@@ -2,9 +2,11 @@
    SMUI.HTML: GRAPH
 
    Graph Builder (a report that is its own launch: columns dropped on zones,
-   elements picked from a palette), Scatterplot Matrix, Scatterplot 3D,
-   Contour Plot, Surface Plot, Bubble Plot, Parallel Plot, Cell Plot,
-   Ternary Plot, and under Legacy the Chart and the Overlay Plot.
+   elements picked from a palette, among them statsmodels' Bean), Scatterplot
+   Matrix, Scatterplot 3D, Contour Plot, Surface Plot, Bubble Plot, Parallel
+   Plot, Cell Plot, Ternary Plot, Treemap, the Functional Data Plot
+   (statsmodels' functional boxplot, HDR boxplot and rainbow plot, which JMP
+   does not have), and under Legacy the Chart and the Overlay Plot.
 
    The statistics (smoothers, fit lines, ellipses, densities, the summary
    statistics of bars, lines and boxes, interpolation) are graph.py's,
@@ -364,6 +366,16 @@
       { key: 'width', label: 'Width Proportion', type: 'number', dflt: 0.5, min: 0.05, max: 1, step: 0.05 },
       { key: 'diamond', label: 'Confidence Diamond', type: 'check', dflt: false },
     ] },
+    // statsmodels' beanplot, which JMP does not have: a violin, a line per row, the mean and median.
+    { type: 'bean', label: 'Bean', z: 45, needs: 'bean', props: [
+      { key: 'beans', label: 'Beans', type: 'select', choices: [['lines', 'Lines'], ['jitter', 'Jittered Points'], ['none', 'None']], dflt: 'lines' },
+      { key: 'mean', label: 'Mean Line', type: 'check', dflt: true },
+      { key: 'median', label: 'Median', type: 'check', dflt: true },
+      { key: 'overall', label: 'Overall Mean', type: 'check', dflt: true },
+      { key: 'split', label: 'Split Two Groups', type: 'check', dflt: false },
+      { key: 'cutoff', label: 'Cut at the Data', type: 'check', dflt: false },
+      { key: 'bw', label: 'Bandwidth Scale', type: 'number', dflt: 1, min: 0.2, max: 5, step: 0.1 },
+    ] },
     { type: 'histogram', label: 'Histogram', z: 25, needs: 'histogram', props: [
       { key: 'histStyle', label: 'Histogram Style', type: 'select', choices: [['bar', 'Bar'], ['kernel', 'Kernel Density']], dflt: 'bar' },
       { key: 'scale', label: 'Response Scale', type: 'select', choices: [['count', 'Count'], ['percent', 'Percent']], dflt: 'count' },
@@ -412,6 +424,7 @@
       case 'xy-cont': return R.xk === 'cont' && R.yk === 'cont' ? null : `${L} needs continuous X and Y`;
       case 'contour': return (R.xk === 'cont' && R.yk === 'cont') || (R.resp && R.facCat) ? null : `${L} needs continuous X and Y (a density), or one continuous and one categorical (a violin)`;
       case 'resp': return R.resp ? null : `${L} needs a continuous X or Y`;
+      case 'bean': return R.resp && (!R.fac || R.facCat) ? null : `${L} needs a continuous X or Y, and at most a categorical column on the other axis`;
       case 'factor': return R.resp || R.fac ? (R.both ? `${L} takes one categorical and one continuous variable, or one categorical alone` : null) : `${L} needs X or Y`;
       case 'histogram': return (R.xk === 'cont') !== (R.yk === 'cont') && !(R.xk === 'cont' && R.yk === 'cont') && (R.fac == null || R.facCat) ? null : `${L} needs one continuous variable, and at most a categorical one on the other axis`;
       case 'xy': return xc && yc ? null : `${L} needs X and Y`;
@@ -451,6 +464,7 @@
       case 'bar': return s({}, rect(3, 8, 4, 8), rect(10, 3, 4, 13), rect(17, 10, 4, 6));
       case 'area': return s({}, svg('path', { d: 'M2 16 L2 11 L8 6 L14 9 L22 3 L22 16 Z', fill: 'currentColor', opacity: 0.55 }), P('M2 11 L8 6 L14 9 L22 3'));
       case 'box': return s({}, P('M12 1 L12 5 M12 13 L12 17 M9 1 L15 1 M9 17 L15 17'), svg('rect', { x: 7, y: 5, width: 10, height: 8, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5 }), P('M7 9 L17 9'));
+      case 'bean': return s({}, P('M12 1 C15 4, 16.5 7, 14.5 9 C17.5 11, 16 15, 12 17 C8 15, 6.5 11, 9.5 9 C7.5 7, 9 4, 12 1 Z', { 'stroke-width': 1.2 }), P('M10 5.5 L14 5.5 M9.5 8 L14.5 8 M8.5 11 L15.5 11 M9.5 13.5 L14.5 13.5', { 'stroke-width': 0.9 }), P('M7.5 9.5 L16.5 9.5', { 'stroke-width': 1.8 }));
       case 'histogram': return s({}, rect(2, 11, 4, 5), rect(6, 6, 4, 10), rect(10, 2, 4, 14), rect(14, 7, 4, 9), rect(18, 12, 4, 4));
       case 'heatmap': return s({}, rect(3, 2, 6, 5, { opacity: 0.35 }), rect(9, 2, 6, 5, { opacity: 0.8 }), rect(15, 2, 6, 5, { opacity: 0.5 }), rect(3, 7, 6, 5, { opacity: 0.9 }), rect(9, 7, 6, 5, { opacity: 0.25 }), rect(15, 7, 6, 5, { opacity: 0.65 }), rect(3, 12, 6, 5, { opacity: 0.5 }), rect(9, 12, 6, 5, { opacity: 0.7 }), rect(15, 12, 6, 5, { opacity: 0.3 }));
       case 'mosaic': return s({}, rect(2, 2, 8, 6, { opacity: 0.85 }), rect(2, 9, 8, 7, { opacity: 0.4 }), rect(11, 2, 11, 10, { opacity: 0.6 }), rect(11, 13, 11, 3, { opacity: 0.3 }));
@@ -1692,9 +1706,10 @@
     E.forCells((P, s, si, gi, rows) => { const R = axesRoles(s.xc, s.yc); for (const it of E.items(R, rows)) blocks.push({ P, s, si, gi, R, it }); });
     if (!blocks.length) return;
     const resp = blocks[0].R.resp;
+    const fac = blocks[0].R.fac;
     const rows = [], codes = [];
     blocks.forEach((b, i) => { for (const r of b.it.rows) { rows.push(r); codes.push(i); } });
-    const res = await E.call('graph.kde1', { y: resp.name, rows, codes, k: blocks.length, bw: e.bw || 1, freq: E.freqName, by: E.byNames });
+    const res = await E.call('graph.kde1', { y: resp.name, rows, codes, k: blocks.length, bw: e.bw || 1, freq: E.freqName, by: E.byNames.concat(fac ? [fac.name] : []) });
     let most = 0;
     res.densities.forEach((d) => { if (d && d.d) for (const v of d.d) most = Math.max(most, v); });
     const slots = E.slots();
@@ -1712,6 +1727,120 @@
       E.fig.traces.push(tr);
     });
   }
+
+  /* Linear interpolation in an increasing xs. */
+  function interp1(xs, ys, v) {
+    const n = xs.length;
+    if (!(v > xs[0])) return ys[0];
+    if (v >= xs[n - 1]) return ys[n - 1];
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (xs[m] <= v) lo = m; else hi = m; }
+    return ys[lo] + ((v - xs[lo]) / (xs[hi] - xs[lo] || 1)) * (ys[hi] - ys[lo]);
+  }
+
+  /* Bean: statsmodels' beanplot (Kampstra's bean plot). For each level, and
+     each group, the violin of a Gaussian kernel density drawn to one width
+     (graph.bean, from statsmodels' own violin), a line for each row (the
+     beans: line markers, linked to their rows), the mean as a longer line
+     and the median as a cross; the overall mean dotted across the panel.
+     With Split Two Groups and an Overlay of two levels, the first level
+     takes the left half of each bean and the second the right. The sizes
+     follow statsmodels' plot_opts: the violin 0.8 of a level's room, a
+     bean 0.5 and the mean line 0.5 of it. */
+  RENDER.bean = async (E, e) => {
+    const blocks = [];
+    E.forCells((P, s, si, gi, rows) => { const R = axesRoles(s.xc, s.yc); for (const it of E.items(R, rows)) blocks.push({ P, s, si, gi, R, it }); });
+    if (!blocks.length) return;
+    const R0 = blocks[0].R;
+    const resp = R0.resp, fac = R0.fac, horiz = R0.horiz;
+    const rows = [], codes = [];
+    blocks.forEach((b, i) => { for (const r of b.it.rows) { rows.push(r); codes.push(i); } });
+    const res = await E.call('graph.bean', { y: resp.name, rows, codes, k: blocks.length, bw: e.bw || 1, cutoff: !!e.cutoff, freq: E.freqName, by: E.byNames.concat(fac ? [fac.name] : []) });
+    const nG = E.G ? Math.min(60, E.G.labels.length) : 0;
+    const split = !!e.split && nG === 2 && E.nSeries === 1;
+    if (e.split && !split) E.note('Bean: Split Two Groups needs an Overlay (or a categorical Color) of two levels, and one column on each axis.');
+    const slots = split ? 1 : E.slots();
+    // A bean is a line marker, its length in pixels: the room a level has along its axis.
+    const nPos = fac && isCat(fac) ? Math.max(1, E.axisLevels(fac).lv.length) : 1;
+    const room = horiz ? (E.B.height(E.nR) - 90) / Math.max(1, E.nR) : (E.B.width() - 110 - (E.G ? 130 : 0)) / Math.max(1, E.nC);
+    const pxUnit = Math.max(8, room / nPos);
+    const tc = SM.util.themeColors();
+    const medColor = dark() ? '#f08a80' : '#b0302a';
+    const perPanel = new Map();     // panel -> the mean lines and the medians
+    const totals = new Map();       // panel|series -> n and sum, for the overall mean
+    const put = (tr, along, across) => { if (horiz) { tr.x = along; tr.y = across; } else { tr.x = across; tr.y = along; } };
+    blocks.forEach((b, i) => {
+      const d = res.beans[i];
+      if (!d || !d.n) return;
+      const { P, si, gi } = b;
+      const side = split ? (gi === 0 ? -1 : 1) : 0;
+      const off = split || slots === 1 ? 0 : -0.4 + (E.slotOf(si, gi) + 0.5) * (0.8 / slots);
+      const pos = b.it.pos + off;
+      const half = 0.4 / slots;
+      const color = E.colorFor(si, gi, inkColor());
+      const key = `${P.idx}|${si}`;
+      const tt = totals.get(key) || { n: 0, s: 0, P, si };
+      tt.n += d.n; tt.s += d.n * d.mean;
+      totals.set(key, tt);
+      const label = `${esc(b.it.label || resp.name)}${gi >= 0 ? `, ${esc(E.G.labels[gi])}` : ''}`;
+      if (d.y && d.d) {
+        let across, along;
+        if (!side) { across = [...d.d.map((v) => pos + v * half), ...d.d.slice().reverse().map((v) => pos - v * half)]; along = [...d.y, ...d.y.slice().reverse()]; }
+        else { across = [...d.d.map((v) => pos + side * v * half), pos, pos]; along = [...d.y, d.y[d.y.length - 1], d.y[0]]; }
+        const tr = { type: 'scatter', mode: 'lines', fill: 'toself', fillcolor: rgba(color, 0.2), line: { color, width: 1.1 }, xaxis: P.xa, yaxis: P.ya,
+          hovertemplate: `${label}<br>density of ${esc(resp.name)}, bandwidth ${fmt(d.bandwidth, { sig: 3 })}<extra></extra>`, ...E.legend(si, gi) };
+        put(tr, along, across);
+        E.fig.traces.push(tr);
+      } else if (d.error && b.it.rows.length > 1) E.note(`Bean${b.it.label ? ` (${b.it.label})` : ''}: ${d.error}.`);
+      if (e.beans !== 'none') {
+        const jit = e.beans === 'jitter' && d.y && d.d;
+        const center = side ? pos + side * 0.125 : pos;
+        const A = [], C = [], RR = [], H = [];
+        for (const r of b.it.rows) {
+          const v = resp.values[r];
+          if (!Number.isFinite(v)) continue;
+          let q = center;
+          if (jit) { const u = hash01(r, 23); q = pos + (side ? side * u : 2 * u - 1) * interp1(d.y, d.d, v) * half; }
+          A.push(v); C.push(q); RR.push(r); H.push(rowHover(E.t, r, [fac, resp, E.G ? E.G.col : null]));
+        }
+        if (RR.length) {
+          const len = (side ? 0.25 : 0.5 / slots) * pxUnit;
+          const tr = { type: 'scatter', mode: 'markers', rows: RR, xaxis: P.xa, yaxis: P.ya, hovertext: H, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false, legendgroup: gi >= 0 ? `g${gi}` : undefined,
+            marker: jit ? { size: 4.5, color, opacity: 0.85, line: { width: 0 } } : { symbol: horiz ? 'line-ns-open' : 'line-ew-open', size: clamp(Math.round(len), 4, 90), color: rgba(color, 0.8), line: { width: 1.1 } } };
+          put(tr, A, C);
+          if (E.fig.mask) tr.selected = { marker: { opacity: 1 } };
+          E.fig.traces.push(tr);
+        }
+      }
+      let pp = perPanel.get(P.idx);
+      if (!pp) { pp = { P, ma: [], mc: [], mh: [], da: [], dc: [], dh: [] }; perPanel.set(P.idx, pp); }
+      if (e.mean !== false && Number.isFinite(d.mean)) {
+        const w = side ? 0.25 : 0.25 / slots;
+        const a = side ? pos : pos - w, z = side ? pos + side * 2 * w : pos + w;
+        const h = `${label}<br>Mean(${esc(resp.name)}): ${fmt(d.mean, { sig: 6 })}<br>N: ${fmt(d.n)}`;
+        pp.ma.push(d.mean, d.mean, null); pp.mc.push(a, z, null); pp.mh.push(h, h, '');
+      }
+      if (e.median !== false && Number.isFinite(d.median)) {
+        pp.da.push(d.median); pp.dc.push(side ? pos + side * 0.08 : pos); pp.dh.push(`${label}<br>Median(${esc(resp.name)}): ${fmt(d.median, { sig: 6 })}`);
+      }
+    });
+    for (const pp of perPanel.values()) {
+      const { P } = pp;
+      if (pp.ma.length) { const tr = { type: 'scatter', mode: 'lines', xaxis: P.xa, yaxis: P.ya, line: { color: tc.text, width: 2.6 }, hovertext: pp.mh, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }; put(tr, pp.ma, pp.mc); E.fig.traces.push(tr); }
+      if (pp.da.length) { const tr = { type: 'scatter', mode: 'markers', xaxis: P.xa, yaxis: P.ya, marker: { symbol: 'cross-thin-open', size: 11, color: medColor, line: { width: 2, color: medColor } }, hovertext: pp.dh, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }; put(tr, pp.da, pp.dc); E.fig.traces.push(tr); }
+    }
+    if (e.overall !== false) {
+      for (const tt of totals.values()) {
+        if (!tt.n) continue;
+        const m = tt.s / tt.n;
+        const line = { color: E.nSeries > 1 ? E.colorFor(tt.si, -1, tc.muted) : tc.muted, width: 1.3, dash: 'dot' };
+        E.fig.shapes.push(horiz
+          ? { type: 'line', xref: tt.P.xa, yref: `${tt.P.ya} domain`, x0: m, x1: m, y0: 0, y1: 1, line, layer: 'below' }
+          : { type: 'line', xref: `${tt.P.xa} domain`, yref: tt.P.ya, x0: 0, x1: 1, y0: m, y1: m, line, layer: 'below' });
+      }
+    }
+    E.note(`Bean: statsmodels' beanplot. Each violin is a Gaussian kernel density (scipy's gaussian_kde, Scott's rule${(e.bw || 1) !== 1 ? ` times ${fmt(e.bw)}` : ''}) drawn to one width, from the smallest value to the largest${e.cutoff ? '' : ' and 1.5 standard deviations past them'}; a line for each row, the mean as the long line and the median as the cross${e.overall !== false ? '. The dotted line is the overall mean, as Kampstra\'s bean plot draws it (statsmodels\' beanplot does not)' : ''}.`);
+  };
 
   /* ---- Graph Builder: the builder -----------------------------------------------------------
      The report's top outline holds the builder: the columns on the left
@@ -2395,7 +2524,7 @@
             ['Size', 'The area of each point follows a continuous column.'],
             ['Freq', 'A count per row: the statistics count the row that many times.'],
           ] },
-          { heading: 'Elements', text: 'Click an element to show it alone, shift-click to add or remove it; its properties are under the columns. Smoother: JMP\'s cubic smoothing spline on standardized X with lambda 0.05 (scipy\'s make_smoothing_spline minimises the same penalised sum of squares), or statsmodels\' lowess as the Local Kernel. Line of Fit: least squares (statsmodels OLS) with the confidence of the fit and of prediction. Ellipse: the bivariate normal density ellipse. Contour: kernel density contours that hold 25%, 50%, 75% and 100% of the points (scipy\'s gaussian_kde). Bar, Line, Area, Points and Box Plot: summary statistics with JMP\'s quantiles.' },
+          { heading: 'Elements', text: 'Click an element to show it alone, shift-click to add or remove it; its properties are under the columns. Smoother: JMP\'s cubic smoothing spline on standardized X with lambda 0.05 (scipy\'s make_smoothing_spline minimises the same penalised sum of squares), or statsmodels\' lowess as the Local Kernel. Line of Fit: least squares (statsmodels OLS) with the confidence of the fit and of prediction. Ellipse: the bivariate normal density ellipse. Contour: kernel density contours that hold 25%, 50%, 75% and 100% of the points (scipy\'s gaussian_kde). Bar, Line, Area, Points and Box Plot: summary statistics with JMP\'s quantiles. Bean: statsmodels\' bean plot, for a continuous variable by the levels of a categorical one: a violin of its density, a line for every row (click one to select the row), the mean, the median and the overall mean; Split Two Groups draws two Overlay levels as the halves of one bean.' },
           { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
           { heading: 'Done', text: 'Done hides the columns, the palette and the zones and leaves the graph; the red triangle\'s Show Control Panel brings them back. Click the title or an axis title to edit it. Undo steps back through the changes.' },
           { heading: 'Differences from JMP', list: [
@@ -2404,14 +2533,15 @@
             'Line of Fit\'s Robust Cauchy is statsmodels\' RLM with Cauchy weights, c = 2.3849; Time Series fits are not here.',
             'Ellipse: the contour of the fitted bivariate normal (radius² the χ²(2) quantile of the coverage).',
             'Contour: highest-density regions of a Gaussian kernel density with Scott\'s bandwidth; Bagplot and HDR types are not here.',
+            'Bean is not in JMP. It follows statsmodels\' beanplot (Kampstra 2008): every violin is scaled to the same width, so their areas do not compare the groups\' sizes; the overall mean line is Kampstra\'s, not drawn by statsmodels.',
             'Excluded rows are left out of the graph; hidden rows are not drawn but count in the statistics. Map shapes, Page, Interval, Shape and the Local Data Filter\'s own column switcher are not in this builder.',
           ] },
         ],
         more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
       },
     },
-    about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size and Freq zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Histogram, Heatmap, Mosaic, Caption Box, Pie), each with its properties. Every mark is linked to its rows; Done leaves the graph alone.',
-    uses: ['scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
+    about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size and Freq zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie), each with its properties. Every mark is linked to its rows; Done leaves the graph alone.',
+    uses: ['scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
     title: () => 'Graph Builder',
     triangle(ctx) { const b = BUILDERS.get(ctx.report); return b && !b.dead ? b.menu() : []; },
     /* The builder of a report (its handle, as the tests use it). */
@@ -3246,6 +3376,516 @@
       };
       box._tiles = { list };
       ctx.container.append(box, ctx.note(`${list.filter((x) => x.depth === 0).length} tiles of ${cats[0].name}${cats[1] ? `, split by ${cats[1].name}` : ''}; areas are ${Z ? `sums of ${Z.name}` : 'counts of rows'}. A click selects a tile's rows (Alt-click zooms in).`));
+    },
+  });
+
+  /* ==========================================================================
+     FUNCTIONAL DATA PLOT
+     statsmodels' functional graphics (fboxplot, hdrboxplot, rainbowplot),
+     their numbers from graph.fbox and graph.hdr, drawn here. A curve is a
+     row (Rows as Functions) or the rows of an ID (Stacked), and it is linked
+     as a whole: a click on a curve selects its rows, curves that hold a
+     selected row are drawn over the others in the selection colour, and a
+     curve whose rows are all hidden is not drawn.
+     ========================================================================== */
+  const FD_DEPTH = [['MBD', 'Modified Band Depth (MBD)'], ['BD2', 'Band Depth (BD2)'], ['BD2x', 'Band Depth (BD2), Counted']];
+  const FD_SHORT = { MBD: 'MBD', BD2: 'BD2', BD2x: 'BD2, counted' };
+  const FD_RULES = [['statsmodels', 'statsmodels (fboxplot)'], ['sungenton', 'Sun and Genton (R\'s fda::fbplot)']];
+  const FD_BW = [['normal_reference', 'Normal Reference'], ['cv_ml', 'Cross-Validation, Likelihood'], ['cv_ls', 'Cross-Validation, Least Squares']];
+  // The outlying curves' colours: the palette without the selection's orange.
+  const FD_COLORS = PALETTE.filter((c) => c.toLowerCase() !== SM.report.SELECTED.toLowerCase());
+  const VIRIDIS = ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'];
+  function viridis(u) {
+    const v = clamp(u, 0, 1) * (VIRIDIS.length - 1);
+    const i = Math.min(VIRIDIS.length - 2, Math.floor(v)), f = v - i;
+    const a = rgbOf(VIRIDIS[i]), b = rgbOf(VIRIDIS[i + 1]);
+    return `rgb(${Math.round(a[0] + f * (b[0] - a[0]))}, ${Math.round(a[1] + f * (b[1] - a[1]))}, ${Math.round(a[2] + f * (b[2] - a[2]))})`;
+  }
+  /* The colour of a depth rank, q from 0 (the deepest) to 1: dark to light
+     on a light page, bright to dark on a dark one. */
+  const depthColor = (q) => viridis(dark() ? 1 - 0.8 * q : 0.88 * q);
+  const pct = (v) => `${fmt(100 * v, { digits: 1 })}%`;
+
+  /* What graph.fbox and graph.hdr are asked: the curves, and the By
+     columns for the Python shown under the results. */
+  function fdPayload(ctx) {
+    const by = ctx.names('by');
+    if (ctx.opt('format', 'wide') === 'long') return { layout: 'long', y: ctx.name('yl'), id: ctx.name('id'), x: ctx.name('x'), by };
+    return { layout: 'wide', y: ctx.names('y'), xmode: ctx.opt('fdX', 'names'), by };
+  }
+
+  /* The curves as the page draws them: labels, rows, and paths with
+     vertices between the points (a line is straight between them anyway),
+     so that hovering or clicking anywhere along a curve finds it. */
+  function fdCurves(ctx, fb) {
+    const t = ctx.table;
+    const long = fb.layout === 'long';
+    const idCol = ctx.role('id') || (long ? null : t.labelColumn());
+    const labels = fb.rows.map((rs) => (idCol && !isMissing(idCol.values[rs[0]]) ? cellText(idCol, idCol.values[rs[0]]) : `row ${rs[0] + 1}`));
+    const x = fb.x, p = x.length;
+    const k = p >= 48 ? 1 : Math.ceil(48 / Math.max(1, p - 1));
+    const along = (v) => { const out = []; for (let j = 0; j < p - 1; j++) for (let s = 0; s < k; s++) out.push(v[j] + ((v[j + 1] - v[j]) * s) / k); out.push(v[p - 1]); return out; };
+    const xc = long ? ctx.role('x') : null;
+    const idName = long ? ctx.name('id') : null;
+    const xTitle = long ? (xc ? xc.name : `the order of each ${idName}'s rows`) : (fb.source === 'names' ? 'X (from the Y column names)' : 'Y column');
+    const yTitle = long ? ctx.name('yl') : 'Y';
+    const xText = (v) => (xc && isDate(xc) ? cellText(xc, v) : (!long && fb.source === 'order' ? fb.names[Math.round(v) - 1] : fmt(v, { sig: 6 })));
+    return { n: fb.curves.length, p, x, dx: along(x), Y: fb.curves, paths: fb.curves.map(along), rows: fb.rows, labels, long, idCol, xc, idName, xTitle, yTitle, xText,
+      idHead: idCol ? idCol.name : 'Row', source: fb.source, names: fb.names };
+  }
+
+  /* A trace of several curves with gaps between them; vtx: the curve of each vertex. */
+  function curveTrace(F, list, style, hov) {
+    const x = [], y = [], vtx = [], text = [];
+    for (const c of list) {
+      const ys = F.paths[c], h = hov(c);
+      for (let j = 0; j < ys.length; j++) { x.push(F.dx[j]); y.push(ys[j]); vtx.push(c); text.push(h); }
+      x.push(null); y.push(null); vtx.push(-1); text.push('');
+    }
+    return { tr: { type: 'scatter', mode: 'lines', x, y, hovertext: text, hovertemplate: `%{hovertext}<br>${esc(F.xTitle)}: %{x}<br>${esc(F.yTitle)}: %{y:.4g}<extra></extra>`, ...style }, vtx };
+  }
+
+  /* A band between two curves, filled. */
+  function fdBand(x, lo, hi, color, name, extra = {}) {
+    return { type: 'scatter', mode: 'lines', x: [...x, ...x.slice().reverse()], y: [...hi, ...lo.slice().reverse()], fill: 'toself', fillcolor: color, line: { width: 0 }, hoverinfo: 'skip', name, ...extra };
+  }
+
+  /* Curves linked by curve. specs: [{ trace, vtx, x, y }] for the traces of
+     curves; overlay: the trace that shows the selected curves. */
+  function linkCurves(box, F, specs, overlay) {
+    const p = box._plot;
+    if (!p) return box;
+    const t = p.table;
+    let hidSig = '';
+    link(box, [], { after: (pl, sel) => {
+      const st = t.state;
+      const hidden = F.rows.map((rs) => rs.every((r) => st[r] & 4));
+      const sig = hidden.map((h) => (h ? 1 : 0)).join('');
+      if (sig !== hidSig) {
+        const had = hidSig.includes('1');
+        hidSig = sig;
+        if (had || sig.includes('1')) {
+          const nul = (s, arr) => arr.map((v, k) => (s.vtx[k] >= 0 && hidden[s.vtx[k]] ? null : v));
+          try { Plotly.restyle(pl.box, { x: specs.map((s) => nul(s, s.x)), y: specs.map((s) => nul(s, s.y)) }, specs.map((s) => s.trace)); } catch (e) { console.warn('SM graph: restyle failed', e); }
+        }
+      }
+      const ox = [], oy = [];
+      if (sel) {
+        F.rows.forEach((rs, c) => {
+          if (hidden[c] || !rs.some((r) => st[r] & 1)) return;
+          const ys = F.paths[c];
+          for (let j = 0; j < ys.length; j++) { ox.push(F.dx[j]); oy.push(ys[j]); }
+          ox.push(null); oy.push(null);
+        });
+      }
+      try { Plotly.restyle(pl.box, { x: [ox], y: [oy] }, [overlay]); } catch (e) { console.warn('SM graph: restyle failed', e); }
+    } });
+    const prev = p.opts.onDraw;
+    p.opts.onDraw = (gd) => {
+      if (prev) prev(gd);
+      gd.on('plotly_click', (ev) => {
+        const pt = ev && ev.points && ev.points[0];
+        if (!pt || !t) return;
+        const s = specs.find((q) => q.trace === pt.curveNumber);
+        const c = s ? s.vtx[pt.pointNumber] : -1;
+        if (c == null || c < 0) return;
+        const e = ev.event || {};
+        t.select(F.rows[c], e.shiftKey ? 'add' : (e.metaKey || e.ctrlKey) ? 'toggle' : 'replace');
+      });
+    };
+    box._curves = { F, specs, overlay };
+    return box;
+  }
+
+  const fdOverlay = () => ({ type: 'scatter', mode: 'lines', x: [], y: [], line: { color: SM.report.SELECTED, width: 2.8 }, hoverinfo: 'skip', showlegend: false });
+
+  /* The layout of a graph of curves; with a legend of `entries` items, on
+     the right, or under the graph when it is narrow. */
+  function fdLayout(F, w, { legend = true, entries = 0 } = {}) {
+    const bottom = w < 620;
+    const ax = { title: { text: esc(F.xTitle) }, zeroline: false };
+    if (F.xc && isDate(F.xc)) ax.type = 'date';
+    if (!F.long && F.source === 'order' && F.p <= 30) { ax.tickmode = 'array'; ax.tickvals = F.x; ax.ticktext = F.names.map(esc); }
+    const under = legend && bottom ? 19 * (w < 460 ? entries : Math.ceil(entries / 2)) + 16 : 0;
+    return {
+      xaxis: ax, yaxis: { title: { text: esc(F.yTitle) }, zeroline: false }, hovermode: 'closest', hoverdistance: 30,
+      margin: { l: 60, r: 12, t: 10, b: 48 + under }, showlegend: legend,
+      legend: bottom ? { orientation: 'h', x: 0, xanchor: 'left', y: 0, yanchor: 'bottom', yref: 'container' } : { x: 1.02, xanchor: 'left', y: 1, yanchor: 'top' },
+      _under: under,
+    };
+  }
+  const fdSize = (ctx) => { const w = Math.min(820, availWidth(ctx)); return { w, h: Math.round(clamp(w * 0.56, 280, 470)), named: w < 620 ? 5 : 12 }; };
+  /* A graph of curves: its layout's room for a legend under it is added to the height. */
+  function fdPlot(ctx, traces, F, { w, h }, { legend = true, title } = {}) {
+    const entries = traces.filter((t) => t.name && t.showlegend !== false).length;
+    const L = fdLayout(F, w, { legend, entries });
+    const under = L._under;
+    delete L._under;
+    return ctx.plot(traces, L, { width: w, height: h + under, title });
+  }
+
+  /* Where a curve passes the fences: runs of X above and below. */
+  function fdWhere(F, fb, c) {
+    const ys = F.Y[c], parts = [];
+    const runs = (test, word) => {
+      let a = -1;
+      for (let j = 0; j <= F.p; j++) {
+        const on = j < F.p && test(j);
+        if (on && a < 0) a = j;
+        if (!on && a >= 0) { parts.push(`${word} ${F.xText(F.x[a])}${j - 1 > a ? `–${F.xText(F.x[j - 1])}` : ''}`); a = -1; }
+      }
+    };
+    runs((j) => ys[j] > fb.fence_hi[j], 'above');
+    runs((j) => ys[j] < fb.fence_lo[j], 'below');
+    return parts.join('; ');
+  }
+
+  const selectMode = (ev) => (ev && ev.shiftKey ? 'add' : ev && (ev.metaKey || ev.ctrlKey) ? 'toggle' : 'replace');
+
+  function fdDataNote(ctx, F, fb) {
+    const parts = [];
+    if (F.long) parts.push(`${F.n} curves, one for each ${F.idName}, at ${F.p} points of ${F.xc ? F.xc.name : `the order of their rows`}`);
+    else parts.push(`${F.n} curves, one for each row, at ${F.p} points; X is ${fb.source === 'names' ? 'the number in each Y column\'s name' : 'the column order'}`);
+    if (fb.dropped) parts.push(`${fb.dropped} row${fb.dropped > 1 ? 's' : ''} with a missing value left out`);
+    if (fb.interp) parts.push(`the curves are not measured at the same X, so each is interpolated linearly (numpy.interp) to ${fb.interp.points} equally spaced points from ${F.xText(fb.interp.lo)} to ${F.xText(fb.interp.hi)}, the range every curve covers${fb.interp.left_out ? `; ${fb.interp.left_out} curve${fb.interp.left_out > 1 ? 's' : ''} with fewer than two points left out` : ''}`);
+    if (fb.averaged) parts.push('values at the same X within a curve are averaged');
+    if (fb.ties && fb.method !== 'BD2x') parts.push(`${fb.ties} value${fb.ties > 1 ? 's are' : ' is'} tied with another at the same point: statsmodels ranks ties in the order numpy's sort leaves them, which moves those curves' depths a little`);
+    return ctx.note(`${parts.join('; ')}.${fb.notes && fb.notes.length ? ` ${fb.notes.join(' ')}` : ''}`);
+  }
+
+  function fdBoxView(ctx, F, fb) {
+    const t = ctx.table;
+    const out = [], rest = [];
+    fb.outlier.forEach((o, c) => (o ? out : rest).push(c));
+    const outRows = out.flatMap((c) => F.rows[c]);
+    const ob = ctx.outline('Functional Boxplot', { key: 'fd:box', info: 'p:functional:box', menu: () => [
+      { label: 'Select Outliers', disabled: !out.length, action: () => t.select(outRows) },
+      ctx.check('Show Curves', 'fdCurves', null, false),
+      ctx.check('Show Fences', 'fdFences', null, false),
+    ] });
+    const ink = SM.util.themeColors().text;
+    const size = fdSize(ctx);
+    const traces = [], specs = [];
+    const add = (ct) => { const i = traces.push(ct.tr) - 1; specs.push({ trace: i, vtx: ct.vtx, x: ct.tr.x, y: ct.tr.y }); };
+    const hov = (c) => `${esc(F.labels[c])}${c === fb.median ? ' (the median)' : ''}<br>depth ${fmt(fb.depth[c], { sig: 4 })}, rank ${fb.rank[c]} of ${F.n}${fb.outlier[c] ? ', outlier' : ''}`;
+    traces.push(fdBand(F.x, fb.env_lo, fb.env_hi, rgba(ink, 0.12), 'Non-outlying envelope'));
+    traces.push(fdBand(F.x, fb.lower, fb.upper, rgba(ink, 0.3), '50% central region'));
+    if (ctx.opt('fdCurves', false)) add(curveTrace(F, rest.filter((c) => c !== fb.median), { line: { color: rgba(ink, 0.3), width: 0.8 }, name: 'The other curves' }, hov));
+    if (ctx.opt('fdFences', false)) traces.push({ type: 'scatter', mode: 'lines', x: [...F.x, null, ...F.x], y: [...fb.fence_lo, null, ...fb.fence_hi], line: { color: rgba(ink, 0.75), width: 1, dash: 'dash' }, hoverinfo: 'skip', name: 'Fences' });
+    add(curveTrace(F, [fb.median], { line: { color: ink, width: 2.6 }, name: esc(`Median: ${F.labels[fb.median]}`) }, hov));
+    const named = size.named;
+    out.slice(0, named).forEach((c, i) => add(curveTrace(F, [c], { line: { color: FD_COLORS[i % FD_COLORS.length], width: 1.6 }, name: esc(F.labels[c]) }, hov)));
+    if (out.length > named) add(curveTrace(F, out.slice(named), { line: { color: rgba(SM.util.themeColors().muted, 0.9), width: 1.1, dash: 'dot' }, name: `${out.length - named} more outliers` }, hov));
+    const oi = traces.push(fdOverlay()) - 1;
+    const box = fdPlot(ctx, traces, F, size, { title: 'Functional boxplot' });
+    linkCurves(box, F, specs, oi);
+    const how = fb.method === 'BD2x' ? 'the band depth counted from its definition' : `statsmodels' banddepth, ${FD_DEPTH.find(([v]) => v === fb.method)[1]}`;
+    const rule = fb.rule === 'sungenton'
+      ? `a curve is an outlier where, at any point, it passes the fences: the central region's envelope widened by ${fmt(fb.wfactor)} times its range on each side (Sun and Genton's rule, as R's fda::fbplot)`
+      : `a curve is an outlier where, at any point, it leaves the central region stretched ${fmt(fb.wfactor)} times about the pointwise median of its curves (statsmodels' fboxplot)`;
+    const notes = [ctx.note(`The curves ordered by ${how}; the median is the deepest curve, ${F.labels[fb.median]}. The 50% central region is the envelope of the ${fb.central} deepest; ${rule}: ${out.length ? `${out.length} outlying curve${out.length > 1 ? 's' : ''}` : 'none'}. The outer band is the envelope of the curves that are not outliers.`)];
+    if (fb.rule !== 'sungenton' && out.length > 0.2 * F.n) notes.push(ctx.note(`fboxplot's fences are narrow: its factor stretches the central region to ${fmt(fb.wfactor)} times its width, where Sun and Genton's add ${fmt(fb.wfactor)} times the width on each side (fboxplot's factor f is their (f − 1)/2), so ${out.length} of the ${F.n} curves are outliers here. Outlier Rule ▸ Sun and Genton, or a larger Outlier Factor (statsmodels' own example takes 2.58), flags fewer.`));
+    if (fb.method === 'BD2') notes.push(ctx.note('statsmodels\' BD2 is a formula in the ranks at each point: (curves below at its lowest rank) × (curves above at its highest), which counts pairs that do not make a band around the curve; it is at least the band depth, and can order the curves differently. Band Depth (BD2), Counted counts the bands.'));
+    ob.add(box, ...notes);
+    if (out.length) {
+      const rows = out.map((c) => ({ id: F.labels[c], depth: fb.depth[c], rank: fb.rank[c], where: fdWhere(F, fb, c), _c: c }));
+      ob.add(ctx.rt({ columns: [{ key: 'id', label: F.idHead, fmt: 'text' }, { key: 'depth', label: `Depth (${FD_SHORT[fb.method]})` }, { key: 'rank', label: 'Rank', fmt: 'int' }, { key: 'where', label: 'Outside the Fences at', fmt: 'text' }], rows },
+        { caption: 'Outlying Curves', key: 'fd:outliers', name: 'Outlying Curves', onRow: (row, ev) => t.select(F.rows[row._c], selectMode(ev)) }));
+    }
+    ob.add(ctx.code(fb.code));
+    return { box, out, outRows };
+  }
+
+  function fdHdrView(ctx, F, hd) {
+    const t = ctx.table;
+    const out = hd && !hd.error ? hd.outlier.map((o, c) => (o ? c : -1)).filter((c) => c >= 0) : [];
+    const outRows = out.flatMap((c) => F.rows[c]);
+    const ob = ctx.outline('HDR Boxplot', { key: 'fd:hdr', info: 'p:functional:hdr', menu: () => [
+      { label: 'Select Outliers', disabled: !out.length, action: () => t.select(outRows) },
+      ctx.check('Score Plot', 'fdScores', null, true),
+      { label: 'Outlier Threshold…', action: async () => {
+        const v = await SM.ui.form({ title: 'Outlier Threshold', lead: 'A curve is an outlier when its density is below the (1 − threshold) quantile of the densities at the curves; statsmodels\' default is 0.95.', fields: [{ key: 'q', label: 'Threshold (0.5 to 0.999)', type: 'number', value: ctx.opt('fdThreshold', 0.95) }], validate: (x) => (x.q > 0.5 && x.q < 1 ? null : 'The threshold must be between 0.5 and 1') });
+        if (v) ctx.set('fdThreshold', v.q);
+      } },
+      { label: 'Bandwidth', submenu: () => FD_BW.map(([v, l]) => ({ label: l, checked: ctx.opt('fdBw', 'normal_reference') === v, action: () => ctx.set('fdBw', v) })) },
+    ] });
+    if (!hd || hd.error) { ob.add(ctx.warn((hd && hd.error) || 'The HDR boxplot could not be computed.')); return { out, outRows }; }
+    const tc = SM.util.themeColors();
+    const ink = inkColor();
+    const size = fdSize(ctx);
+    const traces = [], specs = [];
+    const add = (ct) => { const i = traces.push(ct.tr) - 1; specs.push({ trace: i, vtx: ct.vtx, x: ct.tr.x, y: ct.tr.y }); };
+    const hov = (c) => `${esc(F.labels[c])}<br>HDR density ${fmt(hd.density[c], { sig: 4 })}${hd.outlier[c] ? ', outlier' : ''}`;
+    const rest = F.rows.map((_, c) => c).filter((c) => !hd.outlier[c]);
+    add(curveTrace(F, rest, { line: { color: rgba(tc.text, 0.2), width: 0.8 }, name: 'Curves' }, hov));
+    if (hd.hdr90 && hd.hdr90[0]) traces.push(fdBand(F.x, hd.hdr90[1], hd.hdr90[0], rgba(ink, 0.2), '90% HDR'));
+    if (hd.hdr50 && hd.hdr50[0]) traces.push(fdBand(F.x, hd.hdr50[1], hd.hdr50[0], rgba(ink, 0.42), '50% HDR'));
+    traces.push({ type: 'scatter', mode: 'lines', x: F.x, y: hd.modal, line: { color: ink, width: 2.6 }, name: 'Modal curve', hovertemplate: `the modal curve<br>${esc(F.xTitle)}: %{x}<br>${esc(F.yTitle)}: %{y:.4g}<extra></extra>` });
+    const named = size.named;
+    out.slice(0, named).forEach((c, i) => add(curveTrace(F, [c], { line: { color: FD_COLORS[i % FD_COLORS.length], width: 1.6 }, name: esc(F.labels[c]) }, hov)));
+    if (out.length > named) add(curveTrace(F, out.slice(named), { line: { color: rgba(tc.muted, 0.9), width: 1.1, dash: 'dot' }, name: `${out.length - named} more outliers` }, hov));
+    const oi = traces.push(fdOverlay()) - 1;
+    const box = fdPlot(ctx, traces, F, size, { title: 'HDR boxplot' });
+    linkCurves(box, F, specs, oi);
+    ob.add(box);
+    let scores = null;
+    if (ctx.opt('fdScores', true)) {
+      const S = hd.scores, g = hd.grid;
+      const outColor = dark() ? '#f08a80' : '#b0302a';
+      // A constraint contour shades where the constraint fails: '<' shades the region above the level.
+      const region = (lev, fill, name, dash) => ({ type: 'contour', x: g.x, y: g.y, z: g.z, contours: { type: 'constraint', operation: '<', value: lev }, fillcolor: fill, line: { color: rgba(ink, 0.75), width: 1, dash: dash || 'solid', smoothing: 0.8 }, hoverinfo: 'skip', showscale: false, showlegend: true, name });
+      const st = [
+        region(hd.levels['90'], rgba(ink, 0.14), '90% region'), region(hd.levels['50'], rgba(ink, 0.3), '50% region'),
+        region(hd.levels.threshold, 'rgba(0,0,0,0)', `${fmt(100 * hd.threshold, { sig: 3 })}% contour: outliers outside`, 'dash'),
+      ];
+      const pts = { type: 'scatter', mode: 'markers', x: S.map((s) => s[0]), y: S.map((s) => s[1]), rows: F.long ? F.rows : F.rows.map((rs) => rs[0]),
+        marker: { size: 7, color: S.map((_, c) => (hd.outlier[c] ? outColor : pointColor())), line: { width: 0 } }, name: 'Curves', showlegend: false,
+        hovertext: S.map((_, c) => hov(c)), hovertemplate: '%{hovertext}<br>PC1 %{x:.4g}, PC2 %{y:.4g}<extra></extra>' };
+      st.push(pts, { type: 'scatter', mode: 'markers', x: [hd.mode[0]], y: [hd.mode[1]], marker: { symbol: 'x-thin-open', size: 13, color: tc.text, line: { width: 2, color: tc.text } }, name: 'Mode: the modal curve', hovertemplate: 'the density\'s highest point: the modal curve<extra></extra>' });
+      const ann = out.slice(0, 20).map((c) => ({ x: S[c][0], y: S[c][1], text: esc(F.labels[c]), showarrow: false, xanchor: 'left', xshift: 6, font: { size: 10, color: outColor } }));
+      const ex = hd.explained;
+      const w2 = Math.min(600, availWidth(ctx));
+      const L = { xaxis: { title: { text: `PC1 score${ex ? ` (${pct(ex[0])} of the variance)` : ''}` }, zeroline: false, range: [g.x[0], g.x[g.x.length - 1]] }, yaxis: { title: { text: `PC2 score${ex ? ` (${pct(ex[1])})` : ''}` }, zeroline: false, range: [g.y[0], g.y[g.y.length - 1]] },
+        margin: { l: 60, r: 12, t: 10, b: 108 }, showlegend: true, annotations: ann, legend: { orientation: 'h', x: 0, xanchor: 'left', y: 0, yanchor: 'bottom', yref: 'container' } };
+      scores = ctx.plot(st, L, { width: w2, height: Math.round(w2 * 0.72) + 80, title: 'HDR score plot' });
+      ob.add(el('h4', { class: 'sm-fd-sub', text: 'Score Plot' }), scores);
+    }
+    const bw = hd.bw || [];
+    const G = hd.grid_n;
+    ob.add(ctx.note(`The ${F.n} curves as points in the plane of their first two principal components (statsmodels PCA, each point along the curves standardized${hd.explained ? `; they hold ${pct(hd.explained[0])} and ${pct(hd.explained[1])} of the variance` : ''})${hd.constant ? `; ${hd.constant} point${hd.constant > 1 ? 's' : ''} where every curve has the same value ${hd.constant > 1 ? 'are' : 'is'} left out of the PCA` : ''}. A Gaussian kernel density of the scores (statsmodels KDEMultivariate, ${FD_BW.find(([v]) => v === hd.bw_method)[1].toLowerCase()} bandwidths ${fmt(bw[0], { sig: 3 })} and ${fmt(bw[1], { sig: 3 })}) gives the regions: the 50% region is where the density is above its median at the curves, the 90% region where it is above its 10th percentile (numpy's midpoint rule, as hdrboxplot). The modal curve is the curve rebuilt from the density's highest point, and each band the pointwise range of the curves rebuilt from the scores in its region, within the range of the scores; the 90% band comes from the part of its region outside the 50% one, as in hdrboxplot. A curve is an outlier when its density is below the ${fmt(100 * (1 - hd.threshold), { sig: 3 })}th percentile: ${out.length} of the ${F.n}, as about ${pct(1 - hd.threshold)} of the curves always are.`),
+      ctx.note(`statsmodels' hdrboxplot searches for the ends of each band with differential evolution (7 generations) or a brute-force grid, which can fall short of them; here they are exact on a ${G} × ${G} grid of the score plane, which gives the same bands or slightly wider ones. The curves are not smoothed first, and the PCA is not robust, unlike Hyndman and Shang's HDR boxplot in R's rainbow package.`));
+    if (out.length) {
+      const rows = out.map((c) => ({ id: F.labels[c], dens: hd.density[c], pc1: hd.scores[c][0], pc2: hd.scores[c][1], _c: c }));
+      ob.add(ctx.rt({ columns: [{ key: 'id', label: F.idHead, fmt: 'text' }, { key: 'dens', label: 'HDR Density' }, { key: 'pc1', label: 'PC1' }, { key: 'pc2', label: 'PC2' }], rows },
+        { caption: 'Outlying Curves', key: 'fd:hdroutliers', name: 'HDR Outlying Curves', onRow: (row, ev) => t.select(F.rows[row._c], selectMode(ev)) }));
+    }
+    ob.add(ctx.code(hd.code));
+    return { box, scores, out, outRows };
+  }
+
+  function fdRainbowView(ctx, F, fb) {
+    const ob = ctx.outline('Rainbow Plot', { key: 'fd:rainbow', info: 'p:functional:rainbow' });
+    const n = F.n;
+    const q = (c) => (fb.rank[c] - 1) / Math.max(1, n - 1);
+    const hov = (c) => `${esc(F.labels[c])}${c === fb.median ? ' (the median)' : ''}<br>depth ${fmt(fb.depth[c], { sig: 4 })}, rank ${fb.rank[c]} of ${n}`;
+    const traces = [], specs = [];
+    const add = (ct) => { const i = traces.push(ct.tr) - 1; specs.push({ trace: i, vtx: ct.vtx, x: ct.tr.x, y: ct.tr.y }); };
+    const order = fb.order.slice().reverse().filter((c) => c !== fb.median);   // the least deep first: the deepest on top
+    if (n <= 150) for (const c of order) add(curveTrace(F, [c], { line: { color: depthColor(q(c)), width: 1.1 }, showlegend: false }, hov));
+    else {
+      const bins = 40;
+      const groups = Array.from({ length: bins }, () => []);
+      for (const c of order) groups[Math.min(bins - 1, Math.floor(q(c) * bins))].push(c);
+      for (let b = bins - 1; b >= 0; b--) if (groups[b].length) add(curveTrace(F, groups[b], { line: { color: depthColor((b + 0.5) / bins), width: 1 }, showlegend: false }, hov));
+    }
+    add(curveTrace(F, [fb.median], { line: { color: depthColor(0), width: 3 }, showlegend: false }, hov));
+    const cs = [0, 0.25, 0.5, 0.75, 1].map((u) => [u, depthColor(u)]);
+    traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], hoverinfo: 'skip', showlegend: false,
+      marker: { color: [1, n], cmin: 1, cmax: n, colorscale: cs, showscale: true, colorbar: { title: { text: 'Depth rank', side: 'right' }, thickness: 12, len: 0.8, outlinewidth: 0, tickvals: [1, n], ticktext: ['1: deepest', String(n)] } } });
+    const oi = traces.push(fdOverlay()) - 1;
+    const box = fdPlot(ctx, traces, F, fdSize(ctx), { legend: false, title: 'Rainbow plot' });
+    linkCurves(box, F, specs, oi);
+    ob.add(box, ctx.note(`Every curve coloured by its depth rank (${FD_DEPTH.find(([v]) => v === fb.method)[1]}): the deepest ${dark() ? 'brightest' : 'darkest'}, the median (${F.labels[fb.median]}) drawn thickest and on top. statsmodels' rainbowplot colours the same order with a rainbow colour map, the median in black.`), ctx.code(fb.code));
+    return { box };
+  }
+
+  function fdDepthTable(ctx, F, fb, hd) {
+    const t = ctx.table;
+    const ob = ctx.outline('Curve Depths', { key: 'fd:table' });
+    const H = hd && !hd.error ? hd : null;
+    const columns = [{ key: 'id', label: F.idHead, fmt: 'text' }, { key: 'depth', label: `Depth (${FD_SHORT[fb.method]})` }, { key: 'rank', label: 'Rank', fmt: 'int' }, { key: 'out', label: 'Outlier', fmt: 'text' }];
+    if (H) columns.push({ key: 'hd', label: 'HDR Density' }, { key: 'hout', label: 'HDR Outlier', fmt: 'text' }, { key: 'pc1', label: 'PC1', hidden: true }, { key: 'pc2', label: 'PC2', hidden: true });
+    const rows = F.rows.map((rs, c) => ({ id: F.labels[c], depth: fb.depth[c], rank: fb.rank[c], out: fb.outlier[c] ? 'Yes' : '', hd: H ? H.density[c] : null, hout: H ? (H.outlier[c] ? 'Yes' : '') : null, pc1: H ? H.scores[c][0] : null, pc2: H ? H.scores[c][1] : null, _c: c }));
+    ob.add(ctx.rt({ columns, rows }, { key: 'fd:depths', name: 'Curve Depths', maxRows: 300, onRow: (row, ev) => t.select(F.rows[row._c], selectMode(ev)) }),
+      ctx.note('Click a line to select the curve\'s rows; a heading sorts. Right click for the PC scores (with the HDR Boxplot), Copy Table or Make into Data Table.'));
+  }
+
+  /* Save Columns: a value for each curve, into every row of it. */
+  function fdSave(ctx, name, value, spec = {}) {
+    const S = ctx._fd;
+    if (!S) return;
+    const rows = [], values = [];
+    S.F.rows.forEach((rs, c) => { const v = value(c); for (const r of rs) { rows.push(r); values.push(v); } });
+    ctx.saveColumn(name, { rows, values }, { notes: `${spec.notes || name}, from ${ctx.report.title}`, ...spec });
+  }
+
+  SM.platforms.register({
+    id: 'functional', label: 'Functional Data Plot', menu: 'Graph', order: 100, info: 'p:functional',
+    topics: {
+      'p:functional': {
+        kicker: 'Graph', title: 'Functional Data Plot',
+        lead: 'Curves as data: a boxplot of whole curves, ordered by how central each is among the others (its band depth); an HDR boxplot from the density of their principal component scores; and a rainbow plot coloured by depth. statsmodels\' functional graphics: JMP (standard) has no functional boxplots, and JMP Pro\'s Functional Data Explorer is a different analysis (it fits basis functions and functional principal components).',
+        sections: [
+          { heading: 'Data formats', choices: [['Rows as Functions', 'Each row is a curve, the Y columns its values at the points along it. X is the number in each column\'s name (0, 2.5, week 3), or the column order when a name holds none (X Values in the red triangle).'], ['Stacked', 'A row per point: the ID names the curve, X says where along it (or the order of its rows), Y is the value. Curves measured at different X are interpolated linearly to common points over the range they all cover.']] },
+          { heading: 'The red triangle', choices: [['Functional Boxplot, HDR Boxplot, Rainbow Plot, Curve Depths', 'the views'], ['Depth', 'the modified band depth (statsmodels\' default), statsmodels\' band depth BD2, or BD2 counted from its definition'], ['Outlier Rule, Outlier Factor', 'the fences of the functional boxplot'], ['Select Outliers', 'selects the rows of the functional boxplot\'s outliers'], ['Save Columns', 'depth, rank and outlier flags into the table, a value for each row of a curve']] },
+          { heading: 'Linking', text: 'A curve stands for its row, or for its ID\'s rows: click it (or its line in a table) to select them, shift-click to add. Rows selected anywhere draw their curves in orange. A curve whose rows are all hidden is not drawn; excluded rows are left out.' },
+          { heading: 'Band depth', text: 'For each curve, the share of the bands between two curves of the sample that hold it: at every point (BD2), or on average over the points (MBD, which ties less). The deepest curve is the median; the n/2 deepest make the 50% central region. statsmodels computes both from the ranks at each point (Sun, Genton and Nychka\'s fast formula); for BD2 the formula counts more bands than there are, so Band Depth (BD2), Counted counts them.' },
+        ],
+        more: { label: 'Functional Data Plot', id: 'help-p-functional' },
+      },
+      'p:functional:format': {
+        kicker: 'Functional Data Plot', title: 'Data Format',
+        lead: 'How the table holds the curves.',
+        sections: [{ choices: [['Rows as Functions', 'a row per curve; the Y columns are the points along it, X from the numbers in their names (or their order); ID, Function names the curves'], ['Stacked', 'a row per point: ID, Function names the curve (required), X, Input places the point (optional: else the order of the ID\'s rows), Y, Output is the value']] }],
+        more: { label: 'Functional Data Plot', id: 'help-p-functional' },
+      },
+      'p:functional:box': {
+        kicker: 'Functional Data Plot', title: 'Functional Boxplot',
+        lead: 'Sun and Genton\'s functional boxplot as statsmodels\' fboxplot draws it: the median curve (the deepest), the 50% central region (the envelope of the deepest half of the curves), the envelope of the curves that are not outliers, and the outliers, each in its colour and listed with where it passes the fences.',
+        sections: [
+          { heading: 'Outliers', choices: [['statsmodels (fboxplot)', 'a curve is an outlier where, at any point, it leaves the central region stretched by the factor about the pointwise median of its curves; with the default 1.5 these fences are close to the region, and many curves pass them'], ['Sun and Genton', 'the fences are the central region\'s envelope widened by the factor times its range on each side, as R\'s fda::fbplot draws them; fboxplot\'s factor f equals their (f − 1)/2']] },
+          { heading: 'The red triangle', text: 'Select Outliers selects the outlying curves\' rows. Show Curves draws the other curves thin; Show Fences draws the fences.' },
+        ],
+        more: { label: 'Functional Data Plot', id: 'help-p-functional' },
+      },
+      'p:functional:hdr': {
+        kicker: 'Functional Data Plot', title: 'HDR Boxplot',
+        lead: 'Hyndman and Shang\'s highest-density-region boxplot as statsmodels\' hdrboxplot computes it: each curve becomes a point, its scores on the first two principal components; a kernel density of those points gives the 50% and 90% regions and the mode; the curves rebuilt from the scores in a region make its band, the mode gives the modal curve.',
+        sections: [
+          { heading: 'Outliers', text: 'A curve is an outlier when its density is below the (1 − threshold) quantile of the densities at the curves: with the threshold 0.95 about 5% of the curves always are. Shape outliers, curves of an unusual form within the others\' range, show here more than in the functional boxplot.' },
+          { heading: 'Differences', list: ['The ends of the bands are found exactly on a grid of the score plane, where hdrboxplot searches for them with differential evolution (or a brute-force grid), which falls short of them a little.', 'statsmodels standardizes each point before the PCA; a point where all curves are equal is left out of it here (statsmodels\' PCA fails on it).', 'R\'s rainbow package uses a robust PCA and its own bandwidths, so its regions differ.'] },
+          { heading: 'Score Plot', text: 'The curves\' scores with the 50% and 90% regions and the outlier contour. The points are linked to the rows, as the curves are.' },
+        ],
+        more: { label: 'Functional Data Plot', id: 'help-p-functional' },
+      },
+      'p:functional:rainbow': {
+        kicker: 'Functional Data Plot', title: 'Rainbow Plot',
+        lead: 'Every curve coloured by its depth rank, the deepest darkest (brightest on a dark page) and drawn on top, the median thickest: where the centre of the curves lies, and which curves are far from it. statsmodels\' rainbowplot draws the same order with a rainbow colour map.',
+        more: { label: 'Functional Data Plot', id: 'help-p-functional' },
+      },
+    },
+    about: 'Curves as data (a row per curve, or stacked with an ID): the functional boxplot by band depth (median curve, 50% central region, envelope and outliers), the HDR boxplot from a kernel density of the principal component scores (50% and 90% regions, the modal curve, outliers, the score plot), and the rainbow plot; curves linked to their rows, depths and flags saved to the table.',
+    uses: ['statsmodels.graphics.functional.banddepth (fboxplot, rainbowplot)', 'statsmodels.multivariate.pca.PCA (hdrboxplot)', 'statsmodels.nonparametric.kernel_density.KDEMultivariate (hdrboxplot)', 'statsmodels.graphics.functional._inverse_transform', 'scipy.optimize.minimize (Nelder-Mead: the mode)', 'numpy.interp (Stacked data)'],
+    launch: {
+      lead: 'Curves: each row a curve whose values are the Y columns (Rows as Functions), or stacked, a row per point: an ID naming the curve, an X and a Y.',
+      roles: [
+        { key: 'y', label: 'Y, Output', numeric: true, types: ['continuous'], hint: 'a column for each point along the curves' },
+        { key: 'yl', label: 'Y, Output', max: 1, numeric: true, types: ['continuous'], hint: 'the values' },
+        { key: 'id', label: 'ID, Function', max: 1, hint: 'names the curves' },
+        { key: 'x', label: 'X, Input', max: 1, numeric: true, hint: 'optional: where along the curve (else the row order)' },
+        { key: 'by', label: 'By', hint: 'optional' },
+      ],
+      extra(api, spec) {
+        const st = { format: spec && spec.options && spec.options.format === 'long' ? 'long' : 'wide' };
+        const name = SM.util.uid('fdfmt');
+        const radios = [['wide', 'Rows as Functions'], ['long', 'Stacked']].map(([v, label]) => {
+          const r = el('input', { type: 'radio', name, value: v, dataset: { fdformat: v } });
+          r.addEventListener('change', () => { if (r.checked) { st.format = v; apply(); } });
+          return { v, r, lab: el('label', { class: 'sm-fd-radio' }, r, el('span', { text: label })) };
+        });
+        const box = el('div', { class: 'sm-fd-launch', role: 'radiogroup', 'aria-label': 'Data Format' },
+          el('h4', null, 'Data Format', infoSlot('p:functional:format')), el('div', { class: 'sm-fd-radios' }, ...radios.map((x) => x.lab)));
+        const apply = () => {
+          const long = st.format === 'long';
+          for (const x of radios) x.r.checked = x.v === st.format;
+          api.showRole('y', !long); api.showRole('yl', long); api.showRole('x', long);
+          api.setRequired('y', !long); api.setRequired('yl', long); api.setRequired('id', long);
+          api.message('');
+        };
+        apply();
+        return {
+          el: box, position: 'top',
+          read: () => ({ roles: st.format === 'long' ? { y: [] } : { yl: [], x: [] }, options: { format: st.format } }),
+          recall(saved) { const f = saved && saved.options && saved.options.format; if (f === 'wide' || f === 'long') { st.format = f; apply(); } },
+        };
+      },
+      validate(s) {
+        if ((s.options && s.options.format) === 'long') {
+          if (!(s.roles.yl || []).length) return 'Stacked: choose the Y, Output column (the values)';
+          if (!(s.roles.id || []).length) return 'Stacked: choose the ID, Function column (a curve for each level)';
+          return null;
+        }
+        return (s.roles.y || []).length < 2 ? 'Rows as Functions: choose two or more Y, Output columns, one for each point along the curves' : null;
+      },
+    },
+    title: () => 'Functional Data Plot',
+    /* What a report computed for a By group: { fb, hd, F } (graph.fbox, graph.hdr, the curves). */
+    state: (report, i = 0) => ((report && report._fdGroups) || [])[i] || null,
+    triangle(ctx) {
+      const S = ctx._fd || null;
+      const long = ctx.opt('format', 'wide') === 'long';
+      const outRows = S ? S.F.rows.filter((_, c) => S.fb.outlier[c]).flat() : [];
+      const H = S && S.hd && !S.hd.error ? S.hd : null;
+      const dm = ctx.opt('fdDepth', 'MBD');
+      return [
+        ctx.check('Functional Boxplot', 'fdBox', null, true),
+        ctx.check('HDR Boxplot', 'fdHdr', null, false),
+        ctx.check('Rainbow Plot', 'fdRainbow', null, false),
+        ctx.check('Curve Depths', 'fdTable', null, true),
+        { separator: true },
+        { label: 'Depth', submenu: () => FD_DEPTH.map(([v, l]) => ({ label: l, checked: dm === v, action: () => ctx.set('fdDepth', v) })) },
+        { label: 'Outlier Rule', submenu: () => FD_RULES.map(([v, l]) => ({ label: l, checked: ctx.opt('fdRule', 'statsmodels') === v, action: () => ctx.set('fdRule', v) })) },
+        { label: 'Outlier Factor…', action: async () => {
+          const v = await SM.ui.form({ title: 'Outlier Factor', lead: 'The factor of the functional boxplot\'s fences: statsmodels\' wfactor (1.5 by default; its own example takes 2.58), or Sun and Genton\'s factor (1.5 in R\'s fda::fbplot).', fields: [{ key: 'f', label: 'Factor (0.5 to 10)', type: 'number', value: ctx.opt('fdFactor', 1.5) }], validate: (x) => (x.f >= 0.5 && x.f <= 10 ? null : 'The factor must be between 0.5 and 10') });
+          if (v) ctx.set('fdFactor', v.f);
+        } },
+        long ? null : { label: 'X Values', submenu: () => [['names', 'From the Column Names'], ['order', 'Column Order (1, 2, …)']].map(([v, l]) => ({ label: l, checked: ctx.opt('fdX', 'names') === v, action: () => ctx.set('fdX', v) })) },
+        { separator: true },
+        { label: 'Select Outliers', disabled: !outRows.length, action: () => ctx.table.select(outRows) },
+        { label: 'Save Columns', disabled: !S, submenu: () => [
+          { label: 'Depth', action: () => fdSave(ctx, `Depth (${FD_SHORT[S.fb.method]})`, (c) => S.fb.depth[c], { notes: `band depth, ${FD_DEPTH.find(([v]) => v === S.fb.method)[1]}` }) },
+          { label: 'Depth Rank', action: () => fdSave(ctx, 'Depth Rank', (c) => S.fb.rank[c], { notes: 'depth rank, 1 the deepest curve', modelingType: 'ordinal' }) },
+          { label: 'Outlier Flag', action: () => fdSave(ctx, 'Functional Outlier', (c) => (S.fb.outlier[c] ? 1 : 0), { notes: 'functional boxplot outlier (1)', modelingType: 'nominal' }) },
+          { label: 'HDR Density', disabled: !H, action: () => fdSave(ctx, 'HDR Density', (c) => H.density[c], { notes: 'the kernel density at the curve\'s PC scores' }) },
+          { label: 'HDR Outlier Flag', disabled: !H, action: () => fdSave(ctx, 'HDR Outlier', (c) => (H.outlier[c] ? 1 : 0), { notes: 'HDR boxplot outlier (1)', modelingType: 'nominal' }) },
+          { label: 'PC Scores', disabled: !H, action: () => { fdSave(ctx, 'HDR PC1', (c) => H.scores[c][0], { notes: 'first principal component score' }); fdSave(ctx, 'HDR PC2', (c) => H.scores[c][1], { notes: 'second principal component score' }); } },
+        ] },
+      ];
+    },
+    async render(ctx) {
+      const base = fdPayload(ctx);
+      const fb = await ctx.call('graph.fbox', { ...base, method: ctx.opt('fdDepth', 'MBD'), wfactor: ctx.opt('fdFactor', 1.5), rule: ctx.opt('fdRule', 'statsmodels') });
+      if (fb.error) { ctx.container.append(ctx.warn(fb.error)); return; }
+      const F = fdCurves(ctx, fb);
+      const hd = ctx.opt('fdHdr', false) ? await ctx.call('graph.hdr', { ...base, threshold: ctx.opt('fdThreshold', 0.95), bw: ctx.opt('fdBw', 'normal_reference') }) : null;
+      ctx._fd = { fb, hd, F };
+      // For the tests and the console: what each By group computed (state() below).
+      const rep = ctx.report;
+      if (rep._fdSeq !== rep.seq) { rep._fdSeq = rep.seq; rep._fdGroups = []; }
+      rep._fdGroups.push(ctx._fd);
+      ctx.container.append(fdDataNote(ctx, F, fb));
+      const views = {};
+      if (ctx.opt('fdBox', true)) views.box = fdBoxView(ctx, F, fb);
+      if (hd) views.hdr = fdHdrView(ctx, F, hd);
+      if (ctx.opt('fdRainbow', false)) views.rainbow = fdRainbowView(ctx, F, fb);
+      if (ctx.opt('fdTable', true)) fdDepthTable(ctx, F, fb, hd);
+      ctx._fd.views = views;
+      ctx.container.append(ctx.note('JMP (standard) has no functional boxplots; JMP Pro\'s Functional Data Explorer is a different analysis, fitting basis functions and functional principal components. These are statsmodels\' functional graphics, drawn in the page.'));
+    },
+  });
+
+  /* A simulated table of curves for the Functional Data Plot. */
+  SM.io.addExample('curves', {
+    label: 'Temperature curves (60 days × 24 hours)',
+    about: 'Simulated: a day\'s temperature hour by hour at two sites, a daily cycle with a random level, amplitude and peak hour, and correlated noise. Six days are unusual: three much warmer or colder than the others (magnitude outliers: days 07, 24, 42) and three of another shape (a cold front in the afternoon, the warmest hour at night, an overcast day: days 14, 31, 53). Rows as Functions: the columns 0 to 23 are the hours. For Graph > Functional Data Plot.',
+    make() {
+      const r = SM.util.rng('curves');
+      const n = 60, H = 24;
+      const kind = { 6: 'heat', 23: 'cold', 41: 'warm', 13: 'front', 30: 'night', 52: 'overcast' };
+      const day = [], site = [], cols = Array.from({ length: H }, () => []);
+      for (let i = 0; i < n; i++) {
+        const inland = i % 2 === 1, k = kind[i];
+        let level = r.normal(inland ? 14 : 13, 1.1);
+        let amp = Math.max(1.5, r.normal(inland ? 5.4 : 4.2, 0.6));
+        let peak = 15 + r.normal(0, 0.5);
+        if (k === 'heat') level += 9; else if (k === 'cold') level -= 8; else if (k === 'warm') level += 6.5;
+        if (k === 'night') peak = 3;
+        if (k === 'overcast') amp = 0.5;
+        let e = 0;
+        for (let h = 0; h < H; h++) {
+          e = 0.7 * e + r.normal(0, 0.22);
+          let v = level + amp * Math.cos((2 * Math.PI * (h - peak)) / 24) + e;
+          if (k === 'front') v -= 7 / (1 + Math.exp(-(h - 13) / 0.7));
+          cols[h].push(+v.toFixed(2));
+        }
+        day.push(`Day ${String(i + 1).padStart(2, '0')}`);
+        site.push(inland ? 'Inland' : 'Coast');
+      }
+      return new SM.Table({ name: 'Temperature curves', source: 'simulated', columns: [
+        { name: 'day', dataType: 'character', values: day, role: 'label' },
+        { name: 'site', dataType: 'character', values: site },
+        ...cols.map((v, h) => ({ name: String(h), dataType: 'numeric', values: v, notes: `temperature (°C) at hour ${h}` })),
+      ] });
     },
   });
 

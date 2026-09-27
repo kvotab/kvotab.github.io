@@ -1,0 +1,47 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > COUNT REGRESSION
+   (smui-p-counts.js)
+   The launch dialog's model choice, the model line, each model's colour
+   mark, scrolling wide tables, the Prediction Profiler's grid. Colours are
+   kvot.css's tokens (and the core's), so both themes read.
+   ========================================================================== */
+
+/* ---- the launch dialog ------------------------------------------------------------ */
+.sm-cr-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-cr-launch h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+.sm-cr-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 3px 14px; margin-bottom: 8px; }
+.sm-cr-modelpick { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); cursor: pointer; }
+.sm-cr-modelpick input { margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-cr-launchopts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.sm-cr-opt { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sm-cr-opt > span { color: var(--text-secondary); }
+.sm-cr-opt select, .sm-cr-prof-x input[type="text"], .sm-cr-prof-x select {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; max-width: 100%;
+}
+
+/* ---- report parts -------------------------------------------------------------------- */
+.sm-cr-modelline { display: flex; flex-wrap: wrap; gap: 2px 18px; margin: 2px 0 8px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.sm-cr-modelline b { font-weight: 600; color: var(--text-primary); }
+.sm-cr-scroll { max-width: 100%; overflow-x: auto; }
+.sm-cr-scroll > .sm-rt { margin-right: 2px; }
+/* each model's outline carries its colour, the colour of its curves */
+.sm-cr-model-ob > .sm-ob-head h3, .sm-cr-model-ob > .sm-ob-head h4 { border-left: 4px solid var(--cr-color, var(--color-kvot-accent)); padding-left: 6px; }
+
+/* ---- the Prediction Profiler ------------------------------------------------------------ */
+.sm-cr-profwrap { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.sm-cr-prof { display: grid; gap: 0 2px; align-items: center; width: max-content; }
+.sm-cr-prof .sm-plot { min-width: 0; }
+.sm-cr-prof-y { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 1px; padding-right: 4px; font-size: 11.5px; text-align: right; }
+.sm-cr-prof-name { color: var(--text-secondary); overflow-wrap: anywhere; max-width: 130px; }
+.sm-cr-prof-val { font-size: 14px; font-weight: 600; color: var(--sm-nom, #c0392b); font-variant-numeric: tabular-nums; }
+.sm-cr-prof-ci { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.sm-cr-prof-corner { color: var(--text-muted); font-size: 11px; align-self: start; padding-top: 4px; }
+.sm-cr-prof-x { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 4px; font-size: 11.5px; box-sizing: border-box; }
+.sm-cr-prof-x input[type="text"] { width: 7.5em; text-align: right; }
+.sm-cr-prof-x input[type="range"] { width: 90%; margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-cr-prof-fname { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .sm-cr-models { grid-template-columns: 1fr; }
+  .sm-cr-modelline { gap: 2px 12px; }
+}

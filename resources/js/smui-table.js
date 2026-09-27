@@ -70,7 +70,8 @@
       this.state = new Uint8Array(0);
       this.color = new Int16Array(0);
       this.marker = new Int8Array(0);
-      this.version = 1;
+      this.version = 1;         // every change: the engine sends the table again
+      this.dataVersion = 1;     // changes to what analyses already use; a new column is not one
       this.notes = spec.notes || '';
       this.source = spec.source || '';
       const cols = spec.columns || [];
@@ -375,6 +376,9 @@
 
     _changed(kind, detail) {
       this.version++;
+      // Saving a column (residuals, a formula) leaves every earlier result
+      // valid, so caches keyed by dataVersion survive it.
+      if (!(detail && detail.added)) this.dataVersion++;
       this.emit(kind, detail);
       if (kind !== 'data') this.emit('data', { schema: true, ...detail });
     }

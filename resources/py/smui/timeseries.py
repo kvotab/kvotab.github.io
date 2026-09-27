@@ -19,6 +19,17 @@ JMP's Time Series platform on statsmodels.tsa:
                    (tsa.arima.model.ARIMA), transfer functions as regression
                    with ARIMA errors, the smoothing models of tsa.holtwinters,
                    and state space smoothing (ETSModel)
+  and what JMP does not have:
+  structural       UnobservedComponents: level/trend, seasonal (dummy or
+                   trigonometric), cycle, AR part, inputs; the smoothed
+                   components with their bands
+  regime switching MarkovRegression and MarkovAutoregression from the default
+                   start and seeded random starts (local maxima)
+  filters          hpfilter, bkfilter, cffilter
+  subseries        the data of month_plot / quarter_plot / seasonal_plot
+  theta            ThetaModel (with the IMA(1, 1) prediction interval)
+  Zivot-Andrews    zivot_andrews, with the break date
+  ARDL             ardl_select_order, ARDL, UECM and the PSS bounds test
 
 Every model result is aligned to the slots of the series (the rows in time
 order, with missing time points inserted), so the page can draw, compare and
@@ -1360,3 +1371,1074 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
                       {'columns': 'ets', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c),
                       states=comp, sigma=sigma, nparm=nparm, sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'llf': _f(res.llf)},
                       spec={'error': error, 'trend': trend, 'seasonal': seasonal, 's': s})
+
+
+# ---- the calendar, for the models that need it ------------------------------------------------------
+
+def _per_year(S):
+    """Observations per year of a calendar frequency (12 for monthly data,
+    4 for quarterly ...), or None when the dates follow no such frequency."""
+    if S.offset is None:
+        return None
+    name = type(S.offset).__name__
+    n = abs(int(getattr(S.offset, 'n', 1) or 1))
+    for key, per in (('Year', 1), ('Quarter', 4), ('SemiMonth', 24), ('Month', 12), ('Week', 52)):
+        if key in name:
+            return per / n
+    return None
+
+
+def _endog(S, values=None):
+    """The series as statsmodels gets it, and as the code shown builds it: a
+    Series indexed by its dates when they follow a calendar frequency (so that
+    statsmodels knows the frequency, as the code's y from asfreq() does), else
+    a plain array (statsmodels would ignore the index anyway)."""
+    v = np.asarray(S.y if values is None else values, dtype=float)
+    if S.kind in DATE_KINDS and S.offset is not None:
+        idx = pd.date_range(pd.Timestamp(int(S.t[0]), unit='ms'), periods=S.n, freq=S.offset)
+        return pd.Series(v, index=idx)
+    return v
+
+
+def _plural(n, one, many=None):
+    return f'{n} {one if n == 1 else (many or one + "s")}'
+
+
+# ---- structural models (UnobservedComponents) ---------------------------------------------------------
+
+# statsmodels' level/trend specifications, in its order, with the model each is
+UC_TRENDS = {
+    'irregular': 'no trend: y = ε',
+    'fixed intercept': 'fixed intercept: y = μ',
+    'deterministic constant': 'deterministic constant: y = μ + ε',
+    'local level': 'local level: y = μ_t + ε, μ_t = μ_t−1 + η',
+    'random walk': 'random walk: y = μ_t, μ_t = μ_t−1 + η',
+    'fixed slope': 'fixed slope: y = μ_t, μ_t = μ_t−1 + β',
+    'deterministic trend': 'deterministic trend: y = μ_t + ε, μ_t = μ_t−1 + β',
+    'local linear deterministic trend': 'local linear deterministic trend: μ_t = μ_t−1 + β + η',
+    'random walk with drift': 'random walk with drift: y = μ_t, μ_t = μ_t−1 + β + η',
+    'local linear trend': 'local linear trend: μ_t = μ_t−1 + β_t−1 + η, β_t = β_t−1 + ζ',
+    'smooth trend': 'smooth trend: μ_t = μ_t−1 + β_t−1, β_t = β_t−1 + ζ',
+    'random trend': 'random trend: y = μ_t, μ_t = μ_t−1 + β_t−1, β_t = β_t−1 + ζ',
+}
+
+
+def _uc_label(name):
+    """A report name for one of UnobservedComponents' parameters."""
+    fixed = {'sigma2.irregular': 'Irregular Variance (σ²ε)', 'sigma2.level': 'Level Variance (σ²η)', 'sigma2.trend': 'Slope Variance (σ²ζ)',
+             'sigma2.seasonal': 'Seasonal Variance (σ²ω)', 'sigma2.cycle': 'Cycle Variance (σ²κ)', 'frequency.cycle': 'Cycle Frequency (λ)',
+             'damping.cycle': 'Cycle Damping (ρ)', 'sigma2.ar': 'AR Innovation Variance'}
+    if name in fixed:
+        return fixed[name]
+    if name.startswith('sigma2.freq_seasonal_'):
+        return f'Trigonometric Seasonal {name[len("sigma2.freq_seasonal_"):]} Variance'
+    if name.startswith('ar.L'):
+        return f'AR{name[4:]}'
+    if name.startswith('beta.'):
+        return name[5:]
+    return name
+
+
+def uc_name(trend, seasonal=0, freq=None, cycle=False, ar=0, inputs=None):
+    """A model's name: its components joined, as statsmodels' summary names them."""
+    parts = [trend if trend != 'irregular' else 'no trend']
+    if seasonal:
+        parts.append(f'seasonal({seasonal})')
+    for f in freq or []:
+        parts.append(f'trigonometric seasonal({f["period"]}, {f["harmonics"]})')
+    if cycle:
+        parts.append('cycle')
+    if ar:
+        parts.append(f'AR({ar})')
+    parts += list(inputs or [])
+    return 'Structural: ' + ' + '.join(parts)
+
+
+def _period_text(p):
+    return '∞' if not math.isfinite(p) else f'{p:.6g}'
+
+
+@api('timeseries.structural')
+@_quietly
+def structural(table, y, time=None, rows=None, excluded=None, trend='local linear trend', seasonal=0, stoch_seasonal=True,
+               freq_period=0, freq_harmonics=0, stoch_freq=True, cycle=False, stoch_cycle=True, damped_cycle=True,
+               cycle_lo=None, cycle_hi=None, ar=0, inputs=None, exact=False, level=0.95, h=25, maxiter=200,
+               nlags=25, where=None, table_name='data'):
+    """A structural time series model, y = level + seasonal + cycle +
+    autoregressive + regression + irregular, by maximum likelihood with the
+    Kalman filter (statsmodels' UnobservedComponents), its smoothed components
+    with their bands, and forecasts."""
+    from statsmodels.tsa.statespace.structural import UnobservedComponents
+    trend = trend if trend in UC_TRENDS else 'local linear trend'
+    seasonal, ar = max(0, int(seasonal or 0)), max(0, int(ar or 0))
+    fp = max(0, int(freq_period or 0))
+    fh = max(0, int(freq_harmonics or 0)) or fp // 2
+    if seasonal == 1 or fp == 1:
+        return {'error': 'a seasonal period must be at least 2'}
+    if fp and not 1 <= fh <= fp // 2:
+        return {'error': f'the trigonometric seasonal of period {fp} takes 1 to {fp // 2} harmonics'}
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    names_in = [c for c in dict.fromkeys(inputs or []) if c and c != y]
+    try:
+        S = load(table, y, time, rows, excluded, names_in)
+        E, Ef, xnames, _start, xnotes = _exog(S, [{'name': c} for c in names_in], h)
+    except NoSeries as e:
+        return {'error': str(e)}
+    notes = list(xnotes)
+    endog = _endog(S)
+    index = endog.index if isinstance(endog, pd.Series) else None
+    exog = pd.DataFrame(E, columns=xnames, index=index) if E is not None else None
+    freq = [{'period': fp, 'harmonics': fh}] if fp else None
+    kw = {'level': trend}
+    if seasonal:
+        kw.update(seasonal=seasonal, stochastic_seasonal=bool(stoch_seasonal))
+    if freq:
+        kw.update(freq_seasonal=freq, stochastic_freq_seasonal=[bool(stoch_freq)])
+    if cycle:
+        kw.update(cycle=True, stochastic_cycle=bool(stoch_cycle), damped_cycle=bool(damped_cycle))
+        lo = float(cycle_lo) if cycle_lo not in (None, '') else None
+        hi = float(cycle_hi) if cycle_hi not in (None, '') else None
+        if lo is not None or hi is not None:
+            lo, hi = (lo if lo is not None else 2.0), (hi if hi is not None else math.inf)
+            if not 2 <= lo < hi:
+                return {'error': 'the bounds on the period of the cycle: from 2 periods up, the lower below the upper'}
+            kw['cycle_period_bounds'] = (lo, hi)
+    if ar:
+        kw['autoregressive'] = ar
+    if exog is not None:
+        kw['exog'] = exog
+    kw['use_exact_diffuse'] = bool(exact)
+    nobs = int(np.isfinite(S.y).sum())
+    model = UnobservedComponents(endog, **kw)
+    k_all = len(model.param_names)
+    if nobs < k_all + model.k_states + 3:
+        return {'error': f'too few observations ({nobs}) for a model with {model.k_states} states and {k_all} parameters'}
+    its = []
+    with _quiet():
+        res = model.fit(method='lbfgs', maxiter=int(maxiter or 200), pgtol=1e-7, factr=1e4, disp=False,
+                        callback=lambda xk: its.append(np.array(xk, dtype=float)))
+    names = list(res.param_names)
+    est = np.asarray(res.params, dtype=float)
+    with _quiet():
+        se = np.asarray(res.bse, dtype=float)
+        zv = np.asarray(res.zvalues, dtype=float)
+        pv = np.asarray(res.pvalues, dtype=float)
+    rows_p = [{'term': _uc_label(nm), 'estimate': _f(est[j]), 'se': _f(se[j]), 'z': _f(zv[j]), 'p': _f(pv[j]), 'sm': nm} for j, nm in enumerate(names)]
+    burn = max(int(res.loglikelihood_burn), int(getattr(res, 'nobs_diffuse', 0) or 0))
+    fitted = np.asarray(res.fittedvalues, dtype=float)
+    valid = np.isfinite(S.y) & (np.arange(S.n) >= burn) & np.isfinite(fitted)
+    k = max(0, int(res.df_model) - 1)          # JMP's count: one variance (the scale) not counted
+    st = _fit_stats(S.y, fitted, valid, k, -2 * float(res.llf))
+    zc = stats.norm.ppf(0.5 + level / 2)
+    with _quiet():
+        pr = res.get_prediction()
+        fit_se = np.asarray(pr.se_mean, dtype=float)
+        if h:
+            fc = res.get_forecast(h, exog=Ef if E is not None else None)
+            ci = np.asarray(fc.conf_int(alpha=1 - level), dtype=float)
+            fcd = _forecast(S, h, fc.predicted_mean, fc.se_mean, ci[:, 0], ci[:, 1])
+        else:
+            fcd = _forecast(S, 0, [], [], [], [])
+    # the smoothed components, with their bands (statsmodels' plot_components)
+    comps = []
+
+    def add(key, label, b):
+        if b is None or b['smoothed'] is None:
+            return
+        m = np.asarray(b['smoothed'], dtype=float)
+        s_ = np.sqrt(np.clip(np.asarray(b['smoothed_cov'], dtype=float), 0, None))
+        comps.append({'key': key, 'label': label, 'mean': _arr(m), 'lower': _arr(m - zc * s_), 'upper': _arr(m + zc * s_)})
+
+    with _quiet():
+        add('level', 'Level', res.level)
+        add('trend', 'Trend (slope)', res.trend)
+        add('seasonal', 'Seasonal', res.seasonal)
+        for i, b in enumerate(res.freq_seasonal or []):
+            add(f'freq_seasonal{i}', f'Trigonometric seasonal {freq[i]["period"]}({freq[i]["harmonics"]})', b)
+        add('cycle', 'Cycle', res.cycle)
+        add('autoregressive', 'Autoregressive', res.autoregressive)
+    if E is not None:
+        beta = np.array([est[names.index(f'beta.{c}')] for c in xnames])
+        comps.append({'key': 'regression', 'label': 'Regression effect', 'mean': _arr(E @ beta), 'lower': None, 'upper': None})
+    if model.irregular:
+        sr = res.smoother_results
+        m = np.asarray(sr.smoothed_measurement_disturbance[0], dtype=float)
+        s_ = np.sqrt(np.clip(np.asarray(sr.smoothed_measurement_disturbance_cov[0, 0], dtype=float), 0, None))
+        comps.append({'key': 'irregular', 'label': 'Irregular', 'mean': _arr(m), 'lower': _arr(m - zc * s_), 'upper': _arr(m + zc * s_)})
+    lo_f, hi_f = model.cycle_frequency_bound if cycle else (None, None)
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Residuals', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']]]
+    if cycle:
+        lam = est[names.index('frequency.cycle')]
+        summary.append(['Cycle Period (2π/λ)', 2 * math.pi / lam if lam > 0 else None])
+    summary.append(['Diffuse Initialization', 'exact' if exact else 'approximate', 'text'])
+    conv = bool(res.mle_retvals.get('converged', True)) if isinstance(res.mle_retvals, dict) else True
+    n_iter = int(res.mle_retvals.get('iterations', len(its))) if isinstance(res.mle_retvals, dict) else len(its)
+    if exact:
+        notes.append(f'Maximum likelihood with the Kalman filter, which skips missing values; the nonstationary states start from the exact diffuse '
+                     f'initialization of Durbin and Koopman ({_plural(int(res.nobs_diffuse), "diffuse observation")}), whose likelihood KFAS reports too. '
+                     'The fit statistics leave out the diffuse observations.')
+    else:
+        notes.append('Maximum likelihood with the Kalman filter (statsmodels\' UnobservedComponents), which skips missing values. The nonstationary '
+                     'states start from statsmodels\' approximate diffuse initialization (a very large variance), so the first '
+                     f'{_plural(burn, "observation")} are left out of the likelihood and of the fit statistics; Exact diffuse initialization '
+                     'in the dialog gives Durbin and Koopman\'s exact likelihood instead.')
+    notes.append(f'statsmodels counts every parameter{" and diffuse state" if exact else ""} in its AIC: {res.aic:.6g} (BIC {res.bic:.6g}); '
+                 f'the table leaves one variance (the scale) out, as JMP leaves out the variance of ARIMA models: k = {k}, n = {st["n"]}.')
+    notes.append('Standard errors from the outer product of the gradients (statsmodels\' default). A z test of a variance against 0 lies at the '
+                 'edge of the parameter space, where it is conservative; a variance at 0 means that component is fixed.')
+    if cycle:
+        dflt = '' if 'cycle_period_bounds' in kw else " (statsmodels' default for this frequency)"
+        notes.append(f'The period of the cycle is bounded to {_period_text(2 * math.pi / hi_f)} to '
+                     f'{_period_text(2 * math.pi / lo_f if lo_f > 0 else math.inf)} periods{dflt}. '
+                     'Cycle models often have several local maxima of the likelihood; try other bounds if the cycle looks wrong.')
+    if trend in ('fixed intercept', 'fixed slope') and not (seasonal and stoch_seasonal) and not freq and not (cycle and stoch_cycle) and not ar:
+        notes.append('The model has no stochastic part: statsmodels adds an irregular component.')
+    if not conv:
+        notes.append(f'The fit did not converge within {int(maxiter or 200)} iterations: raise Maximum Iterations in the red triangle.')
+    name = uc_name(trend, seasonal, freq, cycle, ar, names_in)
+    # the code
+    c = _code_series(S, table_name, where, ['from statsmodels.tsa.statespace.structural import UnobservedComponents'])
+    dated = isinstance(endog, pd.Series)
+    if names_in:
+        c.append(f'X = d.loc[y.index, {json.dumps(names_in)}]' + ('' if dated else '.reset_index(drop=True)'))
+        if h:
+            c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
+    args = [f'level={trend!r}']
+    if seasonal:
+        args.append(f'seasonal={seasonal}, stochastic_seasonal={bool(stoch_seasonal)}')
+    if freq:
+        args.append(f'freq_seasonal=[{{"period": {fp}, "harmonics": {fh}}}], stochastic_freq_seasonal=[{bool(stoch_freq)}]')
+    if cycle:
+        args.append(f'cycle=True, stochastic_cycle={bool(stoch_cycle)}, damped_cycle={bool(damped_cycle)}')
+        if 'cycle_period_bounds' in kw:
+            args.append(f'cycle_period_bounds=({kw["cycle_period_bounds"][0]!r}, {"np.inf" if not math.isfinite(kw["cycle_period_bounds"][1]) else repr(kw["cycle_period_bounds"][1])})')
+    if ar:
+        args.append(f'autoregressive={ar}')
+    if names_in:
+        args.append('exog=X')
+    args.append(f'use_exact_diffuse={bool(exact)}')
+    c.append(f'mod = UnobservedComponents({"y" if dated else "y.to_numpy()"}, {", ".join(args)})')
+    c.append(f'res = mod.fit(method="lbfgs", maxiter={int(maxiter or 200)}, pgtol=1e-7, factr=1e4, disp=False)')
+    c.append('print(res.summary())')
+    c.append('print(res.level.smoothed, res.level.smoothed_cov)   # also res.trend, res.seasonal, res.freq_seasonal, res.cycle, res.autoregressive')
+    if h:
+        c.append(f'print(res.get_forecast({h}{", exog=X_future" if names_in else ""}).summary_frame(alpha={1 - level:.6g}))')
+    # the iteration history last: loglike() updates the model's matrices
+    history = []
+    with _quiet():
+        for j, xk in enumerate(its[:500]):
+            try:
+                history.append({'iter': j + 1, 'm2ll': _f(-2 * model.loglike(xk, transformed=False))})
+            except Exception:
+                break
+    fitted_v = np.where(valid, fitted, np.nan)
+    resid = np.where(valid, S.y - fitted, np.nan)
+    fit_se = np.where(valid, fit_se, np.nan)
+    return _model_out(S, 'uc', name, fitted_v, resid, fit_se, level, fcd, st, summary, {'columns': 'uc', 'rows': rows_p}, nlags, 0, notes,
+                      '\n'.join(c), components=comps, iterations=history, converged=conv, n_iter=n_iter, burn=burn,
+                      cycle_bounds=[_f(2 * math.pi / hi_f), _f(2 * math.pi / lo_f) if lo_f and lo_f > 0 else None] if cycle else None,
+                      sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'aicc': _f(res.aicc), 'llf': _f(res.llf), 'df_model': int(res.df_model)},
+                      spec={'trend': trend, 'seasonal': seasonal, 'freq': freq, 'cycle': bool(cycle), 'ar': ar, 'inputs': names_in, 'exact': bool(exact)})
+
+
+# ---- regime switching (MarkovRegression, MarkovAutoregression) -------------------------------------------
+
+def markov_name(k, order=0, trend='c', switching_trend=True, switching_variance=False, switching_ar=True):
+    parts = [f'{k} regimes']
+    if order:
+        parts.append(f'AR({order})')
+    sw = []
+    if switching_trend and trend != 'n':
+        sw.append({'c': 'mean', 'ct': 'mean and trend'}.get(trend, trend))
+    if order and switching_ar:
+        sw.append('AR')
+    if switching_variance:
+        sw.append('variance')
+    return 'Regime Switching: ' + ', '.join(parts) + (f', switching {" and ".join(sw)}' if sw else '')
+
+
+def _ms_spread(names, y, k):
+    """A start that spreads the regimes over the data: the intercepts at the
+    quantiles (j + 1/2)/k of the series, sticky regimes (a 0.9 chance of
+    staying), variances var(y)/k, AR coefficients and trends at 0.
+    statsmodels' own start puts the intercepts at 0 and at a fraction of the
+    OLS intercept, close together, from where the fit often ends where the
+    regimes are the same."""
+    q = np.quantile(y, (np.arange(k) + 0.5) / k)
+    out = []
+    for nm in names:
+        if nm.startswith('p['):
+            i, j = (int(v) for v in nm[2:-1].split('->'))
+            out.append(0.9 if i == j else 0.1 / (k - 1))
+        elif nm.startswith('const['):
+            out.append(float(q[int(nm[6:-1])]))
+        elif nm == 'const':
+            out.append(float(np.mean(y)))
+        elif nm.startswith('sigma2'):
+            out.append(float(np.var(y)) / k)
+        else:
+            out.append(0.0)
+    return np.array(out)
+
+
+def _ms_scale(names, y):
+    """The half-widths of the random starts on statsmodels' unconstrained
+    scale, matched to the data: 1 for the transition logits, sd(y) for the
+    intercepts (sd(y)/n for trends), sd(y)/2 for the standard deviations
+    (statsmodels squares them into variances), 1/2 for the AR coefficients."""
+    sd, n = float(np.std(y)), len(y)
+    return np.array([1.0 if nm.startswith('p[') else 0.5 * sd if nm.startswith('sigma2') else sd if nm.startswith('const')
+                     else sd / n if nm.startswith('x1') else 0.5 for nm in names])
+
+
+def _ms_term(name):
+    """statsmodels' parameter name split into the report's term and regime:
+    const[1] -> ('Intercept', 1), ar.L2 -> ('AR2', None), p[0->1] -> ('P(0 → 1)', None)."""
+    import re
+    m = re.match(r'^p\[(\d+)->(\d+)\]$', name)
+    if m:
+        return f'P({m.group(1)} → {m.group(2)})', None, True
+    m = re.match(r'^(.*?)\[(\d+)\]$', name)
+    base, regime = (m.group(1), int(m.group(2))) if m else (name, None)
+    label = {'const': 'Intercept', 'x1': 'Trend', 'sigma2': 'Variance'}.get(base)
+    if label is None:
+        label = f'AR{base[4:]}' if base.startswith('ar.L') else base
+    return label, regime, False
+
+
+@api('timeseries.markov')
+@_quietly
+def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c', switching_trend=True, switching_variance=False,
+           switching_ar=True, starts=5, maxiter=100, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+    """A Markov switching model: k regimes with their own mean (and trend),
+    variance or AR coefficients, and the Markov chain that moves between them
+    (Hamilton 1989; statsmodels' MarkovRegression and MarkovAutoregression),
+    by maximum likelihood from the default start and from random starts."""
+    from statsmodels.tools.sm_exceptions import ConvergenceWarning
+    from statsmodels.tsa.regime_switching.markov_autoregression import MarkovAutoregression
+    from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+    k, order = int(k or 2), max(0, int(order or 0))
+    trend = trend if trend in ('n', 'c', 'ct') else 'c'
+    starts, maxiter = max(0, min(50, int(starts or 0))), max(5, int(maxiter or 100))
+    level = float(level or 0.95)
+    if k not in (2, 3):
+        return {'error': 'the number of regimes: 2 or 3'}
+    switching_trend = bool(switching_trend) and trend != 'n'
+    switching_ar = bool(switching_ar) and order > 0
+    if not (switching_trend or switching_variance or switching_ar):
+        return {'error': 'nothing switches: choose a switching mean, variance or AR part'}
+    try:
+        S = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    x, miss = _filled(S)
+    n = len(x)
+    if n - order < 10 * k:
+        return {'error': f'too few observations ({n}) for {k} regimes'}
+    with _quiet():
+        if order:
+            mod = MarkovAutoregression(x, k_regimes=k, order=order, trend=trend, switching_ar=switching_ar,
+                                       switching_trend=switching_trend, switching_variance=bool(switching_variance))
+        else:
+            mod = MarkovRegression(x, k_regimes=k, trend=trend, switching_trend=switching_trend, switching_variance=bool(switching_variance))
+        spread = _ms_spread(mod.param_names, x[order:] if order else x, k)
+        u0 = np.asarray(mod.untransform_params(spread), dtype=float)
+        rng = np.random.default_rng(SEED)
+        scale = _ms_scale(mod.param_names, x)
+    draws = ['default', 'quantiles'] + [u0 + rng.uniform(-1, 1, size=u0.size) * scale for _ in range(starts)]
+    tried, best = [], None
+    for i, dr in enumerate(draws):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            try:
+                if isinstance(dr, str):
+                    p = mod.fit(maxiter=maxiter, return_params=True) if dr == 'default' else mod.fit(start_params=spread, maxiter=maxiter, return_params=True)
+                else:
+                    p = mod.fit(start_params=dr, transformed=False, maxiter=maxiter, return_params=True)
+                ll, err = float(mod.loglike(p)), None
+            except Exception as e:  # a start that fails is reported in the Starts table
+                p, ll, err = None, float('nan'), f'{type(e).__name__}: {e}'
+        ws = [w for w in caught if not issubclass(w.category, (DeprecationWarning, FutureWarning))]
+        conv = err is None and math.isfinite(ll) and not any(issubclass(w.category, ConvergenceWarning) for w in ws)
+        label = {'default': 'statsmodels\' default', 'quantiles': 'regimes at the quantiles'}.get(dr, f'random {i - 1}') if isinstance(dr, str) else f'random {i - 1}'
+        tried.append({'start': label, 'm2ll': _f(-2 * ll), 'converged': 'Yes' if conv else 'No', 'note': err or ''})
+        # a later start wins only by more than rounding, so that equal maxima keep the earlier start's regime labels
+        if p is not None and math.isfinite(ll) and (best is None or ll > best[1] + 1e-6):
+            best = (np.asarray(p, dtype=float), ll, ws, i)
+    if best is None:
+        return {'error': 'no start gave a finite likelihood; try fewer regimes or another model', 'starts': tried}
+    for row in tried:
+        row['best'] = ''
+    tried[best[3]]['best'] = '★ best'
+    # the warnings of the fit that is reported, not of the starts left behind
+    for w in best[2]:
+        warnings.warn(str(w.message), w.category)
+    with _quiet():
+        res = mod.smooth(best[0], cov_type='approx')
+        names = list(mod.param_names)
+        est = np.asarray(res.params, dtype=float)
+        se = np.asarray(res.bse, dtype=float)
+        zv = np.asarray(res.tvalues, dtype=float)
+        pv = np.asarray(res.pvalues, dtype=float)
+    rows_p, per = [], {}
+    for j, nm in enumerate(names):
+        term, regime, trans = _ms_term(nm)
+        rows_p.append({'term': term, 'regime': '' if regime is None else str(regime), 'estimate': _f(est[j]), 'se': _f(se[j]),
+                       'z': _f(zv[j]), 'p': _f(pv[j]), 'sm': nm})
+        if not trans:
+            per.setdefault(term, {'term': term, 'switching': 'Yes' if regime is not None else 'No'})
+            for r in (range(k) if regime is None else [regime]):
+                per[term][f'r{r}'] = _f(est[j])
+    P = np.asarray(res.regime_transition, dtype=float)[:, :, 0]      # P[to, from]
+    trans = [{'from': f'Regime {i}', **{f'r{j}': _f(P[j, i]) for j in range(k)}} for i in range(k)]
+    durations = np.asarray(res.expected_durations, dtype=float).ravel()
+    sm_prob = np.asarray(res.smoothed_marginal_probabilities, dtype=float)
+    ft_prob = np.asarray(res.filtered_marginal_probabilities, dtype=float)
+    pad = lambda v: np.concatenate([np.full(order, np.nan), np.asarray(v, dtype=float)])   # noqa: E731
+    prob = [_arr(pad(sm_prob[:, j])) for j in range(k)]
+    fprob = [_arr(pad(ft_prob[:, j])) for j in range(k)]
+    most = np.argmax(sm_prob, axis=1)
+    regimes = []
+    for j in range(k):
+        regimes.append({'regime': f'Regime {j}', 'duration': '∞' if durations[j] == np.inf else _f(durations[j]), 'periods': int((most == j).sum()),
+                        'share': _f(float(np.mean(sm_prob[:, j]))), 'stay': _f(P[j, j])})
+    with _quiet():
+        fitted = np.asarray(res.predict(probabilities='predicted'), dtype=float)
+    fitted_full = pad(fitted)
+    valid = ~miss & np.isfinite(fitted_full) & (np.arange(n) >= order)
+    kk = max(0, len(est) - 1)                 # JMP's count: one variance (the scale) not counted
+    st = _fit_stats(x, fitted_full, valid, kk, -2 * float(res.llf))
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Residuals', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']],
+               ['Regimes', k, 'int'], ['Starts', len(draws), 'int']]
+    notes = [f'Maximum likelihood by the Hamilton filter (statsmodels\' {"MarkovAutoregression" if order else "MarkovRegression"}): '
+             'BFGS after five EM steps, from statsmodels\' default start, from a start with the regimes\' intercepts at the quantiles of '
+             f'the series, and from {_plural(starts, "random start")} around that one (uniform, on a scale matched to the data, seed {SEED}); '
+             'the highest likelihood is kept. Regime-switching likelihoods often have several local maxima, and some starts fail: '
+             'the Starts table shows where each one ended.',
+             'The regimes are numbered as statsmodels numbers them, from 0; which one is which (high or low mean) can change with the data '
+             'or the starts. The smoothed probabilities use all the data (Kim\'s smoother), the filtered ones the data up to each time.',
+             f'statsmodels counts every parameter in its AIC: {res.aic:.6g} (BIC {res.bic:.6g}); the table leaves one variance out, '
+             f'as JMP does for ARIMA models: k = {kk}.',
+             'statsmodels does not forecast Markov switching models: the predictions are one step ahead, E[y_t | y before t], '
+             'from the predicted regime probabilities.']
+    if order:
+        notes.append(f'The likelihood is conditional on the first {_plural(order, "observation")}, the lags\' starting values.')
+    if miss.any():
+        notes.append(f'{_plural(int(miss.sum()), "missing value")} filled by linear interpolation for the fit: the Hamilton filter needs every value. '
+                     'They are left out of the fit statistics.')
+    cls = 'MarkovAutoregression' if order else 'MarkovRegression'
+    c = _code_series(S, table_name, where, [f'from statsmodels.tsa.regime_switching.{"markov_autoregression" if order else "markov_regression"} import {cls}'])
+    if miss.any():
+        c.append('y = y.interpolate(limit_direction="both")   # the Hamilton filter needs every value')
+    args = [f'k_regimes={k}'] + ([f'order={order}'] if order else []) + [f'trend={trend!r}', f'switching_trend={switching_trend}']
+    if order:
+        args.append(f'switching_ar={switching_ar}')
+    args.append(f'switching_variance={bool(switching_variance)}')
+    c += [f'x = y.to_numpy(); k = {k}',
+          f'mod = {cls}(x, {", ".join(args)})',
+          f'xs = x[{order}:]; q = np.quantile(xs, (np.arange(k) + 0.5) / k); sd = x.std()   # a start with the regimes spread over the data',
+          'spread = np.array([(0.9 if nm[2] == nm[5] else 0.1 / (k - 1)) if nm.startswith("p[") else q[int(nm[6:-1])] if nm.startswith("const[")',
+          '                   else xs.mean() if nm == "const" else xs.var() / k if nm.startswith("sigma2") else 0.0 for nm in mod.param_names])',
+          'scale = np.array([1.0 if nm.startswith("p[") else 0.5 * sd if nm.startswith("sigma2") else sd if nm.startswith("const")',
+          '                  else sd / len(x) if nm.startswith("x1") else 0.5 for nm in mod.param_names])',
+          f'rng = np.random.default_rng({SEED}); u0 = mod.untransform_params(spread)',
+          f'starts = ["default", "quantiles"] + [u0 + rng.uniform(-1, 1, size=u0.size) * scale for _ in range({starts})]',
+          'best, best_llf = None, -np.inf',
+          'for s in starts:   # the likelihood has local maxima: keep the best of several starts',
+          '    try:',
+          f'        if isinstance(s, str):',
+          f'            p = mod.fit(maxiter={maxiter}, return_params=True) if s == "default" else mod.fit(start_params=spread, maxiter={maxiter}, return_params=True)',
+          '        else:',
+          f'            p = mod.fit(start_params=s, transformed=False, maxiter={maxiter}, return_params=True)',
+          '    except Exception:',
+          '        continue',
+          '    llf = mod.loglike(p)',
+          '    if np.isfinite(llf) and llf > best_llf + 1e-6:   # equal maxima keep the earlier start',
+          '        best, best_llf = p, llf',
+          'res = mod.smooth(best, cov_type="approx")',
+          'print(res.summary())',
+          'print(res.regime_transition[:, :, 0].T)   # from regime (row) to regime (column)',
+          'print(res.expected_durations)',
+          'print(res.smoothed_marginal_probabilities)   # P(regime at t | all the data)']
+    name = markov_name(k, order, trend, switching_trend, switching_variance, switching_ar)
+    resid = np.where(valid, x - fitted_full, np.nan)
+    return _model_out(S, 'markov', name, np.where(valid, fitted_full, np.nan), resid, None, level, _forecast(S, 0, [], [], [], []), st, summary,
+                      {'columns': 'markov', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c),
+                      k=k, order=order, per_regime=list(per.values()), transition=trans, regimes=regimes, prob=prob, fprob=fprob,
+                      starts=tried, most=[None] * order + [int(v) for v in most],
+                      sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf)},
+                      spec={'k': k, 'order': order, 'trend': trend, 'switching_trend': switching_trend, 'switching_variance': bool(switching_variance),
+                            'switching_ar': switching_ar, 'starts': starts})
+
+
+# ---- filters: Hodrick-Prescott, Baxter-King, Christiano-Fitzgerald -----------------------------------
+
+def filter_defaults(S):
+    """The defaults for the frequency: HP lambda by Ravn and Uhlig's rule
+    1600 (s/4)^4 (6.25 yearly, 1600 quarterly, 129600 monthly), and the
+    business-cycle band of 1.5 to 8 years with Baxter and King's K of 3 years;
+    statsmodels' own defaults (1600; 6, 32 and 12) when the frequency is not
+    known."""
+    f = _per_year(S)
+    if f is None:
+        return {'per_year': None, 'lamb': 1600.0, 'low': 6.0, 'high': 32.0, 'K': 12}
+    return {'per_year': f, 'lamb': 1600.0 * (f / 4.0) ** 4, 'low': max(2.0, 1.5 * f), 'high': 8.0 * f, 'K': max(1, int(round(3 * f)))}
+
+
+FILTER_NAMES = {'hp': 'Hodrick-Prescott Filter', 'bk': 'Baxter-King Filter', 'cf': 'Christiano-Fitzgerald Filter'}
+
+
+@api('timeseries.filter')
+@_quietly
+def filter_series(table, y, time=None, rows=None, excluded=None, method='hp', lamb=None, low=None, high=None, K=None, drift=True,
+                  nlags=25, where=None, table_name='data'):
+    """Trend and cycle by the Hodrick-Prescott filter (hpfilter), the
+    Baxter-King band pass (bkfilter) or the Christiano-Fitzgerald asymmetric
+    band pass (cffilter)."""
+    from statsmodels.tsa.filters.bk_filter import bkfilter
+    from statsmodels.tsa.filters.cf_filter import cffilter
+    from statsmodels.tsa.filters.hp_filter import hpfilter
+    if method not in FILTER_NAMES:
+        return {'error': f'no filter {method!r}'}
+    try:
+        S = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    x, miss = _filled(S)
+    n = len(x)
+    D = filter_defaults(S)
+    notes = []
+    out = {'method': method, 'name': FILTER_NAMES[method], 'defaults': D}
+    imports = []
+    if method == 'hp':
+        lam = float(lamb) if lamb not in (None, '') else D['lamb']
+        if not lam > 0:
+            return {'error': 'λ must be above 0'}
+        if n < 4:
+            return {'error': 'the filter needs at least 4 values'}
+        cycle, trend = hpfilter(x, lam)
+        out.update(lamb=lam, label=f'Hodrick-Prescott Filter (λ = {lam:.6g})')
+        imports.append('from statsmodels.tsa.filters.hp_filter import hpfilter')
+        call = f'cycle, trend = hpfilter(y, lamb={lam!r})'
+        rule = D['per_year'] and abs(lam - D['lamb']) <= 1e-9 * D['lamb']
+        notes.append('The trend minimises Σ(y − τ)² + λ Σ(Δ²τ)², that is τ = (I + λK\'K)⁻¹ y with K the second differences; the cycle is y − τ. '
+                     + (f'λ = {lam:.6g} is Ravn and Uhlig\'s rule 1600 (s/4)⁴ for s = {D["per_year"]:.6g} observations a year.' if rule
+                        else 'statsmodels\' default λ = 1600 is meant for quarterly data.' if lamb in (None, '') else ''))
+    else:
+        lo = float(low) if low not in (None, '') else D['low']
+        hi = float(high) if high not in (None, '') else D['high']
+        if not 2 <= lo < hi:
+            return {'error': 'the band: periods from 2 up, the shorter below the longer'}
+        if method == 'bk':
+            KK = int(K) if K not in (None, '') else D['K']
+            if KK < 1 or n <= 2 * KK + 2:
+                return {'error': f'the series is too short for K = {KK}: it needs more than {2 * KK + 2} values'}
+            cyc = np.asarray(bkfilter(x, lo, hi, KK), dtype=float)
+            cycle = np.full(n, np.nan)
+            cycle[KK:n - KK] = cyc
+            trend = x - cycle
+            out.update(low=lo, high=hi, K=KK, label=f'Baxter-King Filter ({lo:.6g} to {hi:.6g} periods, K = {KK})')
+            imports.append('from statsmodels.tsa.filters.bk_filter import bkfilter')
+            call = f'cycle = bkfilter(y, low={lo!r}, high={hi!r}, K={KK}); trend = y.iloc[{KK}:{n - KK}] - cycle   # K values lost at each end'
+            notes.append(f'A symmetric moving average of 2K + 1 = {2 * KK + 1} terms that passes the cycles of {lo:.6g} to {hi:.6g} periods '
+                         f'(the ideal band-pass weights cut at K and shifted to sum to zero); the first and the last {KK} values are lost. '
+                         'What is left, y − cycle, is the trend and the noise faster than the band.')
+        else:
+            cycle, trend = cffilter(x, lo, hi, bool(drift))
+            out.update(low=lo, high=hi, drift=bool(drift), label=f'Christiano-Fitzgerald Filter ({lo:.6g} to {hi:.6g} periods)')
+            imports.append('from statsmodels.tsa.filters.cf_filter import cffilter')
+            call = f'cycle, trend = cffilter(y, low={lo!r}, high={hi!r}, drift={bool(drift)})'
+            notes.append(f'The asymmetric band pass of Christiano and Fitzgerald for a random walk: every value uses the whole series, so none is lost; '
+                         f'it passes the cycles of {lo:.6g} to {hi:.6g} periods{" after the drift (a line through the first and last values) is removed" if drift else ""}. '
+                         'trend is y − cycle.')
+    cycle = np.asarray(cycle, dtype=float)
+    trend = np.asarray(trend, dtype=float)
+    if miss.any():
+        cycle[miss] = np.nan
+        notes.append(f'{_plural(int(miss.sum()), "missing value")} filled by linear interpolation for the filter; the cycle is left missing there.')
+    ok = np.isfinite(cycle)
+    out.update(trend=_arr(trend), cycle=_arr(cycle), cycle_sd=_f(np.std(cycle[ok], ddof=1)) if ok.sum() > 1 else None,
+               cycle_n=int(ok.sum()), notes=notes, cycle_diag=diagnostics(cycle, nlags))
+    c = _code_series(S, table_name, where, imports)
+    if miss.any():
+        c.append('y = y.interpolate(limit_direction="both")')
+    c += [call, 'print(trend, cycle)']
+    out['code'] = '\n'.join(c)
+    return out
+
+
+# ---- the seasonal subseries plot ----------------------------------------------------------------------------
+
+MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+@api('timeseries.subseries')
+@_quietly
+def subseries(table, y, time=None, rows=None, excluded=None, period=12, nlags=None, where=None, table_name='data'):
+    """The seasonal subseries plot of statsmodels' month_plot, quarter_plot and
+    seasonal_plot: the values of each season (January, February ... or the
+    k-th observation of each period) in time order side by side, each with the
+    mean of the season. Monthly and quarterly dates are grouped by the calendar
+    month or quarter, daily ones by the weekday, the rest by the position in
+    the period counted from the first observation."""
+    try:
+        S = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    s = int(period or 0)
+    by = 'position'
+    dates = _dates(S.t.astype(np.int64)) if S.kind in DATE_KINDS else None
+    if dates is not None and S.offset is not None:
+        name = type(S.offset).__name__
+        one = abs(int(getattr(S.offset, 'n', 1) or 1)) == 1
+        if 'Month' in name and 'Semi' not in name and one and s == 12:
+            by = 'month'
+        elif 'Quarter' in name and one and s == 4:
+            by = 'quarter'
+        elif name in ('Day', 'BusinessDay') and one and s in (7, 5):
+            by = 'weekday'
+    if by == 'position' and s < 2:
+        return {'error': 'the seasonal period must be at least 2'}
+    if by == 'month':
+        season, labels = np.asarray(dates.month) - 1, MONTHS
+    elif by == 'quarter':
+        season, labels = np.asarray(dates.quarter) - 1, ['Q1', 'Q2', 'Q3', 'Q4']
+    elif by == 'weekday':
+        season, labels = np.asarray(dates.dayofweek), WEEKDAYS
+    else:
+        season, labels = np.arange(S.n) % s, [str(j + 1) for j in range(s)]
+    if S.n < 2 * len(set(season.tolist())):
+        return {'error': 'the series needs at least two values of every season'}
+    seasons, start = [], 0
+    for j in range(len(labels)):
+        idx = np.flatnonzero(season == j)
+        if not len(idx):
+            continue
+        v = S.y[idx]
+        ok = np.isfinite(v)
+        seasons.append({'label': labels[j], 'x': list(range(start, start + len(idx))), 'slots': idx.tolist(), 'values': _arr(v),
+                        'rows': [S.rows[i] for i in idx], 't': _arr(S.t[idx]), 'mean': _f(v[ok].mean()) if ok.any() else None,
+                        'n': int(ok.sum()), 'sd': _f(v[ok].std(ddof=1)) if ok.sum() > 1 else None})
+        start += len(idx)
+    notes = []
+    if not np.isfinite(S.y).all():
+        notes.append('The mean of a season is that of its values present; statsmodels\' seasonal_plot draws no mean for a season with a missing value.')
+    c = _code_series(S, table_name, where, ['from statsmodels.graphics.tsaplots import month_plot, quarter_plot, seasonal_plot'])
+    if by == 'month':
+        c += ['month_plot(y)   # matplotlib', 'print(y.groupby(y.index.month).mean())   # the mean lines']
+    elif by == 'quarter':
+        c += ['quarter_plot(y)   # matplotlib', 'print(y.groupby(y.index.quarter).mean())   # the mean lines']
+    elif by == 'weekday':
+        c += [f'seasonal_plot(y.groupby(y.index.dayofweek), {json.dumps(labels[:len(seasons)])})   # matplotlib',
+              'print(y.groupby(y.index.dayofweek).mean())']
+    else:
+        c += [f'season = np.arange(len(y)) % {s}   # the position in the period, from the first value',
+              f'seasonal_plot(y.groupby(season), {json.dumps([x["label"] for x in seasons])})   # matplotlib',
+              'print(y.groupby(season).mean())']
+    return {'by': by, 'period': s if by == 'position' else len(labels), 'seasons': seasons, 'notes': notes, 'code': '\n'.join(c)}
+
+
+# ---- the theta model ---------------------------------------------------------------------------------------
+
+@api('timeseries.theta')
+@_quietly
+def theta_model(table, y, time=None, rows=None, excluded=None, period=12, deseasonalize=True, use_test=True, method='auto', theta=2.0,
+                use_mle=False, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+    """The theta method of Assimakopoulos and Nikolopoulos (2000) with
+    statsmodels' ThetaModel: the series is tested for seasonality and
+    deseasonalized, alpha comes from simple exponential smoothing and b0
+    from a linear trend (or both from an IMA(1, 1) with drift by MLE), and the
+    forecasts combine the two theta lines (Hyndman and Billah 2003)."""
+    from statsmodels.tsa.forecasting.theta import ThetaModel
+    try:
+        S = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    x, miss = _filled(S)
+    n = len(x)
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    th = float(theta if theta not in (None, '') else 2.0)
+    if not th >= 1:
+        return {'error': 'θ must be at least 1'}
+    if n < 8:
+        return {'error': 'the theta model needs at least 8 values'}
+    s = int(period or 0)
+    notes = []
+    des = bool(deseasonalize) and s >= 2
+    if des and n < 2 * s:
+        des = False
+        notes.append(f'The series is shorter than two periods of {s}: it is not deseasonalized.')
+    method = method if method in ('auto', 'additive', 'multiplicative') else 'auto'
+    with _quiet():
+        mod = ThetaModel(x, period=s if des else None, deseasonalize=des, use_test=bool(use_test), method=method)
+        res = mod.fit(use_mle=bool(use_mle))
+        b0, alpha = (float(v) for v in res.params)
+        seasonal_found = bool(des and mod._has_seasonality)
+        meth = mod.method
+        sigma2 = float(res.sigma2)
+        if h:
+            mean = np.asarray(res.forecast(h, theta=th), dtype=float)
+            pi_sm = res.prediction_intervals(h, theta=th, alpha=1 - level)
+            sm_lo, sm_hi = pi_sm['lower'].to_numpy(dtype=float), pi_sm['upper'].to_numpy(dtype=float)
+        yd, seas = mod._deseasonalize_data() if seasonal_found else (x, np.empty(0))
+    z = stats.norm.ppf(0.5 + level / 2)
+    if h:
+        # statsmodels' prediction_intervals take sigma^2 (1 + (h - 1)(1 + (alpha - 1)^2)); the
+        # IMA(1, 1) that the theta method is has psi_j = alpha, so sigma^2 (1 + (h - 1) alpha^2)
+        fse = math.sqrt(sigma2) * np.sqrt(1 + np.arange(h) * alpha ** 2)
+        fcd = _forecast(S, h, mean, fse, mean - z * fse, mean + z * fse)
+        fcd['sm_lower'], fcd['sm_upper'] = _arr(sm_lo), _arr(sm_hi)
+    else:
+        fcd = _forecast(S, 0, [], [], [], [])
+    # the one-step-ahead theta forecasts from every origin, with the parameters of the whole fit:
+    # simple exponential smoothing from the first value, plus the drift of the theta line
+    w = (th - 1) / th if th < 4.0 / np.finfo(np.double).eps else 1.0
+    yd = np.asarray(yd, dtype=float)
+    lev = np.empty(n)
+    prev = yd[0]
+    for j in range(n):
+        lev[j] = prev                       # the forecast of yd[j] from yd[:j]
+        prev = prev + alpha * (yd[j] - prev)
+    one = prev                              # the forecast of the next value, statsmodels' one_step
+    jj = np.arange(n, dtype=float)
+    drift = b0 * (1 / alpha - (1 - alpha) ** jj / alpha) if alpha > 0 else np.zeros(n)
+    fitted = w * drift + lev
+    if seasonal_found:
+        fac = np.asarray(seas, dtype=float)[np.arange(n) % s]
+        fitted = fitted * fac if meth.startswith('mul') else fitted + fac
+    fitted[0] = np.nan
+    valid = ~miss & np.isfinite(fitted)
+    sse = float(np.sum((x - fitted)[valid] ** 2))
+    nv = int(valid.sum())
+    st = _fit_stats(x, fitted, valid, 2, nv * (math.log(2 * math.pi * sse / nv) + 1) if sse > 0 else float('nan'))
+    rows_p = [{'term': 'Trend Slope (b0)', 'estimate': _f(b0)}, {'term': 'Level Smoothing Weight (α)', 'estimate': _f(alpha)},
+              {'term': 'Theta (θ)', 'estimate': _f(th)}, {'term': 'Innovation Variance (σ²)', 'estimate': _f(sigma2)}]
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']],
+               ['Method', 'IMA(1, 1) by MLE' if use_mle else 'OLS and SES', 'text'],
+               ['Deseasonalized', (f'{"multiplicative" if meth.startswith("mul") else "additive"}, period {s}' if seasonal_found else 'no'), 'text']]
+    notes.append(f'ThetaModel: the forecast is ((θ − 1)/θ) b0 [h − 1 + 1/α − (1 − α)^T/α] plus the simple exponential smoothing forecast, '
+                 f'{"reseasonalized" if seasonal_found else "with no seasonal adjustment"}; θ = 2 is the original theta method, which is simple '
+                 'exponential smoothing with half the slope as drift (Hyndman and Billah 2003).')
+    if des:
+        notes.append('The seasonality test (the autocorrelation at the seasonal lag, at 10%) ' + (
+            'found a seasonal pattern: the series is deseasonalized by seasonal_decompose.' if seasonal_found else
+            'found no seasonal pattern: the series is not deseasonalized.') if use_test else
+            ('The series is deseasonalized by seasonal_decompose without the seasonality test.'))
+    if h:
+        ratio = (sm_hi[-1] - mean[-1]) / (z * fse[-1]) if fse[-1] > 0 else float('nan')
+        notes.append(f'Prediction intervals: σ√(1 + (h − 1)α²), those of the IMA(1, 1) with drift that the method is, with statsmodels\' σ² = {sigma2:.6g}. '
+                     f'statsmodels 0.14.6\'s prediction_intervals use σ²(1 + (h − 1)(1 + (α − 1)²)) instead, which is not that model\'s variance: '
+                     f'its interval at h = {h} is {ratio:.3g} times as wide. '
+                     + ('statsmodels takes σ² from an IMA(1, 1) with drift fitted to the series as it is, before any deseasonalizing.' if not use_mle else ''))
+    notes.append('Theta has no likelihood of its own: the fit statistics are those of the one-step-ahead theta forecasts from each origin with the '
+                 'parameters of the whole fit (k = 2: α and b0), as for the smoothing models.')
+    if miss.any():
+        notes.append(f'{_plural(int(miss.sum()), "missing value")} filled by linear interpolation for the fit; they are left out of the fit statistics.')
+    c = _code_series(S, table_name, where, ['from statsmodels.tsa.forecasting.theta import ThetaModel'])
+    if miss.any():
+        c.append('y = y.interpolate(limit_direction="both")')
+    c.append(f'mod = ThetaModel(y.to_numpy(), period={s if des else None}, deseasonalize={des}, use_test={bool(use_test)}, method={method!r})')
+    c.append(f'res = mod.fit(use_mle={bool(use_mle)}); print(res.summary())')
+    if h:
+        c.append(f'fc = res.forecast({h}, theta={th!r})')
+        c.append(f'alpha = res.params["alpha"]; half = {z:.6f} * np.sqrt(res.sigma2 * (1 + np.arange({h}) * alpha**2))   # the IMA(1, 1) interval')
+        c.append('print(pd.DataFrame({"forecast": fc, "lower": fc - half, "upper": fc + half}))')
+        c.append(f'print(res.prediction_intervals({h}, theta={th!r}, alpha={1 - level:.6g}))   # statsmodels\' own, wider')
+    fitted_v = np.where(valid, fitted, np.nan)
+    resid = np.where(valid, x - fitted, np.nan)
+    sd = st['sd'] if st['sd'] is not None else float('nan')
+    return _model_out(S, 'theta', f'Theta Model (θ = {th:.6g})', fitted_v, resid, np.where(valid, sd, np.nan), level, fcd, st, summary,
+                      {'columns': 'theta', 'rows': rows_p}, nlags, 1, notes, '\n'.join(c),
+                      b0=_f(b0), alpha=_f(alpha), sigma2=_f(sigma2), one_step=_f(one), seasonal_found=seasonal_found, method=meth,
+                      spec={'theta': th, 'period': s, 'deseasonalize': des, 'use_test': bool(use_test), 'use_mle': bool(use_mle)})
+
+
+# ---- the Zivot-Andrews test --------------------------------------------------------------------------------
+
+ZA_LABELS = (('c', 'Break in intercept'), ('t', 'Break in trend'), ('ct', 'Break in intercept and trend'))
+
+
+@api('timeseries.zivot')
+@_quietly
+def zivot(table, y, time=None, rows=None, excluded=None, trim=0.15, maxlag=None, autolag='AIC', nlags=None, where=None, table_name='data'):
+    """The Zivot-Andrews test of a unit root against a stationary series with
+    one break in the intercept, the trend or both at an unknown date
+    (statsmodels' zivot_andrews); the break date is the one that makes the
+    test statistic smallest."""
+    from statsmodels.tsa.stattools import zivot_andrews
+    try:
+        S = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    pos = np.flatnonzero(np.isfinite(S.y))
+    v = S.y[pos]
+    trim = float(trim if trim not in (None, '') else 0.15)
+    ml = int(maxlag) if maxlag not in (None, '') else None
+    al = autolag if autolag in ('AIC', 'BIC', 't-stat') else None
+    if len(v) < 20:
+        return {'error': 'the Zivot-Andrews test needs at least 20 values'}
+    out = []
+    for reg, label in ZA_LABELS:
+        try:
+            with _quiet():
+                st, p, cv, lags, bp = zivot_andrews(v, trim=trim, maxlag=ml, regression=reg, autolag=al)
+            slot = int(pos[int(bp)])
+            out.append({'test': label, 'regression': reg, 'stat': _f(st), 'p': _f(p), 'lags': int(lags), 'break_slot': slot,
+                        'break': _f(S.t[slot]), 'break_row': S.rows[slot], 'c1': _f(cv['1%']), 'c5': _f(cv['5%']), 'c10': _f(cv['10%'])})
+        except (ValueError, np.linalg.LinAlgError) as e:
+            out.append({'test': label, 'regression': reg, 'error': str(e)})
+    c = _code_series(S, table_name, where, ['from statsmodels.tsa.stattools import zivot_andrews'])
+    c += ['v = y.dropna()',
+          'for reg in ("c", "t", "ct"):   # a break in the intercept, the trend, both',
+          f'    stat, p, crit, lags, bp = zivot_andrews(v.to_numpy(), trim={trim!r}, maxlag={ml!r}, regression=reg, autolag={al!r})',
+          '    print(reg, stat, p, crit, lags, v.index[bp])   # the break: the last observation before the shift']
+    notes = ['H0: a unit root with a break; H1: stationary with a break at an unknown date, where the test statistic (the t ratio of the lagged level) '
+             'is smallest. The break date is the last observation before the shift (Zivot and Andrews\' T_B). statsmodels follows Baum\'s '
+             'approximation (the lags chosen once, for the model without breaks) and interpolates p-values and critical values in its own '
+             'simulated tables, which are close to Zivot and Andrews\' (1992).']
+    if len(v) < S.n:
+        notes.append(f'{_plural(S.n - len(v), "missing value")} left out, as in the ADF tests.')
+    return {'tests': out, 'n': int(len(v)), 'trim': trim, 'notes': notes, 'code': '\n'.join(c)}
+
+
+# ---- ARDL, the error correction form and the bounds test --------------------------------------------------
+
+PSS_CASES = {1: 'no intercept, no trend', 2: 'restricted intercept, no trend', 3: 'unrestricted intercept, no trend',
+             4: 'unrestricted intercept, restricted trend', 5: 'unrestricted intercept and trend'}
+CASES_OF_TREND = {'n': (1,), 'c': (3, 2), 'ct': (4, 5)}
+
+
+def _lags_text(v, ar=False):
+    """A lag specification of ardl_select_order's tables: None (left out), a
+    largest lag (the lags 1 to p of y, 0 to q of an input), or the lags
+    themselves (a global search)."""
+    if v is None:
+        return 'none'
+    if isinstance(v, (tuple, list)):
+        return ', '.join(str(int(x)) for x in v) if len(v) else 'none'
+    lo = 1 if ar else 0
+    return 'none' if int(v) < lo else str(lo) if int(v) == lo else f'{lo}–{int(v)}'
+
+
+def pss_bounds(stat, k, case):
+    """The PSS (2001) bounds for k inputs from statsmodels' own tables
+    (statsmodels.tsa.ardl.pss_critical_values, 32 million simulations) and
+    its p-value response surfaces. UECMResults.bounds_test in statsmodels
+    0.14.6 looks the tables up at k + 1 (the number of variables with y), so
+    they are read here at k, the number of inputs, as the tables are keyed."""
+    from statsmodels.tsa.ardl import pss_critical_values as pss
+    from statsmodels.tsa.ardl.model import _pss_pvalue
+    lo, hi = pss.crit_vals[(k, case, False)], pss.crit_vals[(k, case, True)]
+    rows = [{'level': f'{100 - pct:g}%', 'pct': float(pct), 'lower': _f(lo[i]), 'upper': _f(hi[i])} for i, pct in enumerate(pss.crit_percentiles)]
+    return rows, _f(_pss_pvalue(stat, k, case, False)), _f(_pss_pvalue(stat, k, case, True))
+
+
+@api('timeseries.ardl')
+@_quietly
+def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, maxorder=4, order=None, trend='c', ic='aic', glob=False,
+         causal=False, seasonal=False, period=12, case=None, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+    """An autoregressive distributed lag model of the series on the inputs,
+    ARDL(p, q1, ..., qk) by least squares (statsmodels' ARDL), its orders
+    chosen by AIC or BIC (ardl_select_order) unless given; the long-run
+    coefficients of the level relation, the unrestricted error correction
+    form (UECM) and the Pesaran, Shin and Smith (2001) bounds test of a
+    level relationship; forecasts with the inputs' future values."""
+    from statsmodels.tsa.ardl import ARDL, UECM, ardl_select_order
+    names_in = [c for c in dict.fromkeys(inputs or []) if c and c != y]
+    if not names_in:
+        return {'error': 'ARDL models need inputs: cast columns in Input List'}
+    if len(names_in) > 9:
+        return {'error': 'at most 9 inputs (statsmodels\' bounds test tables go to 10 variables)'}
+    trend = trend if trend in ('n', 'c', 'ct') else 'c'
+    ic = 'bic' if ic == 'bic' else 'aic'
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    maxlag, maxorder = max(1, int(maxlag or 1)), max(0, int(maxorder or 0))
+    s = int(period or 0)
+    seasonal = bool(seasonal) and s >= 2
+    try:
+        S = load(table, y, time, rows, excluded, names_in)
+        E, Ef, xnames, _start, xnotes = _exog(S, [{'name': c} for c in names_in], h)
+    except NoSeries as e:
+        return {'error': str(e)}
+    notes = list(xnotes)
+    x, miss = _filled(S)
+    n = len(x)
+    Y = pd.Series(x, name=y)
+    X = pd.DataFrame(E, columns=xnames)
+    kw = {'trend': trend, 'causal': bool(causal), 'seasonal': seasonal, 'period': s if seasonal else None}
+    sel = None
+    with _quiet():
+        if order:
+            p_ = int(order.get('p') or 0)
+            q_ = {c: (None if order.get('q', {}).get(c) in (None, '') else int(order['q'][c])) for c in names_in}
+            use = [c for c in names_in if q_[c] is not None]
+            model = ARDL(Y, p_ or None, X[use] if use else None, {c: q_[c] for c in use} if use else 0, **kw)
+            how = 'as given'
+        else:
+            n_models = (maxlag + 1) * (maxorder + 2) ** len(names_in)
+            if glob:
+                bits = maxlag + len(names_in) * (maxorder + 1)
+                n_models = 2 ** bits
+                if n_models > 4096:
+                    return {'error': f'the global search would fit {n_models} models; at most 4096 (lower the largest lags)'}
+            if n - max(maxlag, maxorder) < 3 * (1 + maxlag + len(names_in) * (maxorder + 1)):
+                return {'error': f'too few observations ({n}) for lags up to {max(maxlag, maxorder)} of {1 + len(names_in)} series'}
+            sel = ardl_select_order(Y, maxlag, X, maxorder, ic=ic, glob=bool(glob), **kw)
+            model = sel.model
+            how = f'by {ic.upper()} among {n_models} models'
+        res = model.fit()
+    yname = model.endog_names
+    pnames = list(res.params.index)
+    est = np.asarray(res.params, dtype=float)
+    C = np.asarray(res.cov_params(), dtype=float)
+    ar_lags = [int(v) for v in (model.ar_lags or [])]
+    dl = {c: [int(v) for v in lags] for c, lags in (model.dl_lags or {}).items()}
+    inc = [c for c in names_in if c in dl and len(dl[c])]
+    dropped = [c for c in names_in if c not in inc]
+    with _quiet():
+        se, tv, pv = (np.asarray(v, dtype=float) for v in (res.bse, res.tvalues, res.pvalues))
+    rows_p = []
+    for j, nm in enumerate(pnames):
+        term = 'Intercept' if nm == 'const' else 'Trend' if nm == 'trend' else nm
+        rows_p.append({'term': term, 'estimate': _f(est[j]), 'se': _f(se[j]), 't': _f(tv[j]), 'p': _f(pv[j]), 'sm': nm})
+    # the long-run coefficients of the level relation y = θ0 + θ'x, by the delta method
+    # (the negatives of UECM's ci_params, with its ci_bse)
+    ar_idx = [pnames.index(f'{yname}.L{i}') for i in ar_lags]
+    den = 1.0 - float(est[ar_idx].sum()) if ar_idx else 1.0
+    lr = []
+    terms = [('Intercept', [pnames.index('const')] if 'const' in pnames else []), ('Trend', [pnames.index('trend')] if 'trend' in pnames else [])]
+    terms += [(c, [pnames.index(f'{c}.L{j}') for j in dl[c]]) for c in inc]
+    for label, cols in terms:
+        if not cols:
+            continue
+        num = float(est[cols].sum())
+        g = np.zeros(len(est))
+        g[cols] = 1.0 / den
+        g[ar_idx] = num / den ** 2
+        th = num / den
+        s_ = math.sqrt(max(0.0, float(g @ C @ g)))
+        t_ = th / s_ if s_ > 0 else float('nan')
+        # normal p-values, as UECM's ci_pvalues have them
+        lr.append({'term': label, 'estimate': _f(th), 'se': _f(s_), 't': _f(t_), 'p': _f(2 * stats.norm.sf(abs(t_))) if math.isfinite(t_) else None})
+    # the unrestricted error correction form and the bounds test
+    case = int(case) if case not in (None, '') else CASES_OF_TREND[trend][0]
+    if case not in CASES_OF_TREND[trend]:
+        return {'error': f'bounds test case {case} does not go with the trend {trend!r}: the cases are {", ".join(map(str, CASES_OF_TREND[trend]))}'}
+    bounds, ecm = None, None
+    if inc:
+        lags_u = max([1] + ar_lags)
+        order_u = {c: max(1, max(dl[c])) for c in inc}
+        raised = [c for c in inc if max(dl[c]) < 1]
+        with _quiet():
+            ures = UECM(Y, lags_u, X[inc], order_u, trend=trend, causal=bool(causal)).fit()
+            bt = ures.bounds_test(case=case)
+        stat = float(bt.stat)
+        kx = len(inc)
+        crit, p_lo, p_hi = pss_bounds(stat, kx, case)
+        sm_crit = [{'level': f'{100 - float(pct):g}%', 'lower': _f(bt.crit_vals['lower'].iloc[i]), 'upper': _f(bt.crit_vals['upper'].iloc[i])}
+                   for i, pct in enumerate(bt.crit_vals.index)]
+        c95 = next(r for r in crit if r['pct'] == 95.0)
+        verdict = ('reject' if stat > c95['upper'] else 'accept' if stat < c95['lower'] else 'inconclusive')
+        bounds = {'stat': _f(stat), 'case': case, 'case_label': PSS_CASES[case], 'k': kx, 'crit': crit, 'p_lower': p_lo, 'p_upper': p_hi,
+                  'verdict': verdict, 'sm_crit': sm_crit, 'sm_p_lower': _f(bt.p_values['lower']), 'sm_p_upper': _f(bt.p_values['upper']),
+                  'n_restrictions': int(kx + 1 + (1 if case in (2, 4) else 0)), 'raised': raised}
+        un = list(ures.params.index)
+        with _quiet():
+            use_ = np.asarray(ures.bse, dtype=float), np.asarray(ures.tvalues, dtype=float), np.asarray(ures.pvalues, dtype=float)
+        ecm = [{'term': 'Intercept' if nm == 'const' else 'Trend' if nm == 'trend' else nm, 'estimate': _f(ures.params.iloc[j]), 'se': _f(use_[0][j]),
+                't': _f(use_[1][j]), 'p': _f(use_[2][j]), 'sm': nm} for j, nm in enumerate(un)]
+        speed = _f(ures.params.get(f'{yname}.L1'))
+    else:
+        speed = None
+        notes.append('The selected model has no input left: there is no level relation to test.')
+    # fitted values, forecasts
+    fitted = np.full(n, np.nan)
+    fv = np.asarray(res.fittedvalues, dtype=float)
+    fitted[n - len(fv):] = fv
+    with _quiet():
+        pr = res.get_prediction()
+        fse_in = np.full(n, np.nan)
+        fse_in[n - len(fv):] = np.asarray(pr.se_mean, dtype=float)[-len(fv):]
+        if h:
+            Xf = pd.DataFrame(Ef, columns=xnames)
+            pf = res.get_prediction(start=n, end=n + h - 1, exog_oos=Xf)
+            sf = pf.summary_frame(alpha=1 - level)
+            fcd = _forecast(S, h, sf['mean'], sf['mean_se'], sf['mean_ci_lower'], sf['mean_ci_upper'])
+        else:
+            fcd = _forecast(S, 0, [], [], [], [])
+    valid = ~miss & np.isfinite(fitted)
+    kk = len(est)                             # JMP's count: the variance not counted
+    st = _fit_stats(x, fitted, valid, kk, -2 * float(res.llf))
+    ordr = tuple(int(v) for v in model.ardl_order)
+    name = f'ARDL({", ".join(str(v) for v in ordr)}) with {", ".join(inc) if inc else "no input"}'
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']],
+               ['Orders', how, 'text']]
+    selection = []
+    if sel is not None:
+        crit_s = sel.aic if ic == 'aic' else sel.bic
+        for rank, (val, spec) in enumerate(crit_s.head(10).items(), 1):
+            lags, orders = spec
+            selection.append({'rank': rank, 'ic': _f(val), 'ar': _lags_text(lags, ar=True), **{f'q_{c}': _lags_text((orders or {}).get(c)) for c in names_in}})
+    hold = n - len(fv)
+    notes.insert(0, f'Least squares, the conditional maximum likelihood of statsmodels\' ARDL: the first {_plural(hold, "observation")} '
+                    f'give the lags their starting values. Orders {how}' + (f' ({"all subsets of lags" if glob else "every lag up to each order"}; '
+                                                                          f'up to {maxlag} lags of {y} and {maxorder} of each input).' if sel is not None else '.'))
+    notes.append(f'statsmodels counts σ² in its AIC: {res.aic:.6g} (BIC {res.bic:.6g}); the table follows JMP, k = {kk}.')
+    if dropped:
+        notes.append(f'The selection leaves out {", ".join(dropped)}.')
+    if miss.any():
+        notes.append(f'{_plural(int(miss.sum()), "missing value")} of {y} filled by linear interpolation for the fit: least squares on lags needs every value.')
+    if bounds:
+        if bounds['raised']:
+            notes.append(f'The error correction form needs a lagged level of every input: {", ".join(bounds["raised"])} enter it with order 1.')
+        if seasonal:
+            notes.append('statsmodels\' bounds test refits the error correction form without the seasonal dummies.')
+    # the code
+    c = _code_series(S, table_name, where, ['from statsmodels.tsa.ardl import ARDL, UECM, ardl_select_order',
+                                              'from statsmodels.tsa.ardl import pss_critical_values',
+                                              'from statsmodels.tsa.ardl.model import _pss_pvalue'])
+    if miss.any():
+        c.append('y = y.interpolate(limit_direction="both")')
+    c.append(f'Y = pd.Series(y.to_numpy(), name={json.dumps(y)})')
+    c.append(f'X = d.loc[y.index, {json.dumps(names_in)}].reset_index(drop=True)')
+    extra = f', trend={trend!r}' + (', causal=True' if causal else '') + (f', seasonal=True, period={s}' if seasonal else '')
+    if order:
+        use = [cc for cc in names_in if order.get('q', {}).get(cc) not in (None, '')]
+        qd = '{' + ', '.join(f'{json.dumps(cc)}: {int(order["q"][cc])}' for cc in use) + '}'
+        c.append(f'res = ARDL(Y, {int(order.get("p") or 0) or None}, X[{json.dumps(use)}], {qd}{extra}).fit()')
+    else:
+        c.append(f'sel = ardl_select_order(Y, {maxlag}, X, {maxorder}, ic={ic!r}{", glob=True" if glob else ""}{extra})')
+        c.append(f'print(sel.{ic}.head(10))   # the best orders')
+        c.append('res = sel.model.fit()')
+    c.append('print(res.summary())')
+    if bounds:
+        c.append(f'uecm = UECM(Y, {max([1] + ar_lags)}, X[{json.dumps(inc)}], {json.dumps({cc: max(1, max(dl[cc])) for cc in inc})}, trend={trend!r}'
+                 f'{", causal=True" if causal else ""}).fit()')
+        c.append('print(uecm.summary()); print(uecm.ci_summary())   # the error correction form; the level relation is minus ci_params')
+        c.append(f'bt = uecm.bounds_test(case={case}); print(bt.stat)')
+        c.append(f'k = {len(inc)}   # the inputs: statsmodels 0.14.6\'s bounds_test reads its tables at k + 1, so read them at k')
+        c.append(f'print(pd.DataFrame({{"lower": pss_critical_values.crit_vals[(k, {case}, False)], "upper": pss_critical_values.crit_vals[(k, {case}, True)]}}, '
+                 'index=pss_critical_values.crit_percentiles))')
+        c.append(f'print(_pss_pvalue(bt.stat, k, {case}, False), _pss_pvalue(bt.stat, k, {case}, True))   # p-values, all I(0) and all I(1)')
+    if h:
+        c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
+        c.append(f'print(res.get_prediction(start=len(Y), end=len(Y) + {h - 1}, exog_oos=X_future).summary_frame(alpha={1 - level:.6g}))')
+    resid = np.where(valid, x - fitted, np.nan)
+    return _model_out(S, 'ardl', name, np.where(valid, fitted, np.nan), resid, np.where(valid, fse_in, np.nan), level, fcd, st, summary,
+                      {'columns': 'ardl', 'rows': rows_p}, nlags, len(ar_lags), notes, '\n'.join(c),
+                      order=list(ordr), inputs_used=inc, long_run=lr, bounds=bounds, ecm=ecm, speed=speed, selection=selection,
+                      sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf), 'sigma2': _f(res.sigma2)},
+                      spec={'trend': trend, 'ic': ic, 'glob': bool(glob), 'maxlag': maxlag, 'maxorder': maxorder, 'case': case,
+                            'order': {'p': len(ar_lags) and max(ar_lags), 'q': {c_: (max(dl[c_]) if c_ in inc else None) for c_ in names_in}}})

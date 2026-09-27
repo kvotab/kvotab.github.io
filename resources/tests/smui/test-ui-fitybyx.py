@@ -10,6 +10,9 @@ same statistics computed here in the page's JavaScript from the table
 chi-square, the paired t); points, bars and mosaic cells select their
 rows and selected rows light up; saved columns hold the fit's values; By,
 Group By, several pairs, exclusion and Redo work; every (i) has a topic;
+the tests beyond JMP (Brunner-Munzel, Compare Rates, the Two Sample Test
+for Proportions, Breslow-Day, Cochran's Q and McNemar) agree with the same
+numbers computed in the page and keep their options in By and projects;
 the reports draw in the dark theme and at phone width; a 60 000-row table
 stays quick.
 
@@ -115,6 +118,8 @@ window.__fyx = {
     return (N - 1) * h / ss;
   },
   levene(groups) { return this.anovaF(groups.map((g) => { const m = g.reduce((a, b) => a + b, 0) / g.length; return g.map((v) => Math.abs(v - m)); })); },
+  // scroll an outline of the report open last to the top of its view (for a screenshot)
+  async scrollTo(title, rep) { const h = this.head(title, rep); if (h) h.scrollIntoView({ block: 'start' }); await this.sleep(400); return !!h; },
 };
 '''
 
@@ -396,6 +401,166 @@ async def main():
     check('no errors in Matched Pairs', r['errors'], [])
     await shot(page, '05-matchedpairs.png')
 
+    # ---- beyond JMP: Brunner-Munzel, Compare Rates (Oneway of the adverse event counts) ----------------
+    r = await page.ev('''(async () => { const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['adverse events'], x: ['treatment'] }, {});
+      await __fyx.pick(rep.title, ['Nonparametric', 'Brunner-Munzel Test'], rep);
+      const t = rep.table; const y = t.col('adverse events').values, x = t.col('treatment').values;
+      const a = y.filter((v, i) => x[i] === 'drug'), b = y.filter((v, i) => x[i] === 'placebo');
+      let s = 0; for (const u of a) for (const v of b) s += u > v ? 1 : (u === v ? 0.5 : 0);
+      const tb = __fyx.tableUnder('Brunner-Munzel Test (Probability of Superiority)', 0, rep);
+      return { title: rep.title, row: tb[1], head: tb[0], want: s / (a.length * b.length), errors: __fyx.errors(rep) }; })()''')
+    check('a count Y by treatment is a Oneway', r['title'], 'Oneway Analysis of adverse events By treatment')
+    check('Brunner-Munzel: drug against placebo', r['row'][:2], ['drug', 'placebo'])
+    check.near('P(drug > placebo) + ½P(=) = the pairs counted in the page', float(r['row'][2]), r['want'], 1e-6)
+    check('Brunner-Munzel columns', r['head'], ['Level', 'vs Level', 'P(Level>vs Level)', 'Std Err', 'Lower 95%', 'Upper 95%', 'Brunner-Munzel t', 'DF', 'Prob>|t|'])
+    check('no errors (Brunner-Munzel)', r['errors'], [])
+    ow2 = 'Oneway Analysis of adverse events By treatment'
+    r = await page.ev(f'''(async () => {{
+      const p = __fyx.pick({json.dumps(ow2)}, ['Equivalence Test', 'Probability of Superiority…']);
+      await __fyx.dialogOK((d) => {{ const i = d.querySelectorAll('input'); i[0].value = '0.3'; i[1].value = '0.7'; }});
+      await p;
+      const tb = __fyx.tableUnder('Equivalence Test (Probability of Superiority)', 1);
+      const bm = __fyx.tableUnder('Brunner-Munzel Test (Probability of Superiority)', 0);
+      return {{ has: __fyx.heads().includes('Equivalence Test (Probability of Superiority)'), p: tb ? tb[1][2] : null, prob: bm[1][2], opt: Object.entries(__fyx.rep().spec.options).find(([k]) => k.endsWith('|bmTost'))[1] }};
+    }})()''')
+    check('Equivalence Test ▸ Probability of Superiority: the dialog sets the bounds', (r['has'], r['opt']), (True, {'low': 0.3, 'upp': 0.7}))
+    check('the equivalence table shows the same P', r['p'], r['prob'])
+    r = await page.ev(f'''(async () => {{
+      const p = __fyx.pick({json.dumps(ow2)}, ['Compare Rates…']);
+      await __fyx.dialogOK((d) => {{ const s = d.querySelector('select'); s.value = [...s.options].find(o => o.textContent === 'months').value; }});
+      await p;
+      const rep = __fyx.rep(); const t = rep.table; const y = t.col('adverse events').values, x = t.col('treatment').values, m = t.col('months').values;
+      const tot = (lv, v) => v.reduce((acc, z, i) => acc + (x[i] === lv ? z : 0), 0);
+      const rates = ['placebo', 'drug'].map(lv => tot(lv, y) / tot(lv, m));
+      const tb = __fyx.head('Compare Rates').parentElement.querySelector(':scope > .sm-ob-body table.sm-rt');
+      const rows = [...tb.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(c => c.textContent));
+      const rr = __fyx.tableUnder('Rate Ratios'); const lr = __fyx.tableUnder('Likelihood Ratio Test');
+      return {{ rows, rates, ratio: rr[1], lr: lr[1], heads: __fyx.heads().filter(h => /Rate|Likelihood/.test(h)), errors: __fyx.errors() }};
+    }})()''')
+    check('Compare Rates: its outlines', r['heads'], ['Compare Rates', 'Rate Ratios', 'Likelihood Ratio Test'])
+    check.near('the placebo rate = its events over its months, computed here', float(r['rows'][0][4]), r['rates'][0], 1e-6)
+    check.near('the drug rate', float(r['rows'][1][4]), r['rates'][1], 1e-6)
+    check('the ratio is drug / placebo', r['ratio'][:2], ['drug', 'placebo'])
+    check.near('the rate ratio = the ratio of the rates', float(r['ratio'][2]), r['rates'][1] / r['rates'][0], 1e-6)
+    check('the likelihood-ratio test of the treatment, 1 DF', r['lr'][:2], ['treatment', '1'])
+    check('no errors (Compare Rates)', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = SM.app.reports.find(r => r.title === 'Oneway Analysis of yield (g) By fertilizer');
+      const ctx = new SM.report.Ctx(rep, { rows: rep.table.includedRows() }, rep.content, '');
+      const it = rep.platform.triangle(ctx).find(i => i.label === 'Compare Rates…'); return it ? it.disabled : 'missing'; })()''')
+    check('Compare Rates is for counts: not for a yield in grams', r, True)
+    await page.ev("__fyx.scrollTo('Brunner-Munzel Test (Probability of Superiority)')")
+    await shot(page, '10-brunner.png')
+    await page.ev("__fyx.scrollTo('Compare Rates')")
+    await shot(page, '10-rates.png')
+
+    # ---- beyond JMP: the Two Sample Test for Proportions, Breslow-Day -------------------------------------
+    r = await page.ev('''(async () => { const t = __fyx.table('Clinical study'); const o = {};
+      const y = t.col('response').id, x = t.col('treatment').id; o[y + '~' + x + '|cmh'] = t.col('sex').id;
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['treatment'] }, o);
+      await __fyx.pick(rep.title, ['Two Sample Test for Proportions'], rep);
+      const X = t.col('treatment').values, Y = t.col('response').values;
+      const c = (xl, yl) => X.filter((v, i) => v === xl && (yl == null || Y[i] === yl)).length;
+      const c1 = c('placebo', 'no'), n1 = c('placebo'), c2 = c('drug', 'no'), n2 = c('drug');
+      const p1 = (c1 + 1) / (n1 + 2), p2 = (c2 + 1) / (n2 + 2), z = SM.util.qnorm(0.975), se = Math.sqrt(p1 * (1 - p1) / (n1 + 2) + p2 * (1 - p2) / (n2 + 2));
+      const tp = __fyx.tableUnder('Two Sample Test for Proportions', 2);
+      const ac = tp.find(r => r[0].startsWith('Agresti-Caffo'));
+      const kv = __fyx.tableUnder('Two Sample Test for Proportions', 0);
+      const cmh = __fyx.tableUnder('Cochran Mantel Haenszel', 0); const bs = __fyx.tableUnder('Odds Ratios by Stratum', 0);
+      const S = t.col('sex').values; const cs = (xl, yl) => X.filter((v, i) => v === xl && Y[i] === yl && S[i] === 'F').length;
+      const orF = (cs('placebo', 'no') * cs('drug', 'yes')) / (cs('placebo', 'yes') * cs('drug', 'no'));
+      return { desc: kv[0][1], diff: kv[3][1], want: c1 / n1 - c2 / n2, lo: ac[1], hi: ac[2], wantLo: p1 - p2 - z * se, wantHi: p1 - p2 + z * se,
+        methods: tp.slice(1).map(r => r[0]), tests: cmh.slice(1).map(r => r[0]), orF: bs[1][2], wantOrF: orF, errors: __fyx.errors(rep) }; })()''')
+    check('Two Sample Test for Proportions: the description', r['desc'], 'P(no|placebo) − P(no|drug)')
+    check.near('the proportion difference computed here', float(r['diff']), r['want'], 1e-6)
+    check.near('the adjusted Wald (Agresti-Caffo) lower limit computed here', float(r['lo'].replace('−', '-')), r['wantLo'], 1e-6)
+    check.near('and its upper limit', float(r['hi']), r['wantHi'], 1e-6)
+    check('every method statsmodels has for a difference', r['methods'], ['Wald', 'Agresti-Caffo (adjusted Wald, as JMP)', 'Newcombe (hybrid score)', 'Miettinen-Nurminen (score)'])
+    check('Breslow-Day beside the Cochran Mantel Haenszel test', r['tests'], ['Cochran Mantel Haenszel (odds ratio is 1)', 'Cochran Mantel Haenszel, continuity corrected', 'Breslow-Day (odds ratios are equal)', 'Breslow-Day-Tarone (odds ratios are equal)'])
+    check.near('the odds ratio of the women (ad/bc) computed here', float(r['orF']), r['wantOrF'], 1e-6)
+    check('no errors (two proportions, strata)', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fyx.rep(); await __fyx.pick('Two Sample Test for Proportions', ['Odds Ratio'], rep);
+      const t = rep.table; const X = t.col('treatment').values, Y = t.col('response').values;
+      const c = (xl, yl) => X.filter((v, i) => v === xl && Y[i] === yl).length;
+      const want = (c('placebo', 'no') / c('placebo', 'yes')) / (c('drug', 'no') / c('drug', 'yes'));
+      const kv = __fyx.tableUnder('Two Sample Test for Proportions', 0); const tp = __fyx.tableUnder('Two Sample Test for Proportions', 1);
+      return { desc: kv[0][1], or: kv[3][1], want, methods: tp.slice(1).map(r => r[0]) }; })()''')
+    check('the Odds Ratio item: the description', r['desc'], 'Odds(no|placebo) / Odds(no|drug)')
+    check.near('the odds ratio computed here', float(r['or']), r['want'], 1e-6)
+    check('the odds-ratio methods', r['methods'], ['Woolf (logit)', 'Gart (adjusted logit, 0.5 added)', 'Independence-smoothed logit', 'Miettinen-Nurminen (score)'])
+    await page.ev("__fyx.scrollTo('Cochran Mantel Haenszel')")
+    await shot(page, '11-two-proportions.png')
+
+    # ---- beyond JMP: Matched Pairs of binary responses, Cochran's Q and McNemar ---------------------------
+    await page.ev(r'''(() => {
+      const r = SM.util.rng('smui-binary-pairs'); const n = 80; const c = { t1: [], t2: [], t3: [], u: [], v: [] };
+      for (let i = 0; i < n; i++) { const p = r.u(); c.t1.push(r.u() < 0.3 + 0.4 * p ? 'yes' : 'no'); c.t2.push(r.u() < 0.45 + 0.4 * p ? 'yes' : 'no'); c.t3.push(r.u() < 0.6 + 0.3 * p ? 'yes' : 'no'); c.u.push(r.u() < 0.5 ? 1 : 0); c.v.push(r.u() < 0.6 ? 1 : 0); }
+      c.t2[5] = null;
+      SM.app.addTable(new SM.Table({ name: 'Ratings', source: 'simulated', columns: [{ name: 't1', dataType: 'character', values: c.t1 }, { name: 't2', dataType: 'character', values: c.t2 }, { name: 't3', dataType: 'character', values: c.t3 }, { name: 'u', dataType: 'numeric', values: c.u }, { name: 'v', dataType: 'numeric', values: c.v }] }));
+    })()''')
+    r = await page.ev('''(async () => { const rep = await __fyx.open('Ratings', 'matchedpairs', { y: ['t1', 't2', 't3'] }, {});
+      const t = rep.table; const cols = ['t1', 't2', 't3'].map(n => t.col(n).values);
+      const rows = []; for (let i = 0; i < t.nrows; i++) if (cols.every(v => v[i] != null)) rows.push(cols.map(v => (v[i] === 'yes' ? 1 : 0)));
+      const k = 3, C = [0, 1, 2].map(j => rows.reduce((a, r) => a + r[j], 0)), R = rows.map(r => r[0] + r[1] + r[2]), N = R.reduce((a, b) => a + b, 0);
+      const q = (k - 1) * (k * C.reduce((a, c) => a + c * c, 0) - N * N) / (k * N - R.reduce((a, r) => a + r * r, 0));
+      let b = 0, c2 = 0; for (let i = 0; i < t.nrows; i++) { if (cols[0][i] == null || cols[2][i] == null) continue; if (cols[0][i] === 'yes' && cols[2][i] === 'no') b++; if (cols[0][i] === 'no' && cols[2][i] === 'yes') c2++; }
+      const kv = __fyx.tableUnder("Cochran's Q Test", 1); const mc = __fyx.tableUnder('McNemar Tests', 0);
+      const p13 = mc.find(r => r[0] === 't1' && r[1] === 't3');
+      return { title: rep.title, heads: __fyx.heads(rep), q: kv[0][1], wantQ: q, n: kv[3][1], wantN: rows.length, chi: p13[8], wantChi: (b - c2) ** 2 / (b + c2), bc: [p13[3], p13[4]], wantBc: [String(b), String(c2)], head: mc[0], errors: __fyx.errors(rep) }; })()''')
+    check('binary responses: Cochran\'s Q and McNemar, no paired t tests', [h for h in r['heads'] if h.startswith(('Cochran', 'McNemar', 'Difference'))], ["Cochran's Q Test", 'McNemar Tests'])
+    check.near('Cochran\'s Q by its formula in the page', float(r['q']), r['wantQ'], 1e-6)
+    check('on the rows with every response', r['n'], str(r['wantN']))
+    check('McNemar t1-t3: the discordant counts', r['bc'], r['wantBc'])
+    check.near('McNemar χ² = (b − c)²/(b + c) computed here', float(r['chi']), r['wantChi'], 1e-6)
+    check('the exact test is on by default', r['head'][-1], 'Exact Prob')
+    check('no errors (binary Matched Pairs)', r['errors'], [])
+    r = await page.ev('''(async () => { await __fyx.pick('McNemar Tests', ['Continuity Correction']);
+      const mc = __fyx.tableUnder('McNemar Tests', 0); const p13 = mc.find(r => r[0] === 't1' && r[1] === 't3'); const b = +p13[3], c = +p13[4];
+      return { chi: p13[8], want: (Math.abs(b - c) - 1) ** 2 / (b + c) }; })()''')
+    check.near('Continuity Correction: (|b − c| − 1)²/(b + c)', float(r['chi']), r['want'], 1e-6)
+    q_yes = await page.ev('''__fyx.tableUnder("Cochran's Q Test", 1)[0][1]''')
+    r = await page.ev('''(async () => { await __fyx.pick("Cochran's Q Test", ['Success Level', 'no']); const tb = __fyx.tableUnder("Cochran's Q Test", 0); const kv = __fyx.tableUnder("Cochran's Q Test", 1);
+      return { head: tb[0][2], q: kv[0][1] }; })()''')
+    check('Success Level no: the counts of no, the same Q', (r['head'], r['q']), ('Count no', q_yes))
+    r = await page.ev('''(async () => { const rep = await __fyx.open('Ratings', 'matchedpairs', { y: ['u', 'v'] }, {});
+      const P = SM.platforms.get('matchedpairs'); const t = rep.table;
+      const bad = P.launch.validate({ roles: { y: [t.col('t1').id, t.col('u').id] } }, t);
+      const tStud = __fyx.table('Students'); const bad2 = P.launch.validate({ roles: { y: [tStud.col('sex').id, tStud.col('age').id] } }, tStud);
+      return { heads: __fyx.heads(rep).filter(h => /Cochran|McNemar|Difference/.test(h)), bad, bad2, errors: __fyx.errors(rep) }; })()''')
+    check('0/1 numeric responses: the binary tests and the paired t test', r['heads'], ["Cochran's Q Test", 'McNemar Tests', 'Difference: v-u'])
+    check('yes/no with 0/1 is three values: refused at launch', isinstance(r['bad'], str) and 'binary' in r['bad'], True)
+    check('an ordinal age is not binary: refused at launch', isinstance(r['bad2'], str), True)
+    check('no errors (0/1 Matched Pairs)', r['errors'], [])
+    await asyncio.sleep(0.3)
+    await shot(page, '12-binary-pairs.png')
+
+    # ---- the new options with By, and kept by a project (their column ids change on loading)
+    r = await page.ev('''(async () => { const t = __fyx.table('Clinical study'); const y = t.col('adverse events').id, x = t.col('treatment').id, m = t.col('months').id;
+      const o = {}; o[y + '~' + x + '|bm'] = true; o[y + '~' + x + '|rates'] = { exposure: m, compare: 'diff', method: 'wald', ci: 'wald', control: null };
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['adverse events'], x: ['treatment'], by: ['sex'] }, o);
+      const hs = __fyx.heads(rep);
+      const tr = t.col('response').id; const o2 = {}; o2[tr + '~' + x + '|twoProp'] = true;
+      const rep2 = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['treatment'], by: ['sex'] }, o2);
+      const rep3 = await __fyx.open('Ratings', 'matchedpairs', { y: ['t1', 't2', 't3'], by: ['u'] }, {});
+      return { rates: hs.filter(h => h === 'Compare Rates').length, bm: hs.filter(h => h.startsWith('Brunner')).length, diffs: hs.filter(h => h === 'Rate Differences').length,
+        tp: __fyx.heads(rep2).filter(h => h === 'Two Sample Test for Proportions').length, q: __fyx.heads(rep3).filter(h => h === "Cochran's Q Test").length,
+        errors: [rep, rep2, rep3].flatMap(r => __fyx.errors(r)) }; })()''')
+    check('By: Brunner-Munzel and Compare Rates (a difference) in each group', (r['bm'], r['rates'], r['diffs']), (2, 2, 2))
+    check('By: the Two Sample Test and Cochran\'s Q in each group', (r['tp'], r['q']), (2, 2))
+    check('By: no errors', r['errors'], [])
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports.find(r => r.title === 'Oneway Analysis of adverse events By treatment' && !r.spec.roles.by);
+      const t = rep.table; const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep2 = SM.app.reports[SM.app.reports.length - 1];
+      await new Promise(res => rep2.on('done', res));
+      const h = __fyx.head('Compare Rates', rep2); const tb = h ? h.parentElement.querySelector(':scope > .sm-ob-body table.sm-rt') : null;
+      const out = { newTable: rep2.table !== t, heads: __fyx.heads(rep2).filter(h => /Brunner|Equivalence|Compare Rates/.test(h)), exposure: tb ? tb.querySelectorAll('thead th')[3].textContent : null, errors: __fyx.errors(rep2) };
+      const t2 = rep2.table; SM.app.closeReport(rep2); SM.app.closeTable(t2);   // no report left: no dialog
+      return out; })()''')
+    check('a project keeps Brunner-Munzel, its equivalence test and Compare Rates', (r['newTable'], r['heads']), (True, ['Brunner-Munzel Test (Probability of Superiority)', 'Equivalence Test (Probability of Superiority)', 'Compare Rates']))
+    check('and the exposure column of Compare Rates', r['exposure'], 'Total months')
+    check('the loaded report has no errors (new options)', r['errors'], [])
+
     # ---- several pairs, exclusion and Redo
     r = await page.ev('''(async () => { const rep = await __fyx.open('Students', 'fitybyx', { y: ['height (cm)', 'sex'], x: ['age', 'weight (kg)'] }, {});
       return { title: rep.title, pairs: __fyx.heads(rep).filter(h => / By /.test(h)), errors: __fyx.errors(rep) }; })()''')
@@ -443,6 +608,14 @@ async def main():
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.title === 'Contingency Analysis of response By treatment')))")
     await asyncio.sleep(1.2)
     await shot(page, '07-dark-contingency.png')
+    # the reports of the tests beyond JMP, in the dark theme
+    for title_, outline_, name_ in (('Oneway Analysis of adverse events By treatment', 'Compare Rates', '13-dark-rates.png'), ('Matched Pairs (every pair)', "Cochran's Q Test", '14-dark-binary.png')):
+        await page.ev(f"SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.title === {json.dumps(title_)})))")
+        await asyncio.sleep(1.0)
+        await page.ev(f"__fyx.scrollTo({json.dumps(outline_)}, SM.app.reports.find(r => r.title === {json.dumps(title_)}))")
+        await shot(page, name_)
+    r = await page.ev("SM.app.reports.filter(r => ['Oneway Analysis of adverse events By treatment', 'Matched Pairs (every pair)'].includes(r.title)).map(r => r.body.querySelectorAll('.sm-ob-error').length)")
+    check('dark theme: the new reports redraw without errors', (len(r) >= 2, all(v == 0 for v in r)), (True, True))
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
     check('no horizontal page scroll at phone width (Contingency)', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
@@ -455,6 +628,11 @@ async def main():
     check('at phone width the graphs fit the report', all(w <= r['bw'] for w in r['widths']), True)
     check('and the page does not scroll sideways', r['scroll'], True)
     await shot(page, '08-phone.png')
+    for title_, name_ in (('Matched Pairs (every pair)', '15-phone-binary.png'), ('Oneway Analysis of adverse events By treatment', '16-phone-rates.png')):
+        await page.ev(f"SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.title === {json.dumps(title_)})))")
+        await asyncio.sleep(0.8)
+        check(f'no horizontal page scroll at phone width ({title_})', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+        await shot(page, name_)
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 

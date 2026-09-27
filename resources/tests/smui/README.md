@@ -17,19 +17,27 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6):
 
 | Suite | Checks | Against |
 |---|---|---|
-| `test_distribution.py` | 55 | scipy/statsmodels directly, JMP's quantile definition |
+| `test_distribution.py` | 119 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals |
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
-| `test_fit_y_by_x.py` | 263 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH |
-| `test_fit_model.py` | 264 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas |
-| `test_multivariate.py` | 176 | statsmodels/scipy, brute force, SAS's iris CCC |
-| `test_timeseries.py` | 189 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits |
+| `test_fit_y_by_x.py` | 427 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover |
+| `test_fit_model.py` | 707 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange |
+| `test_multivariate.py` | 213 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation |
+| `test_timeseries.py` | 376 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
 | `test_survival.py` | 145 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
 | `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
 | `test_quality.py` | 153 | Montgomery's control-chart constants, formulas |
 | `test_doe.py` | 159 | design properties, statsmodels power, textbook values |
-| `test_graph.py` | 132 | statsmodels/scipy smoothers, fits, densities, interpolation |
+| `test_graph.py` | 266 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
 | `test_tables.py` | 129 | pandas group-by, merge, melt/pivot, JMP quantiles |
+| `test_multits.py` | 167 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
+| `test_counts.py` | 432 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
+| `test_meta.py` | 139 | statsmodels directly, the textbook formulas, a small example worked by hand |
+| `test_treatment.py` | 294 | statsmodels directly, the estimators' formulas, analytic sandwiches, simulated truth |
+| `test_gam.py` | 190 | statsmodels GLMGam directly, the penalty search by hand, known true functions |
+| `test_mediation.py` | 158 | statsmodels' Mediation called directly with the same seeds, known truth |
+| `test_mi.py` | 120 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
+| `test_copula.py` | 251 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
 | `test-formula.js` | 326 | the parser, missing values, every function, no escape to JS |
 
 Every suite that shows Python code also runs that code on a CSV export of
@@ -136,8 +144,10 @@ SM.commands.register({ menu: 'Tables', label: 'Sort…', order: 30, action(app) 
 
 A launch dialog's own part (`launch.extra(api, spec)` returning `{ el,
 read(), recall(saved) }`) gets `api.selectedColumns()`, `api.state` (the
-roles), `api.onRolesChange(fn)`, `api.showRole(key, on)` and
-`api.message(text, 'info')`. What `read()` returns beside `roles` and
+roles), `api.onRolesChange(fn)`, `api.showRole(key, on)` (a hidden role
+takes no columns and is not checked), `api.setRequired(key, on)` and
+`api.message(text, 'info')`; `position: 'top'` puts the part above the
+roles, and `recall(saved)` runs before the roles are refilled. What `read()` returns beside `roles` and
 `options` is kept in the spec; column ids anywhere in it are remapped when
 a project is opened.
 
@@ -154,13 +164,21 @@ it builds outlines into the report:
   `ctx.check(label, key, scope, default)` makes a toggling item.
 - `ctx.opt(key, default, scope)` / `ctx.set(key, value, scope)` are the
   report's options (scope: a column id for per-column options); `set()`
-  redraws the report. Options are saved with projects and kept by Redo.
+  redraws the report, and `set(key, value, scope, { rerun: false })` does
+  not (to set several options before one redraw). Options are saved with
+  projects and kept by Redo.
+  A scoped lookup falls back to the unscoped option of the same name (so
+  one setting can apply to every column), which means unrelated options
+  of one report need distinct names.
 - `ctx.rt(table)` a report table (p-values as `<.0001*`, sortable, right
   click to copy or make a data table; with By, Make Combined Data Table
   joins the same table of every group). A column with `hidden: true` is an
   optional one the reader can show from the right-click Columns menu (as
-  JMP's Std Beta or VIF). `ctx.kv(pairs)`, `ctx.note(text)`,
+  JMP's Std Beta or VIF); `opts.cellClass(row, column)` gives a cell its
+  own classes (a minimum marked, a colour-map cell). `ctx.kv(pairs)`, `ctx.note(text)`,
   `ctx.warn(text)`, `ctx.code(text)`, `ctx.row(...nodes)` side by side.
+  Save Python Script collects the code of every call, and what `ctx.code`
+  shows beyond that (code worked out in the page).
 - `ctx.plot(traces, layout, { width, height, title })` a themed Plotly
   graph. Give a trace `rows` and it is linked: clicking or dragging selects
   rows, selected rows are highlighted, row colours, markers, labels and
@@ -170,6 +188,11 @@ it builds outlines into the report:
   (subgroup means) an array per point (a point is selected when any of its
   rows is).
 - `ctx.saveColumn(name, { rows, values })` adds a column to the table.
+- A platform may add an example table of its own with
+  `SM.io.addExample(key, { label, about, make })`, `make()` returning an
+  `SM.Table`: simulated with `SM.util.rng(seed)`, never a real dataset
+  that is not ours. It shows in File > Examples and on the Home tab, and
+  `smui.html?example=<key>` opens it.
 - `ctx.reason` says why the report is drawn: `'redo'` (first run, Redo,
   an option changed) or `'theme'` (the same results redrawn in the other
   theme). A platform that changes the table while rendering (colours rows
@@ -177,15 +200,19 @@ it builds outlines into the report:
 - `scattergl` traces fall back to `scatter` where WebGL is missing
   (`SM.report.hasWebGL()`). Text from a table that goes into Plotly's
   text, hovertext or labels goes through `SM.report.plotlyText()`, which
-  escapes the little HTML Plotly reads. `ctx.plot(..., { rowColors: false })`
+  escapes the little HTML Plotly reads and the `%{` a hovertemplate would
+  take for a placeholder. `ctx.plot(..., { rowColors: false })`
   for a graph coloured by a column of its own; `rowsScale` may be one
   number per bar. Mark builder controls `data-noexport` to keep them out
-  of Save Report as HTML.
+  of Save Report as HTML. Graphs are drawn no wider than the room there is
+  (their parent's content box) and follow the window as it narrows; `fit: false` keeps a graph's width
+  (it then scrolls inside the report).
 - Everything is built with `SM.util.el()` (text nodes only). Never put
   table-derived text into `innerHTML`: a table from a file is untrusted.
 
 A platform's report must work in both themes (use the CSS variables of
-kvot.css, and colours that read on both), at phone width, and with By.
+kvot.css, and colours that read on both; `SM.report.BASE`, the points'
+colour, is a lighter blue in the dark theme), at phone width, and with By.
 
 ## What the core test checks
 

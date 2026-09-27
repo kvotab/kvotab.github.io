@@ -1,0 +1,51 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > MULTIVARIATE METHODS > COPULAS (smui-p-copula.js)
+   The launch dialog's part (the copulas to fit and how), the marked lines
+   of the report tables, and the joint-probability calculator. Colours are
+   kvot.css's tokens, so both themes read. Class prefix sm-cop-.
+   ========================================================================== */
+
+/* ---- the launch dialog: families, rotations, estimation, margins ------------- */
+.sm-cop-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-cop-launch h4 { margin: 0 0 6px; }
+.sm-cop-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px 12px; margin: 0 0 8px; }
+.sm-cop-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); cursor: pointer; }
+.sm-cop-check input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-cop-check.is-off { color: var(--text-muted); }
+.sm-cop-check.is-off span { text-decoration: line-through; text-decoration-color: var(--text-muted); }
+.sm-cop-opts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.sm-cop-opt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.sm-cop-opt > span { color: var(--text-secondary); }
+.sm-cop-opt select {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; max-width: 100%;
+}
+.sm-cop-opt select:disabled { color: var(--text-muted); }
+.sm-cop-hint { margin: 7px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+
+/* ---- report tables: the copula shown in the graphs, and the data's line ------- */
+.sm-rt td.sm-cop-shown { font-weight: 600; }
+.sm-rt tr:has(td.sm-cop-shown) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-rt td.sm-cop-datarow { font-style: italic; color: var(--text-secondary); }
+
+/* ---- the joint-probability calculator ----------------------------------------- */
+.sm-cop-calc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 2px 0 8px; font-size: 12px; }
+.sm-cop-calc label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.sm-cop-calc label span { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-cop-input {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; width: 7.5em;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.sm-cop-input:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+
+/* ---- margins: one outline per column, stacked ------------------------------- */
+.sm-cop-margins { display: flex; flex-direction: column; gap: 4px; }
+
+@media (max-width: 560px) {
+  .sm-cop-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sm-cop-calc label span { max-width: 11em; }
+}
+
+/* ---- a wide table scrolls by itself on a narrow screen ------------------------ */
+.sm-cop-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-cop-scroll > table.sm-rt { margin-bottom: 8px; }

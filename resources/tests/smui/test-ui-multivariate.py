@@ -8,8 +8,9 @@ opens with its options on and without an error; the numbers shown agree
 with numbers computed here in the page (correlations, eigenvalues, counts);
 graphs link to the table both ways; saved columns land in the table; row
 colours follow the clusters; By gives one report per level; Response
-Screening opens Fit Y by X when that platform is loaded; the dark theme and
-phone width draw.
+Screening opens Fit Y by X when that platform is loaded; the distance
+correlations agree with the doubly centred distances computed in the page;
+the dark theme and phone width draw.
 
 Start a server on the repository root and headless Chrome on
 SMUI_HTTP_PORT and SMUI_CDP_PORT (see README.md), then
@@ -92,7 +93,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "multivariate").map(f => f.error)')
     check('the multivariate module imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => /^(multivariate|pca|factor|discriminant|hcluster|kmeans|respscreen|outliers|mca|mds)\\./.test(n)).length')
-    check('the 19 backend names are there', names, 19)
+    check('the 20 backend names are there', names, 20)
     check('no script errors at load', page.errors, [])
     menus = await page.ev('''(() => {
       const sub = (path) => { const top = SM.app.menuItems('Analyze'); const m = top.find(i => i.label === path); if (!m) return null; return (typeof m.submenu === 'function' ? m.submenu() : m.submenu).filter(i => i.label).map(i => i.label); };
@@ -107,12 +108,12 @@ async def main():
     # ---- Multivariate: every option ------------------------------------------------------
     opts = {'corrProb': True, 'ci': True, 'inverse': True, 'partial': True, 'partialP': True, 'cov': True, 'pairwise': True, 'simpleUni': True, 'simpleMulti': True,
             'np:spearman': True, 'np:kendall': True, 'np:hoeffding': True, 'cmCorr': True, 'cmP': True, 'cmCluster': True, 'mahal': True, 'jack': True, 't2': True,
-            'alpha:raw': True, 'alpha:std': True, 'spCorr': True, 'spHist': True, 'cmCells': True}
+            'alpha:raw': True, 'alpha:std': True, 'spCorr': True, 'spHist': True, 'cmCells': True, 'dcor': True}
     r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, opts), timeout=240)
     check('Multivariate: no errors', r['errors'], [])
     want = ['Correlations', 'Correlation Probability', 'CI of Correlation', 'Inverse Corr', 'Partial Corr', 'Covariance Matrix', 'Pairwise Correlations', 'Simple Statistics',
             "Nonparametric: Spearman's ρ", "Nonparametric: Kendall's τ", "Nonparametric: Hoeffding's D", 'Scatterplot Matrix', 'Color Map On Correlations', 'Color Map On p-values',
-            'Cluster the Correlations', 'Mahalanobis Distances', 'Jackknife Distances', 'T²', "Cronbach's α", 'Standardized α']
+            'Cluster the Correlations', 'Mahalanobis Distances', 'Jackknife Distances', 'T²', "Cronbach's α", 'Standardized α', 'Distance Correlations']
     check('Multivariate: the outlines of every option', [o for o in want if o not in r['outlines']], [])
     corr = await page.ev(table_under_js('Correlations'))
     js = await page.ev('''(() => {
@@ -125,6 +126,24 @@ async def main():
     })()''')
     check('Multivariate: r(a, d) as computed in the page, row-wise', corr[1][4], js)
     check('Multivariate: row-wise uses 149 rows', 'Variance estimation: Row-wise. 149 observations; 1 row with a missing value left out.' in await page.ev(f'{LAST}.content.textContent'), True)
+    # Distance Correlations: dCor of a and d by the doubly centred distances, computed in the page
+    js = await page.ev('''(() => {
+      const t = SM.app.current; const x = t.col('a').values, y = t.col('d').values; const n = x.length;
+      const centred = (v) => { const D = v.map((p) => v.map((q) => Math.abs(p - q))); const rm = D.map((r) => r.reduce((s, z) => s + z, 0) / n); const gm = rm.reduce((s, z) => s + z, 0) / n;
+        return D.map((r, i) => r.map((z, j) => z - rm[i] - rm[j] + gm)); };
+      const A = centred(x), B = centred(y); let ab = 0, aa = 0, bb = 0;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { ab += A[i][j] * B[i][j]; aa += A[i][j] ** 2; bb += B[i][j] ** 2; }
+      return Math.sqrt(ab / Math.sqrt(aa * bb));
+    })()''')
+    dm = await page.ev(table_under_js('Distance Correlations'))
+    dp = await page.ev(table_under_js('Distance Correlations', 1))
+    row_ad = [x for x in dp[1:] if x[0] == 'd' and x[1] == 'a'][0]
+    check.near('Distance Correlations: dCor(a, d) as computed in the page', float(row_ad[2]), js, 2e-4)
+    check('the dCor matrix holds it', dm[1][4], row_ad[2])
+    check('the pairwise table: ten pairs, a p-value and where it comes from', (len(dp) - 1, dp[0][5:8]), (10, ['n·dCov²', 'Prob>n·dCov²', 'p-Value from']))
+    check('150 rows: permutation p-values (or statsmodels\' asymptotic fallback)', all(x[7].startswith(('permutation (B = 233)', 'asymptotic: no permutation of 233')) for x in dp[1:]), True)
+    dcells = await page.ev(f'''(() => {{ const h = [...{LAST}.content.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Distance Correlations'); return h.parentElement.querySelectorAll('td.mv-cm').length; }})()''')
+    check('the dCor matrix is colour mapped', dcells, 25)
     cells = await page.ev(f'[...{LAST}.content.querySelectorAll("td.mv-cm")].length')
     check('Multivariate: coloured correlation cells', cells >= 25, True)
     bars = await page.ev(f'[...{LAST}.content.querySelectorAll(".mv-bar")].length')
@@ -369,7 +388,7 @@ async def main():
 
     # ---- By, for every platform ------------------------------------------------------------------------------------------
     await page.ev('SM.app.current.setType("f", { modelingType: "nominal" })')
-    by_specs = [('multivariate', {'y': ['a', 'c', 'e']}, {'mahal': True, 'alpha:raw': True}), ('pca', {'y': ['a', 'c', 'e']}, {}),
+    by_specs = [('multivariate', {'y': ['a', 'c', 'e']}, {'mahal': True, 'alpha:raw': True, 'dcor': True}), ('pca', {'y': ['a', 'c', 'e']}, {}),
                 ('factor', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fits': [{'method': 'ml', 'prior': 'smc', 'k': 1, 'rotation': 'none'}]}),
                 ('discriminant', {'y': ['a', 'c'], 'x': ['grp']}, {}), ('hcluster', {'y': ['u', 'v']}, {}), ('kmeans', {'y': ['u', 'v']}, {'k': 3}),
                 ('respscreen', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'mro': True}),
@@ -391,7 +410,7 @@ async def main():
     check('exclude rows and Redo: 144 observations', r, True)
 
     # ---- dark theme, phone width ------------------------------------------------------------------------------------
-    r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'cmCells': True, 'pairwise': True, 'mahal': True}), timeout=240)
+    r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'cmCells': True, 'pairwise': True, 'mahal': True, 'dcor': True}), timeout=240)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev(f'new Promise(res => {LAST}.on("done", res))')
     await asyncio.sleep(1.2)

@@ -1,0 +1,27 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > MULTIVARIATE TIME SERIES
+   The styles of smui-p-multits.js: the smallest criterion of each column
+   of the Lag Order Selection table, the lag (or the cointegration rank) in
+   use, the Johansen statistics beyond their critical values, and a wide
+   table that scrolls on its own at phone width. Colours are kvot.css
+   tokens or pairs that read in both themes; class prefix mts-.
+   ========================================================================== */
+
+/* Lag Order Selection: * after the smallest AIC, BIC, HQIC and FPE */
+.sm-rt.mts-lags td.mts-min { font-weight: 700; color: var(--text-primary); }
+.sm-rt.mts-lags td.mts-min::after { content: '*'; display: inline-block; width: 0; margin-right: -0.1em; padding-left: 1px; color: var(--color-kvot-accent); }
+
+/* the lag the VAR uses, the rank the VECM uses */
+.sm-rt tr.mts-chosen > td { background: color-mix(in oklab, var(--sm-sel-bg) 70%, transparent); }
+.sm-rt tr.mts-chosen > td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+
+/* Johansen: a statistic beyond its critical value rejects that rank */
+.sm-rt.mts-joh td.mts-reject { font-weight: 700; color: #c8322b; }
+:root[data-theme="dark"] .sm-rt.mts-joh td.mts-reject { color: #ff8a7a; }
+
+/* a wide table scrolls by itself, not the page */
+.mts-scroll { max-width: 100%; overflow-x: auto; }
+
+@media (max-width: 760px) {
+  .sm-rt.mts-joh th, .sm-rt.mts-joh td { padding-left: 6px; padding-right: 6px; }
+}

@@ -1,0 +1,40 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SCREENING > MULTIPLE IMPUTATION (smui-p-mi.js)
+   The launch dialog's analysis model and imputer, and the report's
+   summary, tables and notes. Colours are kvot.css's tokens, so both
+   themes read.
+   ========================================================================== */
+
+/* ---- the launch dialog ---------------------------------------------------------- */
+.sm-mi-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-mi-launch h4 { margin: 10px 0 5px; }
+.sm-mi-launch h4:first-child { margin-top: 0; }
+.sm-mi-effbox { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.sm-mi-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.sm-mi-effects { min-height: 48px; max-height: 128px; }
+.sm-mi-hint { margin: 4px 0 0; font-size: 11.5px; color: var(--text-secondary); line-height: 1.45; }
+.sm-mi-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.sm-mi-opt { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-primary); }
+.sm-mi-opt > span { color: var(--text-secondary); }
+.sm-mi-opt select, .sm-mi-opt input[type="text"] {
+  max-width: min(260px, 60vw);
+  padding: 2px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ---- the report ------------------------------------------------------------------------ */
+.sm-mi-summary { margin: 0 0 4px; }
+.sm-mi-summary .sm-kv td:last-child { text-align: left; white-space: normal; max-width: 560px; }
+.sm-mi-table { min-width: 0; max-width: 100%; overflow-x: auto; }
+.sm-mi-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-mi-progress { font-style: italic; }
+.sm-mi-about { max-width: 760px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
+.sm-mi-about p { margin: 0 0 7px; }
+@media (max-width: 760px) {
+  .sm-mi-summary .sm-kv td:first-child { white-space: normal; }
+}

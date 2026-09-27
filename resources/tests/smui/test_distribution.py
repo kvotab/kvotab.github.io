@@ -2,7 +2,10 @@
 """Analyze > Distribution's backend (resources/py/smui/distribution.py),
 checked against scipy and statsmodels called directly, and against the
 definitions JMP documents: quantiles by (n+1)p, the normal quantile plot
-at r/(n+1), Wilson intervals for proportions.
+at r/(n+1), Wilson intervals for proportions. The other interval methods
+by their formulas and Clopper and Pearson's 5 of 20; Test Rate against
+the values statsmodels' tests record from R (DescTools PoissonCI, exactci,
+ratesci) and the classic Garwood limits.
 
     python3 resources/tests/smui/test_distribution.py
 """
@@ -134,6 +137,125 @@ lo, hi = proportion_confint(counts['a'], 83, method='wilson')
 check.near('Wilson interval', cr['levels'][0]['lower'], float(lo))
 tp = call('distribution.test_probs', table=tid, column='g', probs={'a': 1, 'b': 1, 'c': 1})
 check.near('Pearson chi-square', tp['tests'][1]['stat'], float(stats.chisquare(list(counts.values())).statistic))
+# Confidence Interval Method: statsmodels' proportion_confint, and each method by its formula
+z975 = stats.norm.ppf(0.975)
+k_, n_ = counts['a'], 83
+p_ = k_ / n_
+formula = {
+    'wilson': ((p_ + z975 ** 2 / (2 * n_)) / (1 + z975 ** 2 / n_), z975 * math.sqrt(p_ * (1 - p_) / n_ + z975 ** 2 / (4 * n_ ** 2)) / (1 + z975 ** 2 / n_)),
+    'agresti_coull': ((k_ + z975 ** 2 / 2) / (n_ + z975 ** 2), None),
+    'normal': (p_, z975 * math.sqrt(p_ * (1 - p_) / n_)),
+}
+for meth in ('wilson', 'agresti_coull', 'jeffreys', 'beta', 'normal'):
+    cm = call('distribution.categorical', table=tid, column='g', ci_method=meth)
+    lo_, hi_ = proportion_confint(counts['a'], 83, method=meth)
+    check.near(f'{meth}: = proportion_confint', cm['levels'][0]['upper'], float(hi_))
+    check('its label', cm['ci_label'], {'wilson': 'Wilson score', 'agresti_coull': 'Agresti-Coull', 'jeffreys': 'Jeffreys', 'beta': 'Clopper-Pearson (exact)', 'normal': 'Wald'}[meth])
+    if meth == 'beta':
+        check.near('Clopper-Pearson by the beta quantiles', cm['levels'][0]['lower'], float(stats.beta.ppf(0.025, k_, n_ - k_ + 1)))
+    elif meth == 'jeffreys':
+        check.near('Jeffreys: the Beta(x + ½, n − x + ½) interval', cm['levels'][0]['upper'], float(stats.beta.ppf(0.975, k_ + 0.5, n_ - k_ + 0.5)))
+    elif meth == 'agresti_coull':
+        pt = formula[meth][0]
+        check.near('Agresti-Coull by its formula', cm['levels'][0]['lower'], float(pt - z975 * math.sqrt(pt * (1 - pt) / (n_ + z975 ** 2))))
+    else:
+        c_, h_ = formula[meth]
+        check.near(f'{meth} by its formula', cm['levels'][0]['lower'], float(c_ - h_))
+# the classic 5 of 20 (Clopper and Pearson's exact interval 0.0866 to 0.4910)
+t520 = table({'r': ['yes'] * 5 + ['no'] * 15}, levels={'r': ['yes', 'no']})
+cp = call('distribution.categorical', table=t520, column='r', ci_method='beta')['levels'][0]
+check('5 of 20, Clopper-Pearson: 0.0866 to 0.4910', (round(cp['lower'], 4), round(cp['upper'], 4)), (0.0866, 0.491))
+check('an unknown method', 'error' in call('distribution.categorical', table=tid, column='g', ci_method='nope'), True)
+
+# Test Rate: 15 events in 400 (R DescTools PoissonCI and the exact test, as statsmodels' tests record them)
+tr15 = table({'k': [3.0, 4, 2, 6, 0], 'e': [100.0, 80, 70, 120, 30]})
+for meth, cim, pv, ci_ in (('exact-c', 'exact-c', 0.313026269279486, (0.0209884653319583, 0.0618505471787146)),
+                           ('score', 'score', 0.263552477282973, (0.0227264749053794, 0.0618771721463559)),
+                           ('score', 'jeff', None, (0.0219234232268444, 0.0602898619930649)),
+                           ('wald', 'wald', None, (0.0185227303217751, 0.0564772696782249))):
+    rt = call('distribution.test_rate', table=tr15, column='k', rate=0.05, exposure='e', method=meth, ci_method=cim)
+    check('15 events in 400 exposure', (rt['count'], rt['exposure'], rt['units']), (15.0, 400.0, 5.0))
+    if pv is not None:
+        check.near(f'Test Rate, {meth}: p (DescTools / exactci {pv})', rt['p_two'], pv, rel=1e-12)
+    check.near(f'{cim} interval: lower ({ci_[0]})', rt['lower'], ci_[0], rel=1e-12)
+    check.near(f'{cim} interval: upper ({ci_[1]})', rt['upper'], ci_[1], rel=1e-12)
+from statsmodels.stats.rates import confint_poisson, test_poisson  # noqa: E402
+rt = call('distribution.test_rate', table=tr15, column='k', rate=0.05, exposure='e', method='midp-c', ci_method='midp-c')
+check.near('mid-p test = test_poisson', rt['p_two'], float(test_poisson(15, 400, value=0.05, method='midp-c').pvalue))
+check.near('mid-p upper limit (R ratesci 0.0604627555786095)', rt['upper'], 0.0604627555786095, rel=1e-5)
+# the classic exact (Garwood) limits: 10 events, 4.7954 to 18.3904; one-sided exact p P(X ≥ 10 | 5)
+t10 = table({'k': [10.0]})
+rt = call('distribution.test_rate', table=t10, column='k', rate=5, method='exact-c', ci_method='exact-c')
+check('Garwood: 10 events, 4.7954 to 18.3904', (round(rt['lower'], 4), round(rt['upper'], 4)), (4.7954, 18.3904))
+check.near('exact one-sided p = P(X ≥ 10) for a mean of 5 (R poisson.test 0.03182806)', rt['p_greater'], float(stats.poisson.sf(9, 5)))
+check.near('the same, as R prints it', rt['p_greater'], 0.03182806, abs_=5e-9)
+check.near('exact two-sided p doubles the smaller tail', rt['p_two'], 2 * float(stats.poisson.sf(9, 5)))
+# Freq counts units; the Pearson dispersion without an exposure is the index of dispersion s²/mean
+kk = np.array([0, 1, 2, 3, 1, 0, 2, 5, 1, 1, 4, 0], float)
+fq = np.array([1, 2, 1, 1, 3, 1, 1, 1, 2, 1, 1, 2], float)
+tfr = table({'k': kk, 'f': fq})
+rt = call('distribution.test_rate', table=tfr, column='k', rate=1.5, freq='f', method='score', ci_method='score')
+ke = np.repeat(kk, fq.astype(int))
+check('Freq: the count and units of the repeated rows', (rt['count'], rt['exposure'], rt['units']), (float(ke.sum()), float(len(ke)), float(len(ke))))
+check.near('Freq: the score test of the repeated rows', rt['p_two'], float(test_poisson(ke.sum(), len(ke), value=1.5, method='score').pvalue))
+check.near('the dispersion = variance/mean of the repeated counts', rt['dispersion'], float(np.var(ke, ddof=1) / np.mean(ke)))
+tz0 = table({'k': [0.0, 0, 0], 'e': [4.0, 4, 4]})
+rt = call('distribution.test_rate', table=tz0, column='k', rate=0.2, exposure='e', method='exact-c', ci_method='midp-c')
+check('no events: the mid-p lower limit is 0 (statsmodels returns the upper twice)', (rt['lower'], round(rt['upper'], 6), len(rt['notes']) > 0), (0.0, round(math.log(20) / 12, 6), True))
+check('Test Rate needs counts', 'error' in call('distribution.test_rate', table=tid, column='x', rate=1), True)
+check('and a positive rate', 'error' in call('distribution.test_rate', table=t10, column='k', rate=0), True)
+te0 = table({'k': [1.0, 2, 3], 'e': [1.0, 0, 2]})
+rt = call('distribution.test_rate', table=te0, column='k', rate=1, exposure='e')
+check('a row without a positive exposure is left out, said so', (rt['count'], rt['exposure'], len(rt['notes'])), (4.0, 3.0, 1))
+# the Poisson fit's exact interval of λ
+kf = call('distribution.fit', table=table({'k': kk}), column='k', dist='poisson')
+lo_, hi_ = confint_poisson(kk.sum(), len(kk), method='exact-c')
+check.near('Fitted Poisson: the exact interval of λ = confint_poisson(exact-c)', kf['exact']['upper'], float(hi_))
+
+# the code under these results runs on a CSV export and gives the report's numbers
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+import warnings  # noqa: E402
+import pandas as pd  # noqa: E402
+
+
+def code_ns(columns, code, label):
+    with tempfile.TemporaryDirectory() as tmp:
+        pd.DataFrame(columns).to_csv(os.path.join(tmp, 'data.csv'), index=False)
+        here = os.getcwd()
+        os.chdir(tmp)
+        ns = {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                exec(compile(code, label, 'exec'), ns)
+        except Exception as e:
+            ns['__error__'] = f'{type(e).__name__}: {e}'
+        finally:
+            os.chdir(here)
+    check(f'the code of {label} runs', ns.get('__error__', True), True)
+    return ns
+
+
+for label_, cols_, tbl_, kw in (('Test Rate with an exposure', {'k': [3.0, 4, 2, 6, 0], 'e': [100.0, 80, 70, 120, 30]}, tr15, {'exposure': 'e', 'method': 'score', 'ci_method': 'jeff', 'rate': 0.05}),
+                                ('Test Rate with Freq', {'k': kk, 'f': fq}, tfr, {'freq': 'f', 'rate': 1.5}),
+                                ('Test Rate of rows', {'k': kk}, table({'k': kk}), {'rate': 1.5, 'method': 'midp-c'})):
+    rt = call('distribution.test_rate', table=tbl_, column='k', **kw)
+    ns = code_ns(cols_, rt['code'], label_)
+    if 'count' in ns:
+        check(f'{label_}: the count and exposure', (float(ns['count']), float(ns['exposure'])), (rt['count'], rt['exposure']))
+        check.near(f'{label_}: the interval', float(confint_poisson(ns['count'], ns['exposure'], method=rt['ci_method'])[1]), rt['upper'])
+        check.near(f'{label_}: the p-value', float(test_poisson(ns['count'], ns['exposure'], value=kw['rate'], method=rt['method']).pvalue), rt['p_two'])
+for label_, kw in (('Frequencies, Clopper-Pearson', {'ci_method': 'beta'}), ('Frequencies with a weight', {'ci_method': 'wilson', 'weight': 'w'})):
+    cm = call('distribution.categorical', table=tid, column='g', **kw)
+    ns = code_ns({'x': x, 'g': g, 'w': w}, cm['code'], label_)
+    if 'counts' in ns:
+        check(f'{label_}: the counts', [round(float(v), 9) for v in ns['counts'].to_numpy()], [round(l_['count'], 9) for l_ in cm['levels']])
+        check.near(f'{label_}: the first interval', float(proportion_confint(ns['counts'].iloc[0], ns['counts'].sum(), method=cm['ci_method'])[1]), cm['levels'][0]['upper'])
+ns = code_ns({'k': kk}, kf['code'], 'Fitted Poisson')
+
 # rows subset and the error path
 check('rows subset (row 5 is missing)', call('distribution.continuous', table=tid, column='x', rows=list(range(10)))['moments']['n'], 9.0)
 check('no values', 'error' in call('distribution.continuous', table=tid, column='x', rows=[5]), True)

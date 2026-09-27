@@ -30,7 +30,9 @@
   const { el, svg, fmt, fmtP, fmtPct, uid } = SM.util;
 
   const SYMBOLS = ['circle', 'square', 'diamond', 'triangle-up', 'triangle-down', 'cross', 'x', 'star', 'hexagon', 'pentagon', 'circle-open', 'square-open'];
-  const BASE = '#2f6690';
+  // The points' colour. #2f6690 is 2.3:1 on the dark theme's panels, so the
+  // dark theme takes the lighter blue Graph Builder uses there (5.2:1).
+  const baseColor = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? '#6fa3d6' : '#2f6690');
   const BAR = '#8fa9c2';
   const SELECTED = '#d9822b';
 
@@ -122,6 +124,9 @@
           if (f === 'text' || c.left) td.className = 'sm-l';
           if (f === 'p' && typeof v === 'number' && v < alpha) td.classList.add('p-sig');
           if (c.title) td.title = c.title;
+          // cellClass(row, column) -> class names for one cell (a minimum
+          // marked, a colour-map cell); kept when columns are shown or sorted.
+          if (opts.cellClass) { const k = opts.cellClass(r, c); if (k) td.classList.add(...String(k).split(/\s+/).filter(Boolean)); }
           tr.append(td);
         }
         if (opts.onRow) { tr.style.cursor = 'pointer'; tr.addEventListener('click', (ev) => opts.onRow(r, ev)); }
@@ -320,10 +325,21 @@
 
   /* Plotly reads a little HTML in its text (<b>, <br>, <a href>): a value
      from a table goes in with &, < and > escaped, and shows as typed. */
-  const plotlyText = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Table text in Plotly: its tags and entities, and a %{ that a hovertemplate
+  // would take for a placeholder (&#37; still shows as %).
+  const plotlyText = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/%\{/g, '&#37;{');
 
   // scattergl needs WebGL; without it (a headless browser, a locked-down
   // machine) Plotly would draw a notice instead of the graph.
+  // The width a plot can take: its parent's content box (clientWidth counts
+  // the padding, and an outline body has 21 px of it on the left).
+  function roomFor(box) {
+    const p = box.parentElement;
+    if (!p || !p.clientWidth) return 0;
+    const cs = getComputedStyle(p);
+    return Math.max(0, Math.floor(p.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)));
+  }
+
   let webgl = null;
   function hasWebGL() {
     if (webgl == null) {
@@ -342,6 +358,7 @@
       // Builder's Color zone), where the rows' colours would fight it.
       this.rowColors = opts.rowColors !== false;
       this.width = opts.width || 420;
+      this.ownWidth = this.width;
       this.height = opts.height || 280;
       this.userLayout = layout;
       this.rows = [];
@@ -365,7 +382,7 @@
           t.unselected = t.unselected || { marker: { opacity: 0.35 } };
         }
         if (this.kinds[i] === 'points' && (t.type === 'scatter' || t.type === 'scattergl' || t.type == null)) {
-          this.base[i] = { x: t.x ? t.x.slice() : null, y: t.y ? t.y.slice() : null, color: (t.marker && t.marker.color) || BASE, symbol: (t.marker && t.marker.symbol) || 'circle' };
+          this.base[i] = { x: t.x ? t.x.slice() : null, y: t.y ? t.y.slice() : null, color: (t.marker && t.marker.color) || baseColor(), symbol: (t.marker && t.marker.symbol) || 'circle' };
           if (!t.hovertemplate && !t.hovertext) {
             const lab = this.table ? this.table.labelColumn() : null;
             t.hovertext = rows.map((r) => `row ${r + 1}${lab && lab.values[r] != null ? `: ${plotlyText(lab.values[r])}` : ''}`);
@@ -374,7 +391,7 @@
             t.hovertext = t.text;
             delete t.text;
           }
-          t.marker = { color: BASE, size: 6, ...t.marker };
+          t.marker = { color: baseColor(), size: 6, ...t.marker };
           t.selected = t.selected || { marker: { color: SELECTED, opacity: 1 } };
           t.unselected = t.unselected || { marker: { opacity: 0.28 } };
         }
@@ -431,6 +448,11 @@
       if (!this.box.isConnected || this.box.offsetParent === null) return;
       this.drawing = true;
       if (io) io.unobserve(this.box);
+      // Drawn no wider than the room there is (a phone, a narrow window),
+      // unless the platform says fit: false (a forest plot whose text columns
+      // must keep their width scrolls instead).
+      const room = this.opts.fit !== false ? roomFor(this.box) : 0;
+      if (room && room < this.width) { this.width = Math.max(240, room); this.box.style.width = `${this.width}px`; }
       const layout = themedLayout(this.userLayout, this.width, this.height);
       try {
         await Plotly.newPlot(this.box, this.traces, layout, { ...CONFIG, ...(this.opts.config || {}), toImageButtonOptions: { ...CONFIG.toImageButtonOptions, filename: (this.opts.title || 'plot').replace(/[^\w.-]+/g, '_') } });
@@ -753,6 +775,13 @@
       this.el.append(this.bar, this.body);
       this._buildBar();
       this._refilter = SM.util.debounce(() => this.run(), 160);
+      // When the window (or the side panel) changes the room, the graphs are
+      // made narrower, never wider than they were drawn.
+      if (typeof ResizeObserver !== 'undefined') {
+        const fit = SM.util.debounce(() => this.fitPlots(), 120);
+        this._ro = new ResizeObserver(fit);
+        this._ro.observe(this.body);
+      }
       if (this.spec.filter) requestAnimationFrame(() => this._renderFilter());
       if (this.spec.switcher) requestAnimationFrame(() => this._renderSwitcher());
       // A report may have no table (DOE > Sample Size and Power). Not
@@ -1021,8 +1050,22 @@
 
     retheme() { for (const p of this.plots) p.retheme(); }
 
+    fitPlots() {
+      for (const p of this.plots) {
+        if (!p.drawn || !p.box.isConnected || p.opts.fit === false) continue;
+        const room = p.box.parentElement ? roomFor(p.box) : p.ownWidth;
+        if (!room) continue;
+        const w = Math.max(240, Math.min(p.ownWidth, room));
+        if (Math.abs(w - p.width) < 4) continue;
+        p.width = w;
+        p.box.style.width = `${w}px`;
+        try { Plotly.relayout(p.box, { width: w }); } catch (e) { /* a graph being replaced */ }
+      }
+    }
+
     close() {
       this.seq++;
+      if (this._ro) this._ro.disconnect();
       for (const f of this._unsub) f();
       for (const p of this.plots) p.purge();
       this.plots = [];
@@ -1107,7 +1150,7 @@
       const all = this.table && this.rows.length === this.table.nrows;
       const body = { rows: all ? null : this.rows, ...payload };
       const { rows, ...rest } = body;
-      const key = `${fn}\u0001${this.table ? this.table.version : 0}\u0001${hashRows(rows)}\u0001${JSON.stringify(rest)}`;
+      const key = `${fn}\u0001${this.table ? (this.table.dataVersion ?? this.table.version) : 0}\u0001${hashRows(rows)}\u0001${JSON.stringify(rest)}`;
       let r = this.report.cache.get(key);
       if (!r) {
         r = SM.engine.call(fn, this.table ? body : rest, this.table);
@@ -1154,7 +1197,12 @@
       return tbl;
     }
     kv(pairs, opts = {}) { return kv(pairs, { alpha: this.alpha, ...opts }); }
-    code(text) { return code(text, { open: !!this.spec.options.showCode }); }
+    // Code a platform shows that no call returned (worked out in the page)
+    // goes into Save Python Script too; the calls' own code is there already.
+    code(text) {
+      if (text) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
+      return code(text, { open: !!this.spec.options.showCode });
+    }
     note(text) { return note(text); }
     warn(text) { return warn(text); }
     error(e) { return error(e); }
@@ -1211,5 +1259,5 @@
     new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, BASE, BAR, merge });
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

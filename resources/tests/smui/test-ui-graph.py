@@ -5,12 +5,18 @@ Graph Builder opens without a launch dialog; columns reach its zones by a
 real drag and drop (from the page's Columns panel and from the builder's own
 list), by click-to-add and from the keyboard; elements come from the palette
 and their properties change the graph at once; bars, boxes, cells, slices and
-points are linked to the rows both ways; Undo, Done, Redo, a saved project
-and an edited title keep the state; row states apply; it stays quick with
-10,000 rows. Then every other Graph platform, checked against numbers
-computed in the page: Scatterplot Matrix, Scatterplot 3D, Contour Plot,
-Surface Plot, Bubble Plot, Parallel Plot, Cell Plot, Ternary Plot, and the
-legacy Chart and Overlay Plot. The dark theme and phone width at the end.
+points are linked to the rows both ways; statsmodels' Bean (a beanplot's
+violins, beans linked to their rows, split for two groups); Undo, Done,
+Redo, a saved project and an edited title keep the state; row states apply;
+it stays quick with 10,000 rows. Then every other Graph platform, checked
+against numbers computed in the page: Scatterplot Matrix, Scatterplot 3D,
+Contour Plot, Surface Plot, Bubble Plot, Parallel Plot, Cell Plot, Ternary
+Plot, Treemap, the legacy Chart and Overlay Plot, and the Functional Data
+Plot (its launch dialog's two data formats, band depths against their
+definition, fboxplot's regions and outliers, curves linked by curve, Select
+Outliers, Save Columns, the HDR boxplot and its score plot, the rainbow
+plot, stacked and interpolated curves, By, the example). The dark theme and
+phone width at the end.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -167,6 +173,46 @@ MAKE = '''(() => {
 })()'''
 
 
+# A seeded table of 40 curves at 16 points (t0 ... t15), without ties; row 5 much higher, row 11 of another shape.
+FD_MAKE = '''(() => {
+  const R = SM.util.rng('functional tests'); const n = 40, p = 16;
+  const cols = [...Array(p)].map(() => []), name = [], grp = [];
+  for (let i = 0; i < n; i++) {
+    const level = R.normal(10, 1), amp = R.normal(3, 0.4), ph = R.normal(0, 0.3);
+    let e = 0;
+    for (let j = 0; j < p; j++) { e = 0.6 * e + R.normal(0, 0.2); let v = level + amp * Math.sin(2 * Math.PI * j / p + ph) + e; if (i === 5) v += 6; if (i === 11) v = 10 + 3 * Math.sin(4 * Math.PI * j / p); cols[j].push(v); }
+    name.push(`C${String(i + 1).padStart(2, '0')}`); grp.push(i % 2 ? 'B' : 'A');
+  }
+  const t = new SM.Table({ name: 'FD test', source: 'simulated', columns: [{ name: 'name', dataType: 'character', values: name }, { name: 'grp', dataType: 'character', values: grp }, ...cols.map((v, j) => ({ name: 't' + j, values: v }))] });
+  SM.app.addTable(t);
+  return [t.nrows, t.columns.length - 1];
+})()'''
+FD_HELPERS = '''
+// The modified band depth from its definition: the share of each band between two curves that holds the curve, averaged over the points.
+window.mbdRef = (Y) => { const n = Y.length, p = Y[0].length, C2 = (k) => k * (k - 1) / 2; const out = new Array(n).fill(0);
+  for (let t = 0; t < p; t++) for (let i = 0; i < n; i++) { let b = 0, a = 0; for (let j = 0; j < n; j++) { if (j === i) continue; if (Y[j][t] < Y[i][t]) b++; else if (Y[j][t] > Y[i][t]) a++; } out[i] += C2(n - 1) - C2(b) - C2(a); }
+  return out.map((s) => (s / p + (n - 1)) / C2(n)); };
+// What a Functional Data Plot report computed, for its first By group.
+window.fdState = (rep, i) => SM.platforms.get('functional').state(rep, i || 0);
+'''
+# The same curves stacked (id, x, y), the rows shuffled.
+FD_LONG = '''(() => {
+  const w = SM.app.tables.find(t => t.name === 'FD test'); const R = SM.util.rng('shuffle');
+  const rows = [];
+  for (let i = 0; i < w.nrows; i++) for (let j = 0; j < 16; j++) rows.push([w.col('name').values[i], j, w.col('t' + j).values[i]]);
+  for (let k = rows.length - 1; k > 0; k--) { const q = Math.floor(R.u() * (k + 1)); [rows[k], rows[q]] = [rows[q], rows[k]]; }
+  const t = new SM.Table({ name: 'FD long', columns: [{ name: 'id', dataType: 'character', values: rows.map(r => r[0]) }, { name: 'x', values: rows.map(r => r[1]) }, { name: 'y', values: rows.map(r => r[2]) }] });
+  SM.app.addTable(t); return t.nrows;
+})()'''
+# Stacked curves measured at different X: 20 of them, 20 points each.
+FD_IRREGULAR = '''(() => {
+  const R = SM.util.rng('irregular'); const id = [], x = [], y = [];
+  for (let i = 0; i < 20; i++) { const xs = [...Array(20)].map(() => R.u() * 10).sort((a, b) => a - b); for (const v of xs) { id.push(`k${i}`); x.push(v); y.push(Math.sin(v / 2) + 0.2 * i + R.normal(0, 0.05)); } }
+  const t = new SM.Table({ name: 'FD irregular', columns: [{ name: 'id', dataType: 'character', values: id }, { name: 'x', values: x }, { name: 'y', values: y }] });
+  SM.app.addTable(t); return t.nrows;
+})()'''
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
     st = await wait_engine(page)
@@ -174,15 +220,15 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "graph").map(f => f.error)')
     check('graph.py imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => n.startsWith("graph."))')
-    check('the graph functions are registered', sorted(names), ['graph.chisq', 'graph.density', 'graph.ellipse', 'graph.fit', 'graph.interp', 'graph.kde1', 'graph.smoother', 'graph.summary'])
+    check('the graph functions are registered', sorted(names), ['graph.bean', 'graph.chisq', 'graph.density', 'graph.ellipse', 'graph.fbox', 'graph.fit', 'graph.hdr', 'graph.interp', 'graph.kde1', 'graph.smoother', 'graph.summary'])
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
     menu = await page.ev('''(() => { const items = SM.app.menuItems("Graph"); const leg = items.find(i => i.label === "Legacy");
       return { top: items.map(i => i.label || (i.separator ? "—" : "")), legacy: leg ? (typeof leg.submenu === "function" ? leg.submenu() : leg.submenu).map(i => i.label) : null }; })()''')
-    check('the Graph menu in JMP\'s order', [m for m in menu['top'] if m != '—'], ['Graph Builder', 'Scatterplot Matrix…', 'Scatterplot 3D…', 'Contour Plot…', 'Bubble Plot…', 'Parallel Plot…', 'Cell Plot…', 'Ternary Plot…', 'Treemap…', 'Surface Plot…', 'Legacy'])
+    check('the Graph menu in JMP\'s order, statsmodels\' Functional Data Plot among them', [m for m in menu['top'] if m != '—'], ['Graph Builder', 'Scatterplot Matrix…', 'Scatterplot 3D…', 'Contour Plot…', 'Bubble Plot…', 'Parallel Plot…', 'Cell Plot…', 'Ternary Plot…', 'Treemap…', 'Functional Data Plot…', 'Surface Plot…', 'Legacy'])
     check('Graph > Legacy', menu['legacy'], ['Chart…', 'Overlay Plot…'])
-    help_rows = await page.ev('["graphbuilder","scattermatrix","scatter3d","contour","surface","bubble","parallel","cellplot","ternary","treemap","chart","overlay"].filter(id => !document.getElementById("help-p-" + id))')
+    help_rows = await page.ev('["graphbuilder","scattermatrix","scatter3d","contour","surface","bubble","parallel","cellplot","ternary","treemap","functional","chart","overlay"].filter(id => !document.getElementById("help-p-" + id))')
     check('every Graph platform has its row in Help', help_rows, [])
 
     # ---- Graph Builder: no launch dialog, the builder in the report
@@ -201,7 +247,7 @@ async def main():
     check('Graph Builder opens without a launch dialog', (r['dialog'], r['title'], r['active']), (False, 'Graph Builder', True))
     check('its column list', r['cols'], ['id', 'age', 'sex', 'height (cm)', 'weight (kg)'])
     check('the drop zones', sorted(r['zones']), sorted(['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq']))
-    check('the element palette', r['palette'], ['Points', 'Smoother', 'Line of Fit', 'Ellipse', 'Contour', 'Line', 'Bar', 'Area', 'Box Plot', 'Histogram', 'Heatmap', 'Mosaic', 'Caption Box', 'Pie'])
+    check('the element palette, with statsmodels\' Bean', r['palette'], ['Points', 'Smoother', 'Line of Fit', 'Ellipse', 'Contour', 'Line', 'Bar', 'Area', 'Box Plot', 'Bean', 'Histogram', 'Heatmap', 'Mosaic', 'Caption Box', 'Pie'])
     check('an empty graph asks for columns', r['empty'], True)
     check('Graph Builder follows the table (Automatic Recalc)', r['auto'], True)
     await shot(page, 'g01-empty.png')
@@ -315,6 +361,56 @@ async def main():
     check.near('box: median', r['med'], r['w'][1], 1e-9)
     check.near('box: third quartile', r['q3'], r['w'][2], 1e-9)
     check('a click on a box selects its rows', r['n'], r['nF'])
+
+    # ---- Bean: statsmodels' beanplot, the beans linked to their rows
+    r = await page.ev('''(async () => {
+      const t = _rep.table;
+      const p = await gbSet({ x: ['age'], y: ['height (cm)'] }, ['bean']);
+      const age = t.col('age'), h = t.col('height (cm)');
+      const lv = t.levels(age);
+      const vio = p.traces.filter(tr => tr.fill === 'toself');
+      const beans = p.traces.map((tr, i) => [tr, i]).filter(([tr, i]) => Array.isArray(p.rows[i]) && tr.marker && tr.marker.symbol === 'line-ew-open');
+      const widths = vio.map((tr, k) => Math.max(...tr.x.map(v => Math.abs(v - k))));
+      const means = lv.map(a => meanOf(rowsWhere(t, r => age.values[r] === a).map(r => h.values[r])));
+      const medians = lv.map(a => jmpQ(rowsWhere(t, r => age.values[r] === a).map(r => h.values[r]), 0.5));
+      const meanTr = p.traces.find(tr => tr.mode === 'lines' && tr.line && tr.line.width === 2.6);
+      const medTr = p.traces.find(tr => tr.marker && tr.marker.symbol === 'cross-thin-open');
+      const overall = p.userLayout.shapes.filter(sh => sh.line && sh.line.dash === 'dot').map(sh => sh.y0);
+      const [bt, bi] = beans[2];
+      clickTrace(p, bi, 1);
+      const sel = t.selectedRows(), want = p.rows[bi][1];
+      t.select([want]); await settle();
+      const hl = p.box.data[bi].selectedpoints;
+      t.select([]);
+      return { nVio: vio.length, widths, nBeans: beans.reduce((a, [, i]) => a + p.rows[i].length, 0), means, gotMeans: meanTr.y.filter((v, k) => k % 3 === 0), medians, gotMed: medTr.y,
+        overall, want: meanOf(h.values), sel, wantSel: [want], hl, notes: _gb.notes().join(' '), code: _rep.pythonScript() };
+    })()''')
+    check('bean: a violin for each age', r['nVio'], 6)
+    check('bean: every violin drawn to one width (statsmodels\' beanplot)', all(abs(w - 0.4) < 1e-9 for w in r['widths']), True)
+    check('bean: a bean for every row, linked', r['nBeans'], 60)
+    check('bean: the mean line of each level', all(abs(a - b) < 1e-9 for a, b in zip(r['gotMeans'], r['means'])) and len(r['gotMeans']) == 6, True)
+    check('bean: the median mark of each level (the middle value)', all(abs(a - b) < 1e-9 for a, b in zip(r['gotMed'], r['medians'])), True)
+    check.near('bean: the overall mean dotted across the panel', r['overall'][0] if r['overall'] else None, r['want'], 1e-9)
+    check('bean: a click on a bean selects its row', r['sel'], r['wantSel'])
+    check('bean: a selected row shows on its bean', r['hl'], [1])
+    check('bean: the notes and the Python say it is statsmodels\' beanplot', ('statsmodels\' beanplot' in r['notes'], 'gaussian_kde' in r['code'] and 'beanplot' in r['code']), (True, True))
+    r = await page.ev('''(async () => {
+      const p = await gbSet({ x: ['age'], y: ['height (cm)'], overlay: ['sex'] }, ['bean'], { bean: { split: true } });
+      const vio = p.traces.filter(tr => tr.fill === 'toself');
+      const sides = vio.map(tr => { const pos = Math.round(tr.x.reduce((a, b) => a + b, 0) / tr.x.length); const lo = Math.min(...tr.x), hi = Math.max(...tr.x); return [tr.legendgroup, lo >= pos - 1e-9 ? 'right' : hi <= pos + 1e-9 ? 'left' : 'both']; });
+      const legend = p.traces.filter(tr => tr.showlegend).map(tr => tr.name);
+      const q = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['bean']);
+      const refused = _gb.notes().some(n => n.startsWith('Bean needs')), why = _rep.body.querySelector('.sm-gb-el[data-el="bean"]').getAttribute('aria-disabled');
+      const horiz = await gbSet({ x: ['weight (kg)'], y: ['sex'] }, ['bean'], { bean: { beans: 'jitter' } });
+      const hb = horiz.traces.find((tr, i) => Array.isArray(horiz.rows[i]));
+      return { sides, legend, refused, why, n: q.traces.length,
+        horizOk: !!hb && hb.x.every(v => Number.isFinite(v)) && hb.y.every(v => Math.abs(v - Math.round(v)) < 0.41) };
+    })()''')
+    check('bean: Split Two Groups draws F on the left and M on the right of each bean', ({sd for g_, sd in r['sides'] if g_ == 'g0'}, {sd for g_, sd in r['sides'] if g_ == 'g1'}, len(r['sides']) >= 10), ({'left'}, {'right'}, True))
+    check('bean: two continuous columns are refused, as JMP\'s elements say why', (r['refused'], r['why']), (True, 'true'))
+    check('bean: the Overlay\'s levels in the legend', r['legend'], ['F', 'M'])
+    check('bean: horizontal with jittered points within the violins', r['horizOk'], True)
+    await shot(page, 'g03b-bean.png')
 
     # ---- Histogram, Heatmap, Mosaic, Pie, Caption Box, Line of Fit
     r = await page.ev('''(async () => {
@@ -593,6 +689,201 @@ async def main():
     check('overlay plot: a Y on the right axis, connected in X order', (r['right'], r['axes'], r['sorted']), ('right', ['y', 'y2'], True))
     await shot(page, 'g07-overlay.png')
 
+    # ---- Functional Data Plot: statsmodels' functional graphics, curves linked to their rows
+    r = await page.ev(FD_MAKE)
+    check('the seeded table of curves: 40 rows, 16 points and two more columns', r, [40, 17])
+    await page.ev(FD_HELPERS)
+    r = await page.ev('''(async () => {
+      SM.app.launch('functional'); await settle();
+      const dlg = document.querySelector('.sm-launch-dialog');
+      const vis = () => [...dlg.querySelectorAll('.sm-roles > .sm-role')].map(row => row.hidden ? '-' : row.querySelector('.sm-btn').textContent);
+      const wide = vis();
+      const radio = dlg.querySelector('input[data-fdformat="long"]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+      const long = vis(), idReq = [...dlg.querySelectorAll('.sm-roles > .sm-role')][2].querySelector('.sm-btn').classList.contains('required');
+      const head = dlg.querySelector('.sm-fd-launch h4').textContent;
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'Cancel').click(); await settle();
+      return { wide, long, idReq, head, closed: !document.querySelector('.sm-launch-dialog') };
+    })()''')
+    check('Functional Data Plot: Rows as Functions takes Y, Output (columns), an ID and By', r['wide'], ['Y, Output', '-', 'ID, Function', '-', 'By'])
+    check('Stacked takes Y, Output (one), ID, Function (required) and X, Input', (r['long'], r['idReq']), (['-', 'Y, Output', 'ID, Function', 'X, Input', 'By'], True))
+    check('the launch dialog asks for the data format first', (r['head'].startswith('Data Format'), r['closed']), (True, True))
+    res = await run('functional', {'y': [f't{j}' for j in range(16)], 'id': ['name']})
+    check('functional: the functional boxplot and the depths by default', res['outlines'], ['Functional Data Plot', 'Functional Boxplot', 'Curve Depths'])
+    r = await page.ev('''(async () => {
+      const [rep, p] = await lastPlot(); const t = rep.table; const ctx = null;
+      const S = fdState(rep);
+      const cols = [...Array(16).keys()].map(j => t.col('t' + j));
+      const Y = [...Array(t.nrows).keys()].map(r => cols.map(c => c.values[r]));
+      const ref = mbdRef(Y);
+      const got = S.fb.depth;
+      const worst = Math.max(...ref.map((v, i) => Math.abs(v - got[i])));
+      const med = ref.indexOf(Math.max(...ref));
+      const order = ref.map((v, i) => i).sort((a, b) => ref[b] - ref[a]);
+      const central = order.slice(0, 20);
+      const lower = cols.map((_, j) => Math.min(...central.map(i => Y[i][j]))), upper = cols.map((_, j) => Math.max(...central.map(i => Y[i][j])));
+      const med0 = cols.map((_, j) => { const v = central.map(i => Y[i][j]).sort((a, b) => a - b); return (v[9] + v[10]) / 2; });
+      const lo = med0.map((m, j) => m - 1.5 * (m - lower[j])), hi = med0.map((m, j) => m + 1.5 * (upper[j] - m));
+      const out = Y.map(y => y.some((v, j) => v < lo[j] || v > hi[j]));
+      const bandY = p.traces[1].y;
+      const tableRows = [...rep.body.querySelectorAll('table.sm-rt')].map(tb => tb.querySelectorAll('tbody tr').length);
+      return { worst, med, gotMed: S.fb.median, out: out.map((o, i) => o ? i : -1).filter(i => i >= 0), gotOut: S.fb.outlier.map((o, i) => o ? i : -1).filter(i => i >= 0),
+        central: Math.max(...upper.map((u, j) => Math.abs(u - bandY[j]))), names: p.traces.filter(tr => tr.showlegend !== false && tr.name).map(tr => tr.name).slice(0, 3), tableRows, x: S.fb.x.slice(0, 3) };
+    })()''')
+    check.near('functional: the modified band depths are statsmodels\' (against the definition, in the page)', r['worst'], 0.0, 1e-12)
+    check('functional: the median is the deepest curve', r['gotMed'], r['med'])
+    check('functional: fboxplot\'s outliers (the central region stretched 1.5 times about its median)', r['gotOut'], r['out'])
+    check.near('functional: the 50% central region is the envelope of the 20 deepest', r['central'], 0.0, 1e-12)
+    check('functional: X from the numbers in the column names', r['x'], [0, 1, 2])
+    check('functional: the legend names the regions, the median and the outliers', r['names'][:2], ['Non-outlying envelope', '50% central region'])
+    check('functional: the outlying curves listed, and every curve\'s depth', r['tableRows'], [len(r['gotOut']), 40])
+    # linking: a curve is its row
+    r = await page.ev('''(async () => {
+      const [rep, p] = await lastPlot(); const t = rep.table; const S = fdState(rep); const C = p.box._curves;
+      const mi = p.traces.findIndex(tr => tr.name && tr.name.startsWith('Median'));
+      clickTrace(p, mi, 7); const a = t.selectedRows();
+      t.select([3, 7]); await settle();
+      const ov = p.box.data[C.overlay].x.length, per = C.F.dx.length + 1;
+      t.select([]); await settle();
+      const cleared = p.box.data[C.overlay].x.length;
+      const oc = S.fb.outlier.indexOf(true);
+      const oi = p.traces.findIndex(tr => tr.name === C.F.labels[oc]);
+      t.setState([oc], 'hidden', true); await settle();
+      const hid = p.box.data[oi].y.every(v => v == null);
+      t.setState([oc], 'hidden', false); await settle();
+      const back = p.box.data[oi].y.some(v => v != null);
+      return { a, want: [S.fb.median], ov, per, cleared, hid, back };
+    })()''')
+    check('functional: a click on a curve selects its row', r['a'], r['want'])
+    check('functional: rows selected in the table draw their curves over the others', (r['ov'], r['cleared']), (2 * r['per'], 0))
+    check('functional: a hidden row\'s curve is not drawn, and comes back', (r['hid'], r['back']), (True, True))
+    # a real mouse click on a curve, where Plotly draws it
+    xy = await page.ev('''(async () => {
+      const [rep, p] = await lastPlot(); const S = fdState(rep); const gd = p.box;
+      gd.scrollIntoView({ block: 'center' }); await settle();
+      const oc = S.fb.outlier.indexOf(true);
+      const L = gd._fullLayout, j = 9, r = gd.getBoundingClientRect();
+      return [r.left + L.xaxis._offset + L.xaxis.l2p(S.fb.x[j]), r.top + L.yaxis._offset + L.yaxis.l2p(S.fb.curves[oc][j]), oc];
+    })()''')
+    await page.click(xy[0], xy[1])
+    await asyncio.sleep(0.4)
+    check('functional: a mouse click on an outlying curve selects its row', await page.ev('SM.app.reports[SM.app.reports.length - 1].table.selectedRows()'), [xy[2]])
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table; const S = fdState(rep);
+      rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle();
+      const items = [...document.querySelectorAll('.sm-menu button')].map(b => b.textContent.replace(/^[✓ ]+/, ''));
+      [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent.includes('Select Outliers')).click(); await settle();
+      const sel = t.selectedRows(), want = S.fb.outlier.map((o, i) => o ? i : -1).filter(i => i >= 0);
+      t.select([]);
+      rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle();
+      [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent.includes('Save Columns')).click(); await settle();
+      const menus = document.querySelectorAll('.sm-menu');
+      [...menus[menus.length - 1].querySelectorAll('button')].find(b => b.textContent.trim() === 'Depth').click(); await settle();
+      const c = t.col('Depth (MBD)');
+      const saved = c ? Math.max(...S.fb.depth.map((d, i) => Math.abs(c.values[i] - d))) : null;
+      if (c) t.removeColumn(c.id);
+      return { items, sel, want, saved };
+    })()''')
+    check('functional: the red triangle\'s views and options', [i for i in r['items'] if i in ('Functional Boxplot', 'HDR Boxplot', 'Rainbow Plot', 'Curve Depths', 'Depth', 'Outlier Rule', 'Outlier Factor…', 'X Values', 'Select Outliers', 'Save Columns')], ['Functional Boxplot', 'HDR Boxplot', 'Rainbow Plot', 'Curve Depths', 'Depth', 'Outlier Rule', 'Outlier Factor…', 'X Values', 'Select Outliers', 'Save Columns'])
+    check('functional: Select Outliers selects the outlying curves\' rows', r['sel'], r['want'])
+    check.near('functional: Save Columns > Depth writes each curve\'s depth to its row', r['saved'], 0.0, 1e-15)
+    # the HDR boxplot, the score plot and the rainbow plot, turned on in the red triangle
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const done = new Promise(res => rep.on('done', res));
+      rep.spec.options.fdHdr = true; rep.spec.options.fdRainbow = true; rep.run('redo'); await done; await settle();
+      for (const p of rep.plots) await drawn(p);
+      const S = fdState(rep); const H = S.hd;
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head h3, .sm-fd-sub')].map(h => h.textContent);
+      const up50 = H.hdr50[0], lo50 = H.hdr50[1], up90 = H.hdr90[0], lo90 = H.hdr90[1];
+      const nested = up50.every((u, j) => u <= up90[j] + 1e-9 && lo50[j] >= lo90[j] - 1e-9);
+      const modal = H.modal.every((v, j) => v <= up50[j] + 1e-9 && v >= lo50[j] - 1e-9);
+      const dens = H.density.slice().sort((a, b) => a - b);
+      const outs = H.outlier.map((o, i) => o ? i : -1).filter(i => i >= 0);
+      const lowest = H.density.map((d, i) => [d, i]).sort((a, b) => a[0] - b[0]).slice(0, outs.length).map(q => q[1]).sort((a, b) => a - b);
+      const sp = rep.plots.find(p => p.opts.title === 'HDR score plot');
+      const si = sp.traces.findIndex((tr, i) => Array.isArray(sp.rows[i]));
+      t.select([outs[0]]); await settle();
+      const hl = sp.box.data[si].selectedpoints; t.select([]);
+      const rb = rep.plots.find(p => p.opts.title === 'Rainbow plot');
+      const medC = rb.box._curves.specs.find(s => s.vtx[0] === S.fb.median);
+      return { heads, nested, modal, outs, lowest, hl, want: [outs[0]], medColor: medC ? rb.traces[medC.trace].line.color : null, notes: [...rep.body.querySelectorAll('.sm-ob-note')].map(n => n.textContent).join(' ') };
+    })()''')
+    check('functional: HDR Boxplot, its score plot and the Rainbow Plot', [h for h in r['heads'] if h in ('Functional Boxplot', 'HDR Boxplot', 'Score Plot', 'Rainbow Plot', 'Curve Depths')], ['Functional Boxplot', 'HDR Boxplot', 'Score Plot', 'Rainbow Plot', 'Curve Depths'])
+    check('HDR: the 50% band inside the 90% band, the modal curve inside the 50% band', (r['nested'], r['modal']), (True, True))
+    check('HDR: the outliers are the curves of lowest density, 5% of them', (r['outs'], len(r['outs'])), (r['lowest'], 2))
+    check('HDR: the score plot\'s points are linked to the rows', r['hl'], r['want'])
+    check('rainbow: the median in the deepest colour (dark on a light page)', r['medColor'], 'rgb(68, 1, 84)')
+    check('the report says how statsmodels\' HDR boxplot is computed, and that JMP has no functional boxplot', ('KDEMultivariate' in r['notes'] and 'differential evolution' in r['notes'], 'JMP (standard) has no functional boxplots' in r['notes']), (True, True))
+    await shot(page, 'g07b-functional.png')
+    # stacked: an ID, X and Y; the same depths, a curve is all of an ID's rows
+    r = await page.ev(FD_LONG)
+    res = await run('functional', {'yl': ['y'], 'id': ['id'], 'x': ['x']}, {'format': 'long'})
+    r = await page.ev('''(async () => {
+      const [rep, p] = await lastPlot(); const t = rep.table; const S = fdState(rep);
+      const wide = SM.app.reports.find(q => q.table && q.table.name === 'FD test' && q.platform.id === 'functional');
+      const W = fdState(wide);
+      const byName = new Map(W.F.labels.map((l, i) => [l, W.fb.depth[i]]));
+      const worst = Math.max(...S.F.labels.map((l, i) => Math.abs(byName.get(l) - S.fb.depth[i])));
+      const mi = p.traces.findIndex(tr => tr.name && tr.name.startsWith('Median'));
+      clickTrace(p, mi, 3); const n = t.selectedRows().length; t.select([]);
+      return { worst, n, curves: S.F.n, interp: S.fb.interp, note: rep.body.querySelector('.sm-ob-note').textContent };
+    })()''')
+    check.near('stacked: the same depths as the rows as functions', r['worst'], 0.0, 1e-12)
+    check('stacked: a click on a curve selects all its rows', (r['curves'], r['n'], r['interp']), (40, 16, None))
+    await page.ev(FD_IRREGULAR)
+    res = await run('functional', {'yl': ['y'], 'id': ['id'], 'x': ['x']}, {'format': 'long', 'fdHdr': True})
+    r = await page.ev('(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; return { note: rep.body.querySelector(".sm-ob-note").textContent, S: fdState(rep).fb.interp }; })()')
+    check('stacked at different X: interpolated, and the report says how', ('interpolated linearly (numpy.interp)' in r['note'], r['S']['points'] if r['S'] else None), (True, 20))
+    # By: a report for each group, the depths within it
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'FD test')))")
+    res = await run('functional', {'y': [f't{j}' for j in range(16)], 'by': ['grp']})
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const tops = [...rep.body.querySelectorAll('.sm-ob.level-0 > .sm-ob-head h2')].map(h => h.textContent);
+      const tb = [...rep.body.querySelectorAll('table.sm-rt')].filter(x => x.dataset.rtKey === 'fd:depths');
+      const cols = [...Array(16).keys()].map(j => t.col('t' + j));
+      const A = rowsWhere(t, r => t.col('grp').values[r] === 'A');
+      const ref = mbdRef(A.map(r => cols.map(c => c.values[r])));
+      const got = tb[0]._rt.rows.map(q => q.depth);
+      return { tops, n: tb.length, worst: Math.max(...ref.map((v, i) => Math.abs(v - got[i]))), code: rep.pythonScript().includes('for key, g in df.dropna(subset=["grp"]).groupby(["grp"], observed=True)') };
+    })()''')
+    check('By: a Functional Data Plot for each group', (r['tops'], r['n']), (['Functional Data Plot grp=A', 'Functional Data Plot grp=B'], 2))
+    check.near('By: the depths within the group', r['worst'], 0.0, 1e-12)
+    check('By: the Python loops over the groups', r['code'], True)
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('functional: every (i) of its outlines has a topic, every Help link a target', (audit.get('noTopic'), audit.get('brokenMore')), ([], []))
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports.find(q => q.table && q.table.name === 'FD test' && q.platform.id === 'functional' && q.spec.options.fdHdr);
+      const t = rep.table;
+      const proj = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      SM.app.loadProject(JSON.parse(JSON.stringify(proj)));
+      const again = SM.app.reports[SM.app.reports.length - 1];
+      await new Promise(res => again.on('done', res));
+      const heads = [...again.body.querySelectorAll('.sm-ob-head h3')].map(h => h.textContent);
+      const S = fdState(again), W = fdState(rep);
+      const out = { heads, same: S && W ? Math.max(...S.fb.depth.map((d, i) => Math.abs(d - W.fb.depth[i]))) : null, other: again.table !== t };
+      SM.app.closeReport(again); SM.app.closeTable(again.table);
+      return out;
+    })()''')
+    check('a saved project reopens the Functional Data Plot with its views', ([h for h in r['heads'] if h in ('HDR Boxplot', 'Rainbow Plot')], r['other']), (['HDR Boxplot', 'Rainbow Plot'], True))
+    check.near('and the same depths', r['same'], 0.0, 1e-15)
+    # the example
+    r = await page.ev('''(async () => {
+      const ex = SM.io.EXAMPLES.curves;
+      SM.app.openExample('curves'); await settle();
+      const t = SM.app.current;
+      const P = SM.platforms.get('functional');
+      const rep = SM.app.openReport(P, { roles: { y: [...Array(24).keys()].map(h => t.col(String(h)).id) }, options: { fdRule: 'sungenton', fdHdr: true } }, t);
+      await new Promise(res => rep.on('done', res));
+      const S = fdState(rep);
+      const lab = (arr) => arr.map((o, i) => o ? S.F.labels[i] : null).filter(Boolean);
+      return { label: ex && ex.label, name: t.name, n: t.nrows, cols: t.columns.length, sg: lab(S.fb.outlier), hdr: lab(S.hd.outlier), errors: [...rep.body.querySelectorAll('.sm-ob-error')].length };
+    })()''')
+    check('the example: temperature curves, 60 days by 24 hours', (r['name'], r['n'], r['cols'], r['errors']), ('Temperature curves', 60, 26, 0))
+    check('the example: Sun and Genton\'s fences find the heat, cold, front and night days', r['sg'], ['Day 07', 'Day 14', 'Day 24', 'Day 31'])
+    check('the example: the HDR boxplot finds a shape outlier the others miss (Day 31) and two magnitude ones', r['hdr'], ['Day 07', 'Day 31', 'Day 42'])
+    await page.ev("SM.app.showTab(SM.app.tabOf(_rep))")
+
     # ---- dark theme and phone width, with Graph Builder
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
@@ -610,6 +901,20 @@ async def main():
     check('phone width: no horizontal page scroll', r['w'], True)
     check('phone width: the builder stacks its parts in one column', r['cols'], 1)
     await shot(page, 'g09-phone.png')
+    # the Functional Data Plot in the dark theme, at phone width
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables.find(x => x.name === 'FD test');
+      const rep = SM.app.openReport(SM.platforms.get('functional'), { roles: { y: [...Array(16).keys()].map(j => t.col('t' + j).id) }, options: { fdRainbow: true, fdHdr: true } }, t);
+      await new Promise(res => rep.on('done', res));
+      const S = fdState(rep);
+      const rb = rep.plots.find(p => p.opts.title === 'Rainbow plot');
+      rb.box.scrollIntoView({ block: 'center' }); await drawn(rb); await settle();
+      const medC = rb.box._curves.specs.find(s => s.vtx[0] === S.fb.median);
+      return { color: rb.traces[medC.trace].line.color, fits: document.documentElement.scrollWidth <= innerWidth + 1, widths: rep.plots.map(p => p.width), errors: rep.body.querySelectorAll('.sm-ob-error').length };
+    })()''')
+    check('dark theme: the rainbow plot\'s deepest curves are the brightest', r['color'], 'rgb(253, 231, 37)')
+    check('phone width: the Functional Data Plot fits, no horizontal page scroll', (r['fits'], max(r['widths']) <= 400, r['errors']), (True, True, 0))
+    await shot(page, 'g10-functional-phone.png')
     check('no script errors', page.errors, [])
     check('no console errors from the Graph code', [m for m in page.console if 'graph' in m.lower()], [])
     await page.close()

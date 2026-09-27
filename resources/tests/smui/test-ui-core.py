@@ -10,7 +10,8 @@ selects its rows and a selection in the table lights up the graphs; an
 exclusion marks the report stale and Redo uses fewer rows; By gives one
 report per level; the Local Data Filter narrows one report; a saved column
 lands in the table; cell edits and modeling types do what they say; the
-report's Python script is the code of its results; the page draws in the
+report's Python script is the code of its results; Distribution's interval
+methods and Test Rate show what the page computes; the page draws in the
 dark theme and at phone width.
 
 Start a server on the repository root and headless Chrome (the recipe is in
@@ -366,6 +367,7 @@ async def main():
       const heads = [...back.body.querySelectorAll('.sm-ob-head h4')].map(h => h.textContent);
       const t2 = back.table;
       const out = { newTable: t2 !== t, heads, filterCol: t2.col(back.spec.filter[0].col)?.name, note: back.noteEl.textContent };
+      SM.app.closeReport(back);   // closing a table with reports asks first
       SM.app.closeTable(t2);
       return out;
     })()''')
@@ -376,6 +378,88 @@ async def main():
     # ---- the Python script of a report
     r = await page.ev('SM.app.reports[0].pythonScript()')
     check('the script holds the code of the results', 'DescrStatsW(x, ddof=1)' in r and 'proportion_confint' in r, True)
+
+    # ---- Distribution beyond JMP: the interval method of the level probabilities, Test Rate
+    MENU = '''(async (rep, title, path) => {
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.querySelector('h2, h3, h4').textContent === title);
+      h.querySelector('.sm-ob-menu').click();
+      let items = null;
+      for (const label of path) {
+        await new Promise(r => setTimeout(r, 60));
+        const menus = document.querySelectorAll('.sm-menu'); const m = menus[menus.length - 1];
+        const b = [...m.querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label);
+        if (!b) { SM.ui.closeMenus(0); return 'no item ' + label; }
+        items = [...m.querySelectorAll('button')].map(x => [x.querySelector('.sm-label') ? x.querySelector('.sm-label').textContent : '', x.getAttribute('aria-checked'), x.disabled]);
+        b.click();
+      }
+      await new Promise(r => setTimeout(r, 60));
+      const menus = document.querySelectorAll('.sm-menu'); const last = menus[menus.length - 1];
+      const out = { at: items, last: last ? [...last.querySelectorAll('button')].map(x => [x.querySelector('.sm-label') ? x.querySelector('.sm-label').textContent : '', x.getAttribute('aria-checked'), x.disabled]) : [] };
+      return out;
+    })'''
+    r = await page.ev(f'''(async () => {{
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const sex = t.col('sex').id;
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), {{ roles: {{ y: [sex] }}, options: {{ [sex + '|ciCat']: 0.95, [sex + '|ciMethod']: 'agresti_coull' }} }}, t);
+      await new Promise(res => rep.on('done', res));
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Confidence Intervals');
+      const rows = [...h.parentElement.querySelectorAll('table.sm-rt tbody tr')].map(tr => [...tr.children].map(c => c.textContent));
+      const note = h.parentElement.querySelector('.sm-ob-note').textContent;
+      const v = t.col('sex').values; const n = v.filter(x => x != null).length; const k = v.filter(x => x === 'F').length; const z = SM.util.qnorm(0.975);
+      const nc = n + z * z, pc = (k + z * z / 2) / nc, half = z * Math.sqrt(pc * (1 - pc) / nc);
+      const menu = await ({MENU})(rep, 'sex', ['Confidence Interval', 'Confidence Interval Method']);
+      const pick = menu.last.find(x => x[0] === 'Clopper-Pearson (exact)');
+      const done = new Promise(res => rep.on('done', res));
+      [...document.querySelectorAll('.sm-menu')].pop().querySelectorAll('button')[menu.last.indexOf(pick)].click();
+      await done;
+      const note2 = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Confidence Intervals').parentElement.querySelector('.sm-ob-note').textContent;
+      return {{ rows, note, lo: pc - half, hi: pc + half, methods: menu.last.map(x => [x[0], x[1]]), note2, errors: [...rep.body.querySelectorAll('.sm-ob-error')].length }};
+    }})()''')
+    check('Confidence Interval Method: the five methods, Agresti-Coull checked', r['methods'], [['Wilson Score (JMP)', 'false'], ['Agresti-Coull', 'true'], ['Jeffreys', 'false'], ['Clopper-Pearson (exact)', 'false'], ['Wald', 'false']])
+    check.near('the Agresti-Coull lower limit of F as computed in the page', float(r['rows'][0][3]), r['lo'], 1e-6)
+    check.near('and its upper limit', float(r['rows'][0][4]), r['hi'], 1e-6)
+    check('the note names the method', r['note'].startswith('Agresti-Coull confidence intervals'), True)
+    check('choosing Clopper-Pearson redraws with it', (r['note2'].startswith('Clopper-Pearson (exact) confidence intervals'), r['errors']), (True, 0))
+    r = await page.ev(f'''(async () => {{
+      SM.app.openExample('clinical'); const t = SM.app.current; const ae = t.col('adverse events').id, mo = t.col('months').id;
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), {{ roles: {{ y: [ae, mo] }} }}, t);
+      await new Promise(res => rep.on('done', res));
+      const off = (await ({MENU})(rep, 'months', ['Test Rate…'])).at.find(x => x[0] === 'Test Rate…');
+      SM.ui.closeMenus(0);
+      const done = new Promise(res => rep.on('done', res));
+      const m = await ({MENU})(rep, 'adverse events', ['Test Rate…']);
+      let d = null; for (let i = 0; i < 60 && !d; i++) {{ await new Promise(res => setTimeout(res, 50)); d = [...document.querySelectorAll('.sm-dialog')].pop(); }}
+      d.querySelector('input').value = '0.1';
+      const s = d.querySelector('select'); s.value = [...s.options].find(o => o.textContent === 'months').value;
+      d.querySelector('.sm-dialog-foot .primary').click();
+      await done;
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Test Rate');
+      const kv = h ? [...h.parentElement.querySelectorAll('table.sm-kv')].map(tb => [...tb.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent))) : null;
+      const y = t.col('adverse events').values, e = t.col('months').values;
+      const total = y.reduce((a, b) => a + b, 0), expo = e.reduce((a, b) => a + b, 0);
+      return {{ off: off ? off[2] : 'missing', on: m.at.find(x => x[0] === 'Test Rate…')[2], kv, total, expo, errors: [...rep.body.querySelectorAll('.sm-ob-error')].length }};
+    }})()''')
+    check('Test Rate is for counts: not for months', r['off'], True)
+    check('Test Rate is enabled for the adverse event counts', r['on'], False)
+    kv = {row[0]: row[1] for row in r['kv'][0]} if r['kv'] else {}
+    check('Test Rate from its dialog: the hypothesized rate and the total count', (kv.get('Hypothesized Rate'), float(kv.get('Total adverse events', 'nan'))), ('0.1', float(r['total'])))
+    check.near('the total months', float(kv.get('Total months', 'nan')), r['expo'], 1e-6)
+    check.near('the rate = total events / total months computed in the page', float(kv.get('Rate Estimate', 'nan')), r['total'] / r['expo'], 1e-6)
+    check('its tests are listed', [row[0] for row in r['kv'][1]][:4] if r['kv'] else None, ['Test Statistic', 'Prob, rate ≠ hypothesized', 'Prob, rate > hypothesized', 'Prob, rate < hypothesized'])
+    check('no errors in the Test Rate report', r['errors'], 0)
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const j = JSON.parse(JSON.stringify({ format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] }));
+      SM.app.loadProject(j);
+      const back = SM.app.reports[SM.app.reports.length - 1];
+      if (back.body.classList.contains('is-running')) await new Promise(res => back.on('done', res));
+      const h = [...back.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Test Rate');
+      const labels = h ? [...h.parentElement.querySelectorAll('table.sm-kv tr')].map(tr => tr.children[0].textContent) : [];
+      const t2 = back.table; SM.app.closeReport(back); SM.app.closeTable(t2);
+      return { newTable: t2 !== t, labels };
+    })()''')
+    check('a project keeps Test Rate and its exposure column', (r['newTable'], 'Total months' in r['labels']), (True, True))
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables[0]))')
 
     # ---- dark theme and phone width
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
@@ -389,6 +473,35 @@ async def main():
     work = await page.ev("Math.round(document.querySelector('.sm-main').getBoundingClientRect().width)")
     check('the work area fills the phone width', work >= 380, True)
     await shot(page, '05-phone.png')
+
+    # A graph put straight into an outline body fits the body's content box
+    # (its padding is no room), points take the dark theme's colour, and code
+    # a platform only shows goes into Save Python Script.
+    r = await page.ev('''(async () => {
+      SM.platforms.register({ id: 'core-width-test', label: 'Width Test', render(ctx) {
+        const o = ctx.outline('Wide Graph');
+        o.add(ctx.plot([{ type: 'scatter', mode: 'markers', x: [1, 2, 3], y: [3, 1, 2], rows: [0, 1, 2] }], {}, { width: 700, height: 200 }));
+        o.add(ctx.code('# shown only, from no call'));
+      } });
+      const rep = SM.app.openReport(SM.platforms.get('core-width-test'), { roles: {}, options: {} }, SM.app.tables[0]);
+      await new Promise(res => rep.on('done', res));
+      await new Promise(res => setTimeout(res, 400));
+      const p = rep.plots[0];
+      if (!p.drawn) await p.draw();
+      const body = p.box.parentElement, cs = getComputedStyle(body);
+      const inner = body.getBoundingClientRect().right - parseFloat(cs.paddingRight);
+      const out = { drawn: p.drawn, fits: p.box.getBoundingClientRect().right <= inner + 1, noScroll: rep.body.scrollWidth <= rep.body.clientWidth + 1,
+        base: SM.report.BASE, point: p.base[0].color, script: rep.pythonScript().includes('# shown only, from no call') };
+      SM.app.closeReport(rep);
+      return out;
+    })()''')
+    check('phone: a graph in an outline body is drawn', r['drawn'], True)
+    check('phone: the graph fits the body without its padding', r['fits'], True)
+    check('phone: the report does not scroll sideways', r['noScroll'], True)
+    check('dark theme: points take the lighter blue', (r['base'], r['point']), ('#6fa3d6', '#6fa3d6'))
+    check('code shown with ctx.code goes into Save Python Script', r['script'], True)
+    esc = await page.ev("SM.report.plotlyText('a <b> & %{x}')")
+    check('plotlyText escapes tags, entities and a hovertemplate placeholder', esc, 'a &lt;b&gt; &amp; &#37;{x}')
     check('no script errors', page.errors, [])
     await page.close()
 

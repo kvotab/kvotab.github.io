@@ -15,7 +15,13 @@
    keep them. The numbers are resources/py/smui/fit_y_by_x.py's.
 
    Matched Pairs compares two paired responses: the Tukey mean-difference
-   plot, the paired t test, Wilcoxon signed rank and the sign test.
+   plot, the paired t test, Wilcoxon signed rank and the sign test; binary
+   responses (two values in all) get Cochran's Q and McNemar's tests.
+
+   Beyond JMP, from statsmodels: Brunner-Munzel and its equivalence test
+   (Oneway ▸ Nonparametric), Compare Rates for counts with an exposure,
+   the Two Sample Test for Proportions by every method statsmodels has
+   (Contingency), and Breslow-Day beside Cochran Mantel Haenszel.
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -637,9 +643,12 @@
       for (const c of cmp) compareReport(ctx, mc, sc, c, names);
     }
     for (const t of o('np', [])) await nonparReport(ctx, host, sc, base, t, names);
+    if (o('bm', false)) await brunnerReport(ctx, host, sc, base, names);
     for (const m of o('npmc', [])) await npmcReport(ctx, host, sc, base, m, names);
     if (o('unequal', false)) await unequalReport(ctx, host, sc, base, names);
     if (o('equiv', null)) await equivReport(ctx, host, sc, base, o('equiv', null), names);
+    if (o('bmTost', null)) await brunnerTostReport(ctx, host, sc, base, o('bmTost', null), names);
+    if (o('rates', null)) await ratesReport(ctx, host, sc, base, o('rates', null), y, x);
     if (o('power', null)) await powerReport(ctx, host, sc, base, o('power', null));
     if (o('nqp', null)) owNormalQuantile(ctx, host, sc, P, code, names, o('nqp', null), levels);
     if (o('cdf', false)) owCdf(ctx, host, sc, P, code, names);
@@ -773,6 +782,131 @@
         { key: 't_lower', label: 't Ratio (lower)' }, { key: 'p_lower', label: 'p (lower)', fmt: 'p' }, { key: 't_upper', label: 't Ratio (upper)' }, { key: 'p_upper', label: 'p (upper)', fmt: 'p' }, { key: 'p', label: 'Max p-Value', fmt: 'p' }],
       rows: r.pairs.map((p) => ({ ...p, a: names[p.i], b: names[p.j] })) }),
       ctx.note(`Two one-sided t tests: a pair is equivalent at α = ${r.alpha} when both reject, so when the Max p-Value is below α (the ${fmt(100 * (1 - 2 * r.alpha))}% interval lies inside ±${fmt(r.delta)}).`), notesOf(ctx, r.notes), ctx.code(r.code));
+  }
+
+  /* ---- Brunner-Munzel: the probability of superiority (statsmodels
+     rank_compare_2indep; not in JMP) ------------------------------------ */
+  async function brunnerReport(ctx, host, sc, base, names) {
+    const ob = ctx.outline('Brunner-Munzel Test (Probability of Superiority)', { parent: host, key: `bm:${sc}`, info: 'p:fitybyx:brunner', menu: () => [
+      { label: 'Equivalence Test…', checked: !!ctx.opt('bmTost', null, sc), action: () => brunnerTostDialog(ctx, sc) },
+      { separator: true }, { label: 'Remove', action: () => ctx.set('bm', false, sc) }] });
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_brunner', base);
+    if (error) { ob.add(problem(ctx, error)); return; }
+    const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
+    const cols = [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: 'vs Level', fmt: 'text' },
+      { key: 'prob', label: 'P(Level>vs Level)', title: 'P(Y at Level > Y at vs Level) + P(equal)/2' }, { key: 'se', label: 'Std Err' },
+      { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }, { key: 'stat', label: 'Brunner-Munzel t' }, { key: 'df', label: 'DF' },
+      { key: 'p', label: 'Prob>|t|', fmt: 'p' }, { key: 'p_greater', label: 'Prob>t', fmt: 'p', hidden: true }, { key: 'p_less', label: 'Prob<t', fmt: 'p', hidden: true },
+      { key: 'somersd', label: 'Somers\' D (2P − 1)', hidden: true }, { key: 'n1', label: 'N Level', fmt: 'int', hidden: true }, { key: 'n2', label: 'N vs Level', fmt: 'int', hidden: true }];
+    if (r.pairs.some((p) => p.p_holm != null)) cols.push({ key: 'p_holm', label: 'Holm-adjusted p', fmt: 'p', hidden: true });
+    ob.add(ctx.rt({ columns: cols, rows: r.pairs.map((p) => ({ ...p, a: names[p.i], b: names[p.j] })) }, { sortable: r.pairs.length > 2 }),
+      ctx.note('P(Level>vs Level) is P(Y₁ > Y₂) + ½P(Y₁ = Y₂) from the ranks, the Mann-Whitney U/(n₁n₂). The Brunner-Munzel test of P = ½ does not assume, as the Wilcoxon test does, that the two distributions are the same under the null; t with Welch-Satterthwaite degrees of freedom. Not in JMP, whose closest is the Wilcoxon test (its null hypothesis: identical distributions). Right click for one-sided p-values, Somers\' D and Holm-adjusted p-values.'),
+      notesOf(ctx, r.notes), ctx.code(r.code));
+  }
+
+  async function brunnerTostReport(ctx, host, sc, base, tost, names) {
+    const ob = ctx.outline('Equivalence Test (Probability of Superiority)', { parent: host, key: `bmtost:${sc}`, info: 'p:fitybyx:brunner', menu: () => [
+      { label: 'Change Bounds…', action: () => brunnerTostDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('bmTost', null, sc) }] });
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_brunner', { ...base, tost: { low: tost.low, upp: tost.upp } });
+    if (error) { ob.add(problem(ctx, error)); return; }
+    const t = r.tost;
+    const lv2 = `${fmt(100 * (1 - 2 * r.alpha))}%`;
+    ob.add(ctx.kv([['Lower bound', t.low], ['Upper bound', t.upp], ['Alpha', r.alpha]]),
+      ctx.rt({ columns: [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: 'vs Level', fmt: 'text' }, { key: 'prob', label: 'P(Level>vs Level)' },
+        { key: 'lower', label: `Lower ${lv2}` }, { key: 'upper', label: `Upper ${lv2}` }, { key: 't_lower', label: 't (lower)' }, { key: 'p_lower', label: 'p (lower)', fmt: 'p' },
+        { key: 't_upper', label: 't (upper)' }, { key: 'p_upper', label: 'p (upper)', fmt: 'p' }, { key: 'p', label: 'Max p-Value', fmt: 'p' }],
+      rows: t.pairs.map((p) => ({ ...p, a: names[p.i], b: names[p.j] })) }),
+      ctx.note(`Two one-sided Brunner-Munzel tests (statsmodels tost_prob_superior): the levels are stochastically equivalent at α = ${r.alpha} when both reject, so when the Max p-Value is below α (the ${lv2} interval lies inside ${fmt(t.low)} to ${fmt(t.upp)}). Not in JMP, whose Equivalence Test is for means (t tests).`),
+      notesOf(ctx, r.notes), ctx.code(r.code));
+  }
+
+  async function brunnerTostDialog(ctx, sc) {
+    const cur = ctx.opt('bmTost', null, sc) || { low: 0.4, upp: 0.6 };
+    const v = await SM.ui.form({
+      title: 'Equivalence Test: Probability of Superiority', info: 'p:fitybyx:brunner',
+      lead: 'Two levels are stochastically equivalent when P(Y₁ > Y₂) + ½P(Y₁ = Y₂) lies between the bounds; ½ is no difference.',
+      fields: [{ key: 'low', label: 'Lower bound', type: 'number', value: cur.low }, { key: 'upp', label: 'Upper bound', type: 'number', value: cur.upp }],
+      validate: (x) => (x.low != null && x.upp != null && x.low >= 0 && x.low < x.upp && x.upp <= 1 ? null : 'The bounds must satisfy 0 ≤ lower < upper ≤ 1.'),
+    });
+    if (v) ctx.set('bmTost', { low: v.low, upp: v.upp }, sc);
+  }
+
+  /* ---- Compare Rates: Y counts events over an exposure (statsmodels
+     test_poisson_2indep, confint_poisson_2indep; not in JMP) -------------- */
+  const RATE_TESTS = [['score', 'Score', 'both'], ['wald', 'Wald', 'both'], ['score-log', 'Score, log ratio', 'ratio'], ['wald-log', 'Wald, log ratio', 'ratio'],
+    ['sqrt', 'Square root', 'ratio'], ['exact-cond', 'Exact conditional (binomial)', 'ratio'], ['cond-midp', 'Mid-p conditional', 'ratio'],
+    ['waldccv', 'Wald, 0.5 added to the variance', 'diff'], ['etest-score', 'E-test (score)', 'both'], ['etest-wald', 'E-test (Wald)', 'both']];
+  const RATE_CIS = [['score', 'Score', 'both'], ['score-log', 'Score, log ratio', 'ratio'], ['wald-log', 'Wald, log ratio', 'ratio'], ['waldcc', 'Wald, log ratio, 0.5 added', 'ratio'],
+    ['sqrtcc', 'Square root, 0.5 added', 'ratio'], ['exact-cond', 'Exact conditional (Clopper-Pearson)', 'ratio'], ['wald', 'Wald', 'diff'],
+    ['waldccv', 'Wald, 0.5 added to the variance', 'diff'], ['mover', 'MOVER (from each rate\'s score interval)', 'both']];
+  const rateLabel = (list, key) => (list.find((m) => m[0] === key) || [key, key])[1];
+  const forCompare = (list, cmp) => list.filter((m) => m[2] === 'both' || m[2] === cmp);
+
+  function isCountColumn(ctx, y, x) {
+    let any = false;
+    for (const r of ctx.rows) {
+      const v = y.values[r];
+      if (!Number.isFinite(v) || isMissing(x.values[r])) continue;
+      if (v < 0 || Math.abs(v - Math.round(v)) > 1e-9) return false;
+      any = true;
+    }
+    return any;
+  }
+
+  async function ratesDialog(ctx, sc, y, x) {
+    const cur = ctx.opt('rates', null, sc) || { exposure: null, compare: 'ratio', method: 'score', ci: 'score', control: null };
+    const nums = ctx.table.columns.filter((c) => c.isNumeric && !c.isCategorical && c.id !== y.id && c.id !== x.id);
+    const levels = ctx.table.levels(x);
+    const tag = (m) => (m[2] === 'both' ? m[1] : `${m[1]} (${m[2] === 'ratio' ? 'ratio' : 'difference'} only)`);
+    const ctlIndex = cur.control == null ? '' : String(levels.findIndex((l) => keyOf(l) === keyOf(cur.control)));
+    const v = await SM.ui.form({
+      title: `Compare Rates: ${y.name} by ${x.name}`, info: 'p:fitybyx:rates',
+      lead: `${y.name} counts events; each row is one unit, observed for its exposure (time, person-years, area). Each level's rate is its total count over its total exposure.`,
+      fields: [
+        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])] },
+        { key: 'compare', label: 'Compare the rates by their', type: 'select', value: cur.compare, choices: [['ratio', 'Ratio'], ['diff', 'Difference']] },
+        { key: 'method', label: 'Test', type: 'select', value: cur.method, choices: RATE_TESTS.map((m) => [m[0], tag(m)]) },
+        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci, choices: RATE_CIS.map((m) => [m[0], tag(m)]) },
+        { key: 'control', label: 'Levels compared', type: 'select', value: ctlIndex === '-1' ? '' : ctlIndex, choices: [['', 'Each pair (later level against earlier)'], ...levels.map((l, i) => [String(i), `Each level against ${lvText(x, l)}`])] },
+      ],
+      validate: (f) => {
+        const ok = (list, key) => forCompare(list, f.compare).some((m) => m[0] === key);
+        if (!ok(RATE_TESTS, f.method)) return `The ${rateLabel(RATE_TESTS, f.method)} test is for a ${f.compare === 'ratio' ? 'difference' : 'ratio'} of rates.`;
+        if (!ok(RATE_CIS, f.ci)) return `The ${rateLabel(RATE_CIS, f.ci)} interval is for a ${f.compare === 'ratio' ? 'difference' : 'ratio'} of rates.`;
+        return null;
+      },
+    });
+    if (!v) return;
+    ctx.set('rates', { exposure: v.exposure || null, compare: v.compare, method: v.method, ci: v.ci, control: v.control === '' ? null : levels[Number(v.control)] }, sc);
+  }
+
+  async function ratesReport(ctx, host, sc, base, spec, y, x) {
+    const ob = ctx.outline('Compare Rates', { parent: host, key: `rates:${sc}`, info: 'p:fitybyx:rates', menu: () => [
+      { label: 'Change…', action: () => ratesDialog(ctx, sc, y, x) }, { label: 'Remove', action: () => ctx.set('rates', null, sc) }] });
+    const ex = spec.exposure ? ctx.col(spec.exposure) : null;
+    if (spec.exposure && !ex) { ob.add(ctx.warn('The exposure column is no longer in the table.')); return; }
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_rates', { ...base, exposure: ex ? ex.name : null, compare: spec.compare || 'ratio', method: spec.method || 'score', ci_method: spec.ci || 'score', control: spec.control ?? null });
+    if (error) { ob.add(problem(ctx, error)); return; }
+    const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
+    const nm = (i) => lvText(x, r.level_values[i]);
+    ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'n', label: 'Units' }, { key: 'count', label: `Total ${y.name}` }, { key: 'exposure', label: ex ? `Total ${ex.name}` : 'Exposure (units)' },
+      { key: 'rate', label: 'Rate' }, { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }], rows: r.levels.map((l) => ({ ...l, lv: nm(l.index) })) }, { sortable: false, caption: 'Rates' }),
+    ctx.note(`Rate = total ${y.name} / total ${ex ? ex.name : 'units'}, with the exact (Garwood) interval (statsmodels confint_poisson). Not in JMP, whose closest is a Poisson Generalized Linear Model with an offset in Fit Model: its Wald and likelihood-ratio tests, not these exact, score and E-tests of two rates.`));
+    const ratio = r.compare === 'ratio';
+    const pr = ctx.outline(ratio ? 'Rate Ratios' : 'Rate Differences', { parent: ob, key: `ratep:${sc}` });
+    const cols = [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: ratio ? '/ Level' : '- Level', fmt: 'text' }, { key: 'estimate', label: ratio ? 'Ratio' : 'Difference' },
+      { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }, { key: 'stat', label: 'Z' }, { key: 'p', label: 'Prob>|Z|', fmt: 'p' },
+      { key: 'p_greater', label: 'Prob>Z', fmt: 'p', hidden: true }, { key: 'p_less', label: 'Prob<Z', fmt: 'p', hidden: true }];
+    if (r.pairs.some((p) => p.p_holm != null)) cols.push({ key: 'p_holm', label: 'Holm-adjusted p', fmt: 'p', hidden: true });
+    pr.add(ctx.rt({ columns: cols, rows: r.pairs.map((p) => ({ ...p, a: nm(p.i), b: nm(p.j) })) }, { sortable: r.pairs.length > 2 }),
+      ctx.note(`Test: ${rateLabel(RATE_TESTS, r.method)}; interval: ${rateLabel(RATE_CIS, r.ci_method)} (statsmodels test_poisson_2indep and confint_poisson_2indep; the exact conditional test has no Z). Prob>Z is for ${ratio ? 'a ratio above 1' : 'a difference above 0'}; right click for it and the other one-sided p-value.`));
+    if (r.lr) {
+      const lo = ctx.outline('Likelihood Ratio Test', { parent: ob, key: `ratel:${sc}` });
+      lo.add(ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'chisq', label: 'L-R ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }],
+        rows: [{ ...r.lr, source: x.name }] }, { sortable: false }), ctx.kv([['Pearson χ²/DF (dispersion)', r.lr.dispersion]]),
+      ctx.note(`A Poisson GLM with the log ${ex ? ex.name : 'exposure'} as offset: a rate for each level against one rate for all. A dispersion well above 1 means the counts vary more than a Poisson allows.`));
+    }
+    ob.add(notesOf(ctx, r.notes), ctx.code(r.code));
   }
 
   async function powerReport(ctx, host, sc, base, pw) {
@@ -916,11 +1050,14 @@
       { label: 'Compare Means', submenu: () => [cmpItem('Each Pair, Student\'s t', 'student'), cmpItem('All Pairs, Tukey HSD', 'tukey'), cmpItem('With Control, Dunnett\'s…', 'dunnett', true)] },
       { label: 'Nonparametric', submenu: () => [
         np('Wilcoxon / Kruskal-Wallis Tests', 'wilcoxon'), np('Median Test', 'median'), np('van der Waerden Test', 'vdw'), np('Kolmogorov-Smirnov Test', 'ks', k !== 2),
+        ctx.check('Brunner-Munzel Test', 'bm', sc, false),
         { label: 'Nonparametric Multiple Comparisons', submenu: () => [npmcItem('Wilcoxon Each Pair', 'wilcoxon'), npmcItem('Steel-Dwass All Pairs', 'steel_dwass'), npmcItem('Steel With Control…', 'steel_control', true),
           npmcItem('Dunn With Control for Joint Ranks…', 'dunn_control', true), npmcItem('Dunn All Pairs for Joint Ranks', 'dunn_all')] },
       ] },
       ctx.check('Unequal Variances', 'unequal', sc, false),
-      { label: 'Equivalence Test', submenu: [{ label: 'Means…', checked: !!ctx.opt('equiv', null, sc), action: async () => { const v = await ask('Equivalence Test', [{ key: 'd', label: 'Difference considered practically zero', type: 'number', value: (ctx.opt('equiv', null, sc) || {}).delta ?? null }]); if (v && v.d > 0) ctx.set('equiv', { delta: v.d }, sc); } }] },
+      { label: 'Compare Rates…', checked: !!ctx.opt('rates', null, sc), disabled: !isCountColumn(ctx, y, x), action: () => ratesDialog(ctx, sc, y, x) },
+      { label: 'Equivalence Test', submenu: [{ label: 'Means…', checked: !!ctx.opt('equiv', null, sc), action: async () => { const v = await ask('Equivalence Test', [{ key: 'd', label: 'Difference considered practically zero', type: 'number', value: (ctx.opt('equiv', null, sc) || {}).delta ?? null }]); if (v && v.d > 0) ctx.set('equiv', { delta: v.d }, sc); } },
+        { label: 'Probability of Superiority…', checked: !!ctx.opt('bmTost', null, sc), action: () => brunnerTostDialog(ctx, sc) }] },
       { label: 'Power…', checked: !!ctx.opt('power', null, sc), action: () => powerDialog(ctx, sc, ctx.opt('power', null, sc) || {}) },
       { label: 'Set α Level', submenu: () => alphaMenu(ctx) },
       { separator: true },
@@ -1235,6 +1372,7 @@
       }
       if (r && r.mcnemar && o('rr', false)) host.add(ctx.note(`McNemar's test of the 2×2 table as paired data: χ² = ${fmt(r.mcnemar.chisq)}, p = ${SM.util.fmtP(r.mcnemar.p, ctx.alpha)} (exact binomial p = ${SM.util.fmtP(r.mcnemar.p_exact, ctx.alpha)}).`));
     }
+    if (o('twoProp', false)) await twoPropReport(ctx, host, sc, base, res, y, x);
     if (o('measures', false)) {
       const ob = ctx.outline('Measures of Association', { parent: host, key: `ma:${sc}`, info: 'p:fitybyx:measures' });
       const { res: r, error: e2 } = await safeCall(ctx, 'fitybyx.contingency_measures', base);
@@ -1294,16 +1432,62 @@
   }
 
   async function cmhReport(ctx, host, sc, base, strata) {
-    const ob = ctx.outline('Cochran Mantel Haenszel', { parent: host, key: `cmh:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('cmh', null, sc) }] });
+    const ob = ctx.outline('Cochran Mantel Haenszel', { parent: host, key: `cmh:${sc}`, info: 'p:fitybyx:strata', menu: () => [{ label: 'Remove', action: () => ctx.set('cmh', null, sc) }] });
     if (!strata) { ob.add(ctx.warn('The grouping column is no longer in the table.')); return; }
     const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_cmh', { ...base, strata: strata.name });
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     ob.add(ctx.note(`Grouped by ${strata.name}: ${r.strata} strata with both levels of each variable.`),
       ctx.rt({ columns: [{ key: 't', label: 'Test', fmt: 'text' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }],
-        rows: [{ t: 'Cochran Mantel Haenszel (odds ratio is 1)', ...r.cmh }, r.breslow_day ? { t: 'Breslow-Day (odds ratios are equal)', ...r.breslow_day } : null].filter(Boolean) }, { sortable: false }),
-      ctx.kv([['Mantel-Haenszel odds ratio', r.or_mh], [`Lower ${lvl}`, r.lower], [`Upper ${lvl}`, r.upper]]),
-      ctx.note('statsmodels StratifiedTable, 2×2 tables in each stratum (without a continuity correction). For larger tables JMP also reports the general-association statistics, which statsmodels does not compute.'), ctx.code(r.code));
+        rows: [{ t: 'Cochran Mantel Haenszel (odds ratio is 1)', ...r.cmh }, r.cmh_cc ? { t: 'Cochran Mantel Haenszel, continuity corrected', ...r.cmh_cc } : null,
+          r.breslow_day ? { t: 'Breslow-Day (odds ratios are equal)', ...r.breslow_day } : null,
+          r.breslow_day_tarone ? { t: 'Breslow-Day-Tarone (odds ratios are equal)', ...r.breslow_day_tarone } : null].filter(Boolean) }, { sortable: false }),
+      ctx.kv([['Mantel-Haenszel odds ratio', r.or_mh], [`Lower ${lvl}`, r.lower], [`Upper ${lvl}`, r.upper], ['Mantel-Haenszel relative risk', r.rr_mh]]));
+    if (r.by_stratum && r.by_stratum.length) {
+      const bs = ctx.outline('Odds Ratios by Stratum', { parent: ob, key: `cmhs:${sc}` });
+      bs.add(ctx.rt({ columns: [{ key: 'lv', label: strata.name, fmt: 'text' }, { key: 'n', label: 'N' }, { key: 'or', label: 'Odds Ratio' }, { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` },
+        { key: 'a', label: 'a', hidden: true }, { key: 'b', label: 'b', hidden: true }, { key: 'c', label: 'c', hidden: true }, { key: 'd', label: 'd', hidden: true }],
+      rows: r.by_stratum.map((s) => ({ ...s, lv: lvText(strata, s.level) })) }), ctx.note('Each stratum\'s own odds ratio with its log-scale Wald interval (statsmodels Table2x2): the Breslow-Day test asks whether they differ more than chance allows.'));
+    }
+    ob.add(notesOf(ctx, r.notes),
+      ctx.note('statsmodels StratifiedTable, 2×2 tables in each stratum. The Breslow-Day test of equal odds ratios (with Tarone\'s adjustment), the continuity-corrected test and the relative risk are not in JMP, whose Cochran Mantel Haenszel report gives SAS\'s general-association statistics instead, which statsmodels does not compute.'), ctx.code(r.code));
+  }
+
+  /* ---- Two Sample Test for Proportions: JMP's adjusted Wald difference,
+     and statsmodels' other methods, for a difference, ratio or odds ratio -- */
+  const TWOPROP = [['diff', 'Proportion Difference'], ['ratio', 'Relative Risk'], ['odds-ratio', 'Odds Ratio']];
+
+  async function twoPropReport(ctx, host, sc, base, res, y, x) {
+    const cmp = ctx.opt('twoPropCompare', 'diff', sc);
+    const lv0 = ctx.opt('twoPropLevel', null, sc);
+    const yl = res.y_levels, xl = res.x_levels;
+    const ob = ctx.outline('Two Sample Test for Proportions', { parent: host, key: `tp:${sc}`, info: 'p:fitybyx:twoprop', menu: () => [
+      ...TWOPROP.map(([k, l]) => ({ label: l, checked: cmp === k, action: () => ctx.set('twoPropCompare', k, sc) })),
+      { separator: true },
+      { label: 'Response Level', submenu: () => yl.map((v, j) => ({ label: lvText(y, v), checked: lv0 == null ? j === 0 : keyOf(lv0) === keyOf(v), action: () => ctx.set('twoPropLevel', j === 0 ? null : v, sc) })) },
+      { label: 'Remove', action: () => ctx.set('twoProp', false, sc) }] });
+    if (yl.length !== 2 || xl.length !== 2) { ob.add(ctx.warn('The Two Sample Test for Proportions needs a 2×2 table.')); return; }
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_twoprop', { ...base, compare: cmp, response: lv0 });
+    if (error) { ob.add(problem(ctx, error)); return; }
+    const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
+    const yt = lvText(y, yl[r.response]), x1 = lvText(x, xl[0]), x2 = lvText(x, xl[1]);
+    const desc = { diff: `P(${yt}|${x1}) − P(${yt}|${x2})`, ratio: `P(${yt}|${x1}) / P(${yt}|${x2})`, 'odds-ratio': `Odds(${yt}|${x1}) / Odds(${yt}|${x2})` }[cmp];
+    const estLabel = TWOPROP.find((t) => t[0] === cmp)[1];
+    ob.add(ctx.kv([['Description', desc, 'text'], [`P(${yt}|${x1})`, r.p1], [`P(${yt}|${x2})`, r.p2], [estLabel, r.estimate]]));
+    if (cmp === 'diff') {
+      const ac = r.methods.find((m) => m.key === 'agresti-caffo');
+      if (ac) {
+        ob.add(ctx.rt({ columns: [{ key: 'h', label: 'Adjusted Wald Test (Null Hypothesis)', fmt: 'text' }, { key: 'p', label: 'Prob', fmt: 'p' }], rows: [
+          { h: `${desc} ≥ 0`, p: ac.p_less }, { h: `${desc} ≤ 0`, p: ac.p_greater }, { h: `${desc} = 0`, p: ac.p }] }, { sortable: false, caption: `Lower ${lvl} ${fmt(ac.lower)}, Upper ${lvl} ${fmt(ac.upper)} (adjusted Wald, as JMP)` }));
+      }
+    }
+    const mrows = r.methods.map((m) => ({ ...m, note: m.note || (m.p == null && m.key === 'newcomb' ? 'interval only' : '') }));
+    ob.add(ctx.rt({ columns: [{ key: 'method', label: 'Method', fmt: 'text' }, { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }, { key: 'z', label: 'Z' },
+      { key: 'p', label: 'Prob>|Z|', fmt: 'p' }, { key: 'p_greater', label: 'Prob>Z', fmt: 'p', hidden: true }, { key: 'p_less', label: 'Prob<Z', fmt: 'p', hidden: true },
+      ...(mrows.some((m) => m.note) ? [{ key: 'note', label: '', fmt: 'text' }] : [])],
+    rows: mrows }, { sortable: false, caption: `${estLabel}: every method statsmodels has` }),
+    ctx.note(`Each method's interval (statsmodels confint_proportions_2indep) and its test of ${cmp === 'diff' ? 'no difference' : 'a ratio of 1'} (test_proportions_2indep). JMP reports only the adjusted Wald (Agresti-Caffo) difference; the score methods are Miettinen and Nurminen's, with their n/(n − 1) factor, and Koopman's for the ratio without it.`),
+    notesOf(ctx, r.notes), ctx.code(r.code));
   }
 
   async function agreeReport(ctx, host, sc, base) {
@@ -1336,6 +1520,7 @@
       ctx.check('Relative Risk', 'rr', sc, false),
       ctx.check('Odds Ratio', 'or', sc, false),
       ctx.check('Risk Difference', 'rd', sc, false),
+      ctx.check('Two Sample Test for Proportions', 'twoProp', sc, false),
       ctx.check('Measures of Association', 'measures', sc, false),
       ctx.check('Cochran Armitage Trend Test', 'trend', sc, false),
     ];
@@ -1400,9 +1585,10 @@
       { label: 'Quantiles', action: each('oneway', (sc) => { ctx.set('quantiles', true, sc, { rerun: false }); ctx.set('box', true, sc, { rerun: false }); }) },
       { label: 'All Pairs, Tukey HSD', action: each('oneway', (sc) => { const c = ctx.opt('compare', [], sc); if (!c.some((z) => z.method === 'tukey')) ctx.set('compare', [...c, { method: 'tukey', control: null }], sc, { rerun: false }); }) },
       { label: 'Wilcoxon / Kruskal-Wallis Tests', action: each('oneway', (sc) => { const c = ctx.opt('np', [], sc); if (!c.includes('wilcoxon')) ctx.set('np', [...c, 'wilcoxon'], sc, { rerun: false }); }) },
+      { label: 'Brunner-Munzel Test', action: setAll('oneway', 'bm', true) },
       { label: 'Unequal Variances', action: setAll('oneway', 'unequal', true) }] });
     if (of('logistic').length) items.push({ label: 'Logistic', submenu: [{ label: 'Odds Ratios', action: setAll('logistic', 'odds', true) }, { label: 'ROC Curve', action: setAll('logistic', 'roc', true) }] });
-    if (of('contingency').length) items.push({ label: 'Contingency', submenu: [{ label: 'Measures of Association', action: setAll('contingency', 'measures', true) }, { label: 'Correspondence Analysis', action: setAll('contingency', 'ca', true) }] });
+    if (of('contingency').length) items.push({ label: 'Contingency', submenu: [{ label: 'Measures of Association', action: setAll('contingency', 'measures', true) }, { label: 'Correspondence Analysis', action: setAll('contingency', 'ca', true) }, { label: 'Two Sample Test for Proportions', action: setAll('contingency', 'twoProp', true) }] });
     return [
       { head: 'For every analysis of a kind' }, ...items,
       { separator: true },
@@ -1417,6 +1603,7 @@
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One or more responses.'], ['X, Factor', 'One or more factors; every Y is paired with every X.'], ['Block', 'Oneway only: an ordinal or nominal column whose levels are blocks (a randomized block ANOVA).'], ['Weight', 'Weighted least squares; weights the logistic likelihood.'], ['Freq', 'A count per row: the row stands for that many observations.'], ['By', 'A separate analysis for each level.']] },
         { heading: 'The red triangles', text: 'Each analysis has its own: fits for a Bivariate, tests and comparisons for a Oneway, odds ratios and ROC curves for a Logistic, measures and tests for a Contingency. Each fit of a Bivariate has its red triangle too: confidence curves, saved predictions and residuals, residual plots, Remove Fit.' },
+        { heading: 'Beyond JMP', text: 'From statsmodels: Nonparametric ▸ Brunner-Munzel Test and Equivalence Test ▸ Probability of Superiority, Compare Rates for counts with an exposure (Oneway); the Two Sample Test for Proportions by every method statsmodels has and Breslow-Day beside Cochran Mantel Haenszel (Contingency). Each (i) says how they differ from JMP\'s closest.' },
         { heading: 'Weight and Freq', text: 'The least-squares fits use both, with the residual degrees of freedom counted from Freq. Where statsmodels or scipy takes no weights (rank tests, robust, quantile and LOWESS fits, MNLogit, OrderedModel) whole-number frequencies are counted by repeating rows and Weight is not used; the report says so.' },
         { heading: 'Linking', text: 'Points, bars and mosaic cells select their rows; selected rows are highlighted in every graph.' },
       ],
@@ -1454,7 +1641,49 @@
       kicker: 'Oneway', title: 'Nonparametric tests',
       lead: 'Rank tests of whether the levels come from the same distribution: Wilcoxon (Kruskal-Wallis), the median test and van der Waerden\'s normal scores, as linear rank tests; Kolmogorov-Smirnov for two levels.',
       sections: [{ heading: 'Forms', text: 'The chi-square is (N−1)Σ nᵢ(meanᵢ − mean)²/Σ(a − mean)² of the scores a, which for Wilcoxon scores is Kruskal-Wallis\' H with ties corrected, and for median scores (N−1)/N times the Pearson chi-square of scipy\'s median_test. The two-sample Z of the Wilcoxon test has a continuity correction of 0.5.' },
-        { heading: 'Multiple comparisons', text: 'Wilcoxon each pair (no adjustment), Steel-Dwass (all pairs, studentized range), Steel with a control, and Dunn\'s joint-rank comparisons with Bonferroni adjustment (statsmodels multipletests).' }],
+        { heading: 'Multiple comparisons', text: 'Wilcoxon each pair (no adjustment), Steel-Dwass (all pairs, studentized range), Steel with a control, and Dunn\'s joint-rank comparisons with Bonferroni adjustment (statsmodels multipletests).' },
+        { heading: 'Brunner-Munzel', text: 'The probability that a value of one level exceeds one of another, with its interval and a test that does not assume equal distributions; see its own (i).' }],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:brunner': {
+      kicker: 'Oneway', title: 'Brunner-Munzel and the probability of superiority',
+      lead: 'P = P(Y₁ > Y₂) + ½P(Y₁ = Y₂): the chance that a random value of one level exceeds a random value of the other, ties counted half. It is the Mann-Whitney U over n₁n₂, estimated from the ranks, and ½ means neither level tends to be larger.',
+      sections: [
+        { heading: 'The test', text: 'The Brunner-Munzel test of P = ½ estimates the variance of P̂ from the placements of each level without assuming, as the Wilcoxon test does, that the two distributions are the same when there is no effect: it stays valid when the levels differ in spread or shape and with ties. The p-value uses the t distribution with Welch-Satterthwaite type degrees of freedom (Brunner and Munzel 2000), which they recommend for up to 50 values per level; statsmodels rank_compare_2indep.' },
+        { heading: 'Several levels', text: 'Each pair, a later level against an earlier one; the Holm-adjusted p-values are among the optional columns (right click).' },
+        { heading: 'Equivalence Test', text: 'Two one-sided tests that P lies between two bounds, such as 0.4 and 0.6 (statsmodels tost_prob_superior): the levels are stochastically equivalent when both reject.' },
+        { heading: 'Not in JMP', text: 'JMP\'s closest are the Wilcoxon test, whose null hypothesis is identical distributions, and the Hodges-Lehmann estimate of a shift.' },
+      ],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:rates': {
+      kicker: 'Oneway', title: 'Compare Rates',
+      lead: 'Y counts events (whole numbers of zero or more), each row a unit observed for its Exposure: time, person-years, area. A level\'s rate is its total count over its total exposure; without an exposure every row is one unit.',
+      sections: [
+        { heading: 'The comparisons', choices: [['Ratio', 'rate₁/rate₂; 1 is no difference. Score (the default), Wald, log-ratio, square-root, exact conditional (binomial, given the total count), mid-p and E-tests (Gu et al. 2008).'], ['Difference', 'rate₁ − rate₂; 0 is no difference. Score, Wald and E-tests (Ng et al. 2007).']] },
+        { heading: 'Intervals', text: 'The score interval inverts the score test; the exact conditional interval is the Clopper-Pearson interval of the binomial count₁ out of count₁ + count₂, turned into a ratio; MOVER combines each rate\'s own interval. With a zero count some intervals are not defined, and the score interval is found by root finding here when statsmodels\' own search fails.' },
+        { heading: 'Every level together', text: 'The likelihood-ratio test of a Poisson GLM with the log exposure as offset: a rate for each level against one for all. Its Pearson χ²/DF well above 1 means overdispersion: the counts vary more than a Poisson allows and every test here is too optimistic; Count Regression fits a negative binomial.' },
+        { heading: 'Not in JMP', text: 'JMP compares counts with a Poisson Generalized Linear Model in Fit Model; it has no exact, score or E-test comparison of two rates.' },
+      ],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:twoprop': {
+      kicker: 'Contingency', title: 'Two Sample Test for Proportions',
+      lead: 'The proportion of one response level in the first X level against the second: their difference, their ratio (the relative risk) or their odds ratio, with a confidence interval and a test that they are equal. The Response Level item chooses the response level.',
+      sections: [
+        { heading: 'The methods', choices: [['Wald', 'estimate ± z·SE: poor with small counts or proportions near 0 or 1'], ['Agresti-Caffo (adjusted Wald)', 'one success and one failure added to each group: JMP\'s interval and test'], ['Newcombe (hybrid score)', 'from the two Wilson intervals; an interval only'], ['Miettinen-Nurminen (score)', 'inverts the score test, with the n/(n − 1) factor; recommended by Fagerland, Lydersen and Laake (2015)'], ['Katz, Woolf', 'log and logit Wald intervals; not defined with a zero cell'], ['Adjusted log, Gart', '0.5 added to the counts'], ['Koopman (score)', 'the score interval of the ratio'], ['Independence-smoothed logit', 'the counts shrunk toward independence']] },
+        { heading: 'Differences from JMP', text: 'JMP reports only the adjusted Wald difference, with its one- and two-sided tests (the first table here). The ratio and odds ratio, and the other methods, are statsmodels\' confint_proportions_2indep and test_proportions_2indep.' },
+      ],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:strata': {
+      kicker: 'Contingency', title: 'Cochran Mantel Haenszel and Breslow-Day',
+      lead: 'A 2×2 table of X by Y in each level of a grouping column (the strata). The Mantel-Haenszel estimate pools the strata\'s odds ratios; its test asks whether the common odds ratio is 1, the association within strata.',
+      sections: [
+        { heading: 'Breslow-Day', text: 'Whether the strata share one odds ratio: each stratum\'s first cell against what the pooled odds ratio predicts, a χ² with (strata − 1) DF. Tarone\'s adjustment makes it a proper χ² when the pooled estimate is the Mantel-Haenszel one; it is usually tiny. A small p-value means the association differs between strata, and one pooled odds ratio does not describe them.' },
+        { heading: 'The rest', text: 'The Mantel-Haenszel test with and without the continuity correction (R\'s mantelhaen.test uses it), the pooled odds ratio with its Robins-Breslow-Greenland interval, the pooled relative risk, and each stratum\'s own odds ratio.' },
+        { heading: 'Not in JMP', text: 'JMP\'s Cochran Mantel Haenszel report gives the general-association statistics of SAS\'s PROC FREQ (correlation of scores, row and column scores, general association), not the Breslow-Day test; statsmodels does not compute those.' },
+      ],
       more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:variances': {
@@ -1490,8 +1719,19 @@
       kicker: 'Specialized Modeling', title: 'Matched Pairs',
       lead: 'Two measurements of each unit (before and after, left and right): the difference, second minus first, against zero. The Tukey mean-difference plot shows each pair\'s difference against its mean, with the mean difference and its confidence interval.',
       sections: [
-        { heading: 'Roles', choices: [['Y, Paired Response', 'Two columns, or more: then every pair of them.'], ['X, Grouping', 'Optional: the differences and the means compared across its levels.'], ['By', 'A separate analysis for each level.']] },
+        { heading: 'Roles', choices: [['Y, Paired Response', 'Two columns, or more: then every pair of them. Binary columns (0/1, yes/no) also get Cochran\'s Q and McNemar\'s tests.'], ['X, Grouping', 'Optional: the differences and the means compared across its levels.'], ['By', 'A separate analysis for each level.']] },
         { heading: 'Tests', text: 'The paired t test (statsmodels DescrStatsW of the differences); from the red triangle Wilcoxon\'s signed-rank test (scipy; S is the signed-rank sum over two, as JMP shows it) and the sign test (statsmodels sign_test).' },
+      ],
+      more: { label: 'Matched Pairs', id: 'help-p-matchedpairs' },
+    },
+    'p:matchedpairs:binary': {
+      kicker: 'Matched Pairs', title: 'Cochran\'s Q and McNemar',
+      lead: 'Binary responses of the same subjects: two or more ratings, tests or conditions, each a success or not (0/1, yes/no). Cochran\'s Q tests whether every response has the same probability of success; McNemar\'s test compares two of them.',
+      sections: [
+        { heading: 'Cochran\'s Q', text: 'Q = (k − 1)(kΣC²ⱼ − N²)/(kN − ΣR²ᵢ), with Cⱼ the successes of response j, Rᵢ those of row i and N all of them, against χ² with k − 1 DF (statsmodels cochrans_q). Only rows with both outcomes carry information; it uses the rows with every response.' },
+        { heading: 'McNemar', text: 'For a pair only the discordant rows count: b with a success in the first response only, c in the second only; χ² = (b − c)²/(b + c), or (|b − c| − 1)² with the continuity correction, and the exact binomial test of b out of b + c (statsmodels mcnemar). With several pairs the Holm-adjusted p-values are among the optional columns.' },
+        { heading: 'Success Level', text: 'The tests are the same whichever value counts as the success; the proportions shown are of the success level (by default the second value, 1 or yes).' },
+        { heading: 'Not in JMP', text: 'JMP has no Cochran\'s Q; for one pair its closest is Fit Y by X ▸ Contingency ▸ Agreement Statistic, whose Bowker test of a 2×2 table is McNemar\'s χ² without the correction.' },
       ],
       more: { label: 'Matched Pairs', id: 'help-p-matchedpairs' },
     },
@@ -1507,9 +1747,11 @@
 
   SM.platforms.register({
     id: 'fitybyx', label: 'Fit Y by X', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
-    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, ROC and lift curves, inverse prediction) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis).',
+    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, ROC and lift curves, inverse prediction) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), and the Breslow-Day test of equal odds ratios across strata.',
     uses: ['statsmodels OLS, WLS, RLM, QuantReg (fits); lowess', 'statsmodels.stats.multicomp.pairwise_tukeyhsd; weightstats (CompareMeans, ttost_ind)', 'statsmodels.stats.oneway.anova_oneway; power.FTestAnovaPower; multitest.multipletests',
+      'statsmodels.stats.nonparametric.rank_compare_2indep (Brunner-Munzel, tost_prob_superior)', 'statsmodels.stats.rates (test_poisson_2indep, confint_poisson_2indep, confint_poisson); GLM Poisson',
       'statsmodels Logit, GLM Binomial, MNLogit, OrderedModel', 'statsmodels.stats.contingency_tables (Table, Table2x2, SquareTable, StratifiedTable, mcnemar); inter_rater.cohens_kappa',
+      'statsmodels.stats.proportion (test_proportions_2indep, confint_proportions_2indep)',
       'scipy.stats (dunnett, studentized_range, kruskal, ks_2samp, levene, bartlett, chi2_contingency, fisher_exact, multivariate_t, gaussian_kde)', 'scipy.interpolate.make_smoothing_spline'],
     launch: {
       lead: 'Cast one or more columns into each role; every Y is analysed against every X. The modeling types of the pair choose the analysis:',
@@ -1626,26 +1868,95 @@
     return out;
   }
 
+  /* Binary responses: the Y columns hold two values in all (0/1, yes/no).
+     Returns the values as text, or null. */
+  function mpBinaryValues(cols, rows) {
+    const vals = new Set();
+    for (const c of cols) for (const r of rows) { const v = c.values[r]; if (isMissing(v)) continue; vals.add(String(v)); if (vals.size > 2) return null; }
+    return vals.size === 2 ? [...vals] : null;
+  }
+
+  /* Cochran's Q and McNemar's test of each pair (statsmodels cochrans_q and
+     mcnemar; not in JMP, whose closest is Contingency's Agreement
+     Statistic, Bowker's test, for one pair). */
+  async function mpBinaryReport(ctx, ys) {
+    const o = (k, d) => ctx.opt(k, d);
+    const exact = o('mcExact', true), correction = o('mcCorrection', false);
+    const { res: r, error } = await safeCall(ctx, 'matchedpairs.binary', { columns: ys.map((c) => c.name), success: o('success', null), exact, correction, alpha: ctx.alpha, where: ctx.where || [] });
+    const successMenu = () => (r && r.values ? [{ label: 'Success Level', submenu: () => r.values.map((v) => ({ label: v, checked: r.success === v, action: () => ctx.set('success', v) })) }] : []);
+    if (o('cochranQ', true)) {
+      const ob = ctx.outline('Cochran\'s Q Test', { key: 'cochranq', info: 'p:matchedpairs:binary', menu: () => [...successMenu(), { separator: true }, { label: 'Remove', action: () => ctx.set('cochranQ', false) }] });
+      if (error) ob.add(problem(ctx, error));
+      else {
+        ob.add(ctx.rt({ columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'n', label: 'N', fmt: 'int' }, { key: 'count', label: `Count ${r.success}`, fmt: 'int' }, { key: 'prop', label: `Proportion ${r.success}` }], rows: r.columns }, { sortable: false }));
+        if (r.cochran) ob.add(ctx.kv([['Cochran\'s Q', r.cochran.q], ['DF', r.cochran.df, 'int'], ['Prob>ChiSq', r.cochran.p, 'p'], ['Rows with every response', r.cochran.n, 'int'], ['Rows with both outcomes', r.cochran.discordant, 'int']]));
+        ob.add(ctx.note(`Whether the ${ys.length} responses have the same probability of ${r.success}: Q = (k − 1)(kΣC²ⱼ − N²)/(kN − ΣR²ᵢ) from the column counts C and row counts R of ${r.success}, against χ² with k − 1 DF, on the rows with every response. For two responses it is McNemar's χ² without the continuity correction. Not in JMP.`),
+          notesOf(ctx, r.notes.filter((t) => !/discordant pair/.test(t))));
+      }
+    }
+    if (o('mcnemar', true)) {
+      const ob = ctx.outline('McNemar Tests', { key: 'mcnemar', info: 'p:matchedpairs:binary', menu: () => [
+        ctx.check('Exact Test', 'mcExact', null, true), ctx.check('Continuity Correction', 'mcCorrection', null, false), ...successMenu(),
+        { separator: true }, { label: 'Remove', action: () => ctx.set('mcnemar', false) }] });
+      if (error) ob.add(problem(ctx, error));
+      else {
+        const s = r.success, f = r.failure;
+        const cols = [{ key: 'a', label: 'Y1', fmt: 'text' }, { key: 'b', label: 'Y2', fmt: 'text' }, { key: 'n', label: 'N', fmt: 'int' },
+          { key: 'n11', label: `Both ${s}`, fmt: 'int', hidden: true }, { key: 'n10', label: `Y1 ${s}, Y2 ${f}`, fmt: 'int' }, { key: 'n01', label: `Y1 ${f}, Y2 ${s}`, fmt: 'int' }, { key: 'n00', label: `Both ${f}`, fmt: 'int', hidden: true },
+          { key: 'p1', label: `Prop ${s} Y1` }, { key: 'p2', label: `Prop ${s} Y2` }, { key: 'diff', label: 'Difference Y2 − Y1' },
+          { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }];
+        if (exact) cols.push({ key: 'p_exact', label: 'Exact Prob', fmt: 'p' });
+        if (r.pairs.some((p) => p.p_holm != null)) cols.push({ key: 'p_holm', label: 'Holm-adjusted p', fmt: 'p', hidden: true });
+        ob.add(ctx.rt({ columns: cols, rows: r.pairs.map((p) => ({ ...p, a: r.names[p.i], b: r.names[p.j] })) }, { sortable: r.pairs.length > 2 }),
+          ctx.note(`McNemar's test that the two responses have the same proportion of ${s}: only the discordant pairs count, χ² = ${correction ? '(|b − c| − 1)²' : '(b − c)²'}/(b + c) on 1 DF${exact ? '; the exact test is the binomial test of b out of b + c with p = ½' : ''}. Each pair on the rows where both responses are present. JMP's closest is Fit Y by X ▸ Contingency ▸ Agreement Statistic, whose Bowker test is this χ² without the correction; it has no exact McNemar test. Right click for the concordant counts${r.pairs.length > 1 ? ' and Holm-adjusted p-values' : ''}.`),
+          notesOf(ctx, r.notes.filter((t) => /discordant pair/.test(t))));
+      }
+    }
+    if (r && !error) ctx.container.append(ctx.code(r.code));
+  }
+
   SM.platforms.register({
     id: 'matchedpairs', label: 'Matched Pairs', menu: 'Analyze/Specialized Modeling', order: 40, info: 'p:matchedpairs',
-    about: 'Two paired responses (with more, every pair): the difference against zero by the paired t test, Wilcoxon\'s signed rank and the sign test, the Tukey mean-difference plot, and with a grouping column the differences and means compared across its levels.',
-    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.descriptivestats.sign_test', 'scipy.stats.wilcoxon, pearsonr, f_oneway, binomtest'],
+    about: 'Two paired responses (with more, every pair): the difference against zero by the paired t test, Wilcoxon\'s signed rank and the sign test, the Tukey mean-difference plot, and with a grouping column the differences and means compared across its levels. Binary responses (two or more, such as yes/no ratings of the same subjects): Cochran\'s Q test and McNemar\'s test of each pair, exact or with a continuity correction, which JMP does not have.',
+    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.descriptivestats.sign_test', 'statsmodels.stats.contingency_tables.cochrans_q, mcnemar', 'statsmodels.stats.multitest.multipletests (Holm)', 'scipy.stats.wilcoxon, pearsonr, f_oneway, binomtest'],
     launch: {
-      lead: 'Cast the two paired measurements (or more: every pair is analysed) into Y; the difference is the second minus the first.',
+      lead: 'Cast the two paired measurements (or more: every pair is analysed) into Y; the difference is the second minus the first. Binary responses (0/1, yes/no) get Cochran\'s Q and McNemar\'s tests.',
       roles: [
-        { key: 'y', label: 'Y, Paired Response', min: 2, types: ['continuous'], hint: 'required: two or more continuous' },
+        { key: 'y', label: 'Y, Paired Response', min: 2, types: ['continuous', 'ordinal', 'nominal'], hint: 'required: two or more continuous, or binary' },
         { key: 'x', label: 'X, Grouping', max: 1, types: ['ordinal', 'nominal'], hint: 'optional' },
         { key: 'by', label: 'By', hint: 'optional' },
       ],
+      validate(spec, table) {
+        const ys = ((spec.roles && spec.roles.y) || []).map((id) => table.col(id)).filter(Boolean);
+        if (!ys.some((c) => c.isCategorical)) return null;
+        if (!mpBinaryValues(ys, Array.from({ length: table.nrows }, (_, i) => i))) return 'Ordinal and nominal responses must be binary, with two values in all (yes/no): Matched Pairs then tests them with Cochran\'s Q and McNemar\'s test.';
+        return null;
+      },
     },
     title: (spec) => ((spec.roles.y || []).length > 2 ? 'Matched Pairs (every pair)' : 'Matched Pairs'),
     triangle(ctx) {
+      const ys = ctx.roles('y');
+      const binary = ys.length >= 2 && mpBinaryValues(ys, ctx.rows);
+      const numeric = ys.every((c) => c.isNumeric && !c.isCategorical);
+      const bin = binary ? [ctx.check('Cochran\'s Q Test', 'cochranQ', null, true), ctx.check('McNemar Tests', 'mcnemar', null, true), numeric ? ctx.check('Paired Differences', 'mpDiffs', null, true) : null, { separator: true }] : [];
       const pairs = mpPairs(ctx.spec, ctx.table);
-      if (pairs.length === 1) return mpMenu(ctx, `${pairs[0][0].id}~${pairs[0][1].id}`);
-      return [{ label: 'Set α Level', submenu: () => alphaMenu(ctx) }];
+      if (pairs.length === 1 && numeric) return [...bin, ...mpMenu(ctx, `${pairs[0][0].id}~${pairs[0][1].id}`)].filter(Boolean);
+      return [...bin, { label: 'Set α Level', submenu: () => alphaMenu(ctx) }].filter(Boolean);
     },
     async render(ctx) {
       healScopes(ctx);
+      const ys = ctx.roles('y');
+      const binary = ys.length >= 2 && mpBinaryValues(ys, ctx.rows);
+      const numeric = ys.every((c) => c.isNumeric && !c.isCategorical);
+      if (binary && (ctx.opt('cochranQ', true) || ctx.opt('mcnemar', true))) await mpBinaryReport(ctx, ys);
+      if (!numeric) {
+        const one = !binary && (() => { const v = new Set(); for (const c of ys) for (const r of ctx.rows) if (!isMissing(c.values[r])) v.add(String(c.values[r])); return v.size < 2; })();
+        ctx.container.append(binary ? ctx.note('The paired t test, Wilcoxon\'s signed rank and the sign test need numeric responses; these binary responses get Cochran\'s Q and McNemar\'s tests.')
+          : one ? ctx.warn('Every response here has the same value: there is nothing to compare.')
+            : ctx.warn('Ordinal and nominal responses must be binary (two values in all) for Cochran\'s Q and McNemar\'s tests.'));
+        return;
+      }
+      if (binary && !ctx.opt('mpDiffs', true)) return;
       const pairs = mpPairs(ctx.spec, ctx.table);
       const group = ctx.role('x');
       for (const [a, b] of pairs) await matchedPair(ctx, a, b, ctx.top, `${a.id}~${b.id}`, group);

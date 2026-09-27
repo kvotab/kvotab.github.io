@@ -14,6 +14,13 @@ against published values:
   - The Chinese smoking and lung cancer tables of Liu (1992), as Agresti
     analyses them (statsmodels.datasets.china_smoking): Mantel-Haenszel
     odds ratio 2.174, CMH chi-square 280.14, Breslow-Day 5.20.
+  - The values statsmodels' own test suite records from R and the
+    literature: lawstat's brunner.munzel.test (Munzel and Hauschke 2003),
+    the rate comparisons of Gu et al. (2008) and Ng et al. (2007) and R's
+    exactci, PropCIs and Fagerland et al. (2015) for two proportions,
+    DescTools' BreslowDayTest and mantelhaen.test, R's mcnemar.test, and
+    Cochran's Q of Conover (NIST Dataplot) and SAS; JMP's documented Two
+    Sample Test for Proportions example (adjusted Wald).
 
     python3 resources/tests/smui/test_fit_y_by_x.py
 """
@@ -628,6 +635,267 @@ ga = np.array(grp)[okm]
 check.near('across groups: F of the differences', r['across_tests'][0]['f'], float(stats.f_oneway(*[dd[ga == v] for v in ['x', 'y', 'z']]).statistic))
 check('the rows of the plot are table rows', r['rows'][:6], [0, 1, 2, 3, 4, 6])
 
+# ---- Oneway ▸ Brunner-Munzel: the probability of superiority ------------------------------------
+from statsmodels.stats.multitest import multipletests  # noqa: E402
+from statsmodels.stats.nonparametric import rank_compare_2indep  # noqa: E402
+# Munzel and Hauschke (2003): an ordinal score by treatment, given as counts (Freq). R's lawstat,
+# brunner.munzel.test(new, active), as statsmodels' test suite records it
+sc_lv = [-2, -1, 0, 1, 2]
+new_n, act_n = [24, 37, 21, 19, 6], [11, 51, 22, 21, 7]
+tmh = table({'score': sc_lv * 2, 'trt': ['new'] * 5 + ['active'] * 5, 'n': [float(v) for v in new_n + act_n]}, levels={'trt': ['new', 'active']})
+r = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n')
+bm = r['pairs'][0]
+check('Brunner-Munzel: the later level against the earlier (active vs new)', (bm['i'], bm['j'], bm['n1'], bm['n2']), (1, 0, 112, 107))
+check.near('Brunner-Munzel statistic (lawstat 1.1757561456582)', bm['stat'], 1.1757561456582, rel=1e-11)
+check.near('Brunner-Munzel df (lawstat 204.2984239868)', bm['df'], 204.2984239868, rel=1e-11)
+check.near('Brunner-Munzel p (lawstat 0.2410606649547)', bm['p'], 0.2410606649547, rel=1e-10)
+check.near('P(active > new) + ½P(=) (lawstat 0.5442256341789052)', bm['prob'], 0.5442256341789052, rel=1e-13)
+check.near('its lower limit (lawstat 0.4700629827705593)', bm['lower'], 0.4700629827705593, rel=1e-11)
+check.near('its upper limit (lawstat 0.6183882855872511)', bm['upper'], 0.6183882855872511, rel=1e-11)
+xa, xn = np.repeat(sc_lv, act_n).astype(float), np.repeat(sc_lv, new_n).astype(float)
+check.near('P is the Mann-Whitney U/(n1 n2)', bm['prob'], float(stats.mannwhitneyu(xa, xn).statistic / (len(xa) * len(xn))))
+check.near('the statistic is scipy\'s brunnermunzel(new, active)', bm['stat'], float(stats.brunnermunzel(xn, xa).statistic), rel=1e-12)
+check.near('the p-value is scipy\'s brunnermunzel', bm['p'], float(stats.brunnermunzel(xn, xa).pvalue), rel=1e-10)
+check.near('Somers\' D = 2P − 1', bm['somersd'], 2 * bm['prob'] - 1)
+refbm = rank_compare_2indep(xa, xn)
+check.near('Prob>t = test_prob_superior(larger)', bm['p_greater'], float(refbm.test_prob_superior(alternative='larger').pvalue))
+# the lawstat one-sided example of statsmodels' and scipy's tests: statistic 3.1374674823029505, p 0.0057862086661515377
+xs1 = [1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 1, 1]
+ys1 = [3, 3, 4, 3, 1, 2, 3, 1, 1, 5, 4]
+tbm = table({'v': xs1 + ys1, 'g': ['a'] * len(xs1) + ['b'] * len(ys1)})
+r2 = call('fitybyx.oneway_brunner', table=tbm, y='v', x='g')
+check.near('lawstat example: statistic 3.1374674823029505', r2['pairs'][0]['stat'], 3.1374674823029505, rel=1e-13)
+check.near('lawstat example: p 0.0057862086661515377', r2['pairs'][0]['p'], 0.0057862086661515377, rel=1e-12)
+check.near('lawstat example: one-sided p 0.0028931043330757342', r2['pairs'][0]['p_greater'], 0.0028931043330757342, rel=1e-12)
+# several levels: every pair against statsmodels, Holm over the pairs
+r4 = call('fitybyx.oneway_brunner', table=table({'y': yo, 'g': g.tolist()}), y='y', x='g')
+p31 = [p_ for p_ in r4['pairs'] if (p_['i'], p_['j']) == (3, 1)][0]
+ref31 = rank_compare_2indep(groups[3], groups[1])
+check.near('a pair of four levels = rank_compare_2indep', p31['prob'], float(ref31.prob1))
+check.near('its interval', p31['upper'], float(ref31.conf_int(alpha=0.05)[1]))
+check('six pairs of four levels', len(r4['pairs']), 6)
+check.near('Holm-adjusted p (statsmodels multipletests)', p31['p_holm'], float(multipletests([q['p'] for q in r4['pairs']], method='holm')[1][[(q['i'], q['j']) for q in r4['pairs']].index((3, 1))]))
+# the equivalence test: two one-sided tests; at the (1 - 2 alpha) limits the p-value is alpha
+lo90, hi90 = refbm.conf_int(alpha=0.1)
+r5 = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
+tt = refbm.tost_prob_superior(0.4, 0.6)
+check.near('TOST p = tost_prob_superior', r5['tost']['pairs'][0]['p'], float(tt.pvalue))
+check.near('TOST lower t = its larger test', r5['tost']['pairs'][0]['t_lower'], float(tt.results_larger.statistic))
+check.near('the 90% interval shown', r5['tost']['pairs'][0]['upper'], float(hi90))
+r6 = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': float(lo90), 'upp': float(hi90) * 1.05})
+check.near('TOST at the lower 90% limit: p = 0.05', r6['tost']['pairs'][0]['p'], 0.05, rel=1e-9)
+check('bounds outside [0, 1] are refused', 'error' in call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', tost={'low': 0.6, 'upp': 0.4}), True)
+rsep = call('fitybyx.oneway_brunner', table=table({'v': [1.0, 2, 3, 7, 8, 9], 'g': ['a', 'a', 'a', 'b', 'b', 'b']}), y='v', x='g')
+check('no overlap: P = 1, no test, a note', (rsep['pairs'][0]['prob'], rsep['pairs'][0]['p'], len(rsep['notes']) > 0, 'warnings' in rsep), (1.0, None, True, False))
+
+# ---- Oneway ▸ Compare Rates: Poisson counts with an exposure ------------------------------------
+from statsmodels.stats import rates as smr  # noqa: E402
+# Gu, Ng, Tang and Schucany (2008), example 1: 60 events in 51477.5 person-years against 30 in
+# 54308.7; each total split over three rows (units) here. Their one-sided p-values:
+tgu = table({'events': [20.0, 25, 15, 10, 12, 8], 'arm': ['A'] * 3 + ['B'] * 3, 'py': [17000.0, 20000.0, 14477.5, 18000.0, 20000.0, 16308.7]})
+gu = {'wald': 0.000356, 'score': 0.000316, 'score-log': 0.000200, 'wald-log': 0.000420, 'sqrt': 0.000285}
+for meth, pv in gu.items():
+    rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
+    check.near(f'Gu et al. example 1, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=5e-6)
+for meth, pv in (('exact-cond', 0.000428), ('cond-midp', 0.000310), ('etest-score', 0.000298), ('etest-wald', 0.000298)):
+    rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
+    check.near(f'Gu et al. example 1, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=5e-5)
+rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
+check.near('exact conditional two-sided p (R exactci 0.000675182658686321)', rr['pairs'][0]['p'], 0.000675182658686321, rel=1e-12)
+check.near('the rate ratio (R: 2.10999757175465)', rr['pairs'][0]['estimate'], 2.10999757175465, rel=1e-12)
+pl, pu = stats.beta.ppf(0.025, 60, 31), stats.beta.ppf(0.975, 61, 30)
+check.near('exact conditional interval = Clopper-Pearson of 60 of 90, as a ratio (R poisson.test)', rr['pairs'][0]['lower'], float(pl / (1 - pl) * 54308.7 / 51477.5))
+check.near('its upper limit', rr['pairs'][0]['upper'], float(pu / (1 - pu) * 54308.7 / 51477.5))
+lvr = {l['level']: l for l in rr['levels']}
+check('level totals', (lvr['A']['count'], lvr['A']['exposure'], lvr['B']['count']), (60.0, 51477.5, 30.0))
+lo_, hi_ = smr.confint_poisson(60, 51477.5, method='exact-c')
+check.near('a level\'s exact (Garwood) interval = confint_poisson', lvr['A']['lower'], float(lo_))
+rs = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='score', ci_method='score', control='B')
+ci_s = smr.confint_poisson_2indep(60, 51477.5, 30, 54308.7, method='score', compare='ratio')
+check.near('score interval = confint_poisson_2indep', rs['pairs'][0]['lower'], float(ci_s[0]), rel=1e-9)
+check.near('score test at the interval\'s limit: p = 0.05', float(smr.test_poisson_2indep(60, 51477.5, 30, 54308.7, value=rs['pairs'][0]['upper'], method='score').pvalue), 0.05, rel=1e-6)
+# Ng, Gu and Tang (2007): the difference of rates, 41 in 28010 against 15 in 19017, one-sided
+tng = table({'k': [41.0, 15.0], 'grp': ['one', 'two'], 'e': [28010.0, 19017.0]})
+for meth, (st_, pv) in (('wald', (2.2047, 0.0137)), ('score', (2.0818, 0.0187)), ('etest-wald', (2.2047, 0.0184)), ('etest-score', (2.0818, 0.0179))):
+    rr = call('fitybyx.oneway_rates', table=tng, y='k', x='grp', exposure='e', compare='diff', method=meth, ci_method='score', control='two')
+    check.near(f'Ng et al. difference, {meth}: statistic {st_}', rr['pairs'][0]['stat'], st_, abs_=6e-4)
+    check.near(f'Ng et al. difference, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=7e-4)
+# every level: the Poisson GLM's likelihood ratio = its closed form from the totals
+rng_r = np.random.default_rng(8)
+gk = np.repeat(['a', 'b', 'c'], 30)
+ek = rng_r.uniform(0.5, 3, 90)
+yk = rng_r.poisson(np.array([1.0, 1.4, 2.2])[np.repeat([0, 1, 2], 30)] * ek).astype(float)
+fk = rng_r.integers(1, 3, 90).astype(float)
+tk = table({'y': yk, 'g': gk.tolist(), 'e': ek, 'f': fk})
+rk = call('fitybyx.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
+Ck = np.array([np.sum((yk * fk)[gk == v]) for v in 'abc'])
+Ek = np.array([np.sum((ek * fk)[gk == v]) for v in 'abc'])
+lr_closed = 2 * np.sum(Ck * np.log(Ck / (Ek * Ck.sum() / Ek.sum())))
+check.near('LR chi-square of the Poisson GLM = 2ΣC log(C/(E·rate))', rk['lr']['chisq'], float(lr_closed), rel=1e-7)
+full = sm.GLM(yk, pd.get_dummies(gk).to_numpy(float), family=sm.families.Poisson(), exposure=ek, freq_weights=fk).fit()
+check.near('the dispersion = Pearson χ²/DF of the GLM', rk['lr']['dispersion'], float(full.pearson_chi2 / full.df_resid))
+check('three pairs of three levels', [(p_['i'], p_['j']) for p_ in rk['pairs']], [(1, 0), (2, 0), (2, 1)])
+t21 = smr.test_poisson_2indep(Ck[2], Ek[2], Ck[1], Ek[1], method='score')
+check.near('Freq counts units: a pair\'s score test on the totals', [p_ for p_ in rk['pairs'] if (p_['i'], p_['j']) == (2, 1)][0]['p'], float(t21.pvalue))
+# a level without events: the score interval by root finding, the LR from the totals
+tz = table({'events': [0.0, 0, 0, 2, 1, 2], 'arm': ['A'] * 3 + ['B'] * 3})
+rz = call('fitybyx.oneway_rates', table=tz, y='events', x='arm')
+pz = rz['pairs'][0]
+check('zero events: the ratio is infinite, the upper limit too', (pz['estimate'], pz['upper']), ('Infinity', 'Infinity'))
+with np.errstate(divide='ignore'):   # statsmodels divides by the zero rate on the way
+    p_at_lower = float(smr.test_poisson_2indep(5, 3, 0, 3, value=pz['lower'], method='score').pvalue)
+check.near('zero events: at the lower limit the score test gives p = 0.05', p_at_lower, 0.05, rel=1e-6)
+check.near('zero events: the lower limit in closed form, count₁·(units₂/units₁)/z²', pz['lower'], 5 / stats.norm.ppf(0.975) ** 2, rel=1e-8)
+check('zero events: the LR test from the totals, with a note', (rz['lr']['source'], any('no events' in t for t in rz['notes'])), ('totals', True))
+check('zero events: no warnings reach the report', 'warnings' in rz, False)
+check('counts only', 'error' in call('fitybyx.oneway_rates', table=table({'y': [0.5, 1, 2], 'g': ['a', 'b', 'a']}), y='y', x='g'), True)
+check('a method for the other comparison is refused', 'error' in call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', compare='diff', method='exact-cond'), True)
+
+# ---- Contingency ▸ Two Sample Test for Proportions ------------------------------------------------
+from statsmodels.stats.proportion import confint_proportions_2indep, test_proportions_2indep  # noqa: E402
+# JMP's documented example (Car Poll: married 95 of 138 women, 101 of 165 men): the adjusted Wald
+# difference 0.0763, interval [-0.03175, 0.181621], p = 0.1686
+tcar = table({'sex': ['Female', 'Female', 'Male', 'Male'], 'marital': ['Married', 'Single', 'Married', 'Single'], 'n': [95.0, 43, 101, 64]})
+r = call('fitybyx.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
+ac = [m for m in r['methods'] if m['key'] == 'agresti-caffo'][0]
+check.near('JMP example: the difference 0.0763', r['estimate'], 0.0763, abs_=5e-5)
+check.near('JMP example: lower limit -0.03175', ac['lower'], -0.03175, abs_=5e-6)
+check.near('JMP example: upper limit 0.181621', ac['upper'], 0.181621, abs_=2e-6)
+check.near('JMP example: adjusted Wald p 0.1686', ac['p'], 0.1686, abs_=5e-5)
+check('the description', r['description'], 'P(Married|Female) − P(Married|Male)')
+# R PropCIs and Fagerland et al. (2015) for 7 of 34 against 1 of 34
+t734 = table({'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['yes'] * 1 + ['no'] * 33}, levels={'r': ['yes', 'no']})
+r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g')
+M = {m['method']: m for m in r['methods']}
+check.near('PropCIs wald2ci(adjust="AC"): 0.01161167', M['Agresti-Caffo (adjusted Wald, as JMP)']['lower'], 0.01161167, abs_=6e-7)
+check.near('PropCIs wald2ci(adjust="AC"): 0.32172166', M['Agresti-Caffo (adjusted Wald, as JMP)']['upper'], 0.32172166, abs_=6e-7)
+check.near('PropCIs wald2ci(adjust="Wald"): 0.02916942', M['Wald']['lower'], 0.02916942, abs_=6e-7)
+check.near('Fagerland: Newcombe hybrid score 0.019 to 0.340', M['Newcombe (hybrid score)']['upper'], 0.340, abs_=0.005)
+check('Newcombe: an interval without a test', M['Newcombe (hybrid score)']['p'], None)
+ref_mn = confint_proportions_2indep(7, 34, 1, 34, method='score', compare='diff', correction=True)
+check.near('Miettinen-Nurminen = confint_proportions_2indep(score)', M['Miettinen-Nurminen (score)']['lower'], float(ref_mn[0]))
+check.near('its test = test_proportions_2indep(score)', M['Miettinen-Nurminen (score)']['p'], float(test_proportions_2indep(7, 34, 1, 34, method='score', compare='diff').pvalue))
+check.near('score test at the score limit: p = 0.05', float(test_proportions_2indep(7, 34, 1, 34, value=M['Miettinen-Nurminen (score)']['upper'], method='score', compare='diff').pvalue), 0.05, rel=1e-6)
+r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare='ratio')
+M = {m['method']: m for m in r['methods']}
+check.near('PropCIs riskscoreci (Koopman): 1.220853', M['Koopman (score)']['lower'], 1.220853, abs_=6e-7)
+check.near('PropCIs riskscoreci (Koopman): 42.575718', M['Koopman (score)']['upper'], 42.575718, abs_=6e-6)
+check.near('Fagerland: Katz log 0.91 to 54', M['Katz (log)']['upper'], 54, rel=0.01)
+check.near('Fagerland: adjusted log 0.92 to 27', M['Adjusted log (0.5 added)']['upper'], 27, rel=0.01)
+check.near('the relative risk 7', r['estimate'], 7.0)
+r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare='odds-ratio')
+M = {m['method']: m for m in r['methods']}
+check.near('PropCIs orscoreci: 1.246309', M['Miettinen-Nurminen (score)']['lower'], 1.246309, rel=5e-4)
+check.near('PropCIs orscoreci: 56.486130', M['Miettinen-Nurminen (score)']['upper'], 56.486130, rel=5e-4)
+check.near('Fagerland: Woolf logit 0.99 to 74', M['Woolf (logit)']['upper'], 74, rel=0.01)
+check.near('Fagerland: Gart adjusted logit 0.98 to 38', M['Gart (adjusted logit, 0.5 added)']['upper'], 38, rel=0.01)
+check.near('Fagerland: independence-smoothed logit 0.99 to 60', M['Independence-smoothed logit']['upper'], 60, rel=0.01)
+check.near('the odds ratio (7/27)/(1/33)', r['estimate'], (7 / 27) / (1 / 33))
+r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', response='no')
+check.near('Response Level no: the difference of the other level', r['estimate'], 27 / 34 - 33 / 34)
+t0 = table({'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['no'] * 34}, levels={'r': ['yes', 'no']})
+r = call('fitybyx.contingency_twoprop', table=t0, y='r', x='g', compare='odds-ratio')
+M = {m['method']: m for m in r['methods']}
+check('a zero cell: Woolf is not defined, Gart is', (M['Woolf (logit)']['lower'], M['Woolf (logit)'].get('note'), M['Gart (adjusted logit, 0.5 added)']['lower'] is not None), (None, 'not defined with a zero count', True))
+check('a zero cell: no warnings reach the report', 'warnings' in r, False)
+
+# ---- Contingency ▸ Cochran Mantel Haenszel: Breslow-Day (R DescTools) -------------------------------
+def strata_table(tabs):
+    s_, x_, y_, f_ = [], [], [], []
+    for k_, tb in enumerate(tabs):
+        for i_ in range(2):
+            for j_ in range(2):
+                s_.append(f's{k_ + 1}'); x_.append(['x1', 'x2'][i_]); y_.append(['y1', 'y2'][j_]); f_.append(float(tb[i_][j_]))
+    return table({'s': s_, 'x': x_, 'y': y_, 'f': f_})
+
+
+# statsmodels' TestStratified2: DescTools BreslowDayTest(correct=FALSE) 1.8438, p 0.7645; TRUE 1.8436, p 0.7645;
+# mantelhaen.test: 11.8852 (with the continuity correction), p 0.0005658, odds ratio 3.5912 (1.781135 to 7.240633)
+ts2 = strata_table([[[20, 14], [10, 24]], [[15, 12], [3, 15]], [[3, 2], [3, 2]], [[12, 3], [7, 5]], [[1, 0], [3, 2]]])
+r = call('fitybyx.contingency_cmh', table=ts2, y='y', x='x', strata='s', freq='f')
+check.near('Breslow-Day (DescTools 1.8438)', r['breslow_day']['chisq'], 1.8438, abs_=1e-4)
+check.near('Breslow-Day p (0.7645)', r['breslow_day']['p'], 0.7645, abs_=1e-4)
+check.near('Breslow-Day-Tarone (DescTools 1.8436)', r['breslow_day_tarone']['chisq'], 1.8436, abs_=1e-4)
+check.near('CMH with the continuity correction (mantelhaen.test 11.8852)', r['cmh_cc']['chisq'], 11.8852, abs_=1e-4)
+check.near('its p (0.0005658)', r['cmh_cc']['p'], 0.0005658, abs_=1e-7)
+check.near('Mantel-Haenszel odds ratio (3.5912)', r['or_mh'], 3.5912, abs_=1e-4)
+check.near('its lower limit (1.781135)', r['lower'], 1.781135, abs_=1e-6)
+check('a stratum with a zero cell has no odds ratio of its own', [s_['or'] is None for s_ in r['by_stratum']], [False, False, False, False, True])
+check.near('a stratum\'s odds ratio (20·24)/(14·10)', r['by_stratum'][0]['or'], 20 * 24 / (14 * 10))
+# TestStratified3 (the Berkeley admissions tables): DescTools 18.83297, p 0.002064786, Tarone the same
+ts3 = strata_table([[[313, 512], [19, 89]], [[207, 353], [8, 17]], [[205, 120], [391, 202]], [[278, 139], [244, 131]], [[138, 53], [299, 94]], [[351, 22], [317, 24]]])
+r = call('fitybyx.contingency_cmh', table=ts3, y='y', x='x', strata='s', freq='f')
+check.near('Breslow-Day, six strata (DescTools 18.83297)', r['breslow_day']['chisq'], 18.83297, rel=1e-6)
+check.near('its p (0.002064786)', r['breslow_day']['p'], 0.002064786, rel=1e-5)
+check.near('Breslow-Day-Tarone (18.83297)', r['breslow_day_tarone']['chisq'], 18.83297, rel=1e-4)
+check.near('pooled odds ratio 1.101879', r['or_mh'], 1.101879, rel=1e-6)
+check.near('CMH corrected 1.3368', r['cmh_cc']['chisq'], 1.3368, abs_=1e-4)
+from statsmodels.stats.contingency_tables import StratifiedTable as _ST  # noqa: E402
+check.near('the pooled relative risk = StratifiedTable.riskratio_pooled', r['rr_mh'], float(_ST([np.array(t_) for t_ in [[[313, 512], [19, 89]], [[207, 353], [8, 17]], [[205, 120], [391, 202]], [[278, 139], [244, 131]], [[138, 53], [299, 94]], [[351, 22], [317, 24]]]]).riskratio_pooled))
+# TestStratified1: mantelhaen.test 3.9286 (corrected), p 0.04747, odds ratio 7 (1.026713 to 47.725133)
+ts1 = strata_table([[[0, 0], [6, 5]], [[3, 0], [3, 6]], [[6, 2], [0, 4]], [[5, 6], [1, 0]], [[2, 5], [0, 0]]])
+r = call('fitybyx.contingency_cmh', table=ts1, y='y', x='x', strata='s', freq='f')
+check('strata without both levels of X and Y are left out', r['strata'], 3)
+check.near('the other strata give R\'s mantelhaen.test: 3.9286 (corrected)', r['cmh_cc']['chisq'], 3.9286, abs_=1e-4)
+check.near('its p (0.04747)', r['cmh_cc']['p'], 0.04747, abs_=1e-5)
+check.near('the pooled odds ratio 7', r['or_mh'], 7.0)
+check.near('its interval (1.026713 to 47.725133)', r['upper'], 47.725133, rel=1e-6)
+
+# ---- Matched Pairs ▸ binary responses: Cochran's Q and McNemar ------------------------------------------
+# Conover's example (NIST Dataplot): Q = 2.8, p = 0.246597
+xq = np.array([[1, 1, 1], [1, 1, 1], [0, 1, 0], [1, 1, 0], [0, 0, 0], [1, 1, 1], [1, 1, 1], [1, 1, 0], [0, 0, 1], [0, 1, 0], [1, 1, 1], [1, 1, 1]], float)
+tq = table({'a': xq[:, 0], 'b': xq[:, 1], 'c': xq[:, 2]})
+r = call('matchedpairs.binary', table=tq, columns=['a', 'b', 'c'])
+check.near('Cochran\'s Q, Conover (2.8)', r['cochran']['q'], 2.8)
+check.near('its p (0.246597)', r['cochran']['p'], 0.246597, abs_=5e-7)
+check('its DF and the success level', (r['cochran']['df'], r['success']), (2, '1'))
+Cc, Rr = xq.sum(0), xq.sum(1)
+qf = (3 - 1) * (3 * np.sum(Cc ** 2) - Cc.sum() ** 2) / (3 * Rr.sum() - np.sum(Rr ** 2))
+check.near('Q by the formula (k − 1)(kΣC² − N²)/(kN − ΣR²)', r['cochran']['q'], float(qf))
+# the same as text, and the other level as the success: the same Q
+lab = np.where(xq == 1, 'pass', 'fail')
+tq2 = table({'a': lab[:, 0].tolist(), 'b': lab[:, 1].tolist(), 'c': lab[:, 2].tolist()})
+r2 = call('matchedpairs.binary', table=tq2, columns=['a', 'b', 'c'], success='fail')
+check('text responses: the same Q whichever level is the success', (round(r2['cochran']['q'], 12), r2['success'], r2['columns'][0]['count']), (2.8, 'fail', 4))
+# an example checked against the web (13.2857143, 0.00405776), and SAS's frequency-form example (8.4706, 0.0145)
+d4 = np.array([[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1], [1, 1, 1, 1], [1, 0, 0, 1], [0, 1, 0, 1], [1, 0, 0, 1], [0, 0, 0, 1], [0, 1, 0, 0], [0, 0, 0, 0], [1, 0, 0, 1], [0, 0, 1, 1]], float)
+r = call('matchedpairs.binary', table=table({f'q{j}': d4[:, j] for j in range(4)}), columns=[f'q{j}' for j in range(4)])
+check.near('Cochran\'s Q of four responses (13.2857143)', r['cochran']['q'], 13.2857143, rel=1e-7)
+check.near('its p (0.00405776)', r['cochran']['p'], 0.00405776, rel=1e-6)
+cases = np.array([[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1], [0, 1, 0], [1, 1, 0], [0, 1, 1], [1, 1, 1]])
+dsas = np.repeat(cases, [6, 2, 16, 4, 2, 6, 4, 6], 0).astype(float)
+r = call('matchedpairs.binary', table=table({'A': dsas[:, 0], 'B': dsas[:, 1], 'C': dsas[:, 2]}), columns=['A', 'B', 'C'])
+check.near('SAS example: Q 8.4706', r['cochran']['q'], 8.4706, abs_=5e-5)
+check.near('SAS example: p 0.0145', r['cochran']['p'], 0.0145, abs_=5e-5)
+# McNemar: R's mcnemar.test of [[101, 121], [59, 33]] (statsmodels' tests), the Vassar exact p 0.000004
+mc = np.repeat([[1, 1], [1, 0], [0, 1], [0, 0]], [101, 121, 59, 33], axis=0).astype(float)
+tmc = table({'u': mc[:, 0], 'v': mc[:, 1]})
+r = call('matchedpairs.binary', table=tmc, columns=['u', 'v'], correction=True)
+check.near('McNemar with the correction (R 20.67222)', r['pairs'][0]['chisq'], 20.67222, rel=1e-6)
+check.near('its p (R 5.450095e-06)', r['pairs'][0]['p'], 5.450095e-06, rel=1e-6)
+check.near('exact McNemar p (0.000004)', r['pairs'][0]['p_exact'], 0.000004, abs_=5e-7)
+r = call('matchedpairs.binary', table=tmc, columns=['u', 'v'])
+check.near('McNemar without the correction (R 21.35556)', r['pairs'][0]['chisq'], 21.35556, rel=1e-6)
+check.near('its p (R 3.815136e-06)', r['pairs'][0]['p'], 3.815136e-06, rel=1e-6)
+check.near('two responses: Cochran\'s Q is McNemar without the correction', r['cochran']['q'], r['pairs'][0]['chisq'])
+check('the discordant counts b and c', (r['pairs'][0]['n10'], r['pairs'][0]['n01']), (121, 59))
+check.near('the difference of the proportions, second minus first', r['pairs'][0]['diff'], (101 + 59) / 314 - (101 + 121) / 314)
+# no discordant pair: statsmodels would give inf (p 0) with the correction; here chi-square 0, p 1
+tnd = table({'u': [1.0, 1, 0, 0, 1], 'v': [1.0, 1, 0, 0, 1]})
+r = call('matchedpairs.binary', table=tnd, columns=['u', 'v'], correction=True)
+check('no discordant pair: χ² 0, p 1, exact p 1, a note', (r['pairs'][0]['chisq'], r['pairs'][0]['p'], r['pairs'][0]['p_exact'], r['cochran'], len(r['notes'])), (0.0, 1.0, 1.0, None, 2))
+check('no warnings reach the report', 'warnings' in r, False)
+teq = table({'u': [1.0] * 5 + [0.0] * 5, 'v': [0.0] * 5 + [1.0] * 5})
+check('b = c with the correction: χ² 0 as in R (statsmodels: 1/(b + c))', call('matchedpairs.binary', table=teq, columns=['u', 'v'], correction=True)['pairs'][0]['chisq'], 0.0)
+# missing values: Cochran on complete rows, each pair on its own
+xm = xq.copy()
+xm[2, 2] = np.nan
+r = call('matchedpairs.binary', table=table({'a': xm[:, 0], 'b': xm[:, 1], 'c': xm[:, 2]}), columns=['a', 'b', 'c'])
+check('a missing response: Cochran on 11 rows, the pair a-b on 12', (r['cochran']['n'], r['pairs'][0]['n'], r['pairs'][1]['n']), (11, 12, 11))
+check('three values are not binary', 'error' in call('matchedpairs.binary', table=table({'a': [0.0, 1, 2], 'b': [1.0, 0, 1]}), columns=['a', 'b']), True)
+r = call('matchedpairs.binary', table=tq, columns=['a', 'b', 'c'], exact=True)
+check.near('Holm over the pairs\' exact p-values', r['pairs'][2]['p_holm'], float(multipletests([p_['p_exact'] for p_ in r['pairs']], method='holm')[1][2]))
+
 # ---- the Python under the results runs on a CSV export of the table ----------------------------
 import contextlib
 import io
@@ -689,6 +957,83 @@ code_runs('CMH', cols, [('fitybyx.contingency_cmh', call('fitybyx.contingency_cm
 cols = {'before': before, 'after': after, 'grp': grp}
 tidc = table(cols)
 code_runs('Matched Pairs', cols, [('matchedpairs.analyze', call('matchedpairs.analyze', table=tidc, y1='before', y2='after', group='grp'))])
+
+
+
+def code_ns(columns, code, label):
+    """Run a result's code on a CSV export of its table; its variables."""
+    with tempfile.TemporaryDirectory() as tmp:
+        pd.DataFrame(columns).to_csv(os.path.join(tmp, 'data.csv'), index=False)
+        here = os.getcwd()
+        os.chdir(tmp)
+        ns = {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                exec(compile(code, label, 'exec'), ns)
+        except Exception as e:   # the check below reports it
+            ns['__error__'] = f'{type(e).__name__}: {e}'
+        finally:
+            os.chdir(here)
+    check(f'the code of {label} runs', ns.get('__error__', True), True)
+    return ns
+
+
+# the code under the new results gives the report's numbers
+cols = {'score': sc_lv * 2, 'trt': ['new'] * 5 + ['active'] * 5, 'n': new_n + act_n}
+res_ = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
+ns = code_ns(cols, res_['code'], 'Brunner-Munzel with Freq')
+if 'r' in ns:
+    check.near('its code: the probability of superiority', float(ns['r'].prob1), res_['pairs'][0]['prob'])
+    check.near('its code: the Brunner-Munzel p', float(ns['r'].pvalue), res_['pairs'][0]['p'])
+cols = {'y': yk, 'g': gk.tolist(), 'e': ek, 'f': fk}
+res_ = call('fitybyx.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
+ns = code_ns(cols, res_['code'], 'Compare Rates with exposure and Freq')
+if 'full' in ns:
+    check.near('its code: the likelihood ratio of the GLMs', float(2 * (ns['full'].llf - ns['null'].llf)), res_['lr']['chisq'], rel=1e-7)
+    check.near('its code: the first pair\'s score test', float(smr.test_poisson_2indep(ns['c1'], ns['e1'], ns['c2'], ns['e2'], method='score').pvalue), res_['pairs'][0]['p'])
+    check.near('its code: the dispersion', float(ns['full'].pearson_chi2 / ns['full'].df_resid), res_['lr']['dispersion'], rel=1e-7)
+cols = {'events': [20.0, 25, 15, 10, 12, 8], 'arm': ['A'] * 3 + ['B'] * 3, 'py': [17000.0, 20000.0, 14477.5, 18000.0, 20000.0, 16308.7]}
+res_ = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
+ns = code_ns(cols, res_['code'], 'Compare Rates, exact conditional')
+if 'pl' in ns:
+    check.near('its code: the exact conditional interval', float(ns['pl'] / (1 - ns['pl']) * ns['e2'] / ns['e1']), res_['pairs'][0]['lower'])
+cols = {'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['yes'] * 1 + ['no'] * 33}
+for cmp_ in ('diff', 'ratio', 'odds-ratio'):
+    res_ = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare=cmp_)
+    ns = code_ns(cols, res_['code'], f'Two Sample Test for Proportions ({cmp_})')
+    if 'count1' in ns:
+        check('its code: the counts', [float(ns[k]) for k in ('count1', 'nobs1', 'count2', 'nobs2')], [res_['count1'], res_['nobs1'], res_['count2'], res_['nobs2']])
+        m_ = res_['methods'][-1]
+        check.near('its code: the last method\'s interval', float(confint_proportions_2indep(ns['count1'], ns['nobs1'], ns['count2'], ns['nobs2'], method=m_['key'], compare=cmp_, correction=m_['correction'])[1]), m_['upper'])
+cols = {'sex': ['Female', 'Female', 'Male', 'Male'], 'marital': ['Married', 'Single', 'Married', 'Single'], 'n': [95, 43, 101, 64]}
+res_ = call('fitybyx.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
+ns = code_ns(cols, res_['code'], 'Two Sample Test for Proportions with Freq')
+if 'count1' in ns:
+    check('its code: the counts with Freq', [float(ns[k]) for k in ('count1', 'nobs1', 'count2', 'nobs2')], [95.0, 138.0, 101.0, 165.0])
+for label_, tbl_, tabs_ in (('Breslow-Day (DescTools)', ts2, [[[20, 14], [10, 24]], [[15, 12], [3, 15]], [[3, 2], [3, 2]], [[12, 3], [7, 5]], [[1, 0], [3, 2]]]),):
+    res_ = call('fitybyx.contingency_cmh', table=tbl_, y='y', x='x', strata='s', freq='f')
+    s_, x_, y_, f_ = [], [], [], []
+    for k_, tb in enumerate(tabs_):
+        for i_ in range(2):
+            for j_ in range(2):
+                s_.append(f's{k_ + 1}'); x_.append(['x1', 'x2'][i_]); y_.append(['y1', 'y2'][j_]); f_.append(float(tb[i_][j_]))
+    ns = code_ns({'s': s_, 'x': x_, 'y': y_, 'f': f_}, res_['code'], label_)
+    if 'st' in ns:
+        check.near('its code: Breslow-Day', float(ns['st'].test_equal_odds().statistic), res_['breslow_day']['chisq'])
+        check.near('its code: the pooled odds ratio', float(ns['st'].oddsratio_pooled), res_['or_mh'])
+res_ = call('fitybyx.contingency_cmh', table=tid10, y='lung', x='smoking', strata='city', freq='n')
+ns = code_ns({'city': cities, 'smoking': xs_, 'lung': ys_, 'n': fs_}, res_['code'], 'CMH of the Chinese smoking tables, Freq')
+if 'st' in ns:
+    check.near('its code: the Mantel-Haenszel odds ratio with Freq', float(ns['st'].oddsratio_pooled), res_['or_mh'])
+from statsmodels.stats.contingency_tables import cochrans_q  # noqa: E402
+for label_, cols_ in (('Cochran\'s Q, numeric', {'a': xq[:, 0], 'b': xq[:, 1], 'c': xq[:, 2]}), ('Cochran\'s Q, text', {'a': lab[:, 0].tolist(), 'b': lab[:, 1].tolist(), 'c': lab[:, 2].tolist()})):
+    res_ = call('matchedpairs.binary', table=table(cols_), columns=['a', 'b', 'c'])
+    ns = code_ns(cols_, res_['code'], label_)
+    if 'X' in ns:
+        check.near('its code: Q', float(cochrans_q(ns['X'].to_numpy()).statistic), res_['cochran']['q'])
+        check.near('its code: the first pair\'s exact McNemar', float(mcnemar(ns['t'], exact=True).pvalue), res_['pairs'][0]['p_exact'])
+        check.near('its code: the first pair\'s McNemar χ²', float(mcnemar(ns['t'], exact=False, correction=False).statistic), res_['pairs'][0]['chisq'])
 
 # ---- errors and row lists ---------------------------------------------------------------------
 check('Y and X the same column', 'error' in call('fitybyx.fit_poly', table=tid, y='before', x='before'), True)

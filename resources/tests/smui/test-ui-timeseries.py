@@ -14,6 +14,18 @@ selection shows in the graph; excluded rows count as missing values; By
 gives a report per level; the models survive a saved and reopened project;
 the report draws in the dark theme and at phone width.
 
+Then what JMP does not have, on the Business cycle and Monthly sales
+examples: the Zivot-Andrews test in Stationarity Tests with its break date
+and options; Regime Switching through its dialog (regimes, transition
+matrix, durations, the shaded series and the linked probabilities, the
+starts, Save Regime Probabilities); the Hodrick-Prescott, Baxter-King and
+Christiano-Fitzgerald filters with Save Columns; ARDL with the long run and
+the bounds test at the model's k, forecasts from the future inputs, and
+Fit New with fixed orders; the seasonal subseries plot, linked; a
+structural model with its components and Save Components; the Theta model
+and statsmodels' own intervals; all of them in reopened projects, the
+script, the dark theme and at phone width.
+
 Start a server on the repository root and headless Chrome on SMUI_HTTP_PORT
 and SMUI_CDP_PORT (see README.md), then
 
@@ -84,12 +96,18 @@ true
 '''
 
 
+def num(text):
+    """A number as the page shows it: JMP's minus sign (−), a star on a significant p-value."""
+    return float(str(text).replace('−', '-').rstrip('*'))
+
+
 async def shot(page, name, title=None):
     if not SHOTS:
         return
     os.makedirs(SHOTS, exist_ok=True)
-    if title:   # scroll the report down to the outline (only vertically: the report body also scrolls sideways)
-        await page.ev(f'''(() => {{ const rep = SM.app.reports.find(r => r.platform.id === 'timeseries'); const h = __ts.head(rep, {json.dumps(title)});
+    if title:   # scroll the report on show down to the outline (only vertically: the report body also scrolls sideways)
+        await page.ev(f'''(() => {{ const rep = SM.app.reports.find(r => r.platform.id === 'timeseries' && r.body.offsetParent !== null) || SM.app.reports.find(r => r.platform.id === 'timeseries');
+          document.querySelectorAll('.sm-toast').forEach(t => t.remove()); const h = __ts.head(rep, {json.dumps(title)});
           if (h) rep.body.scrollTop = h.getBoundingClientRect().top - rep.body.getBoundingClientRect().top + rep.body.scrollTop - 8; }})()''')
     await asyncio.sleep(1.0)
     await page.shot(os.path.join(SHOTS, name))
@@ -357,6 +375,258 @@ async def main():
     await asyncio.sleep(1.2)
     check('no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
     await shot(page, 'ts-07-phone.png', 'Model Comparison')
+    # ==== beyond JMP: Zivot-Andrews, regime switching, filters, the subseries plot, structural, Theta and ARDL models ====
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev('document.documentElement.setAttribute("data-theme", "light")')
+    await asyncio.sleep(0.8)
+    r = await page.ev('''(() => { const t = SM.io.example('cycles'); SM.app.addTable(t);
+      const p = t.col('price').values; return { name: t.name, rows: t.nrows, cols: t.columns.map(c => c.name), lastPrice: p.slice(-9).map(v => Number.isFinite(v)),
+        listed: !!SM.io.EXAMPLES.cycles, date: t.col('quarter').format && t.col('quarter').format.kind }; })()''')
+    check('the Business cycle example: simulated quarters with a price missing in the last 8', (r['name'], r['rows'], r['cols'], r['lastPrice'], r['listed'], r['date']),
+          ('Business cycle', 184, ['quarter', 'growth', 'output', 'unemployment', 'cost', 'price'], [True] + [False] * 8, True, 'date'))
+
+    async def open_ts(roles, options):
+        return await page.ev(f'''(async () => {{ const t = SM.app.current; const P = SM.platforms.get('timeseries');
+          const ids = {{}}; for (const [k, names] of Object.entries({json.dumps(roles)})) ids[k] = names.map(n => t.col(n).id);
+          const rep = SM.app.openReport(P, {{ roles: ids, options: {json.dumps(options)} }}, t); await __ts.done(rep);
+          return {{ title: rep.title, outlines: __ts.outlines(rep), ...__ts.problems(rep) }}; }})()''', timeout=600)
+
+    # ---- Zivot-Andrews, in Stationarity Tests by default
+    r = await open_ts({'y': ['unemployment'], 'time': ['quarter']}, {'forecast': 8})
+    check('Stationarity Tests hold the Zivot-Andrews Test by default', ('Stationarity Tests' in r['outlines'], 'Zivot-Andrews Test' in r['outlines'], r['errors']), (True, True, []))
+    za = await page.ev(table_under_js('Zivot-Andrews Test'))
+    check('Zivot-Andrews: the three models and the break date', ([row[0] for row in za[1:]], za[0]),
+          (['Break in intercept', 'Break in trend', 'Break in intercept and trend'], ['Model', 'Statistic', 'Prob', 'Lags', 'Break', '1%', '5%', '10%']))
+    check('... the level shift after 2005 Q1 is found (a break in the intercept)', za[1][4] in ('2004-10-01', '2005-01-01', '2005-04-01'), True)
+    check('... and the unit root is rejected', za[1][2].startswith('<') or num(za[1][2]) < 0.05, True)
+    zp = await page.ev('''(() => { const p = __ts.rep().plots.find(p => p.opts.title === 'unemployment Zivot-Andrews breaks'); return p ? { shapes: p.userLayout.shapes.length, labels: p.userLayout.annotations.map(a => a.text.trim()), linked: !!p.rows[0] } : null; })()''')
+    n_dates = len({row[4] for row in za[1:]})
+    check('... a graph with a line at each break date, labelled with its models, its points linked to the rows', (zp['shapes'], len(zp['labels']), zp['linked'], any('intercept' in x for x in zp['labels'])), (n_dates, n_dates, True, True))
+    t = await act(page, '''await __ts.menu(__ts.rep(), 'Zivot-Andrews Test', ['Zivot-Andrews Options…']); return await __ts.form({ 'Trimming at each end (0 to 1/3)': 0.25, 'Lags chosen by': 'BIC' }, 'OK');''')
+    check('Zivot-Andrews Options: the dialog', t, 'Zivot-Andrews Test: unemployment')
+    spec = json.loads(await page.ev('JSON.stringify(__ts.rep().spec.options)'))
+    check('... the options are kept in the report (Redo and projects keep them)', (spec.get('ts:unemployment|zaTrim'), spec.get('ts:unemployment|zaAutolag')), (0.25, 'BIC'))
+    check('... and the test is redrawn with them', await page.ev('__ts.rep().body.textContent.includes("trim=0.25") || [...__ts.rep().body.querySelectorAll("details.sm-code code")].some(c => c.textContent.includes("trim=0.25"))'), True)
+    await shot(page, 'ts-08-zivot.png', 'Zivot-Andrews Test')
+    await act(page, '''await __ts.menu(__ts.rep(), 'Stationarity Tests', ['Zivot-Andrews Test']); return true;''')
+    check('the Stationarity Tests red triangle turns it off', 'Zivot-Andrews Test' in await page.ev('__ts.outlines(__ts.rep())'), False)
+    r = await page.ev('''(async () => { const rng = SM.util.rng('long'); let x = 0; const v = []; for (let i = 0; i < 5001; i++) { x += rng.normal(); v.push(x); }
+      const t = new SM.Table({ name: 'Long walk', columns: [{ name: 'x', dataType: 'numeric', values: v }] }); SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('timeseries'), { roles: { y: [t.col('x').id] }, options: {} }, t); await __ts.done(rep);
+      const out = { za: __ts.outlines(rep).includes('Zivot-Andrews Test'), note: rep.body.textContent.includes('left out for a series of more than 5000 values'), ...__ts.problems(rep) };
+      SM.app.closeReport(rep); SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      const cyc = SM.app.tables.find(x => x.name === 'Business cycle'); if (cyc) SM.app.showTab(SM.app.tabOf(cyc));
+      return out; })()''', timeout=600)
+    check('a series of more than 5000 values leaves the Zivot-Andrews test out by default, and says so', (r['za'], r['note'], r['errors']), (False, True, []))
+
+    # ---- Regime Switching on growth
+    r = await open_ts({'y': ['growth'], 'time': ['quarter']}, {'forecast': 8})
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Regime Switching…']); return await __ts.form({ 'Autoregressive Order (0: switching regression)': 1, 'Random Starts': 3 }, 'Estimate');''', timeout=900)
+    check('Regime Switching: the dialog', t, 'Regime Switching Specification: growth')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('... the model report and its parts', [o for o in outl if o in ('Model: Regime Switching: 2 regimes, AR(1), switching mean', 'Model Comparison', 'Regimes', 'Regime Probabilities', 'Starts', 'One-Step-Ahead Predictions')],
+          ['Model Comparison', 'Model: Regime Switching: 2 regimes, AR(1), switching mean', 'One-Step-Ahead Predictions', 'Regimes', 'Regime Probabilities', 'Starts'])
+    pr = await page.ev('__ts.problems(__ts.rep())')
+    check('... without errors', pr['errors'], [])
+    rg = await page.ev(table_under_js('Regimes'))
+    tp = await page.ev(table_under_js('Regimes', 1))
+    check('Regimes: the probability of staying, the expected duration, how long each is most likely', rg[0], ['Regime', 'P(Stay)', 'Expected Duration', 'Periods Most Likely', 'Mean Probability'])
+    check('... the transition matrix: each row sums to 1', all(abs(num(a) + num(b) - 1) < 2e-6 for _, a, b in tp[1:]), True)
+    stay = [num(row[1]) for row in rg[1:]]
+    dur = [num(row[2]) for row in rg[1:]]
+    check('... the expected duration is 1/(1 − P(Stay))', all(abs(d - 1 / (1 - s_)) < 1e-3 * d for s_, d in zip(stay, dur)), True)
+    pe = await page.ev(table_under_js('Parameter Estimates'))
+    check('Parameter Estimates with a Regime column', (pe[0], [row[0] for row in pe[1:]]), (['Term', 'Regime', 'Estimate', 'Std Error', 'z Ratio', 'Prob>|z|'], ['P(0 → 0)', 'P(1 → 0)', 'Intercept', 'Intercept', 'Variance', 'AR1']))
+    means = sorted(num(row[2]) for row in pe[1:] if row[0] == 'Intercept')
+    check('... the two means near the simulated −0.6 and 0.8 (the quantile start finds them)', abs(means[0] + 0.6) < 0.5 and abs(means[1] - 0.8) < 0.4, True)
+    rp = await page.ev('''(async () => { const rep = __ts.rep(); const p = rep.plots.find(p => /smoothed probabilities$/.test(p.opts.title)); const s = rep.plots.find(p => /regimes$/.test(p.opts.title));
+      await p.draw(); await s.draw(); return { traces: p.traces.filter(t => t.rows || p.rows).length, names: p.traces.map(t => t.name), shapes: s.userLayout.shapes.length, rowsLinked: p.rows.filter(Boolean).length }; })()''')
+    check('Regime Probabilities: a probability line per regime, linked to the rows', (rp['names'][:2], rp['rowsLinked']), (['Regime 0', 'Regime 1'], 2))
+    check('... the series shaded where each regime is the most likely', rp['shapes'] > 2, True)
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const p = rep.plots.find(p => /smoothed probabilities$/.test(p.opts.title));
+      p._click({ points: [{ curveNumber: 0, pointNumber: 50 }], event: {} }); const sel = t.selectedRows();
+      t.select([7, 8]); await new Promise(r => setTimeout(r, 150)); const sp = Array.from(p.box.data[0].selectedpoints || []); t.select([]); return { sel, sp }; })()''')
+    check('... a click on a probability selects its row; a selection shows in the graph', (r['sel'], r['sp']), ([50], [7, 8]))
+    st = await page.ev(table_under_js('Starts'))
+    check('Starts: statsmodels\' default, the quantile start and 3 random starts, one best', ([row[0] for row in st[1:]], sum(1 for row in st[1:] if row[3] == '★ best')),
+          (["statsmodels' default", 'regimes at the quantiles', 'random 1', 'random 2', 'random 3'], 1))
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const before = t.columns.length; await __ts.menu(rep, 'Model: Regime Switching', ['Save Regime Probabilities']);
+      await new Promise(r => setTimeout(r, 150)); const added = t.columns.slice(before); const out = { names: added.map(c => c.name), p0: added[0].values[10], p1: added[1].values[10], most: added[2].values[10] };
+      for (const c of added) t.removeColumn(c.id); return out; })()''')
+    check('Save Regime Probabilities: the smoothed probabilities and the most likely regime', (r['names'], abs(r['p0'] + r['p1'] - 1) < 1e-9, r['most'] == (0 if r['p0'] > r['p1'] else 1)),
+          (['P(Regime 0) growth', 'P(Regime 1) growth', 'Most Likely Regime growth'], True, True))
+    await shot(page, 'ts-09-regimes.png', 'Regime Probabilities')
+    await act(page, '''await __ts.menu(__ts.rep(), 'Model: Regime Switching', ['Filtered Probabilities']); return true;''')
+    check('Filtered Probabilities adds the dotted filtered lines', await page.ev('''(() => __ts.rep().plots.find(p => /smoothed probabilities$/.test(p.opts.title)).traces.filter(t => /filtered$/.test(t.name)).length)()'''), 2)
+
+    # ---- Filters on output
+    r = await open_ts({'y': ['output'], 'time': ['quarter']}, {'forecast': 8})
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Filters', 'Hodrick-Prescott Filter…']); await new Promise(r => setTimeout(r, 250));
+      const dlg = [...document.querySelectorAll('.sm-dialog')].pop(); const lab = [...dlg.querySelectorAll('.sm-form label')].find(l => l.textContent === 'λ, Smoothing');
+      window.__lam = document.getElementById(lab.htmlFor).value; return await __ts.form({}, 'Estimate');''')
+    check('Filters > Hodrick-Prescott: quarterly data propose λ = 1600', (t, await page.ev('window.__lam')), ('Hodrick-Prescott Filter: output', '1600'))
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Filters', 'Baxter-King Filter…']); return await __ts.form({}, 'Estimate');''')
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Filters', 'Christiano-Fitzgerald Filter…']); return await __ts.form({}, 'Estimate');''')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('... three filter reports', [o for o in outl if 'Filter' in o], ['Hodrick-Prescott Filter (λ = 1600)', 'Baxter-King Filter (6 to 32 periods, K = 12)', 'Christiano-Fitzgerald Filter (6 to 32 periods)'])
+    kv = dict(tuple(x) for x in await page.ev(table_under_js('Baxter-King Filter (6 to 32 periods, K = 12)')))
+    check('... Baxter-King loses K = 12 quarters at each end', kv.get('N (cycle)'), '160')
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const before = t.columns.length; await __ts.menu(rep, 'Hodrick-Prescott Filter', ['Save Columns']);
+      await new Promise(r => setTimeout(r, 150)); const added = t.columns.slice(before); const out = { names: added.map(c => c.name), sum: added[0].values[20] + added[1].values[20], y: t.col('output').values[20] };
+      for (const c of added) t.removeColumn(c.id); return out; })()''')
+    check('... Save Columns writes the trend and the cycle, which add up to the series', (r['names'], abs(r['sum'] - r['y']) < 1e-9), (['output HP trend', 'output HP cycle'], True))
+    await shot(page, 'ts-10-filters.png', 'Hodrick-Prescott Filter')
+
+    # ---- ARDL on price and cost, with the future costs
+    r = await open_ts({'y': ['price'], 'time': ['quarter'], 'inputs': ['cost']}, {'forecast': 8})
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['ARDL…']); return await __ts.form({}, 'Estimate');''', timeout=900)
+    check('ARDL: the dialog', t, 'ARDL Specification: price')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    mname = [o for o in outl if o.startswith('Model: ARDL(')]
+    check('... the model, named by its orders', (len(mname), mname[0].endswith('with cost') if mname else False), (1, True))
+    check('... its parts', [o for o in outl if o in ('Lag Order Selection', 'Long-Run Coefficients', 'Bounds Test', 'Error Correction Form')],
+          ['Lag Order Selection', 'Long-Run Coefficients', 'Bounds Test', 'Error Correction Form'])
+    lr = await page.ev(table_under_js('Long-Run Coefficients'))
+    lrd = {row[0]: row for row in lr[1:]}
+    check('Long-Run Coefficients: cost near the simulated 0.75', abs(num(lrd['cost'][1]) - 0.75) < 0.1, True)
+    bt = await page.ev('''(() => { const h = __ts.head(__ts.rep(), 'Bounds Test'); const b = h.parentElement; const v = b.querySelector('.sm-ts-verdict');
+      return { kv: [...b.querySelectorAll('table.sm-kv tr')].map(tr => [...tr.children].map(c => c.textContent)), crit: [...b.querySelectorAll('table.sm-rt tr')].map(tr => [...tr.children].map(c => c.textContent)), verdict: v && v.className, text: v && v.textContent }; })()''')
+    kvb = dict(tuple(x) for x in bt['kv'])
+    check('Bounds Test: the F statistic, the case and k = 1 input', (kvb.get('Case'), kvb.get('Inputs (k)'), await page.ev('__ts.rep().body.textContent.includes("Case 3: unrestricted intercept, no trend.")')), ('3', '1', True))
+    check('... the critical values of PSS (2001) for one input', (bt['crit'][0], [row[0] for row in bt['crit'][1:]]), (['Level', 'I(0) Bound', 'I(1) Bound'], ['10%', '5%', '1%', '0.1%']))
+    check('... the 5% bounds are those of k = 1 (about 4.9 and 5.7), not statsmodels\' k + 1', [round(num(x), 1) for x in bt['crit'][2][1:]], [4.9, 5.7])
+    check('... and the verdict: a level relationship', (bt['verdict'], bt['text'].startswith('At 5%, F = ')), ('sm-ts-verdict sm-ts-reject', True))
+    check('ARDL forecasts continue the quarters with the 8 future costs', await page.ev('__ts.rep().body.textContent.includes("8 periods ahead, from 2024-01-01 to 2025-10-01")'), True)
+    check('... and say where the future inputs came from', await page.ev('__ts.rep().body.textContent.includes("cost: the 8 future values come from the rows after the series in the table.")'), True)
+    await shot(page, 'ts-11-ardl.png', 'Bounds Test')
+    t = await act(page, '''await __ts.menu(__ts.rep(), 'Model: ARDL(', ['Fit New…']);
+      return await __ts.form({ 'Or fixed orders p, q1, q2 … (- leaves an input out)': '2, 1', 'Deterministic Terms': 'ct' }, 'Estimate');''', timeout=900)
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('Fit New… with fixed orders and a trend: ARDL(2, 1)', 'Model: ARDL(2, 1) with cost' in outl, True)
+    kv2 = await page.ev('''(() => [...__ts.rep().body.querySelectorAll('.sm-ob-head')].filter(h => h.textContent.trim() === 'Bounds Test').map(h => [...h.parentElement.querySelectorAll('table.sm-kv tr')].map(tr => [...tr.children].map(c => c.textContent)).find(x => x[0] === 'Case')[1]))()''')
+    check('... its bounds test takes case 4 (the trend restricted)', (kv2, await page.ev('__ts.rep().body.textContent.includes("Case 4: unrestricted intercept, restricted trend.")')), (['3', '4'], True))
+
+    # ---- the sales example: the subseries plot, a structural model with the promotion, the Theta model
+    r = await page.ev(f'''(async () => {{ const t = SM.app.tables.find(t => t.name === 'Monthly sales'); const P = SM.platforms.get('timeseries');
+      const rep = SM.app.openReport(P, {{ roles: {{ y: [t.col('sales').id], time: [t.col('month').id], inputs: [t.col('promotion').id] }}, options: {{ forecast: 12 }} }}, t); await __ts.done(rep);
+      return {{ title: rep.title, ...__ts.problems(rep) }}; }})()''', timeout=600)
+    check('a report on the Monthly sales', (r['title'], r['errors']), ('Time Series sales', []))
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Seasonal Subseries Plot']); return true;''')
+    sp = await page.ev('''(async () => { const p = __ts.rep().plots.find(p => p.opts.title === 'sales seasonal subseries'); await p.draw();
+      return { n: p.traces.filter(t => t.type === 'scatter').length, ticks: p.userLayout.xaxis.ticktext, means: p.userLayout.shapes.length, rows: p.rows[0].slice(0, 3) }; })()''')
+    check('Seasonal Subseries Plot: a small series for each month with its mean line', (sp['n'], sp['ticks'], sp['means']), (12, ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], 12))
+    check('... January is the rows 0, 12, 24 …', sp['rows'], [0, 12, 24])
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const p = rep.plots.find(p => p.opts.title === 'sales seasonal subseries');
+      p._click({ points: [{ curveNumber: 1, pointNumber: 2 }], event: {} }); const sel = t.selectedRows(); t.select([]); return sel; })()''')
+    check('... a click selects the row (the third February)', r, [25])
+    mt = await page.ev(table_under_js('Season Means'))
+    check('... Season Means gives the numbers', (mt[0], len(mt) - 1), (['Season', 'N', 'Mean', 'Std Dev'], 12))
+    await shot(page, 'ts-12-subseries.png', 'Seasonal Subseries Plot')
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Structural Model…']); return await __ts.form({}, 'Estimate');''', timeout=900)
+    check('Structural Model: the dialog', t, 'Structural Model Specification: sales')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('... the model with its seasonal and the promotion input (the dialog\'s defaults)', 'Model: Structural: local linear trend + seasonal(12) + promotion' in outl, True)
+    check('... its parts', [o for o in outl if o in ('Model Summary', 'Parameter Estimates', 'Forecast', 'Residuals', 'Components', 'Iteration History')][:6],
+          ['Model Summary', 'Parameter Estimates', 'Forecast', 'Residuals', 'Components', 'Iteration History'])
+    pe = await page.ev(table_under_js('Parameter Estimates'))
+    check('... the variances and the input coefficient', ([row[0] for row in pe[1:]], pe[0]),
+          (['Irregular Variance (σ²ε)', 'Level Variance (σ²η)', 'Slope Variance (σ²ζ)', 'Seasonal Variance (σ²ω)', 'promotion'], ['Term', 'Estimate', 'Std Error', 'z Ratio', 'Prob>|z|']))
+    cp = await page.ev('''(async () => { const p = __ts.rep().plots.find(p => /components$/.test(p.opts.title)); await p.draw();
+      return { panels: p.userLayout.annotations.map(a => a.text), bands: p.traces.filter(t => t.fill === 'tonexty').length, linked: p.rows.filter(Boolean).length }; })()''')
+    check('Components: level, trend, seasonal, regression and irregular panels, with bands', (cp['panels'], cp['bands']), (['Level', 'Trend (slope)', 'Seasonal', 'Regression effect', 'Irregular'], 4))
+    check('... the data in the level panel, linked to the rows', cp['linked'], 1)
+    check('... forecasts continue the months', await page.ev('__ts.rep().body.textContent.includes("12 periods ahead, from 2026-01-01 to 2026-12-01")'), True)
+    await shot(page, 'ts-13-structural.png', 'Components')
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const before = t.columns.length; await __ts.menu(rep, 'Model: Structural', ['Save Components']);
+      await new Promise(r => setTimeout(r, 150)); const added = t.columns.slice(before); const names = added.map(c => c.name); for (const c of added) t.removeColumn(c.id); return names; })()''')
+    check('Save Components writes the smoothed components', r, ['Level sales', 'Trend (slope) sales', 'Seasonal sales', 'Regression effect sales', 'Irregular sales'])
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Theta Model…']); return await __ts.form({}, 'Estimate');''', timeout=900)
+    check('Theta Model: the dialog', t, 'Theta Model: sales')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('... the model report', 'Model: Theta Model (θ = 2)' in outl, True)
+    rows = await page.ev('__ts.cmpRows(__ts.rep())')
+    check('Model Comparison lists the structural and Theta models', sorted(x['name'] for x in rows), ['Structural: local linear trend + seasonal(12) + promotion', 'Theta Model (θ = 2)'])
+    band = await page.ev('''(() => { const p = __ts.rep().plots.find(p => p.opts.title === 'Theta Model (θ = 2) forecast'); const u = p.traces.find(t => t.name === 'Theta Model (θ = 2) upper'); return u.y[u.y.length - 1]; })()''')
+    await act(page, '''await __ts.menu(__ts.rep(), 'Model: Theta Model', ["statsmodels' Prediction Intervals"]); return true;''')
+    band2 = await page.ev('''(() => { const p = __ts.rep().plots.find(p => p.opts.title === 'Theta Model (θ = 2) forecast'); const u = p.traces.find(t => t.name === 'Theta Model (θ = 2) upper'); return u.y[u.y.length - 1]; })()''')
+    check("... statsmodels' own prediction intervals are wider than the IMA(1, 1) ones", band2 > band, True)
+    check('... and the note says why', await page.ev('__ts.rep().body.textContent.includes("which is not that model\'s variance")'), True)
+    pr = await page.ev('__ts.problems(__ts.rep())')
+    check('no errors with the new models', pr['errors'], [])
+
+    # ---- By: the new parts in every group
+    r = await page.ev('''(async () => {
+      const src = SM.app.tables.find(t => t.name === 'Monthly sales');
+      const m = src.col('month').values, s = src.col('sales').values;
+      const t = new SM.Table({ name: 'Two regions again', columns: [
+        { name: 'region', dataType: 'character', values: [...m.map(() => 'North'), ...m.map(() => 'South')] },
+        { name: 'month', dataType: 'numeric', format: { kind: 'date' }, values: [...m, ...m] },
+        { name: 'sales', dataType: 'numeric', values: [...s, ...s.map((v, i) => v * 0.8 + 5 * Math.sin(i))] } ] });
+      SM.app.addTable(t);
+      const P = SM.platforms.get('timeseries');
+      const rep = SM.app.openReport(P, { roles: { y: [t.col('sales').id], time: [t.col('month').id], by: [t.col('region').id] }, options: { forecast: 6,
+        'ts:sales|models': [{ id: 1, kind: 'uc', trend: 'local level', seasonal: 12, level: 0.95 }, { id: 2, kind: 'theta', theta: 2, deseasonalize: true, period: 12, level: 0.95 }],
+        'ts:sales|filters': [{ id: 1, kind: 'hp' }], 'ts:sales|subseries': true } }, t);
+      await __ts.done(rep);
+      const out = { tops: [...rep.body.querySelectorAll('.sm-ob.level-0 > .sm-ob-head h2')].map(h => h.textContent),
+        outl: __ts.outlines(rep).filter(o => o.startsWith('Model: ') || o.includes('Filter') || o === 'Seasonal Subseries Plot' || o === 'Zivot-Andrews Test'), ...__ts.problems(rep),
+        code: rep.pythonScript().includes('df = df[df["region"] == \\'North\\']') };
+      SM.app.closeReport(rep); SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      return out; })()''', timeout=900)
+    per = ['Zivot-Andrews Test', 'Seasonal Subseries Plot', 'Hodrick-Prescott Filter (λ = 129600)', 'Model: Structural: local level + seasonal(12)', 'Model: Theta Model (θ = 2)']
+    check('By: the new parts in each group', (r['tops'], r['outl']), (['Time Series sales region=North', 'Time Series sales region=South'], per + per))
+    check('... without errors, and the code keeps the group', (r['errors'], r['code']), ([], True))
+
+    # ---- a saved project redraws the new models, filters and options
+    n_ts_before = await page.ev('SM.app.reports.filter(r => r.platform.id === "timeseries").length')
+    r = await page.ev('''(async () => {
+      const out = [];
+      for (const rep of SM.app.reports.filter(r => r.platform.id === 'timeseries').slice(-4)) {
+        const t = rep.table; const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+        const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j))); const r2 = SM.app.reports[n]; await __ts.done(r2);
+        out.push({ outlines: __ts.outlines(r2).filter(o => o.startsWith('Model: ') || o.includes('Filter') || o === 'Seasonal Subseries Plot'), ...__ts.problems(r2) });
+        const t2 = r2.table; SM.app.closeReport(r2); SM.app.closeTable(t2);   // the copies go again
+        document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      }
+      return out;
+    })()''', timeout=900)
+    check('reopened projects redraw the regime model, the filters, ARDL and the sales models', [x['outlines'] for x in r], [
+        ['Model: Regime Switching: 2 regimes, AR(1), switching mean'],
+        ['Hodrick-Prescott Filter (λ = 1600)', 'Baxter-King Filter (6 to 32 periods, K = 12)', 'Christiano-Fitzgerald Filter (6 to 32 periods)'],
+        [o for o in r[2]['outlines'] if o.startswith('Model: ARDL(')],
+        ['Seasonal Subseries Plot', 'Model: Structural: local linear trend + seasonal(12) + promotion', 'Model: Theta Model (θ = 2)']])
+    check('... without errors', [x['errors'] for x in r], [[], [], [], []])
+    check('... ARDL with both its fits', len(r[2]['outlines']), 2)
+    script = await page.ev('SM.app.reports.filter(r => r.platform.id === "timeseries").map(r => r.pythonScript()).join("\\n")')
+    check('the Python script has the new fits', all(s_ in script for s_ in ('UnobservedComponents', 'MarkovAutoregression', 'hpfilter', 'bkfilter', 'cffilter', 'ThetaModel', 'zivot_andrews', 'ardl_select_order', 'bounds_test', 'month_plot')), True)
+
+    # ---- the new reports in the dark theme and at phone width
+    check('the reopened copies are closed again', await page.ev('SM.app.reports.filter(r => r.platform.id === "timeseries").length'), n_ts_before)
+    await page.ev('SM.app.showTab(SM.app.tabOf(__ts.rep()))')
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark'); await d; })()''', timeout=600)
+    await asyncio.sleep(1.0)
+    await shot(page, 'ts-14-dark-structural.png', 'Components')
+    await shot(page, 'ts-15-dark-subseries.png', 'Seasonal Subseries Plot')
+    regime_rep = await page.ev('SM.app.reports.findIndex(r => r.title === "Time Series growth")')
+    await page.ev(f'SM.app.showTab(SM.app.tabOf(SM.app.reports[{regime_rep}]))')
+    await asyncio.sleep(1.0)
+    colors = await page.ev(f'''(() => {{ const rep = SM.app.reports[{regime_rep}]; const p = rep.plots.find(p => /smoothed probabilities$/.test(p.opts.title)); return p.traces.slice(0, 2).map(t => t.line.color); }})()''')
+    check('the regime colours are stepped for the dark theme', colors, ['#3987e5', '#d95926'])
+    if SHOTS:
+        await page.ev(f'''(() => {{ const rep = SM.app.reports[{regime_rep}]; const h = __ts.head(rep, 'Regime Probabilities'); rep.body.scrollTop = h.getBoundingClientRect().top - rep.body.getBoundingClientRect().top + rep.body.scrollTop - 8; }})()''')
+        await asyncio.sleep(1.0)
+        await page.shot(os.path.join(SHOTS, 'ts-16-dark-regimes.png'))
+    ardl_rep = await page.ev('SM.app.reports.findIndex(r => r.title === "Time Series price")')
+    await page.ev(f'SM.app.showTab(SM.app.tabOf(SM.app.reports[{ardl_rep}]))')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await page.ev(f'''(async () => {{ const rep = SM.app.reports[{ardl_rep}]; const d = __ts.done(rep); rep.run(); await d; }})()''', timeout=600)
+    await asyncio.sleep(1.2)
+    check('no horizontal page scroll at phone width (ARDL)', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    if SHOTS:
+        await page.ev(f'''(() => {{ const rep = SM.app.reports[{ardl_rep}]; const h = __ts.head(rep, 'Bounds Test'); rep.body.scrollTop = h.getBoundingClientRect().top - rep.body.getBoundingClientRect().top + rep.body.scrollTop - 8; }})()''')
+        await asyncio.sleep(1.0)
+        await page.shot(os.path.join(SHOTS, 'ts-17-phone-ardl.png'))
+
     check('no script errors', page.errors, [])
     await page.close()
 

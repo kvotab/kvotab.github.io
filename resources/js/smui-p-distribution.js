@@ -5,8 +5,9 @@
    quantiles, summary statistics, and from the red triangle the normal
    quantile plot, CDF plot, stem and leaf, tests of the mean and the
    standard deviation, equivalence, confidence, prediction and tolerance
-   intervals, capability and fitted distributions. Ordinal and nominal:
-   bar chart, frequencies, confidence intervals, mosaic, test of
+   intervals, capability and fitted distributions, and for counts the test
+   of a Poisson rate (with an exposure). Ordinal and nominal: bar chart,
+   frequencies, confidence intervals by a choice of method, mosaic, test of
    probabilities.
 
    This is the reference platform: it uses every part of the report
@@ -23,6 +24,56 @@
   const DISCRETE = [['poisson', 'Poisson'], ['negbin', 'Gamma Poisson']];
   const FIT_COLORS = ['#b0413e', '#3a7d44', '#6c5b7b', '#c0a000', '#1f9e89', '#8c564b', '#e377c2', '#17becf', '#7f7f7f'];
   const pctLabel = (p) => `${(100 * p).toFixed(1)}%`;
+  // Confidence Interval Method of the level probabilities (statsmodels proportion_confint)
+  const CI_METHODS = [['wilson', 'Wilson Score'], ['agresti_coull', 'Agresti-Coull'], ['jeffreys', 'Jeffreys'], ['beta', 'Clopper-Pearson (exact)'], ['normal', 'Wald']];
+  // Test Rate (statsmodels test_poisson and confint_poisson)
+  const RATE_TESTS = [['exact-c', 'Exact (central)'], ['midp-c', 'Mid-p (central)'], ['score', 'Score'], ['wald', 'Wald'], ['waldccv', 'Wald, 0.5 added to the variance'], ['sqrt-a', 'Anscombe square root'], ['sqrt-v', 'Vandenbroucke square root'], ['sqrt', 'Square root']];
+  const RATE_CIS = [['exact-c', 'Exact (Garwood)'], ['midp-c', 'Mid-p'], ['score', 'Score'], ['jeff', 'Jeffreys'], ['wald', 'Wald'], ['waldccv', 'Wald, 0.5 added to the variance'], ['sqrt-a', 'Anscombe square root']];
+  const labelOf = (list, key) => (list.find((m) => m[0] === key) || [key, key])[1];
+
+  /* Whole numbers of zero or more: a column of counts. */
+  function isCounts(vals) {
+    return vals.length > 0 && vals.every((v) => v >= 0 && Math.abs(v - Math.round(v)) < 1e-9);
+  }
+
+  function ciMethodItems(ctx, col) {
+    const sc = col.id;
+    const cur = ctx.opt('ciMethod', 'wilson', sc);
+    return CI_METHODS.map(([k, l]) => ({ label: k === 'wilson' ? `${l} (JMP)` : l, checked: cur === k, action: () => { if (!ctx.opt('ciCat', null, sc)) ctx.set('ciCat', 0.95, sc, { rerun: false }); ctx.set('ciMethod', k, sc); } }));
+  }
+
+  async function testRateDialog(ctx, col) {
+    const sc = col.id;
+    const cur = ctx.opt('testRate', null, sc) || { rate: 1, exposure: null, method: 'exact-c', ci: 'exact-c' };
+    const nums = ctx.table.columns.filter((c) => c.isNumeric && !c.isCategorical && c.id !== col.id);
+    const v = await SM.ui.form({
+      title: `Test Rate: ${col.name}`, info: 'p:distribution:rate',
+      lead: `${col.name} counts events; each row is one unit, observed for its exposure (time, person-years, area). The rate is the total count over the total exposure.`,
+      fields: [
+        { key: 'rate', label: 'Hypothesized rate (events per unit of exposure)', type: 'number', value: cur.rate },
+        { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])] },
+        { key: 'method', label: 'Test', type: 'select', value: cur.method || 'exact-c', choices: RATE_TESTS },
+        { key: 'ci', label: 'Confidence interval', type: 'select', value: cur.ci || 'exact-c', choices: RATE_CIS },
+      ],
+      validate: (x) => (x.rate > 0 ? null : 'The hypothesized rate must be positive.'),
+    });
+    if (v) ctx.set('testRate', { rate: v.rate, exposure: v.exposure || null, method: v.method, ci: v.ci }, sc);
+  }
+
+  async function testRateReport(ctx, col, parent, tr) {
+    const sc = col.id;
+    const ob = ctx.outline('Test Rate', { parent, key: 'testrate', info: 'p:distribution:rate', menu: () => [{ label: 'Change…', action: () => testRateDialog(ctx, col) }, { label: 'Remove Test', action: () => ctx.set('testRate', null, sc) }] });
+    const ex = tr.exposure ? ctx.col(tr.exposure) : null;
+    if (tr.exposure && !ex) { ob.add(ctx.warn('The exposure column is no longer in the table.')); return; }
+    const r = await ctx.call('distribution.test_rate', { column: col.name, rate: tr.rate, exposure: ex ? ex.name : null, method: tr.method || 'exact-c', ci_method: tr.ci || 'exact-c', weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const lvl = fmt(100 * (1 - ctx.alpha));
+    ob.add(ctx.row(
+      ctx.kv([['Hypothesized Rate', r.rate0], [`Total ${col.name}`, r.count], [ex ? `Total ${ex.name}` : 'Units', r.exposure], ex ? ['Units', r.units] : null, ['Rate Estimate', r.rate], [`Lower ${lvl}%`, r.lower], [`Upper ${lvl}%`, r.upper]]),
+      ctx.kv([['Test Statistic', r.statistic], ['Prob, rate ≠ hypothesized', r.p_two, 'p'], ['Prob, rate > hypothesized', r.p_greater, 'p'], ['Prob, rate < hypothesized', r.p_less, 'p'], ['Pearson χ²/DF', r.dispersion]])),
+    ctx.note(`Test: ${labelOf(RATE_TESTS, r.method)} (statsmodels test_poisson${r.method === 'exact-c' ? '; the two-sided p-value doubles the smaller tail' : ''}); interval: ${labelOf(RATE_CIS, r.ci_method)} (confint_poisson). The Pearson χ²/DF of the counts about the rate is near 1 for Poisson counts. Not in JMP, whose closest is Discrete Fit ▸ Poisson: the λ of the fitted distribution, without an exposure or a test.`),
+    ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
+  }
 
   /* ---- the values of one column for the rows of the report ------------------- */
   function valuesOf(ctx, col) {
@@ -236,6 +287,8 @@
       else ob.add(ctx.kv([['Hypothesized Value', r.sigma], ['Actual Estimate', r.sd], ['DF', r.df], ['ChiSquare', r.chi2], ['Min PValue', r.p_two, 'p'], ['Prob < ChiSq', r.p_less, 'p'], ['Prob > ChiSq', r.p_greater, 'p']]),
         ctx.note('(n−1)s²/σ² against χ² with n−1 degrees of freedom; it assumes normal data.'));
     }
+    const trate = o('testRate', null);
+    if (trate) await testRateReport(ctx, col, outline, trate);
     const eq = o('equiv', null);
     if (eq) {
       const r = await ctx.call('distribution.equivalence', { column: col.name, low: eq.low, upp: eq.upp, alpha: ctx.alpha });
@@ -285,6 +338,7 @@
       if (f.dist === 'kde') { ob.add(ctx.kv([['Bandwidth', f.bandwidth], ['N', f.n]]), ctx.note(f.note), ctx.code(f.code)); return; }
       if (f.note) ob.add(ctx.note(f.note));
       ob.add(ctx.rt({ caption: 'Parameter Estimates', columns: [{ key: 'name', label: 'Parameter', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - ctx.alpha))}%` }, { key: 'upper', label: `Upper ${fmt(100 * (1 - ctx.alpha))}%` }], rows: f.params }));
+      if (f.exact) ob.add(ctx.kv([[`λ, exact ${fmt(100 * (1 - ctx.alpha))}% interval (Garwood)`, `${fmt(f.exact.lower)} to ${fmt(f.exact.upper)}`, 'text']]));
       ob.add(ctx.kv([['−2 log(Likelihood)', -2 * f.loglik], ['AICc', f.aicc], ['BIC', f.bic]]));
       if (o(`gof:${f.dist}`, true) && f.gof && f.gof.length) ob.add(ctx.rt({ caption: 'Goodness-of-Fit Test', columns: [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'stat', label: 'Statistic' }, { key: 'p', label: 'p-Value', fmt: 'p' }], rows: f.gof }));
       ob.add(ctx.code(f.code));
@@ -411,6 +465,7 @@
       { separator: true },
       { label: 'Test Mean…', action: () => ask('Test Mean', [{ key: 'mu', label: 'Specify hypothesized mean', type: 'number', value: 0 }, { key: 'sigma', label: 'True standard deviation, for a z test (optional)', type: 'number', value: null }], 'testMean') },
       { label: 'Test Std Dev…', action: () => ask('Test Std Dev', [{ key: 'sigma', label: 'Specify hypothesized standard deviation', type: 'number', value: 1 }], 'testSd') },
+      { label: 'Test Rate…', checked: !!o('testRate', null), disabled: !isCounts(valuesOf(ctx, col).vals), action: () => testRateDialog(ctx, col) },
       { label: 'Test Equivalence…', action: () => ask('Test Equivalence', [{ key: 'low', label: 'Lower bound', type: 'number', value: null }, { key: 'upp', label: 'Upper bound', type: 'number', value: null }], 'equiv') },
       { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ci', null) === l, action: () => ctx.set('ci', l, sc) })).concat([{ label: 'Other…', action: () => ask('Confidence Interval', [{ key: 'l', label: '1 − α', type: 'number', value: 0.95 }], 'ci', (v) => (v.l > 0 && v.l < 1 ? v.l : 0.95)) }]) },
       { label: 'Prediction Interval…', action: () => ask('Prediction Interval', [{ key: 'level', label: '1 − α', type: 'number', value: 0.95 }, { key: 'k', label: 'Number of future values', type: 'number', value: 1 }], 'pi') },
@@ -463,7 +518,9 @@
     const o = (k, d) => ctx.opt(k, d, sc);
     const outline = ctx.outline(col.name, { parent, menu: () => catMenu(ctx, col), key: `col:${col.id}` });
     const ciLevel = o('ciCat', null);
-    const res = await ctx.call('distribution.categorical', { column: col.name, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ciLevel ? 1 - ciLevel : ctx.alpha });
+    const ciMethod = o('ciMethod', 'wilson');
+    const res = await ctx.call('distribution.categorical', { column: col.name, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ciLevel ? 1 - ciLevel : ctx.alpha, ci_method: ciMethod });
+    if (res.error) { outline.add(ctx.warn(`${col.name}: ${res.error}`)); return; }
     const t = ctx.table;
     const levels = res.levels.slice();
     const order = o('order', null);
@@ -495,9 +552,11 @@
       ctx.kv([['N Missing', res.n_missing, 'int'], [`${res.n_levels} Levels`, '', 'text']]), ctx.code(res.code));
     outline.add(horizontal ? [graph, freq.el] : ctx.row(graph, freq.el));
     if (ciLevel) {
-      const ob = ctx.outline('Confidence Intervals', { parent: outline, key: 'cicat', menu: () => [{ label: 'Remove', action: () => ctx.set('ciCat', null, sc) }] });
+      const ob = ctx.outline('Confidence Intervals', { parent: outline, key: 'cicat', info: 'p:distribution:ci', menu: () => [
+        { label: 'Confidence Interval Method', submenu: () => ciMethodItems(ctx, col) }, { separator: true }, { label: 'Remove', action: () => ctx.set('ciCat', null, sc) }] });
       ob.add(ctx.rt({ columns: [{ key: 'label', label: 'Level', fmt: 'text' }, { key: 'count', label: 'Count' }, { key: 'prob', label: 'Prob' }, { key: 'lower', label: 'Lower CI' }, { key: 'upper', label: 'Upper CI' }, { key: 'lv', label: '1−Alpha' }], rows: levels.map((l, i) => ({ ...l, label: labels[i], lv: ciLevel })) }),
-        ctx.note('Score (Wilson) confidence intervals, from statsmodels\' proportion_confint.'));
+        ctx.note(ciMethod === 'wilson' ? 'Score (Wilson) confidence intervals, as JMP computes them, from statsmodels\' proportion_confint.'
+          : `${CI_METHODS.find((m) => m[0] === ciMethod)[1]} confidence intervals, from statsmodels' proportion_confint; JMP's are Wilson score intervals.`));
     }
     if (o('mosaic', false)) {
       const ob = ctx.outline('Mosaic Plot', { parent: outline, key: 'mosaic' });
@@ -530,7 +589,9 @@
       ctx.check('Mosaic Plot', 'mosaic', sc, false),
       { label: 'Order By', submenu: () => [[null, 'Original (value order)'], ['desc', 'Count Descending'], ['asc', 'Count Ascending']].map(([v, l]) => ({ label: l, checked: o('order', null) === v, action: () => ctx.set('order', v, sc) })) },
       { label: 'Test Probabilities…', action: () => testProbsDialog(ctx, col) },
-      { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ciCat', null) === l, action: () => ctx.set('ciCat', l, sc) })) },
+      { label: 'Confidence Interval', submenu: () => [0.9, 0.95, 0.99].map((l) => ({ label: String(l), checked: o('ciCat', null) === l, action: () => ctx.set('ciCat', l, sc) }))
+        .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: `Confidence Interval: ${col.name}`, fields: [{ key: 'l', label: '1 − α', type: 'number', value: o('ciCat', null) || 0.95 }], validate: (x) => (x.l > 0 && x.l < 1 ? null : '1 − α must be between 0 and 1') }); if (v) ctx.set('ciCat', v.l, sc); } },
+          { separator: true }, { label: 'Confidence Interval Method', submenu: () => ciMethodItems(ctx, col) }]) },
       { separator: true },
       { label: 'Save', submenu: () => [{ label: 'Level Numbers', action: () => {
         const lv = ctx.table.levels(col);
@@ -557,10 +618,31 @@
   }
 
   /* ---- the platform ------------------------------------------------------------------ */
+  const TOPICS = {
+    'p:distribution:ci': {
+      kicker: 'Distribution', title: 'Confidence Interval Method',
+      lead: 'The interval for the probability of each level, from its count out of the total (statsmodels proportion_confint). JMP computes the Wilson score interval; the others are statsmodels\'.',
+      sections: [{ choices: [['Wilson Score', 'inverts the score test; good coverage in general, and JMP\'s'], ['Agresti-Coull', 'the Wald interval about the Wilson centre, z²/2 successes and failures added'], ['Jeffreys', 'the central interval of the Beta(x + ½, n − x + ½) posterior'], ['Clopper-Pearson (exact)', 'from the binomial tails: coverage at least 1 − α, and wider for it'], ['Wald', 'p ± z√(p(1 − p)/n): poor for small counts and near 0 or 1, and no width when a count is 0']] },
+        { heading: 'Weights', text: 'With Weight or Freq the counts are sums of weights; the formulas take them as they are.' }],
+      more: { label: 'Distribution', id: 'help-p-distribution' },
+    },
+    'p:distribution:rate': {
+      kicker: 'Distribution', title: 'Test Rate',
+      lead: 'For a column that counts events (whole numbers of zero or more): the rate, the total count over the total exposure, and its test against a hypothesized rate, as for Poisson counts. Without an exposure column each row is one unit; Freq counts a row as that many units.',
+      sections: [
+        { heading: 'The test', choices: [['Exact (central)', 'the Poisson tails of the total count; the two-sided p-value doubles the smaller one (R\'s poisson.test uses the sum of the outcomes no more likely than the one seen)'], ['Mid-p', 'the exact tails with half the probability of the count seen'], ['Score', '(rate − rate₀)/√(rate₀/exposure)'], ['Wald', 'the same with the estimated rate in the variance'], ['Square root', 'variance-stabilizing transforms of the count']] },
+        { heading: 'The interval', text: 'Exact (Garwood) from the gamma distribution by default, or the score, mid-p, Jeffreys, Wald and Anscombe intervals (statsmodels confint_poisson).' },
+        { heading: 'Overdispersion', text: 'The Pearson χ²/DF of the counts about the rate is near 1 for Poisson counts; well above 1 the counts vary more than a Poisson allows and the test is too optimistic.' },
+        { heading: 'Not in JMP', text: 'JMP\'s closest is Discrete Fit ▸ Poisson, the λ of the fitted distribution; it takes no exposure and has no test of a rate.' },
+      ],
+      more: { label: 'Distribution', id: 'help-p-distribution' },
+    },
+  };
+
   SM.platforms.register({
-    id: 'distribution', label: 'Distribution', menu: 'Analyze', order: 10, info: 'p:distribution',
-    about: 'Describes one column at a time: histogram, box plot, quantiles and moments for continuous columns; bar chart and frequencies for ordinal and nominal ones; tests, intervals, capability and fitted distributions from the red triangles.',
-    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.diagnostic.normal_ad, lilliefors', 'statsmodels.stats.stattools.jarque_bera', 'statsmodels.base.model.GenericLikelihoodModel', 'statsmodels.stats.proportion.proportion_confint', 'statsmodels.robust.scale.Huber', 'scipy.stats'],
+    id: 'distribution', label: 'Distribution', menu: 'Analyze', order: 10, info: 'p:distribution', topics: TOPICS,
+    about: 'Describes one column at a time: histogram, box plot, quantiles and moments for continuous columns; bar chart and frequencies for ordinal and nominal ones; tests, intervals, capability and fitted distributions from the red triangles. Beyond JMP: a choice of interval method for the level probabilities (Wilson, JMP\'s, Agresti-Coull, Jeffreys, Clopper-Pearson, Wald), and Test Rate for counts, with an optional exposure column, by exact, mid-p, score and Wald tests and intervals.',
+    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.diagnostic.normal_ad, lilliefors', 'statsmodels.stats.stattools.jarque_bera', 'statsmodels.base.model.GenericLikelihoodModel', 'statsmodels.stats.proportion.proportion_confint', 'statsmodels.stats.rates.test_poisson, confint_poisson', 'statsmodels.robust.scale.Huber', 'scipy.stats'],
     launch: {
       lead: 'Choose the columns to describe. Continuous columns get a histogram, a box plot, quantiles and moments; ordinal and nominal columns a bar chart and frequencies.',
       roles: [

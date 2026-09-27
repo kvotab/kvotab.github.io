@@ -24,6 +24,31 @@ The personalities and the names the page calls:
   fitmodel.mixed        Mixed Model (REML) with variance components
   fitmodel.manova       MANOVA
   fitmodel.genreg       Generalized Regression (lasso, elastic net, ridge)
+  fitmodel.gee          Generalized Estimating Equations (statsmodels' GEE):
+                        working correlations, robust / naive / bias-reduced
+                        covariances, QIC; fitmodel.gee_compare fits every
+                        working correlation and compares their QIC
+  fitmodel.regdiag      Regression Diagnostics of a least squares fit
+                        (Breusch-Pagan, White, Goldfeld-Quandt, RESET,
+                        Harvey-Collier, Rainbow, Breusch-Godfrey,
+                        Jarque-Bera, omnibus)
+  fitmodel.recursive    Recursive and Rolling Regression of a least squares
+                        fit (RecursiveLS, RollingOLS): recursive estimates,
+                        CUSUM and CUSUM of squares with their bounds, in the
+                        table's order or sorted by a column
+  fitmodel.iv           Instrumental Variables: two-stage least squares
+                        (statsmodels' IV2SLS) with the first stages, weak-
+                        instrument statistics, the Durbin-Wu-Hausman and
+                        Sargan / Hansen J tests
+  fitmodel.quantreg     Quantile Regression (QuantReg): the estimates at a
+                        quantile, Koenker and Machado's pseudo RSquare, the
+                        quantile process beside least squares
+
+Robust Standard Errors (HC0-HC3, Newey-West HAC, cluster) are an argument
+of fitmodel.ls, fitmodel.glm and fitmodel.iv (and of the profilers):
+statsmodels' get_robustcov_results or fit(cov_type=...), kept beside the
+usual fit (for 2SLS on the second stage's regressors with the structural
+residuals, _iv_robust).
 
 The designs are models.build's (effect coding, centred crossings, JMP's term
 names), with one correction (_center_main_effects): a continuous main effect
@@ -341,12 +366,60 @@ def _key(kind, tid, rows, spec):
 
 def _spec(y=None, effects=(), weight=None, freq=None, offset=None, no_intercept=False, dist=None, link=None, target=None,
           overdispersion=False, ordinal=None, distr='logit', method='lasso', enet_alpha=0.9, criterion='aicc', n_grid=40,
-          choose=None, **_ignored):
+          choose=None, robust=None, subject=None, time=None, subgroup=None, corr=None, cov=None, scale=None, scale_value=None,
+          nb_alpha=None, var_power=None, endog=None, instruments=None, tau=None, qr_cov=None, kernel=None, bandwidth=None,
+          **_ignored):
     """Everything that defines a fit, as a plain dict (the cache key)."""
     return {'y': _ys(y), 'effects': [[e['names'], e['nest'], e['random']] for e in _effects(effects)], 'weight': weight, 'freq': freq,
             'offset': offset, 'no_intercept': bool(no_intercept), 'dist': dist, 'link': link, 'target': target,
             'overdispersion': bool(overdispersion), 'ordinal': ordinal, 'distr': distr, 'method': method, 'enet_alpha': enet_alpha,
-            'criterion': criterion, 'n_grid': n_grid, 'choose': choose}
+            'criterion': criterion, 'n_grid': n_grid, 'choose': choose, 'robust': _robust_spec(robust), 'subject': subject, 'time': time,
+            'subgroup': subgroup, 'corr': corr, 'cov': cov, 'scale': scale, 'scale_value': scale_value, 'nb_alpha': nb_alpha,
+            'var_power': var_power, 'endog': _ys(endog), 'instruments': _ys(instruments),
+            'tau': None if tau in (None, '') else float(tau), 'qr_cov': qr_cov, 'kernel': kernel, 'bandwidth': bandwidth}
+
+
+# Robust Standard Errors: the types of statsmodels' get_robustcov_results
+_ROBUST = ('HC0', 'HC1', 'HC2', 'HC3', 'HAC', 'cluster')
+_ROBUST_LABEL = {'HC0': 'HC0 (White)', 'HC1': 'HC1 (White, n/(n − p))', 'HC2': 'HC2 (MacKinnon and White, leverage)',
+                 'HC3': 'HC3 (MacKinnon and White, jackknife)', 'HAC': 'Newey–West HAC', 'cluster': 'Cluster'}
+
+
+def _robust_spec(robust):
+    """The robust covariance asked for, as a plain dict, or None: 'HC3',
+    {'type': 'HAC', 'maxlags': 4}, {'type': 'cluster', 'cluster': 'clinic'}."""
+    if not robust:
+        return None
+    r = {'type': robust} if isinstance(robust, str) else dict(robust)
+    t = r.get('type')
+    if t in (None, '', 'none', 'nonrobust'):
+        return None
+    t = {'hac': 'HAC', 'cluster': 'cluster'}.get(str(t).lower(), str(t).upper())
+    if t not in _ROBUST:
+        raise ValueError(f'no robust covariance {r.get("type")!r}: choose one of HC0, HC1, HC2, HC3, HAC or cluster')
+    out = {'type': t}
+    if t == 'HAC':
+        lags = r.get('maxlags')
+        out['maxlags'] = None if lags is None else max(0, int(lags))
+    if t == 'cluster':
+        if not r.get('cluster'):
+            raise ValueError('cluster-robust standard errors need a cluster column')
+        out['cluster'] = str(r['cluster'])
+    return out
+
+
+def _nw_lags(n):
+    """Newey and West's (1994) rule for the number of lags, 4 (n/100)^(2/9)."""
+    return int(math.floor(4 * (max(n, 1) / 100.0) ** (2.0 / 9.0)))
+
+
+def _robust_label(rob, groups=None):
+    t = rob['type']
+    if t == 'HAC':
+        return f'Newey–West HAC, {rob["maxlags"]} lag{"" if rob["maxlags"] == 1 else "s"}'
+    if t == 'cluster':
+        return f'Cluster by {rob["cluster"]}' + (f' ({groups} clusters)' if groups else '')
+    return _ROBUST_LABEL[t]
 
 
 def _eff_of(spec):
@@ -467,7 +540,11 @@ def _ls_model(tid, rows, spec):
     if not ys:
         raise ValueError('choose a Y')
     effs = _eff_of(spec)
-    d = _design(tid, ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'])
+    rob = spec.get('robust')
+    ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
+    if ccol and ccol in ys:
+        raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
+    d = _design(tid, ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'], extra=[ccol] if ccol else ())
     if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
         raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Standard Least Squares needs a continuous Y '
                          '(Nominal or Ordinal Logistic fits a categorical one)')
@@ -475,18 +552,54 @@ def _ls_model(tid, rows, spec):
     wind = _col_values(tid, spec['weight'], d.df.index)
     m = {'kind': 'ls', 'd': d, 'res': res, 'coder': Coder(d, res.model.data.design_info), 'tid': tid, 'key': key, 'spec': spec,
          'w_indiv': wind if wind is not None else np.ones(len(d.df))}
+    m['rob'] = dict(rob, maxlags=rob['maxlags'] if rob['maxlags'] is not None else _nw_lags(len(d.df))) if rob and rob['type'] == 'HAC' else rob
+    m['rres'], m['rob_note'] = _ls_robust(m, m['rob']) if rob else (None, None)
     models.remember(key, m)
     return m
 
 
+def _cluster_codes(tid, name, index):
+    """Integer codes of a column's values for the given rows (the clusters)."""
+    v = data.series(tid, name, index, as_category=False)
+    return pd.factorize(v, sort=True)[0]
+
+
+def _ls_robust(m, rob):
+    """statsmodels' robust covariance of the least squares fit (a results
+    object with it as the default covariance, t tests on the error degrees
+    of freedom, or on the clusters less one), and a note when it cannot be
+    had."""
+    res, d, spec = m['res'], m['d'], m['spec']
+    if spec['freq']:
+        return None, ('Robust Standard Errors are not computed with a Freq column: statsmodels\' sandwich takes the frequencies as '
+                      'weights of single rows, not as repeated rows. The standard errors are the usual ones.')
+    from statsmodels.regression.linear_model import RegressionResultsWrapper as Wrap   # the names on the estimates, as the fit's
+    t = rob['type']
+    if t in ('HC0', 'HC1', 'HC2', 'HC3'):
+        return Wrap(res.get_robustcov_results(cov_type=t, use_t=True)), None
+    if t == 'HAC':
+        return Wrap(res.get_robustcov_results(cov_type='HAC', maxlags=int(rob['maxlags']), use_t=True)), None
+    g = _cluster_codes(m['tid'], rob['cluster'], d.df.index)
+    if len(np.unique(g)) < 2:
+        return None, f'{rob["cluster"]} has a single value in these rows: no cluster-robust standard errors.'
+    return Wrap(res.get_robustcov_results(cov_type='cluster', groups=g, use_t=True)), None
+
+
+def _inference_df(r):
+    """The degrees of freedom of a result's t and F tests (the clusters less
+    one for cluster-robust errors)."""
+    return float(getattr(r, 'df_resid_inference', None) or r.df_resid)
+
+
 def _ls_predict(m, settings, alpha, individual=False):
     res, coder = m['res'], m['coder']
+    R = m.get('rres') if m.get('rres') is not None else res   # Robust Standard Errors: the intervals too
     L = coder.rows(settings)
     b = res.params.to_numpy(float)
-    V = res.cov_params().to_numpy(float)
+    V = np.asarray(R.cov_params(), dtype=float)
     est = L @ b
     se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', L, V, L), 0))
-    t = _tcrit(alpha, res.df_resid)
+    t = _tcrit(alpha, _inference_df(R))
     out = {'name': m['d'].y, 'pred': est, 'lower': est - t * se, 'upper': est + t * se, 'se': se}
     if individual:
         si = np.sqrt(se ** 2 + float(res.scale))
@@ -693,8 +806,8 @@ def _effect_of(d, label):
 
 @api('fitmodel.ls')
 def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, vif=False, leverage=True,
-       dw=False, sequential=False, corr=False, table_name='data'):
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+       dw=False, sequential=False, corr=False, robust=None, ccpr=False, table_name='data'):
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust)
     m = _ls_model(table, rows, spec)
     d, res = m['d'], m['res']
     yname = spec['y'][0]
@@ -704,11 +817,21 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
         notes.append(f'The design is singular: {res.model.exog.shape[1] - res.model.rank} parameter(s) are not estimable. statsmodels '
                      'gives the minimum-norm solution (pinv); JMP would mark the aliased terms Biased or Zeroed. Tests of '
                      'non-estimable hypotheses are not meaningful.')
-    et = models.effect_tests(d, res)
-    tests = {r['source']: r for r in et['rows']}
-    est = models.estimates(d, res, alpha, vif=vif)
+    # Robust Standard Errors: the estimates, their tests and the effect tests
+    # use the robust covariance; the rest of the report is least squares'.
+    R = m['rres'] if m.get('rres') is not None else res
+    dfi = _inference_df(R)
+    et = models.effect_tests(d, R)
+    tests = {r['source']: r for r in (models.effect_tests(d, res)['rows'] if R is not res else et['rows'])}
+    if R is not res:
+        for r in et['rows']:
+            r.pop('ss', None)
+            r['dfden'] = dfi
+        et['columns'] = [col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'), col('dfden', 'DFDen', 'num'),
+                         col('stat', 'F Ratio'), col('p', 'Prob > F', 'p')]
+    est = models.estimates(d, R, alpha, vif=vif)
     names = list(res.params.index)
-    bJ, VJ = res.params.to_numpy(float), res.cov_params().to_numpy(float)
+    bJ, VJ = res.params.to_numpy(float), np.asarray(R.cov_params(), dtype=float)
     T = _uncenter(d, names)
     if T is not None:
         bJ, VJ = T @ bJ, T @ VJ @ T.T
@@ -718,8 +841,8 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
             i0 = names.index('Intercept')
             se0 = math.sqrt(max(VJ[i0, i0], 0))
             t0 = bJ[i0] / se0 if se0 > 0 else float('nan')
-            tc0 = _tcrit(alpha, res.df_resid)
-            r.update({'estimate': bJ[i0], 'se': se0, 't': t0, 'p': float(2 * stats.t.sf(abs(t0), res.df_resid)), 'lower': bJ[i0] - tc0 * se0, 'upper': bJ[i0] + tc0 * se0})
+            tc0 = _tcrit(alpha, dfi)
+            r.update({'estimate': bJ[i0], 'se': se0, 't': t0, 'p': float(2 * stats.t.sf(abs(t0), dfi)), 'lower': bJ[i0] - tc0 * se0, 'upper': bJ[i0] + tc0 * se0})
     n = float(np.sum(d.weights)) if d.weights is not None else float(len(d.df))
     k = int(res.model.rank) + 1        # the parameters and the error variance
     llf = float(res.llf)
@@ -776,10 +899,10 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
     if corr:
         sd = np.sqrt(np.diag(VJ))
         with np.errstate(invalid='ignore', divide='ignore'):
-            R = VJ / np.outer(sd, sd)
+            Rc = VJ / np.outer(sd, sd)
         order = [r['name'] for r in est['rows']]
         idx = [names.index(o) for o in order]
-        out['corr'] = {'terms': [_tlabel(d, o) for o in order], 'matrix': R[np.ix_(idx, idx)]}
+        out['corr'] = {'terms': [_tlabel(d, o) for o in order], 'matrix': Rc[np.ix_(idx, idx)]}
     out['expression'] = [{'term': r['term'], 'estimate': r['estimate']} for r in est['rows']]
     if any(data.meta(table, nm).get('modelingType') == 'ordinal' for nm in _factor_names(d)):
         notes.append('Ordinal factors are coded like nominal ones (effect coding, the last level the negative sum of the others); JMP codes '
@@ -788,6 +911,18 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
     if spec['freq']:
         notes.append('Freq counts each row that many times: the error degrees of freedom are the sum of the frequencies minus the '
                      'parameters, as in JMP.')
+    out['rank'] = int(res.model.rank)
+    rob = m.get('rob')
+    if m.get('rob_note'):
+        notes.append(m['rob_note'])
+    if R is not res:
+        ng = int(dfi) + 1 if rob['type'] == 'cluster' else None
+        wf = float(np.squeeze(R.fvalue)) if dfm > 0 else None
+        out['robust'] = {'type': rob['type'], 'label': _robust_label(rob, groups=ng), 'df': dfi, 'clusters': ng, 'maxlags': rob.get('maxlags'),
+                         'wald_f': wf, 'wald_df': dfm, 'wald_p': float(np.squeeze(R.f_pvalue)) if wf is not None else None}
+        notes.append(_ls_robust_note(rob, dfi, ng))
+    if ccpr:
+        out['ccpr'] = _ccpr(m)
     out['notes'] = notes
     lines = _code_frame(d, table, table_name, rows, [weight, freq])
     wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
@@ -803,8 +938,73 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
         lines.append('infl = sm.OLS(fit.model.wendog, fit.model.wexog).fit().get_influence()   # hats, studentized residuals, Cook\'s D (of the weighted fit)')
     else:
         lines.append('infl = fit.get_influence()   # residuals, studentized residuals, hats, Cook\'s D')
+    if R is not res:
+        lines += _robust_code(rob)
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
+    return out
+
+
+def _robust_code(rob, fit='fit', name='rob'):
+    """The lines that make the robust results from the fit."""
+    t = rob['type']
+    if t == 'HAC':
+        call = f'{fit}.get_robustcov_results(cov_type="HAC", maxlags={int(rob["maxlags"])}, use_t=True)   # Newey-West, the rows in the table\'s order'
+    elif t == 'cluster':
+        call = (f'{fit}.get_robustcov_results(cov_type="cluster", groups=pd.factorize(d[{json.dumps(rob["cluster"])}], sort=True)[0], '
+                'use_t=True)   # clusters: t tests on (clusters - 1) DF')
+    else:
+        call = f'{fit}.get_robustcov_results(cov_type="{t}", use_t=True)   # Robust Standard Errors'
+    return [f'{name} = {call}', f'print({name}.summary())   # Parameter Estimates with the robust standard errors',
+            f'print({name}.wald_test_terms(skip_single=False, scalar=True))   # Effect Tests: robust Wald F tests']
+
+
+def _ls_robust_note(rob, dfi, groups):
+    t = rob['type']
+    what = {'HC0': 'White\'s heteroscedasticity-consistent covariance (HC0)',
+            'HC1': 'the heteroscedasticity-consistent covariance HC1 (HC0 times n/(n − p), as Stata\'s robust)',
+            'HC2': 'the heteroscedasticity-consistent covariance HC2 (squared residuals divided by 1 − h)',
+            'HC3': 'the heteroscedasticity-consistent covariance HC3 (squared residuals divided by (1 − h)², close to the jackknife)',
+            'HAC': f'Newey and West\'s heteroscedasticity- and autocorrelation-consistent covariance, Bartlett weights over {rob.get("maxlags")} lags, '
+                   'the rows in the order of the table, no small-sample correction (statsmodels\' default)',
+            'cluster': f'the cluster-robust covariance by {rob.get("cluster")} ({groups} clusters), with the small-sample factor '
+                       'G/(G − 1)·(n − 1)/(n − p)'}[t]
+    dft = f'the clusters less one ({_fmt_df(dfi)} DF)' if t == 'cluster' else f'the error degrees of freedom ({_fmt_df(dfi)})'
+    return (f'Robust Standard Errors: {what}, from statsmodels\' get_robustcov_results. Parameter Estimates, Effect Tests (Wald F tests), '
+            f'the Effect Summary and the profiler\'s intervals use it, with t and F tests on {dft}; Analysis of Variance, the leverage '
+            'plots and the least squares means are the usual least squares ones. JMP\'s Standard Least Squares has no robust standard '
+            'errors (JMP Pro 19 has a sandwich estimator in its Mixed Model and GLMM platforms).')
+
+
+def _fmt_df(v):
+    return str(int(v)) if float(v).is_integer() else f'{v:.4g}'
+
+
+def _ccpr(m):
+    """Component plus residual (partial residual) plots of the continuous
+    terms, as statsmodels' plot_ccpr draws them: the residual plus the
+    term's part of the fit, b_j x_j, against x_j (a centred main effect
+    against its column's values)."""
+    d, res = m['d'], m['res']
+    names = list(res.params.index)
+    X = np.asarray(res.model.exog, dtype=float)
+    e = np.asarray(res.resid, dtype=float)
+    b = res.params.to_numpy(float)
+    cm = getattr(d, 'centered_main', {})
+    out = []
+    for eff in d.effects:
+        if any(d.alias[n] in d.categorical for n in eff['cols']):
+            continue
+        for tn in eff.get('terms', []):
+            if tn not in names:
+                continue
+            j = names.index(tn)
+            shift = float(cm.get(tn, 0.0))
+            x = X[:, j] + shift
+            comp = b[j] * X[:, j]
+            lo, hi = float(np.min(x)), float(np.max(x))
+            out.append({'term': _tlabel(d, tn), 'effect': eff['label'], 'x': x, 'partial': e + comp, 'estimate': float(b[j]),
+                        'line': {'x': [lo, hi], 'y': [b[j] * (lo - shift), b[j] * (hi - shift)]}, 'rows': [int(i) for i in d.df.index]})
     return out
 
 
@@ -1090,6 +1290,12 @@ def _model(kind, tid, rows, spec):
         return _mixed_model(tid, rows, spec)
     if kind == 'genreg':
         return _genreg_model(tid, rows, spec)
+    if kind == 'gee':
+        return _gee_model(tid, rows, spec)
+    if kind == 'iv':
+        return _iv_model(tid, rows, spec)
+    if kind == 'qr':
+        return _qr_model(tid, rows, spec)
     raise KeyError(f'no model kind {kind!r}')
 
 
@@ -1105,6 +1311,12 @@ def _predict(m, settings, alpha):
         return _mixed_predict(m, settings, alpha)
     if kind == 'genreg':
         return _genreg_predict(m, settings, alpha)
+    if kind == 'gee':
+        return _gee_predict(m, settings, alpha)
+    if kind == 'iv':
+        return _iv_predict(m, settings, alpha)
+    if kind == 'qr':
+        return _qr_predict(m, settings, alpha)
     raise KeyError(kind)
 
 
@@ -1527,22 +1739,25 @@ _LINKS = {'identity': 'Identity', 'log': 'Log', 'logit': 'Logit', 'probit': 'Pro
           'inverse_squared': 'InverseSquared', 'sqrt': 'Sqrt'}
 _LINK_LABEL = {'identity': 'Identity', 'log': 'Log', 'logit': 'Logit', 'probit': 'Probit', 'cloglog': 'Comp LogLog', 'reciprocal': 'Reciprocal',
                'inverse_squared': 'Inverse Square', 'sqrt': 'Square Root'}
-_DEFAULT_LINK = {'normal': 'identity', 'binomial': 'logit', 'poisson': 'log', 'gamma': 'log', 'invgauss': 'log', 'negbin': 'log'}
+_DEFAULT_LINK = {'normal': 'identity', 'binomial': 'logit', 'poisson': 'log', 'gamma': 'log', 'invgauss': 'log', 'negbin': 'log',
+                 'tweedie': 'log'}
 _DIST_LABEL = {'normal': 'Normal', 'binomial': 'Binomial', 'poisson': 'Poisson', 'gamma': 'Gamma', 'invgauss': 'Inverse Gaussian',
-               'negbin': 'Negative Binomial'}
+               'negbin': 'Negative Binomial', 'tweedie': 'Tweedie'}
 _SM_FAMILY = {'normal': 'Gaussian', 'binomial': 'Binomial', 'poisson': 'Poisson', 'gamma': 'Gamma', 'invgauss': 'InverseGaussian',
-              'negbin': 'NegativeBinomial'}
+              'negbin': 'NegativeBinomial', 'tweedie': 'Tweedie'}
 
 
-def _family(dist, link, alpha_nb=1.0):
+def _family(dist, link, alpha_nb=1.0, var_power=1.5):
     import statsmodels.api as sm
     L = getattr(sm.families.links, _LINKS[link])()
     if dist == 'negbin':
         return sm.families.NegativeBinomial(link=L, alpha=alpha_nb)
+    if dist == 'tweedie':
+        return sm.families.Tweedie(link=L, var_power=var_power)
     return getattr(sm.families, _SM_FAMILY[dist])(link=L)
 
 
-def _glm_endog(d, tid, ys, dist, target):
+def _glm_endog(d, tid, ys, dist, target, what='the Generalized Linear Model'):
     """The response: a continuous Y, a two-level Y (the target level, the
     first by default, is the event), or events and trials (two Ys)."""
     yv = d.df[d.y_alias]
@@ -1559,7 +1774,7 @@ def _glm_endog(d, tid, ys, dist, target):
     if isinstance(yv.dtype, pd.CategoricalDtype):
         lv = [c for c in yv.cat.categories if (yv == c).any()]
         if dist != 'binomial' or len(lv) != 2:
-            raise ValueError(f'{ys[0]} is categorical: the Generalized Linear Model takes a two-level Y with the binomial distribution '
+            raise ValueError(f'{ys[0]} is categorical: {what} takes a two-level Y with the binomial distribution '
                              '(Nominal or Ordinal Logistic fits others)')
         t = _level_index(lv, target) if target is not None else 0
         info['levels'] = [lv[t], lv[1 - t]]
@@ -1568,7 +1783,7 @@ def _glm_endog(d, tid, ys, dist, target):
     v = yv.to_numpy(float)
     if dist == 'binomial' and (np.any(v < 0) or np.any(v > 1)):
         raise ValueError('a continuous binomial Y must be a proportion between 0 and 1 (or give events and trials as two Ys)')
-    if dist in ('poisson', 'negbin') and np.any(v < 0):
+    if dist in ('poisson', 'negbin', 'tweedie') and np.any(v < 0):
         raise ValueError(f'{_DIST_LABEL[dist]} needs a Y that is zero or above')
     if dist in ('gamma', 'invgauss') and np.any(v <= 0):
         raise ValueError(f'{_DIST_LABEL[dist]} needs a Y above zero')
@@ -1600,15 +1815,21 @@ def _glm_model(tid, rows, spec):
     dist = spec['dist'] or 'normal'
     link = spec['link'] or _DEFAULT_LINK[dist]
     effs = _eff_of(spec)
+    rob = spec.get('robust')
+    if rob and rob['type'] in ('HC1', 'HC2', 'HC3'):
+        raise ValueError(f'statsmodels\' GLM gives {rob["type"]} the same as HC0: choose HC0 (the sandwich), Newey–West HAC or Cluster')
+    ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
+    if ccol and ccol in ys:
+        raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
     d = _design(tid, ys if len(ys) > 1 else ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'],
-                extra=[spec['offset']] if spec['offset'] else ())
+                extra=[c for c in (spec['offset'], ccol) if c])
     endog, yresp, info = _glm_endog(d, tid, ys, dist, spec['target'])
     X = _matrix(d)
     off = _col_values(tid, spec['offset'], d.df.index)
     vw = _col_values(tid, spec['weight'], d.df.index)
     fw = _col_values(tid, spec['freq'], d.df.index)
     scale = 'X2' if spec['overdispersion'] and dist in ('binomial', 'poisson') else None
-    nb = None
+    nb = nbm = None
     if dist == 'negbin':
         if vw is not None or fw is not None:
             raise ValueError('Weight and Freq are not supported with the negative binomial distribution')
@@ -1622,16 +1843,60 @@ def _glm_model(tid, rows, spec):
     else:
         res = _glm_fit(endog, X, dist, link, off, vw, fw, scale)
     m = {'kind': 'glm', 'd': d, 'res': res, 'nb': nb, 'X': X, 'endog': endog, 'y': yresp, 'info': info, 'dist': dist, 'link': link,
-         'offset': off, 'vw': vw, 'fw': fw, 'scale_opt': scale, 'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid}
+         'offset': off, 'vw': vw, 'fw': fw, 'scale_opt': scale, 'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid,
+         'rob': None, 'rob_V': None, 'rob_note': None}
+    if rob:
+        _glm_robust(m, rob, nbm)
     models.remember(key, m)
     return m
 
 
+def _glm_robust(m, rob, nbm):
+    """Robust Standard Errors of a generalized linear model: statsmodels'
+    fit(cov_type=...) from the estimates (the sandwich HC0, Newey–West HAC
+    or clusters), normal-theory tests as statsmodels' GLM makes them. The
+    negative binomial's covariance is the discrete NB2 model's, alpha
+    included."""
+    import statsmodels.api as sm
+    if m['fw'] is not None:
+        m['rob_note'] = ('Robust Standard Errors are not computed with a Freq column: statsmodels\' sandwich takes the frequencies as '
+                         'weights of single rows, not as repeated rows. The standard errors are the model\'s.')
+        return
+    t = rob['type']
+    if t == 'HAC':
+        rob = dict(rob, maxlags=rob['maxlags'] if rob['maxlags'] is not None else _nw_lags(len(m['d'].df)))
+        kw = {'maxlags': int(rob['maxlags'])}
+    elif t == 'cluster':
+        g = _cluster_codes(m['tid'], rob['cluster'], m['d'].df.index)
+        if len(np.unique(g)) < 2:
+            m['rob_note'] = f'{rob["cluster"]} has a single value in these rows: no cluster-robust standard errors.'
+            return
+        kw = {'groups': g}
+    else:
+        kw = {}
+    ct = 'HAC' if t == 'HAC' else ('cluster' if t == 'cluster' else 'HC0')
+    if m['nb'] is not None:
+        r = nbm.fit(start_params=m['nb'].params, disp=0, maxiter=100, method='newton', cov_type=ct, cov_kwds=kw)
+        m['rob_nb'] = r
+        V = np.asarray(r.cov_params(), dtype=float)
+        m['rob_V'] = V[:-1, :-1]
+    else:
+        fam = _family(m['dist'], m['link'])
+        mod = sm.GLM(m['endog'], m['X'], family=fam, offset=m['offset'], var_weights=m['vw'])
+        r = mod.fit(scale=m['scale_opt'], start_params=m['res'].params.to_numpy(float), cov_type=ct, cov_kwds=kw, **_IRLS)
+        m['rob_res'] = r
+        m['rob_V'] = np.asarray(r.cov_params(), dtype=float)
+    m['rob'] = rob
+    m['rob_groups'] = int(len(np.unique(kw['groups']))) if t == 'cluster' else None
+
+
 def _glm_params(m):
+    """The estimates and their covariance (the robust one when asked for)."""
+    rv = m.get('rob_V')
     if m['nb'] is not None:
         p = m['nb'].params
-        return p.to_numpy(float)[:-1], m['nb'].cov_params().to_numpy(float)[:-1, :-1], list(p.index[:-1])
-    return m['res'].params.to_numpy(float), m['res'].cov_params().to_numpy(float), list(m['res'].params.index)
+        return p.to_numpy(float)[:-1], rv if rv is not None else m['nb'].cov_params().to_numpy(float)[:-1, :-1], list(p.index[:-1])
+    return m['res'].params.to_numpy(float), rv if rv is not None else m['res'].cov_params().to_numpy(float), list(m['res'].params.index)
 
 
 def _glm_llf(m, res=None, nb=None):
@@ -1699,9 +1964,9 @@ def _glm_predict(m, settings, alpha):
 
 @api('fitmodel.glm')
 def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no_intercept=False, dist='normal', link=None,
-        overdispersion=False, target=None, alpha=0.05, lr_params=True, table_name='data'):
+        overdispersion=False, target=None, alpha=0.05, lr_params=True, robust=None, table_name='data'):
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, offset=offset, no_intercept=no_intercept, dist=dist, link=link,
-                 target=target, overdispersion=overdispersion)
+                 target=target, overdispersion=overdispersion, robust=robust)
     m = _glm_model(table, rows, spec)
     d, res = m['d'], m['res']
     dist, link = m['dist'], m['link']
@@ -1778,7 +2043,7 @@ def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no
     est.sort(key=lambda r: rank.get(r['name'], len(d.effects)))
     if m['nb'] is not None:
         a = m['nb'].params.iloc[-1]
-        sa = m['nb'].bse.iloc[-1]
+        sa = (m['rob_nb'] if m.get('rob_V') is not None else m['nb']).bse.iloc[-1]
         est.append({'term': 'Dispersion (alpha)', 'estimate': float(a), 'se': float(sa), 'wald': None, 'p_wald': None, 'lr': None, 'p': None,
                     'lower': float(a - z * sa), 'upper': float(a + z * sa), 'name': 'alpha'})
     # rows
@@ -1833,12 +2098,36 @@ def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no
     if dist != 'negbin':
         lines.append('print(fit.pearson_chi2, fit.deviance, fit.df_resid)   # Goodness of Fit')
     lines.append('print(fit.llf)   # the full model\'s log-likelihood; refit without an effect for its L-R test')
+    rob = m.get('rob') if m.get('rob_V') is not None else None
+    robust_out = None
+    if m.get('rob_note'):
+        notes.append(m['rob_note'])
+    if rob:
+        t = rob['type']
+        ct = {'HAC': 'HAC', 'cluster': 'cluster'}.get(t, 'HC0')
+        kw = (f', cov_kwds={{"maxlags": {int(rob["maxlags"])}}}' if t == 'HAC' else
+              f', cov_kwds={{"groups": pd.factorize(d[{json.dumps(rob["cluster"])}], sort=True)[0]}}' if t == 'cluster' else '')
+        if dist == 'negbin':
+            lines.append(f'rob = fit.model.fit(start_params=fit.params, method="newton", cov_type="{ct}"{kw})   # Robust Standard Errors')
+        else:
+            sc = ', scale="X2"' if m['scale_opt'] else ''
+            lines.append(f'rob = fit.model.fit(cov_type="{ct}"{kw}{sc})   # Robust Standard Errors')
+        lines.append('print(rob.summary())   # the estimates with the robust standard errors, z tests')
+        robust_out = {'type': t, 'label': 'Sandwich (HC0)' if t == 'HC0' else _robust_label(rob, groups=m.get('rob_groups')), 'maxlags': rob.get('maxlags'),
+                      'clusters': m.get('rob_groups')}
+        what = {'HC0': 'the sandwich (HC0, White\'s; the quasi-likelihood or "empirical" covariance)',
+                'HAC': f'Newey and West\'s HAC covariance over {rob.get("maxlags")} lags, the rows in the order of the table',
+                'cluster': f'the cluster-robust sandwich by {rob.get("cluster")} ({m.get("rob_groups")} clusters)'}[t]
+        notes.append(f'Robust Standard Errors: {what}, from statsmodels\' GLM fit(cov_type=...). The standard errors, the Wald χ² tests '
+                     'and intervals of the estimates and effects, and the profiler\'s intervals use it; the likelihood ratio tests assume the '
+                     'model\'s variance, so the report shows the Wald tests. statsmodels\' GLM gives HC1–HC3 the same as HC0, so only HC0 is '
+                     'offered here.')
     lines += _centred_code(d)
     return {'model': {'response': ', '.join(spec['y']), 'distribution': _DIST_LABEL[dist], 'link': _LINK_LABEL.get(link, link), 'n': n,
                       'target': _lvl(m['info']['levels'][0]) if m['info'].get('levels') else None, 'converged': bool(getattr(res, 'converged', True))},
             'whole': whole, 'aicc': aicc, 'bic': bic, 'gof': gof, 'overdispersion': overd, 'scaled': m['scale_opt'] == 'X2', 'phi': phi,
             'effect_tests': et, 'estimates': est, 'diag': diag, 'factors': _factors(d), 'key': m['key'], 'notes': notes, 'alpha': alpha,
-            'code': '\n'.join(lines)}
+            'robust': robust_out, 'code': '\n'.join(lines)}
 
 
 # ---------------------------------------------------------------------------
@@ -2865,3 +3154,1748 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
                       'both scales. The degrees of freedom are the number of non-zero terms for the lasso and the trace of the ridge hat matrix '
                       'on the active terms otherwise. statsmodels\' fit_regularized gives no standard errors for penalised estimates.'],
             'code': '\n'.join(lines)}
+
+
+# ---------------------------------------------------------------------------
+# Generalized Estimating Equations
+# ---------------------------------------------------------------------------
+
+_GEE_CORR = {'independence': 'Independence', 'exchangeable': 'Exchangeable', 'ar1': 'Autoregressive AR(1)', 'nested': 'Nested',
+             'unstructured': 'Unstructured'}
+_GEE_STRUCT = {'independence': 'Independence()', 'exchangeable': 'Exchangeable()', 'ar1': 'Autoregressive(grid=False)', 'nested': 'Nested()',
+               'unstructured': 'Unstructured()'}
+_GEE_COV = {'robust': 'Robust (sandwich)', 'naive': 'Naive (model-based)', 'bias_reduced': 'Bias-reduced (Mancl and DeRouen)'}
+_UNSTRUCTURED_MAX = 15    # distinct Time values the unstructured working correlation takes
+
+
+def _gee_codes(d, name):
+    """Integer codes of a grouping column for the rows of the design (in the
+    table's level order, sorted values for a continuous column) and its
+    levels as the page shows them."""
+    s = d.df[d.alias[name]]
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        s = s.cat.remove_unused_categories()
+        return s.cat.codes.to_numpy().astype(int), [_lvl(v) for v in s.cat.categories]
+    uniq, codes = np.unique(s.to_numpy(), return_inverse=True)
+    return codes.astype(int), [_lvl(u) for u in uniq]
+
+
+def _gee_scale_arg(spec):
+    """statsmodels' scale argument: 'X2' estimates it (Pearson χ²/(N − p)),
+    a float fixes it (an int would not: statsmodels takes only floats),
+    None is the family's default (1 for binomial, Poisson and negative
+    binomial, estimated otherwise)."""
+    s = spec.get('scale')
+    if s == 'estimated':
+        return 'X2'
+    if s == 'fixed':
+        v = 1.0 if spec.get('scale_value') in (None, '') else float(spec['scale_value'])
+        if not v > 0:
+            raise ValueError('a fixed scale must be above zero')
+        return float(v)
+    return None
+
+
+def _gee_model(tid, rows, spec):
+    key = _key('gee', tid, rows, spec)
+    m = models.recall(key)
+    if m is not None:
+        return m
+    from statsmodels.genmod import cov_struct as cs
+    from statsmodels.genmod.generalized_estimating_equations import GEE
+    ys = spec['y']
+    if not ys:
+        raise ValueError('choose a Y')
+    if len(ys) > 1:
+        raise ValueError('Generalized Estimating Equations take one Y column at a time (events and trials are not supported)')
+    subj, tcol, scol = spec['subject'], spec['time'], spec['subgroup']
+    if not subj:
+        raise ValueError('choose a Subject: the column that says which rows belong together (the subjects, or clusters)')
+    dist = spec['dist'] or 'normal'
+    if dist not in _DIST_LABEL:
+        raise ValueError(f'no distribution {dist!r}')
+    link = spec['link'] or _DEFAULT_LINK[dist]
+    corr = spec['corr'] or 'exchangeable'
+    cov = spec['cov'] or 'robust'
+    if corr not in _GEE_CORR or cov not in _GEE_COV:
+        raise ValueError(f'no working correlation {corr!r} or covariance {cov!r}')
+    if spec['weight'] or spec['freq']:
+        raise ValueError('statsmodels\' GEE takes case weights that several working correlations ignore: remove Weight and Freq for '
+                         'Generalized Estimating Equations')
+    effs = _eff_of(spec)
+    if any(e['random'] for e in effs):
+        raise ValueError('Generalized Estimating Equations model the correlation within a subject by the working correlation: take the '
+                         'Random Effect attribute off the effects')
+    if corr in ('ar1', 'unstructured') and not tcol:
+        raise ValueError(f'the {_GEE_CORR[corr]} working correlation needs a Time column (the order of the rows within a subject)')
+    if corr == 'nested' and not scol:
+        raise ValueError('the Nested working correlation needs a Subgroup column (a grouping within the subjects)')
+    roles = [c for c in (subj, tcol, scol) if c]
+    if len(set(roles)) < len(roles):
+        raise ValueError('Subject, Time and Subgroup must be different columns')
+    extra = roles + ([spec['offset']] if spec['offset'] else [])
+    if ys[0] in extra:
+        raise ValueError(f'{ys[0]} is the Y: it cannot also be the Subject, Time, Subgroup or Offset')
+    if tcol and data.meta(tid, tcol).get('dataType') != 'numeric':
+        raise ValueError(f'Time must be numeric: {tcol} is character')
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=extra)
+    if tcol:
+        # statsmodels' AR(1) working correlation counts positions within a
+        # subject: its rows go in time order (a stable sort keeps ties as they are)
+        g0, _ = _gee_codes(d, subj)
+        t0 = data.series(tid, tcol, d.df.index, as_category=False).to_numpy(float)
+        d.df = d.df.iloc[np.lexsort((t0, g0))]
+    endog, yresp, info = _glm_endog(d, tid, ys, dist, spec['target'], what='Generalized Estimating Equations')
+    X = _matrix(d)
+    groups, glabels = _gee_codes(d, subj)
+    tvals = data.series(tid, tcol, d.df.index, as_category=False).to_numpy(float) if tcol else None
+    off = _col_values(tid, spec['offset'], d.df.index)
+    sub, slabels = _gee_codes(d, scol) if scol else (None, None)
+    nb_alpha = 1.0 if spec['nb_alpha'] in (None, '') else float(spec['nb_alpha'])
+    var_power = 1.5 if spec['var_power'] in (None, '') else float(spec['var_power'])
+    if dist == 'negbin' and not nb_alpha > 0:
+        raise ValueError('the negative binomial α must be above zero')
+    if dist == 'tweedie' and not 1 <= var_power <= 3:
+        raise ValueError('the Tweedie power must lie between 1 (Poisson) and 3 (inverse Gaussian); 1 < p < 2 is the compound Poisson-gamma')
+    fam = _family(dist, link, nb_alpha, var_power)
+    time_arg, tcodes, tuniq = None, None, None
+    if corr == 'ar1':
+        time_arg = tvals
+        struct = cs.Autoregressive(grid=False)
+    elif corr == 'unstructured':
+        tuniq, tcodes = np.unique(tvals, return_inverse=True)
+        if len(tuniq) > _UNSTRUCTURED_MAX:
+            raise ValueError(f'{tcol} has {len(tuniq)} distinct values: the Unstructured working correlation takes at most {_UNSTRUCTURED_MAX}')
+        if pd.Series(groups.astype(np.int64) * len(tuniq) + tcodes).duplicated().any():
+            raise ValueError(f'the Unstructured working correlation needs each value of {tcol} at most once within a subject')
+        time_arg = tcodes.astype(np.int64)
+        struct = cs.Unstructured()
+    elif corr == 'nested':
+        struct = cs.Nested()
+    elif corr == 'exchangeable':
+        struct = cs.Exchangeable()
+    else:
+        struct = cs.Independence()
+    scale_arg = _gee_scale_arg(spec)
+    mod = GEE(endog, X, groups=groups, time=time_arg, family=fam, cov_struct=struct, offset=off,
+              dep_data=sub if corr == 'nested' else None)
+    try:
+        res = mod.fit(cov_type=cov, scale=scale_arg)
+    except (ValueError, np.linalg.LinAlgError, FloatingPointError, ZeroDivisionError) as e:
+        raise ValueError(f'statsmodels\' GEE did not fit this model with the {_GEE_CORR[corr]} working correlation ({e}); try another one '
+                         '(Compare Working Correlations lists those that fit)') from e
+    if res is None:
+        raise ValueError('the GEE fit failed: statsmodels found the covariance of the estimates singular (see the messages)')
+    m = {'kind': 'gee', 'd': d, 'res': res, 'X': X, 'endog': endog, 'y': yresp, 'info': info, 'dist': dist, 'link': link, 'corr': corr,
+         'cov': cov, 'offset': off, 'groups': groups, 'glabels': glabels, 'time': tvals, 'tcodes': tcodes, 'tuniq': tuniq, 'sub': sub,
+         'slabels': slabels, 'scale_arg': scale_arg, 'nb_alpha': nb_alpha, 'var_power': var_power, 'coder': Coder(d, X.design_info),
+         'key': key, 'spec': spec, 'tid': tid}
+    models.remember(key, m)
+    return m
+
+
+def _gee_independence(m):
+    """The independence fit of the same model (for the common scale of QIC)."""
+    if m['corr'] == 'independence':
+        return m['res']
+    if m.get('indep') is None:
+        from statsmodels.genmod import cov_struct as cs
+        from statsmodels.genmod.generalized_estimating_equations import GEE
+        fam = _family(m['dist'], m['link'], m['nb_alpha'], m['var_power'])
+        mod = GEE(m['endog'], m['X'], groups=m['groups'], family=fam, cov_struct=cs.Independence(), offset=m['offset'])
+        m['indep'] = mod.fit(cov_type='robust', scale=m['scale_arg'])
+    return m['indep']
+
+
+def _gee_qic_scale(m):
+    """The scale at which QIC is computed, the same for every working
+    correlation: a fixed scale, 1 for the families whose scale is 1, else
+    the Pearson estimate of the independence fit."""
+    sa = m['scale_arg']
+    if isinstance(sa, float):
+        return sa, 'fixed'
+    if sa is None and m['dist'] in ('binomial', 'poisson', 'negbin'):
+        return 1.0, 'fixed'
+    return float(_gee_independence(m).scale), 'independence'
+
+
+def _gee_qic(m, res, scale):
+    """QIC and QICu (Pan 2001) at the given scale. The quasi-likelihood is
+    statsmodels' (Wedderburn's integral, by the trapezoid rule) and so is
+    QICu, -2 Q + 2p. QIC is -2 Q + 2 trace(Omega_I V_R), V_R the robust
+    covariance and Omega_I the information of the independence model at the
+    estimates, sum X' diag(mu'(eta)^2 / v(mu)) X / phi. statsmodels' own
+    qic() leaves v(mu) out of Omega_I (sum D'D / phi), which is Pan's only
+    for the normal family; its value comes back as qic_sm."""
+    mod = res.model
+    b = res.params.to_numpy(float)
+    ql, qic_sm, qicu = mod.qic(b, scale, res.cov_params())
+    X = m['X'].to_numpy(float)
+    lin = X @ b + (m['offset'] if m['offset'] is not None else 0.0)
+    fam = mod.family
+    mu = fam.link.inverse(lin)
+    w = fam.link.inverse_deriv(lin) ** 2 / fam.variance(mu)
+    omega = X.T @ (X * w[:, None]) / scale
+    trace = float(np.trace(omega @ np.asarray(res.cov_robust, dtype=float)))
+    return {'qic': float(-2 * ql + 2 * trace), 'qicu': float(qicu), 'qic_sm': float(qic_sm), 'ql': float(ql), 'trace': trace,
+            'p': int(X.shape[1]), 'scale': float(scale)}
+
+
+def _gee_dep(m):
+    """The estimated dependence parameters, and the working correlation of a
+    typical subject (the first of the largest)."""
+    res, corr = m['res'], m['corr']
+    mod = res.model
+    st = mod.cov_struct
+    subj, scol = m['spec']['subject'], m['spec']['subgroup']
+    rows = []
+    if corr in ('exchangeable', 'ar1'):
+        rows.append({'param': 'Correlation of two rows of a subject' if corr == 'exchangeable' else 'Correlation of adjacent rows (lag 1)',
+                     'value': float(st.dep_params)})
+    elif corr == 'nested' and getattr(st, 'vcomp_coeff', None) is not None:   # none when no subject has two rows
+        vc = np.asarray(st.vcomp_coeff, dtype=float)
+        s = float(st.scale)
+        rows += [{'param': f'Variance component: {subj}', 'value': float(vc[0])},
+                 {'param': f'Variance component: {scol} within {subj}', 'value': float(vc[1])},
+                 {'param': 'Residual', 'value': s - float(np.sum(vc))},
+                 {'param': f'Correlation: same {subj}, another {scol}', 'value': float(vc[0]) / s if s > 0 else None},
+                 {'param': f'Correlation: same {scol}', 'value': float(vc[0] + vc[1]) / s if s > 0 else None}]
+    elif corr == 'unstructured':
+        R = np.asarray(st.dep_params, dtype=float)
+        tl = [_lvl(v) for v in m['tuniq']]
+        for i in range(len(tl)):
+            for j in range(i + 1, len(tl)):
+                rows.append({'param': f'{tl[i]} and {tl[j]}', 'value': float(R[i, j])})
+    sizes = np.array([len(y) for y in mod.endog_li])
+    i = int(np.argmax(sizes))
+    M, is_cor = st.covariance_matrix(mod.cached_means[i][0], i)
+    M = np.asarray(M, dtype=float)
+    if not is_cor:
+        sd = np.sqrt(np.diag(M))
+        M = M / np.outer(sd, sd)
+    idx = mod.group_indices[mod.group_labels[i]]
+    if m['time'] is not None:
+        labels = [_lvl(v) for v in m['time'][idx]]
+    else:
+        labels = [f'row {k + 1}' for k in range(len(idx))]
+    if m['sub'] is not None and corr == 'nested':
+        labels = [f'{m["slabels"][s]}: {lb}' for s, lb in zip(m['sub'][idx], labels)]
+    return {'rows': rows, 'matrix': {'values': M, 'labels': labels, 'subject': m['glabels'][int(mod.group_labels[i])], 'size': int(len(idx))}}
+
+
+def _gee_predict(m, settings, alpha):
+    res = m['res']
+    L = m['coder'].rows(settings)
+    b = res.params.to_numpy(float)
+    V = np.asarray(res.cov_params(), dtype=float)
+    eta = L @ b
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', L, V, L), 0))
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    inv = res.model.family.link.inverse
+    lo, hi = inv(eta - z * se), inv(eta + z * se)
+    name = m['spec']['y'][0] if not m['info'].get('levels') else f'Prob[{_lvl(m["info"]["levels"][0])}]'
+    return [{'name': name, 'pred': inv(eta), 'lower': np.minimum(lo, hi), 'upper': np.maximum(lo, hi), 'bounded': m['dist'] == 'binomial'}]
+
+
+def _gee_ratios(m, z):
+    """Odds ratios (logit link) or rate ratios (log link): per unit and over
+    the range of a continuous main effect, between the levels of a
+    categorical one (the other factors averaged), with the report's
+    covariance; Wald intervals."""
+    if m['link'] not in ('logit', 'log'):
+        return None
+    d, res = m['d'], m['res']
+    names = list(m['X'].columns)
+    b = res.params.to_numpy(float)
+    V = np.asarray(res.cov_params(), dtype=float)
+    kind = 'Odds Ratios' if m['link'] == 'logit' else ('Rate Ratios' if m['dist'] in ('poisson', 'negbin', 'tweedie') else 'Mean Ratios')
+    out = {'kind': kind, 'unit': [], 'levels': []}
+    for e in d.effects:
+        if len(e['cols']) != 1:
+            continue
+        a = d.alias[e['cols'][0]]
+        terms = [t for t in e.get('terms', []) if t in names]
+        if a not in d.categorical and len(terms) == 1:
+            j = names.index(terms[0])
+            bj, sj = float(b[j]), math.sqrt(max(V[j, j], 0))
+            x = d.df[a].to_numpy(float)
+            rng_ = float(np.max(x) - np.min(x))
+            out['unit'].append({'term': e['label'], 'ratio': _exp(bj), 'lower': _exp(bj - z * sj), 'upper': _exp(bj + z * sj),
+                                'p': float(stats.chi2.sf((bj / sj) ** 2, 1)) if sj > 0 else None, 'range': _exp(bj * rng_),
+                                'range_lower': _exp((bj - z * sj) * rng_), 'range_upper': _exp((bj + z * sj) * rng_), 'span': rng_})
+        elif a in d.categorical:
+            lv = d.levels[a]
+            others = {x: AVG for x in d.categorical if x != a}
+            Ls = m['coder'].rows([dict(others, **{a: i}) for i in range(len(lv))])
+            for i1 in range(len(lv)):
+                for i2 in range(len(lv)):
+                    if i1 == i2:
+                        continue
+                    dl = Ls[i1] - Ls[i2]
+                    lo_ = float(dl @ b)
+                    se = math.sqrt(max(float(dl @ V @ dl), 0))
+                    out['levels'].append({'term': e['label'], 'level1': _lvl(lv[i1]), 'level2': _lvl(lv[i2]), 'ratio': _exp(lo_),
+                                          'lower': _exp(lo_ - z * se), 'upper': _exp(lo_ + z * se),
+                                          'p': float(stats.chi2.sf((lo_ / se) ** 2, 1)) if se > 0 else None})
+    return out
+
+
+def _gee_code(m, table, table_name, rows, compare=False, qic_scale=None):
+    """Runnable code for a GEE fit or, compare=True, for the fit of every
+    working correlation the roles allow and their QIC."""
+    d, spec = m['d'], m['spec']
+    subj, tcol, scol, offset = spec['subject'], spec['time'], spec['subgroup'], spec['offset']
+    lines = _code_frame(d, table, table_name, rows, [], ['import patsy'])
+    if tcol:
+        lines.append(f'd = d.sort_values([{json.dumps(subj)}, {json.dumps(tcol)}], kind="stable")   # a subject\'s rows in time order '
+                     '(statsmodels\' AR(1) counts positions)')
+    lines.append(f'X = patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d)   # the design, effect coded')
+    yq = json.dumps(spec['y'][0])
+    if m['info'].get('levels'):
+        lv0 = m['info']['levels'][0]
+        lines.append(f'y = (d[{yq}] == {json.dumps(lv0 if isinstance(lv0, str) else float(lv0))}).astype(float)   # the event level')
+    else:
+        lines.append(f'y = d[{yq}].astype(float)')
+    L = f'sm.families.links.{_LINKS[m["link"]]}()'
+    if m['dist'] == 'negbin':
+        fam = f'sm.families.NegativeBinomial(link={L}, alpha={m["nb_alpha"]!r})'
+    elif m['dist'] == 'tweedie':
+        fam = f'sm.families.Tweedie(link={L}, var_power={m["var_power"]!r})'
+    else:
+        fam = f'sm.families.{_SM_FAMILY[m["dist"]]}(link={L})'
+    lines.append(f'fam = {fam}')
+    sa = m['scale_arg']
+    fit_kw = f'cov_type={json.dumps(m["cov"])}' + (f', scale={sa!r}' if sa is not None else '')
+    off = f', offset=d[{json.dumps(offset)}]' if offset else ''
+    lin = 'lin = Xa @ b' + (f' + d[{json.dumps(offset)}].to_numpy(float)' if offset else '')
+    pan = ('-2 * fit.model.qic(b, scale, fit.cov_params())[0] + 2 * np.trace(Xa.T @ (Xa * w[:, None]) / scale @ fit.cov_robust)')
+    if compare:
+        cands = ['independence', 'exchangeable'] + (['ar1', 'unstructured'] if tcol else []) + (['nested'] if scol else [])
+        lines.append(f'scale = {qic_scale!r}   # QIC at one scale for every working correlation')
+        lines.append('Xa = np.asarray(X)')
+        lines.append('structs = {' + ', '.join(f'{json.dumps(c)}: sm.cov_struct.{_GEE_STRUCT[c]}' for c in cands) + '}')
+        lines.append('for name, cs in structs.items():')
+        lines.append('    kw = {}')
+        if tcol:
+            lines.append(f'    if name == "ar1": kw["time"] = d[{json.dumps(tcol)}].to_numpy(float)')
+            lines.append(f'    if name == "unstructured": kw["time"] = pd.factorize(d[{json.dumps(tcol)}], sort=True)[0]')
+        if scol:
+            lines.append(f'    if name == "nested": kw["dep_data"] = pd.factorize(d[{json.dumps(scol)}], sort=True)[0]')
+        lines.append(f'    fit = sm.GEE(y, X, groups=d[{json.dumps(subj)}]{off}, family=fam, cov_struct=cs, **kw).fit({fit_kw})')
+        lines.append(f'    b = fit.params.to_numpy(); {lin}')
+        lines.append('    w = fam.link.inverse_deriv(lin) ** 2 / fam.variance(fam.link.inverse(lin))   # the independence information')
+        lines.append(f'    print(name, {pan}, fit.qic(scale=scale))   # QIC (Pan\'s penalty); statsmodels\' QIC and QICu')
+        return lines
+    kw = [f'groups=d[{json.dumps(subj)}]']
+    if m['corr'] == 'ar1':
+        kw.append(f'time=d[{json.dumps(tcol)}].to_numpy(float)')
+    elif m['corr'] == 'unstructured':
+        kw.append(f'time=pd.factorize(d[{json.dumps(tcol)}], sort=True)[0]')
+    if m['corr'] == 'nested':
+        kw.append(f'dep_data=pd.factorize(d[{json.dumps(scol)}], sort=True)[0]')
+    lines.append(f'fit = sm.GEE(y, X, {", ".join(kw)}{off}, family=fam, cov_struct=sm.cov_struct.{_GEE_STRUCT[m["corr"]]}).fit({fit_kw})')
+    what = {'robust': 'robust (sandwich)', 'naive': 'naive (model-based)', 'bias_reduced': 'bias-reduced'}[m['cov']]
+    lines.append(f'print(fit.summary())   # the estimates with the {what} standard errors, z tests')
+    lines.append('print(fit.model.cov_struct.summary())   # the working correlation\'s parameters')
+    lines.append(f'scale = {qic_scale!r}   # QIC at the common scale')
+    lines.append('print(fit.qic(scale=scale))   # statsmodels\' QIC and QICu')
+    lines.append(f'Xa = np.asarray(X); b = fit.params.to_numpy(); {lin}')
+    lines.append('w = fam.link.inverse_deriv(lin) ** 2 / fam.variance(fam.link.inverse(lin))   # the independence information, with the variance')
+    lines.append(f'print({pan})   # QIC with Pan\'s penalty, as the report')
+    return lines
+
+
+@api('fitmodel.gee')
+def gee(table, y, effects=(), rows=None, subject=None, time=None, subgroup=None, weight=None, freq=None, offset=None, no_intercept=False,
+        dist='normal', link=None, target=None, corr='exchangeable', cov='robust', scale=None, scale_value=None, nb_alpha=None, var_power=None,
+        alpha=0.05, table_name='data'):
+    """Generalized Estimating Equations (statsmodels' GEE): the marginal model
+    of rows grouped by a Subject, with a working correlation within the
+    subjects and robust (sandwich), naive or bias-reduced standard errors."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, offset=offset, no_intercept=no_intercept, dist=dist, link=link, target=target,
+                 subject=subject, time=time, subgroup=subgroup, corr=corr, cov=cov, scale=scale, scale_value=scale_value, nb_alpha=nb_alpha,
+                 var_power=var_power)
+    m = _gee_model(table, rows, spec)
+    d, res = m['d'], m['res']
+    mod = res.model
+    names = list(m['X'].columns)
+    p = len(names)
+    b = res.params.to_numpy(float)
+    V = np.asarray(res.cov_params(), dtype=float)
+    Vr, Vn = np.asarray(res.cov_robust, dtype=float), np.asarray(res.cov_naive, dtype=float)
+    T = _uncenter(d, names)
+    if T is not None:
+        bJ, VJ, VrJ, VnJ = T @ b, T @ V @ T.T, T @ Vr @ T.T, T @ Vn @ T.T
+    else:
+        bJ, VJ, VrJ, VnJ = b, V, Vr, Vn
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    se = np.sqrt(np.maximum(np.diag(VJ), 0))
+    est = []
+    for j, nm in enumerate(names):
+        zz = bJ[j] / se[j] if se[j] > 0 else None
+        est.append({'term': _tlabel(d, nm), 'estimate': float(bJ[j]), 'se': float(se[j]), 'se_robust': float(math.sqrt(max(VrJ[j, j], 0))),
+                    'se_naive': float(math.sqrt(max(VnJ[j, j], 0))), 'z': zz, 'p': float(2 * stats.norm.sf(abs(zz))) if zz is not None else None,
+                    'lower': float(bJ[j] - z * se[j]), 'upper': float(bJ[j] + z * se[j]), 'name': nm})
+    rank = {'Intercept': -1}
+    for i, e in enumerate(d.effects):
+        for c in e.get('terms', []):
+            rank.setdefault(c, i)
+    est.sort(key=lambda r: rank.get(r['name'], len(d.effects)))
+    # Effect Tests: Wald chi-square of each effect's columns, with the report's covariance
+    et = []
+    for e in d.effects:
+        cols = [names.index(t) for t in e.get('terms', []) if t in names]
+        if not cols:
+            continue
+        Lm = np.zeros((len(cols), p))
+        for i, c in enumerate(cols):
+            Lm[i, c] = 1
+        w = res.wald_test(Lm, scalar=True)
+        et.append({'source': e['label'], 'nparm': len(cols), 'df': len(cols), 'wald': float(w.statistic), 'p': float(w.pvalue),
+                   'logworth': _logworth(float(w.pvalue))})
+    qs, qsrc = _gee_qic_scale(m)
+    qic = _gee_qic(m, res, qs)
+    qic['source'] = qsrc
+    dep = _gee_dep(m)
+    sizes = np.array([len(yy) for yy in mod.endog_li])
+    mu = np.asarray(res.fittedvalues, dtype=float)
+    lin = m['X'].to_numpy(float) @ b + (m['offset'] if m['offset'] is not None else 0.0)
+    yv = np.asarray(m['endog'], dtype=float)
+    diag = {'rows': [int(i) for i in d.df.index], 'actual': m['y'], 'predicted': mu, 'residual': yv - mu,
+            'pearson': np.asarray(res.resid_pearson, dtype=float), 'linpred': lin, 'subject': [m['glabels'][g] for g in m['groups']],
+            'subjects': m['glabels']}
+    dist_label = _DIST_LABEL[m['dist']] + (f' (α = {m["nb_alpha"]:g})' if m['dist'] == 'negbin' else '') + \
+        (f' (power {m["var_power"]:g})' if m['dist'] == 'tweedie' else '')
+    iters = len(res.fit_history['params'])
+    scale_kind = 'fixed' if isinstance(m['scale_arg'], float) or (m['scale_arg'] is None and m['dist'] in ('binomial', 'poisson', 'negbin')) else 'estimated'
+    model = {'response': spec['y'][0], 'target': _lvl(m['info']['levels'][0]) if m['info'].get('levels') else None, 'distribution': dist_label,
+             'link': _LINK_LABEL.get(m['link'], m['link']), 'corr': _GEE_CORR[m['corr']], 'corr_key': m['corr'], 'cov': _GEE_COV[m['cov']],
+             'cov_key': m['cov'], 'scale': float(res.scale), 'scale_kind': scale_kind, 'subject': spec['subject'], 'time': spec['time'],
+             'subgroup': spec['subgroup'], 'n': int(len(yv)), 'subjects': int(mod.num_group), 'size_min': int(sizes.min()),
+             'size_mean': float(sizes.mean()), 'size_max': int(sizes.max()), 'iterations': iters, 'converged': bool(res.converged),
+             'score_norm': float(res.score_norm)}
+    notes = ['Generalized Estimating Equations (statsmodels\' GEE; Liang and Zeger 1986) estimate the marginal mean, the average over the '
+             'subjects (the Mixed Model gives a subject\'s own, conditional, curve). JMP has no GEE platform; SAS\'s PROC GENMOD with a '
+             'REPEATED statement is the nearest.',
+             {'robust': 'Standard errors: the robust (sandwich) covariance, right even when the working correlation is wrong, given enough '
+                        'subjects. ',
+              'naive': 'Standard errors: the naive (model-based) covariance, right only when the working correlation is. ',
+              'bias_reduced': 'Standard errors: Mancl and DeRouen\'s bias-reduced sandwich, for few subjects. '}[m['cov']] +
+             'The tests are z and Wald χ² tests, with no small-sample degrees of freedom.',
+             f'QIC and QICu are at the scale φ = {qs:.6g} ({"fixed" if qsrc == "fixed" else "the Pearson estimate of the independence fit"}), '
+             'the same for every working correlation, as QIC needs. QICu (−2Q + 2p) is statsmodels\'; its QIC leaves the variance function '
+             'out of the independence information (Σ D′D/φ instead of Σ D′V⁻¹D/φ), which is Pan\'s only for the normal family: the report\'s '
+             'QIC uses Pan\'s penalty, 2 trace(Ω_I V_R), and shows statsmodels\' value beside it.']
+    if m['corr'] == 'ar1':
+        notes.append('statsmodels\' AR(1) working correlation is α^|j − k| over the positions j, k of the rows within a subject (sorted here by '
+                     f'{spec["time"]}); the values of {spec["time"]} set the distances only when α is estimated. With gaps in the times the '
+                     'working matrix still counts positions.')
+    if m['corr'] == 'nested':
+        notes.append('The Nested variance components are statsmodels\' moment estimates from the Pearson residuals, clipped at zero.')
+    if m['corr'] == 'unstructured':
+        notes.append(f'The Unstructured working correlation estimates a correlation for each pair of values of {spec["time"]}.')
+    if scale_kind == 'estimated':
+        notes.append('The scale φ is estimated as Pearson χ²/(N − p); it scales the naive covariance and the Pearson residuals\' variance.')
+    if not res.converged:
+        notes.append(f'The fit did not converge in {iters} iterations (statsmodels\' limit is 60): the estimates may be unreliable.')
+    if spec['offset']:
+        notes.append('The profilers predict at an offset of zero: per unit of exp(offset) with the log link.')
+    if any(data.meta(table, nm).get('modelingType') == 'ordinal' for nm in _factor_names(d)):
+        notes.append('Ordinal factors are coded like nominal ones (effect coding).')
+    lines = _gee_code(m, table, table_name, rows, qic_scale=float(qs))
+    lines += _centred_code(d)
+    return {'model': model, 'estimates': est, 'effect_tests': et, 'ratios': _gee_ratios(m, z), 'qic': qic, 'dep': dep, 'diag': diag,
+            'factors': _factors(d), 'key': m['key'], 'alpha': alpha, 'notes': notes, 'code': '\n'.join(lines)}
+
+
+@api('fitmodel.gee_compare')
+def gee_compare(table, y, effects=(), rows=None, subject=None, time=None, subgroup=None, weight=None, freq=None, offset=None,
+                no_intercept=False, dist='normal', link=None, target=None, corr='exchangeable', cov='robust', scale=None, scale_value=None,
+                nb_alpha=None, var_power=None, table_name='data'):
+    """Compare Working Correlations: the model fitted with each working
+    correlation the roles allow, and their QIC at one common scale."""
+    base = dict(y=y, effects=effects, weight=weight, freq=freq, offset=offset, no_intercept=no_intercept, dist=dist, link=link, target=target,
+                subject=subject, time=time, subgroup=subgroup, cov=cov, scale=scale, scale_value=scale_value, nb_alpha=nb_alpha,
+                var_power=var_power)
+    m0 = _gee_model(table, rows, _spec(**dict(base, corr='independence')))   # the common scale is the independence fit's
+    qs, qsrc = _gee_qic_scale(m0)
+    cands = ['independence', 'exchangeable'] + (['ar1', 'unstructured'] if time else []) + (['nested'] if subgroup else [])
+    out = []
+    for c in cands:
+        try:
+            mc = _gee_model(table, rows, _spec(**dict(base, corr=c)))
+        except Exception as e:  # e.g. Unstructured with a Time value twice in a subject: a line that says so
+            out.append({'corr': _GEE_CORR[c], 'key': c, 'error': str(e)})
+            continue
+        q = _gee_qic(mc, mc['res'], qs)
+        dp = _gee_dep(mc)['rows']
+        out.append({'corr': _GEE_CORR[c], 'key': c, 'qic': q['qic'], 'qicu': q['qicu'], 'qic_sm': q['qic_sm'], 'ql': q['ql'], 'trace': q['trace'],
+                    'dep': dp[0]['value'] if len(dp) == 1 else None, 'converged': bool(mc['res'].converged),
+                    'iterations': len(mc['res'].fit_history['params']), 'current': c == (corr or 'exchangeable')})
+    ok = [r for r in out if r.get('qic') is not None and np.isfinite(r['qic'])]
+    best = min(ok, key=lambda r: r['qic'])['key'] if ok else None
+    for r in out:
+        r['best'] = r['key'] == best
+    lines = _gee_code(m0, table, table_name, rows, compare=True, qic_scale=float(qs))
+    return {'rows': out, 'best': best, 'scale': qs, 'scale_source': qsrc, 'code': '\n'.join(lines),
+            'notes': [f'Each working correlation fitted to the same rows; QIC at the common scale φ = {qs:.6g}. The smallest QIC marks the '
+                      'working correlation that fits best (Pan 2001); QICu compares mean models, not working correlations. statsmodels\' '
+                      'QIC is beside it (see the note under the fit).']}
+
+
+# ---------------------------------------------------------------------------
+# Regression Diagnostics (Standard Least Squares)
+# ---------------------------------------------------------------------------
+
+_DIAG = {'bp': 'Breusch–Pagan Test', 'white': 'White Test', 'gq': 'Goldfeld–Quandt Test', 'reset': 'Ramsey RESET Test',
+         'hc': 'Harvey–Collier Test', 'rainbow': 'Rainbow Test', 'bg': 'Breusch–Godfrey Test', 'jb': 'Jarque–Bera Test',
+         'omni': 'Omnibus Normality Test'}
+_DIAG_COLS = [col('test', 'Test', 'text'), col('stat', 'Statistic'), col('df', 'DF', 'num'), col('dfden', 'DF Den', 'num'),
+              col('p', 'p-Value', 'p')]
+
+
+def _has_const(X):
+    return bool(np.any((np.ptp(X, axis=0) == 0) & (X.max(axis=0) != 0)))
+
+
+def _diag_order(m, how):
+    """The order of the rows for a test that depends on it: the table's
+    ('row'), by the predicted values, or by a continuous factor."""
+    d = m['d']
+    n = len(d.df)
+    if how in (None, '', 'row'):
+        return np.arange(n), 'in the order of the table'
+    if how == 'predicted':
+        return np.argsort(np.asarray(m['res'].fittedvalues, dtype=float), kind='stable'), 'sorted by the predicted values'
+    a = d.alias.get(how)
+    if a is None or a in d.categorical or a not in d.df or how in _ys(d.y):
+        raise ValueError(f'{how} is not a continuous factor of the model to sort by')
+    return np.argsort(d.df[a].to_numpy(float), kind='stable'), f'sorted by {how}'
+
+
+def _diag_rows(*rows):
+    return [{'test': t, 'stat': s, 'df': df, 'dfden': dd, 'p': p} for t, s, df, dd, p in rows]
+
+
+@api('fitmodel.regdiag')
+def regdiag(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, tests=(), reset_power=3, bg_lags=None,
+            gq_sort='predicted', gq_drop=0.0, gq_alt='increasing', rainbow_frac=0.5, rainbow_order='leverage', hc_order='row',
+            table_name='data'):
+    """Specification and residual tests of a least squares fit, from
+    statsmodels.stats.diagnostic and stattools: heteroscedasticity
+    (Breusch–Pagan, White, Goldfeld–Quandt), the functional form (RESET,
+    Harvey–Collier, Rainbow), serial correlation (Breusch–Godfrey) and
+    normality of the residuals (Jarque–Bera, omnibus). A weighted fit is
+    tested as the regression of the whitened data (times √w)."""
+    import statsmodels.api as sm
+    from statsmodels.stats import diagnostic as dg
+    from statsmodels.stats.stattools import jarque_bera, omni_normtest
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    m = _ls_model(table, rows, spec)
+    d, res = m['d'], m['res']
+    weighted = d.weights is not None
+    yw = np.asarray(res.model.wendog, dtype=float)
+    Xw = np.asarray(res.model.wexog, dtype=float)
+    ow = sm.OLS(yw, Xw).fit()
+    n, k = Xw.shape
+    rk = int(np.linalg.matrix_rank(Xw))
+    e = np.asarray(ow.resid, dtype=float)
+    Xh = np.asarray(res.model.exog, dtype=float)
+    if not _has_const(Xh):
+        Xh = np.column_stack([np.ones(n), Xh])
+    out = {}
+    for t in [x for x in tests if x in _DIAG]:
+        item = {'key': t, 'title': _DIAG[t], 'table': None, 'note': None, 'error': None}
+        try:
+            if t == 'bp':
+                lm, lmp, f, fp = dg.het_breuschpagan(e, Xh)
+                lm0, lmp0, _f0, _fp0 = dg.het_breuschpagan(e, Xh, robust=False)
+                q = Xh.shape[1] - 1
+                qr = int(np.linalg.matrix_rank(Xh)) - 1
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('LM (Koenker, studentized)', lm, q, None, lmp),
+                                                              ('LM (Breusch–Pagan, normal errors)', lm0, q, None, lmp0),
+                                                              ('F', f, qr, n - qr - 1, fp)))
+                item['note'] = ('H0: the variance of the residuals does not depend on the regressors (the squared residuals regressed on '
+                                'them). Koenker\'s studentized LM, statsmodels\' default, holds without normal errors; the original '
+                                'Breusch–Pagan LM assumes them.')
+            elif t == 'white':
+                i0, i1 = np.triu_indices(Xh.shape[1])
+                qa = int(np.linalg.matrix_rank(Xh[:, i0] * Xh[:, i1]))
+                if qa >= n:
+                    raise ValueError(f'White\'s test needs more rows than the {qa} independent squares and cross products of the regressors')
+                lm, lmp, f, fp = dg.het_white(e, Xh)
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('LM', lm, qa - 1, None, lmp), ('F', f, qa - 1, n - qa, fp)))
+                item['note'] = (f'H0: homoscedastic residuals. The squared residuals regressed on the regressors, their squares and their '
+                                f'cross products ({qa - 1} columns after aliasing, and the constant).')
+            elif t == 'gq':
+                order, by = _diag_order(m, gq_sort)
+                drop = min(max(float(gq_drop or 0.0), 0.0), 0.8)
+                s = int(math.floor(n * (1 - drop) / 2))
+                if s <= rk:
+                    raise ValueError('too few rows for two halves that each fit the model')
+                alt = gq_alt if gq_alt in ('increasing', 'decreasing', 'two-sided') else 'increasing'
+                fval, pval, _o, st = dg.het_goldfeldquandt(yw[order], Xw[order], split=s, drop=n - 2 * s, alternative=alt, store=True)
+                df2, df1 = st.df_fval   # the statistic is the second half's MSE over the first's: F(df2, df1)
+                note = ''
+                if df1 != df2 and alt != 'two-sided':
+                    # statsmodels takes F(df1, df2) for the one-sided p-values; with halves of unequal rank the report uses F(df2, df1)
+                    pval = float(stats.f.sf(fval, df2, df1)) if alt == 'increasing' else float(stats.f.cdf(fval, df2, df1))
+                    note = ' The halves have unequal ranks: the p-value is from F(DF, DF Den) (statsmodels would take them the other way round).'
+                label = {'increasing': 'F (variance increasing)', 'decreasing': 'F (variance decreasing)', 'two-sided': 'F (two-sided)'}[alt]
+                item['table'] = rtable(_DIAG_COLS, _diag_rows((label, fval, float(df2), float(df1), float(pval))))
+                item['note'] = (f'The rows {by}, split in two halves of {s} rows' + (f', the {n - 2 * s} middle rows left out'
+                                if n - 2 * s else '') + '; F is the mean square error of the second half over the first\'s. H0: equal '
+                                'variances.' + note)
+            elif t == 'reset':
+                pw = 2 if int(reset_power) <= 2 else 3
+                r = dg.linear_reset(ow, power=pw, test_type='fitted', use_f=True)
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('F', float(np.squeeze(r.fvalue)), float(r.df_num), float(r.df_denom), float(r.pvalue))))
+                item['note'] = (f'Ramsey\'s RESET: the powers 2{"–3" if pw == 3 else ""} of the predicted values added to the model. H0: they '
+                                'add nothing (the linear form is adequate).')
+            elif t == 'hc':
+                order, by = _diag_order(m, hc_order)
+                Xo = Xw[order]
+                skip = k
+                while skip < n and np.linalg.matrix_rank(Xo[:skip]) < k:
+                    skip += 1
+                if skip >= n - 1:
+                    raise ValueError('the recursive residuals need a set of first rows that fits the model: the design is singular in this order')
+                rr = dg.recursive_olsresiduals(ow, skip=skip, alpha=0.95, order_by=order)
+                w = rr[3][skip:]
+                tt = stats.ttest_1samp(w, 0.0)
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('t', float(tt.statistic), float(len(w) - 1), None, float(tt.pvalue))))
+                item['note'] = (f'The {len(w)} recursive residuals, the rows {by} (statsmodels\' recursive_olsresiduals'
+                                + (f', from the first {skip} rows that fit the model' if skip > k else '') + '); H0: their mean is zero, '
+                                'the relation is linear along the order. statsmodels\' linear_harvey_collier keeps the recursive residuals '
+                                'from the fourth on whatever the number of parameters (right for three, nan from five); the report takes '
+                                'the n − p of Harvey and Collier (1977), as R\'s lmtest::harvtest.')
+            elif t == 'rainbow':
+                frac = min(max(float(rainbow_frac or 0.5), 0.1), 0.9)
+                lo = int(np.ceil(0.5 * (1 - frac) * n))
+                hi = int(np.floor(lo + frac * n))
+                if rainbow_order == 'leverage':
+                    # statsmodels' hats, rounded so that equal leverages (a balanced design) keep the rows' order
+                    h = np.round(ow.get_influence().hat_matrix_diag, 12)
+                    rank_h = np.argsort(h, kind='stable')
+                    central, rest = rank_h[:hi - lo], np.sort(rank_h[hi - lo:])
+                    order = np.concatenate([rest[:lo], central, rest[lo:]])   # linear_rainbow keeps positions lo..hi of the order
+                    by = 'of smallest leverage'
+                else:
+                    order, by = _diag_order(m, rainbow_order)
+                fstat, pval = dg.linear_rainbow(ow, frac=frac, order_by=order)
+                nm = hi - lo
+                rkm = int(np.linalg.matrix_rank(Xw[order][lo:hi]))
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('F', float(fstat), float(n - nm), float(nm - rkm), float(pval))))
+                central = by if rainbow_order == 'leverage' else f'in the middle, the rows {by}'
+                item['note'] = (f'Utts\'s rainbow test: the fit of all rows against the fit of the central {nm} ({frac:g} of them), {central}. '
+                                'H0: the model fits the whole range as well as the middle.' +
+                                (' statsmodels\' use_distance ranks the rows by distance from the table\'s middle row and keeps the middle of '
+                                 'that ranking; the report passes the leverage order to linear_rainbow\'s order_by, so that the central rows '
+                                 'are those of smallest leverage (Utts 1982).' if rainbow_order == 'leverage' else ''))
+            elif t == 'bg':
+                lags = int(bg_lags) if bg_lags not in (None, '') else min(10, n // 5)
+                lags = max(1, min(lags, n - rk - 2))
+                lm, lmp, f, fp = dg.acorr_breusch_godfrey(ow, nlags=lags)
+                aux = np.column_stack([Xw, np.ones(n), np.zeros((n, lags))])
+                ee = np.concatenate([np.zeros(lags), e])
+                for j in range(1, lags + 1):
+                    aux[:, k + j] = ee[lags - j:lags - j + n]
+                dfd = n - int(np.linalg.matrix_rank(aux))
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('LM', lm, float(lags), None, lmp), ('F', f, float(lags), float(dfd), fp)))
+                item['note'] = (f'H0: no autocorrelation of the residuals up to lag {lags}, in the order of the rows in the table (sort the '
+                                'table by time first).')
+            elif t == 'jb':
+                jb, jbp, skew, kurt = jarque_bera(e)
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('Jarque–Bera χ²', float(jb), 2.0, None, float(jbp)),
+                                                              ('Skewness', float(skew), None, None, None), ('Kurtosis', float(kurt), None, None, None)))
+                item['note'] = 'H0: normal residuals, judged by their skewness (0 for the normal) and kurtosis (3).'
+            elif t == 'omni':
+                r = omni_normtest(e)
+                item['table'] = rtable(_DIAG_COLS, _diag_rows(('K² (D\'Agostino–Pearson)', float(r.statistic), 2.0, None, float(r.pvalue))))
+                item['note'] = 'H0: normal residuals: D\'Agostino and Pearson\'s K², the sum of the squared skewness and kurtosis z tests.'
+        except Exception as ex:  # a test that cannot be made on this model: its outline says why
+            item['error'] = f'{type(ex).__name__}: {ex}' if not isinstance(ex, ValueError) else str(ex)
+        out[t] = item
+    notes = []
+    if weighted:
+        notes.append('With a Weight (or Freq) the tests are those of the weighted regression as ordinary least squares on the data times √w; '
+                     'the heteroscedasticity tests regress its squared residuals on the unweighted regressors. With Freq each row counts '
+                     'once, not as repeated rows.')
+    if res.model.rank < res.model.exog.shape[1]:
+        notes.append('The design is singular: the tests use the minimum-norm fit, and their degrees of freedom the rank.')
+    notes.append('JMP has none of these tests beside the Durbin–Watson; they are statsmodels\' (statsmodels.stats.diagnostic and stattools).')
+    conts = [f['name'] for f in _factors(d) if f['type'] == 'continuous']
+    code = _regdiag_code(m, table, table_name, rows, [t for t in tests if t in _DIAG], weight, freq, reset_power, bg_lags, gq_sort, gq_drop,
+                         gq_alt, rainbow_frac, rainbow_order, hc_order, out)
+    return {'tests': out, 'order': list(tests), 'continuous': conts, 'n': n, 'p': rk, 'notes': notes, 'code': code}
+
+
+def _regdiag_code(m, table, table_name, rows, tests, weight, freq, reset_power, bg_lags, gq_sort, gq_drop, gq_alt, rainbow_frac,
+                  rainbow_order, hc_order, out):
+    d = m['d']
+    lines = _code_frame(d, table, table_name, rows, [weight, freq],
+                        ['from scipy import stats', 'from statsmodels.stats import diagnostic as dg',
+                         'from statsmodels.stats.stattools import jarque_bera, omni_normtest'])
+    wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
+    fml = json.dumps(_code_formula(d))
+    lines.append(f'fit = smf.wls({fml}, data=d, weights={wexpr}).fit()' if wexpr else f'fit = smf.ols({fml}, data=d).fit()')
+    lines.append('ow = sm.OLS(fit.model.wendog, fit.model.wexog).fit()   # the fit as plain least squares (times √w when weighted)')
+    lines.append('e, y, X, n = ow.resid, ow.model.endog, ow.model.exog, len(ow.resid)')
+    lines.append('Xh = fit.model.exog' + ('' if _has_const(np.asarray(m['res'].model.exog, dtype=float)) else '; Xh = np.column_stack([np.ones(n), Xh])') +
+                 '   # the regressors of the heteroscedasticity tests')
+
+    def order_code(how):
+        if how in (None, '', 'row'):
+            return 'np.arange(n)'
+        if how == 'predicted':
+            return 'np.argsort(fit.fittedvalues.to_numpy(), kind="stable")'
+        return f'np.argsort(d[{json.dumps(how)}].to_numpy(float), kind="stable")'
+    for t in tests:
+        if out.get(t, {}).get('error'):
+            continue
+        if t == 'bp':
+            lines.append('print(dg.het_breuschpagan(e, Xh), dg.het_breuschpagan(e, Xh, robust=False))   # Breusch-Pagan: LM, p, F, p (Koenker; original)')
+        elif t == 'white':
+            lines.append('print(dg.het_white(e, Xh))   # White: LM, p, F, p')
+        elif t == 'gq':
+            drop = min(max(float(gq_drop or 0.0), 0.0), 0.8)
+            alt = gq_alt if gq_alt in ('increasing', 'decreasing', 'two-sided') else 'increasing'
+            lines.append(f'o = {order_code(gq_sort)}; s = int(np.floor(n * (1 - {drop!r}) / 2))')
+            lines.append(f'print(dg.het_goldfeldquandt(y[o], X[o], split=s, drop=n - 2 * s, alternative={json.dumps(alt)}))   # Goldfeld-Quandt: F, p')
+        elif t == 'reset':
+            lines.append(f'print(dg.linear_reset(ow, power={2 if int(reset_power) <= 2 else 3}, use_f=True))   # RESET')
+        elif t == 'hc':
+            lines.append(f'o = {order_code(hc_order)}; k = X.shape[1]')
+            lines.append('skip = next(s for s in range(k, n) if np.linalg.matrix_rank(X[o][:s]) == k)   # the first rows that fit the model')
+            lines.append('rr = dg.recursive_olsresiduals(ow, skip=skip, order_by=o)')
+            lines.append('print(stats.ttest_1samp(rr[3][skip:], 0))   # Harvey-Collier: t on the n - p recursive residuals')
+        elif t == 'rainbow':
+            frac = min(max(float(rainbow_frac or 0.5), 0.1), 0.9)
+            lines.append(f'frac = {frac!r}; lo = int(np.ceil(0.5 * (1 - frac) * n)); hi = int(np.floor(lo + frac * n))')
+            if rainbow_order == 'leverage':
+                lines.append('h = np.round(ow.get_influence().hat_matrix_diag, 12); r = np.argsort(h, kind="stable")   # rounded: ties keep the rows\' order')
+                lines.append('rest = np.sort(r[hi - lo:]); o = np.concatenate([rest[:lo], r[:hi - lo], rest[lo:]])   # the smallest leverages in the middle')
+            else:
+                lines.append(f'o = {order_code(rainbow_order)}')
+            lines.append('print(dg.linear_rainbow(ow, frac=frac, order_by=o))   # Rainbow: F, p')
+        elif t == 'bg':
+            lags = int(bg_lags) if bg_lags not in (None, '') else min(10, len(d.df) // 5)
+            lags = max(1, min(lags, len(d.df) - int(m['res'].model.rank) - 2))
+            lines.append(f'print(dg.acorr_breusch_godfrey(ow, nlags={lags}))   # Breusch-Godfrey: LM, p, F, p')
+        elif t == 'jb':
+            lines.append('print(jarque_bera(e))   # Jarque-Bera: JB, p, skewness, kurtosis')
+        elif t == 'omni':
+            lines.append('print(omni_normtest(e))   # omnibus K2, p')
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Shared by Instrumental Variables and Quantile Regression
+# ---------------------------------------------------------------------------
+
+def _est_table(d, names, b, V, dfi, alpha):
+    """Parameter Estimates from estimates b and their covariance V in the
+    fitted parameterisation: JMP's names, the intercept at x = 0 (the main
+    effects centred by _center_main_effects put back), t tests on dfi
+    degrees of freedom (z tests when dfi is None), in the effects' order."""
+    b = np.asarray(b, dtype=float)
+    V = np.asarray(V, dtype=float)
+    T = _uncenter(d, names)
+    if T is not None:
+        b, V = T @ b, T @ V @ T.T
+    se = np.sqrt(np.maximum(np.diag(V), 0))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        tv = np.where(se > 0, b / np.where(se > 0, se, 1), np.nan)
+    if dfi is None:
+        pv, crit = 2 * stats.norm.sf(np.abs(tv)), float(stats.norm.ppf(1 - alpha / 2))
+    else:
+        pv, crit = 2 * stats.t.sf(np.abs(tv), dfi), _tcrit(alpha, dfi)
+    rows = [{'term': _tlabel(d, nm), 'estimate': b[j], 'se': se[j], 't': tv[j], 'p': pv[j], 'lower': b[j] - crit * se[j],
+             'upper': b[j] + crit * se[j], 'name': nm} for j, nm in enumerate(names)]
+    rank = {'Intercept': -1}
+    for i, e in enumerate(d.effects):
+        for c in e.get('terms', []):
+            rank.setdefault(c, i)
+    rows.sort(key=lambda r: rank.get(r['name'], len(d.effects)))
+    stat, pl = ('z Ratio', 'Prob>|z|') if dfi is None else ('t Ratio', 'Prob>|t|')
+    lv = f'{100 * (1 - alpha):g}%'
+    return rtable([col('term', 'Term', 'text'), col('estimate', 'Estimate'), col('se', 'Std Error'), col('t', stat), col('p', pl, 'p'),
+                   col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}')], rows)
+
+
+def _wald_tests(d, names, R):
+    """Effect Tests as Wald F tests, with the covariance of the results R
+    (statsmodels' wald_test: F on the inference degrees of freedom)."""
+    rows = []
+    p = len(names)
+    for e in d.effects:
+        cols = [names.index(t) for t in e.get('terms', []) if t in names]
+        if not cols:
+            continue
+        w = R.wald_test(np.eye(p)[cols], scalar=True, use_f=True)
+        rows.append({'source': e['label'], 'nparm': len(cols), 'df': int(round(float(w.df_num))), 'dfden': float(w.df_denom),
+                     'stat': float(np.squeeze(w.statistic)), 'p': float(np.squeeze(w.pvalue))})
+    return rtable([col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'), col('dfden', 'DFDen', 'num'),
+                   col('stat', 'F Ratio'), col('p', 'Prob > F', 'p')], rows)
+
+
+def _ols_robust(fit, rob, groups=None):
+    """statsmodels' robust covariance of an OLS fit (get_robustcov_results),
+    as the report's Robust Standard Errors ask: HC0-HC3, Newey-West HAC or
+    cluster (t tests on the clusters less one)."""
+    from statsmodels.regression.linear_model import RegressionResultsWrapper as Wrap
+    if not rob:
+        return fit
+    t = rob['type']
+    if t == 'HAC':
+        return Wrap(fit.get_robustcov_results(cov_type='HAC', maxlags=int(rob['maxlags']), use_t=True))
+    if t == 'cluster':
+        return Wrap(fit.get_robustcov_results(cov_type='cluster', groups=groups, use_t=True))
+    return Wrap(fit.get_robustcov_results(cov_type=t, use_t=True))
+
+
+def _check_loss(u, tau):
+    """Koenker and Bassett's check function summed: sum of u (tau - [u < 0])."""
+    u = np.asarray(u, dtype=float)
+    return float(np.sum(u * (tau - (u < 0))))
+
+
+# ---------------------------------------------------------------------------
+# Instrumental Variables (two-stage least squares)
+# ---------------------------------------------------------------------------
+
+_WEAK_F = 10.0   # Staiger and Stock's (1997) rule of thumb for the first-stage F
+
+
+def _rep_alias(d, n, k, raw):
+    """One column's factor in an alias-space term of the instruments' design
+    (k its power): a categorical column effect coded, a continuous one raw
+    or centred as its main effect is in the model."""
+    a = d.alias[n]
+    if a in d.categorical:
+        return f'C({a}, Sum)'
+    if raw:
+        return a if k == 1 else f'I({a} ** {k})'
+    m = d.means[a]
+    return f'I({a} - {m!r})' if k == 1 else f'I(({a} - {m!r}) ** {k})'
+
+
+def _rep_code(d, n, k, raw):
+    """_rep_alias over the real names, for the code under the report."""
+    a = d.alias[n]
+    if a in d.categorical:
+        lv = [x.item() if hasattr(x, 'item') else x for x in d.levels[a]]
+        return f'C({_q(n)}, Sum, levels={lv!r})'
+    if raw:
+        return _q(n) if k == 1 else f'I({_q(n)} ** {k})'
+    m = d.means[a]
+    return f'I({_q(n)} - {m!r})' if k == 1 else f'I(({_q(n)} - {m!r}) ** {k})'
+
+
+def _iv_term(d, names, raw_of, code=False):
+    counts = {}
+    for n in names:
+        counts[n] = counts.get(n, 0) + 1
+    f = _rep_code if code else _rep_alias
+    return ':'.join(f(d, n, 1 if d.alias[n] in d.categorical else k, raw_of(n)) for n, k in counts.items())
+
+
+def _code_part(d, e):
+    """One effect of the model as _code_formula writes it (real names)."""
+    counts = {}
+    for n in e['names']:
+        counts[n] = counts.get(n, 0) + 1
+    crossed = len(e['names']) > 1
+    ps = []
+    for n, k in counts.items():
+        a = d.alias[n]
+        if a in d.categorical:
+            lv = [x.item() if hasattr(x, 'item') else x for x in d.levels[a]]
+            ps.append(f'C({_q(n)}, {"Sum" if d.coding == "effect" else "Treatment"}, levels={lv!r})')
+        elif (crossed and d.center) or (k == 1 and f'I({a} - {d.means.get(a)!r})' in getattr(d, 'centered_main', {})):
+            m = d.means[a]
+            ps.append(f'I(({_q(n)} - {m!r}) ** {k})' if k > 1 else f'I({_q(n)} - {m!r})')
+        elif k > 1:
+            ps.append(f'I({_q(n)} ** {k})')
+        else:
+            ps.append(_q(n))
+    return ':'.join(ps)
+
+
+def _iv_model(tid, rows, spec):
+    """The 2SLS fit: the model's design X (JMP's coding), the instruments'
+    design Z (the exogenous effects, the excluded instruments, and for an
+    endogenous crossing or power the same crossing or power of the
+    instruments), statsmodels' IV2SLS, and the covariance the report
+    asks for."""
+    key = _key('iv', tid, rows, spec)
+    m = models.recall(key)
+    if m is not None:
+        return m
+    import patsy
+    from statsmodels.sandbox.regression.gmm import IV2SLS
+    ys = spec['y']
+    if not ys:
+        raise ValueError('choose a Y')
+    endog, inst = list(spec['endog']), list(spec['instruments'])
+    if not endog:
+        raise ValueError('Instrumental Variables need Endogenous columns: the model effects that are correlated with the error '
+                         '(cast them into Endogenous in the launch dialog)')
+    if not inst:
+        raise ValueError('Instrumental Variables need Instruments: columns that move the endogenous columns but have no effect of '
+                         'their own on Y (cast them into Instruments)')
+    if spec['weight'] or spec['freq']:
+        raise ValueError('statsmodels\' IV2SLS takes no weights: remove Weight and Freq for Instrumental Variables')
+    effs = _eff_of(spec)
+    if not effs:
+        raise ValueError('Instrumental Variables need model effects, the endogenous ones among them')
+    if any(e['random'] for e in effs):
+        raise ValueError('Instrumental Variables take fixed effects only: take the Random Effect attribute off the effects')
+    used = {n for e in effs for n in e['cols']}
+    for n in endog:
+        if n in ys:
+            raise ValueError(f'{n} is the Y: it cannot also be Endogenous')
+        if n not in used:
+            raise ValueError(f'{n} is Endogenous but not in the model effects: add it to the model, or take it out of Endogenous')
+    for n in inst:
+        if n in ys or n in endog:
+            raise ValueError(f'{n} is the Y or Endogenous: it cannot also be an Instrument')
+        if n in used:
+            raise ValueError(f'{n} is a model effect and an Instrument: an instrument is excluded from the model (the exogenous '
+                             'effects instrument themselves); take it out of one of them')
+    eset, iset = set(endog), set(inst)
+    for e in effs:
+        if e['nest'] and any(n in eset for n in e['cols']):
+            raise ValueError(f'{e["label"]}: a nested effect with an endogenous column is not supported')
+    rob = spec.get('robust')
+    ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
+    if ccol and ccol in ys:
+        raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=inst + ([ccol] if ccol else []))
+    if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
+        raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Instrumental Variables need a continuous Y')
+    X = _matrix(d)
+    names = list(X.columns)
+    endo_eff = [e for e in d.effects if any(n in eset for n in e['names'])]
+    exo_eff = [e for e in d.effects if e not in endo_eff]
+    endo_cols = [t for e in endo_eff for t in e.get('terms', []) if t in names]
+    # the instruments: the exogenous effects as in the model, each instrument's
+    # main effect and, for an endogenous crossing or power, the same crossing or
+    # power with the instruments in place of the endogenous columns (a column
+    # keeps the form of its main effect, so that patsy codes the crossings as
+    # the model's)
+    cm = {_ALIAS_ANY.match(t).group(1) for t in getattr(d, 'centered_main', {})}
+    raw_of = lambda n: n in iset or d.alias[n] not in cm  # noqa: E731
+    zt, zc, gen = [], [], []
+    for z in inst:
+        zt.append(_iv_term(d, [z], raw_of))
+        zc.append(_iv_term(d, [z], raw_of, code=True))
+    seen = set()
+    for e in endo_eff:
+        en = [n for n in e['names'] if n in eset]
+        ex = [n for n in e['names'] if n not in eset]
+        if len(en) == 1 and not ex:
+            continue
+        for combo in itertools.combinations_with_replacement(inst, len(en)):
+            if any(combo.count(z) > 1 and d.alias[z] in d.categorical for z in combo):
+                continue   # a categorical instrument crossed with itself is itself
+            nm = ex + list(combo)
+            k2 = tuple(sorted(nm))
+            if k2 in seen:
+                continue
+            seen.add(k2)
+            zt.append(_iv_term(d, nm, raw_of))
+            zc.append(_iv_term(d, nm, raw_of, code=True))
+            gen.append({'effect': e['label'], 'instrument': '*'.join(nm)})
+    zrhs = ' + '.join([e['term'] for e in exo_eff] + zt)
+    zcode = ' + '.join([_code_part(d, e) for e in exo_eff] + zc)
+    if spec['no_intercept']:
+        zrhs += ' - 1'
+        zcode += ' - 1'
+    Z = patsy.dmatrix(zrhs, d.df, return_type='dataframe', NA_action='raise')
+    znames = list(Z.columns)
+    excl = []
+    for tname, sl in Z.design_info.term_name_slices.items():
+        if any(models._same_term(tname, t) for t in zt):
+            excl += list(range(sl.start, sl.stop))
+    exo_z = [j for j in range(len(znames)) if j not in excl]
+    Xa, Za = X.to_numpy(float), Z.to_numpy(float)
+    n, k = Xa.shape
+    kE, L2 = len(endo_cols), len(excl)
+    elabels = [_tlabel(d, c) for c in endo_cols]
+    if not kE:
+        raise ValueError('no model effect holds an Endogenous column')
+    if np.linalg.matrix_rank(Xa) < k:
+        raise ValueError('the design is singular: some effects are not estimable (aliased); take them out of the model')
+    if np.linalg.matrix_rank(Za) < Za.shape[1]:
+        raise ValueError('the instruments are collinear, with each other or with the exogenous effects: take out the ones that '
+                         'add nothing')
+    if L2 < kE:
+        raise ValueError(f'the model is not identified: {kE} endogenous column{"s" if kE > 1 else ""} ({", ".join(elabels)}) need at '
+                         f'least as many excluded instrument columns, and there {"is" if L2 == 1 else "are"} {L2}: add instruments')
+    if np.linalg.matrix_rank(Za.T @ Xa) < k:
+        raise ValueError('the instruments do not identify the endogenous columns: their first-stage predictions are collinear '
+                         '(the rank condition fails)')
+    if n <= max(k, Za.shape[1]):
+        raise ValueError('too few rows for this model and these instruments')
+    yv = d.df[d.y_alias].astype(float)
+    res = IV2SLS(yv, X, Z).fit()
+    m = {'kind': 'iv', 'd': d, 'res': res, 'X': X, 'Z': Z, 'names': names, 'znames': znames, 'excl': excl, 'exo_z': exo_z,
+         'endo_cols': endo_cols, 'endo_labels': elabels, 'endo_effects': [e['label'] for e in endo_eff], 'gen': gen, 'zcode': zcode,
+         'coder': Coder(d, X.design_info), 'y': yv.to_numpy(float), 'xhat': np.asarray(res.exog_hat, dtype=float), 'tid': tid,
+         'key': key, 'spec': spec, 'instruments': inst, 'endog': endog}
+    m['rob'] = dict(rob, maxlags=rob['maxlags'] if rob['maxlags'] is not None else _nw_lags(n)) if rob and rob['type'] == 'HAC' else rob
+    m['groups'], m['rob_note'] = None, None
+    if m['rob'] and m['rob']['type'] == 'cluster':
+        g = _cluster_codes(tid, m['rob']['cluster'], d.df.index)
+        if len(np.unique(g)) < 2:
+            m['rob_note'] = f'{m["rob"]["cluster"]} has a single value in these rows: no cluster-robust standard errors.'
+            m['rob'] = None
+        else:
+            m['groups'] = g
+    m['R'] = _iv_robust(m) if m['rob'] else res
+    models.remember(key, m)
+    return m
+
+
+def _iv_robust(m):
+    """The robust covariance of 2SLS with statsmodels' formulas: the scores of
+    2SLS are the second stage's regressors (X projected on Z) times the
+    structural residuals y - Xb, which is least squares of Xhat b + e on
+    Xhat. Its get_robustcov_results gives the sandwich."""
+    import statsmodels.api as sm
+    b = m['res'].params.to_numpy(float)
+    e = m['y'] - m['X'].to_numpy(float) @ b
+    xh = pd.DataFrame(m['xhat'], columns=m['names'], index=m['X'].index)
+    proxy = sm.OLS(m['xhat'] @ b + e, xh).fit()
+    return _ols_robust(proxy, m['rob'], m['groups'])
+
+
+def _iv_predict(m, settings, alpha):
+    L = m['coder'].rows(settings)
+    b = m['res'].params.to_numpy(float)
+    V = np.asarray(m['R'].cov_params(), dtype=float)
+    est = L @ b
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', L, V, L), 0))
+    t = _tcrit(alpha, _inference_df(m['R']))
+    return [{'name': m['spec']['y'][0], 'pred': est, 'lower': est - t * se, 'upper': est + t * se}]
+
+
+def _iv_first_stage(m, alpha):
+    """Each endogenous column regressed on the instruments: its estimates,
+    RSquare, the partial RSquare and the F test of the excluded instruments
+    (with the report's covariance), and Shea's partial RSquare."""
+    import statsmodels.api as sm
+    d, X, Z = m['d'], m['X'], m['Z']
+    Za = Z.to_numpy(float)
+    Lx = np.eye(Za.shape[1])[m['excl']]
+    kE = len(m['endo_cols'])
+    Xa = X.to_numpy(float)
+    shea = None
+    if kE > 1:
+        A = np.linalg.inv(Xa.T @ Xa)
+        B = np.linalg.inv(m['xhat'].T @ m['xhat'])
+        shea = {c: float(A[j, j] / B[j, j]) for j, c in enumerate(m['names']) if c in m['endo_cols']}
+    out = []
+    for c, lab in zip(m['endo_cols'], m['endo_labels']):
+        xj = X[c].to_numpy(float)
+        fs = sm.OLS(xj, Z).fit()
+        FR = _ols_robust(fs, m['rob'], m['groups'])
+        ft = FR.f_test(Lx)
+        F = float(np.squeeze(ft.fvalue))
+        if m['exo_z']:
+            ssr_r = float(sm.OLS(xj, Za[:, m['exo_z']]).fit().ssr)
+        else:
+            ssr_r = float(xj @ xj)
+        partial = (ssr_r - float(fs.ssr)) / ssr_r if ssr_r > 0 else None
+        out.append({'column': c, 'label': lab, 'rsq': float(fs.rsquared), 'partial_rsq': partial, 'shea_rsq': shea[c] if shea else partial,
+                    'f': F, 'df_num': float(ft.df_num), 'df_den': float(ft.df_denom), 'p': float(np.squeeze(ft.pvalue)), 'weak': F < _WEAK_F,
+                    'estimates': _est_table(d, m['znames'], fs.params.to_numpy(float), FR.cov_params(), _inference_df(FR), alpha),
+                    'fitted': np.asarray(fs.fittedvalues, dtype=float), 'resid': np.asarray(fs.resid, dtype=float)})
+    return out
+
+
+def _cragg_donald(m):
+    """Cragg and Donald's minimum eigenvalue statistic (Stock and Yogo's
+    g_min, ivreg2's Cragg-Donald Wald F): the smallest eigenvalue of
+    S^-1/2' Y' P Y S^-1/2 / L2, Y the endogenous columns less their
+    projection on the exogenous effects, P the projection on the excluded
+    instruments so reduced, S = Y' M_Z Y / (n - L). With one endogenous
+    column it is the first-stage F."""
+    Xa = m['X'].to_numpy(float)
+    Za = m['Z'].to_numpy(float)
+    n = len(Xa)
+    jx = [m['names'].index(c) for c in m['endo_cols']]
+    Y2 = Xa[:, jx]
+    Z1, Z2 = Za[:, m['exo_z']], Za[:, m['excl']]
+
+    def resid(A, B):
+        return A - B @ np.linalg.lstsq(B, A, rcond=None)[0] if B.shape[1] else A
+    Y2t, Z2t = resid(Y2, Z1), resid(Z2, Z1)
+    num = Y2t.T @ (Z2t @ np.linalg.lstsq(Z2t, Y2t, rcond=None)[0])
+    S = Y2.T @ resid(Y2, Za) / (n - Za.shape[1])
+    Ci = np.linalg.inv(np.linalg.cholesky(S))
+    G = Ci @ num @ Ci.T / Z2.shape[1]
+    return float(np.min(np.linalg.eigvalsh((G + G.T) / 2)))
+
+
+def _iv_tests(m, first):
+    """Durbin-Wu-Hausman by the control function: the first-stage residuals
+    added to the least squares fit, their F test (robust when asked);
+    Durbin's chi-square n (SSR_OLS - SSR_aug) / SSR_OLS; Sargan's (or with
+    robust errors Hansen's J) test of the overidentifying restrictions."""
+    import statsmodels.api as sm
+    import statsmodels.stats.sandwich_covariance as sw
+    Xa, Za, y = m['X'].to_numpy(float), m['Z'].to_numpy(float), m['y']
+    n, k = Xa.shape
+    kE, L2 = len(m['endo_cols']), len(m['excl'])
+    rob = m['rob']
+    Vh = np.column_stack([f['resid'] for f in first])
+    ols = sm.OLS(y, Xa).fit()
+    aug = sm.OLS(y, np.column_stack([Xa, Vh])).fit()
+    AR = _ols_robust(aug, rob, m['groups'])
+    w = AR.f_test(np.eye(k + kE)[k:])
+    endo = {'f': float(np.squeeze(w.fvalue)), 'df_num': float(w.df_num), 'df_den': float(w.df_denom), 'p': float(np.squeeze(w.pvalue))}
+    if not rob:
+        dstat = n * (float(ols.ssr) - float(aug.ssr)) / float(ols.ssr)
+        endo.update({'durbin': dstat, 'durbin_df': kE, 'durbin_p': float(stats.chi2.sf(dstat, kE))})
+    over = None
+    if L2 > kE:
+        b = m['res'].params.to_numpy(float)
+        e = y - Xa @ b
+        dfo = L2 - kE
+        if not rob:
+            s = n * float(e @ Za @ np.linalg.lstsq(Za, e, rcond=None)[0]) / float(e @ e)
+            over = {'test': 'Sargan', 'stat': s, 'df': dfo, 'p': float(stats.chi2.sf(s, dfo))}
+        else:
+            moms = Za * e[:, None]
+            if rob['type'] == 'cluster':
+                S = sw.S_crosssection(moms, m['groups'])
+            elif rob['type'] == 'HAC':
+                S = sw.S_hac_simple(moms, nlags=int(rob['maxlags']))
+            else:
+                S = sw.S_white_simple(moms)
+            Si = np.linalg.pinv(S)
+            A = Xa.T @ Za @ Si
+            bg = np.linalg.solve(A @ Za.T @ Xa, A @ Za.T @ y)   # the efficient two-step GMM estimate
+            u = Za.T @ (y - Xa @ bg)
+            J = float(u @ Si @ u)
+            over = {'test': 'Hansen J', 'stat': J, 'df': dfo, 'p': float(stats.chi2.sf(J, dfo)), 'gmm': bg}
+    return {'endog': endo, 'overid': over, 'ols': ols}
+
+
+@api('fitmodel.iv')
+def iv(table, y, effects=(), endog=(), instruments=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, robust=None,
+       ols=False, table_name='data'):
+    """Instrumental Variables: two-stage least squares (statsmodels' IV2SLS)
+    with the first stages, the weak-instrument statistics, the
+    Durbin-Wu-Hausman endogeneity test and Sargan's (Hansen's J)
+    overidentification test; OLS beside it when asked."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust, endog=endog,
+                 instruments=instruments)
+    m = _iv_model(table, rows, spec)
+    d, res, R = m['d'], m['res'], m['R']
+    names = m['names']
+    b = res.params.to_numpy(float)
+    V = np.asarray(R.cov_params(), dtype=float)
+    dfi = _inference_df(R)
+    rob = m['rob']
+    Xa = m['X'].to_numpy(float)
+    yv = m['y']
+    n, k = Xa.shape
+    kE, L2 = len(m['endo_cols']), len(m['excl'])
+    est = _est_table(d, names, b, V, dfi, alpha)
+    et = _wald_tests(d, names, R)
+    nonint = [j for j, nm in enumerate(names) if nm != 'Intercept']
+    whole = None
+    if nonint:
+        w = R.wald_test(np.eye(k)[nonint], scalar=True, use_f=True)
+        whole = {'f': float(np.squeeze(w.statistic)), 'df_num': float(w.df_num), 'df_den': float(w.df_denom), 'p': float(np.squeeze(w.pvalue))}
+    first = _iv_first_stage(m, alpha)
+    cd = _cragg_donald(m)
+    tests = _iv_tests(m, first)
+    pred = Xa @ b
+    ybar = float(np.mean(yv))
+    summary = [{'stat': 'RSquare', 'value': float(res.rsquared)}, {'stat': 'RSquare Adj', 'value': float(res.rsquared_adj)},
+               {'stat': 'Root Mean Square Error', 'value': float(math.sqrt(res.mse_resid))}, {'stat': 'Mean of Response', 'value': ybar},
+               {'stat': 'Observations', 'value': float(n)}]
+    ng = int(len(np.unique(m['groups']))) if m['groups'] is not None else None
+    out = {'y': spec['y'][0], 'n': n, 'key': m['key'], 'alpha': alpha, 'summary': rtable([col('stat', '', 'text'), col('value', '')], summary),
+           'whole': whole, 'estimates': est, 'effect_tests': et, 'factors': _factors(d), 'dfi': dfi, 'k': k,
+           'model': {'response': spec['y'][0], 'endogenous': m['endog'], 'endogenous_columns': m['endo_labels'], 'instruments': m['instruments'],
+                     'generated': m['gen'], 'excluded': L2, 'k_endog': kE, 'overidentified': L2 - kE,
+                     'cov': _robust_label(rob, groups=ng) if rob else 'Classical (homoscedastic)', 'n': n},
+           'first': [{kk: v for kk, v in f.items() if kk not in ('fitted', 'resid')} for f in first],
+           'weak': {'cragg_donald': cd, 'k_endog': kE, 'excluded': L2},
+           'tests': {'endog': tests['endog'], 'overid': {kk: v for kk, v in (tests['overid'] or {}).items() if kk != 'gmm'} or None},
+           'diag': {'rows': [int(i) for i in d.df.index], 'actual': yv, 'predicted': pred, 'residual': yv - pred,
+                    'first': [{'label': f['label'], 'fitted': f['fitted'], 'resid': f['resid']} for f in first]},
+           'robust': {'type': rob['type'], 'label': _robust_label(rob, groups=ng), 'df': dfi, 'clusters': ng, 'maxlags': rob.get('maxlags')} if rob else None}
+    if ols:
+        O = _ols_robust(tests['ols'], rob, m['groups'])
+        eo = _est_table(d, names, O.params, O.cov_params(), _inference_df(O), alpha)
+        by = {r['name']: r for r in eo['rows']}
+        rows_c = []
+        for r in est['rows']:
+            o_ = by[r['name']]
+            rows_c.append({'term': r['term'], 'ols': o_['estimate'], 'ols_se': o_['se'], 'iv': r['estimate'], 'iv_se': r['se'],
+                           'diff': r['estimate'] - o_['estimate'], 'ratio': r['se'] / o_['se'] if o_['se'] else None})
+        out['ols'] = rtable([col('term', 'Term', 'text'), col('ols', 'OLS Estimate'), col('ols_se', 'OLS Std Error'), col('iv', '2SLS Estimate'),
+                             col('iv_se', '2SLS Std Error'), col('diff', '2SLS − OLS'), col('ratio', 'Std Error Ratio')], rows_c)
+        out['ols_rsq'] = float(tests['ols'].rsquared)
+    notes = ['Two-stage least squares (statsmodels\' IV2SLS): each endogenous column is regressed on the instruments (the exogenous '
+             'effects and the excluded instruments), and Y on the exogenous effects and the predicted endogenous columns. The standard '
+             'errors use the residuals of the model itself, y − Xb, with σ² = SSR/(n − p) and t tests on n − p DF, as Stata\'s ivregress '
+             '2sls, small and R\'s ivreg; without small, Stata and ivreg2 give z tests with σ² = SSR/n. JMP has no instrumental-variables '
+             'platform.',
+             'RSquare is 1 − SSR/TSS with those residuals: it can be negative and is no guide to the fit of 2SLS.']
+    if m['gen']:
+        notes.append('An endogenous crossing or power is instrumented by the same crossing or power of the instruments (Wooldridge 2010, '
+                     'section 9.5): ' + '; '.join(f'{g["instrument"]} for {g["effect"]}' for g in m['gen']) + '.')
+    weak = [f['label'] for f in first if f['weak']]
+    if rob:
+        notes.append(_iv_robust_note(rob, dfi, ng))
+    if m.get('rob_note'):
+        notes.append(m['rob_note'])
+    if any(data.meta(table, nm).get('modelingType') == 'ordinal' for nm in _factor_names(d) + list(m['instruments'])):
+        notes.append('Ordinal columns are coded like nominal ones (effect coding).')
+    out['notes'] = notes
+    out['weak_columns'] = weak
+    out['code'] = _iv_code(m, table, table_name, rows, tests, ols)
+    return out
+
+
+def _iv_robust_note(rob, dfi, groups):
+    t = rob['type']
+    what = {'HC0': 'White\'s heteroscedasticity-consistent covariance (HC0)', 'HC1': 'HC1 (HC0 times n/(n − p), Stata\'s ivregress, vce(robust) small)',
+            'HC2': 'HC2', 'HC3': 'HC3', 'HAC': f'Newey and West\'s HAC covariance over {rob.get("maxlags")} lags, the rows in the order of the table',
+            'cluster': f'the cluster-robust covariance by {rob.get("cluster")} ({groups} clusters), with the factor G/(G − 1)·(n − 1)/(n − p)'}[t]
+    s = (f'Robust Standard Errors: {what}. The scores of 2SLS are the second stage\'s regressors X̂ (X projected on the instruments) times '
+         'the residuals y − Xb, and statsmodels\' get_robustcov_results makes the sandwich from them; the second stage\'s estimates, Effect '
+         'Tests, the first-stage F tests, the Wu–Hausman test and the profiler use it. The overidentification test is Hansen\'s J of the '
+         'efficient two-step GMM estimate, with the matching weight matrix, as ivreg2 reports it.')
+    if t in ('HC2', 'HC3'):
+        s += (' HC2 and HC3 take the leverages of the second stage, the diagonal of X̂(X̂′X̂)⁻¹X̂′; Stata\'s ivregress and ivreg2 offer only '
+              'the HC0 and HC1 forms, and Hansen\'s J uses White\'s (HC0) weights here.')
+    return s + f' t and F tests on {("the clusters less one, " + _fmt_df(dfi) + " DF") if t == "cluster" else _fmt_df(dfi) + " DF"}.'
+
+
+def _iv_code(m, table, table_name, rows, tests, ols):
+    d = m['d']
+    y = m['spec']['y'][0]
+    rob = m['rob']
+    ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
+    lines = _code_frame(d, table, table_name, rows, [ccol], ['import patsy', 'from statsmodels.sandbox.regression.gmm import IV2SLS'])
+    lines.append(f'X = patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d, return_type="dataframe")   # the model: effect coded, '
+                 'crossings centred')
+    lines.append(f'Z = patsy.dmatrix({json.dumps(m["zcode"])}, d, return_type="dataframe")   # the instruments: the exogenous effects '
+                 'and the excluded instruments')
+    lines.append(f'y = d[{json.dumps(y)}]')
+    lines.append('fit = IV2SLS(y, X, Z).fit()   # two-stage least squares: t tests on n - p DF')
+    lines.append('print(fit.summary())')
+    endo = [m['names'].index(c) for c in m['endo_cols']]
+    lines.append(f'endog, excl = {endo}, {m["excl"]}   # the endogenous columns of X; the excluded instruments\' columns of Z')
+    if rob:
+        t = rob['type']
+        if t == 'HAC':
+            kw = f'cov_type="HAC", maxlags={int(rob["maxlags"])}'
+        elif t == 'cluster':
+            kw = f'cov_type="cluster", groups=pd.factorize(d[{json.dumps(ccol)}], sort=True)[0]'
+        else:
+            kw = f'cov_type="{t}"'
+        lines.append(f'robust = dict({kw}, use_t=True)   # Robust Standard Errors')
+        lines.append('xhat = fit.exog_hat   # the second stage\'s regressors: X projected on Z')
+        lines.append('rob = sm.OLS(xhat @ fit.params.to_numpy() + fit.resid.to_numpy(), xhat).fit().get_robustcov_results(**robust)   '
+                     '# 2SLS\'s sandwich: scores xhat * (y - Xb)')
+        lines.append('print(rob.bse, rob.tvalues)')
+        fit_ = '.get_robustcov_results(**robust)'
+    else:
+        fit_ = ''
+    lines.append('for j in endog:   # the first stages: each endogenous column on Z, the F test of the excluded instruments')
+    lines.append(f'    fs = sm.OLS(X.iloc[:, j], Z).fit(){fit_}')
+    lines.append('    print(X.columns[j], fs.rsquared, fs.f_test(np.eye(Z.shape[1])[excl]))')
+    lines.append('V = np.column_stack([sm.OLS(X.iloc[:, j], Z).fit().resid for j in endog])   # the first-stage residuals')
+    lines.append(f'aug = sm.OLS(y, np.column_stack([X, V])).fit(){fit_}')
+    lines.append('print(aug.f_test(np.eye(X.shape[1] + V.shape[1])[X.shape[1]:]))   # Wu-Hausman F: H0 the endogenous columns are exogenous')
+    if not rob:
+        lines.append('ols = sm.OLS(y, X).fit(); print(len(y) * (ols.ssr - sm.OLS(y, np.column_stack([X, V])).fit().ssr) / ols.ssr)   # Durbin chi2')
+    over = tests.get('overid')
+    if over and over['test'] == 'Sargan':
+        lines.append('e, Za = fit.resid.to_numpy(), np.asarray(Z)')
+        lines.append('print(len(e) * e @ Za @ np.linalg.lstsq(Za, e, rcond=None)[0] / (e @ e))   # Sargan chi2: n times R2 of e on Z')
+    elif over:
+        lines.append('import statsmodels.stats.sandwich_covariance as sw')
+        lines.append('e, Za, Xa, ya = fit.resid.to_numpy(), np.asarray(Z), np.asarray(X), y.to_numpy()')
+        if rob['type'] == 'cluster':
+            lines.append('S = sw.S_crosssection(Za * e[:, None], robust["groups"])')
+        elif rob['type'] == 'HAC':
+            lines.append(f'S = sw.S_hac_simple(Za * e[:, None], nlags={int(rob["maxlags"])})')
+        else:
+            lines.append('S = sw.S_white_simple(Za * e[:, None])')
+        lines.append('W = np.linalg.pinv(S); A = Xa.T @ Za @ W; bg = np.linalg.solve(A @ Za.T @ Xa, A @ Za.T @ ya)   # two-step GMM')
+        lines.append('u = Za.T @ (ya - Xa @ bg); print(u @ W @ u)   # Hansen J')
+    if ols:
+        lines.append(f'print(sm.OLS(y, X).fit(){fit_}.summary())   # least squares, for contrast')
+    lines += _centred_code(d)
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Quantile Regression
+# ---------------------------------------------------------------------------
+
+_QR_KERNEL = {'epa': 'Epanechnikov', 'gau': 'Gaussian', 'cos': 'Cosine', 'par': 'Parzen', 'biw': 'Biweight'}
+_QR_BANDWIDTH = {'hsheather': 'Hall–Sheather', 'bofinger': 'Bofinger', 'chamberlain': 'Chamberlain'}
+_QR_COV = {'robust': 'Robust (statsmodels)', 'iid': 'IID', 'powell': 'Powell sandwich'}
+_QR_PROCESS = [round(0.05 * i, 2) for i in range(1, 20)]
+_QR_LINES = [0.1, 0.25, 0.5, 0.75, 0.9]
+_QR_MAXITER = 5000   # IRLS iterations: statsmodels' 1000 stop short at some quantiles (0.1 of the schooling example needs 1234)
+
+
+def _qr_opts(spec):
+    tau = 0.5 if spec.get('tau') is None else float(spec['tau'])
+    if not 0 < tau < 1:
+        raise ValueError('the quantile τ must lie strictly between 0 and 1')
+    cov = spec.get('qr_cov') or 'robust'
+    kernel = spec.get('kernel') or 'epa'
+    bw = spec.get('bandwidth') or 'hsheather'
+    if cov not in _QR_COV:
+        raise ValueError(f'no standard errors {cov!r}: choose robust, iid or powell')
+    if kernel not in _QR_KERNEL:
+        raise ValueError(f'no kernel {kernel!r}: choose one of {", ".join(_QR_KERNEL)}')
+    if bw not in _QR_BANDWIDTH:
+        raise ValueError(f'no bandwidth {bw!r}: choose hsheather, bofinger or chamberlain')
+    return tau, cov, kernel, bw
+
+
+def _qr_model(tid, rows, spec):
+    """A quantile regression at the spec's tau: the design and the fits of
+    every quantile asked for so far (the report's tau, the quantile process,
+    the lines) are shared by the specs that differ only in tau, so a new
+    quantile reuses them."""
+    base = _qr_base(tid, rows, dict(spec, tau=None))
+    tau = _qr_opts(spec)[0]
+    m = dict(base, tau=tau)
+    m['res'], m['V'] = _qr_fit(base, tau)
+    return m
+
+
+def _qr_base(tid, rows, spec):
+    key = _key('qr', tid, rows, spec)
+    m = models.recall(key)
+    if m is not None:
+        return m
+    ys = spec['y']
+    if not ys:
+        raise ValueError('choose a Y')
+    if spec['weight'] or spec['freq']:
+        raise ValueError('statsmodels\' QuantReg takes no weights: remove Weight and Freq for Quantile Regression')
+    effs = _eff_of(spec)
+    if any(e['random'] for e in effs):
+        raise ValueError('Quantile Regression takes fixed effects only: take the Random Effect attribute off the effects')
+    tau, cov, kernel, bw = _qr_opts(spec)
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'])
+    if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
+        raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Quantile Regression needs a continuous Y')
+    X = _matrix(d)
+    if len(d.df) <= X.shape[1] + 1:
+        raise ValueError('too few rows for the model')
+    m = {'kind': 'qr', 'd': d, 'X': X, 'y': d.df[d.y_alias].astype(float), 'names': list(X.columns), 'coder': Coder(d, X.design_info),
+         'fits': {}, 'cov': cov, 'kernel': kernel, 'bw': bw, 'tid': tid, 'key': key, 'spec': spec}
+    models.remember(key, m)
+    return m
+
+
+def _qr_fit(m, tau):
+    """statsmodels' QuantReg at one quantile, and the covariance the report
+    uses: statsmodels' robust or iid, or Powell's kernel sandwich."""
+    tk = round(float(tau), 10)
+    if tk in m['fits']:
+        return m['fits'][tk]
+    from statsmodels.regression.quantile_regression import QuantReg
+    res = QuantReg(m['y'], m['X']).fit(q=float(tau), vcov='iid' if m['cov'] == 'iid' else 'robust', kernel=m['kernel'], bandwidth=m['bw'],
+                                        max_iter=_QR_MAXITER)
+    V = _qr_powell(m, res, float(tau)) if m['cov'] == 'powell' else np.asarray(res.cov_params(), dtype=float)
+    m['fits'][tk] = (res, V)
+    return res, V
+
+
+def _qr_powell(m, res, tau):
+    """Powell's (1991) kernel sandwich, tau (1 - tau) (X'FX)^-1 X'X (X'FX)^-1,
+    F the kernel density of each row's residual, K(e/h)/h, with
+    statsmodels' kernel and its bandwidth h."""
+    from statsmodels.regression.quantile_regression import kernels
+    X = m['X'].to_numpy(float)
+    e = np.asarray(res.resid, dtype=float)
+    h = float(res.bandwidth)
+    f = kernels[m['kernel']](e / h) / h
+    A = np.linalg.pinv((X * f[:, None]).T @ X)
+    return tau * (1 - tau) * A @ (X.T @ X) @ A
+
+
+def _qr_null_loss(y, tau):
+    """The check loss of the model with only an intercept: at the sample
+    tau-quantile, an order statistic, which minimises it."""
+    ys = np.sort(np.asarray(y, dtype=float))
+    n = len(ys)
+    k = int(math.ceil(n * tau)) - 1
+    return min(_check_loss(ys - ys[j], tau) for j in range(max(0, k - 1), min(n, k + 2)))
+
+
+def _qr_stats(m, res, tau):
+    y = m['y'].to_numpy(float)
+    e = y - m['X'].to_numpy(float) @ res.params.to_numpy(float)
+    v1 = _check_loss(e, tau)
+    v0 = _qr_null_loss(y, tau)
+    return {'v1': v1, 'v0': v0, 'r1': 1 - v1 / v0 if v0 > 0 else None, 'below': float(np.mean(e < 0)), 'sparsity': float(res.sparsity),
+            'bandwidth': float(res.bandwidth), 'iterations': int(res.iterations), 'prsquared': float(res.prsquared)}
+
+
+def _qr_predict(m, settings, alpha):
+    L = m['coder'].rows(settings)
+    res, V = m['res'], m['V']
+    est = L @ res.params.to_numpy(float)
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', L, V, L), 0))
+    t = _tcrit(alpha, float(res.df_resid))
+    return [{'name': f'{m["spec"]["y"][0]} (quantile {m["tau"]:g})', 'pred': est, 'lower': est - t * se, 'upper': est + t * se}]
+
+
+def _qr_taus(taus):
+    """The quantiles of the process: the page's list, else 0.05 to 0.95."""
+    if not taus:
+        return list(_QR_PROCESS)
+    out = sorted({round(float(t), 6) for t in taus if 0 < float(t) < 1})
+    if not out:
+        raise ValueError('the quantile process needs quantiles strictly between 0 and 1')
+    if len(out) > 99:
+        raise ValueError('the quantile process takes at most 99 quantiles')
+    return out
+
+
+@api('fitmodel.quantreg')
+def quantreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, tau=0.5, qr_cov='robust', kernel='epa',
+             bandwidth='hsheather', taus=None, process=True, alpha=0.05, table_name='data'):
+    """Quantile Regression (statsmodels' QuantReg): the estimates at tau, the
+    Koenker-Machado pseudo RSquare, the quantile process (each coefficient
+    over a list of quantiles, with the OLS estimate beside it) and, for
+    one continuous factor, the fitted lines of several quantiles."""
+    import statsmodels.api as sm
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, tau=tau, qr_cov=qr_cov, kernel=kernel,
+                 bandwidth=bandwidth)
+    m = _qr_model(table, rows, spec)
+    d, res, V = m['d'], m['res'], m['V']
+    tau = m['tau']
+    names = m['names']
+    dfr = float(res.df_resid)
+    est = _est_table(d, names, res.params.to_numpy(float), V, dfr, alpha)
+    st = _qr_stats(m, res, tau)
+    yv = m['y'].to_numpy(float)
+    Xa = m['X'].to_numpy(float)
+    n = len(yv)
+    pred = Xa @ res.params.to_numpy(float)
+    summary = [{'stat': 'Quantile (τ)', 'value': tau}, {'stat': 'Pseudo RSquare (Koenker–Machado)', 'value': st['r1']},
+               {'stat': 'Sum of Check Losses', 'value': st['v1']}, {'stat': 'Sum of Check Losses, Intercept Only', 'value': st['v0']},
+               {'stat': 'Share of Rows Below the Fit', 'value': st['below']}, {'stat': 'Sparsity (1/f̂(0))', 'value': st['sparsity']},
+               {'stat': 'Bandwidth', 'value': st['bandwidth']}, {'stat': 'Iterations', 'value': st['iterations']},
+               {'stat': 'Observations', 'value': float(n)}]
+    ols = sm.OLS(m['y'], m['X']).fit()
+    T = _uncenter(d, names)
+    # the terms in the effects' order, as the estimates table
+    order = [names.index(r['name']) for r in est['rows']]
+    labels = [r['term'] for r in est['rows']]
+
+    def jmp(b, Vb):
+        b, Vb = np.asarray(b, dtype=float), np.asarray(Vb, dtype=float)
+        if T is not None:
+            b, Vb = T @ b, T @ Vb @ T.T
+        return b, np.sqrt(np.maximum(np.diag(Vb), 0))
+    bo, so = jmp(ols.params, ols.cov_params())
+    to = _tcrit(alpha, float(ols.df_resid))
+    out = {'y': spec['y'][0], 'tau': tau, 'n': n, 'key': _key('qr', table, rows, spec), 'alpha': alpha, 'estimates': est,
+           'summary': rtable([col('stat', '', 'text'), col('value', '')], summary), 'stats': st, 'factors': _factors(d),
+           'model': {'response': spec['y'][0], 'tau': tau, 'cov': m['cov'], 'cov_label': _QR_COV[m['cov']], 'kernel': m['kernel'],
+                     'kernel_label': _QR_KERNEL[m['kernel']], 'bandwidth': m['bw'], 'bandwidth_label': _QR_BANDWIDTH[m['bw']], 'n': n},
+           'ols': {'terms': labels, 'estimate': [float(bo[j]) for j in order], 'lower': [float(bo[j] - to * so[j]) for j in order],
+                   'upper': [float(bo[j] + to * so[j]) for j in order]},
+           'diag': {'rows': [int(i) for i in d.df.index], 'actual': yv, 'predicted': pred, 'residual': yv - pred}}
+    taus_p = _qr_taus(taus)
+    if process:
+        proc = {'taus': taus_p, 'terms': labels, 'estimate': [[] for _ in labels], 'se': [[] for _ in labels], 'lower': [[] for _ in labels],
+                'upper': [[] for _ in labels], 'r1': []}
+        for t in taus_p:
+            rt_, Vt = _qr_fit(m, t)
+            b, s = jmp(rt_.params, Vt)
+            tc = _tcrit(alpha, float(rt_.df_resid))
+            for i, j in enumerate(order):
+                proc['estimate'][i].append(float(b[j]))
+                proc['se'][i].append(float(s[j]))
+                proc['lower'][i].append(float(b[j] - tc * s[j]))
+                proc['upper'][i].append(float(b[j] + tc * s[j]))
+            proc['r1'].append(_qr_stats(m, rt_, t)['r1'])
+        out['process'] = proc
+    # the fitted quantile lines of one continuous factor (its powers allowed)
+    facs = _factors(d)
+    if len(facs) == 1 and facs[0]['type'] == 'continuous':
+        f = facs[0]
+        a = d.alias[f['name']]
+        gx = np.linspace(f['min'], f['max'], 61)
+        L = m['coder'].rows([{a: float(v)} for v in gx])
+        lines = []
+        for t in sorted(set(_QR_LINES + [tau])):
+            rt_, _Vt = _qr_fit(m, t)
+            lines.append({'tau': t, 'y': L @ rt_.params.to_numpy(float), 'current': abs(t - tau) < 1e-9})
+        out['lines'] = {'factor': f['name'], 'x': gx, 'lines': lines, 'ols': L @ ols.params.to_numpy(float),
+                        'points': {'x': d.df[a].to_numpy(float), 'y': yv, 'rows': out['diag']['rows']}}
+    notes = [f'Quantile regression (Koenker and Bassett 1978) estimates the {tau:g}-quantile of {spec["y"][0]} given the effects by '
+             'minimising the sum of check losses, u·(τ − [u < 0]); statsmodels\' QuantReg solves it by iteratively reweighted least squares '
+             f'(to 1e-6 in the estimates, at most {_QR_MAXITER} iterations where statsmodels stops at 1000), not by the linear program of R\'s quantreg (rq) or Stata\'s qreg, so the estimates agree with '
+             'theirs to about that tolerance. t tests on n − p DF, as Stata and R. JMP Pro fits quantile regression in Generalized '
+             'Regression (without the quantile process); JMP has none.',
+             'Pseudo RSquare is Koenker and Machado\'s (1999) R¹ = 1 − V(τ)/Ṽ(τ), V the check loss of the fit and Ṽ that of the model with '
+             'only an intercept (at the sample τ-quantile), as Stata\'s qreg reports it; statsmodels\' prsquared takes the unconditional '
+             f'quantile by interpolation instead ({st["prsquared"]:.6g} here).']
+    covnote = {'robust': (f'Standard errors: statsmodels\' robust covariance, (X′X)⁻¹X′DX(X′X)⁻¹ with D the squared scores (τ or 1 − τ over '
+                          f'one kernel estimate f̂(0) of the residuals\' density at zero, {_QR_KERNEL[m["kernel"]]} kernel, '
+                          f'{_QR_BANDWIDTH[m["bw"]]} bandwidth; Greene 2008). One density for every row makes it close to the iid formula '
+                          '(at the median it is the iid formula exactly): it does not follow a density that changes with the regressors. '
+                          'Powell\'s sandwich does (R\'s quantreg se = "ker"; choose it in Model Launch when the spread changes with X).'),
+               'iid': (f'Standard errors: the iid formula τ(1 − τ)/f̂(0)²·(X′X)⁻¹ (statsmodels\' vcov="iid", Stata\'s qreg default), the '
+                       f'sparsity 1/f̂(0) from a {_QR_KERNEL[m["kernel"]]} kernel with the {_QR_BANDWIDTH[m["bw"]]} bandwidth: right when the '
+                       'errors have the same distribution in every row.'),
+               'powell': (f'Standard errors: Powell\'s (1991) kernel sandwich τ(1 − τ)(X′FX)⁻¹X′X(X′FX)⁻¹, F the density of each row\'s '
+                          f'residual K(e/h)/h (computed here from statsmodels\' residuals, its {_QR_KERNEL[m["kernel"]]} kernel and its '
+                          f'{_QR_BANDWIDTH[m["bw"]]} bandwidth h = {st["bandwidth"]:.6g}); consistent when the errors\' spread changes with '
+                          'the regressors, like R\'s quantreg se = "ker" (a Gaussian kernel with the bandwidth scaled by the residuals).')}[m['cov']]
+    notes.append(covnote)
+    if process:
+        notes.append('The quantile process: each coefficient fitted at every quantile of the list, with its pointwise confidence band; the '
+                     'dashed line and the shaded band are the least squares estimate and its confidence interval. A slope that changes with '
+                     'τ means the effect differs across the distribution (the spread of Y changes with that term).')
+    if any(data.meta(table, nm).get('modelingType') == 'ordinal' for nm in _factor_names(d)):
+        notes.append('Ordinal factors are coded like nominal ones (effect coding).')
+    out['notes'] = notes
+    out['code'] = _qr_code(m, table, table_name, rows, taus_p if process else None, alpha)
+    return out
+
+
+def _qr_code(m, table, table_name, rows, taus, alpha):
+    d = m['d']
+    y = m['spec']['y'][0]
+    lines = _code_frame(d, table, table_name, rows, [], ['import patsy', 'from statsmodels.regression.quantile_regression import QuantReg, kernels'])
+    lines.append(f'X = patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d, return_type="dataframe")   # the design, effect coded')
+    lines.append(f'y = d[{json.dumps(y)}]')
+    vc = 'iid' if m['cov'] == 'iid' else 'robust'
+    opts = f'vcov={vc!r}, kernel={m["kernel"]!r}, bandwidth={m["bw"]!r}, max_iter={_QR_MAXITER}'
+    lines.append(f'tau = {m["tau"]!r}')
+    lines.append(f'fit = QuantReg(y, X).fit(q=tau, {opts})   # IRLS; t tests on n - p DF')
+    lines.append('print(fit.summary())')
+    if m['cov'] == 'powell':
+        lines.append('Xa, e = np.asarray(X), fit.resid.to_numpy(); f = kernels[' + repr(m['kernel']) + '](e / fit.bandwidth) / fit.bandwidth')
+        lines.append('A = np.linalg.pinv((Xa * f[:, None]).T @ Xa); V = tau * (1 - tau) * A @ Xa.T @ Xa @ A   # Powell\'s sandwich')
+        lines.append('print(np.sqrt(np.diag(V)))   # its standard errors')
+    lines.append('rho = lambda u: np.sum(u * (tau - (u < 0)))   # the check loss')
+    lines.append('ys = np.sort(y.to_numpy()); k = int(np.ceil(len(ys) * tau)) - 1')
+    lines.append('v0 = min(rho(ys - ys[j]) for j in range(max(0, k - 1), min(len(ys), k + 2)))   # the intercept-only fit: the sample quantile')
+    lines.append('print(1 - rho(fit.resid.to_numpy()) / v0)   # Koenker and Machado\'s pseudo RSquare')
+    if taus:
+        lines.append(f'taus = {taus!r}')
+        lines.append(f'process = pd.DataFrame({{t: QuantReg(y, X).fit(q=t, {opts}).params for t in taus}}).T   # the quantile process')
+        lines.append('print(process)')
+        lines.append(f'print(sm.OLS(y, X).fit().conf_int({alpha!r}))   # the least squares reference')
+    lines += _centred_code(d)
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Recursive and Rolling Regression (Standard Least Squares)
+# ---------------------------------------------------------------------------
+
+def _rr_order(tid, d, order_by):
+    """The positions of the model's rows in the order of the recursion: the
+    table's, or sorted by a column (stably; a categorical column by its
+    level order); rows without a value of that column are left out."""
+    n = len(d.df)
+    if not order_by:
+        return np.arange(n), None, 0
+    if order_by not in data.TABLES[tid]['meta']:
+        raise ValueError(f'no column {order_by!r} to sort by')
+    s = data.series(tid, order_by, d.df.index, as_category=True)
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        v = s.cat.codes.to_numpy().astype(float)
+        v[v < 0] = np.nan
+        shown = [None if not np.isfinite(x) else _lvl(s.cat.categories[int(x)]) for x in v]
+    else:
+        v = s.to_numpy(float)
+        shown = [None if not np.isfinite(x) else float(x) for x in v]
+    ok = np.flatnonzero(np.isfinite(v))
+    pos = ok[np.argsort(v[ok], kind='stable')]
+    return pos, [shown[i] for i in pos], n - len(ok)
+
+
+@api('fitmodel.recursive')
+def recursive(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, order_by=None, alpha=0.05, conf=0.05,
+              window=None, rolling=False, table_name='data'):
+    """Recursive least squares (statsmodels' RecursiveLS) of the least squares
+    model with the rows taken one at a time, in the table's order or sorted
+    by a column: the recursive estimates with their bands, the CUSUM and
+    CUSUM of squares of the recursive residuals with their significance
+    bounds (alpha: 0.01, 0.05 or 0.10); rolling least squares (statsmodels'
+    RollingOLS) over windows of a number of rows when asked."""
+    from statsmodels.regression.recursive_ls import RecursiveLS
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    if freq:
+        raise ValueError('Recursive and rolling fits take the rows one at a time: remove Freq (a Weight is fine)')
+    m = _ls_model(table, rows, spec)
+    d, res = m['d'], m['res']
+    names = list(res.params.index)
+    Xw = np.asarray(res.model.wexog, dtype=float)
+    yw = np.asarray(res.model.wendog, dtype=float)
+    k = Xw.shape[1]
+    if res.model.rank < k:
+        raise ValueError('the design is singular: recursive estimates need every parameter estimable')
+    pos, shown, dropped = _rr_order(table, d, order_by)
+    no = len(pos)
+    if no <= k + 3:
+        raise ValueError('too few rows for recursive estimates')
+    Xo, yo = Xw[pos], yw[pos]
+    if np.linalg.matrix_rank(Xo) < k:
+        raise ValueError('the rows left do not identify the model')
+    rows_o = [int(i) for i in np.asarray(d.df.index)[pos]]
+    rr = RecursiveLS(yo, Xo).fit()
+    d0 = int(max(rr.nobs_diffuse, rr.loglikelihood_burn))
+    if d0 >= no - 2:
+        raise ValueError('the recursion starts too late: the design has full rank only after the last rows (sort by another column)')
+    T = _uncenter(d, names)
+    coef = rr.recursive_coefficients
+    B = np.asarray(coef.filtered, dtype=float)           # k x n
+    C = np.asarray(coef.filtered_cov, dtype=float)       # k x k x n
+    if T is not None:
+        B = T @ B
+        C = np.einsum('ij,jkt,lk->ilt', T, C, T)
+    z = float(stats.norm.ppf(1 - float(alpha) / 2))
+    t_obs = np.arange(d0 + 1, no + 1)                    # the observations after the start, counted in the order
+    est_rows = sorted(range(k), key=lambda j: -1 if names[j] == 'Intercept' else next((i for i, e in enumerate(d.effects) if names[j] in e.get('terms', [])), len(d.effects)))
+    bfull = (T @ res.params.to_numpy(float)) if T is not None else res.params.to_numpy(float)
+    recs = []
+    for j in est_rows:
+        se = np.sqrt(np.maximum(C[j, j, d0:], 0))
+        recs.append({'term': _tlabel(d, names[j]), 'estimate': B[j, d0:], 'lower': B[j, d0:] - z * se, 'upper': B[j, d0:] + z * se,
+                     'full': float(bfull[j])})
+    conf = float(conf)
+    if conf not in (0.01, 0.05, 0.1):
+        raise ValueError('the CUSUM bounds are for the 1%, 5% or 10% level')
+    W = np.asarray(rr.cusum, dtype=float)
+    tmp = math.sqrt(no - d0)
+    if conf == 0.1:
+        # statsmodels 0.14 takes 0.950 for 10%, a slip for Brown, Durbin and Evans's 0.850
+        a = 0.850
+        up = a * tmp + 2 * a * (t_obs - d0) / tmp
+        lo = -up
+    else:
+        lo, up = rr._cusum_significance_bounds(conf, points=t_obs)
+        a = float(up[-1]) / (3 * tmp)
+    crossed = np.flatnonzero(np.abs(W) > up)
+    cusum = {'x': t_obs, 'y': W, 'lower': lo, 'upper': up, 'rows': rows_o[d0:], 'crossed': bool(len(crossed)),
+             'first': int(t_obs[crossed[0]]) if len(crossed) else None, 'first_row': rows_o[d0 + int(crossed[0])] if len(crossed) else None,
+             'ratio': float(np.max(np.abs(W) / up)), 'constant': float(a)}
+    S = np.asarray(rr.cusum_squares, dtype=float)
+    lo2, up2 = rr._cusum_squares_significance_bounds(conf, points=t_obs)
+    line = (t_obs - d0) / (no - d0)
+    crit = float(up2[0] - line[0])
+    dev = S - line
+    crossed2 = np.flatnonzero(np.abs(dev) > crit)
+    jmax = int(np.argmax(np.abs(dev)))
+    cusumsq = {'x': t_obs, 'y': S, 'lower': lo2, 'upper': up2, 'line': line, 'rows': rows_o[d0:], 'crit': crit,
+               'dev': float(np.abs(dev[jmax])), 'at': int(t_obs[jmax]), 'at_row': rows_o[d0 + jmax], 'crossed': bool(len(crossed2)),
+               'first': int(t_obs[crossed2[0]]) if len(crossed2) else None, 'first_row': rows_o[d0 + int(crossed2[0])] if len(crossed2) else None}
+    out = {'n': no, 'k': k, 'start': d0, 'order': {'by': order_by, 'rows': rows_o, 'values': shown, 'dropped': dropped},
+           'recursive': recs, 'resid': np.asarray(rr.resid_recursive, dtype=float)[d0:], 'cusum': cusum, 'cusumsq': cusumsq, 'alpha': alpha,
+           'conf': conf, 'weighted': d.weights is not None}
+    w = None
+    if rolling:
+        from statsmodels.regression.rolling import RollingOLS
+        w = int(window) if window not in (None, '') else min(no, max(3 * k, int(round(no / 10))))
+        if not k < w <= no:
+            raise ValueError(f'the window must hold more rows than the {k} parameters and at most the {no} rows')
+        ro = RollingOLS(yo, Xo, window=w).fit(use_t=True)
+        P = np.asarray(ro.params, dtype=float)             # n x k
+        Cv = np.asarray(ro.cov_params(), dtype=float)       # n x k x k
+        if T is not None:
+            P = P @ T.T
+            Cv = np.einsum('ij,tjk,lk->til', T, Cv, T)
+        dfr = np.asarray(ro.df_resid, dtype=float)
+        with np.errstate(invalid='ignore'):
+            tc = stats.t.ppf(1 - float(alpha) / 2, dfr)
+        first = w - 1
+        roll = []
+        for j in est_rows:
+            se = np.sqrt(np.maximum(Cv[first:, j, j], 0))
+            roll.append({'term': _tlabel(d, names[j]), 'estimate': P[first:, j], 'lower': P[first:, j] - tc[first:] * se,
+                         'upper': P[first:, j] + tc[first:] * se, 'full': float(bfull[j])})
+        missing = int(np.sum(~np.isfinite(P[first:, 0])))
+        out['rolling'] = {'window': w, 'x': np.arange(w, no + 1), 'terms': roll, 'singular': missing}
+    notes = [f'The rows are taken one at a time {("sorted by " + order_by) if order_by else "in the order of the table"}; the recursive '
+             f'estimates after t rows are least squares on those rows (statsmodels\' RecursiveLS, a Kalman filter with a diffuse start), '
+             f'the last are the report\'s. The first {d0} rows start the recursion (until every parameter is estimable); after them each '
+             f'row gives a recursive residual, its prediction error from the rows before it scaled to a common variance. The bands are '
+             f'±{z:.4g} standard errors, with the full-sample σ, as statsmodels\' plot_recursive_coefficient draws them.',
+             'CUSUM (Brown, Durbin and Evans 1975): the cumulative sum of the recursive residuals over their standard deviation. With '
+             'stable coefficients it wanders about zero; a drift out of the bounds ±a(√(n − k) + 2(t − k)/√(n − k)) says the '
+             'coefficients change along the order (a = 0.948 at 5%, 1.143 at 1%, 0.850 at 10%). CUSUM of squares: the cumulative share '
+             'of the squared recursive residuals, which rises along the diagonal (t − k)/(n − k) when the coefficients and the variance '
+             'are stable; its bounds are statsmodels\' (Edgerton and Wells\'s 1994 approximation to Durbin\'s 1969 critical values). '
+             'The CUSUM finds shifts in the mean of Y along the order, the CUSUM of squares changes in the variance or in the slopes. Both '
+             'are exact only for fixed regressors in the order, and say nothing about which coefficient moved: the recursive estimates do.',
+             'The recursive residuals are those of R\'s strucchange (recresid) and Stata\'s cusum6. statsmodels scales the CUSUM by the '
+             'standard deviation of all the recursive residuals and starts it at the first of them, as Brown, Durbin and Evans; cusum6 '
+             'starts one row later and R\'s efp (Rec-CUSUM) scales it otherwise, so their paths and bounds differ slightly. JMP has no '
+             'recursive or rolling fits.']
+    if conf == 0.1:
+        notes.append('At the 10% level the CUSUM bounds use a = 0.850 (Brown, Durbin and Evans); statsmodels 0.14\'s '
+                     '_cusum_significance_bounds takes 0.950, a slip.')
+    if dropped:
+        notes.append(f'{dropped} row{"s" if dropped > 1 else ""} without a value of {order_by} {"are" if dropped > 1 else "is"} left out of '
+                     'the recursion: its last estimates are least squares on the rows left.')
+    if d.weights is not None:
+        notes.append('With a Weight the recursion runs on the weighted regression as plain least squares on the data times √w.')
+    if rolling:
+        notes.append(f'Rolling regression (statsmodels\' RollingOLS): least squares on each window of {w} consecutive rows in the same order; '
+                     f'each estimate is plotted at the window\'s last row, with its {100 * (1 - float(alpha)):g}% band (t on {w} − {k} DF). '
+                     'A point stands for its window: clicking it selects the window\'s rows.' +
+                     (f' {out["rolling"]["singular"]} windows have a singular design (a level of a factor missing in them) and no estimates.'
+                      if out['rolling']['singular'] else ''))
+    out['notes'] = notes
+    out['code'] = _rr_code(m, table, table_name, rows, order_by, conf, w, weight)
+    return out
+
+
+def _rr_code(m, table, table_name, rows, order_by, conf, window, weight):
+    d = m['d']
+    lines = _code_frame(d, table, table_name, rows, [weight, order_by], ['from statsmodels.regression.recursive_ls import RecursiveLS',
+                                                                        'from statsmodels.regression.rolling import RollingOLS'])
+    fml = json.dumps(_code_formula(d))
+    lines.append(f'fit = smf.wls({fml}, data=d, weights=d[{json.dumps(weight)}]).fit()' if weight else f'fit = smf.ols({fml}, data=d).fit()')
+    if order_by:
+        meta = data.meta(table, order_by)
+        if meta.get('modelingType') in ('nominal', 'ordinal'):
+            lv = meta.get('levels') or []
+            lines.append(f'o = np.argsort(pd.Categorical(d[{json.dumps(order_by)}], categories={json.dumps(lv)}).codes, kind="stable")   '
+                         '# the rows sorted by the column (its level order)')
+        else:
+            lines.append(f'o = np.argsort(d[{json.dumps(order_by)}].to_numpy(float), kind="stable")   # the rows sorted by the column')
+    else:
+        lines.append('o = np.arange(len(d))   # the rows in the order of the table')
+    lines.append('X, y = fit.model.wexog[o], fit.model.wendog[o]' + ('   # times √w: the weighted fit as least squares' if weight else ''))
+    lines.append('rls = RecursiveLS(y, X).fit()')
+    lines.append('d0 = max(rls.nobs_diffuse, rls.loglikelihood_burn); t = np.arange(d0 + 1, len(y) + 1)   # the rows after the start')
+    lines.append('print(rls.recursive_coefficients.filtered[:, d0:])   # the recursive estimates; the last are least squares\'')
+    if conf == 0.1:
+        lines.append('a = 0.850; print(rls.cusum, a * np.sqrt(len(y) - d0) + 2 * a * (t - d0) / np.sqrt(len(y) - d0))   # CUSUM, its 10% bound')
+    else:
+        lines.append(f'print(rls.cusum, rls._cusum_significance_bounds({conf!r}, points=t))   # CUSUM and its bounds')
+    lines.append(f'print(rls.cusum_squares, rls._cusum_squares_significance_bounds({conf!r}, points=t))   # CUSUM of squares and its bounds')
+    if window:
+        lines.append(f'roll = RollingOLS(y, X, window={int(window)}).fit(use_t=True)   # rolling least squares')
+        lines.append('print(roll.params, roll.bse)')
+    lines += _centred_code(d)
+    return '\n'.join(lines)

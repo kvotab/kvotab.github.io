@@ -13,7 +13,8 @@
                  hint: 'required', info: 'topic key' }, ...],
        options: [{ key, label, type: 'check'|'number'|'select'|'text',
                    value, choices: [[value, label], ...], hint }],
-       extra(api) -> { el, read() -> { roles?, options?, ... } }   (optional)
+       extra(api, spec) -> { el, read() -> { roles?, options?, ... }, recall(saved),
+                             position: 'top' | undefined }   (optional)
        validate(spec, table) -> an error message or null
      }
 
@@ -107,7 +108,8 @@
       const li = ev.target.closest('li');
       if (!li) return;
       const c = table.col(li.dataset.id);
-      const role = roles.find((r) => !roleAccepts(r, c) && state[r.key].length < (r.max ?? Infinity)) || roles.find((r) => !roleAccepts(r, c));
+      const shown = roles.filter((r) => !roleEls[r.key].row.hidden);
+      const role = shown.find((r) => !roleAccepts(r, c) && state[r.key].length < (r.max ?? Infinity)) || shown.find((r) => !roleAccepts(r, c));
       if (role) addTo(role, [c.id]);
       else msg.textContent = roles.length ? roleAccepts(roles[0], c) : '';
     });
@@ -127,7 +129,9 @@
         ev.preventDefault();
         ev.stopPropagation();
         const c = table.col([...selected][0]);
-        const role = roles.find((r) => !roleAccepts(r, c)) || roles[0];
+        const shown = roles.filter((r) => !roleEls[r.key].row.hidden);
+        const role = shown.find((r) => !roleAccepts(r, c)) || shown[0];
+        if (!role) return;
         addTo(role, [...selected]);
       }
     });
@@ -258,6 +262,16 @@
       message: (t, kind) => { msg.textContent = t || ''; msg.classList.toggle('is-info', kind === 'info'); },
       onRolesChange: (fn) => { roleWatchers.push(fn); },
       showRole: (key, on) => { if (roleEls[key]) roleEls[key].row.hidden = !on; },
+      // setRequired(key, on): the role needs a column (or not) in the layout
+      // chosen now; OK checks it, and its empty box says so.
+      setRequired: (key, on) => {
+        const r = roles.find((x) => x.key === key);
+        if (!r) return;
+        r.min = on ? Math.max(1, r.min || 0) : 0;
+        const ul = roleEls[key].list;
+        ul.dataset.hint = r.hint && !/^(required|optional)/.test(r.hint) ? r.hint : (on ? 'required' : 'optional');
+        roleEls[key].btn.classList.toggle('required', !!on);
+      },
     };
     const extra = L.extra ? L.extra(api, spec) : null;
 
@@ -286,7 +300,8 @@
       L.lead ? el('p', { class: 'sm-dialog-lead', text: L.lead }) : null,
       el('div', { class: 'sm-launch' },
         el('div', { class: 'sm-pick' }, el('h4', null, 'Select Columns', el('span', { class: 'sm-grow' }), count), filter, list),
-        el('div', null, el('h4', { text: roles.length ? 'Cast Selected Columns into Roles' : 'Settings' }), roleBox, extra ? extra.el : null),
+        el('div', null, el('h4', { text: roles.length ? 'Cast Selected Columns into Roles' : 'Settings' }),
+          extra && extra.position === 'top' ? extra.el : null, roleBox, extra && extra.position !== 'top' ? extra.el : null),
         actions),
       (L.options || []).length ? opts : null, msg);
 
@@ -294,6 +309,7 @@
 
     const validate = (s) => {
       for (const r of roles) {
+        if (roleEls[r.key].row.hidden) continue;
         const n = s.roles[r.key].length;
         if (n < (r.min || 0)) { roleEls[r.key].row.classList.add('is-missing'); return `${r.label}: choose ${r.min === 1 ? 'a column' : `at least ${r.min} columns`}`; }
       }
@@ -332,8 +348,10 @@
     recall.addEventListener('click', () => {
       let s = last.get(platform.id);
       if (!s) { try { s = JSON.parse(localStorage.getItem(`smui.recall.${platform.id}`) || 'null'); } catch (e) { s = null; } }
-      if (!fillFrom(s, true)) msg.textContent = 'Nothing to recall: this platform has not been launched yet.';
-      else if (extra && extra.recall) extra.recall(s);
+      if (!s) { msg.textContent = 'Nothing to recall: this platform has not been launched yet.'; return; }
+      // The platform's own part first: which roles it shows may depend on it.
+      if (extra && extra.recall) extra.recall(s);
+      fillFrom(s, true);
     });
     help.addEventListener('click', () => {
       if (platform.info && typeof KvotInfo !== 'undefined') KvotInfo.open(platform.info);

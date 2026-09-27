@@ -18,7 +18,15 @@
     "power.py",
     "doe.py",
     "graph.py",
-    "tables.py"
+    "tables.py",
+    "meta.py",
+    "multits.py",
+    "counts.py",
+    "treatment.py",
+    "gam.py",
+    "mediation.py",
+    "copula.py",
+    "mi.py"
   ],
   "modules": [
     "datasets",
@@ -33,6 +41,14 @@
     "power",
     "doe",
     "graph",
-    "tables"
+    "tables",
+    "meta",
+    "multits",
+    "counts",
+    "treatment",
+    "gam",
+    "mediation",
+    "copula",
+    "mi"
   ]
 }

@@ -1,8 +1,9 @@
 /* ==========================================================================
    SMUI.HTML: GRAPH (smui-p-graph.js)
    Graph Builder's columns, element palette, drop zones and properties; the
-   axis pickers of Scatterplot 3D. Colours are kvot.css's tokens, so both
-   themes work; at phone width the builder stacks its parts.
+   axis pickers of Scatterplot 3D; the Functional Data Plot's launch part.
+   Colours are kvot.css's tokens, so both themes work; at phone width the
+   builder stacks its parts.
    ========================================================================== */
 
 /* ---- Graph Builder ---------------------------------------------------------- */
@@ -130,3 +131,11 @@
 .sm-graph-pick label { display: inline-flex; align-items: center; gap: 5px; }
 .sm-graph-pick select { padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; max-width: 220px; }
 .sm-graph-wide { max-width: 100%; overflow-x: auto; }
+
+/* ---- Functional Data Plot --------------------------------------------------------- */
+.sm-fd-launch { margin: 0 0 8px; }
+.sm-fd-launch h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+.sm-fd-radios { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; }
+.sm-fd-radio { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.sm-fd-radio input { margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-fd-sub { margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }

@@ -1,0 +1,26 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > META-ANALYSIS (smui-p-meta.js)
+   The launch dialog's input-layout part and the forest plot's sideways
+   scroller. Colours are kvot.css's tokens, so both themes read.
+   ========================================================================== */
+
+/* ---- the launch dialog: the layout and its options -------------------------- */
+.sm-meta-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-meta-launch.is-top { margin: 0 0 12px; padding: 0 0 10px; border-top: 0; border-bottom: 1px solid var(--border-color); }
+.sm-meta-launch h4 { margin: 0 0 6px; }
+.sm-meta-radios { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.sm-meta-radio { display: inline-flex; align-items: center; gap: 7px; color: var(--text-primary); cursor: pointer; }
+.sm-meta-radio input, .sm-meta-opt input[type="checkbox"] { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-meta-opts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.sm-meta-opts[hidden] { display: none; }
+.sm-meta-opt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.sm-meta-opt > span { color: var(--text-secondary); }
+.sm-meta-opt select {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; max-width: 100%;
+}
+
+/* ---- the forest plot: as wide as a published one; on a narrow screen it
+   scrolls sideways inside the report instead of widening the page --------- */
+.sm-meta-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.sm-meta-scroll > .sm-plot { flex: none; }

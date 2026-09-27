@@ -11,10 +11,26 @@
                                AICc or BIC; Make Model
      Generalized Linear Model  statsmodels' GLM (normal, binomial, Poisson,
                                gamma, inverse Gaussian, negative binomial)
+     Generalized Estimating    statsmodels' GEE: a Subject, Time and Subgroup,
+       Equations               working correlations, robust / naive / bias-
+                               reduced errors, QIC, Compare Working Correlations
      Nominal, Ordinal Logistic MNLogit (or a binomial GLM) and OrderedModel
      Mixed Model               MixedLM by REML, variance components
      MANOVA                    statsmodels' MANOVA
      Generalized Regression    lasso, elastic net and ridge paths
+     Instrumental Variables    two-stage least squares (IV2SLS): Endogenous
+                               and Instruments roles, first stages, weak-
+                               instrument statistics, Durbin-Wu-Hausman and
+                               Sargan / Hansen J tests, OLS beside it
+     Quantile Regression       QuantReg at a quantile, the quantile process
+                               beside least squares, quantile lines
+
+   Beyond JMP, Standard Least Squares has Robust Standard Errors (HC0-HC3,
+   Newey-West, cluster; the GLM the sandwich, HAC and cluster), Regression
+   Diagnostics (statsmodels' specification and residual tests, an Influence
+   Plot, Component + Residual plots) and Recursive and Rolling Regression
+   (RecursiveLS's recursive estimates, CUSUM and CUSUM of squares; RollingOLS).
+   The example tables 'longitudinal' and 'schooling' are made here.
 
    The statistics are resources/py/smui/fit_model.py (fitmodel.*); this file
    draws the dialog and the reports. Every red-triangle choice is an option
@@ -27,14 +43,28 @@
   const { el, fmt, qnorm } = SM.util;
 
   const PERS = [['standard', 'Standard Least Squares'], ['stepwise', 'Stepwise'], ['glm', 'Generalized Linear Model'],
-    ['nominal', 'Nominal Logistic'], ['ordinal', 'Ordinal Logistic'], ['mixed', 'Mixed Model'], ['manova', 'MANOVA'],
-    ['genreg', 'Generalized Regression']];
+    ['gee', 'Generalized Estimating Equations'], ['nominal', 'Nominal Logistic'], ['ordinal', 'Ordinal Logistic'], ['mixed', 'Mixed Model'],
+    ['manova', 'MANOVA'], ['genreg', 'Generalized Regression'], ['iv', 'Instrumental Variables'], ['quantreg', 'Quantile Regression']];
   const PERS_LABEL = Object.fromEntries(PERS);
+  // Quantile Regression: statsmodels' covariances, kernels and bandwidths, the default quantile process
+  const QR_COVS = [['robust', 'Robust (statsmodels)'], ['iid', 'IID'], ['powell', 'Powell sandwich']];
+  const QR_KERNELS = [['epa', 'Epanechnikov'], ['gau', 'Gaussian'], ['cos', 'Cosine'], ['par', 'Parzen'], ['biw', 'Biweight']];
+  const QR_BWS = [['hsheather', 'Hall–Sheather'], ['bofinger', 'Bofinger'], ['chamberlain', 'Chamberlain']];
+  const QR_TAUS = '0.05 to 0.95 by 0.05';
+  // Recursive and Rolling Regression (Standard Least Squares): the parts, each an option of the report
+  const RR = [['rr:recursive', 'Recursive Estimates'], ['rr:cusum', 'CUSUM Test'], ['rr:cusumsq', 'CUSUM of Squares Test'], ['rr:rolling', 'Rolling Regression']];
   const EMPH = [['leverage', 'Effect Leverage'], ['screening', 'Effect Screening'], ['minimal', 'Minimal Report']];
   const DISTS = [['normal', 'Normal'], ['binomial', 'Binomial'], ['poisson', 'Poisson'], ['gamma', 'Gamma'], ['invgauss', 'Inverse Gaussian'], ['negbin', 'Negative Binomial']];
   const GR_DISTS = [['normal', 'Normal'], ['binomial', 'Binomial'], ['poisson', 'Poisson']];
+  const GEE_DISTS = [...DISTS, ['tweedie', 'Tweedie']];
   const LINKS = [['identity', 'Identity'], ['logit', 'Logit'], ['probit', 'Probit'], ['log', 'Log'], ['reciprocal', 'Reciprocal'], ['cloglog', 'Comp LogLog'], ['inverse_squared', 'Inverse Square'], ['sqrt', 'Square Root']];
-  const DEFAULT_LINK = { normal: 'identity', binomial: 'logit', poisson: 'log', gamma: 'log', invgauss: 'log', negbin: 'log' };
+  const DEFAULT_LINK = { normal: 'identity', binomial: 'logit', poisson: 'log', gamma: 'log', invgauss: 'log', negbin: 'log', tweedie: 'log' };
+  // Generalized Estimating Equations: the working correlations, the covariances,
+  // the families whose scale is 1 unless it is estimated
+  const CORRS = [['independence', 'Independence'], ['exchangeable', 'Exchangeable'], ['ar1', 'Autoregressive AR(1)'], ['nested', 'Nested'], ['unstructured', 'Unstructured']];
+  const CORR_LABEL = Object.fromEntries(CORRS);
+  const COVS = [['robust', 'Robust (sandwich)'], ['naive', 'Naive (model-based)'], ['bias_reduced', 'Bias-reduced (Mancl–DeRouen)']];
+  const UNIT_SCALE = new Set(['binomial', 'poisson', 'negbin']);
   const MACROS = [['full', 'Full Factorial'], ['degree', 'Factorial to Degree'], ['sorted', 'Factorial Sorted'], ['rs', 'Response Surface'], ['poly', 'Polynomial to Degree']];
 
   /* ---- effects ---------------------------------------------------------------
@@ -115,6 +145,8 @@
     const st = {
       pers: o0.personality || null, userPers: !!o0.personality, emphasis: o0.emphasis || 'leverage', dist: o0.dist || 'normal',
       link: o0.link || '', noIntercept: !!o0.noIntercept, target: o0.target ?? '', distr: o0.distr || 'logit',
+      corr: o0.workCorr || 'exchangeable', cov: o0.geeCov || 'robust', scale: o0.geeScale || (UNIT_SCALE.has(o0.dist || 'normal') ? 'fixed' : 'estimated'),
+      scaleValue: o0.geeScaleValue ?? 1, nbAlpha: o0.nbAlpha ?? 1, varPower: o0.varPower ?? 1.5, tau: o0.qrTau ?? 0.5,
     };
     const msg = (s) => api.message(s);
     const list = el('ul', { class: 'sm-role-list sm-fm-effects', role: 'listbox', 'aria-label': 'Model effects', 'aria-multiselectable': 'true', tabindex: '0', dataset: { hint: 'Select columns, then Add, Cross, Nest or a macro' } });
@@ -187,12 +219,27 @@
     const mkSel = (choices, value, label) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; return s; };
     const pers = mkSel(PERS, st.pers || 'standard', 'Personality');
     const emph = mkSel(EMPH, st.emphasis, 'Emphasis');
-    const dist = mkSel(DISTS, st.dist, 'Distribution');
+    const dist = mkSel(st.pers === 'gee' ? GEE_DISTS : st.pers === 'genreg' ? GR_DISTS : DISTS, st.dist, 'Distribution');
     const link = mkSel(LINKS, st.link || DEFAULT_LINK[st.dist], 'Link Function');
     const distr = mkSel([['logit', 'Logit'], ['probit', 'Probit']], st.distr, 'Link');
     const target = el('select', { 'aria-label': 'Target Level' });
     const lab = (text, input, cls = '') => el('label', { class: `sm-fm-opt ${cls}` }, el('span', { text }), input);
     const lEmph = lab('Emphasis', emph), lDist = lab('Distribution', dist), lLink = lab('Link Function', link), lDistr = lab('Link', distr), lTarget = lab('Target Level', target);
+    // Generalized Estimating Equations
+    const numIn = (label, value) => { const i = el('input', { type: 'text', inputmode: 'decimal', size: 4, 'aria-label': label, class: 'sm-fm-num' }); i.value = String(value); return i; };
+    const corrSel = mkSel(CORRS, st.corr, 'Working Correlation');
+    const covSel = mkSel(COVS, st.cov, 'Covariance');
+    const scaleSel = mkSel([['estimated', 'Estimated'], ['fixed', 'Fixed at']], st.scale, 'Scale');
+    const scaleVal = numIn('Fixed scale', st.scaleValue);
+    const nbAlpha = numIn('Negative binomial alpha', st.nbAlpha);
+    const varPower = numIn('Tweedie power', st.varPower);
+    const lCorr = lab('Working Correlation', corrSel), lCov = lab('Covariance', covSel);
+    const lScale = el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Scale' }), scaleSel, scaleVal);
+    const lAlpha = lab('α', nbAlpha), lPower = lab('Power', varPower);
+    // Quantile Regression: the quantile τ (the rest of its options are in the report's Model Launch)
+    const tauIn = numIn('Quantile', st.tau);
+    const lTau = lab('Quantile τ', tauIn);
+    const num = (i, dflt) => { const v = Number(String(i.value).replace(',', '.')); return Number.isFinite(v) ? v : dflt; };
     const yCols = () => (api.state.y || []).map((id) => t.col(id)).filter(Boolean);
     const defaultPers = () => { const y = yCols()[0]; return !y ? 'standard' : y.modelingType === 'nominal' ? 'nominal' : y.modelingType === 'ordinal' ? 'ordinal' : 'standard'; };
     const fillTarget = () => {
@@ -208,20 +255,28 @@
       const p = pers.value;
       const y = yCols()[0];
       lEmph.hidden = p !== 'standard';
-      lDist.hidden = !(p === 'glm' || p === 'genreg');
-      const gd = p === 'genreg' ? GR_DISTS : DISTS;
+      lDist.hidden = !(p === 'glm' || p === 'genreg' || p === 'gee');
+      const gd = p === 'genreg' ? GR_DISTS : p === 'gee' ? GEE_DISTS : DISTS;
       if ([...dist.options].map((x) => x.value).join() !== gd.map((x) => x[0]).join()) { const v = dist.value; dist.replaceChildren(...gd.map(([v2, l]) => el('option', { value: v2, text: l }))); dist.value = gd.some((x) => x[0] === v) ? v : 'normal'; }
-      lLink.hidden = p !== 'glm';
+      lLink.hidden = !(p === 'glm' || p === 'gee');
       lDistr.hidden = p !== 'ordinal';
-      lTarget.hidden = !(y && y.isCategorical && ['nominal', 'glm', 'genreg'].includes(p));
+      lTarget.hidden = !(y && y.isCategorical && ['nominal', 'glm', 'genreg', 'gee'].includes(p));
+      const gee = p === 'gee';
+      lCorr.hidden = lCov.hidden = lScale.hidden = !gee;
+      scaleVal.hidden = scaleSel.value !== 'fixed';
+      lAlpha.hidden = !(gee && dist.value === 'negbin');
+      lPower.hidden = !(gee && dist.value === 'tweedie');
+      lTau.hidden = p !== 'quantreg';
       fillTarget();
-      if (dlgEl) {
-        const off = [...dlgEl.querySelectorAll('.sm-role')].find((r) => r.querySelector('.sm-btn') && r.querySelector('.sm-btn').textContent === 'Offset');
-        if (off) off.hidden = p !== 'glm';
-      }
+      // the roles of a personality: Offset for the GLM and GEE, Subject, Time and Subgroup for GEE,
+      // Endogenous and Instruments for Instrumental Variables (validate() says when one is empty)
+      api.showRole('offset', p === 'glm' || gee);
+      for (const k of ['subject', 'time', 'subgroup']) api.showRole(k, gee);
+      for (const k of ['endog', 'instruments']) api.showRole(k, p === 'iv');
     };
     pers.addEventListener('change', () => { st.userPers = true; sync(); });
-    dist.addEventListener('change', () => { link.value = DEFAULT_LINK[dist.value] || 'identity'; });
+    dist.addEventListener('change', () => { link.value = DEFAULT_LINK[dist.value] || 'identity'; scaleSel.value = UNIT_SCALE.has(dist.value) ? 'fixed' : 'estimated'; sync(); });
+    scaleSel.addEventListener('change', () => sync());
     requestAnimationFrame(() => {
       dlgEl = rootEl.closest('.sm-dialog');
       if (!dlgEl) return;
@@ -233,7 +288,8 @@
     const tools = el('div', { class: 'sm-fm-tools' }, bAdd, bCross, bNest, bMacros, el('label', { class: 'sm-fm-degree' }, 'Degree', degree), bAttr, bRemove,
       el('label', { class: 'sm-fm-noint' }, noInt, 'No Intercept'));
     const rootEl = el('div', { class: 'sm-fm-construct' },
-      el('div', { class: 'sm-fm-pers' }, lab('Personality', pers), lEmph, lDist, lLink, lDistr, lTarget, typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:fitmodel:personality') : null),
+      el('div', { class: 'sm-fm-pers' }, lab('Personality', pers), lEmph, lDist, lAlpha, lPower, lLink, lDistr, lTarget, lCorr, lCov, lScale, lTau,
+        typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:fitmodel:personality') : null),
       el('h4', null, 'Construct Model Effects', typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:fitmodel:effects') : null),
       el('div', { class: 'sm-fm-effbox' }, tools, list));
     renderList();
@@ -242,9 +298,11 @@
       el: rootEl,
       read() {
         const p = pers.value;
+        const gee = p === 'gee' ? { workCorr: corrSel.value, geeCov: covSel.value, geeScale: scaleSel.value, geeScaleValue: num(scaleVal, 1), nbAlpha: num(nbAlpha, 1), varPower: num(varPower, 1.5) } : {};
+        const qr = p === 'quantreg' ? { qrTau: num(tauIn, NaN) } : {};
         return {
           effects: effects.map(serialize),
-          options: { personality: p, emphasis: emph.value, dist: dist.value, link: p === 'glm' ? link.value : null, noIntercept: noInt.checked, target: target.value === '' ? null : target.value, distr: distr.value },
+          options: { personality: p, emphasis: emph.value, dist: dist.value, link: p === 'glm' || p === 'gee' ? link.value : null, noIntercept: noInt.checked, target: target.value === '' ? null : target.value, distr: distr.value, ...gee, ...qr },
         };
       },
       recall(saved) {
@@ -253,9 +311,17 @@
         const o = saved.options || {};
         if (o.personality) { pers.value = o.personality; st.userPers = true; }
         if (o.emphasis) emph.value = o.emphasis;
+        sync();   // the distributions of the personality, before the saved one is chosen
         if (o.dist) dist.value = o.dist;
         if (o.link) link.value = o.link;
         if (o.distr) distr.value = o.distr;
+        if (o.workCorr) corrSel.value = o.workCorr;
+        if (o.geeCov) covSel.value = o.geeCov;
+        if (o.geeScale) scaleSel.value = o.geeScale;
+        if (o.geeScaleValue != null) scaleVal.value = String(o.geeScaleValue);
+        if (o.nbAlpha != null) nbAlpha.value = String(o.nbAlpha);
+        if (o.varPower != null) varPower.value = String(o.varPower);
+        if (o.qrTau != null) tauIn.value = String(o.qrTau);
         noInt.checked = !!o.noIntercept;
         st.target = o.target ?? '';
         sel.clear();
@@ -274,7 +340,32 @@
     const yIds = new Set(spec.roles.y || []);
     if (effects.some((e) => [...(e.cols || []), ...(e.nest || [])].some((id) => yIds.has(id)))) return 'A Y column is also in a model effect: take it out of the effects.';
     const cont = ys.every((c) => !c.isCategorical);
-    if (['standard', 'stepwise', 'mixed', 'manova'].includes(p) && !cont) return `${PERS_LABEL[p]} needs continuous Y columns: change the personality, or the modeling type of ${ys.find((c) => c.isCategorical).name}.`;
+    if (['standard', 'stepwise', 'mixed', 'manova', 'iv', 'quantreg'].includes(p) && !cont) return `${PERS_LABEL[p]} needs continuous Y columns: change the personality, or the modeling type of ${ys.find((c) => c.isCategorical).name}.`;
+    if (p === 'iv' || p === 'quantreg') {
+      if (!effects.length) return `${PERS_LABEL[p]} needs model effects: select columns and press Add.`;
+      if (effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only: take the Random Effect attribute off.`;
+      if ((spec.roles.weight || []).length || (spec.roles.freq || []).length) return `${PERS_LABEL[p]}: statsmodels' ${p === 'iv' ? 'IV2SLS' : 'QuantReg'} takes no weights; remove Weight and Freq.`;
+    }
+    if (p === 'quantreg' && !(Number(o.qrTau ?? 0.5) > 0 && Number(o.qrTau ?? 0.5) < 1)) return 'The quantile τ must lie strictly between 0 and 1 (0.5 is the median).';
+    if (p === 'iv') {
+      const en = spec.roles.endog || [], ins = spec.roles.instruments || [];
+      const name = (id) => (table.col(id) || { name: id }).name;
+      if (!en.length) return 'Instrumental Variables need Endogenous columns: the model effects that are correlated with the error.';
+      if (!ins.length) return 'Instrumental Variables need Instruments: columns that move the endogenous ones but have no effect of their own on Y.';
+      const inModel = new Set(effects.flatMap((e) => [...(e.cols || []), ...(e.nest || [])]));
+      for (const id of en) {
+        if (yIds.has(id)) return `${name(id)} is the Y: it cannot also be Endogenous.`;
+        if (!inModel.has(id)) return `${name(id)} is Endogenous but not in the model effects: add it to the model, or take it out of Endogenous.`;
+      }
+      for (const id of ins) {
+        if (yIds.has(id) || en.includes(id)) return `${name(id)} is the Y or Endogenous: it cannot also be an Instrument.`;
+        if (inModel.has(id)) return `${name(id)} is an Instrument and a model effect: an instrument stays out of the model (the exogenous effects instrument themselves).`;
+      }
+      // the order condition for main effects (Python checks the crossings): a categorical column is one less than its levels
+      const width = (id) => { const c = table.col(id); return c && c.isCategorical ? Math.max(1, table.levels(c).length - 1) : 1; };
+      const need = en.reduce((a, id) => a + width(id), 0), have = ins.reduce((a, id) => a + width(id), 0);
+      if (have < need) return `The model is not identified: the endogenous columns need at least ${need} instrument column${need > 1 ? 's' : ''}, and the instruments give ${have}.`;
+    }
     if (p === 'manova' && ys.length < 2) return 'MANOVA needs two or more Y columns.';
     if ((p === 'nominal' || p === 'ordinal') && ys.some((c) => !c.isCategorical)) return `${PERS_LABEL[p]} needs a nominal or ordinal Y.`;
     if (p === 'glm' && o.dist !== 'binomial' && ys.some((c) => c.isCategorical)) return 'A categorical Y takes the binomial distribution (or Nominal Logistic).';
@@ -283,6 +374,21 @@
     if ((p === 'stepwise' || p === 'genreg' || p === 'manova') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only.`;
     const w = ((spec.roles.weight || []).length || (spec.roles.freq || []).length);
     if ((p === 'mixed' || p === 'manova') && w) return `${PERS_LABEL[p]}: statsmodels takes no weights here; remove Weight and Freq.`;
+    if (p === 'gee') {
+      const one = (k) => (spec.roles[k] || [])[0] || null;
+      if (!one('subject')) return 'Generalized Estimating Equations need a Subject: the column that says which rows belong together (the subjects, or clusters).';
+      if (o.dist !== 'binomial' && ys.some((c) => c.isCategorical)) return 'A categorical Y takes the binomial distribution (two levels).';
+      if (effects.some((e) => e.random)) return 'Generalized Estimating Equations model the correlation within a subject by the working correlation: take the Random Effect attribute off the effects.';
+      if (w) return 'Generalized Estimating Equations: statsmodels\' GEE weights are case weights that several working correlations ignore; remove Weight and Freq.';
+      const roleIds = ['subject', 'time', 'subgroup'].map(one).filter(Boolean);
+      if (new Set(roleIds).size < roleIds.length) return 'Subject, Time and Subgroup must be different columns.';
+      if (ys.some((c) => roleIds.includes(c.id))) return 'A Y column is also the Subject, Time or Subgroup.';
+      if ((o.workCorr === 'ar1' || o.workCorr === 'unstructured') && !one('time')) return `The ${CORR_LABEL[o.workCorr]} working correlation needs a Time column: the order of the rows within a subject.`;
+      if (o.workCorr === 'nested' && !one('subgroup')) return 'The Nested working correlation needs a Subgroup column: a grouping within the subjects.';
+      if (o.geeScale === 'fixed' && !(o.geeScaleValue > 0)) return 'A fixed scale must be above zero.';
+      if (o.dist === 'negbin' && !(o.nbAlpha > 0)) return 'The negative binomial α must be above zero.';
+      if (o.dist === 'tweedie' && !(o.varPower >= 1 && o.varPower <= 3)) return 'The Tweedie power must lie between 1 and 3.';
+    }
     return null;
   }
 
@@ -440,11 +546,11 @@
     return ob;
   }
 
-  function leveragePlot(ctx, lev, yname) {
+  function leveragePlot(ctx, lev, yname, robust = false) {
     const P = pal();
     const lines = [lineTrace(lev.line.x, lev.line.y, P.fit, 'solid', 1.4), lineTrace(lev.line.x, [lev.mean, lev.mean], P.mean, 'dot', 1.2)];
     if (lev.curve) lines.push(lineTrace(lev.curve.x, lev.curve.lower, P.fit, 'dash', 1), lineTrace(lev.curve.x, lev.curve.upper, P.fit, 'dash', 1));
-    return rowPlot(ctx, { x: lev.x, y: lev.y, rows: lev.rows, xTitle: `${lev.effect} Leverage, P${pText(lev.p)}`, yTitle: `${yname} Leverage Residuals`, lines, width: 340, height: 290, title: `${lev.effect} leverage plot` });
+    return rowPlot(ctx, { x: lev.x, y: lev.y, rows: lev.rows, xTitle: `${lev.effect} Leverage, P${pText(lev.p)}${robust ? ' (usual F test)' : ''}`, yTitle: `${yname} Leverage Residuals`, lines, width: 340, height: 290, title: `${lev.effect} leverage plot` });
   }
 
   function residualPlots(ctx, parent, d, yname, o, emph, lim) {
@@ -785,7 +891,7 @@
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ]);
     if (ys.length > 1 && ctx.opt('groupProfiler', false) && all.length) {
-      await profiler(ctx, ctx.top, { sources: all.map(({ y }) => ({ kind: 'ls', payload: { ...M.base, y: y.name } })), scope: null, title: 'Prediction Profiler', key: 'groupprofiler', option: 'groupProfiler' });
+      await profiler(ctx, ctx.top, { sources: all.map(({ y }) => { const rob = robustOf(ctx, y.id); return { kind: 'ls', payload: { ...M.base, y: y.name, ...(rob ? { robust: rob } : {}) } }; }), scope: null, title: 'Prediction Profiler', key: 'groupprofiler', option: 'groupProfiler' });
     }
   }
 
@@ -794,13 +900,15 @@
     const o = (k, d) => ctx.opt(k, d, sc);
     const emph = ctx.opt('emphasis', 'leverage');
     const payload = { ...M.base, y: y.name };
-    const res = await ctx.call('fitmodel.ls', { ...payload, alpha: ctx.alpha, vif: true, leverage: true, dw: o('dw', false), sequential: o('sequential', false), corr: o('corr', false) });
+    const rob = robustOf(ctx, sc);
+    const rpay = rob ? { ...payload, robust: rob } : payload;   // the profilers' intervals follow Robust Standard Errors
+    const res = await ctx.call('fitmodel.ls', { ...rpay, alpha: ctx.alpha, vif: true, leverage: true, dw: o('dw', false), sequential: o('sequential', false), corr: o('corr', false), ccpr: !!o('ccpr', false) });
     st.menu = () => lsMenu(ctx, y, res);
     const tc = res.tcrit;
     if (o('effectSummary', true) && res.effect_summary.length) effectSummary(ctx, parent, res.effect_summary, { scope: sc });
     const top = [];
     if (o('plotRegression', emph !== 'minimal')) {
-      const rp = await regressionPlot(ctx, parent, { kind: 'ls', payload, factors: res.factors, d: res.diag, yname: y.name, scope: sc });
+      const rp = await regressionPlot(ctx, parent, { kind: 'ls', payload: rpay, factors: res.factors, d: res.diag, yname: y.name, scope: sc });
       if (rp) top.push(rp.el);
     }
     if (o('plotActual', emph !== 'minimal')) top.push(actualByPredicted(ctx, parent, res.diag, res.whole, y.name).el);
@@ -820,9 +928,13 @@
     if (o('estimates', true)) {
       const showCI = o('showCI', false);
       const cols = res.estimates.columns.map((c) => ({ ...c, hidden: (['lower', 'upper'].includes(c.key) && !showCI) || (c.key === 'vif' && !o('vif', false)) }));
-      ctx.outline('Parameter Estimates', { parent, key: 'estimates' }).add(ctx.rt({ columns: cols, rows: res.estimates.rows }, { key: 'estimates' }));
+      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: res.robust ? 'p:fitmodel:robust' : null }).add(ctx.rt({ columns: cols, rows: res.estimates.rows },
+        { key: 'estimates', caption: res.robust ? `Robust standard errors: ${res.robust.label}; t tests on ${fmt(res.robust.df)} DF` : undefined }));
     }
-    if (o('effectTests', true) && res.effect_tests.rows.length) ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt(res.effect_tests, { key: 'efftests' }));
+    if (o('effectTests', true) && res.effect_tests.rows.length) {
+      ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt(res.effect_tests, { key: 'efftests', caption: res.robust ? `Wald F tests with the robust covariance (${res.robust.label})` : undefined }),
+        res.robust && res.robust.wald_f != null ? ctx.note(`Whole model, robust Wald test: F = ${fmt(res.robust.wald_f, { sig: 5 })} on ${fmt(res.robust.wald_df)} and ${fmt(res.robust.df)} DF, p${pText(res.robust.wald_p)}. (Analysis of Variance above is the usual F test.)`) : null);
+    }
     if (o('expression', false)) {
       const terms = res.expression.map((t, i) => `${i === 0 ? '' : (t.estimate < 0 ? ' − ' : ' + ')}${fmt(i === 0 ? t.estimate : Math.abs(t.estimate), { sig: 7 })}${t.term === 'Intercept' ? '' : ` · ${t.term}`}`);
       ctx.outline('Prediction Expression', { parent, key: 'expression' }).add(el('p', { class: 'sm-fm-expr', text: `${y.name} = ${terms.join('')}` }),
@@ -841,8 +953,12 @@
       ctx.outline('Durbin-Watson', { parent, key: 'dw' }).add(ctx.rt({ columns: [{ key: 'dw', label: 'Durbin-Watson' }, { key: 'n', label: 'Number of Obs.', fmt: 'int' }, { key: 'autocorr', label: 'AutoCorrelation', digits: 4 }, { key: 'p', label: 'Prob<DW', fmt: 'p' }], rows: [res.dw] }, { sortable: false, key: 'dw' }),
         ctx.note('Prob<DW is the exact p-value for positive autocorrelation of the residuals in row order (Imhof\'s method; up to 800 rows).'));
     }
+    if (RD.some(([k]) => o(`rd:${k}`, false))) await regDiagnostics(ctx, parent, payload, res, sc);
+    if (RR.some(([k]) => o(k, false))) await recursiveReport(ctx, parent, payload, y, sc);
+    if (o('influence', false)) influencePlot(ctx, parent, res, y, sc);
+    if (o('ccpr', false) && res.ccpr) ccprPlots(ctx, parent, res, y, sc);
     if (o('boxcox', false)) await boxCox(ctx, M, parent, payload, y, sc);
-    if (o('profiler', emph === 'screening')) await profiler(ctx, parent, { sources: [{ kind: 'ls', payload }], scope: sc });
+    if (o('profiler', emph === 'screening')) await profiler(ctx, parent, { sources: [{ kind: 'ls', payload: rpay }], scope: sc });
     if (o('contour', false)) await contourProfiler(ctx, parent, { kind: 'ls', payload, factors: res.factors, scope: sc });
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'ls', payload, scope: sc });
     tail(ctx, parent, res);
@@ -880,7 +996,7 @@
       const eo = ctx.outline(e.label, { parent: ob, key: `eff:${e.label}`, menu });
       const parts = [];
       const lev = (res.leverage || []).find((l) => l.effect === e.label);
-      if (lev && o('plotLeverage', emph === 'leverage')) parts.push(leveragePlot(ctx, lev, y.name));
+      if (lev && o('plotLeverage', emph === 'leverage')) parts.push(leveragePlot(ctx, lev, y.name, !!res.robust));
       if (lsm && o(`lsmTable:${e.label}`, true)) parts.push(lsmeansTable(ctx, M, lsm));
       if (parts.length) eo.add(ctx.row(...parts));
       if (lsm && o(`lsmPlot:${e.label}`, false)) eo.add(lsmeansPlot(ctx, M, lsm, res.tcrit, y.name, e.label));
@@ -901,9 +1017,12 @@
         c('Effect Tests', 'effectTests', true), c('Effect Details', 'effectDetails', true), c('Lack of Fit', 'lackOfFit', true), { separator: true }, c('Show All Confidence Intervals', 'showCI', false), c('AICc', 'aicc', false)] },
       { label: 'Estimates', submenu: () => [c('Show Prediction Expression', 'expression', false), c('Sorted Estimates', 'sortedEst', emph === 'screening'), c('Sequential Tests', 'sequential', false),
         c('Correlation of Estimates', 'corr', false), c('VIF (in Parameter Estimates)', 'vif', false)] },
+      { label: 'Robust Standard Errors', submenu: () => robustMenu(ctx, y, 'ls') },
       { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', emph === 'screening'), c('Interaction Plots', 'interaction', false), c('Contour Profiler', 'contour', false), c('Box Cox Y Transformation', 'boxcox', false)] },
       { label: 'Row Diagnostics', submenu: () => [c('Plot Regression', 'plotRegression', emph !== 'minimal'), c('Plot Actual by Predicted', 'plotActual', emph !== 'minimal'), c('Plot Effect Leverage', 'plotLeverage', emph === 'leverage'), c('Plot Residual by Predicted', 'plotResidPred', emph !== 'minimal'),
         c('Plot Residual by Row', 'plotResidRow', false), c('Plot Studentized Residuals', 'plotStudent', false), c('Plot Residual by Normal Quantiles', 'plotResidQQ', false), { separator: true }, c('Press', 'press', false), c('Durbin-Watson Test', 'dw', false)] },
+      { label: 'Regression Diagnostics', submenu: () => regDiagMenu(ctx, sc) },
+      { label: 'Recursive and Rolling Regression', submenu: () => rrMenu(ctx, sc) },
       { label: 'Save Columns', submenu: () => saveLS(ctx, res, y) },
       { separator: true },
       c('Effect Summary', 'effectSummary', true),
@@ -926,6 +1045,285 @@
       { label: 'Std Error of Individual', action: () => ctx.saveColumn(`StdErr Indiv ${y.name}`, { rows: d.rows, values: d.se_indiv }) },
       { label: 'Cook\'s D Influence', action: () => ctx.saveColumn(`Cook's D Influence ${y.name}`, { rows: d.rows, values: d.cooks }) },
     ];
+  }
+
+  /* ---- Robust Standard Errors ---------------------------------------------------------------------
+     The option (scoped by the response) is { type: 'HC0'..'HC3' }, { type:
+     'HAC', maxlags } or { type: 'cluster', col: column id }; Python gets the
+     cluster column by name. */
+  function robustOf(ctx, sc) {
+    const r = ctx.opt('robust', null, sc);
+    if (!r || !r.type) return null;
+    if (r.type === 'cluster') { const c = ctx.table.col(r.col); return c ? { type: 'cluster', cluster: c.name } : null; }
+    if (r.type === 'HAC') return { type: 'HAC', maxlags: r.maxlags ?? null };
+    return { type: r.type };
+  }
+
+  function robustMenu(ctx, y, kind) {
+    const sc = y.id;
+    const cur = ctx.opt('robust', null, sc);
+    const t = cur && cur.type ? cur.type : 'none';
+    const set = (v) => ctx.set('robust', v, sc);
+    const hc = kind === 'glm' ? [['HC0', 'Sandwich (HC0)']] : [['HC0', 'HC0 (White)'], ['HC1', 'HC1'], ['HC2', 'HC2'], ['HC3', 'HC3']];
+    const n = ctx.rows.length;
+    return [
+      { label: 'None', checked: t === 'none', action: () => set(null) },
+      ...hc.map(([k, l]) => ({ label: l, checked: t === k, action: () => set({ type: k }) })),
+      { label: 'Newey–West HAC…', checked: t === 'HAC', action: async () => {
+        const v = await SM.ui.form({ title: 'Newey–West HAC', info: 'p:fitmodel:robust', lead: 'Heteroscedasticity- and autocorrelation-consistent standard errors, the rows taken in the order of the table (sort it by time first).',
+          fields: [{ key: 'maxlags', label: 'Maximum lag', type: 'number', value: cur && cur.type === 'HAC' && cur.maxlags != null ? cur.maxlags : Math.floor(4 * (n / 100) ** (2 / 9)), hint: 'Newey and West\'s rule: 4 (n/100)^(2/9)' }],
+          validate: (x) => (Number.isInteger(x.maxlags) && x.maxlags >= 0 && x.maxlags < n - 1 ? null : 'the lag must be a whole number from 0 to n − 2') });
+        if (v) set({ type: 'HAC', maxlags: v.maxlags });
+      } },
+      { label: 'Cluster…', checked: t === 'cluster', action: async () => {
+        const cols = ctx.table.columns.filter((c) => c.id !== y.id);
+        if (!cols.length) { SM.ui.toast('The table has no other column to cluster by'); return; }
+        const pick = cur && cur.type === 'cluster' && cols.some((c) => c.id === cur.col) ? cur.col : (cols.find((c) => c.isCategorical) || cols[0]).id;
+        const v = await SM.ui.form({ title: 'Cluster-Robust Standard Errors', info: 'p:fitmodel:robust', lead: 'Rows with the same value of the column form a cluster: their errors may be correlated, the clusters are independent.',
+          fields: [{ key: 'col', label: 'Cluster by', type: 'select', value: pick, choices: cols.map((c) => [c.id, c.name]) }] });
+        if (v) set({ type: 'cluster', col: v.col });
+      } },
+    ];
+  }
+
+  /* ---- Regression Diagnostics ---------------------------------------------------------------------- */
+  const RD = [['bp', 'Breusch–Pagan Test'], ['white', 'White Test'], ['gq', 'Goldfeld–Quandt Test'], ['reset', 'Ramsey RESET Test'], ['hc', 'Harvey–Collier Test'],
+    ['rainbow', 'Rainbow Test'], ['bg', 'Breusch–Godfrey Test'], ['jb', 'Jarque–Bera Test'], ['omni', 'Omnibus Normality Test']];
+
+  function regDiagMenu(ctx, sc) {
+    const c = (label, key) => ctx.check(label, key, sc, false);
+    const t = (k) => c(RD.find((x) => x[0] === k)[1], `rd:${k}`);
+    const allOn = RD.every(([k]) => ctx.opt(`rd:${k}`, false, sc));
+    return [t('bp'), t('white'), t('gq'), { separator: true }, t('reset'), t('hc'), t('rainbow'), { separator: true }, t('bg'), { separator: true }, t('jb'), t('omni'),
+      { separator: true },
+      { label: allOn ? 'Remove All Tests' : 'All Tests', action: () => { for (const [k] of RD) ctx.set(`rd:${k}`, !allOn, sc, { rerun: false }); ctx.report.run(); } },
+      { separator: true },
+      c('Influence Plot', 'influence'), c('Component + Residual Plots', 'ccpr')];
+  }
+
+  async function regDiagnostics(ctx, parent, payload, res, sc) {
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const on = RD.filter(([k]) => o(`rd:${k}`, false)).map(([k]) => k);
+    const cfg = { reset_power: o('rd:resetPower', 3), bg_lags: o('rd:bgLags', null), gq_sort: o('rd:gqSort', 'predicted'), gq_drop: o('rd:gqDrop', 0),
+      gq_alt: o('rd:gqAlt', 'increasing'), rainbow_frac: o('rd:rainbowFrac', 0.5), rainbow_order: o('rd:rainbowOrder', 'leverage'), hc_order: o('rd:hcOrder', 'row') };
+    const r = await ctx.call('fitmodel.regdiag', { ...payload, tests: on, ...cfg });
+    const ob = ctx.outline('Regression Diagnostics', { parent, key: 'regdiag', info: 'p:fitmodel:regdiag', menu: () => regDiagMenu(ctx, sc).slice(0, -3) });   // the tests, not the plots
+    const conts = r.continuous || [];
+    const sortChoices = (extra) => [...extra, ['row', 'Row order'], ['predicted', 'Predicted'], ...conts.map((n) => [n, n])].filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i);
+    const mkSel = (label, key, value, choices) => {
+      const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: String(v), text: l })));
+      s.value = String(value);
+      s.addEventListener('change', () => { const v = s.value; ctx.set(key, /^-?\d+(\.\d+)?$/.test(v) && key !== 'rd:gqSort' && key !== 'rd:hcOrder' && key !== 'rd:rainbowOrder' ? Number(v) : v, sc); });
+      return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), s);
+    };
+    const mkNum = (label, key, value, ok, placeholder) => {
+      const i = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': label, class: 'sm-fm-num', placeholder: placeholder || null });
+      i.value = value == null ? '' : String(value);
+      i.addEventListener('change', () => { const t = i.value.trim(); if (t === '') { ctx.set(key, null, sc); return; } const v = Number(t.replace(',', '.')); if (ok(v)) ctx.set(key, v, sc); else i.value = value == null ? '' : String(value); });
+      return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), i);
+    };
+    const controls = {
+      gq: () => [mkSel('Sort by', 'rd:gqSort', cfg.gq_sort, sortChoices([])), mkSel('Leave out the middle', 'rd:gqDrop', cfg.gq_drop, [[0, 'nothing'], [0.1, '10%'], [0.2, '20%'], [0.25, '25%'], [0.33, 'a third']]),
+        mkSel('Alternative', 'rd:gqAlt', cfg.gq_alt, [['increasing', 'Variance increasing'], ['decreasing', 'Variance decreasing'], ['two-sided', 'Two-sided']])],
+      reset: () => [mkSel('Powers of the predicted', 'rd:resetPower', cfg.reset_power, [[2, '2'], [3, '2 and 3']])],
+      hc: () => [mkSel('Order', 'rd:hcOrder', cfg.hc_order, sortChoices([]))],
+      rainbow: () => [mkSel('Central rows by', 'rd:rainbowOrder', cfg.rainbow_order, sortChoices([['leverage', 'Leverage (Utts)']])),
+        mkNum('Central fraction', 'rd:rainbowFrac', cfg.rainbow_frac, (v) => v >= 0.1 && v <= 0.9)],
+      bg: () => [mkNum('Lags', 'rd:bgLags', cfg.bg_lags, (v) => Number.isInteger(v) && v >= 1, String(Math.min(10, Math.floor(r.n / 5))))],
+    };
+    for (const k of on) {
+      const t = r.tests[k];
+      if (!t) continue;
+      const to = ctx.outline(t.title, { parent: ob, key: `rd:${k}`, menu: () => [{ label: 'Remove', action: () => ctx.set(`rd:${k}`, false, sc) }] });
+      if (controls[k]) to.add(el('div', { class: 'sm-fm-controls', dataset: { noexport: '' } }, ...controls[k]()));
+      if (t.error) to.add(ctx.warn(t.error));
+      else to.add(ctx.rt(t.table, { sortable: false, key: `rd:${k}` }));
+      if (t.note) to.add(ctx.note(t.note));
+    }
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    ob.add(ctx.code(r.code));
+  }
+
+  /* The Influence Plot: each row's externally studentized residual against
+     its leverage, the area of its bubble Cook's D; lines at ±2 and at 2p/n
+     and 3p/n. */
+  function influencePlot(ctx, parent, res, y, sc) {
+    const P = pal();
+    const d = res.diag;
+    const n = d.rows.length, p = res.rank;
+    const h2 = (2 * p) / n, h3 = (3 * p) / n;
+    const cd = d.cooks.map((v) => (v != null && Number.isFinite(v) ? v : 0));
+    const cmax = Math.max(1e-12, ...cd);
+    const lab = ctx.table.labelColumn();
+    const hover = d.rows.map((r, k) => `row ${r + 1}${lab && lab.values[r] != null ? `: ${SM.report.plotlyText(lab.values[r])}` : ''}<br>Cook's D ${fmt(cd[k], { sig: 4 })}`);
+    const flagged = d.rows.filter((r, k) => Math.abs(d.externally[k] ?? 0) > 2 || d.hat[k] > h2);
+    const ob = ctx.outline('Influence Plot', { parent, key: 'influence', info: 'p:fitmodel:influence', menu: () => [
+      { label: `Select Influential Rows (${flagged.length})`, disabled: !flagged.length, action: () => ctx.table.select(flagged, 'replace') },
+      { label: 'Remove', action: () => ctx.set('influence', false, sc) },
+    ] });
+    const [xl, xh] = extent(d.hat, [h3 * 1.05]);
+    const trace = { type: 'scatter', mode: 'markers', x: d.hat, y: d.externally, rows: d.rows, hovertext: hover, hovertemplate: '%{hovertext}<br>leverage %{x:.4g}, studentized %{y:.4g}<extra></extra>',
+      marker: { size: cd, sizemode: 'area', sizeref: (2 * cmax) / (34 ** 2), sizemin: 3.5, opacity: 0.8, line: { width: 0.6, color: P.dark ? '#1a1410' : '#ffffff' } }, name: 'Rows' };
+    const vline = (x, dash) => ({ type: 'line', xref: 'x', x0: x, x1: x, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, width: 1, dash } });
+    const hline = (v, dash, color = P.muted) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: v, y1: v, line: { color, width: 1, dash } });
+    ob.add(ctx.plot([trace], { xaxis: { title: { text: 'Leverage (hat)' }, range: [Math.max(0, xl - 0.02 * (xh - xl)), xh + 0.04 * (xh - xl)] }, yaxis: { title: { text: 'Externally Studentized Residual' } },
+      shapes: [hline(0, 'solid', P.mean), hline(2, 'dash'), hline(-2, 'dash'), vline(h2, 'dot'), vline(h3, 'dash')], margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(460), height: 340, title: `${y.name} influence plot` }),
+    ctx.note(`The area of a bubble is the row's Cook's D (the largest ${fmt(cmax, { sig: 3 })}). Dashed: studentized residuals of ±2 and the leverage 3p/n = ${fmt(h3, { sig: 3 })}; dotted: 2p/n = ${fmt(h2, { sig: 3 })} (p = ${p}, n = ${n}). ${flagged.length} row${flagged.length === 1 ? '' : 's'} beyond ±2 or 2p/n: the red triangle selects them. statsmodels' influence_plot draws the same (resid_studentized_external, hat_matrix_diag, cooks_distance).`));
+  }
+
+  /* Component + Residual (partial residual) plots of the continuous terms. */
+  function ccprPlots(ctx, parent, res, y, sc) {
+    const P = pal();
+    const ob = ctx.outline('Component + Residual Plots', { parent, key: 'ccpr', info: 'p:fitmodel:influence', menu: () => [{ label: 'Remove', action: () => ctx.set('ccpr', false, sc) }] });
+    if (!res.ccpr.length) { ob.add(ctx.note('The model has no continuous terms.')); return; }
+    const plots = res.ccpr.map((c) => rowPlot(ctx, { x: c.x, y: c.partial, rows: c.rows, xTitle: c.term, yTitle: `Component + Residual`, lines: [lineTrace(c.line.x, c.line.y, P.fit, 'solid', 1.5)], width: 330, height: 270, title: `${c.term} component plus residual` }));
+    ob.add(ctx.row(...plots), ctx.note('For each continuous term the residual plus the term\'s part of the fit, b·x, against x (statsmodels\' plot_ccpr); the line is b·x. A curve in the points asks for a transformation or a power of the term.'));
+  }
+
+  /* ---- Recursive and Rolling Regression -----------------------------------------------------------
+     statsmodels' RecursiveLS on the least squares model with the rows taken
+     one at a time, in the table's order or sorted by a column (the option
+     rr:order), the CUSUM and CUSUM of squares with their bounds (rr:conf),
+     RollingOLS over windows of rr:window rows. A recursive point stands for
+     the row it adds and is linked to it; a rolling point for its window's
+     rows. */
+  const rgba = (hex, a) => {
+    const h = String(hex).replace('#', '');
+    const v = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+    return Number.isFinite(v) ? `rgba(${(v >> 16) & 255}, ${(v >> 8) & 255}, ${v & 255}, ${a})` : hex;
+  };
+
+  /* A series with its band (lower, upper), a dashed reference line and band, a dotted vertical line. */
+  function bandPlot(ctx, { x, est, lower, upper, rows = null, hover = null, ref = null, refBand = null, vline = null, xTitle, yTitle, title, width = 330, height = 240, xaxis = {}, yfrom = 0 }) {
+    const P = pal();
+    const traces = [
+      { type: 'scatter', mode: 'lines', x, y: lower, line: { width: 0, color: P.point }, hoverinfo: 'skip', showlegend: false },
+      { type: 'scatter', mode: 'lines', x, y: upper, fill: 'tonexty', fillcolor: rgba(P.point, P.dark ? 0.32 : 0.18), line: { width: 0, color: P.point }, hoverinfo: 'skip', showlegend: false },
+    ];
+    const main = { type: 'scatter', mode: 'lines+markers', x, y: est, line: { color: P.point, width: 1.5 }, marker: { size: x.length > 300 ? 3 : 5, color: P.point }, name: 'Estimate' };
+    if (rows) main.rows = rows;
+    if (hover) { main.hovertext = hover; main.hovertemplate = '%{hovertext}<br>%{y:.5g}<extra></extra>'; }
+    traces.push(main);
+    const shapes = [];
+    if (refBand) shapes.push({ type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: refBand[0], y1: refBand[1], fillcolor: rgba(P.fit, P.dark ? 0.2 : 0.1), line: { width: 0 }, layer: 'below' });
+    if (ref != null) shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: ref, y1: ref, line: { color: P.fit, width: 1.2, dash: 'dash' } });
+    if (vline != null) shapes.push({ type: 'line', xref: 'x', x0: vline, x1: vline, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, width: 1, dash: 'dot' } });
+    // yfrom: the first point the y range is made for (the recursive estimates of the first rows are wild; zoom out for them)
+    const txt = SM.report.plotlyText;   // the titles hold column names and levels
+    let yaxis = { title: { text: txt(yTitle) } };
+    if (yfrom > 0) {
+      const [lo, hi] = extent(est.slice(yfrom), lower.slice(yfrom), upper.slice(yfrom), ref != null ? [ref] : null);
+      const pad = 0.08 * (hi - lo);
+      yaxis = { ...yaxis, range: [lo - pad, hi + pad] };
+    }
+    return ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) }, ...xaxis }, yaxis, shapes, margin: { l: 58, r: 10, t: 8, b: 44 } }, { width: W(width), height, title });
+  }
+
+  function rrMenu(ctx, sc) {
+    const allOn = RR.every(([k]) => ctx.opt(k, false, sc));
+    return [...RR.map(([k, l]) => ctx.check(l, k, sc, false)),
+      { label: allOn ? 'Remove All' : 'All Four', action: () => { for (const [k] of RR) ctx.set(k, !allOn, sc, { rerun: false }); ctx.report.run(); } },
+      { separator: true },
+      { label: 'Order Rows By…', action: () => rrOrderDialog(ctx, sc) },
+      { label: 'Rolling Window…', action: () => rrWindowDialog(ctx, sc) }];
+  }
+
+  async function rrOrderDialog(ctx, sc) {
+    const t = ctx.table;
+    const cur = ctx.opt('rr:order', null, sc);
+    const v = await SM.ui.form({ title: 'Order Rows By', info: 'p:fitmodel:recursive',
+      lead: 'The recursive and rolling fits take the rows in this order: the table\'s, or sorted by a column (a time, a date, an index; a nominal column by its value order). Rows without a value of the column are left out.',
+      fields: [{ key: 'col', label: 'Order by', type: 'select', value: cur && t.col(cur) ? cur : '', choices: [['', 'Row order (the table\'s)'], ...t.columns.map((c) => [c.id, c.name])] }] });
+    if (v) ctx.set('rr:order', v.col || null, sc);
+  }
+
+  async function rrWindowDialog(ctx, sc) {
+    const n = ctx.rows.length;
+    const cur = ctx.opt('rr:window', null, sc);
+    const v = await SM.ui.form({ title: 'Rolling Window', info: 'p:fitmodel:recursive',
+      lead: 'The number of consecutive rows in each window of the rolling regression. Empty: a tenth of the rows, at least three times the parameters.',
+      fields: [{ key: 'w', label: 'Rows in a window', type: 'number', value: cur ?? '' }],
+      validate: (x) => (x.w == null || (Number.isInteger(x.w) && x.w >= 3 && x.w <= n) ? null : `the window: a whole number from 3 to ${n}`) });
+    if (v) { ctx.set('rr:window', v.w ?? null, sc, { rerun: false }); ctx.set('rr:rolling', true, sc); }
+  }
+
+  async function recursiveReport(ctx, parent, payload, y, sc) {
+    const P = pal();
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const t = ctx.table;
+    const oc = o('rr:order', null) ? t.col(o('rr:order', null)) : null;
+    const on = Object.fromEntries(RR.map(([k]) => [k, !!o(k, false)]));
+    const conf = Number(o('rr:conf', 0.05));
+    const r = await ctx.call('fitmodel.recursive', { ...payload, order_by: oc ? oc.name : null, alpha: ctx.alpha, conf, rolling: on['rr:rolling'], window: o('rr:window', null) });
+    const ob = ctx.outline('Recursive and Rolling Regression', { parent, key: 'rr', info: 'p:fitmodel:recursive', menu: () => rrMenu(ctx, sc) });
+    const mkSel = (label, value, choices, fn) => {
+      const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: String(v), text: l })));
+      s.value = String(value);
+      s.addEventListener('change', () => fn(s.value));
+      return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), s);
+    };
+    const win = el('input', { type: 'text', inputmode: 'numeric', size: 5, 'aria-label': 'Rolling window', class: 'sm-fm-num', placeholder: r.rolling ? String(r.rolling.window) : null });
+    win.value = o('rr:window', null) != null ? String(o('rr:window', null)) : '';
+    win.addEventListener('change', () => {
+      const s = win.value.trim();
+      if (s === '') { ctx.set('rr:window', null, sc); return; }
+      const v = Number(s);
+      if (Number.isInteger(v) && v > r.k && v <= r.n) ctx.set('rr:window', v, sc);
+      else { SM.ui.toast(`The window: a whole number from ${r.k + 1} to ${r.n}`); win.value = o('rr:window', null) != null ? String(o('rr:window', null)) : ''; }
+    });
+    ob.add(el('div', { class: 'sm-fm-controls', dataset: { noexport: '' } },
+      mkSel('Order by', oc ? oc.id : '', [['', 'Row order'], ...t.columns.filter((c) => c.id !== y.id).map((c) => [c.id, c.name])], (v) => ctx.set('rr:order', v || null, sc)),
+      mkSel('Significance', conf, [[0.01, '1%'], [0.05, '5%'], [0.1, '10%']], (v) => ctx.set('rr:conf', Number(v), sc)),
+      on['rr:rolling'] ? el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Window' }), win) : null));
+    const rowsO = r.order.rows;
+    const vals = r.order.values;
+    const lab = t.labelColumn();
+    const txt = SM.report.plotlyText;
+    const hoverOf = (k) => `row ${rowsO[k] + 1}${vals ? `, ${txt(oc.name)} ${txt(vals[k] ?? '')}` : ''}${lab && lab.values[rowsO[k]] != null ? `: ${txt(lab.values[rowsO[k]])}` : ''}`;
+    const xTitle = `Observation (${oc ? `sorted by ${oc.name}` : 'in row order'})`;
+    const start = r.start;
+    const recRows = rowsO.slice(start);
+    const recHover = recRows.map((_, j) => hoverOf(start + j));
+    const zero = { type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0, line: { color: P.muted, width: 1 } };
+    const margin = { l: 58, r: 12, t: 8, b: 46 };
+    if (on['rr:recursive']) {
+      const ro = ctx.outline('Recursive Estimates', { parent: ob, key: 'rr:rec', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:recursive', false, sc) }] });
+      const npts = r.cusum.x.length;
+      const yfrom = Math.min(npts - 1, Math.max(2 * r.k, Math.round(0.05 * npts)));
+      ro.add(ctx.row(...r.recursive.map((c) => bandPlot(ctx, { x: r.cusum.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: recRows, hover: recHover, ref: c.full, xTitle, yTitle: c.term, title: `${c.term} recursive estimate`, width: 340, height: 230, yfrom }))),
+        ctx.note(`Each point is the least squares estimate from the rows up to it in the order (from observation ${start + 1} on, where every parameter is estimable); the band is ±${fmt(qnorm(1 - ctx.alpha / 2), { sig: 3 })} standard errors, the dashed line the estimate from all the rows. The vertical axis is scaled to the estimates from observation ${start + yfrom + 1} on (the first ones swing widely: drag to zoom, double click to come back). A stable coefficient settles inside its band; a drift away shows where it changes.`));
+    }
+    if (on['rr:cusum']) {
+      const c = r.cusum;
+      const co = ctx.outline('CUSUM', { parent: ob, key: 'rr:cusum', info: 'p:fitmodel:recursive', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:cusum', false, sc) }] });
+      const traces = [lineTrace(c.x, c.upper, P.fit, 'dash', 1.2), lineTrace(c.x, c.lower, P.fit, 'dash', 1.2),
+        { type: 'scatter', mode: 'lines+markers', x: c.x, y: c.y, rows: recRows, hovertext: recHover, hovertemplate: '%{hovertext}<br>CUSUM %{y:.4g}<extra></extra>', line: { color: P.point, width: 1.4 }, marker: { size: c.x.length > 300 ? 3 : 5, color: P.point }, name: 'CUSUM' }];
+      co.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM' } }, shapes: [zero], margin }, { width: W(520), height: 300, title: `${y.name} CUSUM` }),
+        ctx.kv([['Significance level', r.conf], ['Crosses the bounds', c.crossed ? 'Yes' : 'No', 'text'], c.crossed ? ['First crossing, observation', c.first, 'int'] : null,
+          c.crossed ? ['First crossing, row', c.first_row + 1, 'int'] : null, ['Largest |CUSUM| / bound', c.ratio], ['a (Brown, Durbin and Evans)', c.constant], ['Recursive residuals', c.x.length, 'int']])),
+      ctx.note(`The cumulative sum of the recursive residuals over their standard deviation, with the ${fmt(100 * r.conf)}% bounds (dashed). Inside them the coefficients look stable along the order; a path that leaves them (here ${c.crossed ? `first at observation ${c.first}, row ${c.first_row + 1}` : 'it does not'}) says the relation shifts: the recursive estimates show which coefficient moves.`));
+    }
+    if (on['rr:cusumsq']) {
+      const c = r.cusumsq;
+      const co = ctx.outline('CUSUM of Squares', { parent: ob, key: 'rr:cusumsq', info: 'p:fitmodel:recursive', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:cusumsq', false, sc) }] });
+      const traces = [lineTrace(c.x, c.line, P.muted, 'dot', 1), lineTrace(c.x, c.upper, P.fit, 'dash', 1.2), lineTrace(c.x, c.lower, P.fit, 'dash', 1.2),
+        { type: 'scatter', mode: 'lines+markers', x: c.x, y: c.y, rows: recRows, hovertext: recHover, hovertemplate: '%{hovertext}<br>CUSUM of squares %{y:.4g}<extra></extra>', line: { color: P.point, width: 1.4 }, marker: { size: c.x.length > 300 ? 3 : 5, color: P.point }, name: 'CUSUM of squares' }];
+      co.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM of Squares' } }, margin }, { width: W(520), height: 300, title: `${y.name} CUSUM of squares` }),
+        ctx.kv([['Significance level', r.conf], ['Crosses the bounds', c.crossed ? 'Yes' : 'No', 'text'], c.crossed ? ['First crossing, observation', c.first, 'int'] : null,
+          c.crossed ? ['First crossing, row', c.first_row + 1, 'int'] : null, ['Largest distance from the diagonal', c.dev], ['At observation', c.at, 'int'], ['At row', c.at_row + 1, 'int'], ['Critical distance', c.crit]])),
+      ctx.note(`The share of the sum of squared recursive residuals reached at each observation. With stable coefficients and variance it follows the dotted diagonal; leaving the ${fmt(100 * r.conf)}% bounds (dashed) says the variance or the slopes change along the order. The largest distance from the diagonal is near the change; the path may cross the bounds before it, since each share is of a total that the later rows inflate.`));
+    }
+    if (on['rr:rolling'] && r.rolling) {
+      const R = r.rolling;
+      const w = R.window;
+      const groups = R.x.map((end) => rowsO.slice(end - w, end));
+      const hov = R.x.map((end) => `observations ${end - w + 1}–${end}: rows ${rowsO[end - w] + 1} to ${rowsO[end - 1] + 1}`);
+      const ro = ctx.outline(`Rolling Regression, Window ${w}`, { parent: ob, key: 'rr:roll', menu: () => [{ label: 'Rolling Window…', action: () => rrWindowDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('rr:rolling', false, sc) }] });
+      ro.add(ctx.row(...R.terms.map((c) => bandPlot(ctx, { x: R.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: groups, hover: hov, ref: c.full, xTitle: `Last observation of the window (${oc ? `sorted by ${oc.name}` : 'row order'})`, yTitle: c.term, title: `${c.term} rolling estimate`, width: 340, height: 230 }))),
+        ctx.note(`Least squares on each window of ${w} consecutive rows, plotted at its last row, with the ${fmt(100 * (1 - ctx.alpha))}% band; the dashed line is the estimate from all the rows. A point stands for its window: clicking it selects the window's rows, and selecting rows lights up every window that holds them.`));
+    }
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    ob.add(ctx.code(r.code));
   }
 
   /* ---- Stepwise ---------------------------------------------------------------------------------- */
@@ -1026,10 +1424,11 @@
     const P = pal();
     const sc = g.id;
     const o = (k, d) => ctx.opt(k, d, sc);
-    const payload = { ...M.base, y: g.cols.length === 1 ? g.cols[0].name : g.cols.map((c) => c.name), offset: ctx.name('offset'), dist, link: ctx.opt('link', null) || DEFAULT_LINK[dist], target: ctx.opt('target', null), overdispersion: !!o('overdispersion', false) };
+    const rob = robustOf(ctx, sc);
+    const payload = { ...M.base, y: g.cols.length === 1 ? g.cols[0].name : g.cols.map((c) => c.name), offset: ctx.name('offset'), dist, link: ctx.opt('link', null) || DEFAULT_LINK[dist], target: ctx.opt('target', null), overdispersion: !!o('overdispersion', false), ...(rob ? { robust: rob } : {}) };
     const res = await ctx.call('fitmodel.glm', { ...payload, alpha: ctx.alpha });
     const m = res.model;
-    const wald = o('wald', false);
+    const wald = o('wald', false) || !!res.robust;   // robust standard errors: Wald tests (the L-R tests assume the model's variance)
     st.menu = () => glmMenu(ctx, g, res, sc);
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', `${m.response}${m.target ? ` (event: ${m.target})` : ''}`], ['Distribution', m.distribution], ['Link', m.link], ['Estimation Method', 'Maximum Likelihood'], ['Observations (or Sum Wgts)', fmt(m.n)]]
       .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
@@ -1044,14 +1443,15 @@
       ctx.outline('Goodness Of Fit Statistic', { parent, key: 'gof' }).add(ctx.rt({ columns: [{ key: 'stat', label: 'Statistic', fmt: 'text' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'df', label: 'DF' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p', hidden: scaleFam }], rows: res.gof }, { sortable: false, key: 'gof' }),
         ctx.kv([['Overdispersion', res.overdispersion]]), scaleFam ? ctx.note('With an estimated dispersion the χ² tests of fit do not apply; Overdispersion is Pearson χ²/DF, the dispersion estimate.') : null);
     }
+    const robCap = res.robust ? `Robust standard errors: ${res.robust.label}` : undefined;
     if (o('effectTests', true) && res.effect_tests.length) {
       ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'nparm', label: 'Nparm', fmt: 'int' }, { key: 'df', label: 'DF', fmt: 'int' },
-        { key: wald ? 'wald' : 'lr', label: wald ? 'Wald ChiSquare' : 'L-R ChiSquare' }, { key: wald ? 'p_wald' : 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.effect_tests }, { key: 'efftests' }));
+        { key: wald ? 'wald' : 'lr', label: wald ? 'Wald ChiSquare' : 'L-R ChiSquare' }, { key: wald ? 'p_wald' : 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.effect_tests }, { key: 'efftests', caption: robCap }));
     }
     if (o('estimates', true)) {
       const ci = o('showCI', true);
-      ctx.outline('Parameter Estimates', { parent, key: 'estimates' }).add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' },
-        { key: wald ? 'wald' : 'lr', label: wald ? 'Wald ChiSquare' : 'L-R ChiSquare' }, { key: wald ? 'p_wald' : 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }, { key: 'upper', label: `Upper ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }], rows: res.estimates }, { key: 'estimates' }));
+      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: res.robust ? 'p:fitmodel:robust' : null }).add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' },
+        { key: wald ? 'wald' : 'lr', label: wald ? 'Wald ChiSquare' : 'L-R ChiSquare' }, { key: wald ? 'p_wald' : 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }, { key: 'upper', label: `Upper ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }], rows: res.estimates }, { key: 'estimates', caption: robCap }));
     }
     const d = res.diag;
     const yl = res.model.response;
@@ -1082,7 +1482,8 @@
     return [
       { label: 'Regression Reports', submenu: () => [c('Whole Model Test', 'wholeModel', true), c('Goodness of Fit', 'gof', true), c('Effect Tests', 'effectTests', true), c('Parameter Estimates', 'estimates', true), c('Confidence Intervals', 'showCI', true), c('Effect Summary', 'effectSummary', true)] },
       c('Overdispersion Tests and Intervals', 'overdispersion', false, { disabled: !['binomial', 'poisson'].includes(ctx.opt('dist', 'normal')) }),
-      c('Wald Tests', 'wald', false),
+      c('Wald Tests', 'wald', false, res.robust ? { checked: true, disabled: true } : {}),
+      { label: 'Robust Standard Errors', submenu: () => robustMenu(ctx, { id: sc }, 'glm') },
       { label: 'Diagnostic Plots', submenu: () => [c('Regression Plot', 'plotRegression', true), c('Studentized Deviance Residuals by Predicted', 'studDev', true), c('Studentized Pearson Residuals by Predicted', 'studPearson', false), c('Deviance Residuals by Predicted', 'devPlot', false), c('Pearson Residuals by Predicted', 'pearPlot', false), c('Actual by Predicted', 'actualPred', false), c('Linear Predictor Plot', 'linPlot', false)] },
       { label: 'Profilers', submenu: () => [c('Profiler', 'profiler', false), c('Contour Profiler', 'contour', false), c('Interaction Plots', 'interaction', false)] },
       { label: 'Save Columns', submenu: () => [
@@ -1094,6 +1495,166 @@
         { label: 'Pearson Residuals', action: sv(`Pearson Residual ${yl}`, d.resid_pearson) },
         { label: 'Studentized Deviance Residuals', action: sv(`Studentized Deviance Residual ${yl}`, d.stud_dev) },
         { label: 'Studentized Pearson Residuals', action: sv(`Studentized Pearson Residual ${yl}`, d.stud_pearson) },
+      ] },
+      { separator: true },
+      { label: 'Model Dialog', action: () => ctx.report.relaunch() },
+    ];
+  }
+
+  /* ---- Generalized Estimating Equations ----------------------------------------------------------------------
+     statsmodels' GEE: the Subject role groups the rows, Time orders them
+     (AR(1), Unstructured), Subgroup nests within the subjects (Nested). The
+     dialog's options are dist, link, target and workCorr, geeCov, geeScale,
+     geeScaleValue, nbAlpha, varPower. */
+  function geePayload(ctx, M, y) {
+    const dist = ctx.opt('dist', 'normal');
+    return { ...M.base, y: y.name, subject: ctx.name('subject'), time: ctx.name('time'), subgroup: ctx.name('subgroup'), offset: ctx.name('offset'),
+      dist, link: ctx.opt('link', null) || DEFAULT_LINK[dist], target: ctx.opt('target', null), corr: ctx.opt('workCorr', 'exchangeable'),
+      cov: ctx.opt('geeCov', 'robust'), scale: ctx.opt('geeScale', null), scale_value: ctx.opt('geeScaleValue', null), nb_alpha: ctx.opt('nbAlpha', null),
+      var_power: ctx.opt('varPower', null) };
+  }
+
+  async function renderGEE(ctx, M) {
+    const ys = ctx.roles('y');
+    await perResponse(ctx, ys, (y) => `Response ${y.name}`, (y, parent, st) => geeY(ctx, M, y, parent, st));
+  }
+
+  async function geeY(ctx, M, y, parent, st) {
+    const P = pal();
+    const sc = y.id;
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const payload = geePayload(ctx, M, y);
+    const res = await ctx.call('fitmodel.gee', { ...payload, alpha: ctx.alpha });
+    const m = res.model;
+    st.menu = () => geeMenu(ctx, y, res, sc);
+    const yl = m.target ? `${m.response} (event: ${m.target})` : m.response;
+    parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', yl], ['Distribution', m.distribution], ['Link', m.link], ['Working Correlation', m.corr], ['Covariance', m.cov], ['Subject', m.subject]]
+      .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
+    if (o('effectSummary', true) && res.effect_tests.length) effectSummary(ctx, parent, res.effect_tests.map((r) => ({ source: r.source, p: r.p, logworth: logw(r.p) })).sort((a, b) => b.logworth - a.logworth), { scope: sc });
+    if (o('modelSummary', true)) {
+      ctx.outline('Model Summary', { parent, key: 'geesummary', info: 'p:fitmodel:gee' }).add(ctx.kv([
+        ['Response', yl, 'text'], ['Distribution', m.distribution, 'text'], ['Link', m.link, 'text'], ['Working Correlation', m.corr, 'text'], ['Covariance', m.cov, 'text'],
+        ['Scale (φ)', `${fmt(m.scale, { sig: 6 })} (${m.scale_kind})`, 'text'], ['Subject', m.subject, 'text'], m.time ? ['Time', m.time, 'text'] : null, m.subgroup ? ['Subgroup', m.subgroup, 'text'] : null,
+        ['Number of Rows', m.n, 'int'], ['Number of Subjects', m.subjects, 'int'], ['Rows per Subject, Min', m.size_min, 'int'], ['Rows per Subject, Mean', m.size_mean], ['Rows per Subject, Max', m.size_max, 'int'],
+        ['Iterations', m.iterations, 'int'], ['Converged', m.converged ? 'Yes' : 'No', 'text']]));
+    }
+    const pct = fmt(100 * (1 - ctx.alpha));
+    if (o('estimates', true)) {
+      const cols = [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' },
+        { key: 'se_robust', label: 'Robust Std Error', hidden: true }, { key: 'se_naive', label: 'Naive Std Error', hidden: true },
+        { key: 'z', label: 'z Ratio' }, { key: 'p', label: 'Prob>|z|', fmt: 'p' }, { key: 'lower', label: `Lower ${pct}%` }, { key: 'upper', label: `Upper ${pct}%` }]
+        .filter((c) => !(c.key === 'se_robust' && m.cov_key === 'robust') && !(c.key === 'se_naive' && m.cov_key === 'naive'));
+      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: 'p:fitmodel:gee' }).add(ctx.rt({ columns: cols, rows: res.estimates }, { key: 'estimates', caption: `Standard errors: ${m.cov.toLowerCase()}` }));
+    }
+    if (res.ratios && o('ratios', false)) geeRatios(ctx, parent, res.ratios, pct);
+    if (o('effectTests', true) && res.effect_tests.length) {
+      ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'nparm', label: 'Nparm', fmt: 'int' }, { key: 'df', label: 'DF', fmt: 'int' },
+        { key: 'wald', label: 'Wald ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.effect_tests }, { key: 'efftests', caption: `Wald tests with the ${m.cov.toLowerCase()} covariance` }));
+    }
+    if (o('qic', true)) {
+      const q = res.qic;
+      ctx.outline('QIC', { parent, key: 'qic', info: 'p:fitmodel:qic' }).add(ctx.kv([['QIC', q.qic], ['QICu', q.qicu], ['QIC (statsmodels qic())', q.qic_sm], ['Quasi-Likelihood', q.ql], ['Penalty trace(Ω_I V_R)', q.trace], ['Parameters (p)', q.p, 'int'], ['Scale for QIC (φ)', q.scale]]),
+        ctx.note(`QIC = −2Q + 2 trace(Ω_I V_R), QICu = −2Q + 2p (Pan 2001), at φ = ${fmt(q.scale, { sig: 6 })} (${q.source === 'fixed' ? 'the fixed scale' : 'the independence fit\'s estimate'}) for every working correlation. Smaller is better: QIC compares working correlations (the red triangle's Compare Working Correlations), QICu mean models.`));
+    }
+    if (o('workcorr', true)) workingCorrelation(ctx, parent, res);
+    const d = res.diag;
+    const plots = [];
+    if (o('residPred', true)) plots.push(ctx.outline('Residual by Predicted', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${m.response} Predicted (marginal)`, yTitle: `${m.response} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} residual by predicted` })).el);
+    if (o('actualPred', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, m.response, 'p:fitmodel:gee').el);
+    if (plots.length > 1) parent.add(ctx.row(...plots));
+    if (o('residSubject', true)) residualsBySubject(ctx, parent, res, y, sc);
+    if (o('compareCorr', false)) await compareCorrelations(ctx, parent, payload, sc);
+    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'gee', payload }], scope: sc });
+    if (o('contour', false)) await contourProfiler(ctx, parent, { kind: 'gee', payload, factors: res.factors, scope: sc });
+    if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'gee', payload, scope: sc });
+    tail(ctx, parent, res);
+  }
+
+  function geeRatios(ctx, parent, R, pct) {
+    const one = R.kind.replace(/s$/, '');
+    const ob = ctx.outline(R.kind, { parent, key: 'ratios', info: 'p:fitmodel:gee' });
+    if (R.unit.length) {
+      ob.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'ratio', label: one }, { key: 'lower', label: `Lower ${pct}%` }, { key: 'upper', label: `Upper ${pct}%` }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: R.unit },
+        { caption: `Unit ${R.kind}: per unit change in the regressor`, key: 'ratiounit' }),
+      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'range', label: one }, { key: 'range_lower', label: `Lower ${pct}%` }, { key: 'range_upper', label: `Upper ${pct}%` }, { key: 'span', label: 'Range' }], rows: R.unit },
+        { caption: `Range ${R.kind}: over the whole range of the regressor`, key: 'ratiorange' }));
+    }
+    if (R.levels.length) {
+      ob.add(ctx.rt({ columns: [{ key: 'term', label: 'Effect', fmt: 'text' }, { key: 'level1', label: 'Level1', fmt: 'text' }, { key: 'level2', label: '/Level2', fmt: 'text' }, { key: 'ratio', label: one }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${pct}%` }, { key: 'upper', label: `Upper ${pct}%` }], rows: R.levels },
+        { caption: `${R.kind} between levels`, key: 'ratiolevels' }));
+    }
+    ob.add(ctx.note(`exp of the marginal model's coefficients: for a level pair the other factors are averaged. Wald intervals with the report's covariance.`));
+  }
+
+  function workingCorrelation(ctx, parent, res) {
+    const ob = ctx.outline('Working Correlation', { parent, key: 'workcorr', info: 'p:fitmodel:workcorr' });
+    const dp = res.dep;
+    if (dp.rows.length) ob.add(ctx.rt({ columns: [{ key: 'param', label: 'Dependence Parameter', fmt: 'text' }, { key: 'value', label: 'Estimate' }], rows: dp.rows }, { sortable: false, key: 'depparams' }));
+    else ob.add(ctx.note('Independence: the rows of a subject are taken as uncorrelated; the robust standard errors allow for their correlation.'));
+    const Mx = dp.matrix;
+    const k = Mx.labels.length;
+    const seen = new Map();
+    const labels = Mx.labels.map((l) => { const n = (seen.get(l) || 0) + 1; seen.set(l, n); return SM.report.plotlyText(n > 1 ? `${l} (${n})` : l); });
+    const tc = SM.util.themeColors();
+    const scale = tc.dark ? [[0, '#5b9cf0'], [0.5, '#3a3431'], [1, '#e8604f']] : [[0, '#2f6ec7'], [0.5, '#f6f3f0'], [1, '#c0392b']];
+    const txt = Mx.values.map((row) => row.map((v) => (v == null ? '' : v.toFixed(2).replace('-', '−'))));
+    const side = Math.max(230, Math.min(560, 70 + 42 * k));
+    // the values on the cells, in a colour that reads on each: the strong colours are dark in the light theme and light in the dark one
+    // placed by the categories' serial numbers: a label such as '2' would be read as the index 2
+    const annotations = k > 12 ? [] : Mx.values.flatMap((row, i) => row.map((v, j) => ({ x: j, y: i, xref: 'x', yref: 'y', text: txt[i][j], showarrow: false,
+      font: { size: 10.5, color: v != null && Math.abs(v) > 0.5 ? (tc.dark ? '#1a1410' : '#ffffff') : tc.text } })));
+    ob.add(ctx.plot([{ type: 'heatmap', z: Mx.values, x: labels, y: labels, zmin: -1, zmax: 1, colorscale: scale, text: txt, hovertemplate: '%{y} and %{x}: %{text}<extra></extra>', xgap: 1, ygap: 1, colorbar: { thickness: 10, len: 0.85 } }],
+      { xaxis: { type: 'category', title: { text: res.model.time || 'Row of the subject' }, showgrid: false, showline: false, ticks: '' }, yaxis: { type: 'category', autorange: 'reversed', showgrid: false, showline: false, ticks: '' }, annotations, margin: { l: 70, r: 10, t: 8, b: 40 } },
+      { width: W(side + 80), height: side, title: 'working correlation', select: false }),
+    ctx.note(`The working correlation of the rows of subject ${Mx.subject} (${Mx.size} rows; the first of the largest subjects), as statsmodels' cov_struct gives it.`));
+  }
+
+  function residualsBySubject(ctx, parent, res, y, sc) {
+    const P = pal();
+    const d = res.diag;
+    const subjects = d.subjects.map((s) => SM.report.plotlyText(s));
+    const xs = d.subject.map((s) => SM.report.plotlyText(s));
+    const traces = [];
+    if (ctx.opt('subjectBoxes', false, sc)) traces.push({ type: 'box', x: xs, y: d.residual, boxpoints: false, fillcolor: 'rgba(0,0,0,0)', line: { color: P.muted, width: 1 }, hoverinfo: 'skip', showlegend: false, name: 'Boxes' });
+    traces.push({ type: d.rows.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: d.residual, rows: d.rows, marker: { size: d.rows.length > 500 ? 4 : 5.5 }, name: 'Rows' });
+    const ob = ctx.outline('Residuals by Subject', { parent, key: 'residsubj', menu: () => [ctx.check('Boxes per Subject', 'subjectBoxes', sc, false)] });
+    ob.add(ctx.plot(traces, { xaxis: { type: 'category', categoryorder: 'array', categoryarray: subjects, title: { text: res.model.subject }, tickfont: { size: subjects.length > 40 ? 8 : 10 } }, yaxis: { title: { text: `${y.name} Residual` } },
+      shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0, line: { color: P.mean, width: 1 } }], margin: { l: 58, r: 12, t: 8, b: 60 } },
+    { width: W(Math.max(420, Math.min(900, 14 * subjects.length + 120))), height: 300, title: `${y.name} residuals by subject` }));
+  }
+
+  async function compareCorrelations(ctx, parent, payload, sc) {
+    const r = await ctx.call('fitmodel.gee_compare', payload);
+    const ob = ctx.outline('Compare Working Correlations', { parent, key: 'geecompare', info: 'p:fitmodel:qic', menu: () => [{ label: 'Remove', action: () => ctx.set('compareCorr', false, sc) }] });
+    const rows = r.rows.map((x) => ({ ...x, label: `${x.corr}${x.best ? '  (smallest QIC)' : ''}${x.current ? '  (current)' : ''}`, conv: x.error ? '' : (x.converged ? 'Yes' : 'No') }));
+    const failed = r.rows.some((x) => x.error);
+    ob.add(ctx.rt({ columns: [{ key: 'label', label: 'Working Correlation', fmt: 'text' }, { key: 'qic', label: 'QIC' }, { key: 'qicu', label: 'QICu' }, { key: 'qic_sm', label: 'QIC (statsmodels)', hidden: true },
+      { key: 'ql', label: 'Quasi-Likelihood', hidden: true }, { key: 'trace', label: 'trace(Ω_I V_R)' }, { key: 'dep', label: 'α' }, { key: 'iterations', label: 'Iterations', fmt: 'int' },
+      { key: 'conv', label: 'Converged', fmt: 'text' }, { key: 'error', label: 'Not fitted', fmt: 'text', hidden: !failed }], rows },
+    { key: 'geecompare', onRow: (row) => { if (!row.error && !row.current) ctx.set('workCorr', row.key); } }));
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    ob.add(ctx.note('Click a line to refit the report with that working correlation.'), ctx.code(r.code));
+  }
+
+  function geeMenu(ctx, y, res, sc) {
+    const c = (label, key, dflt, x) => ctx.check(label, key, sc, dflt, x);
+    const m = res.model;
+    const d = res.diag;
+    const sv = (name, v) => () => ctx.saveColumn(name, { rows: d.rows, values: v });
+    return [
+      { label: 'Regression Reports', submenu: () => [c('Model Summary', 'modelSummary', true), c('Parameter Estimates', 'estimates', true), c('Effect Tests', 'effectTests', true), c('QIC', 'qic', true),
+        c('Working Correlation', 'workcorr', true), c('Effect Summary', 'effectSummary', true)] },
+      c(res.ratios ? res.ratios.kind : 'Odds Ratios', 'ratios', false, { disabled: !res.ratios }),
+      { label: 'Correlation Structure', submenu: () => CORRS.map(([k, l]) => ({ label: l, checked: m.corr_key === k, disabled: ((k === 'ar1' || k === 'unstructured') && !m.time) || (k === 'nested' && !m.subgroup), action: () => ctx.set('workCorr', k) })) },
+      { label: 'Covariance', submenu: () => COVS.map(([k, l]) => ({ label: l, checked: m.cov_key === k, action: () => ctx.set('geeCov', k) })) },
+      c('Compare Working Correlations', 'compareCorr', false),
+      { label: 'Diagnostic Plots', submenu: () => [c('Residual by Predicted', 'residPred', true), c('Actual by Predicted', 'actualPred', true), c('Residuals by Subject', 'residSubject', true), c('Boxes per Subject', 'subjectBoxes', false)] },
+      { label: 'Profilers', submenu: () => [c('Profiler', 'profiler', false), c('Contour Profiler', 'contour', false), c('Interaction Plots', 'interaction', false)] },
+      { label: 'Save Columns', submenu: () => [
+        { label: 'Predicted Values (marginal)', action: sv(`Pred ${y.name}`, d.predicted) },
+        { label: 'Residuals', action: sv(`Residual ${y.name}`, d.residual) },
+        { label: 'Pearson Residuals', action: sv(`Pearson Residual ${y.name}`, d.pearson) },
+        { label: 'Linear Predictor', action: sv(`Linear Predictor ${y.name}`, d.linpred) },
       ] },
       { separator: true },
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
@@ -1340,6 +1901,263 @@
     tail(ctx, parent, res);
   }
 
+  /* ---- Instrumental Variables ---------------------------------------------------------------------------
+     statsmodels' IV2SLS. The roles Endogenous (columns of the model effects:
+     every effect that holds one is endogenous) and Instruments (the excluded
+     instruments; the exogenous effects instrument themselves). Robust
+     Standard Errors are the Standard Least Squares choices (option 'robust',
+     scoped by the response). */
+  async function renderIV(ctx, M) {
+    const ys = ctx.roles('y');
+    await perResponse(ctx, ys, (y) => `Instrumental Variables Fit for ${y.name}`, (y, parent, st) => ivY(ctx, M, y, parent, st));
+  }
+
+  function ivPayload(ctx, M, y) {
+    const rob = robustOf(ctx, y.id);
+    return { ...M.base, y: y.name, endog: ctx.names('endog'), instruments: ctx.names('instruments'), ...(rob ? { robust: rob } : {}) };
+  }
+
+  const TEST_COLS = [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'stat', label: 'Statistic' }, { key: 'df', label: 'DF' }, { key: 'dfden', label: 'DF Den' }, { key: 'p', label: 'p-Value', fmt: 'p' }];
+
+  async function ivY(ctx, M, y, parent, st) {
+    const P = pal();
+    const sc = y.id;
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const payload = ivPayload(ctx, M, y);
+    const res = await ctx.call('fitmodel.iv', { ...payload, alpha: ctx.alpha, ols: !!o('iv:ols', false) });
+    const m = res.model;
+    const d = res.diag;
+    st.menu = () => ivMenu(ctx, y, res, sc);
+    parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', m.response], ['Endogenous', m.endogenous.join(', ')], ['Instruments', m.instruments.join(', ')],
+      ['Estimation', 'Two-Stage Least Squares'], ['Standard Errors', m.cov], ['Observations', fmt(m.n)]].map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
+    const top = [];
+    if (o('iv:actual', true)) top.push(actualByPredicted(ctx, parent, d, null, y.name, 'p:fitmodel:iv').el);
+    if (o('summaryOfFit', true)) {
+      const s = ctx.outline('Summary of Fit', { parent, key: 'sof', info: 'p:fitmodel:iv' });
+      s.add(ctx.kv([...res.summary.rows.map((r) => [r.stat, r.value, r.stat === 'Observations' ? 'int' : 'num']),
+        res.whole ? [`Wald F (${fmt(res.whole.df_num)}, ${fmt(res.whole.df_den)} DF)`, res.whole.f] : null, res.whole ? ['Prob > F', res.whole.p, 'p'] : null]));
+      top.push(s.el);
+    }
+    if (top.length > 1) parent.add(ctx.row(...top));
+    if (o('iv:first', true)) ivFirstStage(ctx, parent, res, sc);
+    if (o('estimates', true)) {
+      const showCI = o('showCI', false);
+      const cols = res.estimates.columns.map((c) => ({ ...c, hidden: ['lower', 'upper'].includes(c.key) && !showCI }));
+      ctx.outline('Second Stage Parameter Estimates', { parent, key: 'estimates', info: res.robust ? 'p:fitmodel:robust' : 'p:fitmodel:iv' }).add(ctx.rt({ columns: cols, rows: res.estimates.rows },
+        { key: 'estimates', caption: res.robust ? `Robust standard errors: ${res.robust.label}; t tests on ${fmt(res.robust.df)} DF` : undefined }));
+    }
+    if (o('effectTests', true) && res.effect_tests.rows.length) {
+      ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt(res.effect_tests, { key: 'efftests', caption: `Wald F tests${res.robust ? ` with the robust covariance (${res.robust.label})` : ''}` }));
+    }
+    if (o('iv:tests', true)) ivTests(ctx, parent, res);
+    if (o('iv:ols', false) && res.ols) {
+      ctx.outline('OLS and 2SLS', { parent, key: 'ivols', info: 'p:fitmodel:iv', menu: () => [{ label: 'Remove', action: () => ctx.set('iv:ols', false, sc) }] }).add(
+        ctx.rt(res.ols, { key: 'ivols' }),
+        ctx.note(`Least squares (RSquare ${fmt(res.ols_rsq, { digits: 4 })}) beside two-stage least squares, with the same standard errors (${m.cov.toLowerCase()}). OLS is biased when an endogenous column is correlated with the error; 2SLS is consistent but less precise: the ratio of the standard errors is the price of the instruments.`));
+    }
+    if (o('iv:resid', true)) {
+      const yn = SM.report.plotlyText(y.name);
+      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yn} Predicted`, yTitle: `${yn} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} residual by predicted` }),
+        ctx.note('The residuals of the model itself, y − Xb (not of the second stage), against its predictions Xb.'));
+    }
+    if (o('plotResidRow', false)) {
+      ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${y.name} residual by row` }));
+    }
+    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'iv', payload }], scope: sc });
+    tail(ctx, parent, res);
+  }
+
+  function ivFirstStage(ctx, parent, res, sc) {
+    const ob = ctx.outline('First Stage', { parent, key: 'ivfirst', info: 'p:fitmodel:ivfirst' });
+    const multi = res.first.length > 1;
+    const rows = res.first.map((f) => ({ endog: f.label, rsq: f.rsq, partial: f.partial_rsq, shea: f.shea_rsq, f: f.f, df: f.df_num, dfden: f.df_den, p: f.p, weak: f.weak ? 'weak: F < 10' : '', _weak: f.weak }));
+    const cols = [{ key: 'endog', label: 'Endogenous', fmt: 'text' }, { key: 'rsq', label: 'RSquare' }, { key: 'partial', label: 'Partial RSquare' },
+      { key: 'shea', label: 'Shea Partial RSquare', hidden: !multi }, { key: 'f', label: 'F Ratio' }, { key: 'df', label: 'Num DF', fmt: 'int' }, { key: 'dfden', label: 'Den DF' },
+      { key: 'p', label: 'Prob > F', fmt: 'p' }, { key: 'weak', label: '', fmt: 'text' }];
+    ob.add(ctx.rt({ columns: cols, rows }, { key: 'ivfirst', sortable: false, caption: `The excluded instruments in each first stage${res.robust ? `: robust Wald F tests (${res.robust.label})` : ''}`,
+      cellClass: (r, c) => ((c.key === 'f' || c.key === 'weak') && r._weak ? 'sm-fm-weak' : null) }));
+    const weak = res.first.filter((f) => f.weak);
+    if (weak.length) ob.add(ctx.warn(`Weak instruments: the first-stage F of ${weak.map((f) => f.label).join(', ')} is below 10, Staiger and Stock's rule of thumb. 2SLS is then biased toward least squares and its tests and intervals are unreliable; look for stronger instruments.`));
+    ob.add(ctx.kv([['Cragg–Donald Wald F', res.weak.cragg_donald], ['Endogenous columns', res.weak.k_endog, 'int'], ['Excluded instrument columns', res.weak.excluded, 'int']], { caption: 'Weak identification' }),
+      ctx.note(`The F ratio tests the excluded instruments in the regression of each endogenous column on all the instruments; the partial RSquare is their share of what the exogenous effects leave unexplained${multi ? ', and Shea\'s partial RSquare the same after the other endogenous columns are accounted for' : ''}. Cragg and Donald's statistic is the smallest eigenvalue of the first stages' joint F (with one endogenous column, its first-stage F). Stock and Yogo (2005) give its critical values by the number of endogenous columns and instruments, for a largest tolerable bias of 2SLS relative to least squares or size distortion of its 5% Wald test (with one endogenous column and one instrument, 16.38 for a 10% maximal size); they assume homoscedastic errors${res.robust ? ', while the F ratios above are robust Wald tests' : ''}.`));
+    for (const f of res.first) {
+      const fo = ctx.outline(`First Stage for ${f.label}`, { parent: ob, key: `ivfs:${f.label}`, closed: true });
+      fo.add(ctx.rt({ columns: f.estimates.columns.map((c) => ({ ...c, hidden: ['lower', 'upper'].includes(c.key) })), rows: f.estimates.rows }, { key: `ivfs:${f.label}`, caption: `${f.label} on the instruments: RSquare ${fmt(f.rsq, { digits: 4 })}` }));
+    }
+  }
+
+  function ivTests(ctx, parent, res) {
+    const T = res.tests;
+    const e = T.endog;
+    const rows = [{ test: res.robust ? 'Wu–Hausman F (robust regression F)' : 'Wu–Hausman F', stat: e.f, df: e.df_num, dfden: e.df_den, p: e.p }];
+    if (e.durbin != null) rows.push({ test: 'Durbin χ² (score)', stat: e.durbin, df: e.durbin_df, dfden: null, p: e.durbin_p });
+    ctx.outline('Endogeneity Test', { parent, key: 'ivendog', info: 'p:fitmodel:ivtests' }).add(ctx.rt({ columns: TEST_COLS, rows }, { key: 'ivendog', sortable: false }),
+      ctx.note(`Durbin–Wu–Hausman, regression-based: the first-stage residuals of ${res.model.endogenous_columns.join(', ')} added to the least squares fit. H0: the endogenous columns are in fact exogenous, least squares is consistent (and efficient). A small p-value says they are endogenous and 2SLS is needed.${res.robust ? ' With robust standard errors the F test uses them (Stata\'s robust regression F); Durbin\'s χ² assumes homoscedastic errors and is left out.' : ' Durbin\'s χ² is n(SSR_OLS − SSR_augmented)/SSR_OLS, ivendog\'s Durbin–Wu–Hausman χ².'}`));
+    const ov = ctx.outline('Overidentification Test', { parent, key: 'ivoverid', info: 'p:fitmodel:ivtests' });
+    const O = T.overid;
+    if (!O) { ov.add(ctx.note('Exactly identified: as many excluded instrument columns as endogenous columns, so there are no overidentifying restrictions to test.')); return; }
+    ov.add(ctx.rt({ columns: TEST_COLS, rows: [{ test: O.test === 'Sargan' ? 'Sargan χ²' : 'Hansen J χ²', stat: O.stat, df: O.df, dfden: null, p: O.p }] }, { key: 'ivoverid', sortable: false }),
+      ctx.note(O.test === 'Sargan' ? `Sargan's test: n times the RSquare of the 2SLS residuals on all the instruments, χ² on the ${O.df} overidentifying restriction${O.df > 1 ? 's' : ''}. H0: every instrument is uncorrelated with the error. A small p-value says some instrument is invalid, or the model is misspecified; it cannot tell which.`
+        : `Hansen's J: the minimised criterion of the efficient two-step GMM estimate, with the weight matrix of the robust covariance (${res.robust.label}); χ² on the ${O.df} overidentifying restriction${O.df > 1 ? 's' : ''}. H0: every instrument is uncorrelated with the error.`));
+  }
+
+  function ivMenu(ctx, y, res, sc) {
+    const c = (label, key, d) => ctx.check(label, key, sc, d);
+    const d = res.diag;
+    const sv = (name, values) => () => ctx.saveColumn(name, { rows: d.rows, values });
+    return [
+      { label: 'Regression Reports', submenu: () => [c('Summary of Fit', 'summaryOfFit', true), c('First Stage', 'iv:first', true), c('Second Stage Parameter Estimates', 'estimates', true),
+        c('Effect Tests', 'effectTests', true), c('Endogeneity and Overidentification Tests', 'iv:tests', true), { separator: true }, c('Show All Confidence Intervals', 'showCI', false)] },
+      c('OLS Beside 2SLS', 'iv:ols', false),
+      { label: 'Robust Standard Errors', submenu: () => robustMenu(ctx, y, 'iv') },
+      { label: 'Row Diagnostics', submenu: () => [c('Plot Actual by Predicted', 'iv:actual', true), c('Plot Residual by Predicted', 'iv:resid', true), c('Plot Residual by Row', 'plotResidRow', false)] },
+      { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', false)] },
+      { label: 'Save Columns', submenu: () => [
+        { label: 'Predicted Values', action: sv(`Predicted ${y.name}`, d.predicted) },
+        { label: 'Residuals', action: sv(`Residual ${y.name}`, d.residual) },
+        ...d.first.flatMap((f) => [{ label: `First Stage Predicted ${f.label}`, action: sv(`First Stage Pred ${f.label}`, f.fitted) }, { label: `First Stage Residual ${f.label}`, action: sv(`First Stage Resid ${f.label}`, f.resid) }]),
+      ] },
+      { separator: true },
+      { label: 'Model Dialog', action: () => ctx.report.relaunch() },
+    ];
+  }
+
+  /* ---- Quantile Regression ----------------------------------------------------------------------------------
+     statsmodels' QuantReg. The quantile (qrTau, from the launch dialog or
+     Model Launch), the standard errors (qrCov), kernel (qrKernel), bandwidth
+     (qrBw) and the process quantiles (qrTaus, text such as '0.05 to 0.95 by
+     0.05' or '0.1, 0.5, 0.9') are options of the whole report. */
+  function parseTaus(text) {
+    const s = String(text || '').trim().toLowerCase();
+    const m = /^([0-9.]+)\s*to\s*([0-9.]+)\s*by\s*([0-9.]+)$/.exec(s);
+    let out = [];
+    if (m) {
+      const a = Number(m[1]), b = Number(m[2]), h = Number(m[3]);
+      if (!(a > 0 && b < 1 && a <= b && h > 0) || (b - a) / h > 98) return null;
+      for (let i = 0; a + i * h <= b + 1e-9; i++) out.push(Math.round((a + i * h) * 1e6) / 1e6);
+    } else {
+      out = s.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (!out.length || out.some((v) => !(v > 0 && v < 1))) return null;
+    }
+    out = [...new Set(out)].sort((u, v) => u - v);
+    return out.length && out.length <= 99 ? out : null;
+  }
+
+  async function renderQR(ctx, M) {
+    const ys = ctx.roles('y');
+    await perResponse(ctx, ys, (y) => `Quantile Regression Fit for ${y.name}`, (y, parent, st) => qrY(ctx, M, y, parent, st));
+  }
+
+  function qrPayload(ctx, M, y) {
+    return { ...M.base, y: y.name, tau: Number(ctx.opt('qrTau', 0.5)), qr_cov: ctx.opt('qrCov', 'robust'), kernel: ctx.opt('qrKernel', 'epa'), bandwidth: ctx.opt('qrBw', 'hsheather') };
+  }
+
+  async function qrY(ctx, M, y, parent, st) {
+    const P = pal();
+    const sc = y.id;
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const payload = qrPayload(ctx, M, y);
+    const tausText = ctx.opt('qrTaus', QR_TAUS);
+    const taus = parseTaus(tausText) || parseTaus(QR_TAUS);
+    const process = !!o('qr:process', true);
+    const res = await ctx.call('fitmodel.quantreg', { ...payload, taus, process, alpha: ctx.alpha });
+    const m = res.model;
+    const d = res.diag;
+    st.menu = () => qrMenu(ctx, y, res, sc);
+    parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', m.response], ['Quantile', fmt(m.tau)], ['Standard Errors', m.cov_label], ['Kernel', m.kernel_label], ['Bandwidth', m.bandwidth_label], ['Observations', fmt(m.n)]]
+      .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
+    // Model Launch: the options of the fit
+    const launch = ctx.outline('Model Launch', { parent, key: 'qrlaunch', info: 'p:fitmodel:quantreg' });
+    const mkSel = (label, key, value, choices) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; s.addEventListener('change', () => ctx.set(key, s.value)); return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), s); };
+    const tauIn = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': 'Quantile', class: 'sm-fm-num' });
+    tauIn.value = String(m.tau);
+    tauIn.addEventListener('change', () => { const v = Number(tauIn.value.replace(',', '.')); if (v > 0 && v < 1) ctx.set('qrTau', v); else { SM.ui.toast('The quantile must lie strictly between 0 and 1'); tauIn.value = String(m.tau); } });
+    const procIn = el('input', { type: 'text', size: 24, 'aria-label': 'Quantile process' });
+    procIn.value = tausText;
+    procIn.addEventListener('change', () => { if (parseTaus(procIn.value)) ctx.set('qrTaus', procIn.value.trim()); else { SM.ui.toast('Quantiles between 0 and 1: a list (0.1, 0.5, 0.9) or a range (0.05 to 0.95 by 0.05)'); procIn.value = tausText; } });
+    launch.add(el('div', { class: 'sm-fm-controls', dataset: { noexport: '' } },
+      el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Quantile τ' }), tauIn),
+      mkSel('Standard Errors', 'qrCov', m.cov, QR_COVS), mkSel('Kernel', 'qrKernel', m.kernel, QR_KERNELS), mkSel('Bandwidth', 'qrBw', m.bandwidth, QR_BWS),
+      el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Quantile Process' }), procIn)));
+    const top = [];
+    if (o('qr:actual', true)) {
+      const ob = ctx.outline('Actual by Predicted Plot', { parent, key: 'actpred', info: 'p:fitmodel:quantreg' });
+      const [lo, hi] = extent(d.predicted, d.actual);
+      ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${SM.report.plotlyText(y.name)} Predicted ${fmt(m.tau)} quantile`, yTitle: `${SM.report.plotlyText(y.name)} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit, 'solid', 1.4)], width: 400, height: 320, title: `${y.name} actual by predicted quantile` }),
+        ctx.note(`About ${fmt(100 * (1 - m.tau))}% of the rows should lie above the line (here ${fmt(100 * (1 - res.stats.below), { digits: 1 })}%).`));
+      top.push(ob.el);
+    }
+    if (o('summaryOfFit', true)) {
+      const s = ctx.outline('Summary of Fit', { parent, key: 'sof', info: 'p:fitmodel:quantreg' });
+      s.add(ctx.kv(res.summary.rows.map((r) => [r.stat, r.value, ['Iterations', 'Observations'].includes(r.stat) ? 'int' : 'num'])));
+      top.push(s.el);
+    }
+    if (top.length > 1) parent.add(ctx.row(...top));
+    if (o('estimates', true)) {
+      const showCI = o('showCI', true);
+      const cols = res.estimates.columns.map((c) => ({ ...c, hidden: ['lower', 'upper'].includes(c.key) && !showCI }));
+      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: 'p:fitmodel:quantreg' }).add(ctx.rt({ columns: cols, rows: res.estimates.rows },
+        { key: 'estimates', caption: `The ${fmt(m.tau)} quantile; standard errors: ${m.cov_label.toLowerCase()}, t tests on ${fmt(m.n - res.estimates.rows.length)} DF` }));
+    }
+    if (process && res.process) qrProcess(ctx, parent, res, sc);
+    if (res.lines && o('qr:lines', true)) qrLines(ctx, parent, res, y);
+    if (o('qr:resid', false)) {
+      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${SM.report.plotlyText(y.name)} Predicted ${fmt(m.tau)} quantile`, yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} quantile residual by predicted` }));
+    }
+    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'qr', payload }], scope: sc });
+    tail(ctx, parent, res);
+  }
+
+  function qrProcess(ctx, parent, res, sc) {
+    const pr = res.process;
+    const ols = res.ols;
+    const ob = ctx.outline('Quantile Process', { parent, key: 'qrprocess', info: 'p:fitmodel:qrprocess', menu: () => [ctx.check('Quantile Process Estimates', 'qr:procTable', sc, false), { label: 'Remove', action: () => ctx.set('qr:process', false, sc) }] });
+    const plots = pr.terms.map((term, i) => bandPlot(ctx, { x: pr.taus, est: pr.estimate[i], lower: pr.lower[i], upper: pr.upper[i], ref: ols.estimate[i], refBand: [ols.lower[i], ols.upper[i]], vline: res.tau,
+      hover: pr.taus.map((t) => `τ = ${t}`), xTitle: 'Quantile τ', yTitle: term, title: `${term} quantile process`, width: 300, height: 230, xaxis: { range: [0, 1] } }));
+    ob.add(ctx.row(...plots), ctx.note(`Each coefficient at the ${pr.taus.length} quantiles of the process, with its pointwise ${fmt(100 * (1 - ctx.alpha))}% band; the dashed line and the pale band are the least squares estimate and its interval, the dotted line the report's quantile. A coefficient whose curve leaves the least squares band acts differently in the tails than at the mean.`));
+    if (ctx.opt('qr:procTable', false, sc)) {
+      const cols = [{ key: 'tau', label: 'Quantile' }, { key: 'r1', label: 'Pseudo RSquare', digits: 4 }, ...pr.terms.flatMap((t, i) => [{ key: `b${i}`, label: t }, { key: `s${i}`, label: `${t} Std Error`, hidden: true }])];
+      const rows = pr.taus.map((t, j) => ({ tau: t, r1: pr.r1[j], ...Object.fromEntries(pr.terms.flatMap((_, i) => [[`b${i}`, pr.estimate[i][j]], [`s${i}`, pr.se[i][j]]])) }));
+      ctx.outline('Quantile Process Estimates', { parent: ob, key: 'qrproctable' }).add(ctx.rt({ columns: cols, rows }, { key: 'qrproctable', sortable: false, caption: 'The estimates at each quantile (right click: Columns adds the standard errors)' }));
+    }
+  }
+
+  function qrLines(ctx, parent, res, y) {
+    const P = pal();
+    const L = res.lines;
+    const traces = [{ type: L.points.x.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: L.points.x, y: L.points.y, rows: L.points.rows, marker: { size: L.points.x.length > 500 ? 4 : 6, color: P.point }, name: 'Rows', showlegend: false }];
+    const taus = L.lines.map((l) => l.tau);
+    const lo = Math.min(...taus), hi = Math.max(...taus);
+    for (const l of L.lines) {
+      const c = SM.util.ramp(hi > lo ? (l.tau - lo) / (hi - lo) : 0.5);
+      traces.push({ type: 'scatter', mode: 'lines', x: L.x, y: l.y, line: { color: c, width: l.current ? 2.6 : 1.6 }, name: `τ = ${l.tau}`, hovertemplate: `τ = ${l.tau}: %{y:.5g}<extra></extra>` });
+    }
+    traces.push({ type: 'scatter', mode: 'lines', x: L.x, y: L.ols, line: { color: P.text, width: 1.3, dash: 'dash' }, name: 'Least squares', hoverinfo: 'skip' });
+    ctx.outline('Quantile Regression Plot', { parent, key: 'qrlines', info: 'p:fitmodel:quantreg', menu: () => [{ label: 'Remove', action: () => ctx.set('qr:lines', false, y.id) }] }).add(
+      ctx.plot(traces, { showlegend: true, legend: { title: { text: 'Quantile' } }, xaxis: { title: { text: SM.report.plotlyText(L.factor) } }, yaxis: { title: { text: SM.report.plotlyText(y.name) } }, margin: { l: 58, r: 12, t: 8, b: 44 } }, { width: W(520), height: 340, title: `${y.name} quantile lines` }),
+      ctx.note(`The fitted quantiles of ${y.name} over ${L.factor} (the report's quantile drawn thicker) and the least squares line (dashed). Lines that fan out mean the spread of ${y.name} changes with ${L.factor}.`));
+  }
+
+  function qrMenu(ctx, y, res, sc) {
+    const c = (label, key, d) => ctx.check(label, key, sc, d);
+    const d = res.diag;
+    const cov = res.model.cov;
+    return [
+      { label: 'Regression Reports', submenu: () => [c('Summary of Fit', 'summaryOfFit', true), c('Parameter Estimates', 'estimates', true), c('Show All Confidence Intervals', 'showCI', true)] },
+      c('Quantile Process', 'qr:process', true),
+      c('Quantile Process Estimates', 'qr:procTable', false),
+      { label: 'Standard Errors', submenu: () => QR_COVS.map(([k, l]) => ({ label: l, checked: cov === k, action: () => ctx.set('qrCov', k) })) },
+      { label: 'Row Diagnostics', submenu: () => [c('Plot Actual by Predicted', 'qr:actual', true), c('Plot Residual by Predicted', 'qr:resid', false), ctx.check('Quantile Regression Plot', 'qr:lines', sc, true, { disabled: !res.lines })] },
+      { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', false)] },
+      { label: 'Save Columns', submenu: () => [
+        { label: 'Predicted Quantile', action: () => ctx.saveColumn(`Pred Quantile(${res.tau}) ${y.name}`, { rows: d.rows, values: d.predicted }, { notes: `the fitted ${res.tau} quantile of ${y.name}, from ${ctx.report.title}` }) },
+        { label: 'Residuals', action: () => ctx.saveColumn(`Quantile(${res.tau}) Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
+      ] },
+      { separator: true },
+      { label: 'Model Dialog', action: () => ctx.report.relaunch() },
+    ];
+  }
+
   /* ---- Help ---------------------------------------------------------------------------------------------- */
   const MORE = { label: 'Fit Model', id: 'help-p-fitmodel' };
   const TOPICS = {
@@ -1347,7 +2165,7 @@
       kicker: 'Analyze', title: 'Fit Model',
       lead: 'Linear and generalized models of one or more responses: choose the Y, build the model from effects, pick a personality and press OK. The model is JMP\'s, the numbers are statsmodels\'.',
       sections: [
-        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Offset', 'A known part of the linear predictor (GLM), for example log exposure.'], ['By', 'A separate fit for each level.']] },
+        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Endogenous', 'Instrumental Variables: the columns of the model effects that are correlated with the error; every effect that holds one is endogenous.'], ['Instruments', 'Instrumental Variables: the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y (they stay out of the model effects).'], ['Offset', 'A known part of the linear predictor (GLM, GEE), for example log exposure.'], ['Subject', 'Generalized Estimating Equations: the rows with the same value belong together (a subject, a cluster).'], ['Time', 'GEE: the order of a subject\'s rows, for the AR(1) and Unstructured working correlations.'], ['Subgroup', 'GEE: a grouping within the subjects, for the Nested working correlation.'], ['By', 'A separate fit for each level.']] },
         { heading: 'Construct Model Effects', text: 'Select columns on the left and press Add. Cross makes an interaction, a column crossed with itself a power; Nest puts an effect within a column (B[A]). The Macros add whole models; Attributes > Random Effect marks an effect as random (Mixed Model, or REML in Standard Least Squares).' },
         { heading: 'Coding', text: 'Nominal and ordinal factors are effect coded (a level\'s parameter is its difference from the average of the levels, the last level the negative sum); continuous columns in crossings and powers are centred at their means, as JMP\'s Center Polynomials.' },
       ],
@@ -1362,7 +2180,7 @@
     'p:fitmodel:personality': {
       kicker: 'Fit Model', title: 'Personality',
       lead: 'How the model is fitted and reported.',
-      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by p-values, AICc or BIC.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized fits: lasso, elastic net, ridge, chosen by AICc or BIC.']] },
+      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by p-values, AICc or BIC.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Generalized Estimating Equations', 'statsmodels GEE: a marginal generalized linear model of rows grouped by a Subject, with a working correlation and robust standard errors.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized fits: lasso, elastic net, ridge, chosen by AICc or BIC.'], ['Instrumental Variables', 'Two-stage least squares (statsmodels IV2SLS) for effects that are correlated with the error: cast them into Endogenous and the excluded instruments into Instruments.'], ['Quantile Regression', 'statsmodels QuantReg: a quantile of Y (the Quantile τ; 0.5 is the median) rather than its mean, with the quantile process.']] },
         { heading: 'Emphasis', text: 'For Standard Least Squares: Effect Leverage opens the leverage plots and the effect details, Effect Screening the sorted estimates and the profiler, Minimal Report only the tables.' }],
       more: MORE,
     },
@@ -1417,20 +2235,190 @@
     },
     'p:fitmodel:manova': { kicker: 'Fit Model', title: 'MANOVA', lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends).', more: MORE },
     'p:fitmodel:genreg': { kicker: 'Fit Model', title: 'Generalized Regression', lead: 'Penalized fits on centred and scaled predictors: the lasso sets small effects to zero, ridge shrinks them all, the elastic net mixes the two (Elastic Net Alpha is the lasso share). The path runs from the heaviest penalty to almost none; the model with the smallest AICc or BIC is chosen, or the one you click.', more: MORE },
+    'p:fitmodel:gee': {
+      kicker: 'Fit Model', title: 'Generalized Estimating Equations',
+      lead: 'A generalized linear model for rows that are not independent: repeated measures of a subject, members of a cluster. GEE (statsmodels\' GEE, Liang and Zeger 1986) estimates the marginal mean, the average over the subjects, with a working correlation for the rows of a subject and standard errors that stay right when that correlation is wrong.',
+      sections: [
+        { heading: 'Launch', choices: [['Subject', 'the column whose values group the rows (required)'], ['Time', 'the order within a subject (AR(1), Unstructured); the rows are sorted by it'], ['Subgroup', 'a grouping within the subjects (Nested)'], ['Distribution, Link', 'as the Generalized Linear Model; the negative binomial with a fixed α, the Tweedie with its power'], ['Working Correlation', 'Independence, Exchangeable (one correlation), AR(1) (α to the power of the distance), Nested (variance components), Unstructured (one per pair of times)'], ['Covariance', 'Robust (sandwich), Naive (model-based: right only when the working correlation is), Bias-reduced (Mancl and DeRouen, for few subjects)'], ['Scale', 'estimated (Pearson χ²/(N − p)) or fixed (1 for binomial and Poisson)']] },
+        { heading: 'Report', choices: [['Model Summary', 'the rows, the subjects and their sizes, the iterations'], ['Parameter Estimates', 'z tests; the right-click Columns menu adds the other standard errors'], ['Effect Tests', 'Wald χ² of each effect'], ['QIC', 'for choosing the working correlation'], ['Working Correlation', 'its parameters and the matrix of a typical subject'], ['Odds Ratios, Rate Ratios', 'for the logit and log links']] },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:qic': {
+      kicker: 'Fit Model', title: 'QIC',
+      lead: 'Pan\'s quasi-likelihood information criterion: QIC = −2Q + 2 trace(Ω_I V_R), Q the quasi-likelihood under independence, Ω_I its information and V_R the robust covariance; QICu = −2Q + 2p. Smaller is better. QIC chooses among working correlations, QICu among mean models. Every structure is scored at one scale, so the values compare.',
+      sections: [
+        { heading: 'Compare Working Correlations', text: 'Fits the model with each working correlation the roles allow and lists their QIC; click a line to refit the report with it.' },
+        { heading: 'statsmodels\' qic()', text: 'statsmodels 0.14 computes Ω_I without the variance function, which is Pan\'s only for the normal family. The report\'s QIC uses Pan\'s penalty and shows statsmodels\' value beside it.' },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:workcorr': { kicker: 'Fit Model', title: 'Working Correlation', lead: 'The correlation GEE assumes among the rows of a subject, with its estimated parameters: one correlation (exchangeable), the lag-1 correlation (AR(1)), variance components (nested), a correlation for each pair of times (unstructured). The heat map is the working matrix of one subject, blue negative, red positive. statsmodels\' AR(1) counts the positions of a subject\'s rows (sorted by Time).', more: MORE },
+    'p:fitmodel:robust': {
+      kicker: 'Fit Model', title: 'Robust Standard Errors',
+      lead: 'Standard errors that do not rest on constant variance (HC), or on independent rows (HAC, Cluster). Parameter Estimates, Effect Tests, the Effect Summary and the profiler\'s intervals use them; the fit itself is unchanged.',
+      sections: [{ choices: [['HC0', 'White\'s sandwich'], ['HC1', 'HC0 times n/(n − p) (Stata\'s robust)'], ['HC2', 'each squared residual divided by 1 − h'], ['HC3', 'divided by (1 − h)²: the safest in small samples'], ['Newey–West HAC', 'also for autocorrelation up to a lag, in the order of the rows'], ['Cluster', 'rows of the same cluster may be correlated; t tests on the clusters less one']] },
+        { heading: 'Generalized Linear Model', text: 'The sandwich (HC0), HAC and Cluster; the report then shows Wald tests, since the likelihood ratio tests assume the model\'s variance.' }],
+      more: MORE,
+    },
+    'p:fitmodel:regdiag': {
+      kicker: 'Fit Model', title: 'Regression Diagnostics',
+      lead: 'Tests of a least squares fit\'s assumptions, from statsmodels.stats.diagnostic. A small p-value speaks against the assumption.',
+      sections: [{ choices: [['Breusch–Pagan, White', 'constant variance, against a variance that depends on the regressors'], ['Goldfeld–Quandt', 'the variances of two halves of the rows, sorted'], ['Ramsey RESET', 'powers of the prediction added: is the form linear?'], ['Harvey–Collier', 'the mean of the recursive residuals, in an order'], ['Rainbow', 'the fit of the central rows against all of them'], ['Breusch–Godfrey', 'autocorrelation of the residuals up to a lag, in the row order'], ['Jarque–Bera, Omnibus', 'normal residuals, from their skewness and kurtosis']] }],
+      more: MORE,
+    },
+    'p:fitmodel:influence': { kicker: 'Fit Model', title: 'Influence and partial residuals', lead: 'The Influence Plot puts each row\'s externally studentized residual against its leverage; the area of the bubble is Cook\'s D, the lines mark residuals of ±2 and leverages of 2p/n and 3p/n. Component + Residual Plots show, for each continuous term, the residual plus the term\'s part of the fit against the term: a curve asks for a transformation.', more: MORE },
+    'p:fitmodel:recursive': {
+      kicker: 'Fit Model', title: 'Recursive and Rolling Regression',
+      lead: 'The least squares model fitted with the rows taken one at a time, in the order of the table or sorted by a column (a time, a date): do the coefficients stay put along that order? statsmodels\' RecursiveLS and RollingOLS; JMP has no such tests.',
+      sections: [
+        { choices: [['Recursive Estimates', 'each coefficient from the first rows up to each row, with its band; the last are the report\'s estimates'], ['CUSUM Test', 'the cumulative sum of the recursive residuals (each row\'s prediction error from the rows before it, standardised): a path that leaves the bounds says the relation shifts'], ['CUSUM of Squares Test', 'the cumulative share of the squared recursive residuals against the diagonal: leaving the bounds says the variance or the slopes change'], ['Rolling Regression', 'least squares on each window of consecutive rows (Rolling Window… sets its size), plotted at the window\'s last row']] },
+        { heading: 'Reading them', text: 'Sort the rows by time first (Order Rows By…). The CUSUM reacts to shifts in the level of Y, the CUSUM of squares to changes in the spread or the slopes; the recursive and rolling estimates show which coefficient moves, and where. The bounds are for the 1%, 5% or 10% level (Brown, Durbin and Evans 1975; Edgerton and Wells 1994).' },
+        { heading: 'Linking', text: 'A recursive point stands for the row it adds: clicking it selects that row. A rolling point stands for its window: clicking it selects the window\'s rows.' },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:iv': {
+      kicker: 'Fit Model', title: 'Instrumental Variables',
+      lead: 'When an effect is correlated with the error (an omitted cause of both, reverse causation, measurement error), least squares is biased. Instruments move the endogenous columns but have no effect of their own on Y; two-stage least squares (statsmodels\' IV2SLS) uses only the part of the endogenous columns they explain. JMP has no such personality.',
+      sections: [
+        { heading: 'Launch', choices: [['Endogenous', 'the columns of the model effects that are endogenous; a crossing or power that holds one is endogenous too, and is instrumented by the same crossing or power of the instruments'], ['Instruments', 'the excluded instruments, not in the model; the exogenous effects instrument themselves. At least as many instrument columns as endogenous columns']] },
+        { heading: 'Report', choices: [['First Stage', 'each endogenous column on the instruments: RSquare, partial RSquare and the F test of the excluded instruments (weak below 10); Cragg and Donald\'s statistic'], ['Second Stage Parameter Estimates', 'the 2SLS estimates; standard errors from the model\'s own residuals y − Xb, classical or robust'], ['Endogeneity Test', 'Durbin–Wu–Hausman: are the endogenous columns in fact exogenous?'], ['Overidentification Test', 'Sargan (Hansen\'s J with robust errors): are the extra instruments valid?'], ['OLS Beside 2SLS', 'least squares and 2SLS side by side']] },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:ivfirst': { kicker: 'Fit Model', title: 'First stage and weak instruments', lead: 'The first stage regresses each endogenous column on all the instruments. The F ratio tests the excluded instruments: below 10 (Staiger and Stock\'s rule of thumb) they are weak, 2SLS leans toward least squares and its intervals are too narrow. The partial RSquare is their share of what the exogenous effects leave unexplained; Shea\'s partial RSquare, with several endogenous columns, what they explain of each one beyond the others. Cragg and Donald\'s statistic (the smallest eigenvalue of the joint F) is what Stock and Yogo (2005) tabulate critical values for.', more: MORE },
+    'p:fitmodel:ivtests': { kicker: 'Fit Model', title: 'Endogeneity and overidentification', lead: 'Durbin–Wu–Hausman: the first-stage residuals are added to the least squares fit; if they add nothing (a large p-value), the endogenous columns behave as exogenous and least squares is fine. Sargan\'s test (Hansen\'s J with robust standard errors) asks, when there are more instruments than endogenous columns, whether the instruments agree with each other: a small p-value says at least one is not valid, without saying which.', more: MORE },
+    'p:fitmodel:quantreg': {
+      kicker: 'Fit Model', title: 'Quantile Regression',
+      lead: 'A quantile of Y given the effects (0.5 the median, 0.9 the upper tenth) instead of its mean: statsmodels\' QuantReg minimises the sum of check losses. It needs no normal errors, resists outliers in Y, and shows how the effects differ across the distribution. JMP Pro has it in Generalized Regression, without the quantile process.',
+      sections: [
+        { heading: 'Model Launch', choices: [['Quantile τ', 'the quantile of the report, strictly between 0 and 1'], ['Standard Errors', 'Robust (statsmodels\' default, one density estimate for every row), IID, or Powell\'s sandwich (a density per row: for a spread that changes with X)'], ['Kernel, Bandwidth', 'how the density of the residuals at the quantile is estimated (Hall–Sheather, Bofinger, Chamberlain)'], ['Quantile Process', 'the quantiles of the process: a list (0.1, 0.5, 0.9) or a range (0.05 to 0.95 by 0.05)']] },
+        { heading: 'Report', choices: [['Summary of Fit', 'Koenker and Machado\'s pseudo RSquare, 1 − the check loss over that of the intercept alone; the share of rows below the fit, which should be near τ'], ['Parameter Estimates', 'at the quantile τ, with t tests'], ['Quantile Process', 'each coefficient against τ, beside the least squares estimate'], ['Quantile Regression Plot', 'with one continuous factor: the fitted lines of several quantiles']] },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:qrprocess': { kicker: 'Fit Model', title: 'Quantile process', lead: 'Each coefficient fitted at every quantile of the list, with its pointwise band (the band is not simultaneous over the quantiles). The dashed line and the pale band are the least squares estimate and its interval. A curve that stays in the band: the effect is the same across the distribution (a location shift); one that rises or falls: the term changes the spread of Y too.', more: MORE },
   };
+
+  /* ---- an example table: repeated measures, for Generalized Estimating Equations ---------------------------------
+     Simulated with a seed (nothing that is not ours): 60 subjects in 10
+     clinics, 3 of the 6 of each clinic on the active drug, seen at 4 visits.
+     Each subject has its own propensity to improve (a random intercept on
+     the logit scale), its own symptom rate (on the log scale) and AR(1)
+     errors in its score, so a subject's rows are correlated. */
+  function makeLongitudinal() {
+    const r = SM.util.rng('longitudinal');
+    const c = { subject: [], clinic: [], treatment: [], visit: [], baseline: [], improved: [], symptoms: [], score: [] };
+    const poisson = (lambda) => { let k = 0, p = Math.exp(-lambda), s = p; const u = r.u(); while (u > s && k < 400) { k++; p *= lambda / k; s += p; } return k; };
+    for (let cl = 0; cl < 10; cl++) {
+      const arms = ['placebo', 'placebo', 'placebo', 'active', 'active', 'active'];
+      for (let i = arms.length - 1; i > 0; i--) { const j = Math.floor(r.u() * (i + 1)); [arms[i], arms[j]] = [arms[j], arms[i]]; }
+      for (let k = 0; k < 6; k++) {
+        const s = cl * 6 + k;
+        const act = arms[k] === 'active' ? 1 : 0;
+        const base = r.normal(20, 5);
+        const b = r.normal(0, 1.3), u = r.normal(0, 0.45);
+        let e = r.normal(0, 4);
+        for (let v = 1; v <= 4; v++) {
+          if (v > 1) e = 0.6 * e + r.normal(0, 4 * Math.sqrt(1 - 0.36));
+          const eta = -1.1 + 0.25 * v + 0.55 * act * (v - 1) + 0.08 * (base - 20) + b;
+          c.subject.push(`S${String(s + 1).padStart(2, '0')}`); c.clinic.push(`C${String(cl + 1).padStart(2, '0')}`); c.treatment.push(arms[k]); c.visit.push(v);
+          c.baseline.push(+base.toFixed(1));
+          c.improved.push(r.u() < 1 / (1 + Math.exp(-eta)) ? 'yes' : 'no');
+          c.symptoms.push(poisson(Math.exp(1.7 - 0.08 * v - 0.18 * act * (v - 1) + 0.035 * (base - 20) + u)));
+          c.score.push(+(40 + 0.6 * (base - 20) - 1.2 * v - 2.2 * act * (v - 1) + e).toFixed(1));
+        }
+      }
+    }
+    return new SM.Table({ name: 'Longitudinal trial', source: 'simulated', columns: [
+      { name: 'subject', dataType: 'character', values: c.subject, role: 'label' },
+      { name: 'clinic', dataType: 'character', values: c.clinic },
+      { name: 'treatment', dataType: 'character', values: c.treatment, valueOrder: ['placebo', 'active'] },
+      { name: 'visit', dataType: 'numeric', values: c.visit },
+      { name: 'baseline', dataType: 'numeric', values: c.baseline },
+      { name: 'improved', dataType: 'character', values: c.improved, valueOrder: ['yes', 'no'] },
+      { name: 'symptoms', dataType: 'numeric', values: c.symptoms },
+      { name: 'score', dataType: 'numeric', values: c.score },
+    ] });
+  }
+  if (SM.io && SM.io.addExample) {
+    SM.io.addExample('longitudinal', {
+      label: 'Longitudinal trial (60 subjects × 4 visits): treatment, a binary and a count outcome',
+      about: 'Simulated repeated measures: 60 subjects in 10 clinics, placebo or active, 4 visits and a baseline severity. Improved (yes/no), symptoms (a count) and score (AR(1) errors) are correlated within a subject. For Fit Model > Generalized Estimating Equations.',
+      make: makeLongitudinal,
+    });
+  }
+
+  /* ---- an example table: returns to schooling ---------------------------------------------------------------
+     Simulated with a seed (nothing that is not ours): 1500 people
+     interviewed from 1995 to 2024, 50 a year, the rows in interview order.
+     An unobserved ability (not in the table) raises both education and the
+     log wage, so least squares overstates the return to education; the
+     distance to a college and a scholarship lottery move education and
+     nothing else (the instruments), the birth quarter hardly at all (a weak
+     instrument); the spread of the log wage grows with experience (quantile
+     regression); the return to experience halves from 2008 on (a structural
+     break along the interview order, for the recursive tests). */
+  function makeSchooling() {
+    const r = SM.util.rng('schooling-5');
+    const regions = ['north', 'south', 'east', 'west'];
+    const regionEffect = { north: 0, south: -0.08, east: 0.04, west: 0.06 };
+    const c = { person: [], year: [], region: [], sex: [], quarter: [], experience: [], distance: [], lottery: [], education: [], lwage: [] };
+    for (let i = 0; i < 1500; i++) {
+      const year = 1995 + Math.floor(i / 50);
+      const ability = r.normal(0, 1);
+      const female = r.u() < 0.5;
+      const region = regions[Math.floor(r.u() * 4)];
+      const quarter = 1 + Math.floor(r.u() * 4);
+      const experience = Math.round((1 + 34 * r.u()) * 10) / 10;
+      const distance = Math.round(Math.min(120, 2 - 18 * Math.log(1 - r.u())) * 10) / 10;
+      const won = r.u() < 0.3;
+      const latent = 12.4 + 1.2 * ability - 0.035 * (distance - 20) + 1.1 * won + 0.25 * female + 0.12 * (quarter === 4) + r.normal(0, 1.4);
+      const education = Math.max(8, Math.min(20, Math.round(latent)));
+      const bExperience = year < 2008 ? 0.030 : 0.015;
+      const lwage = 1.2 + 0.080 * education + bExperience * experience - 0.120 * female + regionEffect[region] + 0.15 * ability + (0.20 + 0.010 * experience) * r.normal(0, 1);
+      c.person.push(`P${String(i + 1).padStart(4, '0')}`); c.year.push(year); c.region.push(region); c.sex.push(female ? 'female' : 'male'); c.quarter.push(`Q${quarter}`);
+      c.experience.push(experience); c.distance.push(distance); c.lottery.push(won ? 'won' : 'lost'); c.education.push(education); c.lwage.push(+lwage.toFixed(4));
+    }
+    return new SM.Table({ name: 'Schooling', source: 'simulated', columns: [
+      { name: 'person', dataType: 'character', values: c.person, role: 'label' },
+      { name: 'year', dataType: 'numeric', values: c.year },
+      { name: 'region', dataType: 'character', values: c.region, valueOrder: regions },
+      { name: 'sex', dataType: 'character', values: c.sex, valueOrder: ['female', 'male'] },
+      { name: 'birth quarter', dataType: 'character', values: c.quarter, valueOrder: ['Q1', 'Q2', 'Q3', 'Q4'] },
+      { name: 'experience', dataType: 'numeric', values: c.experience },
+      { name: 'distance (km)', dataType: 'numeric', values: c.distance },
+      { name: 'lottery', dataType: 'character', values: c.lottery, valueOrder: ['won', 'lost'] },
+      { name: 'education', dataType: 'numeric', values: c.education },
+      { name: 'log wage', dataType: 'numeric', values: c.lwage },
+    ] });
+  }
+  if (SM.io && SM.io.addExample) {
+    SM.io.addExample('schooling', {
+      label: 'Schooling (1500 people): returns to education with instruments, a widening spread and a break',
+      about: 'Simulated (seeded; not real data): 1500 people interviewed from 1995 to 2024, 50 a year, the rows in interview order. The truth: log wage = 1.2 + 0.080 education + 0.030 experience (0.015 from 2008 on) − 0.120 female + region (north 0, south −0.08, east +0.04, west +0.06) + 0.15 ability + (0.20 + 0.010 experience) × a standard normal error. Ability is not in the table and also raises education by 1.2 years per standard deviation, so least squares overstates the return to education. distance (km) (−0.035 years of education per km) and lottery (a scholarship won: +1.1 years) move education and have no effect of their own on the wage: Fit Model > Instrumental Variables with education Endogenous and these two as Instruments recovers about 0.080. birth quarter moves education by 0.12 years in Q4 only: a weak instrument. The spread grows with experience: Quantile Regression finds the slope of experience rising with the quantile (0.010 × the normal quantile above and below the median). The return to experience halves in 2008: Standard Least Squares > Recursive and Rolling Regression (rows in table order, or sorted by year). In JMP\'s effect coding sex[female] is half the female–male gap, −0.060, and region[south] is −0.08 minus the average of the four region effects.',
+      make: makeSchooling,
+    });
+  }
 
   /* ---- the platform -------------------------------------------------------------------------------------- */
   SM.platforms.register({
     id: 'fitmodel', label: 'Fit Model', menu: 'Analyze', order: 110, info: 'p:fitmodel', topics: TOPICS,
-    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers), Stepwise, Generalized Linear Model, Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA and Generalized Regression (lasso, elastic net, ridge).',
-    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'scipy.stats.studentized_range', 'patsy'],
+    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA, Generalized Regression (lasso, elastic net, ridge), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
+    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
     launch: {
       lead: 'Choose the Y, add the model effects from the selected columns, and pick a personality. Continuous Y: least squares; nominal or ordinal Y: logistic.',
       roles: [
         { key: 'y', label: 'Y', min: 1, hint: 'required' },
         { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
         { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
-        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional (generalized linear model)' },
+        { key: 'endog', label: 'Endogenous', hint: 'required: the model effects\' columns that are endogenous' },
+        { key: 'instruments', label: 'Instruments', hint: 'required: the excluded instruments' },
+        { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional (generalized linear model, GEE)' },
+        { key: 'subject', label: 'Subject', max: 1, hint: 'required: the rows that belong together' },
+        { key: 'time', label: 'Time', max: 1, numeric: true, hint: 'optional: the order within a subject' },
+        { key: 'subgroup', label: 'Subgroup', max: 1, hint: 'optional: a grouping within the subjects' },
         { key: 'by', label: 'By', hint: 'optional' },
       ],
       extra: constructEffects,
@@ -1443,11 +2431,14 @@
       switch (p) {
         case 'stepwise': return one ? `Stepwise Fit for ${one}` : 'Fit Stepwise';
         case 'glm': return 'Generalized Linear Model Fit';
+        case 'gee': return one ? `Generalized Estimating Equations for ${one}` : 'Generalized Estimating Equations';
         case 'nominal': return one ? `Nominal Logistic Fit for ${one}` : 'Fit Nominal Logistic';
         case 'ordinal': return one ? `Ordinal Logistic Fit for ${one}` : 'Fit Ordinal Logistic';
         case 'mixed': return 'Fit Mixed';
         case 'manova': return 'Manova Fit';
         case 'genreg': return one ? `Generalized Regression for ${one}` : 'Generalized Regression';
+        case 'iv': return one ? `Instrumental Variables Fit for ${one}` : 'Fit Instrumental Variables';
+        case 'quantreg': return one ? `Quantile Regression Fit for ${one}` : 'Fit Quantile Regression';
         default: return one ? `Response ${one}` : 'Fit Group';
       }
     },
@@ -1458,10 +2449,13 @@
       const p = ctx.opt('personality', 'standard');
       if (p === 'stepwise') return renderStepwise(ctx, M);
       if (p === 'glm') return renderGLM(ctx, M);
+      if (p === 'gee') return renderGEE(ctx, M);
       if (p === 'nominal' || p === 'ordinal') return renderLogistic(ctx, M, p === 'ordinal');
       if (p === 'mixed') return renderMixed(ctx, M);
       if (p === 'manova') return renderManova(ctx, M);
       if (p === 'genreg') return renderGenReg(ctx, M);
+      if (p === 'iv') return renderIV(ctx, M);
+      if (p === 'quantreg') return renderQR(ctx, M);
       if (M.effects.some((e) => e.random)) return renderMixed(ctx, M, { sls: true });
       return renderStandard(ctx, M);
     },

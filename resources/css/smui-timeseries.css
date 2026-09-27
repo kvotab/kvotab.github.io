@@ -3,7 +3,8 @@
    The styles of smui-p-timeseries.js: the correlation tables with a bar in
    each row (JMP's diagnostics chart), the Model Comparison table with its
    Report and Graph boxes, the model outlines' colour mark, the lag plot's
-   control. Colours are kvot.css tokens or pairs that read in both themes.
+   control, the bounds test's verdict. Colours are kvot.css tokens or pairs
+   that read in both themes.
    ========================================================================== */
 
 .sm {
@@ -42,6 +43,16 @@
 /* the lag plot's lag */
 .sm-ts-lagctl { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; }
 .sm-ts-lagctl input { width: 3.2em; padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
+
+/* the ARDL bounds test: the 5% row of the critical values, and the verdict */
+.sm-rt td.sm-ts-crit5 { font-weight: 600; }
+.sm-ts-verdict { margin: 6px 0 4px; padding: 5px 8px; max-width: 760px; border-left: 3px solid var(--border-color); background: var(--bg-surface); color: var(--text-primary); font-size: 12px; line-height: 1.45; }
+.sm-ts-verdict.sm-ts-reject { border-left-color: #2e7d32; }
+.sm-ts-verdict.sm-ts-accept { border-left-color: #8a6d00; }
+.sm-ts-verdict.sm-ts-inconclusive { border-left-color: #b0413e; }
+:root[data-theme="dark"] .sm-ts-verdict.sm-ts-reject { border-left-color: #66bb6a; }
+:root[data-theme="dark"] .sm-ts-verdict.sm-ts-accept { border-left-color: #d6b43a; }
+:root[data-theme="dark"] .sm-ts-verdict.sm-ts-inconclusive { border-left-color: #ff8a7a; }
 
 @media (max-width: 760px) {
   .sm-rt.sm-ts-corr td.sm-ts-barcell svg { width: 96px; }

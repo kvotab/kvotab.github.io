@@ -8,7 +8,20 @@ directly and against published values:
   ETS forecast variances of Hyndman et al. (2008, Table 6.1), and the ARIMA
   fits of the sunspot numbers in statsmodels' documentation ("Autoregressive
   Moving Average (ARMA): Sunspots data"), with the data read from
-  statsmodels.datasets at run time.
+  statsmodels.datasets at run time;
+
+  and for what JMP does not have: Durbin and Koopman's (2012) local level
+  model of the Nile, KFAS's structural models of US unemployment (bundled
+  with statsmodels' tests), Hamilton's (1989) Markov switching model of US
+  GNP as E-views estimates it, Stata's switching mean of the fed funds rate
+  (its smoothed probabilities and predictions), the Hodrick-Prescott filter
+  by its closed form, the Baxter-King weights and Christiano and
+  Fitzgerald's formula, statsmodels' month_plot and quarter_plot drawings,
+  the theta method's IMA(1, 1) forecast variance (against SARIMAX) and
+  Hyndman and Billah's drift, Zivot and Andrews' (1992) real GNP break and
+  critical values, statsmodels' ARDL example (Danish money demand: the
+  selected order, the UECM, the cointegrating vector, the bounds tests) and
+  the bounds of Pesaran, Shin and Smith (2001, Table CI(iii)).
 
 The other series are simulated here from a fixed seed.
 
@@ -399,6 +412,463 @@ check('the code sets the excluded rows missing', ns.get('error') or bool(np.isna
 gap_csv = pd.DataFrame({'month': [pd.Timestamp(months[k], unit='ms').strftime('%Y-%m-%d') for k in keep], 'sales': [y[k] for k in keep]})
 ns = run_code(r3['code'], gap_csv)
 check('the code inserts the missing months', ns.get('error') or (len(ns['y']), bool(np.isnan(ns['y'].iloc[41]))), (120, True))
+
+# ==== beyond JMP: structural models, regime switching, filters, the subseries plot, theta, Zivot-Andrews, ARDL ====
+from scipy import stats as sstats
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+from statsmodels.tsa.regime_switching.markov_autoregression import MarkovAutoregression
+from statsmodels.tsa.filters.hp_filter import hpfilter
+from statsmodels.tsa.filters.bk_filter import bkfilter
+from statsmodels.tsa.filters.cf_filter import cffilter
+from statsmodels.tsa.forecasting.theta import ThetaModel
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.stattools import zivot_andrews
+from statsmodels.tsa.ardl import ARDL, UECM, ardl_select_order
+from statsmodels.tsa.ardl import pss_critical_values as PSS
+FIT = dict(method='lbfgs', maxiter=200, pgtol=1e-7, factr=1e4, disp=False)
+
+
+def near_all(label, got, want, rel=1e-9, abs_=0.0):
+    got = np.array([np.nan if v is None else v for v in got], dtype=float)
+    want = np.asarray(want, dtype=float)
+    ok = got.shape == want.shape and bool(np.all(np.isfinite(got) == np.isfinite(want))) and \
+        bool(np.all(np.abs(got - want)[np.isfinite(want)] <= np.maximum(abs_, rel * np.maximum(1.0, np.abs(want[np.isfinite(want)])))))
+    worst = float(np.nanmax(np.abs(got - want))) if got.shape == want.shape and np.isfinite(got - want).any() else None
+    check(f'{label}' + ('' if ok else f' (largest difference {worst})'), ok, True)
+
+
+def year_table(years, values, name='y'):
+    return table({'year': [float(v) for v in years], name: [float(v) for v in values]})
+
+
+# ---- Structural Model: Durbin and Koopman's Nile local level, KFAS, statsmodels directly ------------------------
+nile = sm.datasets.nile.load_pandas().data
+tid_nile = year_table(nile['year'], nile['volume'], 'volume')
+un = call('timeseries.structural', table=tid_nile, y='volume', time='year', trend='local level', exact=True, h=5)
+check('Structural Model: no error', un.get('error'), None)
+check("Structural Model: the name joins the components as statsmodels' summary does", un['name'], 'Structural: local level')
+pn = {p['sm']: p['estimate'] for p in un['params']['rows']}
+# Durbin and Koopman (2012), section 2.10: the maximum likelihood estimates for the Nile, with the
+# exact diffuse initialization; R's StructTS(Nile, "level") gives the same (epsilon 15099, level 1469)
+check.near('Nile local level: irregular variance 15099 (Durbin and Koopman 2012)', pn['sigma2.irregular'], 15099.0, rel=2e-4)
+check.near('Nile local level: level variance 1469.1 (Durbin and Koopman 2012)', pn['sigma2.level'], 1469.1, rel=5e-4)
+check.near('... the diffuse log-likelihood in KFAS\'s convention, -632.55 (the constant of the diffuse period left out)',
+           -un['stats']['m2ll'] / 2 + 0.5 * math.log(2 * math.pi), -632.5456, abs_=5e-4)
+ref_n = UnobservedComponents(nile['volume'].to_numpy(), level='local level', use_exact_diffuse=True).fit(**FIT)
+near_all('Nile: the estimates are UnobservedComponents\' (exact diffuse)', [pn['sigma2.irregular'], pn['sigma2.level']], ref_n.params, rel=1e-8)
+check.near('Nile: -2LogLikelihood = -2 llf', un['stats']['m2ll'], -2 * ref_n.llf, rel=1e-10)
+check('Nile: the forecast years continue the Time ID', un['forecast']['t'][:2], [1971.0, 1972.0])
+fcn = ref_n.get_forecast(5)
+near_all('Nile: forecasts and prediction limits are get_forecast\'s', un['forecast']['mean'] + un['forecast']['lower'],
+         list(fcn.predicted_mean) + list(fcn.conf_int(alpha=0.05)[:, 0]), rel=1e-8)
+lev = [c for c in un['components'] if c['key'] == 'level'][0]
+near_all('Nile: the smoothed level and its band are statsmodels\' (res.level.smoothed, smoothed_cov)', lev['mean'] + lev['upper'],
+         list(ref_n.level.smoothed) + list(ref_n.level.smoothed + 1.959963984540054 * np.sqrt(ref_n.level.smoothed_cov)), rel=1e-7)
+irr = [c for c in un['components'] if c['key'] == 'irregular'][0]
+near_all('Nile: the irregular is the smoothed measurement disturbance', irr['mean'], ref_n.smoother_results.smoothed_measurement_disturbance[0], rel=1e-7, abs_=1e-6)
+check('Nile: k leaves the scale out (statsmodels counts the 2 variances and the diffuse state)', (un['stats']['k'], un['sm']['df_model']), (2, 3))
+check.near("Nile: AIC = statsmodels' AIC - 2", un['stats']['aic'], ref_n.aic - 2, rel=1e-10)
+ua = call('timeseries.structural', table=tid_nile, y='volume', time='year', trend='local level', h=0)
+ref_a = UnobservedComponents(nile['volume'].to_numpy(), level='local level').fit(**FIT)
+near_all('Nile, approximate diffuse (statsmodels\' default): the estimates', [p['estimate'] for p in ua['params']['rows']], ref_a.params, rel=1e-8)
+check('... the first observation is left out of the likelihood and of the fit statistics', (ua['burn'], ua['stats']['n'], ua['fitted'][0]), (1, 99, None))
+
+# KFAS on the US unemployment rate, as bundled with statsmodels' tests (results_structural.py)
+try:
+    from statsmodels.tsa.statespace.tests.results import results_structural as KFAS
+except Exception:  # noqa: BLE001 - a statsmodels install without its tests
+    KFAS = None
+macro = sm.datasets.macrodata.load_pandas().data
+qdates = pd.date_range('1959-01-01', periods=len(macro), freq='QS')
+tid_macro = date_table({'quarter': [ms(t) for t in qdates], 'unemp': macro['unemp'].tolist(), 'realgdp': np.log(macro['realgdp']).tolist()}, ('quarter',))
+if KFAS is None:
+    print('  (statsmodels\' test results are not installed: the KFAS checks are skipped)')
+else:
+    for spec_name, kw in [('local_linear_trend', {'trend': 'local linear trend'}), ('smooth_trend', {'trend': 'smooth trend'}),
+                          ('random_walk_with_drift', {'trend': 'random walk with drift'})]:
+        true = getattr(KFAS, spec_name)
+        rk = call('timeseries.structural', table=tid_macro, y='unemp', time='quarter', h=0, **kw)
+        # statsmodels' own test: a likelihood at least KFAS's, and within 1e-4 of it
+        llk = -rk['stats']['m2ll'] / 2
+        check(f'US unemployment {kw["trend"]}: the log-likelihood reaches KFAS\'s {true["llf"]:.6f}', llk >= true['llf'] - 1e-4 * abs(true['llf']), True)
+        check.near(f'... and is within 1e-4 of it', llk, true['llf'], rel=1e-4)
+# a basic structural model with an input, statsmodels called directly on the same date-indexed series
+rb_ = call('timeseries.structural', table=tid, y='sales', time='month', trend='local linear trend', seasonal=12, inputs=['promotion'], h=6)
+ys = pd.Series(y, index=pd.date_range('2016-01-01', periods=n, freq='MS'))
+Xs = pd.DataFrame({'promotion': promo}, index=ys.index)
+ref_b = UnobservedComponents(ys, level='local linear trend', seasonal=12, stochastic_seasonal=True, exog=Xs).fit(**FIT)
+near_all('BSM with an input: the estimates are UnobservedComponents\'', [p['estimate'] for p in rb_['params']['rows']], ref_b.params, rel=1e-6, abs_=1e-9)
+check('... the names', [p['term'] for p in rb_['params']['rows']], ['Irregular Variance (σ²ε)', 'Level Variance (σ²η)', 'Slope Variance (σ²ζ)', 'Seasonal Variance (σ²ω)', 'promotion'])
+check.near('... the promotion effect is near the simulated 9', [p['estimate'] for p in rb_['params']['rows'] if p['term'] == 'promotion'][0], 9.0, abs_=2.0)
+fcb = ref_b.get_forecast(6, exog=np.zeros((6, 1)))
+near_all('... forecasts with the promotion held at its last value (0)', rb_['forecast']['mean'], fcb.predicted_mean, rel=1e-6)
+check('... the components: level, trend, seasonal, regression, irregular', [c['key'] for c in rb_['components']], ['level', 'trend', 'seasonal', 'regression', 'irregular'])
+reg = [c for c in rb_['components'] if c['key'] == 'regression'][0]
+near_all('... the regression effect is promotion × β', reg['mean'], np.array(promo) * ref_b.params['beta.promotion'], rel=1e-9, abs_=1e-9)
+comp_sum = sum(np.array([np.nan if v is None else v for v in c['mean']]) for c in rb_['components'] if c['key'] in ('level', 'seasonal', 'regression', 'irregular'))
+check('... level + seasonal + regression + irregular add up to the series (the smoothed parts)', bool(np.allclose(comp_sum, y, atol=1e-6)), True)
+check('... the one-step residuals are statsmodels\'', bool(np.allclose([v for v in rb_['resid'][13:]], (ys - ref_b.fittedvalues).to_numpy()[13:], rtol=1e-6, atol=1e-6)), True)
+# the cycle: statsmodels' default bounds from the frequency (1.5 to 12 years), or the dialog's
+rcy = call('timeseries.structural', table=tid_macro, y='unemp', time='quarter', trend='local level', cycle=True, h=0)
+check('Cycle: statsmodels\' default period bounds for quarterly data, 6 to 48 quarters', rcy['cycle_bounds'], [6.0, 48.0])
+ref_c = UnobservedComponents(pd.Series(macro['unemp'].to_numpy(), index=qdates), level='local level', cycle=True, stochastic_cycle=True, damped_cycle=True).fit(**FIT)
+check.near('Cycle: the likelihood is UnobservedComponents\'', rcy['stats']['m2ll'], -2 * ref_c.llf, rel=1e-8)
+per = [s_[1] for s_ in rcy['summary'] if s_[0] == 'Cycle Period (2π/λ)'][0]
+check('... its period 2π/λ lies within the bounds', 6.0 <= per <= 48.0, True)
+rcy2 = call('timeseries.structural', table=tid_macro, y='unemp', time='quarter', trend='local level', cycle=True, cycle_lo=8, cycle_hi=40, h=0)
+check('Cycle: bounds from the dialog', rcy2['cycle_bounds'], [8.0, 40.0])
+rtr = call('timeseries.structural', table=tid, y='sales', time='month', trend='local level', freq_period=12, freq_harmonics=2, ar=1, h=0)
+check('Trigonometric seasonal and AR part: statsmodels\' parameter names', [p['sm'] for p in rtr['params']['rows']],
+      ['sigma2.irregular', 'sigma2.level', 'sigma2.freq_seasonal_12(2)', 'sigma2.ar', 'ar.L1'])
+rex = call('timeseries.structural', table=tid, y='sales', time='month', trend='local level', seasonal=12, excluded=[40], h=0)
+check('Excluded rows are missing values the Kalman filter skips', (rex.get('error'), rex['resid'][40], rex['stats']['n']), (None, None, 120 - 12 - 1))
+check('too short a series for the model is an error', 'error' in call('timeseries.structural', table=tid, y='sales', rows=list(range(10)), trend='local linear trend', seasonal=12), True)
+
+# ---- Regime Switching: Hamilton (1989), Stata's fed funds, statsmodels directly -------------------------------------
+try:
+    from statsmodels.tsa.regime_switching.tests.test_markov_autoregression import hamilton_ar4_smoothed, rgnp as RGNP
+    from statsmodels.tsa.regime_switching.tests.test_markov_regression import fedfunds as FEDFUNDS
+except Exception:  # noqa: BLE001
+    RGNP = None
+if RGNP is None:
+    print('  (statsmodels\' test data are not installed: the Hamilton and fed funds checks are skipped)')
+else:
+    qd = pd.date_range('1951-04-01', periods=len(RGNP), freq='QS')
+    tid_h = date_table({'quarter': [ms(t) for t in qd], 'rgnp': list(RGNP)}, ('quarter',))
+    mh = call('timeseries.markov', table=tid_h, y='rgnp', time='quarter', k=2, order=4, switching_ar=False, starts=5)
+    check('Hamilton: no error', mh.get('error'), None)
+    ph = {p['sm']: p['estimate'] for p in mh['params']['rows']}
+    # Hamilton (1989), as E-views estimates it (statsmodels' test_markov_autoregression)
+    HAM = {'p[0->0]': 0.754673, 'p[1->0]': 0.095915, 'const[0]': -0.358811, 'const[1]': 1.163516, 'sigma2': math.exp(-0.262658) ** 2,
+           'ar.L1': 0.013486, 'ar.L2': -0.057521, 'ar.L3': -0.246983, 'ar.L4': -0.212923}
+    for k_, v in HAM.items():
+        check.near(f'Hamilton (1989) MS-AR(4): {k_}', ph[k_], v, rel=5e-4, abs_=2e-5)
+    check.near('Hamilton: log-likelihood -181.26339', -mh['stats']['m2ll'] / 2, -181.26339, abs_=1e-4)
+    dur = {r_['regime']: r_['duration'] for r_ in mh['regimes']}
+    check.near('Hamilton: a recession lasts 1/(1 − p00) = 4.1 quarters', dur['Regime 0'], 1 / (1 - HAM['p[0->0]']), rel=1e-3)
+    check.near('... an expansion 1/p10 = 10.4 quarters', dur['Regime 1'], 1 / HAM['p[1->0]'], rel=1e-3)
+    near_all('Hamilton: the smoothed expansion probabilities are E-views\' (Kim smoother)', mh['prob'][1][4:], hamilton_ar4_smoothed, abs_=2e-4)
+    check('... the first 4 quarters have no probability (the lags\' starting values)', mh['prob'][1][:4], [None] * 4)
+    tm = {row['from']: [row['r0'], row['r1']] for row in mh['transition']}
+    check.near('Transition Probabilities: from regime 1 to regime 0 is p10', tm['Regime 1'][0], HAM['p[1->0]'], rel=5e-4)
+    check('... each row sums to 1', all(abs(sum(v) - 1) < 1e-12 for v in tm.values()), True)
+    check('the Starts table: statsmodels\' default, the quantiles and 5 random starts, one best', (len(mh['starts']), sum(1 for s_ in mh['starts'] if s_['best'])), (7, 1))
+    tid_f = table({'fedfunds': list(FEDFUNDS)})
+    mf = call('timeseries.markov', table=tid_f, y='fedfunds', k=2, order=0, starts=3)
+    pf = {p['sm']: p['estimate'] for p in mf['params']['rows']}
+    # Stata's mswitch dr (Stata manual [TS] mswitch; statsmodels' test_markov_regression)
+    STATA = {'p[0->0]': 0.9820939, 'p[1->0]': 0.0503587, 'const[0]': 3.70877, 'const[1]': 9.556793, 'sigma2': 2.107562 ** 2}
+    for k_, v in STATA.items():
+        check.near(f'Fed funds switching mean: {k_} as Stata', pf[k_], v, rel=2e-4)
+    check.near('Fed funds: log-likelihood -508.63592 as Stata', -mf['stats']['m2ll'] / 2, -508.63592, abs_=1e-4)
+    stata = pd.read_csv(os.path.join(os.path.dirname(sm.__file__), 'tsa', 'regime_switching', 'tests', 'results', 'results_predict_fedfunds.csv'))
+    near_all('Fed funds: the smoothed probabilities are Stata\'s', mf['prob'][0], stata['const_sm1'], abs_=1e-5)
+    near_all("Fed funds: the one-step predictions are Stata's predicted values (pyhat), at estimates equal to 5 digits", mf['fitted'], stata['const_pyhat'], abs_=5e-4)
+    # the code shown reproduces the fit (the same starts, the same seed)
+    ns = run_code(mh['code'], pd.DataFrame({'quarter': [t.strftime('%Y-%m-%d') for t in qd], 'rgnp': list(RGNP)}))
+    check('the Hamilton code gives the same fit', ns.get('error') or bool(np.isclose(ns['res'].llf, -mh['stats']['m2ll'] / 2, rtol=1e-9)), True)
+# the example's growth series: the quantile start finds the regimes statsmodels' own start misses
+g_rng = np.random.default_rng(4)
+st_, g0, gs = 0, 0.8, []
+for t_ in range(184):
+    if t_ and g_rng.uniform() > (0.95, 0.75)[st_]:
+        st_ = 1 - st_
+    g0 = (0.8, -0.6)[st_] + 0.3 * (g0 - (0.8, -0.6)[st_]) + g_rng.normal(0, 0.6)
+    gs.append(g0)
+tid_g = table({'growth': gs})
+mg = call('timeseries.markov', table=tid_g, y='growth', k=2, order=1, switching_ar=False, starts=5)
+mod_g = MarkovAutoregression(np.array(gs), k_regimes=2, order=1, switching_ar=False)
+p_default = mod_g.fit(return_params=True)
+check('simulated regimes: the best start is at least as good as statsmodels\' default', -mg['stats']['m2ll'] / 2 >= mod_g.loglike(p_default) - 1e-6, True)
+pg = {p['sm']: p['estimate'] for p in mg['params']['rows']}
+check('... and finds two regimes near the simulated means 0.8 and -0.6', abs(max(pg['const[0]'], pg['const[1]']) - 0.8) < 0.35 and abs(min(pg['const[0]'], pg['const[1]']) + 0.6) < 0.45, True)
+res_g = mod_g.smooth(np.array([pg[nm] for nm in mod_g.param_names]), cov_type='approx')
+near_all('... its smoothed probabilities are MarkovAutoregression.smooth\'s at those estimates', mg['prob'][0][1:], res_g.smoothed_marginal_probabilities[:, 0], abs_=1e-10)
+near_all('... its one-step predictions are predict(probabilities="predicted")', mg['fitted'][1:], res_g.predict(probabilities='predicted'), rel=1e-9)
+check('nothing switching is an error', 'error' in call('timeseries.markov', table=tid_g, y='growth', k=2, trend='n', switching_trend=False, switching_variance=False), True)
+m3 = call('timeseries.markov', table=tid_g, y='growth', k=3, switching_variance=True, starts=2)
+check('three regimes with switching variances: a 3 × 3 transition matrix, three variances', (len(m3['transition']), sum(1 for p in m3['params']['rows'] if p['sm'].startswith('sigma2'))), (3, 3))
+mod3 = MarkovRegression(np.array(gs), k_regimes=3, switching_variance=True)
+p3 = np.array([{p['sm']: p['estimate'] for p in m3['params']['rows']}[nm] for nm in mod3.param_names])
+check.near('... the log-likelihood at its estimates is MarkovRegression\'s', -m3['stats']['m2ll'] / 2, float(mod3.loglike(p3)), rel=1e-10)
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    ll3_default = float(mod3.loglike(mod3.fit(return_params=True)))
+check('... and at least that of statsmodels\' default start', -m3['stats']['m2ll'] / 2 >= ll3_default - 1e-6, True)
+check('... statsmodels does not forecast Markov switching models', m3['forecast']['t'], [])
+
+# ---- Filters: the Hodrick-Prescott closed form, the Baxter-King weights, Christiano-Fitzgerald's formula ----------------
+fh = call('timeseries.filter', table=tid, y='sales', time='month', method='hp')
+check('HP: monthly data take λ = 129600 (Ravn and Uhlig: 1600 × 3⁴)', fh['lamb'], 129600.0)
+K2 = np.zeros((n - 2, n))
+for i in range(n - 2):
+    K2[i, i:i + 3] = [1, -2, 1]
+tau = np.linalg.solve(np.eye(n) + 129600 * K2.T @ K2, y)
+near_all('HP: the trend is the closed form (I + λK\'K)⁻¹y', fh['trend'], tau, rel=1e-8)
+near_all('HP: the cycle is y − trend, as hpfilter', fh['cycle'], hpfilter(y, 129600)[0], rel=1e-9, abs_=1e-9)
+lam_q = call('timeseries.filter', table=tid_macro, y='unemp', time='quarter', method='hp')['lamb']
+lam_y = call('timeseries.filter', table=tid_nile, y='volume', time='year', method='hp')['lamb']
+yr_dates = date_table({'yr': [ms(f'{1900 + i}-01-01') for i in range(40)], 'v': list(np.cumsum(np.random.default_rng(2).normal(size=40)))}, ('yr',))
+lam_a = call('timeseries.filter', table=yr_dates, y='v', time='yr', method='hp')['lamb']
+check('HP λ: 1600 quarterly, 6.25 for yearly dates, statsmodels\' 1600 for a numeric Time ID', (lam_q, lam_a, lam_y), (1600.0, 6.25, 1600.0))
+fb = call('timeseries.filter', table=tid_macro, y='realgdp', time='quarter', method='bk')
+lgdp = np.log(macro['realgdp'].to_numpy())
+a_, b_ = 2 * np.pi / 32, 2 * np.pi / 6
+jj = np.arange(1, 13)
+wts = np.r_[(b_ - a_) / np.pi, (np.sin(b_ * jj) - np.sin(a_ * jj)) / (np.pi * jj)]
+wts = wts - (wts[0] + 2 * wts[1:].sum()) / 25      # Baxter and King: the weights shifted to sum to zero
+w_full = np.r_[wts[::-1], wts[1:]]
+bk_hand = np.convolve(lgdp, w_full, mode='valid')
+check('BK: the quarterly defaults are the band 6 to 32 quarters and K = 12', (fb['low'], fb['high'], fb['K']), (6.0, 32.0, 12))
+near_all('BK: the cycle is the moving average of Baxter and King\'s weights', fb['cycle'][12:-12], bk_hand, rel=1e-9, abs_=1e-12)
+near_all('... which is bkfilter', fb['cycle'][12:-12], bkfilter(lgdp, 6, 32, 12), rel=1e-12, abs_=1e-14)
+check('... and K values are lost at each end', (fb['cycle'][:12], fb['cycle'][-12:], fb['cycle_n']), ([None] * 12, [None] * 12, len(lgdp) - 24))
+fc_ = call('timeseries.filter', table=tid_macro, y='realgdp', time='quarter', method='cf')
+
+
+def cf_by_hand(x, low, high):
+    """Christiano and Fitzgerald (2003) for a random walk: the drift x[0] + t (x[-1] - x[0])/(T - 1)
+    removed, then c_t = B0 x_t + sum B_j x_t+j over the sample, with the end weights ~B = -B0/2 - sum B_j."""
+    T = len(x)
+    x = x - (x[-1] - x[0]) / (T - 1) * np.arange(T)
+    a, b = 2 * np.pi / high, 2 * np.pi / low
+    B = np.r_[(b - a) / np.pi, [(np.sin(b * j) - np.sin(a * j)) / (np.pi * j) for j in range(1, T)]]
+    out = np.empty(T)
+    for t in range(T):
+        f, bk = T - 1 - t, t                     # values after and before t
+        wts_ = np.zeros(T)
+        wts_[t] += B[0]
+        for j in range(1, f):
+            wts_[t + j] += B[j]
+        for j in range(1, bk):
+            wts_[t - j] += B[j]
+        wts_[T - 1] += -0.5 * B[0] - B[1:f].sum()   # the end weights (on x_t itself at the ends)
+        wts_[0] += -0.5 * B[0] - B[1:bk].sum()
+        out[t] = wts_ @ x
+    return out
+
+
+near_all('CF: the cycle is Christiano and Fitzgerald\'s random-walk filter (by hand)', fc_['cycle'], cf_by_hand(lgdp, 6, 32), rel=1e-8, abs_=1e-10)
+near_all('... which is cffilter', fc_['cycle'], cffilter(lgdp, 6, 32, True)[0], rel=1e-12, abs_=1e-14)
+check('... no value is lost', fc_['cycle_n'], len(lgdp))
+fcm = call('timeseries.filter', table=tid, y='sales', time='month', method='cf', excluded=[5])
+check('a missing value: filled for the filter, the cycle missing there', (fcm['cycle'][5], fcm['trend'][5] is not None), (None, True))
+check('the band must have its shorter period below the longer', 'error' in call('timeseries.filter', table=tid, y='sales', method='bk', low=20, high=10), True)
+
+# ---- Seasonal Subseries Plot: statsmodels' month_plot, quarter_plot and seasonal_plot ------------------------------------
+ss_ = call('timeseries.subseries', table=tid, y='sales', time='month', period=12)
+check('Subseries: monthly dates are grouped by calendar month', (ss_['by'], [s_['label'] for s_ in ss_['seasons']][:3]), ('month', ['Jan', 'Feb', 'Mar']))
+near_all('... each month\'s mean is the groupby mean', [s_['mean'] for s_ in ss_['seasons']], ys.groupby(ys.index.month).mean(), rel=1e-12)
+check('... ten Januaries, the January rows 0, 12, 24 …', (ss_['seasons'][0]['n'], ss_['seasons'][0]['rows'][:3]), (10, [0, 12, 24]))
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    from statsmodels.graphics.tsaplots import month_plot, quarter_plot
+except Exception:  # noqa: BLE001
+    month_plot = None
+if month_plot is None:
+    print('  (matplotlib is not installed: the month_plot drawing checks are skipped)')
+else:
+    ax = month_plot(ys).axes[0]
+    lines = ax.get_lines()[:12]
+    check('... the positions are month_plot\'s, block by block', all(list(ln.get_xdata()) == s_['x'] for ln, s_ in zip(lines, ss_['seasons'])), True)
+    check('... and so are the values', all(np.allclose(ln.get_ydata(), s_['values']) for ln, s_ in zip(lines, ss_['seasons'])), True)
+    check('... and the mean lines', all(np.isclose(c_.get_segments()[0][0][1], s_['mean']) for c_, s_ in zip(ax.collections[:12], ss_['seasons'])), True)
+    sq = call('timeseries.subseries', table=tid_macro, y='unemp', time='quarter', period=4)
+    qs = pd.Series(macro['unemp'].to_numpy(), index=qdates)
+    axq = quarter_plot(qs).axes[0]
+    check('Subseries: quarterly dates by quarter, the positions and means of quarter_plot', (sq['by'], [s_['label'] for s_ in sq['seasons']],
+          all(list(ln.get_xdata()) == s_['x'] for ln, s_ in zip(axq.get_lines()[:4], sq['seasons'])),
+          all(np.isclose(c_.get_segments()[0][0][1], s_['mean']) for c_, s_ in zip(axq.collections[:4], sq['seasons']))), ('quarter', ['Q1', 'Q2', 'Q3', 'Q4'], True, True))
+sp_ = call('timeseries.subseries', table=table({'v': list(range(1, 22))}), y='v', period=5)
+check('Subseries: with no dates, the position in the period from the first value', (sp_['by'], sp_['seasons'][1]['values'][:3], sp_['seasons'][0]['x']), ('position', [2.0, 7.0, 12.0], [0, 1, 2, 3, 4]))
+sm_ = call('timeseries.subseries', table=tid, y='sales', time='month', period=12, excluded=[0])
+check('a missing value: the mean of the values present (statsmodels\' seasonal_plot would draw none)', (sm_['seasons'][0]['n'], round(sm_['seasons'][0]['mean'], 9)),
+      (9, round(float(np.mean(y[12::12])), 9)))
+
+# ---- Theta Model: ThetaModel directly, the IMA(1, 1) forecast variance, Hyndman and Billah ---------------------------------
+th = call('timeseries.theta', table=tid, y='sales', time='month', period=12, h=12)
+ref_t = ThetaModel(y, period=12).fit()
+check.near('Theta: b0 is ThetaModel\'s', th['b0'], float(ref_t.params['b0']), rel=1e-12)
+check.near('Theta: alpha is ThetaModel\'s', th['alpha'], float(ref_t.params['alpha']), rel=1e-12)
+near_all('Theta: the forecasts are ThetaModel.forecast(12, theta=2)', th['forecast']['mean'], ref_t.forecast(12, theta=2), rel=1e-12)
+pis = ref_t.prediction_intervals(12, theta=2, alpha=0.05)
+near_all("... statsmodels' own prediction intervals are kept too", th['forecast']['sm_lower'], pis['lower'], rel=1e-12)
+al_, s2_ = float(ref_t.params['alpha']), float(ref_t.sigma2)
+near_all('... the report\'s interval is σ√(1 + (h − 1)α²), the IMA(1, 1)\'s', th['forecast']['upper'],
+         ref_t.forecast(12) + 1.959963984540054 * np.sqrt(s2_ * (1 + np.arange(12) * al_ ** 2)), rel=1e-12)
+check('... the seasonality test found the season and deseasonalized multiplicatively', (th['seasonal_found'], th['method']), (True, 'mul'))
+seas_ = np.asarray(seasonal_decompose(y, model='multiplicative', period=12).seasonal[:12])
+fit_T = ((1 - 1 / 2) * th['b0'] * (1 / al_ - (1 - al_) ** n / al_) + th['one_step']) * seas_[n % 12]
+check.near('the in-sample recursion, carried to the last origin, is ThetaModel\'s one-step forecast', fit_T, float(ref_t.forecast(1).iloc[0]), rel=1e-10)
+th3 = call('timeseries.theta', table=tid, y='sales', time='month', period=12, theta=3, h=4)
+near_all('θ = 3: forecast(theta=3)', th3['forecast']['mean'], ref_t.forecast(4, theta=3), rel=1e-12)
+# non-seasonal: an IMA(1, 1) with drift by MLE, SARIMAX's forecast variance, Hyndman and Billah's drift
+ima_rng = np.random.default_rng(3)
+eps = ima_rng.normal(0, 1, 301)
+xi = np.cumsum(0.1 + eps[1:] - 0.6 * eps[:-1]) + 50
+tid_i = table({'x': list(xi)})
+tm_ = call('timeseries.theta', table=tid_i, y='x', period=0, use_mle=True, h=6)
+ref_m = ThetaModel(xi, deseasonalize=False).fit(use_mle=True)
+near_all('Theta by MLE: the forecasts are ThetaModel\'s', tm_['forecast']['mean'], ref_m.forecast(6), rel=1e-10)
+sx = SARIMAX(xi, order=(0, 1, 1), trend='c').fit(disp=False)
+near_all("... the report's forecast standard errors are the IMA(1, 1) with drift's (SARIMAX)", tm_['forecast']['se'], sx.get_forecast(6).se_mean, rel=1e-6)
+ratio = (tm_['forecast']['sm_upper'][5] - tm_['forecast']['mean'][5]) / (tm_['forecast']['upper'][5] - tm_['forecast']['mean'][5])
+a_m = tm_['alpha']
+check.near("... statsmodels 0.14.6's prediction_intervals are wider, by √((1 + 5(1 + (α − 1)²))/(1 + 5α²)) at h = 6", ratio,
+           math.sqrt((1 + 5 * (1 + (a_m - 1) ** 2)) / (1 + 5 * a_m ** 2)), rel=1e-10)
+tn = call('timeseries.theta', table=tid_i, y='x', period=0, h=6)
+dd = np.diff(tn['forecast']['mean'])
+check('θ = 2 is simple exponential smoothing with drift b0/2 (Hyndman and Billah 2003)', bool(np.allclose(dd, tn['b0'] / 2, rtol=1e-10)), True)
+check('θ below 1 is an error', 'error' in call('timeseries.theta', table=tid_i, y='x', theta=0.5), True)
+
+# ---- Zivot-Andrews: Nelson and Plosser's real GNP (Zivot and Andrews 1992), statsmodels directly ---------------------------
+za_file = os.path.join(os.path.dirname(sm.__file__), 'tsa', 'tests', 'results', 'rgnp.csv')
+if not os.path.exists(za_file):
+    print('  (statsmodels\' test data are not installed: the real GNP checks are skipped)')
+else:
+    gnp = pd.read_csv(za_file).iloc[:, 0].to_numpy(dtype=float)
+    tid_z = year_table(range(1909, 1909 + len(gnp)), gnp, 'rgnp')
+    za = call('timeseries.zivot', table=tid_z, y='rgnp', time='year', maxlag=8, autolag=None)
+    zc = {t_['regression']: t_ for t_ in za['tests']}
+    # Zivot and Andrews (1992), Table 4: real GNP, a break in the intercept, k = 8: t = -5.58 with the break in 1929
+    check.near('Zivot-Andrews: real GNP, a break in the intercept, t = -5.58 (Zivot and Andrews 1992)', zc['c']['stat'], -5.58, abs_=0.006)
+    check('... the break: 1929, the Great Crash', zc['c']['break'], 1929.0)
+    check.near("... R's urca ur.za: -5.57615, p 0.00312 (statsmodels' test)", zc['c']['stat'], -5.57615, rel=1e-4)
+    check.near('... the p-value', zc['c']['p'], 0.00312, rel=2e-3)
+ZA92 = {'c': (-5.34, -4.80, -4.58), 't': (-4.93, -4.42, -4.11), 'ct': (-5.57, -5.08, -4.82)}   # Zivot and Andrews (1992), Tables 2-4
+brk_rng = np.random.default_rng(11)
+u_ = np.zeros(150)
+for t_ in range(1, 150):
+    u_[t_] = 0.5 * u_[t_ - 1] + brk_rng.normal(0, 0.5)
+zb = u_ + np.where(np.arange(150) > 89, 3.0, 0.0) + 0.02 * np.arange(150)
+zb[[20, 21]] = np.nan
+tid_zb = table({'x': list(zb)})
+zr = call('timeseries.zivot', table=tid_zb, y='x')
+v_ok = zb[np.isfinite(zb)]
+pos_ok = np.flatnonzero(np.isfinite(zb))
+for t_ in zr['tests']:
+    ref_z = zivot_andrews(v_ok, trim=0.15, maxlag=None, regression=t_['regression'], autolag='AIC')
+    check.near(f'Zivot-Andrews ({t_["regression"]}): the statistic is zivot_andrews\'', t_['stat'], float(ref_z[0]), rel=1e-12)
+    check(f'... the break maps back past the missing values to its slot', t_['break_slot'], int(pos_ok[ref_z[4]]))
+    for key, pub, tol in zip(('c1', 'c5', 'c10'), ZA92[t_['regression']], (0.11, 0.03, 0.03)):
+        check.near(f'... the {key[1:]}% critical value is near Zivot and Andrews\' {pub}', t_[key], pub, abs_=tol)
+zc_ = {t_['regression']: t_ for t_ in zr['tests']}
+check('the level shift after slot 89 is found (a break in the intercept, rejecting the unit root)', zc_['c']['break_slot'] in range(86, 93) and zc_['c']['p'] < 0.05, True)
+
+# ---- ARDL: statsmodels' Danish money demand example, the PSS (2001) tables, statsmodels directly --------------------------
+dan = sm.datasets.danish_data.load_pandas().data
+tid_d = date_table({'period': [ms(t) for t in dan.index], **{c: dan[c].tolist() for c in ('lrm', 'lry', 'ibo', 'ide')}}, ('period',))
+ad = call('timeseries.ardl', table=tid_d, y='lrm', time='period', inputs=['lry', 'ibo', 'ide'], maxlag=3, maxorder=3, ic='aic', trend='c', h=0)
+check('ARDL: no error', ad.get('error'), None)
+check("ARDL: the documented order ARDL(3, 1, 3, 2) (statsmodels' ARDL example)", ad['order'], [3, 1, 3, 2])
+ref_sel = ardl_select_order(dan.lrm, 3, dan[['lry', 'ibo', 'ide']], 3, ic='aic', trend='c')
+ref_ad = ref_sel.model.fit()
+pa = {p['sm']: p['estimate'] for p in ad['params']['rows']}
+near_all("ARDL(3, 1, 3, 2): the coefficients are ARDL's", [pa[k_] for k_ in ref_ad.params.index], ref_ad.params, rel=1e-10)
+check.near('... the documented intercept 2.6202', pa['const'], 2.6202, abs_=6e-5)
+DOC_UECM = {'const': 2.6202, 'lrm.L1': -0.4169, 'lry.L1': 0.4154, 'ibo.L1': -1.8917, 'ide.L1': 1.2053, 'D.lrm.L1': -0.2639, 'D.lrm.L2': 0.2687,
+            'D.lry.L0': 0.6728, 'D.ibo.L0': -1.0785, 'D.ibo.L1': 0.7070, 'D.ibo.L2': 0.9947, 'D.ide.L0': 0.1255, 'D.ide.L1': -1.4079}
+pe_ = {p['sm']: p['estimate'] for p in ad['ecm']}
+near_all('the error correction form: the documented UECM coefficients', [pe_[k_] for k_ in DOC_UECM], list(DOC_UECM.values()), abs_=6e-5)
+check.near('... the speed of adjustment is the coefficient of lrm(t-1), -0.4169', ad['speed'], -0.4169, abs_=6e-5)
+lrd = {r_['term']: r_ for r_ in ad['long_run']}
+DOC_CI = {'Intercept': (6.2857, 0.772), 'lry': (0.9965, 0.124), 'ibo': (-4.5381, 0.520), 'ide': (2.8915, 0.995)}   # minus the documented ci_summary()
+near_all('Long-run coefficients: minus the documented cointegrating vector', [lrd[k_]['estimate'] for k_ in DOC_CI], [v[0] for v in DOC_CI.values()], abs_=6e-5)
+near_all('... their standard errors', [lrd[k_]['se'] for k_ in DOC_CI], [v[1] for v in DOC_CI.values()], abs_=6e-4)
+ref_u = UECM.from_ardl(ref_sel.model).fit()
+near_all("... UECM's ci_params and ci_bse exactly", [lrd[k_]['estimate'] for k_ in ('Intercept', 'lry', 'ibo', 'ide')] + [lrd[k_]['se'] for k_ in ('Intercept', 'lry', 'ibo', 'ide')],
+         list(-ref_u.ci_params[['const', 'lry', 'ibo', 'ide']]) + list(ref_u.ci_bse[['const', 'lry', 'ibo', 'ide']]), rel=1e-10)
+near_all('... and the p-values (normal, as ci_pvalues)', [lrd[k_]['p'] for k_ in ('lry', 'ibo', 'ide')], ref_u.ci_pvalues[['lry', 'ibo', 'ide']], rel=1e-6, abs_=1e-12)
+# the documented bounds tests are of UECM(lrm, 3, [lry, ibo, ide], 3): an ARDL(3, 3, 3, 3)
+fixed = {'p': 3, 'q': {'lry': 3, 'ibo': 3, 'ide': 3}}
+b3 = call('timeseries.ardl', table=tid_d, y='lrm', time='period', inputs=['lry', 'ibo', 'ide'], order=fixed, trend='c', h=0)['bounds']
+b4 = call('timeseries.ardl', table=tid_d, y='lrm', time='period', inputs=['lry', 'ibo', 'ide'], order=fixed, trend='ct', h=0)['bounds']
+check.near('Bounds test, case 3: F = 5.99305 as documented', b3['stat'], 5.99305, abs_=6e-6)
+check.near('Bounds test, case 4: F = 5.07063 as documented', b4['stat'], 5.07063, abs_=6e-6)
+check.near("... statsmodels' own upper p-value 0.00205 as documented (its tables at k + 1)", b3['sm_p_upper'], 0.00205, abs_=6e-6)
+check.near("... and lower 0.000138", b3['sm_p_lower'], 0.000138, abs_=6e-7)
+sm4 = {r_['level']: r_ for r_ in b4['sm_crit']}
+check.near("... case 4: statsmodels' documented 5% bounds 3.069910 and 3.957893", sm4['5%']['lower'] + sm4['5%']['upper'], 3.069910 + 3.957893, abs_=2e-6)
+check("statsmodels 0.14.6's bounds_test reads its PSS tables at k + 1: the documented case-4 bounds are the tables' for 4 inputs",
+      (round(sm4['5%']['lower'], 5), round(sm4['5%']['upper'], 5)), (round(float(PSS.crit_vals[(4, 4, False)][1]), 5), round(float(PSS.crit_vals[(4, 4, True)][1]), 5)))
+check('... which are not those for the model\'s 3', abs(sm4['5%']['lower'] - float(PSS.crit_vals[(3, 4, False)][1])) > 0.2, True)
+c3 = {r_['level']: r_ for r_ in b3['crit']}
+check('... the report reads them at k = 3, the model\'s inputs', (b3['k'], round(c3['5%']['lower'], 6), round(c3['5%']['upper'], 6)),
+      (3, round(float(PSS.crit_vals[(3, 3, False)][1]), 6), round(float(PSS.crit_vals[(3, 3, True)][1]), 6)))
+from statsmodels.tsa.ardl.model import _pss_pvalue
+check.near('... with the p-value of statsmodels\' response surface at k = 3', b3['p_upper'], float(_pss_pvalue(b3['stat'], 3, 3, True)), rel=1e-12)
+check('Bounds test, case 3: F = 5.99 is above the 5% I(1) bound: a level relationship', b3['verdict'], 'reject')
+# Pesaran, Shin and Smith (2001), Table CI(iii), case III (unrestricted intercept, no trend): the F bounds at 10%, 5%, 1%
+PSS01 = {1: ((4.04, 4.78), (4.94, 5.73), (6.84, 7.84)), 2: ((3.17, 4.14), (3.79, 4.85), (5.15, 6.36)), 3: ((2.72, 3.77), (3.23, 4.35), (4.29, 5.61)),
+         4: ((2.45, 3.52), (2.86, 4.01), (3.74, 5.06)), 5: ((2.26, 3.35), (2.62, 3.79), (3.41, 4.68))}
+for k_, rows_pss in PSS01.items():
+    crit_k, _, _ = ts.pss_bounds(5.0, k_, 3)
+    got = {r_['level']: (r_['lower'], r_['upper']) for r_ in crit_k}
+    for level_, (lo_, hi_), tol in zip(('10%', '5%', '1%'), rows_pss, (0.04, 0.04, 0.07)):
+        check(f'PSS (2001) Table CI(iii), k = {k_}, {level_}: bounds {lo_} and {hi_}', abs(got[level_][0] - lo_) <= tol and abs(got[level_][1] - hi_) <= tol, True)
+# a simulated level relationship with future inputs: the bounds test finds it, forecasts continue with the future cost
+pr_rng = np.random.default_rng(7)
+cost_ = np.cumsum(0.2 + 0.8 * pr_rng.normal(size=184)) + 50
+price_ = np.zeros(176)
+price_[0] = 12.5 + 0.75 * cost_[0]
+for t_ in range(1, 176):
+    price_[t_] = 5 + 0.6 * price_[t_ - 1] + 0.5 * cost_[t_] - 0.2 * cost_[t_ - 1] + 0.5 * pr_rng.normal()
+qd2 = pd.date_range('1980-01-01', periods=184, freq='QS')
+tid_p = date_table({'quarter': [ms(t) for t in qd2], 'price': list(price_) + [None] * 8, 'cost': list(cost_)}, ('quarter',))
+ap = call('timeseries.ardl', table=tid_p, y='price', time='quarter', inputs=['cost'], maxlag=4, maxorder=4, h=8)
+check('simulated price on cost: ARDL chosen by AIC, no error', ap.get('error'), None)
+lrp = {r_['term']: r_['estimate'] for r_ in ap['long_run']}
+check.near('... the long-run cost coefficient near the simulated 0.75', lrp['cost'], 0.75, abs_=0.08)
+check('... the bounds test rejects no level relationship', (ap['bounds']['verdict'], ap['bounds']['k']), ('reject', 1))
+sel_p = ardl_select_order(pd.Series(price_, name='price'), 4, pd.DataFrame({'cost': cost_[:176]}), 4, ic='aic', trend='c')
+res_p = sel_p.model.fit()
+near_all('... the estimates are ardl_select_order\'s model\'s', [p['estimate'] for p in ap['params']['rows']], res_p.params, rel=1e-10)
+pp = res_p.get_prediction(start=176, end=183, exog_oos=pd.DataFrame({'cost': cost_[176:]})).summary_frame(alpha=0.05)
+near_all('... forecasts with the 8 future costs from the table (get_prediction with exog_oos)', ap['forecast']['mean'] + ap['forecast']['lower'], list(pp['mean']) + list(pp['mean_ci_lower']), rel=1e-10)
+check('... the forecast quarters continue the dates', (ap['forecast']['t'][0], ap['forecast']['t'][7]), (float(ms('2024-01-01')), float(ms('2025-10-01'))))
+check('... the future inputs are noted', any('future values come from the rows after' in s_ for s_ in ap['notes']), True)
+check('ARDL needs inputs', 'error' in call('timeseries.ardl', table=tid_p, y='price', inputs=[]), True)
+check('a bounds test case must go with the trend', 'error' in call('timeseries.ardl', table=tid_p, y='price', inputs=['cost'], trend='c', case=5), True)
+check('too wide a global search is refused', 'error' in call('timeseries.ardl', table=tid_d, y='lrm', inputs=['lry', 'ibo', 'ide'], maxlag=3, maxorder=3, glob=True), True)
+ag = call('timeseries.ardl', table=tid_d, y='lrm', time='period', inputs=['lry', 'ibo'], maxlag=2, maxorder=2, ic='bic', glob=True, h=0)
+ref_g = ardl_select_order(dan.lrm, 2, dan[['lry', 'ibo']], 2, ic='bic', glob=True, trend='c')
+check('a global search: the order is ardl_select_order(glob=True)\'s', (ag.get('error'), ag['order']), (None, list(ref_g.model.ardl_order)))
+check.near('... and its BIC is the best in the selection table', ag['selection'][0]['ic'], float(ref_g.bic.index[0]), rel=1e-12)
+
+# ---- the code under each new result runs on a CSV export and gives the same numbers ------------------------------------------
+ns = run_code(rb_['code'], csv)
+check('the structural model code gives the same fit and forecasts', ns.get('error') or (bool(np.isclose(-2 * ns['res'].llf, rb_['stats']['m2ll'], rtol=1e-9)),
+      bool(np.allclose(ns['res'].get_forecast(6, exog=ns['X_future']).predicted_mean, rb_['forecast']['mean'], rtol=1e-6))), (True, True))
+# (read_csv's fast float parser can change the last bit of a value, which moves an optimum on a flat likelihood by about 1e-7)
+nile_csv = pd.DataFrame({'year': nile['year'], 'volume': nile['volume']})
+ns = run_code(un['code'], nile_csv)
+check('the Nile code gives the same estimates', ns.get('error') or bool(np.allclose(ns['res'].params, [pn['sigma2.irregular'], pn['sigma2.level']], rtol=1e-9)), True)
+for label_, res_ in (('HP', fh), ('Theta', th), ('subseries', ss_)):
+    ns = run_code(res_['code'], csv)
+    check(f'the {label_} code runs', ns.get('error'), None)
+ns = run_code(fh['code'], csv)
+check('the HP code gives the same trend', ns.get('error') or bool(np.allclose(ns['trend'], fh['trend'], rtol=1e-10)), True)
+ns = run_code(th['code'], csv)
+check('the Theta code gives the same forecasts and the report\'s interval', ns.get('error') or (bool(np.allclose(ns['fc'], th['forecast']['mean'], rtol=1e-12)),
+      bool(np.allclose(ns['fc'] + ns['half'], th['forecast']['upper'], rtol=1e-6))), (True, True))
+macro_csv = pd.DataFrame({'quarter': [t.strftime('%Y-%m-%d') for t in qdates], 'unemp': macro['unemp'], 'realgdp': np.log(macro['realgdp'])})
+ns = run_code(fb['code'], macro_csv)
+check('the Baxter-King code gives the same cycle', ns.get('error') or bool(np.allclose(ns['cycle'], fb['cycle'][12:-12], rtol=1e-10)), True)
+ns = run_code(zr['code'], pd.DataFrame({'x': zb}))
+check('the Zivot-Andrews code runs', ns.get('error'), None)
+dan_csv = pd.DataFrame({'period': [t.strftime('%Y-%m-%d') for t in dan.index], **{c: dan[c] for c in ('lrm', 'lry', 'ibo', 'ide')}})
+ns = run_code(ad['code'], dan_csv)
+check('the ARDL code gives the same fit and bounds statistic', ns.get('error') or (bool(np.allclose(ns['res'].params, [p['estimate'] for p in ad['params']['rows']], rtol=1e-10)),
+      bool(np.isclose(ns['bt'].stat, ad['bounds']['stat'], rtol=1e-10))), (True, True))
+price_csv = pd.DataFrame({'quarter': [t.strftime('%Y-%m-%d') for t in qd2], 'price': list(price_) + [np.nan] * 8, 'cost': cost_})
+ns = run_code(ap['code'], price_csv)
+check('the ARDL forecast code gives the same forecasts', ns.get('error') or bool(np.allclose(ns['res'].get_prediction(start=176, end=183, exog_oos=ns['X_future']).predicted_mean,
+      ap['forecast']['mean'], rtol=1e-10)), True)
+ns = run_code(mg['code'], pd.DataFrame({'growth': gs}))
+check('the regime switching code gives the same fit', ns.get('error') or bool(np.isclose(ns['res'].llf, -mg['stats']['m2ll'] / 2, rtol=1e-10)), True)
+check('every new result has its code', all(bool(x.get('code')) for x in (un, rb_, mg, fh, fb, fc_, ss_, th, zr, ad, ap)), True)
 
 # ---- names ------------------------------------------------------------------------------------------------
 check("JMP's ARIMA names", [ts.arima_name(1, 0, 0), ts.arima_name(0, 0, 2), ts.arima_name(1, 0, 1), ts.arima_name(0, 1, 0), ts.arima_name(0, 1, 1), ts.arima_name(2, 1, 0), ts.arima_name(1, 1, 1)],

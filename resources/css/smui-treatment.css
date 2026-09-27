@@ -1,0 +1,28 @@
+/* smui.html: styles of smui-p-treatment.js (Analyze > Specialized Modeling >
+   Treatment Effects). Colours from kvot.css's tokens, so both themes read. */
+
+/* The launch dialog: the treated level under the roles */
+.sm-te-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 10px 0 2px; font-size: 12px; }
+.sm-te-launch label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.sm-te-launch select {
+  max-width: min(240px, 60vw);
+  padding: 2px 5px;
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font: inherit;
+}
+
+/* The report */
+.sm-te-summary { margin: 0 0 4px; }
+.sm-te-summary .sm-kv td:last-child { text-align: left; white-space: normal; max-width: 520px; }
+.sm-te-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sm-te-side .sm-kv td:last-child { text-align: left; }
+.sm-te-side .sm-kv caption { caption-side: top; text-align: left; padding: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); }
+.sm-te-about { max-width: 760px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
+.sm-te-about p { margin: 0 0 7px; }
+.sm-te-about strong { color: var(--text-primary); }
+@media (max-width: 760px) {
+  .sm-te-summary .sm-kv td:first-child { white-space: normal; }
+}

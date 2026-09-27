@@ -388,6 +388,125 @@ def mv_nonparametric(table, columns, rows=None, measure='spearman', weight=None,
     return {'measure': measure, 'pairs': pairs, 'code': code}
 
 
+# ---- Multivariate: distance correlation -------------------------------------------------------
+
+DCOR_MAX_N = 2000          # the distance matrices are n x n: a larger pair is subsampled
+DCOR_PERM_WORK = 3e8       # permutations x n^2 over all pairs: about 5 s in Pyodide, 0.8 s a pair of 500 rows
+DCOR_SEED = 20260926
+
+
+def _dcor_b(n):
+    """statsmodels' number of permutations for n observations."""
+    return int(np.floor(200 + 5000 / n))
+
+
+@api('multivariate.distance')
+def mv_distance(table, columns, rows=None, weight=None, freq=None, method='auto', table_name='data'):
+    """Distance correlation (Székely, Rizzo and Bakirov 2007) of every pair,
+    each on its own complete rows: statsmodels' distance_statistics (dCor,
+    dCov and the distance variances, V-statistics) and its
+    distance_covariance_test, whose p-value comes from permutations of the
+    rows for n ≤ 500 (statsmodels' rule; the permutations use a fixed seed)
+    and from the asymptotic bound otherwise. Freq is counted by repeating
+    rows; Weight only leaves out rows without a positive weight. A pair with
+    more than 2000 rows is a seeded random subsample of 2000."""
+    import warnings as _w
+    from statsmodels.stats.dist_dependence_measures import distance_covariance_test, distance_statistics
+    from statsmodels.tools.sm_exceptions import HypothesisTestWarning
+    cols = list(columns)
+    p = len(cols)
+    if p < 2:
+        return {'error': 'distance correlations need two or more columns'}
+    full, _, ff = _frame(table, cols, rows, weight, freq, dropna=False)
+    X = full.to_numpy(float)
+    fin = np.isfinite(X)
+    reps = None
+    if freq:
+        rr = np.rint(ff)
+        if np.any(np.abs(ff - rr) > 1e-9):
+            return {'error': 'Freq must hold whole numbers for the distance correlations (it is counted by repeating rows)'}
+        reps = rr.astype(int)
+    idx = [(i, j) for i in range(p) for j in range(i + 1, p)]
+    sizes = {}
+    for i, j in idx:
+        ok = fin[:, i] & fin[:, j]
+        sizes[(i, j)] = int(reps[ok].sum()) if reps is not None else int(ok.sum())
+    # the permutation test's work over all pairs; beyond the budget the asymptotic test
+    work = sum(_dcor_b(n) * n * n for n in (min(v, DCOR_MAX_N) for v in sizes.values()) if 4 <= n <= 500)
+    asym = method == 'asym' or work > DCOR_PERM_WORK
+    notes = []
+    if method != 'asym' and work > DCOR_PERM_WORK:
+        notes.append('The permutation tests of every pair would take too long here: the p-values are the asymptotic ones.')
+    M = np.eye(p)
+    pairs = []
+    subsampled = False
+    for i, j in idx:
+        ok = fin[:, i] & fin[:, j]
+        x, y = X[ok, i], X[ok, j]
+        if reps is not None:
+            x, y = np.repeat(x, reps[ok]), np.repeat(y, reps[ok])
+        n = len(x)
+        if n > DCOR_MAX_N:
+            keep = np.sort(np.random.default_rng(DCOR_SEED).choice(n, DCOR_MAX_N, replace=False))
+            x, y = x[keep], y[keep]
+            subsampled = True
+        row = {'var': cols[j], 'by': cols[i], 'i': j, 'j': i, 'count': n, 'used': len(x), 'dcor': None, 'dcov': None, 'dvar_x': None, 'dvar_y': None,
+               'stat': None, 'z': None, 'p': None, 'method': '', 'B': None, 'r': None}
+        if len(x) < 4 or np.ptp(x) == 0 or np.ptp(y) == 0:
+            row['method'] = 'too few distinct values'
+            M[i, j] = M[j, i] = np.nan
+            pairs.append(row)
+            continue
+        st = distance_statistics(x, y)
+        state = np.random.get_state()
+        np.random.seed(DCOR_SEED)
+        try:
+            with _w.catch_warnings(record=True) as caught:
+                _w.simplefilter('always')
+                stat, pv, chosen = distance_covariance_test(x, y, method='asym' if asym else 'auto')
+        finally:
+            np.random.set_state(state)
+        fell = [str(w.message) for w in caught if issubclass(w.category, HypothesisTestWarning)]
+        for w in caught:   # to the report, as dispatch collects them
+            _w.warn(str(w.message), w.category)
+        m = len(x)
+        row.update({'dcor': float(st.distance_correlation), 'dcov': float(st.distance_covariance), 'dvar_x': float(st.dvar_x), 'dvar_y': float(st.dvar_y),
+                    'stat': float(st.test_statistic), 'z': float(math.sqrt(st.test_statistic / st.S)) if st.S > 0 else None, 'p': float(pv),
+                    'r': float(np.corrcoef(x, y)[0, 1])})
+        B = _dcor_b(m)
+        if chosen == 'emp' and not fell:
+            row.update({'method': f'permutation (B = {B})', 'B': B})
+        elif chosen == 'emp':
+            # statsmodels replaces a permutation p-value of 0 or 1 by the asymptotic one
+            none = 'was 0' in fell[0]
+            row.update({'method': f'asymptotic: {"no" if none else "every"} permutation of {B} {"reached" if none else "exceeded"} it', 'B': B,
+                        'p_perm_below': 1.0 / B if none else None})
+        else:
+            row['method'] = 'asymptotic'
+        M[i, j] = M[j, i] = row['dcor']
+        pairs.append(row)
+    if subsampled:
+        notes.append(f'Pairs with more than {DCOR_MAX_N} rows use a random subsample of {DCOR_MAX_N} (fixed seed): the distance matrices are n × n.')
+    if weight:
+        notes.append('Weight is not used by the distance statistics; it only leaves out rows without a positive weight.')
+    first = pairs[0] if pairs else None
+    c = [code_head(table_name, ['from statsmodels.stats.dist_dependence_measures import distance_covariance_test, distance_statistics'])]
+    if first:
+        a, b = first['by'], first['var']
+        keep = [a, b] + [v for v in (weight, freq) if v]
+        c.append(f'xy = df[[{", ".join(J(v) for v in keep)}]].dropna()   # one pair on its complete rows; the same for each pair')
+        if weight:
+            c.append(f'xy = xy[xy[{J(weight)}] > 0]')
+        if freq:
+            c.append(f'xy = xy.loc[xy.index.repeat(xy[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times')
+        if first['count'] > DCOR_MAX_N:
+            c.append(f'xy = xy.iloc[np.sort(np.random.default_rng({DCOR_SEED}).choice(len(xy), {DCOR_MAX_N}, replace=False))]   # the subsample')
+        c.append(f'x, y = xy[{J(a)}].to_numpy(), xy[{J(b)}].to_numpy()')
+        c.append('print(distance_statistics(x, y))   # dCor, dCov, the distance variances; test_statistic is n·dCov²')
+        c.append(f'np.random.seed({DCOR_SEED}); print(distance_covariance_test(x, y, method={J("asym" if asym else "auto")}))   # statistic, p, method (permutations for n ≤ 500)')
+    return {'names': cols, 'matrix': _mat(M), 'pairs': pairs, 'asym': asym, 'notes': notes, 'code': '\n'.join(c)}
+
+
 # ---- Multivariate: outlier distances ------------------------------------------------------
 
 def _mahal(Xc, S):

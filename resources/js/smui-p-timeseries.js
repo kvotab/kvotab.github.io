@@ -38,6 +38,18 @@
   const scopeOf = (col) => `ts:${col.name}`;
   const int = (v, d = 0) => (v == null || v === '' || !Number.isFinite(Number(v)) ? d : Math.round(Number(v)));
   const colorOf = (id) => COLORS[(Math.max(1, id) - 1) % COLORS.length];
+  /* The regimes of a Markov switching model: three categorical slots in a
+     fixed order, stepped for each theme (checked for colour-vision
+     separation and contrast on both report backgrounds). */
+  const REGIME_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a'];
+  const REGIME_DARK = ['#3987e5', '#d95926', '#199e70'];
+  const regimeColor = (j) => (SM.util.themeColors().dark ? REGIME_DARK : REGIME_LIGHT)[j % 3];
+  // Column names are the table's text: escaped for Plotly's titles, names and hover text.
+  const ptext = (s) => SM.report.plotlyText(String(s));
+  /* The models JMP does not have. Their specs keep their own fields, so they
+     are told apart by all of them. */
+  const NEW_KINDS = new Set(['uc', 'markov', 'theta', 'ardl']);
+  const UI_FLAGS = new Set(['id', 'group', 'report', 'graph', 'points', 'pi', 'racf', 'rpacf', 'rvario', 'rar', 'comps', 'fprob', 'smpi']);
 
   function rgba(hex, a) {
     const h = hex.replace('#', '');
@@ -52,6 +64,17 @@
     const p = int(ctx.opt('period', null), 0);
     if (p >= 2) return p;
     return S && S.period_auto >= 2 ? S.period_auto : 12;
+  }
+  /* Observations per year of the Time ID's calendar frequency (pandas'
+     frequency string: MS, QS-OCT, YS-JAN, W-SUN, 3MS ...), as the backend
+     reads it from the offset; null when there is none. */
+  function perYear(S) {
+    const m = /^(\d*)([A-Z]+)/.exec((S && S.freq) || '');
+    if (!m) return null;
+    const n = m[1] ? +m[1] : 1;
+    const c = m[2].replace(/^B(?=[AYQM])/, '');
+    const base = c.startsWith('SM') ? 24 : /^[AY]/.test(c) ? 1 : c.startsWith('Q') ? 4 : c.startsWith('M') ? 12 : c.startsWith('W') ? 52 : null;
+    return base ? base / n : null;
   }
 
   /* All the rows of this report's By group, excluded ones too: they go to
@@ -81,7 +104,7 @@
   const isDate = (S) => DATE_KINDS.has(S.kind);
   const timeTitle = (S) => S.time || 'Row';
   function xAxis(S, extra = {}) {
-    return { title: { text: timeTitle(S) }, ...(isDate(S) ? { type: 'date' } : {}), ...extra };
+    return { title: { text: ptext(timeTitle(S)) }, ...(isDate(S) ? { type: 'date' } : {}), ...extra };
   }
   function plotWidth(ctx, want) {
     const w = ctx.report && ctx.report.body ? ctx.report.body.clientWidth : 0;
@@ -184,7 +207,7 @@
   function seriesTrace(S, values, name, { points = true, lines = true, color = SM.report.BASE } = {}) {
     const mode = points && lines ? 'lines+markers' : points ? 'markers' : 'lines';
     // WebGL for long series: SVG slows down beyond a few thousand points.
-    return { type: S.t.length > 5000 ? 'scattergl' : 'scatter', mode, x: S.x, y: values, rows: S.rowsLinked, name, connectgaps: false, line: { color, width: 1.2 }, marker: { size: 5, color } };
+    return { type: S.t.length > 5000 ? 'scattergl' : 'scatter', mode, x: S.x, y: values, rows: S.rowsLinked, name: ptext(name), connectgaps: false, line: { color, width: 1.2 }, marker: { size: 5, color } };
   }
 
   function seriesPlot(ctx, S, values, name, { points = true, lines = true, meanLine = null, extra = [], height = 260, width = 560, title } = {}) {
@@ -193,7 +216,7 @@
     const traces = [];
     if (points || lines) traces.push(seriesTrace(S, values, name, { points, lines }));
     traces.push(...extra);
-    return ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: name } }, shapes }, { width: plotWidth(ctx, width), height, title: title || `${name} time series` });
+    return ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(name) } }, shapes }, { width: plotWidth(ctx, width), height, title: title || `${name} time series` });
   }
 
   function summaryPairs(D, st) {
@@ -237,18 +260,29 @@
       ob.add(diagnosticsBlock(ctx, S.diag, flags));
       ob.add(ctx.code(S.code));
     }
-    if (o('stationarity', true)) {
-      const ob = ctx.outline('Stationarity Tests', { parent: box, key: `${sc}:stat`, info: 'p:timeseries:stationarity', menu: () => [{ label: 'Remove', action: () => ctx.set('stationarity', false, sc) }] });
-      ob.add(stationarityTable(ctx, S.stationarity), ctx.note('ADF: augmented Dickey-Fuller tests of a unit root, with the lags chosen by AIC and MacKinnon\'s p-values and critical values; a small p-value speaks for stationarity. KPSS tests the opposite null, stationarity; statsmodels interpolates its p-value between 0.01 and 0.1 and gives a bound outside.'));
-    }
     // Each part on its own: an error in one shows there, the rest still draws.
-    const part = async (fn) => { try { await fn(); } catch (e) { console.error(e); box.add(ctx.error(e)); } };
+    const part = async (fn, where = box) => { try { await fn(); } catch (e) { console.error(e); where.add(ctx.error(e)); } };
+    if (!seriesLength.has(ctx.report)) seriesLength.set(ctx.report, {});
+    seriesLength.get(ctx.report)[sc] = S.n;
+    if (o('stationarity', true)) {
+      const ob = ctx.outline('Stationarity Tests', { parent: box, key: `${sc}:stat`, info: 'p:timeseries:stationarity', menu: () => [
+        { label: 'Zivot-Andrews Test', checked: zivotOn(ctx, col), action: () => ctx.set('zivot', !zivotOn(ctx, col), sc) },
+        { label: 'Zivot-Andrews Options…', action: () => zivotDialog(ctx, col) },
+        { separator: true },
+        { label: 'Remove', action: () => ctx.set('stationarity', false, sc) },
+      ] });
+      ob.add(stationarityTable(ctx, S.stationarity), ctx.note('ADF: augmented Dickey-Fuller tests of a unit root, with the lags chosen by AIC and MacKinnon\'s p-values and critical values; a small p-value speaks for stationarity. KPSS tests the opposite null, stationarity; statsmodels interpolates its p-value between 0.01 and 0.1 and gives a bound outside.'));
+      if (zivotOn(ctx, col)) await part(() => zivotReport(ctx, col, S, base, ob), ob);
+      else if (ctx.opt('zivot', null, sc) == null) ob.add(ctx.note(`The Zivot-Andrews test is left out for a series of more than ${ZA_AUTO} values (it takes a while): Zivot-Andrews Test in the red triangle adds it.`));
+    }
     if (o('spectral', false)) await part(() => spectralReport(ctx, col, S, base, box));
     if (o('lagPlot', null) != null) await part(() => lagPlot(ctx, col, S, box));
+    if (o('subseries', false)) await part(() => subseriesReport(ctx, col, S, base, box, period));
     if (inputs.length && o('ccf', false)) await part(() => ccfReport(ctx, col, S, base, inputs, box));
     if (inputs.length && o('inputPanel', true)) await part(() => inputPanel(ctx, col, inputs, base, box));
     for (const spec of o('diffs', [])) await part(() => differenceReport(ctx, col, S, base, spec, box));
     for (const spec of o('decomps', [])) await part(() => decompReport(ctx, col, S, base, spec, box));
+    for (const spec of o('filters', [])) await part(() => filterReport(ctx, col, S, base, spec, box));
     await part(() => modelsReport(ctx, col, S, base, box, { period, h }));
   }
 
@@ -407,8 +441,8 @@
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(input.value); } });
     const btn = (label, d) => { const b = el('button', { type: 'button', class: 'sm-btn small', text: label, 'aria-label': d < 0 ? 'Previous lag' : 'Next lag' }); b.addEventListener('click', () => go(lag + d)); return b; };
     ob.add(el('div', { class: 'sm-ts-lagctl' }, el('label', null, 'Lag p ', input), btn('−', -1), btn('+', 1)));
-    const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x, y, rows, name: `${col.name} at t and t − ${lag}` }],
-      { xaxis: { title: { text: `${col.name}(t − ${lag})` } }, yaxis: { title: { text: `${col.name}(t)` } } }, { width: plotWidth(ctx, 360), height: 320, title: `${col.name} lag plot` });
+    const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x, y, rows, name: ptext(`${col.name} at t and t − ${lag}`) }],
+      { xaxis: { title: { text: ptext(`${col.name}(t − ${lag})`) } }, yaxis: { title: { text: ptext(`${col.name}(t)`) } } }, { width: plotWidth(ctx, 360), height: 320, title: `${col.name} lag plot` });
     ob.add(ctx.row(plot, ctx.kv([['Lag', lag, 'int'], ['Pairs', n, 'int'], ['Correlation', r]])), ctx.note('Each point is an observation (y axis) against the one p periods before it; clicking selects the later row.'));
   }
 
@@ -441,6 +475,160 @@
     }
   }
 
+  /* ---- Zivot-Andrews ------------------------------------------------------------------------------------------- */
+  /* On by default up to 5000 values: its regressions at every break date
+     grow with the square of the length (3 s at 5000 in the browser). The
+     length of each series of a report is kept for the menus' check marks. */
+  const ZA_AUTO = 5000;
+  const seriesLength = new WeakMap();
+  const zivotOn = (ctx, col) => !!ctx.opt('zivot', ((seriesLength.get(ctx.report) || {})[scopeOf(col)] ?? 0) <= ZA_AUTO, scopeOf(col));
+  const ZA_DASH = ['dot', 'dash', 'dashdot'];
+  const ZA_SHORT = { c: 'intercept', t: 'trend', ct: 'both' };
+  const zivotOpts = (ctx, col) => {
+    const sc = scopeOf(col);
+    return { trim: ctx.opt('zaTrim', 0.15, sc), maxlag: ctx.opt('zaMaxlag', null, sc), autolag: ctx.opt('zaAutolag', 'AIC', sc) };
+  };
+
+  async function zivotReport(ctx, col, S, base, parent) {
+    const sc = scopeOf(col);
+    const r = await ctx.call('timeseries.zivot', { ...base, ...zivotOpts(ctx, col) });
+    const ob = ctx.outline('Zivot-Andrews Test', { parent, key: `${sc}:za`, info: 'p:timeseries:zivot', menu: () => [
+      { label: 'Zivot-Andrews Options…', action: () => zivotDialog(ctx, col) },
+      { label: 'Remove', action: () => ctx.set('zivot', false, sc) },
+    ] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const rows = r.tests.map((t) => (t.error ? { test: t.test, stat: null, p: t.error }
+      : { test: t.test, stat: t.stat, p: t.p, lags: t.lags, brk: tLabel(S, t.break), c1: t.c1, c5: t.c5, c10: t.c10 }));
+    ob.add(ctx.rt({ columns: [{ key: 'test', label: 'Model', fmt: 'text' }, { key: 'stat', label: 'Statistic' }, { key: 'p', label: 'Prob', fmt: 'p' }, { key: 'lags', label: 'Lags', fmt: 'int' },
+      { key: 'brk', label: 'Break', fmt: 'text' }, { key: 'c1', label: '1%' }, { key: 'c5', label: '5%' }, { key: 'c10', label: '10%' }], rows }, { sortable: false, name: 'Zivot-Andrews Test' }));
+    const ok = r.tests.filter((t) => !t.error);
+    if (ok.length) {
+      const muted = SM.util.themeColors().muted;
+      // one line for each break date, labelled with the models that put the break there
+      const at = new Map();
+      for (const t of ok) { const k = String(t.break); if (!at.has(k)) at.set(k, []); at.get(k).push(ZA_SHORT[t.regression]); }
+      const dates = [...at.keys()];
+      const shapes = dates.map((k, i) => { const x = fx(S, [Number(k)])[0]; return { type: 'line', x0: x, x1: x, yref: 'paper', y0: 0, y1: 1, line: { color: '#b0413e', width: 1.3, dash: ZA_DASH[i % 3] } }; });
+      const annotations = dates.map((k, i) => ({ x: fx(S, [Number(k)])[0], y: 1 - 0.1 * i, yref: 'paper', xanchor: 'left', yanchor: 'top', showarrow: false, text: ` ${at.get(k).join(', ')}`, font: { size: 10, color: muted } }));
+      ob.add(ctx.plot([seriesTrace(S, S.values, col.name)], { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes, annotations },
+        { width: plotWidth(ctx, 560), height: 220, title: `${col.name} Zivot-Andrews breaks` }));
+    }
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    ob.add(ctx.code(r.code));
+  }
+
+  async function zivotDialog(ctx, col) {
+    const sc = scopeOf(col);
+    const o = zivotOpts(ctx, col);
+    const v = await SM.ui.form({
+      title: `Zivot-Andrews Test: ${col.name}`, info: 'p:timeseries:zivot',
+      lead: 'The break is searched for between the trimmed ends of the series. The lags of the test regression are chosen once by the criterion, up to the largest lag (empty: 12(n/100)^¼, Schwert\'s rule).',
+      fields: [
+        { key: 'trim', label: 'Trimming at each end (0 to 1/3)', type: 'number', value: o.trim },
+        { key: 'maxlag', label: 'Largest lag (empty: automatic)', type: 'number', value: o.maxlag ?? '' },
+        { key: 'autolag', label: 'Lags chosen by', type: 'select', value: o.autolag || 'none', choices: [['AIC', 'AIC'], ['BIC', 'BIC'], ['t-stat', 't statistic of the last lag'], ['none', 'none: the largest lag']] },
+      ],
+      validate: (x) => (!(x.trim >= 0 && x.trim < 1 / 3) ? 'Trimming: from 0 up to below 1/3' : x.maxlag != null && !(Number.isInteger(x.maxlag) && x.maxlag >= 0) ? 'Largest lag: a whole number from 0' : null),
+    });
+    if (!v) return;
+    ctx.set('zaTrim', v.trim, sc, { rerun: false });
+    ctx.set('zaMaxlag', v.maxlag, sc, { rerun: false });
+    ctx.set('zaAutolag', v.autolag === 'none' ? null : v.autolag, sc, { rerun: false });
+    ctx.set('zivot', true, sc);
+  }
+
+  /* ---- Seasonal Subseries Plot --------------------------------------------------------------------------------- */
+  const SUB_BY = { month: ['calendar month', 'month_plot'], quarter: ['quarter', 'quarter_plot'], weekday: ['weekday', 'seasonal_plot'], position: ['position in the period', 'seasonal_plot'] };
+
+  async function subseriesReport(ctx, col, S, base, box, period) {
+    const sc = scopeOf(col);
+    const r = await ctx.call('timeseries.subseries', { ...base, period });
+    const ob = ctx.outline('Seasonal Subseries Plot', { parent: box, key: `${sc}:subseries`, info: 'p:timeseries:subseries', menu: () => [{ label: 'Remove', action: () => ctx.set('subseries', false, sc) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const traces = r.seasons.map((s) => ({ type: 'scatter', mode: 'lines+markers', x: s.x, y: s.values, rows: s.rows.map((x) => (x == null ? -1 : x)), name: s.label, connectgaps: false,
+      line: { color: SM.report.BASE, width: 1.2 }, marker: { size: 5, color: SM.report.BASE }, hovertext: s.t.map((t) => tLabel(S, t)), hovertemplate: `${s.label}, %{hovertext}: %{y:.5g}<extra></extra>` }));
+    const shapes = r.seasons.filter((s) => s.mean != null).map((s) => ({ type: 'line', x0: s.x[0] - 0.35, x1: s.x[s.x.length - 1] + 0.35, y0: s.mean, y1: s.mean, line: { color: '#b0413e', width: 2.5 } }));
+    const [what, fn] = SUB_BY[r.by] || SUB_BY.position;
+    ob.add(ctx.plot(traces, {
+      xaxis: { tickvals: r.seasons.map((s) => (s.x[0] + s.x[s.x.length - 1]) / 2), ticktext: r.seasons.map((s) => s.label), showgrid: false, zeroline: false,
+        title: { text: r.by === 'position' ? `Position in the period of ${r.period}` : '' } },
+      yaxis: { title: { text: ptext(col.name) } }, shapes,
+    }, { width: plotWidth(ctx, 720), height: 300, title: `${col.name} seasonal subseries` }));
+    ob.add(ctx.note(`Each small series is one ${what} over the years, in time order, and the red line is its mean (statsmodels' ${fn}). Points are linked to the rows.`));
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    const tb = ctx.outline('Season Means', { parent: ob, key: `${sc}:subseries:means`, closed: true });
+    tb.add(ctx.rt({ columns: [{ key: 'label', label: 'Season', fmt: 'text' }, { key: 'n', label: 'N', fmt: 'int' }, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev' }], rows: r.seasons }, { sortable: false, name: 'Season means' }));
+    ob.add(ctx.code(r.code));
+  }
+
+  /* ---- Filters: Hodrick-Prescott, Baxter-King, Christiano-Fitzgerald ------------------------------------------ */
+  const FILTERS = [['hp', 'Hodrick-Prescott Filter'], ['bk', 'Baxter-King Filter'], ['cf', 'Christiano-Fitzgerald Filter']];
+  const FILTER_LABEL = Object.fromEntries(FILTERS);
+
+  /* The defaults for the frequency, as the backend has them: λ = 1600 (s/4)^4
+     (Ravn and Uhlig), the band of 1.5 to 8 years, K of 3 years; statsmodels'
+     own (1600; 6, 32, 12) with no calendar frequency. */
+  function filterDefaults(S) {
+    const f = perYear(S);
+    if (!f) return { f: null, lamb: 1600, low: 6, high: 32, K: 12 };
+    return { f, lamb: 1600 * (f / 4) ** 4, low: Math.max(2, 1.5 * f), high: 8 * f, K: Math.max(1, Math.round(3 * f)) };
+  }
+
+  async function filterReport(ctx, col, S, base, spec, box) {
+    const sc = scopeOf(col);
+    const remove = () => ctx.set('filters', ctx.opt('filters', [], sc).filter((x) => x.id !== spec.id), sc);
+    const r = await ctx.call('timeseries.filter', { ...base, method: spec.kind, lamb: spec.lamb ?? null, low: spec.low ?? null, high: spec.high ?? null, K: spec.K ?? null, drift: spec.drift !== false });
+    const tag = spec.kind.toUpperCase();
+    const ob = ctx.outline(r.label || FILTER_LABEL[spec.kind], { parent: box, key: `${sc}:flt:${spec.id}`, info: 'p:timeseries:filters', menu: () => [
+      { label: 'Save Columns', disabled: !!r.error, action: () => { saveSlots(ctx, S, `${col.name} ${tag} trend`, r.trend); saveSlots(ctx, S, `${col.name} ${tag} cycle`, r.cycle); } },
+      { label: 'Remove Fit', action: remove },
+    ] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const name = ptext(col.name);
+    const traces = [
+      { ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), xaxis: 'x', yaxis: 'y' },
+      { type: 'scatter', mode: 'lines', x: S.x, y: r.trend, xaxis: 'x', yaxis: 'y', name: spec.kind === 'bk' ? 'y − cycle' : 'Trend', line: { color: '#b0413e', width: 1.8 }, hovertemplate: 'trend %{y:.5g}<extra></extra>' },
+      { type: 'scatter', mode: 'lines', x: S.x, y: r.cycle, xaxis: 'x', yaxis: 'y2', name: 'Cycle', line: { color: SM.report.BASE, width: 1.4 }, hovertemplate: 'cycle %{y:.5g}<extra></extra>' },
+    ];
+    const titles = [[spec.kind === 'bk' ? `${col.name} and y − cycle` : `${col.name} and trend`, 1], ['Cycle', 0.37]];
+    const layout = { xaxis: xAxis(S, { anchor: 'y2' }), yaxis: { domain: [0.47, 1], title: { text: name } }, yaxis2: { domain: [0, 0.37], title: { text: 'Cycle' }, zeroline: true },
+      margin: { l: 60, r: 12, t: 16, b: 40 },
+      annotations: titles.map(([t, y]) => ({ text: ptext(t), xref: 'paper', yref: 'paper', x: 0, y, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } })) };
+    ob.add(ctx.row(ctx.plot(traces, layout, { width: plotWidth(ctx, 620), height: 400, title: r.label }),
+      ctx.kv([spec.kind === 'hp' ? ['λ', r.lamb] : ['Band (periods)', `${fmt(r.low)} to ${fmt(r.high)}`, 'text'], spec.kind === 'bk' ? ['K', r.K, 'int'] : null,
+        spec.kind === 'cf' ? ['Drift removed', r.drift ? 'Yes' : 'No', 'text'] : null, ['Std Dev of the cycle', r.cycle_sd], ['N (cycle)', r.cycle_n, 'int']])));
+    for (const n of r.notes || []) ob.add(ctx.note(n));
+    ob.add(ctx.code(r.code));
+  }
+
+  async function filterDialog(ctx, col, S, kind) {
+    const sc = scopeOf(col);
+    const D = filterDefaults(S);
+    const freq = D.f ? `${fmt(D.f)} observations a year` : 'no calendar frequency: statsmodels\' defaults, meant for quarterly data';
+    const fields = kind === 'hp'
+      ? [{ key: 'lamb', label: 'λ, Smoothing', type: 'number', value: D.lamb }]
+      : [{ key: 'low', label: 'Shortest period in the band', type: 'number', value: D.low }, { key: 'high', label: 'Longest period in the band', type: 'number', value: D.high }];
+    if (kind === 'bk') fields.push({ key: 'K', label: 'K, Lead-lag length (values lost at each end)', type: 'number', value: D.K });
+    if (kind === 'cf') fields.push({ key: 'drift', label: 'Remove the drift first', type: 'check', value: true });
+    const lead = kind === 'hp' ? `The trend minimises the squared deviations plus λ times the squared second differences of the trend. λ follows Ravn and Uhlig's rule 1600 (s/4)⁴ for s observations a year (${freq}): 6.25 yearly, 1600 quarterly, 129600 monthly.`
+      : `A band-pass filter keeps the cycles whose period lies in the band, by default the business cycle of 1.5 to 8 years (${freq}).`;
+    const v = await SM.ui.form({ title: `${FILTER_LABEL[kind]}: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:filters', lead, fields,
+      validate: (x) => {
+        if (kind === 'hp') return x.lamb > 0 ? null : 'λ: above 0';
+        if (!(x.low >= 2 && x.high > x.low)) return 'The band: periods from 2 up, the shortest below the longest';
+        if (kind === 'bk' && !(Number.isInteger(x.K) && x.K >= 1)) return 'K: a whole number from 1';
+        return null;
+      } });
+    if (!v) return;
+    const list = ctx.opt('filters', [], sc).slice();
+    const spec = { id: list.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1, kind };
+    if (kind === 'hp') spec.lamb = v.lamb; else { spec.low = v.low; spec.high = v.high; }
+    if (kind === 'bk') spec.K = v.K;
+    if (kind === 'cf') spec.drift = !!v.drift;
+    list.push(spec);
+    ctx.set('filters', list, sc);
+  }
+
   /* ---- models: the fits ---------------------------------------------------------------------------------- */
   function fitCall(ctx, base, spec, h) {
     if (spec.kind === 'arima') {
@@ -449,10 +637,30 @@
     }
     if (spec.kind === 'smooth') return ctx.call('timeseries.smooth', { ...base, method: spec.method, s: spec.s || 0, level: spec.level || 0.95, h, multiplicative: !!spec.multiplicative });
     if (spec.kind === 'ets') return ctx.call('timeseries.ets', { ...base, error: spec.error, trend: spec.trend, seasonal: spec.seasonal, s: spec.s || 0, level: spec.level || 0.95, h, maxiter: Math.max(200, maxiter(ctx)) });
+    if (spec.kind === 'uc') {
+      return ctx.call('timeseries.structural', { ...base, trend: spec.trend, seasonal: spec.seasonal || 0, stoch_seasonal: spec.stochSeasonal !== false,
+        freq_period: spec.freqPeriod || 0, freq_harmonics: spec.freqHarmonics || 0, stoch_freq: spec.stochFreq !== false, cycle: !!spec.cycle,
+        stoch_cycle: spec.stochCycle !== false, damped_cycle: spec.damped !== false, cycle_lo: spec.cycleLo ?? null, cycle_hi: spec.cycleHi ?? null,
+        ar: spec.ar || 0, inputs: spec.inputs || null, exact: !!spec.exact, level: spec.level || 0.95, h, maxiter: maxiter(ctx) });
+    }
+    if (spec.kind === 'markov') {
+      return ctx.call('timeseries.markov', { ...base, k: spec.k || 2, order: spec.order || 0, trend: spec.trend || 'c', switching_trend: spec.swTrend !== false,
+        switching_variance: !!spec.swVar, switching_ar: !!spec.swAr, starts: spec.starts ?? 5, maxiter: Math.min(500, maxiter(ctx)), level: spec.level || 0.95 });
+    }
+    if (spec.kind === 'theta') {
+      return ctx.call('timeseries.theta', { ...base, period: spec.period || 0, deseasonalize: spec.deseasonalize !== false, use_test: spec.useTest !== false,
+        method: spec.method || 'auto', theta: spec.theta || 2, use_mle: !!spec.mle, level: spec.level || 0.95, h });
+    }
+    if (spec.kind === 'ardl') {
+      return ctx.call('timeseries.ardl', { ...base, inputs: spec.inputs || [], maxlag: spec.maxlag || 4, maxorder: spec.maxorder ?? 4, order: spec.order || null,
+        trend: spec.trend || 'c', ic: spec.ic || 'aic', glob: !!spec.glob, causal: !!spec.causal, seasonal: !!spec.seasonal, period: spec.period || 0,
+        case: spec.case || null, level: spec.level || 0.95, h });
+    }
     return Promise.resolve({ error: `unknown model ${spec.kind}` });
   }
 
-  const fitKey = (s) => JSON.stringify([s.kind, s.p, s.d, s.q, s.P, s.D, s.Q, s.s, s.intercept, s.constrain, s.level, s.inputs, s.method, s.multiplicative, s.error, s.trend, s.seasonal]);
+  const fitKey = (s) => (NEW_KINDS.has(s.kind) ? JSON.stringify(Object.keys(s).filter((k) => !UI_FLAGS.has(k)).sort().map((k) => [k, s[k]]))
+    : JSON.stringify([s.kind, s.p, s.d, s.q, s.P, s.D, s.Q, s.s, s.intercept, s.constrain, s.level, s.inputs, s.method, s.multiplicative, s.error, s.trend, s.seasonal]));
 
   function addModels(ctx, col, specs, { quiet = false } = {}) {
     const list = ctx.opt('models', [], scopeOf(col)).slice();
@@ -499,7 +707,7 @@
     const sc = scopeOf(col);
     const list = ctx.opt('models', [], sc);
     if (!list.length) return;
-    const results = await Promise.all(list.map((spec) => fitCall(ctx, base, spec, h).catch((e) => ({ error: e.message || String(e) }))));
+    const results = (await Promise.all(list.map((spec) => fitCall(ctx, base, spec, h).catch((e) => ({ error: e.message || String(e) }))))).map((r, i) => withOwnBand(list[i], r));
     const eff = effective(list, results);
     comparison(ctx, col, S, list, results, eff, box);
     const groups = [...new Set(list.filter((s) => s.kind === 'ets' && s.group).map((s) => s.group))];
@@ -577,6 +785,9 @@
     const kinds = new Set(list.map((s) => s.kind));
     if (kinds.has('ets') && kinds.size > 1) ob.add(ctx.warn('Caution: the state space smoothing models\' likelihood is not that of the ARIMA and smoothing models, so their AIC and SBC do not compare; compare on MAPE and MAE, or within each class (as JMP cautions).'));
     else if (kinds.has('smooth') && kinds.has('arima')) ob.add(ctx.note('The smoothing models\' likelihood is that of their one-step errors given the estimated starting states; the ARIMA models\' is the exact likelihood. Their AICs are close relatives, not the same quantity.'));
+    const own = [kinds.has('uc') && 'the structural models\' leaves out the diffuse start', kinds.has('markov') && 'the regime-switching models\' is a mixture over the regimes (with an AR part, conditional on its first observations)',
+      kinds.has('ardl') && 'the ARDL models\' is conditional on the lags\' starting values', kinds.has('theta') && 'the Theta model\'s is that of its one-step errors'].filter(Boolean);
+    if (own.length && kinds.size > 1) ob.add(ctx.note(`Across classes the likelihoods differ in detail: ${own.join('; ')}. Their AICs are close relatives, not the same quantity; MAPE and MAE compare directly.`));
     ob.add(ctx.note('Sorted by AIC; click a heading to sort. Weights are AIC weights, exp(−ΔAIC/2) normalised. Report shows a model\'s report, Graph puts it on the plots below. AIC, SBC and AICc count the fitted parameters as JMP does (not the variance).'));
     // the model plots: forecasts, and the residual autocorrelations
     const shown = list.map((s, i) => ({ s, r: results[i], on: eff[i].graph })).filter((x) => x.on && x.r && !x.r.error);
@@ -584,7 +795,7 @@
     const traces = [{ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false }];
     for (const { s, r } of shown) traces.push(...forecastTraces(S, r, colorOf(s.id), { pi: true, name: r.name, legend: true, oneStepPI: false }));
     const end = S.x[S.x.length - 1];
-    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: col.name } }, showlegend: true, legend: { orientation: 'h', y: -0.22 },
+    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, showlegend: true, legend: { orientation: 'h', y: -0.22 },
       shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
     { width: plotWidth(ctx, 640), height: 320 + 18 * Math.ceil(shown.length / 2), title: `${col.name} model comparison forecasts` });
     const acfOver = (key, label) => {
@@ -594,7 +805,7 @@
         const D = r.resid_diag;
         if (!D || D.error) continue;
         n = Math.max(n, D.n);
-        tr.push({ type: 'scatter', mode: 'lines+markers', x: D[key].lag.slice(1), y: D[key].r.slice(1), name: r.name, line: { color: colorOf(s.id), width: 1.2 }, marker: { size: 4, color: colorOf(s.id) }, hovertemplate: `${r.name}: lag %{x}, %{y:.4f}<extra></extra>` });
+        tr.push({ type: 'scatter', mode: 'lines+markers', x: D[key].lag.slice(1), y: D[key].r.slice(1), name: ptext(r.name), line: { color: colorOf(s.id), width: 1.2 }, marker: { size: 4, color: colorOf(s.id) }, hovertemplate: `${ptext(r.name)}: lag %{x}, %{y:.4f}<extra></extra>` });
       }
       if (!tr.length) return null;
       const b = 2 / Math.sqrt(n);
@@ -621,13 +832,18 @@
       return s.method === 'seasonal' || s.method === 'winters' ? `${label}(${s.s})` : label;
     }
     if (s.kind === 'ets') return `ETS(${s.error === 'mul' ? 'M' : 'A'},${s.trend || 'N'},${s.seasonal || 'N'})`;
+    if (s.kind === 'uc') return `Structural: ${s.trend === 'irregular' ? 'no trend' : s.trend}${s.seasonal ? ` + seasonal(${s.seasonal})` : ''}${s.freqPeriod ? ` + trigonometric seasonal(${s.freqPeriod})` : ''}${s.cycle ? ' + cycle' : ''}${s.ar ? ` + AR(${s.ar})` : ''}${(s.inputs || []).map((x) => ` + ${x}`).join('')}`;
+    if (s.kind === 'markov') return `Regime Switching: ${s.k || 2} regimes${s.order ? `, AR(${s.order})` : ''}`;
+    if (s.kind === 'theta') return `Theta Model (θ = ${fmt(s.theta || 2)})`;
+    if (s.kind === 'ardl') return `ARDL with ${(s.inputs || []).join(', ')}`;
     return s.kind;
   }
 
   /* One model's forecast traces: the one-step-ahead predictions, the
      forecasts, and the prediction interval, in-sample lines that go on into
      a band over the forecast periods. */
-  function forecastTraces(S, r, color, { pi = true, name, legend = false, oneStepPI = true } = {}) {
+  function forecastTraces(S, r, color, { pi = true, name: raw, legend = false, oneStepPI = true } = {}) {
+    const name = ptext(raw);
     const n = S.t.length;
     const fc = r.forecast || { t: [] };
     const last = n - 1;
@@ -680,15 +896,31 @@
       { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }],
     smooth: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }],
     ets: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'lower', label: 'Lower 95%' }, { key: 'upper', label: 'Upper 95%' }],
+    uc: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'z', label: 'z Ratio' }, { key: 'p', label: 'Prob>|z|', fmt: 'p' }],
+    markov: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'regime', label: 'Regime', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'z', label: 'z Ratio' }, { key: 'p', label: 'Prob>|z|', fmt: 'p' }],
+    theta: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }],
+    ardl: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }],
   };
+  const MODEL_INFO = { ets: 'p:timeseries:ets', smooth: 'p:timeseries:smoothing', uc: 'p:timeseries:structural', markov: 'p:timeseries:regime', theta: 'p:timeseries:theta', ardl: 'p:timeseries:ardl' };
 
   function modelMenu(ctx, col, S, spec, r) {
     const flag = (k, d = true) => (spec[k] == null ? d : !!spec[k]);
     const up = (patch) => updateModels(ctx, col, (m) => (m.id === spec.id ? { ...m, ...patch } : null));
+    const own = [];
+    if (spec.kind === 'uc') {
+      own.push({ label: 'Components', checked: flag('comps'), action: () => up({ comps: !flag('comps') }) },
+        { label: 'Save Components', disabled: !r || !!r.error, action: () => saveComponents(ctx, col, S, r) });
+    } else if (spec.kind === 'markov') {
+      own.push({ label: 'Filtered Probabilities', checked: flag('fprob', false), action: () => up({ fprob: !flag('fprob', false) }) },
+        { label: 'Save Regime Probabilities', disabled: !r || !!r.error, action: () => saveRegimes(ctx, col, S, r) });
+    } else if (spec.kind === 'theta') {
+      own.push({ label: 'statsmodels\' Prediction Intervals', checked: flag('smpi', false), action: () => up({ smpi: !flag('smpi', false) }) });
+    }
     return [
       { label: 'Show Points', checked: flag('points'), action: () => up({ points: !flag('points') }) },
       { label: 'Show Prediction Interval', checked: flag('pi'), action: () => up({ pi: !flag('pi') }) },
       { label: 'Save Columns', disabled: !r || !!r.error, action: () => saveModelTable(ctx, col, S, r) },
+      ...own,
       { label: 'Residual Statistics', submenu: () => [
         { label: 'Autocorrelation', checked: flag('racf'), action: () => up({ racf: !flag('racf') }) },
         { label: 'Partial Autocorrelation', checked: flag('rpacf'), action: () => up({ rpacf: !flag('rpacf') }) },
@@ -705,7 +937,7 @@
     const sc = scopeOf(col);
     const color = colorOf(spec.id);
     const name = r && r.name ? r.name : specName(spec);
-    const info = spec.kind === 'ets' ? 'p:timeseries:ets' : spec.kind === 'smooth' ? 'p:timeseries:smoothing' : spec.inputs ? 'p:timeseries:transfer' : 'p:timeseries:arima';
+    const info = MODEL_INFO[spec.kind] || (spec.inputs ? 'p:timeseries:transfer' : 'p:timeseries:arima');
     const ob = ctx.outline(`Model: ${name}`, { parent: box, key: `${sc}:model:${spec.id}`, info, menu: () => modelMenu(ctx, col, S, spec, r) });
     ob.el.classList.add('sm-ts-model');
     ob.el.style.setProperty('--ts-model-color', color);
@@ -720,13 +952,13 @@
     if (r.constant) pe.add(ctx.kv([['Constant Estimate', r.constant.estimate], ['Mu', r.constant.mu]]));
     ob.add(ctx.row(sum.el, pe.el));
     for (const n of r.notes || []) ob.add(ctx.note(n));
-    // the forecast
-    const fcOb = ctx.outline('Forecast', { parent: ob, key: `${sc}:model:${spec.id}:fc` });
+    // the forecast (a Markov switching model has none: its one-step-ahead predictions)
+    const fcOb = ctx.outline(spec.kind === 'markov' ? 'One-Step-Ahead Predictions' : 'Forecast', { parent: ob, key: `${sc}:model:${spec.id}:fc` });
     const traces = [];
     if (flag('points')) traces.push({ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false });
     traces.push(...forecastTraces(S, r, color, { pi: flag('pi'), name }));
     const end = S.x[S.x.length - 1];
-    fcOb.add(ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: col.name } }, shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
+    fcOb.add(ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
       { width: plotWidth(ctx, 620), height: 300, title: `${name} forecast` }));
     const fc = r.forecast;
     if (fc && fc.t.length) fcOb.add(ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * r.level)}% prediction intervals; to the left of the dotted line the one-step-ahead forecasts.`));
@@ -736,7 +968,10 @@
       { xaxis: xAxis(S), yaxis: { title: { text: 'Residual' }, zeroline: true }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: SM.util.themeColors().muted, width: 1 } }] },
     { width: plotWidth(ctx, 620), height: 220, title: `${name} residuals` }));
     resOb.add(diagnosticsBlock(ctx, r.resid_diag, { acf: flag('racf'), pacf: flag('rpacf'), variogram: flag('rvario', false), ar: flag('rar', false), residual: true }));
-    if (r.resid_diag && r.resid_diag.model_df) resOb.add(ctx.note(`Ljung-Box on the residuals: degrees of freedom are the lag less the ${r.resid_diag.model_df} ${spec.kind === 'smooth' ? 'smoothing weights' : 'ARMA parameters'}.`));
+    if (r.resid_diag && r.resid_diag.model_df) resOb.add(ctx.note(`Ljung-Box on the residuals: degrees of freedom are the lag less the ${r.resid_diag.model_df} ${spec.kind === 'smooth' || spec.kind === 'theta' ? `smoothing weight${r.resid_diag.model_df > 1 ? 's' : ''}` : spec.kind === 'ardl' ? `lag${r.resid_diag.model_df > 1 ? 's' : ''} of the series` : 'ARMA parameters'}.`));
+    if (spec.kind === 'uc' && flag('comps')) componentsReport(ctx, col, S, spec, r, ob);
+    if (spec.kind === 'markov') regimeReport(ctx, col, S, spec, r, ob);
+    if (spec.kind === 'ardl') ardlReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'ets' && r.states && Object.keys(r.states).length) {
       const cs = ctx.outline('Component States', { parent: ob, key: `${sc}:model:${spec.id}:states`, closed: true });
       for (const [k, v] of Object.entries(r.states)) {
@@ -749,6 +984,131 @@
         ctx.note(r.converged ? `Converged after ${r.n_iter} iterations (L-BFGS on the exact likelihood).` : `Did not converge within ${maxiter(ctx)} iterations: raise them with Maximum Iterations in the red triangle.`));
     } else if (spec.kind === 'arima' && r.converged === false) ob.add(ctx.warn('The fit did not converge: raise Maximum Iterations in the red triangle.'));
     ob.add(ctx.code(r.code));
+  }
+
+  /* The Theta model's forecasts carry two bands: the IMA(1, 1) one (the
+     default) and statsmodels' prediction_intervals, chosen in its red triangle. */
+  function withOwnBand(spec, r) {
+    if (!r || r.error || spec.kind !== 'theta' || !spec.smpi || !r.forecast || !r.forecast.sm_lower) return r;
+    return { ...r, forecast: { ...r.forecast, lower: r.forecast.sm_lower, upper: r.forecast.sm_upper } };
+  }
+
+  /* ---- Structural Model: the Components ------------------------------------------------------------------------------------ */
+  function componentsReport(ctx, col, S, spec, r, ob) {
+    const comps = r.components || [];
+    if (!comps.length) return;
+    const sc = scopeOf(col);
+    const color = colorOf(spec.id);
+    const cp = ctx.outline('Components', { parent: ob, key: `${sc}:model:${spec.id}:comps`, info: 'p:timeseries:structural' });
+    const n = comps.length;
+    const gap = 0.06, hh = (1 - gap * (n - 1)) / n;
+    const traces = [];
+    const layout = { xaxis: xAxis(S, { anchor: n > 1 ? `y${n}` : 'y' }), margin: { l: 60, r: 12, t: 16, b: 40 }, annotations: [] };
+    comps.forEach((c, i) => {
+      const ax = i ? `y${i + 1}` : 'y';
+      const top = 1 - i * (hh + gap);
+      layout[`yaxis${i ? i + 1 : ''}`] = { domain: [Math.max(0, top - hh), top], title: { text: '' }, zeroline: !['level'].includes(c.key) };
+      layout.annotations.push({ text: c.label, xref: 'paper', yref: 'paper', x: 0, y: top, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } });
+      if (c.key === 'level') traces.push({ ...seriesTrace(S, S.values, col.name, { points: true, lines: false, color: SM.util.themeColors().muted }), xaxis: 'x', yaxis: ax, marker: { size: 4, color: SM.util.themeColors().muted } });
+      if (c.lower) {
+        traces.push({ type: 'scatter', mode: 'lines', x: S.x, y: c.upper, xaxis: 'x', yaxis: ax, line: { width: 0, color: rgba(color, 0.3) }, hoverinfo: 'skip', name: `${c.label} upper` },
+          { type: 'scatter', mode: 'lines', x: S.x, y: c.lower, xaxis: 'x', yaxis: ax, line: { width: 0, color: rgba(color, 0.3) }, fill: 'tonexty', fillcolor: rgba(color, 0.18), hoverinfo: 'skip', name: `${c.label} lower` });
+      }
+      traces.push({ type: 'scatter', mode: 'lines', x: S.x, y: c.mean, xaxis: 'x', yaxis: ax, line: { color, width: 1.5 }, name: c.label, hovertemplate: `${c.label}: %{y:.5g}<extra></extra>` });
+    });
+    cp.add(ctx.plot(traces, layout, { width: plotWidth(ctx, 640), height: Math.max(260, 125 * n + 60), title: `${r.name} components` }));
+    cp.add(ctx.note(`The smoothed components (Kalman smoother: each uses all the data) with ${fmt(100 * r.level)}% bands from their smoothed variances, as statsmodels' plot_components draws them; the level panel also shows the data, linked to the rows. They add up to the series: level + seasonal + cycle + autoregressive + regression effect + irregular.${r.burn ? ` The first ${r.burn} one-step predictions are diffuse and left out of the fit.` : ''}`));
+  }
+
+  function saveComponents(ctx, col, S, r) {
+    for (const c of r.components || []) saveSlots(ctx, S, `${c.label} ${col.name}`, c.mean);
+  }
+
+  /* ---- Regime Switching: regimes, transitions, probabilities ------------------------------------------------------------ */
+  function regimeReport(ctx, col, S, spec, r, ob) {
+    const sc = scopeOf(col);
+    const k = r.k;
+    const rc = Array.from({ length: k }, (_, j) => ({ key: `r${j}`, label: `Regime ${j}` }));
+    const rg = ctx.outline('Regimes', { parent: ob, key: `${sc}:model:${spec.id}:regimes`, info: 'p:timeseries:regime' });
+    rg.add(ctx.row(
+      ctx.rt({ columns: [{ key: 'regime', label: 'Regime', fmt: 'text' }, { key: 'stay', label: 'P(Stay)' }, { key: 'duration', label: 'Expected Duration' }, { key: 'periods', label: 'Periods Most Likely', fmt: 'int' }, { key: 'share', label: 'Mean Probability' }], rows: r.regimes },
+        { sortable: false, caption: 'Regimes', name: `${r.name} regimes` }),
+      ctx.rt({ columns: [{ key: 'from', label: 'From \\ To', fmt: 'text' }, ...rc], rows: r.transition }, { sortable: false, caption: 'Transition Probabilities', name: `${r.name} transition probabilities` })));
+    rg.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'switching', label: 'Switching', fmt: 'text' }, ...rc], rows: r.per_regime }, { sortable: false, caption: 'Parameters by Regime', name: `${r.name} parameters by regime` }));
+    rg.add(ctx.note('P(Stay) is the probability of staying in the regime from one period to the next, and the expected duration 1/(1 − P(Stay)) periods. A row of Transition Probabilities is the regime now, a column the regime next period.'));
+    // the series, shaded by the regime that is most likely, and the probabilities
+    const pr = ctx.outline('Regime Probabilities', { parent: ob, key: `${sc}:model:${spec.id}:prob` });
+    const step = S.n > 1 ? (S.t[S.n - 1] - S.t[0]) / (S.n - 1) : 1;
+    const edge = (i) => (i <= 0 ? S.t[0] - step / 2 : i >= S.n ? S.t[S.n - 1] + step / 2 : (S.t[i - 1] + S.t[i]) / 2);
+    const shapes = [];
+    for (let i = 0; i < S.n;) {
+      const m = r.most[i];
+      let j = i + 1;
+      while (j < S.n && r.most[j] === m) j++;
+      if (m != null) shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: edge(i), x1: edge(j), y0: 0, y1: 1, fillcolor: rgba(regimeColor(m), 0.16), line: { width: 0 }, layer: 'below' });
+      i = j;
+    }
+    const legend = rc.map((c, j) => ({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${c.label} most likely`, marker: { symbol: 'square', size: 11, color: rgba(regimeColor(j), 0.45) }, hoverinfo: 'skip' }));
+    // the series in the theme's ink, which reads on either shading; the regime is the shading's
+    const ink = SM.util.themeColors().text;
+    pr.add(ctx.plot([seriesTrace(S, S.values, col.name, { color: ink }), ...legend], { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes, showlegend: true, legend: { orientation: 'h', y: -0.25 } },
+      { width: plotWidth(ctx, 620), height: 290, title: `${r.name} regimes`, rowColors: false }));
+    const flag = spec.fprob === true;
+    const ptr = r.prob.map((p, j) => ({ type: 'scatter', mode: 'lines+markers', x: S.x, y: p, rows: S.rowsLinked, name: `Regime ${j}`, line: { color: regimeColor(j), width: 1.5 },
+      marker: { size: 3, color: regimeColor(j) }, hovertemplate: `P(regime ${j}) %{y:.3f}<extra></extra>` }));
+    if (flag) r.fprob.forEach((p, j) => ptr.push({ type: 'scatter', mode: 'lines', x: S.x, y: p, name: `Regime ${j} filtered`, line: { color: regimeColor(j), width: 1, dash: 'dot' }, hovertemplate: `filtered P(regime ${j}) %{y:.3f}<extra></extra>` }));
+    pr.add(ctx.plot(ptr, { xaxis: xAxis(S), yaxis: { title: { text: 'Smoothed probability' }, range: [-0.03, 1.03] }, showlegend: true, legend: { orientation: 'h', y: -0.25 } },
+      { width: plotWidth(ctx, 620), height: 260, title: `${r.name} smoothed probabilities`, rowColors: false }));
+    pr.add(ctx.note(`Shaded: the regime with the highest smoothed probability, P(regime at t | all the data)${flag ? '; dotted: the filtered probabilities, P(regime at t | the data up to t)' : ''}. Points are linked to the rows.`));
+    const st = ctx.outline('Starts', { parent: ob, key: `${sc}:model:${spec.id}:starts`, closed: true });
+    st.add(ctx.rt({ columns: [{ key: 'start', label: 'Start', fmt: 'text' }, { key: 'm2ll', label: '−2LogLikelihood' }, { key: 'converged', label: 'Converged', fmt: 'text' }, { key: 'best', label: '', fmt: 'text' }, { key: 'note', label: 'Note', fmt: 'text' }], rows: r.starts },
+      { sortable: false, name: `${r.name} starts` }), ctx.note('Each start ends at a local maximum of the likelihood, or fails; the report is the best. Starts that end far apart mean the likelihood has several maxima: more starts make it likelier that the best is found.'));
+  }
+
+  function saveRegimes(ctx, col, S, r) {
+    r.prob.forEach((p, j) => saveSlots(ctx, S, `P(Regime ${j}) ${col.name}`, p));
+    saveSlots(ctx, S, `Most Likely Regime ${col.name}`, r.most);
+  }
+
+  /* ---- ARDL: the orders, the long run, the bounds test --------------------------------------------------------------------- */
+  const VERDICT = {
+    reject: (b) => `At 5%, F = ${fmt(b.stat)} is above the I(1) bound ${fmt(b.crit5.upper)}: the bounds test rejects the null of no level relationship, whether the inputs are I(0) or I(1). The series and the inputs move together in the long run.`,
+    accept: (b) => `At 5%, F = ${fmt(b.stat)} is below the I(0) bound ${fmt(b.crit5.lower)}: no level relationship can be claimed, whether the inputs are I(0) or I(1).`,
+    inconclusive: (b) => `At 5%, F = ${fmt(b.stat)} lies between the bounds ${fmt(b.crit5.lower)} and ${fmt(b.crit5.upper)}: inconclusive; the verdict depends on whether the inputs are I(0) or I(1) (their ADF and KPSS tests tell).`,
+  };
+
+  function ardlReport(ctx, col, S, spec, r, ob) {
+    const sc = scopeOf(col);
+    const key = `${sc}:model:${spec.id}`;
+    if (r.selection && r.selection.length) {
+      const sel = ctx.outline('Lag Order Selection', { parent: ob, key: `${key}:sel`, closed: true });
+      const inputs = spec.inputs || [];
+      sel.add(ctx.rt({ columns: [{ key: 'rank', label: 'Rank', fmt: 'int' }, { key: 'ic', label: (r.spec.ic || 'aic').toUpperCase() }, { key: 'ar', label: `${col.name} lags`, fmt: 'text' },
+        ...inputs.map((c) => ({ key: `q_${c}`, label: `${c} lags`, fmt: 'text' }))], rows: r.selection }, { sortable: false, name: 'ARDL lag order selection' }),
+      ctx.note(`The ten best of the orders searched by statsmodels' ardl_select_order, on the same sample (after the largest lag); "none" leaves the series out.`));
+    }
+    const lr = ctx.outline('Long-Run Coefficients', { parent: ob, key: `${key}:lr`, info: 'p:timeseries:ardl' });
+    lr.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 'z Ratio' }, { key: 'p', label: 'Prob>|z|', fmt: 'p' }], rows: r.long_run },
+      { sortable: false, name: `${r.name} long-run coefficients` }),
+    ctx.note(`The level relation ${col.name} = θ₀ + Σ θ x that the model settles to: θ = Σβ/(1 − Σφ) over the lags of each input (β) and of ${col.name} (φ), with delta-method standard errors and normal p-values; these are minus statsmodels' UECM ci_params, with its ci_bse and ci_pvalues.${r.speed != null ? ` The speed of adjustment, the coefficient of ${col.name}(t−1) in the error correction form, is ${fmt(r.speed)}: that share of a gap from the level relation is closed each period.` : ''}`));
+    const b = r.bounds;
+    if (b) {
+      b.crit5 = b.crit.find((x) => x.pct === 95) || b.crit[1];
+      const bt = ctx.outline('Bounds Test', { parent: ob, key: `${key}:bounds`, info: 'p:timeseries:ardl' });
+      bt.add(ctx.row(
+        ctx.kv([['F Statistic', b.stat], ['Case', b.case, 'int'], ['Inputs (k)', b.k, 'int'], ['Restrictions', b.n_restrictions, 'int'], ['Prob, inputs I(0)', b.p_lower, 'p'], ['Prob, inputs I(1)', b.p_upper, 'p']]),
+        ctx.rt({ columns: [{ key: 'level', label: 'Level', fmt: 'text' }, { key: 'lower', label: 'I(0) Bound' }, { key: 'upper', label: 'I(1) Bound' }], rows: b.crit },
+          { sortable: false, caption: 'Critical Values (Pesaran, Shin and Smith 2001)', name: 'Bounds test critical values', cellClass: (row) => (row.pct === 95 ? 'sm-ts-crit5' : '') })));
+      bt.add(el('p', { class: `sm-ts-verdict sm-ts-${b.verdict}`, text: VERDICT[b.verdict](b) }));
+      const sm5 = (b.sm_crit || []).find((x) => x.level === '5%');
+      bt.add(ctx.note(`Case ${b.case}: ${b.case_label}. The F test that the lagged levels of ${col.name} and the inputs${b.case === 2 ? ' and the intercept' : b.case === 4 ? ' and the trend' : ''} all have zero coefficients in the error correction form (statsmodels' bounds_test). Its distribution depends on whether the inputs are I(0) or I(1): the I(0) and I(1) bounds bracket every mix. The critical values and p-values are statsmodels' own simulated tables at k = ${b.k} inputs.${sm5 ? ` statsmodels 0.14.6's bounds_test reads them at k + 1 = ${b.k + 1} (5%: ${fmt(sm5.lower)} and ${fmt(sm5.upper)}), the bounds of one input more; the ones shown are those of the model's ${b.k}.` : ''}`));
+    }
+    if (r.ecm && r.ecm.length) {
+      const ecm = ctx.outline('Error Correction Form', { parent: ob, key: `${key}:ecm`, closed: true });
+      ecm.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }], rows: r.ecm },
+        { sortable: false, name: `${r.name} error correction form` }),
+      ctx.note(`The unrestricted error correction model (statsmodels' UECM) the bounds test uses: Δ${col.name} on the lagged levels (L1) and the lagged differences (D.), with every lag up to the model's longest.`));
+    }
   }
 
   /* ---- saving ---------------------------------------------------------------------------------------------------------------- */
@@ -961,10 +1321,174 @@
     addModels(ctx, col, specs);
   }
 
+  /* ---- Structural Model… ---------------------------------------------------------------------------------------------------- */
+  const UC_TRENDS = [['irregular', 'No trend: y = ε'], ['fixed intercept', 'Fixed intercept'], ['deterministic constant', 'Deterministic constant: μ + ε'],
+    ['local level', 'Local level: a random walk level + ε'], ['random walk', 'Random walk'], ['fixed slope', 'Fixed slope'], ['deterministic trend', 'Deterministic trend: a line + ε'],
+    ['local linear deterministic trend', 'Local linear deterministic trend: random level, fixed slope'], ['random walk with drift', 'Random walk with drift'],
+    ['local linear trend', 'Local linear trend: random level and slope'], ['smooth trend', 'Smooth trend: a random slope only'], ['random trend', 'Random trend']];
+
+  async function structuralDialog(ctx, col, S, preset = null) {
+    const P0 = preset || {};
+    const inputs = ctx.roles('inputs').filter((c) => c.id !== col.id);
+    const period = P0.seasonal || P0.freqPeriod || periodOf(ctx, S);
+    const seasonalDefault = P0.kind ? (P0.seasonal ? 'dummy' : P0.freqPeriod ? 'trig' : 'none') : (S.period_auto >= 2 ? 'dummy' : 'none');
+    const pre = new Set(P0.inputs || []);
+    const fields = [
+      { key: 'trend', label: 'Level and Trend', type: 'select', value: P0.trend || 'local linear trend', choices: UC_TRENDS },
+      { key: 'seas', label: 'Seasonal', type: 'select', value: seasonalDefault, choices: [['none', 'None'], ['dummy', 'Seasonal dummies (time domain)'], ['trig', 'Trigonometric (frequency domain)']] },
+      { key: 'period', label: 'Seasonal Period', type: 'number', value: period },
+      { key: 'harmonics', label: 'Harmonics, trigonometric (empty: all)', type: 'number', value: P0.freqHarmonics || '' },
+      { key: 'stochSeasonal', label: 'Stochastic seasonal (it may change over time)', type: 'check', value: P0.kind ? (P0.seasonal ? P0.stochSeasonal !== false : P0.stochFreq !== false) : true },
+      { key: 'cycle', label: 'Cycle', type: 'check', value: !!P0.cycle },
+      { key: 'stochCycle', label: 'Stochastic cycle', type: 'check', value: P0.stochCycle !== false },
+      { key: 'damped', label: 'Damped cycle', type: 'check', value: P0.damped !== false },
+      { key: 'cycleLo', label: 'Cycle period from (empty: statsmodels\' default)', type: 'number', value: P0.cycleLo ?? '' },
+      { key: 'cycleHi', label: 'Cycle period to (empty: statsmodels\' default)', type: 'number', value: P0.cycleHi ?? '' },
+      { key: 'ar', label: 'Autoregressive Order', type: 'number', value: P0.ar || 0 },
+    ];
+    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true }));
+    fields.push({ key: 'exact', label: 'Exact diffuse initialization', type: 'check', value: !!P0.exact }, LEVEL(P0.level));
+    const v = await SM.ui.form({
+      title: `Structural Model Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:structural',
+      lead: 'y = level + seasonal + cycle + autoregressive + regression on the inputs + irregular, each part a small state space model (statsmodels\' UnobservedComponents), fitted by maximum likelihood with the Kalman filter. Missing values are skipped. The cycle\'s period is bounded; statsmodels\' default is 1.5 to 12 years for yearly, quarterly and monthly data.',
+      fields,
+      validate: (x) => {
+        if (x.seas !== 'none' && !(Number.isInteger(x.period) && x.period >= 2)) return 'Seasonal Period: a whole number from 2';
+        if (x.seas === 'trig' && x.harmonics != null && !(Number.isInteger(x.harmonics) && x.harmonics >= 1 && x.harmonics <= Math.floor(x.period / 2))) return `Harmonics: from 1 to ${Math.floor(x.period / 2)}`;
+        if (x.cycle && x.cycleLo != null && !(x.cycleLo >= 2)) return 'Cycle period from: at least 2';
+        if (x.cycle && x.cycleLo != null && x.cycleHi != null && !(x.cycleHi > x.cycleLo)) return 'Cycle period to: above the lower bound';
+        if (!(Number.isInteger(x.ar) && x.ar >= 0 && x.ar <= 12)) return 'Autoregressive Order: a whole number from 0 to 12';
+        return levelOk(x);
+      },
+    });
+    if (!v) return;
+    const chosen = inputs.filter((c, i) => v[`use${i}`]).map((c) => c.name);
+    const spec = { kind: 'uc', trend: v.trend, level: v.level, exact: !!v.exact };
+    if (v.seas === 'dummy') { spec.seasonal = Math.round(v.period); spec.stochSeasonal = !!v.stochSeasonal; }
+    if (v.seas === 'trig') { spec.freqPeriod = Math.round(v.period); if (v.harmonics) spec.freqHarmonics = v.harmonics; spec.stochFreq = !!v.stochSeasonal; }
+    if (v.cycle) { spec.cycle = true; spec.stochCycle = !!v.stochCycle; spec.damped = !!v.damped; if (v.cycleLo != null) spec.cycleLo = v.cycleLo; if (v.cycleHi != null) spec.cycleHi = v.cycleHi; }
+    if (v.ar) spec.ar = v.ar;
+    if (chosen.length) spec.inputs = chosen;
+    addModels(ctx, col, [spec]);
+  }
+
+  /* ---- Regime Switching… ------------------------------------------------------------------------------------------------------- */
+  async function regimeDialog(ctx, col, S, preset = null) {
+    const P0 = preset || {};
+    const v = await SM.ui.form({
+      title: `Regime Switching Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:regime',
+      lead: 'k regimes, each with its own mean (and trend), variance or AR coefficients, and a Markov chain that moves between them (Hamilton 1989; statsmodels\' MarkovRegression, or MarkovAutoregression with an AR part). The likelihood has local maxima: the fit starts from statsmodels\' default and from random starts (a fixed seed) and keeps the best.',
+      fields: [
+        { key: 'k', label: 'Number of Regimes', type: 'select', value: String(P0.k || 2), choices: [['2', '2'], ['3', '3']] },
+        { key: 'order', label: 'Autoregressive Order (0: switching regression)', type: 'number', value: P0.order || 0 },
+        { key: 'trend', label: 'Mean', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and linear trend'], ['n', 'None (only the variance switches)']] },
+        { key: 'swTrend', label: 'Switching mean (and trend)', type: 'check', value: P0.swTrend !== false },
+        { key: 'swVar', label: 'Switching variance', type: 'check', value: !!P0.swVar },
+        { key: 'swAr', label: 'Switching AR coefficients', type: 'check', value: !!P0.swAr },
+        { key: 'starts', label: 'Random Starts', type: 'number', value: P0.starts ?? 5 },
+      ],
+      validate: (x) => {
+        if (!(Number.isInteger(x.order) && x.order >= 0 && x.order <= 8)) return 'Autoregressive Order: a whole number from 0 to 8';
+        if (!(Number.isInteger(x.starts) && x.starts >= 0 && x.starts <= 50)) return 'Random Starts: a whole number from 0 to 50';
+        const sw = (x.swTrend && x.trend !== 'n') || x.swVar || (x.order > 0 && x.swAr);
+        return sw ? null : 'Nothing switches: check a switching mean, variance or AR part';
+      },
+    });
+    if (!v) return;
+    const spec = { kind: 'markov', k: +v.k, order: v.order, trend: v.trend, swTrend: !!v.swTrend && v.trend !== 'n', swVar: !!v.swVar, swAr: !!v.swAr && v.order > 0, starts: v.starts };
+    addModels(ctx, col, [spec]);
+  }
+
+  /* ---- Theta Model… ------------------------------------------------------------------------------------------------------------ */
+  async function thetaDialog(ctx, col, S, preset = null) {
+    const P0 = preset || {};
+    const period = P0.period || periodOf(ctx, S);
+    const v = await SM.ui.form({
+      title: `Theta Model: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:theta',
+      lead: 'The theta method (Assimakopoulos and Nikolopoulos 2000) with statsmodels\' ThetaModel: the series is deseasonalized if it tests seasonal, simple exponential smoothing gives α and a linear trend b0, and the forecast weights the trend line by (θ − 1)/θ. θ = 2 is the classic method, simple exponential smoothing with drift.',
+      fields: [
+        { key: 'theta', label: 'θ, Theta (at least 1)', type: 'number', value: P0.theta || 2 },
+        { key: 'deseasonalize', label: 'Deseasonalize', type: 'check', value: P0.deseasonalize ?? period >= 2 },
+        { key: 'period', label: 'Seasonal Period', type: 'number', value: period },
+        { key: 'useTest', label: 'Test for seasonality first (10%)', type: 'check', value: P0.useTest !== false },
+        { key: 'method', label: 'Deseasonalizing', type: 'select', value: P0.method || 'auto', choices: [['auto', 'Automatic: multiplicative if every value is above zero'], ['multiplicative', 'Multiplicative'], ['additive', 'Additive']] },
+        { key: 'mle', label: 'Estimate by maximum likelihood (an IMA(1, 1) with drift)', type: 'check', value: !!P0.mle },
+        LEVEL(P0.level),
+      ],
+      validate: (x) => (!(x.theta >= 1) ? 'θ: at least 1' : x.deseasonalize && !(Number.isInteger(x.period) && x.period >= 2) ? 'Seasonal Period: a whole number from 2' : levelOk(x)),
+    });
+    if (!v) return;
+    addModels(ctx, col, [{ kind: 'theta', theta: v.theta, deseasonalize: !!v.deseasonalize, period: v.deseasonalize ? Math.round(v.period) : 0, useTest: !!v.useTest, method: v.method, mle: !!v.mle, level: v.level }]);
+  }
+
+  /* ---- ARDL… ---------------------------------------------------------------------------------------------------------------------- */
+  const ARDL_CASES = { n: [['1', '1: no intercept, no trend']], c: [['3', '3: unrestricted intercept'], ['2', '2: restricted intercept (in the level relation)']], ct: [['4', '4: restricted trend (in the level relation)'], ['5', '5: unrestricted intercept and trend']] };
+
+  function parseOrders(text, n) {
+    const t = String(text ?? '').trim();
+    if (!t) return null;
+    const parts = t.split(/[\s,;]+/).filter(Boolean);
+    if (parts.length !== n + 1 || !parts.every((p) => /^\d+$/.test(p) || p === '-')) return undefined;
+    return parts.map((p) => (p === '-' ? null : +p));
+  }
+
+  async function ardlDialog(ctx, col, S, preset = null) {
+    const inputs = ctx.roles('inputs').filter((c) => c.id !== col.id);
+    if (!inputs.length) { SM.ui.toast('ARDL models need Input List columns: relaunch with inputs'); return; }
+    const P0 = preset || {};
+    const pre = new Set(P0.inputs || []);
+    const fields = [];
+    inputs.forEach((c, i) => fields.push({ key: `use${i}`, label: `Input ${c.name}`, type: 'check', value: preset ? pre.has(c.name) : true }));
+    const ordersText = P0.order ? [P0.order.p || 0, ...(P0.inputs || []).map((c) => (P0.order.q && P0.order.q[c] != null ? P0.order.q[c] : '-'))].join(', ') : '';
+    fields.push(
+      { key: 'maxlag', label: `Largest lag of ${col.name}, p`, type: 'number', value: P0.maxlag || 4 },
+      { key: 'maxorder', label: 'Largest lag of the inputs, q', type: 'number', value: P0.maxorder ?? 4 },
+      { key: 'ic', label: 'Choose the orders by', type: 'select', value: P0.ic || 'aic', choices: [['aic', 'AIC'], ['bic', 'BIC']] },
+      { key: 'glob', label: 'Search every subset of lags (slow)', type: 'check', value: !!P0.glob },
+      { key: 'orders', label: 'Or fixed orders p, q1, q2 … (- leaves an input out)', type: 'text', value: ordersText, placeholder: 'empty: choose them' },
+      { key: 'trend', label: 'Deterministic Terms', type: 'select', value: P0.trend || 'c', choices: [['c', 'Intercept'], ['ct', 'Intercept and trend'], ['n', 'None']] },
+      { key: 'case', label: 'Bounds Test Case', type: 'select', value: String(P0.case || ''), choices: [['', 'Automatic: 3 with an intercept, 4 with a trend, 1 with neither'], ['1', '1: no intercept, no trend'], ['2', '2: restricted intercept'], ['3', '3: unrestricted intercept'], ['4', '4: restricted trend'], ['5', '5: unrestricted trend']] },
+      { key: 'causal', label: 'Causal: the inputs from lag 1 on', type: 'check', value: !!P0.causal },
+      { key: 'seasonal', label: 'Seasonal dummies', type: 'check', value: !!P0.seasonal },
+      LEVEL(P0.level));
+    const v = await SM.ui.form({
+      title: `ARDL Specification: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:ardl',
+      lead: 'The series on its own lags and on the inputs\' current and lagged values, by least squares (statsmodels\' ARDL), with the orders chosen by AIC or BIC; then the long-run coefficients and the bounds test of Pesaran, Shin and Smith (2001) for a level relationship. Forecasts take the inputs\' future values from the rows after the series.',
+      fields,
+      validate: (x) => {
+        const use = inputs.filter((c, i) => x[`use${i}`]);
+        if (!use.length) return 'Choose at least one input';
+        if (use.length > 9) return 'At most 9 inputs';
+        if (!(Number.isInteger(x.maxlag) && x.maxlag >= 1 && x.maxlag <= 24)) return 'Largest lag p: a whole number from 1 to 24';
+        if (!(Number.isInteger(x.maxorder) && x.maxorder >= 0 && x.maxorder <= 24)) return 'Largest lag q: a whole number from 0 to 24';
+        const ord = parseOrders(x.orders, use.length);
+        if (ord === undefined) return `Fixed orders: ${use.length + 1} whole numbers (p, then one for each input), or empty`;
+        if (x.glob && 2 ** (x.maxlag + use.length * (x.maxorder + 1)) > 4096) return 'Every subset: that many lags make more than 4096 models; lower p or q';
+        if (x.case && !(ARDL_CASES[x.trend] || []).some(([k]) => k === x.case)) return `Bounds Test Case ${x.case} does not go with these deterministic terms: ${ARDL_CASES[x.trend].map(([, l]) => l).join('; ')}`;
+        if (x.seasonal && !(periodOf(ctx, S) >= 2)) return 'Seasonal dummies need a seasonal period';
+        return levelOk(x);
+      },
+    });
+    if (!v) return;
+    const use = inputs.filter((c, i) => v[`use${i}`]).map((c) => c.name);
+    const ord = parseOrders(v.orders, use.length);
+    const spec = { kind: 'ardl', inputs: use, maxlag: v.maxlag, maxorder: v.maxorder, ic: v.ic, trend: v.trend, level: v.level };
+    if (v.glob) spec.glob = true;
+    if (ord) spec.order = { p: ord[0], q: Object.fromEntries(use.map((c, i) => [c, ord[i + 1]])) };
+    if (v.case) spec.case = +v.case;
+    if (v.causal) spec.causal = true;
+    if (v.seasonal) { spec.seasonal = true; spec.period = periodOf(ctx, S); }
+    addModels(ctx, col, [spec]);
+  }
+
   function fitNew(ctx, col, S, spec) {
     if (spec.kind === 'arima' && spec.inputs) return transferDialog(ctx, col, S, spec);
     if (spec.kind === 'arima') return arimaDialog(ctx, col, S, { seasonal: !!(spec.P || spec.D || spec.Q), preset: spec });
     if (spec.kind === 'smooth') return smoothDialog(ctx, col, S, spec.method, spec);
+    if (spec.kind === 'uc') return structuralDialog(ctx, col, S, spec);
+    if (spec.kind === 'markov') return regimeDialog(ctx, col, S, spec);
+    if (spec.kind === 'theta') return thetaDialog(ctx, col, S, spec);
+    if (spec.kind === 'ardl') return ardlDialog(ctx, col, S, spec);
     return etsDialog(ctx, col, S);
   }
 
@@ -1029,6 +1553,7 @@
       ctx.check('AR Coefficients', 'arcoef', sc, false),
       ctx.check('Spectral Density', 'spectral', sc, false),
       ctx.check('Stationarity Tests (ADF, KPSS)', 'stationarity', sc, true),
+      { label: 'Zivot-Andrews Test', checked: !!o('stationarity', true) && zivotOn(ctx, col), action: () => { if (!o('stationarity', true)) { ctx.set('zivot', true, sc, { rerun: false }); ctx.set('stationarity', true, sc); } else ctx.set('zivot', !zivotOn(ctx, col), sc); } },
       { separator: true },
       { label: 'Difference…', action: withS((S) => differenceDialog(ctx, col, S)) },
       { label: 'Decomposition', submenu: () => [
@@ -1038,7 +1563,9 @@
         { label: 'STL Decomposition…', action: withS((S) => addDecomp(ctx, col, S, 'stl')) },
         { label: 'X11', disabled: true, title: 'X-11 needs the Census Bureau\'s X-13ARIMA-SEATS program, which does not run in the browser' },
       ] },
+      { label: 'Filters', submenu: () => FILTERS.map(([k, label]) => ({ label: `${label}…`, action: withS((S) => filterDialog(ctx, col, S, k)) })) },
       { label: 'Show Lag Plot', checked: o('lagPlot', null) != null, action: () => ctx.set('lagPlot', o('lagPlot', null) != null ? null : 1, sc) },
+      ctx.check('Seasonal Subseries Plot', 'subseries', sc, false),
       { label: 'Cross Correlation', checked: !!o('ccf', false), disabled: !hasInputs, action: () => ctx.set('ccf', !o('ccf', false), sc) },
       hasInputs ? ctx.check('Input Time Series Panel', 'inputPanel', sc, true) : null,
       { separator: true },
@@ -1048,11 +1575,15 @@
       { label: 'Transfer Function…', disabled: !hasInputs, action: withS((S) => transferDialog(ctx, col, S)) },
       { label: 'Smoothing Models', submenu: () => SMOOTH.map(([k, label]) => ({ label: `${label}…`, action: withS((S) => smoothDialog(ctx, col, S, k)) })) },
       { label: 'State Space Smoothing Models…', action: withS((S) => etsDialog(ctx, col, S)) },
+      { label: 'Structural Model…', action: withS((S) => structuralDialog(ctx, col, S)) },
+      { label: 'Regime Switching…', action: withS((S) => regimeDialog(ctx, col, S)) },
+      { label: 'Theta Model…', action: withS((S) => thetaDialog(ctx, col, S)) },
+      { label: 'ARDL…', disabled: !hasInputs, action: withS((S) => ardlDialog(ctx, col, S)) },
       { separator: true },
       { label: 'Combine and Save Forecasts from Models', disabled: !o('models', []).length, action: withS(async (S) => {
         const list = o('models', []);
         const base = basePayload(ctx, col);
-        const results = await Promise.all(list.map((spec) => fitCall(ctx, base, spec, horizon(ctx)).catch((e) => ({ error: e.message }))));
+        const results = (await Promise.all(list.map((spec) => fitCall(ctx, base, spec, horizon(ctx)).catch((e) => ({ error: e.message }))))).map((r, i) => withOwnBand(list[i], r));
         combineForecasts(ctx, col, S, list, results);
       }) },
       { label: 'Save Spectral Density', action: async () => { const r = await ctx.call('timeseries.spectral', basePayload(ctx, col)); if (r.error) SM.ui.toast(r.error, { error: true }); else saveSpectral(col, r); } },
@@ -1070,12 +1601,13 @@
   const topics = {
     'p:timeseries': {
       kicker: 'Analyze > Specialized Modeling', title: 'Time Series',
-      lead: 'One series in time order: its graph, autocorrelations and stationarity tests; differencing and decomposition; the spectral density; and ARIMA, seasonal ARIMA, transfer function, smoothing and state space smoothing models with forecasts, compared in one table.',
+      lead: 'One series in time order: its graph, autocorrelations and stationarity tests; differencing, decomposition and filters; the spectral density and the seasonal subseries plot; and ARIMA, seasonal ARIMA, transfer function, smoothing and state space smoothing models with forecasts, compared in one table. Beyond JMP: structural models, regime switching, the Theta model, ARDL models with the bounds test, and the Zivot-Andrews test.',
       sections: [
-        { heading: 'Roles', choices: [['Y, Time Series', 'The series, one report each (continuous columns).'], ['Input List', 'Numeric input series for cross correlations and transfer functions; indicators such as a promotion flag work.'], ['X, Time ID', 'Orders the rows and labels the time axis; a date column gives the calendar frequency, the seasonal period and the forecast dates.'], ['By', 'A report for each level.']] },
+        { heading: 'Roles', choices: [['Y, Time Series', 'The series, one report each (continuous columns).'], ['Input List', 'Numeric input series for cross correlations, transfer functions, structural and ARDL models; indicators such as a promotion flag work.'], ['X, Time ID', 'Orders the rows and labels the time axis; a date column gives the calendar frequency, the seasonal period and the forecast dates.'], ['By', 'A report for each level.']] },
         { heading: 'Options', choices: [['Forecast Periods', 'How many periods each model forecasts (default 25).'], ['Autocorrelation Lags', 'How many lags the correlations go to (default 25; n/4 is a common choice).'], ['Seasonal Period', 'The default observations per period in the dialogs; empty takes it from the Time ID (12 for monthly data).']] },
         { heading: 'Missing and excluded rows', text: 'Excluded rows count as missing values, as in JMP, so the spacing of the series is kept; dates missing from a regular calendar are inserted as missing too. ARIMA models skip missing values in the likelihood; the smoothing and decomposition methods fill them by interpolation, and say so.' },
         { heading: 'Differences from JMP', list: ['ARIMA: statsmodels\' exact likelihood; AIC and SBC count the parameters as JMP does (statsmodels also counts σ², shown in the notes). MA coefficients have statsmodels\' sign, the opposite of JMP\'s.', 'Smoothing models: weights and starting states by least squares (holtwinters), not JMP\'s ARIMA-equivalent fit; prediction intervals from the same moving-average weights JMP uses.', 'ADF lags by AIC; KPSS, STL and state space model selection by AICc are additions. X-11 is not available.'] },
+        { heading: 'Beyond JMP', choices: [['Structural Model…', 'Level, trend, seasonal, cycle and AR parts with their smoothed components (UnobservedComponents).'], ['Regime Switching…', 'Markov switching means, variances and AR parts, with regime probabilities.'], ['Filters', 'Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald trend and cycle.'], ['Seasonal Subseries Plot', 'Each season\'s values over the years with their mean.'], ['Theta Model…', 'The theta method\'s forecasts.'], ['ARDL…', 'Distributed lags of the inputs, the long run and the bounds test for cointegration.'], ['Zivot-Andrews Test', 'A unit root test that allows one break, with its date, in Stationarity Tests.']] },
       ],
       more: MORE,
     },
@@ -1129,20 +1661,105 @@
     },
     'p:timeseries:ets': { kicker: 'Time Series', title: 'State Space Smoothing', lead: 'ETS(error, trend, seasonal) models (Hyndman et al. 2008) with additive or multiplicative errors, no, additive or damped trend, and no, additive or multiplicative seasonality, fitted by maximum likelihood with statsmodels\' ETSModel and ranked by AICc. Their likelihood is not comparable with the ARIMA models\', as JMP also warns. Multiplicative models get simulated prediction intervals (a fixed seed).', more: MORE },
     'p:timeseries:comparison': { kicker: 'Time Series', title: 'Model Comparison', lead: 'Every fitted model with DF, variance, AIC, SBC, AICc, RSquare, −2LogLikelihood, AIC weights, MAPE and MAE, sorted by AIC. Report shows the model\'s report; Graph overlays its forecasts, prediction interval and residual autocorrelations in the plots below. The red triangle removes or hides models, and saves all forecasts in one new table.', more: MORE },
+    'p:timeseries:structural': {
+      kicker: 'Time Series', title: 'Structural Model',
+      lead: 'A structural (unobserved components) model writes the series as a sum of parts, each a small state space model: y = level + seasonal + cycle + autoregressive + β\'x + irregular. statsmodels\' UnobservedComponents fits the variances of their disturbances (and the cycle\'s frequency and damping, the AR coefficients, the input coefficients) by maximum likelihood with the Kalman filter, which also skips missing values.',
+      sections: [
+        { heading: 'The parts', choices: [['Level and trend', 'From a fixed intercept to a local linear trend, whose level and slope both follow random walks (statsmodels\' twelve specifications); a variance of 0 fixes that part.'], ['Seasonal', 'Seasonal dummies summing to zero over the period, or a trigonometric seasonal of sines and cosines (fewer harmonics give a smoother pattern); stochastic ones may change over time.'], ['Cycle', 'A (damped) stochastic cycle whose period is estimated within bounds; statsmodels bounds it to 1.5 to 12 years for yearly, quarterly and monthly data.'], ['Autoregressive', 'An AR(p) part in place of, or besides, the white-noise irregular.'], ['Inputs', 'Regression on the Input List columns; forecasts take their future values from the rows after the series.']] },
+        { heading: 'The report', text: 'Parameter estimates, the fit statistics that join Model Comparison (k leaves one variance out, as JMP does for ARIMA models), the Components: each smoothed part with its band, forecasts with prediction intervals, and the residuals (one-step prediction errors). Save Components writes the smoothed parts to the table.' },
+        { heading: 'What to watch', text: 'The nonstationary states start diffuse: by default statsmodels\' approximate diffuse initialization leaves the first observations out of the likelihood; Exact diffuse initialization gives Durbin and Koopman\'s exact likelihood (the published Nile estimates need it). Cycle models often have several local maxima: try other bounds on the period. A variance estimated at 0 is at the edge of its range, where its z test is conservative.' },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:regime': {
+      kicker: 'Time Series', title: 'Regime Switching',
+      lead: 'A Markov switching model (Hamilton 1989): the series has k regimes, such as expansion and recession, each with its own mean (and trend), variance or AR coefficients, and a hidden Markov chain moves between them with fixed transition probabilities. statsmodels\' MarkovRegression (no AR part) and MarkovAutoregression fit it by maximum likelihood with the Hamilton filter; Kim\'s smoother gives the probability of each regime at each time.',
+      sections: [
+        { heading: 'The report', text: 'The parameters with their regime, the Regimes table (the probability of staying, the expected duration 1/(1 − P), how long each regime is the most likely), the transition matrix, the series shaded by the most likely regime, the smoothed (and filtered) probabilities, and the one-step-ahead predictions. Save Regime Probabilities writes them to the table. statsmodels does not forecast these models.' },
+        { heading: 'Local maxima', text: 'The likelihood of a regime-switching model often has several maxima, and some starts fail. The fit starts from statsmodels\' default and from Random Starts drawn around it (uniform ±0.5 on the unconstrained parameters, a fixed seed, so the report is the same every time) and keeps the highest likelihood; the Starts table shows where each ended. The regimes are numbered as statsmodels numbers them, from 0: which is which can change with the data.' },
+        { heading: 'Missing values', text: 'The Hamilton filter needs every value: missing and excluded values are filled by linear interpolation, and left out of the fit statistics.' },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:filters': {
+      kicker: 'Time Series', title: 'Filters',
+      lead: 'Trend and cycle from a filter, as macroeconomists take the business cycle out of a series. Hodrick-Prescott (hpfilter): the trend τ minimises Σ(y − τ)² + λ Σ(Δ²τ)², with λ from Ravn and Uhlig\'s rule 1600 (s/4)⁴ for s observations a year (6.25 yearly, 1600 quarterly, 129600 monthly). Baxter-King (bkfilter): a symmetric moving average that keeps the cycles of a band of periods and loses K values at each end. Christiano-Fitzgerald (cffilter): an asymmetric band pass that uses the whole series at every time, so none is lost.',
+      sections: [{ heading: 'Options', text: 'The band is given in periods (by default 1.5 to 8 years: 6 to 32 quarters). Save Columns writes the trend and the cycle to the table. Missing values are filled by interpolation for the filter, and the cycle is left missing there.' }],
+      more: MORE,
+    },
+    'p:timeseries:subseries': { kicker: 'Time Series', title: 'Seasonal Subseries Plot', lead: 'statsmodels\' month_plot, quarter_plot and seasonal_plot: the values of each season (every January, every February …; every quarter; every weekday; or every k-th observation of the period) drawn side by side in time order, each with a line at its mean. Differences between the means show the seasonal pattern, and the slope within a season shows it changing over the years. Points are linked to the rows; Season Means gives the numbers.', more: MORE },
+    'p:timeseries:theta': {
+      kicker: 'Time Series', title: 'Theta Model',
+      lead: 'The theta method of Assimakopoulos and Nikolopoulos (2000), which did well in the M3 forecasting competition, with statsmodels\' ThetaModel. The series is tested for seasonality at the seasonal lag and deseasonalized (seasonal_decompose); simple exponential smoothing gives α and a linear trend gives the slope b0; the forecast is ((θ − 1)/θ) b0 [h − 1 + 1/α − (1 − α)^T/α] plus the smoothing forecast, reseasonalized. θ = 2 is the original method, simple exponential smoothing with drift b0/2 (Hyndman and Billah 2003).',
+      sections: [
+        { heading: 'Prediction intervals', text: 'The method is an IMA(1, 1) with drift, whose h-step variance is σ²(1 + (h − 1)α²): the report uses it, with statsmodels\' σ². statsmodels 0.14.6\'s prediction_intervals use σ²(1 + (h − 1)(1 + (α − 1)²)), which is wider; the model\'s red triangle shows those instead.' },
+        { heading: 'Fit statistics', text: 'The method has no likelihood of its own: Model Comparison gets the statistics of its one-step-ahead forecasts from each origin, with the parameters of the whole fit.' },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:zivot': { kicker: 'Time Series', title: 'Zivot-Andrews Test', lead: 'A unit root test that allows one structural break at an unknown date (Zivot and Andrews 1992, statsmodels\' zivot_andrews): H0 a unit root, H1 a stationary series with a break in the intercept, the trend or both. Where the ADF test mistakes a break for a unit root, this one can reject. The break date is where the test statistic is smallest: the last observation before the shift. P-values and critical values are interpolated in statsmodels\' simulated tables; the options set the trimming at the ends and the lag selection.', more: MORE },
+    'p:timeseries:ardl': {
+      kicker: 'Time Series', title: 'ARDL and the Bounds Test',
+      lead: 'An autoregressive distributed lag model ARDL(p, q₁, …, q_k): the series on p of its own lags and on the inputs at lags 0 to q, by least squares (statsmodels\' ARDL), with the orders chosen by AIC or BIC among all orders up to the largest (ardl_select_order), or given.',
+      sections: [
+        { heading: 'The long run', text: 'If the model is stable it settles to a level relation y = θ₀ + Σ θx, with θ = Σβ/(1 − Σφ); the Long-Run Coefficients have delta-method standard errors (statsmodels\' UECM ci_params). The error correction form writes the same model as changes on the lagged levels; the coefficient of the lagged series is the speed of adjustment.' },
+        { heading: 'The bounds test', text: 'Pesaran, Shin and Smith (2001) test whether there is a level relationship at all, without knowing whether the inputs are stationary: the F test of the lagged levels in the error correction form is compared with two bounds, all inputs I(0) and all I(1). Above the I(1) bound: a level relationship (cointegration); below the I(0) bound: none; in between: inconclusive. The case says where the intercept and trend go (3: unrestricted intercept, the usual one; 4: a trend in the level relation). The critical values and p-values are statsmodels\' simulated tables, read for the model\'s number of inputs.' },
+        { heading: 'Forecasts', text: 'They need the inputs\' future values: from the rows after the series in the table (Y missing, the inputs present), as the Transfer Function takes them; beyond those the last value is held.' },
+      ],
+      more: MORE,
+    },
   };
+
+  /* ---- the example: simulated here, never real data ---------------------------------------------------------------------------------------------------- */
+  SM.io.addExample('cycles', {
+    label: 'Business cycle (184 quarters): regimes, a break, a cointegrated pair',
+    about: 'Simulated quarters from 1980: growth switches between an expansion (mean 0.8, staying with probability 0.95) and a recession (mean −0.6, staying with probability 0.75) by a Markov chain, with AR(1) noise; output adds the growth up, a trend with a business cycle; unemployment is stationary around a level that jumps from 5 to 8 after 2005 Q1; cost is a random walk with drift and price follows it: price = 5 + 0.6 price(t−1) + 0.5 cost − 0.2 cost(t−1) + noise, a level relation price = 12.5 + 0.75 cost. The last 8 quarters have cost but no price, for ARDL forecasts. For Time Series: Regime Switching, Filters, the Zivot-Andrews test, Structural Model and ARDL.',
+    make() {
+      const r = SM.util.rng('cycles');
+      const n = 184, future = 8, brk = 100;
+      const mu = [0.8, -0.6], stay = [0.95, 0.75];
+      const quarter = [], growth = [], output = [], unemp = [], cost = [], price = [];
+      let s = 0, g0 = mu[0], out = 100, u = 5, c = 50, p = 12.5 + 0.75 * 50;
+      for (let t = 0; t < n; t++) {
+        if (t > 0 && r.u() > stay[s]) s = 1 - s;
+        const g = mu[s] + 0.3 * (g0 - mu[s]) + r.normal(0, 0.6);
+        g0 = g;
+        out += g;
+        const m = t <= brk ? 5 : 8;
+        u = t === 0 ? m : m + 0.6 * (u - (t - 1 <= brk ? 5 : 8)) + r.normal(0, 0.35);
+        const c1 = c;
+        c = t === 0 ? c : c + 0.2 + r.normal(0, 0.8);
+        p = t === 0 ? p : 5 + 0.6 * p + 0.5 * c - 0.2 * c1 + r.normal(0, 0.5);
+        quarter.push(Date.UTC(1980, 3 * t, 1));
+        growth.push(+g.toFixed(3)); output.push(+out.toFixed(3)); unemp.push(+u.toFixed(3)); cost.push(+c.toFixed(3));
+        price.push(t < n - future ? +p.toFixed(3) : NaN);
+      }
+      return new SM.Table({ name: 'Business cycle', source: 'simulated', columns: [
+        { name: 'quarter', dataType: 'numeric', format: { kind: 'date' }, values: quarter },
+        { name: 'growth', dataType: 'numeric', values: growth },
+        { name: 'output', dataType: 'numeric', values: output },
+        { name: 'unemployment', dataType: 'numeric', values: unemp },
+        { name: 'cost', dataType: 'numeric', values: cost },
+        { name: 'price', dataType: 'numeric', values: price },
+      ] });
+    },
+  });
 
   /* ---- the platform ------------------------------------------------------------------------------------------------------------------------------------ */
   SM.platforms.register({
     id: 'timeseries', label: 'Time Series', menu: 'Analyze/Specialized Modeling', order: 20, info: 'p:timeseries', topics,
-    about: 'One series in time order: its graph with the ADF tests, autocorrelations with Ljung-Box, partial autocorrelations, variogram, KPSS; differencing, linear trend and cycle removal, seasonal decomposition and STL; the spectral density with the white noise tests; lag plots and cross correlations; ARIMA, seasonal ARIMA and ARIMA model groups, transfer functions (ARIMAX), the smoothing models and state space smoothing (ETS), each with forecasts that continue the dates, compared in one table.',
-    uses: ['statsmodels.tsa.stattools.acf, pacf, adfuller, kpss, ccf, levinson_durbin', 'statsmodels.stats.diagnostic.acorr_ljungbox', 'statsmodels.tsa.arima.model.ARIMA',
+    about: 'One series in time order: its graph with the ADF tests, autocorrelations with Ljung-Box, partial autocorrelations, variogram, KPSS and the Zivot-Andrews test with its break date; differencing, linear trend and cycle removal, seasonal decomposition and STL, the Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald filters; the spectral density with the white noise tests; lag plots, seasonal subseries plots and cross correlations; ARIMA, seasonal ARIMA and ARIMA model groups, transfer functions (ARIMAX), the smoothing models and state space smoothing (ETS), and, beyond JMP, structural (unobserved components) models with their smoothed components, Markov regime-switching models with regime probabilities, the Theta model, and ARDL models with the long-run coefficients and the Pesaran-Shin-Smith bounds test; each with forecasts that continue the dates, compared in one table.',
+    uses: ['statsmodels.tsa.stattools.acf, pacf, adfuller, kpss, ccf, levinson_durbin, zivot_andrews', 'statsmodels.stats.diagnostic.acorr_ljungbox', 'statsmodels.tsa.arima.model.ARIMA',
       'statsmodels.tsa.holtwinters.ExponentialSmoothing', 'statsmodels.tsa.exponential_smoothing.ets.ETSModel', 'statsmodels.tsa.seasonal.seasonal_decompose, STL',
+      'statsmodels.tsa.statespace.structural.UnobservedComponents', 'statsmodels.tsa.regime_switching.markov_regression.MarkovRegression, markov_autoregression.MarkovAutoregression',
+      'statsmodels.tsa.filters.hp_filter.hpfilter, bk_filter.bkfilter, cf_filter.cffilter', 'statsmodels.graphics.tsaplots.month_plot, quarter_plot, seasonal_plot (their data)',
+      'statsmodels.tsa.forecasting.theta.ThetaModel', 'statsmodels.tsa.ardl.ARDL, UECM, ardl_select_order, pss_critical_values',
       'statsmodels.tsa.statespace.tools.diff', 'statsmodels.regression.linear_model.OLS', 'pandas.infer_freq', 'numpy.fft'],
     launch: {
-      lead: 'Choose the series. A date column as X, Time ID gives a date axis, the seasonal period and the dates of the forecasts; Input List columns are the inputs of transfer functions.',
+      lead: 'Choose the series. A date column as X, Time ID gives a date axis, the seasonal period and the dates of the forecasts; Input List columns are the inputs of transfer functions, structural and ARDL models.',
       roles: [
         { key: 'y', label: 'Y, Time Series', min: 1, types: ['continuous'], hint: 'required: one or more continuous' },
-        { key: 'inputs', label: 'Input List', numeric: true, hint: 'optional numeric: inputs of transfer functions' },
+        { key: 'inputs', label: 'Input List', numeric: true, hint: 'optional numeric: inputs of transfer functions, structural and ARDL models' },
         { key: 'time', label: 'X, Time ID', max: 1, numeric: true, hint: 'optional: a date or a time step', info: 'p:timeseries:timeid' },
         { key: 'by', label: 'By', hint: 'optional' },
       ],
@@ -1180,5 +1797,5 @@
   });
 
   // For the tests.
-  SM.timeseries = Object.freeze({ groupRows, barSvg, parseRange, effective, specName });
+  SM.timeseries = Object.freeze({ groupRows, barSvg, parseRange, effective, specName, perYear, filterDefaults, parseOrders, fitKey, regimeColor });
 }(typeof self !== 'undefined' ? self : this));

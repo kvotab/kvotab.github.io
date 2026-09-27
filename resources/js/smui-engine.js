@@ -7,7 +7,9 @@
        const r = await SM.engine.call('distribution.continuous', { column }, table);
 
    A call that names a table sends the table first if the worker has not
-   got this version of it. The worker runs one call at a time. A call that
+   got this version of it. Events: 'status', 'busy', 'log' (Python's
+   output) and 'progress' ({ what, done, total }, from lines a backend
+   prints as 'smui:progress <what> <done> <total>'). The worker runs one call at a time. A call that
    runs away can be stopped with restart(): the worker is terminated and
    loaded again, from the browser's cache.
    ========================================================================== */
@@ -88,7 +90,9 @@
       }));
       const arrays = table.columns.map((c) => (c.isNumeric ? Float64Array.from(c.values) : c.values.slice()));
       // The number arrays are fresh copies: move them instead of copying again.
-      this.worker.postMessage({ type: 'table', id: table.id, version: table.version, meta, arrays }, arrays.filter((a) => a instanceof Float64Array).map((a) => a.buffer));
+      // Python keys its fitted models by the version it is given: the data
+      // version, so that a column added to the table keeps them.
+      this.worker.postMessage({ type: 'table', id: table.id, version: table.dataVersion ?? table.version, meta, arrays }, arrays.filter((a) => a instanceof Float64Array).map((a) => a.buffer));
       this.sent.set(table.id, table.version);
     }
 
@@ -159,6 +163,10 @@
         }
       } else if (m.type === 'log') {
         this.emit('log', m);
+        // 'smui:progress <what> <done> <total>' lines from a long calculation
+        // (Mediation's simulations) become a progress event, not console text.
+        const pm = /^smui:progress\s+(\S+)\s+(\d+)\s+(\d+)/.exec(m.text || '');
+        if (pm) { this.emit('progress', { what: pm[1], done: +pm[2], total: +pm[3] }); return; }
         if (m.stream === 'stderr') console.warn('[python]', m.text); else console.log('[python]', m.text);
       }
     }

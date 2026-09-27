@@ -1,0 +1,38 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > MEDIATION (smui-p-mediation.js)
+   The launch dialog's contrast, models and simulations, and the report's
+   summary, effects table and notes. Colours are kvot.css's tokens, so
+   both themes read.
+   ========================================================================== */
+
+/* ---- the launch dialog ---------------------------------------------------------- */
+.sm-med-launch { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-med-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; min-width: 0; }
+.sm-med-head { display: inline-flex; align-items: center; gap: 6px; }
+.sm-med-head strong { font-weight: 600; color: var(--text-secondary); }
+.sm-med-opt { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-primary); }
+.sm-med-opt > span { color: var(--text-secondary); }
+.sm-med-opt input[type="checkbox"] { margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-med-opt select, .sm-med-opt input[type="text"] {
+  max-width: min(220px, 60vw);
+  padding: 2px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.sm-med-opt [hidden] { display: none !important; }
+
+/* ---- the report ------------------------------------------------------------------------ */
+.sm-med-summary { margin: 0 0 4px; }
+.sm-med-summary .sm-kv td:last-child { text-align: left; white-space: normal; max-width: 560px; }
+.sm-med-table { min-width: 0; max-width: 100%; overflow-x: auto; }
+.sm-rt td.sm-med-avg { font-weight: 600; }
+.sm-med-progress { font-style: italic; }
+.sm-med-about { max-width: 760px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
+.sm-med-about p { margin: 0 0 7px; }
+@media (max-width: 760px) {
+  .sm-med-summary .sm-kv td:first-child { white-space: normal; }
+}

@@ -3,8 +3,9 @@
 (resources/py/smui/multivariate.py), checked against statsmodels and scipy
 called directly, against brute-force computations of the definitions JMP
 documents, and against published values (the cubic clustering criterion of
-the Fisher iris example in the SAS PROC CLUSTER and FASTCLUS documentation).
-The data are simulated here from fixed seeds.
+the Fisher iris example in the SAS PROC CLUSTER and FASTCLUS documentation;
+the distance correlation of a bivariate normal, Székely, Rizzo and Bakirov
+2007, Theorem 7). The data are simulated here from fixed seeds.
 
     python3 resources/tests/smui/test_multivariate.py
 """
@@ -124,6 +125,96 @@ for xq in (1.0, 2.0, 3.0):
     check.near(f'BKR P(T > {xq}) (Imhof) against 80000 simulations', mv.bkr_sf(xq), float(np.mean(Tsim > xq)), abs_=0.006)
 hd = call('multivariate.nonparametric', table=tid, columns=['a', 'b'], measure='hoeffding')
 check('Hoeffding p is a probability', 0 <= hd['pairs'][0]['p'] <= 1, True)
+
+# ---- Multivariate: distance correlation (statsmodels dist_dependence_measures) ---------------------
+from statsmodels.stats.dist_dependence_measures import distance_covariance_test, distance_statistics  # noqa: E402
+dc = call('multivariate.distance', table=tid, columns=['a', 'b', 'c'])
+pab = [x for x in dc['pairs'] if (x['by'], x['var']) == ('a', 'b')][0]
+okab = np.isfinite(Xm[:, 0]) & np.isfinite(Xm[:, 1])
+st_ab = distance_statistics(Xm[okab, 0], Xm[okab, 1])
+check('distance: each pair on its own complete rows', pab['count'], int(okab.sum()))
+check.near('dCor = statsmodels distance_statistics', pab['dcor'], float(st_ab.distance_correlation))
+check.near('dCov = distance_statistics', pab['dcov'], float(st_ab.distance_covariance))
+check.near('n·dCov² = its test statistic', pab['stat'], float(st_ab.test_statistic))
+# by the definition: the mean product of the doubly centred distance matrices
+xa_, xb_ = Xm[okab, 0], Xm[okab, 1]
+A_ = np.abs(xa_[:, None] - xa_[None, :])
+B_ = np.abs(xb_[:, None] - xb_[None, :])
+A_ = A_ - A_.mean(0) - A_.mean(1)[:, None] + A_.mean()
+B_ = B_ - B_.mean(0) - B_.mean(1)[:, None] + B_.mean()
+dcov2 = (A_ * B_).mean()
+check.near('dCov² = mean(A·B) of the doubly centred distances (by hand)', pab['dcov'] ** 2, float(dcov2))
+check.near('dCor = dCov/√(dVar·dVar) (by hand)', pab['dcor'], float(math.sqrt(dcov2 / math.sqrt((A_ * A_).mean() * (B_ * B_).mean()))))
+check('the matrix is symmetric with 1 on the diagonal', (dc['matrix'][0][1] == dc['matrix'][1][0], dc['matrix'][2][2]), (True, 1.0))
+check.near('the matrix holds the pair\'s dCor', dc['matrix'][0][1], pab['dcor'])
+check.near('the correlation beside it (numpy)', pab['r'], float(np.corrcoef(xa_, xb_)[0, 1]))
+import warnings  # noqa: E402
+np.random.seed(20260926)
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')   # statsmodels says it falls back to the asymptotic p-value; the report shows that
+    ref_t = distance_covariance_test(xa_, xb_)
+check('n ≤ 500: the permutation test (statsmodels\' rule)', pab['method'].startswith(('permutation', 'asymptotic: no permutation')), True)
+check.near('the p-value = distance_covariance_test with the fixed seed', pab['p'], float(ref_t[1]))
+pac = [x for x in dc['pairs'] if (x['by'], x['var']) == ('a', 'c')][0]
+np.random.seed(20260926)
+ref_ac = distance_covariance_test(Xm[:, 0], Xm[:, 2])
+check.near('a weaker pair: the permutation p-value', pac['p'], float(ref_ac[1]))
+check('its method and number of permutations (B = 200 + 5000/n)', (pac['method'], pac['B']), (f'permutation (B = {int(200 + 5000 / n)})', int(200 + 5000 / n)))
+check.near('the same p-value on a second run (seeded)', call('multivariate.distance', table=tid, columns=['a', 'c'])['pairs'][0]['p'], pac['p'])
+np.random.seed(5)
+call('multivariate.distance', table=tid, columns=['a', 'c'])
+after_ = np.random.rand()
+np.random.seed(5)
+check('the permutations leave numpy\'s global random state as it was', after_, np.random.rand())
+dca = call('multivariate.distance', table=tid, columns=['a', 'c'], method='asym')
+check.near('Asymptotic Test Only: 2(1 − Φ(√(n·dCov²/S)))', dca['pairs'][0]['p'], float(distance_covariance_test(Xm[:, 0], Xm[:, 2], method='asym')[1]))
+check('its method', dca['pairs'][0]['method'], 'asymptotic')
+# y = 2x + 1: dCor is 1; it uses only distances, so a shift and a scale do not change it
+tl_ = table({'x': Xm[:, 4], 'y': 2 * Xm[:, 4] + 1, 'z': -3 * Xm[:, 5] + 10, 'w': Xm[:, 5]})
+dl_ = call('multivariate.distance', table=tl_, columns=['x', 'y', 'z', 'w'])
+check.near('a straight line: dCor 1', [x for x in dl_['pairs'] if (x['by'], x['var']) == ('x', 'y')][0]['dcor'], 1.0, rel=1e-12)
+check.near('dCor(-3w + 10, w) = 1 too', [x for x in dl_['pairs'] if (x['by'], x['var']) == ('z', 'w')][0]['dcor'], 1.0, rel=1e-12)
+pfall = [x for x in dl_['pairs'] if (x['by'], x['var']) == ('x', 'y')][0]
+check('no permutation reaches a perfect line: statsmodels\' asymptotic p, said so', (pfall['method'].startswith('asymptotic: no permutation'), 'HypothesisTestWarning' in ' '.join(dl_.get('warnings', []))), (True, True))
+# the population value for a bivariate normal (Székely, Rizzo and Bakirov 2007, Theorem 7)
+rho_ = 0.6
+pop = math.sqrt((rho_ * math.asin(rho_) + math.sqrt(1 - rho_ ** 2) - rho_ * math.asin(rho_ / 2) - math.sqrt(4 - rho_ ** 2) + 1) / (1 + math.pi / 3 - math.sqrt(3)))
+dns = []
+for s_ in range(20):   # the mean of 20 samples of 1000: its standard error is about 0.005
+    zz = np.random.default_rng(100 + s_).multivariate_normal([0, 0], [[1, rho_], [rho_, 1]], size=1000)
+    dn_ = call('multivariate.distance', table=table({'u': zz[:, 0], 'v': zz[:, 1]}), columns=['u', 'v'])
+    dns.append(dn_['pairs'][0]['dcor'])
+check.near(f'bivariate normal, ρ 0.6: the mean dCor of 20 samples is the population {pop:.4f}', float(np.mean(dns)), pop, abs_=0.02)
+check('more than 500 rows: the asymptotic test', dn_['pairs'][0]['method'], 'asymptotic')
+# Freq: the same as repeating the rows
+tf_ = table({'a': Xm[:20, 0], 'c': Xm[:20, 2], 'k': [2.0, 1.0] * 10})
+df_ = call('multivariate.distance', table=tf_, columns=['a', 'c'], freq='k')
+rep_ = np.repeat(np.arange(20), [2, 1] * 10)
+check.near('Freq: dCor of the repeated rows', df_['pairs'][0]['dcor'], float(distance_statistics(Xm[rep_, 0], Xm[rep_, 2]).distance_correlation))
+check('Freq must be whole numbers', 'error' in call('multivariate.distance', table=table({'a': [1.0, 2, 3, 4], 'c': [2.0, 1, 4, 3], 'k': [1.5, 1, 1, 1]}), columns=['a', 'c'], freq='k'), True)
+# more rows than the distance matrices take: a seeded subsample, said so
+big = np.random.default_rng(13).normal(size=(2300, 2))
+dbig = call('multivariate.distance', table=table({'p': big[:, 0], 'q': big[:, 0] ** 2 + big[:, 1]}), columns=['p', 'q'])
+keep_ = np.sort(np.random.default_rng(20260926).choice(2300, 2000, replace=False))
+check('2300 rows: 2000 used, a note', (dbig['pairs'][0]['count'], dbig['pairs'][0]['used'], any('subsample' in t for t in dbig['notes'])), (2300, 2000, True))
+check.near('the subsample\'s dCor', dbig['pairs'][0]['dcor'], float(distance_statistics(big[keep_, 0], big[keep_, 0] ** 2 + big[keep_, 1]).distance_correlation))
+wide = np.random.default_rng(14).normal(size=(500, 5))
+dw = call('multivariate.distance', table=table({f'w{j}': wide[:, j] for j in range(5)}), columns=[f'w{j}' for j in range(5)])
+check('ten pairs of 500 rows: too many permutations here, the asymptotic tests, said so', (all(x['method'] == 'asymptotic' for x in dw['pairs']), any('too long' in t for t in dw['notes'])), (True, True))
+check('a constant column has no distance correlation', call('multivariate.distance', table=table({'a': [1.0, 2, 3, 4, 5], 'c': [2.0] * 5}), columns=['a', 'c'])['pairs'][0]['dcor'], None)
+# the example in the (i) topic: y = x² on 41 points from −1 to 1, and a circle of 40 points
+xq_ = np.linspace(-1, 1, 41)
+th_ = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+dq = call('multivariate.distance', table=table({'x': xq_, 'y': xq_ ** 2}), columns=['x', 'y'])['pairs'][0]
+dcirc = call('multivariate.distance', table=table({'x': np.cos(th_), 'y': np.sin(th_)}), columns=['x', 'y'])['pairs'][0]
+import os  # noqa: E402
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js', 'smui-p-multivariate.js')) as fjs:
+    js_src = fjs.read()
+topic_parab = f'correlation 0, Spearman ρ {abs(stats.spearmanr(xq_, xq_ ** 2).statistic):.2f}, dCor {dq["dcor"]:.2f}, p {dq["p"]:.2f} (permutations)'
+topic_circ = f'correlation 0, Spearman ρ {abs(stats.spearmanr(np.cos(th_), np.sin(th_)).statistic):.2f}, dCor {dcirc["dcor"]:.2f}, p {dcirc["p"]:.2f}'
+check('the (i) topic\'s parabola is computed so', topic_parab in js_src, True)
+check('the (i) topic\'s circle is computed so', topic_circ in js_src, True)
+check('the parabola: correlation 0, dCor about 0.49', (abs(dq['r']) < 1e-12, round(dq['dcor'], 2)), (True, 0.49))
 
 # ---- Multivariate: outlier distances and item reliability -----------------------------------------
 o = call('multivariate.outliers', table=tid, columns=cols)
@@ -471,6 +562,7 @@ snippets = [
     ('main', 'factor.eigen', call('factor.eigen', table=tid, columns=cols)), ('main', 'factor.fit ml', fa), ('main', 'factor.fit pa', fap), ('main', 'factor.fit varimax', fav),
     ('disc', 'discriminant.fit', dr), ('main', 'hcluster.fit', hw), ('km', 'kmeans.fit', km), ('main', 'respscreen.fit', rs),
     ('mro', 'outliers.multivariate', mo), ('mro', 'outliers.knn', ko), ('mca', 'mca.fit', mc), ('main', 'mds.fit', md), ('dm', 'mds.fit matrix', mm_),
+    ('main', 'multivariate.distance', dc), ('main', 'multivariate.distance freq', call('multivariate.distance', table=tid, columns=['a', 'c'], freq='w')),
 ]
 with tempfile.TemporaryDirectory() as tmp:
     here = os.getcwd()
@@ -503,6 +595,27 @@ with tempfile.TemporaryDirectory() as tmp:
         finally:
             os.chdir(here)
         check(f'the code of {label} runs on the CSV', ok_, True)
+
+# the code of the distance correlations gives the report's numbers
+for label_, res_ in (('distance', dc), ('distance freq', call('multivariate.distance', table=tid, columns=['a', 'c'], freq='w'))):
+    with tempfile.TemporaryDirectory() as tmp:
+        frames['main'].to_csv(os.path.join(tmp, 'data.csv'), index=False)
+        here = os.getcwd()
+        os.chdir(tmp)
+        ns_ = {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                exec(compile(res_['code'], label_, 'exec'), ns_)
+        finally:
+            os.chdir(here)
+    first_ = res_['pairs'][0]
+    check.near(f'the code of {label_}: its x, y give the dCor', float(distance_statistics(ns_['x'], ns_['y']).distance_correlation), first_['dcor'])
+    np.random.seed(20260926)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        pv_ = distance_covariance_test(ns_['x'], ns_['y'], method='asym' if res_['asym'] else 'auto')[1]
+    check.near(f'the code of {label_}: and the p-value', float(pv_), first_['p'])
 
 # ---- rows = None means every row; By groups use row lists -------------------------------------------------------------
 check('rows=None gives every row', call('multivariate.outliers', table=tid, columns=cols, rows=None)['rows'][-1], n - 1)

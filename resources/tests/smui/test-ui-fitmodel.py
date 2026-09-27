@@ -13,6 +13,25 @@ predictions; By, exclusions and Redo work; every other personality opens
 without an error; a saved project reopens with its model; the report reads
 in the dark theme and at phone width.
 
+Beyond JMP: the Generalized Estimating Equations personality on the simulated
+longitudinal example (the dialog's roles and options, the report's outlines,
+its numbers against each other, linking, the red triangle's working
+correlations, covariances, Odds Ratios and Compare Working Correlations, Save
+Columns against the profiler, By, a nested fit, a project), Robust Standard
+Errors (HC0 against the page's own sandwich, Cluster through its dialog, the
+GLM's sandwich) and Regression Diagnostics (every test, Jarque-Bera against the
+page's own, a test's controls, the Influence Plot's selection, the Component +
+Residual plot); on the simulated schooling example Instrumental Variables (the
+dialog's Endogenous and Instruments roles, the report, a just-identified 2SLS
+and its first-stage F against the page's own, linking, Robust Standard Errors,
+OLS beside 2SLS, Save Columns, a weak instrument, By, the profiler, a project),
+Quantile Regression (the dialog's quantile, Model Launch, Powell's sandwich,
+the saved quantile against the share of rows below it, the process and its
+table, the quantile lines, By) and Recursive and Rolling Regression (the last
+recursive estimates against the Parameter Estimates, the CUSUM's crossing of
+the example's break, a CUSUM point and a rolling window selecting their rows,
+Order by, Rolling Window), in both themes and at phone width.
+
 Start a server on the repository root and headless Chrome on
 SMUI_HTTP_PORT and SMUI_CDP_PORT (the recipe is in README.md), then
 
@@ -22,6 +41,7 @@ With SMUI_SHOTS=<folder> it saves screenshots.
 """
 import asyncio
 import json
+import math
 import os
 import sys
 
@@ -432,8 +452,472 @@ async def main():
     wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
     check('no horizontal page scroll at phone width', wide, True)
     await shot(page, 'fm-04-phone.png')
+    # ==== Generalized Estimating Equations, Robust Standard Errors, Regression Diagnostics, on the longitudinal example ====
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    r = await page.ev('''(() => { const ex = SM.io.EXAMPLES.longitudinal; SM.app.openExample('longitudinal'); const t = SM.app.current;
+      return { label: ex ? ex.label : null, name: t.name, rows: t.nrows, subjects: new Set(t.col('subject').values).size, cols: t.columns.map(c => c.name),
+        sorted: t.col('subject').values.every((s, i, a) => i === 0 || a[i - 1] < s || (a[i - 1] === s && t.col('visit').values[i - 1] < t.col('visit').values[i])) }; })()''')
+    check('the longitudinal example (File > Examples): 240 rows, 60 subjects', (r['name'], r['rows'], r['subjects'], bool(r['label'])), ('Longitudinal trial', 240, 60, True))
+    check('its columns', r['cols'], ['subject', 'clinic', 'treatment', 'visit', 'baseline', 'improved', 'symptoms', 'score'])
+    await page.ev(HELPERS)
+    r = await page.ev('''(async () => {
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      const d = __fm.dlg(); const out = {};
+      const role = (lab) => [...d.querySelectorAll('.sm-role')].find(x => x.querySelector('.sm-btn').textContent === lab);
+      const shown = () => ['Offset', 'Subject', 'Time', 'Subgroup'].filter(l => !role(l).hidden);
+      const ps = d.querySelector('select[aria-label="Personality"]');
+      out.sls = shown();
+      ps.value = 'glm'; ps.dispatchEvent(new Event('change')); out.glm = shown();
+      ps.value = 'gee'; ps.dispatchEvent(new Event('change')); out.gee = shown();
+      out.opts = [...d.querySelectorAll('.sm-fm-pers > label')].filter(l => !l.hidden).map(l => l.firstChild.textContent);
+      __fm.pick('improved'); __fm.role('Y'); await __fm.tick();
+      out.target = !d.querySelector('select[aria-label="Target Level"]').closest('label').hidden;
+      __fm.pick('treatment', 'visit', 'baseline'); __fm.btn('Add');
+      const dist = d.querySelector('select[aria-label="Distribution"]'); dist.value = 'binomial'; dist.dispatchEvent(new Event('change'));
+      out.link = d.querySelector('select[aria-label="Link Function"]').value;
+      out.scale = d.querySelector('select[aria-label="Scale"]').value;
+      out.dists = [...dist.options].map(o => o.value);
+      __fm.btn('OK'); await __fm.tick(); out.noSubject = d.querySelector('.sm-launch-msg').textContent;
+      __fm.pick('subject'); __fm.role('Subject');
+      d.querySelector('select[aria-label="Working Correlation"]').value = 'ar1';
+      __fm.btn('OK'); await __fm.tick(); out.noTime = d.querySelector('.sm-launch-msg').textContent;
+      __fm.pick('visit'); __fm.role('Time');
+      __fm.btn('OK');
+      const rep = __fm.rep(); await __fm.settled(rep);
+      out.state = __fm.state(rep);
+      const o = rep.spec.options;
+      out.opt = { corr: o.workCorr, cov: o.geeCov, scale: o.geeScale, dist: o.dist };
+      return out; })()''')
+    check('Offset shows for the GLM and GEE, Subject, Time and Subgroup for GEE only', (r['sls'], r['glm'], r['gee']), ([], ['Offset'], ['Offset', 'Subject', 'Time', 'Subgroup']))
+    check('the GEE options of the dialog', [o for o in ['Distribution', 'Link Function', 'Working Correlation', 'Covariance', 'Scale'] if o in r['opts']], ['Distribution', 'Link Function', 'Working Correlation', 'Covariance', 'Scale'])
+    check('GEE offers the Tweedie', 'tweedie' in r['dists'], True)
+    check('a two-level Y has a Target Level', r['target'], True)
+    check('binomial: the logit link and the scale fixed at 1', (r['link'], r['scale']), ('logit', 'fixed'))
+    check('GEE needs a Subject', 'Subject' in r['noSubject'], True)
+    check('AR(1) needs a Time', 'Time' in r['noTime'], True)
+    check('the GEE report', r['state']['title'], 'Generalized Estimating Equations for improved')
+    for o in ['Effect Summary', 'Model Summary', 'Parameter Estimates', 'Effect Tests', 'QIC', 'Working Correlation', 'Residual by Predicted', 'Actual by Predicted Plot', 'Residuals by Subject']:
+        check(f'GEE outline {o}', o in r['state']['outlines'], True)
+    check('no errors in the GEE report', r['state']['errors'], [])
+    check('the spec keeps the GEE options', r['opt'], {'corr': 'ar1', 'cov': 'robust', 'scale': 'fixed', 'dist': 'binomial'})
+    await asyncio.sleep(1)
+    await shot(page, 'fm-06-gee.png')
+    r = await page.ev('''(() => ({ kv: __fm.kv('Model Summary'), pe: __fm.table('Parameter Estimates'), et: __fm.table('Effect Tests'), q: __fm.kv('QIC'),
+      wc: __fm.table('Working Correlation') }))()''')
+    kv = r['kv']
+    check('Model Summary: 240 rows, 60 subjects of 4, AR(1), robust', (kv['Number of Rows'], kv['Number of Subjects'], kv['Rows per Subject, Max'], kv['Working Correlation'], kv['Covariance']),
+          ('240', '60', '4', 'Autoregressive AR(1)', 'Robust (sandwich)'))
+    check('Parameter Estimates: z tests', r['pe'][0][:5], ['Term', 'Estimate', 'Std Error', 'z Ratio', 'Prob>|z|'])
+    pe = {row[0]: row for row in r['pe'][1:]}
+    et = {row[0]: row for row in r['et'][1:]}
+    check.near('Effect Tests: the Wald chi-square of visit = its z squared', num(et['visit'][3]), num(pe['visit'][3]) ** 2, 1e-5)
+    q = r['q']
+    check.near('QIC = -2 Q + 2 trace(Ω_I V_R)', num(q['QIC']), -2 * num(q['Quasi-Likelihood']) + 2 * num(q['Penalty trace(Ω_I V_R)']), 1e-5)
+    check('the working correlation\'s parameter', r['wc'][1][0], 'Correlation of adjacent rows (lag 1)')
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const p = rep.plots.find(p => p.opts.title === 'improved residuals by subject');
+      p._click({ points: [{ curveNumber: 0, pointNumber: 5 }], event: {} });
+      const sel = t.selectedRows();
+      t.select([7, 8]); await new Promise(r => setTimeout(r, 150));
+      const q = rep.plots.find(p => p.opts.title === 'improved residual by predicted');
+      const sp = q && q.drawn ? q.box.data[0].selectedpoints : null;
+      t.select([]);
+      return { sel, want: p.rows[0][5], sp, spWant: q ? q.rows[0].map((r, k) => [r, k]).filter(([r]) => r === 7 || r === 8).map(([, k]) => k).sort((a, b) => a - b) : null }; })()''')
+    check('a click in Residuals by Subject selects its row', r['sel'], [r['want']])
+    check('a table selection shows in Residual by Predicted', r['sp'] is None or sorted(r['sp']) == r['spWant'], True)
+    r = await page.ev('''(async () => { const rep = __fm.rep(); let d = __fm.done(rep);
+      await __fm.topMenu('Correlation Structure', 'Exchangeable'); await d;
+      const corr = __fm.kv('Model Summary')['Working Correlation'];
+      d = __fm.done(rep); await __fm.topMenu('Covariance', 'Naive (model-based)'); await d;
+      const cap = __fm.outline('Parameter Estimates').querySelector('caption').textContent;
+      d = __fm.done(rep); await __fm.topMenu('Covariance', 'Robust (sandwich)'); await d;
+      d = __fm.done(rep); await __fm.topMenu('Odds Ratios'); await d;
+      const odds = __fm.table('Odds Ratios');
+      d = __fm.done(rep); await __fm.topMenu('Compare Working Correlations'); await d;
+      const cmp = __fm.table('Compare Working Correlations');
+      const tr = [...__fm.outline('Compare Working Correlations').querySelectorAll('tbody tr')].find(x => x.firstChild.textContent.startsWith('Unstructured'));
+      d = __fm.done(rep); tr.click(); await d;
+      return { corr, cap, odds, cmp, after: __fm.kv('Model Summary')['Working Correlation'], errors: __fm.state(rep).errors }; })()''')
+    check('Correlation Structure > Exchangeable refits', r['corr'], 'Exchangeable')
+    check('Covariance > Naive: the estimates say so', r['cap'], 'Standard errors: naive (model-based)')
+    check('Odds Ratios for the logit link', r['odds'][0][:2], ['Term', 'Odds Ratio'])
+    check('Compare Working Correlations: a line for each structure the roles allow', [row[0].split('  ')[0] for row in r['cmp'][1:]], ['Independence', 'Exchangeable', 'Autoregressive AR(1)', 'Unstructured'])
+    check('Compare: it marks the current one and the smallest QIC', (sum('(current)' in row[0] for row in r['cmp'][1:]), sum('(smallest QIC)' in row[0] for row in r['cmp'][1:])), (1, 1))
+    check('a click on a line refits with that working correlation', r['after'], 'Unstructured')
+    check('no errors after the red triangle', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table; const row = 17;
+      await __fm.topMenu('Save Columns', 'Predicted Values (marginal)'); await __fm.tick();
+      await __fm.topMenu('Save Columns', 'Pearson Residuals'); await __fm.tick();
+      const pc = t.col('Pred improved'), pr = t.col('Pearson Residual improved');
+      const d = __fm.done(rep); await __fm.topMenu('Profilers', 'Profiler'); await d;
+      const ob = __fm.outline('Prediction Profiler'); ob.scrollIntoView(); await new Promise(r => setTimeout(r, 1000));
+      const val = () => ob.querySelector('.sm-fm-prof-val').textContent;
+      const set = async (sel, v) => { const was = val(); const i = ob.querySelector(sel); i.value = v; i.dispatchEvent(new Event('change')); for (let k = 0; k < 400 && val() === was; k++) await new Promise(r => setTimeout(r, 5)); };
+      await set('input[aria-label="visit current value"]', String(t.col('visit').values[row]));
+      await set('input[aria-label="baseline current value"]', String(t.col('baseline').values[row]));
+      const fsel = ob.querySelector('select[aria-label="treatment current value"]'); fsel.value = String(['placebo', 'active'].indexOf(t.col('treatment').values[row])); fsel.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 500));
+      const out = { pred: val(), name: ob.querySelector('.sm-fm-prof-name').textContent, saved: pc ? pc.values[row] : null, pears: pr ? pr.values[row] : null, y: t.col('improved').values[row] };
+      for (const c of [pc, pr]) if (c) t.removeColumn(c.id);
+      return out; })()''')
+    check('the GEE profiler predicts Prob[yes]', r['name'], 'Prob[yes]')
+    check.near('the profiler at a row\'s values predicts its saved marginal prediction', num(r['pred']), r['saved'], 1e-5)
+    check.near('the saved Pearson residual is (y - p)/sqrt(p (1 - p))', r['pears'], ((1 if r['y'] == 'yes' else 0) - r['saved']) / math.sqrt(r['saved'] * (1 - r['saved'])), 1e-8)
+    r = await page.ev(open_js('symptoms', E(['visit'], ['baseline']), {'personality': 'gee', 'dist': 'poisson', 'link': 'log', 'workCorr': 'exchangeable'}, {'subject': ['subject'], 'by': ['treatment']}))
+    check('GEE with By: one report per level', [o for o in r['outlines'] if o.startswith('Generalized Estimating')],
+          ['Generalized Estimating Equations for symptoms treatment=placebo', 'Generalized Estimating Equations for symptoms treatment=active'])
+    check('GEE with By: no errors', r['errors'], [])
+    r = await page.ev(open_js('symptoms', E(['treatment'], ['visit'], ['baseline']), {'personality': 'gee', 'dist': 'poisson', 'link': 'log', 'workCorr': 'nested'}, {'subject': ['clinic'], 'subgroup': ['subject']}))
+    check('GEE nested: no errors', r['errors'], [])
+    wc = await page.ev('__fm.table("Working Correlation")')
+    check('GEE nested: its variance components', [row[0] for row in wc[1:3]], ['Variance component: clinic', 'Variance component: subject within clinic'])
+    # Robust Standard Errors in Standard Least Squares, against the page's own sandwich
+    r = await page.ev(open_js('score', E(['baseline'])))
+    js_ls = '''const t = rep.table; const x = t.col('baseline').values, y = t.col('score').values; const n = x.length;
+      const mx = x.reduce((a, b) => a + b) / n, my = y.reduce((a, b) => a + b) / n;
+      let sxy = 0, sxx = 0; for (let i = 0; i < n; i++) { sxy += (x[i] - mx) * (y[i] - my); sxx += (x[i] - mx) ** 2; }
+      const b = sxy / sxx, a = my - b * mx; const e = y.map((v, i) => v - a - b * x[i]);'''
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep);
+      await __fm.topMenu('Robust Standard Errors', 'HC0 (White)'); await d;
+      ''' + js_ls + '''
+      let meat = 0; for (let i = 0; i < n; i++) meat += (x[i] - mx) ** 2 * e[i] * e[i];
+      return { pe: __fm.table('Parameter Estimates'), cap: __fm.outline('Parameter Estimates').querySelector('caption').textContent, hc0: Math.sqrt(meat) / sxx, errors: __fm.state(rep).errors }; })()''')
+    pe = {row[0]: row for row in r['pe'][1:]}
+    check.near('HC0: the slope\'s robust std error = the page\'s own sandwich', num(pe['baseline'][2]), r['hc0'], 1e-6)
+    check('HC0: the estimates say which covariance they use', r['cap'].startswith('Robust standard errors: HC0'), True)
+    check('HC0: no errors', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep();
+      await __fm.topMenu('Robust Standard Errors', 'Cluster…'); await new Promise(r => setTimeout(r, 250));
+      const dlg = [...document.querySelectorAll('.sm-dialog')].find(x => x.getAttribute('aria-label') === 'Cluster-Robust Standard Errors');
+      dlg.querySelector('select').value = rep.table.col('subject').id;
+      const d = __fm.done(rep); dlg.querySelector('.sm-dialog-foot .primary').click(); await d;
+      return { cap: __fm.outline('Parameter Estimates').querySelector('caption').textContent, et: __fm.table('Effect Tests')[0], errors: __fm.state(rep).errors }; })()''')
+    check('Cluster…: the column and the number of clusters', r['cap'], 'Robust standard errors: Cluster by subject (60 clusters); t tests on 59 DF')
+    check('Cluster…: Effect Tests are robust Wald F tests with a DFDen', ('DFDen' in r['et'], 'Sum of Squares' in r['et']), (True, False))
+    check('Cluster…: no errors', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep(); let d = __fm.done(rep);
+      await __fm.topMenu('Robust Standard Errors', 'None'); await d;
+      d = __fm.done(rep); await __fm.topMenu('Regression Diagnostics', 'All Tests'); await d;
+      ''' + js_ls + '''
+      const m2 = e.reduce((s, v) => s + v * v, 0) / n, m3 = e.reduce((s, v) => s + v ** 3, 0) / n, m4 = e.reduce((s, v) => s + v ** 4, 0) / n;
+      const S = m3 / m2 ** 1.5, K = m4 / m2 ** 2;
+      return { st: __fm.state(rep), jb: __fm.table('Jarque–Bera Test'), js: (n / 6) * (S * S + (K - 3) ** 2 / 4), cap: __fm.outline('Parameter Estimates').querySelector('caption') }; })()''')
+    for o in ['Regression Diagnostics', 'Breusch–Pagan Test', 'White Test', 'Goldfeld–Quandt Test', 'Ramsey RESET Test', 'Harvey–Collier Test', 'Rainbow Test', 'Breusch–Godfrey Test', 'Jarque–Bera Test', 'Omnibus Normality Test']:
+        check(f'diagnostics outline {o}', o in r['st']['outlines'], True)
+    check('no errors with every test', r['st']['errors'], [])
+    check('Robust Standard Errors > None: the usual estimates again', r['cap'], None)
+    check.near('Jarque–Bera = the page\'s own from the least squares residuals', num(r['jb'][1][1]), r['js'], 1e-5)
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Goldfeld–Quandt Test');
+      const before = __fm.table('Goldfeld–Quandt Test')[1][1];
+      const s = ob.querySelector('select[aria-label="Sort by"]'); s.value = 'row'; const d = __fm.done(rep); s.dispatchEvent(new Event('change')); await d;
+      return { before, after: __fm.table('Goldfeld–Quandt Test')[1][1], note: __fm.outline('Goldfeld–Quandt Test').querySelector('.sm-ob-note').textContent }; })()''')
+    check('Goldfeld–Quandt: Sort by changes the test', r['before'] != r['after'], True)
+    check('... and its note says the order', 'in the order of the table' in r['note'], True)
+    r = await page.ev('''(async () => { const rep = __fm.rep(); let d = __fm.done(rep);
+      await __fm.topMenu('Regression Diagnostics', 'Influence Plot'); await d;
+      d = __fm.done(rep); await __fm.topMenu('Regression Diagnostics', 'Component + Residual Plots'); await d;
+      ''' + js_ls + '''
+      const p = rep.plots.find(q => q.opts.title === 'score influence plot');
+      const tr = p.traces[0]; const nn = tr.x.length;
+      const want = p.rows[0].filter((r, k) => Math.abs(tr.y[k]) > 2 || tr.x[k] > 4 / nn).sort((u, v) => u - v);
+      const ob = __fm.outline('Influence Plot'); ob.querySelector('.sm-ob-menu').click(); await __fm.tick();
+      const item = [...document.querySelectorAll('.sm-menu button')].find(bt => bt.querySelector('.sm-label').textContent.startsWith('Select Influential Rows'));
+      item.click(); await __fm.tick();
+      const sel = rep.table.selectedRows().slice().sort((u, v) => u - v);
+      rep.table.select([]);
+      const cp = rep.plots.find(q => q.opts.title === 'baseline component plus residual');
+      const ccprOk = !!cp && cp.traces[0].y.every((v, k) => Math.abs(v - (y[cp.rows[0][k]] - a)) < 1e-6);
+      return { want, sel, ccprOk, errors: __fm.state(rep).errors }; })()''')
+    check('Influence Plot: Select Influential Rows selects the rows beyond ±2 or 2p/n', r['sel'], r['want'])
+    check('... there are some', len(r['want']) > 0, True)
+    check('Component + Residual: residual + b·x (for one regressor: y − the intercept)', r['ccprOk'], True)
+    check('no errors with the plots', r['errors'], [])
+    await shot(page, 'fm-07-diagnostics.png')
+    r = await page.ev(open_js('symptoms', E(['treatment'], ['visit'], ['baseline']), {'personality': 'glm', 'dist': 'poisson', 'link': 'log'}))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep);
+      await __fm.topMenu('Robust Standard Errors', 'Sandwich (HC0)'); await d;
+      return { cap: __fm.outline('Parameter Estimates').querySelector('caption').textContent, et: __fm.table('Effect Tests')[0], errors: __fm.state(rep).errors }; })()''')
+    check('GLM Robust Standard Errors: the sandwich, and Wald tests', (r['cap'], 'Wald ChiSquare' in r['et']), ('Robust standard errors: Sandwich (HC0)', True))
+    check('GLM robust: no errors', r['errors'], [])
+    # a GEE report saved in a project reopens with its roles and options
+    r = await page.ev(open_js('improved', E(['treatment'], ['visit']), {'personality': 'gee', 'dist': 'binomial', 'link': 'logit', 'workCorr': 'ar1', 'geeCov': 'bias_reduced'}, {'subject': ['subject'], 'time': ['visit']}))
+    r = await page.ev('''(async () => { const t = SM.app.current;
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [__fm.rep().toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep = SM.app.reports[n]; await __fm.done(rep);
+      const kv = __fm.kv('Model Summary');
+      const out = { title: rep.title, errors: __fm.state(rep).errors, corr: kv['Working Correlation'], cov: kv['Covariance'], subject: kv['Subject'], time: kv['Time'], other: rep.table !== t };
+      SM.app.showTab(SM.app.tabOf(t)); return out; })()''')
+    check('a GEE project reopens with its roles and options', (r['title'], r['errors'], r['corr'], r['cov'], r['subject'], r['time']),
+          ('Generalized Estimating Equations for improved', [], 'Autoregressive AR(1)', 'Bias-reduced (Mancl and DeRouen)', 'subject', 'visit'))
+    r = await page.ev(open_js('improved', E(['treatment'], ['visit'], ['baseline']), {'personality': 'gee', 'dist': 'binomial', 'link': 'logit', 'workCorr': 'ar1'}, {'subject': ['subject'], 'time': ['visit']}))
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('every (i) of the GEE report has a topic', audit.get('noTopic'), [])
+    check('every Help link has a target', audit.get('brokenMore'), [])
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.5)
+    await page.ev('''(() => { const ob = __fm.outline('Working Correlation'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-08-gee-dark.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(1)
+    wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
+    check('the GEE report: no horizontal page scroll at phone width', wide, True)
+    await shot(page, 'fm-09-gee-phone.png')
+    # ==== Instrumental Variables, Quantile Regression, Recursive and Rolling Regression, on the schooling example ====
+    await schooling(page)
+
     check('no script errors', page.errors, [])
     await page.close()
+
+
+async def schooling(page):
+    """Instrumental Variables, Quantile Regression and Recursive and Rolling
+    Regression on the simulated schooling example."""
+    num = lambda s: float(str(s).replace('−', '-').replace('<', '').replace('*', ''))  # noqa: E731
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    r = await page.ev('''(() => { const ex = SM.io.EXAMPLES.schooling; SM.app.openExample('schooling'); const t = SM.app.current;
+      const yr = t.col('year').values;
+      return { label: ex ? ex.label : null, name: t.name, rows: t.nrows, cols: t.columns.map(c => c.name), first: yr[0], last: yr[t.nrows - 1],
+        sorted: yr.every((v, i) => i === 0 || yr[i - 1] <= v), lab: t.labelColumn() ? t.labelColumn().name : null }; })()''')
+    check('the schooling example (File > Examples): 1500 people, 1995 to 2024, in interview order', (r['name'], r['rows'], r['first'], r['last'], r['sorted'], bool(r['label'])), ('Schooling', 1500, 1995, 2024, True, True))
+    check('its columns', r['cols'], ['person', 'year', 'region', 'sex', 'birth quarter', 'experience', 'distance (km)', 'lottery', 'education', 'log wage'])
+    await page.ev(HELPERS)
+
+    # ---- the launch dialog: the roles and options of the two personalities
+    r = await page.ev('''(async () => {
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      const d = __fm.dlg(); const out = {};
+      const role = (lab) => [...d.querySelectorAll('.sm-role')].find(x => x.querySelector('.sm-btn').textContent === lab);
+      const shown = () => ['Endogenous', 'Instruments', 'Offset', 'Subject'].filter(l => !role(l).hidden);
+      const tau = () => !d.querySelector('input[aria-label="Quantile"]').closest('label').hidden;
+      // one column: a click after the mousedown (a mousedown on a selected column keeps the selection, for a drag)
+      const one = (n) => { const li = [...d.querySelectorAll('.sm-pick-list li')].find(x => x.textContent === n); li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); li.dispatchEvent(new MouseEvent('click', { bubbles: true })); };
+      const ps = d.querySelector('select[aria-label="Personality"]');
+      out.sls = [shown(), tau()];
+      ps.value = 'quantreg'; ps.dispatchEvent(new Event('change')); out.qr = [shown(), tau()];
+      ps.value = 'iv'; ps.dispatchEvent(new Event('change')); out.iv = [shown(), tau()];
+      out.pers = [...ps.options].map(o => o.textContent).slice(-2);
+      __fm.pick('log wage'); __fm.role('Y'); await __fm.tick();
+      __fm.pick('education', 'experience', 'sex', 'region'); __fm.btn('Add');
+      __fm.btn('OK'); await __fm.tick(); out.noEndog = d.querySelector('.sm-launch-msg').textContent;
+      one('education'); __fm.role('Endogenous');
+      __fm.btn('OK'); await __fm.tick(); out.noInst = d.querySelector('.sm-launch-msg').textContent;
+      one('experience'); __fm.role('Instruments');
+      __fm.btn('OK'); await __fm.tick(); out.inModel = d.querySelector('.sm-launch-msg').textContent;
+      const ins = [...role('Instruments').querySelectorAll('li')][0]; ins.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      __fm.pick('distance (km)', 'lottery'); __fm.role('Instruments');
+      __fm.btn('OK');
+      const rep = __fm.rep(); await __fm.settled(rep);
+      out.state = __fm.state(rep);
+      out.roles = { endog: rep.spec.roles.endog.map(id => rep.table.col(id).name), inst: rep.spec.roles.instruments.map(id => rep.table.col(id).name) };
+      return out; })()''')
+    check('Standard Least Squares shows neither the IV roles nor the quantile', r['sls'], [[], False])
+    check('Quantile Regression: the Quantile τ box, no IV roles', r['qr'], [[], True])
+    check('Instrumental Variables: the Endogenous and Instruments roles', r['iv'], [['Endogenous', 'Instruments'], False])
+    check('the two personalities are in the list', r['pers'], ['Instrumental Variables', 'Quantile Regression'])
+    check('IV needs Endogenous columns', 'Endogenous' in r['noEndog'], True)
+    check('... and Instruments', 'Instruments' in r['noInst'], True)
+    check('... an instrument may not be a model effect', 'model effect' in r['inModel'], True)
+    check('the IV report', r['state']['title'], 'Instrumental Variables Fit for log wage')
+    for o in ['Actual by Predicted Plot', 'Summary of Fit', 'First Stage', 'First Stage for education', 'Second Stage Parameter Estimates', 'Effect Tests', 'Endogeneity Test', 'Overidentification Test', 'Residual by Predicted Plot']:
+        check(f'IV outline {o}', o in r['state']['outlines'], True)
+    check('no errors in the IV report', r['state']['errors'], [])
+    check('the spec keeps the roles', r['roles'], {'endog': ['education'], 'inst': ['distance (km)', 'lottery']})
+    await asyncio.sleep(1)
+    await shot(page, 'fm-10-iv.png')
+    r = await page.ev('''(() => ({ pe: __fm.table('Second Stage Parameter Estimates'), fs: __fm.table('First Stage'), en: __fm.table('Endogeneity Test'), ov: __fm.table('Overidentification Test') }))()''')
+    pe = {row[0]: row for row in r['pe'][1:]}
+    check('2SLS estimates education near the truth 0.080 (within 2 standard errors)', abs(num(pe['education'][1]) - 0.08) < 2 * num(pe['education'][2]), True)
+    check('the first stage of education is strong', (r['fs'][0][3], num(r['fs'][1][3]) > 50, r['fs'][1][-1]), ('F Ratio', True, ''))
+    check('the Durbin–Wu–Hausman test rejects exogeneity of education', (r['en'][1][0], num(r['en'][1][4]) < 0.01), ('Wu–Hausman F', True))
+    check('one overidentifying restriction: Sargan', (r['ov'][1][0], r['ov'][1][2]), ('Sargan χ²', '1'))
+
+    # ---- the numbers of a just-identified IV against the page's own: b = cov(z, y) / cov(z, x), the first-stage F = t²
+    r = await page.ev(open_js('log wage', E(['education']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['distance (km)']}))
+    check('a just-identified IV opens', r['errors'], [])
+    js = await page.ev('''(() => { const t = SM.app.current; const z = t.col('distance (km)').values, x = t.col('education').values, y = t.col('log wage').values; const n = x.length;
+      const m = (a) => a.reduce((s, v) => s + v, 0) / n; const mz = m(z), mx = m(x), my = m(y);
+      let szy = 0, szx = 0, szz = 0, sxx = 0; for (let i = 0; i < n; i++) { szy += (z[i] - mz) * (y[i] - my); szx += (z[i] - mz) * (x[i] - mx); szz += (z[i] - mz) ** 2; sxx += (x[i] - mx) ** 2; }
+      const b = szy / szx, a = my - b * mx, r2 = szx * szx / (szz * sxx);
+      return { a, b, f: (n - 2) * r2 / (1 - r2), r2 }; })()''')
+    r = await page.ev('''(() => ({ pe: __fm.table('Second Stage Parameter Estimates'), fs: __fm.table('First Stage'), cd: __fm.table('First Stage', 1), ov: __fm.outline('Overidentification Test').querySelector('.sm-ob-note').textContent }))()''')
+    pe = {row[0]: row for row in r['pe'][1:]}
+    check.near('the 2SLS slope = the page\'s cov(z, y)/cov(z, x)', num(pe['education'][1]), js['b'], 1e-6)
+    check.near('the intercept = mean(y) − b mean(x)', num(pe['Intercept'][1]), js['a'], 1e-6)
+    check.near('the first-stage F = the page\'s (n − 2) r²/(1 − r²)', num(r['fs'][1][3]), js['f'], 1e-6)
+    check.near('... and the Cragg–Donald statistic is that F', num(r['cd'][0][1]), js['f'], 1e-6)
+    check.near('... and its RSquare', num(r['fs'][1][1]), js['r2'], 1e-6)
+    check('exactly identified: no overidentification test', 'Exactly identified' in r['ov'], True)
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const p = rep.plots.find(q => q.opts.title === 'log wage residual by predicted');
+      p._click({ points: [{ curveNumber: 0, pointNumber: 12 }], event: {} });
+      const sel = t.selectedRows(); const want = p.rows[0][12];
+      t.select([5, 6]); await new Promise(r => setTimeout(r, 150));
+      const q = rep.plots.find(x => x.opts.title === 'log wage actual by predicted');
+      const sp = q && q.drawn ? q.box.data[0].selectedpoints : null; t.select([]);
+      let d = __fm.done(rep); await __fm.topMenu('Robust Standard Errors', 'HC1'); await d;
+      const cap = __fm.outline('Second Stage Parameter Estimates').querySelector('caption').textContent;
+      const fcap = __fm.outline('First Stage').querySelector('caption').textContent;
+      d = __fm.done(rep); await __fm.topMenu('OLS Beside 2SLS'); await d;
+      const ols = __fm.table('OLS and 2SLS');
+      await __fm.topMenu('Save Columns', 'Predicted Values'); await __fm.tick();
+      const pc = t.col('Predicted log wage'); const x = t.col('education').values;
+      const saved = pc ? [pc.values[3], pc.values[700]] : null; const xs = [x[3], x[700]];
+      if (pc) t.removeColumn(pc.id);
+      return { sel, want, sp, cap, fcap, ols, saved, xs, errors: __fm.state(rep).errors }; })()''')
+    check('IV: a click on a residual point selects its row', r['sel'], [r['want']])
+    check('IV: a table selection shows in Actual by Predicted', r['sp'] is None or sorted(r['sp']) == [5, 6], True)
+    check('IV: Robust Standard Errors > HC1, and the report says so', r['cap'].startswith('Robust standard errors: HC1'), True)
+    check('... the first stage\'s F tests are robust too', 'robust Wald F' in r['fcap'], True)
+    check('IV: OLS Beside 2SLS', r['ols'][0][:5] if r['ols'] else None, ['Term', 'OLS Estimate', 'OLS Std Error', '2SLS Estimate', '2SLS Std Error'])
+    if r['saved']:
+        check.near('IV: Save Columns > Predicted Values is a + b x', r['saved'][0], js['a'] + js['b'] * r['xs'][0], 1e-6)
+        check.near('... for another row', r['saved'][1], js['a'] + js['b'] * r['xs'][1], 1e-6)
+    check('IV with the red triangle: no errors', r['errors'], [])
+    r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['birth quarter']}))
+    check('a weak instrument (birth quarter): the report warns', any('Weak instruments' in w for w in r['warnings']), True)
+    wf = await page.ev('__fm.table("First Stage")')
+    check('... its first-stage F is below 10', (num(wf[1][3]) < 10, 'weak' in wf[1][-1]), (True, True))
+    r = await page.ev(open_js('log wage', E(['education'], ['experience']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['distance (km)', 'lottery'], 'by': ['sex']}))
+    check('IV with By: one report per level', [o for o in r['outlines'] if o.startswith('Instrumental Variables Fit')], ['Instrumental Variables Fit for log wage sex=female', 'Instrumental Variables Fit for log wage sex=male'])
+    check('IV with By: no errors', r['errors'], [])
+    r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['distance (km)', 'lottery']}))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep); await __fm.topMenu('Factor Profiling', 'Profiler'); await d;
+      return { st: __fm.state(rep), val: __fm.outline('Prediction Profiler') ? __fm.outline('Prediction Profiler').querySelector('.sm-fm-prof-val').textContent : null }; })()''')
+    check('the IV profiler opens', ('Prediction Profiler' in r['st']['outlines'], r['st']['errors'], r['val'] is not None), (True, [], True))
+    r = await page.ev('''(async () => { const t = SM.app.current;
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [__fm.rep().toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep = SM.app.reports[n]; await __fm.done(rep);
+      const out = { title: rep.title, errors: __fm.state(rep).errors, endog: rep.spec.roles.endog.map(id => rep.table.col(id).name), inst: rep.spec.roles.instruments.map(id => rep.table.col(id).name),
+        line: rep.body.querySelector('.sm-fm-modelline').textContent, other: rep.table !== t };
+      SM.app.showTab(SM.app.tabOf(t)); return out; })()''')
+    check('an IV project reopens with its roles (the columns found again)', (r['title'], r['errors'], r['endog'], r['inst'], r['other']),
+          ('Instrumental Variables Fit for log wage', [], ['education'], ['distance (km)', 'lottery'], True))
+
+    # ---- Quantile Regression
+    r = await page.ev('''(async () => {
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      const d = __fm.dlg();
+      const ps = d.querySelector('select[aria-label="Personality"]'); ps.value = 'quantreg'; ps.dispatchEvent(new Event('change'));
+      __fm.pick('log wage'); __fm.role('Y'); await __fm.tick();
+      __fm.pick('education', 'experience', 'sex'); __fm.btn('Add');
+      const tau = d.querySelector('input[aria-label="Quantile"]'); tau.value = '1.5'; __fm.btn('OK'); await __fm.tick();
+      const bad = d.querySelector('.sm-launch-msg').textContent;
+      tau.value = '0.25'; __fm.btn('OK');
+      const rep = __fm.rep(); await __fm.settled(rep);
+      return { bad, st: __fm.state(rep), kv: __fm.kv('Summary of Fit'), opt: rep.spec.options.qrTau }; })()''')
+    check('Quantile Regression refuses τ = 1.5', 'strictly between 0 and 1' in r['bad'], True)
+    check('the quantile regression report', (r['st']['title'], r['opt']), ('Quantile Regression Fit for log wage', 0.25))
+    for o in ['Model Launch', 'Actual by Predicted Plot', 'Summary of Fit', 'Parameter Estimates', 'Quantile Process']:
+        check(f'QR outline {o}', o in r['st']['outlines'], True)
+    check('no errors in the QR report', r['st']['errors'], [])
+    check('... the quantile of the dialog', r['kv']['Quantile (τ)'], '0.25')
+    check.near('... about a quarter of the rows below the fit', num(r['kv']['Share of Rows Below the Fit']), 0.25, 0.01)
+    await asyncio.sleep(1)
+    await shot(page, 'fm-11-quantreg.png')
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const before = __fm.table('Parameter Estimates');
+      const inp = __fm.outline('Model Launch').querySelector('input[aria-label="Quantile"]');
+      let d = __fm.done(rep); inp.value = '0.75'; inp.dispatchEvent(new Event('change')); await d;
+      const after = __fm.table('Parameter Estimates');
+      const sel = __fm.outline('Model Launch').querySelector('select[aria-label="Standard Errors"]');
+      d = __fm.done(rep); sel.value = 'powell'; sel.dispatchEvent(new Event('change')); await d;
+      const cap = __fm.outline('Parameter Estimates').querySelector('caption').textContent;
+      await __fm.topMenu('Save Columns', 'Predicted Quantile'); await __fm.tick();
+      const pc = t.col('Pred Quantile(0.75) log wage'); const y = t.col('log wage').values;
+      let below = 0; if (pc) for (let i = 0; i < t.nrows; i++) if (y[i] < pc.values[i]) below++;
+      if (pc) t.removeColumn(pc.id);
+      d = __fm.done(rep); await __fm.topMenu('Quantile Process Estimates'); await d;
+      const proc = __fm.table('Quantile Process Estimates');
+      const plots = rep.plots.filter(p => /quantile process$/.test(p.opts.title || '')).length;
+      return { before: before[2][1], after: after[2][1], tau: rep.spec.options.qrTau, cap, below: below / t.nrows, proc: proc ? [proc[0].slice(0, 3), proc.length - 1] : null, plots, errors: __fm.state(rep).errors }; })()''')
+    check('Model Launch: a new quantile refits (the estimates change)', (r['tau'], r['before'] != r['after']), (0.75, True))
+    check('Model Launch: Powell\'s sandwich, and the report says so', 'powell sandwich' in r['cap'], True)
+    check.near('Save Columns > Predicted Quantile: three quarters of the rows below their saved 0.75 quantile', r['below'], 0.75, 0.01)
+    check('the quantile process table: a line for each of the 19 quantiles', r['proc'], [['Quantile', 'Pseudo RSquare', 'Intercept'], 19])
+    check('the quantile process: a plot for each of the 4 terms', r['plots'], 4)
+    check('QR with the red triangle: no errors', r['errors'], [])
+    r = await page.ev(open_js('log wage', E(['experience']), {'personality': 'quantreg', 'qrTau': 0.5}))
+    check('one continuous X: the Quantile Regression Plot', ('Quantile Regression Plot' in r['outlines'], r['errors']), (True, []))
+    ql = await page.ev('''(() => { const rep = __fm.rep(); const p = rep.plots.find(q => q.opts.title === 'log wage quantile lines');
+      const names = p.traces.filter(t => t.mode === 'lines').map(t => t.name);
+      const pe = __fm.table('Parameter Estimates'); const med = p.traces.find(t => t.name === 'τ = 0.5');
+      return { names, slope: (med.y[med.y.length - 1] - med.y[0]) / (med.x[med.x.length - 1] - med.x[0]), est: pe[2][1] }; })()''')
+    check('... lines for 0.1, 0.25, 0.5, 0.75, 0.9 and least squares', ql['names'], ['τ = 0.1', 'τ = 0.25', 'τ = 0.5', 'τ = 0.75', 'τ = 0.9', 'Least squares'])
+    check.near('... the median line has the reported slope', ql['slope'], num(ql['est']), 1e-6)
+    r = await page.ev(open_js('log wage', E(['education'], ['experience']), {'personality': 'quantreg', 'qrTau': 0.5}, {'by': ['sex']}))
+    check('QR with By: no errors', (len([o for o in r['outlines'] if o.startswith('Quantile Regression Fit')]), r['errors']), (2, []))
+
+    # ---- Recursive and Rolling Regression in Standard Least Squares
+    r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex'], ['region']), {'personality': 'standard'}))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep);
+      await __fm.topMenu('Recursive and Rolling Regression', 'All Four'); await d;
+      const st = __fm.state(rep);
+      const pe = Object.fromEntries(__fm.table('Parameter Estimates').slice(1).map(r => [r[0], __fm.num(r[1])]));
+      const last = {}; for (const p of rep.plots) { const m = /^(.*) recursive estimate$/.exec(p.opts.title || ''); if (m) { const tr = p.traces[2]; last[m[1]] = tr.y[tr.y.length - 1]; } }
+      return { st, pe, last, cusum: __fm.kv('CUSUM'), sq: __fm.kv('CUSUM of Squares') }; })()''')
+    cus0 = r['cusum']
+    for o in ['Recursive and Rolling Regression', 'Recursive Estimates', 'CUSUM', 'CUSUM of Squares', 'Rolling Regression, Window 150']:
+        check(f'recursive outline {o}', o in r['st']['outlines'], True)
+    check('no errors in the recursive and rolling reports', r['st']['errors'], [])
+    check('the last recursive estimates are the Parameter Estimates', all(abs(r['last'][k] - r['pe'][k]) < 1e-6 * max(1, abs(r['pe'][k])) for k in r['pe']), True)
+    check('the CUSUM crosses its bounds after the 2008 break (row 651 on)', r['cusum']['Crosses the bounds'] == 'Yes' and int(r['cusum']['First crossing, observation']) > 651, True)
+    await asyncio.sleep(1)
+    await page.ev('''(() => { const ob = __fm.outline('CUSUM'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-12-cusum.png')
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const p = rep.plots.find(q => q.opts.title === 'log wage CUSUM');
+      p._click({ points: [{ curveNumber: 2, pointNumber: 100 }], event: {} });
+      const sel = t.selectedRows(); const want = p.rows[2][100];
+      const q = rep.plots.find(x => x.opts.title === 'experience rolling estimate');
+      q._click({ points: [{ curveNumber: 2, pointNumber: 10 }], event: {} });
+      const win = t.selectedRows().slice().sort((a, b) => a - b);
+      t.select([]);
+      const ob = __fm.outline('Recursive and Rolling Regression');
+      const s = ob.querySelector('select[aria-label="Order by"]'); let d = __fm.done(rep);
+      s.value = t.col('year').id; s.dispatchEvent(new Event('change')); await d;
+      const year = { cusum: __fm.kv('CUSUM'), title: rep.plots.find(x => x.opts.title === 'log wage CUSUM').userLayout.xaxis.title.text };
+      const s2 = __fm.outline('Recursive and Rolling Regression').querySelector('select[aria-label="Order by"]'); d = __fm.done(rep);
+      s2.value = t.col('experience').id; s2.dispatchEvent(new Event('change')); await d;
+      const expr = __fm.kv('CUSUM');
+      d = __fm.done(rep); await __fm.topMenu('Recursive and Rolling Regression', 'Rolling Window…'); await new Promise(r => setTimeout(r, 250));
+      const dlg = [...document.querySelectorAll('.sm-dialog')].find(x => x.getAttribute('aria-label') === 'Rolling Window');
+      dlg.querySelector('input').value = '100'; dlg.querySelector('.sm-dialog-foot .primary').click(); await d;
+      return { sel, want, win, year, expr, st: __fm.state(rep) }; })()''')
+    check('a click on a CUSUM point selects the row it adds', r['sel'], [r['want']])
+    check('a click on a rolling point selects its window\'s 150 rows (consecutive in the order)', (len(r['win']), r['win'][-1] - r['win'][0]), (150, 149))
+    check('Order by year: the table\'s order again (it is in interview order), and the axis says so', (r['year']['cusum']['First crossing, observation'], 'sorted by year' in r['year']['title']), (cus0['First crossing, observation'], True))
+    check('Order by experience: another order, another CUSUM', r['expr'] != r['year']['cusum'], True)
+    check('Rolling Window… 100', 'Rolling Regression, Window 100' in r['st']['outlines'], True)
+    check('no errors after the controls', r['st']['errors'], [])
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('every (i) of the new reports has a topic', audit.get('noTopic'), [])
+    check('every Help link has a target', audit.get('brokenMore'), [])
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(2)
+    await page.ev('''(() => { const ob = __fm.outline('Recursive Estimates'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-13-recursive-dark.png')
+    r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex']), {'personality': 'quantreg', 'qrTau': 0.9}))
+    await asyncio.sleep(1.5)
+    await page.ev('''(() => { const ob = __fm.outline('Quantile Process'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-14-process-dark.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(1.2)
+    check('the quantile regression report: no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'fm-15-quantreg-phone.png')
+    r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['distance (km)', 'lottery']}))
+    await asyncio.sleep(1.2)
+    check('the IV report: no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'fm-16-iv-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 
 
 asyncio.run(main())

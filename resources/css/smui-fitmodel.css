@@ -1,9 +1,12 @@
 /* ==========================================================================
    SMUI.HTML: ANALYZE > FIT MODEL (smui-p-fitmodel.js)
-   The launch dialog's Construct Model Effects part, the Effect Summary's
-   LogWorth bars, the Prediction Profiler's grid of plots, the controls of
-   Stepwise, Generalized Regression and the contour profiler. Colours are
-   kvot.css's tokens (and the core's), so both themes read.
+   The launch dialog's Construct Model Effects part (with the options of
+   Generalized Estimating Equations), the Effect Summary's LogWorth bars,
+   the Prediction Profiler's grid of plots, the controls of Stepwise,
+   Generalized Regression, the contour profiler, the Regression
+   Diagnostics, Recursive and Rolling Regression and Quantile Regression's
+   Model Launch, the weak first stages of Instrumental Variables. Colours
+   are kvot.css's tokens (and the core's), so both themes read.
    ========================================================================== */
 
 /* ---- the launch dialog ------------------------------------------------------ */
@@ -15,6 +18,7 @@
 .sm-fm-opt select, .sm-fm-opt input[type="text"], .sm-fm-degree input, .sm-fm-prof-x input[type="text"], .sm-fm-prof-x select {
   padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0;
 }
+.sm-fm-opt input.sm-fm-num { width: 4.4em; text-align: right; }
 .sm-fm-effbox { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 7px; align-items: start; }
 .sm-fm-tools { display: flex; flex-direction: column; gap: 5px; }
 .sm-fm-tools .sm-btn { justify-content: center; width: 104px; }
@@ -37,6 +41,8 @@
 .sm-fm-controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 2px 0 8px; }
 .sm-fm-swtable td input[type="checkbox"] { margin: 0; }
 .sm-fm-swtable tbody tr.is-entered td { font-weight: 600; }
+/* Instrumental Variables: a first-stage F below 10 (weak instruments) */
+.sm-rt td.sm-fm-weak { color: var(--sm-nom, #c0392b); font-weight: 600; }
 
 /* ---- the Prediction Profiler ------------------------------------------------------------ */
 .sm-fm-profwrap { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }

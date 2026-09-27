@@ -8,16 +8,19 @@ choose the analysis, as JMP does:
                                                 value, robust, orthogonal,
                                                 quantile, ellipses, contours
     Y continuous,  X categorical  Oneway        ANOVA, t tests, comparisons,
-                                                rank tests, variances,
-                                                equivalence, power, ANOM
+                                                rank tests, Brunner-Munzel,
+                                                variances, equivalence,
+                                                power, ANOM, Poisson rates
     Y categorical, X continuous   Logistic      Logit (GLM with weights),
                                                 MNLogit, OrderedModel
     Y categorical, X categorical  Contingency   the crosstab, chi-square and
                                                 exact tests, measures,
-                                                kappa, relative risk, CMH
+                                                kappa, relative risk, two
+                                                proportions, CMH and
+                                                Breslow-Day
 
 Matched Pairs compares paired responses (their difference against their
-mean).
+mean); binary responses get Cochran's Q and McNemar's tests.
 
 Weight and Freq. Freq counts a row that many times; Weight weights it. The
 least-squares fits use both: weighted least squares on weight x freq, with
@@ -238,6 +241,101 @@ def _grid(lo, hi, n=160):
     if not hi > lo:
         return np.array([lo, hi], float)
     return np.linspace(lo, hi, n)
+
+
+def _lvcode(v):
+    """A level as a Python literal for the code under a result: 12.0 as 12,
+    text quoted."""
+    if isinstance(v, (bool, np.bool_)):
+        return repr(bool(v))
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else repr(f)
+    return J(str(v))
+
+
+def _fin(v):
+    """A float, or None for a missing or undefined value (NaN)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(f) else f
+
+
+def _invert_test(pfun, alpha, center, log=False, lo_lim=-np.inf, hi_lim=np.inf, span=None):
+    """A two-sided confidence interval by inverting a test: where the
+    p-value pfun(v) falls to alpha on either side of its largest value. The
+    p-value is scanned on a grid (log scale for ratios, v > 0) and each
+    crossing refined by brentq; a side where it stays above alpha up to its
+    limit gets the limit (0 or infinity for a ratio). Used when statsmodels'
+    own inversion fails (a zero count)."""
+    from scipy.optimize import brentq
+
+    def p(u):
+        v = math.exp(u) if log else u
+        with np.errstate(all='ignore'):
+            try:
+                pv = float(pfun(v))
+            except (ValueError, ZeroDivisionError, FloatingPointError):
+                pv = float('nan')
+        return pv if math.isfinite(pv) else 0.0
+    if log:
+        c = math.log(center) if center and center > 0 and math.isfinite(center) else 0.0
+        us = c + np.linspace(-(span or 25.0), span or 25.0, 1001)
+        lo_u, hi_u = -np.inf, np.inf
+    else:
+        s = span or 1.0
+        lo_u = lo_lim if math.isfinite(lo_lim) else center - 40 * s
+        hi_u = hi_lim if math.isfinite(hi_lim) else center + 40 * s
+        us = np.linspace(lo_u, hi_u, 2001)
+    ps = np.array([p(u) for u in us])
+    if not np.any(ps >= alpha):
+        return None, None
+    top = int(np.argmax(ps))
+    f = lambda u: p(u) - alpha
+    below = np.where(ps[:top] < alpha)[0]
+    above = np.where(ps[top:] < alpha)[0]
+    if len(below):
+        i = below[-1]
+        lo = brentq(f, us[i], us[i + 1], xtol=1e-13)
+        lo = math.exp(lo) if log else lo
+    else:
+        lo = 0.0 if log else lo_lim
+    if len(above):
+        i = top + above[0]
+        hi = brentq(f, us[i - 1], us[i], xtol=1e-13)
+        hi = math.exp(hi) if log else hi
+    else:
+        hi = np.inf if log else hi_lim
+    return float(lo), float(hi)
+
+
+def _ci_checked(ci, pfun, alpha, est, tol=1e-4):
+    """True when a confidence interval from statsmodels' test inversion is
+    one: it holds the estimate, its finite limits give the p-value alpha,
+    and inside it the p-value is above alpha. (With a zero count
+    statsmodels can return one root twice.)"""
+    try:
+        lo, hi = float(ci[0]), float(ci[1])
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(lo) or math.isnan(hi) or not lo < hi:
+        return False
+    if est is not None and not (lo - 1e-9 * (1 + abs(lo)) <= est <= hi + 1e-9 * (1 + abs(hi))):
+        return False
+    with np.errstate(all='ignore'):
+        for v in (lo, hi):
+            if math.isfinite(v) and v != 0:
+                pv = float(pfun(v))
+                if not (math.isfinite(pv) and abs(pv - alpha) <= tol * max(alpha, 1e-3) * 10):
+                    return False
+        if math.isfinite(lo) and math.isfinite(hi):
+            mid = math.sqrt(lo * hi) if lo > 0 and hi > 0 else (lo + hi) / 2
+            pm = float(pfun(mid))
+            if not (math.isfinite(pm) and pm > alpha):
+                return False
+    return True
 
 
 # ---- Bivariate ----------------------------------------------------------------
@@ -1666,6 +1764,299 @@ def oneway_densities(table, y, x, rows=None, weight=None, freq=None, grid=160, a
     return out
 
 
+def _repeat_code(freq, frame='d'):
+    """The line that counts Freq by repeating rows, for the code shown."""
+    return f'{frame} = {frame}.loc[{frame}.index.repeat({frame}[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times'
+
+
+@api('fitybyx.oneway_brunner')
+def oneway_brunner(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, tost=None, where=None, table_name='data'):
+    """Nonparametric ▸ Brunner-Munzel: for each pair of levels (a later
+    level against an earlier one) the probability of superiority p =
+    P(Y_a > Y_b) + P(Y_a = Y_b)/2 from the ranks, its confidence interval
+    and the Brunner-Munzel test of p = 1/2, which does not assume that the
+    two distributions are the same under the null (statsmodels
+    rank_compare_2indep, t with Welch-Satterthwaite type degrees of
+    freedom). With tost = {low, upp}: the equivalence test low < p < upp
+    (tost_prob_superior), two one-sided tests."""
+    from statsmodels.stats.multitest import multipletests
+    from statsmodels.stats.nonparametric import rank_compare_2indep
+    G = _OW(table, y, x, rows, weight, freq)
+    if G.k < 2:
+        return {'error': 'the Brunner-Munzel test needs two levels of X'}
+    smp = G.samples()
+    low = upp = None
+    if tost:
+        low, upp = float(tost.get('low')), float(tost.get('upp'))
+        if not (0 <= low < upp <= 1):
+            return {'error': 'the equivalence bounds must satisfy 0 ≤ lower < upper ≤ 1'}
+    notes = []
+    pairs, eq = [], []
+    for i in range(G.k):
+        for j in range(i + 1, G.k):
+            a, b = smp[j], smp[i]
+            if len(a) < 2 or len(b) < 2:
+                notes.append(f'{_lvtext(G.levels[j])} and {_lvtext(G.levels[i])}: each level needs two values.')
+                continue
+            # a zero variance (the levels do not overlap, or every value is
+            # the same) makes the statistic infinite: reported below
+            with np.errstate(divide='ignore', invalid='ignore'):
+                r = rank_compare_2indep(a, b, use_t=True)
+            row = {'i': j, 'j': i, 'n1': len(a), 'n2': len(b), 'prob': float(r.prob1), 'somersd': float(r.somersd1)}
+            if not r.var > 0:
+                row.update({'se': 0.0, 'lower': None, 'upper': None, 'stat': None, 'df': None, 'p': None, 'p_greater': None, 'p_less': None})
+                notes.append(f'{_lvtext(G.levels[j])} against {_lvtext(G.levels[i])}: the rank variance is zero (the levels do not overlap, or every value is the same), so there is no Brunner-Munzel test or interval.')
+                pairs.append(row)
+                continue
+            lo, hi = r.conf_int(alpha=alpha)
+            dlo, dhi = r.confint_lintransf(const=-1, slope=2, alpha=alpha)
+            row.update({'se': float(math.sqrt(r.var_prob)), 'lower': float(lo), 'upper': float(hi), 'stat': float(r.statistic), 'df': float(r.df),
+                        'p': float(r.pvalue), 'p_greater': float(r.test_prob_superior(0.5, alternative='larger').pvalue),
+                        'p_less': float(r.test_prob_superior(0.5, alternative='smaller').pvalue), 'd_lower': float(dlo), 'd_upper': float(dhi)})
+            pairs.append(row)
+            if tost:
+                tt = r.tost_prob_superior(low, upp)
+                lo2, hi2 = r.conf_int(alpha=2 * alpha)
+                eq.append({'i': j, 'j': i, 'prob': float(r.prob1), 'lower': float(lo2), 'upper': float(hi2),
+                           't_lower': float(tt.results_larger.statistic), 'p_lower': float(tt.results_larger.pvalue),
+                           't_upper': float(tt.results_smaller.statistic), 'p_upper': float(tt.results_smaller.pvalue), 'p': float(tt.pvalue), 'df': float(r.df)})
+    ps = [p_['p'] for p_ in pairs if p_['p'] is not None]
+    if len(ps) > 1:
+        adj = iter(multipletests(ps, method='holm')[1])
+        for p_ in pairs:
+            if p_['p'] is not None:
+                p_['p_holm'] = float(next(adj))
+    if weight:
+        notes.append('Weight is not used by the rank statistics; Freq is counted by repeating rows.')
+    out = {'pairs': pairs, 'alpha': alpha, 'k': G.k, 'levels': G.levels, 'notes': notes}
+    if tost:
+        out['tost'] = {'low': low, 'upp': upp, 'pairs': eq}
+    c = _ow_code(G, table_name, where, ['from statsmodels.stats.nonparametric import rank_compare_2indep'])
+    if freq:
+        c.append(_repeat_code(freq))
+    c.append(f'g = {{lv: s.to_numpy() for lv, s in d.groupby({J(x)}, observed=True)[{J(y)}]}}')
+    if pairs:
+        a_, b_ = G.levels[pairs[0]['i']], G.levels[pairs[0]['j']]
+        c.append(f'r = rank_compare_2indep(g[{_lvcode(a_)}], g[{_lvcode(b_)}])   # P({_lvtext(a_)} > {_lvtext(b_)}) + P(=)/2; the same for each pair')
+        c.append(f'print(r.prob1, r.conf_int(alpha={alpha!r}), r.statistic, r.df, r.pvalue)   # estimate, interval, Brunner-Munzel t, DF, Prob>|t|')
+        if tost:
+            c.append(f'print(r.tost_prob_superior({low!r}, {upp!r}))   # the equivalence test: p, then the two one-sided tests')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+# Compare Rates: the methods statsmodels has for the test and the interval
+RATE_TESTS = {'ratio': ['score', 'wald', 'score-log', 'wald-log', 'sqrt', 'exact-cond', 'cond-midp', 'etest-score', 'etest-wald'],
+              'diff': ['score', 'wald', 'waldccv', 'etest-score', 'etest-wald']}
+RATE_CIS = {'ratio': ['score', 'score-log', 'wald-log', 'waldcc', 'sqrtcc', 'mover', 'exact-cond'],
+            'diff': ['score', 'wald', 'waldccv', 'mover']}
+ETEST_MAX_MEAN = 1000.0     # the E-test sums over a grid of counts squared: larger expected counts are too big for the browser
+
+
+def _counts_check(yv):
+    return bool(len(yv)) and bool(np.all(yv >= 0)) and bool(np.all(np.abs(yv - np.rint(yv)) < 1e-9))
+
+
+def _rate_test(c1, e1, c2, e2, method, ci_method, compare, alpha):
+    """One comparison of two Poisson rates, count1/exposure1 against
+    count2/exposure2: test_poisson_2indep two-sided and one-sided, and the
+    interval confint_poisson_2indep ('exact-cond': the Clopper-Pearson
+    interval of the conditional binomial, which statsmodels does not give).
+    An interval that inverts a test is checked against that test; with a
+    zero count statsmodels' inversion can fail, and the test is inverted
+    here instead. Returns the row and notes."""
+    from statsmodels.stats.proportion import proportion_confint
+    from statsmodels.stats.rates import confint_poisson_2indep, test_poisson_2indep
+    notes = []
+    row = {'count1': c1, 'exposure1': e1, 'count2': c2, 'exposure2': e2, 'rate1': c1 / e1, 'rate2': c2 / e2,
+           'stat': None, 'p': None, 'p_greater': None, 'p_less': None, 'lower': None, 'upper': None}
+    r1, r2 = c1 / e1, c2 / e2
+    if compare == 'ratio':
+        row['estimate'] = r1 / r2 if r2 > 0 else (np.inf if r1 > 0 else None)
+    else:
+        row['estimate'] = r1 - r2
+    if c1 + c2 == 0:
+        notes.append('No events in either level: no test or interval.')
+        return row, notes
+    zero = c1 == 0 or c2 == 0
+    m = method
+    if compare == 'ratio' and zero and m in ('score-log', 'wald-log'):
+        notes.append(f'The {m} test takes the logs of both counts: it is not defined with no events in one level.')
+        m = None
+    if m and m.startswith('etest'):
+        mean = max(c1, c2, (c1 + c2) / 2)
+        if mean > ETEST_MAX_MEAN:
+            notes.append(f'The E-test sums over every pair of counts up to about {mean:.0f}; above {ETEST_MAX_MEAN:.0f} that grid is too large here. At such counts the score test is accurate.')
+            m = None
+    if m:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t2 = test_poisson_2indep(c1, e1, c2, e2, method=m, compare=compare)
+            tg = test_poisson_2indep(c1, e1, c2, e2, method=m, compare=compare, alternative='larger')
+            tl = test_poisson_2indep(c1, e1, c2, e2, method=m, compare=compare, alternative='smaller')
+        row.update({'stat': _fin(t2.statistic), 'p': _fin(t2.pvalue), 'p_greater': _fin(tg.pvalue), 'p_less': _fin(tl.pvalue)})
+    cm = ci_method
+    if compare == 'ratio' and zero and cm in ('score-log', 'wald-log'):
+        notes.append(f'The {cm} interval takes the logs of both counts: it is not defined with no events in one level.')
+        cm = None
+    if cm == 'exact-cond':
+        pl, pu = proportion_confint(c1, c1 + c2, alpha=alpha, method='beta')
+        row['lower'] = pl / (1 - pl) * e2 / e1
+        row['upper'] = pu / (1 - pu) * e2 / e1 if pu < 1 else np.inf
+    elif cm:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            try:
+                ci = confint_poisson_2indep(c1, e1, c2, e2, method=cm, compare=compare, alpha=alpha)
+            except (ValueError, ZeroDivisionError, FloatingPointError):
+                ci = (np.nan, np.nan)
+        if cm in ('score', 'score-log'):
+            pf = lambda v: test_poisson_2indep(c1, e1, c2, e2, value=v, method=cm, compare=compare).pvalue
+            est = row['estimate'] if row['estimate'] is not None else None
+            if not _ci_checked(ci, pf, alpha, est):
+                if compare == 'ratio':
+                    center = (c1 + 0.5) / (c2 + 0.5) * e2 / e1
+                    ci = _invert_test(pf, alpha, center, log=True)
+                else:
+                    span = math.sqrt((c1 + 0.5) / e1 ** 2 + (c2 + 0.5) / e2 ** 2)
+                    ci = _invert_test(pf, alpha, r1 - r2, span=span)
+                notes.append(f'statsmodels\' {cm} interval failed (a zero count); the interval is its test inverted by root finding here.')
+        row['lower'], row['upper'] = _fin(ci[0]), _fin(ci[1])
+    return row, notes
+
+
+@api('fitybyx.oneway_rates')
+def oneway_rates(table, y, x, exposure=None, compare='ratio', method='score', ci_method='score', control=None, rows=None,
+                 weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+    """Compare Rates: Y counts events, each row a unit observed for its
+    Exposure (1 without one). Each level's rate is its total count over its
+    total exposure, with the exact (Garwood) interval (confint_poisson).
+    Each pair of levels, or each level against a control, is compared by
+    the ratio or the difference of the rates (statsmodels
+    test_poisson_2indep, confint_poisson_2indep), and all levels together
+    by the likelihood-ratio test of a Poisson GLM with the log exposure as
+    offset."""
+    import statsmodels.api as sm
+    from statsmodels.stats.multitest import multipletests
+    from statsmodels.stats.rates import confint_poisson
+    if compare not in RATE_TESTS:
+        return {'error': f'unknown comparison {compare!r}'}
+    if method not in RATE_TESTS[compare]:
+        return {'error': f'the {method} test is not one statsmodels has for a rate {compare}'}
+    if ci_method not in RATE_CIS[compare]:
+        return {'error': f'the {ci_method} interval is not one statsmodels has for a rate {compare}'}
+    if exposure and exposure in (y, x):
+        return {'error': 'the exposure must be a column other than Y and X'}
+    df = data.frame(table, [y, x, exposure, weight, freq], rows)
+    df, w, f = _wf(df, table, weight, freq)
+    yv = df[y].to_numpy(float)
+    ev = df[exposure].to_numpy(float) if exposure else np.ones(len(df))
+    ok = np.isfinite(yv) & np.isfinite(ev) & (ev > 0)
+    notes = []
+    if exposure and (~ok).sum():
+        notes.append(f'{int((~ok).sum())} row(s) with an exposure that is not positive are left out.')
+    df, yv, ev, f = df[ok], yv[ok], ev[ok], f[ok]
+    if not _counts_check(yv):
+        return {'error': 'Compare Rates needs counts in Y: whole numbers of zero or more'}
+    try:
+        reps = _reps(f) if freq else None
+    except ValueError as e:
+        return {'error': str(e)}
+    fr = reps.astype(float) if reps is not None else np.ones(len(yv))
+    xs = df[x]
+    if not isinstance(xs.dtype, pd.CategoricalDtype):
+        xs = pd.Series(pd.Categorical(xs), index=df.index)
+    xs = xs.cat.remove_unused_categories()
+    levels = list(xs.cat.categories)
+    code = xs.cat.codes.to_numpy().astype(int)
+    k = len(levels)
+    if k < 2:
+        return {'error': 'Compare Rates needs two levels of X'}
+    C = np.bincount(code, weights=fr * yv, minlength=k)
+    E = np.bincount(code, weights=fr * ev, minlength=k)
+    Nu = np.bincount(code, weights=fr, minlength=k)
+    lv_rows = []
+    for i in range(k):
+        lo, hi = confint_poisson(C[i], E[i], method='exact-c', alpha=alpha)
+        lv_rows.append({'index': i, 'level': levels[i], 'n': float(Nu[i]), 'count': float(C[i]), 'exposure': float(E[i]), 'rate': float(C[i] / E[i]),
+                        'lower': float(lo), 'upper': float(hi)})
+    ci_ = None
+    if control is not None:
+        for i, lv in enumerate(levels):
+            if _lvtext(lv) == _lvtext(control):
+                ci_ = i
+    idx = [(i, ci_) for i in range(k) if i != ci_] if ci_ is not None else [(j, i) for i in range(k) for j in range(i + 1, k)]
+    pairs = []
+    seen = set()
+    for a, b in idx:
+        row, nts = _rate_test(float(C[a]), float(E[a]), float(C[b]), float(E[b]), method, ci_method, compare, alpha)
+        row.update({'i': a, 'j': b})
+        pairs.append(row)
+        for t in nts:
+            key = t
+            if key not in seen:
+                seen.add(key)
+                notes.append(f'{_lvtext(levels[a])} against {_lvtext(levels[b])}: {t}' if len(idx) > 1 else t)
+    ps = [p_['p'] for p_ in pairs if p_['p'] is not None]
+    if len(ps) > 1:
+        adj = iter(multipletests(ps, method='holm')[1])
+        for p_ in pairs:
+            if p_['p'] is not None:
+                p_['p_holm'] = float(next(adj))
+    # every level together: the Poisson GLM of the rows, log exposure as offset
+    X = np.zeros((len(yv), k))
+    X[np.arange(len(yv)), code] = 1.0
+    lr = None
+    if C.sum() > 0:
+        if np.all(C > 0):
+            full = sm.GLM(yv, X, family=sm.families.Poisson(), exposure=ev, freq_weights=fr).fit()
+            null = sm.GLM(yv, np.ones((len(yv), 1)), family=sm.families.Poisson(), exposure=ev, freq_weights=fr).fit()
+            stat = float(2 * (full.llf - null.llf))
+            disp = float(full.pearson_chi2 / full.df_resid) if full.df_resid > 0 else None
+            lr = {'chisq': max(stat, 0.0), 'df': k - 1, 'p': float(stats.chi2.sf(max(stat, 0.0), k - 1)), 'dispersion': disp, 'df_resid': float(full.df_resid), 'source': 'glm'}
+        else:
+            # a level without events: the GLM's estimate for it is minus
+            # infinity; the likelihood ratio is its limit, from the totals
+            rbar = C.sum() / E.sum()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                terms = np.where(C > 0, C * np.log(C / (E * rbar)), 0.0)
+            stat = float(2 * terms.sum())
+            mu = ev * (C / E)[code]
+            dfr = float(fr.sum() - k)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                pear = float(np.sum(np.where(mu > 0, fr * (yv - mu) ** 2 / mu, 0.0)))
+            lr = {'chisq': stat, 'df': k - 1, 'p': float(stats.chi2.sf(stat, k - 1)), 'dispersion': pear / dfr if dfr > 0 else None, 'df_resid': dfr, 'source': 'totals'}
+            notes.append('A level has no events: its GLM estimate would be minus infinity, so the likelihood ratio is computed from the totals, its limit.')
+    if lr and lr['dispersion'] is not None and lr['dispersion'] > 1.5:
+        notes.append(f'The Pearson χ²/DF of the Poisson model is {lr["dispersion"]:.3g}: the counts vary more than a Poisson allows, and these tests treat the evidence as stronger than it is. A negative binomial model (Count Regression) allows for it.')
+    if weight:
+        notes.append('Weight is not used; Freq is counted as that many units.')
+    out = {'levels': lv_rows, 'pairs': pairs, 'lr': lr, 'compare': compare, 'method': method, 'ci_method': ci_method, 'control': ci_, 'k': k,
+           'alpha': alpha, 'exposure': exposure, 'level_values': levels, 'notes': notes}
+    # the code: totals per level, the pair tests, the GLM
+    c = _head(table_name, where, ['from statsmodels.stats.rates import test_poisson_2indep, confint_poisson_2indep'])
+    c.append(f'd = df[[{", ".join(J(v) for v in (y, x, exposure, freq) if v)}]].dropna()')
+    if exposure:
+        c.append(f'd = d[d[{J(exposure)}] > 0]')
+    fw = f'd[{J(freq)}]' if freq else '1'
+    ex = f'd[{J(exposure)}]' if exposure else '1'
+    c.append(f'd = d.assign(_count=d[{J(y)}] * {fw}, _exposure={ex} * {fw})')
+    c.append(f't = d.groupby({J(x)}, observed=True)[["_count", "_exposure"]].sum(); print(t.assign(rate=t._count / t._exposure))   # each level\'s total count, exposure and rate')
+    if pairs:
+        a_, b_ = levels[pairs[0]['i']], levels[pairs[0]['j']]
+        c.append(f'c1, e1 = t.loc[{_lvcode(a_)}]; c2, e2 = t.loc[{_lvcode(b_)}]   # {_lvtext(a_)} against {_lvtext(b_)}; the same for each pair')
+        c.append(f'print(test_poisson_2indep(c1, e1, c2, e2, method={J(method)}, compare={J(compare)}))')
+        if ci_method == 'exact-cond':
+            c.append('from statsmodels.stats.proportion import proportion_confint')
+            c.append(f'pl, pu = proportion_confint(c1, c1 + c2, alpha={alpha!r}, method="beta"); print(pl / (1 - pl) * e2 / e1, pu / (1 - pu) * e2 / e1)   # exact conditional interval of the ratio')
+        else:
+            c.append(f'print(confint_poisson_2indep(c1, e1, c2, e2, method={J(ci_method)}, compare={J(compare)}, alpha={alpha!r}))')
+    glm_kw = f'family=sm.families.Poisson(){", exposure=d[" + J(exposure) + "]" if exposure else ""}{", freq_weights=d[" + J(freq) + "]" if freq else ""}'
+    c.append(f'full = smf.glm({J(_q(y) + " ~ C(" + _q(x) + ")")}, d, {glm_kw}).fit()')
+    c.append(f'null = smf.glm({J(_q(y) + " ~ 1")}, d, {glm_kw}).fit()')
+    c.append('print(2 * (full.llf - null.llf), full.pearson_chi2 / full.df_resid)   # the likelihood-ratio chi-square (k - 1 DF), the dispersion')
+    out['code'] = '\n'.join(c)
+    return out
+
+
 # ---- Logistic -----------------------------------------------------------------
 
 def _expit(v):
@@ -2250,6 +2641,95 @@ def contingency_2x2(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, 
     return out
 
 
+# Two Sample Test for Proportions: (statsmodels method, correction, label, needs every cell > 0, test available)
+TWOPROP_METHODS = {
+    'diff': [('wald', True, 'Wald', False, True), ('agresti-caffo', True, 'Agresti-Caffo (adjusted Wald, as JMP)', False, True),
+             ('newcomb', True, 'Newcombe (hybrid score)', False, False), ('score', True, 'Miettinen-Nurminen (score)', False, True)],
+    'ratio': [('log', True, 'Katz (log)', True, True), ('log-adjusted', True, 'Adjusted log (0.5 added)', False, True),
+              ('score', False, 'Koopman (score)', False, True), ('score', True, 'Miettinen-Nurminen (score)', False, True)],
+    'odds-ratio': [('logit', True, 'Woolf (logit)', True, True), ('logit-adjusted', True, 'Gart (adjusted logit, 0.5 added)', False, True),
+                   ('logit-smoothed', True, 'Independence-smoothed logit', False, True), ('score', True, 'Miettinen-Nurminen (score)', False, True)],
+}
+
+
+@api('fitybyx.contingency_twoprop')
+def contingency_twoprop(table, y, x, compare='diff', response=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+    """Two Sample Test for Proportions: the proportion of one Y level
+    (response, default the first) in the first X level against the second,
+    compared as a difference, a ratio (relative risk) or an odds ratio, by
+    each of statsmodels' methods: confint_proportions_2indep for the
+    interval, test_proportions_2indep for the test that the two are equal.
+    JMP's report is the Agresti-Caffo (adjusted Wald) difference."""
+    from statsmodels.stats.proportion import confint_proportions_2indep, test_proportions_2indep
+    if compare not in TWOPROP_METHODS:
+        return {'error': f'unknown comparison {compare!r}'}
+    n, xl, yl, df, w, f = _crosstab(table, y, x, rows, weight, freq)
+    if n.shape != (2, 2):
+        return {'error': 'the Two Sample Test for Proportions needs two levels of X and two of Y'}
+    j = 0
+    if response is not None:
+        for jj, lv in enumerate(yl):
+            if _lvtext(lv) == _lvtext(response):
+                j = jj
+    c1, n1, c2, n2 = float(n[0, j]), float(n[0].sum()), float(n[1, j]), float(n[1].sum())
+    if n1 <= 0 or n2 <= 0:
+        return {'error': 'each level of X needs rows'}
+    p1, p2 = c1 / n1, c2 / n2
+    null = 0.0 if compare == 'diff' else 1.0
+    with np.errstate(divide='ignore', invalid='ignore'):
+        est = {'diff': p1 - p2, 'ratio': p1 / p2 if p2 > 0 else (np.inf if p1 > 0 else np.nan),
+               'odds-ratio': (p1 / (1 - p1)) / (p2 / (1 - p2)) if 0 < p2 < 1 and p1 < 1 else np.nan}[compare]
+    zero = min(c1, c2, n1 - c1, n2 - c2) <= 0
+    cell0 = {'diff': False, 'ratio': min(c1, c2) <= 0, 'odds-ratio': zero}[compare]
+    rows_out, notes = [], []
+    for m, corr, label, needs, has_test in TWOPROP_METHODS[compare]:
+        row = {'method': label, 'key': m, 'correction': corr, 'lower': None, 'upper': None, 'z': None, 'p': None, 'p_greater': None, 'p_less': None}
+        if needs and cell0:
+            row['note'] = 'not defined with a zero count'
+            rows_out.append(row)
+            continue
+        # zero cells make statsmodels' root finding divide by zero on the way: the results are checked below
+        with np.errstate(divide='ignore', invalid='ignore'):
+            try:
+                lo, hi = confint_proportions_2indep(c1, n1, c2, n2, method=m, compare=compare, alpha=alpha, correction=corr)
+                row['lower'], row['upper'] = _fin(lo), _fin(hi)
+            except (ValueError, ZeroDivisionError, FloatingPointError):
+                row['note'] = 'statsmodels\' interval fails with a zero count'
+            if has_test:
+                try:
+                    t2 = test_proportions_2indep(c1, n1, c2, n2, value=null, method=m, compare=compare, correction=corr)
+                    tg = test_proportions_2indep(c1, n1, c2, n2, value=null, method=m, compare=compare, correction=corr, alternative='larger')
+                    tl = test_proportions_2indep(c1, n1, c2, n2, value=null, method=m, compare=compare, correction=corr, alternative='smaller')
+                    row.update({'z': _fin(t2.statistic), 'p': _fin(t2.pvalue), 'p_greater': _fin(tg.pvalue), 'p_less': _fin(tl.pvalue)})
+                except (ValueError, ZeroDivisionError, FloatingPointError):
+                    pass
+        if row['lower'] is not None and row['upper'] is not None and not row['lower'] <= row['upper']:
+            row['lower'] = row['upper'] = None
+            row['note'] = 'statsmodels\' interval fails with a zero count'
+        rows_out.append(row)
+    if zero:
+        notes.append('A cell of the table is zero: the Katz, Woolf and some score methods are not defined or fall back; the adjusted methods add 0.5 (or 1) to the counts.')
+    if weight or freq:
+        integer = bool(np.all(np.abs(n - np.rint(n)) < 1e-9))
+        if not integer:
+            notes.append('The counts are weighted (not whole numbers): the methods are used as they are, which assumes the weights are frequencies.')
+    ylab, x1, x2 = _lvtext(yl[j]), _lvtext(xl[0]), _lvtext(xl[1])
+    what = {'diff': f'P({ylab}|{x1}) − P({ylab}|{x2})', 'ratio': f'P({ylab}|{x1}) / P({ylab}|{x2})',
+            'odds-ratio': f'Odds({ylab}|{x1}) / Odds({ylab}|{x2})'}[compare]
+    out = {'compare': compare, 'response': j, 'y_levels': yl, 'x_levels': xl, 'counts': n, 'count1': c1, 'nobs1': n1, 'count2': c2, 'nobs2': n2,
+           'p1': p1, 'p2': p2, 'estimate': _fin(est), 'null': null, 'description': what, 'methods': rows_out, 'alpha': alpha, 'notes': notes}
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.proportion import test_proportions_2indep, confint_proportions_2indep'])
+    c.append(f'count1, nobs1 = n.loc[{_lvcode(xl[0])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[0])}].sum()   # {ylab} in {x1}')
+    c.append(f'count2, nobs2 = n.loc[{_lvcode(xl[1])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[1])}].sum()   # {ylab} in {x2}')
+    for m, corr, label, needs, has_test in TWOPROP_METHODS[compare]:
+        args = f'count1, nobs1, count2, nobs2, method={J(m)}, compare={J(compare)}{"" if corr else ", correction=False"}'
+        line = f'print({J(label)}, confint_proportions_2indep({args}, alpha={alpha!r})'
+        line += f', test_proportions_2indep({args}).pvalue)' if has_test else ')'
+        c.append(line)
+    out['code'] = '\n'.join(c)
+    return out
+
+
 @api('fitybyx.contingency_cmh')
 def contingency_cmh(table, y, x, strata, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Cochran Mantel Haenszel: a 2x2 table (X by Y) in each level of the
@@ -2278,19 +2758,56 @@ def contingency_cmh(table, y, x, strata, rows=None, weight=None, freq=None, alph
             names.append(lv)
     if not tabs:
         return {'error': 'no stratum has both levels of X and of Y'}
+    from statsmodels.stats.contingency_tables import Table2x2
     st = StratifiedTable([t for t in tabs])
     tn = st.test_null_odds(correction=False)
     lo, hi = st.oddsratio_pooled_confint(alpha=alpha)
+    notes = []
     out = {'strata': len(tabs), 'strata_levels': names, 'cmh': {'chisq': float(tn.statistic), 'df': 1, 'p': float(tn.pvalue)},
-           'or_mh': float(st.oddsratio_pooled), 'lower': float(lo), 'upper': float(hi), 'alpha': alpha}
-    try:
-        te = st.test_equal_odds()
-        out['breslow_day'] = {'chisq': float(te.statistic), 'df': len(tabs) - 1, 'p': float(te.pvalue)}
-    except Exception:
-        pass
+           'or_mh': float(st.oddsratio_pooled), 'lower': float(lo), 'upper': float(hi), 'alpha': alpha,
+           'rr_mh': _fin(st.riskratio_pooled), 'se_log_or': _fin(st.logodds_pooled_se)}
+    # R's mantelhaen.test corrects by 0.5 only when |sum(a - E(a))| >= 0.5;
+    # statsmodels always subtracts it: the same guard is kept here
+    cube = st.table
+    dev = float(np.abs(np.sum(cube[0, 0, :] - cube[0, :, :].sum(0) * cube[:, 0, :].sum(0) / cube.sum((0, 1)))))
+    if dev >= 0.5:
+        tc = st.test_null_odds(correction=True)
+        out['cmh_cc'] = {'chisq': float(tc.statistic), 'df': 1, 'p': float(tc.pvalue)}
+    else:
+        out['cmh_cc'] = {'chisq': 0.0, 'df': 1, 'p': 1.0}
+        notes.append('|Σ(a − E(a))| is below 0.5: the continuity-corrected statistic is 0, as in R\'s mantelhaen.test (statsmodels would square a negative difference).')
+    if len(tabs) > 1:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            te = st.test_equal_odds(adjust=False)
+            ta = st.test_equal_odds(adjust=True)
+        if np.isfinite(te.statistic):
+            out['breslow_day'] = {'chisq': float(te.statistic), 'df': len(tabs) - 1, 'p': float(te.pvalue)}
+        if np.isfinite(ta.statistic):
+            out['breslow_day_tarone'] = {'chisq': float(ta.statistic), 'df': len(tabs) - 1, 'p': float(ta.pvalue)}
+    by = []
+    for lv, t in zip(names, tabs):
+        row = {'level': lv, 'n': float(t.sum()), 'a': float(t[0, 0]), 'b': float(t[0, 1]), 'c': float(t[1, 0]), 'd': float(t[1, 1]),
+               'or': None, 'lower': None, 'upper': None}
+        if np.all(t > 0):
+            t2 = Table2x2(t, shift_zeros=False)
+            l2, h2 = t2.oddsratio_confint(alpha=alpha)
+            row.update({'or': float(t2.oddsratio), 'lower': float(l2), 'upper': float(h2)})
+        by.append(row)
+    out['by_stratum'] = by
+    if any(r_['or'] is None for r_ in by):
+        notes.append('A stratum with a zero cell has no finite odds ratio of its own; it still counts in the Mantel-Haenszel estimate and tests.')
+    out['notes'] = notes
     c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import StratifiedTable'])
-    c.append(f'tabs = [pd.crosstab(g[{J(x)}], g[{J(y)}]).to_numpy() for _, g in df.groupby({J(strata)})]')
-    c.append('st = StratifiedTable(tabs); print(st.test_null_odds(correction=False), st.oddsratio_pooled, st.oddsratio_pooled_confint(), st.test_equal_odds())')
+    we = _wexpr(weight, freq, 'df')
+    order = f'.reindex(index=[{", ".join(_lvcode(v) for v in xs.cat.categories)}], columns=[{", ".join(_lvcode(v) for v in ys.cat.categories)}], fill_value=0)'
+    if we:
+        c.append(f'df = df.assign(_n={we})')
+        c.append(f'tabs = [g.pivot_table(index={J(x)}, columns={J(y)}, values="_n", aggfunc="sum", fill_value=0){order}.to_numpy() for _, g in df.groupby({J(strata)})]')
+    else:
+        c.append(f'tabs = [pd.crosstab(g[{J(x)}], g[{J(y)}]){order}.to_numpy() for _, g in df.groupby({J(strata)})]   # the levels in the table\'s order')
+    c.append('st = StratifiedTable([t for t in tabs if t.sum(0).min() > 0 and t.sum(1).min() > 0])')
+    c.append(f'print(st.test_null_odds(correction=False), st.test_null_odds(correction=True), st.oddsratio_pooled, st.oddsratio_pooled_confint(alpha={alpha!r}), st.riskratio_pooled)')
+    c.append('print(st.test_equal_odds(adjust=False), st.test_equal_odds(adjust=True))   # Breslow-Day, and with Tarone\'s adjustment')
     out['code'] = '\n'.join(c)
     return out
 
@@ -2455,5 +2972,111 @@ def matched_pairs(table, y1, y2, group=None, rows=None, alpha=0.05, where=None, 
     c.append(f'print(stats.pearsonr(d[{J(y1)}], d[{J(y2)}]))')
     if group:
         c.append(f'print(stats.f_oneway(*[g for _, g in dif.groupby(d[{J(group)}])]))   # the mean difference across the groups')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+def _binary_text(table, columns, rows):
+    """The responses as text (12.0 as 12, missing as None) and the values
+    found, in the order of the columns' levels (numbers ascending)."""
+    df = data.frame(table, columns, rows, dropna=False)
+    txt, order = {}, []
+    for c in columns:
+        s = df[c]
+        if isinstance(s.dtype, pd.CategoricalDtype):
+            t = pd.Series([None if pd.isna(v) else _lvtext(v) for v in s.astype(object)], index=s.index, dtype=object)
+            cand = [_lvtext(v) for v in s.cat.categories]
+        else:
+            vals = s.to_numpy(float)
+            t = pd.Series([_lvtext(float(v)) if np.isfinite(v) else None for v in vals], index=s.index, dtype=object)
+            cand = [_lvtext(float(v)) for v in np.unique(vals[np.isfinite(vals)])]
+        present = set(t.dropna())
+        order += [v for v in cand if v in present and v not in order]
+        txt[c] = t
+    return pd.DataFrame(txt), order
+
+
+@api('matchedpairs.binary')
+def matched_binary(table, columns, success=None, exact=True, correction=False, rows=None, alpha=0.05, where=None, table_name='data'):
+    """Matched Pairs with binary responses: Cochran's Q test that every
+    column has the same probability of the success level (statsmodels
+    cochrans_q, on the rows with every response), and McNemar's test for
+    each pair of columns (statsmodels mcnemar, each pair on its own complete
+    rows): the chi-square, with or without the continuity correction, and
+    the exact binomial test."""
+    from statsmodels.stats.contingency_tables import cochrans_q, mcnemar
+    from statsmodels.stats.multitest import multipletests
+    cols = list(dict.fromkeys(c for c in columns if c))
+    if len(cols) < 2:
+        return {'error': 'Cochran\'s Q and McNemar\'s test need two or more responses'}
+    T, order = _binary_text(table, cols, rows)
+    if len(order) > 2:
+        return {'error': f'Cochran\'s Q and McNemar\'s test take binary responses: these columns hold {len(order)} different values'}
+    if len(order) < 2:
+        return {'error': 'every response has the same value: there is nothing to compare'}
+    succ = _lvtext(success) if success is not None and _lvtext(success) in order else order[-1]
+    fail = order[0] if order[1] == succ else order[1]
+    notes = []
+    comp = T.notna().all(axis=1).to_numpy()
+    X = (T[comp] == succ).astype(int).to_numpy()
+    n, k = X.shape
+    colsum, rowsum = X.sum(0), X.sum(1)
+    columns_out = [{'column': c, 'n': n, 'count': int(colsum[i]), 'prop': float(colsum[i] / n) if n else None} for i, c in enumerate(cols)]
+    discordant = int(np.sum((rowsum > 0) & (rowsum < k)))
+    q = None
+    if n < 2:
+        notes.append('Fewer than two rows have every response: no Cochran\'s Q test.')
+    elif discordant == 0:
+        notes.append('No row has both outcomes, so every column has the same proportion: Cochran\'s Q is not defined (0/0).')
+    else:
+        r = cochrans_q(X, return_object=True)
+        q = {'q': float(r.statistic), 'df': int(r.df), 'p': float(r.pvalue), 'n': n, 'k': k, 'discordant': discordant}
+    pairs = []
+    for i in range(k):
+        for j in range(i + 1, k):
+            a, b = T[cols[i]], T[cols[j]]
+            ok = (a.notna() & b.notna()).to_numpy()
+            xa = (a[ok] == succ).to_numpy()
+            xb = (b[ok] == succ).to_numpy()
+            m = int(ok.sum())
+            n11, n10, n01, n00 = int(np.sum(xa & xb)), int(np.sum(xa & ~xb)), int(np.sum(~xa & xb)), int(np.sum(~xa & ~xb))
+            row = {'i': i, 'j': j, 'n': m, 'n11': n11, 'n10': n10, 'n01': n01, 'n00': n00,
+                   'p1': float(xa.mean()) if m else None, 'p2': float(xb.mean()) if m else None, 'diff': float(xb.mean() - xa.mean()) if m else None,
+                   'chisq': None, 'p': None, 'p_exact': None}
+            if m and n10 + n01 == 0:
+                # statsmodels divides by n10 + n01: without a discordant pair
+                # the statistic is 0/0 (or 1/0 with the correction)
+                row.update({'chisq': 0.0, 'p': 1.0, 'p_exact': 1.0})
+                notes.append(f'{cols[i]} and {cols[j]}: no discordant pair, so the proportions are equal (χ² = 0, p = 1).')
+            elif m:
+                tab = np.array([[n11, n10], [n01, n00]], float)
+                if correction and n10 == n01:
+                    row.update({'chisq': 0.0, 'p': 1.0})   # R's convention; statsmodels gives (0 - 1)²/(b + c)
+                else:
+                    mc = mcnemar(tab, exact=False, correction=bool(correction))
+                    row.update({'chisq': float(mc.statistic), 'p': float(mc.pvalue)})
+                row['p_exact'] = float(mcnemar(tab, exact=True).pvalue)
+            pairs.append(row)
+    key = 'p_exact' if exact else 'p'
+    ps = [p_[key] for p_ in pairs if p_[key] is not None]
+    if len(ps) > 1:
+        adj = iter(multipletests(ps, method='holm')[1])
+        for p_ in pairs:
+            if p_[key] is not None:
+                p_['p_holm'] = float(next(adj))
+    out = {'columns': columns_out, 'cochran': q, 'pairs': pairs, 'success': succ, 'failure': fail, 'values': order, 'exact': bool(exact),
+           'correction': bool(correction), 'n_complete': n, 'notes': notes, 'names': cols}
+    # the code: the success indicator of each column, then the tests
+    def is_succ(c, frame='d'):
+        num = data.meta(table, c).get('dataType') == 'numeric'
+        lit = _lvcode(float(succ)) if num else J(succ)
+        return f'({frame}[{J(c)}] == {lit})'
+    c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import cochrans_q, mcnemar'])
+    c.append(f'd = df[[{", ".join(J(v) for v in cols)}]].dropna()')
+    c.append(f'X = pd.DataFrame({{{", ".join(f"{J(v)}: {is_succ(v)}" for v in cols)}}}).astype(int)   # 1: {succ}')
+    c.append('print(cochrans_q(X.to_numpy()))   # Q, DF and p on the rows with every response')
+    c.append(f'dd = df[[{J(cols[0])}, {J(cols[1])}]].dropna()   # one pair on its own complete rows; the same for each pair')
+    c.append(f't = pd.crosstab({is_succ(cols[0], "dd")}, {is_succ(cols[1], "dd")}).reindex(index=[True, False], columns=[True, False], fill_value=0).to_numpy()')
+    c.append(f'print(mcnemar(t, exact=False, correction={bool(correction)}), mcnemar(t, exact=True))   # chi-square, exact binomial')
     out['code'] = '\n'.join(c)
     return out

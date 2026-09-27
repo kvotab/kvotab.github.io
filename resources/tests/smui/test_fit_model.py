@@ -5,10 +5,35 @@ against statsmodels and scipy called directly, the NIST StRD certified values
 and Mazzeo data, the balanced one-way random effects model) and brute force
 (leave-one-out PRESS, simulated Durbin-Watson p-values, all subsets).
 
+Generalized Estimating Equations are checked against statsmodels' documented
+GEE example (epil), R's gee package (the results statsmodels' test suite
+records), statsmodels' GEE called directly for every working correlation and
+covariance, least squares and GLM for the independence model, and known truth
+for Pan's QIC penalty; Robust Standard Errors against Stata's regress, robust /
+cluster and ivreg2 (recorded in statsmodels' test suite, on its macrodata and
+grunfeld data); the Regression Diagnostics against R's lmtest (bptest, gqtest,
+bgtest, harvtest, raintest, as statsmodels' test suite records them), statsmodels
+and scipy.
+
+Instrumental Variables are checked against Stata's ivreg2 and ivendog on
+Griliches's wage data (every estimate and standard error, classical, robust and
+small robust; Sargan, Hansen's J, Cragg-Donald, Wu-Hausman and Durbin), IV2SLS
+and the sandwiches by hand, Shea's definition, and a simulation with known truth;
+Quantile Regression against Stata's qreg on Koenker's Engel data (estimates,
+iid standard errors, sparsity, bandwidth, pseudo RSquare), QuantReg called
+directly, Powell's sandwich by its formula and by the spread of the estimates
+over simulated samples, and the true quantiles of a heteroscedastic model;
+Recursive and Rolling Regression against R's strucchange (recursive residuals
+and estimates, as statsmodels' tests record them), recursive_olsresiduals,
+least squares on the first rows and on each window by brute force, RollingOLS
+and RollingWLS, Brown, Durbin and Evans's constants, and a simulated break.
+
     python3 resources/tests/smui/test_fit_model.py
 
-The statsmodels datasets are loaded from the installed package at run time;
-everything else is simulated here with fixed seeds.
+The statsmodels datasets, the data files of statsmodels' own GEE and IV tests
+(griliches76.dta) and the results modules of its test suite are loaded from the
+installed package at run time; everything else is simulated here with fixed
+seeds.
 """
 import contextlib
 import io
@@ -738,4 +763,952 @@ try:
 except Exception as e:
     bad = str(e)
 check('a categorical Y is refused by least squares', bad is not None and 'continuous' in bad, True)
+# ======================================================================================================================
+# Generalized Estimating Equations, Robust Standard Errors, Regression Diagnostics
+# ======================================================================================================================
+import statsmodels
+from statsmodels.genmod import cov_struct as cs
+from statsmodels.genmod.generalized_estimating_equations import GEE
+from statsmodels.stats import diagnostic as dg
+from statsmodels.stats.stattools import jarque_bera, omni_normtest
+
+SMRES = os.path.join(os.path.dirname(statsmodels.__file__), 'genmod', 'tests', 'results')   # data that ship with statsmodels
+
+
+def est_of(r_):
+    return {x['term']: x for x in r_['estimates']}
+
+
+def err_of(fn, **kw):
+    try:
+        call(fn, **kw)
+    except Exception as e_:  # the message the report shows
+        return str(e_)
+    return None
+
+
+# ---- statsmodels' documented GEE example: epil (the GEE page; release 0.6), Poisson, exchangeable ----------------------
+epil = pd.read_csv(os.path.join(SMRES, 'epil.csv'))
+t_ep = table({'y': epil['y'].tolist(), 'trt': epil['trt'].tolist(), 'base': epil['base'].tolist(), 'age': epil['age'].tolist(),
+              'subject': epil['subject'].tolist()})
+gep = call('fitmodel.gee', table=t_ep, y='y', effects=[['age'], ['trt'], ['base']], subject='subject', dist='poisson', corr='exchangeable')
+eep = est_of(gep)
+# printed there (treatment coding): Intercept 0.5730, trt[T.progabide] -0.1519 (0.171, z -0.888), age 0.0223 (0.011, z 1.960),
+# base 0.0226 (0.001, z 18.451); JMP's effect coding has trt[placebo] = minus half that difference, the intercept at the average level
+check.near('GEE epil, the documented example: age 0.0223', eep['age']['estimate'], 0.0223, abs_=5e-5)
+check.near('GEE epil: age robust std error 0.011', eep['age']['se'], 0.011, abs_=5e-4)
+check.near('GEE epil: age z 1.960', eep['age']['z'], 1.960, abs_=5e-4)
+check.near('GEE epil: base 0.0226', eep['base']['estimate'], 0.0226, abs_=5e-5)
+check.near('GEE epil: base z 18.451', eep['base']['z'], 18.451, abs_=5e-4)
+check.near('GEE epil: trt[placebo] (effect coded) = 0.1519 / 2', eep['trt[placebo]']['estimate'], 0.1519 / 2, abs_=5e-5)
+check.near('GEE epil: its robust std error = 0.171 / 2', eep['trt[placebo]']['se'], 0.171 / 2, abs_=2.5e-4)
+check.near('GEE epil: its z = 0.888, the sign turned', eep['trt[placebo]']['z'], 0.888, abs_=5e-4)
+check.near('GEE epil: the Intercept (effect coding) = 0.5730 - 0.1519 / 2', eep['Intercept']['estimate'], 0.5730 - 0.1519 / 2, abs_=1e-4)
+m_ep = gep['model']
+check('GEE epil: 236 rows, 59 subjects of 4, 2 iterations, converged, scale 1',
+      (m_ep['n'], m_ep['subjects'], m_ep['size_min'], m_ep['size_max'], m_ep['iterations'], m_ep['converged'], m_ep['scale']), (236, 59, 4, 4, 2, True, 1.0))
+ep2 = epil.copy()
+ep2['trt'] = pd.Categorical(ep2['trt'], ['placebo', 'progabide'])
+dep_ = smf.gee('y ~ age + C(trt, Sum) + base', 'subject', ep2, cov_struct=cs.Exchangeable(), family=sm.families.Poisson()).fit()
+check.near('GEE epil: trt[placebo] = statsmodels\' GEE called directly', eep['trt[placebo]']['estimate'], float(dep_.params['C(trt, Sum)[S.placebo]']), rel=1e-10)
+check.near('GEE epil: its robust std error', eep['trt[placebo]']['se'], float(dep_.bse['C(trt, Sum)[S.placebo]']), rel=1e-9)
+check.near('GEE epil: the naive std error of base', eep['base']['se_naive'], float(np.asarray(dep_.standard_errors('naive'))[list(dep_.params.index).index('base')]), rel=1e-9)
+check.near('GEE epil: the exchangeable correlation', gep['dep']['rows'][0]['value'], float(dep_.model.cov_struct.dep_params), rel=1e-9)
+check.near('GEE epil: the Pearson residuals', maxdiff(gep['diag']['pearson'], dep_.resid_pearson), 0.0, abs_=1e-9)
+check.near('GEE epil: the residuals, y - the marginal mean', maxdiff(gep['diag']['residual'], dep_.resid), 0.0, abs_=1e-9)
+check('GEE epil: log link, so rate ratios', gep['ratios']['kind'], 'Rate Ratios')
+rr_ep = [x for x in gep['ratios']['levels'] if x['level1'] == 'progabide'][0]
+check.near('GEE epil: rate ratio progabide/placebo = exp(-0.1519)', rr_ep['ratio'], math.exp(float(dep_.params['C(trt, Sum)[S.placebo]']) * -2), rel=1e-9)
+
+# ---- R's gee package, the values statsmodels' test suite records (statsmodels' gee_logistic_1 and gee_poisson_1 data) ----
+Zl = np.genfromtxt(os.path.join(SMRES, 'gee_logistic_1.csv'), delimiter=',')
+t_rl = table({'id': Zl[:, 0].tolist(), 'y': Zl[:, 1].tolist(), 'x1': Zl[:, 2].tolist(), 'x2': Zl[:, 3].tolist(), 'x3': Zl[:, 4].tolist()})
+R_cf = [[0.0167272965285882, 1.13038654425893, -1.86896345082962, 1.09397608331333],
+        [0.0178982283915449, 1.13118798191788, -1.86133518416017, 1.08944256230299]]
+R_se = [[0.127291720283049, 0.166725808326067, 0.192430061340865, 0.173141068839597],
+        [0.127045031730155, 0.165470678232842, 0.192052750030501, 0.173174779369249]]
+for j, corr_ in enumerate(['independence', 'exchangeable']):
+    rgl = call('fitmodel.gee', table=t_rl, y='y', effects=[['x1'], ['x2'], ['x3']], subject='id', dist='binomial', corr=corr_)
+    check.near(f'GEE logistic ({corr_}) = R\'s gee: the coefficients', maxdiff([x['estimate'] for x in rgl['estimates']], R_cf[j]), 0.0, abs_=1e-6)
+    check.near(f'GEE logistic ({corr_}) = R\'s gee: the robust std errors', maxdiff([x['se'] for x in rgl['estimates']], R_se[j]), 0.0, abs_=1e-6)
+Zp = np.genfromtxt(os.path.join(SMRES, 'gee_poisson_1.csv'), delimiter=',')
+t_rp = table({'id': Zp[:, 0].tolist(), 'y': Zp[:, 1].tolist(), **{f'x{k}': Zp[:, 1 + k].tolist() for k in range(1, 6)}})
+Rp_cf = [[-0.0364450410793481, -0.0543209391301178, 0.0156642711741052, 0.57628591338724, -0.00465659951186211, -0.477093153099256],
+         [-0.0315615554826533, -0.0562589480840004, 0.0178419412298561, 0.571512795340481, -0.00363255566297332, -0.475971696727736]]
+Rp_se = [[0.0611309237214186, 0.0390680524493108, 0.0334234174505518, 0.0366860768962715, 0.0304758505008105, 0.0316348058881079],
+         [0.0610840153582275, 0.0376887268649102, 0.0325168379415177, 0.0369786751362213, 0.0296141014225009, 0.0306115470200955]]
+for j, corr_ in enumerate(['independence', 'exchangeable']):
+    rgp = call('fitmodel.gee', table=t_rp, y='y', effects=[[f'x{k}'] for k in range(1, 6)], subject='id', dist='poisson', corr=corr_)
+    check.near(f'GEE Poisson ({corr_}) = R\'s gee: the coefficients', maxdiff([x['estimate'] for x in rgp['estimates']], Rp_cf[j]), 0.0, abs_=1e-5)
+    check.near(f'GEE Poisson ({corr_}) = R\'s gee: the robust std errors', maxdiff([x['se'] for x in rgp['estimates']], Rp_se[j]), 0.0, abs_=1e-6)
+
+# ---- a simulated trial, 60 subjects x 4 visits, its rows shuffled: the report sorts a subject's rows by time -------------
+ls_rng = np.random.default_rng(2026)
+NG, NT = 60, 4
+sj = np.repeat(np.arange(NG), NT)
+vis = np.tile(np.arange(1, NT + 1), NG).astype(float)
+arm = np.where(ls_rng.permutation(np.repeat([0, 1], NG // 2))[sj] == 1, 'active', 'placebo')
+bl = ls_rng.normal(20, 5, NG)[sj]
+eta_ = -1.1 + 0.25 * vis + 0.55 * (arm == 'active') * (vis - 1) + 0.08 * (bl - 20) + ls_rng.normal(0, 1.3, NG)[sj]
+impv = np.where(ls_rng.uniform(size=NG * NT) < 1 / (1 + np.exp(-eta_)), 'yes', 'no')
+cnts = ls_rng.poisson(np.exp(1.7 - 0.08 * vis - 0.18 * (arm == 'active') * (vis - 1) + 0.035 * (bl - 20) + ls_rng.normal(0, 0.45, NG)[sj]))
+ear = np.zeros(NG * NT)
+for g_ in range(NG):
+    x_ = ls_rng.normal(0, 4)
+    for t_ in range(NT):
+        if t_:
+            x_ = 0.6 * x_ + ls_rng.normal(0, 4 * math.sqrt(1 - 0.36))
+        ear[g_ * NT + t_] = x_
+scr = 40 + 0.6 * (bl - 20) - 1.2 * vis - 2.2 * (arm == 'active') * (vis - 1) + ear
+lt = pd.DataFrame({'subject': [f'S{i + 1:02d}' for i in sj], 'clinic': [f'C{c + 1:02d}' for c in sj // 6], 'treatment': arm, 'visit': vis,
+                   'baseline': bl, 'improved': impv, 'symptoms': cnts, 'score': scr, 'lexp': np.log(ls_rng.uniform(0.5, 2, NG * NT))})
+lt = lt.iloc[ls_rng.permutation(NG * NT)].reset_index(drop=True)
+t_lt = table({c: lt[c].tolist() for c in lt.columns}, levels={'treatment': ['placebo', 'active'], 'improved': ['yes', 'no']})
+Elt = [['treatment'], ['visit'], ['baseline']]
+st_ = lt.sort_values(['subject', 'visit'], kind='stable')
+X_st = np.column_stack([np.ones(len(st_)), np.where(st_['treatment'] == 'placebo', 1.0, -1.0), st_['visit'], st_['baseline']])   # JMP's coding
+X_lt = np.column_stack([np.ones(len(lt)), np.where(lt['treatment'] == 'placebo', 1.0, -1.0), lt['visit'], lt['baseline']])
+yb_st = (st_['improved'] == 'yes').to_numpy(float)
+gee_fits = {}
+for corr_, struct_, kw_ in [('exchangeable', cs.Exchangeable(), {}), ('ar1', cs.Autoregressive(grid=False), {'time': st_['visit'].to_numpy()}),
+                            ('unstructured', cs.Unstructured(), {'time': (st_['visit'].to_numpy() - 1).astype(int)}), ('independence', cs.Independence(), {})]:
+    rep_ = call('fitmodel.gee', table=t_lt, y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr=corr_)
+    dir_ = GEE(yb_st, X_st, groups=st_['subject'].to_numpy(), family=sm.families.Binomial(), cov_struct=struct_, **kw_).fit()
+    er_ = rep_['estimates']
+    # AR(1)'s alpha is statsmodels' brent minimum (tolerance about 1.5e-8): a last bit elsewhere moves its ninth digit
+    tol_ = 1e-7 if corr_ == 'ar1' else 1e-9
+    check.near(f'GEE binomial {corr_}: estimates = statsmodels\' on the rows sorted by subject and visit', maxdiff([x['estimate'] for x in er_], dir_.params), 0.0, abs_=tol_)
+    check.near(f'GEE binomial {corr_}: robust std errors', maxdiff([x['se'] for x in er_], dir_.bse), 0.0, abs_=tol_)
+    check.near(f'GEE binomial {corr_}: naive std errors', maxdiff([x['se_naive'] for x in er_], dir_.standard_errors('naive')), 0.0, abs_=tol_)
+    check.near(f'GEE binomial {corr_}: p-values (normal)', maxdiff([x['p'] for x in er_], dir_.pvalues), 0.0, abs_=tol_)
+    check.near(f'GEE binomial {corr_}: confidence limits', maxdiff([x['lower'] for x in er_], np.asarray(dir_.conf_int())[:, 0]), 0.0, abs_=tol_)
+    check(f'GEE binomial {corr_}: the iterations and convergence', (rep_['model']['iterations'], rep_['model']['converged']),
+          (len(dir_.fit_history['params']), bool(dir_.converged)))
+    gee_fits[corr_] = (rep_, dir_)
+rar, dar = gee_fits['ar1']
+rex, dex = gee_fits['exchangeable']
+fit_by_row = dict(zip(st_.index.tolist(), np.asarray(dar.fittedvalues).tolist()))
+check.near('GEE: each row\'s prediction goes back to its row of the (shuffled) table', max(abs(p_ - fit_by_row[r_]) for r_, p_ in zip(rar['diag']['rows'], rar['diag']['predicted'])), 0.0, abs_=1e-12)
+check('GEE: the subject of each row', all(s_ == lt.loc[r_, 'subject'] for r_, s_ in zip(rar['diag']['rows'], rar['diag']['subject'])), True)
+uns = GEE((lt['improved'] == 'yes').to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), time=lt['visit'].to_numpy(), family=sm.families.Binomial(),
+          cov_struct=cs.Autoregressive(grid=False)).fit()
+check('GEE AR(1): statsmodels on the rows in table order gives other estimates (its working matrix counts positions): the report sorts',
+      float(np.max(np.abs(uns.params - dar.params))) > 1e-6, True)
+a_ar = float(dar.model.cov_struct.dep_params)
+check.near('GEE AR(1): the dependence parameter (to brent\'s tolerance)', rar['dep']['rows'][0]['value'], a_ar, rel=1e-7)
+a_rep = rar['dep']['rows'][0]['value']
+check.near('GEE AR(1): the working correlation of a subject is alpha^|j - k|', float(np.max(np.abs(np.array(rar['dep']['matrix']['values']) - a_rep ** np.abs(np.subtract.outer(np.arange(4), np.arange(4)))))), 0.0, abs_=1e-12)
+check('GEE AR(1): its rows labelled by visit', rar['dep']['matrix']['labels'], ['1', '2', '3', '4'])
+run_, dun_ = gee_fits['unstructured']
+check.near('GEE unstructured: the correlation of visits 1 and 3', [x for x in run_['dep']['rows'] if x['param'] == '1 and 3'][0]['value'], float(dun_.model.cov_struct.dep_params[0, 2]), rel=1e-12)
+# QIC: statsmodels' qic() as it is, QICu, and Pan's penalty with the information of statsmodels' own independence model
+for lab_, (rep_, dir_) in [('exchangeable', gee_fits['exchangeable']), ('AR(1)', gee_fits['ar1']), ('unstructured', gee_fits['unstructured'])]:
+    q_ = rep_['qic']
+    qsm_ = dir_.qic(scale=1.0)
+    check.near(f'QIC ({lab_}): statsmodels\' qic() as the report shows it', q_['qic_sm'], float(qsm_[0]), rel=1e-10)
+    check.near(f'QICu ({lab_}) = statsmodels\'', q_['qicu'], float(qsm_[1]), rel=1e-10)
+    ind_ = GEE(yb_st, X_st, groups=st_['subject'].to_numpy(), family=sm.families.Binomial(), cov_struct=cs.Independence()).fit(
+        start_params=np.asarray(dir_.params), maxiter=0, scale=1.0)
+    omega_ = np.linalg.inv(np.asarray(ind_.cov_naive))   # statsmodels' model-based covariance of the independence model, at the same estimates
+    check.near(f'QIC ({lab_}): Pan\'s penalty trace(Omega_I V_R) through statsmodels\' independence covariance', q_['trace'], float(np.trace(omega_ @ np.asarray(dir_.cov_robust))), rel=1e-9)
+    check.near(f'QIC ({lab_}) = -2 Q + 2 trace', q_['qic'], -2 * q_['ql'] + 2 * q_['trace'], rel=1e-12)
+q_rng = np.random.default_rng(99)
+gq_ = np.repeat(np.arange(400), 4)
+xq_ = q_rng.normal(size=1600)
+t_q = table({'g': gq_.tolist(), 'x': xq_.tolist(), 'y': q_rng.poisson(np.exp(1.5 + 0.3 * xq_)).tolist()})
+rq_ = call('fitmodel.gee', table=t_q, y='y', effects=[['x']], subject='g', dist='poisson', corr='independence')['qic']
+pen_sm = (rq_['qic_sm'] + 2 * rq_['ql']) / 2
+check('QIC, known truth: a right independence model has the penalty trace(Omega_I V_R) near p = 2', abs(rq_['trace'] - 2) < 0.5, True)
+check('QIC, known truth: statsmodels\' qic() penalty is not near p (it leaves the variance function out)', abs(pen_sm - 2) > 3, True)
+print(f'      QIC penalty for p = 2: Pan {rq_["trace"]:.3f}, statsmodels\' qic() {pen_sm:.3f}')
+rnr = call('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', time='visit', dist='normal', corr='ar1')
+check.near('QIC for the normal family: Pan\'s = statsmodels\' qic() (the variance function is 1)', rnr['qic']['qic'], rnr['qic']['qic_sm'], rel=1e-10)
+ind_n = GEE(st_['score'].to_numpy(float), X_st, groups=st_['subject'].to_numpy(), cov_struct=cs.Independence()).fit()
+check.near('QIC for the normal family: at the scale of the independence fit', rnr['qic']['scale'], float(ind_n.scale), rel=1e-12)
+check('... which the report says', rnr['qic']['source'], 'independence')
+# the normal independence GEE is least squares with cluster-robust errors
+rni = call('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', dist='normal', corr='independence')
+fo_ = sm.OLS(lt['score'].to_numpy(float), X_lt).fit()
+check.near('GEE normal independence: the estimates are least squares\'', maxdiff([x['estimate'] for x in rni['estimates']], fo_.params), 0.0, abs_=1e-9)
+check.near('GEE normal independence: the naive std errors are least squares\'', maxdiff([x['se_naive'] for x in rni['estimates']], fo_.bse), 0.0, abs_=1e-9)
+fc_ = fo_.get_robustcov_results(cov_type='cluster', groups=pd.factorize(lt['subject'])[0], use_correction=False)
+check.near('GEE normal independence: the robust std errors are the cluster-robust ones of least squares (no small-sample factor)',
+           maxdiff([x['se'] for x in rni['estimates']], fc_.bse), 0.0, abs_=1e-9)
+rpi = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='subject', dist='poisson', corr='independence')
+gpi = sm.GLM(lt['symptoms'].to_numpy(float), X_lt, family=sm.families.Poisson()).fit()
+check.near('GEE Poisson independence: the estimates are the GLM\'s', maxdiff([x['estimate'] for x in rpi['estimates']], gpi.params), 0.0, abs_=1e-7)
+# the covariances, the scale
+for cov_ in ['naive', 'bias_reduced']:
+    rcv = call('fitmodel.gee', table=t_lt, y='improved', effects=Elt, subject='subject', dist='binomial', corr='exchangeable', cov=cov_)
+    dcv = GEE((lt['improved'] == 'yes').to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), family=sm.families.Binomial(), cov_struct=cs.Exchangeable()).fit(cov_type=cov_)
+    check.near(f'GEE {cov_} covariance: std errors = statsmodels\' fit(cov_type={cov_!r})', maxdiff([x['se'] for x in rcv['estimates']], dcv.bse), 0.0, abs_=1e-9)
+    check.near(f'GEE {cov_} covariance: the robust ones beside them', maxdiff([x['se_robust'] for x in rcv['estimates']], dcv.standard_errors('robust')), 0.0, abs_=1e-9)
+rsx = call('fitmodel.gee', table=t_lt, y='improved', effects=Elt, subject='subject', dist='binomial', corr='exchangeable', scale='estimated')
+dsx = GEE((lt['improved'] == 'yes').to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), family=sm.families.Binomial(), cov_struct=cs.Exchangeable()).fit(scale='X2')
+check.near('GEE scale estimated: statsmodels\' fit(scale="X2")', rsx['model']['scale'], float(dsx.scale), rel=1e-12)
+check.near('... = Pearson chi-square / (N - p)', rsx['model']['scale'], float(np.sum(np.asarray(dsx.resid_pearson) ** 2) / (len(lt) - 4)), rel=1e-9)
+check('... and the report says so', rsx['model']['scale_kind'], 'estimated')
+rsf = call('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', dist='normal', corr='exchangeable', scale='fixed', scale_value=2)
+dsf = GEE(lt['score'].to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), cov_struct=cs.Exchangeable()).fit(scale=2.0)
+check.near('GEE scale fixed at 2 (an integer from the page is taken as fixed): the naive std errors', maxdiff([x['se_naive'] for x in rsf['estimates']], dsf.standard_errors('naive')), 0.0, abs_=1e-9)
+check('... the scale is 2', rsf['model']['scale'], 2.0)
+# nested, offset, negative binomial, Tweedie
+rne = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='clinic', subgroup='subject', dist='poisson', corr='nested')
+dne = GEE(lt['symptoms'].to_numpy(float), X_lt, groups=pd.factorize(lt['clinic'], sort=True)[0], family=sm.families.Poisson(), cov_struct=cs.Nested(),
+          dep_data=pd.factorize(lt['subject'], sort=True)[0]).fit()
+check.near('GEE nested (subjects in clinics): estimates', maxdiff([x['estimate'] for x in rne['estimates']], dne.params), 0.0, abs_=1e-9)
+check.near('GEE nested: robust std errors', maxdiff([x['se'] for x in rne['estimates']], dne.bse), 0.0, abs_=1e-9)
+check.near('GEE nested: the subject\'s variance component', rne['dep']['rows'][1]['value'], float(dne.model.cov_struct.vcomp_coeff[1]), rel=1e-9)
+check('GEE nested: 10 clinics of 24 rows', (rne['model']['subjects'], rne['model']['size_max']), (10, 24))
+roff = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='subject', offset='lexp', dist='poisson', corr='exchangeable')
+doff = GEE(lt['symptoms'].to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), offset=lt['lexp'].to_numpy(), family=sm.families.Poisson(),
+           cov_struct=cs.Exchangeable()).fit()
+check.near('GEE with an offset: estimates', maxdiff([x['estimate'] for x in roff['estimates']], doff.params), 0.0, abs_=1e-9)
+check.near('GEE with an offset: the marginal means', maxdiff(roff['diag']['predicted'], doff.fittedvalues), 0.0, abs_=1e-9)
+rnb2 = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='subject', dist='negbin', nb_alpha=0.5, corr='exchangeable')
+dnb2 = GEE(lt['symptoms'].to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), family=sm.families.NegativeBinomial(alpha=0.5), cov_struct=cs.Exchangeable()).fit()
+check.near('GEE negative binomial (alpha 0.5): estimates', maxdiff([x['estimate'] for x in rnb2['estimates']], dnb2.params), 0.0, abs_=1e-9)
+check.near('GEE negative binomial: robust std errors', maxdiff([x['se'] for x in rnb2['estimates']], dnb2.bse), 0.0, abs_=1e-9)
+rtw = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='subject', dist='tweedie', var_power=1.5, corr='exchangeable', scale='estimated')
+dtw = GEE(lt['symptoms'].to_numpy(float), X_lt, groups=lt['subject'].to_numpy(), family=sm.families.Tweedie(link=sm.families.links.Log(), var_power=1.5),
+          cov_struct=cs.Exchangeable()).fit(scale='X2')
+check.near('GEE Tweedie (power 1.5): estimates', maxdiff([x['estimate'] for x in rtw['estimates']], dtw.params), 0.0, abs_=1e-9)
+check.near('GEE Tweedie: the scale', rtw['model']['scale'], float(dtw.scale), rel=1e-10)
+# effect tests, odds ratios, the profiler
+et_ex = {x['source']: x for x in rex['effect_tests']}
+check.near('GEE Effect Tests: the Wald chi-square of visit is its z squared', et_ex['visit']['wald'], est_of(rex)['visit']['z'] ** 2, rel=1e-10)
+rcl = call('fitmodel.gee', table=t_lt, y='improved', effects=Elt + [['clinic']], subject='subject', dist='binomial', corr='exchangeable')
+Dcl = patsy.dmatrix('C(treatment, Sum, levels=["placebo", "active"]) + visit + baseline + C(clinic, Sum)', lt)
+dcl = GEE((lt['improved'] == 'yes').to_numpy(float), np.asarray(Dcl), groups=lt['subject'].to_numpy(), family=sm.families.Binomial(), cov_struct=cs.Exchangeable()).fit()
+Lcl = np.eye(Dcl.shape[1])[Dcl.design_info.slice('C(clinic, Sum)')]   # patsy puts the categorical terms first
+wcl = dcl.wald_test(Lcl, scalar=True)
+etc = {x['source']: x for x in rcl['effect_tests']}['clinic']
+check.near('GEE Effect Tests: the Wald chi-square of clinic (9 DF) = statsmodels\' wald_test', etc['wald'], float(wcl.statistic), rel=1e-9)
+check('... on 9 DF, its p-value', (etc['df'], round(etc['p'], 12)), (9, round(float(wcl.pvalue), 12)))
+ou_ = {x['term']: x for x in rex['ratios']['unit']}
+check.near('GEE odds ratio per visit = exp(estimate)', ou_['visit']['ratio'], math.exp(est_of(rex)['visit']['estimate']), rel=1e-12)
+ol_ = [x for x in rex['ratios']['levels'] if x['level1'] == 'placebo'][0]
+b_pl, s_pl = est_of(rex)['treatment[placebo]']['estimate'], est_of(rex)['treatment[placebo]']['se']
+check.near('GEE odds ratio placebo/active = exp(2 x treatment[placebo])', ol_['ratio'], math.exp(2 * b_pl), rel=1e-10)
+check.near('... its lower limit from the robust std error', ol_['lower'], math.exp(2 * b_pl - 1.959963984540054 * 2 * s_pl), rel=1e-9)
+check('GEE: the identity link has no ratios', rnr['ratios'], None)
+pgp = call('fitmodel.profile', table=t_lt, kind='gee', y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr='exchangeable',
+           current={'treatment': 'active', 'visit': 3, 'baseline': 22})
+xp_ = np.array([1.0, -1.0, 3.0, 22.0])
+ep_ = float(xp_ @ np.asarray(dex.params))
+sp_ = math.sqrt(float(xp_ @ np.asarray(dex.cov_params()) @ xp_))
+check('GEE profiler: the response is Prob[yes]', pgp['responses'][0]['name'], 'Prob[yes]')
+check.near('GEE profiler: the marginal prediction', pgp['responses'][0]['current']['pred'], 1 / (1 + math.exp(-ep_)), rel=1e-10)
+check.near('GEE profiler: its lower limit, from the robust covariance', pgp['responses'][0]['current']['lower'], 1 / (1 + math.exp(-(ep_ - 1.959963984540054 * sp_))), rel=1e-9)
+# Compare Working Correlations
+cmpc = call('fitmodel.gee_compare', table=t_lt, y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr='exchangeable')
+cq_ = {x['key']: x for x in cmpc['rows']}
+check('Compare Working Correlations: the structures the roles allow', [x['key'] for x in cmpc['rows']], ['independence', 'exchangeable', 'ar1', 'unstructured'])
+check.near('Compare: the exchangeable line is its fit\'s QIC', cq_['exchangeable']['qic'], rex['qic']['qic'], rel=1e-12)
+check.near('Compare: the AR(1) line is its fit\'s QIC', cq_['ar1']['qic'], rar['qic']['qic'], rel=1e-12)
+check('Compare: the smallest QIC is marked', cmpc['best'], min(cq_, key=lambda k_: cq_[k_]['qic']))
+check('Compare: the current working correlation is marked', [k_ for k_ in cq_ if cq_[k_]['current']], ['exchangeable'])
+cmpn = call('fitmodel.gee_compare', table=t_lt, y='symptoms', effects=Elt, subject='clinic', subgroup='subject', dist='poisson', corr='nested')
+check('Compare with a Subgroup and no Time: independence, exchangeable, nested', [x['key'] for x in cmpn['rows']], ['independence', 'exchangeable', 'nested'])
+dup = lt.copy()
+dup.loc[dup.index[(dup['subject'] == 'S01') & (dup['visit'] == 2)], 'visit'] = 1.0
+t_dup = table({c: dup[c].tolist() for c in dup.columns}, levels={'treatment': ['placebo', 'active'], 'improved': ['yes', 'no']})
+emsg = err_of('fitmodel.gee', table=t_dup, y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr='unstructured')
+check('Unstructured refuses a Time value twice within a subject', emsg is not None and 'at most once' in emsg, True)
+cmpd = call('fitmodel.gee_compare', table=t_dup, y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr='exchangeable')
+check('Compare: the Unstructured line says why it is not fitted', 'at most once' in ({x['key']: x for x in cmpd['rows']}['unstructured'].get('error') or ''), True)
+check('GEE without a Subject is refused', 'Subject' in (err_of('fitmodel.gee', table=t_lt, y='score', effects=Elt, dist='normal') or ''), True)
+check('GEE AR(1) without a Time is refused', 'Time' in (err_of('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', corr='ar1') or ''), True)
+check('GEE with a Weight is refused', 'Weight' in (err_of('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', weight='baseline') or ''), True)
+check('GEE with a random effect is refused', 'Random' in (err_of('fitmodel.gee', table=t_lt, y='score', effects=[{'names': ['treatment']}, {'names': ['clinic'], 'random': True}], subject='subject') or ''), True)
+rsub = call('fitmodel.gee', table=t_lt, y='score', effects=Elt, subject='subject', corr='exchangeable', rows=list(range(120)))
+check('GEE on a row subset (a By group) uses those rows', (rsub['model']['n'], sorted(rsub['diag']['rows']) == list(range(120))), (120, True))
+# the code under the fit runs on the exported table and gives the report's numbers
+rcd = call('fitmodel.gee', table=t_lt, y='improved', effects=Elt, subject='subject', time='visit', dist='binomial', corr='ar1', table_name='trial')
+ns, err = run_code(rcd['code'], lt, 'trial')
+check('GEE code runs', err, None)
+if not err:
+    check.near('its fit has the report\'s estimates', maxdiff([x['estimate'] for x in rcd['estimates']], ns['fit'].params.to_numpy()), 0.0, abs_=1e-8)
+    check.near('and its robust std errors', maxdiff([x['se'] for x in rcd['estimates']], ns['fit'].bse.to_numpy()), 0.0, abs_=1e-8)
+    qpan = -2 * ns['fit'].model.qic(ns['b'], ns['scale'], ns['fit'].cov_params())[0] + 2 * np.trace(ns['Xa'].T @ (ns['Xa'] * ns['w'][:, None]) / ns['scale'] @ ns['fit'].cov_robust)
+    check.near('and the report\'s QIC (Pan)', float(qpan), rcd['qic']['qic'], rel=1e-8)
+ns, err = run_code(cmpc['code'], lt, 'data')
+check('Compare Working Correlations code runs', err, None)
+if not err:
+    check.near('its last fit (unstructured) has the report\'s parameters', maxdiff([x['estimate'] for x in gee_fits['unstructured'][0]['estimates']], ns['fit'].params.to_numpy()), 0.0, abs_=1e-8)
+rcn = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='clinic', subgroup='subject', dist='poisson', corr='nested', table_name='trial')
+ns, err = run_code(rcn['code'], lt, 'trial')
+check('GEE nested code runs', err, None)
+if not err:
+    check.near('its fit has the report\'s estimates', maxdiff([x['estimate'] for x in rcn['estimates']], ns['fit'].params.to_numpy()), 0.0, abs_=1e-8)
+rco = call('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='subject', offset='lexp', dist='negbin', nb_alpha=0.5, corr='exchangeable', table_name='trial')
+ns, err = run_code(rco['code'], lt, 'trial')
+check('GEE negative binomial code with an offset runs', err, None)
+if not err:
+    check.near('its fit has the report\'s estimates', maxdiff([x['estimate'] for x in rco['estimates']], ns['fit'].params.to_numpy()), 0.0, abs_=1e-8)
+emsg = err_of('fitmodel.gee', table=t_lt, y='symptoms', effects=Elt, subject='clinic', subgroup='subject', offset='lexp', dist='poisson', corr='nested')
+check('a fit that statsmodels cannot make (nested with this offset diverges) says so, and what to try', emsg is not None and 'did not fit' in emsg and 'Compare Working Correlations' in emsg, True)
+
+# the centred design x + g + x*g: GEE puts the intercept back at x = 0, as the other personalities
+t20s = table({'x': xa.tolist(), 'g': ga.tolist(), 'y': ya.tolist(), 's': [f's{i // 6}' for i in range(na)]})
+g20 = call('fitmodel.gee', table=t20s, y='y', effects=Ea, subject='s', dist='normal', corr='independence')
+check.near('GEE x + g + x*g: the estimates are JMP\'s (least squares on its design, the intercept at x = 0)', maxdiff([x['estimate'] for x in g20['estimates']], refj.params), 0.0, abs_=1e-8)
+g20e = GEE(ya, XJ, groups=np.arange(na) // 6, cov_struct=cs.Independence()).fit()
+check.near('GEE x + g + x*g: the intercept\'s robust std error = statsmodels\' on JMP\'s design', g20['estimates'][0]['se'], float(g20e.bse[0]), rel=1e-8)
+it20 = call('fitmodel.interaction', table=t20s, kind='gee', y='y', effects=Ea, subject='s', dist='normal', corr='exchangeable')
+check('GEE: the interaction plots take the GEE fit', len(it20['cells']) > 0 and it20['response'] == 'y', True)
+h20 = call('fitmodel.ls', table=t20, y='y', effects=Ea, robust='HC3')
+check.near('HC3 on x + g + x*g: the intercept\'s robust std error = statsmodels\' HC3 on JMP\'s design', rows_of(h20['estimates'])['Intercept']['se'], float(refj.HC3_se[0]), rel=1e-9)
+check.near('HC3 on x + g + x*g: the crossing\'s robust F = statsmodels\'', rows_of(h20['effect_tests'])['x*g']['stat'],
+           float(np.squeeze(sm.OLS(ya, XJ).fit().get_robustcov_results(cov_type='HC3', use_t=True).f_test(np.eye(6)[4:]).fvalue)), rel=1e-9)
+
+# ---- Robust Standard Errors: Stata's results, recorded in statsmodels' test suite, on statsmodels' macrodata and grunfeld ----
+md_ = sm.datasets.macrodata.load_pandas().data
+g_inv = 400 * np.diff(np.log(md_['realinv'].to_numpy()))
+g_gdp = 400 * np.diff(np.log(md_['realgdp'].to_numpy()))
+lint_ = md_['realint'].to_numpy()[:-1]
+mac = pd.DataFrame({'g_inv': g_inv, 'g_gdp': g_gdp, 'lint': lint_})
+t_mac = table({c: mac[c].tolist() for c in mac.columns})
+Emac = [['g_gdp'], ['lint']]
+ols_m = sm.OLS(g_inv, sm.add_constant(np.column_stack([g_gdp, lint_]))).fit()
+h1 = call('fitmodel.ls', table=t_mac, y='g_inv', effects=Emac, robust='HC1')
+e_h1 = rows_of(h1['estimates'])
+stata_hc1 = {'g_gdp': (0.32355452428856, 13.519272136038, 5.703151404e-30), 'lint': (0.32772840315987, -1.8734933059173, 0.06246625509181),
+             'Intercept': (1.3690593206013, -6.9256843965613, 5.860240898e-11)}
+for k_, (se_, t_, p_) in stata_hc1.items():
+    check.near(f'HC1 = Stata\'s regress, robust (macrodata): the std error of {k_}', e_h1[k_]['se'], se_, rel=1e-9)
+    check.near(f'HC1 = Stata: the t ratio of {k_}', e_h1[k_]['t'], t_, rel=1e-9)
+    check.near(f'HC1 = Stata: the p-value of {k_} (t on 199 DF)', e_h1[k_]['p'], p_, rel=1e-6)
+check.near('HC1 = Stata: the whole model\'s robust Wald F', h1['robust']['wald_f'], 92.94502024547633, rel=1e-9)
+check('HC1: the report says which covariance it uses', (h1['robust']['type'], 'HC1' in h1['robust']['label'], any('HC1' in n_ for n_ in h1['notes'])), ('HC1', True, True))
+hac = call('fitmodel.ls', table=t_mac, y='g_inv', effects=Emac, robust={'type': 'HAC', 'maxlags': 4})
+for k_, v_ in {'g_gdp': 0.32878742225811, 'lint': 0.29361854972141, 'Intercept': 1.1770944273439}.items():
+    check.near(f'Newey-West, 4 lags = Stata\'s ivreg2 bw(5) (no small-sample factor): {k_}', rows_of(hac['estimates'])[k_]['se'], v_, rel=1e-9)
+hac0 = call('fitmodel.ls', table=t_mac, y='g_inv', effects=Emac, robust={'type': 'HAC'})
+check('Newey-West without a lag: 4 (n/100)^(2/9) lags', hac0['robust']['maxlags'], int(math.floor(4 * (202 / 100) ** (2 / 9))))
+for t_ in ['HC0', 'HC2', 'HC3']:
+    r_ = call('fitmodel.ls', table=t_mac, y='g_inv', effects=Emac, robust=t_)
+    check.near(f'{t_} std errors = statsmodels\' {t_}_se', maxdiff([rows_of(r_['estimates'])[k_]['se'] for k_ in ['Intercept', 'g_gdp', 'lint']], getattr(ols_m, f'{t_}_se')), 0.0, abs_=1e-10)
+gf = sm.datasets.grunfeld.load_pandas().data.iloc[:200]   # the ten firms of Stata's example
+gfd = pd.DataFrame({'invest': gf['invest'], 'value': gf['value'], 'capital': gf['capital'], 'firm': gf['firm'].astype(str)})
+t_gf = table({c: gfd[c].tolist() for c in gfd.columns})
+clr = call('fitmodel.ls', table=t_gf, y='invest', effects=[['value'], ['capital']], robust={'type': 'cluster', 'cluster': 'firm'})
+stata_cl = {'value': (0.01589433647768, 7.2706499090564, 4.710548549e-05), 'capital': (0.08496711097464, 2.7149150406994, 0.02380515903536),
+            'Intercept': (20.425202580078, -2.0912580352272, 0.06604843284516)}
+for k_, (se_, t_, p_) in stata_cl.items():
+    check.near(f'Cluster by firm = Stata\'s regress, cluster(firm) (grunfeld): the std error of {k_}', rows_of(clr['estimates'])[k_]['se'], se_, rel=1e-6)
+    check.near(f'Cluster = Stata: the t ratio of {k_}', rows_of(clr['estimates'])[k_]['t'], t_, rel=1e-6)
+    check.near(f'Cluster = Stata: the p-value of {k_} (t on 10 - 1 DF)', rows_of(clr['estimates'])[k_]['p'], p_, rel=1e-5)
+check('Cluster: 10 clusters, t and F tests on 9 DF', (clr['robust']['clusters'], clr['robust']['df'], rows_of(clr['effect_tests'])['value']['dfden']), (10, 9.0, 9.0))
+check.near('Cluster = Stata: the whole model\'s robust Wald F', clr['robust']['wald_f'], 51.59060716590177, rel=1e-6)
+ns, err = run_code(clr['code'], gfd, 'data')
+check('cluster-robust code runs', err, None)
+if not err:
+    check.near('its robust std errors are the report\'s', maxdiff([rows_of(clr['estimates'])[k_]['se'] for k_ in ['Intercept', 'value', 'capital']], ns['rob'].bse), 0.0, abs_=1e-9)
+hr = np.random.default_rng(12)
+gh = hr.choice(['a', 'b', 'c'], 90)
+xh = hr.normal(size=90)
+yh = 1 + (gh == 'b') * 1.2 + 0.7 * xh + hr.normal(size=90) * (0.5 + np.abs(xh))
+dfh = pd.DataFrame({'g': gh, 'x': xh, 'y': yh})
+t_h = table({c: dfh[c].tolist() for c in dfh.columns})
+rh3 = call('fitmodel.ls', table=t_h, y='y', effects=[['g'], ['x']], robust='HC3')
+fh = smf.ols('y ~ C(g, Sum) + x', dfh).fit()
+fh3 = fh.get_robustcov_results(cov_type='HC3', use_t=True)
+wth = fh3.wald_test_terms(skip_single=False, scalar=True).table
+check.near('HC3 Effect Tests: the F of g (2 DF) = statsmodels\' wald_test_terms', rows_of(rh3['effect_tests'])['g']['stat'], float(wth.loc['C(g, Sum)', 'statistic']), rel=1e-10)
+check.near('HC3 Effect Tests: its p-value', rows_of(rh3['effect_tests'])['g']['p'], float(wth.loc['C(g, Sum)', 'pvalue']), rel=1e-9)
+check('HC3 Effect Tests: no sums of squares, a DFDen', ('ss' in rh3['effect_tests']['rows'][0], rows_of(rh3['effect_tests'])['g']['dfden']), (False, 86.0))
+check.near('HC3: the Analysis of Variance stays least squares\'', {x['source']: x for x in rh3['anova']['rows']}['Model']['f'], float(fh.fvalue), rel=1e-10)
+prh = call('fitmodel.profile', table=t_h, kind='ls', y='y', effects=[['g'], ['x']], robust='HC3', current={'g': 'b', 'x': 0.5})
+sfh = fh3.get_prediction(np.asarray(patsy.build_design_matrices([fh.model.data.design_info], pd.DataFrame({'g': ['b'], 'x': [0.5]}))[0]), transform=False).summary_frame(alpha=0.05)
+check.near('HC3: the profiler\'s interval uses the robust covariance', prh['responses'][0]['current']['lower'], float(sfh['mean_ci_lower'].iloc[0]), rel=1e-10)
+pr0 = call('fitmodel.profile', table=t_h, kind='ls', y='y', effects=[['g'], ['x']], current={'g': 'b', 'x': 0.5})
+check('... not the usual one', abs(pr0['responses'][0]['current']['lower'] - prh['responses'][0]['current']['lower']) > 1e-6, True)
+ns, err = run_code(rh3['code'], dfh, 'data')
+check('HC3 code runs', err, None)
+if not err:
+    check.near('its robust std errors are the report\'s', maxdiff([x['se'] for x in rh3['estimates']['rows']], ns['rob'].bse), 0.0, abs_=1e-10)
+rf_rob = call('fitmodel.ls', table=t6, y='y', effects=[['x']], freq='f', robust='HC1')
+check('with Freq, no robust standard errors, and a note that says why', ('robust' in rf_rob, any('Freq' in n_ and 'Robust' in n_ for n_ in rf_rob['notes'])), (False, True))
+rglc = call('fitmodel.glm', table=t_lt, y='symptoms', effects=Elt, dist='poisson', robust={'type': 'cluster', 'cluster': 'subject'})
+gcl = sm.GLM(lt['symptoms'].to_numpy(float), X_lt, family=sm.families.Poisson()).fit(cov_type='cluster', cov_kwds={'groups': pd.factorize(lt['subject'], sort=True)[0]})
+check.near('GLM cluster-robust std errors = statsmodels\' GLM fit(cov_type="cluster")', maxdiff([x['se'] for x in rglc['estimates']], gcl.bse), 0.0, abs_=1e-8)
+check.near('GLM cluster-robust: the Wald chi-square of visit', {x['term']: x for x in rglc['estimates']}['visit']['wald'], float(gcl.tvalues[2] ** 2), rel=1e-8)
+rgl0 = call('fitmodel.glm', table=t_lt, y='symptoms', effects=Elt, dist='poisson', robust='HC0')
+gh0 = sm.GLM(lt['symptoms'].to_numpy(float), X_lt, family=sm.families.Poisson()).fit(cov_type='HC0')
+check.near('GLM sandwich (HC0) std errors = statsmodels\'', maxdiff([x['se'] for x in rgl0['estimates']], gh0.bse), 0.0, abs_=1e-8)
+check('GLM refuses HC3 (statsmodels\' GLM gives it as HC0)', 'HC0' in (err_of('fitmodel.glm', table=t_lt, y='symptoms', effects=Elt, dist='poisson', robust='HC3') or ''), True)
+pgl = call('fitmodel.profile', table=t_lt, kind='glm', y='symptoms', effects=Elt, dist='poisson', robust='HC0', current={'treatment': 'active', 'visit': 2, 'baseline': 20})
+xg_ = np.array([1.0, -1.0, 2.0, 20.0])
+eg_ = float(xg_ @ gh0.params)
+check.near('GLM profiler with HC0: the lower limit from the sandwich', pgl['responses'][0]['current']['lower'], math.exp(eg_ - 1.959963984540054 * math.sqrt(float(xg_ @ gh0.cov_params() @ xg_))), rel=1e-7)
+ns, err = run_code(rglc['code'], lt, 'data')
+check('GLM robust code runs', err, None)
+if not err:
+    check.near('its robust std errors are the report\'s', maxdiff([x['se'] for x in rglc['estimates']], ns['rob'].bse), 0.0, abs_=1e-7)
+
+# ---- Regression Diagnostics: R's lmtest results, recorded in statsmodels' test suite, on the same macrodata regression ------
+dmx = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=Emac, tests=['bp', 'white', 'gq', 'reset', 'hc', 'rainbow', 'bg', 'jb', 'omni'],
+           gq_sort='row', rainbow_order='row', hc_order='row', bg_lags=4)
+TD = {k_: v_['table']['rows'] for k_, v_ in dmx['tests'].items()}
+check('Regression Diagnostics: every test made', [k_ for k_, v_ in dmx['tests'].items() if v_['error'] is None], ['bp', 'white', 'gq', 'reset', 'hc', 'rainbow', 'bg', 'jb', 'omni'])
+check.near('Breusch-Pagan (Koenker) = R\'s bptest', TD['bp'][0]['stat'], 0.709924388395087, rel=1e-10)
+check.near('Breusch-Pagan (Koenker): its p-value', TD['bp'][0]['p'], 0.701199952134347, rel=1e-9)
+check.near('Breusch-Pagan (normal errors) = R\'s bptest(studentize = FALSE)', TD['bp'][1]['stat'], 1.302014063483341, rel=1e-10)
+check.near('Breusch-Pagan (normal errors): its p-value', TD['bp'][1]['p'], 0.5215203247110649, rel=1e-9)
+check('Breusch-Pagan: 2 DF', TD['bp'][0]['df'], 2)
+check.near('Goldfeld-Quandt (the table\'s order, halves) = R\'s gqtest', TD['gq'][0]['stat'], 0.5313259064778423, rel=1e-10)
+check.near('Goldfeld-Quandt: its p-value (variance increasing)', TD['gq'][0]['p'], 0.9990217851193723, rel=1e-9)
+check('Goldfeld-Quandt: on 98 and 98 DF', (TD['gq'][0]['df'], TD['gq'][0]['dfden']), (98.0, 98.0))
+check.near('Breusch-Godfrey LM, 4 lags = R\'s bgtest', TD['bg'][0]['stat'], 4.771042651230007, rel=1e-9)
+check.near('Breusch-Godfrey LM: its p-value', TD['bg'][0]['p'], 0.3116067133066697, rel=1e-9)
+check.near('Breusch-Godfrey F = R\'s bgtest(type = "F")', TD['bg'][1]['stat'], 1.179280833676792, rel=1e-9)
+check.near('Breusch-Godfrey F: its p-value', TD['bg'][1]['p'], 0.321197487261203, rel=1e-9)
+check('Breusch-Godfrey F: on 4 and 195 DF', (TD['bg'][1]['df'], TD['bg'][1]['dfden']), (4.0, 195.0))
+check.near('Harvey-Collier = R\'s harvtest', TD['hc'][0]['stat'], 0.494432160939874, rel=1e-9)
+check.near('Harvey-Collier: its p-value', TD['hc'][0]['p'], 0.6215491310408242, rel=1e-9)
+check('Harvey-Collier: on 198 DF', TD['hc'][0]['df'], 198.0)
+check.near('Rainbow (the table\'s order) = R\'s raintest', TD['rainbow'][0]['stat'], 0.6809600116739604, rel=1e-9)
+check.near('Rainbow: its p-value', TD['rainbow'][0]['p'], 0.971832843583418, rel=1e-9)
+check('Rainbow: on 101 and 98 DF', (TD['rainbow'][0]['df'], TD['rainbow'][0]['dfden']), (101.0, 98.0))
+hw_ = dg.het_white(ols_m.resid, ols_m.model.exog)
+check.near('White LM = statsmodels\' het_white', TD['white'][0]['stat'], float(hw_[0]), rel=1e-10)
+check.near('White LM = statsmodels\' reference value', TD['white'][0]['stat'], 33.503722896538441, rel=1e-10)
+check.near('White F and its p-value', TD['white'][1]['p'], float(hw_[3]), rel=1e-9)
+check('White: 5 DF (the squares and products of 1, g_gdp, lint, less the constant)', TD['white'][0]['df'], 5)
+rst_ = dg.linear_reset(ols_m, power=3, use_f=True)
+check.near('RESET = statsmodels\' linear_reset', TD['reset'][0]['stat'], float(rst_.fvalue), rel=1e-10)
+aug_ = sm.OLS(g_inv, np.column_stack([ols_m.model.exog, ols_m.fittedvalues ** 2, ols_m.fittedvalues ** 3])).fit()
+check.near('RESET = the F test of the regression with the squared and cubed predictions added', TD['reset'][0]['stat'], float(aug_.compare_f_test(ols_m)[0]), rel=1e-7)
+check('RESET: on 2 and 197 DF', (TD['reset'][0]['df'], TD['reset'][0]['dfden']), (2.0, 197.0))
+check.near('Jarque-Bera = scipy\'s jarque_bera', TD['jb'][0]['stat'], float(stats.jarque_bera(ols_m.resid).statistic), rel=1e-10)
+check.near('Jarque-Bera: its p-value = statsmodels\'', TD['jb'][0]['p'], float(jarque_bera(ols_m.resid)[1]), rel=1e-10)
+check.near('Jarque-Bera: the kurtosis', TD['jb'][2]['stat'], float(stats.kurtosis(ols_m.resid, fisher=False)), rel=1e-10)
+check.near('Omnibus = scipy\'s normaltest', TD['omni'][0]['stat'], float(stats.normaltest(ols_m.resid).statistic), rel=1e-10)
+check.near('Omnibus = statsmodels\' omni_normtest (p)', TD['omni'][0]['p'], float(omni_normtest(ols_m.resid).pvalue), rel=1e-10)
+o2_ = sm.OLS(g_inv, sm.add_constant(g_gdp)).fit()
+hc2 = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=[['g_gdp']], tests=['hc'])['tests']['hc']['table']['rows'][0]
+w2_ = dg.recursive_olsresiduals(o2_, alpha=0.95)[4][2:]
+t2_ = float(np.mean(w2_) / (np.std(w2_, ddof=1) / math.sqrt(len(w2_))))
+check.near('Harvey-Collier with two parameters: t on the n - p recursive residuals (Harvey and Collier 1977)', hc2['stat'], t2_, rel=1e-9)
+check('Harvey-Collier with two parameters: on n - p - 1 = 199 DF', hc2['df'], 199.0)
+check('statsmodels\' linear_harvey_collier differs here (it drops the first recursive residual)', abs(float(dg.linear_harvey_collier(o2_).statistic) - t2_) > 1e-3, True)
+rb_ = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=Emac, tests=['rainbow'], rainbow_order='leverage')['tests']['rainbow']['table']['rows'][0]
+hh_ = np.round(ols_m.get_influence().hat_matrix_diag, 12)
+lo_ = int(np.ceil(0.25 * 202))
+hi_ = int(np.floor(lo_ + 0.5 * 202))
+cen_ = np.argsort(hh_, kind='stable')[:hi_ - lo_]
+oc_ = sm.OLS(g_inv[cen_], ols_m.model.exog[cen_]).fit()
+check.near('Rainbow by leverage = Utts\'s F, the central rows those of smallest leverage', rb_['stat'], ((ols_m.ssr - oc_.ssr) / (202 - len(cen_))) / (oc_.ssr / oc_.df_resid), rel=1e-10)
+gq4 = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=Emac, tests=['gq'], gq_sort='predicted', gq_drop=0.2, gq_alt='two-sided')['tests']['gq']['table']['rows'][0]
+o4_ = np.argsort(ols_m.fittedvalues, kind='stable')
+s4_ = int(np.floor(202 * 0.8 / 2))
+ref4 = dg.het_goldfeldquandt(g_inv[o4_], ols_m.model.exog[o4_], split=s4_, drop=202 - 2 * s4_, alternative='two-sided')
+check.near('Goldfeld-Quandt sorted by the predicted values, a fifth left out, two-sided = statsmodels\'', gq4['stat'], float(ref4[0]), rel=1e-12)
+check.near('... its p-value', gq4['p'], float(ref4[1]), rel=1e-10)
+ns, err = run_code(dmx['code'], mac, 'data')
+check('Regression Diagnostics code runs', err, None)
+if not err:
+    check.near('its Breusch-Pagan is the report\'s', float(dg.het_breuschpagan(ns['e'], ns['Xh'])[0]), TD['bp'][0]['stat'], rel=1e-10)
+dml = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=Emac, tests=['rainbow'], rainbow_order='leverage')
+ns, err = run_code(dml['code'], mac, 'data')
+check('Rainbow by leverage code runs', err, None)
+if not err:
+    check.near('and gives the report\'s F', float(dg.linear_rainbow(ns['ow'], frac=ns['frac'], order_by=ns['o'])[0]), rb_['stat'], rel=1e-10)
+wr = np.random.default_rng(31)
+wts = wr.uniform(0.5, 3, 202)
+t_w = table({**{c: mac[c].tolist() for c in mac.columns}, 'w': wts.tolist()})
+rwd = call('fitmodel.regdiag', table=t_w, y='g_inv', effects=Emac, weight='w', tests=['bp', 'jb'])
+fw_ = sm.WLS(g_inv, ols_m.model.exog, weights=wts).fit()
+check.near('weighted fit: Breusch-Pagan on the whitened residuals and the regressors', rwd['tests']['bp']['table']['rows'][0]['stat'], float(dg.het_breuschpagan(fw_.wresid, fw_.model.exog)[0]), rel=1e-10)
+check.near('weighted fit: Jarque-Bera on the whitened residuals', rwd['tests']['jb']['table']['rows'][0]['stat'], float(jarque_bera(fw_.wresid)[0]), rel=1e-10)
+bad_order = call('fitmodel.regdiag', table=t_mac, y='g_inv', effects=Emac, tests=['gq'], gq_sort='nosuchcolumn')['tests']['gq']
+check('an unknown sort column: the test says why', bad_order['error'] is not None and 'continuous factor' in bad_order['error'], True)
+# the Influence Plot and the Component + Residual plots come with the least squares report
+rc2 = call('fitmodel.ls', table=t_mac, y='g_inv', effects=Emac, ccpr=True)
+check('the report gives the rank p for the influence plot\'s lines', rc2['rank'], 3)
+inf_ = ols_m.get_influence()
+check.near('Influence Plot: the studentized residuals = statsmodels\' resid_studentized_external', maxdiff(rc2['diag']['externally'], inf_.resid_studentized_external), 0.0, abs_=1e-10)
+check.near('Influence Plot: Cook\'s D = statsmodels\' cooks_distance', maxdiff(rc2['diag']['cooks'], inf_.cooks_distance[0]), 0.0, abs_=1e-12)
+cp_ = {c_['term']: c_ for c_ in rc2['ccpr']}
+check('Component + Residual plots of the continuous terms', sorted(cp_), ['g_gdp', 'lint'])
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig_ = sm.graphics.plot_ccpr(ols_m, 1)
+    pts_ = fig_.axes[0].lines[0].get_xydata()
+    plt.close(fig_)
+    check.near('Component + Residual of g_gdp = the points of statsmodels\' plot_ccpr', maxdiff(cp_['g_gdp']['partial'], pts_[:, 1]), 0.0, abs_=1e-10)
+    check.near('... against the regressor', maxdiff(cp_['g_gdp']['x'], pts_[:, 0]), 0.0, abs_=1e-12)
+except ImportError:
+    check.near('Component + Residual of g_gdp = residual + b x (plot_ccpr\'s definition)', maxdiff(cp_['g_gdp']['partial'], ols_m.resid + ols_m.params[1] * g_gdp), 0.0, abs_=1e-10)
+ra2 = call('fitmodel.ls', table=t20, y='y', effects=Ea, ccpr=True)
+ca2 = {c_['term']: c_ for c_ in ra2['ccpr']}
+check('a centred main effect (x + g + x*g) is plotted against x itself', (sorted(ca2), maxdiff(ca2['x']['x'], xa) < 1e-9), (['x'], True))
+check.near('... its partial residual = residual + b (x - mean)', maxdiff(ca2['x']['partial'], np.asarray(refj.resid) + float(refj.params[1]) * (xa - xa.mean())), 0.0, abs_=1e-8)
+
+# ======================================================================================================================
+# Instrumental Variables, Quantile Regression, Recursive and Rolling Regression
+# ======================================================================================================================
+import importlib.util
+from statsmodels.regression.quantile_regression import QuantReg
+from statsmodels.regression.recursive_ls import RecursiveLS
+from statsmodels.regression.rolling import RollingOLS, RollingWLS
+from statsmodels.sandbox.regression.gmm import IV2SLS
+
+SMDIR = os.path.dirname(statsmodels.__file__)
+
+
+def load_results(*parts):
+    """A results module of statsmodels' own test suite, from the installed package."""
+    path = os.path.join(SMDIR, *parts)
+    spec_ = importlib.util.spec_from_file_location('smres_' + parts[-1][:-3], path)
+    mod_ = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(mod_)
+    return mod_
+
+
+# ---- 2SLS on Griliches's wage data, against Stata's ivreg2 and ivendog (the results statsmodels' test suite records) --------
+rg = load_results('sandbox', 'regression', 'tests', 'results_ivreg2_griliches.py')
+gri = pd.read_stata(os.path.join(SMDIR, 'sandbox', 'regression', 'tests', 'griliches76.dta'))
+for yr_ in sorted(gri['year'].unique()):
+    gri[f'dyear_{int(yr_) % 100}'] = (gri['year'] == yr_).astype(float)
+g_dums = ['dyear_67', 'dyear_68', 'dyear_69', 'dyear_70', 'dyear_71', 'dyear_73']
+g_cols = ['lw', 's', 'iq', 'expr', 'tenure', 'rns', 'smsa', 'med', 'kww', 'age', 'mrt'] + g_dums
+t_gri = table({c: gri[c].astype(float).tolist() for c in g_cols})
+E_gri = [[c] for c in ['s', 'iq', 'expr', 'tenure', 'rns', 'smsa'] + g_dums]
+IVG = dict(table=t_gri, y='lw', effects=E_gri, endog=['s', 'iq'], instruments=['med', 'kww', 'age', 'mrt'])
+ivg = call('fitmodel.iv', **IVG, ols=True)
+eg = rows_of(ivg['estimates'])
+names_st = [('Intercept' if nm == '_cons' else nm) for nm in rg.param_names]
+pt_small = rg.results_small.params_table
+check.near('2SLS (Griliches) = ivreg2, small: every estimate', max(abs(eg[nm]['estimate'] - pt_small[i, 0]) / max(1, abs(pt_small[i, 0])) for i, nm in enumerate(names_st)), 0.0, abs_=1e-9)
+check.near('2SLS = ivreg2, small: every standard error', max(abs(eg[nm]['se'] - pt_small[i, 1]) / pt_small[i, 1] for i, nm in enumerate(names_st)), 0.0, abs_=1e-9)
+check.near('2SLS = ivreg2, small: the t ratio of s', eg['s']['t'], pt_small[0, 2], rel=1e-9)
+check.near('2SLS = ivreg2, small: the p-value of iq (t on 745 DF)', eg['iq']['p'], pt_small[1, 3], rel=1e-7)
+check.near('2SLS = ivreg2, small: the lower limit of expr', [r_ for r_ in ivg['estimates']['rows'] if r_['term'] == 'expr'][0]['lower'], pt_small[2, 4], rel=1e-9)
+sof_g = {r_['stat']: r_['value'] for r_ in ivg['summary']['rows']}
+check.near('2SLS RSquare = ivreg2\'s r2', sof_g['RSquare'], rg.results_small.r2, rel=1e-9)
+check.near('2SLS RSquare Adj = ivreg2\'s r2_a', sof_g['RSquare Adj'], rg.results_small.r2_a, rel=1e-9)
+check.near('2SLS Root Mean Square Error = ivreg2, small', sof_g['Root Mean Square Error'], rg.results_small.rmse, rel=1e-9)
+check.near('2SLS whole-model Wald F = ivreg2\'s F (12, 745)', ivg['whole']['f'], rg.results_small.F, rel=1e-9)
+check('... on 12 and 745 DF', (ivg['whole']['df_num'], ivg['whole']['df_den']), (12.0, 745.0))
+ov_g = ivg['tests']['overid']
+check.near('Sargan = ivreg2\'s sargan', ov_g['stat'], rg.results_small.sargan, rel=1e-9)
+check.near('Sargan p-value = ivreg2\'s', ov_g['p'], rg.results_small.sarganp, rel=1e-8)
+check('Sargan: 2 overidentifying restrictions', (ov_g['test'], ov_g['df']), ('Sargan', 2))
+check.near('Cragg-Donald Wald F = ivreg2\'s cdf', ivg['weak']['cragg_donald'], rg.results_small.cdf, rel=1e-9)
+en_g = ivg['tests']['endog']
+check.near('Wu-Hausman F = ivendog\'s WHF', en_g['f'], rg.results_small.hausman['WHF'], rel=1e-9)
+check('Wu-Hausman F on 2 and 743 DF, as ivendog', (en_g['df_num'], en_g['df_den']), (2.0, float(rg.results_small.hausman['df_r'])))
+check.near('Wu-Hausman p-value = ivendog\'s', en_g['p'], rg.results_small.hausman['WHFp'], rel=1e-6)
+check.near('Durbin chi2 = ivendog\'s Durbin-Wu-Hausman', en_g['durbin'], rg.results_small.hausman['DWH'], rel=1e-9)
+check.near('Durbin p-value = ivendog\'s', en_g['durbin_p'], rg.results_small.hausman['DWHp'], rel=1e-6)
+Xg = np.column_stack([np.ones(len(gri)), gri[['s', 'iq', 'expr', 'tenure', 'rns', 'smsa'] + g_dums].to_numpy(float)])
+Zg = np.column_stack([np.ones(len(gri)), gri[['expr', 'tenure', 'rns', 'smsa'] + g_dums + ['med', 'kww', 'age', 'mrt']].to_numpy(float)])
+yg_ = gri['lw'].to_numpy(float)
+ivd = IV2SLS(yg_, Xg, Zg).fit()
+h_sm = ivd.spec_hausman()
+Xg_last = np.column_stack([Xg[:, 1:], Xg[:, :1]])
+Zg_last = np.column_stack([Zg[:, 1:], Zg[:, :1]])
+h_last = IV2SLS(yg_, Xg_last, Zg_last).fit().spec_hausman()
+check('statsmodels\' spec_hausman is the same statistic up to its pinv (constant first or last: both near ivendog)', abs(h_sm[0] - en_g['durbin']) / en_g['durbin'] < 1e-4 and abs(h_last[0] - en_g['durbin']) / en_g['durbin'] < 1e-9, True)
+print(f'      spec_hausman with the constant first {h_sm[0]:.10g}, last {h_last[0]:.10g}; regression-based {en_g["durbin"]:.10g}')
+fs_g = {f['label']: f for f in ivg['first']}
+for c_, j_ in [('s', 1), ('iq', 2)]:
+    fsd = sm.OLS(Xg[:, j_], Zg).fit()
+    ftd = fsd.f_test(np.eye(Zg.shape[1])[-4:])
+    check.near(f'first stage of {c_}: F of the excluded instruments = statsmodels\' f_test', fs_g[c_]['f'], float(np.squeeze(ftd.fvalue)), rel=1e-10)
+    check.near(f'first stage of {c_}: its RSquare', fs_g[c_]['rsq'], float(fsd.rsquared), rel=1e-12)
+    fr0 = sm.OLS(Xg[:, j_], Zg[:, :-4]).fit()
+    check.near(f'first stage of {c_}: partial RSquare = 1 - SSR(all)/SSR(exogenous only)', fs_g[c_]['partial_rsq'], 1 - fsd.ssr / fr0.ssr, rel=1e-10)
+    # Shea's partial RSquare by his definition: the regressor and its first-stage prediction, each purged of the other regressors
+    others = [k for k in range(Xg.shape[1]) if k != j_]
+    xh_ = Zg @ np.linalg.lstsq(Zg, Xg, rcond=None)[0]
+    r_x = Xg[:, j_] - Xg[:, others] @ np.linalg.lstsq(Xg[:, others], Xg[:, j_], rcond=None)[0]
+    r_h = xh_[:, j_] - xh_[:, others] @ np.linalg.lstsq(xh_[:, others], xh_[:, j_], rcond=None)[0]
+    check.near(f'first stage of {c_}: Shea\'s partial RSquare (Godfrey\'s formula) = the squared correlation of the purged columns', fs_g[c_]['shea_rsq'], float(np.corrcoef(r_x, r_h)[0, 1] ** 2), rel=1e-9)
+check('first stages: F above 10, not weak', [f['weak'] for f in ivg['first']], [False, False])
+ols_g = rows_of(ivg['ols'])
+ols_d = sm.OLS(yg_, Xg).fit()
+check.near('OLS beside 2SLS: the OLS estimate of s', ols_g['s']['ols'], float(ols_d.params[1]), rel=1e-10)
+check.near('... and its 2SLS - OLS difference', ols_g['s']['diff'], eg['s']['estimate'] - float(ols_d.params[1]), rel=1e-10)
+ns, err = run_code(ivg['code'], gri[g_cols].astype(float), 'data')   # float64: the Stata file's float32 would be written short
+check('2SLS code runs', err, None)
+if not err:
+    check.near('its fit has the report\'s estimates', maxdiff([eg[nm]['estimate'] for nm in ['Intercept', 's', 'iq']], ns['fit'].params.to_numpy()[:3]), 0.0, abs_=1e-10)
+    check.near('its Durbin-Wu-Hausman and Sargan are the report\'s', abs(float(np.squeeze(ns['aug'].f_test(np.eye(ns['X'].shape[1] + 2)[ns['X'].shape[1]:]).fvalue)) - en_g['f'])
+               + abs(float(len(ns['e']) * ns['e'] @ ns['Za'] @ np.linalg.lstsq(ns['Za'], ns['e'], rcond=None)[0] / (ns['e'] @ ns['e'])) - ov_g['stat']), 0.0, abs_=1e-8)
+# robust: HC0 is ivreg2's robust (no small-sample factor), HC1 ivreg2's small robust; Hansen's J
+ivh0 = call('fitmodel.iv', **IVG, robust='HC0')
+e0 = rows_of(ivh0['estimates'])
+pt_r = rg.results_robust.params_table
+check.near('2SLS HC0 = ivreg2, robust: every standard error', max(abs(e0[nm]['se'] - pt_r[i, 1]) / pt_r[i, 1] for i, nm in enumerate(names_st)), 0.0, abs_=1e-9)
+check.near('Hansen J = ivreg2\'s j (robust)', ivh0['tests']['overid']['stat'], rg.results_robust.j, rel=1e-9)
+check.near('Hansen J p-value = ivreg2\'s jp', ivh0['tests']['overid']['p'], rg.results_robust.jp, rel=1e-8)
+check('robust: the test is Hansen\'s J, and no Durbin chi2', (ivh0['tests']['overid']['test'], 'durbin' in ivh0['tests']['endog']), ('Hansen J', False))
+ivh1 = call('fitmodel.iv', **IVG, robust='HC1')
+e1 = rows_of(ivh1['estimates'])
+pt_sr = rg.results_small_robust.params_table
+check.near('2SLS HC1 = ivreg2, small robust: every standard error', max(abs(e1[nm]['se'] - pt_sr[i, 1]) / pt_sr[i, 1] for i, nm in enumerate(names_st)), 0.0, abs_=1e-9)
+check.near('2SLS HC1 = ivreg2, small robust: the p-value of s', e1['s']['p'], pt_sr[0, 3], rel=1e-6)
+check.near('2SLS HC1: the whole-model robust Wald F = ivreg2\'s (small robust)', ivh1['whole']['f'], rg.results_small_robust.F, rel=1e-9)
+# the robust sandwich of 2SLS by its formula: (Xhat'Xhat)^-1 Xhat' diag(e^2) Xhat (Xhat'Xhat)^-1 n/(n - k)
+xh_g = ivd.exog_hat
+eg_res = yg_ - Xg @ ivd.params
+Bg = np.linalg.inv(xh_g.T @ xh_g)
+Vg1 = Bg @ (xh_g * eg_res[:, None] ** 2).T @ xh_g @ Bg * len(yg_) / (len(yg_) - Xg.shape[1])
+check.near('HC1 of 2SLS = the sandwich with the second stage\'s regressors and the structural residuals', abs(e1['s']['se'] - math.sqrt(Vg1[1, 1])) / e1['s']['se'], 0.0, abs_=1e-10)
+ns, err = run_code(ivh1['code'], gri[g_cols].astype(float), 'data')
+check('robust 2SLS code runs', err, None)
+if not err:
+    check.near('its robust std errors are the report\'s', maxdiff([e1[nm]['se'] for nm in ['Intercept', 's', 'iq']], np.asarray(ns['rob'].bse)[:3]), 0.0, abs_=1e-10)
+    check.near('its Hansen J is the report\'s', float(ns['u'] @ ns['W'] @ ns['u']), ivh1['tests']['overid']['stat'], rel=1e-9)
+
+# ---- 2SLS with known truth: an unobserved ability behind both education and the wage -------------------------------------
+ivr = np.random.default_rng(11)
+n_iv = 3000
+abil = ivr.normal(size=n_iv)
+z1_ = ivr.normal(size=n_iv)
+z2_ = np.where(ivr.uniform(size=n_iv) < 0.4, 'won', 'lost')
+fem_ = np.where(ivr.uniform(size=n_iv) < 0.5, 'F', 'M')
+exper_ = ivr.uniform(0, 30, n_iv)
+weakz = ivr.normal(size=n_iv)
+educ_ = 12 + 1.0 * abil + 0.8 * z1_ + 1.0 * (z2_ == 'won') + 0.3 * (fem_ == 'F') + 0.02 * weakz + ivr.normal(size=n_iv)
+lw_ = 1 + 0.08 * educ_ + 0.02 * exper_ - 0.1 * (fem_ == 'F') + 0.004 * exper_ * (fem_ == 'F') + 0.25 * abil + ivr.normal(0, 0.3, n_iv)
+bad_ = z1_ + ivr.normal(size=n_iv)                       # an "instrument" that moves the wage directly
+lw_bad = lw_ + 0.15 * bad_
+d_iv = pd.DataFrame({'educ': educ_, 'exper': exper_, 'sex': fem_, 'z1': z1_, 'lottery': z2_, 'weak': weakz, 'bad': bad_, 'lw': lw_, 'lwbad': lw_bad})
+t_iv = table({c: d_iv[c].tolist() for c in d_iv.columns}, levels={'sex': ['F', 'M'], 'lottery': ['won', 'lost']})
+E_iv = [['educ'], ['exper'], ['sex'], ['exper', 'sex']]
+tr_iv = call('fitmodel.iv', table=t_iv, y='lw', effects=E_iv, endog=['educ'], instruments=['z1', 'lottery'], ols=True)
+et_iv = rows_of(tr_iv['estimates'])
+ot_iv = rows_of(tr_iv['ols'])
+check('known truth: 2SLS recovers the return to education, 0.08, within 3 standard errors', abs(et_iv['educ']['estimate'] - 0.08) < 3 * et_iv['educ']['se'], True)
+check('known truth: least squares is biased upward, more than 5 of its standard errors from 0.08', ot_iv['educ']['ols'] - 0.08 > 5 * ot_iv['educ']['ols_se'], True)
+check('known truth: the Durbin-Wu-Hausman test rejects exogeneity', tr_iv['tests']['endog']['p'] < 1e-4, True)
+check('known truth: Sargan does not reject valid instruments at 1%', tr_iv['tests']['overid']['p'] > 0.01, True)
+tb_iv = call('fitmodel.iv', table=t_iv, y='lwbad', effects=E_iv, endog=['educ'], instruments=['z1', 'bad'])
+check('known truth: Sargan rejects when an instrument moves Y directly', tb_iv['tests']['overid']['p'] < 1e-4, True)
+tw_iv = call('fitmodel.iv', table=t_iv, y='lw', effects=E_iv, endog=['educ'], instruments=['weak'])
+check('a weak instrument: first-stage F below 10, flagged', (tw_iv['first'][0]['f'] < 10, tw_iv['first'][0]['weak'], tw_iv['weak_columns']), (True, True, ['educ']))
+check.near('one endogenous column: Cragg-Donald = the (classical) first-stage F', tw_iv['weak']['cragg_donald'], tw_iv['first'][0]['f'], rel=1e-9)
+check('exactly identified: no overidentification test', tw_iv['tests']['overid'], None)
+# JMP's design by hand: effect codes, the crossing centred, the intercept at exper = 0; the instruments with the lottery effect coded
+fcode = np.where(fem_ == 'F', 1.0, -1.0)
+mx_iv = exper_.mean()
+XJ_iv = np.column_stack([np.ones(n_iv), educ_, exper_, fcode, (exper_ - mx_iv) * fcode])
+ZJ_iv = np.column_stack([np.ones(n_iv), exper_, fcode, (exper_ - mx_iv) * fcode, z1_, np.where(z2_ == 'won', 1.0, -1.0)])
+ivj = IV2SLS(lw_, XJ_iv, ZJ_iv).fit()
+check.near('2SLS on JMP\'s design (x + g + x*g, a categorical instrument) = IV2SLS by hand: the intercept at exper = 0', et_iv['Intercept']['estimate'], float(ivj.params[0]), rel=1e-9)
+check.near('... its standard error', et_iv['Intercept']['se'], float(ivj.bse[0]), rel=1e-9)
+check.near('... the crossing', et_iv[f'(exper-{mx_iv:.6g})*sex[F]']['estimate'], float(ivj.params[4]), rel=1e-9)
+check('the effect tests of the model\'s effects', [r_['source'] for r_ in tr_iv['effect_tests']['rows']], ['educ', 'exper', 'sex', 'exper*sex'])
+check.near('the Wald F of educ is its t squared', rows_of(tr_iv['effect_tests'])['educ']['stat'], et_iv['educ']['t'] ** 2, rel=1e-9)
+# an endogenous crossing: educ*sex instrumented by z1*sex and lottery*sex
+tx_iv = call('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper'], ['sex'], ['educ', 'sex']], endog=['educ'], instruments=['z1', 'lottery'])
+mz_ = z1_.mean()
+me_ = educ_.mean()
+lc_ = np.where(z2_ == 'won', 1.0, -1.0)
+XX_ = np.column_stack([np.ones(n_iv), educ_, exper_, fcode, (educ_ - me_) * fcode])
+ZX_ = np.column_stack([np.ones(n_iv), exper_, fcode, z1_, lc_, z1_ * fcode, lc_ * fcode])
+ivx = IV2SLS(lw_, XX_, ZX_).fit()
+ex_ = rows_of(tx_iv['estimates'])
+check('an endogenous crossing: its instruments are the crossings of the instruments', [g_['instrument'] for g_ in tx_iv['model']['generated']], ['sex*z1', 'sex*lottery'])
+check.near('... and 2SLS with them = IV2SLS by hand (the crossing\'s estimate)', ex_[f'(educ-{me_:.6g})*sex[F]']['estimate'], float(ivx.params[4]), rel=1e-8)
+check.near('... educ\'s', ex_['educ']['estimate'], float(ivx.params[1]), rel=1e-8)
+check('... two endogenous columns, four excluded instruments', (tx_iv['model']['k_endog'], tx_iv['model']['excluded']), (2, 4))
+check('an endogenous crossing is said in the notes', any('Wooldridge' in n_ for n_ in tx_iv['notes']), True)
+# cluster and HAC by their formulas
+cl_iv = np.arange(n_iv) % 60
+t_ivc = table({**{c: d_iv[c].tolist() for c in d_iv.columns}, 'cl': [f'c{k}' for k in cl_iv]}, levels={'sex': ['F', 'M'], 'lottery': ['won', 'lost']})
+tc_iv = call('fitmodel.iv', table=t_ivc, y='lw', effects=[['educ'], ['exper']], endog=['educ'], instruments=['z1', 'lottery'], robust={'type': 'cluster', 'cluster': 'cl'})
+X2_ = np.column_stack([np.ones(n_iv), educ_, exper_])
+Z2_ = np.column_stack([np.ones(n_iv), exper_, z1_, lc_])
+iv2 = IV2SLS(lw_, X2_, Z2_).fit()
+xh2 = iv2.exog_hat
+u2 = xh2 * (lw_ - X2_ @ iv2.params)[:, None]
+G_ = pd.factorize(pd.Series([f'c{k}' for k in cl_iv]), sort=True)[0]
+S_ = sum(np.outer(u2[G_ == g].sum(0), u2[G_ == g].sum(0)) for g in range(60))
+B2 = np.linalg.inv(xh2.T @ xh2)
+Vc = B2 @ S_ @ B2 * 60 / 59 * (n_iv - 1) / (n_iv - 3)
+check.near('cluster-robust 2SLS = the clustered sandwich by hand, G/(G-1)(n-1)/(n-k)', rows_of(tc_iv['estimates'])['educ']['se'], math.sqrt(Vc[1, 1]), rel=1e-9)
+check('... t tests on the clusters less one', tc_iv['dfi'], 59.0)
+Sc = sum(np.outer((Z2_[G_ == g] * iv2.resid[G_ == g][:, None]).sum(0), (Z2_[G_ == g] * iv2.resid[G_ == g][:, None]).sum(0)) for g in range(60))
+Wc = np.linalg.inv(Sc)
+bgc = np.linalg.solve(X2_.T @ Z2_ @ Wc @ Z2_.T @ X2_, X2_.T @ Z2_ @ Wc @ Z2_.T @ lw_)
+uc = Z2_.T @ (lw_ - X2_ @ bgc)
+check.near('Hansen J with clusters: the two-step GMM criterion by hand', tc_iv['tests']['overid']['stat'], float(uc @ Wc @ uc), rel=1e-8)
+th_iv = call('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper']], endog=['educ'], instruments=['z1', 'lottery'], robust={'type': 'HAC', 'maxlags': 3})
+Sh = u2.T @ u2
+for L_ in range(1, 4):
+    Gm = u2[L_:].T @ u2[:-L_]
+    Sh = Sh + (1 - L_ / 4) * (Gm + Gm.T)
+Vh = B2 @ Sh @ B2
+check.near('Newey-West 2SLS = the Bartlett sandwich by hand (3 lags, no small-sample factor)', rows_of(th_iv['estimates'])['educ']['se'], math.sqrt(Vh[1, 1]), rel=1e-9)
+fs_c = sm.OLS(educ_, Z2_).fit().get_robustcov_results(cov_type='cluster', groups=G_, use_t=True)
+check.near('cluster-robust first stage: the robust Wald F of the excluded instruments', tc_iv['first'][0]['f'], float(np.squeeze(fs_c.f_test(np.eye(4)[2:]).fvalue)), rel=1e-9)
+pr_iv = call('fitmodel.profile', table=t_iv, kind='iv', y='lw', effects=E_iv, endog=['educ'], instruments=['z1', 'lottery'], current={'educ': 14, 'exper': 10, 'sex': 'M'})
+xp_iv = np.array([1, 14, 10, -1, (10 - mx_iv) * -1])
+tq_iv = stats.t.ppf(0.975, n_iv - 5)
+check.near('the IV profiler: the prediction x\'b', pr_iv['responses'][0]['current']['pred'], float(xp_iv @ ivj.params), rel=1e-10)
+check.near('... its lower limit, t on n - p DF', pr_iv['responses'][0]['current']['lower'], float(xp_iv @ ivj.params - tq_iv * math.sqrt(xp_iv @ ivj.cov_params() @ xp_iv)), rel=1e-9)
+ns, err = run_code(tr_iv['code'], d_iv, 'data')
+check('IV code with a crossing and a categorical instrument runs', err, None)
+if not err:
+    check.near('its estimates are the report\'s (the fitted parameterisation)', abs(float(ns['fit'].params['educ']) - et_iv['educ']['estimate']), 0.0, abs_=1e-10)
+ns, err = run_code(tc_iv['code'], pd.DataFrame({**{c: d_iv[c] for c in d_iv.columns}, 'cl': [f'c{k}' for k in cl_iv]}), 'data')
+check('cluster-robust IV code runs', err, None)
+if not err:
+    check.near('its robust std errors and Hansen J are the report\'s', abs(float(np.asarray(ns['rob'].bse)[1]) - rows_of(tc_iv['estimates'])['educ']['se'])
+               + abs(float(ns['u'] @ ns['W'] @ ns['u']) - tc_iv['tests']['overid']['stat']), 0.0, abs_=1e-8)
+check('IV refuses a model that is not identified', 'not identified' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper']], endog=['educ', 'exper'], instruments=['z1']) or ''), True)
+check('IV refuses an Endogenous column outside the model', 'not in the model' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['exper']], endog=['educ'], instruments=['z1']) or ''), True)
+check('IV refuses an instrument that is a model effect', 'excluded from the model' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['z1']], endog=['educ'], instruments=['z1']) or ''), True)
+check('IV refuses weights', 'weights' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['educ']], endog=['educ'], instruments=['z1'], weight='exper') or ''), True)
+check('IV refuses instruments collinear with the model', 'collinear' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper']], endog=['educ'], instruments=['z1', 'exper']) or '') or
+      'model effect' in (err_of('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper']], endog=['educ'], instruments=['z1', 'exper']) or ''), True)
+rsub_iv = call('fitmodel.iv', table=t_iv, y='lw', effects=[['educ'], ['exper']], endog=['educ'], instruments=['z1'], rows=list(range(0, n_iv, 2)))
+check('IV on a row subset (a By group) uses those rows', (rsub_iv['n'], rsub_iv['diag']['rows'][:3]), (n_iv // 2, [0, 2, 4]))
+
+# ---- Quantile Regression: Koenker's Engel data against Stata's qreg (the results statsmodels' test suite records) -------------
+rq = load_results('regression', 'tests', 'results', 'results_quantile_regression.py')
+engel = sm.datasets.engel.load_pandas().data
+t_en = table({'income': engel['income'].tolist(), 'foodexp': engel['foodexp'].tolist()})
+for tau_, ker_, bw_, ref_ in [(0.5, 'epa', 'hsheather', rq.epan2_hsheather), (0.75, 'epa', 'hsheather', rq.epanechnikov_hsheather_q75),
+                              (0.5, 'gau', 'bofinger', rq.gaussian_bofinger), (0.5, 'cos', 'chamberlain', rq.cosine_chamberlain),
+                              (0.5, 'par', 'hsheather', rq.parzen_hsheather), (0.5, 'biw', 'bofinger', rq.biweight_bofinger)]:
+    qe = call('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=tau_, qr_cov='iid', kernel=ker_, bandwidth=bw_, process=False)
+    qr_ = rows_of(qe['estimates'])
+    lab_ = f'{tau_}, {ker_}, {bw_}'
+    check.near(f'QuantReg (Engel, {lab_}) = Stata\'s qreg: the slope (IRLS against the simplex)', qr_['income']['estimate'], ref_.table[0, 0], rel=2e-6)
+    check.near(f'... the intercept ({lab_})', qr_['Intercept']['estimate'], ref_.table[1, 0], rel=2e-5)
+    check.near(f'... the slope\'s iid std error ({lab_}; statsmodels\' own tolerance)', qr_['income']['se'], ref_.table[0, 1], rel=1e-3)
+    if tau_ == 0.5 and ker_ == 'epa':
+        check.near('... the sparsity 1/f(0)', qe['stats']['sparsity'], ref_.sparsity, rel=1e-3)
+        check.near('... the kernel bandwidth', qe['stats']['bandwidth'], ref_.kbwidth, rel=1e-3)
+    sof_q = {r_['stat']: r_['value'] for r_ in qe['summary']['rows']}
+    check.near(f'... Koenker-Machado pseudo RSquare = Stata\'s 1 - sum_adev/sum_rdev ({lab_})', sof_q['Pseudo RSquare (Koenker–Machado)'], 1 - ref_.sum_adev / ref_.sum_rdev, rel=1e-6)
+    check.near(f'... Stata\'s sum of weighted deviations is twice the check loss ({lab_})', 2 * sof_q['Sum of Check Losses'], ref_.sum_adev, rel=2e-6)
+qe5 = call('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=0.75, qr_cov='iid', process=False)
+qsm = QuantReg(engel['foodexp'], sm.add_constant(engel['income'])).fit(q=0.75, vcov='iid', max_iter=5000)
+check('statsmodels\' prsquared interpolates the unconditional quantile: it is not Stata\'s at 0.75', abs(float(qsm.prsquared) - (1 - rq.epanechnikov_hsheather_q75.sum_adev / rq.epanechnikov_hsheather_q75.sum_rdev)) > 1e-6, True)
+check.near('... the report shows it in its notes', float(qe5['stats']['prsquared']), float(qsm.prsquared), rel=1e-10)
+# the estimates are statsmodels' QuantReg at every quantile, robust and iid; the robust covariance is the iid one at the median
+yq_ = engel['foodexp'].to_numpy(float)
+Xq_ = sm.add_constant(engel['income'].to_numpy(float))
+for tau_ in (0.1, 0.25, 0.5, 0.9):
+    for cov_ in ('robust', 'iid'):
+        qq = call('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=tau_, qr_cov=cov_, process=False)
+        dq = QuantReg(yq_, Xq_).fit(q=tau_, vcov=cov_, max_iter=5000)
+        # the same IRLS; the design's memory order changes the rounding of its products, so they agree to the IRLS tolerance
+        check.near(f'QuantReg at {tau_} ({cov_}) = statsmodels called directly: estimates and std errors', maxdiff([r_['estimate'] for r_ in qq['estimates']['rows']] + [r_['se'] for r_ in qq['estimates']['rows']], np.r_[dq.params, dq.bse]), 0.0, abs_=2e-6)
+qr_i = rows_of(call('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=0.5, qr_cov='iid', process=False)['estimates'])
+qr_r = rows_of(call('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=0.5, qr_cov='robust', process=False)['estimates'])
+check.near('statsmodels\' robust covariance is its iid one at the median (one density for every row)', qr_r['income']['se'], qr_i['income']['se'], rel=1e-12)
+# heteroscedastic errors: the true quantile slopes, Powell's sandwich against the spread of the estimates over samples
+hq = np.random.default_rng(77)
+
+
+def het_sample(n_, rng_):
+    x_ = rng_.uniform(0, 10, n_)
+    return x_, 1 + 0.5 * x_ + (0.2 + 0.3 * x_) * rng_.normal(size=n_)
+
+
+xq1, yq1 = het_sample(4000, hq)
+t_hq = table({'x': xq1.tolist(), 'y': yq1.tolist()})
+for tau_ in (0.1, 0.5, 0.9):
+    qh_ = rows_of(call('fitmodel.quantreg', table=t_hq, y='y', effects=[['x']], tau=tau_, qr_cov='powell', process=False)['estimates'])
+    truth_ = 0.5 + 0.3 * stats.norm.ppf(tau_)
+    check(f'known truth: the {tau_} quantile slope {truth_:.4f} within 3 Powell standard errors', abs(qh_['x']['estimate'] - truth_) < 3 * qh_['x']['se'], True)
+reps, n_rep = 150, 500
+slopes, se_pw, se_rb = [], [], []
+Xr_rep = None
+from statsmodels.regression.quantile_regression import kernels as qr_kernels
+for _ in range(reps):
+    xr_, yr_ = het_sample(n_rep, hq)
+    Xr_rep = sm.add_constant(xr_)
+    fr_ = QuantReg(yr_, Xr_rep).fit(q=0.9, max_iter=5000)
+    slopes.append(float(fr_.params[1]))
+    se_rb.append(float(fr_.bse[1]))
+    e_ = yr_ - Xr_rep @ fr_.params
+    f_ = qr_kernels['epa'](e_ / fr_.bandwidth) / fr_.bandwidth
+    A_ = np.linalg.inv((Xr_rep * f_[:, None]).T @ Xr_rep)
+    se_pw.append(float(np.sqrt((0.9 * 0.1 * A_ @ Xr_rep.T @ Xr_rep @ A_)[1, 1])))
+sd_true = float(np.std(slopes, ddof=1))
+print(f'      the 0.9 slope over {reps} samples: sd {sd_true:.4f}; mean Powell se {np.mean(se_pw):.4f}; mean statsmodels robust se {np.mean(se_rb):.4f}')
+check('Powell\'s sandwich tracks the spread of the estimates over samples (within 20%)', abs(np.mean(se_pw) / sd_true - 1) < 0.2, True)
+check('statsmodels\' robust standard error is too small with this heteroscedasticity (by more than 20%)', np.mean(se_rb) / sd_true < 0.8, True)
+xs_, ys_ = het_sample(300, np.random.default_rng(5))
+t_pw = table({'x': xs_.tolist(), 'y': ys_.tolist()})
+pw_ = call('fitmodel.quantreg', table=t_pw, y='y', effects=[['x']], tau=0.9, qr_cov='powell', kernel='gau', bandwidth='bofinger', process=False)
+fpw = QuantReg(ys_, sm.add_constant(xs_)).fit(q=0.9, kernel='gau', bandwidth='bofinger', max_iter=5000)
+ep_ = ys_ - sm.add_constant(xs_) @ fpw.params
+fk_ = np.exp(-0.5 * (ep_ / fpw.bandwidth) ** 2) / math.sqrt(2 * math.pi) / fpw.bandwidth
+Xp_ = sm.add_constant(xs_)
+Ap_ = np.linalg.inv((Xp_ * fk_[:, None]).T @ Xp_)
+check.near('Powell\'s sandwich (Gaussian kernel, Bofinger) = its formula', rows_of(pw_['estimates'])['x']['se'], float(np.sqrt((0.09 * Ap_ @ Xp_.T @ Xp_ @ Ap_)[1, 1])), rel=1e-9)
+# the quantile process, the least squares reference, the lines, the share below
+d_qp = pd.DataFrame({'x': xq1, 'g': np.where(np.arange(4000) % 3 == 0, 'a', np.where(np.arange(4000) % 3 == 1, 'b', 'c')), 'y': yq1})
+t_qp = table({c: d_qp[c].tolist() for c in d_qp.columns})
+qp_ = call('fitmodel.quantreg', table=t_qp, y='y', effects=[['x'], ['g']], tau=0.5, taus=[0.1, 0.3, 0.5, 0.7, 0.9])
+pr_ = qp_['process']
+Xqp = patsy.dmatrix('x + C(g, Sum)', d_qp)
+check('the quantile process at the quantiles asked for', pr_['taus'], [0.1, 0.3, 0.5, 0.7, 0.9])
+check('... one curve per term, in the estimates\' order', pr_['terms'], ['Intercept', 'x', 'g[a]', 'g[b]'])
+for j_, tau_ in enumerate(pr_['taus']):
+    dq = QuantReg(yq1, np.asarray(Xqp)).fit(q=tau_, max_iter=5000)
+    check.near(f'the process at {tau_} = QuantReg there (every coefficient)', maxdiff([pr_['estimate'][i][j_] for i in range(4)], dq.params[[0, 3, 1, 2]]), 0.0, abs_=2e-6)   # patsy puts g first
+olq = sm.OLS(yq1, np.asarray(Xqp)).fit()
+check.near('the process\'s least squares line and band = OLS and its interval', maxdiff(qp_['ols']['estimate'] + qp_['ols']['lower'], np.r_[olq.params[[0, 3, 1, 2]], olq.conf_int()[[0, 3, 1, 2], 0]]), 0.0, abs_=1e-9)
+check('two factors: no quantile lines', 'lines' in qp_, False)
+ql_ = call('fitmodel.quantreg', table=t_hq, y='y', effects=[['x'], ['x', 'x']], tau=0.6, process=False)
+check('one continuous factor (with its square): the lines of 0.1, 0.25, 0.5, 0.6, 0.75, 0.9', [l_['tau'] for l_ in ql_['lines']['lines']], [0.1, 0.25, 0.5, 0.6, 0.75, 0.9])
+mxq = float(xq1.mean())
+Xl_ = np.column_stack([np.ones(4000), xq1, (xq1 - mxq) ** 2])
+dl_ = QuantReg(yq1, Xl_).fit(q=0.75, max_iter=5000)
+gx_ = np.asarray(ql_['lines']['x'])
+check.near('... the 0.75 line is the fitted quantile over the grid', maxdiff(ql_['lines']['lines'][4]['y'], dl_.params[0] + dl_.params[1] * gx_ + dl_.params[2] * (gx_ - mxq) ** 2), 0.0, abs_=1e-9)
+check('... the report\'s quantile is marked', [l_['current'] for l_ in ql_['lines']['lines']], [False, False, False, True, False, False])
+check.near('the share of rows below the fitted 0.6 quantile is 0.6', ql_['stats']['below'], 0.6, abs_=4 / 4000)
+qa_ = call('fitmodel.quantreg', table=t_qp, y='y', effects=[['x'], ['g']], tau=0.3, taus=[0.3, 0.6])
+qb_ = call('fitmodel.quantreg', table=t_qp, y='y', effects=[['x'], ['g']], tau=0.6, taus=[0.3, 0.6])
+check.near('a new quantile: its estimates are the process\'s at that quantile (the fits are shared)', maxdiff([r_['estimate'] for r_ in qb_['estimates']['rows']], [qa_['process']['estimate'][i][1] for i in range(4)]), 0.0, abs_=1e-12)
+check('... and the report\'s key names the quantile', qa_['key'] != qb_['key'], True)
+t_md = table({'y': [3.0, 1.0, 4.0, 1.5, 9.0, 2.6, 5.3], 'x': [1.0, 2, 3, 4, 5, 6, 7]})
+qmd = call('fitmodel.quantreg', table=t_md, y='y', effects=[['x']], tau=0.5, no_intercept=False, process=False)
+check.near('the pseudo RSquare\'s null loss is the check loss at the sample median', qmd['stats']['v0'], 0.5 * float(np.sum(np.abs(np.array([3.0, 1.0, 4.0, 1.5, 9.0, 2.6, 5.3]) - 3.0))), rel=1e-12)
+pq_ = call('fitmodel.profile', table=t_qp, kind='qr', y='y', effects=[['x'], ['g']], tau=0.5, current={'x': 4.0, 'g': 'b'})
+d05 = QuantReg(yq1, np.asarray(Xqp)).fit(q=0.5, max_iter=5000)
+xq_p = np.array([1.0, 0.0, 1.0, 4.0])   # patsy's order: 1, g[a], g[b], x
+check.near('the quantile profiler: the predicted median at x = 4, g = b', pq_['responses'][0]['current']['pred'], float(xq_p @ d05.params), rel=1e-9)
+check.near('... its lower limit', pq_['responses'][0]['current']['lower'], float(xq_p @ d05.params - stats.t.ppf(0.975, 4000 - 4) * math.sqrt(xq_p @ d05.cov_params() @ xq_p)), rel=1e-8)
+ns, err = run_code(qp_['code'], d_qp, 'data')
+check('Quantile Regression code runs', err, None)
+if not err:
+    check.near('its fit and process are the report\'s', abs(float(ns['fit'].params['x']) - rows_of(qp_['estimates'])['x']['estimate']) + abs(float(ns['process']['x'].iloc[4]) - pr_['estimate'][1][4]), 0.0, abs_=1e-9)
+qpw = call('fitmodel.quantreg', table=t_pw, y='y', effects=[['x']], tau=0.9, qr_cov='powell', process=False)
+ns, err = run_code(qpw['code'], pd.DataFrame({'x': xs_, 'y': ys_}), 'data')
+check('Powell code runs', err, None)
+if not err:
+    check.near('its standard errors are the report\'s', float(np.sqrt(np.diag(ns['V']))[1]), rows_of(qpw['estimates'])['x']['se'], rel=1e-9)
+    check.near('and its pseudo RSquare', float(1 - ns['rho'](ns['fit'].resid.to_numpy()) / ns['v0']), qpw['stats']['r1'], rel=1e-9)
+check('Quantile Regression refuses a quantile of 1', 'strictly between' in (err_of('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], tau=1.0) or ''), True)
+check('Quantile Regression refuses weights', 'weights' in (err_of('fitmodel.quantreg', table=t_en, y='foodexp', effects=[['income']], weight='income') or ''), True)
+
+# ---- Recursive and rolling regression: R's strucchange (the values statsmodels' test suite records), brute force, known truth ------
+rls_R = pd.read_csv(os.path.join(SMDIR, 'regression', 'tests', 'results', 'results_rls_R.csv'))
+mdat = sm.datasets.macrodata.load_pandas().data
+t_rls = table({'cpi': mdat['cpi'].tolist(), 'm1': mdat['m1'].tolist(), 'realgdp': mdat['realgdp'].tolist(), 'quarter': mdat['quarter'].tolist()})
+rr_ = call('fitmodel.recursive', table=t_rls, y='cpi', effects=[['m1']], rolling=True, window=40)
+rec_ = {c_['term']: c_ for c_ in rr_['recursive']}
+check('the recursion starts after the 2 parameters\' rows', rr_['start'], 2)
+check.near('recursive residuals = R\'s strucchange (recresid)', maxdiff(rr_['resid'], rls_R['rec_resid']), 0.0, abs_=1e-7)
+check.near('recursive estimates of m1 = R\'s (from the 10th row, as statsmodels\' tests)', maxdiff(rec_['m1']['estimate'][7:], rls_R['beta2'].to_numpy()[7:]), 0.0, abs_=1e-9)
+check.near('... of the intercept', maxdiff(rec_['Intercept']['estimate'][7:], rls_R['beta1'].to_numpy()[7:]), 0.0, abs_=5e-7)
+ols_m1 = sm.OLS(mdat['cpi'].to_numpy(), sm.add_constant(mdat['m1'].to_numpy())).fit()
+from statsmodels.stats.diagnostic import recursive_olsresiduals
+check.near('CUSUM = statsmodels\' recursive_olsresiduals (another implementation)', maxdiff(rr_['cusum']['y'], recursive_olsresiduals(ols_m1)[-2][1:]), 0.0, abs_=1e-6)
+Xm = sm.add_constant(mdat['m1'].to_numpy())
+ym = mdat['cpi'].to_numpy()
+for t_ in (5, 60, 150, 202):
+    b_prev = np.linalg.lstsq(Xm[:t_ - 1], ym[:t_ - 1], rcond=None)[0]
+    w_ = (ym[t_ - 1] - Xm[t_ - 1] @ b_prev) / math.sqrt(1 + Xm[t_ - 1] @ np.linalg.inv(Xm[:t_ - 1].T @ Xm[:t_ - 1]) @ Xm[t_ - 1])
+    check.near(f'the recursive residual of row {t_}: its prediction error from the rows before, standardised (by hand)', rr_['resid'][t_ - 3], float(w_), rel=1e-7)
+    bt_ = np.linalg.lstsq(Xm[:t_], ym[:t_], rcond=None)[0]
+    check.near(f'the recursive estimate at row {t_} = least squares on the first {t_} rows', rec_['m1']['estimate'][t_ - 3], float(bt_[1]), rel=1e-8)
+check.near('the last recursive estimates are the report\'s least squares', rec_['m1']['estimate'][-1], float(ols_m1.params[1]), rel=1e-9)
+check.near('... and their band the ±1.96 standard errors of least squares', rec_['m1']['upper'][-1], float(ols_m1.params[1] + stats.norm.ppf(0.975) * ols_m1.bse[1]), rel=1e-8)
+w_all = np.asarray(rr_['resid'])
+check.near('CUSUM = the cumulative sum of the recursive residuals over their standard deviation', maxdiff(rr_['cusum']['y'], np.cumsum(w_all) / np.std(w_all, ddof=1)), 0.0, abs_=1e-9)
+t_o = np.arange(3, 204)
+check.near('the 5% CUSUM bounds: 0.948 (sqrt(n - k) + 2 (t - k)/sqrt(n - k))', maxdiff(rr_['cusum']['upper'], 0.948 * (math.sqrt(201) + 2 * (t_o - 2) / math.sqrt(201))), 0.0, abs_=1e-9)
+check.near('CUSUM of squares = the cumulative share of the squared recursive residuals', maxdiff(rr_['cusumsq']['y'], np.cumsum(w_all ** 2) / np.sum(w_all ** 2)), 0.0, abs_=1e-12)
+rls_m = RecursiveLS(ym, Xm).fit()
+lo_sq, up_sq = rls_m._cusum_squares_significance_bounds(0.05, points=t_o)
+check.near('... its bounds are statsmodels\' (Edgerton and Wells)', maxdiff(rr_['cusumsq']['upper'], up_sq), 0.0, abs_=1e-12)
+check('macrodata: prices and money do not keep one relation (CUSUM and CUSUM of squares cross)', (rr_['cusum']['crossed'], rr_['cusumsq']['crossed']), (True, True))
+
+
+def bde(a_):
+    return 1 - stats.norm.cdf(3 * a_) + math.exp(-4 * a_ * a_) * stats.norm.cdf(a_)
+
+
+from scipy import optimize as sopt
+check('Brown, Durbin and Evans\'s constants 1.143, 0.948, 0.850 solve alpha/2 = 1 - Phi(3a) + exp(-4a^2) Phi(a)',
+      [round(sopt.brentq(lambda a_: bde(a_) - al_ / 2, 0.1, 3), 3) for al_ in (0.01, 0.05, 0.1)], [1.143, 0.948, 0.85])
+rr10 = call('fitmodel.recursive', table=t_rls, y='cpi', effects=[['m1']], conf=0.1)
+check.near('the 10% bounds take 0.850', rr10['cusum']['constant'], 0.850, rel=1e-12)
+check('statsmodels\' _cusum_significance_bounds takes 0.950 at 10% (a slip)', round(float(rls_m._cusum_significance_bounds(0.1, points=np.array([203]))[1][0]) / (3 * math.sqrt(201)), 3), 0.95)
+ro_ = rr_['rolling']
+check('rolling windows of 40: the estimates from the 40th row on', (ro_['window'], ro_['x'][0], len(ro_['x'])), (40, 40, 164))
+for end_ in (40, 100, 203):
+    bw_ = sm.OLS(ym[end_ - 40:end_], Xm[end_ - 40:end_]).fit()
+    rro = {c_['term']: c_ for c_ in ro_['terms']}
+    check.near(f'the rolling estimate of the window ending at row {end_} = least squares on it', rro['m1']['estimate'][end_ - 40], float(bw_.params[1]), rel=1e-9)
+    check.near(f'... its upper limit (t on 38 DF, window ending at row {end_})', rro['m1']['upper'][end_ - 40], float(bw_.conf_int()[1, 1]), rel=1e-9)
+check.near('the rolling estimates = statsmodels\' RollingOLS called directly', maxdiff(ro_['terms'][1]['estimate'], np.asarray(RollingOLS(ym, Xm, window=40).fit().params)[39:, 1]), 0.0, abs_=1e-12)
+rsr = call('fitmodel.recursive', table=t_rls, y='cpi', effects=[['m1']], rows=list(range(100)))
+check('a row subset (a By group): the recursion over those rows', (rsr['n'], rsr['order']['rows'][-1]), (100, 99))
+check.near('... its last estimate is least squares on them', {c_['term']: c_ for c_ in rsr['recursive']}['m1']['estimate'][-1], float(sm.OLS(ym[:100], Xm[:100]).fit().params[1]), rel=1e-9)
+t_sm12 = table({'x': list(range(12)), 'y': [1.0, 2.5, 2.0, 4.1, 3.9, 6.2, 5.8, 8.1, 7.7, 9.9, 10.4, 12.2]})
+check('the default rolling window: a tenth of the rows, at least 3 per parameter, at most every row', call('fitmodel.recursive', table=t_sm12, y='y', effects=[['x']], rolling=True)['rolling']['window'], 6)
+ns, err = run_code(rr_['code'], mdat[['cpi', 'm1', 'realgdp', 'quarter']], 'data')
+check('recursive and rolling code runs', err, None)
+if not err:
+    check.near('its recursive estimates, CUSUM and rolling estimates are the report\'s', abs(float(ns['rls'].recursive_coefficients.filtered[1, -1]) - rec_['m1']['estimate'][-1]) +
+               abs(float(ns['rls'].cusum[-1]) - rr_['cusum']['y'][-1]) + abs(float(ns['roll'].params[-1, 1]) - ro_['terms'][1]['estimate'][-1]), 0.0, abs_=1e-9)
+# known truth: a break in a slope along a time column; the rows of the table shuffled, the report sorts them
+br = np.random.default_rng(8)
+n_br = 600
+tt_ = np.arange(n_br, dtype=float)
+xb_ = br.normal(5, 2, n_br)
+gb_ = np.where(br.uniform(size=n_br) < 0.5, 'p', 'q')
+yb_ = 1 + np.where(tt_ < 350, 0.5, 0.9) * xb_ + 0.3 * (gb_ == 'p') + br.normal(0, 1, n_br)
+ys0 = 1 + 0.5 * xb_ + 0.3 * (gb_ == 'p') + br.normal(0, 1, n_br)
+perm = br.permutation(n_br)
+d_br = pd.DataFrame({'time': tt_, 'x': xb_, 'g': gb_, 'y': yb_, 'y0': ys0}).iloc[perm].reset_index(drop=True)
+t_br = table({c: d_br[c].tolist() for c in d_br.columns})
+rb_ = call('fitmodel.recursive', table=t_br, y='y', effects=[['x'], ['g'], ['x', 'g']], order_by='time', rolling=True, window=60)
+check('known truth: a break at time 350, found by the CUSUM after it', rb_['cusum']['crossed'] and 350 < rb_['cusum']['first'] < 600, True)
+check('... the rows are the table\'s, sorted by time', rb_['order']['rows'][:3], [int(np.flatnonzero(d_br['time'] == v)[0]) for v in (0.0, 1.0, 2.0)])
+check('... the order values come back for the hover text', rb_['order']['values'][:3], [0.0, 1.0, 2.0])
+rb0 = call('fitmodel.recursive', table=t_br, y='y0', effects=[['x'], ['g'], ['x', 'g']], order_by='time')
+check('known truth: without a break the CUSUM keeps inside its bounds', (rb0['cusum']['crossed'], rb0['cusum']['ratio'] < 1), (False, True))
+srt = d_br.sort_values('time', kind='stable')
+mxb = float(d_br['x'].mean())
+gcb = np.where(srt['g'] == 'p', 1.0, -1.0)
+Xb = np.column_stack([np.ones(n_br), srt['x'] - mxb, gcb, (srt['x'] - mxb) * gcb])   # the design as fitted (x centred like its crossing)
+rlb = RecursiveLS(srt['y'].to_numpy(), Xb).fit()
+recb = {c_['term']: c_ for c_ in rb_['recursive']}
+check.near('the recursion sorted by time = RecursiveLS on the sorted rows (the slope of x)', maxdiff(recb['x']['estimate'], rlb.recursive_coefficients.filtered[1, rb_['start']:]), 0.0, abs_=1e-9)
+check.near('... the intercept put back at x = 0 at every step', maxdiff(recb['Intercept']['estimate'], rlb.recursive_coefficients.filtered[0, rb_['start']:] - mxb * rlb.recursive_coefficients.filtered[1, rb_['start']:]), 0.0, abs_=1e-8)
+rob_ = {c_['term']: c_ for c_ in rb_['rolling']['terms']}
+wlast = sm.OLS(srt['y'].to_numpy()[-60:], Xb[-60:]).fit()
+check.near('the last rolling window = least squares on the last 60 rows in time', rob_['x']['estimate'][-1], float(wlast.params[1]), rel=1e-9)
+check.near('... its intercept at x = 0', rob_['Intercept']['estimate'][-1], float(wlast.params[0] - mxb * wlast.params[1]), rel=1e-9)
+rbc = call('fitmodel.recursive', table=t_br, y='y', effects=[['x'], ['g']], order_by='g', rolling=True, window=30)
+check('sorted by a nominal column: the rows of p first (its level order)', all(d_br['g'][r_] == 'p' for r_ in rbc['order']['rows'][:10]), True)
+check('... the recursion starts when both levels have come', rbc['start'] > int((d_br['g'] == 'p').sum()) - 1, True)
+check('... windows of one level have a singular design: no estimates, and the notes say so', rbc['rolling']['singular'] > 0 and any('singular' in n_ for n_ in rbc['notes']), True)
+t_brm = table({**{c: d_br[c].tolist() for c in d_br.columns}, 'tm': [None if i % 10 == 0 else v for i, v in enumerate(d_br['time'])]})
+rbm = call('fitmodel.recursive', table=t_brm, y='y', effects=[['x']], order_by='tm')
+check('rows without a value of the order column are left out, and the notes say so', (rbm['n'], rbm['order']['dropped'], any('left out' in n_ for n_ in rbm['notes'])), (540, 60, True))
+wts_b = br.uniform(0.5, 2, n_br)
+t_brw = table({**{c: d_br[c].tolist() for c in d_br.columns}, 'w': wts_b.tolist()})
+rbw = call('fitmodel.recursive', table=t_brw, y='y', effects=[['x']], weight='w', order_by='time', rolling=True, window=50)
+ow_ = np.argsort(d_br['time'].to_numpy(), kind='stable')
+Xw_ = sm.add_constant(d_br['x'].to_numpy())[ow_]
+rlw = RecursiveLS(d_br['y'].to_numpy()[ow_] * np.sqrt(wts_b[ow_]), Xw_ * np.sqrt(wts_b[ow_])[:, None]).fit()
+check.near('with a Weight: the recursion of the data times sqrt(w)', maxdiff({c_['term']: c_ for c_ in rbw['recursive']}['x']['estimate'], rlw.recursive_coefficients.filtered[1, rbw['start']:]), 0.0, abs_=1e-9)
+rww = RollingWLS(d_br['y'].to_numpy()[ow_], Xw_, window=50, weights=wts_b[ow_]).fit()
+check.near('... and the rolling estimates = RollingWLS', maxdiff({c_['term']: c_ for c_ in rbw['rolling']['terms']}['x']['estimate'], np.asarray(rww.params)[49:, 1]), 0.0, abs_=1e-9)
+ns, err = run_code(rb_['code'], d_br, 'data')
+check('recursive code sorted by a column runs', err, None)
+if not err:
+    jx_ = [i for i, nm in enumerate(ns['fit'].model.exog_names) if nm.startswith('I(x') and ':' not in nm][0]   # patsy puts g first
+    check.near('its recursive estimates are the report\'s', abs(float(ns['rls'].recursive_coefficients.filtered[jx_, -1]) - recb['x']['estimate'][-1]) + abs(float(ns['rls'].cusum[-1]) - rb_['cusum']['y'][-1]), 0.0, abs_=1e-9)
+check('recursive fits refuse Freq', 'Freq' in (err_of('fitmodel.recursive', table=t_brw, y='y', effects=[['x']], freq='w') or ''), True)
+
 sys.exit(check.done())

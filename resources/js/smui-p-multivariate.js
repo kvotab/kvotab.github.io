@@ -269,10 +269,35 @@
       decorate(tbl, (tr, row) => { const td = tr.cells[tr.cells.length - 1]; td.classList.add('mv-barcell'); cellBar(td, row.value, key === 'hoeffding' ? 0 : -1, 1, row.value < 0 ? '#2f6ec7' : RED); });
       ob.add(tbl, ctx.note({ spearman: 'The correlation of the ranks (ties averaged); p from the t approximation with n − 2 df (scipy.stats.spearmanr).', kendall: 'τb from concordant and discordant pairs with the correction for ties; p from the normal approximation (scipy.stats.kendalltau).', hoeffding: 'D ranges from −0.5 to 1; large values mean dependence of any kind. Computed as SAS and JMP define it (30 × Hoeffding\'s U statistic); p from the Blum-Kiefer-Rosenblatt limit law of (n − 1)π⁴D/60 + π⁴/72.' }[key]), ctx.code(r.code));
     }
+    if (o('dcor', false)) await distanceOutline(ctx, names);
     if (o('splom', true)) splomOutline(ctx, cols);
     if (o('cmCorr', false) || o('cmP', false) || o('cmCluster', false)) await colorMaps(ctx, names, res);
     if (o('mahal', false) || o('jack', false) || o('t2', false)) await outlierOutlines(ctx, names);
     if (o('alpha:raw', false) || o('alpha:std', false)) await reliabilityOutline(ctx, names);
+  }
+
+  /* ---- distance correlation (statsmodels dist_dependence_measures; not in
+     JMP): 0 only for independence, whatever the form of the dependence ---- */
+  async function distanceOutline(ctx, names) {
+    const o = (k, d) => ctx.opt(k, d);
+    const ob = ctx.outline('Distance Correlations', { key: 'dcor', info: 'mv:dcor', menu: () => [
+      ctx.check('Color Cells', 'dcorCells', null, true), ctx.check('Asymptotic Test Only', 'dcorAsym', null, false),
+      { separator: true }, { label: 'Remove', action: () => ctx.set('dcor', false) }] });
+    const r = await ctx.call('multivariate.distance', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('dcorAsym', false) ? 'asym' : 'auto' });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    // 0 (neutral) to 1 (red): dCor is never negative
+    ob.add(matrixTable(ctx, names, r.matrix, { colors: o('dcorCells', true) ? (v) => diverging(v) : null, digits: 4, caption: 'Distance correlation' }));
+    const tbl = ctx.rt({
+      columns: [{ key: 'var', label: 'Variable', fmt: 'text' }, { key: 'by', label: 'by Variable', fmt: 'text' }, { key: 'dcor', label: 'dCor', digits: 4 }, { key: 'r', label: 'Correlation', digits: 4 },
+        { key: 'dcov', label: 'dCov' }, { key: 'stat', label: 'n·dCov²' }, { key: 'p', label: 'Prob>n·dCov²', fmt: 'p' }, { key: 'method', label: 'p-Value from', fmt: 'text' },
+        { key: 'z', label: '√(n·dCov²/S)', hidden: true }, { key: 'dvar_x', label: 'dVar by Variable', hidden: true }, { key: 'dvar_y', label: 'dVar Variable', hidden: true },
+        { key: 'count', label: 'Count', fmt: 'int', hidden: true }, { key: 'bar', label: '0 .2 .4 .6 .8', fmt: 'text' }],
+      rows: r.pairs.map((x) => ({ ...x, bar: '' })),
+    });
+    decorate(tbl, (tr, row) => { const td = tr.cells[tr.cells.length - 1]; td.classList.add('mv-barcell'); cellBar(td, row.dcor, 0, 1, RED); });
+    ob.add(tbl,
+      ctx.note('Distance correlation is 0 only when the two columns are independent, so it finds dependence of any form: a U or a circle, which the correlation and the rank correlations can miss (the (i) shows an example). dCov² is the mean product of the doubly centred distance matrices, dCor its correlation form (V-statistics, Székely, Rizzo and Bakirov 2007; statsmodels distance_statistics). The test of independence (distance_covariance_test) takes its p-value from permutations of the rows when a pair has at most 500 rows (the number B = 200 + 5000/n, a fixed seed), otherwise from the asymptotic bound; when no permutation reaches the observed n·dCov², statsmodels gives the asymptotic p-value instead, a conservative bound that can be larger than the permutation p-value (then below 1/B). Each pair on its own complete rows. Not in JMP, whose closest is Hoeffding\'s D (Nonparametric Correlations), a rank measure that also detects non-monotone dependence.'),
+      ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
   }
 
   function pairwiseOutline(ctx, res, lv) {
@@ -431,8 +456,9 @@
 
   SM.platforms.register({
     id: 'multivariate', label: 'Multivariate', menu: 'Analyze/Multivariate Methods', order: 10, info: 'p:multivariate',
-    about: 'Correlations of several columns (row-wise or pairwise), their tests and confidence intervals, inverse and partial correlations, covariances, Spearman, Kendall and Hoeffding, the scatterplot matrix with density ellipses, Mahalanobis, jackknife and T² distances, and Cronbach\'s α.',
-    uses: ['numpy (correlations, covariances, inverse)', 'scipy.stats: pearsonr, spearmanr, kendalltau, t, beta', "Hoeffding's D and the Blum-Kiefer-Rosenblatt law (numpy, scipy.integrate)", 'statsmodels.stats.weightstats.DescrStatsW (weights)'],
+    about: 'Correlations of several columns (row-wise or pairwise), their tests and confidence intervals, inverse and partial correlations, covariances, Spearman, Kendall and Hoeffding, the scatterplot matrix with density ellipses, Mahalanobis, jackknife and T² distances, and Cronbach\'s α. Beyond JMP: distance correlations with the distance covariance test of independence, which detect dependence that is not monotone.',
+    uses: ['numpy (correlations, covariances, inverse)', 'scipy.stats: pearsonr, spearmanr, kendalltau, t, beta', "Hoeffding's D and the Blum-Kiefer-Rosenblatt law (numpy, scipy.integrate)", 'statsmodels.stats.weightstats.DescrStatsW (weights)',
+      'statsmodels.stats.dist_dependence_measures: distance_statistics, distance_covariance_test'],
     topics: {
       'p:multivariate': {
         kicker: 'Analyze > Multivariate Methods', title: 'Multivariate',
@@ -440,11 +466,23 @@
         sections: [
           { heading: 'Roles', choices: [['Y, Columns', 'Two or more numeric columns (continuous or ordinal).'], ['Weight, Freq', 'Case weights and frequencies (DescrStatsW); a frequency counts as that many observations.'], ['By', 'One report per level.']] },
           { heading: 'Estimation Method', choices: [['Row-wise', 'Rows with a missing value in any column are left out of everything but the Univariate Simple Statistics and the Pairwise Correlations.'], ['Pairwise', 'Each correlation on the rows where its two columns are present; the matrix need not be positive definite.']] },
-          { heading: 'Differences from JMP', text: 'JMP\'s REML, ML and Robust estimation are not offered; its Default (REML when there are missing values) is Row-wise here. Hoeffding\'s D is computed as JMP documents it, with p-values from the Blum-Kiefer-Rosenblatt limit (as SAS does).' },
+          { heading: 'Differences from JMP', text: 'JMP\'s REML, ML and Robust estimation are not offered; its Default (REML when there are missing values) is Row-wise here. Hoeffding\'s D is computed as JMP documents it, with p-values from the Blum-Kiefer-Rosenblatt limit (as SAS does). Distance Correlations are statsmodels\', not JMP\'s.' },
         ],
         more: { label: 'Multivariate', id: 'help-p-multivariate' },
       },
       'mv:hoeffding': { kicker: 'Multivariate', title: "Hoeffding's D", lead: 'A rank measure of dependence of any form, not only monotone: D = 30[(n−2)(n−3)D₁ + D₂ − 2(n−2)D₃]/[n(n−1)(n−2)(n−3)(n−4)] from the ranks R, S and the bivariate ranks Q. It is 1 for a perfectly monotone relation and near 0 for independence (it can be negative). The p-value refers (n − 1)π⁴D/60 + π⁴/72 to the Blum-Kiefer-Rosenblatt distribution, computed here by Imhof\'s inversion.', more: { label: 'Multivariate', id: 'help-p-multivariate' } },
+      'mv:dcor': {
+        kicker: 'Multivariate', title: 'Distance correlation',
+        lead: 'A measure of dependence of any form: 0 only when two columns are independent, 1 for a straight line. It correlates the distances between rows, not the values: dCov² is the mean product of the two doubly centred distance matrices, and dCor = dCov/√(dVar_X·dVar_Y) (Székely, Rizzo and Bakirov 2007).',
+        facts: [['y = x², 41 points from −1 to 1', 'correlation 0, Spearman ρ 0.02, dCor 0.49, p 0.04 (permutations)'], ['a circle, 40 points', 'correlation 0, Spearman ρ 0.00, dCor 0.20, p 0.55'], ['y = x', 'every measure 1']],
+        sections: [
+          { heading: 'The example', text: 'For the parabola the correlation and the rank correlations are 0, for there is no monotone trend; the distance correlation sees the dependence. Some shapes, such as the circle, give it only a weak signal: no single measure finds every dependence.' },
+          { heading: 'The test', text: 'n·dCov² is large when the columns depend on each other. Its p-value comes from permuting the rows when a pair has at most 500 rows (B = 200 + 5000/n permutations, a fixed seed here, so the numbers repeat), otherwise from the asymptotic bound 2(1 − Φ(√(n·dCov²/S))), S the product of the mean distances. When no permutation reaches the observed value statsmodels gives that asymptotic p-value instead, and says so; that bound is conservative and can be larger than the permutation p-value, which is then below 1/B.' },
+          { heading: 'Size', text: 'The distance matrices are n × n: a pair with more than 2000 rows uses a seeded random subsample of 2000.' },
+          { heading: 'Not in JMP', text: 'JMP\'s closest is Hoeffding\'s D (Nonparametric Correlations), a rank measure that also detects non-monotone dependence.' },
+        ],
+        more: { label: 'Multivariate', id: 'help-p-multivariate' },
+      },
       'mv:outliers': { kicker: 'Multivariate', title: 'Outlier distances', lead: 'Mahalanobis distance: √((y − ȳ)′S⁻¹(y − ȳ)) with the sample mean and covariance of the rows with no missing value. The jackknife distance leaves the row itself out of the mean and covariance. T² is the squared Mahalanobis distance. The UCL of T² is (n − 1)²/n times the 1 − α quantile of Beta(p/2, (n − p − 1)/2) (Mason and Young 2002); the others are its transformations.', more: { label: 'Multivariate', id: 'help-p-multivariate' } },
     },
     launch: {
@@ -473,6 +511,7 @@
         ctx.check('Pairwise Correlations', 'pairwise', null, false),
         { label: 'Simple Statistics', submenu: () => [ctx.check('Univariate Simple Statistics', 'simpleUni', null, false), ctx.check('Multivariate Simple Statistics', 'simpleMulti', null, false)] },
         { label: 'Nonparametric Correlations', submenu: () => NONPAR.map(([k, l]) => ctx.check(l, `np:${k}`, null, false)) },
+        ctx.check('Distance Correlations', 'dcor', null, false),
         { label: 'Set α Level', submenu: () => levelOptions(ctx) },
         { label: 'Estimation Method', submenu: () => [['rowwise', 'Row-wise'], ['pairwise', 'Pairwise']].map(([v, l]) => ({ label: l, checked: o('method', 'rowwise') === v, action: () => ctx.set('method', v) })) },
         { separator: true },

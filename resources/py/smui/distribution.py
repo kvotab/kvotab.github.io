@@ -2,8 +2,9 @@
 
 Continuous columns: moments, JMP's quantiles, normality tests, tests of the
 mean and the standard deviation, fitted distributions with standard errors,
-process capability. Categorical columns: frequencies with confidence
-intervals, and a test of hypothesised probabilities.
+process capability, and for counts the test of a Poisson rate (with an
+exposure). Categorical columns: frequencies with confidence intervals by a
+choice of method, and a test of hypothesised probabilities.
 
 The statistics are statsmodels' where it has them (DescrStatsW, the
 normality tests, GenericLikelihoodModel for the standard errors of a fit,
@@ -503,6 +504,11 @@ def fit(table, column, rows=None, dist='normal', alpha=0.05, table_name='data'):
         line = f'print(stats.{scipy_name}.fit(x{", floc=0" if dist in ("lognormal", "weibull", "exponential", "gamma") else ""}))'
     elif dist == 'poisson':
         line = 'print(x.mean())   # the Poisson MLE of λ'
+        if 'error' not in out:
+            from statsmodels.stats.rates import confint_poisson
+            lo, hi = confint_poisson(float(np.sum(x)), float(len(x)), method='exact-c', alpha=alpha)
+            out['exact'] = {'lower': float(lo), 'upper': float(hi), 'method': 'exact (Garwood)'}
+            line += f'\nfrom statsmodels.stats.rates import confint_poisson; print(confint_poisson(x.sum(), len(x), method="exact-c", alpha={alpha!r}))   # the exact interval of λ'
     elif dist == 'negbin':
         line = '# λ, σ: maximise stats.nbinom.logpmf(x, λ/(σ-1), 1/σ).sum() over λ > 0, σ > 1'
     else:
@@ -577,8 +583,19 @@ def capability(table, column, rows=None, lsl=None, usl=None, target=None, alpha=
 
 # ---- categorical columns --------------------------------------------------
 
+# Confidence Interval Method for the level probabilities: statsmodels'
+# proportion_confint names, and what the report calls them
+CI_METHODS = {'wilson': 'Wilson score', 'agresti_coull': 'Agresti-Coull', 'jeffreys': 'Jeffreys', 'beta': 'Clopper-Pearson (exact)', 'normal': 'Wald'}
+
+
 @api('distribution.categorical')
 def categorical(table, column, rows=None, weight=None, freq=None, alpha=0.05, ci_method='wilson', table_name='data'):
+    """Frequencies of an ordinal or nominal column, and a confidence
+    interval for each level's probability (statsmodels proportion_confint:
+    Wilson's score interval, JMP's, by default; Agresti-Coull, Jeffreys,
+    Clopper-Pearson or Wald)."""
+    if ci_method not in CI_METHODS:
+        return {'error': f'unknown interval method {ci_method!r}'}
     s = data.series(table, column, rows)
     df = pd.DataFrame({column: s})
     if weight or freq:
@@ -597,11 +614,105 @@ def categorical(table, column, rows=None, weight=None, freq=None, alpha=0.05, ci
         lo, hi = proportion_confint(c, total, alpha=alpha, method=ci_method) if total else (float('nan'), float('nan'))
         rows_out.append({'level': lv, 'count': float(c), 'prob': p, 'se': math.sqrt(p * (1 - p) / total) if total else None,
                          'cum': cum, 'lower': float(lo), 'upper': float(hi)})
+    if weight or freq:
+        wexpr = ' * '.join(f'df[{json.dumps(v)}]' for v in (weight, freq) if v)
+        count_line = f'counts = ({wexpr}).groupby(df[{json.dumps(column)}]).sum()'
+    else:
+        count_line = f'counts = df[{json.dumps(column)}].value_counts().sort_index()'
     return {'column': column, 'levels': rows_out, 'n': total, 'n_levels': len(levels), 'n_missing': int(s.isna().sum()), 'alpha': alpha,
-            'ci_method': ci_method,
+            'ci_method': ci_method, 'ci_label': CI_METHODS[ci_method],
             'code': '\n'.join([code_head(table_name, ['from statsmodels.stats.proportion import proportion_confint']),
-                               f'counts = df[{json.dumps(column)}].value_counts().sort_index()',
-                               f'print(proportion_confint(counts, counts.sum(), alpha={alpha}, method={ci_method!r}))'])}
+                               count_line,
+                               f'print(proportion_confint(counts, counts.sum(), alpha={alpha}, method={ci_method!r}))   # {CI_METHODS[ci_method]}'])}
+
+
+# Test Rate: statsmodels' methods for one Poisson rate
+RATE_TESTS_1 = {'exact-c': 'exact (central)', 'midp-c': 'mid-p (central)', 'score': 'score', 'wald': 'Wald', 'waldccv': 'Wald, 0.5 added to the variance',
+                'sqrt-a': 'Anscombe square root', 'sqrt-v': 'Vandenbroucke square root', 'sqrt': 'square root'}
+RATE_CIS_1 = {'exact-c': 'exact (Garwood)', 'midp-c': 'mid-p', 'score': 'score', 'jeff': 'Jeffreys', 'wald': 'Wald', 'waldccv': 'Wald, 0.5 added to the variance',
+              'sqrt-a': 'Anscombe square root'}
+
+
+@api('distribution.test_rate')
+def test_rate(table, column, rows=None, rate=1.0, exposure=None, method='exact-c', ci_method='exact-c', weight=None, freq=None, alpha=0.05,
+              table_name='data'):
+    """Test Rate: the column counts events, each row a unit observed for its
+    exposure (1 without one). The rate is the total count over the total
+    exposure; its test against a hypothesized rate is statsmodels'
+    test_poisson (two-sided and each one-sided) and its interval
+    confint_poisson. Freq counts a row as that many units."""
+    from statsmodels.stats.rates import confint_poisson, test_poisson
+    if method not in RATE_TESTS_1:
+        return {'error': f'unknown test method {method!r}'}
+    if ci_method not in RATE_CIS_1:
+        return {'error': f'unknown interval method {ci_method!r}'}
+    if rate is None or not rate > 0:
+        return {'error': 'the hypothesized rate must be positive'}
+    if exposure and exposure == column:
+        return {'error': 'the exposure must be another column'}
+    df = data.frame(table, [column, exposure, freq], rows, as_category=False)
+    y = df[column].to_numpy(float)
+    e = df[exposure].to_numpy(float) if exposure else np.ones(len(df))
+    f = df[freq].to_numpy(float) if freq else np.ones(len(df))
+    ok = np.isfinite(y) & np.isfinite(e) & (e > 0) & np.isfinite(f) & (f > 0)
+    notes = []
+    if exposure and np.sum(np.isfinite(y) & ~(np.isfinite(e) & (e > 0))):
+        notes.append(f'{int(np.sum(np.isfinite(y) & ~(np.isfinite(e) & (e > 0))))} row(s) without a positive exposure are left out.')
+    y, e, f = y[ok], e[ok], f[ok]
+    if not len(y):
+        return {'error': 'no rows with a count' + (' and a positive exposure' if exposure else '')}
+    if not (np.all(y >= 0) and np.all(np.abs(y - np.rint(y)) < 1e-9)):
+        return {'error': 'Test Rate needs counts: whole numbers of zero or more'}
+    count, expo, units = float(np.sum(f * y)), float(np.sum(f * e)), float(np.sum(f))
+    if method in ('exact-c', 'midp-c') and abs(count - round(count)) > 1e-9:
+        return {'error': 'the exact tests need a whole total count: Freq must hold whole numbers'}
+    tests = {}
+    for alt in ('two-sided', 'larger', 'smaller'):
+        with np.errstate(divide='ignore', invalid='ignore'):
+            r = test_poisson(count, expo, value=float(rate), method=method, alternative=alt)
+        tests[alt] = r
+    with np.errstate(divide='ignore', invalid='ignore'):
+        lo, hi = confint_poisson(count, expo, method=ci_method, alpha=alpha)
+    lo, hi = float(lo), float(hi)
+    if ci_method == 'midp-c' and count == 0:
+        lo = 0.0   # statsmodels' root finding returns the upper limit twice when there are no events
+        notes.append('With no events the lower mid-p limit is 0 (statsmodels\' inversion returns the upper limit twice).')
+    if ci_method == 'wald' and count == 0:
+        notes.append('With no events the Wald interval has no width: use the exact or score interval.')
+    est = count / expo
+    mu = est * e
+    with np.errstate(divide='ignore', invalid='ignore'):
+        disp = float(np.sum(f * (y - mu) ** 2 / mu) / (units - 1)) if est > 0 and units > 1 else None
+    if disp is not None and disp > 1.5:
+        notes.append(f'The Pearson χ²/DF of the counts about the rate is {disp:.3g}: they vary more than a Poisson allows, and the test treats the evidence as stronger than it is.')
+    if weight:
+        notes.append('Weight is not used by the rate test.')
+    out = {'column': column, 'rate0': float(rate), 'count': count, 'exposure': expo, 'units': units, 'rate': est, 'lower': lo, 'upper': hi,
+           'method': method, 'method_label': RATE_TESTS_1[method], 'ci_method': ci_method, 'ci_label': RATE_CIS_1[ci_method], 'alpha': alpha,
+           'statistic': _num(tests['two-sided'].statistic), 'p_two': _num(tests['two-sided'].pvalue), 'p_greater': _num(tests['larger'].pvalue),
+           'p_less': _num(tests['smaller'].pvalue), 'dispersion': disp, 'has_exposure': bool(exposure), 'notes': notes}
+    c = [code_head(table_name, ['from statsmodels.stats.rates import test_poisson, confint_poisson']),
+         f'd = df[[{", ".join(json.dumps(v) for v in (column, exposure, freq) if v)}]].dropna()']
+    if exposure:
+        c.append(f'd = d[d[{json.dumps(exposure)}] > 0]')
+    fw = f'd[{json.dumps(freq)}]' if freq else '1'
+    ex = f'd[{json.dumps(exposure)}]' if exposure else '1'
+    if exposure or freq:
+        c.append(f'count, exposure = (d[{json.dumps(column)}] * {fw}).sum(), ({ex} * {fw}).sum()')
+    else:
+        c.append(f'count, exposure = d[{json.dumps(column)}].sum(), len(d)   # without an exposure each row is one unit')
+    c.append(f'print(count / exposure, confint_poisson(count, exposure, method={ci_method!r}, alpha={alpha!r}))   # the rate and its {RATE_CIS_1[ci_method]} interval')
+    c.append(f'for alt in ["two-sided", "larger", "smaller"]: print(alt, test_poisson(count, exposure, value={float(rate)!r}, method={method!r}, alternative=alt).pvalue)')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+def _num(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(f) else f
 
 
 @api('distribution.test_probs')

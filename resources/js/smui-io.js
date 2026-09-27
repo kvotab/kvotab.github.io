@@ -388,6 +388,14 @@
     },
   };
 
+  /* A platform may bring an example table of its own, simulated like these
+     (seeded; nothing that is not ours): { label, about, make() -> SM.Table }.
+     It appears in File > Examples and on the Home tab. */
+  function addExample(key, def) {
+    if (!key || !def || typeof def.make !== 'function') throw new Error('an example needs a key and make()');
+    EXAMPLES[key] = def;
+  }
+
   function example(key) {
     const ex = EXAMPLES[key];
     if (!ex) throw new Error(`no example ${key}`);
@@ -398,6 +406,6 @@
 
   SM.io = Object.freeze({
     detectDelimiter, parseRows, columnsFromRows, tableFromText, readXlsx, readFile, toCsv, toXlsxBlob, formatDate, parseDate,
-    cellText, EXAMPLES, example,
+    cellText, EXAMPLES, example, addExample,
   });
 }(typeof self !== 'undefined' ? self : this));
