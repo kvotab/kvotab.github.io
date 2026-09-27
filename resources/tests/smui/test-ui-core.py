@@ -289,6 +289,71 @@ async def main():
     check('a range filter narrows it further', r['count2'].startswith(f"{r['want2']} matching rows"), True)
     check('closing the filter restores the rows', (r['off'], 'filtered' in r['noteOff']), (True, False))
 
+    # ---- the levels of a filter: a click, ctrl/⌘ for one more, shift for a sweep
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[0]; const t = rep.table;
+      const done = () => new Promise(res => rep.on('done', res));
+      rep.toggleFilter(true); await done();
+      rep.spec.filter.push({ col: t.col('age').id, levels: [] }); rep._renderFilter();
+      const btns = () => [...rep.filterHost.querySelectorAll('.sm-filter-level')];
+      const on = () => btns().filter(b => b.classList.contains('is-on')).map(b => b.firstChild.textContent);
+      const click = async (i, o = {}) => { const d = done(); btns()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, ...o })); await d; };
+      const levels = btns().map(b => b.firstChild.textContent);
+      await click(0); const a = on();
+      await click(3, { shiftKey: true }); const b = on();
+      await click(1, { metaKey: true }); const c = on();
+      await click(4, { shiftKey: true, metaKey: true }); const d = on();
+      await click(2, { shiftKey: true }); const e = on();
+      rep.toggleFilter(false); await done();
+      return { levels, a, b, c, d, e };
+    })()''')
+    L = r['levels']
+    check('filter levels: a click keeps one level', r['a'], L[:1])
+    check('... shift-click the fourth: the first four', r['b'], L[:4])
+    check('... ctrl/⌘-click the second: it is taken away', r['c'], [L[0]] + L[2:4])
+    check('... shift with ctrl/⌘ adds the sweep to the fifth (from the level clicked last)', r['d'], L[0:5])
+    check('... shift alone: the sweep from there, the others let go', r['e'], L[1:3])
+
+    # ---- the role lists of a launch dialog: the same rules, and Remove
+    r = await page.ev('''(async () => {
+      SM.app.launch('distribution');
+      await new Promise(r => setTimeout(r, 250));
+      const dlg = document.querySelector('.sm-launch-dialog');
+      const items = [...dlg.querySelectorAll('.sm-pick-list li')];
+      const pick = (name, o = {}) => items.find(li => li.textContent === name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, ...o }));
+      pick('id'); pick('weight (kg)', { shiftKey: true });
+      [...dlg.querySelectorAll('.sm-role .sm-btn')].find(b => b.textContent === 'Y, Columns').click();
+      const ul = dlg.querySelector('.sm-role-list');
+      const lis = () => [...ul.querySelectorAll('li')];
+      const sel = () => lis().filter(li => li.classList.contains('is-selected')).map(li => li.textContent);
+      const click = (i, o = {}) => lis()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, ...o }));
+      const cast = lis().map(li => li.textContent);
+      click(1); const a = sel();
+      click(3, { shiftKey: true }); const b = sel();
+      click(2, { ctrlKey: true }); const c = sel();
+      click(0, { shiftKey: true }); const d = sel();
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'Remove').click();
+      const left = lis().map(li => li.textContent);
+      dlg.querySelector('.sm-dialog-x').click();
+      return { cast, a, b, c, d, left };
+    })()''')
+    C = r['cast']
+    check('the column list: shift-click casts the sweep', C, ['id', 'age', 'sex', 'height (cm)', 'weight (kg)'])
+    check('a role list: a click selects one', r['a'], C[1:2])
+    check('... shift-click the fourth: the second to the fourth', r['b'], C[1:4])
+    check('... ctrl-click the third: taken away', r['c'], [C[1], C[3]])
+    check('... shift-click the first: the sweep from the one clicked last (the third)', r['d'], C[0:3])
+    check('... and Remove takes those out of the role', r['left'], C[3:])
+
+    # ---- the rule itself
+    r = await page.ev('''(() => {
+      const ids = ['a', 'b', 'c', 'd', 'e']; const s = new Set(); const m = { anchor: null }; const out = [];
+      const go = (id, o = {}) => { SM.util.listClick(o, id, ids, s, m); out.push([...s].sort().join('')); };
+      go('b', { shiftKey: true }); go('d', { shiftKey: true }); go('a', { shiftKey: true }); go('a'); go('a');
+      return out;
+    })()''')
+    check('shift with nothing clicked before selects the one; the sweep keeps its start; a click on the only one clears it', r, ['b', 'bcd', 'ab', 'a', ''])
+
     # ---- the Column Switcher
     r = await page.ev('''(async () => {
       const t = SM.app.current;

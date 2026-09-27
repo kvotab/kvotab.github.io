@@ -84,7 +84,7 @@
       sections: [
         { heading: 'Controls', choices: [
           ['Add Filter Columns', 'Adds a column to filter by: a nominal or ordinal column shows a button per level, a continuous one a from and to range. A row must match every filter column.'],
-          ['Levels', 'Click a level to keep its rows; ctrl/⌘ or shift adds more levels (a row matches any of them). Click it again to let every level through.'],
+          ['Levels', 'Click a level to keep its rows; ctrl/⌘ adds or takes away one more, shift takes the range from the level clicked last (a row matches any of them). Click the only one again to let every level through.'],
           ['from, to', 'The range of a continuous column: type a lower and an upper limit; an empty box is no limit.'],
           ['Select', 'The matching rows are selected in the table, and so in every graph.'],
           ['Show', 'The other rows are hidden: graphs do not draw them.'],
@@ -105,11 +105,11 @@
       sections: [
         { heading: 'Controls', choices: [
           ['Add Filter Columns', 'Adds a column to filter by: a nominal or ordinal column shows a button per level, a continuous one a from and to range.'],
-          ['Levels', 'Click a level to keep its rows; ctrl/⌘ or shift adds more levels. Click it again to let every level through.'],
+          ['Levels', 'Click a level to keep its rows; ctrl/⌘ adds or takes away one more, shift takes the range from the level clicked last. Click the only one again to let every level through.'],
           ['from, to', 'The range of a continuous column: type a lower and an upper limit; an empty box is no limit.'],
           ['remove, Clear', 'remove takes one column out of the filter, Clear all of them.'],
         ] },
-        { heading: 'Several filters', text: 'A row must match every filter column. Within one categorical column, ctrl/⌘ or shift adds levels (a row matches any of them).' },
+        { heading: 'Several filters', text: 'A row must match every filter column. Within one categorical column, ctrl/⌘ adds levels and shift a range of them (a row matches any of them).' },
       ],
       more: { label: 'Reports', id: 'help-reports' },
     },
@@ -171,7 +171,7 @@
       ul([
         'The dialog lists the columns with their modeling types. Select some and press a role\'s button, drag them onto a role, or double click a column for the first role that takes it.',
         '**Y** is the response, **X** the factor or regressor; **Weight** and **Freq** are numeric; **By** repeats the analysis for each level.',
-        'Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
+        'In the column list and the role lists, click to select one, ctrl/⌘ to add or take away one more, shift to select the range from the one clicked last. Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
         'Right click a column in the dialog to change its modeling type there.',
         'The (i) in a dialog\'s title bar explains the analysis and what each role, option and field is for. Drag the title bar to move the dialog.',
       ]),

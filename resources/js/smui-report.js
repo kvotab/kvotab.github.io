@@ -725,6 +725,8 @@
 
   /* Draw a filter into host; onChange after every change, onClose for the ×.
      extra: nodes to put under the count (the global filter's modes). */
+  // the level clicked last in each filter column, where a shift-click sweep starts
+  const FILTER_MARKS = new WeakMap();
   function renderFilter(host, t, f, { title, info, onClose, onChange, extra = null, base = null }) {
     const redraw = () => renderFilter(host, t, f, { title, info, onClose, onChange, extra, base });
     const changed = () => { redraw(); onChange(); };
@@ -768,16 +770,16 @@
             el('span', { text: SM.grid.cellText(c, v) }), el('span', { class: 'sm-count', text: String(counts.get(v)) }));
           b.addEventListener('click', (ev) => {
             const on = new Set(e.levels);
-            if (ev.metaKey || ev.ctrlKey || ev.shiftKey) { if (on.has(v)) on.delete(v); else on.add(v); }
-            else if (on.size === 1 && on.has(v)) on.clear();
-            else { on.clear(); on.add(v); }
+            // a click, ctrl/⌘ for one more level, shift for a sweep of levels
+            if (!FILTER_MARKS.has(e)) FILTER_MARKS.set(e, { anchor: null });
+            SM.util.listClick(ev, v, lv, on, FILTER_MARKS.get(e));
             e.levels = lv.filter((x) => on.has(x));
             changed();
           });
           list.append(b);
         }
         if (lv.length > 200) list.append(el('span', { class: 'sm-ob-note', text: `… ${lv.length - 200} more levels` }));
-        box.append(list, el('div', { class: 'sm-ob-note', text: 'Click a level; ctrl/⌘ or shift adds more.' }));
+        box.append(list, el('div', { class: 'sm-ob-note', text: 'Click a level; ctrl/⌘ adds one more, shift a range.' }));
       } else {
         let lo = Infinity, hi = -Infinity;
         for (const r of pool) { const v = c.values[r]; if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }

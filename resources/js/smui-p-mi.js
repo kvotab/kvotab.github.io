@@ -369,11 +369,12 @@
         list.append(li);
       });
     };
+    const mark = { anchor: null };
     list.addEventListener('click', (ev) => {
       const li = ev.target.closest('li');
       if (!li) return;
-      const i = +li.dataset.i;
-      if (ev.metaKey || ev.ctrlKey || ev.shiftKey) { if (sel.has(i)) sel.delete(i); else sel.add(i); } else { const had = sel.has(i) && sel.size === 1; sel.clear(); if (!had) sel.add(i); }
+      // a click, ctrl/⌘ for one more, shift for a sweep (the list's order)
+      SM.util.listClick(ev, +li.dataset.i, effects.map((_, k) => k), sel, mark);
       renderList();
     });
     list.addEventListener('dblclick', (ev) => { const li = ev.target.closest('li'); if (!li) return; effects.splice(+li.dataset.i, 1); sel.clear(); renderList(); });
@@ -426,7 +427,7 @@
         ['Add', 'Adds the columns selected in the list on the left to the analysis model, each as a main effect.'],
         ['Cross', 'Adds an interaction: the crossing of two or more columns selected on the left; with effects selected in the model list as well, each of them crossed with each selected column; with only effects selected, their crossing.'],
         ['Remove', 'Takes the effects selected in the model list out (a double click removes one too).'],
-        ['Effects', 'The analysis model\'s effects: click to select one, shift or ctrl/⌘ for more. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
+        ['Effects', 'The analysis model\'s effects: click to select one, ctrl/⌘ for one more, shift for a range. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
         ['Model', 'The analysis model: Least Squares (the default for a continuous response), Logistic or Probit for a two-level one (Logistic by default for a categorical response), Poisson for counts.'],
         ['Method', 'MICE (chained equations, the default): each column in turn regressed on the others and its missing values drawn by predictive mean matching, so every imputed value is one that occurs; for continuous, two-level and ordinal columns. Bayesian Gaussian: a Gibbs sampler of a multivariate normal; numbers only, no categorical column with missing values.'],
         ['Imputations m', 'How many completed tables are made, analysed and pooled: 2 to 200, 20 by default. More make the between-imputation variance, and so the pooled standard errors, steadier; the time grows with m.'],

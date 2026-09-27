@@ -694,6 +694,25 @@ async def main():
     await repeated(page)
     # ==== help for every input: the launch dialog, the red-triangle forms, the controls in the reports ====
     await help_inputs(page)
+    # the model effects list: a click, shift for a sweep, ctrl/⌘ for one more, Remove
+    r = await page.ev('''(async () => {
+      SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Plants') || SM.app.tables[0]));
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      __fm.pick('yield (g)'); __fm.role('Y'); await __fm.tick();
+      __fm.pick('fertilizer', 'water', 'light (h)', 'plot'); __fm.btn('Add'); await __fm.tick();
+      const lis = () => [...__fm.dlg().querySelectorAll('.sm-fm-effects li')];
+      const sel = () => lis().filter(li => li.classList.contains('is-selected')).map(li => li.textContent);
+      const click = (i, o = {}) => lis()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, ...o }));
+      const all = __fm.effects();
+      click(0); const a = sel(); click(2, { shiftKey: true }); const b = sel(); click(3, { metaKey: true }); const c = sel();
+      __fm.btn('Remove'); await __fm.tick();
+      const left = __fm.effects();
+      __fm.btn('Cancel');
+      return { all, a, b, c, left };
+    })()''')
+    effs = r['all']
+    check('effects list: a click selects one, shift-click the third the sweep', (r['a'], r['b']), (effs[:1], effs[:3]))
+    check('... ctrl/⌘ adds the fourth, and Remove takes all four out', (r['c'], r['left']), (effs[:4], effs[4:]))
     # a random effect in a personality that fits fixed effects only is refused,
     # not left out without a word
     r = await page.ev('''(() => {

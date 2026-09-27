@@ -255,12 +255,12 @@
       const btn = el('button', { type: 'button', class: `sm-btn${r.min ? ' required' : ''}`, text: r.label });
       btn.addEventListener('click', () => { if (selected.size) addTo(r, [...selected]); else msg.textContent = 'Select columns on the left first.'; });
       const ul = el('ul', { class: 'sm-role-list', role: 'listbox', 'aria-label': r.label, dataset: { hint: r.hint || (r.min ? 'required' : 'optional') } });
+      const mark = { anchor: null };
       ul.addEventListener('click', (ev) => {
         const li = ev.target.closest('li');
         if (!li) return;
-        const s = roleSel[r.key];
-        if (!(ev.metaKey || ev.ctrlKey)) { const had = s.has(li.dataset.id) && s.size === 1; s.clear(); if (had) { renderRoles(); return; } }
-        if (s.has(li.dataset.id)) s.delete(li.dataset.id); else s.add(li.dataset.id);
+        // a click, ctrl/⌘ for one more, shift for a sweep
+        SM.util.listClick(ev, li.dataset.id, state[r.key], roleSel[r.key], mark);
         renderRoles();
       });
       ul.addEventListener('dblclick', (ev) => {

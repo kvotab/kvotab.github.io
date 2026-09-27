@@ -252,8 +252,28 @@
     return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
   }
 
+  /* A click in a list whose items can be selected together, as in JMP and
+     the system's own lists: a plain click selects that item alone (a click
+     on the only one selected clears it), ctrl/⌘ adds or takes away one,
+     shift selects the sweep from the item clicked last (with ctrl/⌘ too:
+     added to the selection). ids: the items in the list's order; sel: the
+     selected ids (a Set, changed in place); mark: { anchor }, kept with
+     the list between clicks. */
+  function listClick(ev, id, ids, sel, mark) {
+    const mod = !!(ev && (ev.metaKey || ev.ctrlKey));
+    if (ev && ev.shiftKey && mark.anchor != null && ids.includes(mark.anchor) && ids.includes(id)) {
+      const a = ids.indexOf(mark.anchor), b = ids.indexOf(id);
+      if (!mod) sel.clear();
+      for (let k = Math.min(a, b); k <= Math.max(a, b); k++) sel.add(ids[k]);
+      return;      // the anchor stays, so the sweep can be widened or narrowed
+    }
+    if (mod) { if (sel.has(id)) sel.delete(id); else sel.add(id); }
+    else { const only = sel.size === 1 && sel.has(id); sel.clear(); if (!only) sel.add(id); }
+    mark.anchor = id;
+  }
+
   SM.util = Object.freeze({
     Emitter, fmt, fmtP, fmtPct, el, svg, typeIcon, TYPE_LABEL, rng, uid, debounce, download, pyStr, q, quantileSorted,
-    themeColors, PALETTE, colorOf, ramp, qnorm, pnorm, ranks,
+    themeColors, PALETTE, colorOf, ramp, qnorm, pnorm, ranks, listClick,
   });
 }(typeof self !== 'undefined' ? self : this));

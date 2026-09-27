@@ -163,11 +163,12 @@
         list.append(li);
       });
     };
+    const mark = { anchor: null };
     list.addEventListener('click', (ev) => {
       const li = ev.target.closest('li');
       if (!li) return;
-      const i = +li.dataset.i;
-      if (ev.metaKey || ev.ctrlKey || ev.shiftKey) { if (sel.has(i)) sel.delete(i); else sel.add(i); } else { const had = sel.has(i) && sel.size === 1; sel.clear(); if (!had) sel.add(i); }
+      // a click, ctrl/⌘ for one more, shift for a sweep (the list's order)
+      SM.util.listClick(ev, +li.dataset.i, effects.map((_, k) => k), sel, mark);
       renderList();
     });
     list.addEventListener('dblclick', (ev) => { const li = ev.target.closest('li'); if (!li) return; effects.splice(+li.dataset.i, 1); sel.clear(); renderList(); });
@@ -317,7 +318,7 @@
       if (on(lScale)) out.push(['Scale', 'The scale φ of the variance: Estimated, Pearson χ²/(N − p), or Fixed at the value beside it (1 by default). A change of distribution picks Fixed for the binomial, Poisson and negative binomial, Estimated for the others.']);
       if (on(lTau)) out.push(['Quantile τ', 'The quantile of Y to fit, strictly between 0 and 1: 0.5 is the median, 0.9 the upper tenth. Model Launch in the report changes it.']);
       out.push(
-        ['Model effects', 'The list of the model\'s effects: click one to select it (shift or ctrl/⌘ adds), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
+        ['Model effects', 'The list of the model\'s effects: click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
         ['Add', 'Each selected column (in the list on the left) as a main effect.'],
         ['Cross', 'The selected columns crossed into one interaction, A*B; each selected effect of the list crossed with the selected columns; or two or more selected effects crossed together. A continuous column crossed with itself is its square. Continuous columns in crossings are centred at their means, as JMP\'s Center Polynomials.'],
         ['Nest', 'Nests the selected effects within the selected columns: B[A], the levels of B within each level of A.'],

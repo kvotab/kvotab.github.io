@@ -247,6 +247,10 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- Lists whose items can be selected together (role lists, effects lists,
+  a filter's levels) take clicks through `SM.util.listClick(ev, id, ids,
+  sel, mark)`: a click selects one (again on the only one: none), ctrl/⌘
+  adds or takes away one, shift the sweep from the item clicked last.
 - Graph selections: a handler of `plotly_selected` returns at once while
   `plot.quiet` (the row states are being drawn: Plotly's full redraw
   announces a kept selection box again, and taking that for a new selection
@@ -347,4 +351,5 @@ buttons left out, a graph wider than the paper scaled to fit); documents in
 the light theme from the dark one, an SVG diagram with its paint; a box
 selection in Graph Builder whose edges are then moved (real mouse events)
 selects once each time, and a selection made elsewhere takes the kept box
-away; the dark theme and phone width.
+away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels;
+the dark theme and phone width.
