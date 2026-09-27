@@ -211,9 +211,14 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		arrow('←', 'Back to the block you were reading', hooks.canBack, hooks.onBack),
 		arrow('→', 'Forward again', hooks.canForward, hooks.onForward),
 	);
-	// Out into a window of its own, from beside the view's name: it is about
-	// the whole view rather than about the block in it. See `popInfo` in
-	// ./app.js.
+	bar?.append(nav);
+	// What this view is, behind an (i) at the end of its title bar, where the
+	// other sections of the panel keep theirs. See ./infopanel.js. In a window
+	// the window has its own.
+	if (hooks.info && !windowed) bar?.append(hooks.info());
+	// Out into a window of its own, last of all, after the (i): like the (i)
+	// it is about the whole view rather than about the block in it, and it is
+	// drawn like it -- see `.info-pop`. See `popInfo` in ./app.js.
 	if (!windowed && hooks.onPopOut) {
 		const out = el('button', {
 			className: 'ghost info-pop', type: 'button',
@@ -222,13 +227,8 @@ export function renderInfo(host, project, selection, hooks = {}) {
 			'aria-label': 'Open Information in a window of its own',
 		}, popIcon('out'));
 		out.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); hooks.onPopOut(); });
-		bar.querySelector('.panel-section-title')?.after(out);
+		bar?.append(out);
 	}
-	bar?.append(nav);
-	// What this view is, behind an (i) at the end of its title bar, where the
-	// other sections of the panel keep theirs. See ./infopanel.js. In a window
-	// the window has its own.
-	if (hooks.info && !windowed) bar?.append(hooks.info());
 
 	// A sibling of the disclosure, not a child of it.
 	//

@@ -5619,7 +5619,9 @@ history's labels. Each window's (i) is keyed by the window
 (`dialog:block:<id>`), since two windows can be about two kinds of block.
 
 The Information view uses the same machinery for a window of its own (`popInfo`
-in src/ui/app.js), opened by the button beside its name in its title bar.
+in src/ui/app.js), opened by the button at the end of its title bar, after
+its (i), and drawn like the (i): the same box, muted, borderless, centred in
+the row rather than on the text's baseline.
 That button and the window's put-back button, which takes the place of the ×,
 are one icon drawn two ways (`popIcon` in src/ui/icons.js): a box with an arrow
 leaving it, and coming back into it. `renderInfoCard`

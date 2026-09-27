@@ -278,7 +278,10 @@ export function popIcon(way) {
 		focusable: 'false',
 		fill: 'none',
 		stroke: 'currentColor',
-		'stroke-width': 1.4,
+		// About the weight of the (i)'s ring beside it (1.3 on the same
+		// 16-unit grid), a touch under it since this is all lines: at 1.4 it
+		// read heavier than every other button in the bar.
+		'stroke-width': 1.15,
 		'stroke-linecap': 'round',
 		'stroke-linejoin': 'round',
 	});

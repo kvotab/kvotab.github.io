@@ -37681,9 +37681,16 @@ test('Information pops out into a window of its own and back, and its arrows sit
 		&& g.kids.slice(0, 2).map((k) => k.attrs.d).join() === back.kids.slice(0, 2).map((k) => k.attrs.d).join()),
 		'the two are not one box and one line, in the button\'s colour');
 	assert(out.attrs.class === 'pop-icon pop-out' && back.attrs.class === 'pop-icon pop-back');
-	// The way out, beside the view's name, and the view drawn into a window's
-	// body with its buttons in the window's head.
-	assert(/bar\.querySelector\('\.panel-section-title'\)\?\.after\(out\);/.test(info), 'no pop-out button beside the name');
+	// The way out, last in the bar, after the (i) -- and drawn like it: the
+	// same box, the muted colour, no border, centred in the row as the (i) is
+	// rather than on the text's baseline, which left it 2 px high -- and the
+	// view drawn into a window's body with its buttons in the window's head.
+	const pop = info.indexOf('bar?.append(out);');
+	assert(pop > icon, `the pop-out button is not after the (i): ${pop} against ${icon}`);
+	const popRule = /^\.info-pop \{([^}]*)\}/m.exec(css)?.[1] ?? '';
+	assert(/align-self: center;/.test(popRule) && /width: 17px;/.test(popRule) && /height: 17px;/.test(popRule)
+		&& /border: none;/.test(popRule) && /color: var\(--text-muted\);/.test(popRule), `the pop-out button's rule: ${popRule}`);
+	assert(Number(out.attrs['stroke-width']) < 1.3, `the icon is drawn at ${out.attrs['stroke-width']}, heavier than the (i) beside it`);
 	assert(/const windowed = !!hooks\.bar;/.test(info) && /hidden: !windowed && !open/.test(info), 'the view cannot be drawn in a window');
 	// The window: floating, kept across a newly opened model, its own class,
 	// and the rail given to the tree while it is out.

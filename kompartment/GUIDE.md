@@ -934,8 +934,9 @@ is the point of the arrangement: with a model of any size the tree is hundreds
 of rows long, and a panel that scrolled meant reading a block's equation and
 then losing it to reach the next block in the tree.
 
-**Information can have a window of its own.** The button beside its name, a
-box with an arrow leaving it, takes the view out of the panel into a window
+**Information can have a window of its own.** The button at the right-hand
+end of its title bar, after the (i) — a box with an arrow leaving it — takes
+the view out of the panel into a window
 that floats over the page. Drag it by its title bar and pull its bottom-right
 corner to size it; while it is out, the tree has the whole height of the panel.
 It goes on following the selection, and its buttons go with it into the

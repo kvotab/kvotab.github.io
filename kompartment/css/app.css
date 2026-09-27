@@ -6090,15 +6090,31 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
    23px further right once Edit… came in beside them. */
 .panel-section > summary > .info-nav + .info-btn { margin-left: 4px; align-self: center; }
 
-/* Out into a window of its own, beside the view's name. The icon is the
-   window's put-back button run the other way (`popIcon` in ./icons.js). */
+/* Out into a window of its own, at the end of the title bar after the (i),
+   and drawn as the (i) is: the same 17-pixel box, no border, the muted
+   colour, the accent under the pointer. The two are about the view rather
+   than the block in it. Centred in the row as the (i) is -- the row lines its
+   text up by the baseline, which left this 2 px higher than the (i) beside it.
+   The icon is the window's put-back button run the other way (`popIcon` in
+   ./icons.js). */
 .info-pop {
 	display: inline-flex;
 	align-items: center;
-	margin-left: 4px;
-	padding: 1px 5px;
+	justify-content: center;
+	flex: none;
+	align-self: center;
+	width: 17px;
+	height: 17px;
+	margin-left: 3px;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
 	line-height: 1;
 }
+.info-pop:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.info-pop:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .info-pop svg { display: block; }
 
 /* Out in its window (`popInfo`), the view leaves the rail to the tree. */
