@@ -42,6 +42,15 @@ own, Forward Selection against the page's own least squares, the binomial
 profiler against Save Columns, Diagnostic Plots by set and their linking, By,
 a project, that it needs no scikit-learn, both themes and phone width.
 
+MANOVA's Repeated Measures: Choose Response and its dialog (Y Name, Univariate
+Tests Also, Cancel), JMP's Between and Within Subjects outlines and rows against
+the backend, the between test against a one-way ANOVA of the subjects' sums and
+the univariate within test against a subjects-by-levels ANOVA computed in the
+page, the Sphericity Test, the red triangle, a project, By, Bootstrap on
+resampled subjects, both themes and phone width; the Effect Tests' optional
+Partial η² and Partial ω² columns from the right-click menu, against the tables'
+own sums of squares, and Bootstrap of a hidden column.
+
 Start a server on the repository root and headless Chrome on
 SMUI_HTTP_PORT and SMUI_CDP_PORT (the recipe is in README.md), then
 
@@ -112,6 +121,8 @@ window.__fm = {
   done: (rep) => new Promise(res => rep.on('done', res)),
   // A report opened by a menu item may be done before a listener is on: wait until it has settled.
   settled: async (rep) => { for (let i = 0; i < 1200 && (rep.body.classList.contains('is-running') || !rep.content.querySelector('.sm-ob')); i++) await new Promise(r => setTimeout(r, 25)); },
+  // Until no report has run for 300 ms (a theme change redraws every report, a little later).
+  idle: async () => { let calm = 0; for (let i = 0; i < 4800 && calm < 12; i++) { await new Promise(r => setTimeout(r, 25)); calm = SM.app.reports.some(x => x.body.classList.contains('is-running')) ? 0 : calm + 1; } },
   num: (s) => Number(String(s).replace('−', '-').replace('<', '').replace('*', '')),
 };
 '''
@@ -679,6 +690,8 @@ async def main():
     await schooling(page)
     # ==== Generalized Regression: the validation methods, the adaptive methods, forward selection ====
     await genreg(page)
+    # ==== MANOVA's Repeated Measures; the Effect Tests' effect sizes ====
+    await repeated(page)
 
     check('no script errors', page.errors, [])
     await page.close()
@@ -1165,6 +1178,206 @@ async def genreg(page):
     await shot(page, 'fm-20-genreg-phone.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+
+
+# A repeated-measures table: 36 subjects in three groups and two sites, measured four times (one missing).
+RM_TABLE = r'''(() => {
+  const r = SM.util.rng('smui-repeated-test'); const n = 36;
+  const c = { subject: [], group: [], site: [], t1: [], t2: [], t3: [], t4: [] };
+  for (let i = 0; i < n; i++) {
+    const g = ['control', 'low', 'high'][i % 3], u = r.normal(0, 1.2), eff = { control: 0, low: 0.4, high: 0.9 }[g];
+    c.subject.push(`S${i + 1}`); c.group.push(g); c.site.push(i < 18 ? 'A' : 'B');
+    c.t1.push(+(10 + u + r.normal(0, 0.6)).toFixed(3)); c.t2.push(+(10.3 + u + 0.5 * eff + r.normal(0, 0.9)).toFixed(3));
+    c.t3.push(+(10.5 + u + eff + r.normal(0, 1.3)).toFixed(3)); c.t4.push(+(10.4 + u + 1.4 * eff + r.normal(0, 1.8)).toFixed(3));
+  }
+  c.t3[5] = NaN;
+  SM.app.addTable(new SM.Table({ name: 'Repeated test', source: 'simulated', columns: [
+    { name: 'subject', dataType: 'character', values: c.subject, role: 'label' },
+    { name: 'group', dataType: 'character', values: c.group, valueOrder: ['control', 'low', 'high'] },
+    { name: 'site', dataType: 'character', values: c.site },
+    ...['t1', 't2', 't3', 't4'].map((k) => ({ name: k, dataType: 'numeric', values: c[k] })),
+  ] }));
+  return SM.app.current.nrows;
+})()'''
+
+RM_PAYLOAD = "{ y: ['t1', 't2', 't3', 't4'], effects: [{ names: ['group'], nest: [], random: false }], response: 'repeated' }"
+
+
+async def repeated(page):
+    """MANOVA's Repeated Measures (Choose Response and its dialog, Between and
+    Within Subjects against the backend and the page's own ANOVA, Univariate
+    Tests Also, Y Name, the red triangle, a project, By, Bootstrap, both
+    themes, phone width) and the optional effect-size columns of the Effect
+    Tests."""
+    num = lambda s: float(str(s).replace('−', '-').replace('<', '').replace('*', ''))  # noqa: E731
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    check('the repeated-measures test table', await page.ev(RM_TABLE), 36)
+    await page.ev(HELPERS)
+    await page.ev('__fm.idle()', timeout=300)
+    ys = ['t1', 't2', 't3', 't4']
+    r = await page.ev(open_js(ys, E(['group']), {'personality': 'manova'}))
+    await page.ev('__fm.idle()', timeout=300)
+    check('MANOVA opens as before (Identity)', ([o for o in ('Response Specification', 'Whole Model', 'Intercept', 'group') if o in r['outlines']], 'Between Subjects' in r['outlines'], r['errors']),
+          (['Response Specification', 'Whole Model', 'Intercept', 'group'], False, []))
+    dlg_js = '''const s = __fm.outline('Response Specification').querySelector('select[aria-label="Choose Response"]');
+      s.value = 'repeated'; s.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 300));
+      const dlg = [...document.querySelectorAll('.sm-dialog')].find(x => x.getAttribute('aria-label') === 'Repeated Measures');'''
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const seq = rep.seq;
+      ''' + dlg_js + '''
+      const out = { opts: [...s.options].map(o => o.textContent), dlg: !!dlg, name: dlg && dlg.querySelector('input[type="text"]').value, uni: dlg && dlg.querySelector('input[type="checkbox"]').checked,
+        labels: dlg ? [...dlg.querySelectorAll('.sm-form label')].map(l => l.textContent) : null, info: !!(dlg && dlg.querySelector('.info-btn')) };
+      [...dlg.querySelectorAll('button')].find(b => b.textContent === 'Cancel').click(); await new Promise(r => setTimeout(r, 250));
+      out.after = s.value; out.reran = rep.seq !== seq; out.open = !!document.querySelector('.sm-dialog[aria-label="Repeated Measures"]');
+      return out; })()''')
+    check('Choose Response lists Repeated Measures first, as JMP', r['opts'], ['Repeated Measures', 'Sum', 'Identity', 'Contrast', 'Polynomial', 'Mean'])
+    check('Repeated Measures asks for the Y Name (Time) and Univariate Tests Also', (r['dlg'], r['name'], r['uni'], r['labels'], r['info']), (True, 'Time', False, ['Y Name', 'Univariate Tests Also'], True))
+    check('Cancel keeps the response design and does not rerun', (r['after'], r['reran'], r['open']), ('identity', False, False))
+    r = await page.ev('''(async () => { const rep = __fm.rep();
+      ''' + dlg_js + '''
+      dlg.querySelector('input[type="text"]').value = 'Visit'; dlg.querySelector('input[type="checkbox"]').checked = true;
+      const d = __fm.done(rep); dlg.querySelector('.sm-dialog-foot .primary').click(); await d;
+      const o = rep.spec.options; return { state: __fm.state(rep), opt: [o['manova|response'], o['manova|rmName'], o['manova|univariate']] }; })()''')
+    want = ['Response Specification', 'Between Subjects', 'All Between', 'Intercept', 'group', 'Within Subjects', 'Sphericity Test', 'All Within Interactions', 'Visit', 'Visit*group']
+    check('Repeated Measures: Between and Within Subjects, JMP\'s outlines', [o for o in r['state']['outlines'] if o in want], want)
+    check('... no errors, and the options kept in the spec', (r['state']['errors'], r['opt']), ([], ['repeated', 'Visit', True]))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const res = await SM.engine.call('fitmodel.manova', { ...''' + RM_PAYLOAD + ''', within: 'Visit' }, t);
+      const ys = ['t1', 't2', 't3', 't4'].map(n => t.col(n).values), g = t.col('group').values;
+      const rows = [...Array(t.nrows).keys()].filter(i => ys.every(v => Number.isFinite(v[i])));
+      const s = rows.map(i => ys.reduce((a, v) => a + v[i], 0)), m = s.reduce((a, b) => a + b) / s.length;
+      let ssb = 0, ssw = 0; const lv = [...new Set(rows.map(i => g[i]))];
+      for (const l of lv) { const v = rows.map((i, k) => (g[i] === l ? s[k] : null)).filter(x => x != null); const ml = v.reduce((a, b) => a + b) / v.length; ssb += v.length * (ml - m) ** 2; for (const x of v) ssw += (x - ml) ** 2; }
+      return { res, visit: __fm.table('Visit'), vg: __fm.table('Visit*group'), awi: __fm.table('All Within Interactions'), grp: __fm.table('group'), sph: __fm.kv('Sphericity Test'),
+        notes: [...__fm.outline('Within Subjects').querySelectorAll(':scope > .sm-ob-body > .sm-ob-note')].map(x => x.textContent),
+        spec: __fm.outline('Response Specification').querySelector('.sm-ob-note').textContent, oneway: (ssb / (lv.length - 1)) / (ssw / (s.length - lv.length)), n: rows.length }; })()''')
+    res = r['res']
+    wt = {t['effect']: t for t in res['within_tests']}
+    check('Visit: an exact F Test and the three univariate rows, as JMP', [row[0] for row in r['visit']], ['Test', 'F Test', 'Univar unadj Epsilon', 'Univar G-G Epsilon', 'Univar H-F Epsilon'])
+    check('... under JMP\'s headings', r['visit'][0], ['Test', 'Value', 'Exact F', 'NumDF', 'DenDF', 'Prob>F'])
+    for k_, row in enumerate(wt['Visit']['rows'] + wt['Visit']['univariate']):
+        check.near(f'Visit, {row["test"]}: the F shown = the backend\'s', num(r['visit'][k_ + 1][2]), row['f'], 1e-6)
+        check.near(f'Visit, {row["test"]}: Value (λ; a univariate row\'s epsilon)', num(r['visit'][k_ + 1][1]), row['value'], 1e-6)
+    check.near('Visit, G-G: the DenDF is the epsilon times ν p', num(r['visit'][3][4]), res['epsilon']['gg'] * res['dfe'] * 3, 1e-6)
+    check('Visit*group: the four statistics (Approx. F) and the univariate rows', ([row[0] for row in r['vg']][1:], r['vg'][0][2]),
+          (["Wilks' Lambda", "Pillai's Trace", 'Hotelling-Lawley', "Roy's Max Root", 'Univar unadj Epsilon', 'Univar G-G Epsilon', 'Univar H-F Epsilon'], 'Approx. F'))
+    check('All Within Interactions = Visit*group with one effect', r['awi'][1], r['vg'][1])
+    check.near('Between group: the Exact F = the one-way ANOVA of the subjects\' sums, computed in the page', num(r['grp'][1][2]), r['oneway'], 1e-6)
+    check('... on 2 and 32 DF (35 subjects with every measurement)', (r['grp'][1][3], r['grp'][1][4], r['n']), ('2', '32', 35))
+    check.near('Sphericity Test: Mauchly Criterion = the backend\'s', num(r['sph']['Mauchly Criterion']), res['sphericity']['w'], 1e-6)
+    check('Sphericity Test: JMP\'s rows', list(r['sph']), ['Mauchly Criterion', 'ChiSquare', 'DF', 'Prob > Chisq'])
+    check('the epsilon note gives Lecoutre\'s correction and the lower bound', any('Lecoutre' in x and 'lower bound' in x for x in r['notes']), True)
+    check('the Response Specification says what is tested', ('the 4 levels of Visit' in r['spec'], '35 rows with every response' in r['spec']), (True, True))
+    # the page's own univariate test of Visit, without between effects
+    r = await page.ev(open_js(ys, [], {'personality': 'manova', 'manova|response': 'repeated', 'manova|rmName': 'Visit', 'manova|univariate': True}))
+    js = await page.ev('''(() => { const t = SM.app.current; const ys = ['t1', 't2', 't3', 't4'].map(n => t.col(n).values);
+      const rows = [...Array(t.nrows).keys()].filter(i => ys.every(v => Number.isFinite(v[i]))); const n = rows.length, k = 4;
+      const g = rows.reduce((a, i) => a + ys.reduce((b, v) => b + v[i], 0), 0) / (n * k);
+      const cm = ys.map(v => rows.reduce((a, i) => a + v[i], 0) / n), rm = rows.map(i => ys.reduce((a, v) => a + v[i], 0) / k);
+      let sst = 0, sse = 0; ys.forEach((v, j) => { sst += n * (cm[j] - g) ** 2; rows.forEach((i, q) => { sse += (v[i] - rm[q] - cm[j] + g) ** 2; }); });
+      return (sst / (k - 1)) / (sse / ((n - 1) * (k - 1))); })()''')
+    vt = await page.ev("__fm.table('Visit')")
+    check('no between effects: only the Intercept between, Visit within', ([o for o in r['outlines'] if o in ('All Between', 'Intercept', 'All Within Interactions', 'Visit')], r['errors']), (['Intercept', 'Visit'], []))
+    check.near('Visit\'s univariate F = the two-way (subjects by visits) ANOVA computed in the page', num(vt[2][2]), js, 1e-6)
+    await page.ev("SM.app.closeReport(__fm.rep())")
+    # Univariate Tests Also off from the Response Specification; Y Name; the red triangle turns it on again
+    r = await page.ev('''(async () => { const rep = __fm.rep(); let d = __fm.done(rep);
+      const cb = __fm.outline('Response Specification').querySelector('input[aria-label="Univariate Tests Also"]'); cb.checked = false; cb.dispatchEvent(new Event('change')); await d;
+      const off = { outlines: __fm.state(rep).outlines, visit: __fm.table('Visit').map(x => x[0]) };
+      d = __fm.done(rep); const inp = __fm.outline('Response Specification').querySelector('input[aria-label="Y Name"]'); inp.value = 'Week'; inp.dispatchEvent(new Event('change')); await d;
+      const named = __fm.state(rep).outlines;
+      d = __fm.done(rep); await __fm.topMenu('Univariate Tests Also'); await d;
+      return { off, named, on: __fm.state(rep).outlines, week: __fm.table('Week').map(x => x[0]), errors: __fm.state(rep).errors }; })()''')
+    check('Univariate Tests Also off: no Sphericity Test, only the F Test', ('Sphericity Test' in r['off']['outlines'], r['off']['visit']), (False, ['Test', 'F Test']))
+    check('a new Y Name renames the within tests', [o for o in r['named'] if o.startswith('Week')], ['Week', 'Week*group'])
+    check('the red triangle\'s Univariate Tests Also turns them on again', ('Sphericity Test' in r['on'], r['week'][-1], r['errors']), (True, 'Univar H-F Epsilon', []))
+    # a project keeps the design; By gives each level its repeated measures
+    r = await page.ev('''(async () => { const t = SM.app.current; const before = __fm.table('Week');
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [__fm.rep().toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep = SM.app.reports[n]; await __fm.done(rep);
+      const out = { title: rep.title, errors: __fm.state(rep).errors, same: JSON.stringify(__fm.table('Week', 0, rep)) === JSON.stringify(before), sph: !!__fm.outline('Sphericity Test', rep) };
+      SM.app.showTab(SM.app.tabOf(t)); return out; })()''')
+    check('a project reopens the repeated measures with its Y Name and univariate tests', (r['title'], r['errors'], r['same'], r['sph']), ('Manova Fit', [], True, True))
+    r = await page.ev(open_js(ys, E(['group']), {'personality': 'manova', 'manova|response': 'repeated', 'manova|univariate': True}, {'by': ['site']}))
+    check('By site: a repeated-measures report per level, no errors', ([o for o in r['outlines'] if o.startswith('Manova Fit')], r['outlines'].count('Sphericity Test'), r['errors']),
+          (['Manova Fit site=A', 'Manova Fit site=B'], 2, []))
+    await page.ev("SM.app.closeReport(__fm.rep())")
+    # Bootstrap reruns the report on resampled subjects: sample 1 is the backend on its rows
+    r = await page.ev('''(async () => { const rep = SM.app.reports.filter(x => x.platform.id === 'fitmodel' && x.table.name === 'Repeated test').pop();
+      SM.app.showTab(SM.app.tabOf(rep)); await new Promise(r => setTimeout(r, 100));
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Week');
+      const tbl = h.parentElement.querySelector('table.sm-rt');
+      const res = await SM.bootstrap.run(tbl, tbl._rt.columns.find(c => c.label === 'Exact F'), { B: 3, seed: 21, show: false });
+      const rows = SM.bootstrap.sampler(rep.groups()[0].rows, 21)();
+      const own = await SM.engine.call('fitmodel.manova', { ...''' + RM_PAYLOAD + ''', within: 'Week', rows }, rep.table);
+      const w = own.within_tests.find(x => x.effect === 'Week');
+      const out = { cols: res.columns.map(c => c.name), b0: res.col('F Test').values[0], b1: res.col('F Test').values[1], gg1: res.col('Univar G-G Epsilon').values[1],
+        own: w.rows[0].f, ownU: w.univariate[1].f, report: tbl._rt.rows[0].f };
+      SM.app.closeTable(res); return out; })()''', timeout=300)
+    check('Bootstrap of a within test: its rows are the tests', r['cols'], ['BootID', 'F Test', 'Univar unadj Epsilon', 'Univar G-G Epsilon', 'Univar H-F Epsilon'])
+    check.near('... sample 0 is the report', r['b0'], r['report'], 1e-12)
+    check.near('... sample 1 is fitmodel.manova on its rows (the render has no side effects)', r['b1'], r['own'], 1e-12)
+    check.near('... and its univariate F', r['gg1'], r['ownU'], 1e-12)
+    await asyncio.sleep(0.5)
+    await shot(page, 'fm-21-repeated.png')
+    # dark theme, phone width
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await page.ev('__fm.idle()', timeout=300)
+    await shot(page, 'fm-22-repeated-dark.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(1)
+    check('the repeated-measures report: no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'fm-23-repeated-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await page.ev('__fm.idle()', timeout=300)
+
+    # ---- the Effect Tests' optional effect sizes (right click, Columns) ----------------------------------------------
+    await page.ev("SM.app.openExample('plants')")
+    await page.ev(HELPERS)
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)'])))
+    await page.ev('__fm.idle()', timeout=300)
+    col_js = '''const ob = __fm.outline('Effect Tests'); const tbl = ob.querySelector('table.sm-rt');
+      const note = [...ob.querySelectorAll('.sm-ob-note')].find(x => x.textContent.startsWith('Partial η²'));
+      const pick = async (label) => { tbl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })); await __fm.tick(); await __fm.menuItem('Columns', label); await __fm.tick();
+        if (!tbl.isConnected) throw new Error('the report was redrawn under the test'); };'''
+    r = await page.ev('''(async () => { ''' + col_js + '''
+      const out = { head: __fm.table('Effect Tests')[0], hidden: note ? note.hidden : 'no note', info: !!ob.querySelector(':scope > .sm-ob-head .info-btn') };
+      tbl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })); await __fm.tick();
+      const cols = [...document.querySelectorAll('.sm-menu button')].find(b => b.querySelector('.sm-label').textContent === 'Columns'); cols.dispatchEvent(new MouseEvent('mouseenter')); await __fm.tick();
+      const menus = [...document.querySelectorAll('.sm-menu')]; out.items = [...menus[menus.length - 1].querySelectorAll('button .sm-label')].map(x => x.textContent); SM.ui.closeMenus();
+      await pick('Partial η²'); out.eta = { head: __fm.table('Effect Tests')[0], rows: __fm.table('Effect Tests').slice(1), shown: !note.hidden };
+      await pick('Partial ω²'); out.both = __fm.table('Effect Tests')[0];
+      out.anova = __fm.table('Analysis of Variance'); out.n = __fm.kv('Summary of Fit')['Observations (or Sum Wgts)'];
+      out.omega = __fm.table('Effect Tests').slice(1);
+      await pick('Partial η²'); await pick('Partial ω²'); out.again = { head: __fm.table('Effect Tests')[0], hidden: note.hidden };
+      out.text = note.textContent; return out; })()''')
+    check('Effect Tests look as before: no effect sizes shown, the note hidden', (r['head'], r['hidden']), (['Source', 'Nparm', 'DF', 'Sum of Squares', 'F Ratio', 'Prob > F'], True))
+    check('Effect Tests has an (i)', r['info'], True)
+    check('the right-click Columns menu offers Partial η² and Partial ω²', r['items'], ['Partial η²', 'Partial ω²'])
+    check('Columns > Partial η² shows it, and the note on the definitions', (r['eta']['head'][-1], r['eta']['shown']), ('Partial η²', True))
+    sse = num([row for row in r['anova'] if row[0] == 'Error'][0][2])
+    for row in r['eta']['rows']:
+        ss = num(row[3])
+        check.near(f'{row[0]}: Partial η² = SS/(SS + SSE) from the tables', num(row[-1]), ss / (ss + sse), 2e-4)
+    nobs = num(r['n'])
+    check('Partial ω² beside it', r['both'][-2:], ['Partial η²', 'Partial ω²'])
+    for row in r['omega']:
+        df, f = num(row[2]), num(row[4])
+        check.near(f'{row[0]}: Partial ω² = DF(F − 1)/(DF(F − 1) + N)', num(row[-1]), df * (f - 1) / (df * (f - 1) + nobs), 2e-4)
+    check('hiding both hides the note again', (r['again']['head'], r['again']['hidden']), (['Source', 'Nparm', 'DF', 'Sum of Squares', 'F Ratio', 'Prob > F'], True))
+    check('the note names the references', ('Cohen 1973' in r['text'], 'Olejnik and Algina 2003' in r['text']), (True, True))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Effect Tests'); const tbl = ob.querySelector('table.sm-rt');
+      const res = await SM.bootstrap.run(tbl, tbl._rt.all.find(c => c.key === 'pes'), { B: 3, seed: 5, show: false });
+      const rows = SM.bootstrap.sampler(rep.groups()[0].rows, 5)();
+      const own = await SM.engine.call('fitmodel.ls', { y: 'yield (g)', effects: ['fertilizer', 'water', 'light (h)'].map(n => ({ names: [n], nest: [], random: false })), rows }, rep.table);
+      const out = { b1: res.col('water').values[1], own: own.effect_tests.rows.find(x => x.source === 'water').pes, b0: res.col('water').values[0], report: tbl._rt.rows.find(x => x.source === 'water').pes };
+      SM.app.closeTable(res); return out; })()''', timeout=300)
+    check.near('Bootstrap of Partial η² (a hidden column): sample 0 is the report', r['b0'], r['report'], 1e-12)
+    check.near('... sample 1 is fitmodel.ls on its rows', r['b1'], r['own'], 1e-12)
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('every (i) of the repeated-measures and effect-test reports has a topic', audit.get('noTopic'), [])
 
 
 asyncio.run(main())

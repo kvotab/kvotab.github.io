@@ -16,7 +16,8 @@
                                reduced errors, QIC, Compare Working Correlations
      Nominal, Ordinal Logistic MNLogit (or a binomial GLM) and OrderedModel
      Mixed Model               MixedLM by REML, variance components
-     MANOVA                    statsmodels' MANOVA
+     MANOVA                    statsmodels' MANOVA; Repeated Measures: between and
+                               within subjects, sphericity, G-G and H-F epsilons
      Generalized Regression    lasso, elastic net, ridge (and adaptive) paths, forward
                                selection; AICc, BIC, KFold, holdback, leave-one-out or a
                                Validation column (the launch's Validation role)
@@ -811,7 +812,8 @@
         { key: 'estimates', caption: res.robust ? `Robust standard errors: ${res.robust.label}; t tests on ${fmt(res.robust.df)} DF` : undefined }));
     }
     if (o('effectTests', true) && res.effect_tests.rows.length) {
-      ctx.outline('Effect Tests', { parent, key: 'efftests' }).add(ctx.rt(res.effect_tests, { key: 'efftests', caption: res.robust ? `Wald F tests with the robust covariance (${res.robust.label})` : undefined }),
+      const tbl = ctx.rt(res.effect_tests, { key: 'efftests', caption: res.robust ? `Wald F tests with the robust covariance (${res.robust.label})` : undefined });
+      ctx.outline('Effect Tests', { parent, key: 'efftests', info: 'p:fitmodel:efftests' }).add(tbl, effectSizeNote(ctx, tbl, res.effect_tests),
         res.robust && res.robust.wald_f != null ? ctx.note(`Whole model, robust Wald test: F = ${fmt(res.robust.wald_f, { sig: 5 })} on ${fmt(res.robust.wald_df)} and ${fmt(res.robust.df)} DF, p${pText(res.robust.wald_p)}. (Analysis of Variance above is the usual F test.)`) : null);
     }
     if (o('expression', false)) {
@@ -842,6 +844,17 @@
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'ls', payload, scope: sc });
     tail(ctx, parent, res);
     return res;
+  }
+
+  /* The definitions of the Effect Tests' optional effect-size columns (right click, Columns),
+     shown while one of them is. */
+  function effectSizeNote(ctx, tbl, et) {
+    if (!(et.columns || []).some((c) => c.key === 'pes')) return null;
+    const note = ctx.note(`Partial η² = SS/(SS + SSE), the effect's share of the variation the other effects leave (Cohen 1973). Partial ω² = (SS − DF·MSE)/(SS + (N − DF)·MSE), the same share estimated with less bias (Keren and Lewis 1979; Olejnik and Algina 2003); it is negative when F < 1. SS is the effect's sum of squares above, N = ${fmt(et.n)} the observations. JMP's Effect Tests have neither.`);
+    const sync = () => { note.hidden = !tbl._rt.columns.some((c) => c.key === 'pes' || c.key === 'pos'); };
+    sync();
+    if (typeof MutationObserver !== 'undefined' && tbl.tHead) new MutationObserver(sync).observe(tbl.tHead, { childList: true });
+    return note;
   }
 
   function sortedEstimates(ctx, parent, res, tc) {
@@ -1689,13 +1702,33 @@
     tail(ctx, parent, res);
   }
 
-  /* ---- MANOVA --------------------------------------------------------------------------------------------- */
+  /* ---- MANOVA ---------------------------------------------------------------------------------------------
+     Choose Response picks the response design. Repeated Measures (JMP's) asks
+     for the name of the within-subject factor across the Y columns (Y Name,
+     Time) and Univariate Tests Also, then reports Between Subjects (the
+     effects on the sum of the responses) and Within Subjects (the factor and
+     its crossings with the effects, on their contrasts), with the sphericity
+     test and the epsilon-adjusted univariate tests when asked. */
+  const RESPONSES = [['repeated', 'Repeated Measures'], ['sum', 'Sum'], ['identity', 'Identity'], ['contrast', 'Contrast'], ['polynomial', 'Polynomial'], ['mean', 'Mean']];
+
+  async function repeatedDialog(ctx, sc) {
+    return SM.ui.form({
+      title: 'Repeated Measures', info: 'p:fitmodel:repeated', okLabel: 'OK',
+      lead: 'The Y columns are the levels of a within-subject factor, in their order: give the factor a name. The report tests the model effects on the sum of the responses (Between Subjects) and on their contrasts, as crossings with the named factor (Within Subjects).',
+      fields: [{ key: 'name', label: 'Y Name', type: 'text', value: ctx.opt('rmName', 'Time', sc) },
+        { key: 'univariate', label: 'Univariate Tests Also', type: 'check', value: !!ctx.opt('univariate', false, sc) }],
+      validate: (v) => (String(v.name || '').trim() ? null : 'Give the within-subject factor a name (Time, for example).'),
+    });
+  }
+
   async function renderManova(ctx, M) {
     const ys = ctx.roles('y');
     const sc = 'manova';
     const o = (k, d) => ctx.opt(k, d, sc);
     const response = o('response', 'identity');
-    const res = await ctx.call('fitmodel.manova', { ...M.base, y: ys.map((c) => c.name), response, alpha: ctx.alpha });
+    const rm = response === 'repeated';
+    const within = String(o('rmName', 'Time') || 'Time').trim() || 'Time';
+    const res = await ctx.call('fitmodel.manova', { ...M.base, y: ys.map((c) => c.name), response, alpha: ctx.alpha, ...(rm ? { within } : {}) });
     ctx.fm.menu = () => [
       ctx.check('Show E and H Matrices', 'matrices', sc, false),
       ctx.check('Partial Correlation', 'partial', sc, false),
@@ -1705,10 +1738,31 @@
     ];
     if (res.error) { ctx.top.add(ctx.warn(res.error)); return; }
     const spec = ctx.outline('Response Specification', { key: 'mvspec', info: 'p:fitmodel:manova' });
-    const s = el('select', { 'aria-label': 'Choose Response' }, ...[['identity', 'Identity'], ['sum', 'Sum'], ['contrast', 'Contrast'], ['polynomial', 'Polynomial'], ['mean', 'Mean']].map(([v, l]) => el('option', { value: v, text: l })));
+    const s = el('select', { 'aria-label': 'Choose Response' }, ...RESPONSES.map(([v, l]) => el('option', { value: v, text: l })));
     s.value = response;
-    s.addEventListener('change', () => ctx.set('response', s.value, sc));
-    spec.add(el('div', { class: 'sm-fm-controls' }, el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Choose Response' }), s)),
+    s.addEventListener('change', async () => {
+      if (s.value !== 'repeated') { ctx.set('response', s.value, sc); return; }
+      const v = await repeatedDialog(ctx, sc);
+      if (!v) { s.value = response; return; }
+      ctx.set('rmName', String(v.name).trim(), sc, { rerun: false });
+      ctx.set('univariate', !!v.univariate, sc, { rerun: false });
+      ctx.set('response', 'repeated', sc);
+    });
+    const controls = el('div', { class: 'sm-fm-controls' }, el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Choose Response' }), s));
+    if (rm) {
+      const nameIn = el('input', { type: 'text', size: 10, 'aria-label': 'Y Name', class: 'sm-fm-name' });
+      nameIn.value = within;
+      nameIn.addEventListener('change', () => { const v = nameIn.value.trim(); if (v && v !== within) ctx.set('rmName', v, sc); else nameIn.value = within; });
+      const uni = el('input', { type: 'checkbox', 'aria-label': 'Univariate Tests Also' });
+      uni.checked = !!o('univariate', false);
+      uni.addEventListener('change', () => ctx.set('univariate', uni.checked, sc));
+      controls.append(el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Y Name' }), nameIn), el('label', { class: 'sm-fm-opt' }, uni, el('span', { text: 'Univariate Tests Also' })));
+      spec.add(controls, ctx.note(`Responses: ${res.responses.join(', ')}, the ${res.k} levels of ${res.within}, on ${res.n} rows with every response (${fmt(res.dfe)} error DF). Between Subjects tests the effects on the sum of the responses; Within Subjects tests ${res.within} and its crossings with the effects on their contrasts (each response minus the first).`));
+      repeatedReport(ctx, res, o);
+      tail(ctx, ctx.top, res);
+      return;
+    }
+    spec.add(controls,
       ctx.note(`Responses: ${res.responses.join(', ')}. Tested: ${res.labels.join(', ')}. Identity tests the responses themselves; Sum their total; Contrast each against the last; Polynomial the trends over them.`));
     for (const t of res.tests) {
       ctx.outline(t.effect, { key: `mv:${t.effect}` }).add(ctx.rt({ columns: [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'value', label: 'Value' }, { key: 'f', label: 'Approx. F' }, { key: 'numdf', label: 'NumDF' }, { key: 'dendf', label: 'DenDF' }, { key: 'p', label: 'Prob>F', fmt: 'p' }], rows: t.rows }, { sortable: false, key: `mv:${t.effect}` }),
@@ -1721,6 +1775,41 @@
       for (const u of res.univariate) ob.add(ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'ss', label: 'Sum of Squares' }, { key: 'f', label: 'F Ratio' }, { key: 'p', label: 'Prob > F', fmt: 'p' }], rows: u.rows }, { caption: `${u.y}: RSquare ${fmt(u.rsq, { digits: 4 })}, RMSE ${fmt(u.rmse, { sig: 5 })}`, key: `uni:${u.y}` }));
     }
     tail(ctx, ctx.top, res);
+  }
+
+  /* A multivariate test table as JMP's: one exact F Test row when the hypothesis has one DF or the
+     design one response, else the four statistics with approximate F. */
+  const MV_COLS = (exact) => [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'value', label: 'Value' }, { key: 'f', label: exact ? 'Exact F' : 'Approx. F' },
+    { key: 'numdf', label: 'NumDF' }, { key: 'dendf', label: 'DenDF' }, { key: 'p', label: 'Prob>F', fmt: 'p' }];
+
+  function repeatedReport(ctx, res, o) {
+    const uni = !!o('univariate', false);
+    const bs = ctx.outline('Between Subjects', { key: 'rm:between', info: 'p:fitmodel:repeated' });
+    for (const t of res.between) {
+      ctx.outline(t.effect, { parent: bs, key: `rmb:${t.effect}` }).add(ctx.rt({ columns: MV_COLS(t.exact), rows: t.rows }, { sortable: false, key: `rmb:${t.effect}` }));
+    }
+    const ws = ctx.outline('Within Subjects', { key: 'rm:within', info: 'p:fitmodel:repeated' });
+    if (uni) {
+      const so = ctx.outline('Sphericity Test', { parent: ws, key: 'rm:sphericity', info: 'p:fitmodel:repeated' });
+      const s = res.sphericity;
+      if (s) so.add(ctx.kv([['Mauchly Criterion', s.w], ['ChiSquare', s.chi2], ['DF', s.df, 'int'], ['Prob > Chisq', s.p, 'p']]));
+      else so.add(ctx.note(res.sphericity_note));
+    }
+    for (const t of res.within_tests) {
+      const rows = uni ? [...t.rows, ...t.univariate] : t.rows;
+      const ob = ctx.outline(t.effect, { parent: ws, key: `rmw:${t.effect}` });
+      if (rows.length) ob.add(ctx.rt({ columns: MV_COLS(t.exact), rows }, { sortable: false, key: `rmw:${t.effect}` }));
+      else ob.add(ctx.note('No multivariate test here (see the note below); Univariate Tests Also gives the univariate one.'));
+    }
+    if (uni) {
+      const e = res.epsilon;
+      ws.add(ctx.note(`Univariate tests: the within effects as if the responses were stacked in one column, on the orthonormalized contrasts; F is the same in the three rows, Value is the epsilon that multiplies both degrees of freedom. G-G: Greenhouse and Geisser's ε = ${fmt(e.gg, { digits: 4 })}; H-F: Huynh and Feldt's (1976) ε = ${fmt(e.hf, { digits: 4 })} (capped at 1). Lecoutre's (1991) correction of H-F, which SAS reports as Huynh-Feldt-Lecoutre, is ${fmt(e.hf_lecoutre, { digits: 4 })} here (the same with one group of subjects); the lower bound is 1/${res.p} = ${fmt(e.lower, { digits: 4 })}.`));
+    }
+    if (o('matrices', false) && res.E) {
+      ctx.outline('E Matrix', { key: 'mvE' }).add(matrixTable(ctx, res.E, res.labels, 'E: the residual sums of squares and cross products of the responses'),
+        ctx.note('The tests use M′EM and M′HM, M the sum of the responses (Between Subjects) or their orthonormalized contrasts (Within Subjects).'));
+    }
+    if (o('partial', false) && res.partial_corr) ctx.outline('Partial Correlation', { key: 'mvpc' }).add(matrixTable(ctx, res.partial_corr, res.labels, 'Correlations of the residuals'), ctx.note(`DF = ${fmt(res.dfe)}.`));
   }
 
   function matrixTable(ctx, Mx, labels, caption) {
@@ -2206,7 +2295,25 @@
       sections: [{ choices: [['Var Component', 'the variance of the random effect; Var Ratio its ratio to the residual variance, Pct of Total its share'], ['Std Error', 'from the REML information; Wald intervals and p-values'], ['DFDen', 'Satterthwaite\'s degrees of freedom of each test'], ['Conditional', 'predictions with the random effects\' BLUPs; marginal: the fixed effects only']] }],
       more: MORE,
     },
-    'p:fitmodel:manova': { kicker: 'Fit Model', title: 'MANOVA', lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends).', more: MORE },
+    'p:fitmodel:manova': { kicker: 'Fit Model', title: 'MANOVA', lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends); Repeated Measures takes the responses for the levels of a within-subject factor.', more: MORE },
+    'p:fitmodel:repeated': {
+      kicker: 'Fit Model', title: 'Repeated Measures',
+      lead: 'Each row is a subject and the Y columns are its measurements at the levels of a within-subject factor (Y Name, Time by default), in the order of the columns; rows missing a measurement are left out. The model effects are the between-subject factors. As in JMP, this is a sum and a contrast response design at once.',
+      sections: [
+        { choices: [['Between Subjects', 'each effect on the sum of the responses (All Between: every effect together); one response, so each test is an exact F'], ['Within Subjects', 'the intercept on the contrasts of the responses is the within factor (Time), each effect on them its crossing with it (Time*drug); All Within Interactions tests every crossing together. The multivariate tests need no assumption on the covariance of the measurements'], ['F Test, Exact F', 'a hypothesis of one DF (or one response): the four statistics are one exact test; Value is the eigenvalue of E⁻¹H'], ['Approx. F', 'Wilks\' lambda (Rao), Pillai\'s trace, Hotelling-Lawley (McKeon) and Roy\'s maximum root (an upper bound), statsmodels\' MANOVA']] },
+        { heading: 'Univariate Tests Also', choices: [['Sphericity Test', 'Mauchly\'s (1940) criterion W = det(S)/(tr S/p)^p of the covariance S of the orthonormalized contrasts, p = levels − 1, with −(ν − (2p² + p + 2)/(6p)) ln W against χ² on p(p + 1)/2 − 1 DF, ν the error DF (the plain χ² p-value, as JMP; R and pingouin add a second-order term)'], ['Univar unadj Epsilon', 'the within effect as if the responses were stacked in one column: F = (tr H/(q p))/(tr E/(ν p)), valid under sphericity'], ['Univar G-G Epsilon', 'Greenhouse and Geisser (1959): both DF times ε = (tr S)²/(p tr S²), between 1/p and 1'], ['Univar H-F Epsilon', 'Huynh and Feldt (1976): ε = (N p ε_GG − 2)/(p (ν − p ε_GG)), N the subjects, capped at 1. The note gives Lecoutre\'s (1991) correction, ν + 1 in place of N, which SAS uses; they agree with one group of subjects']] },
+        { heading: 'Reading them', text: 'If the sphericity test is not significant the unadjusted univariate tests serve; if it is, use the multivariate tests or the adjusted univariate ones (Greenhouse–Geisser is the safer, Huynh–Feldt the less conservative). The main within effect of an unbalanced design is the Type III one: the unweighted mean profile of the groups.' },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:efftests': {
+      kicker: 'Fit Model', title: 'Effect Tests',
+      lead: 'The F test of each effect with every other effect in the model (Type III, with effect coding): its sum of squares, its DF and the F ratio against the error mean square.',
+      sections: [
+        { heading: 'Effect sizes', text: 'Right click the table, Columns, for Partial η² and Partial ω² (JMP\'s Effect Tests have neither; they follow the standard references). Partial η² = SS/(SS + SSE) (Cohen 1973): the effect\'s share of the variation left once the other effects are taken out. Partial ω² = (SS − DF·MSE)/(SS + (N − DF)·MSE), equivalently DF(F − 1)/(DF(F − 1) + N) (Keren and Lewis 1979; Olejnik and Algina 2003): the same share in the population, estimated with less upward bias; negative when F < 1, read as 0. N is the number of observations (the sum of Freq). With Robust Standard Errors the tests are Wald tests without sums of squares, and the columns are not offered.' },
+      ],
+      more: MORE,
+    },
     'p:fitmodel:genreg': {
       kicker: 'Fit Model', title: 'Generalized Regression',
       lead: 'JMP Pro\'s penalized and stepwise fits of a normal, binomial or Poisson response, with a validation that picks the model on the path. The predictors are centred and scaled first, by the rows that train the model; the intercept is not penalized. The fits minimise the objective of statsmodels\' fit_regularized, solved as glmnet does (coordinate descent inside Newton steps).',
@@ -2389,7 +2496,7 @@
   /* ---- the platform -------------------------------------------------------------------------------------- */
   SM.platforms.register({
     id: 'fitmodel', label: 'Fit Model', menu: 'Analyze', order: 110, info: 'p:fitmodel', topics: TOPICS,
-    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA, Generalized Regression (lasso, elastic net, ridge, adaptive lasso and elastic net, forward and pruned forward selection, validated by AICc, BIC, KFold, holdback, leave-one-out or a Validation column), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
+    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests with partial η² and ω² as optional columns, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA (with JMP\'s Repeated Measures: the between- and within-subject tests, Mauchly\'s sphericity test, the Greenhouse–Geisser and Huynh–Feldt adjusted univariate tests), Generalized Regression (lasso, elastic net, ridge, adaptive lasso and elastic net, forward and pruned forward selection, validated by AICc, BIC, KFold, holdback, leave-one-out or a Validation column), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
     uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.genmod.generalized_linear_model.GLM.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
     launch: {
       lead: 'Choose the Y, add the model effects from the selected columns, and pick a personality. Continuous Y: least squares; nominal or ordinal Y: logistic.',

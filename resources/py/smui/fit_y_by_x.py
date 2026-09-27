@@ -338,6 +338,234 @@ def _ci_checked(ci, pfun, alpha, est, tol=1e-4):
     return True
 
 
+# ---- Effect sizes and Bayes factors (Distribution's Test Mean uses them too) ----
+#
+# Exact intervals invert the noncentral t and F distributions: the
+# noncentralities at which the observed statistic is the upper and the lower
+# alpha/2 point (Steiger and Fouladi 1997, Cumming and Finch 2001, Smithson
+# 2003, Steiger 2004). The Bayes factors are Rouder et al.'s (2009) JZS t
+# tests and Ly, Verhagen and Wagenmakers' (2016) test of a correlation.
+
+JZS_R = math.sqrt(2) / 2     # the default scale of the Cauchy prior on δ ("medium")
+
+
+def hedges_j(df):
+    """Hedges' (1981) exact correction J = Γ(ν/2)/(√(ν/2) Γ((ν−1)/2)): J·d
+    is unbiased for δ under normality (about 1 − 3/(4ν − 1))."""
+    if not df > 1:
+        return float('nan')
+    return math.exp(math.lgamma(df / 2) - 0.5 * math.log(df / 2) - math.lgamma((df - 1) / 2))
+
+
+def _falls_to(fun, target, start, scale, low=-math.inf):
+    """The x at which fun, decreasing in x, equals target: a bracket grown
+    outward from start, then brentq. None when fun stays below target down
+    to low (the root would be below the limit)."""
+    from scipy.optimize import brentq
+    g = lambda v: fun(v) - target
+    a, b = max(low, start - scale), start + scale
+    for _ in range(80):
+        ga = g(a)
+        if ga < 0:
+            if a <= low:
+                return None
+            a = max(low, a - 2 * (b - a))
+            continue
+        if g(b) > 0:
+            b = b + 2 * (b - a)
+            continue
+        return float(brentq(g, a, b, xtol=1e-12, rtol=1e-13, maxiter=500))
+    return float('nan')
+
+
+def nct_interval(t, df, alpha):
+    """The 1 − alpha interval of the noncentrality λ of a t statistic on df
+    degrees of freedom: stats.nct.cdf(t, df, λ) is 1 − alpha/2 at the lower
+    limit and alpha/2 at the upper."""
+    cdf = lambda lam: float(stats.nct.cdf(t, df, lam))
+    s = 2 * math.sqrt(1 + t * t / (2 * df))
+    return _falls_to(cdf, 1 - alpha / 2, t, s), _falls_to(cdf, alpha / 2, t, s)
+
+
+def ncf_interval(F, d1, d2, alpha):
+    """The 1 − alpha interval of the noncentrality λ ≥ 0 of an F statistic:
+    stats.ncf.cdf(F, d1, d2, λ) is 1 − alpha/2 at the lower limit and
+    alpha/2 at the upper; a limit is 0 when even λ = 0 puts F below that
+    point."""
+    cdf = lambda lam: float(stats.ncf.cdf(F, d1, d2, lam)) if lam > 0 else float(stats.f.cdf(F, d1, d2))
+    start = max(1.0, (F - 1) * d1)
+    s = 2 + 2 * math.sqrt(max(start, 1.0))
+    lo = _falls_to(cdf, 1 - alpha / 2, start, s, low=0.0)
+    hi = _falls_to(cdf, alpha / 2, start, s, low=0.0)
+    return (0.0 if lo is None else lo), (0.0 if hi is None else hi)
+
+
+def smd_rows(d, t, df, k, alpha, names=("Cohen's d", "Hedges' g")):
+    """The rows of an Effect Size table for a standardized mean difference d
+    whose t statistic is t = d/k on df degrees of freedom: the exact
+    interval of δ from the noncentral t (λ = δ/k), and Hedges' g = J·d with
+    the interval multiplied by J."""
+    lo, hi = nct_interval(t, df, alpha)
+    lo, hi = (lo * k if lo is not None else None), (hi * k if hi is not None else None)
+    j = hedges_j(df)
+    return [{'effect': names[0], 'estimate': d, 'lower': lo, 'upper': hi, 'method': 'noncentral t'},
+            {'effect': names[1], 'estimate': j * d, 'lower': j * lo if lo is not None else None, 'upper': j * hi if hi is not None else None,
+             'method': 'noncentral t × J', 'j': j}]
+
+
+def bonett_se(d, v1, v2, n1, n2, r=None):
+    """Bonett's (2008) standard error of a mean difference standardized by
+    √((s₁² + s₂²)/2): two independent groups, or (r given) two paired
+    measurements of n units."""
+    s2 = (v1 + v2) / 2
+    if r is None:
+        df1, df2 = n1 - 1, n2 - 1
+        return math.sqrt(d * d * (v1 * v1 / df1 + v2 * v2 / df2) / (8 * s2 * s2) + (v1 / df1 + v2 / df2) / s2)
+    df = n1 - 1
+    vd = v1 + v2 - 2 * r * math.sqrt(v1 * v2)
+    return math.sqrt(d * d * (v1 * v1 + v2 * v2 + 2 * r * r * v1 * v2) / (8 * df * s2 * s2) + vd / (df * s2))
+
+
+def _peaked_integral(f, a, b, peak, width):
+    """∫ f over (a, b) (either may be infinite) for a positive f with most of
+    its mass within a few widths of peak: quad on pieces cut there."""
+    from scipy.integrate import quad
+    cuts = sorted({min(max(peak + k * width, a), b) for k in (-60, -20, -6, -2, 0, 2, 6, 20, 60)} | {a, b})
+    # f falls away from the peak: its value at the interval's point nearest
+    # the peak, times the width, bounds the integral's scale, and an absolute
+    # tolerance from it keeps about 1e-12 of the whole without chasing the
+    # relative accuracy of pieces that add nothing
+    near = min(max(peak, a), b)
+    top = f(near) if math.isfinite(near) else 0.0
+    eps = 1e-13 * top * width if top > 0 else 0.0
+    total = 0.0
+    for lo, hi in zip(cuts[:-1], cuts[1:]):
+        if hi > lo:
+            v, _ = quad(f, lo, hi, limit=200, epsabs=eps, epsrel=1e-11)
+            total += v
+    return total
+
+
+def jzs(t, n, df, r=JZS_R):
+    """Rouder et al.'s (2009, eq. 1) JZS t test: δ ~ Cauchy(0, r) as δ | g ~
+    N(0, g r²), g ~ inverse gamma(½, ½), Jeffreys' prior on σ. n is the
+    sample size (one sample, paired) or n₁n₂/(n₁ + n₂), df the t's degrees
+    of freedom. Returns log BF10 and the posterior probabilities P(δ > 0 | t)
+    and P(δ < 0 | t) under the alternative, for the one-sided Bayes factors
+    BF±0 = 2·BF10·P(δ ≷ 0 | t) (Morey and Wagenmakers 2014). Given g, σ
+    integrates out in closed form: P(δ > 0 | t, g) is the central t cdf (df
+    + 1 DF) at t·√(c(df + 1)/(df + t²(1 − c))), c = n g r²/(1 + n g r²); so
+    all three are integrals over g of Rouder's integrand, taken on log g
+    and scaled by its largest value."""
+    from scipy.integrate import quad
+    from scipy.optimize import minimize_scalar
+    t = float(t)
+    t2 = t * t
+    lnr = math.log(n * r * r)
+
+    def l1a(u):   # log(1 + n g r²) at g = e^u, without overflow
+        la = lnr + u
+        return la + math.log1p(math.exp(-la)) if la > 0 else math.log1p(math.exp(la))
+
+    def L(u):   # log of the integrand at g = e^u, times dg/du
+        if u < -700:
+            return -math.inf
+        lg = l1a(u)
+        return (-0.5 * lg - (df + 1) / 2 * math.log1p(t2 / df * math.exp(-lg))
+                - 0.5 * math.log(2 * math.pi) - 0.5 * u - 0.5 * math.exp(-u))
+
+    def q(u):
+        inv = math.exp(-l1a(u))          # 1/(1 + n g r²)
+        return t * math.sqrt((1 - inv) * (df + 1) / (df + t2 * inv))
+    grid = np.arange(-20.0, 60.0, 0.5)
+    vals = [L(u) for u in grid]
+    i = int(np.argmax(vals))
+    m = minimize_scalar(lambda u: -L(u), bounds=(grid[max(i - 1, 0)], grid[min(i + 1, len(grid) - 1)]), method='bounded', options={'xatol': 1e-10})
+    top = float(m.x) if -m.fun >= vals[i] else float(grid[i])
+    Lmax = L(top)
+
+    def integral(h):   # ∫ exp(L − Lmax) h du, split at the top; the integrand is at most 1 and about as wide
+        f = lambda u: math.exp(L(u) - Lmax) * h(u)
+        return (quad(f, -np.inf, top, limit=200, epsabs=1e-15, epsrel=1e-11)[0]
+                + quad(f, top, np.inf, limit=200, epsabs=1e-15, epsrel=1e-11)[0])
+    whole = integral(lambda u: 1.0)
+    pos = integral(lambda u: float(stats.t.cdf(q(u), df + 1)))
+    neg = integral(lambda u: float(stats.t.sf(q(u), df + 1)))
+    log_bf = Lmax + math.log(whole) + (df + 1) / 2 * math.log1p(t2 / df)
+    return log_bf, pos / whole, neg / whole
+
+
+def _bf_row(label, log_bf10):
+    """A row of a Bayes Factor table from log BF10 (BF01 its inverse)."""
+    lb = float(log_bf10)
+    big = 700.0   # exp overflows beyond about 709
+    bf10 = math.exp(lb) if lb < big else float('inf')
+    bf01 = math.exp(-lb) if -lb < big else float('inf')
+    return {'alternative': label, 'bf10': bf10, 'bf01': bf01, 'log10': lb / math.log(10)}
+
+
+def jzs_rows(t, n, df, r, labels):
+    """The Bayes Factor table of a t statistic: two-sided, then δ > 0, δ < 0
+    (labels in that order)."""
+    lb, pp, pn = jzs(t, n, df, r)
+    lpos = lb + math.log(2 * pp) if pp > 0 else -math.inf
+    lneg = lb + math.log(2 * pn) if pn > 0 else -math.inf
+    return [_bf_row(labels[0], lb), _bf_row(labels[1], lpos), _bf_row(labels[2], lneg)]
+
+
+JZS_CODE = '''def jzs(t, n, df, r):   # Rouder et al. (2009): BF10 of a t statistic for δ ~ Cauchy(0, r), and P(δ > 0 | t)
+    w = lambda g: (1 + n*g*r**2)**-0.5 * (1 + t**2/((1 + n*g*r**2)*df))**(-(df + 1)/2) * (2*np.pi)**-0.5 * g**-1.5 * np.exp(-1/(2*g))
+    q = lambda g: t * np.sqrt(n*g*r**2/(1 + n*g*r**2) * (df + 1)/(df + t**2/(1 + n*g*r**2)))   # P(δ > 0 | t, g) is the t cdf (df + 1 DF) at q
+    I = integrate.quad(w, 0, np.inf, limit=200)[0]
+    return I / (1 + t**2/df)**(-(df + 1)/2), integrate.quad(lambda g: w(g) * stats.t.cdf(q(g), df + 1), 0, np.inf, limit=200)[0] / I'''
+
+
+def pearson_log_bf(r, n, kappa=1.0):
+    """Ly, Verhagen and Wagenmakers' (2016) Bayes factors for a Pearson
+    correlation r of n pairs, a stretched beta(1/κ, 1/κ) prior on ρ over
+    (−1, 1) (κ = 1: uniform): the exact likelihood of ρ given r (Hotelling's
+    form of the density of r, relative to ρ = 0) integrated against the
+    prior over (−1, 1), (0, 1) and (−1, 0) (the one-sided priors doubled).
+    Returns log BF10, log BF+0, log BF−0. The integrals are taken on
+    z = atanh ρ, where the likelihood is about normal, scaled by its top."""
+    from scipy.special import betaln, hyp2f1
+    r = float(r)
+    c = n - 0.5
+    base = math.log(hyp2f1(0.5, 0.5, c, 0.5))
+    lprior0 = (1 - 2 / kappa) * math.log(2) - betaln(1 / kappa, 1 / kappa)
+
+    def logf(z):   # log of likelihood × prior × dρ/dz at ρ = tanh z
+        rho = math.tanh(z)
+        lone = math.log(4) - 2 * abs(z) - 2 * math.log1p(math.exp(-2 * abs(z)))   # log(1 − ρ²), exact for any z
+        return ((n - 1) / 2 * lone - (n - 1.5) * math.log1p(-rho * r) + math.log(hyp2f1(0.5, 0.5, c, (1 + rho * r) / 2)) - base
+                + lprior0 + (1 / kappa - 1) * lone + lone)
+    z0 = math.atanh(max(-0.999999, min(0.999999, r)))
+    w = 1 / math.sqrt(max(n - 3, 1))
+    zs = np.concatenate([z0 + w * np.linspace(-12, 12, 241), np.linspace(-15, 15, 301)])
+    top = max(logf(float(z)) for z in zs)
+    f = lambda z: math.exp(logf(z) - top)
+    pos = _peaked_integral(f, 0.0, np.inf, z0, w)
+    neg = _peaked_integral(f, -np.inf, 0.0, z0, w)
+    lt = lambda v: top + math.log(v) if v > 0 else -math.inf
+    return lt(pos + neg), lt(2 * pos), lt(2 * neg)
+
+
+PEARSON_CODE = '''def bf_rho(r, n, kappa, lo=-1, hi=1):   # Ly et al. (2016): the exact likelihood of ρ given r against a stretched beta prior
+    lik = lambda p: (1 - p*p)**((n - 1)/2) * (1 - p*r)**(1.5 - n) * special.hyp2f1(0.5, 0.5, n - 0.5, (1 + p*r)/2) / special.hyp2f1(0.5, 0.5, n - 0.5, 0.5)
+    prior = lambda p: 2**(1 - 2/kappa) * (1 - p*p)**(1/kappa - 1) / special.beta(1/kappa, 1/kappa)
+    return integrate.quad(lambda p: lik(p) * prior(p), lo, hi, points=[r] if lo < r < hi else None, limit=200)[0] * (2 if hi - lo < 2 else 1)'''
+
+
+def _es_table(rows, alpha):
+    lv = f'{100 * (1 - alpha):g}%'
+    return _tab([col('effect', 'Effect Size', 'text'), col('estimate', 'Estimate'), col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}'),
+                 col('method', 'Interval', 'text')], rows)
+
+
+def _bf_table(rows):
+    return _tab([col('alternative', 'Alternative', 'text'), col('bf10', 'BF10'), col('bf01', 'BF01'), col('log10', 'log10 BF10', hidden=True)], rows)
+
+
 # ---- Bivariate ----------------------------------------------------------------
 
 @api('fitybyx.bivariate')
@@ -362,6 +590,42 @@ def bivariate(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=
         c.append(f'print(DescrStatsW(d[[{J(x)}, {J(y)}]], weights={we}, ddof=1).cov)')
     else:
         c.append('print(d.mean(), d.std(), d.corr(), d.cov())')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+@api('fitybyx.bivariate_bf')
+def bivariate_bf(table, y, x, kappa=1.0, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+    """Bayes Factor of the Pearson correlation (Ly, Verhagen and Wagenmakers
+    2016): ρ ~ stretched beta(1/κ, 1/κ) on (−1, 1) under the alternative
+    (κ = 1, uniform, by default), the exact likelihood of ρ given r;
+    two-sided and one-sided (ρ > 0, ρ < 0). Freq counts rows; Weight is
+    not used."""
+    xy = _xy(table, y, x, rows, weight, freq)
+    if not (kappa and kappa > 0):
+        return {'error': 'the width κ of the prior must be positive'}
+    try:
+        yv, xv, _ = xy.expand()
+    except ValueError as e:
+        return {'error': str(e)}
+    n = len(yv)
+    if n < 3:
+        return {'error': 'fewer than three rows with both values'}
+    if np.std(xv) == 0 or np.std(yv) == 0:
+        return {'error': 'a column is constant: no correlation'}
+    r = float(stats.pearsonr(xv, yv).statistic)
+    if abs(r) >= 1 - 1e-12:
+        return {'error': 'the points lie on a line (r = ±1): the Bayes factor is infinite'}
+    l2, lp, ln = pearson_log_bf(r, n, kappa)
+    rows_out = [_bf_row('ρ ≠ 0', l2), _bf_row('ρ > 0', lp), _bf_row('ρ < 0', ln)]
+    out = {'table': _bf_table(rows_out), 'r': r, 'n': n, 'kappa': kappa, 'notes': ['Weight is not used by the Bayes factor; Freq is.'] if weight else []}
+    c = _head(table_name, where, ['from scipy import stats, integrate, special'])
+    c.append(f'd = df[[{", ".join(J(v) for v in (x, y, freq) if v)}]].dropna()')
+    if freq:
+        c.append(_repeat_code(freq))
+    c.append(f'r, n = stats.pearsonr(d[{J(x)}], d[{J(y)}]).statistic, len(d)')
+    c.append(PEARSON_CODE)
+    c.append(f'print(bf_rho(r, n, {kappa!r}), bf_rho(r, n, {kappa!r}, 0, 1), bf_rho(r, n, {kappa!r}, -1, 0))   # BF10: ρ ≠ 0, ρ > 0, ρ < 0; BF01 = 1/BF10')
     out['code'] = '\n'.join(c)
     return out
 
@@ -1160,6 +1424,182 @@ def oneway_ttest(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, whe
     return out
 
 
+NCP_T_CODE = '''def ncp(t, df, q):   # the noncentrality at which t is the q quantile of the noncentral t
+    return optimize.brentq(lambda lam: stats.nct.cdf(t, df, lam) - q, t - 10 - abs(t), t + 10 + abs(t))'''
+
+
+def _two_levels(G):
+    """The two levels' values and frequencies, the first level first."""
+    a, b = [G.y[G.code == i] for i in (0, 1)]
+    fa, fb = [G.f[G.code == i] for i in (0, 1)]
+    return a, b, fa, fb
+
+
+@api('fitybyx.oneway_effect')
+def oneway_effect(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.05, where=None, table_name='data'):
+    """Effect Size of the one-way ANOVA: η² = SS_X/SS_total, ε² = (SS_X −
+    df_X MS_E)/SS_total (Kelley 1935) and ω² = (SS_X − df_X MS_E)/(SS_total +
+    MS_E) (Hays 1963); with a Block their partial forms, the block's sum of
+    squares left out. The interval is the exact one of the population
+    proportion of variance η²_pop = λ/(λ + df_X + df_E + 1), from the
+    noncentral F whose λ puts the observed F at its upper and lower α/2
+    points (Steiger 2004); the three estimates estimate that same
+    proportion, with less bias from η² to ω²."""
+    G = _OW(table, y, x, rows, weight, freq, block)
+    if G.k < 2:
+        return {'error': 'X has one level: no analysis of variance'}
+    effects = [[x]] + ([[block]] if block else [])
+    d = models.build(table, y, effects, rows, weight, freq)
+    f = _freq_of(table, freq, d.df.index)
+    res = _fit_design(d, f)
+    df_e, ss_e = float(res.df_resid), float(res.ssr)
+    if df_e <= 0:
+        return {'error': 'no degrees of freedom for error'}
+    if block:
+        et = models.effect_tests(d, res)['rows'][0]
+        ss_x, df_x = float(et['ss']), float(et['df'])
+    else:
+        ss_x, df_x = float(res.ess), float(res.df_model)
+    ms_e = ss_e / df_e
+    N = df_x + df_e + 1          # the observations (Freq summed) in the one-way layout
+    count = float(np.sum(f)) if f is not None else float(len(d.df))
+    ss_t = ss_x + ss_e
+    F = (ss_x / df_x) / ms_e if ms_e > 0 else float('inf')
+    lam_lo, lam_hi = ncf_interval(F, df_x, df_e, alpha) if math.isfinite(F) else (float('nan'), float('nan'))
+    pop = lambda lam: lam / (lam + N)
+    lo, hi = pop(lam_lo), pop(lam_hi)
+    pre = 'Partial ' if block else ''
+    rows_out = [
+        {'effect': f'{pre}η² (eta²)', 'estimate': ss_x / ss_t, 'lower': lo, 'upper': hi, 'method': 'noncentral F'},
+        {'effect': f'{pre}ε² (epsilon²)', 'estimate': (ss_x - df_x * ms_e) / ss_t, 'lower': lo, 'upper': hi, 'method': 'noncentral F'},
+        {'effect': f'{pre}ω² (omega²)', 'estimate': (ss_x - df_x * ms_e) / (ss_x + (count - df_x) * ms_e), 'lower': lo, 'upper': hi, 'method': 'noncentral F'},
+    ]
+    notes = []
+    if weight:
+        notes.append('With Weight the sums of squares are weighted, as in the Analysis of Variance.')
+    out = {'table': _es_table(rows_out, alpha), 'F': F, 'df_num': df_x, 'df_den': df_e, 'lambda': [lam_lo, lam_hi], 'n': count, 'alpha': alpha,
+           'partial': bool(block), 'notes': notes}
+    c = _ow_code(G, table_name, where, ['from scipy import stats, optimize'])
+    if freq:
+        c.append(_repeat_code(freq))
+    formula = f'{_q(y)} ~ C({_q(x)})' + (f' + C({_q(block)})' if block else '')
+    c.append(f'res = smf.{"wls" if weight else "ols"}({J(formula)}, d{", weights=d[" + J(weight) + "]" if weight else ""}).fit(); a = sm.stats.anova_lm(res, typ={3 if block else 1})')
+    c.append(f'ss_x, df_x = a.loc[{J("C(" + _q(x) + ")")}, "sum_sq"], a.loc[{J("C(" + _q(x) + ")")}, "df"]; ss_e, df_e = res.ssr, res.df_resid; ms_e = ss_e / df_e')
+    c.append('print(ss_x / (ss_x + ss_e), (ss_x - df_x*ms_e) / (ss_x + ss_e), (ss_x - df_x*ms_e) / (ss_x + (res.nobs - df_x)*ms_e))   # η², ε², ω²' + (' (partial)' if block else ''))
+    c.append('F = ss_x / df_x / ms_e')
+    c.append('def ncp(q):   # the noncentrality at which F is the q quantile of the noncentral F (0 when λ = 0 already puts it lower)')
+    c.append('    g = lambda lam: stats.ncf.cdf(F, df_x, df_e, lam) - q')
+    c.append('    return 0.0 if g(0) < 0 else optimize.brentq(g, 0, 100 + 10 * F * df_x)')
+    c.append(f'lo, hi = ncp({1 - alpha / 2!r}), ncp({alpha / 2!r}); N = df_x + df_e + 1')
+    c.append('print(lo / (lo + N), hi / (hi + N))   # the exact interval of the population η² (Steiger 2004)')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+@api('fitybyx.ttest_effect')
+def ttest_effect(table, y, x, kind='pooled', rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+    """Effect Size of a two-level t test, the second level minus the first.
+    pooled: Cohen's d = difference/s_pooled with the exact interval from the
+    noncentral t of the pooled t (δ = λ√(1/n₁ + 1/n₂)), and Hedges' g =
+    J(n₁ + n₂ − 2)·d. welch: d* = difference/√((s₁² + s₂²)/2), Cohen's
+    (1988) standardizer for unequal variances, with Bonett's (2008)
+    interval d* ± z·SE (no exact interval exists without equal variances),
+    and g* = J(n₁ + n₂ − 2)·d*. Freq counts rows; Weight is not used, as in
+    the t tests."""
+    from statsmodels.stats.weightstats import DescrStatsW
+    G = _OW(table, y, x, rows, weight, freq)
+    if G.k != 2:
+        return {'error': 'an effect size of a t test needs exactly two levels of X'}
+    if kind not in ('pooled', 'welch'):
+        return {'error': f'unknown t test {kind!r}'}
+    a, b, fa, fb = _two_levels(G)
+    da, db = DescrStatsW(a, weights=fa, ddof=1), DescrStatsW(b, weights=fb, ddof=1)
+    n1, n2 = float(da.sum_weights), float(db.sum_weights)
+    if n1 < 2 or n2 < 2:
+        return {'error': 'each level needs two values'}
+    v1, v2 = float(da.var), float(db.var)
+    diff = float(db.mean - da.mean)
+    df = n1 + n2 - 2
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    notes = ['Weight is not used here, as in the t tests; Freq is.'] if weight else []
+    if kind == 'pooled':
+        sp = math.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / df)
+        if not sp > 0:
+            return {'error': 'no variation within the levels'}
+        d = diff / sp
+        k = math.sqrt(1 / n1 + 1 / n2)
+        rows_out = smd_rows(d, d / k, df, k, alpha)
+        out = {'table': _es_table(rows_out, alpha), 'standardizer': sp, 't': d / k, 'df': df, 'n1': n1, 'n2': n2, 'j': rows_out[1]['j']}
+    else:
+        s = math.sqrt((v1 + v2) / 2)
+        if not s > 0:
+            return {'error': 'no variation within the levels'}
+        d = diff / s
+        se = bonett_se(d, v1, v2, n1, n2)
+        j = hedges_j(df)
+        rows_out = [{'effect': "Cohen's d*", 'estimate': d, 'lower': d - z * se, 'upper': d + z * se, 'method': 'Bonett (2008)', 'se': se},
+                    {'effect': "Hedges' g*", 'estimate': j * d, 'lower': j * (d - z * se), 'upper': j * (d + z * se), 'method': 'Bonett (2008) × J', 'se': j * se}]
+        t_ = _tab([col('effect', 'Effect Size', 'text'), col('estimate', 'Estimate'), col('lower', f'Lower {100 * (1 - alpha):g}%'), col('upper', f'Upper {100 * (1 - alpha):g}%'),
+                   col('method', 'Interval', 'text'), col('se', 'Std Err', hidden=True)], rows_out)
+        out = {'table': t_, 'standardizer': s, 'df': df, 'n1': n1, 'n2': n2, 'j': j}
+    out.update({'kind': kind, 'diff': diff, 'levels': G.levels, 'alpha': alpha, 'notes': notes})
+    c = _ow_code(G, table_name, where, ['from scipy import stats, optimize, special'])
+    if freq:
+        c.append(_repeat_code(freq))
+    c.append(f'a, b = [g[{J(y)}].to_numpy() for _, g in d.groupby({J(x)}, observed=True)]   # the first level, the second')
+    c.append('n1, n2, v1, v2 = len(a), len(b), a.var(ddof=1), b.var(ddof=1); df_ = n1 + n2 - 2')
+    c.append('J = np.exp(special.gammaln(df_ / 2) - 0.5 * np.log(df_ / 2) - special.gammaln((df_ - 1) / 2))   # Hedges\' exact correction')
+    if kind == 'pooled':
+        c.append(NCP_T_CODE)
+        c.append('sp = np.sqrt(((n1 - 1)*v1 + (n2 - 1)*v2) / df_); d_ = (b.mean() - a.mean()) / sp; k = np.sqrt(1/n1 + 1/n2); t = d_ / k')
+        c.append(f'lo, hi = ncp(t, df_, {1 - alpha / 2!r}) * k, ncp(t, df_, {alpha / 2!r}) * k')
+        c.append("print(d_, lo, hi, J * d_, J * lo, J * hi)   # Cohen's d with its exact interval (noncentral t), Hedges' g = J d")
+    else:
+        c.append('s = np.sqrt((v1 + v2) / 2); d_ = (b.mean() - a.mean()) / s')
+        c.append('se = np.sqrt(d_**2 * (v1**2/(n1 - 1) + v2**2/(n2 - 1)) / (8 * s**4) + (v1/(n1 - 1) + v2/(n2 - 1)) / s**2)   # Bonett (2008)')
+        c.append(f'z = stats.norm.ppf({1 - alpha / 2!r}); print(d_, d_ - z*se, d_ + z*se, J * d_)   # d* with Bonett\'s interval, Hedges\' g* = J d*')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+@api('fitybyx.oneway_bf')
+def oneway_bf(table, y, x, r=JZS_R, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+    """Bayes Factor of the two-sample t test (Rouder et al. 2009): the
+    pooled t of the second level minus the first, a Cauchy(0, r) prior on δ
+    = (μ₂ − μ₁)/σ under the alternative, equal variances; two-sided and
+    one-sided (δ > 0, δ < 0). Freq counts rows; Weight is not used."""
+    from statsmodels.stats.weightstats import DescrStatsW
+    G = _OW(table, y, x, rows, weight, freq)
+    if G.k != 2:
+        return {'error': 'the Bayes factor of the t test needs exactly two levels of X'}
+    if not (r and r > 0):
+        return {'error': 'the scale of the Cauchy prior must be positive'}
+    a, b, fa, fb = _two_levels(G)
+    da, db = DescrStatsW(a, weights=fa, ddof=1), DescrStatsW(b, weights=fb, ddof=1)
+    n1, n2 = float(da.sum_weights), float(db.sum_weights)
+    if n1 < 2 or n2 < 2:
+        return {'error': 'each level needs two values'}
+    df = n1 + n2 - 2
+    sp = math.sqrt(((n1 - 1) * float(da.var) + (n2 - 1) * float(db.var)) / df)
+    if not sp > 0:
+        return {'error': 'no variation within the levels'}
+    t = float(db.mean - da.mean) / (sp * math.sqrt(1 / n1 + 1 / n2))
+    ne = n1 * n2 / (n1 + n2)
+    lv = [_lvtext(v) for v in G.levels]
+    rows_out = jzs_rows(t, ne, df, r, ['δ ≠ 0', f'δ > 0 ({lv[1]} higher)', f'δ < 0 ({lv[1]} lower)'])
+    out = {'table': _bf_table(rows_out), 't': t, 'df': df, 'n1': n1, 'n2': n2, 'n_eff': ne, 'r': r, 'levels': G.levels,
+           'notes': ['Weight is not used here, as in the t tests; Freq is.'] if weight else []}
+    c = _ow_code(G, table_name, where, ['from scipy import stats, integrate'])
+    if freq:
+        c.append(_repeat_code(freq))
+    c.append(f'a, b = [g[{J(y)}].to_numpy() for _, g in d.groupby({J(x)}, observed=True)]')
+    c.append('t, n1, n2 = stats.ttest_ind(b, a).statistic, len(a), len(b); n, df_ = n1*n2/(n1 + n2), n1 + n2 - 2   # the pooled t, second level minus first')
+    c.append(JZS_CODE)
+    c.append(f'bf, p = jzs(t, n, df_, {r!r}); print(bf, 2*bf*p, 2*bf*(1 - p))   # BF10: δ ≠ 0, δ > 0, δ < 0; BF01 = 1/BF10')
+    out['code'] = '\n'.join(c)
+    return out
+
+
 def _letters(order, sig):
     """Connecting letters (the insert-absorb algorithm): levels in `order`
     (by mean, highest first); sig[i][j] true when i and j differ. Levels
@@ -1199,7 +1639,9 @@ def oneway_compare(table, y, x, method='student', control=None, rows=None, weigh
     """Compare Means: Each Pair, Student's t (pooled error, no
     adjustment); All Pairs, Tukey HSD (Tukey-Kramer: pairwise_tukeyhsd for
     the differences, scipy's studentized range for q* and the p-values);
-    With Control, Dunnett's (scipy.stats.dunnett)."""
+    All Pairs, Games-Howell (unequal variances: each pair's Welch standard
+    error and degrees of freedom, the studentized range); With Control,
+    Dunnett's (scipy.stats.dunnett)."""
     from statsmodels.stats.multicomp import pairwise_tukeyhsd
     G = _OW(table, y, x, rows, weight, freq)
     if G.k < 2:
@@ -1289,6 +1731,60 @@ def oneway_compare(table, y, x, method='student', control=None, rows=None, weigh
         lets, ncols = _letters(order, sig)
         out['letters'] = [{'index': i, 'letters': lets[i], 'mean': float(means[i])} for i in order]
         out['pairs'] = pairs
+    elif method == 'gameshowell':
+        # Games and Howell (1976): each pair with its own (Welch) standard
+        # error and degrees of freedom, p and intervals from the studentized
+        # range of k levels on those degrees of freedom
+        if weight:
+            notes.append('Games-Howell uses each level\'s own variance and takes no weights: Weight is not used here.')
+        smp = G.samples()
+        if any(len(s) < 2 for s in smp):
+            return {'error': 'Games-Howell needs two values in every level (it uses each level\'s own variance)'}
+        mh = np.array([float(s.mean()) for s in smp])
+        vh = np.array([float(s.var(ddof=1)) for s in smp])
+        nh = np.array([float(len(s)) for s in smp])
+        if not np.all(vh > 0):
+            return {'error': 'a level has no variation: Games-Howell divides by each level\'s variance'}
+        u = vh / nh
+
+        def pair(i, j):
+            se = math.sqrt(u[i] + u[j])
+            dfw = (u[i] + u[j]) ** 2 / (u[i] ** 2 / (nh[i] - 1) + u[j] ** 2 / (nh[j] - 1))
+            return se, dfw, float(stats.studentized_range.ppf(1 - alpha, G.k, dfw)) / math.sqrt(2)
+        order = [int(i) for i in np.argsort(-mh, kind='stable')]
+        out.update({'order': order, 'means': mh, 'n': nh, 'quantile': {'label': 'q* (each pair\'s)', 'value': None}})
+        for i in range(G.k):
+            for j in range(i + 1, G.k):
+                se, dfw, crit = pair(i, j)
+                a, b = (i, j) if mh[i] >= mh[j] else (j, i)
+                dv = abs(float(mh[i] - mh[j]))
+                pv = float(stats.studentized_range.sf(dv / se * math.sqrt(2), G.k, dfw))
+                pairs.append({'i': a, 'j': b, 'diff': dv, 'se': se, 'lower': dv - crit * se, 'upper': dv + crit * se, 'p': min(1.0, max(0.0, pv)), 'df': dfw, 'q': crit})
+        pairs.sort(key=lambda p: -p['diff'])
+        M = []
+        for i in order:
+            row = []
+            for j in order:
+                se, dfw, crit = pair(i, j) if i != j else (math.sqrt(2 * u[i]), 2 * (nh[i] - 1), float(stats.studentized_range.ppf(1 - alpha, G.k, 2 * (nh[i] - 1))) / math.sqrt(2))
+                row.append(abs(mh[i] - mh[j]) - crit * se)
+            M.append(row)
+        out['matrix'] = M
+        sig = [[False] * G.k for _ in range(G.k)]
+        for p_ in pairs:
+            if p_['p'] < alpha:
+                sig[p_['i']][p_['j']] = sig[p_['j']][p_['i']] = True
+        lets, ncols = _letters(order, sig)
+        out['letters'] = [{'index': i, 'letters': lets[i], 'mean': float(mh[i])} for i in order]
+        out['pairs'] = pairs
+        notes.append('Games-Howell: each difference over its own standard error √(s²ᵢ/nᵢ + s²ⱼ/nⱼ), with the Welch-Satterthwaite degrees of freedom of the pair; p-values and intervals from scipy\'s studentized range distribution of k levels on those degrees of freedom. It does not assume equal variances.')
+        c = _ow_code(G, table_name, where, ['from scipy import stats', 'import itertools'])
+        if freq:
+            c.append(_repeat_code(freq))
+        c.append(f'g = d.groupby({J(x)}, observed=True)[{J(y)}]; m, v, n = g.mean(), g.var(), g.count(); k = len(m)')
+        c.append('for i, j in itertools.combinations(m.index, 2):   # Games-Howell, each pair')
+        c.append('    a, b = v[i]/n[i], v[j]/n[j]; se = np.sqrt(a + b); df_ = (a + b)**2 / (a**2/(n[i] - 1) + b**2/(n[j] - 1))')
+        c.append(f'    q = stats.studentized_range.ppf({1 - alpha!r}, k, df_) / np.sqrt(2)   # the pair\'s own quantile')
+        c.append('    print(i, j, m[i] - m[j], se, df_, stats.studentized_range.sf(abs(m[i] - m[j]) / se * np.sqrt(2), k, df_), m[i] - m[j] - q*se, m[i] - m[j] + q*se)')
     elif method == 'dunnett':
         ci_ = G.levels.index(control) if control in G.levels else 0
         if weight:
@@ -2972,6 +3468,83 @@ def matched_pairs(table, y1, y2, group=None, rows=None, alpha=0.05, where=None, 
     c.append(f'print(stats.pearsonr(d[{J(y1)}], d[{J(y2)}]))')
     if group:
         c.append(f'print(stats.f_oneway(*[g for _, g in dif.groupby(d[{J(group)}])]))   # the mean difference across the groups')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+def _pairs_of(table, y1, y2, rows):
+    df = data.frame(table, [y1, y2], rows)
+    a = df[y1].to_numpy(float)
+    b = df[y2].to_numpy(float)
+    return a, b, b - a
+
+
+@api('matchedpairs.effect')
+def matched_effect(table, y1, y2, rows=None, alpha=0.05, where=None, table_name='data'):
+    """Effect Size of the paired difference y2 − y1: Cohen's d_z = mean
+    difference/SD of the differences, with the exact interval from the
+    noncentral t of the paired t (δ_z = λ/√n), Hedges' g_z = J(n − 1)·d_z,
+    and d_av = mean difference/√((s₁² + s₂²)/2), comparable with a
+    two-group d (Cumming 2012; Lakens 2013), with Bonett's (2008)
+    interval."""
+    if y1 == y2:
+        return {'error': 'the two responses are the same column'}
+    a, b, d = _pairs_of(table, y1, y2, rows)
+    n = len(d)
+    if n < 3:
+        return {'error': 'fewer than three complete pairs'}
+    sd = float(np.std(d, ddof=1))
+    v1, v2 = float(np.var(a, ddof=1)), float(np.var(b, ddof=1))
+    if not sd > 0 or not (v1 + v2) > 0:
+        return {'error': 'the differences do not vary: no standardized effect'}
+    dz = float(d.mean()) / sd
+    rows_out = smd_rows(dz, dz * math.sqrt(n), n - 1, 1 / math.sqrt(n), alpha, names=("Cohen's d_z", "Hedges' g_z"))
+    rho = float(np.corrcoef(a, b)[0, 1]) if v1 > 0 and v2 > 0 else 0.0
+    dav = float(d.mean()) / math.sqrt((v1 + v2) / 2)
+    se = bonett_se(dav, v1, v2, n, n, r=rho)
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    rows_out.append({'effect': "Cohen's d_av", 'estimate': dav, 'lower': dav - z * se, 'upper': dav + z * se, 'method': 'Bonett (2008)', 'se': se})
+    lv = f'{100 * (1 - alpha):g}%'
+    t_ = _tab([col('effect', 'Effect Size', 'text'), col('estimate', 'Estimate'), col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}'),
+               col('method', 'Interval', 'text'), col('se', 'Std Err', hidden=True)], rows_out)
+    out = {'table': t_, 'n': n, 'r': rho, 'sd_diff': sd, 'alpha': alpha}
+    c = _head(table_name, where, ['from scipy import stats, optimize, special'])
+    c.append(f'd = df[[{J(y1)}, {J(y2)}]].dropna(); a, b = d[{J(y1)}].to_numpy(), d[{J(y2)}].to_numpy(); dif = b - a; n = len(dif)')
+    c.append(NCP_T_CODE)
+    c.append(f'dz = dif.mean() / dif.std(ddof=1); t = dz * np.sqrt(n); lo, hi = ncp(t, n - 1, {1 - alpha / 2!r}) / np.sqrt(n), ncp(t, n - 1, {alpha / 2!r}) / np.sqrt(n)')
+    c.append('J = np.exp(special.gammaln((n - 1) / 2) - 0.5 * np.log((n - 1) / 2) - special.gammaln((n - 2) / 2))   # Hedges\' exact correction')
+    c.append("print(dz, lo, hi, J * dz)   # Cohen's d_z with its exact interval (noncentral t), Hedges' g_z")
+    c.append('v1, v2, r = a.var(ddof=1), b.var(ddof=1), np.corrcoef(a, b)[0, 1]; s2 = (v1 + v2) / 2; dav = dif.mean() / np.sqrt(s2)')
+    c.append('se = np.sqrt(dav**2 * (v1**2 + v2**2 + 2*r**2*v1*v2) / (8*(n - 1)*s2**2) + (v1 + v2 - 2*r*np.sqrt(v1*v2)) / ((n - 1)*s2))   # Bonett (2008)')
+    c.append(f'z = stats.norm.ppf({1 - alpha / 2!r}); print(dav, dav - z*se, dav + z*se)   # d_av with Bonett\'s interval')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+@api('matchedpairs.bayes')
+def matched_bayes(table, y1, y2, r=JZS_R, rows=None, alpha=0.05, where=None, table_name='data'):
+    """Bayes Factor of the paired t test (Rouder et al. 2009): the
+    differences y2 − y1 as one sample, a Cauchy(0, r) prior on δ = mean
+    difference/SD under the alternative; two-sided and one-sided."""
+    if y1 == y2:
+        return {'error': 'the two responses are the same column'}
+    if not (r and r > 0):
+        return {'error': 'the scale of the Cauchy prior must be positive'}
+    a, b, d = _pairs_of(table, y1, y2, rows)
+    n = len(d)
+    if n < 2:
+        return {'error': 'fewer than two complete pairs'}
+    sd = float(np.std(d, ddof=1))
+    if not sd > 0:
+        return {'error': 'the differences do not vary: no t statistic'}
+    t = float(d.mean()) / (sd / math.sqrt(n))
+    rows_out = jzs_rows(t, n, n - 1, r, ['δ ≠ 0', f'δ > 0 ({y2} higher)', f'δ < 0 ({y2} lower)'])
+    out = {'table': _bf_table(rows_out), 't': t, 'n': n, 'df': n - 1, 'r': r}
+    c = _head(table_name, where, ['from scipy import stats, integrate'])
+    c.append(f'd = df[[{J(y1)}, {J(y2)}]].dropna(); dif = d[{J(y2)}] - d[{J(y1)}]; n = len(dif)')
+    c.append('t = stats.ttest_1samp(dif, 0).statistic   # the paired t')
+    c.append(JZS_CODE)
+    c.append(f'bf, p = jzs(t, n, n - 1, {r!r}); print(bf, 2*bf*p, 2*bf*(1 - p))   # BF10: δ ≠ 0, δ > 0, δ < 0; BF01 = 1/BF10')
     out['code'] = '\n'.join(c)
     return out
 

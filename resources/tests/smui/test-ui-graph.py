@@ -345,6 +345,23 @@ async def main():
       return { els: _gb.state().elements.map(e => e.type), jitter: pts ? pts.x.every(v => Math.abs(v - Math.round(v)) <= 0.41) : null }; })()''')
     check('shift-click adds Points to Bar', r['els'], ['bar', 'points'])
     check('points jittered within their level', r['jitter'], True)
+    # Packed jitter: side by side at each level, none on another (measured on the drawn axes)
+    r = await page.ev('''(async () => {
+      const p = await drawn(await gbSet({ x: ['sex'], y: ['height (cm)'] }, ['points'], { points: { jitter: 'packed' } }));
+      const gd = p.box;
+      const ti = p.traces.findIndex((t, i) => t.mode === 'markers' && Array.isArray(p.rows[i]));
+      const tr = gd.data[ti], xa = gd._fullLayout.xaxis, ya = gd._fullLayout.yaxis;
+      const px = tr.x.map(v => xa.l2p(v)), py = tr.y.map(v => ya.l2p(v));
+      let overlaps = 0, pairs = 0, closest = Infinity;
+      for (let i = 0; i < px.length; i++) for (let j = i + 1; j < px.length; j++) {
+        if (Math.round(tr.x[i]) !== Math.round(tr.x[j])) continue;
+        pairs++; const d = Math.hypot(px[i] - px[j], py[i] - py[j]); closest = Math.min(closest, d); if (d < 0.9 * tr.marker.size) overlaps++;
+      }
+      const offs = tr.x.map(v => v - Math.round(v));
+      return { overlaps, pairs, closest, size: tr.marker.size, within: offs.every(o => Math.abs(o) <= 0.41), centred: Math.abs(offs.reduce((a, b) => a + b, 0) / offs.length) < 0.05, n: p.rows[ti].length, jitter: _gb.state().elements[0].jitter };
+    })()''')
+    check('Packed jitter: no two points of a level overlap on the drawn graph', (r['jitter'], r['overlaps'], r['pairs'] > 300), ('packed', 0, True))
+    check('... they stay within their level, around its middle', (r['within'], r['centred']), (True, True))
 
     # ---- Box Plot: JMP's quantiles; outliers linked point by point
     r = await page.ev('''(async () => {

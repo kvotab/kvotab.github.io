@@ -10,7 +10,9 @@ nested in other columns, possibly marked as a random effect:
 The personalities and the names the page calls:
 
   fitmodel.ls           Standard Least Squares: the report tables, row
-                        diagnostics, leverage plots, least squares means
+                        diagnostics, leverage plots, least squares means;
+                        partial eta and omega squared, optional columns of
+                        the Effect Tests
   fitmodel.compare      LSMeans Student's t and Tukey HSD, connecting letters
   fitmodel.contrast     LSMeans Contrast
   fitmodel.boxcox       Box-Cox Y Transformation
@@ -22,7 +24,10 @@ The personalities and the names the page calls:
   fitmodel.glm          Generalized Linear Model
   fitmodel.logistic     Nominal and Ordinal Logistic
   fitmodel.mixed        Mixed Model (REML) with variance components
-  fitmodel.manova       MANOVA
+  fitmodel.manova       MANOVA; Repeated Measures (response='repeated'): the
+                        between- and within-subject tests, Mauchly's sphericity
+                        test, the Greenhouse-Geisser and Huynh-Feldt adjusted
+                        univariate within tests
   fitmodel.genreg       Generalized Regression: lasso, elastic net, ridge, their
                         adaptive forms, forward selection; AICc, BIC, KFold,
                         holdback, leave-one-out or a Validation column
@@ -833,6 +838,8 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
             r['dfden'] = dfi
         et['columns'] = [col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'), col('dfden', 'DFDen', 'num'),
                          col('stat', 'F Ratio'), col('p', 'Prob > F', 'p')]
+    else:
+        _effect_sizes(et, res)
     est = models.estimates(d, R, alpha, vif=vif)
     names = list(res.params.index)
     bJ, VJ = res.params.to_numpy(float), np.asarray(R.cov_params(), dtype=float)
@@ -944,6 +951,12 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
         lines.append('infl = fit.get_influence()   # residuals, studentized residuals, hats, Cook\'s D')
     if R is not res:
         lines += _robust_code(rob)
+    elif any('pes' in r for r in et['rows']):
+        lines += ['et = sm.stats.anova_lm(fit, typ=3).drop(index=["Intercept", "Residual"], errors="ignore")   # Effect Tests, and their optional columns:',
+                  'N = fit.df_resid + np.linalg.matrix_rank(fit.model.exog)   # the observations the DF count',
+                  'et["Partial eta2"] = et.sum_sq / (et.sum_sq + fit.ssr)',
+                  'et["Partial omega2"] = (et.sum_sq - et.df * fit.mse_resid) / (et.sum_sq + (N - et.df) * fit.mse_resid)',
+                  'print(et)']
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
     return out
@@ -982,6 +995,29 @@ def _ls_robust_note(rob, dfi, groups):
 
 def _fmt_df(v):
     return str(int(v)) if float(v).is_integer() else f'{v:.4g}'
+
+
+def _effect_sizes(et, res):
+    """Effect sizes of the least squares Effect Tests, as optional columns
+    (hidden until the reader shows them): partial eta squared SS/(SS + SSE)
+    (Cohen 1973) and partial omega squared (SS - DF MSE)/(SS + (N - DF) MSE)
+    (Keren and Lewis 1979; Olejnik and Algina 2003), N the observations the
+    degrees of freedom count (the sum of Freq). Omega is negative when F < 1.
+    JMP's Effect Tests have neither."""
+    dfe = float(res.df_resid)
+    if not et['rows'] or dfe <= 0:
+        return
+    sse, mse = float(res.ssr), float(res.mse_resid)
+    nobs = dfe + float(res.model.rank)
+    for r in et['rows']:
+        ss, q = r.get('ss'), float(r.get('df') or 0)
+        if ss is None or not np.isfinite(ss):
+            continue
+        r['pes'] = ss / (ss + sse) if ss + sse > 0 else None
+        den = ss + (nobs - q) * mse
+        r['pos'] = (ss - q * mse) / den if den > 0 else None
+    et['columns'] = et['columns'] + [col('pes', 'Partial η²', 'num', digits=4, hidden=True), col('pos', 'Partial ω²', 'num', digits=4, hidden=True)]
+    et['n'] = nobs
 
 
 def _ccpr(m):
@@ -2897,9 +2933,218 @@ def _transform_M(kind, k):
 _MV_NAMES = {"Wilks' lambda": "Wilks' Lambda", "Pillai's trace": "Pillai's Trace", 'Hotelling-Lawley trace': 'Hotelling-Lawley',
              "Roy's greatest root": "Roy's Max Root"}
 
+# ---- Repeated Measures ------------------------------------------------------------
+# JMP's Choose Response > Repeated Measures: the Y columns are the levels of a
+# within-subject factor (Y Name, Time by default). Between Subjects: each
+# effect on the sum of the responses (M a column of ones). Within Subjects:
+# the intercept on contrasts of the responses is the within factor, each
+# effect on them its crossing with the within factor. With Univariate Tests
+# Also: Mauchly's (1940) sphericity test and the univariate within tests,
+# unadjusted and with the degrees of freedom times the Greenhouse-Geisser
+# (1959) and Huynh-Feldt (1976) epsilons, all on the orthonormalized
+# contrasts, as JMP computes them. The multivariate tests do not depend on
+# the contrasts chosen; the univariate ones need them orthonormal.
+_UNIVAR = (('unadj', 'Univar unadj Epsilon'), ('gg', 'Univar G-G Epsilon'), ('hf', 'Univar H-F Epsilon'))
+_MV_F_NOTE = ('The F approximations are statsmodels\': Rao\'s for Wilks\' lambda, Pillai\'s, McKeon\'s for the Hotelling-Lawley trace and '
+              'Roy\'s upper bound, the ones JMP reports (McKeon\'s gives the Hotelling-Lawley DenDF of 18.326 in JMP\'s Compound example).')
+
+
+def _mv_results(mv, hyps, E, nu):
+    """statsmodels' mv_test of each hypothesis (name, L[, M]), E the residual
+    SSCP of the responses and nu its DF. statsmodels 0.14.6 fails
+    (ValueError: the max of an empty array) when no eigenvalue of E^-1 H
+    passes its tolerance, an effect that is exactly zero: that test gets the
+    statistics of no effect (Wilks' lambda 1, the traces 0, F 0, p 1), with
+    statsmodels' own degrees of freedom."""
+    from statsmodels.multivariate.multivariate_ols import multivariate_stats
+    out = {}
+    for h in hyps:
+        name, L = h[0], h[1]
+        try:
+            out[name] = mv.mv_test(hypotheses=[h]).results[name]
+        except ValueError as ex:
+            if 'zero-size array' not in str(ex):
+                raise
+            M = h[2] if len(h) > 2 else np.eye(E.shape[0])
+            p_, q_ = int(np.linalg.matrix_rank(M)), int(np.linalg.matrix_rank(L))
+            out[name] = {'stat': multivariate_stats(np.zeros(min(p_, q_)), p_, q_, nu, tolerance=-1.0),
+                         'H': np.zeros((M.shape[1], M.shape[1])), 'E': M.T @ E @ M}
+    return out
+
+
+def _contrasts(k):
+    """JMP's Contrast response design (each response minus the first),
+    orthonormalized: k x (k - 1), orthogonal to a column of ones."""
+    Mc = np.vstack([-np.ones((1, k - 1)), np.eye(k - 1)])
+    return np.linalg.qr(Mc)[0]
+
+
+def _mv_rows(stat, q, p, nu):
+    """The test table of a hypothesis with q degrees of freedom on p
+    transformed responses and nu error DF: JMP's single exact F Test when
+    min(p, q) = 1 (every multivariate statistic is then the same test; its
+    value is the one eigenvalue of E^-1 H), else the four statistics with
+    statsmodels' F approximations (Rao, Pillai, McKeon, Roy's bound: the
+    ones JMP reports)."""
+    if min(p, q) == 1:
+        lam = float(np.real(stat.loc['Hotelling-Lawley trace', 'Value']))
+        df1, df2 = (q, nu) if p == 1 else (p, nu - p + 1)
+        F = lam * df2 / df1 if df2 > 0 else float('nan')
+        pv = float(stats.f.sf(F, df1, df2)) if df2 > 0 else None
+        return [{'test': 'F Test', 'value': lam, 'f': F, 'numdf': float(df1), 'dendf': float(df2), 'p': pv}], True
+    rows_ = []
+    for idx, row in stat.iterrows():
+        rows_.append({'test': _MV_NAMES.get(idx, idx), 'value': float(row['Value']), 'f': float(row['F Value']), 'numdf': float(row['Num DF']),
+                      'dendf': float(row['Den DF']), 'p': float(row['Pr > F'])})
+    return rows_, False
+
+
+def _mauchly(W, nu, p):
+    """Mauchly's criterion W of p orthonormal contrasts with nu error DF, as
+    JMP reports it: -(nu - (2p² + p + 2)/(6p)) log W against chi-square with
+    p(p + 1)/2 - 1 DF, the plain chi-square p-value (R's mauchly.test and
+    pingouin add Anderson's second-order term to the p-value)."""
+    df = p * (p + 1) / 2 - 1
+    chi2 = -(nu - (2 * p * p + p + 2) / (6 * p)) * math.log(W) if W > 0 else float('inf')
+    return chi2, df, float(stats.chi2.sf(chi2, df))
+
+
+def _epsilons(S, n, nu):
+    """The epsilons of the covariance S of p orthonormal contrasts, from n
+    subjects and nu error DF: Greenhouse and Geisser's (Box's) tr(S)²/(p
+    tr(S²)); Huynh and Feldt's (1976) (n p gg - 2)/(p (nu - p gg)) and
+    Lecoutre's (1991) correction of it, nu + 1 in place of n (the same with
+    one group of subjects); the lower bound 1/p. Capped at 1."""
+    p = S.shape[0]
+    tr, tr2 = float(np.trace(S)), float(np.trace(S @ S))
+    gg = min(1.0, tr * tr / (p * tr2)) if tr2 > 0 else 1.0
+
+    def hf(m):
+        den = p * (nu - p * gg)
+        return min(1.0, (m * p * gg - 2) / den) if den > 0 else 1.0
+    return {'gg': gg, 'hf': hf(n), 'hf_lecoutre': hf(nu + 1), 'lower': 1.0 / p}
+
+
+def _repeated(d, ys, Y, X, within, table, table_name, rows):
+    from statsmodels.multivariate.manova import MANOVA
+    names = list(X.columns)
+    Xa = X.to_numpy(float)
+    n, k = Y.shape
+    p = k - 1
+    nu = int(n - np.linalg.matrix_rank(Xa))
+    if nu < 1:
+        return {'error': f'{n} rows with every response: no error degrees of freedom left for the {int(np.linalg.matrix_rank(Xa))} parameters of the model'}
+    C = _contrasts(k)
+    one = np.ones((k, 1))
+    I = np.eye(Xa.shape[1])
+    nonint = [j for j, nm in enumerate(names) if nm != 'Intercept']
+    Ls = []                                   # (between name, within name, columns)
+    if nonint:
+        Ls.append(('All Between', 'All Within Interactions', nonint))
+    if 'Intercept' in names:
+        Ls.append(('Intercept', within, [names.index('Intercept')]))
+    for e in d.effects:
+        cols = [names.index(t) for t in e.get('terms', []) if t in names]
+        if cols:
+            Ls.append((e['label'], f'{within}*{e["label"]}', cols))
+    B = np.linalg.lstsq(Xa, Y, rcond=None)[0]
+    R = Y - Xa @ B
+    E = R.T @ R                               # the residual SSCP of the responses
+    Ew = C.T @ E @ C
+    S = Ew / nu                               # the covariance of the orthonormal contrasts
+    eps = _epsilons(S, n, nu)
+    multi = nu >= p                           # the multivariate within tests need E of full rank
+    try:
+        mv = MANOVA(Y, Xa)                    # statsmodels refuses a singular design (ValueError)
+        tb = _mv_results(mv, [(b, I[c], one) for b, _w, c in Ls], E, nu)
+        tw = _mv_results(mv, [(w, I[c], C) for _b, w, c in Ls], E, nu) if multi else None
+    except (np.linalg.LinAlgError, ValueError):
+        return {'error': 'The model cannot be tested: its design is singular (a crossing with an empty cell?), or the contrasts of the '
+                         'responses are collinear.'}
+    between, wtests = [], []
+    for b, w, c in Ls:
+        q = int(np.linalg.matrix_rank(I[c]))
+        r_ = tb[b]
+        rows_, exact = _mv_rows(r_['stat'], q, 1, nu)
+        between.append({'effect': b, 'rows': rows_, 'exact': exact})
+        if multi:
+            r_ = tw[w]
+            Hw = np.asarray(r_['H'], dtype=float)
+            mrows, mexact = _mv_rows(r_['stat'], q, p, nu)
+        else:
+            Lc = I[c]
+            XtXi = np.linalg.pinv(Xa.T @ Xa)
+            t1 = Lc @ B @ C
+            Hw = t1.T @ np.linalg.pinv(Lc @ XtXi @ Lc.T) @ t1
+            mrows, mexact = [], min(p, q) == 1
+        ssh, sse = float(np.trace(Hw)), float(np.trace(Ew))
+        df1, df2 = q * p, nu * p
+        F = (ssh / df1) / (sse / df2) if sse > 0 else float('nan')
+        uni = []
+        for key, label in _UNIVAR:
+            ev = 1.0 if key == 'unadj' else eps[key]
+            uni.append({'test': label, 'value': ev, 'f': F, 'numdf': ev * df1, 'dendf': ev * df2,
+                        'p': float(stats.f.sf(F, ev * df1, ev * df2)) if np.isfinite(F) else None})
+        wtests.append({'effect': w, 'rows': mrows, 'exact': mexact, 'univariate': uni, 'ss': ssh, 'df': df1})
+    sph, sph_note = None, None
+    if p < 2:
+        sph_note = 'Two levels give a single contrast: sphericity holds trivially, and every epsilon is 1.'
+    elif nu < p:
+        sph_note = f'Sphericity test not performed: {nu} error degrees of freedom, fewer than the {p} contrasts.'
+    else:
+        sign, logdet = np.linalg.slogdet(S)
+        W = float(math.exp(logdet - p * math.log(float(np.trace(S)) / p))) if sign > 0 else 0.0
+        chi2, dfs, pv = _mauchly(W, nu, p)
+        sph = {'w': W, 'chi2': chi2, 'df': dfs, 'p': pv}
+    notes = [_MV_F_NOTE] if any(not t['exact'] for t in wtests if t['rows']) else []
+    if not multi:
+        notes.append(f'The multivariate within-subject tests need at least as many error degrees of freedom as contrasts ({nu} < {p}): '
+                     'only the univariate tests are shown.')
+    if 'Intercept' not in names:
+        notes.append(f'Without an intercept there is no test of {within} itself: the within tests are its crossings with the effects.')
+    sd = np.sqrt(np.diag(E))
+    with np.errstate(invalid='ignore', divide='ignore'):
+        pc = E / np.outer(sd, sd)
+    # the code under the report
+    lines = _code_frame(d, table, table_name, rows, [], ['import patsy', 'from scipy import stats', 'from statsmodels.multivariate.manova import MANOVA'])
+    lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d))   # the design, effect coded')
+    lines.append(f'Y = d[{json.dumps(ys)}].to_numpy(); n, k = Y.shape; p = k - 1   # the levels of {within}, in this order')
+    lines.append('nu = n - np.linalg.matrix_rank(X)   # the error degrees of freedom')
+    lines.append('C = np.linalg.qr(np.vstack([-np.ones((1, p)), np.eye(p)]))[0]   # the contrasts: each response minus the first, orthonormalized')
+    lines.append('I = np.eye(X.shape[1])')
+    lines.append('L = {' + ', '.join(f'{json.dumps(b)}: I[{c!r}]' for b, _w, c in Ls) + '}   # the rows of each hypothesis: the columns of its terms')
+    lines.append('WS = {' + ', '.join(f'{json.dumps(w)}: {json.dumps(b)}' for b, w, _c in Ls) + '}   # a within test: the same rows on the contrasts')
+    lines.append('mv = MANOVA(Y, X)')
+    lines.append('between = mv.mv_test(hypotheses=[(h, L[h], np.ones((k, 1))) for h in L])   # Between Subjects: the sum of the responses')
+    if multi:
+        lines.append('within = mv.mv_test(hypotheses=[(w, L[h], C) for w, h in WS.items()])   # Within Subjects: the contrasts')
+        lines.append('print(between.summary()); print(within.summary())   # one DF (or one response): all four statistics are the exact F Test')
+    else:
+        lines.append('print(between.summary())')
+    lines += [
+        'Rs = Y - X @ np.linalg.lstsq(X, Y, rcond=None)[0]; S = C.T @ Rs.T @ Rs @ C / nu   # the covariance of the orthonormal contrasts',
+        'gg = min(1, np.trace(S) ** 2 / (p * np.trace(S @ S)))   # Greenhouse-Geisser epsilon',
+        'hf = min(1, (n * p * gg - 2) / (p * (nu - p * gg)))   # Huynh-Feldt (1976); Lecoutre (1991) puts nu + 1 for n',
+    ]
+    if sph is not None:
+        lines += ['Wm = np.linalg.det(S) / (np.trace(S) / p) ** p   # Mauchly\'s criterion',
+                  'chi2 = -(nu - (2 * p * p + p + 2) / (6 * p)) * np.log(Wm); dfs = p * (p + 1) / 2 - 1',
+                  'print("Sphericity Test", Wm, chi2, dfs, stats.chi2.sf(chi2, dfs))']
+    lines += ['uni = {}',
+              'for w, h in WS.items():   # the univariate within tests',
+              '    t1 = L[h] @ np.linalg.lstsq(X, Y, rcond=None)[0] @ C; q = np.linalg.matrix_rank(L[h])',
+              '    H = t1.T @ np.linalg.inv(L[h] @ np.linalg.pinv(X.T @ X) @ L[h].T) @ t1',
+              '    F = (np.trace(H) / (q * p)) / (np.trace(S) / p)',
+              '    uni[w] = [F] + [stats.f.sf(F, e * q * p, e * nu * p) for e in (1, gg, hf)]   # unadjusted, G-G and H-F p-values',
+              'print(uni)']
+    return {'response': 'repeated', 'responses': ys, 'within': within, 'n': int(n), 'k': int(k), 'p': int(p), 'dfe': nu,
+            'between': between, 'within_tests': wtests, 'sphericity': sph, 'sphericity_note': sph_note, 'epsilon': eps,
+            'multivariate_within': multi, 'E': E, 'partial_corr': pc, 'labels': ys, 'notes': notes, 'code': '\n'.join(lines)}
+
 
 @api('fitmodel.manova')
-def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, response='identity', alpha=0.05, table_name='data'):
+def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, response='identity', alpha=0.05, within='Time',
+           table_name='data'):
     from statsmodels.multivariate.manova import MANOVA
     import statsmodels.api as sm
     ys = _ys(y)
@@ -2914,6 +3159,8 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
             return {'error': f'{n0} is categorical: MANOVA needs continuous Y columns'}
     Y = d.df[[d.alias[n0] for n0 in ys]].to_numpy(float)
     X = _matrix(d)
+    if response == 'repeated':
+        return _repeated(d, ys, Y, X, str(within or 'Time').strip() or 'Time', table, table_name, rows)
     names = list(X.columns)
     Xa = X.to_numpy(float)
     p = Xa.shape[1]
@@ -2936,19 +3183,21 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
         cols = [names.index(t) for t in e.get('terms', []) if t in names]
         if cols:
             hyps.append((e['label'], sel(cols)))
-    r = mv.mv_test(hypotheses=[(nm, L, M) if M is not None else (nm, L) for nm, L in hyps])
+    B0 = np.linalg.lstsq(Xa, Y, rcond=None)[0]
+    E0 = (Y - Xa @ B0).T @ (Y - Xa @ B0)
+    res_ = _mv_results(mv, [(nm, L, M) if M is not None else (nm, L) for nm, L in hyps], E0, int(len(Y) - np.linalg.matrix_rank(Xa)))
     tests = []
     Hs = {}
     E = None
     for nm, _L in hyps:
-        st = r.results[nm]['stat']
+        st = res_[nm]['stat']
         rows_ = []
         for idx, row in st.iterrows():
             rows_.append({'test': _MV_NAMES.get(idx, idx), 'value': float(row['Value']), 'f': float(row['F Value']), 'numdf': float(row['Num DF']),
                           'dendf': float(row['Den DF']), 'p': float(row['Pr > F'])})
         tests.append({'effect': nm, 'rows': rows_})
-        Hs[nm] = np.asarray(r.results[nm]['H'], dtype=float)
-        E = np.asarray(r.results[nm]['E'], dtype=float)
+        Hs[nm] = np.asarray(res_[nm]['H'], dtype=float)
+        E = np.asarray(res_[nm]['E'], dtype=float)
     labels = mnames if M is not None else ys
     sd = np.sqrt(np.diag(E))
     with np.errstate(invalid='ignore', divide='ignore'):
@@ -2972,8 +3221,7 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
     lines.append('print(MANOVA(Y, np.asarray(X)).mv_test(hypotheses=[("Whole Model", L)]))')
     return {'responses': ys, 'response': response, 'labels': labels, 'tests': tests, 'E': E, 'H': Hs, 'partial_corr': pc, 'univariate': uni,
             'n': int(len(d.df)), 'dfe': float(len(d.df) - np.linalg.matrix_rank(Xa)),
-            'notes': ['The F approximations are statsmodels\' (Rao\'s for Wilks\' lambda, Pillai\'s and McKeon\'s forms for the traces; '
-                      'Roy\'s F is an upper bound). JMP\'s approximations can differ in the degrees of freedom of Hotelling-Lawley.'],
+            'notes': [_MV_F_NOTE],
             'code': '\n'.join(lines)}
 
 

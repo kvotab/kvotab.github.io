@@ -10,7 +10,9 @@ graphs link to the table both ways; saved columns land in the table; row
 colours follow the clusters; By gives one report per level; Response
 Screening opens Fit Y by X when that platform is loaded; the distance
 correlations agree with the doubly centred distances computed in the page;
-the dark theme and phone width draw.
+Item Reliability's intraclass correlations and Kendall's W agree with an ANOVA
+and ranks computed in the page, and Bootstrap reruns them; the dark theme and
+phone width draw.
 
 Start a server on the repository root and headless Chrome on
 SMUI_HTTP_PORT and SMUI_CDP_PORT (see README.md), then
@@ -93,7 +95,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "multivariate").map(f => f.error)')
     check('the multivariate module imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => /^(multivariate|pca|factor|discriminant|hcluster|kmeans|respscreen|outliers|mca|mds)\\./.test(n)).length')
-    check('the 20 backend names are there', names, 20)
+    check('the 22 backend names are there', names, 22)
     check('no script errors at load', page.errors, [])
     menus = await page.ev('''(() => {
       const sub = (path) => { const top = SM.app.menuItems('Analyze'); const m = top.find(i => i.label === path); if (!m) return null; return (typeof m.submenu === 'function' ? m.submenu() : m.submenu).filter(i => i.label).map(i => i.label); };
@@ -379,6 +381,71 @@ async def main():
     check('MDS: a click on the map selects the row', r['sel'], [r['want']])
     check('MDS: Save Coordinates', r['added'], ['MDS Dimension 1', 'MDS Dimension 2'])
 
+    # ---- Item Reliability: intraclass correlations and Kendall's W ------------------------------------------------------
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Multivariate test')))")
+    r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'icc': True, 'kendallw': True, 'splom': False}), timeout=240)
+    check('Item Reliability: no errors', r['errors'], [])
+    check('Item Reliability: Intraclass Correlations and Kendall\'s W', [o for o in ('Intraclass Correlations', "Kendall's W") if o in r['outlines']], ['Intraclass Correlations', "Kendall's W"])
+    items = await page.ev(f'''(() => {{ const rep = {LAST}; const ctx = {CTX}; const it = rep.platform.triangle(ctx).find(i => i.label === 'Item Reliability');
+      return it.submenu().map(i => i.separator ? '—' : i.label); }})()''')
+    check('the Item Reliability submenu', items, ["Cronbach's α", 'Standardized α', '—', 'Intraclass Correlations', "Kendall's W"])
+    js = await page.ev('''(() => {
+      const t = SM.app.current; const X = ['a', 'b', 'c', 'd', 'e'].map(n => t.col(n).values);
+      const rows = [...Array(t.nrows).keys()].filter(i => X.every(v => Number.isFinite(v[i])));
+      const n = rows.length, k = X.length;
+      const g = rows.reduce((s, i) => s + X.reduce((a, v) => a + v[i], 0), 0) / (n * k);
+      let ssr = 0, ssc = 0, sst = 0;
+      for (const i of rows) { const m = X.reduce((a, v) => a + v[i], 0) / k; ssr += k * (m - g) ** 2; for (const v of X) sst += (v[i] - g) ** 2; }
+      for (const v of X) { const m = rows.reduce((a, i) => a + v[i], 0) / n; ssc += n * (m - g) ** 2; }
+      const sse = sst - ssr - ssc, msr = ssr / (n - 1), msc = ssc / (k - 1), mse = sse / ((n - 1) * (k - 1)), msw = (ssc + sse) / (n * (k - 1));
+      const rank = (vals) => { const idx = vals.map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]); const r = new Array(vals.length); let j = 0, T = 0;
+        while (j < idx.length) { let e = j; while (e + 1 < idx.length && idx[e + 1][0] === idx[j][0]) e++; for (let q = j; q <= e; q++) r[idx[q][1]] = (j + e) / 2 + 1; T += (e - j + 1) ** 3 - (e - j + 1); j = e + 1; }
+        return { r, T }; };
+      let T = 0; const Rs = new Array(n).fill(0);
+      for (const v of X) { const o = rank(rows.map(i => v[i])); T += o.T; o.r.forEach((x, q) => { Rs[q] += x; }); }
+      const mean = Rs.reduce((a, b) => a + b) / n, S = Rs.reduce((a, b) => a + (b - mean) ** 2, 0);
+      return { n, one: (msr - msw) / (msr + (k - 1) * msw), c1: (msr - mse) / (msr + (k - 1) * mse), a1: (msr - mse) / (msr + (k - 1) * mse + k * (msc - mse) / n), ck: (msr - mse) / msr,
+        fr: msr / mse, w: 12 * S / (k * k * (n ** 3 - n) - k * T) };
+    })()''')
+    num = lambda s: float(str(s).replace('−', '-').replace('<', '').replace('*', ''))  # noqa: E731
+    it = await page.ev(table_under_js('Intraclass Correlations', 2))
+    icc = {row[0]: row for row in it[1:]}
+    check('the ICC table: its columns', it[0], ['Form', 'Shrout–Fleiss', 'Model', 'ICC', 'F Ratio', 'NumDF', 'DenDF', 'Prob > F', 'Lower 95%', 'Upper 95%'])
+    check('... the six forms', list(icc), ['ICC(1,1)', 'ICC(A,1)', 'ICC(C,1)', 'ICC(1,k)', 'ICC(A,k)', 'ICC(C,k)'])
+    check.near('ICC(1,1) = the one-way ANOVA computed in the page', num(icc['ICC(1,1)'][3]), js['one'], 1e-4)
+    check.near('ICC(C,1) = the two-way ANOVA computed in the page', num(icc['ICC(C,1)'][3]), js['c1'], 1e-4)
+    check.near('ICC(A,1) = the page\'s', num(icc['ICC(A,1)'][3]), js['a1'], 1e-4)
+    check.near('ICC(C,k) = the page\'s', num(icc['ICC(C,k)'][3]), js['ck'], 1e-4)
+    check.near('its F = MSR/MSE', num(icc['ICC(C,1)'][4]), js['fr'], 1e-6)
+    check('... on 148 and 592 DF (149 complete rows, 5 raters)', (icc['ICC(C,1)'][5], icc['ICC(C,1)'][6]), ('148', '592'))
+    av = await page.ev(table_under_js('Intraclass Correlations', 1))
+    check('the ANOVA table: Between Targets, Between Raters, Residual, Within Targets, Total', [row[0] for row in av[1:]], ['Between Targets', 'Between Raters', 'Residual', 'Within Targets', 'Total'])
+    kv = dict((row[0], row[1]) for row in await page.ev(table_under_js("Kendall's W")))
+    check.near("Kendall's W = the page's own ranks (ties corrected)", num(kv["Kendall's W"]), js['w'], 1e-6)
+    check.near('its ChiSquare = m (n − 1) W', num(kv['ChiSquare']), 5 * (js['n'] - 1) * js['w'], 1e-6)
+    check("Kendall's W: DF and the objects", (kv['DF'], kv['Objects (rows)'], kv['Raters (columns)']), ('148', '149', '5'))
+    txt = await page.ev(f'{LAST}.content.textContent')
+    check('the notes say which rows count', ('rated by every rater (149 of them)' in txt, '1 row without a rating from every rater' in txt), (True, True))
+    r = await page.ev(f'''(async () => {{
+      const rep = {LAST}; const t = rep.table;
+      const h = [...rep.content.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Intraclass Correlations');
+      const tbl = h.parentElement.querySelectorAll('table.sm-rt')[1];
+      const col = tbl._rt.columns.find(c => c.label === 'ICC');
+      const res = await SM.bootstrap.run(tbl, col, {{ B: 3, seed: 13, show: false }});
+      const rows = SM.bootstrap.sampler(rep.groups()[0].rows, 13)();
+      const own = await SM.engine.call('multivariate.icc', {{ columns: ['a', 'b', 'c', 'd', 'e'], rows }}, t);
+      const out = {{ cols: res.columns.map(c => c.name).slice(0, 3), b0: res.col('ICC(C,1) ICC(3,1) Two-way, consistency, one rater').values[0], b1: res.col('ICC(C,1) ICC(3,1) Two-way, consistency, one rater').values[1],
+        own: own.icc.find(x => x.form === 'ICC(C,1)').icc, report: tbl._rt.rows.find(x => x.form === 'ICC(C,1)').icc }};
+      SM.app.closeTable(res); return out;
+    }})()''', timeout=300)
+    check('Bootstrap of the ICC column: its rows are the forms', r['cols'], ['BootID', 'ICC(1,1) ICC(1,1) One-way random, one rater', 'ICC(A,1) ICC(2,1) Two-way, absolute agreement, one rater'])
+    check.near('... sample 0 is the report', r['b0'], r['report'], 1e-12)
+    check.near('... sample 1 is multivariate.icc on its rows (the render has no side effects)', r['b1'], r['own'], 1e-12)
+    r = await run_menu(page, 'Item Reliability', 'Intraclass Correlations')
+    outl = await page.ev(f'[...{LAST}.content.querySelectorAll(".sm-ob-head h3")].map(h => h.textContent)')
+    check('the submenu item turns Intraclass Correlations off', (r, 'Intraclass Correlations' in outl, "Kendall's W" in outl), ('ok', False, True))
+    await shot(page, 'mv-08-reliability.png')
+
     # ---- every (i) of these reports has a topic, every Help link a target -------------------------------------------
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) in the reports has a topic', audit.get('noTopic'), [])
@@ -388,7 +455,7 @@ async def main():
 
     # ---- By, for every platform ------------------------------------------------------------------------------------------
     await page.ev('SM.app.current.setType("f", { modelingType: "nominal" })')
-    by_specs = [('multivariate', {'y': ['a', 'c', 'e']}, {'mahal': True, 'alpha:raw': True, 'dcor': True}), ('pca', {'y': ['a', 'c', 'e']}, {}),
+    by_specs = [('multivariate', {'y': ['a', 'c', 'e']}, {'mahal': True, 'alpha:raw': True, 'dcor': True, 'icc': True, 'kendallw': True}), ('pca', {'y': ['a', 'c', 'e']}, {}),
                 ('factor', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fits': [{'method': 'ml', 'prior': 'smc', 'k': 1, 'rotation': 'none'}]}),
                 ('discriminant', {'y': ['a', 'c'], 'x': ['grp']}, {}), ('hcluster', {'y': ['u', 'v']}, {}), ('kmeans', {'y': ['u', 'v']}, {'k': 3}),
                 ('respscreen', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'mro': True}),
@@ -410,7 +477,7 @@ async def main():
     check('exclude rows and Redo: 144 observations', r, True)
 
     # ---- dark theme, phone width ------------------------------------------------------------------------------------
-    r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'cmCells': True, 'pairwise': True, 'mahal': True, 'dcor': True}), timeout=240)
+    r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'cmCells': True, 'pairwise': True, 'mahal': True, 'dcor': True, 'icc': True, 'kendallw': True}), timeout=240)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev(f'new Promise(res => {LAST}.on("done", res))')
     await asyncio.sleep(1.2)

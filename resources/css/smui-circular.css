@@ -1,0 +1,7 @@
+/* ==========================================================================
+   SMUI.HTML: CIRCULAR STATISTICS (resources/js/smui-p-circular.js)
+   The column outlines one under the other; the dot plot and the rose side
+   by side where there is room, one under the other on a phone.
+   ========================================================================== */
+.sm-circ-wrap { display: block; }
+.sm-circ-wrap > .sm-ob { margin-bottom: 6px; }

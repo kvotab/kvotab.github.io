@@ -37,6 +37,17 @@ Leave-One-Out, a Validation column), predictive.prepare's sets, brute force
 (the forward steps, the best pair of the floating search) and the Model
 Summary's measures by their formulas.
 
+MANOVA's Repeated Measures is checked against statsmodels' AnovaRM and MANOVA
+(with other contrast bases), least squares on the stacked data (Type III within
+tests of unbalanced groups), anova_lm on the subjects' sums, Hotelling's T² and
+t tests, the formulas of Mauchly, Greenhouse-Geisser, Huynh-Feldt and Lecoutre,
+JMP's documented Sphericity Test of its Dogs example, and pingouin's rm_anova,
+mixed_anova, sphericity and epsilon; the Effect Tests' partial eta and omega
+squared against pingouin's anova and ancova, Hays's one-way omega squared and
+expanded Freq rows. statsmodels' mv_test failing on an exactly null effect is
+pinned. pingouin (GPL) is only called as a reference, its datasets read at run
+time; without it those checks are skipped.
+
     python3 resources/tests/smui/test_fit_model.py
 
 The statsmodels datasets, the data files of statsmodels' own GEE and IV tests
@@ -2079,5 +2090,461 @@ for label, kw in [('KFold lasso (normal)', dict(y='y', criterion='kfold', folds=
         check.near(f'... its penalties are the report\'s: {label}', maxdiff(rr_['path']['alpha'], ns['lams']) / rr_['path']['alpha'][0], 0.0, abs_=1e-9)
     sm_ = summary_of(rr_)['Scaled -LogLikelihood']
     check.near(f'... the Scaled -LogLikelihood of its sets: {label}', max(abs(ns['fit_nll'][k_] - sm_[k_]) for k_ in ns['fit_nll']), 0.0, abs_=1e-5)
+
+# ======================================================================================================================
+# MANOVA > Repeated Measures, and the effect sizes of the Effect Tests
+# ======================================================================================================================
+# Checked against statsmodels' AnovaRM and MANOVA called directly, least squares
+# on the stacked (long) data with a column per subject, scipy's t tests, the
+# formulas of Mauchly (1940), Greenhouse and Geisser (1959), Huynh and Feldt
+# (1976) and Lecoutre (1991) written out here, JMP's documented Sphericity Test
+# (Fitting Linear Models, Figure 10.10: the Dogs example, Mauchly Criterion
+# 0.1752641, ChiSquare 16.930873, DF 5, Prob > Chisq 0.0046328, 15 dogs in 4
+# groups), and pingouin (GPL: called here as a reference only, its datasets read
+# at run time) when it is installed.
+from statsmodels.multivariate.manova import MANOVA as SM_MANOVA
+from statsmodels.stats.anova import AnovaRM
+try:
+    import pingouin as pg
+except ImportError:  # the reference checks that need it are skipped
+    pg = None
+    print('pingouin is not installed: its reference checks are skipped')
+
+
+def rm_call(tid_, ys_, effects_, within_='Time', **kw):
+    return call('fitmodel.manova', table=tid_, y=ys_, effects=effects_, response='repeated', within=within_, **kw)
+
+
+def rm_tests(r_):
+    """{effect: {test: row}} of the between and the within tables, and the univariate rows."""
+    b_ = {t['effect']: {x['test']: x for x in t['rows']} for t in r_['between']}
+    w_ = {t['effect']: {x['test']: x for x in t['rows'] + t['univariate']} for t in r_['within_tests']}
+    return b_, w_
+
+
+def orthonormal_contrasts(k_):
+    """An orthonormal basis of the contrasts other than the page's (normalized Helmert): the
+    univariate tests and the sphericity test must not depend on the basis."""
+    H_ = np.zeros((k_, k_ - 1))
+    for j_ in range(1, k_):
+        H_[:j_, j_ - 1] = 1.0
+        H_[j_, j_ - 1] = -j_
+        H_[:, j_ - 1] /= np.linalg.norm(H_[:, j_ - 1])
+    return H_
+
+
+def long_ols(Y_, groups_):
+    """The within tests of a split plot by least squares on the stacked data: a column per
+    subject, the within factor effect coded, its crossing with the group (effect coded).
+    Returns (the fit, the within columns, the crossing columns); the tests are Type III."""
+    n_, k_ = Y_.shape
+    lv = sorted(set(groups_))
+    g_ = len(lv)
+    Tc = np.vstack([np.eye(k_ - 1), -np.ones((1, k_ - 1))])          # effect coding of the levels
+    Gc = np.vstack([np.eye(g_ - 1), -np.ones((1, g_ - 1))]) if g_ > 1 else np.zeros((1, 0))
+    rows_ = []
+    for i_ in range(n_):
+        gi = Gc[lv.index(groups_[i_])]
+        for t_ in range(k_):
+            subj = np.zeros(n_)
+            subj[i_] = 1
+            rows_.append(np.concatenate([subj, Tc[t_], np.kron(gi, Tc[t_])]))
+    Z_ = np.array(rows_)
+    fit_ = sm.OLS(Y_.reshape(-1), Z_).fit()
+    wcols = list(range(n_, n_ + k_ - 1))
+    icols = list(range(n_ + k_ - 1, Z_.shape[1]))
+    return fit_, wcols, icols
+
+
+def ftest_cols(fit_, cols):
+    R_ = np.zeros((len(cols), len(fit_.params)))
+    for i_, c_ in enumerate(cols):
+        R_[i_, c_] = 1
+    ft_ = fit_.f_test(R_)
+    return float(np.squeeze(ft_.fvalue)), float(np.squeeze(ft_.pvalue)), float(ft_.df_num), float(ft_.df_denom)
+
+
+def mauchly_by_hand(S_, nu_):
+    p_ = S_.shape[0]
+    W_ = np.linalg.det(S_) / (np.trace(S_) / p_) ** p_
+    chi2_ = -(nu_ - (2 * p_ * p_ + p_ + 2) / (6 * p_)) * np.log(W_)
+    df_ = p_ * (p_ + 1) / 2 - 1
+    return W_, chi2_, df_, stats.chi2.sf(chi2_, df_)
+
+
+def pooled_contrast_cov(Y_, groups_, C_):
+    """The covariance of the contrasts C of the responses about their group means (the
+    between model of one factor), on n - g DF: what Mauchly's test and the epsilons read."""
+    D_ = Y_ @ C_
+    lv = sorted(set(groups_))
+    R_ = np.vstack([D_[np.array(groups_) == g_] - D_[np.array(groups_) == g_].mean(0) for g_ in lv])
+    return R_.T @ R_ / (len(Y_) - len(lv))
+
+
+# ---- JMP's documented Sphericity Test (the Dogs example) and the helper's formulas ------------------------------
+chi2_j, df_j, p_j = fit_model._mauchly(0.1752641, 11, 3)
+check.near("Mauchly's chi-square of JMP's Dogs example (W 0.1752641, 11 error DF, 4 times): 16.930873", chi2_j, 16.930873, rel=2e-7)
+check('... on 5 DF', df_j, 5.0)
+check.near('... Prob > Chisq 0.0046328 (the plain chi-square p-value, as JMP)', p_j, 0.0046328, rel=2e-5)
+eps_t = fit_model._epsilons(np.diag([1.0, 1.0, 1.0]), 12, 9)
+check('spherical S: every epsilon 1, the lower bound 1/p', (eps_t['gg'], eps_t['hf'], eps_t['hf_lecoutre'], round(eps_t['lower'], 12)), (1.0, 1.0, 1.0, round(1 / 3, 12)))
+Sx = np.array([[4.0, 1.0], [1.0, 0.5]])
+eps_t = fit_model._epsilons(Sx, 20, 17)
+gg_x = np.trace(Sx) ** 2 / (2 * np.trace(Sx @ Sx))
+check.near('Greenhouse-Geisser epsilon = tr(S)²/(p tr(S²))', eps_t['gg'], gg_x, rel=1e-12)
+check.near('Huynh-Feldt (1976): (N p gg - 2)/(p (nu - p gg)), N = 20 subjects, nu = 17', eps_t['hf'], min(1, (20 * 2 * gg_x - 2) / (2 * (17 - 2 * gg_x))), rel=1e-12)
+check.near("Lecoutre's (1991) correction: nu + 1 in place of N", eps_t['hf_lecoutre'], min(1, (18 * 2 * gg_x - 2) / (2 * (17 - 2 * gg_x))), rel=1e-12)
+
+# ---- one within factor, no between effects -------------------------------------------------------------------------
+rng_rm = np.random.default_rng(20260927)
+n1, k1 = 14, 4
+Y1 = rng_rm.normal(size=(n1, 1)) * 1.5 + rng_rm.normal(size=(n1, k1)) @ np.diag([1, 1.4, 2, 2.6]) + np.array([0, 0.4, 0.9, 0.7])
+Y1[:, 2] += 0.8 * Y1[:, 1]
+Y1m = Y1.copy()
+Y1m[3, 2] = np.nan                                           # a subject missing a measurement is left out
+cols1 = [f't{i}' for i in range(k1)]
+tid_rm1 = table({c: Y1m[:, i].tolist() for i, c in enumerate(cols1)})
+r1 = rm_call(tid_rm1, cols1, [])
+Y1c = np.delete(Y1, 3, axis=0)
+nc1 = len(Y1c)
+check('Repeated Measures: the rows with every response (a subject with a missing one is left out)', (r1['n'], r1['k'], r1['p'], r1['dfe']), (nc1, 4, 3, nc1 - 1))
+b1, w1 = rm_tests(r1)
+check('Between Subjects: the Intercept; Within Subjects: Time (no effects, no All Between)', (list(b1), list(w1)), (['Intercept'], ['Time']))
+long1 = pd.DataFrame(Y1c, columns=cols1).reset_index().melt(id_vars='index', var_name='time', value_name='y')
+arm = AnovaRM(long1, 'y', 'index', within=['time']).fit().anova_table
+check.near('the univariate Time F = statsmodels AnovaRM', w1['Time']['Univar unadj Epsilon']['f'], float(arm['F Value'].iloc[0]), rel=1e-10)
+check.near('... its p-value (unadjusted)', w1['Time']['Univar unadj Epsilon']['p'], float(arm['Pr > F'].iloc[0]), rel=1e-9)
+check('... its DF', (w1['Time']['Univar unadj Epsilon']['numdf'], w1['Time']['Univar unadj Epsilon']['dendf']), (float(arm['Num DF'].iloc[0]), float(arm['Den DF'].iloc[0])))
+# the within Time test is Hotelling's one-sample T² of the contrasts
+Dc = Y1c[:, 1:] - Y1c[:, :1]
+dbar = Dc.mean(0)
+T2 = nc1 * dbar @ np.linalg.inv(np.cov(Dc, rowvar=False)) @ dbar
+F_T2 = (nc1 - 3) / (3 * (nc1 - 1)) * T2
+check('Time: one DF, so one exact F Test', (list(w1['Time'])[0], r1['within_tests'][0]['exact']), ('F Test', True))
+check.near("Time's Exact F = Hotelling's T² of the contrasts, (n - p)/(p (n - 1)) T²", w1['Time']['F Test']['f'], F_T2, rel=1e-10)
+check('... on p and n - p DF', (w1['Time']['F Test']['numdf'], w1['Time']['F Test']['dendf']), (3.0, float(nc1 - 3)))
+check.near('... its p-value', w1['Time']['F Test']['p'], float(stats.f.sf(F_T2, 3, nc1 - 3)), rel=1e-9)
+# the between Intercept is the t test of the sums
+tt = stats.ttest_1samp(Y1c.sum(1), 0.0)
+check.near('Between Intercept: the Exact F is t² of the one-sample t test of the sums', b1['Intercept']['F Test']['f'], float(tt.statistic) ** 2, rel=1e-10)
+check.near('... its Value is F/nu (the eigenvalue h/e of the sum)', b1['Intercept']['F Test']['value'], float(tt.statistic) ** 2 / (nc1 - 1), rel=1e-10)
+# sphericity and the epsilons, by hand, with another orthonormal basis
+Sh = np.cov(Y1c @ orthonormal_contrasts(k1), rowvar=False)
+Wh, chih, dfh, ph = mauchly_by_hand(Sh, nc1 - 1)
+sp1 = r1['sphericity']
+check.near("Mauchly's criterion by the formula (Helmert contrasts: the basis does not matter)", sp1['w'], Wh, rel=1e-10)
+check.near('... its chi-square', sp1['chi2'], chih, rel=1e-10)
+check('... its DF', sp1['df'], dfh)
+check.near('... its p-value', sp1['p'], ph, rel=1e-9)
+gg1 = np.trace(Sh) ** 2 / (3 * np.trace(Sh @ Sh))
+check.near('G-G epsilon by the formula', r1['epsilon']['gg'], gg1, rel=1e-10)
+check.near('the G-G row: its Value is the epsilon', w1['Time']['Univar G-G Epsilon']['value'], gg1, rel=1e-10)
+check.near('... and both DF are multiplied by it', w1['Time']['Univar G-G Epsilon']['numdf'], 3 * gg1, rel=1e-10)
+check.near('... its p-value', w1['Time']['Univar G-G Epsilon']['p'], float(stats.f.sf(float(arm['F Value'].iloc[0]), 3 * gg1, 3 * (nc1 - 1) * gg1)), rel=1e-8)
+hf1 = min(1, (nc1 * 3 * gg1 - 2) / (3 * (nc1 - 1 - 3 * gg1)))
+check.near('H-F epsilon by the 1976 formula', r1['epsilon']['hf'], hf1, rel=1e-10)
+check.near('... Lecoutre\'s correction gives the same with one group', r1['epsilon']['hf_lecoutre'], hf1, rel=1e-10)
+check('the univariate F is the same in the three rows', len({round(w1['Time'][t]['f'], 12) for t in ('Univar unadj Epsilon', 'Univar G-G Epsilon', 'Univar H-F Epsilon')}), 1)
+if pg is not None:
+    ra = pg.rm_anova(data=long1, dv='y', within='time', subject='index', correction=True)
+    check.near('pingouin rm_anova: F', w1['Time']['Univar unadj Epsilon']['f'], float(ra['F'].iloc[0]), rel=1e-10)
+    check.near('pingouin rm_anova: the unadjusted p', w1['Time']['Univar unadj Epsilon']['p'], float(ra['p_unc'].iloc[0]), rel=1e-8)
+    check.near('pingouin rm_anova: the G-G p', w1['Time']['Univar G-G Epsilon']['p'], float(ra['p_GG_corr'].iloc[0]), rel=1e-8)
+    check.near('pingouin rm_anova: the G-G epsilon', r1['epsilon']['gg'], float(ra['eps'].iloc[0]), rel=1e-10)
+    check.near('pingouin rm_anova: Mauchly\'s W', sp1['w'], float(ra['W_spher'].iloc[0]), rel=1e-10)
+    sph_pg = pg.sphericity(long1, dv='y', within='time', subject='index')
+    check.near('pingouin sphericity: W', sp1['w'], float(sph_pg.W), rel=1e-10)
+    check.near('pingouin sphericity: the chi-square', sp1['chi2'], float(sph_pg.chi2), rel=1e-10)
+    check('pingouin sphericity: the DF', sp1['df'], float(sph_pg.dof))
+    # pingouin's p-value (as R's mauchly.test) adds a second-order term; JMP's is the plain chi-square (its Dogs example, above)
+    check('pingouin\'s sphericity p-value is a little above the plain chi-square one', 0 < float(sph_pg.pval) - sp1['p'] < 0.01 * sp1['p'] + 1e-3, True)
+    for c_, key_ in (('gg', 'gg'), ('hf', 'hf'), ('lb', 'lower')):
+        check.near(f'pingouin epsilon({c_!r})', r1['epsilon'][key_], float(pg.epsilon(long1, dv='y', within='time', subject='index', correction=c_)), rel=1e-10)
+    wide_pg = pg.read_dataset('rm_anova_wide')                  # pingouin's own example, read at run time
+    tid_pgw = table({c: wide_pg[c].tolist() for c in wide_pg.columns})
+    rpw = rm_call(tid_pgw, list(wide_pg.columns), [])
+    lpw = wide_pg.dropna().reset_index().melt(id_vars='index', var_name='time', value_name='y')
+    rpa = pg.rm_anova(data=lpw, dv='y', within='time', subject='index', correction=True)
+    _b, wpw = rm_tests(rpw)
+    check.near("pingouin's rm_anova_wide example (its complete rows): F", wpw['Time']['Univar unadj Epsilon']['f'], float(rpa['F'].iloc[0]), rel=1e-10)
+    check.near('... the G-G p', wpw['Time']['Univar G-G Epsilon']['p'], float(rpa['p_GG_corr'].iloc[0]), rel=1e-8)
+    check.near('... W', rpw['sphericity']['w'], float(rpa['W_spher'].iloc[0]), rel=1e-9)
+
+# ---- a mixed design: one between factor, balanced ------------------------------------------------------------------
+if pg is not None:
+    mx = pg.read_dataset('mixed_anova')                        # 60 subjects in two groups, three times
+    wide_mx = mx.pivot_table(index=['Subject', 'Group'], columns='Time', values='Scores').reset_index()
+    times = ['August', 'January', 'June']
+    grp_mx = wide_mx['Group'].astype(str).tolist()
+    Ymx = wide_mx[times].to_numpy(float)
+else:
+    grp_mx = ['a' if i < 30 else 'b' for i in range(60)]
+    Ymx = rng_rm.normal(size=(60, 3)) + rng_rm.normal(size=(60, 1)) + np.where(np.array(grp_mx) == 'a', 0.0, 0.5)[:, None]
+    times = ['August', 'January', 'June']
+tid_mx = table({'Group': grp_mx, **{t: Ymx[:, i].tolist() for i, t in enumerate(times)}})
+rmx = rm_call(tid_mx, times, [['Group']])
+bmx, wmx = rm_tests(rmx)
+check('Between Subjects: All Between, Intercept, Group', list(bmx), ['All Between', 'Intercept', 'Group'])
+check('Within Subjects: All Within Interactions, Time, Time*Group', list(wmx), ['All Within Interactions', 'Time', 'Time*Group'])
+fit_l, wc_l, ic_l = long_ols(Ymx, grp_mx)
+Fw, pw_, d1w, d2w = ftest_cols(fit_l, wc_l)
+check.near('balanced: the univariate Time F = least squares on the stacked data (a column per subject)', wmx['Time']['Univar unadj Epsilon']['f'], Fw, rel=1e-9)
+check('... its DF', (wmx['Time']['Univar unadj Epsilon']['numdf'], wmx['Time']['Univar unadj Epsilon']['dendf']), (d1w, d2w))
+Fi, pi_, d1i, d2i = ftest_cols(fit_l, ic_l)
+check.near('balanced: the univariate Time*Group F = the stacked fit\'s crossing', wmx['Time*Group']['Univar unadj Epsilon']['f'], Fi, rel=1e-9)
+check.near('... its p-value', wmx['Time*Group']['Univar unadj Epsilon']['p'], pi_, rel=1e-8)
+sums_mx = pd.DataFrame({'s': Ymx.sum(1), 'g': grp_mx})
+a3_mx = sm.stats.anova_lm(smf.ols('s ~ C(g, Sum)', sums_mx).fit(), typ=3)
+check.near('Between Group: the Exact F = the ANOVA of the subjects\' sums (anova_lm type III)', bmx['Group']['F Test']['f'], float(a3_mx.loc['C(g, Sum)', 'F']), rel=1e-10)
+Sp = pooled_contrast_cov(Ymx, grp_mx, orthonormal_contrasts(3))
+Wp, chip, dfp, pp_ = mauchly_by_hand(Sp, len(Ymx) - 2)
+check.near('Mauchly\'s W of the contrasts pooled within the groups', rmx['sphericity']['w'], Wp, rel=1e-10)
+check.near('... its chi-square on nu = n - g', rmx['sphericity']['chi2'], chip, rel=1e-9)
+if pg is not None:
+    ma = pg.mixed_anova(data=mx, dv='Scores', within='Time', subject='Subject', between='Group', correction=True).set_index('Source')
+    check.near('pingouin mixed_anova: the between F of Group', bmx['Group']['F Test']['f'], float(ma.loc['Group', 'F']), rel=1e-9)
+    check.near('pingouin mixed_anova: its p', bmx['Group']['F Test']['p'], float(ma.loc['Group', 'p_unc']), rel=1e-8)
+    check.near('pingouin mixed_anova: the within F of Time', wmx['Time']['Univar unadj Epsilon']['f'], float(ma.loc['Time', 'F']), rel=1e-9)
+    check.near('pingouin mixed_anova: its unadjusted p', wmx['Time']['Univar unadj Epsilon']['p'], float(ma.loc['Time', 'p_unc']), rel=1e-8)
+    check.near('pingouin mixed_anova: its G-G p', wmx['Time']['Univar G-G Epsilon']['p'], float(ma.loc['Time', 'p_GG_corr']), rel=1e-8)
+    check.near('pingouin mixed_anova: the Interaction F = Time*Group', wmx['Time*Group']['Univar unadj Epsilon']['f'], float(ma.loc['Interaction', 'F']), rel=1e-9)
+    check.near('pingouin mixed_anova: the Interaction G-G p', wmx['Time*Group']['Univar G-G Epsilon']['p'], float(ma.loc['Interaction', 'p_GG_corr']), rel=1e-8)
+    check.near('pingouin mixed_anova: the epsilon', rmx['epsilon']['gg'], float(ma.loc['Time', 'eps']), rel=1e-9)
+    check.near('pingouin mixed_anova: W (pooled within the groups too)', rmx['sphericity']['w'], float(ma.loc['Time', 'W_spher']), rel=1e-9)
+
+# ---- a mixed design: three unbalanced groups ------------------------------------------------------------------------
+if pg is not None:
+    mu = pg.read_dataset('mixed_anova_unbalanced')
+    wide_mu = mu.pivot_table(index=['Subject', 'Group'], columns='Time', values='Scores').reset_index()
+    tms = ['T0', 'T1', 'T2', 'T3']
+    grp_mu = wide_mu['Group'].astype(str).tolist()
+    Ymu = wide_mu[tms].to_numpy(float)
+else:
+    tms = ['T0', 'T1', 'T2', 'T3']
+    grp_mu = ['a'] * 7 + ['b'] * 10 + ['c'] * 9
+    Ymu = rng_rm.normal(size=(26, 4)) + rng_rm.normal(size=(26, 1))
+tid_mu = table({'Group': grp_mu, **{t: Ymu[:, i].tolist() for i, t in enumerate(tms)}})
+rmu = rm_call(tid_mu, tms, [['Group']])
+bmu, wmu = rm_tests(rmu)
+fit_u, wc_u, ic_u = long_ols(Ymu, grp_mu)
+check.near('unbalanced: Time is the Type III test (the stacked fit, effect coded)', wmu['Time']['Univar unadj Epsilon']['f'], ftest_cols(fit_u, wc_u)[0], rel=1e-9)
+check.near('unbalanced: Time*Group', wmu['Time*Group']['Univar unadj Epsilon']['f'], ftest_cols(fit_u, ic_u)[0], rel=1e-9)
+Su = pooled_contrast_cov(Ymu, grp_mu, orthonormal_contrasts(4))
+ggu = np.trace(Su) ** 2 / (3 * np.trace(Su @ Su))
+nu_u = len(Ymu) - 3
+check.near('unbalanced: the G-G epsilon of the pooled covariance', rmu['epsilon']['gg'], ggu, rel=1e-10)
+check.near('unbalanced: Huynh-Feldt (1976), N = the subjects', rmu['epsilon']['hf'], min(1, (len(Ymu) * 3 * ggu - 2) / (3 * (nu_u - 3 * ggu))), rel=1e-10)
+check.near('unbalanced: Lecoutre\'s correction, nu + 1 = N - g + 1', rmu['epsilon']['hf_lecoutre'], min(1, ((nu_u + 1) * 3 * ggu - 2) / (3 * (nu_u - 3 * ggu))), rel=1e-10)
+# three small groups, very unequal variances over the levels: H-F below 1, and Lecoutre's correction below it
+rng_ns = np.random.default_rng(7)
+g_ns = ['a'] * 5 + ['b'] * 6 + ['c'] * 4
+Y_ns = rng_ns.normal(size=(15, 1)) + rng_ns.normal(size=(15, 4)) * np.array([0.3, 0.6, 2.5, 4.0])
+r_ns = rm_call(table({'Group': g_ns, **{t: Y_ns[:, i].tolist() for i, t in enumerate(tms)}}), tms, [['Group']])
+S_ns = pooled_contrast_cov(Y_ns, g_ns, orthonormal_contrasts(4))
+gg_ns = np.trace(S_ns) ** 2 / (3 * np.trace(S_ns @ S_ns))
+hf_ns, hfl_ns = min(1, (15 * 3 * gg_ns - 2) / (3 * (12 - 3 * gg_ns))), min(1, (13 * 3 * gg_ns - 2) / (3 * (12 - 3 * gg_ns)))
+check('a non-spherical design with three groups: Huynh-Feldt and Lecoutre below 1 and apart', (hf_ns < 1, hfl_ns < hf_ns - 0.01), (True, True))
+check.near('... the H-F epsilon is the 1976 formula (N = 15 subjects)', r_ns['epsilon']['hf'], hf_ns, rel=1e-10)
+check.near('... Lecoutre\'s (nu + 1 = 13) is given beside it', r_ns['epsilon']['hf_lecoutre'], hfl_ns, rel=1e-10)
+check.near('... the Univar H-F row of Time uses the 1976 epsilon', rm_tests(r_ns)[1]['Time']['Univar H-F Epsilon']['value'], hf_ns, rel=1e-10)
+# statsmodels MANOVA called directly on the design: the four statistics of Time*Group, and Time
+Xmu = patsy.dmatrix('C(g, Sum)', pd.DataFrame({'g': grp_mu}), return_type='dataframe')
+mvu = SM_MANOVA(Ymu, np.asarray(Xmu))
+Cj = np.vstack([-np.ones((1, 3)), np.eye(3)])                     # JMP's Contrast, not orthonormal: the same tests
+st_i = mvu.mv_test(hypotheses=[('i', np.eye(3)[1:], Cj)]).results['i']['stat']
+for sm_name, jmp_name in [("Wilks' lambda", "Wilks' Lambda"), ("Pillai's trace", "Pillai's Trace"), ('Hotelling-Lawley trace', 'Hotelling-Lawley'), ("Roy's greatest root", "Roy's Max Root")]:
+    check.near(f'Time*Group {jmp_name}: statsmodels MANOVA with the unorthonormalized contrasts', wmu['Time*Group'][jmp_name]['value'], float(st_i.loc[sm_name, 'Value']), rel=1e-9)
+    check.near(f'... its F ({jmp_name})', wmu['Time*Group'][jmp_name]['f'], float(st_i.loc[sm_name, 'F Value']), rel=1e-9)
+st_t = mvu.mv_test(hypotheses=[('t', np.eye(3)[:1], Cj)]).results['t']['stat']
+check.near('Time: the exact F = statsmodels\' Wilks F of the intercept on the contrasts', wmu['Time']['F Test']['f'], float(st_t.loc["Wilks' lambda", 'F Value']), rel=1e-9)
+check.near('... = its Hotelling-Lawley F (one DF: every statistic the same test)', wmu['Time']['F Test']['f'], float(st_t.loc['Hotelling-Lawley trace', 'F Value']), rel=1e-9)
+check('All Within Interactions = Time*Group with one effect', wmu['All Within Interactions']["Wilks' Lambda"]['value'], wmu['Time*Group']["Wilks' Lambda"]['value'])
+check('the note names the F approximations', any('McKeon' in x for x in rmu['notes']), True)
+if pg is not None:
+    mau = pg.mixed_anova(data=mu, dv='Scores', within='Time', subject='Subject', between='Group', correction=True).set_index('Source')
+    check.near('pingouin mixed_anova (unbalanced): the between F of Group', bmu['Group']['F Test']['f'], float(mau.loc['Group', 'F']), rel=1e-9)
+    check.near('pingouin mixed_anova (unbalanced): the Interaction F', wmu['Time*Group']['Univar unadj Epsilon']['f'], float(mau.loc['Interaction', 'F']), rel=1e-9)
+    check.near('pingouin mixed_anova (unbalanced): the epsilon', rmu['epsilon']['gg'], float(mau.loc['Time', 'eps']), rel=1e-9)
+    check.near('pingouin mixed_anova (unbalanced): W', rmu['sphericity']['w'], float(mau.loc['Time', 'W_spher']), rel=1e-9)
+    # pingouin's Time main effect weighs the groups by their sizes (Type II); JMP's and ours is Type III
+    check('pingouin\'s within main effect of unbalanced groups is not Type III (it weighs the groups)', abs(wmu['Time']['Univar unadj Epsilon']['f'] - float(mau.loc['Time', 'F'])) > 0.05, True)
+
+# ---- two crossed between factors, and a continuous covariate --------------------------------------------------------
+n4 = 40
+a4 = np.repeat(['a1', 'a2'], 20)
+b4 = np.tile(np.repeat(['b1', 'b2'], 10), 2)
+x4 = rng_rm.normal(size=n4)
+Y4 = rng_rm.normal(size=(n4, 1)) + rng_rm.normal(size=(n4, 5)) * np.array([1, 1.2, 1.5, 1.9, 2.4]) + np.outer(a4 == 'a2', [0, 0.5, 1.0, 1.2, 1.3]) + np.outer(x4, [0, 0.2, 0.4, 0.6, 0.8])
+cols4 = [f'v{i}' for i in range(5)]
+tid4 = table({'a': a4.tolist(), 'b': b4.tolist(), 'x': x4.tolist(), **{c: Y4[:, i].tolist() for i, c in enumerate(cols4)}})
+E4 = [['a'], ['b'], ['a', 'b'], ['x']]
+r4 = rm_call(tid4, cols4, E4, within_='Dose')
+b4r, w4r = rm_tests(r4)
+check('crossed factors and a covariate: the within tests take the Y Name', list(w4r), ['All Within Interactions', 'Dose', 'Dose*a', 'Dose*b', 'Dose*a*b', 'Dose*x'])
+X4 = patsy.dmatrix('C(a, Sum) * C(b, Sum) + x', pd.DataFrame({'a': a4, 'b': b4, 'x': x4}), return_type='dataframe')
+mv4 = SM_MANOVA(Y4, np.asarray(X4))
+nm4 = list(X4.columns)
+Pol = fit_model._transform_M('polynomial', 5)[0]                  # orthogonal polynomials: yet another contrast basis
+for eff, term in [('a', 'C(a, Sum)[S.a1]'), ('x', 'x')]:
+    L4 = np.eye(len(nm4))[[nm4.index(term)]]
+    st4 = mv4.mv_test(hypotheses=[('h', L4, Pol)]).results['h']['stat']
+    check.near(f'Dose*{eff}: the exact F = statsmodels MANOVA with polynomial contrasts', w4r[f'Dose*{eff}']['F Test']['f'], float(st4.loc["Wilks' lambda", 'F Value']), rel=1e-9)
+    check.near(f'Dose*{eff}: its value = the Hotelling-Lawley trace', w4r[f'Dose*{eff}']['F Test']['value'], float(st4.loc['Hotelling-Lawley trace', 'Value']), rel=1e-9)
+sums4 = pd.DataFrame({'s': Y4.sum(1), 'a': a4, 'b': b4, 'x': x4})
+a3_4 = sm.stats.anova_lm(smf.ols('s ~ C(a, Sum) * C(b, Sum) + x', sums4).fit(), typ=3)
+for eff, term in [('a', 'C(a, Sum)'), ('a*b', 'C(a, Sum):C(b, Sum)'), ('x', 'x')]:
+    check.near(f'Between {eff}: the Exact F = the type III ANOVA of the sums', b4r[eff]['F Test']['f'], float(a3_4.loc[term, 'F']), rel=1e-9)
+f4 = smf.ols('s ~ C(a, Sum) * C(b, Sum) + x', sums4).fit()
+check.near('All Between = the whole-model F of the sums', b4r['All Between']['F Test']['f'], float(f4.fvalue), rel=1e-9)
+U4 = orthonormal_contrasts(5)
+R4 = Y4 - np.asarray(X4) @ np.linalg.lstsq(np.asarray(X4), Y4, rcond=None)[0]
+S4 = U4.T @ R4.T @ R4 @ U4 / (n4 - 5)
+check.near('Mauchly\'s W with the residuals of the full between model (nu = n - 5)', r4['sphericity']['w'], mauchly_by_hand(S4, n4 - 5)[0], rel=1e-9)
+check('the whole-model tests have four statistics (Approx. F)', [t['exact'] for t in r4['within_tests']][0], False)
+
+# ---- two levels: a paired t test; too few subjects; no intercept -----------------------------------------------------
+Y2l = Y4[:, :2]
+tid2l = table({'g': a4.tolist(), 'u': Y2l[:, 0].tolist(), 'w': Y2l[:, 1].tolist()})
+r2l = rm_call(tid2l, ['u', 'w'], [])
+_b, w2l = rm_tests(r2l)
+check.near('two levels: the Time F Test is t² of the paired t test', w2l['Time']['F Test']['f'], float(stats.ttest_rel(Y2l[:, 1], Y2l[:, 0]).statistic) ** 2, rel=1e-10)
+check('two levels: no sphericity test, every epsilon 1', (r2l['sphericity'], r2l['epsilon']['gg'], r2l['epsilon']['hf'], 'trivially' in r2l['sphericity_note']), (None, 1.0, 1.0, True))
+r2g = rm_call(tid2l, ['u', 'w'], [['g']])
+_b, w2g = rm_tests(r2g)
+dd = Y2l[:, 1] - Y2l[:, 0]
+check.near('two levels and a group: Time*g is t² of the two-sample t test of the differences', w2g['Time*g']['F Test']['f'], float(stats.ttest_ind(dd[a4 == 'a1'], dd[a4 == 'a2']).statistic) ** 2, rel=1e-10)
+Yf = rng_rm.normal(size=(4, 6)) + np.arange(6)
+tidf = table({f'q{i}': Yf[:, i].tolist() for i in range(6)})
+rf = rm_call(tidf, [f'q{i}' for i in range(6)], [])
+_b, wf = rm_tests(rf)
+lf = pd.DataFrame(Yf).reset_index().melt(id_vars='index', var_name='t', value_name='y')
+check('4 subjects, 6 levels (nu 3 < p 5): no multivariate within tests, no sphericity test', (rf['multivariate_within'], rf['sphericity'], 'not performed' in rf['sphericity_note']), (False, None, True))
+check.near('... the univariate test still = AnovaRM', wf['Time']['Univar unadj Epsilon']['f'], float(AnovaRM(lf, 'y', 'index', within=['t']).fit().anova_table['F Value'].iloc[0]), rel=1e-10)
+rni = rm_call(tid4, cols4, [['a']], no_intercept=True)
+check('no intercept: no Time test, a note says so', ([t['effect'] for t in rni['within_tests']], any('no test of Time' in x for x in rni['notes'])), (['All Within Interactions', 'Time*a'], True))
+check('a Weight is refused as in MANOVA', 'error' in call('fitmodel.manova', table=tid4, y=cols4, effects=[['a']], response='repeated', weight='x'), True)
+rng_e = np.random.default_rng(11)
+a_e, b_e = ['a1'] * 6 + ['a2'] * 6, ['b1'] * 3 + ['b2'] * 3 + ['b1'] * 6
+tid_e = table({'a': a_e, 'b': b_e, **{f'y{i}': rng_e.normal(size=12).tolist() for i in range(3)}})
+check('a crossing with an empty cell: a message, not an exception', 'singular' in rm_call(tid_e, ['y0', 'y1', 'y2'], [['a'], ['b'], ['a', 'b']]).get('error', ''), True)
+# an effect that is exactly zero: statsmodels 0.14.6's mv_test fails (the max of an empty array); the page gives no effect
+Ya_ = rng_e.normal(size=(8, 3))
+Y0_ = np.vstack([Ya_, Ya_])                                       # the two groups hold the same rows
+g0_ = ['g1'] * 8 + ['g2'] * 8
+try:
+    SM_MANOVA(Y0_, np.column_stack([np.ones(16), np.r_[np.ones(8), -np.ones(8)]])).mv_test(hypotheses=[('g', np.array([[0, 1.0]]))])
+    sm_null = 'no error'
+except ValueError as ex_:
+    sm_null = 'zero-size array' in str(ex_)
+check('statsmodels 0.14.6: mv_test of an exactly null effect raises (pinned; the page works around it)', sm_null, True)
+tid0_ = table({'g': g0_, **{f'z{i}': Y0_[:, i].tolist() for i in range(3)}})
+r0_ = rm_call(tid0_, ['z0', 'z1', 'z2'], [['g']])
+b0_, w0_ = rm_tests(r0_)
+check('an exactly null effect: no error; its between F Test is F 0, p 1', ('error' in r0_, b0_['g']['F Test']['f'], b0_['g']['F Test']['p']), (False, 0.0, 1.0))
+check('... and its within test too', (round(w0_['Time*g']['F Test']['value'], 12), w0_['Time*g']['F Test']['p']), (0.0, 1.0))
+ri0_ = call('fitmodel.manova', table=tid0_, y=['z0', 'z1', 'z2'], effects=[['g']])
+ti0_ = {t['effect']: {x['test']: x for x in t['rows']} for t in ri0_['tests']}
+check("... and in the Identity design: Wilks' lambda 1, p 1", (ti0_['g']["Wilks' Lambda"]['value'], ti0_['g']["Wilks' Lambda"]['p']), (1.0, 1.0))
+Yc = rng_e.normal(size=(20, 3))
+Yc = np.column_stack([Yc, Yc[:, 0] + Yc[:, 1]])                   # collinear responses: the contrasts can still be of full rank
+rc_ = rm_call(table({f'c{i}': Yc[:, i].tolist() for i in range(4)}), [f'c{i}' for i in range(4)], [])
+lc_ = pd.DataFrame(Yc).reset_index().melt(id_vars='index', var_name='t', value_name='y')
+check.near('collinear responses: the within test still = AnovaRM', rm_tests(rc_)[1]['Time']['Univar unadj Epsilon']['f'], float(AnovaRM(lc_, 'y', 'index', within=['t']).fit().anova_table['F Value'].iloc[0]), rel=1e-9)
+ri = call('fitmodel.manova', table=tid4, y=cols4, effects=E4)
+check('the Identity response is as before (no repeated-measures keys)', ('tests' in ri, 'within_tests' in ri, [t['effect'] for t in ri['tests']][:2]), (True, False, ['Whole Model', 'Intercept']))
+
+# ---- the code under the report, on the table exported as CSV --------------------------------------------------------
+for label_, tid_, frame_, ys_, eff_, res_ in [
+        ('no between effects, a missing value', tid_rm1, pd.DataFrame({c: Y1m[:, i] for i, c in enumerate(cols1)}), cols1, [], r1),
+        ('crossed factors and a covariate', tid4, pd.DataFrame({'a': a4, 'b': b4, 'x': x4, **{c: Y4[:, i] for i, c in enumerate(cols4)}}), cols4, E4, r4),
+        ('three unbalanced groups', tid_mu, pd.DataFrame({'Group': grp_mu, **{t: Ymu[:, i] for i, t in enumerate(tms)}}), tms, [['Group']], rmu)]:
+    rr_ = rm_call(tid_, ys_, eff_, within_=res_['within'], table_name='rm')
+    ns, err = run_code(rr_['code'], frame_, 'rm')
+    check(f'Repeated Measures code runs: {label_}', err, None)
+    if err:
+        print(rr_['code'])
+        continue
+    bb_, ww_ = rm_tests(rr_)
+    check.near(f'... its Mauchly W: {label_}', float(ns['Wm']), rr_['sphericity']['w'], rel=1e-9)
+    check.near(f'... its chi-square: {label_}', float(ns['chi2']), rr_['sphericity']['chi2'], rel=1e-9)
+    check.near(f'... its G-G and H-F epsilons: {label_}', float(ns['gg']) + float(ns['hf']), rr_['epsilon']['gg'] + rr_['epsilon']['hf'], rel=1e-10)
+    for w_name, vals in ns['uni'].items():
+        check.near(f'... its univariate F of {w_name}: {label_}', float(vals[0]), ww_[w_name]['Univar unadj Epsilon']['f'], rel=1e-9)
+        check.near(f'... its G-G p of {w_name}: {label_}', float(vals[2]), ww_[w_name]['Univar G-G Epsilon']['p'], rel=1e-8)
+        check.near(f'... its H-F p of {w_name}: {label_}', float(vals[3]), ww_[w_name]['Univar H-F Epsilon']['p'], rel=1e-8)
+    for h_ in bb_:
+        st_ = ns['between'].results[h_]['stat']
+        check.near(f'... its between test of {h_}: {label_}', float(st_.loc['Hotelling-Lawley trace', 'Value']), bb_[h_]['F Test']['value'], rel=1e-9)
+    for w_name in ww_:
+        st_ = ns['within'].results[w_name]['stat']
+        check.near(f'... its within Wilks\' lambda of {w_name}: {label_}', float(st_.loc["Wilks' lambda", 'Value']),
+                   float(np.real(1 / (1 + ww_[w_name]['F Test']['value']))) if 'F Test' in ww_[w_name] else ww_[w_name]["Wilks' Lambda"]['value'], rel=1e-9)
+
+# ---- Effect Tests: partial eta and omega squared -------------------------------------------------------------------
+def es_rows(r_):
+    return {x['source']: x for x in r_['effect_tests']['rows']}
+
+
+tid_lon = table({c: lon[c].tolist() for c in lon.columns})
+E_lon = [['GNPDEFL'], ['GNP'], ['UNEMP'], ['ARMED'], ['POP'], ['YEAR']]
+r_lon = call('fitmodel.ls', table=tid_lon, y='TOTEMP', effects=E_lon)
+es_cols = {c['key']: c for c in r_lon['effect_tests']['columns']}
+check('Effect Tests: Partial η² and Partial ω², optional (hidden) columns', (es_cols['pes']['label'], es_cols['pes'].get('hidden'), es_cols['pos']['label'], es_cols['pos'].get('hidden')),
+      ('Partial η²', True, 'Partial ω²', True))
+check('... and the columns shown before are the same', [c['key'] for c in r_lon['effect_tests']['columns'] if not c.get('hidden')], ['source', 'nparm', 'df', 'ss', 'stat', 'p'])
+rows_ = es_rows(r_lon)
+sse_l = {x['source']: x for x in r_lon['anova']['rows']}['Error']
+for src in ('GNP', 'YEAR'):
+    x_ = rows_[src]
+    check.near(f'Longley {src}: partial η² = SS/(SS + SSE)', x_['pes'], x_['ss'] / (x_['ss'] + sse_l['ss']), rel=1e-12)
+    check.near(f'Longley {src}: partial ω² = DF(F - 1)/(DF(F - 1) + N)', x_['pos'], x_['df'] * (x_['stat'] - 1) / (x_['df'] * (x_['stat'] - 1) + 16), rel=1e-10)
+check('the effect tests of a robust fit have no effect sizes', any('pes' in x for x in call('fitmodel.ls', table=tid_lon, y='TOTEMP', effects=E_lon, robust='HC3')['effect_tests']['rows']), False)
+if pg is not None:
+    an = pg.read_dataset('anova')                               # pain threshold by hair colour (McClave and Dietrich 1991)
+    tid_an = table({'pain': an['Pain threshold'].tolist(), 'hair': an['Hair color'].astype(str).tolist()})
+    ran = es_rows(call('fitmodel.ls', table=tid_an, y='pain', effects=[['hair']]))['hair']
+    pga = pg.anova(data=an, dv='Pain threshold', between='Hair color', effsize='np2')
+    check.near('one-way: partial η² = pingouin anova np2', ran['pes'], float(pga['np2'].iloc[0]), rel=1e-10)
+    sst = float(((an['Pain threshold'] - an['Pain threshold'].mean()) ** 2).sum())
+    mse_an = (sst - ran['ss']) / (len(an) - 4)
+    check.near('one-way: partial ω² = Hays\'s ω² (SS_b - df_b MSE)/(SS_T + MSE)', ran['pos'], (ran['ss'] - 3 * mse_an) / (sst + mse_an), rel=1e-10)
+    a2u = pg.read_dataset('anova2_unbalanced')                   # diet and exercise, unbalanced
+    tid_a2 = table({'y': a2u['Scores'].tolist(), 'diet': a2u['Diet'].astype(str).tolist(), 'exercise': a2u['Exercise'].astype(str).tolist()})
+    ra2 = es_rows(call('fitmodel.ls', table=tid_a2, y='y', effects=[['diet'], ['exercise'], ['diet', 'exercise']]))
+    pa2 = pg.anova(data=a2u, dv='Scores', between=['Diet', 'Exercise'], ss_type=3, effsize='np2').set_index('Source')
+    for src, pgs in (('diet', 'Diet'), ('exercise', 'Exercise'), ('diet*exercise', 'Diet * Exercise')):
+        check.near(f'two-way unbalanced, type III: partial η² of {src} = pingouin anova np2', ra2[src]['pes'], float(pa2.loc[pgs, 'np2']), rel=1e-9)
+    ac = pg.read_dataset('ancova')                              # teaching method with family income as covariate
+    tid_ac = table({'y': ac['Scores'].tolist(), 'method': ac['Method'].astype(str).tolist(), 'income': ac['Income'].tolist()})
+    rac = es_rows(call('fitmodel.ls', table=tid_ac, y='y', effects=[['method'], ['income']]))
+    pac = pg.ancova(data=ac, dv='Scores', covar='Income', between='Method', effsize='np2').set_index('Source')
+    check.near('ANCOVA: partial η² of the factor = pingouin ancova np2', rac['method']['pes'], float(pac.loc['Method', 'np2']), rel=1e-9)
+    check.near('ANCOVA: partial η² of the covariate = pingouin ancova np2', rac['income']['pes'], float(pac.loc['Income', 'np2']), rel=1e-9)
+# Freq counts rows: the effect sizes of a table with frequencies = those of its expanded rows
+fq = rng_rm.integers(1, 4, 30).astype(float)
+xq = rng_rm.normal(size=30)
+gq = np.array(['p', 'q', 'r'])[np.arange(30) % 3]
+yq = xq + (gq == 'q') * 0.8 + rng_rm.normal(size=30)
+rfq = es_rows(call('fitmodel.ls', table=table({'y': yq.tolist(), 'x': xq.tolist(), 'g': gq.tolist(), 'f': fq.tolist()}), y='y', effects=[['x'], ['g']], freq='f'))
+rep_ = np.repeat(np.arange(30), fq.astype(int))
+rex_ = es_rows(call('fitmodel.ls', table=table({'y': yq[rep_].tolist(), 'x': xq[rep_].tolist(), 'g': gq[rep_].tolist()}), y='y', effects=[['x'], ['g']]))
+check.near('Freq: partial η² = that of the expanded rows', rfq['g']['pes'], rex_['g']['pes'], rel=1e-9)
+check.near('Freq: partial ω² = that of the expanded rows (N the sum of the frequencies)', rfq['x']['pos'], rex_['x']['pos'], rel=1e-9)
+tid_pl = table({'fertilizer': fert.tolist(), 'water': water.tolist(), 'light': light.tolist(), 'yield': yv.tolist()},
+               types={'water': 'ordinal'}, levels={'water': ['low', 'high']})
+E_pl = [{'names': ['fertilizer']}, {'names': ['water']}, {'names': ['light']}, {'names': ['fertilizer', 'water']}, {'names': ['light', 'light']}]
+plants_es = pd.DataFrame({'fertilizer': fert, 'water': water, 'light': light, 'yield': yv})
+for label_, kw_, frame_ in [('the plants model (crossings, a power)', dict(table=tid_pl, y='yield', effects=E_pl), plants_es),
+                            ('with a Freq column', dict(table=table({'y': yq.tolist(), 'x': xq.tolist(), 'g': gq.tolist(), 'f': fq.tolist()}), y='y', effects=[['x'], ['g']], freq='f'),
+                             pd.DataFrame({'y': yq, 'x': xq, 'g': gq, 'f': fq}))]:
+    rr_ = call('fitmodel.ls', table_name='es', **kw_)
+    ns, err = run_code(rr_['code'], frame_, 'es')
+    check(f'the Standard Least Squares code computes the effect sizes: {label_}', err, None)
+    if not err:
+        got_ = sorted(x['pes'] for x in rr_['effect_tests']['rows'])
+        check.near(f'... its partial eta squared are the report\'s: {label_}', maxdiff(got_, sorted(ns['et']['Partial eta2'])), 0.0, abs_=1e-10)
+        check.near(f'... and its partial omega squared: {label_}', maxdiff(sorted(x['pos'] for x in rr_['effect_tests']['rows']), sorted(ns['et']['Partial omega2'])), 0.0, abs_=1e-10)
+noise = es_rows(call('fitmodel.ls', table=table({'y': rng_rm.normal(size=40).tolist(), 'z': rng_rm.normal(size=40).tolist(), 'h': (['s', 't'] * 20)}), y='y', effects=[['z'], ['h']]))
+check('partial ω² is negative exactly when F < 1', [(noise[s_]['pos'] < 0) == (noise[s_]['stat'] < 1) for s_ in ('z', 'h')], [True, True])
 
 sys.exit(check.done())

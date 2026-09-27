@@ -1278,7 +1278,9 @@
   // theme's colours when they were made. The results come from the cache.
   if (typeof MutationObserver !== 'undefined') {
     const redraw = SM.util.debounce(() => { if (SM.app && SM.app.reports) for (const r of SM.app.reports) r.run('theme'); }, 60);
-    new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    // Only a change of theme: setting the theme that is already on redraws nothing.
+    new MutationObserver((muts) => { if (muts.some((m) => m.oldValue !== document.documentElement.getAttribute('data-theme'))) redraw(); })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'], attributeOldValue: true });
   }
 
   SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });

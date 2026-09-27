@@ -309,7 +309,7 @@
     { type: 'points', label: 'Points', z: 60, needs: 'any', props: [
       { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['none', 'None'], ...STATS], dflt: 'none' },
       { key: 'interval', label: 'Error Interval', type: 'select', choices: INTERVALS, dflt: 'none', when: (e) => e.summary !== 'none' },
-      { key: 'jitter', label: 'Jitter', type: 'select', choices: [['auto', 'Auto'], ['none', 'None'], ['uniform', 'Random Uniform'], ['normal', 'Random Normal'], ['grid', 'Centered Grid']], dflt: 'auto', when: (e) => e.summary === 'none' },
+      { key: 'jitter', label: 'Jitter', type: 'select', choices: [['auto', 'Auto'], ['none', 'None'], ['uniform', 'Random Uniform'], ['normal', 'Random Normal'], ['grid', 'Centered Grid'], ['packed', 'Packed']], dflt: 'auto', when: (e) => e.summary === 'none' },
       { key: 'jitterLimit', label: 'Jitter Limit', type: 'number', dflt: 1, min: 0, max: 2, step: 0.1, when: (e) => e.summary === 'none' && e.jitter !== 'none' },
     ] },
     { type: 'smoother', label: 'Smoother', z: 80, needs: 'xy-cont', props: [
@@ -1092,13 +1092,86 @@
     return off;
   }
 
+  /* Packed jitter (JMP's Packed; a beeswarm): at each position, the points
+     in order of their value, each at the offset nearest the middle where it
+     does not overlap a point already placed. The geometry is in pixels, from
+     the graph's size, the panels and the value range; a position whose points
+     need more room than the jitter limit is squeezed into it. */
+  function packedJitter(list, { valuePx, catPx, diam, lim }) {
+    const off = new Map();
+    const byPos = new Map();
+    for (const p of list) { let g = byPos.get(p.pos); if (!g) { g = []; byPos.set(p.pos, g); } g.push(p); }
+    const room = 0.5 * lim * catPx;        // half the width a position may take, in pixels
+    for (const g of byPos.values()) {
+      g.sort((a, b) => a.v - b.v || a.r - b.r);
+      const placed = [];                   // { vp, o }, in order of vp
+      let widest = 0;
+      for (const p of g) {
+        const vp = p.v * valuePx;
+        const blocked = [];
+        for (let i = placed.length - 1; i >= 0; i--) {
+          const dy = vp - placed[i].vp;
+          if (dy >= diam) break;
+          const half = Math.sqrt(Math.max(0, diam * diam - dy * dy));
+          blocked.push([placed[i].o - half, placed[i].o + half]);
+        }
+        const cands = [0];
+        for (const [a, b] of blocked) cands.push(a, b);
+        cands.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+        const o = cands.find((c) => blocked.every(([a, b]) => c <= a + 1e-6 || c >= b - 1e-6)) ?? 0;
+        let k = placed.length;
+        while (k > 0 && placed[k - 1].vp > vp) k--;
+        placed.splice(k, 0, { vp, o });
+        widest = Math.max(widest, Math.abs(o));
+        off.set(p.r, o);
+      }
+      const squeeze = widest > room ? room / widest : 1;
+      for (const p of g) off.set(p.r, (off.get(p.r) * squeeze) / catPx);
+    }
+    return off;
+  }
+
+  // The pixels per unit of a panel's axes, for the packed jitter.
+  function packGeometry(E, list, jx, col, diam, lim) {
+    const W = Math.max(200, (E.B.width ? E.B.width() : 600) - 90) / Math.max(1, E.nC);
+    const H = Math.max(150, (E.B.height ? E.B.height() : 400) - 70) / Math.max(1, E.nR);
+    const vals = list.map((p) => p.v);
+    const ex = extent(vals) || [0, 1];
+    const span = (ex[1] - ex[0]) * 1.1 || 1;          // Plotly's autorange pads about 5% each side
+    const k = col ? Math.max(1, E.axisLevels(col).lv.length) : 1;
+    return { valuePx: (jx ? H : W) / span, catPx: (jx ? W : H) / k, diam, lim };
+  }
+
   RENDER.points = async (E, e) => {
     if (e.summary && e.summary !== 'none') return summaryPoints(E, e);
     const t = E.t;
+    // Packed jitter packs a panel's points over every group at once, so
+    // that the groups' points do not fall on each other.
+    const packs = new Map();
+    const packedFor = (P, s, si) => {
+      const key = `${P.idx}|${si}`;
+      if (packs.has(key)) return packs.get(key);
+      const { xc, yc } = s;
+      const jx = jitterOn(e, xc) && E.xKind !== 'count', jy = jitterOn(e, yc) && E.yKind !== 'count';
+      let m = null;
+      if (jx !== jy) {
+        const list = [];
+        for (const r of P.rows) {
+          const x = E.at(xc, r), y = E.at(yc, r);
+          if (x == null || y == null) continue;
+          list.push({ r, pos: jx ? x : y, v: jx ? y : x });
+        }
+        const diam = (E.rows0.length > 2000 ? 4 : 6) + 1;
+        m = list.length <= 20000 ? packedJitter(list, packGeometry(E, list, jx, jx ? xc : yc, diam, e.jitterLimit ?? 1)) : null;
+      }
+      packs.set(key, m);
+      return m;
+    };
     E.forCells((P, s, si, gi, rows) => {
       const { xc, yc } = s;
       const jx = jitterOn(e, xc) && E.xKind !== 'count', jy = jitterOn(e, yc) && E.yKind !== 'count';
       let grid = null;
+      if (e.jitter === 'packed' && (jx !== jy)) grid = packedFor(P, s, si);
       if (e.jitter === 'grid' && (jx !== jy)) {
         const list = [];
         for (const r of rows) {

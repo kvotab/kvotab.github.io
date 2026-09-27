@@ -234,6 +234,132 @@ def test_mean(table, column, rows=None, mu=0.0, sigma=None, wilcoxon=True, weigh
     return res
 
 
+def _weighted_lines(column, weight, freq):
+    """The code lines that read the column (and its weights) as the report does."""
+    cols = [v for v in (column, weight, freq) if v]
+    lines = [f'd = df[[{", ".join(json.dumps(v) for v in cols)}]].dropna()']
+    if weight or freq:
+        wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
+        lines.append(f'd = d[{wexpr} > 0]; ds = DescrStatsW(d[{json.dumps(column)}], weights={wexpr}, ddof=1)')
+    else:
+        lines.append(f'ds = DescrStatsW(d[{json.dumps(column)}], ddof=1)')
+    lines.append('m, s, n = ds.mean, ds.std, ds.sum_weights')
+    return lines
+
+
+@api('distribution.effect')
+def effect(table, column, rows=None, mu=0.0, weight=None, freq=None, alpha=0.05, table_name='data'):
+    """Effect Size of Test Mean: Cohen's d = (mean − μ₀)/s with the exact
+    interval from the noncentral t of the t test (δ = λ/√n; Steiger and
+    Fouladi 1997), and Hedges' g = J(n − 1)·d (Hedges 1981). With Weight or
+    Freq, n is the sum of the weights, as in the t test."""
+    from .fit_y_by_x import NCP_T_CODE, _es_table, smd_rows
+    x, w, _ = _values(table, column, rows, weight, freq)
+    if len(x) < 2:
+        return {'error': 'fewer than two values'}
+    d = DescrStatsW(x, weights=w, ddof=1)
+    n, sd = float(d.sum_weights), float(d.std)
+    if not n > 2:
+        return {'error': 'Hedges\' g needs more than two values'}
+    if not sd > 0:
+        return {'error': 'the values do not vary: no standardized effect'}
+    dd = (float(d.mean) - mu) / sd
+    rows_out = smd_rows(dd, dd * math.sqrt(n), n - 1, 1 / math.sqrt(n), alpha)
+    out = {'table': _es_table(rows_out, alpha), 'mu': mu, 'n': n, 'sd': sd, 'alpha': alpha, 'j': rows_out[1]['j']}
+    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, optimize, special'])]
+    c += _weighted_lines(column, weight, freq)
+    c.append(NCP_T_CODE)
+    c.append(f'd_ = (m - {mu!r}) / s; t = d_ * np.sqrt(n); lo, hi = ncp(t, n - 1, {1 - alpha / 2!r}) / np.sqrt(n), ncp(t, n - 1, {alpha / 2!r}) / np.sqrt(n)')
+    c.append('J = np.exp(special.gammaln((n - 1) / 2) - 0.5 * np.log((n - 1) / 2) - special.gammaln((n - 2) / 2))   # Hedges\' exact correction')
+    c.append("print(d_, lo, hi, J * d_, J * lo, J * hi)   # Cohen's d with its exact interval (noncentral t), Hedges' g = J d")
+    out['code'] = '\n'.join(c)
+    return out
+
+
+@api('distribution.bayes_t')
+def bayes_t(table, column, rows=None, mu=0.0, r=None, weight=None, freq=None, table_name='data'):
+    """Bayes Factor of Test Mean (Rouder et al. 2009): the t of the mean
+    against μ₀, a Cauchy(0, r) prior on δ = (μ − μ₀)/σ under the
+    alternative (r = √2/2 by default); two-sided and one-sided."""
+    from .fit_y_by_x import JZS_CODE, JZS_R, _bf_table, jzs_rows
+    r = JZS_R if r is None else r
+    if not r > 0:
+        return {'error': 'the scale of the Cauchy prior must be positive'}
+    x, w, _ = _values(table, column, rows, weight, freq)
+    if len(x) < 2:
+        return {'error': 'fewer than two values'}
+    d = DescrStatsW(x, weights=w, ddof=1)
+    n, sd = float(d.sum_weights), float(d.std)
+    if not sd > 0:
+        return {'error': 'the values do not vary: no t statistic'}
+    t = (float(d.mean) - mu) / (sd / math.sqrt(n))
+    rows_out = jzs_rows(t, n, n - 1, r, [f'mean ≠ {mu:g}', f'mean > {mu:g}', f'mean < {mu:g}'])
+    out = {'table': _bf_table(rows_out), 't': t, 'n': n, 'df': n - 1, 'r': r, 'mu': mu}
+    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, integrate'])]
+    c += _weighted_lines(column, weight, freq)
+    c.append(f't = (m - {mu!r}) / (s / np.sqrt(n))')
+    c.append(JZS_CODE)
+    c.append(f'bf, p = jzs(t, n, n - 1, {r!r}); print(bf, 2*bf*p, 2*bf*(1 - p))   # BF10: two-sided, mean above, mean below; BF01 = 1/BF10')
+    out['code'] = '\n'.join(c)
+    return out
+
+
+def _lit(v):
+    """A level as a Python literal: 12.0 as 12, text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else repr(f)
+    return json.dumps(str(v))
+
+
+@api('distribution.bayes_binom')
+def bayes_binom(table, column, rows=None, probs=None, a=1.0, b=1.0, weight=None, freq=None, table_name='data'):
+    """Bayes Factor of Test Probabilities for a column of two levels: the
+    count k of the first level out of n against its hypothesized
+    probability p₀, a beta(a, b) prior on the probability under the
+    alternative (a = b = 1, uniform, by default): BF10 = B(k + a, n − k +
+    b)/(B(a, b) p₀^k (1 − p₀)^(n−k)); one-sided, the prior cut at p₀:
+    BF±0 = BF10·P(p ≷ p₀ | data)/P(p ≷ p₀)."""
+    from scipy.special import betaln
+    from .fit_y_by_x import _bf_row, _bf_table
+    if not (a and a > 0 and b and b > 0):
+        return {'error': 'the beta prior needs positive a and b'}
+    res = categorical(table, column, rows, weight, freq)
+    if 'error' in res:
+        return res
+    lv = res['levels']
+    if len(lv) != 2:
+        return {'error': f'the binomial Bayes factor is for a column of two levels; {column} has {len(lv)}'}
+    labels = [l['level'] for l in lv]
+    p = np.array([float((probs or {}).get(str(l), (probs or {}).get(l, 0)) or 0) for l in labels], dtype=float)
+    if not p.sum() > 0:
+        return {'error': 'give hypothesized probabilities'}
+    p0 = float(p[0] / p.sum())
+    if not 0 < p0 < 1:
+        return {'error': 'the hypothesized probabilities must both be above zero'}
+    k, n = float(lv[0]['count']), float(res['n'])
+    lb = betaln(k + a, n - k + b) - betaln(a, b) - k * math.log(p0) - (n - k) * math.log(1 - p0)
+    lpos = lb + stats.beta.logsf(p0, k + a, n - k + b) - stats.beta.logsf(p0, a, b)
+    lneg = lb + stats.beta.logcdf(p0, k + a, n - k + b) - stats.beta.logcdf(p0, a, b)
+    name = str(labels[0]) if not isinstance(labels[0], float) or not labels[0].is_integer() else str(int(labels[0]))
+    rows_out = [_bf_row(f'P({name}) ≠ {p0:g}', lb), _bf_row(f'P({name}) > {p0:g}', lpos), _bf_row(f'P({name}) < {p0:g}', lneg)]
+    notes = []
+    if abs(k - round(k)) > 1e-9 or abs(n - round(n)) > 1e-9:
+        notes.append('The counts are sums of weights and not whole numbers; the Bayes factor takes them as they are.')
+    out = {'table': _bf_table(rows_out), 'k': k, 'n': n, 'p0': p0, 'a': a, 'b': b, 'level': labels[0], 'notes': notes}
+    c = [code_head(table_name, ['from scipy import stats, special'])]
+    if weight or freq:
+        wexpr = ' * '.join(f'df[{json.dumps(v)}]' for v in (weight, freq) if v)
+        c.append(f'counts = ({wexpr}).groupby(df[{json.dumps(column)}]).sum().reindex([{_lit(labels[0])}, {_lit(labels[1])}])')
+    else:
+        c.append(f'counts = df[{json.dumps(column)}].value_counts().reindex([{_lit(labels[0])}, {_lit(labels[1])}])')
+    c.append(f'k, n, p0, a, b = counts.iloc[0], counts.sum(), {p0!r}, {a!r}, {b!r}   # the first level\'s count, its hypothesized probability, the beta prior')
+    c.append('bf = np.exp(special.betaln(k + a, n - k + b) - special.betaln(a, b) - k*np.log(p0) - (n - k)*np.log(1 - p0))')
+    c.append('print(bf, bf * stats.beta.sf(p0, k + a, n - k + b) / stats.beta.sf(p0, a, b), bf * stats.beta.cdf(p0, k + a, n - k + b) / stats.beta.cdf(p0, a, b))   # BF10: ≠, >, <; BF01 = 1/BF10')
+    out['code'] = '\n'.join(c)
+    return out
+
+
 @api('distribution.test_sd')
 def test_sd(table, column, rows=None, sigma=1.0):
     x, _, _ = _values(table, column, rows)

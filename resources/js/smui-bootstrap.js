@@ -49,7 +49,8 @@
     return r.groups().find((g) => (g.label ? `${r.title} ${g.label}` : r.title) === L.titles[0]) || null;
   }
 
-  /* The rows of a report table by name: its text columns joined (a term, a level), or the row number. */
+  /* The rows of a report table by name: its text columns joined (a term, a
+     level, a method and its settings), or the row number. */
   function labelsOf(rt) {
     const text = (rt.all || rt.columns).filter((c) => (c.fmt || 'num') === 'text');
     const seen = new Map();

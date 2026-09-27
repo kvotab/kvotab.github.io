@@ -6,9 +6,10 @@
    quantile plot, CDF plot, stem and leaf, tests of the mean and the
    standard deviation, equivalence, confidence, prediction and tolerance
    intervals, capability and fitted distributions, and for counts the test
-   of a Poisson rate (with an exposure). Ordinal and nominal: bar chart,
-   frequencies, confidence intervals by a choice of method, mosaic, test of
-   probabilities.
+   of a Poisson rate (with an exposure); Test Mean's effect size and Bayes
+   factor. Ordinal and nominal: bar chart, frequencies, confidence intervals
+   by a choice of method, mosaic, test of probabilities (and its binomial
+   Bayes factor for two levels).
 
    This is the reference platform: it uses every part of the report
    context (see smui-report.js) and is the one to copy.
@@ -73,6 +74,61 @@
       ctx.kv([['Test Statistic', r.statistic], ['Prob, rate ≠ hypothesized', r.p_two, 'p'], ['Prob, rate > hypothesized', r.p_greater, 'p'], ['Prob, rate < hypothesized', r.p_less, 'p'], ['Pearson χ²/DF', r.dispersion]])),
     ctx.note(`Test: ${labelOf(RATE_TESTS, r.method)} (statsmodels test_poisson${r.method === 'exact-c' ? '; the two-sided p-value doubles the smaller tail' : ''}); interval: ${labelOf(RATE_CIS, r.ci_method)} (confint_poisson). The Pearson χ²/DF of the counts about the rate is near 1 for Poisson counts. Not in JMP, whose closest is Discrete Fit ▸ Poisson: the λ of the fitted distribution, without an exposure or a test.`),
     ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
+  }
+
+  /* ---- Test Mean's effect size and Bayes factor, Test Probabilities' Bayes
+     factor: opt-in, not in JMP ------------------------------------------------ */
+  const BF_NOTE = 'BF10 is how many times more likely the data are under the alternative than under the null hypothesis; BF01 = 1/BF10 the other way round. Right click for log₁₀ BF10.';
+
+  async function meanEffect(ctx, col, parent, tm) {
+    const ob = ctx.outline('Effect Size', { parent, key: 'tmeffect', info: 'p:distribution:effect', menu: () => [{ label: 'Remove', action: () => ctx.set('tmEffect', false, col.id) }] });
+    const r = await ctx.call('distribution.effect', { column: col.name, mu: tm.mu, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    ob.add(ctx.rt(r.table, { sortable: false }),
+      ctx.note(`(mean − ${fmt(r.mu)})/s with s = ${fmt(r.sd)}: Cohen's d, and Hedges' g = J·d with J = ${fmt(r.j)} (Hedges 1981). The interval of d is exact: the noncentral t distributions whose noncentrality λ puts the t of Test Mean at their upper and lower α/2 points give δ = λ/√n (Steiger and Fouladi 1997); g's is J times it.`),
+      ctx.code(r.code));
+  }
+
+  async function meanBayes(ctx, col, parent, tm, bf) {
+    const ob = ctx.outline('Bayes Factor', { parent, key: 'tmbf', info: 'p:distribution:bayes', menu: () => [{ label: 'Change Prior…', action: () => jzsDialog(ctx, col) }, { label: 'Remove', action: () => ctx.set('tmBf', null, col.id) }] });
+    const r = await ctx.call('distribution.bayes_t', { column: col.name, mu: tm.mu, r: bf.r, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    ob.add(ctx.row(ctx.rt(r.table, { sortable: false }), ctx.kv([['t', r.t], ['DF', r.df], ['N', r.n], ['Prior scale r', r.r]])),
+      ctx.note(`The JZS Bayes factor of the one-sample t test (Rouder et al. 2009): a Cauchy(0, ${fmt(r.r)}) prior on δ = (μ − ${fmt(r.mu)})/σ under the alternative; a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`),
+      ctx.code(r.code));
+  }
+
+  async function jzsDialog(ctx, col) {
+    const cur = ctx.opt('tmBf', null, col.id) || { r: Math.SQRT1_2 };
+    const v = await SM.ui.form({
+      title: `Bayes Factor: ${col.name}`, info: 'p:distribution:bayes',
+      lead: 'Under the alternative the standardized effect δ = (μ − μ₀)/σ has a Cauchy prior centred at 0; its scale r is the effect as likely to be exceeded as not. √2/2 ≈ 0.707 is the default of Rouder et al. (2009) and JASP.',
+      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r }],
+      validate: (x) => (x.r > 0 ? null : 'The scale must be positive.'),
+    });
+    if (v) ctx.set('tmBf', { r: v.r }, col.id);
+  }
+
+  async function probsBayes(ctx, col, parent, tp, bf) {
+    const ob = ctx.outline('Bayes Factor', { parent, key: 'tpbf', info: 'p:distribution:bayes', menu: () => [{ label: 'Change Prior…', action: () => betaDialog(ctx, col) }, { label: 'Remove', action: () => ctx.set('tpBf', null, col.id) }] });
+    const r = await ctx.call('distribution.bayes_binom', { column: col.name, probs: tp, a: bf.a, b: bf.b, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const lv = SM.grid.cellText(col, r.level);
+    ob.add(ctx.row(ctx.rt(r.table, { sortable: false }), ctx.kv([[`Count ${lv}`, r.k], ['N', r.n], [`Hypothesized P(${lv})`, r.p0], ['Prior a', r.a], ['Prior b', r.b]])),
+      ctx.note(`The binomial Bayes factor of the count of ${lv}: a beta(${fmt(r.a)}, ${fmt(r.b)}) prior on its probability under the alternative${r.a === 1 && r.b === 1 ? ' (uniform, as Jeffreys 1961 took it)' : ''}, BF10 = B(k + a, n − k + b)/(B(a, b)·p₀ᵏ(1 − p₀)ⁿ⁻ᵏ); a one-sided alternative keeps the prior on its side of p₀, renormalized. ${BF_NOTE}`),
+      ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
+  }
+
+  async function betaDialog(ctx, col) {
+    const cur = ctx.opt('tpBf', null, col.id) || { a: 1, b: 1 };
+    const lv = ctx.table.levels(col);
+    const v = await SM.ui.form({
+      title: `Bayes Factor: ${col.name}`, info: 'p:distribution:bayes',
+      lead: `Under the alternative the probability of ${lv.length ? SM.grid.cellText(col, lv[0]) : 'the first level'} has a beta(a, b) prior; a = b = 1 is uniform, the default. Larger a and b concentrate it at a/(a + b).`,
+      fields: [{ key: 'a', label: 'Prior a', type: 'number', value: cur.a }, { key: 'b', label: 'Prior b', type: 'number', value: cur.b }],
+      validate: (x) => (x.a > 0 && x.b > 0 ? null : 'a and b must be positive.'),
+    });
+    if (v) ctx.set('tpBf', { a: v.a, b: v.b }, col.id);
   }
 
   /* ---- the values of one column for the rows of the report ------------------- */
@@ -268,7 +324,10 @@
     const tm = o('testMean', null);
     if (tm) {
       const r = await ctx.call('distribution.test_mean', { column: col.name, mu: tm.mu, sigma: tm.sigma || null, wilcoxon: true, weight: ctx.name('weight'), freq: ctx.name('freq') });
-      const ob = ctx.outline(`Test Mean`, { parent: outline, key: 'testmean', menu: () => [{ label: 'Remove Test', action: () => ctx.set('testMean', null, sc) }] });
+      const ob = ctx.outline(`Test Mean`, { parent: outline, key: 'testmean', menu: () => [
+        ctx.check('Effect Size', 'tmEffect', sc, false),
+        { label: 'Bayes Factor…', checked: !!o('tmBf', null), action: () => jzsDialog(ctx, col) },
+        { separator: true }, { label: 'Remove Test', action: () => ctx.set('testMean', null, sc) }] });
       if (r.error) ob.add(ctx.warn(r.error));
       else {
         ob.add(ctx.kv([['Hypothesized Value', r.mu], ['Actual Estimate', r.mean], ['DF', r.df], ['Std Dev', r.sd], r.z ? ['Sigma given', r.z.sigma] : null]));
@@ -277,6 +336,9 @@
         if (r.wilcoxon) cols.push({ key: 'w', label: 'Signed-Rank' });
         const rowsT = [['Test Statistic', 'stat', 'num'], ['Prob > |t|', 'p_two', 'p'], ['Prob > t', 'p_greater', 'p'], ['Prob < t', 'p_less', 'p']].map(([label, key]) => ({ row: label, t: r.t[key], z: r.z ? r.z[key] : null, w: r.wilcoxon ? r.wilcoxon[key] : null, _p: key !== 'stat' }));
         ob.add(pTable(ctx, cols, rowsT), ctx.code(r.code));
+        if (o('tmEffect', false)) await meanEffect(ctx, col, ob, tm);
+        const bf = o('tmBf', null);
+        if (bf) await meanBayes(ctx, col, ob, tm, bf);
       }
     }
     const tsd = o('testSd', null);
@@ -566,12 +628,18 @@
     const tp = o('testProbs', null);
     if (tp) {
       const r = await ctx.call('distribution.test_probs', { column: col.name, probs: tp, weight: ctx.name('weight'), freq: ctx.name('freq') });
-      const ob = ctx.outline('Test Probabilities', { parent: outline, key: 'testprobs', menu: () => [{ label: 'Remove', action: () => ctx.set('testProbs', null, sc) }] });
+      const two = res.levels.length === 2;
+      const ob = ctx.outline('Test Probabilities', { parent: outline, key: 'testprobs', menu: () => [
+        { label: 'Bayes Factor…', checked: !!o('tpBf', null), disabled: !two, action: () => betaDialog(ctx, col) },
+        { separator: true }, { label: 'Remove', action: () => ctx.set('testProbs', null, sc) }] });
       if (r.error) ob.add(ctx.warn(r.error));
       else {
         ob.add(ctx.rt({ columns: [{ key: 'level', label: 'Level', fmt: 'text' }, { key: 'observed', label: 'Estim Prob' }, { key: 'hypothesized', label: 'Hypoth Prob' }], rows: r.levels.map((l) => ({ ...l, level: SM.grid.cellText(col, l.level) })) }),
           ctx.rt({ columns: [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'stat', label: 'ChiSquare' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'p', label: 'Prob>Chisq', fmt: 'p' }], rows: r.tests }));
         if (r.min_expected < 5) ob.add(ctx.warn(`The smallest expected count is ${fmt(r.min_expected)}; with counts below 5 the χ² p-values are approximate.`));
+        const bf = o('tpBf', null);
+        if (bf && two) await probsBayes(ctx, col, ob, tp, bf);
+        else if (bf) ob.add(ctx.note('Bayes Factor: the binomial Bayes factor is for a column of two levels; it is not shown.'));
       }
     }
   }
@@ -637,12 +705,32 @@
       ],
       more: { label: 'Distribution', id: 'help-p-distribution' },
     },
+    'p:distribution:effect': {
+      kicker: 'Distribution', title: 'Effect Size of Test Mean',
+      lead: 'How far the mean is from the hypothesized value, in standard deviations: Test Mean ▸ Effect Size. Not in JMP.',
+      sections: [
+        { choices: [['Cohen\'s d', '(mean − μ₀)/s, the t of Test Mean over √n'], ['Hedges\' g', 'J·d with Hedges\' (1981) exact J = Γ(ν/2)/(√(ν/2)Γ((ν−1)/2)), ν = n − 1: unbiased for δ under normality']] },
+        { heading: 'The interval', text: 'Exact: the noncentral t distributions (n − 1 DF) whose noncentrality λ puts the observed t at their upper and lower α/2 points give δ = λ/√n (Steiger and Fouladi 1997; Cumming and Finch 2001). g\'s interval is J times d\'s.' },
+        { heading: 'Weight and Freq', text: 'As in the t test: the weighted mean and standard deviation, n the sum of the weights.' },
+      ],
+      more: { label: 'Distribution', id: 'help-p-distribution' },
+    },
+    'p:distribution:bayes': {
+      kicker: 'Distribution', title: 'Bayes Factor',
+      lead: 'How much more likely the data are under the alternative than under the null hypothesis (BF10), or the other way round (BF01 = 1/BF10), for a prior on the effect under the alternative. Not in JMP.',
+      sections: [
+        { heading: 'Test Mean', text: 'The JZS Bayes factor of the one-sample t test (Rouder et al. 2009): under the alternative δ = (μ − μ₀)/σ has a Cauchy(0, r) prior, r = √2/2 by default, the variance Jeffreys\' prior; computed as their integral over g. A one-sided alternative (mean above or below μ₀) keeps the prior\'s half on its side, doubled: BF+0 = 2·BF10·P(δ > 0 | data) (Morey and Wagenmakers 2014).' },
+        { heading: 'Test Probabilities', text: 'For a column of two levels: the count k of the first level out of n, its hypothesized probability p₀ against a beta(a, b) prior (uniform by default): BF10 = B(k + a, n − k + b)/(B(a, b)·p₀ᵏ(1 − p₀)ⁿ⁻ᵏ). One-sided, the prior is cut at p₀ and renormalized: BF+0 = BF10·P(p > p₀ | data)/P(p > p₀). With Weight the counts are sums of weights.' },
+        { heading: 'Reading them', text: 'BF10 above 1 favours the alternative, below 1 the null; unlike a p-value it can show evidence for no effect. The numbers are shown as they are, without verbal labels, and depend on the prior. Right click a table for log₁₀ BF10.' },
+      ],
+      more: { label: 'Distribution', id: 'help-p-distribution' },
+    },
   };
 
   SM.platforms.register({
     id: 'distribution', label: 'Distribution', menu: 'Analyze', order: 10, info: 'p:distribution', topics: TOPICS,
-    about: 'Describes one column at a time: histogram, box plot, quantiles and moments for continuous columns; bar chart and frequencies for ordinal and nominal ones; tests, intervals, capability and fitted distributions from the red triangles. Beyond JMP: a choice of interval method for the level probabilities (Wilson, JMP\'s, Agresti-Coull, Jeffreys, Clopper-Pearson, Wald), and Test Rate for counts, with an optional exposure column, by exact, mid-p, score and Wald tests and intervals.',
-    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.diagnostic.normal_ad, lilliefors', 'statsmodels.stats.stattools.jarque_bera', 'statsmodels.base.model.GenericLikelihoodModel', 'statsmodels.stats.proportion.proportion_confint', 'statsmodels.stats.rates.test_poisson, confint_poisson', 'statsmodels.robust.scale.Huber', 'scipy.stats'],
+    about: 'Describes one column at a time: histogram, box plot, quantiles and moments for continuous columns; bar chart and frequencies for ordinal and nominal ones; tests, intervals, capability and fitted distributions from the red triangles. Beyond JMP: a choice of interval method for the level probabilities (Wilson, JMP\'s, Agresti-Coull, Jeffreys, Clopper-Pearson, Wald), Test Rate for counts, with an optional exposure column, by exact, mid-p, score and Wald tests and intervals, and for Test Mean the effect size (Cohen\'s d, Hedges\' g, exact intervals from the noncentral t) and the JZS Bayes factor, for Test Probabilities of two levels the binomial Bayes factor (two- and one-sided).',
+    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.diagnostic.normal_ad, lilliefors', 'statsmodels.stats.stattools.jarque_bera', 'statsmodels.base.model.GenericLikelihoodModel', 'statsmodels.stats.proportion.proportion_confint', 'statsmodels.stats.rates.test_poisson, confint_poisson', 'statsmodels.robust.scale.Huber', 'scipy.stats', 'scipy.stats.nct (effect size intervals), scipy.integrate.quad and scipy.special.betaln (Bayes factors)'],
     launch: {
       lead: 'Choose the columns to describe. Continuous columns get a histogram, a box plot, quantiles and moments; ordinal and nominal columns a bar chart and frequencies.',
       roles: [

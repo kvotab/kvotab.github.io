@@ -39,7 +39,8 @@
     "embedding.py",
     "text.py",
     "screening.py",
-    "bootstrap.py"
+    "bootstrap.py",
+    "circular.py"
   ],
   "modules": [
     "datasets",
@@ -75,6 +76,7 @@
     "embedding",
     "text",
     "screening",
-    "bootstrap"
+    "bootstrap",
+    "circular"
   ]
 }

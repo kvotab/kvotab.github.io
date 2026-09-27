@@ -5,7 +5,12 @@ definitions JMP documents: quantiles by (n+1)p, the normal quantile plot
 at r/(n+1), Wilson intervals for proportions. The other interval methods
 by their formulas and Clopper and Pearson's 5 of 20; Test Rate against
 the values statsmodels' tests record from R (DescTools PoissonCI, exactci,
-ratesci) and the classic Garwood limits.
+ratesci) and the classic Garwood limits. Test Mean's effect size and Bayes
+factor and Test Probabilities' binomial Bayes factor against a
+noncentrality search, the noncentral t and beta integrals, the closed
+forms, BayesFactor's 17.25888 for t = −4.0621 on 9 DF, and pingouin's
+compute_effsize, compute_esci, bayesfactor_ttest and bayesfactor_binom
+when it is installed (GPL: a reference only).
 
     python3 resources/tests/smui/test_distribution.py
 """
@@ -255,6 +260,100 @@ for label_, kw in (('Frequencies, Clopper-Pearson', {'ci_method': 'beta'}), ('Fr
         check(f'{label_}: the counts', [round(float(v), 9) for v in ns['counts'].to_numpy()], [round(l_['count'], 9) for l_ in cm['levels']])
         check.near(f'{label_}: the first interval', float(proportion_confint(ns['counts'].iloc[0], ns['counts'].sum(), method=cm['ci_method'])[1]), cm['levels'][0]['upper'])
 ns = code_ns({'k': kk}, kf['code'], 'Fitted Poisson')
+
+# ---- Test Mean's effect size and Bayes factor, Test Probabilities' Bayes factor (round 5) ----------
+# Against pingouin (GPL: a reference only, skipped without it), the formulas and a noncentrality
+# search written out here, the noncentral t integral of the one-sided Bayes
+# factors, direct integrals of the beta prior, and BayesFactor's published
+# 17.25888 (t = −4.062128 on 9 DF, r = √2/2).
+try:
+    import pingouin as pg  # noqa: E402
+except ImportError:
+    pg = None
+    print('pingouin is not installed: its reference checks are skipped')
+from scipy import integrate, special  # noqa: E402
+
+
+def ncp_bisect(t, df, q):
+    a, b = t - 20 - abs(t), t + 20 + abs(t)
+    for _ in range(200):
+        m_ = (a + b) / 2
+        if stats.nct.cdf(t, df, m_) > q:
+            a = m_
+        else:
+            b = m_
+    return (a + b) / 2
+
+
+ef = call('distribution.effect', table=tid, column='x', mu=48)
+er = {r_['effect']: r_ for r_ in ef['table']['rows']}
+d_ = (xs.mean() - 48) / xs.std(ddof=1)
+check.near("Test Mean: Cohen's d = (mean − μ₀)/s", er["Cohen's d"]['estimate'], float(d_), rel=1e-12)
+if pg is not None:
+    check.near("Test Mean: Cohen's d = pingouin compute_effsize(x, μ₀)", er["Cohen's d"]['estimate'], float(pg.compute_effsize(xs, 48)), rel=1e-12)
+J_ = np.exp(special.gammaln((n - 1) / 2) - 0.5 * np.log((n - 1) / 2) - special.gammaln((n - 2) / 2))
+check.near("Test Mean: Hedges' g = J(n − 1)·d, J exact", er["Hedges' g"]['estimate'], float(J_ * d_), rel=1e-12)
+check.near("Test Mean: Hedges' g ≈ d(1 − 3/(4n − 5)), the usual approximation", er["Hedges' g"]['estimate'], float(d_ * (1 - 3 / (4 * n - 5))), rel=1e-4)
+if pg is not None:
+    check.near("Test Mean: Hedges' g ≈ pingouin's", er["Hedges' g"]['estimate'], float(pg.compute_effsize(xs, 48, eftype='hedges')), rel=1e-4)
+t_ = d_ * np.sqrt(n)
+check.near("Test Mean: d's exact lower limit, a noncentrality search", er["Cohen's d"]['lower'], ncp_bisect(t_, n - 1, 0.975) / np.sqrt(n), rel=1e-9)
+check.near("Test Mean: d's exact upper limit", er["Cohen's d"]['upper'], ncp_bisect(t_, n - 1, 0.025) / np.sqrt(n), rel=1e-9)
+if pg is not None:
+    lo_, hi_ = pg.compute_esci(float(d_), n, 1, eftype='cohen', decimals=6)
+    check("Test Mean: pingouin's approximate interval is within 0.02 of the exact one", abs(lo_ - er["Cohen's d"]['lower']) < 0.02 and abs(hi_ - er["Cohen's d"]['upper']) < 0.02, True)
+efw = call('distribution.effect', table=tid, column='x', mu=48, weight='w')
+dw = DescrStatsW(xs, weights=ww, ddof=1)
+check.near("Test Mean with Weight: d from the weighted mean and SD", efw['table']['rows'][0]['estimate'], float((dw.mean - 48) / dw.std), rel=1e-12)
+check.near("Test Mean with Weight: n is the sum of the weights, as in the t test", efw['n'], float(dw.sum_weights), rel=1e-12)
+bt = call('distribution.bayes_t', table=tid, column='x', mu=48)
+bf_ = [r_['bf10'] for r_ in bt['table']['rows']]
+f1 = lambda dd: stats.nct.pdf(t_, n - 1, dd * np.sqrt(n)) * stats.cauchy.pdf(dd, 0, np.sqrt(2) / 2)
+den = stats.t.pdf(t_, n - 1)
+check.near('Test Mean: BF10 = the noncentral t likelihood integrated over the Cauchy prior', bf_[0], integrate.quad(f1, -np.inf, np.inf, limit=400)[0] / den, rel=1e-7)
+if pg is not None:
+    check.near('Test Mean: BF10 = pingouin bayesfactor_ttest (r = √2/2)', bf_[0], float(pg.bayesfactor_ttest(float(t_), n, r=np.sqrt(2) / 2)), rel=1e-8)
+check.near('Test Mean: BF+0 = 2 × the noncentral t integral over δ > 0', bf_[1], 2 * integrate.quad(f1, 0, np.inf, limit=400)[0] / den, rel=1e-7)
+check.near('Test Mean: BF−0 = 2 × the integral over δ < 0', bf_[2], 2 * integrate.quad(f1, -np.inf, 0, limit=400)[0] / den, rel=1e-7)
+xs_sleep = 3.0 + (lambda z: (z - z.mean()) / z.std(ddof=1))(np.random.default_rng(11).normal(size=10)) + (-4.062127683382037 / np.sqrt(10))
+bs = call('distribution.bayes_t', table=table({'v': xs_sleep}), column='v', mu=3.0)
+check.near("Test Mean: t = −4.062128 on 9 DF gives BayesFactor's 17.25888", bs['table']['rows'][0]['bf10'], 17.25888, rel=3e-7)
+check('Test Mean: prior scale 0 is refused', 'error' in call('distribution.bayes_t', table=tid, column='x', mu=48, r=0), True)
+# the binomial Bayes factor of a two-level column
+yn = ['yes'] * 37 + ['no'] * 23
+tb2 = table({'yn': yn, 'f': [2.0] * 30 + [1.0] * 30, 'w': [0.5] * 60}, levels={'yn': ['yes', 'no']})
+bb = call('distribution.bayes_binom', table=tb2, column='yn', probs={'yes': 1, 'no': 1})
+bbf = [r_['bf10'] for r_ in bb['table']['rows']]
+check.near('binomial BF10 = B(38, 24)/(B(1, 1)·½⁶⁰)', bbf[0], float(np.exp(special.betaln(38, 24) - special.betaln(1, 1) - 60 * np.log(0.5))), rel=1e-10)
+if pg is not None:
+    check.near('binomial BF10 = pingouin bayesfactor_binom (uniform prior)', bbf[0], float(pg.bayesfactor_binom(37, 60, 0.5)), rel=1e-10)
+lik = lambda p_: p_ ** 37 * (1 - p_) ** 23
+check.near('binomial BF+0 = ∫ over p > ½ of the likelihood × the prior renormalized, over the likelihood at ½', bbf[1], integrate.quad(lik, 0.5, 1)[0] / 0.5 / lik(0.5), rel=1e-8)
+check.near('binomial BF−0', bbf[2], integrate.quad(lik, 0, 0.5)[0] / 0.5 / lik(0.5), rel=1e-8)
+bb2 = call('distribution.bayes_binom', table=tb2, column='yn', probs={'yes': 3, 'no': 1}, a=2, b=3)
+lik2 = lambda p_: p_ ** 37 * (1 - p_) ** 23 * stats.beta.pdf(p_, 2, 3)
+check.near('p₀ = 0.75, a beta(2, 3) prior: BF10 by direct integration', bb2['table']['rows'][0]['bf10'], integrate.quad(lik2, 0, 1)[0] / 0.75 ** 37 / 0.25 ** 23, rel=1e-8)
+if pg is not None:
+    check.near('p₀ = 0.75, a beta(2, 3) prior: BF10 = pingouin', bb2['table']['rows'][0]['bf10'], float(pg.bayesfactor_binom(37, 60, 0.75, a=2, b=3)), rel=1e-10)
+check.near('p₀ = 0.75, beta(2, 3): BF+0 by direct integration', bb2['table']['rows'][1]['bf10'], integrate.quad(lik2, 0.75, 1)[0] / stats.beta.sf(0.75, 2, 3) / 0.75 ** 37 / 0.25 ** 23, rel=1e-8)
+bbf_ = call('distribution.bayes_binom', table=tb2, column='yn', probs={'yes': 1, 'no': 1}, freq='f')
+check.near('with Freq: the counts are summed (67 of 90)', bbf_['table']['rows'][0]['bf10'], float(np.exp(special.betaln(68, 24) - 90 * np.log(0.5))), rel=1e-10)
+bbw = call('distribution.bayes_binom', table=tb2, column='yn', probs={'yes': 1, 'no': 1}, weight='w')
+check('with a Weight the counts are not whole: noted', any('whole' in t for t in bbw['notes']), True)
+check('three levels: refused', 'error' in call('distribution.bayes_binom', table=tid, column='g', probs={'a': 1, 'b': 1, 'c': 1}), True)
+# the code, on a CSV export
+for label_, res_, cols_ in (('Test Mean\'s effect size', ef, {'x': x, 'g': g, 'w': w}), ('Test Mean\'s effect size with a weight', efw, {'x': x, 'g': g, 'w': w}),
+                            ('Test Mean\'s Bayes factor', bt, {'x': x, 'g': g, 'w': w}), ('the binomial Bayes factor', bb2, {'yn': yn, 'f': [2.0] * 30 + [1.0] * 30, 'w': [0.5] * 60}),
+                            ('the binomial Bayes factor with Freq', bbf_, {'yn': yn, 'f': [2.0] * 30 + [1.0] * 30, 'w': [0.5] * 60})):
+    ns = code_ns(cols_, res_['code'], label_)
+    if 'd_' in ns:
+        check.near(f'{label_}: d', float(ns['d_']), res_['table']['rows'][0]['estimate'], rel=1e-12)
+        check.near(f'{label_}: the exact lower limit', float(ns['lo']), res_['table']['rows'][0]['lower'], rel=1e-8)
+    elif 'p' in ns and 'bf' in ns and 'k' not in ns:
+        check.near(f'{label_}: BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-7)
+        check.near(f'{label_}: BF+0', float(2 * ns['bf'] * ns['p']), res_['table']['rows'][1]['bf10'], rel=1e-7)
+    elif 'bf' in ns:
+        check.near(f'{label_}: BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-10)
 
 # rows subset and the error path
 check('rows subset (row 5 is missing)', call('distribution.continuous', table=tid, column='x', rows=list(range(10)))['moments']['n'], 9.0)

@@ -21,7 +21,10 @@
    Beyond JMP, from statsmodels: Brunner-Munzel and its equivalence test
    (Oneway ▸ Nonparametric), Compare Rates for counts with an exposure,
    the Two Sample Test for Proportions by every method statsmodels has
-   (Contingency), and Breslow-Day beside Cochran Mantel Haenszel.
+   (Contingency), and Breslow-Day beside Cochran Mantel Haenszel. From the
+   published methods: Effect Size (d, g, η², ε², ω², d_z, d_av with exact
+   or Bonett intervals), Bayes Factor (JZS t tests, the correlation's) and
+   Games-Howell comparisons.
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -145,6 +148,53 @@
       if (v > 0) td.classList.add('p-sig');
     }));
     return tbl;
+  }
+
+  /* ---- effect sizes and Bayes factors, opt-in (not in JMP) ------------------
+     Effect Size outlines: a standardized effect with its interval, exact from
+     the noncentral t or F where it exists. Bayes Factor outlines: BF10 and
+     BF01 for the two-sided and each one-sided alternative. */
+  async function effectOutline(ctx, parent, key, fn, payload, note, remove) {
+    const ob = ctx.outline('Effect Size', { parent, key, info: 'p:fitybyx:effect', menu: remove ? () => [{ label: 'Remove', action: remove }] : null });
+    const { res: r, error } = await safeCall(ctx, fn, payload);
+    if (error) { ob.add(problem(ctx, error)); return ob; }
+    ob.add(ctx.rt(r.table, { sortable: false }), note ? ctx.note(note(r)) : null, notesOf(ctx, r.notes), ctx.code(r.code));
+    return ob;
+  }
+
+  async function bayesOutline(ctx, parent, key, fn, payload, facts, note, menu) {
+    const ob = ctx.outline('Bayes Factor', { parent, key, info: 'p:fitybyx:bayes', menu });
+    const { res: r, error } = await safeCall(ctx, fn, payload);
+    if (error) { ob.add(problem(ctx, error)); return ob; }
+    ob.add(ctx.row(ctx.rt(r.table, { sortable: false }), ctx.kv(facts(r))), ctx.note(note(r)), notesOf(ctx, r.notes), ctx.code(r.code));
+    return ob;
+  }
+
+  const BF_NOTE = 'BF10 is how many times more likely the data are under the alternative than under the null hypothesis; BF01 = 1/BF10 the other way round. Right click for log₁₀ BF10.';
+  const JZS_R = Math.SQRT1_2;
+
+  /* The scale r of the Cauchy prior on the standardized effect (Rouder et al. 2009). */
+  async function priorDialog(ctx, sc, key, title) {
+    const cur = ctx.opt(key, null, sc) || { r: JZS_R };
+    const v = await SM.ui.form({
+      title, info: 'p:fitybyx:bayes',
+      lead: 'Under the alternative the standardized effect δ has a Cauchy prior centred at 0; its scale r is the effect size that is as likely to be exceeded as not. √2/2 ≈ 0.707 is the default of Rouder et al. (2009) and JASP; 1 is the original JZS prior, 0.5 expects smaller effects.',
+      fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r }],
+      validate: (x) => (x.r > 0 ? null : 'The scale must be positive.'),
+    });
+    if (v) ctx.set(key, { r: v.r }, sc);
+  }
+
+  /* The width κ of the stretched beta prior on ρ (Ly et al. 2016). */
+  async function kappaDialog(ctx, sc) {
+    const cur = ctx.opt('corrBf', null, sc) || { kappa: 1 };
+    const v = await SM.ui.form({
+      title: 'Bayes Factor for the Correlation', info: 'p:fitybyx:bayes',
+      lead: 'Under the alternative the correlation ρ has a beta(1/κ, 1/κ) prior stretched to (−1, 1): κ = 1 is uniform (the default of Ly, Verhagen and Wagenmakers 2016 and JASP); a smaller κ expects correlations nearer 0.',
+      fields: [{ key: 'kappa', label: 'Width κ of the prior on ρ', type: 'number', value: cur.kappa }],
+      validate: (x) => (x.kappa > 0 ? null : 'κ must be positive.'),
+    });
+    if (v) ctx.set('corrBf', { kappa: v.kappa }, sc);
   }
 
   /* ======================================================================
@@ -305,6 +355,13 @@
       if (error) ob.add(problem(ctx, error));
       else ob.add(ctx.kv([[`Mean of ${x.name}`, res.mean_x], [`Mean of ${y.name}`, res.mean_y], [`Std Dev of ${x.name}`, res.sd_x], [`Std Dev of ${y.name}`, res.sd_y],
         ['Correlation', res.r], ['Covariance', res.cov], ['N', res.n]]), ctx.code(res.code));
+    }
+    const cbf = o('corrBf', null);
+    if (cbf) {
+      await bayesOutline(ctx, host, `cbf:${sc}`, 'fitybyx.bivariate_bf', { ...base, kappa: cbf.kappa },
+        (r) => [['Correlation r', r.r], ['N', r.n], ['Prior width κ', r.kappa]],
+        (r) => `Whether ${y.name} and ${x.name} are correlated: the exact likelihood of ρ given r = ${fmt(r.r)} from ${fmt(r.n)} pairs, against a beta(1/κ, 1/κ) prior on ρ stretched to (−1, 1)${r.kappa === 1 ? ', uniform' : ''} (Ly, Verhagen and Wagenmakers 2016); a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
+        () => [{ label: 'Change Prior…', action: () => kappaDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('corrBf', null, sc) }]);
     }
     // ---- one outline per fit (and group)
     for (const item of results) await fitReport(ctx, item, host, sc, y, x, groups);
@@ -492,6 +549,7 @@
       ctx.check('Show Points', 'points', sc, true),
       ctx.check('Histogram Borders', 'hist', sc, false),
       ctx.check('Summary Statistics', 'summary', sc, false),
+      { label: 'Bayes Factor for the Correlation…', checked: !!ctx.opt('corrBf', null, sc), action: () => kappaDialog(ctx, sc) },
       { separator: true },
       { label: 'Fit Mean', action: () => add({ kind: 'mean' }) },
       { label: 'Fit Line', action: () => add({ kind: 'line' }) },
@@ -586,7 +644,7 @@
     if (o('grandMean', false)) shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: res.grand_mean, y1: res.grand_mean, line: { color: GREY, width: 1, dash: 'dot' } });
     if (o('connect', false)) traces.push({ type: 'scatter', mode: 'lines+markers', x: levels.map((_, i) => i), y: levels.map((l) => l.mean), line: { color: RED, width: 1.4 }, marker: { size: 5, color: RED }, hoverinfo: 'skip', showlegend: false });
     // comparison circles for the last comparison chosen
-    const circ = o('circles', true) ? cmp.filter((c) => c.res && !c.error).slice(-1)[0] : null;
+    const circ = o('circles', true) ? cmp.filter((c) => c.res && !c.error && c.res.quantile && c.res.quantile.value != null).slice(-1)[0] : null;
     const circles = [];
     const layout = {
       xaxis: { title: { text: x.name }, tickvals: levels.map((_, i) => i), ticktext: names, range: [-0.6, k - 0.4], zeroline: false, showgrid: false },
@@ -621,7 +679,7 @@
       ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'min', label: 'Minimum' }, { key: 'q10', label: '10%' }, { key: 'q25', label: '25%' }, { key: 'median', label: 'Median' }, { key: 'q75', label: '75%' }, { key: 'q90', label: '90%' }, { key: 'max', label: 'Maximum' }],
         rows: levels.map((l, i) => ({ ...l, lv: names[i] })) }, { sortable: false }));
     }
-    if (o('anova', false)) owAnova(ctx, host, sc, res, names, block, y, x);
+    if (o('anova', false)) await owAnova(ctx, host, sc, res, names, block, y, x, base);
     if (o('meansd', false)) {
       const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
       const ob = ctx.outline('Means and Std Deviations', { parent: host, key: `msd:${sc}` });
@@ -635,7 +693,20 @@
       if (error) ob.add(problem(ctx, error));
       else {
         ob.add(el('p', { class: 'sm-fyx-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming unequal variances'), tTestTable(ctx, r), notesOf(ctx, r.notes), ctx.code(r.code));
+        if (o('effect', false)) {
+          await effectOutline(ctx, ob, `tte:${sc}`, 'fitybyx.ttest_effect', { ...base, kind: 'welch' },
+            (e) => `${names[1]} minus ${names[0]} over √((s₁² + s₂²)/2) = ${fmt(e.standardizer)}, the unweighted standardizer for unequal variances (Cohen 1988): d* and Hedges' g* = J·d* with J = ${fmt(e.j)}. The interval is Bonett's (2008), d* ± z·SE; no exact interval exists when the variances differ. Right click for the standard errors.`,
+            () => ctx.set('effect', false, sc));
+        }
       }
+    }
+    const bf = o('bf', null);
+    if (bf && (k !== 2 || block)) host.add(ctx.note(`Bayes Factor: ${block ? 'the two-sample t test takes no Block' : 'the two-sample t test needs exactly two levels'}; it is not shown.`));
+    else if (bf) {
+      await bayesOutline(ctx, host, `bf:${sc}`, 'fitybyx.oneway_bf', { ...base, r: bf.r },
+        (r) => [['t (pooled)', r.t], ['DF', r.df], [`N ${names[0]}`, r.n1], [`N ${names[1]}`, r.n2], ['Prior scale r', r.r]],
+        (r) => `The JZS Bayes factor of the two-sample t test (Rouder et al. 2009): the pooled t of ${names[1]} minus ${names[0]}, equal variances, against a Cauchy(0, ${fmt(r.r)}) prior on δ = (μ₂ − μ₁)/σ under the alternative; a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
+        () => [{ label: 'Change Prior…', action: () => priorDialog(ctx, sc, 'bf', 'Bayes Factor: two-sample t test') }, { label: 'Remove', action: () => ctx.set('bf', null, sc) }]);
     }
     if (o('anom', false)) await owAnom(ctx, host, sc, base, names);
     if (cmp.length) {
@@ -661,15 +732,25 @@
       ctx.kv([['t Ratio', r.t], ['DF', r.df], ['Prob > |t|', r.p, 'p'], ['Prob > t', r.p_greater, 'p'], ['Prob < t', r.p_less, 'p']]));
   }
 
-  function owAnova(ctx, host, sc, res, names, block, y, x) {
+  async function owAnova(ctx, host, sc, res, names, block, y, x, base) {
     const ob = ctx.outline('Oneway Anova', { parent: host, key: `anova:${sc}`, info: 'p:fitybyx:anova' });
     if (res.error_anova) { ob.add(ctx.warn(res.error_anova)); return; }
+    const effect = ctx.opt('effect', false, sc);
+    const off = () => ctx.set('effect', false, sc);
     ctx.outline('Summary of Fit', { parent: ob, key: `sof:${sc}` }).add(kvOf(ctx, res.summary));
     if (res.pooled_t) {
       const t = ctx.outline('t Test', { parent: ob, key: `ptt:${sc}` });
       t.add(el('p', { class: 'sm-fyx-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming equal variances'), tTestTable(ctx, res.pooled_t));
+      if (effect) {
+        await effectOutline(ctx, t, `ptte:${sc}`, 'fitybyx.ttest_effect', { ...base, kind: 'pooled' },
+          (e) => `${names[1]} minus ${names[0]} over the pooled standard deviation ${fmt(e.standardizer)}: Cohen's d, and Hedges' g = J·d with J = ${fmt(e.j)} (Hedges 1981). The interval of d is exact: the noncentral t distributions whose noncentrality λ puts the pooled t at their upper and lower α/2 points give δ = λ√(1/n₁ + 1/n₂) (Steiger and Fouladi 1997); g's is J times it.`, off);
+      }
     }
     ctx.outline('Analysis of Variance', { parent: ob, key: `aov:${sc}` }).add(rtFixed(ctx, res.anova));
+    if (effect) {
+      await effectOutline(ctx, ob, `aove:${sc}`, 'fitybyx.oneway_effect', { ...base, block: block ? block.name : null },
+        (e) => `${e.partial ? 'Partial η², ε² and ω²: the Block\'s sum of squares left out of the denominators. ' : ''}η² = SS(${x.name})/SS(total) overstates the population value; ε² (Kelley 1935) and ω² (Hays 1963) take the error mean square off, and are less biased. The interval is the exact one of the population proportion of variance, λ/(λ + df₁ + df₂ + 1) (N${e.partial ? ' in a one-way layout' : ''}) for the noncentral F whose λ puts F = ${fmt(e.F)} on (${fmt(e.df_num)}, ${fmt(e.df_den)}) DF at its upper and lower α/2 points (Steiger 2004): the same for the three estimates, which estimate the same proportion. The lower limit is 0 when the F test's p-value is above α/2.`, off);
+    }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     const m = ctx.outline('Means for Oneway Anova', { parent: ob, key: `mfa:${sc}` });
     if (block) {
@@ -686,18 +767,22 @@
 
   const METHOD_TITLE = {
     student: 'Comparisons for each pair using Student\'s t', tukey: 'Comparisons for all pairs using Tukey-Kramer HSD', dunnett: 'Comparisons with a control using Dunnett\'s Method',
+    gameshowell: 'Comparisons for all pairs using Games-Howell',
   };
 
   function compareReport(ctx, parent, sc, c, names) {
+    const gh = c.c.method === 'gameshowell';
     const ob = ctx.outline(METHOD_TITLE[c.c.method], { parent, key: `cmp:${sc}:${c.c.method}`, menu: () => [{ label: 'Remove', action: () => ctx.set('compare', ctx.opt('compare', [], sc).filter((z) => z.method !== c.c.method), sc) }] });
     if (c.error) { ob.add(problem(ctx, c.error)); return; }
     const r = c.res;
-    ob.add(ctx.rt({ columns: [{ key: 'q', label: r.quantile.label }, { key: 'a', label: 'Alpha' }], rows: [{ q: r.quantile.value, a: r.alpha }] }, { sortable: false, caption: 'Confidence Quantile' }));
+    if (r.quantile.value != null) ob.add(ctx.rt({ columns: [{ key: 'q', label: r.quantile.label }, { key: 'a', label: 'Alpha' }], rows: [{ q: r.quantile.value, a: r.alpha }] }, { sortable: false, caption: 'Confidence Quantile' }));
+    else ob.add(ctx.kv([['Alpha', r.alpha]]), ctx.note('Each pair has its own quantile q*, from its own degrees of freedom: see the Ordered Differences Report (right click it for q*). No comparison circles: they need one quantile and one standard error per level.'));
     if (r.matrix) {
       const cols = [{ key: 'lv', label: '', fmt: 'text' }, ...r.order.map((i) => ({ key: `c${i}`, label: names[i] }))];
       const rows = r.order.map((i, a) => { const row = { lv: names[i] }; r.order.forEach((j, b) => { row[`c${j}`] = r.matrix[a][b]; }); return row; });
-      const mt = ctx.outline(`${c.c.method === 'tukey' ? 'HSD' : 'LSD'} Threshold Matrix`, { parent: ob, key: `thr:${sc}:${c.c.method}` });
-      mt.add(el('p', { class: 'sm-ob-note', text: 'Abs(Dif)-' + (c.c.method === 'tukey' ? 'HSD' : 'LSD') }), markPositive(ctx.rt({ columns: cols, rows }, { sortable: false })), ctx.note('Positive values show pairs of means that are significantly different.'));
+      const what = c.c.method === 'tukey' ? 'HSD' : gh ? 'q*·SE' : 'LSD';
+      const mt = ctx.outline(`${gh ? 'Games-Howell' : c.c.method === 'tukey' ? 'HSD' : 'LSD'} Threshold Matrix`, { parent: ob, key: `thr:${sc}:${c.c.method}` });
+      mt.add(el('p', { class: 'sm-ob-note', text: `Abs(Dif)-${what}` }), markPositive(ctx.rt({ columns: cols, rows }, { sortable: false })), ctx.note(`Positive values show pairs of means that are significantly different.${gh ? ' Each pair with its own standard error and q*; the diagonal with twice the level\'s own variance.' : ''}`));
     }
     if (r.matrix_control) {
       const mt = ctx.outline('LSD Threshold Matrix', { parent: ob, key: `thr:${sc}:${c.c.method}` });
@@ -712,8 +797,9 @@
       cl.add(t, ctx.note('Levels not connected by the same letter are significantly different.'));
     }
     const od = ctx.outline(r.control != null ? 'Comparisons with a control' : 'Ordered Differences Report', { parent: ob, key: `od:${sc}:${c.c.method}` });
-    od.add(ctx.rt({ columns: [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: '- Level', fmt: 'text' }, { key: 'diff', label: 'Difference' }, { key: 'se', label: 'Std Err Dif' }, { key: 'lower', label: 'Lower CL' }, { key: 'upper', label: 'Upper CL' }, { key: 'p', label: 'p-Value', fmt: 'p' }],
-      rows: r.pairs.map((p) => ({ ...p, a: names[p.i], b: names[p.j] })) }, { sortable: true }));
+    const ocols = [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: '- Level', fmt: 'text' }, { key: 'diff', label: 'Difference' }, { key: 'se', label: 'Std Err Dif' }, { key: 'lower', label: 'Lower CL' }, { key: 'upper', label: 'Upper CL' }, { key: 'p', label: 'p-Value', fmt: 'p' }];
+    if (gh) { ocols.splice(4, 0, { key: 'df', label: 'DF' }); ocols.push({ key: 'q', label: 'q*', hidden: true }); }
+    od.add(ctx.rt({ columns: ocols, rows: r.pairs.map((p) => ({ ...p, a: names[p.i], b: names[p.j] })) }, { sortable: true }));
     ob.add(notesOf(ctx, r.notes), ctx.code(r.code));
   }
 
@@ -1041,13 +1127,21 @@
     const withQuantiles = () => { const on = !ctx.opt('quantiles', false, sc); ctx.set('box', on, sc, { rerun: false }); ctx.set('quantiles', on, sc); };
     const np = (label, t, dis) => ({ label, checked: ctx.opt('np', [], sc).includes(t), disabled: dis, action: () => ctx.set('np', listToggle('np', t), sc) });
     const saveCol = (kind) => oneSave(ctx, sc, y, x, kind);
+    // Effect Size goes with Means/Anova and the t tests: on its own it turns Means/Anova on
+    const withEffect = () => {
+      const on = !ctx.opt('effect', false, sc);
+      if (on && !ctx.opt('anova', false, sc) && !ctx.opt('ttest', false, sc)) { ctx.set('diamonds', true, sc, { rerun: false }); ctx.set('anova', true, sc, { rerun: false }); }
+      ctx.set('effect', on, sc);
+    };
     return [
       { label: 'Quantiles', checked: ctx.opt('quantiles', false, sc), action: withQuantiles },
       { label: k === 2 ? 'Means/Anova/Pooled t' : 'Means/Anova', checked: ctx.opt('anova', false, sc), action: withAnova },
       { label: 'Means and Std Dev', checked: ctx.opt('meansd', false, sc), action: withMeansd },
       ctx.check('t Test', 'ttest', sc, false, { disabled: k !== 2 }),
+      { label: 'Effect Size', checked: ctx.opt('effect', false, sc), action: withEffect },
+      { label: 'Bayes Factor…', checked: !!ctx.opt('bf', null, sc), disabled: k !== 2 || !!(ctx.role('block') && ctx.role('block').isCategorical), action: () => priorDialog(ctx, sc, 'bf', 'Bayes Factor: two-sample t test') },
       { label: 'Analysis of Means Methods', submenu: [ctx.check('ANOM', 'anom', sc, false)] },
-      { label: 'Compare Means', submenu: () => [cmpItem('Each Pair, Student\'s t', 'student'), cmpItem('All Pairs, Tukey HSD', 'tukey'), cmpItem('With Control, Dunnett\'s…', 'dunnett', true)] },
+      { label: 'Compare Means', submenu: () => [cmpItem('Each Pair, Student\'s t', 'student'), cmpItem('All Pairs, Tukey HSD', 'tukey'), cmpItem('All Pairs, Games-Howell', 'gameshowell'), cmpItem('With Control, Dunnett\'s…', 'dunnett', true)] },
       { label: 'Nonparametric', submenu: () => [
         np('Wilcoxon / Kruskal-Wallis Tests', 'wilcoxon'), np('Median Test', 'median'), np('van der Waerden Test', 'vdw'), np('Kolmogorov-Smirnov Test', 'ks', k !== 2),
         ctx.check('Brunner-Munzel Test', 'bm', sc, false),
@@ -1603,7 +1697,7 @@
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One or more responses.'], ['X, Factor', 'One or more factors; every Y is paired with every X.'], ['Block', 'Oneway only: an ordinal or nominal column whose levels are blocks (a randomized block ANOVA).'], ['Weight', 'Weighted least squares; weights the logistic likelihood.'], ['Freq', 'A count per row: the row stands for that many observations.'], ['By', 'A separate analysis for each level.']] },
         { heading: 'The red triangles', text: 'Each analysis has its own: fits for a Bivariate, tests and comparisons for a Oneway, odds ratios and ROC curves for a Logistic, measures and tests for a Contingency. Each fit of a Bivariate has its red triangle too: confidence curves, saved predictions and residuals, residual plots, Remove Fit.' },
-        { heading: 'Beyond JMP', text: 'From statsmodels: Nonparametric ▸ Brunner-Munzel Test and Equivalence Test ▸ Probability of Superiority, Compare Rates for counts with an exposure (Oneway); the Two Sample Test for Proportions by every method statsmodels has and Breslow-Day beside Cochran Mantel Haenszel (Contingency). Each (i) says how they differ from JMP\'s closest.' },
+        { heading: 'Beyond JMP', text: 'From statsmodels: Nonparametric ▸ Brunner-Munzel Test and Equivalence Test ▸ Probability of Superiority, Compare Rates for counts with an exposure (Oneway); the Two Sample Test for Proportions by every method statsmodels has and Breslow-Day beside Cochran Mantel Haenszel (Contingency). From the published methods: Effect Size (Cohen\'s d, Hedges\' g, η², ε², ω² with exact intervals), Bayes Factor (the JZS t test; the correlation\'s in Bivariate) and Compare Means ▸ All Pairs, Games-Howell (Oneway). Each (i) says how they differ from JMP\'s closest.' },
         { heading: 'Weight and Freq', text: 'The least-squares fits use both, with the residual degrees of freedom counted from Freq. Where statsmodels or scipy takes no weights (rank tests, robust, quantile and LOWESS fits, MNLogit, OrderedModel) whole-number frequencies are counted by repeating rows and Weight is not used; the report says so.' },
         { heading: 'Linking', text: 'Points, bars and mosaic cells select their rows; selected rows are highlighted in every graph.' },
       ],
@@ -1634,6 +1728,30 @@
       sections: [
         { heading: 'Reading the reports', list: ['The threshold matrix shows |difference| minus the least significant difference: positive for pairs that differ.', 'Levels that do not share a letter in the connecting letters report differ.', 'The comparison circles have radius quantile × standard error; circles of means that differ barely overlap or not at all.'] },
         { heading: 'The numbers', text: 'Student\'s t: statsmodels contrasts of the cell-means model. Tukey: the differences from statsmodels\' pairwise_tukeyhsd; q* and the p-values from scipy\'s studentized range distribution, which is exact where pairwise_tukeyhsd\'s approximation stops at p = 0.001. Dunnett: scipy.stats.dunnett.' },
+        { heading: 'Games-Howell', text: 'All pairs without assuming equal variances (Games and Howell 1976): each difference over its own standard error √(s²ᵢ/nᵢ + s²ⱼ/nⱼ), with the Welch-Satterthwaite degrees of freedom of the pair, and p-values and intervals from the studentized range of k levels on those degrees of freedom. Use it where Unequal Variances rejects equal variances and Tukey\'s pooled error would mislead. Each pair has its own q*, so there are no comparison circles. Not in JMP; Weight is not used.' },
+      ],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:effect': {
+      kicker: 'Fit Y by X, Matched Pairs', title: 'Effect Size',
+      lead: 'How large the difference is, in standard deviations or as a share of the variance, with a confidence interval: from the red triangle (Effect Size), for Means/Anova, the t tests and Matched Pairs. Not in JMP.',
+      sections: [
+        { heading: 'Two levels', choices: [['Cohen\'s d', 'the difference of the means (second level minus first) over the pooled standard deviation, beside the pooled t test'], ['Hedges\' g', 'J·d with Hedges\' (1981) exact J = Γ(ν/2)/(√(ν/2)Γ((ν−1)/2)), ν = n₁ + n₂ − 2: unbiased for δ under normality'], ['d* and g*', 'beside the unequal-variance t test: the difference over √((s₁² + s₂²)/2), Cohen\'s (1988) standardizer when the variances differ, which does not depend on the group sizes']] },
+        { heading: 'Several levels', choices: [['η²', 'SS(X)/SS(total), the share of the variation that X explains in the sample; biased upward'], ['ε²', '(SS(X) − df(X)·MSE)/SS(total) (Kelley 1935)'], ['ω²', '(SS(X) − df(X)·MSE)/(SS(total) + MSE) (Hays 1963), the least biased'], ['With a Block', 'their partial forms, the block\'s sum of squares left out']] },
+        { heading: 'Matched Pairs', choices: [['d_z', 'the mean difference over the standard deviation of the differences: the paired t over √n'], ['g_z', 'J(n − 1)·d_z'], ['d_av', 'the mean difference over √((s₁² + s₂²)/2), comparable with a two-group d (Cumming 2012; Lakens 2013): d_z grows with the correlation of the pair, d_av does not']] },
+        { heading: 'The intervals', text: 'Exact where an exact interval exists: d and d_z from the noncentral t, whose noncentrality λ is found where the observed t is the upper and the lower α/2 point (Steiger and Fouladi 1997; Cumming and Finch 2001); η², ε² and ω² from the noncentral F in the same way, λ/(λ + df₁ + df₂ + 1) being the population proportion of variance that all three estimate (Smithson 2003; Steiger 2004). g\'s interval is J times d\'s. d*, g* and d_av have no exact interval: theirs are Bonett\'s (2008), estimate ± z·SE, which do not assume equal variances. Steiger (2004) suggests a 90% interval for η², which matches the one-sided F test at α = 0.05: set α to 0.1.' },
+        { heading: 'Weight and Freq', text: 'Freq counts rows. The t tests\' effect sizes, like the t tests, do not use Weight; η², ε² and ω² use the weighted sums of squares of the Analysis of Variance.' },
+      ],
+      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+    },
+    'p:fitybyx:bayes': {
+      kicker: 'Fit Y by X, Matched Pairs', title: 'Bayes Factor',
+      lead: 'How much more likely the data are under the alternative than under the null hypothesis (BF10), or the other way round (BF01 = 1/BF10), for a prior on the effect under the alternative. BF10 above 1 favours the alternative, below 1 the null; unlike a p-value it can show evidence for no effect. Not in JMP.',
+      sections: [
+        { heading: 'The t tests', text: 'JZS Bayes factors (Rouder et al. 2009): under the alternative the standardized effect δ has a Cauchy(0, r) prior (r = √2/2 by default, adjustable), the variance Jeffreys\' prior. Two samples: the pooled t, equal variances, with n = n₁n₂/(n₁ + n₂); paired: the differences as one sample. BF10 = ∫ p(t | δ) p(δ) dδ / p(t | δ = 0), computed as Rouder et al.\'s integral over g on a log scale.' },
+        { heading: 'The correlation', text: 'Bivariate ▸ Bayes Factor for the Correlation: the exact likelihood of ρ given r (from the distribution of r) against a beta(1/κ, 1/κ) prior stretched to (−1, 1), κ = 1 uniform by default (Ly, Verhagen and Wagenmakers 2016). Two-sided it equals their closed form with the hypergeometric function.' },
+        { heading: 'One-sided', text: 'δ > 0 (or ρ > 0) keeps the half of the prior on that side, doubled: BF+0 = 2·BF10·P(δ > 0 | data) (Morey and Wagenmakers 2014), the posterior probability from the noncentral t (or the correlation\'s) likelihood.' },
+        { heading: 'Reading them', text: 'The numbers are shown as they are, without verbal labels. They depend on the prior: a wider prior (larger r or κ) expects larger effects and favours the null more when the effect is small. Right click a table for log₁₀ BF10, which is easier to read when BF10 is very large or small.' },
       ],
       more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
     },
@@ -1747,12 +1865,13 @@
 
   SM.platforms.register({
     id: 'fitybyx', label: 'Fit Y by X', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
-    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, ROC and lift curves, inverse prediction) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), and the Breslow-Day test of equal odds ratios across strata.',
+    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, ROC and lift curves, inverse prediction) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), the Breslow-Day test of equal odds ratios across strata, effect sizes with intervals (Cohen\'s d and Hedges\' g, exact from the noncentral t; d* for unequal variances; η², ε² and ω², exact from the noncentral F), JZS Bayes factors of the two-sample t test and Bayes factors of the correlation (two- and one-sided), and Games-Howell comparisons for unequal variances.',
     uses: ['statsmodels OLS, WLS, RLM, QuantReg (fits); lowess', 'statsmodels.stats.multicomp.pairwise_tukeyhsd; weightstats (CompareMeans, ttost_ind)', 'statsmodels.stats.oneway.anova_oneway; power.FTestAnovaPower; multitest.multipletests',
       'statsmodels.stats.nonparametric.rank_compare_2indep (Brunner-Munzel, tost_prob_superior)', 'statsmodels.stats.rates (test_poisson_2indep, confint_poisson_2indep, confint_poisson); GLM Poisson',
       'statsmodels Logit, GLM Binomial, MNLogit, OrderedModel', 'statsmodels.stats.contingency_tables (Table, Table2x2, SquareTable, StratifiedTable, mcnemar); inter_rater.cohens_kappa',
       'statsmodels.stats.proportion (test_proportions_2indep, confint_proportions_2indep)',
-      'scipy.stats (dunnett, studentized_range, kruskal, ks_2samp, levene, bartlett, chi2_contingency, fisher_exact, multivariate_t, gaussian_kde)', 'scipy.interpolate.make_smoothing_spline'],
+      'scipy.stats (dunnett, studentized_range, kruskal, ks_2samp, levene, bartlett, chi2_contingency, fisher_exact, multivariate_t, gaussian_kde)', 'scipy.interpolate.make_smoothing_spline',
+      'scipy.stats.nct, ncf (exact effect-size intervals); scipy.integrate.quad, scipy.special.hyp2f1 (Bayes factors)'],
     launch: {
       lead: 'Cast one or more columns into each role; every Y is analysed against every X. The modeling types of the pair choose the analysis:',
       roles: [
@@ -1842,6 +1961,19 @@
         ctx.note('statsmodels sign_test; the one-sided p-values are the binomial test of the positive differences.'));
       else s.add(ctx.warn('Every difference is zero.'));
     }
+    const mpay = { y1: y1.name, y2: y2.name, alpha: ctx.alpha, where: ctx.where || [] };
+    if (o('mpEffect', false)) {
+      await effectOutline(ctx, ob, `mpe:${sc}`, 'matchedpairs.effect', mpay,
+        (e) => `The mean difference ${y2.name} − ${y1.name} standardized two ways. d_z divides by the standard deviation of the differences (${fmt(e.sd_diff)}): the paired t is d_z√n, and the interval is exact, from the noncentral t (δ_z = λ/√n; Steiger and Fouladi 1997); Hedges' g_z = J(n − 1)·d_z. d_av divides by √((s₁² + s₂²)/2) and does not grow with the correlation of the pair (r = ${fmt(e.r)}), so it compares with a two-group d (Cumming 2012; Lakens 2013); its interval is Bonett's (2008). Right click for the standard error.`,
+        () => ctx.set('mpEffect', false, sc));
+    }
+    const mbf = o('mpBf', null);
+    if (mbf) {
+      await bayesOutline(ctx, ob, `mpbf:${sc}`, 'matchedpairs.bayes', { ...mpay, r: mbf.r },
+        (b) => [['t (paired)', b.t], ['DF', b.df], ['N', b.n], ['Prior scale r', b.r]],
+        (b) => `The JZS Bayes factor of the paired t test (Rouder et al. 2009): the differences ${y2.name} − ${y1.name} as one sample, a Cauchy(0, ${fmt(b.r)}) prior on δ = mean difference/SD under the alternative; a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
+        () => [{ label: 'Change Prior…', action: () => priorDialog(ctx, sc, 'mpBf', 'Bayes Factor: paired t test') }, { label: 'Remove', action: () => ctx.set('mpBf', null, sc) }]);
+    }
     if (r.across) {
       const a = ctx.outline('Across Groups', { parent: ob, key: `mpa:${sc}` });
       a.add(ctx.rt({ columns: [{ key: 'lv', label: group.name, fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'diff', label: 'Mean Difference' }, { key: 'mean', label: 'Mean Mean' }], rows: r.across.map((g) => ({ ...g, lv: lvText(group, g.level) })) }, { sortable: false }));
@@ -1857,6 +1989,8 @@
       ctx.check('Plot Dif by Row', 'plotRow', sc, false),
       ctx.check('Wilcoxon Signed Rank', 'wilcoxon', sc, false),
       ctx.check('Sign Test', 'sign', sc, false),
+      ctx.check('Effect Size', 'mpEffect', sc, false),
+      { label: 'Bayes Factor…', checked: !!ctx.opt('mpBf', null, sc), action: () => priorDialog(ctx, sc, 'mpBf', 'Bayes Factor: paired t test') },
       { label: 'Set α Level', submenu: () => alphaMenu(ctx) },
     ];
   }
@@ -1917,8 +2051,8 @@
 
   SM.platforms.register({
     id: 'matchedpairs', label: 'Matched Pairs', menu: 'Analyze/Specialized Modeling', order: 40, info: 'p:matchedpairs',
-    about: 'Two paired responses (with more, every pair): the difference against zero by the paired t test, Wilcoxon\'s signed rank and the sign test, the Tukey mean-difference plot, and with a grouping column the differences and means compared across its levels. Binary responses (two or more, such as yes/no ratings of the same subjects): Cochran\'s Q test and McNemar\'s test of each pair, exact or with a continuity correction, which JMP does not have.',
-    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.descriptivestats.sign_test', 'statsmodels.stats.contingency_tables.cochrans_q, mcnemar', 'statsmodels.stats.multitest.multipletests (Holm)', 'scipy.stats.wilcoxon, pearsonr, f_oneway, binomtest'],
+    about: 'Two paired responses (with more, every pair): the difference against zero by the paired t test, Wilcoxon\'s signed rank and the sign test, the Tukey mean-difference plot, and with a grouping column the differences and means compared across its levels. Binary responses (two or more, such as yes/no ratings of the same subjects): Cochran\'s Q test and McNemar\'s test of each pair, exact or with a continuity correction, which JMP does not have. Also beyond JMP: the effect sizes d_z (exact interval), g_z and d_av (Bonett\'s interval), and the JZS Bayes factor of the paired t test.',
+    uses: ['statsmodels.stats.weightstats.DescrStatsW', 'statsmodels.stats.descriptivestats.sign_test', 'statsmodels.stats.contingency_tables.cochrans_q, mcnemar', 'statsmodels.stats.multitest.multipletests (Holm)', 'scipy.stats.wilcoxon, pearsonr, f_oneway, binomtest', 'scipy.stats.nct, scipy.integrate.quad (effect sizes, Bayes factors)'],
     launch: {
       lead: 'Cast the two paired measurements (or more: every pair is analysed) into Y; the difference is the second minus the first. Binary responses (0/1, yes/no) get Cochran\'s Q and McNemar\'s tests.',
       roles: [

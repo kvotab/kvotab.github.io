@@ -274,6 +274,8 @@
     if (o('cmCorr', false) || o('cmP', false) || o('cmCluster', false)) await colorMaps(ctx, names, res);
     if (o('mahal', false) || o('jack', false) || o('t2', false)) await outlierOutlines(ctx, names);
     if (o('alpha:raw', false) || o('alpha:std', false)) await reliabilityOutline(ctx, names);
+    if (o('icc', false)) await iccOutline(ctx, names);
+    if (o('kendallw', false)) await kendallOutline(ctx, names);
   }
 
   /* ---- distance correlation (statsmodels dist_dependence_measures; not in
@@ -448,6 +450,30 @@
     }
   }
 
+  /* ---- intraclass correlations and Kendall's W (Item Reliability; not in JMP): the columns are
+     the raters, the rows the targets they rate, only the rows every rater rated ---- */
+  async function iccOutline(ctx, names) {
+    const r = await ctx.call('multivariate.icc', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha });
+    const ob = ctx.outline('Intraclass Correlations', { key: 'icc', info: 'mv:icc', menu: () => [{ label: 'Remove', action: () => ctx.set('icc', false) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const lv = fmt(100 * (1 - ctx.alpha));
+    ob.add(ctx.kv([['Targets (rows)', r.n], ['Raters (columns)', r.k, 'int']]),
+      ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'df', label: 'DF' }, { key: 'ss', label: 'Sum of Squares' }, { key: 'ms', label: 'Mean Square' }, { key: 'f', label: 'F Ratio' }, { key: 'p', label: 'Prob > F', fmt: 'p' }], rows: r.anova, caption: 'Analysis of Variance' }, { sortable: false, key: 'icc:anova' }),
+      ctx.rt({ columns: [{ key: 'form', label: 'Form', fmt: 'text' }, { key: 'sf', label: 'Shrout–Fleiss', fmt: 'text' }, { key: 'model', label: 'Model', fmt: 'text' }, { key: 'icc', label: 'ICC', digits: 4 }, { key: 'f', label: 'F Ratio' },
+        { key: 'df1', label: 'NumDF' }, { key: 'df2', label: 'DenDF' }, { key: 'p', label: 'Prob > F', fmt: 'p' }, { key: 'lower', label: `Lower ${lv}%`, digits: 4 }, { key: 'upper', label: `Upper ${lv}%`, digits: 4 }], rows: r.icc, caption: 'Intraclass Correlations' }, { sortable: false, key: 'icc:forms' }),
+      ctx.note(`The columns are the raters and the rows the targets, only the rows rated by every rater (${r.n_rows} of them). A one-way model takes each target's raters as a sample of raters; the two-way models have the same ${r.k} raters for every target: absolute agreement counts their differences in level, consistency does not. The k forms are the reliability of the mean of the ${r.k} raters. Each F tests ICC = 0; the intervals are exact but for absolute agreement (McGraw and Wong's approximation).`),
+      ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
+  }
+
+  async function kendallOutline(ctx, names) {
+    const r = await ctx.call('multivariate.kendall_w', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    const ob = ctx.outline("Kendall's W", { key: 'kendallw', info: 'mv:kendallw', menu: () => [{ label: 'Remove', action: () => ctx.set('kendallw', false) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    ob.add(ctx.kv([["Kendall's W", r.w], ['ChiSquare', r.chi2], ['DF', r.df, 'int'], ['Prob > ChiSq', r.p, 'p'], ['Objects (rows)', r.n, 'int'], ['Raters (columns)', r.m, 'int'], ['Mean Spearman ρ', r.mean_spearman]]),
+      ctx.note(`The concordance of the ${r.m} raters (the columns): each ranks the ${r.n} objects (the rows rated by all of them; ties share the mean rank), and W = 12S/(m²(n³ − n) − mT) from the spread S of the objects' rank sums, T the correction for ties. W is 1 when every rater ranks the objects alike and 0 when their rankings share nothing. ChiSquare = m(n − 1)W on n − 1 DF is Friedman's test with the raters as blocks.`),
+      ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
+  }
+
   function openPCA(ctx) {
     const P = SM.platforms.get('pca');
     if (!P) { SM.ui.toast('Principal Components is not loaded'); return; }
@@ -456,9 +482,9 @@
 
   SM.platforms.register({
     id: 'multivariate', label: 'Multivariate', menu: 'Analyze/Multivariate Methods', order: 10, info: 'p:multivariate',
-    about: 'Correlations of several columns (row-wise or pairwise), their tests and confidence intervals, inverse and partial correlations, covariances, Spearman, Kendall and Hoeffding, the scatterplot matrix with density ellipses, Mahalanobis, jackknife and T² distances, and Cronbach\'s α. Beyond JMP: distance correlations with the distance covariance test of independence, which detect dependence that is not monotone.',
+    about: 'Correlations of several columns (row-wise or pairwise), their tests and confidence intervals, inverse and partial correlations, covariances, Spearman, Kendall and Hoeffding, the scatterplot matrix with density ellipses, Mahalanobis, jackknife and T² distances, and Cronbach\'s α. Beyond JMP: distance correlations with the distance covariance test of independence, which detect dependence that is not monotone; intraclass correlations (the six forms of Shrout and Fleiss, in McGraw and Wong\'s names, with F tests and intervals) and Kendall\'s W with its chi-square (Friedman) test, in Item Reliability.',
     uses: ['numpy (correlations, covariances, inverse)', 'scipy.stats: pearsonr, spearmanr, kendalltau, t, beta', "Hoeffding's D and the Blum-Kiefer-Rosenblatt law (numpy, scipy.integrate)", 'statsmodels.stats.weightstats.DescrStatsW (weights)',
-      'statsmodels.stats.dist_dependence_measures: distance_statistics, distance_covariance_test'],
+      'statsmodels.stats.dist_dependence_measures: distance_statistics, distance_covariance_test', 'scipy.stats: f, chi2, rankdata (intraclass correlations, Kendall\'s W)'],
     topics: {
       'p:multivariate': {
         kicker: 'Analyze > Multivariate Methods', title: 'Multivariate',
@@ -480,6 +506,25 @@
           { heading: 'The test', text: 'n·dCov² is large when the columns depend on each other. Its p-value comes from permuting the rows when a pair has at most 500 rows (B = 200 + 5000/n permutations, a fixed seed here, so the numbers repeat), otherwise from the asymptotic bound 2(1 − Φ(√(n·dCov²/S))), S the product of the mean distances. When no permutation reaches the observed value statsmodels gives that asymptotic p-value instead, and says so; that bound is conservative and can be larger than the permutation p-value, which is then below 1/B.' },
           { heading: 'Size', text: 'The distance matrices are n × n: a pair with more than 2000 rows uses a seeded random subsample of 2000.' },
           { heading: 'Not in JMP', text: 'JMP\'s closest is Hoeffding\'s D (Nonparametric Correlations), a rank measure that also detects non-monotone dependence.' },
+        ],
+        more: { label: 'Multivariate', id: 'help-p-multivariate' },
+      },
+      'mv:icc': {
+        kicker: 'Multivariate', title: 'Intraclass correlations',
+        lead: 'How much of the variation in the ratings is between the targets: the columns are the raters (or items), the rows the targets they rate, only the rows every rater rated. From the two-way analysis of variance without replication (Between Targets MSR, Between Raters MSC, Residual MSE; Within Targets MSW for the one-way model), the six forms of Shrout and Fleiss (1979), named as McGraw and Wong (1996) name them. Not in JMP.',
+        sections: [
+          { choices: [['ICC(1,1)', 'one-way random: each target has its own sample of raters; (MSR − MSW)/(MSR + (k − 1)MSW)'], ['ICC(A,1)', 'two-way, absolute agreement (Shrout and Fleiss\'s ICC(2,1)): the raters\' differences in level count as error; (MSR − MSE)/(MSR + (k − 1)MSE + k(MSC − MSE)/n)'], ['ICC(C,1)', 'two-way, consistency (their ICC(3,1)): only the rank and spacing of the targets matter; (MSR − MSE)/(MSR + (k − 1)MSE)'], ['ICC(1,k), ICC(A,k), ICC(C,k)', 'the reliability of the mean of the k raters: (MSR − MSW)/MSR, (MSR − MSE)/(MSR + (MSC − MSE)/n), (MSR − MSE)/MSR']] },
+          { heading: 'Tests and intervals', text: 'F tests ICC = 0: MSR/MSW for the one-way forms, MSR/MSE for the two-way ones. The intervals invert the F distribution of those ratios (exact); for absolute agreement they are McGraw and Wong\'s approximation with Satterthwaite\'s degrees of freedom (their Table 7). Weight and Freq count a row that many times.' },
+          { heading: 'Which one', text: 'Random raters from a larger pool whose levels matter: ICC(A,1). The same fixed raters, levels aside: ICC(C,1). A single score from one rater, or the mean of all k: the 1 or k forms. Shrout and Fleiss\'s example (6 targets, 4 judges) gives .17, .29, .71, .44, .62, .91.' },
+        ],
+        more: { label: 'Multivariate', id: 'help-p-multivariate' },
+      },
+      'mv:kendallw': {
+        kicker: 'Multivariate', title: "Kendall's W",
+        lead: 'The coefficient of concordance of m raters (the columns) ranking n objects (the rows every rater rated): W = 12S/(m²(n³ − n) − mT), S the sum of the squared deviations of the objects\' rank sums from their mean, T = Σ(t³ − t) over the groups of t tied objects of each rater (Kendall and Babington Smith 1939). W is 0 for no agreement, 1 for rankings that are all the same. Not in JMP.',
+        sections: [
+          { heading: 'The test', text: 'm(n − 1)W against χ² on n − 1 DF, which is Friedman\'s (1937) test with the raters as the blocks (scipy\'s friedmanchisquare gives the same number, ties corrected). Mean Spearman ρ is the average rank correlation of the pairs of raters; without ties it is (mW − 1)/(m − 1).' },
+          { heading: 'Weights', text: 'As for the nonparametric correlations, Weight and Freq only leave out the rows without a positive value.' },
         ],
         more: { label: 'Multivariate', id: 'help-p-multivariate' },
       },
@@ -518,7 +563,8 @@
         ctx.check('Scatterplot Matrix', 'splom', null, true),
         { label: 'Color Maps', submenu: () => [ctx.check('Color Map On Correlations', 'cmCorr', null, false), ctx.check('Color Map On p-values', 'cmP', null, false), ctx.check('Cluster the Correlations', 'cmCluster', null, false), ctx.check('Color Cells of the Correlations', 'cmCells', null, false)] },
         { label: 'Outlier Analysis', submenu: () => [ctx.check('Mahalanobis Distances', 'mahal', null, false), ctx.check('Jackknife Distances', 'jack', null, false), ctx.check('T²', 't2', null, false)] },
-        { label: 'Item Reliability', submenu: () => [ctx.check("Cronbach's α", 'alpha:raw', null, false), ctx.check('Standardized α', 'alpha:std', null, false)] },
+        { label: 'Item Reliability', submenu: () => [ctx.check("Cronbach's α", 'alpha:raw', null, false), ctx.check('Standardized α', 'alpha:std', null, false),
+          { separator: true }, ctx.check('Intraclass Correlations', 'icc', null, false), ctx.check("Kendall's W", 'kendallw', null, false)] },
         { label: 'Principal Components', action: () => openPCA(ctx) },
         { separator: true },
         { label: 'Save', submenu: () => [['mahal', 'Mahalanobis Distances', 'Mahal. Distances'], ['jack', 'Jackknife Distances', 'Jackknife Distances'], ['t2', 'T²', 'T Square']].map(([f, l, name]) => ({ label: l, action: async () => {

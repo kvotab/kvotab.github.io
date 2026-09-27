@@ -14,7 +14,10 @@ the tests beyond JMP (Brunner-Munzel, Compare Rates, the Two Sample Test
 for Proportions, Breslow-Day, Cochran's Q and McNemar) agree with the same
 numbers computed in the page and keep their options in By and projects;
 the reports draw in the dark theme and at phone width; a 60 000-row table
-stays quick.
+stays quick. The effect sizes (η², ε², ω², d, g, d*, d_z) agree with the
+same numbers computed in the page and with Bootstrap reruns, the Bayes
+factors with the backend, Games-Howell with its formulas; they are kept by
+By and projects.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -592,6 +595,158 @@ async def main():
     check('its columns have new ids', r['newIds'], True)
     check('and it keeps the fits, Group By and Summary Statistics', r['heads'], ['Summary Statistics', 'Linear Fit sex==F', 'Linear Fit sex==M'])
     check('the loaded report has no errors', r['errors'], [])
+
+    # ---- round 5: Effect Size, Bayes Factor, Games-Howell (not in JMP) ---------------------------
+    await page.ev(r'''(() => {
+      // every table under every outline of a title, in the order of the report
+      __fyx.tablesUnder = (title, rep) => [...(rep || __fyx.rep()).body.querySelectorAll('.sm-ob-head')].filter((h) => h.querySelector('h2, h3, h4').textContent === title)
+        .map((h) => [...h.parentElement.querySelector(':scope > .sm-ob-body').querySelectorAll(':scope > table.sm-rt, :scope > .sm-ob-row table')].map((t) => [...t.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => c.textContent.trim()))));
+      // η² of y by g from the rows given (the ANOVA's sums of squares)
+      __fyx.eta2 = (t, yName, xName, rows) => { const g = __fyx.groups(t, yName, xName, rows); const all = g.flat(); const m = all.reduce((a, b) => a + b, 0) / all.length;
+        let ssb = 0, sst = 0; for (const v of g) { const gm = v.reduce((a, b) => a + b, 0) / v.length; ssb += v.length * (gm - m) ** 2; } for (const v of all) sst += (v - m) ** 2; return ssb / sst; };
+      __fyx.meanVar = (v) => { const m = v.reduce((a, b) => a + b, 0) / v.length; return [m, v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1), v.length]; };
+    })()''')
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Plant trial', 'fitybyx', { y: ['yield (g)'], x: ['fertilizer'] }, {});
+      await __fyx.pick(rep.title, ['Effect Size'], rep);
+      const t = rep.table;
+      return { heads: __fyx.heads(rep), aov: __fyx.tableUnder('Analysis of Variance', 0, rep), es: __fyx.tableUnder('Effect Size', 0, rep), want: __fyx.eta2(t, 'yield (g)', 'fertilizer'),
+        info: !!__fyx.head('Effect Size', rep).querySelector('.info-btn'), errors: __fyx.errors(rep) };
+    })()''')
+    check('Effect Size on its own turns Means/Anova on, and sits under the Analysis of Variance', [h for h in r['heads'] if h in ('Oneway Anova', 'Analysis of Variance', 'Effect Size', 'Means for Oneway Anova')], ['Oneway Anova', 'Analysis of Variance', 'Effect Size', 'Means for Oneway Anova'])
+    num = lambda s: float(str(s).replace('−', '-'))
+    ss_x, df_x, ss_e, df_e = num(r['aov'][1][2]), num(r['aov'][1][1]), num(r['aov'][2][2]), num(r['aov'][2][1])
+    ms_e = ss_e / df_e
+    es = {row[0]: row for row in r['es'][1:]}
+    check('η², ε², ω² with their interval', (r['es'][0], list(es)), (['Effect Size', 'Estimate', 'Lower 95%', 'Upper 95%', 'Interval'], ['η² (eta²)', 'ε² (epsilon²)', 'ω² (omega²)']))
+    check.near('η² = SS(X)/SS(total) from the Analysis of Variance shown', num(es['η² (eta²)'][1]), ss_x / (ss_x + ss_e), 1e-5)
+    check.near('η² = the sums of squares computed in the page', num(es['η² (eta²)'][1]), r['want'], 1e-5)
+    check.near('ε² = (SS(X) − df·MSE)/SS(total)', num(es['ε² (epsilon²)'][1]), (ss_x - df_x * ms_e) / (ss_x + ss_e), 1e-5)
+    check.near('ω² = (SS(X) − df·MSE)/(SS(total) + MSE)', num(es['ω² (omega²)'][1]), (ss_x - df_x * ms_e) / (ss_x + ss_e + ms_e), 1e-5)
+    check('one interval, of the population proportion, for the three', len({(v[2], v[3]) for v in es.values()}), 1)
+    check('the Effect Size outline has an (i)', r['info'], True)
+    check('no errors (Effect Size)', r['errors'], [])
+    # Games-Howell
+    r = await page.ev('''(async () => {
+      const rep = __fyx.rep(); await __fyx.pick(rep.title, ['Compare Means', 'All Pairs, Games-Howell'], rep);
+      const t = rep.table; const g = __fyx.groups(t, 'yield (g)', 'fertilizer').map(__fyx.meanVar);
+      const od = __fyx.tableUnder('Ordered Differences Report', 0, rep); const hs = __fyx.heads(rep);
+      const circles = rep.plots[0].traces.filter((tr) => tr.xaxis === 'x2').length;
+      return { hs: hs.filter((h) => /Games-Howell|Letters|Ordered/.test(h)), od, g, circles, lv: t.levels(t.col('fertilizer')), errors: __fyx.errors(rep) };
+    })()''')
+    check('Games-Howell outlines', r['hs'], ['Comparisons for all pairs using Games-Howell', 'Games-Howell Threshold Matrix', 'Connecting Letters Report', 'Ordered Differences Report'])
+    check('its Ordered Differences Report has each pair\'s DF', r['od'][0], ['Level', '- Level', 'Difference', 'Std Err Dif', 'DF', 'Lower CL', 'Upper CL', 'p-Value'])
+    row0 = r['od'][1]
+    ia, ib = r['lv'].index(row0[0]), r['lv'].index(row0[1])
+    (ma, va, na), (mb, vb, nb) = r['g'][ia], r['g'][ib]
+    check.near('Games-Howell: the difference computed in the page', num(row0[2]), ma - mb, 1e-6)
+    check.near('Games-Howell: its SE √(s²ᵢ/nᵢ + s²ⱼ/nⱼ) computed in the page', num(row0[3]), (va / na + vb / nb) ** 0.5, 1e-6)
+    check.near('Games-Howell: its Welch-Satterthwaite DF', num(row0[4]), (va / na + vb / nb) ** 2 / ((va / na) ** 2 / (na - 1) + (vb / nb) ** 2 / (nb - 1)), 1e-6)
+    check('no comparison circles for Games-Howell (each pair has its own quantile)', r['circles'], 0)
+    check('no errors (Games-Howell)', r['errors'], [])
+    # Bootstrap reruns the report headless: an effect size of resampled rows
+    r = await page.ev('''(async () => {
+      const rep = __fyx.rep(); const h = __fyx.head('Effect Size', rep);
+      const tbl = h.parentElement.querySelector(':scope > .sm-ob-body table.sm-rt');
+      const t = await SM.bootstrap.run(tbl, tbl._rt.columns.find((c) => c.label === 'Estimate'), { B: 6, seed: 5, show: false });
+      const rows = SM.bootstrap.sampler(rep.groups()[0].rows, 5)();
+      const n0 = SM.app.tables.length;
+      return { cols: t.columns.map((c) => c.name), v1: t.col('η² (eta²) noncentral F').values[1], want: __fyx.eta2(rep.table, 'yield (g)', 'fertilizer', rows), same: __fyx.heads(rep).includes('Effect Size'), errors: __fyx.errors(rep) };
+    })()''', timeout=300)
+    check('Bootstrap of the Effect Size table: a column per estimate (named by its text columns)', r['cols'], ['BootID', 'η² (eta²) noncentral F', 'ε² (epsilon²) noncentral F', 'ω² (omega²) noncentral F'])
+    check.near('Bootstrap: sample 1\'s η² = η² of the rows drawn, computed in the page', r['v1'], r['want'], 1e-9)
+    check('Bootstrap leaves the report as it was', (r['same'], r['errors']), (True, []))
+
+    # two levels: Cohen's d and Hedges' g of the pooled t test, d* of the unequal-variance t test, the Bayes factor
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('Clinical study'); const y = t.col('adverse events').id, x = t.col('treatment').id;
+      const o = {}; o[y + '~' + x + '|anova'] = true; o[y + '~' + x + '|ttest'] = true; o[y + '~' + x + '|effect'] = true;
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['adverse events'], x: ['treatment'] }, o);
+      const lv = t.levels(t.col('treatment')); const vals = lv.map((l) => { const Y = t.col('adverse events').values, X = t.col('treatment').values; return Y.filter((v, i) => X[i] === l && Number.isFinite(v)); });
+      return { es: __fyx.tablesUnder('Effect Size', rep), g: vals.map(__fyx.meanVar), heads: __fyx.heads(rep), errors: __fyx.errors(rep) };
+    })()''')
+    check('two levels: an Effect Size under the pooled t test, the ANOVA and the unequal-variance t test', len(r['es']), 3)
+    (m1, v1, n1), (m2, v2, n2) = r['g']
+    sp = (((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2)) ** 0.5
+    pooled = {row[0]: row for row in r['es'][0][0][1:]}
+    welch = {row[0]: row for row in r['es'][2][0][1:]}
+    check.near("Cohen's d = (mean₂ − mean₁)/s_pooled computed in the page", num(pooled["Cohen's d"][1]), (m2 - m1) / sp, 1e-5)
+    check("Hedges' g is a little smaller than d", abs(num(pooled["Hedges' g"][1])) < abs(num(pooled["Cohen's d"][1])), True)
+    check.near("d* = (mean₂ − mean₁)/√((s₁² + s₂²)/2) computed in the page", num(welch["Cohen's d*"][1]), (m2 - m1) / ((v1 + v2) / 2) ** 0.5, 1e-5)
+    check('the intervals: noncentral t (pooled), Bonett (unequal variances)', (pooled["Cohen's d"][4], welch["Cohen's d*"][4]), ('noncentral t', 'Bonett (2008)'))
+    check('no errors (two-level effect sizes)', r['errors'], [])
+    ow2 = 'Oneway Analysis of adverse events By treatment'
+    r = await page.ev(f'''(async () => {{
+      const rep = __fyx.rep(); const p = __fyx.pick({json.dumps(ow2)}, ['Bayes Factor…'], rep);
+      await __fyx.dialogOK((d) => {{ d.querySelector('input').value = '0.5'; }});
+      await p;
+      const bf = __fyx.tableUnder('Bayes Factor', 0, rep); const kv = __fyx.tableUnder('Bayes Factor', 1, rep);
+      const back = await SM.engine.call('fitybyx.oneway_bf', {{ y: 'adverse events', x: 'treatment', r: 0.5, rows: null }}, rep.table);
+      const opt = Object.entries(rep.spec.options).find(([k]) => k.endsWith('|bf'))[1];
+      return {{ bf, kv, back: back.table.rows.map((x) => x.bf10), opt, errors: __fyx.errors(rep) }};
+    }})()''')
+    check('Bayes Factor…: the dialog sets the prior scale', r['opt'], {'r': 0.5})
+    check('the Bayes Factor table: two-sided and each one-sided alternative', ([row[0] for row in r['bf'][1:]], r['bf'][0]), (['δ ≠ 0', 'δ > 0 (drug higher)', 'δ < 0 (drug lower)'], ['Alternative', 'BF10', 'BF01']))
+    for i, lab in enumerate(('two-sided', 'δ > 0', 'δ < 0')):
+        check.near(f'BF10 ({lab}) = the backend with r = 0.5', num(r['bf'][i + 1][1]), r['back'][i], 1e-6)
+        check.near(f'BF01 ({lab}) = 1/BF10', num(r['bf'][i + 1][2]), 1 / r['back'][i], 1e-5)
+    check('its facts: the pooled t and the prior', [row[0] for row in r['kv']], ['t (pooled)', 'DF', 'N placebo', 'N drug', 'Prior scale r'])
+    check('no errors (Bayes factor)', r['errors'], [])
+    await page.ev("__fyx.scrollTo('Bayes Factor')")
+    await shot(page, '17-bayes-factor.png')
+    r = await page.ev('''(async () => { const rep = SM.app.reports.find(r => r.title === 'Oneway Analysis of yield (g) By fertilizer' && !r.spec.roles.by);
+      const ctx = new SM.report.Ctx(rep, { rows: rep.table.includedRows() }, rep.content, '');
+      const it = rep.platform.triangle(ctx).find(i => i.label === 'Bayes Factor…'); return it ? it.disabled : 'missing'; })()''')
+    check('Bayes Factor… is for two levels: not for three', r, True)
+
+    # Bivariate: the Bayes factor of the correlation
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Students', 'fitybyx', { y: ['weight (kg)'], x: ['height (cm)'] }, {});
+      const p = __fyx.pick(rep.title, ['Bayes Factor for the Correlation…'], rep); await __fyx.dialogOK(); await p;
+      const t = rep.table; const X = t.col('height (cm)').values, Y = t.col('weight (kg)').values; const n = X.length;
+      const mx = X.reduce((a, b) => a + b, 0) / n, my = Y.reduce((a, b) => a + b, 0) / n;
+      let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (X[i] - mx) * (Y[i] - my); sxx += (X[i] - mx) ** 2; syy += (Y[i] - my) ** 2; }
+      const back = await SM.engine.call('fitybyx.bivariate_bf', { y: 'weight (kg)', x: 'height (cm)', kappa: 1, rows: null }, t);
+      return { bf: __fyx.tableUnder('Bayes Factor', 0, rep), kv: __fyx.tableUnder('Bayes Factor', 1, rep), r: sxy / Math.sqrt(sxx * syy), back: back.table.rows.map((x) => x.bf10), errors: __fyx.errors(rep) };
+    })()''')
+    kv = {row[0]: row[1] for row in r['kv']}
+    check.near('the correlation r shown = Pearson r computed in the page', num(kv['Correlation r']), r['r'], 1e-6)
+    check('its alternatives', [row[0] for row in r['bf'][1:]], ['ρ ≠ 0', 'ρ > 0', 'ρ < 0'])
+    check.near('BF10 of the correlation = the backend', num(r['bf'][1][1]), r['back'][0], 1e-6)
+    check('no errors (the correlation\'s Bayes factor)', r['errors'], [])
+
+    # Matched Pairs: d_z, g_z, d_av and the paired Bayes factor
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Students', 'matchedpairs', { y: ['height (cm)', 'weight (kg)'] }, {});
+      const title = 'Difference: weight (kg)-height (cm)';
+      await __fyx.pick(title, ['Effect Size'], rep);
+      const p = __fyx.pick(title, ['Bayes Factor…'], rep); await __fyx.dialogOK(); await p;
+      const t = rep.table; const a = t.col('height (cm)').values, b = t.col('weight (kg)').values; const d = b.map((v, i) => v - a[i]);
+      const [md, vd] = __fyx.meanVar(d);
+      const back = await SM.engine.call('matchedpairs.bayes', { y1: 'height (cm)', y2: 'weight (kg)', r: Math.SQRT1_2, rows: null }, t);
+      return { es: __fyx.tableUnder('Effect Size', 0, rep), bf: __fyx.tableUnder('Bayes Factor', 0, rep), dz: md / Math.sqrt(vd), back: back.table.rows.map((x) => x.bf10), heads: __fyx.heads(rep), errors: __fyx.errors(rep) };
+    })()''')
+    es = {row[0]: row for row in r['es'][1:]}
+    check('Matched Pairs: d_z, g_z and d_av', list(es), ["Cohen's d_z", "Hedges' g_z", "Cohen's d_av"])
+    check.near('d_z = mean difference/SD of the differences, computed in the page', num(es["Cohen's d_z"][1]), r['dz'], 1e-5)
+    check.near('the paired BF10 = the backend', num(r['bf'][1][1]), r['back'][0], 1e-6)
+    check('no errors (Matched Pairs effect size and Bayes factor)', r['errors'], [])
+
+    # By and a project keep them
+    r = await page.ev('''(async () => { const t = __fyx.table('Clinical study'); const y = t.col('adverse events').id, x = t.col('treatment').id;
+      const o = {}; o[y + '~' + x + '|anova'] = true; o[y + '~' + x + '|effect'] = true; o[y + '~' + x + '|bf'] = { r: 0.707 }; o[y + '~' + x + '|compare'] = [{ method: 'gameshowell', control: null }];
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['adverse events'], x: ['treatment'], by: ['sex'] }, o);
+      const hs = __fyx.heads(rep);
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep2 = SM.app.reports[SM.app.reports.length - 1]; await new Promise(res => rep2.on('done', res));
+      const out = { es: hs.filter((h) => h === 'Effect Size').length, bf: hs.filter((h) => h === 'Bayes Factor').length, gh: hs.filter((h) => /Games-Howell/.test(h) && /Comparisons/.test(h)).length,
+        back: __fyx.heads(rep2).filter((h) => h === 'Effect Size' || h === 'Bayes Factor' || /using Games-Howell/.test(h)).length, newTable: rep2.table !== t, errors: [rep, rep2].flatMap((x) => __fyx.errors(x)) };
+      const t2 = rep2.table; SM.app.closeReport(rep2); SM.app.closeTable(t2);
+      return out; })()''')
+    check('By: an Effect Size (ANOVA and pooled t), a Bayes factor and Games-Howell in each group', (r['es'], r['bf'], r['gh']), (4, 2, 2))
+    check('a project keeps them (its columns get new ids)', (r['newTable'], r['back']), (True, 8))
+    check('no errors (By, project)', r['errors'], [])
 
     # ---- (i) topics, the Help links, the script
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))

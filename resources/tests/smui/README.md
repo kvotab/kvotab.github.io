@@ -12,19 +12,20 @@ the browser, through the same `registry.dispatch` and JSON round trip the
 page uses. They need a Python with numpy, scipy, pandas, patsy and
 statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 1.8 for the predictive platforms' suites and test_fit_model.py (Pyodide has
-1.8.0):
+1.8.0). pingouin 0.7, if installed, is one more reference in some suites
+(called, never copied: it is GPL-3.0); its checks are skipped without it:
 
     python3 resources/tests/smui/test_distribution.py   # and test_<module>.py for each module
     node resources/tests/smui/test-formula.js           # the formula language, no browser
 
 | Suite | Checks | Against |
 |---|---|---|
-| `test_distribution.py` | 119 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals |
+| `test_distribution.py` | 158 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor |
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
-| `test_fit_y_by_x.py` | 427 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover |
-| `test_fit_model.py` | 832 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds |
-| `test_multivariate.py` | 213 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation |
+| `test_fit_y_by_x.py` | 560 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
+| `test_fit_model.py` | 1030 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω² |
+| `test_multivariate.py` | 306 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman |
 | `test_timeseries.py` | 376 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
 | `test_survival.py` | 145 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
 | `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
@@ -48,6 +49,7 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | `test_embedding.py` | 39 | scikit-learn's TSNE (identical maps), the learning-rate formula, the exact KL divergence of the map, the code on a CSV |
 | `test_text.py` | 188 | Porter's 1980 examples, scikit-learn's stop words and CountVectorizer, independent term and phrase counts, the weightings, numpy's SVD, statsmodels' varimax, NMF and LDA, the code on a CSV |
 | `test_screening.py` | 150 | scikit-learn's estimators called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, the validation column's rounding, the code on a CSV |
+| `test_circular.py` | 126 | scipy's circmean, circvar, circstd and vonmises.fit, pingouin's circ_* (and its bundled Berens data, read at run time), the formulas, interval coverage, test sizes, simulated truth |
 | `test_profile.py` | 38 | scipy's PchipInterpolator and sobol_indices, the Ishigami function's Sobol indices, known optima, a tree's best leaf on a grid |
 | `test_bootstrap.py` | 51 | scipy.stats.bootstrap on the same resamples (percentile, BCa), the formulas, the code on a CSV |
 | `test_predictive.py` | 102 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
@@ -298,7 +300,7 @@ its place, its rows by their text columns.
 
 ## What the core test checks
 
-`test-ui-profiler.py` (21): the shared profiler on GAM: Desirability Functions, Maximize Desirability against `gam.maximize`, Minimize, Remember Settings, Assess Variable Importance against `gam.importance`, a project, dark theme, phone width. GAM and Count Regression use the shared profiler; Fit Model's moves to it next.
+`test-ui-profiler.py` (24): the shared profiler on GAM: Desirability Functions, Maximize Desirability against `gam.maximize`, Minimize, Remember Settings, Assess Variable Importance against `gam.importance`, a project, Fit Model's profiler of two responses weighed together by desirability (against `fitmodel.maximize`), dark theme, phone width. Fit Model, GAM, Count Regression and the predictive platforms use the shared profiler.
 
 `test-ui-bootstrap.py` (22): the right-click item, the dialog, progress and Stop, samples against the backend on the same rows, a two-column table with BCa, a By group, the report left untouched, a project, dark theme, phone width.
 

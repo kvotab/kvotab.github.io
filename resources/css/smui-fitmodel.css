@@ -23,6 +23,8 @@
 .sm-fm-opt input.sm-fm-seed { width: 7.5em; text-align: right; }
 /* ... and its zeroed terms */
 .sm-rt td.sm-fm-zeroed { color: var(--text-muted); }
+/* MANOVA's Repeated Measures: the name of the within-subject factor */
+.sm-fm-opt input.sm-fm-name { width: 8em; }
 .sm-fm-effbox { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 7px; align-items: start; }
 .sm-fm-tools { display: flex; flex-direction: column; gap: 5px; }
 .sm-fm-tools .sm-btn { justify-content: center; width: 104px; }

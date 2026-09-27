@@ -5,7 +5,8 @@ Analyze > Multivariate Methods
                         Fisher-z intervals, inverse and partial correlations,
                         covariances, simple statistics, Spearman, Kendall and
                         Hoeffding, Mahalanobis, jackknife and T² distances,
-                        Cronbach's alpha
+                        Cronbach's alpha; beyond JMP intraclass correlations
+                        (Shrout and Fleiss, McGraw and Wong) and Kendall's W
   Principal Components  statsmodels PCA on correlations, covariances or the
                         unscaled data; Bartlett's test of equal eigenvalues;
                         rotations of the components
@@ -585,6 +586,207 @@ def mv_reliability(table, columns, rows=None, weight=None, freq=None, table_name
                       "print('alpha', k * c / (v + (k - 1) * c))",
                       "r = (X.corr().to_numpy().sum() - k) / (k * (k - 1)); print('standardized alpha', k * r / (1 + (k - 1) * r))"])
     return {'alpha': _alpha(S), 'std_alpha': _alpha(R), 'k': len(cols), 'n': len(X), 'items': items, 'code': code}
+
+
+# ---- Multivariate: intraclass correlations and Kendall's W (Item Reliability) -------------------
+# Not in JMP; the standard references. The Y columns are the raters (or
+# items), the rows the targets (objects) they rate; only the rows rated by
+# every rater count.
+
+_ICC_FORMS = (
+    # (name, Shrout and Fleiss's name, model, single rater?)
+    ('ICC(1,1)', 'ICC(1,1)', 'One-way random, one rater', True),
+    ('ICC(A,1)', 'ICC(2,1)', 'Two-way, absolute agreement, one rater', True),
+    ('ICC(C,1)', 'ICC(3,1)', 'Two-way, consistency, one rater', True),
+    ('ICC(1,k)', 'ICC(1,k)', 'One-way random, mean of k raters', False),
+    ('ICC(A,k)', 'ICC(2,k)', 'Two-way, absolute agreement, mean of k raters', False),
+    ('ICC(C,k)', 'ICC(3,k)', 'Two-way, consistency, mean of k raters', False),
+)
+
+
+def icc_forms(MSR, MSC, MSE, MSW, n, k, alpha=0.05):
+    """The six intraclass correlations from the mean squares of the two-way
+    ANOVA of n targets by k raters (MSR between targets, MSC between raters,
+    MSE residual, MSW within targets), with their F tests of rho = 0 and
+    1 - alpha confidence intervals: McGraw and Wong (1996), Tables 4, 7 and 8
+    (Shrout and Fleiss 1979 for their cases 1, 2 and 3). The absolute-agreement
+    intervals are McGraw and Wong's approximation (Satterthwaite's DF); the
+    others are exact. Returns {name: (icc, F, df1, df2, lower, upper)}."""
+    q = 1 - alpha / 2
+    df_r, df_w, df_e = n - 1, n * (k - 1), (n - 1) * (k - 1)
+
+    def ratio(a, b):
+        return a / b if b > 0 else float('inf') if a > 0 else float('nan')
+    out = {}
+    # one-way: targets random, the raters of a target a sample (F = MSR/MSW)
+    F1 = ratio(MSR, MSW)
+    FL, FU = F1 / stats.f.ppf(q, df_r, df_w), F1 * stats.f.ppf(q, df_w, df_r)
+    out['ICC(1,1)'] = ((MSR - MSW) / (MSR + (k - 1) * MSW), F1, df_r, df_w, (FL - 1) / (FL + k - 1), (FU - 1) / (FU + k - 1))
+    out['ICC(1,k)'] = ((MSR - MSW) / MSR, F1, df_r, df_w, 1 - 1 / FL, 1 - 1 / FU)
+    # two-way, consistency: the raters' means do not count (F = MSR/MSE)
+    F3 = ratio(MSR, MSE)
+    FL, FU = F3 / stats.f.ppf(q, df_r, df_e), F3 * stats.f.ppf(q, df_e, df_r)
+    out['ICC(C,1)'] = ((MSR - MSE) / (MSR + (k - 1) * MSE), F3, df_r, df_e, (FL - 1) / (FL + k - 1), (FU - 1) / (FU + k - 1))
+    out['ICC(C,k)'] = ((MSR - MSE) / MSR, F3, df_r, df_e, 1 - 1 / FL, 1 - 1 / FU)
+    # two-way, absolute agreement: the raters' means count too; the test of rho = 0 is F = MSR/MSE
+    r1 = (MSR - MSE) / (MSR + (k - 1) * MSE + k * (MSC - MSE) / n)
+    rk = (MSR - MSE) / (MSR + (MSC - MSE) / n)
+    lo1 = hi1 = lok = hik = float('nan')
+    if r1 < 1:
+        a = k * r1 / (n * (1 - r1))
+        b = 1 + k * r1 * (n - 1) / (n * (1 - r1))
+        den = (a * MSC) ** 2 / (k - 1) + (b * MSE) ** 2 / df_e
+        v = (a * MSC + b * MSE) ** 2 / den if den > 0 else float('nan')
+        if np.isfinite(v) and v > 0:
+            Fs, Fs2 = stats.f.ppf(q, df_r, v), stats.f.ppf(q, v, df_r)
+            lo1 = n * (MSR - Fs * MSE) / (Fs * (k * MSC + (k * n - k - n) * MSE) + n * MSR)
+            hi1 = n * (Fs2 * MSR - MSE) / (k * MSC + (k * n - k - n) * MSE + n * Fs2 * MSR)
+            lok = n * (MSR - Fs * MSE) / (Fs * (MSC - MSE) + n * MSR)
+            hik = n * (Fs2 * MSR - MSE) / (MSC - MSE + n * Fs2 * MSR)
+    out['ICC(A,1)'] = (r1, F3, df_r, df_e, lo1, hi1)
+    out['ICC(A,k)'] = (rk, F3, df_r, df_e, lok, hik)
+    return out
+
+
+@api('multivariate.icc')
+def mv_icc(table, columns, rows=None, weight=None, freq=None, alpha=0.05, table_name='data'):
+    """Intraclass correlations of the ratings of the rows (targets) by the
+    columns (raters): the two-way ANOVA without replication and the six forms
+    of Shrout and Fleiss (1979) in McGraw and Wong's (1996) names, each with
+    its F test and confidence interval. Weight and Freq count a row that many
+    times (as for Cronbach's alpha)."""
+    cols = list(columns)
+    k = len(cols)
+    full, _, _ = _frame(table, cols, rows, weight, freq, dropna=False)
+    df, w, _ = _frame(table, cols, rows, weight, freq)
+    X = df.to_numpy(float)
+    N = float(np.sum(w))
+    if k < 2 or len(X) < 2 or N < 2:
+        return {'error': 'Intraclass correlations need two or more columns (the raters) and two or more rows rated by all of them'}
+    left = int(len(full) - len(X))
+    g = float(np.sum(w[:, None] * X) / (N * k))
+    rmean = X.mean(axis=1)
+    cmean = (w[:, None] * X).sum(axis=0) / N
+    ssr = float(k * np.sum(w * (rmean - g) ** 2))
+    ssc = float(N * np.sum((cmean - g) ** 2))
+    sst = float(np.sum(w[:, None] * (X - g) ** 2))
+    sse = max(sst - ssr - ssc, 0.0)
+    df_r, df_c, df_e, df_w = N - 1, k - 1, (N - 1) * (k - 1), N * (k - 1)
+    MSR, MSC, MSE, MSW = ssr / df_r, ssc / df_c, sse / df_e, (ssc + sse) / df_w
+    if not (MSE > 0 and MSW > 0 and MSR > 0):
+        return {'error': 'The ratings do not vary within the targets (or not at all): no intraclass correlations'}
+    anova = [
+        {'source': 'Between Targets', 'df': df_r, 'ss': ssr, 'ms': MSR, 'f': MSR / MSE, 'p': float(stats.f.sf(MSR / MSE, df_r, df_e))},
+        {'source': 'Between Raters', 'df': df_c, 'ss': ssc, 'ms': MSC, 'f': MSC / MSE, 'p': float(stats.f.sf(MSC / MSE, df_c, df_e))},
+        {'source': 'Residual', 'df': df_e, 'ss': sse, 'ms': MSE, 'f': None, 'p': None},
+        {'source': 'Within Targets', 'df': df_w, 'ss': ssc + sse, 'ms': MSW, 'f': None, 'p': None},
+        {'source': 'Total', 'df': N * k - 1, 'ss': sst, 'ms': None, 'f': None, 'p': None},
+    ]
+    forms = icc_forms(MSR, MSC, MSE, MSW, N, k, alpha)
+    out_rows = []
+    for name, sf, model, _one in _ICC_FORMS:
+        v, F, d1, d2, lo, hi = forms[name]
+        out_rows.append({'form': name, 'sf': sf, 'model': model, 'icc': v, 'f': F, 'df1': d1, 'df2': d2,
+                         'p': float(stats.f.sf(F, d1, d2)) if np.isfinite(F) else None, 'lower': lo, 'upper': hi})
+    wexpr = _weight_code(weight, freq)
+    c = [code_head(table_name, ['from scipy import stats'])]
+    c.append(f'X = df[{_cols_expr(cols)}]   # the raters are the columns, the targets the rows')
+    if wexpr:
+        c += [f'w = {wexpr}', 'ok = X.notna().all(axis=1) & w.gt(0); X, w = X[ok].to_numpy(), w[ok].to_numpy()   # every rater, a positive weight']
+    else:
+        c += ['X = X.dropna().to_numpy(); w = np.ones(len(X))   # the targets rated by every rater']
+    c += ['n, k = w.sum(), X.shape[1]; g = (w[:, None] * X).sum() / (n * k)',
+          'SSR = k * (w * (X.mean(1) - g) ** 2).sum(); SSC = n * (((w[:, None] * X).sum(0) / n - g) ** 2).sum()',
+          'SSE = (w[:, None] * (X - g) ** 2).sum() - SSR - SSC',
+          'MSR, MSC, MSE, MSW = SSR / (n - 1), SSC / (k - 1), SSE / ((n - 1) * (k - 1)), (SSC + SSE) / (n * (k - 1))',
+          'icc = {"ICC(1,1)": (MSR - MSW) / (MSR + (k - 1) * MSW), "ICC(A,1)": (MSR - MSE) / (MSR + (k - 1) * MSE + k * (MSC - MSE) / n),',
+          '       "ICC(C,1)": (MSR - MSE) / (MSR + (k - 1) * MSE), "ICC(1,k)": (MSR - MSW) / MSR,',
+          '       "ICC(A,k)": (MSR - MSE) / (MSR + (MSC - MSE) / n), "ICC(C,k)": (MSR - MSE) / MSR}   # McGraw and Wong (1996)',
+          'print(icc)',
+          'dr, dw, de = n - 1, n * (k - 1), (n - 1) * (k - 1); F1, F3 = MSR / MSW, MSR / MSE   # the F tests of rho = 0',
+          'print(stats.f.sf(F1, dr, dw), stats.f.sf(F3, dr, de))   # ICC(1, .); the two-way forms',
+          f'q, Q = {1 - alpha / 2!r}, stats.f.ppf',
+          'L1, U1, L3, U3 = F1 / Q(q, dr, dw), F1 * Q(q, dw, dr), F3 / Q(q, dr, de), F3 * Q(q, de, dr)',
+          'r = icc["ICC(A,1)"]; a = k * r / (n * (1 - r)); b = 1 + k * r * (n - 1) / (n * (1 - r))',
+          'v = (a * MSC + b * MSE) ** 2 / ((a * MSC) ** 2 / (k - 1) + (b * MSE) ** 2 / de); Fs, Ft = Q(q, dr, v), Q(q, v, dr)   # Satterthwaite',
+          'ci = {"ICC(1,1)": ((L1 - 1) / (L1 + k - 1), (U1 - 1) / (U1 + k - 1)), "ICC(1,k)": (1 - 1 / L1, 1 - 1 / U1),',
+          '      "ICC(C,1)": ((L3 - 1) / (L3 + k - 1), (U3 - 1) / (U3 + k - 1)), "ICC(C,k)": (1 - 1 / L3, 1 - 1 / U3),',
+          '      "ICC(A,1)": (n * (MSR - Fs * MSE) / (Fs * (k * MSC + (k * n - k - n) * MSE) + n * MSR), n * (Ft * MSR - MSE) / (k * MSC + (k * n - k - n) * MSE + n * Ft * MSR)),',
+          '      "ICC(A,k)": (n * (MSR - Fs * MSE) / (Fs * (MSC - MSE) + n * MSR), n * (Ft * MSR - MSE) / (MSC - MSE + n * Ft * MSR))}',
+          'print(ci)   # McGraw and Wong (1996), Table 7: exact, but approximate for absolute agreement']
+    notes = []
+    if left:
+        why = ' (or without a positive Weight or Freq)' if weight or freq else ''
+        notes.append(f'{left} row{"" if left == 1 else "s"} without a rating from every rater{why} left out.')
+    if weight or freq:
+        notes.append('Weight and Freq count each row that many times.')
+    return {'n': N, 'n_rows': int(len(X)), 'k': k, 'left_out': left, 'alpha': alpha, 'anova': anova, 'icc': out_rows,
+            'ms': {'MSR': MSR, 'MSC': MSC, 'MSE': MSE, 'MSW': MSW}, 'notes': notes, 'code': '\n'.join(c)}
+
+
+def kendall_w(X):
+    """Kendall's coefficient of concordance of the columns (raters) of X over
+    its rows (objects), with the correction for ties: each rater ranks the
+    objects (tied ones share the mean rank), S is the sum of squared
+    deviations of the objects' rank sums from their mean, and
+    W = 12 S / (m² (n³ - n) - m T), T = sum over raters and tie groups of
+    t³ - t (Kendall and Babington Smith 1939; Kendall 1948). The chi-square
+    m (n - 1) W on n - 1 DF is Friedman's (1937) statistic, ties corrected."""
+    X = np.asarray(X, float)
+    n, m = X.shape
+    R = np.column_stack([stats.rankdata(X[:, j]) for j in range(m)])
+    Ri = R.sum(axis=1)
+    S = float(np.sum((Ri - Ri.mean()) ** 2))
+    T = 0.0
+    for j in range(m):
+        _, t = np.unique(X[:, j], return_counts=True)
+        T += float(np.sum(t ** 3 - t))
+    den = m * m * (n ** 3 - n) - m * T
+    W = 12 * S / den if den > 0 else float('nan')
+    return W, S, T, Ri
+
+
+@api('multivariate.kendall_w')
+def mv_kendall_w(table, columns, rows=None, weight=None, freq=None, table_name='data'):
+    """Kendall's W of the columns (raters) over the rows (objects) rated by
+    all of them, its chi-square test (Friedman's) and the mean Spearman
+    correlation of the pairs of raters. As for the nonparametric
+    correlations, Weight and Freq only leave out rows without a positive
+    value."""
+    cols = list(columns)
+    m = len(cols)
+    full, _, _ = _frame(table, cols, rows, weight, freq, dropna=False)
+    df, _, _ = _frame(table, cols, rows, weight, freq)
+    X = df.to_numpy(float)
+    n = len(X)
+    if m < 2 or n < 2:
+        return {'error': "Kendall's W needs two or more columns (the raters) and two or more rows rated by all of them"}
+    W, S, T, _ = kendall_w(X)
+    if not np.isfinite(W):
+        return {'error': "Every rater ties every object: Kendall's W is not defined"}
+    chi2 = m * (n - 1) * W
+    rs = stats.spearmanr(X).statistic if m > 2 else stats.spearmanr(X[:, 0], X[:, 1]).statistic
+    rs = np.atleast_2d(rs)
+    mean_rs = float(np.nanmean(rs[np.triu_indices(m, 1)])) if m > 2 else float(rs[0, 0])
+    left = int(len(full) - n)
+    c = [code_head(table_name, ['from scipy import stats']),
+         f'X = df[{_cols_expr(cols)}].dropna().to_numpy(); n, m = X.shape   # the objects are the rows, the raters the columns',
+         'R = np.column_stack([stats.rankdata(X[:, j]) for j in range(m)])   # each rater ranks the objects (ties: mean ranks)',
+         'S = ((R.sum(1) - R.sum(1).mean()) ** 2).sum()',
+         'T = 0',
+         'for j in range(m):   # the ties of each rater: t^3 - t for each group of t tied objects',
+         '    t = np.unique(X[:, j], return_counts=True)[1]; T += (t ** 3 - t).sum()',
+         'W = 12 * S / (m * m * (n ** 3 - n) - m * T); chi2 = m * (n - 1) * W',
+         'print(W, chi2, n - 1, stats.chi2.sf(chi2, n - 1))']
+    if n >= 3:
+        c.append('print(stats.friedmanchisquare(*X), chi2)   # Friedman\'s test is the same chi-square: W = chi2 / (m (n - 1))')
+    notes = []
+    if left:
+        notes.append(f'{left} row{"" if left == 1 else "s"} without a rating from every rater left out.')
+    if weight or freq:
+        notes.append('Weight and Freq are not used by these rank statistics; they only leave out rows without a positive value.')
+    return {'w': W, 'chi2': chi2, 'df': n - 1, 'p': float(stats.chi2.sf(chi2, n - 1)), 'n': n, 'm': m, 's': S, 'ties': T, 'mean_spearman': mean_rs,
+            'left_out': left, 'notes': notes, 'code': '\n'.join(c)}
 
 
 @api('multivariate.cluster_order')

@@ -7,6 +7,13 @@ the Fisher iris example in the SAS PROC CLUSTER and FASTCLUS documentation;
 the distance correlation of a bivariate normal, Székely, Rizzo and Bakirov
 2007, Theorem 7). The data are simulated here from fixed seeds.
 
+Item Reliability's intraclass correlations are checked against Shrout and
+Fleiss's (1979) published coefficients (from their mean squares), McGraw and
+Wong's (1996) formulas, least squares on the stacked ratings, the pivots of the
+exact intervals and pingouin's intraclass_corr; Kendall's W against scipy's
+friedmanchisquare, its definition with pandas' ranks and pingouin's friedman.
+pingouin (GPL) is only called as a reference, its example read at run time.
+
     python3 resources/tests/smui/test_multivariate.py
 """
 import itertools
@@ -621,4 +628,184 @@ for label_, res_ in (('distance', dc), ('distance freq', call('multivariate.dist
 check('rows=None gives every row', call('multivariate.outliers', table=tid, columns=cols, rows=None)['rows'][-1], n - 1)
 sub = call('multivariate.fit', table=tid, columns=cols, rows=list(range(0, n, 2)))
 check('a row subset', sub['n'], float(len([i for i in range(0, n, 2) if ok[i]])))
+
+# ======================================================================================================================
+# Item Reliability: intraclass correlations and Kendall's W
+# ======================================================================================================================
+# Checked against the published mean squares and coefficients of Shrout and
+# Fleiss's (1979) example (Table 2: results, not their data), McGraw and Wong's
+# (1996) formulas written out here, least squares on the stacked ratings,
+# scipy's friedmanchisquare, pandas' rank correlations, and pingouin's
+# intraclass_corr and friedman (GPL: a reference only; its wine-rating example
+# read at run time) when it is installed.
+import statsmodels.formula.api as smf  # noqa: E402
+try:
+    import pingouin as pg  # noqa: E402
+except ImportError:
+    pg = None
+    print('pingouin is not installed: its reference checks are skipped')
+
+sf = mv.icc_forms(11.24, 32.49, 1.02, 6.26, 6, 4)
+check("Shrout and Fleiss's example (their mean squares, 6 targets, 4 judges): the six published coefficients",
+      {k_: round(v_[0], 2) for k_, v_ in sf.items()}, {'ICC(1,1)': 0.17, 'ICC(1,k)': 0.44, 'ICC(C,1)': 0.71, 'ICC(C,k)': 0.91, 'ICC(A,1)': 0.29, 'ICC(A,k)': 0.62})
+
+rng_icc = np.random.default_rng(1979)
+nt, kr = 30, 5
+Xr = rng_icc.normal(size=(nt, 1)) * 1.2 + rng_icc.normal(size=(nt, kr)) + np.array([0, 0.3, -0.2, 0.6, 0.1])
+Xrm = Xr.copy()
+Xrm[4, 2] = np.nan                                            # a target one rater missed: left out
+rcols = [f'r{j}' for j in range(kr)]
+tid_icc = table({c: Xrm[:, j].tolist() for j, c in enumerate(rcols)})
+ic = call('multivariate.icc', table=tid_icc, columns=rcols)
+Xc_ = np.delete(Xr, 4, axis=0)
+ncs = len(Xc_)
+check('ICC: the targets rated by every rater, one row left out (and a note says so)', (ic['n'], ic['k'], ic['left_out'], any('left out' in t for t in ic['notes'])), (float(ncs), kr, 1, True))
+av = {x['source']: x for x in ic['anova']}
+longr = pd.DataFrame(Xc_, columns=rcols).reset_index().melt(id_vars='index', var_name='rater', value_name='y')
+a2 = sm.stats.anova_lm(smf.ols('y ~ C(index) + C(rater)', longr).fit())
+check.near('Between Targets SS = least squares on the stacked ratings', av['Between Targets']['ss'], float(a2.loc['C(index)', 'sum_sq']), rel=1e-10)
+check.near('Between Raters SS', av['Between Raters']['ss'], float(a2.loc['C(rater)', 'sum_sq']), rel=1e-10)
+check.near('Residual SS', av['Residual']['ss'], float(a2.loc['Residual', 'sum_sq']), rel=1e-10)
+check('the DF', (av['Between Targets']['df'], av['Between Raters']['df'], av['Residual']['df'], av['Within Targets']['df'], av['Total']['df']),
+      (float(ncs - 1), float(kr - 1), float((ncs - 1) * (kr - 1)), float(ncs * (kr - 1)), float(ncs * kr - 1)))
+a1 = sm.stats.anova_lm(smf.ols('y ~ C(index)', longr).fit())
+check.near('Within Targets MS = the error of the one-way model', av['Within Targets']['ms'], float(a1.loc['Residual', 'mean_sq']), rel=1e-10)
+check.near("Between Raters F = the stacked fit's", av['Between Raters']['f'], float(a2.loc['C(rater)', 'F']), rel=1e-10)
+MSR, MSC, MSE, MSW = (float(a2.loc['C(index)', 'mean_sq']), float(a2.loc['C(rater)', 'mean_sq']), float(a2.loc['Residual', 'mean_sq']), float(a1.loc['Residual', 'mean_sq']))
+nn, kk = ncs, kr
+want = {'ICC(1,1)': (MSR - MSW) / (MSR + (kk - 1) * MSW), 'ICC(A,1)': (MSR - MSE) / (MSR + (kk - 1) * MSE + kk * (MSC - MSE) / nn),
+        'ICC(C,1)': (MSR - MSE) / (MSR + (kk - 1) * MSE), 'ICC(1,k)': (MSR - MSW) / MSR, 'ICC(A,k)': (MSR - MSE) / (MSR + (MSC - MSE) / nn), 'ICC(C,k)': (MSR - MSE) / MSR}
+got = {x['form']: x for x in ic['icc']}
+check('the six forms in order, with Shrout and Fleiss\'s names', [(x['form'], x['sf']) for x in ic['icc']],
+      [('ICC(1,1)', 'ICC(1,1)'), ('ICC(A,1)', 'ICC(2,1)'), ('ICC(C,1)', 'ICC(3,1)'), ('ICC(1,k)', 'ICC(1,k)'), ('ICC(A,k)', 'ICC(2,k)'), ('ICC(C,k)', 'ICC(3,k)')])
+for f_, v_ in want.items():
+    check.near(f'{f_} = McGraw and Wong\'s formula from the stacked fit\'s mean squares', got[f_]['icc'], v_, rel=1e-10)
+for f_ in ('ICC(1,1)', 'ICC(1,k)'):
+    check.near(f'{f_}: F = MSR/MSW', got[f_]['f'], MSR / MSW, rel=1e-10)
+    check.near(f'{f_}: its p-value on (n - 1, n(k - 1)) DF', got[f_]['p'], float(stats.f.sf(MSR / MSW, nn - 1, nn * (kk - 1))), rel=1e-9)
+for f_ in ('ICC(A,1)', 'ICC(C,1)', 'ICC(A,k)', 'ICC(C,k)'):
+    check.near(f'{f_}: F = MSR/MSE', got[f_]['f'], MSR / MSE, rel=1e-10)
+    check('... on (n - 1, (n - 1)(k - 1)) DF', (got[f_]['df1'], got[f_]['df2']), (float(nn - 1), float((nn - 1) * (kk - 1))))
+# the exact intervals invert the F distribution: at each limit the pivot is the quantile
+fq_ = stats.f.ppf(0.975, nn - 1, (nn - 1) * (kk - 1))
+L_ = got['ICC(C,1)']['lower']
+check.near('ICC(C,1): at the lower limit, F (1 - L)/(1 + (k - 1)L) is the 97.5% quantile', (MSR / MSE) * (1 - L_) / (1 + (kk - 1) * L_), fq_, rel=1e-9)
+U_ = got['ICC(C,1)']['upper']
+check.near('ICC(C,1): at the upper limit, the 2.5% quantile', (MSR / MSE) * (1 - U_) / (1 + (kk - 1) * U_), stats.f.ppf(0.025, nn - 1, (nn - 1) * (kk - 1)), rel=1e-9)
+L_ = got['ICC(1,1)']['lower']
+check.near('ICC(1,1): the same with MSW', (MSR / MSW) * (1 - L_) / (1 + (kk - 1) * L_), stats.f.ppf(0.975, nn - 1, nn * (kk - 1)), rel=1e-9)
+for one, many in (('ICC(1,1)', 'ICC(1,k)'), ('ICC(C,1)', 'ICC(C,k)'), ('ICC(A,1)', 'ICC(A,k)')):
+    sb = lambda x: kk * x / (1 + (kk - 1) * x)  # noqa: E731 (Spearman-Brown)
+    check.near(f'{many} = Spearman-Brown of {one}', got[many]['icc'], sb(got[one]['icc']), rel=1e-10)
+    check.near(f'{many}: its limits are Spearman-Brown of {one}\'s', got[many]['lower'] + got[many]['upper'], sb(got[one]['lower']) + sb(got[one]['upper']), rel=1e-10)
+# absolute agreement: McGraw and Wong's approximate interval, written out
+r_ = want['ICC(A,1)']
+a_, b_ = kk * r_ / (nn * (1 - r_)), 1 + kk * r_ * (nn - 1) / (nn * (1 - r_))
+v_ = (a_ * MSC + b_ * MSE) ** 2 / ((a_ * MSC) ** 2 / (kk - 1) + (b_ * MSE) ** 2 / ((nn - 1) * (kk - 1)))
+Fs_, Ft_ = stats.f.ppf(0.975, nn - 1, v_), stats.f.ppf(0.975, v_, nn - 1)
+check.near("ICC(A,1): McGraw and Wong's lower limit (Satterthwaite's DF)", got['ICC(A,1)']['lower'], nn * (MSR - Fs_ * MSE) / (Fs_ * (kk * MSC + (kk * nn - kk - nn) * MSE) + nn * MSR), rel=1e-9)
+check.near('... and upper limit', got['ICC(A,1)']['upper'], nn * (Ft_ * MSR - MSE) / (kk * MSC + (kk * nn - kk - nn) * MSE + nn * Ft_ * MSR), rel=1e-9)
+ic90 = {x['form']: x for x in call('multivariate.icc', table=tid_icc, columns=rcols, alpha=0.1)['icc']}
+check('α = 0.1 gives narrower intervals', all(ic90[f_]['lower'] > got[f_]['lower'] and ic90[f_]['upper'] < got[f_]['upper'] for f_ in want), True)
+if pg is not None:
+    pgi = pg.intraclass_corr(data=longr, targets='index', raters='rater', ratings='y').set_index('Type')
+    for f_ in want:
+        check.near(f'{f_} = pingouin intraclass_corr', got[f_]['icc'], float(pgi.loc[f_, 'ICC']), rel=1e-10)
+        check.near(f'{f_}: F and its DF = pingouin\'s', got[f_]['f'] + got[f_]['df1'] + got[f_]['df2'], float(pgi.loc[f_, 'F'] + pgi.loc[f_, 'df1'] + pgi.loc[f_, 'df2']), rel=1e-10)
+        check.near(f'{f_}: its p-value = pingouin\'s', got[f_]['p'], float(pgi.loc[f_, 'pval']), rel=1e-8)
+        lo_, hi_ = pgi.loc[f_, 'CI95']
+        check(f'{f_}: its 95% interval = pingouin\'s (which rounds to two decimals)', (abs(got[f_]['lower'] - lo_) <= 0.005 + 1e-12, abs(got[f_]['upper'] - hi_) <= 0.005 + 1e-12), (True, True))
+    wine = pg.read_dataset('icc')                              # pingouin's example: 8 wines, 4 judges
+    ww = wine.pivot(index='Wine', columns='Judge', values='Scores')
+    iw = {x['form']: x for x in call('multivariate.icc', table=table({str(j): ww[j].tolist() for j in ww.columns}), columns=[str(j) for j in ww.columns])['icc']}
+    pgw = pg.intraclass_corr(data=wine, targets='Wine', raters='Judge', ratings='Scores').set_index('Type')
+    check("pingouin's wine example: the six coefficients", [round(iw[f_]['icc'], 12) for f_ in want], [round(float(pgw.loc[f_, 'ICC']), 12) for f_ in want])
+    check("... and their F ratios", [round(iw[f_]['f'], 10) for f_ in want], [round(float(pgw.loc[f_, 'F']), 10) for f_ in want])
+# Freq counts a row that many times
+fr_ = np.where(np.arange(nt) % 4 == 0, 2.0, 1.0)
+icf = {x['form']: x for x in call('multivariate.icc', table=table({**{c: Xr[:, j].tolist() for j, c in enumerate(rcols)}, 'f': fr_.tolist()}), columns=rcols, freq='f')['icc']}
+rep_ = np.repeat(np.arange(nt), fr_.astype(int))
+ice = {x['form']: x for x in call('multivariate.icc', table=table({c: Xr[rep_, j].tolist() for j, c in enumerate(rcols)}), columns=rcols)['icc']}
+check.near('Freq: the ICC(A,1) of the rows counted twice = that of the repeated rows', icf['ICC(A,1)']['icc'], ice['ICC(A,1)']['icc'], rel=1e-10)
+check.near('Freq: its interval too', icf['ICC(A,1)']['lower'], ice['ICC(A,1)']['lower'], rel=1e-9)
+check('constant ratings: an error, not a division by zero', 'error' in call('multivariate.icc', table=table({'a': [1.0] * 5, 'b': [1.0] * 5}), columns=['a', 'b']), True)
+check('one rater: an error', 'error' in call('multivariate.icc', table=tid_icc, columns=['r0']), True)
+
+# ---- Kendall's W ----------------------------------------------------------------------------------------------------
+kw = call('multivariate.kendall_w', table=tid_icc, columns=rcols)
+fr_st = stats.friedmanchisquare(*Xc_)
+check("Kendall's W: the objects rated by every rater", (kw['n'], kw['m'], kw['left_out'], kw['df']), (ncs, kr, 1, ncs - 1))
+check.near("Kendall's W = Friedman's chi-square / (m (n - 1)) (no ties)", kw['w'], float(fr_st.statistic) / (kr * (ncs - 1)), rel=1e-10)
+check.near('its chi-square = scipy friedmanchisquare', kw['chi2'], float(fr_st.statistic), rel=1e-10)
+check.near('its p-value', kw['p'], float(fr_st.pvalue), rel=1e-9)
+Rk = pd.DataFrame(Xc_).rank(axis=0).to_numpy()                 # pandas' ranks, independently
+Sk = float(((Rk.sum(1) - Rk.sum(1).mean()) ** 2).sum())
+check.near("W = 12 S/(m² (n³ - n)) by the definition", kw['w'], 12 * Sk / (kr ** 2 * (ncs ** 3 - ncs)), rel=1e-10)
+sp_ = pd.DataFrame(Xc_).corr(method='spearman').to_numpy()
+check.near('the mean Spearman ρ of the pairs of raters (pandas)', kw['mean_spearman'], float(sp_[np.triu_indices(kr, 1)].mean()), rel=1e-10)
+check.near('... = (m W - 1)/(m - 1) without ties', kw['mean_spearman'], (kr * kw['w'] - 1) / (kr - 1), rel=1e-9)
+Xt = rng_icc.integers(1, 6, size=(18, 4)).astype(float)       # ratings 1 to 5: many ties
+Xt[:, 1] = np.clip(Xt[:, 0] + rng_icc.integers(-1, 2, 18), 1, 5)
+tid_t = table({f'j{j}': Xt[:, j].tolist() for j in range(4)})
+kt = call('multivariate.kendall_w', table=tid_t, columns=[f'j{j}' for j in range(4)])
+ft_ = stats.friedmanchisquare(*Xt)
+check.near("ties: the chi-square = scipy's Friedman statistic, ties corrected", kt['chi2'], float(ft_.statistic), rel=1e-10)
+check.near('ties: W = chi-square / (m (n - 1))', kt['w'], float(ft_.statistic) / (4 * 17), rel=1e-10)
+Tt = 0.0
+for j in range(4):   # t³ - t for each group of t tied objects of a rater (pandas' counts)
+    c_ = pd.Series(Xt[:, j]).value_counts().to_numpy()
+    Tt += float((c_ ** 3 - c_).sum())
+Rt = pd.DataFrame(Xt).rank(axis=0).to_numpy()
+St = float(((Rt.sum(1) - Rt.sum(1).mean()) ** 2).sum())
+check.near('ties: W = 12 S/(m² (n³ - n) - m T) by the definition', kt['w'], 12 * St / (16 * (18 ** 3 - 18) - 4 * Tt), rel=1e-10)
+check('ties: the correction term T', kt['ties'], Tt)
+if pg is not None:
+    lt = pd.DataFrame(Xt).reset_index().melt(id_vars='index', var_name='rater', value_name='y')
+    pgf = pg.friedman(data=lt, dv='y', within='index', subject='rater')
+    check.near("pingouin friedman: Kendall's W", kt['w'], float(pgf['W'].iloc[0]), rel=1e-9)
+    check.near('pingouin friedman: Q', kt['chi2'], float(pgf['Q'].iloc[0]), rel=1e-9)
+same = np.tile(np.arange(8.0)[:, None], (1, 3)) * np.array([1.0, 2.0, 0.5])
+check.near('raters that rank alike: W = 1', call('multivariate.kendall_w', table=table({f'a{j}': same[:, j].tolist() for j in range(3)}), columns=['a0', 'a1', 'a2'])['w'], 1.0, rel=1e-12)
+check.near('two raters in reverse order: W = 0', call('multivariate.kendall_w', table=table({'u': list(range(6)), 'v': list(range(6, 0, -1))}), columns=['u', 'v'])['w'], 0.0, abs_=1e-12)
+check('every object tied by every rater: an error', 'error' in call('multivariate.kendall_w', table=table({'a': [2.0] * 4, 'b': [3.0] * 4}), columns=['a', 'b']), True)
+
+# ---- their code, on the table exported as CSV -----------------------------------------------------------------------
+import contextlib as _cl  # noqa: E402
+import io as _io  # noqa: E402
+import os as _os  # noqa: E402
+import tempfile as _tf  # noqa: E402
+
+
+def run_csv(code, frame):
+    here = _os.getcwd()
+    with _tf.TemporaryDirectory() as tmp_:
+        frame.to_csv(_os.path.join(tmp_, 'data.csv'), index=False)
+        _os.chdir(tmp_)
+        ns_ = {}
+        try:
+            with _cl.redirect_stdout(_io.StringIO()):
+                exec(compile(code, 'report code', 'exec'), ns_)
+            return ns_, None
+        except Exception as ex:  # reported as a failed check
+            return ns_, f'{type(ex).__name__}: {ex}'
+        finally:
+            _os.chdir(here)
+
+
+ns_i, err = run_csv(ic['code'], pd.DataFrame({c: Xrm[:, j] for j, c in enumerate(rcols)}))
+check('the code of the intraclass correlations runs on the CSV', err, None)
+if not err:
+    check.near('... its six coefficients are the report\'s', max(abs(ns_i['icc'][f_] - got[f_]['icc']) for f_ in want), 0.0, abs_=1e-12)
+    check.near('... and their intervals', max(abs(ns_i['ci'][f_][0] - got[f_]['lower']) + abs(ns_i['ci'][f_][1] - got[f_]['upper']) for f_ in want), 0.0, abs_=1e-10)
+icw = call('multivariate.icc', table=table({**{c: Xr[:, j].tolist() for j, c in enumerate(rcols)}, 'f': fr_.tolist()}), columns=rcols, freq='f')
+ns_w, err = run_csv(icw['code'], pd.DataFrame({**{c: Xr[:, j] for j, c in enumerate(rcols)}, 'f': fr_}))
+check('the code with a Freq column runs', err, None)
+if not err:
+    check.near('... and gives the report\'s ICC(A,k)', ns_w['icc']['ICC(A,k)'], {x['form']: x for x in icw['icc']}['ICC(A,k)']['icc'], rel=1e-12)
+ns_k, err = run_csv(kt['code'], pd.DataFrame({f'j{j}': Xt[:, j] for j in range(4)}))
+check("the code of Kendall's W runs on the CSV", err, None)
+if not err:
+    check.near("... its W is the report's", float(ns_k['W']), kt['w'], rel=1e-12)
+    check.near("... its chi-square", float(ns_k['chi2']), kt['chi2'], rel=1e-12)
+
 sys.exit(check.done())

@@ -21,6 +21,14 @@ against published values:
     DescTools' BreslowDayTest and mantelhaen.test, R's mcnemar.test, and
     Cochran's Q of Conover (NIST Dataplot) and SAS; JMP's documented Two
     Sample Test for Proportions example (adjusted Wald).
+  - Effect sizes, Bayes factors and Games-Howell: noncentrality searches
+    and the formulas written out here, Bonett's published examples
+    (statpsych's ci.stdmean2 and ci.stdmean.ps), BayesFactor's 17.25888 for
+    R's sleep data (t = −4.0621 on 9 DF), Ly et al.'s closed forms (₂F₁, and
+    ₃F₂ summed here), the noncentral t integrals of the one-sided Bayes
+    factors, Monte Carlo coverage, and pingouin's compute_effsize,
+    compute_esci, anova, bayesfactor_ttest, bayesfactor_pearson and
+    pairwise_gameshowell when it is installed (GPL: a reference only).
 
     python3 resources/tests/smui/test_fit_y_by_x.py
 """
@@ -1034,6 +1042,381 @@ for label_, cols_ in (('Cochran\'s Q, numeric', {'a': xq[:, 0], 'b': xq[:, 1], '
         check.near('its code: Q', float(cochrans_q(ns['X'].to_numpy()).statistic), res_['cochran']['q'])
         check.near('its code: the first pair\'s exact McNemar', float(mcnemar(ns['t'], exact=True).pvalue), res_['pairs'][0]['p_exact'])
         check.near('its code: the first pair\'s McNemar χ²', float(mcnemar(ns['t'], exact=False, correction=False).statistic), res_['pairs'][0]['chisq'])
+
+# ---- effect sizes, Bayes factors, Games-Howell (round 5) ----------------------------------------
+# Checked against pingouin (GPL: a reference here, nothing of it is in the
+# page; skipped without it), the formulas and noncentrality searches written out again here,
+# the published examples of Bonett's statpsych (ci.stdmean2, ci.stdmean.ps)
+# and of the BayesFactor package (ttestBF on R's sleep data: t = −4.0621 on
+# 9 DF, BF10 = 17.25888), Ly et al.'s closed forms, and Monte Carlo coverage.
+try:
+    import pingouin as pg  # noqa: E402
+except ImportError:
+    pg = None
+    print('pingouin is not installed: its reference checks are skipped')
+from scipy import integrate, special  # noqa: E402
+
+
+def es_rows(res):
+    return {x['effect']: x for x in res['table']['rows']}
+
+
+def bf_rows(res):
+    return [x['bf10'] for x in res['table']['rows']]
+
+
+def ncp_bisect(t, df, q):
+    """The noncentrality at which t is the q quantile of the noncentral t, by
+    bisection (independent of the page's bracket and brentq)."""
+    a, b = t - 20 - abs(t), t + 20 + abs(t)
+    for _ in range(200):
+        m_ = (a + b) / 2
+        if stats.nct.cdf(t, df, m_) > q:
+            a = m_
+        else:
+            b = m_
+    return (a + b) / 2
+
+
+def ncf_bisect(F_, d1, d2, q):
+    """The same for the noncentral F (0 when λ = 0 already puts F lower)."""
+    if stats.f.cdf(F_, d1, d2) < q:
+        return 0.0
+    a, b = 0.0, 50 + 20 * F_ * d1
+    for _ in range(200):
+        m_ = (a + b) / 2
+        if stats.ncf.cdf(F_, d1, d2, m_) > q:
+            a = m_
+        else:
+            b = m_
+    return (a + b) / 2
+
+
+def jzs_nct(t, n_, df_, r_, lo=-np.inf, hi=np.inf):
+    """∫ nct.pdf(t; df, δ√n) × Cauchy(δ; 0, r) over (lo, hi): the one-sided
+    marginal likelihoods, by the noncentral t directly (not the page's
+    integral over g)."""
+    f_ = lambda d_: stats.nct.pdf(t, df_, d_ * np.sqrt(n_)) * stats.cauchy.pdf(d_, 0, r_)
+    return integrate.quad(f_, lo, hi, limit=400, points=None if not (np.isfinite(lo) and np.isfinite(hi)) else [t / np.sqrt(n_)])[0]
+
+
+def exact_sample(rng_, m_, s_, n_):
+    """n values with mean m and standard deviation s exactly."""
+    z_ = rng_.normal(size=n_)
+    z_ = (z_ - z_.mean()) / z_.std(ddof=1)
+    return m_ + s_ * z_
+
+
+es_rng = np.random.default_rng(20260927)
+a_ = es_rng.normal(10, 2, 18)
+b_ = es_rng.normal(11.3, 2.6, 23)
+c_ = es_rng.normal(9.5, 1.5, 15)
+f_es = es_rng.integers(1, 4, 56).astype(float)
+tes = table({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15,
+             'f': f_es, 'w': es_rng.uniform(0.5, 2, 56), 'blk': (['p', 'q', 'r'] * 19)[:56]})
+two_rows = list(range(41))
+# ---- Cohen's d and Hedges' g of the pooled t test
+r_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows)
+e_ = es_rows(r_)
+sp_ = np.sqrt((17 * a_.var(ddof=1) + 22 * b_.var(ddof=1)) / 39)
+d_ = (b_.mean() - a_.mean()) / sp_
+check.near("Cohen's d = (mean B − mean A)/s_pooled", e_["Cohen's d"]['estimate'], float(d_), rel=1e-12)
+if pg is not None:
+    check.near("Cohen's d = pingouin compute_effsize", e_["Cohen's d"]['estimate'], float(pg.compute_effsize(b_, a_, eftype='cohen')), rel=1e-12)
+J_ = np.exp(special.gammaln(39 / 2) - 0.5 * np.log(39 / 2) - special.gammaln(38 / 2))
+check.near("Hedges' g = J·d, J exact (Hedges 1981)", e_["Hedges' g"]['estimate'], float(J_ * d_), rel=1e-12)
+check.near("Hedges' g ≈ d(1 − 3/(4N − 9)), the usual approximation", e_["Hedges' g"]['estimate'], float(d_ * (1 - 3 / (4 * 41 - 9))), rel=2e-4)
+if pg is not None:
+    check.near("Hedges' g ≈ pingouin's (its J is 1 − 3/(4N − 9))", e_["Hedges' g"]['estimate'], float(pg.compute_effsize(b_, a_, eftype='hedges')), rel=2e-4)
+t_ = stats.ttest_ind(b_, a_).statistic
+k_ = np.sqrt(1 / 18 + 1 / 23)
+check.near('the t of d is the pooled t', float(d_ / k_), float(t_), rel=1e-12)
+check.near("d's exact lower limit = a noncentrality search by bisection", e_["Cohen's d"]['lower'], ncp_bisect(t_, 39, 0.975) * k_, rel=1e-9)
+check.near("d's exact upper limit", e_["Cohen's d"]['upper'], ncp_bisect(t_, 39, 0.025) * k_, rel=1e-9)
+check.near("g's limits are J times d's", e_["Hedges' g"]['lower'], float(J_ * e_["Cohen's d"]['lower']), rel=1e-12)
+if pg is not None:
+    lo_pg, hi_pg = pg.compute_esci(float(d_), 18, 23, eftype='cohen', decimals=6)
+    check('pingouin\'s approximate interval (normal SE) is within 0.04 of the exact one', abs(lo_pg - e_["Cohen's d"]['lower']) < 0.04 and abs(hi_pg - e_["Cohen's d"]['upper']) < 0.04, True)
+# the exact interval covers δ 95% of the time (small groups, where approximations drift)
+cov = 0
+for _ in range(1500):
+    xa, xb = es_rng.normal(0, 1, 8), es_rng.normal(0.8, 1, 10)
+    tt_ = stats.ttest_ind(xb, xa).statistic
+    lo, hi = F.nct_interval(float(tt_), 16, 0.05)
+    kk_ = np.sqrt(1 / 8 + 1 / 10)
+    cov += lo * kk_ <= 0.8 <= hi * kk_
+check('the exact interval of δ covers it 94-96% of the time (1500 samples of 8 and 10)', 0.935 <= cov / 1500 <= 0.965, True)
+print(f'   (coverage of the exact interval of d: {cov / 1500:.3f})')
+# ---- d* and g* of the unequal-variance t test: Bonett's (2008) published example (statpsych ci.stdmean2)
+g1_ = exact_sample(es_rng, 19.1, 3.19, 50)
+g2_ = exact_sample(es_rng, 20.9, 3.85, 50)
+tb_ = table({'y': np.concatenate([g1_, g2_]), 'g': ['a'] * 50 + ['b'] * 50})
+e_ = es_rows(call('fitybyx.ttest_effect', table=tb_, y='y', x='g', kind='welch'))
+check.near("Bonett's example: d* = 0.5091 (statpsych)", e_["Cohen's d*"]['estimate'], 0.5091, abs_=5e-5)
+check.near("Bonett's example: its SE 0.20539", e_["Cohen's d*"]['se'], 0.20539, abs_=5e-6)
+check.near("Bonett's example: lower limit 0.1066", e_["Cohen's d*"]['lower'], 0.1066, abs_=5e-5)
+check.near("Bonett's example: upper limit 0.9117", e_["Cohen's d*"]['upper'], 0.9117, abs_=5e-5)
+check.near("Bonett's example: the bias-adjusted estimate 0.5052", e_["Hedges' g*"]['estimate'], 0.5052, abs_=5e-5)
+e_ = es_rows(call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='welch', rows=two_rows))
+s_ = np.sqrt((a_.var(ddof=1) + b_.var(ddof=1)) / 2)
+dd_ = (b_.mean() - a_.mean()) / s_
+se_ = np.sqrt(dd_ ** 2 * (a_.var(ddof=1) ** 2 / 17 + b_.var(ddof=1) ** 2 / 22) / (8 * s_ ** 4) + (a_.var(ddof=1) / 17 + b_.var(ddof=1) / 22) / s_ ** 2)
+check.near('d* = difference/√((s₁² + s₂²)/2)', e_["Cohen's d*"]['estimate'], float(dd_), rel=1e-12)
+check.near("d*'s interval: Bonett's SE written out", e_["Cohen's d*"]['upper'], float(dd_ + stats.norm.ppf(0.975) * se_), rel=1e-12)
+# ---- Freq counts rows; Weight is not used
+e_f = es_rows(call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, freq='f'))
+ya_ = np.repeat(a_, f_es[:18].astype(int))
+yb_ = np.repeat(b_, f_es[18:41].astype(int))
+d_rep = (yb_.mean() - ya_.mean()) / np.sqrt(((len(ya_) - 1) * ya_.var(ddof=1) + (len(yb_) - 1) * yb_.var(ddof=1)) / (len(ya_) + len(yb_) - 2))
+check.near("Freq: Cohen's d = the same rows repeated", e_f["Cohen's d"]['estimate'], float(d_rep), rel=1e-12)
+rw_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, weight='w')
+check('Weight: noted, not used', (any('Weight' in t for t in rw_['notes']), es_rows(rw_)["Cohen's d"]['estimate'] == es_rows(r_)["Cohen's d"]['estimate']), (True, True))
+check('three levels: no two-sample effect size', 'error' in call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled'), True)
+
+# ---- η², ε², ω² of the one-way ANOVA
+r_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g')
+e_ = es_rows(r_)
+dfa_ = pd.DataFrame({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15})
+aov_ = sm.stats.anova_lm(smf.ols('y ~ C(g)', dfa_).fit(), typ=1)
+ssb_, sse_ = float(aov_['sum_sq'].iloc[0]), float(aov_['sum_sq'].iloc[1])
+mse_ = sse_ / 53
+check.near('η² = SS(X)/SS(total) from statsmodels anova_lm', e_['η² (eta²)']['estimate'], ssb_ / (ssb_ + sse_), rel=1e-10)
+if pg is not None:
+    check.near('η² = pingouin anova np2', e_['η² (eta²)']['estimate'], float(pg.anova(data=dfa_, dv='y', between='g', detailed=True)['np2'][0]), rel=1e-10)
+check.near('ε² = (SS(X) − 2·MSE)/SS(total) (Kelley 1935)', e_['ε² (epsilon²)']['estimate'], (ssb_ - 2 * mse_) / (ssb_ + sse_), rel=1e-10)
+check.near('ω² = (SS(X) − 2·MSE)/(SS(total) + MSE) (Hays 1963)', e_['ω² (omega²)']['estimate'], (ssb_ - 2 * mse_) / (ssb_ + sse_ + mse_), rel=1e-10)
+F_ = (ssb_ / 2) / mse_
+check.near('its F = the ANOVA F', r_['F'], F_, rel=1e-10)
+lamL, lamU = ncf_bisect(F_, 2, 53, 0.975), ncf_bisect(F_, 2, 53, 0.025)
+check.near('the exact interval: lower λ/(λ + N) by a noncentral F search', e_['η² (eta²)']['lower'], lamL / (lamL + 56), rel=1e-8, abs_=1e-12)
+check.near('the exact interval: upper', e_['η² (eta²)']['upper'], lamU / (lamU + 56), rel=1e-8)
+check('the three estimates share the interval of the population proportion', len({(x['lower'], x['upper']) for x in r_['table']['rows']}), 1)
+# small F: the lower limit is 0 when p > α/2
+tn_ = table({'y': es_rng.normal(0, 1, 30), 'g': ['a', 'b', 'c'] * 10})
+en_ = es_rows(call('fitybyx.oneway_effect', table=tn_, y='y', x='g'))
+fo_n = call('fitybyx.oneway', table=tn_, y='y', x='g')['anova']['rows'][0]['p']
+check('no effect: the lower limit is 0 exactly when the F test\'s p is above α/2', (en_['η² (eta²)']['lower'] == 0) == (fo_n > 0.025), True)
+# coverage of the exact interval of the population η²: balanced groups of 8, fixed means
+mus_ = np.array([0.0, 0.5, 1.0])
+pop_ = np.mean((mus_ - mus_.mean()) ** 2) / (np.mean((mus_ - mus_.mean()) ** 2) + 1)
+cov = 0
+for _ in range(1000):
+    ys_ = [es_rng.normal(m, 1, 8) for m in mus_]
+    Fs_ = stats.f_oneway(*ys_).statistic
+    l_, h_ = F.ncf_interval(float(Fs_), 2, 21, 0.05)
+    cov += l_ / (l_ + 24) <= pop_ <= h_ / (h_ + 24)
+check('the interval of η² covers the population value 93-97% of the time (1000 samples)', 0.93 <= cov / 1000 <= 0.97, True)
+print(f'   (coverage of the exact interval of η²: {cov / 1000:.3f})')
+# a block: partial forms, against anova_lm
+dfb_ = pd.DataFrame({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15, 'blk': (['p', 'q', 'r'] * 19)[:56]})
+rb_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', block='blk')
+eb_ = es_rows(rb_)
+ab_ = sm.stats.anova_lm(smf.ols('y ~ C(g) + C(blk)', dfb_).fit(), typ=2)
+ssx_, sse2_, dfe_ = float(ab_.loc['C(g)', 'sum_sq']), float(ab_.loc['Residual', 'sum_sq']), float(ab_.loc['Residual', 'df'])
+check.near('with a Block: partial η² = SS(X)/(SS(X) + SSE)', eb_['Partial η² (eta²)']['estimate'], ssx_ / (ssx_ + sse2_), rel=1e-9)
+check.near('with a Block: partial ω² (Olejnik and Algina 2003)', eb_['Partial ω² (omega²)']['estimate'], (ssx_ - 2 * sse2_ / dfe_) / (ssx_ + (56 - 2) * sse2_ / dfe_), rel=1e-9)
+Fb_ = (ssx_ / 2) / (sse2_ / dfe_)
+lb_ = ncf_bisect(Fb_, 2, dfe_, 0.025)
+check.near('with a Block: the upper limit λ/(λ + df₁ + df₂ + 1)', eb_['Partial η² (eta²)']['upper'], lb_ / (lb_ + 2 + dfe_ + 1), rel=1e-8)
+# Freq: repeated rows
+rf_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', freq='f')
+fv_all = f_es.astype(int)
+yrep = np.repeat(np.concatenate([a_, b_, c_]), fv_all)
+grep_ = np.repeat(['A'] * 18 + ['B'] * 23 + ['C'] * 15, fv_all)
+rr_ = call('fitybyx.oneway_effect', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g')
+check('Freq = the same rows repeated (η², its interval)', [round(x, 10) for x in (es_rows(rf_)['η² (eta²)']['estimate'], es_rows(rf_)['η² (eta²)']['upper'])],
+      [round(x, 10) for x in (es_rows(rr_)['η² (eta²)']['estimate'], es_rows(rr_)['η² (eta²)']['upper'])])
+
+# ---- the JZS Bayes factors
+check.near('JZS BF10 for the sleep data (t = −4.062128, 9 DF): 17.25888, BayesFactor\'s ttestBF', float(np.exp(F.jzs(-4.062127683382037, 10, 9)[0])), 17.25888, rel=3e-7)
+r_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
+t_ = float(stats.ttest_ind(b_, a_).statistic)
+ne_ = 18 * 23 / 41
+bf_ = bf_rows(r_)
+if pg is not None:
+    check.near('two-sample BF10 = pingouin bayesfactor_ttest (r = √2/2; pingouin\'s default is 0.707)', bf_[0], float(pg.bayesfactor_ttest(t_, 18, 23, r=np.sqrt(2) / 2)), rel=1e-8)
+den_ = stats.t.pdf(t_, 39)
+check.near('two-sample BF10 = the noncentral t likelihood integrated over the Cauchy prior', bf_[0], jzs_nct(t_, ne_, 39, np.sqrt(2) / 2) / den_, rel=1e-7)
+check.near('BF+0 = 2 × the noncentral t integral over δ > 0', bf_[1], 2 * jzs_nct(t_, ne_, 39, np.sqrt(2) / 2, 0, np.inf) / den_, rel=1e-7)
+check.near('BF−0 = 2 × the integral over δ < 0', bf_[2], 2 * jzs_nct(t_, ne_, 39, np.sqrt(2) / 2, -np.inf, 0) / den_, rel=1e-7)
+check.near('BF+0 + BF−0 = 2 BF10', bf_[1] + bf_[2], 2 * bf_[0], rel=1e-10)
+check.near('BF01 = 1/BF10', r_['table']['rows'][0]['bf01'], 1 / bf_[0], rel=1e-12)
+r1_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows, r=1.0)
+check.near('prior scale r = 1: the noncentral t integral with r = 1', bf_rows(r1_)[0], jzs_nct(t_, ne_, 39, 1.0) / den_, rel=1e-7)
+if pg is not None:
+    check.near('prior scale r = 1: pingouin with r = 1', bf_rows(r1_)[0], float(pg.bayesfactor_ttest(t_, 18, 23, r=1.0)), rel=1e-8)
+check('three levels: no two-sample Bayes factor', 'error' in call('fitybyx.oneway_bf', table=tes, y='y', x='g'), True)
+# a huge t stays finite in logs
+big_ = F.jzs(40.0, 5000, 9998)
+check('a huge t: log BF10 finite, the directions certain', (bool(np.isfinite(big_[0]) and big_[0] > 700), round(big_[1], 12), big_[2] < 1e-300), (True, 1.0, True))
+
+# ---- the Bayes factor of the correlation (Ly, Verhagen and Wagenmakers 2016)
+xr_ = es_rng.normal(0, 1, 40)
+yr_ = 0.35 * xr_ + es_rng.normal(0, 1, 40)
+fr2_ = es_rng.integers(1, 4, 40).astype(float)
+tr_ = table({'x': xr_, 'y': yr_, 'f': fr2_, 'w': es_rng.uniform(0.5, 2, 40)})
+r_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x')
+rr0 = float(stats.pearsonr(xr_, yr_).statistic)
+bf_ = bf_rows(r_)
+
+
+def ly_closed(r, n, k):
+    """Ly et al.'s (2016) two-sided BF10 of r in closed form, with ₂F₁."""
+    return float(np.exp((k - 2) / k * np.log(2) + 0.5 * np.log(np.pi) - special.betaln(1 / k, 1 / k) + special.gammaln((n + 2 / k - 1) / 2) - special.gammaln((n + 2 / k) / 2))
+                 * special.hyp2f1((n - 1) / 2, (n - 1) / 2, (n + 2 / k) / 2, r * r))
+
+
+check.near('BF10 of r = Ly et al.\'s closed form with ₂F₁, written out', bf_[0], ly_closed(rr0, 40, 1.0), rel=1e-9)
+if pg is not None:
+    check.near('BF10 of r = pingouin bayesfactor_pearson', bf_[0], float(pg.bayesfactor_pearson(rr0, 40)), rel=1e-9)
+
+
+def hyp3f2(a1, a2, a3, b1, b2, z):
+    s_, term_ = 1.0, 1.0
+    for kk in range(100000):
+        term_ *= (a1 + kk) * (a2 + kk) * (a3 + kk) / ((b1 + kk) * (b2 + kk) * (kk + 1)) * z
+        s_ += term_
+        if abs(term_) < 1e-17 * abs(s_):
+            break
+    return s_
+
+
+for kap_ in (1.0, 0.5, 2.0):
+    rk_ = bf_rows(call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', kappa=kap_))
+    Cc = (2 ** ((3 * kap_ - 2) / kap_) * kap_ * rr0 / (2 + 39 * kap_) * np.exp(2 * (special.gammaln(20) - special.gammaln(19.5)) - special.betaln(1 / kap_, 1 / kap_))
+          * hyp3f2(1, 20, 20, 1.5, (2 + kap_ * 41) / (2 * kap_), rr0 ** 2))
+    check.near(f'κ = {kap_:g}: BF10 = the closed form', rk_[0], ly_closed(rr0, 40, kap_), rel=1e-9)
+    if pg is not None:
+        check.near(f'κ = {kap_:g}: BF10 = pingouin', rk_[0], float(pg.bayesfactor_pearson(rr0, 40, kappa=kap_)), rel=1e-9)
+    check.near(f'κ = {kap_:g}: BF+0 = BF10 + C, Ly et al.\'s ₃F₂ term summed here', rk_[1], rk_[0] + Cc, rel=1e-9)
+    check.near(f'κ = {kap_:g}: BF−0 = BF10 − C', rk_[2], rk_[0] - Cc, rel=1e-8)
+rf_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', freq='f')
+xrep, yrep2 = np.repeat(xr_, fr2_.astype(int)), np.repeat(yr_, fr2_.astype(int))
+rrep_ = call('fitybyx.bivariate_bf', table=table({'x': xrep, 'y': yrep2}), y='y', x='x')
+check.near('Freq: the Bayes factor of the rows repeated', bf_rows(rf_)[0], bf_rows(rrep_)[0], rel=1e-12)
+check('Weight is noted and not used', (any('Weight' in t for t in call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', weight='w')['notes']),), (True,))
+check('a line: the Bayes factor is infinite, an error', 'error' in call('fitybyx.bivariate_bf', table=table({'x': [1.0, 2, 3, 4], 'y': [2.0, 4, 6, 8]}), y='y', x='x'), True)
+
+# ---- Games-Howell: the formulas written out, and pingouin.pairwise_gameshowell
+r_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell')
+lv_ = r_['levels']
+gv_ = dict(zip(['A', 'B', 'C'], [a_, b_, c_]))
+for p_ in r_['pairs']:
+    A_, B_ = gv_[lv_[p_['i']]], gv_[lv_[p_['j']]]
+    ua_, ub_ = A_.var(ddof=1) / len(A_), B_.var(ddof=1) / len(B_)
+    se_ = np.sqrt(ua_ + ub_)
+    dfw_ = (ua_ + ub_) ** 2 / (ua_ ** 2 / (len(A_) - 1) + ub_ ** 2 / (len(B_) - 1))
+    lab_ = f"{lv_[p_['i']]}-{lv_[p_['j']]}"
+    check.near(f'Games-Howell {lab_}: |difference|', p_['diff'], abs(A_.mean() - B_.mean()), rel=1e-12)
+    check.near(f'Games-Howell {lab_}: SE √(s²ᵢ/nᵢ + s²ⱼ/nⱼ)', p_['se'], float(se_), rel=1e-12)
+    check.near(f'Games-Howell {lab_}: the Welch-Satterthwaite DF', p_['df'], float(dfw_), rel=1e-12)
+    check.near(f'Games-Howell {lab_}: p = P(Q(3, DF) > √2·|difference|/SE)', p_['p'], float(stats.studentized_range.sf(np.sqrt(2) * abs(A_.mean() - B_.mean()) / se_, 3, dfw_)), rel=1e-9)
+    q_ = stats.studentized_range.ppf(0.95, 3, dfw_) / np.sqrt(2)
+    check.near(f'Games-Howell {lab_}: the interval, difference − q*·SE', p_['lower'], abs(A_.mean() - B_.mean()) - q_ * se_, rel=1e-9)
+if pg is not None:
+    gh_ = pg.pairwise_gameshowell(data=pd.DataFrame({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15}), dv='y', between='g')
+    for _, row_ in gh_.iterrows():
+        p_ = [p for p in r_['pairs'] if {lv_[p['i']], lv_[p['j']]} == {row_['A'], row_['B']}][0]
+        lab_ = f"{row_['A']}-{row_['B']}"
+        check.near(f'Games-Howell {lab_}: SE = pingouin', p_['se'], float(row_['se']), rel=1e-12)
+        check.near(f'Games-Howell {lab_}: DF = pingouin', p_['df'], float(row_['df']), rel=1e-12)
+        check.near(f'Games-Howell {lab_}: p = pingouin', p_['p'], float(row_['pval']), rel=1e-9)
+check('Games-Howell: letters agree with the p-values', all((p['p'] < 0.05) == (not set(next(l['letters'] for l in r_['letters'] if l['index'] == p['i']).split()) & set(next(l['letters'] for l in r_['letters'] if l['index'] == p['j']).split())) for p in r_['pairs']), True)
+check('Games-Howell: no single quantile (each pair has its own)', r_['quantile']['value'], None)
+rgf_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
+rgr_ = call('fitybyx.oneway_compare', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g', method='gameshowell')
+check('Games-Howell with Freq = the same rows repeated', [round(p['p'], 12) for p in rgf_['pairs']], [round(p['p'], 12) for p in rgr_['pairs']])
+check('Games-Howell needs two values per level', 'error' in call('fitybyx.oneway_compare', table=table({'y': [1.0, 2, 3, 4, 5], 'g': ['a', 'a', 'b', 'b', 'c']}), y='y', x='g', method='gameshowell'), True)
+
+# ---- Matched Pairs: d_z, g_z, d_av and the paired Bayes factor
+y1_ = es_rng.normal(50, 8, 25)
+y2_ = y1_ + es_rng.normal(3, 5, 25)
+tp_ = table({'y1': y1_, 'y2': y2_})
+r_ = call('matchedpairs.effect', table=tp_, y1='y1', y2='y2')
+e_ = es_rows(r_)
+dif_ = y2_ - y1_
+dz_ = dif_.mean() / dif_.std(ddof=1)
+check.near("d_z = mean difference/SD of the differences", e_["Cohen's d_z"]['estimate'], float(dz_), rel=1e-12)
+check.near("d_av = mean difference/√((s₁² + s₂²)/2)", e_["Cohen's d_av"]['estimate'], float(dif_.mean() / np.sqrt((y1_.var(ddof=1) + y2_.var(ddof=1)) / 2)), rel=1e-12)
+if pg is not None:
+    check.near("d_z = pingouin compute_effsize (cohen_dz)", e_["Cohen's d_z"]['estimate'], float(pg.compute_effsize(y2_, y1_, paired=True, eftype='cohen_dz')), rel=1e-12)
+    check.near("d_av = pingouin's paired Cohen's d", e_["Cohen's d_av"]['estimate'], float(pg.compute_effsize(y2_, y1_, paired=True, eftype='cohen')), rel=1e-12)
+tz_ = dz_ * 5
+check.near("d_z's exact limits: a noncentrality search (λ/√n)", e_["Cohen's d_z"]['lower'], ncp_bisect(tz_, 24, 0.975) / 5, rel=1e-9)
+check.near("d_z's upper limit", e_["Cohen's d_z"]['upper'], ncp_bisect(tz_, 24, 0.025) / 5, rel=1e-9)
+Jz_ = np.exp(special.gammaln(12) - 0.5 * np.log(12) - special.gammaln(11.5))
+check.near("g_z = J(n − 1)·d_z", e_["Hedges' g_z"]['estimate'], float(Jz_ * dz_), rel=1e-12)
+if pg is not None:
+    lo_pg, hi_pg = pg.compute_esci(float(dz_), 25, paired=True, eftype='cohen', decimals=6)
+    check("pingouin's approximate paired interval is within 0.06 of the exact one", abs(lo_pg - e_["Cohen's d_z"]['lower']) < 0.06 and abs(hi_pg - e_["Cohen's d_z"]['upper']) < 0.06, True)
+# Bonett's published paired example (statpsych ci.stdmean.ps): 602.4 vs 705.6, SDs 33.17 and 51.08, r = .769, n = 8
+Z_ = es_rng.normal(size=(8, 2))
+Z_ = Z_ - Z_.mean(axis=0)
+Z_ = Z_ @ np.linalg.inv(np.linalg.cholesky(np.cov(Z_.T)).T)
+S_ = np.array([[33.17 ** 2, 0.769 * 33.17 * 51.08], [0.769 * 33.17 * 51.08, 51.08 ** 2]])
+X_ = Z_ @ np.linalg.cholesky(S_).T + np.array([602.4, 705.6])
+e_ = es_rows(call('matchedpairs.effect', table=table({'first': X_[:, 1], 'second': X_[:, 0]}), y1='first', y2='second'))
+check.near("Bonett's paired example: d_av = −2.3963", e_["Cohen's d_av"]['estimate'], -2.3963, abs_=5e-5)
+check.near("Bonett's paired example: SE 0.65209", e_["Cohen's d_av"]['se'], 0.65209, abs_=5e-6)
+check.near("Bonett's paired example: lower limit −3.6744", e_["Cohen's d_av"]['lower'], -3.6744, abs_=5e-5)
+check.near("Bonett's paired example: upper limit −1.1182", e_["Cohen's d_av"]['upper'], -1.1182, abs_=5e-5)
+r_ = call('matchedpairs.bayes', table=tp_, y1='y1', y2='y2')
+bf_ = bf_rows(r_)
+tt2_ = float(stats.ttest_rel(y2_, y1_).statistic)
+check.near('paired BF10 = the noncentral t integral over the Cauchy prior', bf_[0], jzs_nct(tt2_, 25, 24, np.sqrt(2) / 2) / stats.t.pdf(tt2_, 24), rel=1e-7)
+if pg is not None:
+    check.near('paired BF10 = pingouin bayesfactor_ttest (one sample of differences)', bf_[0], float(pg.bayesfactor_ttest(tt2_, 25, paired=True, r=np.sqrt(2) / 2)), rel=1e-8)
+check.near('paired BF+0 = 2 × the noncentral t integral over δ > 0', bf_[1], 2 * jzs_nct(tt2_, 25, 24, np.sqrt(2) / 2, 0, np.inf) / stats.t.pdf(tt2_, 24), rel=1e-7)
+# the sleep data's t built into pairs: the published 17.25888
+dsl_ = exact_sample(es_rng, -4.062127683382037 / np.sqrt(10), 1.0, 10)
+bs_ = call('matchedpairs.bayes', table=table({'a': np.zeros(10) + 5.0, 'b': 5.0 + dsl_}), y1='a', y2='b')
+check.near('paired: t = −4.062128 on 9 DF gives BayesFactor\'s 17.25888', bs_['table']['rows'][0]['bf10'], 17.25888, rel=3e-7)
+check('paired: the higher one-sided Bayes factor is for δ < 0 there', bs_['table']['rows'][2]['bf10'] > bs_['table']['rows'][0]['bf10'] > bs_['table']['rows'][1]['bf10'], True)
+
+# ---- the code under the new results, on a CSV export
+cols_es = {'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15, 'f': fv_all.astype(float), 'blk': (['p', 'q', 'r'] * 19)[:56]}
+res_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g')
+ns = code_ns(cols_es, res_['code'], 'the ANOVA effect sizes')
+if 'lo' in ns:
+    check.near('its code: the lower limit of η²', float(ns['lo'] / (ns['lo'] + ns['N'])), es_rows(res_)['η² (eta²)']['lower'], rel=1e-7, abs_=1e-12)
+    check.near('its code: the upper limit of η²', float(ns['hi'] / (ns['hi'] + ns['N'])), es_rows(res_)['η² (eta²)']['upper'], rel=1e-7)
+res_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', freq='f', block='blk')
+ns = code_ns(cols_es, res_['code'], 'the ANOVA effect sizes with Freq and a Block')
+if 'ss_x' in ns:
+    check.near('its code with Freq and a Block: partial η²', float(ns['ss_x'] / (ns['ss_x'] + ns['ss_e'])), es_rows(res_)['Partial η² (eta²)']['estimate'], rel=1e-9)
+cols_two = {'y': np.concatenate([a_, b_]), 'g': ['A'] * 18 + ['B'] * 23}
+for kind_ in ('pooled', 'welch'):
+    res_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind=kind_, rows=two_rows)
+    ns = code_ns(cols_two, res_['code'], f'the {kind_} effect size')
+    if 'd_' in ns:
+        check.near(f'its code ({kind_}): d', float(ns['d_']), res_['table']['rows'][0]['estimate'], rel=1e-12)
+        if kind_ == 'pooled':
+            check.near('its code (pooled): the exact upper limit', float(ns['hi']), res_['table']['rows'][0]['upper'], rel=1e-8)
+        else:
+            check.near('its code (welch): Bonett\'s SE', float(ns['se']), res_['table']['rows'][0]['se'], rel=1e-12)
+res_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
+ns = code_ns(cols_two, res_['code'], 'the two-sample Bayes factor')
+if 'bf' in ns:
+    check.near('its code: BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-7)
+    check.near('its code: BF+0', float(2 * ns['bf'] * ns['p']), res_['table']['rows'][1]['bf10'], rel=1e-7)
+res_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', freq='f')
+ns = code_ns({'x': xr_, 'y': yr_, 'f': fr2_}, res_['code'], 'the Bayes factor of the correlation')
+if 'bf_rho' in ns:
+    check.near('its code: BF10 of r', float(ns['bf_rho'](ns['r'], ns['n'], 1.0)), res_['table']['rows'][0]['bf10'], rel=1e-7)
+    check.near('its code: BF+0 of r', float(ns['bf_rho'](ns['r'], ns['n'], 1.0, 0, 1)), res_['table']['rows'][1]['bf10'], rel=1e-7)
+res_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
+ns = code_ns(cols_es, res_['code'], 'Games-Howell with Freq')
+if 'df_' in ns:
+    check('its code runs every pair (the last pair\'s DF is a pair\'s)', any(abs(p['df'] - float(ns['df_'])) < 1e-9 for p in res_['pairs']), True)
+for fn_, label_ in (('matchedpairs.effect', 'the paired effect sizes'), ('matchedpairs.bayes', 'the paired Bayes factor')):
+    res_ = call(fn_, table=tp_, y1='y1', y2='y2')
+    ns = code_ns({'y1': y1_, 'y2': y2_}, res_['code'], label_)
+    if 'dz' in ns:
+        check.near('its code: d_z', float(ns['dz']), res_['table']['rows'][0]['estimate'], rel=1e-12)
+        check.near('its code: the exact lower limit of d_z', float(ns['lo']), res_['table']['rows'][0]['lower'], rel=1e-8)
+        check.near('its code: d_av and Bonett\'s SE', float(ns['se']), res_['table']['rows'][2]['se'], rel=1e-12)
+    if 'bf' in ns:
+        check.near('its code: the paired BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-7)
 
 # ---- errors and row lists ---------------------------------------------------------------------
 check('Y and X the same column', 'error' in call('fitybyx.fit_poly', table=tid, y='before', x='before'), True)
