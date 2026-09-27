@@ -12,6 +12,11 @@
    prints as 'smui:progress <what> <done> <total>'). The worker runs one call at a time. A call that
    runs away can be stopped with restart(): the worker is terminated and
    loaded again, from the browser's cache.
+
+   A function that needs a package beyond the four (scikit-learn for the
+   predictive platforms) makes the worker load it on its first call; while
+   it loads, `loading` holds a line for the status button, and afterwards
+   `versions` has the package too.
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -25,6 +30,7 @@
       super();
       this.state = 'off';          // off, loading, ready, error
       this.text = '';
+      this.loading = '';          // a package being loaded for a call, after the start
       this.versions = null;
       this.names = [];
       this.failed = [];
@@ -64,6 +70,7 @@
       for (const [, p] of this.pending) p.reject(new Error('stopped'));
       this.pending.clear();
       this.busy = 0;
+      this.loading = '';
       this.state = 'off';
       this.start(this.version);
     }
@@ -147,6 +154,13 @@
         this.failed = m.failed || [];
         this.loadSeconds = (performance.now() - this.startedAt) / 1000;
         this.text = `statsmodels ${m.versions.statsmodels} ready`;
+        this.emit('status', this);
+      } else if (m.type === 'loading') {
+        this.loading = m.text;
+        this.emit('status', this);
+      } else if (m.type === 'loaded') {
+        this.loading = '';
+        if (this.versions) Object.assign(this.versions, m.versions || {});
         this.emit('status', this);
       } else if (m.type === 'fatal') {
         this._fail(m.message, m.traceback);

@@ -1,0 +1,47 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > CLUSTERING > NORMAL MIXTURES (smui-p-mixtures.js)
+   The Iterative Clustering panel, the cluster legend, the fit that is
+   open in the Cluster Comparison, and tables that scroll by themselves on
+   a phone. Colours are kvot.css's tokens, so both themes read. Class
+   prefix sm-mix-.
+   ========================================================================== */
+
+/* ---- the Iterative Clustering panel -------------------------------------------- */
+.sm-mix-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 4px 0 8px; font-size: 12px; max-width: 920px; }
+.sm-mix-control { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.sm-mix-control > span { color: var(--text-secondary); }
+.sm-mix-control select, .sm-mix-num {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; min-width: 0;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.sm-mix-control input[type="checkbox"] { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-mix-num:focus-visible, .sm-mix-control select:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+
+/* ---- progress while a range of fits runs ----------------------------------------- */
+.sm-mix-progress { font-style: italic; }
+
+/* ---- the clusters under a fit: a button per cluster selects its rows ------------ */
+.sm-mix-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 8px; font-size: 11.5px; max-width: 920px; }
+.sm-mix-legend button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border: 1px solid transparent; border-radius: 3px;
+  background: none; color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.sm-mix-legend button:hover, .sm-mix-legend button:focus-visible { border-color: var(--border-color); }
+.sm-mix-swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+/* ---- the Cluster Comparison: the open fit, NCluster to the right ---------------- */
+.sm-rt td.sm-mix-open { font-weight: 600; }
+.sm-rt tr:has(td.sm-mix-open) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-rt td.sm-l.sm-mix-right { text-align: right; }
+
+/* ---- the clusters' correlations side by side ------------------------------------- */
+.sm-mix-corrs { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+
+/* ---- a wide table scrolls by itself on a narrow screen ---------------------------- */
+.sm-mix-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-mix-scroll > table.sm-rt { margin-bottom: 8px; }
+
+@media (max-width: 560px) {
+  .sm-mix-controls { gap: 6px 10px; }
+  .sm-mix-control { flex-wrap: wrap; }
+}

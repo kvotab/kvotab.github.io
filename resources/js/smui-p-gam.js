@@ -338,133 +338,16 @@
   }
 
   /* ---- the Prediction Profiler --------------------------------------------------------------------
-     One small plot per term: the prediction on the response scale as the
-     term varies, the others at their current values, the confidence band
-     dotted, the current value a red dashed line to drag (or click the
-     plot, or use the box and the slider under it). */
+     The shared profiler (SM.profiler, gam.profile from profile.expose):
+     the prediction on the response scale as each term varies, the others
+     at their current values, with its confidence band; desirability,
+     Maximize Desirability and variable importance in its red triangle. */
   async function profiler(ctx, payload) {
-    const P = pal();
-    const stateKey = `prof:${ctx.byLabel || ''}`;
-    let current = { ...(ctx.opt(stateKey, null) || {}) };
-    const ob = ctx.outline('Prediction Profiler', { key: 'profiler', info: 'p:gam:profiler', menu: () => [
-      { label: 'Reset Factor Settings', action: () => ctx.set(stateKey, null) },
-      { label: 'Remove', action: () => ctx.set('profiler', false) },
-    ] });
-    const load = () => ctx.call('gam.profile', { ...payload, current, alpha: ctx.alpha });
-    let res = await load();
-    const F = res.factors;
-    const nf = F.length;
-    const avail = Math.max(300, Math.min(1180, (root.innerWidth || 1200) - 150));
-    const pw = Math.max(118, Math.min(215, Math.floor((avail - 130) / nf)));
-    const ph = 175;
-    const grid = el('div', { class: 'sm-gam-prof', style: { gridTemplateColumns: `minmax(92px, max-content) repeat(${nf}, max-content)` } });
-    const r0 = res.responses[0];
-    const yrange = () => {
-      const r = res.responses[0];
-      if (r.bounded) return [0, 1];
-      const [lo, hi] = extent(...r.traces.flatMap((t) => [t.pred, t.lower, t.upper]));
-      const pad = 0.06 * (hi - lo);
-      return [lo - pad, hi + pad];
-    };
-    const labelOf = (f, v) => { const i = f.levels.findIndex((x) => x === v || String(x) === String(v)); return i >= 0 ? f.labels[i] : String(v); };
-    const traces = (fi) => {
-      const r = res.responses[0], tr = r.traces[fi], f = res.factors[fi];
-      const cat = f.type === 'categorical';
-      const out = [];
-      for (const b of [tr.upper, tr.lower]) out.push({ type: 'scatter', mode: cat ? 'markers' : 'lines', x: tr.x, y: b, line: { color: P.fit, width: 1, dash: 'dot' }, marker: { symbol: 'line-ew-open', size: 11, color: P.fit, line: { width: 1.2, color: P.fit } }, hoverinfo: 'skip', showlegend: false });
-      out.push({ type: 'scatter', mode: cat ? 'lines+markers' : 'lines', x: tr.x, y: tr.pred, line: { color: P.point, width: 1.8 }, marker: { size: 6, color: P.point }, hovertemplate: `${SM.report.plotlyText(f.name)} %{x}<br>${SM.report.plotlyText(r.name)} %{y:.5g}<extra></extra>`, showlegend: false });
-      out.push(lineTrace([tr.x[0], tr.x[tr.x.length - 1]], [r.current.pred, r.current.pred], P.fit, 'dash', 1));
-      return out;
-    };
-    const layout = (fi) => {
-      const f = res.factors[fi];
-      const cat = f.type === 'categorical';
-      const cur = cat ? labelOf(f, f.current) : f.current;
-      return {
-        margin: { l: fi === 0 ? 48 : 6, r: 6, t: 6, b: 24 }, hovermode: 'x', dragmode: false,
-        xaxis: cat ? { type: 'category', tickfont: { size: 9 }, fixedrange: true, showgrid: false } : { range: [f.min, f.max], tickfont: { size: 9 }, fixedrange: true, showgrid: false, nticks: 4 },
-        yaxis: { range: yrange(), showticklabels: fi === 0, tickfont: { size: 9 }, fixedrange: true, nticks: 5 },
-        shapes: [{ type: 'line', xref: 'x', yref: 'paper', x0: cur, x1: cur, y0: 0, y1: 1, line: { color: P.fit, width: 1.4, dash: 'dash' } }],
-      };
-    };
-    const cells = [];
-    let busy = false, pending = false;
-    const setFactor = async (fi, x) => {
-      const f = res.factors[fi];
-      let v;
-      if (f.type === 'categorical') {
-        let i = typeof x === 'number' ? Math.round(x) : f.labels.indexOf(String(x));
-        i = clamp(i < 0 ? 0 : i, 0, f.levels.length - 1);
-        v = f.levels[i];
-      } else {
-        v = Number(x);
-        if (!Number.isFinite(v)) return;
-        v = clamp(v, f.min, f.max);
-      }
-      current = { ...current, [f.name]: v };
-      if (busy) { pending = true; return; }
-      busy = true;
-      try {
-        do {
-          pending = false;
-          ctx.set(stateKey, current, null, { rerun: false });
-          res = await load();
-          redraw();
-        } while (pending);
-      } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); } finally { busy = false; }
-    };
-    const wire = (fi) => (gd) => {
-      gd.on('plotly_relayout', (ev) => { const k = ev && Object.keys(ev).find((q) => /^shapes\[0\]\.x0$/.test(q)); if (k) setFactor(fi, ev[k]); });
-      gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt) setFactor(fi, pt.x); });
-    };
-    const valueBox = () => {
-      const r = res.responses[0];
-      const c = r.current;
-      return [el('span', { class: 'sm-gam-prof-name', text: r.name }), el('span', { class: 'sm-gam-prof-val', text: fmt(c.pred, { sig: 6 }) }),
-        c.lower != null ? el('span', { class: 'sm-gam-prof-ci', text: `[${fmt(c.lower, { sig: 5 })}, ${fmt(c.upper, { sig: 5 })}]` }) : null];
-    };
-    const val = el('div', { class: 'sm-gam-prof-y' }, ...valueBox());
-    grid.append(val);
-    F.forEach((f, fi) => {
-      const box = ctx.plot(traces(fi), layout(fi), { width: pw + (fi === 0 ? 42 : 0), height: ph, select: false, title: `${r0.name} profile over ${f.name}`, config: { edits: { shapePosition: true }, displayModeBar: false }, onDraw: wire(fi) });
-      cells.push(box);
-      grid.append(box);
+    const bounded = payload.family === 'binomial';
+    return SM.profiler.render(ctx, null, {
+      sources: [{ fn: 'gam.profile', payload }], option: 'profiler', info: 'p:gam:profiler', stateKey: `prof:${ctx.byLabel || ''}`,
+      note: `The prediction of the mean on the response scale${bounded ? ' (a probability)' : ''}, with its ${fmt(100 * (1 - ctx.alpha))}% confidence interval (statsmodels' get_prediction). Drag a red dashed line, click in a plot, or type a value.`,
     });
-    grid.append(el('div', { class: 'sm-gam-prof-y sm-gam-prof-corner', text: 'Terms' }));
-    const inputs = F.map((f, fi) => {
-      let input;
-      if (f.type === 'categorical') {
-        input = el('select', { 'aria-label': `${f.name} current value` }, ...f.labels.map((l, i) => el('option', { value: String(i), text: l })));
-        input.value = String(Math.max(0, f.levels.findIndex((x) => x === f.current)));
-        input.addEventListener('change', () => setFactor(fi, Number(input.value)));
-      } else {
-        input = el('input', { type: 'text', inputmode: 'decimal', size: 8, 'aria-label': `${f.name} current value` });
-        input.value = fmt(f.current, { sig: 6 }).replace('−', '-');
-        const apply = () => setFactor(fi, SM.table.toNumber(input.value.replace(',', '.')));
-        input.addEventListener('change', apply);
-        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
-      }
-      const slider = f.type === 'continuous' ? el('input', { type: 'range', min: String(f.min), max: String(f.max), step: String((f.max - f.min) / 200 || 1), value: String(f.current), 'aria-label': `${f.name} slider` }) : null;
-      if (slider) slider.addEventListener('change', () => setFactor(fi, Number(slider.value)));
-      const kind = f.kind === 'smooth' ? 's(·)' : 'linear';
-      grid.append(el('div', { class: 'sm-gam-prof-x', style: { width: `${pw + (fi === 0 ? 42 : 0)}px` } }, el('span', { class: 'sm-gam-prof-fname', text: f.name, title: `${f.name} (${kind})` }), input, slider));
-      return { input, slider };
-    });
-    const redraw = () => {
-      val.replaceChildren(...valueBox().filter(Boolean));
-      res.factors.forEach((f, fi) => {
-        const box = cells[fi];
-        const p = box._plot;
-        const tr = traces(fi), lay = layout(fi);
-        if (p && p.drawn) Plotly.react(box, tr, SM.report.merge(box.layout, { shapes: lay.shapes, yaxis: { range: lay.yaxis.range } }));
-        else if (p) { p.traces = tr; p.userLayout = lay; }
-        const { input, slider } = inputs[fi];
-        if (f.type === 'categorical') input.value = String(Math.max(0, f.levels.findIndex((x) => x === f.current)));
-        else { if (document.activeElement !== input) input.value = fmt(f.current, { sig: 6 }).replace('−', '-'); if (slider) slider.value = String(f.current); }
-      });
-    };
-    ob.add(el('div', { class: 'sm-gam-profwrap' }, grid), ctx.note(`The prediction of the mean on the response scale${r0.bounded ? ' (a probability)' : ''}, with its ${fmt(100 * (1 - ctx.alpha))}% confidence interval (statsmodels' get_prediction). Drag a red dashed line, click in a plot, or type a value.`));
-    return ob;
   }
 
   /* ---- Surface Plot: two smooth terms together ---------------------------------------------------- */

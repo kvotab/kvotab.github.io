@@ -103,7 +103,7 @@ async def main():
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
     check('gam imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "gam").map(f => f.error)'), [])
-    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.profile', 'gam.surface', 'gam.term'])
+    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.importance', 'gam.maximize', 'gam.profile', 'gam.surface', 'gam.term'])
     await page.ev(HELPERS)
     t = await page.ev('({ name: SM.app.current.name, rows: SM.app.current.nrows, cols: SM.app.current.columns.map(c => c.name), listed: !!SM.io.EXAMPLES.ozone, date: SM.app.current.col("date").format.kind })')
     check('?example=ozone opens the simulated table', (t['name'], t['rows'], t['listed'], t['date']), ('Ozone', 365, True, 'date'))
@@ -302,7 +302,7 @@ async def main():
       await __g.topMenu('Save Columns', 'Predicted Values');
       const saved = t.col('Pred ' + __g.Y).values[row];
       const ob = __g.outline('Prediction Profiler'); ob.scrollIntoView(); await new Promise(r => setTimeout(r, 900));
-      const val = () => ob.querySelector('.sm-gam-prof-val').textContent;
+      const val = () => ob.querySelector('.sm-prof-val').textContent;
       const set = async (sel, v) => { const was = val(); const i = ob.querySelector(sel); i.value = v; i.dispatchEvent(new Event('change')); for (let k = 0; k < 400 && val() === was; k++) await new Promise(r => setTimeout(r, 5)); };
       await set(`input[aria-label="${__g.T} current value"]`, '10');   // the first call refits: saving a column made a new table version
       const t0 = performance.now();
@@ -369,8 +369,8 @@ async def main():
         kv = await page.ev('__g.kv("Model Summary")')
         print(f'      {label}: {ms:.0f} ms, smoothing {kv.get("Smoothing")}, EDF {kv.get("Total EDF")}')
         if label == 'Binomial (0/1)':
-            b = await page.ev('''(() => { const ob = __g.outline('Prediction Profiler'); const v = __g.num(ob.querySelector('.sm-gam-prof-val').textContent);
-              const p = __g.plot(__g.T + ' partial effect'); return { v, name: ob.querySelector('.sm-gam-prof-name').textContent, resid: p.traces.some(t => t.name === 'Partial residuals') }; })()''')
+            b = await page.ev('''(() => { const ob = __g.outline('Prediction Profiler'); const v = __g.num(ob.querySelector('.sm-prof-val').textContent);
+              const p = __g.plot(__g.T + ' partial effect'); return { v, name: ob.querySelector('.sm-prof-name').textContent, resid: p.traces.some(t => t.name === 'Partial residuals') }; })()''')
             check('Binomial: the profiler predicts a probability', 0 < b['v'] < 1 and b['name'] == 'Prob[alert = 1]', True)
             check('Binomial: partial residuals hidden by default', b['resid'], False)
         if label == 'K-fold':

@@ -392,6 +392,8 @@
 .sm-ob-error { margin: 2px 0 6px; padding: 6px 10px; border-left: 3px solid #c0392b; background: color-mix(in oklab, #c0392b 10%, transparent); font-size: 12px; max-width: 760px; white-space: pre-wrap; }
 
 .sm-rt { border-collapse: collapse; font-size: 12px; margin: 2px 0 8px; }
+/* A table wider than its outline (a phone, a narrow window) scrolls in its own box, not the page. */
+.sm-rt, .sm-kv { display: block; width: max-content; max-width: 100%; overflow-x: auto; }
 .sm-rt caption { caption-side: top; text-align: left; padding: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--text-secondary); }
 .sm-rt th, .sm-rt td { padding: 2px 9px; border-bottom: 1px solid color-mix(in oklab, var(--border-color) 75%, transparent); white-space: nowrap; }
 .sm-rt thead th { background: var(--sm-head-bg); border-bottom: 1px solid var(--border-color); font-weight: 600; text-align: right; color: var(--text-primary); position: relative; }
@@ -590,3 +592,25 @@
   .sm-body { display: block; }
   .sm-reportbody { overflow: visible; }
 }
+
+/* ---- the Prediction Profiler (smui-profiler.js), for any platform ---- */
+.sm-profwrap { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.sm-prof { display: grid; gap: 0 2px; align-items: center; width: max-content; }
+.sm-prof .sm-plot { min-width: 0; }
+.sm-prof-y { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 1px; padding-right: 4px; font-size: 11.5px; text-align: right; }
+.sm-prof-name { color: var(--text-secondary); overflow-wrap: anywhere; max-width: 130px; }
+.sm-prof-val { font-size: 14px; font-weight: 600; color: var(--sm-nom, #c0392b); font-variant-numeric: tabular-nums; }
+.sm-prof-ci { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.sm-prof-corner { color: var(--text-muted); font-size: 11px; align-self: start; padding-top: 4px; }
+.sm-prof-x { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 4px; font-size: 11.5px; box-sizing: border-box; }
+.sm-prof-x input[type="text"], .sm-prof-x select { padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; }
+.sm-prof-x input[type="text"] { width: 7.5em; text-align: right; }
+.sm-prof-x select { max-width: 100%; }
+.sm-prof-x input[type="range"] { width: 90%; margin: 0; accent-color: var(--color-kvot-accent); }
+.sm-prof-fname { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the predictive platforms' shared parts (smui-predict.js) ---- */
+.sm-pred-cm { display: flex; flex-direction: column; gap: 2px; }
+
+/* ---- Bootstrap's progress (smui-bootstrap.js) ---- */
+.sm-boot-progress progress { width: 100%; height: 12px; accent-color: var(--color-kvot-accent); }

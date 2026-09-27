@@ -70,6 +70,7 @@ from scipy import optimize, special, stats
 
 from . import data, models
 from .registry import api
+from . import profile as profile_mod
 from .util import code_head, col, table as rtable
 
 ORDER = ['poisson', 'nb2', 'nb1', 'gp', 'zip', 'zinb', 'zigp', 'hp', 'hnb']
@@ -1372,81 +1373,57 @@ def _gradient(fn, theta, h=1e-6):
     return base, G
 
 
-@api('counts.profile')
-def profile(table, y, rows=None, model='poisson', current=None, grid=41, alpha=0.05, x=(), degree=1, zx=(), zero_same=True,
-            exposure=None, offset=None, freq=None):
-    """The Prediction Profiler: for each factor, E[Y] and P(Y = 0) (with
-    delta-method confidence intervals on the log and logit scales) as the
-    factor varies and the others stay at their current values."""
+def _predictor(table, y, rows=None, alpha=0.05, model='poisson', x=(), degree=1, zx=(), zero_same=True, exposure=None, offset=None, freq=None):
+    """The profiler's view of a fitted count model (see profile.py): E[Y] and
+    P(Y = 0), with delta-method confidence intervals on the log and logit
+    scales, at any settings of the factors (the exposure or offset among
+    them)."""
     spec = _spec(y, x, degree, zx, zero_same, exposure, offset, freq)
-    try:
-        m = _get(table, rows, spec, model)
-    except Exception as e:  # noqa: BLE001
-        return {'error': str(e)}
+    m = _get(table, rows, spec, model)
     P = m['P']
     facs = _factors(P)
-    cur = {}
-    for f in facs:
-        v = (current or {}).get(f['name'])
-        if f['type'] == 'categorical':
-            cur[f['name']] = f['levels'][_level_index(f['levels'], v)] if v is not None else f['levels'][0]
-        else:
-            try:
-                cur[f['name']] = float(v) if v is not None else f['mean']
-            except (TypeError, ValueError):
-                cur[f['name']] = f['mean']
-    settings = [dict(cur)]
-    spans = []
-    for f in facs:
-        g = list(range(len(f['levels']))) if f['type'] == 'categorical' else list(np.linspace(f['min'], f['max'], int(grid))) if f['max'] > f['min'] else [f['min']]
-        spans.append((len(settings), len(g)))
-        for v in g:
-            s = dict(cur)
-            s[f['name']] = f['levels'][v] if f['type'] == 'categorical' else float(v)
-            settings.append(s)
-    Xn = _design_rows(P['d'], P['X'].design_info, settings)
-    Zn = _design_rows(P['dz'], P['Z'].design_info, settings) if not P['same'] else Xn
-    if P['spec']['exposure']:
-        lo = np.log(np.array([s[P['spec']['exposure']] for s in settings], dtype=float))
-    elif P['spec']['offset']:
-        lo = np.array([s[P['spec']['offset']] for s in settings], dtype=float)
-    else:
-        lo = np.zeros(len(settings))
-
-    def g(theta):
-        D = _dist(m, Xn, Zn, lo, theta)
-        with np.errstate(divide='ignore'):
-            return np.concatenate([np.log(D.mean()), special.logit(np.clip(D.p0(), 1e-300, 1 - 1e-16))])
-
-    theta = np.asarray(m['params'], float)
-    val, G = _gradient(g, theta)
-    V = m['cov']
-    ns = len(settings)
     zc = float(stats.norm.ppf(1 - alpha / 2))
-    if np.all(np.isfinite(V)):
-        se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', G, V, G), 0))
-    else:
-        se = np.full(len(val), np.nan)
-    lm, lp = val[:ns], val[ns:]
-    sm_, sp = se[:ns], se[ns:]
-    resp = [
-        {'name': f'Mean {spec["y"]}', 'pred': np.exp(lm), 'lower': np.exp(lm - zc * sm_), 'upper': np.exp(lm + zc * sm_), 'bounded': False},
-        {'name': f'P({spec["y"]} = 0)', 'pred': special.expit(lp), 'lower': special.expit(lp - zc * sp), 'upper': special.expit(lp + zc * sp), 'bounded': True},
-    ]
-    for f in facs:
-        f['current'] = cur[f['name']]
-    out = {'factors': facs, 'responses': [], 'alpha': alpha}
-    for r in resp:
-        ok = np.all(np.isfinite(r['lower']))
-        item = {'name': r['name'], 'bounded': r['bounded'],
-                'current': {'pred': float(r['pred'][0]), 'lower': float(r['lower'][0]) if ok else None, 'upper': float(r['upper'][0]) if ok else None},
-                'traces': []}
-        for f, (at, k) in zip(facs, spans):
-            sl = slice(at, at + k)
-            item['traces'].append({'factor': f['name'], 'x': f['labels'] if f['type'] == 'categorical' else [s[f['name']] for s in settings[sl]],
-                                   'pred': r['pred'][sl], 'lower': r['lower'][sl] if ok else None, 'upper': r['upper'][sl] if ok else None})
-        out['responses'].append(item)
-    return out
+
+    def run(settings):
+        Xn = _design_rows(P['d'], P['X'].design_info, settings)
+        Zn = _design_rows(P['dz'], P['Z'].design_info, settings) if not P['same'] else Xn
+        if P['spec']['exposure']:
+            lo = np.log(np.array([s[P['spec']['exposure']] for s in settings], dtype=float))
+        elif P['spec']['offset']:
+            lo = np.array([s[P['spec']['offset']] for s in settings], dtype=float)
+        else:
+            lo = np.zeros(len(settings))
+
+        def g(theta):
+            D = _dist(m, Xn, Zn, lo, theta)
+            with np.errstate(divide='ignore'):
+                return np.concatenate([np.log(D.mean()), special.logit(np.clip(D.p0(), 1e-300, 1 - 1e-16))])
+        theta = np.asarray(m['params'], float)
+        val, G = _gradient(g, theta)
+        V = m['cov']
+        ns = len(settings)
+        se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', G, V, G), 0)) if np.all(np.isfinite(V)) else np.full(len(val), np.nan)
+        lm, lp, sm_, sp = val[:ns], val[ns:], se[:ns], se[ns:]
+        out = []
+        for name, pred, lower, upper, bounded in ((f'Mean {spec["y"]}', np.exp(lm), np.exp(lm - zc * sm_), np.exp(lm + zc * sm_), False),
+                                                  (f'P({spec["y"]} = 0)', special.expit(lp), special.expit(lp - zc * sp), special.expit(lp + zc * sp), True)):
+            ok = bool(np.all(np.isfinite(lower)))
+            out.append({'name': name, 'pred': pred, 'lower': lower if ok else None, 'upper': upper if ok else None, 'bounded': bounded})
+        return out
+    observed = {}
+    for des in (P['d'], P['dz']):
+        for nm, a in des.alias.items():
+            if nm in observed or a not in des.df:
+                continue
+            observed[nm] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else (v.item() if hasattr(v, 'item') else v) for v in des.df[a].astype(object)]
+    for role, key in (('exposure', 'expo'), ('offset', 'off')):
+        if P['spec'][role]:
+            observed[P['spec'][role]] = np.asarray(P[key], dtype=float).tolist()
+    return profile_mod.Predictor(facs, run, observed)
+
+
+# counts.profile (the traces), counts.maximize and counts.importance, as every profiled model
+profile_mod.expose('counts', _predictor, alpha=True)
 
 
 # ---------------------------------------------------------------------------

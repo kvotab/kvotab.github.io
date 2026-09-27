@@ -1,0 +1,13 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SPECIALIZED MODELING > GAUSSIAN PROCESS
+   (smui-p-gaussproc.js): the Model Report's wide table and the progress
+   line of a fit. Colours are kvot.css's tokens, so both themes read. Class
+   prefix sm-gp-.
+   ========================================================================== */
+
+/* the Model Report has an interaction column per factor: it scrolls by itself on a narrow screen */
+.sm-gp-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-gp-scroll > table.sm-rt { margin-bottom: 8px; }
+
+/* the line that says how far the optimizer has come */
+.sm-gp-progress { color: var(--text-secondary); font-style: italic; }

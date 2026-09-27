@@ -3,18 +3,31 @@
 Every analysis module registers its entry points with @api('platform.name');
 dispatch() looks the name up, passes the JSON payload as keyword arguments,
 and returns the result as JSON.
+
+A function that needs a Pyodide package beyond numpy, scipy, pandas and
+statsmodels names it, @api('partition.fit', packages=['scikit-learn']),
+and imports it inside its body: the worker loads the package the first
+time such a function is called, so the page starts without it.
 """
 import json
 import traceback
 
 API = {}
+PACKAGES = {}
 
 
-def api(name):
+def api(name, packages=()):
     def deco(fn):
         API[name] = fn
+        if packages:
+            PACKAGES[name] = list(packages)
         return fn
     return deco
+
+
+def packages_for(name):
+    """The extra Pyodide packages a function needs, as JSON (for the worker)."""
+    return json.dumps(PACKAGES.get(name, []))
 
 
 def dispatch(name, payload_json, _data=None):
@@ -43,8 +56,10 @@ def dispatch(name, payload_json, _data=None):
     for w in caught:
         text = f'{w.category.__name__}: {w.message}'
         # Deprecations are for whoever maintains the code, not for the reader
-        # of the report: to the log (the browser console) with them.
-        if issubclass(w.category, (DeprecationWarning, PendingDeprecationWarning, FutureWarning)):
+        # of the report: to the log (the browser console) with them. So is
+        # Pyodide's own notice about its JsProxy API (threadpoolctl, on the
+        # first scikit-learn call).
+        if issubclass(w.category, (DeprecationWarning, PendingDeprecationWarning, FutureWarning)) or 'JsProxy' in str(w.message):
             import sys
             print(f'smui: {name}: {text}', file=sys.stderr)
             continue

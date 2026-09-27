@@ -1,0 +1,808 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > PARTITION
+
+   JMP's Partition platform: a decision tree for a continuous or categorical
+   response, grown one split at a time. The report, in JMP's layout:
+
+     the partition graph   the training rows in their leaves (linked), leaf
+                           means or level rates; the Small Tree View beside it
+     Split, Prune, Go      Split takes the leaf and column with the largest
+                           LogWorth; Prune takes back the weakest last split;
+                           Go (with validation) splits until the validation
+                           RSquare has not improved for 10 splits and keeps
+                           the best tree
+     the summary           RSquare, RASE (or Entropy RSquare,
+                           Misclassification Rate), N and Number of Splits
+                           for each set
+     the tree              JMP's node boxes: count, mean and std dev, or the
+                           level rates and probabilities with bars; the
+                           split's LogWorth. A click selects the node's rows;
+                           each node has its red triangle (Split Here, Split
+                           Best, Split Specific, Prune Below, Select Rows)
+     Candidates            each column's best split of a node: SS or G²,
+                           LogWorth, the condition
+     from the red triangle Split History, Leaf Report, Column Contributions,
+                           Fit Details, Confusion Matrix, ROC and Lift Curves,
+                           Actual by Predicted, K Fold Crossvalidation, the
+                           Prediction Profiler, Save Columns
+
+   The splits the user makes are the report's steps (options), replayed from
+   the root by resources/py/smui/partition.py, so Redo, By groups and
+   projects give the same tree. CART (scikit-learn) is the second method.
+   ========================================================================== */
+(function (root) {
+  'use strict';
+  const SM = root.SM;
+  const { el, svg, fmt } = SM.util;
+  const T = (v) => SM.report.plotlyText(v);
+  const MORE = { label: 'Partition', id: 'help-p-partition' };
+  const SETS = ['Training', 'Validation', 'Test'];
+  const W = (w) => Math.max(260, Math.min(w, (root.innerWidth || 1200) - 110));
+  const f4 = (v) => (v == null || !Number.isFinite(v) ? '.' : v.toFixed(4));
+  /* A report table in a box of its own that scrolls sideways on a phone. */
+  const wide = (tbl) => el('div', { class: 'sm-part-scroll' }, tbl);
+  function wrapTables(ob) {
+    if (!ob || !ob.body) return ob;
+    for (const t of ob.body.querySelectorAll(':scope > table.sm-rt, :scope > .sm-ob-row > table.sm-rt')) { const w = wide(null); t.replaceWith(w); w.append(t); }
+    return ob;
+  }
+  const sig = (v, n = 6) => fmt(v, { sig: n });
+
+  /* The colours of the sets (the same in the Split History and elsewhere). */
+  function setColor(set) {
+    const dark = SM.util.themeColors().dark;
+    return { Training: SM.report.BASE, Validation: dark ? '#e0a050' : '#b8641d', Test: dark ? '#6cc38a' : '#3a7d44' }[set];
+  }
+  const fitColor = () => (SM.util.themeColors().dark ? '#ff7a6b' : '#c0392b');
+
+  /* ---- the steps (per By group), the method, the payload ---------------------------------------------- */
+  const scopeOf = (ctx) => (ctx.byLabel ? `by:${ctx.byLabel}` : null);
+  const stepsOf = (ctx) => ctx.opt('steps', [], scopeOf(ctx)) || [];
+  const isCart = (ctx) => ctx.opt('method', 'jmp') === 'cart';
+
+  function fns(ctx) {
+    return isCart(ctx)
+      ? { fit: 'partition.cart_fit', save: 'partition.cart_save', leaves: 'partition.cart_leaves', kfold: 'partition.cart_kfold', profile: 'partition.cart.profile' }
+      : { fit: 'partition.fit', save: 'partition.save', leaves: 'partition.leaves', kfold: 'partition.kfold', profile: 'partition.profile' };
+  }
+
+  function payloadOf(ctx) {
+    // a step names its column by id (so a project remaps it); the backend takes names
+    const steps = stepsOf(ctx).map((s) => (s.col ? { ...s, col: (ctx.col(s.col) || { name: s.col }).name } : s));
+    const ms = Number(ctx.opt('minsize', 5));
+    return { y: ctx.name('y'), x: ctx.names('x'), ...SM.predict.payload(ctx), minsize: ms > 0 ? ms : 5, ordinal_order: ctx.opt('ordinalOrder', true) !== false, steps, group: ctx.byLabel || null };
+  }
+
+  function addStep(ctx, step) {
+    const steps = stepsOf(ctx).slice();
+    const last = steps[steps.length - 1];
+    if (step.op === 'split' && !step.node && last && last.op === 'split' && !last.node) steps[steps.length - 1] = { ...last, n: (last.n || 1) + (step.n || 1) };
+    else steps.push(step);
+    ctx.set('steps', steps, scopeOf(ctx));
+  }
+
+  /* ---- the render's state: rows by leaf and node ------------------------------------------------------ */
+  function state(ctx, res, base) {
+    const a = res.assign;
+    const nl = res.leaves.length;
+    const S = { ctx, res, base, F: fns(ctx), cat: res.kind === 'categorical', cart: res.method === 'cart', by: new Map(res.nodes.map((nd) => [nd.path, nd])) };
+    S.leafAll = Array.from({ length: nl }, () => []);
+    S.leafTrain = Array.from({ length: nl }, () => []);
+    S.leafIdx = Array.from({ length: nl }, () => []);
+    for (let i = 0; i < a.rows.length; i++) {
+      S.leafAll[a.leaf[i]].push(a.rows[i]);
+      if (a.set[i] === 0) { S.leafTrain[a.leaf[i]].push(a.rows[i]); S.leafIdx[a.leaf[i]].push(i); }
+    }
+    S.rowsOf = (nd, train = false) => { const out = []; for (let l = nd.lo; l <= nd.hi; l++) out.push(...(train ? S.leafTrain[l] : S.leafAll[l])); return out; };
+    // the node Candidates shows: the one picked, else the leaf the next split takes
+    const picked = ctx.opt('candNode', null, scopeOf(ctx));
+    S.cand = picked != null && S.by.has(picked) ? picked : nextLeaf(res);
+    return S;
+  }
+
+  function nextLeaf(res) {
+    let best = null;
+    for (const nd of res.nodes) {
+      if (!nd.leaf) continue;
+      const c = (nd.cands || []).find((x) => x.best);
+      if (c && (best == null || c.logworth > best.lw || (c.logworth === best.lw && c.stat > best.stat))) best = { path: nd.path, lw: c.logworth, stat: c.stat };
+    }
+    return best ? best.path : '';
+  }
+
+  /* ======================================================================
+     RENDER
+     ====================================================================== */
+  async function render(ctx) {
+    const base = payloadOf(ctx);
+    const F = fns(ctx);
+    const res = await ctx.call(F.fit, base);
+    const S = state(ctx, res, base);
+    ctx._part = S;
+    const box = ctx.container;
+    const o = (k, d) => ctx.opt(k, d);
+    // the graph and the small tree view
+    const top = [];
+    if (o('showGraph', true)) top.push(partitionGraph(ctx, S));
+    if (o('smallTree', false)) top.push(treeBox(ctx, S, true));
+    if (top.length) box.append(ctx.row(...top));
+    box.append(buttons(ctx, S));
+    box.append(summaryTable(ctx, S));
+    const notes = [...(res.notes || []), ...((res.fit && res.fit.notes) || [])];
+    if (notes.length) box.append(...notes.map((t) => (/was not done/.test(t) ? ctx.warn(t) : ctx.note(t))));
+    if (o('showTree', true)) box.append(treeBox(ctx, S, false));
+    box.append(ctx.note(treeNote(S)));
+    box.append(ctx.code(res.script));
+    if (!ctx.headless) watchSelection(ctx, S);
+    if (o('cands', true) && !S.cart) candidatesOutline(ctx, S);
+    if (o('history', false)) historyOutline(ctx, S);
+    if (o('leafReport', false)) leafOutline(ctx, S);
+    if (o('contrib', false)) contributionsOutline(ctx, S);
+    if (o('fitDetails', false)) wrapTables(SM.predict.measures(ctx, null, res.fit, { title: 'Fit Details' }));
+    SM.predict.classification(ctx, null, res.fit);
+    if (!S.cat && o('abp', false)) SM.predict.actualByPredicted(ctx, null, res.fit);
+    if (o('kfold', null)) await kfoldOutline(ctx, S);
+    if (o('profiler', false)) await SM.profiler.render(ctx, null, { sources: [{ fn: F.profile, payload: base }], option: 'profiler', note: 'The tree\'s prediction is a step function: it changes only where a split cuts the factor. Drag the red dashed line of a factor, click in its plot, or type its value.' });
+  }
+
+  function treeNote(S) {
+    const { res } = S;
+    const n = res.leaves.length;
+    const parts = [`${res.splits} split${res.splits === 1 ? '' : 's'}, ${n} lea${n === 1 ? 'f' : 'ves'}; each split's side with the larger ${S.cat ? `rate of ${res.levels[0]}` : 'mean'} is on the left.`];
+    if (S.cart) parts.push('CART (scikit-learn): each split the one with the largest decrease of the impurity, one level against the rest for a nominal X, cut halfway between two values; there is no LogWorth.');
+    else parts.push(`Click a node to select its rows (Shift adds, ${navigator.platform && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'} toggles); its red triangle has Split Here, Split Best, Split Specific and Prune Below.${S.cat ? ' Prob is the rate shrunk toward the parent node\'s, as JMP does, so it is never 0.' : ''}`);
+    return parts.join(' ');
+  }
+
+  /* ---- Split, Prune, Go, Color Points -------------------------------------------------------------------- */
+  function buttons(ctx, S) {
+    const b = (text, title, fn, disabled = false) => {
+      const x = el('button', { type: 'button', class: 'sm-btn small', text, title, disabled });
+      x.addEventListener('click', fn);
+      return x;
+    };
+    const split = b('Split', 'Split the leaf and column with the largest LogWorth (Shift-click: several splits)', async (ev) => {
+      if (ev.shiftKey) {
+        const v = await SM.ui.form({ title: 'Split', info: 'p:partition', fields: [{ key: 'n', label: 'Number of splits', type: 'number', value: 5 }], validate: (x) => (x.n >= 1 && x.n <= 500 ? null : 'From 1 to 500 splits') });
+        if (v) addStep(ctx, { op: 'split', n: Math.round(v.n) });
+      } else addStep(ctx, { op: 'split' });
+    });
+    const prune = b('Prune', 'Take back the split with two leaves and the smallest LogWorth', () => addStep(ctx, { op: 'prune' }), !S.res.splits);
+    const go = S.res.has_validation ? b('Go', 'Split until the validation RSquare has not improved for 10 splits, then keep the best tree', () => addStep(ctx, { op: 'go' })) : null;
+    const color = S.cat ? b('Color Points', 'Colour the rows by the response level', () => colorPoints(ctx, S)) : null;
+    const info = typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:partition:tree') : null;
+    return el('div', { class: 'sm-part-buttons', 'data-noexport': '' }, split, prune, go, color, info);
+  }
+
+  function colorPoints(ctx, S) {
+    const a = S.res.assign;
+    const by = S.res.levels.map(() => []);
+    a.rows.forEach((r, i) => by[a.y[i]].push(r));
+    by.forEach((rows, j) => ctx.table.setColor(rows, j % SM.util.PALETTE.length));
+    SM.ui.toast(`Coloured the rows by ${S.res.y}`);
+  }
+
+  /* ---- the summary line --------------------------------------------------------------------------------- */
+  function summaryTable(ctx, S) {
+    const { res } = S;
+    const sets = res.summary.length > 1;
+    const cols = [sets ? { key: 'set', label: '', fmt: 'text' } : null,
+      ...(S.cat ? [{ key: 'entropy_rsquare', label: 'Entropy RSquare', digits: 3 }, { key: 'misclassification', label: 'Misclassification Rate', digits: 4 }]
+        : [{ key: 'rsquare', label: 'RSquare', digits: 3 }, { key: 'rase', label: 'RASE' }]),
+      { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Number of Splits', fmt: 'int' }].filter(Boolean);
+    return el('div', { class: 'sm-part-summary' }, ctx.rt({ columns: cols, rows: res.summary }, { key: 'summary', sortable: false, name: 'Partition Summary' }));
+  }
+
+  /* ======================================================================
+     THE PARTITION GRAPH
+     ====================================================================== */
+  function partitionGraph(ctx, S) {
+    const { res } = S;
+    const a = res.assign;
+    const nl = res.leaves.length;
+    const counts = S.leafIdx.map((m) => m.length);
+    const total = counts.reduce((x, y) => x + y, 0) || 1;
+    const bands = [];
+    let at = 0;
+    for (const c of counts) { bands.push([at / total, (at + c) / total]); at += c; }
+    const centers = bands.map(([lo, hi]) => (lo + hi) / 2);
+    const showPoints = ctx.opt('showPoints', true);
+    const traces = [];
+    const shapes = bands.slice(1).map(([lo]) => ({ type: 'line', xref: 'x', yref: 'paper', x0: lo, x1: lo, y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }));
+    const rng = SM.util.rng('partition graph');
+    const hoverOf = (i, l) => `row ${a.rows[i] + 1}<br>leaf ${l + 1}: ${T(res.leaves[l].label)}`;
+    if (!S.cat) {
+      const xs = [], ys = [], rows = [], hov = [];
+      S.leafIdx.forEach((m, l) => {
+        const [lo, hi] = bands[l];
+        m.forEach((i, k) => { xs.push(lo + ((k + 0.5) / m.length) * (hi - lo)); ys.push(a.y[i]); rows.push(a.rows[i]); hov.push(`${hoverOf(i, l)}<br>${T(res.y)} ${sig(a.y[i])}`); });
+      });
+      if (showPoints) traces.push({ type: rows.length > 4000 && SM.report.hasWebGL() ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: ys, rows, marker: { size: rows.length > 1500 ? 3.5 : 5 }, hovertext: hov, hovertemplate: '%{hovertext}<extra></extra>', name: res.y });
+      const lx = [], ly = [], lt = [];
+      res.leaves.forEach((lf, l) => { lx.push(bands[l][0], bands[l][1], null); ly.push(lf.mean, lf.mean, null); lt.push(`leaf ${l + 1}: mean ${sig(lf.mean)}`, `leaf ${l + 1}: mean ${sig(lf.mean)}`, ''); });
+      traces.push({ type: 'scatter', mode: 'lines', x: lx, y: ly, line: { color: fitColor(), width: 2 }, hovertext: lt, hovertemplate: '%{hovertext}<extra></extra>', name: 'Leaf means' });
+    } else {
+      // each leaf a band, the level rates stacked in it; the points jittered in their level's part
+      const L = res.levels.length;
+      const cum = res.leaves.map((lf) => { const c = [0]; for (let j = 0; j < L; j++) c.push(c[j] + lf.rates[j]); return c; });
+      for (let j = 0; j < L; j++) {
+        const rowsJ = S.leafIdx.map((m) => m.filter((i) => a.y[i] === j).map((i) => a.rows[i]));
+        traces.push({
+          type: 'bar', x: centers, y: res.leaves.map((lf) => lf.rates[j]), base: cum.map((c) => c[j]), width: bands.map(([lo, hi]) => Math.max(1e-6, hi - lo)),
+          rows: rowsJ, rowsScale: res.leaves.map((lf, l) => (counts[l] ? 1 / counts[l] : 0)),
+          marker: { color: SM.util.PALETTE[j % SM.util.PALETTE.length], opacity: showPoints ? 0.28 : 0.8, line: { width: 0 } }, name: T(res.levels[j]),
+          hovertext: res.leaves.map((lf, l) => `leaf ${l + 1}: ${T(res.levels[j])} ${f4(lf.rates[j])}`), hovertemplate: '%{hovertext}<extra></extra>', showlegend: true,
+        });
+      }
+      if (showPoints) {
+        const xs = [], ys = [], rows = [], hov = [];
+        S.leafIdx.forEach((m, l) => {
+          const [lo, hi] = bands[l];
+          m.forEach((i) => {
+            const j = a.y[i];
+            xs.push(lo + (0.08 + 0.84 * rng.u()) * (hi - lo));
+            ys.push(cum[l][j] + (0.1 + 0.8 * rng.u()) * (cum[l][j + 1] - cum[l][j]));
+            rows.push(a.rows[i]);
+            hov.push(`${hoverOf(i, l)}<br>${T(res.y)} ${T(res.levels[j])}`);
+          });
+        });
+        traces.push({ type: rows.length > 4000 && SM.report.hasWebGL() ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: ys, rows, marker: { size: rows.length > 1500 ? 3 : 4.5 }, hovertext: hov, hovertemplate: '%{hovertext}<extra></extra>', name: 'Rows', showlegend: false });
+      }
+    }
+    const ticks = nl <= 40 ? { tickvals: centers, ticktext: res.leaves.map((lf) => String(lf.number)) } : { showticklabels: false };
+    return ctx.plot(traces, {
+      showlegend: S.cat, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, bargap: 0,
+      margin: { l: 56, r: 10, t: S.cat ? 26 : 8, b: 40 },
+      xaxis: { range: [0, 1], showgrid: false, zeroline: false, title: { text: 'Leaves (the Leaf Report\'s numbers)' }, ...ticks },
+      yaxis: S.cat ? { range: [0, 1], title: { text: `${res.y}: rate` } } : { title: { text: res.y }, zeroline: false },
+    }, { width: W(560), height: 300, title: `Partition of ${res.y}` });
+  }
+
+  /* ======================================================================
+     THE TREE: JMP's node boxes, drawn in SVG
+     ====================================================================== */
+  function geometry(ctx, S, small) {
+    const o = (k, d) => ctx.opt(k, d);
+    const G = { small, stats: o('splitStats', true), bar: o('splitBar', true), prob: o('splitProb', true), count: o('splitCount', true) };
+    G.TITLE = small ? 17 : 20; G.ROW = small ? 12 : 14; G.GAP = small ? 8 : 14; G.VGAP = small ? 18 : 28; G.PAD = 6;
+    G.L = S.cat ? S.res.levels.length : 0;
+    if (small) G.BW = 118;
+    else if (S.cat) {
+      const longest = Math.max(5, ...S.res.levels.map((l) => String(l).length));
+      G.levelW = Math.max(38, Math.min(96, Math.round(6.3 * longest)));
+      G.barW = G.bar ? 38 : 0;
+      G.numW = 46;
+      G.cntW = G.count ? 42 : 0;
+      G.BW = Math.max(184, 10 + G.levelW + G.barW + G.numW * (G.prob ? 2 : 1) + G.cntW);
+    } else G.BW = 184;
+    G.height = (nd) => {
+      if (small) return G.TITLE + G.ROW + 5;
+      let h = G.TITLE + G.PAD;
+      if (S.cat) h += (G.stats ? G.ROW * (nd.split ? 3 : 2) : 0) + G.ROW * (G.L + 1);
+      else h += G.ROW * (G.stats ? 3 + (nd.split ? 2 : 0) : 1);
+      return h + 6;
+    };
+    return G;
+  }
+
+  const clip = (s, px, cw = 6.4) => { const n = Math.max(3, Math.floor(px / cw)); s = String(s); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+
+  function treeBox(ctx, S, small) {
+    const { res } = S;
+    const G = geometry(ctx, S, small);
+    const depth = (nd) => nd.path.length;
+    const D = Math.max(0, ...res.nodes.map(depth));
+    const rowH = new Array(D + 1).fill(0);
+    for (const nd of res.nodes) rowH[depth(nd)] = Math.max(rowH[depth(nd)], G.height(nd));
+    const ys = [];
+    let y = G.PAD;
+    for (let d = 0; d <= D; d++) { ys.push(y); y += rowH[d] + G.VGAP; }
+    const H = Math.ceil(y - G.VGAP + G.PAD);
+    const nl = res.leaves.length;
+    const Wd = Math.ceil(G.GAP + nl * (G.BW + G.GAP));
+    const cx = (nd) => G.GAP + ((nd.lo + nd.hi) / 2) * (G.BW + G.GAP) + G.BW / 2;
+    const s = svg('svg', { class: `sm-part-tree${small ? ' is-small' : ''}`, width: Wd, height: H, viewBox: `0 0 ${Wd} ${H}`, role: 'group', 'aria-label': small ? 'Small tree view' : 'Decision tree' });
+    // the lines between parents and children
+    const lines = svg('g', { class: 'sm-part-links' });
+    for (const nd of res.nodes) {
+      if (!nd.split) continue;
+      const d = depth(nd);
+      const x0 = cx(nd), y0 = ys[d] + G.height(nd), ym = ys[d] + rowH[d] + G.VGAP / 2;
+      for (const p of nd.split.children) {
+        const ch = S.by.get(p);
+        lines.append(svg('path', { d: `M${x0} ${y0} V${ym} H${cx(ch)} V${ys[d + 1]}` }));
+      }
+    }
+    s.append(lines);
+    const groups = new Map();
+    for (const nd of res.nodes) {
+      const g = small ? smallNode(S, G, nd) : nodeBox(S, G, nd);
+      g.setAttribute('transform', `translate(${Math.round(cx(nd) - G.BW / 2)},${ys[depth(nd)]})`);
+      wireNode(ctx, S, g, nd);
+      groups.set(nd.path, g);
+      s.append(g);
+    }
+    (S.groups || (S.groups = [])).push(groups);
+    const wrap = el('div', { class: `sm-part-treebox${small ? ' is-small' : ''}`, role: 'region', 'aria-label': small ? 'Small tree view' : 'The tree', tabindex: '-1' }, s);
+    if (!small) wrap.style.setProperty('--sm-part-h', `${H}px`);
+    if (!ctx.headless) centre(wrap, cx(res.nodes[0]));
+    return wrap;
+  }
+
+  /* A tree wider than its box opens scrolled to its root, once the box has
+     its size (the report is built aside and put in place when it is done). */
+  function centre(wrap, x) {
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (!wrap.clientWidth) return;
+      ro.disconnect();
+      if (wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = Math.max(0, Math.round(x - wrap.clientWidth / 2));
+    });
+    ro.observe(wrap);
+  }
+
+  function txt(cls, x, y, s, anchor = null) {
+    return svg('text', { class: cls, x, y, 'text-anchor': anchor }, String(s));
+  }
+
+  function nodeBox(S, G, nd) {
+    const { res } = S;
+    const h = G.height(nd);
+    const g = svg('g', { class: `sm-part-node${nd.leaf ? ' is-leaf' : ''}${S.cand === nd.path ? ' is-picked' : ''}`, tabindex: '0', role: 'button', 'data-path': nd.path,
+      'aria-label': `${nd.label}: count ${fmt(nd.count)}${S.cat ? '' : `, mean ${sig(nd.mean)}`}${nd.split ? `, split by ${nd.split.column}` : ''}` });
+    g.append(svg('title', null, `${nd.label}${nd.leaf ? ` (leaf ${nd.number})` : ''}`));
+    g.append(svg('rect', { class: 'sm-part-box', x: 0.5, y: 0.5, width: G.BW - 1, height: h - 1, rx: 3 }));
+    g.append(svg('path', { class: 'sm-part-head', d: `M0.5 ${G.TITLE} V3.5 Q0.5 0.5 3.5 0.5 H${G.BW - 3.5} Q${G.BW - 0.5} 0.5 ${G.BW - 0.5} 3.5 V${G.TITLE} Z` }));
+    const tri = svg('g', { class: 'sm-part-menu', role: 'button', 'aria-label': `Options for ${nd.label}` }, svg('rect', { x: 2, y: 2, width: 15, height: G.TITLE - 4, fill: 'transparent' }), svg('path', { class: 'sm-part-tri', d: `M5 ${G.TITLE / 2 - 3} L13 ${G.TITLE / 2 - 3} L9 ${G.TITLE / 2 + 3} Z` }));
+    g.append(tri);
+    g.append(txt('sm-part-title', 18, G.TITLE - 6, clip(nd.label, G.BW - 24, 7.1)));
+    let y = G.TITLE + G.PAD + G.ROW - 3;
+    const kv = (k, v) => { g.append(txt('sm-part-k', 7, y, k), txt('sm-part-v', G.BW - 7, y, v, 'end')); y += G.ROW; };
+    if (!S.cat) {
+      if (G.stats) {
+        kv('Count', fmt(nd.count)); kv('Mean', sig(nd.mean)); kv('Std Dev', nd.sd == null ? '.' : sig(nd.sd));
+        if (nd.split) { kv(S.cart ? 'SS' : 'LogWorth', S.cart ? sig(nd.split.stat) : sig(nd.split.logworth)); kv('Difference', sig(nd.split.difference)); }
+      } else kv('Mean', sig(nd.mean));
+    } else {
+      if (G.stats) {
+        kv('Count', fmt(nd.count)); kv('G^2', sig(nd.g2));
+        if (nd.split) kv(S.cart ? 'Split G^2' : 'LogWorth', S.cart ? sig(nd.split.stat) : sig(nd.split.logworth));
+      }
+      // the level table: Level, a bar, Rate, Prob, Count
+      let x = 7 + G.levelW;
+      const xBar = x; if (G.bar) x += G.barW;
+      const xRate = x + G.numW - 4; x += G.numW;
+      const xProb = G.prob ? x + G.numW - 4 : null; if (G.prob) x += G.numW;
+      const xCnt = G.count ? x + G.cntW - 4 : null;
+      g.append(txt('sm-part-h', 7, y, 'Level'), txt('sm-part-h', xRate, y, 'Rate', 'end'));
+      if (G.prob) g.append(txt('sm-part-h', xProb, y, 'Prob', 'end'));
+      if (G.count) g.append(txt('sm-part-h', xCnt, y, 'Count', 'end'));
+      y += G.ROW;
+      res.levels.forEach((lv, j) => {
+        g.append(txt('sm-part-k', 7, y, clip(lv, G.levelW - 4)));
+        if (G.bar) {
+          g.append(svg('rect', { class: 'sm-part-track', x: xBar, y: y - 8, width: G.barW - 6, height: 8 }));
+          g.append(svg('rect', { class: 'sm-part-rate', x: xBar, y: y - 8, width: Math.max(0, (G.barW - 6) * nd.rates[j]), height: 8, fill: SM.util.PALETTE[j % SM.util.PALETTE.length] }));
+        }
+        g.append(txt('sm-part-v', xRate, y, f4(nd.rates[j]), 'end'));
+        if (G.prob) g.append(txt('sm-part-v', xProb, y, f4(nd.probs[j]), 'end'));
+        if (G.count) g.append(txt('sm-part-v', xCnt, y, fmt(Math.round(nd.counts[j] * 1000) / 1000), 'end'));
+        y += G.ROW;
+      });
+    }
+    g.append(svg('rect', { class: 'sm-part-sel', x: 1, y: h - 4, width: 0, height: 3 }));
+    return g;
+  }
+
+  function smallNode(S, G, nd) {
+    const h = G.height(nd);
+    const g = svg('g', { class: `sm-part-node is-small${nd.leaf ? ' is-leaf' : ''}`, tabindex: '0', role: 'button', 'data-path': nd.path, 'aria-label': `${nd.label}: count ${fmt(nd.count)}` });
+    g.append(svg('title', null, nd.label));
+    g.append(svg('rect', { class: 'sm-part-box', x: 0.5, y: 0.5, width: G.BW - 1, height: h - 1, rx: 3 }));
+    g.append(txt('sm-part-title', 5, G.TITLE - 5, clip(nd.label, G.BW - 8, 6.2)));
+    // the most likely level and its probability, or the mean
+    let right = sig(nd.mean, 4);
+    if (S.cat) { const j = nd.probs.indexOf(Math.max(...nd.probs)); right = `${clip(S.res.levels[j], 36, 5.6)} ${nd.probs[j].toFixed(3)}`; }
+    g.append(txt('sm-part-k', 5, G.TITLE + G.ROW - 2, `${fmt(nd.count)} rows`), txt('sm-part-v', G.BW - 5, G.TITLE + G.ROW - 2, right, 'end'));
+    g.append(svg('rect', { class: 'sm-part-sel', x: 1, y: h - 4, width: 0, height: 3 }));
+    return g;
+  }
+
+  /* A click on a node selects its rows; its red triangle (or a right click)
+     opens its menu; Enter selects, the context-menu key opens the menu. */
+  function wireNode(ctx, S, g, nd) {
+    const select = (ev) => {
+      if (ctx.headless) return;
+      const rows = S.rowsOf(nd);
+      const mode = ev && ev.shiftKey ? 'add' : ev && (ev.metaKey || ev.ctrlKey) ? 'toggle' : 'replace';
+      ctx.table.select(rows, mode);
+      pickNode(ctx, S, nd.path);
+    };
+    const menu = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const r = g.getBoundingClientRect();
+      SM.ui.menu(nodeMenu(ctx, S, nd), ev.clientX != null && ev.type !== 'keydown' ? { x: ev.clientX, y: ev.clientY } : { x: r.left, y: r.bottom }, { returnFocus: g });
+    };
+    g.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('.sm-part-menu')) menu(ev); else select(ev); });
+    g.addEventListener('contextmenu', menu);
+    g.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(ev); } else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) menu(ev);
+    });
+  }
+
+  function nodeMenu(ctx, S, nd) {
+    const items = [{ head: nd.label }];
+    if (!S.cart) {
+      const best = (nd.cands || []).find((c) => c.best);
+      items.push(
+        { label: 'Split Here', disabled: !nd.leaf || !best, action: () => addStep(ctx, { op: 'here', node: nd.path }) },
+        { label: 'Split Best', disabled: !S.res.nodes.some((x) => x.leaf && x.lo >= nd.lo && x.hi <= nd.hi && (x.cands || []).some((c) => c.best)), action: () => addStep(ctx, { op: 'split', node: nd.path }) },
+        { label: 'Split Specific…', disabled: !nd.leaf, action: () => splitSpecific(ctx, S, nd) },
+        { label: 'Prune Below', disabled: nd.leaf, action: () => addStep(ctx, { op: 'below', node: nd.path }) },
+        { label: 'Prune Worst', disabled: nd.leaf, action: () => addStep(ctx, { op: 'prune', node: nd.path }) },
+        { separator: true },
+      );
+    }
+    items.push({ label: 'Select Rows', action: () => { ctx.table.select(S.rowsOf(nd)); pickNode(ctx, S, nd.path); } });
+    if (!S.cart) items.push({ label: 'Show Candidates', action: () => pickNode(ctx, S, nd.path, true) });
+    return items;
+  }
+
+  async function splitSpecific(ctx, S, nd) {
+    const xs = ctx.roles('x');
+    const cont = new Set(S.res.columns.filter((c) => c.kind === 'continuous').map((c) => c.name));
+    const best = (nd.cands || []).find((c) => c.best);
+    const first = (best && xs.find((c) => c.name === best.column)) || xs[0];
+    const v = await SM.ui.form({
+      title: `Split Specific: ${nd.label}`, info: 'p:partition:tree',
+      lead: 'Split this leaf by a column of your choice: at its best cut, or at a value you give (a continuous column). The other rows of the tree stay as they are.',
+      fields: [
+        { key: 'col', label: 'Column', type: 'select', value: first ? first.id : '', choices: xs.map((c) => [c.id, `${c.name}${cont.has(c.name) ? '' : ' (levels grouped)'}`]) },
+        { key: 'cut', label: 'Cut value (a continuous column; empty: the best cut)', type: 'number', value: null },
+      ],
+      validate: (x) => (x.cut != null && !Number.isFinite(x.cut) ? 'The cut value is a number' : null),
+    });
+    if (!v) return;
+    const col = ctx.col(v.col);
+    const step = { op: 'specific', node: nd.path, col: v.col };
+    if (v.cut != null && col && cont.has(col.name)) step.cut = v.cut;
+    addStep(ctx, step);
+  }
+
+  /* The node Candidates shows (and the one drawn picked), without a redraw. */
+  function pickNode(ctx, S, path, open = false) {
+    if (ctx.headless) return;
+    ctx.set('candNode', path, scopeOf(ctx), { rerun: false });
+    S.cand = path;
+    for (const groups of S.groups || []) for (const [p, g] of groups) g.classList.toggle('is-picked', p === path);
+    if (S.fillCands) S.fillCands();
+    if (open && S.candOutline) { S.candOutline.setOpen(true); S.candOutline.el.scrollIntoView({ block: 'nearest' }); }
+  }
+
+  /* Rows selected anywhere show as an orange bar along each node's foot: the
+     share of its training rows selected. */
+  function watchSelection(ctx, S) {
+    const t = ctx.table;
+    const apply = () => {
+      const st = t.state;
+      const sel = S.leafTrain.map((rows) => { let k = 0; for (const r of rows) if (st[r] & 1) k++; return k; });
+      const tot = S.leafTrain.map((rows) => rows.length);
+      for (const groups of S.groups || []) {
+        for (const [p, g] of groups) {
+          const nd = S.by.get(p);
+          let a = 0, b = 0;
+          for (let l = nd.lo; l <= nd.hi; l++) { a += sel[l]; b += tot[l]; }
+          const bar = g.querySelector('.sm-part-sel');
+          const box = g.querySelector('.sm-part-box');
+          if (bar && box) bar.setAttribute('width', String(b ? Math.max(0, (Number(box.getAttribute('width')) - 1) * (a / b)) : 0));
+        }
+      }
+    };
+    let off = null;
+    off = t.on('rowstate', () => {
+      const alive = (S.groups || []).some((groups) => [...groups.values()].some((g) => g.isConnected));
+      if (!alive && ctx.report.body && !ctx.report.body.classList.contains('is-running')) { off(); return; }
+      apply();
+    });
+    requestAnimationFrame(apply);
+  }
+
+  /* ======================================================================
+     CANDIDATES
+     ====================================================================== */
+  function candidatesOutline(ctx, S) {
+    const ob = ctx.outline('Candidates', { key: 'cands', info: 'p:partition:cands', menu: () => [
+      ctx.check('Sort Split Candidates', 'sortCands', null, false),
+      { label: 'Remove', action: () => ctx.set('cands', false) },
+    ] });
+    S.candOutline = ob;
+    const host = el('div');
+    ob.add(host);
+    S.fillCands = () => {
+      const nd = S.by.get(S.cand) || S.by.get('');
+      const rows = (nd.cands || []).map((c) => ({ ...c, mark: nd.split ? (c.column === nd.split.column ? '✓' : '') : (c.best ? '✓' : '') }));
+      if (ctx.opt('sortCands', false)) rows.sort((a, b) => (b.logworth ?? -1) - (a.logworth ?? -1));
+      const what = nd.split ? `split by ${nd.split.column} (✓)` : S.cand === nextLeaf(S.res) && (nd.cands || []).some((c) => c.best) ? 'the leaf the next Split takes; ✓ its best column' : 'a leaf; ✓ its best column';
+      host.replaceChildren(
+        // Term names a row (Bootstrap finds rows by their text columns); the conditions change with the rows
+        wide(ctx.rt({ columns: [{ key: 'mark', label: '', fmt: 'cond', left: true }, { key: 'column', label: 'Term', fmt: 'text' }, { key: 'stat', label: S.cat ? 'Candidate G^2' : 'Candidate SS' }, { key: 'logworth', label: 'LogWorth', digits: 4 }, { key: 'split', label: 'Split', fmt: 'cond', left: true }, { key: 'other', label: 'Other Side', fmt: 'cond', left: true, hidden: true }], rows },
+          { key: 'cands', caption: `${nd.label} (${fmt(nd.count)} rows): ${what}`, sortable: true, cellClass: (r) => (r.mark ? 'sm-part-best' : '') })),
+        ctx.note(`For each column its best split of this node (a click on a node shows its candidates): ${S.cat ? 'G², the likelihood-ratio chi-square of the split' : 'SS, the sum of squares the split explains'}, and LogWorth, −log10 of its p-value adjusted for the number of ways the column can be cut. A column with no split has none that leaves ${fmt(S.res.minsize)} rows on each side.`));
+    };
+    S.fillCands();
+  }
+
+  /* ======================================================================
+     SPLIT HISTORY
+     ====================================================================== */
+  function historyOutline(ctx, S) {
+    const { res } = S;
+    const ob = ctx.outline('Split History', { key: 'history', info: 'p:partition:history', menu: () => [{ label: 'Remove', action: () => ctx.set('history', false) }] });
+    const sets = SETS.filter((s) => res.history.some((h) => h[s] != null));
+    const traces = sets.map((s) => ({ type: 'scatter', mode: 'lines+markers', x: res.history.map((h) => h.splits), y: res.history.map((h) => h[s]), name: s, line: { color: setColor(s), width: 1.8 }, marker: { size: 5, color: setColor(s) }, hovertemplate: `${s}: %{x} splits, RSquare %{y:.4f}<extra></extra>` }));
+    const shapes = [];
+    if (res.go) {
+      const after = res.go.trace.filter((e) => e.splits > res.go.best);
+      for (const s of sets) if (after.length) traces.push({ type: 'scatter', mode: 'lines+markers', x: [res.go.best, ...after.map((e) => e.splits)], y: [res.go.trace.find((e) => e.splits === res.go.best)?.[s] ?? null, ...after.map((e) => e[s])], line: { color: setColor(s), width: 1.2, dash: 'dot' }, marker: { size: 4, color: setColor(s), symbol: 'circle-open' }, showlegend: false, hovertemplate: `${s}, looked at by Go: %{x} splits, RSquare %{y:.4f}<extra></extra>` });
+      shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: res.go.best, x1: res.go.best, y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dash' } });
+    }
+    ob.add(ctx.row(ctx.plot(traces, { showlegend: sets.length > 1, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, margin: { l: 56, r: 12, t: sets.length > 1 ? 26 : 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: S.cat ? 'Entropy RSquare' : 'RSquare' } } }, { width: W(460), height: 280, title: 'Split history', select: false })),
+      ctx.note(`${S.cat ? 'The entropy RSquare' : 'RSquare'} of each set after each split of the tree, in the order the splits were made.${res.go ? ` Go looked ${res.go.trace.length - 1} splits past ${res.go.start} (dotted) and kept ${res.go.best}, the best validation RSquare: the next 10 splits did not beat it.` : ''}${sets.length > 1 ? ' A validation curve that turns down while the training curve still rises is the tree learning noise.' : ''}`));
+  }
+
+  /* ======================================================================
+     LEAF REPORT
+     ====================================================================== */
+  function leafOutline(ctx, S) {
+    const { res } = S;
+    const ob = ctx.outline('Leaf Report', { key: 'leaves', info: 'p:partition:leaves', menu: () => [{ label: 'Remove', action: () => ctx.set('leafReport', false) }] });
+    const nl = res.leaves.length;
+    const labels = res.leaves.map((lf) => `${lf.number}`);
+    const h = Math.max(160, Math.min(560, 48 + 22 * nl));
+    if (!S.cat) {
+      const rows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, mean: lf.mean, sd: lf.sd, count: lf.count }));
+      const t = ctx.rt({ columns: [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev', hidden: true }, { key: 'count', label: 'Count', fmt: 'int' }], rows }, { key: 'leafreport', caption: 'Response Means' });
+      const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: labels, x: res.leaves.map((lf) => lf.mean), rows: S.leafTrain, rowsScale: res.leaves.map((lf, l) => (S.leafTrain[l].length ? lf.mean / S.leafTrain[l].length : 0)), marker: { color: SM.report.BAR }, hovertext: res.leaves.map((lf) => `leaf ${lf.number}: ${T(lf.label)}<br>mean ${sig(lf.mean)}, ${fmt(lf.count)} rows`), hovertemplate: '%{hovertext}<extra></extra>' }],
+        { margin: { l: 44, r: 12, t: 6, b: 38 }, xaxis: { title: { text: `Mean ${res.y}` }, zeroline: true }, yaxis: { type: 'category', autorange: 'reversed', title: { text: 'Leaf' } }, bargap: 0.25 }, { width: W(320), height: h, title: 'Leaf means', select: false });
+      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, t), bars));
+    } else {
+      const L = res.levels.length;
+      const pcols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, ...res.levels.map((lv, j) => ({ key: `p${j}`, label: `Prob(${lv})`, digits: 4 }))];
+      const prows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, ...Object.fromEntries(lf.probs.map((p, j) => [`p${j}`, p])) }));
+      const ccols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, ...res.levels.map((lv, j) => ({ key: `c${j}`, label: String(lv) })), { key: 'count', label: 'Count' }];
+      const crows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, count: lf.count, ...Object.fromEntries(lf.counts.map((c, j) => [`c${j}`, c])) }));
+      const a = res.assign;
+      const traces = [];
+      for (let j = 0; j < L; j++) {
+        const cum = res.leaves.map((lf) => lf.probs.slice(0, j).reduce((x, y) => x + y, 0));
+        const rowsJ = S.leafIdx.map((m) => m.filter((i) => a.y[i] === j).map((i) => a.rows[i]));
+        traces.push({ type: 'bar', orientation: 'h', y: labels, x: res.leaves.map((lf) => lf.probs[j]), base: cum, rows: rowsJ, rowsScale: res.leaves.map((lf, l) => (rowsJ[l].length ? lf.probs[j] / rowsJ[l].length : 0)), name: T(lv(res, j)), marker: { color: SM.util.PALETTE[j % SM.util.PALETTE.length] }, hovertext: res.leaves.map((lf) => `leaf ${lf.number}: ${T(lf.label)}<br>Prob(${T(lv(res, j))}) ${f4(lf.probs[j])}`), hovertemplate: '%{hovertext}<extra></extra>' });
+      }
+      const bars = ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 44, r: 12, t: 26, b: 38 }, xaxis: { title: { text: 'Prob' }, range: [0, 1] }, yaxis: { type: 'category', autorange: 'reversed', title: { text: 'Leaf' } }, bargap: 0.25 }, { width: W(340), height: h + 20, title: 'Leaf probabilities', select: false });
+      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: pcols, rows: prows }, { key: 'leafprob', caption: 'Response Prob' })), bars),
+        el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: ccols, rows: crows }, { key: 'leafcount', caption: 'Response Counts' })));
+    }
+    ob.add(ctx.note(`The leaves from left to right, numbered as Save Leaf Numbers numbers them; the label is the path of conditions from the root (Save Leaf Labels). ${S.cat ? 'Prob is the smoothed probability the tree predicts; the counts are the training rows (by weight).' : 'The mean is the tree\'s prediction for the leaf\'s rows.'} A bar selects the leaf's training rows.`));
+  }
+  const lv = (res, j) => String(res.levels[j]);
+
+  /* ======================================================================
+     COLUMN CONTRIBUTIONS
+     ====================================================================== */
+  function contributionsOutline(ctx, S) {
+    const c = S.res.contributions;
+    const splits = c.rows.map((r) => `${r.column} ${r.splits}`).join(', ');
+    SM.predict.contributions(ctx, null, c, { note: `Number of Splits: ${splits}. ${S.cat ? 'G^2' : 'SS'} is the sum over the column's splits of what each explains; the portion is its share of the total.` });
+  }
+
+  /* ======================================================================
+     K FOLD CROSSVALIDATION
+     ====================================================================== */
+  async function kfoldDialog(ctx) {
+    const v = await SM.ui.form({ title: 'K Fold Crossvalidation', info: 'p:partition:kfold', lead: 'The training rows are split into k folds drawn from the report\'s seed; each fold is predicted by a tree with as many best splits as this one, grown on the other folds.', fields: [{ key: 'k', label: 'Number of folds (k)', type: 'number', value: ctx.opt('kfold', null) || 5 }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 100 ? null : 'k is a whole number from 2 to 100') });
+    if (v) ctx.set('kfold', v.k);
+  }
+
+  async function kfoldOutline(ctx, S) {
+    const k = ctx.opt('kfold', null);
+    const ob = ctx.outline('Crossvalidation', { key: 'kfold', info: 'p:partition:kfold', menu: () => [{ label: 'Number of Folds…', action: () => kfoldDialog(ctx) }, { label: 'Remove', action: () => ctx.set('kfold', null) }] });
+    let r;
+    try { r = await ctx.call(S.F.kfold, { ...S.base, k }); } catch (e) { ob.add(ctx.error(e)); return; }
+    const src = (m, what) => (S.cat ? { source: what, k: what.startsWith('K') ? r.k : null, entropy_rsquare: m.entropy_rsquare, misclassification: m.misclassification, neg_loglik: m.neg_loglik, n: m.n }
+      : { source: what, k: what.startsWith('K') ? r.k : null, rsquare: m.rsquare, rase: m.rase, sse: m.sse, n: m.n });
+    const cols = [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'k', label: 'k', fmt: 'int' },
+      ...(S.cat ? [{ key: 'entropy_rsquare', label: 'Entropy RSquare', digits: 4 }, { key: 'misclassification', label: 'Misclassification Rate', digits: 4 }, { key: 'neg_loglik', label: '-LogLikelihood' }]
+        : [{ key: 'rsquare', label: 'RSquare', digits: 4 }, { key: 'rase', label: 'RASE' }, { key: 'sse', label: 'SSE' }]), { key: 'n', label: 'N' }];
+    ob.add(wide(ctx.rt({ columns: cols, rows: [src(r.folded, 'K Fold'), src(r.overall, 'Overall')] }, { key: 'kfold', sortable: false })),
+      wide(ctx.rt({ columns: [{ key: 'fold', label: 'Fold', fmt: 'int' }, { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Splits', fmt: 'int' }, { key: 'rsquare', label: S.cat ? 'Entropy RSquare' : 'RSquare', digits: 4 }], rows: r.folds }, { key: 'folds', caption: 'Each Fold', sortable: false })),
+      ctx.note(`K Fold: each training row predicted by the tree grown without its fold (${r.k} trees of the best ${r.splits} splits each${S.cart ? ', CART' : ''}); Overall: this tree on its own training rows. A K Fold RSquare well below the overall one means the tree is larger than the data support.`),
+      ctx.code(r.script));
+  }
+
+  /* ======================================================================
+     SAVE COLUMNS, MINIMUM SIZE SPLIT, THE RED TRIANGLE
+     ====================================================================== */
+  function saveItems(ctx, S) {
+    if (!S) return [];
+    const base = SM.predict.saveItems(ctx, S.F.save, S.base, S.res.fit)[0];
+    const leaves = async (what) => {
+      try {
+        const r = await ctx.call(S.F.leaves, S.base);
+        const notes = `the leaf of each row in ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`;
+        if (what === 'numbers') ctx.saveColumn('Leaf Number', { rows: r.rows, values: r.numbers }, { notes, modelingType: 'nominal' });
+        else ctx.saveColumn('Leaf Label', { rows: r.rows, values: r.labels }, { notes, dataType: 'character' });
+      } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+    };
+    return [{ label: 'Save Columns', submenu: () => [...(typeof base.submenu === 'function' ? base.submenu() : base.submenu), { label: 'Save Leaf Numbers', action: () => leaves('numbers') }, { label: 'Save Leaf Labels', action: () => leaves('labels') }] }];
+  }
+
+  async function minSizeDialog(ctx) {
+    const v = await SM.ui.form({ title: 'Minimum Size Split', info: 'p:partition', lead: 'The fewest rows (by Freq) either side of a split may have: a number of rows, or below 1 a share of the training rows. JMP\'s default is 5.', fields: [{ key: 'm', label: 'Minimum size', type: 'number', value: ctx.opt('minsize', 5) }], validate: (x) => (x.m > 0 ? null : 'A positive number') });
+    if (v) ctx.set('minsize', v.m);
+  }
+
+  function topMenu(ctx) {
+    const S = ctx._part;
+    const cat = S ? S.cat : ctx.roles('y').some((c) => c.isCategorical);
+    const cart = isCart(ctx);
+    return [
+      { label: 'Display Options', submenu: () => [
+        ctx.check('Show Points', 'showPoints', null, true), ctx.check('Show Tree', 'showTree', null, true), ctx.check('Show Graph', 'showGraph', null, true),
+        cat ? ctx.check('Show Split Bar', 'splitBar', null, true) : null, ctx.check('Show Split Stats', 'splitStats', null, true),
+        cat ? ctx.check('Show Split Prob', 'splitProb', null, true) : null, cat ? ctx.check('Show Split Count', 'splitCount', null, true) : null,
+        ctx.check('Show Split Candidates', 'cands', null, true, { disabled: cart }), ctx.check('Sort Split Candidates', 'sortCands', null, false, { disabled: cart }),
+      ].filter(Boolean) },
+      { label: 'Split Best', action: () => addStep(ctx, { op: 'split' }) },
+      { label: 'Prune Worst', disabled: !S || !S.res.splits, action: () => addStep(ctx, { op: 'prune' }) },
+      { label: 'Minimum Size Split…', action: () => minSizeDialog(ctx) },
+      { separator: true },
+      cat ? null : ctx.check('Plot Actual by Predicted', 'abp', null, false),
+      ctx.check('Small Tree View', 'smallTree', null, false),
+      ctx.check('Leaf Report', 'leafReport', null, false),
+      ctx.check('Column Contributions', 'contrib', null, false),
+      ctx.check('Split History', 'history', null, false),
+      { label: 'K Fold Crossvalidation…', checked: !!ctx.opt('kfold', null), action: () => kfoldDialog(ctx) },
+      ...(cat && S ? SM.predict.classificationItems(ctx, S.res.fit) : []),
+      ctx.check('Show Fit Details', 'fitDetails', null, false),
+      ctx.check('Profiler', 'profiler', null, false),
+      cat && S ? { label: 'Color Points', action: () => colorPoints(ctx, S) } : null,
+      { separator: true },
+      { label: 'Method', submenu: () => [['jmp', 'Decision Tree (LogWorth, JMP)'], ['cart', 'CART (scikit-learn)']].map(([k, l]) => ({ label: l, checked: ctx.opt('method', 'jmp') === k, action: () => ctx.set('method', k) })) },
+      { label: 'Start Over', disabled: !stepsOf(ctx).length, action: () => ctx.set('steps', [], scopeOf(ctx)) },
+      ...saveItems(ctx, S),
+    ].filter(Boolean);
+  }
+
+  /* ======================================================================
+     TOPICS: the (i) panels
+     ====================================================================== */
+  const TOPICS = {
+    'p:partition': {
+      kicker: 'Analyze > Predictive Modeling', title: 'Partition',
+      lead: 'A decision tree, grown one split at a time as JMP\'s Partition grows it. Each split cuts the rows of a leaf in two by one column: a continuous or ordinal column at a value, a nominal column into two groups of its levels. The leaves predict the mean of a continuous response, or the probability of each level of a categorical one.',
+      sections: [
+        { heading: 'Roles', choices: [['Y, Response', 'One column: continuous (a regression tree) or nominal or ordinal (a classification tree).'], ['X, Factor', 'The columns a split may use, of any type.'], ['Weight, Freq', 'Freq counts a row that many times (the minimum size counts it so); Weight weighs it in the means and rates.'], ['Validation', 'Rows marked 0 or Training grow the tree; 1 or Validation choose its size (Go); 2 or Test are kept out of both.'], ['By', 'A tree for each level, each with its own splits.']] },
+        { heading: 'Launch options', choices: [['Minimum Size Split', 'The fewest rows either side of a split (JMP\'s default 5); below 1, a share of the training rows.'], ['Informative Missing', 'A missing value of a continuous X goes to the side of each split that fits better; a missing level of a categorical X is a level of its own. Off: rows missing a factor are left out (JMP keeps them).'], ['Ordinal Restricts Order', 'An ordinal X is cut between neighbouring levels only; off, its levels are grouped freely like a nominal X\'s.'], ['Validation Portion, Random Seed', 'A share of the rows held back for validation, drawn from the seed.'], ['Method', 'Decision Tree (JMP\'s LogWorth, the default), or CART: scikit-learn\'s trees, grown best first, for comparison. CART takes the split with the largest decrease of the impurity, not adjusted for how many cuts a column has; it splits a nominal X one level against the rest, cuts halfway between two values, and its leaf probabilities are the plain rates, which can be 0.']] },
+        { heading: 'How a split is chosen', text: 'For every leaf and column the best cut: the one that explains the most, SS (the sum of squares between the two sides) for a continuous response, G² (the likelihood-ratio chi-square) for a categorical one. A nominal X\'s levels are ordered by the response mean or rate and cut between neighbours (the best grouping for a continuous or two-level response); for a response of three or more levels every grouping is tried, up to 12 levels. The split made is the one with the largest LogWorth: −log10 of the split\'s p-value (the two-group F test, or G² as a chi-square) adjusted for the number of ways the column can be cut, so a column with many values does not win just by having more cuts to choose from.' },
+        { heading: 'The adjustment', text: 'JMP calibrates its adjustment by Monte Carlo and has not published it, so the LogWorths here are not JMP\'s numbers, and where two columns are close the split chosen can differ. Here: for ordered cuts (a continuous or ordinal X), 1 plus the expected number of times the statistic crosses its observed value between neighbouring cuts (Lausen, Sauerbrei and Schumacher 1994; Rice\'s formula for a chi process); for a nominal X the smaller of Bonferroni over its groupings and Scheffé\'s bound; never more than Bonferroni over the candidates. With no effect an adjusted p-value falls below 0.05 in at most about 5% of samples (2 to 4% for a column with many values, where the bound is a little conservative), where the best of 200 unadjusted cuts does in more than half (the tests check both).' },
+        { heading: 'Probabilities', text: 'A leaf\'s probability of a level is (n + prior)/(N + 1): its count of the level plus a prior, over its count plus one. The root\'s prior is the training rates; a child\'s is 0.9 of its parent\'s prior plus 0.1 of its parent\'s probability (JMP\'s documented rule, λ = 0.9). So no probability is 0, and a small leaf leans toward its parent. Rate is the plain share.' },
+        { heading: 'Beyond and unlike JMP', text: 'A cut is written as the shortest decimal between the two neighbouring values (JMP writes a data value); the rows split the same way. CART, scikit-learn\'s trees, is a second method for comparison. Not here: Lock Columns, Tree 3D, the prediction formulas, Specify Profit Matrix, and JMP Pro\'s Bootstrap Forest and Boosted Tree (their own platforms).' },
+      ],
+      more: MORE,
+    },
+    'p:partition:tree': {
+      kicker: 'Partition', title: 'The Tree and the Buttons',
+      lead: 'Split splits the leaf whose best split has the largest LogWorth; Prune takes back the split with two leaves and the smallest LogWorth; Go (with validation rows) splits until the validation RSquare has not improved for 10 splits and keeps the tree with the best one. Shift-click Split for several splits. The splits are the report\'s: Redo, a project and By keep them.',
+      sections: [
+        { heading: 'The graph', text: 'The training rows side by side in their leaves (numbered as in the Leaf Report), each leaf as wide as its rows: the response with the leaf\'s mean, or the leaf\'s rates of the levels stacked with the rows scattered in them. Drag over points to select rows.' },
+        { heading: 'A node', choices: [['Count', 'its training rows (by Freq)'], ['Mean, Std Dev', 'of a continuous response'], ['G^2', 'its −2 log likelihood: 2 × the sum of −log(rate) over its rows'], ['Rate, Prob', 'the share of each level, and the probability the tree predicts (the rate shrunk toward the parent\'s)'], ['LogWorth', 'of the split made at the node'], ['Difference', 'the left child\'s mean minus the right child\'s']] },
+        { heading: 'Clicking', text: 'A click on a node selects its rows (every set) in the table and shows its candidates; Shift adds, Ctrl or ⌘ toggles. The orange bar along its foot is the share of its training rows selected. Its red triangle (or a right click) has Split Here (its best split), Split Best (the best split at or below it), Split Specific (a column of your choice, at a value you give), Prune Below, Prune Worst and Select Rows.' },
+      ],
+      more: MORE,
+    },
+    'p:partition:cands': {
+      kicker: 'Partition', title: 'Candidates',
+      lead: 'For the node picked (by a click; at first the leaf the next Split takes), every column\'s best split: its SS or G², its LogWorth and the condition of its left side (right click, Columns, shows the other side). ✓ marks the column split there, or a leaf\'s best.',
+      more: MORE,
+    },
+    'p:partition:history': {
+      kicker: 'Partition', title: 'Split History',
+      lead: 'RSquare (the entropy RSquare for a categorical response) of each set after each split, in the order the splits were made. With validation rows the validation curve shows where more splits stop helping; after Go the splits it looked at past the tree it kept are dotted.',
+      more: MORE,
+    },
+    'p:partition:leaves': {
+      kicker: 'Partition', title: 'Leaf Report',
+      lead: 'Each leaf, left to right: its label (the conditions from the root, joined by &), its mean or level probabilities, and its count; a bar per leaf, which selects the leaf\'s training rows. For a categorical response also the counts of each level.',
+      more: MORE,
+    },
+    'p:partition:kfold': {
+      kicker: 'Partition', title: 'K Fold Crossvalidation',
+      lead: 'The training rows split into k folds at random (from the report\'s seed). Each fold is predicted by a tree grown on the other folds with as many splits as this tree has, each the best there (manual splits are not copied). K Fold gives the measures of those out-of-fold predictions, Overall the tree\'s own on its training rows.',
+      more: MORE,
+    },
+  };
+
+  /* ======================================================================
+     THE PLATFORM
+     ====================================================================== */
+  SM.platforms.register({
+    id: 'partition', label: 'Partition', menu: 'Analyze/Predictive Modeling', order: 10, info: 'p:partition', topics: TOPICS,
+    about: 'JMP\'s Partition platform: a decision tree for a continuous or categorical response, grown one split at a time (Split, Prune, and Go with validation rows), each split the column and cut with the largest LogWorth, the adjusted p-value of each column\'s best split (the F test of the two sides, or the likelihood-ratio G²); continuous and ordinal columns cut at a value, nominal ones into two groups of levels; Informative Missing; leaf probabilities smoothed by JMP\'s rule. The report: the partition graph (linked), JMP\'s node boxes (a click selects a node\'s rows; each node has its own red triangle), candidates, the split history, the leaf report, column contributions, fit details, confusion matrix, ROC and lift curves, actual by predicted, K-fold crossvalidation, the Prediction Profiler, and Save Columns (predicteds, residuals, leaf numbers and labels). The splitter is written here in numpy after JMP\'s documented method; CART (scikit-learn) is a second method.',
+    uses: ['numpy (the splitter, after JMP\'s documented method)', 'scipy.stats (f, chi2, chi), scipy.special (xlogy, gammaln, betaln)', 'sklearn.tree.DecisionTreeRegressor, DecisionTreeClassifier (the CART method)'],
+    launch: {
+      lead: 'Choose a response and the factors. The tree starts with every row in one node: press Split to grow it, or Go with validation rows.',
+      roles: [
+        { key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: one, continuous or categorical' },
+        { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more' },
+        ...SM.predict.roles(),
+      ],
+      options: [
+        ...SM.predict.options(),
+        { key: 'minsize', label: 'Minimum Size Split', type: 'number', value: 5, hint: 'the fewest rows either side of a split (below 1: a share of the training rows)' },
+        { key: 'ordinalOrder', label: 'Ordinal Restricts Order', type: 'check', value: true, hint: 'an ordinal X is cut between neighbouring levels only' },
+        { key: 'method', label: 'Method', type: 'select', value: 'jmp', choices: [['jmp', 'Decision Tree'], ['cart', 'CART (scikit-learn)']], hint: 'Decision Tree: JMP\'s LogWorth; CART: scikit-learn\'s trees, for comparison' },
+      ],
+      validate: (spec) => {
+        const m = spec.options && spec.options.minsize;
+        return m != null && !(m > 0) ? 'Minimum Size Split: a positive number' : null;
+      },
+    },
+    title: (spec, table) => {
+      const id = ((spec.roles && spec.roles.y) || [])[0];
+      const c = id && table ? table.col(id) : null;
+      return c ? `Partition for ${c.name}` : 'Partition';
+    },
+    triangle: topMenu,
+    render,
+  });
+
+  /* ---- the example: simulated churn, with its true tree in the notes ------------------------------------ */
+  SM.io.addExample('churn', {
+    label: 'Churn (2000 customers): contract, tenure, support calls',
+    about: 'Simulated: 2000 customers of a subscription service. Whether a customer left (churn) follows a tree. Month-to-month contracts: churn 50% in the first year (tenure under 12 months); after it 40% with 4 or more support calls, 15% with fewer. One-year contracts 8%, two-year 3%. On top: +10 points when the satisfaction score is missing (the 10% who did not answer) and +10 when it is 4 or below. Region changes nothing. Monthly charge is 20 € plus 25 for DSL or 50 for fiber, plus 8 per streaming channel, plus noise (sd 5). The validation column splits the rows 60/25/15 at random. For Partition (Analyze > Predictive Modeling).',
+    make() {
+      const r = SM.util.rng('partition-churn');
+      const n = 2000;
+      const c = { customer: [], region: [], contract: [], tenure: [], calls: [], internet: [], streaming: [], charge: [], satisfaction: [], churn: [], validation: [] };
+      for (let i = 0; i < n; i++) {
+        const u = r.u();
+        const contract = u < 0.55 ? 'Month-to-month' : u < 0.8 ? 'One year' : 'Two year';
+        const tenure = contract === 'Month-to-month' ? 1 + Math.floor(-Math.log(1 - r.u()) * 16) : 6 + Math.floor(r.u() * 66);
+        const calls = Math.min(9, Math.floor(-Math.log(1 - r.u()) * 1.8));
+        const net = r.u();
+        const internet = net < 0.2 ? 'None' : net < 0.6 ? 'DSL' : 'Fiber';
+        const streaming = internet === 'None' ? 0 : r.int(0, 3);
+        const answered = r.u() >= 0.1;
+        const sat = answered ? Math.max(1, Math.min(10, Math.round(r.normal(6.5, 2)))) : NaN;
+        let p = contract === 'One year' ? 0.08 : contract === 'Two year' ? 0.03 : Math.min(72, tenure) < 12 ? 0.5 : calls >= 4 ? 0.4 : 0.15;
+        if (!answered) p += 0.1; else if (sat <= 4) p += 0.1;
+        const v = r.u();
+        c.customer.push(`C${String(i + 1).padStart(4, '0')}`);
+        c.region.push(r.pick(['North', 'South', 'East', 'West']));
+        c.contract.push(contract);
+        c.tenure.push(Math.min(72, tenure));
+        c.calls.push(calls);
+        c.internet.push(internet);
+        c.streaming.push(streaming);
+        c.charge.push(+(20 + (internet === 'DSL' ? 25 : internet === 'Fiber' ? 50 : 0) + 8 * streaming + r.normal(0, 5)).toFixed(2));
+        c.satisfaction.push(sat);
+        c.churn.push(r.u() < Math.min(0.95, p) ? 'Yes' : 'No');
+        c.validation.push(v < 0.6 ? 'Training' : v < 0.85 ? 'Validation' : 'Test');
+      }
+      return new SM.Table({ name: 'Churn', source: 'simulated', columns: [
+        { name: 'customer', dataType: 'character', values: c.customer, role: 'label' },
+        { name: 'region', dataType: 'character', values: c.region },
+        { name: 'contract', dataType: 'character', modelingType: 'ordinal', values: c.contract, valueOrder: ['Month-to-month', 'One year', 'Two year'] },
+        { name: 'tenure (months)', dataType: 'numeric', values: c.tenure },
+        { name: 'support calls', dataType: 'numeric', values: c.calls },
+        { name: 'internet', dataType: 'character', values: c.internet, valueOrder: ['None', 'DSL', 'Fiber'] },
+        { name: 'streaming channels', dataType: 'numeric', values: c.streaming },
+        { name: 'monthly charge (€)', dataType: 'numeric', values: c.charge },
+        { name: 'satisfaction', dataType: 'numeric', values: c.satisfaction },
+        { name: 'churn', dataType: 'character', values: c.churn, valueOrder: ['No', 'Yes'] },
+        { name: 'validation', dataType: 'character', values: c.validation, valueOrder: ['Training', 'Validation', 'Test'] },
+      ] });
+    },
+  });
+}(typeof self !== 'undefined' ? self : this));

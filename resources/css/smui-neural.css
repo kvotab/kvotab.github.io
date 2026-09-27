@@ -1,0 +1,79 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > NEURAL (smui-p-neural.js)
+   The report's Model Launch panel, the network Diagram (an inline SVG
+   whose colours are the tokens below, so both themes read), the marked
+   lines of the report tables and the boxes that scroll on a phone. Class
+   prefix sm-nn-.
+   ========================================================================== */
+
+:root {
+  --sm-nn-in-bg: #dce8f4; --sm-nn-in-line: #2f6690;
+  --sm-nn-hid-bg: #ddf0da; --sm-nn-hid-line: #3a7d44;
+  --sm-nn-out-bg: #d4efeb; --sm-nn-out-line: #1b7a70;
+}
+:root[data-theme="dark"] {
+  --sm-nn-in-bg: #223a52; --sm-nn-in-line: #6fa3d6;
+  --sm-nn-hid-bg: #1f3d26; --sm-nn-hid-line: #6cc27a;
+  --sm-nn-out-bg: #173f3a; --sm-nn-out-line: #4fc1b3;
+}
+
+/* ---- the Model Launch --------------------------------------------------------- */
+.sm-nn-vline { margin: 0 0 6px; font-size: 12px; color: var(--text-secondary); }
+.sm-nn-launch { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-start; font-size: 12px; max-width: 100%; }
+.sm-nn-box {
+  margin: 0; padding: 6px 10px 8px; min-width: 0; max-width: 100%;
+  border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-surface);
+}
+.sm-nn-box legend { padding: 0 4px; font-weight: 600; color: var(--text-secondary); }
+.sm-nn-fields { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.sm-nn-field { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.sm-nn-field > span { color: var(--text-secondary); }
+.sm-nn-field[hidden] { display: none; }
+.sm-nn-box select, .sm-nn-num {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; max-width: 100%;
+}
+.sm-nn-num { text-align: right; font-variant-numeric: tabular-nums; }
+.sm-nn-box select:focus-visible, .sm-nn-num:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-nn-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 6px; }
+.sm-nn-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); cursor: pointer; }
+.sm-nn-check input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-nn-check.is-off { color: var(--text-muted); cursor: default; }
+.sm-nn-check.is-off input { cursor: default; }
+.sm-nn-layers { border-collapse: collapse; margin: 6px 0 2px; }
+.sm-nn-layers th { font-weight: 600; color: var(--text-secondary); text-align: left; padding: 1px 12px 2px 0; }
+.sm-nn-layers td { padding: 1px 12px 1px 0; color: var(--text-primary); }
+.sm-nn-hint { margin: 5px 0 0; max-width: 34em; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+.sm-nn-line { margin: 2px 0 0; color: var(--text-primary); }
+.sm-nn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 2px; font-size: 12px; }
+.sm-nn-go { min-width: 64px; justify-content: center; }
+.sm-nn-seed { color: var(--text-muted); font-size: 11.5px; }
+.sm-nn-msg { margin: 4px 0 0; min-height: 1em; color: var(--accent-text, #9d4637); font-size: 12px; }
+.sm-nn-msg:empty { display: none; }
+.sm-nn-progress { font-style: italic; }
+
+/* ---- tables and graphs that scroll inside their own box on a phone -------------- */
+.sm-nn-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-nn-scroll > table.sm-rt { margin-bottom: 8px; }
+.sm-rt td.sm-nn-chosen { font-weight: 600; }
+.sm-rt tr:has(td.sm-nn-chosen) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-nn-caption { margin: 6px 0 2px; font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+/* the shared confusion matrices of this platform's reports, too */
+.sm-report[data-platform="neural"] .sm-pred-cm { max-width: 100%; overflow-x: auto; }
+
+/* ---- the Diagram ----------------------------------------------------------------- */
+.sm-nn-diagram { padding: 2px 0 6px; }
+.sm-nn-svg { display: block; font-family: verdana, sans-serif; }
+.sm-nn-edge { stroke: var(--text-muted); stroke-opacity: 0.5; stroke-width: 1; }
+.sm-nn-edge:hover { stroke: var(--color-kvot-accent); stroke-opacity: 1; stroke-width: 2.2; }
+.sm-nn-in rect { fill: var(--sm-nn-in-bg); stroke: var(--sm-nn-in-line); stroke-width: 1.2; }
+.sm-nn-hid circle { fill: var(--sm-nn-hid-bg); stroke: var(--sm-nn-hid-line); stroke-width: 1.4; }
+.sm-nn-out rect { fill: var(--sm-nn-out-bg); stroke: var(--sm-nn-out-line); stroke-width: 1.2; }
+.sm-nn-glyph { fill: none; stroke: var(--text-primary); stroke-width: 1.5; stroke-linecap: round; }
+.sm-nn-label { fill: var(--text-primary); font-size: 11px; }
+.sm-nn-layer { fill: var(--text-muted); font-size: 10.5px; }
+
+@media (max-width: 560px) {
+  .sm-nn-launch { flex-direction: column; }
+  .sm-nn-box { width: 100%; box-sizing: border-box; }
+}

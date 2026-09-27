@@ -67,7 +67,9 @@ def q(name):
 def code_head(table_name, extra_imports=()):
     lines = ['import numpy as np', 'import pandas as pd', 'import statsmodels.api as sm', 'import statsmodels.formula.api as smf']
     lines += list(extra_imports)
-    lines.append(f'df = pd.read_csv({json.dumps(table_name + ".csv")})   # the table, as File > Export CSV writes it')
+    # round_trip: every number exactly as exported (the default parser can be
+    # off in the last digit, which an iterative fit can feel)
+    lines.append(f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip")   # the table, as File > Export CSV writes it')
     return '\n'.join(lines)
 
 

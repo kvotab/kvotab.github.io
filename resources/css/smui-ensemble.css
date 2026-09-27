@@ -1,0 +1,54 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > BOOTSTRAP FOREST, BOOSTED TREE
+   (smui-p-ensemble.js). The launch dialog's Specification panel, the fit
+   shown in Model Validation-Set Summaries, the tree views and wide tables.
+   Colours are kvot.css's tokens, so both themes read. Class prefix sm-ens-.
+   ========================================================================== */
+
+/* ---- the launch dialog: the Specification panel ------------------------------- */
+.sm-ens-spec { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-ens-spec h4 { margin: 0 0 4px; }
+.sm-ens-head { margin: 0 0 6px; color: var(--text-secondary); white-space: pre-wrap; }
+.sm-ens-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 12px; }
+.sm-ens-panel { margin: 0; padding: 4px 8px 6px; border: 1px solid var(--border-color); border-radius: 4px; min-width: 0; }
+.sm-ens-panel legend { padding: 0 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.sm-ens-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 3px 0; color: var(--text-primary); }
+.sm-ens-field > span { flex: 1 1 auto; min-width: 0; }
+.sm-ens-field select {
+  padding: 2px 4px; border: 1px solid var(--border-color); border-radius: 3px; max-width: 58%;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 11.5px;
+}
+.sm-ens-check { display: flex; align-items: center; gap: 6px; margin: 4px 0; color: var(--text-primary); cursor: pointer; }
+.sm-ens-check input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-ens-input {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; width: 6.5em; flex: 0 0 auto;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right;
+}
+.sm-ens-input::placeholder { color: var(--text-muted); }
+.sm-ens-input:focus-visible, .sm-ens-field select:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-ens-hint { margin: 6px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+.sm-ens-hint:empty { display: none; }
+
+/* ---- the report ---------------------------------------------------------------- */
+.sm-ens-progress { font-style: italic; }
+.sm-rt td.sm-ens-shown { font-weight: 600; }
+.sm-rt tr:has(td.sm-ens-shown) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-ens-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-ens-scroll > table.sm-rt { margin-bottom: 8px; }
+
+/* ---- tree views: a line per node, indented by depth ---------------------------- */
+.sm-ens-treebar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 2px 0 6px; font-size: 12px; }
+.sm-ens-treebar label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.sm-ens-treebar .sm-ens-input { width: 4em; }
+.sm-ens-treewrap { max-width: 100%; max-height: 460px; overflow: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); }
+.sm-ens-tree { display: inline-block; min-width: 100%; padding: 4px 8px 6px 4px; box-sizing: border-box; font-size: 12px; }
+.sm-ens-node { white-space: nowrap; line-height: 1.55; color: var(--text-primary); border-left: 1px dotted transparent; }
+.sm-ens-node .sm-ens-cond { font-weight: 600; }
+.sm-ens-node.is-leaf .sm-ens-cond { font-weight: 400; }
+.sm-ens-node.is-leaf .sm-ens-cond::before { content: '• '; color: var(--text-muted); }
+.sm-ens-count, .sm-ens-est { margin-left: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 560px) {
+  .sm-ens-panels { grid-template-columns: minmax(0, 1fr); }
+  .sm-ens-field select { max-width: 64%; }
+}

@@ -399,7 +399,10 @@ check('... and forecasts with the same future inputs', ns.get('error') or bool(n
 ns = run_code(mt2['code'], csv)
 check('the lagged transfer function code gives the same fit', ns.get('error') or bool(np.isclose(ns['res'].params.iloc[1], mt2['params']['rows'][1]['estimate'], rtol=1e-5)), True)
 ns = run_code(rb['code'], csv)
-check("Brown's code gives the same fit", ns.get('error') or bool(np.allclose(ns['res'].fittedvalues, rb['fitted'], rtol=1e-6)), True)
+# Brown's alpha is a minimum on a flat sum of squares, found by the report and the
+# code along their own paths: the fits agree to about 1e-6 (the minimum itself is
+# checked above), so 1e-5 here.
+check("Brown's code gives the same fit", ns.get('error') or bool(np.allclose(ns['res'].fittedvalues, rb['fitted'], rtol=1e-5)), True)
 ns = run_code(rwm['code'], csv)
 check('the Winters code gives the same forecasts', ns.get('error') or bool(np.allclose(ns['res'].forecast(6), rwm['forecast']['mean'], rtol=1e-6)), True)
 ns = run_code(re_['code'], csv)

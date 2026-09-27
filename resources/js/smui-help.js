@@ -182,7 +182,7 @@
       commandTable(),
 
       h('h2', 'The Python engine', 'engine'),
-      p('Pyodide is CPython compiled to WebAssembly. The page starts it in a Web Worker as soon as it loads, with numpy, scipy, pandas, patsy and statsmodels, and this page\'s analysis package (resources/py/smui, plain Python that also runs outside the browser). The first visit downloads about 40 MB from the jsDelivr CDN, which the browser then keeps.'),
+      p('Pyodide is CPython compiled to WebAssembly. The page starts it in a Web Worker as soon as it loads, with numpy, scipy, pandas, patsy and statsmodels, and this page\'s analysis package (resources/py/smui, plain Python that also runs outside the browser). The first visit downloads about 40 MB from the jsDelivr CDN, which the browser then keeps. The predictive platforms (Partition, Bootstrap Forest, Neural and the others under Predictive Modeling, Text Explorer) use scikit-learn, which is loaded the first time one of them runs.'),
       p('A table goes to the engine when an analysis needs it, and again when it has changed. Nothing is sent anywhere else: the files you open, the tables and the reports stay in this browser tab.'),
       el('div', { class: 'sm-engine-versions' }),
 
@@ -190,7 +190,8 @@
       ul([
         'The numbers come from statsmodels and scipy. Where JMP has its own method (for example its Lack of Fit or its exact tests) the report says what is computed instead, and the Python shows it.',
         'JMP\'s scripting language (JSL) has no counterpart; the Python scripts take its place.',
-        'Some platforms of JMP have nothing like them in statsmodels (neural networks, partition trees, text exploration); they are not here.',
+        'Where statsmodels has nothing like a JMP platform (partition trees, forests, boosted trees, neural networks, text exploration, Gaussian processes, partial least squares, normal mixtures), the platform uses scikit-learn, and its (i) text says where scikit-learn\'s method differs from JMP\'s.',
+        'Bootstrap (from any report table\'s right-click menu) and the profiler\'s desirability and variable importance are computed with scipy.',
       ]),
       el('p', { class: 'sm-build', text: `Page build ${document.documentElement.dataset.build || ''}` }),
     );

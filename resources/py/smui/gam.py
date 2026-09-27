@@ -64,6 +64,7 @@ from scipy import stats
 
 from . import data, models
 from .registry import api
+from . import profile as profile_mod
 from .util import code_head, col, table as rtable
 
 _SM_FAMILY = {'normal': 'Gaussian', 'binomial': 'Binomial', 'poisson': 'Poisson', 'gamma': 'Gamma'}
@@ -781,35 +782,12 @@ def _predict(m, settings, alpha):
     return sf['mean'].to_numpy(float), sf['mean_ci_lower'].to_numpy(float), sf['mean_ci_upper'].to_numpy(float)
 
 
-@api('gam.profile')
-def profile(table, current=None, rows=None, grid=41, alpha=0.05, **model):
+def _predictor(table, rows=None, alpha=0.05, **model):
+    """The profiler's view of the fitted GAM (see profile.py): the mean on
+    the response scale with its confidence limits (get_prediction)."""
     spec = _spec(**model)
     m = _model(table, rows, spec)
     facs = _factors(m)
-    cur = {}
-    for f in facs:
-        v = (current or {}).get(f['name'])
-        if f['type'] == 'categorical':
-            lv = f['levels']
-            cur[f['name']] = lv[_level_index(lv, v)] if v is not None else lv[0]
-        else:
-            try:
-                x = float(v) if v is not None else f['mean']
-            except (TypeError, ValueError):
-                x = f['mean']
-            cur[f['name']] = min(max(x, f['min']), f['max'])
-    settings = [dict(cur)]
-    spans = []
-    for f in facs:
-        g = list(f['levels']) if f['type'] == 'categorical' else list(_grid(np.array([f['min'], f['max']]), int(grid)))
-        spans.append((len(settings), len(g)))
-        for v in g:
-            s = dict(cur)
-            s[f['name']] = v
-            settings.append(s)
-    mu, lo, hi = _predict(m, settings, alpha)
-    for f in facs:
-        f['current'] = cur[f['name']]
     info = m['D']['info']
     if spec['family'] != 'binomial':
         name = spec['y']
@@ -817,13 +795,19 @@ def profile(table, current=None, rows=None, grid=41, alpha=0.05, **model):
         name = f'Prob[{_lvl(info["event"])}]'
     else:
         name = f'Prob[{spec["y"]} = 1]'
-    resp = {'name': name, 'current': {'pred': float(mu[0]), 'lower': float(lo[0]), 'upper': float(hi[0])}, 'traces': [],
-            'bounded': spec['family'] == 'binomial'}
-    for f, (at, k) in zip(facs, spans):
-        sl = slice(at, at + k)
-        resp['traces'].append({'factor': f['name'], 'x': f['labels'] if f['type'] == 'categorical' else list(np.linspace(f['min'], f['max'], k)),
-                               'pred': mu[sl], 'lower': lo[sl], 'upper': hi[sl]})
-    return {'factors': facs, 'responses': [resp], 'alpha': alpha}
+
+    def run(settings):
+        mu, lo, hi = _predict(m, settings, alpha)
+        return [{'name': name, 'pred': mu, 'lower': lo, 'upper': hi, 'bounded': spec['family'] == 'binomial'}]
+    D, d = m['D'], m['d']
+    observed = {n: D['xs'][:, j].tolist() for j, n in enumerate(spec['smooth'])}
+    for n in spec['linear']:
+        observed[n] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else (v.item() if hasattr(v, 'item') else v) for v in d.df[d.alias[n]].astype(object)]
+    return profile_mod.Predictor(facs, run, observed)
+
+
+# gam.profile (the traces), gam.maximize and gam.importance, as every profiled model
+profile_mod.expose('gam', _predictor, alpha=True)
 
 
 @api('gam.surface')

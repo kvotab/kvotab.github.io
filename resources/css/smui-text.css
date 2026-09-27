@@ -1,0 +1,64 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > TEXT EXPLORER (smui-p-text.js)
+   The term and phrase lists (scrolling boxes, the chosen terms marked),
+   the word cloud, Show Text, the topic tables and the launch dialog's
+   Customize Regex. Colours are kvot.css's tokens, so both themes read;
+   the word cloud's own colours are set per theme in the script. Class
+   prefix sm-tx-.
+   ========================================================================== */
+
+/* ---- lists: a scrolling box each, side by side (one above the other on a phone) ---- */
+.sm-tx-list { width: fit-content; max-height: 24em; max-width: 100%; overflow: auto; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); }
+.sm-tx-list > table.sm-rt { margin: 0; }
+.sm-tx-list > table.sm-rt caption { position: sticky; left: 0; padding: 4px 9px 3px; background: var(--bg-primary); }
+.sm-tx-list > table.sm-rt thead th { position: sticky; top: 0; z-index: 1; }
+.sm-tx-list.sm-tx-wide { max-height: 30em; }
+.sm-rt td.sm-tx-chosen { background: var(--sm-sel-bg); }
+.sm-rt tr:has(td.sm-tx-chosen) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-tx-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-tx-scroll > table.sm-rt { margin-bottom: 8px; }
+
+/* ---- the word cloud ---- */
+.sm-tx-cloudbox { max-width: 100%; margin: 4px 0 6px; }
+.sm-tx-cloud { display: block; width: 100%; height: auto; font-family: verdana, sans-serif; user-select: none; }
+.sm-tx-cloud.is-uniform .sm-tx-word { fill: var(--text-primary); }
+.sm-tx-word { cursor: pointer; }
+.sm-tx-word:hover { text-decoration: underline; }
+.sm-tx-word.is-chosen { paint-order: stroke; stroke: var(--sm-sel-bg); stroke-width: 7px; stroke-linejoin: round; font-weight: 700; }
+.sm-tx-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 11.5px; color: var(--text-secondary); margin: 2px 0 6px; }
+.sm-tx-ramp { display: inline-block; width: 140px; max-width: 40vw; height: 10px; border-radius: 2px; }
+
+/* ---- topics: one small table per topic, in a grid ---- */
+.sm-tx-topics { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 18px; align-items: start; }
+.sm-tx-topics > table.sm-rt { width: 100%; }
+.sm-tx-topics > table.sm-rt td.sm-l { max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- the stop words in use ---- */
+.sm-tx-stoplist { margin: 6px 0 4px; font-size: 12px; }
+.sm-tx-stoplist summary { cursor: pointer; color: var(--text-secondary); }
+.sm-tx-stoplist p { margin: 6px 0 0; line-height: 1.6; color: var(--text-secondary); max-width: 70em; overflow-wrap: anywhere; }
+
+/* ---- Show Text ---- */
+.sm-dialog.sm-tx-dialog { width: min(760px, 100%); }
+.sm-tx-texts { margin: 0; padding: 0 0 0 0; list-style: none; max-height: 60vh; overflow: auto; font-size: 12.5px; line-height: 1.5; }
+.sm-tx-texts li { display: flex; gap: 10px; padding: 4px 2px; border-bottom: 1px solid color-mix(in oklab, var(--border-color) 75%, transparent); }
+.sm-tx-rownum { flex: none; min-width: 5.5em; color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.sm-tx-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.sm-tx-texts mark { background: var(--sm-sel-bg); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* ---- the launch dialog: Customize Regex ---- */
+.sm-tx-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-tx-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); cursor: pointer; }
+.sm-tx-check input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-tx-regexrow { margin-top: 6px; }
+.sm-tx-regex {
+  width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+}
+.sm-tx-regex:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-tx-hint { margin: 5px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
+
+@media (max-width: 560px) {
+  .sm-tx-list { max-height: 18em; width: 100%; }
+  .sm-tx-topics { grid-template-columns: minmax(0, 1fr); }
+}

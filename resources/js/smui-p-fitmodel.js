@@ -17,7 +17,9 @@
      Nominal, Ordinal Logistic MNLogit (or a binomial GLM) and OrderedModel
      Mixed Model               MixedLM by REML, variance components
      MANOVA                    statsmodels' MANOVA
-     Generalized Regression    lasso, elastic net and ridge paths
+     Generalized Regression    lasso, elastic net, ridge (and adaptive) paths, forward
+                               selection; AICc, BIC, KFold, holdback, leave-one-out or a
+                               Validation column (the launch's Validation role)
      Instrumental Variables    two-stage least squares (IV2SLS): Endogenous
                                and Instruments roles, first stages, weak-
                                instrument statistics, Durbin-Wu-Hausman and
@@ -648,146 +650,23 @@
   }
 
   /* ---- the Prediction Profiler -------------------------------------------------------------------
-     One small plot per factor and response: the prediction as the factor
-     varies with the others at their current values, the confidence band
-     dashed, the current value a red dashed line to drag (or click the plot,
-     or type in the box below it). The profile is recomputed from the
-     remembered fit; the current values are an option of the report. */
+     The shared profiler (SM.profiler, fitmodel.profile from profile.expose):
+     one small plot per factor and response, the prediction with its
+     confidence interval as the factor varies and the others stay at their
+     current values; desirability, Maximize Desirability and variable
+     importance in its red triangle. Several sources (the responses of a
+     Standard Least Squares report) go as one, so that desirability can
+     weigh them together. The current values keep their earlier option. */
   async function profiler(ctx, parent, { sources, scope, title = 'Prediction Profiler', key = 'profiler', option = 'profiler' }) {
-    const P = pal();
-    // the current values, per By group; the group profiler (several responses) keeps its own
-    const stateKey = `${option === 'profiler' ? 'prof' : option}:${ctx.byLabel || ''}`;
-    let current = { ...(ctx.opt(stateKey, null, scope) || {}) };
-    const ob = ctx.outline(title, { parent, key, info: 'p:fitmodel:profiler', menu: () => [
-      { label: 'Reset Factor Settings', action: () => ctx.set(stateKey, null, scope) },
-      { label: 'Remove', action: () => ctx.set(option, false, scope) },
-    ] });
-    const load = async () => {
-      const outs = await Promise.all(sources.map((s) => ctx.call('fitmodel.profile', { ...s.payload, kind: s.kind, current, alpha: ctx.alpha })));
-      return { factors: outs[0].factors, responses: outs.flatMap((x) => x.responses) };
-    };
-    let res = await load();
-    const F = res.factors;
-    if (!F.length) { ob.add(ctx.note('The model has no factors to profile.')); return ob; }
-    const nf = F.length;
-    const avail = Math.max(320, Math.min(1180, (root.innerWidth || 1200) - 150));
-    const pw = Math.max(118, Math.min(215, Math.floor((avail - 130) / nf)));
-    const ph = res.responses.length > 2 ? 140 : 175;
-    const grid = el('div', { class: 'sm-fm-prof', style: { gridTemplateColumns: `minmax(92px, max-content) repeat(${nf}, max-content)` } });
-    const yr = res.responses.map((r) => {
-      if (r.bounded) return [0, 1];
-      const [lo, hi] = extent(...r.traces.flatMap((t) => [t.pred, t.lower, t.upper]));
-      const pad = 0.06 * (hi - lo);
-      return [lo - pad, hi + pad];
+    const first = sources[0];
+    const payload = sources.length > 1
+      ? { ...first.payload, kind: first.kind, ys: sources.map((s) => ({ y: s.payload.y, robust: s.payload.robust || null })) }
+      : { ...first.payload, kind: first.kind };
+    return SM.profiler.render(ctx, parent, {
+      sources: [{ fn: 'fitmodel.profile', payload }], scope, title, key, option, info: 'p:fitmodel:profiler',
+      stateKey: `${option === 'profiler' ? 'prof' : option}:${ctx.byLabel || ''}`,
+      note: 'Drag the red dashed line of a factor, click in its plot, or type its value. Dotted: the confidence interval of the prediction.',
     });
-    const labelOfLevel = (f, v) => { const i = f.levels.findIndex((x) => x === v || String(x) === String(v)); return i >= 0 ? f.labels[i] : String(v); };
-    const traces = (ri, fi) => {
-      const r = res.responses[ri], tr = r.traces[fi], f = res.factors[fi];
-      const cat = f.type === 'categorical';
-      const out = [];
-      if (tr.lower && tr.upper) {
-        for (const b of [tr.upper, tr.lower]) out.push({ type: 'scatter', mode: cat ? 'markers' : 'lines', x: tr.x, y: b, line: { color: P.fit, width: 1, dash: 'dot' }, marker: { symbol: 'line-ew-open', size: 11, color: P.fit, line: { width: 1.2, color: P.fit } }, hoverinfo: 'skip', showlegend: false });
-      }
-      out.push({ type: 'scatter', mode: cat ? 'lines+markers' : 'lines', x: tr.x, y: tr.pred, line: { color: P.point, width: 1.8 }, marker: { size: 6, color: P.point }, hovertemplate: `${f.name} %{x}<br>${r.name} %{y:.5g}<extra></extra>`, showlegend: false });
-      out.push(lineTrace([tr.x[0], tr.x[tr.x.length - 1]], [r.current.pred, r.current.pred], P.fit, 'dash', 1));
-      return out;
-    };
-    const layout = (ri, fi) => {
-      const f = res.factors[fi];
-      const cat = f.type === 'categorical';
-      const cur = cat ? labelOfLevel(f, f.current) : f.current;
-      return {
-        margin: { l: fi === 0 ? 48 : 6, r: 6, t: 6, b: 24 }, hovermode: 'x', dragmode: false,
-        xaxis: cat ? { type: 'category', tickfont: { size: 9 }, fixedrange: true, showgrid: false } : { range: [f.min, f.max], tickfont: { size: 9 }, fixedrange: true, showgrid: false, nticks: 4 },
-        yaxis: { range: yr[ri], showticklabels: fi === 0, tickfont: { size: 9 }, fixedrange: true, nticks: 5 },
-        shapes: [{ type: 'line', xref: 'x', yref: 'paper', x0: cur, x1: cur, y0: 0, y1: 1, line: { color: P.fit, width: 1.4, dash: 'dash' } }],
-      };
-    };
-    const cells = res.responses.map(() => []);
-    const vals = [];
-    let busy = false, pending = null;
-    const setFactor = async (fi, x) => {
-      const f = res.factors[fi];
-      let v;
-      if (f.type === 'categorical') {
-        let i = typeof x === 'number' ? Math.round(x) : f.labels.indexOf(String(x));
-        i = Math.max(0, Math.min(f.levels.length - 1, i < 0 ? 0 : i));
-        v = f.levels[i];
-      } else {
-        v = Number(x);
-        if (!Number.isFinite(v)) return;
-        v = Math.max(f.min, Math.min(f.max, v));
-      }
-      current = { ...current, [f.name]: v };
-      if (busy) { pending = true; return; }
-      busy = true;
-      try {
-        do {
-          pending = false;
-          ctx.set(stateKey, current, scope, { rerun: false });
-          res = await load();
-          redraw();
-        } while (pending);
-      } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); } finally { busy = false; }
-    };
-    const wire = (fi) => (gd) => {
-      gd.on('plotly_relayout', (ev) => { const k = ev && Object.keys(ev).find((q) => /^shapes\[0\]\.x0$/.test(q)); if (k) setFactor(fi, ev[k]); });
-      gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt) setFactor(fi, pt.x); });
-    };
-    const valueBox = (ri) => {
-      const r = res.responses[ri];
-      const c = r.current;
-      return [el('span', { class: 'sm-fm-prof-name', text: r.name }), el('span', { class: 'sm-fm-prof-val', text: fmt(c.pred, { sig: 6 }) }),
-        c.lower != null ? el('span', { class: 'sm-fm-prof-ci', text: `[${fmt(c.lower, { sig: 5 })}, ${fmt(c.upper, { sig: 5 })}]` }) : null];
-    };
-    res.responses.forEach((r, ri) => {
-      const lab = el('div', { class: 'sm-fm-prof-y' }, ...valueBox(ri));
-      vals.push(lab);
-      grid.append(lab);
-      F.forEach((f, fi) => {
-        const box = ctx.plot(traces(ri, fi), layout(ri, fi), { width: pw + (fi === 0 ? 42 : 0), height: ph, select: false, title: `${r.name} profile over ${f.name}`, config: { edits: { shapePosition: true }, displayModeBar: false }, onDraw: wire(fi) });
-        cells[ri].push(box);
-        grid.append(box);
-      });
-    });
-    grid.append(el('div', { class: 'sm-fm-prof-y sm-fm-prof-corner', text: 'Factors' }));
-    const inputs = F.map((f, fi) => {
-      let input;
-      if (f.type === 'categorical') {
-        input = el('select', { 'aria-label': `${f.name} current value` }, ...f.labels.map((l, i) => el('option', { value: String(i), text: l })));
-        input.value = String(Math.max(0, f.levels.findIndex((x) => x === f.current)));
-        input.addEventListener('change', () => setFactor(fi, Number(input.value)));
-      } else {
-        input = el('input', { type: 'text', inputmode: 'decimal', size: 8, 'aria-label': `${f.name} current value` });
-        input.value = fmt(f.current, { sig: 6 }).replace('−', '-');
-        const apply = () => setFactor(fi, SM.table.toNumber(input.value.replace(',', '.')));
-        input.addEventListener('change', apply);
-        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
-      }
-      const slider = f.type === 'continuous' ? el('input', { type: 'range', min: String(f.min), max: String(f.max), step: String((f.max - f.min) / 200 || 1), value: String(f.current), 'aria-label': `${f.name} slider` }) : null;
-      if (slider) slider.addEventListener('change', () => setFactor(fi, Number(slider.value)));
-      grid.append(el('div', { class: 'sm-fm-prof-x', style: { width: `${pw + (fi === 0 ? 42 : 0)}px` } }, el('span', { class: 'sm-fm-prof-fname', text: f.name }), input, slider));
-      return { input, slider };
-    });
-    const redraw = () => {
-      res.responses.forEach((r, ri) => {
-        vals[ri].replaceChildren(...valueBox(ri).filter(Boolean));
-        res.factors.forEach((f, fi) => {
-          const box = cells[ri][fi];
-          const p = box._plot;
-          const tr = traces(ri, fi), lay = layout(ri, fi);
-          if (p && p.drawn) Plotly.react(box, tr, SM.report.merge(box.layout, { shapes: lay.shapes, yaxis: { range: lay.yaxis.range } }));
-          else if (p) { p.traces = tr; p.userLayout = lay; }
-        });
-      });
-      res.factors.forEach((f, fi) => {
-        const { input, slider } = inputs[fi];
-        if (f.type === 'categorical') input.value = String(Math.max(0, f.levels.findIndex((x) => x === f.current)));
-        else { if (document.activeElement !== input) input.value = fmt(f.current, { sig: 6 }).replace('−', '-'); if (slider) slider.value = String(f.current); }
-      });
-    };
-    ob.add(el('div', { class: 'sm-fm-profwrap' }, grid), ctx.note('Drag the red dashed line of a factor, click in its plot, or type its value. Dotted: the confidence interval of the prediction.'));
-    return ob;
   }
 
   /* ---- the Contour Profiler --------------------------------------------------------------------- */
@@ -1848,57 +1727,151 @@
     return ctx.rt({ columns: [{ key: 'r', label: '', fmt: 'text' }, ...labels.map((l, j) => ({ key: `c${j}`, label: l }))], rows: Mx.map((row, i) => ({ r: labels[i], ...Object.fromEntries(row.map((v, j) => [`c${j}`, v])) })) }, { caption, sortable: false, key: caption });
   }
 
-  /* ---- Generalized Regression ------------------------------------------------------------------------------ */
+  /* ---- Generalized Regression ------------------------------------------------------------------------------
+     JMP Pro's. The Model Launch: the Distribution, the Estimation Method (Lasso, Elastic Net, Ridge, with
+     Adaptive for the first two; Forward and Pruned Forward Selection) and the Validation Method (AICc, BIC,
+     KFold, Holdback, Leave-One-Out, or the launch's Validation column) with its settings. The fit's outline:
+     the Model Summary per set, the Solution Path (the estimates and the validation curve against the size of
+     the scaled estimates, or the step; the red line is the model shown: drag it or click a point) and the
+     estimates on both scales. KFold and Holdback draw their rows from the report's seed (SM.predict.seed),
+     a holdback and a Validation column follow predictive.prepare's rules, so the page's platforms agree. */
+  const GR_METHODS = [['lasso', 'Lasso'], ['enet', 'Elastic Net'], ['ridge', 'Ridge'], ['forward', 'Forward Selection'], ['pruned', 'Pruned Forward Selection']];
+  const GR_VALID = [['aicc', 'AICc'], ['bic', 'BIC'], ['kfold', 'KFold'], ['holdback', 'Holdback'], ['loo', 'Leave-One-Out'], ['validation', 'Validation Column']];
+  const GR_LINK = { Normal: 'Identity', Binomial: 'Logit', Poisson: 'Log' };
+
   async function renderGenReg(ctx, M) {
     const ys = ctx.roles('y');
     await perResponse(ctx, ys, (y) => `Generalized Regression for ${y.name}`, (y, parent, st) => genregY(ctx, M, y, parent, st));
+  }
+
+  /* The fit's settings from the report's options (scoped by the response), and the payload. */
+  function genregCfg(ctx, M, y) {
+    const sc = y.id;
+    const o = (k, d) => ctx.opt(k, d, sc);
+    const vcol = ctx.name('validation');
+    const valids = GR_VALID.filter(([k]) => (vcol ? ['validation', 'aicc', 'bic'] : ['aicc', 'bic', 'kfold', 'holdback', 'loo']).includes(k));
+    let crit = o('gr:crit', vcol ? 'validation' : 'aicc');
+    if (!valids.some((v) => v[0] === crit)) crit = valids[0][0];
+    const method = GR_METHODS.some((x) => x[0] === o('gr:method', 'lasso')) ? o('gr:method', 'lasso') : 'lasso';
+    const cfg = { dist: o('gr:dist', ctx.opt('dist', 'normal')), method, enet_alpha: o('gr:enet', 0.9), criterion: crit, n_grid: 40, choose: o(`gr:choose:${ctx.byLabel || ''}`, null), target: ctx.opt('target', null) };
+    if (!GR_DISTS.some((x) => x[0] === cfg.dist)) cfg.dist = 'normal';
+    if ((method === 'lasso' || method === 'enet') && o('gr:adaptive', false)) cfg.adaptive = true;
+    if (crit === 'kfold') cfg.folds = o('gr:folds', 5);
+    if (crit === 'holdback') cfg.portion = o('gr:holdback', 0.3);
+    if (crit === 'kfold' || crit === 'holdback') cfg.seed = SM.predict.payload(ctx).seed;
+    if (vcol) cfg.validation = vcol;
+    return { cfg, valids, vcol, payload: { ...M.base, y: y.name, ...cfg } };
   }
 
   async function genregY(ctx, M, y, parent, st) {
     const P = pal();
     const sc = y.id;
     const o = (k, d) => ctx.opt(k, d, sc);
-    const cfg = { dist: o('gr:dist', ctx.opt('dist', 'normal')), method: o('gr:method', 'lasso'), enet_alpha: o('gr:enet', 0.9), criterion: o('gr:crit', 'aicc'), n_grid: 40, choose: o(`gr:choose:${ctx.byLabel || ''}`, null), target: ctx.opt('target', null) };
-    if (!GR_DISTS.some((x) => x[0] === cfg.dist)) cfg.dist = 'normal';
-    const payload = { ...M.base, y: y.name, ...cfg };
-    const res = await ctx.call('fitmodel.genreg', payload);
+    const chooseKey = `gr:choose:${ctx.byLabel || ''}`;
+    const { cfg, valids, payload } = genregCfg(ctx, M, y);
+    // KFold and Leave-One-Out fit the path once per fold: say how far they are
+    let res;
+    const status = cfg.criterion === 'kfold' || cfg.criterion === 'loo' ? el('p', { class: 'sm-ob-note', role: 'status', text: `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}: fitting the path of every fold…` }) : null;
+    const off = status ? SM.engine.on('log', (ev) => { const k = /^smui:progress genreg (\d+) (\d+)/.exec((ev && ev.text) || ''); if (k) status.textContent = `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${k[1]} of ${k[2]} fits…`; }) : null;
+    if (status) (parent.body || parent.el || ctx.container).append(status);
+    try { res = await ctx.call('fitmodel.genreg', payload); } finally { if (off) off(); if (status) status.remove(); }
     const m = res.model;
+    const d = res.diag;
+    const resampled = cfg.criterion === 'kfold' || cfg.criterion === 'holdback';
     st.menu = () => [
+      ctx.check('Diagnostic Plots', 'gr:diag', sc, false, { disabled: m.distribution === 'Binomial' }),
       { label: 'Profilers', submenu: () => [ctx.check('Profiler', 'profiler', sc, false), ctx.check('Interaction Plots', 'interaction', sc, false)] },
-      { label: 'Save Columns', submenu: () => [{ label: 'Predicted Values', action: () => ctx.saveColumn(`Pred ${y.name}`, { rows: res.diag.rows, values: res.diag.predicted }) }, { label: 'Residuals', action: () => ctx.saveColumn(`Residual ${y.name}`, { rows: res.diag.rows, values: res.diag.residual }) }] },
+      { label: 'Save Columns', submenu: () => [
+        { label: 'Predicted Values', action: () => ctx.saveColumn(`Pred ${y.name}`, { rows: d.rows, values: d.predicted }) },
+        { label: 'Residuals', action: () => ctx.saveColumn(`Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
+        resampled ? { label: 'Validation Column', action: () => ctx.saveColumn('Validation', { rows: d.rows, values: d.set }, { notes: `0 training, 1 validation: the rows of ${m.title} in ${ctx.report.title}`, modelingType: 'nominal' }) } : null,
+      ].filter(Boolean) },
       { separator: true },
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ];
+    // Model Launch: every change refits (and shows the best model again)
     const launch = ctx.outline('Model Launch', { parent, key: 'grlaunch', info: 'p:fitmodel:genreg' });
-    const mkSel = (label, key, value, choices) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; s.addEventListener('change', () => { ctx.set(`gr:choose:${ctx.byLabel || ''}`, null, sc, { rerun: false }); ctx.set(key, s.value, sc); }); return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), s); };
-    const enet = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': 'Elastic Net Alpha' });
-    enet.value = String(cfg.enet_alpha);
-    enet.addEventListener('change', () => { const v = Number(enet.value.replace(',', '.')); if (v > 0 && v < 1) ctx.set('gr:enet', v, sc); else enet.value = String(cfg.enet_alpha); });
+    const reset = () => ctx.set(chooseKey, null, sc, { rerun: false });
+    const field = (label, input) => el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), input);
+    const mkSel = (label, key, value, choices) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; s.addEventListener('change', () => { reset(); ctx.set(key, s.value, sc); }); return field(label, s); };
+    const numIn = (label, key, value, ok) => {
+      const i = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': label, class: 'sm-fm-num' });
+      i.value = String(value);
+      i.addEventListener('change', () => { const v = Number(String(i.value).replace(',', '.')); if (ok(v)) { reset(); ctx.set(key, v, sc); } else i.value = String(value); });
+      return field(label, i);
+    };
+    const adaptive = el('input', { type: 'checkbox', 'aria-label': 'Adaptive' });
+    adaptive.checked = !!cfg.adaptive;
+    adaptive.addEventListener('change', () => { reset(); ctx.set('gr:adaptive', adaptive.checked, sc); });
+    const seed = el('input', { type: 'text', inputmode: 'numeric', size: 8, 'aria-label': 'Random Seed', class: 'sm-fm-seed', placeholder: cfg.seed != null ? String(cfg.seed) : '' });
+    seed.value = String(ctx.opt('seed', '') ?? '');
+    seed.addEventListener('change', () => { const v = seed.value.trim(); if (v === '' || /^\d+$/.test(v)) { reset(); ctx.set('seed', v); } else seed.value = String(ctx.opt('seed', '') ?? ''); });
     launch.add(el('div', { class: 'sm-fm-controls' },
       mkSel('Distribution', 'gr:dist', cfg.dist, GR_DISTS),
-      mkSel('Estimation Method', 'gr:method', cfg.method, [['lasso', 'Lasso'], ['enet', 'Elastic Net'], ['ridge', 'Ridge']]),
-      mkSel('Validation Method', 'gr:crit', cfg.criterion, [['aicc', 'AICc'], ['bic', 'BIC']]),
-      cfg.method === 'enet' ? el('label', { class: 'sm-fm-opt' }, el('span', { text: 'Elastic Net Alpha' }), enet) : null));
-    const fitOb = ctx.outline(`${m.method} with ${m.criterion} Validation`, { parent, key: 'grfit' });
-    fitOb.add(ctx.kv([['Response', m.response, 'text'], ['Distribution', m.distribution, 'text'], m.target ? ['Target level', m.target, 'text'] : null, ['Number of rows', m.rows, 'int'], ['Sum of Frequencies', m.n], ['-LogLikelihood', m.nll], ['Number of Parameters', m.nparm], ['BIC', m.bic], ['AICc', m.aicc], ['Generalized RSquare', m.grsq], ['Lambda Penalty', m.lambda], m.method === 'Elastic Net' ? ['Elastic Net Alpha', m.enet_alpha] : null], { caption: 'Model Summary' }));
-    // the solution path: the scaled estimates and the criterion against the size of the estimates
-    const x = res.path.l1;
-    const chosenX = x[res.chosen];
-    const crit = cfg.criterion === 'bic' ? res.path.bic : res.path.aicc;
-    const vline = { type: 'line', x0: chosenX, x1: chosenX, yref: 'paper', y0: 0, y1: 1, line: { color: P.fit, width: 1.4, dash: 'dash' } };
-    const coefTr = res.path.coefs.map((c2, i) => ({ type: 'scatter', mode: 'lines', x, y: c2.values, name: c2.term, line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.4 }, hovertemplate: `${c2.term}: %{y:.4g}<extra></extra>` }));
-    const critTr = [{ type: 'scatter', mode: 'lines+markers', x, y: crit, marker: { size: 5, color: P.point }, line: { color: P.point, width: 1.2 }, hovertemplate: `step %{pointNumber}: ${m.criterion} %{y:.5g}<extra></extra>` }];
-    const choose = (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt != null && pt.pointNumber != null) ctx.set(`gr:choose:${ctx.byLabel || ''}`, pt.pointNumber, sc); });
-    const pathOb = ctx.outline('Solution Path', { parent: fitOb, key: 'grpath', menu: () => [{ label: 'Reset to the Best Model', action: () => ctx.set(`gr:choose:${ctx.byLabel || ''}`, null, sc) }] });
-    pathOb.add(ctx.row(
-      ctx.plot(coefTr, { xaxis: { title: { text: 'Magnitude of Scaled Parameter Estimates' } }, yaxis: { title: { text: 'Parameter Estimates' } }, shapes: [vline], hovermode: 'x' }, { width: W(390), height: 290, title: 'solution path', select: false, onDraw: choose }),
-      ctx.plot(critTr, { xaxis: { title: { text: 'Magnitude of Scaled Parameter Estimates' } }, yaxis: { title: { text: m.criterion } }, shapes: [vline] }, { width: W(330), height: 290, title: `${m.criterion} path`, select: false, onDraw: choose })),
-    ctx.note(`Each step of the path is a penalty; the dashed line is the chosen model (${res.chosen === res.best ? `the smallest ${m.criterion}` : 'chosen by a click'}). Click a point of the ${m.criterion} plot, or a line of the path, to choose another.`));
-    fitOb.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'zeroed', label: '', fmt: 'text' }], rows: res.estimates.map((e) => ({ ...e, zeroed: e.zero ? 'zeroed' : '' })) }, { caption: 'Parameter Estimates for Original Predictors', sortable: false, key: 'grest' }),
-      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.scaled }, { caption: 'Parameter Estimates for Centered and Scaled Predictors', sortable: false, key: 'grscaled' }));
+      mkSel('Estimation Method', 'gr:method', cfg.method, GR_METHODS),
+      cfg.method === 'lasso' || cfg.method === 'enet' ? el('label', { class: 'sm-fm-opt' }, adaptive, el('span', { text: 'Adaptive' })) : null,
+      mkSel('Validation Method', 'gr:crit', cfg.criterion, valids),
+      cfg.method === 'enet' ? numIn('Elastic Net Alpha', 'gr:enet', cfg.enet_alpha, (v) => v > 0 && v < 1) : null,
+      cfg.criterion === 'kfold' ? numIn('Number of Folds', 'gr:folds', cfg.folds, (v) => Number.isInteger(v) && v >= 2 && v <= d.rows.length) : null,
+      cfg.criterion === 'holdback' ? numIn('Holdback Proportion', 'gr:holdback', cfg.portion, (v) => v > 0 && v < 1) : null,
+      resampled ? field('Random Seed', seed) : null));
+    // the fit
+    const fitOb = ctx.outline(m.title, { parent, key: 'grfit' });
+    const sumOb = ctx.outline('Model Summary', { parent: fitOb, key: 'grsummary', info: 'p:fitmodel:grsummary' });
+    sumOb.add(ctx.row(
+      ctx.kv([['Response', m.response, 'text'], ['Distribution', m.distribution, 'text'], ['Estimation Method', m.method, 'text'], ['Validation Method', m.validation, 'text'],
+        [m.distribution === 'Binomial' ? 'Probability Model Link' : 'Mean Model Link', GR_LINK[m.distribution], 'text'], m.target ? ['Target level', m.target, 'text'] : null,
+        m.validation_column ? ['Validation column', m.validation_column, 'text'] : null, m.seed != null ? ['Random Seed', String(m.seed), 'text'] : null]),
+      ctx.rt(res.summary, { key: 'grsummary', sortable: false })));
+    genregPath(ctx, fitOb, res, { P, sc, chooseKey });
+    ctx.outline('Parameter Estimates for Centered and Scaled Predictors', { parent: fitOb, key: 'grscaled' }).add(
+      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.scaled }, { sortable: false, key: 'grscaled' }));
+    // zeroed terms in grey (not a text column: Bootstrap finds the rows again by their text)
+    const zeroed = res.estimates.filter((e) => e.zero).length;
+    ctx.outline('Parameter Estimates for Original Predictors', { parent: fitOb, key: 'grest' }).add(
+      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.estimates }, { sortable: false, key: 'grest', cellClass: (r) => (r.zero ? 'sm-fm-zeroed' : null) }),
+      zeroed ? ctx.note(`${zeroed} term${zeroed > 1 ? 's' : ''} zeroed (in grey): the ${res.path.xlabel === 'Step' ? 'selection' : 'penalty'} leaves ${zeroed > 1 ? 'them' : 'it'} out.`) : null);
+    if (o('gr:diag', false) && m.distribution !== 'Binomial') {
+      const sets = ['Training', 'Validation', 'Test'].filter((_, k) => d.set.some((v) => v === k));
+      SM.predict.actualByPredicted(ctx, fitOb, { kind: 'continuous', sets, residuals: { rows: d.rows, actual: d.actual, predicted: d.predicted, set: d.set } }, { key: 'gractual' });
+    }
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'genreg', payload }], scope: sc });
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'genreg', payload, scope: sc });
     tail(ctx, parent, res);
+  }
+
+  /* The Solution Path: the estimates on the scaled predictors (left) and the validation curve (right)
+     against the magnitude of the scaled estimates or the step; the red line is the model shown. Drag it
+     (in either plot) or click a point to show another; Reset to the Best Model goes back. */
+  function genregPath(ctx, fitOb, res, { P, sc, chooseKey }) {
+    const x = res.path.x;
+    const at = (i) => x[Math.max(0, Math.min(x.length - 1, i))];
+    const choose = (i) => { if (i !== res.chosen) ctx.set(chooseKey, i === res.best ? null : i, sc); };
+    const nearest = (v) => { let k = 0; for (let i = 1; i < x.length; i++) if (Math.abs(x[i] - v) < Math.abs(x[k] - v)) k = i; return k; };
+    const shapes = [{ type: 'line', x0: at(res.chosen), x1: at(res.chosen), yref: 'paper', y0: 0, y1: 1, line: { color: P.fit, width: 2 } }];
+    if (res.best !== res.chosen) shapes.push({ type: 'line', x0: at(res.best), x1: at(res.best), yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, width: 1, dash: 'dot' } });
+    const step = res.path.xlabel === 'Step';
+    const coefTr = res.path.coefs.map((c, i) => ({ type: 'scatter', mode: step ? 'lines+markers' : 'lines', x, y: c.values, name: SM.report.plotlyText(c.term), marker: { size: 4 }, line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.4, shape: step ? 'hv' : 'linear' }, hovertemplate: `${SM.report.plotlyText(c.term)}: %{y:.4g}<extra></extra>` }));
+    const lab = res.path.label;
+    const critTr = [{ type: 'scatter', mode: 'lines+markers', x, y: res.path.curve, marker: { size: 5, color: P.point }, line: { color: P.point, width: 1.2 }, hovertemplate: `${step ? 'step' : 'point'} %{pointNumber}: ${lab} %{y:.5g}<extra></extra>` },
+      { type: 'scatter', mode: 'markers', x: [at(res.chosen)], y: [res.path.curve[res.chosen]], marker: { size: 10, color: P.fit, symbol: 'diamond' }, hoverinfo: 'skip', showlegend: false }];
+    const wire = (gd) => {
+      gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && pt.pointNumber != null && pt.curveNumber != null && (pt.data || {}).hoverinfo !== 'skip') choose(pt.pointNumber); });
+      gd.on('plotly_relayout', (ev) => {
+        const k0 = ev && Object.keys(ev).find((q) => /^shapes\[0\]\.x0$/.test(q));
+        if (!k0) return;
+        const k1 = Object.keys(ev).find((q) => /^shapes\[0\]\.x1$/.test(q));
+        choose(nearest(k1 ? (ev[k0] + ev[k1]) / 2 : ev[k0]));
+      });
+    };
+    const xaxis = { title: { text: res.path.xlabel }, ...(step ? { dtick: x.length > 12 ? undefined : 1 } : {}) };
+    const pathOb = ctx.outline('Solution Path', { parent: fitOb, key: 'grpath', info: 'p:fitmodel:grpath', menu: () => [{ label: 'Reset to the Best Model', action: () => ctx.set(chooseKey, null, sc), disabled: res.chosen === res.best }] });
+    const config = { edits: { shapePosition: true } };
+    pathOb.add(ctx.row(
+      ctx.plot(coefTr, { xaxis, yaxis: { title: { text: 'Parameter Estimates' } }, shapes, hovermode: 'x', showlegend: false }, { width: W(400), height: 300, title: 'solution path', select: false, config, onDraw: wire }),
+      ctx.plot(critTr, { xaxis, yaxis: { title: { text: lab } }, shapes, showlegend: false }, { width: W(340), height: 300, title: `${lab} path`, select: false, config, onDraw: wire })),
+    ctx.note(`${step ? 'Each step enters (or, pruned, removes) a term' : 'Each point is a penalty λ, from the one that keeps every term out'}; the red line is the model shown (${res.chosen === res.best ? `the smallest ${lab}` : 'chosen on the plot; the dotted line is the best'}). Drag it, or click a point, to show another.`));
+    return pathOb;
   }
 
   /* ---- Instrumental Variables ---------------------------------------------------------------------------
@@ -2165,7 +2138,7 @@
       kicker: 'Analyze', title: 'Fit Model',
       lead: 'Linear and generalized models of one or more responses: choose the Y, build the model from effects, pick a personality and press OK. The model is JMP\'s, the numbers are statsmodels\'.',
       sections: [
-        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Endogenous', 'Instrumental Variables: the columns of the model effects that are correlated with the error; every effect that holds one is endogenous.'], ['Instruments', 'Instrumental Variables: the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y (they stay out of the model effects).'], ['Offset', 'A known part of the linear predictor (GLM, GEE), for example log exposure.'], ['Subject', 'Generalized Estimating Equations: the rows with the same value belong together (a subject, a cluster).'], ['Time', 'GEE: the order of a subject\'s rows, for the AR(1) and Unstructured working correlations.'], ['Subgroup', 'GEE: a grouping within the subjects, for the Nested working correlation.'], ['By', 'A separate fit for each level.']] },
+        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Validation', 'Generalized Regression: a column with 0 (Training), 1 (Validation) and 2 (Test), or those words; the other personalities ignore it.'], ['Endogenous', 'Instrumental Variables: the columns of the model effects that are correlated with the error; every effect that holds one is endogenous.'], ['Instruments', 'Instrumental Variables: the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y (they stay out of the model effects).'], ['Offset', 'A known part of the linear predictor (GLM, GEE), for example log exposure.'], ['Subject', 'Generalized Estimating Equations: the rows with the same value belong together (a subject, a cluster).'], ['Time', 'GEE: the order of a subject\'s rows, for the AR(1) and Unstructured working correlations.'], ['Subgroup', 'GEE: a grouping within the subjects, for the Nested working correlation.'], ['By', 'A separate fit for each level.']] },
         { heading: 'Construct Model Effects', text: 'Select columns on the left and press Add. Cross makes an interaction, a column crossed with itself a power; Nest puts an effect within a column (B[A]). The Macros add whole models; Attributes > Random Effect marks an effect as random (Mixed Model, or REML in Standard Least Squares).' },
         { heading: 'Coding', text: 'Nominal and ordinal factors are effect coded (a level\'s parameter is its difference from the average of the levels, the last level the negative sum); continuous columns in crossings and powers are centred at their means, as JMP\'s Center Polynomials.' },
       ],
@@ -2180,7 +2153,7 @@
     'p:fitmodel:personality': {
       kicker: 'Fit Model', title: 'Personality',
       lead: 'How the model is fitted and reported.',
-      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by p-values, AICc or BIC.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Generalized Estimating Equations', 'statsmodels GEE: a marginal generalized linear model of rows grouped by a Subject, with a working correlation and robust standard errors.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized fits: lasso, elastic net, ridge, chosen by AICc or BIC.'], ['Instrumental Variables', 'Two-stage least squares (statsmodels IV2SLS) for effects that are correlated with the error: cast them into Endogenous and the excluded instruments into Instruments.'], ['Quantile Regression', 'statsmodels QuantReg: a quantile of Y (the Quantile τ; 0.5 is the median) rather than its mean, with the quantile process.']] },
+      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by p-values, AICc or BIC.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Generalized Estimating Equations', 'statsmodels GEE: a marginal generalized linear model of rows grouped by a Subject, with a working correlation and robust standard errors.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized and stepwise fits (lasso, elastic net, ridge, their adaptive forms, forward selection), the model picked by AICc, BIC, KFold, holdback, leave-one-out or a Validation column.'], ['Instrumental Variables', 'Two-stage least squares (statsmodels IV2SLS) for effects that are correlated with the error: cast them into Endogenous and the excluded instruments into Instruments.'], ['Quantile Regression', 'statsmodels QuantReg: a quantile of Y (the Quantile τ; 0.5 is the median) rather than its mean, with the quantile process.']] },
         { heading: 'Emphasis', text: 'For Standard Least Squares: Effect Leverage opens the leverage plots and the effect details, Effect Screening the sorted estimates and the profiler, Minimal Report only the tables.' }],
       more: MORE,
     },
@@ -2234,7 +2207,18 @@
       more: MORE,
     },
     'p:fitmodel:manova': { kicker: 'Fit Model', title: 'MANOVA', lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends).', more: MORE },
-    'p:fitmodel:genreg': { kicker: 'Fit Model', title: 'Generalized Regression', lead: 'Penalized fits on centred and scaled predictors: the lasso sets small effects to zero, ridge shrinks them all, the elastic net mixes the two (Elastic Net Alpha is the lasso share). The path runs from the heaviest penalty to almost none; the model with the smallest AICc or BIC is chosen, or the one you click.', more: MORE },
+    'p:fitmodel:genreg': {
+      kicker: 'Fit Model', title: 'Generalized Regression',
+      lead: 'JMP Pro\'s penalized and stepwise fits of a normal, binomial or Poisson response, with a validation that picks the model on the path. The predictors are centred and scaled first, by the rows that train the model; the intercept is not penalized. The fits minimise the objective of statsmodels\' fit_regularized, solved as glmnet does (coordinate descent inside Newton steps).',
+      sections: [
+        { heading: 'Estimation Method', choices: [['Lasso', 'an l1 penalty: small effects are set to zero'], ['Elastic Net', 'the lasso and ridge penalties mixed; Elastic Net Alpha is the lasso share'], ['Ridge', 'an l2 penalty: every effect shrinks, none is zero'], ['Adaptive', 'for the lasso and the elastic net: each term\'s penalty is divided by |b| of the maximum likelihood fit (of a ridge fit when that does not exist), so large effects are penalized less'], ['Forward Selection', 'terms enter one at a time, the one with the largest score statistic (for the normal the largest drop in the error sum of squares); each step is a maximum likelihood fit'], ['Pruned Forward Selection', 'after each entry a term leaves while the model without it fits better than every model of its size before (a floating search)']] },
+        { heading: 'Validation Method', choices: [['AICc, BIC', 'the model on the path with the smallest criterion of the training fit'], ['KFold', 'the rows split at random into folds (Number of Folds); each fold is predicted by a fit to the others; the curve is the mean of the folds\' Scaled −LogLikelihood. As in JMP, the model shown is the fold model that validates best at the chosen penalty'], ['Holdback', 'a random share of the rows (Holdback Proportion) held back to validate, drawn as the page draws a Validation Portion'], ['Leave-One-Out', 'KFold with a fold per row: slow, and taken up to 1000 rows (300 for the binomial, the Poisson and the forward methods)'], ['Validation Column', 'the launch\'s Validation role: 0 Training, 1 Validation, 2 Test (kept out of both)'], ['Random Seed', 'the seed of KFold and Holdback; empty: one drawn at the first run and kept with the report']] },
+        { heading: 'Validation rows of a normal response', text: 'Their −LogLikelihood takes the variance of the training residuals (SSE/N).' },
+      ],
+      more: MORE,
+    },
+    'p:fitmodel:grpath': { kicker: 'Fit Model', title: 'Solution Path', lead: 'The estimates on the centred and scaled predictors (left) and the validation curve (right: AICc, BIC, or the Scaled −LogLikelihood of the validation rows) along the path: against the magnitude of the scaled estimates (the sum of their absolute values) for the penalized methods, against the step for forward selection. The red line is the model the report shows; drag it in either plot, or click a point, to show another. Reset to the Best Model goes back to the smallest value of the curve.', more: MORE },
+    'p:fitmodel:grsummary': { kicker: 'Fit Model', title: 'Model Summary', lead: 'The fit\'s measures for each set of rows: Training (the rows the model learns from), Validation (the rows that chose it) and Test (a Validation column\'s 2s, kept out of both). −LogLikelihood of the set under the fitted model (the normal\'s variance from the training residuals, SSE/N); Scaled −LogLikelihood, that per unit of weight (the validation curve); Generalized RSquare against the training mean (Nagelkerke\'s; for the normal 1 − exp(2(LL0 − LL)/N)); RASE, the root mean squared error. Number of Parameters, BIC and AICc are the training fit\'s: the nonzero terms and the intercept (for the elastic net and ridge the trace of the ridge hat matrix on the nonzero terms); for the normal AICc and BIC count the variance too.', more: MORE },
     'p:fitmodel:gee': {
       kicker: 'Fit Model', title: 'Generalized Estimating Equations',
       lead: 'A generalized linear model for rows that are not independent: repeated measures of a subject, members of a cluster. GEE (statsmodels\' GEE, Liang and Zeger 1986) estimates the marginal mean, the average over the subjects, with a working correlation for the rows of a subject and standard errors that stay right when that correlation is wrong.',
@@ -2405,14 +2389,15 @@
   /* ---- the platform -------------------------------------------------------------------------------------- */
   SM.platforms.register({
     id: 'fitmodel', label: 'Fit Model', menu: 'Analyze', order: 110, info: 'p:fitmodel', topics: TOPICS,
-    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA, Generalized Regression (lasso, elastic net, ridge), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
-    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
+    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA, Generalized Regression (lasso, elastic net, ridge, adaptive lasso and elastic net, forward and pruned forward selection, validated by AICc, BIC, KFold, holdback, leave-one-out or a Validation column), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
+    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.genmod.generalized_linear_model.GLM.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
     launch: {
       lead: 'Choose the Y, add the model effects from the selected columns, and pick a personality. Continuous Y: least squares; nominal or ordinal Y: logistic.',
       roles: [
         { key: 'y', label: 'Y', min: 1, hint: 'required' },
         { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
         { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric' },
+        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional (Generalized Regression): 0/1/2 or Training/Validation/Test' },
         { key: 'endog', label: 'Endogenous', hint: 'required: the model effects\' columns that are endogenous' },
         { key: 'instruments', label: 'Instruments', hint: 'required: the excluded instruments' },
         { key: 'offset', label: 'Offset', max: 1, numeric: true, types: ['continuous'], hint: 'optional (generalized linear model, GEE)' },
@@ -2447,6 +2432,8 @@
       ctx.fm = { menu: null };
       const M = modelOf(ctx);
       const p = ctx.opt('personality', 'standard');
+      const vc = ctx.name('validation');
+      if (vc && p !== 'genreg') ctx.top.add(ctx.note(`${vc} is in the Validation role, which only Generalized Regression uses: this fit takes every row, whatever its set.`));
       if (p === 'stepwise') return renderStepwise(ctx, M);
       if (p === 'glm') return renderGLM(ctx, M);
       if (p === 'gee') return renderGEE(ctx, M);

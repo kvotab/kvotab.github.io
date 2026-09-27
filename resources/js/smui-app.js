@@ -72,7 +72,7 @@
     'Analyze/Multivariate Methods': 210, 'Analyze/Clustering': 220,
     'Analyze/Quality and Process': 310, 'Analyze/Reliability and Survival': 320, 'Analyze/Consumer Research': 330,
     'DOE/Classical': 110, 'DOE/Special Purpose': 120, 'DOE/Design Diagnostics': 210, 'DOE/Sample Size Explorers': 220,
-    'Graph/Legacy': 310, 'Cols/Utilities': 310, 'Tables/Utilities': 310, 'Rows/Row Selection': 10,
+    'Graph/Legacy': 310, 'Cols/Utilities': 310, 'Cols/Modeling Utilities': 320, 'Tables/Utilities': 310, 'Rows/Row Selection': 10,
   };
 
   const MENUS = ['File', 'Edit', 'Tables', 'Rows', 'Cols', 'DOE', 'Analyze', 'Graph', 'Help'];
@@ -967,8 +967,9 @@
     _engineStatus() {
       const e = SM.engine;
       this.engineEl.dataset.state = e.state;
-      this.engineEl.textContent = e.state === 'ready' ? `Python · statsmodels ${e.versions.statsmodels}` : e.text;
-      this.engineEl.title = e.text;
+      this.engineEl.textContent = e.state === 'ready' ? (e.loading || `Python · statsmodels ${e.versions.statsmodels}`) : e.text;
+      this.engineEl.title = e.loading || e.text;
+      this.engineEl.dataset.loading = e.loading ? '1' : '0';
     }
 
     /* ---- home and help --------------------------------------------------------------- */

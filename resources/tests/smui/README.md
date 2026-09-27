@@ -10,7 +10,9 @@ patsy, statsmodels) running in Pyodide in a module worker.
 Backend tests run the page's Python package (`resources/py/smui`) outside
 the browser, through the same `registry.dispatch` and JSON round trip the
 page uses. They need a Python with numpy, scipy, pandas, patsy and
-statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6):
+statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
+1.8 for the predictive platforms' suites and test_fit_model.py (Pyodide has
+1.8.0):
 
     python3 resources/tests/smui/test_distribution.py   # and test_<module>.py for each module
     node resources/tests/smui/test-formula.js           # the formula language, no browser
@@ -21,7 +23,7 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6):
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
 | `test_fit_y_by_x.py` | 427 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover |
-| `test_fit_model.py` | 707 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange |
+| `test_fit_model.py` | 832 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds |
 | `test_multivariate.py` | 213 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation |
 | `test_timeseries.py` | 376 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
 | `test_survival.py` | 145 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
@@ -36,6 +38,19 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6):
 | `test_treatment.py` | 294 | statsmodels directly, the estimators' formulas, analytic sandwiches, simulated truth |
 | `test_gam.py` | 190 | statsmodels GLMGam directly, the penalty search by hand, known true functions |
 | `test_mediation.py` | 158 | statsmodels' Mediation called directly with the same seeds, known truth |
+| `test_partition.py` | 136 | brute-force cut and grouping searches, scikit-learn trees on the same column, scipy's f_oneway and chi2_contingency, the LogWorth adjustment, a Monte Carlo under no effect, smoothing by hand, Freq as repeated rows, the code on a CSV |
+| `test_ensemble.py` | 131 | scikit-learn's forests and boosting called directly (trees, staged curves, probabilities), brute-force out-of-bag losses and permutation importance, JMP's documented probabilities, the code on a CSV |
+| `test_neural.py` | 149 | scikit-learn's MLP replayed exactly, a forward pass from the Estimates, an identity network against OLS, WLS and Logit, the code on a CSV |
+| `test_learners.py` | 128 | scikit-learn's KNeighbors, GaussianNB, CategoricalNB, SVC, SVR and folds called directly, missing-value products by hand, the code on a CSV |
+| `test_gaussproc.py` | 117 | scikit-learn's GaussianProcessRegressor, the closed-form jackknife, known sensitivity indices, the code on a CSV |
+| `test_pls.py` | 120 | scikit-learn's PLSRegression and NIPALS written out, van der Voet's test, VIP by formula, the code on a CSV |
+| `test_mixtures.py` | 213 | GaussianMixture for the four structures, the one-cluster MLE, the likelihood by scipy, AICc/BIC, the EM fixed point, planted outliers, the code on a CSV |
+| `test_embedding.py` | 39 | scikit-learn's TSNE (identical maps), the learning-rate formula, the exact KL divergence of the map, the code on a CSV |
+| `test_text.py` | 188 | Porter's 1980 examples, scikit-learn's stop words and CountVectorizer, independent term and phrase counts, the weightings, numpy's SVD, statsmodels' varimax, NMF and LDA, the code on a CSV |
+| `test_screening.py` | 150 | scikit-learn's estimators called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, the validation column's rounding, the code on a CSV |
+| `test_profile.py` | 38 | scipy's PchipInterpolator and sobol_indices, the Ishigami function's Sobol indices, known optima, a tree's best leaf on a grid |
+| `test_bootstrap.py` | 51 | scipy.stats.bootstrap on the same resamples (percentile, BCa), the formulas, the code on a CSV |
+| `test_predictive.py` | 102 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
 | `test_mi.py` | 120 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
 | `test_copula.py` | 251 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
 | `test-formula.js` | 326 | the parser, missing values, every function, no escape to JS |
@@ -74,8 +89,11 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-panels.js` | the Table, Columns and Rows panels |
 | `resources/js/smui-app.js` | the menu bar, tabs, the platform and command registries |
 | `resources/js/smui-help.js` | the Help tab and the (i) topics of the frame |
+| `resources/js/smui-profiler.js` | `SM.profiler`: the Prediction Profiler of any model a backend exposes |
+| `resources/js/smui-bootstrap.js` | `SM.bootstrap`: Bootstrap from any report table's right-click menu, and the Bootstrap report |
+| `resources/js/smui-predict.js` | `SM.predict`: the predictive platforms' roles, options, Measures of Fit, confusion, ROC, lift, Column Contributions, Save Columns |
 | `resources/js/smui-p-*.js`, `resources/css/smui-*.css` | the platforms, one file and one stylesheet per menu area |
-| `resources/py/smui/` | the backend: `registry` (dispatch), `util` (JSON, report tables), `data` (tables as DataFrames), `models` (linear models as JMP reports them), one module per platform area; `manifest.json` lists what the worker loads |
+| `resources/py/smui/` | the backend: `registry` (dispatch), `util` (JSON, report tables), `data` (tables as DataFrames), `models` (linear models as JMP reports them), `predictive` (the predictive platforms' data, sets and measures), `profile` (the profiler of any model, desirability, Sobol importance), `bootstrap` (bootstrap confidence limits), one module per platform area; `manifest.json` lists what the worker loads |
 
 ## Writing a platform
 
@@ -214,7 +232,76 @@ A platform's report must work in both themes (use the CSS variables of
 kvot.css, and colours that read on both; `SM.report.BASE`, the points'
 colour, is a lighter blue in the dark theme), at phone width, and with By.
 
+### Predictive platforms (scikit-learn)
+
+Pyodide ships scikit-learn 1.8.0 but the page does not load it at the
+start: a function that needs it registers
+`@api('partition.fit', packages=predictive.SK)` and imports `sklearn`
+inside its body; the worker loads the package before the first such call
+(the status button says so). Do the same for any other extra package.
+
+- `predictive.prepare(table, y, x, rows, weight, freq, validation, portion,
+  seed, missing, coding)` gives `P`: `P.X` (continuous columns as they are;
+  a 0/1 column per level of a categorical one, or `coding='ordinal'` its
+  level number; Informative Missing: the training mean plus a Missing
+  column, a missing level its own column), `P.target` (a number, or the
+  level index), `P.levels`/`P.labels`, `P.w` (weight x freq), `P.sets`
+  (0 Training, 1 Validation, 2 Test: from a Validation column, or a
+  seeded validation portion), `P.train()`, `P.proba(model, X)` (every
+  level, in the table's order), `P.encode(frame)`, `P.features` and
+  `P.groups` (the X columns of each factor), `P.notes`, and `P.code()`, the
+  lines that build the same `d`, `X`, `y`, `w`, `sets` from a CSV export.
+- `predictive.report(P, fitted)` (fitted: predictions, or an n x levels
+  probability matrix) gives the Measures of Fit per set, the confusion
+  matrices, ROC and lift curves, or actual by predicted;
+  `predictive.contributions(P, per-feature values)`, `predictive.saved(P,
+  predict, proba)` for Save Columns, `predictive.cached(kind, table, rows,
+  spec, build)` for the fitted model (the profiler and Save reuse it).
+- A predicted probability should never be exactly 0 or 1 when the method
+  allows otherwise (JMP's Partition adds a prior to its leaf rates): the
+  log-likelihood measures clip at 1e-15, and a 0 on a validation row
+  makes them huge.
+- `profile.expose(area, build, packages=predictive.SK)` registers
+  `<area>.profile`; build(table, rows, **spec) returns
+  `predictive.predictor(P, model)` (or any `profile.Predictor`). The page
+  draws it with `SM.profiler.render(ctx, parent, { sources: [{ fn:
+  '<area>.profile', payload }], scope, option })`.
+- `SM.predict.roles()` (Weight, Freq, Validation, By), `SM.predict.options()`
+  (Validation Portion, Informative Missing, Random Seed),
+  `SM.predict.payload(ctx)` (the seed is drawn once and kept with the
+  report when none is given), and the report blocks `measures`,
+  `classification` / `classificationItems`, `actualByPredicted`,
+  `contributions`, `saveItems`.
+- Everything random takes the report's seed (`random_state`), so a redraw
+  and the shown code give the same model; `n_jobs` stays 1 (one thread).
+- The profiler's red triangle has Desirability Functions, Maximize
+  Desirability, Set Desirabilities, Remember Settings and Assess Variable
+  Importance for any source exposed with `profile.expose` (one model):
+  expose also registers `<area>.maximize` and `<area>.importance`, whose
+  own arguments are `des`, `max_seed`, `imp_method`, `imp_n`, `imp_seed`.
+  A predictor may carry `data` ({factor: values}) for resampled inputs;
+  `predictive.predictor` fills it from the training rows.
+
+### Bootstrap
+
+Any report table (and two-column table) has Bootstrap in its right-click
+menu: the report's rows are drawn again with replacement and the platform
+renders again on each sample in a headless `ctx` (`ctx.headless`,
+`ctx.resampled`): `ctx.plot` draws nothing, `ctx.set` and
+`ctx.saveColumn` do nothing, calls skip the cache and the Python script.
+So a platform's render must get everything a table shows from its calls
+and options, not from side effects; it may test `ctx.headless` to skip
+work no table needs. The table is found again by its outline titles and
+its place, its rows by their text columns.
+  A long fit prints `smui:progress <what> <done> <total>` lines (the engine
+  turns them into 'progress' events).
+
 ## What the core test checks
+
+`test-ui-profiler.py` (21): the shared profiler on GAM: Desirability Functions, Maximize Desirability against `gam.maximize`, Minimize, Remember Settings, Assess Variable Importance against `gam.importance`, a project, dark theme, phone width. GAM and Count Regression use the shared profiler; Fit Model's moves to it next.
+
+`test-ui-bootstrap.py` (22): the right-click item, the dialog, progress and Stop, samples against the backend on the same rows, a two-column table with BCa, a By group, the report left untouched, a project, dark theme, phone width.
+
 
 `test-ui-core.py`: the frame loads without errors, the engine starts, every
 (i) has a topic and every Help link a target, the examples, the launch

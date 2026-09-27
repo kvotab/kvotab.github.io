@@ -557,7 +557,7 @@ async def main():
       const body = rep.body.getBoundingClientRect();
       const boxes = rep.plots.filter(p => p.drawn).map(p => p.box.getBoundingClientRect().right);
       return { page: document.documentElement.scrollWidth <= innerWidth + 1, plots: boxes.every(x => x <= body.right + 1), n: boxes.length,
-               body: rep.body.scrollWidth <= rep.body.clientWidth + 1, scrollers: [...rep.body.querySelectorAll('.sm-cop-scroll')].some(s => s.scrollWidth > s.clientWidth) };
+               body: rep.body.scrollWidth <= rep.body.clientWidth + 1, scrollers: [...rep.body.querySelectorAll('.sm-cop-scroll, table.sm-rt, table.sm-kv')].some(s => s.scrollWidth > s.clientWidth) };   // the core's tables scroll in their own box too
     })()''')
     check('no horizontal page scroll at phone width', r['page'], True)
     check('the graphs fit the phone\'s width', (r['plots'], r['n'] >= 2), (True, True))

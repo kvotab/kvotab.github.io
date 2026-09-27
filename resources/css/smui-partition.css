@@ -1,0 +1,61 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > PARTITION (smui-p-partition.js)
+   The Split, Prune and Go buttons, the summary line, the tree's node boxes
+   (SVG, drawn with kvot.css's tokens so both themes read) and the tree's
+   own scrolling box, which keeps a wide tree from widening the page on a
+   phone. Class prefix sm-part-.
+   ========================================================================== */
+
+/* ---- the buttons and the summary line ------------------------------------------ */
+.sm-part-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.sm-part-buttons .kvot-info-slot { margin-left: 2px; }
+.sm-part-summary { max-width: 100%; overflow-x: auto; }
+.sm-part-summary table.sm-rt { margin: 2px 0 6px; }
+.sm-part-scroll { max-width: 100%; overflow-x: auto; }
+.sm-rt td.sm-part-best { font-weight: 600; }
+
+/* ---- the tree: a box of its own that scrolls both ways ---------------------------- */
+.sm-part-treebox {
+  max-width: 100%;
+  max-height: min(82vh, calc(var(--sm-part-h, 420px) + 26px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 4px 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+.sm-part-treebox.is-small { max-height: 320px; align-self: flex-start; }
+.sm-part-tree { display: block; font-family: verdana, sans-serif; }
+
+.sm-part-links path { fill: none; stroke: var(--text-muted); stroke-width: 1.2; }
+
+.sm-part-node { cursor: pointer; outline: none; }
+.sm-part-box { fill: var(--bg-surface); stroke: var(--border-color); stroke-width: 1; }
+.sm-part-node.is-leaf .sm-part-box { stroke: var(--text-muted); }
+.sm-part-head { fill: var(--bg-secondary); }
+.sm-part-node:hover .sm-part-box { stroke: var(--color-kvot-accent); }
+.sm-part-node:focus-visible .sm-part-box,
+.sm-part-node.is-picked .sm-part-box { stroke: var(--color-kvot-accent); stroke-width: 2; }
+
+.sm-part-title { font-size: 11px; font-weight: 600; fill: var(--text-primary); }
+.sm-part-k { font-size: 10.5px; fill: var(--text-secondary); }
+.sm-part-v { font-size: 10.5px; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+.sm-part-h { font-size: 9.5px; fill: var(--text-muted); }
+
+/* the node's red triangle, as the outlines' */
+.sm-part-tri { fill: #c8322b; }
+:root[data-theme="dark"] .sm-part-tri { fill: #ff6b5c; }
+.sm-part-menu:hover .sm-part-tri { fill: var(--color-kvot-accent); }
+
+/* a level's rate as a bar, and the share of the node's rows selected */
+.sm-part-track { fill: var(--border-color); }
+.sm-part-sel { fill: #d9822b; }
+
+.sm-part-tree.is-small .sm-part-title { font-size: 9.5px; font-weight: 500; }
+.sm-part-tree.is-small .sm-part-k,
+.sm-part-tree.is-small .sm-part-v { font-size: 9px; }
+
+@media (max-width: 560px) {
+  .sm-part-treebox { max-height: 70vh; }
+}

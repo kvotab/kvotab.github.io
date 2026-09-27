@@ -32,6 +32,16 @@ recursive estimates against the Parameter Estimates, the CUSUM's crossing of
 the example's break, a CUSUM point and a rolling window selecting their rows,
 Order by, Rolling Window), in both themes and at phone width.
 
+Generalized Regression (JMP Pro's): the launch dialog's Validation role (its
+Validation Column; another personality says it ignores it), the Model
+Launch's Estimation and Validation Methods, the Model Summary's sets against
+the table's Validation column, KFold's folds and the seed kept by Redo, the
+Solution Path's red line dragged and clicked and Reset to the Best Model,
+Holdback's share and Save Columns > Validation Column, a Random Seed of one's
+own, Forward Selection against the page's own least squares, the binomial
+profiler against Save Columns, Diagnostic Plots by set and their linking, By,
+a project, that it needs no scikit-learn, both themes and phone width.
+
 Start a server on the repository root and headless Chrome on
 SMUI_HTTP_PORT and SMUI_CDP_PORT (the recipe is in README.md), then
 
@@ -253,7 +263,7 @@ async def main():
       const rep = __fm.rep();
       let d = __fm.done(rep); await __fm.topMenu('Factor Profiling', 'Profiler'); await d;
       const ob = __fm.outline('Prediction Profiler'); ob.scrollIntoView(); await new Promise(r => setTimeout(r, 1200));
-      const val = () => ob.querySelector('.sm-fm-prof-val').textContent;
+      const val = () => ob.querySelector('.sm-prof-val').textContent;
       const t = rep.table; const row = 20;
       const set = async (sel, v) => { const was = val(); const i = ob.querySelector(sel); i.value = v; i.dispatchEvent(new Event('change')); for (let k = 0; k < 400 && val() === was; k++) await new Promise(r => setTimeout(r, 5)); };
       const t0 = performance.now();
@@ -552,13 +562,13 @@ async def main():
       const pc = t.col('Pred improved'), pr = t.col('Pearson Residual improved');
       const d = __fm.done(rep); await __fm.topMenu('Profilers', 'Profiler'); await d;
       const ob = __fm.outline('Prediction Profiler'); ob.scrollIntoView(); await new Promise(r => setTimeout(r, 1000));
-      const val = () => ob.querySelector('.sm-fm-prof-val').textContent;
+      const val = () => ob.querySelector('.sm-prof-val').textContent;
       const set = async (sel, v) => { const was = val(); const i = ob.querySelector(sel); i.value = v; i.dispatchEvent(new Event('change')); for (let k = 0; k < 400 && val() === was; k++) await new Promise(r => setTimeout(r, 5)); };
       await set('input[aria-label="visit current value"]', String(t.col('visit').values[row]));
       await set('input[aria-label="baseline current value"]', String(t.col('baseline').values[row]));
       const fsel = ob.querySelector('select[aria-label="treatment current value"]'); fsel.value = String(['placebo', 'active'].indexOf(t.col('treatment').values[row])); fsel.dispatchEvent(new Event('change'));
       await new Promise(r => setTimeout(r, 500));
-      const out = { pred: val(), name: ob.querySelector('.sm-fm-prof-name').textContent, saved: pc ? pc.values[row] : null, pears: pr ? pr.values[row] : null, y: t.col('improved').values[row] };
+      const out = { pred: val(), name: ob.querySelector('.sm-prof-name').textContent, saved: pc ? pc.values[row] : null, pears: pr ? pr.values[row] : null, y: t.col('improved').values[row] };
       for (const c of [pc, pr]) if (c) t.removeColumn(c.id);
       return out; })()''')
     check('the GEE profiler predicts Prob[yes]', r['name'], 'Prob[yes]')
@@ -667,6 +677,8 @@ async def main():
     await shot(page, 'fm-09-gee-phone.png')
     # ==== Instrumental Variables, Quantile Regression, Recursive and Rolling Regression, on the schooling example ====
     await schooling(page)
+    # ==== Generalized Regression: the validation methods, the adaptive methods, forward selection ====
+    await genreg(page)
 
     check('no script errors', page.errors, [])
     await page.close()
@@ -786,7 +798,7 @@ async def schooling(page):
     check('IV with By: no errors', r['errors'], [])
     r = await page.ev(open_js('log wage', E(['education'], ['experience'], ['sex']), {'personality': 'iv'}, {'endog': ['education'], 'instruments': ['distance (km)', 'lottery']}))
     r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep); await __fm.topMenu('Factor Profiling', 'Profiler'); await d;
-      return { st: __fm.state(rep), val: __fm.outline('Prediction Profiler') ? __fm.outline('Prediction Profiler').querySelector('.sm-fm-prof-val').textContent : null }; })()''')
+      return { st: __fm.state(rep), val: __fm.outline('Prediction Profiler') ? __fm.outline('Prediction Profiler').querySelector('.sm-prof-val').textContent : null }; })()''')
     check('the IV profiler opens', ('Prediction Profiler' in r['st']['outlines'], r['st']['errors'], r['val'] is not None), (True, [], True))
     r = await page.ev('''(async () => { const t = SM.app.current;
       const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [__fm.rep().toJSON()] };
@@ -916,6 +928,241 @@ async def schooling(page):
     await asyncio.sleep(1.2)
     check('the IV report: no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
     await shot(page, 'fm-16-iv-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+
+
+# A table for Generalized Regression: y (normal), yb (two levels), a Validation column as numbers (v) and as names (vt).
+GR_TABLE = """((n) => { const r = SM.util.rng('genreg-ui'); const cols = [];
+  const X = []; for (let j = 0; j < 6; j++) X.push(Array.from({ length: n }, () => +r.normal(0, 1).toFixed(4)));
+  const eta = X[0].map((v, i) => 1.5 * v - 1.0 * X[1][i] + 0.6 * X[4][i]);
+  for (let j = 0; j < 6; j++) cols.push({ name: 'x' + j, dataType: 'numeric', values: X[j] });
+  cols.push({ name: 'y', dataType: 'numeric', values: eta.map((e) => +(1 + e + r.normal(0, 1)).toFixed(4)) });
+  cols.push({ name: 'yb', dataType: 'character', values: eta.map((e) => (r.u() < 1 / (1 + Math.exp(-e)) ? 'yes' : 'no')), valueOrder: ['yes', 'no'] });
+  const vv = Array.from({ length: n }, () => { const u = r.u(); return u < 0.6 ? 0 : u < 0.85 ? 1 : 2; });
+  cols.push({ name: 'v', dataType: 'numeric', values: vv });
+  cols.push({ name: 'vt', dataType: 'character', values: vv.map((k) => ['Training', 'Validation', 'Test'][k]) });
+  cols.push({ name: 'sex', dataType: 'character', values: Array.from({ length: n }, () => (r.u() < 0.5 ? 'F' : 'M')) });
+  const t = new SM.Table({ name: 'GenReg test', source: 'simulated', columns: cols }); SM.app.addTable(t); return t.nrows; })"""
+
+# Set report options of the response and wait for the redraw.
+GR_SET = """(async (pairs) => { const rep = __fm.rep(); const y = rep.table.col(rep.spec.roles.y[0]).id; const d = __fm.done(rep);
+  for (const [k, v] of pairs) rep.spec.options[y + '|' + k] = v; rep.run(); await d; return __fm.state(rep); })"""
+
+
+def gr_set(**kw):
+    return f'({GR_SET})({json.dumps([[k.replace("_", ":", 1), v] for k, v in kw.items()])})'
+
+
+async def genreg(page):
+    """Generalized Regression (JMP Pro's): the Validation role, the Model
+    Launch's methods, the Model Summary per set, the Solution Path's draggable
+    line, Save Columns, the profiler, By, Redo, a project, both themes."""
+    num = lambda s: float(str(s).replace('−', '-').replace('<', '').replace('*', ''))  # noqa: E731
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    check('the GenReg test table', await page.ev(f'({GR_TABLE})(400)'), 400)
+    await page.ev(HELPERS)
+    sk0 = await page.ev("!!(SM.engine.versions && SM.engine.versions['scikit-learn'])")
+
+    # ---- the launch dialog: the Validation role; Generalized Regression takes it as its Validation Column
+    r = await page.ev('''(async () => {
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      const d = __fm.dlg(); const out = {};
+      const role = (lab) => [...d.querySelectorAll('.sm-role')].find(x => x.querySelector('.sm-btn').textContent === lab);
+      out.role = !!role('Validation') && !role('Validation').hidden;
+      __fm.pick('y'); __fm.role('Y'); await __fm.tick();
+      __fm.pick('x0', 'x1', 'x2', 'x3', 'x4', 'x5'); __fm.btn('Add');
+      __fm.pick('v'); __fm.role('Validation');
+      const ps = d.querySelector('select[aria-label="Personality"]'); ps.value = 'genreg'; ps.dispatchEvent(new Event('change'));
+      __fm.btn('OK');
+      const rep = __fm.rep(); await __fm.settled(rep);
+      const vm = __fm.outline('Model Launch').querySelector('select[aria-label="Validation Method"]');
+      const t = rep.table; const v = t.col('v').values;
+      return { ...out, st: __fm.state(rep), vm: vm.value, choices: [...vm.options].map(o => o.textContent), sum: __fm.table('Model Summary', 1),
+        counts: [0, 1, 2].map(k => v.filter(x => x === k).length), roles: rep.spec.roles.validation.map(id => t.col(id).name) }; })()''')
+    check('Fit Model\'s launch has a Validation role', r['role'], True)
+    check('Generalized Regression takes it: Validation Column', (r['st']['title'], r['vm'], r['roles']), ('Generalized Regression for y', 'validation', ['v']))
+    check('... with a Validation column the methods are AICc, BIC, Validation Column', r['choices'], ['AICc', 'BIC', 'Validation Column'])
+    for o in ['Model Launch', 'Lasso with Validation Column', 'Model Summary', 'Solution Path', 'Parameter Estimates for Centered and Scaled Predictors', 'Parameter Estimates for Original Predictors']:
+        check(f'GenReg outline {o}', o in r['st']['outlines'], True)
+    check('no errors in the GenReg report', r['st']['errors'], [])
+    sm_ = {row[0]: row for row in r['sum']}
+    check('the Model Summary: a column per set', r['sum'][0], ['Measure', 'Training', 'Validation', 'Test'])
+    check('... their rows are the Validation column\'s 0, 1 and 2', [int(num(x)) for x in sm_['Number of rows'][1:]], r['counts'])
+    cur = await page.ev('''(() => { const p = __fm.rep().plots.find(q => q.opts.title === 'Scaled -LogLikelihood path'); return p.traces[1].y[0]; })()''')
+    check.near('... the curve at the model is the Validation Scaled -LogLikelihood', cur, num(sm_['Scaled -LogLikelihood'][2]), 1e-6)
+    await asyncio.sleep(1)
+    await shot(page, 'fm-17-genreg-validation.png')
+
+    # ---- another personality with the Validation role says it ignores it
+    r = await page.ev(open_js('y', E(['x0'], ['x1']), {'personality': 'standard'}, {'validation': ['v']}))
+    notes = await page.ev('[...__fm.rep().body.querySelectorAll(".sm-ob-note")].map(n => n.textContent)')
+    check('Standard Least Squares with a Validation column says only Generalized Regression uses it', any('only Generalized Regression uses' in n for n in notes), True)
+    check('... and fits every row', (await page.ev('__fm.kv("Summary of Fit")'))['Observations (or Sum Wgts)'], '400')
+
+    # ---- no Validation column: AICc, BIC, KFold, Holdback, Leave-One-Out
+    E6 = E(*[[f'x{j}'] for j in range(6)])
+    r = await page.ev(open_js('y', E6, {'personality': 'genreg'}))
+    r = await page.ev('''(() => { const ml = __fm.outline('Model Launch'); const q = (l) => ml.querySelector(`select[aria-label="${l}"]`);
+      return { vm: [...q('Validation Method').options].map(o => o.textContent), em: [...q('Estimation Method').options].map(o => o.textContent),
+        adaptive: !!ml.querySelector('input[aria-label="Adaptive"]') }; })()''')
+    check('without a Validation column: AICc, BIC, KFold, Holdback, Leave-One-Out', r['vm'], ['AICc', 'BIC', 'KFold', 'Holdback', 'Leave-One-Out'])
+    check('the Estimation Methods', r['em'], ['Lasso', 'Elastic Net', 'Ridge', 'Forward Selection', 'Pruned Forward Selection'])
+    check('the lasso has an Adaptive box', r['adaptive'], True)
+    r = await page.ev('''(async () => { const rep = __fm.rep();
+      const s = __fm.outline('Model Launch').querySelector('select[aria-label="Validation Method"]'); const d = __fm.done(rep); s.value = 'kfold'; s.dispatchEvent(new Event('change')); await d;
+      const m2 = __fm.outline('Model Launch');
+      return { st: __fm.state(rep), folds: m2.querySelector('input[aria-label="Number of Folds"]').value, seed: m2.querySelector('input[aria-label="Random Seed"]').placeholder,
+        drawn: rep.spec.options.seedDrawn, sum: __fm.table('Model Summary', 1), notes: [...rep.body.querySelectorAll('.sm-ob-note')].map(n => n.textContent) }; })()''')
+    sm_ = {row[0]: row for row in r['sum']}
+    check('KFold: the report, the Number of Folds, the seed drawn and kept', ('Lasso with KFold Validation' in r['st']['outlines'], r['folds'], r['drawn'] is not None and r['seed'] == str(r['drawn'])), (True, '5', True))
+    check('... the final model\'s Training and Validation sets: four folds and one', (int(num(sm_['Number of rows'][1])) + int(num(sm_['Number of rows'][2])), int(num(sm_['Number of rows'][2]))), (400, 80))
+    check('... the notes say which fold, as JMP chooses it', any('As JMP does, the model reported is the fold model' in n for n in r['notes']), True)
+    check('no errors with KFold', r['st']['errors'], [])
+    kf_sum = r['sum']
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const d = __fm.done(rep); rep.run(); await d; return __fm.table('Model Summary', 1); })()''')
+    check('Redo draws the same folds (the seed kept with the report)', r, kf_sum)
+    # the red line dragged to another point of the path, a click, Reset to the Best Model
+    r = await page.ev('''(async () => { const rep = __fm.rep();
+      const key = () => rep.spec.options[Object.keys(rep.spec.options).find(k2 => k2.endsWith('|gr:choose:'))];
+      const lamOf = () => __fm.table('Model Summary', 1).find(r => r[0] === 'Lambda Penalty')[1];
+      const drawn = async (title) => { __fm.outline('Solution Path').scrollIntoView({ block: 'start' }); let q = null;
+        for (let i = 0; i < 200; i++) { q = rep.plots.find(q2 => q2.opts.title === title); if (q && q.drawn) break; await new Promise(r => setTimeout(r, 25)); } return q; };
+      const p = await drawn('Scaled -LogLikelihood path'); const x = p.traces[0].x;
+      const lam0 = lamOf(); const best = x.indexOf(p.traces[1].x[0]); const k = best > 10 ? best - 8 : best + 8;
+      let d = __fm.done(rep); p.box.emit('plotly_relayout', { 'shapes[0].x0': x[k] + 1e-9, 'shapes[0].x1': x[k] + 1e-9 }); await d;
+      const q = await drawn('Scaled -LogLikelihood path');
+      const after = { lam: lamOf(), at: q.traces[1].x[0], x: x[k], shapes: q.userLayout.shapes.length, chosen: key() };
+      d = __fm.done(rep); q.box.emit('plotly_click', { points: [{ curveNumber: 0, pointNumber: k + 1, data: q.traces[0] }] }); await d;
+      const clicked = key();
+      d = __fm.done(rep); __fm.outline('Solution Path').querySelector('.sm-ob-menu').click(); await __fm.tick(); await __fm.menuItem('Reset to the Best Model'); await d;
+      return { lam0, best, k, after, clicked, reset: { lam: lamOf(), chosen: key() }, errors: __fm.state(rep).errors }; })()''')
+    check('dragging the red line shows the model at that point of the path', (r['after']['chosen'], r['after']['at'] == r['after']['x'], r['after']['lam'] != r['lam0']), (r['k'], True, True))
+    check('... and the best one stays marked (a dotted line)', r['after']['shapes'], 2)
+    check('a click on a point shows that model', r['clicked'], r['k'] + 1)
+    check('Reset to the Best Model', (r['reset']['chosen'], r['reset']['lam']), (None, r['lam0']))
+    check('no errors after the drag', r['errors'], [])
+    await page.ev('''(() => { const ob = __fm.outline('Solution Path'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-18-genreg-kfold.png')
+
+    # ---- Holdback: the share of rows, Save Columns > Validation Column, another seed
+    r = await page.ev(gr_set(gr_crit='holdback'))
+    check('Holdback: the report', ('Lasso with Holdback Validation' in r['outlines'], r['errors']), (True, []))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const sum = __fm.table('Model Summary', 1); const nv = __fm.num(sum.find(r => r[0] === 'Number of rows')[2]);
+      await __fm.topMenu('Save Columns', 'Validation Column'); await __fm.tick();
+      const c = t.col('Validation'); const ones = c ? c.values.filter(v => v === 1).length : null; const mt = c ? c.modelingType : null;
+      if (c) t.removeColumn(c.id);
+      const s = __fm.outline('Model Launch').querySelector('input[aria-label="Random Seed"]');
+      const d = __fm.done(rep); s.value = '4242'; s.dispatchEvent(new Event('change')); await d;
+      return { nv, ones, mt, seed: rep.spec.options.seed, kv: __fm.kv('Model Summary')['Random Seed'], changed: JSON.stringify(__fm.table('Model Summary', 1)) !== JSON.stringify(sum),
+        prop: __fm.outline('Model Launch').querySelector('input[aria-label="Holdback Proportion"]').value }; })()''')
+    check('... 0.3 of the rows held back (the Holdback Proportion)', (r['prop'], r['nv']), ('0.3', 120))
+    check('Save Columns > Validation Column: its 1s are the held-back rows', (r['ones'], r['mt']), (120, 'nominal'))
+    check('a Random Seed of one\'s own draws other rows, and the Model Summary says it', (r['seed'], r['kv'], r['changed']), ('4242', '4242', True))
+    r = await page.ev('''(async () => { const tbl = __fm.outline('Parameter Estimates for Original Predictors').querySelector('table.sm-rt');
+      const t = await SM.bootstrap.run(tbl, tbl._rt.columns.find(c => c.key === 'estimate'), { B: 4, seed: 3, show: false });
+      return { n: t.nrows, failed: / failed/.test(t.notes), finite: t.columns.slice(1).every(c => c.values.every(Number.isFinite)), cols: t.columns.length - 1 }; })()''')
+    check('Bootstrap of the estimates reruns the fit headless on resampled rows (repeats and all)', (r['n'], r['failed'], r['finite'], r['cols']), (5, False, True, 7))
+
+    # ---- Forward Selection: each step a least squares fit, against the page's own
+    r = await page.ev(gr_set(gr_crit='aicc', gr_method='forward'))
+    adapt = await page.ev("!!__fm.outline('Model Launch').querySelector('input[aria-label=\"Adaptive\"]')")
+    check('Forward Selection with AICc: the report, no Adaptive box', ('Forward Selection with AICc Validation' in r['outlines'], adapt), (True, False))
+    js = await page.ev('''(() => { const t = SM.app.current; const n = t.nrows;
+      const pe = __fm.table('Parameter Estimates for Centered and Scaled Predictors').slice(1).map(r => [r[0], __fm.num(r[1])]);
+      const inn = pe.filter(([k, v]) => k !== 'Intercept' && v !== 0).map(([k]) => k);
+      const z = inn.map(k => { const x = t.col(k).values; const m = x.reduce((a, b) => a + b) / n; const sd = Math.sqrt(x.reduce((a, b) => a + (b - m) ** 2, 0) / n); return x.map(v => (v - m) / sd); });
+      const y = t.col('y').values; const A = [Array(n).fill(1), ...z]; const p = A.length;
+      const M = A.map((a) => [...A.map(b => a.reduce((s, v, i) => s + v * b[i], 0)), a.reduce((s, v, i) => s + v * y[i], 0)]);
+      for (let k = 0; k < p; k++) for (let i = 0; i < p; i++) if (i !== k) { const f = M[i][k] / M[k][k]; for (let j = k; j <= p; j++) M[i][j] -= f * M[k][j]; }
+      const b = M.map((r, i) => r[p] / r[i]);
+      const got = [pe.find(([k]) => k === 'Intercept')[1], ...inn.map(k => pe.find(([q]) => q === k)[1])];
+      const sp = __fm.rep().plots.find(q => q.opts.title === 'solution path');
+      return { inn, err: Math.max(...b.map((v, i) => Math.abs(v - got[i]) / Math.max(1, Math.abs(v)))), x0: sp.traces[0].x[0], x1: sp.traces[0].x[1], xlab: sp.userLayout.xaxis.title.text }; })()''')
+    check('Forward Selection: the true terms are in', all(k in js['inn'] for k in ['x0', 'x1', 'x4']), True)
+    check.near('... the chosen step is least squares on its terms (the page\'s own normal equations)', js['err'], 0.0, 1e-5)
+    check('... the path runs by step', (js['xlab'], js['x0'], js['x1']), ('Step', 0, 1))
+    r = await page.ev(gr_set(gr_method='pruned'))
+    check('Pruned Forward Selection: no errors', ('Pruned Forward Selection with AICc Validation' in r['outlines'], r['errors']), (True, []))
+    r = await page.ev(gr_set(gr_method='enet', gr_adaptive=True, gr_crit='loo'))
+    check('Adaptive Elastic Net with Leave-One-Out', ('Adaptive Elastic Net with Leave-One-Out Validation' in r['outlines'], r['errors']), (True, []))
+    check('... Elastic Net Alpha in the Model Launch', await page.ev("__fm.outline('Model Launch').querySelector('input[aria-label=\"Elastic Net Alpha\"]').value"), '0.9')
+
+    # ---- binomial: KFold, the profiler against Save Columns
+    r = await page.ev(open_js('yb', E6, {'personality': 'genreg'}))
+    r = await page.ev(gr_set(gr_crit='kfold'))
+    dist = (await page.ev('__fm.kv("Model Summary")'))['Distribution']
+    check('a two-level Y: binomial, with KFold', ('Lasso with KFold Validation' in r['outlines'], r['errors'], dist), (True, [], 'Binomial'))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table; const row = 11;
+      await __fm.topMenu('Save Columns', 'Predicted Values'); await __fm.tick();
+      const pc = t.col('Pred yb');
+      const d = __fm.done(rep); await __fm.topMenu('Profilers', 'Profiler'); await d;
+      const ob = __fm.outline('Prediction Profiler'); ob.scrollIntoView(); await new Promise(r => setTimeout(r, 800));
+      const val = () => ob.querySelector('.sm-prof-val').textContent;
+      for (let j = 0; j < 6; j++) { const i = ob.querySelector(`input[aria-label="x${j} current value"]`); const was = val(); i.value = String(t.col('x' + j).values[row]); i.dispatchEvent(new Event('change')); for (let k = 0; k < 400 && val() === was; k++) await new Promise(r => setTimeout(r, 5)); }
+      await new Promise(r => setTimeout(r, 300));
+      const out = { pred: val(), name: ob.querySelector('.sm-prof-name').textContent, saved: pc ? pc.values[row] : null, all01: pc ? pc.values.every(v => v > 0 && v < 1) : null };
+      if (pc) t.removeColumn(pc.id);
+      return out; })()''')
+    check('the profiler predicts Prob[yes]', r['name'], 'Prob[yes]')
+    check.near('... at a row\'s values it gives its saved prediction', num(r['pred']), r['saved'], 1e-5)
+    check('... probabilities strictly inside (0, 1)', r['all01'], True)
+    t0 = await page.ev('performance.now()')
+    await page.ev(f'({GR_TABLE})(2000)')
+    await page.ev(HELPERS)
+    r = await page.ev(open_js('yb', E6, {'personality': 'genreg'}))
+    r = await page.ev(gr_set(gr_crit='kfold'))
+    ms = await page.ev('performance.now()') - t0
+    check('2000 rows, binomial lasso with KFold: a few seconds', (r['errors'], ms < 15000), ([], True))
+    print(f'      GenReg binomial KFold, 2000 rows: {ms / 1000:.1f} s (with the table and the default AICc report)')
+    check('Generalized Regression needs no scikit-learn (no extra download)', (sk0, await page.ev("!!(SM.engine.versions && SM.engine.versions['scikit-learn'])")), (False, False))
+
+    # ---- Diagnostic Plots (normal), linked; By; a project
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'GenReg test' && t.nrows === 400)))")
+    await page.ev(HELPERS)
+    r = await page.ev(open_js('y', E6, {'personality': 'genreg'}, {'validation': ['vt']}))
+    r = await page.ev(gr_set(gr_diag=True))
+    check('Diagnostic Plots: Actual by Predicted for each set', ('Actual by Predicted Plot' in r['outlines'], r['errors']), (True, []))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table;
+      const ps = rep.plots.filter(p => /^Actual by predicted/.test(p.opts.title || ''));
+      const p = ps.find(q => q.opts.title === 'Actual by predicted Validation'); p._click({ points: [{ curveNumber: 0, pointNumber: 3 }], event: {} });
+      const sel = t.selectedRows(); const want = p.rows[0][3]; t.select([]);
+      return { titles: ps.map(q => q.opts.title), sel, want, set: t.col('vt').values[want] }; })()''')
+    check('... one plot per set', r['titles'], ['Actual by predicted Training', 'Actual by predicted Validation', 'Actual by predicted Test'])
+    check('... a click on a point selects its row, a Validation row', (r['sel'], r['set']), ([r['want']], 'Validation'))
+    r = await page.ev(open_js('y', E6, {'personality': 'genreg'}, {'by': ['sex']}))
+    r = await page.ev(gr_set(gr_crit='kfold', gr_method='enet'))
+    check('GenReg with By: one report per level, no errors', ([o for o in r['outlines'] if o.startswith('Generalized Regression for')], r['errors']),
+          (['Generalized Regression for y sex=F', 'Generalized Regression for y sex=M'], []))
+    r = await page.ev(open_js('yb', E6, {'personality': 'genreg'}, {'validation': ['v']}))
+    r = await page.ev(gr_set(gr_method='lasso', gr_adaptive=True, gr_crit='bic'))
+    r = await page.ev('''(async () => { const t = SM.app.current; const before = __fm.table('Model Summary', 1);
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [__fm.rep().toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const rep = SM.app.reports[n]; await __fm.done(rep);
+      const out = { title: rep.title, errors: __fm.state(rep).errors, outlines: __fm.state(rep).outlines, same: JSON.stringify(__fm.table('Model Summary', 1, rep)) === JSON.stringify(before),
+        v: rep.spec.roles.validation.map(id => rep.table.col(id).name), other: rep.table !== t };
+      SM.app.showTab(SM.app.tabOf(t)); return out; })()''')
+    check('a GenReg project reopens with its Validation column and options', (r['title'], r['errors'], 'Adaptive Lasso with BIC Validation' in r['outlines'], r['v'], r['other']),
+          ('Generalized Regression for yb', [], True, ['v'], True))
+    check('... and the same Model Summary', r['same'], True)
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('every (i) of the GenReg reports has a topic', audit.get('noTopic'), [])
+    # ---- dark theme, phone width
+    r = await page.ev(open_js('y', E6, {'personality': 'genreg'}))
+    r = await page.ev(gr_set(gr_crit='holdback', gr_method='enet'))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.5)
+    await page.ev('''(() => { const ob = __fm.outline('Model Summary'); if (ob) ob.scrollIntoView({ block: 'start' }); })()''')
+    await asyncio.sleep(1)
+    await shot(page, 'fm-19-genreg-dark.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(1.2)
+    check('the GenReg report: no horizontal page scroll at phone width', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'fm-20-genreg-phone.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 

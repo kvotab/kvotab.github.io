@@ -1,0 +1,31 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > MULTIVARIATE METHODS > PARTIAL LEAST SQUARES
+   (smui-p-pls.js): the Model Launch panel, the marked lines of the report
+   tables, and the wide tables. Colours are kvot.css's tokens, so both
+   themes read. Class prefix sm-pls-.
+   ========================================================================== */
+
+/* ---- Model Launch: the settings of a new fit ------------------------------- */
+.sm-pls-launch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin: 2px 0 6px; font-size: 12px; }
+.sm-pls-field { display: inline-flex; flex-direction: column; gap: 3px; color: var(--text-secondary); }
+.sm-pls-field[hidden] { display: none; }
+.sm-pls-select, .sm-pls-input {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0; max-width: 100%;
+}
+.sm-pls-select:disabled { color: var(--text-muted); }
+.sm-pls-input { width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.sm-pls-input:focus-visible, .sm-pls-select:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-pls-msg { color: var(--sm-nom, #c0392b); font-size: 11.5px; align-self: center; }
+
+/* ---- report tables: the minimum Root Mean PRESS, X's below the VIP threshold -- */
+.sm-rt td.sm-pls-min { font-weight: 600; }
+.sm-rt tr:has(td.sm-pls-min) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+.sm-rt td.sm-pls-low { color: var(--text-muted); }
+
+/* the progress line of a long cross validation */
+.sm-pls-progress { color: var(--text-secondary); font-style: italic; }
+
+/* ---- a wide table (many responses or factors) scrolls by itself ------------ */
+.sm-pls-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-pls-scroll > table.sm-rt { margin-bottom: 8px; }

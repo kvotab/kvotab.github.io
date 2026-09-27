@@ -23,7 +23,9 @@ The personalities and the names the page calls:
   fitmodel.logistic     Nominal and Ordinal Logistic
   fitmodel.mixed        Mixed Model (REML) with variance components
   fitmodel.manova       MANOVA
-  fitmodel.genreg       Generalized Regression (lasso, elastic net, ridge)
+  fitmodel.genreg       Generalized Regression: lasso, elastic net, ridge, their
+                        adaptive forms, forward selection; AICc, BIC, KFold,
+                        holdback, leave-one-out or a Validation column
   fitmodel.gee          Generalized Estimating Equations (statsmodels' GEE):
                         working correlations, robust / naive / bias-reduced
                         covariances, QIC; fitmodel.gee_compare fits every
@@ -71,8 +73,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from . import data, models
+from . import data, models, predictive
 from .registry import api
+from . import profile as profile_mod
 from .util import code_head, col, table as rtable
 
 AVG = 'avg'          # a categorical factor averaged over its levels (LS means)
@@ -368,7 +371,7 @@ def _spec(y=None, effects=(), weight=None, freq=None, offset=None, no_intercept=
           overdispersion=False, ordinal=None, distr='logit', method='lasso', enet_alpha=0.9, criterion='aicc', n_grid=40,
           choose=None, robust=None, subject=None, time=None, subgroup=None, corr=None, cov=None, scale=None, scale_value=None,
           nb_alpha=None, var_power=None, endog=None, instruments=None, tau=None, qr_cov=None, kernel=None, bandwidth=None,
-          **_ignored):
+          adaptive=False, validation=None, portion=None, folds=None, seed=None, **_ignored):
     """Everything that defines a fit, as a plain dict (the cache key)."""
     return {'y': _ys(y), 'effects': [[e['names'], e['nest'], e['random']] for e in _effects(effects)], 'weight': weight, 'freq': freq,
             'offset': offset, 'no_intercept': bool(no_intercept), 'dist': dist, 'link': link, 'target': target,
@@ -376,7 +379,8 @@ def _spec(y=None, effects=(), weight=None, freq=None, offset=None, no_intercept=
             'criterion': criterion, 'n_grid': n_grid, 'choose': choose, 'robust': _robust_spec(robust), 'subject': subject, 'time': time,
             'subgroup': subgroup, 'corr': corr, 'cov': cov, 'scale': scale, 'scale_value': scale_value, 'nb_alpha': nb_alpha,
             'var_power': var_power, 'endog': _ys(endog), 'instruments': _ys(instruments),
-            'tau': None if tau in (None, '') else float(tau), 'qr_cov': qr_cov, 'kernel': kernel, 'bandwidth': bandwidth}
+            'tau': None if tau in (None, '') else float(tau), 'qr_cov': qr_cov, 'kernel': kernel, 'bandwidth': bandwidth,
+            'adaptive': bool(adaptive), 'validation': validation, 'portion': portion, 'folds': folds, 'seed': seed}
 
 
 # Robust Standard Errors: the types of statsmodels' get_robustcov_results
@@ -1327,43 +1331,34 @@ def _grid_of(f, n):
     return list(np.linspace(lo, hi, n)) if hi > lo else [lo]
 
 
-@api('fitmodel.profile')
-def profile(table, kind='ls', current=None, rows=None, grid=41, alpha=0.05, **model):
-    """The Prediction Profiler: for each factor, the prediction (and its
-    confidence interval) as that factor varies and the others stay at their
-    current values."""
-    spec = _spec(**model)
-    m = _model(kind, table, rows, spec)
-    d = m['d']
+def _profile_build(table, rows=None, alpha=0.05, kind='ls', ys=None, **model):
+    """The Prediction Profiler's view of a fitted model (see profile.py): the
+    prediction and its confidence interval at any settings of the factors.
+    ys: several responses ({y, robust}), one model each with the same
+    effects (the profiler of all the responses of a Standard Least Squares
+    report), so that desirability can weigh them together."""
+    if ys:
+        specs = [_spec(**{**model, 'y': e['y'] if isinstance(e, dict) else e, 'robust': (e.get('robust') if isinstance(e, dict) else None) or model.get('robust')}) for e in ys]
+    else:
+        specs = [_spec(**model)]
+    ms = [_model(kind, table, rows, sp) for sp in specs]
+    d = ms[0]['d']
     facs = _factors(d)
-    cur = _setting(d, current)
-    settings = [dict(cur)]
-    spans = []
+
+    def run(settings):
+        out = []
+        for m in ms:
+            out.extend(_predict(m, [_setting(m['d'], s) for s in settings], alpha))
+        return [{'name': q['name'], 'pred': q['pred'], 'lower': q.get('lower'), 'upper': q.get('upper'), 'bounded': q.get('bounded')} for q in out]
+    observed = {}
     for f in facs:
         a = d.alias[f['name']]
-        g = _grid_of(f, int(grid))
-        spans.append((len(settings), len(g), g))
-        for v in g:
-            s = dict(cur)
-            s[a] = v
-            settings.append(s)
-    preds = _predict(m, settings, alpha)
-    for f in facs:
-        a = d.alias[f['name']]
-        v = cur.get(a, 0 if f['type'] == 'categorical' else f['mean'])
-        f['current'] = f['levels'][v] if f['type'] == 'categorical' else float(v)
-    out = {'factors': facs, 'responses': [], 'alpha': alpha}
-    for p in preds:
-        lo, up = p.get('lower'), p.get('upper')
-        resp = {'name': p['name'], 'current': {'pred': float(p['pred'][0]), 'lower': None if lo is None else float(lo[0]),
-                                               'upper': None if up is None else float(up[0])}, 'traces': [],
-                'bounded': p.get('bounded')}
-        for f, (at, k, g) in zip(facs, spans):
-            sl = slice(at, at + k)
-            resp['traces'].append({'factor': f['name'], 'x': (f['labels'] if f['type'] == 'categorical' else g),
-                                   'pred': p['pred'][sl], 'lower': None if lo is None else lo[sl], 'upper': None if up is None else up[sl]})
-        out['responses'].append(resp)
-    return out
+        observed[f['name']] = [None if v is None or (isinstance(v, float) and math.isnan(v)) else (v.item() if hasattr(v, 'item') else v) for v in d.df[a].astype(object)]
+    return profile_mod.Predictor(facs, run, observed)
+
+
+# fitmodel.profile (the traces), fitmodel.maximize and fitmodel.importance, as every profiled model
+profile_mod.expose('fitmodel', _profile_build, alpha=True)
 
 
 @api('fitmodel.contour')
@@ -2985,19 +2980,374 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
 # ---------------------------------------------------------------------------
 # Generalized Regression
 # ---------------------------------------------------------------------------
+# JMP Pro's Generalized Regression of a normal, binomial or Poisson response.
+# Estimation Method: Lasso, Elastic Net, Ridge, Adaptive Lasso and Adaptive
+# Elastic Net (penalized fits along a path of penalties), Forward Selection
+# and Pruned Forward Selection (maximum likelihood fits of a growing set of
+# terms). Validation Method, which picks the model on the path: AICc, BIC,
+# KFold, Holdback, Leave-One-Out or a Validation column. The sets of a
+# Validation column and of a holdback are predictive.prepare's, so the page's
+# platforms agree on them; the KFold folds are drawn from the same seed.
+#
+# The predictors are centred and scaled by the weighted mean and SD of the
+# rows that train the model (every row for KFold and Leave-One-Out); the
+# intercept is not penalized. A penalized fit minimises the objective of
+# statsmodels' fit_regularized,
+#
+#     -loglik / N + lambda * sum_j p_j (alpha |b_j| + (1 - alpha) b_j^2 / 2)
+#
+# (N the sum of the weights; for the normal -loglik is RSS / 2), p_j = 1, or
+# 1 / |b_j| of an initial fit for the adaptive methods. It is solved as glmnet
+# solves it (Friedman, Hastie and Tibshirani 2010): coordinate descent on the
+# weighted least squares problem, inside Newton (IRLS) steps with step halving
+# for the binomial and the Poisson, warm started along the path, every fold at
+# once. statsmodels' own coordinate descent builds a model object for each
+# coordinate of each sweep, too slow for the folds in the browser; scikit-learn
+# has no penalty per term and no lasso for a Poisson response. The code under
+# the report refits the chosen model with statsmodels' fit_regularized.
 
-def _genreg_model(tid, rows, spec):
-    key = _key('genreg', tid, rows, spec)
-    m = models.recall(key)
-    if m is not None:
-        return m
-    import statsmodels.api as sm
-    ys = spec['y']
+_GR_METHOD = {'lasso': 'Lasso', 'enet': 'Elastic Net', 'ridge': 'Ridge', 'forward': 'Forward Selection',
+              'pruned': 'Pruned Forward Selection'}
+_GR_VALID = {'aicc': 'AICc', 'bic': 'BIC', 'kfold': 'KFold', 'holdback': 'Holdback', 'loo': 'Leave-One-Out',
+             'validation': 'Validation Column'}
+_GR_RIDGE0 = 0.01      # the ridge penalty of an adaptive method's initial fit when the MLE does not exist
+_GR_ETA = 34.5         # |eta| of a binomial fit at most: probabilities stay 1e-15 from 0 and 1
+_GR_LOO = {'normal': 1000, 'other': 300}   # rows Leave-One-Out takes (penalized normal; the rest)
+
+
+def _gr_opts(spec):
+    """What defines a Generalized Regression path (everything but the model
+    chosen on it), as a plain dict: the key of the path's cache."""
+    method = spec.get('method') if spec.get('method') in _GR_METHOD else 'lasso'
+    crit = spec.get('criterion') if spec.get('criterion') in _GR_VALID else 'aicc'
+    dist = spec.get('dist') if spec.get('dist') in ('normal', 'binomial', 'poisson') else 'normal'
+    l1 = {'lasso': 1.0, 'ridge': 0.0}.get(method)
+    if method == 'enet':
+        l1 = float(spec['enet_alpha']) if spec.get('enet_alpha') not in (None, '') else 0.9
+        if not 0 < l1 <= 1:
+            raise ValueError('the Elastic Net Alpha is the lasso share of the penalty: above 0, at most 1')
+    portion = folds = seed = None
+    if crit == 'holdback':
+        portion = float(spec['portion']) if spec.get('portion') not in (None, '') else 0.3
+        if not 0 < portion < 1:
+            raise ValueError('the Holdback Proportion is a share of the rows, between 0 and 1')
+    if crit == 'kfold':
+        folds = int(spec.get('folds') or 5)
+    if crit in ('kfold', 'holdback'):
+        seed = predictive.seed_of(spec.get('seed'))
+        if seed is None:
+            raise ValueError(f'{_GR_VALID[crit]} draws rows at random: it needs a random seed')
+    return {'y': list(spec['y']), 'effects': spec['effects'], 'weight': spec.get('weight'), 'freq': spec.get('freq'), 'dist': dist,
+            'target': spec.get('target'), 'method': method, 'l1': l1, 'adaptive': bool(spec.get('adaptive')) and method in ('lasso', 'enet'),
+            'criterion': crit, 'validation': spec.get('validation') or None, 'portion': portion, 'folds': folds, 'seed': seed,
+            'n_grid': int(spec.get('n_grid') or 40)}
+
+
+def _gr_label(O):
+    """The method and the report's title, as JMP names them."""
+    meth = ('Adaptive ' if O['adaptive'] else '') + _GR_METHOD[O['method']]
+    v = _GR_VALID[O['criterion']]
+    return meth, f'{meth} with {v}' if O['criterion'] == 'validation' else f'{meth} with {v} Validation'
+
+
+def _gr_mu(dist, eta):
+    if dist == 'binomial':
+        return 1.0 / (1.0 + np.exp(-np.clip(eta, -_GR_ETA, _GR_ETA)))
+    if dist == 'poisson':
+        return np.exp(np.minimum(eta, 700.0))
+    return eta
+
+
+def _gr_var(dist, mu):
+    if dist == 'binomial':
+        return mu * (1.0 - mu)
+    if dist == 'poisson':
+        return mu
+    return np.ones_like(mu)
+
+
+def _gr_llc(dist, y, eta):
+    """The part of a row's log-likelihood that depends on eta (binomial,
+    Poisson): what the fits maximise."""
+    if dist == 'binomial':
+        e = np.clip(eta, -_GR_ETA, _GR_ETA)
+        return y * e - np.logaddexp(0.0, e)
+    e = np.minimum(eta, 700.0)
+    return y * e - np.exp(e)
+
+
+def _gr_ll(dist, y, eta, sigma2=None):
+    """Each row's log-likelihood (weights not applied), with the constants of
+    statsmodels' families; the normal's with the variance sigma2."""
+    from scipy.special import gammaln
+    if dist == 'normal':
+        return -0.5 * (np.log(2 * np.pi * sigma2) + (y - eta) ** 2 / sigma2)
+    if dist == 'binomial':
+        return _gr_llc(dist, y, eta) - gammaln(y + 1) - gammaln(2 - y)
+    return _gr_llc(dist, y, eta) - gammaln(y + 1)
+
+
+def _gr_gram(W, Z, ZZ=None):
+    """Z' diag(W_k) Z for each row W_k of W (K x n): K x p x p."""
+    K, p = W.shape[0], Z.shape[1]
+    if ZZ is not None:
+        return (W @ ZZ).reshape(K, p, p)
+    return np.stack([Z.T @ (Z * W[k][:, None]) for k in range(K)]) if K else np.zeros((0, p, p))
+
+
+def _gr_zz(Z, K):
+    """The rows' outer products (n x p^2), when there are many problems and they fit in memory."""
+    n, p = Z.shape
+    return (Z[:, :, None] * Z[:, None, :]).reshape(n, p * p) if K > 8 and n * p * p <= 4_000_000 else None
+
+
+def _gr_cd(G, c, B, l1, l2, tol=1e-10, maxsweep=20000):
+    """Coordinate descent for K problems at once: B_k minimises
+    0.5 b'G_k b - c_k'b + sum_j l1_kj |b_j| + 0.5 sum_j l2_kj b_j^2
+    (G: K x p x p, c and B: K x p; B is the start and is overwritten). A
+    sweep over every coordinate, then sweeps over the nonzero ones until they
+    settle, then a sweep over all again, as glmnet does."""
+    K, p = c.shape
+    if p == 0 or K == 0:
+        return B
+    l1 = np.broadcast_to(np.asarray(l1, dtype=float), (K, p))
+    l2 = np.broadcast_to(np.asarray(l2, dtype=float), (K, p))
+    if not np.any(l1):                      # ridge: a linear system
+        return np.linalg.solve(G + l2[:, :, None] * np.eye(p)[None], c[:, :, None])[:, :, 0]
+    dg = np.einsum('kjj->kj', G)
+    den = dg + l2
+    den = np.where(den > 1e-14, den, 1.0)   # a column constant in these rows stays at 0
+    Q = np.einsum('kij,kj->ki', G, B)
+    full, js = True, range(p)
+    for _ in range(maxsweep):
+        big = 0.0
+        for j in js:
+            bj = B[:, j]
+            r = c[:, j] - Q[:, j] + dg[:, j] * bj
+            nb = np.sign(r) * np.maximum(np.abs(r) - l1[:, j], 0.0) / den[:, j]
+            dl = nb - bj
+            m = float(np.max(np.abs(dl)))
+            if m > 0.0:
+                Q += dl[:, None] * G[:, :, j]
+                B[:, j] = nb
+                if m > big:
+                    big = m
+        if full:
+            if big < tol:
+                return B
+            full, js = False, np.flatnonzero(np.any(B != 0, axis=0))
+        elif big < tol:
+            full, js = True, range(p)
+    import warnings
+    warnings.warn('Generalized Regression: coordinate descent stopped before it converged (highly correlated terms?)')
+    return B
+
+
+def _gr_normal_path(Z, y, w, M, lams, a1, pf):
+    """Penalized least squares of the problems M (K x n: 1 for a training row)
+    along the penalties lams: intercepts K x L and slopes K x L x p."""
+    WM = M * w[None, :]
+    N = WM.sum(1)
+    m = (WM @ Z) / N[:, None]
+    yb = (WM @ y) / N
+    G = (_gr_gram(WM, Z, _gr_zz(Z, len(M))) - N[:, None, None] * m[:, :, None] * m[:, None, :]) / N[:, None, None]
+    c = ((WM * y[None, :]) @ Z - N[:, None] * m * yb[:, None]) / N[:, None]
+    K, p = c.shape
+    B = np.zeros((K, p))
+    out = np.zeros((K, len(lams), p))
+    for l, lam in enumerate(lams):
+        B = _gr_cd(G, c, B, lam * a1 * pf, lam * (1 - a1) * pf)
+        out[:, l] = B
+        _gr_progress(l + 1, len(lams), K)
+    return yb[:, None] - np.einsum('kp,klp->kl', m, out), out
+
+
+def _gr_progress(done, total, K):
+    """A progress line for the page when the fits are many (Leave-One-Out)."""
+    if K >= 50 and (done == total or done % max(1, total // 10) == 0):
+        print(f'smui:progress genreg {done} {total}', flush=True)
+
+
+def _gr_glm_path(Z, y, w, M, dist, lams, a1, pf, tol=1e-9, maxit=100):
+    """Penalized binomial or Poisson fits of the problems M along lams: IRLS
+    (Newton) steps, each a weighted least squares problem solved by coordinate
+    descent, halved when the penalized objective does not fall."""
+    K, n = M.shape
+    p = Z.shape[1]
+    WM = M * w[None, :]
+    N = WM.sum(1)
+    ZZ = _gr_zz(Z, K)
+    ybar = np.clip((WM @ y) / N, 1e-10, 1 - 1e-10 if dist == 'binomial' else np.inf)
+    b0 = np.log(ybar / (1 - ybar)) if dist == 'binomial' else np.log(ybar)
+    B = np.zeros((K, p))
+    out0, outB = np.zeros((K, len(lams))), np.zeros((K, len(lams), p))
+
+    def objective(b0, B, p1, p2):
+        eta = b0[:, None] + B @ Z.T
+        return -np.sum(WM * _gr_llc(dist, y, eta), axis=1) / N + np.abs(B) @ p1 + 0.5 * (B * B) @ p2
+
+    for l, lam in enumerate(lams):
+        p1, p2 = lam * a1 * pf, lam * (1 - a1) * pf
+        F = objective(b0, B, p1, p2)
+        for _ in range(maxit):
+            eta = b0[:, None] + B @ Z.T
+            mu = _gr_mu(dist, eta)
+            var = np.maximum(_gr_var(dist, mu), 1e-15)
+            Wk = WM * var
+            Wz = WM * (var * eta + (y[None, :] - mu))       # W times the working response
+            sW = Wk.sum(1)
+            m = (Wk @ Z) / sW[:, None]
+            zb = Wz.sum(1) / sW
+            G = (_gr_gram(Wk, Z, ZZ) - sW[:, None, None] * m[:, :, None] * m[:, None, :]) / N[:, None, None]
+            c = (Wz @ Z - sW[:, None] * m * zb[:, None]) / N[:, None]
+            Bn = _gr_cd(G, c, B.copy(), p1, p2)
+            b0n = zb - np.sum(m * Bn, axis=1)
+            Fn = objective(b0n, Bn, p1, p2)
+            t = 1.0
+            up = Fn > F + 1e-13 * np.abs(F)
+            while up.any() and t > 1e-5:        # step halving where the objective rose
+                t *= 0.5
+                Bt, b0t = B + t * (Bn - B), b0 + t * (b0n - b0)
+                Ft = objective(b0t, Bt, p1, p2)
+                take = up & (Ft <= F + 1e-13 * np.abs(F))
+                Bn[up], b0n[up], Fn[up] = Bt[up], b0t[up], Ft[up]
+                up = up & ~take
+            change = max(float(np.max(np.abs(Bn - B))) if p else 0.0, float(np.max(np.abs(b0n - b0))))
+            B, b0, F = Bn, b0n, Fn
+            if change < tol:
+                break
+        else:
+            import warnings
+            warnings.warn('Generalized Regression: the Newton steps of a penalized fit stopped before they converged')
+        out0[:, l], outB[:, l] = b0, B
+        _gr_progress(l + 1, len(lams), K)
+    return out0, outB
+
+
+def _gr_mle(A, y, w, dist, start=None, maxit=100):
+    """The maximum likelihood fit of y on the columns of A (the first the
+    intercept) with weights w: (coefficients, converged)."""
+    if dist == 'normal':
+        sw = np.sqrt(w)
+        coef, _res, rank, _sv = np.linalg.lstsq(A * sw[:, None], y * sw, rcond=None)
+        return coef, rank == A.shape[1]
+    if start is None:
+        start = np.zeros(A.shape[1])
+        yb = min(max(float(np.average(y, weights=w)), 1e-10), 1 - 1e-10 if dist == 'binomial' else np.inf)
+        start[0] = math.log(yb / (1 - yb)) if dist == 'binomial' else math.log(yb)
+    coef = np.array(start, dtype=float)
+    ll = float(np.sum(w * _gr_llc(dist, y, A @ coef)))
+    for _ in range(maxit):
+        mu = _gr_mu(dist, A @ coef)
+        g = A.T @ (w * (y - mu))
+        H = A.T @ (A * (w * np.maximum(_gr_var(dist, mu), 1e-15))[:, None])
+        try:
+            step = np.linalg.solve(H, g)
+        except np.linalg.LinAlgError:
+            step = np.linalg.lstsq(H, g, rcond=None)[0]
+        t = 1.0
+        while True:
+            new = coef + t * step
+            ll_new = float(np.sum(w * _gr_llc(dist, y, A @ new)))
+            if ll_new >= ll - 1e-12 * abs(ll) or t < 1e-6:
+                break
+            t *= 0.5
+        small = float(np.max(np.abs(new - coef))) < 1e-9 * (1 + float(np.max(np.abs(coef))))
+        coef, ll = new, ll_new
+        if small:
+            return coef, True
+    return coef, False
+
+
+def _gr_fitll(A, coef, y, w, dist):
+    """The log-likelihood that ranks models of the same rows: -N/2 log(RSS/N)
+    for the normal (the variance profiled out), else the fit's."""
+    eta = A @ coef
+    if dist == 'normal':
+        rss = float(np.sum(w * (y - eta) ** 2))
+        return -0.5 * float(np.sum(w)) * math.log(max(rss, 1e-300) / float(np.sum(w)))
+    return float(np.sum(w * _gr_llc(dist, y, eta)))
+
+
+def _gr_forward(Z, y, w, dist, pruned, kmax):
+    """Forward Selection on these rows: the term with the largest score
+    statistic enters, one at a time (for the normal the largest drop in the
+    error sum of squares). Pruned: after each entry, terms leave while the
+    model without one (the one with the smallest Wald statistic, never the
+    term just entered) beats every model of that size seen so far (Pudil's
+    floating search). Returns the steps: [(active columns, coefficients)]."""
+    n, p = Z.shape
+    one = np.ones((n, 1))
+    active = []
+    coef = _gr_mle(one, y, w, dist)[0]
+    steps = [([], coef.copy())]
+    best = {0: _gr_fitll(one, coef, y, w, dist)}
+    dead = set()
+    for _guard in range(4 * p + 10):
+        if len(active) >= kmax:
+            break
+        A = np.column_stack([one, Z[:, active]])
+        mu = _gr_mu(dist, A @ coef)
+        wv = w * _gr_var(dist, mu)
+        cand = [j for j in range(p) if j not in active and j not in dead]
+        if not cand:
+            break
+        C = Z[:, cand]
+        Iss = A.T @ (A * wv[:, None])
+        Isc = A.T @ (C * wv[:, None])
+        Icc = np.einsum('ij,ij,i->j', C, C, wv)
+        eff = Icc - np.sum(Isc * np.linalg.lstsq(Iss, Isc, rcond=None)[0], axis=0)
+        ok = eff > 1e-9 * np.maximum(Icc, 1e-300)
+        dead.update(j for j, o in zip(cand, ok) if not o)
+        if not ok.any():
+            break
+        U = C.T @ (w * (y - mu))
+        stat = np.where(ok, U * U / np.where(ok, eff, 1.0), -np.inf)
+        last = cand[int(np.argmax(stat))]
+        active.append(last)
+        A = np.column_stack([one, Z[:, active]])
+        coef = _gr_mle(A, y, w, dist, start=np.r_[coef, 0.0])[0]
+        steps.append((list(active), coef.copy()))
+        best[len(active)] = max(best.get(len(active), -np.inf), _gr_fitll(A, coef, y, w, dist))
+        while pruned and len(active) >= 2:
+            mu = _gr_mu(dist, A @ coef)
+            H = A.T @ (A * (w * np.maximum(_gr_var(dist, mu), 1e-15))[:, None])
+            z2 = coef[1:] ** 2 / np.maximum(np.diag(np.linalg.pinv(H))[1:], 1e-300)
+            z2[active.index(last)] = np.inf
+            i = int(np.argmin(z2))
+            red = active[:i] + active[i + 1:]
+            Ar = np.column_stack([one, Z[:, red]])
+            cr = _gr_mle(Ar, y, w, dist, start=np.r_[coef[:i + 1], coef[i + 2:]])[0]
+            llr = _gr_fitll(Ar, cr, y, w, dist)
+            if llr <= best.get(len(red), -np.inf) + 1e-9 * (1 + abs(llr)):
+                break
+            active, A, coef = red, Ar, cr
+            best[len(red)] = llr
+            steps.append((list(active), coef.copy()))
+    return steps
+
+
+def _gr_steps_matrix(steps, p):
+    """Forward steps as coefficient rows over [intercept, every column]."""
+    out = np.zeros((len(steps), p + 1))
+    for s, (act, coef) in enumerate(steps):
+        out[s, 0] = coef[0]
+        out[s, 1 + np.asarray(act, dtype=int)] = coef[1:]
+    return out
+
+
+def _gr_setup(tid, rows, O):
+    """The design and data of a fit: the rows, y, the weights, the sets
+    (0 training, 1 validation, 2 test) and folds, and the centred and scaled
+    predictors."""
+    ys = O['y']
     if not ys:
         raise ValueError('choose a Y')
-    dist = spec['dist'] if spec['dist'] in ('normal', 'binomial', 'poisson') else 'normal'
-    effs = _eff_of(spec)
-    d = _design(tid, ys[0], effs, rows, spec['weight'], spec['freq'], True)
+    dist, crit, vcol = O['dist'], O['criterion'], O['validation']
+    effs = _eff_of(O)
+    if vcol and (vcol in ys or any(vcol in e['cols'] for e in effs)):
+        raise ValueError(f'{vcol} is the Validation column: it cannot also be the Y or in a model effect')
+    d = _design(tid, ys[0], effs, rows, O['weight'], O['freq'], True, extra=[vcol] if vcol else ())
     info = {}
     yv = d.df[d.y_alias]
     if isinstance(yv.dtype, pd.CategoricalDtype):
@@ -3005,7 +3355,7 @@ def _genreg_model(tid, rows, spec):
         if len(lv) != 2:
             raise ValueError(f'{ys[0]} is categorical: Generalized Regression here takes a continuous Y or a two-level one (binomial)')
         dist = 'binomial'
-        t = _level_index(lv, spec['target']) if spec['target'] is not None else 0
+        t = _level_index(lv, O['target']) if O['target'] is not None else 0
         info['levels'] = [lv[t], lv[1 - t]]
         y = (yv == lv[t]).to_numpy(float)
     else:
@@ -3018,65 +3368,207 @@ def _genreg_model(tid, rows, spec):
     names = list(X.columns)
     Xa = X.to_numpy(float)
     w = d.weights if d.weights is not None else np.ones(len(y))
+    n = len(y)
     ic = names.index('Intercept')
     cols = [j for j in range(len(names)) if j != ic]
-    mu_ = np.average(Xa[:, cols], axis=0, weights=w) if cols else np.zeros(0)
-    sd_ = np.sqrt(np.average((Xa[:, cols] - mu_) ** 2, axis=0, weights=w)) if cols else np.zeros(0)
+    # the sets
+    if vcol and crit in ('kfold', 'holdback', 'loo'):
+        raise ValueError(f'with a Validation column ({vcol}) the fit is validated by it: choose Validation Column, AICc or BIC '
+                         '(or take the column out of the Validation role)')
+    if crit == 'validation' and not vcol:
+        raise ValueError('Validation Column needs a column in the Validation role of the launch dialog (Model Dialog)')
+    sets = np.zeros(n, dtype=int)
+    pnotes = []
+    if vcol or crit == 'holdback':
+        xcols = list(dict.fromkeys(c for e in effs for c in e['cols']))
+        P = predictive.prepare(tid, ys[0], xcols, rows, O['weight'], O['freq'], validation=vcol,
+                               portion=O['portion'] or 0, seed=O['seed'], missing='drop')
+        if len(P.index) != n or not np.array_equal(P.index, np.asarray(d.df.index)):   # the same rows, in the same order (a resample repeats some)
+            raise ValueError('the rows of the validation sets are not the rows of the model (an infinite value in a column?)')
+        sets = P.sets.astype(int)
+        pnotes = list(P.notes)
+        if crit in ('validation', 'holdback') and not (sets == 1).any():
+            raise ValueError(f'{vcol} has no validation rows (1 or Validation)' if vcol else 'the Holdback Proportion leaves no validation rows')
+    folds = None
+    if crit == 'kfold':
+        K = O['folds']
+        if not 2 <= K <= n:
+            raise ValueError(f'KFold needs between 2 and {n} folds (the number of rows)')
+        folds = np.empty(n, dtype=int)
+        folds[np.random.default_rng(O['seed']).permutation(n)] = np.arange(n) % K
+    elif crit == 'loo':
+        cap = _GR_LOO['normal' if dist == 'normal' and O['method'] not in ('forward', 'pruned') else 'other']
+        if n > cap:
+            raise ValueError(f'Leave-One-Out refits the model once for each row: it takes up to {cap} rows here, and these are {n}. Use KFold.')
+        folds = np.arange(n)
+    tr = sets == 0
+    Xc = Xa[:, cols]
+    mu_ = np.average(Xc[tr], axis=0, weights=w[tr]) if cols else np.zeros(0)
+    sd_ = np.sqrt(np.average((Xc[tr] - mu_) ** 2, axis=0, weights=w[tr])) if cols else np.zeros(0)
     live = sd_ > 1e-12
     sd_[~live] = 1.0
-    Z = np.column_stack([np.ones(len(y)), (Xa[:, cols] - mu_) / sd_])
-    method = spec['method'] if spec['method'] in ('lasso', 'enet', 'ridge') else 'lasso'
-    l1 = 1.0 if method == 'lasso' else (0.0 if method == 'ridge' else float(spec['enet_alpha'] or 0.9))
-    N = float(np.sum(w))
-    if dist == 'normal':
-        mod = sm.WLS(y, Z, weights=w)
-        base = y - np.average(y, weights=w)
-        fam = None
+    Z = (Xc - mu_) / sd_
+    return {'d': d, 'X': X, 'names': names, 'Xa': Xa, 'y': y, 'w': w, 'n': n, 'ic': ic, 'cols': cols, 'dist': dist, 'info': info,
+            'sets': sets, 'folds': folds, 'mu': mu_, 'sd': sd_, 'live': live, 'Zl': Z[:, live], 'notes': pnotes}
+
+
+def _gr_adaptive(S, rows):
+    """The adaptive methods' penalty factors 1/|b_j|, b the maximum likelihood
+    estimates on the scaled predictors (least squares for the normal); when
+    they do not exist (more terms than rows, a singular design, separation)
+    the ridge estimates at a small penalty. Returns (factors, source)."""
+    Zt, yt, wt = S['Zl'][rows], S['y'][rows], S['w'][rows]
+    p = Zt.shape[1]
+    A = np.column_stack([np.ones(len(yt)), Zt])
+    b, ok = _gr_mle(A, yt, wt, S['dist'])
+    if ok and len(yt) > p + 1 and np.all(np.isfinite(b)) and (S['dist'] == 'normal' or np.max(np.abs(b[1:]), initial=0) < 30):
+        src = 'mle'
+        b = b[1:]
     else:
-        fam = sm.families.Binomial() if dist == 'binomial' else sm.families.Poisson()
-        mod = sm.GLM(y, Z, family=fam, var_weights=w)
-        base = y - np.average(y, weights=w)
-    grad = np.abs(Z[:, 1:].T @ (w * base)) / N if len(cols) else np.zeros(1)
-    amax = float(np.max(grad)) / max(l1, 1e-3) if len(cols) and np.max(grad) > 0 else 1.0
-    ng = int(spec['n_grid'] or 40)
-    alphas = amax * np.logspace(0, -4, ng) if l1 > 0 else amax * np.logspace(1, -5, ng)
-    path = []
-    sp = None
-    for a in alphas:
-        pen = np.r_[0.0, np.full(Z.shape[1] - 1, a)]
-        r = mod.fit_regularized(method='elastic_net', alpha=pen, L1_wt=l1, start_params=sp, maxiter=200)
-        c = np.asarray(r.params, dtype=float)
-        c[1:][~live] = 0.0
-        sp = c
-        eta = Z @ c
+        src = 'ridge'
+        M = rows[None, :].astype(float)
+        one = np.ones(p)
+        if S['dist'] == 'normal':
+            B = _gr_normal_path(S['Zl'], S['y'], S['w'], M, [_GR_RIDGE0], 0.0, one)[1]
+        else:
+            B = _gr_glm_path(S['Zl'], S['y'], S['w'], M, S['dist'], [_GR_RIDGE0], 0.0, one)[1]
+        b = B[0, 0]
+    return 1.0 / np.maximum(np.abs(b), 1e-8), src
+
+
+def _gr_eval(S, M, V, b0, B, dist):
+    """The validation -loglik of each problem k (rows V_k) at each step l of
+    its path, and each problem's validation weight: (K x L, K). The normal's
+    variance is the training rows' mean squared error."""
+    Z, y, w = S['Zl'], S['y'], S['w']
+    WM, WV = M * w[None, :], V * w[None, :]
+    K, L = b0.shape
+    out = np.zeros((K, L))
+    for l in range(L):
+        eta = b0[:, l, None] + B[:, l] @ Z.T
         if dist == 'normal':
-            rss = float(np.sum(w * (y - eta) ** 2))
-            ll = -0.5 * N * (math.log(2 * math.pi * rss / N) + 1) if rss > 0 else float('inf')
-            W = w
+            e2 = (y[None, :] - eta) ** 2
+            s2 = np.maximum(np.sum(WM * e2, axis=1) / WM.sum(1), 1e-300)
+            out[:, l] = 0.5 * np.sum(WV * (np.log(2 * np.pi * s2)[:, None] + e2 / s2[:, None]), axis=1)
         else:
-            mu = fam.link.inverse(eta)
-            ll = float(fam.loglike(y, mu, var_weights=w))
-            W = w * fam.variance(mu) if dist == 'binomial' else w * mu
-        act = np.flatnonzero(np.abs(c[1:]) > 1e-10)
-        if l1 >= 1:
-            df_ = len(act) + 1
+            out[:, l] = -np.sum(WV * _gr_ll(dist, y[None, :], eta), axis=1)
+    return out, WV.sum(1)
+
+
+def _gr_train(S, rows, coef, dist, lam=None, a1=1.0, pf=None, nterms=None):
+    """A model's fit on its training rows: -loglik, the degrees of freedom
+    (the number of nonzero terms, for the elastic net and ridge the trace of
+    the ridge hat matrix on them), AICc and BIC. coef: [intercept, the live
+    columns], on the scaled predictors."""
+    Z, y, w = S['Zl'][rows], S['y'][rows], S['w'][rows]
+    N = float(np.sum(w))
+    eta = coef[0] + Z @ coef[1:]
+    if dist == 'normal':
+        rss = float(np.sum(w * (y - eta) ** 2))
+        ll = -0.5 * N * (math.log(2 * math.pi * rss / N) + 1) if rss > 0 else float('inf')
+        W = w
+    else:
+        ll = float(np.sum(w * _gr_ll(dist, y, eta)))
+        W = w * _gr_var(dist, _gr_mu(dist, eta))
+    act = np.flatnonzero(np.abs(coef[1:]) > 1e-8)   # statsmodels' fit_regularized zeroes what is smaller
+    if lam is None or a1 >= 1 or not len(act):
+        df = float(len(act) + 1)
+    else:
+        Za = Z[:, act]
+        Mx = Za.T @ (Za * W[:, None])
+        v = np.ones(len(act)) if pf is None else pf[act]
+        df = float(np.trace(np.linalg.solve(Mx + N * lam * (1 - a1) * np.diag(v), Mx))) + 1
+    k = df + (1 if dist == 'normal' else 0)
+    aicc = -2 * ll + 2 * k + (2 * k * (k + 1) / (N - k - 1) if N - k - 1 > 0 else float('nan'))
+    return {'ll': ll, 'df': df, 'aicc': aicc, 'bic': -2 * ll + k * math.log(N), 'N': N, 'nonzero': int(len(act))}
+
+
+def _genreg_path(tid, rows, spec):
+    """The path of a fit and the validation that picks a model on it
+    (remembered: choosing another model on the path does not refit)."""
+    O = _gr_opts(spec)
+    key = _key('genreg-path', tid, rows, O)
+    R = models.recall(key)
+    if R is not None:
+        return R
+    S = _gr_setup(tid, rows, O)
+    dist, crit, method = S['dist'], O['criterion'], O['method']
+    Z, y, w = S['Zl'], S['y'], S['w']
+    n, p = Z.shape
+    tr = S['sets'] == 0
+    if crit in ('kfold', 'loo'):
+        K = int(S['folds'].max()) + 1
+        M = (S['folds'][None, :] != np.arange(K)[:, None]).astype(float)
+    else:
+        K = 1
+        M = tr[None, :].astype(float)
+    V = (1.0 - M) if crit in ('kfold', 'loo') else (S['sets'] == 1)[None, :].astype(float)
+    forward = method in ('forward', 'pruned')
+    lams, a1, pf, pf_from = None, None, None, None
+    if forward:
+        paths = []
+        for k in range(K):
+            r = M[k] > 0
+            kmax = min(p, int(r.sum()) - (3 if dist == 'normal' else 2))
+            paths.append(_gr_forward(Z[r], y[r], w[r], dist, method == 'pruned', max(kmax, 0)))
+            _gr_progress(k + 1, K, K)
+        L = max(len(s) for s in paths)
+        C = np.stack([np.vstack([m_, np.repeat(m_[-1:], L - len(m_), axis=0)]) for m_ in (_gr_steps_matrix(s, p) for s in paths)])
+        b0, B = C[:, :, 0], C[:, :, 1:]
+    else:
+        a1 = O['l1']
+        pf = np.ones(p)
+        if O['adaptive']:
+            pf, pf_from = _gr_adaptive(S, tr)
+        Nm = float(np.sum(w[tr]))
+        grad = np.abs(Z[tr].T @ (w[tr] * (y[tr] - np.average(y[tr], weights=w[tr])))) / Nm / pf if p else np.zeros(1)
+        amax = float(np.max(grad)) / max(a1, 1e-3) if p and np.max(grad) > 0 else 1.0
+        lams = amax * (np.logspace(0, -4, O['n_grid']) if a1 > 0 else np.logspace(1, -5, O['n_grid']))
+        if dist == 'normal':
+            b0, B = _gr_normal_path(Z, y, w, M, lams, a1, pf)
         else:
-            Za = Z[:, 1:][:, act]
-            if len(act):
-                Mx = Za.T @ (Za * W[:, None])
-                df_ = float(np.trace(np.linalg.solve(Mx + N * a * (1 - l1) * np.eye(len(act)), Mx))) + 1
-            else:
-                df_ = 1.0
-        kk = df_ + (1 if dist == 'normal' else 0)
-        aicc = -2 * ll + 2 * kk + (2 * kk * (kk + 1) / (N - kk - 1) if N - kk - 1 > 0 else float('nan'))
-        bic = -2 * ll + kk * math.log(N)
-        path.append({'alpha': float(a), 'coef': c, 'l1': float(np.sum(np.abs(c[1:]))), 'll': ll, 'df': df_, 'aicc': aicc, 'bic': bic,
-                     'nonzero': int(len(act))})
-    crit = spec['criterion'] if spec['criterion'] in ('aicc', 'bic') else 'aicc'
-    vals = np.array([p_[crit] if np.isfinite(p_[crit]) else np.inf for p_ in path])
-    best = int(np.argmin(vals))
-    chosen = best if spec['choose'] is None else min(max(int(spec['choose']), 0), len(path) - 1)
-    c = path[chosen]['coef']
+            b0, B = _gr_glm_path(Z, y, w, M, dist, lams, a1, pf)
+        L = len(lams)
+    # the curve that picks the model, and the problem whose model is shown
+    scaled = shown = None
+    if crit not in ('aicc', 'bic'):
+        nll, nv = _gr_eval(S, M, V, b0, B, dist)
+        scaled = nll / np.maximum(nv, 1e-300)[:, None]
+    if crit in ('aicc', 'bic'):
+        rows0 = M[0] > 0
+        shown = [_gr_train(S, rows0, np.r_[b0[0, l], B[0, l]], dist, None if forward else lams[l], a1 if a1 is not None else 1.0, pf) for l in range(L)]
+        curve = np.array([s[crit] for s in shown], dtype=float)
+    else:
+        curve = scaled.mean(axis=0) if crit in ('kfold', 'loo') else scaled[0]
+    finite = np.where(np.isfinite(curve), curve, np.inf)
+    best = int(np.argmin(finite))
+    fstar = int(np.argmin(np.where(np.isfinite(scaled[:, best]), scaled[:, best], np.inf))) if crit in ('kfold', 'loo') else 0
+    rows_k = M[fstar] > 0
+    if shown is None:
+        shown = [_gr_train(S, rows_k, np.r_[b0[fstar, l], B[fstar, l]], dist, None if forward else lams[l], a1 if a1 is not None else 1.0, pf) for l in range(L)]
+    coefs = np.column_stack([b0[fstar], B[fstar]])
+    R = {'S': S, 'O': O, 'lams': lams, 'l1': a1, 'pf': pf, 'pf_from': pf_from, 'coefs': coefs, 'curve': curve, 'best': best, 'fstar': fstar,
+         'K': K, 'train': rows_k, 'valid': V[fstar] > 0, 'shown': shown, 'forward': forward}
+    models.remember(key, R)
+    return R
+
+
+def _genreg_model(tid, rows, spec):
+    """The model chosen on the path (the best, or the one the page chose),
+    in the form the profilers take."""
+    key = _key('genreg', tid, rows, spec)
+    m = models.recall(key)
+    if m is not None:
+        return m
+    R = _genreg_path(tid, rows, spec)
+    S = R['S']
+    d, names, cols, ic, live = S['d'], S['names'], S['cols'], S['ic'], S['live']
+    L = len(R['coefs'])
+    chosen = R['best'] if spec.get('choose') is None else min(max(int(spec['choose']), 0), L - 1)
+    c = np.zeros(1 + len(cols))                  # [intercept, every column] on the scaled predictors
+    c[0] = R['coefs'][chosen, 0]
+    c[1:][live] = R['coefs'][chosen, 1:]
+    mu_, sd_ = S['mu'], S['sd']
     borig = np.zeros(len(names))
     borig[cols] = c[1:] / sd_
     borig[ic] = c[0] - float(np.sum(c[1:] * mu_ / sd_))
@@ -3084,9 +3576,10 @@ def _genreg_model(tid, rows, spec):
     for t, mean in getattr(d, 'centered_main', {}).items():
         if t in names:
             bjmp[ic] -= mean * borig[names.index(t)]
-    m = {'kind': 'genreg', 'd': d, 'X': X, 'names': names, 'path': path, 'best': best, 'chosen': chosen, 'b': borig, 'b_jmp': bjmp, 'scaled': c, 'mu': mu_,
-         'sd': sd_, 'cols': cols, 'dist': dist, 'fam': fam, 'method': method, 'l1': l1, 'crit': crit, 'info': info, 'N': N, 'y': y, 'w': w,
-         'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid}
+    sets = np.where(R['train'], 0, np.where(R['valid'], 1, np.where(S['sets'] == 2, 2, -1)))
+    m = {'kind': 'genreg', 'd': d, 'X': S['X'], 'names': names, 'path': R, 'best': R['best'], 'chosen': chosen, 'b': borig, 'b_jmp': bjmp,
+         'scaled': c, 'mu': mu_, 'sd': sd_, 'cols': cols, 'dist': S['dist'], 'info': S['info'], 'y': S['y'], 'w': S['w'],
+         'sets': sets, 'coder': Coder(d, S['X'].design_info), 'key': key, 'spec': spec, 'tid': tid}
     models.remember(key, m)
     return m
 
@@ -3094,20 +3587,250 @@ def _genreg_model(tid, rows, spec):
 def _genreg_predict(m, settings, alpha):
     L = m['coder'].rows(settings)
     eta = L @ m['b']
-    pred = eta if m['dist'] == 'normal' else m['fam'].link.inverse(eta)
+    pred = _gr_mu(m['dist'], eta)
     name = m['spec']['y'][0] if not m['info'].get('levels') else f'Prob[{_lvl(m["info"]["levels"][0])}]'
     return [{'name': name, 'pred': pred, 'lower': None, 'upper': None, 'bounded': m['dist'] == 'binomial'}]
 
 
+def _gr_sets_stats(m):
+    """The Model Summary's measures for each set of the chosen model:
+    -LogLikelihood (the normal's variance from the training rows), Scaled
+    -LogLikelihood (per unit of weight), Generalized RSquare (against the
+    training mean), RASE; the fit's own on the training rows."""
+    S = m['path']['S']
+    dist, y, w, sets = S['dist'], S['y'], S['w'], m['sets']
+    eta = m['X'].to_numpy(float) @ m['b']
+    mu = _gr_mu(dist, eta)
+    tr = sets == 0
+    Ntr = float(np.sum(w[tr]))
+    s2 = float(np.sum(w[tr] * (y[tr] - eta[tr]) ** 2)) / Ntr if dist == 'normal' else None
+    ybar = float(np.average(y[tr], weights=w[tr]))
+    s02 = float(np.sum(w[tr] * (y[tr] - ybar) ** 2)) / Ntr if dist == 'normal' else None
+    if dist == 'binomial':
+        eta0 = math.log(min(max(ybar, 1e-15), 1 - 1e-15) / (1 - min(max(ybar, 1e-15), 1 - 1e-15)))
+    elif dist == 'poisson':
+        eta0 = math.log(max(ybar, 1e-300))
+    else:
+        eta0 = ybar
+    out = []
+    for k, name in enumerate(predictive.SETS):
+        r = sets == k
+        if not r.any():
+            continue
+        N = float(np.sum(w[r]))
+        ll = float(np.sum(w[r] * _gr_ll(dist, y[r], eta[r], s2)))
+        ll0 = float(np.sum(w[r] * _gr_ll(dist, y[r], np.full(int(r.sum()), eta0), s02)))
+        if dist == 'normal':
+            gr = 1 - math.exp(2 * (ll0 - ll) / N)
+        else:
+            den = 1 - math.exp(2 * ll0 / N)
+            gr = (1 - math.exp(2 * (ll0 - ll) / N)) / den if den > 0 else None
+        out.append({'set': name, 'rows': int(r.sum()), 'n': N, 'nll': -ll, 'scaled': -ll / N, 'grsq': gr,
+                    'rase': math.sqrt(float(np.sum(w[r] * (y[r] - mu[r]) ** 2)) / N)})
+    return out
+
+
+def _gr_code(m, table, table_name, rows):
+    """The Python under the report: the sets and the scaled design as the
+    report builds them, the chosen model refitted with statsmodels, its
+    criterion or validation curve, and the Model Summary's -LogLikelihood."""
+    R, S = m['path'], m['path']['S']
+    O, d, dist = R['O'], m['d'], S['dist']
+    vcol, crit, forward = O['validation'], O['criterion'], R['forward']
+    live = S['live']
+    lines = _code_frame(d, table, table_name, rows, [O['weight'], O['freq'], vcol], ['import patsy', 'from scipy.special import gammaln'])
+    lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d))   # the design, effect coded')
+    if S['info'].get('levels'):
+        lv0 = S['info']['levels'][0]
+        lines.append(f'y = (d[{json.dumps(O["y"][0])}] == {json.dumps(lv0 if isinstance(lv0, str) else float(lv0))}).to_numpy(float)   # the target level')
+    else:
+        lines.append(f'y = d[{json.dumps(O["y"][0])}].to_numpy(float)')
+    wp = [f'd[{json.dumps(c)}].to_numpy(float)' for c in (O['weight'], O['freq']) if c]
+    lines.append(f'w = {" * ".join(wp)}' if wp else 'w = np.ones(len(d))   # every row counts once')
+    n = S['n']
+    if vcol:
+        if data.meta(table, vcol).get('dataType') == 'numeric':
+            lines.append(f'sets = d[{json.dumps(vcol)}].astype(float).to_numpy().astype(int)   # 0 training, 1 validation, 2 test')
+        else:
+            lines.append(f'names = {json.dumps(predictive._SET_NAMES)}')
+            lines.append(f'sets = d[{json.dumps(vcol)}].astype(str).str.strip().str.lower().map(names).to_numpy(int)   # 0 training, 1 validation, 2 test')
+    elif crit == 'holdback':
+        lines.append(f'rng = np.random.default_rng({O["seed"]})   # the holdback, drawn as the page draws a Validation Portion')
+        lines.append(f'sets = np.zeros(len(d), dtype=int); sets[rng.permutation(len(d))[:{int(round(O["portion"] * n))}]] = 1')
+    elif crit == 'kfold':
+        lines.append(f'fold = np.empty(len(d), dtype=int); fold[np.random.default_rng({O["seed"]}).permutation(len(d))] = np.arange(len(d)) % {O["folds"]}   # the folds')
+    elif crit == 'loo':
+        lines.append('fold = np.arange(len(d))   # Leave-One-Out: a fold per row')
+    else:
+        lines.append('sets = np.zeros(len(d), dtype=int)   # every row trains the model')
+    if crit in ('kfold', 'loo'):
+        lines.append('s = np.ones(len(d), dtype=bool)   # every row scales the predictors')
+    else:
+        lines.append('s = sets == 0   # the training rows scale the predictors')
+    lines.append('m = np.average(X[s, 1:], axis=0, weights=w[s]); sd = np.sqrt(np.average((X[s, 1:] - m) ** 2, axis=0, weights=w[s]))')
+    lines.append('sd[sd <= 1e-12] = 1.0')
+    lines.append('Z = np.column_stack([np.ones(len(X)), (X[:, 1:] - m) / sd])   # centred and scaled; the intercept first')
+    fam = {'binomial': 'sm.families.Binomial()', 'poisson': 'sm.families.Poisson()'}.get(dist)
+    # the fit on some rows, the -loglik of rows under a fit on others
+    if forward:
+        if fam:
+            lines.append(f'fit_on = lambda rows, cols: sm.GLM(y[rows], Z[rows][:, [0] + cols], family={fam}, var_weights=w[rows]).fit()   # maximum likelihood on those columns')
+        else:
+            lines.append('fit_on = lambda rows, cols: sm.WLS(y[rows], Z[rows][:, [0] + cols], weights=w[rows]).fit()   # least squares on those columns')
+        lines.append('eta = lambda f, cols: Z[:, [0] + cols] @ f.params')
+    else:
+        a1 = R['l1']
+        if O['adaptive']:
+            if R['pf_from'] == 'mle':
+                init = (f'sm.GLM(y[s], Z[s], family={fam}, var_weights=w[s]).fit()' if fam else 'sm.WLS(y[s], Z[s], weights=w[s]).fit()')
+                lines.append(f'b0 = {init}.params[1:]   # the initial fit: maximum likelihood')
+            else:
+                init = (f'sm.GLM(y[s], Z[s], family={fam}, var_weights=w[s]).fit_regularized(method="elastic_net", alpha=np.r_[0, np.full(Z.shape[1] - 1, {_GR_RIDGE0})] * w[s].sum() / s.sum(), L1_wt=0)'
+                        if fam else f'sm.WLS(y[s], Z[s], weights=w[s]).fit_regularized(method="elastic_net", alpha=np.r_[0, np.full(Z.shape[1] - 1, {_GR_RIDGE0})], L1_wt=0)')
+                lines.append(f'b0 = {init}.params[1:]   # the initial fit: ridge (the maximum likelihood estimates do not exist here)')
+            lines.append('pf = 1 / np.maximum(np.abs(b0), 1e-8)   # the adaptive penalty of each term')
+        else:
+            lines.append('pf = np.ones(Z.shape[1] - 1)   # the same penalty for every term')
+        lines.append(f'L1 = {a1!r}   # the lasso share of the penalty')
+        lines.append('def fit_at(rows, lam, start=None):')
+        if fam:
+            lines.append('    """The penalized fit on these rows (statsmodels scales the GLM\'s loss by the rows, the report by their weight)."""')
+            lines.append(f'    return sm.GLM(y[rows], Z[rows], family={fam}, var_weights=w[rows]).fit_regularized(method="elastic_net", alpha=np.r_[0, lam * pf] * w[rows].sum() / rows.sum(),')
+        else:
+            lines.append('    """The penalized fit on these rows."""')
+            lines.append('    return sm.WLS(y[rows], Z[rows], weights=w[rows]).fit_regularized(method="elastic_net", alpha=np.r_[0, lam * pf],')
+        lines.append('                                         L1_wt=L1, start_params=start, maxiter=1000, cnvrg_tol=1e-12)')
+        lines.append('def path(rows):')
+        lines.append('    """The fits along the penalties, each started at the one before: statsmodels\' coordinate descent keeps a')
+        lines.append('    coefficient that is zero after its second sweep at zero, so a fit started at zero can stop short."""')
+        lines.append('    fits = []')
+        lines.append('    for lam in lams:')
+        lines.append('        fits.append(fit_at(rows, lam, fits[-1].params if fits else None))')
+        lines.append('    return fits')
+        lines.append('eta = lambda f: Z @ f.params')
+        if crit in ('aicc', 'bic'):
+            if (a1 or 0) >= 1:
+                lines.append('df = lambda f, lam: np.sum(np.abs(f.params[1:]) > 1e-8) + 1   # the lasso\'s degrees of freedom: its nonzero terms and the intercept')
+            else:
+                lines.append('def df(f, lam, rows=None):')
+                lines.append('    """The degrees of freedom: the trace of the ridge hat matrix on the nonzero terms, and the intercept."""')
+                lines.append('    rows = train if rows is None else rows')
+                lines.append('    a = np.flatnonzero(np.abs(f.params[1:]) > 1e-8) + 1')
+                lines.append('    if not len(a): return 1.0')
+                lines.append('    e_ = Z[rows] @ f.params')
+                if dist == 'binomial':
+                    lines.append(f'    p = 1 / (1 + np.exp(-np.clip(e_, -{_GR_ETA}, {_GR_ETA}))); v = w[rows] * p * (1 - p)')
+                elif dist == 'poisson':
+                    lines.append('    v = w[rows] * np.exp(e_)')
+                else:
+                    lines.append('    v = w[rows]')
+                lines.append('    Za = Z[rows][:, a]; M = Za.T @ (Za * v[:, None])')
+                lines.append('    return np.trace(np.linalg.solve(M + w[rows].sum() * lam * (1 - L1) * np.diag(pf[a - 1]), M)) + 1')
+        lines.append('s0 = s & (w > 0)')
+        lines.append('grad = np.abs(Z[s0, 1:].T @ (w[s0] * (y[s0] - np.average(y[s0], weights=w[s0])))) / w[s0].sum() / pf')
+        grid = 'np.logspace(0, -4, ' if (a1 or 0) > 0 else 'np.logspace(1, -5, '
+        lines.append(f'lams = grad.max() / max(L1, 1e-3) * {grid}{len(R["lams"])})   # the path, from the penalty that keeps every term out')
+    if dist == 'normal':
+        lines.append('def nll(e, train, rows):')
+        lines.append('    """-LogLikelihood of rows, the variance the training rows\' mean squared error."""')
+        lines.append('    s2 = np.sum(w[train] * (y[train] - e[train]) ** 2) / w[train].sum()')
+        lines.append('    return 0.5 * np.sum(w[rows] * (np.log(2 * np.pi * s2) + (y[rows] - e[rows]) ** 2 / s2))')
+    elif dist == 'binomial':
+        lines.append('def nll(e, train, rows):')
+        lines.append(f'    p = 1 / (1 + np.exp(-np.clip(e[rows], -{_GR_ETA}, {_GR_ETA})))')
+        lines.append('    return -np.sum(w[rows] * (y[rows] * np.log(p) + (1 - y[rows]) * np.log(1 - p) - gammaln(y[rows] + 1) - gammaln(2 - y[rows])))')
+    else:
+        lines.append('def nll(e, train, rows):')
+        lines.append('    return -np.sum(w[rows] * (y[rows] * e[rows] - np.exp(e[rows]) - gammaln(y[rows] + 1)))')
+    ch = m['chosen']
+    steps = None
+    if forward:
+        live_idx = np.flatnonzero(live)
+        path_cols = [[int(live_idx[j]) + 1 for j in np.flatnonzero(np.abs(R['coefs'][s_, 1:]) > 0)] for s_ in range(len(R['coefs']))]
+        steps = [sorted(c_) for c_ in path_cols]
+    # the curve and the final model
+    if crit in ('aicc', 'bic'):
+        lines.append('train = sets == 0')
+        lines.append('def criterion(e, k):')
+        lines.append(f'    """{"AICc" if crit == "aicc" else "BIC"} of a fit with k nonzero parameters (the report\'s Number of Parameters){", plus the variance" if dist == "normal" else ""}."""')
+        lines.append(f'    N = w[train].sum(); ll = -nll(e, train, train); k = k{" + 1" if dist == "normal" else ""}')
+        lines.append('    return -2 * ll + 2 * k + 2 * k * (k + 1) / (N - k - 1)' if crit == 'aicc' else '    return -2 * ll + k * np.log(N)')
+        if forward:
+            lines.append(f'steps = {json.dumps(steps)}   # the columns of Z each step holds')
+            lines.append('curve = [criterion(eta(fit_on(train, c), c), len(c) + 1) for c in steps]')
+            lines.append(f'chosen = {ch}   # the report\'s: the smallest (np.argmin(curve)), or the one chosen on the plot')
+            lines.append('fit = fit_on(train, steps[chosen])')
+        else:
+            lines.append('fits = path(train)')
+            lines.append('curve = [criterion(eta(f), df(f, lam)) for f, lam in zip(fits, lams)]')
+            lines.append(f'chosen = {ch}   # the report\'s: the smallest (np.argmin(curve)), or the one chosen on the plot')
+            lines.append('fit = fits[chosen]')
+        lines.append('valid = np.zeros(len(d), dtype=bool)' if not vcol else 'valid = sets == 1')
+    elif crit in ('holdback', 'validation'):
+        lines.append('train, valid = sets == 0, sets == 1')
+        if forward:
+            lines.append(f'steps = {json.dumps(steps)}   # the columns of Z each step holds')
+            lines.append('curve = [nll(eta(f, c), train, valid) / w[valid].sum() for c, f in ((c, fit_on(train, c)) for c in steps)]   # Scaled -LogLikelihood of the validation rows')
+            lines.append(f'chosen = {ch}   # the report\'s: the smallest (np.argmin(curve)), or the one chosen on the plot')
+            lines.append('fit = fit_on(train, steps[chosen])')
+        else:
+            lines.append('fits = path(train)')
+            lines.append('curve = [nll(eta(f), train, valid) / w[valid].sum() for f in fits]   # Scaled -LogLikelihood of the validation rows')
+            lines.append(f'chosen = {ch}   # the report\'s: the smallest (np.argmin(curve)), or the one chosen on the plot')
+            lines.append('fit = fits[chosen]')
+    else:
+        f = R['fstar']
+        if forward:
+            fcols = steps[ch]
+            lines.append(f'train, valid = fold != {f}, fold == {f}   # the final model\'s fold: the Validation set')
+            lines.append(f'chosen, cols = {ch}, {json.dumps(fcols)}   # the report\'s step, and the columns of Z it holds in that fold')
+            lines.append('fit = fit_on(train, cols)')
+        elif crit == 'kfold':
+            K = R['K']
+            lines.append(f'paths = [path(fold != k) for k in range({K})]   # every fold\'s path')
+            lines.append(f'curve = [np.mean([nll(eta(paths[k][l]), fold != k, fold == k) / w[fold == k].sum() for k in range({K})]) for l in range(len(lams))]')
+            lines.append(f'best = {R["best"]}   # np.argmin(curve): the mean Scaled -LogLikelihood of the folds')
+            lines.append(f'scores = [nll(eta(paths[k][best]), fold != k, fold == k) / w[fold == k].sum() for k in range({K})]')
+            lines.append(f'f = {f}   # np.argmin(scores): as JMP, the final model is the fold model that validates best at that penalty')
+            lines.append(f'chosen = {ch}   # the report\'s penalty: the best, or the one chosen on the plot')
+            lines.append('train, valid = fold != f, fold == f')
+            lines.append('fit = paths[f][chosen]')
+        else:
+            lines.append('# the curve refits the path once per row, the mean of each row\'s Scaled -LogLikelihood; slow, so only the final model here')
+            lines.append(f'f = {f}   # as JMP, the final model is the fit without row f, the row it predicts best at the best penalty')
+            lines.append(f'chosen = {ch}')
+            lines.append('train, valid = fold != f, fold == f')
+            lines.append('fit = path(train)[chosen]')
+    e = 'eta(fit, cols)' if forward and crit in ('kfold', 'loo') else ('eta(fit, steps[chosen])' if forward else 'eta(fit)')
+    lines.append(f'e = {e}')
+    lines.append('print(fit.params)   # the estimates on the scaled predictors')
+    if forward:
+        cc = 'cols' if crit in ('kfold', 'loo') else 'steps[chosen]'
+        lines.append(f'b = np.zeros(Z.shape[1]); b[[0] + {cc}] = fit.params')
+        lines.append('print(b[1:] / sd, b[0] - np.sum(b[1:] * m / sd))   # on the original predictors, and the intercept')
+    else:
+        lines.append('print(fit.params[1:] / sd, fit.params[0] - np.sum(fit.params[1:] * m / sd))   # on the original predictors, and the intercept')
+    lines += _centred_code(d)
+    lines.append('fit_nll = {"Training": nll(e, train, train) / w[train].sum()}   # the Model Summary\'s Scaled -LogLikelihood')
+    lines.append('if valid.any(): fit_nll["Validation"] = nll(e, train, valid) / w[valid].sum()')
+    if vcol:
+        lines.append('if (sets == 2).any(): fit_nll["Test"] = nll(e, train, sets == 2) / w[sets == 2].sum()')
+    lines.append('print(fit_nll)')
+    return '\n'.join(lines)
+
+
 @api('fitmodel.genreg')
 def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, dist='normal', method='lasso', enet_alpha=0.9,
-           criterion='aicc', n_grid=40, choose=None, target=None, table_name='data'):
+           criterion='aicc', n_grid=40, choose=None, target=None, adaptive=False, validation=None, portion=None, folds=None, seed=None,
+           table_name='data'):
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, dist=dist, method=method, enet_alpha=enet_alpha, criterion=criterion,
-                 n_grid=n_grid, choose=choose, target=target)
+                 n_grid=n_grid, choose=choose, target=target, adaptive=adaptive, validation=validation, portion=portion, folds=folds, seed=seed)
     m = _genreg_model(table, rows, spec)
-    d, names, path = m['d'], m['names'], m['path']
+    R = m['path']
+    S, O = R['S'], R['O']
+    d, names = m['d'], m['names']
     ch = m['chosen']
-    pc = path[ch]
+    sh = R['shown'][ch]
     labels = [_tlabel(d, nm) for nm in names]
     ic = names.index('Intercept')
     est = [{'term': labels[j], 'estimate': float(m['b_jmp'][j]), 'zero': j != ic and abs(m['b_jmp'][j]) < 1e-12} for j in range(len(names))]
@@ -3121,39 +3844,87 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
     scaled = [{'term': labels[ic], 'estimate': float(m['scaled'][0])}] + [
         {'term': labels[j], 'estimate': float(m['scaled'][1 + pos[j]])} for j in order if j != ic]
     eta = m['X'].to_numpy(float) @ m['b']
-    pred = eta if m['dist'] == 'normal' else m['fam'].link.inverse(eta)
-    ll = pc['ll']
-    if m['dist'] == 'normal':
-        yb = np.average(m['y'], weights=m['w'])
-        ll0 = -0.5 * m['N'] * (math.log(2 * math.pi * float(np.sum(m['w'] * (m['y'] - yb) ** 2)) / m['N']) + 1)
+    pred = _gr_mu(m['dist'], eta)
+    meth, title = _gr_label(O)
+    crit = O['criterion']
+    live = S['live']
+    L = len(R['coefs'])
+    full = np.zeros((L, len(m['cols'])))
+    full[:, live] = R['coefs'][:, 1:]
+    l1n = np.sum(np.abs(full), axis=1)
+    stats_ = _gr_sets_stats(m)
+    byset = {s_['set']: s_ for s_ in stats_}
+    tr_ = byset['Training']
+    msr = [('rows', 'Number of rows'), ('n', 'Sum of Frequencies'), ('nll', '-LogLikelihood'), ('scaled', 'Scaled -LogLikelihood'),
+           ('nparm', 'Number of Parameters'), ('bic', 'BIC'), ('aicc', 'AICc'), ('grsq', 'Generalized RSquare'), ('rase', 'RASE')]
+    extra = {'nparm': sh['df'], 'bic': sh['bic'], 'aicc': sh['aicc']}
+    if not R['forward']:
+        msr.append(('lambda', 'Lambda Penalty'))
+        extra['lambda'] = float(R['lams'][ch])
+        if O['method'] == 'enet':
+            msr.append(('alpha', 'Elastic Net Alpha'))
+            extra['alpha'] = float(R['l1'])
+    srows = []
+    for k_, lab in msr:
+        r_ = {'measure': lab}
+        for s_ in stats_:
+            r_[s_['set']] = s_.get(k_) if k_ in s_ else (extra.get(k_) if s_['set'] == 'Training' else None)
+        srows.append(r_)
+    summary = rtable([col('measure', 'Measure', 'text')] + [col(s_['set'], s_['set']) for s_ in stats_], srows)
+    notes = []
+    if R['forward']:
+        notes.append(('Each step enters the term with the largest score statistic (for the normal: the largest drop in the error sum of squares) '
+                      'and refits by maximum likelihood on the centred and scaled predictors'
+                      + ('; after an entry, a term leaves while the model without it (the term with the smallest Wald statistic, never the one '
+                         'just entered) fits better than any model of that size before it (floating search).' if O['method'] == 'pruned' else '.')))
     else:
-        mu0 = np.full(len(m['y']), np.average(m['y'], weights=m['w']))
-        ll0 = float(m['fam'].loglike(m['y'], mu0, var_weights=m['w']))
-    grsq = (1 - math.exp(2 * (ll0 - ll) / m['N'])) / (1 - math.exp(2 * ll0 / m['N'])) if m['dist'] != 'normal' else 1 - math.exp(2 * (ll0 - ll) / m['N'])
-    meth = {'lasso': 'Lasso', 'enet': 'Elastic Net', 'ridge': 'Ridge'}[m['method']]
-    lines = _code_frame(d, table, table_name, rows, [weight, freq], ['import patsy'])
-    lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d))   # the design, effect coded')
-    lines.append('Z = (X[:, 1:] - X[:, 1:].mean(0)) / X[:, 1:].std(0); Z = np.column_stack([np.ones(len(Z)), Z])   # centred and scaled')
-    fam = 'sm.WLS(y, Z)' if m['dist'] == 'normal' else f'sm.GLM(y, Z, family=sm.families.{"Binomial" if m["dist"] == "binomial" else "Poisson"}())'
-    if m['info'].get('levels'):
-        lv0 = m['info']['levels'][0]
-        lines.append(f'y = (d[{json.dumps(spec["y"][0])}] == {json.dumps(lv0 if isinstance(lv0, str) else float(lv0))}).to_numpy(float)   # the target level')
-    else:
-        lines.append(f'y = d[{json.dumps(spec["y"][0])}].to_numpy(float)')
-    lines.append(f'fit = {fam}.fit_regularized(method="elastic_net", alpha=np.r_[0, np.full(Z.shape[1] - 1, {pc["alpha"]!r})], L1_wt={m["l1"]!r})')
-    lines += _centred_code(d)
-    return {'model': {'response': spec['y'][0], 'distribution': _DIST_LABEL[m['dist']], 'method': meth, 'criterion': m['crit'].upper() if m['crit'] == 'bic' else 'AICc',
-                      'n': m['N'], 'rows': int(len(d.df)), 'nll': -ll, 'nparm': pc['df'], 'aicc': pc['aicc'], 'bic': pc['bic'], 'grsq': grsq,
-                      'lambda': pc['alpha'], 'enet_alpha': m['l1'], 'target': _lvl(m['info']['levels'][0]) if m['info'].get('levels') else None},
-            'path': {'l1': [p_['l1'] for p_ in path], 'alpha': [p_['alpha'] for p_ in path], 'aicc': [p_['aicc'] for p_ in path],
-                     'bic': [p_['bic'] for p_ in path], 'df': [p_['df'] for p_ in path], 'nonzero': [p_['nonzero'] for p_ in path],
-                     'coefs': [{'term': labels[j], 'values': [float(p_['coef'][1 + i]) for p_ in path]} for i, j in enumerate(m['cols'])]},
-            'best': m['best'], 'chosen': ch, 'estimates': est, 'scaled': scaled, 'factors': _factors(d), 'key': m['key'],
-            'diag': {'rows': [int(i) for i in d.df.index], 'actual': m['y'], 'predicted': pred, 'residual': m['y'] - pred},
-            'notes': ['The predictors are centred and scaled before the penalty (the intercept is not penalised); the estimates are shown on '
-                      'both scales. The degrees of freedom are the number of non-zero terms for the lasso and the trace of the ridge hat matrix '
-                      'on the active terms otherwise. statsmodels\' fit_regularized gives no standard errors for penalised estimates.'],
-            'code': '\n'.join(lines)}
+        notes.append('The predictors are centred and scaled by the rows that train the model before the penalty; the intercept is not penalized. '
+                     'The degrees of freedom of AICc and BIC are the number of nonzero terms for the lasso, the trace of the ridge hat matrix on '
+                     'them for the elastic net and ridge. Penalized estimates have no standard errors here.')
+    if O['adaptive']:
+        notes.append('Adaptive: each term\'s penalty (both parts, for the elastic net) is divided by |b|, b its '
+                     + ('maximum likelihood estimate on the scaled predictors' if R['pf_from'] == 'mle' else
+                        f'ridge estimate at λ = {_GR_RIDGE0} (the maximum likelihood estimates do not exist here)')
+                     + ', from the rows that train the model (every row for KFold and Leave-One-Out). Terms with small initial estimates are penalized more.')
+    rowsets = {'rows': [int(i) for i in d.df.index]}
+    if crit == 'kfold':
+        f = R['fstar']
+        notes.append(f'KFold: {O["folds"]} folds drawn with the seed {O["seed"]}. The curve is the mean over the folds of each fold\'s validation '
+                     '−LogLikelihood per unit of weight (Scaled −LogLikelihood). As JMP does, the model reported is the fold model with the smallest '
+                     f'validation −LogLikelihood at the chosen penalty, fold {f + 1}: the other folds train it (the Training set), its '
+                     f'{int(R["valid"].sum())} rows are the Validation set.')
+    elif crit == 'loo':
+        f = R['fstar']
+        notes.append(f'Leave-One-Out: the path refitted once per row ({R["K"]} fits); the curve is the mean of each row\'s Scaled −LogLikelihood. As JMP '
+                     f'does, the model reported is the one without the row it predicts best at the chosen penalty (row {int(d.df.index[f]) + 1}), '
+                     'which is its Validation set.')
+    elif crit == 'holdback':
+        notes.append(f'Holdback: {int((S["sets"] == 1).sum())} rows ({O["portion"]:g} of them) held back for validation, drawn with the seed {O["seed"]} '
+                     'as the page\'s predictive platforms draw a Validation Portion. The curve is their Scaled −LogLikelihood.')
+    elif crit == 'validation':
+        notes.append(f'Validation Column: rows {O["validation"]} = 0 (Training) fit the model, 1 (Validation) choose it by their Scaled '
+                     '−LogLikelihood, 2 (Test) take no part and show how the chosen model predicts.')
+    elif O['validation']:
+        notes.append(f'{O["validation"]}: the training rows (0) fit the model; the Validation and Test rows are shown in the Model Summary.')
+    notes += S['notes']
+    if crit not in ('aicc', 'bic') and S['dist'] == 'normal':
+        notes.append('The normal\'s −LogLikelihood of validation and test rows takes the variance of the training residuals (SSE/N).')
+    model = {'response': O['y'][0], 'distribution': _DIST_LABEL[S['dist']], 'method': meth, 'validation': _GR_VALID[crit], 'title': title,
+             'criterion': _GR_VALID[crit] if crit in ('aicc', 'bic') else 'Scaled -LogLikelihood',
+             'n': tr_['n'], 'rows': tr_['rows'], 'nll': tr_['nll'], 'nparm': sh['df'], 'aicc': sh['aicc'], 'bic': sh['bic'], 'grsq': tr_['grsq'],
+             'lambda': None if R['forward'] else float(R['lams'][ch]), 'enet_alpha': R['l1'],
+             'target': _lvl(S['info']['levels'][0]) if S['info'].get('levels') else None, 'adaptive': bool(O['adaptive']),
+             'folds': O['folds'], 'portion': O['portion'], 'seed': O['seed'], 'fold': R['fstar'] + 1 if crit in ('kfold', 'loo') else None,
+             'validation_column': O['validation']}
+    path = {'x': list(range(L)) if R['forward'] else l1n.tolist(), 'xlabel': 'Step' if R['forward'] else 'Magnitude of Scaled Parameter Estimates',
+            'l1': l1n.tolist(), 'alpha': None if R['forward'] else [float(a) for a in R['lams']],
+            'aicc': [s_['aicc'] for s_ in R['shown']], 'bic': [s_['bic'] for s_ in R['shown']], 'df': [s_['df'] for s_ in R['shown']],
+            'nonzero': [s_['nonzero'] for s_ in R['shown']], 'curve': [float(v) for v in R['curve']], 'label': model['criterion'],
+            'coefs': [{'term': labels[j], 'values': full[:, i].tolist()} for i, j in enumerate(m['cols'])]}
+    return {'model': model, 'summary': summary, 'path': path, 'best': m['best'], 'chosen': ch, 'estimates': est, 'scaled': scaled,
+            'factors': _factors(d), 'key': m['key'],
+            'diag': {**rowsets, 'actual': m['y'], 'predicted': pred, 'residual': m['y'] - pred, 'set': m['sets']},
+            'notes': notes, 'code': _gr_code(m, table, table_name, rows)}
 
 
 # ---------------------------------------------------------------------------

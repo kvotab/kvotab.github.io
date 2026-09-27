@@ -28,6 +28,15 @@ and estimates, as statsmodels' tests record them), recursive_olsresiduals,
 least squares on the first rows and on each window by brute force, RollingOLS
 and RollingWLS, Brown, Durbin and Evans's constants, and a simulated break.
 
+Generalized Regression is checked against scikit-learn called directly (the
+lasso and elastic net paths, LogisticRegression and PoissonRegressor at the
+same penalty, Lasso on the columns times |b| for the adaptive lasso, LassoCV's
+folds, log_loss), statsmodels' fit_regularized and score_test, the validation
+curves by their formulas on fits made by scikit-learn (KFold, Holdback,
+Leave-One-Out, a Validation column), predictive.prepare's sets, brute force
+(the forward steps, the best pair of the floating search) and the Model
+Summary's measures by their formulas.
+
     python3 resources/tests/smui/test_fit_model.py
 
 The statsmodels datasets, the data files of statsmodels' own GEE and IV tests
@@ -1710,5 +1719,365 @@ if not err:
     jx_ = [i for i, nm in enumerate(ns['fit'].model.exog_names) if nm.startswith('I(x') and ':' not in nm][0]   # patsy puts g first
     check.near('its recursive estimates are the report\'s', abs(float(ns['rls'].recursive_coefficients.filtered[jx_, -1]) - recb['x']['estimate'][-1]) + abs(float(ns['rls'].cusum[-1]) - rb_['cusum']['y'][-1]), 0.0, abs_=1e-9)
 check('recursive fits refuse Freq', 'Freq' in (err_of('fitmodel.recursive', table=t_brw, y='y', effects=[['x']], freq='w') or ''), True)
+
+
+# ======================================================================================================================
+# Generalized Regression: JMP Pro's validation methods, the adaptive methods, forward selection
+# ======================================================================================================================
+import warnings
+
+from scipy.special import gammaln
+from sklearn import metrics as skm
+from sklearn.linear_model import ElasticNet, Lasso, LassoCV, LogisticRegression, PoissonRegressor, lasso_path
+
+from smui import predictive
+
+gr_rng = np.random.default_rng(20260927)
+ng = 240
+Xg = gr_rng.normal(size=(ng, 6))
+Xg[:, 2] = 0.6 * Xg[:, 0] + 0.8 * Xg[:, 2]                  # two correlated columns
+bg = np.array([1.5, -1.0, 0.0, 0.0, 0.6, 0.0])
+yg_n = 1 + Xg @ bg + gr_rng.normal(size=ng)
+yg_b = np.where(gr_rng.uniform(size=ng) < 1 / (1 + np.exp(-(0.3 + Xg @ bg))), 'yes', 'no')
+yb01 = (yg_b == 'yes').astype(float)
+yg_c = gr_rng.poisson(np.exp(0.3 + 0.4 * Xg[:, 0] - 0.3 * Xg[:, 1])).astype(float)
+wg = gr_rng.uniform(0.5, 2.0, ng).round(2)
+vg = gr_rng.choice([0.0, 1.0, 2.0], ng, p=[0.6, 0.25, 0.15])
+vg_m = vg.copy()
+vg_m[[3, 50]] = np.nan                                     # rows with no validation value
+gdf = pd.DataFrame({**{f'x{i}': Xg[:, i] for i in range(6)}, 'y': yg_n, 'yb': yg_b, 'yc': yg_c, 'w': wg, 'v': vg_m,
+                    'vt': np.array(['Training', 'Validation', 'Test'])[vg.astype(int)]})
+tg = table({c: [None if isinstance(v_, float) and np.isnan(v_) else v_ for v_ in gdf[c].tolist()] for c in gdf.columns},
+           types={'yb': 'nominal', 'vt': 'nominal'}, levels={'yb': ['yes', 'no']})
+Eg6 = [[f'x{i}'] for i in range(6)]
+X6 = [f'x{i}' for i in range(6)]
+
+
+def gr(**kw):
+    return call('fitmodel.genreg', table=tg, effects=kw.pop('effects', Eg6), **kw)
+
+
+def gr_scaled(rows_mask, weights=None):
+    """The predictors centred and scaled by some rows, as the report does."""
+    ww = np.ones(ng) if weights is None else weights
+    m_ = np.average(Xg[rows_mask], axis=0, weights=ww[rows_mask])
+    return (Xg - m_) / np.sqrt(np.average((Xg[rows_mask] - m_) ** 2, axis=0, weights=ww[rows_mask]))
+
+
+def path_coefs(r_):
+    """The report's path of the scaled estimates: terms x steps."""
+    return np.array([c_['values'] for c_ in r_['path']['coefs']])
+
+
+def summary_of(r_):
+    return {x_['measure']: x_ for x_ in r_['summary']['rows']}
+
+
+def scaled_est(r_):
+    return [e_['estimate'] for e_ in r_['scaled']]
+
+
+allr = np.ones(ng, dtype=bool)
+Z1 = gr_scaled(allr)
+Z1w = gr_scaled(allr, wg)
+A1 = np.column_stack([np.ones(ng), Z1])
+
+# ---- the sets: predictive.prepare's (the page's rules), the folds from the seed ----------------------------------------
+rh = gr(y='y', criterion='holdback', portion=0.25, seed=77)
+Ph = predictive.prepare(tg, 'y', X6, portion=0.25, seed=77, missing='drop')
+check('Holdback: the sets are predictive.prepare\'s (the page\'s Validation Portion)', rh['diag']['set'], Ph.sets.tolist())
+want_h = np.zeros(ng, dtype=int)
+want_h[np.random.default_rng(77).permutation(ng)[:int(round(0.25 * ng))]] = 1
+check('... drawn as numpy permutes the rows with the seed', rh['diag']['set'], want_h.tolist())
+check('... the same seed draws the same rows', gr(y='y', criterion='holdback', portion=0.25, seed=77, method='enet')['diag']['set'], rh['diag']['set'])
+check('... another seed other rows', gr(y='y', criterion='holdback', portion=0.25, seed=78)['diag']['set'] != rh['diag']['set'], True)
+check('the report says Holdback Validation', rh['model']['title'], 'Lasso with Holdback Validation')
+rv = gr(y='y', criterion='validation', validation='v')
+okv = ~np.isnan(vg_m)
+check('Validation Column (0/1/2): rows with no value are left out', (len(rv['diag']['rows']), rv['diag']['rows'][:5]), (int(okv.sum()), np.flatnonzero(okv)[:5].tolist()))
+check('... the sets are the column\'s', rv['diag']['set'], vg_m[okv].astype(int).tolist())
+check('... and the notes say what was left out', any('no v value' in n_ for n_ in rv['notes']), True)
+check('... the report\'s title, as JMP names it', rv['model']['title'], 'Lasso with Validation Column')
+rvt = gr(y='y', criterion='validation', validation='vt')
+check('a Validation column of names: Training, Validation, Test', rvt['diag']['set'], vg.astype(int).tolist())
+check('the Model Summary has a column per set', [c_['label'] for c_ in rvt['summary']['columns']], ['Measure', 'Training', 'Validation', 'Test'])
+check('AICc with a Validation column: the training rows fit, the others are reported', ([c_['label'] for c_ in gr(y='y', validation='vt')['summary']['columns']], summary_of(gr(y='y', validation='vt'))['Number of rows']['Training']),
+      (['Measure', 'Training', 'Validation', 'Test'], int((vg == 0).sum())))
+rk = gr(y='y', criterion='kfold', folds=5, seed=123)
+fold = np.empty(ng, dtype=int)
+fold[np.random.default_rng(123).permutation(ng)] = np.arange(ng) % 5
+fk = rk['model']['fold'] - 1
+check('KFold: the final model\'s Validation set is one fold, drawn from the seed', rk['diag']['set'], (fold == fk).astype(int).tolist())
+check('KFold with a Validation column is refused', 'Validation column' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, validation='v') or ''), True)
+check('Validation Column needs a column in the role', 'Validation role' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation') or ''), True)
+check('a Validation column holds 0, 1 and 2 (predictive.prepare\'s message)', 'holds 0 (training)' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='w') or ''), True)
+check('the Validation column cannot be a model effect', 'cannot also' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='x0') or ''), True)
+check('KFold needs a seed', 'seed' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold') or ''), True)
+check('KFold needs 2 to n folds', 'folds' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, folds=1) or ''), True)
+t_big = table({'x': gr_rng.normal(size=320).tolist(), 'y': gr_rng.normal(size=320).tolist()})
+check('Leave-One-Out is refused beyond its rows (Forward Selection: 300)', 'KFold' in (err_of('fitmodel.genreg', table=t_big, y='y', effects=[['x']], method='forward', criterion='loo') or ''), True)
+
+# ---- the fits against scikit-learn and statsmodels called directly -------------------------------------------------------
+r1 = gr(y='y', method='lasso')
+_, co1, _ = lasso_path(Z1, yg_n - yg_n.mean(), alphas=np.array(r1['path']['alpha']), tol=1e-12, max_iter=100000)
+check.near('lasso path = scikit-learn lasso_path on the centred and scaled predictors', float(np.max(np.abs(path_coefs(r1) - co1))), 0.0, abs_=1e-8)
+check.near('... from λ_max = max |z\'(y - ȳ)| / N, where every term is out', r1['path']['alpha'][0], float(np.max(np.abs(Z1.T @ (yg_n - yg_n.mean())))) / ng, rel=1e-12)
+check('... which it is', r1['path']['nonzero'][0], 0)
+r2 = gr(y='y', method='enet', enet_alpha=0.5, weight='w')
+l2_ = np.array(r2['path']['alpha'])
+d2 = max(float(np.max(np.abs(ElasticNet(alpha=l2_[l], l1_ratio=0.5, tol=1e-12, max_iter=100000).fit(Z1w, yg_n, sample_weight=wg).coef_ - path_coefs(r2)[:, l]))) for l in (0, 13, 26, 39))
+check.near('elastic net with a Weight = scikit-learn ElasticNet(sample_weight)', d2, 0.0, abs_=1e-8)
+r3 = gr(y='yb', method='lasso')
+check('a two-level Y is binomial, the first level the target', (r3['model']['distribution'], r3['model']['target']), ('Binomial', 'yes'))
+l3 = np.array(r3['path']['alpha'])
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    d3 = max(float(np.max(np.abs(LogisticRegression(l1_ratio=1.0, C=1 / (l3[l] * ng), solver='saga', tol=1e-14, max_iter=10 ** 6, random_state=0).fit(Z1, yb01).coef_[0] - path_coefs(r3)[:, l]))) for l in (8, 20, 32))
+check.near('binomial lasso = scikit-learn LogisticRegression(l1_ratio=1, saga) at C = 1/(λN)', d3, 0.0, abs_=1e-6)
+r4 = gr(y='yb', method='ridge', weight='w')
+l4 = np.array(r4['path']['alpha'])
+d4 = max(float(np.max(np.abs(LogisticRegression(l1_ratio=0.0, C=1 / (l4[l] * wg.sum()), solver='newton-cholesky', tol=1e-12, max_iter=10000).fit(Z1w, yb01, sample_weight=wg).coef_[0] - path_coefs(r4)[:, l]))) for l in (0, 20, 39))
+check.near('binomial ridge with a Weight = LogisticRegression(l1_ratio=0): the penalty per unit of weight', d4, 0.0, abs_=1e-8)
+r5 = gr(y='yc', dist='poisson', method='ridge', weight='w')
+l5 = np.array(r5['path']['alpha'])
+d5 = max(float(np.max(np.abs(PoissonRegressor(alpha=l5[l], solver='newton-cholesky', tol=1e-12, max_iter=10000).fit(Z1w, yg_c, sample_weight=wg).coef_ - path_coefs(r5)[:, l]))) for l in (0, 20, 39))
+check.near('Poisson ridge with a Weight = scikit-learn PoissonRegressor(alpha=λ)', d5, 0.0, abs_=1e-8)
+r6 = gr(y='yc', dist='poisson', method='lasso')
+lam6 = r6['path']['alpha'][r6['chosen']]
+f6 = sm.GLM(yg_c, A1, family=sm.families.Poisson()).fit_regularized(method='elastic_net', alpha=np.r_[0, np.full(6, lam6)], L1_wt=1.0, cnvrg_tol=1e-12, maxiter=1000)
+check.near('Poisson lasso = statsmodels GLM fit_regularized (scikit-learn has no lasso for a Poisson Y)', maxdiff(scaled_est(r6), f6.params), 0.0, abs_=1e-6)
+r7 = gr(y='y', method='lasso', adaptive=True)
+b_ols = sm.OLS(yg_n, A1).fit().params[1:]
+l7 = np.array(r7['path']['alpha'])
+check('Adaptive Lasso, its initial fit least squares (the notes say so)', (r7['model']['method'], any('maximum likelihood estimate' in n_ for n_ in r7['notes'])), ('Adaptive Lasso', True))
+d7 = max(float(np.max(np.abs(Lasso(alpha=l7[l], tol=1e-12, max_iter=100000).fit(Z1 * np.abs(b_ols), yg_n).coef_ * np.abs(b_ols) - path_coefs(r7)[:, l]))) for l in (5, 20, 35))
+check.near('... = scikit-learn Lasso on the columns times |b|, the estimates times |b| again (the adaptive lasso\'s identity)', d7, 0.0, abs_=1e-8)
+check.near('... its path starts at max |z_j\'(y - ȳ)| |b_j| / N', l7[0], float(np.max(np.abs(Z1.T @ (yg_n - yg_n.mean())) * np.abs(b_ols))) / ng, rel=1e-10)
+r8 = gr(y='y', method='enet', enet_alpha=0.7, adaptive=True)
+f8 = sm.OLS(yg_n, A1).fit_regularized(method='elastic_net', alpha=np.r_[0, r8['path']['alpha'][r8['chosen']] / np.abs(b_ols)], L1_wt=0.7, maxiter=2000)
+check.near('Adaptive Elastic Net = statsmodels fit_regularized with each term\'s penalty (both parts) divided by |b|', maxdiff(scaled_est(r8), f8.params), 0.0, abs_=1e-6)
+r8b = gr(y='yb', method='lasso', adaptive=True)
+b_glm = sm.GLM(yb01, A1, family=sm.families.Binomial()).fit().params[1:]
+check.near('Adaptive Lasso (binomial): the initial fit is the logistic MLE', r8b['path']['alpha'][0], float(np.max(np.abs(Z1.T @ (yb01 - yb01.mean())) * np.abs(b_glm))) / ng, rel=1e-6)
+Xs_ = gr_rng.normal(size=(8, 10))
+ys_ = Xs_[:, 0] + gr_rng.normal(size=8)
+ts_ = table({**{f's{i}': Xs_[:, i].tolist() for i in range(10)}, 'y': ys_.tolist()})
+ra_ = call('fitmodel.genreg', table=ts_, y='y', effects=[[f's{i}'] for i in range(10)], method='lasso', adaptive=True)
+Zs_ = (Xs_ - Xs_.mean(0)) / Xs_.std(0)
+b_rdg = np.linalg.solve(Zs_.T @ Zs_ / 8 + 0.01 * np.eye(10), Zs_.T @ (ys_ - ys_.mean()) / 8)
+check('Adaptive with more terms than rows: the initial fit is ridge (λ = 0.01), and the notes say so', any('ridge estimate' in n_ for n_ in ra_['notes']), True)
+check.near('... its weights 1/|b| of that ridge fit start the path', ra_['path']['alpha'][0], float(np.max(np.abs(Zs_.T @ (ys_ - ys_.mean())) * np.abs(b_rdg))) / 8, rel=1e-9)
+
+# ---- the validation curves: the formulas on fits made by scikit-learn ------------------------------------------------------
+lk = np.array(rk['path']['alpha'])
+cvk = [(np.flatnonzero(fold != k), np.flatnonzero(fold == k)) for k in range(5)]
+scores = np.zeros((5, len(lk)))
+mse = np.zeros((len(lk), 5))
+for k, (a_, v_) in enumerate(cvk):
+    for l, lam in enumerate(lk):
+        la = Lasso(alpha=lam, tol=1e-12, max_iter=100000).fit(Z1[a_], yg_n[a_])
+        e_ = yg_n - la.predict(Z1)
+        s2_ = np.mean(e_[a_] ** 2)
+        scores[k, l] = 0.5 * np.mean(np.log(2 * np.pi * s2_) + e_[v_] ** 2 / s2_)
+        mse[l, k] = np.mean(e_[v_] ** 2)
+check.near('KFold curve = the mean of the folds\' Scaled -LogLikelihood (scikit-learn Lasso on each fold, the variance its SSE/N)', maxdiff(rk['path']['curve'], scores.mean(0)), 0.0, abs_=1e-9)
+check('... the model is at the curve\'s smallest value', rk['best'], int(np.argmin(scores.mean(0))))
+check('... and, as JMP, it is the fold model that validates best there', fk, int(np.argmin(scores[:, rk['best']])))
+lcv = LassoCV(alphas=lk, cv=cvk, tol=1e-12, max_iter=100000).fit(Z1, yg_n)
+check.near('the same folds give scikit-learn LassoCV\'s mse_path_', float(np.max(np.abs(lcv.mse_path_ - mse))), 0.0, abs_=1e-9)
+la_k = Lasso(alpha=lk[rk['chosen']], tol=1e-12, max_iter=100000).fit(Z1[fold != fk], yg_n[fold != fk])
+check.near('the final model = the fold\'s Lasso fit', maxdiff(scaled_est(rk), np.r_[la_k.intercept_, la_k.coef_]), 0.0, abs_=1e-8)
+sk_ = summary_of(rk)
+check('its Training and Validation rows are the other folds and the fold', (sk_['Number of rows']['Training'], sk_['Number of rows']['Validation']), (int((fold != fk).sum()), int((fold == fk).sum())))
+check.near('its Validation Scaled -LogLikelihood is the fold\'s score', sk_['Scaled -LogLikelihood']['Validation'], float(scores[fk, rk['chosen']]), abs_=1e-9)
+rhb = gr(y='yb', method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9)
+sh_ = np.array(rhb['diag']['set'])
+trh, vah = sh_ == 0, sh_ == 1
+Zh = gr_scaled(trh)
+lh = np.array(rhb['path']['alpha'])
+# the first point keeps every term out: the training rows' share. scikit-learn 1.8, pinned: saga stops early there, its
+# intercept short of logit(share)
+share_h = float(yb01[trh].mean())
+lr0 = LogisticRegression(l1_ratio=0.5, C=1 / (lh[0] * trh.sum()), solver='saga', tol=1e-14, max_iter=10 ** 6, random_state=0).fit(Zh[trh], yb01[trh])
+logit_h = math.log(share_h / (1 - share_h))
+p_h = fit_model._genreg_path(tg, None, fit_model._spec(y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9))
+check('scikit-learn pinned: saga where every term is out stops with the intercept short of logit(share) (the report\'s is it)',
+      (bool(np.all(lr0.coef_ == 0)), abs(float(lr0.intercept_[0]) - logit_h) > 1e-4, abs(float(p_h['coefs'][0, 0]) - logit_h) < 1e-10), (True, True, True))
+cur_h = [skm.log_loss(yb01[vah], np.full(int(vah.sum()), share_h), labels=[0, 1])]
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    for lam in lh[1:]:
+        lr_ = LogisticRegression(l1_ratio=0.5, C=1 / (lam * trh.sum()), solver='saga', tol=1e-14, max_iter=10 ** 6, random_state=0).fit(Zh[trh], yb01[trh])
+        cur_h.append(skm.log_loss(yb01[vah], lr_.predict_proba(Zh[vah])[:, 1], labels=[0, 1]))
+check.near('Holdback curve = scikit-learn log_loss of the held-back rows, LogisticRegression(elastic net) on the others', maxdiff(rhb['path']['curve'], cur_h), 0.0, abs_=1e-8)
+check('... the chosen model is at its smallest value', rhb['chosen'], int(np.argmin(cur_h)))
+# statsmodels 0.14.6, pinned: fit_elasticnet keeps a coefficient that is zero after its second sweep at zero for good (its
+# "active set"), so fit_regularized from its default start (zeros) can stop short of the optimum. The code under the report
+# starts each fit at the one before it on the path, which reaches the report's fit.
+lam_h = lh[rhb['chosen']]
+Ah = np.column_stack([np.ones(ng), Zh])
+glm_h = lambda start: sm.GLM(yb01[trh], Ah[trh], family=sm.families.Binomial()).fit_regularized(  # noqa: E731
+    method='elastic_net', alpha=np.r_[0, np.full(6, lam)], L1_wt=0.5, start_params=start, maxiter=1000, cnvrg_tol=1e-12)
+obj_h = lambda b_: float(-np.mean(yb01[trh] * (Ah[trh] @ b_) - np.logaddexp(0, Ah[trh] @ b_)) + lam_h * (0.5 * np.sum(np.abs(b_[1:])) + 0.25 * np.sum(b_[1:] ** 2)))  # noqa: E731
+lam = lam_h
+cold = glm_h(None)
+check('statsmodels bug pinned: a binomial elastic net started at zero leaves a term at 0, at a larger objective', (float(cold.params[-1]), obj_h(cold.params) > obj_h(np.array(scaled_est(rhb))) + 1e-6), (0.0, True))
+warm = None
+for lam in lh[:rhb['chosen'] + 1]:
+    warm = glm_h(None if warm is None else warm.params)
+check.near('... started at the fit before it on the path, it reaches the report\'s fit', maxdiff(scaled_est(rhb), warm.params), 0.0, abs_=1e-8)
+rvc = gr(y='yc', dist='poisson', method='lasso', criterion='validation', validation='vt')
+sv_ = np.array(rvc['diag']['set'])
+trv, vav, tev = sv_ == 0, sv_ == 1, sv_ == 2
+Zv = gr_scaled(trv)
+fv = sm.GLM(yg_c[trv], np.column_stack([np.ones(int(trv.sum())), Zv[trv]]), family=sm.families.Poisson()).fit_regularized(
+    method='elastic_net', alpha=np.r_[0, np.full(6, rvc['path']['alpha'][rvc['chosen']])], L1_wt=1.0, cnvrg_tol=1e-12, maxiter=1000)
+mu_v = np.exp(np.column_stack([np.ones(ng), Zv]) @ fv.params)
+sv2 = summary_of(rvc)
+nll_pois = lambda m_: -float(np.sum(yg_c[m_] * np.log(mu_v[m_]) - mu_v[m_] - gammaln(yg_c[m_] + 1)))  # noqa: E731
+check.near('Validation Column (Poisson lasso): the model = statsmodels fit_regularized on the training rows', maxdiff(scaled_est(rvc), fv.params), 0.0, abs_=1e-6)
+check.near('... the Validation -LogLikelihood is Poisson\'s (its constant too)', sv2['-LogLikelihood']['Validation'], nll_pois(vav), rel=1e-6)
+check.near('... and the Test rows\', which take no part', sv2['-LogLikelihood']['Test'], nll_pois(tev), rel=1e-6)
+check.near('... the curve at the model is the Validation Scaled -LogLikelihood', rvc['path']['curve'][rvc['chosen']], sv2['Scaled -LogLikelihood']['Validation'], abs_=1e-12)
+rl_ = gr(y='y', method='lasso', criterion='loo', rows=list(range(40)))
+Z40 = (Xg[:40] - Xg[:40].mean(0)) / Xg[:40].std(0)
+y40 = yg_n[:40]
+ll_ = np.array(rl_['path']['alpha'])
+sc40 = np.zeros((40, len(ll_)))
+for i in range(40):
+    a_ = np.arange(40) != i
+    for l, lam in enumerate(ll_):
+        e_ = y40 - Lasso(alpha=lam, tol=1e-12, max_iter=100000).fit(Z40[a_], y40[a_]).predict(Z40)
+        s2_ = np.mean(e_[a_] ** 2)
+        sc40[i, l] = 0.5 * (np.log(2 * np.pi * s2_) + e_[i] ** 2 / s2_)
+check.near('Leave-One-Out curve = the mean of each row\'s Scaled -LogLikelihood, scikit-learn Lasso without it', maxdiff(rl_['path']['curve'], sc40.mean(0)), 0.0, abs_=1e-8)
+check('... the model shown leaves out the row it predicts best at the best penalty (as KFold, JMP\'s rule)', rl_['model']['fold'] - 1, int(np.argmin(sc40[:, rl_['best']])))
+rlb = gr(y='yb', method='ridge', criterion='loo', rows=list(range(40)))
+lb_ = np.array(rlb['path']['alpha'])
+yb40 = yb01[:40]
+sb40 = np.zeros((40, len(lb_)))
+for i in range(40):
+    a_ = np.arange(40) != i
+    for l, lam in enumerate(lb_):
+        pr_ = LogisticRegression(l1_ratio=0.0, C=1 / (lam * 39), solver='newton-cholesky', tol=1e-12, max_iter=1000).fit(Z40[a_], yb40[a_]).predict_proba(Z40[i:i + 1])[0, 1]
+        sb40[i, l] = -(yb40[i] * np.log(pr_) + (1 - yb40[i]) * np.log(1 - pr_))
+check.near('Leave-One-Out (binomial ridge) = the rows\' log loss under LogisticRegression without them', maxdiff(rlb['path']['curve'], sb40.mean(0)), 0.0, abs_=1e-7)
+
+# ---- Forward Selection and Pruned Forward Selection ---------------------------------------------------------------------
+rf = gr(y='y', method='forward')
+cf = path_coefs(rf)
+act, seq_ok, est_ok = [], True, 0.0
+for s_ in range(1, cf.shape[1]):
+    rss_ = {j: sm.OLS(yg_n, np.column_stack([A1[:, :1]] + [Z1[:, k] for k in act + [j]])).fit().ssr for j in range(6) if j not in act}
+    new_ = [j for j in range(6) if cf[j, s_] != 0 and j not in act]
+    seq_ok &= new_ == [min(rss_, key=rss_.get)]
+    act = act + new_
+    ols_ = sm.OLS(yg_n, np.column_stack([A1[:, :1]] + [Z1[:, k] for k in act])).fit().params[1:]
+    est_ok = max(est_ok, float(np.max(np.abs(cf[act, s_] - ols_))))
+check('Forward Selection (normal): each step enters the term that most lowers the error sum of squares', (seq_ok, cf.shape[1]), (True, 7))
+check.near('... and each step is least squares on its terms', est_ok, 0.0, abs_=1e-9)
+k_ = np.arange(cf.shape[1]) + 2.0                           # the terms, the intercept and the variance
+ll_f = np.array([-0.5 * ng * (np.log(2 * np.pi * sm.OLS(yg_n, np.column_stack([A1[:, :1]] + [Z1[:, j] for j in range(6) if cf[j, s_] != 0])).fit().ssr / ng) + 1) for s_ in range(cf.shape[1])])
+check.near('... its AICc path: -2LL + 2k + 2k(k + 1)/(N - k - 1), k counting the variance', maxdiff(rf['path']['aicc'], -2 * ll_f + 2 * k_ + 2 * k_ * (k_ + 1) / (ng - k_ - 1)), 0.0, abs_=1e-8)
+check('... the step chosen has the smallest AICc', rf['chosen'], int(np.argmin(rf['path']['aicc'])))
+rfb = gr(y='yb', method='forward')
+cfb = path_coefs(rfb)
+act, seq_ok, est_ok = [], True, 0.0
+for s_ in range(1, cfb.shape[1]):
+    fit_ = sm.GLM(yb01, np.column_stack([A1[:, :1]] + [Z1[:, k] for k in act]), family=sm.families.Binomial()).fit()
+    st_ = {j: float(np.squeeze(fit_.score_test(exog_extra=Z1[:, [j]])[0])) for j in range(6) if j not in act}
+    new_ = [j for j in range(6) if cfb[j, s_] != 0 and j not in act]
+    seq_ok &= new_ == [max(st_, key=st_.get)]
+    act = act + new_
+    mle_ = sm.GLM(yb01, np.column_stack([A1[:, :1]] + [Z1[:, k] for k in act]), family=sm.families.Binomial()).fit().params[1:]
+    est_ok = max(est_ok, float(np.max(np.abs(cfb[act, s_] - mle_))))
+check('Forward Selection (binomial): each step enters the term with the largest score statistic (statsmodels\' score_test)', seq_ok, True)
+check.near('... and each step is the logistic MLE on its terms', est_ok, 0.0, abs_=1e-6)
+# a design where the floating search pays: xc = xa + xb + noise enters first, but {xa, xb} is the best pair
+fx = np.random.default_rng(31)
+xa_, xb_ = fx.normal(size=150), fx.normal(size=150)
+xc_ = xa_ + xb_ + 0.4 * fx.normal(size=150)
+yp_ = xa_ + xb_ + 0.3 * fx.normal(size=150)
+tp_ = table({'xa': xa_.tolist(), 'xb': xb_.tolist(), 'xc': xc_.tolist(), 'xd': fx.normal(size=150).tolist(), 'y': yp_.tolist()})
+Ep_ = [['xa'], ['xb'], ['xc'], ['xd']]
+rfp = call('fitmodel.genreg', table=tp_, y='y', effects=Ep_, method='forward')
+rpp = call('fitmodel.genreg', table=tp_, y='y', effects=Ep_, method='pruned')
+steps_f = [tuple(int(j) for j in np.flatnonzero(c_)) for c_ in path_coefs(rfp).T]
+steps_p = [tuple(int(j) for j in np.flatnonzero(c_)) for c_ in path_coefs(rpp).T]
+check('Forward Selection enters xc first, then keeps it', (steps_f[1], all(2 in s_ for s_ in steps_f[1:])), ((2,), True))
+check('Pruned Forward Selection: after xa and xb enter, xc leaves (the pair beats every pair before it)', steps_p[:5], [(), (2,), (0, 2), (0, 1, 2), (0, 1)])
+rss_pair = lambda c_: sm.OLS(yp_, sm.add_constant(np.column_stack([[xa_, xb_, xc_][j] for j in c_]))).fit().ssr  # noqa: E731
+best_pair = min(itertools.combinations(range(3), 2), key=rss_pair)
+check('... which is the best pair, by brute force', best_pair, (0, 1))
+check('... so its pair fits better than forward selection\'s', rss_pair(steps_p[4]) < rss_pair(steps_f[2]), True)
+
+# ---- the Model Summary: the measures of each set by their formulas -------------------------------------------------------
+S_h = summary_of(rh)
+pr_h = np.array(rh['diag']['predicted'])
+st_h = np.array(rh['diag']['set'])
+tr_, va_ = st_h == 0, st_h == 1
+s2_h = float(np.mean((yg_n[tr_] - pr_h[tr_]) ** 2))
+nll_hv = 0.5 * float(np.sum(np.log(2 * np.pi * s2_h) + (yg_n[va_] - pr_h[va_]) ** 2 / s2_h))
+check.near('Model Summary (normal): the Validation -LogLikelihood takes the training residuals\' variance SSE/N', S_h['-LogLikelihood']['Validation'], nll_hv, rel=1e-10)
+check.near('... the Training -LogLikelihood = N/2 (log 2π SSE/N + 1)', S_h['-LogLikelihood']['Training'], 0.5 * tr_.sum() * (math.log(2 * math.pi * s2_h) + 1), rel=1e-10)
+check.near('... Scaled -LogLikelihood = -LogLikelihood / N', S_h['Scaled -LogLikelihood']['Validation'], nll_hv / va_.sum(), rel=1e-10)
+check.near('... RASE of the Validation rows', S_h['RASE']['Validation'], math.sqrt(float(np.mean((yg_n[va_] - pr_h[va_]) ** 2))), rel=1e-10)
+check.near('... Generalized RSquare of the Training rows = 1 - SSE/SST', S_h['Generalized RSquare']['Training'],
+           1 - float(np.sum((yg_n[tr_] - pr_h[tr_]) ** 2) / np.sum((yg_n[tr_] - yg_n[tr_].mean()) ** 2)), rel=1e-9)
+s02_ = float(np.mean((yg_n[tr_] - yg_n[tr_].mean()) ** 2))
+ll0_v = -0.5 * float(np.sum(np.log(2 * np.pi * s02_) + (yg_n[va_] - yg_n[tr_].mean()) ** 2 / s02_))
+check.near('... of the Validation rows, against the training mean: 1 - exp(2(LL0 - LL)/N)', S_h['Generalized RSquare']['Validation'], 1 - math.exp(2 * (ll0_v + nll_hv) / va_.sum()), rel=1e-9)
+check('... Number of Parameters, BIC and AICc are the training fit\'s', (S_h['AICc']['Validation'], S_h['BIC']['Validation'], S_h['Number of Parameters']['Training']), (None, None, rh['path']['df'][rh['chosen']]))
+check.near('the holdback curve at the model is its Validation Scaled -LogLikelihood', rh['path']['curve'][rh['chosen']], S_h['Scaled -LogLikelihood']['Validation'], abs_=1e-12)
+S_b = summary_of(rhb)
+pb_ = np.array(rhb['diag']['predicted'])
+check.near('Model Summary (binomial): Scaled -LogLikelihood = scikit-learn log_loss, Validation rows', S_b['Scaled -LogLikelihood']['Validation'], skm.log_loss(yb01[vah], pb_[vah], labels=[0, 1]), rel=1e-9)
+check.near('... and Training rows', S_b['Scaled -LogLikelihood']['Training'], skm.log_loss(yb01[trh], pb_[trh], labels=[0, 1]), rel=1e-9)
+ll0b = float(np.sum(yb01[trh] * np.log(yb01[trh].mean()) + (1 - yb01[trh]) * np.log(1 - yb01[trh].mean())))
+llb = -S_b['-LogLikelihood']['Training']
+check.near('... Generalized RSquare (Nagelkerke) of the training rows', S_b['Generalized RSquare']['Training'], (1 - math.exp(2 * (ll0b - llb) / trh.sum())) / (1 - math.exp(2 * ll0b / trh.sum())), rel=1e-9)
+check('predicted probabilities stay inside (0, 1)', bool(np.all((pb_ > 0) & (pb_ < 1))), True)
+
+# ---- a model chosen on the path; the profiler --------------------------------------------------------------------------
+rc_ = gr(y='y', criterion='kfold', folds=5, seed=123, choose=5)
+check('a chosen point: the model at that penalty, of the same fold', (rc_['chosen'], rc_['best'], rc_['model']['fold']), (5, rk['best'], rk['model']['fold']))
+check.near('... its estimates are the path\'s there', maxdiff(scaled_est(rc_)[1:], path_coefs(rk)[:, 5]), 0.0, abs_=1e-12)
+p1_ = fit_model._genreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123))
+p2_ = fit_model._genreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123, choose=5))
+check('choosing a point does not refit the path', p1_ is p2_, True)
+pf_ = call('fitmodel.profile', table=tg, kind='genreg', y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9,
+           current={f'x{i}': float(Xg[7, i]) for i in range(6)})
+check.near('the profiler predicts the chosen model (a row\'s Prob[yes])', pf_['responses'][0]['current']['pred'], rhb['diag']['predicted'][7], abs_=1e-12)
+check('... named as the level', pf_['responses'][0]['name'], 'Prob[yes]')
+t0_ = __import__('time').time()
+Xt_ = gr_rng.normal(size=(5000, 10))
+tt_ = table({**{f'z{i}': Xt_[:, i].tolist() for i in range(10)}, 'yb': np.where(Xt_[:, 0] - Xt_[:, 1] + gr_rng.logistic(size=5000) > 0, 'a', 'b').tolist()})
+call('fitmodel.genreg', table=tt_, y='yb', effects=[[f'z{i}'] for i in range(10)], criterion='kfold', seed=1)
+check('5000 rows, 10 terms, binomial lasso with KFold: a few seconds at most', __import__('time').time() - t0_ < 6, True)
+
+# ---- the Python under the report, on the table exported as CSV --------------------------------------------------------
+for label, kw in [('KFold lasso (normal)', dict(y='y', criterion='kfold', folds=5, seed=123)),
+                  ('a chosen point of KFold', dict(y='y', criterion='kfold', folds=5, seed=123, choose=5)),
+                  ('Holdback elastic net (binomial)', dict(y='yb', method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9)),
+                  ('a Validation column of names, Poisson lasso', dict(y='yc', dist='poisson', criterion='validation', validation='vt')),
+                  ('Forward Selection by AICc', dict(y='y', method='forward')),
+                  ('Adaptive Lasso by BIC with a Weight', dict(y='y', adaptive=True, criterion='bic', weight='w')),
+                  ('Adaptive Elastic Net, binomial, KFold', dict(y='yb', method='enet', adaptive=True, criterion='kfold', folds=4, seed=5)),
+                  ('Pruned Forward Selection with a numeric Validation column missing some rows', dict(y='yb', method='pruned', criterion='validation', validation='v')),
+                  ('Leave-One-Out ridge on 40 rows', dict(y='y', method='ridge', criterion='loo', rows=list(range(40))))]:
+    rr_ = gr(table_name='grcsv', **kw)
+    ns, err = run_code(rr_['code'], gdf, 'grcsv')
+    check(f'Generalized Regression code runs: {label}', err, None)
+    if err:
+        print(rr_['code'])
+        continue
+    got_ = ns['b'] if 'b' in ns and kw.get('method') in ('forward', 'pruned') else np.asarray(ns['fit'].params)
+    check.near(f'... its fit has the report\'s scaled estimates: {label}', maxdiff(scaled_est(rr_), got_), 0.0, abs_=1e-4)
+    if 'curve' in ns:
+        check.near(f'... its curve is the report\'s: {label}', maxdiff(rr_['path']['curve'], ns['curve']) / max(1.0, float(np.max(np.abs(ns['curve'])))), 0.0, abs_=1e-5)
+    if 'lams' in ns:
+        check.near(f'... its penalties are the report\'s: {label}', maxdiff(rr_['path']['alpha'], ns['lams']) / rr_['path']['alpha'][0], 0.0, abs_=1e-9)
+    sm_ = summary_of(rr_)['Scaled -LogLikelihood']
+    check.near(f'... the Scaled -LogLikelihood of its sets: {label}', max(abs(ns['fit_nll'][k_] - sm_[k_]) for k_ in ns['fit_nll']), 0.0, abs_=1e-5)
 
 sys.exit(check.done())

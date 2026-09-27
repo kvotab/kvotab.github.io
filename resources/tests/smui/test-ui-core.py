@@ -46,6 +46,7 @@ async def main():
     check('engine ready', st, 'ready')
     failed = await page.ev('SM.engine.failed.filter(f => f.error !== "not written yet").map(f => f.module + ": " + f.error)')
     check('every analysis module that exists imports', failed, [])
+    check('scikit-learn waits for its first use', await page.ev("(SM.engine.versions['scikit-learn'] || null)"), None)
     check('no script errors at load', page.errors, [])
     audit = await page.ev('JSON.stringify(KvotInfo.audit())')
     audit = json.loads(audit)

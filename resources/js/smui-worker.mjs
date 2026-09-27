@@ -15,11 +15,15 @@
    Messages out:
      { type: 'status', stage, text }        while loading
      { type: 'ready', versions, names, failed }
+     { type: 'loading', text }              a package a call needs, on its first use
+     { type: 'loaded', versions }           ... and when it is in (versions of what came)
      { type: 'result', id, json }  or  { type: 'error', id, message, traceback }
      { type: 'log', stream, text }          Python's stdout and stderr
 
    Messages are handled one at a time, in order: Python is single-threaded
-   and a call must see the table sent before it.
+   and a call must see the table sent before it. A function that needs a
+   package beyond the four (scikit-learn) says so in the registry; the
+   package is loaded before the first such call runs.
    ========================================================================== */
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs';
 
@@ -29,6 +33,8 @@ let py = null;
 let dispatch = null;
 let dispatchBytes = null;
 let setTable = null;
+let packagesFor = null;
+const extra = new Set();     // the packages loaded after the start
 let queue = Promise.resolve();
 
 const post = (m) => self.postMessage(m);
@@ -72,6 +78,7 @@ async function boot(base, version) {
   dispatch = py.pyimport('smui.registry').dispatch;
   dispatchBytes = py.pyimport('smui.registry').dispatch_bytes;
   setTable = py.pyimport('smui.data').set_table;
+  packagesFor = py.pyimport('smui.registry').packages_for;
   const versions = JSON.parse(py.runPython(
     "import json, sys, numpy, scipy, pandas, statsmodels, patsy\n" +
     "json.dumps({'python': sys.version.split()[0], 'numpy': numpy.__version__, 'scipy': scipy.__version__, " +
@@ -81,13 +88,36 @@ async function boot(base, version) {
   post({ type: 'ready', versions, names, failed });
 }
 
+/* The packages a call needs that are not in yet: load them (from the same
+   Pyodide release, so they match), and tell the page which versions came. */
+async function ensurePackages(fn) {
+  const need = JSON.parse(packagesFor(fn)).filter((p) => !extra.has(p));
+  if (!need.length) return;
+  post({ type: 'loading', text: `Loading ${need.join(', ')} (first use)…` });
+  const errors = [];
+  let versions = {};
+  try {
+    await py.loadPackage(need, {
+      messageCallback: (text) => post({ type: 'loading', text }),
+      errorCallback: (text) => { errors.push(text); post({ type: 'log', stream: 'stderr', text }); },
+    });
+    versions = JSON.parse(py.runPython(
+      `import json, importlib.metadata as md\nout = {}\nfor p in ${JSON.stringify(need)}:\n    try: out[p] = md.version(p)\n    except Exception: pass\njson.dumps(out)`));
+  } finally {
+    post({ type: 'loaded', versions });
+  }
+  const missing = need.filter((p) => !versions[p]);
+  if (missing.length) throw new Error(`${missing.join(', ')} could not be loaded${errors.length ? `: ${errors[errors.length - 1]}` : ' (is the network there?)'}`);
+  for (const p of need) extra.add(p);
+}
+
 function lastLine(e) {
   const s = String((e && e.message) || e);
   const lines = s.trim().split('\n').filter((l) => l.trim());
   return lines[lines.length - 1] || s;
 }
 
-function handle(msg) {
+async function handle(msg) {
   if (msg.type === 'init') {
     return boot(msg.base, msg.version).catch((e) => post({ type: 'fatal', message: lastLine(e), traceback: String(e && e.message || e) }));
   }
@@ -107,6 +137,7 @@ function handle(msg) {
   if (msg.type === 'call' || msg.type === 'callb') {
     if (!dispatch) { post({ type: 'error', id: msg.id, message: 'the engine is not ready' }); return null; }
     try {
+      await ensurePackages(msg.fn);
       let json;
       if (msg.type === 'callb') {
         const bytes = py.toPy(new Uint8Array(msg.bytes));

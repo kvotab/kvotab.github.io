@@ -1,0 +1,20 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > MULTIVARIATE METHODS > MULTIVARIATE EMBEDDING
+   (smui-p-embedding.js)
+   The progress of a running t-SNE, the question before a long one, and the
+   legend under a 3-D map. Colours are kvot.css's tokens, so both themes
+   read. Class prefix sm-emb-.
+   ========================================================================== */
+
+/* ---- while t-SNE runs --------------------------------------------------------- */
+.sm-emb-running { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 4px 0 8px; }
+.sm-emb-progress { margin: 0; font-style: italic; }
+.sm-emb-bar { width: min(260px, 60vw); height: 8px; accent-color: var(--color-kvot-accent); }
+
+/* ---- the question before a long run --------------------------------------------- */
+.sm-emb-ask { margin: 6px 0 8px; }
+
+/* ---- the colours of a 3-D map ----------------------------------------------------- */
+.sm-emb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 4px 0 8px; font-size: 11.5px; color: var(--text-primary); max-width: 900px; }
+.sm-emb-legend span[role="listitem"] { display: inline-flex; align-items: center; gap: 5px; }
+.sm-emb-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }

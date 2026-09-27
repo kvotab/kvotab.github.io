@@ -106,7 +106,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "counts").map(f => f.error)')
     check('counts imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => n.startsWith("counts.")).sort()')
-    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.lr_effects', 'counts.margeff', 'counts.profile'])
+    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.importance', 'counts.lr_effects', 'counts.margeff', 'counts.maximize', 'counts.profile'])
     await page.ev(HELPERS)
     menu = await page.ev('''(() => { const sub = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling");
       const items = typeof sub.submenu === "function" ? sub.submenu() : sub.submenu; return items.map(i => i.label).filter(Boolean); })()''')
@@ -281,7 +281,7 @@ async def main():
       const ob = __cr.outline('Zero-Inflated Negative Binomial');
       await __cr.obMenu(ob, 'Prediction Profiler'); await __cr.settled();
       const pr = __cr.within(__cr.outline('Zero-Inflated Negative Binomial'), 'Prediction Profiler');
-      const vals = () => [...pr.querySelectorAll('.sm-cr-prof-val')].map(v => __cr.num(v.textContent));
+      const vals = () => [...pr.querySelectorAll('.sm-prof-val')].map(v => __cr.num(v.textContent));
       const before = vals();
       const input = pr.querySelector('input[aria-label="age current value"]');
       input.value = '70'; input.dispatchEvent(new Event('change'));
@@ -290,7 +290,7 @@ async def main():
       const t = SM.app.current;
       const direct = await SM.engine.call('counts.profile', { y: 'visits', x: ['age', 'sex', 'chronic', 'insurance'], degree: 1, zx: [], zero_same: true, exposure: 'years', offset: null, freq: null,
         model: 'zinb', current: __cr.rep().spec.options[Object.keys(__cr.rep().spec.options).find(k => k.includes('~zinb|prof:'))], alpha: 0.05 }, t);
-      return { before, after, direct: [direct.responses[0].current.pred, direct.responses[1].current.pred], factors: [...pr.querySelectorAll('.sm-cr-prof-fname')].map(e => e.textContent) };
+      return { before, after, direct: [direct.responses[0].current.pred, direct.responses[1].current.pred], factors: [...pr.querySelectorAll('.sm-prof-fname')].map(e => e.textContent) };
     })()''')
     check('profiler: the factors, the exposure among them', r['factors'], ['age', 'sex', 'chronic', 'insurance', 'years'])
     check('profiler: a new age changes the prediction', r['after'][0] != r['before'][0], True)

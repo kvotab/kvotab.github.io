@@ -177,6 +177,7 @@
         { label: 'Copy Table', action: () => copyText(rtText({ columns: cols, rows }, alpha)) },
         { label: 'Make into Data Table', action: () => SM.app.addTable(tableFromRT({ columns: cols, rows }, opts.name || caption || 'Report table')), disabled: !SM.app },
         combined && combined.length > 1 ? { label: `Make Combined Data Table (${combined.length} groups)`, action: () => SM.app.addTable(combineRT(combined, opts.name || caption || 'Report table')) } : null,
+        ...(SM.bootstrap ? [{ separator: true }, SM.bootstrap.item(tbl, cols[ev.target.closest('td, th')?.cellIndex ?? -1] || null)] : []),
       ], { x: ev.clientX, y: ev.clientY });
     });
     tbl._rt = { get columns() { return shownCols(); }, rows, all };
@@ -239,14 +240,28 @@
     const tbl = el('table', { class: 'sm-kv' });
     if (opts.caption) tbl.append(el('caption', { text: opts.caption }));
     const body = el('tbody');
+    const rows = [];
     for (const p of pairs) {
       if (!p) continue;
       const [label, v, f = 'num', col = {}] = p;
       const td = el('td', { text: cellText(v, f, col, alpha) });
       if (f === 'p' && typeof v === 'number' && v < alpha) td.classList.add('p-sig');
       body.append(el('tr', null, el('td', { text: label }), td));
+      rows.push({ label: String(label), value: f === 'text' ? (v == null ? null : String(v)) : v });
     }
     tbl.append(body);
+    // As a report table to the right-click menu: Copy, Make into Data Table, Bootstrap.
+    const columns = [{ key: 'label', label: '', fmt: 'text' }, { key: 'value', label: 'Value' }];
+    tbl._rt = { columns, rows, all: columns };
+    tbl.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      const name = opts.caption || tbl.closest('.sm-ob')?.querySelector('.sm-ob-head')?.textContent.trim() || 'Report table';
+      SM.ui.menu([
+        { label: 'Copy Table', action: () => copyText(rows.map((r) => `${r.label}\t${cellText(r.value, typeof r.value === 'number' ? 'num' : 'text', {}, alpha)}`).join('\n')) },
+        { label: 'Make into Data Table', action: () => SM.app.addTable(tableFromRT({ columns: [{ key: 'label', label: 'Statistic', fmt: 'text' }, { key: 'value', label: 'Value' }], rows }, name)), disabled: !SM.app },
+        ...(SM.bootstrap ? [{ separator: true }, SM.bootstrap.item(tbl, columns[1])] : []),
+      ], { x: ev.clientX, y: ev.clientY });
+    });
     return tbl;
   }
 
@@ -1129,6 +1144,7 @@
     }
 
     set(key, value, scope, { rerun = true } = {}) {
+      if (this.headless) return;
       const o = this.spec.options;
       if (scope != null) o[`${scope}|${key}`] = value; else {
         o[key] = value;
@@ -1146,21 +1162,24 @@
 
     async call(fn, payload = {}) {
       // Every row, in order, goes as no row list at all: the same to Python,
-      // and a long list is slow to send.
-      const all = this.table && this.rows.length === this.table.nrows;
+      // and a long list is slow to send. A resample (Bootstrap) may have as
+      // many rows as the table and still not be every row.
+      const all = !this.resampled && this.table && this.rows.length === this.table.nrows;
       const body = { rows: all ? null : this.rows, ...payload };
       const { rows, ...rest } = body;
       const key = `${fn}\u0001${this.table ? (this.table.dataVersion ?? this.table.version) : 0}\u0001${hashRows(rows)}\u0001${JSON.stringify(rest)}`;
-      let r = this.report.cache.get(key);
+      let r = this.headless ? null : this.report.cache.get(key);
       if (!r) {
         r = SM.engine.call(fn, this.table ? body : rest, this.table);
-        this.report.cache.set(key, r);
-        r.catch(() => this.report.cache.delete(key));
-        if (this.report.cache.size > 400) this.report.cache.delete(this.report.cache.keys().next().value);
+        if (!this.headless) {
+          this.report.cache.set(key, r);
+          r.catch(() => this.report.cache.delete(key));
+          if (this.report.cache.size > 400) this.report.cache.delete(this.report.cache.keys().next().value);
+        }
       }
       const out = await r;
       if (out && Array.isArray(out.warnings)) for (const w of out.warnings) if (!this.warnings.includes(w)) this.warnings.push(w);
-      if (out && out.code) this.report.pyCode.push(out.code);
+      if (out && out.code && !this.headless) this.report.pyCode.push(out.code);
       return out;
     }
 
@@ -1181,6 +1200,8 @@
     row(...nodes) { return el('div', { class: 'sm-ob-row' }, ...nodes); }
 
     plot(traces, layout, opts = {}) {
+      // A headless run (Bootstrap reruns a report on resamples) draws nothing.
+      if (this.headless) return el('div', { class: 'sm-plot' });
       const p = new Plot(this.report, traces, layout, opts);
       this.report.plots.push(p);
       return p.box;
@@ -1200,7 +1221,7 @@
     // Code a platform shows that no call returned (worked out in the page)
     // goes into Save Python Script too; the calls' own code is there already.
     code(text) {
-      if (text) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
+      if (text && !this.headless) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
       return code(text, { open: !!this.spec.options.showCode });
     }
     note(text) { return note(text); }
@@ -1210,6 +1231,7 @@
     /* A new column in the table from values for some rows (the rest
        missing): Save Residuals, Save Predicteds, Save Principal Components. */
     saveColumn(name, { rows, values }, spec = {}) {
+      if (this.headless) return null;
       const t = this.table;
       // JSON has no infinities: util.clean sends them as 'Infinity' and '-Infinity'.
       const INF = { Infinity: Infinity, '-Infinity': -Infinity, NaN: NaN };

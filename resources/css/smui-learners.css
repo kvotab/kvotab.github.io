@@ -1,0 +1,21 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > K NEAREST NEIGHBORS, NAIVE
+   BAYES AND SUPPORT VECTOR MACHINES (smui-p-learners.js)
+   The chosen and best lines of the model-selection and tuning tables, and
+   the scroller of a long two-column list. Colours are kvot.css's tokens, so both
+   themes read. Class prefix sm-lrn-.
+   ========================================================================== */
+
+/* ---- a two-column list with long labels scrolls by itself on a narrow screen,
+        as report tables do (smui.css) ------------------------------------------- */
+.sm-lrn-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+
+/* ---- Model Selection (K) and the Tuning Design: the line shown, the best one --- */
+.sm-rt td.sm-lrn-chosen { font-weight: 600; }
+.sm-rt tr:has(td.sm-lrn-chosen) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+/* The mark is drawn, not written: the cell's text stays the number (Copy
+   Table, Bootstrap and the tests read it). */
+.sm-rt td.sm-lrn-best::after { content: 'best'; margin-left: 6px; font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
+
+/* ---- a long fit's progress line ----------------------------------------------- */
+.sm-lrn-progress { font-style: italic; }

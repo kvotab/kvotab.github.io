@@ -479,7 +479,7 @@ check('the code with an exogenous column gives the same fit', ns.get('error') or
 by_tid = table({'region': ['N'] * 200 + ['S'] * 200, 'growth': x[:, 0].tolist(), 'inflation': x[:, 1].tolist(), 'interest rate': x[:, 2].tolist()})
 Vb = call('multits.var', table=by_tid, y=SIM, rows=list(range(200, 400)), where=[{'column': 'region', 'value': 'S'}], p=2, table_name='T')
 by_csv = pd.DataFrame({'region': ['N'] * 200 + ['S'] * 200, 'growth': x[:, 0], 'inflation': x[:, 1], 'interest rate': x[:, 2]})
-check('the By group is in the code', 'df = df[df["region"] == \'S\']' in Vb['code'] and 'pd.read_csv("T.csv")' in Vb['code'], True)
+check('the By group is in the code', 'df = df[df["region"] == \'S\']' in Vb['code'] and 'pd.read_csv("T.csv"' in Vb['code'], True)
 ns = run_code(Vb['code'].replace('T.csv', 'data.csv'), by_csv)
 check('... and gives the group\'s fit', ns.get('error') or close(ns['res'].params.T, [[r['estimate'] for r in e['rows']] for e in Vb['equations']], rtol=1e-10), True)
 ns = run_code(Vy['code'], pd.DataFrame({'year': 1900 + np.arange(400) * 0.25, **{c: x[:, i] for i, c in enumerate(SIM)}}))

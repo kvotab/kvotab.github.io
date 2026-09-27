@@ -1,0 +1,720 @@
+"""What the predictive-modeling platforms share.
+
+Partition, Bootstrap Forest, Boosted Tree, Neural, K Nearest Neighbors,
+Naive Bayes, Support Vector Machines, Gaussian Process and Model Screening
+learn from some rows and are judged on others, as JMP's platforms are:
+
+  a Validation column   0 or "Training": the rows a model learns from;
+                        1 or "Validation": the rows that choose among
+                        models (the size of a tree, the number of trees);
+                        2 or "Test": rows kept out of both;
+  a validation portion  a random share of the rows held back for
+                        validation, drawn from a seed;
+  neither               every row trains the model.
+
+prepare() turns a table into what scikit-learn takes: the predictor matrix
+(continuous columns as they are, one 0/1 column per level of a nominal or
+ordinal one, or its level number), the response (a number, or the index
+of a categorical level), the case weights and the set of every row. The
+Measures of Fit, confusion matrices and ROC and lift curves are computed
+here once, the same way for every platform, and P.code() writes the Python
+that builds the same matrices from a CSV export of the table.
+
+A module that uses scikit-learn registers its functions with
+@api(name, packages=SK) and imports sklearn inside them: the page loads the
+package on the first call, not at the start.
+"""
+import hashlib
+import json
+import math
+
+import numpy as np
+import pandas as pd
+
+from . import data, models
+from .util import code_head
+
+SETS = ('Training', 'Validation', 'Test')
+SK = ('scikit-learn',)
+_SET_NAMES = {'training': 0, 'train': 0, 'validation': 1, 'valid': 1, 'test': 2}
+
+
+def level_label(v):
+    """A level as the page shows it (2.0 as '2')."""
+    if isinstance(v, (float, np.floating)):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else f'{f:.6g}'
+    return str(v)
+
+
+def rows_sig(rows):
+    if rows is None:
+        return 'all'
+    a = np.asarray(rows, dtype=np.int64)
+    return f'{len(a)}:{hashlib.blake2b(a.tobytes(), digest_size=10).hexdigest()}'
+
+
+def cached(kind, table, rows, spec, build, keep=24):
+    """build(), remembered for this table version, these rows and this spec
+    (a fitted model: the profiler and the Save commands reuse it)."""
+    key = models.model_key(kind, table, data.version(table), rows_sig(rows), spec)
+    m = models.recall(key)
+    if m is None:
+        m = build()
+        models.remember(key, m, keep=keep)
+    return m
+
+
+def _pylit(v):
+    return json.dumps(float(v)) if isinstance(v, (float, int, np.floating, np.integer)) and not isinstance(v, bool) else json.dumps(str(v))
+
+
+class Prepared:
+    """The data of one predictive model; see prepare()."""
+
+    def __init__(self):
+        self.table = None
+        self.y = None
+        self.x = []
+        self.kind = None          # 'continuous' or 'categorical'
+        self.index = None         # the table's row numbers, aligned with everything below
+        self.X = None             # the predictor matrix (float)
+        self.features = []        # the names of X's columns
+        self.groups = {}          # x column name -> indices of its columns in X
+        self.target = None        # float, or the level index
+        self.levels = []          # the response's levels (values), in the table's order
+        self.labels = []          # ... as text
+        self.w = None             # weight x frequency, or None when every row counts once
+        self.freq = None          # the frequencies alone (counts in confusion matrices), or None
+        self.sets = None          # 0 Training, 1 Validation, 2 Test
+        self.coding = 'onehot'
+        self.missing = 'informative'
+        self.enc = []             # how each x column became columns of X
+        self.notes = []           # what was left out, for the report
+        self.spec = {}
+
+    # ---- the sets
+    def mask(self, k):
+        return self.sets == k
+
+    def has(self, k):
+        return bool(np.any(self.sets == k))
+
+    def train(self):
+        return self.sets == 0
+
+    def weights(self, m=None):
+        w = np.ones(len(self.index)) if self.w is None else self.w
+        return w if m is None else w[m]
+
+    def counts(self, m=None):
+        f = np.ones(len(self.index)) if self.freq is None else self.freq
+        return f if m is None else f[m]
+
+    # ---- encoding new rows (a whole table, or the profiler's settings)
+    def encode(self, frame):
+        """X for a DataFrame with the x columns (categorical ones as values
+        of the table). Returns (X, ok): rows with a missing value that the
+        coding cannot take (missing='drop') are not ok and get zeros."""
+        n = len(frame)
+        cols = []
+        ok = np.ones(n, dtype=bool)
+        for e in self.enc:
+            s = frame[e['name']]
+            if e['type'] == 'continuous':
+                v = pd.to_numeric(s, errors='coerce').to_numpy(float)
+                miss = ~np.isfinite(v)
+                if self.missing == 'informative':
+                    cols.append(np.where(miss, e['fill'], v))
+                    if e['indicator']:
+                        cols.append(miss.astype(float))
+                else:
+                    ok &= ~miss
+                    cols.append(np.where(miss, 0.0, v))
+            else:
+                vals = list(s.astype(object))
+                idx = np.array([_level_at(e['levels'], v) for v in vals], dtype=int)
+                miss = idx == -1
+                unknown = idx == -2
+                if self.missing != 'informative':
+                    ok &= ~miss
+                if self.coding == 'ordinal':
+                    col = idx.astype(float)
+                    col[unknown] = -1.0
+                    cols.append(col)
+                else:
+                    for j in range(len(e['levels'])):
+                        cols.append((idx == j).astype(float))
+                    if e['indicator']:
+                        cols.append(miss.astype(float))
+        X = np.column_stack(cols) if cols else np.zeros((n, 0))
+        return X, ok
+
+    def frame_of(self, settings):
+        """The profiler's settings ({x name: value}) as a DataFrame."""
+        return pd.DataFrame({e['name']: [s.get(e['name']) for s in settings] for e in self.enc})
+
+    def encode_settings(self, settings):
+        return self.encode(self.frame_of(settings))[0]
+
+    def factors(self):
+        """The factors of the Prediction Profiler: each x column's range and
+        mean, or its levels."""
+        out = []
+        for e in self.enc:
+            if e['type'] == 'continuous':
+                out.append({'name': e['name'], 'type': 'continuous', 'min': e['min'], 'max': e['max'], 'mean': e['mean']})
+            else:
+                out.append({'name': e['name'], 'type': 'categorical', 'levels': list(e['levels']), 'labels': [level_label(v) for v in e['levels']]})
+        return out
+
+    def proba(self, model, X):
+        """predict_proba for every level of the response, in the table's
+        order: a level the training rows lack gets probability 0."""
+        p = np.asarray(model.predict_proba(X), dtype=float)
+        out = np.zeros((p.shape[0], len(self.levels)))
+        for j, c in enumerate(model.classes_):
+            out[:, int(c)] = p[:, j]
+        return out
+
+    # ---- the whole table (Save Predicteds, Save Probabilities)
+    def all_rows(self):
+        """X for every row of the table (excluded rows too, as a formula
+        column would compute them), and the row numbers that are ok."""
+        frame = data.frame(self.table, self.x, None, dropna=False)
+        X, ok = self.encode(frame)
+        return X[ok], np.asarray(frame.index, dtype=int)[ok]
+
+    # ---- the code under the report
+    def code(self, table_name, rows=None, extra_imports=()):
+        """Lines that read the exported table and build d, X, y, w and sets
+        exactly as the report does."""
+        L = [code_head(table_name, list(extra_imports))]
+        n_all = data.TABLES[self.table]['n'] if self.table in data.TABLES else None
+        if rows is not None:
+            keep = [int(r) for r in rows]
+            if n_all is not None and len(keep) > n_all / 2:
+                drop = sorted(set(range(n_all)) - set(keep))
+                if drop:
+                    L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+            else:
+                L.append(f'df = df.loc[{keep}]   # the rows of the report')
+        sp = self.spec
+        cols = list(dict.fromkeys([self.y] + list(self.x) + [c for c in (sp.get('weight'), sp.get('freq'), sp.get('validation')) if c]))
+        L.append(f'd = df[{json.dumps(cols)}]')
+        L.append(f'd = d[d[{json.dumps(self.y)}].notna()]   # rows with a response')
+        for c in (sp.get('weight'), sp.get('freq')):
+            if c:
+                L.append(f'd = d[d[{json.dumps(c)}] > 0]   # a missing or non-positive {"weight" if c == sp.get("weight") else "frequency"} leaves the row out')
+        v = sp.get('validation')
+        if v:
+            L.append(f'd = d[d[{json.dumps(v)}].notna()]   # rows with a validation value')
+        if self.missing != 'informative':
+            L.append(f'd = d.dropna(subset={json.dumps(list(self.x))})   # rows with every predictor')
+        if v:
+            if data.meta(self.table, v).get('dataType') == 'numeric':
+                L.append(f'sets = d[{json.dumps(v)}].to_numpy(int)   # 0 training, 1 validation, 2 test')
+            else:
+                L.append(f'names = {json.dumps(_SET_NAMES)}')
+                L.append(f'sets = d[{json.dumps(v)}].str.strip().str.lower().map(names).to_numpy(int)   # 0 training, 1 validation, 2 test')
+        else:
+            por = sp.get('portion') or 0
+            if por:
+                L.append(f'rng = np.random.default_rng({int(sp["seed"])})   # the validation portion')
+                L.append(f'sets = np.zeros(len(d), dtype=int); sets[rng.permutation(len(d))[:{int(round(por * len(self.index)))}]] = 1')
+            else:
+                L.append('sets = np.zeros(len(d), dtype=int)   # every row trains the model')
+        # the predictors
+        L.append('')
+        L.append('def encode(d):')
+        L.append(f'    """The predictors as the report codes them: {self._coding_words()}."""')
+        L.append('    cols = []')
+        for e in self.enc:
+            nm = json.dumps(e['name'])
+            if e['type'] == 'continuous':
+                if self.missing == 'informative':
+                    L.append(f'    cols.append(pd.to_numeric(d[{nm}], errors="coerce").fillna({e["fill"]!r}).to_numpy(float))')
+                    if e['indicator']:
+                        L.append(f'    cols.append(pd.to_numeric(d[{nm}], errors="coerce").isna().to_numpy(float))   # {e["name"]} Missing')
+                else:
+                    L.append(f'    cols.append(d[{nm}].to_numpy(float))')
+            else:
+                lv = '[' + ', '.join(_pylit(v) for v in e['levels']) + ']'
+                numeric = all(isinstance(v, (float, int, np.floating, np.integer)) for v in e['levels'])
+                src = f'pd.to_numeric(d[{nm}], errors="coerce")' if numeric else f'd[{nm}].astype(object)'
+                if self.coding == 'ordinal':
+                    L.append(f'    cols.append(pd.Categorical({src}, categories={lv}).codes.astype(float))   # the level number, -1 when missing')
+                else:
+                    L.append(f'    cols += [({src} == v).to_numpy(float) for v in {lv}]   # one column per level')
+                    if e['indicator']:
+                        L.append(f'    cols.append(d[{nm}].isna().to_numpy(float))   # {e["name"]} Missing')
+        L.append('    return np.column_stack(cols)')
+        L.append('')
+        L.append('X = encode(d)')
+        if self.kind == 'categorical':
+            lv = '[' + ', '.join(_pylit(v) for v in self.levels) + ']'
+            numeric = all(isinstance(v, (float, int, np.floating, np.integer)) for v in self.levels)
+            src = f'pd.to_numeric(d[{json.dumps(self.y)}], errors="coerce")' if numeric else f'd[{json.dumps(self.y)}].astype(object)'
+            L.append(f'levels = {lv}')
+            L.append(f'y = pd.Categorical({src}, categories=levels).codes   # the index of the level')
+        else:
+            L.append(f'y = d[{json.dumps(self.y)}].to_numpy(float)')
+        wparts = [f'd[{json.dumps(c)}].to_numpy(float)' for c in (sp.get('weight'), sp.get('freq')) if c]
+        L.append(f'w = {" * ".join(wparts)}' if wparts else 'w = None   # every row counts once')
+        L.append('train = sets == 0')
+        return L
+
+    def _coding_words(self):
+        parts = []
+        if any(e['type'] == 'continuous' for e in self.enc):
+            parts.append('continuous as they are' + (', a missing value as the training mean with a 0/1 Missing column' if self.missing == 'informative' else ''))
+        if any(e['type'] != 'continuous' for e in self.enc):
+            parts.append('a categorical one as its level number' if self.coding == 'ordinal' else 'a 0/1 column per level of a categorical one')
+        return '; '.join(parts) or 'none'
+
+
+def _level_at(levels, v):
+    """The index of v among the levels; -1 when missing, -2 when unknown."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return -1
+    for j, lv in enumerate(levels):
+        if lv == v:
+            return j
+        if isinstance(lv, (float, np.floating)) and isinstance(v, (int, float, np.integer, np.floating)) and float(lv) == float(v):
+            return j
+        if isinstance(lv, (float, np.floating)) and isinstance(v, str):
+            try:
+                if float(v) == float(lv):
+                    return j
+            except ValueError:
+                pass
+    return -2
+
+
+def prepare(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None,
+            missing='informative', coding='onehot', categorical_y=None):
+    """The response, predictors, weights and sets of a predictive model.
+
+    y: the response column (continuous, or nominal/ordinal for a
+    classification); x: the predictor columns; weight, freq: optional case
+    weight and frequency columns; validation: an optional Validation column,
+    or portion (0 to 1): a random share of rows for validation, drawn with
+    seed; missing: 'informative' (a missing continuous value is the
+    training mean plus a 0/1 Missing column; a missing level is a level of
+    its own) or 'drop' (rows missing a predictor are left out); coding:
+    'onehot' or 'ordinal' for categorical predictors. categorical_y: force
+    the response's kind (None: its modeling type decides).
+    """
+    if not y:
+        raise ValueError('choose a Y, Response')
+    x = [c for c in dict.fromkeys(x or []) if c and c != y]
+    if not x:
+        raise ValueError('choose at least one X, Factor')
+    for c in (weight, freq, validation):
+        if c and (c == y or c in x):
+            raise ValueError(f'{c} cannot be both a role column and a response or factor')
+    P = Prepared()
+    P.table, P.y, P.x = table, y, list(x)
+    P.coding, P.missing = coding, missing
+    P.spec = {'weight': weight, 'freq': freq, 'validation': validation, 'portion': float(portion or 0), 'seed': seed}
+    cat_y = data.is_categorical(table, y) if categorical_y is None else bool(categorical_y)
+    P.kind = 'categorical' if cat_y else 'continuous'
+    names = list(dict.fromkeys([y] + P.x + [c for c in (weight, freq, validation) if c]))
+    df = data.frame(table, names, rows, dropna=False)
+    n0 = len(df)
+    # (1) a response
+    ys = df[y]
+    keep = np.array(ys.notna(), dtype=bool)
+    if not cat_y:
+        yv = pd.to_numeric(ys, errors='coerce').to_numpy(float)
+        keep &= np.isfinite(yv)
+    if (~keep).sum():
+        P.notes.append(f'{int((~keep).sum())} rows with no {y} are left out.')
+    df = df[keep]
+    # (2) weights and frequencies
+    w = None
+    f = None
+    for c, kind in ((weight, 'weight'), (freq, 'freq')):
+        if not c:
+            continue
+        v = pd.to_numeric(df[c], errors='coerce').to_numpy(float)
+        ok = np.isfinite(v) & (v > 0)
+        if (~ok).sum():
+            P.notes.append(f'{int((~ok).sum())} rows with a missing or non-positive {c} are left out.')
+        df = df[ok]
+        v = v[ok]
+        if w is not None:
+            w = w[ok]
+        if f is not None:
+            f = f[ok]
+        w = v if w is None else w * v
+        if kind == 'freq':
+            f = v
+    # (3) the validation column
+    sets = None
+    if validation:
+        m = data.meta(table, validation)
+        raw = df[validation]
+        if m.get('dataType') == 'numeric':
+            v = pd.to_numeric(raw.astype(object), errors='coerce').to_numpy(float)
+            ok = np.isfinite(v)
+            bad = sorted(set(np.unique(v[ok]).tolist()) - {0.0, 1.0, 2.0})
+            if bad:
+                raise ValueError(f'{validation}: a Validation column holds 0 (training), 1 (validation) and 2 (test); it has {", ".join(level_label(b) for b in bad[:5])}')
+            s = np.where(ok, v, -1).astype(int)
+        else:
+            vals = raw.astype(object).tolist()
+            s = np.array([-1 if (vv is None or (isinstance(vv, float) and math.isnan(vv))) else _SET_NAMES.get(str(vv).strip().lower(), -9) for vv in vals], dtype=int)
+            if (s == -9).any():
+                odd = sorted({str(vv) for vv, k in zip(vals, s) if k == -9})[:5]
+                raise ValueError(f'{validation}: a Validation column holds Training, Validation and Test (or 0, 1, 2); it has {", ".join(odd)}')
+        if (s < 0).sum():
+            P.notes.append(f'{int((s < 0).sum())} rows with no {validation} value are left out.')
+        ok = s >= 0
+        df, s = df[ok], s[ok]
+        w = None if w is None else w[ok]
+        f = None if f is None else f[ok]
+        sets = s
+        if not np.any(sets == 0):
+            raise ValueError(f'{validation} leaves no training rows (value 0 or Training)')
+    # (4) rows missing a predictor, when they are left out
+    if missing != 'informative':
+        ok = np.array(df[P.x].notna().all(axis=1), dtype=bool)
+        for c in P.x:
+            if not data.is_categorical(table, c):
+                ok &= np.isfinite(pd.to_numeric(df[c], errors='coerce').to_numpy(float))
+        if (~ok).sum():
+            P.notes.append(f'{int((~ok).sum())} rows missing a factor are left out (Informative Missing is off).')
+        df = df[ok]
+        w = None if w is None else w[ok]
+        f = None if f is None else f[ok]
+        sets = None if sets is None else sets[ok]
+    n = len(df)
+    if n == 0:
+        raise ValueError('no rows to fit: every row misses the response, a weight or a factor')
+    # (5) the validation portion
+    if sets is None:
+        por = float(portion or 0)
+        sets = np.zeros(n, dtype=int)
+        if por > 0:
+            if not 0 < por < 1:
+                raise ValueError('the Validation Portion is a share between 0 and 1')
+            if seed is None:
+                raise ValueError('a validation portion needs a random seed')
+            k = int(round(por * n))
+            if k >= n:
+                raise ValueError('the Validation Portion leaves no training rows')
+            sets[np.random.default_rng(int(seed)).permutation(n)[:k]] = 1
+    P.sets = sets.astype(int)
+    P.index = np.asarray(df.index, dtype=int)
+    P.w = w
+    P.freq = f
+    tr = P.sets == 0
+    # the response
+    if cat_y:
+        s = df[y]
+        cats = list(s.cat.categories) if isinstance(s.dtype, pd.CategoricalDtype) else sorted({v for v in s if v is not None})
+        codes = s.cat.codes.to_numpy() if isinstance(s.dtype, pd.CategoricalDtype) else np.array([cats.index(v) for v in s])
+        present = [j for j in range(len(cats)) if np.any(codes == j)]
+        remap = {j: i for i, j in enumerate(present)}
+        P.levels = [cats[j].item() if hasattr(cats[j], 'item') else cats[j] for j in present]
+        P.labels = [level_label(v) for v in P.levels]
+        P.target = np.array([remap[c] for c in codes], dtype=int)
+        if len(P.levels) < 2:
+            raise ValueError(f'{y} has one level in these rows: nothing to classify')
+    else:
+        P.target = pd.to_numeric(df[y], errors='coerce').to_numpy(float)
+    # the predictors
+    for c in P.x:
+        s = df[c]
+        if data.is_categorical(table, c):
+            cats = list(s.cat.categories) if isinstance(s.dtype, pd.CategoricalDtype) else sorted({v for v in s if v is not None})
+            codes = s.cat.codes.to_numpy() if isinstance(s.dtype, pd.CategoricalDtype) else None
+            present = [cats[j] for j in range(len(cats)) if codes is None or np.any(codes == j)]
+            levels = [v.item() if hasattr(v, 'item') else v for v in present]
+            indicator = missing == 'informative' and bool(s.isna().any())
+            P.enc.append({'name': c, 'type': 'categorical', 'levels': levels, 'indicator': indicator})
+        else:
+            v = pd.to_numeric(s, errors='coerce').to_numpy(float)
+            fin = np.isfinite(v)
+            if not fin.any():
+                raise ValueError(f'{c} has no values in these rows')
+            trv = v[tr & fin]
+            fill = float(np.mean(trv)) if len(trv) else float(np.mean(v[fin]))
+            indicator = missing == 'informative' and bool((~fin).any())
+            P.enc.append({'name': c, 'type': 'continuous', 'fill': fill, 'indicator': indicator,
+                          'min': float(np.min(v[fin])), 'max': float(np.max(v[fin])), 'mean': float(np.mean(v[fin]))})
+    P.X, _ = P.encode(df[P.x])
+    # the names of X's columns and the x column each came from
+    j = 0
+    for e in P.enc:
+        idx = []
+        if e['type'] == 'continuous':
+            P.features.append(e['name']); idx.append(j); j += 1
+            if e['indicator'] and missing == 'informative':
+                P.features.append(f'{e["name"]} Missing'); idx.append(j); j += 1
+        elif coding == 'ordinal':
+            P.features.append(e['name']); idx.append(j); j += 1
+        else:
+            for lv in e['levels']:
+                P.features.append(f'{e["name"]}[{level_label(lv)}]'); idx.append(j); j += 1
+            if e['indicator']:
+                P.features.append(f'{e["name"]}[Missing]'); idx.append(j); j += 1
+        P.groups[e['name']] = idx
+    if n0 and not tr.any():
+        raise ValueError('no training rows')
+    return P
+
+
+# ---------------------------------------------------------------------------
+# how well a model predicts, per set
+# ---------------------------------------------------------------------------
+
+def _clip(p):
+    return np.clip(np.asarray(p, dtype=float), 1e-15, 1.0)
+
+
+def measures(P, fitted):
+    """The Measures of Fit of each set present.
+
+    fitted: the prediction of every row of P (a vector for a continuous
+    response, an n x levels probability matrix for a categorical one).
+    Continuous: RSquare (1 - SSE/SST about the set's own mean), RASE (root
+    average squared error), Mean Abs Dev, -LogLikelihood (normal, with the
+    variance SSE/N), SSE and N (the sum of the weights). Categorical:
+    Entropy RSquare (1 - LL/LL0, LL0 the training shares of the levels),
+    Generalized RSquare (Nagelkerke's), Mean -Log p, RASE and Mean Abs Dev
+    of 1 - p(actual level), the Misclassification Rate (most likely level
+    not the actual one), -LogLikelihood and N; AUC for two levels.
+    """
+    out = []
+    fitted = np.asarray(fitted, dtype=float)
+    if P.kind == 'categorical':
+        wt = P.weights(P.train())
+        share = np.array([wt[P.target[P.train()] == j].sum() for j in range(len(P.levels))]) / wt.sum()
+    for k in range(3):
+        m = P.mask(k)
+        if not m.any():
+            continue
+        w = P.weights(m)
+        N = float(w.sum())
+        row = {'set': SETS[k], 'n': N}
+        if P.kind == 'continuous':
+            y, f = P.target[m], fitted[m]
+            r = y - f
+            sse = float(np.sum(w * r * r))
+            yb = float(np.sum(w * y) / N)
+            sst = float(np.sum(w * (y - yb) ** 2))
+            row.update({'rsquare': 1 - sse / sst if sst > 0 else None, 'rase': math.sqrt(sse / N), 'mad': float(np.sum(w * np.abs(r)) / N),
+                        'neg_loglik': 0.5 * N * (math.log(2 * math.pi * sse / N) + 1) if sse > 0 else None, 'sse': sse})
+        else:
+            y = P.target[m]
+            p = fitted[m]
+            pt = _clip(p[np.arange(len(y)), y])
+            ll = float(np.sum(w * np.log(pt)))
+            ll0 = float(np.sum(w * np.log(_clip(share[y]))))
+            er2 = 1 - ll / ll0 if ll0 < 0 else None
+            den = 1 - math.exp(2 * ll0 / N)
+            gr2 = (1 - math.exp(2 * (ll0 - ll) / N)) / den if den > 0 else None
+            miss = np.argmax(p, axis=1) != y
+            row.update({'entropy_rsquare': er2, 'generalized_rsquare': gr2, 'mean_neg_log_p': -ll / N,
+                        'rase': math.sqrt(float(np.sum(w * (1 - pt) ** 2)) / N), 'mad': float(np.sum(w * (1 - pt)) / N),
+                        'misclassification': float(np.sum(w * miss) / N), 'neg_loglik': -ll})
+            if len(P.levels) == 2:
+                row['auc'] = _auc(p[:, 1], y == 1, w)
+        out.append(row)
+    return out
+
+
+def measure_columns(kind):
+    """The report table's columns for measures()."""
+    if kind == 'continuous':
+        return [{'key': 'set', 'label': 'Set', 'fmt': 'text'}, {'key': 'rsquare', 'label': 'RSquare'}, {'key': 'rase', 'label': 'RASE'},
+                {'key': 'mad', 'label': 'Mean Abs Dev'}, {'key': 'neg_loglik', 'label': '-LogLikelihood'}, {'key': 'sse', 'label': 'SSE'},
+                {'key': 'n', 'label': 'N'}]
+    return [{'key': 'set', 'label': 'Set', 'fmt': 'text'}, {'key': 'entropy_rsquare', 'label': 'Entropy RSquare'},
+            {'key': 'generalized_rsquare', 'label': 'Generalized RSquare'}, {'key': 'mean_neg_log_p', 'label': 'Mean -Log p'},
+            {'key': 'rase', 'label': 'RASE'}, {'key': 'mad', 'label': 'Mean Abs Dev'}, {'key': 'misclassification', 'label': 'Misclassification Rate'},
+            {'key': 'auc', 'label': 'AUC'}, {'key': 'n', 'label': 'N'}]
+
+
+def _auc(score, pos, w):
+    """The area under the ROC curve (ties count half), weighted."""
+    score = np.asarray(score, dtype=float)
+    pos = np.asarray(pos, dtype=bool)
+    w = np.asarray(w, dtype=float)
+    P_, N_ = w[pos].sum(), w[~pos].sum()
+    if P_ <= 0 or N_ <= 0:
+        return None
+    # each positive row beats the negative rows scored below it, and half
+    # of those scored the same
+    u, inv = np.unique(score, return_inverse=True)
+    pw = np.bincount(inv, weights=np.where(pos, w, 0.0), minlength=len(u))
+    nw = np.bincount(inv, weights=np.where(pos, 0.0, w), minlength=len(u))
+    below = np.cumsum(nw) - nw
+    return float(np.sum(pw * (below + 0.5 * nw)) / (P_ * N_))
+
+
+def confusion(P, fitted):
+    """Per set: counts of actual (rows) by most likely level (columns),
+    each row counted by its frequency."""
+    out = []
+    fitted = np.asarray(fitted, dtype=float)
+    L = len(P.levels)
+    for k in range(3):
+        m = P.mask(k)
+        if not m.any():
+            continue
+        y, pred, f = P.target[m], np.argmax(fitted[m], axis=1), P.counts(m)
+        mat = np.zeros((L, L))
+        np.add.at(mat, (y, pred), f)
+        out.append({'set': SETS[k], 'levels': list(P.labels), 'matrix': mat.tolist()})
+    return out
+
+
+def _thin(n, most):
+    if n <= most:
+        return np.arange(n)
+    return np.unique(np.round(np.linspace(0, n - 1, most)).astype(int))
+
+
+def roc(P, fitted, most=400):
+    """Per set and level: the ROC curve of the level against the others by
+    its probability (1 - specificity, sensitivity), and its AUC."""
+    out = []
+    fitted = np.asarray(fitted, dtype=float)
+    for k in range(3):
+        m = P.mask(k)
+        if not m.any():
+            continue
+        y, p, w = P.target[m], fitted[m], P.counts(m)
+        for j, lab in enumerate(P.labels):
+            pos = y == j
+            Pw, Nw = w[pos].sum(), w[~pos].sum()
+            if Pw <= 0 or Nw <= 0:
+                continue
+            order = np.argsort(-p[:, j], kind='mergesort')
+            s = p[order, j]
+            tp = np.cumsum(np.where(pos[order], w[order], 0.0))
+            fp = np.cumsum(np.where(pos[order], 0.0, w[order]))
+            last = np.r_[s[1:] != s[:-1], True]           # the end of each run of equal scores
+            fpr = np.r_[0.0, fp[last] / Nw]
+            tpr = np.r_[0.0, tp[last] / Pw]
+            keep = _thin(len(fpr), most)
+            out.append({'set': SETS[k], 'level': lab, 'fpr': fpr[keep].tolist(), 'tpr': tpr[keep].tolist(),
+                        'auc': _auc(p[:, j], pos, w)})
+    return out
+
+
+def lift(P, fitted, most=300):
+    """Per set and level: the lift curve (the share of rows taken, highest
+    probability first, and the rate of the level among them over its rate
+    in the set)."""
+    out = []
+    fitted = np.asarray(fitted, dtype=float)
+    for k in range(3):
+        m = P.mask(k)
+        if not m.any():
+            continue
+        y, p, w = P.target[m], fitted[m], P.counts(m)
+        tot = w.sum()
+        for j, lab in enumerate(P.labels):
+            pos = y == j
+            base = w[pos].sum() / tot
+            if base <= 0:
+                continue
+            order = np.argsort(-p[:, j], kind='mergesort')
+            cw = np.cumsum(w[order])
+            hits = np.cumsum(np.where(pos[order], w[order], 0.0))
+            portion = cw / tot
+            lift_ = (hits / cw) / base
+            keep = _thin(len(portion), most)
+            out.append({'set': SETS[k], 'level': lab, 'portion': portion[keep].tolist(), 'lift': lift_[keep].tolist(), 'base': float(base)})
+    return out
+
+
+def residuals(P, fitted):
+    """Actual by predicted, for a continuous response: per row, with its set."""
+    return {'rows': P.index.tolist(), 'actual': P.target.tolist(), 'predicted': np.asarray(fitted, dtype=float).tolist(),
+            'set': P.sets.tolist()}
+
+
+def contributions(P, values, label='Contribution', extra=None):
+    """A per-feature quantity (an importance) summed back to the x columns:
+    [{'column', 'value', 'portion'}], largest first. extra: more columns
+    for the table, {label: {x column: value}} (JMP's Number of Splits)."""
+    values = np.asarray(values, dtype=float)
+    rows = []
+    for c in P.x:
+        v = float(np.sum(values[P.groups[c]]))
+        rows.append({'column': c, 'value': v})
+    tot = sum(max(r['value'], 0.0) for r in rows)
+    for r in rows:
+        r['portion'] = r['value'] / tot if tot > 0 else None
+        for j, (lab, by) in enumerate((extra or {}).items()):
+            r[f'extra{j}'] = by.get(r['column'])
+    rows.sort(key=lambda r: -(r['value'] if r['value'] is not None else -math.inf))
+    return {'rows': rows, 'label': label, 'extra': list((extra or {}).keys())}
+
+
+def saved(P, predict, proba=None):
+    """What Save Predicteds / Save Probabilities put in the table: for every
+    row whose factors the model can take. predict(X) gives the prediction
+    (continuous); proba(X) the level probabilities (categorical)."""
+    X, rows = P.all_rows()
+    if P.kind == 'continuous':
+        pred = np.asarray(predict(X), dtype=float)
+        yv = pd.to_numeric(pd.Series(data.raw(P.table, P.y, rows)), errors='coerce').to_numpy(float)
+        return {'rows': rows.tolist(), 'values': pred.tolist(), 'residuals': (yv - pred).tolist(), 'name': f'Predicted {P.y}'}
+    pr = np.asarray(proba(X), dtype=float)
+    most = [P.labels[int(j)] for j in np.argmax(pr, axis=1)]
+    return {'rows': rows.tolist(), 'prob': pr.tolist(), 'levels': list(P.labels), 'most_likely': most,
+            'names': [f'Prob[{lab}]' for lab in P.labels], 'most_name': f'Most Likely {P.y}',
+            'ordinal': data.meta(P.table, P.y).get('modelingType') == 'ordinal'}
+
+
+def report(P, fitted, roc_curves=True):
+    """The pieces every platform shows: the Measures of Fit, and for a
+    categorical response the confusion matrices and the ROC and lift
+    curves; for a continuous one actual by predicted."""
+    out = {'kind': P.kind, 'measures': measures(P, fitted), 'measure_columns': measure_columns(P.kind), 'sets': [SETS[k] for k in range(3) if P.has(k)],
+           'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)}, 'notes': list(P.notes), 'features': list(P.features)}
+    if P.kind == 'categorical':
+        out['levels'] = list(P.labels)
+        out['confusion'] = confusion(P, fitted)
+        if roc_curves:
+            out['roc'] = roc(P, fitted)
+            out['lift'] = lift(P, fitted)
+    else:
+        out['residuals'] = residuals(P, fitted)
+    return out
+
+
+def seed_of(seed):
+    """A seed from the page (a number, or text holding one), or None."""
+    if seed is None or seed == '':
+        return None
+    try:
+        return int(float(seed))
+    except (TypeError, ValueError):
+        raise ValueError(f'the random seed is a whole number, not {seed!r}')
+
+
+def predictor(P, model, predict=None, proba=None):
+    """The Prediction Profiler's view of a fitted model (see profile.py):
+    the prediction of a continuous response, or the probability of each
+    level of a categorical one. predict / proba default to the model's own
+    (a function of X may be given, a pipeline's for example)."""
+    from .profile import Predictor
+    predict = predict or model.predict
+    proba = proba or (lambda X: P.proba(model, X))
+
+    def run(settings):
+        X = P.encode_settings(settings)
+        if P.kind == 'continuous':
+            return [{'name': P.y, 'pred': np.asarray(predict(X), dtype=float), 'lower': None, 'upper': None, 'bounded': False}]
+        pr = np.asarray(proba(X), dtype=float)
+        return [{'name': f'Prob[{lab}]', 'pred': pr[:, j], 'lower': None, 'upper': None, 'bounded': True} for j, lab in enumerate(P.labels)]
+    frame = data.frame(P.table, P.x, P.index[P.train()], dropna=False)
+    observed = {c: [None if (isinstance(v, float) and math.isnan(v)) else (v.item() if hasattr(v, 'item') else v) for v in frame[c].astype(object)] for c in P.x}
+    return Predictor(P.factors(), run, observed)
