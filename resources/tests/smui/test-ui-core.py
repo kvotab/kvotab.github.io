@@ -717,6 +717,62 @@ async def main():
     check('and nothing around it scrolls', r['scrolls'], 0)
     check('after printing the scaling is taken off', (after['n'], after['zoom']), (0, 0))
 
+    # ---- a box selection, then its edge moved (with the mouse, as a user
+    # does): the rows are selected once each time, and the tab stays alive.
+    # A redraw used to make Plotly announce the kept box again, which was
+    # taken for a new selection and redrew again, without end. A selection
+    # made elsewhere then takes the kept box away.
+    box = await page.ev('''(async () => {
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      window.__selCalls = 0; const orig = t.select; t.select = function (...a) { __selCalls++; return orig.apply(this, a); }; window.__unsel = () => { delete t.select; };
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise(res => rep.on('done', res));
+      const gb = rep.body.querySelector('.sm-gb')._gb;
+      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      SM.app.showTab(SM.app.tabOf(rep));
+      await new Promise(res => setTimeout(res, 600));
+      const p = rep.plots.find(p => p.drawn);
+      p.box.scrollIntoView({ block: 'center' }); await new Promise(res => setTimeout(res, 200));
+      const r = p.box.querySelector('.nsewdrag').getBoundingClientRect();
+      return { left: r.left, top: r.top, w: r.width, h: r.height };
+    })()''')
+
+    async def mouse(kind, x, y):
+        await page.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'buttons': 0 if kind == 'mouseReleased' else 1, 'clickCount': 1}, session=page.sid)
+
+    async def drag(x0, y0, x1, y1):
+        await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': x0, 'y': y0}, session=page.sid)
+        await asyncio.sleep(0.1)
+        await mouse('mousePressed', x0, y0)
+        for i in range(1, 9):
+            await mouse('mouseMoved', x0 + (x1 - x0) * i / 8, y0 + (y1 - y0) * i / 8)
+            await asyncio.sleep(0.03)
+        await mouse('mouseReleased', x1, y1)
+        await asyncio.sleep(0.6)
+    x1, y1 = box['left'] + box['w'] * 0.25, box['top'] + box['h'] * 0.15
+    x2, y2 = box['left'] + box['w'] * 0.75, box['top'] + box['h'] * 0.85
+    await drag(x1, y1, x2, y2)
+    a = await page.ev('({ calls: __selCalls, n: SM.app.tables[0].selectedRows().length })')
+    ym = (y1 + y2) / 2
+    await drag(x1, ym, x1 + 60, ym)
+    b = await asyncio.wait_for(page.ev('({ calls: __selCalls, n: SM.app.tables[0].selectedRows().length })'), 20)
+    await drag(x2, ym, x2 - 60, ym)
+    c = await asyncio.wait_for(page.ev('({ calls: __selCalls, n: SM.app.tables[0].selectedRows().length })'), 20)
+    check('a box selection selects its rows once', (a['calls'], a['n'] > 0), (1, True))
+    check('moving its left edge selects once more, fewer rows, and the tab answers', (b['calls'], 0 < b['n'] < a['n']), (2, True))
+    check('moving its right edge too', (c['calls'], 0 < c['n'] < b['n']), (3, True))
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables[0]; const rep = SM.app.reports[SM.app.reports.length - 1]; const p = rep.plots.find(p => p.drawn);
+      const kept = (p.box.layout.selections || []).length;
+      t.select([0, 1, 2]);
+      await new Promise(res => setTimeout(res, 300));
+      const out = { kept, after: (p.box.layout.selections || []).length, selected: t.selectedRows(), calls: __selCalls, sp: p.box.data[0].selectedpoints };
+      __unsel(); t.select([]); SM.app.closeReport(rep);
+      return out;
+    })()''')
+    check('the kept box goes when rows are selected elsewhere', (r['kept'], r['after']), (1, 0))
+    check('... and that selection stands, in the graph too', (r['selected'], r['calls'], sorted(r['sp'] or [])), ([0, 1, 2], 4, [0, 1, 2]))
+
     # ---- dark theme and phone width
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports[0]))')

@@ -247,6 +247,11 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- Graph selections: a handler of `plotly_selected` returns at once while
+  `plot.quiet` (the row states are being drawn: Plotly's full redraw
+  announces a kept selection box again, and taking that for a new selection
+  redrew without end), and selects inside `plot.own(() => ...)`, so that the
+  redraw keeps the graph's own box; a selection from elsewhere clears it.
 - Everything is built with `SM.util.el()` (text nodes only). Never put
   table-derived text into `innerHTML`: a table from a file is untrusted.
 
@@ -339,5 +344,7 @@ in for through the frame's `contentWindow`), Save Report as Word read back
 with JSZip (its parts, headings, tables, PNG pictures, the code only when
 shown), the page's own print (emulated print media: the site, menus and
 buttons left out, a graph wider than the paper scaled to fit); documents in
-the light theme from the dark one, an SVG diagram with its paint; the dark
-theme and phone width.
+the light theme from the dark one, an SVG diagram with its paint; a box
+selection in Graph Builder whose edges are then moved (real mouse events)
+selects once each time, and a selection made elsewhere takes the kept box
+away; the dark theme and phone width.

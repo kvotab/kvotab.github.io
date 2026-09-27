@@ -482,8 +482,8 @@
       const gd = this.box;
       gd.on('plotly_click', (ev) => this._click(ev));
       gd.on('plotly_selected', (ev) => { if (ev) this._selected(ev); });
-      gd.on('plotly_deselect', () => { if (this.table) this.table.select([]); });
-      this.applyStates();
+      gd.on('plotly_deselect', () => { if (this.table && !this.quiet) this.own(() => this.table.select([])); });
+      this.refreshStates();
       if (this.opts.onDraw) this.opts.onDraw(gd);
     }
 
@@ -520,9 +520,37 @@
     }
 
     _selected(ev) {
-      if (!this.table || !ev.points) return;
+      if (!this.table || !ev.points || this.quiet) return;
       const rows = [...new Set(ev.points.flatMap((p) => this.rowsOf(p)))];
-      this.table.select(rows, (ev.event && ev.event.shiftKey) ? 'add' : 'replace');
+      this.own(() => this.table.select(rows, (ev.event && ev.event.shiftKey) ? 'add' : 'replace'));
+    }
+
+    /* A selection made in this graph (fn selects the rows): the redraw it
+       causes keeps the graph's selection box, which the user may still
+       move or resize. */
+    own(fn) {
+      this.owning = (this.owning || 0) + 1;
+      try { return fn(); } finally { this.owning -= 1; }
+    }
+
+    /* Row states onto the graph (applyStates, which a platform may wrap)
+       with the graph's selection events held back meanwhile. A full redraw
+       makes Plotly announce a kept selection box again (a box stays in
+       layout.selections, the more so once an edge has been moved), and
+       that taken for a new selection would redraw again, without end: the
+       tab hung. A selection made elsewhere (the grid, another graph) takes
+       the box away, as it no longer shows what is selected. */
+    refreshStates(kind) {
+      if (!this.drawn) return;
+      this.quiet = (this.quiet || 0) + 1;
+      try {
+        const gd = this.box;
+        const kept = gd.layout && Array.isArray(gd.layout.selections) && gd.layout.selections.length;
+        if (kept && !this.owning && (!kind || kind === 'selected' || kind === 'all')) {
+          try { Plotly.relayout(gd, { selections: [] }); } catch (e) { console.warn('SM: relayout failed', e); }
+        }
+        this.applyStates(kind);
+      } finally { this.quiet -= 1; }
     }
 
     /* Row states onto the graph: selection, colours, markers, labels, hidden. */
@@ -639,7 +667,14 @@
 
     purge() {
       if (io) io.unobserve(this.box);
-      if (this.drawn && typeof Plotly !== 'undefined') Plotly.purge(this.box);
+      if (this.drawn && typeof Plotly !== 'undefined') {
+        // After the redraw under way: Plotly ends each one in a promise
+        // callback that reads the graph's layout, and a graph purged in the
+        // same moment (rows selected, then the report closed) made it throw.
+        // The graph's element is on its way out, never drawn in again.
+        const gd = this.box;
+        setTimeout(() => { try { Plotly.purge(gd); } catch (e) { /* gone already */ } }, 0);
+      }
       this.drawn = false;
     }
   }
@@ -857,7 +892,7 @@
     }
 
     _rowstate(e) {
-      for (const p of this.plots) p.applyStates(e && e.kind);
+      for (const p of this.plots) p.refreshStates(e && e.kind);
       if (e && e.kind === 'excluded' || e && e.kind === 'all') this._data();
     }
 

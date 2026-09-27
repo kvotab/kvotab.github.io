@@ -171,10 +171,10 @@
         t.select(rows, e.shiftKey ? 'add' : (e.metaKey || e.ctrlKey) ? 'toggle' : 'replace');
       });
       gd.on('plotly_selected', (ev) => {
-        if (!t || !ev || !ev.points) return;
+        if (!t || !ev || !ev.points || p.quiet) return;    // not an announcement of a redraw (SM.report's refreshStates)
         const rows = new Set();
         for (const pt of ev.points) { const s = byTrace.get(pt.curveNumber); if (s) for (const r of rowsAt(s, pt)) rows.add(r); }
-        if (rows.size) t.select([...rows], 'add');
+        if (rows.size) p.own(() => t.select([...rows], 'add'));
       });
       if (prev) prev(gd);
     };
@@ -3246,10 +3246,12 @@
           if (rs.length) t.select(rs, e.shiftKey ? 'add' : (e.metaKey || e.ctrlKey) ? 'toggle' : 'replace');
         });
         gd.on('plotly_selected', (ev) => {
-          if (!ev || !ev.points) return;
+          const pl = gd._plot;
+          if (!ev || !ev.points || (pl && pl.quiet)) return;
           const rs = [];
           for (const pt of ev.points) if (pt.curveNumber === 0) rs.push(...(itemRows[pt.pointNumber] || []));
-          t.select(rs, (ev.event && ev.event.shiftKey) ? 'add' : 'replace');
+          const go = () => t.select(rs, (ev.event && ev.event.shiftKey) ? 'add' : 'replace');
+          if (pl) pl.own(go); else go();
         });
       };
       box._bubble = { frames, labels, itemRows };
