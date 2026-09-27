@@ -209,10 +209,12 @@
   gap: 2px;
   margin-left: -8px;
   padding: 6px 10px 0 18px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  /* the line under the tabs is drawn inside the row, so that the active tab
+     covers it without reaching out of the row (which made it scroll) */
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
   flex: 0 0 auto;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 .ec-tabs button {
   padding: 6px 12px;
@@ -231,7 +233,6 @@
   color: var(--text-primary);
   border-color: var(--border-color);
   font-weight: 600;
-  margin-bottom: -1px;
 }
 .ec-pane {
   flex: 1 1 auto;
