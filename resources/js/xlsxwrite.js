@@ -995,6 +995,7 @@ class XlsxWriter {
         this.sharedStrings = [];
         this.sharedStringsMap = new Map();  // String -> index for O(1) lookup
         this.charts = [];
+        this.drawings = [];
         this.comments = [];
         this.currentSheetId = 0;
         
@@ -1190,6 +1191,8 @@ class XlsxWriter {
                 startRow: 1,
                 startCol: 1,
                 chart: null,
+                charts: [],
+                view: {},
                 comments: []
             });
             this.sheetMap.set(sheetName, sheetIndex);
@@ -1440,7 +1443,60 @@ class XlsxWriter {
         chart.y = (options.y_offset || 0) + row * 20;
         
         this.sheets[sheetIndex].chart = chart;
-        
+
+        return this;
+    }
+
+    /**
+     * Put a chart on a sheet, beside any already there. insertChart gives a
+     * sheet its one chart, whose series refer to the sheet's data by position;
+     * a sheet can hold any number of these, placed exactly.
+     *
+     * The chart is either one from newChart(), or { xml, width, height } whose
+     * chart part is already written: `xml` is its XML, or a function of the
+     * chart's number in the workbook that returns it. The series of such a
+     * chart name their own ranges (Data!$B$8:$B$67), on any sheet.
+     *
+     * @param {string} sheet - Sheet name
+     * @param {Object} chart - The chart
+     * @param {{x?: number, y?: number}} [at] - Its top-left corner, in pixels from the sheet's
+     * @returns {XlsxWriter} this
+     */
+    addChart(sheet, chart, at = {}) {
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        const sheetObj = this.sheets[sheetIndex];
+        if (!sheetObj.charts) sheetObj.charts = [];
+        sheetObj.charts.push({ chart, x: at.x || 0, y: at.y || 0 });
+        return this;
+    }
+
+    /**
+     * Keep the top `rows` rows and the left `cols` columns in view as the
+     * rest of the sheet scrolls.
+     */
+    freezePanes(sheet, rows, cols = 0) {
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        const sheetObj = this.sheets[sheetIndex];
+        sheetObj.view = Object.assign({}, sheetObj.view, { freeze: { rows, cols } });
+        return this;
+    }
+
+    /**
+     * Print a sheet `width` pages wide and `height` pages tall at most (0: as
+     * many as it takes), landscape if asked.
+     */
+    fitToPage(sheet, { width = 1, height = 0, landscape = false } = {}) {
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        const sheetObj = this.sheets[sheetIndex];
+        sheetObj.page = { width, height, landscape };
+        return this;
+    }
+
+    /** Show or hide a sheet's gridlines (a sheet of charts reads better without). */
+    showGridlines(sheet, show) {
+        const { sheetIndex } = this._getOrCreateSheet(sheet);
+        const sheetObj = this.sheets[sheetIndex];
+        sheetObj.view = Object.assign({}, sheetObj.view, { showGridLines: !!show });
         return this;
     }
     
@@ -2367,6 +2423,7 @@ class XlsxWriter {
     async save() {
         // Reset charts array to avoid duplicates on multiple saves
         this.charts = [];
+        this.drawings = [];
         
         // Add _rels/.rels
         this._addRels();
@@ -2451,10 +2508,12 @@ class XlsxWriter {
             xml += `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
         }
         
-        // Add chart content types
+        // Add chart and drawing content types: a drawing per sheet, holding each of its charts
         for (let i = 0; i < this.charts.length; i++) {
             xml += `<Override PartName="/xl/charts/chart${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
-            xml += `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`;
+        }
+        for (const drawing of this.drawings || []) {
+            xml += `<Override PartName="/xl/drawings/drawing${drawing.id}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`;
         }
         
         xml += '</Types>';
@@ -2882,7 +2941,8 @@ class XlsxWriter {
             let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
             xml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ';
             xml += 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">';
-            xml += '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
+            if (sheet.page) xml += '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>';
+            xml += '<sheetViews>' + this._sheetViewXML(sheet.view) + '</sheetViews>';
             xml += '<sheetFormatPr defaultRowHeight="15"/>';
             
             // Column widths
@@ -2918,20 +2978,29 @@ class XlsxWriter {
             }
             
             xml += '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>';
+            if (sheet.page) {
+                xml += `<pageSetup orientation="${sheet.page.landscape ? 'landscape' : 'portrait'}" fitToWidth="${sheet.page.width}" fitToHeight="${sheet.page.height}"/>`;
+            }
             
-            // Add drawing reference if there's a chart (after pageMargins per OOXML schema)
-            if (sheet.chart) {
-                this.charts.push({ 
-                    chart: sheet.chart, 
-                    sheetIndex: i, 
-                    sheetName: sheet.name,
-                    dataInfo: {
-                        startRow: sheet.startRow,
-                        startCol: sheet.startCol,
-                        numRows: sheet.data.length,
-                        numCols: sheet.data.length > 0 ? sheet.data[0].length : 0
-                    }
-                });
+            // A drawing holds the sheet's charts: the one insertChart or writeData
+            // gave it, and any addChart put there (after pageMargins per OOXML schema)
+            const dataInfo = {
+                startRow: sheet.startRow,
+                startCol: sheet.startCol,
+                numRows: sheet.data.length,
+                numCols: sheet.data.length > 0 ? sheet.data[0].length : 0
+            };
+            const placed = [];
+            if (sheet.chart) placed.push({ chart: sheet.chart, legacy: true });
+            for (const c of sheet.charts || []) placed.push(c);
+            let drawing = null;
+            if (placed.length) {
+                drawing = { id: this.drawings.length + 1, sheetIndex: i, chartIds: [] };
+                for (const p of placed) {
+                    this.charts.push({ chart: p.chart, sheetIndex: i, sheetName: sheet.name, dataInfo, legacy: !!p.legacy, x: p.x || 0, y: p.y || 0 });
+                    drawing.chartIds.push(this.charts.length);
+                }
+                this.drawings.push(drawing);
                 xml += `<drawing r:id="rId1"/>`;
             }
             
@@ -2939,10 +3008,10 @@ class XlsxWriter {
             this.zip.file(`xl/worksheets/sheet${i + 1}.xml`, xml);
             
             // Add sheet rels if there's a chart
-            if (sheet.chart) {
+            if (drawing) {
                 let relsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
                 relsXml += '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
-                relsXml += `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${this.charts.length}.xml"/>`;
+                relsXml += `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${drawing.id}.xml"/>`;
                 relsXml += '</Relationships>';
                 this.zip.file(`xl/worksheets/_rels/sheet${i + 1}.xml.rels`, relsXml);
             }
@@ -2953,63 +3022,104 @@ class XlsxWriter {
      * Add charts
      */
     _addCharts() {
-        for (let i = 0; i < this.charts.length; i++) {
-            const chartInfo = this.charts[i];
-            const chartId = i + 1;
-            
-            // chart.xml
-            const chartXml = this._generateChartXML(chartInfo.chart, chartInfo.sheetName, chartInfo.dataInfo);
-            this.zip.file(`xl/charts/chart${chartId}.xml`, chartXml);
-            
-            // Calculate cell positions for chart placement
-            const startCol = Math.floor(chartInfo.chart.x / 64) || 2;
-            const startRow = Math.floor(chartInfo.chart.y / 20) || 1;
-            const endCol = startCol + Math.ceil((chartInfo.chart.width || 480) / 64);
-            const endRow = startRow + Math.ceil((chartInfo.chart.height || 288) / 20);
-            
-            // drawing.xml - exact xlsxwriter format
+        for (const drawing of this.drawings || []) {
             let drawingXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
             drawingXml += '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">';
-            drawingXml += '<xdr:twoCellAnchor>';
-            drawingXml += '<xdr:from>';
-            drawingXml += `<xdr:col>${startCol}</xdr:col>`;
-            drawingXml += '<xdr:colOff>0</xdr:colOff>';
-            drawingXml += `<xdr:row>${startRow}</xdr:row>`;
-            drawingXml += '<xdr:rowOff>0</xdr:rowOff>';
-            drawingXml += '</xdr:from>';
-            drawingXml += '<xdr:to>';
-            drawingXml += `<xdr:col>${endCol}</xdr:col>`;
-            drawingXml += '<xdr:colOff>0</xdr:colOff>';
-            drawingXml += `<xdr:row>${endRow}</xdr:row>`;
-            drawingXml += '<xdr:rowOff>0</xdr:rowOff>';
-            drawingXml += '</xdr:to>';
-            drawingXml += '<xdr:graphicFrame macro="">';
-            drawingXml += '<xdr:nvGraphicFramePr>';
-            drawingXml += `<xdr:cNvPr id="${chartId + 1}" name="Chart ${chartId}"/>`;
-            drawingXml += '<xdr:cNvGraphicFramePr/>';
-            drawingXml += '</xdr:nvGraphicFramePr>';
-            drawingXml += '<xdr:xfrm>';
-            drawingXml += '<a:off x="0" y="0"/>';
-            drawingXml += '<a:ext cx="0" cy="0"/>';
-            drawingXml += '</xdr:xfrm>';
-            drawingXml += '<a:graphic>';
-            drawingXml += '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">';
-            drawingXml += '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/>';
-            drawingXml += '</a:graphicData>';
-            drawingXml += '</a:graphic>';
-            drawingXml += '</xdr:graphicFrame>';
-            drawingXml += '<xdr:clientData/>';
-            drawingXml += '</xdr:twoCellAnchor>';
-            drawingXml += '</xdr:wsDr>';
-            this.zip.file(`xl/drawings/drawing${chartId}.xml`, drawingXml);
-            
-            // drawing rels
             let drawingRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
             drawingRelsXml += '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
-            drawingRelsXml += `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${chartId}.xml"/>`;
+
+            drawing.chartIds.forEach((chartId, k) => {
+                const chartInfo = this.charts[chartId - 1];
+                const chart = chartInfo.chart;
+                const relId = `rId${k + 1}`;
+
+                // chart.xml: written by the caller, or generated from the chart's settings
+                const chartXml = chart.xml !== undefined
+                    ? (typeof chart.xml === 'function' ? chart.xml(chartId) : chart.xml)
+                    : this._generateChartXML(chart, chartInfo.sheetName, chartInfo.dataInfo);
+                this.zip.file(`xl/charts/chart${chartId}.xml`, chartXml);
+
+                drawingXml += chartInfo.legacy
+                    ? this._twoCellAnchorXML(chart, chartId, relId)
+                    : this._absoluteAnchorXML(chartInfo, chartId, relId);
+                drawingRelsXml += `<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${chartId}.xml"/>`;
+            });
+
+            drawingXml += '</xdr:wsDr>';
             drawingRelsXml += '</Relationships>';
-            this.zip.file(`xl/drawings/_rels/drawing${chartId}.xml.rels`, drawingRelsXml);
+            this.zip.file(`xl/drawings/drawing${drawing.id}.xml`, drawingXml);
+            this.zip.file(`xl/drawings/_rels/drawing${drawing.id}.xml.rels`, drawingRelsXml);
         }
+    }
+
+    /**
+     * The graphic frame a chart sits in, shared by both anchors.
+     * @private
+     */
+    _chartFrameXML(chartId, relId) {
+        return '<xdr:graphicFrame macro="">' +
+            '<xdr:nvGraphicFramePr>' +
+            `<xdr:cNvPr id="${chartId + 1}" name="Chart ${chartId}"/>` +
+            '<xdr:cNvGraphicFramePr/>' +
+            '</xdr:nvGraphicFramePr>' +
+            '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>' +
+            '<a:graphic>' +
+            '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+            `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="${relId}"/>` +
+            '</a:graphicData>' +
+            '</a:graphic>' +
+            '</xdr:graphicFrame>';
+    }
+
+    /**
+     * A chart from insertChart or writeData, spread over the cells its pixel
+     * size covers at the default cell size -- exact xlsxwriter format.
+     * @private
+     */
+    _twoCellAnchorXML(chart, chartId, relId) {
+        const startCol = Math.floor(chart.x / 64) || 2;
+        const startRow = Math.floor(chart.y / 20) || 1;
+        const endCol = startCol + Math.ceil((chart.width || 480) / 64);
+        const endRow = startRow + Math.ceil((chart.height || 288) / 20);
+        return '<xdr:twoCellAnchor>' +
+            `<xdr:from><xdr:col>${startCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${startRow}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+            `<xdr:to><xdr:col>${endCol}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${endRow}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>` +
+            this._chartFrameXML(chartId, relId) +
+            '<xdr:clientData/>' +
+            '</xdr:twoCellAnchor>';
+    }
+
+    /**
+     * A chart from addChart, at an exact place and size in pixels, whatever
+     * the rows and columns under it: charts laid edge to edge stay that way.
+     * @private
+     */
+    _absoluteAnchorXML(chartInfo, chartId, relId) {
+        const PX = 9525;  // EMUs per pixel at 96 dpi
+        const chart = chartInfo.chart;
+        return '<xdr:absoluteAnchor>' +
+            `<xdr:pos x="${Math.round(chartInfo.x * PX)}" y="${Math.round(chartInfo.y * PX)}"/>` +
+            `<xdr:ext cx="${Math.round((chart.width || 480) * PX)}" cy="${Math.round((chart.height || 288) * PX)}"/>` +
+            this._chartFrameXML(chartId, relId) +
+            '<xdr:clientData/>' +
+            '</xdr:absoluteAnchor>';
+    }
+
+    /**
+     * A sheet's view: frozen panes and gridlines, as freezePanes and
+     * showGridlines set them; the plain view otherwise.
+     * @private
+     */
+    _sheetViewXML(view = {}) {
+        const attrs = view.showGridLines === false ? ' showGridLines="0"' : '';
+        const freeze = view.freeze;
+        if (!freeze || (!freeze.rows && !freeze.cols)) return `<sheetView${attrs} workbookViewId="0"/>`;
+        const topLeft = xlColumn(freeze.cols + 1) + (freeze.rows + 1);
+        const pane = freeze.rows && freeze.cols ? 'bottomRight' : freeze.rows ? 'bottomLeft' : 'topRight';
+        return `<sheetView${attrs} workbookViewId="0">` +
+            `<pane${freeze.cols ? ` xSplit="${freeze.cols}"` : ''}${freeze.rows ? ` ySplit="${freeze.rows}"` : ''} topLeftCell="${topLeft}" activePane="${pane}" state="frozen"/>` +
+            `<selection pane="${pane}" activeCell="${topLeft}" sqref="${topLeft}"/>` +
+            '</sheetView>';
     }
     
     /**

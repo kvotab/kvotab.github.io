@@ -51,6 +51,7 @@ PROBES = {
     'rb-chart-axes':     'getNamedColor',
     'rb-chart-presets':  'loadPresets',
     'rb-chart-export':   'downloadChartData',
+    'rb-chart-excel':    'downloadChartDataAsExcel',
     'rb-chart-toggles':  'toggleShowTotal',
     'rb-chart':          'backgroundRectShapes',
     'rb-legend':         'toggleDynamicLegend',
@@ -113,6 +114,10 @@ async def main():
             got = json.loads(await page.ev(PROBE % json.dumps(list(PROBES.values()))))
             for script, fn in PROBES.items():
                 check(f'{script}.js is strict (via {fn})', got.get(fn), 'strict')
+            # A script added to the page and not to PROBES would go untested.
+            loaded = await page.ev("[...document.scripts].map(s => (/\\/(rb-[\\w-]+)\\.js/.exec(s.src) || [])[1]).filter(Boolean)")
+            check('every rb-*.js on the page is probed or listed as having nothing to probe',
+                  sorted(set(loaded) - set(PROBES) - set(NO_TOP_LEVEL_FUNCTIONS)), [])
         finally:
             await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',
                                        'params': {'targetId': tid}}))

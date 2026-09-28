@@ -271,6 +271,7 @@ function createPlotlyChart(path, savedAxisState) {
           traceObj._probYFlat      = yData;
           traceObj._probMaxLen     = timeMatrix.maxLen;
           traceObj._nIter          = timeMatrix.nIter;
+          markTraceSource(traceObj, fileKey, dataset);
           traces.push(traceObj);
           continue;  // Skip the regular probabilistic / column-stats path
         }
@@ -335,6 +336,7 @@ function createPlotlyChart(path, savedAxisState) {
 
         const traceObj = ChartService.timeSeriesTrace({ x: timeData.slice(0, minLength), y: yArray.slice(0, minLength), name: buildTraceName(yAxisName, path, fileKey, [path], enabledFiles) });
         traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
+        markTraceSource(traceObj, fileKey, dataset);
         if (isProbabilistic) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
@@ -731,6 +733,7 @@ function createMultiDatasetChart(items) {
         const traceName = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
         const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: lineFor(fileKey, baseColor), hovertemplate: `<b>${traceName}</b><br>Time: %{x}<br>Value: %{y}<extra></extra>` });
         traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
+        markTraceSource(traceObj, fileKey, dataset);
         if (isProbabilistic) {
           // Store raw data and time data on the trace for CI computation
           traceObj._rawData = normalizedRawData;
@@ -1216,6 +1219,7 @@ function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, 
     };
   }
   totalDataByFile[fileKey].dataArrays.push(trimmedYData);
+  if (!totalDataByFile[fileKey].unit) totalDataByFile[fileKey].unit = unitAttrOf(dataset);
   if (isProbabilistic) {
     const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData,
       getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`));
@@ -1254,6 +1258,26 @@ function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, 
   }
 }
 
+/** A dataset's unit attribute as text, or '' when it has none. */
+function unitAttrOf(node) {
+  try {
+    const unit = node ? getAttr(node, 'unit') : undefined;
+    return unit === undefined || unit === null ? '' : String(unit);
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * Say on a trace which file and unit its values are from. The chart does not
+ * need them; the Excel export (rb-chart-excel.js) writes them over the
+ * trace's column, and a chart can mix both.
+ */
+function markTraceSource(trace, fileKey, dataset) {
+  trace._fileKey = fileKey;
+  trace._unit = unitAttrOf(dataset);
+}
+
 /**
  * Turn a computed series into the Plotly trace.
  *
@@ -1275,6 +1299,7 @@ function buildRadionuclideTrace({ series, dataset, datasetKey, path, fileKey, en
   }
   const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
   traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
+  markTraceSource(traceObj, fileKey, dataset);
   if (isProbabilistic) {
     // Store raw data and time data on the trace for CI computation
     traceObj._rawData = normalizedRawData;
@@ -1365,7 +1390,9 @@ function insertTotalTraces(ctx) {
             width: lineWidth
           },
           type: 'scatter',
-          _datasetKey: '__total__'
+          _datasetKey: '__total__',
+          _fileKey: fileKey,
+          _unit: fileData.unit || ''
         };
 
         if (fileData.probabilisticSlices) {

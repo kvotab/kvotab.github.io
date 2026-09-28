@@ -245,6 +245,29 @@ along the way, answers the question by replacing `rbAskConfirm`.
 
     python3 test-ask.py
 
+`test-excel.py` covers the chart's Excel export (`rb-chart-excel.js`), which
+writes the chart as the page draws it over a Data sheet of what it is drawn
+from. It catches the workbook instead of downloading it and reads it back with
+the standard library. Every series must point at the Data cells its cache
+holds. None may point at a zero or a negative value on a log axis: Excel then
+puts up a modal alert every time the workbook is opened, which holds up the
+whole of Excel, so the export draws such a line as its runs between those
+points, as Plotly does. The legend must be the page's, in the page's order
+(rb sorts it by peak, not by trace). Each axis is lin or log over the page's
+range, and a linear axis is labelled over the page's exponent (1.6×10⁻¹¹,
+0.1M) with fixed decimals. The format may never put General together with
+text: Excel then sizes the labels as if General wrote every digit it can,
+and moves the plot area right, 56 px for 1.6×10⁻¹¹, so stacked panels no
+longer line up. Several groups make a chart per panel, each under its label,
+with the plot areas lined up. The Data sheet puts each column's panel, or its
+file, over the columns. The cases are a group chart, the same with CI, an
+iteration and log axes, two files, three panels, an overlay on a log axis
+whose time starts at 0, and a line with zeros in it on log y. How Excel
+*draws* the workbook is not checked here: it was compared by eye against the
+page when the export was written.
+
+    python3 test-excel.py
+
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
 characterise.py only runs its walk when started as a script.

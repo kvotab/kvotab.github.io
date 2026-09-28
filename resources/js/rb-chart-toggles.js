@@ -324,6 +324,9 @@ async function toggleShowCI() {
             // In the panel of the line it belongs to, on a chart of several.
             xaxis: trace.xaxis,
             yaxis: trace.yaxis,
+            // And which line that is, for the Excel export (rb-chart-excel.js):
+            // two files' lines share a colour, so the colour cannot tell.
+            _bandOf: bandKeyOf(trace),
             x: [...timeSlice, ...timeSlice.slice().reverse()],
             y: [...p95Slice, ...p5Slice.slice().reverse()],
             fill: 'tozeroy',
@@ -351,6 +354,21 @@ async function toggleShowCI() {
       hideChartLoading(chartContainer);
     }
   }
+}
+
+let _bandKeySeq = 0;
+
+/**
+ * A line's own key, given it the first time a band is drawn for it. A band
+ * carries it as _bandOf, which is how the Excel export finds the line a band
+ * belongs to. It stays on the trace object, which Plotly keeps across restyles.
+ *
+ * @param {Object} trace - A trace in plotDiv.data
+ * @returns {string}
+ */
+function bandKeyOf(trace) {
+  if (!trace._bandKey) trace._bandKey = `band${++_bandKeySeq}`;
+  return trace._bandKey;
 }
 
 /**
@@ -426,6 +444,7 @@ async function toggleShowSDOM() {
         sdomTraces.push({
           xaxis: trace.xaxis,
           yaxis: trace.yaxis,
+          _bandOf: bandKeyOf(trace),
           x: [...timeSlice, ...timeSlice.slice().reverse()],
           y: [...upperSlice, ...lowerSlice.slice().reverse()],
           fill: 'tozeroy',

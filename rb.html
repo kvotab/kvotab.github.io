@@ -30,7 +30,7 @@
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js" integrity="sha384-eeLEhtwdMwD3X9y+8P3Cn7Idl/M+w8H4uZqkgD/2eJVkWIN1yKzEj6XegJ9dL3q0" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
-  <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20260927"></script>
   <script>
     /*
       This flag used to be set here unconditionally, which made it true even
@@ -331,11 +331,11 @@
       rb-file     which files are loaded, enabled and in what order
       rb-tabs     the file tab strip
       rb-tree     tree building, lazy expansion, intersect and union
-      rb-chart-*  charting, split across five files that must load in this
+      rb-chart-*  charting, split across six files that must load in this
                   order: -axes (line styles, scales, axes lock), -presets,
-                  -export (CSV and Excel), -toggles (the checkboxes and the
-                  background overlay), then rb-chart itself (the three
-                  chart builders)
+                  -export (CSV), -excel (the chart as an Excel workbook),
+                  -toggles (the checkboxes and the background overlay), then
+                  rb-chart itself (the three chart builders)
       rb-legend   dynamic legend
       rb-info     the dataset information panel
       rb-search   tree filtering
@@ -360,8 +360,8 @@
     through bare global names - 66 of them, 58 in characterise.py alone - so the
     conversion would break the whole safety net at the moment it was most
     needed, and keeping it working would mean re-exporting most of the surface
-    onto window anyway. The split of rb-chart.js into five files below gets the
-    navigability without that trade; those five must load in the order shown,
+    onto window anyway. The split of rb-chart.js into six files below gets the
+    navigability without that trade; those six must load in the order shown,
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20260921"></script>
@@ -375,15 +375,16 @@
   <script src="./resources/js/rb-tree.js?v=20260926"></script>
   <script src="./resources/js/rb-chart-axes.js?v=20260926"></script>
   <script src="./resources/js/rb-chart-presets.js?v=20260927"></script>
-  <script src="./resources/js/rb-chart-export.js?v=20260926"></script>
-  <script src="./resources/js/rb-chart-toggles.js?v=20260926"></script>
-  <script src="./resources/js/rb-chart.js?v=20260926"></script>
+  <script src="./resources/js/rb-chart-export.js?v=20260927"></script>
+  <script src="./resources/js/rb-chart-excel.js?v=20260927"></script>
+  <script src="./resources/js/rb-chart-toggles.js?v=20260927"></script>
+  <script src="./resources/js/rb-chart.js?v=20260927"></script>
   <script src="./resources/js/rb-legend.js?v=20260926"></script>
   <script src="./resources/js/rb-info.js?v=20260926"></script>
   <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20260926"></script>
+  <script src="./resources/js/rb-init.js?v=20260927"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20260921"></script>
 </body>

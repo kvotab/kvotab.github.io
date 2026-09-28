@@ -176,7 +176,13 @@ EventBus.on('theme:changed', ({ isDark }) => {
 
     if (!currentChartData) return;
     _suppressPresetSync = true;
-    Plotly.relayout(el, forEveryPanel(el, ChartService.relayoutForTheme(isDark)));
+    const update = forEveryPanel(el, ChartService.relayoutForTheme(isDark));
+    // Given a minor gridcolor, Plotly shows the minor grid unless told not
+    // to, and a linear axis has none (createBaseLayout): log axes only.
+    for (const [key, ax] of Object.entries(el._fullLayout || {})) {
+      if (/^[xy]axis\d*$/.test(key) && ax) update[`${key}.minor.showgrid`] = ax.type === 'log';
+    }
+    Plotly.relayout(el, update);
     setTimeout(() => { _suppressPresetSync = false; }, 0);
   } catch (e) {
     kvotWarn('theme:changed handler failed', e);
