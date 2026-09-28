@@ -1636,8 +1636,15 @@
       const fillCols = () => {
         const f = colFilter.value.trim().toLowerCase();
         colList.replaceChildren(...t.columns.filter((x) => x !== cur && (!f || x.name.toLowerCase().includes(f))).map((x) => {
-          const b = el('button', { type: 'button', class: 'smf-item', role: 'listitem', title: `Insert ${refText(x.name)}` }, SM.util.typeIcon(x.modelingType), el('span', { text: x.name }));
+          const b = el('button', { type: 'button', class: 'smf-item', role: 'listitem', draggable: 'true', title: `Insert ${refText(x.name)} (click, or drag it into the formula)` }, SM.util.typeIcon(x.modelingType), el('span', { text: x.name }));
           b.addEventListener('click', () => insert(refText(x.name)));
+          // dragged into the formula box, the column's reference lands where
+          // it is let go (the box takes the text as any text field does)
+          b.addEventListener('dragstart', (ev) => {
+            ev.dataTransfer.setData('text/plain', refText(x.name));
+            if (SM.launch) ev.dataTransfer.setData(SM.launch.MIME, JSON.stringify([x.id]));
+            ev.dataTransfer.effectAllowed = 'copy';
+          });
           return b;
         }));
       };
@@ -1702,6 +1709,7 @@
         }
       }, 140);
       ta.addEventListener('input', () => { msg.textContent = ''; refresh(); });
+      ta.addEventListener('drop', () => requestAnimationFrame(() => ta.focus()));
 
       // OK and Apply: check first, keep a copy for Undo, then change the table.
       const commit = () => {
@@ -1779,7 +1787,7 @@
         kicker: 'Cols', title: 'Formula',
         lead: 'A formula computes a column from others, row by row, and keeps it current: when the values it uses change, it is computed again.',
         sections: [
-          { heading: 'Writing one', list: ['Columns are `:name`, or `:"weight (kg)"` when the name has spaces or signs; a bare name that is a column works too.', 'Operators: `+ - * / ^`, comparisons `== != < <= > >=` (chained: `1 < :x <= 3`), `&` and, `|` or, `!` not, `||` joins text.', 'Functions by their JMP names, in any case: `If(:age >= 15, "older", "younger")`, `Col Mean(:height, :sex)`, `Lag(:sales, 12)`, `Round(:x, 2)`.', 'Click a column or a function to insert it; a function wraps the selected text. ctrl/⌘+Enter is OK.'] },
+          { heading: 'Writing one', list: ['Columns are `:name`, or `:"weight (kg)"` when the name has spaces or signs; a bare name that is a column works too.', 'Operators: `+ - * / ^`, comparisons `== != < <= > >=` (chained: `1 < :x <= 3`), `&` and, `|` or, `!` not, `||` joins text.', 'Functions by their JMP names, in any case: `If(:age >= 15, "older", "younger")`, `Col Mean(:height, :sex)`, `Lag(:sales, 12)`, `Round(:x, 2)`.', 'Click a column or a function to insert it, or drag a column into the formula, where it lands; a function wraps the selected text. ctrl/⌘+Enter is OK.'] },
           { heading: 'Missing values', text: 'As in JMP: arithmetic and comparisons with a missing value are missing, If with a missing condition is missing, `0 & .` is 0 and `1 | .` is 1, and Sum, Mean, Min and Max of their arguments skip missing ones. Division by zero is missing.' },
           { heading: 'Safe to share', text: 'A formula is text that this page reads with its own parser; it never runs as code, so a table from someone else cannot run anything.' },
         ],

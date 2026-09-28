@@ -769,6 +769,26 @@ async def main():
     wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
     check('no horizontal page scroll at phone width, with Tabulate', wide, True)
     await shot(page, 't09-phone-tabulate.png')
+    # ---- a column dragged into the formula with the mouse lands where it is let go
+    await page.ev('''(() => { const t = SM.app.tables.find(x => x.name === 'Students') || SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t)); window.__fpr = SM.formula.edit(t, null, { name: 'dragged' }); })()''')
+    await asyncio.sleep(0.3)
+    geo = '''(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop();
+      const src = [...d.querySelectorAll('.smf-item')].find(b => b.textContent === 'height (cm)'), ta = d.querySelector('textarea.smf-expr');
+      src.scrollIntoView({ block: 'nearest' }); ta.scrollIntoView({ block: 'nearest' });
+      const a = src.getBoundingClientRect(), b = ta.getBoundingClientRect();
+      return [a.x + 24, a.y + a.height / 2, b.x + b.width - 12, b.y + 12]; })()'''
+    began = await page.drag_to(*(await page.ev(geo)))
+    await asyncio.sleep(0.5)
+    one = await page.ev('''(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop(); return { value: d.querySelector('textarea.smf-expr').value, rows: d.querySelectorAll('.smf-rows tbody tr').length, error: !!d.querySelector('.smf-error') }; })()''')
+    await page.ev('''(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop(); const ta = d.querySelector('textarea.smf-expr'); ta.value = '2 * '; ta.dispatchEvent(new Event('input')); })()''')
+    await asyncio.sleep(0.2)
+    await page.drag_to(*(await page.ev(geo)))
+    await asyncio.sleep(0.5)
+    two = await page.ev('''(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop(); const v = d.querySelector('textarea.smf-expr').value;
+      [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Cancel').click(); return v; })()''')
+    check('a drag began from the formula editor\'s columns', began, True)
+    check('dropped into the empty formula: the column\'s reference, and the preview shows its rows', (one['value'], one['rows'] > 0, one['error']), (':"height (cm)"', True, False))
+    check('dropped after text: it goes where it is let go', two, '2 * :"height (cm)"')
     check('no script errors', page.errors, [])
     await page.close()
 
