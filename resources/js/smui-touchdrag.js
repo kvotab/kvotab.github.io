@@ -60,7 +60,14 @@
     const t = ev.touches[0];
     // the browser's own long-press drag and text selection stay out of it
     src.setAttribute('draggable', 'false');
-    press = { src, x: t.clientX, y: t.clientY, lifted: false, timer: setTimeout(() => { if (press) { press.lifted = true; src.classList.add('sm-touch-ready'); if (navigator.vibrate) navigator.vibrate(8); } }, HOLD_MS) };
+    press = { src, x: t.clientX, y: t.clientY, lifted: false, timer: setTimeout(() => { if (press) { press.lifted = true; unselect(); src.classList.add('sm-touch-ready'); if (navigator.vibrate) navigator.vibrate(8); } }, HOLD_MS) };
+  }
+
+  // A text selection the browser began under the finger goes (an iPhone
+  // starts one on a long press, and its handles then take the gesture).
+  function unselect() {
+    const s = typeof getSelection === 'function' ? getSelection() : null;
+    if (s && s.rangeCount) s.removeAllRanges();
   }
 
   function cancelPress() {
@@ -80,6 +87,7 @@
     src.setAttribute('draggable', 'true');
     src.classList.remove('sm-touch-ready');
     if (start.defaultPrevented) return;
+    unselect();
     const lines = dt.getData('text/plain').split('\n').filter(Boolean);
     const label = (lines[0] || src.textContent || '').trim().slice(0, 40) + (lines.length > 1 ? ` +${lines.length - 1}` : '');
     const ghost = SM.util.el('div', { class: 'sm-touchghost', 'aria-hidden': 'true', text: label });
@@ -165,6 +173,8 @@
   document.addEventListener('touchcancel', () => { if (drag) end(drag.x, drag.y, true); cancelPress(); }, { capture: true });
   // held still until the phone offers its menu: the menu, not a drag
   document.addEventListener('contextmenu', () => { if (press) cancelPress(); }, true);
+  // no text selection while an item is held or dragged (the CSS says so too)
+  document.addEventListener('selectstart', (ev) => { if (press || drag) ev.preventDefault(); }, true);
 
   SM.touchdrag = Object.freeze({ HOLD_MS, active: () => !!drag });
 }(typeof self !== 'undefined' ? self : this));

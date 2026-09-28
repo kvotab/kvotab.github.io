@@ -680,7 +680,10 @@
 .sm-boot-progress progress { width: 100%; height: 12px; accent-color: var(--color-kvot-accent); }
 
 /* ---- drag and drop by touch (smui-touchdrag.js) ---- */
-.sm [draggable="true"], .sm-dialog [draggable="true"] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* no text selection or callout on a held item: [draggable] of any value,
+   as the attribute is "false" while a finger holds it (an iPhone selected
+   the text when the rule asked for "true", and the drag never started) */
+.sm [draggable], .sm-dialog [draggable], .sm-pick-list, .sm-role-list, .sm-gb-collist, .smf-list, .smt-cols, .sm-collist { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .sm-touch-ready { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
 .sm-touch-dragging { opacity: 0.55; }
 .sm-touchghost { position: fixed; z-index: 100; pointer-events: none; transform: translate(-50%, calc(-100% - 22px)); max-width: 70vw; padding: 5px 11px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-surface); box-shadow: 0 6px 18px var(--shadow-color); font: 12.5px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

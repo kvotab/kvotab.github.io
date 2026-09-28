@@ -1018,6 +1018,18 @@ async def main():
     await touch('touchEnd', [])
     await asyncio.sleep(0.3)
     swiped = await page.ev(f"[...({ydst}).querySelectorAll('li')].map(li => li.textContent)")
+    # held: the item cannot be selected as text, though its draggable is
+    # "false" while the finger is down (an iPhone selected the text, and
+    # the drag never began, while the CSS asked for draggable="true")
+    await touch('touchStart', [{'x': src[0], 'y': src[1]}])
+    await asyncio.sleep(0.45)
+    held = await page.ev('''(() => { const li = [...document.querySelectorAll('.sm-launch-dialog .sm-pick-list li')].find(li => li.textContent === 'yield (g)');
+      const cs = getComputedStyle(li); const e = new Event('selectstart', { bubbles: true, cancelable: true }); li.dispatchEvent(e);
+      return { attr: li.getAttribute('draggable'), select: cs.userSelect || cs.webkitUserSelect, refused: e.defaultPrevented, ready: li.classList.contains('sm-touch-ready') }; })()''')
+    await touch('touchEnd', [])
+    await asyncio.sleep(0.2)
+    check('phone: a held item shows it is ready, and cannot be selected as text', (held['attr'], held['select'], held['refused'], held['ready']), ('false', 'none', True, True))
+    check('phone: its draggable comes back when the finger lifts', await page.ev("[...document.querySelectorAll('.sm-launch-dialog .sm-pick-list li')].find(li => li.textContent === 'yield (g)').getAttribute('draggable')"), 'true')
     await drag_to(src, ydst)
     ys = await page.ev(f"[...({ydst}).querySelectorAll('li')].map(li => li.textContent)")
     check('phone: a swipe over a column scrolls, it does not drag', swiped, [])
