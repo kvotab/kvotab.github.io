@@ -285,6 +285,49 @@ async def main():
             check('  since in each panel the second file is the thin line', len(thin) > 0 and all(
                 t['width'] * 2 == width[t['name'].split(' (')[0]] for t in thin), True)
 
+            # --- Pathways and Exposed groups draw as Repositories do ----------
+            # They drew nothing at all until 2026-09-28: the index lists a
+            # group chart is drawn for (checkGroupForRadionuclides) had neither
+            # name. Their lines have styles of their own (NAMED_LINE_STYLES).
+            await page.ev(r"""(async () => {
+              document.querySelector('#treeModeContainer button[data-value=separated]').click();
+              await __wait(1500);
+              const { FS, File } = window.h5wasm;
+              const path = '/lists-' + Date.now() + '.h5';
+              const t = Float64Array.from({ length: 12 }, (_, i) => Math.pow(10, 4 * i / 11));
+              const w = new File(path, 'w');
+              const list = (name, index, members) => {
+                const g = w.create_group(name);
+                g.create_attribute('IndexLists', [index]);
+                g.create_attribute('time_dependent', 'TRUE');
+                g.create_attribute('unit', 'Sv/year');
+                members.forEach((m, k) => g.create_dataset({ name: m, data: Float64Array.from(t, v => (k + 1) * v / 1e10), shape: [12], dtype: '<f8' })
+                  .create_attribute('unit', 'Sv/year'));
+              };
+              try {
+                w.create_dataset({ name: 'time', data: t, shape: [12], dtype: '<f8' }).create_attribute('unit', 'years');
+                list('pathways', 'Pathways', ['ext', 'ing_water', 'ing_milk']);
+                list('exposed', 'Exposed groups', ['garden_plot', 'drilled_well']);
+              } finally {
+                w.close();
+              }
+              loadedFileBuffers['lists.h5'] = FS.readFile(path).slice().buffer;
+              loadedFiles['lists.h5'] = new File(path, 'r');
+              fileStates['lists.h5'] = true;
+              if (!fileOrder.includes('lists.h5')) fileOrder.push('lists.h5');
+              await updateTabs(true);
+              await __wait(1500);
+            })()""", timeout=120)
+            lines = "(document.getElementById('plotlyChart').data || []).filter(t => t.name !== 'Total').map(t => [t.name, t.line.color, t.line.dash, t.line.width])"
+            await page.ev("__click('/pathways')")
+            check('a Pathways group draws a chart of its pathways, in their colours', sorted(await page.ev(lines) or []), [
+                ['ext', 'rgb(255,211,158)', 'solid', 2], ['ing_milk', 'rgb(154,154,154)', 'solid', 2],
+                ['ing_water', 'rgb(0,169,212)', 'solid', 2]])
+            await page.ev("__click('/exposed')")
+            check('an Exposed groups group too; the drilled well is the garden plot\'s blue, thicker',
+                  sorted(await page.ev(lines) or []),
+                  [['drilled_well', 'rgb(0,191,255)', 'solid', 3], ['garden_plot', 'rgb(0,191,255)', 'solid', 2]])
+
             check('no console errors throughout', page.logs[:3], [])
         finally:
             await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',

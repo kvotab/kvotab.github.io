@@ -262,7 +262,7 @@ function constantValuesOf(dataset, nIter = null) {
  * Check if a group contains data suitable for special time-chart plotting.
  * A qualifying group must have:
  * - IndexLists attribute containing 'Radionuclides', 'Materials', 'Contaminants',
- *   'Repositories', 'NHB', or 'exposed_groups'
+ *   'Repositories', 'Pathways', 'Exposed groups' (or 'exposed_groups'), or 'NHB'
  * - time_dependent attribute set to true
  * 
  * These groups get special treatment: all child datasets are plotted together
@@ -280,7 +280,7 @@ function checkGroupForRadionuclides(file, path) {
     }
     
     const chartIndexNames = ['Radionuclides', 'Materials', 'Contaminants', 'Repositories',
-      'NHB', 'exposed_groups'];
+      'Pathways', 'Exposed groups', 'exposed_groups', 'NHB'];
     let hasRadionuclidesIndex = false;
     let isTimeDependentGroup = false;
     

@@ -213,7 +213,11 @@ union draw files: the first group's lines as its own chart draws them, the
 others' at half the width, named with the part of the path that tells them
 apart, and Show Ratio across two groups as across two files. With files
 combined it is not offered, ticked or not, since a thin line already means the
-other file there. The file is built in the page with h5wasm.
+other file there. Last, a group whose index list is Pathways, and one whose is
+Exposed groups, must each draw a chart as a Repositories group does, in their
+own colours: until 2026-09-28 neither name was among the index lists a group
+chart is drawn for, and they drew nothing. The files are built in the page
+with h5wasm.
 
     python3 test-groups.py
 

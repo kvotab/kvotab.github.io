@@ -19,13 +19,16 @@
    ========================================================================== */
 
 /**
- * Get the line style (color, dash pattern) for a radionuclide isotope.
+ * Get the line style (color, dash pattern, width) for a line by its name:
+ * a radionuclide, a repository, a pathway or an exposed group.
  * 
  * Predefined styles are provided for common isotopes in categories:
  * - Actinides (Ac, Am, Cm, Np, Pa, Pu, Th, U)
  * - Fission products (Ag, Cs, I, Pd, Se, Sm, Sn, Sr, Tc, Zr)
  * - Activation products (Be, C, Cl, Co, H, Ni, Nb, Mo)
  * - Other radionuclides (various)
+ * and for the members of the other index lists results files have:
+ * Repositories, Pathways and Exposed groups.
  * 
  * Colors are chosen for visual distinction on both light backgrounds
  * and when multiple isotopes are plotted together.
@@ -133,13 +136,34 @@ const NAMED_LINE_STYLES = {
   '2BTF': { color: 'rgb(102,153,204)', dash: 'dash' },
   'BRT': { color: 'rgb(192,80,77)', dash: 'solid' },
 
-  // Exposed groups
-  'drained_mire':{color: 'rgb(165,42,42)', dash: 'solid'},
-  'forager':{color: 'rgb(147,197,114)', dash: 'solid'},
-  'garden_plot':{color: 'rgb(0,191,255)', dash: 'solid'},
-  'infield_outland':{color: 'rgb(255,204,0)', dash: 'solid'},
-  'drilled_well':{color: 'rgb(0,0,255)', dash: 'solid'},
-  'drained_mire_irrig':{color: 'rgb(165,42,42)', dash: 'dash'},
+  // Pathways: the hues of the PSAR pathway dose charts, where each is the
+  // pale fill of a stacked area. As lines they are made strong enough to
+  // show on white and on the dark theme, and far enough apart to tell every
+  // ingestion pathway from the others; the charts' own colour is in the
+  // comment. External and Inhalation keep theirs, lighter than the rest.
+  'ext': { color: 'rgb(255,211,158)', dash: 'solid' },         // External; as in the charts
+  'inh': { color: 'rgb(180,216,229)', dash: 'solid' },         // Inhalation; charts #C8F0FF
+  'ing_water': { color: 'rgb(0,169,212)', dash: 'solid' },     // Water; charts #64FFFF
+  'ing_meat': { color: 'rgb(224,48,46)', dash: 'solid' },      // Meat; charts #FFB4B4
+  'ing_milk': { color: 'rgb(154,154,154)', dash: 'solid' },    // Milk; charts #FAFAFA
+  'ing_tuber': { color: 'rgb(142,90,42)', dash: 'solid' },     // Tuber; charts #E2C5A8
+  'ing_root': { color: 'rgb(142,90,42)', dash: 'dash' },       // not in the charts: Tuber's, dashed
+  'ing_cereal': { color: 'rgb(232,196,0)', dash: 'solid' },    // Cereal; charts #FFFFC8
+  'ing_veg': { color: 'rgb(58,158,58)', dash: 'solid' },       // Vegetable; charts #C8FFC8
+  'ing_berry': { color: 'rgb(224,64,160)', dash: 'solid' },    // Berry; charts #FF96FF
+  'ing_game': { color: 'rgb(255,140,26)', dash: 'solid' },     // Game; charts #FF9600
+  'ing_mush': { color: 'rgb(140,132,36)', dash: 'solid' },     // Mushroom; charts #C87800
+  'ing_cray': { color: 'rgb(138,92,240)', dash: 'solid' },     // Crayfish; charts #9664FF
+  'ing_fish': { color: 'rgb(42,112,216)', dash: 'solid' },     // Fish; the charts have a blue a lake, #5A87E6 the first
+
+  // Exposed groups: the colours of the PSAR dose charts, where the drilled
+  // well is the garden plot's line drawn a little thicker.
+  'drained_mire': { color: 'rgb(165,42,42)', dash: 'solid' },
+  'forager': { color: 'rgb(147,197,114)', dash: 'solid' },
+  'garden_plot': { color: 'rgb(0,191,255)', dash: 'solid' },
+  'infield_outland': { color: 'rgb(255,204,0)', dash: 'solid' },
+  'drilled_well': { color: 'rgb(0,191,255)', dash: 'solid', width: 3 },
+  'drained_mire_irrig': { color: 'rgb(165,42,42)', dash: 'dash' },
 
   // No color
   'none': { color: 'rgba(255,255,255,0)', dash: 'solid' },
