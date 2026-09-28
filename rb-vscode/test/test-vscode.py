@@ -31,8 +31,10 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -149,10 +151,12 @@ async def main():
             head = fh.read(200)
         check('Download CSV is saved by the extension', (os.path.basename(saved['path']).endswith('.csv'), head.startswith('Series,X,Y')), (True, True))
         m = vs.mark()
-        await page.ev("downloadChartDataAsExcel().then(() => true)")
+        # The chart's own button, as a reader clicks it: its handler is in rb-init.js.
+        await page.ev("EventBus.emit('toolbar:download-excel'); true")
         saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the workbook to be saved', since=m)
-        with open(saved['path'], 'rb') as fh:
-            check('  and Excel too, a real workbook', (saved['path'].endswith('.xlsx'), fh.read(2)), (True, b'PK'))
+        with zipfile.ZipFile(saved['path']) as z:
+            check('  and Excel too, from the chart\'s button: a workbook with the chart in it',
+                  (saved['path'].endswith('.xlsx'), 'xl/charts/chart1.xml' in z.namelist()), (True, True))
         m = vs.mark()
         await page.ev("exportPresets(); true")
         saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the presets to be saved', since=m)
@@ -325,6 +329,26 @@ async def main():
         check('the empty file\'s refusal was reported in its page', any('empty.h5 is empty.' in t for t in logs))
         check('nothing else was blocked by the policy or logged as an error',
               [t[:200] for t in logs if 'empty.h5 is empty.' not in t], [])
+
+        # --- the files replaced under a running extension -------------------
+        # As a .vsix of the same version installed over the running one does:
+        # the extension keeps its build, the page gets the new files.
+        subprocess.run(['node', 'build.mjs'], cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       check=True, capture_output=True)
+        m = vs.mark()
+        vs.command('open', paths=[fixture('sample-b.h5')], own=True)
+        await opened(vs, m, 'sample-b.h5 to open')
+        page = await vs.page_for('sample-b.h5')
+        bar = ''
+        for _ in range(50):
+            bar = await page.ev("(document.querySelector('.rb-vscode-stale') || {}).textContent || ''")
+            if bar:
+                break
+            await asyncio.sleep(0.2)
+        vs.read_events()
+        check('a page from files newer than the extension serving it says to reload the window',
+              'Reload Window' in (bar or ''), True)
+        check('  and tells the extension\'s log', any('reload the window' in e['text'] for e in vs.events[m:] if e['type'] == 'log'))
     finally:
         if page:
             await page.close()

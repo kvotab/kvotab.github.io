@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+* *Download Excel*: the chart is on white round and behind the plot, in the
+  light theme's colours whatever the view is in; a background overlay's
+  phases are lines along the time they span, which follow the time axis if
+  its scale or limits are changed in Excel, in every panel.
+* A view served by an older copy of the extension, still running after an
+  update of the same version was installed over it, says to reload the
+  window. Installing 0.1.0 over 0.1.0 had left "Download Excel" failing
+  (`downloadChartDataAsExcel is not defined`) until the window was reloaded.
+  Each release now has a version of its own, so VS Code keeps the old one
+  running until the reload instead of mixing the two.
+
 ## 0.1.0
 
 The first version: kvotab.se's HDF5 Browser as a VS Code editor for `.h5`,

@@ -35,6 +35,47 @@
   const codec = window.KvotVscodeCodec;
   const vscode = acquireVsCodeApi();
 
+  /* ── an extension older than these files ──────────────────────────────── */
+
+  /*
+    A .vsix of the same version installed over the one running replaces these
+    files at once, while the extension that serves the page stays the one the
+    window started with until it is reloaded. Its page, with its old list of
+    scripts, then runs the new ones, and parts went missing: "Download Excel"
+    failed with downloadChartDataAsExcel not defined (2026-09-28). build.mjs
+    writes its build in here; the extension says which build it started with.
+  */
+  const FILES = { stamp: '__RB_VSCODE_STAMP__', built: '__RB_VSCODE_BUILT__' };
+  if (!FILES.built.startsWith('__')
+      && (config.built ? config.built !== FILES.built : config.build !== FILES.stamp)) {
+    post('log', { level: 'warn', text: `the page's files are build ${FILES.stamp}, the extension serving it is ${config.build}: reload the window` });
+    const show = () => {
+      const bar = document.createElement('div');
+      bar.className = 'rb-vscode-stale';
+      bar.setAttribute('role', 'alert');
+      Object.assign(bar.style, {
+        position: 'fixed', top: '0', left: '0', right: '0', zIndex: '100000', padding: '8px 40px 8px 12px',
+        font: '13px var(--vscode-font-family, sans-serif)', color: 'var(--vscode-foreground, #ccc)',
+        background: 'var(--vscode-inputValidation-warningBackground, #5f4a0e)',
+        borderBottom: '1px solid var(--vscode-inputValidation-warningBorder, #b89500)'
+      });
+      bar.textContent = 'The HDF5 Browser was updated while this window was open. Run "Developer: Reload Window" '
+        + 'from the Command Palette to use the new version: until then parts of it may not work.';
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.textContent = '×';
+      close.title = 'Close';
+      close.setAttribute('aria-label', 'Close');
+      Object.assign(close.style, { position: 'absolute', right: '8px', top: '4px', font: 'inherit', fontSize: '16px',
+        background: 'none', border: '0', color: 'inherit', cursor: 'pointer' });
+      close.addEventListener('click', () => bar.remove());
+      bar.appendChild(close);
+      document.body.prepend(bar);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show);
+    else show();
+  }
+
   /* ── the channel ──────────────────────────────────────────────────────── */
 
   const listeners = new Map();   // type -> [fn]

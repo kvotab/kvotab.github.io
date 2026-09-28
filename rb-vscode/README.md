@@ -38,6 +38,9 @@ so the extension shows what kvotab.se shows.
   toggling back to the mode VS Code is in goes back to following VS Code.
 * The header is the file tabs alone, with *Add Files* and the toggle at its
   right end: the editor's own tab already names the file.
+* **After an update**, reload the window (*Developer: Reload Window*) when
+  VS Code asks. A view opened by the old copy, still running, says so at its
+  top rather than half working.
 
 ## How a file is read
 

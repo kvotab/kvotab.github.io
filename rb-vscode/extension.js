@@ -676,6 +676,7 @@ class Hdf5BrowserProvider {
     const config = {
       media,
       build: this.build.stamp,
+      built: this.build.built,   // early.js compares it with its own (an older extension still running after an update)
       readLazily: vscode.workspace.getConfiguration('hdf5Browser').get('readLazily', 'auto'),
       theme
     };

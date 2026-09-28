@@ -53,8 +53,10 @@ into the page; Save through VS Code; Add Files; the preset dialog; the header
 (no logo or name, every tab standing on its line, Add Files and the toggle at
 the right, measured in px); VS Code's theme, and the light/dark toggle, kept in
 `hdf5Browser.theme` and followed by every view; Open Together, same-named
-files from two folders, a file rewritten on disk; and the channel refusing
-what the page was not given. 39 checks.
+files from two folders, a file rewritten on disk; the channel refusing
+what the page was not given; and, last, the files rebuilt under the running
+extension (as a .vsix of the same version installed over it does), after
+which a new view must say to reload the window. 41 checks.
 
     python3 rb-vscode/test/test-vscode.py
 

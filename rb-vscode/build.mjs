@@ -332,15 +332,6 @@ async function main() {
 
   /* ── the extension's own page files ──────────────────────────────── */
 
-  write(path.join(MEDIA, 'rb-vscode', 'codec.js'), fs.readFileSync(path.join(HERE, 'src', 'codec.js')));
-  for (const f of ['early.js', 'late.js', 'rb-vscode.css']) {
-    write(path.join(MEDIA, 'rb-vscode', f), fs.readFileSync(path.join(HERE, 'webview', f)));
-  }
-  for (const [rel, text] of Object.entries(generated)) write(path.join(MEDIA, rel), text);
-  // The site's own licence is the extension's.
-  write(path.join(HERE, 'LICENSE'), read('LICENSE'));
-  write(path.join(MEDIA, 'index.html'), page);
-
   let commit = 'unknown';
   let dirty = false;
   try {
@@ -349,8 +340,28 @@ async function main() {
       .toString().split('\n').some(line => line.trim() && !/\s(rb-vscode\/(media|node|\.cache)\/)/.test(line));
   } catch (_) { /* not a git checkout */ }
   const built = new Date().toISOString();
+  const stamp = `${commit}${dirty ? '+' : ''} ${built.slice(0, 16).replace('T', ' ')}`;
+
+  write(path.join(MEDIA, 'rb-vscode', 'codec.js'), fs.readFileSync(path.join(HERE, 'src', 'codec.js')));
+  for (const f of ['early.js', 'late.js', 'rb-vscode.css']) {
+    let text = fs.readFileSync(path.join(HERE, 'webview', f), 'utf8');
+    // early.js says which build it is, so a page can tell when the extension
+    // that served it is an older one, still running from before an update.
+    if (f === 'early.js') {
+      for (const [key, value] of [['__RB_VSCODE_STAMP__', stamp], ['__RB_VSCODE_BUILT__', built]]) {
+        if (!text.includes(key)) fail(`webview/early.js has no ${key} to fill in`);
+        text = text.split(key).join(value);
+      }
+    }
+    write(path.join(MEDIA, 'rb-vscode', f), text);
+  }
+  for (const [rel, text] of Object.entries(generated)) write(path.join(MEDIA, rel), text);
+  // The site's own licence is the extension's.
+  write(path.join(HERE, 'LICENSE'), read('LICENSE'));
+  write(path.join(MEDIA, 'index.html'), page);
+
   write(path.join(MEDIA, 'build.json'), JSON.stringify({
-    stamp: `${commit}${dirty ? '+' : ''} ${built.slice(0, 16).replace('T', ' ')}`,
+    stamp,
     commit, dirty, built,
     h5wasmNodeDir: 'node/h5wasm',
     pluginDir: path.relative(HERE, vendorPath(pluginBase)).split(path.sep).join('/'),
