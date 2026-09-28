@@ -71,6 +71,11 @@ Chrome, as `../rb/README.md` shows, on the ports in `SMUI_HTTP_PORT` and
       --user-data-dir=/tmp/smui-chrome --disable-gpu about:blank
     python3 resources/tests/smui/test-ui-core.py        # then test-ui-<area>.py for each platform area
 
+The site is GitHub Pages without Jekyll (`.nojekyll` at the repository
+root): Jekyll leaves out files whose names start with an underscore, such
+as `resources/py/smui/__init__.py`, which the engine fetches. The local
+server serves everything, so test-ui-core.py checks that the file is there.
+
 `SMUI_SHOTS=<folder>` saves screenshots. The first run downloads Pyodide
 (about 40 MB) from jsDelivr; the tests turn the cache off for the page, so
 every run fetches the page's own files fresh.

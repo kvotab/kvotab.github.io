@@ -58,11 +58,18 @@ async function boot(base, version) {
   const manifest = await (await fetch(url('manifest.json'), { cache: 'no-cache' })).json();
   py.FS.mkdirTree('/home/pyodide/smui');
   const missing = new Set();
+  const status = {};
   await Promise.all(manifest.files.map(async (f) => {
     const r = await fetch(url(f), { cache: 'no-cache' });
-    if (!r.ok) { missing.add(f); return; }
+    if (!r.ok) { missing.add(f); status[f] = r.status; return; }
     py.FS.writeFile(`/home/pyodide/smui/${f}`, await r.text());
   }));
+  // Without these the package cannot start. (A site built by Jekyll, as
+  // GitHub Pages does without a .nojekyll file, leaves out __init__.py:
+  // Python then took smui for an empty namespace package, and the page
+  // said only "module 'smui' has no attribute 'names'".)
+  const core = ['__init__.py', 'registry.py', 'util.py', 'data.py'].filter((f) => missing.has(f));
+  if (core.length) throw new Error(`the analysis package did not load: ${core.map((f) => `resources/py/smui/${f} (HTTP ${status[f]})`).join(', ')}`);
   py.runPython("import sys\nif '/home/pyodide' not in sys.path: sys.path.insert(0, '/home/pyodide')\nimport smui");
   const failed = [];
   for (const m of manifest.modules) {

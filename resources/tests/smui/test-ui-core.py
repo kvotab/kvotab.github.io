@@ -49,6 +49,13 @@ async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
+    # The site is published as it is: GitHub Pages' default Jekyll build
+    # leaves out files whose names start with an underscore, and without
+    # resources/py/smui/__init__.py the engine stopped on every device
+    # ("module 'smui' has no attribute 'names'"). The test server here
+    # serves every file, so only this check sees it.
+    repo = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
+    check('the repository root has .nojekyll (GitHub Pages then publishes __init__.py)', os.path.isfile(os.path.join(repo, '.nojekyll')), True)
     failed = await page.ev('SM.engine.failed.filter(f => f.error !== "not written yet").map(f => f.module + ": " + f.error)')
     check('every analysis module that exists imports', failed, [])
     check('scikit-learn waits for its first use', await page.ev("(SM.engine.versions['scikit-learn'] || null)"), None)
