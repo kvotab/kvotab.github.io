@@ -25,6 +25,21 @@
 
   const WORKER = './resources/js/smui-worker.mjs';
 
+  // Loading longer than this (seconds), the page says what may be wrong.
+  // The first visit downloads about 40 MB from jsDelivr: a firewall, a proxy
+  // or a blocker can hold that without an error, and a worker that runs out
+  // of memory stops without a word, so the status alone would say
+  // "Loading…" for ever.
+  const SLOW_AFTER = 90;
+
+  // Does this browser start module workers? (One that ignores the type
+  // option would load the worker as a classic script, which cannot import.)
+  function moduleWorkers() {
+    let reads = false;
+    try { new Worker('data:text/javascript,', { get type() { reads = true; return 'module'; } }).terminate(); } catch (e) { /* reads says it all */ }
+    return reads;
+  }
+
   class Engine extends Emitter {
     constructor() {
       super();
@@ -41,6 +56,21 @@
       this.busy = 0;
       this.version = '';
       this.startedAt = 0;
+      this.elapsed = 0;          // seconds since the start, while loading
+      this.slow = false;         // loading longer than SLOW_AFTER
+      this.lastNews = 0;         // when the worker last said anything
+      this.timer = null;
+    }
+
+    /* While loading: the time it has taken, for the status line, and past
+       SLOW_AFTER the flag that makes the page explain. */
+    _tick() {
+      if (this.state !== 'loading') { clearInterval(this.timer); this.timer = null; return; }
+      const now = performance.now();
+      this.elapsed = Math.round((now - this.startedAt) / 1000);
+      this.quiet = Math.round((now - this.lastNews) / 1000);
+      if (this.elapsed >= SLOW_AFTER) this.slow = true;
+      this.emit('status', this);
     }
 
     start(version = '') {
@@ -48,8 +78,14 @@
       this.version = version;
       this.state = 'loading';
       this.text = 'Starting the Python engine…';
-      this.startedAt = performance.now();
+      this.startedAt = this.lastNews = performance.now();
+      this.elapsed = 0;
+      this.slow = false;
       this.emit('status', this);
+      if (typeof WebAssembly !== 'object') { this._fail('This browser runs no WebAssembly (or it is turned off), so the Python engine cannot run here. A current Chrome, Edge, Firefox or Safari runs it.'); return; }
+      if (!moduleWorkers()) { this._fail('This browser cannot start the Python engine: it has no module workers. A current Chrome, Edge, Firefox (114 or later) or Safari (15 or later) runs it.'); return; }
+      clearInterval(this.timer);
+      this.timer = setInterval(() => this._tick(), 1000);
       let w;
       try {
         w = new Worker(`${WORKER}?v=${encodeURIComponent(version)}`, { type: 'module' });
@@ -144,6 +180,7 @@
     }
 
     _onMessage(m) {
+      this.lastNews = performance.now();
       if (m.type === 'status') {
         this.text = m.text;
         this.emit('status', this);
@@ -186,6 +223,8 @@
     }
 
     _fail(text, traceback) {
+      clearInterval(this.timer);
+      this.timer = null;
       this.state = 'error';
       this.text = text;
       this.traceback = traceback;

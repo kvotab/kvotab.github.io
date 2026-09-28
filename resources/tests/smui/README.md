@@ -256,6 +256,12 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- The engine's start (smui-engine.js): a browser without WebAssembly or
+  module workers gets a plain message at once; while loading, the status
+  line shows the time taken, and past `SLOW_AFTER` (90 s) the home page
+  says what may hold it (a firewall, proxy or blocker on cdn.jsdelivr.net;
+  an old browser or too little memory) with Restart and What it is doing,
+  since a stalled download or a worker killed for memory sends no error.
 - Loading: smui.html's own scripts are `defer` (fetched together, run in
   their order once the page is parsed; one after another they took a
   phone's latency 48 times over), Plotly is `async` (graphs asked for before

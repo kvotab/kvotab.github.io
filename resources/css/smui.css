@@ -98,6 +98,11 @@
 .sm-engine[data-state="loading"]::before, .sm-engine[data-busy="1"]::before { background: var(--color-kvot-bright); animation: sm-pulse 1s ease-in-out infinite; }
 .sm-engine[data-state="ready"]::before { background: #3a9a4a; }
 .sm-engine[data-state="error"]::before { background: #c0392b; }
+/* loading for long (smui-engine.js SLOW_AFTER): the line asks to be clicked */
+.sm-engine[data-slow="1"] { border-color: var(--color-kvot-bright); color: var(--text-primary); }
+.sm-home-slow { margin: 14px 0; padding: 8px 12px; font-size: 12.5px; line-height: 1.5; }
+.sm-home-slow p { margin: 0 0 6px; }
+.sm-home-slow ul { margin: 0 0 8px; padding-left: 18px; }
 @keyframes sm-pulse { 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .sm-engine::before { animation: none !important; } }
 

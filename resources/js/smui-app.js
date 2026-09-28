@@ -81,6 +81,9 @@
     },
   });
 
+  // 75 -> '1 min 15 s'
+  const duration = (s) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`);
+
   // Where submenus go among the items of their menu.
   const SUBMENU_ORDER = {
     'Analyze/Predictive Modeling': 120, 'Analyze/Specialized Modeling': 130, 'Analyze/Screening': 140,
@@ -968,6 +971,7 @@
     engineDialog() {
       const e = SM.engine;
       const lines = [['State', e.state], ['Status', e.text]];
+      if (e.state === 'loading') lines.push(['Loading for', duration(e.elapsed || 0)], ['Last news from the engine', `${duration(e.quiet || 0)} ago`]);
       if (e.versions) for (const [k, v] of Object.entries(e.versions)) lines.push([k, v]);
       if (e.loadSeconds) lines.push(['Loaded in', `${e.loadSeconds.toFixed(1)} s`]);
       const body = el('div', null,
@@ -983,9 +987,15 @@
     _engineStatus() {
       const e = SM.engine;
       this.engineEl.dataset.state = e.state;
-      this.engineEl.textContent = e.state === 'ready' ? (e.loading || `Python · statsmodels ${e.versions.statsmodels}`) : e.text;
-      this.engineEl.title = e.loading || e.text;
+      // while loading, how long it has taken: a slow download is then told from a stuck one
+      const took = e.state === 'loading' && e.elapsed >= 5 ? ` (${duration(e.elapsed)})` : '';
+      this.engineEl.textContent = e.state === 'ready' ? (e.loading || `Python · statsmodels ${e.versions.statsmodels}`) : `${e.text}${took}`;
+      this.engineEl.title = e.loading || (e.slow && e.state === 'loading' ? `${e.text}${took}. Still loading: click for what it is doing.` : e.text);
       this.engineEl.dataset.loading = e.loading ? '1' : '0';
+      this.engineEl.dataset.slow = e.slow && e.state === 'loading' ? '1' : '0';
+      // past SLOW_AFTER (smui-engine.js) the home page says what may be wrong, once
+      if (e.slow && e.state === 'loading' && !this._slowShown) { this._slowShown = true; this._renderHome(); }
+      if (e.state !== 'loading') this._slowShown = false;
     }
 
     /* ---- home and help --------------------------------------------------------------- */
@@ -1034,6 +1044,24 @@
         h.append(ul);
       }
       const e = SM.engine;
+      if (e.state === 'loading' && e.slow) {
+        const restart = el('button', { type: 'button', class: 'sm-btn', text: 'Restart the engine' });
+        restart.addEventListener('click', () => { e.restart(); this._renderHome(); });
+        const what = el('button', { type: 'button', class: 'sm-btn', text: 'What it is doing' });
+        what.addEventListener('click', () => this.engineDialog());
+        // at the top, under the heading, where it is seen
+        h.insertBefore(el('div', { class: 'sm-ob-warn sm-home-slow', role: 'status' },
+          el('p', null, el('strong', { text: 'The Python engine is taking long to load. ' }), 'The first visit downloads about 40 MB from cdn.jsdelivr.net (the browser keeps it for the next time), which on a slow line takes a few minutes. If it does not end:'),
+          el('ul', null,
+            el('li', { text: 'A firewall, a company proxy or a browser extension (an ad or script blocker) may be holding the download: allow cdn.jsdelivr.net, or try another network.' }),
+            el('li', { text: 'An old browser, or one short of memory, may not run it: a current Chrome, Edge, Firefox or Safari does. Other tabs closed free memory.' })),
+          el('div', { class: 'sm-homebtns' }, restart, what)), h.children[1] || null);
+      }
+      if (e.state === 'error') {
+        h.insertBefore(el('div', { class: 'sm-ob-warn sm-home-slow', role: 'status' },
+          el('p', null, el('strong', { text: 'The Python engine did not start. ' }), e.text || ''),
+          el('p', { text: 'Its files come from cdn.jsdelivr.net: a firewall, a company proxy or a blocker may stop them, and an old browser may lack WebAssembly or module workers. Python Engine (in the Help menu, or the status line at the top right) shows the details and can restart it.' })), h.children[1] || null);
+      }
       h.append(el('p', { class: 'sm-ob-note sm-home-engine', text: e.state === 'ready' ? `Python engine ready: statsmodels ${e.versions.statsmodels}, scipy ${e.versions.scipy}, pandas ${e.versions.pandas}, numpy ${e.versions.numpy} on Python ${e.versions.python} (Pyodide ${e.versions.pyodide}), loaded in ${e.loadSeconds.toFixed(1)} s.` : `Python engine: ${e.text || 'not started'}` }));
     }
 

@@ -965,6 +965,45 @@ async def main():
     check('no script errors', page.errors, [])
     await page.close()
 
+    # ---- an engine that goes on loading says what may be wrong (a colleague's
+    # computer never got past the packages): its time on the status line and,
+    # past 90 s, a note on the home page with Restart and What it is doing.
+    # The download is slowed to a crawl once the page is up, and the start
+    # moved 100 s back.
+    page = await open_page(f'{BASE}/smui.html')
+    for _ in range(200):
+        await asyncio.sleep(0.1)
+        if await page.ev('!!(window.SM && SM.app && SM.app.started)'):
+            break
+    await page.call('Network.emulateNetworkConditions', {'offline': False, 'latency': 50, 'downloadThroughput': 30e3, 'uploadThroughput': 30e3}, session=page.sid)
+    await asyncio.sleep(1)
+    r = await page.ev('''(async () => {
+      const e = SM.engine; const btn = document.querySelector('.sm-engine');
+      if (e.state !== 'loading') return { skipped: e.state };
+      e.startedAt -= 100000;
+      await new Promise(res => setTimeout(res, 1500));
+      const out = { line: btn.textContent, flag: btn.dataset.slow, hint: document.querySelector('.sm-home-slow')?.textContent || '',
+        buttons: [...document.querySelectorAll('.sm-home-slow button')].map(b => b.textContent) };
+      [...document.querySelectorAll('.sm-home-slow button')].find(b => b.textContent === 'What it is doing').click();
+      await new Promise(res => setTimeout(res, 200));
+      const d = [...document.querySelectorAll('.sm-dialog')].pop();
+      out.rows = d ? [...d.querySelectorAll('tr')].map(tr => tr.children[0].textContent) : [];
+      if (d) d.querySelector('.sm-dialog-x').click();
+      [...document.querySelectorAll('.sm-home-slow button')].find(b => b.textContent === 'Restart the engine').click();
+      await new Promise(res => setTimeout(res, 300));
+      out.after = { slow: e.slow, state: e.state, hint: !!document.querySelector('.sm-home-slow'), flag: btn.dataset.slow };
+      return out;
+    })()''')
+    if isinstance(r, dict) and r.get('skipped'):
+        print(f"   (the engine was {r['skipped']} already: the slow-loading checks are skipped)")
+    else:
+        check('a long load shows its time on the status line', '(1 min ' in r['line'], True)
+        check('... is flagged there', r['flag'], '1')
+        check('... and the home page says what may be wrong', ('cdn.jsdelivr.net' in r['hint'], 'firewall' in r['hint'], r['buttons']), (True, True, ['Restart the engine', 'What it is doing']))
+        check('What it is doing: how long it has loaded, and when it last said anything', ('Loading for' in r['rows'], 'Last news from the engine' in r['rows']), (True, True))
+        check('Restart starts it again, and the note goes', (r['after']['slow'], r['after']['state'], r['after']['hint'], r['after']['flag']), (False, 'loading', False, '0'))
+    await page.close()
+
 
 asyncio.run(main())
 sys.exit(check.done())
