@@ -29,3 +29,5 @@ resources/tests/simplefunctions/local/
 
 # SKB's code test case for resources/tests/erosion_corrosion (make-local-fixtures.py); not ours to publish
 resources/tests/erosion_corrosion/local/
+# JMPReader.jl's test tables for resources/tests/smui/test_jmp.py (fetch-jmp-fixtures.py); not ours
+resources/tests/smui/local/

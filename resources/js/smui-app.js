@@ -197,7 +197,7 @@
       this.panels = new SM.panels.Panels(this.side, this);
       this._wireHandle();
 
-      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt', multiple: true, hidden: true });
+      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt,.jmp', multiple: true, hidden: true });
       this.fileInput.addEventListener('change', () => { const f = [...this.fileInput.files]; this.fileInput.value = ''; this.openFiles(f); });
       h.append(this.fileInput);
       this._wireDrop();
@@ -386,7 +386,7 @@
     async openFiles(files) {
       for (const f of files) {
         try {
-          if (/\.(dta|sas7bdat|xpt)$/i.test(f.name)) {
+          if (/\.(dta|sas7bdat|xpt|jmp)$/i.test(f.name)) {
             SM.ui.toast(`Reading ${f.name} in the Python engine…`);
             const r = await SM.engine.callBytes('datasets.read_file', { name: f.name }, await f.arrayBuffer());
             const t = new SM.Table({ name: r.name, source: `from ${f.name}`, notes: r.note || '', columns: r.columns.map((c) => ({ ...c, values: c.values.map((v) => (v == null && c.dataType === 'numeric' ? NaN : v)) })) });
@@ -1018,7 +1018,7 @@
         el('h2', { text: 'Statistics in the browser, with statsmodels' }),
         el('p', { text: 'Open a table, choose an analysis from the Analyze or Graph menu, cast columns into roles, and read the report. Each report is live: select points and the rows light up everywhere; exclude rows and redo; open the red triangles for more. Under every result is the Python that computes it.' }),
         el('div', { class: 'sm-homebtns' }, openBtn, dsBtn, newBtn),
-        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt) and this page\'s JSON tables open by drop or by File > Open. Nothing is uploaded: the data stay in this browser.' }),
+        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt), JMP (.jmp) and this page\'s JSON tables open by drop or by File > Open. Nothing is uploaded: the data stay in this browser.' }),
         el('h3', { text: 'Examples (simulated for this page)' }));
       const exBox = el('div', { class: 'sm-examples' });
       for (const [k, v] of Object.entries(SM.io.EXAMPLES)) {

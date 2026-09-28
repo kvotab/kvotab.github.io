@@ -446,6 +446,26 @@ async def main():
         }})()''')
         check('a Stata file opens as a table', (r['added'], r['name'], r['cols']), (1, 'demo', [['a', 'continuous'], ['g', 'nominal']]))
         check('its missing value stays missing', r['a'], [1.5, 2.5, None])
+    # a JMP data table (JMPReader.jl's example1, fetched by fetch-jmp-fixtures.py
+    # into local/jmp/; skipped without it): its columns, dates as dates
+    jmp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'local', 'jmp', 'example1.jmp')
+    if os.path.isfile(jmp_path):
+        with open(jmp_path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode()
+        r = await page.ev(f'''(async () => {{
+          const bytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
+          const n = SM.app.tables.length;
+          await SM.app.openFiles([new File([bytes], 'example1.jmp')]);
+          const t = SM.app.tables[SM.app.tables.length - 1];
+          return {{ added: SM.app.tables.length - n, name: t.name, rows: t.nrows, cols: t.columns.map(c => [c.name, c.dataType, c.modelingType]),
+            date: SM.grid.cellText(t.col('date'), t.col('date').values[0]), utf8: t.col('char utf8').values[1], notes: t.notes }};
+        }})()''')
+        check('a JMP table opens as a table', (r['added'], r['name'], r['rows']), (1, 'example1', 4))
+        check('... its columns, numbers continuous and text nominal', r['cols'][:3], [['ints', 'numeric', 'continuous'], ['floats', 'numeric', 'continuous'], ['charconstwidth', 'character', 'nominal']])
+        check('... a date shown as a date, UTF-8 text as it is', (r['date'], r['utf8']), ('2024-01-13', '🚴💨'))
+        check('... and its notes say the modeling types were guessed', 'Modeling types' in (r['notes'] or ''), True)
+    else:
+        print('   (local/jmp/example1.jmp not fetched: the JMP table check is skipped)')
     r = await page.ev('''(async () => {
       const n = SM.app.tables.length;
       SM.app.datasetsDialog();
@@ -644,9 +664,10 @@ async def main():
     check('hovering the disabled item again closes the other submenu', c, 1)
 
     # ---- the tab strip has no scroll bar of its own
-    r = await page.ev('''(() => { const s = document.querySelector('.sm-tabs'); return { h: s.scrollHeight - s.clientHeight, bar: s.offsetHeight - s.clientHeight - parseFloat(getComputedStyle(s).borderTopWidth) - parseFloat(getComputedStyle(s).borderBottomWidth) }; })()''')
+    # (the slider once seen on its right; with many tabs it may scroll sideways)
+    r = await page.ev('''(() => { const s = document.querySelector('.sm-tabs'), cs = getComputedStyle(s); return { h: s.scrollHeight - s.clientHeight, bar: s.offsetWidth - s.clientWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth) }; })()''')
     check('the tab strip does not scroll vertically', r['h'], 0)
-    check('and shows no scroll bar', r['bar'], 0)
+    check('and shows no vertical scroll bar', r['bar'], 0)
 
     # ---- the (i) of a launch dialog explains its roles and options; the
     # platform's own Roles section gives way to the generated one; a form's

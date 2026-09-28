@@ -141,7 +141,7 @@
 
       h('h2', 'Getting started', 'start'),
       ul([
-        'Open a table: drop a CSV, tab-separated or Excel file on the page, use **File > Open**, pick one of the simulated examples, or load a statsmodels dataset (**File > statsmodels Datasets**).',
+        'Open a table: drop a CSV, tab-separated, Excel, Stata, SAS or JMP file on the page, use **File > Open**, pick one of the simulated examples, or load a statsmodels dataset (**File > statsmodels Datasets**).',
         'Check the modeling types in the Columns panel: a number that is really a category (a subgroup, a code) should be ordinal or nominal.',
         'Choose an analysis from **Analyze** or **Graph**, put columns into the roles and press OK. The report opens in its own tab.',
         'Open the red triangles (▼ in red) for more: tests, fits, saved columns. Click the grey triangles to close outlines you do not need.',
@@ -157,6 +157,7 @@
         'ctrl/⌘+C copies the selected rows, or the cell, as tab-separated text; ctrl/⌘+V pastes at the cursor, adding rows as needed.',
         'Right click a heading for the column menu (Column Info, modeling type, sort), a row number for the row states.',
         'File > Save Table keeps everything (types, formats, value order, formulas, row states) in a JSON file this page opens again. File > Save Project saves all tables with their reports.',
+        'A JMP data table (.jmp) brings its columns and values, dates included. JMP\'s file format is not published, and what a reader has not found in it does not come: the modeling types (numbers come in continuous and text nominal, as from a CSV file: change them in the Columns panel), value orders and labels, formulas (their values come), column properties and scripts. The reader is a port of JMPReader.jl (MIT licence, Jaakko Ruohio).',
       ]),
       h('h3', 'Modeling types', 'types'),
       el('table', null, el('tbody', null,

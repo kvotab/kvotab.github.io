@@ -7,6 +7,7 @@
     "data.py",
     "models.py",
     "datasets.py",
+    "jmp.py",
     "distribution.py",
     "fit_y_by_x.py",
     "fit_model.py",

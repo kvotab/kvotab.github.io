@@ -66,10 +66,14 @@ def load(name):
 
 @api('datasets.read_file')
 def read_file(name, data):
-    """A Stata (.dta) or SAS (.sas7bdat, .xpt) file, read by pandas. Stata's
-    value labels become nominal levels in their coded order; dates stay dates."""
+    """A Stata (.dta) or SAS (.sas7bdat, .xpt) file, read by pandas, or a
+    JMP data table (.jmp, jmp.py). Stata's value labels become nominal
+    levels in their coded order; dates stay dates."""
     import io
     lower = name.lower()
+    if lower.endswith('.jmp'):
+        from . import jmp
+        return jmp.read(name, data)
     buf = io.BytesIO(data)
     notes = ''
     if lower.endswith('.dta'):
@@ -90,7 +94,7 @@ def read_file(name, data):
         df = pd.read_sas(buf, format='xport', encoding='latin-1')
         labels = {}
     else:
-        raise ValueError(f'not a Stata or SAS file: {name}')
+        raise ValueError(f'not a Stata, SAS or JMP file: {name}')
     df = df.reset_index(drop=True)
     cols = _columns(df)
     for c in cols:
