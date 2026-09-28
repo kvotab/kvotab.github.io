@@ -152,7 +152,7 @@
       scaleValue: o0.geeScaleValue ?? 1, nbAlpha: o0.nbAlpha ?? 1, varPower: o0.varPower ?? 1.5, tau: o0.qrTau ?? 0.5,
     };
     const msg = (s) => api.message(s);
-    const list = el('ul', { class: 'sm-role-list sm-fm-effects', role: 'listbox', 'aria-label': 'Model effects', 'aria-multiselectable': 'true', tabindex: '0', dataset: { hint: 'Select columns, then Add, Cross, Nest or a macro' } });
+    const list = el('ul', { class: 'sm-role-list sm-fm-effects', role: 'listbox', 'aria-label': 'Model effects', 'aria-multiselectable': 'true', tabindex: '0', dataset: { hint: 'Select columns, then Add, Cross, Nest or a macro; or drag columns here' } });
     const renderList = () => {
       list.replaceChildren();
       list.classList.toggle('is-empty', !effects.length);
@@ -180,6 +180,8 @@
       sel.clear();
       renderList();
     };
+    // columns dragged here from the list on the left go in as main effects, as Add puts them
+    SM.launch.acceptColumns(list, t, (cols) => { msg(''); add(cols.map((c) => ({ cols: [c], nest: [], random: false }))); });
     const picked = () => { const c = api.selectedColumns(); if (!c.length) msg('Select columns in the list on the left first.'); return c; };
     const btn = (label, fn, extra = {}) => { const b = el('button', { type: 'button', class: 'sm-btn', text: label, ...extra }); b.addEventListener('click', fn); return b; };
     const removeSel = () => { effects = effects.filter((_, i) => !sel.has(i)); sel.clear(); renderList(); };
@@ -318,7 +320,7 @@
       if (on(lScale)) out.push(['Scale', 'The scale φ of the variance: Estimated, Pearson χ²/(N − p), or Fixed at the value beside it (1 by default). A change of distribution picks Fixed for the binomial, Poisson and negative binomial, Estimated for the others.']);
       if (on(lTau)) out.push(['Quantile τ', 'The quantile of Y to fit, strictly between 0 and 1: 0.5 is the median, 0.9 the upper tenth. Model Launch in the report changes it.']);
       out.push(
-        ['Model effects', 'The list of the model\'s effects: click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
+        ['Model effects', 'The list of the model\'s effects: columns dragged onto it from the list on the left go in as main effects, as Add puts them; click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
         ['Add', 'Each selected column (in the list on the left) as a main effect.'],
         ['Cross', 'The selected columns crossed into one interaction, A*B; each selected effect of the list crossed with the selected columns; or two or more selected effects crossed together. A continuous column crossed with itself is its square. Continuous columns in crossings are centred at their means, as JMP\'s Center Polynomials.'],
         ['Nest', 'Nests the selected effects within the selected columns: B[A], the levels of B within each level of A.'],

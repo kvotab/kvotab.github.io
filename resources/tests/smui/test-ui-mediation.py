@@ -519,6 +519,20 @@ async def imputation(page):
     check('Remove takes the selected effect out', eff['removed'], ['age', 'bmi', 'cholesterol', 'activity'])
     check('the model follows the response: least squares', eff['model'], 'ols')
     check('the burn-in and skip boxes show statsmodels\' defaults for MICE', eff['placeholders'], ['10', '3'])
+    # a column dragged onto the effects with the mouse goes in as Add puts it (here: once only)
+    xy = await page.ev('''(() => {
+      const dlg = document.querySelector('.sm-launch-dialog');
+      const src = [...dlg.querySelectorAll('.sm-pick-list li')].find(li => li.textContent === 'age'), dst = dlg.querySelector('.sm-mi-effects');
+      src.scrollIntoView({ block: 'nearest' }); dst.scrollIntoView({ block: 'nearest' });
+      const a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
+      return [a.x + 20, a.y + a.height / 2, b.x + b.width / 2, b.y + b.height / 2];
+    })()''')
+    began = await page.drag_to(*xy)
+    await asyncio.sleep(0.2)
+    r = await page.ev('''(() => { const dlg = document.querySelector('.sm-launch-dialog');
+      [...dlg.querySelectorAll('.sm-pick-list li')].forEach(li => li.classList.remove('is-selected'));
+      return { effects: [...dlg.querySelectorAll('.sm-mi-effects li')].map(li => li.textContent), msg: dlg.querySelector('.sm-launch-msg').textContent }; })()''')
+    check('a column dragged onto the analysis model effects reaches them', (began, r['effects'], r['msg']), (True, ['age', 'bmi', 'cholesterol', 'activity'], 'Those effects are in the model already.'))
     await shot(page, 'mi-00-launch.png')
     r = await page.ev(OK_DIALOG, timeout=300)
     TOP = 'Multiple Imputation: sbp'

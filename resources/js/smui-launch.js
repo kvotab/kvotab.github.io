@@ -427,5 +427,29 @@
     return dlg;
   }
 
-  SM.launch = Object.freeze({ open, roleAccepts, MIME, last });
+  /* Let an element take columns dragged from a launch dialog's column
+     list, as the role lists do (a platform's own list, such as Fit Model's
+     Construct Model Effects): onDrop(columns) gets them in the table's
+     order. */
+  function acceptColumns(target, table, onDrop) {
+    target.addEventListener('dragover', (ev) => {
+      if (![...ev.dataTransfer.types].includes(MIME)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+      target.classList.add('drop');
+    });
+    target.addEventListener('dragleave', (ev) => { if (!target.contains(ev.relatedTarget)) target.classList.remove('drop'); });
+    target.addEventListener('drop', (ev) => {
+      target.classList.remove('drop');
+      const data = ev.dataTransfer.getData(MIME);
+      if (!data) return;
+      ev.preventDefault();
+      let ids;
+      try { ids = JSON.parse(data); } catch (e) { return; }
+      const cols = (Array.isArray(ids) ? ids : []).map((id) => table.col(id)).filter(Boolean).sort((a, b) => table.colIndex(a) - table.colIndex(b));
+      if (cols.length) onDrop(cols);
+    });
+  }
+
+  SM.launch = Object.freeze({ open, roleAccepts, MIME, last, acceptColumns });
 }(typeof self !== 'undefined' ? self : this));

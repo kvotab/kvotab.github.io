@@ -694,6 +694,41 @@ async def main():
     await repeated(page)
     # ==== help for every input: the launch dialog, the red-triangle forms, the controls in the reports ====
     await help_inputs(page)
+    # columns dragged onto Construct Model Effects, with the mouse: main effects, as Add makes them
+    r = await page.ev('''(async () => {
+      SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Plants') || SM.app.tables[0]));
+      SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
+      __fm.pick('yield (g)'); __fm.role('Y'); await __fm.tick();
+      __fm.pick('fertilizer', 'water');
+      return 'open';
+    })()''')
+    check('the Fit Model dialog for the drags', r, 'open')
+    xy = await page.ev('''(() => {
+      const d = __fm.dlg(); const src = [...d.querySelectorAll('.sm-pick-list li')].find(li => li.textContent === 'water');
+      const dst = d.querySelector('.sm-fm-effects'); src.scrollIntoView({ block: 'nearest' }); dst.scrollIntoView({ block: 'nearest' });
+      const a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
+      return [a.x + 20, a.y + a.height / 2, b.x + b.width / 2, b.y + b.height / 2];
+    })()''')
+    began = await page.drag_to(*xy)
+    await asyncio.sleep(0.2)
+    first = await page.ev('__fm.effects()')
+    xy = await page.ev('''(() => {
+      const d = __fm.dlg(); const src = [...d.querySelectorAll('.sm-pick-list li')].find(li => li.textContent === 'light (h)');
+      const dst = d.querySelector('.sm-fm-effects'); const a = src.getBoundingClientRect(), b = dst.getBoundingClientRect();
+      return [a.x + 20, a.y + a.height / 2, b.x + b.width / 2, b.y + b.height / 2];
+    })()''')
+    await page.drag_to(*xy)     # an unselected column: the press selects it, and it goes alone
+    await asyncio.sleep(0.2)
+    second = await page.ev('__fm.effects()')
+    await page.drag_to(*xy)     # again: it is in the model already
+    await asyncio.sleep(0.2)
+    third = await page.ev('({ effects: __fm.effects(), msg: __fm.dlg().querySelector(".sm-launch-msg").textContent })')
+    await page.ev("__fm.btn('Cancel')")
+    check('a drag began from the column list', began, True)
+    check('two selected columns dropped on Construct Model Effects: two main effects', first, ['fertilizer', 'water'])
+    check('an unselected column dragged there goes in alone', second, ['fertilizer', 'water', 'light (h)'])
+    check('... and once only', (third['effects'], third['msg']), (['fertilizer', 'water', 'light (h)'], 'Those effects are in the model already.'))
+
     # the model effects list: a click, shift for a sweep, ctrl/⌘ for one more, Remove
     r = await page.ev('''(async () => {
       SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Plants') || SM.app.tables[0]));

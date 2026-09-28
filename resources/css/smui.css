@@ -469,6 +469,10 @@
   position: relative;
 }
 .sm-dialog.narrow { width: min(460px, 100%); }
+/* a click beside a dialog: it stays, and says so */
+.sm-dialog.is-attention { animation: sm-attention 0.45s ease-out; }
+@keyframes sm-attention { 0%, 100% { box-shadow: 0 18px 50px var(--shadow-color); } 35% { box-shadow: 0 0 0 3px var(--color-kvot-accent), 0 18px 50px var(--shadow-color); } }
+@media (prefers-reduced-motion: reduce) { .sm-dialog.is-attention { animation-duration: 0.01s; } }
 .sm-dialog-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border-color); }
 .sm-dialog-head h2 { flex: 1 1 auto; margin: 0; font-size: 14px; font-weight: 600; }
 .sm-dialog-head .sm-dialog-x { border: 0; background: none; font-size: 18px; color: var(--text-secondary); cursor: pointer; width: 26px; height: 26px; }

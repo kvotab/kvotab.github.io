@@ -76,6 +76,10 @@ root): Jekyll leaves out files whose names start with an underscore, such
 as `resources/py/smui/__init__.py`, which the engine fetches. The local
 server serves everything, so test-ui-core.py checks that the file is there.
 
+`page.drag_to(x0, y0, x1, y1)` in cdp.py drags with the mouse as a user
+does (the page's own dragstart sets the data; Chrome hands it over by drag
+interception).
+
 `SMUI_SHOTS=<folder>` saves screenshots. The first run downloads Pyodide
 (about 40 MB) from jsDelivr; the tests turn the cache off for the page, so
 every run fetches the page's own files fresh.
@@ -252,6 +256,11 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- A platform's own list that takes columns (Fit Model's Construct Model
+  Effects, Multiple Imputation's effects) calls `SM.launch.acceptColumns(el,
+  table, onDrop)`, so that columns dragged from the dialog's column list land
+  there as they do on a role. Dialogs close only by their buttons, the × and
+  Escape: a click beside one makes it flash.
 - Lists whose items can be selected together (role lists, effects lists,
   a filter's levels) take clicks through `SM.util.listClick(ev, id, ids,
   sel, mark)`: a click selects one (again on the only one: none), ctrl/⌘
@@ -356,5 +365,6 @@ buttons left out, a graph wider than the paper scaled to fit); documents in
 the light theme from the dark one, an SVG diagram with its paint; a box
 selection in Graph Builder whose edges are then moved (real mouse events)
 selects once each time, and a selection made elsewhere takes the kept box
-away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels;
+away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels; a click
+beside a dialog leaves it open;
 the dark theme and phone width.

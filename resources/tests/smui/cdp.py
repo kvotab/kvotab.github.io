@@ -33,6 +33,7 @@ class Page:
         self.tid = None
         self.errors = []
         self.console = []
+        self.drags = []       # the drags Chrome intercepts (Input.dragIntercepted), for drag_to()
 
     async def call(self, method, params=None, session=None, timeout=120):
         self.n += 1
@@ -50,7 +51,9 @@ class Page:
             async for raw in self.bws:
                 r = json.loads(raw)
                 m = r.get('method')
-                if m == 'Runtime.exceptionThrown':
+                if m == 'Input.dragIntercepted':
+                    self.drags.append(r['params'])
+                elif m == 'Runtime.exceptionThrown':
                     d = r['params']['exceptionDetails']
                     self.errors.append(str(d.get('exception', {}).get('description') or d.get('text', ''))[:600])
                 elif m == 'Runtime.consoleAPICalled' and r['params'].get('type') in ('error', 'warning'):
@@ -81,6 +84,31 @@ class Page:
         await self.mouse('mouseMoved', x, y)
         await self.mouse('mousePressed', x, y, modifiers=modifiers)
         await self.mouse('mouseReleased', x, y, modifiers=modifiers)
+
+    async def drag_to(self, x0, y0, x1, y1):
+        """A drag with the mouse, as a user makes it: pressed at (x0, y0), the
+        page's own dragstart sets the data (Chrome hands it over through drag
+        interception), and it is dropped at (x1, y1). True when a drag began."""
+        await self.call('Input.setInterceptDrags', {'enabled': True}, session=self.sid)
+        self.drags.clear()
+        try:
+            await self.mouse('mouseMoved', x0, y0)
+            await self.mouse('mousePressed', x0, y0)
+            for k in range(1, 8):
+                await self.mouse('mouseMoved', x0 + 6 * k, y0 + 3 * k)
+                await asyncio.sleep(0.05)
+                if self.drags:
+                    break
+            if not self.drags:
+                await self.mouse('mouseReleased', x0, y0)
+                return False
+            data = self.drags[-1]['data']
+            for kind in ('dragEnter', 'dragOver', 'drop'):
+                await self.call('Input.dispatchDragEvent', {'type': kind, 'x': x1, 'y': y1, 'data': data}, session=self.sid)
+            await self.mouse('mouseReleased', x1, y1)
+            return True
+        finally:
+            await self.call('Input.setInterceptDrags', {'enabled': False}, session=self.sid)
 
     async def key(self, key, code=None, text=None, modifiers=0):
         base = {'key': key, 'code': code or key, 'modifiers': modifiers}

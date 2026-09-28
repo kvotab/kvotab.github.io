@@ -359,7 +359,7 @@
     const st = { model: o0.model || null };
     const msg = (s) => api.message(s);
     const list = el('ul', { class: 'sm-role-list sm-mi-effects', role: 'listbox', 'aria-label': 'Analysis model effects', 'aria-multiselectable': 'true', tabindex: '0',
-      dataset: { hint: 'Select columns on the left, then Add or Cross' } });
+      dataset: { hint: 'Select columns on the left, then Add or Cross; or drag them here' } });
     const renderList = () => {
       list.replaceChildren();
       list.classList.toggle('is-empty', !effects.length);
@@ -385,6 +385,8 @@
       sel.clear();
       renderList();
     };
+    // columns dragged here from the list on the left go in as main effects, as Add puts them
+    SM.launch.acceptColumns(list, t, (cols) => { msg(''); add(cols.map((x) => [x])); });
     const btn = (label, fn) => { const b = el('button', { type: 'button', class: 'sm-btn', text: label }); b.addEventListener('click', () => { msg(''); fn(); }); return b; };
     const bAdd = btn('Add', () => { const c = api.selectedColumns(); if (!c.length) { msg('Select columns in the list on the left first.'); return; } add(c.map((x) => [x])); });
     const bCross = btn('Cross', () => {
@@ -427,7 +429,7 @@
         ['Add', 'Adds the columns selected in the list on the left to the analysis model, each as a main effect.'],
         ['Cross', 'Adds an interaction: the crossing of two or more columns selected on the left; with effects selected in the model list as well, each of them crossed with each selected column; with only effects selected, their crossing.'],
         ['Remove', 'Takes the effects selected in the model list out (a double click removes one too).'],
-        ['Effects', 'The analysis model\'s effects: click to select one, ctrl/⌘ for one more, shift for a range. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
+        ['Effects', 'The analysis model\'s effects: columns dragged onto it go in as main effects, as Add puts them; click to select one, ctrl/⌘ for one more, shift for a range. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
         ['Model', 'The analysis model: Least Squares (the default for a continuous response), Logistic or Probit for a two-level one (Logistic by default for a categorical response), Poisson for counts.'],
         ['Method', 'MICE (chained equations, the default): each column in turn regressed on the others and its missing values drawn by predictive mean matching, so every imputed value is one that occurs; for continuous, two-level and ordinal columns. Bayesian Gaussian: a Gibbs sampler of a multivariate normal; numbers only, no categorical column with missing values.'],
         ['Imputations m', 'How many completed tables are made, analysed and pooled: 2 to 200, 20 by default. More make the between-imputation variance, and so the pooled standard errors, steadier; the time grows with m.'],

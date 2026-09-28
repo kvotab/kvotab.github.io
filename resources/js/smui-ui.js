@@ -154,7 +154,16 @@
     }
     if (!buttons.length) foot.remove();
     x.addEventListener('click', () => api.close(null));
-    back.addEventListener('mousedown', (ev) => { if (ev.target === back) api.close(null); });
+    // A click on the dimmed page closes nothing (it lost the work in the
+    // dialog too easily): the dialog flashes, as a modal window does.
+    back.addEventListener('mousedown', (ev) => {
+      if (ev.target !== back) return;
+      ev.preventDefault();
+      box.classList.remove('is-attention');
+      void box.offsetWidth;          // restart the flash
+      box.classList.add('is-attention');
+    });
+    box.addEventListener('animationend', () => box.classList.remove('is-attention'));
     box.addEventListener('keydown', (ev) => {
       if (ev.key === 'Escape' && !ev.defaultPrevented) { ev.preventDefault(); ev.stopPropagation(); api.close(null); }
       if (ev.key === 'Enter' && !ev.defaultPrevented && ev.target.tagName !== 'TEXTAREA' && ev.target.tagName !== 'BUTTON') {

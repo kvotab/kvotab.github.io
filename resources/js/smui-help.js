@@ -169,7 +169,7 @@
 
       h('h2', 'Launching an analysis', 'launch'),
       ul([
-        'The dialog lists the columns with their modeling types. Select some and press a role\'s button, drag them onto a role, or double click a column for the first role that takes it.',
+        'The dialog lists the columns with their modeling types. Select some and press a role\'s button, drag them onto a role (or onto Fit Model\'s Construct Model Effects, as main effects), or double click a column for the first role that takes it.',
         '**Y** is the response, **X** the factor or regressor; **Weight** and **Freq** are numeric; **By** repeats the analysis for each level.',
         'In the column list and the role lists, click to select one, ctrl/⌘ to add or take away one more, shift to select the range from the one clicked last. Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
         'Right click a column in the dialog to change its modeling type there.',
@@ -201,7 +201,7 @@
         ['Grid', 'arrows move; Enter or F2 edits; typing replaces the cell; Tab moves right; Delete clears; ctrl/⌘+C and V copy and paste; ctrl/⌘+Z undo, shift for redo; ctrl/⌘+A selects all rows'],
         ['Menus', 'arrows move and open submenus; Enter chooses; Escape closes'],
         ['Tabs', 'left and right arrows, Home and End'],
-        ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog'],
+        ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog. A click beside a dialog leaves it open.'],
       ].map((r) => el('tr', null, el('td', null, el('strong', { text: r[0] })), el('td', { text: r[1] }))))),
 
       h('h2', 'The platforms', 'platforms'),

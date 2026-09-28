@@ -575,6 +575,21 @@ async def main():
     check('the × is a button, not a handle', r['still'], True)
     check('the title bar shows the move cursor', r['grip'], 'move')
 
+    # ---- a click on the dimmed page beside a dialog leaves it open (it lost
+    # the work in it too easily); the dialog flashes instead
+    await page.ev("SM.app.launch('distribution')")
+    await asyncio.sleep(0.3)
+    xy = await page.ev('''(() => { const d = document.querySelector('.sm-launch-dialog').getBoundingClientRect();
+      const x = Math.max(8, d.left / 2), y = innerHeight - 12; const hit = document.elementFromPoint(x, y);
+      return { x, y, back: !!(hit && hit.classList.contains('sm-modal-back')) }; })()''')
+    await page.click(xy['x'], xy['y'])
+    await asyncio.sleep(0.1)
+    r = await page.ev('''(() => { const d = document.querySelector('.sm-launch-dialog'); const out = { open: !!d, flash: !!(d && d.classList.contains('is-attention')) };
+      if (d) d.querySelector('.sm-dialog-x').click(); return out; })()''')
+    check('the test clicks the dimmed page', xy['back'], True)
+    check('a click beside a dialog leaves it open, and it flashes', (r['open'], r['flash']), (True, True))
+    check('its × still closes it', await page.ev("!document.querySelector('.sm-launch-dialog')"), True)
+
     # ---- a disabled item's submenu does not open; an enabled one's does
     # (the mouse moved by the browser, as a user's)
     r = await page.ev('''(() => {
