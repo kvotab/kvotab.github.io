@@ -75,7 +75,10 @@ Explorer it passes to the extension. The test drops a file, then more (once
 the stand-in editor was closed too soon and every later drop reached
 nothing), two at once, the same file again, with Shift both kinds and a
 name that is not HDF5, and checks that a preview, Open Together and the
-setting off still open a browser of their own. 20 checks, on 1.100 and 1.135.
+setting off still open a browser of their own; last, three files dropped
+where no browser is open, which must make one browser with the three in it
+(VS Code opens a tab each and loads only the first), and a drop after it.
+25 checks, on 1.100 and 1.135.
 
     python3 rb-vscode/test/test-drop.py
 

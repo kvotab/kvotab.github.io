@@ -14,7 +14,8 @@
    * rereading a file when it changes on disk, and Open Together, which puts
      several files in one view for rb's intersect and union;
    * a file dropped on a view going into it as another file, as Add Files
-     would add it, not into a view of its own (browserShowingBehind).
+     would add it, not into a view of its own (browserShowingBehind), and
+     several files dropped at once going into one view (gatherInto).
 
    The page may ask only about files this view was given, and is given
    tokens, never paths: what it is shown comes from a file that may have been
@@ -49,6 +50,8 @@ const DROP_MAX_FILES = 64;
 const ADD_INSTEAD_WAIT_MS = 2000;
 /** and how long it is left showing before it is closed (Hdf5BrowserProvider.addInstead). */
 const STAND_IN_MS = 300;
+/** HDF5 files VS Code opens into a group this close together were opened together: a drop of several. */
+const TOGETHER_MS = 2000;
 
 /* ── the reader ───────────────────────────────────────────────────────── */
 
@@ -516,6 +519,8 @@ class Hdf5BrowserProvider {
     this.views = new Map();          // document URI -> View
     this.pendingExtras = new Map();  // document URI -> URIs to add once its view exists
     this.opening = new Set();        // document URIs the extension is opening a view of its own for
+    this.tabOpenedAt = new Map();    // 'column|uri' -> when VS Code opened a tab of an HDF5 file there
+    this.gatherers = new Map();      // column -> { view, until }: a browser taking the tabs opened with its file
     this.template = fs.readFileSync(path.join(__dirname, 'media', 'index.html'), 'utf8');
     this.testHooks = null;
   }
@@ -555,11 +560,80 @@ class Hdf5BrowserProvider {
     return best ? best.view : null;
   }
 
+  /*
+    Several files dropped at once, or opened at once, VS Code opens as a tab
+    each, and loads only the one it shows: the others wait, as tabs, to be
+    clicked. So the browser the file it shows goes into takes the others too,
+    the HDF5 tabs opened into its group within a moment and not yet loaded,
+    and closes their tabs. Tabs VS Code restored from the last session were
+    never seen being opened (the extension starts when VS Code has started:
+    activationEvents onStartupFinished) and are left alone, as is a tab of a
+    file with a browser of its own, a preview, and anything the extension
+    opens itself.
+  */
+
+  /** VS Code opened tabs: note the HDF5 ones, and hand them to a browser gathering in their group. */
+  tabsOpened(e) {
+    const now = Date.now();
+    for (const tab of e.opened) {
+      if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.viewType !== VIEW_TYPE) continue;
+      const column = tab.group.viewColumn;
+      this.tabOpenedAt.set(`${column}|${tab.input.uri.toString()}`, now);
+      const g = this.gatherers.get(column);
+      if (g && now <= g.until && !g.view.disposed && this.mayTake(tab)) this.take(g.view, [tab]);
+    }
+    for (const [k, t] of this.tabOpenedAt) if (now - t > 10 * TOGETHER_MS) this.tabOpenedAt.delete(k);
+  }
+
+  /** A tab a browser may take: an HDF5 file's, not loaded (the one shown loads itself), not a preview, not a browser of its own. */
+  mayTake(tab, exceptUri) {
+    if (!(tab.input instanceof vscode.TabInputCustom) || tab.input.viewType !== VIEW_TYPE) return false;
+    const key = tab.input.uri.toString();
+    if (exceptUri && key === exceptUri.toString()) return false;
+    return !tab.isActive && !tab.isPreview && !this.views.has(key) && !this.opening.has(key);
+  }
+
+  /** From now until a moment on, `view` takes the HDF5 tabs opened into its group with the file at `uri`. */
+  gatherInto(view, column, uri) {
+    if (!vscode.workspace.getConfiguration('hdf5Browser').get('addToOpenBrowser', true)) return;
+    const now = Date.now();
+    const group = vscode.window.tabGroups.all.find(g => g.viewColumn === column);
+    const already = group ? group.tabs.filter((tab) => {
+      if (!this.mayTake(tab, uri)) return false;
+      const at = this.tabOpenedAt.get(`${column}|${tab.input.uri.toString()}`);
+      return at !== undefined && now - at <= TOGETHER_MS;
+    }) : [];
+    this.take(view, already);
+    this.gatherers.set(column, { view, until: now + TOGETHER_MS });
+  }
+
+  /** `view` takes these tabs' files; the tabs are closed a moment later (see addInstead for why not at once). */
+  take(view, tabs) {
+    if (!tabs.length) return;
+    const uris = tabs.map(t => t.input.uri);
+    const column = tabs[0].group.viewColumn;
+    view.add(uris, 'added');
+    this.log.info(`${uris.map(u => path.posix.basename(u.path)).join(', ')} opened with ${path.posix.basename(view.documentUri.path)}; added to its HDF5 Browser`);
+    this.event({ type: 'gathered', into: view.documentUri.fsPath, files: uris.map(u => u.fsPath) });
+    setTimeout(async () => {
+      for (const uri of uris) {
+        const tab = tabOf(uri, column);
+        if (!tab || tab.group.viewColumn !== column || this.views.has(uri.toString())) continue;
+        try {
+          await vscode.window.tabGroups.close(tab, true);
+        } catch (_) {
+          // closed already, by hand
+        }
+      }
+    }, STAND_IN_MS);
+  }
+
   /** The file goes into `view`; the editor VS Code opened for it says so, and is closed. */
   addInstead(view, uri, panel) {
     this.log.info(`${uri.fsPath || uri.toString()} was opened where an HDF5 Browser was showing; added to it`);
     view.add([uri], 'added');
     this.event({ type: 'addedInstead', into: view.documentUri.fsPath, file: uri.fsPath });
+    this.gatherInto(view, panel.viewColumn, uri);
     panel.webview.html = standInHtml(path.posix.basename(uri.path));
     /*
       Closed a moment after it shows, not at once. Closed on the tick it
@@ -613,9 +687,12 @@ class Hdf5BrowserProvider {
     panel.onDidDispose(() => {
       view.dispose();
       if (this.views.get(key) === view) this.views.delete(key);
+      for (const [column, g] of this.gatherers) if (g.view === view) this.gatherers.delete(column);
     });
     await view.start();
     view.add([document.uri], 'open');
+    const tab = tabOf(document.uri, panel.viewColumn);
+    if (!this.opening.has(key) && !(tab && tab.isPreview)) this.gatherInto(view, panel.viewColumn, document.uri);
     const extra = this.pendingExtras.get(key);
     if (extra) {
       this.pendingExtras.delete(key);
@@ -740,6 +817,7 @@ function activate(context) {
       supportsMultipleEditorsPerDocument: false
     }),
     vscode.commands.registerCommand('kvotab.hdf5Browser.openTogether', (uri, uris) => provider.openTogether(uri, uris)),
+    vscode.window.tabGroups.onDidChangeTabs(e => provider.tabsOpened(e)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('hdf5Browser.theme')) provider.themeChanged();
     }),

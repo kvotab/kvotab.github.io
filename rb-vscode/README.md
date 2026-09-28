@@ -25,8 +25,9 @@ so the extension shows what kvotab.se shows.
   goes for any HDF5 file opened into a group while a browser shows there: a
   double-click in the Explorer adds it to that browser too. A single click (a
   preview) and *Open Together* open a browser of their own, and so does a
-  drop on the edge of a group, which VS Code opens beside it. For a browser
-  of its own every time, turn `hdf5Browser.addToOpenBrowser` off.
+  drop on the edge of a group, which VS Code opens beside it. Several files
+  dropped at once go into one browser, also where none is open yet. For a
+  browser of its own every time, turn `hdf5Browser.addToOpenBrowser` off.
 * **Save**: *Download CSV*, *Download Excel*, the chart's right-click menu and
   *Export* in the preset manager open VS Code's Save dialog, starting in the
   folder of the file.

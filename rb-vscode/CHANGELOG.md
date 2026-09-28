@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+* Several files dropped at once go into one browser, as its file tabs, also
+  when no browser was open: VS Code opens a tab each and loads only the one
+  it shows, and that browser now takes the others. The extension starts
+  when VS Code has started (`onStartupFinished`), so it sees them opened.
+
 ## 0.1.2
 
 * The extension's icon is kvotab's logo, the site's favicon (as rb.html's

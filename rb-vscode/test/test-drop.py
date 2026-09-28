@@ -135,7 +135,7 @@ async def tabs_become(vs, want, seconds=10):
 async def main():
     work = tempfile.mkdtemp(prefix='rbv-drop-')
     copies = {}
-    for name in ('b1', 'b2', 'b3', 'b4', 'b5', 'b6'):
+    for name in ('b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'm1', 'm2', 'm3', 'm4'):
         copies[name] = os.path.join(work, f'{name}.h5')
         shutil.copy(fixture('sample-b.h5'), copies[name])
     notes = os.path.join(work, 'notes.txt')
@@ -238,6 +238,27 @@ async def main():
             vs.wait_event(lambda e: e['type'] == 'status' and e.get('kind') == 'opened'
                           and any(f['name'] == 'lzf.h5' for f in e.get('opened', [])), 120, 'Open Together', since=m)
             check('Open Together opens a browser of its own, whatever is showing', len(vs.command('views')), 2)
+
+            # --- several files dropped where no browser is open ------------
+            # VS Code opens a tab each and loads only the first; the browser
+            # it gets takes the others, which were waiting to be clicked.
+            vs.command('closeAll')
+            await tabs_become(vs, [])
+            area = await wb.ev("(() => { const r = document.querySelector('.part.editor').getBoundingClientRect();"
+                               " return { x: r.x, y: r.y, w: r.width, h: r.height }; })()")
+            m = vs.mark()
+            await wb.drag(area, files(copies['m1'], copies['m2'], copies['m3']))
+            vs.wait_event(lambda e: e['type'] == 'gathered', 60, 'the other files to be taken', since=m)
+            page = await vs.page_for('m1.h5')
+            check('three files dropped where no browser is open go into one browser',
+                  await files_in(page, ['m1.h5', 'm2.h5', 'm3.h5']), ['m1.h5', 'm2.h5', 'm3.h5'])
+            check('  whose tab is the only one left', await tabs_become(vs, ['m1.h5']), ['m1.h5'])
+            check('  one view', len(vs.command('views')), 1)
+            box = await wb.webview_box()
+            await wb.drag(box, files(copies['m4']))
+            check('  and the next drop goes into it too', await files_in(page, ['m1.h5', 'm2.h5', 'm3.h5', 'm4.h5']),
+                  ['m1.h5', 'm2.h5', 'm3.h5', 'm4.h5'])
+            check('  with no other tab left', await tabs_become(vs, ['m1.h5']), ['m1.h5'])
 
         check('nothing was logged as an error', [e['text'][:200] for e in vs.events if e['type'] == 'log'], [])
     finally:
