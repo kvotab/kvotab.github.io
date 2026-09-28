@@ -20,7 +20,7 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 
 | Suite | Checks | Against |
 |---|---|---|
-| `test_distribution.py` | 158 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor |
+| `test_distribution.py` | 163 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out |
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
 | `test_jmp.py` | 41 | JMPReader.jl's own test tables and the values its runtests.jl expects (the tables are not ours: `fetch-jmp-fixtures.py` puts them in `local/jmp/`, git-ignored; skipped without them) |
@@ -56,10 +56,21 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | `test_predictive.py` | 102 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
 | `test_mi.py` | 120 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
 | `test_copula.py` | 251 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
+| `test_charts.py` | 1405 | every graph's matplotlib code (Distribution, Fit Y by X, Fit Model) run with Agg on the exported CSV, its figure against the report's numbers: points, lines, bands, bars, boxes, texts and titles |
+| `test_notebook.py` | 41 | the notebook's Python: outputs in the order made (streams joined, the last value, a trailing `;`), rich displays (pandas HTML, a statsmodels summary, Plotly dicts, `display()`), figures at `plt.show()` and at the end (SVG; PNG at twice the size for many points), tracebacks from the cell, namespaces, `reset()`, top-level await, `table()`, `table_names()` and `new_table()` |
+| `test_jsl.py` | 437 | JSL to Python: the JSL Syntax Reference's rules (precedence, names, escapes, dates, matrices, scopes, error recovery); every translation compiled, read as Python 3.10, and run on a CSV of a small table of our own against numpy and plain Python; the page's platform specs; 400 damaged scripts |
 | `test-formula.js` | 326 | the parser, missing values, every function, no escape to JS |
 
 Every suite that shows Python code also runs that code on a CSV export of
-its table and checks that it gives the report's numbers.
+its table and checks that it gives the report's numbers. The export is the
+whole table: code for a report that leaves rows out (excluded, filtered, a
+By group) says which (`df = df.drop(index=[...])   # the rows the report
+leaves out`), and a graph's code (matplotlib, ending in `plt.show()`) sits
+right under its graph.
+
+Browser suites, and their checks on 2026-09-28: core 187, distribution 168,
+fitybyx 600, fitmodel 796, notebook 45, jsl 24 and the other platforms'
+(4,837 in 32 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -103,9 +114,34 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-help.js` | the Help tab and the (i) topics of the frame |
 | `resources/js/smui-profiler.js` | `SM.profiler`: the Prediction Profiler of any model a backend exposes |
 | `resources/js/smui-bootstrap.js` | `SM.bootstrap`: Bootstrap from any report table's right-click menu, and the Bootstrap report |
+| `resources/js/smui-editor.js` | `SM.editor`: the code editor (a textarea over a coloured `<pre>`; Python and JSL) |
+| `resources/js/smui-notebook.js` | `SM.notebook`: the notebook tab, `exec()` and `renderOutputs()` (also the reports' code blocks' Run), .ipynb and .py files |
+| `resources/js/smui-jsl.js` | `SM.jsl`: JSL to Python, the page's side (each analysis's code from a report run out of sight) |
+| `resources/py/smui/notebook.py`, `nb_backend.py` | the notebook's Python: `run_cell`, outputs, `table()`, `new_table()`; matplotlib's backend for it |
+| `resources/py/smui/jsl.py`, `jsl_python.py` | JSL to Python: the lexer and parser (a Pratt parser, with recovery), and the translator with the platforms' specs (`jsl.convert`) |
 | `resources/js/smui-predict.js` | `SM.predict`: the predictive platforms' roles, options, Measures of Fit, confusion, ROC, lift, Column Contributions, Save Columns |
 | `resources/js/smui-p-*.js`, `resources/css/smui-*.css` | the platforms, one file and one stylesheet per menu area |
 | `resources/py/smui/` | the backend: `registry` (dispatch), `util` (JSON, report tables), `data` (tables as DataFrames), `models` (linear models as JMP reports them), `predictive` (the predictive platforms' data, sets and measures), `profile` (the profiler of any model, desirability, Sobol importance), `bootstrap` (bootstrap confidence limits), one module per platform area; `manifest.json` lists what the worker loads |
+
+## The notebook and the code blocks
+
+A cell runs in the engine (`smui/notebook.py`, `run_cell`), in a namespace
+of its own for each notebook; the worker loads the Pyodide packages its
+imports name first (`loadPackagesFromImports`), and the engine writes each
+open table's CSV, as File > Export CSV writes it, under the name the
+reports' code reads (`<name>.csv`, from `util.code_head`), when that
+version of the table is not there yet. matplotlib draws with
+`smui/nb_backend.py` (Agg; `plt.show()` hands the open figures to the
+cell's outputs). A report's code block runs the same way with a fresh
+namespace each time, so a platform's code must run on its own: the
+standard head (`util.code_head`, or `SM.report.codeHead` for code the page
+writes), everything computed from `df`, and for a graph's block matplotlib
+ending in `plt.show()`. HTML from an output, a cell's or a file's, goes
+through `kvotSanitizeHtml`; images are `<img>`.
+
+`smui.tables` is the Tables platform's module: the notebook's list of
+tables is `smui.table_names()`. A user-facing name in the package must not
+be a module's name, or the module, imported at start, takes its place.
 
 ## Writing a platform
 
@@ -370,6 +406,12 @@ its place, its rows by their text columns.
 
 `test-ui-bootstrap.py` (22): the right-click item, the dialog, progress and Stop, samples against the backend on the same rows, a two-column table with BCa, a By group, the report left untouched, a project, dark theme, phone width.
 
+
+`test-ui-notebook.py` (45): Python > New Notebook; code typed with real keys runs on Shift+Enter (the table is the CSV file the reports' code reads) and Ctrl+Enter; `smui.table()` with the modeling types as dtypes, a date column as datetimes, a table opened later there as a file too; `smui.new_table()` into the page; a report's code run in a cell gives the report's mean; figures as SVG and, with many points, PNG; an HTML output sanitised (no script, image or javascript: link); tracebacks; Run All stops at an error; Markdown text cells (only http(s) links); top-level await; `%matplotlib`, `%time` and `%pip`; Restart; .ipynb and .py both ways, an .ipynb from elsewhere opened without running and sanitised; a project with its notebooks; a report's code block edited, run with Shift+Enter (its output under it, the report's layout kept), Reset and Close; Notebook and Save > Open Script in Notebook; the editor's keys (Enter's indent, Tab and Shift+Tab, Ctrl+/, Backspace in an indent, Undo), its colours; closing a notebook with changes; dark theme and phone width.
+
+`test-ui-jsl.py` (24): Python > JSL to Python; the page's own sample converts (the table read as the reports' code reads it, a formula column as pandas, each analysis as its report's code on the script's table, the imports once at the top); what did not convert as a comment and a note with its line, a click on which shows the line; Open in Notebook runs clean, graphs too, and gives the report's mean; Open the Reports Here opens the four analyses with their options (Fit Line, Means/Anova, t Test); a table that is not open, a column the script makes, a syntax error (the lines after it still convert), a Where() and its mean; a dropped .jsl file; Ctrl+Enter; phone width.
+
+JSL to Python: `jsl.convert` returns the script with a marker line where each analysis goes and a step for it (the page's platform, roles and options by column name, the script's table variable, a Where as a Python mask). The page maps the names to ids (`SM.specs.remap`), runs the report out of sight, and puts its code at the marker: imports to the top, `df = pd.read_csv(...)` as `df = <table variable>` (or `.loc[<where>]`), and without the lines that drop the rows the page's report left out (the script picks its own rows). The order of JSL's operators is the Scripting Guide's Table 5.3; the Syntax Reference has none.
 
 `test-ui-core.py`: the frame loads without errors, the engine starts, every
 (i) has a topic and every Help link a target, the examples, the launch

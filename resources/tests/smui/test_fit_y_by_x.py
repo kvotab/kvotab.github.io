@@ -1392,7 +1392,8 @@ res_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', freq='f', block='b
 ns = code_ns(cols_es, res_['code'], 'the ANOVA effect sizes with Freq and a Block')
 if 'ss_x' in ns:
     check.near('its code with Freq and a Block: partial η²', float(ns['ss_x'] / (ns['ss_x'] + ns['ss_e'])), es_rows(res_)['Partial η² (eta²)']['estimate'], rel=1e-9)
-cols_two = {'y': np.concatenate([a_, b_]), 'g': ['A'] * 18 + ['B'] * 23}
+# the whole table, as the page exports it: the code leaves out the rows the report does not use (C's)
+cols_two = {'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15}
 for kind_ in ('pooled', 'welch'):
     res_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind=kind_, rows=two_rows)
     ns = code_ns(cols_two, res_['code'], f'the {kind_} effect size')

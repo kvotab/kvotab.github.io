@@ -959,7 +959,277 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
                   'print(et)']
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
+    out['plot_code'] = _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out)
     return out
+
+
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code
+# ---------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from a
+# CSV export of the table (the notebook runs it): the model fitted as the
+# report's code fits it, the light theme's colours, the graph's size at 100
+# pixels an inch.
+BASE, BAR, FIT, MEAN, MUTED, TEXT = '#2f6690', '#8fa9c2', '#c0392b', '#2f6690', '#786b5d', '#352921'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+PLT = 'import matplotlib.pyplot as plt'
+J = json.dumps
+
+
+def _fig(w, h, extra=''):
+    return f'fig, ax = plt.subplots(figsize=({w / 100:g}, {h / 100:g}), layout="constrained"{extra})'
+
+
+def _p_text(p):
+    """The page's P text of a p-value, as a code expression: <.0001 or =0.1234."""
+    return f'("<.0001" if {p} < 0.0001 else f"={{{p}:.4f}}")'
+
+
+def _row_plot(head, x, y, n, xlabel, ylabel, title, w=380, h=300, lines=(), zero=False, xlabel_code=False):
+    """The rows as points (x and y code expressions) with reference lines, as
+    the page's rowPlot draws them; xlabel_code: xlabel is an expression."""
+    c = list(head) + [_fig(w, h), f'ax.scatter({x}, {y}, s={8 if n > 500 else 18}, color="{BASE}")', *lines]
+    if zero:
+        c.append(f'ax.axhline(0, color="{MEAN}", linewidth=0.7)')
+    c += [f'ax.set_xlabel({xlabel if xlabel_code else J(xlabel)})', f'ax.set_ylabel({J(ylabel)})', f'ax.set_title({J(title)})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _positive_weights(weight, freq):
+    """The line that keeps the rows with a positive Weight and Freq, as the fit takes them."""
+    wexpr = ' * '.join(f'd[{J(v)}]' for v in (weight, freq) if v)
+    return [f'd = d[{wexpr} > 0]   # the rows with a positive weight'] if wexpr else []
+
+
+def _ls_fit_code(d, table, table_name, rows, weight, freq, imports=()):
+    """The lines that fit the least squares model as the report's code does."""
+    lines = _code_frame(d, table, table_name, rows, [weight, freq], extra_imports=[PLT, *imports]) + _positive_weights(weight, freq)
+    wexpr = ' * '.join(f'd[{J(v)}]' for v in (weight, freq) if v)
+    fit = f'smf.wls({J(_code_formula(d))}, data=d, weights={wexpr})' if wexpr else f'smf.ols({J(_code_formula(d))}, data=d)'
+    if freq:
+        lines += [f'mod = {fit}', f'mod.df_resid = d[{J(freq)}].sum() - np.linalg.matrix_rank(mod.exog)   # Freq: JMP\'s error degrees of freedom', 'fit = mod.fit()']
+    else:
+        lines.append(f'fit = {fit}.fit()   # C(x, Sum): effect coding, as JMP; crossings and powers centred at the means')
+    lines.append(f'w = ({wexpr}).to_numpy()' if wexpr else 'w = np.ones(len(d))')
+    return lines
+
+
+def _studentized_code():
+    """The externally studentized residuals as the report makes them (the
+    hats of the weighted design, Freq's error degrees of freedom)."""
+    return ['h = sm.OLS(fit.model.wendog, fit.model.wexog).fit().get_influence().hat_matrix_diag   # the hats',
+            'ri = fit.wresid / np.sqrt(fit.scale * (1 - h)); dfe = fit.df_resid',
+            'ext = ri * np.sqrt((dfe - 1) / (dfe - ri ** 2))   # externally studentized: the row left out']
+
+
+def _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out):
+    """The graphs of a Standard Least Squares report as code: Regression Plot,
+    Actual by Predicted, the residual plots, the leverage plots, the influence
+    and component plus residual plots, the sorted estimates, the least squares
+    means plots."""
+    d, res = m['d'], m['res']
+    y = spec['y'][0]
+    n = len(d.df)
+    fitc = lambda imports=(): _ls_fit_code(d, table, table_name, rows, weight, freq, imports)   # noqa: E731
+    codes = {}
+    # ---- Actual by Predicted, with the mean and Sall's confidence curves
+    wh = out['whole']
+    c = fitc(['from scipy import stats']) + [f'pred, actual = fit.fittedvalues.to_numpy(), d[{J(y)}].to_numpy()',
+                                             'lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())',
+                                             'm = np.average(actual, weights=w)   # the mean of Y']
+    lines = [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)   # the line of fit',
+             f'ax.plot([lo, hi], [m, m], color="{MEAN}", linewidth=0.9, linestyle=":")   # the mean']
+    if wh.get('curve'):
+        c += ['X = fit.model.exog; xbar = np.average(X, axis=0, weights=w)',
+              'hbar = xbar @ np.linalg.pinv((X * w[:, None]).T @ X) @ xbar',
+              f'F, fcrit, t = fit.fvalue, stats.f.ppf({1 - alpha!r}, fit.df_model, fit.df_resid), stats.t.ppf({1 - alpha / 2!r}, fit.df_resid)',
+              'pad = 0.04 * (pred.max() - pred.min() or 1.0); gx = np.linspace(pred.min() - pad, pred.max() + pad, 60)',
+              f'c0 = {"m" if "Intercept" in res.params.index else "0.0"}; z = gx - c0',
+              'half = np.sqrt(t ** 2 * fit.scale * hbar + (fcrit / F) * z ** 2)   # Sall\'s confidence curves (1990)']
+        lines.append(f'ax.plot(gx, c0 + z - half, gx, c0 + z + half, color="{FIT}", linewidth=0.7, linestyle="--")')
+    if wh.get('p') is not None:   # the whole model's test, RSquare and RMSE in the title, as the page has them
+        xl = J(f'{y} Predicted P') + ' + ' + _p_text('fit.f_pvalue') + ' + f" RSq={fit.rsquared:.2f} RMSE={np.sqrt(fit.scale):.5g}"'
+        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, xl, f'{y} Actual', f'{y} actual by predicted', 400, 320, lines, xlabel_code=True)
+    else:
+        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, f'{y} Predicted', f'{y} Actual', f'{y} actual by predicted', 400, 320, lines)
+    # ---- the residual plots
+    codes['residpred'] = _row_plot(fitc(), 'fit.fittedvalues', 'fit.resid', n, f'{y} Predicted', f'{y} Residual', f'{y} residual by predicted', zero=True)
+    codes['residrow'] = _row_plot(fitc(), 'd.index + 1', 'fit.resid', n, 'Row Number', f'{y} Residual', f'{y} residual by row', 460, zero=True)
+    lim = out['diag'].get('limits') or {}
+    lines = [f'ax.axhline(0, color="{MEAN}", linewidth=0.7)']
+    c = fitc(['from scipy import stats']) + _studentized_code()
+    if lim.get('individual') is not None:
+        c.append(f'ind = stats.t.ppf({1 - alpha / 2!r}, dfe - 1); bonf = stats.t.ppf(1 - {alpha!r} / (2 * len(d)), dfe - 1)   # the individual and the Bonferroni limits')
+        lines += [f'ax.axhline(ind, color="{MUTED}", linewidth=0.7, linestyle="--"); ax.axhline(-ind, color="{MUTED}", linewidth=0.7, linestyle="--")',
+                  f'ax.axhline(bonf, color="{FIT}", linewidth=0.7); ax.axhline(-bonf, color="{FIT}", linewidth=0.7)']
+    codes['student'] = _row_plot(c, 'd.index + 1', 'ext', n, 'Row Number', 'Externally Studentized Residuals', f'{y} studentized residuals', 460, 300, lines)
+    c = fitc(['from scipy import stats']) + ['e = fit.resid.to_numpy(); o = np.argsort(e, kind="stable")',
+                                             'z = stats.norm.ppf(stats.rankdata(e) / (len(e) + 1))[o]   # each residual\'s normal quantile, Φ⁻¹(r/(n+1))',
+                                             'm, s = e.mean(), e.std(ddof=1)']
+    codes['residqq'] = _row_plot(c, 'z', 'e[o]', n, 'Normal Quantile', f'{y} Residual', f'{y} residual normal quantile plot', 360, 300,
+                                 [f'ax.plot([z.min(), z.max()], [m + s * z.min(), m + s * z.max()], color="{FIT}", linewidth=0.9)'])
+    # ---- the leverage plots (Sall 1990): each effect's residuals with and without it
+    lev = {}
+    names = list(res.params.index)
+    has_int = 'Intercept' in names
+    for i, e in enumerate(d.effects):
+        cols = [names.index(tn) for tn in e.get('terms', []) if tn in names]
+        L = next((q for q in out.get('leverage') or [] if q['effect'] == e['label']), None)
+        if not cols or L is None:
+            continue
+        terms = list(res.model.data.design_info.term_names)
+        pos = terms.index(e['patsy']) if e.get('patsy') in terms else None   # the effect's line in the Wald tests of the terms
+        c = fitc(['from scipy import stats'])
+        c += ['X, yv = fit.model.exog, fit.model.endog; sw = np.sqrt(w)',
+              'r = yv - X @ fit.params.to_numpy()', f'c0 = {"np.average(yv, weights=w)" if has_int else "0.0"}   # the mean line',
+              f'cols = {cols}   # the columns of {e["label"]} in the design',
+              'keep = [j for j in range(X.shape[1]) if j not in cols]',
+              'b0 = np.linalg.lstsq(X[:, keep] * sw[:, None], yv * sw, rcond=None)[0] if keep else np.zeros(0)',
+              'r0 = yv - X[:, keep] @ b0   # the residuals without the effect',
+              'xs, ys = r0 - r + c0, r0 + c0']
+        if L.get('slope') is not None:
+            c += [f'slope, xbar = fit.params.iloc[{cols[0]}], d[{J(e["names"][0])}].mean()   # in the units of {e["names"][0]}', 'xs = (xs - c0) / slope + xbar']
+        c += ['pad = 0.04 * (xs.max() - xs.min() or 1.0); x0, x1 = xs.min() - pad, xs.max() + pad']
+        c.append('ly = [c0 + (x0 - xbar) * slope, c0 + (x1 - xbar) * slope]' if L.get('slope') is not None else 'ly = [x0, x1]')
+        wt = f'fit.wald_test_terms(skip_single=False, scalar=True).table.iloc[{pos}]' if pos is not None else None
+        lines = [f'ax.plot([x0, x1], ly, color="{FIT}", linewidth=1)', f'ax.plot([x0, x1], [c0, c0], color="{MEAN}", linewidth=0.9, linestyle=":")']
+        if wt:
+            c.append(f'test = {wt}   # the effect\'s F test')
+            c.append('F, p, q = test["statistic"], test["pvalue"], test["df_constraint"]')
+        if L.get('curve') and wt:
+            c += ['xb = np.average(X, axis=0, weights=w); hbar = xb @ np.linalg.pinv((X * w[:, None]).T @ X) @ xb',
+                  f'fcrit, t = stats.f.ppf({1 - alpha!r}, q, fit.df_resid), stats.t.ppf({1 - alpha / 2!r}, fit.df_resid)',
+                  'gx = np.linspace(x0, x1, 60)', 'z = (gx - xbar) * slope' if L.get('slope') is not None else 'z = gx - c0',
+                  'half = np.sqrt(t ** 2 * fit.scale * hbar + (fcrit / F) * z ** 2)   # Sall\'s confidence curves']
+            lines.append(f'ax.plot(gx, c0 + z - half, gx, c0 + z + half, color="{FIT}", linewidth=0.7, linestyle="--")')
+        if wt:
+            xl = J(f'{e["label"]} Leverage, P') + ' + ' + _p_text('p') + (' + " (usual F test)"' if out.get('robust') else '')
+            lev[e['label']] = _row_plot(c, 'xs', 'ys', n, xl, f'{y} Leverage Residuals', f'{e["label"]} leverage plot', 340, 290, lines, xlabel_code=True)
+        else:
+            lev[e['label']] = _row_plot(c, 'xs', 'ys', n, f'{e["label"]} Leverage', f'{y} Leverage Residuals', f'{e["label"]} leverage plot', 340, 290, lines)
+    codes['leverage'] = lev
+    # ---- the Regression Plot: one continuous factor, at most one categorical
+    facs = out['factors']
+    cont = [f for f in facs if f['type'] == 'continuous']
+    cats = [f for f in facs if f['type'] == 'categorical']
+    if len(cont) == 1 and len(cats) <= 1:
+        xf, gf = cont[0], (cats[0] if cats else None)
+        rob = m.get('rob') if m.get('rres') is not None else None
+        imports = ['from scipy import stats', 'import patsy'] if rob else []
+        c = fitc(imports) + [f'gx = np.linspace(d[{J(xf["name"])}].min(), d[{J(xf["name"])}].max(), 81)']
+        if gf is None:
+            c.append(_fig(400, 320))
+            c.append(f'ax.scatter(d[{J(xf["name"])}], d[{J(y)}], s={8 if n > 500 else 18}, color="{BASE}")')
+            if rob:
+                c += [_robust_code(rob)[0],
+                      f'Xg = np.asarray(patsy.build_design_matrices([fit.model.data.design_info], pd.DataFrame({{{J(xf["name"])}: gx}}))[0])',
+                      'fy = Xg @ fit.params.to_numpy(); se = np.sqrt(np.einsum("ij,jk,ik->i", Xg, rob.cov_params(), Xg))',
+                      f't = stats.t.ppf({1 - alpha / 2!r}, getattr(rob, "df_resid_inference", None) or rob.df_resid)   # the robust interval',
+                      'lower, upper = fy - t * se, fy + t * se']
+            else:
+                c += [f'band = fit.get_prediction(pd.DataFrame({{{J(xf["name"])}: gx}})).summary_frame(alpha={alpha!r})',
+                      'fy, lower, upper = band["mean"], band["mean_ci_lower"], band["mean_ci_upper"]']
+            c += [f'ax.plot(gx, lower, gx, upper, color="{FIT}", linewidth=0.7, linestyle=":")   # the confidence band of the mean',
+                  f'ax.plot(gx, fy, color="{FIT}", linewidth=1.3)']
+        else:
+            lv = gf['levels']
+            c += [f'levels = [{", ".join(_pylit(v) for v in lv)}]; names = {J(gf["labels"])}   # {gf["name"]}, in the table\'s order',
+                  f'colors = {J(PALETTE)}', _fig(440, 320),
+                  f'ax.scatter(d[{J(xf["name"])}], d[{J(y)}], s={8 if n > 500 else 18}, c=[colors[levels.index(v) % len(colors)] for v in d[{J(gf["name"])}]])',
+                  'for i, v in enumerate(levels):',
+                  f'    ax.plot(gx, fit.predict(pd.DataFrame({{{J(xf["name"])}: gx, {J(gf["name"])}: [v] * len(gx)}})), color=colors[i % len(colors)], linewidth=1.3, label=names[i])',
+                  f'ax.legend(title={J(gf["name"])}, fontsize=8, frameon=False)']
+        c += [f'ax.set_xlabel({J(xf["name"])})', f'ax.set_ylabel({J(y)})', f'ax.set_title({J(y + " regression plot")})', 'plt.show()']
+        codes['regression'] = '\n'.join(c)
+    # ---- the Influence Plot: the studentized residual against the leverage, the bubble's area Cook's D
+    p = int(res.model.rank)
+    c = fitc() + _studentized_code() + [f'cooks = np.nan_to_num(ri ** 2 * h / ({p} * (1 - h)))   # Cook\'s D',
+                                        f'h2, h3 = 2 * {p} / len(d), 3 * {p} / len(d)   # 2p/n and 3p/n',
+                                        _fig(460, 340),
+                                        f'ax.scatter(h, ext, s=np.maximum(599 * cooks / max(cooks.max(), 1e-12), 6.35), color="{BASE}", alpha=0.8, edgecolors="white", linewidths=0.4)   # the area of a bubble: its Cook\'s D',
+                                        f'ax.axhline(0, color="{MEAN}", linewidth=0.7)',
+                                        f'ax.axhline(2, color="{MUTED}", linewidth=0.7, linestyle="--"); ax.axhline(-2, color="{MUTED}", linewidth=0.7, linestyle="--")',
+                                        f'ax.axvline(h2, color="{MUTED}", linewidth=0.7, linestyle=":"); ax.axvline(h3, color="{MUTED}", linewidth=0.7, linestyle="--")',
+                                        'xl, xh = min(h.min(), h3 * 1.05), max(h.max(), h3 * 1.05)',
+                                        'ax.set_xlim(max(0, xl - 0.02 * (xh - xl)), xh + 0.04 * (xh - xl))',
+                                        'ax.set_xlabel("Leverage (hat)")', 'ax.set_ylabel("Externally Studentized Residual")', f'ax.set_title({J(y + " influence plot")})', 'plt.show()']
+    codes['influence'] = '\n'.join(c)
+    # ---- the Component + Residual plots of the continuous terms
+    cm_ = getattr(d, 'centered_main', {})
+    ccpr = []
+    for eff in d.effects:
+        if any(d.alias[nm] in d.categorical for nm in eff['cols']):
+            continue
+        for tn in eff.get('terms', []):
+            if tn not in names:
+                continue
+            j = names.index(tn)
+            shift = float(cm_.get(tn, 0.0))
+            term = _tlabel(d, tn)
+            c = fitc() + [f'b = fit.params.iloc[{j}]; x = fit.model.exog[:, {j}]{" + " + repr(shift) if shift else ""}   # the column of {term} in the design',
+                          'partial = fit.resid.to_numpy() + b * fit.model.exog[:, ' + str(j) + ']   # the residual plus the term\'s part of the fit']
+            ccpr.append(_row_plot(c, 'x', 'partial', n, term, 'Component + Residual', f'{term} component plus residual', 330, 270,
+                                  [f'ax.plot([x.min(), x.max()], [b * (x.min() - {shift!r}), b * (x.max() - {shift!r})], color="{FIT}", linewidth=1.1)']))
+    codes['ccpr'] = ccpr
+    # ---- Sorted Parameter Estimates: the t ratios, by size
+    est_rows = [r for r in out['estimates']['rows'] if r['term'] != 'Intercept']
+    if est_rows:
+        rob = m.get('rob') if m.get('rres') is not None else None
+        c = fitc(['from scipy import stats'])
+        if rob:
+            c.append(_robust_code(rob)[0])
+        src = 'rob' if rob else 'fit'
+        c += [f'idx, terms = {[names.index(r["name"]) for r in est_rows]}, {J([r["term"] for r in est_rows])}   # the design\'s columns of the terms, as the report names them',
+              f't, pv = np.asarray({src}.tvalues)[idx], np.asarray({src}.pvalues)[idx]',
+              'o = np.argsort(-np.abs(t), kind="stable")   # the largest t first',
+              f'tc = stats.t.ppf({1 - alpha / 2!r}, fit.df_resid)',
+              _fig(340, max(160, min(560, 40 + 22 * len(est_rows)))),
+              f'ax.barh([terms[i] for i in o], t[o], color=["{FIT}" if pv[i] < {alpha!r} else "{BAR}" for i in o])   # significant at α in red',
+              'ax.invert_yaxis()', f'ax.axvline(tc, color="{MUTED}", linewidth=0.7, linestyle="--"); ax.axvline(-tc, color="{MUTED}", linewidth=0.7, linestyle="--")',
+              'ax.set_xlabel("t Ratio")', 'ax.set_title("sorted t ratios")', 'plt.show()']
+        codes['sorted'] = '\n'.join(c)
+    # ---- LSMeans Plots: the least squares means with their intervals
+    codes['lsmeans'] = {}
+    for e in d.effects:
+        lsm = out['lsmeans'].get(e['label'])
+        if lsm is None or len(lsm['factors']) > 2 or e['spec']['nest']:
+            continue
+        codes['lsmeans'][e['label']] = _lsmeans_plot_code(m, e, lsm, fitc, alpha, y)
+    return codes
+
+
+def _lsmeans_plot_code(m, e, lsm, fitc, alpha, y):
+    """An effect's LSMeans Plot: the model's prediction at each level (each
+    combination), the other categorical factors averaged over their levels
+    and the continuous ones at their means, with its t interval."""
+    d = m['d']
+    cats = [n for n in dict.fromkeys(n for e2 in d.effects for n in e2['names']) if d.alias[n] in d.categorical]
+    conts = [n for n in dict.fromkeys(n for e2 in d.effects for n in e2['names']) if d.alias[n] not in d.categorical]
+    others = [n for n in cats if n not in lsm['factors']]
+    c = fitc(['from scipy import stats', 'import itertools', 'import patsy'])
+    c.append(f'levels = {{{", ".join(f"{J(n)}: [{", ".join(_pylit(v) for v in d.levels[d.alias[n]])}]" for n in cats)}}}   # the levels, in the table\'s order')
+    c.append(f'means = {{{", ".join(f"{J(n)}: d[{J(n)}].mean()" for n in conts)}}}   # the continuous factors at their means' if conts else 'means = {}')
+    c.append(f'effect, others = {J(lsm["factors"])}, {J(others)}')
+    c += ['rows, labels = [], []',
+          'for combo in itertools.product(*[levels[f] for f in effect]):   # each level of the effect: the design rows averaged over the other factors',
+          '    grid = pd.DataFrame([{**dict(zip(effect, combo)), **dict(zip(others, o)), **means} for o in itertools.product(*[levels[f] for f in others])])',
+          '    rows.append(np.asarray(patsy.build_design_matrices([fit.model.data.design_info], grid)[0]).mean(axis=0)); labels.append(combo)',
+          'L = np.array(rows); ls = L @ fit.params.to_numpy(); se = np.sqrt(np.einsum("ij,jk,ik->i", L, fit.cov_params().to_numpy(), L))',
+          f'tc = stats.t.ppf({1 - alpha / 2!r}, fit.df_resid)']
+    label = e['label']
+    if len(lsm['factors']) == 2:
+        f0, f1 = lsm['factors']
+        c += [f'names0, names1 = {J([_lvl(v) for v in d.levels[d.alias[f0]]])}, {J([_lvl(v) for v in d.levels[d.alias[f1]]])}', f'colors = {J(PALETTE)}',
+              _fig(420, 290),
+              'for j, v1 in enumerate(levels[effect[1]]):   # a line for each level of the second factor',
+              '    k = [i for i, lab in enumerate(labels) if lab[1] == v1]',
+              '    ax.errorbar([names0[levels[effect[0]].index(labels[i][0])] for i in k], ls[k], yerr=tc * se[k], color=colors[j % len(colors)], marker="o", markersize=5, linewidth=1.2, capsize=3, label=names1[j])',
+              f'ax.legend(title={J(f1)}, fontsize=8, frameon=False)', f'ax.set_xlabel({J(f0)})']
+    else:
+        c += [f'names = {J(lsm["labels"])}', _fig(360, 280),
+              f'ax.errorbar(names, ls, yerr=tc * se, color="{BASE}", marker="o", markersize=6, linewidth=1, capsize=3)', f'ax.set_xlabel({J(label)})']
+    c += [f'ax.set_ylabel({J(y + " LS Means")})', f'ax.set_title({J(label + " LS means plot")})', 'plt.show()']
+    return '\n'.join(c)
 
 
 def _robust_code(rob, fit='fit', name='rob'):
@@ -1304,7 +1574,26 @@ def boxcox(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
         ci[0] = float(optimize.brentq(g, lo, best))
     if g(hi) > 0:
         ci[1] = float(optimize.brentq(g, best, hi))
-    return {'lambda': lams, 'sse': sses, 'best': best, 'sse_best': sbest, 'ci': ci, 'gm': gm, 'alpha': alpha,
+    plot = _ls_fit_code(d, table, table_name, rows, weight, freq, ['from scipy import stats, optimize']) + [
+        f'yv = d[{json.dumps(spec["y"][0])}].to_numpy(float); X = fit.model.exog; sw = np.sqrt(w)',
+        'ly = np.log(yv); gm = np.exp(np.average(ly, weights=w))   # the geometric mean',
+        'Xs = X * sw[:, None]; pinv = np.linalg.pinv(Xs)',
+        'transform = lambda lam: gm * ly if abs(lam) < 1e-10 else (yv ** lam - 1) / (lam * gm ** (lam - 1))',
+        'def sse(lam):   # the error sum of squares of the model fitted to the transformed Y',
+        '    z = transform(lam) * sw; r = z - Xs @ (pinv @ z); return float(r @ r)',
+        f'lams = np.linspace({float(lo)!r}, {float(hi)!r}, {int(n)}); sses = np.array([sse(v) for v in lams])',
+        'i = int(np.argmin(sses)); best, sbest = lams[i], sses[i]',
+        'a_, b_ = lams[max(i - 1, 0)], lams[min(i + 1, len(lams) - 1)]',
+        'if b_ > a_:   # the best between the grid\'s neighbours',
+        '    r = optimize.minimize_scalar(sse, bounds=(a_, b_), method="bounded", options={"xatol": 1e-6})',
+        '    if r.fun <= sbest:', '        best, sbest = r.x, r.fun',
+        f'thr = sbest * np.exp(stats.chi2.ppf({1 - alpha!r}, 1) / w.sum())   # the likelihood-ratio interval of lambda',
+        'ci = [optimize.brentq(lambda v: sse(v) - thr, lams[0], best) if sse(lams[0]) > thr else None, optimize.brentq(lambda v: sse(v) - thr, best, lams[-1]) if sse(lams[-1]) > thr else None]',
+        _fig(360, 260), f'ax.plot(lams, sses, color="{BASE}", linewidth=1.2)',
+        f'ax.plot(best, sbest, linestyle="none", marker="o", markersize=6.5, color="{FIT}")   # the best lambda',
+        'for v in ci:', '    if v is not None:', f'        ax.axvline(v, color="{MUTED}", linewidth=0.7, linestyle="--")',
+        'ax.set_xlabel("λ")', 'ax.set_ylabel("SSE")', f'ax.set_title({json.dumps(spec["y"][0] + " Box-Cox")})', 'plt.show()']
+    return {'lambda': lams, 'sse': sses, 'best': best, 'sse_best': sbest, 'ci': ci, 'gm': gm, 'alpha': alpha, 'plot_code': '\n'.join(plot),
             'rows': [int(v) for v in d.df.index], 'values': transform(best),
             'code': '\n'.join(_code_frame(d, table, table_name, rows, [weight, freq]) + [
                 f'y = d[{json.dumps(spec["y"][0])}].to_numpy(); g = np.exp(np.log(y).mean())   # the geometric mean',
@@ -1424,7 +1713,7 @@ def contour(table, kind='ls', xfactor=None, yfactor=None, current=None, response
 
 
 @api('fitmodel.interaction')
-def interaction(table, kind='ls', rows=None, alpha=0.05, max_factors=6, **model):
+def interaction(table, kind='ls', rows=None, alpha=0.05, max_factors=6, table_name='data', **model):
     """Interaction Plots: for each pair of factors, the prediction across one
     with a line for each level of the other (a continuous factor at its
     minimum and maximum); the other categorical factors averaged, the other
@@ -1453,8 +1742,110 @@ def interaction(table, kind='ls', rows=None, alpha=0.05, max_factors=6, **model)
             cells.append({'row': i, 'col': j, 'x': fc['labels'] if fc['type'] == 'categorical' else xs,
                           'lines': [{'label': fr['labels'][q] if fr['type'] == 'categorical' else _lvl(float(lines[q])),
                                      'y': p[q * k:(q + 1) * k]} for q in range(len(lines))]})
-    return {'factors': [f['name'] for f in facs], 'types': [f['type'] for f in facs], 'cells': cells,
-            'response': _predict(m, [{}], alpha)[0]['name']}
+    response = _predict(m, [{}], alpha)[0]['name']
+    return {'factors': [f['name'] for f in facs], 'types': [f['type'] for f in facs], 'cells': cells, 'response': response,
+            'plot_code': _interaction_code(m, table, rows, table_name, facs, response) if len(facs) >= 2 else None}
+
+
+def _interaction_code(m, table, rows, table_name, facs, response):
+    """Interaction Plots as code: for each pair of factors, the prediction
+    across the column factor with a line for each level of the row factor (a
+    continuous one at its minimum and maximum), the other categorical factors
+    averaged over their levels (their design rows averaged, as least squares
+    means) and the other continuous ones at their means. The model is fitted
+    as the report's code fits it, and predicted as the profilers predict it."""
+    kind, d, spec = m['kind'], m['d'], m['spec']
+    if kind == 'ls':
+        base = _ls_fit_code(d, table, table_name, rows, spec['weight'], spec['freq'], ['import patsy'])
+        di, pred = 'fit.model.data.design_info', ['    return L @ np.asarray(fit.params)   # the least squares prediction']
+    elif kind == 'glm':
+        base = _glm_fit_code(m, table, table_name, rows)
+        di = 'Xd.design_info'
+        pred = [f'    return fit.family.link.inverse(L @ np.asarray(b))   # the mean at the linear predictor{" (the offset left out, as the profilers do)" if spec["offset"] else ""}']
+    elif kind == 'logit':
+        base = _logit_fit_code(m, table, table_name, rows)
+        di, pred = 'Xd.design_info', [f'    return probs(L)[:, 0]   # {response}']
+    elif kind == 'mixed':
+        base = _mixed_fit_code(m, table, table_name, rows, ['import patsy'])
+        di, pred = 'md.data.design_info', ['    return L @ fit.fe_params.to_numpy()   # the fixed effects\' prediction (the marginal mean)']
+    elif kind == 'gee':
+        base = _gee_fit_code(m, table, table_name, rows)
+        di, pred = 'X.design_info', ['    return fam.link.inverse(L @ np.asarray(fit.params))   # the marginal mean']
+    elif kind == 'genreg':
+        R = m['path']
+        base = _gr_code(m, table, table_name, rows).split('\n')
+        base = base[:next(i for i, ln in enumerate(base) if ln.startswith('e = '))]
+        base = _after_frame(_with_plt(base), _positive_weights(R['O']['weight'], R['O']['freq']))
+        di = f'patsy.dmatrix({J(_code_formula(d, lhs=False))}, d).design_info'
+        if R['forward']:
+            cc = 'cols' if R['O']['criterion'] in ('kfold', 'loo') else 'steps[chosen]'
+            base.append(f'bz = np.zeros(Z.shape[1]); bz[[0] + {cc}] = fit.params   # the estimates on the scaled predictors')
+        else:
+            base.append('bz = np.asarray(fit.params)   # the estimates on the scaled predictors')
+        mu = {'binomial': f'1 / (1 + np.exp(-np.clip(e_, -{_GR_ETA}, {_GR_ETA})))', 'poisson': 'np.exp(np.minimum(e_, 700))'}.get(m['dist'], 'e_')
+        pred = ['    e_ = np.column_stack([np.ones(len(L)), (L[:, 1:] - m) / sd]) @ bz   # the design rows scaled as the fit\'s',
+                f'    return {mu}']
+    else:
+        return None
+    names = [f['name'] for f in facs]
+    cats = [f for f in facs if f['type'] == 'categorical']
+    conts = [f['name'] for f in facs if f['type'] != 'categorical']
+    others = [n for n in _factor_names(d) if n not in names]   # beyond the first six: at their means, or averaged
+    k = len(facs)
+    side = max(260, min(620, 140 * k))
+    c = list(base) + [
+        f'di = {di}   # the design of the fit (patsy): the design rows of any settings',
+        f'factors = {J(names)}   # the factors, in the model\'s order' + (' (the first six)' if others else ''),
+        'flevels = {' + ', '.join(f'{J(f["name"])}: [{", ".join(_pylit(v) for v in f["levels"])}]' for f in cats) + '}   # the categorical factors\' levels, in the table\'s order',
+        'flabels = {' + ', '.join(f'{J(f["name"])}: {J(f["labels"])}' for f in cats) + '}   # as the page shows them']
+    rest_c = [n for n in others if d.alias[n] in d.categorical]
+    rest_n = [n for n in others if d.alias[n] not in d.categorical]
+    if rest_c:
+        c.append('flevels.update({' + ', '.join(f'{J(n)}: [{", ".join(_pylit(v) for v in d.levels[d.alias[n]])}]' for n in rest_c) + '})   # the factors beyond six, averaged')
+    c += [f'fmeans = {{f: d[f].mean() for f in {J(conts + rest_n)}}}   # the continuous factors: at their means where a plot does not set them',
+          'flo, fhi = {f: d[f].min() for f in fmeans}, {f: d[f].max() for f in fmeans}   # and their ranges',
+          'def design(S):',
+          '    """The design rows at the settings S (a frame, one setting a row): the',
+          '    categorical factors S does not set averaged over their levels, the',
+          '    continuous ones at their means."""',
+          '    g = S.assign(at_=np.arange(len(S)))',
+          '    for f, lv in flevels.items():',
+          '        if f not in S:',
+          '            g = g.merge(pd.DataFrame({f: lv}), how="cross")   # every level of an averaged factor',
+          '    for f, v in fmeans.items():',
+          '        if f not in S:',
+          '            g[f] = v',
+          '    for f, lv in flevels.items():',
+          '        g[f] = pd.Categorical(g[f], categories=lv)',
+          '    X_ = np.asarray(patsy.build_design_matrices([di], g)[0])',
+          '    return pd.DataFrame(X_).groupby(g["at_"].to_numpy()).mean().to_numpy()',
+          'def predict(L):', *pred,
+          'lab = lambda v: str(int(v)) if float(v).is_integer() else f"{v:.6g}"   # a continuous line\'s label, as the page writes it',
+          f'colors = {J(PALETTE)}',
+          f'nf = len(factors); fig, axs = plt.subplots(nf, nf, figsize=({side / 100:g}, {side / 100:g}), sharey=True, layout="constrained", squeeze=False)',
+          'for i, fr in enumerate(factors):   # the row factor: a line for each of its levels (a continuous one at its minimum and maximum)',
+          '    for j, fc in enumerate(factors):   # the column factor: across the axis',
+          '        ax = axs[i, j]',
+          '        if i == j:',
+          '            ax.text(0.5, 0.5, fr, ha="center", va="center", transform=ax.transAxes); ax.set_axis_off()',
+          '            continue',
+          '        xs = flevels[fc] if fc in flevels else (np.linspace(flo[fc], fhi[fc], 11) if fhi[fc] > flo[fc] else np.array([flo[fc]]))',
+          '        lv = flevels[fr] if fr in flevels else [flo[fr], fhi[fr]]',
+          '        S = pd.DataFrame({fr: np.repeat(np.asarray(lv), len(xs)), fc: np.tile(np.asarray(xs), len(lv))})',
+          '        p = predict(design(S)).reshape(len(lv), len(xs))',
+          '        at = np.arange(len(xs)) if fc in flevels else xs',
+          '        for q in range(len(lv)):',
+          '            color = colors[q % len(colors)]',
+          '            ax.plot(at, p[q], color=color, linewidth=1.4, marker="o", markersize=2)',
+          '            ax.annotate(flabels[fr][q] if fr in flevels else lab(lv[q]), (at[-1], p[q, -1]), xytext=(3, 0), textcoords="offset points", fontsize=7, color=color, va="center")',
+          '        if fc in flevels:',
+          '            ax.set_xticks(at, flabels[fc])',
+          '        ax.tick_params(labelsize=7)',
+          'axs[0, 1].tick_params(labelleft=True)   # the first row\'s scale, as the page shows it',
+          f'fig.supylabel({J(response)}, fontsize=9)',
+          'fig.suptitle("interaction plots")',
+          'plt.show()']
+    return '\n'.join(c)
 
 
 # ---------------------------------------------------------------------------
@@ -2154,11 +2545,116 @@ def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no
                      'model\'s variance, so the report shows the Wald tests. statsmodels\' GLM gives HC1–HC3 the same as HC0, so only HC0 is '
                      'offered here.')
     lines += _centred_code(d)
-    return {'model': {'response': ', '.join(spec['y']), 'distribution': _DIST_LABEL[dist], 'link': _LINK_LABEL.get(link, link), 'n': n,
-                      'target': _lvl(m['info']['levels'][0]) if m['info'].get('levels') else None, 'converged': bool(getattr(res, 'converged', True))},
-            'whole': whole, 'aicc': aicc, 'bic': bic, 'gof': gof, 'overdispersion': overd, 'scaled': m['scale_opt'] == 'X2', 'phi': phi,
-            'effect_tests': et, 'estimates': est, 'diag': diag, 'factors': _factors(d), 'key': m['key'], 'notes': notes, 'alpha': alpha,
-            'robust': robust_out, 'code': '\n'.join(lines)}
+    out = {'model': {'response': ', '.join(spec['y']), 'distribution': _DIST_LABEL[dist], 'link': _LINK_LABEL.get(link, link), 'n': n,
+                     'target': _lvl(m['info']['levels'][0]) if m['info'].get('levels') else None, 'converged': bool(getattr(res, 'converged', True))},
+           'whole': whole, 'aicc': aicc, 'bic': bic, 'gof': gof, 'overdispersion': overd, 'scaled': m['scale_opt'] == 'X2', 'phi': phi,
+           'effect_tests': et, 'estimates': est, 'diag': diag, 'factors': _factors(d), 'key': m['key'], 'notes': notes, 'alpha': alpha,
+           'robust': robust_out, 'code': '\n'.join(lines)}
+    out['plot_code'] = _glm_plots(m, table, rows, table_name, alpha, out)
+    return out
+
+
+def _glm_fit_code(m, table, table_name, rows, imports=()):
+    """The lines that fit the generalized linear model as the report does (the
+    design, the response, statsmodels' GLM to the report's tolerance; the
+    negative binomial's alpha from the NB2 model first), and give eta, the
+    linear predictor, and pred, the fitted mean, at each row."""
+    d, spec = m['d'], m['spec']
+    ys, weight, freq, offset = spec['y'], spec['weight'], spec['freq'], spec['offset']
+    rob = m.get('rob') if m.get('rob_V') is not None else None
+    ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
+    lines = _code_frame(d, table, table_name, rows, [weight, freq, offset, ccol] + list(ys[1:]), [PLT, 'import patsy', *imports]) + _positive_weights(weight, freq)
+    lines.append(f'Xd = patsy.dmatrix({J(_code_formula(d, lhs=False))}, d); X = np.asarray(Xd)   # the design, effect coded')
+    if len(ys) == 2:
+        lines.append(f'ev, tr = d[{J(ys[0])}].to_numpy(float), d[{J(ys[1])}].to_numpy(float)')
+        lines.append('endog, actual = np.column_stack([ev, tr - ev]), ev / tr   # events and trials; the proportion')
+    elif m['info'].get('levels'):
+        lv0 = m['info']['levels'][0]
+        lines.append(f'endog = actual = (d[{J(ys[0])}] == {_pylit(lv0)}).to_numpy(float)   # the event level, {_lvl(lv0)}')
+    else:
+        lines.append(f'endog = actual = d[{J(ys[0])}].to_numpy(float)')
+    lines.append(f'off = d[{J(offset)}].to_numpy(float)' if offset else 'off = None')
+    irls = 'tol_criterion="params", atol=1e-12, rtol=1e-10, maxiter=200'   # the report's tolerance (_IRLS)
+    link = f'sm.families.links.{_LINKS[m["link"]]}()'
+    if m['dist'] == 'negbin':
+        lines += ['nb = sm.NegativeBinomial(endog, X, loglike_method="nb2", offset=off).fit(disp=0, maxiter=500, method="bfgs")   # NB2: alpha by maximum likelihood',
+                  'if not nb.mle_retvals.get("converged", True):',
+                  '    nb = nb.model.fit(start_params=nb.params, disp=0, maxiter=100, method="newton")',
+                  f'fit = sm.GLM(endog, X, family=sm.families.NegativeBinomial(link={link}, alpha=nb.params[-1]), offset=off).fit(start_params=nb.params[:-1], {irls})',
+                  'b, V = nb.params[:-1], nb.cov_params()[:-1, :-1]']
+    else:
+        kw = ['offset=off']
+        if weight:
+            kw.append(f'var_weights=d[{J(weight)}].to_numpy(float)')
+        if freq:
+            kw.append(f'freq_weights=d[{J(freq)}].to_numpy(float)')
+        fam = f'sm.families.{_SM_FAMILY[m["dist"]]}(link={link})'
+        if m['dist'] == 'tweedie':
+            fam = f'sm.families.Tweedie(link={link}, var_power=1.5)'
+        sc = 'scale="X2", ' if m['scale_opt'] else ''
+        lines.append(f'fit = sm.GLM(endog, X, family={fam}, {", ".join(kw)}).fit({sc}{irls})')
+        lines.append('b, V = fit.params, fit.cov_params()')
+    lines.append('eta = X @ b + (off if off is not None else 0); pred = fit.family.link.inverse(eta)   # the linear predictor, the fitted mean')
+    return lines
+
+
+def _glm_plots(m, table, rows, table_name, alpha, out):
+    """The graphs of a Generalized Linear Model report as code: the residuals
+    by predicted, actual by predicted, the linear predictor plot, the
+    regression plot."""
+    d = m['d']
+    yl = out['model']['response']
+    n = len(d.df)
+    codes = {}
+    resid = ['hat = fit.get_influence().hat_matrix_diag',
+             'rdev, rpear = fit.resid_deviance, fit.resid_pearson']
+    for key, what, expr, ylab, title in (('studDev', 'Studentized Deviance Residual', 'rdev / np.sqrt(fit.scale * (1 - hat))', 'Studentized Deviance Residual', 'studentized deviance residuals'),
+                                         ('studPearson', 'Studentized Pearson Residual', 'rpear / np.sqrt(fit.scale * (1 - hat))', 'Studentized Pearson Residual', 'Studentized Pearson Residual by Predicted'),
+                                         ('devPlot', 'Deviance Residual', 'rdev', 'Deviance Residual', 'Deviance Residual by Predicted'),
+                                         ('pearPlot', 'Pearson Residual', 'rpear', 'Pearson Residual', 'Pearson Residual by Predicted')):
+        codes[key] = _row_plot(_glm_fit_code(m, table, table_name, rows) + resid + [f'r = {expr}   # the {what.lower()}s'], 'pred', 'r', n, f'{yl} Predicted', ylab, title, zero=True)
+    codes['actualPred'] = _row_plot(_glm_fit_code(m, table, table_name, rows) + ['lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())'], 'pred', 'actual', n,
+                                    f'{yl} Predicted', f'{yl} Actual', f'{yl} actual by predicted', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)'])
+    codes['linPlot'] = _row_plot(_glm_fit_code(m, table, table_name, rows) + ['o = np.argsort(eta, kind="stable")'], 'eta', 'actual', n, 'Linear Predictor', yl, 'linear predictor plot',
+                                 lines=[f'ax.plot(eta[o], pred[o], color="{FIT}", linewidth=1)   # the fitted mean, the inverse link of the linear predictor'])
+    # the Regression Plot: the profiler's curve over one continuous factor, at each level of a categorical one
+    facs = out['factors']
+    cont = [f for f in facs if f['type'] == 'continuous']
+    cats = [f for f in facs if f['type'] == 'categorical']
+    if len(cont) == 1 and len(cats) <= 1 and len(m['spec']['y']) == 1:
+        xf, gf = cont[0], (cats[0] if cats else None)
+        rob = m.get('rob') if m.get('rob_V') is not None else None
+        c = _glm_fit_code(m, table, table_name, rows, ['from scipy import stats'])
+        if rob:   # the profiler's interval follows Robust Standard Errors
+            t = rob['type']
+            ct = {'HAC': 'HAC', 'cluster': 'cluster'}.get(t, 'HC0')
+            kw = (f', cov_kwds={{"maxlags": {int(rob["maxlags"])}}}' if t == 'HAC' else
+                  f', cov_kwds={{"groups": pd.factorize(d[{J(rob["cluster"])}], sort=True)[0]}}' if t == 'cluster' else '')
+            if m['dist'] == 'negbin':
+                c.append(f'V = nb.model.fit(start_params=nb.params, disp=0, maxiter=100, method="newton", cov_type="{ct}"{kw}).cov_params()[:-1, :-1]   # Robust Standard Errors')
+            else:
+                c.append(f'V = fit.model.fit(start_params=fit.params, cov_type="{ct}"{kw}{", scale=" + repr("X2") if m["scale_opt"] else ""}, tol_criterion="params", atol=1e-12, rtol=1e-10, maxiter=200).cov_params()   # Robust Standard Errors')
+        c.append(f'gx = np.linspace(d[{J(xf["name"])}].min(), d[{J(xf["name"])}].max(), 81)')
+        c.append(f'z = stats.norm.ppf({1 - alpha / 2!r}); inv = fit.family.link.inverse')
+
+        def curve(extra):
+            return [f'L = np.asarray(patsy.build_design_matrices([Xd.design_info], pd.DataFrame({{{J(xf["name"])}: gx{extra}}}))[0])',
+                    'e = L @ b; se = np.sqrt(np.einsum("ij,jk,ik->i", L, V, L))   # at an offset of zero']
+        if gf is None:
+            c += curve('') + ['lo_, hi_ = inv(e - z * se), inv(e + z * se)', _fig(400, 320),
+                              f'ax.scatter(d[{J(xf["name"])}], actual, s={8 if n > 500 else 18}, color="{BASE}")',
+                              f'ax.plot(gx, np.minimum(lo_, hi_), gx, np.maximum(lo_, hi_), color="{FIT}", linewidth=0.7, linestyle=":")   # the Wald interval, through the link',
+                              f'ax.plot(gx, inv(e), color="{FIT}", linewidth=1.3)']
+        else:
+            c += [f'levels = [{", ".join(_pylit(v) for v in gf["levels"])}]; names = {J(gf["labels"])}   # {gf["name"]}, in the table\'s order',
+                  f'colors = {J(PALETTE)}', _fig(440, 320),
+                  f'ax.scatter(d[{J(xf["name"])}], actual, s={8 if n > 500 else 18}, c=[colors[levels.index(v) % len(colors)] for v in d[{J(gf["name"])}]])',
+                  'for i, v in enumerate(levels):']
+            c += ['    ' + ln for ln in curve(f', {J(gf["name"])}: [v] * len(gx)')]
+            c += ['    ax.plot(gx, inv(e), color=colors[i % len(colors)], linewidth=1.3, label=names[i])', f'ax.legend(title={J(gf["name"])}, fontsize=8, frameon=False)']
+        c += [f'ax.set_xlabel({J(xf["name"])})', f'ax.set_ylabel({J(yl)})', f'ax.set_title({J(yl + " regression plot")})', 'plt.show()']
+        codes['regression'] = '\n'.join(c)
+    return codes
 
 
 # ---------------------------------------------------------------------------
@@ -2521,7 +3017,313 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
     out['notes'] = notes
+    out['plot_code'] = _logit_plots(m, table, rows, table_name, out)
     return out
+
+
+def _with_plt(lines, imports=()):
+    """A report code's lines (a list of lines or of blocks of lines) with
+    matplotlib, and the other imports, first among its head's extra imports
+    (where code_head puts them)."""
+    text = '\n'.join(lines).replace('import statsmodels.formula.api as smf', '\n'.join(['import statsmodels.formula.api as smf', PLT, *imports]), 1)
+    return text.split('\n')
+
+
+def _after_frame(lines, extra):
+    """The lines with extra ones right after the frame (d = df[...].dropna())."""
+    k = next(i for i, ln in enumerate(lines) if ln.startswith('d = df['))
+    return lines[:k + 1] + list(extra) + lines[k + 1:]
+
+
+def _upto(lines, start):
+    """The lines up to the first that starts with start (the fit), without the rest (the prints)."""
+    k = next(i for i, ln in enumerate(lines) if ln.startswith(start))
+    return lines[:k + 1]
+
+
+def _logit_fit_code(m, table, table_name, rows):
+    """The lines that fit the logistic model as the report does, and give
+    probs(L): each level's probability (in the table's order) at design rows L."""
+    d, spec = m['d'], m['spec']
+    weight, freq = spec['weight'], spec['freq']
+    mode, k = m['mode'], m['k']
+    imports = ['import patsy'] + (['from scipy import stats', 'from statsmodels.miscmodels.ordinal_model import OrderedModel'] if mode == 'ordinal' else [])
+    lines = _code_frame(d, table, table_name, rows, [weight, freq], [PLT, *imports]) + _positive_weights(weight, freq)
+    lines.append(f'Xd = patsy.dmatrix({J(_code_formula(d, lhs=False))}, d); X = np.asarray(Xd)   # the design, effect coded')
+    lines.append(f'levels = [{", ".join(_pylit(v) for v in m["levels"])}]; names = {J([_lvl(v) for v in m["levels"]])}   # the levels in these rows, in the table\'s order')
+    lines.append(f'codes = pd.Categorical(d[{J(spec["y"][0])}], categories=levels).codes; k = {k}')
+    wexpr = ' * '.join(f'd[{J(v)}]' for v in (weight, freq) if v)
+    lines.append(f'w = ({wexpr}).to_numpy(float)' if wexpr else 'w = None')
+    if mode != 'binary' and wexpr:
+        lines.append('r_ = np.round(w).astype(int)   # the weights as frequencies: the rows repeated')
+    rep = lambda a: f'np.repeat({a}, r_, axis=0)' if wexpr else a   # noqa: E731
+    if mode == 'binary':
+        t = m['target']
+        lines.append(f'fit = sm.GLM((codes == {t}).astype(float), X, family=sm.families.Binomial(), freq_weights=w).fit(tol_criterion="params", atol=1e-12, rtol=1e-10, maxiter=200)   # log odds of {_lvl(m["levels"][t])}')
+        lines += ['def probs(L):', f'    p = 1 / (1 + np.exp(-(L @ fit.params)))   # P({_lvl(m["levels"][t])})',
+                  f'    return np.column_stack({"[p, 1 - p]" if t == 0 else "[1 - p, p]"})']
+    elif mode == 'multinomial':
+        lines.append('ysm = np.where(codes == k - 1, 0, codes + 1)   # the last level is the reference, as in JMP')
+        lines.append(f'fit = sm.MNLogit({rep("ysm")}, {rep("X")}).fit(disp=0, method="newton", maxiter=200)')
+        lines.append('if not fit.mle_retvals.get("converged", True):')
+        lines.append(f'    fit = sm.MNLogit({rep("ysm")}, {rep("X")}).fit(disp=0, method="bfgs", maxiter=2000)')
+        lines.append('def probs(L):')
+        lines.append('    e = np.column_stack([np.zeros(len(L)), L @ fit.params]); e = np.exp(e - e.max(axis=1, keepdims=True)); p = e / e.sum(axis=1, keepdims=True)')
+        lines.append('    return np.column_stack([p[:, 1:], p[:, :1]])   # back in the table\'s order')
+    else:
+        keep = m['beta_cols']
+        lines.append(f'keep = {keep}   # every column but the intercept: the thresholds take its place')
+        lines.append(f'yc = pd.Series(pd.Categorical.from_codes({rep("codes")}, categories=[str(i) for i in range(k)], ordered=True))')
+        lines.append(f'om = OrderedModel(yc, pd.DataFrame({rep("X")}[:, keep]), distr={J(m["distr"])})')
+        lines.append('fit = om.fit(method="bfgs", disp=0, maxiter=1000)')
+        lines.append('if not fit.mle_retvals.get("converged", True):')
+        lines.append('    fit = om.fit(start_params=fit.params, method="newton", disp=0, maxiter=100)')
+        lines.append(f'beta, cuts = -np.asarray(fit.params)[:{len(keep)}], om.transform_threshold_params(np.asarray(fit.params))[1:-1]   # JMP\'s P(Y <= j) = F(a_j + x\'b)')
+        F = 'stats.logistic.cdf' if m['distr'] == 'logit' else 'stats.norm.cdf'
+        lines.append('def probs(L):')
+        lines.append(f'    cum = np.column_stack([{F}(c + L[:, keep] @ beta) for c in cuts] + [np.ones(len(L))])')
+        lines.append('    return np.diff(np.column_stack([np.zeros(len(L)), cum]), axis=1)')
+    return lines
+
+
+def _logit_plots(m, table, rows, table_name, out):
+    """The Nominal and Ordinal Logistic report's graphs as code: the logistic
+    plot (one continuous X) and the ROC curves."""
+    codes = {}
+    y = m['spec']['y'][0]
+    p = out.get('plot')
+    if p:
+        c = _logit_fit_code(m, table, table_name, rows) + [
+            f'x = d[{J(p["factor"])}].to_numpy(float)',
+            'g = np.linspace(x.min(), x.max(), 100)',
+            f'cum = np.cumsum(probs(np.asarray(patsy.build_design_matrices([Xd.design_info], pd.DataFrame({{{J(p["factor"])}: g}}))[0])), axis=1)[:, :-1]   # each level\'s cumulative probability',
+            'cr = np.column_stack([np.zeros(len(x)), np.cumsum(probs(X), axis=1)])',
+            'u = np.random.default_rng(20260926).uniform(0.1, 0.9, len(x))   # each row at random between the curves of its level, as the report',
+            'i = np.arange(len(x)); py = cr[i, codes] + u * (cr[i, codes + 1] - cr[i, codes])',
+            f'colors = {J(PALETTE)}', _fig(430, 320),
+            'for j in range(k - 1):', '    ax.plot(g, cum[:, j], color=colors[j % len(colors)], linewidth=1.3)',
+            f'ax.scatter(x, py, s={8 if len(m["d"].df) > 500 else 13}, color="{BASE}")',
+            'ends = [0.0] + [cum[-1, j] for j in range(k - 1)] + [1.0]   # the level names at the right, between their curves',
+            'for j, nm in enumerate(names):',
+            '    ax.text(1.01, (ends[j] + ends[j + 1]) / 2, nm, transform=ax.get_yaxis_transform(), color=colors[j % len(colors)], fontsize=8, va="center")',
+            'ax.set_ylim(0, 1)', f'ax.set_xlabel({J(p["factor"])})', f'ax.set_ylabel({J(y + " (cumulative probability)")})', f'ax.set_title({J(y + " logistic plot")})', 'plt.show()']
+        codes['logistic'] = '\n'.join(c)
+    if out.get('roc'):
+        targets = [m['target']] if m['mode'] == 'binary' else list(range(m['k']))
+        c = _logit_fit_code(m, table, table_name, rows) + [
+            'P = probs(X); wv = w if w is not None else np.ones(len(d))',
+            'def roc(score, event, w):   # the thresholds from high to low; tied scores move together',
+            '    o = np.argsort(-score, kind="stable"); s_, e_, w_ = score[o], event[o], w[o]',
+            '    tp, fp = np.cumsum(w_ * e_), np.cumsum(w_ * (1 - e_)); last = np.r_[np.diff(s_) != 0, True]',
+            '    return np.r_[0, fp[last] / fp[-1]], np.r_[0, tp[last] / tp[-1]]',
+            f'colors = {J(PALETTE)}', _fig(360, 340),
+            f'for i, j in enumerate({targets!r}):   # {"the target level" if m["mode"] == "binary" else "each level against all the others"}, by its fitted probability',
+            '    fpr, tpr = roc(P[:, j], (codes == j).astype(float), wv)',
+            '    ax.plot(fpr, tpr, drawstyle="steps-post", color=colors[i % len(colors)], linewidth=1.3, label=f"{names[j]} (AUC {np.trapezoid(tpr, fpr):.4f})")',
+            f'ax.plot([0, 1], [0, 1], color="{MUTED}", linewidth=0.7, linestyle=":")', 'ax.set_xlim(0, 1); ax.set_ylim(0, 1.01)',
+            'ax.legend(loc="lower right", fontsize=8, frameon=False)', 'ax.set_xlabel("1 - Specificity")', 'ax.set_ylabel("Sensitivity")', 'ax.set_title("ROC curve")', 'plt.show()']
+        codes['roc'] = '\n'.join(c)
+    return codes
+
+
+def _mixed_fit_code(m, table, table_name, rows, imports=()):
+    """The lines that fit the mixed model as the report does (REML, another
+    optimizer when the first does not converge): md, the model, and fit."""
+    d = m['d']
+    head = _code_frame(d, table, table_name, rows, [], [PLT, *imports])
+    if m['group']:
+        grp = f'd[{J(m["group"])}]'
+    else:
+        head.append('d["_one"] = 1   # crossed random effects: one group, a variance component each')
+        grp = 'd["_one"]'
+    vcs = ', '.join(f'{J(k2)}: {J(v)}' for k2, v in m['vc_code'].items())
+    head.append(f'md = smf.mixedlm({J(_code_formula(d))}, data=d, groups={grp}, re_formula={J(m["re_formula"])}' + (f', vc_formula={{{vcs}}})' if vcs else ')'))
+    head += ['fit = md.fit(reml=True)', 'if not fit.converged:   # as the report: another optimizer, kept when it does no worse',
+             '    fit2 = md.fit(reml=True, method=["lbfgs", "powell"]); fit = fit2 if fit2.llf >= fit.llf else fit']
+    return head
+
+
+def _mixed_plots(m, table, rows, table_name, out):
+    """The Mixed Model report's graphs as code: actual by conditional and by
+    marginal predicted, the conditional residuals."""
+    d = m['d']
+    y = m['spec']['y'][0]
+    n = len(d.df)
+    head = _mixed_fit_code(m, table, table_name, rows)
+    head += [f'actual, cond = d[{J(y)}].to_numpy(float), fit.fittedvalues.to_numpy()   # the conditional prediction: fixed and random effects',
+             'marg = md.exog @ fit.fe_params.to_numpy()   # the marginal prediction: the fixed effects alone']
+    line = lambda a: [f'lo, hi = min({a}.min(), actual.min()), max({a}.max(), actual.max())']   # noqa: E731
+    fitline = [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)']
+    return {'actCond': _row_plot(head + line('cond'), 'cond', 'actual', n, f'{y} Predicted', f'{y} Actual', f'{y} actual by predicted', 400, 320, fitline),
+            'actMarg': _row_plot(head + line('marg'), 'marg', 'actual', n, f'{y} Marginal Predicted', f'{y} Actual', 'actual by marginal predicted', lines=fitline),
+            'resCond': _row_plot(head, 'cond', 'actual - cond', n, f'{y} Conditional Predicted', 'Conditional Residual', 'conditional residuals', zero=True)}
+
+
+def _iv_plots(m, table, rows, table_name):
+    """The Instrumental Variables report's graphs as code: actual by predicted,
+    the residuals by predicted and by row."""
+    y = m['spec']['y'][0]
+    n = len(m['d'].df)
+    head = _upto(_with_plt(_iv_code(m, table, table_name, rows, {}, False).split('\n')), 'fit = IV2SLS')
+    head.append('pred = np.asarray(X) @ fit.params.to_numpy(); actual = y.to_numpy(float)   # the model\'s own prediction, Xb (not the second stage\'s)')
+    return {'actual': _row_plot(head + ['lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())'], 'pred', 'actual', n, f'{y} Predicted', f'{y} Actual',
+                                f'{y} actual by predicted', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)']),
+            'resid': _row_plot(head, 'pred', 'actual - pred', n, f'{y} Predicted', f'{y} Residual', f'{y} residual by predicted', zero=True),
+            'residRow': _row_plot(head, 'd.index + 1', 'actual - pred', n, 'Row Number', f'{y} Residual', f'{y} residual by row', 460, zero=True)}
+
+
+def _qr_plots(m, table, rows, table_name, out):
+    """The Quantile Regression report's graphs as code: actual by predicted,
+    the residuals, the quantile process of each term, the quantile lines."""
+    d = m['d']
+    y = m['spec']['y'][0]
+    n = len(d.df)
+    tau = m['tau']
+    base = _upto(_with_plt(_qr_code(m, table, table_name, rows, None, out['alpha']).split('\n')), 'fit = QuantReg')
+    base.append('pred = np.asarray(X) @ fit.params.to_numpy(); actual = y.to_numpy(float)')
+    tl = _fmt_num(tau)
+    codes = {'actual': _row_plot(base + ['lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())'], 'pred', 'actual', n, f'{y} Predicted {tl} quantile',
+                                 f'{y} Actual', f'{y} actual by predicted quantile', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)']),
+             'resid': _row_plot(base, 'pred', 'actual - pred', n, f'{y} Predicted {tl} quantile', f'{y} Residual', f'{y} quantile residual by predicted', zero=True)}
+    # the quantile process: each term's estimate over the quantiles, with the least squares estimate beside it
+    pr = out.get('process')
+    if pr:
+        names = m['names']
+        order = [names.index(r['name']) for r in out['estimates']['rows']]
+        T = _uncenter(d, names)
+        opts = f'vcov={"iid" if m["cov"] == "iid" else "robust"!r}, kernel={m["kernel"]!r}, bandwidth={m["bw"]!r}, max_iter={_QR_MAXITER}'
+        common = _upto(_with_plt(_qr_code(m, table, table_name, rows, None, out['alpha']).split('\n'), ['from scipy import stats']), 'y = d[')
+        if T is not None:
+            i0 = names.index('Intercept')
+            common.append(f'T = np.eye({len(names)})   # the intercept at 0, as the report puts it back (the centred main effects)')
+            for t_, mm in getattr(d, 'centered_main', {}).items():
+                if t_ in names:
+                    common.append(f'T[{i0}, {names.index(t_)}] = -{mm!r}')
+        else:
+            common.append(f'T = np.eye({len(names)})')
+        common += [f'taus = {pr["taus"]!r}', 'est, low, upp = [], [], []', 'for t in taus:   # the fit at every quantile of the process, with its t interval',
+                   f'    f = QuantReg(y, X).fit(q=t, {opts})']
+        if m['cov'] == 'powell':
+            common += ['    Xa, e = np.asarray(X), f.resid.to_numpy(); fk = kernels[' + repr(m['kernel']) + '](e / f.bandwidth) / f.bandwidth',
+                       '    A = np.linalg.pinv((Xa * fk[:, None]).T @ Xa); V = t * (1 - t) * A @ Xa.T @ Xa @ A   # Powell\'s sandwich']
+        else:
+            common += ['    V = f.cov_params().to_numpy()']
+        common += ['    b, s = T @ f.params.to_numpy(), np.sqrt(np.maximum(np.diag(T @ V @ T.T), 0))',
+                   f'    tc = stats.t.ppf({1 - out["alpha"] / 2!r}, f.df_resid)',
+                   '    est.append(b); low.append(b - tc * s); upp.append(b + tc * s)',
+                   'est, low, upp = np.array(est), np.array(low), np.array(upp)',
+                   'ols = sm.OLS(y, X).fit(); bo, so = T @ ols.params.to_numpy(), np.sqrt(np.maximum(np.diag(T @ ols.cov_params().to_numpy() @ T.T), 0))',
+                   f'to = stats.t.ppf({1 - out["alpha"] / 2!r}, ols.df_resid)']
+        proc = []
+        for i, (j, term) in enumerate(zip(order, pr['terms'])):
+            c = common + [f'j = {j}   # {term}', _fig(300, 230),
+                          f'ax.axhspan(bo[j] - to * so[j], bo[j] + to * so[j], color="{FIT}", alpha=0.1, linewidth=0)   # the least squares interval',
+                          f'ax.axhline(bo[j], color="{FIT}", linewidth=0.9, linestyle="--")   # and its estimate',
+                          f'ax.fill_between(taus, low[:, j], upp[:, j], color="{BASE}", alpha=0.18, linewidth=0)',
+                          f'ax.plot(taus, est[:, j], color="{BASE}", linewidth=1.1, marker="o", markersize=3)',
+                          f'ax.axvline({tau!r}, color="{MUTED}", linewidth=0.7, linestyle=":")   # the report\'s quantile',
+                          'ax.set_xlim(0, 1)', 'ax.set_xlabel("Quantile τ")', f'ax.set_ylabel({J(term)})', f'ax.set_title({J(term + " quantile process")})', 'plt.show()']
+            proc.append('\n'.join(c))
+        codes['process'] = proc
+    L = out.get('lines')
+    if L:
+        taus = [q['tau'] for q in L['lines']]
+        c = base + ['from matplotlib.colors import LinearSegmentedColormap',
+                    f'gx = np.linspace(d[{J(L["factor"])}].min(), d[{J(L["factor"])}].max(), 61)',
+                    f'G = np.asarray(patsy.build_design_matrices([X.design_info], pd.DataFrame({{{J(L["factor"])}: gx}}))[0])',
+                    f'taus = {taus!r}',
+                    'ramp = LinearSegmentedColormap.from_list("ramp", ["#2f6ec7", "#b0b0b0", "#c0392b"])   # the page\'s colours, low to high quantiles',
+                    _fig(520, 340),
+                    f'ax.scatter(d[{J(L["factor"])}], actual, s={8 if n > 500 else 18}, color="{BASE}")',
+                    'for t in taus:',
+                    f'    ft = QuantReg(y, X).fit(q=t, vcov={"iid" if m["cov"] == "iid" else "robust"!r}, kernel={m["kernel"]!r}, bandwidth={m["bw"]!r}, max_iter={_QR_MAXITER})',
+                    f'    ax.plot(gx, G @ ft.params.to_numpy(), color=ramp((t - min(taus)) / (max(taus) - min(taus)) if max(taus) > min(taus) else 0.5), linewidth=1.9 if abs(t - {tau!r}) < 1e-9 else 1.2, label=f"τ = {{t}}")',
+                    f'ax.plot(gx, G @ sm.OLS(y, X).fit().params.to_numpy(), color="{TEXT}", linewidth=0.9, linestyle="--", label="Least squares")',
+                    'ax.legend(title="Quantile", fontsize=8, frameon=False)',
+                    f'ax.set_xlabel({J(L["factor"])})', f'ax.set_ylabel({J(y)})', f'ax.set_title({J(y + " quantile lines")})', 'plt.show()']
+        codes['lines'] = '\n'.join(c)
+    return codes
+
+
+def _fmt_num(v):
+    """A number as the page's fmt writes it (7 significant digits, no trailing zeros)."""
+    if float(v).is_integer():
+        return str(int(v))
+    s = f'{float(v):.7g}'
+    return s
+
+
+def _gee_fit_code(m, table, table_name, rows):
+    """The lines that fit the GEE model as the report does: X, the design
+    (patsy), fam, the family, and fit."""
+    head = _upto(_gee_code(m, table, table_name, rows, qic_scale=None, extra_imports=[PLT]), 'fit = sm.GEE')
+    subj = m['spec']['subject']
+    s0 = m['d'].df[m['d'].alias[subj]]
+    if isinstance(s0.dtype, pd.CategoricalDtype):   # the subjects in the table's order, as the report numbers them
+        cats = list(s0.cat.remove_unused_categories().cat.categories)
+        head[-1] = head[-1].replace(f'groups=d[{J(subj)}]', f'groups=pd.Categorical(d[{J(subj)}], categories=[{", ".join(_pylit(v) for v in cats)}]).codes')
+    return head
+
+
+def _gee_plots(m, table, rows, table_name, out):
+    """The GEE report's graphs as code: residual by predicted, actual by
+    predicted, the residuals by subject, the working correlation."""
+    y = m['spec']['y'][0]
+    n = len(m['d'].df)
+    head = _gee_fit_code(m, table, table_name, rows)
+    head.append('mu, actual = fit.fittedvalues.to_numpy() if hasattr(fit.fittedvalues, "to_numpy") else np.asarray(fit.fittedvalues), np.asarray(y, float)   # the marginal mean')
+    resp = out['model']['response']
+    codes = {'residPred': _row_plot(head, 'mu', 'actual - mu', n, f'{resp} Predicted (marginal)', f'{resp} Residual', f'{y} residual by predicted', zero=True),
+             'actualPred': _row_plot(head + ['lo, hi = min(mu.min(), actual.min()), max(mu.max(), actual.max())'], 'mu', 'actual', n, f'{resp} Predicted', f'{resp} Actual',
+                                     f'{resp} actual by predicted', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)'])}
+    subj = m['spec']['subject']
+    subjects = out['diag']['subjects']
+    ns = len(subjects)
+    by_subject = head + [
+        f'subjects = {J(subjects)}   # every subject, in the table\'s order',
+        f'at = d[{J(subj)}].map(lambda v: {_subject_key_code(m)}).map({{s: i for i, s in enumerate(subjects)}}).to_numpy()   # each row\'s subject on the axis',
+        'res = actual - mu',
+        _fig(max(420, min(900, 14 * ns + 120)), 300)]
+    boxes = ['boxes = []   # Boxes per Subject: the quartiles as the page\'s graph takes them (the midpoint rule), whiskers to the furthest values within 1.5 IQR',
+             'for i in range(len(subjects)):',
+             '    v = res[at == i]; q1, med, q3 = np.percentile(v, [25, 50, 75], method="hazen"); iqr = q3 - q1',
+             '    inside = v[(v >= q1 - 1.5 * iqr) & (v <= q3 + 1.5 * iqr)]',
+             '    boxes.append({"q1": q1, "med": med, "q3": q3, "whislo": inside.min(), "whishi": inside.max()})',
+             f'ax.bxp(boxes, positions=range(len(subjects)), widths=0.6, showfliers=False, manage_ticks=False, boxprops={{"color": "{MUTED}", "linewidth": 0.7}}, '
+             f'medianprops={{"color": "{MUTED}", "linewidth": 0.7}}, whiskerprops={{"color": "{MUTED}", "linewidth": 0.7}}, capprops={{"color": "{MUTED}", "linewidth": 0.7}})']
+    tail = [f'ax.scatter(at, res, s={8 if n > 500 else 13}, color="{BASE}")',
+            f'ax.axhline(0, color="{MEAN}", linewidth=0.7)',
+            f'ax.set_xticks(range(len(subjects)), subjects, rotation=90, fontsize={7 if ns > 40 else 8})', 'ax.set_xlim(-0.6, len(subjects) - 0.4)',
+            f'ax.set_xlabel({J(subj)})', f'ax.set_ylabel({J(y + " Residual")})', f'ax.set_title({J(y + " residuals by subject")})', 'plt.show()']
+    codes['residSubject'] = '\n'.join(by_subject + tail)
+    codes['residSubjectBoxes'] = '\n'.join(by_subject + boxes + tail)
+    k = len(out['dep']['matrix']['labels'])
+    side = max(230, min(560, 70 + 42 * k))
+    tl = m['spec']['time']
+    c = head + ['from matplotlib.colors import LinearSegmentedColormap',
+                'st = fit.model.cov_struct; sizes = [len(v) for v in fit.model.endog_li]; i = int(np.argmax(sizes))   # the first of the largest subjects',
+                'M, is_cor = st.covariance_matrix(fit.model.cached_means[i][0], i); M = np.asarray(M, float)',
+                'if not is_cor:', '    sd = np.sqrt(np.diag(M)); M = M / np.outer(sd, sd)',
+                'idx = fit.model.group_indices[fit.model.group_labels[i]]']
+    if tl:
+        c.append(f'labels = [f"{{v:g}}" for v in d[{J(tl)}].to_numpy(float)[idx]]   # its rows\' times')
+    else:
+        c.append('labels = [f"row {j + 1}" for j in range(len(idx))]')
+    c += [_fig(side + 80, side),
+          'im = ax.imshow(M, vmin=-1, vmax=1, cmap=LinearSegmentedColormap.from_list("rb", ["#2f6ec7", "#f6f3f0", "#c0392b"]))',
+          'fig.colorbar(im, ax=ax, shrink=0.85)',
+          'ax.set_xticks(range(len(labels)), labels); ax.set_yticks(range(len(labels)), labels)']
+    if k <= 12:
+        c += ['for a in range(len(labels)):', '    for b_ in range(len(labels)):',
+              '        ax.text(b_, a, f"{M[a, b_]:.2f}".replace("-", "−"), ha="center", va="center", fontsize=8, color="white" if abs(M[a, b_]) > 0.5 else "#352921")']
+    c += [f'ax.set_xlabel({J(tl or "Row of the subject")})', 'ax.set_title("working correlation")', 'plt.show()']
+    codes['workcorr'] = '\n'.join(c)
+    return codes
+
+
+def _subject_key_code(m):
+    """How a subject's value is written as its label (the page's)."""
+    return 'str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)'
 
 
 def _odds_ratios(m, z):
@@ -2906,7 +3708,7 @@ def mixed(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=
             'alpha': alpha,
             'diag': {'rows': [int(i) for i in d.df.index], 'actual': y, 'predicted': cond, 'marginal': marg, 'residual': y - cond,
                      'marg_resid': y - marg},
-            'code': '\n'.join(lines)}
+            'code': '\n'.join(lines), 'plot_code': _mixed_plots(m, table, rows, table_name, None)}
 
 
 # ---------------------------------------------------------------------------
@@ -4067,6 +4869,53 @@ def _gr_code(m, table, table_name, rows):
     return '\n'.join(lines)
 
 
+def _genreg_plots(m, table, rows, table_name, out):
+    """The Solution Path of a Generalized Regression as code: the estimates on
+    the scaled predictors along the path (or the steps) and the curve that
+    picks the model, with the model shown (red) and the best (dotted). The
+    path is refitted as the report's code refits it (statsmodels'
+    fit_regularized for the penalized methods; the report's own steps for
+    forward selection). Without a block: the curve of Leave-One-Out (a path
+    per row) and both plots of forward selection by KFold or Leave-One-Out
+    (the steps of every fold)."""
+    R = m['path']
+    crit, forward = R['O']['criterion'], R['forward']
+    if forward and crit in ('kfold', 'loo'):
+        return {}
+    base = _gr_code(m, table, table_name, rows).split('\n')
+    base = base[:next(i for i, ln in enumerate(base) if ln.startswith('e = '))]
+    base = _after_frame(_with_plt(base), _positive_weights(R['O']['weight'], R['O']['freq']))
+    p = out['path']
+    terms = [c['term'] for c in p['coefs']]
+    if forward:
+        coef = ['P_ = np.zeros((len(steps), Z.shape[1] - 1))   # each step\'s estimates on the scaled predictors',
+                'for s_, c_ in enumerate(steps):', '    P_[s_, [j - 1 for j in c_]] = fit_on(train, c_).params[1:]',
+                'x = np.arange(len(steps))   # the step']
+    else:
+        src = {'kfold': 'paths[f]', 'loo': 'path(train)'}.get(crit, 'fits')
+        coef = [f'P_ = np.array([q.params[1:] for q in {src}])   # the estimates on the scaled predictors along the path',
+                'x = np.abs(P_).sum(axis=1)   # the magnitude of the scaled estimates']
+    marks = [f'ax.axvline(x[chosen], color="{FIT}", linewidth=1.4)   # the model shown']
+    best = 'best = int(np.argmin(curve))' if crit != 'kfold' else None
+    codes = {}
+    c = base + coef + [f'terms = {J(terms)}', f'colors = {J(PALETTE)}', _fig(400, 300),
+                       'for i, t in enumerate(terms):',
+                       f'    ax.plot(x, P_[:, i], color=colors[i % len(colors)], linewidth=1{", drawstyle=" + J("steps-post") + ", marker=" + J("o") + ", markersize=3" if forward else ""}, label=t)',
+                       *marks]
+    if crit != 'loo':
+        c += ([best] if best else []) + ['if best != chosen:', f'    ax.axvline(x[best], color="{MUTED}", linewidth=0.7, linestyle=":")   # the best']
+    c += [f'ax.set_xlabel({J(p["xlabel"])})', 'ax.set_ylabel("Parameter Estimates")', 'ax.set_title("solution path")', 'plt.show()']
+    codes['path'] = '\n'.join(c)
+    if crit != 'loo':
+        c = base + coef + ([best] if best else []) + [_fig(340, 300),
+                                                      f'ax.plot(x, curve, color="{BASE}", linewidth=0.9, marker="o", markersize=3.5)',
+                                                      f'ax.plot(x[chosen], curve[chosen], linestyle="none", marker="D", markersize=7, color="{FIT}")', *marks,
+                                                      'if best != chosen:', f'    ax.axvline(x[best], color="{MUTED}", linewidth=0.7, linestyle=":")',
+                                                      f'ax.set_xlabel({J(p["xlabel"])})', f'ax.set_ylabel({J(p["label"])})', f'ax.set_title({J(p["label"] + " path")})', 'plt.show()']
+        codes['curve'] = '\n'.join(c)
+    return codes
+
+
 @api('fitmodel.genreg')
 def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, dist='normal', method='lasso', enet_alpha=0.9,
            criterion='aicc', n_grid=40, choose=None, target=None, adaptive=False, validation=None, portion=None, folds=None, seed=None,
@@ -4169,10 +5018,12 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
             'aicc': [s_['aicc'] for s_ in R['shown']], 'bic': [s_['bic'] for s_ in R['shown']], 'df': [s_['df'] for s_ in R['shown']],
             'nonzero': [s_['nonzero'] for s_ in R['shown']], 'curve': [float(v) for v in R['curve']], 'label': model['criterion'],
             'coefs': [{'term': labels[j], 'values': full[:, i].tolist()} for i, j in enumerate(m['cols'])]}
-    return {'model': model, 'summary': summary, 'path': path, 'best': m['best'], 'chosen': ch, 'estimates': est, 'scaled': scaled,
-            'factors': _factors(d), 'key': m['key'],
-            'diag': {**rowsets, 'actual': m['y'], 'predicted': pred, 'residual': m['y'] - pred, 'set': m['sets']},
-            'notes': notes, 'code': _gr_code(m, table, table_name, rows)}
+    out = {'model': model, 'summary': summary, 'path': path, 'best': m['best'], 'chosen': ch, 'estimates': est, 'scaled': scaled,
+           'factors': _factors(d), 'key': m['key'],
+           'diag': {**rowsets, 'actual': m['y'], 'predicted': pred, 'residual': m['y'] - pred, 'set': m['sets']},
+           'notes': notes, 'code': _gr_code(m, table, table_name, rows)}
+    out['plot_code'] = _genreg_plots(m, table, rows, table_name, out)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -4459,12 +5310,12 @@ def _gee_ratios(m, z):
     return out
 
 
-def _gee_code(m, table, table_name, rows, compare=False, qic_scale=None):
+def _gee_code(m, table, table_name, rows, compare=False, qic_scale=None, extra_imports=()):
     """Runnable code for a GEE fit or, compare=True, for the fit of every
     working correlation the roles allow and their QIC."""
     d, spec = m['d'], m['spec']
     subj, tcol, scol, offset = spec['subject'], spec['time'], spec['subgroup'], spec['offset']
-    lines = _code_frame(d, table, table_name, rows, [], ['import patsy'])
+    lines = _code_frame(d, table, table_name, rows, [], [*extra_imports, 'import patsy'])
     if tcol:
         lines.append(f'd = d.sort_values([{json.dumps(subj)}, {json.dumps(tcol)}], kind="stable")   # a subject\'s rows in time order '
                      '(statsmodels\' AR(1) counts positions)')
@@ -4623,8 +5474,10 @@ def gee(table, y, effects=(), rows=None, subject=None, time=None, subgroup=None,
         notes.append('Ordinal factors are coded like nominal ones (effect coding).')
     lines = _gee_code(m, table, table_name, rows, qic_scale=float(qs))
     lines += _centred_code(d)
-    return {'model': model, 'estimates': est, 'effect_tests': et, 'ratios': _gee_ratios(m, z), 'qic': qic, 'dep': dep, 'diag': diag,
-            'factors': _factors(d), 'key': m['key'], 'alpha': alpha, 'notes': notes, 'code': '\n'.join(lines)}
+    out = {'model': model, 'estimates': est, 'effect_tests': et, 'ratios': _gee_ratios(m, z), 'qic': qic, 'dep': dep, 'diag': diag,
+           'factors': _factors(d), 'key': m['key'], 'alpha': alpha, 'notes': notes, 'code': '\n'.join(lines)}
+    out['plot_code'] = _gee_plots(m, table, rows, table_name, out)
+    return out
 
 
 @api('fitmodel.gee_compare')
@@ -5381,6 +6234,7 @@ def iv(table, y, effects=(), endog=(), instruments=(), rows=None, weight=None, f
     out['notes'] = notes
     out['weak_columns'] = weak
     out['code'] = _iv_code(m, table, table_name, rows, tests, ols)
+    out['plot_code'] = _iv_plots(m, table, rows, table_name)
     return out
 
 
@@ -5694,6 +6548,7 @@ def quantreg(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
         notes.append('Ordinal factors are coded like nominal ones (effect coding).')
     out['notes'] = notes
     out['code'] = _qr_code(m, table, table_name, rows, taus_p if process else None, alpha)
+    out['plot_code'] = _qr_plots(m, table, rows, table_name, out)
     return out
 
 
@@ -5885,7 +6740,75 @@ def recursive(table, y, effects=(), rows=None, weight=None, freq=None, no_interc
                       if out['rolling']['singular'] else ''))
     out['notes'] = notes
     out['code'] = _rr_code(m, table, table_name, rows, order_by, conf, w, weight)
+    out['plot_code'] = _rr_plots(m, out, table, table_name, rows, order_by, conf, w, weight, alpha)
     return out
+
+
+def _rr_plots(m, out, table, table_name, rows, order_by, conf, window, weight, alpha):
+    """The Recursive and Rolling Regression graphs as code: each term's
+    recursive estimate with its band, the CUSUM and the CUSUM of squares
+    with their bounds, each term's rolling estimate."""
+    d = m['d']
+    y = m['spec']['y'][0]
+    names = list(m['res'].params.index)
+    base = _rr_code(m, table, table_name, rows, order_by, conf, window, weight).split('\n')
+    base = _with_plt(base[:next(i for i, ln in enumerate(base) if ln.startswith('d0 = ')) + 1], ['from scipy import stats'])
+    base = _after_frame(base, _positive_weights(weight, None))
+    T = _uncenter(d, names)
+    if T is not None:   # the intercept at 0, as the report puts it back (the centred main effects)
+        i0 = names.index('Intercept')
+        base.append(f'T = np.eye({len(names)})')
+        for t_, mm in getattr(d, 'centered_main', {}).items():
+            if t_ in names:
+                base.append(f'T[{i0}, {names.index(t_)}] = -{mm!r}')
+    else:
+        base.append(f'T = np.eye({len(names)})')
+    xt = f'Observation ({"sorted by " + order_by if order_by else "in row order"})'
+    k = len(names)
+    order = sorted(range(k), key=lambda j: -1 if names[j] == 'Intercept' else next((i for i, e in enumerate(d.effects) if names[j] in e.get('terms', [])), len(d.effects)))
+    terms = [r['term'] for r in out['recursive']]
+    band = lambda est, lo, hi, xs, title, ylab, xlab, ref, yfrom=None: ([_fig(340, 230),   # noqa: E731
+                                                                        f'ax.fill_between({xs}, {lo}, {hi}, color="{BASE}", alpha=0.18, linewidth=0)',
+                                                                        f'ax.plot({xs}, {est}, color="{BASE}", linewidth=1.1, marker="o", markersize={2 if len(d.df) > 300 else 3})',
+                                                                        f'ax.axhline({ref}, color="{FIT}", linewidth=0.9, linestyle="--")   # the estimate from all the rows']
+                                                                       + ([f'v = np.r_[({est})[{yfrom}:], ({lo})[{yfrom}:], ({hi})[{yfrom}:], {ref}]; pad = 0.08 * (v.max() - v.min())',
+                                                                           'ax.set_ylim(v.min() - pad, v.max() + pad)   # the first estimates swing widely: the axis is made for the later ones'] if yfrom is not None else [])
+                                                                       + [f'ax.set_xlabel({J(xlab)})', f'ax.set_ylabel({J(ylab)})', f'ax.set_title({J(title)})', 'plt.show()'])
+    rec = base + ['B = T @ rls.recursive_coefficients.filtered; C = np.einsum("ij,jkt,lk->ilt", T, rls.recursive_coefficients.filtered_cov, T)',
+                  f'z = stats.norm.ppf({1 - alpha / 2!r}); full = T @ fit.params.to_numpy()']
+    npts = len(out['cusum']['x'])
+    yfrom = min(npts - 1, max(2 * out['k'], round(0.05 * npts)))
+    codes = {'recursive': []}
+    for j, term in zip(order, terms):
+        c = rec + [f'j = {j}   # {term}', 'est = B[j, d0:]; se = np.sqrt(np.maximum(C[j, j, d0:], 0))']
+        c += band('est', 'est - z * se', 'est + z * se', 't', f'{term} recursive estimate', term, xt, 'full[j]', yfrom)
+        codes['recursive'].append('\n'.join(c))
+    bounds = (['a = 0.850; up = a * np.sqrt(len(y) - d0) + 2 * a * (t - d0) / np.sqrt(len(y) - d0); lo = -up   # Brown, Durbin and Evans\'s 10% bound'] if conf == 0.1
+              else [f'lo, up = rls._cusum_significance_bounds({conf!r}, points=t)'])
+    codes['cusum'] = '\n'.join(base + bounds + [_fig(520, 300),
+                                                f'ax.plot(t, up, t, lo, color="{FIT}", linewidth=0.9, linestyle="--")   # the {100 * conf:g}% bounds',
+                                                f'ax.plot(t, rls.cusum, color="{BASE}", linewidth=1, marker="o", markersize={2 if npts > 300 else 3})',
+                                                f'ax.axhline(0, color="{MUTED}", linewidth=0.7)',
+                                                f'ax.set_xlabel({J(xt)})', 'ax.set_ylabel("CUSUM")', f'ax.set_title({J(y + " CUSUM")})', 'plt.show()'])
+    codes['cusumsq'] = '\n'.join(base + [f'lo, up = rls._cusum_squares_significance_bounds({conf!r}, points=t)', _fig(520, 300),
+                                         f'ax.plot(t, (t - d0) / (len(y) - d0), color="{MUTED}", linewidth=0.7, linestyle=":")   # the diagonal',
+                                         f'ax.plot(t, up, t, lo, color="{FIT}", linewidth=0.9, linestyle="--")   # the {100 * conf:g}% bounds',
+                                         f'ax.plot(t, rls.cusum_squares, color="{BASE}", linewidth=1, marker="o", markersize={2 if npts > 300 else 3})',
+                                         f'ax.set_xlabel({J(xt)})', 'ax.set_ylabel("CUSUM of Squares")', f'ax.set_title({J(y + " CUSUM of squares")})', 'plt.show()'])
+    ro = out.get('rolling')
+    if ro:
+        w = ro['window']
+        roll = base + [f'roll = RollingOLS(y, X, window={int(w)}).fit(use_t=True)   # least squares on each window of {w} rows',
+                       'P = np.asarray(roll.params) @ T.T; Cv = np.einsum("ij,tjk,lk->til", T, np.asarray(roll.cov_params()), T)',
+                       f'tc = stats.t.ppf({1 - alpha / 2!r}, np.asarray(roll.df_resid, dtype=float)); full = T @ fit.params.to_numpy()',
+                       f'ends = np.arange({int(w)}, len(y) + 1)   # each window at its last observation']
+        codes['rolling'] = []
+        for j, term in zip(order, [r['term'] for r in ro['terms']]):
+            c = roll + [f'j = {j}   # {term}', f'est = P[{int(w) - 1}:, j]; se = np.sqrt(np.maximum(Cv[{int(w) - 1}:, j, j], 0)); tj = tc[{int(w) - 1}:]']
+            c += band('est', 'est - tj * se', 'est + tj * se', 'ends', f'{term} rolling estimate', term,
+                      f'Last observation of the window ({"sorted by " + order_by if order_by else "row order"})', 'full[j]')
+            codes['rolling'].append('\n'.join(c))
+    return codes
 
 
 def _rr_code(m, table, table_name, rows, order_by, conf, window, weight):

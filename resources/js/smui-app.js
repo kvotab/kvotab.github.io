@@ -93,7 +93,7 @@
     'Graph/Legacy': 310, 'Cols/Utilities': 310, 'Cols/Modeling Utilities': 320, 'Tables/Utilities': 310, 'Rows/Row Selection': 10,
   };
 
-  const MENUS = ['File', 'Edit', 'Tables', 'Rows', 'Cols', 'DOE', 'Analyze', 'Graph', 'Help'];
+  const MENUS = ['File', 'Edit', 'Tables', 'Rows', 'Cols', 'DOE', 'Analyze', 'Graph', 'Python', 'Help'];
 
   /* ---- the app -------------------------------------------------------------- */
   class App extends Emitter {
@@ -197,7 +197,7 @@
       this.panels = new SM.panels.Panels(this.side, this);
       this._wireHandle();
 
-      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt,.jmp', multiple: true, hidden: true });
+      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt,.jmp,.ipynb,.py,.jsl', multiple: true, hidden: true });
       this.fileInput.addEventListener('change', () => { const f = [...this.fileInput.files]; this.fileInput.value = ''; this.openFiles(f); });
       h.append(this.fileInput);
       this._wireDrop();
@@ -239,7 +239,7 @@
       const id = SM.util.uid('tab');
       const titleEl = el('span', { class: 'sm-tabtitle', text: title });
       const btn = el('button', { type: 'button', class: 'sm-tab', role: 'tab', 'aria-selected': 'false', id, dataset: { kind } },
-        kind === 'table' ? tableGlyph() : kind === 'report' ? reportGlyph() : null, titleEl);
+        kind === 'table' ? tableGlyph() : kind === 'report' ? reportGlyph() : kind === 'notebook' || kind === 'jsl' ? notebookGlyph() : null, titleEl);
       const tab = { id, kind, title, btn, titleEl, view, table, report, closable };
       if (closable) {
         const x = el('span', { class: 'sm-tabclose', role: 'button', 'aria-label': `Close ${title}`, text: '×' });
@@ -302,6 +302,8 @@
     closeTab(tab) {
       if (tab.kind === 'table') return this.closeTable(tab.table);
       if (tab.kind === 'report') return this.closeReport(tab.report);
+      if (tab.kind === 'notebook' && SM.notebook) return SM.notebook.close(this, tab.notebook);
+      if (tab.onClose) tab.onClose();
       this._removeTab(tab);
     }
 
@@ -386,6 +388,9 @@
     async openFiles(files) {
       for (const f of files) {
         try {
+          // a notebook, or a JSL script to convert
+          if (/\.(ipynb|py)$/i.test(f.name) && SM.notebook) { await SM.notebook.openFile(this, f); continue; }
+          if (/\.jsl$/i.test(f.name) && SM.jsl) { await SM.jsl.openFile(this, f); continue; }
           if (/\.(dta|sas7bdat|xpt|jmp)$/i.test(f.name)) {
             SM.ui.toast(`Reading ${f.name} in the Python engine…`);
             const r = await SM.engine.callBytes('datasets.read_file', { name: f.name }, await f.arrayBuffer());
@@ -461,7 +466,9 @@
     }
 
     saveProject() {
-      const j = { format: 'smui-project', version: 1, saved: new Date().toISOString(), tables: this.tables.map((t) => ({ id: t.id, ...t.toJSON() })), reports: this.reports.map((r) => r.toJSON()) };
+      const j = { format: 'smui-project', version: 1, saved: new Date().toISOString(), tables: this.tables.map((t) => ({ id: t.id, ...t.toJSON() })), reports: this.reports.map((r) => r.toJSON()),
+        notebooks: SM.notebook ? SM.notebook.notebooks.map((n) => n.toJSON()) : [] };
+      if (SM.notebook) for (const n of SM.notebook.notebooks) n.dirty = false;
       SM.util.download('smui-project.json', JSON.stringify(j), 'application/json');
     }
 
@@ -477,9 +484,11 @@
         const spec = remapSpec(rj.spec, t, rj.idNames);
         this.openReport(p, spec, t, { show: false });
       }
+      if (SM.notebook) for (const nj of j.notebooks || []) SM.notebook.open(this, nj, { show: false }).dirty = false;
       const first = this.tabs.find((x) => x.kind === 'table');
       if (first) this.showTab(first);
-      SM.ui.toast(`Opened the project: ${(j.tables || []).length} tables, ${(j.reports || []).length} reports`);
+      const nbs = (j.notebooks || []).length;
+      SM.ui.toast(`Opened the project: ${(j.tables || []).length} tables, ${(j.reports || []).length} reports${nbs ? `, ${nbs} notebook${nbs > 1 ? 's' : ''}` : ''}`);
     }
 
     /* ---- reports ------------------------------------------------------------ */
@@ -538,7 +547,7 @@
       const ex = Object.entries(SM.io.EXAMPLES).map(([k, v]) => ({ label: v.label, action: () => this.openExample(k), title: v.about }));
       return [
         { order: 10, label: 'New Data Table', action: () => this.newTable() },
-        { order: 20, label: 'Open…', key: 'CSV, Excel, Stata, SAS', action: () => this.fileInput.click() },
+        { order: 20, label: 'Open…', key: 'CSV, Excel, Stata, SAS, JMP', action: () => this.fileInput.click(), title: 'A table (CSV, text, Excel, Stata, SAS, JMP), a project, a notebook (.ipynb, .py) or a JSL script to convert (.jsl)' },
         { order: 30, label: 'Examples', submenu: ex },
         { order: 40, label: 'statsmodels Datasets…', action: () => this.datasetsDialog() },
         { order: 110, label: 'Save Table (.json)', action: () => this.exportTable('json'), disabled: !this.current },
@@ -547,7 +556,7 @@
           { label: 'Tab separated text', action: () => this.exportTable('tsv') },
           { label: 'Excel workbook (.xlsx)', action: () => this.exportTable('xlsx') },
         ] },
-        { order: 130, label: 'Save Project (tables and reports)', action: () => this.saveProject(), disabled: !this.tables.length },
+        { order: 130, label: 'Save Project (tables, reports, notebooks)', action: () => this.saveProject(), disabled: !this.tables.length && !(SM.notebook && SM.notebook.notebooks.length) },
         { order: 140, label: 'Open Project…', action: () => this.fileInput.click() },
         { order: 210, label: 'Close Table', action: () => this.current && this.closeTable(this.current), disabled: !this.current },
         { order: 220, label: 'Close All Reports', action: () => { for (const r of this.reports.slice()) this.closeReport(r); }, disabled: !this.reports.length },
@@ -1014,11 +1023,15 @@
       dsBtn.addEventListener('click', () => this.datasetsDialog());
       const newBtn = el('button', { type: 'button', class: 'sm-btn', text: 'New empty table' });
       newBtn.addEventListener('click', () => this.newTable());
+      const nbBtn = SM.notebook ? el('button', { type: 'button', class: 'sm-btn', text: 'New notebook' }) : null;
+      if (nbBtn) nbBtn.addEventListener('click', () => SM.notebook.open(this));
+      const jslBtn = SM.jsl ? el('button', { type: 'button', class: 'sm-btn', text: 'JSL to Python…' }) : null;
+      if (jslBtn) jslBtn.addEventListener('click', () => SM.jsl.open(this));
       h.append(
         el('h2', { text: 'Statistics in the browser, with statsmodels' }),
-        el('p', { text: 'Open a table, choose an analysis from the Analyze or Graph menu, cast columns into roles, and read the report. Each report is live: select points and the rows light up everywhere; exclude rows and redo; open the red triangles for more. Under every result is the Python that computes it.' }),
-        el('div', { class: 'sm-homebtns' }, openBtn, dsBtn, newBtn),
-        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt), JMP (.jmp) and this page\'s JSON tables open by drop or by File > Open. Nothing is uploaded: the data stay in this browser.' }),
+        el('p', { text: 'Open a table, choose an analysis from the Analyze or Graph menu, cast columns into roles, and read the report. Each report is live: select points and the rows light up everywhere; exclude rows and redo; open the red triangles for more. Under every result is the Python that computes it: edit it and run it where it is, or take it to a notebook (Python > New Notebook), where the open tables are at hand. Python > JSL to Python turns a JMP script into Python.' }),
+        el('div', { class: 'sm-homebtns' }, openBtn, dsBtn, newBtn, nbBtn, jslBtn),
+        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt), JMP (.jmp) and this page\'s JSON tables open by drop or by File > Open, and so do notebooks (.ipynb, .py) and JSL scripts (.jsl). Nothing is uploaded: the data stay in this browser.' }),
         el('h3', { text: 'Examples (simulated for this page)' }));
       const exBox = el('div', { class: 'sm-examples' });
       for (const [k, v] of Object.entries(SM.io.EXAMPLES)) {
@@ -1215,5 +1228,13 @@
       SM.util.svg('path', { d: 'M1.5 10.5 V6 M4.5 10.5 V3 M7.5 10.5 V5 M10.5 10.5 V1.5', stroke: 'currentColor', 'stroke-width': 1.6 }));
   }
 
+  // a notebook (and the JSL converter): a page of code, its lines ragged
+  function notebookGlyph() {
+    return SM.util.svg('svg', { viewBox: '0 0 12 12', width: 11, height: 11, 'aria-hidden': 'true', class: 'sm-tabicon' },
+      SM.util.svg('path', { d: 'M4 3 L1.5 6 L4 9 M8 3 L10.5 6 L8 9', stroke: 'currentColor', 'stroke-width': 1.5, fill: 'none', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  }
+
   SM.App = App;
+  // For JSL to Python, whose specs name their columns: ids put in wherever a spec holds them.
+  SM.specs = Object.freeze({ remap: remapSpec, withNames });
 }(typeof self !== 'undefined' ? self : this));

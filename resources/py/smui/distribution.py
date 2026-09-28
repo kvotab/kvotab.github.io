@@ -45,6 +45,37 @@ def _n_missing(table_id, column, rows):
     return int(np.sum(~np.isfinite(v.astype(float))))
 
 
+# ---- the graphs as matplotlib code -----------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table, as the other code does: the report's rows, the
+# light theme's colours, the graph's size at 100 pixels an inch.
+BASE, BAR, RED = '#2f6690', '#8fa9c2', '#b0413e'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+
+
+def _plot_head(table_name, imports=()):
+    return [code_head(table_name, ['import matplotlib.pyplot as plt', *imports])]
+
+
+def _rows_code(table, rows):
+    """The line that keeps the report's rows of the table as exported (a By
+    group, rows excluded or filtered out); none when it has every row."""
+    if rows is None:
+        return []
+    n = data.TABLES[table]['n'] if table in data.TABLES else None
+    keep = [int(r) for r in rows]
+    if n is not None and len(keep) > n / 2:
+        drop = sorted(set(range(n)) - set(keep))
+        return [f'df = df.drop(index={drop})   # the rows the report leaves out'] if drop else []
+    return [f'df = df.loc[{keep}]   # the rows of the report']
+
+
+def _rows_text(table, rows):
+    """_rows_code as text to go after a code head ('' when the report has
+    every row): the statistics' code keeps the report's rows too."""
+    return ''.join('\n' + line for line in _rows_code(table, rows))
+
+
 @api('distribution.continuous')
 def continuous(table, column, rows=None, weight=None, freq=None, alpha=0.05, table_name='data'):
     x, w, _ = _values(table, column, rows, weight, freq)
@@ -80,7 +111,7 @@ def continuous(table, column, rows=None, weight=None, freq=None, alpha=0.05, tab
     out['quantiles'] = quant
     out['alpha'] = alpha
     out['normality'] = _normality(x) if not weighted else None
-    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW']),
+    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW']) + _rows_text(table, rows),
          f'x = df[{json.dumps(column)}].dropna()']
     if weighted:
         wexpr = ' * '.join(f'df[{json.dumps(v)}]' for v in (weight, freq) if v)
@@ -153,7 +184,7 @@ def intervals(table, column, rows=None, alpha=0.05, k_future=1, coverage=0.90, t
             'prediction_sd': {'lower': s * math.sqrt(stats.f.ppf(alpha / 2, k - 1, n - 1)) if k > 1 else None,
                               'upper': s * math.sqrt(stats.f.ppf(1 - alpha / 2, k - 1, n - 1)) if k > 1 else None},
             'tolerance': {'lower': m - ktol * s, 'upper': m + ktol * s, 'k': ktol},
-            'code': '\n'.join([code_head(table_name, ['from scipy import stats']),
+            'code': '\n'.join([code_head(table_name, ['from scipy import stats']) + _rows_text(table, rows),
                                f'x = df[{json.dumps(column)}].dropna().to_numpy(); n, m, s = len(x), x.mean(), x.std(ddof=1)',
                                f't = stats.t.ppf(1 - {alpha}/(2*{k}), n - 1); print(m - t*s*np.sqrt(1 + 1/n), m + t*s*np.sqrt(1 + 1/n))   # prediction',
                                f'k = stats.norm.ppf((1 + {coverage})/2) * np.sqrt((n - 1)*(1 + 1/n)/stats.chi2.ppf({alpha}, n - 1)); print(m - k*s, m + k*s)   # tolerance (Howe)'])}
@@ -171,7 +202,7 @@ def equivalence(table, column, rows=None, low=None, upp=None, alpha=0.05, table_
             'lower': {'t': float(lower[0]), 'p': float(lower[1]), 'df': float(lower[2])},
             'upper': {'t': float(upper[0]), 'p': float(upper[1]), 'df': float(upper[2])},
             'ci': [float(v) for v in d.tconfint_mean(2 * alpha)],
-            'code': '\n'.join([code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW']),
+            'code': '\n'.join([code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW']) + _rows_text(table, rows),
                                f'x = df[{json.dumps(column)}].dropna()',
                                f'print(DescrStatsW(x, ddof=1).ttost_mean({low!r}, {upp!r}))   # p, (t, p, df) lower, (t, p, df) upper'])}
 
@@ -193,15 +224,31 @@ def _normality(x):
 
 
 @api('distribution.qq')
-def qq(table, column, rows=None):
-    """Normal quantile plot: each value against Φ⁻¹(r/(n+1)), as JMP."""
+def qq(table, column, rows=None, prob_axis=False, table_name='data'):
+    """Normal quantile plot: each value against Φ⁻¹(r/(n+1)), as JMP.
+    prob_axis: the page's Show Probability Axis (for the graph's code)."""
     x, _, idx = _values(table, column, rows)
     order = np.argsort(x, kind='stable')
     n = len(x)
     r = stats.rankdata(x[order], method='average')
     z = stats.norm.ppf(r / (n + 1))
     mean, sd = float(np.mean(x)), float(np.std(x, ddof=1)) if n > 1 else 0.0
-    return {'x': x[order].tolist(), 'z': z.tolist(), 'rows': idx[order].tolist(), 'mean': mean, 'sd': sd}
+    c = _plot_head(table_name, ['from scipy import stats'])
+    c += _rows_code(table, rows)
+    c += [f'x = np.sort(df[{json.dumps(column)}].dropna().to_numpy())',
+          'z = stats.norm.ppf(stats.rankdata(x) / (len(x) + 1))   # each value\'s normal quantile, Φ⁻¹(r/(n+1)) with r its rank',
+          'm, s = x.mean(), x.std(ddof=1)',
+          'fig, ax = plt.subplots(figsize=(3.8, 3.0), layout="constrained")',
+          f'ax.scatter(z, x, s=18, color="{BASE}")',
+          f'ax.plot([z.min(), z.max()], [m + s * z.min(), m + s * z.max()], color="{RED}", linewidth=1)   # the normal with the sample mean and standard deviation']
+    if prob_axis:
+        c += ['p = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]',
+              'ax.set_xticks(stats.norm.ppf(p), [str(v) for v in p])   # Show Probability Axis',
+              'ax.set_xlabel("Normal Quantile Plot (probability)")']
+    else:
+        c.append('ax.set_xlabel("Normal Quantile")')
+    c += [f'ax.set_ylabel({json.dumps(column)})', f'ax.set_title({json.dumps(column + " normal quantile plot")})', 'plt.show()']
+    return {'x': x[order].tolist(), 'z': z.tolist(), 'rows': idx[order].tolist(), 'mean': mean, 'sd': sd, 'plot_code': '\n'.join(c)}
 
 
 @api('distribution.test_mean')
@@ -227,7 +274,7 @@ def test_mean(table, column, rows=None, mu=0.0, sigma=None, wilcoxon=True, weigh
             res['wilcoxon'] = {'stat': s, 'W': float(wr.statistic), 'p_two': float(wr.pvalue),
                                'p_greater': float(stats.wilcoxon(dif, alternative='greater').pvalue),
                                'p_less': float(stats.wilcoxon(dif, alternative='less').pvalue)}
-    res['code'] = '\n'.join([code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats']),
+    res['code'] = '\n'.join([code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats']) + _rows_text(table, rows),
                              f'x = df[{json.dumps(column)}].dropna()',
                              f'print(DescrStatsW(x, ddof=1).ttest_mean({mu!r}))   # t, p (two-sided), df',
                              f'print(stats.wilcoxon(x - {mu!r}))'])
@@ -266,7 +313,7 @@ def effect(table, column, rows=None, mu=0.0, weight=None, freq=None, alpha=0.05,
     dd = (float(d.mean) - mu) / sd
     rows_out = smd_rows(dd, dd * math.sqrt(n), n - 1, 1 / math.sqrt(n), alpha)
     out = {'table': _es_table(rows_out, alpha), 'mu': mu, 'n': n, 'sd': sd, 'alpha': alpha, 'j': rows_out[1]['j']}
-    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, optimize, special'])]
+    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, optimize, special']) + _rows_text(table, rows)]
     c += _weighted_lines(column, weight, freq)
     c.append(NCP_T_CODE)
     c.append(f'd_ = (m - {mu!r}) / s; t = d_ * np.sqrt(n); lo, hi = ncp(t, n - 1, {1 - alpha / 2!r}) / np.sqrt(n), ncp(t, n - 1, {alpha / 2!r}) / np.sqrt(n)')
@@ -295,7 +342,7 @@ def bayes_t(table, column, rows=None, mu=0.0, r=None, weight=None, freq=None, ta
     t = (float(d.mean) - mu) / (sd / math.sqrt(n))
     rows_out = jzs_rows(t, n, n - 1, r, [f'mean ≠ {mu:g}', f'mean > {mu:g}', f'mean < {mu:g}'])
     out = {'table': _bf_table(rows_out), 't': t, 'n': n, 'df': n - 1, 'r': r, 'mu': mu}
-    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, integrate'])]
+    c = [code_head(table_name, ['from statsmodels.stats.weightstats import DescrStatsW', 'from scipy import stats, integrate']) + _rows_text(table, rows)]
     c += _weighted_lines(column, weight, freq)
     c.append(f't = (m - {mu!r}) / (s / np.sqrt(n))')
     c.append(JZS_CODE)
@@ -347,7 +394,7 @@ def bayes_binom(table, column, rows=None, probs=None, a=1.0, b=1.0, weight=None,
     if abs(k - round(k)) > 1e-9 or abs(n - round(n)) > 1e-9:
         notes.append('The counts are sums of weights and not whole numbers; the Bayes factor takes them as they are.')
     out = {'table': _bf_table(rows_out), 'k': k, 'n': n, 'p0': p0, 'a': a, 'b': b, 'level': labels[0], 'notes': notes}
-    c = [code_head(table_name, ['from scipy import stats, special'])]
+    c = [code_head(table_name, ['from scipy import stats, special']) + _rows_text(table, rows)]
     if weight or freq:
         wexpr = ' * '.join(f'df[{json.dumps(v)}]' for v in (weight, freq) if v)
         c.append(f'counts = ({wexpr}).groupby(df[{json.dumps(column)}]).sum().reindex([{_lit(labels[0])}, {_lit(labels[1])}])')
@@ -612,18 +659,88 @@ def _kde(x):
             'note': f"A Gaussian kernel density estimate (scipy gaussian_kde, Scott's bandwidth: {bw:.4g}); JMP's Smooth Curve chooses its own bandwidth."}
 
 
+# The fitted curve on the histogram, as code for the graph's snippet: lines
+# that fit the distribution to xf (the column's values, each row once, as the
+# fits take them) by maximum likelihood and give its density f on the grid g
+# of the report's curve (a discrete fit: its probabilities f at the whole
+# numbers g). The page scales f to the histogram's axis. scipy's fit is the
+# maximum likelihood estimate the report's fit starts from and refines.
+_GRID = 'pad = 0.08 * (xf.max() - xf.min() if xf.max() > xf.min() else abs(xf.max()) + 1)'
+_GRID_ALL = 'g = np.linspace(xf.min() - pad, xf.max() + pad, 200)'
+_GRID_POS = 'g = np.linspace(max(xf.min() - pad, 1e-9), xf.max() + pad, 200)'
+# The report's fit maximises the likelihood from scipy's estimate (statsmodels'
+# GenericLikelihoodModel: Nelder-Mead, then BFGS); where that moves it, the code does the same.
+_POLISH = ('p = optimize.minimize(nll, {start}, method="Nelder-Mead", options={{"maxiter": 4000, "xatol": 1e-4, "fatol": 1e-4}}).x   # the likelihood maximised from scipy\'s estimate, as the report\'s fit\n'
+           '{out} = optimize.minimize(nll, p, method="BFGS", options={{"maxiter": 200}}).x')
+_CURVES = {
+    'normal': [_GRID, _GRID_ALL, 'mu, sigma = xf.mean(), xf.std(ddof=1)   # JMP\'s σ is the sample standard deviation', 'f = stats.norm.pdf(g, mu, sigma)'],
+    'lognormal': [_GRID, _GRID_POS, 's_, loc_, scale_ = stats.lognorm.fit(xf, floc=0)', 'f = stats.lognorm.pdf(g, s_, scale=scale_)'],
+    'weibull': [_GRID, _GRID_POS, 'c_, loc_, scale_ = stats.weibull_min.fit(xf, floc=0)', 'f = stats.weibull_min.pdf(g, c_, scale=scale_)'],
+    'exponential': [_GRID, _GRID_POS, 'loc_, scale_ = stats.expon.fit(xf, floc=0)', 'f = stats.expon.pdf(g, scale=scale_)'],
+    'gamma': [_GRID, _GRID_POS, 'a_, loc_, scale_ = stats.gamma.fit(xf, floc=0)', 'f = stats.gamma.pdf(g, a_, scale=scale_)'],
+    'beta': ['g = np.linspace(1e-6, 1 - 1e-6, 200)', 'a_, b_, loc_, scale_ = stats.beta.fit(xf, floc=0, fscale=1)', 'f = stats.beta.pdf(g, a_, b_)'],
+    'logistic': [_GRID, _GRID_ALL, 'loc_, scale_ = stats.logistic.fit(xf)', 'f = stats.logistic.pdf(g, loc_, scale_)'],
+    'cauchy': [_GRID, _GRID_ALL, 'loc_, scale_ = stats.cauchy.fit(xf)', 'f = stats.cauchy.pdf(g, loc_, scale_)'],
+    't': [_GRID, _GRID_ALL, 'df_, loc_, scale_ = stats.t.fit(xf)',
+          'nll = lambda p: -np.mean(stats.t.logpdf(xf, p[2], p[0], p[1])) if p[1] > 0 and 0 < p[2] <= 1000 else 1e300   # ν at most 1000',
+          *_POLISH.format(start='[loc_, scale_, min(df_, 200)]', out='loc_, scale_, df_').split('\n'),
+          'f = stats.t.pdf(g, df_, loc_, scale_)'],
+    'johnsonsu': [_GRID, _GRID_ALL, 'nll = lambda p: -np.mean(stats.johnsonsu.logpdf(xf, *p)) if p[1] > 0 and p[3] > 0 else 1e300',
+                  *_POLISH.format(start='stats.johnsonsu.fit(xf)', out='a_, b_, loc_, scale_').split('\n'),
+                  'f = stats.johnsonsu.pdf(g, a_, b_, loc_, scale_)'],
+    'johnsonsb': [_GRID, _GRID_ALL, 'w_ = 0.05 * (xf.max() - xf.min() if xf.max() > xf.min() else 1.0)   # the threshold and range start just outside the values',
+                  'nll = lambda p: -np.mean(stats.johnsonsb.logpdf(xf, *p)) if p[1] > 0 and p[3] > 0 and np.all(np.isfinite(stats.johnsonsb.logpdf(xf, *p))) else 1e300',
+                  *_POLISH.format(start='stats.johnsonsb.fit(xf, loc=xf.min() - w_, scale=xf.max() - xf.min() + 2 * w_)', out='a_, b_, loc_, scale_').split('\n'),
+                  'f = stats.johnsonsb.pdf(g, a_, b_, loc_, scale_)'],
+    'poisson': ['g = np.arange(int(xf.min()), int(xf.max()) + 1)', 'f = stats.poisson.pmf(g, xf.mean())   # λ: the mean'],
+    'negbin': ['g = np.arange(int(xf.min()), int(xf.max()) + 1)',
+               'nll = lambda p: -stats.nbinom.logpmf(xf, p[0] / (p[1] - 1), 1 / p[1]).sum() if p[0] > 0 and p[1] > 1 else np.inf',
+               'lam, sig = optimize.minimize(nll, [xf.mean(), max(1.05, xf.var(ddof=1) / max(xf.mean(), 1e-9))], method="Nelder-Mead").x   # λ and σ (variance/mean)',
+               'f = stats.nbinom.pmf(g, lam / (sig - 1), 1 / sig)'],
+    'kde': ['kde = stats.gaussian_kde(xf)   # Scott\'s bandwidth', 'bw = kde.factor * xf.std(ddof=1)',
+            'g = np.linspace(xf.min() - 3 * bw, xf.max() + 3 * bw, 300)', 'f = kde(g)'],
+}
+
+
+def _mixture_curve(k):
+    return [_GRID, _GRID_ALL,
+            f'k = {k}   # a normal mixture by EM from quantile starts, as the report\'s fit starts',
+            'mu, sd, pi = np.quantile(xf, (np.arange(k) + 0.5) / k), np.full(k, xf.std() / k + 1e-9), np.full(k, 1 / k)',
+            'for _ in range(500):',
+            '    dens = pi[:, None] * stats.norm.pdf(xf, mu[:, None], sd[:, None])',
+            '    r = dens / (dens.sum(axis=0) + 1e-300)',
+            '    nk = r.sum(axis=1) + 1e-12',
+            '    mu_new = (r * xf).sum(axis=1) / nk',
+            '    sd = np.sqrt((r * (xf - mu_new[:, None]) ** 2).sum(axis=1) / nk) + 1e-9',
+            '    pi = nk / len(xf)',
+            '    done = np.max(np.abs(mu_new - mu)) < 1e-10 * (1 + np.max(np.abs(mu)))',
+            '    mu = mu_new',
+            '    if done:',
+            '        break',
+            'f = sum(pi[j] * stats.norm.pdf(g, mu[j], sd[j]) for j in range(k))']
+
+
+def _curve_code(dist):
+    if dist in ('normal2', 'normal3'):
+        return _mixture_curve(int(dist[-1]))
+    return list(_CURVES.get(dist, []))
+
+
 @api('distribution.fit')
 def fit(table, column, rows=None, dist='normal', alpha=0.05, table_name='data'):
     x, _, _ = _values(table, column, rows)
     if len(x) < 3:
         return {'error': 'fewer than three values'}
-    head = [code_head(table_name, ['from scipy import stats', 'from statsmodels.base.model import GenericLikelihoodModel']),
+    head = [code_head(table_name, ['from scipy import stats', 'from statsmodels.base.model import GenericLikelihoodModel']) + _rows_text(table, rows),
             f'x = df[{json.dumps(column)}].dropna().to_numpy()']
     if dist == 'kde':
         out = _kde(x)
         out['code'] = '\n'.join(head + ['kde = stats.gaussian_kde(x)   # Scott\'s bandwidth', 'print(kde.factor * x.std(ddof=1))'])
+        out['curve_code'] = _curve_code(dist)
         return out
     out = _fit_one(x, dist, alpha)
+    if 'error' not in out:
+        out['curve_code'] = _curve_code(dist)
     scipy_name = {'normal': 'norm', 'lognormal': 'lognorm', 'weibull': 'weibull_min', 'exponential': 'expon', 'gamma': 'gamma',
                   'beta': 'beta', 'logistic': 'logistic', 'cauchy': 'cauchy', 't': 't', 'johnsonsu': 'johnsonsu', 'johnsonsb': 'johnsonsb'}.get(dist)
     if scipy_name:
@@ -714,12 +831,101 @@ def capability(table, column, rows=None, lsl=None, usl=None, target=None, alpha=
 CI_METHODS = {'wilson': 'Wilson score', 'agresti_coull': 'Agresti-Coull', 'jeffreys': 'Jeffreys', 'beta': 'Clopper-Pearson (exact)', 'normal': 'Wald'}
 
 
+def _counts_code(table, column, rows, weight, freq, levels, labels):
+    """The lines that count the levels as the report does (Weight times
+    Freq, in the table's level order), and name them as the page does."""
+    c = _rows_code(table, rows)
+    J = json.dumps
+    lv = '[' + ', '.join(_lit(v) for v in levels) + ']'
+    if weight or freq:
+        cols = [v for v in (column, weight, freq) if v]
+        wexpr = ' * '.join(f'd[{J(v)}]' for v in (weight, freq) if v)
+        c += [f'd = df[{J(cols)}].dropna()', f'wt = {wexpr}', 'd, wt = d[wt > 0], wt[wt > 0]   # rows with a positive weight',
+              f'counts = wt.groupby(d[{J(column)}]).sum().reindex({lv}, fill_value=0)   # the sums of the weights, in the table\'s level order']
+    else:
+        c.append(f'counts = df[{J(column)}].value_counts().reindex({lv}, fill_value=0)   # the levels in the table\'s order')
+    names = labels if labels and len(labels) == len(levels) else None
+    if names and any(str(n) != _lvtext(v) for n, v in zip(names, levels)):
+        c.append('names = {' + ', '.join(f'{_lit(v)}: {J(str(n))}' for v, n in zip(levels, names)) + '}   # the levels as the table shows them')
+    else:
+        c.append('names = {v: str(v) for v in counts.index}')
+    return c
+
+
+def _lvtext(v):
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else repr(f)
+    return str(v)
+
+
+def _bar_code(table, column, rows, weight, freq, levels, plot, table_name):
+    """Distribution's bar chart of a categorical column, as the page draws it:
+    plot = {order: None | 'desc' | 'asc', prob, horizontal, counts, percents,
+    labels (the page's level labels, in the table's order)}."""
+    J = json.dumps
+    c = _plot_head(table_name) + _counts_code(table, column, rows, weight, freq, levels, plot.get('labels'))
+    order = plot.get('order')
+    if order in ('desc', 'asc'):
+        c.append(f'counts = counts.sort_values(ascending={order == "asc"}, kind="stable")   # Order By: Count {"Ascending" if order == "asc" else "Descending"}')
+    prob, horizontal = bool(plot.get('prob')), bool(plot.get('horizontal'))
+    c.append('labels = [names[v] for v in counts.index]')
+    c.append('heights = counts / counts.sum()   # Prob Axis' if prob else 'heights = counts')
+    k = len(levels)
+    if horizontal:
+        c += [f'fig, ax = plt.subplots(figsize=({max(320, min(760, 80 + 40 * k)) / 100:g}, 2.8), layout="constrained")',
+              f'bars = ax.bar(labels, heights, width=0.85, color="{BAR}")',
+              f'ax.set_xlabel({J(column)})', f'ax.set_ylabel("{"Probability" if prob else "Count"}")']
+    else:
+        c += [f'fig, ax = plt.subplots(figsize=(3.3, {max(200, min(520, 60 + 26 * k)) / 100:g}), layout="constrained")',
+              f'bars = ax.barh(labels, heights, height=0.85, color="{BAR}")',
+              'ax.invert_yaxis()   # the first level at the top',
+              f'ax.set_ylabel({J(column)})', f'ax.set_xlabel("{"Probability" if prob else "Count"}")']
+    c += _bar_text_code(plot.get('counts'), plot.get('percents'))
+    c += [f'ax.set_title({J(column + " bar chart")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _bar_text_code(show_counts, show_percents):
+    """Show Counts and Show Percents: the text at the end of each bar."""
+    if show_counts and show_percents:
+        return ['ax.bar_label(bars, labels=[f"{v:.7g} {100 * v / counts.sum():.1f}%" for v in counts], fontsize=8)   # Show Counts and Show Percents']
+    if show_counts:
+        return ['ax.bar_label(bars, labels=[f"{v:.7g}" for v in counts], fontsize=8)   # Show Counts']
+    if show_percents:
+        return ['ax.bar_label(bars, labels=[f"{100 * v / counts.sum():.1f}%" for v in counts], fontsize=8)   # Show Percents']
+    return []
+
+
+def _mosaic_code(table, column, rows, weight, freq, levels, plot, table_name):
+    """Distribution's Mosaic Plot: the probabilities of the levels stacked in one bar."""
+    J = json.dumps
+    c = _plot_head(table_name) + _counts_code(table, column, rows, weight, freq, levels, plot.get('labels'))
+    order = plot.get('order')
+    if order in ('desc', 'asc'):
+        c.append(f'counts = counts.sort_values(ascending={order == "asc"}, kind="stable")   # Order By: Count {"Ascending" if order == "asc" else "Descending"}')
+    c += ['p = counts / counts.sum()',
+          f'colors = {J(PALETTE)}',
+          'fig, ax = plt.subplots(figsize=(2.4, 3.0), layout="constrained")',
+          'bottom = 0.0',
+          'for i, (v, pv) in enumerate(p.items()):',
+          '    ax.bar(0, pv, bottom=bottom, width=0.8, color=colors[i % len(colors)], label=names[v])',
+          '    bottom += pv',
+          'ax.set_ylim(0, 1)', 'ax.set_xticks([])', 'ax.set_ylabel("Probability")',
+          'handles, texts = ax.get_legend_handles_labels()',
+          'ax.legend(handles[::-1], texts[::-1], loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=8)   # the top level first',
+          f'ax.set_title({J(column + " mosaic")})', 'plt.show()']
+    return '\n'.join(c)
+
+
 @api('distribution.categorical')
-def categorical(table, column, rows=None, weight=None, freq=None, alpha=0.05, ci_method='wilson', table_name='data'):
+def categorical(table, column, rows=None, weight=None, freq=None, alpha=0.05, ci_method='wilson', plot=None, table_name='data'):
     """Frequencies of an ordinal or nominal column, and a confidence
     interval for each level's probability (statsmodels proportion_confint:
     Wilson's score interval, JMP's, by default; Agresti-Coull, Jeffreys,
-    Clopper-Pearson or Wald)."""
+    Clopper-Pearson or Wald). plot: the page's choices for the bar chart
+    and the mosaic (see _bar_code), whose code comes back as plot_code
+    and mosaic_code."""
     if ci_method not in CI_METHODS:
         return {'error': f'unknown interval method {ci_method!r}'}
     s = data.series(table, column, rows)
@@ -745,11 +951,15 @@ def categorical(table, column, rows=None, weight=None, freq=None, alpha=0.05, ci
         count_line = f'counts = ({wexpr}).groupby(df[{json.dumps(column)}]).sum()'
     else:
         count_line = f'counts = df[{json.dumps(column)}].value_counts().sort_index()'
-    return {'column': column, 'levels': rows_out, 'n': total, 'n_levels': len(levels), 'n_missing': int(s.isna().sum()), 'alpha': alpha,
-            'ci_method': ci_method, 'ci_label': CI_METHODS[ci_method],
-            'code': '\n'.join([code_head(table_name, ['from statsmodels.stats.proportion import proportion_confint']),
-                               count_line,
-                               f'print(proportion_confint(counts, counts.sum(), alpha={alpha}, method={ci_method!r}))   # {CI_METHODS[ci_method]}'])}
+    out = {'column': column, 'levels': rows_out, 'n': total, 'n_levels': len(levels), 'n_missing': int(s.isna().sum()), 'alpha': alpha,
+           'ci_method': ci_method, 'ci_label': CI_METHODS[ci_method],
+           'code': '\n'.join([code_head(table_name, ['from statsmodels.stats.proportion import proportion_confint']) + _rows_text(table, rows),
+                              count_line,
+                              f'print(proportion_confint(counts, counts.sum(), alpha={alpha}, method={ci_method!r}))   # {CI_METHODS[ci_method]}'])}
+    if plot is not None:
+        out['plot_code'] = _bar_code(table, column, rows, weight, freq, levels, plot, table_name)
+        out['mosaic_code'] = _mosaic_code(table, column, rows, weight, freq, levels, plot, table_name)
+    return out
 
 
 # Test Rate: statsmodels' methods for one Poisson rate
@@ -817,7 +1027,7 @@ def test_rate(table, column, rows=None, rate=1.0, exposure=None, method='exact-c
            'method': method, 'method_label': RATE_TESTS_1[method], 'ci_method': ci_method, 'ci_label': RATE_CIS_1[ci_method], 'alpha': alpha,
            'statistic': _num(tests['two-sided'].statistic), 'p_two': _num(tests['two-sided'].pvalue), 'p_greater': _num(tests['larger'].pvalue),
            'p_less': _num(tests['smaller'].pvalue), 'dispersion': disp, 'has_exposure': bool(exposure), 'notes': notes}
-    c = [code_head(table_name, ['from statsmodels.stats.rates import test_poisson, confint_poisson']),
+    c = [code_head(table_name, ['from statsmodels.stats.rates import test_poisson, confint_poisson']) + _rows_text(table, rows),
          f'd = df[[{", ".join(json.dumps(v) for v in (column, exposure, freq) if v)}]].dropna()']
     if exposure:
         c.append(f'd = d[d[{json.dumps(exposure)}] > 0]')

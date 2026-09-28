@@ -65,6 +65,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, maxdiff, points_of, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -694,6 +695,8 @@ async def main():
     await repeated(page)
     # ==== help for every input: the launch dialog, the red-triangle forms, the controls in the reports ====
     await help_inputs(page)
+    # ==== the graphs' Python code: a block under each graph, run in the page ====
+    await chart_code(page)
     # columns dragged onto Construct Model Effects, with the mouse: main effects, as Add makes them
     r = await page.ev('''(async () => {
       SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Plants') || SM.app.tables[0]));
@@ -1634,6 +1637,153 @@ async def help_inputs(page):
     check('Quantile Regression\'s Model Launch (i): every control', r, ['Quantile τ', 'Standard Errors', 'Kernel', 'Bandwidth', 'Quantile Process'])
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', (audit.get('noTopic'), audit.get('brokenMore')), ([], []))
+
+
+# ---- the graphs' matplotlib code --------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (the notebook's
+# runner) with test_charts.PROBE in place of plt.show(), and the figure it
+# draws is compared with the Plotly graph above it: its points, its lines,
+# its reference lines, its bars, its titles.
+CHART_TABLE = r'''(() => {
+  const g = SM.util.rng('fitmodel-charts'); const n = 80;
+  const c = { x1: [], x2: [], g: [], h: [], w: [], y: [], cnt: [], yb: [], subj: [], tt: [], ym: [], zz: [], xe: [], yiv: [], yp: [] };
+  for (let i = 0; i < n; i++) {
+    const x1 = Math.round(1000 * (0.2 + 4.6 * g.u())) / 1000, x2 = Math.round(1000 * g.normal(5, 2)) / 1000, gi = ['a', 'b', 'c'][i % 3], hi = i % 2 ? 'p' : 'q';
+    c.x1.push(x1); c.x2.push(x2); c.g.push(gi); c.h.push(hi); c.w.push(i === 3 ? 0 : Math.round(100 * (0.5 + 1.5 * g.u())) / 100);
+    c.y.push(i === 5 ? NaN : Math.round(1000 * (2 + 0.5 * x1 + (gi === 'b' ? 1 : gi === 'c' ? -0.7 : 0) + 0.3 * x2 + g.normal(0, 1))) / 1000);
+    c.cnt.push(Math.round(Math.exp(0.2 + 0.4 * x1 + g.normal(0, 0.3)))); c.yb.push(g.u() < 1 / (1 + Math.exp(-(x1 - 2.4))) ? 'yes' : 'no');
+    c.subj.push(`s${String(Math.floor(i / 4)).padStart(2, '0')}`); c.tt.push(i % 4);
+    const zz = x2 + g.normal(0, 0.5), xe = 0.7 * zz + g.normal(0, 0.5);
+    c.zz.push(Math.round(1000 * zz) / 1000); c.xe.push(Math.round(1000 * xe) / 1000); c.yiv.push(Math.round(1000 * (1 + 0.5 * xe + 0.3 * x1 + g.normal(0, 0.5))) / 1000);
+    c.yp.push(Math.round(1000 * Math.exp(0.3 + 0.2 * x1 + g.normal(0, 0.2))) / 1000);
+  }
+  let sub = 0; for (let i = 0; i < n; i++) { if (i % 4 === 0) sub = g.normal(0, 0.7); c.ym.push(Math.round(1000 * (1 + 0.8 * c.x1[i] + sub + g.normal(0, 0.5))) / 1000); }
+  const cols = Object.entries(c).map(([name, values]) => (typeof values[0] === 'string' ? { name, dataType: 'character', values } : { name, values }));
+  const t = new SM.Table({ name: 'Model charts', columns: cols });
+  SM.app.addTable(t); SM.app.showTab(SM.app.tabOf(t));
+  return t.nrows;
+})()'''
+
+
+def pts_of(ax, k=0):
+    return [tuple(p) for p in (ax['scatter'][k]['xy'] if len(ax['scatter']) > k else [])]
+
+
+def check_rowlike(label, g, F, any_order=False, rel=1e-6):
+    """A graph of rows with reference lines: the points, every line, every
+    horizontal or vertical reference, the titles."""
+    ax = F['axes'][0]
+    rows = [t for t in g['traces'] if t.get('name') == 'Rows' and 'markers' in (t.get('mode') or '')]
+    if rows:
+        want = points_of(rows[0])
+        got = pts_of(ax)
+        if any(isinstance(a, str) for a, _ in want):   # a category axis: matplotlib draws the levels at their ticks
+            at = {lab: x for x, lab in zip(ax['xticks'], ax['xticklabels'])}
+            want = [(at.get(a, float('nan')), b) for a, b in want]
+        if any_order:
+            want, got = sorted((round(a, 7), round(b, 7)) for a, b in want), sorted((round(a, 7), round(b, 7)) for a, b in got)
+            check(f'{label}: the rows\' points', got, want)
+        else:
+            check.near(f'{label}: the rows\' points', maxdiff([q for p in got for q in p], [q for p in want for q in p]), 0, rel)
+    for t in [t for t in g['traces'] if t.get('type') == 'scatter' and t.get('mode') == 'lines' and not t.get('fill') and t.get('name') != 'Rows' and len(t.get('x') or []) > 1]:
+        check(f'{label}: a line of {len(t["x"])} points', find_line(ax, t['x'], t['y'], rel=rel, abs_=1e-9) is not None, True)
+    for s in g['shapes']:
+        if s.get('xref') == 'paper' and s['y0'] == s['y1']:
+            check(f'{label}: a horizontal reference at {s["y0"]:.4g}', any(close(ln['y'], [s['y0'], s['y0']], rel, 1e-9) for ln in ax['lines']), True)
+        elif s.get('yref') == 'paper' and s['x0'] == s['x1']:
+            check(f'{label}: a vertical reference at {s["x0"]:.4g}', any(close(ln['x'], [s['x0'], s['x0']], rel, 1e-9) for ln in ax['lines']), True)
+    check(f'{label}: the titles', (ax['xlabel'], ax['ylabel'], ax['title'] or F['suptitle']), (g['titles']['x'] or '', g['titles']['y'] or '', g['label']))
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev('__gr.idle()')   # the reports run again by a change of theme are done
+    n = await page.ev(CHART_TABLE)
+    check('charts: the table', n, 80)
+    tbl = "SM.app.tables.find((t) => t.name === 'Model charts')"
+    specs = [
+        ('SLS', 'y', E(['x1'], ['g'], ['x1', 'g']), {'personality': 'standard', 'plotResidRow': True, 'plotStudent': True, 'plotResidQQ': True, 'sortedEst': True, 'influence': True,
+                                                  'ccpr': True, 'boxcox': False, 'rr:recursive': True, 'rr:cusum': True, 'rr:cusumsq': True, 'rr:rolling': True, 'rr:window': 20,
+                                                  'interaction': True}, {'weight': ['w']}),
+        ('SLS (robust, one factor)', 'y', E(['x1'], ['x1', 'x1']), {'personality': 'standard', 'robust': {'type': 'HC1'}}, {}),
+        ('SLS (LS means)', 'yp', E(['g'], ['h'], ['g', 'h']), {'personality': 'standard', 'lsmPlot:g': True, 'lsmPlot:g*h': True, 'boxcox': True}, {}),
+        ('GLM', 'cnt', E(['x1'], ['g']), {'personality': 'glm', 'dist': 'poisson', 'studPearson': True, 'devPlot': True, 'pearPlot': True, 'actualPred': True, 'linPlot': True,
+                                          'interaction': True}, {}),
+        ('GLM (one factor)', 'cnt', E(['x1']), {'personality': 'glm', 'dist': 'poisson'}, {}),
+        ('Logistic', 'yb', E(['x1']), {'personality': 'nominal', 'roc': True}, {}),
+        ('Logistic (two factors)', 'yb', E(['x1'], ['g']), {'personality': 'nominal', 'interaction': True}, {}),
+        ('Mixed', 'ym', E(['x1'], {'names': ['subj'], 'random': True}), {'personality': 'mixed', 'actMarg': True}, {}),
+        ('GEE', 'ym', E(['x1']), {'personality': 'gee', 'workCorr': 'ar1', 'subjectBoxes': True}, {'subject': ['subj'], 'time': ['tt']}),
+        ('GEE (two factors)', 'ym', E(['x1'], ['h']), {'personality': 'gee', 'workCorr': 'exchangeable', 'interaction': True}, {'subject': ['subj']}),
+        ('Mixed (two factors)', 'ym', E(['x1'], ['h'], {'names': ['subj'], 'random': True}), {'personality': 'mixed', 'interaction': True}, {}),
+        ('IV', 'yiv', E(['xe'], ['x1']), {'personality': 'iv', 'plotResidRow': True}, {'endog': ['xe'], 'instruments': ['zz']}),
+        ('QR', 'ym', E(['x1']), {'personality': 'quantreg', 'qrTau': 0.3, 'qrTaus': '0.25, 0.5, 0.75', 'qr:resid': True}, {}),
+        ('GenReg', 'y', E(['x1'], ['x2'], ['g']), {'personality': 'genreg', 'interaction': True}, {}),
+    ]
+    for label, y, effects, options, extra in specs:
+        # the options scoped by the response are set on its column id
+        o = await page.ev(f'''(() => {{ const t = {tbl}; const id = t.col({json.dumps(y)}).id; const o = {json.dumps(options)}; const out = {{}};
+          const top = ['personality', 'dist', 'workCorr', 'qrTau', 'qrTaus', 'subjectBoxes'];
+          for (const [k, v] of Object.entries(o)) {{ if (top.includes(k)) out[k] = v; else out[id + '|' + k] = v; }}
+          if ('subjectBoxes' in o) out[id + '|subjectBoxes'] = o.subjectBoxes;
+          return out; }})()''')
+        r = await page.ev(open_js(y, effects, o, extra))
+        check(f'charts: {label}: no errors', r['errors'] if isinstance(r, dict) else r, [])
+        gs = await page.ev('__gr.graphs(__fm.rep())')
+        check(f'charts: {label}: every graph of the report drawn (none in a closed outline)', (await page.ev('__gr.take()'), len(gs) > 0), ([], True))
+        titles = [g['label'] for g in gs]
+        blocks = [g['label'] for g in gs if g['code'] and g['code'].rstrip().split('\n')[-1] == 'plt.show()']
+        # the interactive profilers draw without a block; every other graph has its own
+        check(f'charts: {label}: every graph has its code block right under it, ending in plt.show()', [t for t in titles if t not in blocks], [])
+        for g in gs:
+            F, err = await run_graph(page, g, tbl)
+            lab = f'{label}: {g["label"]}'
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            t = g['label']
+            if t.endswith('sorted t ratios'):
+                bar = [x for x in g['traces'] if x.get('type') == 'bar'][0]
+                check(f'{lab}: the terms and their t ratios', ([x for x in ax['yticklabels'] if x], [round(b['w'], 9) for b in ax['bars']]), (bar['y'], [round(v, 9) for v in bar['x']]))
+            elif t.endswith('LS means plot'):
+                ys = sorted(round(v, 9) for x in g['traces'] for v in (x.get('y') or []))
+                got = sorted(round(v, 9) for ln in ax['lines'] if ln['marker'] == 'o' for v in ln['y'])
+                check(f'{lab}: the least squares means', got, ys)
+            elif t == 'working correlation':
+                hm = [x for x in g['traces'] if x.get('type') == 'heatmap'][0]
+                check.near(f'{lab}: the matrix', maxdiff(ax['images'][0]['data'] if ax['images'] else [], [v for row in hm['z'] for v in row]), 0, 1e-9)
+            elif t in ('solution path',) or t.endswith(' path') or t.endswith('quantile lines') or t.endswith('regression plot') or t.endswith('logistic plot') or t == 'ROC curve':
+                for x in [x for x in g['traces'] if x.get('type') == 'scatter' and 'lines' in (x.get('mode') or '') and len(x.get('x') or []) > 1 and not x.get('fill')]:
+                    check(f'{lab}: a curve of {len(x["x"])} points', find_line(ax, x['x'], x['y'], rel=1e-6, abs_=1e-9) is not None, True)
+                rows = [x for x in g['traces'] if x.get('name') == 'Rows']
+                if rows:
+                    check.near(f'{lab}: the rows\' points', maxdiff([q for p in pts_of(ax) for q in p], [q for p in points_of(rows[0]) for q in p]), 0, 1e-6)
+            elif t.endswith('recursive estimate') or t.endswith('rolling estimate') or t.endswith('quantile process'):
+                est = [x for x in g['traces'] if x.get('name') == 'Estimate'][0]
+                ln = [q for q in ax['lines'] if q['marker'] == 'o']
+                check.near(f'{lab}: the estimates', maxdiff(ln[0]['y'] if ln else [], est['y']), 0, 1e-6)
+            elif t.endswith('Box-Cox'):
+                check(f'{lab}: the SSE over λ and the best λ', (find_line(ax, g['traces'][0]['x'], g['traces'][0]['y'], rel=1e-9) is not None, find_line(ax, g['traces'][1]['x'], g['traces'][1]['y'], rel=1e-6, abs_=1e-7) is not None), (True, True))
+            elif t == 'interaction plots':
+                # a plot for each pair of factors, row-major as Plotly's axes x, x2, x3, ...; a categorical axis at the levels' places
+                found = 0
+                for x in g['traces']:
+                    at = int((x.get('xaxis') or 'x')[1:] or 1) - 1
+                    A = F['axes'][at] if at < len(F['axes']) else {'lines': []}
+                    numeric = all(isinstance(v, (int, float)) for v in x['x'])
+                    found += any(close(ln['y'], x['y'], 1e-6, 1e-9) and (not numeric or close(ln['x'], x['x'], 1e-9, 1e-12)) for ln in A['lines'])
+                check(f'{lab}: every line of every plot', (found, len(F['axes'])), (len(g['traces']), round(len(F['axes']) ** 0.5) ** 2))
+            elif t.endswith('CUSUM') or t.endswith('CUSUM of squares'):
+                path_ = [x for x in g['traces'] if 'markers' in (x.get('mode') or '')][0]
+                check(f'{lab}: the path and its bounds', (find_line(ax, path_['x'], path_['y'], rel=1e-9) is not None, all(find_line(ax, x['x'], x['y'], rel=1e-9) is not None for x in g['traces'] if x.get('mode') == 'lines')), (True, True))
+            else:
+                check_rowlike(lab, g, F, any_order=label.startswith('GEE'))
+                continue
+            check(f'{lab}: the titles', (ax['xlabel'], ax['ylabel'], ax['title'] or F['suptitle']), (g['titles']['x'] or '', g['titles']['y'] or '', g['label']))
+    await page.ev(f"for (const r of SM.app.reports.filter((x) => x.table && x.table.name === 'Model charts')) SM.app.closeReport(r); SM.app.closeTable({tbl});")
 
 
 asyncio.run(main())

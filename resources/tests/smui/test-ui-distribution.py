@@ -24,6 +24,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, lines_labelled, maxdiff, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -200,6 +201,9 @@ async def main():
     check('a project keeps them', (r['newTable'], r['back']), (True, 4))
     check('no errors (By, project)', r['errors'], [])
 
+    # ---- the graphs' Python code: a block under each graph, run in the page
+    await chart_code(page)
+
     # ---- help for every input: the launch dialog's (i), the red-triangle forms' (i)
     await help_inputs(page)
 
@@ -238,6 +242,178 @@ async def main():
     check('each interval then shows its own Python', r['code'][0] - r['code'][1], 1)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code --------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (the notebook's
+# runner, SM.engine.runCell) with test_charts.PROBE in place of plt.show(),
+# and the figure it draws is compared with the Plotly graph above it.
+def tr_named(g, name, kind=None):
+    return [t for t in g['traces'] if t.get('name') == name and (kind is None or t.get('type') == kind)]
+
+
+def check_histogram(label, g, F, horizontal, fits=()):
+    """The histogram and its box plots against the Plotly graph above the code."""
+    check(f'{label}: the title and the size', (F['suptitle'], F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+    ax = F['axes'][0]
+    bars = tr_named(g, 'Histogram', 'bar')
+    if bars:
+        b = bars[0]
+        centers, heights = (b['x'], b['y']) if horizontal else (b['y'], b['x'])
+        got_c = [(r['x'] + r['w'] / 2) if horizontal else (r['y'] + r['h'] / 2) for r in ax['bars']]
+        got_h = [r['h'] if horizontal else r['w'] for r in ax['bars']]
+        check(f'{label}: a bar for each bin', len(ax['bars']), len(centers))
+        check.near(f'{label}: the bins\' centres', maxdiff(got_c, centers), 0, 1e-9)
+        check.near(f'{label}: the bars\' heights', maxdiff(got_h, heights), 0, 1e-9)
+        check.near(f'{label}: the bin width', (ax['bars'][0]['w'] if horizontal else ax['bars'][0]['h']) if ax['bars'] else None, b['width'], 1e-12)
+    for f in fits:
+        t = [x for x in g['traces'] if x.get('name') == f and x.get('type') == 'scatter']
+        ln = lines_labelled(ax, f)
+        ok = bool(t and ln)
+        if ok:
+            gx, gy = (ln[0]['x'], ln[0]['y'])
+            ok = close(gx, t[0]['x'], 1e-4, 1e-9) and close(gy, t[0]['y'], 1e-4, 1e-9)
+        check(f'{label}: the fitted {f} curve', ok, True)
+    check(f'{label}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+    boxes = [t for t in g['traces'] if t.get('type') == 'box']
+    if boxes:
+        bx = F['axes'][1]
+        box = boxes[0]
+        q1, med, q3, lo, hi = box['q1'][0], box['median'][0], box['q3'][0], box['lowerfence'][0], box['upperfence'][0]
+        pos = (lambda ln: ln['x']) if horizontal else (lambda ln: ln['y'])
+        vals = [pos(ln) for ln in bx['lines']]
+        check(f'{label}: the median', any(close(v, [med, med]) for v in vals), True)
+        check(f'{label}: the whiskers to the fences', (any(close(v, [q1, lo]) for v in vals), any(close(v, [q3, hi]) for v in vals)), (True, True))
+        verts = [q for p in bx['patches'] for q in p.get('xy', [])]
+        check(f'{label}: the box from Q1 to Q3', sorted({round(q[0 if horizontal else 1], 9) for q in verts})[:1] + sorted({round(q[0 if horizontal else 1], 9) for q in verts})[-1:], [round(q1, 9), round(q3, 9)])
+        out = tr_named(g, 'Outliers')
+        fl = [ln for ln in bx['lines'] if ln['marker'] == 'o']
+        want = sorted((out[0]['x'] if horizontal else out[0]['y']) if out else [])
+        check(f'{label}: the outliers', sorted(pos(fl[0]) if fl else []), want)
+        for name, key in (('Mean', 'the mean diamond'), ('Shortest half', 'the shortest half')):
+            t = tr_named(g, name)
+            if t:
+                check(f'{label}: {key}', find_line(bx, t[0]['x'], t[0]['y']) is not None, True)
+        qb = tr_named(g, 'Quantile box')
+        if qb:
+            marks = qb[0]['x'] if horizontal else qb[0]['y']
+            check(f'{label}: the quantile box\'s marks', any(close(pos(ln), marks) for ln in bx['lines']), True)
+    for s in g['shapes']:
+        v = s['x0'] if horizontal else s['y0']
+        check(f'{label}: the spec limit at {v}', any(close(ln['x' if horizontal else 'y'], [v, v]) for ln in ax['lines']), True)
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev('__gr.idle()')   # the reports run again by a change of theme are done
+    # the students, with the options of the continuous column's red triangle; then By with excluded rows and a Freq
+    r = await page.ev('''(async () => {
+      const t = __dt.table('Students'); const h = t.col('height (cm)').id, s = t.col('sex').id;
+      const o = {}; o[h + '|fits'] = ['normal', 'kde', 'weibull']; o[h + '|qq'] = true; o[h + '|qqProb'] = true; o[h + '|cdf'] = true;
+      o[s + '|order'] = 'desc'; o[s + '|mosaic'] = true; o[s + '|showCounts'] = true;
+      const rep = await __dt.open('Students', { y: ['height (cm)', 'sex'] }, o);
+      const o2 = {}; o2[h + '|horizontal'] = true; o2[h + '|axis'] = 'density'; o2[h + '|qbox'] = true; o2[h + '|cap'] = { lsl: 150, target: 160, usl: 175 }; o2[h + '|showCounts'] = true; o2[h + '|showPercents'] = true; o2[h + '|binWidth'] = 4;
+      o2[h + '|fits'] = ['lognormal']; o2[s + '|horizontal'] = true; o2[s + '|axis'] = 'prob';
+      const rep2 = await __dt.open('Students', { y: ['height (cm)', 'sex'] }, o2);
+      return { g1: await __gr.graphs(rep), g2: await __gr.graphs(rep2), errors: [rep, rep2].flatMap((x) => __dt.errors(x)), undrawn: __gr.take() };
+    })()''')
+    check('no errors (the graphs with their options)', r['errors'], [])
+    check('every graph of the reports drawn (none in a closed outline)', r['undrawn'], [])
+    names = [g['label'] for g in r['g1']]
+    check('the graphs of the first report', names, ['height (cm) histogram', 'height (cm) normal quantile plot', 'height (cm) CDF', 'sex bar chart', 'sex mosaic'])
+    for g in r['g1'] + r['g2']:
+        check(f'{g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    tbl = "__dt.table('Students')"
+    figs = {}
+    for tag, gs in (('', r['g1']), (' (second)', r['g2'])):
+        for g in gs:
+            if not g['code']:
+                continue
+            F, err = await run_graph(page, g, tbl)
+            check(f'{g["label"]}{tag}: the code runs in the page', err, None)
+            figs[g['label'] + tag] = (g, F[0] if F else None)
+    g, F = figs['height (cm) histogram']
+    if F:
+        check_histogram('histogram', g, F, False, fits=('Normal', 'Smooth Curve', 'Weibull'))
+    g, F = figs['height (cm) histogram (second)']
+    if F:
+        check_histogram('histogram (horizontal, density, bin width 4, quantile box, spec limits)', g, F, True, fits=('Lognormal',))
+        texts = [t['s'] for t in F['axes'][0]['texts'] if t['s'].strip() not in ('LSL', 'Target', 'USL')]
+        want = [t for t in (tr_named(g, 'Histogram', 'bar')[0].get('text') or [])]
+        check('histogram: Show Counts and Show Percents on the bars', [t.replace('−', '-') for t in texts], [t.replace('−', '-') for t in want])
+    g, F = figs['height (cm) normal quantile plot']
+    if F:
+        ax = F['axes'][0]
+        pts = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        t0, t1 = g['traces'][0], g['traces'][1]
+        check.near('normal quantile plot: the points', max(maxdiff([p[0] for p in pts], t0['x']), maxdiff([p[1] for p in pts], t0['y'])), 0, 1e-6)
+        check('normal quantile plot: the normal line', find_line(ax, t1['x'], t1['y'], rel=1e-6) is not None, True)
+        check('normal quantile plot: the probability axis, the titles', (ax['xticklabels'][:2], ax['xlabel'], ax['ylabel'], ax['title']), (['0.01', '0.05'], g['titles']['x'], g['titles']['y'], g['label']))
+    g, F = figs['height (cm) CDF']
+    if F:
+        ax = F['axes'][0]
+        t0 = g['traces'][0]
+        check('CDF plot: the steps', (find_line(ax, t0['x'], t0['y']) or {}).get('drawstyle'), 'steps-post')
+        check('CDF plot: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+    for key, horizontal, prob in (('sex bar chart', False, False), ('sex bar chart (second)', True, True)):
+        g, F = figs[key]
+        if not F:
+            continue
+        ax = F['axes'][0]
+        t0 = [t for t in g['traces'] if t['type'] == 'bar' and t.get('name') == 'sex'][0]
+        cats, hs = (t0['x'], t0['y']) if horizontal else (t0['y'], t0['x'])
+        check(f'{key}: the levels in the page\'s order', [t for t in (ax['xticklabels'] if horizontal else ax['yticklabels']) if t], cats)
+        check.near(f'{key}: the bars', maxdiff([b['h'] if horizontal else b['w'] for b in ax['bars']], hs), 0, 1e-12)
+        check(f'{key}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+        if t0.get('text'):
+            check(f'{key}: Show Counts', [x['s'] for x in ax['texts']], t0['text'])
+    g, F = figs['sex mosaic']
+    if F:
+        ax = F['axes'][0]
+        bars = [t for t in g['traces'] if t['type'] == 'bar' and t.get('showlegend') is not False and t.get('name')]
+        tops = [b['y'] + b['h'] for b in ax['bars']]
+        acc, want = 0, []
+        for t in bars:
+            acc += t['y'][0]
+            want.append(acc)
+        check.near('mosaic: the stacked probabilities, in the page\'s order', maxdiff(tops, want), 0, 1e-12)
+        check('mosaic: the legend', ax['legend'], [t['name'] for t in bars][::-1])
+    # By, rows excluded, a Freq column, and Histograms Only
+    r = await page.ev('''(async () => {
+      const t = new SM.Table({ name: 'Chart rows', columns: [
+        { name: 'x', dataType: 'numeric', values: Array.from({ length: 48 }, (_, i) => Math.round(100 * (20 + 6 * Math.sin(i * 1.7) + (i % 5))) / 100) },
+        { name: 'grp', dataType: 'character', values: Array.from({ length: 48 }, (_, i) => (i % 3 === 0 ? 'u' : 'v')) },
+        { name: 'k', dataType: 'character', values: Array.from({ length: 48 }, (_, i) => ['p', 'q', 'r'][i % 4 === 0 ? 2 : i % 2]) },
+        { name: 'n', dataType: 'numeric', values: Array.from({ length: 48 }, (_, i) => (i === 4 ? 0 : 1 + (i % 3))) }] });
+      SM.app.addTable(t);
+      t.setState([2, 7, 11], 'excluded', true);
+      const o1 = {}; o1[t.col('x').id + '|fits'] = ['normal', 'gamma'];
+      const rep = await __dt.open('Chart rows', { y: ['x', 'k'], freq: ['n'], by: ['grp'] }, o1);
+      const o = { histOnly: true };
+      const rep2 = await __dt.open('Chart rows', { y: ['x', 'k'] }, o);
+      return { g: await __gr.graphs(rep), g2: await __gr.graphs(rep2), errors: [rep, rep2].flatMap((x) => __dt.errors(x)), undrawn: __gr.take() };
+    })()''')
+    check('no errors (By, excluded rows, Freq)', r['errors'], [])
+    check('every graph of the reports drawn (By, Histograms Only)', r['undrawn'], [])
+    check('By: the graphs of each group, each with its code', [(g['label'], bool(g['code'])) for g in r['g']], [('x histogram', True), ('k bar chart', True)] * 2)
+    check('Histograms Only: the two graphs with their code', [(g['label'], bool(g['code'])) for g in r['g2']], [('x histogram', True), ('k bar chart', True)])
+    for i, g in enumerate(r['g'] + r['g2']):
+        F, err = await run_graph(page, g, "__dt.table('Chart rows')")
+        tag = f'{g["label"]} ({"group " + str(i // 2 + 1) if i < 4 else "Histograms Only"})'
+        check(f'{tag}: the code runs in the page', err, None)
+        if not F:
+            continue
+        F = F[0]
+        if g['label'].endswith('histogram'):
+            check_histogram(tag, g, F, False, fits=('Normal', 'Gamma') if i < 4 else ())
+            if i >= 4:
+                check(f'{tag}: the histogram alone', len(F['axes']), 1)
+        else:
+            ax = F['axes'][0]
+            t0 = [t for t in g['traces'] if t['type'] == 'bar' and t.get('name') == 'k'][0]
+            check(f'{tag}: the Freq-weighted counts of the group', ([t for t in ax['yticklabels'] if t], [b['w'] for b in ax['bars']]), (t0['y'], t0['x']))
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.table && ['Chart rows'].includes(x.table.name))) SM.app.closeReport(r); SM.app.closeTable(__dt.table('Chart rows'));")
 
 
 # Read the (i) panels: the open panel's title and sections, each with its

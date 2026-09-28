@@ -189,10 +189,31 @@
         'Graphs: click a point or bar to select its rows (shift adds), drag a rectangle to select several; double click to clear. The toolbar above a graph zooms, pans and saves it as PNG.',
       ]),
 
+      h('h2', 'The Python notebook', 'notebook'),
+      p('**Python > New Notebook** opens a tab of cells, as in Jupyter. Code cells run in the page\'s own Python, the engine the reports use; text cells are Markdown. Each notebook keeps its own variables.'),
+      ul([
+        '**Shift+Enter** runs a cell and moves to the next, **Ctrl/⌘+Enter** runs it and stays, **Alt+Enter** runs it and adds a cell below. **Run All** runs every cell from the top and stops at an error.',
+        'What a cell prints and the value of its last line show under it: pandas tables, statsmodels summaries, and matplotlib figures (at `plt.show()`, or at the end of the cell). A trailing `;` keeps the last value quiet.',
+        'The open tables are here as the CSV files the reports\' code reads (`pd.read_csv("<name>.csv")`), so a report\'s code runs as it is. `import smui` gives `smui.table_names()`, `smui.table("<name>")` (a DataFrame, its modeling types as dtypes: ordinal and nominal columns categorical, in the table\'s value order) and `smui.new_table(df, "<name>")`, which puts a DataFrame in the page as a new table.',
+        'numpy, scipy, pandas and statsmodels are in; matplotlib, scikit-learn and the other packages that come with Pyodide load when a cell imports them. `%pip install <name>` fetches a pure-Python package from PyPI.',
+        '**Restart** forgets the notebook\'s variables. A cell cannot be stopped in the middle: **Stop** restarts Python itself, which every notebook, and any report still calculating, feels.',
+        '**Save ▾** writes the notebook as a Jupyter notebook (.ipynb, with its outputs) or as a Python script with `# %%` cells; **File > Open** reads both, and a saved project keeps its notebooks. A notebook opened from a file runs nothing until you run it.',
+        'In a report, each **Python code** block has **Edit**: the code becomes editable, **Run** runs it on its own (the table read as the code reads it) and shows its output, figures too, under the block, and **Reset** puts the report\'s code back; an edit lasts until the report is drawn again. **Notebook** sends a block to a notebook as a cell, and **Save ▾ > Open Script in Notebook** the report\'s whole script, a cell per result.',
+      ]),
+
+      h('h2', 'JSL to Python', 'jsl'),
+      p('**Python > JSL to Python** (or a .jsl file dropped on the page) turns a JSL script, JMP\'s scripting language, into a Python script: the language and the work on data tables in pandas and numpy, and each analysis as this page\'s own Python for it, run on the open table, so its numbers are the report\'s. The notes list what did not convert, line by line, and a comment marks the place in the Python.'),
+      ul([
+        'Open the table the script works on first (File > Open reads .jmp files): an analysis on a table that is not open, or on columns it lacks, is left as a note.',
+        'JMP\'s windows, dialogs and display boxes, its report objects (SendToReport, Dispatch), and Eval or Parse of text have no Python counterpart and do not convert.',
+        '**Open in Notebook** puts the Python into a new notebook, a cell for each analysis; **Open the Reports Here** opens the analyses as reports of this page.',
+      ]),
+
       h('h2', 'Saving your work', 'saving'),
       ul([
         '**File > Save Table** writes one table as JSON, with its modeling types, formats, value orders, formulas, spec limits and row states; File > Open reads it back.',
-        '**File > Save Project** writes every open table and every report (roles, options, filters) into one JSON file; opening it rebuilds the reports.',
+        '**File > Save Project** writes every open table, every report (roles, options, filters) and every notebook into one JSON file; opening it rebuilds the reports and reopens the notebooks.',
+        'A notebook\'s **Save ▾** writes it as a Jupyter notebook (.ipynb) or a Python script (.py).',
         '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script, a standalone HTML copy or a Word document (.docx), or prints it.',
         'Nothing is kept by the page itself between visits: save a project before closing the tab.',
         '**Edit > Undo** (ctrl/⌘+Z in the grid) takes back edits, deleted rows and columns, sorting and row states, thirty steps deep.',
@@ -204,6 +225,7 @@
         ['Menus', 'arrows move and open submenus; Enter chooses; Escape closes'],
         ['Tabs', 'left and right arrows, Home and End'],
         ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog. A click beside a dialog leaves it open.'],
+        ['Code', 'Shift+Enter runs a cell (or a report\'s edited code) and moves on; Ctrl/⌘+Enter runs it; Alt+Enter runs it and adds a cell; Tab and Shift+Tab indent and outdent; Ctrl/⌘+/ comments lines out and in; Escape, then Tab, leaves the editor'],
       ].map((r) => el('tr', null, el('td', null, el('strong', { text: r[0] })), el('td', { text: r[1] }))))),
 
       h('h2', 'The platforms', 'platforms'),
@@ -222,7 +244,7 @@
       h('h2', 'Differences from JMP', 'differences'),
       ul([
         'The numbers come from statsmodels and scipy. Where JMP has its own method (for example its Lack of Fit or its exact tests) the report says what is computed instead, and the Python shows it.',
-        'JMP\'s scripting language (JSL) has no counterpart; the Python scripts take its place.',
+        'JMP\'s scripting language (JSL) does not run here: **Python > JSL to Python** turns a script into Python, which the notebook runs; the reports\' Python scripts take the place of JMP\'s saved scripts.',
         'Where statsmodels has nothing like a JMP platform (partition trees, forests, boosted trees, neural networks, text exploration, Gaussian processes, partial least squares, normal mixtures), the platform uses scikit-learn, and its (i) text says where scikit-learn\'s method differs from JMP\'s.',
         'Bootstrap (from any report table\'s right-click menu) and the profiler\'s desirability and variable importance are computed with scipy.',
       ]),

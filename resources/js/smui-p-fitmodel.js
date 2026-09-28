@@ -469,6 +469,13 @@
   const levelText = (ctx, M, name, v) => { const c = M.byName.get(name); return c ? SM.grid.cellText(c, v) : String(v); };
   const lineTrace = (x, y, color, dash = 'solid', width = 1.3) => ({ type: 'scatter', mode: 'lines', x, y, line: { color, dash, width }, hoverinfo: 'skip', showlegend: false });
 
+  // A graph with its Python code under it, as one item of a row. The code of
+  // each graph (plot_code) comes from the function that fits the model: the
+  // model fitted as the report's code fits it, then the graph drawn with
+  // matplotlib from the rows.
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-fm-plotcode' }, graph, code) : graph);
+  const codeOf = (res, key) => (res && res.plot_code ? res.plot_code[key] : null);
+
   /* A scatter of rows (linked to the table) with reference lines. */
   function rowPlot(ctx, { x, y, rows, xTitle, yTitle, lines = [], hlines = [], width = 380, height = 300, title }) {
     const P = pal();
@@ -546,7 +553,7 @@
   }
 
   /* ---- the plots of a least squares fit ----------------------------------------------------- */
-  function actualByPredicted(ctx, parent, d, whole, yname, info = 'p:fitmodel:leverage', title = 'Actual by Predicted Plot') {
+  function actualByPredicted(ctx, parent, d, whole, yname, info = 'p:fitmodel:leverage', title = 'Actual by Predicted Plot', code = null) {
     const P = pal();
     const ob = ctx.outline(title, { parent, key: 'actpred', info });
     const [lo, hi] = extent(d.predicted, d.actual);
@@ -554,14 +561,14 @@
     if (whole && whole.mean != null) lines.push(lineTrace([lo, hi], [whole.mean, whole.mean], P.mean, 'dot', 1.2));
     if (whole && whole.curve) lines.push(lineTrace(whole.curve.x, whole.curve.lower, P.fit, 'dash', 1), lineTrace(whole.curve.x, whole.curve.upper, P.fit, 'dash', 1));
     const sub = whole ? ` P${pText(whole.p)} RSq=${whole.rsq != null ? whole.rsq.toFixed(2) : '.'} RMSE=${fmt(whole.rmse, { sig: 5 })}` : '';
-    ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${yname} Predicted${sub}`, yTitle: `${yname} Actual`, lines, width: 400, height: 320, title: `${yname} actual by predicted` }));
+    ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${yname} Predicted${sub}`, yTitle: `${yname} Actual`, lines, width: 400, height: 320, title: `${yname} actual by predicted` }), ctx.code(code));
     return ob;
   }
 
   /* JMP's Regression Plot: with one continuous factor (and at most one
      categorical one) the data and the fitted curve, one per level, with the
      confidence band of the mean. The curves are the profiler's traces. */
-  async function regressionPlot(ctx, parent, { kind, payload, factors, d, yname, scope }) {
+  async function regressionPlot(ctx, parent, { kind, payload, factors, d, yname, scope, code = null }) {
     const P = pal();
     const cont = factors.filter((f) => f.type === 'continuous');
     const cats = factors.filter((f) => f.type === 'categorical');
@@ -584,7 +591,7 @@
     });
     const ob = ctx.outline('Regression Plot', { parent, key: 'regplot', menu: () => [{ label: 'Remove', action: () => ctx.set('plotRegression', false, scope) }] });
     ob.add(ctx.plot(traces, { showlegend: !!g, legend: g ? { title: { text: g.name } } : undefined, xaxis: { title: { text: f.name } }, yaxis: { title: { text: yname } }, margin: { l: 58, r: 12, t: 8, b: 44 } },
-      { width: W(g ? 440 : 400), height: 320, title: `${yname} regression plot` }));
+      { width: W(g ? 440 : 400), height: 320, title: `${yname} regression plot` }), ctx.code(code));
     return ob;
   }
 
@@ -595,20 +602,20 @@
     return rowPlot(ctx, { x: lev.x, y: lev.y, rows: lev.rows, xTitle: `${lev.effect} Leverage, P${pText(lev.p)}${robust ? ' (usual F test)' : ''}`, yTitle: `${yname} Leverage Residuals`, lines, width: 340, height: 290, title: `${lev.effect} leverage plot` });
   }
 
-  function residualPlots(ctx, parent, d, yname, o, emph, lim) {
+  function residualPlots(ctx, parent, d, yname, o, emph, lim, codes = {}) {
     const P = pal();
     if (o('plotResidPred', emph !== 'minimal')) {
-      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yname} Predicted`, yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${yname} residual by predicted` }));
+      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yname} Predicted`, yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${yname} residual by predicted` }), ctx.code(codes.residpred));
     }
     if (o('plotResidRow', false)) {
-      ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${yname} residual by row` }));
+      ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${yname} residual by row` }), ctx.code(codes.residrow));
     }
     if (o('plotStudent', false) && d.externally) {
       const hl = [{ y: 0, color: P.mean }];
       if (lim && lim.individual) hl.push({ y: lim.individual, color: P.muted, dash: 'dash' }, { y: -lim.individual, color: P.muted, dash: 'dash' });
       if (lim && lim.bonferroni) hl.push({ y: lim.bonferroni, color: P.fit }, { y: -lim.bonferroni, color: P.fit });
       const ob = ctx.outline('Studentized Residuals', { parent, key: 'student' });
-      ob.add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.externally, rows: d.rows, xTitle: 'Row Number', yTitle: 'Externally Studentized Residuals', hlines: hl, width: 460, title: `${yname} studentized residuals` }),
+      ob.add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.externally, rows: d.rows, xTitle: 'Row Number', yTitle: 'Externally Studentized Residuals', hlines: hl, width: 460, title: `${yname} studentized residuals` }), ctx.code(codes.student),
         ctx.note(`Each residual divided by its standard error with the row left out. Dashed: the 95% individual limits (±${fmt(lim.individual, { sig: 4 })}); solid: Bonferroni over the rows (±${fmt(lim.bonferroni, { sig: 4 })}).`));
     }
     if (o('plotResidQQ', false)) {
@@ -620,7 +627,7 @@
       const m = yv.reduce((a, b) => a + b, 0) / n;
       const sd = Math.sqrt(yv.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, n - 1));
       const [zl, zh] = extent(z);
-      ctx.outline('Residual Normal Quantile Plot', { parent, key: 'residqq' }).add(rowPlot(ctx, { x: z, y: yv, rows: order.map((k) => d.rows[k]), xTitle: 'Normal Quantile', yTitle: `${yname} Residual`, lines: [lineTrace([zl, zh], [m + sd * zl, m + sd * zh], P.fit)], width: 360, title: `${yname} residual normal quantile plot` }));
+      ctx.outline('Residual Normal Quantile Plot', { parent, key: 'residqq' }).add(rowPlot(ctx, { x: z, y: yv, rows: order.map((k) => d.rows[k]), xTitle: 'Normal Quantile', yTitle: `${yname} Residual`, lines: [lineTrace([zl, zh], [m + sd * zl, m + sd * zh], P.fit)], width: 360, title: `${yname} residual normal quantile plot` }), ctx.code(codes.residqq));
     }
   }
 
@@ -771,7 +778,7 @@
       });
     }
     const side = Math.max(260, Math.min(620, 140 * k));
-    ob.add(ctx.plot(traces, layout, { width: W(side), height: side, title: 'interaction plots', select: false }),
+    ob.add(withCode(ctx.plot(traces, layout, { width: W(side), height: side, title: 'interaction plots', select: false }), ctx.code(r.plot_code)),
       ctx.note('Each plot shows the prediction across the column factor, one line for each level of the row factor (a continuous one at its minimum and maximum), the other factors averaged. Lines that are not parallel show an interaction.'));
   }
 
@@ -790,7 +797,7 @@
     for (const v of r.ci) if (v != null) shapes.push({ type: 'line', x0: v, x1: v, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, dash: 'dash', width: 1 } });
     const traces = [{ type: 'scatter', mode: 'lines', x: r.lambda, y: r.sse, line: { color: P.point, width: 1.6 }, hovertemplate: 'λ %{x:.3g}: SSE %{y:.6g}<extra></extra>' },
       { type: 'scatter', mode: 'markers', x: [r.best], y: [r.sse_best], marker: { color: P.fit, size: 9 }, hovertemplate: `best λ ${fmt(r.best, { sig: 4 })}<extra></extra>` }];
-    ob.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: 'λ' } }, yaxis: { title: { text: 'SSE' } }, shapes }, { width: W(360), height: 260, title: `${y.name} Box-Cox` }),
+    ob.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: 'λ' } }, yaxis: { title: { text: 'SSE' } }, shapes }, { width: W(360), height: 260, title: `${y.name} Box-Cox` }), ctx.code(r.plot_code)),
       ctx.kv([['Best λ', r.best], ['SSE at best λ', r.sse_best], [`Lower ${fmt(100 * (1 - r.alpha))}% λ`, r.ci[0]], [`Upper ${fmt(100 * (1 - r.alpha))}% λ`, r.ci[1]], ['Geometric mean of Y', r.gm]])),
     ctx.note('The error sum of squares of the model fitted to (y^λ − 1)/(λ·ẏ^(λ−1)), ẏ the geometric mean, over λ; the best λ minimises it. Dashed: the likelihood-ratio interval for λ. λ = 1 is no transformation, 0 the logarithm, 0.5 the square root.'), ctx.code(r.code));
   }
@@ -828,10 +835,10 @@
     if (o('effectSummary', true) && res.effect_summary.length) effectSummary(ctx, parent, res.effect_summary, { scope: sc });
     const top = [];
     if (o('plotRegression', emph !== 'minimal')) {
-      const rp = await regressionPlot(ctx, parent, { kind: 'ls', payload: rpay, factors: res.factors, d: res.diag, yname: y.name, scope: sc });
+      const rp = await regressionPlot(ctx, parent, { kind: 'ls', payload: rpay, factors: res.factors, d: res.diag, yname: y.name, scope: sc, code: codeOf(res, 'regression') });
       if (rp) top.push(rp.el);
     }
-    if (o('plotActual', emph !== 'minimal')) top.push(actualByPredicted(ctx, parent, res.diag, res.whole, y.name).el);
+    if (o('plotActual', emph !== 'minimal')) top.push(actualByPredicted(ctx, parent, res.diag, res.whole, y.name, undefined, undefined, codeOf(res, 'actpred')).el);
     if (o('summaryOfFit', true)) {
       const s = ctx.outline('Summary of Fit', { parent, key: 'sof' });
       const pairs = res.summary.rows.map((r) => [r.stat, r.value]);
@@ -868,7 +875,7 @@
       ctx.outline('Correlation of Estimates', { parent, key: 'corr' }).add(ctx.rt({ columns: cols, rows: res.corr.terms.map((tm, i) => ({ term: tm, ...Object.fromEntries(res.corr.matrix[i].map((v, j) => [`c${j}`, v])) })) }, { sortable: false, key: 'corr' }));
     }
     if (o('effectDetails', true) && res.effects.length) await effectDetails(ctx, M, parent, res, payload, y, o, emph);
-    residualPlots(ctx, parent, res.diag, y.name, o, emph, res.diag.limits);
+    residualPlots(ctx, parent, res.diag, y.name, o, emph, res.diag.limits, res.plot_code || {});
     if (o('press', false)) ctx.outline('Press', { parent, key: 'press' }).add(ctx.kv([['Press', res.press.press], ['Press RMSE', res.press.rmse]]), ctx.note('The sum of squared leave-one-out prediction errors, Σ(eᵢ/(1 − hᵢ))².'));
     if (o('dw', false) && res.dw) {
       ctx.outline('Durbin-Watson', { parent, key: 'dw' }).add(ctx.rt({ columns: [{ key: 'dw', label: 'Durbin-Watson' }, { key: 'n', label: 'Number of Obs.', fmt: 'int' }, { key: 'autocorr', label: 'AutoCorrelation', digits: 4 }, { key: 'p', label: 'Prob<DW', fmt: 'p' }], rows: [res.dw] }, { sortable: false, key: 'dw' }),
@@ -906,7 +913,7 @@
     const tr = [{ type: 'bar', orientation: 'h', y: rows.map((r) => r.term), x: rows.map((r) => r.t), marker: { color: rows.map((r) => (r.p < ctx.alpha ? P.fit : SM.report.BAR)) }, hovertemplate: '%{y}: t = %{x:.4g}<extra></extra>' }];
     const shapes = [tc, -tc].map((v) => ({ type: 'line', x0: v, x1: v, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, dash: 'dash', width: 1 } }));
     ob.add(ctx.row(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }], rows }, { sortable: false, key: 'sorted' }),
-      ctx.plot(tr, { yaxis: { autorange: 'reversed', type: 'category' }, xaxis: { title: { text: 't Ratio' } }, shapes, margin: { l: 120, r: 12, t: 8, b: 40 } }, { width: W(340), height: h, title: 'sorted t ratios', select: false })));
+      withCode(ctx.plot(tr, { yaxis: { autorange: 'reversed', type: 'category' }, xaxis: { title: { text: 't Ratio' } }, shapes, margin: { l: 120, r: 12, t: 8, b: 40 } }, { width: W(340), height: h, title: 'sorted t ratios', select: false }), ctx.code(codeOf(res, 'sorted')))));
   }
 
   async function effectDetails(ctx, M, parent, res, payload, y, o, emph) {
@@ -928,10 +935,10 @@
       const eo = ctx.outline(e.label, { parent: ob, key: `eff:${e.label}`, menu });
       const parts = [];
       const lev = (res.leverage || []).find((l) => l.effect === e.label);
-      if (lev && o('plotLeverage', emph === 'leverage')) parts.push(leveragePlot(ctx, lev, y.name, !!res.robust));
+      if (lev && o('plotLeverage', emph === 'leverage')) parts.push(withCode(leveragePlot(ctx, lev, y.name, !!res.robust), ctx.code((codeOf(res, 'leverage') || {})[e.label])));
       if (lsm && o(`lsmTable:${e.label}`, true)) parts.push(lsmeansTable(ctx, M, lsm));
       if (parts.length) eo.add(ctx.row(...parts));
-      if (lsm && o(`lsmPlot:${e.label}`, false)) eo.add(lsmeansPlot(ctx, M, lsm, res.tcrit, y.name, e.label));
+      if (lsm && o(`lsmPlot:${e.label}`, false)) eo.add(lsmeansPlot(ctx, M, lsm, res.tcrit, y.name, e.label), ctx.code((codeOf(res, 'lsmeans') || {})[e.label]));
       if (lsm && o(`student:${e.label}`, false)) await comparisons(ctx, M, eo, payload, e.label, 'student', sc);
       if (lsm && o(`tukey:${e.label}`, false)) await comparisons(ctx, M, eo, payload, e.label, 'tukey', sc);
       const cl = o(`contrast:${e.label}`, []);
@@ -1101,7 +1108,7 @@
     const vline = (x, dash) => ({ type: 'line', xref: 'x', x0: x, x1: x, yref: 'paper', y0: 0, y1: 1, line: { color: P.muted, width: 1, dash } });
     const hline = (v, dash, color = P.muted) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: v, y1: v, line: { color, width: 1, dash } });
     ob.add(ctx.plot([trace], { xaxis: { title: { text: 'Leverage (hat)' }, range: [Math.max(0, xl - 0.02 * (xh - xl)), xh + 0.04 * (xh - xl)] }, yaxis: { title: { text: 'Externally Studentized Residual' } },
-      shapes: [hline(0, 'solid', P.mean), hline(2, 'dash'), hline(-2, 'dash'), vline(h2, 'dot'), vline(h3, 'dash')], margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(460), height: 340, title: `${y.name} influence plot` }),
+      shapes: [hline(0, 'solid', P.mean), hline(2, 'dash'), hline(-2, 'dash'), vline(h2, 'dot'), vline(h3, 'dash')], margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(460), height: 340, title: `${y.name} influence plot` }), ctx.code(codeOf(res, 'influence')),
     ctx.note(`The area of a bubble is the row's Cook's D (the largest ${fmt(cmax, { sig: 3 })}). Dashed: studentized residuals of ±2 and the leverage 3p/n = ${fmt(h3, { sig: 3 })}; dotted: 2p/n = ${fmt(h2, { sig: 3 })} (p = ${p}, n = ${n}). ${flagged.length} row${flagged.length === 1 ? '' : 's'} beyond ±2 or 2p/n: the red triangle selects them. statsmodels' influence_plot draws the same (resid_studentized_external, hat_matrix_diag, cooks_distance).`));
   }
 
@@ -1110,7 +1117,7 @@
     const P = pal();
     const ob = ctx.outline('Component + Residual Plots', { parent, key: 'ccpr', info: 'p:fitmodel:influence', menu: () => [{ label: 'Remove', action: () => ctx.set('ccpr', false, sc) }] });
     if (!res.ccpr.length) { ob.add(ctx.note('The model has no continuous terms.')); return; }
-    const plots = res.ccpr.map((c) => rowPlot(ctx, { x: c.x, y: c.partial, rows: c.rows, xTitle: c.term, yTitle: `Component + Residual`, lines: [lineTrace(c.line.x, c.line.y, P.fit, 'solid', 1.5)], width: 330, height: 270, title: `${c.term} component plus residual` }));
+    const plots = res.ccpr.map((c, i) => withCode(rowPlot(ctx, { x: c.x, y: c.partial, rows: c.rows, xTitle: c.term, yTitle: `Component + Residual`, lines: [lineTrace(c.line.x, c.line.y, P.fit, 'solid', 1.5)], width: 330, height: 270, title: `${c.term} component plus residual` }), ctx.code((codeOf(res, 'ccpr') || [])[i])));
     ob.add(ctx.row(...plots), ctx.note('For each continuous term the residual plus the term\'s part of the fit, b·x, against x (statsmodels\' plot_ccpr); the line is b·x. A curve in the points asks for a transformation or a power of the term.'));
   }
 
@@ -1226,7 +1233,7 @@
       const ro = ctx.outline('Recursive Estimates', { parent: ob, key: 'rr:rec', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:recursive', false, sc) }] });
       const npts = r.cusum.x.length;
       const yfrom = Math.min(npts - 1, Math.max(2 * r.k, Math.round(0.05 * npts)));
-      ro.add(ctx.row(...r.recursive.map((c) => bandPlot(ctx, { x: r.cusum.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: recRows, hover: recHover, ref: c.full, xTitle, yTitle: c.term, title: `${c.term} recursive estimate`, width: 340, height: 230, yfrom }))),
+      ro.add(ctx.row(...r.recursive.map((c, i) => withCode(bandPlot(ctx, { x: r.cusum.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: recRows, hover: recHover, ref: c.full, xTitle, yTitle: c.term, title: `${c.term} recursive estimate`, width: 340, height: 230, yfrom }), ctx.code((codeOf(r, 'recursive') || [])[i])))),
         ctx.note(`Each point is the least squares estimate from the rows up to it in the order (from observation ${start + 1} on, where every parameter is estimable); the band is ±${fmt(qnorm(1 - ctx.alpha / 2), { sig: 3 })} standard errors, the dashed line the estimate from all the rows. The vertical axis is scaled to the estimates from observation ${start + yfrom + 1} on (the first ones swing widely: drag to zoom, double click to come back). A stable coefficient settles inside its band; a drift away shows where it changes.`));
     }
     if (on['rr:cusum']) {
@@ -1234,7 +1241,7 @@
       const co = ctx.outline('CUSUM', { parent: ob, key: 'rr:cusum', info: 'p:fitmodel:recursive', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:cusum', false, sc) }] });
       const traces = [lineTrace(c.x, c.upper, P.fit, 'dash', 1.2), lineTrace(c.x, c.lower, P.fit, 'dash', 1.2),
         { type: 'scatter', mode: 'lines+markers', x: c.x, y: c.y, rows: recRows, hovertext: recHover, hovertemplate: '%{hovertext}<br>CUSUM %{y:.4g}<extra></extra>', line: { color: P.point, width: 1.4 }, marker: { size: c.x.length > 300 ? 3 : 5, color: P.point }, name: 'CUSUM' }];
-      co.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM' } }, shapes: [zero], margin }, { width: W(520), height: 300, title: `${y.name} CUSUM` }),
+      co.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM' } }, shapes: [zero], margin }, { width: W(520), height: 300, title: `${y.name} CUSUM` }), ctx.code(codeOf(r, 'cusum'))),
         ctx.kv([['Significance level', r.conf], ['Crosses the bounds', c.crossed ? 'Yes' : 'No', 'text'], c.crossed ? ['First crossing, observation', c.first, 'int'] : null,
           c.crossed ? ['First crossing, row', c.first_row + 1, 'int'] : null, ['Largest |CUSUM| / bound', c.ratio], ['a (Brown, Durbin and Evans)', c.constant], ['Recursive residuals', c.x.length, 'int']])),
       ctx.note(`The cumulative sum of the recursive residuals over their standard deviation, with the ${fmt(100 * r.conf)}% bounds (dashed). Inside them the coefficients look stable along the order; a path that leaves them (here ${c.crossed ? `first at observation ${c.first}, row ${c.first_row + 1}` : 'it does not'}) says the relation shifts: the recursive estimates show which coefficient moves.`));
@@ -1244,7 +1251,7 @@
       const co = ctx.outline('CUSUM of Squares', { parent: ob, key: 'rr:cusumsq', info: 'p:fitmodel:recursive', menu: () => [{ label: 'Remove', action: () => ctx.set('rr:cusumsq', false, sc) }] });
       const traces = [lineTrace(c.x, c.line, P.muted, 'dot', 1), lineTrace(c.x, c.upper, P.fit, 'dash', 1.2), lineTrace(c.x, c.lower, P.fit, 'dash', 1.2),
         { type: 'scatter', mode: 'lines+markers', x: c.x, y: c.y, rows: recRows, hovertext: recHover, hovertemplate: '%{hovertext}<br>CUSUM of squares %{y:.4g}<extra></extra>', line: { color: P.point, width: 1.4 }, marker: { size: c.x.length > 300 ? 3 : 5, color: P.point }, name: 'CUSUM of squares' }];
-      co.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM of Squares' } }, margin }, { width: W(520), height: 300, title: `${y.name} CUSUM of squares` }),
+      co.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: txt(xTitle) } }, yaxis: { title: { text: 'CUSUM of Squares' } }, margin }, { width: W(520), height: 300, title: `${y.name} CUSUM of squares` }), ctx.code(codeOf(r, 'cusumsq'))),
         ctx.kv([['Significance level', r.conf], ['Crosses the bounds', c.crossed ? 'Yes' : 'No', 'text'], c.crossed ? ['First crossing, observation', c.first, 'int'] : null,
           c.crossed ? ['First crossing, row', c.first_row + 1, 'int'] : null, ['Largest distance from the diagonal', c.dev], ['At observation', c.at, 'int'], ['At row', c.at_row + 1, 'int'], ['Critical distance', c.crit]])),
       ctx.note(`The share of the sum of squared recursive residuals reached at each observation. With stable coefficients and variance it follows the dotted diagonal; leaving the ${fmt(100 * r.conf)}% bounds (dashed) says the variance or the slopes change along the order. The largest distance from the diagonal is near the change; the path may cross the bounds before it, since each share is of a total that the later rows inflate.`));
@@ -1255,7 +1262,7 @@
       const groups = R.x.map((end) => rowsO.slice(end - w, end));
       const hov = R.x.map((end) => `observations ${end - w + 1}–${end}: rows ${rowsO[end - w] + 1} to ${rowsO[end - 1] + 1}`);
       const ro = ctx.outline(`Rolling Regression, Window ${w}`, { parent: ob, key: 'rr:roll', menu: () => [{ label: 'Rolling Window…', action: () => rrWindowDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('rr:rolling', false, sc) }] });
-      ro.add(ctx.row(...R.terms.map((c) => bandPlot(ctx, { x: R.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: groups, hover: hov, ref: c.full, xTitle: `Last observation of the window (${oc ? `sorted by ${oc.name}` : 'row order'})`, yTitle: c.term, title: `${c.term} rolling estimate`, width: 340, height: 230 }))),
+      ro.add(ctx.row(...R.terms.map((c, i) => withCode(bandPlot(ctx, { x: R.x, est: c.estimate, lower: c.lower, upper: c.upper, rows: groups, hover: hov, ref: c.full, xTitle: `Last observation of the window (${oc ? `sorted by ${oc.name}` : 'row order'})`, yTitle: c.term, title: `${c.term} rolling estimate`, width: 340, height: 230 }), ctx.code((codeOf(r, 'rolling') || [])[i])))),
         ctx.note(`Least squares on each window of ${w} consecutive rows, plotted at its last row, with the ${fmt(100 * (1 - ctx.alpha))}% band; the dashed line is the estimate from all the rows. A point stands for its window: clicking it selects the window's rows, and selecting rows lights up every window that holds them.`));
     }
     for (const n of r.notes || []) ob.add(ctx.note(n));
@@ -1391,17 +1398,17 @@
     }
     const d = res.diag;
     const yl = res.model.response;
-    if (o('studDev', true)) ctx.outline('Studentized Deviance Residual by Predicted', { parent, key: 'studdev' }).add(rowPlot(ctx, { x: d.predicted, y: d.stud_dev, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: 'Studentized Deviance Residual', hlines: [{ y: 0, color: P.mean }], title: 'studentized deviance residuals' }));
+    if (o('studDev', true)) ctx.outline('Studentized Deviance Residual by Predicted', { parent, key: 'studdev' }).add(rowPlot(ctx, { x: d.predicted, y: d.stud_dev, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: 'Studentized Deviance Residual', hlines: [{ y: 0, color: P.mean }], title: 'studentized deviance residuals' }), ctx.code(codeOf(res, 'studDev')));
     const extraPlots = [['studPearson', 'Studentized Pearson Residual by Predicted', d.stud_pearson, 'Studentized Pearson Residual'], ['devPlot', 'Deviance Residual by Predicted', d.resid_dev, 'Deviance Residual'], ['pearPlot', 'Pearson Residual by Predicted', d.resid_pearson, 'Pearson Residual']];
-    for (const [k, title, v, yt] of extraPlots) if (o(k, false)) ctx.outline(title, { parent, key: k }).add(rowPlot(ctx, { x: d.predicted, y: v, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: yt, hlines: [{ y: 0, color: P.mean }], title }));
-    if (o('actualPred', false)) actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, yl, 'p:fitmodel:glm');
+    for (const [k, title, v, yt] of extraPlots) if (o(k, false)) ctx.outline(title, { parent, key: k }).add(rowPlot(ctx, { x: d.predicted, y: v, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: yt, hlines: [{ y: 0, color: P.mean }], title }), ctx.code(codeOf(res, k)));
+    if (o('actualPred', false)) actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, yl, 'p:fitmodel:glm', undefined, codeOf(res, 'actualPred'));
     if (o('linPlot', false)) {
       const order = d.linpred.map((_, k) => k).sort((a, b) => d.linpred[a] - d.linpred[b]);
       ctx.outline('Linear Predictor Plot', { parent, key: 'linplot' }).add(rowPlot(ctx, { x: d.linpred, y: d.actual, rows: d.rows, xTitle: 'Linear Predictor', yTitle: yl, lines: [lineTrace(order.map((k) => d.linpred[k]), order.map((k) => d.predicted[k]), P.fit)], title: 'linear predictor plot' }),
-        ctx.note('The response against the linear predictor; the curve is the fitted mean, the inverse link of the linear predictor.'));
+        ctx.code(codeOf(res, 'linPlot')), ctx.note('The response against the linear predictor; the curve is the fitted mean, the inverse link of the linear predictor.'));
     }
     const kind = 'glm';
-    if (o('plotRegression', true) && g.cols.length === 1) await regressionPlot(ctx, parent, { kind, payload, factors: res.factors, d, yname: yl, scope: sc });
+    if (o('plotRegression', true) && g.cols.length === 1) await regressionPlot(ctx, parent, { kind, payload, factors: res.factors, d, yname: yl, scope: sc, code: codeOf(res, 'regression') });
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind, payload }], scope: sc });
     if (o('contour', false)) await contourProfiler(ctx, parent, { kind, payload, factors: res.factors, scope: sc });
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind, payload, scope: sc });
@@ -1495,8 +1502,8 @@
     if (o('workcorr', true)) workingCorrelation(ctx, parent, res);
     const d = res.diag;
     const plots = [];
-    if (o('residPred', true)) plots.push(ctx.outline('Residual by Predicted', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${m.response} Predicted (marginal)`, yTitle: `${m.response} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} residual by predicted` })).el);
-    if (o('actualPred', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, m.response, 'p:fitmodel:gee').el);
+    if (o('residPred', true)) plots.push(ctx.outline('Residual by Predicted', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${m.response} Predicted (marginal)`, yTitle: `${m.response} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} residual by predicted` }), ctx.code(codeOf(res, 'residPred'))).el);
+    if (o('actualPred', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, m.response, 'p:fitmodel:gee', undefined, codeOf(res, 'actualPred')).el);
     if (plots.length > 1) parent.add(ctx.row(...plots));
     if (o('residSubject', true)) residualsBySubject(ctx, parent, res, y, sc);
     if (o('compareCorr', false)) await compareCorrelations(ctx, parent, payload, sc);
@@ -1541,7 +1548,7 @@
       font: { size: 10.5, color: v != null && Math.abs(v) > 0.5 ? (tc.dark ? '#1a1410' : '#ffffff') : tc.text } })));
     ob.add(ctx.plot([{ type: 'heatmap', z: Mx.values, x: labels, y: labels, zmin: -1, zmax: 1, colorscale: scale, text: txt, hovertemplate: '%{y} and %{x}: %{text}<extra></extra>', xgap: 1, ygap: 1, colorbar: { thickness: 10, len: 0.85 } }],
       { xaxis: { type: 'category', title: { text: res.model.time || 'Row of the subject' }, showgrid: false, showline: false, ticks: '' }, yaxis: { type: 'category', autorange: 'reversed', showgrid: false, showline: false, ticks: '' }, annotations, margin: { l: 70, r: 10, t: 8, b: 40 } },
-      { width: W(side + 80), height: side, title: 'working correlation', select: false }),
+      { width: W(side + 80), height: side, title: 'working correlation', select: false }), ctx.code(codeOf(res, 'workcorr')),
     ctx.note(`The working correlation of the rows of subject ${Mx.subject} (${Mx.size} rows; the first of the largest subjects), as statsmodels' cov_struct gives it.`));
   }
 
@@ -1556,7 +1563,8 @@
     const ob = ctx.outline('Residuals by Subject', { parent, key: 'residsubj', menu: () => [ctx.check('Boxes per Subject', 'subjectBoxes', sc, false)] });
     ob.add(ctx.plot(traces, { xaxis: { type: 'category', categoryorder: 'array', categoryarray: subjects, title: { text: res.model.subject }, tickfont: { size: subjects.length > 40 ? 8 : 10 } }, yaxis: { title: { text: `${y.name} Residual` } },
       shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0, line: { color: P.mean, width: 1 } }], margin: { l: 58, r: 12, t: 8, b: 60 } },
-    { width: W(Math.max(420, Math.min(900, 14 * subjects.length + 120))), height: 300, title: `${y.name} residuals by subject` }));
+    { width: W(Math.max(420, Math.min(900, 14 * subjects.length + 120))), height: 300, title: `${y.name} residuals by subject` }),
+    ctx.code(codeOf(res, ctx.opt('subjectBoxes', false, sc) ? 'residSubjectBoxes' : 'residSubject')));
   }
 
   async function compareCorrelations(ctx, parent, payload, sc) {
@@ -1652,7 +1660,7 @@
     if (o('roc', false) && res.roc.length) {
       const traces = res.roc.map((r, i) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, name: `${r.level} (AUC ${r.auc.toFixed(4)})`, line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.8, shape: 'hv' } }));
       traces.push(lineTrace([0, 1], [0, 1], P.muted, 'dot', 1));
-      ctx.outline('Receiver Operating Characteristic', { parent, key: 'roc' }).add(ctx.row(ctx.plot(traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(360), height: 340, title: 'ROC curve', select: false }),
+      ctx.outline('Receiver Operating Characteristic', { parent, key: 'roc' }).add(ctx.row(withCode(ctx.plot(traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(360), height: 340, title: 'ROC curve', select: false }), ctx.code(codeOf(res, 'roc'))),
         ctx.rt({ columns: [{ key: 'level', label: 'Level', fmt: 'text' }, { key: 'auc', label: 'AUC' }], rows: res.roc }, { sortable: false, key: 'auc' })),
       ctx.note(res.roc.length > 1 ? 'Each level against all the others, by its fitted probability.' : `The fitted probability of ${res.roc[0].level} as the score.`));
     }
@@ -1671,6 +1679,7 @@
     const end = (j) => (j < 0 ? 0 : j >= n - 1 ? 1 : p.cum[j][p.cum[j].length - 1]);
     const ann = res.levels.map((lv, j) => ({ xref: 'paper', x: 1.01, xanchor: 'left', yref: 'y', y: (end(j - 1) + end(j)) / 2, text: lv, showarrow: false, font: { size: 10, color: SM.util.PALETTE[j % SM.util.PALETTE.length] } }));
     ctx.outline('Logistic Plot', { parent, key: 'logplot', info: 'p:fitmodel:logistic' }).add(ctx.plot(traces, { xaxis: { title: { text: p.factor } }, yaxis: { title: { text: `${y.name} (cumulative probability)` }, range: [0, 1] }, annotations: ann, margin: { l: 58, r: 60, t: 8, b: 44 } }, { width: W(430), height: 320, title: `${y.name} logistic plot` }),
+      ctx.code(codeOf(res, 'logistic')),
       ctx.note('The curves are the fitted cumulative probabilities of the levels; each row is placed at random between the curves of its level.'));
   }
 
@@ -1737,9 +1746,9 @@
       if (!res.blups.length) ob.add(ctx.note('For a model this large (rows times random levels) the predictions are not computed.'));
     }
     const plots = [];
-    if (o('actCond', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, y.name, 'p:fitmodel:mixed', 'Actual by Conditional Predicted').el);
-    if (o('actMarg', false)) { const ob = ctx.outline('Actual by Marginal Predicted', { parent, key: 'actmarg' }); const [lo, hi] = extent(d.marginal, d.actual); ob.add(rowPlot(ctx, { x: d.marginal, y: d.actual, rows: d.rows, xTitle: `${y.name} Marginal Predicted`, yTitle: `${y.name} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit)], title: 'actual by marginal predicted' })); plots.push(ob.el); }
-    if (o('resCond', true)) { const ob = ctx.outline('Conditional Residual by Predicted', { parent, key: 'rescond' }); ob.add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${y.name} Conditional Predicted`, yTitle: 'Conditional Residual', hlines: [{ y: 0, color: P.mean }], title: 'conditional residuals' })); plots.push(ob.el); }
+    if (o('actCond', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, y.name, 'p:fitmodel:mixed', 'Actual by Conditional Predicted', codeOf(res, 'actCond')).el);
+    if (o('actMarg', false)) { const ob = ctx.outline('Actual by Marginal Predicted', { parent, key: 'actmarg' }); const [lo, hi] = extent(d.marginal, d.actual); ob.add(rowPlot(ctx, { x: d.marginal, y: d.actual, rows: d.rows, xTitle: `${y.name} Marginal Predicted`, yTitle: `${y.name} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit)], title: 'actual by marginal predicted' }), ctx.code(codeOf(res, 'actMarg'))); plots.push(ob.el); }
+    if (o('resCond', true)) { const ob = ctx.outline('Conditional Residual by Predicted', { parent, key: 'rescond' }); ob.add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${y.name} Conditional Predicted`, yTitle: 'Conditional Residual', hlines: [{ y: 0, color: P.mean }], title: 'conditional residuals' }), ctx.code(codeOf(res, 'resCond'))); plots.push(ob.el); }
     if (plots.length > 1) parent.add(ctx.row(...plots));
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'mixed', payload }], scope: sc });
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'mixed', payload, scope: sc });
@@ -2003,8 +2012,8 @@
     const pathOb = ctx.outline('Solution Path', { parent: fitOb, key: 'grpath', info: 'p:fitmodel:grpath', menu: () => [{ label: 'Reset to the Best Model', action: () => ctx.set(chooseKey, null, sc), disabled: res.chosen === res.best }] });
     const config = { edits: { shapePosition: true } };
     pathOb.add(ctx.row(
-      ctx.plot(coefTr, { xaxis, yaxis: { title: { text: 'Parameter Estimates' } }, shapes, hovermode: 'x', showlegend: false }, { width: W(400), height: 300, title: 'solution path', select: false, config, onDraw: wire }),
-      ctx.plot(critTr, { xaxis, yaxis: { title: { text: lab } }, shapes, showlegend: false }, { width: W(340), height: 300, title: `${lab} path`, select: false, config, onDraw: wire })),
+      withCode(ctx.plot(coefTr, { xaxis, yaxis: { title: { text: 'Parameter Estimates' } }, shapes, hovermode: 'x', showlegend: false }, { width: W(400), height: 300, title: 'solution path', select: false, config, onDraw: wire }), ctx.code(codeOf(res, 'path'))),
+      withCode(ctx.plot(critTr, { xaxis, yaxis: { title: { text: lab } }, shapes, showlegend: false }, { width: W(340), height: 300, title: `${lab} path`, select: false, config, onDraw: wire }), ctx.code(codeOf(res, 'curve')))),
     ctx.note(`${step ? 'Each step enters (or, pruned, removes) a term' : 'Each point is a penalty λ, from the one that keeps every term out'}; the red line is the model shown (${res.chosen === res.best ? `the smallest ${lab}` : 'chosen on the plot; the dotted line is the best'}). Drag it, or click a point, to show another.`));
     return pathOb;
   }
@@ -2039,7 +2048,7 @@
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', m.response], ['Endogenous', m.endogenous.join(', ')], ['Instruments', m.instruments.join(', ')],
       ['Estimation', 'Two-Stage Least Squares'], ['Standard Errors', m.cov], ['Observations', fmt(m.n)]].map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
     const top = [];
-    if (o('iv:actual', true)) top.push(actualByPredicted(ctx, parent, d, null, y.name, 'p:fitmodel:iv').el);
+    if (o('iv:actual', true)) top.push(actualByPredicted(ctx, parent, d, null, y.name, 'p:fitmodel:iv', undefined, codeOf(res, 'actual')).el);
     if (o('summaryOfFit', true)) {
       const s = ctx.outline('Summary of Fit', { parent, key: 'sof', info: 'p:fitmodel:iv' });
       s.add(ctx.kv([...res.summary.rows.map((r) => [r.stat, r.value, r.stat === 'Observations' ? 'int' : 'num']),
@@ -2066,10 +2075,10 @@
     if (o('iv:resid', true)) {
       const yn = SM.report.plotlyText(y.name);
       ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yn} Predicted`, yTitle: `${yn} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} residual by predicted` }),
-        ctx.note('The residuals of the model itself, y − Xb (not of the second stage), against its predictions Xb.'));
+        ctx.code(codeOf(res, 'resid')), ctx.note('The residuals of the model itself, y − Xb (not of the second stage), against its predictions Xb.'));
     }
     if (o('plotResidRow', false)) {
-      ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${y.name} residual by row` }));
+      ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${y.name} residual by row` }), ctx.code(codeOf(res, 'residRow')));
     }
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'iv', payload }], scope: sc });
     tail(ctx, parent, res);
@@ -2192,7 +2201,7 @@
       const ob = ctx.outline('Actual by Predicted Plot', { parent, key: 'actpred', info: 'p:fitmodel:quantreg' });
       const [lo, hi] = extent(d.predicted, d.actual);
       ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${SM.report.plotlyText(y.name)} Predicted ${fmt(m.tau)} quantile`, yTitle: `${SM.report.plotlyText(y.name)} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit, 'solid', 1.4)], width: 400, height: 320, title: `${y.name} actual by predicted quantile` }),
-        ctx.note(`About ${fmt(100 * (1 - m.tau))}% of the rows should lie above the line (here ${fmt(100 * (1 - res.stats.below), { digits: 1 })}%).`));
+        ctx.code(codeOf(res, 'actual')), ctx.note(`About ${fmt(100 * (1 - m.tau))}% of the rows should lie above the line (here ${fmt(100 * (1 - res.stats.below), { digits: 1 })}%).`));
       top.push(ob.el);
     }
     if (o('summaryOfFit', true)) {
@@ -2210,7 +2219,7 @@
     if (process && res.process) qrProcess(ctx, parent, res, sc);
     if (res.lines && o('qr:lines', true)) qrLines(ctx, parent, res, y);
     if (o('qr:resid', false)) {
-      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${SM.report.plotlyText(y.name)} Predicted ${fmt(m.tau)} quantile`, yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} quantile residual by predicted` }));
+      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${SM.report.plotlyText(y.name)} Predicted ${fmt(m.tau)} quantile`, yTitle: `${SM.report.plotlyText(y.name)} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${y.name} quantile residual by predicted` }), ctx.code(codeOf(res, 'resid')));
     }
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'qr', payload }], scope: sc });
     tail(ctx, parent, res);
@@ -2220,8 +2229,8 @@
     const pr = res.process;
     const ols = res.ols;
     const ob = ctx.outline('Quantile Process', { parent, key: 'qrprocess', info: 'p:fitmodel:qrprocess', menu: () => [ctx.check('Quantile Process Estimates', 'qr:procTable', sc, false), { label: 'Remove', action: () => ctx.set('qr:process', false, sc) }] });
-    const plots = pr.terms.map((term, i) => bandPlot(ctx, { x: pr.taus, est: pr.estimate[i], lower: pr.lower[i], upper: pr.upper[i], ref: ols.estimate[i], refBand: [ols.lower[i], ols.upper[i]], vline: res.tau,
-      hover: pr.taus.map((t) => `τ = ${t}`), xTitle: 'Quantile τ', yTitle: term, title: `${term} quantile process`, width: 300, height: 230, xaxis: { range: [0, 1] } }));
+    const plots = pr.terms.map((term, i) => withCode(bandPlot(ctx, { x: pr.taus, est: pr.estimate[i], lower: pr.lower[i], upper: pr.upper[i], ref: ols.estimate[i], refBand: [ols.lower[i], ols.upper[i]], vline: res.tau,
+      hover: pr.taus.map((t) => `τ = ${t}`), xTitle: 'Quantile τ', yTitle: term, title: `${term} quantile process`, width: 300, height: 230, xaxis: { range: [0, 1] } }), ctx.code((codeOf(res, 'process') || [])[i])));
     ob.add(ctx.row(...plots), ctx.note(`Each coefficient at the ${pr.taus.length} quantiles of the process, with its pointwise ${fmt(100 * (1 - ctx.alpha))}% band; the dashed line and the pale band are the least squares estimate and its interval, the dotted line the report's quantile. A coefficient whose curve leaves the least squares band acts differently in the tails than at the mean.`));
     if (ctx.opt('qr:procTable', false, sc)) {
       const cols = [{ key: 'tau', label: 'Quantile' }, { key: 'r1', label: 'Pseudo RSquare', digits: 4 }, ...pr.terms.flatMap((t, i) => [{ key: `b${i}`, label: t }, { key: `s${i}`, label: `${t} Std Error`, hidden: true }])];
@@ -2243,6 +2252,7 @@
     traces.push({ type: 'scatter', mode: 'lines', x: L.x, y: L.ols, line: { color: P.text, width: 1.3, dash: 'dash' }, name: 'Least squares', hoverinfo: 'skip' });
     ctx.outline('Quantile Regression Plot', { parent, key: 'qrlines', info: 'p:fitmodel:quantreg', menu: () => [{ label: 'Remove', action: () => ctx.set('qr:lines', false, y.id) }] }).add(
       ctx.plot(traces, { showlegend: true, legend: { title: { text: 'Quantile' } }, xaxis: { title: { text: SM.report.plotlyText(L.factor) } }, yaxis: { title: { text: SM.report.plotlyText(y.name) } }, margin: { l: 58, r: 12, t: 8, b: 44 } }, { width: W(520), height: 340, title: `${y.name} quantile lines` }),
+      ctx.code(codeOf(res, 'lines')),
       ctx.note(`The fitted quantiles of ${y.name} over ${L.factor} (the report's quantile drawn thicker) and the least squares line (dashed). Lines that fan out mean the spread of ${y.name} changes with ${L.factor}.`));
   }
 

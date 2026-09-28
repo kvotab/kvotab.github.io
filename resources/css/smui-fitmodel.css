@@ -59,3 +59,7 @@
   .sm-fm-esum th, .sm-fm-esum td { padding: 2px 5px; }
   .sm-fm-esum td.sm-fm-barcell, .sm-fm-esum th.sm-fm-barhead { width: 46px; min-width: 36px; }
 }
+
+/* A graph with its Python code under it, as one item of a row of graphs: the
+   code opens below the graph and the row makes room for it. */
+.sm-fm-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

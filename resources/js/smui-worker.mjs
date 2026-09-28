@@ -12,6 +12,9 @@
      { type: 'table', id, version, meta, arrays }   a table, new or changed
      { type: 'call', id, fn, payload }      run smui.registry.dispatch
      { type: 'callb', id, fn, payload, bytes }   the same with a file's bytes
+     { type: 'nbrun', id, nb, code, files, info }   a notebook cell (smui.notebook.run_cell):
+                                            files [{name, text}] are written first (the
+                                            tables' CSV), then the packages its imports need
    Messages out:
      { type: 'status', stage, text }        while loading
      { type: 'ready', versions, names, failed }
@@ -34,6 +37,7 @@ let dispatch = null;
 let dispatchBytes = null;
 let setTable = null;
 let packagesFor = null;
+let runCell = null;
 const extra = new Set();     // the packages loaded after the start
 let queue = Promise.resolve();
 
@@ -86,6 +90,7 @@ async function boot(base, version) {
   dispatchBytes = py.pyimport('smui.registry').dispatch_bytes;
   setTable = py.pyimport('smui.data').set_table;
   packagesFor = py.pyimport('smui.registry').packages_for;
+  try { runCell = py.pyimport('smui.notebook').run_cell; } catch (e) { runCell = null; }   // the analyses run without it
   const versions = JSON.parse(py.runPython(
     "import json, sys, numpy, scipy, pandas, statsmodels, patsy\n" +
     "json.dumps({'python': sys.version.split()[0], 'numpy': numpy.__version__, 'scipy': scipy.__version__, " +
@@ -141,6 +146,7 @@ async function handle(msg) {
     }
     return null;
   }
+  if (msg.type === 'nbrun') return notebookCell(msg);
   if (msg.type === 'call' || msg.type === 'callb') {
     if (!dispatch) { post({ type: 'error', id: msg.id, message: 'the engine is not ready' }); return null; }
     try {
@@ -157,6 +163,32 @@ async function handle(msg) {
     }
   }
   return null;
+}
+
+/* A notebook cell. The packages its imports name come from the same Pyodide
+   release as the rest (matplotlib the first time, say); one that is not
+   there fails in the cell, with Python's own message. */
+async function notebookCell(msg) {
+  if (!runCell) { post({ type: 'error', id: msg.id, message: 'the notebook is not in this engine (reload the page)' }); return; }
+  try {
+    for (const f of msg.files || []) py.FS.writeFile(`/home/pyodide/${f.name}`, f.text);
+    let loading = false;
+    try {
+      await py.loadPackagesFromImports(msg.code, {
+        messageCallback: (text) => { loading = true; post({ type: 'loading', text }); },
+        errorCallback: (text) => post({ type: 'log', stream: 'stderr', text }),
+      });
+    } catch (e) {
+      post({ type: 'log', stream: 'stderr', text: `packages for a cell: ${lastLine(e)}` });
+    } finally {
+      if (loading) post({ type: 'loaded', versions: {} });
+    }
+    const json = await runCell(msg.nb, msg.code, JSON.stringify(msg.info || {}));
+    post({ type: 'result', id: msg.id, json });
+  } catch (e) {
+    const text = String((e && e.message) || e);
+    post({ type: 'error', id: msg.id, message: lastLine(e), traceback: text.length > 6000 ? text.slice(-6000) : text });
+  }
 }
 
 self.onmessage = (ev) => {

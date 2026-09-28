@@ -40,6 +40,10 @@
     return reads;
   }
 
+  // The file a table's CSV is in, for the notebook: the name the reports'
+  // code reads (util.code_head), with no folder in it.
+  const csvName = (name) => `${String(name).replace(/[/\\]/g, '_')}.csv`;
+
   class Engine extends Emitter {
     constructor() {
       super();
@@ -52,6 +56,8 @@
       this.worker = null;
       this.pending = new Map();
       this.sent = new Map();
+      this.csvSent = new Map();     // table id -> the version whose CSV the notebook's files hold
+      this.restarts = 0;
       this.seq = 0;
       this.busy = 0;
       this.version = '';
@@ -103,6 +109,8 @@
       if (this.worker) this.worker.terminate();
       this.worker = null;
       this.sent.clear();
+      this.csvSent.clear();
+      this.restarts++;
       for (const [, p] of this.pending) p.reject(new Error('stopped'));
       this.pending.clear();
       this.busy = 0;
@@ -151,6 +159,36 @@
         const json = await new Promise((resolve, reject) => {
           this.pending.set(id, { resolve, reject, fn });
           this.worker.postMessage({ type: 'call', id, fn, payload: body });
+        });
+        return JSON.parse(json);
+      } finally {
+        this.busy = Math.max(0, this.busy - 1);
+        this.emit('busy', this.busy);
+      }
+    }
+
+    /* A notebook cell (smui.notebook.run_cell). The page's tables go first, as
+       for a call, and each one's CSV file, as the reports' code reads it
+       ("<name>.csv", written as File > Export CSV writes it), when the
+       worker lacks this version of it. info: { label, fresh } (see
+       notebook.py). Resolves to { outputs, tables, count }. */
+    async runCell(nb, code, { tables = [], current = null, label = 'cell', fresh = false } = {}) {
+      await this.ready();
+      const files = [];
+      for (const t of tables) {
+        this._sync(t);
+        if (this.csvSent.get(t.id) === t.version) continue;
+        files.push({ name: csvName(t.name), text: SM.io.toCsv(t, ',') });
+        this.csvSent.set(t.id, t.version);
+      }
+      const info = { tables: tables.map((t) => ({ id: t.id, name: t.name })), current: current ? current.id : null, label, fresh };
+      const id = ++this.seq;
+      this.busy++;
+      this.emit('busy', this.busy);
+      try {
+        const json = await new Promise((resolve, reject) => {
+          this.pending.set(id, { resolve, reject, fn: 'notebook' });
+          this.worker.postMessage({ type: 'nbrun', id, nb, code, files, info });
         });
         return JSON.parse(json);
       } finally {
@@ -235,4 +273,5 @@
   }
 
   SM.engine = new Engine();
+  SM.engine.csvName = csvName;
 }(typeof self !== 'undefined' ? self : this));

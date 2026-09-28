@@ -1,0 +1,210 @@
+/* ==========================================================================
+   SMUI.HTML: THE CODE EDITOR, THE NOTEBOOK AND THE REPORTS' EDITABLE CODE
+   The editor is a textarea over a <pre> of the same text in colour: both
+   have the same font, padding, wrapping and line height, or the colours
+   would not sit under the letters. No bold or italic in the colours, for
+   the same reason. Class prefixes: sm-ed- (editor), sm-nb- (notebook).
+   ========================================================================== */
+:root {
+  --sm-syn-k: #8a2c99;      /* keywords */
+  --sm-syn-s: #2c7a34;      /* strings */
+  --sm-syn-n: #a85400;      /* numbers */
+  --sm-syn-c: #7b7b7b;      /* comments */
+  --sm-syn-b: #1f5fa8;      /* built-ins, JSL functions */
+  --sm-syn-f: #1f5fa8;      /* names being defined */
+  --sm-syn-d: #99512b;      /* decorators */
+  --sm-syn-v: #b3261e;      /* JSL :columns, << */
+}
+:root[data-theme="dark"] {
+  --sm-syn-k: #d596f0;
+  --sm-syn-s: #93d493;
+  --sm-syn-n: #f2ab62;
+  --sm-syn-c: #939393;
+  --sm-syn-b: #86b8ff;
+  --sm-syn-f: #86b8ff;
+  --sm-syn-d: #e3a676;
+  --sm-syn-v: #ff8f80;
+}
+
+/* ---- the editor ---------------------------------------------------------------------- */
+.sm-ed {
+  position: relative;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--code-bg);
+  min-width: 0;
+}
+.sm-ed.is-focus { border-color: var(--color-kvot-accent); }
+.sm-ed-hl, .sm-ed-ta {
+  margin: 0;
+  padding: 6px 10px 6px 46px;
+  border: 0;
+  box-sizing: border-box;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: normal;
+  word-spacing: normal;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  text-align: left;
+}
+.sm-ed-hl { position: relative; min-height: calc(1.5em + 12px); color: var(--text-primary); pointer-events: none; counter-reset: ln; background: none; }
+.sm-ed-ta {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text-primary);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+}
+.sm-ed-ta::placeholder { color: var(--text-muted); -webkit-text-fill-color: var(--text-muted); opacity: 1; }
+.sm-ed-ta::selection { background: color-mix(in oklab, var(--color-kvot-accent) 32%, transparent); }
+.sm-ed.is-plain .sm-ed-ta { color: var(--text-primary); -webkit-text-fill-color: currentColor; }
+.sm-ed.is-plain .sm-ed-hl { color: transparent; }
+.sm-ed.is-readonly .sm-ed-ta { caret-color: transparent; }
+.sm-ed-hl .ln { display: block; position: relative; counter-increment: ln; }
+.sm-ed-hl .ln::before {
+  content: counter(ln);
+  position: absolute;
+  left: -42px;
+  width: 32px;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+.sm-ed-hl .ln:empty::after { content: '\200b'; }
+.t-k { color: var(--sm-syn-k); }
+.t-s { color: var(--sm-syn-s); }
+.t-n { color: var(--sm-syn-n); }
+.t-c { color: var(--sm-syn-c); }
+.t-b { color: var(--sm-syn-b); }
+.t-f { color: var(--sm-syn-f); }
+.t-d { color: var(--sm-syn-d); }
+.t-v, .t-o { color: var(--sm-syn-v); }
+
+/* ---- the notebook ------------------------------------------------------------------- */
+.sm-nb { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.sm-nb-bar .sm-nb-status { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sm-nb-bar .sm-nb-stop { border-color: var(--sm-nom); color: var(--sm-nom); }
+.sm-nb-body { overflow: auto; padding: 10px 14px 80px; }
+.sm-nb-lead { margin: 0 0 10px 60px; max-width: 1040px; font-size: 11.5px; color: var(--text-muted); }
+.sm-nb-lead code, .sm-nb-md code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95em; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.sm-nb-cells { display: flex; flex-direction: column; gap: 8px; max-width: 1100px; }
+.sm-nb-cell {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 0 8px;
+  align-items: start;
+  padding: 3px 0;
+  border-left: 3px solid transparent;
+}
+.sm-nb-cell.is-active { border-left-color: var(--color-kvot-accent); }
+.sm-nb-gutter { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; padding-top: 4px; }
+.sm-nb-count { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-muted); white-space: pre; }
+.sm-nb-run { border: 0; border-radius: 3px; background: none; color: var(--link-color); cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; }
+.sm-nb-run:hover, .sm-nb-run:focus-visible { background: var(--sm-sel-bg); }
+.sm-nb-main { min-width: 0; }
+.sm-nb-tools { display: flex; gap: 2px; padding-top: 3px; opacity: 0; transition: opacity 0.12s; }
+.sm-nb-cell:hover .sm-nb-tools, .sm-nb-cell.is-active .sm-nb-tools, .sm-nb-cell:focus-within .sm-nb-tools { opacity: 1; }
+.sm-nb-tool { border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-surface); color: var(--text-muted); cursor: pointer; font: inherit; font-size: 11px; padding: 1px 5px; }
+.sm-nb-tool:hover { color: var(--text-primary); border-color: var(--color-kvot-accent); }
+.sm-nb-end { display: flex; gap: 6px; margin: 12px 0 0 60px; }
+.sm-nb-empty { color: var(--text-muted); font-style: italic; }
+
+/* text cells, and Markdown in outputs */
+.sm-nb-md { padding: 2px 4px; line-height: 1.5; font-size: 13px; overflow-wrap: anywhere; border-radius: 3px; }
+.sm-nb-cell.is-markdown .sm-nb-md { cursor: text; }
+.sm-nb-md:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 2px; }
+.sm-nb-md > :first-child { margin-top: 0; }
+.sm-nb-md > :last-child { margin-bottom: 0; }
+.sm-nb-md h1 { font-size: 1.55em; margin: 0.4em 0; }
+.sm-nb-md h2 { font-size: 1.3em; margin: 0.5em 0 0.3em; }
+.sm-nb-md h3, .sm-nb-md h4, .sm-nb-md h5, .sm-nb-md h6 { font-size: 1.08em; margin: 0.5em 0 0.25em; }
+.sm-nb-md p, .sm-nb-md ul, .sm-nb-md ol, .sm-nb-md blockquote, .sm-nb-md table { margin: 0.35em 0; }
+.sm-nb-md ul, .sm-nb-md ol { padding-left: 1.6em; }
+.sm-nb-md blockquote { padding-left: 10px; border-left: 3px solid var(--border-color); color: var(--text-muted); }
+.sm-nb-md pre { padding: 6px 9px; background: var(--code-bg); border-radius: 4px; overflow-x: auto; font-size: 12px; }
+.sm-nb-md table { border-collapse: collapse; }
+.sm-nb-md th, .sm-nb-md td { padding: 2px 9px; border-bottom: 1px solid var(--border-color); text-align: left; }
+.sm-nb-md a { color: var(--link-color); }
+
+/* ---- outputs (the notebook's, and a report's code block run in place) ---------------------------- */
+.sm-nb-out { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 6px; min-width: 0; }
+.sm-nb-out[hidden] { display: none; }
+.sm-nb-stream, .sm-nb-error {
+  margin: 0;
+  padding: 3px 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 520px;
+  overflow: auto;
+}
+.sm-nb-stream.stderr { background: color-mix(in oklab, #f3b87b 20%, transparent); border-left: 3px solid #e6a45c; }
+.sm-nb-error { background: color-mix(in oklab, #c0392b 9%, transparent); border-left: 3px solid #c0392b; }
+.sm-nb-img { align-self: flex-start; max-width: 100%; height: auto; background: #fff; border-radius: 3px; }
+.sm-nb-html { max-height: 560px; overflow: auto; font-size: 12px; }
+.sm-nb-html table { border-collapse: collapse; margin: 2px 0 6px; }
+.sm-nb-html th, .sm-nb-html td { padding: 2px 9px; border-bottom: 1px solid var(--border-color); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sm-nb-html th { background: var(--sm-head-bg); font-weight: 600; }
+.sm-nb-html caption { text-align: left; font-weight: 600; color: var(--text-muted); padding-bottom: 3px; }
+.sm-nb-plotly { width: 100%; max-width: 920px; min-height: 380px; }
+
+/* ---- a report's code block, edited and run in place ------------------------------------------ */
+.sm-code .sm-code-btns { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
+.sm-code .sm-code-btns [hidden] { display: none; }
+.sm-code-edit { margin-top: 4px; max-width: 820px; }
+.sm-code-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.sm-code-status { font-size: 11.5px; color: var(--text-muted); }
+/* the output takes the width the code gives it, never more: a long printed
+   line wraps here instead of widening the report's column past its graph */
+.sm-code-out { max-width: 820px; contain: inline-size; }
+
+/* ---- JSL to Python --------------------------------------------------------------------------------- */
+.sm-jsl .sm-jsl-sep { width: 1px; align-self: stretch; background: var(--border-color); margin: 0 3px; }
+.sm-jsl .sm-jsl-lead { margin-left: 0; max-width: 1200px; }
+.sm-jsl-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; max-width: 1700px; }
+.sm-jsl-col { min-width: 0; }
+.sm-jsl-h { margin: 0 0 4px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.sm-jsl-col .sm-jsl-h:not(:first-child) { margin-top: 12px; }
+.sm-jsl .sm-ed-hl { min-height: 240px; }
+.sm-jsl-notes { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.sm-jsl-note { display: flex; align-items: baseline; gap: 7px; padding: 3px 8px; border-left: 3px solid var(--link-color); background: var(--bg-surface); overflow-wrap: anywhere; }
+.sm-jsl-note.is-warn { border-left-color: #e6a45c; }
+.sm-jsl-note.is-error { border-left-color: #c0392b; }
+.sm-jsl-sev { flex: none; width: 1.1em; text-align: center; }
+.sm-jsl-line { flex: none; padding: 0; border: 0; background: none; color: var(--link-color); cursor: pointer; font: inherit; text-decoration: underline; white-space: nowrap; }
+
+/* ---- a phone ------------------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  .sm-ed { font-size: 16px; }             /* a phone zooms into a field whose text is smaller */
+  .sm-ed-hl, .sm-ed-ta { padding-left: 36px; }
+  .sm-ed-hl .ln::before { left: -33px; width: 26px; font-size: 12px; line-height: 2; }
+  .sm-nb-body { padding: 8px 8px 80px; }
+  .sm-nb-cell { grid-template-columns: 30px minmax(0, 1fr); }
+  .sm-nb-tools { grid-column: 2; opacity: 1; justify-content: flex-end; }
+  .sm-nb-lead, .sm-nb-end { margin-left: 34px; }
+  .sm-jsl-body { grid-template-columns: minmax(0, 1fr); }
+  .sm-jsl .sm-ed-hl { min-height: 160px; }
+}
+
+@media print {
+  .sm-nb-bar, .sm-nb-tools, .sm-nb-run, .sm-nb-end, .sm-code-bar { display: none !important; }
+  .sm-nb-body { overflow: visible; }
+  .sm-ed-ta { display: none; }
+}

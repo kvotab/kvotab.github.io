@@ -65,12 +65,59 @@ def _lvtext(v):
     return str(v)
 
 
-def _head(table_name, where=None, imports=()):
-    """The top of a code snippet: read the table, keep the group's rows."""
+def _head(table_name, where=None, imports=(), table=None, rows=None):
+    """The top of a code snippet: read the table, keep the group's rows (and,
+    given the table and the report's rows, leave out the group's rows the
+    report does not use: excluded, or filtered out)."""
     lines = [code_head(table_name, list(imports))]
     for w in where or []:
         lines.append(f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {_lvtext(w["value"])}')
+    if table is not None:
+        lines += _rows_drop(table, rows, where)
     return lines
+
+
+# ---- the graphs as matplotlib code ----------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from a
+# CSV export of the table (the notebook runs it), with the light theme's
+# colours and the graph's size at 100 pixels an inch. A Bivariate graph is put
+# together in the page (the points, and a fragment from each fit: 'plot'); the
+# other graphs' code comes whole from the function that makes their numbers.
+BASE, BAR, RED, GREEN, PURPLE, GREY, TEXT, MUTED = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#6c5b7b', '#8a8a8a', '#352921', '#786b5d'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+PLT = 'import matplotlib.pyplot as plt'
+
+
+def _rows_drop(table, rows, where):
+    """The line that leaves out the rows of the group (the By's where) that
+    the report does not use: excluded, or filtered out."""
+    if rows is None or table not in data.TABLES:
+        return []
+    n = data.TABLES[table]['n']
+    mask = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        mask &= np.asarray(v == w['value'], dtype=bool)
+    drop = sorted(set(np.flatnonzero(mask).tolist()) - {int(r) for r in rows})
+    return [f'df = df.drop(index={drop})   # the rows the report leaves out (excluded, or filtered out)'] if drop else []
+
+
+def _plot_head(table, rows, where, table_name, imports=()):
+    """The top of a graph's code: the table, the group's rows, matplotlib."""
+    return _head(table_name, where, [PLT, *imports]) + _rows_drop(table, rows, where)
+
+
+def _frame_code(cols, weight, freq, frame='d', src='df'):
+    """The rows with every column and a positive Weight and Freq, as the report takes them."""
+    c = [f'{frame} = {src}[{J(list(dict.fromkeys(v for v in cols if v)))}].dropna()']
+    we = _wexpr(weight, freq, frame)
+    if we:
+        c.append(f'{frame} = {frame}[{we} > 0]   # the rows with a positive weight')
+    return c
+
+
+def _figure(w, h, extra=''):
+    return f'fig, ax = plt.subplots(figsize=({w / 100:g}, {h / 100:g}), layout="constrained"{extra})'
 
 
 def _wf(df, table, weight, freq):
@@ -582,7 +629,7 @@ def bivariate(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=
     r = float(cov[0, 1] / (sd[0] * sd[1])) if sd[0] > 0 and sd[1] > 0 else None
     out = {'n': xy.N, 'n_rows': xy.n, 'mean_x': float(d.mean[0]), 'mean_y': float(d.mean[1]), 'sd_x': float(sd[0]), 'sd_y': float(sd[1]),
            'r': r, 'cov': float(cov[0, 1])}
-    c = _head(table_name, where, ['from statsmodels.stats.weightstats import DescrStatsW'])
+    c = _head(table_name, where, ['from statsmodels.stats.weightstats import DescrStatsW'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     we = _wexpr(weight, freq)
     if we:
@@ -619,7 +666,7 @@ def bivariate_bf(table, y, x, kappa=1.0, rows=None, weight=None, freq=None, alph
     l2, lp, ln = pearson_log_bf(r, n, kappa)
     rows_out = [_bf_row('ρ ≠ 0', l2), _bf_row('ρ > 0', lp), _bf_row('ρ < 0', ln)]
     out = {'table': _bf_table(rows_out), 'r': r, 'n': n, 'kappa': kappa, 'notes': ['Weight is not used by the Bayes factor; Freq is.'] if weight else []}
-    c = _head(table_name, where, ['from scipy import stats, integrate, special'])
+    c = _head(table_name, where, ['from scipy import stats, integrate, special'], table=table, rows=rows)
     c.append(f'd = df[[{", ".join(J(v) for v in (x, y, freq) if v)}]].dropna()')
     if freq:
         c.append(_repeat_code(freq))
@@ -679,7 +726,7 @@ def fit_poly(table, y, x, degree=1, rows=None, weight=None, freq=None, alpha=0.0
     if want_rows:
         out['row_values'] = _row_values(res, d.df.index.to_numpy(), yv, np.asarray(res.model.exog), wf, alpha)
     formula = models.code_formula(d)
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     we = _wexpr(weight, freq)
     if we:
@@ -691,6 +738,15 @@ def fit_poly(table, y, x, degree=1, rows=None, weight=None, freq=None, alpha=0.0
     c += ['res = mod.fit()', 'print(res.summary())',
           f'print(res.get_prediction(pd.DataFrame({{{J(x)}: np.linspace(d[{J(x)}].min(), d[{J(x)}].max(), 5)}})).summary_frame(alpha={alpha}))   # confidence curves']
     out['code'] = '\n'.join(c)
+    # the fragment for the graph's code: the fit to the rows s, its curve and bands
+    we = _wexpr(weight, freq, 's')
+    p = [f'mod = smf.wls({J(formula)}, s, weights={we})' if we else f'mod = smf.ols({J(formula)}, s)']
+    if freq:
+        p.append(f'mod.df_resid = s[{J(freq)}].sum() - np.linalg.matrix_rank(mod.exog)   # Freq counts rows')
+    p += ['res = mod.fit()', f'gx = np.linspace(s[{J(x)}].min(), s[{J(x)}].max(), 160)',
+          f'band = res.get_prediction(pd.DataFrame({{{J(x)}: gx}})).summary_frame(alpha={alpha!r})',
+          'fy, lo_fit, hi_fit, lo_ind, hi_ind = (band[k].to_numpy() for k in ("mean", "mean_ci_lower", "mean_ci_upper", "obs_ci_lower", "obs_ci_upper"))']
+    out['plot'] = {'imports': [], 'fit': p, 'pred': ['pred = res.fittedvalues.to_numpy()']}
     return out
 
 
@@ -727,12 +783,16 @@ def fit_mean(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, want_ro
            'curve': {'x': [float(xy.x.min()), float(xy.x.max())], 'fit': [mean, mean]}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': np.full(xy.n, mean), 'residual': xy.y - mean}
-    c = _head(table_name, where, ['from statsmodels.stats.weightstats import DescrStatsW'])
+    c = _head(table_name, where, ['from statsmodels.stats.weightstats import DescrStatsW'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     we = _wexpr(weight, freq)
     c.append(f'res = sm.WLS(d[{J(y)}], np.ones(len(d)), weights={we}).fit()' if we else f'res = sm.OLS(d[{J(y)}], np.ones(len(d))).fit()')
     c.append('print(res.params, np.sqrt(res.mse_resid), res.bse, res.ssr)   # mean, Std Dev [RMSE], Std Error, SSE')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    out['plot'] = {'imports': [], 'fit': [f'm = np.average(s[{J(y)}]{", weights=" + ws if ws else ""})   # the mean of {y}',
+                                          f'gx, fy = np.array([s[{J(x)}].min(), s[{J(x)}].max()]), np.full(2, m)'],
+                   'pred': ['pred = np.full(len(s), m)']}
     return out
 
 
@@ -750,6 +810,57 @@ _TRANSFORMS = {
 _X_DOMAIN = {'square': lambda v: np.isfinite(v)}
 _TR_TITLE = {'log': 'Log', 'sqrt': 'Sqrt', 'square': 'Square', 'reciprocal': 'Recip', 'exp': 'Exp'}
 _TR_CODE = {'none': '{}', 'log': 'np.log({})', 'sqrt': 'np.sqrt({})', 'square': '{}**2', 'reciprocal': '1/{}', 'exp': 'np.exp({})'}
+# the domains (Y's, and X's where it differs) and the way back to Y's scale, as code
+_TR_DOMAIN = {'none': 'np.isfinite({0})', 'log': '({0} > 0)', 'sqrt': '({0} >= 0)', 'square': '({0} >= 0)', 'reciprocal': '({0} != 0)',
+              'exp': 'np.isfinite(np.exp(np.clip({0}, -700, 700)))'}
+_TR_INVERSE = {'none': '{0}', 'log': 'np.exp({0})', 'sqrt': 'np.where({0} >= 0, {0} * {0}, np.nan)', 'square': 'np.sqrt(np.where({0} >= 0, {0}, np.nan))',
+               'reciprocal': '1 / {0}', 'exp': 'np.log(np.where({0} > 0, {0}, np.nan))'}
+
+
+def _special_plot(y, x, ytr, xtr, degree, intercept, slope, weight, freq, alpha):
+    """Fit Special's fragment: the transformed fit to the rows s in the
+    transformations' domain, its curve and bands on the original scale."""
+    dx = 'np.isfinite({0})' if xtr == 'square' else _TR_DOMAIN[xtr]
+    tx = lambda v: _TR_CODE[xtr].format(v)
+    back = lambda v: _TR_INVERSE[ytr].format(f'({v})' if ' ' in v else v)   # an expression in parentheses
+    we = _wexpr(weight, freq, 's')
+    p = [f'yv, xv = s[{J(y)}].to_numpy(), s[{J(x)}].to_numpy()',
+         f'ok = {_TR_DOMAIN[ytr].format("yv")} & {dx.format("xv")}   # the rows in the domain of the transformations',
+         's, yv, xv = s[ok], yv[ok], xv[ok]',
+         f'w = ({we}).to_numpy()' if we else 'w = np.ones(len(s))',
+         f'yt, xt = {_TR_CODE[ytr].format("yv")}, {tx("xv")}',
+         'gx = np.linspace(xv.min(), xv.max(), 200)', f'gt = {tx("gx")}']
+    pred = []
+    if intercept is not None and slope is not None:
+        p.append(f'a, b = {float(intercept)!r}, {float(slope)!r}   # the intercept and the slope held')
+        p.append(f'fy = {back("a + b * gt")}')
+        pred = [f'pred = {back("a + b * xt")}']
+    elif intercept is not None:
+        p.append(f'a = {float(intercept)!r}   # the intercept held: the slope alone is fitted')
+        p.append(f'b = sm.{"WLS" if we else "OLS"}(yt - a, xt{", weights=w" if we else ""}).fit().params[0]')
+        p.append(f'fy = {back("a + b * gt")}')
+        pred = [f'pred = {back("a + b * xt")}']
+    elif slope is not None:
+        p.append(f'b = {float(slope)!r}   # the slope held: the intercept alone is fitted')
+        p.append('a = np.average(yt - b * xt, weights=w)')
+        p.append(f'fy = {back("a + b * gt")}')
+        pred = [f'pred = {back("a + b * xt")}']
+    else:
+        powers = lambda v: ''.join(f', ({v} - mx) ** {k}' for k in range(2, degree + 1))
+        if degree > 1:
+            p.append('mx = np.average(xt, weights=w)   # the powers are centred at the mean')
+        p.append(f'X = sm.add_constant(np.column_stack([xt{powers("xt")}]), has_constant="add")')
+        p.append(f'mod = sm.{"WLS" if we else "OLS"}(yt, X{", weights=w" if we else ""})')
+        if freq:
+            p.append(f'mod.df_resid = s[{J(freq)}].sum() - np.linalg.matrix_rank(X)   # Freq counts rows')
+        p.append('res = mod.fit()')
+        p.append(f'band = res.get_prediction(sm.add_constant(np.column_stack([gt{powers("gt")}]), has_constant="add")).summary_frame(alpha={alpha!r})')
+        p.append(f'fy, lo_fit, hi_fit, lo_ind, hi_ind = ({back("band[k].to_numpy()")} for k in ("mean", "mean_ci_lower", "mean_ci_upper", "obs_ci_lower", "obs_ci_upper"))'
+                 + ('   # back on the original scale' if ytr != 'none' else ''))
+        if ytr == 'reciprocal':
+            p.append('lo_fit, hi_fit, lo_ind, hi_ind = hi_fit, lo_fit, hi_ind, lo_ind   # 1/y turns the bands over')
+        pred = [f'pred = {back("np.asarray(res.fittedvalues)")}']
+    return {'imports': [], 'fit': p, 'pred': pred}
 
 
 @api('fitybyx.fit_special')
@@ -863,7 +974,7 @@ def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, s
     out['curve'] = curve
     if want_rows:
         out['row_values'] = {'rows': rws, 'predicted': pred, 'residual': yv - pred}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     c.append(f'yt = {_TR_CODE[ytr].format("d[" + J(y) + "]")}; xt = {_TR_CODE[xtr].format("d[" + J(x) + "]")}')
     we = _wexpr(weight, freq)
@@ -879,6 +990,7 @@ def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, s
         c.insert(len(c) - 1, f'# Freq: set mod.df_resid = d[{J(freq)}].sum() - (number of parameters) before .fit() to count rows as JMP does')
     c.append('print(res.summary())' if res is not None else f'print(({_TR_CODE[ytr].format("d[" + J(y) + "]")} - ({intercept!r} + {slope!r} * xt))**2).sum())')
     out['code'] = '\n'.join(c)
+    out['plot'] = _special_plot(y, x, ytr, xtr, degree, intercept, slope, weight, freq, alpha)
     return out
 
 
@@ -913,7 +1025,7 @@ def fit_spline(table, y, x, lam=None, standardize=False, rows=None, weight=None,
            'curve': {'x': g, 'fit': spl((g - mx) / sx)}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': pred, 'residual': xy.y - pred}
-    c = _head(table_name, where, ['from scipy.interpolate import make_smoothing_spline'])
+    c = _head(table_name, where, ['from scipy.interpolate import make_smoothing_spline'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     we = _wexpr(weight, freq)
     c.append(f'd = d.assign(_w={we if we else "1.0"})')
@@ -922,6 +1034,17 @@ def fit_spline(table, y, x, lam=None, standardize=False, rows=None, weight=None,
     c.append(f'spl = make_smoothing_spline({xs}, g["y"], w=g["w"], lam={lam!r})')
     c.append(f'print(spl(({xs})[:5]))')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    p = [f'sw = {ws}' if ws else 'sw = pd.Series(1.0, index=s.index)',
+         f'W = sw.groupby(s[{J(x)}]).sum(); yb = (sw * s[{J(y)}]).groupby(s[{J(x)}]).sum() / W   # the rows with the same X combined',
+         'ux = W.index.to_numpy()']
+    if standardize:
+        p += [f'mx = np.average(s[{J(x)}], weights=sw); sx = np.sqrt(np.sum(sw * (s[{J(x)}] - mx) ** 2) / (sw.sum() - 1)) or 1.0   # Standardize X']
+    else:
+        p += ['mx, sx = 0.0, 1.0']
+    p += [f'spl = make_smoothing_spline((ux - mx) / sx, yb.to_numpy(), w=W.to_numpy(), lam={lam!r})   # lam None: by generalised cross-validation',
+          'gx = np.linspace(ux[0], ux[-1], int(min(600, max(200, len(ux)))))', 'fy = spl((gx - mx) / sx)']
+    out['plot'] = {'imports': ['from scipy.interpolate import make_smoothing_spline'], 'fit': p, 'pred': [f'pred = spl((s[{J(x)}].to_numpy() - mx) / sx)']}
     return out
 
 
@@ -956,13 +1079,20 @@ def fit_lowess(table, y, x, frac=2 / 3, it=0, rows=None, weight=None, freq=None,
     if want_rows:
         pr = _unexpand(fitted, reps)
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr}
-    c = _head(table_name, where, ['from statsmodels.nonparametric.smoothers_lowess import lowess'])
+    c = _head(table_name, where, ['from statsmodels.nonparametric.smoothers_lowess import lowess'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(freq) if freq else ""}]].dropna()')
     if freq:
         c.append(f'd = d.loc[d.index.repeat(d[{J(freq)}].astype(int))]   # Freq: each row counted that many times')
     c.append(f'fit = lowess(d[{J(y)}], d[{J(x)}], frac={frac!r}, it={it}, delta={delta!r})   # sorted (x, fitted) pairs')
     c.append('print(fit[:5])')
     out['code'] = '\n'.join(c)
+    p = [f'r = s.loc[s.index.repeat(s[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq else 'r = s',
+         f'delta = 0.005 * (r[{J(x)}].max() - r[{J(x)}].min()) if len(r) > 3000 else 0.0',
+         f'fit = lowess(r[{J(y)}], r[{J(x)}], frac={frac!r}, it={it}, delta=delta)   # the (x, fitted) pairs, sorted by x',
+         'gx, fy = fit[:, 0], fit[:, 1]']
+    pred = [f'fitted = lowess(r[{J(y)}], r[{J(x)}], frac={frac!r}, it={it}, delta=delta, return_sorted=False)',
+            'pred = pd.Series(fitted, index=r.index).groupby(level=0).first().reindex(s.index).to_numpy()   # a row\'s first copy']
+    out['plot'] = {'imports': ['from statsmodels.nonparametric.smoothers_lowess import lowess'], 'fit': p, 'pred': pred}
     return out
 
 
@@ -983,11 +1113,16 @@ def fit_each(table, y, x, rows=None, weight=None, freq=None, want_rows=False, al
            'rsquare': 1 - sse / sst if sst > 0 else None, 'curve': {'x': ux, 'fit': m}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': m[inv], 'residual': xy.y - m[inv]}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'means = d.groupby({J(x)})[{J(y)}].transform("mean"); sse = ((d[{J(y)}] - means)**2).sum()')
     c.append(f'print(d[{J(x)}].nunique(), sse, sse / (len(d) - d[{J(x)}].nunique()))   # unique values, SS, mean square')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    out['plot'] = {'imports': [], 'fit': [f'sw = {ws}' if ws else 'sw = pd.Series(1.0, index=s.index)',
+                                          f'm = (sw * s[{J(y)}]).groupby(s[{J(x)}]).sum() / sw.groupby(s[{J(x)}]).sum()   # the mean of {y} at each {x}',
+                                          'gx, fy = m.index.to_numpy(), m.to_numpy()'],
+                   'pred': [f'pred = s[{J(x)}].map(m).to_numpy()']}
     return out
 
 
@@ -1017,11 +1152,15 @@ def fit_robust(table, y, x, method='huber', rows=None, weight=None, freq=None, a
     if want_rows:
         pr = b[0] + b[1] * xy.x
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr, 'weights': _unexpand(np.asarray(res.weights, float), reps)}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'res = sm.RLM(d[{J(y)}], sm.add_constant(d[{J(x)}]), M=sm.robust.norms.{"TukeyBiweight" if method == "bisquare" else "HuberT"}()).fit()')
     c.append('print(res.summary())')
     out['code'] = '\n'.join(c)
+    p = [f'r = s.loc[s.index.repeat(s[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq else 'r = s',
+         f'res = sm.RLM(r[{J(y)}].to_numpy(), sm.add_constant(r[{J(x)}].to_numpy()), M=sm.robust.norms.{"TukeyBiweight" if method == "bisquare" else "HuberT"}()).fit()',
+         'a, b = res.params', f'gx = np.array([r[{J(x)}].min(), r[{J(x)}].max()]); fy = a + b * gx']
+    out['plot'] = {'imports': [], 'fit': p, 'pred': [f'pred = a + b * s[{J(x)}].to_numpy()']}
     return out
 
 
@@ -1088,12 +1227,21 @@ def fit_orthogonal(table, y, x, mode='univariate', ratio=None, rows=None, weight
            'lower': b - t * se_b, 'upper': b + t * se_b, 'lower_intercept': a - t * se_a, 'upper_intercept': a + t * se_a, 'alpha': alpha,
            'means': [{'variable': x, 'mean': float(mx), 'sd': sdx}, {'variable': y, 'mean': float(my), 'sd': sdy}], 'r': float(r),
            'terms': [{'term': 'Intercept', 'estimate': a}, {'term': x, 'estimate': b}], 'curve': {'x': g, 'fit': a + b * g}}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna(); sxx, syy, sxy = d[{J(x)}].var(), d[{J(y)}].var(), d[{J(x)}].cov(d[{J(y)}])')
     c.append(f'delta = {"syy / sxx" if mode == "univariate" else repr(dl)}   # var(Y error) / var(X error)')
     c.append('b = syy / sxy if delta == 0 else (syy - delta*sxx + np.sqrt((syy - delta*sxx)**2 + 4*delta*sxy**2)) / (2*sxy)')
     c.append(f'print(d[{J(y)}].mean() - b * d[{J(x)}].mean(), b)   # intercept, slope; the standard errors are jackknifed')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    delta = {'univariate': 'syy / sxx   # Univariate Variances', 'equal': '1.0   # Equal Variances', 'x_to_y': '0.0   # Fit X to Y'}.get(mode, f'{float(ratio if ratio is not None else 1.0)!r}   # the variance ratio given')
+    p = [f'sw = {ws}' if ws else 'sw = pd.Series(1.0, index=s.index)',
+         f'mx, my = np.average(s[{J(x)}], weights=sw), np.average(s[{J(y)}], weights=sw)',
+         f'sxx, syy, sxy = (sw * (s[{J(x)}] - mx) ** 2).sum(), (sw * (s[{J(y)}] - my) ** 2).sum(), (sw * (s[{J(x)}] - mx) * (s[{J(y)}] - my)).sum()',
+         f'delta = {delta}',
+         'b = syy / sxy if delta == 0 else (syy - delta * sxx + np.sqrt((syy - delta * sxx) ** 2 + 4 * delta * sxy ** 2)) / (2 * sxy)   # the Deming slope',
+         'a = my - b * mx', f'gx = np.array([s[{J(x)}].min(), s[{J(x)}].max()]); fy = a + b * gx']
+    out['plot'] = {'imports': [], 'fit': p, 'pred': []}
     return out
 
 
@@ -1138,12 +1286,18 @@ def density_ellipse(table, y, x, levels=(0.95,), rows=None, weight=None, freq=No
         ell.append({'p': float(P), 'x': pts[0], 'y': pts[1]})
     out = {'kind': 'ellipse', 'n': N, 'means': [{'variable': x, 'mean': float(mean[0]), 'sd': float(sd[0])}, {'variable': y, 'mean': float(mean[1]), 'sd': float(sd[1])}],
            'r': r, 'p': p, 'lower': lo, 'upper': hi, 'alpha': alpha, 'cov': float(cov[0, 1]), 'ellipses': ell}
-    c = _head(table_name, where, ['from scipy import stats'])
+    c = _head(table_name, where, ['from scipy import stats'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'r = stats.pearsonr(d[{J(x)}], d[{J(y)}]); print(r.statistic, r.pvalue, r.confidence_interval({1 - alpha!r}))   # Fisher z interval')
     c.append(f'm, S = d.mean().to_numpy(), d.cov().to_numpy(); L = np.linalg.cholesky(S); t = np.linspace(0, 2*np.pi, 100)')
     c.append(f'ellipse = m[:, None] + np.sqrt(stats.chi2.ppf({levels[0] if levels else 0.95!r}, 2)) * (L @ np.vstack([np.cos(t), np.sin(t)]))')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    P = float(levels[0]) if levels else 0.95
+    p = [f'ds = DescrStatsW(s[[{J(x)}, {J(y)}]].to_numpy(){", weights=(" + ws + ").to_numpy()" if ws else ""}, ddof=1)   # the means and the covariance',
+         'L = np.linalg.cholesky(ds.cov); t = np.linspace(0, 2 * np.pi, 121)',
+         f'ex, ey = ds.mean[:, None] + np.sqrt(stats.chi2.ppf({P!r}, 2)) * (L @ np.vstack([np.cos(t), np.sin(t)]))   # the contour that holds P = {P:g}']
+    out['plot'] = {'imports': ['from scipy import stats', 'from statsmodels.stats.weightstats import DescrStatsW'], 'fit': p, 'pred': []}
     return out
 
 
@@ -1178,11 +1332,26 @@ def nonpar_density(table, y, x, rows=None, weight=None, freq=None, grid=64, quan
     cw = np.cumsum(wv[order]) / wv.sum()
     lv = [{'q': float(q), 'value': float(dens[order][min(len(order) - 1, np.searchsorted(cw, q))])} for q in quantiles]
     out = {'kind': 'kde', 'x': gx, 'y': gy, 'z': z, 'levels': lv, 'bw': float(kde.factor), 'subsample': int(len(idx)) if sub else None, 'n': xy.N}
-    c = _head(table_name, where, ['from scipy import stats'])
+    c = _head(table_name, where, ['from scipy import stats'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna(); z = (d - d.mean()) / d.std(ddof=0)')
     c.append('kde = stats.gaussian_kde(z.to_numpy().T)   # density of the standardised points')
     c.append(f'levels = np.quantile(kde(z.to_numpy().T), {list(quantiles)!r})   # contour q holds about 1 - q of the points')
     out['code'] = '\n'.join(c)
+    ws = _wexpr(weight, freq, 's')
+    p = [f'xv, yv = s[{J(x)}].to_numpy(), s[{J(y)}].to_numpy(); wv = {"(" + ws + ").to_numpy()" if ws else "np.ones(len(s))"}',
+         f'if len(xv) > {int(max_points)}:   # a random subsample, as the report takes',
+         f'    k = np.sort(np.random.default_rng({SEED}).choice(len(xv), {int(max_points)}, replace=False)); xv, yv, wv = xv[k], yv[k], wv[k]',
+         'mx, my = np.average(xv, weights=wv), np.average(yv, weights=wv)',
+         'sx, sy = np.sqrt(np.average((xv - mx) ** 2, weights=wv)) or 1.0, np.sqrt(np.average((yv - my) ** 2, weights=wv)) or 1.0',
+         'kde = stats.gaussian_kde(np.vstack([(xv - mx) / sx, (yv - my) / sy]), weights=wv)   # the standardised points',
+         'px, py = 0.12 * ((xv.max() - xv.min()) or 1), 0.12 * ((yv.max() - yv.min()) or 1)',
+         f'gx, gy = np.linspace(xv.min() - px, xv.max() + px, {int(grid)}), np.linspace(yv.min() - py, yv.max() + py, {int(grid)})',
+         'GX, GY = np.meshgrid(gx, gy)',
+         'Z = kde(np.vstack([(GX.ravel() - mx) / sx, (GY.ravel() - my) / sy])).reshape(GX.shape) / (sx * sy)',
+         'dens = kde(np.vstack([(xv - mx) / sx, (yv - my) / sy])) / (sx * sy)',
+         'order = np.argsort(dens); cw = np.cumsum(wv[order]) / wv.sum()',
+         f'levels = [dens[order][min(len(order) - 1, np.searchsorted(cw, q))] for q in {list(quantiles)!r}]   # the density exceeded by 90%, 75%, 50%, 25% and 10% of the points']
+    out['plot'] = {'imports': ['from scipy import stats'], 'fit': p, 'pred': [], 'quantiles': list(quantiles)}
     return out
 
 
@@ -1207,10 +1376,14 @@ def fit_quantile(table, y, x, tau=0.5, rows=None, weight=None, freq=None, alpha=
     if want_rows:
         pr = b[0] + b[1] * xy.x
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'res = smf.quantreg({J(_q(y) + " ~ " + _q(x))}, d).fit(q={tau!r}); print(res.summary())')
     out['code'] = '\n'.join(c)
+    p = [f'r = s.loc[s.index.repeat(s[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq else 'r = s',
+         f'a, b = sm.QuantReg(r[{J(y)}].to_numpy(), sm.add_constant(r[{J(x)}].to_numpy())).fit(q={tau!r}).params   # the {tau:g} quantile of {y} given {x}',
+         f'gx = np.array([r[{J(x)}].min(), r[{J(x)}].max()]); fy = a + b * gx']
+    out['plot'] = {'imports': [], 'fit': p, 'pred': [f'pred = a + b * s[{J(x)}].to_numpy()']}
     return out
 
 
@@ -1234,6 +1407,7 @@ class _OW:
         self.rows = df.index.to_numpy()
         self.k = len(self.levels)
         self.names = (y, x, block, weight, freq)
+        self.table, self.given_rows = table, rows          # for the code's rows line
         self.weight, self.freq = weight, freq
         self.N = float(np.sum(f))
         self.block_code = None
@@ -1267,7 +1441,7 @@ class _OW:
 
 def _ow_code(G, table_name, where, imports=()):
     y, x, block, weight, freq = G.names
-    c = _head(table_name, where, imports)
+    c = _head(table_name, where, imports, table=G.table, rows=G.given_rows)
     c.append(f'd = df[[{", ".join(J(v) for v in (y, x, block, weight, freq) if v)}]].dropna()')
     return c
 
@@ -1306,8 +1480,156 @@ def _level_stats(G, alpha):
     return out
 
 
+def _level_names(table, col, levels, labels):
+    """The page's names of some levels of a column (labels: one for each of the
+    table's levels), or the levels as text."""
+    try:
+        all_levels = data.meta(table, col).get('levels') or []
+    except KeyError:
+        all_levels = []
+    if labels and len(labels) == len(all_levels):
+        by = {_lvtext(v): str(t) for v, t in zip(all_levels, labels)}
+        return [by.get(_lvtext(v), _lvtext(v)) for v in levels]
+    return [_lvtext(v) for v in levels]
+
+
+def _oneway_plot(G, out, plot, table, rows, where, table_name, alpha):
+    """The Oneway graph as the page draws it, from its display options (plot):
+    points (jittered), box plots, means diamonds, mean lines, error bars and
+    standard deviation lines, confidence lines, the grand mean, connected
+    means and the comparison circles of plot['circles'] ({method, control})."""
+    y, x, block, weight, freq = G.names
+    o = lambda k: bool(plot.get(k))
+    k = G.k
+    circ = plot.get('circles') if k >= 2 and not block else None
+    circ = circ if circ and circ.get('method') in ('student', 'tukey', 'dunnett') else None
+    diamonds = o('diamonds') and k >= 2
+    need_q = o('box')
+    need_raw = o('meanLines') or o('errorBars') or o('sdLines')
+    need_cm = (diamonds and not block) or o('ciLines') or o('connect') or circ is not None
+    need_ls = diamonds and block
+    imports = []
+    if need_raw:
+        imports.append('from statsmodels.stats.weightstats import DescrStatsW')
+    if circ or need_ls:
+        imports.append('from scipy import stats')
+    if circ:
+        imports.append('from matplotlib.patches import Ellipse')
+    if need_ls:
+        imports.append('from patsy import build_design_matrices')
+    c = _plot_head(table, rows, where, table_name, imports)
+    c += _frame_code([y, x, block, weight, freq], weight, freq)
+    names = _level_names(table, x, G.levels, plot.get('labels'))
+    c.append(f'levels = [{", ".join(_lvcode(v) for v in G.levels)}]   # the levels of {x} in these rows, in the table\'s order')
+    if names != [_lvtext(v) for v in G.levels]:
+        c.append(f'names = {J(names)}   # as the table shows them')
+    else:
+        c.append('names = [str(v) for v in levels]')
+    we = _wexpr(weight, freq)
+    c.append(f'wf = ({we}).to_numpy()' if we else 'wf = np.ones(len(d))')
+    c.append(f'pos = d[{J(x)}].map({{v: i for i, v in enumerate(levels)}}).to_numpy()   # each row\'s place on the axis')
+    whole = freq is None or bool(np.all(np.abs(G.f - np.rint(G.f)) < 1e-9))
+    if need_q or (circ and circ['method'] == 'dunnett'):
+        c.append(f'e = d.loc[d.index.repeat(d[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq and whole else 'e = d')
+    if need_cm:
+        c.append(f'X = pd.get_dummies(pd.Categorical(d[{J(x)}], categories=levels)).to_numpy(float)   # an indicator of each level')
+        c.append(f'mod = sm.{"WLS" if we else "OLS"}(d[{J(y)}].to_numpy(), X{", weights=wf" if we else ""})')
+        if freq:
+            c.append(f'mod.df_resid = d[{J(freq)}].sum() - len(levels)   # Freq counts rows')
+        c.append(f'cm = mod.fit(); means, ci = cm.params, cm.conf_int(alpha={alpha!r})   # the level means, with the pooled error')
+    counts = f'd.groupby({J(x)})[{J(freq)}].sum().reindex(levels).to_numpy()' if freq else f'd[{J(x)}].value_counts().reindex(levels).to_numpy()'
+    if diamonds or circ:
+        c.append(f'n = {counts}   # the rows of each level (Freq counted)')
+    if need_ls:
+        blocks = G.blocks
+        c.append(f'blocks = [{", ".join(_lvcode(v) for v in blocks)}]')
+        c.append(f'res = smf.{"wls" if we else "ols"}({J(_q(y) + " ~ C(" + _q(x) + ", Sum) + C(" + _q(block) + ", Sum)")}, d{", weights=wf" if we else ""}).fit()')
+        c.append('ls = []   # the least squares means: the block effect averaged over its levels')
+        c.append('for v in levels:')
+        c.append(f'    L = np.asarray(build_design_matrices([res.model.data.design_info], pd.DataFrame({{{J(x)}: [v] * len(blocks), {J(block)}: blocks}}))[0]).mean(axis=0)')
+        c.append(f'    t = res.t_test(L); ls.append([t.effect[0], *t.conf_int(alpha={alpha!r})[0]])')
+        c.append('ls = np.array(ls); lsm, lci = ls[:, 0], ls[:, 1:]')
+    if need_raw:
+        c.append(f'raw = [DescrStatsW(d.loc[d[{J(x)}] == v, {J(y)}], weights={"d.loc[d[" + J(x) + "] == v, " + J(freq) + "]" if freq else "None"}, ddof=1) for v in levels]   # each level\'s mean and standard deviation')
+        c.append('mr, sd, se = np.array([r.mean for r in raw]), np.array([r.std for r in raw]), np.array([r.std_mean for r in raw])')
+    if need_q:
+        if whole:
+            c.append(f'q = np.array([np.quantile(e.loc[e[{J(x)}] == v, {J(y)}], [0.25, 0.5, 0.75], method="weibull") for v in levels])   # JMP\'s quartiles')
+        else:
+            if not need_raw:
+                imports.append('from statsmodels.stats.weightstats import DescrStatsW')
+                c[0] = _plot_head(table, rows, where, table_name, imports)[0]
+            c.append(f'q = np.array([DescrStatsW(d.loc[d[{J(x)}] == v, {J(y)}], weights=d.loc[d[{J(x)}] == v, {J(freq)}]).quantile([0.25, 0.5, 0.75], return_pandas=False) for v in levels])   # weighted quartiles')
+        c.append('boxes = []')
+        c.append('for v, (q1, med, q3) in zip(levels, q):')
+        c.append(f'    ev = e.loc[e[{J(x)}] == v, {J(y)}]')
+        c.append('    inside = ev[(ev >= q1 - 1.5 * (q3 - q1)) & (ev <= q3 + 1.5 * (q3 - q1))]   # the whiskers: the furthest values within 1.5 IQR')
+        c.append('    boxes.append({"q1": q1, "med": med, "q3": q3, "whislo": inside.min(), "whishi": inside.max()})')
+    width, height = float(plot.get('width') or 480), float(plot.get('height') or 380)
+    if circ:
+        c.append(f'fig, (ax, cx) = plt.subplots(1, 2, sharey=True, figsize=({width / 100:g}, {height / 100:g}), layout="constrained", gridspec_kw={{"width_ratios": [78, 18]}})')
+    else:
+        c.append(_figure(width, height))
+    if o('points'):
+        if o('jitter'):
+            c.append('rng = np.random.default_rng(1)   # the points jittered across their level, as the page does (with random numbers of its own)')
+            c.append(f'ax.scatter(pos + (rng.uniform(size=len(d)) - 0.5) * 0.46, d[{J(y)}], s={8 if len(G.y) > 3000 else 18}, color="{BASE}")')
+        else:
+            c.append(f'ax.scatter(pos, d[{J(y)}], s={8 if len(G.y) > 3000 else 18}, color="{BASE}")')
+    if need_q:
+        edge = f'{{"color": "{TEXT}", "linewidth": 0.7}}'
+        c.append(f'ax.bxp(boxes, positions=range(len(levels)), widths=0.28, showfliers=False, patch_artist=True, manage_ticks=False, boxprops={{"facecolor": "#8fa9c22e", "edgecolor": "{TEXT}", "linewidth": 0.7}}, '
+                 f'medianprops={edge}, whiskerprops={edge}, capprops={edge})   # Box Plots')
+    if diamonds:
+        c.append(f'for i, (m, (lo, hi)) in enumerate(zip({"lsm, lci" if block else "means, ci"})):   # the means diamonds: the mean, its confidence interval and the overlap marks; the width grows with the level\'s rows')
+        c.append('    w = 0.08 + 0.3 * n[i] / n.max(); ov = (hi - m) / np.sqrt(2)')
+        c.append(f'    ax.plot([i - w, i, i + w, i, i - w], [m, hi, m, lo, m], color="{GREEN}", linewidth=1)')
+        c.append(f'    ax.plot([i - w, i + w], [m, m], [i - 0.7 * w, i + 0.7 * w], [m + ov, m + ov], [i - 0.7 * w, i + 0.7 * w], [m - ov, m - ov], color="{GREEN}", linewidth=1)')
+    at = 'np.arange(len(levels))'
+    if o('meanLines'):
+        c.append(f'ax.hlines(mr, {at} - 0.3, {at} + 0.3, color="{RED}", linewidth=1)   # Mean Lines')
+    if o('errorBars'):
+        c.append(f'ax.vlines({at} + 0.18, mr - se, mr + se, color="{RED}", linewidth=0.9)   # Mean Error Bars: ± one standard error')
+        c.append(f'ax.hlines(np.r_[mr - se, mr + se], np.r_[{at}, {at}] + 0.13, np.r_[{at}, {at}] + 0.23, color="{RED}", linewidth=0.9)')
+    if o('sdLines'):
+        c.append(f'ax.hlines(np.r_[mr - sd, mr + sd], np.r_[{at}, {at}] - 0.24, np.r_[{at}, {at}] + 0.24, color="{PURPLE}", linewidth=0.8, linestyle="--")   # Std Dev Lines')
+    if o('ciLines'):
+        c.append(f'ax.hlines(ci.ravel(), np.repeat({at}, 2) - 0.2, np.repeat({at}, 2) + 0.2, color="{GREEN}", linewidth=0.8, linestyle=":")   # Mean CI Lines')
+    if o('grandMean'):
+        c.append(f'ax.axhline(np.average(d[{J(y)}], weights=wf), color="{GREY}", linewidth=0.7, linestyle=":")   # Grand Mean')
+    if o('connect'):
+        c.append(f'ax.plot({at}, means, color="{RED}", linewidth=1, marker="o", markersize=3.6)   # Connect Means')
+    c += ['ax.set_xticks(range(len(levels)), names)', 'ax.set_xlim(-0.6, len(levels) - 0.4)', f'ax.set_xlabel({J(x)})', f'ax.set_ylabel({J(y)})']
+    if circ:
+        method = circ['method']
+        if method == 'student':
+            c.append(f'q, mse = stats.t.ppf({1 - alpha / 2!r}, cm.df_resid), cm.mse_resid   # Student\'s t: each pair')
+        elif method == 'tukey':
+            c.append(f'q, mse = stats.studentized_range.ppf({1 - alpha!r}, len(levels), cm.df_resid) / np.sqrt(2), cm.mse_resid   # Tukey-Kramer HSD: all pairs')
+        else:
+            ctl = circ.get('control')
+            ci_ = next((i for i, v in enumerate(G.levels) if ctl is not None and _lvtext(v) == _lvtext(ctl)), 0)
+            c.append(f'smp = [e.loc[e[{J(x)}] == v, {J(y)}].to_numpy() for v in levels]; c0 = {ci_}   # Dunnett\'s: each level against the control {_lvtext(G.levels[ci_])}')
+            c.append('others = [i for i in range(len(levels)) if i != c0]')
+            c.append(f'dn = stats.dunnett(*[smp[i] for i in others], control=smp[c0], rng=np.random.default_rng({SEED}))')
+            c.append('mse = sum(((v - v.mean()) ** 2).sum() for v in smp) / (sum(len(v) for v in smp) - len(levels))')
+            c.append('se_ = np.array([np.sqrt(mse * (1 / len(smp[i]) + 1 / len(smp[c0]))) for i in others])')
+            c.append(f'q = np.median((dn.confidence_interval({1 - alpha!r}).high - np.array([smp[i].mean() - smp[c0].mean() for i in others])) / se_)   # the |d| of the intervals')
+        title = {'student': "Student's t", 'tukey': 'Tukey', 'dunnett': 'Dunnett'}[method]
+        c += ['r = q * np.sqrt(mse / n)   # the comparison circles: two means differ when their circles cross at less than a right angle',
+              f'colors = {J(PALETTE)}',
+              'circles = [Ellipse((0, m), 2 * ri, 2 * ri, fill=False, edgecolor=colors[i % len(colors)], linewidth=1) for i, (m, ri) in enumerate(zip(means, r))]',
+              'for p_ in circles:', '    cx.add_patch(p_)',
+              f'cx.set_xlim(-1.05, 1.05); cx.set_xticks([]); cx.set_xlabel({J(title)}, fontsize=8)',
+              'fig.canvas.draw()   # the layout first, so that the circles can be made round',
+              'bb = cx.get_window_extent(); k_ = (2.1 / bb.width) / (np.diff(cx.get_ylim())[0] / bb.height)',
+              'for p_, ri in zip(circles, r):', '    p_.set_width(2 * ri * k_)']
+    c += [f'ax.set_title({J(y + " by " + x)})' if not circ else f'fig.suptitle({J(y + " by " + x)}, fontsize=10)', 'plt.show()']
+    return '\n'.join(c)
+
+
 @api('fitybyx.oneway')
-def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.05, where=None, table_name='data'):
+def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.05, plot=None, where=None, table_name='data'):
     """Oneway: the levels' counts, means, standard deviations and
     quantiles; the one-way ANOVA (with a Block: the randomized block
     ANOVA, the block an additive effect) with its Summary of Fit and Means
@@ -1324,6 +1646,8 @@ def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.0
     if G.k < 2:
         out['error_anova'] = 'X has one level: no analysis of variance'
         out['code'] = '\n'.join(_ow_code(G, table_name, where))
+        if plot is not None:
+            out['plot_code'] = _oneway_plot(G, out, plot, table, rows, where, table_name, alpha)
         return out
     # the cell-means model: weighted means with the pooled standard error
     cm = G.cell_means()
@@ -1398,6 +1722,8 @@ def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.0
     if G.k == 2 and not block:
         c.append(f'from scipy import stats; a, b = [g[{J(y)}] for _, g in d.groupby({J(x)})]; print(stats.ttest_ind(b, a))   # pooled t test, second level minus first')
     out['code'] = '\n'.join(c)
+    if plot is not None:
+        out['plot_code'] = _oneway_plot(G, out, plot, table, rows, where, table_name, alpha)
     return out
 
 
@@ -2207,7 +2533,7 @@ def _anom_h(n, alpha, df=None):
 
 
 @api('fitybyx.oneway_anom')
-def oneway_anom(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
+def oneway_anom(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, labels=None, where=None, table_name='data'):
     """Analysis of Means: each level's mean against decision limits around
     the grand mean, mean ± h s sqrt((N - n_i)/(N n_i)), with the exact
     critical value h (see _anom_h)."""
@@ -2235,11 +2561,54 @@ def oneway_anom(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, wher
     c.append(f'mv = stats.multivariate_t(shape=R / (1 + 1e-8), df=N - k)   # then solve mv.cdf(h*ones, lower_limit=-h*ones) = {1 - alpha} for h')
     c.append(f'h = {h!r}; print(m.dot(n) / N - h * s * np.sqrt((N - n) / (N * n)), m.dot(n) / N + h * s * np.sqrt((N - n) / (N * n)))   # decision limits')
     out['code'] = '\n'.join(c)
+    out['plot_code'] = _anom_plot(G.names[1], G.levels, _level_names(table, x, G.levels, labels), table, rows, where, table_name, alpha,
+                                  _frame_code([y, x, weight, freq], weight, freq) + ([_repeat_code(freq)] if freq else []),
+                                  [f'g = d.groupby({J(x)})[{J(y)}]; n, m = g.count().reindex(levels).to_numpy(float), g.mean().reindex(levels).to_numpy()   # Freq counted by repeating rows',
+                                   'N, k = n.sum(), len(n)', 's = np.sqrt((np.nan_to_num(g.var().reindex(levels).to_numpy()) * (n - 1)).sum() / (N - k))   # the pooled standard deviation'],
+                                  'N - k', 'Mean', 'Analysis of Means')
     return out
 
 
+def _anom_h_code(alpha, df):
+    """The lines that find the exact ANOM critical value h, as _anom_h does."""
+    c = ['lam = np.sqrt(n / (N - n)); R = -np.outer(lam, lam); np.fill_diagonal(R, 1.0)',
+         'R = R + 1e-8 * np.eye(k); R = R / np.sqrt(np.outer(np.diag(R), np.diag(R)))   # the correlations of the ANOM statistics (made regular)']
+    if df is None:
+        c.append(f'cover = lambda h: stats.multivariate_normal.cdf(np.full(k, h), cov=R, maxpts=40000 * k, lower_limit=np.full(k, -h), rng=np.random.default_rng({SEED})) - {1 - alpha!r}')
+        c.append(f'h = optimize.brentq(cover, stats.norm.ppf({1 - alpha / 2!r}) * 0.9, stats.norm.ppf(1 - {alpha!r} / (2 * k)) * 1.1, xtol=1e-5)   # P(max |T| <= h) = {1 - alpha:g}')
+    else:
+        c.append(f'mv = stats.multivariate_t(shape=R, df={df})')
+        c.append(f'cover = lambda h: mv.cdf(np.full(k, h), lower_limit=np.full(k, -h), maxpts=40000, random_state=np.random.default_rng({SEED})) - {1 - alpha!r}')
+        c.append(f'h = optimize.brentq(cover, stats.t.ppf({1 - alpha / 2!r}, {df}) * 0.9, stats.t.ppf(1 - {alpha!r} / (2 * k), {df}) * 1.1, xtol=1e-5)   # P(max |T| <= h) = {1 - alpha:g}')
+    return c
+
+
+def _anom_plot(x, levels, names, table, rows, where, table_name, alpha, frame, stats_lines, df, ylabel, title, proportion=False):
+    """An Analysis of Means chart: each level's mean (or proportion) with the
+    decision limits about the overall one."""
+    c = _plot_head(table, rows, where, table_name, ['from scipy import stats, optimize']) + frame
+    c.append(f'levels = [{", ".join(_lvcode(v) for v in levels)}]   # the levels of {x}, in the table\'s order')
+    c += stats_lines
+    c += _anom_h_code(alpha, None if proportion else df)
+    if proportion:
+        c += ['half = h * np.sqrt(pbar * (1 - pbar) * (N - n) / (N * n))', 'ldl, udl = np.maximum(0, pbar - half), np.minimum(1, pbar + half)', 'm, gm = p, pbar']
+    else:
+        c += ['gm = m.dot(n) / N; half = h * s * np.sqrt((N - n) / (N * n))', 'ldl, udl = gm - half, gm + half   # the decision limits']
+    width = max(360, 120 + 60 * len(levels))
+    c += [_figure(width, 280), 'i = np.arange(k)',
+          f'ax.hlines(np.r_[ldl, udl], np.r_[i, i] - 0.5, np.r_[i, i] + 0.5, color="{RED}", linewidth=0.9)   # LDL and UDL',
+          f'ax.axhline(gm, color="{GREY}", linewidth=0.7)',
+          f'ax.plot(i, m, color="{GREY}", linewidth=0.7)',
+          f'ax.scatter(i, m, s=40, color=np.where((m < ldl) | (m > udl), "{RED}", "{BASE}"), zorder=3)   # outside the limits in red',
+          f'ax.set_xticks(i, {J(names)})', 'ax.set_xlim(-0.6, k - 0.4)']
+    if proportion:
+        c.append(f'ax.set_xlabel({J(x)})')
+    c += [f'ax.set_ylabel({J(ylabel)})', f'ax.set_title({J(title)})', 'plt.show()']
+    return '\n'.join(c)
+
+
 @api('fitybyx.oneway_densities')
-def oneway_densities(table, y, x, rows=None, weight=None, freq=None, grid=160, alpha=0.05, where=None, table_name='data'):
+def oneway_densities(table, y, x, rows=None, weight=None, freq=None, grid=160, alpha=0.05, mode='compare', labels=None, where=None, table_name='data'):
     """Densities: a Gaussian kernel density of Y in each level (scipy
     gaussian_kde, Scott's bandwidth) on a common grid, and the levels'
     shares of the rows."""
@@ -2260,6 +2629,28 @@ def oneway_densities(table, y, x, rows=None, weight=None, freq=None, grid=160, a
     c = _ow_code(G, table_name, where, ['from scipy import stats'])
     c.append(f'for lv, s in d.groupby({J(x)}, observed=True)[{J(y)}]: print(lv, stats.gaussian_kde(s.to_numpy())(np.linspace(s.min(), s.max(), 5)))')
     out['code'] = '\n'.join(c)
+    names = _level_names(table, x, G.levels, labels)
+    p = _plot_head(table, rows, where, table_name, ['from scipy import stats']) + _frame_code([y, x, weight, freq], weight, freq)
+    fw = f'd[{J(freq)}]' if freq else 'pd.Series(1.0, index=d.index)'
+    p += [f'levels = [{", ".join(_lvcode(v) for v in G.levels)}]; names = {J(names)}   # the levels of {x}, in the table\'s order',
+          f'lo, hi = d[{J(y)}].min(), d[{J(y)}].max(); pad = 0.1 * (hi - lo if hi > lo else 1)', f'g = np.linspace(lo - pad, hi + pad, {int(grid)})',
+          f'f = {fw}   # Freq weighs the densities (Weight is not used)',
+          f'colors = {J(PALETTE)}', 'curves = []   # each level\'s density (with two values or more), and its share of the rows',
+          'for i, v in enumerate(levels):',
+          f'    s = d[d[{J(x)}] == v]',
+          f'    if s[{J(y)}].nunique() > 1:',
+          f'        curves.append((i, f[s.index].sum() / f.sum(), stats.gaussian_kde(s[{J(y)}], weights=f[s.index])(g)))',
+          _figure(480, 320)]
+    if mode == 'compare':
+        p += ['for i, share, dens in curves:', '    ax.plot(g, dens, color=colors[i % len(colors)], linewidth=1.2, label=names[i])']
+    else:
+        p += ['parts = np.array([share * dens for _, share, dens in curves])   # the densities weighted by the levels\' shares']
+        if mode == 'proportion':
+            p += ['tot = parts.sum(axis=0); parts = np.divide(parts, tot, out=np.zeros_like(parts), where=tot > 0)   # each level\'s share at each value']
+        p += ['ax.stackplot(g, parts, colors=[colors[i % len(colors)] for i, _, _ in curves], labels=[names[i] for i, _, _ in curves], alpha=0.8)']
+    p += ['ax.set_ylim(bottom=0)', f'ax.set_xlabel({J(y)})', f'ax.set_ylabel("{"Proportion" if mode == "proportion" else "Density"}")',
+          'fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=8)', 'ax.set_title("Densities")', 'plt.show()']
+    out['plot_code'] = '\n'.join(p)
     return out
 
 
@@ -2531,7 +2922,7 @@ def oneway_rates(table, y, x, exposure=None, compare='ratio', method='score', ci
     out = {'levels': lv_rows, 'pairs': pairs, 'lr': lr, 'compare': compare, 'method': method, 'ci_method': ci_method, 'control': ci_, 'k': k,
            'alpha': alpha, 'exposure': exposure, 'level_values': levels, 'notes': notes}
     # the code: totals per level, the pair tests, the GLM
-    c = _head(table_name, where, ['from statsmodels.stats.rates import test_poisson_2indep, confint_poisson_2indep'])
+    c = _head(table_name, where, ['from statsmodels.stats.rates import test_poisson_2indep, confint_poisson_2indep'], table=table, rows=rows)
     c.append(f'd = df[[{", ".join(J(v) for v in (y, x, exposure, freq) if v)}]].dropna()')
     if exposure:
         c.append(f'd = d[d[{J(exposure)}] > 0]')
@@ -2776,7 +3167,7 @@ def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=
     g = _grid(float(xv.min()), float(xv.max()), 200)
     Pg = _probs(fit['model'], g)
     out['curve'] = {'x': g, 'cum': np.cumsum(Pg, axis=1)[:, :-1].T}
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     lv = [_lvtext(v) for v in levels]
     we = _wexpr(weight, freq)
@@ -2798,7 +3189,95 @@ def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=
         c.append(f'res = OrderedModel(pd.Series(yc), d[[{J(x)}]], distr="logit").fit(method="bfgs")')
         c.append('print(res.summary())   # statsmodels: P(Y <= j) = F(threshold_j - b x); JMP reports the thresholds and -b')
     out['code'] = '\n'.join(c)
+    out.update(_logistic_plots(fit, table, y, x, rows, weight, freq, where, table_name))
     return out
+
+
+def _logistic_probs_code(fit, y, x, weight, freq):
+    """The lines that fit the logistic model to the rows d as the report does
+    and give probs(v): the probability of each level (in the table's order) at
+    the values v of X."""
+    k, levels = fit['k'], fit['levels']
+    c = [f'levels = [{", ".join(_lvcode(v) for v in levels)}]   # the levels of {y} in these rows, in the table\'s order',
+         f'names = {J([_lvtext(v) for v in levels])}',
+         f'j = pd.Categorical(d[{J(y)}], categories=levels).codes   # each row\'s level']
+    we = _wexpr(weight, freq)
+    if fit['kind'] == 'binary':
+        t = fit['target']
+        c.append(f'd["_event"] = (j == {t}).astype(float)   # the target level, {_lvtext(levels[t])}')
+        if we:
+            c.append(f'res = smf.glm("_event ~ {_q(x)}", d, family=sm.families.Binomial(), freq_weights={we}).fit()')
+        else:
+            c.append(f'res = smf.logit("_event ~ {_q(x)}", d).fit(disp=0)')
+        c.append(f'pt = lambda v: res.predict(pd.DataFrame({{{J(x)}: np.asarray(v, float)}})).to_numpy()   # P({_lvtext(levels[t])})')
+        c.append('probs = lambda v: np.column_stack([pt(v), 1 - pt(v)])' if t == 0 else 'probs = lambda v: np.column_stack([1 - pt(v), pt(v)])')
+        return c
+    c.append(f'e = d.loc[d.index.repeat(d[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq else 'e = d')
+    if fit['kind'] == 'nominal':
+        c.append(f'res = sm.MNLogit((pd.Categorical(e[{J(y)}], categories=levels).codes + 1) % {k}, sm.add_constant(e[{J(x)}].to_numpy(), has_constant="add")).fit(disp=0, maxiter=200)   # the last level first: statsmodels\' reference')
+        c.append(f'probs = lambda v: res.predict(sm.add_constant(np.asarray(v, float), has_constant="add"))[:, list(range(1, {k})) + [0]]   # back in the table\'s order')
+    else:
+        c.append('from statsmodels.miscmodels.ordinal_model import OrderedModel')
+        c.append(f'yc = pd.Series(pd.Categorical.from_codes(pd.Categorical(e[{J(y)}], categories=levels).codes, categories=list(range({k})), ordered=True))')
+        c.append(f'res = OrderedModel(yc, e[[{J(x)}]].to_numpy(), distr="logit").fit(method="bfgs", disp=0, maxiter=500)   # the cumulative logit')
+        c.append('probs = lambda v: res.model.predict(res.params, exog=np.asarray(v, float)[:, None])')
+    return c
+
+
+def _roc_code():
+    return ['def roc(score, event, w):   # the thresholds from high to low; tied scores move together',
+            '    o = np.argsort(-score, kind="stable"); s_, e_, w_ = score[o], event[o], w[o]',
+            '    last = np.r_[np.nonzero(np.diff(s_))[0], len(s_) - 1]',
+            '    tp, fp = np.r_[0, np.cumsum(w_ * e_)[last]], np.r_[0, np.cumsum(w_ * (1 - e_))[last]]',
+            '    return fp / fp[-1], tp / tp[-1]']
+
+
+def _logistic_plots(fit, table, y, x, rows, weight, freq, where, table_name):
+    """The Logistic report's graphs: the logistic plot (the cumulative
+    probabilities over X, each row at random in its level's band), the ROC
+    and the lift curves."""
+    k = fit['k']
+    we = _wexpr(weight, freq)
+    head = lambda imports=(): _plot_head(table, rows, where, table_name, imports) + _frame_code([x, y, weight, freq], weight, freq)
+    probs = _logistic_probs_code(fit, y, x, weight, freq)
+    lp = head() + probs + [
+        f'g = np.linspace(d[{J(x)}].min(), d[{J(x)}].max(), 200)',
+        'cum = np.cumsum(probs(g), axis=1)[:, :-1]   # P(level or lower), for every level but the last',
+        f'colors = {J(PALETTE)}',
+        _figure(560, 380),
+        f'ax.plot(g, cum, color="{TEXT}", linewidth=1.2)',
+        f'P = probs(d[{J(x)}]); i = np.arange(len(d)); lo = np.cumsum(P, axis=1)[i, j] - P[i, j]',
+        'u = np.random.default_rng(3).uniform(size=len(d))   # each row at random in its level\'s band at its X, as the page places it (with random numbers of its own)',
+        f'ax.scatter(d[{J(x)}], lo + (0.06 + 0.88 * u) * P[i, j], s={8 if len(fit["x"]) > 3000 else 18}, c=[colors[v % len(colors)] for v in j])',
+        f'pr = probs([d[{J(x)}].max()])[0]; mids = np.cumsum(pr) - pr / 2   # the level names at the right, in their bands, a line apart',
+        'for v in range(1, len(mids)):', '    mids[v] = max(mids[v], mids[v - 1] + 0.045)',
+        'over = mids[-1] - (1 - 0.045 / 2)',
+        'if over > 0:',
+        '    for v in range(len(mids) - 1, -1, -1):',
+        '        mids[v] = min(mids[v] - (over if v == len(mids) - 1 else 0), mids[v + 1] - 0.045 if v < len(mids) - 1 else 1)',
+        'for v, nm in enumerate(names):',
+        '    ax.text(1.01, max(0.01, mids[v]), nm, transform=ax.get_yaxis_transform(), color=colors[v % len(colors)], fontsize=8, va="center")',
+        'ax.set_ylim(0, 1)', f'ax.set_xlabel({J(x)})', f'ax.set_ylabel({J(y)})', f'ax.set_title({J(f"{y} by {x} logistic plot")})', 'plt.show()']
+    targets = [fit['target']] if k == 2 else list(range(k))
+    wv = f'({we}).to_numpy()' if we else 'np.ones(len(d))'
+    roc = head() + probs + _roc_code() + [
+        f'P, w = probs(d[{J(x)}]), {wv}', f'colors = {J(PALETTE)}', _figure(360, 360),
+        f'for v in {targets!r}:   # {"the target level" if k == 2 else "each level against the rest"}, by its fitted probability',
+        '    fpr, tpr = roc(P[:, v], (j == v).astype(float), w)',
+        '    ax.plot(fpr, tpr, color=colors[v % len(colors)], linewidth=1.3, label=f"{names[v]} (AUC {np.trapezoid(tpr, fpr):.4f})")',
+        f'ax.plot([0, 1], [0, 1], color="{GREY}", linewidth=0.7, linestyle=":")', 'ax.set_xlim(0, 1); ax.set_ylim(0, 1)',
+        'ax.set_xlabel("1-Specificity (False Positive Rate)")', 'ax.set_ylabel("Sensitivity (True Positive Rate)")',
+        'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)', 'ax.set_title("ROC Curve")', 'plt.show()']
+    lift = head() + probs + [
+        f'P, w = probs(d[{J(x)}]), {wv}', f'colors = {J(PALETTE)}', _figure(420, 320),
+        f'for v in {targets!r}:',
+        '    o = np.argsort(-P[:, v], kind="stable"); e_, w_ = (j[o] == v).astype(float), w[o]   # the rows by their fitted probability, highest first',
+        '    cw = np.cumsum(w_)',
+        '    ax.plot(cw / cw[-1], (np.cumsum(w_ * e_) / cw) / (np.sum(w_ * e_) / cw[-1]), color=colors[v % len(colors)], linewidth=1.2, label=names[v])   # the rate among them over the overall rate',
+        f'ax.axhline(1, color="{GREY}", linewidth=0.7, linestyle=":")', 'ax.set_xlim(0, 1); ax.set_ylim(bottom=0)',
+        'ax.set_xlabel("Portion")', 'ax.set_ylabel("Lift")',
+        'fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=8)', 'ax.set_title("Lift Curve")', 'plt.show()']
+    return {'plot_code': '\n'.join(lp), 'roc_code': '\n'.join(roc), 'lift_code': '\n'.join(lift)}
 
 
 @api('fitybyx.logistic_rows')
@@ -2836,7 +3315,7 @@ def logistic_inverse(table, y, x, probs=(0.5,), rows=None, weight=None, freq=Non
             r1, r2 = (-B - math.sqrt(disc)) / (2 * A), (-B + math.sqrt(disc)) / (2 * A)
             lo, hi = min(r1, r2), max(r1, r2)
         out.append({'p': p, 'x': xp, 'lower': lo, 'upper': hi})
-    c = _head(table_name, where)
+    c = _head(table_name, where, table=table, rows=rows)
     c.append('# a, b and their covariance V from the logistic fit: x = (log(p/(1-p)) - a)/b; Fieller: solve (a + b x - L)^2 = z^2 (V00 + 2 x V01 + x^2 V11)')
     return {'rows': out, 'alpha': alpha, 'target': fit['target'], 'levels': fit['levels'], 'code': '\n'.join(c)}
 
@@ -2859,8 +3338,48 @@ def _crosstab(table, y, x, rows, weight, freq):
     return n, xl, yl, df, w, f
 
 
-def _ct_code(table_name, where, y, x, weight, freq, imports=()):
-    c = _head(table_name, where, imports)
+def _counts_code(y, x, xl, yl, weight, freq):
+    """The lines that count the table of X by Y (Weight times Freq) from the rows
+    d, the levels in the table's order: cnt, X's levels as rows."""
+    lx, ly = ', '.join(_lvcode(v) for v in xl), ', '.join(_lvcode(v) for v in yl)
+    c = [f'xl, yl = [{lx}], [{ly}]   # the levels of {x} and {y} in these rows, in the table\'s order']
+    we = _wexpr(weight, freq)
+    if we:
+        c.append(f'cnt = ({we}).groupby([d[{J(x)}], d[{J(y)}]]).sum().unstack(fill_value=0).reindex(index=xl, columns=yl, fill_value=0).to_numpy(float)   # the sums of the weights')
+    else:
+        c.append(f'cnt = pd.crosstab(d[{J(x)}], d[{J(y)}]).reindex(index=xl, columns=yl, fill_value=0).to_numpy(float)   # {x} as rows, {y} as columns')
+    return c
+
+
+def _mosaic_plot(table, rows, where, table_name, y, x, xl, yl, weight, freq):
+    """Contingency's Mosaic Plot: a column for each level of X, as wide as its
+    share of the rows, split by the shares of Y's levels in it; Y's overall
+    shares in the narrow column on the right."""
+    c = _plot_head(table, rows, where, table_name) + _frame_code([y, x, weight, freq], weight, freq) + _counts_code(y, x, xl, yl, weight, freq)
+    c += [f'xnames, ynames = {J([_lvtext(v) for v in xl])}, {J([_lvtext(v) for v in yl])}',
+          'N, rowT, colT = cnt.sum(), cnt.sum(axis=1), cnt.sum(axis=0)', f'colors = {J(PALETTE)}',
+          _figure(560, 360),
+          'gap = 0.012; avail = 1 - gap * (len(xl) - 1); start = 0.0; centers = []',
+          'for i in range(len(xl)):',
+          '    w = avail * rowT[i] / N; centers.append(start + w / 2); base = 0.0',
+          '    for j in range(len(yl)):',
+          '        h = cnt[i, j] / rowT[i] if rowT[i] > 0 else 0.0',
+          '        ax.bar(start + w / 2, h, width=w, bottom=base, color=colors[j % len(colors)], edgecolor="white", linewidth=0.7, label=ynames[j] if i == 0 else "_nolegend_")',
+          '        base += h',
+          '    start += w + gap',
+          'base = 0.0',
+          'for j in range(len(yl)):   # the overall shares of the levels of Y',
+          '    ax.bar(1.07, colT[j] / N, width=0.06, bottom=base, color=colors[j % len(colors)], edgecolor="white", linewidth=0.7)',
+          '    base += colT[j] / N',
+          'ax.set_xlim(0, 1.11); ax.set_ylim(0, 1)', 'ax.set_xticks(centers + [1.07], xnames + ["all"])',
+          'handles, texts = ax.get_legend_handles_labels()',
+          'ax.legend(handles[::-1], texts[::-1], loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=8)',
+          f'ax.set_xlabel({J(x)})', f'ax.set_ylabel({J(y)})', f'ax.set_title({J(f"{y} by {x} mosaic")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _ct_code(table_name, where, y, x, weight, freq, imports=(), table=None, rows=None):
+    c = _head(table_name, where, imports, table=table, rows=rows)
     we = _wexpr(weight, freq, 'df')
     if we:
         c.append(f'n = df.assign(_w={we}).pivot_table(index={J(x)}, columns={J(y)}, values="_w", aggfunc="sum", fill_value=0)')
@@ -2918,12 +3437,13 @@ def contingency(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, wher
             except Exception:
                 pass
     out['notes'] = notes
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from scipy import stats'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from scipy import stats'], table=table, rows=rows)
     c.append('print(stats.chi2_contingency(n, correction=False))   # Pearson')
     c.append('print(stats.chi2_contingency(n, correction=False, lambda_="log-likelihood"))   # likelihood ratio G²')
     if r == 2 and c_ == 2:
         c.append('print(stats.fisher_exact(n), stats.fisher_exact(n, alternative="less"), stats.fisher_exact(n, alternative="greater"))   # 2-Tail, Left, Right')
     out['code'] = '\n'.join(c)
+    out['plot_code'] = _mosaic_plot(table, rows, where, table_name, y, x, xl, yl, weight, freq)
     return out
 
 
@@ -3060,7 +3580,7 @@ def contingency_measures(table, y, x, rows=None, weight=None, freq=None, alpha=0
                 pass
     out = {'measures': ms, 'other': other, 'alpha': alpha,
            'notes': ['Gamma, tau-b, tau-c, Somers\' D, lambda and the uncertainty coefficients are computed with numpy by the formulas of SAS PROC FREQ (statsmodels has none of them); tau-b and Somers\' D agree with scipy\'s kendalltau and somersd. The intervals are value ± z·Std Err.']}
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from scipy import stats'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from scipy import stats'], table=table, rows=rows)
     c.append('print(stats.somersd(n.to_numpy()).statistic, stats.contingency.association(n.to_numpy(), method="cramer"))   # Somers\' D R|C in scipy\'s orientation, Cramér\'s V')
     c.append(f'print(stats.kendalltau(df[{J(x)}].astype("category").cat.codes, df[{J(y)}].astype("category").cat.codes))   # tau-b (level order = sorted)')
     out['code'] = '\n'.join(c)
@@ -3099,7 +3619,7 @@ def contingency_agreement(table, y, x, rows=None, weight=None, freq=None, alpha=
         pass
     out['notes'] = ['The levels are matched by their text; a level missing from one column is a row or column of zeros.',
                     'Prob>Z uses the standard error under no agreement (std_kappa0); the interval uses the standard error of the estimate.']
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.inter_rater import cohens_kappa', 'from statsmodels.stats.contingency_tables import SquareTable'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.inter_rater import cohens_kappa', 'from statsmodels.stats.contingency_tables import SquareTable'], table=table, rows=rows)
     c.append('lv = sorted(set(n.index.astype(str)) | set(n.columns.astype(str))); sq = n.rename(index=str, columns=str).reindex(index=lv, columns=lv, fill_value=0)')
     c.append('print(cohens_kappa(sq.to_numpy()))   # kappa, its standard error, a 95% interval, the z test')
     c.append('print(SquareTable(sq.to_numpy(), shift_zeros=False).symmetry())   # Bowker')
@@ -3133,7 +3653,7 @@ def contingency_2x2(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, 
         mc = mcnemar(ni, exact=False, correction=False)
         me = mcnemar(ni, exact=True)
         out['mcnemar'] = {'chisq': float(mc.statistic), 'p': float(mc.pvalue), 'p_exact': float(me.pvalue)}
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.contingency_tables import Table2x2, mcnemar'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.contingency_tables import Table2x2, mcnemar'], table=table, rows=rows)
     c.append('t = Table2x2(n.to_numpy()); print(t.riskratio, t.riskratio_confint(), t.oddsratio, t.oddsratio_confint())   # P(first Y level | first X level) / P(... | second)')
     c.append('print(mcnemar(n.to_numpy(), exact=False, correction=False), mcnemar(n.to_numpy(), exact=True))')
     out['code'] = '\n'.join(c)
@@ -3217,7 +3737,7 @@ def contingency_twoprop(table, y, x, compare='diff', response=None, rows=None, w
             'odds-ratio': f'Odds({ylab}|{x1}) / Odds({ylab}|{x2})'}[compare]
     out = {'compare': compare, 'response': j, 'y_levels': yl, 'x_levels': xl, 'counts': n, 'count1': c1, 'nobs1': n1, 'count2': c2, 'nobs2': n2,
            'p1': p1, 'p2': p2, 'estimate': _fin(est), 'null': null, 'description': what, 'methods': rows_out, 'alpha': alpha, 'notes': notes}
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.proportion import test_proportions_2indep, confint_proportions_2indep'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.proportion import test_proportions_2indep, confint_proportions_2indep'], table=table, rows=rows)
     c.append(f'count1, nobs1 = n.loc[{_lvcode(xl[0])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[0])}].sum()   # {ylab} in {x1}')
     c.append(f'count2, nobs2 = n.loc[{_lvcode(xl[1])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[1])}].sum()   # {ylab} in {x2}')
     for m, corr, label, needs, has_test in TWOPROP_METHODS[compare]:
@@ -3296,7 +3816,7 @@ def contingency_cmh(table, y, x, strata, rows=None, weight=None, freq=None, alph
     if any(r_['or'] is None for r_ in by):
         notes.append('A stratum with a zero cell has no finite odds ratio of its own; it still counts in the Mantel-Haenszel estimate and tests.')
     out['notes'] = notes
-    c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import StratifiedTable'])
+    c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import StratifiedTable'], table=table, rows=rows)
     we = _wexpr(weight, freq, 'df')
     order = f'.reindex(index=[{", ".join(_lvcode(v) for v in xs.cat.categories)}], columns=[{", ".join(_lvcode(v) for v in ys.cat.categories)}], fill_value=0)'
     if we:
@@ -3328,7 +3848,7 @@ def contingency_trend(table, y, x, rows=None, weight=None, freq=None, alpha=0.05
     out = {'z_perm': float(res.zscore), 'p_perm': float(res.pvalue), 'z': z_ca, 'p_two': float(2 * stats.norm.sf(abs(z_ca))),
            'p_greater': float(stats.norm.sf(z_ca)), 'p_less': float(stats.norm.cdf(z_ca)), 'statistic': float(res.statistic), 'n': N,
            'notes': ['statsmodels\' test_ordinal_association uses the permutation variance, (N−1)r²; the Cochran-Armitage test of SAS and JMP uses the binomial variance, N r², so its Z is √(N/(N−1)) times statsmodels\' z. Both are shown.']}
-    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.contingency_tables import Table'])
+    c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.contingency_tables import Table'], table=table, rows=rows)
     c.append('r = Table(n.to_numpy(), shift_zeros=False).test_ordinal_association(); print(r.zscore, r.pvalue)')
     c.append('print(r.zscore * np.sqrt(n.to_numpy().sum() / (n.to_numpy().sum() - 1)))   # the Cochran-Armitage Z')
     out['code'] = '\n'.join(c)
@@ -3361,11 +3881,17 @@ def contingency_anomp(table, y, x, event=None, rows=None, weight=None, freq=None
         half = h * math.sqrt(pbar * (1 - pbar) * (N - ni[i]) / (N * ni[i]))
         p = float(n[i, j] / ni[i])
         lv.append({'index': i, 'level': xl[i], 'n': float(ni[i]), 'p': p, 'ldl': max(0.0, pbar - half), 'udl': min(1.0, pbar + half), 'out': bool(abs(p - pbar) > half)})
-    c = _ct_code(table_name, where, y, x, weight, freq)
+    c = _ct_code(table_name, where, y, x, weight, freq, table=table, rows=rows)
     c.append(f'p = n.iloc[:, {j}] / n.sum(1); pbar = n.iloc[:, {j}].sum() / n.to_numpy().sum(); ni, N = n.sum(1), n.to_numpy().sum()')
     c.append(f'h = {h!r}   # the ANOM critical value for infinite df (multivariate normal)')
     c.append('print(p, pbar - h*np.sqrt(pbar*(1-pbar)*(N-ni)/(N*ni)), pbar + h*np.sqrt(pbar*(1-pbar)*(N-ni)/(N*ni)))')
-    return {'levels': lv, 'event': j, 'y_levels': yl, 'pbar': pbar, 'h': h, 'alpha': alpha, 'code': '\n'.join(c)}
+    stats_lines = _counts_code(y, x, xl, yl, weight, freq) + [
+        f'n = cnt.sum(axis=1); p = cnt[:, {j}] / n; pbar = cnt[:, {j}].sum() / n.sum()   # the proportion of {_lvtext(yl[j])} in each level, and overall',
+        'N, k = n.sum(), len(n)']
+    frame = _frame_code([y, x, weight, freq], weight, freq)
+    plot = _anom_plot(x, xl, [_lvtext(v) for v in xl], table, rows, where, table_name, alpha, frame, stats_lines, None,
+                      f'Proportion of {_lvtext(yl[j])}', 'Analysis of Means for Proportions', proportion=True)
+    return {'levels': lv, 'event': j, 'y_levels': yl, 'pbar': pbar, 'h': h, 'alpha': alpha, 'code': '\n'.join(c), 'plot_code': plot}
 
 
 @api('fitybyx.contingency_ca')
@@ -3398,11 +3924,32 @@ def contingency_ca(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, w
            'rows': [{'level': xl[i], 'mass': float(rm[i]), 'c1': float(F[i, 0]), 'c2': float(F[i, 1]) if k > 1 else None} for i in range(r)],
            'cols': [{'level': yl[j], 'mass': float(cm[j]), 'c1': float(G[j, 0]), 'c2': float(G[j, 1]) if k > 1 else None} for j in range(c_)],
            'chisq': float(N * tot)}
-    c = _ct_code(table_name, where, y, x, weight, freq)
+    c = _ct_code(table_name, where, y, x, weight, freq, table=table, rows=rows)
     c.append('P = n.to_numpy() / n.to_numpy().sum(); r, c = P.sum(1), P.sum(0); S = (P - np.outer(r, c)) / np.sqrt(np.outer(r, c))')
     c.append('U, s, Vt = np.linalg.svd(S, full_matrices=False); print(s**2)   # principal inertias')
     c.append('print(U * s / np.sqrt(r)[:, None], Vt.T * s / np.sqrt(c)[:, None])   # row and column principal coordinates')
     out['code'] = '\n'.join(c)
+    p = _plot_head(table, rows, where, table_name) + _frame_code([y, x, weight, freq], weight, freq) + _counts_code(y, x, xl, yl, weight, freq)
+    two = k > 1
+    p += [f'xnames, ynames = {J([_lvtext(v) for v in xl])}, {J([_lvtext(v) for v in yl])}',
+          'P = cnt / cnt.sum(); rm, cm = P.sum(axis=1), P.sum(axis=0)',
+          'S = (P - np.outer(rm, cm)) / np.sqrt(np.outer(rm, cm))   # the standardised residuals',
+          'U, sv, Vt = np.linalg.svd(S, full_matrices=False); k = min(cnt.shape) - 1',
+          'F = U[:, :k] * sv[:k] / np.sqrt(rm)[:, None]; G = Vt.T[:, :k] * sv[:k] / np.sqrt(cm)[:, None]   # the principal coordinates',
+          'for dim in range(k):   # the sign of each dimension: its largest coordinate among the X levels is positive',
+          '    if F[np.argmax(np.abs(F[:, dim])), dim] < 0:',
+          '        F[:, dim] *= -1; G[:, dim] *= -1',
+          'portion = sv[:k] ** 2 / (sv[:k] ** 2).sum()',
+          _figure(460, 380),
+          f'ax.axhline(0, color="{GREY}", linewidth=0.5); ax.axvline(0, color="{GREY}", linewidth=0.5)',
+          f'fy, gy = {"F[:, 1], G[:, 1]" if two else "np.zeros(len(F)), np.zeros(len(G))"}',
+          f'ax.scatter(F[:, 0], fy, s=40, color="{BASE}", label={J(x)})',
+          f'ax.scatter(G[:, 0], gy, s=40, marker="s", color="{RED}", label={J(y)})',
+          'for a, b, t in zip(F[:, 0], fy, xnames):', '    ax.annotate(t, (a, b), textcoords="offset points", xytext=(0, 5), ha="center", va="bottom", fontsize=8)',
+          'for a, b, t in zip(G[:, 0], gy, ynames):', '    ax.annotate(t, (a, b), textcoords="offset points", xytext=(0, -5), ha="center", va="top", fontsize=8)',
+          'ax.set_xlabel(f"c1 ({100 * portion[0]:.1f}%)")', 'ax.set_ylabel(f"c2 ({100 * portion[1]:.1f}%)")' if two else 'ax.set_ylabel("")',
+          'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)', 'ax.set_title("Correspondence Analysis")', 'plt.show()']
+    out['plot_code'] = '\n'.join(p)
     return out
 
 
@@ -3464,7 +4011,7 @@ def matched_pairs(table, y1, y2, group=None, rows=None, alpha=0.05, where=None, 
                                    {'what': 'Mean Mean', 'f': float(fm.statistic), 'dfn': len(gl) - 1, 'dfd': n - len(gl), 'p': float(fm.pvalue)}]
         out['group_levels'] = gl
         out['group_code'] = gc
-    c = _head(table_name, where, ['from scipy import stats', 'from statsmodels.stats.descriptivestats import sign_test'])
+    c = _head(table_name, where, ['from scipy import stats', 'from statsmodels.stats.descriptivestats import sign_test'], table=table, rows=rows)
     c.append(f'd = df[[{J(y1)}, {J(y2)}{", " + J(group) if group else ""}]].dropna(); dif = d[{J(y2)}] - d[{J(y1)}]')
     c.append(f'print(stats.ttest_rel(d[{J(y2)}], d[{J(y1)}]))   # the paired t test of {y2} - {y1}')
     c.append('print(stats.wilcoxon(dif[dif != 0]), sign_test(dif, 0))   # Wilcoxon signed rank, sign test (M, p)')
@@ -3511,7 +4058,7 @@ def matched_effect(table, y1, y2, rows=None, alpha=0.05, where=None, table_name=
     t_ = _tab([col('effect', 'Effect Size', 'text'), col('estimate', 'Estimate'), col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}'),
                col('method', 'Interval', 'text'), col('se', 'Std Err', hidden=True)], rows_out)
     out = {'table': t_, 'n': n, 'r': rho, 'sd_diff': sd, 'alpha': alpha}
-    c = _head(table_name, where, ['from scipy import stats, optimize, special'])
+    c = _head(table_name, where, ['from scipy import stats, optimize, special'], table=table, rows=rows)
     c.append(f'd = df[[{J(y1)}, {J(y2)}]].dropna(); a, b = d[{J(y1)}].to_numpy(), d[{J(y2)}].to_numpy(); dif = b - a; n = len(dif)')
     c.append(NCP_T_CODE)
     c.append(f'dz = dif.mean() / dif.std(ddof=1); t = dz * np.sqrt(n); lo, hi = ncp(t, n - 1, {1 - alpha / 2!r}) / np.sqrt(n), ncp(t, n - 1, {alpha / 2!r}) / np.sqrt(n)')
@@ -3543,7 +4090,7 @@ def matched_bayes(table, y1, y2, r=JZS_R, rows=None, alpha=0.05, where=None, tab
     t = float(d.mean()) / (sd / math.sqrt(n))
     rows_out = jzs_rows(t, n, n - 1, r, ['δ ≠ 0', f'δ > 0 ({y2} higher)', f'δ < 0 ({y2} lower)'])
     out = {'table': _bf_table(rows_out), 't': t, 'n': n, 'df': n - 1, 'r': r}
-    c = _head(table_name, where, ['from scipy import stats, integrate'])
+    c = _head(table_name, where, ['from scipy import stats, integrate'], table=table, rows=rows)
     c.append(f'd = df[[{J(y1)}, {J(y2)}]].dropna(); dif = d[{J(y2)}] - d[{J(y1)}]; n = len(dif)')
     c.append('t = stats.ttest_1samp(dif, 0).statistic   # the paired t')
     c.append(JZS_CODE)
@@ -3647,7 +4194,7 @@ def matched_binary(table, columns, success=None, exact=True, correction=False, r
         num = data.meta(table, c).get('dataType') == 'numeric'
         lit = _lvcode(float(succ)) if num else J(succ)
         return f'({frame}[{J(c)}] == {lit})'
-    c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import cochrans_q, mcnemar'])
+    c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import cochrans_q, mcnemar'], table=table, rows=rows)
     c.append(f'd = df[[{", ".join(J(v) for v in cols)}]].dropna()')
     c.append(f'X = pd.DataFrame({{{", ".join(f"{J(v)}: {is_succ(v)}" for v in cols)}}}).astype(int)   # 1: {succ}')
     c.append('print(cochrans_q(X.to_numpy()))   # Q, DF and p on the rows with every response')

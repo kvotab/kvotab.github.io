@@ -75,3 +75,7 @@
   .sm-fyx-group.is-rows > .sm-ob { flex-basis: 100%; }
   .sm-fyx-map { max-width: 100%; }
 }
+
+/* A graph with its Python code under it, as one item of a row of graphs: the
+   code opens below the graph and the row makes room for it. */
+.sm-fyx-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

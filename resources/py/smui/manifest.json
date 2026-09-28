@@ -41,7 +41,11 @@
     "text.py",
     "screening.py",
     "bootstrap.py",
-    "circular.py"
+    "circular.py",
+    "notebook.py",
+    "nb_backend.py",
+    "jsl.py",
+    "jsl_python.py"
   ],
   "modules": [
     "datasets",
@@ -78,6 +82,9 @@
     "text",
     "screening",
     "bootstrap",
-    "circular"
+    "circular",
+    "notebook",
+    "jsl",
+    "jsl_python"
   ]
 }

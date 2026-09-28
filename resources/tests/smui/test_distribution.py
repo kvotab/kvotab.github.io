@@ -355,6 +355,17 @@ for label_, res_, cols_ in (('Test Mean\'s effect size', ef, {'x': x, 'g': g, 'w
     elif 'bf' in ns:
         check.near(f'{label_}: BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-10)
 
+# excluded rows: on the whole table's CSV, the code leaves out the rows the report leaves out
+keep_ = [i for i in range(len(x)) if i % 4]
+rex = call('distribution.continuous', table=tid, column='x', rows=keep_)
+ns = code_ns({'x': x, 'g': g, 'w': w}, rex['code'], 'the moments with rows excluded')
+if 'd' in ns:
+    check.near("with rows excluded: the code's mean is the report's", float(ns['d'].mean), rex['moments']['mean'], rel=1e-12)
+    check("... and its N", float(ns['d'].nobs), rex['moments']['n'])
+rct = call('distribution.categorical', table=tid, column='g', rows=keep_)
+ns = code_ns({'x': x, 'g': g, 'w': w}, rct['code'], 'the frequencies with rows excluded')
+check("... the frequencies' code counts only the report's rows", int(ns['counts'].sum()) if 'counts' in ns else None, len([i for i in keep_ if g[i] is not None]))
+
 # rows subset and the error path
 check('rows subset (row 5 is missing)', call('distribution.continuous', table=tid, column='x', rows=list(range(10)))['moments']['n'], 9.0)
 check('no values', 'error' in call('distribution.continuous', table=tid, column='x', rows=[5]), True)

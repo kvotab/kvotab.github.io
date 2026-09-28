@@ -266,13 +266,72 @@
     return tbl;
   }
 
-  function code(text, { open = false } = {}) {
+  /* The head of a code snippet written in the page (a graph's code, when the
+     page chose its bins or its lines): the same lines as the backend's
+     util.code_head, so that every snippet starts alike and runs on its own. */
+  function codeHead(tableName, extraImports = []) {
+    return ['import numpy as np', 'import pandas as pd', 'import statsmodels.api as sm', 'import statsmodels.formula.api as smf', ...extraImports,
+      `df = pd.read_csv(${JSON.stringify(`${tableName}.csv`)}, float_precision="round_trip")   # the table, as File > Export CSV writes it`].join('\n');
+  }
+
+  /* A result's Python, folded away until the Python code button (or its
+     heading) opens it. Copy copies it; Notebook sends it to a notebook as a
+     cell; Edit turns it into an editor with Run: the code runs here, on its
+     own (a namespace of its own, the table read as the code reads it), and
+     its output shows under it. Reset puts the report's code back. An edit
+     lasts until the report is drawn again. */
+  function code(text, { open = false, title = null, table = null } = {}) {
     if (!text) return null;
     const d = el('details', { class: 'sm-code' });
     if (open) d.open = true;
-    const copy = el('button', { type: 'button', class: 'sm-btn small', text: 'Copy', style: { marginLeft: '8px' } });
-    copy.addEventListener('click', (ev) => { ev.preventDefault(); copyText(text); });
-    d.append(el('summary', null, 'Python code', copy), el('pre', null, el('code', { text })));
+    let current = text;
+    const btn = (label, hint, fn, cls = '') => {
+      const b = el('button', { type: 'button', class: `sm-btn small ${cls}`, text: label, title: hint });
+      b.addEventListener('click', (ev) => { ev.preventDefault(); fn(); });
+      return b;
+    };
+    const copy = btn('Copy', 'Copy the code', () => copyText(current));
+    const edit = SM.editor && SM.notebook ? btn('Edit', 'Edit the code and run it here: its output shows under it', () => startEdit()) : null;
+    const toNb = SM.notebook ? btn('Notebook', 'Send the code to a notebook, as a cell (the one used last, or a new one)', () => SM.notebook.collect(current, { title: title || 'a report', table })) : null;
+    const pre = el('pre', null, el('code', { text }));
+    const out = el('div', { class: 'sm-nb-out sm-code-out', 'aria-live': 'polite', hidden: true });
+    d.append(el('summary', null, 'Python code', el('span', { class: 'sm-code-btns' }, copy, edit, toNb)), pre, out);
+    let editor = null, box = null;
+    function startEdit() {
+      d.open = true;
+      if (editor) { editor.focus(); return; }
+      const ns = uid('code');
+      const status = el('span', { class: 'sm-code-status', role: 'status' });
+      let runBtn = null;
+      const run = async () => {
+        runBtn.disabled = true;
+        status.textContent = 'Running…';
+        try {
+          const res = await SM.notebook.exec(ns, editor.value, { label: 'code', fresh: true });
+          SM.notebook.renderOutputs(out, res.outputs);
+          status.textContent = res.outputs.some((o) => o.type === 'error') ? 'It stopped at an error: see below.' : res.outputs.length ? '' : 'It ran, and showed nothing.';
+        } catch (e) {
+          SM.notebook.renderOutputs(out, [{ type: 'error', ename: 'Error', evalue: e.message, traceback: [/^stopped$/.test(e.message) ? 'Stopped: Python was restarted.' : `The engine: ${e.message}`] }]);
+          status.textContent = '';
+        } finally { runBtn.disabled = false; }
+      };
+      editor = SM.editor.create({ value: current, language: 'python', label: 'The Python code of this result',
+        onKey: (ev) => { if (ev.key === 'Enter' && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) { run(); return true; } return false; } });
+      runBtn = btn('▶ Run', 'Run the code (Shift+Enter). It reads the table as it is now, from the file the report\'s code names', run, 'primary');
+      const reset = btn('Reset', 'Put back the report\'s own code', () => { editor.value = text; current = text; reset.disabled = true; SM.notebook.renderOutputs(out, []); status.textContent = ''; });
+      reset.disabled = current === text;
+      editor.on('change', (v) => { current = v; reset.disabled = v === text; });
+      const done = btn('Close', 'Back to the code as text (the output stays)', () => {
+        pre.firstChild.textContent = current;
+        box.replaceWith(pre);
+        editor = null; box = null;
+        if (edit) edit.hidden = false;
+      });
+      box = el('div', { class: 'sm-code-edit' }, editor.el, el('div', { class: 'sm-code-bar' }, runBtn, reset, done, status));
+      pre.replaceWith(box);
+      if (edit) edit.hidden = true;
+      requestAnimationFrame(() => editor && editor.focus());
+    }
     return d;
   }
 
@@ -879,6 +938,7 @@
       return [
         { label: 'Save Python Script (.py)', action: () => SM.util.download(`${slug(this.title)}.py`, this.pythonScript(), 'text/x-python') },
         { label: 'Copy Python Script', action: () => copyText(this.pythonScript()) },
+        { label: 'Open Script in Notebook', action: () => SM.notebook.fromReport(this), disabled: !SM.notebook, title: 'The report\'s Python as the cells of a new notebook, to run and change' },
         { label: 'Save Report as HTML', action: () => this.exportHtml() },
         { label: 'Save Report as Word', action: () => this.exportDocx(), disabled: !SM.docx },
         { label: 'Print…', action: () => this.printReport() },
@@ -1086,11 +1146,18 @@
       try { groups = this.groups(); } catch (e) { groups = []; fresh.append(error(e)); }
       if (!groups.length) fresh.append(warn('No rows to analyse: every row is excluded, or every By value is missing.'));
       let used = 0;
+      // What this run draws. A newer run (a Redo, a theme change, an option)
+      // may start while this one waits on Python: from then on this run adds
+      // nothing to the report's graphs and code, and at its end it purges
+      // only its own graphs, not the newer run's.
+      const made = [];
       for (const g of groups) {
         used += g.rows.length;
         const title = g.label ? `${this.title} ${g.label}` : this.title;
         const path = g.label || '';
         const ctx = new Ctx(this, g, fresh, path);
+        ctx.seq = seq;
+        ctx.made = made;
         const top = ctx.outline(title, { level: 0, menu: () => ctx.topMenu() });
         ctx.container = top.body;
         ctx.top = top;
@@ -1106,9 +1173,9 @@
           const w = ctx.outline('Messages from statsmodels', { closed: false, level: 1 });
           w.add(...ctx.warnings.map((m) => warn(m)));
         }
-        if (seq !== this.seq) { for (const p of this.plots) p.purge(); return; }
+        if (seq !== this.seq) { for (const p of made) p.purge(); this.plots = this.plots.filter((p) => !made.includes(p)); return; }
       }
-      if (seq !== this.seq) return;
+      if (seq !== this.seq) { for (const p of made) p.purge(); this.plots = this.plots.filter((p) => !made.includes(p)); return; }
       this.content.querySelector('.sm-waiting')?.remove();
       if (!first) this.content.replaceChildren(fresh);
       if (this.spec.filter) this._renderFilter();
@@ -1334,9 +1401,12 @@
       }
       const out = await r;
       if (out && Array.isArray(out.warnings)) for (const w of out.warnings) if (!this.warnings.includes(w)) this.warnings.push(w);
-      if (out && out.code && !this.headless) this.report.pyCode.push(out.code);
+      if (out && out.code && !this.headless && this.current) this.report.pyCode.push(out.code);
       return out;
     }
+
+    // false once a newer run of the report has started (a headless Ctx has no run: always true)
+    get current() { return this.seq == null || this.seq === this.report.seq; }
 
     outline(title, opts = {}) {
       const parent = opts.parent ? (opts.parent.body || opts.parent) : this.container;
@@ -1358,7 +1428,8 @@
       // A headless run (Bootstrap reruns a report on resamples) draws nothing.
       if (this.headless) return el('div', { class: 'sm-plot' });
       const p = new Plot(this.report, traces, layout, opts);
-      this.report.plots.push(p);
+      if (this.made) this.made.push(p);
+      if (this.current) this.report.plots.push(p);
       return p.box;
     }
 
@@ -1376,8 +1447,8 @@
     // Code a platform shows that no call returned (worked out in the page)
     // goes into Save Python Script too; the calls' own code is there already.
     code(text) {
-      if (text && !this.headless) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
-      return code(text, { open: !!this.spec.options.showCode });
+      if (text && !this.headless && this.current) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
+      return code(text, { open: !!this.spec.options.showCode, title: this.report.title, table: this.report.table });
     }
     note(text) { return note(text); }
     warn(text) { return warn(text); }
@@ -1536,5 +1607,5 @@
     if (tag) tag.addEventListener('load', () => { if (document.body) kickPlots(document.body); });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

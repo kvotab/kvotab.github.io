@@ -57,6 +57,41 @@
     return m ? `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${a})` : hex;
   }
 
+  /* ---- the graphs as matplotlib code -------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of the
+     table (the notebook runs it): the report's rows, the light theme's colours, the
+     graph's size at 100 pixels an inch. The Bivariate scatterplot is put together
+     here, from the rows and each fit's fragment (res.plot: the lines that fit it to
+     the rows s and give its curve); the other graphs' code comes whole from the
+     function that makes their numbers (plot_code). */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+  const inches = (px) => String(Math.round(px) / 100);
+  const MPL_DASH = { solid: '"-"', dash: '"--"', dot: '":"', dashdot: '"-."', longdash: '(0, (8, 3))' };
+
+  // The By group's rows (as the backend's code has them), and those of it the report leaves out.
+  function whereLines(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${lvText(t.col(w.column), w.value)}`);
+    const cols = where.map((w) => t.col(w.column));
+    const keep = new Set(ctx.rows), drop = [];
+    for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
+    if (drop.length) L.push(`df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out (excluded, or filtered out)`);
+    return L;
+  }
+
+  // d: the rows with Y, X (and the extra columns) and a positive Weight and Freq, as pointsOf takes them.
+  function frameLines(ctx, names) {
+    const w = ctx.name('weight'), f = ctx.name('freq');
+    const L = [`d = df.dropna(subset=${J([...new Set([...names, w, f].filter(Boolean))])})   # the rows with every value`];
+    if (w || f) L.push(`d = d[${[w, f].filter(Boolean).map((c) => `d[${J(c)}]`).join(' * ')} > 0]   # the rows with a positive weight`);
+    return L;
+  }
+
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-fyx-plotcode' }, graph, code) : graph);
+
   function pairsOf(spec, table) {
     if (!table) return [];
     const ys = ((spec.roles && spec.roles.y) || []).map((id) => table.col(id)).filter(Boolean);
@@ -286,6 +321,77 @@
     return t;
   }
 
+  /* The scatterplot with its fits: the rows as the page takes them, then each fit's
+     fragment (fitted to the rows s: all of them, or a Group By level's) drawn in its
+     colour, with the confidence curves and shading chosen. */
+  function bivariateCode(ctx, y, x, { results, fits, gcol, P, points, hist, width, height, lrows }) {
+    const imports = new Set();
+    for (const it of results) if (it.res && it.res.plot) for (const i of it.res.plot.imports || []) imports.add(i);
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt', ...imports]), ...whereLines(ctx), ...frameLines(ctx, [x.name, y.name])];
+    if (hist) {
+      L.push(`fig = plt.figure(figsize=(${inches(width)}, ${inches(height)}), layout="constrained")`,
+        'grid = fig.add_gridspec(2, 2, width_ratios=[82, 15], height_ratios=[15, 82])',
+        'ax = fig.add_subplot(grid[1, 0]); top = fig.add_subplot(grid[0, 0], sharex=ax); side = fig.add_subplot(grid[1, 1], sharey=ax)',
+        `w = ${[ctx.name('weight'), ctx.name('freq')].filter(Boolean).map((c) => `d[${J(c)}]`).join(' * ') || 'np.ones(len(d))'}`);
+      for (const [key, vals, on, fn] of [[x.name, P.xv, 'top', 'bar'], [y.name, P.yv, 'side', 'barh']]) {
+        const b = SM.report.niceBins(vals);
+        const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
+        L.push(`start, size, nb = ${pyNum(b.start)}, ${pyNum(b.size)}, ${nb}   # the page's bins of ${key}`,
+          `k = np.clip(np.floor((d[${J(key)}] - start) / size + 1e-9), 0, nb - 1).astype(int)`,
+          `${on}.${fn}(start + (np.arange(nb) + 0.5) * size, np.bincount(k, weights=w, minlength=nb), ${fn === 'bar' ? 'width' : 'height'}=size, color="${SM.report.BAR}", edgecolor="white", linewidth=0.5)`,
+          `${on}.axis("off")   # Histogram Borders`);
+      }
+    } else L.push(`fig, ax = plt.subplots(figsize=(${inches(width)}, ${inches(height)}), layout="constrained")`);
+    if (points) L.push(`ax.scatter(d[${J(x.name)}], d[${J(y.name)}], s=${P.rows.length > 3000 ? 8 : 18}, color="#2f6690")`);
+    for (const { f, g, res, error } of results) {
+      if (error || !res || !res.plot || f.line === false) continue;
+      const fi = fits.indexOf(f);
+      const color = g.color || FIT_COLORS[fi % FIT_COLORS.length];
+      const dash = MPL_DASH[gcol ? DASHES[fi % DASHES.length] : 'solid'];
+      const name = `${fitTitle(f, res)}${g.label ? ` ${g.label}` : ''}`;
+      const lv = g.label ? g.where[g.where.length - 1].value : null;
+      L.push(`# ${name}`, g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${lvText(gcol, lv)} (Group By)` : 's = d', ...res.plot.fit);
+      if (f.kind === 'ellipse') L.push(`ax.plot(ex, ey, color="${color}", linewidth=1.2, linestyle=${dash}, label=${J(name)})`);
+      else if (f.kind === 'kde') {
+        L.push(`for q, lv in zip(${J(res.plot.quantiles)}, levels):   # a contour for each share of the points, the median's thicker`,
+          `    ax.contour(gx, gy, Z, levels=[lv], colors="${color}", linewidths=1.3 if q == 0.5 else 0.65)`,
+          `ax.plot([], [], color="${color}", label=${J(name)})   # the contours' name in the legend`);
+      } else {
+        const c = res.curve || {};
+        if (f.sind && c.lo_ind) L.push(`ax.fill_between(gx, lo_ind, hi_ind, color="${color}", alpha=0.1, linewidth=0)   # Confid Shaded Indiv`);
+        if (f.sfit && c.lo_fit) L.push(`ax.fill_between(gx, lo_fit, hi_fit, color="${color}", alpha=0.2, linewidth=0)   # Confid Shaded Fit`);
+        L.push(`ax.plot(gx, fy, color="${color}", linewidth=1.4, linestyle=${dash}${f.kind === 'each' ? ', marker="o", markersize=3' : ''}, label=${J(name)})`);
+        if (f.cfit && c.lo_fit) L.push(`ax.plot(gx, lo_fit, gx, hi_fit, color="${color}", linewidth=0.7, linestyle="--")   # Confid Curves Fit`);
+        if (f.cind && c.lo_ind) L.push(`ax.plot(gx, lo_ind, gx, hi_ind, color="${color}", linewidth=0.7, linestyle=":")   # Confid Curves Indiv`);
+      }
+    }
+    L.push(`ax.set_xlabel(${J(x.name)})`, `ax.set_ylabel(${J(y.name)})`);
+    if (lrows > 0) L.push('fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)');
+    L.push(`${hist ? 'fig.suptitle' : 'ax.set_title'}(${J(`${y.name} by ${x.name}`)}${hist ? ', fontsize=10' : ''})`, 'plt.show()');
+    return L.join('\n');
+  }
+
+  /* One of a fit's Diagnostics Plots: the fit's fragment and its predictions. */
+  function diagnosticCode(ctx, y, x, item, res, gcol, which, title) {
+    const p = res.plot;
+    const lv = item.g.label ? item.g.where[item.g.where.length - 1].value : null;
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt', ...(which === 'nq' ? ['from scipy import stats'] : []), ...(p.imports || [])]), ...whereLines(ctx), ...frameLines(ctx, [x.name, y.name])];
+    L.push(item.g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${lvText(gcol, lv)} (Group By)` : 's = d', ...p.fit, ...p.pred,
+      `resid = s[${J(y.name)}].to_numpy() - pred`, 'fig, ax = plt.subplots(figsize=(2.8, 2.3), layout="constrained")');
+    const zero = `ax.axhline(0, color="${GREY}", linewidth=0.7, linestyle=":")`;
+    const plots = {
+      rp: [`ax.scatter(pred, resid, s=13, color="#2f6690")`, zero, `ax.set_xlabel(${J(`Predicted ${y.name}`)})`, 'ax.set_ylabel("Residual")'],
+      ap: [`ax.scatter(pred, s[${J(y.name)}], s=13, color="#2f6690")`, `ax.plot([pred.min(), pred.max()], [pred.min(), pred.max()], color="${GREY}", linewidth=0.7, linestyle=":")`,
+        `ax.set_xlabel(${J(`Predicted ${y.name}`)})`, `ax.set_ylabel(${J(y.name)})`],
+      rr: ['ax.scatter(s.index + 1, resid, s=13, color="#2f6690")', zero, 'ax.set_xlabel("Row Number")', 'ax.set_ylabel("Residual")'],
+      rx: [`ax.scatter(s[${J(x.name)}], resid, s=13, color="#2f6690")`, zero, `ax.set_xlabel(${J(x.name)})`, 'ax.set_ylabel("Residual")'],
+      nq: ['z = stats.norm.ppf((np.argsort(np.argsort(resid, kind="stable"), kind="stable") + 1) / (len(resid) + 1))   # each residual\'s normal quantile, by its place in order',
+        'ax.scatter(z, resid, s=13, color="#2f6690")', 'ax.set_xlabel("Normal Quantile")', 'ax.set_ylabel("Residual")'],
+    };
+    L.push(...plots[which], `ax.set_title(${J(title)}, fontsize=10)`, 'plt.show()');
+    return L.join('\n');
+  }
+
   async function bivariate(ctx, y, x, host, sc) {
     const o = (k, d) => ctx.opt(k, d, sc);
     const P = pointsOf(ctx, y, x);
@@ -357,7 +463,8 @@
       traces.push(histBars(P.xv, P.rows, P.wv, false, { xaxis: 'x', yaxis: 'y2' }), histBars(P.yv, P.rows, P.wv, true, { xaxis: 'x2', yaxis: 'y' }));
     }
     const height = 400 + 20 * lrows;
-    host.add(ctx.plot(traces, layout, { width, height, title: `${y.name} by ${x.name}` }));
+    host.add(ctx.plot(traces, layout, { width, height, title: `${y.name} by ${x.name}` }),
+      ctx.code(bivariateCode(ctx, y, x, { results, fits, gcol, P, points: o('points', true), hist, width, height, lrows })));
     if (!o('points', true) && !fits.length) host.add(ctx.note('Show Points is off and there are no fits: choose a fit from the red triangle.'));
     if (o('summary', false)) {
       const ob = ctx.outline('Summary Statistics', { parent: host, key: `sum:${sc}` });
@@ -451,8 +558,11 @@
     const xs = rows.map((r) => x.values[r]);
     const ys = rows.map((r) => y.values[r]);
     const zero = (xa) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0, line: { color: GREY, width: 1, dash: 'dot' } });
-    const sm = (title, xv, yv, xt, yt, shapes = []) => ctx.plot([{ type: rows.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xv, y: yv, rows, marker: { size: 5 } }],
-      { xaxis: { title: { text: xt } }, yaxis: { title: { text: yt } }, shapes, margin: { l: 56, r: 10, t: 8, b: 40 } }, { width: 280, height: 230, title });
+    const gcol = ctx.opt('groupBy', null, sc) ? ctx.col(ctx.opt('groupBy', null, sc)) : null;
+    const which = { 'Residual by Predicted': 'rp', 'Actual by Predicted': 'ap', 'Residual by Row': 'rr', [`Residual by ${x.name}`]: 'rx', 'Residual Normal Quantile Plot': 'nq' };
+    const sm = (title, xv, yv, xt, yt, shapes = []) => withCode(ctx.plot([{ type: rows.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xv, y: yv, rows, marker: { size: 5 } }],
+      { xaxis: { title: { text: xt } }, yaxis: { title: { text: yt } }, shapes, margin: { l: 56, r: 10, t: 8, b: 40 } }, { width: 280, height: 230, title }),
+    res.plot && res.plot.pred.length ? ctx.code(diagnosticCode(ctx, y, x, item, res, gcol, which[title], title)) : null);
     const order = rv.residual.map((_, k) => k).sort((a, b) => rv.residual[a] - rv.residual[b]);
     const nq = new Array(order.length);
     order.forEach((k, i) => { nq[k] = qnorm((i + 1) / (order.length + 1)); });
@@ -617,16 +727,25 @@
     const block = blockCol && blockCol.isCategorical && blockCol.id !== x.id && blockCol.id !== y.id ? blockCol : null;
     if (blockCol && !block) host.add(ctx.note(`The Block ${blockCol.name} is not used: a block is an ordinal or nominal column other than Y and X.`));
     const base = basePayload(ctx, y, x);
-    const res = await ctx.call('fitybyx.oneway', { ...base, block: block ? block.name : null });
+    const P = pointsOf(ctx, y, x, block ? [block] : []);
+    // the comparisons first: the graph's code draws the last one's circles
+    const cmp = [];
+    for (const c of o('compare', [])) cmp.push({ c, ...(await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: c.method, control: c.control ?? null })) });
+    // comparison circles for the last comparison chosen
+    const circ = o('circles', true) ? cmp.filter((c) => c.res && !c.error && c.res.quantile && c.res.quantile.value != null).slice(-1)[0] : null;
+    const width = availWidth(ctx, Math.max(420, Math.min(760, 180 + 70 * new Set(P.xv.map(keyOf)).size + (circ ? 120 : 0))));
+    // what the graph shows, for its code
+    const plot = { points: o('points', true), jitter: o('jitter', true), box: o('box', o('quantiles', false)), diamonds: o('diamonds', o('anova', false)),
+      meanLines: o('meanLines', o('meansd', false)), errorBars: o('errorBars', o('meansd', false)), sdLines: o('sdLines', o('meansd', false)), ciLines: o('ciLines', false),
+      grandMean: o('grandMean', false), connect: o('connect', false), circles: circ ? { method: circ.c.method, control: circ.c.control ?? null } : null,
+      labels: ctx.table.levels(x).map((v) => lvText(x, v)), width, height: 380 };
+    const res = await ctx.call('fitybyx.oneway', { ...base, block: block ? block.name : null, plot });
     if (res.error) { host.add(ctx.warn(`${y.name} by ${x.name}: ${res.error}`)); return; }
     const levels = res.levels;
     const k = levels.length;
     const names = levels.map((l) => lvText(x, l.level));
     const lmap = new Map(levels.map((l) => [keyOf(l.level), l.index]));
-    const P = pointsOf(ctx, y, x, block ? [block] : []);
     const code = P.xv.map((v) => lmap.get(keyOf(v)));
-    const cmp = [];
-    for (const c of o('compare', [])) cmp.push({ c, ...(await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: c.method, control: c.control ?? null })) });
     // ---- the plot
     const traces = [];
     const n = P.rows.length;
@@ -661,8 +780,6 @@
     if (o('ciLines', false)) levels.forEach((l, i) => { const ci = pooled(l); if (ci) shapes.push(seg(i, ci[0], 0.2, GREEN, 'dot', 1.1), seg(i, ci[1], 0.2, GREEN, 'dot', 1.1)); });
     if (o('grandMean', false)) shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: res.grand_mean, y1: res.grand_mean, line: { color: GREY, width: 1, dash: 'dot' } });
     if (o('connect', false)) traces.push({ type: 'scatter', mode: 'lines+markers', x: levels.map((_, i) => i), y: levels.map((l) => l.mean), line: { color: RED, width: 1.4 }, marker: { size: 5, color: RED }, hoverinfo: 'skip', showlegend: false });
-    // comparison circles for the last comparison chosen
-    const circ = o('circles', true) ? cmp.filter((c) => c.res && !c.error && c.res.quantile && c.res.quantile.value != null).slice(-1)[0] : null;
     const circles = [];
     const layout = {
       xaxis: { title: { text: x.name }, tickvals: levels.map((_, i) => i), ticktext: names, range: [-0.6, k - 0.4], zeroline: false, showgrid: false },
@@ -679,7 +796,6 @@
         traces.push({ type: 'scatter', mode: 'lines', xaxis: 'x2', yaxis: 'y', x: TH.map((t) => 0.3 * Math.cos(t)), y: TH.map((t) => circ.res.means[i] + r * Math.sin(t)), line: { color: PALETTE[i % PALETTE.length], width: 1.3 }, hovertemplate: `${names[i]}: mean ${fmt(circ.res.means[i])}, radius ${fmt(r)}<extra></extra>`, showlegend: false });
       });
     }
-    const width = availWidth(ctx, Math.max(420, Math.min(760, 180 + 70 * k + (circ ? 120 : 0))));
     host.add(ctx.plot(traces, layout, {
       width, height: 380, title: `${y.name} by ${x.name}`,
       onDraw: circles.length ? (gd) => {
@@ -689,7 +805,7 @@
         const ux = 2.1 / (fl._size.w * 0.18), uy = (yr[1] - yr[0]) / fl._size.h;
         try { Plotly.restyle(gd, { x: circles.map((c) => TH.map((t) => (c.r / uy) * ux * Math.cos(t))) }, circles.map((c) => c.at)); } catch (e) { /* the graph was redrawn */ }
       } : null,
-    }));
+    }), ctx.code(res.plot_code));
     // ---- the reports, in JMP's order
     if (res.notes && res.notes.length) host.add(notesOf(ctx, res.notes));
     if (o('quantiles', false)) {
@@ -726,7 +842,7 @@
         (r) => `The JZS Bayes factor of the two-sample t test (Rouder et al. 2009): the pooled t of ${names[1]} minus ${names[0]}, equal variances, against a Cauchy(0, ${fmt(r.r)}) prior on δ = (μ₂ − μ₁)/σ under the alternative; a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
         () => [{ label: 'Change Prior…', action: () => priorDialog(ctx, sc, 'bf', 'Bayes Factor: two-sample t test') }, { label: 'Remove', action: () => ctx.set('bf', null, sc) }]);
     }
-    if (o('anom', false)) await owAnom(ctx, host, sc, base, names);
+    if (o('anom', false)) await owAnom(ctx, host, sc, base, names, x);
     if (cmp.length) {
       const mc = ctx.outline('Means Comparisons', { parent: host, key: `mc:${sc}`, info: 'p:fitybyx:compare' });
       for (const c of cmp) compareReport(ctx, mc, sc, c, names);
@@ -739,9 +855,9 @@
     if (o('bmTost', null)) await brunnerTostReport(ctx, host, sc, base, o('bmTost', null), names);
     if (o('rates', null)) await ratesReport(ctx, host, sc, base, o('rates', null), y, x);
     if (o('power', null)) await powerReport(ctx, host, sc, base, o('power', null));
-    if (o('nqp', null)) owNormalQuantile(ctx, host, sc, P, code, names, o('nqp', null), levels);
-    if (o('cdf', false)) owCdf(ctx, host, sc, P, code, names);
-    if (o('densities', null)) await owDensities(ctx, host, sc, base, names, o('densities', null), y);
+    if (o('nqp', null)) owNormalQuantile(ctx, host, sc, P, code, names, o('nqp', null), levels, { y, x, block });
+    if (o('cdf', false)) owCdf(ctx, host, sc, P, code, names, levels, { y, x, block });
+    if (o('densities', null)) await owDensities(ctx, host, sc, base, names, o('densities', null), y, x);
   }
 
   function tTestTable(ctx, r) {
@@ -1046,9 +1162,9 @@
     ctx.set('power', { alpha: v.alpha > 0 && v.alpha < 1 ? v.alpha : null, sigma: v.sigma > 0 ? v.sigma : null, delta: v.delta > 0 ? v.delta : null, nobs }, sc);
   }
 
-  async function owAnom(ctx, host, sc, base, names) {
+  async function owAnom(ctx, host, sc, base, names, x) {
     const ob = ctx.outline('Analysis of Means', { parent: host, key: `anom:${sc}` });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_anom', base);
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_anom', { ...base, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
     if (error) { ob.add(problem(ctx, error)); return; }
     const L = r.levels;
     const xs = L.map((_, i) => i);
@@ -1058,7 +1174,8 @@
       { type: 'scatter', mode: 'lines', x: lo.X, y: lo.Y, line: { color: RED, width: 1.2 }, hoverinfo: 'skip', name: 'LDL' },
       { type: 'scatter', mode: 'lines', x: hi.X, y: hi.Y, line: { color: RED, width: 1.2 }, hoverinfo: 'skip', name: 'UDL' },
       { type: 'scatter', mode: 'lines+markers', x: xs, y: L.map((l) => l.mean), marker: { size: 8, color: L.map((l) => (l.out ? RED : SM.report.BASE)) }, line: { color: GREY, width: 1 }, text: names, hovertemplate: '%{text}: %{y}<extra></extra>', name: 'Means' },
-    ], { xaxis: { tickvals: xs, ticktext: names, range: [-0.6, L.length - 0.4] }, yaxis: { title: { text: 'Mean' } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.grand_mean, y1: r.grand_mean, line: { color: GREY, width: 1 } }] }, { width: availWidth(ctx, Math.max(360, 120 + 60 * L.length)), height: 280, title: 'Analysis of Means' }));
+    ], { xaxis: { tickvals: xs, ticktext: names, range: [-0.6, L.length - 0.4] }, yaxis: { title: { text: 'Mean' } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.grand_mean, y1: r.grand_mean, line: { color: GREY, width: 1 } }] }, { width: availWidth(ctx, Math.max(360, 120 + 60 * L.length)), height: 280, title: 'Analysis of Means' }),
+    ctx.code(r.plot_code));
     ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'n', label: 'Number' }, { key: 'mean', label: 'Mean' }, { key: 'ldl', label: 'Lower Decision Limit' }, { key: 'udl', label: 'Upper Decision Limit' }, { key: 'flag', label: 'Outside', fmt: 'text' }],
       rows: L.map((l) => ({ ...l, lv: names[l.index], flag: l.out ? 'yes' : '' })) }, { sortable: false }),
     ctx.kv([['Grand Mean', r.grand_mean], ['h (exact)', r.h], ['Alpha', r.alpha], ['Std Dev (pooled)', r.s], ['DF', r.df]]),
@@ -1066,7 +1183,17 @@
     notesOf(ctx, r.notes), ctx.code(r.code));
   }
 
-  function owNormalQuantile(ctx, host, sc, P, code, names, mode, levels) {
+  /* The normal quantile and CDF plots of each level, whose positions and sums the page works out. */
+  function owByLevelCode(ctx, y, x, levels, names, block, body, title, size, legend = true) {
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt', 'from scipy import stats']), ...whereLines(ctx), ...frameLines(ctx, [y.name, x.name, ...(block ? [block.name] : [])])];
+    L.push(`levels = [${levels.map((l) => pyLit(l.level)).join(', ')}]   # the levels of ${x.name} in these rows, in the table's order`, `names = ${J(names)}`,
+      `colors = ${J(PALETTE)}`, `fig, ax = plt.subplots(figsize=(${inches(size[0])}, ${inches(size[1])}), layout="constrained")`, ...body);
+    if (legend) L.push('fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=8)');
+    L.push(`ax.set_title(${J(title)})`, 'plt.show()');
+    return L.join('\n');
+  }
+
+  function owNormalQuantile(ctx, host, sc, P, code, names, mode, levels, { y, x, block }) {
     const ob = ctx.outline('Normal Quantile Plot', { parent: host, key: `nqp:${sc}`, menu: () => [
       { label: 'Plot Actual by Quantile', checked: mode.orient !== 'qa', action: () => ctx.set('nqp', { ...mode, orient: 'aq' }, sc) },
       { label: 'Plot Quantile by Actual', checked: mode.orient === 'qa', action: () => ctx.set('nqp', { ...mode, orient: 'qa' }, sc) },
@@ -1089,11 +1216,22 @@
         traces.push({ type: 'scatter', mode: 'lines', x: qa ? [m + s * z0, m + s * z1] : [z0, z1], y: qa ? [z0, z1] : [m + s * z0, m + s * z1], line: { color, width: 1.2 }, hoverinfo: 'skip', showlegend: false });
       }
     });
-    ob.add(ctx.plot(traces, { xaxis: { title: { text: qa ? 'Actual' : 'Normal Quantile' } }, yaxis: { title: { text: qa ? 'Normal Quantile' : 'Actual' } }, showlegend: true, legend: { orientation: 'h', y: -0.25 } }, { width: availWidth(ctx, 460), height: 340, title: 'Normal Quantile Plot' }),
+    const width = availWidth(ctx, 460);
+    const body = ['for i, v in enumerate(levels):',
+      `    vals = np.sort(d.loc[d[${J(x.name)}] == v, ${J(y.name)}].to_numpy()); n = len(vals)`,
+      '    z = stats.norm.ppf(np.arange(1, n + 1) / (n + 1))   # the r-th value against Φ⁻¹(r/(n+1))',
+      qa ? '    ax.scatter(vals, z, s=13, color=colors[i % len(colors)], label=names[i])' : '    ax.scatter(z, vals, s=13, color=colors[i % len(colors)], label=names[i])'];
+    if (mode.line !== false) {
+      body.push('    if n > 1:   # the normal with the level\'s mean and standard deviation', '        m, sd = vals.mean(), vals.std(ddof=1)',
+        qa ? '        ax.plot([m + sd * z[0], m + sd * z[-1]], [z[0], z[-1]], color=colors[i % len(colors)], linewidth=0.9)' : '        ax.plot([z[0], z[-1]], [m + sd * z[0], m + sd * z[-1]], color=colors[i % len(colors)], linewidth=0.9)');
+    }
+    body.push(`ax.set_xlabel("${qa ? 'Actual' : 'Normal Quantile'}")`, `ax.set_ylabel("${qa ? 'Normal Quantile' : 'Actual'}")`);
+    ob.add(ctx.plot(traces, { xaxis: { title: { text: qa ? 'Actual' : 'Normal Quantile' } }, yaxis: { title: { text: qa ? 'Normal Quantile' : 'Actual' } }, showlegend: true, legend: { orientation: 'h', y: -0.25 } }, { width, height: 340, title: 'Normal Quantile Plot' }),
+      ctx.code(owByLevelCode(ctx, y, x, levels, names, block, body, 'Normal Quantile Plot', [width, 340])),
       ctx.note('Each level\'s values against Φ⁻¹(r/(n+1)); the lines are the normal with the level\'s mean and standard deviation.'));
   }
 
-  function owCdf(ctx, host, sc, P, code, names) {
+  function owCdf(ctx, host, sc, P, code, names, levels, { y, x, block }) {
     const ob = ctx.outline('CDF Plot', { parent: host, key: `cdf:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('cdf', false, sc) }] });
     const traces = names.map((nm, i) => {
       const idx = P.rows.map((_, kk) => kk).filter((kk) => code[kk] === i).sort((a, b) => P.yv[a] - P.yv[b]);
@@ -1101,14 +1239,22 @@
       let acc = 0;
       return { type: 'scatter', mode: 'lines+markers', x: idx.map((kk) => P.yv[kk]), y: idx.map((kk) => { acc += P.wv[kk]; return acc / tot; }), rows: idx.map((kk) => P.rows[kk]), line: { shape: 'hv', color: PALETTE[i % PALETTE.length], width: 1.4 }, marker: { size: 4, color: PALETTE[i % PALETTE.length] }, name: nm, showlegend: true };
     });
-    ob.add(ctx.plot(traces, { xaxis: { title: { text: ctx.name('y') || '' } }, yaxis: { title: { text: 'Cumulative Probability' }, range: [0, 1.02] }, showlegend: true, legend: { orientation: 'h', y: -0.25 } }, { width: availWidth(ctx, 460), height: 320, title: 'CDF Plot' }));
+    const width = availWidth(ctx, 460);
+    const wts = [ctx.name('weight'), ctx.name('freq')].filter(Boolean).map((c) => `d[${J(c)}]`).join(' * ');
+    const body = [`wt = ${wts || 'pd.Series(1.0, index=d.index)'}`, 'for i, v in enumerate(levels):   # each level\'s weighted share of its values up to each value',
+      `    s = d[d[${J(x.name)}] == v]; o = np.argsort(s[${J(y.name)}].to_numpy(), kind="stable")`,
+      `    vals, w_ = s[${J(y.name)}].to_numpy()[o], wt[s.index].to_numpy()[o]`,
+      '    ax.plot(vals, np.cumsum(w_) / w_.sum(), drawstyle="steps-post", marker="o", markersize=3, color=colors[i % len(colors)], linewidth=1, label=names[i])',
+      'ax.set_ylim(0, 1.02)', `ax.set_xlabel(${J(y.name)})`, 'ax.set_ylabel("Cumulative Probability")'];
+    ob.add(ctx.plot(traces, { xaxis: { title: { text: ctx.name('y') || '' } }, yaxis: { title: { text: 'Cumulative Probability' }, range: [0, 1.02] }, showlegend: true, legend: { orientation: 'h', y: -0.25 } }, { width, height: 320, title: 'CDF Plot' }),
+      ctx.code(owByLevelCode(ctx, y, x, levels, names, block, body, 'CDF Plot', [width, 320])));
   }
 
-  async function owDensities(ctx, host, sc, base, names, mode, y) {
+  async function owDensities(ctx, host, sc, base, names, mode, y, x) {
     const ob = ctx.outline('Densities', { parent: host, key: `dens:${sc}`, menu: () => [
       ...[['compare', 'Compare Densities'], ['composition', 'Composition of Densities'], ['proportion', 'Proportion of Densities']].map(([k, l]) => ({ label: l, checked: mode === k, action: () => ctx.set('densities', k, sc) })),
       { separator: true }, { label: 'Remove', action: () => ctx.set('densities', null, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_densities', base);
+    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_densities', { ...base, mode, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
     if (error) { ob.add(problem(ctx, error)); return; }
     const L = r.levels.filter((l) => l.density);
     const traces = [];
@@ -1118,7 +1264,7 @@
       L.forEach((l) => traces.push({ type: 'scatter', mode: 'lines', stackgroup: 'd', x: r.x, y: l.density.map((d, j) => (mode === 'proportion' ? (tot[j] > 0 ? l.share * d / tot[j] : 0) : l.share * d)), line: { color: PALETTE[l.index % PALETTE.length], width: 1 }, name: names[l.index] }));
     }
     ob.add(ctx.plot(traces, { xaxis: { title: { text: y.name } }, yaxis: { title: { text: mode === 'proportion' ? 'Proportion' : 'Density' }, rangemode: 'tozero' }, showlegend: true, legend: { orientation: 'h', y: -0.25 } }, { width: availWidth(ctx, 480), height: 320, title: 'Densities', select: false }),
-      ctx.note('Gaussian kernel densities of each level (scipy.stats.gaussian_kde); Composition stacks them weighted by the levels\' shares, Proportion shows each level\'s share at each value.'), ctx.code(r.code));
+      ctx.code(r.plot_code), ctx.note('Gaussian kernel densities of each level (scipy.stats.gaussian_kde); Composition stacks them weighted by the levels\' shares, Proportion shows each level\'s share at each value.'), ctx.code(r.code));
   }
 
   function owMenu(ctx, sc, y, x) {
@@ -1276,7 +1422,8 @@
       const over = mids.length ? mids[mids.length - 1] - (1 - gapY / 2) : 0;
       if (over > 0) for (let j = mids.length - 1; j >= 0; j--) mids[j] = Math.min(mids[j] - (j === mids.length - 1 ? over : 0), j < mids.length - 1 ? mids[j + 1] - gapY : 1);
       const ann = names.map((nm, j) => ({ x: 1.01, xref: 'paper', y: Math.max(0.01, mids[j]), yref: 'y', text: nm, showarrow: false, xanchor: 'left', font: { size: 10.5, color: PALETTE[j % PALETTE.length] } }));
-      host.add(ctx.plot(traces, { xaxis: { title: { text: x.name } }, yaxis: { title: { text: y.name }, range: [0, 1] }, annotations: ann, margin: { l: 60, r: 80, t: 10, b: 44 } }, { width: availWidth(ctx, 560), height: 380, title: `${y.name} by ${x.name} logistic plot` }));
+      host.add(ctx.plot(traces, { xaxis: { title: { text: x.name } }, yaxis: { title: { text: y.name }, range: [0, 1] }, annotations: ann, margin: { l: 60, r: 80, t: 10, b: 44 } }, { width: availWidth(ctx, 560), height: 380, title: `${y.name} by ${x.name} logistic plot` }),
+        ctx.code(res.plot_code));
     }
     const wm = ctx.outline('Whole Model Test', { parent: host, key: `wm:${sc}`, info: 'p:fitybyx:logistic' });
     wm.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'nll', label: '-LogLikelihood' }, { key: 'df', label: 'DF' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.whole }, { sortable: false }),
@@ -1313,7 +1460,7 @@
       const ob = ctx.outline('ROC Curve', { parent: host, key: `roc:${sc}` });
       const traces = res.roc.map((r) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, line: { color: PALETTE[r.level % PALETTE.length], width: 1.8, shape: 'linear' }, name: `${names[r.level]} (AUC ${r.auc.toFixed(4)})` }));
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: [0, 1], line: { color: GREY, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
-      ob.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: '1-Specificity (False Positive Rate)' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity (True Positive Rate)' }, range: [0, 1] }, showlegend: true, legend: { orientation: 'h', y: -0.28 } }, { width: availWidth(ctx, 360), height: 360, title: 'ROC Curve', select: false }),
+      ob.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: '1-Specificity (False Positive Rate)' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity (True Positive Rate)' }, range: [0, 1] }, showlegend: true, legend: { orientation: 'h', y: -0.28 } }, { width: availWidth(ctx, 360), height: 360, title: 'ROC Curve', select: false }), ctx.code(res.roc_code)),
         ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'auc', label: 'Area Under Curve' }], rows: res.roc.map((r) => ({ lv: names[r.level], auc: r.auc })) }, { sortable: false })),
       ctx.note(k === 2 ? `Sensitivity and 1 − specificity of classifying ${names[res.target]} by its fitted probability, over every cutoff.` : 'Each level against the rest, by its fitted probability.'));
     }
@@ -1322,7 +1469,7 @@
       ob.add(ctx.plot(res.lift.map((l) => ({ type: 'scatter', mode: 'lines', x: l.portion, y: l.lift, line: { color: PALETTE[l.level % PALETTE.length], width: 1.6 }, name: names[l.level] }))
         .concat([{ type: 'scatter', mode: 'lines', x: [0, 1], y: [1, 1], line: { color: GREY, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false }]),
       { xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { title: { text: 'Lift' }, rangemode: 'tozero' }, showlegend: true, legend: { orientation: 'h', y: -0.28 } }, { width: availWidth(ctx, 420), height: 320, title: 'Lift Curve', select: false }),
-      ctx.note('The rate of the level among the rows with the highest fitted probabilities, divided by its overall rate.'));
+      ctx.code(res.lift_code), ctx.note('The rate of the level among the rows with the highest fitted probabilities, divided by its overall rate.'));
     }
     if (o('confusion', false)) {
       const ob = ctx.outline('Confusion Matrix', { parent: host, key: `cm:${sc}` });
@@ -1442,7 +1589,7 @@
     const P = pointsOf(ctx, y, x);
     if (o('mosaic', true)) {
       const ob = ctx.outline('Mosaic Plot', { parent: host, key: `mosaic:${sc}` });
-      ob.add(mosaic(ctx, res, y, x, P));
+      ob.add(mosaic(ctx, res, y, x, P), ctx.code(res.plot_code));
     }
     if (o('ctable', true)) {
       const cells = o('cells', ['count', 'total', 'col', 'row']);
@@ -1533,6 +1680,7 @@
       { type: 'scatter', mode: 'lines', x: hi.X, y: hi.Y, line: { color: RED, width: 1.2 }, hoverinfo: 'skip', name: 'UDL' },
       { type: 'scatter', mode: 'lines+markers', x: xs, y: L.map((l) => l.p), marker: { size: 8, color: L.map((l) => (l.out ? RED : SM.report.BASE)) }, line: { color: GREY, width: 1 }, text: names, hovertemplate: '%{text}: %{y:.4f}<extra></extra>', name: 'Proportions' },
     ], { xaxis: { tickvals: xs, ticktext: names, range: [-0.6, L.length - 0.4], title: { text: x.name } }, yaxis: { title: { text: `Proportion of ${ev}` } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.pbar, y1: r.pbar, line: { color: GREY, width: 1 } }] }, { width: availWidth(ctx, Math.max(360, 120 + 60 * L.length)), height: 280, title: 'Analysis of Means for Proportions', select: false }),
+    ctx.code(r.plot_code),
     ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'n', label: 'N' }, { key: 'p', label: `Proportion ${ev}` }, { key: 'ldl', label: 'Lower Decision Limit' }, { key: 'udl', label: 'Upper Decision Limit' }, { key: 'flag', label: 'Outside', fmt: 'text' }],
       rows: L.map((l, i) => ({ ...l, lv: names[i], flag: l.out ? 'yes' : '' })) }, { sortable: false }),
     ctx.kv([['Overall proportion', r.pbar], ['h (exact, normal)', r.h], ['Alpha', r.alpha]]),
@@ -1548,7 +1696,8 @@
       { type: 'scatter', mode: 'markers+text', x: r.rows.map((v) => v.c1), y: r.rows.map((v) => (two ? v.c2 : 0)), text: r.rows.map((v) => lvText(x, v.level)), textposition: 'top center', marker: { color: SM.report.BASE, size: 8, symbol: 'circle' }, name: x.name, hoverinfo: 'text' },
       { type: 'scatter', mode: 'markers+text', x: r.cols.map((v) => v.c1), y: r.cols.map((v) => (two ? v.c2 : 0)), text: r.cols.map((v) => lvText(y, v.level)), textposition: 'bottom center', marker: { color: RED, size: 8, symbol: 'square' }, name: y.name, hoverinfo: 'text' },
     ];
-    ob.add(ctx.plot(pts, { xaxis: { title: { text: `c1 (${(100 * r.details[0].portion).toFixed(1)}%)` }, zeroline: true }, yaxis: { title: { text: two ? `c2 (${(100 * r.details[1].portion).toFixed(1)}%)` : '' }, zeroline: true }, showlegend: true, legend: { orientation: 'h', y: -0.22 } }, { width: availWidth(ctx, 460), height: 380, title: 'Correspondence Analysis', select: false }));
+    ob.add(ctx.plot(pts, { xaxis: { title: { text: `c1 (${(100 * r.details[0].portion).toFixed(1)}%)` }, zeroline: true }, yaxis: { title: { text: two ? `c2 (${(100 * r.details[1].portion).toFixed(1)}%)` : '' }, zeroline: true }, showlegend: true, legend: { orientation: 'h', y: -0.22 } }, { width: availWidth(ctx, 460), height: 380, title: 'Correspondence Analysis', select: false }),
+      ctx.code(r.plot_code));
     const det = ctx.outline('Details', { parent: ob, key: `cad:${sc}` });
     det.add(ctx.rt({ columns: [{ key: 'sv', label: 'Singular Value' }, { key: 'inertia', label: 'Inertia' }, { key: 'portion', label: 'Portion' }, { key: 'cum', label: 'Cumulative' }], rows: r.details }, { sortable: false }),
       ctx.rt({ columns: [{ key: 'lv', label: x.name, fmt: 'text' }, { key: 'c1', label: 'c1' }, { key: 'c2', label: 'c2' }], rows: r.rows.map((v) => ({ ...v, lv: lvText(x, v.level) })) }, { sortable: false }),

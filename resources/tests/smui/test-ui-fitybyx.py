@@ -34,6 +34,7 @@ import sys
 import time
 
 from cdp import BASE, Checks, open_page, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, lines_labelled, maxdiff, points_of, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -929,6 +930,9 @@ async def main():
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 
+    # ---- the graphs' Python code: a block under each graph, run in the page
+    await chart_code(page)
+
     # ---- a large table stays quick
     t0 = time.time()
     r = await page.ev('''(async () => {
@@ -953,6 +957,270 @@ async def main():
     await shot(page, '09-large.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code --------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (the notebook's
+# runner) with test_charts.PROBE in place of plt.show(), and the figure it
+# draws is compared with the Plotly graph above it.
+CHART_TABLE = r'''(() => {
+  const g = SM.util.rng('fitybyx-charts'); const n = 84;
+  const x = [], y = [], w = [], f = [], grp = [], k = [], o = [], by = [], blk = [];
+  for (let i = 0; i < n; i++) {
+    const xi = Math.round(10 * (1 + 9 * g.u())) / 10, gi = ['lo', 'mid', 'hi'][i % 3];
+    x.push(i === 4 ? NaN : xi); y.push(Math.round(100 * (3 + 0.8 * xi - 0.05 * xi * xi + (gi === 'hi' ? 1.2 : gi === 'mid' ? 0.5 : 0) + g.normal(0, 0.8))) / 100);
+    w.push(Math.round(100 * (0.5 + 1.5 * g.u())) / 100); f.push(i === 6 ? 0 : 1 + (i % 3)); grp.push(gi);
+    k.push(g.u() < 1 / (1 + Math.exp(-(xi - 5))) ? 'yes' : 'no'); o.push(xi < 4 ? 'low' : xi > 7 ? 'high' : 'middle'); by.push(i % 2 ? 'u' : 'v'); blk.push(['b1', 'b2', 'b3', 'b4'][Math.floor(i / 3) % 4]);
+  }
+  const t = new SM.Table({ name: 'Chart pairs', columns: [{ name: 'x', values: x }, { name: 'y', values: y }, { name: 'w', values: w }, { name: 'n', values: f },
+    { name: 'g', dataType: 'character', values: grp, valueOrder: ['lo', 'mid', 'hi'] }, { name: 'k', dataType: 'character', values: k },
+    { name: 'o', dataType: 'character', values: o, valueOrder: ['low', 'middle', 'high'], modelingType: 'ordinal' }, { name: 'by', dataType: 'character', values: by }, { name: 'blk', dataType: 'character', values: blk }] });
+  SM.app.addTable(t);
+  return t.nrows;
+})()'''
+
+
+def curve_ok(ln, t, rel=1e-9):
+    """An mpl line with the trace's points (the page's thinned curve lies on it)."""
+    if not ln:
+        return False
+    if close(ln['x'], t['x'], rel, 1e-12) and close(ln['y'], t['y'], rel, 1e-12):
+        return True
+    try:   # the page's curve thinned (lowess): each of its points on the code's curve
+        xs, ys = ln['x'], ln['y']
+        for a, b in points_of(t):
+            i = min(range(len(xs)), key=lambda j: abs(xs[j] - a))
+            if abs(xs[i] - a) > 1e-9 * max(1, abs(a)) or abs(ys[i] - b) > 1e-6 * max(1, abs(b)):
+                return False
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def seg_match(ax, x0, x1, y0, y1):
+    segs = [s for c in ax['segments'] for s in c['segs']]
+    return any(close(s[0], [x0, y0], 1e-9, 1e-9) and close(s[1], [x1, y1], 1e-9, 1e-9) for s in segs)
+
+
+def check_bivariate(label, g, F):
+    ax = F['axes'][0]
+    check(f'{label}: the title and the size', ((ax['title'] or F['suptitle']), F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+    check(f'{label}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+    pts = [t for t in g['traces'] if t.get('name') == 'Points']
+    if pts:
+        got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'{label}: the points', maxdiff([q for p in got for q in p], [q for p in points_of(pts[0]) for q in p]), 0, 1e-12)
+    named = [t for t in g['traces'] if t.get('type') == 'scatter' and t.get('showlegend') and t.get('name') and t['name'] != 'Points']
+    for t in named:
+        lns = lines_labelled(ax, t['name'])
+        spline_gcv = 'lambda by GCV' in t['name']
+        check(f'{label}: the curve of {t["name"]}', curve_ok(lns[0] if lns else None, t, 1e-4 if spline_gcv else 1e-9), True)
+    for t in [t for t in g['traces'] if t.get('type') == 'scatter' and t.get('mode') == 'lines' and not t.get('showlegend') and t.get('dash') in ('dash', 'dot') and not t.get('fill')]:
+        ls = '--' if t['dash'] == 'dash' else ':'
+        check(f'{label}: a confidence curve ({t["dash"]})', any(ln['ls'] == ls and close(ln['x'], t['x'], 1e-9, 1e-12) and close(ln['y'], t['y'], 1e-9, 1e-12) for ln in ax['lines']), True)
+    shades = [t for t in g['traces'] if t.get('fill') == 'toself']
+    check(f'{label}: the shaded bands', len(ax['polys']) - sum(1 for p in ax['polys'] if 'contour' in p), len(shades))
+    for t, p in zip(shades, [p for p in ax['polys'] if 'contour' not in p]):
+        ys = [q[1] for q in p['paths'][0] if q[1] is not None]
+        tys = [v for v in t['y'] if v is not None]
+        check.near(f'{label}: a shaded band spans the report\'s', max(abs(min(ys) - min(tys)), abs(max(ys) - max(tys))), 0, 1e-9)
+    contours = [t for t in g['traces'] if t.get('type') == 'contour']
+    if contours:
+        got = sorted(v for p in ax['polys'] if 'contour' in p for v in p['contour'])
+        check.near(f'{label}: the density contours\' levels', maxdiff(got, sorted(t['contours']['start'] for t in contours)), 0, 1e-12)
+    bars = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('x') and t.get('y') and t.get('hoverinfo') == 'skip' and t.get('showlegend') is False and t.get('width')]
+    if bars:
+        top, side = F['axes'][1], F['axes'][2]
+        bx = [t for t in bars if t.get('yaxis') == 'y2'][0]
+        by = [t for t in bars if t.get('xaxis') == 'x2'][0]
+        check.near(f'{label}: the histogram border of X', maxdiff([b['h'] for b in top['bars']], bx['y']), 0, 1e-12)
+        check.near(f'{label}: the histogram border of Y', maxdiff([b['w'] for b in side['bars']], by['x']), 0, 1e-12)
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev('__gr.idle()')   # the reports run again by a change of theme are done
+    await page.ev(CHART_TABLE)
+    tbl = "__fyx.table('Chart pairs')"
+    # ---- Bivariate: every fit, the bands, the histogram borders
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('Chart pairs'); const sc = t.col('y').id + '~' + t.col('x').id;
+      const o = {}; o[sc + '|hist'] = true;
+      o[sc + '|fits'] = [{ id: 'f1', kind: 'line', cfit: true, cind: true, sfit: true, sind: true }, { id: 'f2', kind: 'poly', degree: 3 }, { id: 'f3', kind: 'spline', lam: 1 },
+        { id: 'f4', kind: 'lowess', frac: 0.5, it: 1 }, { id: 'f5', kind: 'each' }, { id: 'f6', kind: 'robust', method: 'huber' }, { id: 'f7', kind: 'orth', mode: 'univariate' },
+        { id: 'f8', kind: 'ellipse', p: 0.9 }, { id: 'f9', kind: 'kde' }, { id: 'f10', kind: 'quantile', tau: 0.5 }, { id: 'f11', kind: 'mean' },
+        { id: 'f12', kind: 'special', ytr: 'log', xtr: 'sqrt', degree: 2, cfit: true }, { id: 'f13', kind: 'spline', lam: null, standardize: true }];
+      const rep = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['x'] }, o);
+      const o2 = {}; o2[sc + '|groupBy'] = t.col('g').id; o2[sc + '|fits'] = [{ id: 'f1', kind: 'line', resid: true, sfit: true }, { id: 'f2', kind: 'poly', degree: 2, cfit: true }];
+      const rep2 = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['x'], weight: ['w'], freq: ['n'] }, o2);
+      // each report's graphs before the change to the rows runs it again
+      const g1 = await __gr.graphs(rep), g2 = await __gr.graphs(rep2);
+      t.setState([10, 11, 12, 13], 'excluded', true);
+      const o3 = {}; o3[sc + '|fits'] = [{ id: 'f1', kind: 'line', resid: true }];
+      const rep3 = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['x'], by: ['by'] }, o3);
+      const g3 = await __gr.graphs(rep3), errors = [rep, rep2, rep3].flatMap((x) => __fyx.errors(x));
+      t.setState([10, 11, 12, 13], 'excluded', false);
+      return { g1, g2, g3, errors, undrawn: __gr.take() };
+    })()''')
+    check('charts: no errors (Bivariate with every fit, Group By with weights, By with excluded rows)', r['errors'], [])
+    check('charts: every graph of the Bivariate reports drawn (none in a closed outline)', r['undrawn'], [])
+    diag = ['Residual by Predicted', 'Actual by Predicted', 'Residual by Row', 'Residual by x', 'Residual Normal Quantile Plot']
+    check('charts: the graphs of the Group By report (the scatterplot, a line fit\'s diagnostics for each group)', [g['label'] for g in r['g2']], ['y by x'] + diag * 3)
+    for g in r['g1'] + r['g2'] + r['g3']:
+        check(f'charts: {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    for tag, gs in (('Bivariate', r['g1'][:1]), ('Bivariate (Group By, Weight, Freq)', r['g2']), ('Bivariate (By, excluded rows)', r['g3'])):
+        for i, g in enumerate(gs):
+            F, err = await run_graph(page, g, tbl)
+            lab = f'{tag}: {g["label"]}' + (f' ({i})' if g['label'] != 'y by x' else '')
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            if g['label'] == 'y by x':
+                check_bivariate(lab, g, F)
+            else:
+                ax = F['axes'][0]
+                got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+                # the page's normal quantiles are its own approximation (relative error below 1.2e-9)
+                check.near(f'{lab}: the points', maxdiff([q for p in got for q in p], [q for p in points_of(g['traces'][0]) for q in p]), 0, 1e-8)
+                check(f'{lab}: the titles', (ax['title'], ax['xlabel'], ax['ylabel']), (g['label'], g['titles']['x'], g['titles']['y']))
+    # ---- Oneway: every overlay, the comparison circles, ANOM, the quantile, CDF and density plots; a block
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('Chart pairs'); const sc = t.col('y').id + '~' + t.col('g').id;
+      const o = {}; for (const k of ['points', 'jitter', 'box', 'diamonds', 'meanLines', 'errorBars', 'sdLines', 'ciLines', 'grandMean', 'connect', 'anova', 'anom', 'cdf']) o[sc + '|' + k] = true;
+      o[sc + '|compare'] = [{ method: 'tukey', control: null }]; o[sc + '|nqp'] = { orient: 'aq' }; o[sc + '|densities'] = 'composition';
+      const rep = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['g'], freq: ['n'] }, o);
+      const o2 = {}; o2[sc + '|anova'] = true; o2[sc + '|compare'] = [{ method: 'dunnett', control: 'mid' }]; o2[sc + '|nqp'] = { orient: 'qa' }; o2[sc + '|densities'] = 'proportion';
+      const rep2 = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['g'], weight: ['w'] }, o2);
+      const o3 = {}; o3[sc + '|anova'] = true; o3[sc + '|meansd'] = true; o3[sc + '|densities'] = 'compare';
+      const rep3 = await __fyx.open('Chart pairs', 'fitybyx', { y: ['y'], x: ['g'], block: ['blk'] }, o3);
+      return { g1: await __gr.graphs(rep), g2: await __gr.graphs(rep2), g3: await __gr.graphs(rep3), errors: [rep, rep2, rep3].flatMap((x) => __fyx.errors(x)), undrawn: __gr.take() };
+    })()''')
+    check('charts: no errors (Oneway with its overlays and plots)', r['errors'], [])
+    check('charts: every graph of the Oneway reports drawn', r['undrawn'], [])
+    check('charts: the Oneway graphs', [g['label'] for g in r['g1']], ['y by g', 'Analysis of Means', 'Normal Quantile Plot', 'CDF Plot', 'Densities'])
+    for g in r['g1'] + r['g2'] + r['g3']:
+        check(f'charts: {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    for tag, gs in (('Oneway (Freq, Tukey)', r['g1']), ('Oneway (Weight, Dunnett)', r['g2']), ('Oneway (block)', r['g3'])):
+        for g in gs:
+            F, err = await run_graph(page, g, tbl)
+            lab = f'{tag}: {g["label"]}'
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            if g['label'] == 'y by g':
+                check_oneway(lab, g, F)
+            elif g['label'] in ('Analysis of Means',):
+                lims = [(a, b) for t in g['traces'] if t.get('name') in ('LDL', 'UDL') for a, b in zip(points_of(t)[::2], points_of(t)[1::2])]
+                check(f'{lab}: the decision limits', all(seg_match(ax, p0[0], p1[0], p0[1], p1[1]) for p0, p1 in lims) and len(lims) > 0, True)
+                means = [t for t in g['traces'] if t.get('name') == 'Means'][0]
+                check.near(f'{lab}: the means', maxdiff([q[1] for q in ax['scatter'][0]['xy']], means['y']), 0, 1e-12)
+            elif g['label'] == 'Normal Quantile Plot':   # the page's normal quantiles are its own approximation (relative error below 1.2e-9)
+                for t in [t for t in g['traces'] if t.get('mode') == 'markers']:
+                    sc = [s for s in ax['scatter'] if s['label'] == t['name']]
+                    check.near(f'{lab}: the points of {t["name"]}', maxdiff([q for p in (sc[0]['xy'] if sc else []) for q in p], [q for p in points_of(t) for q in p]), 0, 1e-8)
+                for t in [t for t in g['traces'] if t.get('mode') == 'lines']:
+                    check(f'{lab}: a normal line', find_line(ax, t['x'], t['y'], rel=1e-8, abs_=1e-8) is not None, True)
+            elif g['label'] == 'CDF Plot':
+                for t in g['traces']:
+                    ln = lines_labelled(ax, t['name'])
+                    check(f'{lab}: the steps of {t["name"]}', bool(ln) and close(ln[0]['x'], t['x'], 1e-12) and close(ln[0]['y'], t['y'], 1e-12) and ln[0]['drawstyle'] == 'steps-post', True)
+            elif g['label'] == 'Densities':
+                if any(t.get('stackgroup') for t in g['traces']):
+                    acc = None
+                    tops = []
+                    for t in g['traces']:
+                        acc = list(t['y']) if acc is None else [a + b for a, b in zip(acc, t['y'])]
+                        tops.append(max(acc))
+                    check.near(f'{lab}: the stacked shares', maxdiff([max(q[1] for q in p['paths'][0]) for p in ax['polys']], tops), 0, 1e-9)
+                else:
+                    for t in g['traces']:
+                        ln = lines_labelled(ax, t['name'])
+                        check(f'{lab}: the density of {t["name"]}', bool(ln) and close(ln[0]['x'], t['x'], 1e-12) and close(ln[0]['y'], t['y'], 1e-9, 1e-12), True)
+            check(f'{lab}: the titles', ((ax['title'] or F['suptitle']), ax['xlabel'], ax['ylabel']), (g['label'], g['titles']['x'] or '', g['titles']['y'] or ''))
+    # ---- Logistic and Contingency
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('Chart pairs'); const s1 = t.col('k').id + '~' + t.col('x').id, s2 = t.col('g').id + '~' + t.col('x').id;
+      const o = {}; o[s1 + '|roc'] = true; o[s1 + '|lift'] = true; o[s2 + '|roc'] = true;
+      const rep = await __fyx.open('Chart pairs', 'fitybyx', { y: ['k', 'g'], x: ['x'], freq: ['n'] }, o);
+      const s3 = t.col('k').id + '~' + t.col('g').id, s4 = t.col('o').id + '~' + t.col('blk').id;
+      const o2 = {}; o2[s3 + '|anomp'] = true; o2[s4 + '|ca'] = true;
+      const rep2 = await __fyx.open('Chart pairs', 'fitybyx', { y: ['k', 'o'], x: ['g', 'blk'], weight: ['w'] }, o2);
+      return { g1: await __gr.graphs(rep), g2: await __gr.graphs(rep2), errors: [rep, rep2].flatMap((x) => __fyx.errors(x)), undrawn: __gr.take() };
+    })()''')
+    check('charts: no errors (Logistic, Contingency)', r['errors'], [])
+    check('charts: every graph of the Logistic and Contingency reports drawn', r['undrawn'], [])
+    for g in r['g1'] + r['g2']:
+        check(f'charts: {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    for i, g in enumerate(r['g1'] + r['g2']):
+        F, err = await run_graph(page, g, tbl)
+        lab = f'{g["label"]} ({i})'
+        check(f'{lab}: the code runs in the page', err, None)
+        if not F:
+            continue
+        F = F[0]
+        ax = F['axes'][0]
+        if g['label'].endswith('logistic plot'):
+            curves = [t for t in g['traces'] if t.get('mode') == 'lines']
+            check(f'{lab}: the cumulative probability curves', all(find_line(ax, t['x'], t['y'], rel=1e-6, abs_=1e-9) is not None for t in curves) and len(curves) > 0, True)
+            pts = [t for t in g['traces'] if t.get('name') == 'Points'][0]
+            got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+            check.near(f'{lab}: the points at their X', maxdiff([p[0] for p in got], pts['x']), 0, 1e-12)
+            check(f'{lab}: the titles', (ax['title'], ax['xlabel'], ax['ylabel']), (g['label'], g['titles']['x'], g['titles']['y']))
+        elif g['label'] in ('ROC Curve', 'Lift Curve'):
+            curves = [t for t in g['traces'] if t.get('showlegend') is not False]
+            for t in curves:
+                check(f'{lab}: the curve of {t["name"]}', find_line(ax, t['x'], t['y'], rel=1e-9, abs_=1e-12) is not None, True)
+            check(f'{lab}: the legend', F['legend'], [t['name'] for t in curves])
+        elif g['label'].endswith('mosaic'):
+            cells = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('x') and len(t['x']) == 1 and t.get('y') and len(t['y']) == 1 and t.get('base')]
+            want = sorted((round(t['x'][0], 9), round(t['base'][0], 9), round(t['y'][0], 9), round(t['width'] if not isinstance(t['width'], list) else t['width'][0], 9)) for t in cells)
+            got = sorted((round(b['x'] + b['w'] / 2, 9), round(b['y'], 9), round(b['h'], 9), round(b['w'], 9)) for b in ax['bars'])
+            check(f'{lab}: every cell, where the page draws it', got, want)
+            check(f'{lab}: the titles', (ax['title'], ax['xlabel'], ax['ylabel']), (g['label'], g['titles']['x'], g['titles']['y']))
+        elif g['label'] == 'Analysis of Means for Proportions':
+            lims = [(a, b) for t in g['traces'] if t.get('name') in ('LDL', 'UDL') for a, b in zip(points_of(t)[::2], points_of(t)[1::2])]
+            check(f'{lab}: the decision limits', all(seg_match(ax, p0[0], p1[0], p0[1], p1[1]) for p0, p1 in lims) and len(lims) > 0, True)
+            props = [t for t in g['traces'] if t.get('name') == 'Proportions'][0]
+            check.near(f'{lab}: the proportions', maxdiff([q[1] for q in ax['scatter'][0]['xy']], props['y']), 0, 1e-12)
+            check(f'{lab}: the titles', (ax['title'], ax['xlabel'], ax['ylabel']), (g['label'], g['titles']['x'], g['titles']['y']))
+        elif g['label'] == 'Correspondence Analysis':
+            for t, sc in zip(g['traces'], ax['scatter']):
+                check.near(f'{lab}: the coordinates of {t["name"]}\'s levels', maxdiff([q for p in sc['xy'] for q in p], [q for p in points_of(t) for q in p]), 0, 1e-9)
+            check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.table && x.table.name === 'Chart pairs')) SM.app.closeReport(r); SM.app.closeTable(__fyx.table('Chart pairs'));")
+
+
+def check_oneway(lab, g, F):
+    ax = F['axes'][0]
+    check(f'{lab}: the levels on the axis', [t for t in ax['xticklabels'] if t], g['ticks'])
+    pts = [t for t in g['traces'] if t.get('name') == 'Points'][0]
+    got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+    same = len(got) == len(pts['y']) and all(round(a[0]) == round(b) and abs(a[0] - round(a[0])) <= 0.23 + 1e-9 and abs(a[1] - c) < 1e-12 for a, b, c in zip(got, pts['x'], pts['y']))
+    check(f'{lab}: each point at its level (jittered) and its value', same, True)
+    ys = [ln['y'] for ln in ax['lines']]
+    for t in [t for t in g['traces'] if t.get('type') == 'box']:
+        ok = any(close(v, [t['median'][0]] * 2) for v in ys) and any(close(v, [t['q1'][0], t['lowerfence'][0]]) for v in ys) and any(close(v, [t['q3'][0], t['upperfence'][0]]) for v in ys)
+        check(f'{lab}: the box plot of {t["name"]}', ok, True)
+    for t in [t for t in g['traces'] if t.get('type') == 'scatter' and t.get('mode') == 'lines' and t.get('x') and len(t['x']) == 14]:
+        check(f'{lab}: a means diamond', find_line(ax, t['x'][:5], t['y'][:5], rel=1e-9) is not None, True)
+    for s in g['shapes']:
+        if s.get('xref') in (None, 'x'):
+            check(f'{lab}: a mean, error-bar, std dev or CI line at {s["y0"]:.4g}', seg_match(ax, s['x0'], s['x1'], s['y0'], s['y1']), True)
+        else:
+            check(f'{lab}: the grand mean', find_line(ax, None, [s['y0'], s['y0']], rel=1e-12) is not None, True)
+    conn = [t for t in g['traces'] if t.get('mode') == 'lines+markers']
+    if conn:
+        check(f'{lab}: the connected means', find_line(ax, conn[0]['x'], conn[0]['y'], rel=1e-12) is not None, True)
+    circles = [t for t in g['traces'] if t.get('xaxis') == 'x2']
+    if circles:
+        cx = F['axes'][1]
+        ells = [p for p in cx['patches'] if p['type'] == 'ellipse']
+        want = [((max(t['y']) + min(t['y'])) / 2, (max(t['y']) - min(t['y'])) / 2) for t in circles]
+        check.near(f'{lab}: the comparison circles\' centres and radii', maxdiff([q for e in ells for q in (e['center'][1], e['h'] / 2)], [q for c in want for q in c]), 0, 1e-6)
 
 
 asyncio.run(main())

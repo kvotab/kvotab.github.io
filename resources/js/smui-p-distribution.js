@@ -171,6 +171,135 @@
     return q ? q.value : NaN;
   }
 
+  /* ---- the graphs as matplotlib code ---------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table, as the notebook runs it: the report's rows, the light theme's
+     colours, the graph's size at 100 pixels an inch. The graphs whose numbers
+     the backend makes get their code from it (plot_code, mosaic_code); the
+     histogram with its box plots and the CDF plot, whose bins and sums the
+     page works out, get theirs here. */
+  const PAPER = { text: '#352921', muted: '#786b5d', base: '#2f6690' };
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const inches = (px) => String(Math.round(px) / 100);
+
+  // The line that keeps the report's rows of the table as exported (a By
+  // group, rows excluded or filtered out), as the backend's code does.
+  function rowsLines(ctx) {
+    const t = ctx.table, keep = ctx.rows;
+    if (!t || keep.length === t.nrows) return [];
+    if (keep.length > t.nrows / 2) {
+      const set = new Set(keep), drop = [];
+      for (let r = 0; r < t.nrows; r++) if (!set.has(r)) drop.push(r);
+      return drop.length ? [`df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out`] : [];
+    }
+    return [`df = df.loc[[${keep.join(', ')}]]   # the rows of the report`];
+  }
+
+  // x and its weights w as valuesOf takes them: a value, Weight times Freq above zero.
+  function valueLines(ctx, col) {
+    const w = ctx.name('weight'), f = ctx.name('freq');
+    if (!w && !f) return [`x = df[${J(col.name)}].dropna().to_numpy()`, 'w = np.ones(len(x))'];
+    const cols = [...new Set([col.name, w, f].filter(Boolean))];
+    return [`d = df[${J(cols)}].dropna()`, `wt = ${[w, f].filter(Boolean).map((c) => `d[${J(c)}]`).join(' * ')}   # ${w && f ? 'Weight times Freq' : w ? 'Weight' : 'Freq'}`,
+      'd, wt = d[wt > 0], wt[wt > 0]   # the rows with a positive weight', `x, w = d[${J(col.name)}].to_numpy(), wt.to_numpy()`];
+  }
+
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-dist-plotcode', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: '0', maxWidth: '100%' } }, graph, code) : graph);
+
+  /* The histogram beside (or above) the outlier box plot, as the page draws it. */
+  function histogramCode(ctx, col, g) {
+    const hz = g.horizontal;
+    const fits = g.fits;
+    const imports = ['from statsmodels.stats.weightstats import DescrStatsW'];
+    if (fits.length) imports.push('from scipy import stats, optimize');
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt', ...imports]), ...rowsLines(ctx), ...valueLines(ctx, col)];
+    L.push(`start, size, nb = ${pyNum(g.bins.start)}, ${pyNum(g.bins.size)}, ${g.nb}   # the page's bins${g.binWidth ? ' (Set Bin Width)' : ''}${g.range ? ', over the range of every column (Uniform Scaling)' : ''}`,
+      'k = np.clip(np.floor((x - start) / size + 1e-9), 0, nb - 1).astype(int)   # each value\'s bin, as the page counts',
+      'counts = np.bincount(k, weights=w, minlength=nb)', 'mids = start + (np.arange(nb) + 0.5) * size', 'total = counts.sum()');
+    L.push(g.probAxis === 'prob' ? 'scale = 1 / total   # Prob Axis' : g.probAxis === 'density' ? 'scale = 1 / (total * size)   # Density Axis' : 'scale = 1   # Count Axis');
+    const box = g.showBox && !g.histOnly, qbox = g.qbox && !g.histOnly;
+    if (box || qbox) {
+      L.push(g.weighted ? 'q1, med, q3 = DescrStatsW(x, weights=w).quantile([0.25, 0.5, 0.75], return_pandas=False)   # the weighted quartiles'
+        : 'q1, med, q3 = np.quantile(x, [0.25, 0.5, 0.75], method="weibull")   # JMP\'s quartiles, the (n + 1)p-th values');
+    }
+    if (box) {
+      L.push('iqr = q3 - q1', 'lo, hi = x[x >= q1 - 1.5 * iqr].min(), x[x <= q3 + 1.5 * iqr].max()   # the whiskers: the furthest values within 1.5 IQR of the box');
+      if (g.meanCI) L.push(`ds = DescrStatsW(x, weights=w, ddof=1)`, `mean, (lower, upper) = ds.mean, ds.tconfint_mean(alpha=${pyNum(g.alpha)})   # the mean diamond: the mean and its ${fmt(100 * (1 - g.alpha))}% interval`);
+      if (g.shortest) L.push('xs = np.sort(x); h = len(xs) // 2 + 1', 'i = np.argmin(xs[h - 1:] - xs[:len(xs) - h + 1])   # the shortest half: the densest half of the values');
+    }
+    if (qbox) {
+      L.push(g.weighted ? 'qs = DescrStatsW(x, weights=w).quantile([0.005, 0.025, 0.1, 0.9, 0.975, 0.995], return_pandas=False)   # the quantile box\'s marks'
+        : 'qs = np.quantile(x, [0.005, 0.025, 0.1, 0.9, 0.975, 0.995], method="weibull")   # the quantile box\'s marks');
+    }
+    if (fits.length) L.push(g.weighted ? `xf = df[${J(col.name)}].dropna().to_numpy()   # the fits take each row once, without the weights` : 'xf = x   # the values the fits take');
+    const W = inches(g.width), H = inches(g.height);
+    if (g.histOnly) L.push(`fig, ax = plt.subplots(figsize=(${W}, ${H}), layout="constrained")`);
+    else if (hz) L.push(`fig, (ax, bx) = plt.subplots(2, 1, sharex=True, figsize=(${W}, ${H}), layout="constrained", gridspec_kw={"height_ratios": [70, 22]})`);
+    else L.push(`fig, (ax, bx) = plt.subplots(1, 2, sharey=True, figsize=(${W}, ${H}), layout="constrained", gridspec_kw={"width_ratios": [70, 24]})`);
+    if (g.showHist) {
+      L.push(hz ? `bars = ax.bar(mids, counts * scale, width=size, color="${SM.report.BAR}", edgecolor="white", linewidth=0.6)`
+        : `bars = ax.barh(mids, counts * scale, height=size, color="${SM.report.BAR}", edgecolor="white", linewidth=0.6)`);
+      if (g.showCounts && g.showPct) L.push('ax.bar_label(bars, labels=[f"{c:.7g} {100 * c / total:.1f}%" for c in counts], fontsize=8)   # Show Counts and Show Percents');
+      else if (g.showCounts) L.push('ax.bar_label(bars, labels=[f"{c:.7g}" for c in counts], fontsize=8)   # Show Counts');
+      else if (g.showPct) L.push('ax.bar_label(bars, labels=[f"{100 * c / total:.1f}%" for c in counts], fontsize=8)   # Show Percents');
+    }
+    if (!g.histOnly) {
+      for (const f of fits) {
+        L.push(`# ${f.label}: fitted as in the report (${f.dist === 'kde' ? 'Smooth Curve' : `Fitted ${f.label} Distribution`} below)`, ...f.curve_code);
+        const ys = f.curve.discrete ? 'f * total * scale' : 'f * total * size * scale';
+        const args = hz ? `g, ${ys}` : `${ys}, g`;
+        L.push(f.curve.discrete ? `ax.plot(${args}, color="${f.color}", linewidth=1.4, marker="o", markersize=3, drawstyle="steps-mid", label=${J(f.label)})`
+          : `ax.plot(${args}, color="${f.color}", linewidth=1.4, label=${J(f.label)})`);
+      }
+    }
+    const cnt = g.probAxis === 'prob' ? 'Probability' : g.probAxis === 'density' ? 'Density' : 'Count';
+    L.push(hz ? `ax.set_xlabel(${J(col.name)})` : `ax.set_ylabel(${J(col.name)})`, hz ? `ax.set_ylabel("${cnt}")` : `ax.set_xlabel("${cnt}")`);
+    if (g.valRange) L.push(`ax.set_${hz ? 'x' : 'y'}lim(${pyNum(g.valRange[0])}, ${pyNum(g.valRange[1])})   # Uniform Scaling: the range of every column`);
+    if (!g.histOnly) {
+      const orient = hz ? ', orientation="horizontal"' : '';
+      const edge = `{"color": "${PAPER.text}", "linewidth": 0.7}`;
+      if (box) {
+        L.push(`bx.bxp([{"q1": q1, "med": med, "q3": q3, "whislo": lo, "whishi": hi, "fliers": x[(x < lo) | (x > hi)]}], positions=[0], widths=0.55${orient}, patch_artist=True,`,
+          `        boxprops={"facecolor": "#8fa9c240", "edgecolor": "${PAPER.text}", "linewidth": 0.7}, medianprops=${edge}, whiskerprops=${edge}, capprops=${edge},`,
+          `        flierprops={"marker": "o", "markersize": 4, "markerfacecolor": "${PAPER.base}", "markeredgecolor": "none"})   # the outlier box plot`);
+        if (g.meanCI) L.push(hz ? `bx.plot([lower, mean, upper, mean, lower], [0, 0.26, 0, -0.26, 0], color="#b0413e", linewidth=1)   # the mean diamond`
+          : `bx.plot([0, 0.26, 0, -0.26, 0], [lower, mean, upper, mean, lower], color="#b0413e", linewidth=1)   # the mean diamond`);
+        if (g.shortest) L.push(hz ? 'bx.plot([xs[i], xs[i], xs[i + h - 1], xs[i + h - 1]], [0.42, 0.48, 0.48, 0.42], color="#c0392b", linewidth=1.2)   # the shortest half'
+          : 'bx.plot([0.42, 0.48, 0.48, 0.42], [xs[i], xs[i], xs[i + h - 1], xs[i + h - 1]], color="#c0392b", linewidth=1.2)   # the shortest half');
+      }
+      if (qbox) {
+        const mute = `{"color": "${PAPER.muted}", "linewidth": 0.7}`;
+        L.push(`bx.bxp([{"q1": q1, "med": med, "q3": q3, "whislo": x.min(), "whishi": x.max()}], positions=[0.75], widths=0.3${orient}, showfliers=False,`,
+          `        boxprops=${mute}, medianprops=${mute}, whiskerprops=${mute}, capprops=${mute})   # the quantile box plot`,
+          hz ? `bx.plot(qs, np.full(6, 0.75), linestyle="none", marker="|", markersize=9, color="${PAPER.muted}")   # 0.5%, 2.5%, 10%, 90%, 97.5%, 99.5%`
+            : `bx.plot(np.full(6, 0.75), qs, linestyle="none", marker="_", markersize=9, color="${PAPER.muted}")   # 0.5%, 2.5%, 10%, 90%, 97.5%, 99.5%`);
+      }
+      L.push(`bx.set_${hz ? 'y' : 'x'}lim(-0.6, ${qbox ? '1.1' : '0.6'})`, 'bx.axis("off")');
+    }
+    if (g.cap) {
+      for (const [key, label, dash] of [['lsl', 'LSL', '-'], ['target', 'Target', ':'], ['usl', 'USL', '-']]) {
+        const v = g.cap[key];
+        if (v == null) continue;
+        L.push(`for a in ${g.histOnly ? '(ax,)' : '(ax, bx)'}:`, `    a.ax${hz ? 'v' : 'h'}line(${pyNum(v)}, color="#c0392b", linewidth=1, linestyle="${dash}")   # ${label}`);
+        L.push(hz ? `ax.text(${pyNum(v)}, 1, " ${label}", transform=ax.get_xaxis_transform(), va="top", fontsize=8, color="#c0392b")`
+          : `${g.histOnly ? 'ax' : 'bx'}.text(1, ${pyNum(v)}, "${label}", transform=${g.histOnly ? 'ax' : 'bx'}.get_yaxis_transform(), ha="right", va="bottom", fontsize=8, color="#c0392b")`);
+      }
+    }
+    L.push(`fig.suptitle(${J(g.title)}, fontsize=10)`, 'plt.show()');
+    return L.join('\n');
+  }
+
+  /* The CDF plot: the weighted share of the values up to each value. */
+  function cdfCode(ctx, col, title) {
+    return [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt']), ...rowsLines(ctx), ...valueLines(ctx, col),
+      'order = np.argsort(x, kind="stable")', 'xs, cum = x[order], np.cumsum(w[order]) / w.sum()',
+      'fig, ax = plt.subplots(figsize=(4.2, 2.8), layout="constrained")',
+      `ax.plot(xs, cum, drawstyle="steps-post", marker="o", markersize=3, color="${PAPER.base}", linewidth=1.1)`,
+      'ax.set_ylim(0, 1.02)', `ax.set_xlabel(${J(col.name)})`, 'ax.set_ylabel("Cumulative Probability")', `ax.set_title(${J(title)})`, 'plt.show()'].join('\n');
+  }
+
   /* ---- continuous ------------------------------------------------------------ */
   async function continuous(ctx, col, parent, shared) {
     const sc = col.id;
@@ -276,9 +405,15 @@
       margin: { l: 56, r: 8, t: 8, b: 40 }, shapes,
     };
     if (shared.histOnly) { delete layout.xaxis2; delete layout.yaxis2; }
-    const graph = ctx.plot(shared.histOnly ? traces.slice(0, 1) : traces, layout, { width: horizontal ? 470 : 330, height: horizontal ? 290 : 330, title: `${col.name} histogram` });
+    const size = { width: horizontal ? 470 : 330, height: horizontal ? 290 : 330, title: `${col.name} histogram` };
+    const graph = ctx.plot(shared.histOnly ? traces.slice(0, 1) : traces, layout, size);
+    // the fits drawn on the histogram, in their colours
+    const drawn = fits.map((f, i) => ({ ...f, color: FIT_COLORS[i % FIT_COLORS.length] })).filter((f) => f.curve && !f.error && f.curve_code && o(`curve:${f.dist}`, true));
+    const histCode = ctx.code(histogramCode(ctx, col, { ...size, bins, nb: hb.nb, horizontal, probAxis, showHist: o('histogram', true), showBox: o('box', true), qbox: o('qbox', false),
+      fits: drawn, cap, valRange, range, binWidth: o('binWidth', null), showCounts, showPct, histOnly: !!shared.histOnly, weighted, alpha: ctx.alpha,
+      meanCI: Number.isFinite(m.lower), shortest: !!m.shortest_half }));
 
-    if (shared.histOnly) { outline.add(graph); return; }
+    if (shared.histOnly) { outline.add(graph, histCode); return; }
 
     // ---- quantiles and summary statistics
     const quant = ctx.outline('Quantiles', { parent: outline, closed: !o('quantiles', true), key: 'quantiles' });
@@ -293,7 +428,7 @@
     sum.add(ctx.kv(STAT_ROWS.filter((s) => chosen.includes(s[0])).map((s) => [s[1], s[2]])));
 
     const side = el('div', { class: 'sm-dist-tables' }, quant.el, sum.el);
-    outline.add(horizontal ? [graph, ctx.row(quant.el, sum.el)] : ctx.row(graph, side));
+    outline.add(horizontal ? [graph, histCode, ctx.row(quant.el, sum.el)] : ctx.row(withCode(graph, histCode), side));
     sum.add(ctx.code(res.code));
     if (res.normality && o('normality', false)) {
       const nt = ctx.outline('Normality Tests', { parent: outline, key: 'normality' });
@@ -303,7 +438,7 @@
 
     // ---- the optional outlines, in JMP's order
     if (o('qq', false)) {
-      const qq = await ctx.call('distribution.qq', { column: col.name });
+      const qq = await ctx.call('distribution.qq', { column: col.name, prob_axis: !!o('qqProb', false) });
       const zmin = Math.min(...qq.z), zmax = Math.max(...qq.z);
       const ob = ctx.outline('Normal Quantile Plot', { parent: outline, key: 'qq', menu: () => [ctx.check('Show Probability Axis', 'qqProb', sc, false)] });
       const traces2 = [
@@ -314,7 +449,7 @@
       ob.add(ctx.plot(traces2, {
         xaxis: o('qqProb', false) ? { title: { text: 'Normal Quantile Plot (probability)' }, tickvals: probTicks.map(qnorm), ticktext: probTicks.map(String) } : { title: { text: 'Normal Quantile' } },
         yaxis: { title: { text: col.name } },
-      }, { width: 380, height: 300, title: `${col.name} normal quantile plot` }),
+      }, { width: 380, height: 300, title: `${col.name} normal quantile plot` }), ctx.code(qq.plot_code),
       ctx.note('Each value against Φ⁻¹(r/(n+1)), r its rank. Points near the line are consistent with a normal distribution with the sample mean and standard deviation.'));
     }
     if (o('cdf', false)) {
@@ -324,7 +459,8 @@
       for (const k of order) { acc += wts[k]; cum.push(acc / wsum); }
       const ob = ctx.outline('CDF Plot', { parent: outline, key: 'cdf' });
       ob.add(ctx.plot([{ type: 'scatter', mode: 'lines+markers', x, y: cum, rows: order.map((k) => rows[k]), line: { shape: 'hv', color: SM.report.BASE, width: 1.5 }, marker: { size: 4 }, name: 'CDF' }],
-        { xaxis: { title: { text: col.name } }, yaxis: { title: { text: 'Cumulative Probability' }, range: [0, 1.02] } }, { width: 420, height: 280, title: `${col.name} CDF` }));
+        { xaxis: { title: { text: col.name } }, yaxis: { title: { text: 'Cumulative Probability' }, range: [0, 1.02] } }, { width: 420, height: 280, title: `${col.name} CDF` }),
+      ctx.code(cdfCode(ctx, col, `${col.name} CDF`)));
     }
     if (o('stem', false)) stemLeaf(ctx, vals, col.name, outline);
     const tm = o('testMean', null);
@@ -644,7 +780,10 @@
     const outline = ctx.outline(col.name, { parent, menu: () => catMenu(ctx, col), key: `col:${col.id}` });
     const ciLevel = o('ciCat', null);
     const ciMethod = o('ciMethod', 'wilson');
-    const res = await ctx.call('distribution.categorical', { column: col.name, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ciLevel ? 1 - ciLevel : ctx.alpha, ci_method: ciMethod });
+    // the page's choices for the bar chart's and the mosaic's code
+    const plot = { order: o('order', null), prob: o('axis', 'count') === 'prob', horizontal: o('horizontal', !!shared.stack), counts: !!o('showCounts', false), percents: !!o('showPercents', false),
+      labels: ctx.table.levels(col).map((v) => SM.grid.cellText(col, v)) };
+    const res = await ctx.call('distribution.categorical', { column: col.name, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ciLevel ? 1 - ciLevel : ctx.alpha, ci_method: ciMethod, plot });
     if (res.error) { outline.add(ctx.warn(`${col.name}: ${res.error}`)); return; }
     const t = ctx.table;
     const levels = res.levels.slice();
@@ -666,7 +805,8 @@
     const num = { title: { text: prob ? 'Probability' : 'Count' }, rangemode: 'tozero' };
     const h = Math.max(200, Math.min(520, 60 + 26 * labels.length));
     const graph = ctx.plot([bar], horizontal ? { xaxis: cat, yaxis: num, bargap: 0.15 } : { yaxis: { ...cat, autorange: 'reversed' }, xaxis: num, bargap: 0.15 }, { width: horizontal ? Math.max(320, Math.min(760, 80 + 40 * labels.length)) : 330, height: horizontal ? 280 : h, title: `${col.name} bar chart`, select: false });
-    if (shared.histOnly) { outline.add(graph); return; }
+    const barCode = ctx.code(res.plot_code);
+    if (shared.histOnly) { outline.add(graph, barCode); return; }
     const freq = ctx.outline('Frequencies', { parent: outline, key: 'freq', closed: !o('frequencies', true) });
     const cols = [{ key: 'label', label: 'Level', fmt: 'text' }, { key: 'count', label: 'Count' }, { key: 'prob', label: 'Prob' }];
     if (o('stderr', false)) cols.push({ key: 'se', label: 'StdErr Prob' });
@@ -675,7 +815,7 @@
     const rowsF = levels.map((l, i) => { cum += l.prob; return { label: labels[i], count: l.count, prob: l.prob, se: l.se, cum }; });
     freq.add(ctx.rt({ columns: cols, rows: [...rowsF, { label: 'Total', count: total, prob: 1, se: null, cum: null }] }, { sortable: false }),
       ctx.kv([['N Missing', res.n_missing, 'int'], [`${res.n_levels} Levels`, '', 'text']]), ctx.code(res.code));
-    outline.add(horizontal ? [graph, freq.el] : ctx.row(graph, freq.el));
+    outline.add(horizontal ? [graph, barCode, freq.el] : ctx.row(withCode(graph, barCode), freq.el));
     if (ciLevel) {
       const ob = ctx.outline('Confidence Intervals', { parent: outline, key: 'cicat', info: 'p:distribution:ci', menu: () => [
         { label: 'Confidence Interval Method', submenu: () => ciMethodItems(ctx, col) }, { separator: true }, { label: 'Remove', action: () => ctx.set('ciCat', null, sc) }] });
@@ -686,7 +826,8 @@
     if (o('mosaic', false)) {
       const ob = ctx.outline('Mosaic Plot', { parent: outline, key: 'mosaic' });
       const traces = levels.map((l, i) => ({ type: 'bar', x: [''], y: [l.prob], name: labels[i], rows: [members.get(key(l.level))], rowsScale: 1 / total, marker: { color: SM.util.PALETTE[i % SM.util.PALETTE.length] }, hovertemplate: `${labels[i]}: %{y:.3f}<extra></extra>` }));
-      ob.add(ctx.plot(traces, { barmode: 'stack', showlegend: true, yaxis: { range: [0, 1], title: { text: 'Probability' } }, xaxis: { showticklabels: false } }, { width: 240, height: 300, title: `${col.name} mosaic`, select: false }));
+      ob.add(ctx.plot(traces, { barmode: 'stack', showlegend: true, yaxis: { range: [0, 1], title: { text: 'Probability' } }, xaxis: { showticklabels: false } }, { width: 240, height: 300, title: `${col.name} mosaic`, select: false }),
+        ctx.code(res.mosaic_code));
     }
     const tp = o('testProbs', null);
     if (tp) {
