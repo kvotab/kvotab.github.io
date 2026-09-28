@@ -146,7 +146,7 @@
         'Choose an analysis from **Analyze** or **Graph**, put columns into the roles and press OK. The report opens in its own tab.',
         'Open the red triangles (▼ in red) for more: tests, fits, saved columns. Click the grey triangles to close outlines you do not need.',
         'Select points or bars: the rows are selected in the table and in every other graph. Exclude them (**Rows > Exclude/Unexclude**) and press **Redo**, or turn on **Automatic Recalc**.',
-        'Each result has its **Python code**: what statsmodels was asked and how. **Save ▾ > Save Python Script** writes all of it as one script that runs on a CSV export of the table.',
+        'Each result computed in Python has its **Python code** under it: what statsmodels was asked and how. The **Python code** button above the report shows or hides all of it; a graph drawn in the page has none. **Save ▾ > Save Python Script** writes all of it as one script that runs on a CSV export of the table.',
       ]),
 
       h('h2', 'Data tables', 'tables'),

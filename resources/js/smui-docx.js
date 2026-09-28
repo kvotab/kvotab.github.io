@@ -115,8 +115,8 @@
           if (img) { images.list.push(img); out.push(pictureXml(img, images.list.length)); }
         } else if (e.matches('details.sm-code')) {
           const pre = e.querySelector('pre');
-          // the Python, when the report shows it (the Python code button)
-          if (pre && !e.closest('.sm-ob-error') && report.spec.options.showCode) {
+          // the Python, when the report shows it (the Python code button) or the block is open
+          if (pre && !e.closest('.sm-ob-error') && (report.spec.options.showCode || e.open)) {
             out.push(para(run('Python code', { bold: true }), { style: 'SmNote', keepNext: true }));
             for (const line of pre.textContent.replace(/\n$/, '').split('\n')) out.push(para(run(line, { mono: true }), { style: 'SmCode' }));
           }

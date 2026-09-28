@@ -827,6 +827,8 @@
       this.body.append(this.filterHost, this.main);
       this.el.append(this.bar, this.body);
       this._buildBar();
+      // a code block opened or closed by its own heading: the button follows
+      this.body.addEventListener('toggle', (ev) => { if (ev.target.matches && ev.target.matches('details.sm-code')) this._codeState(); }, true);
       this._refilter = SM.util.debounce(() => this.run(), 160);
       // When the window (or the side panel) changes the room, the graphs are
       // made narrower, never wider than they were drawn.
@@ -853,7 +855,7 @@
     _buildBar() {
       const redo = el('button', { type: 'button', class: 'sm-btn small', text: 'Redo ▾', 'aria-haspopup': 'menu' });
       redo.addEventListener('click', () => SM.ui.menu(this.redoMenu(), redo, { returnFocus: redo }));
-      const codeBtn = el('button', { type: 'button', class: 'sm-btn small', text: 'Python code' });
+      const codeBtn = this.codeBtn = el('button', { type: 'button', class: 'sm-btn small', text: 'Python code', 'aria-pressed': 'false' });
       codeBtn.addEventListener('click', () => this.toggleCode());
       const exp = el('button', { type: 'button', class: 'sm-btn small', text: 'Save ▾', 'aria-haspopup': 'menu' });
       exp.addEventListener('click', () => SM.ui.menu(this.saveMenu(), exp, { returnFocus: exp }));
@@ -883,10 +885,60 @@
       ];
     }
 
-    toggleCode(force) {
-      const open = force != null ? force : !this.spec.options.showCode;
+    // The code blocks of the results (an error's traceback is not one).
+    codeBlocks() { return [...this.body.querySelectorAll('details.sm-code')].filter((d) => !d.closest('.sm-ob-error')); }
+    // Shown when every block is open; with none, as the report is set.
+    codeShown() { const b = this.codeBlocks(); return b.length ? b.every((d) => d.open) : !!this.spec.options.showCode; }
+    _codeState() { if (this.codeBtn) this.codeBtn.setAttribute('aria-pressed', String(this.codeShown())); }
+
+    /* Every code block open or closed, and the report set to show (or not)
+       the code of the results still to come. */
+    setCode(open) {
       this.spec.options.showCode = open;
-      this.body.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error')) d.open = open; });
+      const blocks = this.codeBlocks();
+      for (const d of blocks) d.open = open;
+      this._codeState();
+      return blocks;
+    }
+
+    /* The Python code button and the red triangle's Show Python Code. They
+       go by what is open, not by the setting, so a click never does nothing
+       after a block was closed by its own heading. The code shows where it
+       can be seen: when all of it is in closed outlines the first one's
+       open, when none is in view the report scrolls to the nearest, and a
+       report with no code says so. */
+    toggleCode() {
+      const blocks = this.setCode(!this.codeShown());
+      if (!this.spec.options.showCode) return;
+      if (!blocks.length) {
+        SM.ui.toast(this.pyCode && this.pyCode.length
+          ? 'This report shows none of its Python code: Save ▾ > Save Python Script (.py) has it.'
+          : 'This report ran no Python, so it has no code to show. Results computed in Python, such as a fit or a test, show their code under them.', { ms: 6000 });
+        return;
+      }
+      let seen = blocks.filter((d) => d.getClientRects().length);
+      if (!seen.length) {
+        for (let ob = blocks[0].closest('.sm-ob.is-closed'); ob; ob = ob.parentElement && ob.parentElement.closest('.sm-ob.is-closed')) if (ob._outline) ob._outline.setOpen(true);
+        seen = blocks.filter((d) => d.getClientRects().length);
+      }
+      if (!seen.length) return;
+      const box = this.body.getBoundingClientRect();
+      // how far a block is out of the report's view (0: enough of it is in it)
+      const off = (d) => {
+        const r = d.getBoundingClientRect();
+        if (Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top) >= Math.min(r.height, 60)) return 0;
+        return r.top < box.top ? r.top - box.top - 12 : Math.min(r.top - box.top - 12, r.bottom - box.bottom + 12);
+      };
+      if (seen.every((d) => off(d) !== 0)) {
+        const dy = seen.map(off).reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a));
+        this.body.scrollBy({ top: dy, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      }
+      for (const d of seen) {
+        d.classList.remove('is-new');
+        void d.offsetWidth;          // the flash starts again on a second click
+        d.classList.add('is-new');
+        d.addEventListener('animationend', () => d.classList.remove('is-new'), { once: true });
+      }
     }
 
     relaunch() {
@@ -1063,7 +1115,7 @@
       for (const p of oldPlots) p.purge();
       this.body.classList.remove('is-running');
       this.body.scrollTop = scroll;
-      if (this.spec.options.showCode) this.toggleCode(true);
+      if (this.spec.options.showCode) this.setCode(true); else this._codeState();
       if (this.table) {
         const c = this.table.counts();
         const filtered = this.spec.filter && this.spec.filter.length ? ', filtered' : '';
@@ -1126,8 +1178,8 @@
         copies[i].replaceChildren(img ? el('img', { src: img.data, alt: img.alt, width: img.w, height: img.h }) : el('em', { text: '(graph not drawn)' }));
       }
       clone.querySelectorAll('button, .kvot-info-slot, [data-noexport], input, select, textarea').forEach((b) => b.remove());
-      // The Python goes along when the report shows it (the Python code button); a traceback always.
-      if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error')) d.remove(); });
+      // The Python goes along when the report shows it (the Python code button) or its block is open; a traceback always.
+      if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error') && !d.open) d.remove(); });
       clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
       const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
         + '@page{margin:15mm}@media print{body{margin:0}table,img,.sm-plot,caption{break-inside:avoid}h2,h3,h4{break-after:avoid}summary{list-style:none}}';
@@ -1359,7 +1411,7 @@
         { label: 'Column Switcher', checked: !!this.spec.switcher, disabled: !this.table, action: () => this.report.columnSwitcher() },
         { label: 'Redo', submenu: () => this.report.redoMenu() },
         { label: 'Save Script', submenu: () => this.report.saveMenu() },
-        { label: 'Show Python Code', checked: !!this.spec.options.showCode, action: () => this.report.toggleCode() },
+        { label: 'Show Python Code', checked: this.report.codeShown(), action: () => this.report.toggleCode() },
       ];
     }
   }

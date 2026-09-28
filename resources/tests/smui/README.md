@@ -377,13 +377,17 @@ dialog, the Distribution report against numbers computed in the page,
 linking both ways, exclusion and Redo, By and combined By tables, saved
 columns, grid editing and Undo, the Local Data Filter and Rows > Data
 Filter, a Stata file and a statsmodels dataset read by the engine, the
-Python script; dialogs moved by their title bar and kept within reach, a
+Python script; the Python code button and Show Python Code by real clicks
+(they go by what is open, so a click after a block's own heading closed it
+shows it again; an outline closed around the code opens; a report without
+code says so), and by a tap on a phone, where the report scrolls to the
+code; dialogs moved by their title bar and kept within reach, a
 disabled item's submenu shut (the mouse moved by the browser), the tab strip
 without a scroll bar; a launch dialog's (i) with its Roles and Options and
 a form's with its Fields; Print from a hidden frame (the print dialog stood
 in for through the frame's `contentWindow`), Save Report as Word read back
 with JSZip (its parts, headings, tables, PNG pictures, the code only when
-shown), the page's own print (emulated print media: the site, menus and
+shown or its block open), the page's own print (emulated print media: the site, menus and
 buttons left out, a graph wider than the paper scaled to fit); documents in
 the light theme from the dark one, an SVG diagram with its paint; a box
 selection in Graph Builder whose edges are then moved (real mouse events)

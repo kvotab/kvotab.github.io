@@ -10,7 +10,9 @@ selects its rows and a selection in the table lights up the graphs; an
 exclusion marks the report stale and Redo uses fewer rows; By gives one
 report per level; the Local Data Filter narrows one report; a saved column
 lands in the table; cell edits and modeling types do what they say; the
-report's Python script is the code of its results; Distribution's interval
+report's Python script is the code of its results; the Python code button
+and Show Python Code show the code where it is seen, whatever was opened
+or closed before, and a report without code says so; Distribution's interval
 methods and Test Rate show what the page computes; dialogs move by their
 title bar, a disabled menu item opens no submenu, the tab strip has no
 scroll bar; a dialog's (i) explains its roles, options and fields; Print
@@ -506,6 +508,63 @@ async def main():
     r = await page.ev('SM.app.reports[0].pythonScript()')
     check('the script holds the code of the results', 'DescrStatsW(x, ddof=1)' in r and 'proportion_confint' in r, True)
 
+    # ---- the Python code button and the red triangle's Show Python Code go
+    # by what is open: after the code was closed by its own heading a click
+    # shows it again (it did nothing: the report still took it as shown).
+    # An outline closed around the code opens; a report without code says so.
+    LAST = 'SM.app.reports[SM.app.reports.length - 1]'
+    CODE = f'''(() => {{ const rep = {LAST}, box = rep.body.getBoundingClientRect(), ds = rep.codeBlocks();
+      return {{ n: ds.length, open: ds.filter(d => d.open).length, pressed: rep.codeBtn.getAttribute('aria-pressed'),
+        seen: ds.filter(d => {{ const r = d.getBoundingClientRect(); return d.open && r.height > 0 && r.top >= box.top && r.top < box.bottom - 40; }}).length,
+        toast: (document.querySelector('.sm-toast') || {{}}).textContent || '' }}; }})()'''
+
+    # on the Students table (closing a report may leave another one current)
+    def OPEN_ON_STUDENTS(platform, roles):
+        return f'''(async () => {{ const t = SM.app.tables[0], roles = {{}};
+          for (const [k, names] of Object.entries({json.dumps(roles)})) roles[k] = names.map(n => t.col(n).id);
+          const rep = SM.app.openReport(SM.platforms.get({json.dumps(platform)}), {{ roles, options: {{}} }}, t);
+          await new Promise(res => rep.on('done', res)); return rep.title; }})()'''
+
+    async def click_on(expr):
+        xy = await page.ev(f'(() => {{ const e = {expr}; const r = e.getBoundingClientRect(); return [r.left + Math.min(20, r.width / 2), r.top + r.height / 2]; }})()')
+        await page.click(*xy)
+        await asyncio.sleep(0.6)
+
+    async def show_code_item():
+        await click_on(f'{LAST}.body.querySelector(".sm-ob-head .sm-ob-menu")')
+        was = await page.ev('[...document.querySelectorAll(".sm-menu button")].find(b => b.textContent.includes("Show Python Code")).getAttribute("aria-checked")')
+        await click_on('[...document.querySelectorAll(".sm-menu button")].find(b => b.textContent.includes("Show Python Code"))')
+        return was
+
+    await page.ev(OPEN_ON_STUDENTS('distribution', {'y': ['height (cm)']}))
+    await asyncio.sleep(0.4)
+    await click_on(f'{LAST}.codeBtn')
+    r = await page.ev(CODE)
+    check('Python code: the code opens and is seen, the button pressed', (r['n'] > 0, r['open'] == r['n'], r['seen'] > 0, r['pressed']), (True, True, True, 'true'))
+    await click_on(f'{LAST}.codeBlocks()[0].querySelector("summary")')
+    r = await page.ev(CODE)
+    check('... closed by its own heading, the button no longer pressed', (r['open'], r['pressed']), (0, 'false'))
+    await click_on(f'{LAST}.codeBtn')
+    r = await page.ev(CODE)
+    check('... and the button shows it again', (r['open'] == r['n'], r['seen'] > 0, r['pressed']), (True, True, 'true'))
+    was = await show_code_item()
+    r = await page.ev(CODE)
+    check("Show Python Code is ticked while the code shows, and hides it", (was, r['open'], r['pressed']), ('true', 0, 'false'))
+    was = await show_code_item()
+    r = await page.ev(CODE)
+    check('... unticked, it shows it', (was, r['open'] == r['n'], r['pressed']), ('false', True, 'true'))
+    await page.ev(f'(() => {{ const rep = {LAST}; rep.setCode(false); rep.codeBlocks()[0].closest(".sm-ob")._outline.setOpen(false); rep.body.scrollTop = 0; }})()')
+    await click_on(f'{LAST}.codeBtn')
+    r = await page.ev(CODE)
+    check('code in a closed outline: the outline opens and the code is seen', (await page.ev(f'{LAST}.codeBlocks()[0].closest(".sm-ob").classList.contains("is-closed")'), r['seen'] > 0), (False, True))
+    await page.ev(f'SM.app.closeReport({LAST})')
+    await page.ev(OPEN_ON_STUDENTS('bubble', {'y': ['height (cm)'], 'x': ['weight (kg)']}))
+    await asyncio.sleep(0.4)
+    await click_on(f'{LAST}.codeBtn')
+    r = await page.ev(CODE)
+    check('a report with no Python code says so', (r['n'], 'ran no Python' in r['toast'], r['pressed']), (0, True, 'true'))
+    await page.ev(f'SM.app.closeReport({LAST}); document.querySelectorAll(".sm-toast").forEach(t => t.remove())')
+
     # ---- Distribution beyond JMP: the interval method of the level probabilities, Test Rate
     MENU = '''(async (rep, title, path) => {
       const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.querySelector('h2, h3, h4').textContent === title);
@@ -778,10 +837,14 @@ async def main():
       rep.spec.options.showCode = true;
       const coded = await read(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
       rep.spec.options.showCode = false;
+      // one block opened by its own heading: that code goes along
+      rep.codeBlocks()[0].open = true;
+      const opened = await read(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
+      rep.codeBlocks()[0].open = false;
       const tables = [...rep.content.querySelectorAll('table.sm-rt, table.sm-kv')].filter(tb => !tb.closest('.sm-ob.is-closed') && tb.offsetParent !== null).length;
       const plots = rep.plots.filter(p => !p.box.closest('.sm-ob.is-closed')).length;
       SM.app.closeReport(rep);
-      return { heads, plain, coded, tables, plots, title: rep.title };
+      return { heads, plain, coded, opened, tables, plots, title: rep.title };
     })()''')
     p = r['plain']
     check('the .docx has the parts Word needs', [f for f in p['files'] if not f.startswith('word/media/')], ['[Content_Types].xml', '_rels/.rels', 'docProps/core.xml', 'word/_rels/document.xml.rels', 'word/document.xml', 'word/styles.xml'])
@@ -794,6 +857,8 @@ async def main():
     check('each graph is a picture, with its image part', (p['pictures'], p['rels'], len([f for f in p['files'] if f.startswith('word/media/')])), (r['plots'], r['plots'], r['plots']))
     check('the pictures are PNG', p['png'], [137, 80, 78, 71])
     check('no Python code unless the report shows it', (sum(1 for x in p['paras'] if x['style'] == 'SmCode'), sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode') > 0), (0, True))
+    n = sum(1 for x in r['opened']['paras'] if x['style'] == 'SmCode')
+    check('... or that block was opened by its heading (and only that one)', 0 < n < sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode'), True)
 
     # ---- the page's own print (the browser's Print command): only the
     # report in view, flowing over pages
@@ -1094,6 +1159,16 @@ async def main():
     src = await rect("(() => { const li = [...document.querySelectorAll('.sm-gb-collist li')].find(li => li.textContent.includes('yield (g)')); li.scrollIntoView({ block: 'center' }); return li; })()")
     await drag_to(src, "document.querySelector('.sm-gb-z-y')", far_top=450)
     check('phone: dragged onto Graph Builder\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gb-z-y').textContent.includes('yield (g)')"), True)
+    # a tap on Python code: the code is far below the screen, the report scrolls to it
+    await page.ev(open_report_js('distribution', {'y': ['yield (g)']}))
+    await asyncio.sleep(0.6)
+    b = await rect(f'{LAST}.codeBtn')
+    before = await page.ev(CODE)
+    await touch('touchStart', [{'x': b[0], 'y': b[1]}])
+    await touch('touchEnd', [])
+    await asyncio.sleep(1)
+    r = await page.ev(CODE)
+    check('phone: a tap on Python code scrolls the report to its code', (before['seen'], r['n'] > 0 and r['open'] == r['n'], r['seen'] > 0, await page.ev(f'{LAST}.body.scrollTop > 100')), (0, True, True, True))
     check('phone: no script errors', page.errors, [])
     await page.close()
 
