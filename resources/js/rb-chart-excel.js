@@ -21,13 +21,15 @@
 
    What is drawn is read from Plotly itself, _fullData and _fullLayout: the
    colour a line was given by default, the range autorange chose, the ticks
-   it placed. The colours around the lines are the light theme's whatever the
-   page is in, since a workbook is printed on white.
+   it placed. The text and the grid are in the light theme's colours whatever
+   the page is in, on white, as Copy chart gives the chart; the only colour
+   behind the lines is a background overlay's, which was asked for.
 
    What Excel cannot do the same way: fill between two lines (a band is its
-   two edges, drawn light), stretch a phase with the chart (a phase is a line
-   as wide as the phase is at the size exported), and write a log axis's
-   10⁻¹¹ (it writes 1E-11). A linear axis's 1.6×10⁻¹¹ and 0.1M it does
+   two edges, drawn light), fill a stretch of time (a phase is a line along
+   it, as thick as Excel draws one, which follows the time axis lin or log
+   and fills the plot whatever its y limits), and write a log axis's 10⁻¹¹
+   (it writes 1E-11). A linear axis's 1.6×10⁻¹¹ and 0.1M it does
    write: the axis shows its values in units of 10⁻¹¹ or of a million
    (display units) and a number format adds the ×10⁻¹¹ or the M, with as
    many decimals on every label as the step needs (1.0×10⁻¹¹ where Plotly
@@ -40,14 +42,14 @@
 
 'use strict';   // see the script manifest in rb.html for why
 
-/** The light theme's colours for what is not a line (rb-utils.js relayoutForTheme, getPanelBgColor). */
+/** The light theme's colours for what is not a line (rb-utils.js relayoutForTheme), whatever theme the page is in. */
 const XL_THEME = Object.freeze({
   text: '2D2416',
   muted: '7A6E62',
   grid: 'E5DDD5',
   minorGrid: 'F0EBE5',
   plot: 'FFFFFF',
-  paper: 'FAF8F6'
+  paper: 'FFFFFF'   // white round the plot too, as Copy chart makes it (rb-export.js)
 });
 
 /** Plotly's text, in points: 12px ticks and legend, 14px axis titles, 11px panel labels. */
@@ -65,6 +67,8 @@ const XL_EMU_PER_PT = 12700;
 const XL_DASH = Object.freeze({
   solid: 'solid', dot: 'sysDot', dash: 'dash', longdash: 'lgDash', dashdot: 'dashDot', longdashdot: 'lgDashDot'
 });
+/** A background phase's line: as thick as Excel draws a line (1584 pt), so it fills the plot however tall. */
+const XL_PHASE_LINE_PT = 1584;
 /** How a band's edges are drawn: thin and light, in the colour of the line. */
 const XL_BAND = Object.freeze({ ci: { widthPt: 0.75, alpha: 0.55, dash: 'solid' }, sem: { widthPt: 0.75, alpha: 0.55, dash: 'sysDot' } });
 /** Where the data starts on the Data sheet: rows above it hold its description. */
@@ -486,27 +490,36 @@ function xlDataLayout(model, firstRow) {
     col += 1;   // a column between blocks
   }
 
-  // The overlay's phases: a table to the right, two rows a phase -- the
-  // middle of what of it is on screen, at the bottom and the top of the first
-  // panel's y axis -- which is the line the chart draws as wide as the phase.
+  // The overlay's phases: a table to the right, two rows a phase. The chart
+  // draws a phase along the time it spans, from its first row's "Drawn
+  // from/to" to its second's, as the page draws its rectangle (from the first
+  // positive time on a log axis), and no further than the data or the axis go.
   let phaseTable = null;
   if (model.phases.length) {
     const c0 = col;
-    const { x, y } = model.panels[0];
-    const span = x.log ? Math.log10(x.max / x.min) : x.max - x.min;
+    const { x } = model.panels[0];
+    let lo = x.min;
+    let hi = x.max;
+    for (const b of blocks) {
+      for (const v of b.x) {
+        if (v === null || (x.log && !(v > 0))) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
     const rows = [];
     for (const p of model.phases) {
-      const a = Math.max(p.x0, x.min);
-      const b = Math.min(p.x1, x.max);
-      if (!(b > a) || (x.log && a <= 0) || !(span > 0)) continue;
+      let a = Math.max(p.x0, lo);
+      const b = Math.min(p.x1, hi);
+      if (x.log && !(a > 0)) a = x.min;
+      if (!(b > a)) continue;
       const r = dataRow + 2 * rows.length;
-      rows.push({ phase: p, row: r, mid: Number((x.log ? Math.sqrt(a * b) : (a + b) / 2).toPrecision(12)), bottom: y.min, top: y.max,
-        fraction: x.log ? Math.log10(b / a) / span : (b - a) / span,
-        nameRef: xlRef(c0, r), xRef: xlRange(c0 + 3, r, r + 1), yRef: xlRange(c0 + 4, r, r + 1) });
+      rows.push({ phase: p, row: r, from: Number(a.toPrecision(12)), to: Number(b.toPrecision(12)),   // not 999.999999999999
+        nameRef: xlRef(c0, r), xRef: xlRange(c0 + 3, r, r + 1) });
     }
     if (rows.length) {
       phaseTable = { col: c0, rows };
-      col = c0 + 5;
+      col = c0 + 4;
     }
   }
 
@@ -573,22 +586,18 @@ function xlWriteDataSheet(xlsx, model, layout, subject) {
 
   if (layout.phaseTable) {
     const t = layout.phaseTable;
-    const heads = ['Phase', 'From', 'To', 'Middle', 'Drawn from/to'];
+    const heads = ['Phase', 'From', 'To', 'Drawn from/to'];
     heads.forEach((h, i) => xlsx.write(layout.nameRow, t.col + i, h, f.name, S));
-    xlsx.write(layout.unitRow, t.col + 1, timeUnit, f.unit, S);
-    xlsx.write(layout.unitRow, t.col + 2, timeUnit, f.unit, S);
+    for (const i of [1, 2, 3]) xlsx.write(layout.unitRow, t.col + i, timeUnit, f.unit, S);
     for (const r of t.rows) {
-      const vfmt = xlValueFormat([r.bottom, r.top]) === 'General' ? f.general : f.sci;
       xlsx.write(r.row, t.col, r.phase.name, f.general, S);
       xlsx.write(r.row, t.col + 1, r.phase.from, f.general, S);
       xlsx.write(r.row, t.col + 2, r.phase.to, f.general, S);
-      xlsx.write(r.row, t.col + 3, r.mid, f.general, S);
-      xlsx.write(r.row + 1, t.col + 3, r.mid, f.general, S);
-      xlsx.write(r.row, t.col + 4, r.bottom, vfmt, S);
-      xlsx.write(r.row + 1, t.col + 4, r.top, vfmt, S);
+      xlsx.write(r.row, t.col + 3, r.from, f.general, S);
+      xlsx.write(r.row + 1, t.col + 3, r.to, f.general, S);
     }
     xlsx.setColumn(t.col, t.col, 16, null, {}, S);
-    xlsx.setColumn(t.col + 1, t.col + 4, 12, null, {}, S);
+    xlsx.setColumn(t.col + 1, t.col + 3, 12, null, {}, S);
   }
 
   // The names and units stay in view, and a single time column with them.
@@ -639,6 +648,12 @@ function xlNumRef(ref, values) {
     + `<c:ptCount val="${values.length}"/>${pts}</c:numCache></c:numRef>`;
 }
 
+/** Values written into the chart, not taken from cells: where a phase's line is drawn up the y axis. */
+function xlNumLit(values) {
+  const pts = values.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join('');
+  return `<c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>${pts}</c:numLit>`;
+}
+
 function xlSeriesXml(i, s) {
   const marker = s.markers
     ? `<c:marker><c:symbol val="circle"/><c:size val="${Math.max(2, Math.min(72, Math.round(s.markers.sizePt)))}"/>`
@@ -648,7 +663,7 @@ function xlSeriesXml(i, s) {
   return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>`
     + `<c:tx><c:strRef><c:f>${s.nameRef}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${xlEscape(s.name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`
     + `<c:spPr>${line}</c:spPr>${marker}`
-    + `<c:xVal>${xlNumRef(s.xRef, s.x)}</c:xVal><c:yVal>${xlNumRef(s.yRef, s.y)}</c:yVal>`
+    + `<c:xVal>${xlNumRef(s.xRef, s.x)}</c:xVal><c:yVal>${s.yLit ? xlNumLit(s.yLit) : xlNumRef(s.yRef, s.y)}</c:yVal>`
     + `<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
 }
 
@@ -778,18 +793,26 @@ function xlDrawableRuns(c, panel, markers) {
 }
 
 /**
- * What a panel's chart draws, back to front: the overlay's phases, the band
- * edges, then the lines. Excel lists a legend in the order it draws, so the
+ * What a panel's chart draws, back to front: the overlay's phases (in every
+ * panel), the band edges, then the lines. Excel lists a legend in the order it draws, so the
  * lines are in the legend's order (legendrank), not the traces'; the Data
  * sheet keeps the traces' order, which is the file's.
  */
-function xlPanelSeries(model, panel, layout, box) {
+function xlPanelSeries(model, panel, layout) {
   const series = [];
-  if (layout.phaseTable && panel === model.panels[0]) {
+  if (layout.phaseTable) {
+    // In every panel, as the page's overlay runs down all of them: a line
+    // along the phase's time, halfway up this panel's y axis, as thick as
+    // Excel draws one, which fills the plot whatever its y limits. Being along
+    // the time axis it follows it, lin or log, where a line across it would
+    // have to be as wide as the phase happened to be when exported.
+    const { y } = panel;
+    let level = y.log ? Math.sqrt(y.min * y.max) : (y.min + y.max) / 2;
+    if (!y.log && !(level > 0) && y.max > 0) level = y.max / 2;   // still drawable if the axis goes log
+    level = Number(level.toPrecision(12));
     for (const r of layout.phaseTable.rows) {
-      series.push({ name: r.phase.name, nameRef: r.nameRef, xRef: r.xRef, yRef: r.yRef,
-        x: [r.mid, r.mid], y: [r.bottom, r.top], color: r.phase.color, lines: true,
-        widthPt: r.fraction * box.plot.w * XL_PX_TO_PT, dash: 'solid', cap: 'flat', legend: false });
+      series.push({ name: r.phase.name, nameRef: r.nameRef, xRef: r.xRef, x: [r.from, r.to], yLit: [level, level],
+        color: r.phase.color, lines: true, widthPt: XL_PHASE_LINE_PT, dash: 'solid', cap: 'flat', legend: false });
     }
   }
   const columns = layout.blocks.flatMap(b => b.columns).filter(c => c.series.panel === panel);
@@ -869,8 +892,8 @@ function xlChartSubject(model) {
   if (kinds.has('sem')) lines.push('SEM: the mean ± its standard error, drawn as the edges of the band.');
   if (model.phases.length) {
     const sources = [...new Set(model.phases.map(p => p.source).filter(Boolean))];
-    lines.push(`Background${sources.length ? `, from ${sources.join(', ')}` : ''}: each phase is drawn as a line as wide as `
-      + 'the phase at the size exported; resizing the chart leaves them that wide.');
+    lines.push(`Background${sources.length ? `, from ${sources.join(', ')}` : ''}: each phase is drawn as a very thick line `
+      + 'along the time it spans (Drawn from/to), which follows the time axis, lin or log, and fills the plot whatever its y limits.');
   }
   return { title: paths.join(', ') || 'Chart', lines, paths, files };
 }
@@ -924,7 +947,7 @@ async function downloadChartDataAsExcel() {
     let y = 8;
     model.panels.forEach((panel, i) => {
       const box = boxes[i];
-      const series = xlPanelSeries(model, panel, layout, box);
+      const series = xlPanelSeries(model, panel, layout);
       xlsx.addChart(XL_CHART_SHEET, { width: box.width, height: box.height, xml: xlChartXml(panel, series, box) }, { x: 8, y });
       y += box.height;
     });

@@ -260,11 +260,16 @@ text: Excel then sizes the labels as if General wrote every digit it can,
 and moves the plot area right, 56 px for 1.6×10⁻¹¹, so stacked panels no
 longer line up. Several groups make a chart per panel, each under its label,
 with the plot areas lined up. The Data sheet puts each column's panel, or its
-file, over the columns. The cases are a group chart, the same with CI, an
-iteration and log axes, two files, three panels, an overlay on a log axis
+file, over the columns. Every chart is on white, round the plot and behind it,
+whatever theme the page is in. A background overlay's phase is a line along
+the time it spans, where the page draws its rectangle, at one level, 1584 pt
+thick (the most Excel draws) and cut square: so it follows the time axis if
+its scale or limits are changed in Excel, and fills the plot whatever its y
+limits. The cases are a group chart, the same with CI, an iteration and log
+axes, two files, three panels, an overlay on a linear and on a log axis
 whose time starts at 0, and a line with zeros in it on log y. How Excel
 *draws* the workbook is not checked here: it was compared by eye against the
-page when the export was written.
+page when the export was written, before the phases were drawn this way.
 
     python3 test-excel.py
 

@@ -138,7 +138,8 @@ HELPERS = r"""(() => {
       exponent: fl[k]._tickexponent || 0, format: fl[k].exponentformat || 'B',
       domain: fl[k].domain.map(Number) }));
     const segments = (gd.__bgSegments || []).map(s => ({ name: String(s.category), x0: Number(s.x0), x1: Number(s.x1) }));
-    return { legend, axes, segments };
+    const shapes = (fl.shapes || []).filter(s => s.name === BACKGROUND_SHAPE_NAME).map(s => [Number(s.x0), Number(s.x1)]);
+    return { legend, axes, segments, shapes };
   };
   window.__row = (path) => findTreeItem(path, { extra: '.group', root: document.getElementById('tree') });
   window.__click = async (path, ctrl) => {
@@ -155,6 +156,7 @@ HELPERS = r"""(() => {
 
 # --- the workbook, read with the standard library ------------------------
 
+A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 NS = {
     'm': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
@@ -221,14 +223,24 @@ def chart_info(book, chart):
                'name': s.find('c:tx/c:strRef/c:strCache/c:pt/c:v', NS).text,
                'nameCell': book.range(s.find('c:tx/c:strRef/c:f', NS).text)[0]}
         for tag in ('xVal', 'yVal'):
+            lit = s.find(f'c:{tag}/c:numLit', NS)
+            if lit is not None:   # written into the chart, not taken from cells
+                values = [float(p.find('c:v', NS).text) for p in lit.findall('c:pt', NS)]
+                one[tag] = {'ref': None, 'cells': values, 'cache': dict(enumerate(values)), 'literal': True}
+                continue
             ref = s.find(f'c:{tag}/c:numRef/c:f', NS).text
             cache = {int(p.get('idx')): float(p.find('c:v', NS).text)
                      for p in s.findall(f'c:{tag}/c:numRef/c:numCache/c:pt', NS)}
-            one[tag] = {'ref': ref, 'cells': book.range(ref), 'cache': cache}
+            one[tag] = {'ref': ref, 'cells': book.range(ref), 'cache': cache, 'literal': False}
+        ln = s.find('c:spPr/{%s}ln' % A_NS, NS)
+        one['line'] = {'w': int(ln.get('w', 0)), 'cap': ln.get('cap')} if ln is not None else None
         series.append(one)
     layout = chart.find('c:chart/c:plotArea/c:layout/c:manualLayout', NS)
     title = chart.find('c:chart/c:title', NS)
+    fill = lambda el: (el.find('{%s}solidFill/{%s}srgbClr' % (A_NS, A_NS)).get('val') if el is not None
+                       and el.find('{%s}solidFill/{%s}srgbClr' % (A_NS, A_NS)) is not None else None)
     return {
+        'fills': {'chart': fill(chart.find('c:spPr', NS)), 'plot': fill(chart.find('c:chart/c:plotArea/c:spPr', NS))},
         'x': axes[x_id], 'y': axes[y_id], 'series': series,
         'legend': [s['name'] for s in series if s['idx'] not in deleted] if chart.find('.//c:legend', NS) is not None else [],
         'plot': {k: float(layout.find(f'c:{k}', NS).get('val')) for k in ('x', 'w')},
@@ -243,6 +255,8 @@ def refs_hold_the_cache(info):
         if s['name'] != s['nameCell']:
             bad.append(f"{s['name']!r}: name cell {s['nameCell']!r}")
         for tag in ('xVal', 'yVal'):
+            if s[tag]['literal']:
+                continue
             for i, v in enumerate(s[tag]['cells']):
                 c = s[tag]['cache'].get(i)
                 if (v is None) != (c is None) or (v is not None and abs(v - c) > 1e-12 * max(1.0, abs(v))):
@@ -252,11 +266,12 @@ def refs_hold_the_cache(info):
 
 
 def nothing_undrawable_on_log(info):
+    """Cells or values written into the chart alike: either would bring up Excel's alert."""
     bad = []
     for s in info['series']:
         for tag, axis in (('xVal', info['x']), ('yVal', info['y'])):
             if axis['log'] and any(v is not None and v <= 0 for v in s[tag]['cells']):
-                bad.append(f"{s['name']!r} {tag} {s[tag]['ref']}")
+                bad.append(f"{s['name']!r} {tag} {s[tag]['ref'] or 'in the chart'}")
     return bad
 
 
@@ -307,6 +322,8 @@ def common_checks(label, book, shown, want_panels=1):
     check(f'{label}:   and none at a zero or a negative value on a log axis',
           [b for i in infos for b in nothing_undrawable_on_log(i)], [])
     check(f'{label}:   the legend is the page\'s, in its order', [n for i in infos for n in i['legend']], shown['legend'])
+    check(f'{label}:   on white, round the plot and behind it, whatever theme the page is in',
+          {(i['fills']['chart'], i['fills']['plot']) for i in infos}, {('FFFFFF', 'FFFFFF')})
     xs = [a for a in shown['axes'] if a['key'].startswith('x')]
     ys = sorted((a for a in shown['axes'] if a['key'].startswith('y')), key=lambda a: -a['domain'][1])
     if len(ys) == len(infos):
@@ -384,24 +401,48 @@ async def main():
                 check('panels:   over the columns, the panel each is of, each over its run',
                       ([t in book.cells['Data'].values() for t in labels], len(book.merged['Data'])), ([True] * 3, 3))
 
-            # --- the built file: a background overlay, t = 0 on a log axis ---
-            await page.ev("(async () => { selectedGroups = []; selectDataset('/geo/flux'); await __wait(2000); const sel = document.getElementById('backgroundSourceSelect'); sel.value = [...sel.options].map(o => o.value).find(v => v.endsWith('_phase')); sel.dispatchEvent(new Event('change', { bubbles: true })); await __wait(2000); await __scale('x', 'log'); })()", timeout=120)
-            book, shown = await export_case(page, 'overlay, log')
-            if book:
-                infos = common_checks('overlay, log', book, shown)
-                flux = [s for s in infos[0]['series'] if s['name'] == 'flux']
-                check('overlay, log:   the line leaves out t = 0, which a log axis cannot draw',
-                      [min(v for v in s['xVal']['cells'] if v is not None) > 0 for s in flux], [True])
-                check('overlay, log:   while the Data sheet keeps it', book.cells['Data'].get('A8'), 0.0)
-                phases = [s['name'] for s in infos[0]['series'] if s['name'] in ('Submerged', 'Shore', 'Terrestrial')]
-                check('overlay, log:   the phases are drawn behind the line, left out of the legend',
-                      (phases, any(p in infos[0]['legend'] for p in phases)), (['Submerged', 'Shore', 'Terrestrial'], False))
+            # --- the panels again, with a background overlay: in every panel --
+            has = await page.ev("(async () => { const sel = document.getElementById('backgroundSourceSelect'); const v = [...sel.options].map(o => o.value).find(v => v.endsWith('_phase')); if (!v) return false; sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); await __wait(2500); return (document.getElementById('plotlyChart')._fullLayout.shapes || []).length > 0; })()", timeout=120)
+            if has:
+                book, shown = await export_case(page, 'panels, overlay')
+                if book:
+                    infos = common_checks('panels, overlay', book, shown, want_panels=3)
+                    check('panels, overlay:   the overlay in every panel, as the page draws it down all of them',
+                          [[x['name'] for x in i['series'][:3]] for i in infos], [['Submerged', 'Shore', 'Terrestrial']] * 3)
+                    check('  each at a level of its own panel',
+                          all(i['y']['min'] <= i['series'][0]['yVal']['cells'][0] <= i['y']['max'] for i in infos), True)
+                await page.ev("(async () => { const sel = document.getElementById('backgroundSourceSelect'); sel.value = ''; sel.dispatchEvent(new Event('change', { bubbles: true })); await __wait(1500); })()")
+            else:
+                print('skip  the panels with an overlay: the page offers none for them')
+
+            # --- the built file: a background overlay, lin and log ----------
+            await page.ev("(async () => { selectedGroups = []; selectDataset('/geo/flux'); await __wait(2000); const sel = document.getElementById('backgroundSourceSelect'); sel.value = [...sel.options].map(o => o.value).find(v => v.endsWith('_phase')); sel.dispatchEvent(new Event('change', { bubbles: true })); await __wait(2000); })()", timeout=120)
+            for scale in ('lin', 'log'):
+                if scale == 'log':
+                    await page.ev("__scale('x', 'log')")
+                label = f'overlay, {scale}'
+                book, shown = await export_case(page, label)
+                if not book:
+                    continue
+                infos = common_checks(label, book, shown)
+                phases = [x for x in infos[0]['series'] if x['name'] in ('Submerged', 'Shore', 'Terrestrial')]
+                check(f'{label}:   the phases are drawn behind the line, left out of the legend',
+                      ([x['name'] for x in phases], any(x['name'] in infos[0]['legend'] for x in phases), infos[0]['series'][3]['name']),
+                      (['Submerged', 'Shore', 'Terrestrial'], False, 'flux'))
+                check(f'{label}:   each along the time it spans, as the page draws it, from its cells',
+                      [[round(v, 6) for v in x['xVal']['cells']] for x in phases], [[round(v, 6) for v in s2] for s2 in shown['shapes']])
+                check(f'{label}:   level, as thick as Excel draws a line, cut square at the ends',
+                      {(len(set(x['yVal']['cells'])), x['line']['w'], x['line']['cap']) for x in phases}, {(1, 1584 * 12700, 'flat')})
                 table = {v: k for k, v in book.cells['Data'].items() if v in ('Submerged', 'Shore', 'Terrestrial')}
                 col = re.match(r'[A-Z]+', table['Submerged']).group(0)
-                nxt = chr(ord(col) + 1)
                 row = re.sub(r'\D', '', table['Submerged'])
-                check('overlay, log:   and tabled from where each starts, not from where the axis clips it',
-                      book.cells['Data'].get(f'{nxt}{row}'), min(s['x0'] for s in shown['segments']))
+                check(f'{label}:   and tabled from where each starts, not from where the axis clips it',
+                      book.cells['Data'].get(f'{chr(ord(col) + 1)}{row}'), min(x['x0'] for x in shown['segments']))
+                if scale == 'log':
+                    flux = [x for x in infos[0]['series'] if x['name'] == 'flux']
+                    check(f'{label}:   the line leaves out t = 0, which a log axis cannot draw',
+                          [min(v for v in x['xVal']['cells'] if v is not None) > 0 for x in flux], [True])
+                    check(f'{label}:   while the Data sheet keeps it', book.cells['Data'].get('A8'), 0.0)
 
             # --- a zero in the middle of a line on a log axis -----------------
             await page.ev("(async () => { const sel = document.getElementById('backgroundSourceSelect'); sel.value = ''; sel.dispatchEvent(new Event('change', { bubbles: true })); selectDataset('/geo/gap'); await __wait(2000); await __scale('y', 'log'); })()", timeout=120)
