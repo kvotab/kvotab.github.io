@@ -141,6 +141,11 @@ import {
 	DIS_EQUATION_KEYS, DIS_DEFAULTS, disruptionProblems, describeDisruption,
 } from './disruption.js';
 import { schemeOf, operandKeys, OPERAND_KEYS } from './availability.js';
+// An app built on the model names its blocks and indices too, and follows
+// every rename made here. See ./apps.js.
+import {
+	retargetAppNames, retargetAppIndexes, renameAppIndex, renameAppIndexList,
+} from './apps.js';
 
 export {
 	KINDS, SINGULAR, PLURAL, allBlocks, blockIndex, findBlock, blockNames,
@@ -1223,6 +1228,8 @@ function retargetBlockIndexes(project, moves) {
 			}
 		}
 	}
+	// An app's controls and results are keyed the way entries are.
+	retargetAppIndexes(project, moves);
 
 	if (![...written.values()].some(Boolean)) return;
 	const rewrite = (text) => rewriteWrittenIndices(text, (n) => written.get(n) ?? null);
@@ -1403,6 +1410,9 @@ function retargetReferences(project, oldName, newName) {
 			? referenceFrom(newName, system, known)
 			: ref
 	));
+	// And so does an app built on the model: its sliders and its charts name
+	// blocks by their qualified names.
+	retargetAppNames(project, (n) => (n === oldName ? newName : null));
 }
 
 /**
@@ -3530,6 +3540,7 @@ export function renameIndexList(project, oldName, newName) {
 			}
 		}
 	}
+	renameAppIndexList(project, oldName, newName);
 }
 
 /** Blocks and lists that depend on an index list. */
@@ -3785,6 +3796,8 @@ export function renameIndex(project, listName, oldName, newName) {
 			}
 		}
 	}
+	// And every control and result of an app that names one.
+	renameAppIndex(project, kinNames, oldName, to);
 	// And every list defined against any of them, in both directions.
 	for (const other of project.index_lists ?? []) {
 		if (kinNames.has(other.name)) continue;
@@ -4714,6 +4727,9 @@ function retargetAll(project, newNameOf, newSystemOf, alsoKnown = null) {
 		if (to === q && where === system) return ref;
 		return referenceFrom(to, where, known);
 	});
+	// An app names blocks by their qualified names, which is exactly what a
+	// move or a sub-system rename changes.
+	retargetAppNames(project, newNameOf);
 	// A compartment's and a transfer's *qualified* name is an index of the
 	// dimension made of them, so a move or a sub-system rename renames indices
 	// too -- and everything keyed by one has to follow. `renameBlock` has

@@ -2972,6 +2972,14 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
     if diagram:
         report.warn(f"The diagram is this tool’s own and is not written ({', '.join(diagram)}): Ecolego lays a "
                     'model out itself.')
+    # So is an app laid out on the model: a line, as the diagram is.
+    app = raw.get('app')
+    pages = app.get('pages') if isinstance(app, dict) else None
+    parts = sum(len(p['components']) for p in (pages if isinstance(pages, list) else [])
+                if isinstance(p, dict) and isinstance(p.get('components'), list))
+    if parts:
+        report.warn(f"The app built on the model is this tool’s own and is not written ({parts} part"
+                    f"{'' if parts == 1 else 's'}): an Ecolego project has nothing to hold it.")
 
 
 def _normalise_series(raw: Any) -> List[Dict[str, Any]]:

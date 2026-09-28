@@ -58,6 +58,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/domain/transport.js` | A chain of N cells written as one block |
 | `src/domain/farfield.js`, `src/sim/farfield.js` | The dual-porosity far-field pathway (SKB TR-19-06 App. B; TR-90-01 ch. 3) |
 | `src/domain/availability.js` | Solubility limits and Langmuir sorption |
+| `src/domain/apps.js`, `src/domain/appinputs.js` | An app on the model: its data, grid and edits, and what its controls set and its results read. See *Apps on a model* |
 | `src/domain/wastepackage.js` | Packages that fail, a waste form that degrades, an instant release |
 | `src/domain/disruption.js` | Timed and Poisson events with consequences |
 | `src/domain/derived.js` | Quantities worked out from a finished curve, and reporting periods |
@@ -5833,6 +5834,107 @@ and Straighten the point that canvas owns. The keys follow a renamed block
 drops every canvas's point (`clearWaypoints`). A file written before this has
 only the one key, which is now the whole drawing's; its pipes start from their
 default places.
+
+## Apps on a model
+
+The App designer tab lays out a page of controls and results over the model,
+and *Run app* shows that page and nothing else (GUIDE.md, *Apps on a model*).
+Six files, and one section of app.js:
+
+| File | What it is |
+|---|---|
+| `src/domain/apps.js` | The app as data: the reader every path goes through, the grid, the edits, and the renames that follow into it. No import from edit.js, which imports it |
+| `src/domain/appinputs.js` | The app against a model: what an input can be pointed at, what the model holds there, the copy a run is made on, which series a result names, a first app from the model |
+| `src/ui/appwidgets.js` | Each kind of part drawn, and brought up to date in place |
+| `src/ui/appdesigner.js` | The tab: the list of parts, the page and its gestures, the settings form |
+| `src/ui/apprun.js` | The app running on its own |
+| `src/ui/appinfo.js` | The (i) topics |
+
+**Stored as read.** `readApp` is the only reader: it keeps the keys the file
+format defines and nothing else, clamps every number to its range, reads an
+unknown component type as nothing, gives every component an id of its own and
+settles any overlap. Every edit is `editApp`: made on that reading and written
+back *whole*, so there is no second, looser path into the file, and the first
+edit to an app from a file is also the one that tidies it. A component's keys
+are listed once, in `PROPS`, which both reading and `updateComponent` go
+through. The example's app is stored in exactly the form it is read in, and a
+test holds it there, so opening and editing it rewrites nothing.
+
+**Nothing out of the file becomes markup.** Labels and titles are text nodes;
+a Text part is drawn by the Help tab's `renderMarkdown`, which builds elements
+and makes a link only of an `http(s)` address; the ids it gives headings are
+taken off again, since they would be ids a file chose. An index map is keyed by
+list names out of the file, so `readIndex` skips `__proto__`, `constructor`
+and `prototype` as keys.
+
+**A run of the app is a preview.** The session values -- where each control
+stands, `state.appSession.values`, keyed by `targetKey` so that two controls on
+one parameter share one -- are written into a structured clone of the model
+(`applyInputs`), exactly as the optimiser's *Run at these values* writes its
+answer, and `runSimulation({ app: changes })` runs the clone. So the results are
+the page's ordinary results: the Chart and the Table show them, `renderRunKind`
+says they are at the app's controls, and a control that does not reach the
+integration is a re-evaluation, not a solve, because the clone's integration
+fingerprint is what `reuse` compares. `state.preview` is `{ from: 'app',
+signature, changes }` for the run asked for; `runPreview` stamps it onto the
+results as `preview` when they land, as `runRev` does the revision, and
+`appResultsFit` compares that signature with the controls' own -- the empty
+string being the model's own values, which an ordinary run is too. A control
+moved while a run is in flight sets `appRunWanted`, and `setRunning(false)`
+starts one run at the controls' values then. A slider runs while it is dragged
+only when the last solve took under `APP_LIVE_MS`.
+
+The run at an app's controls is the run of the model edited to the same values,
+bit for bit: `test/apps.js` checks it on the biosphere example with a value and
+a factor over every index.
+
+**Laying out an app moves no number.** The designer's commit is
+`modelChanged({ layoutOnly: true, appOnly: true, label })`: an undo step with a
+name of its own, no new revision, no rescan of the equations, and
+`renderEditorViews` draws the tab and nothing else. That exposed a fault the
+diagram had had all along: the JSON tab keyed its text on `state.rev` alone, so
+after an edit that moves no number -- a block dragged, or anything done on this
+tab -- it showed the model as it had been, and Apply on that text put the old
+layout back. It is keyed on `modelEdits` as well now, a count of every edit and
+every step of undo.
+
+**Renames follow.** `retargetAppNames` is called from `retargetReferences`
+(a rename) and `retargetAll` (a move, a sub-system renamed or moved, a
+sub-system dissolved), with the same `newNameOf` they apply to the model's own
+references -- and a series a run names after a block, `Rock held` or
+`Rock.gravel1`, follows the block at its front. `retargetAppIndexes` is called
+from `retargetBlockIndexes`, for a compartment's or a transfer's name as an
+index of the dimension made of them, and applies every move at once so that two
+names swapping swap. `renameIndex` and `renameIndexList` call theirs. A paste
+does none of this: the app stays on the blocks it named. The Python package
+makes the same four walks from the same edits (`python/kompartment/apps.py`),
+and `test_app_parity.py` holds the two to the same JSON. A delete is not
+refused over an app: the part says it is not connected, in the designer, which
+is the place to mend it.
+
+**The grid is CSS's.** `.app-grid` is twelve columns and rows of `--app-row`
+with `--app-gap` between them; a part is placed with `grid-column` and
+`grid-row`, so the page lays itself out and the designer only turns a pointer
+into a cell, with `ROW` and `GAP` -- the same two numbers, which a test holds to
+the stylesheet. `settle` puts one box where it was put and pushes what it lands
+on down, in reading order; nothing is pulled up. The page is written into the
+DOM in `stackOrder` -- band by band, each band column by column -- which is the
+order Tab walks it in and the order a phone stacks it in, where
+`.app-run-grid` becomes one column of the same rows.
+
+**Running on its own**, `#app.is-app-run` hides the header and the panels,
+and `#app-run` takes the row they leave; the footer stays as a row of no
+height, showing nothing but its notices, which rise from it. It is inside `#app`, so a page
+framing the tool (`?chrome=`) insets it as it does the editor. The page's key
+handler gives it ⌘↵ to run and Esc to leave -- when it was opened from the
+designer -- and swallows the editor's ⌘S and ⌘Z, which are about a model its
+user is not editing. `?app` in the address, and `app.open: 'app'` in a file or
+example that is opened, start there.
+
+**Not done.** A run of the app is one deterministic run; a probabilistic run's
+bands are not drawn on it. A part holds no other parts, and a page has no
+images. An app goes wherever its model file goes, and no further: there is no
+way yet to hand one over as a link.
 
 ## Faults found by building
 

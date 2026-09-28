@@ -280,6 +280,57 @@ class EditingAModel(unittest.TestCase):
         with self.assertRaises(kp.EditError):
             m.delete_block('Solubility')
 
+    def test_an_app_on_the_model_follows_every_rename_as_the_application_s_does(self):
+        # The App designer's app names blocks by qualified name and indices by
+        # list: renames, moves, sub-system renames, index and list renames all
+        # follow into it -- the same walks as src/domain/apps.js.
+        raw = example('landscape')
+        raw['app'] = {'pages': [{'name': 'Main', 'components': [
+            {'id': 'c1', 'type': 'slider', 'target': {'kind': 'value', 'block': 'Kd', 'index': {'Radionuclides': 'Tc-99'}}},
+            {'id': 'c2', 'type': 'slider', 'target': {'kind': 'value', 'block': 'discharge', 'factor': True}},
+            {'id': 'c3', 'type': 'switch', 'target': {'kind': 'enabled', 'block': 'Discharge'}},
+            {'id': 'c4', 'type': 'chart', 'series': [
+                {'block': 'Water', 'index': {'Radionuclides': 'I-129', 'Object': 'Lake'}},
+                {'block': 'Regolith held', 'index': {'Object': 'Mire'}},
+                {'block': 'Downstream', 'index': {'Compartments': 'Water'}},
+            ]},
+        ]}]}
+        ops = [['renameBlock', 'Water', 'Lakewater'], ['renameBlock', 'Regolith', 'Soil'],
+               ['renameIndex', 'Radionuclides', 'Tc-99', 'Tc99'], ['renameIndexList', 'Object', 'Site'],
+               ['addSystem', {'name': 'Sub'}], ['moveBlock', 'Kd', 'Sub'], ['renameSystem', 'Sub', 'Params']]
+        js = app('edit', model=raw, ops=ops)
+        self.assertNotIn('error', js)
+        m = kp.Model(raw)
+        m.rename_block('Water', 'Lakewater')
+        m.rename_block('Regolith', 'Soil')
+        m.rename_index('Radionuclides', 'Tc-99', 'Tc99')
+        m.rename_index_list('Object', 'Site')
+        m.add_system('Sub')
+        m.move_block('Kd', 'Sub')
+        m.rename_system('Sub', 'Params')
+        self.assertEqual(differences(m.to_dict(), js['model']), [])
+        self.assertEqual(dumps(m.to_dict()['app']), dumps(js['model']['app']))
+        parts = {c['id']: c for c in js['model']['app']['pages'][0]['components']}
+        self.assertEqual(parts['c1']['target'], {'kind': 'value', 'block': 'Params.Kd', 'index': {'Radionuclides': 'Tc99'}})
+        self.assertEqual(parts['c4']['series'], [
+            {'block': 'Lakewater', 'index': {'Radionuclides': 'I-129', 'Site': 'Lake'}},
+            {'block': 'Soil held', 'index': {'Site': 'Mire'}},
+            {'block': 'Downstream', 'index': {'Compartments': 'Lakewater'}},
+        ])
+
+    def test_an_app_index_that_is_not_a_name_is_passed_over_as_the_application_passes_it(self):
+        raw = example('landscape')
+        raw['app'] = {'pages': [{'components': [
+            {'id': 'c1', 'type': 'chart', 'series': [{'block': 'Water', 'index': {'Object': ['Lake'], 'Radionuclides': 5}}]},
+        ]}]}
+        js = app('edit', model=raw, ops=[['renameIndex', 'Object', 'Lake', 'Pond'], ['renameIndexList', 'Object', 'Site']])
+        self.assertNotIn('error', js)
+        m = kp.Model(raw)
+        m.rename_index('Object', 'Lake', 'Pond')
+        m.rename_index_list('Object', 'Site')
+        self.assertEqual(differences(m.to_dict(), js['model']), [])
+        self.assertEqual(dumps(m.to_dict()['app']), dumps(js['model']['app']))
+
     def test_a_sub_system_is_written_once_after_a_rename_move_or_delete(self):
         base = {'name': 'Nested', 'systems': ['Outer', 'Outer.Inner', 'Y'],
                 'compartments': [{'name': 'A', 'system': 'Outer.Inner', 'initial': '1'},

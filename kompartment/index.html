@@ -156,6 +156,11 @@
 					title="The model’s dimensions: indices, sub-sets, mappings, and the half-lives and decay chains of the radionuclide list">Index lists</button>
 				<button class="tab" role="tab" data-tab="chart" aria-selected="false">Chart</button>
 				<button class="tab" role="tab" data-tab="table" aria-selected="false">Table</button>
+				<!-- A page of controls and results over the model, for somebody
+				     who does not need the editor, and the way to show it on its
+				     own. See ./src/ui/appdesigner.js. -->
+				<button class="tab" role="tab" data-tab="app" aria-selected="false"
+					title="Lay out an app on the model — sliders, charts, numbers — and run it on its own">App designer</button>
 				<button class="tab" role="tab" data-tab="model" aria-selected="false">JSON</button>
 				<button class="tab" role="tab" data-tab="code" aria-selected="false">Generated code</button>
 				<span class="spacer"></span>
@@ -335,6 +340,11 @@
 
 					<div class="panel" id="panel-help" role="tabpanel"></div>
 
+					<!-- Drawn by ./src/ui/appdesigner.js when the tab is shown:
+					     the parts, the page, and the settings of what is
+					     selected. -->
+					<div class="panel" id="panel-app" role="tabpanel"></div>
+
 					<!-- Two views of the same thing: what the builder generated from
 					     the model's equations. The derivative function, and the
 					     matrix of its partial derivatives that the stiff solvers
@@ -380,6 +390,11 @@
 		<a class="foot-link" href="https://kvotab.se" target="_blank" rel="noopener noreferrer"
 			title="Kvot AB — kvotab.se (opens in a new tab)">kvotab.se</a>
 	</footer>
+
+	<!-- The app, running: while it shows, the header, the panels and the
+	     footer are gone and this is the whole window. Inside #app, so it is
+	     inset by the same chrome the editor is. See ./src/ui/apprun.js. -->
+	<section id="app-run" class="app-run" hidden aria-label="App"></section>
 
 	<div id="drop-zone" hidden>
 		<div class="drop-card">

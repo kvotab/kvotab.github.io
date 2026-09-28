@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from . import decay as _decay
+from .apps import rename_app_index, rename_app_index_list, retarget_app_indexes, retarget_app_names
 from .blocks import (
     AGGREGATE_OPERATIONS, DIRECTIONS, EVENT_DEFAULTS, EVENT_EQUATION_KEYS, EXTREMES, FARF_DEFAULTS,
     FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_OPTIONAL_KEYS, INTERPOLATIONS, KINDS, OPERATIONS, SINGULAR,
@@ -1494,6 +1495,7 @@ class Model:
                 ix = e.get('index')
                 if isinstance(ix, dict) and old in ix:
                     ix[new] = ix.pop(old)
+        rename_app_index_list(self._raw, old, new)
 
     def index_list_users(self, name: str) -> List[str]:
         """The lists defined from ``name`` and the blocks indexed by it."""
@@ -1648,6 +1650,7 @@ class Model:
                     for n in kin_names:
                         if ix.get(n) == old:
                             ix[n] = to
+        rename_app_index(self._raw, kin_names, old, to)
         for other in self._stored_lists():
             if other['name'] in kin_names:
                 continue
@@ -3109,6 +3112,8 @@ class Model:
             return ref if r is None else reference_from(r[0], r[1], known)
 
         self._each_target(target)
+        # An app built on the model names blocks by their qualified names too.
+        retarget_app_names(self._raw, new_name_of)
         moves: Dict[str, Dict[str, str]] = {}
         for collection, list_name in (('compartments', COMPARTMENT_LIST), ('transfers', TRANSFER_LIST)):
             m = {}
@@ -3141,6 +3146,7 @@ class Model:
                     was = ix.get(list_name)
                     if was is not None and was in m:
                         ix[list_name] = m[was]
+        retarget_app_indexes(self._raw, moves)
         if not any(written.values()):
             return
         mapping = written.get

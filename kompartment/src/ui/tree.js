@@ -574,6 +574,16 @@ function choose(b, ev, order, pickedNames, hooks) {
  */
 let dragging = null;
 
+/**
+ * The blocks being dragged out of the tree right now, by qualified name; none
+ * when nothing is. For a drop target elsewhere on the page -- the App
+ * designer's page takes a parameter as a slider over it -- which cannot read
+ * the payload until the drop, for the reason above.
+ */
+export function draggedNames() {
+	return dragging ? [...dragging] : [];
+}
+
 function wireDrag(node, spec) {
 	node.draggable = true;
 	node.addEventListener('dragstart', (ev) => {

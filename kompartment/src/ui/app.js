@@ -39,8 +39,8 @@ import {
 } from './inspector.js';
 import { section as part, el } from './parts.js';
 import { blockIcon, sampleMark, popIcon } from './icons.js';
-import { openMenu } from './menu.js';
-import { openModal, refreshModal, closeAllModals } from './modal.js';
+import { openMenu, closeMenu, menuIsOpen } from './menu.js';
+import { openModal, refreshModal, closeAllModals, modalIsOpen } from './modal.js';
 import { openProbabilisticDialog, openReplayDialog, openBandsDialog, bandPairs } from './probdialog.js';
 import { openSensitivityDialog } from './sensdialog.js';
 import { openDistributionDialog } from './distdialog.js';
@@ -91,8 +91,18 @@ import { outputsOf } from '../sim/runner.js';
 import { samplingPlan, slotName, groupOf } from '../sim/probabilistic.js';
 import { renderMatrix, markSelection } from './matrix.js';
 import { UndoStack } from './undo.js';
-import { renderBlockTree, treeTools } from './tree.js';
-import { infoButton, refreshInfo, setInfoLinks } from './infopanel.js';
+import { renderBlockTree, treeTools, draggedNames } from './tree.js';
+// An app on the model: the page of controls and results the App designer
+// lays out, and the same page running on its own. See ../domain/apps.js.
+import * as apps from '../domain/apps.js';
+import * as appIn from '../domain/appinputs.js';
+import {
+	renderAppDesigner, refreshAppDesigner, resetDesigner, designerPage,
+} from './appdesigner.js';
+import {
+	renderAppRun, refreshAppRun, paintAppRunStatus, redrawAppRun, resetAppRun, closeAppRun,
+} from './apprun.js';
+import { infoButton, refreshInfo, setInfoLinks, closeInfo } from './infopanel.js';
 import { simTopic, fmtSetting } from './siminfo.js';
 import { panelTopic } from './panelinfo.js';
 import { wireJsonEditor } from './jsoneditor.js';
@@ -611,6 +621,26 @@ const state = {
 	pickChips: 0,
 	// How many rows the table draws, from TABLE_ROWS, likewise.
 	tableRows: 0,
+
+	// --- the app ---------------------------------------------------------------
+	/**
+	 * The app built on the model, as it is being used on this page.
+	 *
+	 * `values` is where each of its inputs stands, by `targetKey` -- the
+	 * session's, never the model's: moving a slider changes no number in the
+	 * file, and a run of the app is made on a copy with these written in (see
+	 * ../domain/appinputs.js). `mode` is `'run'` while the app is showing on
+	 * its own, and `fromDesigner` says it was opened from the App designer's
+	 * button, which is what makes Esc the way back.
+	 */
+	appSession: { values: new Map(), mode: null, fromDesigner: false },
+	/**
+	 * What the run in flight was asked to be: `state.preview` as it stood when
+	 * the run started, stamped onto its results when they land -- the same
+	 * trick `runRev` plays -- so "are these the app's numbers?" is asked of
+	 * the results on screen and not of whatever was asked for since.
+	 */
+	runPreview: null,
 };
 
 /** What either pane of the rail may be squeezed to, in pixels. */
@@ -663,6 +693,13 @@ let runWanted = false;
 // ... and whether that remembered run was asked for by hand (Run, Cmd-Enter),
 // which is honoured when it comes round even with auto-run switched off.
 let runWantedManual = false;
+/**
+ * The same for the app: a control moved while a run was going, so a run at
+ * the controls' values is owed when that one ends. See `runApp`.
+ */
+let appRunWanted = false;
+/** A run of the app waiting for a slider being dragged to pause. */
+let appRunTimer = null;
 /** Set during boot; reflects the project's view flags onto the checkboxes. */
 
 const $ = (sel) => document.querySelector(sel);
@@ -1162,12 +1199,18 @@ function runSimulation(opts = {}) {
 	// A preview runs against a *copy* with other values in it, which is how
 	// "show me what these give" can be answered without editing anything. Any
 	// ordinary run clears it: the next thing the reader asks for is about the
-	// model, not about the preview.
-	if (!opts.substitute) state.preview = null;
+	// model, not about the preview. An app's run is the same thing with its
+	// controls' values in the copy (`opts.app`, see `runApp`).
+	if (!opts.substitute && !opts.app) state.preview = null;
 	let project;
 	try {
-		const raw = opts.substitute
-			? (() => { const copy = structuredClone(state.raw); putValues(copy, opts.substitute); return copy; })()
+		const raw = opts.substitute || opts.app
+			? (() => {
+				const copy = structuredClone(state.raw);
+				if (opts.substitute) putValues(copy, opts.substitute);
+				if (opts.app) appIn.applyInputs(copy, opts.app);
+				return copy;
+			})()
 			: state.raw;
 		project = new Project(structuredClone(raw));
 		state.project = project;
@@ -1185,11 +1228,16 @@ function runSimulation(opts = {}) {
 		return;
 	}
 	clearError();
+	// What an app's run is at, set only now that it is going: a run refused
+	// above -- a model with a problem, a copy that would not load -- must not
+	// leave the results on screen described as a run at the app's controls.
+	if (opts.app) state.preview = opts.preview ?? null;
 	setRunning(true);
 	state.primaryBusy = true;
 	state.runId += 1;
 	// Which model this run is of. Stamped onto the results when they arrive.
 	state.runRev = state.rev;
+	state.runPreview = state.preview;
 	state.runSolver = project.simulation?.solver ?? DEFAULT_SOLVER;
 	state.runKey = integrationKeyNow(project);
 	clearTimeout(autoRunTimer);
@@ -1219,7 +1267,7 @@ function runSimulation(opts = {}) {
 		// its own. Not for a preview: that is this scenario at values the model
 		// does not hold, and a line of another scenario at the values it does
 		// would be drawn beside it as if the two were comparable.
-		if (opts.substitute) stopScenarios({ all: true });
+		if (opts.substitute || opts.app) stopScenarios({ all: true });
 		else startScenarios();
 	} else {
 		state.reusing = false;
@@ -1244,7 +1292,7 @@ function runSimulation(opts = {}) {
  */
 function shownScenarioRuns({ hidden = true } = {}) {
 	const r = state.results;
-	if (!r || r.replayed != null || state.preview) return [];
+	if (!r || r.replayed != null || r.preview) return [];
 	const out = [];
 	for (const name of otherScenarios(state.raw, state.scenarioChoice)) {
 		const e = state.scenarioRuns.get(name);
@@ -1622,7 +1670,13 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	// `replayed` says these are one realisation of a probabilistic run, run
 	// again in full -- which the status line says, since a curve that is the
 	// 734th draw and not the model's values is a different thing to read.
-	state.results = { ...payload, rev: state.runRev ?? state.rev, runId: state.runId, replayed, storedLog };
+	state.results = {
+		...payload, rev: state.runRev ?? state.rev, runId: state.runId, replayed, storedLog,
+		// What these are a run *at*: the model's own values, a preview of
+		// other values, or an app's controls. A replayed realisation is none
+		// of them.
+		preview: replayed == null ? state.runPreview ?? null : null,
+	};
 	// What this run warns about, in place of the last run's: see `runWarnings`.
 	const hadWarnings = state.runWarnings.length > 0;
 	state.runWarnings = Array.isArray(payload.stats?.farfield) ? payload.stats.farfield : [];
@@ -1635,6 +1689,7 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	state.dirty = state.results.rev !== state.rev;
 	reconcileSelection();
 	renderResults();
+	renderAppResults();
 	setStatus(payload);
 	clearError();
 	// In, but the run is not over while a scenario beside it is still going:
@@ -2567,7 +2622,7 @@ function askProbMatrices(indices, want = 'all', { compact = false } = {}) {
  */
 const STOP_GRACE = 250;
 
-function cancelSimulation() {
+function cancelSimulation({ keepAutoRun = false } = {}) {
 	if (!state.running) return;
 	// Stop means stop: an edit made while this run was going does not get to
 	// start another one the moment this one dies. Both halves of that -- the
@@ -2577,6 +2632,10 @@ function cancelSimulation() {
 	runWanted = false;
 	clearTimeout(autoRunTimer);
 	autoRunTimer = null;
+	// Nor does a control of the app that moved during it.
+	appRunWanted = false;
+	clearTimeout(appRunTimer);
+	appRunTimer = null;
 
 	// Terminated, not asked. A message to a worker is only delivered between
 	// turns of its event loop, and a solve is one long synchronous call -- so
@@ -2624,7 +2683,9 @@ function cancelSimulation() {
 	//
 	// Not `autoRunHeld`, which is the other thing: a slow solve holds auto-run
 	// back without touching the switch, because nobody asked for that one.
-	const wasAuto = state.autoRun;
+	// Not by the running app's own Stop, which is about the run and has no
+	// view of the switch it would be turning off.
+	const wasAuto = state.autoRun && !keepAutoRun;
 	if (wasAuto) {
 		state.autoRun = false;
 		const box = $('#autorun');
@@ -2666,6 +2727,7 @@ function setRunning(on, { keepStatus = false } = {}) {
 		}
 		startRunClock();
 		setProgress(0);
+		paintAppStatus();
 		return;
 	}
 	stopRunClock();
@@ -2676,6 +2738,16 @@ function setRunning(on, { keepStatus = false } = {}) {
 	if (statusOwed) {
 		statusOwed = false;
 		if (state.results && state.results.rev === state.rev && !state.results.detached) setStatus(state.results);
+	}
+	paintAppStatus();
+	// A control of the app that moved while this run was going: its run is
+	// the one owed now, at wherever the controls stand -- which is also every
+	// move made in between, since a run is made at the controls' values and
+	// not at the value one of them had when it asked.
+	if (appRunWanted) {
+		appRunWanted = false;
+		runApp();
+		return;
 	}
 	// Here rather than in `acceptResults`, so that a run which failed or was
 	// stopped still lets the edits made during it have their turn. Only if
@@ -2727,6 +2799,7 @@ function setProgress(fraction, at = null) {
  * and how many are in, since one clock would be one scenario's.
  */
 function paintProgress() {
+	paintAppStatus();
 	const bar = $('#progress');
 	const text = $('#progress-pct');
 	if (!bar || !text) return;
@@ -2841,6 +2914,7 @@ function setLoadingStage(stage, detail) {
  * solve was slow enough that doing so on every keystroke would be annoying.
  */
 function modelChanged(opts = {}) {
+	modelEdits += 1;
 	// Any edit calls off a pending cut: a move whose source has been changed
 	// under it is a move nobody asked for. The paste clears it before it moves
 	// anything, so this does not cancel the move it is performing.
@@ -2862,6 +2936,9 @@ function modelChanged(opts = {}) {
 	undoStack.record(state.raw, viewNow(), {
 		coalesce: opts.coalesce ?? null,
 		layoutOnly: !!opts.layoutOnly,
+		// What to call the step, where the edit knows better than a diff of
+		// the blocks can: an edit of the app changes none of them.
+		label: opts.label ?? null,
 		// What the editor was pointed at, which is what names an edit that
 		// changed a value rather than the shape of anything.
 		hint: state.settingsFor ?? state.selection?.name ?? null,
@@ -2958,7 +3035,7 @@ function republish(opts = {}) {
 	// Without the rail: `renderEditorViews` two lines down renders it, and
 	// building the tree of every block in the model twice is most of what an
 	// edit used to cost.
-	rescanProblems({ rail: false });
+	if (!opts.appOnly) rescanProblems({ rail: false });
 	updateDirtyBadge();
 	// Whether there is anything to write, which every edit changes.
 	renderSaveButton();
@@ -2976,8 +3053,9 @@ function republish(opts = {}) {
 	if (opts.layoutOnly) {
 		// Moving a node changes nothing about the numbers -- but an edit that
 		// did may still be waiting for a run, and that is what the badge is
-		// about, so it is asked rather than assumed.
-		state.dirty = resultsAreStale();
+		// about, so it is asked rather than assumed. A model with no results
+		// at all is owed one, as `setModel` has it.
+		state.dirty = !state.results || resultsAreStale();
 		updateDirtyBadge();
 		return;
 	}
@@ -3019,6 +3097,7 @@ function timeTravel(back) {
 		flash(back ? 'Nothing left to undo.' : 'Nothing to redo.', 'info');
 		return;
 	}
+	modelEdits += 1;
 	// A gesture still in the pointer's hands writes to the model as it moves,
 	// and would go on writing to the one that has just been replaced.
 	graph?.cancelGesture();
@@ -3555,6 +3634,8 @@ function showError({ name, message, blockName, hint }) {
 	if (before || state.runProblem?.where) remark();
 	else renderProblems();
 	renderStaleness();
+	// Somebody using the app has no strip above the tabs to read it in.
+	paintAppStatus();
 }
 
 function clearError() {
@@ -4669,6 +4750,13 @@ function applyHelpLine() {
 }
 
 function renderEditorViews(opts = {}) {
+	// An edit of the app draws the app and nothing else: no block, list or
+	// setting of the model has changed, and the diagram, the tree and the
+	// matrix are the model's.
+	if (opts.appOnly) {
+		if (state.tab === 'app') renderAppDesignerView();
+		return;
+	}
 	applyHelpLine();
 	renderModelIdentity();
 	reconcileSelection();
@@ -4693,6 +4781,8 @@ function renderEditorViews(opts = {}) {
 	// panel rebuilt its half-life table and decay drawing per keystroke, and
 	// left a ResizeObserver behind each time.
 	if (state.tab === 'indexlists') renderIndexListsView();
+	// And the app, which names blocks: a rename or a deletion shows on it.
+	if (state.tab === 'app') renderAppDesignerView();
 	renderSidebar();
 }
 
@@ -7102,6 +7192,7 @@ function acceptColumns(m) {
 	m.indices.forEach((i, k) => { r.columns[i] = m.columns[k]; });
 	renderChart();
 	renderTable();
+	renderAppResults();
 	for (const done of r.onColumns ?? []) done();
 	r.onColumns = [];
 }
@@ -7354,9 +7445,16 @@ function renderRunKind() {
 	}
 	// A preview is not an ordinary run and must not read as one: the model on
 	// screen is not the model these numbers came from.
-	if (r && state.preview) {
-		words.push(`at ${state.preview.length} optimised value`
-			+ `${state.preview.length === 1 ? '' : 's'} — the model still holds its own`);
+	// What the results on screen were run at, from the results themselves:
+	// `state.preview` is what the run in flight was asked for.
+	const at = r?.preview ?? null;
+	if (at?.from === 'app') {
+		const n = at.changes?.length ?? 0;
+		words.push(`at the app’s controls, ${n} away from the model’s value`
+			+ `${n === 1 ? '' : 's'} — the model still holds its own`);
+	} else if (at) {
+		words.push(`at ${at.length} optimised value`
+			+ `${at.length === 1 ? '' : 's'} — the model still holds its own`);
 	}
 	// What else could be here, where something could. A probabilistic run is
 	// the thing a reader does not know is possible until it is offered.
@@ -9241,6 +9339,9 @@ function acceptJacobianCheck(m) {
  */
 function themeChanged() {
 	chart?.draw();
+	// A chart on the app is a canvas too, and reads the palette when drawn.
+	if (state.appSession.mode === 'run') redrawAppRun();
+	else if (state.tab === 'app') renderAppDesignerView();
 	if (state.tab === 'code' && generated.view === 'jacobian') renderJacobian();
 }
 
@@ -11008,6 +11109,7 @@ async function openModelFile(file, { read = null } = {}) {
 			?? await readModelFile(file, { onStage: (stage) => showOpening(stage, file.name) });
 		await showOpening('setup', file.name);
 		setModel(project, { label: file.name });
+		openAsAppIfAsked();
 		if (report) showImportReport(report, file.name);
 		if (datasetProblem) {
 			flash(`${file.name} carries a saved run that could not be read: `
@@ -11099,6 +11201,8 @@ function openDataset(data, fileName) {
 	setRunning(true);
 	state.runId += 1;
 	state.runRev = state.rev;
+	// A saved run is of the model's own values: at no app's controls.
+	state.runPreview = null;
 	state.runSolver = data.meta?.stats?.solver ?? null;
 	// Nothing was integrated, so there is no fingerprint to compare a later
 	// edit against: the next edit re-solves rather than re-evaluating somebody
@@ -11303,7 +11407,17 @@ const revealByName = {
 const HUGE_JSON = 4e6;
 
 /** What the textarea holds, so coming back to the tab does not lay it out again. */
-const modelEditor = { rev: -1, text: null, opened: false };
+const modelEditor = { rev: -1, edits: -1, text: null, opened: false };
+/**
+ * Every change to the model, counted -- the ones that move no number too.
+ *
+ * `state.rev` is about the numbers, and an edit that cannot change one --
+ * a block dragged on the diagram, anything done on the App designer tab --
+ * leaves it where it was. The JSON tab keyed its text on it alone, so after
+ * such an edit it went on showing the model as it had been, and Apply on
+ * that text put the old layout, or the old app, back.
+ */
+let modelEdits = 0;
 
 /** The box's colouring, its check and Apply's state: see ./jsoneditor.js. Wired at boot. */
 let jsonEd = null;
@@ -11319,10 +11433,11 @@ function renderModelEditor({ force = false } = {}) {
 	// Already showing this revision. Every visit to the tab used to re-serialise
 	// and re-lay-out the same text, which on a large model is seconds for a
 	// document that has not changed.
-	if (!force && modelEditor.rev === state.rev && modelEditor.text !== null) return;
+	if (!force && modelEditor.rev === state.rev && modelEditor.edits === modelEdits && modelEditor.text !== null) return;
 
 	const text = JSON.stringify(state.raw, null, 2);
 	modelEditor.rev = state.rev;
+	modelEditor.edits = modelEdits;
 	modelEditor.text = text;
 	if (force) modelEditor.opened = true;
 
@@ -11435,6 +11550,7 @@ async function loadExample(file) {
 	const res = await fetch(new URL(`../../examples/${file}`, import.meta.url));
 	if (!res.ok) throw new Error(`Could not load ${file} (${res.status})`);
 	setModel(await res.json(), { example: file });
+	openAsAppIfAsked();
 }
 
 /**
@@ -11548,6 +11664,13 @@ function setModel(raw, source) {
 	modelEditor.opened = false;
 	modelEditor.text = null;
 	state.results = null;
+	// The app's controls stood where this session had put them on the model
+	// just closed; the one arriving starts at its own values, on its first
+	// page, with nothing selected in the designer.
+	state.appSession.values.clear();
+	state.preview = null;
+	state.runPreview = null;
+	resetDesigner();
 	state.selected = [];
 	state.prevLabels = null;
 	state.selection = null;
@@ -11650,12 +11773,285 @@ function setModel(raw, source) {
 	// results yet and offers the button.
 	if (state.autoRun) runSimulation();
 	else renderStaleness();
+	// A model opened while an app was running on its own -- a file dropped on
+	// it -- is the app to show now, if it has one; if not, the editor is back,
+	// since there is nothing else to show.
+	if (state.appSession.mode === 'run') {
+		if (apps.hasApp(state.raw)) {
+			resetAppRun(0);
+			drawAppRun();
+			if (!appResultsFit() && apps.readApp(state.raw)?.run !== 'button') runApp();
+		} else {
+			leaveAppRun();
+			flash('The model just opened has no app, so here is the editor.', 'info');
+		}
+	}
 	// The model just opened is what this tab is working on now. Written
 	// without waiting for an edit: a file opened and then refreshed away
 	// would otherwise be offered back as the model before it.
 	draftKeeper.note(state.raw, draftMeta());
 }
 
+
+// --- the app ------------------------------------------------------------------------
+
+/*
+  An app on the model: the App designer tab lays it out, and *Run app* shows it
+  and nothing else. Its data and its rules are ../domain/apps.js and
+  ../domain/appinputs.js, its drawing ./appdesigner.js, ./apprun.js and
+  ./appwidgets.js. What is here is where it meets the rest of the page.
+
+  **A run of the app is a preview.** Its controls' values are written into a
+  copy of the model and that copy is run, exactly as *Run at these values*
+  runs an optimiser's answer -- so the results are the page's ordinary
+  results, the Chart and the Table show them with a line saying what they are
+  at, the model keeps its own values, and a run whose integration those values
+  do not reach is a re-evaluation rather than a solve. `state.preview` says
+  what the run was at, and the results carry it (`preview` in
+  `acceptResults`), which is how the app knows whether the numbers on screen
+  are its own: `appResultsFit`.
+*/
+
+/** Where an input of the app stands: its value this session, or the model's. */
+function appValueOf(target) {
+	const key = appIn.targetKey(target);
+	if (key && state.appSession.values.has(key)) return state.appSession.values.get(key);
+	return appIn.modelValue(state.raw, target);
+}
+
+/** The results the app draws from: this model's, whatever they were run at. */
+function appResults() {
+	const r = state.results;
+	if (!r || r.rev !== state.rev || r.replayed != null || !r.outputs?.length) return null;
+	return { t: r.t, outputs: r.outputs, column: (i) => column(r, i) };
+}
+
+/**
+ * What the model reports, for checking what an app's results name: the run's
+ * list while the run is of this model, and the model's own otherwise -- a
+ * block renamed since the run is not among what the run reported, and is
+ * among what the model does.
+ */
+function appOutputs() {
+	const r = state.results;
+	return r?.outputs?.length && r.rev === state.rev ? r.outputs : outputsNow();
+}
+
+/** What a part of the app is drawn against: see ./appwidgets.js. */
+function appContext(live) {
+	const outputs = appOutputs();
+	return {
+		raw: state.raw,
+		live,
+		valueOf: appValueOf,
+		set: setAppValue,
+		act: (action) => (action === 'reset' ? resetAppValues() : runApp()),
+		results: appResults(),
+		timeUnit: String(state.raw?.simulation?.time_unit ?? 'year'),
+		scenarios: ed.scenarioNames(state.raw),
+		problemOf: (c) => appIn.componentProblem(state.raw, c, outputs),
+	};
+}
+
+/** The app's inputs that stand away from the model's values: what its run changes. */
+function appChanges() {
+	return appIn.inputChanges(state.raw, state.appSession.values);
+}
+
+/**
+ * Whether the results on screen are a run at the values the app's controls
+ * hold now: of this model, at exactly these changes -- none being a run at
+ * the model's own values, which an ordinary run is too.
+ */
+function appResultsFit() {
+	const r = state.results;
+	if (!r || r.rev !== state.rev || r.replayed != null) return false;
+	const had = r.preview == null ? '' : (r.preview.from === 'app' ? r.preview.signature : null);
+	return had === appIn.signature(appChanges());
+}
+
+/**
+ * Runs the model at the values the app's controls hold.
+ *
+ * With nothing moved that is an ordinary run; otherwise a preview, on a copy.
+ * One at a time: a control moved while a run is going leaves a run owed,
+ * which `setRunning` starts when this one ends -- at the controls' values
+ * then, so a slider dragged through twenty values during a slow solve costs
+ * one more run, not twenty.
+ */
+function runApp() {
+	clearTimeout(appRunTimer);
+	appRunTimer = null;
+	if (state.running) {
+		appRunWanted = true;
+		paintAppStatus();
+		return;
+	}
+	appRunWanted = false;
+	const changes = appChanges();
+	if (changes.length) {
+		runSimulation({ app: changes, preview: { from: 'app', signature: appIn.signature(changes), changes } });
+	} else {
+		runSimulation();
+	}
+	paintAppStatus();
+}
+
+/**
+ * An input of the app moved.
+ *
+ * Kept as the session's value, shown on every other control over the same
+ * thing, and run -- at once when it has come to rest, and while a slider is
+ * still being dragged too when the last solve was quick enough to keep up.
+ * An app that runs when asked only notes that a run is owed.
+ */
+function setAppValue(target, value, final, from = null) {
+	const key = appIn.targetKey(target);
+	if (!key) return;
+	state.appSession.values.set(key, value);
+	// Every other control over the same thing follows; the one that moved
+	// already shows where it is.
+	if (state.appSession.mode === 'run') refreshAppRun({ inputs: true, outputs: false, except: from });
+	if (apps.readApp(state.raw)?.run === 'button') { paintAppStatus(); return; }
+	if (final) { runApp(); return; }
+	if (state.lastSolveMs > APP_LIVE_MS) return;
+	if (state.running) { appRunWanted = true; return; }
+	clearTimeout(appRunTimer);
+	appRunTimer = setTimeout(runApp, 60);
+}
+
+/** How quick a solve has to be for a slider to run the model while it is dragged. */
+const APP_LIVE_MS = 400;
+
+/** Every control back where the model has it, and a run there. */
+function resetAppValues() {
+	state.appSession.values.clear();
+	if (state.appSession.mode === 'run') refreshAppRun({ inputs: true, outputs: false });
+	// In an app that runs when asked, the reset is a change like any other:
+	// owed, and said so, until Run.
+	if (!appResultsFit() && apps.readApp(state.raw)?.run !== 'button') runApp();
+	else paintAppStatus();
+}
+
+/** What the app's title bar says: see `paintAppRunStatus` in ./apprun.js. */
+function appStatus() {
+	const problem = state.problems.length
+		? `The model has ${state.problems.length === 1 ? 'a problem' : `${state.problems.length} problems`} `
+			+ `that ${state.problems.length === 1 ? 'has' : 'have'} to be fixed before it can run: ${state.problems[0].message}`
+		: state.runProblem ? `The run stopped: ${state.runProblem.message}` : null;
+	return {
+		running: state.running,
+		fraction: state.primaryFraction,
+		owed: !state.running && apps.readApp(state.raw)?.run === 'button' && !appResultsFit(),
+		problem,
+	};
+}
+
+function paintAppStatus() {
+	if (state.appSession.mode === 'run') paintAppRunStatus();
+}
+
+/** A run came in, or a column of one: the app draws it where it is showing. */
+function renderAppResults() {
+	if (state.appSession.mode === 'run') refreshAppRun({ inputs: false });
+	else if (state.tab === 'app') refreshAppDesigner();
+}
+
+/** The App designer tab, drawn from the model as it stands. */
+function renderAppDesignerView() {
+	const panel = $('#panel-app');
+	if (!panel) return;
+	renderAppDesigner(panel, {
+		raw: () => state.raw,
+		// Laying out an app moves no number: recorded for Undo, and nothing
+		// is run or marked out of date.
+		commit: (label, opts = {}) => modelChanged({
+			layoutOnly: true, appOnly: true, label: `the app: ${label}`, coalesce: opts.coalesce ?? null,
+		}),
+		context: () => appContext(false),
+		outputs: () => outputsNow(),
+		runApp: () => enterAppRun({ fromDesigner: true }),
+		treeNames: () => draggedNames(),
+		flash,
+	});
+}
+
+/**
+ * The app on its own: the editor goes, and the app's title, pages and parts
+ * take the whole window.
+ *
+ * `fromDesigner` for the designer's own button, whose Edit and Esc come back;
+ * otherwise the app was asked for by the address or by the file, and offers
+ * the way back only if it says to.
+ */
+function enterAppRun({ fromDesigner = false } = {}) {
+	if (!apps.hasApp(state.raw)) {
+		flash('This model has no app yet. The App designer tab is where one is laid out.', 'warn');
+		return false;
+	}
+	closeAllModals();
+	closeMenu();
+	closeInfo();
+	state.appSession.mode = 'run';
+	state.appSession.fromDesigner = fromDesigner;
+	resetAppRun(fromDesigner ? designerPage() : 0);
+	$('#app')?.classList.add('is-app-run');
+	const host = $('#app-run');
+	host.hidden = false;
+	drawAppRun();
+	host.querySelector('.app-run-body')?.focus({ preventScroll: true });
+	// While another run is going too: `runApp` leaves one owed, at the
+	// controls' values, rather than the app showing that run's numbers under
+	// controls that stand somewhere else.
+	if (!appResultsFit() && apps.readApp(state.raw)?.run !== 'button') runApp();
+	return true;
+}
+
+function drawAppRun() {
+	renderAppRun($('#app-run'), {
+		raw: () => state.raw,
+		context: () => appContext(true),
+		status: appStatus,
+		run: runApp,
+		stop: () => cancelSimulation({ keepAutoRun: true }),
+		canEdit: () => state.appSession.fromDesigner || apps.readApp(state.raw)?.edit_button !== false,
+		leave: leaveAppRun,
+	});
+}
+
+/** Back to the editor, on the tab the app was opened from. */
+function leaveAppRun() {
+	if (state.appSession.mode !== 'run') return;
+	state.appSession.mode = null;
+	// A run the app still owed is the app's, not the editor's: left owed, it
+	// would start the moment the run in flight ended, ahead of any edit's.
+	appRunWanted = false;
+	clearTimeout(appRunTimer);
+	appRunTimer = null;
+	closeAppRun();
+	$('#app-run').hidden = true;
+	$('#app')?.classList.remove('is-app-run');
+	selectTab(state.appSession.fromDesigner ? 'app' : state.tab);
+	state.appSession.fromDesigner = false;
+	// The results are what the app last ran, and the Chart says so: see
+	// `renderRunKind`.
+	renderRunKind();
+}
+
+/**
+ * After a model has been opened from a file or an example: into its app, when
+ * the app says that is how it opens.
+ */
+function openAsAppIfAsked() {
+	if (appOpenRefused) return;
+	if (apps.readApp(state.raw)?.open === 'app' && apps.hasApp(state.raw)) enterAppRun({ fromDesigner: false });
+}
+
+/**
+ * `?app=off`: whatever a file says, it opens in the editor -- the address for
+ * its author, when the app it opens as offers no way out of itself.
+ */
+let appOpenRefused = false;
 
 // --- tabs ---------------------------------------------------------------------------
 
@@ -11684,6 +12080,7 @@ function selectTab(name) {
 	if (name === 'code') { renderCode(); if (generated.view === 'jacobian') renderJacobian(); }
 	if (name === 'model') renderModelEditor();
 	if (name === 'help') renderHelp($('#panel-help'));
+	if (name === 'app') renderAppDesignerView();
 }
 
 // --- boot -----------------------------------------------------------------------------
@@ -12062,6 +12459,26 @@ export function boot() {
 	$('#redo').addEventListener('click', () => timeTravel(false));
 
 	window.addEventListener('keydown', (e) => {
+		// The app running on its own has two keys of its own, and none of the
+		// editor's: Undo and Save are about a model its user is not editing.
+		if (state.appSession.mode === 'run') {
+			const mod = e.metaKey || e.ctrlKey;
+			if (mod && e.key === 'Enter') { e.preventDefault(); runApp(); return; }
+			if (e.key === 'Escape' && state.appSession.fromDesigner && !menuIsOpen() && !modalIsOpen()) {
+				e.preventDefault();
+				leaveAppRun();
+				return;
+			}
+			// The author's way out of an app that offers none: one saved to open
+			// as the app, with Edit off, would otherwise shut its own author out.
+			if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+				e.preventDefault();
+				leaveAppRun();
+				return;
+			}
+			if (mod && !e.altKey && ['s', 'z', 'y'].includes(e.key.toLowerCase()) && !isTyping(e.target)) e.preventDefault();
+			return;
+		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
 			e.preventDefault();
 			runSimulation({ manual: true });
@@ -12127,6 +12544,11 @@ export function boot() {
 	else selectTab('build');
 
 	const wanted = params.get('model');
+	// `?app` opens on the model's app, on its own, once the model is in: the
+	// address to send somebody who is to use a model rather than edit it.
+	appOpenRefused = ['0', 'off', 'no', 'false'].includes(params.get('app'));
+	const appWanted = params.has('app') && !appOpenRefused;
+	const openApp = () => { if (appWanted && state.appSession.mode !== 'run') enterAppRun({ fromDesigner: false }); };
 
 	/*
 	  `?model=draft` is how the model gets out of the page's frame. The "full
@@ -12148,6 +12570,7 @@ export function boot() {
 	if (wanted === 'draft') {
 		if (held?.raw) {
 			setModel(held.raw, { label: held.meta?.label || held.raw.name || UNTITLED });
+			openApp();
 			return;
 		}
 		flash('The model could not be carried over from the framed page — it was not '
@@ -12168,6 +12591,7 @@ export function boot() {
 				+ 'The examples are in the list at the top.', 'warn');
 		}
 		offerDraft(held);
+		openApp();
 		return;
 	}
 	// Named before it arrives, so the picker does not show another example on
@@ -12185,7 +12609,10 @@ export function boot() {
 		})
 		// After the model is on screen either way: the offer sits above the
 		// tabs and is about replacing what is there.
-		.finally(() => offerDraft(held));
+		.finally(() => {
+			offerDraft(held);
+			openApp();
+		});
 }
 
 /**

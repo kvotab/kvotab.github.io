@@ -401,5 +401,259 @@
       "equation": "WellConc * intake * doseCoeff",
       "unit": "Sv/year"
     }
-  ]
+  ],
+  "app": {
+    "title": "Dose from a leaking repository",
+    "description": "Move the controls to see what each does to the dose from the well. The model itself is not changed: every run is of a copy at the values the controls hold.",
+    "run": "change",
+    "open": "editor",
+    "edit_button": true,
+    "pages": [
+      {
+        "name": "Dose",
+        "components": [
+          {
+            "id": "c1",
+            "type": "slider",
+            "x": 0,
+            "y": 0,
+            "w": 4,
+            "h": 2,
+            "label": "Release from the waste form ×",
+            "target": {
+              "kind": "value",
+              "block": "leachRate",
+              "factor": true
+            },
+            "min": 0.1,
+            "max": 10,
+            "step": null,
+            "scale": "log"
+          },
+          {
+            "id": "c2",
+            "type": "slider",
+            "x": 0,
+            "y": 2,
+            "w": 4,
+            "h": 2,
+            "label": "Transit through the geosphere",
+            "target": {
+              "kind": "value",
+              "block": "geoTransit"
+            },
+            "min": 2e-05,
+            "max": 0.002,
+            "step": null,
+            "scale": "log"
+          },
+          {
+            "id": "c3",
+            "type": "slider",
+            "x": 0,
+            "y": 4,
+            "w": 4,
+            "h": 2,
+            "label": "Leaching out of the soil",
+            "target": {
+              "kind": "value",
+              "block": "soilLeach"
+            },
+            "min": 0.01,
+            "max": 0.1,
+            "step": null,
+            "scale": "log"
+          },
+          {
+            "id": "c4",
+            "type": "slider",
+            "x": 0,
+            "y": 6,
+            "w": 4,
+            "h": 2,
+            "label": "Sorption in the soil ×",
+            "target": {
+              "kind": "value",
+              "block": "Kd",
+              "factor": true
+            },
+            "min": 0.1,
+            "max": 10,
+            "step": null,
+            "scale": "log"
+          },
+          {
+            "id": "c5",
+            "type": "slider",
+            "x": 0,
+            "y": 8,
+            "w": 4,
+            "h": 2,
+            "label": "Volume of the well",
+            "target": {
+              "kind": "value",
+              "block": "wellVolume"
+            },
+            "min": 3000,
+            "max": 8000,
+            "step": null,
+            "scale": "linear"
+          },
+          {
+            "id": "c6",
+            "type": "chart",
+            "x": 4,
+            "y": 0,
+            "w": 8,
+            "h": 10,
+            "title": "Dose to somebody drinking from the well",
+            "series": [
+              {
+                "block": "Dose"
+              }
+            ],
+            "x_scale": "log",
+            "y_scale": "log",
+            "legend": true
+          },
+          {
+            "id": "c7",
+            "type": "value",
+            "x": 0,
+            "y": 10,
+            "w": 4,
+            "h": 2,
+            "title": "Peak dose, I-129",
+            "series": [
+              {
+                "block": "Dose",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              }
+            ],
+            "statistic": "max",
+            "at": null,
+            "digits": 3,
+            "limit": 0.0001
+          },
+          {
+            "id": "c8",
+            "type": "value",
+            "x": 0,
+            "y": 12,
+            "w": 4,
+            "h": 2,
+            "title": "When the I-129 dose peaks",
+            "series": [
+              {
+                "block": "Dose",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              }
+            ],
+            "statistic": "max_time",
+            "at": null,
+            "digits": 3,
+            "limit": null
+          },
+          {
+            "id": "c9",
+            "type": "bars",
+            "x": 4,
+            "y": 10,
+            "w": 8,
+            "h": 4,
+            "title": "Peak dose of each radionuclide",
+            "series": [
+              {
+                "block": "Dose"
+              }
+            ],
+            "statistic": "max",
+            "at": null,
+            "scale": "log",
+            "sort": true
+          }
+        ]
+      },
+      {
+        "name": "Inventories",
+        "components": [
+          {
+            "id": "c10",
+            "type": "chart",
+            "x": 0,
+            "y": 0,
+            "w": 8,
+            "h": 9,
+            "title": "Where the I-129 is",
+            "series": [
+              {
+                "block": "Repository",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              },
+              {
+                "block": "Geosphere",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              },
+              {
+                "block": "Soil",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              },
+              {
+                "block": "Well",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              }
+            ],
+            "x_scale": "log",
+            "y_scale": "log",
+            "legend": true
+          },
+          {
+            "id": "c11",
+            "type": "text",
+            "x": 8,
+            "y": 0,
+            "w": 4,
+            "h": 9,
+            "text": "The inventory of each compartment, in becquerels, as the release works its way down the chain: out of the **repository**, through the **geosphere** and the **soil**, and into the **well**.\n\nThe controls are on the first page. Every page reads the same run, so what they do shows here too.",
+            "style": "note",
+            "align": "left"
+          },
+          {
+            "id": "c12",
+            "type": "table",
+            "x": 0,
+            "y": 9,
+            "w": 12,
+            "h": 6,
+            "title": "Dose, per radionuclide",
+            "series": [
+              {
+                "block": "Dose"
+              }
+            ],
+            "rows": 10,
+            "times": [
+              100,
+              1000,
+              10000,
+              100000,
+              1000000
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }

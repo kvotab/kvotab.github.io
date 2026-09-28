@@ -3008,6 +3008,14 @@ function writeSimulation(w, raw, ctx) {
 	if (diagram.length) {
 		report.warn(`The diagram is this tool’s own and is not written (${diagram.join(', ')}): Ecolego lays a model out itself.`);
 	}
+	// So is an app laid out on the model (see ../domain/apps.js): a line, as
+	// the diagram is, since no number of the model is in it.
+	const pages = Array.isArray(raw.app?.pages) ? raw.app.pages : [];
+	const parts = pages.reduce((n, p) => n + (Array.isArray(p?.components) ? p.components.length : 0), 0);
+	if (parts) {
+		report.warn(`The app built on the model is this tool’s own and is not written (${parts} part`
+			+ `${parts === 1 ? '' : 's'}): an Ecolego project has nothing to hold it.`);
+	}
 }
 
 /** The output series a model lists, read as ../domain/project.js reads them. */

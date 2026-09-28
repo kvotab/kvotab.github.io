@@ -9296,8 +9296,10 @@ test('one realisation can be run again in full, and a tornado is a design of the
 		'a tornado does not go through the pool');
 	assert(/tornado: msg\.tornado \?\? null,/.test(worker), 'a slice is not told it is a tornado');
 	assert(/type: 'done', id,\n\t\t\t\treplayed: \{/.test(worker), 'a replay does not arrive as an ordinary run');
-	assert(/state\.results = \{ \.\.\.payload, rev: state\.runRev \?\? state\.rev, runId: state\.runId, replayed, storedLog \};/.test(app),
+	assert(/state\.results = \{\n\t\t\.\.\.payload, rev: state\.runRev \?\? state\.rev, runId: state\.runId, replayed, storedLog,/.test(app),
 		'the page forgets that a run is a replay');
+	// And a replay is no run at anybody's values: not a preview, not an app's.
+	assert(/preview: replayed == null \? state\.runPreview \?\? null : null,/.test(app), 'a replay is taken for a preview');
 	assert(/className: 'stat stat-replay'/.test(app), 'the status line does not name the realisation');
 	// A replay is not the model at its values: its states must never be reused
 	// for a later edit as though they were.
@@ -9948,7 +9950,7 @@ test('Stop switches auto-run off', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 
-	const cancel = /function cancelSimulation\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const cancel = /function cancelSimulation\(\{ keepAutoRun = false \} = \{\}\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(cancel, 'cancelSimulation is gone');
 	assert(/state\.autoRun = false/.test(cancel),
 		'Stop no longer switches auto-run off');
@@ -10323,7 +10325,7 @@ test('auto-run keeps up with a slow solver instead of giving up on it', async ()
 	// the timer of an edit whose 350 milliseconds have not elapsed, which
 	// would otherwise queue one an instant after the Stop and compute the
 	// very thing that was just stopped.
-	const cancel = /function cancelSimulation\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const cancel = /function cancelSimulation\(\{ keepAutoRun = false \} = \{\}\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(cancel && /runWanted = false;/.test(cancel)
 		&& /clearTimeout\(autoRunTimer\);/.test(cancel) && /autoRunTimer = null;/.test(cancel),
 		'stopping a run lets another start anyway');
@@ -36392,13 +36394,18 @@ test('an optimised answer can be tried without being taken', async () => {
 	assert(!/putValues\(state\.raw/.test(preview), 'the preview edits the model');
 
 	// And the run built from a substitute is built from a *copy*.
-	assert(/const copy = structuredClone\(state\.raw\); putValues\(copy, opts\.substitute\)/.test(app),
+	assert(/const copy = structuredClone\(state\.raw\);\n\t+if \(opts\.substitute\) putValues\(copy, opts\.substitute\);/.test(app),
 		'a substituted run is not made against a copy');
+	// So is a run of an app, at its controls' values: see ../src/domain/appinputs.js.
+	assert(/if \(opts\.app\) appIn\.applyInputs\(copy, opts\.app\);/.test(app) && !/applyInputs\(state\.raw/.test(app),
+		'an app\u2019s run is not made against a copy');
 	// A preview that read as an ordinary run would be the worst of both, so
 	// the corner of the Chart says which it is.
-	assert(/at \$\{state\.preview\.length\} optimised value/.test(app),
+	assert(/at \$\{at\.length\} optimised value/.test(app) && /const at = r\?\.preview \?\? null;/.test(app),
 		'the chart does not say a preview is one');
-	assert(/if \(!opts\.substitute\) state\.preview = null;/.test(app),
+	// And an app's run says it is one, from what the results were run at.
+	assert(/at the app’s controls, \$\{n\} away from the model’s value/.test(app), 'the chart does not say an app\u2019s run is one');
+	assert(/if \(!opts\.substitute && !opts\.app\) state\.preview = null;/.test(app),
 		'an ordinary run does not clear the preview');
 
 	// The replies carry their own counter, not the run's — the trap that
@@ -37200,7 +37207,7 @@ test('the page runs the chosen scenarios in workers of their own and draws them 
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	// Started with the selected scenario's run, not after it, and dropped for a
 	// preview, which is not the model at its own values.
-	assert(/if \(opts\.substitute\) stopScenarios\(\{ all: true \}\);\n\t\telse startScenarios\(\);/.test(app),
+	assert(/if \(opts\.substitute \|\| opts\.app\) stopScenarios\(\{ all: true \}\);\n\t\telse startScenarios\(\);/.test(app),
 		'the scenarios do not start with the run');
 	// Each in a simulation worker of its own, asked what the selected one is asked.
 	assert(/const w = new Worker\(new URL\('\.\.\/worker\/sim-worker\.js', import\.meta\.url\), \{ type: 'module' \}\);\n\tw\.onmessage = \(ev\) => acceptScenarioMessage\(entry, ev\.data\);/.test(app),
@@ -38396,6 +38403,11 @@ test('the Model panel edits the author and shows the dates, and Save stamps what
 // which also runs alone with a longer comparison against the cells.
 section('the semi-analytical far-field path');
 for (const [name, fn] of (await import('./farfield-laplace.js')).TESTS) test(name, fn);
+
+// Apps on a model -- the App designer's data, what its controls set, and every
+// rename following into it -- in a file of their own too.
+section('apps on a model');
+for (const [name, fn] of (await import('./apps.js')).TESTS) test(name, fn);
 
 // =========================================================================
 await Promise.all(pending);

@@ -54,6 +54,11 @@ Ten worked examples ship with it — open one from the Help tab or with
 - **Unit checking** on every equation, with SI prefixes and unit literals.
 - **Results** as CSV, as HDF5 in the shape the assessment tools read, or as a
   project archive with the run beside it.
+- **An app designer.** Drag sliders, number fields, drop-downs, switches,
+  charts, values, gauges, bar charts and tables onto a page over the model;
+  *Run app* then shows that page and nothing else, and every change to a
+  control runs a copy of the model at the controls' values. The app is saved
+  in the model file and follows every rename.
 - **A Python package** that reads a model into objects, edits it by the same
   rules as the editor — a rename follows every reference, a delete is refused
   while something reads the block — writes it back, and runs it outside the

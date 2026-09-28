@@ -4355,7 +4355,9 @@ else:
 
 The diagram — layout, shapes, colours — is not written either: it is this
 tool's own, and Ecolego lays a model out itself. The report says so in a line
-rather than counting it as a loss.
+rather than counting it as a loss. So is an app laid out on the model (see
+[Apps on a model](#apps-on-a-model)): an Ecolego project has nothing to hold
+it, and the report says how many parts were left out.
 
 A block that reads something left out goes with it, and the report says what
 it read, so the file never names a block it does not hold. Two settings are
@@ -6971,6 +6973,194 @@ boundary; the page fills a column from it if and when it charts one. And since
 an ordinary thing for a model to carry — draws nothing on a log axis, so the
 chart says so rather than leaving a lit chip beside a line that is not there.
 
+## Apps on a model
+
+A model answers more questions than the person who built it will ask. An
+**app** is a page of controls and results laid out over the model for somebody
+who does not need the editor: a reviewer asking what a tenfold sorption
+coefficient does to the peak dose, a colleague choosing between three
+climates, a meeting that wants to watch the curve move. The **App designer**
+tab lays one out; **Run app** then shows it on its own — the controls, the
+results, and nothing else of the editor — and each change to a control runs the
+model at the values the controls hold.
+
+`examples/biosphere.json` carries one: open it, choose the **App designer**
+tab, and press **Run app**.
+
+**An app changes no number the model computes.** Moving a slider runs a *copy*
+of the model with the slider's value written in, exactly as *Run at these
+values* runs an optimiser's answer. The model keeps its own values and the file
+is not touched. The Chart and the Table show the app's last run, with a line
+saying what it is — *at the app's controls, 2 away from the model's values —
+the model still holds its own* — and **Run** in the editor goes back to the
+model's own.
+
+**It is kept in the model file**, under `app`, so a model and its app travel as
+one file, and Undo takes back an edit to the app like any other. A rename in
+the model follows into the app — of a block, a sub-system, an index or an index
+list — as it follows into every equation. Laying out an app moves no number, so
+nothing is run and nothing goes out of date.
+
+### Designing an app
+
+The tab is three columns: the parts on the left, the page in the middle, and
+the settings of what is selected on the right.
+
+- **Add a part** by dragging it from the list onto the page, where a dashed
+  outline shows the cells it will take, or by clicking it, which puts it in the
+  first place it fits.
+- **Drag a block out of the tree** onto the page: a parameter lands as a slider
+  over it — over its one value, or as a factor on every index of one that has
+  index lists — and anything else as a chart of it. Several at once make a
+  column of sliders with one chart beside them.
+- **Move** a part by dragging its body, and **resize** it by the handle at its
+  bottom-right corner. The page is a grid of twelve columns across whatever
+  width there is, and rows of a fixed height. What a part lands on moves down
+  out of its way, and whatever that lands on in turn; nothing is pulled up to
+  fill a gap, since a gap on a page is somebody's choice. The arrow keys move
+  the selected part a cell at a time, **shift** with an arrow resizes it,
+  **Delete** removes it, ⌘D duplicates it and **Enter** goes to its settings.
+- **Select** a part to set it up on the right: what it sets or shows, its
+  range, its title, and where it is in cells. Every setting has its (i). A part
+  that is not set up yet — a slider pointed at nothing, a chart with no series
+  — has a dashed red outline, and its settings say what it lacks; the line
+  above the page counts them.
+- **Start from the model**, on a model with no app, makes a first one: a slider
+  for each parameter that carries a distribution, at the spread the
+  distribution has; the scenario, where the model has several; a chart of the
+  endpoints, or of the last result the model is built up to; and its peak and
+  when it peaked.
+
+With nothing selected, the right-hand column holds the page and the app.
+**Pages** are the tabs across the top of the running app — the controls and
+the main result on one, the detail on another. **+** adds one, and
+right-clicking a page's tab renames, moves or deletes it. Every page reads the
+same run, so a slider on one moves the results on all of them.
+
+In the designer the parts are drawn but not used: a slider there does not move
+when it is dragged, because dragging it is how it is placed. The results drawn
+on it are whichever run the model has, so a chart can be seen at the size it
+will be before the app is run.
+
+### The parts of an app
+
+| Part | What it does |
+|---|---|
+| **Slider** | Sets a number by dragging along a range, with a box beside it for typing one. **Min** and **Max** are the range; **Scale** at *logarithmic* spreads it evenly in the logarithm, which is how a rate spanning decades is best dragged; **Step** makes a linear one move in steps. |
+| **Number field** | Sets a number typed into a box, within an optional **Min** and **Max**. |
+| **Drop-down**, **Option buttons** | Choose one of a list: the model's scenario, or a parameter's value from the **choices** listed under it, each a label and a number. |
+| **Switch** | On or off: whether a block takes part in the run, or a parameter at its **On** or **Off** value — 1 and 0 unless set. |
+| **Button** | **Run the model** at the values the controls hold, or **put the controls back** where the model has them. |
+| **Chart** | The series named, over time, drawn as the Chart tab draws them, on logarithmic or linear axes; drag to zoom, double-click for everything. |
+| **Value** | One number read off one series, large, with its unit. A **Limit** turns it red above and green below, and it says which. |
+| **Gauge** | One number as an arc on a dial between **Min** and **Max** — left empty, nought and a round number above the value and the limit. |
+| **Bar chart** | One number from each of several series, as bars: the peak dose of every radionuclide. Logarithmic by default, over the six decades below the largest. |
+| **Table** | The series named, a column each, at the **Times** given — or at **Rows** of the run's own output times, spread evenly along its list. |
+| **Text** | Words on the page, as Markdown: `**bold**`, `*italic*`, lists, and web addresses as links. **Style** makes it a title, a heading or a note. |
+
+A part given no label or title is named after what it sets or shows.
+
+### What an input sets
+
+Every input is pointed at one thing in the model, chosen under **Sets**:
+
+- **A parameter** — its value. One with index lists is set at one index, chosen
+  from a list per dimension, or at **every one, as a factor**: a slider over
+  `Kd ×` at 2 doubles the Kd of every nuclide, each from the value the model
+  holds for it. The dimensions left at *every one* are multiplied along; the
+  others stay at the index chosen.
+- **A compartment** — its value at the start, in the same way.
+- **Scenario** — which scenario is live, for a drop-down or option buttons.
+- **End of the run** — the end time, for a slider or a number field.
+- **A block on or off** — for a switch. Off leaves the block out of the run, as
+  **Disable** does in the editor, and a model that cannot run without it says
+  so.
+
+An input starts where the model stands. A new slider spans the parameter's
+distribution where it has one — the spread an assessment has already argued
+for, logarithmic when the distribution is — and a decade either side of its
+value where it has none; **Range from the model** puts that back once it has
+been changed. A compartment whose value at the start is an equation starts at
+the bottom of its range, and a run of the app replaces the equation with the
+number set.
+
+Two inputs pointed at the same thing share one value, so a slider and a number
+field over one parameter move together.
+
+### What a result shows
+
+A chart, a bar chart and a table show the series of the blocks named under
+**Shows**, a row per block. A block with index lists shows every index of a
+dimension left at **every one** — `Dose` over the radionuclides is a line, or a
+bar, for each — or the one chosen. Anything a run reports can be shown: a
+compartment, an expression, a transfer, a parameter, a recorder, what a
+far-field path holds. Where every series shares the block, or every one the
+index, the labels leave it out and the title says it.
+
+A value and a gauge show one number, so they take one index of each dimension,
+and a bar chart one number per series. **Reads** says which:
+
+| Reads | The number |
+|---|---|
+| At the end | the value at the last output time |
+| Peak | the largest value; a value says when it was reached |
+| Time of the peak | when the series is largest, in the model's time unit |
+| Lowest | the smallest value |
+| At the start | the value at the first output time |
+| At a time | the value at a time given, on the straight line between the output times either side |
+| Mean over the run | the average over the span of the run, each stretch weighted by how long it lasts |
+
+They are read off the run's output times, so a peak between two of them is the
+larger of the two; a peak worked out as a model output is in [Numbers read off
+a finished curve](#numbers-read-off-a-finished-curve).
+
+### Running an app
+
+**Run app** shows the app across the whole window: its title and description
+at the top, its pages as tabs, and the parts on the grid they were laid out on.
+On a window too narrow for twelve columns — a phone — they stack in one column
+in the order the page is read: band by band down the page, and each band
+column by column, so a column of sliders comes before the chart beside it.
+
+Each change to a control runs the model: a slider as it is let go, and while it
+is dragged too when the last solve took less than about four tenths of a
+second. A control moved while a run is going leaves one run owed, made when
+that one ends, at wherever the controls then stand — so a slider dragged
+through twenty values during a slow solve costs one more run, not twenty. A
+control the integration does not read — a dose coefficient, say — is worked
+out again rather than solved; see [Edits that do not need solving
+again](#edits-that-do-not-need-solving-again). While a run goes the results
+fade a little and the title bar says so, with a bar and **Stop**; ⌘↵ runs it
+again.
+
+The app's own settings, with nothing selected in the designer:
+
+- **Runs** — *whenever a control changes*, or *when Run is pressed*, for a
+  model slow enough that one run at a time is enough. The title bar then has a
+  **Run** button and says when a run is owed.
+- **Opens as** — *the app* opens a file that carries it straight into the app;
+  *the editor* opens it as usual.
+- **Offer Edit while it runs** — the way back to the editor, at the right of
+  the title bar. Opened from the designer, **Edit** and **Esc** always come
+  back to it. Left off, ⌘⇧E (Ctrl+Shift+E) still leaves the app, and `?app=off`
+  in the address opens a file that opens as its app in the editor instead —
+  the two ways back for its author.
+
+A model that cannot run says why under the title bar, since somebody using the
+app has nowhere else to look. The controls keep their values for as long as the
+page is open; **Reset** puts them back where the model has them, and opening
+another model starts its app there too.
+
+### Handing an app to someone
+
+An app is saved with its model, so the file is the app. Set **Opens as** to *the
+app*, and whoever opens the file sees the app first. `?app` in the address does
+the same for any model the address opens: `kompartment.html?model=biosphere.json&app`
+is the example's app on its own. Nothing the app does is written to the file,
+so whoever uses it can move every control to its end and leave the model
+exactly as it came. The app is not written into an `.eco` export; see
+[Importing Ecolego projects](#importing-ecolego-projects).
+
 ## The project format
 
 A model is one JSON object. The smallest useful one:
@@ -7015,6 +7205,7 @@ Blocks:
 | `layout` | Diagram geometry per block. Ignored by the solver. |
 | `systems` | The sub-systems the model is organised into, as dotted paths. A block's `system` says which one holds it. |
 | `transports` | Which of those sub-systems are transports — chains of N compartments drawn as two. The parts inside carry `transport`: `begin` or `end` on a compartment, `number`, `counter` or `operation` on an expression. See *Transports*. |
+| `app` | An app laid out on the model: `title`, `description`, `run` (`change` or `button`), `open` (`editor` or `app`), `edit_button`, and `pages`, each a `name` and its `components` — a `type`, an `id`, a place on the grid (`x`, `y`, `w`, `h` in cells), and the settings of its type: `target` for an input, `series` for a result. Ignored by the solver. See [Apps on a model](#apps-on-a-model). |
 
 Every block also takes `index_lists` (its dimensions) and `entries` (values per
 index combination).
@@ -7206,7 +7397,7 @@ through Node. Its README has the whole of it.
 |---|---|
 | `examples/four-compartment.json` | A four-compartment test model: one source draining two ways, rejoining, and discharging |
 | `examples/decay-chain.json` | Ingrowth down the 4n+1 chain, Pu-241 to Th-229 |
-| `examples/biosphere.json` | Repository to geosphere to soil to well, with a dose calculation — and the one to open for a probabilistic run: 15 of its parameters carry distributions |
+| `examples/biosphere.json` | Repository to geosphere to soil to well, with a dose calculation — and the one to open for a probabilistic run: 15 of its parameters carry distributions. It carries an app too: two pages of sliders, charts and numbers on the App designer tab |
 | `examples/landscape.json` | Two dimensions: 4 nuclides × 3 landscape objects, a sub-set list, and three reductions; solved with ndf |
 | `examples/lookup-driver.json` | Two lookup tables driving the model: groundwater flow over a glacial cycle, and a lake silting up |
 | `examples/post-processing.json` | No compartments at all: a released inventory, a dilution and a dose, evaluated over the time span |
@@ -7224,7 +7415,8 @@ title beside it. Choosing an entry loads it, over whatever is there.
 
 `?model=decay-chain.json` open a bundled example ·
 `?tab=chart` open on a tab (`build`, `chart`, `table`, `code`, `matrix`,
-`indexlists`, `model`, `help`; an unknown name opens Build) ·
+`indexlists`, `model`, `app`, `help`; an unknown name opens Build) ·
+`?app` open on the model's app, on its own, and `?app=off` never (see [Apps on a model](#apps-on-a-model)) ·
 `?theme=light` / `?theme=dark` force a colour scheme ·
 `?brand=kvotab` use the site palette ·
 `?chrome=kvotab` leave room for the site's own header and footer ·

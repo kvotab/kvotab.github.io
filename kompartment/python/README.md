@@ -161,8 +161,10 @@ m.set_dimensions('Soil', ['Radionuclides', 'Object'])
 These follow the change through every reference the way the application's
 editor does: every equation (written from wherever it is written), transfer
 ends, reduction targets, trigger names, event actions, values keyed by a
-compartment's or a transfer's name, and the diagram. They refuse what it
-refuses, and the error says why:
+compartment's or a transfer's name, the diagram, and an app laid out on the
+model in the App designer -- its controls and results name blocks and indices
+too, and an index or a list renamed follows into it as well. The app itself is
+kept in the file as it is. They refuse what it refuses, and the error says why:
 
 - a delete while something still reads the block (a compartment's transfers
   and inflows go with it);
