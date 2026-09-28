@@ -629,7 +629,6 @@
   .info-panel { z-index: 10020; top: 0 !important; bottom: 0 !important; }
   .sm-menu { z-index: 10030; }
   .sm-toast { z-index: 10040; }
-  .sm-touchghost { z-index: 10050; }
   :root.sm-modal-open body > .nav-toggle { visibility: hidden; }
 }
 /* Printing the page itself (the browser's Print; Save > Print… prints the
@@ -686,8 +685,16 @@
 .sm [draggable], .sm-dialog [draggable], .sm-pick-list, .sm-role-list, .sm-gb-collist, .smf-list, .smt-cols, .sm-collist { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .sm-touch-ready { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
 .sm-touch-dragging { opacity: 0.55; }
-.sm-touchghost { position: fixed; z-index: 100; pointer-events: none; transform: translate(-50%, calc(-100% - 22px)); max-width: 70vw; padding: 5px 11px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-surface); box-shadow: 0 6px 18px var(--shadow-color); font: 12.5px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sm-touchghost.is-yes { border-color: var(--color-kvot-accent); }
+/* the dragged item under the finger: above everything (a phone's dialog is
+   at 10010, over the site's header), a little above the finger so that it
+   is seen, tinted over a place that takes it */
+.sm-touchghost { position: fixed; z-index: 10050; pointer-events: none; display: flex; align-items: center; gap: 7px; transform: translate(-50%, calc(-100% - 34px)); max-width: 78vw; padding: 7px 14px; border: 1.5px solid var(--color-kvot-accent); border-radius: 17px; background: var(--bg-surface); box-shadow: 0 8px 24px var(--shadow-color); font: 600 13.5px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; animation: sm-ghost-in 0.16s ease-out; }
+.sm-touchghost span { overflow: hidden; text-overflow: ellipsis; }
+.sm-touchghost.is-yes { background: color-mix(in oklab, var(--color-kvot-bright) 38%, var(--bg-surface)); }
+@keyframes sm-ghost-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 18px)) scale(0.8); } }
+@media (prefers-reduced-motion: reduce) { .sm-touchghost { animation: none; } }
+/* while a drag is under way (mouse or touch), where it can go */
+:root.sm-dragging .sm-role-list:not(.drop), :root.sm-dragging .smt-zone:not(.drop), :root.sm-dragging textarea.smf-expr { outline: 1px dashed color-mix(in oklab, var(--color-kvot-accent) 60%, transparent); outline-offset: -1px; }
 
 /* ---- dialogs move by their title bar (smui-ui.js) ---- */
 .sm-dialog-grip { cursor: move; touch-action: none; user-select: none; }

@@ -90,7 +90,9 @@
     unselect();
     const lines = dt.getData('text/plain').split('\n').filter(Boolean);
     const label = (lines[0] || src.textContent || '').trim().slice(0, 40) + (lines.length > 1 ? ` +${lines.length - 1}` : '');
-    const ghost = SM.util.el('div', { class: 'sm-touchghost', 'aria-hidden': 'true', text: label });
+    // the column's type icon and its name, as the list shows it
+    const icon = src.querySelector('.sm-type');
+    const ghost = SM.util.el('div', { class: 'sm-touchghost', 'aria-hidden': 'true' }, icon ? icon.cloneNode(true) : null, SM.util.el('span', { text: label }));
     document.body.append(ghost);
     drag = { src, dt, ghost, over: null, accepted: false, x, y, raf: 0, box: scrollBoxOf(src) };
     src.classList.add('sm-touch-dragging');
@@ -175,6 +177,12 @@
   document.addEventListener('contextmenu', () => { if (press) cancelPress(); }, true);
   // no text selection while an item is held or dragged (the CSS says so too)
   document.addEventListener('selectstart', (ev) => { if (press || drag) ev.preventDefault(); }, true);
+
+  // While a drag is under way, by mouse or by touch, the places that take a
+  // drop are marked (smui.css :root.sm-dragging).
+  const rootEl = document.documentElement;
+  document.addEventListener('dragstart', () => rootEl.classList.add('sm-dragging'));
+  for (const t of ['dragend', 'drop']) document.addEventListener(t, () => rootEl.classList.remove('sm-dragging'));
 
   SM.touchdrag = Object.freeze({ HOLD_MS, active: () => !!drag });
 }(typeof self !== 'undefined' ? self : this));

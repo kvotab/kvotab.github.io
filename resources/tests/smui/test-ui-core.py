@@ -1030,7 +1030,24 @@ async def main():
     await asyncio.sleep(0.2)
     check('phone: a held item shows it is ready, and cannot be selected as text', (held['attr'], held['select'], held['refused'], held['ready']), ('false', 'none', True, True))
     check('phone: its draggable comes back when the finger lifts', await page.ev("[...document.querySelectorAll('.sm-launch-dialog .sm-pick-list li')].find(li => li.textContent === 'yield (g)').getAttribute('draggable')"), 'true')
-    await drag_to(src, ydst)
+    # while it is dragged the item is seen under the finger, above the dialog
+    # (it went behind it on an iPhone), and the places that take it are marked
+    await touch('touchStart', [{'x': src[0], 'y': src[1]}])
+    await asyncio.sleep(0.45)
+    await slide(src[0], src[1], src[0] + 40, src[1] + 120, 6)
+    mid = await page.ev('''(() => { const g = document.querySelector('.sm-touchghost'), back = document.querySelector('.sm-modal-back');
+      if (!g) return null; const r = g.getBoundingClientRect();
+      return { text: g.textContent, icon: !!g.querySelector('.sm-type'), above: +getComputedStyle(g).zIndex > +getComputedStyle(back).zIndex,
+        seen: r.top >= 0 && r.bottom <= innerHeight && r.width > 40, marked: document.documentElement.classList.contains('sm-dragging'),
+        faint: getComputedStyle(document.querySelectorAll('.sm-launch-dialog .sm-role-list')[1]).outlineStyle }; })()''')
+    ydst_r = await rect(ydst)
+    await slide(src[0] + 40, src[1] + 120, ydst_r[0], ydst_r[1], 6)
+    await touch('touchEnd', [])
+    await asyncio.sleep(0.4)
+    after = await page.ev("({ ghost: !!document.querySelector('.sm-touchghost'), marked: document.documentElement.classList.contains('sm-dragging') })")
+    check('phone: the dragged item is seen under the finger, with its type icon, above the dialog', (mid and mid['text'], mid and mid['icon'], mid and mid['above'], mid and mid['seen']), ('yield (g)', True, True, True))
+    check('phone: while it is dragged the places that take it are marked', (mid and mid['marked'], mid and mid['faint']), (True, 'dashed'))
+    check('phone: after the drop the item and the marks go', (after['ghost'], after['marked']), (False, False))
     ys = await page.ev(f"[...({ydst}).querySelectorAll('li')].map(li => li.textContent)")
     check('phone: a swipe over a column scrolls, it does not drag', swiped, [])
     check('phone: held, then dragged onto Y', ys, ['yield (g)'])
