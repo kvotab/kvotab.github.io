@@ -32,6 +32,25 @@
 }
 
 .sm [hidden], .sm-dialog [hidden] { display: none !important; }
+
+/* The stand-in while the page's scripts load (smui.html; the app takes it
+   away): the workbench's frame, so that the page looks under way rather
+   than empty, and its line only after a moment, so a quick load shows the
+   frame alone. */
+#smApp { height: 100%; }      /* the stand-in fills the work area too, before the app makes it .sm */
+.sm-boot { display: grid; grid-template-rows: 30px minmax(0, 1fr); height: 100%; font-family: verdana, sans-serif; font-size: 12.5px; color: var(--text-primary); background: var(--bg-primary); }
+.sm-boot-bar { border-bottom: 1px solid var(--border-color); background: var(--bg-surface); }
+.sm-boot-body { display: grid; grid-template-columns: var(--sm-boot-side-w, 250px) minmax(0, 1fr); min-height: 0; }
+.sm-boot-side { border-right: 1px solid var(--border-color); background: var(--bg-surface); }
+.sm-boot-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 0 16px 8vh; text-align: center; animation: sm-boot-in 0.4s ease-out 0.25s both; }
+.sm-boot-title { margin: 0; font-size: 15px; font-weight: 600; }
+.sm-boot-text { margin: 0; color: var(--text-muted); }
+.sm-boot-track { position: relative; width: min(240px, 70%); height: 3px; margin-top: 4px; border-radius: 2px; overflow: hidden; background: var(--border-color); }
+.sm-boot-track span { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 2px; background: var(--color-kvot-accent); animation: sm-boot-slide 1.3s ease-in-out infinite; }
+@keyframes sm-boot-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sm-boot-slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .sm-boot-main { animation: none; } .sm-boot-track span { animation: none; width: 100%; opacity: 0.45; } }
+@media (max-width: 760px) { .sm-boot-body { grid-template-columns: minmax(0, 1fr); } .sm-boot-side { display: none; } }
 .sm-type { display: inline-block; flex: none; vertical-align: -1px; }
 .sm-type-continuous { color: var(--sm-cont); }
 .sm-type-ordinal { color: var(--sm-ord); }

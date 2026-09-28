@@ -1776,7 +1776,8 @@
     for (const t of app.tables || []) adopt(t);
     app.on('tableadded', (t) => adopt(t));
   }
-  if (typeof document !== 'undefined' && document.addEventListener) {
+  if (SM.whenApp) SM.whenApp(hook);
+  else if (typeof document !== 'undefined' && document.addEventListener) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook);
     else setTimeout(hook, 0);
   }

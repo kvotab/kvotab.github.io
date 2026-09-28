@@ -1476,5 +1476,13 @@
     window.addEventListener('afterprint', unfitForPrint);
   }
 
+  // Plotly loads on its own (async in smui.html), so the workbench can start
+  // without waiting for it: graphs that were to be drawn before it came are
+  // drawn when it does.
+  if (typeof document !== 'undefined') {
+    const tag = document.querySelector('script[src*="plotly"]');
+    if (tag) tag.addEventListener('load', () => { if (document.body) kickPlots(document.body); });
+  }
+
   SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

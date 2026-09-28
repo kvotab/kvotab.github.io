@@ -49,6 +49,19 @@ async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
+    # The page's scripts are deferred and Plotly async: a stand-in in the
+    # workbench's frame shows while they load, and the app replaces it
+    r = await page.ev('''(async () => {
+      const html = await (await fetch('smui.html', { cache: 'no-cache' })).text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const own = [...doc.querySelectorAll('script[src*="resources/js/smui-"], script[src*="kvot-info"], script[src*="xlsxwrite"], script[src*="jszip"]')];
+      const plotly = doc.querySelector('script[src*="plotly"]');
+      return { standin: !!doc.querySelector('#smApp > .sm-boot'), n: own.length, deferred: own.filter(s => s.defer).length, plotlyAsync: !!(plotly && plotly.async),
+        gone: !document.querySelector('.sm-boot'), built: !!document.querySelector('#smApp.sm > .sm-menubar') };
+    })()''')
+    check('the page has a stand-in in the frame while its scripts load', r['standin'], True)
+    check('its scripts are deferred (fetched together), Plotly async', (r['deferred'] == r['n'] and r['n'] > 40, r['plotlyAsync']), (True, True))
+    check('the app takes the stand-in away', (r['gone'], r['built']), (True, True))
     # The site is published as it is: GitHub Pages' default Jekyll build
     # leaves out files whose names start with an underscore, and without
     # resources/py/smui/__init__.py the engine stopped on every device
@@ -273,6 +286,22 @@ async def main():
     check('undo brings deleted rows back', (r['rows'][1], r['rows'][2], r['id']), (r['rows'][0] - 3, r['rows'][0], True))
     check('undo an exclusion', r['ex'], [2, 0])
     await shot(page, '03-grid.png')
+
+    # ---- a graph asked for before Plotly came is drawn when it does
+    r = await page.ev('''(async () => {
+      const P = window.Plotly; delete window.Plotly;
+      const t = SM.app.tables[0];
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('height (cm)').id] }, options: {} }, t);
+      await new Promise(res => rep.on('done', res)); await new Promise(res => setTimeout(res, 300));
+      const before = rep.plots.filter(p => p.drawn).length;
+      window.Plotly = P; document.querySelector('script[src*="plotly"]').dispatchEvent(new Event('load'));
+      await new Promise(res => setTimeout(res, 600));
+      const after = rep.plots.filter(p => p.drawn).length, n = rep.plots.length;
+      SM.app.closeReport(rep);
+      return { before, after, n };
+    })()''')
+    check('without Plotly the graphs wait', (r['before'], r['n'] > 0), (0, True))
+    check('... and are drawn when it loads', r['after'], r['n'])
 
     # ---- the Local Data Filter
     r = await page.ev('''(async () => {

@@ -66,6 +66,12 @@
     all: () => commands.slice(),
   });
 
+  /* fn(app) once the page's app has started: now, if it has. The page's
+     scripts are deferred and the app is made when they have all run, so a
+     module that works on the app (smui-formula.js) waits for it here. */
+  const appHooks = [];
+  SM.whenApp = (fn) => { if (SM.app && SM.app.started) fn(SM.app); else appHooks.push(fn); };
+
   // get() gives a topic as shown: a topic may be a function of the state.
   SM.info = Object.freeze({
     add: addTopics,
@@ -149,6 +155,7 @@
     /* ---- layout ---------------------------------------------------------- */
     _build() {
       const h = this.host;
+      h.querySelector(':scope > .sm-boot')?.remove();     // the page's stand-in while its scripts load
       h.classList.add('sm');
       this.menubar = el('nav', { class: 'sm-menubar', 'aria-label': 'Menus' });
       const sideBtn = el('button', { type: 'button', class: 'sm-sidetoggle', 'aria-label': 'Show or hide the table panels', text: '☰' });
@@ -1071,6 +1078,7 @@
       const want = new URLSearchParams(location.search).get('example');
       if (want && SM.io.EXAMPLES[want]) this.openExample(want);
       this.started = true;
+      for (const fn of appHooks.splice(0)) { try { fn(this); } catch (e) { console.error('SM: an app hook failed', e); } }
       return this;
     }
   }

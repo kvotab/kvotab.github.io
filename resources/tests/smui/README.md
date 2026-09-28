@@ -256,6 +256,14 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- Loading: smui.html's own scripts are `defer` (fetched together, run in
+  their order once the page is parsed; one after another they took a
+  phone's latency 48 times over), Plotly is `async` (graphs asked for before
+  it comes are drawn when it does), and the app is made at
+  DOMContentLoaded. A new script gets `defer` too. Code that needs the app
+  at load time waits for it with `SM.whenApp(fn)`, not a timer. Until the
+  app takes it away, `#smApp > .sm-boot` stands in: the frame and a
+  "Loading the workbench" line.
 - A platform's own list that takes columns (Fit Model's Construct Model
   Effects, Multiple Imputation's effects) calls `SM.launch.acceptColumns(el,
   table, onDrop)`, so that columns dragged from the dialog's column list land
