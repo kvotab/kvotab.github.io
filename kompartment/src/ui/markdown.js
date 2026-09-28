@@ -191,27 +191,46 @@ export function outline(source) {
 /** The symbol notation's tags, and the run flag each one sets. */
 const TAG_FLAG = { sub: 'sub', sup: 'sup', b: 'strong', i: 'em' };
 
-const OPEN_TAG = /^<(sub|sup|b|i)>/i;
+/**
+ * How deep emphasis and tags are read inside one another. These documents go
+ * two deep; a text out of a model file -- an app's Text part -- can go as deep
+ * as it likes, and every level was a level of recursion, so 2,800 nested
+ * `<i>` were enough to overflow the stack. Past this, they are text.
+ */
+const MAX_NEST = 8;
 
 /**
- * The content of an open tag, up to the partner that closes *it*.
+ * Every tag that has a partner closing it, found in one pass: the open tag's
+ * position to its content and to where the closing tag ends.
  *
- * Depth-counted rather than taking the first closing tag of that name, so
- * `<sub>a<sub>b</sub>c</sub>` ends where it should. Null where there is no
- * partner at all, which leaves the opening tag as the literal text it is.
+ * Depth-counted per tag, so `<sub>a<sub>b</sub>c</sub>` ends where it should,
+ * and an open tag with no partner at all is left as the literal text it is.
+ * One pass with a stack for each tag gives the same pairs as counting the
+ * depth forward from each open tag, which is how this was done -- and which
+ * read the rest of the text again for every tag, so three thousand of them
+ * unclosed took a noticeable fraction of a second.
  */
-function tagged(src, from, tag) {
-	const scan = new RegExp(`<(/?)${tag}>`, 'gi');
-	scan.lastIndex = from;
-	let depth = 1;
+function tagPartners(src) {
+	const partner = new Map();
+	const stacks = new Map();
+	const scan = /<(\/?)(sub|sup|b|i)>/gi;
 	for (let m = scan.exec(src); m; m = scan.exec(src)) {
-		depth += m[1] ? -1 : 1;
-		if (!depth) return { text: src.slice(from, m.index), after: scan.lastIndex };
+		const name = m[2].toLowerCase();
+		if (!stacks.has(name)) stacks.set(name, []);
+		const open = stacks.get(name);
+		if (!m[1]) open.push({ at: m.index, from: scan.lastIndex, name });
+		else if (open.length) {
+			const o = open.pop();
+			partner.set(o.at, { name: o.name, text: src.slice(o.from, m.index), after: scan.lastIndex });
+		}
 	}
-	return null;
+	return partner;
 }
 
-export function inlineRuns(text) {
+/** An italic run, where it starts. */
+const EM = /\*([^*\n]+)\*/y;
+
+export function inlineRuns(text, depth = 0) {
 	const src = String(text ?? '');
 	const out = [];
 	let plain = '';
@@ -219,16 +238,39 @@ export function inlineRuns(text) {
 		if (plain) out.push({ text: plain });
 		plain = '';
 	};
+	const deep = depth >= MAX_NEST;
 	// The content of emphasis is a line in its own right.
 	const nested = (inner, flag) => {
 		flush();
-		for (const run of inlineRuns(inner)) out.push({ ...run, [flag]: true });
+		for (const run of inlineRuns(inner, depth + 1)) out.push({ ...run, [flag]: true });
 	};
+	const partners = !deep && src.includes('<') ? tagPartners(src) : null;
+	// The first `]` at or after where it was last looked for, or -2 when the
+	// text has none left. Looked for once per bracket rather than by a pattern
+	// run to the end of the text from every `[`, which is what made a line of
+	// twenty thousand of them take half a second.
+	const firstFrom = (find) => {
+		let at = -1;
+		return (from) => {
+			if (at === -2) return -1;
+			if (at >= from) return at;
+			at = find(from);
+			if (at < 0) { at = -2; return -1; }
+			return at;
+		};
+	};
+	const closeAfter = firstFrom((from) => src.indexOf(']', from));
+	// And where an address ends: at the first `)`, or at the first space,
+	// which ends it without closing it. The same memo, for the same reason.
+	const parenAfter = firstFrom((from) => src.indexOf(')', from));
+	const spaceAt = /\s/g;
+	const spaceAfter = firstFrom((from) => {
+		spaceAt.lastIndex = from;
+		return spaceAt.exec(src)?.index ?? -1;
+	});
 
 	let i = 0;
 	while (i < src.length) {
-		const rest = src.slice(i);
-
 		if (src[i] === '`') {
 			const end = src.indexOf('`', i + 1);
 			if (end > i + 1) {
@@ -238,25 +280,31 @@ export function inlineRuns(text) {
 				continue;
 			}
 		}
-		if (src[i] === '<') {
-			const m = OPEN_TAG.exec(rest);
-			const inner = m ? tagged(src, i + m[0].length, m[1].toLowerCase()) : null;
+		if (src[i] === '<' && partners) {
+			const inner = partners.get(i);
 			if (inner) {
-				nested(inner.text, TAG_FLAG[m[1].toLowerCase()]);
+				nested(inner.text, TAG_FLAG[inner.name]);
 				i = inner.after;
 				continue;
 			}
 		}
 		if (src[i] === '[') {
-			const m = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(rest);
-			if (m) {
-				flush();
-				out.push({ text: m[1], href: m[2] });
-				i += m[0].length;
-				continue;
+			// `[text](address)`: text with no `]` in it, and an address with
+			// neither a `)` nor a space in it.
+			const end = closeAfter(i + 1);
+			if (end > i + 1 && src[end + 1] === '(') {
+				const from = end + 2;
+				const paren = parenAfter(from);
+				const space = spaceAfter(from);
+				if (paren > from && (space < 0 || paren < space)) {
+					flush();
+					out.push({ text: src.slice(i + 1, end), href: src.slice(from, paren) });
+					i = paren + 1;
+					continue;
+				}
 			}
 		}
-		if (src[i] === '*' && src[i + 1] === '*') {
+		if (src[i] === '*' && src[i + 1] === '*' && !deep) {
 			const end = src.indexOf('**', i + 2);
 			if (end > i + 1) {
 				nested(src.slice(i + 2, end), 'strong');
@@ -264,11 +312,12 @@ export function inlineRuns(text) {
 				continue;
 			}
 		}
-		if (src[i] === '*') {
-			const m = /^\*([^*\n]+)\*/.exec(rest);
+		if (src[i] === '*' && !deep) {
+			EM.lastIndex = i;
+			const m = EM.exec(src);
 			if (m) {
 				nested(m[1], 'em');
-				i += m[0].length;
+				i = EM.lastIndex;
 				continue;
 			}
 		}
