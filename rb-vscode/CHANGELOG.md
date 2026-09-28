@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+* From the site: a group whose index list is Pathways or Exposed groups draws
+  a chart of its members, as a Repositories group does, and their lines have
+  colours of their own, in the hues of the PSAR dose and pathway charts.
+
 ## 0.1.3
 
 * Several files dropped at once go into one browser, as its file tabs, also
