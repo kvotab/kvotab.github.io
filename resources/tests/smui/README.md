@@ -256,6 +256,14 @@ it builds outlines into the report:
   `role="button"`. The browser's own Print prints the report in view: the
   page's print rules hide the frame, and before printing whatever is wider
   than the paper (a graph, a table, a profiler grid) is scaled to fit it.
+- Phones: at 760 px and below a dialog is the whole screen (above the
+  site's header, whose menu button steps aside while one is open; it does
+  not move), the (i) panel too. HTML drag and drop does not start from a
+  finger, so smui-touchdrag.js turns a touch held still for 320 ms and then
+  moved into the same drag events a mouse sends (with a stand-in
+  dataTransfer), scrolls the box under the finger near its edges, and puts
+  dragged text into a text field at its cursor: any `draggable="true"`
+  item inside `.sm` or a dialog works by touch with no code of its own.
 - The engine's start (smui-engine.js): a browser without WebAssembly or
   module workers gets a plain message at once; while loading, the status
   line shows the time taken, and past `SLOW_AFTER` (90 s) the home page
@@ -380,5 +388,7 @@ the light theme from the dark one, an SVG diagram with its paint; a box
 selection in Graph Builder whose edges are then moved (real mouse events)
 selects once each time, and a selection made elsewhere takes the kept box
 away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels; a click
-beside a dialog leaves it open;
+beside a dialog leaves it open; on a phone (touch emulation) the dialog and
+the (i) panel as the whole screen, a swipe that scrolls and a touch drag
+onto a role, the model effects, the formula and a Graph Builder zone;
 the dark theme and phone width.

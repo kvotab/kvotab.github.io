@@ -103,6 +103,7 @@
     head.classList.add('sm-dialog-grip');
     head.addEventListener('pointerdown', (ev) => {
       if (ev.button !== 0 || ev.target.closest('button, a, input, select, textarea, .kvot-info-slot')) return;
+      if (matchMedia('(max-width: 760px)').matches) return;      // the whole screen on a phone: nowhere to move
       ev.preventDefault();
       const r = box.getBoundingClientRect();
       const left0 = r.left - dx, top0 = r.top - dy;      // where it sits unmoved
@@ -141,6 +142,7 @@
         closed = true;
         back.remove();
         dialogs.splice(dialogs.indexOf(api), 1);
+        if (!dialogs.length) document.documentElement.classList.remove('sm-modal-open');
         if (onClose) onClose(result);
       },
     };
@@ -173,6 +175,8 @@
     });
     document.body.append(back);
     dialogs.push(api);
+    // (a phone shows the dialog as the whole screen: the site's menu button then steps aside)
+    document.documentElement.classList.add('sm-modal-open');
     if (typeof KvotInfo !== 'undefined') KvotInfo.mount(box);
     requestAnimationFrame(() => (box.querySelector('input, select, textarea, .sm-pick-list li, button.primary') || x).focus({ preventScroll: true }));
     return api;

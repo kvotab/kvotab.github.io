@@ -965,6 +965,88 @@ async def main():
     check('no script errors', page.errors, [])
     await page.close()
 
+    # ---- a phone: a dialog is the whole screen (its title bar above the
+    # site's header), the (i) panel too, and a column is dragged by touch:
+    # held a moment, then moved (a swipe at once still scrolls). Onto a role,
+    # Fit Model's model effects (the dialog scrolls to them), the formula
+    # and Graph Builder's Y zone (the report scrolls to it).
+    page = await open_page(f'{BASE}/smui.html?example=plants', width=400, height=820)
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 820, 'deviceScaleFactor': 2, 'mobile': True}, session=page.sid)
+    await page.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 1}, session=page.sid)
+    await wait_engine(page)
+
+    async def touch(kind, pts):
+        await page.call('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': pts}, session=page.sid)
+
+    async def slide(x0, y0, x1, y1, steps=8):
+        for i in range(1, steps + 1):
+            await touch('touchMove', [{'x': x0 + (x1 - x0) * i / steps, 'y': y0 + (y1 - y0) * i / steps}])
+            await asyncio.sleep(0.03)
+
+    def rect(sel):
+        return page.ev(f'''(() => {{ const e = {sel}; if (!e) return null; const r = e.getBoundingClientRect(); return [r.x + Math.min(40, r.width / 2), r.y + r.height / 2, r.top, r.bottom]; }})()''')
+
+    async def drag_to(src, dst_sel, far_top=None):
+        # held, then moved; to the bottom edge first when the target is below the screen
+        await touch('touchStart', [{'x': src[0], 'y': src[1]}])
+        await asyncio.sleep(0.45)
+        if far_top is not None:
+            await slide(src[0], src[1], src[0], 806)
+            for _ in range(100):
+                await touch('touchMove', [{'x': src[0], 'y': 806}])
+                await asyncio.sleep(0.05)
+                r = await rect(dst_sel)
+                if r and r[2] < far_top:
+                    break
+            src = [src[0], 806]
+        dst = await rect(dst_sel)
+        await slide(src[0], src[1], dst[0], dst[1])
+        await touch('touchEnd', [])
+        await asyncio.sleep(0.4)
+
+    await page.ev("SM.app.launch('fitmodel')")
+    await asyncio.sleep(0.4)
+    r = await page.ev('''(() => { const d = document.querySelector('.sm-launch-dialog'), b = d.getBoundingClientRect(), x = d.querySelector('.sm-dialog-x').getBoundingClientRect();
+      const hit = document.elementFromPoint(x.left + x.width / 2, x.top + x.height / 2);
+      return { box: [b.left, b.top, b.width, b.height].map(Math.round), vw: innerWidth, vh: innerHeight, xOnTop: !!(hit && hit.closest('.sm-dialog-x')) }; })()''')
+    check('phone: a dialog is the whole screen', r['box'], [0, 0, r['vw'], r['vh']])
+    check('phone: its title bar, with the ×, is above the site\'s header', r['xOnTop'], True)
+    src = await rect("[...document.querySelectorAll('.sm-launch-dialog .sm-pick-list li')].find(li => li.textContent === 'yield (g)')")
+    ydst = "[...document.querySelectorAll('.sm-launch-dialog .sm-role')].find(x => x.querySelector('.sm-btn').textContent === 'Y').querySelector('.sm-role-list')"
+    await touch('touchStart', [{'x': src[0], 'y': src[1]}])
+    await slide(src[0], src[1], src[0], src[1] + 60, 5)
+    await touch('touchEnd', [])
+    await asyncio.sleep(0.3)
+    swiped = await page.ev(f"[...({ydst}).querySelectorAll('li')].map(li => li.textContent)")
+    await drag_to(src, ydst)
+    ys = await page.ev(f"[...({ydst}).querySelectorAll('li')].map(li => li.textContent)")
+    check('phone: a swipe over a column scrolls, it does not drag', swiped, [])
+    check('phone: held, then dragged onto Y', ys, ['yield (g)'])
+    src = await rect("(() => { const li = [...document.querySelectorAll('.sm-launch-dialog .sm-pick-list li')].find(li => li.textContent === 'water'); li.scrollIntoView({ block: 'center' }); return li; })()")
+    await drag_to(src, "document.querySelector('.sm-launch-dialog .sm-fm-effects')", far_top=600)
+    check('phone: dragged onto the model effects, the dialog scrolling to them', await page.ev("[...document.querySelectorAll('.sm-launch-dialog .sm-fm-effects li')].map(li => li.textContent)"), ['water'])
+    await page.ev("document.querySelector('.sm-launch-dialog .sm-dialog-head .info-btn').click()")
+    await asyncio.sleep(0.3)
+    r = await page.ev("(() => { const b = document.querySelector('.info-panel').getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map(Math.round); })()")
+    check('phone: the (i) panel is the whole screen too', r, [0, 0, 400, 820])
+    await page.ev("KvotInfo.close(); document.querySelector('.sm-launch-dialog .sm-dialog-x').click()")
+    await asyncio.sleep(0.3)
+    await page.ev("(() => { window.__fp = SM.formula.edit(SM.app.current, null, { name: 'f' }); return 1; })()")
+    await asyncio.sleep(0.4)
+    await page.ev("(() => { const ta = [...document.querySelectorAll('.sm-dialog')].pop().querySelector('textarea.smf-expr'); ta.value = '2 * '; ta.dispatchEvent(new Event('input')); ta.setSelectionRange(4, 4); })()")
+    src = await rect("(() => { const b = [...[...document.querySelectorAll('.sm-dialog')].pop().querySelectorAll('.smf-item')].find(b => b.textContent === 'water'); b.scrollIntoView({ block: 'center' }); return b; })()")
+    await drag_to(src, "[...document.querySelectorAll('.sm-dialog')].pop().querySelector('textarea.smf-expr')")
+    check('phone: a column dragged into the formula goes in at its cursor', await page.ev("[...document.querySelectorAll('.sm-dialog')].pop().querySelector('textarea.smf-expr').value"), '2 * :water')
+    await page.ev("[...[...document.querySelectorAll('.sm-dialog')].pop().querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Cancel').click()")
+    await asyncio.sleep(0.3)
+    await page.ev('''(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise(res => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); })()''')
+    await asyncio.sleep(0.8)
+    src = await rect("(() => { const li = [...document.querySelectorAll('.sm-gb-collist li')].find(li => li.textContent.includes('yield (g)')); li.scrollIntoView({ block: 'center' }); return li; })()")
+    await drag_to(src, "document.querySelector('.sm-gb-z-y')", far_top=450)
+    check('phone: dragged onto Graph Builder\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gb-z-y').textContent.includes('yield (g)')"), True)
+    check('phone: no script errors', page.errors, [])
+    await page.close()
+
     # ---- an engine that goes on loading says what may be wrong (a colleague's
     # computer never got past the packages): its time on the status line and,
     # past 90 s, a note on the home page with Restart and What it is doing.

@@ -2460,7 +2460,7 @@
         this.plotBox = null;
         const w = this.width(), h = this.height();
         this.plotWrap.replaceChildren(el('div', { class: 'sm-gb-empty', style: { width: `${w}px`, height: `${Math.min(h, 360)}px` } },
-          el('p', { text: 'Drop columns here' }), el('p', { class: 'sm-ob-note', text: 'Drag a column from the list (or from the Columns panel) onto X or Y. For touch or the keyboard: select a column, then click a zone.' })));
+          el('p', { text: 'Drop columns here' }), el('p', { class: 'sm-ob-note', text: 'Drag a column from the list (or from the Columns panel) onto X or Y; by touch, hold it a moment first. Or select a column, then click a zone (the keyboard: Enter).' })));
         this.status.replaceChildren();
         return;
       }

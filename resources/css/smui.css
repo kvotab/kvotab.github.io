@@ -616,6 +616,21 @@
   .sm-menubar { overflow-x: auto; }
   .sm-launch { grid-template-columns: 1fr; }
   .sm-actions { flex-direction: row; flex-wrap: wrap; }
+  /* a dialog is the whole screen on a phone, not a small floating window
+     (and does not move), and the (i) panel covers it all too */
+  .sm-modal-back { padding: 0; align-items: stretch; overflow: hidden; }
+  .sm-dialog, .sm-dialog.narrow { width: 100%; max-width: none; height: 100%; max-height: none; border: 0; border-radius: 0; box-shadow: none; transform: none !important; }
+  .sm-dialog-body { flex: 1 1 auto; }
+  .sm-dialog-grip { cursor: default; touch-action: auto; }
+  .info-panel { left: 0; width: 100%; border-left: 0; box-shadow: none; }
+  /* ... above the site's header too (z-index 10000), which hid the dialog's
+     title bar with its x; the menus of a dialog and the toasts above that */
+  .sm-modal-back { z-index: 10010; }
+  .info-panel { z-index: 10020; top: 0 !important; bottom: 0 !important; }
+  .sm-menu { z-index: 10030; }
+  .sm-toast { z-index: 10040; }
+  .sm-touchghost { z-index: 10050; }
+  :root.sm-modal-open body > .nav-toggle { visibility: hidden; }
 }
 /* Printing the page itself (the browser's Print; Save > Print… prints the
    report as a document instead): the current view flows onto the paper,
@@ -663,6 +678,13 @@
 
 /* ---- Bootstrap's progress (smui-bootstrap.js) ---- */
 .sm-boot-progress progress { width: 100%; height: 12px; accent-color: var(--color-kvot-accent); }
+
+/* ---- drag and drop by touch (smui-touchdrag.js) ---- */
+.sm [draggable="true"], .sm-dialog [draggable="true"] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.sm-touch-ready { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+.sm-touch-dragging { opacity: 0.55; }
+.sm-touchghost { position: fixed; z-index: 100; pointer-events: none; transform: translate(-50%, calc(-100% - 22px)); max-width: 70vw; padding: 5px 11px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-surface); box-shadow: 0 6px 18px var(--shadow-color); font: 12.5px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-touchghost.is-yes { border-color: var(--color-kvot-accent); }
 
 /* ---- dialogs move by their title bar (smui-ui.js) ---- */
 .sm-dialog-grip { cursor: move; touch-action: none; user-select: none; }

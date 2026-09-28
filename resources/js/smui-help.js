@@ -174,6 +174,7 @@
         'In the column list and the role lists, click to select one, ctrl/⌘ to add or take away one more, shift to select the range from the one clicked last. Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
         'Right click a column in the dialog to change its modeling type there.',
         'The (i) in a dialog\'s title bar explains the analysis and what each role, option and field is for. Drag the title bar to move the dialog.',
+        'On a phone or a tablet, touch and hold a column for a moment, then drag it where it goes (a list scrolls when the finger nears its edge); a quick swipe scrolls as usual. On a phone a dialog, and the (i) panel, take the whole screen.',
       ]),
 
       h('h2', 'Reports', 'reports'),
