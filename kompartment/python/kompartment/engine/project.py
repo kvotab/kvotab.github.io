@@ -90,7 +90,9 @@ DIRECTION_FROM_ECO = {'RIGHT': 'rising', 'LEFT': 'falling', 'BOTH': 'both'}
 VALUE_KEYS: Dict[str, Sequence[str]] = {
     'compartment': ('initial', 'abstol', 'non_negative', 'dydt'),
     'function': ('equation',),
-    'transfer': ('rate', 'multiply_by_donor'),
+    # The rate alone: whether it is multiplied by the donor is one setting of
+    # the whole transfer, and an entry that says otherwise is refused (``_block``).
+    'transfer': ('rate',),
     'expression': ('equation',),
     'parameter': ('value', 'pdf'),
     'inflow': ('rate',),
@@ -715,6 +717,9 @@ class Project:
             base['argument'] = _transport_argument(raw.get('argument')) or 'all'
         if kind == 'compartment':
             base['non_negative'] = base.get('non_negative') is not False
+        # Multiplied by the donor unless a model says ``False``.
+        if kind == 'transfer':
+            base['multiply_by_donor'] = base.get('multiply_by_donor') is not False
         if kind in ('transfer', 'inflow'):
             if base.get('sum_extra_indices') is True or base.get('sum_extra_indices') == 'true':
                 base['sum_extra_indices'] = True
@@ -802,6 +807,20 @@ class Project:
         base['system'] = raw.get('system') or ''
         base['qname'] = qualified_name(base)
         base['entries'] = normalise_entries(raw, kind, self.nuclide_list_name, base['index_lists'])
+        if kind == 'transfer':
+            raws = raw.get('entries') if isinstance(raw.get('entries'), list) else []
+            at = next((k for k, e in enumerate(raws) if isinstance(e, dict) and 'multiply_by_donor' in e
+                       and (e['multiply_by_donor'] is not False) != base['multiply_by_donor']), -1)
+            if at >= 0:
+                index = base['entries'][at].get('index') if at < len(base['entries']) else None
+                where = ', '.join(str(v) for v in (index or {}).values()) or 'one of its entries'
+                said = ('It multiplies its rate by the donor' if base['multiply_by_donor']
+                        else 'Its rate is an absolute flux')
+                raise ValidationError(
+                    f'{said}, and {where} says otherwise. That is one setting for the whole transfer -- it makes '
+                    'the rate a coefficient or a flux, and gives it its unit -- so a model that needs both has two '
+                    'transfers between the same compartments: one by the donor and one an absolute flux, each with '
+                    'a zero rate where the other applies.', base.get('name'))
         if isinstance(base.get('initial'), dict):
             base['initial'] = '0'
         if kind == 'compartment':

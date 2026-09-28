@@ -49,8 +49,9 @@ from ..names import RESERVED, resolve_reference
 from ..simulation import DEFAULT_SOLVER
 from ..simulation import DEFAULTS as DEFAULT_SIMULATION
 from ._eco_maps import (
-    EQUATION_FIELDS, EVENT_FIELDS, JS_DOT, JS_SPACE_CLASS, KIND_FROM_ECO, KIND_LABEL, SECONDS_PER_YEAR,
-    collation_key, direction_from_eco, extreme_from_eco, interpolation_from_eco, is_finite, iso_date,
+    EQUATION_FIELDS, EVENT_FIELDS, JS_DOT, JS_SPACE_CLASS, KIND_FROM_ECO, KIND_LABEL,
+    collation_key, direction_from_eco, eco_seconds_per_year, extreme_from_eco, interpolation_from_eco, is_finite,
+    iso_date,
     js_floor, js_identifier, js_len, js_object_order, js_round, js_string, js_trim, json_ready,
     operation_from_eco, round_significant, solver_name, to_exponential, to_number,
 )
@@ -306,7 +307,7 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     index_ids = _read_index_lists(data_model, project, names, report, materials)
     _read_decay_chains(data_model, project, report)
     hierarchy = _read_hierarchy(data_model, project, names, report)
-    block_name_by_id, wiring = _read_blocks(data_model, project, names, index_ids, report, hierarchy)
+    block_name_by_id, wiring, twins = _read_blocks(data_model, project, names, index_ids, report, hierarchy)
     _read_simulation_settings(data_model, project, report)
 
     # Two rewrites, both textual and both necessary: Ecolego names may hold
@@ -320,7 +321,7 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     # directly. Last, so the references it writes are the names the model
     # ended up with.
     _connect_interfaces(project, wiring, block_name_by_id, report)
-    _rewrite_endpoint_ids(project, block_name_by_id, report)
+    _rewrite_endpoint_ids(project, block_name_by_id, report, twins)
 
     duplicated = names.duplicated()
     if duplicated:
@@ -923,6 +924,19 @@ class _NameMapper:
             self.report.rename('(unnamed)' if absent else given, candidate)
         return candidate
 
+    def claim(self, base: str, system: str = '') -> str:
+        """A name for a block the file does not have -- a second transfer this
+        import makes of one -- free in its sub-system, and taken there, so no
+        block mapped later is given it too. Not a rename: nothing was called it."""
+        taken = self.used.setdefault(system, set())
+        candidate = base
+        n = 1
+        while candidate in taken or candidate in RESERVED:
+            candidate = f'{base}_{n}'
+            n += 1
+        taken.add(candidate)
+        return candidate
+
     def duplicated(self) -> List[str]:
         """Original names that mapped to more than one identifier."""
         return list(self.ambiguous)
@@ -1216,6 +1230,11 @@ def _read_materials(data_model: Node, project: Dict[str, Any], report: ImportRep
     if model is None:
         return out
 
+    # A half-life is in seconds, and how many make a year depends on the unit
+    # the model runs in: see eco_seconds_per_year. Its database writes 30.07
+    # years of Cs-137 as 948917546.6 s, which is 30.0694 years of 365.25 days.
+    said = (child_text(child(data_model, 'simulation-settings'), 'time-unit') or '').lower()
+    per_year = eco_seconds_per_year(_TIME_UNITS.get(said, 'year'))
     half_lives: Dict[str, Any] = {}
     decay_unit: Optional[str] = None
     for nuc in children(model, 'nuclide'):
@@ -1234,7 +1253,7 @@ def _read_materials(data_model: Node, project: Dict[str, Any], report: ImportRep
         raw_half_life = child_text(nuc, 'half-life')
         seconds = to_number(raw_half_life)
         if math.isfinite(seconds) and seconds > 0:
-            half_lives[name] = seconds / SECONDS_PER_YEAR
+            half_lives[name] = seconds / per_year
         else:
             # Stable isotopes are written with an infinite (or absent)
             # half-life. The word, not infinity, which JSON cannot hold.
@@ -1302,7 +1321,11 @@ def _read_index_lists(data_model: Node, project: Dict[str, Any], names: _NameMap
 
     raw: List[Dict[str, Any]] = []
     for list_el in children(model, 'index-list'):
-        raw_name = list_el.attrs.get('name')
+        # This package's export writes a scenario list under Ecolego's name for
+        # it, `Scenarios`, with its own name beside it (``decide_lists`` in
+        # ``io/ecoexport.py``): that name is the list's.
+        own_name = _property_text(list_el, 'kompartment-name') if _predefined_type(list_el) == 'SCENARIOS' else None
+        raw_name = own_name or list_el.attrs.get('name')
         list_id = child_text(list_el, 'id')
         key = list_id if list_id is not None else (raw_name if raw_name is not None else '')
         name = names.map(raw_name, f'indexlist:{key}', '', 'IndexList')
@@ -1488,23 +1511,28 @@ def _read_decay_chains(data_model: Node, project: Dict[str, Any], report: Import
 
 def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, index_ids: Dict[str, Any],
                  report: ImportReport,
-                 hierarchy: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, str], Dict[str, Any]]:
+                 hierarchy: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, str], Dict[str, Any], Dict[str, str]]:
     """``<block-model>``: every component and connection, as blocks of this
     tool's kinds or as entries in the report. ``readBlocks`` in
     ``src/io/eco.js``.
 
     Returns the map from block id to qualified name, which the rewrites use,
-    and the sub-system wiring for :func:`_connect_interfaces`.
+    the sub-system wiring for :func:`_connect_interfaces`, and the transfers
+    made in two, by qualified name (see the transfers below).
     """
     model = child(data_model, 'block-model')
     if model is None:
         report.warn('The file has no <block-model>; nothing to import.')
-        return {}, {'links': [], 'operations': {}, 'exposed': {}, 'id_by_guid': {}}
+        return {}, {'links': [], 'operations': {}, 'exposed': {}, 'id_by_guid': {}}, {}
 
     elements = children(model, 'component') + children(model, 'connection')
 
     # What the sub-system interfaces say, applied once every block exists.
     wiring: Dict[str, Any] = {'links': [], 'operations': {}, 'exposed': {}, 'id_by_guid': None}
+    # A transfer made in two, by the qualified name of the file's: the second
+    # half, which goes where the first goes -- switched off with it, and kept
+    # with it as an endpoint.
+    twins: Dict[str, str] = {}
 
     block_name_by_id: Dict[str, str] = {}
     path_by_id = hierarchy['path_by_id'] if hierarchy is not None else {}
@@ -1836,20 +1864,53 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                 report.skip(type_, original, 'neither endpoint is a compartment in this model')
                 continue
 
-            donor = _or(_pick_default(entries, 'multiply_by_donor'), DONOR_DEFAULT.get(type_, False))
+            # Per the file format; the default row's own value still wins. A
+            # transfer with no donor cannot be multiplied by one.
+            donor = False if frm is None else _or(_pick_default(entries, 'multiply_by_donor'),
+                                                  DONOR_DEFAULT.get(type_, False))
+            rate = _or(_pick_default(entries, 'rate'), '0')
+
+            # Ecolego keeps the flag row by row, and here it is one setting of
+            # the transfer (VALUE_KEYS in engine/project.py). Rows that say
+            # otherwise become a second transfer between the same two ends, and
+            # the first moves nothing there: the two fluxes add up to what the
+            # file's one moves, to the bit. ``readBlocks`` in src/io/eco.js.
+            other = [] if frm is None else [e for e in entries if e['index'] and 'multiply_by_donor' in e
+                                            and e['multiply_by_donor'] != donor]
+            moved = {id(e) for e in other}
             project['transfers'].append(_trim_empty({
                 'name': name, 'system': system, **dim_spec, 'unit': unit, 'comment': comment,
                 'from': frm, 'to': to,
-                'rate': _or(_pick_default(entries, 'rate'), '0'),
-                # A transfer with no donor cannot be multiplied by one.
-                'multiply_by_donor': False if frm is None else donor,
-                'entries': _keep_indexed(entries, ['rate', 'multiply_by_donor']),
+                'rate': rate,
+                'multiply_by_donor': donor,
+                'entries': _keep_indexed([{**e, 'rate': '0'} if id(e) in moved else e for e in entries], ['rate']),
             }))
+            if other:
+                twin = names.claim(f"{name}_{'absolute' if donor else 'by_donor'}", system)
+                twins[f'{system}.{name}' if system else name] = f'{system}.{twin}' if system else twin
+                project['transfers'].append(_trim_empty({
+                    'name': twin, 'system': system, **dim_spec,
+                    'from': frm, 'to': to,
+                    'rate': '0',
+                    'multiply_by_donor': not donor,
+                    'entries': [{'index': e['index'], 'rate': _or(e.get('rate'), rate)} for e in other],
+                }))
+                where = '; '.join(', '.join(str(v) for v in e['index'].values()) for e in other[:3])
+                more = f'; {len(other) - 3} more' if len(other) > 3 else ''
+                report.warn(
+                    f"'{original}' {'multiplies by its donor' if donor else 'is an absolute flux'} at some indices "
+                    f'and not at others ({where}{more}), which is one setting of a whole transfer here. Those '
+                    f"indices are '{twin}', {'an absolute flux' if donor else 'multiplied by the donor'}, beside "
+                    f"'{name}', which moves nothing there; the two move what the file's transfer moves, and a "
+                    f"block that reads '{name}' reads zero at those indices.")
 
     # The blocks the file switches off, now that they exist. A block inside a
     # sub-system the file switches off keeps its own switch; the report counts
     # what each such sub-system holds.
     off_names = {block_name_by_id[i] for i in disabled_ids if block_name_by_id.get(i)}
+    for whole, twin in twins.items():
+        if whole in off_names:
+            off_names.add(twin)
     off_paths = hierarchy['disabled_paths'] if hierarchy is not None else []
 
     def in_off_system(system: str) -> Optional[str]:
@@ -1870,7 +1931,7 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                 report.disable(qname)
 
     wiring['id_by_guid'] = id_by_guid
-    return block_name_by_id, wiring
+    return block_name_by_id, wiring, twins
 
 
 def _or(value: Any, fallback: Any) -> Any:
@@ -2160,17 +2221,27 @@ def _trim_empty(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 # --- simulation settings ------------------------------------------------------------------
 
-#: The solver each Ecolego solver name becomes: three are the same method, the
-#: rest the nearest there is.
+#: The solver each Ecolego solver name becomes, as ``_solver_key`` reduces it:
+#: four are the same method, the rest the nearest there is.
 SOLVER_MAP = {
     'ODE45': 'dp45', 'ODE23': 'dp45', 'ODE113': 'dp45', 'ODE853': 'dp45',
-    'ODE15S': 'ndf',
+    # Ecolego's fixed-step Runge-Kutta methods, rk1 to rk5 in its menu: explicit
+    # methods, of which the adaptive one here is the nearest.
+    'ODE1': 'dp45', 'ODE2': 'dp45', 'ODE3': 'dp45', 'ODE4': 'dp45', 'ODE5': 'dp45',
+    'ODE15S': 'ndf', 'ODE15SBDF': 'ndf',
     'ODE23S': 'ros23', 'ODE23T': 'ros23', 'ODE23TB': 'ros23',
     'RADAU5': 'ndf', 'KRYLOV': 'ndf', 'PADE': 'ndf', 'TAYLOR': 'ndf',
 }
 
-#: The names above that arrive at the same method rather than a substitute.
-SOLVER_EXACT = frozenset(['ODE15S', 'ODE23S', 'ODE45'])
+#: The names above that arrive at the same method rather than a substitute --
+#: ODE15SBDF is Ecolego's ode15s with its BDF option, this tool's BDF switch.
+SOLVER_EXACT = frozenset(['ODE15S', 'ODE15SBDF', 'ODE23S', 'ODE45'])
+
+#: Older names Ecolego still reads, as it reads them (its SimulationSettingsXMLHandler).
+SOLVER_ALIAS = {
+    'EULERFORWARD': 'ODE1', 'EULERBACKWARD': 'ODE1', 'HEUN': 'ODE2', 'MIDPOINT': 'ODE3',
+    'RK4': 'ODE4', 'DORMANDPRINCE': 'ODE45', 'IMEXSD': 'ODE15S',
+}
 
 #: Ecolego's "not set": one magic double written wherever a number was left
 #: alone -- as a time series' first or last time among other places.
@@ -2287,6 +2358,18 @@ _TIME_UNITS = {
 _NOT_SOLVER_CHAR = re.compile('[^A-Z0-9]')
 
 
+def _solver_key(text: str) -> str:
+    """The solver a file names, as a key of ``SOLVER_MAP`` (``solverKey``).
+
+    Ecolego writes its own keys, ``java-ode15s`` and the like, and earlier
+    exports from this tool a bare ``ODE15S``; both come to the same word, case,
+    punctuation and the ``java`` prefix dropped."""
+    word = _NOT_SOLVER_CHAR.sub('', text.upper())
+    if word.startswith('JAVA'):
+        word = word[4:]
+    return SOLVER_ALIAS.get(word, word)
+
+
 def _read_simulation_settings(data_model: Node, project: Dict[str, Any], report: ImportReport) -> None:
     """``<simulation-settings>`` and ``<probabilistic-settings>``: the time
     span and unit, the solver and tolerances, the saturation switch, the
@@ -2352,13 +2435,20 @@ def _read_simulation_settings(data_model: Node, project: Dict[str, Any], report:
     elif unit:
         report.warn(f"Unrecognised time unit '{unit}'; years were assumed.")
 
-    solver = _NOT_SOLVER_CHAR.sub('', (child_text(s, 'java-solver') or '').upper())
+    said = js_trim(child_text(s, 'java-solver') or '')
+    solver = _solver_key(said)
     if SOLVER_MAP.get(solver):
         sim['solver'] = SOLVER_MAP[solver]
+        if solver == 'ODE15SBDF':
+            sim['bdf'] = True
         if solver not in SOLVER_EXACT:
             report.warn(
                 f'The model used the {solver} solver, which this tool does not have; '
                 f"{solver_name(sim['solver'])} was chosen as the closest.")
+    elif said:
+        report.warn(
+            f"The model names a solver this tool does not know, '{said}'; "
+            f"{solver_name(sim['solver'])} was used.")
 
     rtol = child_number(s, 'rel-error-tolerance')
     atol = child_number(s, 'abs-error-tolerance')
@@ -2426,7 +2516,7 @@ def _read_functions(data_model: Node, project: Dict[str, Any], names: _NameMappe
 
 
 def _rewrite_endpoint_ids(project: Dict[str, Any], block_name_by_id: Dict[str, str],
-                          report: ImportReport) -> None:
+                          report: ImportReport, twins: Optional[Dict[str, str]] = None) -> None:
     """The endpoints by the names the blocks ended up with; a repeat is not a
     fault (Ecolego writes one per index), and an id with no block behind it is
     left out, with one warning for all of them. ``rewriteEndpointIds`` in
@@ -2451,7 +2541,16 @@ def _rewrite_endpoint_ids(project: Dict[str, Any], block_name_by_id: Dict[str, s
             continue
         seen.add(name)
         out.append(name)
-    if out:
+        # Half a transfer is not what was asked for.
+        twin = (twins or {}).get(name)
+        if twin and twin not in seen:
+            seen.add(twin)
+            out.append(twin)
+    # A list of every block a run has a result for is what keeping everything
+    # means here, where a block added later is kept too -- and it is what the
+    # export writes for a model with no list (``_write_simulation`` in
+    # ``io/ecoexport.py``), and what Ecolego's projects mostly carry.
+    if out and not _names_every_result(project, seen):
         project['simulation']['endpoints'] = out
     else:
         del project['simulation']['endpoints']
@@ -2459,6 +2558,28 @@ def _rewrite_endpoint_ids(project: Dict[str, Any], block_name_by_id: Dict[str, s
         report.warn(
             f"{unresolved} of the model's saved endpoints name blocks that are not in "
             'the imported model; they were left out of the endpoint list.')
+
+
+def _names_every_result(project: Dict[str, Any], names: Set[str]) -> bool:
+    """Whether a set of names holds every block a run has a result for: all but
+    functions and tables read at a value, which answer an argument, the parts of
+    a transport that count, and what is switched off. ``namesEveryResult``."""
+    any_block = False
+    for collection in KINDS:
+        if collection == 'functions':
+            continue
+        for b in project.get(collection) or []:
+            if not isinstance(b, dict) or b.get('enabled') is False:
+                continue
+            argument = b.get('argument')
+            if collection == 'lookups' and argument is not None and js_trim(str(argument)) != '':
+                continue
+            if collection == 'expressions' and b.get('transport') in ('counter', 'operation'):
+                continue
+            any_block = True
+            if _qualified(b) not in names:
+                return False
+    return any_block
 
 
 def _read_endpoints(s: Node, sim: Dict[str, Any]) -> None:

@@ -69,8 +69,32 @@ export const SKB_TOP30 = [
 
 const LN2 = Math.log(2);
 
-/** Seconds per year used by Ecolego's unit system (Julian year). */
+/** Seconds per year: this tool's year, the Julian one of 365.25 days. */
 export const SECONDS_PER_YEAR = 365.25 * 24 * 3600;
+
+/**
+ * Seconds per year as Ecolego's `year` unit has it: 365.2425 days
+ * (`EcoMath.YEAR_IN_SECONDS`, 31556952), and what its nuclide database turns
+ * a half-life in years into -- Cs-137's 948917546.6 s in a real file is 30.07
+ * of these years, where it is 30.0694 of this tool's.
+ */
+export const ECOLEGO_YEAR = 31556952;
+
+/**
+ * How many seconds a year of half-life is in an .eco file whose model runs in
+ * `unit`, so that the file and this tool mean the same decay constant.
+ *
+ * Ecolego turns a half-life in seconds into the run's unit with its own
+ * seconds per unit, and this tool turns one in years into it with its own
+ * years per unit. The two agree on every unit but the year itself, which is
+ * 365.2425 days there and 365.25 here -- so a model run in years reads its
+ * half-lives in Ecolego's years, and one run in days or anything shorter in
+ * this tool's. Dividing by one where the other was meant is two parts in a
+ * hundred thousand on every decay constant.
+ */
+export function ecoSecondsPerYear(unit) {
+	return unit === 'minute' || unit === 'second' || unit === 'hour' || unit === 'day' ? SECONDS_PER_YEAR : ECOLEGO_YEAR;
+}
 
 /**
  * Decay constant in 1/timeUnit.

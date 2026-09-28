@@ -123,7 +123,8 @@ export async function makeZip(files) {
 	return out;
 }
 
-const YEAR_S = 365.25 * 24 * 3600;
+/** Seconds per year as Ecolego's files hold a half-life: its `year`, 365.2425 days. */
+const YEAR_S = 31556952;
 
 /**
  * A model.xml exercising: nuclides with half-lives, a decay pair, a root index
@@ -145,7 +146,7 @@ export const MODEL_XML = `<?xml version="1.0" encoding="UTF-8"?>
 		</nuclide>
 		<nuclide name="Ba-137m">
 			<id>nuc-ba</id>
-			<half-life>${2.552 / 60 / 60 / 24 / 365.25 * YEAR_S}</half-life>
+			<half-life>${2.552 * 60}</half-life>
 			<z>56</z><a>137</a>
 		</nuclide>
 	</material-model>
@@ -357,7 +358,7 @@ export const MODEL_XML = `<?xml version="1.0" encoding="UTF-8"?>
 		<start-time>0.0</start-time>
 		<end-time>1000.0</end-time>
 		<time-unit>year</time-unit>
-		<java-solver>ODE15S</java-solver>
+		<java-solver>java&#45;ode15s</java-solver>
 		<rel-error-tolerance>1.0E-7</rel-error-tolerance>
 		<abs-error-tolerance>1.0E-12</abs-error-tolerance>
 		<simulation-type>DETERMINISTIC</simulation-type>
@@ -445,7 +446,7 @@ export const REAL_SHAPES_XML = `<?xml version="1.0" encoding="UTF-8"?>
 		<start-time>0.0</start-time>
 		<end-time>10.0</end-time>
 		<time-unit>year</time-unit>
-		<java-solver>ODE45</java-solver>
+		<java-solver>java-ode45</java-solver>
 	</simulation-settings>
 </data-model>`;
 
@@ -536,7 +537,7 @@ export const TRANSPORT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 	</block-model>
 	<simulation-settings>
 		<start-time>0.0</start-time><end-time>10.0</end-time><time-unit>year</time-unit>
-		<java-solver>ODE45</java-solver>
+		<java-solver>java&#45;ode45</java-solver>
 		<rel-error-tolerance>1.0E-8</rel-error-tolerance>
 		<abs-error-tolerance>1.0E-12</abs-error-tolerance>
 	</simulation-settings>

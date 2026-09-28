@@ -98,6 +98,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/clipboard.js` | The block clipboard, shared between tabs of one browser |
 | `src/io/eco.js` | The importer for `.eco` projects and `.eas` assessments |
 | `src/io/ecoexport.js` | The exporter to `.eco` projects (and `python/kompartment/io/ecoexport.py`, which writes the same bytes) |
+| `src/io/ecoequation.js` | Equations in Ecolego's spelling, for the exporter (and `python/kompartment/io/ecoequation.py`, the same text) |
 | `src/sim/pathlayout.js` | A far-field path's matrix layers as a run lays them out, for the exporter |
 | `src/ui/ecoreport.js` | What an export holds and leaves out, in the Save dialog and on the Build tab |
 | `src/io/zip.js`, `src/io/gzip.js`, `src/io/inflate.js` | Reading and writing the archives those come in |
@@ -924,8 +925,9 @@ objects between them; the other 10 carry 41 connections.
 
 ### Not mapped
 
-The other ~20 block types, presentation state, scenarios, probabilistic
-settings and results. Sub-systems are read, transports included -- see
+The other ~20 block types, presentation state and results. Scenarios and
+the probabilistic settings are read (see *Scenarios* below, and the Guide);
+sub-systems are read too, transports included -- see
 "Transport sub-systems" -- and the *external* flavour is read as an ordinary
 one, with a warning. Skipped blocks are listed in the import
 report rather than dropped silently; `influence` connections are noted
@@ -940,6 +942,112 @@ Two wrinkles worth knowing:
   names do not tokenise — so check the rewritten equations.
 - Ecolego can obfuscate a project on save (the archive writer
   encrypts entries with PBE). Encrypted archives are detected and refused.
+
+
+## Exporting .eco projects
+
+`src/io/ecoexport.js` (and `python/kompartment/io/ecoexport.py`, byte for
+byte) writes the other direction, laid out as the importer above reads a
+project; the Guide's *Exporting to Ecolego* says what maps to what. This
+section is about the part the importer could not say: **what Ecolego itself
+accepts**. Until 2026-09-27 every export had only been read back by this
+tool's own importer, which is forgiving, and none of them opened in Ecolego.
+
+### Checked in Ecolego itself
+
+Ecolego 6.5.85's own reader, validator and simulator run headless under Java
+8 from its jars, driven by a few small classes kept outside this repository
+(Ecolego is not ours to ship). What they do, so they can be made again:
+
+- **Open** an `.eco` through `new EcolegoWorkspacePersistence(scratchFolder)`
+  after `Resources.setApplicationDir(scratchApp)` and
+  `EcolegoDefaults.install()`, then read `getDataModel().getValidationResult()`
+  (severity, text, key) and `getProjectProperties().canRun()`. **Never** the
+  default persistence or `Initializer.init`: setting the workspace home deletes
+  the workspace folder the user's preferences name. Run with an in-memory
+  `java.util.prefs.PreferencesFactory` so those preferences are not read or
+  written at all.
+- **Run** it: `Workspace.createWorkspace()`, the scratch persistence set on it
+  and the project opened through it (the simulation server finds the project
+  through the workspace), the LU set to `Dense` (the native KLU and UMFPACK do
+  not load on macOS), then `SimulationManager.run(project, scenarios, true)` in
+  scenario mode or `run(project, true)`; every context's `getOutputInfo()` and
+  `getData(info, i, 0)` gives the saved series. Ecolego's arrays are
+  column-major -- the first index fastest -- and a transfer's output is its
+  flux, rate times donor, where this tool's series is the rate. A model with
+  nothing time-dependent has no time axis, and a sub-system's output has no
+  data.
+- **Compare**: export, run in both, and compare every saved series at the
+  times both have, each against its own peak.
+
+Every bundled example and every model of `test/eco-export-fixture.js` opens
+without an error and gives the numbers a run here gives: a few parts in a
+million of each series' peak at the models' own tolerances, and closer as the
+tolerance tightens -- `NO_EQUIVALENT`, on radau5 at rtol 1e-6, differs by 9e-5
+against Ecolego's own RADAU5 and by 7.5e-9 with both at 1e-10. Every equation
+the translator writes again gives the same number to the last bit, apart from
+the inverse hyperbolic functions. Three real assessment models of several
+hundred compartments export, open with no error and are ready to run; their
+thousand-odd warnings are Ecolego's unit check on the models' own units.
+
+### What Ecolego needs that the importer did not
+
+| What | Ecolego | The export |
+|---|---|---|
+| `<java-solver>` | one of the 14 keys of `SolverSettingPage.ALL_SOLVER_INFOS`, `java-ode15s` and the like; anything else is looked up, not found, and the null solver fails `SimulationSettingsValidator` with an NPE that `ZippedWorkspacePersistence.open` reports as a bare `IOException` | writes Ecolego's keys; the importer reads them (it never had: every real file opened on the default solver without a word) |
+| `<differential-equation>` | an empty one is an empty equation, refused | only where there is a term |
+| the scenario list | a built-in list is found by its **name** alone, `Scenarios`, and filled from `<scenario-model>`; a list called anything else is ordinary, and an unindexed reference to it cannot be resolved | goes out as `Scenarios`, its own name in a `kompartment-name` property, with a scenario per index and `run-scenarios-mode` on |
+| `<outputs>` | a run saves only the blocks listed; none listed, nothing at all | a model with no list goes out with every block a run has results for; read back, a list of every block is no list |
+| initial values | worked out before the run (`ESimulationStage.PRE_PROCESSING`, `canPreProcess`): parameters, tables read at a value, and expressions whose evaluation mode is *set* to BEFORE -- AUTO, the default, does not count; not the time, not an aggregate or an index operation | every expression an initial value reads, transitively, goes out BEFORE; one that cannot is named in the report |
+| the year | `EcoMath.YEAR_IN_SECONDS` = 31,556,952 s, 365.2425 days; a half-life in seconds is turned into the run's unit with it | half-lives in seconds of Ecolego's year for a model run in years, of this tool's in days or shorter (`ecoSecondsPerYear`), both ways |
+| a cyclic table read at a value | `LookupTableClassWriter`'s cyclic branch reads `_time`, never the argument | written unrepeated, every call wrapping its value onto the range with Ecolego's own `rem` -- Java's `%`, which is what `../domain/lookup.js` does |
+
+And the equation language, which is the importer's with less in it
+(`src/io/ecoequation.js`, whose header has the reasons): a unit on a number
+empties the equation; a test is only ever the condition of an `if()` --
+`(a > b) * 3` validates and its generated Java does not compile; `?:` and `!=`
+do not parse; a sign straight after an operator is written into the Java as
+`--`; five spellings are unknown, and `min`, `max`, `sum`, `prod`, `mean` and
+the logical functions take two arguments at least. `asinh`, `acosh` and `atanh`
+are listed and validate, and the Java calls `Math.asinh`, which Java 8 does not
+have. `mod(a, 0)` is `a` here and NaN there, and **`mod` and `rem` are not the
+same function**: Ecolego's is the exact remainder, Java's `%`, and this tool's
+is `a - b·floor(a/b)` (`fix` for `rem`) -- half of 200,000 random pairs differ
+in the last bit, and `mod(1, 0.1)` is 0 here and 0.0999… there, a whole period
+at the instant a saw-tooth jumps. So both go out as that arithmetic, which
+Java does to the bit. The one mismatch left is cosmetic: Ecolego has no way to
+put a unit on a number, so a written-out `mole2bq` draws a unit warning there
+(the constants carry none); Ecolego keeps its own `mole2Bq` in `EcoMath` and
+not in its equation language.
+
+`ecoequation.js` and `python/kompartment/io/ecoequation.py` are compared on 141
+chosen and 4,000 random equations (`test_eco_export.py`): the same text, the
+same flags, the same unsupported calls and the same references.
+
+### Multiplying by the donor is one setting of a transfer
+
+Ecolego keeps *multiply with donor* on each row of a transfer's table. Here
+`VALUE_KEYS` listed it per entry from the first commit, the importer kept the
+rows' values, the Python API let an index set it -- and nothing read it: the
+builder, the Jacobian's pattern and its analytic terms, the unit
+(`derivedUnit`: a coefficient is `1/time`, a flux `amount/time`), an
+availability and the constant-matrix test on a release all read the block's.
+A model that set it at one index ran as if it had not. So it is one setting of
+the whole transfer, and an entry that says otherwise is refused (`_block` in
+`../domain/project.js`, with the message saying what to do: two transfers).
+The importer makes a transfer whose rows disagree into two between the same
+ends, the second holding the rows that say otherwise and the first a zero rate
+there, which move what the file's one moves to the bit (a zero flux added is
+no change); the second goes where the first goes, switched off and kept as an
+endpoint with it. The export writes each row as the model says, so a model
+that mixes them opens in Ecolego as it means, and warns. None of the 148
+project files here that could be read mixes them -- 69,126 of their 69,160
+transfers leave it to the kind of connection, and the other 34 state it once
+-- so the split has only ever been needed for this tool's own exports.
+
+`null` or `0` for the flag was a flux to the builder, which asked whether it
+was truthy, and a coefficient to everything else; the Project now makes it
+`false` or `true`, off only for `false`, as every other reader already did.
 
 
 ## Scenarios
@@ -2317,10 +2425,71 @@ object:
 
 | | |
 |---|---|
-| the solution | `src/domain/farfield-laplace.js` (and `python/kompartment/engine/farfield_laplace.py`): the transfer matrix T(s) = H(G) over the block's decay network, its inversion on a parabola, and each unit response tabulated as quintic Hermite pieces to 2e-8 |
+| the solution | `src/domain/farfield-laplace.js` (and `python/kompartment/engine/farfield_laplace.py`): the transfer matrix T(s) = H(G) over the block's decay network, its inversion on parabolas that nearby times share (see *Shared parabolas* below), and each unit response tabulated as quintic Hermite pieces to 2e-8 |
 | the runtime | `LaplaceFarfPath` in `src/sim/farfield-laplace.js` (and `engine/farfield_semi.py`), with `FarfPath`'s interface |
 | the builder | `farfLayout` gives the block one state per nuclide per combination (`cellCount` 1), what it holds; the release slot `needs` every rate delivering into the path; `laplaceLines` compiles what flows in (value, tangent and columns) into `setInflow` |
 | the hooks | `primeRecorders`, `storeStep` (every accepted step and output time) and `startSegment` (every segment the runner starts: after a switch time or a jump) record the inflow; `restartPaths` makes the responses be worked out again from the settings at a run's first instant |
+
+**Shared parabolas.** The nodes of one parabola give the response at any time
+near its own from the same values of T, only e^(st) changing, so nearby times
+share one (`makeCells`, `invertShared`). Each axis's times fall into cells on a
+lattice in ln t taken from its real-axis table alone — at most two tilted
+standard deviations and a factor 2 either side of a cell's middle time — so a
+time's value does not depend on which times were asked for before it. A cell
+is built when a time first falls in it, from its middle time's vertex:
+flattened for its earliest time, its step following its latest time and the
+faster phase of its two ends, and halved until the single parabola's tests
+hold at five times across it. Each time is then summed from the nodes with an
+error estimate of its own; one that does not pass, or whose cell failed, gets
+a parabola of its own as before, and de Hoog's method after that. An
+inventory's two axes have cells of their own; `responseAt` inverts every time
+on its own parabola, with de Hoog's method after it as for a sample. The
+far-field example's release responses take a seventh
+of the time they did and its inventories a third, with no sample left to a
+parabola of its own, and agree with one parabola per time to 1e-13 of each
+peak (to 1e-11 in harder made-up cases); far out in a long tail, below 1e-10 of
+the peak, some times need their own. `shared: false` in `unitResponse` turns
+the cells off, for comparisons, and `shared` in a response counts how its
+samples were taken: cells built and failed, samples served, left to their own
+parabola, gone on to de Hoog's method and negligible — counts the parity tests
+compare between the two engines.
+
+**Sharp fronts, spikes and weak singularities.** Four rules in the inversion
+keep the hard cases right:
+
+- *Plug flow's exponent.* T and A⁻¹T have their delay e^(−T<sub>w</sub>
+  R<sub>min</sub> s) taken out, R<sub>min</sub> the block's smallest R<sub>f</sub>.
+  Each member's exponent is formed shifted, R<sub>f</sub>λ + (R<sub>f</sub> −
+  R<sub>min</sub>)s + a<sub>w</sub>D<sub>e</sub>τ, not as g − R<sub>min</sub>s
+  (`gFracture`), which kept the rounding of R<sub>min</sub>s where the saddles
+  lie right after the delay: T 1e-7 off at s = 1e8, spikes good to 1e-8. The
+  shift is one scalar for the whole block, whatever each member's
+  R<sub>f</sub>, so the divided differences of H over G's shifted diagonal
+  give H(G) without the delay; a member held back more keeps
+  (R<sub>f</sub> − R<sub>min</sub>)s as a delay of its own.
+- *Every member's phase, under plug flow too.* The step follows the fastest
+  phase along the path of every member's own transform (`pathFrequency`). In
+  a chain with a thin matrix these turn thousands of times faster than the
+  answer, and two sums too coarse for them once agreed on values 1e-4 off.
+- *Sinh nodes next to a weak singularity.* Where the strip of analyticity is
+  narrower than a tenth of the integrand's Gaussian — a pole of tanh just left
+  of the saddle, whose residue hardly shows — the nodes are Y = c sinh(u),
+  trapezoidal in u, when that reaches the Gaussian's end in fewer nodes
+  (`nodeScale`), for a single time and for a cell. The strip in u is π/4, and
+  such sums are never taken on the strip's bound after one halving. A front
+  at P<sub>e</sub> 10⁵ into a 1 m matrix once exhausted every parabola's
+  budget after its peak, 17 % off; it now takes a few hundred evaluations.
+- *The rising edge.* The real-axis table goes on until the saddle-point
+  exponent w = sD + ψ is e^−120 below its top, rather than stopping where ψ
+  falls below −900: that ended the same front's response 1e-5 below its peak.
+
+Those cases' tests compare with closed forms (ψ of plug flow at s up to 1e8,
+also for a daughter held back more than its parent; the classical solution for
+a spike 1e-4 a after the delay; a Bromwich integral for a matrix that fills at
+once) and with the subordination integral at 40 digits for the front: each
+time's own parabola and the cells to 1e-12 of the peak, the table to 1e-9
+between its samples, and the mass balance to 1e-9 of T(0), at P<sub>e</sub> 10⁶
+as well.
 
 **The balance.** d(held)/dt = in − out − Λ·held, `apply` doing the last two,
 so what went in, what came out and what decayed add up to what is held
@@ -4131,6 +4300,17 @@ once a model has been split what the split measured decides (`splitMemory` in
 the worker, per layout signature). The parts agree with a whole solve to
 within the tolerance, not to the last digit, so the setting is in the
 integration fingerprint.
+
+**The Python engine splits a job at a time**, and keeps its own cost model
+for it (`python/kompartment/engine/split.py`). Its processes have no shared
+heap to run out of, and its builds do shrink with the part -- on a made-up
+model of twelve chains, 10,080 states, one job built in 0.18 of the whole's
+time and half of them in 0.46, which is `0.1 + 0.9 × share` near enough -- so
+building each job on its own costs little more than a share per core, and it
+keeps what that design was for: a job's run is the same whichever others share
+its process, and the worker count changes no number. Its plans are the
+application's in everything but the weighing; `PlanParity` compares them so,
+and holds the weighing to the engine's own formula.
 
 ## A global switch over the floor
 

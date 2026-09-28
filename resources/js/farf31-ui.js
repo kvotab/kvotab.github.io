@@ -17,8 +17,8 @@
   const esc = (s) => (typeof kvotEscapeHtml === 'function' ? kvotEscapeHtml(s) : String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
   const STORAGE_KEY = 'kvot-farf31-v1';
   const DEFAULT_WIDTH = 340;
-  const BUILD = '2026-09-26';
-  const WORKER_URL = './resources/js/farf31-worker.js?v=20260926d';
+  const BUILD = '2026-09-28';
+  const WORKER_URL = './resources/js/farf31-worker.js?v=20260928a';
   const PALETTE = ['#bb6c5d', '#4e79a7', '#e0a458', '#59a14f', '#8e6c8a', '#76b7b2', '#d37295', '#9c755f'];
   const DEFAULT_SERIES = [[0, 1e-3], [1e5, 1e-3]];
   const M = window.Farf31Model, IO = window.Farf31IO, DATA = window.Farf31Data;

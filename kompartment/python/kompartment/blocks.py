@@ -690,11 +690,16 @@ class Transfer(_Connection):
     kind = 'transfer'
     collection = 'transfers'
     value_key = 'rate'
-    entry_keys = ('rate', 'multiply_by_donor')
+    # The rate alone: multiplying by the donor is one setting of the whole
+    # transfer (it is the rate's unit too), and a run refuses an index that
+    # says otherwise.
+    entry_keys = ('rate',)
     equation_keys = ('rate',)
 
     multiply_by_donor = Field('multiply_by_donor', 'bool', True, doc='Whether the rate is multiplied by '
-                              'the donor\'s inventory (a rate coefficient). Off makes it an absolute flux.')
+                              'the donor\'s inventory (a rate coefficient). Off makes it an absolute flux. One '
+                              'setting for the whole transfer: a model that needs both at different indices has '
+                              'two transfers.')
 
     @property
     def source(self) -> Optional[str]:

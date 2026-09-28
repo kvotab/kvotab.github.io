@@ -5,7 +5,7 @@
    1. Closed forms: the inverse Gaussian of advection and dispersion without
       matrix interaction; the classical solution for diffusion into an
       infinite matrix under plug flow (and a very high Peclet number close to
-      it); an infinite matrix at finite Pe by the subordination integral; the
+      it), and plug flow's T at large s; an infinite matrix at finite Pe by the subordination integral; the
       Bateman solution for chains whose members move alike (distinct, close
       and equal half-lives); the transmission T(0) and the mass balance. With
       sorption on the fracture surfaces (Rf = 1 + Ka aw): without a matrix
@@ -23,7 +23,15 @@
       against T(0), and the run's own mass balance.
       Then the real axis next to a singularity, the mass balance caught
       failing, and four sharp-front cases (Pe 1000 to 10 000) against de
-      Hoog's method.
+      Hoog's method. Then the shared parabolas: h, h' and h'' from the
+      cells against one parabola per time for ten responses of different
+      kinds, a time's value independent of the times asked for before it,
+      and few samples left to parabolas of their own. Then plug flow's
+      spikes against a closed form and a Bromwich integral, a chain under
+      plug flow where the parabola once converged on wrong values, a weak
+      singularity next to a sharp front (Pe 1e5 and 1e6) against the
+      subordination integral (40-digit values and one computed here), and
+      the rising edge of a sharp front against the inverse Gaussian.
    4. With the reference cases present ($FARF31_REF, default
       ~/Downloads/Farf31-SKB-new/reference-cases): the page reproduces the
       original program's outputs for these made-up cases, its unit responses
@@ -200,6 +208,32 @@ for (const [kd, de, aw, th, ka] of [[0.01, 5e-6, 1500, 7.6e4, 0.002], [1, 4e-6, 
   check('plug flow with two fracture retardations in one chain is refused', /same fracture retardation/.test(msg), msg);
   const ctx = M.prepare(Object.assign({}, base, { nuclides: [{ name: 'A', thalf: 100, kd: 0.1, ka: 0.01, de: 1e-6, daughter: true }, { name: 'B', thalf: 1e3, kd: 0.3, ka: 0.01, de: 2e-6 }] }));
   check('  one retardation for the chain: the delay is Rf tw', M.pairDelay(ctx, 1, 0) === 50 * 5);
+}
+{
+  // Under plug flow the transform lacks the chain's delay e^(-Rf tw s); what
+  // is left, exp(-tw (Rf lambda + aw De tau)), must not be formed as g - Rf s:
+  // right after the delay the saddles lie at s of 1e4 and more, where that
+  // difference left T with the rounding of Rf s (2e-8 at s = 1e7). ln T from
+  // evalBlock (held scaled) against the closed form, over |ln T|.
+  const PLUG = [
+    ['an infinite matrix', { tw: 50.27, aw: 0.3922, eps: 1.888e-4, x0: Infinity }, { thalf: 13.05, kd: 3.703e-4, de: 1.508e-6 }],
+    ['fracture sorption', { tw: 100, aw: 1500, eps: 0.005, x0: Infinity }, { thalf: 7.6e4, kd: 0.01, ka: 0.002, de: 5e-6 }],
+    ['a finite matrix', { tw: 119.84, aw: 380.5, eps: 1.085e-4, x0: 0.0817 }, { thalf: 2.727e5, kd: 0, de: 3.157e-3 }],
+  ];
+  for (const [label, p, n] of PLUG) {
+    const ctx = M.prepare(Object.assign({ Pe: Infinity, rho: 2700 }, p, { nuclides: [Object.assign({ name: 'X' }, n)] }));
+    const ws = M.makeWorkspace(ctx);
+    const R = p.eps + n.kd * 2700, lam = LN2 / n.thalf, Rf = 1 + (n.ka || 0) * p.aw;
+    let worst = 0;
+    for (const s of [1, 1e2, 1e4, 1e5, 1e6, 1e7, 1e8]) {
+      M.evalBlock(ctx, ws, s, 0, 0, 0);
+      const lnT = Math.log(ws.Fr[0]) - ws.E;
+      const u = Math.sqrt(R * (s + lam) / n.de), tau = isFinite(p.x0) ? u * Math.tanh(p.x0 * u) : u;
+      const want = -p.tw * Rf * lam - p.tw * p.aw * n.de * tau;
+      worst = Math.max(worst, Math.abs(lnT - want) / Math.max(1, Math.abs(want)));
+    }
+    below(`plug flow, ${label}: ln T at s from 1 to 1e8 against its closed form, over |ln T|`, worst, 1e-14);
+  }
 }
 {
   // a very high Peclet number approaches the closed form where the matrix spreads the pulse far more than dispersion
@@ -582,6 +616,373 @@ console.log('\n--- the real axis, the mass balance, high Peclet numbers ---');
     check(`  and the run's own check against de Hoog`, res.check.worst < 1e-5, res.check.worst.toExponential(2));
     check(`  in a few seconds at most`, ms < 8000, `${ms} ms`);
   }
+}
+
+/* ======================================================================
+   3c. Shared parabolas: one parabola serves the times of a cell
+   ====================================================================== */
+console.log('\n--- shared parabolas against one parabola per time ---');
+{
+  // h, h' and h'' from the cells against invertParabola at the same times,
+  // 60 a decade (200 at least) over the response's support, each over its
+  // largest value there. Only times both answer are compared; those the
+  // cells leave to a parabola of their own are counted.
+  const RESP = [
+    ['one nuclide', CASES.single, 0, 0],
+    ['chain, U233 from Am241', CASES.chain, 2, 0],
+    ['chain, Th229 from U233', CASES.chain, 3, 2],
+    ['fracture sorption, Pb210 from Th230', CASES.fsorb, 2, 0],
+    ['fracture sorption, Ra226 from Ra226', CASES.fsorb, 1, 1],
+    ['plug flow, infinite matrix, fracture sorption', { params: { tw: 100, Pe: Infinity, aw: 1500, eps: 0.005, x0: Infinity },
+      nuclides: [{ name: 'X', thalf: 7.6e4, kd: 0.01, ka: 0.002, de: 5e-6 }] }, 0, 0],
+    ['plug flow, a matrix that fills at once', { params: { tw: 119.84, Pe: Infinity, aw: 380.5, eps: 1.085e-4, x0: 0.0817 },
+      nuclides: [{ name: 'X', thalf: 2.727e5, kd: 0, de: 3.157e-3 }] }, 0, 0],
+    ['sharp front, Pe 3000, 5 mm matrix', { params: { tw: 2.549, Pe: 3000, aw: 105.07, eps: 0.001107, x0: 0.00506 },
+      nuclides: [{ name: 'X1', thalf: Infinity, kd: 0.0003797, de: 1.498e-7 }] }, 0, 0],
+    ['sharp front, Pe 1000, daughter from parent', { params: { tw: 23.36, Pe: 1000, aw: 6.508, eps: 0.00755, x0: 64.52 }, nuclides: [
+      { name: 'P1', thalf: 57.49, kd: 0, de: 4.153e-6, daughter: true }, { name: 'D1', thalf: 55.24, kd: 0.05558, de: 4.153e-6 }] }, 1, 0],
+    ['long slow tail, Pe 300', CASES['tail-300-1'], 0, 0],
+  ];
+  for (const [label, c, i, j] of RESP) {
+    const ctx = M.prepare(Object.assign({ rho: 2700 }, c.params, { nuclides: c.nuclides }));
+    const ws = M.makeWorkspace(ctx);
+    const d = M.pairDelay(ctx, i, j), lo = ctx.infPe ? d * (1 + 1e-9) : ctx.tw * 1e-6;
+    const ax = M.realAxis(ctx, ws, i, j, lo, 1e12);
+    const sup = M.responseSupport(ctx, ax, lo, 1e12);
+    const peak = Math.exp(sup.logPeak), atol = 1e-16 * peak;
+    const cells = M.makeCells(ctx, ax, { atol, peak });
+    const u0 = sup.tLo - d, u1 = Math.min(sup.tHi, 1e12) - d;
+    const ts = logGrid(u0, u1, Math.max(200, Math.ceil(60 * Math.log10(u1 / u0)) + 1)).map((u) => d + u);
+    const own = [], shared = [];
+    let left = 0;
+    for (const t of ts) {
+      const s = M.invertShared(ctx, ws, cells, t);
+      const p = M.invertParabola(ctx, ws, ax, t, { atol });
+      if (!s) { left++; continue; }
+      if (!isFinite(p.h) || p.err > 1e-6 * Math.abs(p.h) + atol) continue;
+      own.push(p); shared.push(s);
+    }
+    const worst = ['h', 'dh', 'd2'].map((key) => {
+      let top = 0, w = 0;
+      own.forEach((p, k) => { top = Math.max(top, Math.abs(p[key])); w = Math.max(w, Math.abs(shared[k][key] - p[key])); });
+      return w / top;
+    });
+    check(`shared parabolas, ${label}: h, h' and h'' agree with one parabola per time to 1e-10 of their peaks`, own.length > 50 && worst.every((w) => w <= 1e-10),
+      `${worst.map((w) => w.toExponential(1)).join(', ')} at ${own.length} times, ${cells.stats.cells} cells, ${left} times left to a parabola of their own`);
+  }
+}
+{
+  // A time's result does not depend on which times were asked for before
+  // it: each cell comes from the real-axis table and its index alone.
+  const c = CASES.chain, i = 2, j = 0;
+  const ctx = M.prepare(Object.assign({}, c.params, { nuclides: c.nuclides }));
+  const ws = M.makeWorkspace(ctx);
+  const ax = M.realAxis(ctx, ws, i, j, 1e-3, 1e12);
+  const sup = M.responseSupport(ctx, ax, 1e-3, 1e12);
+  const opt = { atol: 1e-16 * Math.exp(sup.logPeak), peak: Math.exp(sup.logPeak) };
+  const ts = logGrid(sup.tLo, sup.tHi, 150);
+  const inOrder = (order) => {
+    const cells = M.makeCells(ctx, ax, opt), out = new Array(ts.length);
+    for (const k of order) out[k] = M.invertShared(ctx, ws, cells, ts[k]);
+    return out;
+  };
+  const idx = ts.map((_, k) => k), perm = idx.slice();
+  let x = 12345;
+  for (let k = perm.length - 1; k > 0; k--) { x = (x * 1103515245 + 12345) % 2147483648; const r = x % (k + 1); [perm[k], perm[r]] = [perm[r], perm[k]]; }
+  const fwd = inOrder(idx), back = inOrder(idx.slice().reverse()), mixed = inOrder(perm);
+  const same = (p, q) => (p === null && q === null) || (!!p && !!q && p.h === q.h && p.dh === q.dh && p.d2 === q.d2);
+  const alone = [0, 37, 75, 149].every((k) => same(M.invertShared(ctx, ws, M.makeCells(ctx, ax, opt), ts[k]), fwd[k]));
+  check('shared parabolas: a time gives the same value, bit for bit, whatever was asked for before it (forward, backward, shuffled, alone)',
+    fwd.every((r) => r !== null) && idx.every((k) => same(fwd[k], back[k]) && same(fwd[k], mixed[k])) && alone);
+  const cells = M.makeCells(ctx, ax, opt);
+  for (const t of ts) M.invertShared(ctx, ws, cells, t);
+  let span = cells.map.size > 3;
+  for (const cell of cells.map.values()) if (!(cell.tHi <= 2 * cell.tA * (1 + 1e-12) && cell.tA <= 2 * cell.tLo * (1 + 1e-12))) span = false;
+  check('  every cell spans at most a factor 2 either side of its middle time', span, `${cells.map.size} cells`);
+}
+{
+  // In ordinary cases the cells serve (nearly) every sample, and the releases
+  // are those of one parabola per time.
+  let left = 0, all = 0;
+  const count = (res) => { const s = res.timing.shared; left += s.fallback; all += s.shared + s.fallback + s.negligible; };
+  for (const ex of DATA.EXAMPLES) {
+    const p = ex.params, aw = p.awMode === 'F' ? p.F / p.tw : p.aw;
+    count(M.run({ params: { tw: p.tw, Pe: p.Pe, aw, eps: p.eps, x0: p.x0, rho: p.rho }, nuclides: ex.nuclides.map((n) => Object.assign({}, n, { de: ex.diffusivity === 'SINGLE' ? p.de : n.de })), series: ex.series, settings: { check: false } }));
+  }
+  for (const c of Object.values(CASES)) count(M.run(Object.assign({}, c, { settings: { check: false } })));
+  check('shared parabolas: fewer than 1% of the samples of the built-in examples and the 40-digit cases need a parabola of their own', all > 5000 && left <= 0.01 * all, `${left} of ${all}`);
+  for (const name of ['chain', 'fsorb']) {
+    const c = CASES[name];
+    const times = Array.from(M.run(Object.assign({}, c, { settings: { check: false } })).times);
+    const a = M.run(Object.assign({}, c, { settings: { check: false, evalTimes: times } }));
+    const b = M.run(Object.assign({}, c, { settings: { check: false, evalTimes: times, shared: false } }));
+    let w = 0;
+    a.at.out.forEach((o, q) => { const pk = Math.max(...b.at.out[q]); if (pk > 0) o.forEach((v, k) => { w = Math.max(w, Math.abs(v - b.at.out[q][k]) / pk); }); });
+    below(`  the ${name} case: its releases those of one parabola per time, over each peak`, w, 1e-10);
+  }
+}
+
+/* ======================================================================
+   3d. Spikes under plug flow, a weak singularity next to a sharp front,
+       and the rising edge of a sharp front
+   ====================================================================== */
+console.log('\n--- spikes under plug flow, a weak singularity, a sharp front\'s rising edge ---');
+
+/** Adaptive Gauss-Kronrod (7-15) to tol relative or abs absolute, the
+    absolute part halved with each split (for integrands that are tiny over
+    most of the range). */
+function quadAbs(f, a, b, tol, abs, depth = 0) {
+  const xk = [0.991455371120813, 0.949107912342759, 0.864864423359769, 0.741531185599394, 0.586087235467691, 0.405845151377397, 0.207784955007898, 0];
+  const wk = [0.022935322010529, 0.063092092629979, 0.104790010322250, 0.140653259715525, 0.169004726639267, 0.190350578064785, 0.204432940075298, 0.209482141084728];
+  const wg = [0, 0.129484966168870, 0, 0.279705391489277, 0, 0.381830050505119, 0, 0.417959183673469];
+  const c = 0.5 * (a + b), h = 0.5 * (b - a);
+  let K = 0, G = 0;
+  for (let q = 0; q < 8; q++) { const s = q === 7 ? f(c) : f(c - h * xk[q]) + f(c + h * xk[q]); K += wk[q] * s; G += wg[q] * s; }
+  K *= h; G *= h;
+  if (Math.abs(K - G) <= tol * Math.abs(K) + abs || depth > 24) return K;
+  return quadAbs(f, a, c, tol, abs / 2, depth + 1) + quadAbs(f, c, b, tol, abs / 2, depth + 1);
+}
+
+/**
+ * h, h' and h'' of one nuclide at finite Pe with an unlimited matrix, by the
+ * subordination integral h = e^(-lam t) J, J(t) = int IG(u) K(t - u; a(u)) du,
+ * K(tau; a) = a/(2 sqrt(pi) tau^1.5) exp(-a^2/(4 tau)), a = u aw sqrt(De R).
+ * Near a front the matrix delays of interest are a few years, whose
+ * diffusion depth is well below a metre: for a 1 m matrix the kernel is
+ * exact there. Since d/dt K = c K_a - d/du K (c = da/du), parts move the
+ * time derivatives onto IG, which keeps the quadrature free of cancellation:
+ * J' = int (IG' K + c IG K_a) du, J'' = int (IG'' K + 2 c IG' K_a + c^2 IG
+ * K_aa) du, K_a = K (1/a - a/(2 tau)), K_aa = K (a^2/(4 tau^2) - 3/(2 tau)).
+ * In ln tau, with break points at the kernel's and the front's scales, each
+ * part to 1e-16 of the integral of its modulus. Returns [h, h', h''], or
+ * [h] alone when `alone`.
+ */
+function subordination(p, n, t, alone) {
+  const R = p.eps + n.kd * 2700, lam = LN2 / n.thalf, c = p.aw * Math.sqrt(n.de * R);
+  const IG = (u) => Math.sqrt(p.Pe * p.tw / (4 * Math.PI * u ** 3)) * Math.exp(-p.Pe * (u - p.tw) ** 2 / (4 * p.tw * u));
+  const part = (m) => (x) => {
+    const tau = Math.exp(x), u = t - tau;
+    if (!(u > 0)) return 0;
+    const a = c * u, k = IG(u) * a / (2 * Math.sqrt(Math.PI) * Math.sqrt(tau)) * Math.exp(-a * a / (4 * tau));   // IG K dtau/dx
+    if (m === 0) return k;
+    const l1 = -1.5 / u - p.Pe / (4 * p.tw) * (1 - p.tw * p.tw / (u * u)), l2 = 1.5 / (u * u) - p.Pe * p.tw / (2 * u ** 3);   // (ln IG)', (ln IG)''
+    const ka = 1 / a - a / (2 * tau);
+    if (m === 1) return k * (l1 + c * ka);
+    return k * (l1 * l1 + l2 + 2 * c * l1 * ka + c * c * (a * a / (4 * tau * tau) - 1.5 / tau));
+  };
+  const sig = p.tw * Math.sqrt(2 / p.Pe), a0 = c * p.tw, d = t - p.tw;
+  const bp = [Math.log(1e-16), Math.log(a0 * a0 / 60), Math.log(a0 * a0 / 6), Math.log(6 * a0 * a0), Math.log(t)];
+  for (const k of [-8, -4, -2, -1, 0, 1, 2, 4, 8]) { const tau = d + k * sig; if (tau > 1e-16 && tau < t) bp.push(Math.log(tau)); }
+  const xs = bp.filter(isFinite).sort((x, y) => x - y);
+  const J = (alone ? [0] : [0, 1, 2]).map((m) => {
+    const f = part(m), fa = (x) => Math.abs(f(x));
+    let size = 0, sum = 0;
+    for (let k = 0; k + 1 < xs.length; k++) if (xs[k + 1] > xs[k]) size += quadAbs(fa, xs[k], xs[k + 1], 1e-4, 1e-300, 6);
+    if (!(size > 1e-250)) return 0;
+    for (let k = 0; k + 1 < xs.length; k++) if (xs[k + 1] > xs[k]) sum += quadAbs(f, xs[k], xs[k + 1], 1e-13, 1e-16 * size);
+    return sum;
+  });
+  const e = Math.exp(-lam * t);
+  return alone ? [e * J[0]] : [e * J[0], e * (J[1] - lam * J[0]), e * (J[2] - 2 * lam * J[1] + lam * lam * J[0])];
+}
+
+{
+  // Two spikes right after the delay of plug flow. The hair case's own
+  // response (an infinite matrix, Pe = infinity): the classical closed form,
+  // at the page's own time less the delay (the spike is 1e-4 a wide, and
+  // t - delay keeps fewer digits than t). Before T's exponent was formed
+  // without cancellation (see above) the page was 8e-9 off it.
+  const p = { tw: 50.27, Pe: Infinity, aw: 0.3922, eps: 1.888e-4, x0: Infinity, rho: 2700 }, n = { name: 'P', thalf: 13.05, kd: 3.703e-4, de: 1.508e-6 };
+  const ctx = M.prepare(Object.assign({}, p, { nuclides: [n] }));
+  const ws = M.makeWorkspace(ctx);
+  const d = M.pairDelay(ctx, 0, 0), ax = M.realAxis(ctx, ws, 0, 0, d * (1 + 1e-9), 1e12);
+  const R = p.eps + n.kd * 2700, lam = LN2 / n.thalf, k = p.tw * p.aw * Math.sqrt(n.de * R);
+  const exact = (tt) => Math.exp(-lam * (tt + d)) * neret(tt, k);
+  const up = k * k / 6;
+  const ts = logGrid(up / 20, up * 1e4, 61).map((u) => d + u);
+  below('plug flow, the hair case\'s own spike 1e-4 a after the delay: against the closed form, above 1e-6 of the peak', worstRel(ts, ts.map((t) => M.invertParabola(ctx, ws, ax, t).h), ts.map((t) => exact(t - d)), 1e-6), 1e-12);
+  const res = M.run({ params: p, nuclides: [Object.assign({ source: true }, n)], series: { P: [[0, 1], [1, 1]] }, settings: { check: false } });
+  const r = res.responses[0];
+  let w = 0;
+  for (let q = 0; q < r.t.length; q++) w = Math.max(w, Math.abs(r.h[q] - exact(r.t[q] - d)));
+  below('  the run\'s response at its samples, over the peak', w / r.peak, 1e-12);
+}
+{
+  // The matrix that fills at once (a finite matrix under plug flow): the
+  // Bromwich integral of the closed-form transform on the imaginary axis,
+  // (1/pi) int_0^inf Re[e^(i w u) T(i w)] dw, by Gauss-Kronrod in pieces of
+  // a few turns (the response is a Gaussian 0.008 a wide, 0.40 a after the
+  // delay: T(i w) dies by w = 2000). Before, 5e-13 off.
+  const p = { tw: 119.84, Pe: Infinity, aw: 380.5, eps: 1.085e-4, x0: 0.0817, rho: 2700 }, n = { name: 'X', thalf: 2.727e5, kd: 0, de: 3.157e-3 };
+  const ctx = M.prepare(Object.assign({}, p, { nuclides: [n] }));
+  const ws = M.makeWorkspace(ctx);
+  const d = M.pairDelay(ctx, 0, 0), ax = M.realAxis(ctx, ws, 0, 0, d * (1 + 1e-9), 1e12);
+  const R = p.eps + n.kd * 2700, lam = LN2 / n.thalf;
+  const lnT = (w) => {   // ln T(i w), delay removed: -tw lam - tw aw De sqrt(z) tanh(x0 sqrt z), z = R (i w + lam)/De
+    const zr = R * lam / n.de, zi = R * w / n.de, rr = Math.hypot(zr, zi);
+    const ur = Math.sqrt((rr + zr) / 2), ui = Math.sqrt((rr - zr) / 2);
+    const e = Math.exp(-2 * p.x0 * ur), c2 = Math.cos(2 * p.x0 * ui), s2 = Math.sin(2 * p.x0 * ui);
+    const nr = 1 - e * c2, ni = e * s2, dr = 1 + e * c2, di = -e * s2, dd = dr * dr + di * di;
+    const tr = (nr * dr + ni * di) / dd, ti = (ni * dr - nr * di) / dd;
+    return [-p.tw * lam - p.tw * p.aw * n.de * (ur * tr - ui * ti), -p.tw * p.aw * n.de * (ur * ti + ui * tr)];
+  };
+  let W = 1;
+  while (Math.exp(lnT(W)[0]) > 1e-22) W *= 2;
+  const bromwich = (u) => {
+    const f = (w) => { const l = lnT(w); return Math.exp(l[0]) * Math.cos(w * u + l[1]); };
+    const pieces = Math.max(16, Math.ceil(W * u / Math.PI));
+    let sum = 0;
+    for (let q = 0; q < pieces; q++) sum += quadAbs(f, W * q / pieces, W * (q + 1) / pieces, 1e-13, 2e-15 * W / pieces);
+    return sum / Math.PI;
+  };
+  const us = Array.from({ length: 19 }, (_, q) => 0.37 + 0.004 * q);
+  const want = us.map((u) => bromwich((d + u) - d)), pk = Math.max(...want);
+  let w = 0;
+  us.forEach((u, q) => { w = Math.max(w, Math.abs(M.invertParabola(ctx, ws, ax, d + u).h - want[q])); });
+  below('plug flow, a matrix that fills at once: the spike against the Bromwich integral of its closed-form transform, over the peak', w / pk, 5e-14);
+  const res = M.run({ params: p, nuclides: [Object.assign({ source: true }, n)], series: { X: [[0, 1], [1, 1]] }, settings: { check: false } });
+  const r = res.responses[0];
+  let wr = 0, m = 0;
+  for (let q = 0; q < r.t.length; q++) {
+    const u = r.t[q] - d;
+    if (u < 0.37 || u > 0.442) continue;
+    m++;
+    wr = Math.max(wr, Math.abs(r.h[q] - bromwich(u)));
+  }
+  below(`  the run's response at its ${m} samples across the spike, over the peak`, wr / pk, 5e-13);
+}
+{
+  // A chain under plug flow with a thin matrix: each member's own transform
+  // can exceed the chain's response and turn thousands of times faster
+  // along the path than it. Once the step followed only the response's own
+  // phase there, and two sums, both too coarse, agreed on values 1e-4 and
+  // 2e-5 off (with an error estimate of 1e-15). Now the parabola is right,
+  // or says it has not converged (and the sample goes on to de Hoog's method);
+  // the shared parabolas are right. Against de Hoog at two term counts.
+  const p = { tw: 2741.36, Pe: Infinity, aw: 4.401, eps: 0.0138, x0: 0.001016, rho: 2700 };
+  const nucs = [{ name: 'N0', thalf: 6234.3, kd: 0.0078128, ka: 0.00096121, de: 1.1566e-7, daughter: true },
+    { name: 'N1', thalf: 9884.0, kd: 0.031940, ka: 0.00096121, de: 2.1815e-5, daughter: true },
+    { name: 'N2', thalf: 2.7713e8, kd: 0.35151, ka: 0.00096121, de: 1.4778e-4, daughter: true },
+    { name: 'N3', thalf: 355.60, kd: 0, ka: 0.00096121, de: 1.1650e-5 }];
+  const ctx = M.prepare(Object.assign({}, p, { nuclides: nucs }));
+  const ws = M.makeWorkspace(ctx);
+  let silent = 0, sharedOff = 0, count = 0;
+  for (const [i, j, tts] of [[1, 0, [72.5, 72.695, 72.9]], [2, 1, [1085, 1089.4, 1095]]]) {
+    const d = M.pairDelay(ctx, i, j), ax = M.realAxis(ctx, ws, i, j, d * (1 + 1e-9), 1e12);
+    const cells = M.makeCells(ctx, ax, {});
+    for (const tt of tts) {
+      const t = d + tt;
+      const a = M.invertDeHoog(ctx, ws, i, j, t, { M: 120 }), b = M.invertDeHoog(ctx, ws, i, j, t, { M: 240 });
+      const own = M.invertParabola(ctx, ws, ax, t), sh = M.invertShared(ctx, ws, cells, t);
+      count++;
+      const converged = isFinite(own.h) && !(own.err > 1e-6 * Math.abs(own.h));
+      if (converged && Math.abs(own.h - b) > 1e-9 * Math.abs(b) + 1e2 * Math.abs(a - b)) silent++;
+      if (!sh || Math.abs(sh.h - b) > 1e-9 * Math.abs(b) + 1e2 * Math.abs(a - b)) sharedOff++;
+    }
+  }
+  check('plug flow, a chain with a thin matrix: the parabola is right to 1e-9 or says it has not converged, and the shared parabolas are right, at six times', silent === 0 && sharedOff === 0, `${silent} wrong and converged, ${sharedOff} shared off, of ${count}`);
+}
+{
+  // A weak singularity next to a sharp front: one nuclide, tw 100 a, Pe 1e5,
+  // aw 0.2 1/m (F = 20 a/m), a 1 m matrix. The first pole of tanh in the
+  // matrix term, s0 = -0.0049, lies within 0.01 of the saddles just after
+  // the front; its residue (aw De = 2e-6) hardly shows in the response, but
+  // it bounds the step of a uniform trapezoidal rule, and the parabola
+  // exhausted its budget at every time after the peak, 17 % off. With sinh
+  // nodes it needs a few hundred evaluations. Against the subordination
+  // integral at 40 digits (mpmath, quadrature in ln tau with break points;
+  // repeated at 60 digits) and against the function above.
+  const p = { tw: 100, Pe: 1e5, aw: 0.2, eps: 0.005, x0: 1, rho: 2700 }, n = { name: 'X', thalf: 1e6, kd: 0, de: 1e-5 };
+  const REF = [[97.0, 7.7425173134802672717e-11], [97.5, 1.0003730354311338361e-7], [97.9, 1.1670634165061735854e-5], [98.3, 5.8050957020603802405e-4],
+    [99.0, 0.071743739914590541379], [99.5, 0.47594316089825745417], [99.9, 0.8671308692850578021], [100.0, 0.88853639316213341001],
+    [100.02, 0.88754487363082356384], [100.052, 0.88229307770110894935], [100.1, 0.86615182604107402573], [100.3, 0.70913263206761010465],
+    [101.0, 0.075737186734056615885], [103.0, 2.5422010804685433653e-4]];
+  const pk = 0.88853639316213341001;
+  const ctx = M.prepare(Object.assign({}, p, { nuclides: [n] }));
+  const ws = M.makeWorkspace(ctx);
+  const ax = M.realAxis(ctx, ws, 0, 0, ctx.tw * 1e-6, 1e12);
+  const sup = M.responseSupport(ctx, ax, ctx.tw * 1e-6, 1e12);
+  const cells = M.makeCells(ctx, ax, { atol: 1e-16 * Math.exp(sup.logPeak), peak: Math.exp(sup.logPeak) });
+  let wo = 0, wc = 0, ws2 = 0, most = 0;
+  for (const [t, want] of REF) {
+    const n0 = ws.evaluations;
+    const o = M.invertParabola(ctx, ws, ax, t);
+    most = Math.max(most, ws.evaluations - n0);
+    const s = M.invertShared(ctx, ws, cells, t);
+    wo = Math.max(wo, isFinite(o.err) ? Math.abs(o.h - want) / pk : Infinity);
+    wc = Math.max(wc, s ? Math.abs(s.h - want) / pk : Infinity);
+    ws2 = Math.max(ws2, Math.abs(subordination(p, n, t, true)[0] - want) / pk);
+  }
+  below('a weak singularity next to a sharp front (Pe 1e5): the subordination function here against the 40-digit values, over the peak', ws2, 1e-13);
+  below(`  the parabola of each time at the 14 reference times from 97 to 103 a, over the peak (at most ${most} evaluations)`, wo, 1e-12);
+  below('  and the shared parabolas', wc, 1e-12);
+  // h, h' and h'' after the peak, each over its largest value there
+  const ts = [100.02, 100.052, 100.1, 100.2, 100.3, 100.5, 100.7, 101, 101.5, 102, 103];
+  const want = ts.map((t) => subordination(p, n, t));
+  const top = [0, 1, 2].map((m) => Math.max(...want.map((v) => Math.abs(v[m]))));
+  let eo = 0, ec = 0;
+  ts.forEach((t, q) => {
+    const o = M.invertParabola(ctx, ws, ax, t), s = M.invertShared(ctx, ws, cells, t);
+    eo = Math.max(eo, Math.abs(o.h - want[q][0]) / top[0], Math.abs(o.dh - want[q][1]) / top[1], Math.abs(o.d2 - want[q][2]) / top[2]);
+    ec = Math.max(ec, s ? Math.max(Math.abs(s.h - want[q][0]) / top[0], Math.abs(s.dh - want[q][1]) / top[1], Math.abs(s.d2 - want[q][2]) / top[2]) : Infinity);
+  });
+  below('  h, h\' and h\'\' after the peak (100.02 to 103 a) by the parabola of each time, against the subordination integral, each over its largest', eo, 1e-11);
+  below('  and by the shared parabolas', ec, 1e-11);
+  // the run: every sample by a parabola, the rising edge down to 1e-12 of
+  // the peak (the real-axis table once ended where ln T fell below -900:
+  // there, at 97.9 a, h was still 1e-5 of the peak), and the mass balance
+  const res = M.run({ params: p, nuclides: [Object.assign({ source: true }, n)], series: { X: [[0, 1], [1, 1]] }, settings: { check: false } });
+  const r = res.responses[0];
+  let wr = 0, first = Infinity;
+  for (let q = 0; q < r.t.length; q++) {
+    const t = r.t[q];
+    if (t > 104) break;
+    if (ig(t, p.tw, p.Pe) < 1e-15 * pk) continue;   // before the edge (the matrix only delays)
+    const v = subordination(p, n, t, true)[0];
+    if (v >= 1e-12 * pk) first = Math.min(first, t); else continue;
+    wr = Math.max(wr, Math.abs(r.h[q] - v) / Math.max(Math.abs(v), 1e-6 * pk));
+  }
+  check('  the run: no sample needs de Hoog\'s method', r.shared.dehoog === 0, JSON.stringify(r.shared));
+  check('  its response reaches back to 1e-12 of the peak', r.t[0] < first && r.h[0] < 1e-12 * pk, `from ${r.t[0].toPrecision(6)} a, ${(r.h[0] / pk).toExponential(1)} of the peak`);
+  below('  and gives the subordination integral up to 104 a, relative above 1e-6 of the peak and over 1e-6 of it below', wr, 1e-10);
+  below('  its integral against what leaves by its last time (de Hoog\'s inversion of T/s), over T(0)', Math.abs(r.integral - r.expected) / r.T0, 1e-9);
+  below('  and against T(0) itself', Math.abs(r.integral / r.T0 - 1), 1e-7);
+}
+{
+  // The rising edge of a sharp front without the matrix: the inverse
+  // Gaussian, from 1e-12 of the peak on (the table once stopped at 97.9 a).
+  const p = { tw: 100, Pe: 1e5, aw: 0, eps: 0.005, x0: 1, rho: 2700 }, n = { name: 'X', thalf: 1e6, kd: 0, de: 1e-5 };
+  const lam = LN2 / n.thalf;
+  const res = M.run({ params: p, nuclides: [Object.assign({ source: true }, n)], series: { X: [[0, 1], [1, 1]] }, settings: { check: false } });
+  const r = res.responses[0];
+  const pk = Math.exp(-lam * 100) * ig(100, 100, 1e5);
+  let w = 0, first = Infinity;
+  for (let q = 0; q < r.t.length && r.t[q] <= 100; q++) {
+    const v = Math.exp(-lam * r.t[q]) * ig(r.t[q], 100, 1e5);
+    if (v < 1e-12 * pk) continue;
+    first = Math.min(first, r.t[q]);
+    w = Math.max(w, Math.abs(r.h[q] - v) / v);
+  }
+  check('a sharp front (Pe 1e5, no matrix): the response reaches back to 1e-12 of its peak', r.t[0] < first, `from ${r.t[0].toPrecision(6)} a`);
+  below('  its rising edge against the inverse Gaussian, relative, from 1e-12 of the peak', w, 1e-10);
+}
+{
+  // The same tube at Pe 1e6: the run once took two and a half minutes and
+  // missed its mass balance by 6 %.
+  const p = { tw: 100, Pe: 1e6, aw: 0.2, eps: 0.005, x0: 1, rho: 2700 }, n = { name: 'X', thalf: 1e6, kd: 0, de: 1e-5 };
+  const t0 = Date.now();
+  const res = M.run({ params: p, nuclides: [Object.assign({ source: true }, n)], series: { X: [[0, 1], [1, 1]] }, settings: { check: false } });
+  const ms = Date.now() - t0;
+  const r = res.responses[0];
+  let w = 0;
+  for (const t of [100, 100.1, 100.3, 101, 105, 110]) {
+    const q = r.t.findIndex((x) => x >= t);
+    const tq = r.t[q], v = subordination(p, n, tq, true)[0];
+    w = Math.max(w, Math.abs(r.h[q] - v) / r.peak);
+  }
+  check('the same tube at Pe 1e6: in a few seconds at most, with its mass balance', ms < 8000 && res.balance.failed.length === 0 && Math.abs(r.integral - r.expected) / r.T0 < 1e-9,
+    `${ms} ms; integral against what leaves by the last time ${(Math.abs(r.integral - r.expected) / r.T0).toExponential(1)} of T(0); ${JSON.stringify(r.shared)}`);
+  below('  its response near the front against the subordination integral, over the peak', w, 1e-12);
 }
 
 /* ======================================================================

@@ -663,6 +663,7 @@ class Model:
                 *(raw.get('index_lists') or []),
             ]
         self._materialise_legacy_entries()
+        self._drop_donor_copies()
         self._ensure_material_lists()
         self._qualify_endpoints()
         self._make_dimensions_explicit()
@@ -710,6 +711,24 @@ class Model:
             for nuc, v in imap.items():
                 add(c, {material: nuc}, 'initial', _js_string(v))
             c['initial'] = '0'
+
+    def _drop_donor_copies(self) -> None:
+        """An entry's copy of its transfer's ``multiply_by_donor`` that agrees
+        with it, which older imports kept on every row: it is one setting of the
+        whole transfer, and a copy would disagree the moment the transfer's own
+        was changed. One that disagrees stays, for the Project to name
+        (``dropDonorCopies``)."""
+        for t in self._raw.get('transfers') or []:
+            if not isinstance(t, dict) or not isinstance(t.get('entries'), list):
+                continue
+            own = t.get('multiply_by_donor') is not False
+            dropped = False
+            for e in t['entries']:
+                if isinstance(e, dict) and 'multiply_by_donor' in e and (e['multiply_by_donor'] is not False) == own:
+                    del e['multiply_by_donor']
+                    dropped = True
+            if dropped:
+                t['entries'] = [e for e in t['entries'] if not isinstance(e, dict) or any(k != 'index' for k in e)]
 
     def _ensure_material_lists(self) -> None:
         split = split_material_roles(self._raw)

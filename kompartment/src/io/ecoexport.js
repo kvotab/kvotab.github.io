@@ -11,6 +11,13 @@
  * Ecolego's own constructs exists, that is what is written, and the report
  * says that too.
  *
+ * The importer is not the last word, though: it is forgiving, and a file it
+ * reads back perfectly can still be one Ecolego refuses. Every export here
+ * once named its solver ODE15S, which the importer accepted and Ecolego has no
+ * such key for, and gave each compartment an empty dy/dt term, which Ecolego
+ * reads as an equation that is missing. Where Ecolego's own files and this
+ * reader disagree, Ecolego's files are right.
+ *
  *   exportEco(project)       -> { bytes, xml, report }   the .eco archive
  *   exportModelXML(project)  -> { xml, report }          model.xml alone
  *
@@ -42,7 +49,7 @@
 
 import { zip, crc32 } from './zip.js';
 import { migrateKeys, materialiseShorthand, syncDerivedUnits } from '../domain/edit.js';
-import { HALF_LIVES, defaultChains, SECONDS_PER_YEAR } from '../domain/nuclides.js';
+import { HALF_LIVES, defaultChains, ecoSecondsPerYear } from '../domain/nuclides.js';
 import {
 	deriveElements, sharedDims, summedDims, lineage,
 	COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
@@ -60,6 +67,7 @@ import {
 	releaseWeights, structureProblem, surfaceOf, usesCells,
 } from '../domain/farfield.js';
 import { pathLayouts, cellEquivalent } from '../sim/pathlayout.js';
+import { ecolegoEquation, readsOf, unsupportedCalls, TO_ROUNDING, WORKED_OTHERWISE } from './ecoequation.js';
 
 export class ExportError extends Error {
 	constructor(message) {
@@ -153,26 +161,49 @@ const OPERATION_TO_ECO = table({
 const DIRECTION_TO_ECO = table({ rising: 'RIGHT', falling: 'LEFT', both: 'BOTH' });
 
 /**
- * The solver each of this tool's is written as.
+ * The solver each of this tool's is written as: the key Ecolego stores in
+ * `<java-solver>`, one of the fourteen its `SolverSettingPage` lists.
+ *
+ * Only those keys will do. Ecolego looks the text up in that list and keeps
+ * whatever it finds, so a name it does not have leaves the model with no
+ * solver at all -- and its validation then fails on the null, and Ecolego
+ * refuses the whole file with a bare `java.io.IOException`.
  *
  * The first three are the same method under Ecolego's name and are read back
  * as they went. The rest are either the same method under a name the importer
- * maps elsewhere (RADAU5, ODE23TB) or the closest Ecolego has; the report says
- * which.
+ * maps elsewhere (java-radau5, java-ode23tb) or the closest Ecolego has; the
+ * report says which.
  */
 const SOLVER_TO_ECO = table({
-	ndf: 'ODE15S',
-	ros23: 'ODE23S',
-	dp45: 'ODE45',
-	qndf: 'ODE15S',
-	fbdf: 'ODE15S',
-	radau5: 'RADAU5',
-	trbdf2: 'ODE23TB',
-	rodas5p: 'ODE23S',
-	kencarp4: 'ODE15S',
-	scipy_bdf: 'ODE15S',
-	scipy_radau: 'RADAU5',
-	scipy_lsoda: 'ODE15S',
+	ndf: 'java-ode15s',
+	ros23: 'java-ode23s',
+	dp45: 'java-ode45',
+	qndf: 'java-ode15s',
+	fbdf: 'java-ode15s-BDF',
+	radau5: 'java-radau5',
+	trbdf2: 'java-ode23tb',
+	rodas5p: 'java-ode23s',
+	kencarp4: 'java-ode15s',
+	scipy_bdf: 'java-ode15s',
+	scipy_radau: 'java-radau5',
+	scipy_lsoda: 'java-ode15s',
+});
+
+/**
+ * Ecolego's ode15s with its BDF option: the NDFs with every κ zero, which is
+ * what this tool's BDF switch runs -- so ndf with the switch on goes out as
+ * this and comes back as itself, and qndf with it on goes out as this too.
+ */
+const ECO_BDF = 'java-ode15s-BDF';
+
+/** What Ecolego's solver menu calls each key written here, for the report. */
+const ECO_SOLVER_LABEL = table({
+	'java-ode15s': 'NDF',
+	'java-ode15s-BDF': 'BDF',
+	'java-ode23s': 'Rosenbrock',
+	'java-ode45': 'DOPRI45',
+	'java-radau5': 'RADAU5',
+	'java-ode23tb': 'TR-BDF2',
 });
 
 /** The three that go out and come back as themselves. */
@@ -183,13 +214,22 @@ const SOLVER_WHY = table({
 	qndf: 'the same numerical differentiation formulas, which this tool reads back as ndf',
 	radau5: 'Ecolego’s Radau IIA of order 5, which this tool reads back as ndf',
 	trbdf2: 'Ecolego’s TR-BDF2, which this tool reads back as ros23',
-	fbdf: 'the nearest Ecolego has: another BDF formulation',
+	fbdf: 'the nearest Ecolego has: the same backward differentiation formulas, with a '
+		+ 'quasi-constant step rather than a fixed leading coefficient, which this tool reads '
+		+ 'back as ndf with its BDF switch on',
 	rodas5p: 'the nearest Ecolego has: its Rosenbrock solver, of lower order',
 	kencarp4: 'the nearest Ecolego has for a stiff model',
 	scipy_bdf: 'the nearest Ecolego has: the same family, a different implementation',
 	scipy_radau: 'Ecolego’s Radau IIA of order 5, which this tool reads back as ndf',
 	scipy_lsoda: 'the nearest Ecolego has for a stiff model',
 });
+
+/** The solvers whose BDF switch the key carries (SOLVER_OPTIONS in ../ode/solvers.js). */
+const BDF_SOLVERS = new Set(['ndf', 'qndf']);
+
+/** Why qndf with its BDF switch on is written as ECO_BDF. */
+const QBDF_WHY = 'the same backward differentiation formulas, which this tool reads back as ndf '
+	+ 'with its BDF switch on';
 
 /**
  * How results are saved, as `<output-options>` spells it. See readOutputTimes
@@ -213,6 +253,12 @@ const NO_FLOOR = '-1.0E300';
  * ../domain/indexlists.js): not somebody's comment, so not one left out.
  */
 const BUILT_IN_COMMENT = /^(Every material the model knows\.( The radionuclides among them are in .+\.)?|The materials that have a half-life\.|One index per element of .+, kept in step with it\.)$/;
+
+/**
+ * The property the scenario list carries its own name in, when it goes out as
+ * Ecolego's `Scenarios`: see `decideLists`. The importer gives it back.
+ */
+export const SCENARIO_NAME_PROPERTY = 'kompartment-name';
 
 /** The property type an index list's predefined role is written with. */
 const PREDEFINED_TYPE = 'se.facilia.ecolego.domain.EcolegoIndexList$PredefinedType';
@@ -382,6 +428,7 @@ function buildModelXML(project, options) {
 	ctx.decideLists();
 	ctx.decideMaterials();
 	ctx.decideBlocks();
+	ctx.decideBefore();
 	ctx.checkNames();
 
 	const w = new XmlWriter();
@@ -394,6 +441,7 @@ function buildModelXML(project, options) {
 	writeBlocks(w, ctx);
 	writeSimulation(w, raw, ctx);
 	writeProbabilistic(w, raw, ctx);
+	writeScenarioModel(w, ctx);
 	w.close('data-model');
 
 	report.counts = ctx.counts();
@@ -421,6 +469,9 @@ class Context {
 		this.report = report;
 		/** What the project is called in the file, and what its GUIDs are keyed by. */
 		this.projectName = String(raw.name ?? '').trim() || 'model';
+		/** The unit the run is in, as `<time-unit>` writes it: a half-life's seconds depend on it. */
+		this.timeUnit = ['second', 'minute', 'hour', 'day', 'year'].includes(raw.simulation?.time_unit)
+			? raw.simulation.time_unit : 'year';
 		this.lists = Array.isArray(raw.index_lists) ? raw.index_lists : [];
 		/** Every block, by qualified name: { collection, block }. */
 		this.blocks = new Map();
@@ -449,9 +500,37 @@ class Context {
 		this.layouts = null;
 		/** Names taken in each sub-system: blocks, sub-systems and boundaries. */
 		this.usedNames = new Map();
+		/** Blocks whose equations went out in Ecolego's spelling, and what that took. */
+		this.respelled = new Map();
+		/** The blocks written that a run has results for, in the order written: see `writeSimulation`. */
+		this.resultIds = [];
+		/** Tables read at a value that repeat over their range, and that range: see `decideBlocks`. */
+		this.cyclicArgs = new Map();
 	}
 
 	known(name) { return this.blocks.has(name); }
+
+	/**
+	 * An equation as Ecolego is to read it (./ecoequation.js), with what that
+	 * took remembered against the block for the report.
+	 */
+	equation(text, q, collection) {
+		const system = this.blocks.get(q)?.block?.system ?? '';
+		const call = this.cyclicArgs.size
+			? (name) => {
+				const r = resolveReference(name, system, (n) => this.known(n));
+				return r == null ? null : this.cyclicArgs.get(r) ?? null;
+			}
+			: undefined;
+		const out = ecolegoEquation(text, { call });
+		if (out.respelled) {
+			const seen = this.respelled.get(q) ?? { collection, units: false, writtenOut: [] };
+			if (out.units) seen.units = true;
+			for (const f of out.writtenOut) if (!seen.writtenOut.includes(f)) seen.writtenOut.push(f);
+			this.respelled.set(q, seen);
+		}
+		return out.text;
+	}
 
 	// --- index lists ------------------------------------------------------------
 
@@ -510,6 +589,25 @@ class Context {
 				report.rename(list.name, 'Materials');
 			}
 			this.listIds.set(list.name, id);
+		}
+
+		// Ecolego's scenario dimension is a list of its own, found by its name
+		// alone -- `Scenarios` (IndexListModelXMLHandler) -- and filled from the
+		// scenarios of `<scenario-model>`. A list called anything else is an
+		// ordinary list there, and a block that reads one without naming an
+		// index is an error. So the model's goes out as that list, carrying its
+		// own name for the importer to give it back.
+		this.scenarioList = out.find((l) => l.for_scenarios) ?? null;
+		const scenarios = this.scenarioList;
+		if (scenarios && scenarios.name !== 'Scenarios') {
+			if (!taken.has('Scenarios')) {
+				this.listIds.set(scenarios.name, 'Scenarios');
+				report.rewrite('index list', scenarios.name, 'written as Ecolego’s own list of scenarios, Scenarios, '
+					+ 'with a scenario for each of its indices; read back here, it has its own name again');
+			} else {
+				report.warn(`'${scenarios.name}' is the model's scenario list, and another list is called Scenarios, `
+					+ 'which is the one list Ecolego runs scenarios over; rename that one to have the scenarios run.');
+			}
 		}
 
 		// Index ids. An index is addressed by its name, trimmed and without the
@@ -687,9 +785,33 @@ class Context {
 						skip(q, `its interpolation rule '${b.interpolation}' is not one Ecolego has`);
 						continue;
 					}
+					// Ecolego repeats a cyclic table over the time even where it is
+					// read at a value, so such a table goes out unrepeated and every
+					// call to it wraps the value -- which one range has to serve.
+					if (tableArgument(b) && (b.cyclic === true || b.cyclic === 'true')) {
+						const ranges = [b.points, ...(Array.isArray(b.entries) ? b.entries : []).map((e) => e?.points)]
+							.filter((p) => p != null).map(tableRange).filter((r) => r.span > 0);
+						const one = ranges.every((r) => r.first === ranges[0].first && r.span === ranges[0].span);
+						if (!one) {
+							skip(q, 'it is read at a value and repeats over a range that is not the same at every index, '
+								+ 'which Ecolego repeats over the time instead and one wrap of the value cannot serve');
+							continue;
+						}
+						if (ranges.length) this.cyclicArgs.set(q, { first: javaDouble(ranges[0].first), span: javaDouble(ranges[0].span) });
+					}
 				}
 				if (this.usesEnds(b, collection)) {
 					skip(q, `it reads '${SOURCE_INDEX}' or '${TARGET_INDEX}', which only a transfer here can`);
+				}
+			}
+		}
+		// A call Ecolego has no function for and this tool no written-out form of.
+		for (const collection of [...COMPONENT_COLLECTIONS, 'transfers', 'inflows']) {
+			for (const b of raw[collection] ?? []) {
+				if (!b || typeof b !== 'object') continue;
+				const calls = [...new Set(this.equationsOf(b, collection).flatMap(unsupportedCalls))];
+				if (calls.length) {
+					skip(qnameOf(b), `it calls ${calls.map((c) => `${c}()`).join(' and ')}, which Ecolego has no function for`);
 				}
 			}
 		}
@@ -1144,6 +1266,107 @@ class Context {
 			for (const k of ['limit', 'top', 'bottom']) if (typeof a[k] === 'string') out.push(a[k]);
 		}
 		return out;
+	}
+
+	// --- what Ecolego works out before a run ----------------------------------------
+
+	/**
+	 * The expressions Ecolego is to work out before a run, and the initial
+	 * values it cannot.
+	 *
+	 * Ecolego works a compartment's initial value out before the run, from what
+	 * it has then: parameters, lookup tables read at a value rather than at the
+	 * time, and expressions *set* to be evaluated before the run -- not left to
+	 * its own choice, which is the default and which its validator does not
+	 * count -- and nothing else: not an aggregate or an index operation even of
+	 * those, and not the time (`ESimulationStage.PRE_PROCESSING` and
+	 * `canPreProcess` in Ecolego). This tool works an initial value out at the
+	 * start of the run from anything, so every expression and function an
+	 * initial value reads, and every one those read, goes out set to BEFORE
+	 * where it can be. Where it cannot, the report names the compartment.
+	 */
+	decideBefore() {
+		this.before = new Set();
+		const verdicts = new Map();
+		const visiting = new Set();
+		// Null when Ecolego can work the block out before a run, or why not.
+		const why = (q) => {
+			if (verdicts.has(q)) return verdicts.get(q);
+			if (visiting.has(q)) return null;
+			const found = this.blocks.get(q);
+			if (!found) return null;
+			const { collection, block } = found;
+			let answer = null;
+			switch (collection) {
+				case 'parameters':
+					break;
+				case 'lookups':
+					if (block.argument == null || String(block.argument).trim() === '') answer = `the table of the time '${q}'`;
+					break;
+				case 'expressions':
+				case 'functions': {
+					if (collection === 'expressions' && block.transport === 'number') break;
+					if (collection === 'expressions' && ['counter', 'operation'].includes(block.transport)) {
+						answer = `'${q}', a part of a transport`;
+						break;
+					}
+					visiting.add(q);
+					const locals = collection === 'functions' ? new Set((block.parameters ?? []).map((p) => String(p ?? '').trim())) : null;
+					for (const text of this.equationsOf(block, collection)) {
+						const reads = readsOf(text);
+						if (reads.time) { answer = `'${q}', which reads the time`; break; }
+						for (const name of reads.names) {
+							if (locals?.has(name)) continue;
+							const r = resolveReference(name, block.system ?? '', (n) => this.known(n));
+							const inner = r == null ? null : why(r);
+							if (inner) { answer = inner; break; }
+						}
+						if (answer) break;
+					}
+					visiting.delete(q);
+					if (!answer) this.before.add(q);
+					break;
+				}
+				case 'compartments':
+					answer = `the compartment '${q}'`;
+					break;
+				case 'transfers':
+				case 'inflows':
+					answer = `the transfer '${q}'`;
+					break;
+				case 'index_reductions':
+				case 'block_reductions':
+					answer = `'${q}', which Ecolego works out only during a run`;
+					break;
+				default:
+					answer = `'${q}', which records what happens during a run`;
+			}
+			verdicts.set(q, answer);
+			return answer;
+		};
+		const compartments = [...(this.raw.compartments ?? []), ...this.generated.compartments];
+		for (const c of compartments) {
+			if (!c || typeof c !== 'object') continue;
+			const q = qnameOf(c);
+			if (this.skippedBlocks.has(q)) continue;
+			const texts = [c.initial, ...(Array.isArray(c.entries) ? c.entries.map((e) => e?.initial) : [])]
+				.filter((t) => t != null && String(t).trim() !== '');
+			let problem = null;
+			for (const text of texts) {
+				const reads = readsOf(text);
+				if (reads.time) { problem = 'the time'; break; }
+				for (const name of reads.names) {
+					const r = resolveReference(name, c.system ?? '', (n) => this.known(n));
+					const inner = r == null ? null : why(r);
+					if (inner) { problem = inner; break; }
+				}
+				if (problem) break;
+			}
+			if (problem) {
+				this.report.warn(`'${q}' starts from a value that reads ${problem}, which Ecolego cannot work out `
+					+ 'before a run; Ecolego will not run the model until that value is one it can, such as a parameter.');
+			}
+		}
 	}
 
 	/** The first block a block's equations name that is left out, or null. */
@@ -1827,16 +2050,18 @@ function ulpStep(x, n) {
 }
 
 /**
- * A half-life in seconds that the importer's division reads back as exactly
- * the years it was: `years × SECONDS_PER_YEAR` where that is so, and otherwise
- * the nearest double within a few steps of it that is.
+ * A half-life in seconds, for a model run in `unit`, that Ecolego reads as the
+ * decay constant this tool uses and the importer's division reads back as
+ * exactly the years it was: `years × ecoSecondsPerYear(unit)` where that is
+ * so, and otherwise the nearest double within a few steps of it that is.
  */
-export function secondsFor(years) {
-	const s = years * SECONDS_PER_YEAR;
-	if (!Number.isFinite(s) || s <= 0 || s / SECONDS_PER_YEAR === years) return s;
+export function secondsFor(years, unit = 'year') {
+	const perYear = ecoSecondsPerYear(unit);
+	const s = years * perYear;
+	if (!Number.isFinite(s) || s <= 0 || s / perYear === years) return s;
 	for (let k = 1; k <= 4; k++) {
 		for (const c of [ulpStep(s, k), ulpStep(s, -k)]) {
-			if (c / SECONDS_PER_YEAR === years) return c;
+			if (c / perYear === years) return c;
 		}
 	}
 	return s;
@@ -1948,7 +2173,7 @@ function writeMaterials(w, ctx) {
 			w.open('nuclide', [['name', m.name]]);
 			w.text('id', id);
 			w.text('unit', unit);
-			w.text('half-life', m.years != null && Number.isFinite(m.years) ? javaDouble(secondsFor(m.years)) : 'Infinity');
+			w.text('half-life', m.years != null && Number.isFinite(m.years) ? javaDouble(secondsFor(m.years, ctx.timeUnit)) : 'Infinity');
 			const za = nuclideNumbers(m.name);
 			if (za) { w.text('z', String(za[0])); w.text('a', String(za[1])); }
 			w.close('nuclide');
@@ -1977,6 +2202,9 @@ function writeIndexLists(w, ctx) {
 		].filter(([on]) => on).map(([, t]) => t);
 		if (flags.length) {
 			w.text('property', flags[0], [['name', 'predefined-type'], ['type', PREDEFINED_TYPE]]);
+			if (list === ctx.scenarioList && id !== list.name) {
+				w.text('property', list.name, [['name', SCENARIO_NAME_PROPERTY], ['type', 'string']]);
+			}
 			if (flags.length > 1) {
 				report.warn(`'${list.name}' is marked as more than one of Ecolego's own lists `
 					+ `(${flags.join(', ')}); it is written as ${flags[0]}.`);
@@ -2094,6 +2322,9 @@ function writeBlocks(w, ctx) {
 	}
 	for (const t of ctx.generated.transfers) writeConnection(w, ctx, t, ctx.generatedPlans.get(qnameOf(t)));
 	w.close('block-model');
+	for (const [q, seen] of ctx.respelled) {
+		ctx.report.rewrite(KIND_WORD[seen.collection] ?? 'block', q, respelledHow(seen));
+	}
 	if (ctx.expandedEntries) {
 		ctx.report.rewrite('values per index', `${ctx.expandedEntries} block(s)`, 'an entry that names only '
 			+ 'some of a block’s index lists is written as one row per index combination it covers, '
@@ -2145,6 +2376,11 @@ function writeComponent(w, ctx, block, collection) {
 	const dims = collection === 'functions' ? [] : (Array.isArray(block.index_lists) ? block.index_lists : []);
 	w.open('component', [['name', block.name], ['type', type], ...dimAttrs(ctx, dims)]);
 	writeCommon(w, ctx, block, q);
+	// What a run has a result for: not a function or a table read at a value,
+	// which answer an argument, nor the parts of a transport that count.
+	const answers = collection === 'functions' || role === 'counter' || role === 'operation'
+		|| (collection === 'lookups' && block.argument != null && String(block.argument).trim() !== '');
+	if (!answers && block.enabled !== false) ctx.resultIds.push(q);
 
 	if (role === 'counter') { w.close('component'); return; }
 	if (role === 'operation') {
@@ -2162,6 +2398,7 @@ function writeComponent(w, ctx, block, collection) {
 		return;
 	}
 	if (role === 'number') w.text('evaluation-mode', 'SIMULATION');
+	else if (ctx.before?.has(q)) w.text('evaluation-mode', 'BEFORE');
 
 	const table = collection === 'functions' ? null : tableOf(block, collection, dims, ctx);
 	if (table?.expanded) ctx.expandedEntries = (ctx.expandedEntries ?? 0) + 1;
@@ -2180,7 +2417,7 @@ function writeComponent(w, ctx, block, collection) {
 		}
 		case 'expressions': {
 			writeRows(w, ctx, dims, table, 'expression', (values) => {
-				w.cdata('equation', equationText(values.equation, '0'));
+				w.cdata('equation', ctx.equation(equationText(values.equation, '0'), q, collection));
 			});
 			break;
 		}
@@ -2194,7 +2431,7 @@ function writeComponent(w, ctx, block, collection) {
 				w.close('argument');
 			}
 			w.open('entry', [['type', 'expression']]);
-			w.cdata('equation', equationText(block.equation, ''));
+			w.cdata('equation', ctx.equation(equationText(block.equation, ''), q, collection));
 			w.close('entry');
 			break;
 		}
@@ -2202,8 +2439,14 @@ function writeComponent(w, ctx, block, collection) {
 			const rule = block.interpolation == null || block.interpolation === ''
 				? 'linear' : (interpolationFromEco(block.interpolation) ?? block.interpolation);
 			w.cdata('lookup-option', INTERPOLATION_TO_ECO[rule]);
-			w.text('lookup-cyclic', block.cyclic === true || block.cyclic === 'true' ? 'true' : 'false');
+			const cyclic = block.cyclic === true || block.cyclic === 'true';
 			const argument = block.argument == null ? '' : String(block.argument).trim();
+			// Read at a value, the repeating is in its callers (`decideBlocks`).
+			w.text('lookup-cyclic', cyclic && !argument ? 'true' : 'false');
+			if (cyclic && argument && ctx.cyclicArgs.has(q)) {
+				ctx.report.rewrite('lookup table', q, 'it is read at a value and repeats over its range, which Ecolego '
+					+ 'repeats over the time instead: it is written unrepeated, and each call to it puts its value on the range first');
+			}
 			if (argument) {
 				w.open('argument');
 				w.text('argument-key', argument);
@@ -2242,7 +2485,7 @@ function writeComponent(w, ctx, block, collection) {
 				w.cdata('operation', (extremeFromEco(block.operation) ?? 'max') === 'min' ? 'MIN' : 'MAX');
 			}
 			writeRows(w, ctx, dims, table, collection === 'min_maxes' ? 'min-max' : 'running-mean', (values) => {
-				w.cdata('target-expression', targetText(ctx, values.target, system));
+				w.cdata('target-expression', ctx.equation(targetText(ctx, values.target, system), q, collection));
 				for (const [key, tag] of [['reset_trigger', 'reset-event'], ['start_trigger', 'start-recording-event'], ['stop_trigger', 'stop-recording-event']]) {
 					if (values[key] != null && String(values[key]).trim() !== '') w.cdata(tag, ctx.idOf(values[key], system));
 				}
@@ -2251,24 +2494,24 @@ function writeComponent(w, ctx, block, collection) {
 		}
 		case 'snapshots': {
 			writeRows(w, ctx, dims, table, 'snapshot', (values) => {
-				w.cdata('snapshot-target', targetText(ctx, values.target, system));
+				w.cdata('snapshot-target', ctx.equation(targetText(ctx, values.target, system), q, collection));
 				if (values.trigger != null && String(values.trigger).trim() !== '') w.cdata('snapshot-event', ctx.idOf(values.trigger, system));
-				w.cdata('snapshot-initial-value', equationText(values.initial, '0'));
+				w.cdata('snapshot-initial-value', ctx.equation(equationText(values.initial, '0'), q, collection));
 			});
 			break;
 		}
 		case 'delays': {
 			writeRows(w, ctx, dims, table, 'delay', (values) => {
-				w.cdata('delay-target', targetText(ctx, values.target, system));
-				w.cdata('delay-time', equationText(values.delay, '0'));
+				w.cdata('delay-target', ctx.equation(targetText(ctx, values.target, system), q, collection));
+				w.cdata('delay-time', ctx.equation(equationText(values.delay, '0'), q, collection));
 			});
 			break;
 		}
 		case 'triggers': {
 			const directions = new Set();
 			writeRows(w, ctx, dims, table, 'discrete-event', (values) => {
-				w.cdata('first-expression', equationText(values.first, '0'));
-				w.cdata('second-expression', equationText(values.second, '0'));
+				w.cdata('first-expression', ctx.equation(equationText(values.first, '0'), q, collection));
+				w.cdata('second-expression', ctx.equation(equationText(values.second, '0'), q, collection));
 				const dir = values.direction == null || values.direction === ''
 					? 'rising' : (directionFromEco(values.direction) ?? values.direction);
 				directions.add(DIRECTION_TO_ECO[dir] ?? 'RIGHT');
@@ -2284,6 +2527,32 @@ function writeComponent(w, ctx, block, collection) {
 			break;
 	}
 	w.close('component');
+}
+
+/** What writing a block's equations in Ecolego's spelling took, in words. */
+function respelledHow(seen) {
+	const parts = [];
+	const lacking = seen.writtenOut.filter((n) => !WORKED_OTHERWISE.has(n));
+	const otherwise = seen.writtenOut.filter((n) => WORKED_OTHERWISE.has(n));
+	if (lacking.length) {
+		const many = lacking.length > 1;
+		const rounding = lacking.filter((n) => TO_ROUNDING.has(n));
+		parts.push(`${lacking.map((n) => `${n}()`).join(', ')} ${many ? 'are' : 'is'} written out as the arithmetic `
+			+ `${many ? 'they stand' : 'it stands'} for, which Ecolego has no function for`
+			+ (rounding.length ? `; ${rounding.join(', ')} to rounding, not to the bit` : ''));
+	}
+	if (otherwise.length) {
+		const many = otherwise.length > 1;
+		parts.push(`${otherwise.map((n) => `${n}()`).join(' and ')} ${many ? 'are' : 'is'} written out as the `
+			+ `arithmetic ${many ? 'they are' : 'it is'} here, since Ecolego's own ${many ? 'are' : 'is'} the exact `
+			+ 'remainder, which is not always the same number');
+	}
+	if (seen.units) parts.push('its numbers are written without the units against them, which Ecolego has no place for');
+	if (!parts.length) {
+		parts.push('its equations are written in Ecolego’s spelling, which means the same: a test that stands for a '
+			+ 'number as if(test, 1, 0), a ?: as an if(), a sign after an operator in brackets, and the like');
+	}
+	return parts.join('; ');
 }
 
 /** An equation as text -- a number written as JavaScript writes it -- and nothing as the default. */
@@ -2308,20 +2577,39 @@ function targetsOf(targets) {
 	return list.map((t) => String(t).trim()).filter((t) => t !== '');
 }
 
+/** A lookup table's argument, or '' for one read at the time. */
+function tableArgument(b) {
+	return b.argument == null ? '' : String(b.argument).trim();
+}
+
+/**
+ * A table's points one by one, each `[x, y, pdf]` or `{ x, y, pdf }`: a table
+ * held as its list of xs beside its list of ys is paired up.
+ */
+function pointsOf(points) {
+	const pairs = Array.isArray(points) ? points : [];
+	if (pairs.length === 2 && Array.isArray(pairs[0]) && Array.isArray(pairs[1])
+		&& pairs[0].length === pairs[1].length
+		&& pairs[0].every((v) => typeof v === 'number' || typeof v === 'string')
+		&& pairs[0].length !== 2) {
+		return pairs[0].map((x, i) => [x, pairs[1][i]]);
+	}
+	return pairs;
+}
+
+/** The first x of a table's points and how far its last lies beyond it, as ../domain/lookup.js has them. */
+function tableRange(points) {
+	const xs = pointsOf(points).map((p) => Number(Array.isArray(p) ? p[0] : p?.x)).filter(Number.isFinite).sort((a, b) => a - b);
+	return xs.length ? { first: xs[0], span: xs[xs.length - 1] - xs[0] } : { first: 0, span: 0 };
+}
+
 /**
  * A table's points as number pairs sorted by time, as Ecolego keeps a table.
  * A point's own distribution is counted, for the report, and not written.
  */
 function lookupPoints(points, ctx, q) {
-	let pairs = Array.isArray(points) ? points : [];
-	if (pairs.length === 2 && Array.isArray(pairs[0]) && Array.isArray(pairs[1])
-		&& pairs[0].length === pairs[1].length
-		&& pairs[0].every((v) => typeof v === 'number' || typeof v === 'string')
-		&& pairs[0].length !== 2) {
-		pairs = pairs[0].map((x, i) => [x, pairs[1][i]]);
-	}
 	const out = [];
-	for (const p of pairs) {
+	for (const p of pointsOf(points)) {
 		const [x, y, pdf] = Array.isArray(p) ? p : [p?.x, p?.y, p?.pdf];
 		if (pdf) {
 			ctx.report.skip('distribution', q, 'a distribution on a point of a lookup table has no Ecolego '
@@ -2382,7 +2670,7 @@ function writeParameterRows(w, ctx, block, q, dims, table) {
 function writeCompartmentRows(w, ctx, q, dims, table) {
 	const floors = new Set();
 	const body = (values) => {
-		w.cdata('initial-condition', equationText(values.initial, '0'));
+		w.cdata('initial-condition', ctx.equation(equationText(values.initial, '0'), q, 'compartments'));
 		const on = values.non_negative !== false && values.non_negative !== 'false' && values.non_negative !== 0;
 		floors.add(on);
 		w.text('lower-saturation', on ? '0.0' : NO_FLOOR);
@@ -2390,8 +2678,12 @@ function writeCompartmentRows(w, ctx, q, dims, table) {
 		const tol = values.abstol;
 		const t = tol == null || tol === '' ? null : Number(tol);
 		w.text('abs-tol', t != null && Number.isFinite(t) && t > 0 ? javaDouble(t) : '');
+		// Only a term that is there. Ecolego writes the element for a
+		// compartment that has one and for no other, and reads an empty one as
+		// an empty equation, which its validation refuses -- the model opens
+		// and will not run.
 		const dydt = values.dydt == null ? '' : String(values.dydt).trim();
-		w.cdata('differential-equation', dydt);
+		if (dydt) w.cdata('differential-equation', ctx.equation(dydt, q, 'compartments'));
 	};
 	writeRows(w, ctx, dims, table, 'compartment', body);
 	if (floors.size > 1) {
@@ -2470,11 +2762,22 @@ function writeConnection(w, ctx, t, plan) {
 		...dimAttrs(ctx, dims, plan.intersection),
 	]);
 	writeCommon(w, ctx, t, q);
+	if (t.enabled !== false) ctx.resultIds.push(q);
 	const collection = plan.collection === 'inflows' ? 'inflows' : 'transfers';
 	const absolute = plan.from == null;
-	const rate = (text) => availabilityRate(equationText(text, '0'), plan.availability);
-	const donor = (values) => (absolute ? false
-		: values.multiply_by_donor !== false && values.multiply_by_donor !== 'false' && values.multiply_by_donor !== 0);
+	const rate = (text) => ctx.equation(availabilityRate(equationText(text, '0'), plan.availability), q, collection);
+	// On unless it says `false`, as `Project` reads it. It is one setting of
+	// the whole transfer, and a model whose entries say otherwise does not run
+	// here (`_block` in ../domain/project.js); Ecolego reads it row by row, so
+	// each row says what the model says, and the report says what that means.
+	const donor = (values) => !absolute && values.multiply_by_donor !== false;
+	const own = !absolute && t.multiply_by_donor !== false;
+	if (!absolute && (Array.isArray(t.entries) ? t.entries : [])
+		.some((e) => e && typeof e === 'object' && 'multiply_by_donor' in e && (e.multiply_by_donor !== false) !== own)) {
+		ctx.report.warn(`'${q}' multiplies by its donor at some indices and not at others. The file says so row `
+			+ 'by row, which is how Ecolego reads it; a run here refuses the model until the transfer is two, and '
+			+ 'reading the file back makes it two.');
+	}
 	const body = (values) => {
 		w.cdata('transfer-equation', rate(values.rate));
 		w.text('multiply-with-donor', donor(values) ? 'true' : 'false');
@@ -2567,18 +2870,23 @@ function writeSimulation(w, raw, ctx) {
 	w.text('time-unit', unit);
 
 	const solver = String(sim.solver ?? 'ndf');
-	const eco = SOLVER_TO_ECO[solver] ?? 'ODE15S';
+	const bdf = BDF_SOLVERS.has(solver) && (sim.bdf === true || sim.bdf === 'true');
+	const eco = bdf ? ECO_BDF : SOLVER_TO_ECO[solver] ?? 'java-ode15s';
 	w.text('java-solver', eco);
 	if (!SOLVER_EXACT.has(solver)) {
-		report.rewrite('solver', solver, `written as ${eco}: ${SOLVER_WHY[solver] ?? 'the nearest Ecolego has'}`);
-	} else if (solver === 'ndf' && (sim.bdf === true || sim.bdf === 'true')) {
-		report.warn('The model runs the plain BDF formulas; the file asks for ODE15S, whose formulas are the numerical differentiation ones.');
+		const why = bdf ? QBDF_WHY : SOLVER_WHY[solver] ?? 'the nearest Ecolego has';
+		report.rewrite('solver', solver, `written as ${ECO_SOLVER_LABEL[eco]} (${eco}): ${why}`);
 	}
 	w.text('rel-error-tolerance', javaDouble(num(sim.rtol, 1e-3)));
 	w.text('abs-error-tolerance', javaDouble(num(sim.abstol, 1e-6)));
 	const floor = !(sim.non_negative === false || sim.non_negative === 'false' || sim.non_negative === 0);
 	w.text('saturation-enabled', floor ? 'true' : 'false');
 	w.text('simulation-type', 'DETERMINISTIC');
+	// Each scenario a run of its own, as here: see `writeScenarioModel`.
+	if (ctx.scenarioList && ctx.listId(ctx.scenarioList.name) === 'Scenarios'
+		&& (ctx.scenarioList.indices ?? []).some(indexOn)) {
+		w.text('run-scenarios-mode', 'true');
+	}
 
 	// When results are saved.
 	const spacing = ['log', 'linear', 'series', 'solver', 'both'].includes(sim.spacing) ? sim.spacing : 'log';
@@ -2632,11 +2940,22 @@ function writeSimulation(w, raw, ctx) {
 	// The endpoints, as the ids of the blocks that went out.
 	const endpoints = [];
 	const lost = [];
-	for (const name of Array.isArray(sim.endpoints) ? sim.endpoints : []) {
+	const listed = Array.isArray(sim.endpoints) ? sim.endpoints : [];
+	for (const name of listed) {
 		const text = String(name);
 		const q = ctx.known(text) ? text : null;
 		if (q && !ctx.skippedBlocks.has(q) && !endpoints.includes(q)) endpoints.push(q);
 		else if (!q || ctx.skippedBlocks.has(q)) lost.push(text);
+	}
+	// A model with no list keeps every block's results, and an Ecolego project
+	// keeps only the blocks its list names -- a run of one with none saves no
+	// result at all. So a model with no list goes out with every block on it,
+	// which is what Ecolego's own projects carry; and read back, a list of
+	// every block is no list (`rewriteEndpointIds` in ./eco.js).
+	if (!listed.length && ctx.resultIds.length) {
+		endpoints.push(...ctx.resultIds);
+		report.rewrite('endpoints', 'every block', 'the model keeps every block’s results and an Ecolego project '
+			+ 'only those its list of outputs names, so every block is on the list');
 	}
 	if (endpoints.length) {
 		w.open('outputs');
@@ -2656,6 +2975,8 @@ function writeSimulation(w, raw, ctx) {
 		// What each says when it leaves the choice to the solver or the tool.
 		if ((k === 'max_step' || k === 'initial_step') && Number(v) === 0) return false;
 		if (k === 'split' && v === 'auto') return false;
+		// Carried after all, in the solver's key.
+		if (k === 'bdf' && BDF_SOLVERS.has(solver)) return false;
 		if (Array.isArray(v) && !v.length) return false;
 		if (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length) return false;
 		return true;
@@ -2710,6 +3031,31 @@ function normaliseSeries(raw) {
 		out.push({ kind, points, from: Number.isFinite(from) ? from : null, to: Number.isFinite(to) ? to : null });
 	}
 	return out;
+}
+
+/**
+ * `<scenario-model>`: a scenario for each index of the scenario list, which is
+ * what Ecolego makes the indices of its `Scenarios` list from. With
+ * `run-scenarios-mode` on, a run is one simulation per scenario switched on --
+ * each the model with that scenario's value read wherever a block is indexed
+ * by the list, which is what a run of one scenario is here. A scenario keeps
+ * the project's own settings, having none of its own.
+ */
+function writeScenarioModel(w, ctx) {
+	const list = ctx.scenarioList;
+	if (!list || ctx.listId(list.name) !== 'Scenarios') return;
+	w.open('scenario-model');
+	for (const i of list.indices ?? []) {
+		const name = indexName(i);
+		if (name == null) continue;
+		const id = ctx.indexId(list.name, name);
+		w.open('scenario', [['name', String(name).trim()]]);
+		w.text('id', id);
+		w.text('enabled', indexOn(i) ? 'true' : 'false');
+		w.cdata('guid', guidFor(ctx.projectName, `scenario:${id}`));
+		w.close('scenario');
+	}
+	w.close('scenario-model');
 }
 
 function writeProbabilistic(w, raw, ctx) {

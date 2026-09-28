@@ -364,9 +364,20 @@ def collation_key(text: str) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
 
 # --- the mappers eco.js imports ---------------------------------------------------------
 
-#: Seconds in a Julian year, which is what Ecolego's half-lives are divided by.
+#: Seconds per year: this tool's year, the Julian one of 365.25 days.
 #: ``src/domain/nuclides.js``.
 SECONDS_PER_YEAR = 365.25 * 24 * 3600
+
+#: Seconds per year as Ecolego's ``year`` unit has it, 365.2425 days
+#: (``EcoMath.YEAR_IN_SECONDS``), and what its database writes a half-life in.
+ECOLEGO_YEAR = 31556952
+
+
+def eco_seconds_per_year(unit: Any) -> float:
+    """How many seconds a year of half-life is in an .eco file whose model runs
+    in ``unit`` (``ecoSecondsPerYear``): Ecolego's year for a model in years,
+    this tool's for one in days or anything shorter."""
+    return SECONDS_PER_YEAR if unit in ('minute', 'second', 'hour', 'day') else ECOLEGO_YEAR
 
 # How Ecolego spells the interpolation rules. A plain object in lookup.js, and
 # so read through `plain_lookup`.

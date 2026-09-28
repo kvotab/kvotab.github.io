@@ -158,7 +158,11 @@ const VALUE_KEYS = {
 	// body is one equation whatever it is called with, and what varies
 	// between calls is the arguments, not the index.
 	function: ['equation'],
-	transfer: ['rate', 'multiply_by_donor'],
+	// The rate alone. Whether it is multiplied by the donor is one setting of
+	// the whole transfer -- it makes the rate a coefficient or a flux, which is
+	// the transfer's unit -- and an entry that says otherwise is refused
+	// (`_block`) rather than kept: it used to be kept, and nothing read it.
+	transfer: ['rate'],
 	expression: ['equation'],
 	// `value` first, because the first key is *the* value: a parameter's number.
 	// `pdf` beside it is the distribution that number was drawn from, per index
@@ -666,6 +670,11 @@ export class Project {
 		// under each solver. `src/io/eco.js` maps the band a file does set onto
 		// this flag and reports whatever it could not.
 		if (kind === 'compartment') base.non_negative = base.non_negative !== false;
+		// Multiplied by the donor unless a model says `false`, which is how the
+		// unit, an availability and the Python engine have always read it. The
+		// builder asked whether it was truthy, so a `null` or a `0` made a flux
+		// there and a coefficient everywhere else.
+		if (kind === 'transfer') base.multiply_by_donor = base.multiply_by_donor !== false;
 		// Off unless a model asks for it by name: a flux whose dimensions its
 		// end has not got is added up on the way in, and a model should say so
 		// rather than have it happen. See `summedDims` and the check in
@@ -834,14 +843,31 @@ export class Project {
 		base.qname = qualifiedName(base);
 
 		base.entries = normaliseEntries(raw, kind, this.nuclideListName, base.index_lists);
+		if (kind === 'transfer') {
+			const raws = Array.isArray(raw.entries) ? raw.entries : [];
+			const at = raws.findIndex((e) => e && typeof e === 'object'
+				&& Object.prototype.hasOwnProperty.call(e, 'multiply_by_donor')
+				&& (e.multiply_by_donor !== false) !== base.multiply_by_donor);
+			if (at >= 0) {
+				const where = Object.values(base.entries[at]?.index ?? {}).join(', ') || 'one of its entries';
+				throw new ValidationError(
+					`${base.multiply_by_donor ? 'It multiplies its rate by the donor' : 'Its rate is an absolute flux'}, `
+					+ `and ${where} says otherwise. That is one setting for the whole transfer -- it makes the `
+					+ 'rate a coefficient or a flux, and gives it its unit -- so a model that needs both has two '
+					+ 'transfers between the same compartments: one by the donor and one an absolute flux, each '
+					+ 'with a zero rate where the other applies.', base.name,
+				);
+			}
+		}
 
 		// The legacy shorthands have been folded into entries; drop them so
 		// nothing downstream has two places to look.
 		if (base.initial && typeof base.initial === 'object') base.initial = '0';
 		// The explicit dy/dt term is optional, and blank is the same as
-		// absent: Ecolego writes an empty `<differential-equation>` on every
-		// entry it saves, and nothing downstream should have to ask twice.
-		// A number typed in is an equation like any other.
+		// absent, so that nothing downstream has to ask twice. (Ecolego leaves
+		// `<differential-equation>` out of an entry that has no term, and the
+		// importer reads an empty one as none too.) A number typed in is an
+		// equation like any other.
 		if (kind === 'compartment') {
 			for (const holder of [base, ...base.entries]) {
 				if (!Object.prototype.hasOwnProperty.call(holder, 'dydt')) continue;

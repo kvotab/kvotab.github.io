@@ -5456,6 +5456,9 @@ test('a model brings its endpoint list, and a run can be told to keep it', async
 		<component name="k leach" type="parameter"><id>k&#32;id</id>
 			<entry type="parameter"><value>0.5</value></entry>
 		</component>
+		<component name="Twice" type="expression"><id>Twice</id>
+			<entry type="expression"><equation><![CDATA[2]]></equation></entry>
+		</component>
 	</block-model>
 	<simulation-settings>
 		<start-time>0</start-time><end-time>10</end-time>
@@ -5468,6 +5471,8 @@ test('a model brings its endpoint list, and a run can be told to keep it', async
 		</outputs>
 	</simulation-settings>
 </data-model>`;
+	// `Twice` is not on the list, so the list is a choice: a list of every
+	// block is no list (see the export's tests).
 	const { project, report } = importModelXML(xml, { fileName: 'ep.eco' });
 	// Repeats are not a fault: Ecolego writes one <output> per index of an
 	// endpoint, so model B lists 746 of them for 102 blocks.
@@ -20761,11 +20766,49 @@ test('project properties and simulation settings are read', () => {
 	close(p.simulation.abstol, 1e-12, 0);
 });
 
-test('ODE15S imports as the real variableOrder, with no substitution warning', () => {
+test('java-ode15s imports as ndf, with no substitution warning', () => {
 	assert(imported.project.simulation.solver === 'ndf',
 		imported.project.simulation.solver);
-	assert(!imported.report.warnings.some((w) => /ODE15S/.test(w)),
+	assert(!imported.report.warnings.some((w) => /ODE15S|solver/.test(w)),
 		'nothing was substituted, so nothing to warn about');
+});
+
+test('every solver key Ecolego writes imports as the solver it is', () => {
+	// Ecolego's keys are `java-ode15s` and the like, the hyphen often written
+	// &#45;. They were upper-cased and stripped to JAVAODE15S, which matched
+	// nothing: every real file opened on the default solver without a word.
+	const cases = [
+		// [what the file says, solver, BDF switch, warns]
+		['java&#45;ode15s', 'ndf', false, false],
+		['java&#45;ode15s&#45;BDF', 'ndf', true, false],
+		['java-ode45', 'dp45', false, false],
+		['java&#45;ode23s', 'ros23', false, false],
+		// What this tool's own exports wrote before they wrote Ecolego's keys.
+		['ODE15S', 'ndf', false, false],
+		['ODE45', 'dp45', false, false],
+		// Older keys, read as Ecolego reads them.
+		['java-dormandprince', 'dp45', false, false],
+		['java-imexsd', 'ndf', false, false],
+		// Methods this tool lacks: the nearest, said.
+		['java&#45;radau5', 'ndf', false, true],
+		['java-ode23tb', 'ros23', false, true],
+		['java-rk4', 'dp45', false, true],
+		['java-ode4', 'dp45', false, true],
+	];
+	for (const [said, solver, bdf, warns] of cases) {
+		const { project, report } = importModelXML(MODEL_XML.replace(
+			'<java-solver>java&#45;ode15s</java-solver>', `<java-solver>${said}</java-solver>`));
+		const sim = project.simulation;
+		assert(sim.solver === solver, `${said} came in as ${sim.solver}`);
+		assert(Boolean(sim.bdf) === bdf, `${said}: the BDF switch is ${sim.bdf}`);
+		assert(report.warnings.some((w) => /solver/.test(w)) === warns,
+			`${said}: ${report.warnings.join(' | ')}`);
+	}
+	// A name nobody has is said, rather than quietly replaced.
+	const { project, report } = importModelXML(MODEL_XML.replace(
+		'<java-solver>java&#45;ode15s</java-solver>', '<java-solver>java-nonesuch</java-solver>'));
+	assert(project.simulation.solver === 'ndf', project.simulation.solver);
+	assert(report.warnings.some((w) => /does not know, 'java-nonesuch'/.test(w)), report.warnings.join(' | '));
 });
 
 test('how the file says results should be saved comes across', () => {
@@ -20991,8 +21034,8 @@ test('a compartment’s own absolute tolerance comes in from the file', () => {
 });
 
 test('a solver this tool really lacks is substituted, with a warning', () => {
-	const xml = MODEL_XML.replace('<java-solver>ODE15S</java-solver>',
-		'<java-solver>RADAU5</java-solver>');
+	const xml = MODEL_XML.replace('<java-solver>java&#45;ode15s</java-solver>',
+		'<java-solver>java&#45;radau5</java-solver>');
 	const { project, report } = importModelXML(xml);
 	assert(project.simulation.solver === 'ndf', project.simulation.solver);
 	assert(report.warnings.some((w) => /RADAU5/.test(w)),
@@ -21588,6 +21631,17 @@ await (async () => {
 	};
 
 	/**
+	 * Every key Ecolego 6.5 has for `<java-solver>`: `ALL_SOLVER_INFOS` in its
+	 * SolverSettingPage. Anything else is looked up, not found and kept as no
+	 * solver at all, and the project does not open.
+	 */
+	const ECOLEGO_SOLVER_KEYS = [
+		'java-ode1', 'java-ode2', 'java-ode3', 'java-ode4', 'java-ode5', 'java-ode23', 'java-ode45',
+		'java-ode113', 'java-ode15s', 'java-ode15s-BDF', 'java-radau5', 'java-ode23s', 'java-ode23t',
+		'java-ode23tb',
+	];
+
+	/**
 	 * Exports, imports with the application's own importer, and says what
 	 * both mean -- leaving out what the report says it left out or wrote in
 	 * another form.
@@ -21684,6 +21738,14 @@ await (async () => {
 			const back = await importEcoFile(out.bytes);
 			const a = run(fx.withoutBlocks(fx.openedModel(model), out.report.skipped.map((s) => s.name)));
 			const b = run(fx.openedModel(back.project));
+			// A half-life that no double of seconds divides back to exactly
+			// comes back a step off -- Y-90's, in Ecolego's year -- and a delay
+			// reads the step as a history a hair apart, a few parts in a
+			// billion (a step on Y-90 alone does the same). Compared at the
+			// tolerance the model was solved to.
+			const halfLives = (p) => new Project(fx.openedModel(p)).halfLives;
+			const [was, now] = [halfLives(model), halfLives(back.project)];
+			const stepped = Object.keys(was).some((n) => was[n] !== now[n] && Math.abs(was[n] - now[n]) <= Number.EPSILON * was[n]);
 			assert(a.t.length === b.t.length, `${name}: ${a.t.length} output times against ${b.t.length}`);
 			for (let i = 0; i < a.t.length; i++) {
 				assert(Math.abs(a.t[i] - b.t[i]) <= 1e-12 * Math.abs(a.t[i]), `${name}: time ${i} is ${b.t[i]}, was ${a.t[i]}`);
@@ -21703,7 +21765,7 @@ await (async () => {
 				const y = b.series(p);
 				let scale = 0;
 				for (const v of x) scale = Math.max(scale, Math.abs(v));
-				const tol = (paths ? 1e-6 : loose ? 1e-7 : 1e-12) * (scale || 1);
+				const tol = (paths ? 1e-6 : loose || stepped ? 1e-7 : 1e-12) * (scale || 1);
 				for (let i = 0; i < x.length; i++) {
 					assert(Math.abs(x[i] - y[i]) <= tol, `${name}: ${o.label} at ${a.t[i]} is ${y[i]}, was ${x[i]}`);
 				}
@@ -21787,7 +21849,7 @@ await (async () => {
 		assert(carbon && childText(carbon, 'unit') === 'kgC', 'a material and its unit');
 		const cs = children(materials, 'nuclide').find((m) => m.attrs.name === 'Cs-137');
 		assert(childText(cs, 'unit') === 'Bq' && childText(cs, 'z') === '55' && childText(cs, 'a') === '137', 'Cs-137');
-		assert(Number(childText(cs, 'half-life')) / 31557600 === HL('Cs-137'), childText(cs, 'half-life'));
+		assert(Number(childText(cs, 'half-life')) / 31556952 === HL('Cs-137'), childText(cs, 'half-life'));
 		const pair = child(child(root, 'nuclide-decay-model'), 'decay-pair');
 		assert(pair.attrs.parent === 'Sr-90' && pair.attrs.daughter === 'Y-90' && pair.attrs.rate === '1.0', JSON.stringify(pair.attrs));
 		// The description is the project's comment, and text the XML cannot
@@ -21837,17 +21899,23 @@ await (async () => {
 		const nudged = (x, n) => { bits[0] = x; words[0] += BigInt(n); return bits[0]; };
 		let exact = 0;
 		let total = 0;
-		for (const years of Object.values(HALF_LIVES)) {
-			if (!Number.isFinite(years)) continue;
-			total++;
-			const s = eco.secondsFor(years);
-			if (s / 31557600 === years) { exact++; continue; }
-			let reachable = false;
-			for (let k = -64; k <= 64 && !reachable; k++) reachable = nudged(years * 31557600, k) / 31557600 === years;
-			assert(!reachable, `${years} years could have been written exactly`);
-			assert(Math.abs(s / 31557600 - years) <= Number.EPSILON * years, `${years} years is more than a step off`);
+		// In the year Ecolego reads a model in years in, 365.2425 days, and
+		// this tool's for one in days: see ecoSecondsPerYear.
+		for (const [unit, perYear] of [['year', 31556952], ['day', 31557600]]) {
+			let exact = 0;
+			let total = 0;
+			for (const years of Object.values(HALF_LIVES)) {
+				if (!Number.isFinite(years)) continue;
+				total++;
+				const s = eco.secondsFor(years, unit);
+				if (s / perYear === years) { exact++; continue; }
+				let reachable = false;
+				for (let k = -64; k <= 64 && !reachable; k++) reachable = nudged(years * perYear, k) / perYear === years;
+				assert(!reachable, `${years} years could have been written exactly in ${unit}s`);
+				assert(Math.abs(s / perYear - years) <= Number.EPSILON * years, `${years} years is more than a step off`);
+			}
+			assert(exact > 0.9 * total, `only ${exact} of ${total} half-lives come back exactly in ${unit}s`);
 		}
-		assert(exact > 0.9 * total, `only ${exact} of ${total} half-lives come back exactly`);
 	});
 
 	test('what an Ecolego project has no place for is left out and named, and so is what reads it', async () => {
@@ -21936,6 +22004,27 @@ await (async () => {
 		assert(pdfs.join(' ') === ':logt Lake:unif Mire:logt', pdfs.join(' '));
 	});
 
+	test('a compartment with no dy/dt term goes out with no element for one', () => {
+		// Ecolego writes <differential-equation> only where there is a term,
+		// and reads an empty one as an equation that is missing: every
+		// compartment of every export was an error, and the model would not run.
+		for (const [name, model] of models) {
+			const root = xmlOf(model);
+			for (const c of components(root).filter((x) => x.attrs.type === 'compartment')) {
+				for (const e of children(c, 'entry')) {
+					const term = child(e, 'differential-equation');
+					assert(!term || term.text.trim() !== '', `${name}: ${childText(c, 'id')} has an empty dy/dt term`);
+				}
+			}
+		}
+		const root = xmlOf(fx.EVERY_KIND);
+		const lake = children(byId(root, 'Lake'), 'entry')
+			.map((e) => `${e.attrs.index ?? ''}=${childText(e, 'differential-equation')}`);
+		assert(lake.join(' ') === '=0 Y-90=-1e-3 * Lake[Y-90]', lake.join(' '));
+		assert(children(byId(root, 'Near.Soil'), 'entry').every((e) => !child(e, 'differential-equation')),
+			'Soil has no term, and its rows should have no element for one');
+	});
+
 	test('the output times and the solver go out as Ecolego settings', async () => {
 		const settings = (model) => child(xmlOf(model), 'simulation-settings');
 		// A logarithmic grid: its own times, since a geometric series from zero starts at 1.
@@ -21966,14 +22055,237 @@ await (async () => {
 		assert(children(child(prob, 'probabilistic-parameters'), 'selected-parameter').map((p) => p.text).join() === 'Near.k_leach,Kd',
 			'the varied parameters');
 		// Every solver goes out as one Ecolego has, and the importer knows it.
+		// "Has" is Ecolego's list, not the importer's: the importer took ODE15S,
+		// which is no key of Ecolego's, and Ecolego refused every file.
 		for (const id of SOLVER_IDS) {
 			const out = await eco.exportEco({ ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, solver: id } });
 			const name = childText(child(parseXML(out.xml), 'simulation-settings'), 'java-solver');
+			assert(ECOLEGO_SOLVER_KEYS.includes(name), `${id} went out as ${name}, which Ecolego does not have`);
 			const back = await importEcoFile(out.bytes);
 			assert(back.project.simulation.solver === (SOLVER_BACK[id] ?? id), `${id} -> ${name} -> ${back.project.simulation.solver}`);
 			assert(['ndf', 'ros23', 'dp45'].includes(id) || out.report.rewritten.some((r) => r.type === 'solver' && r.name === id),
 				`${id} went out as ${name} without a word`);
 		}
+		// The BDF switch is Ecolego's BDF option on its ode15s: carried in the
+		// key, so ndf with it on comes back as itself and nothing is left out.
+		for (const [id, rewritten] of [['ndf', false], ['qndf', true]]) {
+			const model = { ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, solver: id, bdf: true } };
+			const out = await eco.exportEco(model);
+			const name = childText(child(parseXML(out.xml), 'simulation-settings'), 'java-solver');
+			assert(name === 'java-ode15s-BDF', `${id} with BDF went out as ${name}`);
+			const back = (await importEcoFile(out.bytes)).project.simulation;
+			assert(back.solver === 'ndf' && back.bdf === true, `${id} with BDF came back as ${back.solver}, bdf ${back.bdf}`);
+			assert(out.report.rewritten.some((r) => r.type === 'solver' && r.name === id) === rewritten,
+				`${id} with BDF: ${JSON.stringify(out.report.rewritten)}`);
+			assert(!out.report.warnings.some((w) => /bdf|BDF/.test(w)), out.report.warnings.join(' | '));
+		}
+	});
+
+	test('an equation Ecolego cannot read goes out in its spelling, and what has no spelling is left out', () => {
+		// Each form below was run through Ecolego 6.5's own simulator beside this
+		// tool and gave the same numbers: see ../src/io/ecoequation.js.
+		const { xml, report } = eco.exportModelXML(fx.SPELLING);
+		const root = parseXML(xml);
+		const equation = (id) => childText(child(byId(root, id), 'entry'), 'equation');
+		const expect = {
+			Inventory: '0.6931471805599453 * n0 * 6.02214179E23 / (T * 3.15576E7)',
+			Seed: 'Inventory / 2 + 1',
+			Depth: '1.5 * k',
+			Late: 'if(time() > 5, 1, 0) * 2 + if(k ~= 0, 1, 2)',
+			All: 'if(k > 0 && n0 > 0 && T > 0, 1, 0) + mod(if(k, 1, 0) + if(0, 1, 0), 2) + if(1 ~= 0 && k ~= 0, 0, 1)',
+			Power: '2^(-k) - (-k)',
+			Lone: 'k + log(2) + abs(-k)',
+			// Worked out as this tool does, not as Ecolego's own mod and rem.
+			Guard: 'if(k - k == 0, time(), time() - (k - k) * floor(time() / (k - k))) + (time() - 3 * floor(time() / 3))',
+			Saw: 'time() - 0.1 * floor(time() / 0.1) + ((-time()) - 0.3 * fix((-time()) / 0.3))',
+		};
+		for (const [id, text] of Object.entries(expect)) assert(equation(id) === text, `${id}: ${equation(id)}`);
+		// What Ecolego reads as it is goes as it was typed.
+		const leak = childText(child(byId(root, 'Leak'), 'entry'), 'transfer-equation');
+		assert(leak === 'k * if(time > 2 && Store > 0, 1, 0.5)', leak);
+		const how = new Map(report.rewritten.map((r) => [r.name, r.how]));
+		assert(/mole2bq\(\) is written out/.test(how.get('Inventory')), how.get('Inventory'));
+		assert(/without the units/.test(how.get('Depth')), how.get('Depth'));
+		assert(/rampUp\(\), smoothDown\(\), ulp\(\) are written out/.test(how.get('Ramp')), how.get('Ramp'));
+		assert(/Ecolego’s spelling/.test(how.get('Late')), how.get('Late'));
+		assert(/^mod\(\) and rem\(\) are written out as the arithmetic they are here, since Ecolego's own are the exact remainder/
+			.test(how.get('Saw')), how.get('Saw'));
+		assert(!how.has('Leak'), 'an equation that went as it was typed is reported');
+		const skipped = new Map(report.skipped.map((x) => [x.name, x.why]));
+		assert(/calls percentile\(\), which Ecolego has no function for/.test(skipped.get('Middle')), skipped.get('Middle'));
+		assert(/reads 'Middle'/.test(skipped.get('AfterMiddle')), skipped.get('AfterMiddle'));
+	});
+
+	test('the constants a written-out function needs are what Java writes', async () => {
+		const q = await import('../src/io/ecoequation.js');
+		const { SECONDS_PER_YEAR } = await import('../src/domain/nuclides.js');
+		assert(q.LN2_TEXT === eco.javaDouble(Math.LN2), q.LN2_TEXT);
+		assert(q.AVOGADRO_TEXT === eco.javaDouble(6.02214179e23), q.AVOGADRO_TEXT);
+		assert(q.SECONDS_PER_YEAR_TEXT === eco.javaDouble(SECONDS_PER_YEAR), q.SECONDS_PER_YEAR_TEXT);
+		assert(q.MAX_DOUBLE_TEXT === eco.javaDouble(Number.MAX_VALUE), q.MAX_DOUBLE_TEXT);
+		// And the translation is the number: every rewrite, read back here,
+		// gives what the original gives, to the bit.
+		const cases = ['mole2bq(3.3e-9, 24100)', 'bq2mole(1e10, 2)', 'rampDown(3, 10, 0)', 'smoothUp(1, 2, 3)', 'xor(1, 1 > 0, 0)',
+			'nand(1, 0, 1)', 'mod(7, 0)', '(1 > 0) ? (2 < 1) : 7', '1 < 2 == 1', '2^-2^2', 'ulp(-3e7)', 'max(5)', '1[m] * 3'];
+		const exprs = cases.flatMap((c, i) => [{ name: `o${i}`, equation: c }, { name: `t${i}`, equation: q.ecolegoEquation(c).text }]);
+		const r = run({ name: 'x', nuclides: [], simulation: { start_time: 0, end_time: 1, output_points: 2, spacing: 'linear', solver: 'ndf', time_unit: 'year' }, expressions: exprs });
+		const outs = r.outputs();
+		const cols = r.seriesMany(outs);
+		const at = new Map(outs.map((o, k) => [o.label, cols[k][0]]));
+		cases.forEach((c, i) => assert(Object.is(at.get(`o${i}`), at.get(`t${i}`)), `${c}: ${at.get(`o${i}`)} against ${at.get(`t${i}`)}`));
+	});
+
+	test('what an initial value reads is worked out before the run, and the time cannot be', () => {
+		// Ecolego works initial values out before the run, from parameters and
+		// from expressions *set* to BEFORE -- not left to its own choice.
+		const { xml, report } = eco.exportModelXML(fx.SPELLING);
+		const root = parseXML(xml);
+		const mode = (id) => childText(byId(root, id), 'evaluation-mode');
+		assert(mode('Seed') === 'BEFORE' && mode('Inventory') === 'BEFORE', `${mode('Seed')} ${mode('Inventory')}`);
+		assert(mode('Late') == null && mode('Depth') == null, 'an expression no initial value reads was set');
+		assert(report.warnings.some((w) => /'Clocked' starts from a value that reads the time/.test(w)), report.warnings.join(' | '));
+	});
+
+	test('a model with no endpoint list goes out with every block on Ecolego’s, and comes back with none', async () => {
+		// Ecolego keeps the results of the blocks its list names and no other:
+		// a run of a project with none saves nothing.
+		const model = examples.find(([f]) => f === 'four-compartment.json')[1];
+		const out = await eco.exportEco(model);
+		const settings = child(parseXML(out.xml), 'simulation-settings');
+		const listed = children(child(settings, 'outputs'), 'output').map((o) => o.attrs.id);
+		assert(listed.join() === 'p12,p23,p13,p34,C1,C2,C3,C4,Outflow,T1,T2,T3,TCOut', listed.join());
+		assert(out.report.rewritten.some((r) => r.type === 'endpoints'), JSON.stringify(out.report.rewritten));
+		const back = await importEcoFile(out.bytes);
+		assert(!('endpoints' in back.project.simulation), JSON.stringify(back.project.simulation.endpoints));
+		// A list that leaves a block out is the model's choice, and stays.
+		const chosen = await eco.exportEco({ ...model, simulation: { ...model.simulation, endpoints: ['C3', 'Outflow'] } });
+		assert(JSON.stringify((await importEcoFile(chosen.bytes)).project.simulation.endpoints) === '["C3","Outflow"]', 'the list was lost');
+	});
+
+	test('a scenario list goes out as Ecolego’s own, run scenario by scenario, and comes back under its name', async () => {
+		const model = examples.find(([f]) => f === 'scenarios.json')[1];
+		const out = await eco.exportEco(model);
+		const root = parseXML(out.xml);
+		const lists = children(child(root, 'index-list-model'), 'index-list');
+		const scenarios = lists.find((l) => l.attrs.name === 'Scenarios');
+		assert(scenarios && !lists.some((l) => l.attrs.name === 'Climate'), lists.map((l) => l.attrs.name).join());
+		const property = children(scenarios, 'property').find((p) => p.attrs.name === 'kompartment-name');
+		assert(property?.text === 'Climate', JSON.stringify(property));
+		const written = children(child(root, 'scenario-model'), 'scenario').map((x) => `${x.attrs.name}:${childText(x, 'enabled')}`);
+		assert(written.join() === 'Present:true,Warmer and wetter:true,Drier:true', written.join());
+		assert(childText(child(root, 'simulation-settings'), 'run-scenarios-mode') === 'true', 'not run per scenario');
+		assert(byId(root, 'Runoff').attrs['index-lists'] === 'Scenarios', byId(root, 'Runoff').attrs['index-lists']);
+		const back = (await importEcoFile(out.bytes)).project;
+		const climate = back.index_lists.find((l) => l.name === 'Climate');
+		assert(climate?.for_scenarios && !back.index_lists.some((l) => l.name === 'Scenarios'), JSON.stringify(back.index_lists.map((l) => l.name)));
+	});
+
+	test('a half-life is in the seconds Ecolego reads the model’s unit with, both ways', async () => {
+		// Ecolego's year is 365.2425 days and its database writes half-lives in
+		// it: Cs-137's 30.07 years is 948917546.6 s.
+		const { ecoSecondsPerYear, ECOLEGO_YEAR } = await import('../src/domain/nuclides.js');
+		assert(ecoSecondsPerYear('year') === ECOLEGO_YEAR && ECOLEGO_YEAR === 31556952, 'the year');
+		assert(ecoSecondsPerYear('day') === 31557600 && ecoSecondsPerYear('hour') === 31557600, 'the day');
+		const xml = MODEL_XML.replace(/<half-life>[^<]*<\/half-life>/, '<half-life>948917546.6</half-life>');
+		assert(importModelXML(xml).project.half_lives['Cs-137'] === 948917546.6 / 31556952, 'read in the wrong year');
+		const inDays = MODEL_XML.replace(/<half-life>[^<]*<\/half-life>/, '<half-life>948917546.6</half-life>')
+			.replace('<time-unit>year</time-unit>', '<time-unit>day</time-unit>');
+		assert(importModelXML(inDays).project.half_lives['Cs-137'] === 948917546.6 / 31557600, 'a model in days');
+		for (const [unit, perYear] of [['year', 31556952], ['day', 31557600]]) {
+			const m = { ...fx.SCENARIO_ONLY, nuclides: ['Cs-137'], simulation: { ...fx.SCENARIO_ONLY.simulation, time_unit: unit } };
+			const cs = children(child(parseXML(eco.exportModelXML(m).xml), 'material-model'), 'nuclide').find((n) => n.attrs.name === 'Cs-137');
+			assert(Number(childText(cs, 'half-life')) / perYear === HL('Cs-137'), `${unit}: ${childText(cs, 'half-life')}`);
+		}
+	});
+
+	test('a table read at a value that repeats goes out unrepeated, and its callers wrap the value', () => {
+		// Ecolego's code for a cyclic table reads the clock and never the
+		// argument, so Retardation(3) there was read at the time.
+		const { xml, report } = eco.exportModelXML(fx.EVERY_KIND);
+		const root = parseXML(xml);
+		assert(childText(byId(root, 'Retardation'), 'lookup-cyclic') === 'false', 'still cyclic');
+		const call = childText(child(byId(root, 'WithTable'), 'entry'), 'equation');
+		assert(call === 'Retardation(if(rem(3 - 0.0, 10.0) >= 0, rem(3 - 0.0, 10.0) + 0.0, rem(3 - 0.0, 10.0) + 10.0 + 0.0)) + Sorption[Lake]', call);
+		assert(report.rewritten.some((r) => r.name === 'Retardation' && /unrepeated/.test(r.how)), JSON.stringify(report.rewritten));
+		// A time table keeps its own repeating: Ecolego does that one right.
+		const cyclic = eco.exportModelXML({ ...fx.EVERY_KIND, lookups: fx.EVERY_KIND.lookups.map((l) => (l.name === 'Sorption' ? { ...l, cyclic: true } : l)) });
+		assert(childText(byId(parseXML(cyclic.xml), 'Sorption'), 'lookup-cyclic') === 'true', 'a time table lost its repeating');
+	});
+
+	test('multiplying by the donor is one setting of a transfer: a file that says it row by row comes back as two', async () => {
+		// A hand-made model that says otherwise at one index, which nothing
+		// used to read: a run here refuses it now, and the file says it row by
+		// row, which is how Ecolego reads it.
+		const model = {
+			name: 'Mixed',
+			index_lists: [{ name: 'Objects', indices: [{ name: 'A' }, { name: 'B' }] }],
+			compartments: [{ name: 'Pond', index_lists: ['Objects'], initial: '100' }],
+			transfers: [{ name: 'Out', from: 'Pond', to: null, index_lists: ['Objects'], rate: '0.1',
+				entries: [{ index: { Objects: 'B' }, rate: '2', multiply_by_donor: false }] }],
+			simulation: { start_time: 0, end_time: 10, output_points: 11, spacing: 'linear', solver: 'ndf',
+				rtol: 1e-10, abstol: 1e-12, time_unit: 'year' },
+		};
+		let refused = null;
+		try { new Project(model); } catch (e) { refused = e; }
+		assert(refused instanceof ValidationError && /^Out: It multiplies its rate by the donor, and B says otherwise\./.test(refused.message),
+			String(refused?.message));
+		const out = await eco.exportEco(model);
+		const rows = children(byId(parseXML(out.xml), 'Out'), 'entry').map((e) => `${e.attrs.index ?? ''}=${childText(e, 'multiply-with-donor')}`);
+		assert(rows.join() === '=true,A=true,B=false' || rows.join() === '=true,B=false', rows.join());
+		assert(out.report.warnings.some((w) => /^'Out' multiplies by its donor at some indices and not at others/.test(w)),
+			out.report.warnings.join(' | '));
+		// Read back: two transfers between the same ends, the second holding
+		// the index that is an absolute flux, the first moving nothing there.
+		const { project, report } = await importEcoFile(out.bytes);
+		const said = project.transfers.map((t) => `${t.name}:${t.multiply_by_donor}:${t.rate}:`
+			+ (t.entries ?? []).map((e) => `${e.index.Objects}=${e.rate}`).join('/'));
+		assert(said.join() === 'Out:true:0.1:B=0,Out_absolute:false:0:B=2', said.join());
+		assert(report.warnings.some((w) => /Those indices are 'Out_absolute', an absolute flux, beside 'Out'/.test(w)),
+			report.warnings.join(' | '));
+		// And they move what the file's transfer moves: A as a share of what
+		// it holds, B two a year.
+		const r = run(fx.openedModel(project));
+		const at = (label) => r.series(r.outputs().find((o) => o.label === label));
+		const A = at('Pond [A]');
+		const B = at('Pond [B]');
+		Array.from(r.t).forEach((t, i) => {
+			close(A[i], 100 * Math.exp(-0.1 * t), 1e-7, `A at ${t}`);
+			close(B[i], 100 - 2 * t, 1e-9, `B at ${t}`);
+		});
+	});
+
+	test('a transfer whose entries agree with it about the donor is what it always was', () => {
+		// Every import used to write the flag on each entry, the same as the
+		// block's; such a model still loads, and the entries' copies say nothing.
+		const p = new Project({
+			index_lists: [{ name: 'Objects', indices: [{ name: 'A' }] }],
+			compartments: [{ name: 'Pond', index_lists: ['Objects'], initial: '1' }],
+			transfers: [
+				{ name: 'Out', from: 'Pond', to: null, index_lists: ['Objects'], rate: '0.1',
+					entries: [{ index: { Objects: 'A' }, rate: '0.2', multiply_by_donor: true }] },
+				// Off only when it says `false`: a `null` or a `0` used to make a
+				// flux in a run and a coefficient in its unit.
+				{ name: 'Leak', from: 'Pond', to: null, index_lists: ['Objects'], rate: '0.01', multiply_by_donor: null },
+				{ name: 'Seep', from: 'Pond', to: null, index_lists: ['Objects'], rate: '0.01', multiply_by_donor: 0 },
+			],
+		});
+		const by = Object.fromEntries(p.transfers.map((t) => [t.name, t]));
+		assert(by.Out.multiply_by_donor === true && by.Leak.multiply_by_donor === true && by.Seep.multiply_by_donor === true,
+			JSON.stringify(p.transfers.map((t) => t.multiply_by_donor)));
+		assert(by.Out.entries.length === 1 && !('multiply_by_donor' in by.Out.entries[0]), JSON.stringify(by.Out.entries));
+		assert(by.Leak.unit === '1/year', by.Leak.unit);
+		// Opened in the editor, a copy that agrees goes, so that changing the
+		// transfer's own setting later is not refused for what the copy says.
+		const raw = {
+			index_lists: [{ name: 'Objects', indices: [{ name: 'A' }, { name: 'B' }] }],
+			compartments: [{ name: 'Pond', index_lists: ['Objects'], initial: '1' }],
+			transfers: [{ name: 'Out', from: 'Pond', to: null, index_lists: ['Objects'], rate: '0.1',
+				entries: [{ index: { Objects: 'A' }, rate: '0.2', multiply_by_donor: true }, { index: { Objects: 'B' }, multiply_by_donor: true }] }],
+		};
+		ed.materialiseShorthand(raw);
+		assert(JSON.stringify(raw.transfers[0].entries) === '[{"index":{"Objects":"A"},"rate":"0.2"}]', JSON.stringify(raw.transfers[0].entries));
+		raw.transfers[0].multiply_by_donor = false;
+		assert(new Project(raw).transfers[0].multiply_by_donor === false, 'the flip was refused');
 	});
 
 	test('distributions are written in Ecolego’s spelling, the kind in function=', () => {
@@ -30817,8 +31129,7 @@ const dydtModel = (extra = {}, compartment = {}) => ({
 });
 
 test('a dy/dt term is normalised, kept per index and written back', () => {
-	// A number typed in is an equation; blank is none, at either level --
-	// Ecolego writes an empty <differential-equation> on every entry it saves.
+	// A number typed in is an equation; blank is none, at either level.
 	const p = new Project(dydtModel({
 		index_lists: [{ name: 'Animals', indices: ['Rabbit', 'Fox'] }],
 	}, {
@@ -31044,7 +31355,8 @@ test('the term comes in from a .eco file, at the block level and per index', () 
 	const built = buildSystem(new Project(structuredClone(project)));
 	assert(built.layout.algebraic.some((a) => a.kind === 'compartment:dydt' && a.hidden),
 		'no slot for the term');
-	// An empty element, which is what Ecolego writes on every other entry, is none.
+	// An empty element is none. Ecolego writes none -- it leaves the element
+	// out -- but a file from elsewhere may, and Ecolego itself refuses one.
 	const empty = importModelXML(MODEL_XML.replace('<upper-saturation></upper-saturation>',
 		'<upper-saturation></upper-saturation><differential-equation><![CDATA[]]></differential-equation>'));
 	assert(!('dydt' in empty.project.compartments.find((c) => c.name === 'Soil')), 'an empty term was kept');

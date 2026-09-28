@@ -253,7 +253,18 @@ class PartitionParity(unittest.TestCase):
 class PlanParity(unittest.TestCase):
     """The jobs, the state names and every plan, with the application's
     constants put in for auto: its structure is the application's, its numbers
-    this engine's own."""
+    this engine's own.
+
+    Except where a plan weighs what a split costs. The application builds each
+    of its bins once -- its generated code does not shrink with the part, so a
+    part costs half a whole build whatever it holds -- and packs its jobs into
+    bins by their states. Here every job is built and solved on its own, and a
+    build does shrink with the part (a twelfth of a 10,080-state model built
+    in 0.18 of the whole's time, half of it in 0.46), so a job costs about its
+    share of the states, build and solve alike, and the jobs are packed by that.
+    A plan that weighs -- auto, with nothing measured to decide -- is held to
+    this engine's own formula (``OwnConstants``); against the application's it
+    is compared in everything but the weighing."""
 
     def check(self, name: str, model: Dict[str, Any]) -> None:
         theirs = engine('plan', model=model, opts=OPTIONS)
@@ -278,7 +289,23 @@ class PlanParity(unittest.TestCase):
                                  AUTO_GAIN=app['AUTO_GAIN'], AUTO_GAIN_UNTIMED=app['AUTO_GAIN_UNTIMED']):
             for o, p in zip(OPTIONS, theirs['plans']):
                 mine = plan_view(S.plan_split(system, project, **python_opts(o)))
-                self.assertEqual(mine, app_view(p), f'{name} {o}')
+                app = app_view(p)
+                if p['predicted'] is not None and (o.get('known') or {}).get('gain') is None:
+                    # Weighed, each by its own engine's costs: the same model and
+                    # the same question, and the answer may differ.
+                    self.assertIsNotNone(mine['predicted'], f'{name} {o}')
+                    self.assertEqual((mine['mode'], mine['why'].split(';')[0]), (app['mode'], app['why'].split(';')[0]),
+                                     f'{name} {o}')
+                    continue
+                if app['use']:
+                    # As many workers, each job in one, however they are packed.
+                    for view in (mine, app):
+                        self.assertEqual(sorted(j for b in view.get('bins') or [] for j in b),
+                                         list(range(len(app['jobs']))), f'{name} {o}')
+                    self.assertEqual(len(mine.get('bins') or []), len(app['bins']), f'{name} {o}')
+                    mine.pop('bins', None)
+                    app.pop('bins')
+                self.assertEqual(mine, app, f'{name} {o}')
 
     def test_every_bundled_example(self) -> None:
         for name in EXAMPLES:

@@ -414,13 +414,17 @@ what the report lists; the Guide's *Exporting to Ecolego* says what maps to
 what, what is written in another form (an inflow as a transfer from a source,
 a narrowed transfer with zeros outside its sub-set, an availability folded
 into the rate, a logarithmic output grid as its list of times, a far-field
-path as a sub-system of its cells and the transfers between them) and what is
-left out (waste packages, events, a far-field path that is switched off,
-summed fluxes, blocks on the `Compartments` and `Transfers` lists, the
-double-triangular distributions, correlations and the diagram). A far-field
-path's layers are laid out by the package's engine, as a run lays them out
-at its start, so exporting one needs numpy. The model's author goes out as
-the project's.
+path as a sub-system of its cells and the transfers between them, the
+equations in Ecolego's spelling by `kompartment.io.ecoequation`, which
+translates as the application does, the scenario list as Ecolego's own
+`Scenarios`, and a model with no endpoint list with every block on it) and
+what is left out (waste packages, events, a far-field path that is switched
+off, summed fluxes, blocks on the `Compartments` and `Transfers` lists, calls
+to `percentile()`, the double-triangular distributions, correlations and the
+diagram). The files have been opened and run in Ecolego 6.5 itself, and give
+the numbers a run here gives. A far-field path's layers are laid out by the
+package's engine, as a run lays them out at its start, so exporting one needs
+numpy. The model's author goes out as the project's.
 
 ### Speed
 

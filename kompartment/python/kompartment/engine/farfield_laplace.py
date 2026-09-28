@@ -19,7 +19,10 @@ the method; in short:
   or sums over decay paths of divided differences from Taylor series where
   diagonal entries cluster;
 * inversion along a parabola through the saddle point on the real axis, with
-  Talbot's contour and de Hoog's method as checks; responses tabulated with
+  Talbot's contour and de Hoog's method as checks, nearby times summed from
+  the nodes of one parabola (the shared contours), under plug flow the delay
+  taken out of each member's exponent as it is formed, and sinh-spaced nodes
+  next to a weak singularity; responses tabulated with
   their first two derivatives on adaptive grids, quintic Hermite between
   samples; the exact convolution of a piecewise-linear inflow.
 
@@ -192,7 +195,6 @@ class _DD:
     def __init__(self, nmax: int) -> None:
         self.n = 0
         self.kind = 0
-        self.d = 0j
         self.E = 0.0
         self.t = 0.0
         self.z = [0j] * nmax
@@ -499,13 +501,28 @@ def _tau_scale(path: LaplacePath, z: complex) -> float:
     return sc
 
 
-def _phi_at(path: LaplacePath, g: complex, d: complex) -> complex:
+def _phi_at(path: LaplacePath, g: complex) -> complex:
+    """phi(g); under plug flow -TW g, g then the shifted exponent g - Rmin s
+    wherever the transform has its delay taken out (see :func:`_g_fracture`)."""
     tw = path.tw
     if path.inf_pe:
-        return complex(-tw * (g.real - d.real), -tw * (g.imag - d.imag))
+        return complex(-tw * g.real, -tw * g.imag)
     B = 4 * tw / path.Pe
     S = _csqrt(complex(1 + B * g.real, B * g.imag))
     return _cdiv(complex(-2 * tw * g.real, -2 * tw * g.imag), complex(1 + S.real, S.imag))
+
+
+def _g_fracture(blk: _Block, p: int, sr: float, si: float, d: float) -> complex:
+    """The fracture's part of member p's g at s: Rf_p (s + lambda_p), less d s
+    when the pair's transform has the delay e^(-TW d s) taken out (d = Rmin
+    under plug flow, else 0), formed directly as Rf_p lambda_p + (Rf_p - d) s
+    (``gFracture``): subtracting d s afterwards left the small remainder with
+    the rounding of the large terms."""
+    rf = blk.Rf[p]
+    if d > 0:
+        e = rf - d
+        return complex(rf * blk.lam[p] + e * sr, e * si)
+    return complex((sr + blk.lam[p]) * rf, si * rf)
 
 
 def _h_scale(path: LaplacePath, g: complex) -> float:
@@ -585,11 +602,11 @@ def _tau_series(path: LaplacePath, c: complex, K: int) -> List[complex]:
     return out
 
 
-def _h_series(path: LaplacePath, c: complex, d: complex, E: float, K: int) -> List[complex]:
+def _h_series(path: LaplacePath, c: complex, E: float, K: int) -> List[complex]:
     tw = path.tw
     if path.inf_pe:
         s1 = [0j] * (K + 1)
-        s1[0] = complex(-tw * (c.real - d.real), -tw * (c.imag - d.imag))
+        s1[0] = complex(-tw * c.real, -tw * c.imag)
         if K >= 1:
             s1[1] = complex(-tw, 0.0)
     else:
@@ -598,7 +615,7 @@ def _h_series(path: LaplacePath, c: complex, d: complex, E: float, K: int) -> Li
         s1 = _sqrt_series(complex(1 + B * c.real, B * c.imag), complex(B, 0.0), K)
         for n in range(1, K + 1):
             s1[n] = complex(s1[n].real * -half, s1[n].imag * -half)
-        s1[0] = _phi_at(path, c, d)
+        s1[0] = _phi_at(path, c)
     out = [0j] * (K + 1)
     out[0] = _cexp(complex(s1[0].real + E, s1[0].imag))
     for n in range(1, K + 1):
@@ -648,7 +665,7 @@ def _dd_series(path: LaplacePath, dd: _DD, c: complex, K: int) -> List[complex]:
     if dd.kind == 0:
         return _tau_series(path, c, K)
     if dd.kind == 1:
-        return _h_series(path, c, dd.d, dd.E, K)
+        return _h_series(path, c, dd.E, K)
     return _exp_series(dd.t, c, K)
 
 
@@ -913,8 +930,10 @@ def _eval_block(path: LaplacePath, ws: _Workspace, blk: _Block, s: complex, kind
     m = blk.m
     aw = path.aw
     ws.evaluations += 1
+    # under plug flow T and A^-1 T have their delay e^(-TW Rmin s) taken out:
+    # G's diagonal holds g_p - Rmin s, formed directly (see _g_fracture); the
+    # shift is one for the whole block, so exp(-TW G) is H(G) without it
     delay = blk.Rmin if kind != INVENTORY and path.inf_pe else 0.0
-    d = complex(delay * s.real, delay * s.imag)
     phi_max = -INF
     lam = blk.lam
     Rf = blk.Rf
@@ -922,8 +941,9 @@ def _eval_block(path: LaplacePath, ws: _Workspace, blk: _Block, s: complex, kind
     for p in range(m):
         a = complex(s.real + lam[p], s.imag)
         ws.a[p] = a
-        gr = a.real * Rf[p]
-        gi = a.imag * Rf[p]
+        g0 = _g_fracture(blk, p, s.real, s.imag, delay)
+        gr = g0.real
+        gi = g0.imag
         if blk.matrix:
             fm = blk.Rm[p] / De[p]
             mz = complex(fm * a.real, fm * a.imag)
@@ -934,7 +954,7 @@ def _eval_block(path: LaplacePath, ws: _Workspace, blk: _Block, s: complex, kind
             gi += aw * De[p] * tz.imag
         g = complex(gr, gi)
         ws.g[p] = g
-        ph = _phi_at(path, g, d)
+        ph = _phi_at(path, g)
         if ph.real > phi_max:
             phi_max = ph.real
     E = -phi_max if math.isfinite(phi_max) else 0.0
@@ -961,11 +981,10 @@ def _eval_block(path: LaplacePath, ws: _Workspace, blk: _Block, s: complex, kind
                 for q in range(p):
                     L[p * m + q] = complex(A[p * m + q] * Rf[q], 0.0)
     dd.kind = 1
-    dd.d = d
     dd.E = E
     for p in range(m):
         dd.z[p] = ws.g[p]
-        ph = _phi_at(path, ws.g[p], d)
+        ph = _phi_at(path, ws.g[p])
         dd.f[p] = _cexp(complex(ph.real + E, ph.imag))
     F = ws.F
     _tri_fun(path, ws, m, L, F, NEED_CORNER if kind == RELEASE else NEED_COLUMN)
@@ -1136,27 +1155,38 @@ def _real_axis(path: LaplacePath, ws: _Workspace, pr: Dict[str, Any], t_lo: floa
     x0 = max(abs(s0), 0.0) + 1 / t_hi
     up: List[Tuple[float, float]] = []
     dn: List[Tuple[float, float]] = []
+    def d_of(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+        return -(b[1] - a[1]) / (b[0] - a[0])
+
+    # w = s D + psi(s), D the tilted mean between two points, is the
+    # saddle-point exponent of the response at the time D; it is largest at
+    # s = 0 and falls as s grows: away from s0 the scan goes on until w is
+    # e^-120 below its top, and so to before the response's rising edge (psi
+    # itself may be far below what exp can hold). A psi that is not finite, x
+    # past 1e12/t_lo and 800 points end the scan too.
+    wmax = -INF
     x = x0
     for _ in range(800):
         p = psi_at(s0 + x)
         up.append((s0 + x, p))
-        if p < -900 or x > 1e12 / t_lo:
+        if not math.isfinite(p) or x > 1e12 / t_lo:
             break
+        m = len(up)
+        if m >= 2:
+            a = up[m - 2]
+            b = up[m - 1]
+            w = 0.5 * (a[0] + b[0]) * d_of(a, b) + 0.5 * (a[1] + b[1])
+            if w > wmax:
+                wmax = w
+            if w < wmax - 120:
+                break
         x *= fac
 
-    # Toward s0 the tilted mean D grows without bound. w = s D + psi(s) there
-    # is the Chernoff bound: the part of the response after the time D is at
-    # most e^w (s < 0). The scan stops where that part is negligible, where D
-    # passes 10 t_hi, and where D no longer grows: psi is convex, so a D that
-    # does not grow is rounding next to the singularity.
-    def d_of(a: Tuple[float, float], b: Tuple[float, float]) -> float:
-        return -(b[1] - a[1]) / (b[0] - a[0])
-
-    wmax = -INF
-    for k in range(len(up) - 1):
-        w = 0.5 * (up[k][0] + up[k + 1][0]) * d_of(up[k], up[k + 1]) + 0.5 * (up[k][1] + up[k + 1][1])
-        if w > wmax:
-            wmax = w
+    # Toward s0 the tilted mean D grows without bound. w there is the
+    # Chernoff bound: the part of the response after the time D is at most e^w
+    # (s < 0). The scan stops where that part is negligible, where D passes 10
+    # t_hi, and where D no longer grows: psi is convex, so a D that does not
+    # grow is rounding next to the singularity.
     prev = up[0]
     d_prev = d_of(up[0], up[1]) if len(up) > 1 else 0.0
     x = x0 / fac
@@ -1283,8 +1313,27 @@ def _saddle_at(ax: Dict[str, Any], t: float) -> Optional[Dict[str, Any]]:
     return {'s': ss, 'psi2': psi2, 'w': ss * t + psi, 'edge': False, 'beyond': False}
 
 
+def _sinh(x: float) -> float:
+    """``Math.sinh``: +-Infinity past the largest double, not OverflowError."""
+    try:
+        return math.sinh(x)
+    except OverflowError:
+        return math.copysign(INF, x)
+
+
+def _cosh(x: float) -> float:
+    """``Math.cosh``: Infinity past the largest double, not OverflowError."""
+    try:
+        return math.cosh(x)
+    except OverflowError:
+        return INF
+
+
 def _parabola_term(path: LaplacePath, ws: _Workspace, pr: Dict[str, Any], t: float, ss: float, kappa: float,
-                   Y: float, wgt: float, acc: Dict[str, Any]) -> float:
+                   Y: float, jac: float, wgt: float, acc: Dict[str, Any]) -> float:
+    """One term of the parabola sum at Y, jac = dY/du the node map's Jacobian
+    (1 for uniform nodes) and wgt the trapezoidal weight: adds wgt jac z to
+    acc and returns jac |z| (``parabolaTerm``)."""
     sr = ss - kappa * Y * Y
     si = Y
     F = _eval_block(path, ws, pr['blk'], complex(sr, si), pr['kind'])
@@ -1300,33 +1349,37 @@ def _parabola_term(path: LaplacePath, ws: _Workspace, pr: Dict[str, Any], t: flo
     q = 2 * kappa * Y
     zr = ar - ai * q
     zi = ai + ar * q
-    acc['h'] += wgt * zr
+    w = wgt * jac
+    acc['h'] += w * zr
     yr = sr * zr - si * zi
     yi = sr * zi + si * zr
-    acc['dh'] += wgt * yr
-    acc['d2'] += wgt * (sr * yr - si * yi)
+    acc['dh'] += w * yr
+    acc['d2'] += w * (sr * yr - si * yi)
     mod = math.hypot(zr, zi)
-    acc['abs'] += wgt * mod
-    return mod
+    acc['abs'] += w * mod
+    return jac * mod
 
 
 def _parabola_sweep(path: LaplacePath, ws: _Workspace, pr: Dict[str, Any], t: float, ss: float, kappa: float,
-                    step: float, off: float, acc: Dict[str, Any]) -> None:
-    """Trapezoidal sum over Y = off, off + 2 step, ... until the terms die
-    out; terms that grow back after they have fallen away set `regrow` (the
-    envelope is the largest of the last seven terms), and a sum out of nodes
-    or budget before the terms died out is `cut` short."""
+                    step: float, off: float, acc: Dict[str, Any], c: float = 0.0) -> None:
+    """Trapezoidal sum over u = off, off + 2 step, ... until the terms die
+    out, the nodes Y = u or, with c > 0, Y = c sinh(u); terms that grow back
+    after they have fallen away set `regrow` (the envelope is the largest of
+    the last seven terms), and a sum out of nodes or budget before the terms
+    died out is `cut` short."""
     max_mod = 0.0
     min_env = INF
     small = 0
     last = [0.0] * 7
     for k in range(20000):
-        Y = off + k * (2 * step if off else step)
-        if Y == 0:
-            m0 = _parabola_term(path, ws, pr, t, ss, kappa, 0.0, 0.5, acc)
+        u = off + k * (2 * step if off else step)
+        Y = c * _sinh(u) if c > 0 else u
+        jac = c * _cosh(u) if c > 0 else 1.0
+        if u == 0:
+            m0 = _parabola_term(path, ws, pr, t, ss, kappa, 0.0, jac, 0.5, acc)
             max_mod = max(max_mod, m0)
             continue
-        m = _parabola_term(path, ws, pr, t, ss, kappa, Y, 1.0, acc)
+        m = _parabola_term(path, ws, pr, t, ss, kappa, Y, jac, 1.0, acc)
         if k > 3 and (m > 100 * max_mod or (min_env < 1e-6 * max_mod and m > 1e-3 * max_mod)):
             acc['regrow'] = True
             break
@@ -1368,14 +1421,15 @@ def _ln_hk(path: LaplacePath, blk: _Block, p: int, sr: float, si: float, rfc: fl
     """ln |H(g_p(s))|, the size of member p's own transform at s, with the
     delay e^(-TW rfc s) taken out as the pair's transform has it."""
     lam = blk.lam[p]
-    gr = blk.Rf[p] * (sr + lam)
-    gi = blk.Rf[p] * si
+    g0 = _g_fracture(blk, p, sr, si, rfc)
+    gr = g0.real
+    gi = g0.imag
     if blk.matrix:
         fm = blk.Rm[p] / blk.De[p]
         tz = _tau_at(path, complex(fm * (sr + lam), fm * si))
         gr += path.aw * blk.De[p] * tz.real
         gi += path.aw * blk.De[p] * tz.imag
-    return _phi_at(path, complex(gr, gi), complex(rfc * sr, rfc * si)).real
+    return _phi_at(path, complex(gr, gi)).real
 
 
 def _clears_ridge(path: LaplacePath, blk: _Block, v: float, t: float, kappa: float, lev: List[float],
@@ -1400,25 +1454,31 @@ def _clears_ridge(path: LaplacePath, blk: _Block, v: float, t: float, kappa: flo
 
 
 def _path_frequency(path: LaplacePath, blk: _Block, v: float, t: float, kappa: float, floor: float,
-                    rfc: float) -> float:
+                    rfc: float, t2: Optional[float] = None, c: float = 0.0) -> Tuple[float, float]:
     """How fast, at most, the phase of any member's own transform times e^(st)
     turns along the parabola (per unit Y), over the stretch where its size is
-    above e^floor (``pathFrequency``): the trapezoidal step must follow it."""
+    above e^floor (``pathFrequency``): the trapezoidal step must follow it.
+    With t2, the larger of the rates at t and t2 (the rate is linear in t).
+    Returns (the rate per unit Y, and with c > 0 the rate per unit u of sinh
+    nodes Y = c sinh(u), else 0); rfc the delay the transform has taken out."""
     ymax = math.sqrt(max(0.0, (t * v - floor + (40 if path.inf_pe else path.Pe / 2 + 40)) / (t * kappa)))
     wmax = 0.0
+    wmax_u = 0.0
     for q in range(97):
         Y = ymax * q / 96
         sr = v - kappa * Y * Y
         si = Y
         for p in range(blk.m):
             zr0 = sr + blk.lam[p]
-            gr = blk.Rf[p] * zr0
-            gi = blk.Rf[p] * si
-            dgr = blk.Rf[p]
+            # g (under plug flow g - rfc s, see _g_fracture) and dg/ds
+            g0 = _g_fracture(blk, p, sr, si, rfc)
+            gr = g0.real
+            gi = g0.imag
+            dgr = blk.Rf[p] - rfc if path.inf_pe else blk.Rf[p]
             dgi = 0.0
             if blk.matrix:
                 f = blk.Rm[p] / blk.De[p]
-                c = path.aw * blk.De[p]
+                aw_de = path.aw * blk.De[p]
                 u = _csqrt(complex(f * zr0, f * si))
                 tr, ti = u.real, u.imag
                 hh = _cdiv(complex(0.5, 0.0), u)
@@ -1431,15 +1491,17 @@ def _path_frequency(path: LaplacePath, blk: _Block, v: float, t: float, kappa: f
                     se = _csech2(complex(path.x0 * u.real, path.x0 * u.imag))
                     dr = th.real * hh.real - th.imag * hh.imag + 0.5 * path.x0 * se.real
                     di = th.real * hh.imag + th.imag * hh.real + 0.5 * path.x0 * se.imag
-                gr += c * tr
-                gi += c * ti
-                dgr += c * f * dr
-                dgi += c * f * di
-            ph = _phi_at(path, complex(gr, gi), complex(rfc * sr, rfc * si))
+                gr += aw_de * tr
+                gi += aw_de * ti
+                dgr += aw_de * f * dr
+                dgi += aw_de * f * di
+            ph = _phi_at(path, complex(gr, gi))
             if t * sr + ph.real < floor:
                 continue
+            # phi'(s) = dphi/dg g'(s), or -TW g'(s) under plug flow (g' then
+            # the derivative of g - rfc s)
             if path.inf_pe:
-                pr_ = -path.tw * (dgr - rfc)
+                pr_ = -path.tw * dgr
                 pi_ = -path.tw * dgi
             else:
                 B = 4 * path.tw / path.Pe
@@ -1448,9 +1510,15 @@ def _path_frequency(path: LaplacePath, blk: _Block, v: float, t: float, kappa: f
                 pr_ = q_.real * dgr - q_.imag * dgi
                 pi_ = q_.real * dgi + q_.imag * dgr
             w = abs((t + pr_) - 2 * kappa * Y * pi_)
+            if t2 is not None:
+                w = max(w, abs((t2 + pr_) - 2 * kappa * Y * pi_))
             if w > wmax:
                 wmax = w
-    return wmax
+            if c > 0:
+                wu = w * math.sqrt(c * c + Y * Y)
+                if wu > wmax_u:
+                    wmax_u = wu
+    return wmax, wmax_u
 
 
 def _zero(**extra: Any) -> Dict[str, Any]:
@@ -1464,6 +1532,52 @@ def _new_acc(stop: float = INF) -> Dict[str, Any]:
 
 
 VERTEX_BETA = 1.5
+
+
+def _parabola_vertex(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: float,
+                     sad: Dict[str, Any]) -> Tuple[float, Optional[Dict[str, float]], float]:
+    """The vertex of the parabola for time tt (``parabolaVertex``): the saddle
+    from the table, at least 1.5/tt right of s0, polished by Newton's method
+    on D(v) = tt -- except K's, which stays where the scan put it. Returns
+    (v, the local axis at v or None for K, psi'')."""
+    v_min = ax['s0'] + VERTEX_BETA / tt
+    v = max(sad['s'], v_min)
+    loc = None
+    psi2 = NAN
+    if ax['pr']['kind'] != INVENTORY:
+        # the differences on the scale of the saddle's own width
+        scale = min(1 / tt, 1 / math.sqrt(sad['psi2']) if math.isfinite(sad['psi2']) and sad['psi2'] > 0 else INF)
+        loc = _local_axis(path, ws, ax, v, scale)
+        for _ in range(3):
+            if not (v > v_min and loc['psi2'] > 0 and abs(loc['D'] - tt) > 0.5 * math.sqrt(loc['psi2'])):
+                break
+            vn = max(v + (loc['D'] - tt) / loc['psi2'], v_min)
+            ln = _local_axis(path, ws, ax, vn, scale)
+            if not abs(ln['D'] - tt) < abs(loc['D'] - tt) or not ln['psi2'] > 0:
+                break
+            v = vn
+            loc = ln
+        psi2 = loc['psi2']
+    if not psi2 > 0 or not math.isfinite(psi2):
+        psi2 = sad['psi2'] if math.isfinite(sad['psi2']) and sad['psi2'] > 0 else tt * tt
+    return v, loc, psi2
+
+
+def _flatten_for_ridge(path: LaplacePath, blk: _Block, v: float, t: float, wv: float, kappa: float,
+                       rfc: float) -> float:
+    """kappa, divided by 4 until no member's own transform times e^(st) grows
+    along the parabola at time t (``flattenForRidge``); wv = t v + psi(v)."""
+    m = blk.m
+    lev = [0.0] * m
+    lev_min = INF
+    for p in range(m):
+        lev[p] = max(t * v + _ln_hk(path, blk, p, v, 0.0, rfc), wv) + 2
+        lev_min = min(lev_min, lev[p])
+    for _ in range(16):
+        if _clears_ridge(path, blk, v, t, kappa, lev, lev_min, rfc):
+            break
+        kappa /= 4
+    return kappa
 
 
 def _invert_parabola(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], t: float,
@@ -1484,49 +1598,29 @@ def _invert_parabola(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], t: f
     if sad is None or sad['beyond'] or sad['w'] < -720:
         return _zero(negligible=True)
     n0 = ws.evaluations
-    v_min = ax['s0'] + VERTEX_BETA / tt
-    v = max(sad['s'], v_min)
-    psi2 = NAN
-    wv = sad['w']
-    omega = 0.0
-    # K's removable points s = -lambda would spoil the differences
-    if pr['kind'] != INVENTORY:
-        # the differences on the scale of the saddle's own width
-        scale = min(1 / tt, 1 / math.sqrt(sad['psi2']) if math.isfinite(sad['psi2']) and sad['psi2'] > 0 else INF)
-        loc = _local_axis(path, ws, ax, v, scale)
-        for _ in range(3):
-            if not (v > v_min and loc['psi2'] > 0 and abs(loc['D'] - tt) > 0.5 * math.sqrt(loc['psi2'])):
-                break
-            vn = max(v + (loc['D'] - tt) / loc['psi2'], v_min)
-            ln = _local_axis(path, ws, ax, vn, scale)
-            if not abs(ln['D'] - tt) < abs(loc['D'] - tt) or not ln['psi2'] > 0:
-                break
-            v = vn
-            loc = ln
-        psi2 = loc['psi2']
-        if math.isfinite(loc['psi']):
-            wv = tt * v + loc['psi']
-        omega = abs(tt - loc['D']) if math.isfinite(loc['D']) else 0.0
-    if not psi2 > 0 or not math.isfinite(psi2):
-        psi2 = sad['psi2'] if math.isfinite(sad['psi2']) and sad['psi2'] > 0 else tt * tt
+    # K's removable points s = -lambda would spoil the differences: its vertex
+    # stays where the scan put it
+    v, loc, psi2 = _parabola_vertex(path, ws, ax, tt, sad)
+    wv = tt * v + loc['psi'] if loc is not None and math.isfinite(loc['psi']) else sad['w']
+    omega = abs(tt - loc['D']) if loc is not None and math.isfinite(loc['D']) else 0.0
     kappa = max(psi2 / (2 * tt), 0.25 / (v - ax['s0']))
     # the delay the pair's transform has taken out (under plug flow)
     rfc = pr['blk'].Rmin if pr['shift'] > 0 else 0.0
     if not path.inf_pe or not path.inf_x0:
-        m = pr['blk'].m
-        lev = [0.0] * m
-        lev_min = INF
-        for p in range(m):
-            lev[p] = max(tt * v + _ln_hk(path, pr['blk'], p, v, 0.0, rfc), wv) + 2
-            lev_min = min(lev_min, lev[p])
-        for _ in range(16):
-            if _clears_ridge(path, pr['blk'], v, tt, kappa, lev, lev_min, rfc):
-                break
-            kappa /= 4
+        kappa = _flatten_for_ridge(path, pr['blk'], v, tt, wv, kappa, rfc)
     res: Dict[str, Any] = {}
     for _ in range(4):
-        w_path = omega if path.inf_pe else max(omega, _path_frequency(path, pr['blk'], v, tt, kappa, wv - 25, rfc))
-        res = _parabola_sums(path, ws, ax, tt, v, kappa, psi2, w_path, rtol, atol, n0 + max_eval)
+        strip = _parabola_strip(ax, v, kappa)
+        psi2e = _path_curvature(psi2, tt, loc['D'] if loc is not None else NAN, kappa)
+        # the phase rates per unit Y and per unit u of sinh nodes: the
+        # answer's |t - D(v)| and the members' own (pathFrequency), under
+        # plug flow as well
+        w_y, rate_u = _path_frequency(path, pr['blk'], v, tt, kappa, wv - 25, rfc, None, strip)
+        w_y = max(omega, w_y)
+        w_u = max(omega * math.sqrt(strip * strip + 50 / psi2e), rate_u)
+        c = _node_scale(strip, psi2e, 1.5 * PI / math.sqrt(18.5 * psi2), w_y, w_u)
+        res = _parabola_sums(path, ws, ax, tt, v, kappa, psi2, w_u if c > 0 else w_y, rtol, atol, n0 + max_eval,
+                             strip, c)
         if not res.get('regrow'):
             break
         kappa /= 8
@@ -1536,12 +1630,9 @@ def _invert_parabola(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], t: f
     return res
 
 
-def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: float, v: float, kappa: float,
-                   psi2: float, omega: float, rtol: float, atol: float, stop: float) -> Dict[str, Any]:
-    pr = ax['pr']
-    step = 1.5 * PI / math.sqrt(18.5 * psi2)
-    if omega > 0:
-        step = min(step, 0.5 * PI / omega)
+def _parabola_strip(ax: Dict[str, Any], v: float, kappa: float) -> float:
+    """The half-width of the strip of analyticity about the real Y axis along
+    the parabola through v (``parabolaStrip``)."""
     dist = v - ax['s0']
     strip = INF
     if dist > 0 and math.isfinite(dist):
@@ -1553,10 +1644,58 @@ def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: fl
             strip = (1 - math.sqrt(1 - 4 * kappa * dist)) / (2 * kappa)
     if not strip > 0:
         strip = dist if dist > 0 else INF
-    step = min(step, 0.5 * strip)
-    ss = _off_lambda(pr['blk'], v, 0.25 * step) if pr['kind'] == INVENTORY else v
+    return strip
+
+
+def _path_curvature(psi2: float, t: float, dv: float, kappa: float) -> float:
+    """The curvature of the integrand's Gaussian in Y at time t: psi'' at the
+    saddle, and more for a vertex held right of it (``pathCurvature``)."""
+    return psi2 + 2 * max(0.0, t - dv if math.isfinite(dv) else 0.0) * kappa
+
+
+SINH_RATIO = 0.1  # sinh nodes only where the strip is below this times the Gaussian's width
+SINH_STEP = 0.3  # the first step in u of sinh nodes
+
+
+def _node_scale(strip: float, psi2e: float, gauss_step: float, w_y: float, w_u: float) -> float:
+    """The node map of the sums along a parabola (``nodeScale``): 0 for
+    uniform nodes, or c = strip for Y = c sinh(u) where the strip of
+    analyticity is below a tenth of the Gaussian's width, sets the uniform
+    step, and sinh nodes reach the end of the Gaussian in fewer nodes."""
+    if not psi2e > 0 or not strip * math.sqrt(psi2e) < SINH_RATIO:
+        return 0.0
+    step_y = min(gauss_step, 0.5 * PI / w_y if w_y > 0 else INF)
+    if not 0.5 * strip < step_y:
+        return 0.0
+    reach = math.sqrt(83 / psi2e)
+    n_y = reach / (0.5 * strip)
+    n_u = math.asinh(reach / strip) / _sinh_step(strip, gauss_step, w_u)
+    return strip if n_u < n_y else 0.0
+
+
+def _sinh_step(c: float, gauss_step: float, w_u: float) -> float:
+    """The first step in u of sinh nodes (``sinhStep``)."""
+    return min(SINH_STEP, 0.5 * PI / w_u if w_u > 0 else INF, gauss_step / c)
+
+
+def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: float, v: float, kappa: float,
+                   psi2: float, omega: float, rtol: float, atol: float, stop: float, strip: float,
+                   c: float = 0.0) -> Dict[str, Any]:
+    pr = ax['pr']
+    if c > 0:
+        # sinh nodes: the strip in u is pi/4
+        strip_u = PI / 4
+        step = _sinh_step(c, 1.5 * PI / math.sqrt(18.5 * psi2), omega)
+    else:
+        step = 1.5 * PI / math.sqrt(18.5 * psi2)
+        if omega > 0:
+            step = min(step, 0.5 * PI / omega)
+        strip_u = strip
+        step = min(step, 0.5 * strip)
+    # K's node on the real axis a quarter step clear of s = -lambda
+    ss = _off_lambda(pr['blk'], v, 0.25 * (c * step if c > 0 else step)) if pr['kind'] == INVENTORY else v
     acc = _new_acc(stop)
-    _parabola_sweep(path, ws, pr, tt, ss, kappa, step, 0.0, acc)
+    _parabola_sweep(path, ws, pr, tt, ss, kappa, step, 0.0, acc, c)
     if acc['regrow']:
         return {'regrow': True}
     h = acc['h'] * step / PI
@@ -1569,7 +1708,7 @@ def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: fl
             break
         half = step / 2
         a2 = _new_acc(stop)
-        _parabola_sweep(path, ws, pr, tt, ss, kappa, half, half, a2)
+        _parabola_sweep(path, ws, pr, tt, ss, kappa, half, half, a2, c)
         if a2['regrow']:
             return {'regrow': True}
         if a2['bad']:
@@ -1589,12 +1728,12 @@ def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: fl
         d2 = acc['d2'] * step / PI
         floor = 1e-15 * acc['abs'] * step / PI + atol
         rel = err / max(abs(h), 1e-300)
-        edge = 2 * _exp(-2 * PI * strip / step) if math.isfinite(strip) else 0.0
+        edge = 2 * _exp(-2 * PI * strip_u / step) if math.isfinite(strip_u) else 0.0
         nxt = max(rel * rel, edge)
-        # under plug flow two agreements in a row (the step does not follow
-        # the phase along the path there)
+        # under plug flow two agreements in a row (a finite matrix puts an
+        # essential singularity at every pole of tanh, with a ridge beside it)
         ok = err <= floor or (level >= 1 and err <= rtol * abs(h) and nxt <= rtol) or (
-            step <= 0.3 * strip and nxt <= rtol * 1e-2)
+            not c > 0 and step <= 0.3 * strip_u and nxt <= rtol * 1e-2)
         agreed = agreed + 1 if ok else 0
         if ok and (agreed >= 2 or not path.inf_pe):
             err = min(err, nxt * abs(h) + floor)
@@ -1605,7 +1744,507 @@ def _parabola_sums(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], tt: fl
     # a sum cut short can agree with the next one and still be wrong
     if acc['cut']:
         err = INF
-    return {'h': h, 'dh': dh, 'd2': d2, 'err': err, 'cond': cond, 's': ss, 'kappa': kappa}
+    return {'h': h, 'dh': dh, 'd2': d2, 'err': err, 'cond': cond, 's': ss, 'kappa': kappa, 'c': c}
+
+
+# ---------------------------------------------------------------------------
+# Shared contours: one parabola for the times of a cell
+#
+# The nodes of one parabola give the response at any time near its own from
+# the same values of the transform, only e^(st) changing. The times of each
+# axis are divided into cells on a lattice in ln t taken from its real-axis
+# table alone (at most two tilted standard deviations and a factor 2 either
+# side of a cell's middle), so that a time's value does not depend on which
+# times were asked for before it; each cell has one parabola, made valid for
+# all its times and held to the tests of the single parabola at five probe
+# times across it, and a time it cannot serve gets a parabola of its own. See
+# the application's ``makeCells``, whose decisions these are.
+# ---------------------------------------------------------------------------
+
+CELL_C = 2  # a cell spans at most 2 tilted standard deviations either side
+CELL_F = 2  # and at most a factor 2 either side
+CELL_PROBES = (-0.5, -0.25, 0.0, 0.25, 0.5)  # the probe times, in u about the cell's middle
+CELL_COND = 1e6  # the largest sum of moduli over the answer a shared time may have
+CELL_PRUNE = 1e-20  # nodes below this times the vertex's term at both ends are dropped
+CELL_NEGLIGIBLE = 1e-20  # terms below this times the response's peak need no condition
+CELL_MAX_EVAL = 24000  # the evaluations a cell may take: four times a single time's budget
+CELL_SLOPE = 1 / (2 * math.log(CELL_F))  # du/d ln t where the factor rules
+LN_PRUNE = math.log(CELL_PRUNE)
+LN2 = math.log(2)
+
+
+def _ln(x: float) -> float:
+    """``Math.log``: -Infinity at zero and NaN below it, not ValueError."""
+    if x > 0:
+        return math.log(x)
+    return -INF if x == 0 else NAN
+
+
+def _cell_span(t1: float, t2: float, sig: float) -> float:
+    """The part of u over [t1, t2] within one interval of the table."""
+    if not sig > 0 or not math.isfinite(sig):
+        return CELL_SLOPE * math.log(t2 / t1)
+    tk = CELL_C * sig / math.log(CELL_F)
+    if t2 <= tk:
+        return CELL_SLOPE * math.log(t2 / t1)
+    if t1 >= tk:
+        return (t2 - t1) / (2 * CELL_C * sig)
+    return CELL_SLOPE * math.log(tk / t1) + (t2 - tk) / (2 * CELL_C * sig)
+
+
+def _cell_u(C: Dict[str, Any], tt: float) -> float:
+    """u at time tt (the time less the plug-flow delay)."""
+    tb = C['tb']
+    nb = len(tb)
+    if not nb:
+        return CELL_SLOPE * math.log(tt)
+    if tt <= tb[0]:
+        return CELL_SLOPE * math.log(tt / tb[0])
+    if tt >= tb[nb - 1]:
+        return C['U'][nb - 1] + CELL_SLOPE * math.log(tt / tb[nb - 1])
+    lo = 0
+    hi = nb - 1
+    while hi - lo > 1:
+        c = (lo + hi) >> 1
+        if tb[c] <= tt:
+            lo = c
+        else:
+            hi = c
+    return C['U'][lo] + _cell_span(tb[lo], tt, C['sig'][lo])
+
+
+def _cell_t(C: Dict[str, Any], u: float) -> float:
+    """The time tt at u, the inverse of :func:`_cell_u`."""
+    tb = C['tb']
+    nb = len(tb)
+    U = C['U']
+    if not nb:
+        return _exp(u / CELL_SLOPE)
+    if u <= 0:
+        return tb[0] * _exp(u / CELL_SLOPE)
+    if u >= U[nb - 1]:
+        return tb[nb - 1] * _exp((u - U[nb - 1]) / CELL_SLOPE)
+    lo = 0
+    hi = nb - 1
+    while hi - lo > 1:
+        c = (lo + hi) >> 1
+        if U[c] <= u:
+            lo = c
+        else:
+            hi = c
+    t1 = tb[lo]
+    sig = C['sig'][lo]
+    du = u - U[lo]
+    if not sig > 0 or not math.isfinite(sig):
+        return t1 * _exp(du / CELL_SLOPE)
+    tk = CELL_C * sig / math.log(CELL_F)
+    if t1 >= tk:
+        return t1 + du * 2 * CELL_C * sig
+    uk = CELL_SLOPE * math.log(tk / t1)
+    return t1 * _exp(du / CELL_SLOPE) if du <= uk else tk + (du - uk) * 2 * CELL_C * sig
+
+
+def _make_cells(path: LaplacePath, ax: Dict[str, Any], opt: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The cells of one axis, built as times ask for them (``makeCells``):
+    opt ``rtol`` (1e-11), ``atol`` (0), ``peak`` (from the table when left
+    out) and ``maxEval``; ``stats`` counts the times served by their cell,
+    those that fell back to their own parabola, those negligible by the
+    saddle rule, the cells built and those that failed, and the times whose own
+    parabola failed too and that went on to de Hoog's method."""
+    opt = opt or {}
+    # the tilted means of the table, falling, as _saddle_at reads them; the
+    # lattice's anchor u = 0 is the earliest of them
+    D = ax['D']
+    sm = ax['sm']
+    tb: List[float] = []
+    sb: List[float] = []
+    last = INF
+    for k in range(len(D)):
+        d = D[k]
+        if not math.isfinite(d):
+            if tb:
+                break
+            continue
+        if not d > 0 or not d < last:
+            continue
+        tb.append(d)
+        sb.append(sm[k])
+        last = d
+    tb.reverse()
+    sb.reverse()
+    nb = len(tb)
+    U = [0.0] * nb
+    sig = [0.0] * max(0, nb - 1)
+    for m in range(nb - 1):
+        den = sb[m] - sb[m + 1]
+        psi2 = (tb[m + 1] - tb[m]) / den if den != 0 else NAN
+        sig[m] = math.sqrt(psi2) if psi2 > 0 and math.isfinite(psi2) else NAN
+        U[m + 1] = U[m] + _cell_span(tb[m], tb[m + 1], sig[m])
+    peak = opt.get('peak') or 0.0
+    if not peak > 0:
+        lp = -INF
+        for t in tb:
+            lp = max(lp, _log_estimate(ax, t + ax['pr']['shift']))
+        peak = _exp(lp) if math.isfinite(lp) else 0.0
+    return {'ax': ax, 'tb': tb, 'U': U, 'sig': sig, 'map': {}, 'peak': peak, 'infPe': path.inf_pe,
+            'rtol': opt.get('rtol') or 1e-11, 'atol': opt.get('atol') or 0.0,
+            'maxEval': opt.get('maxEval') or CELL_MAX_EVAL,
+            'stats': {'shared': 0, 'fallback': 0, 'negligible': 0, 'cells': 0, 'failed': 0, 'dehoog': 0},
+            'pt': [0.0] * len(CELL_PROBES)}
+
+
+def _cell_sweep(path: LaplacePath, ws: _Workspace, C: Dict[str, Any], ss: float, kappa: float, step: float,
+                off: float, level: int, acc: Dict[str, Any], nodes: Dict[str, List[float]], c: float = 0.0) -> None:
+    """One trapezoidal sweep of a cell's parabola with the terms of every
+    probe time (``cellSweep``): it stops when they have died out at all of
+    them, and a regrowth at any one is a regrowth. The nodes are appended
+    with their level, each as s and the weighted factor T(s) (1 + 2 i kappa Y)
+    of its term, scaled by e^E."""
+    pr = C['ax']['pr']
+    blk = pr['blk']
+    kind = pr['kind']
+    P = C['pt']
+    npr = len(P)
+    ah = acc['h']
+    aa = acc['abs']
+    mods = [0.0] * npr
+    max_mod = [0.0] * npr
+    min_env = [INF] * npr
+    small = [0] * npr
+    last = [0.0] * (7 * npr)
+    n_sr = nodes['sr']
+    n_si = nodes['si']
+    n_gr = nodes['gr']
+    n_gi = nodes['gi']
+    n_e = nodes['E']
+    n_lev = nodes['lev']
+    for k in range(20000):
+        u = off + k * (2 * step if off else step)
+        Y = c * _sinh(u) if c > 0 else u
+        jac = c * _cosh(u) if c > 0 else 1.0
+        wgt = 0.5 if u == 0 else 1.0
+        w = wgt * jac
+        sr = ss - kappa * Y * Y
+        si = Y
+        F = _eval_block(path, ws, blk, complex(sr, si), kind)
+        Fr = F.real
+        Fi = F.imag
+        E = ws.E
+        q = 2 * kappa * Y
+        gr = w * (Fr - Fi * q)
+        gi = w * (Fi + Fr * q)
+        n_sr.append(sr)
+        n_si.append(si)
+        n_gr.append(gr)
+        n_gi.append(gi)
+        n_e.append(E)
+        n_lev.append(level)
+        for p in range(npr):
+            t = P[p]
+            ex = t * sr - E
+            m = 0.0
+            if ex > 700:
+                acc['bad'] = True
+                m = INF
+            elif not (ex < -740 or (Fr == 0 and Fi == 0)):
+                e = _cexp(complex(ex, t * si))
+                zr = e.real * gr - e.imag * gi
+                zi = e.real * gi + e.imag * gr
+                ah[p] += zr
+                m = math.hypot(zr, zi)
+                aa[p] += m
+                m /= wgt
+            mods[p] = m
+        if u == 0:
+            for p in range(npr):
+                max_mod[p] = max(max_mod[p], mods[p])
+            continue
+        dead = k > 3
+        for p in range(npr):
+            m = mods[p]
+            if k > 3 and (m > 100 * max_mod[p] or (min_env[p] < 1e-6 * max_mod[p] and m > 1e-3 * max_mod[p])):
+                acc['regrow'] = True
+                return
+            if m > max_mod[p]:
+                max_mod[p] = m
+            last[7 * p + k % 7] = m
+            if k >= 7:
+                env = 0.0
+                for r in range(7 * p, 7 * p + 7):
+                    if last[r] > env:
+                        env = last[r]
+                if env < min_env[p]:
+                    min_env[p] = env
+            if m <= 1e-18 * max_mod[p]:
+                small[p] += 1
+            else:
+                small[p] = 0
+            if small[p] < 3:
+                dead = False
+        if dead:
+            return
+        if acc['bad']:
+            return
+        if ws.evaluations > acc['stop']:
+            break
+    # out of nodes or budget before the terms died out: the sum is cut short
+    acc['cut'] = True
+
+
+def _cell_sums(path: LaplacePath, ws: _Workspace, C: Dict[str, Any], v: float, kappa: float, psi2: float,
+               omega: float, stop: float, strip: float, c: float = 0.0) -> Dict[str, Any]:
+    """The sums of a cell's parabola: those of :func:`_parabola_sums`, at every
+    probe time (``cellSums``); step and strip in the node variable."""
+    pr = C['ax']['pr']
+    npr = len(C['pt'])
+    rtol = C['rtol']
+    # the step for the narrowest Gaussian and the fastest phase of the cell
+    if c > 0:
+        strip_u = PI / 4
+        step = _sinh_step(c, 1.5 * PI / math.sqrt(18.5 * psi2), omega)
+    else:
+        step = 1.5 * PI / math.sqrt(18.5 * psi2)
+        if omega > 0:
+            step = min(step, 0.5 * PI / omega)
+        strip_u = strip
+        step = min(step, 0.5 * strip)
+    # K's node on the real axis a quarter step clear of s = -lambda
+    ss = _off_lambda(pr['blk'], v, 0.25 * (c * step if c > 0 else step)) if pr['kind'] == INVENTORY else v
+    acc: Dict[str, Any] = {'h': [0.0] * npr, 'abs': [0.0] * npr, 'bad': False, 'regrow': False, 'cut': False,
+                           'stop': stop}
+    nodes: Dict[str, List[float]] = {'sr': [], 'si': [], 'gr': [], 'gi': [], 'E': [], 'lev': []}
+    _cell_sweep(path, ws, C, ss, kappa, step, 0.0, 0, acc, nodes, c)
+    if acc['regrow']:
+        return {'regrow': True}
+    if acc['bad'] or acc['cut']:
+        return {'ok': False, 'why': 'overflow' if acc['bad'] else 'cut short'}
+    h = [x * step / PI for x in acc['h']]
+    agreed = 0
+    for level in range(12):
+        if ws.evaluations > stop:
+            break
+        half = step / 2
+        _cell_sweep(path, ws, C, ss, kappa, half, half, level + 1, acc, nodes, c)
+        if acc['regrow']:
+            return {'regrow': True}
+        if acc['bad'] or acc['cut']:
+            return {'ok': False, 'why': 'overflow' if acc['bad'] else 'cut short'}
+        step = half
+        edge = 2 * _exp(-2 * PI * strip_u / step) if math.isfinite(strip_u) else 0.0
+        every = True
+        for p in range(npr):
+            h2 = acc['h'][p] * step / PI
+            err = abs(h2 - h[p])
+            h[p] = h2
+            floor = 1e-15 * acc['abs'][p] * step / PI + C['atol']
+            rel = err / max(abs(h2), 1e-300)
+            nxt = max(rel * rel, edge)
+            if not (err <= floor or (level >= 1 and err <= rtol * abs(h2) and nxt <= rtol) or (
+                    not c > 0 and step <= 0.3 * strip_u and nxt <= rtol * 1e-2)):
+                every = False
+        agreed = agreed + 1 if every else 0
+        if every and (agreed >= 2 or not path.inf_pe):
+            return {'ok': True, 'step': step, 'levels': level + 1, 'strip': strip_u, 'c': c, 'ss': ss,
+                    'nodes': nodes}
+    return {'ok': False, 'why': 'budget' if ws.evaluations > stop else 'no agreement'}
+
+
+def _build_cell(path: LaplacePath, ws: _Workspace, C: Dict[str, Any], k: float) -> Dict[str, Any]:
+    """Cell k: its parabola, built and summed at its probe times, and its
+    nodes, the negligible ones dropped (``buildCell``); ``ok`` False when it
+    cannot serve."""
+    ax = C['ax']
+    pr = ax['pr']
+    t_a = _cell_t(C, k)
+    t_lo = _cell_t(C, k - 0.5)
+    t_hi = _cell_t(C, k + 0.5)
+
+    def fail(why: str) -> Dict[str, Any]:
+        return {'ok': False, 'k': k, 'tLo': t_lo, 'tA': t_a, 'tHi': t_hi, 'why': why}
+
+    if not t_lo > 0 or not t_a > t_lo or not t_hi > t_a or not math.isfinite(t_hi):
+        return fail('lattice')
+    sad = _saddle_at(ax, t_a)
+    if sad is None or sad['beyond'] or sad['w'] < -720:
+        return fail('negligible')
+    n0 = ws.evaluations
+    v, loc, psi2 = _parabola_vertex(path, ws, ax, t_a, sad)
+    # psi(v) and the tilted mean D(v); K's vertex is the scan's saddle for the
+    # middle time, as the single parabola takes it
+    psi_v = sad['w'] - t_a * v
+    d_v = t_a
+    if loc is not None:
+        if not math.isfinite(loc['psi']) or not math.isfinite(loc['D']):
+            return fail('axis')
+        psi_v = loc['psi']
+        d_v = loc['D']
+    # the phase turns at |t - D(v)| at the vertex: the larger of the two ends
+    omega = max(abs(t_lo - d_v), abs(t_hi - d_v))
+    kappa = max(psi2 / (2 * t_a), 0.25 / (v - ax['s0']))
+    rfc = pr['blk'].Rmin if pr['shift'] > 0 else 0.0
+    # the ridge at the earliest time: t (Re s - v) is largest there
+    if not path.inf_pe or not path.inf_x0:
+        kappa = _flatten_for_ridge(path, pr['blk'], v, t_lo, t_lo * v + psi_v, kappa, rfc)
+    C['pt'] = [_cell_t(C, k + p) for p in CELL_PROBES]
+    res: Dict[str, Any] = {}
+    for _ in range(4):
+        # the phase rates and the node map as for a single time, the widest
+        # Gaussian (earliest time) for the stretch and the narrowest (latest)
+        # for the step; the members' own rates under plug flow as well
+        strip = _parabola_strip(ax, v, kappa)
+        psi2lo = max(psi2 * t_lo / t_a, psi2 + 2 * (t_lo - d_v) * kappa)
+        psi2hi = psi2 * t_hi / t_a
+        w_y, rate_u = _path_frequency(path, pr['blk'], v, t_lo, kappa, t_lo * v + psi_v - 25, rfc, t_hi, strip)
+        w_y = max(omega, w_y)
+        w_u = max(omega * math.sqrt(strip * strip + 50 / psi2lo), rate_u)
+        c = _node_scale(strip, psi2lo, 1.5 * PI / math.sqrt(18.5 * psi2hi), w_y, w_u)
+        res = _cell_sums(path, ws, C, v, kappa, psi2hi, w_u if c > 0 else w_y, n0 + C['maxEval'], strip, c)
+        if not res.get('regrow'):
+            break
+        kappa /= 8
+    if not res.get('ok'):
+        return fail('regrowth' if res.get('regrow') else res['why'])
+    # drop the nodes whose terms stay below CELL_PRUNE times the vertex's (the
+    # first node) at both ends: ln |term| is linear in t
+    nd = res['nodes']
+    n_sr = nd['sr']
+    n_gr = nd['gr']
+    n_gi = nd['gi']
+    n_e = nd['E']
+    ss = res['ss']
+    lg = [_ln(math.hypot(n_gr[q], n_gi[q])) - n_e[q] for q in range(len(n_sr))]
+    top = lg[0] + LN2 + LN_PRUNE  # the vertex's weight 1/2 undone
+    keep = [q for q in range(len(n_sr))
+            if q == 0 or not (t_lo * (n_sr[q] - ss) + lg[q] < top and t_hi * (n_sr[q] - ss) + lg[q] < top)]
+    ag = [math.hypot(n_gr[q], n_gi[q]) for q in keep]
+    return {'ok': True, 'k': k, 'tLo': t_lo, 'tHi': t_hi, 'tA': t_a, 'v': v, 'step': res['step'],
+            'levels': res['levels'], 'strip': res['strip'], 'c': res['c'], 'n': len(keep),
+            'sr': [n_sr[q] for q in keep], 'si': [nd['si'][q] for q in keep], 'gr': [n_gr[q] for q in keep],
+            'gi': [n_gi[q] for q in keep], 'ag': ag, 'la': [_ln(x) for x in ag], 'mE': [-n_e[q] for q in keep],
+            'lev': [nd['lev'][q] for q in keep]}
+
+
+def _cell_sample(C: Dict[str, Any], cell: Dict[str, Any], tt: float) -> Optional[Dict[str, float]]:
+    """The response, h' and h'' at tt from a cell's nodes, or None when the
+    result does not pass (``cellSample``): its own error estimate from the
+    last two levels (under plug flow also the two before), and a sum of
+    moduli within CELL_COND of the answer unless negligible beside the
+    response's peak."""
+    n = cell['n']
+    sr = cell['sr']
+    si = cell['si']
+    gr = cell['gr']
+    gi = cell['gi']
+    ag = cell['ag']
+    la = cell['la']
+    mE = cell['mE']
+    lev = cell['lev']
+    L = cell['levels']
+    # a term below CELL_PRUNE times the vertex's at tt is left out, as the
+    # pruning leaves out those below it at both ends
+    low = tt * sr[0] + mE[0] + la[0] + LN_PRUNE
+    h = 0.0
+    d1 = 0.0
+    d2 = 0.0
+    a = 0.0
+    h1 = 0.0
+    a1 = 0.0
+    h2 = 0.0
+    exp = math.exp
+    cos = math.cos
+    sin = math.sin
+    for q in range(n):
+        ex = tt * sr[q] + mE[q]
+        if ex > 700:
+            return None
+        if ex < -740 or ex + la[q] < low:
+            continue
+        e = exp(ex)
+        ph = tt * si[q]
+        er = e * cos(ph)
+        ei = e * sin(ph)
+        g_r = gr[q]
+        g_i = gi[q]
+        zr = er * g_r - ei * g_i
+        zi = er * g_i + ei * g_r
+        s_r = sr[q]
+        s_i = si[q]
+        yr = s_r * zr - s_i * zi
+        yi = s_r * zi + s_i * zr
+        m = e * ag[q]
+        h += zr
+        d1 += yr
+        d2 += s_r * yr - s_i * yi
+        a += m
+        if lev[q] < L:
+            h1 += zr
+            a1 += m
+            if lev[q] < L - 1:
+                h2 += zr
+    rtol = C['rtol']
+    atol = C['atol']
+    strip = cell['strip']
+
+    def passes(hn: float, hp: float, an: float, st: float, level: int) -> float:
+        # the test of the single parabola on level `level` against the one before
+        err = abs(hn - hp)
+        floor = 1e-15 * an + atol
+        rel = err / max(abs(hn), 1e-300)
+        nxt = max(rel * rel, 2 * _exp(-2 * PI * strip / st) if math.isfinite(strip) else 0.0)
+        ok = err <= floor or (level >= 1 and err <= rtol * abs(hn) and nxt <= rtol) or (
+            not cell['c'] > 0 and st <= 0.3 * strip and nxt <= rtol * 1e-2)
+        return min(err, nxt * abs(hn) + floor) if ok else -1.0
+
+    st = cell['step']
+    c = st / PI
+    H = h * c
+    H1 = h1 * 2 * c
+    A = a * c
+    err = passes(H, H1, A, st, L - 1)
+    if not err >= 0:
+        return None
+    if C['infPe'] and not passes(H1, h2 * 4 * c, a1 * 2 * c, 2 * st, L - 2) >= 0:
+        return None
+    cond = A / max(abs(H), 1e-300)
+    if not math.isfinite(H) or not (cond <= CELL_COND or A <= CELL_NEGLIGIBLE * C['peak']):
+        return None
+    if err > 1e-6 * abs(H) + atol:
+        return None
+    return {'h': H, 'dh': d1 * c, 'd2': d2 * c, 'err': err, 'cond': cond}
+
+
+def _invert_shared(path: LaplacePath, ws: _Workspace, C: Dict[str, Any], t: float) -> Optional[Dict[str, Any]]:
+    """The response and its first two derivatives at t from the shared
+    parabola of t's cell, building the cell when first asked for
+    (``invertShared``); the zeros of :func:`_invert_parabola` where the
+    saddle rule makes the response negligible, or None when the cell cannot
+    serve t."""
+    ax = C['ax']
+    stats = C['stats']
+    tt = t - ax['pr']['shift']
+    if not tt > 0:
+        stats['negligible'] += 1
+        return _zero()
+    sad = _saddle_at(ax, tt)
+    if sad is None or sad['beyond'] or sad['w'] < -720:
+        stats['negligible'] += 1
+        return _zero(negligible=True)
+    u = _cell_u(C, tt) + 0.5
+    k: float = math.floor(u) if math.isfinite(u) else (u if u == u else NAN)
+    cell = C['map'].get(k)
+    if cell is None:
+        cell = _build_cell(path, ws, C, k)
+        C['map'][k] = cell
+        stats['cells'] += 1
+        if not cell['ok']:
+            stats['failed'] += 1
+    r = _cell_sample(C, cell, tt) if cell['ok'] and math.isfinite(k) else None
+    if r is not None:
+        stats['shared'] += 1
+        r['cell'] = k
+    else:
+        stats['fallback'] += 1
+    return r
 
 
 def _talbot_sum(path: LaplacePath, ws: _Workspace, pr: Dict[str, Any], t: float, r: float,
@@ -1827,7 +2466,10 @@ def _response_support(ax: Dict[str, Any], t_min: float, t_max: float) -> Optiona
 
 
 def _sample(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], t: float, method: Optional[str],
-            atol: float, hint: Optional[Dict[str, int]] = None) -> Tuple[float, float, float, float, float]:
+            atol: float, hint: Optional[Dict[str, int]] = None,
+            cells: Optional[Dict[str, Any]] = None) -> Tuple[float, float, float, float, float]:
+    """One sample (h, h', h'', cond, err) by the chosen method; ``cells`` the
+    axis's shared parabolas, for the default method."""
     if method == 'talbot':
         r = _invert_talbot(path, ws, ax, t)
         if math.isfinite(r['h']) and math.isfinite(r['dh']) and math.isfinite(r['d2']):
@@ -1842,12 +2484,19 @@ def _sample(path: LaplacePath, ws: _Workspace, ax: Dict[str, Any], t: float, met
     # samples mostly fell back to de Hoog goes there first
     if hint is not None:
         hint['tries'] += 1
+    # the shared parabola of t's cell, and t's own where that cannot serve
+    if cells is not None:
+        s = _invert_shared(path, ws, cells, t)
+        if s is not None:
+            return (s['h'], s['dh'], s['d2'], s['cond'] or 1.0, s['err'])
     direct = hint is not None and hint['tries'] > 16 and hint['fails'] > 0.75 * hint['tries']
     r = {'h': NAN, 'err': INF} if direct else _invert_parabola(path, ws, ax, t, {'atol': atol})
     if math.isfinite(r['h']) and not r['err'] > 1e-6 * abs(r['h']) + atol:
         return (r['h'], r['dh'], r['d2'], r['cond'] or 1.0, r['err'])
     if hint is not None:
         hint['fails'] += 1
+    if cells is not None:
+        cells['stats']['dehoog'] += 1
     # de Hoog's Bromwich line with twice the terms the spread asks for; the
     # parabola only when it has an error estimate below de Hoog's
     m1 = _de_hoog_terms(path, ax, t)
@@ -1907,20 +2556,20 @@ def _bateman(path: LaplacePath, ws: _Workspace, blk: _Block, t: float) -> Tuple[
 
 
 def _sample_inventory(path: LaplacePath, ws: _Workspace, ax_c: Dict[str, Any], ax_k: Dict[str, Any], t: float,
-                      method: Optional[str], atol: float,
-                      hint: Optional[Dict[str, int]] = None) -> Tuple[float, float, float, float, float]:
+                      method: Optional[str], atol: float, hint: Optional[Dict[str, int]] = None,
+                      cells: Optional[Sequence[Dict[str, Any]]] = None) -> Tuple[float, float, float, float, float]:
     """One sample of an inventory response: e^(-Lambda t) - c while the path
     still holds at least half of that, and otherwise whichever of that and K
     inverted whole carries the smaller error estimate (see the application's
-    ``sampleInventory``)."""
+    ``sampleInventory``); ``cells`` the shared parabolas of the two axes."""
     b0, b1, b2 = _bateman(path, ws, ax_c['pr']['blk'], t)
-    c0, c1, c2, cc, ce = _sample(path, ws, ax_c, t, method, atol, hint)
+    c0, c1, c2, cc, ce = _sample(path, ws, ax_c, t, method, atol, hint, cells[0] if cells else None)
     k0 = b0 - c0
     err_split = ce + EPS * (cc * abs(c0) + 2 * abs(b0))
     split = (k0, b1 - c1, b2 - c2, cc, err_split)
     if abs(k0) >= 0.5 * abs(b0):
         return split
-    r = _sample(path, ws, ax_k, t, method, atol)
+    r = _sample(path, ws, ax_k, t, method, atol, None, cells[1] if cells else None)
     err_whole = r[4] + EPS * r[3] * abs(r[0])
     return r if err_whole < err_split else split
 
@@ -2064,7 +2713,9 @@ def response_at(path: LaplacePath, i: int, j: int, t: float, kind: Any = 'releas
                 method: Optional[str] = None, **opt: Any) -> Dict[str, Any]:
     """The response of i to a unit pulse of j at t = 0 -- the release rate,
     or with ``kind='inventory'`` what the path holds -- and its first two
-    derivatives, inverted at t directly."""
+    derivatives, inverted at t directly: on a parabola of its own, and where
+    that one's error estimate does not pass, by de Hoog's method at twice its
+    terms (as a tabulated response's samples, without the shared parabolas)."""
     pr = _pair_of(path, i, j, kind)
     if pr is None:
         return {'h': 0.0, 'dh': 0.0, 'd2': 0.0}
@@ -2083,7 +2734,8 @@ def response_at(path: LaplacePath, i: int, j: int, t: float, kind: Any = 'releas
     ax = _axis_of(path, pr)
     if method == 'talbot':
         return _invert_talbot(path, ws, ax, t, opt)
-    return _invert_parabola(path, ws, ax, t, opt)
+    h, dh, d2, cond, err = _sample(path, ws, ax, t, 'parabola', opt.get('atol') or 0.0)
+    return {'h': h, 'dh': dh, 'd2': d2, 'cond': cond, 'err': err}
 
 
 def _add_early_mass(path: LaplacePath, pr: Dict[str, Any], resp: Dict[str, Any]) -> None:
@@ -2121,12 +2773,16 @@ def _mass_balance(path: LaplacePath, ax: Dict[str, Any], resp: Dict[str, Any], t
 
 def unit_response(path: LaplacePath, i: int, j: int, kind: Any = 'release', t_max: Optional[float] = None,
                   method: Optional[str] = None, rtol: Optional[float] = None,
-                  per_decade: Optional[int] = None, max_pts: Optional[int] = None) -> Dict[str, Any]:
+                  per_decade: Optional[int] = None, max_pts: Optional[int] = None,
+                  shared: bool = True) -> Dict[str, Any]:
     """One unit response, tabulated on an adaptive grid over [0, t_max]:
     ``{i, j, kind, t, h, dh, d2h, peak, tPeak, integral, T0}``, and for a
     release ``m0``, ``expected``, ``balanced`` and ``rel``: its integral held
     to what leaves the path by its last time, worked out again from far
-    earlier on a finer grid when it misses (``unitResponse``)."""
+    earlier on a finer grid when it misses (``unitResponse``). The default
+    inversion samples nearby times on shared parabolas, and ``shared`` in the
+    result counts how the samples were taken; ``shared=False`` gives every
+    sample a parabola of its own (the count is then None)."""
     pr = _pair_of(path, i, j, kind)
     kname = KINDS[_kind_of(kind)]
 
@@ -2142,29 +2798,40 @@ def unit_response(path: LaplacePath, i: int, j: int, kind: Any = 'release', t_ma
     T0 = transfer(path, 0.0, 0.0, i, j).real
     if not math.isfinite(T0):
         T0 = transfer(path, 1e-300, 0.0, i, j).real
+    # the shared parabolas, a set per axis, held to the absolute floor of the
+    # response's peak estimate (one that grew with the peak found so far would
+    # make a cell depend on the times asked for before it)
+    share = (method or 'parabola') == 'parabola' and shared is not False
+
+    def cells_of(axis: Dict[str, Any], peak: float) -> Dict[str, Any]:
+        return _make_cells(path, axis, {'atol': 1e-3 * RESP_ATOL * peak if peak > 0 else 0.0, 'peak': peak})
+
     if pr['kind'] == INVENTORY:
         ax_c, ax_k = _inventory_axes(path, i, j)
+        cells_ck = [cells_of(ax_c, 1.0), cells_of(ax_k, 1.0)] if share else None
 
         def sampler_k(t: float, atol: float, hint: Optional[Dict[str, int]] = None) -> Tuple[float, float, float,
                                                                                             float, float]:
-            return _sample_inventory(path, ws, ax_c, ax_k, t, method, atol, hint)
+            return _sample_inventory(path, ws, ax_c, ax_k, t, method, atol, hint, cells_ck)
 
         start = _bateman(path, ws, pr['blk'], 0.0)
         sup = _response_support(ax_k, ax_k['tLo'], T_CAP)
         t_a = min(sup['tLo'] if sup else ax_k['tLo'], ax_k['tLo'], tm / 2)
         t_b = min(max(sup['tHi'], 2 * t_a), tm) if sup else tm
         resp = _compute_response(sampler_k, start, t_a, t_b, {**o, 'peakEstimate': 1.0})
-        return {'i': i, 'j': j, 'kind': kname, **resp, 'T0': T0}
+        return {'i': i, 'j': j, 'kind': kname, **resp, 'T0': T0, 'shared': _cell_counts(cells_ck)}
     ax = _axis_of(path, pr)
     sup = _response_support(ax, ax['tLo'], T_CAP)
     t_a = sup['tLo'] if sup else NAN
     t_b = min(sup['tHi'], tm) if sup else NAN
+    peak_estimate = _exp(sup['logPeak']) if sup else 0.0
+    cells = cells_of(ax, peak_estimate) if share else None
 
     def sampler(t: float, atol: float, hint: Optional[Dict[str, int]] = None) -> Tuple[float, float, float, float,
                                                                                      float]:
-        return _sample(path, ws, ax, t, method, atol, hint)
+        return _sample(path, ws, ax, t, method, atol, hint, cells)
 
-    ropt = {**o, 'peakEstimate': _exp(sup['logPeak']) if sup else 0.0, 'delay': pr['shift']}
+    ropt = {**o, 'peakEstimate': peak_estimate, 'delay': pr['shift']}
     resp = _compute_response(sampler, None, t_a, t_b, ropt) if sup and t_b > t_a * (1 + 1e-9) else empty()
     _add_early_mass(path, pr, resp)
     resp['T0'] = T0
@@ -2184,7 +2851,19 @@ def unit_response(path: LaplacePath, i: int, j: int, kind: Any = 'release', t_ma
                 resp = r2
                 bal = b2
     return {'i': i, 'j': j, 'kind': kname, **resp, 'T0': T0, 'expected': bal['expected'], 'balanced': bal['ok'],
-            'rel': bal['rel'], 'checked': bal['checked']}
+            'rel': bal['rel'], 'checked': bal['checked'], 'shared': _cell_counts([cells] if cells is not None else None)}
+
+
+def _cell_counts(sets: Optional[Sequence[Dict[str, Any]]]) -> Optional[Dict[str, int]]:
+    """How the samples of a response's axes were taken, summed; None without
+    shared parabolas (``cellCounts``)."""
+    if not sets:
+        return None
+    out = {'shared': 0, 'fallback': 0, 'negligible': 0, 'cells': 0, 'failed': 0, 'dehoog': 0}
+    for C in sets:
+        for key in out:
+            out[key] += C['stats'][key]
+    return out
 
 
 def unit_responses(path: LaplacePath, kinds: Sequence[str] = KINDS, sources: Optional[Sequence[int]] = None,

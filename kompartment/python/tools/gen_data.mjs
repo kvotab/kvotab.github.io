@@ -15,6 +15,12 @@
                                   functions an equation can call, and the
                                   words the language keeps -- exactly
                                   Kompartment's RESERVED set.
+  kompartment/data/functions.json the functions an equation can call, with
+                                  how many arguments each takes, and the
+                                  other spellings the parser accepts: what
+                                  the .eco export's equation translator
+                                  (io/ecoequation.py) parses with, where the
+                                  engine's own table would need numpy.
 
   The Python test suite runs this with --check, so a change to either table
   in the application fails there until the data is written again.
@@ -30,6 +36,7 @@ const CHECK = process.argv.includes('--check');
 
 const { ICRP107 } = await import(join(SRC, 'domain', 'icrp107.js'));
 const { RESERVED } = await import(join(SRC, 'domain', 'names.js'));
+const { FUNCTIONS, FUNCTION_ALIASES } = await import(join(SRC, 'parser', 'functions.js'));
 
 const files = {
 	'icrp107.json': JSON.stringify({
@@ -47,6 +54,16 @@ const files = {
 	'reserved.json': JSON.stringify({
 		source: "Kompartment's RESERVED set, src/domain/names.js.",
 		names: [...RESERVED].sort(),
+	}, null, 1) + '\n',
+	'functions.json': JSON.stringify({
+		source: "Kompartment's FUNCTIONS and FUNCTION_ALIASES, src/parser/functions.js: "
+			+ 'the fewest arguments each takes and the most, null for no limit.',
+		functions: Object.fromEntries(Object.keys(FUNCTIONS).sort().map((key) => {
+			const fn = FUNCTIONS[key];
+			const most = fn.maxArity ?? (fn.varargs ? null : fn.arity);
+			return [key, [fn.arity, most]];
+		})),
+		aliases: FUNCTION_ALIASES,
 	}, null, 1) + '\n',
 };
 

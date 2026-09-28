@@ -253,7 +253,13 @@ def plug_model() -> Dict[str, Any]:
 @needs_app
 class PointMass(unittest.TestCase):
     def test_plug_flow_releases_its_point_mass_as_the_application_does(self) -> None:
+        # The two solve with steps of their own, which part after a while, and
+        # at rtol 1e-9 what the path holds then parts by up to 3e-8 of its
+        # largest value (2e-9 at 1e-10, 6e-10 at 1e-11) though the responses
+        # and the point mass agree to rounding: the comparison is made where
+        # the solver's own error is below its bound.
         m = plug_model()
+        m['simulation']['rtol'] = 1e-11
         js = engine('run', model=m)
         self.assertNotIn('error', js, js.get('error'))
         res = run(Project(m))

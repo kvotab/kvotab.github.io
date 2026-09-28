@@ -74,6 +74,17 @@
  *     the nearest singularity's own error bound is met (see
  *     `invertParabola`), which the page's rule -- that each halving squares
  *     the error -- missed next to a pole;
+ *   - the shared contours: nearby times summed from the nodes of one
+ *     parabola, the times of each axis divided into cells on a lattice in
+ *     ln t taken from its real-axis table alone, and a time its cell cannot
+ *     serve given a parabola of its own (see `makeCells`);
+ *   - under plug flow the pair's delay taken out of each member's exponent as
+ *     it is formed, not subtracted after (see `gFracture`), and the step
+ *     following the members' own phase rates there as elsewhere; nodes
+ *     spaced as c sinh(u) where a weak singularity next to the saddle makes
+ *     the strip of analyticity far narrower than the integrand (see
+ *     `nodeScale`); the real-axis table reaching to before a sharp front's
+ *     rising edge (see `realAxis`);
  *   - each response sampled with its first two derivatives (the inversions of
  *     s T and s^2 T come free) on an adaptive grid, interpolated by quintic
  *     Hermite pieces;
@@ -125,6 +136,8 @@ const PI = Math.PI;
 
 let RE = 0;
 let IM = 0;
+// pathFrequency's fastest phase rate per unit u of sinh nodes (see nodeScale)
+let RATE_U = 0;
 
 function cdiv(ar, ai, br, bi) {
 	if (Math.abs(br) >= Math.abs(bi)) {
@@ -482,15 +495,38 @@ function tauScale(path, zr, zi) {
 
 /**
  * phi(g) into RE/IM: (Pe/2)(1 - sqrt(1 + 4 TW g/Pe)) written without the
- * cancellation. Under plug flow phi = -TW (g - d), where d = s Rmin is the
- * delay the caller takes out and applies as a shift in time.
+ * cancellation. Under plug flow phi = -TW g, g then the shifted exponent g -
+ * Rmin s wherever the transform has its delay e^(-TW Rmin s) taken out and
+ * applied as a shift in time (see gFracture).
  */
-function phiAt(path, gr, gi, dr, di) {
+function phiAt(path, gr, gi) {
 	const tw = path.tw;
-	if (path.infPe) { RE = -tw * (gr - dr); IM = -tw * (gi - di); return; }
+	if (path.infPe) { RE = -tw * gr; IM = -tw * gi; return; }
 	const B = 4 * tw / path.Pe;
 	csqrt(1 + B * gr, B * gi);
 	cdiv(-2 * tw * gr, -2 * tw * gi, 1 + RE, IM);
+}
+
+/**
+ * The fracture's part of member p's g at s into RE/IM: Rf_p (s + lambda_p),
+ * less d s when the pair's transform has the delay e^(-TW d s) taken out (d =
+ * Rmin, the block's smallest Rf, under plug flow; 0 otherwise). What is formed
+ * then is the shifted exponent Rf_p lambda_p + (Rf_p - d) s, directly: forming
+ * Rf_p (s + lambda_p) and subtracting d s would leave the small remainder with
+ * the rounding of the large terms, and right after the delay, where the
+ * saddles lie at s of order 1/(t - delay), the transform lost up to eight
+ * digits so. Rf_p - d is zero, or the member's own delay beyond the pair's.
+ */
+function gFracture(blk, p, sr, si, d) {
+	const rf = blk.Rf[p];
+	if (d > 0) {
+		const e = rf - d;
+		RE = rf * blk.lam[p] + e * sr;
+		IM = e * si;
+	} else {
+		RE = (sr + blk.lam[p]) * rf;
+		IM = si * rf;
+	}
 }
 
 /** H's length scale at g: 1/|phi'| and the distance to the branch point
@@ -580,20 +616,21 @@ function tauSeries(path, cr0, ci0, K, outR, outI, s1r, s1i, s2r, s2i, s3r, s3i) 
 	}
 }
 
-/** Taylor coefficients of exp(phi(c + w) + E). */
-function hSeries(path, cr0, ci0, dr, di, E, K, outR, outI, s1r, s1i) {
+/** Taylor coefficients of exp(phi(c + w) + E) (under plug flow c is a
+    shifted exponent, see phiAt). */
+function hSeries(path, cr0, ci0, E, K, outR, outI, s1r, s1i) {
 	const tw = path.tw;
 	if (path.infPe) {
 		for (let n = 0; n <= K; n++) { s1r[n] = 0; s1i[n] = 0; }
-		s1r[0] = -tw * (cr0 - dr);
-		s1i[0] = -tw * (ci0 - di);
+		s1r[0] = -tw * cr0;
+		s1i[0] = -tw * ci0;
 		if (K >= 1) s1r[1] = -tw;
 	} else {
 		const B = 4 * tw / path.Pe;
 		const half = path.Pe / 2;
 		sqrtSeries(1 + B * cr0, B * ci0, B, 0, K, s1r, s1i);
 		for (let n = 1; n <= K; n++) { s1r[n] *= -half; s1i[n] *= -half; }
-		phiAt(path, cr0, ci0, dr, di);
+		phiAt(path, cr0, ci0);
 		s1r[0] = RE;
 		s1i[0] = IM;
 	}
@@ -634,7 +671,7 @@ const TAYLOR_FRAC = 0.5;
 function makeDD(nmax) {
 	const size = 1 << nmax;
 	const dd = {
-		n: 0, kind: 0, dr: 0, di: 0, E: 0, t: 0,
+		n: 0, kind: 0, E: 0, t: 0,
 		zr: new Float64Array(nmax), zi: new Float64Array(nmax),
 		fr: new Float64Array(nmax), fi: new Float64Array(nmax),
 		sc: new Float64Array(nmax), cl: new Int32Array(nmax), seen: new Int32Array(nmax),
@@ -667,7 +704,7 @@ function ddScale(path, dd, zr, zi) {
 
 function ddSeries(path, dd, cr, ci, K, outR, outI) {
 	if (dd.kind === 0) tauSeries(path, cr, ci, K, outR, outI, dd.s1r, dd.s1i, dd.s2r, dd.s2i, dd.s3r, dd.s3i);
-	else if (dd.kind === 1) hSeries(path, cr, ci, dd.dr, dd.di, dd.E, K, outR, outI, dd.s1r, dd.s1i);
+	else if (dd.kind === 1) hSeries(path, cr, ci, dd.E, K, outR, outI, dd.s1r, dd.s1i);
 	else expSeries(dd.t, cr, ci, K, outR, outI);
 }
 
@@ -989,17 +1026,21 @@ function evalBlock(path, ws, blk, sr, si, kind) {
 	const m = blk.m;
 	const aw = path.aw;
 	ws.evaluations++;
+	// Under plug flow T and A^-1 T have their delay e^(-TW Rmin s) taken out:
+	// G's diagonal then holds g_p - Rmin s, formed directly (see gFracture).
+	// Divided differences of H are the same for points shifted alike, and
+	// the shift Rmin s is one for the whole block, whatever each member's Rf,
+	// so exp(-TW G) with the shifted diagonal is H(G) without the delay.
 	const delay = kind !== INVENTORY && path.infPe ? blk.Rmin : 0;
-	const dr = delay * sr;
-	const di = delay * si;
 	let phiMax = -Infinity;
 	for (let p = 0; p < m; p++) {
 		const ar = sr + blk.lam[p];
 		const ai = si;
 		ws.ar[p] = ar;
 		ws.ai[p] = ai;
-		let gr = ar * blk.Rf[p];
-		let gi = ai * blk.Rf[p];
+		gFracture(blk, p, sr, si, delay);
+		let gr = RE;
+		let gi = IM;
 		if (blk.matrix) {
 			const f = blk.Rm[p] / blk.De[p];
 			const mr = f * ar;
@@ -1014,7 +1055,7 @@ function evalBlock(path, ws, blk, sr, si, kind) {
 		}
 		ws.gr[p] = gr;
 		ws.gi[p] = gi;
-		phiAt(path, gr, gi, dr, di);
+		phiAt(path, gr, gi);
 		if (RE > phiMax) phiMax = RE;
 	}
 	const E = Number.isFinite(phiMax) ? -phiMax : 0;
@@ -1051,13 +1092,11 @@ function evalBlock(path, ws, blk, sr, si, kind) {
 	}
 	// H(G), scaled by e^E.
 	dd.kind = 1;
-	dd.dr = dr;
-	dd.di = di;
 	dd.E = E;
 	for (let p = 0; p < m; p++) {
 		dd.zr[p] = ws.gr[p];
 		dd.zi[p] = ws.gi[p];
-		phiAt(path, ws.gr[p], ws.gi[p], dr, di);
+		phiAt(path, ws.gr[p], ws.gi[p]);
 		cexp(RE + E, IM);
 		dd.fr[p] = RE;
 		dd.fi[p] = IM;
@@ -1248,25 +1287,38 @@ function realAxis(path, ws, pr, tLo, tHi) {
 	const x0 = Math.max(Math.abs(s0), 0) + 1 / tHi;
 	const up = [];
 	const dn = [];
+	// w = s D + psi(s), D the tilted mean between two points, is the
+	// saddle-point exponent of the response at the time D (its log there, but
+	// for half the log of 2 pi psi''). It is largest, ln T(0), at s = 0 and
+	// falls as s grows (dw/ds = s dD/ds < 0): away from s0 the scan goes on
+	// until w is e^-120 below its top, and so to before the response's rising
+	// edge. psi itself may be far below what exp can hold (at a sharp front
+	// e^(st) makes up for a transform of e^-1000 and less; evalBlock holds it
+	// scaled, and psi is its log). A psi that is not finite, x past 1e12/tLo
+	// and 800 points end the scan too.
+	const Dof = (a, b) => -(b[1] - a[1]) / (b[0] - a[0]);
+	let wmax = -Infinity;
 	for (let x = x0, k = 0; k < 800; x *= fac, k++) {
 		const p = psiAt(s0 + x);
 		up.push([s0 + x, p]);
-		if (p < -900 || x > 1e12 / tLo) break;
+		if (!Number.isFinite(p) || x > 1e12 / tLo) break;
+		const m = up.length;
+		if (m >= 2) {
+			const a = up[m - 2];
+			const b = up[m - 1];
+			const w = 0.5 * (a[0] + b[0]) * Dof(a, b) + 0.5 * (a[1] + b[1]);
+			if (w > wmax) wmax = w;
+			if (w < wmax - 120) break;
+		}
 	}
-	// Toward s0 the tilted mean D grows without bound. w = s D + psi(s) there
-	// is the Chernoff bound: the part of the response after the time D is at
-	// most e^w (s < 0), and w is largest, ln T(0), at s = 0. The scan stops
-	// where that part is negligible, where D passes 10 tHi, and where D no
-	// longer grows: psi is convex (the response is not negative), so a D that
-	// does not grow is rounding -- s0 + x keeping few digits of x, and the
-	// transform cancelling next to its singularity. Such a D once stopped
-	// every saddle search of a path with little matrix and a long tail.
-	const Dof = (a, b) => -(b[1] - a[1]) / (b[0] - a[0]);
-	let wmax = -Infinity;
-	for (let k = 0; k + 1 < up.length; k++) {
-		const w = 0.5 * (up[k][0] + up[k + 1][0]) * Dof(up[k], up[k + 1]) + 0.5 * (up[k][1] + up[k + 1][1]);
-		if (w > wmax) wmax = w;
-	}
+	// Toward s0 the tilted mean D grows without bound. w there is the
+	// Chernoff bound: the part of the response after the time D is at most e^w
+	// (s < 0). The scan stops where that part is negligible, where D passes 10
+	// tHi, and where D no longer grows: psi is convex (the response is not
+	// negative), so a D that does not grow is rounding -- s0 + x keeping few
+	// digits of x, and the transform cancelling next to its singularity. Such
+	// a D once stopped every saddle search of a path with little matrix and a
+	// long tail.
 	let prev = up[0];
 	let Dprev = up.length > 1 ? Dof(up[0], up[1]) : 0;
 	for (let x = x0 / fac, k = 0; k < 800; x /= fac, k++) {
@@ -1395,8 +1447,10 @@ function saddleAt(ax, t) {
 	return { s: ss, psi2, w: ss * t + psi, edge: false, beyond: false };
 }
 
-/** One term of the parabola sum at Y: returns its modulus, adds to acc. */
-function parabolaTerm(path, ws, pr, t, ss, kappa, Y, wgt, acc) {
+/** One term of the parabola sum at Y, jac = dY/du the node map's Jacobian
+    (1 for uniform nodes) and wgt the trapezoidal weight (1/2 at the vertex):
+    adds wgt jac z to acc and returns jac |z|. */
+function parabolaTerm(path, ws, pr, t, ss, kappa, Y, jac, wgt, acc) {
 	const sr = ss - kappa * Y * Y;
 	const si = Y;
 	evalBlock(path, ws, pr.blk, sr, si, pr.kind);
@@ -1413,36 +1467,40 @@ function parabolaTerm(path, ws, pr, t, ss, kappa, Y, wgt, acc) {
 	const q = 2 * kappa * Y;
 	const zr = ar - ai * q;
 	const zi = ai + ar * q;
-	acc.h += wgt * zr;
+	const w = wgt * jac;
+	acc.h += w * zr;
 	const yr = sr * zr - si * zi;
 	const yi = sr * zi + si * zr;
-	acc.dh += wgt * yr;
-	acc.d2 += wgt * (sr * yr - si * yi);
+	acc.dh += w * yr;
+	acc.d2 += w * (sr * yr - si * yi);
 	const mod = Math.hypot(zr, zi);
-	acc.abs += wgt * mod;
-	return mod;
+	acc.abs += w * mod;
+	return jac * mod;
 }
 
-/** Trapezoidal sum over Y = off, off + 2 step, ... (off = 0 or step) until
-    the terms die out. Terms that grow back, after they have fallen away, to
-    within 1e-3 of the largest, or past it, mean the path runs into a region
-    where the transform is large: `regrow`. The terms' envelope is the largest
-    of the last seven, so that a dip (the transform passing near a zero) is
-    not taken for a fall. Out of nodes or budget before the terms died out,
-    the sum is `cut` short. */
-function parabolaSweep(path, ws, pr, t, ss, kappa, step, off, acc) {
+/** Trapezoidal sum over u = off, off + 2 step, ... (off = 0 or step) until
+    the terms die out; the nodes are Y = u, or Y = c sinh(u) when c > 0 (see
+    nodeScale). Terms that grow back, after they have fallen away, to within
+    1e-3 of the largest, or past it, mean the path runs into a region where
+    the transform is large: `regrow`. The terms' envelope is the largest of
+    the last seven, so that a dip (the transform passing near a zero) is not
+    taken for a fall. Out of nodes or budget before the terms died out, the
+    sum is `cut` short. */
+function parabolaSweep(path, ws, pr, t, ss, kappa, step, off, acc, c) {
 	let maxMod = 0;
 	let minEnv = Infinity;
 	let small = 0;
 	const last = [0, 0, 0, 0, 0, 0, 0];
 	for (let k = 0; k < 20000; k++) {
-		const Y = off + k * (off ? 2 * step : step);
-		if (Y === 0) {
-			const m0 = parabolaTerm(path, ws, pr, t, ss, kappa, 0, 0.5, acc);
+		const u = off + k * (off ? 2 * step : step);
+		const Y = c > 0 ? c * Math.sinh(u) : u;
+		const jac = c > 0 ? c * Math.cosh(u) : 1;
+		if (u === 0) {
+			const m0 = parabolaTerm(path, ws, pr, t, ss, kappa, 0, jac, 0.5, acc);
 			maxMod = Math.max(maxMod, m0);
 			continue;
 		}
-		const m = parabolaTerm(path, ws, pr, t, ss, kappa, Y, 1, acc);
+		const m = parabolaTerm(path, ws, pr, t, ss, kappa, Y, jac, 1, acc);
 		if (k > 3 && (m > 100 * maxMod || (minEnv < 1e-6 * maxMod && m > 1e-3 * maxMod))) { acc.regrow = true; break; }
 		if (m > maxMod) maxMod = m;
 		last[k % 7] = m;
@@ -1476,15 +1534,16 @@ function localAxis(path, ws, ax, s, scale) {
     delay e^(-TW rfc s) taken out as the pair's transform has it. */
 function lnHk(path, blk, p, sr, si, rfc) {
 	const lam = blk.lam[p];
-	let gr = blk.Rf[p] * (sr + lam);
-	let gi = blk.Rf[p] * si;
+	gFracture(blk, p, sr, si, rfc);
+	let gr = RE;
+	let gi = IM;
 	if (blk.matrix) {
 		const f = blk.Rm[p] / blk.De[p];
 		tauAt(path, f * (sr + lam), f * si);
 		gr += path.aw * blk.De[p] * RE;
 		gi += path.aw * blk.De[p] * IM;
 	}
-	phiAt(path, gr, gi, rfc * sr, rfc * si);
+	phiAt(path, gr, gi);
 	return RE;
 }
 
@@ -1523,24 +1582,32 @@ function clearsRidge(path, blk, v, t, kappa, lev, levMin, rfc) {
  * turns at (Pe/2) |d sqrt(1 + 4 TW g/Pe)/ds|, fast when Pe is large, and a
  * member that the saddle of a daughter's response does not hold still turns
  * at |t - D_k|: the trapezoidal step must follow both, or its sums alias
- * them, two halvings agreeing on the wrong value.
+ * them, two halvings agreeing on the wrong value. The rate is linear in t:
+ * with t2 given, the larger of its values at t and t2 (the floor and the
+ * stretch are then those of t, the earlier). With c > 0 it also leaves in
+ * RATE_U the fastest rate per unit u of sinh nodes Y = c sinh(u) (see
+ * nodeScale): the rate per unit Y times dY/du = sqrt(c^2 + Y^2). rfc is the
+ * delay the pair's transform has taken out (see gFracture).
  */
-function pathFrequency(path, blk, v, t, kappa, floor, rfc) {
+function pathFrequency(path, blk, v, t, kappa, floor, rfc, t2, c) {
 	const ymax = Math.sqrt(Math.max(0, (t * v - floor + (path.infPe ? 40 : path.Pe / 2 + 40)) / (t * kappa)));
 	let wmax = 0;
+	let wmaxU = 0;
 	for (let q = 0; q <= 96; q++) {
 		const Y = ymax * q / 96;
 		const sr = v - kappa * Y * Y;
 		const si = Y;
 		for (let p = 0; p < blk.m; p++) {
 			const zr0 = sr + blk.lam[p];
-			let gr = blk.Rf[p] * zr0;
-			let gi = blk.Rf[p] * si;
-			let dgr = blk.Rf[p];
+			// g (under plug flow g - rfc s, see gFracture) and dg/ds
+			gFracture(blk, p, sr, si, rfc);
+			let gr = RE;
+			let gi = IM;
+			let dgr = path.infPe ? blk.Rf[p] - rfc : blk.Rf[p];
 			let dgi = 0;
 			if (blk.matrix) {
 				const f = blk.Rm[p] / blk.De[p];
-				const c = path.aw * blk.De[p];
+				const awDe = path.aw * blk.De[p];
 				csqrt(f * zr0, f * si);
 				const ur = RE;
 				const ui = IM;
@@ -1565,18 +1632,19 @@ function pathFrequency(path, blk, v, t, kappa, floor, rfc) {
 					dr = thr * hr - thi * hi + 0.5 * path.x0 * RE;
 					di = thr * hi + thi * hr + 0.5 * path.x0 * IM;
 				}
-				gr += c * tr;
-				gi += c * ti;
-				dgr += c * f * dr;
-				dgi += c * f * di;
+				gr += awDe * tr;
+				gi += awDe * ti;
+				dgr += awDe * f * dr;
+				dgi += awDe * f * di;
 			}
-			phiAt(path, gr, gi, rfc * sr, rfc * si);
+			phiAt(path, gr, gi);
 			if (t * sr + RE < floor) continue;
-			// phi'(s) = dphi/dg g'(s): -TW/sqrt(1 + 4 TW g/Pe), or -TW (g' - rfc) under plug flow
+			// phi'(s) = dphi/dg g'(s): -TW/sqrt(1 + 4 TW g/Pe) g'(s), or -TW g'(s)
+			// under plug flow (g' then the derivative of g - rfc s)
 			let pr;
 			let pi;
 			if (path.infPe) {
-				pr = -path.tw * (dgr - rfc);
+				pr = -path.tw * dgr;
 				pi = -path.tw * dgi;
 			} else {
 				const B = 4 * path.tw / path.Pe;
@@ -1586,16 +1654,73 @@ function pathFrequency(path, blk, v, t, kappa, floor, rfc) {
 				pi = RE * dgi + IM * dgr;
 			}
 			// d(phase)/dY = Im[(t + phi'(s)) (i - 2 kappa Y)]
-			const w = Math.abs((t + pr) - 2 * kappa * Y * pi);
+			let w = Math.abs((t + pr) - 2 * kappa * Y * pi);
+			if (t2 !== undefined) w = Math.max(w, Math.abs((t2 + pr) - 2 * kappa * Y * pi));
 			if (w > wmax) wmax = w;
+			if (c > 0) {
+				const wu = w * Math.sqrt(c * c + Y * Y);
+				if (wu > wmaxU) wmaxU = wu;
+			}
 		}
 	}
+	RATE_U = wmaxU;
 	return wmax;
 }
 
 const ZERO = { h: 0, dh: 0, d2: 0, err: 0, cond: 1, nodes: 0 };
 
 const VERTEX_BETA = 1.5;
+
+/**
+ * The vertex of the parabola for time tt: the saddle `sad` from the table, at
+ * least 1.5/tt right of s0, polished by Newton's method on D(v) = tt -- except
+ * K's, whose removable points s = -lambda would spoil the differences: it
+ * stays where the scan put it. Returns `{v, loc, psi2}`, `loc` the local axis
+ * at v (null for K).
+ */
+function parabolaVertex(path, ws, ax, tt, sad) {
+	const vMin = ax.s0 + VERTEX_BETA / tt;
+	let v = Math.max(sad.s, vMin);
+	let loc = null;
+	let psi2 = NaN;
+	if (ax.pr.kind !== INVENTORY) {
+		// the differences on the scale of the saddle's own width (the distance
+		// to s0 can be 1e5 times larger, under plug flow with a finite matrix)
+		const scale = Math.min(1 / tt, Number.isFinite(sad.psi2) && sad.psi2 > 0 ? 1 / Math.sqrt(sad.psi2) : Infinity);
+		loc = localAxis(path, ws, ax, v, scale);
+		for (let it = 0; it < 3 && v > vMin && loc.psi2 > 0 && Math.abs(loc.D - tt) > 0.5 * Math.sqrt(loc.psi2); it++) {
+			const vn = Math.max(v + (loc.D - tt) / loc.psi2, vMin);
+			const ln = localAxis(path, ws, ax, vn, scale);
+			if (!(Math.abs(ln.D - tt) < Math.abs(loc.D - tt)) || !(ln.psi2 > 0)) break;
+			v = vn;
+			loc = ln;
+		}
+		psi2 = loc.psi2;
+	}
+	if (!(psi2 > 0) || !Number.isFinite(psi2)) psi2 = Number.isFinite(sad.psi2) && sad.psi2 > 0 ? sad.psi2 : tt * tt;
+	return { v, loc, psi2 };
+}
+
+/**
+ * kappa, divided by 4 until no member's own transform times e^(st) grows along
+ * the parabola at time t (see clearsRidge); wv = t v + psi(v) is the size of
+ * the answer's integrand at the vertex, rfc the delay the pair's transform has
+ * taken out.
+ */
+function flattenForRidge(path, blk, v, t, wv, kappa, rfc) {
+	// each member may grow along the path to its own size at the vertex or to
+	// the answer's, whichever is larger (under plug flow with an unlimited
+	// matrix nothing grows: exp(-TW aw sqrt(De R s)))
+	const m = blk.m;
+	const lev = new Float64Array(m);
+	let levMin = Infinity;
+	for (let p = 0; p < m; p++) {
+		lev[p] = Math.max(t * v + lnHk(path, blk, p, v, 0, rfc), wv) + 2;
+		levMin = Math.min(levMin, lev[p]);
+	}
+	for (let k = 0; k < 16 && !clearsRidge(path, blk, v, t, kappa, lev, levMin, rfc); k++) kappa /= 4;
+	return kappa;
+}
 
 /**
  * The response and its first two derivatives at t, on a parabola
@@ -1613,7 +1738,10 @@ const VERTEX_BETA = 1.5;
  * focus at s0 so that the path wraps a branch point there as Hankel's
  * contour does. It is reduced until no member's transform grows along the
  * path (see clearsRidge), and again should the terms, once fallen away, grow
- * on. Trapezoidal in Y, the step halved until two sums agree.
+ * on. Trapezoidal in Y, the step halved until two sums agree, following the
+ * fastest phase along the path of the answer and of every member's own
+ * transform (see pathFrequency), under plug flow as elsewhere; next to a weak
+ * singularity trapezoidal in u, Y = c sinh(u) (see nodeScale).
  */
 function invertParabola(path, ws, ax, t, opt) {
 	const pr = ax.pr;
@@ -1625,50 +1753,28 @@ function invertParabola(path, ws, ax, t, opt) {
 	const sad = saddleAt(ax, tt);
 	if (!sad || sad.beyond || sad.w < -720) return { ...ZERO, negligible: true };
 	const n0 = ws.evaluations;
-	const vMin = ax.s0 + VERTEX_BETA / tt;
-	let v = Math.max(sad.s, vMin);
-	let psi2 = NaN;
-	let wv = sad.w;
-	let omega = 0;
-	// K's removable points s = -lambda would spoil the differences: its
-	// vertex stays where the scan put it.
-	if (pr.kind !== INVENTORY) {
-		// the differences on the scale of the saddle's own width (the distance
-		// to s0 can be 1e5 times larger, under plug flow with a finite matrix)
-		const scale = Math.min(1 / tt, Number.isFinite(sad.psi2) && sad.psi2 > 0 ? 1 / Math.sqrt(sad.psi2) : Infinity);
-		let loc = localAxis(path, ws, ax, v, scale);
-		for (let it = 0; it < 3 && v > vMin && loc.psi2 > 0 && Math.abs(loc.D - tt) > 0.5 * Math.sqrt(loc.psi2); it++) {
-			const vn = Math.max(v + (loc.D - tt) / loc.psi2, vMin);
-			const ln = localAxis(path, ws, ax, vn, scale);
-			if (!(Math.abs(ln.D - tt) < Math.abs(loc.D - tt)) || !(ln.psi2 > 0)) break;
-			v = vn;
-			loc = ln;
-		}
-		psi2 = loc.psi2;
-		if (Number.isFinite(loc.psi)) wv = tt * v + loc.psi;
-		omega = Number.isFinite(loc.D) ? Math.abs(tt - loc.D) : 0;
-	}
-	if (!(psi2 > 0) || !Number.isFinite(psi2)) psi2 = Number.isFinite(sad.psi2) && sad.psi2 > 0 ? sad.psi2 : tt * tt;
+	const { v, loc, psi2 } = parabolaVertex(path, ws, ax, tt, sad);
+	const wv = loc && Number.isFinite(loc.psi) ? tt * v + loc.psi : sad.w;
+	const omega = loc && Number.isFinite(loc.D) ? Math.abs(tt - loc.D) : 0;
 	let kappa = Math.max(psi2 / (2 * tt), 0.25 / (v - ax.s0));
 	// the delay the pair's transform has taken out (under plug flow)
 	const rfc = pr.shift > 0 ? pr.blk.Rmin : 0;
-	if (!path.infPe || !path.infX0) {
-		// each member may grow along the path to its own size at the vertex
-		// or to the answer's, whichever is larger (under plug flow with an
-		// unlimited matrix nothing grows: exp(-TW aw sqrt(De R s)))
-		const m = pr.blk.m;
-		const lev = new Float64Array(m);
-		let levMin = Infinity;
-		for (let p = 0; p < m; p++) {
-			lev[p] = Math.max(tt * v + lnHk(path, pr.blk, p, v, 0, rfc), wv) + 2;
-			levMin = Math.min(levMin, lev[p]);
-		}
-		for (let k = 0; k < 16 && !clearsRidge(path, pr.blk, v, tt, kappa, lev, levMin, rfc); k++) kappa /= 4;
-	}
+	if (!path.infPe || !path.infX0) kappa = flattenForRidge(path, pr.blk, v, tt, wv, kappa, rfc);
 	let res = null;
 	for (let attempt = 0; attempt < 4; attempt++) {
-		const wPath = path.infPe ? omega : Math.max(omega, pathFrequency(path, pr.blk, v, tt, kappa, wv - 25, rfc));
-		res = parabolaSums(path, ws, ax, tt, v, kappa, psi2, wPath, rtol, atol, n0 + maxEval);
+		const strip = parabolaStrip(ax, v, kappa);
+		const psi2e = pathCurvature(psi2, tt, loc ? loc.D : NaN, kappa);
+		// The phase rates, per unit Y and per unit u of sinh nodes: |t - D(v)|
+		// over the stretch where the answer's terms are above e^-25 of the
+		// vertex's, and the members' own (pathFrequency), under plug flow as
+		// well: the members of a chain can each exceed the answer, with tilted
+		// means far from t, and turn thousands of times faster than it along
+		// the path; two sums at a step too coarse for them agreed on a value
+		// 1e-4 off.
+		const wY = Math.max(omega, pathFrequency(path, pr.blk, v, tt, kappa, wv - 25, rfc, undefined, strip));
+		const wU = Math.max(omega * Math.sqrt(strip * strip + 50 / psi2e), RATE_U);
+		const c = nodeScale(strip, psi2e, 1.5 * PI / Math.sqrt(18.5 * psi2), wY, wU);
+		res = parabolaSums(path, ws, ax, tt, v, kappa, psi2, c > 0 ? wU : wY, rtol, atol, n0 + maxEval, strip, c);
 		if (!res.regrow) break;
 		kappa /= 8;
 	}
@@ -1679,19 +1785,10 @@ function invertParabola(path, ws, ax, t, opt) {
 	return res;
 }
 
-/** The trapezoidal sums of invertParabola on one parabola. */
-function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop) {
-	const pr = ax.pr;
-	// A Gaussian e^(-psi'' Y^2/2) is integrated to about 1e-7 at this step
-	// and to rounding at half of it; four nodes to a turn of the fastest phase
-	// along the path (a vertex off the saddle turns at |t - D|; see
-	// pathFrequency).
-	let step = 1.5 * PI / Math.sqrt(18.5 * psi2);
-	if (omega > 0) step = Math.min(step, 0.5 * PI / omega);
-	// The rightmost singularity maps to Y = (i +- sqrt(4 kappa d - 1))/(2
-	// kappa), d = v - s0: the integrand is analytic in the strip |Im Y| < w,
-	// and the trapezoidal rule converges like exp(-2 pi w/step). Start inside
-	// that, or two coarse sums can agree while both miss the feature.
+/** The half-width of the strip of analyticity about the real Y axis of the
+    integrand along s = v + iY - kappa Y^2: the rightmost singularity s0 maps
+    to Y = (i +- sqrt(4 kappa d - 1))/(2 kappa), d = v - s0. */
+function parabolaStrip(ax, v, kappa) {
 	const dist = v - ax.s0;
 	let strip = Infinity;
 	if (dist > 0 && Number.isFinite(dist)) {
@@ -1699,13 +1796,93 @@ function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop)
 			: 4 * kappa * dist >= 1 ? 1 / (2 * kappa) : (1 - Math.sqrt(1 - 4 * kappa * dist)) / (2 * kappa);
 	}
 	if (!(strip > 0)) strip = dist > 0 ? dist : Infinity;
-	step = Math.min(step, 0.5 * strip);
+	return strip;
+}
+
+/** The curvature of the integrand's Gaussian in Y along the parabola at time
+    t: ln |e^(st) T(s)| = t v + psi(v) - (t - D(v)) kappa Y^2 - psi'' Y^2/2 +
+    ..., D(v) the tilted mean at the vertex. At the saddle it is psi''; a
+    vertex held right of the saddle (D(v) < t) adds the rest. */
+function pathCurvature(psi2, t, Dv, kappa) {
+	return psi2 + 2 * Math.max(0, Number.isFinite(Dv) ? t - Dv : 0) * kappa;
+}
+
+const SINH_RATIO = 0.1; // sinh nodes only where the strip is below this times the Gaussian's width
+const SINH_STEP = 0.3; // the first step in u of sinh nodes (about 1e-7; halved, rounding)
+
+/**
+ * The node map of the trapezoidal sums along a parabola: Y = u (returns 0) or
+ * Y = c sinh(u), c = strip (returns c).
+ *
+ * Next to a weak singularity the strip of analyticity, half-width `strip` in
+ * Y, can be far narrower than the integrand's Gaussian: a first pole of tanh
+ * just left of the saddle, whose residue (a_w D_e small) hardly shows in the
+ * response, bounds a uniform step all the same, and the terms die out only
+ * after tens of thousands of steps. With Y = c sinh(u), trapezoidal in u, the
+ * nodes lie c h apart next to the vertex and about |Y| h beyond, so that a few
+ * dozen cover the Gaussian. The singularity at Y = i c maps to u = i pi/2,
+ * but the Gaussian grows off the real u axis past |Im u| = pi/4 (Re Y^2 < 0
+ * there for large |u|): the strip in u is pi/4, the error goes as
+ * exp(-pi^2/(2 h)) in the step h in u, and halving h still squares it. The
+ * spacing grows with |Y|, so a phase that turns over the whole Gaussian costs
+ * sinh nodes more than uniform ones; and in the first halvings the sums can
+ * converge more slowly than the strip of pi/4 promises, so their sums are
+ * never taken after one halving on the strip's bound.
+ *
+ * So sinh nodes where the strip is narrower than a tenth of the Gaussian's
+ * width 1/sqrt(psi2e) (a uniform step then needs ten times the nodes and
+ * more), sets the uniform step, and sinh nodes reach the end of the Gaussian
+ * (e^-41.5, where the sweeps stop) in fewer nodes at the first steps:
+ * gaussStep the uniform step for the Gaussian, wY and wU the fastest phase
+ * per unit Y and per unit u (four nodes to a turn in either).
+ */
+function nodeScale(strip, psi2e, gaussStep, wY, wU) {
+	if (!(strip * Math.sqrt(psi2e) < SINH_RATIO)) return 0;
+	const stepY = Math.min(gaussStep, wY > 0 ? 0.5 * PI / wY : Infinity);
+	if (!(0.5 * strip < stepY)) return 0;
+	const reach = Math.sqrt(83 / psi2e);
+	const nY = reach / (0.5 * strip);
+	const nU = Math.asinh(reach / strip) / sinhStep(strip, gaussStep, wU);
+	return nU < nY ? strip : 0;
+}
+
+/** The first step in u of sinh nodes Y = c sinh(u): SINH_STEP, four nodes to
+    a turn of the phase (wU per unit u), and no coarser than the uniform step
+    for the Gaussian next to the vertex, where dY/du = c. */
+function sinhStep(c, gaussStep, wU) {
+	return Math.min(SINH_STEP, wU > 0 ? 0.5 * PI / wU : Infinity, gaussStep / c);
+}
+
+/** The trapezoidal sums of invertParabola on one parabola: strip from
+    parabolaStrip, c from nodeScale, omega the fastest phase rate per unit of
+    the node variable. */
+function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop, strip, c) {
+	const pr = ax.pr;
+	let step;
+	let stripU;
+	if (c > 0) {
+		// sinh nodes: the strip in u is pi/4 (see nodeScale)
+		stripU = PI / 4;
+		step = sinhStep(c, 1.5 * PI / Math.sqrt(18.5 * psi2), omega);
+	} else {
+		// A Gaussian e^(-psi'' Y^2/2) is integrated to about 1e-7 at this step
+		// and to rounding at half of it; four nodes to a turn of the fastest
+		// phase along the path (a vertex off the saddle turns at |t - D|; see
+		// pathFrequency).
+		step = 1.5 * PI / Math.sqrt(18.5 * psi2);
+		if (omega > 0) step = Math.min(step, 0.5 * PI / omega);
+		// The integrand is analytic in the strip |Im Y| < strip, and the
+		// trapezoidal rule converges like exp(-2 pi strip/step). Start inside
+		// that, or two coarse sums can agree while both miss the feature.
+		stripU = strip;
+		step = Math.min(step, 0.5 * strip);
+	}
 	// K is finite at s = -lambda, but I - T cancels there: keep the node on
 	// the real axis a quarter step clear of those points, on the right,
-	// where there is nothing singular to meet.
-	const ss = pr.kind === INVENTORY ? offLambda(pr.blk, v, 0.25 * step) : v;
+	// where there is nothing singular to meet (dY/du = c at the vertex).
+	const ss = pr.kind === INVENTORY ? offLambda(pr.blk, v, 0.25 * (c > 0 ? c * step : step)) : v;
 	const acc = { h: 0, dh: 0, d2: 0, abs: 0, bad: false, regrow: false, cut: false, stop };
-	parabolaSweep(path, ws, pr, tt, ss, kappa, step, 0, acc);
+	parabolaSweep(path, ws, pr, tt, ss, kappa, step, 0, acc, c);
 	if (acc.regrow) return { regrow: true };
 	let h = acc.h * step / PI;
 	let dh = acc.dh * step / PI;
@@ -1716,7 +1893,7 @@ function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop)
 		if (ws.evaluations > stop) break;
 		const half = step / 2;
 		const a2 = { h: 0, dh: 0, d2: 0, abs: 0, bad: false, regrow: false, cut: false, stop };
-		parabolaSweep(path, ws, pr, tt, ss, kappa, half, half, a2);
+		parabolaSweep(path, ws, pr, tt, ss, kappa, half, half, a2, c);
 		if (a2.regrow) return { regrow: true };
 		if (a2.bad) { acc.bad = true; break; }
 		if (a2.cut) acc.cut = true;
@@ -1740,13 +1917,13 @@ function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop)
 		// answer. Squaring alone is not enough: A^-1 T has a pole and a branch
 		// point together at s = -lambda, and there a sum that squared its
 		// error by the difference was still 2e-11 out, at an estimate of 2e-15.
-		const next = Math.max(rel * rel, 2 * Math.exp(-2 * PI * strip / step));
-		// Under plug flow the step does not follow the phase along the path
-		// (pathFrequency), and an oscillation a whole number of steps long
-		// gives two sums that agree and are both wrong: there, two
-		// agreements in a row.
+		const next = Math.max(rel * rel, 2 * Math.exp(-2 * PI * stripU / step));
+		// Under plug flow a finite matrix puts an essential singularity at
+		// every pole of tanh, with a ridge beside it, and an oscillation a
+		// whole number of steps long gives two sums that agree and are both
+		// wrong: there, two agreements in a row.
 		const ok = err <= floor || (level >= 1 && err <= rtol * Math.abs(h) && next <= rtol)
-			|| (step <= 0.3 * strip && next <= rtol * 1e-2);
+			|| (!(c > 0) && step <= 0.3 * stripU && next <= rtol * 1e-2);
 		agreed = ok ? agreed + 1 : 0;
 		if (ok && (agreed >= 2 || !path.infPe)) {
 			err = Math.min(err, next * Math.abs(h) + floor);
@@ -1757,7 +1934,484 @@ function parabolaSums(path, ws, ax, tt, v, kappa, psi2, omega, rtol, atol, stop)
 	const cond = acc.abs * step / PI / Math.max(Math.abs(h), 1e-300);
 	// a sum cut short can agree with the next one and still be wrong
 	if (acc.cut) err = Infinity;
-	return { h, dh, d2, err, cond, s: ss, kappa };
+	return { h, dh, d2, err, cond, s: ss, kappa, c };
+}
+
+/* ==========================================================================
+   Shared contours: one parabola for the times of a cell
+
+   The nodes of one parabola give the response at any time t' near its own
+   time t_a from the same values of the transform: only e^(s t') changes, and
+   that costs a small fraction of an evaluation of the transform, let alone of
+   the search for the path. Along the parabola built for t_a the terms for t'
+   exceed the answer by about exp((t' - t_a)^2/(2 psi'')) near the saddle (in
+   general by f(v) - min f, f(s) = s t' + psi(s)), so one parabola serves the
+   times within a few tilted standard deviations sigma = sqrt(psi'') of t_a;
+   and within a factor of about 2, since the Gaussian's width in Y goes as
+   sqrt(t_a/t').
+
+   The cells: a lattice in ln t per axis, from its real-axis table alone, t
+   the time less the plug-flow delay. u(ln t) = integral of max(t/(2 C
+   sigma(t)), 1/(2 ln F)) d ln t, C = 2, F = 2, sigma from psi'' on the table
+   as saddleAt takes it, continued beyond the table's ends with the slope
+   1/(2 ln F); cell k covers u in [k - 1/2, k + 1/2], so it spans at most 2
+   sigma and a factor 2 on either side of its middle time t(u = k). A cell
+   depends on the table and k only, never on which times were asked for: a
+   time's result does not depend on the order in which times are requested.
+
+   The parabola of cell k is built from its middle time's saddle and vertex
+   rule, as for a single time -- K's vertex stays where the scan put it, the
+   tilted mean there taken as the middle time, and its node on the real axis
+   a quarter step clear of s = -lambda -- and made valid for all its times:
+   the ridge is checked at the earliest time (where e^(st) damps least), the
+   phase rate is the larger of its values at the two ends (it is linear in t),
+   the first step follows the narrowest Gaussian (psi'' t_hi/t_a, the latest
+   time), the nodes are uniform or sinh-spaced as for a single time (see
+   nodeScale, the widest Gaussian deciding), and the sweeps run until the
+   terms are negligible at five probe times across the cell (at k - 1/2,
+   k - 1/4, k, k + 1/4, k + 1/2 on the lattice), so as far as the widest
+   Gaussian needs. The halvings stop only when every probe
+   meets the tests of parabolaSums. The nodes are kept, and any time of the
+   cell is summed from them, with its own error estimate from the last two
+   levels of halving (under plug flow, three) and the tests of parabolaSums
+   at its own time. A cell whose sums still grow back when flattened as for a
+   single time, are cut short, run out of budget or do not converge serves no
+   time, and a time whose own estimate does not pass is inverted on its own
+   parabola as before. Each axis has cells of its own: an inventory is
+   sampled on two (see `sampleInventory`).
+   ========================================================================== */
+
+const CELL_C = 2; // a cell spans at most 2 tilted standard deviations either side
+const CELL_F = 2; // and at most a factor 2 either side
+const CELL_PROBES = [-0.5, -0.25, 0, 0.25, 0.5]; // the probe times, in u about the cell's middle
+const CELL_COND = 1e6; // the largest sum of moduli over the answer a shared time may have
+const CELL_PRUNE = 1e-20; // nodes below this times the vertex's term at both ends are dropped
+const CELL_NEGLIGIBLE = 1e-20; // terms below this times the response's peak need no condition
+const CELL_MAX_EVAL = 24000; // the evaluations a cell may take: four times a single time's budget, for all its times
+const CELL_SLOPE = 1 / (2 * Math.log(CELL_F)); // du/d ln t where the factor rules
+const LN_PRUNE = Math.log(CELL_PRUNE);
+
+/** The part of u over [t1, t2] within one interval of the table (sigma
+    constant there). */
+function cellSpan(t1, t2, sig) {
+	if (!(sig > 0) || !Number.isFinite(sig)) return CELL_SLOPE * Math.log(t2 / t1);
+	const tk = CELL_C * sig / Math.log(CELL_F); // t/(2 C sigma) = 1/(2 ln F) here
+	if (t2 <= tk) return CELL_SLOPE * Math.log(t2 / t1);
+	if (t1 >= tk) return (t2 - t1) / (2 * CELL_C * sig);
+	return CELL_SLOPE * Math.log(tk / t1) + (t2 - tk) / (2 * CELL_C * sig);
+}
+
+/** u at time tt (the time less the plug-flow delay). */
+function cellU(C, tt) {
+	const tb = C.tb;
+	const nb = tb.length;
+	if (!nb) return CELL_SLOPE * Math.log(tt);
+	if (tt <= tb[0]) return CELL_SLOPE * Math.log(tt / tb[0]);
+	if (tt >= tb[nb - 1]) return C.U[nb - 1] + CELL_SLOPE * Math.log(tt / tb[nb - 1]);
+	let lo = 0;
+	let hi = nb - 1;
+	while (hi - lo > 1) { const c = (lo + hi) >> 1; if (tb[c] <= tt) lo = c; else hi = c; }
+	return C.U[lo] + cellSpan(tb[lo], tt, C.sig[lo]);
+}
+
+/** The time tt at u, the inverse of cellU. */
+function cellT(C, u) {
+	const tb = C.tb;
+	const nb = tb.length;
+	const U = C.U;
+	if (!nb) return Math.exp(u / CELL_SLOPE);
+	if (u <= 0) return tb[0] * Math.exp(u / CELL_SLOPE);
+	if (u >= U[nb - 1]) return tb[nb - 1] * Math.exp((u - U[nb - 1]) / CELL_SLOPE);
+	let lo = 0;
+	let hi = nb - 1;
+	while (hi - lo > 1) { const c = (lo + hi) >> 1; if (U[c] <= u) lo = c; else hi = c; }
+	const t1 = tb[lo];
+	const sig = C.sig[lo];
+	const du = u - U[lo];
+	if (!(sig > 0) || !Number.isFinite(sig)) return t1 * Math.exp(du / CELL_SLOPE);
+	const tk = CELL_C * sig / Math.log(CELL_F);
+	if (t1 >= tk) return t1 + du * 2 * CELL_C * sig;
+	const uk = CELL_SLOPE * Math.log(tk / t1);
+	return du <= uk ? t1 * Math.exp(du / CELL_SLOPE) : tk + (du - uk) * 2 * CELL_C * sig;
+}
+
+/**
+ * The cells of one axis, built as times ask for them. `opt`: `{rtol}` (1e-11,
+ * as invertParabola), `atol` (0), `peak` (the response's peak; from the table
+ * when left out), `maxEval` (CELL_MAX_EVAL). The counts in `.stats`: times
+ * served by their cell, times that fell back to their own parabola, times
+ * negligible by the saddle rule, cells built, cells that failed, and times
+ * whose own parabola failed too and that went on to de Hoog's method.
+ */
+function makeCells(path, ax, opt) {
+	// the tilted means of the table, falling, as saddleAt reads them; the
+	// lattice's anchor u = 0 is the earliest of them
+	const D = ax.D;
+	const sm = ax.sm;
+	const K = D.length;
+	const tb = [];
+	const sb = [];
+	let last = Infinity;
+	for (let k = 0; k < K; k++) {
+		const d = D[k];
+		if (!Number.isFinite(d)) { if (tb.length) break; continue; }
+		if (!(d > 0) || !(d < last)) continue;
+		tb.push(d);
+		sb.push(sm[k]);
+		last = d;
+	}
+	tb.reverse();
+	sb.reverse();
+	const nb = tb.length;
+	const U = new Float64Array(nb);
+	const sig = new Float64Array(Math.max(0, nb - 1));
+	for (let m = 0; m + 1 < nb; m++) {
+		const psi2 = (tb[m + 1] - tb[m]) / (sb[m] - sb[m + 1]);
+		sig[m] = psi2 > 0 && Number.isFinite(psi2) ? Math.sqrt(psi2) : NaN;
+		U[m + 1] = U[m] + cellSpan(tb[m], tb[m + 1], sig[m]);
+	}
+	let peak = opt && opt.peak > 0 ? opt.peak : 0;
+	if (!peak) {
+		let lp = -Infinity;
+		for (const t of tb) lp = Math.max(lp, logEstimate(ax, t + ax.pr.shift));
+		peak = Number.isFinite(lp) ? Math.exp(lp) : 0;
+	}
+	const np = CELL_PROBES.length;
+	return {
+		ax, tb, U, sig, map: new Map(), peak, infPe: path.infPe,
+		rtol: (opt && opt.rtol) || 1e-11, atol: (opt && opt.atol) || 0, maxEval: (opt && opt.maxEval) || CELL_MAX_EVAL,
+		stats: { shared: 0, fallback: 0, negligible: 0, cells: 0, failed: 0, dehoog: 0 },
+		// scratch for the sweeps
+		pt: new Float64Array(np), ph: new Float64Array(np), pa: new Float64Array(np), mods: new Float64Array(np),
+		maxMod: new Float64Array(np), minEnv: new Float64Array(np), small: new Int32Array(np), last: new Float64Array(7 * np),
+	};
+}
+
+/** One trapezoidal sweep of a cell's parabola, as parabolaSweep but with the
+    terms of every probe time: it stops when they have died out at all of
+    them, and a regrowth at any one is a regrowth. The nodes are appended to
+    `nodes` with their level, each as s and the weighted factor
+    T(s) (1 + 2 i kappa Y) dY/du of its term, scaled by e^E; the nodes are
+    Y = u, or Y = c sinh(u) when c > 0. */
+function cellSweep(path, ws, C, ss, kappa, step, off, level, acc, nodes, c) {
+	const pr = C.ax.pr;
+	const P = C.pt;
+	const np = P.length;
+	const mods = C.mods;
+	const maxMod = C.maxMod;
+	const minEnv = C.minEnv;
+	const small = C.small;
+	const last = C.last;
+	maxMod.fill(0);
+	minEnv.fill(Infinity);
+	small.fill(0);
+	last.fill(0);
+	for (let k = 0; k < 20000; k++) {
+		const u = off + k * (off ? 2 * step : step);
+		const Y = c > 0 ? c * Math.sinh(u) : u;
+		const jac = c > 0 ? c * Math.cosh(u) : 1;
+		const wgt = u === 0 ? 0.5 : 1;
+		const w = wgt * jac;
+		const sr = ss - kappa * Y * Y;
+		const si = Y;
+		evalBlock(path, ws, pr.blk, sr, si, pr.kind);
+		const Fr = RE;
+		const Fi = IM;
+		const E = ws.E;
+		const q = 2 * kappa * Y;
+		const gr = w * (Fr - Fi * q);
+		const gi = w * (Fi + Fr * q);
+		nodes.sr.push(sr);
+		nodes.si.push(si);
+		nodes.gr.push(gr);
+		nodes.gi.push(gi);
+		nodes.E.push(E);
+		nodes.lev.push(level);
+		for (let p = 0; p < np; p++) {
+			const t = P[p];
+			const ex = t * sr - E;
+			let m = 0;
+			if (ex > 700) {
+				acc.bad = true;
+				m = Infinity;
+			} else if (!(ex < -740 || (Fr === 0 && Fi === 0))) {
+				cexp(ex, t * si);
+				const zr = RE * gr - IM * gi;
+				const zi = RE * gi + IM * gr;
+				acc.h[p] += zr;
+				m = Math.hypot(zr, zi);
+				acc.abs[p] += m;
+				m /= wgt;
+			}
+			mods[p] = m;
+		}
+		if (Y === 0) {
+			for (let p = 0; p < np; p++) maxMod[p] = Math.max(maxMod[p], mods[p]);
+			continue;
+		}
+		let dead = k > 3;
+		for (let p = 0; p < np; p++) {
+			const m = mods[p];
+			if (k > 3 && (m > 100 * maxMod[p] || (minEnv[p] < 1e-6 * maxMod[p] && m > 1e-3 * maxMod[p]))) {
+				acc.regrow = true;
+				return;
+			}
+			if (m > maxMod[p]) maxMod[p] = m;
+			last[7 * p + k % 7] = m;
+			if (k >= 7) {
+				let env = 0;
+				for (let r = 7 * p; r < 7 * p + 7; r++) if (last[r] > env) env = last[r];
+				if (env < minEnv[p]) minEnv[p] = env;
+			}
+			if (m <= 1e-18 * maxMod[p]) small[p]++; else small[p] = 0;
+			if (small[p] < 3) dead = false;
+		}
+		if (dead) return;
+		if (acc.bad) return;
+		if (ws.evaluations > acc.stop) break;
+	}
+	// out of nodes or budget before the terms died out: the sum is cut short
+	acc.cut = true;
+}
+
+/** The sums of a cell's parabola: those of parabolaSums, at every probe time.
+    Returns `{regrow}`, `{ok: false, why}` or `{ok: true, step, levels, strip,
+    c, ss, nodes}`, step and strip in the node variable u, ss the vertex's
+    node. */
+function cellSums(path, ws, C, v, kappa, psi2, omega, stop, strip, c) {
+	const pr = C.ax.pr;
+	const P = C.pt;
+	const np = P.length;
+	const rtol = C.rtol;
+	// the step as in parabolaSums, for the narrowest Gaussian and the fastest
+	// phase of the cell
+	let step;
+	let stripU;
+	if (c > 0) {
+		stripU = PI / 4;
+		step = sinhStep(c, 1.5 * PI / Math.sqrt(18.5 * psi2), omega);
+	} else {
+		step = 1.5 * PI / Math.sqrt(18.5 * psi2);
+		if (omega > 0) step = Math.min(step, 0.5 * PI / omega);
+		stripU = strip;
+		step = Math.min(step, 0.5 * strip);
+	}
+	// K's node on the real axis a quarter step clear of s = -lambda, as in
+	// parabolaSums
+	const ss = pr.kind === INVENTORY ? offLambda(pr.blk, v, 0.25 * (c > 0 ? c * step : step)) : v;
+	const acc = { h: C.ph, abs: C.pa, bad: false, regrow: false, cut: false, stop };
+	acc.h.fill(0);
+	acc.abs.fill(0);
+	const nodes = { sr: [], si: [], gr: [], gi: [], E: [], lev: [] };
+	cellSweep(path, ws, C, ss, kappa, step, 0, 0, acc, nodes, c);
+	if (acc.regrow) return { regrow: true };
+	if (acc.bad || acc.cut) return { ok: false, why: acc.bad ? 'overflow' : 'cut short' };
+	const h = new Float64Array(np);
+	for (let p = 0; p < np; p++) h[p] = acc.h[p] * step / PI;
+	let agreed = 0;
+	for (let level = 0; level < 12; level++) {
+		if (ws.evaluations > stop) break;
+		const half = step / 2;
+		cellSweep(path, ws, C, ss, kappa, half, half, level + 1, acc, nodes, c);
+		if (acc.regrow) return { regrow: true };
+		if (acc.bad || acc.cut) return { ok: false, why: acc.bad ? 'overflow' : 'cut short' };
+		step = half;
+		const edge = 2 * Math.exp(-2 * PI * stripU / step);
+		let all = true;
+		for (let p = 0; p < np; p++) {
+			const h2 = acc.h[p] * step / PI;
+			const err = Math.abs(h2 - h[p]);
+			h[p] = h2;
+			const floor = 1e-15 * acc.abs[p] * step / PI + C.atol;
+			const rel = err / Math.max(Math.abs(h2), 1e-300);
+			const next = Math.max(rel * rel, edge);
+			if (!(err <= floor || (level >= 1 && err <= rtol * Math.abs(h2) && next <= rtol)
+				|| (!(c > 0) && step <= 0.3 * stripU && next <= rtol * 1e-2))) all = false;
+		}
+		agreed = all ? agreed + 1 : 0;
+		if (all && (agreed >= 2 || !path.infPe)) return { ok: true, step, levels: level + 1, strip: stripU, c, ss, nodes };
+	}
+	return { ok: false, why: ws.evaluations > stop ? 'budget' : 'no agreement' };
+}
+
+/** Cell k of C: its parabola, built and summed at its probe times, and its
+    nodes, the negligible ones dropped. `{ok: false}` when it cannot serve. */
+function buildCell(path, ws, C, k) {
+	const ax = C.ax;
+	const pr = ax.pr;
+	const tA = cellT(C, k);
+	const tLo = cellT(C, k - 0.5);
+	const tHi = cellT(C, k + 0.5);
+	const fail = (why) => ({ ok: false, k, tLo, tA, tHi, why });
+	if (!(tLo > 0) || !(tA > tLo) || !(tHi > tA) || !Number.isFinite(tHi)) return fail('lattice');
+	const sad = saddleAt(ax, tA);
+	if (!sad || sad.beyond || sad.w < -720) return fail('negligible');
+	const n0 = ws.evaluations;
+	const { v, loc, psi2 } = parabolaVertex(path, ws, ax, tA, sad);
+	// psi(v) and the tilted mean D(v); K's vertex is the scan's saddle for the
+	// middle time, as invertParabola takes it
+	let psiV = sad.w - tA * v;
+	let Dv = tA;
+	if (loc) {
+		if (!Number.isFinite(loc.psi) || !Number.isFinite(loc.D)) return fail('axis');
+		psiV = loc.psi;
+		Dv = loc.D;
+	}
+	// the phase turns at |t - D(v)| at the vertex: the larger of the two ends
+	const omega = Math.max(Math.abs(tLo - Dv), Math.abs(tHi - Dv));
+	let kappa = Math.max(psi2 / (2 * tA), 0.25 / (v - ax.s0));
+	const rfc = pr.shift > 0 ? pr.blk.Rmin : 0;
+	// the ridge at the earliest time: t (Re s - v) is largest there
+	if (!path.infPe || !path.infX0) kappa = flattenForRidge(path, pr.blk, v, tLo, tLo * v + psiV, kappa, rfc);
+	for (let p = 0; p < CELL_PROBES.length; p++) C.pt[p] = cellT(C, k + CELL_PROBES[p]);
+	let res = null;
+	for (let attempt = 0; attempt < 4; attempt++) {
+		// the phase rates and the node map as for a single time, the Gaussian
+		// the widest (earliest time) for the stretch and the narrowest (latest)
+		// for the step; the members' own rates under plug flow as well (see
+		// invertParabola)
+		const strip = parabolaStrip(ax, v, kappa);
+		const psi2lo = Math.max(psi2 * tLo / tA, psi2 + 2 * (tLo - Dv) * kappa);
+		const psi2hi = psi2 * tHi / tA;
+		const wY = Math.max(omega, pathFrequency(path, pr.blk, v, tLo, kappa, tLo * v + psiV - 25, rfc, tHi, strip));
+		const wU = Math.max(omega * Math.sqrt(strip * strip + 50 / psi2lo), RATE_U);
+		const c = nodeScale(strip, psi2lo, 1.5 * PI / Math.sqrt(18.5 * psi2hi), wY, wU);
+		res = cellSums(path, ws, C, v, kappa, psi2hi, c > 0 ? wU : wY, n0 + C.maxEval, strip, c);
+		if (!res.regrow) break;
+		kappa /= 8;
+	}
+	if (!res.ok) return fail(res.regrow ? 'regrowth' : res.why);
+	// drop the nodes whose terms stay below CELL_PRUNE times the vertex's (the
+	// first node) at both ends: ln |term| is linear in t
+	const nd = res.nodes;
+	const nn = nd.sr.length;
+	const lg = (q) => Math.log(Math.hypot(nd.gr[q], nd.gi[q])) - nd.E[q];
+	const lg0 = lg(0) + Math.LN2; // the vertex's weight 1/2 undone
+	const keep = [];
+	for (let q = 0; q < nn; q++) {
+		const l = lg(q);
+		const d = nd.sr[q] - res.ss;
+		if (q === 0 || !(tLo * d + l < lg0 + LN_PRUNE && tHi * d + l < lg0 + LN_PRUNE)) keep.push(q);
+	}
+	const n = keep.length;
+	const cell = {
+		ok: true, k, tLo, tHi, tA, v, step: res.step, levels: res.levels, strip: res.strip, c: res.c, n,
+		sr: new Float64Array(n), si: new Float64Array(n), gr: new Float64Array(n), gi: new Float64Array(n),
+		ag: new Float64Array(n), la: new Float64Array(n), mE: new Float64Array(n), lev: new Uint8Array(n),
+	};
+	for (let r = 0; r < n; r++) {
+		const q = keep[r];
+		cell.sr[r] = nd.sr[q];
+		cell.si[r] = nd.si[q];
+		cell.gr[r] = nd.gr[q];
+		cell.gi[r] = nd.gi[q];
+		cell.ag[r] = Math.hypot(nd.gr[q], nd.gi[q]);
+		cell.la[r] = Math.log(cell.ag[r]);
+		cell.mE[r] = -nd.E[q];
+		cell.lev[r] = nd.lev[q];
+	}
+	return cell;
+}
+
+/** h, h' and h'' at time tt from a cell's nodes, or null when the result does
+    not pass: the error estimate is that of parabolaSums from the last two
+    levels (under plug flow also the two before), and the sum of the moduli
+    must stay within CELL_COND of the answer unless the terms are negligible
+    against the response's peak. */
+function cellSample(C, cell, tt) {
+	const n = cell.n;
+	const sr = cell.sr;
+	const si = cell.si;
+	const gr = cell.gr;
+	const gi = cell.gi;
+	const ag = cell.ag;
+	const la = cell.la;
+	const mE = cell.mE;
+	const lev = cell.lev;
+	const L = cell.levels;
+	// a term below CELL_PRUNE times the vertex's (the first node) at tt is
+	// left out, as the pruning leaves out those below it at both ends
+	const low = tt * sr[0] + mE[0] + la[0] + LN_PRUNE;
+	let h = 0;
+	let d1 = 0;
+	let d2 = 0;
+	let a = 0;
+	let h1 = 0;
+	let a1 = 0;
+	let h2 = 0;
+	for (let q = 0; q < n; q++) {
+		const ex = tt * sr[q] + mE[q];
+		if (ex > 700) return null;
+		if (ex < -740 || ex + la[q] < low) continue;
+		const e = Math.exp(ex);
+		const ph = tt * si[q];
+		const er = e * Math.cos(ph);
+		const ei = e * Math.sin(ph);
+		const zr = er * gr[q] - ei * gi[q];
+		const zi = er * gi[q] + ei * gr[q];
+		const yr = sr[q] * zr - si[q] * zi;
+		const yi = sr[q] * zi + si[q] * zr;
+		const m = e * ag[q];
+		h += zr;
+		d1 += yr;
+		d2 += sr[q] * yr - si[q] * yi;
+		a += m;
+		if (lev[q] < L) {
+			h1 += zr;
+			a1 += m;
+			if (lev[q] < L - 1) h2 += zr;
+		}
+	}
+	const rtol = C.rtol;
+	const strip = cell.strip;
+	// the test of parabolaSums on level l (step st) against l - 1
+	const passes = (hn, hp, an, st, level) => {
+		const err = Math.abs(hn - hp);
+		const floor = 1e-15 * an + C.atol;
+		const rel = err / Math.max(Math.abs(hn), 1e-300);
+		const next = Math.max(rel * rel, 2 * Math.exp(-2 * PI * strip / st));
+		const ok = err <= floor || (level >= 1 && err <= rtol * Math.abs(hn) && next <= rtol)
+			|| (!(cell.c > 0) && st <= 0.3 * strip && next <= rtol * 1e-2);
+		return ok ? Math.min(err, next * Math.abs(hn) + floor) : -1;
+	};
+	const st = cell.step;
+	const c = st / PI;
+	const H = h * c;
+	const H1 = h1 * 2 * c;
+	const A = a * c;
+	const err = passes(H, H1, A, st, L - 1);
+	if (!(err >= 0)) return null;
+	if (C.infPe && !(passes(H1, h2 * 4 * c, a1 * 2 * c, 2 * st, L - 2) >= 0)) return null;
+	const cond = A / Math.max(Math.abs(H), 1e-300);
+	if (!Number.isFinite(H) || !(cond <= CELL_COND || A <= CELL_NEGLIGIBLE * C.peak)) return null;
+	if (err > 1e-6 * Math.abs(H) + C.atol) return null;
+	return { h: H, dh: d1 * c, d2: d2 * c, err, cond };
+}
+
+/**
+ * The response and its first two derivatives at t from the shared parabola of
+ * t's cell (C from makeCells), building the cell when it is first asked for:
+ * `{h, dh, d2, err, cond, cell}`, the zeros of invertParabola where the
+ * saddle rule makes the response negligible, or null when the cell cannot
+ * serve t (then t needs its own parabola).
+ */
+function invertShared(path, ws, C, t) {
+	const ax = C.ax;
+	const tt = t - ax.pr.shift;
+	if (!(tt > 0)) { C.stats.negligible++; return ZERO; }
+	const sad = saddleAt(ax, tt);
+	if (!sad || sad.beyond || sad.w < -720) { C.stats.negligible++; return { ...ZERO, negligible: true }; }
+	const k = Math.floor(cellU(C, tt) + 0.5);
+	let cell = C.map.get(k);
+	if (!cell) {
+		cell = buildCell(path, ws, C, k);
+		C.map.set(k, cell);
+		C.stats.cells++;
+		if (!cell.ok) C.stats.failed++;
+	}
+	const r = cell.ok && Number.isFinite(k) ? cellSample(C, cell, tt) : null;
+	if (r) { C.stats.shared++; r.cell = k; } else C.stats.fallback++;
+	return r;
 }
 
 /** The fixed Talbot sum for h, h' and h'' with scale r and M nodes. */
@@ -2029,8 +2683,9 @@ function responseSupport(ax, tMin, tMax) {
 }
 
 /** One sample [h, h', h'', cond, err] of a pair's inverse, by the chosen
-    method; the parabola where the other two break down. */
-function sample(path, ws, ax, t, method, atol, hint) {
+    method; the parabola where the other two break down. `cells` (from
+    makeCells) are the axis's shared parabolas, for the default method. */
+function sample(path, ws, ax, t, method, atol, hint, cells) {
 	if (method === 'talbot') {
 		const r = invertTalbot(path, ws, ax, t);
 		if (Number.isFinite(r.h) && Number.isFinite(r.dh) && Number.isFinite(r.d2)) return [r.h, r.dh, r.d2, 1, 0];
@@ -2045,10 +2700,16 @@ function sample(path, ws, ax, t, method, atol, hint) {
 	// The default, and where the other two break down. A response whose
 	// samples mostly fell back to de Hoog (below) goes there first.
 	if (hint) hint.tries++;
+	// the shared parabola of t's cell, and t's own where that cannot serve
+	if (cells) {
+		const s = invertShared(path, ws, cells, t);
+		if (s) return [s.h, s.dh, s.d2, s.cond || 1, s.err];
+	}
 	const direct = hint && hint.tries > 16 && hint.fails > 0.75 * hint.tries;
 	const r = direct ? { h: NaN, err: Infinity } : invertParabola(path, ws, ax, t, { atol });
 	if (Number.isFinite(r.h) && !(r.err > 1e-6 * Math.abs(r.h) + atol)) return [r.h, r.dh, r.d2, r.cond || 1, r.err];
 	if (hint) hint.fails++;
+	if (cells) cells.stats.dehoog++;
 	// A path that found no clear way, or did not converge within its budget:
 	// de Hoog's Bromwich line (where |T| stays below T(Re s), so no sum of
 	// huge terms), with twice the terms the spread asks for; the parabola
@@ -2121,16 +2782,17 @@ function bateman(path, ws, blk, t) {
  * through its own saddle, and the subtraction costs at most a bit. Later
  * that difference cancels more and more, while K inverted whole gets better
  * as the delay falls behind its saddle: both are worked out, and the one
- * with the smaller error estimate kept.
+ * with the smaller error estimate kept. `cells` are the shared parabolas of
+ * the two axes, [axC's, axK's], or null.
  */
-function sampleInventory(path, ws, axC, axK, t, method, atol, hint) {
+function sampleInventory(path, ws, axC, axK, t, method, atol, hint, cells) {
 	const [b0, b1, b2] = bateman(path, ws, axC.pr.blk, t);
-	const [c0, c1, c2, cc, ce] = sample(path, ws, axC, t, method, atol, hint);
+	const [c0, c1, c2, cc, ce] = sample(path, ws, axC, t, method, atol, hint, cells && cells[0]);
 	const k0 = b0 - c0;
 	const errSplit = ce + EPS * (cc * Math.abs(c0) + 2 * Math.abs(b0));
 	const split = [k0, b1 - c1, b2 - c2, cc, errSplit];
 	if (Math.abs(k0) >= 0.5 * Math.abs(b0)) return split;
-	const r = sample(path, ws, axK, t, method, atol);
+	const r = sample(path, ws, axK, t, method, atol, null, cells && cells[1]);
 	const errWhole = r[4] + EPS * r[3] * Math.abs(r[0]);
 	return errWhole < errSplit ? r : split;
 }
@@ -2265,9 +2927,12 @@ function inventoryAxes(path, i, j) {
 /**
  * The response of i to a unit pulse of j at t = 0 -- the release rate, or,
  * with `kind: 'inventory'`, what the path holds -- and its first two
- * derivatives, inverted at t directly.
+ * derivatives, inverted at t directly: on a parabola of its own, and where
+ * that one's error estimate does not pass, by de Hoog's method at twice its
+ * terms (as a tabulated response's samples are, without the shared
+ * parabolas), with `cond` and `err`.
  *
- * @param {object} opt `{kind, method}`
+ * @param {object} opt `{kind, method, atol}`
  * @returns {{h: number, dh: number, d2: number}}
  */
 export function responseAt(path, i, j, t, opt = {}) {
@@ -2291,7 +2956,8 @@ export function responseAt(path, i, j, t, opt = {}) {
 	}
 	const ax = axisOf(path, pr);
 	if (opt.method === 'talbot') return invertTalbot(path, ws, ax, t, opt);
-	return invertParabola(path, ws, ax, t, opt);
+	const [h, dh, d2, cond, err] = sample(path, ws, ax, t, 'parabola', opt.atol || 0);
+	return { h, dh, d2, cond, err };
 }
 
 /**
@@ -2353,7 +3019,13 @@ function massBalance(path, ax, resp, tol) {
  * `rel` by how much, which the caller has to say. For an inventory `integral`
  * is the time the pulse spends in the path, when that is finite.
  *
- * @param {object} opt `{kind, tMax, method, rtol, perDecade, maxPts}`
+ * The default inversion samples nearby times on shared parabolas (see
+ * `makeCells`), and `shared` counts how the samples were taken, over the
+ * response's axes and both passes when a first missed its balance.
+ * `shared: false` gives every sample a parabola of its own (for comparisons);
+ * `shared` is then null, as it is for the other methods.
+ *
+ * @param {object} opt `{kind, tMax, method, rtol, perDecade, maxPts, shared}`
  */
 export function unitResponse(path, i, j, opt = {}) {
 	const pr = pairOf(path, i, j, opt.kind);
@@ -2368,22 +3040,30 @@ export function unitResponse(path, i, j, opt = {}) {
 	const o = { method: opt.method, perDecade: opt.perDecade, rtol: opt.rtol, maxPts: opt.maxPts };
 	const T0raw = transfer(path, 0, 0, i, j)[0];
 	const T0 = Number.isFinite(T0raw) ? T0raw : transfer(path, 1e-300, 0, i, j)[0];
+	// The shared parabolas, a set per axis, held to the absolute floor of the
+	// response's peak estimate (a floor that grew with the peak found so far
+	// would make a cell depend on the times asked for before it).
+	const share = (opt.method || 'parabola') === 'parabola' && opt.shared !== false;
+	const cellsOf = (ax, peak) => makeCells(path, ax, { atol: peak > 0 ? 1e-3 * RESP_ATOL * peak : 0, peak });
 	if (pr.kind === INVENTORY) {
 		const [axC, axK] = inventoryAxes(path, i, j);
-		const sampler = (t, atol, hint) => sampleInventory(path, ws, axC, axK, t, opt.method, atol, hint);
+		const cells = share ? [cellsOf(axC, 1), cellsOf(axK, 1)] : null;
+		const sampler = (t, atol, hint) => sampleInventory(path, ws, axC, axK, t, opt.method, atol, hint, cells);
 		const start = bateman(path, ws, pr.blk, 0);
 		const sup = responseSupport(axK, axK.tLo, T_CAP);
 		const tA = Math.min(sup ? sup.tLo : axK.tLo, axK.tLo, tMax / 2);
 		const tB = sup ? Math.min(Math.max(sup.tHi, 2 * tA), tMax) : tMax;
 		const resp = computeResponse(sampler, start, tA, tB, { ...o, peakEstimate: 1 });
-		return { i, j, kind, ...resp, T0 };
+		return { i, j, kind, ...resp, T0, shared: cellCounts(cells) };
 	}
 	const ax = axisOf(path, pr);
 	const sup = responseSupport(ax, ax.tLo, T_CAP);
 	const tA = sup ? sup.tLo : NaN;
 	const tB = sup ? Math.min(sup.tHi, tMax) : NaN;
-	const sampler = (t, atol, hint) => sample(path, ws, ax, t, opt.method, atol, hint);
-	const ropt = { ...o, peakEstimate: sup ? Math.exp(sup.logPeak) : 0, delay: pr.shift };
+	const peakEstimate = sup ? Math.exp(sup.logPeak) : 0;
+	const cells = share ? cellsOf(ax, peakEstimate) : null;
+	const sampler = (t, atol, hint) => sample(path, ws, ax, t, opt.method, atol, hint, cells);
+	const ropt = { ...o, peakEstimate, delay: pr.shift };
 	let resp = sup && tB > tA * (1 + 1e-9) ? computeResponse(sampler, null, tA, tB, ropt) : empty();
 	addEarlyMass(path, pr, resp);
 	resp.T0 = T0;
@@ -2412,14 +3092,24 @@ export function unitResponse(path, i, j, opt = {}) {
 	}
 	return {
 		i, j, kind, ...resp, T0, expected: bal.expected, balanced: bal.ok, rel: bal.rel, checked: bal.checked,
+		shared: cellCounts(cells && [cells]),
 	};
+}
+
+/** How the samples of a response's axes were taken (see makeCells), summed;
+    null without shared parabolas. */
+function cellCounts(sets) {
+	if (!sets) return null;
+	const out = { shared: 0, fallback: 0, negligible: 0, cells: 0, failed: 0, dehoog: 0 };
+	for (const C of sets) for (const key of Object.keys(out)) out[key] += C.stats[key];
+	return out;
 }
 
 /**
  * Every unit response of the path: `{release, inventory}`, each an array
  * indexed i*n + j (null where j never becomes i, or for a kind not asked for).
  *
- * @param {object} opt `{kinds, sources, tMax, method, rtol, perDecade}`;
+ * @param {object} opt `{kinds, sources, tMax, method, rtol, perDecade, shared}`;
  *   `sources` limits the columns j to the nuclides that receive an inflow
  */
 export function unitResponses(path, opt = {}) {
@@ -2594,7 +3284,8 @@ export function inventoryAt(path, responses, inflows, t) {
 export const _internal = {
 	blockOf, evalBlock, pairOf, axisOf, realAxis, saddleAt, invertParabola, invertTalbot, invertDeHoog,
 	singularity, computeResponse, responseSupport, hermite5, bateman, sampleInventory, inventoryAxes,
-	deHoogTerms, massBalance, sample, pathFrequency,
+	deHoogTerms, massBalance, sample, pathFrequency, makeCells, invertShared, cellU, cellT, RESP_ATOL,
+	logEstimate, nodeScale, gFracture,
 	RELEASE, INVENTORY, DECAYED,
 	get RE() { return RE; }, get IM() { return IM; },
 };

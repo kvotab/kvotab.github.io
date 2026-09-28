@@ -3969,8 +3969,8 @@ stops at 256 MB of decompressed output for the whole archive, not per entry.
 
 A compartment's `<differential-equation>` — Ecolego's dy/dt column — comes
 across as its `dydt` term, at the block level and per index; see *An explicit
-dy/dt term*. An empty one, which is what Ecolego writes on every entry that has
-none, is nothing. It used to be dropped with a warning.
+dy/dt term*. Ecolego leaves the element out of an entry that has no term, and
+an empty one is read as none. It used to be dropped with a warning.
 
 **An imported model arrives knowing what it is.** It used to arrive with an
 empty description and a name of `model`, and a safety assessment of fifteen
@@ -4020,7 +4020,9 @@ scenario dimension arrives as this model's, so one index of it is live at a
 time and every block indexed by it is read at that one. Three ways a file says
 which list that is — the marker in upper case, the marker in title case, and,
 in the oldest files, nothing at all but the name `Scenarios` — and all three are
-read. The same three settle the `Elements` dimension.
+read. The same three settle the `Elements` dimension. A list this tool's own
+export wrote as Ecolego's `Scenarios` (see *Exporting to Ecolego* below) arrives
+under its own name again.
 
 **Sub-system inputs and outputs are joined up rather than kept.** Ecolego
 routes a value across a sub-system boundary through a *model output* block, a
@@ -4090,6 +4092,36 @@ decided. A logarithmic series from a start of zero begins at 1 in Ecolego, and
 here at a millionth of the end time. See
 [When results are saved](#when-results-are-saved).
 
+**The solver.** A project file names its solver by Ecolego's key, which its
+solver menu shows under a shorter name. Four arrive as themselves: NDF
+(`java-ode15s`) as ndf, BDF (`java-ode15s-BDF`) as ndf with **BDF formulas**
+on, Rosenbrock (`java-ode23s`) as ros23 and DOPRI45 (`java-ode45`) as dp45. The
+rest arrive as the nearest solver here — RADAU5 as ndf, TR-BDF2 and
+Trapezoidal as ros23, the explicit ones (BOSH23, Adams and the fixed-step rk1
+to rk5) as dp45 — and the import report says so. See [Solvers](#solvers).
+
+**Half-lives.** A nuclide's half-life is in seconds in the file, and Ecolego's
+year is 365.2425 days where this tool's is the Julian year of 365.25. Ecolego
+turns the seconds into the run's own unit with its own year, so a model run in
+years reads its half-lives in Ecolego's years: Cs-137's 948,917,546.6 s is the
+30.07 years its nuclide database says, where it would be 30.0694 of this
+tool's. A model run in days or anything shorter reads them in this tool's
+years, since in those units the two agree. Either way the decay constant is
+the one Ecolego runs with. Imports used to read every file in Julian years,
+which made each decay constant two parts in a hundred thousand too large.
+
+**Multiply with donor.** Ecolego keeps it on each row of a transfer's table;
+here it is one setting of the whole transfer, since it makes the rate a
+coefficient or a flux and so decides its unit. A transfer whose rows disagree
+arrives as two between the same ends — the second named after the first,
+`Out_absolute` or `Out_by_donor`, holding the rows that say otherwise — each
+with a zero rate where the other applies, so that together they move what the
+file's one moves; a block that reads the first reads zero at those rows, and
+the import report says all of this. None of the project files tested against
+does it: they set it once, or leave it to the kind of transfer. Exports from
+this tool did, from a model that set it per index, which a run here now
+refuses rather than ignores.
+
 **Endpoints.** A project file carries the list of blocks whose results are
 kept:
 
@@ -4105,7 +4137,10 @@ Ecolego result file of a three-thousand-block model holds two groups: somebody
 decided what was worth keeping. The list arrives as `simulation.endpoints`,
 which is what the endpoint trees open on, and decides nothing about the run
 here, where every series is kept. A parameter named in it is skipped — a
-parameter is not an endpoint — and an Ecolego list often names dozens. See
+parameter is not an endpoint — and an Ecolego list often names dozens. A list
+that names every block a run has a result for arrives as no list, which is what
+keeping everything means here, where a block added later is kept too; it is
+also what this tool's own export writes for a model with none. See
 [Choosing endpoints](#choosing-endpoints).
 
 **Result files.** The HDF5 export is laid out as Ecolego lays out its own —
@@ -4176,9 +4211,10 @@ file.
   arguments, which is how Ecolego writes one, and a transport's begin, end,
   number, counter and operations become Ecolego's transport blocks.
 - Index lists, with their sub-sets and mappings. The catalogue of materials is
-  written under Ecolego's name for it, `Materials`, and it, the radionuclides,
-  the elements and the scenario list carry the markers Ecolego puts on its own
-  lists. Each material's unit and each nuclide's half-life go with them, and
+  written under Ecolego's name for it, `Materials`, and it, the radionuclides
+  and the elements carry the markers Ecolego puts on its own lists. Each
+  material's unit and each nuclide's half-life go with them — the half-life in
+  seconds of the year Ecolego will read it in (see *Half-lives* above) — and
   the decay chain is written out pair by pair — the model's own pairs, or the
   ones the database gives it.
 - Values per index. Ecolego keeps one row per index combination with every
@@ -4234,10 +4270,67 @@ own way:
   Ecolego geometric series from a start of zero begins at 1 and this grid
   begins far below it. An even grid is Ecolego's linear series, and a list of
   series goes as it is.
-- **The solver**: ndf, ros23 and dp45 are Ecolego's ODE15S, ODE23S and ODE45
-  and come back as themselves. The rest go out as the nearest Ecolego has —
-  radau5 as RADAU5, trbdf2 as ODE23TB — and the report says which; read back
+- **The solver**: ndf, ros23 and dp45 go out as Ecolego's NDF, Rosenbrock and
+  DOPRI45 (`java-ode15s`, `java-ode23s` and `java-ode45` in the file) and come
+  back as themselves, and so does ndf with **BDF formulas** on, as Ecolego's
+  BDF (`java-ode15s-BDF`). The rest go out as the nearest Ecolego has —
+  radau5 as RADAU5, trbdf2 as TR-BDF2 — and the report says which; read back
   here, those arrive as ndf or ros23.
+- **Equations** are written in Ecolego's spelling wherever this tool's
+  differs, and the report names every block whose equations were written
+  again, and what that took. A unit written against a number, `0.01[m]`, goes
+  without it: Ecolego reads such an equation as empty. A test standing for a
+  number, `(time > 5) * 2`, becomes `if(time > 5, 1, 0) * 2`; a `?:` becomes an
+  `if()`, `!=` Ecolego's `~=`, and a sign straight after an operator goes in
+  brackets, `2^(-k)`. `ln`, `pow`, `sgn`, `fabs` and `product` are spelled
+  `log`, `power`, `sign`, `abs` and `prod`, and `min`, `max`, `sum`, `prod` or
+  `mean` of one value is that value. The functions Ecolego has no counterpart
+  for — `mole2bq`, `bq2mole`, `ulp`, the ramps and smooth steps, `nand`, `nor`
+  and `xor` — are written out as the arithmetic they stand for, which gives the
+  same number to the last bit; Ecolego's unit check may then warn that such an
+  equation's unit is not its block's, since the constants written out carry
+  none. `asinh`, `acosh` and `atanh`, which Ecolego lists and cannot run, are
+  written as the logarithms they are, and agree to about twelve figures.
+  `mod` and `rem` Ecolego has, and works out as the exact remainder, which is
+  not always the number this tool works out — `mod(1, 0.1)` is 0 here and
+  0.0999… there — so they are written out too, `a - b * floor(a / b)` and the
+  same with `fix`; and since `mod(a, 0)` is `a` here and not a number in
+  Ecolego, a `mod` whose divisor may be zero is guarded.
+- **Initial values.** Ecolego works a compartment's initial value out before
+  the run, from what it has then: parameters, tables read at a value, and
+  expressions *set* to be evaluated before the run — its default, which leaves
+  the choice to Ecolego, does not count. Here an initial value is worked out at
+  the start of the run, from anything. So every expression and function an
+  initial value reads, and every one those read, goes out set to be evaluated
+  before the run. An initial value that reads the time, another compartment, a
+  transfer, a table of the time or a block that records the run cannot be
+  worked out then, and the report names the compartment: Ecolego opens such a
+  model and will not run it until that value is one it can work out, such as a
+  parameter.
+- **The scenario list** is written as Ecolego's own list of scenarios,
+  `Scenarios`, with a scenario for each of its indices, and the project is set
+  to run them: an Ecolego run is then one simulation per scenario switched on,
+  each reading its scenario wherever a block is indexed by the list, which is
+  what a run of each scenario is here. Read back here, the list has its own
+  name again. Ecolego finds that list by its name alone, so where another list
+  is already called `Scenarios` the scenario list keeps its own name, and the
+  report says the scenarios will not run as scenarios until one of the two is
+  renamed.
+- **Endpoints.** A model with no list of endpoints keeps every block's
+  results, and an Ecolego project saves only the blocks its list of outputs
+  names — a run of one with no list saves nothing at all. So a model with none
+  goes out with every block a run has results for on the list, which is what
+  Ecolego's own projects mostly carry, and read back here that is no list
+  again.
+- A **lookup table read at a value that repeats over its range**: Ecolego
+  repeats a cyclic table over the time, whatever it is read at, so the table
+  goes out unrepeated and every call to it puts its value on the range first,
+  the way a run here repeats it.
+- A transfer's **multiply by the donor** goes out on every row, since
+  Ecolego keeps it row by row (see *Multiply with donor* above). A model whose
+  entries disagree with the transfer about it is written as it says, row by
+  row, and the report says so: a run here refuses such a model, and reading
+  the file back makes it two transfers.
 
 **What is left out, and named in the report.** Each has no Ecolego
 equivalent, and none is written in a form Ecolego would read as something
@@ -4250,6 +4343,10 @@ else:
 - a block indexed by the `Compartments` or `Transfers` list, and an equation
   that reads `_source_` or `_target_`;
 - a function with no parameters, which Ecolego would take for an expression;
+- a block whose equation calls `percentile()` or one of the transport
+  functions (`transport_point`, `transport_sum`, `transport_mean`), which
+  Ecolego has no function for, and a table read at a value that repeats over a
+  range that is not the same at every index;
 - the two double-triangular distributions, correlation groups, correlations,
   and a distribution on one point of a lookup table (the point keeps its
   value);
@@ -4266,17 +4363,19 @@ kept per index in the file and read back here per block: a trigger's
 direction, and **Cannot go negative** — the report says when a model sets
 either differently at different indices.
 
-**What has been checked, and what has not.** Every bundled example and a set
-of made-up models covering every block kind are exported, imported again and
-run, and give the same numbers as the model they came from — a far-field
-pathway's cells to within the tolerance it was solved to, since the solver
-steps through the same equations assembled another way. The author goes out
-as the project's author and comes back as the model's. The file has not
-been opened in Ecolego itself: what the importer does not read — the empty
-diagram, the GUIDs, the `.version` flags, the source and sink blocks, a
-floor of `-1.0E300` for a compartment that may go negative — is written the way
-Ecolego's own files suggest, and is the first thing to look at if Ecolego
-refuses one.
+**What has been checked.** Every bundled example and a set of made-up models
+covering every block kind are exported, imported again and run, and give the
+same numbers as the model they came from — a far-field pathway's cells to
+within the tolerance it was solved to, since the solver steps through the same
+equations assembled another way. The same files have been opened and run in
+Ecolego 6.5 itself, by its own reader, validator and simulator: each opens
+without an error and gives the numbers a run here gives, to the tolerance the
+two were solved to — solved tighter, they agree more closely. Real assessment
+models of several hundred compartments open there without an error, ready to
+run. The rules under *Equations*, *Initial values*, *The scenario list* and
+*Endpoints* above were each found that way, from a file the importer here read
+back perfectly and Ecolego refused, or ran to a different answer. The author
+goes out as the project's author and comes back as the model's.
 
 ## Copying blocks between two windows
 
@@ -5628,9 +5727,9 @@ worked out semi-analytically is 9 states instead of 1,581.
 | | states | steps | run |
 |---|---|---|---|
 | on cells, 20 × 20, the rock going on | 1,581 | 3,776 | 0.9 s |
-| semi-analytically | 9 | 1,511 | 0.3 s |
+| semi-analytically | 9 | 1,534 | 0.2 s |
 | on cells, steps of at most 100 years | 1,581 | 12,318 | 1.8 s |
-| semi-analytically, steps of at most 100 years | 9 | 10,330 | 0.8 s |
+| semi-analytically, steps of at most 100 years | 9 | 10,354 | 0.8 s |
 | on cells, steps of at most 10 years | 1,581 | 101,734 | 12 s |
 | semi-analytically, steps of at most 10 years | 9 | 100,163 | 7 s |
 
@@ -5680,12 +5779,11 @@ what leaves the path by its last time, which is T(0) unless the response runs
 on past the end of the run. One that misses is worked out again, from earlier
 and on a grid twice as fine; one that misses even so is said, in the run log, in
 the problems strip, on the block and in its settings, and the release worked
-out from it is not to be relied on. Where this happens is a front far sharper
-than the rest of the response — a Peclet number of 10⁵ or more into a matrix
-that takes up almost nothing — and such a path also takes minutes to work out:
-in one made-up case P<sub>e</sub> 10⁴ held to 3 parts in 10¹¹ in 23 s, 10⁵
-missed by 1.5 parts in 10⁵ and 10⁶ by 9 %, each in 150 s. Work such a path out
-on cells, or as plug flow.
+out from it is not to be relied on. In one made-up case with a front far
+sharper than the rest of the response (T<sub>w</sub> 100 years, F 20 years/m, a
+matrix 1 m deep that holds almost nothing), P<sub>e</sub> 10⁴, 10⁵ and 10⁶ held
+their balance to a part in 10¹⁰, each in under a second; 10⁷ and 10⁸ held it
+too, but took about a minute.
 
 ## Waste packages: the source term with its barriers
 
@@ -6896,7 +6994,7 @@ Blocks:
 | Key | Meaning |
 |---|---|
 | `compartments` | State variables. `initial` is a number or an equation. `dydt` is an optional extra term in the rate of change, added to what the transfers and decay give; it may read the compartment itself — see [An explicit dy/dt term](#an-explicit-dydt-term). `handle_decay` (default true) adds decay and ingrowth. `non_negative` (default true) stops the solver carrying the inventory below zero. |
-| `transfers` | `from` -> `to`, either of which may be `null` for a source or sink. `rate` is multiplied by the donor compartment unless `"multiply_by_donor": false`, in which case it is an absolute flux. Several transfers may join the same two compartments; their fluxes add. A flux indexed by a dimension one of its ends has not got needs `"sum_extra_indices": true` to say that the total is meant — see [Ends of different dimension](#ends-of-different-dimension-and-sum-extra-indices). |
+| `transfers` | `from` -> `to`, either of which may be `null` for a source or sink. `rate` is multiplied by the donor compartment unless `"multiply_by_donor": false`, in which case it is an absolute flux — one setting for the whole transfer, which an entry cannot change. Several transfers may join the same two compartments; their fluxes add. A flux indexed by a dimension one of its ends has not got needs `"sum_extra_indices": true` to say that the total is meant — see [Ends of different dimension](#ends-of-different-dimension-and-sum-extra-indices). |
 | `parameters` | Constants. |
 | `expressions` | Algebraic quantities evaluated from the state each step. They may reference each other; circular references are rejected. |
 | `functions` | Arithmetic written once and called from any equation: `parameters` names the values passed in, `equation` is the body. See [Functions](#functions). |

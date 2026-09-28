@@ -18,6 +18,17 @@ the point, and so agrees with the whole to within the tolerance. The worker
 count changes nothing: each job is the same run in whichever process takes
 it.
 
+**A job at a time, where the application builds a bin once.** The
+application packs its jobs into one bin per core and builds each bin once,
+since the code it generates does not shrink with the part: a part costs half a
+whole build whatever it holds. A build here does shrink with the part -- a
+twelfth of a 10,080-state model built in 0.18 of the whole's time, half of it
+in 0.46 -- so a job costs about its share of the states, build and solve
+alike, which is the cost model below; and building each job on its own is
+what keeps a job's run the same whichever jobs share its process. The plans
+are the application's in everything but that weighing (``PlanParity`` in the
+tests).
+
 **Refused, whatever the setting, where it would be wrong or cannot work:** a
 model the partition declines (a delay, a snapshot or an event reaches across
 parts without showing in the Jacobian); output at the solver's own steps,

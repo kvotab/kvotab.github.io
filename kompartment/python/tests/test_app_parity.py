@@ -58,6 +58,31 @@ class OpeningAFile(unittest.TestCase):
         js = app('normalise', model=raw)['model']
         self.assertEqual(differences(py, js), [])
 
+    def test_a_transfer_s_copies_of_its_donor_setting_go_as_the_application_drops_them(self):
+        # The copies an older import kept on each entry: the agreeing ones go,
+        # an entry left with nothing goes with them, and one that disagrees stays.
+        raw = {
+            'name': 'Copies',
+            'index_lists': [{'name': 'Objects', 'indices': [{'name': 'A'}, {'name': 'B'}, {'name': 'C'}]}],
+            'compartments': [{'name': 'Pond', 'index_lists': ['Objects'], 'initial': '1'}],
+            'transfers': [
+                {'name': 'Out', 'from': 'Pond', 'to': None, 'index_lists': ['Objects'], 'rate': '0.1',
+                 'entries': [{'index': {'Objects': 'A'}, 'rate': '0.2', 'multiply_by_donor': True},
+                             {'index': {'Objects': 'B'}, 'multiply_by_donor': True},
+                             {'index': {'Objects': 'C'}, 'rate': '3', 'multiply_by_donor': False}]},
+                {'name': 'Flux', 'from': 'Pond', 'to': None, 'index_lists': ['Objects'], 'rate': '1',
+                 'multiply_by_donor': False, 'entries': [{'index': {'Objects': 'A'}, 'multiply_by_donor': False}]},
+            ],
+        }
+        py = kp.Model(raw).raw
+        js = app('normalise', model=raw)['model']
+        self.assertEqual(differences(py, js), [])
+        self.assertEqual(dumps(py), dumps(js))
+        by = {t['name']: t for t in py['transfers']}
+        self.assertEqual(by['Out']['entries'], [{'index': {'Objects': 'A'}, 'rate': '0.2'},
+                                                {'index': {'Objects': 'C'}, 'rate': '3', 'multiply_by_donor': False}])
+        self.assertEqual(by['Flux']['entries'], [])
+
     def test_a_new_model_is_the_application_s_new_model(self):
         from kompartment.simulation import DEFAULTS
         blank = {

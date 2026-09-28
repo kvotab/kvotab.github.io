@@ -7441,6 +7441,7 @@ export function materialiseShorthand(raw) {
 	// this, a model's real per-index values are invisible in the interface --
 	// examples/biosphere.json is written that way.
 	materialiseLegacyEntries(raw);
+	dropDonorCopies(raw);
 
 	// The two material dimensions are built in: every model has them, so make
 	// sure they are there before anything reads the model's shape.
@@ -7459,6 +7460,34 @@ export function materialiseShorthand(raw) {
 	// never asked for. Making it explicit on load removes the divergence
 	// without changing what any existing file means.
 	makeDimensionsExplicit(raw);
+}
+
+/**
+ * A transfer's entries once carried a copy of its `multiply_by_donor` -- the
+ * importer kept each row's, and this tool's exports wrote it on every row --
+ * where it is one setting of the whole transfer (VALUE_KEYS in ./project.js).
+ * A copy that agrees says nothing, and would disagree the moment the
+ * transfer's own was changed, which `Project` refuses; so it goes, on load. One
+ * that disagrees already stays, for `Project` to name.
+ */
+export function dropDonorCopies(project) {
+	for (const t of project.transfers ?? []) {
+		if (!t || typeof t !== 'object' || !Array.isArray(t.entries)) continue;
+		const own = t.multiply_by_donor !== false;
+		let dropped = false;
+		for (const e of t.entries) {
+			if (e && typeof e === 'object' && Object.prototype.hasOwnProperty.call(e, 'multiply_by_donor')
+				&& (e.multiply_by_donor !== false) === own) {
+				delete e.multiply_by_donor;
+				dropped = true;
+			}
+		}
+		// An entry that held nothing else holds nothing now.
+		if (dropped) {
+			t.entries = t.entries.filter((e) => !e || typeof e !== 'object' || Object.keys(e).some((k) => k !== 'index'));
+		}
+	}
+	return project;
 }
 
 /**

@@ -12,7 +12,7 @@
    ========================================================================== */
 'use strict';
 
-self.importScripts('./farf31-model.js?v=20260926d');
+self.importScripts('./farf31-model.js?v=20260928a');
 
 self.onmessage = (ev) => {
   const { id, input } = ev.data || {};

@@ -41,7 +41,7 @@ import {
 	find,
 	XMLError,
 } from './xml.js';
-import { SECONDS_PER_YEAR } from '../domain/nuclides.js';
+import { ecoSecondsPerYear } from '../domain/nuclides.js';
 import { interpolationFromEco } from '../domain/lookup.js';
 import { parsePDF } from '../domain/pdf.js';
 import { operationFromEco } from '../domain/reduce.js';
@@ -364,7 +364,7 @@ function* importSteps(text, meta) {
 	const indexIds = readIndexLists(dataModel, project, names, report, materials);
 	readDecayChains(dataModel, project, report);
 	const hierarchy = readHierarchy(dataModel, project, names, report);
-	const { blockNameById, wiring } = readBlocks(
+	const { blockNameById, wiring, twins } = readBlocks(
 		dataModel, project, names, indexIds, report, hierarchy,
 	);
 	yield 'settings';
@@ -383,7 +383,7 @@ function* importSteps(text, meta) {
 	// directly. Last, so the references it writes are the names the model
 	// ended up with. See `connectInterfaces`.
 	connectInterfaces(project, wiring, blockNameById, report);
-	rewriteEndpointIds(project, blockNameById, report);
+	rewriteEndpointIds(project, blockNameById, report, twins);
 
 	const duplicated = names.duplicated();
 	if (duplicated.length) {
@@ -960,6 +960,21 @@ class NameMapper {
 		return candidate;
 	}
 
+	/**
+	 * A name for a block the file does not have -- a second transfer this
+	 * import makes of one -- free in its sub-system, and taken there, so no
+	 * block mapped later is given it too. Not a rename: nothing was called it.
+	 */
+	claim(base, system = '') {
+		if (!this.used.has(system)) this.used.set(system, new Set());
+		const taken = this.used.get(system);
+		let candidate = base;
+		let n = 1;
+		while (taken.has(candidate) || RESERVED.has(candidate)) candidate = `${base}_${n++}`;
+		taken.add(candidate);
+		return candidate;
+	}
+
 	/** Original names that mapped to more than one identifier. */
 	duplicated() { return [...this.ambiguous]; }
 }
@@ -1264,6 +1279,11 @@ function readMaterials(dataModel, project, report) {
 
 	// Prototype-free: keyed by what the file calls its nuclides. See keyName.
 	const halfLives = Object.create(null);
+	// A half-life is in seconds, and how many make a year depends on the unit
+	// the model runs in: see ecoSecondsPerYear. Its database writes 30.07 years
+	// of Cs-137 as 948917546.6 s, which is 30.0694 years of 365.25 days.
+	const said = (childText(child(dataModel, 'simulation-settings') ?? { children: [] }, 'time-unit') ?? '').toLowerCase();
+	const perYear = ecoSecondsPerYear(TIME_UNIT_FROM_ECO[said] ?? 'year');
 	// What the inventories are in. Ecolego keeps this on the material model as
 	// `decayUnit`, and keeps every nuclide's own unit in step with it -- which
 	// is how the file carries it, since the model-level property is never
@@ -1287,7 +1307,7 @@ function readMaterials(dataModel, project, report) {
 		const rawHalfLife = childText(nuc, 'half-life');
 		const seconds = Number(rawHalfLife);
 		if (Number.isFinite(seconds) && seconds > 0) {
-			halfLives[name] = seconds / SECONDS_PER_YEAR;
+			halfLives[name] = seconds / perYear;
 		} else {
 			// Stable isotopes are written with an infinite (or absent) half-life
 			// and belong in the material list all the same. The word, not
@@ -1352,7 +1372,11 @@ function readIndexLists(dataModel, project, names, report, materials) {
 
 	const raw = [];
 	for (const listEl of children(model, 'index-list')) {
-		const rawName = listEl.attrs.name;
+		// This tool's export writes a scenario list under Ecolego's name for
+		// it, `Scenarios`, with its own name beside it (`decideLists` in
+		// ./ecoexport.js): that name is the list's.
+		const ownName = predefinedType(listEl) === 'SCENARIOS' ? propertyText(listEl, 'kompartment-name') : null;
+		const rawName = ownName || listEl.attrs.name;
 		const listId = childText(listEl, 'id');
 		// The mapper treats a blank name as none and falls back to `IndexList`;
 		// the original kept for the messages below is whichever it had.
@@ -1582,6 +1606,10 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	// What the sub-system interfaces say, gathered as they are read and applied
 	// once every block exists. See INTERFACE and `connectInterfaces`.
 	const wiring = { links: [], operations: new Map(), exposed: new Set(), idByGuid: null };
+	// A transfer made in two, by the qualified name of the file's: the second
+	// half, which goes where the first goes -- switched off with it, and kept
+	// with it as an endpoint.
+	const twins = new Map();
 
 	// Pass one: block id -> mapped name, so connections can resolve endpoints.
 	// Boundary components are recorded separately: a transfer touching one gets
@@ -1971,18 +1999,48 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 				continue;
 			}
 
-			// Per the file format; an explicit entry value still wins.
+			// Per the file format; the default row's own value still wins. A
+			// transfer with no donor cannot be multiplied by one.
 			const donorDefault = DONOR_DEFAULT[type] ?? false;
-			const donor = pickDefault(entries, 'multiply_by_donor') ?? donorDefault;
+			const donor = from.name == null ? false : pickDefault(entries, 'multiply_by_donor') ?? donorDefault;
+			const rate = pickDefault(entries, 'rate') ?? '0';
 
+			// Ecolego keeps the flag row by row, and here it is one setting of
+			// the transfer (VALUE_KEYS in ../domain/project.js). Rows that say
+			// otherwise become a second transfer between the same two ends, and
+			// the first moves nothing there: the two fluxes add up to what the
+			// file's one moves, to the bit. No real file here does it; this
+			// tool's own exports did, before an index could not.
+			const other = from.name == null ? [] : entries.filter((e) => Object.keys(e.index).length
+				&& e.multiply_by_donor !== undefined && e.multiply_by_donor !== donor);
+			const moved = new Set(other);
 			project.transfers.push(trimEmpty({
 				name, system, ...dimSpec, unit, comment,
 				from: from.name, to: to.name,
-				rate: pickDefault(entries, 'rate') ?? '0',
-				// A transfer with no donor cannot be multiplied by one.
-				multiply_by_donor: from.name == null ? false : donor,
-				entries: keepIndexed(entries, ['rate', 'multiply_by_donor']),
+				rate,
+				multiply_by_donor: donor,
+				entries: keepIndexed(entries.map((e) => (moved.has(e) ? { ...e, rate: '0' } : e)), ['rate']),
 			}));
+			if (other.length) {
+				const twin = names.claim(`${name}_${donor ? 'absolute' : 'by_donor'}`, system);
+				twins.set(system ? `${system}.${name}` : name, system ? `${system}.${twin}` : twin);
+				project.transfers.push(trimEmpty({
+					name: twin, system, ...dimSpec,
+					from: from.name, to: to.name,
+					rate: '0',
+					multiply_by_donor: !donor,
+					entries: other.map((e) => ({ index: e.index, rate: e.rate ?? rate })),
+				}));
+				const where = other.slice(0, 3).map((e) => Object.values(e.index).join(', ')).join('; ');
+				report.warn(
+					`'${original}' ${donor ? 'multiplies by its donor' : 'is an absolute flux'} at some indices and `
+					+ `not at others (${where}${other.length > 3 ? `; ${other.length - 3} more` : ''}), which is one `
+					+ `setting of a whole transfer here. Those indices are '${twin}', `
+					+ `${donor ? 'an absolute flux' : 'multiplied by the donor'}, beside '${name}', which moves nothing `
+					+ `there; the two move what the file's transfer moves, and a block that reads '${name}' reads `
+					+ 'zero at those indices.',
+				);
+			}
 		}
 	}
 
@@ -1995,6 +2053,7 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	// counts what each switched-off sub-system holds, so the summary can say
 	// how much of the model that is.
 	const offNames = new Set([...disabledIds].map((id) => blockNameById.get(id)).filter(Boolean));
+	for (const [whole, twin] of twins) if (offNames.has(whole)) offNames.add(twin);
 	const offPaths = hierarchy?.disabledPaths ?? [];
 	const inOffSystem = (system) => offPaths.find((p) => system === p || system.startsWith(`${p}.`));
 	if (offNames.size || offPaths.length) {
@@ -2015,7 +2074,7 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	}
 
 	wiring.idByGuid = idByGuid;
-	return { blockNameById, wiring };
+	return { blockNameById, wiring, twins };
 }
 
 /**
@@ -2373,17 +2432,29 @@ function trimEmpty(obj) {
 	return out;
 }
 
+/** A `<time-unit>` as this tool names it. */
+const TIME_UNIT_FROM_ECO = lookup({
+	second: 'second', seconds: 'second', s: 'second',
+	minute: 'minute', minutes: 'minute',
+	hour: 'hour', hours: 'hour', h: 'hour',
+	day: 'day', days: 'day', d: 'day',
+	year: 'year', years: 'year', y: 'year', a: 'year',
+});
+
 /**
  * Maps the solver an imported file names onto one this tool has.
  *
- * The keys are the words that appear in the file; the values are this tool's
- * own ids. Three of them are the same method under another name, and the rest
- * are the nearest thing available -- which is worth telling the reader about,
- * so `SOLVER_EXACT` separates the two cases.
+ * The keys are the words that appear in the file, as `solverKey` reduces
+ * them; the values are this tool's own ids. Four of them are the same method
+ * under another name, and the rest are the nearest thing available -- which is
+ * worth telling the reader about, so `SOLVER_EXACT` separates the two cases.
  */
 const SOLVER_MAP = lookup({
 	ODE45: 'dp45', ODE23: 'dp45', ODE113: 'dp45', ODE853: 'dp45',
-	ODE15S: 'ndf',
+	// Ecolego's fixed-step Runge-Kutta methods, rk1 to rk5 in its menu: explicit
+	// methods, of which the adaptive one here is the nearest.
+	ODE1: 'dp45', ODE2: 'dp45', ODE3: 'dp45', ODE4: 'dp45', ODE5: 'dp45',
+	ODE15S: 'ndf', ODE15SBDF: 'ndf',
 	ODE23S: 'ros23', ODE23T: 'ros23', ODE23TB: 'ros23',
 	RADAU5: 'ndf', KRYLOV: 'ndf', PADE: 'ndf', TAYLOR: 'ndf',
 });
@@ -2391,12 +2462,35 @@ const SOLVER_MAP = lookup({
 /**
  * The names above that arrive at the same method rather than at a substitute.
  *
- * The numerical differentiation formulas, the Rosenbrock (2,3) pair and
- * Dormand-Prince (4,5) are all here, so a file asking for one of those gets
- * what it asked for and needs no warning. Everything else in the map is the
- * closest available method, which does need one.
+ * The numerical differentiation formulas, the same with Ecolego's BDF option
+ * (this tool's BDF switch), the Rosenbrock (2,3) pair and Dormand-Prince (4,5)
+ * are all here, so a file asking for one of those gets what it asked for and
+ * needs no warning. Everything else in the map is the closest available
+ * method, which does need one.
  */
-const SOLVER_EXACT = new Set(['ODE15S', 'ODE23S', 'ODE45']);
+const SOLVER_EXACT = new Set(['ODE15S', 'ODE15SBDF', 'ODE23S', 'ODE45']);
+
+/** Older names Ecolego still reads, as it reads them (its SimulationSettingsXMLHandler). */
+const SOLVER_ALIAS = lookup({
+	EULERFORWARD: 'ODE1', EULERBACKWARD: 'ODE1', HEUN: 'ODE2', MIDPOINT: 'ODE3',
+	RK4: 'ODE4', DORMANDPRINCE: 'ODE45', IMEXSD: 'ODE15S',
+});
+
+/**
+ * The solver a file names, as a key of SOLVER_MAP.
+ *
+ * Ecolego writes its own keys -- `java-ode15s`, `java-ode15s-BDF`,
+ * `java-ode45` -- the prefix naming the one server that runs them, and every
+ * file Ecolego wrote on this machine says it that way: 147 of them. Earlier
+ * exports from this tool wrote a bare ODE15S instead. Both come to the same
+ * word here, case and punctuation dropped. Until the prefix was dropped too,
+ * no real file matched, and every one of them opened on the default solver
+ * without a word, whichever it asked for.
+ */
+function solverKey(text) {
+	const word = String(text ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^JAVA/, '');
+	return SOLVER_ALIAS[word] ?? word;
+}
 
 /**
  * Ecolego's "not set": a “not set” sentinel, one magic double written
@@ -2638,25 +2732,25 @@ function readSimulationSettings(dataModel, project, report) {
 	}
 
 	const unit = (childText(s, 'time-unit') ?? '').toLowerCase();
-	const UNITS = lookup({
-		second: 'second', seconds: 'second', s: 'second',
-		minute: 'minute', minutes: 'minute',
-		hour: 'hour', hours: 'hour', h: 'hour',
-		day: 'day', days: 'day', d: 'day',
-		year: 'year', years: 'year', y: 'year', a: 'year',
-	});
-	if (UNITS[unit]) sim.time_unit = UNITS[unit];
+	if (TIME_UNIT_FROM_ECO[unit]) sim.time_unit = TIME_UNIT_FROM_ECO[unit];
 	else if (unit) report.warn(`Unrecognised time unit '${unit}'; years were assumed.`);
 
-	const solver = (childText(s, 'java-solver') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+	const said = (childText(s, 'java-solver') ?? '').trim();
+	const solver = solverKey(said);
 	if (SOLVER_MAP[solver]) {
 		sim.solver = SOLVER_MAP[solver];
+		if (solver === 'ODE15SBDF') sim.bdf = true;
 		if (!SOLVER_EXACT.has(solver)) {
 			report.warn(
 				`The model used the ${solver} solver, which this tool does not have; `
 				+ `${solverName(sim.solver)} was chosen as the closest.`,
 			);
 		}
+	} else if (said) {
+		report.warn(
+			`The model names a solver this tool does not know, '${said}'; `
+			+ `${solverName(sim.solver)} was used.`,
+		);
 	}
 
 	const rtol = childNumber(s, 'rel-error-tolerance');
@@ -2737,7 +2831,7 @@ function readFunctions(dataModel, project, names, report) {
  * is dropped in silence: an endpoint on a block that did not come across is
  * answered by the report entry for that block, not by a second complaint.
  */
-function rewriteEndpointIds(project, blockNameById, report) {
+function rewriteEndpointIds(project, blockNameById, report, twins = new Map()) {
 	const ids = project.simulation?.endpoints;
 	if (!Array.isArray(ids) || !ids.length) return;
 	const known = new Set();
@@ -2764,8 +2858,18 @@ function rewriteEndpointIds(project, blockNameById, report) {
 		if (!known.has(name)) { unresolved += 1; continue; }
 		seen.add(name);
 		out.push(name);
+		// Half a transfer is not what was asked for.
+		const twin = twins.get(name);
+		if (twin && !seen.has(twin)) {
+			seen.add(twin);
+			out.push(twin);
+		}
 	}
-	if (out.length) project.simulation.endpoints = out;
+	// A list of every block a run has a result for is what keeping everything
+	// means here, where a block added later is kept too -- and it is what this
+	// tool's own export writes for a model with no list (`writeSimulation` in
+	// ./ecoexport.js), and what Ecolego's projects mostly carry.
+	if (out.length && !namesEveryResult(project, seen)) project.simulation.endpoints = out;
 	else delete project.simulation.endpoints;
 	if (unresolved) {
 		report.warn(
@@ -2773,6 +2877,26 @@ function rewriteEndpointIds(project, blockNameById, report) {
 			+ `the imported model; they were left out of the endpoint list.`,
 		);
 	}
+}
+
+/**
+ * Whether a set of names holds every block a run has a result for: all but
+ * functions and tables read at a value, which answer an argument, the parts of
+ * a transport that count, and what is switched off.
+ */
+function namesEveryResult(project, names) {
+	let any = false;
+	for (const collection of KINDS) {
+		if (collection === 'functions') continue;
+		for (const b of project[collection] ?? []) {
+			if (!b || typeof b !== 'object' || b.enabled === false) continue;
+			if (collection === 'lookups' && b.argument != null && String(b.argument).trim() !== '') continue;
+			if (collection === 'expressions' && (b.transport === 'counter' || b.transport === 'operation')) continue;
+			any = true;
+			if (!names.has(b.system ? `${b.system}.${b.name}` : b.name)) return false;
+		}
+	}
+	return any;
 }
 
 /**

@@ -162,6 +162,18 @@ def check_model(model: 'Model') -> List[str]:
                                    f"{k.replace('_', ' ')}, which a flux cannot {'leave' if end == 'from' else 'enter'}")
                 if kind == 'transfer' and b.get('from') is None and b.get('to') is None:
                     out.append(f'{q} runs from nowhere to nowhere')
+                if kind == 'transfer':
+                    # One setting for the whole transfer: the Project refuses an
+                    # entry that says otherwise (``_block`` in engine/project.py).
+                    own = b.get('multiply_by_donor') is not False
+                    odd = next((e for e in b.get('entries') or []
+                                if isinstance(e, dict) and 'multiply_by_donor' in e
+                                and (e['multiply_by_donor'] is not False) != own), None)
+                    if odd is not None:
+                        where = ', '.join(str(v) for v in (odd.get('index') or {}).values()) or 'one of its entries'
+                        out.append(f"{q}: {where} says otherwise about multiplying by the donor, which is one setting "
+                                   'for the whole transfer; make it two transfers, one by the donor and one an '
+                                   'absolute flux')
                 if kind == 'inflow' and b.get('to') is None:
                     out.append(f'{q} feeds nothing')
                 a = b.get('availability')

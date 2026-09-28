@@ -30,6 +30,13 @@ grid its list of times, and a far-field path a sub-system of its cells and the
 transfers between them -- its layers laid out by the package's engine
 (:mod:`kompartment.engine.pathlayout`), as a run lays them out at its start.
 
+The importer is not the last word, though: it is forgiving, and a file it
+reads back perfectly can still be one Ecolego refuses. Every export once named
+its solver ODE15S, which the importer accepted and Ecolego has no such key
+for, and gave each compartment an empty dy/dt term, which Ecolego reads as an
+equation that is missing. Where Ecolego's own files and that reader disagree,
+Ecolego's files are right.
+
 **The same bytes as the application.** The archive is laid out as the
 application lays it out -- ``.version``, ``model.xml`` and ``views.xml`` at the
 root, every entry stored, dated 1980-01-01 at midnight unless a date is given
@@ -55,8 +62,8 @@ from ..decay import default_chains, half_life
 from ..equations import EquationSyntaxError, tokenize
 from ..errors import KompartmentError
 from ..importers._eco_maps import (
-    JS_DOT, JS_SPACE_CLASS, direction_from_eco, extreme_from_eco, interpolation_from_eco, js_round, js_trim,
-    operation_from_eco, to_number,
+    JS_DOT, JS_SPACE_CLASS, direction_from_eco, eco_seconds_per_year, extreme_from_eco, interpolation_from_eco,
+    js_round, js_trim, operation_from_eco, to_number,
 )
 from ..indexlists import (
     COMPARTMENT_LIST, SOURCE_INDEX, TARGET_INDEX, TRANSFER_LIST, derive_elements, lineage, shared_dims,
@@ -66,6 +73,7 @@ from ..jsmath import exp as _js_exp, log as _js_log
 from ..jsonio import js_number
 from ..names import RESERVED, base_name, parent_of, resolve_reference
 from ..stats.pdf import PDF_KINDS, complete, quantile
+from .ecoequation import TO_ROUNDING, WORKED_OTHERWISE, ecolego_equation, reads_of, unsupported_calls
 from .xlsx import _utf8, _zip
 
 __all__ = ['ExportError', 'ExportReport', 'EcoExport', 'ECOLEGO_VERSION', 'VIEWS_XML', 'export_eco',
@@ -128,11 +136,25 @@ OPERATION_TO_ECO = {
 #: An event's direction as Ecolego spells it.
 DIRECTION_TO_ECO = {'rising': 'RIGHT', 'falling': 'LEFT', 'both': 'BOTH'}
 
-#: The solver each of this tool's is written as.
+#: The solver each of this tool's is written as: the key Ecolego stores in
+#: ``<java-solver>``, one of the fourteen its ``SolverSettingPage`` lists. A name
+#: it does not have leaves the model with no solver, and Ecolego then refuses
+#: the file with a bare ``java.io.IOException`` (``SOLVER_TO_ECO``).
 SOLVER_TO_ECO = {
-    'ndf': 'ODE15S', 'ros23': 'ODE23S', 'dp45': 'ODE45', 'qndf': 'ODE15S', 'fbdf': 'ODE15S',
-    'radau5': 'RADAU5', 'trbdf2': 'ODE23TB', 'rodas5p': 'ODE23S', 'kencarp4': 'ODE15S',
-    'scipy_bdf': 'ODE15S', 'scipy_radau': 'RADAU5', 'scipy_lsoda': 'ODE15S',
+    'ndf': 'java-ode15s', 'ros23': 'java-ode23s', 'dp45': 'java-ode45', 'qndf': 'java-ode15s',
+    'fbdf': 'java-ode15s-BDF', 'radau5': 'java-radau5', 'trbdf2': 'java-ode23tb',
+    'rodas5p': 'java-ode23s', 'kencarp4': 'java-ode15s', 'scipy_bdf': 'java-ode15s',
+    'scipy_radau': 'java-radau5', 'scipy_lsoda': 'java-ode15s',
+}
+
+#: Ecolego's ode15s with its BDF option: the NDFs with every κ zero, which is
+#: what this tool's BDF switch runs.
+ECO_BDF = 'java-ode15s-BDF'
+
+#: What Ecolego's solver menu calls each key written here, for the report.
+ECO_SOLVER_LABEL = {
+    'java-ode15s': 'NDF', 'java-ode15s-BDF': 'BDF', 'java-ode23s': 'Rosenbrock',
+    'java-ode45': 'DOPRI45', 'java-radau5': 'RADAU5', 'java-ode23tb': 'TR-BDF2',
 }
 
 #: The three that go out and come back as themselves.
@@ -143,13 +165,22 @@ SOLVER_WHY = {
     'qndf': 'the same numerical differentiation formulas, which this tool reads back as ndf',
     'radau5': 'Ecolego’s Radau IIA of order 5, which this tool reads back as ndf',
     'trbdf2': 'Ecolego’s TR-BDF2, which this tool reads back as ros23',
-    'fbdf': 'the nearest Ecolego has: another BDF formulation',
+    'fbdf': ('the nearest Ecolego has: the same backward differentiation formulas, with a '
+             'quasi-constant step rather than a fixed leading coefficient, which this tool reads '
+             'back as ndf with its BDF switch on'),
     'rodas5p': 'the nearest Ecolego has: its Rosenbrock solver, of lower order',
     'kencarp4': 'the nearest Ecolego has for a stiff model',
     'scipy_bdf': 'the nearest Ecolego has: the same family, a different implementation',
     'scipy_radau': 'Ecolego’s Radau IIA of order 5, which this tool reads back as ndf',
     'scipy_lsoda': 'the nearest Ecolego has for a stiff model',
 }
+
+#: The solvers whose BDF switch the key carries.
+BDF_SOLVERS = frozenset(['ndf', 'qndf'])
+
+#: Why qndf with its BDF switch on is written as ``ECO_BDF``.
+QBDF_WHY = ('the same backward differentiation formulas, which this tool reads back as ndf '
+            'with its BDF switch on')
 
 #: How results are saved, as ``<output-options>`` spells it.
 OUTPUT_OPTION = {
@@ -171,6 +202,10 @@ BUILT_IN_COMMENT = re.compile(
 
 #: The property type an index list's predefined role is written with.
 PREDEFINED_TYPE = 'se.facilia.ecolego.domain.EcolegoIndexList$PredefinedType'
+
+#: The property the scenario list carries its own name in, when it goes out as
+#: Ecolego's ``Scenarios`` (``decide_lists``). The importer gives it back.
+SCENARIO_NAME_PROPERTY = 'kompartment-name'
 
 #: The chemical elements in order of atomic number, for a nuclide's ``<z>``.
 ELEMENT_SYMBOLS = (
@@ -505,6 +540,7 @@ def _build_model_xml(model: Any, modified: DateLike) -> Tuple[str, ExportReport,
     ctx.decide_lists()
     ctx.decide_materials()
     ctx.decide_blocks()
+    ctx.decide_before()
     ctx.check_names()
 
     w = _XmlWriter()
@@ -517,6 +553,7 @@ def _build_model_xml(model: Any, modified: DateLike) -> Tuple[str, ExportReport,
     _write_blocks(w, ctx)
     _write_simulation(w, raw, ctx)
     _write_probabilistic(w, raw, ctx)
+    _write_scenario_model(w, ctx)
     w.close('data-model')
 
     report.counts = ctx.counts()
@@ -530,6 +567,10 @@ class _Context:
         self.raw = raw
         self.report = report
         self.project_name = _trim(_or(raw.get('name'), '')) or 'model'
+        sim = raw.get('simulation')
+        unit = sim.get('time_unit', _UNDEF) if isinstance(sim, dict) else _UNDEF
+        #: The unit the run is in, as ``<time-unit>`` writes it: a half-life's seconds depend on it.
+        self.time_unit = unit if unit in ('second', 'minute', 'hour', 'day', 'year') else 'year'
         self.lists: List[Any] = _list(raw.get('index_lists'))
         self.blocks: Dict[str, Dict[str, Any]] = {}
         for collection in ALL_COLLECTIONS:
@@ -555,9 +596,40 @@ class _Context:
         self.expanded_entries = 0
         self.dropped_entries = 0
         self.list_comments = 0
+        #: Blocks whose equations went out in Ecolego's spelling, and what that took.
+        self.respelled: Dict[str, Dict[str, Any]] = {}
+        #: The blocks written that a run has results for, in the order written.
+        self.result_ids: List[str] = []
+        #: Tables read at a value that repeat over their range, and that range.
+        self.cyclic_args: Dict[str, Dict[str, str]] = {}
+        self.before: set = set()
+        self.scenario_list: Optional[Dict[str, Any]] = None
 
     def known(self, name: Any) -> bool:
         return isinstance(name, str) and name in self.blocks
+
+    def equation(self, text: Any, q: str, collection: str) -> str:
+        """An equation as Ecolego is to read it (``io/ecoequation.py``), with what
+        that took remembered against the block for the report."""
+        found = self.blocks.get(q)
+        system = _str(_or(found['block'].get('system'), '')) if found else ''
+        call = None
+        if self.cyclic_args:
+            def call(name: str) -> Optional[Dict[str, str]]:
+                r = resolve_reference(name, system, self.known)
+                return None if r is None else self.cyclic_args.get(r)
+        out = ecolego_equation(text, call)
+        if out.respelled:
+            seen = self.respelled.get(q)
+            if seen is None:
+                seen = {'collection': collection, 'units': False, 'written_out': []}
+                self.respelled[q] = seen
+            if out.units:
+                seen['units'] = True
+            for f in out.written_out:
+                if f not in seen['written_out']:
+                    seen['written_out'].append(f)
+        return out.text
 
     # --- index lists ---------------------------------------------------------------
 
@@ -601,6 +673,21 @@ class _Context:
                 lid = 'Materials'
                 report.rename(_str(name), 'Materials')
             self.list_ids[name] = lid
+
+        # Ecolego's scenario dimension is its own list, found by its name alone
+        # -- `Scenarios` -- and filled from `<scenario-model>` (``decideLists``).
+        self.scenario_list = next((l for l in out if _truthy(l.get('for_scenarios'))), None)
+        scenarios = self.scenario_list
+        if scenarios is not None and scenarios.get('name') != 'Scenarios':
+            if 'Scenarios' not in taken:
+                self.list_ids[scenarios.get('name')] = 'Scenarios'
+                report.rewrite('index list', _str(scenarios.get('name')),
+                               'written as Ecolego’s own list of scenarios, Scenarios, with a scenario for each of '
+                               'its indices; read back here, it has its own name again')
+            else:
+                report.warn(f"'{_str(scenarios.get('name'))}' is the model's scenario list, and another list is "
+                            'called Scenarios, which is the one list Ecolego runs scenarios over; rename that one to '
+                            'have the scenarios run.')
 
         self.index_ids: Dict[Any, Dict[Any, str]] = {}
         for lst in out:
@@ -756,8 +843,33 @@ class _Context:
                         skip(q, f"its interpolation rule '{_str(b.get('interpolation', _UNDEF))}' is not one "
                                 'Ecolego has')
                         continue
+                    # Ecolego repeats a cyclic table over the time even where it is read at a value.
+                    if _table_argument(b) and (b.get('cyclic') is True or b.get('cyclic') == 'true'):
+                        rows = [b.get('points', _UNDEF)] + [_get(e, 'points') for e in _list(b.get('entries'))]
+                        ranges = [r for r in (_table_range(p) for p in rows if not _nullish(p)) if r[1] > 0]
+                        if not all(r[0] == ranges[0][0] and r[1] == ranges[0][1] for r in ranges):
+                            skip(q, 'it is read at a value and repeats over a range that is not the same at every '
+                                    'index, which Ecolego repeats over the time instead and one wrap of the value '
+                                    'cannot serve')
+                            continue
+                        if ranges:
+                            first, span = ranges[0]
+                            self.cyclic_args[q] = {'first': java_double(first), 'span': java_double(span)}
                 if self.uses_ends(b, collection):
                     skip(q, f"it reads '{SOURCE_INDEX}' or '{TARGET_INDEX}', which only a transfer here can")
+        # A call Ecolego has no function for and this tool no written-out form of.
+        for collection in list(COMPONENT_COLLECTIONS) + ['transfers', 'inflows']:
+            for b in _list(raw.get(collection)):
+                if not isinstance(b, dict):
+                    continue
+                calls: List[str] = []
+                for text in self.equations_of(b, collection):
+                    for c in unsupported_calls(text):
+                        if c not in calls:
+                            calls.append(c)
+                if calls:
+                    skip(_qname_of(b), f"it calls {' and '.join(f'{c}()' for c in calls)}, which Ecolego has no "
+                                       'function for')
         compartment_names = {_qname_of(c) for c in _list(raw.get('compartments'))}
         for collection in ('transfers', 'inflows'):
             for t in _list(raw.get(collection)):
@@ -797,6 +909,95 @@ class _Context:
         # The paths first: the transfers into and out of one are written to what it became.
         self.plan_paths()
         self.plan_fluxes()
+
+    def decide_before(self) -> None:
+        """The expressions Ecolego is to work out before a run, and the initial
+        values it cannot (``decideBefore``)."""
+        self.before = set()
+        verdicts: Dict[str, Optional[str]] = {}
+        visiting: set = set()
+
+        def why(q: str) -> Optional[str]:
+            if q in verdicts:
+                return verdicts[q]
+            if q in visiting:
+                return None
+            found = self.blocks.get(q)
+            if not found:
+                return None
+            collection, block = found['collection'], found['block']
+            answer: Optional[str] = None
+            if collection == 'parameters':
+                pass
+            elif collection == 'lookups':
+                if _nullish(block.get('argument', _UNDEF)) or js_trim(_str(block.get('argument'))) == '':
+                    answer = f"the table of the time '{q}'"
+            elif collection in ('expressions', 'functions'):
+                role = block.get('transport', _UNDEF)
+                if collection == 'expressions' and role == 'number':
+                    pass
+                elif collection == 'expressions' and role in ('counter', 'operation'):
+                    answer = f"'{q}', a part of a transport"
+                else:
+                    visiting.add(q)
+                    params = block.get('parameters') if collection == 'functions' else None
+                    locals_ = ({js_trim(_str(_or(p, ''))) for p in params} if isinstance(params, list)
+                               else set() if collection == 'functions' else None)
+                    for text in self.equations_of(block, collection):
+                        names, time = reads_of(text)
+                        if time:
+                            answer = f"'{q}', which reads the time"
+                            break
+                        for name in names:
+                            if locals_ is not None and name in locals_:
+                                continue
+                            r = resolve_reference(name, _str(_or(block.get('system'), '')), self.known)
+                            inner = None if r is None else why(r)
+                            if inner:
+                                answer = inner
+                                break
+                        if answer:
+                            break
+                    visiting.discard(q)
+                    if not answer:
+                        self.before.add(q)
+            elif collection == 'compartments':
+                answer = f"the compartment '{q}'"
+            elif collection in ('transfers', 'inflows'):
+                answer = f"the transfer '{q}'"
+            elif collection in ('index_reductions', 'block_reductions'):
+                answer = f"'{q}', which Ecolego works out only during a run"
+            else:
+                answer = f"'{q}', which records what happens during a run"
+            verdicts[q] = answer
+            return answer
+
+        for c in _list(self.raw.get('compartments')) + list(self.generated['compartments']):
+            if not isinstance(c, dict):
+                continue
+            q = _qname_of(c)
+            if q in self.skipped_blocks:
+                continue
+            texts = [c.get('initial', _UNDEF)] + [_get(e, 'initial') for e in _list(c.get('entries'))]
+            texts = [t for t in texts if not _nullish(t) and js_trim(_str(t)) != '']
+            problem: Optional[str] = None
+            for text in texts:
+                names, time = reads_of(text)
+                if time:
+                    problem = 'the time'
+                    break
+                for name in names:
+                    r = resolve_reference(name, _str(_or(c.get('system'), '')), self.known)
+                    inner = None if r is None else why(r)
+                    if inner:
+                        problem = inner
+                        break
+                if problem:
+                    break
+            if problem:
+                self.report.warn(f"'{q}' starts from a value that reads {problem}, which Ecolego cannot work out "
+                                 'before a run; Ecolego will not run the model until that value is one it can, such '
+                                 'as a parameter.')
 
     def fall(self, skip: Any) -> None:
         """Everything that reads what is left out, until nothing more falls."""
@@ -1851,20 +2052,18 @@ def _ulp_step(x: float, n: int) -> float:
     return struct.unpack('<d', struct.pack('<q', bits + n))[0]
 
 
-#: Seconds in a Julian year, which Ecolego's half-lives are divided by.
-SECONDS_PER_YEAR = 365.25 * 24 * 3600
-
-
-def seconds_for(years: float) -> float:
-    """A half-life in seconds that the importer's division reads back as exactly
-    the years it was: ``years × SECONDS_PER_YEAR`` where that is so, and
-    otherwise the nearest double within a few steps of it that is."""
-    s = years * SECONDS_PER_YEAR
-    if not math.isfinite(s) or s <= 0 or s / SECONDS_PER_YEAR == years:
+def seconds_for(years: float, unit: str = 'year') -> float:
+    """A half-life in seconds, for a model run in `unit`, that Ecolego reads as
+    the decay constant this package uses and the importer's division reads back
+    as exactly the years it was: ``years × eco_seconds_per_year(unit)`` where
+    that is so, and otherwise the nearest double within a few steps of it that is."""
+    per_year = eco_seconds_per_year(unit)
+    s = years * per_year
+    if not math.isfinite(s) or s <= 0 or s / per_year == years:
         return s
     for k in range(1, 5):
         for c in (_ulp_step(s, k), _ulp_step(s, -k)):
-            if c / SECONDS_PER_YEAR == years:
+            if c / per_year == years:
                 return c
     return s
 
@@ -1984,8 +2183,8 @@ def _write_materials(w: _XmlWriter, ctx: _Context) -> None:
             w.text('id', mid)
             w.text('unit', unit)
             years = m['years']
-            w.text('half-life', java_double(seconds_for(years)) if years is not None and math.isfinite(years)
-                   else 'Infinity')
+            w.text('half-life', java_double(seconds_for(years, ctx.time_unit))
+                   if years is not None and math.isfinite(years) else 'Infinity')
             za = _nuclide_numbers(m['name'])
             if za:
                 w.text('z', str(za[0]))
@@ -2013,6 +2212,8 @@ def _write_index_lists(w: _XmlWriter, ctx: _Context) -> None:
                                  (lst is ctx.element_list, 'ELEMENTS')) if on]
         if flags:
             w.text('property', flags[0], [('name', 'predefined-type'), ('type', PREDEFINED_TYPE)])
+            if lst is ctx.scenario_list and lid != name:
+                w.text('property', name, [('name', SCENARIO_NAME_PROPERTY), ('type', 'string')])
             if len(flags) > 1:
                 report.warn(f"'{_str(lst.get('name', _UNDEF))}' is marked as more than one of Ecolego's own lists "
                             f"({', '.join(flags)}); it is written as {flags[0]}.")
@@ -2124,6 +2325,8 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
     for t in ctx.generated['transfers']:
         _write_connection(w, ctx, t, ctx.generated_plans[_qname_of(t)])
     w.close('block-model')
+    for q, seen in ctx.respelled.items():
+        ctx.report.rewrite(KIND_WORD.get(seen['collection'], 'block'), q, _respelled_how(seen))
     if ctx.expanded_entries:
         ctx.report.rewrite('values per index', f'{ctx.expanded_entries} block(s)', 'an entry that names only '
                            'some of a block’s index lists is written as one row per index combination it covers, '
@@ -2176,6 +2379,12 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
     dims = [] if collection == 'functions' else _list(block.get('index_lists'))
     w.open('component', [('name', block.get('name')), ('type', type_), *_dim_attrs(ctx, dims)])
     _write_common(w, ctx, block, q)
+    # What a run has a result for: not a function or a table read at a value,
+    # which answer an argument, nor the parts of a transport that count.
+    answers = (collection == 'functions' or role in ('counter', 'operation')
+               or (collection == 'lookups' and _table_argument(block) != ''))
+    if not answers and block.get('enabled', _UNDEF) is not False:
+        ctx.result_ids.append(q)
 
     if role == 'counter':
         w.close('component')
@@ -2194,6 +2403,8 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
         return
     if role == 'number':
         w.text('evaluation-mode', 'SIMULATION')
+    elif q in ctx.before:
+        w.text('evaluation-mode', 'BEFORE')
 
     table = None if collection == 'functions' else _table_of(block, collection, dims, ctx)
     if table is not None and table['expanded']:
@@ -2208,8 +2419,8 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
         w.text('handle-decay', 'false' if block.get('handle_decay') is False else 'true')
         _write_compartment_rows(w, ctx, q, dims, table)
     elif collection == 'expressions':
-        _write_rows(w, ctx, dims, table, 'expression',
-                    lambda values: w.cdata('equation', _equation_text(values['equation'], '0')))
+        _write_rows(w, ctx, dims, table, 'expression', lambda values: w.cdata(
+            'equation', ctx.equation(_equation_text(values['equation'], '0'), q, collection)))
     elif collection == 'functions':
         for p in _list(block.get('parameters')):
             name = js_trim(_str(_or(p, '')))
@@ -2220,13 +2431,18 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
             w.text('argument-name', name)
             w.close('argument')
         w.open('entry', [('type', 'expression')])
-        w.cdata('equation', _equation_text(block.get('equation', _UNDEF), ''))
+        w.cdata('equation', ctx.equation(_equation_text(block.get('equation', _UNDEF), ''), q, collection))
         w.close('entry')
     elif collection == 'lookups':
         w.cdata('lookup-option', _interpolation_to_eco(_lookup_rule(block.get('interpolation', _UNDEF))))
-        cyclic = block.get('cyclic')
-        w.text('lookup-cyclic', 'true' if cyclic is True or cyclic == 'true' else 'false')
-        argument = '' if _nullish(block.get('argument', _UNDEF)) else js_trim(_str(block['argument']))
+        cyclic = block.get('cyclic') is True or block.get('cyclic') == 'true'
+        argument = _table_argument(block)
+        # Read at a value, the repeating is in its callers (``decide_blocks``).
+        w.text('lookup-cyclic', 'true' if cyclic and not argument else 'false')
+        if cyclic and argument and q in ctx.cyclic_args:
+            ctx.report.rewrite('lookup table', q, 'it is read at a value and repeats over its range, which Ecolego '
+                               'repeats over the time instead: it is written unrepeated, and each call to it puts '
+                               'its value on the range first')
         if argument:
             w.open('argument')
             w.text('argument-key', argument)
@@ -2257,7 +2473,7 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
             w.cdata('operation', 'MIN' if extreme_from_eco(None if _nullish(op) else _str(op)) == 'min' else 'MAX')
 
         def recorder_body(values: Dict[str, Any]) -> None:
-            w.cdata('target-expression', _target_text(ctx, values['target'], system))
+            w.cdata('target-expression', ctx.equation(_target_text(ctx, values['target'], system), q, collection))
             for key, tag in (('reset_trigger', 'reset-event'), ('start_trigger', 'start-recording-event'),
                              ('stop_trigger', 'stop-recording-event')):
                 v = values[key]
@@ -2266,23 +2482,23 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
         _write_rows(w, ctx, dims, table, 'min-max' if collection == 'min_maxes' else 'running-mean', recorder_body)
     elif collection == 'snapshots':
         def snapshot_body(values: Dict[str, Any]) -> None:
-            w.cdata('snapshot-target', _target_text(ctx, values['target'], system))
+            w.cdata('snapshot-target', ctx.equation(_target_text(ctx, values['target'], system), q, collection))
             v = values['trigger']
             if not _nullish(v) and js_trim(_str(v)) != '':
                 w.cdata('snapshot-event', ctx.id_of(v, system))
-            w.cdata('snapshot-initial-value', _equation_text(values['initial'], '0'))
+            w.cdata('snapshot-initial-value', ctx.equation(_equation_text(values['initial'], '0'), q, collection))
         _write_rows(w, ctx, dims, table, 'snapshot', snapshot_body)
     elif collection == 'delays':
         def delay_body(values: Dict[str, Any]) -> None:
-            w.cdata('delay-target', _target_text(ctx, values['target'], system))
-            w.cdata('delay-time', _equation_text(values['delay'], '0'))
+            w.cdata('delay-target', ctx.equation(_target_text(ctx, values['target'], system), q, collection))
+            w.cdata('delay-time', ctx.equation(_equation_text(values['delay'], '0'), q, collection))
         _write_rows(w, ctx, dims, table, 'delay', delay_body)
     elif collection == 'triggers':
         directions: List[str] = []
 
         def trigger_body(values: Dict[str, Any]) -> None:
-            w.cdata('first-expression', _equation_text(values['first'], '0'))
-            w.cdata('second-expression', _equation_text(values['second'], '0'))
+            w.cdata('first-expression', ctx.equation(_equation_text(values['first'], '0'), q, collection))
+            w.cdata('second-expression', ctx.equation(_equation_text(values['second'], '0'), q, collection))
             raw_dir = values['direction']
             if _nullish(raw_dir) or raw_dir == '':
                 d = 'rising'
@@ -2298,6 +2514,30 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
             ctx.report.warn(f"'{q}' fires in a different direction at some indices. The file says so index "
                             'by index; this tool reads back only the block’s own direction.')
     w.close('component')
+
+
+def _respelled_how(seen: Dict[str, Any]) -> str:
+    """What writing a block's equations in Ecolego's spelling took, in words."""
+    parts: List[str] = []
+    lacking = [n for n in seen['written_out'] if n not in WORKED_OTHERWISE]
+    otherwise = [n for n in seen['written_out'] if n in WORKED_OTHERWISE]
+    if lacking:
+        many = len(lacking) > 1
+        rounding = [n for n in lacking if n in TO_ROUNDING]
+        parts.append(f"{', '.join(f'{n}()' for n in lacking)} {'are' if many else 'is'} written out as the arithmetic "
+                     f"{'they stand' if many else 'it stands'} for, which Ecolego has no function for"
+                     + (f"; {', '.join(rounding)} to rounding, not to the bit" if rounding else ''))
+    if otherwise:
+        many = len(otherwise) > 1
+        parts.append(f"{' and '.join(f'{n}()' for n in otherwise)} {'are' if many else 'is'} written out as the "
+                     f"arithmetic {'they are' if many else 'it is'} here, since Ecolego's own "
+                     f"{'are' if many else 'is'} the exact remainder, which is not always the same number")
+    if seen['units']:
+        parts.append('its numbers are written without the units against them, which Ecolego has no place for')
+    if not parts:
+        parts.append('its equations are written in Ecolego’s spelling, which means the same: a test that stands for '
+                     'a number as if(test, 1, 0), a ?: as an if(), a sign after an operator in brackets, and the like')
+    return '; '.join(parts)
 
 
 def _equation_text(value: Any, fallback: str) -> str:
@@ -2323,14 +2563,34 @@ def _targets_of(targets: Any) -> List[str]:
     return [x for x in (js_trim(_str(t)) for t in items) if x != '']
 
 
-def _lookup_points(points: Any, ctx: _Context, q: str) -> List[List[float]]:
+def _table_argument(b: Dict[str, Any]) -> str:
+    """A lookup table's argument, or '' for one read at the time."""
+    a = b.get('argument', _UNDEF)
+    return '' if _nullish(a) else js_trim(_str(a))
+
+
+def _points_of(points: Any) -> list:
+    """A table's points one by one, each ``[x, y, pdf]`` or ``{x, y, pdf}``: a
+    table held as its list of xs beside its list of ys is paired up."""
     pairs = points if isinstance(points, list) else []
     flat = (lambda a: isinstance(a, list) and all(isinstance(v, str) or _is_number(v) for v in a))
     if (len(pairs) == 2 and isinstance(pairs[0], list) and isinstance(pairs[1], list)
             and len(pairs[0]) == len(pairs[1]) and flat(pairs[0]) and len(pairs[0]) != 2):
-        pairs = [[x, pairs[1][k]] for k, x in enumerate(pairs[0])]
+        return [[x, pairs[1][k]] for k, x in enumerate(pairs[0])]
+    return pairs
+
+
+def _table_range(points: Any) -> Tuple[float, float]:
+    """The first x of a table's points and how far its last lies beyond it, as
+    ``domain/lookup.js`` has them."""
+    xs = sorted(x for x in (_num(_get_index(p, 0) if isinstance(p, list) else _get(p, 'x'))
+                            for p in _points_of(points)) if math.isfinite(x))
+    return (xs[0], xs[-1] - xs[0]) if xs else (0.0, 0.0)
+
+
+def _lookup_points(points: Any, ctx: _Context, q: str) -> List[List[float]]:
     out: List[List[float]] = []
-    for p in pairs:
+    for p in _points_of(points):
         if isinstance(p, list):
             x, y, pdf = _get_index(p, 0), _get_index(p, 1), _get_index(p, 2)
         else:
@@ -2385,7 +2645,7 @@ def _write_compartment_rows(w: _XmlWriter, ctx: _Context, q: str, dims: Sequence
     floors: List[bool] = []
 
     def body(values: Dict[str, Any]) -> None:
-        w.cdata('initial-condition', _equation_text(values['initial'], '0'))
+        w.cdata('initial-condition', ctx.equation(_equation_text(values['initial'], '0'), q, 'compartments'))
         v = values['non_negative']
         on = v is not False and v != 'false' and not (_is_number(v) and v == 0)
         if on not in floors:
@@ -2395,7 +2655,11 @@ def _write_compartment_rows(w: _XmlWriter, ctx: _Context, q: str, dims: Sequence
         tol = values['abstol']
         t = None if _nullish(tol) or tol == '' else _num(tol)
         w.text('abs-tol', java_double(t) if t is not None and math.isfinite(t) and t > 0 else '')
-        w.cdata('differential-equation', '' if _nullish(values['dydt']) else js_trim(_str(values['dydt'])))
+        # Only a term that is there: Ecolego reads an empty element as an empty
+        # equation, which its validation refuses.
+        dydt = '' if _nullish(values['dydt']) else js_trim(_str(values['dydt']))
+        if dydt:
+            w.cdata('differential-equation', ctx.equation(dydt, q, 'compartments'))
 
     _write_rows(w, ctx, dims, table, 'compartment', body)
     if len(floors) > 1:
@@ -2467,17 +2731,27 @@ def _write_connection(w: _XmlWriter, ctx: _Context, t: Dict[str, Any], plan: Dic
         *_dim_attrs(ctx, plan['file_dims'], plan['intersection']),
     ])
     _write_common(w, ctx, t, q)
+    if t.get('enabled', _UNDEF) is not False:
+        ctx.result_ids.append(q)
     collection = 'inflows' if plan['collection'] == 'inflows' else 'transfers'
     absolute = plan['from'] is None
 
     def rate(text: Any) -> str:
-        return _availability_rate(_equation_text(text, '0'), plan['availability'])
+        return ctx.equation(_availability_rate(_equation_text(text, '0'), plan['availability']), q, collection)
 
+    # On unless it says `false`, as the Project reads it. It is one setting of
+    # the whole transfer, and a model whose entries say otherwise does not run
+    # (``_block`` in ``engine/project.py``); Ecolego reads it row by row, so each
+    # row says what the model says, and the report says what that means.
     def donor(values: Dict[str, Any]) -> bool:
-        if absolute:
-            return False
-        v = values.get('multiply_by_donor', _UNDEF)
-        return v is not False and v != 'false' and not (_is_number(v) and v == 0)
+        return not absolute and values.get('multiply_by_donor', _UNDEF) is not False
+
+    own = not absolute and t.get('multiply_by_donor', _UNDEF) is not False
+    if not absolute and any(isinstance(e, dict) and 'multiply_by_donor' in e
+                            and (e['multiply_by_donor'] is not False) != own for e in _list(t.get('entries'))):
+        ctx.report.warn(f"'{q}' multiplies by its donor at some indices and not at others. The file says so row "
+                        'by row, which is how Ecolego reads it; a run here refuses the model until the transfer is '
+                        'two, and reading the file back makes it two.')
 
     def body(values: Dict[str, Any]) -> None:
         w.cdata('transfer-equation', rate(values['rate']))
@@ -2565,19 +2839,23 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
     w.text('time-unit', time_unit if time_unit in ('second', 'minute', 'hour', 'day', 'year') else 'year')
 
     solver = _str(_or(sim.get('solver', _UNDEF), 'ndf'))
-    eco = SOLVER_TO_ECO.get(solver, 'ODE15S')
+    bdf = solver in BDF_SOLVERS and (sim.get('bdf') is True or sim.get('bdf') == 'true')
+    eco = ECO_BDF if bdf else SOLVER_TO_ECO.get(solver, 'java-ode15s')
     w.text('java-solver', eco)
     if solver not in SOLVER_EXACT:
-        report.rewrite('solver', solver, f"written as {eco}: {SOLVER_WHY.get(solver, 'the nearest Ecolego has')}")
-    elif solver == 'ndf' and (sim.get('bdf') is True or sim.get('bdf') == 'true'):
-        report.warn('The model runs the plain BDF formulas; the file asks for ODE15S, whose formulas are the '
-                    'numerical differentiation ones.')
+        why = QBDF_WHY if bdf else SOLVER_WHY.get(solver, 'the nearest Ecolego has')
+        report.rewrite('solver', solver, f'written as {ECO_SOLVER_LABEL[eco]} ({eco}): {why}')
     w.text('rel-error-tolerance', java_double(num(sim.get('rtol', _UNDEF), 1e-3)))
     w.text('abs-error-tolerance', java_double(num(sim.get('abstol', _UNDEF), 1e-6)))
     nn = sim.get('non_negative', _UNDEF)
     floor = not (nn is False or nn == 'false' or (_is_number(nn) and nn == 0))
     w.text('saturation-enabled', 'true' if floor else 'false')
     w.text('simulation-type', 'DETERMINISTIC')
+    # Each scenario a run of its own, as here: see ``_write_scenario_model``.
+    scenario_list = ctx.scenario_list
+    if (scenario_list is not None and ctx.list_id(scenario_list.get('name')) == 'Scenarios'
+            and any(_index_on(i) for i in _list(scenario_list.get('indices')))):
+        w.text('run-scenarios-mode', 'true')
 
     spacing = sim.get('spacing', _UNDEF)
     spacing = spacing if spacing in ('log', 'linear', 'series', 'solver', 'both') else 'log'
@@ -2622,13 +2900,23 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
 
     endpoints: List[str] = []
     lost: List[str] = []
-    for name in _list(sim.get('endpoints')):
+    listed = _list(sim.get('endpoints'))
+    for name in listed:
         text = _str(name)
         q = text if ctx.known(text) else None
         if q and q not in ctx.skipped_blocks and q not in endpoints:
             endpoints.append(q)
         elif not q or q in ctx.skipped_blocks:
             lost.append(text)
+    # A model with no list keeps every block's results, and an Ecolego project
+    # keeps only the blocks its list names -- a run of one with none saves no
+    # result at all. So a model with no list goes out with every block on it,
+    # which is what Ecolego's own projects carry; and read back, a list of
+    # every block is no list (``_rewrite_endpoint_ids`` in the importer).
+    if not listed and ctx.result_ids:
+        endpoints.extend(ctx.result_ids)
+        report.rewrite('endpoints', 'every block', 'the model keeps every block’s results and an Ecolego project '
+                       'only those its list of outputs names, so every block is on the list')
     if endpoints:
         w.open('outputs')
         for q in endpoints:
@@ -2647,6 +2935,9 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
         if k in ('max_step', 'initial_step') and _num(v) == 0:
             continue
         if k == 'split' and v == 'auto':
+            continue
+        # Carried after all, in the solver's key.
+        if k == 'bdf' and solver in BDF_SOLVERS:
             continue
         if isinstance(v, list) and not v:
             continue
@@ -2709,6 +3000,30 @@ def _normalise_series(raw: Any) -> List[Dict[str, Any]]:
                     'from': start if start is not None and math.isfinite(start) else None,
                     'to': stop if stop is not None and math.isfinite(stop) else None})
     return out
+
+
+def _write_scenario_model(w: _XmlWriter, ctx: _Context) -> None:
+    """``<scenario-model>``: a scenario for each index of the scenario list,
+    which is what Ecolego makes the indices of its ``Scenarios`` list from. With
+    ``run-scenarios-mode`` on, a run is one simulation per scenario switched on
+    -- each the model with that scenario's value read wherever a block is
+    indexed by the list, which is what a run of one scenario is here. A scenario
+    keeps the project's own settings, having none of its own."""
+    lst = ctx.scenario_list
+    if lst is None or ctx.list_id(lst.get('name')) != 'Scenarios':
+        return
+    w.open('scenario-model')
+    for i in _list(lst.get('indices')):
+        name = _index_name(i)
+        if name is None:
+            continue
+        sid = ctx.index_id(lst.get('name'), name)
+        w.open('scenario', [('name', js_trim(_str(name)))])
+        w.text('id', sid)
+        w.text('enabled', 'true' if _index_on(i) else 'false')
+        w.cdata('guid', guid_for(ctx.project_name, f'scenario:{sid}'))
+        w.close('scenario')
+    w.close('scenario-model')
 
 
 def _write_probabilistic(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None:

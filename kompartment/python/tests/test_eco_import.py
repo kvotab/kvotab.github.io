@@ -146,6 +146,8 @@ def settings(inner: str) -> str:
 
 AUTO = '&#45;7&#46;92842341234234E11'
 
+#: `Twice` is not on the list, so the list is a choice: a list of every block
+#: is no list (see the export's tests).
 ENDPOINTS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <data-model>
 	<project-properties name="ep"/>
@@ -156,6 +158,9 @@ ENDPOINTS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 		</component>
 		<component name="k leach" type="parameter"><id>k&#32;id</id>
 			<entry type="parameter"><value>0.5</value></entry>
+		</component>
+		<component name="Twice" type="expression"><id>Twice</id>
+			<entry type="expression"><equation><![CDATA[2]]></equation></entry>
 		</component>
 	</block-model>
 	<simulation-settings>
@@ -681,7 +686,16 @@ def run_js_cases() -> List[Case]:
             '<initial-condition><![CDATA[1.0e10]]></initial-condition><abs-tol><![CDATA[1e-11]]></abs-tol>')),
         xml('abs-tol infinite', replace(model, '<lower-saturation>0</lower-saturation>',
                                         '<abs-tol><![CDATA[Infinity]]></abs-tol><lower-saturation>0</lower-saturation>')),
-        xml('RADAU5', replace(model, '<java-solver>ODE15S</java-solver>', '<java-solver>RADAU5</java-solver>')),
+        # the solver, in Ecolego's keys, this tool's older spelling, an older
+        # Ecolego name and one nobody has
+        xml('RADAU5', replace(model, '<java-solver>java&#45;ode15s</java-solver>',
+                              '<java-solver>java&#45;radau5</java-solver>')),
+        xml('BDF', replace(model, '<java-solver>java&#45;ode15s</java-solver>',
+                           '<java-solver>java&#45;ode15s&#45;BDF</java-solver>')),
+        xml('ODE15S', replace(model, '<java-solver>java&#45;ode15s</java-solver>', '<java-solver>ODE15S</java-solver>')),
+        xml('rk4', replace(model, '<java-solver>java&#45;ode15s</java-solver>', '<java-solver>java-rk4</java-solver>')),
+        xml('unknown solver', replace(model, '<java-solver>java&#45;ode15s</java-solver>',
+                                      '<java-solver>java-nonesuch</java-solver>')),
         # a compartment's saturation band
         xml('negative floor', replace(model, '<lower-saturation>0</lower-saturation>',
                                       '<lower-saturation>-1e30</lower-saturation>')),
@@ -800,6 +814,19 @@ def made_up_cases() -> List[Case]:
         '<entry type="transfer"><transfer-equation><![CDATA[0.1]]></transfer-equation>'
         '<multiply-with-donor>FALSE</multiply-with-donor></entry></connection>'
         '</block-model>')))
+    # A transfer the rows of which disagree about the donor: two transfers.
+    mixed = ('<id>blk-out</id>'
+             '<entry type="transfer" index="ix-cs,ix-lake"><transfer-equation><![CDATA[2]]></transfer-equation>'
+             '<multiply-with-donor>false</multiply-with-donor></entry>'
+             '<entry type="transfer" index="ix-ba,ix-mire"><multiply-with-donor>false</multiply-with-donor></entry>'
+             '<entry type="transfer" index="ix-cs,ix-mire"><multiply-with-donor>true</multiply-with-donor></entry>')
+    out.append(xml('a transfer by its donor at some indices only', replace(model, '<id>blk-out</id>', mixed)))
+    out.append(xml('a transfer by its donor at some indices only, switched off and an endpoint', replace(
+        replace(model, '<id>blk-out</id>',
+                mixed.replace('<id>blk-out</id>', '<id>blk-out</id><enabled>false</enabled>')),
+        '<simulation-type>DETERMINISTIC</simulation-type>',
+        '<simulation-type>DETERMINISTIC</simulation-type><outputs><output id="blk-out"/><output id="blk-leach"/>'
+        '</outputs>')))
     out.append(xml('entries keyed badly', replace(
         model, '<entry type="parameter" index="ix-mire">',
         '<entry type="parameter" index="ix-nowhere"><value>7</value></entry>'
@@ -1004,7 +1031,7 @@ def made_up_cases() -> List[Case]:
     out.append(xml('simulation span unusable', replace(
         replace(replace(model, '<end-time>1000.0</end-time>', '<end-time>-5</end-time>'),
                 '<time-unit>year</time-unit>', '<time-unit>Fortnight</time-unit>'),
-        '<java-solver>ODE15S</java-solver>', '<java-solver>ode-23.tb</java-solver>')))
+        '<java-solver>java&#45;ode15s</java-solver>', '<java-solver>ode-23.tb</java-solver>')))
     out.append(xml('simulation settings missing', io_model(io_expr('x', 'X', '1'))))
     out.append(xml('probabilistic settings, the rest', replace(
         model, '</data-model>',
@@ -1266,6 +1293,11 @@ RANDOM_TYPES = ['compartment', 'compartment', 'expression', 'expression', 'param
                 'post-processing', 'constant', 'index-operation', 'aggregate', 'min-max', 'running-mean', 'snapshot',
                 'delay', 'discrete-event', 'transport-begin', 'transport-number', 'source', 'sink', 'weird',
                 'model-output', 'model-input']
+#: What a random model names its solver: Ecolego's keys as it writes them, this
+#: tool's older spelling, an older Ecolego name, one nobody has and none.
+SOLVER_SPELLINGS = ['java&#45;ode15s', 'java&#45;ode15s&#45;BDF', 'java&#45;ode45', 'ODE15S', 'RADAU5',
+                    'java-rk4', 'java-nonesuch', '']
+
 ENTRY_TYPE = {'compartment': 'compartment', 'transport-begin': 'compartment', 'parameter': 'parameter',
               'lookup-table': 'lookup-table', 'min-max': 'min-max', 'running-mean': 'running-mean',
               'snapshot': 'snapshot', 'delay': 'delay', 'discrete-event': 'discrete-event'}
@@ -1412,7 +1444,7 @@ def random_model(seed: int) -> str:
         out.append(f'<simulation-settings><start-time>{rnd.choice(["0", "-1", "10"])}</start-time>'
                    f'<end-time>{rnd.choice(["100", "1e6", "5"])}</end-time>'
                    f'<time-unit>{rnd.choice(["year", "d", "x"])}</time-unit>'
-                   f'<java-solver>{rnd.choice(["ODE15S", "ODE45", "RADAU5", ""])}</java-solver>'
+                   f'<java-solver>{rnd.choice(SOLVER_SPELLINGS)}</java-solver>'
                    f'{outputs}</simulation-settings>')
     out.append('</data-model>')
     return ''.join(out)

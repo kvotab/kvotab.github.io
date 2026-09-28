@@ -394,8 +394,12 @@ export const EVERY_KIND = {
 			comment: 'Between a block on the catalogue and one on its radionuclides: over what the two share' },
 		{ name: 'Out', from: 'Lake', to: null, index_lists: ['Radionuclides'], rate: '0.02', multiply_by_donor: true },
 		{ name: 'Feed', from: null, to: 'Lake', index_lists: ['Radionuclides'], rate: '5', multiply_by_donor: false },
+		// An absolute flux but for Cs-137, which leaves as a share of what the
+		// lake holds: two transfers, since that is one setting of a transfer.
 		{ name: 'Absolute', from: 'Lake', to: null, index_lists: ['Radionuclides'], rate: '1e-3', multiply_by_donor: false,
-			entries: [{ index: { Radionuclides: 'Cs-137' }, multiply_by_donor: true, rate: '1e-4' }] },
+			entries: [{ index: { Radionuclides: 'Cs-137' }, rate: '0' }] },
+		{ name: 'Absolute_by_donor', from: 'Lake', to: null, index_lists: ['Radionuclides'], rate: '0',
+			entries: [{ index: { Radionuclides: 'Cs-137' }, rate: '1e-4' }] },
 	],
 	inflows: [
 		{ name: 'Rain', to: 'Near.Soil', index_lists: ['Radionuclides', 'Objects'], rate: '10', unit: 'Bq/year' },
@@ -620,4 +624,45 @@ export const FARFIELD_PATHS = {
 };
 
 /** The made-up models, by name, for the tests and for the Python package's. */
-export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS };
+/**
+ * The equation language this tool has and Ecolego has not (see
+ * ../src/io/ecoequation.js): units against numbers, the functions written out,
+ * tests that are numbers, `?:` and `!=`, signs after operators, and a call
+ * Ecolego has nothing for. An initial value that reads an expression, which
+ * then goes out to be worked out before the run, and one that reads the time,
+ * which cannot.
+ */
+export const SPELLING = {
+	name: 'Spelling',
+	nuclides: ['C-14'],
+	simulation: { start_time: 0, end_time: 10, output_points: 21, spacing: 'linear', solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year' },
+	parameters: [
+		{ name: 'k', value: 0.2, unit: '1/year' },
+		{ name: 'n0', value: 1e-12, unit: 'mol' },
+		{ name: 'T', value: 5730, unit: 'year' },
+	],
+	expressions: [
+		{ name: 'Inventory', equation: 'mole2bq(n0, T)', unit: 'Bq' },
+		{ name: 'Seed', equation: 'Inventory / 2 + 1[Bq]', unit: 'Bq' },
+		{ name: 'Depth', equation: '1.5[m] * k' },
+		{ name: 'Late', equation: '(time > 5) * 2 + (k != 0 ? 1 : 2)' },
+		{ name: 'All', equation: 'and(k > 0, n0 > 0, T > 0) + xor(k, 0) + nand(1, k)' },
+		{ name: 'Power', equation: '2^-k - -k' },
+		{ name: 'Lone', equation: 'max(k) + ln(2) + fabs(-k)' },
+		{ name: 'Ramp', equation: 'rampUp(time, 1, 5) * smoothDown(time, 5, 2) + ulp(k)' },
+		{ name: 'Guard', equation: 'mod(time, k - k) + mod(time, 3)' },
+		// A saw-tooth read where it jumps: mod(1, 0.1) is 0 here and 0.0999… in Ecolego's own.
+		{ name: 'Saw', equation: 'mod(time, 0.1) + rem(-time, 0.3)' },
+		{ name: 'Middle', equation: 'percentile(50, k, n0, T)' },
+		{ name: 'AfterMiddle', equation: 'Middle + 1' },
+	],
+	compartments: [
+		{ name: 'Store', unit: 'Bq', initial: 'Seed * 2' },
+		{ name: 'Clocked', unit: 'Bq', initial: 'time + 1' },
+	],
+	transfers: [
+		{ name: 'Leak', from: 'Store', to: 'Clocked', rate: 'k * if(time > 2 && Store > 0, 1, 0.5)' },
+	],
+};
+
+export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING };

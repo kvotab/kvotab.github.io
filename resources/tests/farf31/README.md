@@ -89,6 +89,62 @@ hair of the delay (kept as a point mass). Four sharp-front cases, Pe 1000 to
 its parent: every response carries what leaves the tube, and agrees with de
 Hoog's method at twice its usual terms to 10^-7 above 10^-4 of each peak.
 
+**Shared parabolas.** One parabola serves the times of a cell (see the Help,
+Numerical inversion). For ten responses of different kinds (one nuclide, two
+pairs of the chain case, two of the case with fracture sorption, plug flow
+into an infinite matrix and into a matrix that fills at once, two sharp
+fronts at Pe 3000 and 1000, and the long tail at Pe 300), h, h′ and h″ from
+the cells agree with one parabola per time (`invertParabola`) to 10^-10 of
+their largest values (at present 4·10^-12 at most), at 60 times a decade
+(200 at least) over each response's support. Against a tighter single
+parabola (rtol 10^-15) either can be the one that is off at that level: the
+single parabola by its own error, the cells by rounding where their sums
+cancel (up to 10^6, the most a shared time may have). A time's value is the
+same, bit for bit, whether the times are asked for forwards, backwards,
+shuffled or alone, and every cell spans at most a factor 2 either side of
+its middle time. Fewer than 1% of the samples of the built-in examples and
+the 40-digit cases need a parabola of their own (none, at present), and the
+releases of `chain` and `fsorb` equal those of a run with `settings.shared =
+false` to 10^-10 of each peak.
+
+**Plug flow's exponent, spikes, a weak singularity, a sharp front's rising
+edge.**
+- Under plug flow T lacks the chain's delay; ln T from `evalBlock` equals
+  its closed form, −t_w(R_f λ + a_w D_e τ), to 10^-14 of |ln T| at s from 1
+  to 10^8, for an infinite matrix, one with fracture sorption and a finite
+  one (the difference g − R_f s once left T 2·10^-8 off at s = 10^7).
+- Two spikes right after the delay: the hair case's own response (an
+  infinite matrix) against the classical closed form to 10^-12 relative,
+  taken at the page's own t − delay (it keeps fewer digits than t), and its
+  run's response to 10^-12 of the peak; the matrix that fills at once
+  against the Bromwich integral of its closed-form transform on the
+  imaginary axis (Gauss–Kronrod in pieces of a few turns), to 5·10^-14 of
+  the peak for the parabola and 5·10^-13 for the run's response (before:
+  5·10^-13 and 2·10^-12).
+- A chain under plug flow with a 1 mm matrix, where the parabola once
+  converged on values 10^-4 and 2·10^-5 off: at six times it is right to
+  10^-9 or says it has not converged, and the shared parabolas are right,
+  against de Hoog at 120 and 240 terms.
+- A weak singularity next to a sharp front (t_w 100 a, Pe 10^5, a_w 0.2,
+  a 1 m matrix; the first pole of tanh 0.005 left of the saddles just
+  after the front): h at 14 times from 97 to 103 a against the
+  subordination integral at 40 digits (mpmath, quadrature in ln τ with
+  break points, repeated at 60 digits), to 10^-12 of the peak, by the
+  parabola of each time (at most a few hundred evaluations) and by the
+  shared parabolas; h, h′ and h″ after the peak against the subordination
+  integral computed in the test (derivatives moved onto the inverse
+  Gaussian by parts, so that the quadrature does not cancel), to 10^-11 of
+  each largest value; the run's response from 10^-12 of the peak to 104 a
+  against it to 10^-10, no sample going to de Hoog, and its integral
+  against what has left by its last time to 10^-9 of T(0) (it missed by
+  10^-6 before).
+- The same tube without the matrix: the response reaches back to 10^-12 of
+  the peak and follows the inverse Gaussian there to 10^-10.
+- The same tube at Pe 10^6: in a few seconds at most (it took two and a
+  half minutes and missed its mass balance by 6 %), the mass balance to
+  10^-9, and the response near the front against the subordination
+  integral to 10^-12 of the peak.
+
 **The original program's outputs.** When the reference cases are on the
 machine (`$FARF31_REF`, default `~/Downloads/Farf31-SKB-new/reference-cases`;
 made-up inputs and the original FARF31 1.2's outputs, not in the repository),

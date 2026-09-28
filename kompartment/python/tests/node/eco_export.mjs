@@ -13,7 +13,11 @@
 //   import     { base64 }                          -> { project, report } from importEcoFile
 //   roundtrip  { model }                           -> the export, and what importEcoFile makes of it
 //   canonical  { model, exclude, imported }        -> canonicalModel: what a model means, as JSON
-//   numbers    { values }                          -> javaDouble of each, and secondsFor
+//   numbers    { values }                          -> javaDouble of each, and secondsFor in years and in days
+//   equations  { texts, wraps? }                   -> for each text, what ../src/io/ecoequation.js makes of it:
+//                                                     ecolegoEquation, unsupportedCalls and readsOf; wraps
+//                                                     names the tables a call wraps its value for, with the
+//                                                     range, { name: { first, span } }
 //
 // A task that throws answers { error: { name, message } } instead. The reports
 // are written out as plain data, with `ok` and `summary()` alongside.
@@ -25,6 +29,7 @@ import { pathToFileURL } from 'node:url';
 const src = process.argv[2];
 const load = (file) => import(pathToFileURL(path.join(src, file)).href);
 const eco = await load('io/ecoexport.js');
+const equation = await load('io/ecoequation.js');
 const { importEcoFile } = await load('io/eco.js');
 const fixture = await import(pathToFileURL(path.join(src, '..', 'test', 'eco-export-fixture.js')).href);
 
@@ -66,11 +71,22 @@ async function answer(req) {
 			}
 			case 'canonical':
 				return { canonical: plain(fixture.canonicalModel(req.model, { exclude: req.exclude ?? [], imported: !!req.imported })) };
-			case 'numbers':
+			case 'numbers': {
+				const seconds = (unit) => req.values.map((v) => (typeof v === 'number' && v > 0 && Number.isFinite(v)
+					? eco.javaDouble(eco.secondsFor(v, unit)) : null));
+				return { java: req.values.map((v) => eco.javaDouble(v)), seconds: seconds('year'), days: seconds('day') };
+			}
+			case 'equations': {
+				const wraps = req.wraps ?? {};
+				const call = Object.keys(wraps).length ? (name) => (Object.hasOwn(wraps, name) ? wraps[name] : null) : undefined;
 				return {
-					java: req.values.map((v) => eco.javaDouble(v)),
-					seconds: req.values.map((v) => (typeof v === 'number' && v > 0 && Number.isFinite(v) ? eco.javaDouble(eco.secondsFor(v)) : null)),
+					equations: req.texts.map((text) => ({
+						...equation.ecolegoEquation(text, { call }),
+						unsupported: equation.unsupportedCalls(text),
+						reads: equation.readsOf(text),
+					})),
 				};
+			}
 			default:
 				throw new Error(`No task '${req.task}'`);
 		}

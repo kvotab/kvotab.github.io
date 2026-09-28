@@ -687,6 +687,651 @@ test('what the method cannot solve is refused, saying why', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared contours: one parabola serves the times of a cell
+// ---------------------------------------------------------------------------
+
+/** An unbranched chain, one half-life each (Infinity: stable). */
+const chainOf = (set, half) => {
+	const lam = half.map((th) => (Number.isFinite(th) ? LN2 / th : 0));
+	return L.preparePath(set, L.decayTable(lam, lam.slice(1).map((_, k) => [k, k + 1, lam[k]])));
+};
+
+/** Plug flow into a thin matrix, a parent into a stable daughter: what the
+    path holds falls below half of what it would hold within the run, so K is
+    also inverted whole. */
+const plugThin = () => chainOf({ tw: 100, f: 2e4, rho_m: 2700, pe: Infinity, pen_dep: 0.05, kd_f: 1e-4, eps_m: 0.005,
+	kd_m: [1e-3, 0.01], de_m: 1e-5 }, [2.4e5, Infinity]);
+
+/** The far-field example's path, made up as the example makes it. */
+function examplePath() {
+	const { names, dec } = decayOfModel(JSON.parse(readFileSync(EXAMPLE, 'utf8')));
+	const kd = { 'U-238': 0.0017, 'U-234': 0.0017, 'Th-230': 0.05 };
+	return L.preparePath({
+		tw: 50, f: 1e5, rho_m: 2700, pe: 10, pen_dep: 12.5, kd_f: 0, eps_m: 0.0018,
+		kd_m: names.map((x) => kd[x]), de_m: 3.15e-5,
+	}, dec, { names });
+}
+
+/** The axes a response of this kind is sampled on: a release's, or an
+    inventory's two (A^-1 T for the split, K for the whole). */
+function axesOf(path, i, j, kind) {
+	const I = L._internal;
+	if (kind === 'release') return [['release', I.axisOf(path, I.pairOf(path, i, j, 'release'))]];
+	const [axC, axK] = I.inventoryAxes(path, i, j);
+	return [['split', axC], ['whole', axK]];
+}
+
+/** The peak and absolute floor the app holds an axis's cells to: a release's
+    peak estimate, an inventory's one unit. */
+function cellOptions(ax) {
+	const I = L._internal;
+	const sup = I.responseSupport(ax, ax.tLo, 1e12);
+	const peak = ax.pr.kind === I.RELEASE ? Math.exp(sup.logPeak) : 1;
+	return { sup, opt: { atol: 1e-3 * I.RESP_ATOL * peak, peak } };
+}
+
+/** Whether the app samples an inventory's K inverted whole at t: only once
+    less than half of what the path would hold is left in it (see
+    sampleInventory). Before that K's terms cancel, and one parabola's own sums
+    are cut short there as often as the cells'. */
+function takesWhole(path, ax, t) {
+	const I = L._internal;
+	const k = I.invertParabola(path, path.ws, ax, t).h;
+	return Math.abs(k) < 0.5 * Math.abs(I.bateman(path, path.ws, ax.pr.blk, t)[0]);
+}
+
+/** The times from the first at which the app takes K whole, which it goes on
+    doing (found by bisection: before it, one parabola runs to its budget). */
+function fromWhole(path, ax, ts) {
+	let lo = -1;
+	let hi = ts.length - 1;
+	while (hi - lo > 1) { const c = (lo + hi) >> 1; if (takesWhole(path, ax, ts[c])) hi = c; else lo = c; }
+	return ts.slice(hi);
+}
+
+/** Times over an axis's support, logarithmic in t less the delay: `per` a
+    decade, `least` at least. */
+function supportTimes(ax, sup, per, least) {
+	const d = ax.pr.shift;
+	const u0 = sup.tLo - d;
+	const u1 = Math.min(sup.tHi, 1e12) - d;
+	return logGrid(u0, u1, Math.max(least, Math.ceil(per * Math.log10(u1 / u0)) + 1)).map((u) => d + u);
+}
+
+test('shared parabolas: h, h\' and h\'\' agree with one parabola per time to 1e-10 of their peaks, on every kind of axis', () => {
+	// The cells against invertParabola at the same times, 60 a decade (200 at
+	// least; two dozen or so to a cell) over each axis's support where the
+	// app samples it, each derivative over its largest value there. Only times
+	// both answer are compared. The cells serve every time where the response
+	// is above 1e-10 of its peak; far out in a long tail, below that, some
+	// times need a parabola of their own, whose sums cancel there too or do
+	// not converge (such a time is sized by the saddle-point estimate).
+	const I = L._internal;
+	const cases = [
+		['the far-field example', examplePath(), [[2, 0, 'release'], [1, 1, 'release'], [1, 0, 'inventory']]],
+		['plug flow, a thin matrix', plugThin(), [[1, 0, 'release'], [1, 0, 'inventory']]],
+		['plug flow, a matrix without end', chainOf({ tw: 30, f: 5e4, rho_m: 2700, pe: Infinity, pen_dep: Infinity,
+			kd_f: 0, eps_m: 0.004, kd_m: [0.001], de_m: 3e-5 }, [2.3e6]), [[0, 0, 'release'], [0, 0, 'inventory']]],
+		['a sharp front, Pe 3000', chainOf({ tw: 20, f: 3e3, rho_m: 2700, pe: 3000, pen_dep: 1, kd_f: 0, eps_m: 0.003,
+			kd_m: [5e-4, 2e-3], de_m: 2e-5 }, [1e5, 3e4]), [[1, 0, 'release'], [0, 0, 'inventory']]],
+		['a front at Pe 5440', pageCase(pageInput({ tw: 260, Pe: 5440, aw: 4.9, eps: 0.002, x0: 0.038 },
+			[{ name: 'X', thalf: 1.4e7, kd: 0, de: 7.1e-7, ka: 6.6e-5 }])), [[0, 0, 'release']]],
+		['a long slow tail, Pe 300, stable', chainOf({ tw: 50, f: 1e3, rho_m: 2700, pe: 300, pen_dep: Infinity, kd_f: 0,
+			eps_m: 0.002, kd_m: [0], de_m: 1e-5 }, [Infinity]), [[0, 0, 'release'], [0, 0, 'inventory']]],
+	];
+	for (const [label, path, pairs] of cases) {
+		for (const [i, j, kind] of pairs) {
+			for (const [which, ax] of axesOf(path, i, j, kind)) {
+				const { sup, opt } = cellOptions(ax);
+				const cells = I.makeCells(path, ax, opt);
+				const own = [];
+				const shared = [];
+				const left = [];
+				const ts = supportTimes(ax, sup, 60, 200);
+				for (const t of which === 'whole' ? fromWhole(path, ax, ts) : ts) {
+					const p = I.invertParabola(path, path.ws, ax, t, { atol: opt.atol });
+					if (which === 'whole' && !(Math.abs(p.h) < 0.5 * Math.abs(I.bateman(path, path.ws, ax.pr.blk, t)[0]))) continue; // see takesWhole
+					const s = I.invertShared(path, path.ws, cells, t);
+					if (!s) { left.push(Math.exp(I.logEstimate(ax, t))); continue; }
+					if (!Number.isFinite(p.h) || p.err > 1e-6 * Math.abs(p.h) + opt.atol) continue;
+					own.push(p);
+					shared.push(s);
+				}
+				const worst = ['h', 'dh', 'd2'].map((key) => {
+					let top = 0;
+					let w = 0;
+					own.forEach((p, k) => { top = Math.max(top, Math.abs(p[key])); w = Math.max(w, Math.abs(shared[k][key] - p[key])); });
+					return w / top;
+				});
+				const what = `${label}, ${path.names[i]} from ${path.names[j]}, ${which}`;
+				assert(own.length > 50, `${what}: ${own.length} times compared`);
+				assert(worst.every((w) => w <= 1e-10), `${what}: h, h' and h'' ${worst.map((w) => w.toExponential(1)).join(', ')}`);
+				const top = Math.max(...own.map((p) => Math.abs(p.h)));
+				const high = left.filter((v) => !(v <= 1e-10 * top)).length;
+				assert(high === 0, `${what}: ${high} of ${left.length} times left to a parabola of their own are above 1e-10 of the peak`);
+			}
+		}
+	}
+});
+
+test('shared parabolas: a time gives the same value, bit for bit, whatever was asked for before it', () => {
+	// Each cell comes from the axis's table and its index alone: forwards,
+	// backwards, shuffled or alone, a time gets the same sums.
+	const I = L._internal;
+	const plug = plugThin();
+	const example = examplePath();
+	const axes = [
+		['a release', example, axesOf(example, 2, 0, 'release')[0][1]],
+		['the split of an inventory, plug flow', plug, axesOf(plug, 1, 0, 'inventory')[0][1]],
+		['a whole inventory, plug flow', plug, axesOf(plug, 1, 0, 'inventory')[1][1]],
+	];
+	const same = (p, q) => (p === null && q === null)
+		|| (!!p && !!q && Object.is(p.h, q.h) && Object.is(p.dh, q.dh) && Object.is(p.d2, q.d2) && Object.is(p.err, q.err));
+	for (const [label, path, ax] of axes) {
+		const { sup, opt } = cellOptions(ax);
+		let ts = supportTimes(ax, sup, 0, 150);
+		if (ax.pr.kind === I.INVENTORY) {
+			const from = fromWhole(path, ax, ts);
+			ts = logGrid(from[0], from[from.length - 1], 150);
+		}
+		const inOrder = (order) => {
+			const cells = I.makeCells(path, ax, opt);
+			const out = new Array(ts.length);
+			for (const k of order) out[k] = I.invertShared(path, path.ws, cells, ts[k]);
+			return out;
+		};
+		const idx = ts.map((_, k) => k);
+		const perm = idx.slice();
+		let x = 12345;
+		for (let k = perm.length - 1; k > 0; k--) {
+			x = (x * 1103515245 + 12345) % 2147483648;
+			const r = x % (k + 1);
+			[perm[k], perm[r]] = [perm[r], perm[k]];
+		}
+		const fwd = inOrder(idx);
+		const back = inOrder(idx.slice().reverse());
+		const mixed = inOrder(perm);
+		assert(fwd.filter((r) => r !== null).length > 0.95 * ts.length, `${label}: the cells serve too few times`);
+		assert(idx.every((k) => same(fwd[k], back[k]) && same(fwd[k], mixed[k])), `${label}: a value depends on the order`);
+		for (const k of [0, 37, 75, 149]) {
+			assert(same(I.invertShared(path, path.ws, I.makeCells(path, ax, opt), ts[k]), fwd[k]), `${label}: time ${k} alone`);
+		}
+		// every cell spans at most a factor 2 either side of its middle time
+		const cells = I.makeCells(path, ax, opt);
+		for (const t of ts) I.invertShared(path, path.ws, cells, t);
+		assert(cells.map.size > 3, `${label}: ${cells.map.size} cells`);
+		for (const cell of cells.map.values()) {
+			assert(cell.tHi <= 2 * cell.tA * (1 + 1e-12) && cell.tA <= 2 * cell.tLo * (1 + 1e-12),
+				`${label}: a cell spans ${cell.tLo} to ${cell.tHi} about ${cell.tA}`);
+		}
+	}
+});
+
+test('shared parabolas: the far-field example is what one parabola per time gives, and hardly a sample needs one', () => {
+	const path = examplePath();
+	const R = L.unitResponses(path, { tMax: 1e6 });
+	const own = L.unitResponses(examplePath(), { tMax: 1e6, shared: false });
+	// how the samples were taken: the cells serve all of them but a few
+	let left = 0;
+	let all = 0;
+	let failed = 0;
+	for (const kind of L.KINDS) {
+		for (const r of R[kind]) {
+			if (!r) continue;
+			left += r.shared.fallback;
+			failed += r.shared.failed;
+			all += r.shared.shared + r.shared.fallback + r.shared.negligible;
+		}
+	}
+	assert(all > 2000 && left <= 0.01 * all, `${left} of ${all} samples needed a parabola of their own`);
+	assert(failed === 0, `${failed} cells could not serve`);
+	assert(own.release.every((r) => !r || r.shared === null), 'shared: false still shares');
+	// ...and the values and both derivatives are one parabola per time's, at
+	// every time both grids hold, each over its largest value
+	for (const kind of L.KINDS) {
+		R[kind].forEach((r, q) => {
+			if (!r) return;
+			const o = own[kind][q];
+			const at = new Map(Array.from(o.t, (t, k) => [t, k]));
+			const common = r.t.filter((t) => at.has(t)).length;
+			const what = `${kind} of ${path.names[r.i]} from ${path.names[r.j]}`;
+			assert(common >= 0.9 * r.t.length, `${what}: ${common} of ${r.t.length} times in both grids`);
+			for (const key of ['h', 'dh', 'd2h']) {
+				let pk = 0;
+				for (const v of o[key]) pk = Math.max(pk, Math.abs(v));
+				let worst = 0;
+				r.t.forEach((t, k) => { if (at.has(t)) worst = Math.max(worst, Math.abs(r[key][k] - o[key][at.get(t)]) / pk); });
+				below(worst, 1e-10, `${what}: ${key}, over its largest`);
+			}
+		});
+	}
+	// ...and so is what an inflow of the parent makes of them
+	const n = path.n;
+	const inflows = new Array(n).fill(null);
+	inflows[path.names.indexOf('U-238')] = L.inflowSeries([[0, 0], [1e3, 1], [1e5, 1], [2e5, 0]]);
+	for (const [fn, what] of [[L.releaseAt, 'the release'], [L.inventoryAt, 'what the path holds']]) {
+		const a = logGrid(1e3, 1e6, 40).map((t) => fn(path, R, inflows, t));
+		const b = logGrid(1e3, 1e6, 40).map((t) => fn(path, own, inflows, t));
+		for (let i = 0; i < n; i++) {
+			const pk = Math.max(...b.map((row) => Math.abs(row[i])));
+			if (!(pk > 0)) continue;
+			below(Math.max(...a.map((row, q) => Math.abs(row[i] - b[q][i]))) / pk, 1e-10, `${what} of ${path.names[i]}, over its peak`);
+		}
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Plug flow's exponent, a weak singularity next to a sharp front, a sharp
+// front's rising edge, and responseAt's fallback
+// ---------------------------------------------------------------------------
+
+/** Adaptive Gauss-Kronrod (7-15) to tol relative or abs absolute, the absolute
+    part halved with each split (for integrands tiny over most of the range). */
+function quadAbs(f, a, b, tol, abs, depth = 0) {
+	const xk = [0.991455371120813, 0.949107912342759, 0.864864423359769, 0.741531185599394, 0.586087235467691, 0.405845151377397, 0.207784955007898, 0];
+	const wk = [0.022935322010529, 0.063092092629979, 0.104790010322250, 0.140653259715525, 0.169004726639267, 0.190350578064785, 0.204432940075298, 0.209482141084728];
+	const wg = [0, 0.129484966168870, 0, 0.279705391489277, 0, 0.381830050505119, 0, 0.417959183673469];
+	const c = 0.5 * (a + b);
+	const h = 0.5 * (b - a);
+	let K = 0;
+	let G = 0;
+	for (let q = 0; q < 8; q++) {
+		const s = q === 7 ? f(c) : f(c - h * xk[q]) + f(c + h * xk[q]);
+		K += wk[q] * s;
+		G += wg[q] * s;
+	}
+	K *= h;
+	G *= h;
+	if (Math.abs(K - G) <= tol * Math.abs(K) + abs || depth > 24) return K;
+	return quadAbs(f, a, c, tol, abs / 2, depth + 1) + quadAbs(f, c, b, tol, abs / 2, depth + 1);
+}
+
+/**
+ * h, h' and h'' of one nuclide at finite Pe with an unlimited matrix, no
+ * sorption on the fracture, by the subordination integral h = e^(-lambda t) J,
+ * J(t) = int IG(u) K(t - u; a(u)) du, K(tau; a) = a/(2 sqrt(pi) tau^1.5)
+ * exp(-a^2/(4 tau)), a = u aw sqrt(De R). Near a front the matrix delays of
+ * interest are a few years, whose diffusion depth is well below a metre: for
+ * a 1 m matrix the kernel is exact there. Since d/dt K = c K_a - d/du K (c =
+ * da/du), parts move the time derivatives onto IG, which keeps the quadrature
+ * free of cancellation: J' = int (IG' K + c IG K_a) du, J'' = int (IG'' K +
+ * 2 c IG' K_a + c^2 IG K_aa) du, K_a = K (1/a - a/(2 tau)), K_aa = K (a^2/(4
+ * tau^2) - 3/(2 tau)). In ln tau, with break points at the kernel's and the
+ * front's scales, each part to 1e-16 of the integral of its modulus. Returns
+ * [h, h', h''], or [h] alone when `alone`.
+ */
+function subordination({ tw, Pe, aw, R, De, lam }, t, alone) {
+	const c = aw * Math.sqrt(De * R);
+	const IG = (u) => Math.sqrt(Pe * tw / (4 * Math.PI * u ** 3)) * Math.exp(-Pe * (u - tw) ** 2 / (4 * tw * u));
+	const part = (m) => (x) => {
+		const tau = Math.exp(x);
+		const u = t - tau;
+		if (!(u > 0)) return 0;
+		const a = c * u;
+		const k = IG(u) * a / (2 * Math.sqrt(Math.PI) * Math.sqrt(tau)) * Math.exp(-a * a / (4 * tau)); // IG K dtau/dx
+		if (m === 0) return k;
+		const l1 = -1.5 / u - Pe / (4 * tw) * (1 - tw * tw / (u * u)); // (ln IG)'
+		const l2 = 1.5 / (u * u) - Pe * tw / (2 * u ** 3); // (ln IG)''
+		const ka = 1 / a - a / (2 * tau);
+		if (m === 1) return k * (l1 + c * ka);
+		return k * (l1 * l1 + l2 + 2 * c * l1 * ka + c * c * (a * a / (4 * tau * tau) - 1.5 / tau));
+	};
+	const sig = tw * Math.sqrt(2 / Pe);
+	const a0 = c * tw;
+	const d = t - tw;
+	const bp = [Math.log(1e-16), Math.log(a0 * a0 / 60), Math.log(a0 * a0 / 6), Math.log(6 * a0 * a0), Math.log(t)];
+	for (const k of [-8, -4, -2, -1, 0, 1, 2, 4, 8]) {
+		const tau = d + k * sig;
+		if (tau > 1e-16 && tau < t) bp.push(Math.log(tau));
+	}
+	const xs = bp.filter(Number.isFinite).sort((x, y) => x - y);
+	const J = (alone ? [0] : [0, 1, 2]).map((m) => {
+		const f = part(m);
+		const fa = (x) => Math.abs(f(x));
+		let size = 0;
+		let sum = 0;
+		for (let k = 0; k + 1 < xs.length; k++) if (xs[k + 1] > xs[k]) size += quadAbs(fa, xs[k], xs[k + 1], 1e-4, 1e-300, 6);
+		if (!(size > 1e-250)) return 0;
+		for (let k = 0; k + 1 < xs.length; k++) if (xs[k + 1] > xs[k]) sum += quadAbs(f, xs[k], xs[k + 1], 1e-13, 1e-16 * size);
+		return sum;
+	});
+	const e = Math.exp(-lam * t);
+	return alone ? [e * J[0]] : [e * J[0], e * (J[1] - lam * J[0]), e * (J[2] - 2 * lam * J[1] + lam * lam * J[0])];
+}
+
+/** One nuclide in a tube 100 a long with a 1 m matrix that takes up little
+    (a_w 0.2 1/m, De 1e-5, eps 0.005): a sharp front at Pe 1e5 or 1e6. */
+const TUBE = { tw: 100, aw: 0.2, R: 0.005, De: 1e-5, lam: LN2 / 1e6 };
+const tubePath = (Pe) => L.preparePath({ tw: 100, f: 20, rho_m: 2700, pe: Pe, pen_dep: 1, kd_f: 0, eps_m: 0.005,
+	kd_m: 0, de_m: 1e-5 }, L.decayTable([LN2 / 1e6]));
+
+/** h at Pe 1e5 at 14 times across the front: the subordination integral at 40
+    digits (mpmath, quadrature in ln tau with break points; the same at 60). */
+const TUBE_REF = [[97.0, 7.7425173134802672717e-11], [97.5, 1.0003730354311338361e-7], [97.9, 1.1670634165061735854e-5],
+	[98.3, 5.8050957020603802405e-4], [99.0, 0.071743739914590541379], [99.5, 0.47594316089825745417],
+	[99.9, 0.8671308692850578021], [100.0, 0.88853639316213341001], [100.02, 0.88754487363082356384],
+	[100.052, 0.88229307770110894935], [100.1, 0.86615182604107402573], [100.3, 0.70913263206761010465],
+	[101.0, 0.075737186734056615885], [103.0, 2.5422010804685433653e-4]];
+const TUBE_PEAK = 0.88853639316213341001;
+
+test('plug flow: ln T at s from 1 to 1e8 is its closed form, one delay taken out of members whose Rf differ', () => {
+	// Under plug flow the transform lacks the pair's delay e^(-TW Rmin s); what
+	// is left must not be formed as g - Rmin s, which leaves it with the
+	// rounding of Rmin s where the saddles lie right after the delay (s of 1e4
+	// and more). ln T from evalBlock, held scaled, over |ln T|.
+	const I = L._internal;
+	const lnT = (path, i, j, s) => {
+		I.evalBlock(path, path.ws, I.blockOf(path, i, j), s, 0, I.RELEASE);
+		return Math.log(I.RE) - path.ws.E;
+	};
+	const S = [1, 1e2, 1e4, 1e5, 1e6, 1e7, 1e8];
+	for (const [label, p, n] of [
+		['a matrix without end', { tw: 50.27, aw: 0.3922, eps: 1.888e-4, x0: Infinity }, { th: 13.05, kd: 3.703e-4, de: 1.508e-6, ka: 0 }],
+		['fracture sorption', { tw: 100, aw: 1500, eps: 0.005, x0: Infinity }, { th: 7.6e4, kd: 0.01, ka: 0.002, de: 5e-6 }],
+		['a finite matrix', { tw: 119.84, aw: 380.5, eps: 1.085e-4, x0: 0.0817 }, { th: 2.727e5, kd: 0, de: 3.157e-3, ka: 0 }],
+	]) {
+		const path = L.preparePath({ surface: 'aw', aw: p.aw, tw: p.tw, rho_m: 2700, pe: Infinity, pen_dep: p.x0, kd_f: n.ka,
+			eps_m: p.eps, kd_m: n.kd, de_m: n.de }, L.decayTable([LN2 / n.th]));
+		const R = p.eps + n.kd * 2700;
+		const lam = LN2 / n.th;
+		const Rf = 1 + n.ka * p.aw;
+		let worst = 0;
+		for (const s of S) {
+			const u = Math.sqrt(R * (s + lam) / n.de);
+			const tau = Number.isFinite(p.x0) ? u * Math.tanh(p.x0 * u) : u;
+			const want = -p.tw * Rf * lam - p.tw * p.aw * n.de * tau;
+			worst = Math.max(worst, Math.abs(lnT(path, 0, 0, s) - want) / Math.max(1, Math.abs(want)));
+		}
+		below(worst, 1e-14, `plug flow, ${label}: ln T against its closed form, over |ln T|`);
+	}
+	// A parent into a daughter that the fracture holds back more: one delay,
+	// TW Rmin s, taken out of both, the daughter keeping (Rf - Rmin) s of its
+	// own. Divided differences of H are the same for points shifted alike, so
+	// with an unlimited matrix T_21 = G_21 (H(g_2) - H(g_1))/(g_2 - g_1), H(g) =
+	// e^(-TW g), g_p = Rf_p lambda_p + (Rf_p - Rmin) s + aw De tau_p and G_21 =
+	// A_21 (Rf_1 + aw Rm_1/(tau_1 + tau_2)): the closed form of the two.
+	const tw = 100;
+	const aw = 1000;
+	const kdf = [1e-4, 5e-4];
+	const kdm = [1e-3, 0.01];
+	const De = [1e-5, 2e-5];
+	const lam = [LN2 / 2.4e5, LN2 / 3e3];
+	const path = L.preparePath({ surface: 'aw', aw, tw, rho_m: 2700, pe: Infinity, pen_dep: Infinity, kd_f: kdf, eps_m: 0.005,
+		kd_m: kdm, de_m: De }, L.decayTable(lam, [[0, 1, lam[0]]]));
+	const Rf = kdf.map((k) => 1 + k * aw);
+	const Rm = kdm.map((k) => 0.005 + k * 2700);
+	const Rmin = Math.min(...Rf);
+	let worst = 0;
+	for (const s of S) {
+		const tau = [0, 1].map((p) => Math.sqrt(Rm[p] * (s + lam[p]) / De[p]));
+		const g = [0, 1].map((p) => Rf[p] * lam[p] + (Rf[p] - Rmin) * s + aw * De[p] * tau[p]);
+		const G21 = -lam[0] * (Rf[0] + aw * Rm[0] / (tau[0] + tau[1]));
+		const a = Math.min(...g);
+		const d = Math.abs(g[1] - g[0]);
+		const want = Math.log(-G21) - tw * a + Math.log(-Math.expm1(-tw * d) / d);
+		worst = Math.max(worst, Math.abs(lnT(path, 1, 0, s) - want) / Math.max(1, Math.abs(want)));
+	}
+	below(worst, 1e-13, 'plug flow, a daughter held back more than its parent: ln T_21 against its closed form, over |ln T|');
+});
+
+test('plug flow: a spike right after the delay, against the classical solution and the Bromwich integral', () => {
+	// A matrix without end, a nuclide it barely holds: the whole response lies
+	// within 1e-4 a of the delay. The classical closed form at t less the delay
+	// as the path forms it, by the parabola of each time and in the table.
+	{
+		const tw = 50.27;
+		const aw = 0.3922;
+		const R = 1.888e-4 + 3.703e-4 * 2700;
+		const De = 1.508e-6;
+		const lam = LN2 / 13.05;
+		const path = L.preparePath({ surface: 'aw', aw, tw, rho_m: 2700, pe: Infinity, pen_dep: Infinity, kd_f: 0,
+			eps_m: 1.888e-4, kd_m: 3.703e-4, de_m: De }, L.decayTable([lam]));
+		const k = tw * aw * Math.sqrt(De * R);
+		const d = tw;
+		const exact = (u) => Math.exp(-lam * (u + d)) * neret(u, k);
+		const up = k * k / 6;
+		const ts = logGrid(up / 20, up * 1e4, 61).map((u) => d + u);
+		below(worstRel(ts, ts.map((t) => L.responseAt(path, 0, 0, t).h), ts.map((t) => exact(t - d)), 1e-6), 1e-12,
+			'a spike 1e-4 a after the delay, against the classical solution above 1e-6 of the peak');
+		const r = L.unitResponse(path, 0, 0);
+		let w = 0;
+		for (let q = 0; q < r.t.length; q++) w = Math.max(w, Math.abs(r.h[q] - exact(r.t[q] - d)));
+		below(w / r.peak, 1e-12, '  the tabulated response at its samples, over the peak');
+	}
+	// A finite matrix that fills at once: a Gaussian 0.008 a wide, 0.40 a
+	// after the delay. The Bromwich integral of the closed-form transform on
+	// the imaginary axis, (1/pi) int_0^inf Re[e^(i w u) T(i w)] dw, by
+	// Gauss-Kronrod in pieces of a few turns (T(i w) dies by w = 2000).
+	{
+		const tw = 119.84;
+		const aw = 380.5;
+		const x0 = 0.0817;
+		const R = 1.085e-4;
+		const De = 3.157e-3;
+		const lam = LN2 / 2.727e5;
+		const path = L.preparePath({ surface: 'aw', aw, tw, rho_m: 2700, pe: Infinity, pen_dep: x0, kd_f: 0, eps_m: R,
+			kd_m: 0, de_m: De }, L.decayTable([lam]));
+		const d = tw;
+		const lnT = (w) => { // ln T(i w), the delay taken out: -tw lam - tw aw De sqrt(z) tanh(x0 sqrt z), z = R (i w + lam)/De
+			const zr = R * lam / De;
+			const zi = R * w / De;
+			const rr = Math.hypot(zr, zi);
+			const ur = Math.sqrt((rr + zr) / 2);
+			const ui = Math.sqrt((rr - zr) / 2);
+			const e = Math.exp(-2 * x0 * ur);
+			const c2 = Math.cos(2 * x0 * ui);
+			const s2 = Math.sin(2 * x0 * ui);
+			const nr = 1 - e * c2;
+			const ni = e * s2;
+			const dr = 1 + e * c2;
+			const di = -e * s2;
+			const dd = dr * dr + di * di;
+			const tr = (nr * dr + ni * di) / dd;
+			const ti = (ni * dr - nr * di) / dd;
+			return [-tw * lam - tw * aw * De * (ur * tr - ui * ti), -tw * aw * De * (ur * ti + ui * tr)];
+		};
+		let W = 1;
+		while (Math.exp(lnT(W)[0]) > 1e-22) W *= 2;
+		const bromwich = (u) => {
+			const f = (w) => { const l = lnT(w); return Math.exp(l[0]) * Math.cos(w * u + l[1]); };
+			const pieces = Math.max(16, Math.ceil(W * u / Math.PI));
+			let sum = 0;
+			for (let q = 0; q < pieces; q++) sum += quadAbs(f, W * q / pieces, W * (q + 1) / pieces, 1e-13, 2e-15 * W / pieces);
+			return sum / Math.PI;
+		};
+		// at t less the delay as the path forms it: t = d + u keeps fewer digits of u
+		const us = Array.from({ length: 19 }, (_, q) => 0.37 + 0.004 * q);
+		const want = us.map((u) => bromwich((d + u) - d));
+		const pk = Math.max(...want);
+		let w = 0;
+		us.forEach((u, q) => { w = Math.max(w, Math.abs(L.responseAt(path, 0, 0, d + u).h - want[q])); });
+		below(w / pk, 5e-14, 'a matrix that fills at once: the spike against the Bromwich integral, over the peak');
+		const r = L.unitResponse(path, 0, 0);
+		let wr = 0;
+		let m = 0;
+		for (let q = 0; q < r.t.length; q++) {
+			const u = r.t[q] - d;
+			if (u < 0.37 || u > 0.442) continue;
+			m++;
+			wr = Math.max(wr, Math.abs(r.h[q] - bromwich(u)));
+		}
+		assert(m > 10, `${m} samples across the spike`);
+		below(wr / pk, 5e-13, '  the tabulated response at its samples across the spike, over the peak');
+	}
+});
+
+test('plug flow, a chain with a thin matrix: the parabola is right or says it has not converged', () => {
+	// Each member's own transform can exceed the chain's response and turn
+	// thousands of times faster along the path than it. Once, under plug flow,
+	// the step followed only the response's own phase, and two sums, both too
+	// coarse, agreed on values 1e-4 and 2e-5 off with an error estimate of
+	// 1e-15. Against de Hoog's method at 120 and 240 terms, at six times.
+	const I = L._internal;
+	const path = pageCase(pageInput({ tw: 2741.36, Pe: Infinity, aw: 4.401, eps: 0.0138, x0: 0.001016 }, [
+		{ name: 'N0', thalf: 6234.3, kd: 0.0078128, ka: 0.00096121, de: 1.1566e-7, daughter: true },
+		{ name: 'N1', thalf: 9884.0, kd: 0.031940, ka: 0.00096121, de: 2.1815e-5, daughter: true },
+		{ name: 'N2', thalf: 2.7713e8, kd: 0.35151, ka: 0.00096121, de: 1.4778e-4, daughter: true },
+		{ name: 'N3', thalf: 355.60, kd: 0, ka: 0.00096121, de: 1.1650e-5 }]));
+	let silent = 0;
+	let off = 0;
+	for (const [i, j, tts] of [[1, 0, [72.5, 72.695, 72.9]], [2, 1, [1085, 1089.4, 1095]]]) {
+		const pr = I.pairOf(path, i, j, 'release');
+		const ax = I.axisOf(path, pr);
+		const { opt } = cellOptions(ax);
+		const cells = I.makeCells(path, ax, opt);
+		for (const tt of tts) {
+			const t = pr.shift + tt;
+			const a = I.invertDeHoog(path, path.ws, pr, t, { M: 120 });
+			const b = I.invertDeHoog(path, path.ws, pr, t, { M: 240 });
+			const tol = 1e-9 * Math.abs(b) + 1e2 * Math.abs(a - b);
+			const own = I.invertParabola(path, path.ws, ax, t);
+			if (Number.isFinite(own.h) && !(own.err > 1e-6 * Math.abs(own.h)) && Math.abs(own.h - b) > tol) silent++;
+			const s = I.invertShared(path, path.ws, cells, t);
+			if (!s || Math.abs(s.h - b) > tol) off++;
+			const r = L.responseAt(path, i, j, t);
+			if (Math.abs(r.h - b) > tol) off++;
+		}
+	}
+	assert(silent === 0, `${silent} parabolas converged on a wrong value`);
+	assert(off === 0, `${off} answers from the cells or responseAt off`);
+});
+
+test('a sharp front without the matrix (Pe 1e5): the rising edge, from 1e-12 of the peak, is the inverse Gaussian', () => {
+	// The real-axis table once stopped where ln T fell below -900, at 97.9 a
+	// here: the response was zero before it.
+	const lam = LN2 / 1e6;
+	const path = L.preparePath({ tw: 100, f: 0, rho_m: 2700, pe: 1e5, pen_dep: 1, kd_f: 0, eps_m: 0.005, kd_m: 0, de_m: 0 },
+		L.decayTable([lam]));
+	const r = L.unitResponse(path, 0, 0, { tMax: 1e6 });
+	const pk = Math.exp(-lam * 100) * ig(100, 100, 1e5);
+	let w = 0;
+	let first = Infinity;
+	for (let q = 0; q < r.t.length && r.t[q] <= 100; q++) {
+		const v = Math.exp(-lam * r.t[q]) * ig(r.t[q], 100, 1e5);
+		if (v < 1e-12 * pk) continue;
+		first = Math.min(first, r.t[q]);
+		w = Math.max(w, Math.abs(r.h[q] - v) / v);
+	}
+	assert(r.t[0] < first, `the response starts at ${r.t[0]}`);
+	below(w, 1e-10, 'its rising edge against the inverse Gaussian, relative, from 1e-12 of the peak');
+});
+
+test('a weak singularity next to a sharp front (Pe 1e5): the 40-digit values, the rising edge and the mass balance', () => {
+	// The first pole of tanh in the matrix term lies within 0.01 of the saddles
+	// just after the front; its residue (aw De = 2e-6) hardly shows in the
+	// response, but it bounds a uniform trapezoidal step, and a parabola once
+	// exhausted its budget at every time after the peak, 17 % off. Nodes
+	// spaced as c sinh(u) need a few hundred evaluations there.
+	const I = L._internal;
+	const pk = TUBE_PEAK;
+	const params = { ...TUBE, Pe: 1e5 };
+	let wsub = 0;
+	for (const [t, want] of TUBE_REF) wsub = Math.max(wsub, Math.abs(subordination(params, t, true)[0] - want) / pk);
+	below(wsub, 1e-13, 'the subordination integral here against the 40-digit values, over the peak');
+	const path = tubePath(1e5);
+	const ax = I.axisOf(path, I.pairOf(path, 0, 0, 'release'));
+	const sup = I.responseSupport(ax, ax.tLo, 1e12);
+	const cells = I.makeCells(path, ax, { atol: 1e-3 * I.RESP_ATOL * Math.exp(sup.logPeak), peak: Math.exp(sup.logPeak) });
+	let wa = 0;
+	let wo = 0;
+	let wc = 0;
+	let most = 0;
+	for (const [t, want] of TUBE_REF) {
+		wa = Math.max(wa, Math.abs(L.responseAt(path, 0, 0, t).h - want) / pk);
+		const n0 = path.ws.evaluations;
+		const o = I.invertParabola(path, path.ws, ax, t);
+		most = Math.max(most, path.ws.evaluations - n0);
+		wo = Math.max(wo, Number.isFinite(o.err) ? Math.abs(o.h - want) / pk : Infinity);
+		const s = I.invertShared(path, path.ws, cells, t);
+		wc = Math.max(wc, s ? Math.abs(s.h - want) / pk : Infinity);
+	}
+	below(wa, 1e-12, 'responseAt at the 14 times from 97 to 103 a, over the peak');
+	below(wo, 1e-12, `  the parabola of each time (at most ${most} evaluations)`);
+	below(wc, 1e-12, '  and the shared parabolas');
+	// h, h' and h'' after the peak, each over its largest value there
+	const ts = [100.02, 100.052, 100.1, 100.2, 100.3, 100.5, 100.7, 101, 101.5, 102, 103];
+	const want = ts.map((t) => subordination(params, t));
+	const top = [0, 1, 2].map((m) => Math.max(...want.map((v) => Math.abs(v[m]))));
+	let e3 = 0;
+	ts.forEach((t, q) => {
+		const r = L.responseAt(path, 0, 0, t);
+		e3 = Math.max(e3, Math.abs(r.h - want[q][0]) / top[0], Math.abs(r.dh - want[q][1]) / top[1], Math.abs(r.d2 - want[q][2]) / top[2]);
+	});
+	below(e3, 1e-11, '  h, h\' and h\'\' after the peak against the subordination integral, each over its largest');
+	// The tabulated response: every sample by a parabola, the rising edge down
+	// to 1e-12 of the peak (the real-axis table once ended where ln T fell
+	// below -900, and the response was zero before 97.9 a), the 40-digit values
+	// between its samples, and its mass balance (once 1e-6 short).
+	const r = L.unitResponse(path, 0, 0, { tMax: 1e6 });
+	assert(r.shared.dehoog === 0, `samples went to de Hoog's method: ${JSON.stringify(r.shared)}`);
+	let wr = 0;
+	let first = Infinity;
+	for (let q = 0; q < r.t.length && r.t[q] <= 104; q++) {
+		const t = r.t[q];
+		if (ig(t, TUBE.tw, 1e5) < 1e-15 * pk) continue; // before the edge (the matrix only delays)
+		const v = subordination(params, t, true)[0];
+		if (v < 1e-12 * pk) continue;
+		first = Math.min(first, t);
+		wr = Math.max(wr, Math.abs(r.h[q] - v) / Math.max(Math.abs(v), 1e-6 * pk));
+	}
+	assert(r.t[0] < first && r.h[0] < 1e-12 * pk, `the response starts at ${r.t[0]}, ${(r.h[0] / pk).toExponential(1)} of the peak`);
+	below(wr, 1e-10, '  the tabulated response up to 104 a, relative above 1e-6 of the peak and over 1e-6 of it below');
+	let wi = 0;
+	for (const [t, v] of TUBE_REF) {
+		let k = 0;
+		while (k + 2 < r.t.length && r.t[k + 1] <= t) k++;
+		wi = Math.max(wi, Math.abs(I.hermite5(r.t[k], r.h[k], r.dh[k], r.d2h[k], r.t[k + 1], r.h[k + 1], r.dh[k + 1], r.d2h[k + 1], t) - v) / pk);
+	}
+	below(wi, 1e-9, '  between its samples at the 14 times, over the peak');
+	assert(r.balanced, `the mass balance misses by ${r.rel}`);
+	below(Math.abs(r.integral - r.expected) / r.T0, 1e-9, '  its integral against what leaves by its last time, over T(0)');
+});
+
+test('the same tube at Pe 1e6: its mass balance, in a second or so', () => {
+	// It once took two and a half minutes and missed its mass balance by 6 %.
+	const path = tubePath(1e6);
+	const t0 = Date.now();
+	const r = L.unitResponse(path, 0, 0, { tMax: 1e6 });
+	const ms = Date.now() - t0;
+	assert(ms < 8000, `${ms} ms`);
+	assert(r.balanced, `the mass balance misses by ${r.rel}`);
+	below(Math.abs(r.integral - r.expected) / r.T0, 1e-9, 'Pe 1e6: the integral against what leaves by its last time, over T(0)');
+	let w = 0;
+	for (const t of [100, 100.1, 100.3, 101, 105, 110]) {
+		const q = r.t.findIndex((x) => x >= t);
+		w = Math.max(w, Math.abs(r.h[q] - subordination({ ...TUBE, Pe: 1e6 }, r.t[q], true)[0]) / r.peak);
+	}
+	below(w, 1e-12, '  the response near the front against the subordination integral, over the peak');
+});
+
+test('responseAt never returns a parabola that failed: de Hoog\'s method at twice its terms takes over', () => {
+	const I = L._internal;
+	// far out in a long tail the parabola does not converge (its terms cancel
+	// or grow back): there responseAt answers with de Hoog's method, and its
+	// error estimate
+	const tail = chainOf({ tw: 50, f: 1e3, rho_m: 2700, pe: 300, pen_dep: Infinity, kd_f: 0, eps_m: 0.002, kd_m: [0], de_m: 1e-5 }, [Infinity]);
+	const ax = I.axisOf(tail, I.pairOf(tail, 0, 0, 'release'));
+	let replaced = 0;
+	for (const t of logGrid(1e10, 1e11, 9)) {
+		const own = I.invertParabola(tail, tail.ws, ax, t);
+		const r = L.responseAt(tail, 0, 0, t);
+		assert(Number.isFinite(r.h) && Number.isFinite(r.err), `at ${t}: h ${r.h}, err ${r.err}`);
+		if (!(Number.isFinite(own.h) && !(own.err > 1e-6 * Math.abs(own.h)))) {
+			replaced++;
+			const M = Math.min(2 * I.deHoogTerms(tail, ax, t), 320);
+			assert(r.h === I.invertDeHoog(tail, tail.ws, ax.pr, t, { M }), `at ${t} the answer is not de Hoog's`);
+		}
+	}
+	assert(replaced > 0, 'no time where the parabola failed');
+	// ...and across the sharp front and its tail every answer passes
+	const path = tubePath(1e5);
+	for (const t of logGrid(96, 1e4, 60)) {
+		const r = L.responseAt(path, 0, 0, t);
+		assert(Number.isFinite(r.h) && Number.isFinite(r.err) && !(r.err > 1e-6 * Math.abs(r.h)), `at ${t}: h ${r.h}, err ${r.err}`);
+	}
+});
+
+// ---------------------------------------------------------------------------
 // Kompartment's own discretised block
 // ---------------------------------------------------------------------------
 

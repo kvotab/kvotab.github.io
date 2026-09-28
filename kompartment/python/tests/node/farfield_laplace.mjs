@@ -8,7 +8,9 @@
 //   { settings, decay, names,
 //     s:         [[sr, si, i, j], ...]   -> transfer, inventoryTransfer: [re, im] each
 //     at:        [[i, j, t, kind], ...]  -> at: {h, dh, d2} each, inverted directly
-//     responses: {kinds, tMax} | null    -> responses: {'<kind>:<i>,<j>': {t, h, dh, d2h, integral, T0}}
+//     responses: {kinds, tMax, shared} | null
+//                                        -> responses: {'<kind>:<i>,<j>': {t, h, dh, d2h, integral, T0,
+//                                           shared (how the samples were taken)}}
 //     inflows:   [[[t, rate], ...] | null, ...], times: [...]
 //                                        -> release, inventory: one row per time }
 //
@@ -53,7 +55,7 @@ for (const c of req.cases) {
 				if (!r) continue;
 				answer.responses[`${kind}:${r.i},${r.j}`] = {
 					t: r.t, h: r.h, dh: r.dh, d2h: r.d2h, integral: r.integral, T0: r.T0,
-					m0: r.m0 ?? 0, expected: r.expected ?? null, balanced: r.balanced ?? null,
+					m0: r.m0 ?? 0, expected: r.expected ?? null, balanced: r.balanced ?? null, shared: r.shared ?? null,
 				};
 			}
 		}
