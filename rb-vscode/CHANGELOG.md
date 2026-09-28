@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+* The extension's icon is kvotab's logo, the site's favicon (as rb.html's
+  is now too, where it was SKB's).
+
 ## 0.1.1
 
 * *Download Excel*: the chart is on white round and behind the plot, in the
