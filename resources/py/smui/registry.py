@@ -68,6 +68,13 @@ def dispatch(name, payload_json, _data=None):
     if seen and isinstance(out, dict):
         out = dict(out)
         out.setdefault('warnings', seen[:12])
+    # a date column is text in the CSV the code reads: the code turns it back
+    # into the number the page computed with (util.dated_code)
+    if isinstance(out, (dict, list)) and isinstance(payload.get('table'), str):
+        from .util import date_columns, dated_result
+        cols = date_columns(payload['table'])
+        if cols:
+            out = dated_result(out, cols)
     return to_json(out)
 
 

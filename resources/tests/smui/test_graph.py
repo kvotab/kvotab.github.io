@@ -691,4 +691,39 @@ res = call('graph.bean', table=tid, y='y', rows=rows, codes=codes, k=3, by=['g']
 ns = run_code(res['code'], {'Beans': bean_csv})
 check.near('the code of graph.bean with Freq: the rows repeated', float(np.max(np.abs(ns['violin'] - np.array(res['beans'][2]['d'])))) if 'violin' in ns else 1.0, 0.0, abs_=1e-12)
 
+# ---- a date column: text in the CSV, a number (ms since 1970) in the page ---------------------------------
+# The code turns it back into the number before it computes (util.dated_code),
+# so the smoother's code on the CSV as the page exports it gives the page's curve.
+import contextlib, io, os, tempfile  # noqa: E401,E402
+from smui import data as _data  # noqa: E402
+from smui.util import dated_code  # noqa: E402
+days = np.array([np.datetime64('1980-01-01') + np.timedelta64(91 * i, 'D') for i in range(40)])
+ms_ = (days - np.datetime64('1970-01-01')).astype('timedelta64[ms]').astype(float)
+out_ = 100 + np.cumsum(np.random.default_rng(5).normal(1, 0.5, 40))
+tq = table({'quarter': ms_, 'output': out_})
+_data.TABLES[tq]['meta']['quarter']['format'] = {'kind': 'date'}
+for xn, yn in (('output', 'quarter'), ('quarter', 'output')):
+    r_ = call('graph.smoother', table=tq, x=xn, y=yn, lam=0.05, table_name='Cycle')
+    code_ = r_['code']
+    with tempfile.TemporaryDirectory() as tmp:
+        pd.DataFrame({'quarter': [str(d) for d in days], 'output': out_}).to_csv(os.path.join(tmp, 'Cycle.csv'), index=False)
+        here = os.getcwd()
+        os.chdir(tmp)
+        ns_ = {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                exec(code_, ns_)
+            err_ = None
+        except Exception as e_:   # the check says it
+            err_ = f'{type(e_).__name__}: {e_}'
+        finally:
+            os.chdir(here)
+    check(f'a date on {"Y" if yn == "quarter" else "X"}: the code turns the date back into its number', ('pd.to_datetime(df["quarter"])' in code_, err_), (True, None))
+    if err_ is None:
+        cv = r_['curves'][0]
+        check.near(f'... and gives the page\'s curve (its first point, date on {"Y" if yn == "quarter" else "X"})', float(ns_['spline']((ns_['grid'][0] - ns_['m']) / ns_['s'])), cv['y'][0], rel=1e-9)
+check('code that parses the date itself (a Time ID) is left to do so', dated_code('df = pd.read_csv("a.csv")\ndf["t"] = pd.to_datetime(df["t"])', ['t']), 'df = pd.read_csv("a.csv")\ndf["t"] = pd.to_datetime(df["t"])')
+check('... and code that does not use the date column gets no line', dated_code('df = pd.read_csv("a.csv")\nx = df["y"]', ['t']), 'df = pd.read_csv("a.csv")\nx = df["y"]')
+check('... a second pass adds nothing', dated_code(dated_code('df = pd.read_csv("a.csv")\nx = df["t"]', ['t']), ['t']).count('to_datetime'), 1)
+
 sys.exit(check.done())

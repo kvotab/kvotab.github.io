@@ -50,7 +50,7 @@ async def main():
     py = r['py']
     check('Sample: the sample script converts, its analyses with this page\'s code', ('4 analyses' in r['status'], r['opened']), (True, 4))
     check('... the table as the reports\' code reads it, the formula column as pandas', ('dt = pd.read_csv("Students.csv", float_precision="round_trip")' in py, 'dt["BMI"] = dt["weight (kg)"] / (dt["height (cm)"] / 100) ** 2' in py), (True, True))
-    check("... each analysis as its report's code, on the script's table", (py.count('df = dt\n') >= 4, 'DescrStatsW(x, ddof=1)' in py, 'smf.ols(' in py, '(line 13: Fit Model' in py), (True, True, True, True))
+    check("... each analysis as its report's code, on the script's table", (py.count('df = dt.copy()\n') >= 4, 'DescrStatsW(x, ddof=1)' in py, 'smf.ols(' in py, '(line 13: Fit Model' in py), (True, True, True, True))
     check('... the imports once, at the top', (py.count('import numpy as np') == 1, py.index('import numpy as np') < py.index('dt = pd.read_csv')), (True, True))
     check('... what did not convert: a comment where it was, and a note with its line', ('# NOT CONVERTED (line 21): New Window(' in py, any(n.startswith('⚠line 21') and 'New Window' in n for n in r['notes'])), (True, True))
     sel = await page.ev(f'''(() => {{ const c = {CONV}; const b = [...c.notesEl.querySelectorAll('.sm-jsl-line')].find(b => b.textContent === 'line 21'); b.click(); const ta = c.jsl.ta; return ta.value.slice(ta.selectionStart, ta.selectionEnd); }})()''')

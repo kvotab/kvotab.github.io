@@ -266,6 +266,28 @@
     return tbl;
   }
 
+  /* A date column is a number in the page (milliseconds since 1970) and text
+     in the CSV the code reads (as File > Export CSV writes it): code that
+     uses one gets, after its read_csv line, the line that turns it back
+     into that number, as the backend's code does (util.dated_code). A
+     column the code parses itself (pd.to_datetime(df[...])) is left to it. */
+  const pyJson = (s) => JSON.stringify(s).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  function datedCode(text, table) {
+    if (!text || !table || !table.columns || !/pd\.read_csv\(/.test(text)) return text;
+    const need = [];
+    for (const c of table.columns) {
+      if (!c.isNumeric || !c.format || !/^date/.test(c.format.kind || '')) continue;
+      const forms = [JSON.stringify(c.name), pyJson(c.name), `'${c.name}'`];
+      if (!forms.some((f) => text.includes(f))) continue;
+      if (forms.some((f) => new RegExp(`pd\\.to_datetime\\(\\s*df\\[\\s*${escRe(f)}`).test(text))) continue;
+      need.push(c.name);
+    }
+    if (!need.length) return text;
+    const line = (n) => { const q = JSON.stringify(n); return `df[${q}] = (pd.to_datetime(df[${q}]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)   # a date: text in the CSV, milliseconds since 1970 here as in the page`; };
+    return text.split('\n').flatMap((l) => (/^df = pd\.read_csv\(/.test(l) ? [l, ...need.map(line)] : [l])).join('\n');
+  }
+
   /* The head of a code snippet written in the page (a graph's code, when the
      page chose its bins or its lines): the same lines as the backend's
      util.code_head, so that every snippet starts alike and runs on its own. */
@@ -328,6 +350,9 @@
         if (edit) edit.hidden = false;
       });
       box = el('div', { class: 'sm-code-edit' }, editor.el, el('div', { class: 'sm-code-bar' }, runBtn, reset, done, status));
+      // as wide as the code as text was (its long lines wrap), so that Edit leaves the report's layout as it is
+      const w = pre.getBoundingClientRect().width;
+      if (w > 0) box.style.width = `${Math.round(w)}px`;
       pre.replaceWith(box);
       if (edit) edit.hidden = true;
       requestAnimationFrame(() => editor && editor.focus());
@@ -1447,6 +1472,7 @@
     // Code a platform shows that no call returned (worked out in the page)
     // goes into Save Python Script too; the calls' own code is there already.
     code(text) {
+      text = datedCode(text, this.report.table);
       if (text && !this.headless && this.current) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
       return code(text, { open: !!this.spec.options.showCode, title: this.report.title, table: this.report.table });
     }
@@ -1607,5 +1633,5 @@
     if (tag) tag.addEventListener('load', () => { if (document.body) kickPlots(document.body); });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, datedCode, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

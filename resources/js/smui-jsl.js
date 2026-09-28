@@ -112,7 +112,8 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
         if (IMPORT.test(line)) { if (!imports.includes(line)) imports.push(line); continue; }
         // the rows the page's report left out (its row states, its filter) are not the script's: it picks its own rows
         if (/^\s*df = df\.drop\(index=\[[^\]]*\]\)\s*# the rows the report leaves out/.test(line)) continue;
-        if (/^df = pd\.read_csv\(/.test(line)) { lines.push(step.where ? `df = ${frame}.loc[${step.where}]` : `df = ${frame}`); continue; }
+        // a copy: the analysis's own changes to df (a date column made a number again) stay out of the script's table
+        if (/^df = pd\.read_csv\(/.test(line)) { lines.push(step.where ? `df = ${frame}.loc[${step.where}].copy()` : `df = ${frame}.copy()`); continue; }
         lines.push(line);
       }
       lines.push('');

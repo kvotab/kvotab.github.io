@@ -38,6 +38,38 @@ SHIFT, CTRL, ALT = 8, 2, 1
 
 NB = 'SM.notebook.notebooks[SM.notebook.notebooks.length - 1]'
 
+# The editor of a report's code block: the computed styles of its two layers.
+LAYERS = r"""(async () => { const rep = SM.app.reports[0]; SM.app.showTab(SM.app.tabOf(rep)); const d = rep.codeBlocks().find(d => /print\(d\.mean/.test(d.textContent)); d.open = true;
+  if (!d.querySelector('textarea')) [...d.querySelectorAll('summary button')].find(b => b.textContent === 'Edit').click();
+  await new Promise(r => setTimeout(r, 200));
+  const hl = d.querySelector('.sm-ed-hl'), ta = d.querySelector('.sm-ed-ta'), a = getComputedStyle(hl), b = getComputedStyle(ta);
+  const keys = ['fontSize', 'lineHeight', 'fontFamily', 'paddingLeft', 'paddingTop', 'letterSpacing', 'whiteSpace', 'borderLeftWidth', 'marginTop'];
+  return { diff: keys.filter(k => a[k] !== b[k]).map(k => `${k}: ${a[k]} / ${b[k]}`), numbers: getComputedStyle(hl.querySelector('.ln'), '::before').content !== 'none',
+    same: Math.abs(hl.getBoundingClientRect().height - ta.getBoundingClientRect().height) < 1 }; })()"""
+
+# Graph Builder's smoother and a Bivariate graph on the Business cycle table's date column, their code run.
+DATES = r"""(async () => {
+  const t = SM.app.openExample('cycles');
+  const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+  await new Promise(res => { if (rep.body.querySelector('.sm-gb')) res(); else rep.on('done', res); });
+  let gb = rep.body.querySelector('.sm-gb')._gb; await gb.idle();
+  await gb.update(S => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('output').id, name: 'output' }]; S.zones.y = [{ id: t.col('quarter').id, name: 'quarter' }]; S.auto = false; S.elements = []; });
+  await gb.elements(['points', 'smoother']);
+  await gb.idle(); await new Promise(r => setTimeout(r, 300));
+  gb = rep.body.querySelector('.sm-gb')._gb;
+  const code = rep.pyCode.find(c => /make_smoothing_spline/.test(c)) || '';
+  const trace = gb.plot().traces.find(tr => tr.mode === 'lines');
+  const res = await SM.notebook.exec('dates', code + '\nfirst = float(spline((grid[0] - m) / s))\nfirst', { label: 'code', fresh: true });
+  const got = res.outputs.find(o => o.type === 'result');
+  const bv = SM.app.openReport(SM.platforms.get('fitybyx'), { roles: { y: [t.col('output').id], x: [t.col('quarter').id] }, options: {} }, t);
+  await new Promise(res => bv.on('done', res));
+  const graphCode = bv.codeBlocks().map(d => d.querySelector('code') ? d.querySelector('code').textContent : '').find(c => /plt\.show\(\)/.test(c)) || '';
+  const res2 = await SM.notebook.exec('dates2', graphCode, { label: 'code', fresh: true });
+  return { conv: /pd\.to_datetime\(df\["quarter"\]\)/.test(code), errors: res.outputs.filter(o => o.type === 'error').map(o => o.evalue), first: got ? +got.data['text/plain'] : null, page: trace ? trace.y[0] : null,
+    conv2: /pd\.to_datetime\(df\["quarter"\]\)/.test(graphCode), errors2: res2.outputs.filter(o => o.type === 'error').map(o => o.evalue),
+    fig2: res2.outputs.some(o => o.data && (o.data['image/svg+xml'] || o.data['image/png'])) };
+})()"""
+
 
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
@@ -237,6 +269,19 @@ async def main():
       [...[...document.querySelectorAll('.sm-dialog')].pop().querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => /Close without/.test(b.textContent)).click(); await new Promise(r => setTimeout(r, 200));
       return {{ asked, still, gone: !SM.notebook.notebooks.includes(nb) && !SM.app.tabs.includes(tab) }}; }})()''')
     check('closing a notebook with changes asks first; Cancel keeps it, Close without saving closes it', r, {'asked': True, 'still': True, 'gone': True})
+
+    # ---- the editor inside a report's code block: its two layers alike (the code
+    # block's own pre rule once gave the coloured layer another size and padding,
+    # and a selection sat beside the text, the line numbers gone)
+    r = await page.ev(LAYERS)
+    check("a report's code in the editor: the coloured layer and the text under the cursor alike, the line numbers shown", r, {'diff': [], 'numbers': True, 'same': True})
+
+    # ---- a date column: text in the CSV, the page's number in the code (user report
+    # 2026-09-28: Graph Builder's smoother code on the Business cycle table failed on its quarter)
+    r = await page.ev(DATES, timeout=400)
+    check("a date column: Graph Builder's smoother code turns it back into the page's number and runs", (r['conv'], r['errors']), (True, []))
+    check("... and gives the page's curve", r['first'] is not None and r['page'] is not None and abs(r['first'] - r['page']) <= 1e-9 * abs(r['page']), True)
+    check("... a Bivariate graph's code (put together in the page) on a date X runs and draws", (r['conv2'], r['errors2'], r['fig2']), (True, [], True))
     check('no script errors', page.errors, [])
     await page.close()
 

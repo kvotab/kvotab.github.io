@@ -1,6 +1,7 @@
 """JSON out, and small helpers every analysis module uses."""
 import json
 import math
+import re
 
 import numpy as np
 import pandas as pd
@@ -71,6 +72,72 @@ def code_head(table_name, extra_imports=()):
     # off in the last digit, which an iterative fit can feel)
     lines.append(f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip")   # the table, as File > Export CSV writes it')
     return '\n'.join(lines)
+
+
+# ---- dates in the code ------------------------------------------------------
+# The page keeps a date as a number, milliseconds since 1970, and computes on
+# that number; File > Export CSV (and the notebook's files) write it as text,
+# 2024-01-31. Code that reads the CSV must turn such a column back into the
+# number before it computes with it, or it computes with text.
+DATE_KINDS = ('date', 'datetime')
+_READ = re.compile(r'^df = pd\.read_csv\(')
+
+
+def date_columns(table):
+    """The table's number columns shown as dates (any modeling type)."""
+    from . import data
+    t = data.TABLES.get(table) if table is not None else None
+    if not t:
+        return []
+    return [c for c, m in t['meta'].items() if m.get('dataType') == 'numeric' and (m.get('format') or {}).get('kind') in DATE_KINDS]
+
+
+def date_line(name):
+    q = json.dumps(name)
+    return f'df[{q}] = (pd.to_datetime(df[{q}]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)   # a date: text in the CSV, milliseconds since 1970 here as in the page'
+
+
+def dated_code(code, columns):
+    """code with, after each line that reads the table's CSV, a line turning
+    each date column it uses back into the page's number. A column the code
+    parses itself (pd.to_datetime(df[...]): a time series' Time ID) is left
+    to it; code that has the line already is left as it is."""
+    if not isinstance(code, str) or not columns or 'pd.read_csv(' not in code:
+        return code
+    need = []
+    for c in columns:
+        q = json.dumps(c)
+        if q not in code and repr(c) not in code:
+            continue
+        if re.search(r'pd\.to_datetime\(\s*df\[\s*' + re.escape(q), code) or re.search(r'pd\.to_datetime\(\s*df\[\s*' + re.escape(repr(c)), code):
+            continue
+        need.append(c)
+    if not need:
+        return code
+    out = []
+    for line in code.split('\n'):
+        out.append(line)
+        if _READ.match(line):
+            out += [date_line(c) for c in need]
+    return '\n'.join(out)
+
+
+def dated_result(obj, columns, depth=0):
+    """dated_code() on every code string of a result (the keys code and
+    *_code, at any depth), in place."""
+    if not columns or depth > 5:
+        return obj
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str) and (k == 'code' or k.endswith('_code')):
+                obj[k] = dated_code(v, columns)
+            elif isinstance(v, (dict, list)):
+                dated_result(v, columns, depth + 1)
+    elif isinstance(obj, list):
+        for v in obj:
+            if isinstance(v, (dict, list)):
+                dated_result(v, columns, depth + 1)
+    return obj
 
 
 def finite(x):

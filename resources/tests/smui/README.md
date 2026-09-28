@@ -32,7 +32,7 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
 | `test_quality.py` | 161 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
 | `test_doe.py` | 160 | design properties, statsmodels power, textbook values |
-| `test_graph.py` | 266 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
+| `test_graph.py` | 273 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
 | `test_tables.py` | 129 | pandas group-by, merge, melt/pivot, JMP quantiles |
 | `test_multits.py` | 167 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
 | `test_counts.py` | 432 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
@@ -66,10 +66,15 @@ its table and checks that it gives the report's numbers. The export is the
 whole table: code for a report that leaves rows out (excluded, filtered, a
 By group) says which (`df = df.drop(index=[...])   # the rows the report
 leaves out`), and a graph's code (matplotlib, ending in `plt.show()`) sits
-right under its graph.
+right under its graph. A date column is a number in the page (milliseconds
+since 1970) and text in the CSV: code that uses one gets, after its
+`read_csv` line, the line that turns it back into that number
+(`util.dated_code`, which `registry.dispatch` applies to every result's
+code, and `SM.report.datedCode` for code the page writes); code that parses
+the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
 Browser suites, and their checks on 2026-09-28: core 187, distribution 168,
-fitybyx 600, fitmodel 796, notebook 45, jsl 24 and the other platforms'
+fitybyx 600, fitmodel 796, notebook 49, jsl 24 and the other platforms'
 (4,837 in 32 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
@@ -407,7 +412,7 @@ its place, its rows by their text columns.
 `test-ui-bootstrap.py` (22): the right-click item, the dialog, progress and Stop, samples against the backend on the same rows, a two-column table with BCa, a By group, the report left untouched, a project, dark theme, phone width.
 
 
-`test-ui-notebook.py` (45): Python > New Notebook; code typed with real keys runs on Shift+Enter (the table is the CSV file the reports' code reads) and Ctrl+Enter; `smui.table()` with the modeling types as dtypes, a date column as datetimes, a table opened later there as a file too; `smui.new_table()` into the page; a report's code run in a cell gives the report's mean; figures as SVG and, with many points, PNG; an HTML output sanitised (no script, image or javascript: link); tracebacks; Run All stops at an error; Markdown text cells (only http(s) links); top-level await; `%matplotlib`, `%time` and `%pip`; Restart; .ipynb and .py both ways, an .ipynb from elsewhere opened without running and sanitised; a project with its notebooks; a report's code block edited, run with Shift+Enter (its output under it, the report's layout kept), Reset and Close; Notebook and Save > Open Script in Notebook; the editor's keys (Enter's indent, Tab and Shift+Tab, Ctrl+/, Backspace in an indent, Undo), its colours; closing a notebook with changes; dark theme and phone width.
+`test-ui-notebook.py` (49): Python > New Notebook; code typed with real keys runs on Shift+Enter (the table is the CSV file the reports' code reads) and Ctrl+Enter; `smui.table()` with the modeling types as dtypes, a date column as datetimes, a table opened later there as a file too; `smui.new_table()` into the page; a report's code run in a cell gives the report's mean; figures as SVG and, with many points, PNG; an HTML output sanitised (no script, image or javascript: link); tracebacks; Run All stops at an error; Markdown text cells (only http(s) links); top-level await; `%matplotlib`, `%time` and `%pip`; Restart; .ipynb and .py both ways, an .ipynb from elsewhere opened without running and sanitised; a project with its notebooks; a report's code block edited, run with Shift+Enter (its output under it, the report's layout kept), Reset and Close; Notebook and Save > Open Script in Notebook; the editor's keys (Enter's indent, Tab and Shift+Tab, Ctrl+/, Backspace in an indent, Undo), its colours; closing a notebook with changes; the editor in a report's code block, its two layers alike (a selection on the text); a date column in Graph Builder's smoother and a Bivariate graph, their code run and the page's curve; dark theme and phone width.
 
 `test-ui-jsl.py` (24): Python > JSL to Python; the page's own sample converts (the table read as the reports' code reads it, a formula column as pandas, each analysis as its report's code on the script's table, the imports once at the top); what did not convert as a comment and a note with its line, a click on which shows the line; Open in Notebook runs clean, graphs too, and gives the report's mean; Open the Reports Here opens the four analyses with their options (Fit Line, Means/Anova, t Test); a table that is not open, a column the script makes, a syntax error (the lines after it still convert), a Where() and its mean; a dropped .jsl file; Ctrl+Enter; phone width.
 
