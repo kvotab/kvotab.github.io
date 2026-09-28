@@ -423,6 +423,124 @@ function buildLinkBadge(linkInfo) {
 }
 
 /* ==========================================================================
+   2.0d ASKING THE READER
+
+   In-page questions where the page used to call prompt() and confirm().
+   Those block the whole tab and cannot be styled, and in a frame sandboxed
+   without allow-modals they show nothing at all: prompt() returns null and
+   confirm() false at once. A VS Code webview is such a frame, so there a
+   preset could be neither saved nor deleted, with no sign of why.
+   ========================================================================== */
+
+/**
+ * Ask for one line of text.
+ *
+ * @param {{title: string, label?: string, value?: string, okLabel?: string}} opts
+ * @returns {Promise<string|null>} What was typed, or null if the reader cancelled
+ */
+function rbAskText(opts) {
+  return rbAsk(Object.assign({}, opts, { input: true }));
+}
+
+/**
+ * Ask a yes-or-no question.
+ *
+ * @param {{title: string, message?: string, okLabel?: string}} opts
+ * @returns {Promise<boolean>} True for the OK button, false for anything else
+ */
+function rbAskConfirm(opts) {
+  return rbAsk(Object.assign({}, opts, { input: false })).then(answer => answer !== null);
+}
+
+/**
+ * The dialog behind rbAskText and rbAskConfirm, in the URL dialog's styles.
+ * Everything in it is set as text, so a name taken from a file cannot become
+ * markup here. Escape, Cancel and a click outside all mean no.
+ *
+ * @returns {Promise<string|true|null>}
+ */
+function rbAsk({ title, message = '', label = '', value = '', okLabel = 'OK', input = false }) {
+  return new Promise((resolve) => {
+    const before = document.activeElement;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'url-dialog-overlay rb-ask';
+    const dialog = document.createElement('div');
+    dialog.className = 'url-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    dialog.appendChild(heading);
+    if (message) {
+      const p = document.createElement('p');
+      p.textContent = message;
+      dialog.appendChild(p);
+    }
+    let field = null;
+    if (input) {
+      field = document.createElement('input');
+      field.type = 'text';
+      field.className = 'url-input';
+      field.autocomplete = 'off';
+      field.value = value;
+      field.placeholder = label;
+      field.setAttribute('aria-label', label || title);
+      dialog.appendChild(field);
+    }
+    const buttons = document.createElement('div');
+    buttons.className = 'url-dialog-buttons';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'url-btn url-btn-cancel';
+    cancel.textContent = 'Cancel';
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.className = 'url-btn url-btn-load';
+    ok.textContent = okLabel;
+    buttons.append(cancel, ok);
+    dialog.appendChild(buttons);
+    overlay.appendChild(dialog);
+
+    const finish = (answer) => {
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      if (before && typeof before.focus === 'function' && document.contains(before)) before.focus();
+      resolve(answer);
+    };
+    /*
+      Captured on the document, and stopped there: the preset manager closes
+      itself on an Escape that reaches the document, and this dialog opens on
+      top of it. Enter is taken only in the text field; on a button it is the
+      button's own click, so Enter on Cancel still cancels.
+    */
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(null);
+      } else if (e.key === 'Enter' && field && e.target === field) {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(field.value);
+      }
+    };
+    cancel.addEventListener('click', () => finish(null));
+    ok.addEventListener('click', () => finish(field ? field.value : true));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
+    document.addEventListener('keydown', onKey, true);
+
+    document.body.appendChild(overlay);
+    if (field) {
+      field.focus();
+      field.select();
+    } else {
+      ok.focus();
+    }
+  });
+}
+
+/* ==========================================================================
    PDF SAMPLING ENGINE
    Mirrors the Python Distribution class from samp_util.py.
    Supports: uniform, triangular, dtriangular, normal, exponential,

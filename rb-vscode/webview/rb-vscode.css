@@ -1,0 +1,87 @@
+/* ==========================================================================
+   rb.html in a VS Code webview: what differs from the site's styles.
+
+   VS Code puts its own default styles into every webview (a padded body,
+   its link and code colours, its scrollbars, a 13px body font). rb.css
+   already sets the body's margin and padding, so the page lays out as it does
+   on the site; the scrollbars are VS Code's on purpose, to fit the editor.
+   ========================================================================== */
+
+/* The site's links are its own colour, not VS Code's link blue. */
+.welcome-panel a,
+.url-dialog a {
+  color: inherit;
+}
+
+/* ── the header: the file toolbar alone ─────────────────────────────────
+   build.mjs leaves out the logo and the page's name, so the header is one
+   column and the tabs have its width, with Add Files and the light/dark
+   toggle at its right end.
+
+   A tab must stand on the header's bottom line, or it stops looking like a
+   tab. On the site it does by luck: the page's name, set at 24px, makes the
+   header row 32.8px, and the strip is stretched to that and nudged down 3px
+   onto the line. Here VS Code's 13px body font shrank the name and left the
+   tabs 3px short; without the name nothing props the row up at all. So the
+   strip is taken down through the header's bottom padding (6px) to the line
+   itself, and everything in it stands on its bottom edge. The strip's own
+   scrollbar, when there are more tabs than fit, then sits on the line under
+   them, as it does on the site. */
+header.rb-vscode-header {
+  grid-template-columns: 1fr;
+}
+
+header.rb-vscode-header .tabs-container {
+  margin-left: 0;
+  top: 0;
+  align-self: stretch;
+  margin-bottom: -6px;
+}
+
+/* ── the light/dark toggle ───────────────────────────────────────────────
+   Shaped like Add Files, as a tab on the line, in the header's own colour:
+   the header is dark in both themes. The icon is a mask, as rb's others are,
+   so it takes that colour; a sun to go light, a moon to go dark. */
+.rb-theme-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 22.4px;
+  padding: 0;
+  border: 1px solid var(--color-kvot-accent);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--header-text);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.2s;
+}
+
+.rb-theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.rb-theme-toggle:focus-visible {
+  outline: 2px solid var(--color-kvot-accent);
+  outline-offset: 1px;
+}
+
+.rb-theme-toggle .rb-ico {
+  width: 15px;
+  height: 15px;
+  -webkit-mask-image: var(--ico-moon);
+  mask-image: var(--ico-moon);
+}
+
+:root[data-theme="dark"] .rb-theme-toggle .rb-ico {
+  -webkit-mask-image: var(--ico-sun);
+  mask-image: var(--ico-sun);
+}
+
+:root {
+  --ico-sun: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8'/%3E%3C/svg%3E");
+  --ico-moon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Ccircle cx='16.5' cy='7.5' r='7' fill='black'/%3E%3C/mask%3E%3Ccircle cx='12' cy='12' r='9' mask='url(%23m)'/%3E%3C/svg%3E");
+}

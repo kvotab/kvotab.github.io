@@ -191,10 +191,16 @@ class RbLazyDataset {
 
 /**
  * One lazy file: what has been fetched of it, and the fetching.
+ *
+ * `call` is the reader that opened it, asked as rbLazyCall is asked. It is
+ * rb-lazy-worker.js for a file picked or dropped here; the HDF5 Browser
+ * extension for VS Code (rb-vscode/) hands in one that reads the file in its
+ * extension host, where a worker in the page cannot reach it.
  */
 class RbLazyState {
-  constructor(name, opened) {
+  constructor(name, opened, call = rbLazyCall) {
     this.name = name;
+    this.call = call;
     this.fid = opened.fid;
     this.paths = opened.paths;
     this.pathSet = new Set(opened.paths);
@@ -291,7 +297,7 @@ class RbLazyState {
   loadGroup(path) {
     if (this.groups.has(path) || this.notGroups.has(path) || this.closed) return Promise.resolve();
     if (!this.loading.has(path)) {
-      this.loading.set(path, rbLazyCall('group', { fid: this.fid, path }).then((snapshot) => {
+      this.loading.set(path, this.call('group', { fid: this.fid, path }).then((snapshot) => {
         this.loading.delete(path);
         if (snapshot.missing) this.notGroups.add(path);
         else this.addGroup(snapshot);
@@ -307,7 +313,7 @@ class RbLazyState {
   async ensureValues(paths) {
     const wanted = [...new Set(paths)].filter(p => !this.values.has(p));
     if (!wanted.length || this.closed) return;
-    const { values, errors } = await rbLazyCall('values', { fid: this.fid, paths: wanted });
+    const { values, errors } = await this.call('values', { fid: this.fid, paths: wanted });
     for (const [path, value] of Object.entries(values)) this.remember(path, value);
     for (const [path, message] of Object.entries(errors)) {
       kvotWarn(`${this.name}: could not read ${path}: ${message}`);
@@ -328,7 +334,7 @@ class RbLazyState {
     if (this.closed) return;
     this.closed = true;
     this.values.clear();
-    rbLazyCall('close', { fid: this.fid }).catch(e => ignoreFailure('RbLazyState.close', e));
+    this.call('close', { fid: this.fid }).catch(e => ignoreFailure('RbLazyState.close', e));
   }
 }
 
@@ -345,19 +351,33 @@ async function ingestHdf5Lazy(file, context = 'ingestHdf5Lazy') {
   const check = validateHdf5Buffer(head);
   if (!check.ok) throw new Error(`${file.name}: ${check.reason}`);
 
-  const state = new RbLazyState(file.name, await rbLazyCall('open', { file }));
+  return registerLazyFile(file.name, await rbLazyCall('open', { file }), rbLazyCall, context);
+}
+
+/**
+ * Register a file a reader has opened lazily, as the page registers a file.
+ * An existing file of this name is replaced.
+ *
+ * @param {string} name - Display name
+ * @param {Object} opened - The reader's answer to 'open': fid, paths and root
+ * @param {function(string, Object): Promise} call - The reader, asked as rbLazyCall is
+ * @param {string} [context] - Label for failure reporting
+ * @returns {Promise<string>} The name the file was registered under
+ */
+async function registerLazyFile(name, opened, call, context = 'registerLazyFile') {
+  const state = new RbLazyState(name, opened, call);
   // What nearly every chart reads, fetched with the file rather than per click.
   const always = ['/time'].filter(p => state.isDataset(p));
   await state.ensureValues(always);
 
-  if (loadedFiles[file.name]) {
-    try { loadedFiles[file.name].close(); } catch (_) { ignoreFailure(context, _); }
+  if (loadedFiles[name]) {
+    try { loadedFiles[name].close(); } catch (_) { ignoreFailure(context, _); }
   }
-  delete loadedFileBuffers[file.name];
-  loadedFiles[file.name] = state.root;
-  fileStates[file.name] = true;
-  if (!fileOrder.includes(file.name)) fileOrder.push(file.name);
-  return file.name;
+  delete loadedFileBuffers[name];
+  loadedFiles[name] = state.root;
+  fileStates[name] = true;
+  if (!fileOrder.includes(name)) fileOrder.push(name);
+  return name;
 }
 
 /** Whether a node, or the file it is from, is a lazy one; its state if so. */

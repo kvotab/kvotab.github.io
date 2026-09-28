@@ -84,7 +84,8 @@ BUILD = """(async () => {
 HELPERS = r"""(() => {
   window.__notes = [];
   window.notifyUser = (m) => { window.__notes.push(String(m)); };
-  window.confirm = () => true;
+  // Deleting a preset asks in the page (rbAskConfirm); test-ask.py drives that dialog itself.
+  window.rbAskConfirm = async () => true;
   window.__wait = (ms) => new Promise(r => setTimeout(r, ms));
   window.__row = (id) => [...document.querySelectorAll('#presetManagerList .preset-manager-row')]
     .find(r => r.dataset.presetId === id);

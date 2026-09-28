@@ -426,4 +426,6 @@ async def main():
             await page.ev("localStorage.removeItem('kvot-rb-lazy'); true")
         await bws.send(json.dumps({'id': 99, 'method': 'Target.closeTarget', 'params': {'targetId': tid}}))
 
-asyncio.run(main())
+if __name__ == '__main__':
+    # Imported by rb-vscode/test/characterise-vscode.py for its STEPS, which run it inside VS Code.
+    asyncio.run(main())

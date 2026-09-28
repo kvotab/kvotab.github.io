@@ -220,10 +220,10 @@ function _captureCurrentView() {
   return { xScale, yScale, xMin, xMax, yMin, yMax };
 }
 
-/** Save the current chart view as a new preset (prompts for name). */
-function saveCurrentAsPreset() {
+/** Save the current chart view as a new preset (asks for its name). */
+async function saveCurrentAsPreset() {
   if (!currentChartData) { notifyUser('Draw a chart first — there is nothing to capture yet.'); return; }
-  const name = prompt('Preset name:');
+  const name = await rbAskText({ title: 'Save preset', label: 'Preset name', okLabel: 'Save' });
   if (!name || !name.trim()) return;
 
   const view = _captureCurrentView();
@@ -605,8 +605,14 @@ function _updatePresetFromView(id) {
   _renderPresetManagerList();
 }
 
-function _deletePreset(id) {
-  if (!confirm('Delete this preset?')) return;
+async function _deletePreset(id) {
+  const doomed = loadPresets().find(x => x.id === id);
+  const asked = await rbAskConfirm({
+    title: 'Delete preset',
+    message: doomed ? `Delete the preset “${doomed.name}”?` : 'Delete this preset?',
+    okLabel: 'Delete'
+  });
+  if (!asked) return;
   const wasSelected = _selectedPresetId() === id;
   let presets = loadPresets();
   presets = presets.filter(x => x.id !== id);

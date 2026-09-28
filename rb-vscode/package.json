@@ -1,0 +1,133 @@
+{
+  "name": "hdf5-browser",
+  "displayName": "HDF5 Browser",
+  "description": "Browse HDF5 (.h5) files in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
+  "version": "0.1.0",
+  "publisher": "kvotab",
+  "license": "MIT",
+  "author": "Kvot AB",
+  "homepage": "https://kvotab.se/rb.html",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kvotab/kvotab.github.io.git",
+    "directory": "rb-vscode"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Visualization",
+    "Data Science"
+  ],
+  "keywords": [
+    "hdf5",
+    "h5",
+    "hdf",
+    "viewer",
+    "plot"
+  ],
+  "main": "./extension.js",
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "On a virtual file system a file is read whole, up to 1 GB; only a file on disk can be read a piece at a time."
+    }
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "kvotab.hdf5Browser",
+        "displayName": "HDF5 Browser",
+        "selector": [
+          {
+            "filenamePattern": "*.{h5,hdf5,he5}"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "kvotab.hdf5Browser.openTogether",
+        "title": "Open Together in HDF5 Browser",
+        "category": "HDF5 Browser"
+      },
+      {
+        "command": "kvotab.hdf5Browser.showLog",
+        "title": "Show Log",
+        "category": "HDF5 Browser"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "kvotab.hdf5Browser.openTogether",
+          "when": "!explorerResourceIsFolder && resourceExtname =~ /^\\.(h5|hdf5|he5)$/i",
+          "group": "navigation@20"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "kvotab.hdf5Browser.openTogether",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "HDF5 Browser",
+      "properties": {
+        "hdf5Browser.readLazily": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Files of 256 MB or more are read a piece at a time, as they are looked at; smaller ones are read whole.",
+            "Every file on disk is read a piece at a time.",
+            "Every file is read whole, up to 1 GB."
+          ],
+          "default": "auto",
+          "markdownDescription": "How a file is read. Read whole, it is held in the editor's memory; read lazily, the extension's HDF5 reader reads only what is looked at, so a file of any size opens at once. The same rule the [HDF5 Browser](https://kvotab.se/rb.html) applies on the web."
+        },
+        "hdf5Browser.addToOpenBrowser": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "A file dropped on an HDF5 Browser goes into it as another file tab, as *Add Files* would add it, instead of opening a browser of its own. VS Code opens a dropped file as an editor in the group it was dropped on, so this takes any HDF5 file opened there while a browser shows in the group: a double-click in the Explorer too. A preview (a single click) and *Open Together* still open their own browser, and so does a drop on the edge of a group, which VS Code opens beside it."
+        },
+        "hdf5Browser.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "Follow VS Code's theme.",
+            "Light, whatever VS Code is in.",
+            "Dark, whatever VS Code is in."
+          ],
+          "default": "auto",
+          "markdownDescription": "Light or dark mode in the HDF5 Browser's views. The toggle at the right of a view's header sets this; toggling back to the mode VS Code is in sets it to `auto` again."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "package": "node build.mjs && vsce package",
+    "test": "node build.mjs && python3 test/test-reader.py && python3 test/test-vscode.py"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.2.0"
+  }
+}

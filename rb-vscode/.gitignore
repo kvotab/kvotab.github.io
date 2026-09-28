@@ -1,0 +1,13 @@
+# Built by build.mjs from the site's files; never edited by hand.
+media/
+node/
+LICENSE
+# Downloads build.mjs checks against its pins.
+.cache/
+# npm and the packaged extension.
+node_modules/
+package-lock.json
+*.vsix
+# The VS Code builds and profiles the integration tests use.
+.vscode-test/
+test/.run/

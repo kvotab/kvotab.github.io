@@ -1,0 +1,192 @@
+[
+ {
+  "file": "plotly.js-2.27.0/LICENSE",
+  "source": "https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.27.0/LICENSE",
+  "sha256": "67a26cf80f03ff388f26945dfc1f6caed1a0746ff43871190339b3aee49b94bb"
+ },
+ {
+  "file": "sortablejs-1.15.0/LICENSE",
+  "source": "https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/LICENSE",
+  "sha256": "e94dfc31e800d169257569db270457c9f028440c9ccae41e7eb78b2db18f1298"
+ },
+ {
+  "file": "jszip-3.10.1/LICENSE.markdown",
+  "source": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/LICENSE.markdown",
+  "sha256": "566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4"
+ },
+ {
+  "file": "h5wasm-0.10.3/LICENSE.txt",
+  "source": "https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/LICENSE.txt",
+  "sha256": "f3ba6b8afe2a0d6f482f29a46672f88668ae02b16dfc4a2e878fd50a4f34fa6a"
+ },
+ {
+  "file": "h5wasm-plugins-0.3.0/LICENSE",
+  "source": "https://cdn.jsdelivr.net/npm/h5wasm-plugins@0.3.0/LICENSE",
+  "sha256": "3eab810e64b495626387842d8cd056c46b5fb2c17b59922a976782b42fe939ff"
+ },
+ {
+  "file": "h5wasm-plugins-0.3.0/COPYING",
+  "source": "https://cdn.jsdelivr.net/npm/h5wasm-plugins@0.3.0/COPYING",
+  "sha256": "8f61dc9697b77e77ad599e411bfda5823f5fe4aa4f4379cfe784d3e25d198bd1"
+ },
+ {
+  "file": "hdf5_plugins/COPYING",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/COPYING",
+  "sha256": "e8f6edb2096ddb006cb6e6e1e66d285537038bafae72585ee40811e415b15534"
+ },
+ {
+  "file": "hdf5_plugins/BITGROOM-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/BITGROOM/Additional_Legal/LICENSE",
+  "sha256": "14f81d590ac30768732ae707abb214dddc6d4ee669e5b6fb186ac3ac0d5065df"
+ },
+ {
+  "file": "hdf5_plugins/BITROUND-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/BITROUND/Additional_Legal/LICENSE",
+  "sha256": "3c94d61ffaa4f88e46686941c7ea8632f7fd30d0eb0e6f76522016e1e37d318c"
+ },
+ {
+  "file": "hdf5_plugins/BSHUF-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/BSHUF/Additional_Legal/LICENSE",
+  "sha256": "ef357c2061cf67db298f9f1565572ee229ad9263582a9f9d0ebff5094f5d10ac"
+ },
+ {
+  "file": "hdf5_plugins/LZ4-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/LZ4/Additional_Legal/LICENSE",
+  "sha256": "10bc1b96982db456bf6d8ccd91568f477d160842c80a6fb38db10b29135ca481"
+ },
+ {
+  "file": "hdf5_plugins/ZSTD-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/ZSTD/Additional_Legal/LICENSE",
+  "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+ },
+ {
+  "file": "hdf5_plugins/ZFP-LICENSE",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/ZFP/LICENSE",
+  "sha256": "5f6ab1d3a4a647763a8f60082e440353d5f302e4aed4446344e908659f671401"
+ },
+ {
+  "file": "hdf5_plugins/PyTables_Copyrights_and_Licenses.txt",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/BLOSC/Additional_Legal/PyTables_Copyrights_and_Licenses.txt",
+  "sha256": "f3a5014937821af47b5f4cb98f4e279bfab73a518f022254535f691c4746c890"
+ },
+ {
+  "file": "hdf5_plugins/h5py_Copyrights_and_Licenses.txt",
+  "source": "https://raw.githubusercontent.com/HDFGroup/hdf5_plugins/bafec5a3bf14c96371c99cc02019f3722912038e/LZF/Additional_Legal/h5py_Copyrights_and_Licenses.txt",
+  "sha256": "eff8f7d97535e1a1dc36d0ab8c0728517670b261cf0013fe9593482798e38871"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSE.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSE.txt",
+  "sha256": "22623131a9b9f6a86a4dc6b9bccbb1d2aeb390df86bca00fc727af24735c2fae"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSE.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSE.txt",
+  "sha256": "22623131a9b9f6a86a4dc6b9bccbb1d2aeb390df86bca00fc727af24735c2fae"
+ },
+ {
+  "file": "zlib-1.3.1/LICENSE",
+  "source": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+  "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+ },
+ {
+  "file": "zstd-1.5.7/LICENSE",
+  "source": "https://raw.githubusercontent.com/facebook/zstd/v1.5.7/LICENSE",
+  "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+ },
+ {
+  "file": "lz4-1.10.0/LICENSE",
+  "source": "https://raw.githubusercontent.com/lz4/lz4/v1.10.0/lib/LICENSE",
+  "sha256": "8b58c446121a109ccf32edc094bba3010a3d85e4ee3702950db55e4d3e87736c"
+ },
+ {
+  "file": "zfp-1.0.1/LICENSE",
+  "source": "https://raw.githubusercontent.com/LLNL/zfp/1.0.1/LICENSE",
+  "sha256": "3a5eb0afef5c157575ec0cf4207fa8f1007d88aeb79fc59127c38cfbf1a30e2c"
+ },
+ {
+  "file": "bitshuffle-0.5.2/LICENSE",
+  "source": "https://raw.githubusercontent.com/kiyo-masui/bitshuffle/0.5.2/LICENSE",
+  "sha256": "ef357c2061cf67db298f9f1565572ee229ad9263582a9f9d0ebff5094f5d10ac"
+ },
+ {
+  "file": "bzip2-1.0.8/LICENSE",
+  "source": "https://gitlab.com/bzip2/bzip2/-/raw/bzip2-1.0.8/LICENSE",
+  "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-BITSHUFFLE.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/BITSHUFFLE.txt",
+  "sha256": "ef357c2061cf67db298f9f1565572ee229ad9263582a9f9d0ebff5094f5d10ac"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-FASTLZ.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/FASTLZ.txt",
+  "sha256": "cf52909e6ed770fe81511ba62d4ebee13185d30a37d0fd7de2b56685e288ab38"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-LZ4.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/LZ4.txt",
+  "sha256": "fe6dc1f27f68d9dd6b0192e39be1a8f1fbed0fe86e13540f618a7133971b10b3"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-SNAPPY.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/SNAPPY.txt",
+  "sha256": "5221a36a801b981fbdfda7b87db64cff231a3b88223a066c325411b539df796f"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-STDINT.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/STDINT.txt",
+  "sha256": "f2af03db562e88539f019b1ab0881878ee82d0c80f3bce68c650064652e25d7b"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-ZLIB-NG.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/ZLIB-NG.txt",
+  "sha256": "f8ad3757bc2ae9f5a6af77e13b37a5721397421ce55ab16e1da49e4629264d2c"
+ },
+ {
+  "file": "c-blosc-1.21.6/LICENSES-ZLIB.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc/v1.21.6/LICENSES/ZLIB.txt",
+  "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSES-BITSHUFFLE.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSES/BITSHUFFLE.txt",
+  "sha256": "ef357c2061cf67db298f9f1565572ee229ad9263582a9f9d0ebff5094f5d10ac"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSES-FASTLZ.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSES/FASTLZ.txt",
+  "sha256": "cf52909e6ed770fe81511ba62d4ebee13185d30a37d0fd7de2b56685e288ab38"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSES-LZ4.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSES/LZ4.txt",
+  "sha256": "8b58c446121a109ccf32edc094bba3010a3d85e4ee3702950db55e4d3e87736c"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSES-ZLIB.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSES/ZLIB.txt",
+  "sha256": "d3c80be055d94d798eaa786116e84fa0b010bc11420b5d2060d978ea77845436"
+ },
+ {
+  "file": "c-blosc2-2.17.1/LICENSES-ZSTD.txt",
+  "source": "https://raw.githubusercontent.com/Blosc/c-blosc2/v2.17.1/LICENSES/ZSTD.txt",
+  "sha256": "2c1a7fa704df8f3a606f6fc010b8b5aaebf403f3aeec339a12048f1ba7331a0b"
+ },
+ {
+  "file": "libjpeg-9e/README",
+  "source": "https://www.ijg.org/files/jpegsrc.v9e.tar.gz (jpeg-9e/README)",
+  "sha256": "50c1c5978d490c7f13062d91c4b89affc83774f87bc4568a714f748b62a5b216"
+ },
+ {
+  "file": "liblzf-3.6/LICENSE",
+  "source": "http://dist.schmorp.de/liblzf/liblzf-3.6.tar.gz (liblzf-3.6/LICENSE)",
+  "sha256": "71f85db195892fcaf0e048fbba166270f736e5150d9c84cb98a346f13fcc2a52"
+ },
+ {
+  "file": "rawengulk-sans/SIL Open Font License.txt",
+  "source": "vendors/font/SIL Open Font License.txt in this repository",
+  "sha256": "60e7375ff5fe9dd43b144bd82fe71f44976cfc6a4b748a9424a58611581b88ba"
+ }
+]

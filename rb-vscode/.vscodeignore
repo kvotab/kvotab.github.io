@@ -1,0 +1,11 @@
+# What the packaged extension leaves out: sources of the build, the tests,
+# and what they download.
+build.mjs
+test/**
+.cache/**
+.vscode-test/**
+node_modules/**
+licenses/fetch-licenses.py
+**/*.vsix
+.gitignore
+webview/**

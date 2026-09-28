@@ -232,6 +232,23 @@ The size rule (lazy from 256 MB, or `localStorage['kvot-rb-lazy']` set to
 
     python3 test-lazy.py
 
+`test-ask.py` covers the questions asked in the page (`rbAskText`,
+`rbAskConfirm` in rb-utils.js), which replaced `prompt()` for a preset's name
+and `confirm()` before deleting one. In a frame sandboxed without
+`allow-modals` -- a VS Code webview, where rb-vscode/ runs this page -- both
+return at once and show nothing, so a preset could be neither saved nor
+deleted there. Driven with real key events: Enter saves, Escape and Cancel do
+not; the delete question opens over the preset manager, and the Escape that
+closes it must not close the manager too; a preset's name, which can come
+from an imported file, is shown as text. test-axes.py, which deletes presets
+along the way, answers the question by replacing `rbAskConfirm`.
+
+    python3 test-ask.py
+
+The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
+VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
+characterise.py only runs its walk when started as a script.
+
 ## Nothing here needs a committed data file
 
 `handoff-demo.html` used to fetch a sample HDF5 file to get valid bytes, and
