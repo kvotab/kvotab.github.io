@@ -16,6 +16,7 @@ import { buildComponent, gridItem } from './appwidgets.js';
 import { wearTheme } from './appdesigner.js';
 import * as apps from '../domain/apps.js';
 import { usesSpread } from '../domain/appinputs.js';
+import { homeLink, endButtons } from './sitechrome.js';
 
 let root = null;
 let hooks = null;
@@ -65,14 +66,18 @@ export function renderAppRun(host, h) {
 	const edit = el('button', { type: 'button', className: 'ghost app-run-edit', title: 'Back to the editor (Esc)' }, 'Edit');
 	edit.addEventListener('click', () => hooks.leave());
 	edit.hidden = !hooks.canEdit();
+	// Framed in the site's page, the bar has the page's full window too (and
+	// in it the site's mark and light/dark switch), as the editor's does: an
+	// app is the whole of what its user sees. See ./sitechrome.js.
 	const bar = el('header', { className: 'app-run-bar' },
+		homeLink(),
 		el('div', { className: 'app-run-titles' },
 			el('h1', { className: 'app-run-title' }, title),
 			app.description ? el('p', { className: 'app-run-sub' }, app.description) : null),
 		el('span', { className: 'spacer' }),
 		el('span', { className: 'app-run-status', role: 'status', 'aria-live': 'polite' }),
 		el('progress', { className: 'app-run-progress', max: 1, value: 0, hidden: true }),
-		stop, spread, run, edit);
+		stop, spread, run, edit, ...endButtons());
 
 	const tabs = app.pages.length > 1
 		? el('nav', { className: 'app-run-pages', role: 'tablist', 'aria-label': 'Pages' },

@@ -28,6 +28,9 @@ const BRANDS = new Set(['kvotab']);
 	if (BRANDS.has(brand)) document.documentElement.setAttribute('data-brand', brand);
 	const chrome = params.get('chrome');
 	if (BRANDS.has(chrome)) document.documentElement.setAttribute('data-chrome', chrome);
+	// ... and whether that page has put its header and footer away (its full
+	// window, which ./sitechrome.js asks for): no room kept for them then.
+	if (BRANDS.has(chrome) && params.get('full') === '1') document.documentElement.setAttribute('data-chrome-full', '');
 }
 
 // Never on a `file://` page: modules do not load there, and ./boot-problem.js

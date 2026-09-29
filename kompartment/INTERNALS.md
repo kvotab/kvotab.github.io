@@ -94,6 +94,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/cores.js` | How many cores a sampled run is shared over, when the reader says |
 | `src/ui/help.js`, `src/ui/markdown.js`, `src/ui/helpfigures.js` | This documentation, read inside the application |
 | `css/app.css`, `css/theme-kvotab.css` | Every colour, as tokens, and a second palette for embedding |
+| `src/ui/sitechrome.js` | Framed in the site's page: the full-window button, and in the full window the kvot mark and the site's light/dark switch, in the editor's bar and the running app's |
 | `src/ui/undo.js` | Undo and redo, from snapshots |
 | `src/ui/histview.js`, `src/ui/scatterview.js` | The Chart tab's other two pictures of a sample |
 | `src/ui/clipboard.js` | The block clipboard, shared between tabs of one browser |
@@ -6005,9 +6006,10 @@ says. A link's model is not written as the tab's draft until it is edited
 (`source.link` in `setModel`): somebody opening a link as an app cannot see the
 offer of the draft it would replace. The first edit writes the draft and takes
 `#m=` out of the address (`leaveLinkAddress`), so the address and the draft
-never disagree about which model is the tab's; the site page's *full window*
-link asks the frame's address which it is. kompartment.html hands its `#` to
-the frame, and *Share* inside the frame names the site page.
+never disagree about which model is the tab's. kompartment.html hands its `#`
+to the frame, and *Share* inside the frame names the site page. (The site
+page's full window puts its header and footer away around the frame, in place,
+so no model has to leave the frame for it: see `ui/sitechrome.js`.)
 
 **Styles** are `data-app-theme` on `#app-run` and on the designer's
 `.appd-canvas` (`wearTheme`), and nowhere else, so the editor keeps its look

@@ -229,8 +229,11 @@
  *
  * The two heights are the site's own variables where the site defines them,
  * with its current values as the fallback for a page that does not.
+ *
+ * In the page's full window (`data-chrome-full`, see ../src/ui/sitechrome.js)
+ * the header and the footer are put away, and the room kept for them goes.
  */
-:root[data-chrome="kvotab"] body {
+:root[data-chrome="kvotab"]:not([data-chrome-full]) body {
 	padding-top: var(--header-height, 43px);
 	padding-bottom: var(--footer-height, 31px);
 }
@@ -267,6 +270,33 @@
    keeps a centred dialog clear of both: it cannot start above the header, and
    by symmetry it cannot end below the footer. The panels, the canvas and the
    chart need none of this -- they are inside `#app`. */
-:root[data-chrome="kvotab"] .modal {
+:root[data-chrome="kvotab"]:not([data-chrome-full]) .modal {
 	max-height: min(84dvh, 900px, calc(100dvh - 2 * var(--header-height, 43px) - 2px));
 }
+
+/* The page's full window, from inside (../src/ui/sitechrome.js): a button at
+   the end of the editor's bar and of the running app's. In the full window
+   the page's header and footer are away, so the bar also carries what they
+   did: the kvot mark, first, to the site's home page, set off from the tool's
+   own mark by a line; and the site's light/dark switch, beside the button. */
+:root[data-chrome="kvotab"] .kvot-full,
+:root[data-chrome="kvotab"] .kvot-theme {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 5px 8px;
+	line-height: 1;
+}
+:root[data-chrome="kvotab"] .kvot-full { color: var(--text-secondary); }
+:root[data-chrome="kvotab"] .kvot-full:hover { color: var(--text-primary); }
+:root[data-chrome="kvotab"] .kvot-theme { font-size: 14px; }
+:root[data-chrome="kvotab"] .kvot-home {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 12px 0 0;
+	border-right: 1px solid var(--border);
+}
+:root[data-chrome="kvotab"] .kvot-home img { display: block; width: 22px; height: 22px; }
+:root[data-chrome="kvotab"] .kvot-home:hover img { transform: scale(1.08); }
+:root[data-chrome="kvotab"]:not([data-chrome-full]) .kvot-home,
+:root[data-chrome="kvotab"]:not([data-chrome-full]) .kvot-theme { display: none; }

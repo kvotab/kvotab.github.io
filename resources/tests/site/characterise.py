@@ -887,8 +887,9 @@ ${p('Styrelseledamot')}
 
     # The tool itself has its own suite; what is recorded here is the frame
     # this page puts around it -- the address it is given, whether it insets
-    # itself into the gap between the site's header and footer, and the two
-    # controls it hands over to the page.
+    # itself into the gap between the site's header and footer, the two
+    # controls it hands over to the page, and the full window its own button
+    # asks the page for.
     'kompartment.html': [
         ('kompartment.frame', """(async () => {
           const f = document.getElementById('komp-frame');
@@ -903,7 +904,7 @@ ${p('Styrelseledamot')}
           const app = d.getElementById('app').getBoundingClientRect();
           const head = document.querySelector('header').getBoundingClientRect();
           const foot = document.querySelector('footer').getBoundingClientRect();
-          const out = document.querySelector('.komp-open');
+          const full = d.querySelector('#app > header .kvot-full');
           return {
             loaded,
             framePath: url.pathname,
@@ -922,11 +923,8 @@ ${p('Styrelseledamot')}
               === document.documentElement.getAttribute('data-theme'),
             ownThemeButton: w.getComputedStyle(d.getElementById('theme')).display,
             ownSiteLink: w.getComputedStyle(d.querySelector('.foot-link')).display,
-            fullWindowLink: out ? (() => {
-              const u = new URL(out.getAttribute('href'), location.href);
-              u.searchParams.set('theme', '<page>');
-              return u.pathname + u.search;
-            })() : null,
+            fullWindowButton: full ? { pressed: full.getAttribute('aria-pressed'), shown: w.getComputedStyle(full).display !== 'none' } : null,
+            fullOnlyShown: [...d.querySelectorAll('#app > header .kvot-home, #app > header .kvot-theme')].map(e => w.getComputedStyle(e).display !== 'none'),
             tabs: [...d.querySelectorAll('#app .tab')].map(t => t.dataset.tab)
           };
         })()"""),
@@ -947,6 +945,46 @@ ${p('Styrelseledamot')}
             matchedThePage: inFrame === page,
             restored: d.documentElement.getAttribute('data-theme') === before
           };
+        })()"""),
+
+        # The tool's own button: the page's header and footer put away in
+        # place (the frame is not reloaded) and the room for them given back;
+        # in the full window the kvot mark and the site's light/dark switch in
+        # the tool's bar, the switch the page's; the choice kept; and back.
+        ('kompartment.fullWindow', """(async () => {
+          const f = document.getElementById('komp-frame'), d = f.contentDocument;
+          const src = f.getAttribute('src');
+          const shown = (doc, sel) => { const e = doc.querySelector(sel); return !!e && doc.defaultView.getComputedStyle(e).display !== 'none'; };
+          const look = () => {
+            const app = d.getElementById('app').getBoundingClientRect();
+            return {
+              page: document.documentElement.classList.contains('komp-full'),
+              frame: d.documentElement.hasAttribute('data-chrome-full'),
+              header: shown(document, 'body > header'), footer: shown(document, 'body > footer'),
+              appFillsWindow: Math.abs(app.top) < 2 && Math.abs(app.bottom - window.innerHeight) < 2,
+              mark: shown(d, '#app > header .kvot-home'), themeSwitch: shown(d, '#app > header .kvot-theme'),
+              pressed: d.querySelector('#app > header .kvot-full').getAttribute('aria-pressed'),
+              kept: localStorage.getItem('kompartment.full')
+            };
+          };
+          const wait = () => new Promise(r => setTimeout(r, 400));
+          d.querySelector('#app > header .kvot-full').click();
+          await wait();
+          const inFull = look();
+          const before = document.documentElement.getAttribute('data-theme');
+          d.querySelector('#app > header .kvot-theme').click();
+          await wait();
+          const switched = { page: document.documentElement.getAttribute('data-theme') !== before,
+            frameFollows: d.documentElement.getAttribute('data-theme') === document.documentElement.getAttribute('data-theme') };
+          d.querySelector('#app > header .kvot-theme').click();
+          await wait();
+          const mark = d.querySelector('#app > header .kvot-home');
+          const markHref = mark.getAttribute('href'), markTarget = mark.getAttribute('target');
+          d.querySelector('#app > header .kvot-full').click();
+          await wait();
+          const back = look();
+          try { localStorage.removeItem('kompartment.full'); } catch (e) {}
+          return { inFull, switched, markHref, markTarget, back, frameNotReloaded: f.getAttribute('src') === src && f.contentDocument === d };
         })()"""),
     ],
 

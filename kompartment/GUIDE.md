@@ -33,6 +33,14 @@ the page as well.
 
 ## Running it
 
+**On kvotab.se**, [kompartment.html](https://kvotab.se/kompartment.html) runs Kompartment
+under the site's header and above its footer. The button with four corners at
+the end of the bar gives it the whole window instead — in place, so the model
+and its run stay as they are — and then the kvot mark at the start of the bar
+opens the site's home page (in a new tab), and ☀️ or 🌙 beside the button changes
+between the light and the dark theme. The same button brings the header and
+footer back, and the page keeps the choice for the next visit.
+
 **Do not open `index.html` by double-clicking it.** The app is built from ES
 modules, and browsers refuse to load those from a `file://` page — you get the
 toolbar and tabs but nothing behind them. Serve it instead:
@@ -7567,6 +7575,7 @@ title beside it. Choosing an entry loads it, over whatever is there.
 `?theme=light` / `?theme=dark` force a colour scheme ·
 `?brand=kvotab` use the site palette ·
 `?chrome=kvotab` leave room for the site's own header and footer ·
+`?full=1` with it, the page's full window: no room kept for them ·
 `?mainthread=1` solve without a Worker
 
 ### Embedding it in a page
@@ -7609,6 +7618,30 @@ frame.contentWindow.postMessage({ type: 'kvot:theme', theme: 'dark' }, location.
 and only as the two words `light` and `dark`. A message rather than a reload:
 what is in the frame is somebody's unsaved model. A page that embeds this and
 has no switch of its own can leave `?theme=` to say it once at the start.
+
+**The full window.** Framed with `?chrome=kvotab`, the bar ends with one more
+button, which asks the page to put its header and footer away — in place, so
+nothing reloads, and the model, its run and everything else stay as they are.
+The page answers with the same message back, and it is the answer that takes
+the room away:
+
+```js
+// the button, asking
+window.parent.postMessage({ type: 'kvot:full', full: true }, location.origin);
+// the page, answering
+frame.contentWindow.postMessage({ type: 'kvot:full', full: true }, location.origin);
+```
+
+In the full window the bar also carries what the header and the footer did:
+the kvot mark, which opens the site's home page in a new tab (as the footer's
+kvotab.se link does, since a model in progress lives in this page until it is
+saved), and the site's light/dark switch, which asks the page
+(`{ type: 'kvot:toggle-theme' }`) and gets the choice back as `kvot:theme`. The
+running app's bar carries the same. Either way a message is taken only from
+the other window, only same-origin, and `full` only as `true` or `false`.
+`?full=1` starts the frame in the full window, before the first paint;
+kompartment.html keeps the choice for the next visit and says so in the
+address it gives the frame.
 
 The two are separate on purpose: a page may want the palette while the reader
 has hidden its navigation, or the navigation with the tool's own colours.

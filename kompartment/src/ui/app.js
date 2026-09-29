@@ -133,6 +133,7 @@ import {
 	solverDefault,
 } from '../ode/solvers.js';
 import { dialogInfo } from './dialoginfo.js';
+import * as sitechrome from './sitechrome.js';
 
 /**
  * Bumped whenever the app changes. Shown at the foot of the Help tab so that a
@@ -12240,9 +12241,8 @@ async function openShareDialog() {
 /**
  * A model from a link, once edited, is no longer the model in the address:
  * the address loses it, and the draft the edit wrote holds the model from
- * then on. Until then the address is what a refresh -- or the site page's
- * *full window* -- opens it from, since the draft is not written for it (see
- * the end of `setModel`).
+ * then on. Until then the address is what a refresh opens it from, since the
+ * draft is not written for it (see the end of `setModel`).
  */
 function leaveLinkAddress() {
 	if (!modelSource?.link || modelInHash(location.hash) == null) return;
@@ -12757,6 +12757,16 @@ export function boot() {
 		modelChanged({ layoutOnly: true });
 	});
 
+	// Framed in the site's page: the full-window button at the end of the bar,
+	// and in the full window the site's mark and light/dark switch -- see
+	// ./sitechrome.js. (The running app's bar gets the same, in ./apprun.js.)
+	if (sitechrome.framed()) {
+		const bar = $('#app > header');
+		bar.prepend(sitechrome.homeLink());
+		bar.append(...sitechrome.endButtons());
+		sitechrome.listen();
+	}
+
 	$('#theme').addEventListener('click', () => {
 		const cur = document.documentElement.getAttribute('data-theme');
 		const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
@@ -12887,11 +12897,13 @@ export function boot() {
 	const openApp = () => { if (appWanted && state.appSession.mode !== 'run') enterAppRun({ fromDesigner: false }); };
 
 	/*
-	  `?model=draft` is how the model gets out of the page's frame. The "full
-	  window" link on kompartment.html sets it, and what it names is the draft
-	  this tab has already written -- the two pages are one origin, and the
-	  framed one flushes on `pagehide`, which is what leaving it is. So the
-	  model that was open comes with, unsaved edits and all.
+	  `?model=draft` is how a model gets out of the site page's frame into the
+	  tool on its own: what it names is the draft this tab has already written
+	  -- the two pages are one origin, and the framed one flushes on
+	  `pagehide`, which is what leaving it is. So the model that was open comes
+	  with, unsaved edits and all. (The site page's own full window does not go
+	  through it: that puts the page's header and footer away around this
+	  frame, in place -- see ./sitechrome.js.)
 
 	  Restored rather than offered, which is the one place that is right: the
 	  reader has just said which model they mean by stepping out of the frame

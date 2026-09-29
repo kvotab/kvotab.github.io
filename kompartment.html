@@ -16,6 +16,9 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // The full window (the button at the end of the tool's own bar), as it
+        // was left: no site header or footer, from the first paint.
+        if (localStorage.getItem('kompartment.full') === '1') document.documentElement.classList.add('komp-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
@@ -56,18 +59,17 @@
     }
     footer { z-index: 1; }
 
-    /* The way out of the frame, in the header's third column. */
-    .komp-open {
-      justify-self: end;
-      align-self: center;
-      font-size: 13px;
-      color: var(--header-text);
-      text-decoration: none;
-      opacity: 0.85;
-      white-space: nowrap;
-    }
-    .komp-open:hover { opacity: 1; text-decoration: underline; }
-    @media (max-width: 700px) { .komp-open { display: none; } }
+    /*
+      The full window: the site's header, menu and footer put away, and the
+      tool told to keep no room for them. The button that asks for it is the
+      tool's own, at the end of its bar, and so are the kvot mark and the
+      light/dark switch that stand in for the header and the footer there --
+      see kompartment/src/ui/sitechrome.js. In place: nothing reloads, so the
+      model in the frame, and its run, stay as they are.
+    */
+    :root.komp-full { --header-height: 0px; --footer-height: 0px; }
+    :root.komp-full body > header, :root.komp-full body > footer, :root.komp-full body > .nav-toggle,
+    :root.komp-full body > #menu, :root.komp-full #kvotmap { display: none; }
 
     /* Without scripting the frame never gets its address; say where to go.
        The same place is where the page explains itself when it has been opened
@@ -123,23 +125,29 @@
         return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
       }
 
+      function isFull() {
+        return document.documentElement.classList.contains('komp-full');
+      }
+
       /*
         `brand` is the palette, `chrome` says the site's own header and footer
-        are above and below this, and `theme` is light against dark. Anything
-        else on this page's address is the tool's own — ?model=, ?tab=,
-        ?workers= — and is handed straight through, so a link into a tab or an
-        example works whether it is written against this page or the bare one.
+        are above and below this, `full` that they are put away (the full
+        window), and `theme` is light against dark. Anything else on this
+        page's address is the tool's own — ?model=, ?tab=, ?workers= — and is
+        handed straight through, so a link into a tab or an example works
+        whether it is written against this page or the bare one.
       */
       function frameURL() {
         // `index.html` by name, not the directory: a bare directory resolves to
         // the index only when a server does it.
         var url = new URL('./kompartment/index.html', location.href);
         var mine = new URLSearchParams(location.search);
-        mine.delete('brand'); mine.delete('chrome'); mine.delete('theme');
+        mine.delete('brand'); mine.delete('chrome'); mine.delete('theme'); mine.delete('full');
         mine.forEach(function (v, k) { url.searchParams.set(k, v); });
         url.searchParams.set('brand', 'kvotab');
         url.searchParams.set('chrome', 'kvotab');
         url.searchParams.set('theme', theme());
+        if (isFull()) url.searchParams.set('full', '1');
         // And what follows the `#`: a model in the address itself, which is
         // what the tool's Share… makes — see kompartment/src/io/applink.js.
         url.hash = location.hash;
@@ -173,56 +181,24 @@
       }
 
       /*
-        The same address without the site's chrome, for the reader who wants
-        the whole window. The palette and the theme go with it, so stepping
-        out of the frame is not also a change of skin — and so does the model,
-        by `?model=draft`: the tool keeps a draft of what it is working on in
-        this origin's storage and writes it out as the frame is unloaded, so
-        the page arriving reads the model that was on screen a moment ago
-        rather than starting again on an example. See the `model=draft` branch
-        in kompartment/src/ui/app.js.
+        The full window, which the tool's own button asks for (and the page
+        answers: it is the page that has the header and the footer). Kept for
+        the next visit. The frame is told, so that it keeps no room for them
+        and shows the kvot mark and the light/dark switch in its bar instead.
       */
-      var openLink = document.createElement('a');
-      openLink.className = 'komp-open';
-      openLink.textContent = 'full window ↗';
-      openLink.title = 'Open Kompartment in the whole window, without the site header and '
-        + 'footer — the model you are working on comes with it';
-      function pointOpenLink() {
-        var url = frameURL();
-        url.searchParams.delete('chrome');
-        // Asked of the frame as it is now, which is why this runs again as the
-        // link is reached for. A model opened from a link (#m=) is not kept
-        // as a draft until it is edited, and the frame's address loses the
-        // model at that edit: so a frame still holding one in its address has
-        // it unedited, and the link carries it on. Otherwise the draft is the
-        // model — and whether the app is up is the frame's to say too.
-        var inner = null;
-        try { inner = frame.contentWindow && frame.contentWindow.location; } catch (e) { inner = null; }
-        var linked = !!(inner && /^#(?:.*&)?m=/.test(inner.hash));
-        var running = false;
-        try { running = !!frame.contentDocument.querySelector('#app.is-app-run'); } catch (e) { running = false; }
-        if (running) url.searchParams.set('app', ''); else url.searchParams.delete('app');
-        if (linked) {
-          url.hash = inner.hash;
-          url.searchParams.delete('model');
-        } else {
-          url.hash = '';
-          // After the pass-through in frameURL, so it beats a ?model= this
-          // page was itself opened on: the link means *this* model in the
-          // whole window, and this model is whatever has been done to that
-          // one since.
-          url.searchParams.set('model', 'draft');
-        }
-        // The address a reader may keep: the directory, which a server resolves
-        // to the same page. On disk there is nothing to resolve it, so the file
-        // is named — and it is worth linking even there, because that page says
-        // for itself why it cannot start.
-        if (!onDisk) url.pathname = url.pathname.replace(/index\.html$/, '');
-        openLink.href = url.href;
+      function setFull(on) {
+        document.documentElement.classList.toggle('komp-full', on);
+        try { localStorage.setItem('kompartment.full', on ? '1' : '0'); } catch (e) { /* for this visit only */ }
+        var win = onDisk ? null : frame.contentWindow;
+        if (win) win.postMessage({ type: 'kvot:full', full: on }, location.origin);
       }
-      pointOpenLink();
-      ['pointerenter', 'focus', 'pointerdown', 'contextmenu'].forEach(function (type) {
-        openLink.addEventListener(type, pointOpenLink);
+
+      // Only from the frame, same-origin, and only the two requests.
+      window.addEventListener('message', function (e) {
+        if (onDisk || e.origin !== location.origin || e.source !== frame.contentWindow) return;
+        var m = e.data || {};
+        if (m.type === 'kvot:full' && typeof m.full === 'boolean') setFull(m.full);
+        else if (m.type === 'kvot:toggle-theme') KVOT.toggleTheme();
       });
 
       KVOT.renderHeader('Kompartment');
@@ -230,23 +206,14 @@
       KVOT.renderFooter();
       KVOT.initMap('kvotmap');
 
-      // renderHeader writes the header's contents, so the link goes in after
-      // it — into the third column, where the other pages put their toolbars.
-      var slot = document.querySelector('header .title');
-      if (slot && slot.nextElementSibling) {
-        slot.insertAdjacentElement('afterend', openLink);
-      } else {
-        document.querySelector('header')?.appendChild(openLink);
-      }
-
       /*
-        The site's toggle is the only one on this page — the tool's own is
-        hidden while it wears this chrome — so the choice has to reach into
+        The choice is the site's, made here — by the footer's toggle, or in the
+        full window by the one in the tool's bar, which asks for it (the tool's
+        own is hidden while it wears this chrome) — so it has to reach into
         the frame. A message rather than a reload: the model in there is the
         reader's unsaved work.
       */
       document.documentElement.addEventListener('kvot-theme-change', function (e) {
-        pointOpenLink();
         var win = onDisk ? null : frame.contentWindow;
         if (!win) return;
         win.postMessage({ type: 'kvot:theme', theme: e.detail && e.detail.theme }, location.origin);

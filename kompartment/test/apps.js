@@ -837,7 +837,43 @@ test('a link opens its model before anything else, keeps the draft it would repl
 	assert(/info: dialogInfo\('app-link'\),/.test(app), 'the share dialog has no (i)');
 	const html = readFileSync(new URL('../../kompartment.html', import.meta.url), 'utf8');
 	assert(/url\.hash = location\.hash;\n\s+return url;/.test(html), 'the site page drops the model in its address');
-	assert(/var linked = !!\(inner && \/\^#\(\?:\.\*&\)\?m=\/\.test\(inner\.hash\)\);/.test(html), 'full window forgets an unedited link');
+});
+
+test('the site page’s full window puts its header and footer away in place, asked by the frame’s own button', () => {
+	const html = readFileSync(new URL('../../kompartment.html', import.meta.url), 'utf8');
+	// As it was left, from the first paint -- and in the frame's address, so
+	// the frame starts without the room kept for them.
+	assert(/if \(localStorage\.getItem\('kompartment\.full'\) === '1'\) document\.documentElement\.classList\.add\('komp-full'\);/.test(html), 'not from the first paint');
+	assert(/:root\.komp-full \{ --header-height: 0px; --footer-height: 0px; \}/.test(html), 'the room is not given back');
+	assert(/if \(isFull\(\)\) url\.searchParams\.set\('full', '1'\);/.test(html), 'the frame does not start in the full window');
+	// In place: the page answers the frame's request and tells it, and nothing
+	// reloads the frame -- the model in there is the reader's unsaved work.
+	const setFull = html.slice(html.indexOf('function setFull('), html.indexOf("window.addEventListener('message'"));
+	assert(/postMessage\(\{ type: 'kvot:full', full: on \}, location\.origin\)/.test(setFull), 'the frame is not told');
+	assert(!/\.src\b|location\.(href|assign|replace)/.test(setFull), 'the full window reloads the frame or leaves the page');
+	assert(/localStorage\.setItem\('kompartment\.full'/.test(setFull), 'the choice is not kept');
+	assert(!/komp-open|model', 'draft'/.test(html), 'the old link to the bare page is still there');
+	// Only from the frame, same-origin, and only the two requests.
+	assert(/e\.origin !== location\.origin \|\| e\.source !== frame\.contentWindow/.test(html), 'the page listens to any window');
+	assert(/m\.type === 'kvot:full' && typeof m\.full === 'boolean'/.test(html) && /m\.type === 'kvot:toggle-theme'\) KVOT\.toggleTheme\(\)/.test(html), 'the page takes other requests');
+	// The frame: the attribute from the page's answer only, as a boolean, and
+	// from `?full=1` before the first paint.
+	const chrome = readFileSync(new URL('../src/ui/sitechrome.js', import.meta.url), 'utf8');
+	assert(/ev\.origin !== location\.origin \|\| ev\.source !== window\.parent/.test(chrome) && /typeof ev\.data\.full !== 'boolean'/.test(chrome), 'the frame listens to any window');
+	assert(/root\(\)\.toggleAttribute\('data-chrome-full', ev\.data\.full\)/.test(chrome), 'the answer does not set the attribute');
+	const start = readFileSync(new URL('../src/ui/start.js', import.meta.url), 'utf8');
+	assert(/params\.get\('full'\) === '1'\) document\.documentElement\.setAttribute\('data-chrome-full', ''\)/.test(start), 'not before the first paint');
+	// The room goes in the full window; the mark and the switch show only there.
+	const css = readFileSync(new URL('../css/theme-kvotab.css', import.meta.url), 'utf8');
+	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) body \{/.test(css), 'the room is kept in the full window');
+	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-home,\n:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-theme \{ display: none; \}/.test(css), 'the mark and the switch show outside the full window');
+	// The home page in a new tab, as the footer's kvotab.se: the model lives in this page.
+	assert(/href: '\.\.\/index\.html', target: '_blank', rel: 'noopener'/.test(chrome), 'the mark navigates away from the model');
+	// Both bars: the editor's and the running app's.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const run = readFileSync(new URL('../src/ui/apprun.js', import.meta.url), 'utf8');
+	assert(/bar\.prepend\(sitechrome\.homeLink\(\)\);\n\t\tbar\.append\(\.\.\.sitechrome\.endButtons\(\)\);\n\t\tsitechrome\.listen\(\);/.test(app), 'the editor’s bar has no full window');
+	assert(/homeLink\(\),\n/.test(run) && /edit, \.\.\.endButtons\(\)\);/.test(run), 'the running app’s bar has no full window');
 });
 
 // --- how an app looks -------------------------------------------------------------------------
