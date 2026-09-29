@@ -610,18 +610,33 @@ function gaugeSpan(c, v) {
 	return { lo, hi };
 }
 
-function gauge(c, ctx) {
-	const W = 120;
-	const R = 50;
-	const cx = W / 2;
-	const cy = 58;
-	const pic = svg('svg', { viewBox: `0 0 ${W} 70`, class: 'app-gauge-pic', role: 'img' });
-	const arc = (f0, f1) => {
-		const a0 = Math.PI * (1 - f0);
-		const a1 = Math.PI * (1 - f1);
-		const p = (a) => `${(cx + R * Math.cos(a)).toFixed(2)} ${(cy - R * Math.sin(a)).toFixed(2)}`;
-		return `M ${p(a0)} A ${R} ${R} 0 ${f1 - f0 > 0.5 ? 1 : 0} 1 ${p(a1)}`;
+/** Where a dial is drawn, in the units of its picture: 120 across and 70 down. */
+export const GAUGE_DIAL = { W: 120, H: 70, R: 50, cx: 60, cy: 58 };
+
+/**
+ * The stretch of a dial from `f0` to `f1` of the way round, as an SVG path:
+ * clockwise over the top of the circle about the dial's centre, from the left
+ * end at 0 to the right end at 1.
+ *
+ * Half a circle at most, so never the *large* arc. An arc is given by its two
+ * ends and its radius, which two circles pass through, and the large-arc flag
+ * chooses between them. It was set for any stretch over half the dial, and
+ * that drew a value past the middle on the other circle -- the long way round
+ * from the left end, bulging out below and beside the track it was meant to
+ * fill.
+ */
+export function gaugeArc(f0, f1, { R, cx, cy } = GAUGE_DIAL) {
+	const p = (f) => {
+		const a = Math.PI * (1 - f);
+		return `${(cx + R * Math.cos(a)).toFixed(2)} ${(cy - R * Math.sin(a)).toFixed(2)}`;
 	};
+	return `M ${p(f0)} A ${R} ${R} 0 0 1 ${p(f1)}`;
+}
+
+function gauge(c, ctx) {
+	const { W, H, R, cx, cy } = GAUGE_DIAL;
+	const pic = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'app-gauge-pic', role: 'img' });
+	const arc = (f0, f1) => gaugeArc(f0, f1);
 	const track = svg('path', { d: arc(0, 1), class: 'app-gauge-track' });
 	const fill = svg('path', { d: arc(0, 0.001), class: 'app-gauge-fill' });
 	const tick = svg('line', { class: 'app-gauge-limit' });

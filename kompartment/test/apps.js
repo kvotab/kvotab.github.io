@@ -433,6 +433,38 @@ test('a slider’s track and a dial’s needle, on either scale', async () => {
 	assert(W.parseNumber(' 2e-3 ') === 0.002 && W.parseNumber('−1') === -1 && W.parseNumber('x') === null && W.parseNumber('') === null);
 });
 
+test('a dial’s fill runs along its track, however far round it goes', async () => {
+	const W = await import('../src/ui/appwidgets.js');
+	const { R, cx, cy } = W.GAUGE_DIAL;
+	// The centre an SVG arc is drawn about, from its ends, its radius and its
+	// two flags -- the conversion in the SVG specification (F.6.5), for a
+	// circle with no rotation.
+	const centreOf = (d) => {
+		const m = /^M ([\d.-]+) ([\d.-]+) A ([\d.]+) ([\d.]+) 0 ([01]) ([01]) ([\d.-]+) ([\d.-]+)$/.exec(d);
+		assert(m, `not an arc: ${d}`);
+		const [x1, y1, r0, , large, sweep, x2, y2] = m.slice(1).map(Number);
+		const hx = (x1 - x2) / 2;
+		const hy = (y1 - y2) / 2;
+		const r = Math.max(r0, Math.hypot(hx, hy));
+		const k = (large !== sweep ? 1 : -1) * Math.sqrt(Math.max(0, (r * r - hx * hx - hy * hy) / (hx * hx + hy * hy)));
+		return { x: k * hy + (x1 + x2) / 2, y: -k * hx + (y1 + y2) / 2, sweep, ends: [[x1, y1], [x2, y2]], chord: 2 * Math.hypot(hx, hy) };
+	};
+	for (let f = 0.001; f <= 1.0000001; f += 0.037) {
+		for (const d of [W.gaugeArc(0, Math.min(1, f)), W.gaugeArc(Math.min(1, f) / 3, Math.min(1, f))]) {
+			const c = centreOf(d);
+			assert(c.sweep === 1, `${d} runs the other way`);
+			for (const [x, y] of c.ends) assert(Math.abs(Math.hypot(x - cx, y - cy) - R) < 0.01, `${d} ends off the dial`);
+			// Where the ends are far enough apart to say where the centre is:
+			// two hundredths of rounding on a short chord moves it further.
+			if (c.chord >= 10) {
+				assert(Math.hypot(c.x - cx, c.y - cy) < 0.05, `${d} is drawn about ${c.x.toFixed(2)}, ${c.y.toFixed(2)}, not the dial’s centre`);
+			}
+		}
+	}
+	// And the track itself: the upper half, left to right.
+	assert(W.gaugeArc(0, 1) === `M ${cx - R}.00 ${cy}.00 A ${R} ${R} 0 0 1 ${cx + R}.00 ${cy}.00`, W.gaugeArc(0, 1));
+});
+
 test('a Text part out of a file is drawn in bounded time, however it nests', async () => {
 	const md = await import('../src/ui/markdown.js');
 	const t0 = performance.now();
