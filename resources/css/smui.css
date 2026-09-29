@@ -548,6 +548,23 @@
 .sm-toast.error { background: #a8322a; color: #fff; }
 
 /* ---- the frame: side toggle, views, drop target ---------------------------------------- */
+/* The full window (the button at the right end of the menu bar): the
+   workbench without the site's header and footer. There the kvot mark at the
+   left of the menu bar goes to the home page, and the site's theme switch is
+   in the menu bar; otherwise they are the header's and the footer's own.
+   smui.html sets the class before the first paint when it was left on. */
+:root.sm-full { --header-height: 0px; --footer-height: 0px; }
+:root.sm-full body > header, :root.sm-full body > footer, :root.sm-full body > .nav-toggle, :root.sm-full body > #menu, :root.sm-full #kvotmap { display: none; }
+.sm-menubar .sm-fullonly { display: none; }
+:root.sm-full .sm-menubar .sm-fullonly { display: inline-flex; }
+.sm-menubar > .sm-homelink { align-items: center; padding: 0 8px 0 4px; }
+.sm-menubar > .sm-homelink:hover { background: var(--sm-sel-bg); }
+.sm-homelink img { display: block; width: 20px; height: 20px; }
+.sm-menuend { display: flex; align-items: stretch; margin-left: 2px; background: var(--bg-surface); }
+.sm-menuend > button { display: inline-flex; align-items: center; padding: 0 8px; border: 0; background: none; font: inherit; color: var(--text-secondary); cursor: pointer; }
+.sm-menuend > button:hover { background: var(--sm-sel-bg); color: var(--text-primary); }
+.sm-menuend > .theme-toggle { padding: 0 7px; font-size: 14px; line-height: 1; }
+.sm-menuend > .theme-toggle:hover { transform: none; }
 .sm-sidetoggle { display: none; }
 .sm-views { position: relative; min-height: 0; min-width: 0; }
 .sm-views > .sm-view { position: absolute; inset: 0; }
@@ -624,7 +641,10 @@
   .sm-side, .sm-handle { display: none; }
   .sm.side-open .sm-body { grid-template-columns: min(80vw, 280px) minmax(0, 1fr); }
   .sm.side-open .sm-side { display: flex; }
-  .sm-menubar { overflow-x: auto; }
+  /* the theme switch and the full-window button stay at the right edge while the menus
+     scroll under them (a sticky box keeps clear of the bar's padding: none on that side) */
+  .sm-menubar { overflow-x: auto; padding-right: 0; }
+  .sm-menuend { position: sticky; right: 0; z-index: 1; padding-right: 4px; box-shadow: -8px 0 8px -6px var(--shadow-color); }
   .sm-launch { grid-template-columns: 1fr; }
   .sm-actions { flex-direction: row; flex-wrap: wrap; }
   /* a dialog is the whole screen on a phone, not a small floating window

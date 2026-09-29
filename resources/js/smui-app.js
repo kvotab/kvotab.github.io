@@ -163,9 +163,12 @@
       h.querySelector(':scope > .sm-boot')?.remove();     // the page's stand-in while its scripts load
       h.classList.add('sm');
       this.menubar = el('nav', { class: 'sm-menubar', 'aria-label': 'Menus' });
+      // in the full window, where the site's header is not shown, the kvot mark goes to the home page
+      const home = el('a', { class: 'sm-homelink sm-fullonly', href: './index.html', title: 'kvot ab: the home page' },
+        el('img', { src: './resources/images/kvot-logotype.svg', alt: 'kvot ab: the home page', width: '20', height: '20' }));
       const sideBtn = el('button', { type: 'button', class: 'sm-sidetoggle', 'aria-label': 'Show or hide the table panels', text: '☰' });
       sideBtn.addEventListener('click', () => h.classList.toggle('side-open'));
-      this.menubar.append(sideBtn);
+      this.menubar.append(home, sideBtn);
       for (const name of MENUS) {
         const b = el('button', { type: 'button', text: name, 'aria-haspopup': 'menu', dataset: { menu: name } });
         const openIt = () => {
@@ -188,7 +191,14 @@
       }
       this.engineEl = el('button', { type: 'button', class: 'sm-engine', dataset: { state: 'off' }, 'aria-live': 'polite' });
       this.engineEl.addEventListener('click', () => this.engineDialog());
-      this.menubar.append(el('span', { class: 'sm-spacer' }), this.engineEl);
+      // in the full window, the site's own theme switch (site.js keeps its icon and title)
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const theme = el('button', { type: 'button', class: 'theme-toggle sm-fullonly', 'data-on-click': 'kvot:toggleTheme', title: dark ? 'Switch to light mode' : 'Switch to dark mode', text: dark ? '☀️' : '🌙' });
+      this.fullBtn = el('button', { type: 'button', class: 'sm-fullbtn', 'aria-label': 'Full window' });
+      this.fullBtn.addEventListener('click', () => this.setFull(!document.documentElement.classList.contains('sm-full')));
+      // (the two at the end stay in sight at phone width, where the menu bar scrolls)
+      this.menubar.append(el('span', { class: 'sm-spacer' }), this.engineEl, el('span', { class: 'sm-menuend' }, theme, this.fullBtn));
+      this._fullState();
 
       this.side = el('aside', { class: 'sm-side', 'aria-label': 'Table, columns and rows' });
       this.handle = el('div', { class: 'sm-handle', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the panels', tabindex: '0' });
@@ -206,6 +216,24 @@
 
       this.homeTab = this._addTab({ kind: 'home', title: 'Home', closable: false, view: this._homeView() });
       this.helpTab = null;
+    }
+
+    /* The full window: the workbench without the site's header and footer
+       (smui.css :root.sm-full), kept for the next visit. */
+    setFull(on) {
+      document.documentElement.classList.toggle('sm-full', !!on);
+      try { localStorage.setItem('smui.full', on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+      this._fullState();
+    }
+
+    _fullState() {
+      const on = document.documentElement.classList.contains('sm-full');
+      const b = this.fullBtn;
+      b.setAttribute('aria-pressed', String(on));
+      b.title = on ? 'Show the site\'s header and footer again' : 'Full window: the workbench without the site\'s header and footer';
+      // four corners: out to the full window, or in again
+      b.replaceChildren(SM.util.svg('svg', { viewBox: '0 0 16 16', width: 15, height: 15, 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
+        SM.util.svg('path', { d: on ? 'M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4' : 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4' })));
     }
 
     _wireHandle() {

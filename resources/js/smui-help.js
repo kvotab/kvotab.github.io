@@ -147,6 +147,7 @@
         'Open the red triangles (▼ in red) for more: tests, fits, saved columns. Click the grey triangles to close outlines you do not need.',
         'Select points or bars: the rows are selected in the table and in every other graph. Exclude them (**Rows > Exclude/Unexclude**) and press **Redo**, or turn on **Automatic Recalc**.',
         'Each result computed in Python has its **Python code** under it: what statsmodels was asked and how. The **Python code** button above the report shows or hides all of it. Every graph has code under it that draws it with matplotlib from the table, so an edited graph can be run again; only the interactive ones (the profilers) have none. **Save ▾ > Save Python Script** writes all of it as one script that runs on a CSV export of the table.',
+        'The button with four corners at the right end of the menu bar gives the workbench the whole window, without the site\'s header and footer. There the kvot mark at the left of the menu bar goes to kvot\'s home page, and ☀️ or 🌙 beside the button changes between the light and the dark theme. The same button brings the header and footer back, and the page keeps the choice for the next visit.',
       ]),
 
       h('h2', 'Data tables', 'tables'),

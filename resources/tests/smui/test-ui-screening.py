@@ -514,7 +514,9 @@ async def main():
     tv = await page.ev(table_under_js('Decision Threshold', 1))
     thr = rows_of(tv)
     lin = next(m for m in th['methods'] if m['key'] == 'linear')
-    check.near('Decision Threshold: the engine\'s sensitivity at 0.5, Validation', num(thr['Nominal Logistic']['Sensitivity']), round(lin['sets']['Validation']['sensitivity'], 4), tol=1e-9)
+    # the page shows 4 decimals, an exact tie rounded up (25/32 is 0.7813) where Python's round() goes to
+    # the even digit: within half a unit of the last decimal of the engine's value, either way
+    check.near('Decision Threshold: the engine\'s sensitivity at 0.5, Validation', num(thr['Nominal Logistic']['Sensitivity']), lin['sets']['Validation']['sensitivity'], tol=5.0001e-5)
     r = await page.ev('''(async () => {
       const rep = SM.app.reports.at(-1);
       const box = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold').parentElement;

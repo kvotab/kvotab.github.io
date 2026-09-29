@@ -19,7 +19,9 @@ scroll bar; a dialog's (i) explains its roles, options and fields; Print
 prints the report as a document from a hidden frame, Save Report as Word
 writes a .docx of the open outlines, tables and graphs, and the page's own
 print leaves the site around the report out; the page draws in the dark
-theme (documents keep the light one) and at phone width.
+theme (documents keep the light one) and at phone width; the full window
+(no site header or footer, the kvot mark and the theme switch in the menu
+bar, kept for the next visit from before the workbench is made).
 
 Start a server on the repository root and headless Chrome (the recipe is in
 ../rb/README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT (defaults 8791, 9291),
@@ -1182,6 +1184,77 @@ async def main():
     check('phone: a tap on Python code shows the code, scrolled to when below the screen', (before['seen'], r['n'] > 0 and r['open'] == r['n'], r['seen'] > 0), (0, True, True))
     check('phone: no script errors', page.errors, [])
     await page.close()
+
+    # ---- the full window: the workbench without the site's header and
+    # footer, by the button at the right end of the menu bar; there the kvot
+    # mark goes to the home page and the site's theme switch is in the menu
+    # bar; the choice is kept for the next visit, from before the workbench
+    # is made; at phone width the two buttons stay at the right edge while
+    # the menus scroll under them
+    page = await open_page(f'{BASE}/smui.html?example=students')
+    await wait_engine(page)
+    await page.ev("localStorage.removeItem('smui.full')")
+    FULL = """(() => { const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; };
+      const c = document.querySelector('.content').getBoundingClientRect(), b = document.querySelector('.sm-fullbtn');
+      return { on: document.documentElement.classList.contains('sm-full'), site: [shown('body > header'), shown('body > footer'), shown('body > .nav-toggle')],
+        top: Math.round(c.top), fills: Math.round(c.height) === innerHeight, mine: [shown('.sm-homelink'), shown('.sm-menubar .theme-toggle')],
+        pressed: b.getAttribute('aria-pressed'), stored: localStorage.getItem('smui.full') }; })()"""
+    THEME = """[document.documentElement.dataset.theme, document.querySelector('.sm-menubar .theme-toggle').textContent, localStorage.getItem('kvot-theme')]"""
+    MARK = """(() => { const a = document.querySelector('.sm-homelink'), img = a.querySelector('img');
+      return [a.getAttribute('href'), img.complete && img.naturalWidth > 0, img.alt, a.getBoundingClientRect().left < 12]; })()"""
+    EARLY = """document.addEventListener('readystatechange', () => {
+      if (document.readyState !== 'interactive' || window.__early) return;
+      const h = document.querySelector('body > header');
+      window.__early = { full: document.documentElement.classList.contains('sm-full'), app: !!(window.SM && window.SM.app), header: h ? getComputedStyle(h).display : null };
+    });"""
+    EDGE = """(() => { const m = document.querySelector('.sm-menubar'), bar = m.getBoundingClientRect(), end = m.querySelector('.sm-menuend').getBoundingClientRect(), mark = m.querySelector('.sm-homelink').getBoundingClientRect();
+      return { scrolls: m.scrollWidth > m.clientWidth, atRight: Math.abs(end.right - bar.right) <= 1, markAt: Math.round(mark.left - bar.left + m.scrollLeft) }; })()"""
+
+    async def press(sel):
+        x, y = await page.ev(f'(() => {{ const r = document.querySelector({json.dumps(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }})()')
+        await page.click(x, y)
+        await asyncio.sleep(0.3)
+
+    try:
+        r = await page.ev(FULL)
+        check('the site\'s header, menu and footer around the workbench, as before', (r['on'], r['site'], r['top'], r['mine'], r['pressed']), (False, [True, True, True], 43, [False, False], 'false'))
+        await press('.sm-fullbtn')
+        r = await page.ev(FULL)
+        check('the full-window button: no site header, menu or footer', (r['on'], r['site'], r['pressed'], r['stored']), (True, [False, False, False], 'true', '1'))
+        check('... the workbench takes the whole window', (r['top'], r['fills']), (0, True))
+        check('... and the kvot mark and the theme switch are in the menu bar', r['mine'], [True, True])
+        check('the kvot mark, at the left, goes to the home page', await page.ev(MARK), ['./index.html', True, 'kvot ab: the home page', True])
+        await press('.sm-menubar .theme-toggle')
+        r = await page.ev(THEME)
+        await press('.sm-menubar .theme-toggle')
+        r2 = await page.ev(THEME)
+        check('its theme switch changes the theme and keeps it, as the footer\'s does', (r, r2), (['dark', '☀️', 'dark'], ['light', '🌙', 'light']))
+        # the next visit: in the full window before the workbench is made (no header shown while it loads)
+        await page.call('Page.addScriptToEvaluateOnNewDocument', {'source': EARLY}, session=page.sid)
+        await page.call('Page.reload', {}, session=page.sid)
+        await asyncio.sleep(0.5)
+        await wait_engine(page)
+        check('the next visit is in the full window from the start, before the workbench is made', await page.ev('window.__early || null'), {'full': True, 'app': False, 'header': 'none'})
+        r = await page.ev(FULL)
+        check('... its button pressed', (r['on'], r['pressed'], r['fills']), (True, 'true', True))
+        await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 820, 'deviceScaleFactor': 2, 'mobile': True}, session=page.sid)
+        await asyncio.sleep(0.5)
+        a = await page.ev(EDGE)
+        await page.ev("document.querySelector('.sm-menubar').scrollLeft = 150")
+        b = await page.ev(EDGE)
+        r = await page.ev("({ fills: Math.round(document.querySelector('.content').getBoundingClientRect().height) === innerHeight, wide: document.documentElement.scrollWidth <= innerWidth + 1 })")
+        check('phone: the menus scroll under the theme switch and the full-window button, at the right edge', (a['scrolls'], a['atRight'], b['atRight']), (True, True, True))
+        check('phone: the kvot mark first in the menu bar, the workbench the whole screen and no wider', (a['markAt'] < 10, r['fills'], r['wide']), (True, True, True))
+        await page.ev("document.querySelector('.sm-menubar').scrollLeft = 0")
+        await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+        await asyncio.sleep(0.4)
+        await press('.sm-fullbtn')
+        r = await page.ev(FULL)
+        check('pressed again: the header, menu and footer are back, and that is kept', (r['on'], r['site'], r['top'], r['mine'], r['pressed'], r['stored']), (False, [True, True, True], 43, [False, False], 'false', '0'))
+        check('full window: no script errors', page.errors, [])
+    finally:
+        await page.ev("localStorage.removeItem('smui.full')")     # (the lane's later suites open pages in this browser)
+        await page.close()
 
     # ---- an engine that goes on loading says what may be wrong (a colleague's
     # computer never got past the packages): its time on the status line and,

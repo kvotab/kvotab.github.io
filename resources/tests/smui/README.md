@@ -73,8 +73,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 187, counts 304, distribution 168, dnd 123, dock 75, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
-(13,640 in 35 suites in all).
+Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 199, counts 304, distribution 168, dnd 123, dock 75, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
+(13,652 in 35 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -474,4 +474,7 @@ away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels; a 
 beside a dialog leaves it open; on a phone (touch emulation) the dialog and
 the (i) panel as the whole screen, a swipe that scrolls and a touch drag
 onto a role, the model effects, the formula and a Graph Builder zone;
-the dark theme and phone width.
+the dark theme and phone width; the full window (no site header, menu or
+footer; the kvot mark to the home page and the theme switch in the menu
+bar; kept for the next visit from before the workbench is made; at phone
+width its two buttons at the right edge while the menus scroll).
