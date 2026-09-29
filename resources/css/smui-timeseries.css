@@ -3,8 +3,8 @@
    The styles of smui-p-timeseries.js: the correlation tables with a bar in
    each row (JMP's diagnostics chart), the Model Comparison table with its
    Report and Graph boxes, the model outlines' colour mark, the lag plot's
-   control, the bounds test's verdict. Colours are kvot.css tokens or pairs
-   that read in both themes.
+   control, the bounds test's verdict, and a graph with its code. Colours
+   are kvot.css tokens or pairs that read in both themes.
    ========================================================================== */
 
 .sm {
@@ -15,6 +15,9 @@
   --sm-ts-bar: #7fa6cf;
   --sm-ts-band: #7cb2ff;
 }
+
+/* a graph with its Python code under it, as one item of a row */
+.sm-ts-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
 
 /* the diagnostics chart: Lag, value, a bar, then the tests */
 .sm-ts-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

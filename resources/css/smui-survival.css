@@ -15,6 +15,9 @@
   vertical-align: middle;
 }
 
+/* a graph with its Python under it, as one item of a row */
+.sm-sv-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+
 /* Life Distribution: Compare Distributions */
 .sm-life-dists td { padding: 1px 9px; }
 .sm-life-dists td:not(.sm-l), .sm-life-dists th:not(.sm-l) { text-align: center; }

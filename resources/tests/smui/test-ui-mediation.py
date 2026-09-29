@@ -47,6 +47,7 @@ import sys
 from decimal import ROUND_HALF_UP, Decimal
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -857,9 +858,237 @@ async def main():
     await check_form_help(page, f"await __hp.menu({rep}, null, ['Save', 'Imputed Table…'])", ['Imputation'], 'mi: Save > Imputed Table…')
     await check_controls_help(page, rep, 'Missing Data', ['A line of Missing Columns Report', 'A line of Missing Value Report', 'The red triangle'], 'mi: Missing Data')
     await check_controls_help(page, rep, 'Imputation Diagnostics', ['A bar', 'A column\'s red triangle'], 'mi: Imputation Diagnostics')
+    await chart_code(page)
     check('no script errors', page.errors, [])
     check('no console errors', [c for c in page.console if 'error' in c.lower() and 'favicon' not in c.lower()], [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code -------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE_MORE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it. __mc adds what GRAPHS_JS does not collect: error bars, annotations,
+# the subplots' axes.
+CHART_JS = r'''
+window.__mc = {
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      return { label: p.getAttribute('aria-label'),
+        err: (p.data || []).map((d) => (d.error_x ? { plus: d.error_x.array, minus: d.error_x.arrayminus } : null)),
+        ann: (L.annotations || []).map((a) => ({ x: a.x, y: a.y, text: a.text, arrow: !!a.showarrow, color: a.arrowcolor || null, yref: a.yref || null })),
+        rects: (L.shapes || []).filter((s) => s.type === 'rect').map((s) => ({ x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, xref: s.xref })),
+        cats: L.yaxis && L.yaxis.categoryarray ? L.yaxis.categoryarray : null,
+        xticks: L.xaxis && L.xaxis.tickvals ? L.xaxis.tickvals : null };
+    });
+  },
+};
+'''
+PROFILER = (' profile over ', ' desirability', 'Desirability over ', ' variable importance')
+
+
+async def run_more(page, g, table_js):
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=900)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+def near_list(a, b, rel=1e-7, abs_=1e-9):
+    a, b = list(a or []), list(b or [])
+    return len(a) == len(b) and all(x is not None and y is not None and abs(x - y) <= max(abs_, rel * max(abs(x), abs(y))) for x, y in zip(a, b))
+
+
+def plain_lines(html):
+    """An annotation's text as lines, without its markup (Plotly's <b>, <span> and <br>)."""
+    import re
+    text = re.sub(r'<br\s*/?>', '\n', html or '')
+    text = re.sub(r'<[^>]+>', '', text)
+    for a, b in (('&lt;', '<'), ('&gt;', '>'), ('&#123;', '{'), ('&#125;', '}'), ('&amp;', '&')):
+        text = text.replace(a, b)
+    return text.split('\n')
+
+
+def check_forest(lab, g, ex, ax, F):
+    """An effects plot of points with error bars on a category axis (mediation effects)."""
+    cats = list(reversed(ex['cats']))
+    check(f'{lab}: the effects, top down, as the page lists them', ax['yticklabels'], cats)
+    pts = {}
+    for ln in ax['lines']:
+        if ln['marker'] in ('s', 'o', 'D'):
+            for xv, yv in zip(ln['x'], ln['y']):
+                pts[cats[round(yv)]] = xv
+    segs = {cats[round(s_[0][1])]: (min(s_[0][0], s_[1][0]), max(s_[0][0], s_[1][0])) for c_ in ax['segments'] for s_ in c_['segs']}
+    ok = ok_ci = True
+    for t, er in zip(g['traces'], ex['err']):
+        for i, (xv, yv) in enumerate(zip(t['x'], t['y'])):
+            ok &= abs(pts.get(yv, float('nan')) - xv) <= 1e-7 * max(1, abs(xv))
+            lo_, hi_ = xv - er['minus'][i], xv + er['plus'][i]
+            ok_ci &= yv in segs and abs(segs[yv][0] - lo_) <= 1e-6 * max(1, abs(lo_)) and abs(segs[yv][1] - hi_) <= 1e-6 * max(1, abs(hi_))
+    check(f'{lab}: each estimate, the page\'s', ok, True)
+    check(f'{lab}: each interval, the page\'s', ok_ci, True)
+    check(f'{lab}: the legend', F['legend'], [t['name'] for t in g['traces']])
+    check(f'{lab}: the zero line when the intervals straddle it', len([ln for ln in ax['lines'] if ln['marker'] == 'None' and ln['x'] == [0.0, 0.0]]), len(g['shapes']))
+    check(f'{lab}: the x axis title', ax['xlabel'], g['titles']['x'])
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.0)
+    await page.ev('__gr.idle()')
+    # ---- mediation: the path diagram (wide, and compact at phone width), the effects, the simulated distributions
+    tbl = "SM.app.tables.find((t) => t.name === 'Coaching study')"
+    await page.ev(f"SM.app.showTab(SM.app.tabOf({tbl})); {tbl}.setState([5, 77], 'excluded', true)")
+    runs = [
+        ('the defaults, two rows excluded', {'y': ['score'], 'treatment': ['program'], 'mediator': ['confidence'], 'covariates': ['age', 'baseline', 'sex']}, {'nRep': 100, 'draws': True}, None),
+        ('a probit outcome with the interaction, at phone width', {'y': ['passed'], 'treatment': ['program'], 'mediator': ['confidence'], 'covariates': ['age', 'baseline', 'sex']},
+         {'nRep': 100, 'outcomeModel': 'probit', 'interaction': True, 'seed': 4}, 400),
+        ('a continuous treatment, the bootstrap', {'y': ['score'], 'treatment': ['baseline'], 'mediator': ['confidence'], 'covariates': ['age']},
+         {'nRep': 60, 'method': 'bootstrap', 'control': 45, 'treated': 55, 'draws': True}, None),
+    ]
+    for label, roles, options, width in runs:
+        if width:
+            await page.call('Emulation.setDeviceMetricsOverride', {'width': width, 'height': 900, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+            await asyncio.sleep(0.8)
+        r = await page.ev(f'''(async () => {{ const t = {tbl}; const ids = {{}};
+          for (const [k, v] of Object.entries({json.dumps(roles)})) ids[k] = v.map((n) => t.col(n).id);
+          const rep = SM.app.openReport(SM.platforms.get('mediation'), {{ roles: ids, options: {json.dumps(options)} }}, t);
+          await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep));
+          return {{ g: await __gr.graphs(rep), extra: __mc.extra(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=1200)
+        if width:
+            await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 1150, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+            await asyncio.sleep(0.6)
+        if not isinstance(r, dict):
+            check(f'charts: mediation, {label}: the report', r, 'opens')
+            continue
+        check(f'charts: mediation, {label}: no errors', r['errors'], [])
+        check(f'charts: mediation, {label}: every graph of the report drawn', r['undrawn'], [])
+        want = ['mediation path diagram', 'mediation effects'] + (['ACME (average) simulated', 'ADE (average) simulated'] if options.get('draws') else [])
+        check(f'charts: mediation, {label}: the graphs', [g['label'] for g in r['g']], want)
+        for g, ex in zip(r['g'], r['extra']):
+            lab = f'charts: mediation, {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            check(f'{lab}: the code leaves out the excluded rows', 'df = df.drop(index=[5, 77])' in g['code'], True)
+            F, err = await run_more(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            check(f'{lab}: the title', ax['title'], g['label'])
+            if g['label'] == 'mediation path diagram':
+                want_lines = [ln for a in ex['ann'] if not a['arrow'] for ln in plain_lines(a['text'])]
+                check(f'{lab}: its texts are the page\'s', [a['s'] for a in ax['annotations'] if a['s']], want_lines)
+                tips = sorted((round(a['xy'][0], 9), round(a['xy'][1], 9), a['color']) for a in ax['annotations'] if a['s'] == '')
+                check(f'{lab}: the arrows end where the page\'s do, in their colours', tips, sorted((round(a['x'], 9), round(a['y'], 9), a['color']) for a in ex['ann'] if a['arrow']))
+                boxes = sorted((round(b['x'], 9), round(b['y'], 9), round(b['x'] + b['w'], 9), round(b['y'] + b['h'], 9)) for b in ax['bars'])
+                check(f'{lab}: the boxes, the page\'s', boxes, sorted((round(s['x0'], 9), round(s['y0'], 9), round(s['x1'], 9), round(s['y1'], 9)) for s in ex['rects']))
+                compact = bool(width)
+                check(f'{lab}: the {"compact" if compact else "wide"} layout\'s ranges', (ax['xlim'], ax['ylim']), ([-0.1, 10.1], [-1.65 if compact else -0.75, 5.6]))
+            elif g['label'] == 'mediation effects':
+                check_forest(lab, g, ex, ax, F)
+            else:
+                t = g['traces'][0]
+                check(f'{lab}: the bars, the page\'s', near_list([b['x'] + b['w'] / 2 for b in ax['bars']], t['x'], 1e-9) and near_list([b['h'] for b in ax['bars']], t['y']), True)
+                vl = sorted(round(ln['x'][0], 9) for ln in ax['lines'] if ln['x'][0] == ln['x'][1])
+                check(f'{lab}: the estimate, the interval (and zero), the page\'s', vl, sorted(round(s['x0'], 9) for s in g['shapes']))
+                check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+        await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+    await page.ev(f"{tbl}.setState([5, 77], 'excluded', false)")
+    # ---- multiple imputation: the pooled and complete-case estimates, each imputed column's diagnostics
+    await page.ev('''(() => {
+      const g = SM.util.rng('mi-charts'); const n = 160; const x1 = [], x2 = [], sex = [], y = [];
+      for (let i = 0; i < n; i++) { const a = g.normal(0, 1), b = g.normal(0, 1), s = g.u() < 0.5 ? 'F' : 'M';
+        x1.push(g.u() < 0.1 ? NaN : Math.round(a * 1000) / 1000); x2.push(g.u() < 0.2 ? NaN : Math.round(b * 1000) / 1000); sex.push(g.u() < 0.15 ? null : s);
+        y.push(Math.round((1 + 0.8 * a - 0.5 * b + (s === 'M' ? 0.6 : 0) + g.normal(0, 1)) * 1000) / 1000); }
+      SM.app.addTable(new SM.Table({ name: 'MI charts', columns: [{ name: 'y', values: y }, { name: 'x1', values: x1 }, { name: 'x2', values: x2 }, { name: 'sex', dataType: 'character', values: sex, valueOrder: ['F', 'M'] }] }));
+    })()''')
+    mruns = [
+        ('the health survey, MICE, two rows excluded', 'Health survey', [3, 8], {'y': ['age', 'bmi', 'activity', 'cholesterol', 'sbp'], 'response': ['sbp']},
+         [['age'], ['bmi'], ['cholesterol'], ['activity']], {'m': 5, 'seed': 3}),
+        ('the health survey, the multivariate normal', 'Health survey', [], {'y': ['age', 'bmi', 'activity', 'cholesterol', 'sbp'], 'response': ['sbp']},
+         [['age'], ['bmi']], {'m': 4, 'seed': 2, 'method': 'bayes', 'burnin': 20, 'skip': 2}),
+        ('a two-level column with missing values, imputing only', 'MI charts', [], {'y': ['y', 'x1', 'x2', 'sex']}, [], {'m': 4, 'seed': 5}),
+    ]
+    for label, tname, excl, roles, effects, options in mruns:
+        tj = f"SM.app.tables.find((t) => t.name === {json.dumps(tname)})"
+        if excl:
+            await page.ev(f"{tj}.setState({json.dumps(excl)}, 'excluded', true)")
+        r = await page.ev(f'''(async () => {{ const t = {tj}; SM.app.showTab(SM.app.tabOf(t)); const ids = {{}};
+          for (const [k, v] of Object.entries({json.dumps(roles)})) ids[k] = v.map((n) => t.col(n).id);
+          const effects = {json.dumps(effects)}.map((e) => ({{ cols: e.map((n) => t.col(n).id), names: e }}));
+          const rep = SM.app.openReport(SM.platforms.get('mi'), {{ roles: ids, options: {json.dumps(options)}, effects }}, t);
+          await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep));
+          return {{ g: await __gr.graphs(rep), extra: __mc.extra(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=1200)
+        if excl:
+            await page.ev(f"{tj}.setState({json.dumps(excl)}, 'excluded', false)")
+        if not isinstance(r, dict):
+            check(f'charts: MI, {label}: the report', r, 'opens')
+            continue
+        check(f'charts: MI, {label}: no errors', r['errors'], [])
+        check(f'charts: MI, {label}: every graph of the report drawn', r['undrawn'], [])
+        kinds = [g['label'] for g in r['g']]
+        check(f'charts: MI, {label}: a comparison with a model, two graphs a column with missing values', (kinds.count('pooled and complete-case estimates'), len([k for k in kinds if k.endswith(' trace')])),
+              (1 if 'response' in roles else 0, 3 if tname == 'Health survey' else 3))
+        for g, ex in zip(r['g'], r['extra']):
+            lab = f'charts: MI, {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if excl:
+                check(f'{lab}: the code leaves out the excluded rows', f'df = df.drop(index={excl})' in g['code'], True)
+            F, err = await run_more(page, g, tj)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            if g['label'] == 'pooled and complete-case estimates':
+                terms = [plain_lines(a['text'])[0] for a in ex['ann']]
+                check(f'{lab}: a panel for each term, the page\'s', [a['ylabel'] for a in F['axes']], terms)
+                ok = ok_ci = True
+                for i, (t, er) in enumerate(zip(g['traces'], ex['err'])):
+                    k = int((t.get('xaxis') or 'x')[1:] or 1) - 1
+                    axk = F['axes'][k]
+                    got = [ln for ln in axk['lines'] if ln['marker'] in ('o', 's') and round(ln['y'][0]) == t['y'][0]]
+                    ok &= bool(got) and abs(got[0]['x'][0] - t['x'][0]) <= 1e-7 * max(1, abs(t['x'][0]))
+                    seg = [s_ for c_ in axk['segments'] for s_ in c_['segs'] if round(s_[0][1]) == t['y'][0]]
+                    lo_, hi_ = t['x'][0] - er['minus'][0], t['x'][0] + er['plus'][0]
+                    ok_ci &= bool(seg) and abs(min(seg[0][0][0], seg[0][1][0]) - lo_) <= 1e-6 * max(1, abs(lo_)) and abs(max(seg[0][0][0], seg[0][1][0]) - hi_) <= 1e-6 * max(1, abs(hi_))
+                check(f'{lab}: each estimate, pooled and complete-case, the page\'s', ok, True)
+                check(f'{lab}: each interval, the page\'s', ok_ci, True)
+                check(f'{lab}: the legend and the title', (F['legend'], F['suptitle']), ([t['name'] for t in g['traces'] if t.get('showlegend')], g['label']))
+                continue
+            ax = F['axes'][0]
+            check(f'{lab}: the title', ax['title'], g['label'])
+            if g['label'].endswith(' trace'):
+                t0, t1 = g['traces'][0], g['traces'][1]
+                ln = [x for x in ax['lines'] if x['label'] == 'Mean of the imputed values']
+                check(f'{lab}: the means over the cycles, the page\'s', bool(ln) and near_list(ln[0]['x'], t0['x'], 1e-12) and near_list(ln[0]['y'], t0['y']), True)
+                dots = [x for x in ax['lines'] if x['label'] == 'An imputation']
+                check(f'{lab}: the imputations\' dots, the page\'s', bool(dots) and near_list(dots[0]['x'], t1['x'], 1e-12) and near_list(dots[0]['y'], t1['y']), True)
+                om = [s for s in g['shapes'] if s['yref'] == 'y']
+                check(f'{lab}: the observed mean, the page\'s', [round(x['y'][0], 9) for x in ax['lines'] if x['ls'] == ':'], [round(s['y0'], 9) for s in om])
+                burn = [(b['x'], b['x'] + b['w']) for b in ax['bars']]
+                check(f'{lab}: the burn-in, the page\'s', burn, [(s['x0'], s['x1']) for s in ex['rects']])
+                check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+            else:
+                bars = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('name')]
+                for t, color in zip(bars, ('#2e6fba', '#b8406e')):
+                    got = sorted((b for b in ax['bars'] if (b['fc'] or '').startswith(color)), key=lambda b: b['x'])
+                    if g['label'].endswith('levels'):
+                        check(f'{lab}: the {t["name"]} proportions, the page\'s', near_list([b['h'] for b in got], t['y']), True)
+                    else:
+                        check(f'{lab}: the {t["name"]} densities in the page\'s bins', near_list([b['x'] + b['w'] / 2 for b in got], t['x'], 1e-9) and near_list([b['h'] for b in got], t['y']), True)
+                check(f'{lab}: the legend', F['legend'], [t['name'] for t in bars])
+                check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+        await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
 
 
 asyncio.run(main())

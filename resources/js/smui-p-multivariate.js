@@ -204,6 +204,41 @@
 
   const idsOf = (ctx, key) => ((ctx.spec.roles && ctx.spec.roles[key]) || []).slice();
 
+  /* ---- the graphs as matplotlib code ------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table (the notebook runs it): the report's rows, the numbers computed as
+     the report computes them, the light theme's colours, the graph's size at 100
+     pixels an inch. The backend writes the code of the graphs whose numbers it
+     makes (the calls send the By group, `where`, for the code's rows); the
+     scatterplot matrix's is written here, as the page chose its bins. */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+  const inches = (px) => String(Math.round(px) / 100);
+  const PAPER = { base: '#2f6690', bar: '#8fa9c2', text: '#352921', muted: '#786b5d' };
+  const mcall = (ctx, fn, payload) => ctx.call(fn, { ...payload, where: ctx.where || [] });
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { class: 'mv-plotcode' }, graph, code) : graph);
+  // A choice of the report written into the backend's code, on the line the backend marks for it
+  // (so that the choice needs no new call: Color Clusters, Biplot Rays).
+  const withChoice = (code, line, value) => (code ? code.replace(line, value) : code);
+  // The column that names the rows (the Label role, else the table's label column).
+  // The lines the backend marks for those choices (multivariate.py's HC_COLOR and KM_RAYS).
+  const HC_COLOR = 'color_clusters = False   # Color Clusters';
+  const KM_RAYS = 'show_rays = True   # Biplot Rays';
+  const labelName = (ctx) => { const c = ctx.role('label') || (ctx.table ? ctx.table.labelColumn() : null); return c ? c.name : null; };
+
+  // The By group's rows (as the backend's code has them), and those of it the report leaves out.
+  function keepLines(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${t.col(w.column) ? SM.grid.cellText(t.col(w.column), w.value) : w.value}`);
+    const cols = where.map((w) => t.col(w.column));
+    const keep = new Set(ctx.rows), drop = [];
+    for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
+    if (drop.length) L.push(`df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out`);
+    return L;
+  }
+
   function levelOptions(ctx) {
     return [0.01, 0.05, 0.1, 0.5].map((a) => ({ label: String(a), checked: Math.abs(ctx.alpha - a) < 1e-12, action: () => ctx.set('alpha', a) }))
       .concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set α Level', fields: [{ key: 'a', label: 'α (for the confidence intervals and tests)', type: 'number', value: ctx.alpha,
@@ -224,7 +259,7 @@
     const names = cols.map((c) => c.name);
     const o = (k, d) => ctx.opt(k, d);
     const payload = { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('method', 'rowwise'), alpha: ctx.alpha };
-    const res = await ctx.call('multivariate.fit', payload);
+    const res = await mcall(ctx, 'multivariate.fit', payload);
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     const lv = fmt(100 * (1 - ctx.alpha));
@@ -268,7 +303,7 @@
     }
     for (const [key, label, vlab, plab] of NONPAR) {
       if (!o(`np:${key}`, false)) continue;
-      const r = await ctx.call('multivariate.nonparametric', { columns: names, measure: key, weight: ctx.name('weight'), freq: ctx.name('freq') });
+      const r = await mcall(ctx, 'multivariate.nonparametric', { columns: names, measure: key, weight: ctx.name('weight'), freq: ctx.name('freq') });
       const ob = ctx.outline(`Nonparametric: ${label}`, { key: `np:${key}`, info: key === 'hoeffding' ? 'mv:hoeffding' : null, menu: () => [{ label: 'Remove', action: () => ctx.set(`np:${key}`, false) }] });
       const tbl = ctx.rt({ columns: [{ key: 'var', label: 'Variable', fmt: 'text' }, { key: 'by', label: 'by Variable', fmt: 'text' }, { key: 'value', label: vlab, digits: 4 }, { key: 'p', label: plab, fmt: 'p' }, { key: 'count', label: 'Count', fmt: 'int', hidden: true }, { key: 'bar', label: key === 'hoeffding' ? '0 .2 .4 .6 .8' : '−.8 −.4 0 .4 .8', fmt: 'text' }], rows: r.pairs.map((x) => ({ ...x, bar: '' })) });
       decorate(tbl, (tr, row) => { const td = tr.cells[tr.cells.length - 1]; td.classList.add('mv-barcell'); cellBar(td, row.value, key === 'hoeffding' ? 0 : -1, 1, row.value < 0 ? '#2f6ec7' : RED); });
@@ -290,7 +325,7 @@
     const ob = ctx.outline('Distance Correlations', { key: 'dcor', info: 'mv:dcor', menu: () => [
       ctx.check('Color Cells', 'dcorCells', null, true), ctx.check('Asymptotic Test Only', 'dcorAsym', null, false),
       { separator: true }, { label: 'Remove', action: () => ctx.set('dcor', false) }] });
-    const r = await ctx.call('multivariate.distance', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('dcorAsym', false) ? 'asym' : 'auto' });
+    const r = await mcall(ctx, 'multivariate.distance', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('dcorAsym', false) ? 'asym' : 'auto' });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     // 0 (neutral) to 1 (red): dCor is never negative
     ob.add(matrixTable(ctx, names, r.matrix, { colors: o('dcorCells', true) ? (v) => diverging(v) : null, digits: 4, caption: 'Distance correlation' }));
@@ -334,12 +369,15 @@
     ob.add(scatterMatrix(ctx, cols, ctx.rows, {
       format: o('matrixFormat', 'square'), points: o('spPoints', true), ellipses: o('spEllipses', true), shaded: o('spShaded', false),
       corr: o('spCorr', false), hist: o('spHist', false), fit: o('spFit', false), level: o('spLevel', 0.95),
-    }));
+    }, [`X = df[${J(cols.map((c) => c.name))}]   # each pair on the rows where both columns have a value`]));
     ob.add(ctx.note(`Drag over points to select rows; the ellipses cover ${fmt(100 * o('spLevel', 0.95))}% of a bivariate normal with each pair's means, standard deviations and correlation.`));
   }
 
-  function scatterMatrix(ctx, cols, rows, opt) {
+  /* The scatterplot matrix with its code under it: frame, the lines that
+     give X, the graph's rows (all the report's, or those a fit took). */
+  function scatterMatrix(ctx, cols, rows, opt, frame) {
     const p = cols.length;
+    const bins = [];
     const cells = [];
     if (opt.format === 'lower') { for (let i = 1; i < p; i++) for (let j = 0; j < i; j++) cells.push([i, j, i - 1, j]); }
     else if (opt.format === 'upper') { for (let i = 0; i < p - 1; i++) for (let j = i + 1; j < p; j++) cells.push([i, j, i, j - 1]); }
@@ -368,6 +406,7 @@
           const { v, rows: rs } = colValues(cols[i], rows);
           const b = SM.report.niceBins(v);
           const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
+          bins[i] = { start: b.start, size: b.size, nb };
           const counts = new Array(nb).fill(0), members = Array.from({ length: nb }, () => []);
           v.forEach((x, q) => { const h = Math.min(nb - 1, Math.max(0, Math.floor((x - b.start) / b.size + 1e-9))); counts[h]++; members[h].push(rs[q]); });
           const mx = Math.max(...counts, 1);
@@ -394,7 +433,100 @@
         if (opt.corr && Number.isFinite(s.r)) layout.annotations.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.03, y: 0.97, xanchor: 'left', yanchor: 'top', text: s.r.toFixed(4).replace('-', '−'), showarrow: false, font: { size: 9.5, color: tc.text } });
       }
     });
-    return ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix' });
+    return [ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix' }), ctx.code(splomCode(ctx, cols, opt, bins, W, H, frame, rows.length))];
+  }
+
+  // The page's density ellipse, as Python (the backend's code has the same function).
+  const ELLIPSE_PY = [
+    'def ellipse(mx, my, sx, sy, r, level):',
+    '    """The page\'s density ellipse: the contour of a bivariate normal with these means, standard deviations',
+    '    and correlation that holds `level` of it, at 73 points."""',
+    '    c = np.sqrt(-2 * np.log(1 - level))   # the square root of the chi-square quantile with 2 DF',
+    '    t = 2 * np.pi * np.arange(73) / 72',
+    '    r = min(max(r, -0.999999), 0.999999)',
+    '    return mx + c * sx * np.cos(t), my + c * sy * (r * np.cos(t) + np.sqrt(1 - r * r) * np.sin(t))'];
+
+  /* The scatterplot matrix as matplotlib code: each pair on its rows with its
+     density ellipse, fit line and correlation, the columns' histograms on the
+     diagonal in the page's bins, the axes over the ranges the page takes. */
+  function splomCode(ctx, cols, opt, bins, W, H, frame, nrows) {
+    const names = cols.map((c) => c.name);
+    const p = cols.length, g = opt.format === 'square' ? p : p - 1;
+    const lw = (px) => String(+(px * 0.72).toPrecision(3)), area = (px) => String(+((px * 0.72) ** 2).toPrecision(3));
+    const hist = opt.hist && opt.format === 'square' && bins.filter(Boolean).length === p;
+    const cells = {
+      square: 'cells = [(i, j, i, j) for i in range(p) for j in range(p)]   # (the y column, the x column, the grid\'s row and column): Square',
+      lower: 'cells = [(i, j, i - 1, j) for i in range(1, p) for j in range(i)]   # (the y column, the x column, the grid\'s row and column): Lower Triangular',
+      upper: 'cells = [(i, j, i, j - 1) for i in range(p - 1) for j in range(i + 1, p)]   # (the y column, the x column, the grid\'s row and column): Upper Triangular',
+    };
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt']), ...keepLines(ctx), ...frame, `cols = ${J(names)}`];
+    if (opt.ellipses) L.push(`level = ${pyNum(opt.level)}   # Ellipse Coverage`);
+    if (hist) L.push(`bins = {${names.map((n, i) => `${J(n)}: (${pyNum(bins[i].start)}, ${pyNum(bins[i].size)}, ${bins[i].nb})`).join(', ')}}   # the page's histogram bins: start, width, number`);
+    if (opt.ellipses) L.push('', ...ELLIPSE_PY);
+    L.push('',
+      'def axis_range(v):   # an axis over the values and 6% more on each side, as the page\'s',
+      '    lo, hi = v.min(), v.max()',
+      '    d = hi - lo or abs(hi) or 1',
+      '    return lo - 0.06 * d, hi + 0.06 * d',
+      '',
+      '',
+      'ranges = [axis_range(X[c].dropna()) if X[c].notna().any() else (0, 1) for c in cols]',
+      `p, g = len(cols), ${g}`,
+      cells[opt.format] || cells.square,
+      `fig, axes = plt.subplots(g, g, figsize=(${inches(W)}, ${inches(H)}), squeeze=False, layout="constrained")`,
+      'for ax in axes.flat:',
+      '    ax.set_visible(False)   # (the cells the format leaves empty stay so)',
+      'for i, j, gi, gj in cells:',
+      '    ax = axes[gi, gj]',
+      '    ax.set_visible(True)',
+      '    ax.set_xlim(*ranges[j])',
+      '    ax.set_ylim(*ranges[i])',
+      '    ax.locator_params(nbins=4)',
+      '    ax.tick_params(axis="x", labelbottom=gi == g - 1, length=3 if gi == g - 1 else 0, labelsize=6.5)',
+      '    ax.tick_params(axis="y", labelleft=gj == 0, length=3 if gj == 0 else 0, labelsize=6.5)',
+      '    if gi == g - 1:',
+      '        ax.set_xlabel(cols[j], fontsize=7.6)',
+      '    if gj == 0:',
+      '        ax.set_ylabel(cols[i], fontsize=7.6)',
+      `    if i == j:   # the diagonal: the column's name${hist ? ' and its histogram' : ''}`,
+      `        ax.text(0.5, ${opt.hist ? 0.92 : 0.5}, cols[i], transform=ax.transAxes, ha="center", va="center", fontsize=7.9)`);
+    if (hist) {
+      L.push('        v = X[cols[i]].dropna().to_numpy()',
+        '        start, size, nb = bins[cols[i]]',
+        '        counts = np.bincount(np.clip(np.floor((v - start) / size + 1e-9), 0, nb - 1).astype(int), minlength=nb)   # each value\'s bin, as the page counts',
+        '        lo, hi = ranges[i]',
+        `        ax.bar(start + (np.arange(nb) + 0.5) * size, counts * (hi - lo) * 0.78 / max(counts.max(), 1), width=size * 0.96, bottom=lo, color="${PAPER.bar}")   # the tallest bar 78% of the cell`);
+    }
+    L.push('        continue',
+      '    d = X[[cols[j], cols[i]]].dropna()   # the rows with both values',
+      '    x, y = d.iloc[:, 0].to_numpy(), d.iloc[:, 1].to_numpy()');
+    if (opt.points) L.push(`    ax.scatter(x, y, s=${area(nrows > 500 ? 3 : 4)}, color="${PAPER.base}")`);
+    if (opt.ellipses || opt.fit || opt.corr) {
+      L.push('    if len(x) <= 2:',
+        '        continue',
+        '    mx, my = x.mean(), y.mean()',
+        '    sxx, syy, sxy = ((x - mx) ** 2).sum(), ((y - my) ** 2).sum(), ((x - mx) * (y - my)).sum()',
+        '    sx, sy = np.sqrt(sxx / (len(x) - 1)), np.sqrt(syy / (len(x) - 1))',
+        '    r = sxy / np.sqrt(sxx * syy) if sxx > 0 and syy > 0 else np.nan   # the pair\'s correlation');
+      if (opt.ellipses) {
+        L.push('    if np.isfinite(r):   # the density ellipse', '        ex, ey = ellipse(mx, my, sx, sy, r, level)');
+        if (opt.shaded) L.push(`        ax.fill(ex, ey, color="${RED}", alpha=0.13, linewidth=0)   # Shaded Ellipses`);
+        L.push(`        ax.plot(ex, ey, color="${RED}", linewidth=${lw(1)})`);
+      }
+      if (opt.fit) {
+        L.push('    if sx > 0:   # Fit Line: the least squares line of the pair',
+          '        b1 = r * sy / sx',
+          '        b0 = my - b1 * mx',
+          '        lo, hi = ranges[j]',
+          `        ax.plot([lo, hi], [b0 + b1 * lo, b0 + b1 * hi], color="${PAPER.muted}", linewidth=${lw(1)})`);
+      }
+      if (opt.corr) {
+        L.push('    if np.isfinite(r):   # Show Correlations',
+          '        ax.text(0.03, 0.97, f"{r:.4f}".replace("-", "−"), transform=ax.transAxes, ha="left", va="top", fontsize=6.8)');
+      }
+    }
+    L.push('fig.suptitle("Scatterplot Matrix", fontsize=10)', 'plt.show()');
+    return L.join('\n');
   }
 
   /* ---- colour maps --------------------------------------------------------------- */
@@ -411,22 +543,22 @@
     };
     const ident = names.map((_, i) => i);
     const r4 = (v) => (v == null ? '' : v.toFixed(2).replace('-', '−'));
-    if (o('cmCorr', false)) ctx.outline('Color Map On Correlations', { key: 'cmcorr' }).add(heat(res.corr, -1, 1, r4, divergingScale(), 'Color Map On Correlations', ident), ctx.note('Red for +1, blue for −1.'));
+    if (o('cmCorr', false)) ctx.outline('Color Map On Correlations', { key: 'cmcorr' }).add(heat(res.corr, -1, 1, r4, divergingScale(), 'Color Map On Correlations', ident), ctx.code(res.cm_corr_code), ctx.note('Red for +1, blue for −1.'));
     if (o('cmP', false)) {
       const P = res.p.map((row, i) => row.map((v, j) => (i === j ? null : v)));
       const scale = dark() ? [[0, '#e8604f'], [0.5, '#3a3431'], [1, '#5b9cf0']] : [[0, '#c0392b'], [0.5, '#f6f3f0'], [1, '#2f6ec7']];
-      ctx.outline('Color Map On p-values', { key: 'cmp' }).add(heat(P, 0, 1, (v, i, j) => (i === j ? '' : SM.util.fmtP(v, ctx.alpha)), scale, 'Color Map On p-values', ident), ctx.note('Red for p = 0, blue for p = 1.'));
+      ctx.outline('Color Map On p-values', { key: 'cmp' }).add(heat(P, 0, 1, (v, i, j) => (i === j ? '' : SM.util.fmtP(v, ctx.alpha)), scale, 'Color Map On p-values', ident), ctx.code(res.cm_p_code), ctx.note('Red for p = 0, blue for p = 1.'));
     }
     if (o('cmCluster', false)) {
       const r = await ctx.call('multivariate.cluster_order', { corr: res.corr });
-      ctx.outline('Cluster the Correlations', { key: 'cmcluster' }).add(heat(res.corr, -1, 1, r4, divergingScale(), 'Cluster the Correlations', r.order), ctx.note('The columns reordered so that similar ones are together: average linkage of 1 − r (scipy).'));
+      ctx.outline('Cluster the Correlations', { key: 'cmcluster' }).add(heat(res.corr, -1, 1, r4, divergingScale(), 'Cluster the Correlations', r.order), ctx.code(res.cm_cluster_code), ctx.note('The columns reordered so that similar ones are together: average linkage of 1 − r (scipy).'));
     }
   }
 
   /* ---- outlier analysis --------------------------------------------------------------- */
   async function outlierOutlines(ctx, names) {
     const o = (k, d) => ctx.opt(k, d);
-    const r = await ctx.call('multivariate.outliers', { columns: names, alpha: ctx.alpha });
+    const r = await mcall(ctx, 'multivariate.outliers', { columns: names, alpha: ctx.alpha });
     if (r.error) { ctx.outline('Outlier Analysis', { key: 'outliers' }).add(ctx.warn(r.error)); return; }
     const kinds = [['mahal', 'Mahalanobis Distances', 'Mahalanobis Distance', 'mahal', 'ucl_mahal', 'Mahal. Distances'], ['jack', 'Jackknife Distances', 'Jackknife Distance', 'jack', 'ucl_jack', 'Jackknife Distances'], ['t2', 'T²', 'T²', 't2', 'ucl_t2', 'T Square']];
     for (const [key, title, ytitle, field, ucl, saveName] of kinds) {
@@ -437,13 +569,13 @@
         { label: 'Select Rows above the UCL', action: () => ctx.table.select(above) },
         { label: 'Remove', action: () => ctx.set(key, false) },
       ] });
-      ob.add(rowPlot(ctx, { rows: r.rows, y: r[field], limit: r[ucl], ytitle, title }),
+      ob.add(rowPlot(ctx, { rows: r.rows, y: r[field], limit: r[ucl], ytitle, title }), ctx.code(r[`${key}_code`]),
         ctx.note(`${above.length} row${above.length === 1 ? '' : 's'} above the upper control limit at α = ${ctx.alpha} (n = ${r.n}, p = ${r.p}).${key === 'jack' ? ' Each distance leaves its own row out of the mean and covariance.' : ''}`), ctx.code(r.code));
     }
   }
 
   async function reliabilityOutline(ctx, names) {
-    const r = await ctx.call('multivariate.reliability', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    const r = await mcall(ctx, 'multivariate.reliability', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') });
     const both = [['alpha:raw', "Cronbach's α", 'alpha'], ['alpha:std', 'Standardized α', 'std_alpha']];
     for (const [key, title, field] of both) {
       if (!ctx.opt(key, false)) continue;
@@ -458,7 +590,7 @@
   /* ---- intraclass correlations and Kendall's W (Item Reliability; not in JMP): the columns are
      the raters, the rows the targets they rate, only the rows every rater rated ---- */
   async function iccOutline(ctx, names) {
-    const r = await ctx.call('multivariate.icc', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha });
+    const r = await mcall(ctx, 'multivariate.icc', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha });
     const ob = ctx.outline('Intraclass Correlations', { key: 'icc', info: 'mv:icc', menu: () => [{ label: 'Remove', action: () => ctx.set('icc', false) }] });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const lv = fmt(100 * (1 - ctx.alpha));
@@ -471,7 +603,7 @@
   }
 
   async function kendallOutline(ctx, names) {
-    const r = await ctx.call('multivariate.kendall_w', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    const r = await mcall(ctx, 'multivariate.kendall_w', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') });
     const ob = ctx.outline("Kendall's W", { key: 'kendallw', info: 'mv:kendallw', menu: () => [{ label: 'Remove', action: () => ctx.set('kendallw', false) }] });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     ob.add(ctx.kv([["Kendall's W", r.w], ['ChiSquare', r.chi2], ['DF', r.df, 'int'], ['Prob > ChiSq', r.p, 'p'], ['Objects (rows)', r.n, 'int'], ['Raters (columns)', r.m, 'int'], ['Mean Spearman ρ', r.mean_spearman]]),
@@ -578,7 +710,7 @@
         { label: 'Principal Components', action: () => openPCA(ctx) },
         { separator: true },
         { label: 'Save', submenu: () => [['mahal', 'Mahalanobis Distances', 'Mahal. Distances'], ['jack', 'Jackknife Distances', 'Jackknife Distances'], ['t2', 'T²', 'T Square']].map(([f, l, name]) => ({ label: l, action: async () => {
-          const r = await ctx.call('multivariate.outliers', { columns: ctx.names('y'), alpha: ctx.alpha });
+          const r = await mcall(ctx, 'multivariate.outliers', { columns: ctx.names('y'), alpha: ctx.alpha });
           if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
           ctx.saveColumn(name, { rows: r.rows, values: r[f] }, { notes: `${l} from Multivariate` });
         } })) },
@@ -602,7 +734,8 @@
     const o = (k, d) => ctx.opt(k, d);
     const on = o('on', 'correlations');
     const rot = o('rotation', null);
-    const res = await ctx.call('pca.fit', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), on, rotation: rot ? rot.method : null, n_rotate: rot ? rot.k : null, gamma: rot ? rot.gamma : null, kaiser: rot ? rot.kaiser !== false : true });
+    const res = await mcall(ctx, 'pca.fit', { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq'), on, rotation: rot ? rot.method : null, n_rotate: rot ? rot.k : null, gamma: rot ? rot.gamma : null, kaiser: rot ? rot.kaiser !== false : true,
+      plot: { x: o('pcx', 0), y: o('pcy', 1), ellipse: !!o('ellipse', false) } });
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     const k = res.eigenvalues.length;
@@ -613,7 +746,8 @@
       const ob = ctx.outline('Summary Plots', { key: 'summary', info: 'pca:summary' });
       const choose = controls(control('Select component, x', selectEl(cx, res.eigenvalues.map((_, j) => [j, comp(j)]), (v) => ctx.set('pcx', +v), 'x component')),
         control('y', selectEl(cy, res.eigenvalues.map((_, j) => [j, comp(j)]), (v) => ctx.set('pcy', +v), 'y component')));
-      ob.add(ctx.row(eigenBars(ctx, res, 250, 240), scorePlot(ctx, res, cx, cy, 300, 280, o('ellipse', false)), loadingPlot(ctx, res.loadings, names, cx, cy, 300, 280, on !== 'unscaled', comp)), choose);
+      ob.add(ctx.row(withCode(eigenBars(ctx, res, 250, 240), ctx.code(res.eigen_code)), withCode(scorePlot(ctx, res, cx, cy, 300, 280, o('ellipse', false)), ctx.code(res.score_summary_code)),
+        withCode(loadingPlot(ctx, res.loadings, names, cx, cy, 300, 280, on !== 'unscaled', comp), ctx.code(res.loading_summary_code))), choose);
     }
     if (o('eigen', true)) {
       const ob = ctx.outline('Eigenvalues', { key: 'eigen', menu: () => [ctx.check('Bartlett Test', 'bartlett', null, false)] });
@@ -632,10 +766,10 @@
     if (o('fmtload', false)) formattedLoadings(ctx, res, names, comp);
     if (o('corrmat', false) && res.corr) ctx.outline('Correlations', { key: 'corrmat' }).add(matrixTable(ctx, names, res.corr, { digits: 4 }));
     if (o('covmat', false)) ctx.outline(on === 'unscaled' ? "Cross Products X′X/n" : on === 'correlations' ? 'Correlation Matrix (analysed)' : 'Covariance Matrix', { key: 'covmat' }).add(matrixTable(ctx, names, res.matrix));
-    if (o('scree', false)) ctx.outline('Scree Plot', { key: 'scree' }).add(screePlot(ctx, res.eigenvalues, 'Eigenvalue', on === 'correlations'));
-    if (o('score', false)) ctx.outline('Score Plot', { key: 'score' }).add(scorePlot(ctx, res, cx, cy, 440, 380, o('ellipse', false)));
-    if (o('loadplot', false)) ctx.outline('Loading Plot', { key: 'loadplot' }).add(loadingPlot(ctx, res.loadings, names, cx, cy, 420, 380, on !== 'unscaled', comp));
-    if (o('biplot', false)) ctx.outline('Biplot', { key: 'biplot' }).add(biplot(ctx, res, names, cx, cy), ctx.note('The scores as points and the loadings as rays, the rays scaled to the spread of the scores.'));
+    if (o('scree', false)) ctx.outline('Scree Plot', { key: 'scree' }).add(screePlot(ctx, res.eigenvalues, 'Eigenvalue', on === 'correlations'), ctx.code(res.scree_code));
+    if (o('score', false)) ctx.outline('Score Plot', { key: 'score' }).add(scorePlot(ctx, res, cx, cy, 440, 380, o('ellipse', false)), ctx.code(res.score_code));
+    if (o('loadplot', false)) ctx.outline('Loading Plot', { key: 'loadplot' }).add(loadingPlot(ctx, res.loadings, names, cx, cy, 420, 380, on !== 'unscaled', comp), ctx.code(res.loading_code));
+    if (o('biplot', false)) ctx.outline('Biplot', { key: 'biplot' }).add(biplot(ctx, res, names, cx, cy), ctx.code(res.biplot_code), ctx.note('The scores as points and the loadings as rays, the rays scaled to the spread of the scores.'));
     if (res.rotation) rotatedOutline(ctx, res, names);
   }
 
@@ -720,7 +854,7 @@
     ob.add(ctx.rt({ columns: [{ key: 'f', label: '', fmt: 'text' }, { key: 'v', label: 'Variance', digits: 4 }, { key: 'pct', label: 'Percent', digits: 3 }], rows: fac.map((f, j) => ({ f, v: R.variance[j], pct: (100 * R.variance[j]) / res.eigenvalues.reduce((a, b) => a + b, 0) })), caption: R.kind === 'oblique' ? 'Variance Explained by Each Factor (ignoring the others)' : 'Variance Explained by Each Factor' }, { sortable: false }));
     ob.add(matrixTable(ctx, fac, R.T, { rowNames: fac, digits: 5, caption: 'Rotation Matrix' }));
     if (R.kind === 'oblique') ob.add(matrixTable(ctx, fac, R.phi, { rowNames: fac, digits: 4, caption: 'Factor Correlations' }));
-    if (R.k >= 2) ob.add(loadingPlot(ctx, R.loadings, names, 0, 1, 380, 340, true, (j) => fac[j]));
+    if (R.k >= 2) ob.add(loadingPlot(ctx, R.loadings, names, 0, 1, 380, 340, true, (j) => fac[j]), ctx.code(res.rotated_code));
     ob.add(ctx.note(`The first ${R.k} components' loadings rotated by statsmodels' factor_rotation${R.kaiser ? ', with Kaiser\'s normalization (as SAS)' : ''}. ${R.kind === 'oblique' ? 'Oblique: the rotated components are correlated.' : 'Orthogonal: the rotated components stay uncorrelated.'}`));
   }
 
@@ -731,7 +865,7 @@
   }
 
   async function pcaSave(ctx) {
-    const res = await ctx.call('pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on: ctx.opt('on', 'correlations') });
+    const res = await mcall(ctx, 'pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on: ctx.opt('on', 'correlations') });
     if (res.error) { SM.ui.toast(res.error, { error: true }); return; }
     const k = res.eigenvalues.length;
     const dflt = Math.max(1, res.eigenvalues.filter((e) => e >= 1).length);
@@ -815,7 +949,7 @@
         ctx.check('Score Plot', 'score', null, false), ctx.check('Loading Plot', 'loadplot', null, false), ctx.check('Score Ellipses', 'ellipse', null, false),
         { separator: true },
         { label: 'Factor Rotation…', action: () => rotationDialog(ctx) },
-        { label: 'Save Columns', submenu: () => [{ label: 'Save Principal Components…', action: () => pcaSave(ctx) }, { label: 'Save Rotated Components', disabled: !ctx.opt('rotation', null), action: async () => { const r = await ctx.call('pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on, rotation: ctx.opt('rotation').method, n_rotate: ctx.opt('rotation').k, gamma: ctx.opt('rotation').gamma, kaiser: ctx.opt('rotation').kaiser !== false }); saveRotated(ctx, r); } }] },
+        { label: 'Save Columns', submenu: () => [{ label: 'Save Principal Components…', action: () => pcaSave(ctx) }, { label: 'Save Rotated Components', disabled: !ctx.opt('rotation', null), action: async () => { const r = await mcall(ctx, 'pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on, rotation: ctx.opt('rotation').method, n_rotate: ctx.opt('rotation').k, gamma: ctx.opt('rotation').gamma, kaiser: ctx.opt('rotation').kaiser !== false }); saveRotated(ctx, r); } }] },
       ];
     },
     render: pcaRender,
@@ -840,11 +974,11 @@
     const names = ctx.names('y');
     const o = (k, d) => ctx.opt(k, d);
     const base = { columns: names, weight: ctx.name('weight'), freq: ctx.name('freq') };
-    const pre = await ctx.call('factor.eigen', base);
+    const pre = await mcall(ctx, 'factor.eigen', base);
     if (pre.error) { ctx.container.append(ctx.warn(pre.error)); return; }
     ctx.container.append(ctx.note(`${fmt(pre.n)} observations of ${names.length} columns, on the correlation matrix${pre.n_rows < ctx.rows.length ? `; ${dropped(ctx.rows.length - pre.n_rows)}` : ''}.`));
     if (o('eigen', true)) ctx.outline('Eigenvalues', { key: 'eigen' }).add(eigenTable(ctx, pre.eigen), ctx.note(`${pre.n_default} eigenvalue${pre.n_default > 1 ? 's' : ''} of at least 1: the default number of factors.`), ctx.code(pre.code));
-    if (o('scree', true)) ctx.outline('Scree Plot', { key: 'scree' }).add(screePlot(ctx, pre.eigen.values, 'Eigenvalue', true));
+    if (o('scree', true)) ctx.outline('Scree Plot', { key: 'scree' }).add(screePlot(ctx, pre.eigen.values, 'Eigenvalue', true), ctx.code(pre.scree_code));
     if (o('sphericity', false)) {
       const ob = ctx.outline("Bartlett's Test of Sphericity", { key: 'sphericity' });
       if (pre.sphericity) ob.add(ctx.rt({ columns: [{ key: 'chi2', label: 'ChiSquare', digits: 4 }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: [pre.sphericity] }, { sortable: false }), ctx.note('H0: the correlation matrix is the identity. χ² = −(n − 1 − (2p + 5)/6) ln|R|, p(p − 1)/2 df.'));
@@ -895,8 +1029,9 @@
   }
 
   async function faFit(ctx, base, fit, i) {
-    const r = await ctx.call('factor.fit', { ...base, n_factors: fit.k, method: fit.method, prior: fit.prior, rotation: fit.rotation === 'none' ? null : fit.rotation, gamma: fit.gamma, kaiser: fit.kaiser !== false });
     const sc = `fa${fit.id ?? i}`;   // a fit keeps its options when an earlier one is removed
+    const r = await mcall(ctx, 'factor.fit', { ...base, n_factors: fit.k, method: fit.method, prior: fit.prior, rotation: fit.rotation === 'none' ? null : fit.rotation, gamma: fit.gamma, kaiser: fit.kaiser !== false,
+      plot: { x: ctx.opt('fx', 0, sc), y: ctx.opt('fy', 1, sc) } });
     const o = (k, d) => ctx.opt(k, d, sc);
     const names = base.columns;
     const title = r.error && !r.k ? 'Factor Analysis' : `Factor Analysis on Correlations with ${r.k} Factor${r.k > 1 ? 's' : ''}: ${FA_METHOD[r.method]}, ${r.rotation_label || 'no'} Rotation`;
@@ -934,13 +1069,13 @@
     }
     if (o('loadplot', true) && r.k >= 2) {
       const a = Math.min(o('fx', 0), r.k - 1), b = Math.min(o('fy', 1), r.k - 1);
-      ob.add(loadingPlot(ctx, r.rotated, names, a, b, 380, 340, true, (j) => fac[j]),
+      ob.add(loadingPlot(ctx, r.rotated, names, a, b, 380, 340, true, (j) => fac[j]), ctx.code(r.loading_code),
         r.k > 2 ? controls(control('x', selectEl(a, fac.map((f, j) => [j, f]), (v) => ctx.set('fx', +v, sc))), control('y', selectEl(b, fac.map((f, j) => [j, f]), (v) => ctx.set('fy', +v, sc)))) : null);
     }
     if (o('scoreplot', false)) {
       const a = Math.min(o('fx', 0), r.k - 1), b = r.k > 1 ? Math.min(o('fy', 1), r.k - 1) : 0;
       ob.add(ctx.plot([{ type: 'scatter', mode: 'markers', x: r.scores.map((s) => s[a]), y: r.scores.map((s) => (r.k > 1 ? s[b] : 0)), rows: r.rows, hovertext: rowLabels(ctx, r.rows), hovertemplate: '%{hovertext}<br>(%{x:.3f}, %{y:.3f})<extra></extra>' }],
-        { xaxis: { title: { text: fac[a] }, zeroline: true }, yaxis: { title: { text: r.k > 1 ? fac[b] : '' }, zeroline: true } }, { width: fitW(420), height: 360, title: 'Score Plot' }));
+        { xaxis: { title: { text: fac[a] }, zeroline: true }, yaxis: { title: { text: r.k > 1 ? fac[b] : '' }, zeroline: true } }, { width: fitW(420), height: 360, title: 'Score Plot' }), ctx.code(r.score_code));
     }
     ob.add(ctx.code(r.code));
   }
@@ -1022,7 +1157,8 @@
 
   function discCall(ctx, ycols) {
     const o = (k, d) => ctx.opt(k, d);
-    return ctx.call('discriminant.fit', { y: ycols, x: ctx.name('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('method', 'linear'), lam: o('lam', 0.5), gam: o('gam', 0), priors: o('priors', 'equal'), prior_values: o('priorValues', null), alpha: ctx.alpha });
+    return mcall(ctx, 'discriminant.fit', { y: ycols, x: ctx.name('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('method', 'linear'), lam: o('lam', 0.5), gam: o('gam', 0), priors: o('priors', 'equal'), prior_values: o('priorValues', null), alpha: ctx.alpha,
+      plot: { points: !!o('cpPoints', true), cl: !!o('cpCL', true), c50: !!o('cp50', false), rays: !!o('cpRays', true) } });
   }
 
   function discColumns(ctx) {
@@ -1108,7 +1244,7 @@
       showlegend: true, legend: { orientation: 'h', y: -0.2 }, annotations,
       xaxis: { title: { text: 'Canonical1' }, zeroline: true },
       yaxis: two ? { title: { text: 'Canonical2' }, zeroline: true, scaleanchor: 'x' } : { title: { text: '' }, tickvals: labels.map((_, t) => t), ticktext: labels, range: [-0.8, T + 0.2] },
-    }, { width: fitW(540), height: two ? 460 : 320, title: 'Canonical Plot' }),
+    }, { width: fitW(540), height: two ? 460 : 320, title: 'Canonical Plot' }), ctx.code(res.canonical_code),
     ctx.note(`${two ? 'The first two canonical variables' : 'The canonical variable (two groups)'}: the directions that separate the groups best, scaled to unit pooled within-group variance. + marks each group mean${o('cpCL', true) ? ', with its 95% confidence region' : ''}${o('cp50', false) ? '; dotted: where half of a group\'s rows fall' : ''}${o('cpRays', true) ? '; the rays are the standardized scoring coefficients × 1.5' : ''}.`));
   }
 
@@ -1131,7 +1267,7 @@
     decorate(tbl, (tr, row) => { const td = tr.cells[5]; td.classList.add('mv-barcell'); cellBar(td, row.nl, 0, mx, row.mis ? RED : SM.report.BAR); tr.cells[6].classList.toggle('mv-hit', !!row.mis); });
     const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x: res.rows.map((r) => r + 1), y: res.neg_log_prob, rows: res.rows, marker: { size: 6, color: res.misclassified.map((m) => (m ? RED : SM.report.BASE)), symbol: res.misclassified.map((m) => (m ? 'x' : 'circle')) }, hovertext: res.rows.map((r, k) => `${rowLabels(ctx, [r])[0]}: ${labels[res.actual[k]]} → ${labels[res.pred[k]]}`), hovertemplate: '%{hovertext}<br>−log(prob) %{y:.3f}<extra></extra>' }],
       { xaxis: { title: { text: 'Row Number' } }, yaxis: { title: { text: '−Log(Prob(Actual))' }, rangemode: 'tozero' } }, { width: fitW(520), height: 230, title: 'Discriminant scores by row' });
-    ob.add(tbl, plot, ctx.note(`${interesting ? 'Misclassified rows and rows whose predicted probability is between 0.05 and 0.95. ' : ''}* marks a misclassified row; a click on a line selects the row. The bar is −log of the probability of the actual group: long bars are rows the model predicts badly.`));
+    ob.add(tbl, plot, ctx.code(res.scores_code), ctx.note(`${interesting ? 'Misclassified rows and rows whose predicted probability is between 0.05 and 0.95. ' : ''}* marks a misclassified row; a click on a line selects the row. The bar is −log of the probability of the actual group: long bars are rows the model predicts badly.`));
   }
 
   function scoreSummaries(ctx, res, labels) {
@@ -1334,7 +1470,7 @@
     const names = cols.map((c) => c.name);
     const o = (k, d) => ctx.opt(k, d);
     const method = o('method', 'ward'), standardize = o('standardize', 'columns');
-    const res = await ctx.call('hcluster.fit', { columns: names, method, standardize, two_way: o('twoWay', false) });
+    const res = await mcall(ctx, 'hcluster.fit', { columns: names, method, standardize, two_way: o('twoWay', false), label: labelName(ctx), n_clusters: o('ncluster', null) });
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     const n = res.n;
@@ -1374,7 +1510,8 @@
       const crit = res.criterion.filter((c) => c.k >= 1);
       const ob = ctx.outline('Cluster Criterion', { key: 'criterion', info: 'mv:ccc' });
       ob.add(ctx.rt({ columns: [{ key: 'k', label: 'Number of Clusters', fmt: 'int' }, { key: 'ccc', label: 'CCC', digits: 4 }, { key: 'r2', label: 'RSquare', digits: 4 }, { key: 'er2', label: 'Approx Expected RSquare', digits: 4 }], rows: crit }, { maxRows: 200 }),
-        ctx.plot([{ type: 'scatter', mode: 'lines+markers', x: crit.map((c) => c.k), y: crit.map((c) => c.ccc), line: { color: SM.report.BASE }, hovertemplate: '%{x} clusters: CCC %{y:.3f}<extra></extra>' }], { xaxis: { title: { text: 'Number of Clusters' } }, yaxis: { title: { text: 'CCC' } } }, { width: fitW(420), height: 240, title: 'Cubic clustering criterion', select: false }));
+        ctx.plot([{ type: 'scatter', mode: 'lines+markers', x: crit.map((c) => c.k), y: crit.map((c) => c.ccc), line: { color: SM.report.BASE }, hovertemplate: '%{x} clusters: CCC %{y:.3f}<extra></extra>' }], { xaxis: { title: { text: 'Number of Clusters' } }, yaxis: { title: { text: 'CCC' } } }, { width: fitW(420), height: 240, title: 'Cubic clustering criterion', select: false }),
+        ctx.code(res.ccc_code));
     }
     if (o('summary', false)) clusterSummary(ctx, cols, members, 'Cluster Summary');
     if (o('twoWay', false) && res.col_order && res.data) {
@@ -1384,7 +1521,7 @@
       const tall = n <= 150;
       ob.add(ctx.plot([{ type: 'heatmap', z, x: colo.map((j) => names[j]), y: order.map((i) => i), colorscale: standardize === 'none' ? 'Viridis' : divergingScale(), zmid: standardize === 'none' ? undefined : 0, hovertemplate: '%{x}: %{z:.3f}<extra></extra>', colorbar: { thickness: 10 } }],
         { yaxis: { autorange: 'reversed', tickvals: tall ? order.map((i) => i) : [], ticktext: tall ? order.map((i) => names0[i]) : [], type: 'category', showgrid: false }, xaxis: { type: 'category', showgrid: false, tickangle: -35 }, margin: { l: 70, r: 10, t: 8, b: 70 } },
-        { width: fitW(Math.min(760, 120 + 40 * names.length)), height: tall ? Math.max(260, 13 * n + 90) : 600, title: 'Two way clustering', select: false }),
+        { width: fitW(Math.min(760, 120 + 40 * names.length)), height: tall ? Math.max(260, 13 * n + 90) : 600, title: 'Two way clustering', select: false }), ctx.code(res.twoway_code),
       ctx.note(`Rows in the order of the dendrogram, columns in the order of their own clustering (${method === 'centroid' ? 'Ward' : HMETHODS.find((m) => m[0] === method)[1]} on the columns); the colours are the ${standardize === 'none' ? 'values' : 'standardized values'}.`));
     }
     box.append(ctx.code(res.code));
@@ -1439,7 +1576,9 @@
     slider.addEventListener('input', () => { val.textContent = slider.value; });
     slider.addEventListener('change', () => ctx.set('ncluster', +slider.value));
     const ob = ctx.outline('Dendrogram', { key: 'dendro', info: 'hc:dendro' });
-    ob.add(controls(control('Number of clusters', slider), val, button('−', () => ctx.set('ncluster', Math.max(1, k - 1))), button('+', () => ctx.set('ncluster', Math.min(n, k + 1)))), dendro);
+    // the dendrogram's code with Color Clusters written in (the backend writes the number of clusters)
+    const dendroCode = withChoice(res.dendro_code, HC_COLOR, colored ? 'color_clusters = True   # Color Clusters' : HC_COLOR);
+    ob.add(controls(control('Number of clusters', slider), val, button('−', () => ctx.set('ncluster', Math.max(1, k - 1))), button('+', () => ctx.set('ncluster', Math.min(n, k + 1)))), dendro, ctx.code(dendroCode));
     ob.add(el('div', { class: 'mv-legend' }, ...members.map((rs, c) => {
       const b = el('button', { type: 'button', title: `Select the rows of cluster ${c + 1}` }, el('span', { class: 'mv-swatch', style: { background: colored ? pal(c) : tc.muted } }), `${c + 1}: ${rs.length}`);
       b.addEventListener('click', (ev) => ctx.table.select(rs, ev.shiftKey ? 'add' : 'replace'));
@@ -1451,7 +1590,8 @@
       for (let s = n - 2; s >= n - 1 - m && s >= 0; s--) { ks.push(n - 1 - s); ds.push(heights[s]); }
       ob.add(ctx.plot([{ type: 'scatter', mode: 'lines+markers', x: ks, y: ds, line: { color: SM.report.BASE, width: 1.3 }, marker: { size: 5 }, hovertemplate: '%{x} clusters: joined at %{y:.4g}<extra>click: choose</extra>' }],
         { xaxis: { title: { text: 'Number of Clusters' }, autorange: 'reversed' }, yaxis: { title: { text: 'Distance' }, rangemode: 'tozero' }, shapes: [{ type: 'line', x0: k, x1: k, yref: 'paper', y0: 0, y1: 1, line: { color: RED, width: 1, dash: 'dash' } }] },
-        { width: fitW(600), height: 200, title: 'Distance Graph', select: false, onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('ncluster', pt.x); }) }));
+        { width: fitW(600), height: 200, title: 'Distance Graph', select: false, onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('ncluster', pt.x); }) }),
+        ctx.code(res.distgraph_code));
     }
     ob.add(ctx.note('Drag the slider, click a point of the distance graph or use Number of Clusters… to choose the clusters; click a join to select its rows, or a cluster in the legend.'));
   }
@@ -1473,7 +1613,7 @@
 
   async function hcSave(ctx, what) {
     const names = ctx.names('y');
-    const res = await ctx.call('hcluster.fit', { columns: names, method: ctx.opt('method', 'ward'), standardize: ctx.opt('standardize', 'columns'), two_way: ctx.opt('twoWay', false) });
+    const res = await mcall(ctx, 'hcluster.fit', { columns: names, method: ctx.opt('method', 'ward'), standardize: ctx.opt('standardize', 'columns'), two_way: ctx.opt('twoWay', false), label: labelName(ctx), n_clusters: ctx.opt('ncluster', null) });
     if (res.error) { SM.ui.toast(res.error, { error: true }); return; }
     const k = Math.max(1, Math.min(res.n, Math.round(ctx.opt('ncluster', null) ?? defaultClusters(res.heights, res.n))));
     if (what === 'order') { const q = new Array(res.n); res.order.forEach((leaf, i) => { q[leaf] = i + 1; }); ctx.saveColumn('Display Order', { rows: res.rows, values: q }); return; }
@@ -1552,7 +1692,7 @@
     const o = (k, d) => ctx.opt(k, d);
     const kmin = Math.max(1, Math.round(o('k', 3)));
     const kmax = o('kRange', null);
-    return ctx.call('kmeans.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), k_min: kmin, k_max: kmax && kmax > kmin ? Math.round(kmax) : kmin, standardize: o('scaled', true), seed: o('seed', 20260926), restarts: o('restarts', 10) });
+    return mcall(ctx, 'kmeans.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), k_min: kmin, k_max: kmax && kmax > kmin ? Math.round(kmax) : kmin, standardize: o('scaled', true), seed: o('seed', 20260926), restarts: o('restarts', 10) });
   }
 
   async function kmRender(ctx) {
@@ -1622,8 +1762,8 @@
       b.addEventListener('click', (ev) => ctx.table.select(rs, ev.shiftKey ? 'add' : 'replace'));
       return b;
     })));
-    if (o('biplot', true)) ob.add(kmBiplot(ctx, res, f, cols, o('rays', true)));
-    if (o('pcp', false)) ob.add(kmParallel(ctx, res, f, cols));
+    if (o('biplot', true)) ob.add(kmBiplot(ctx, res, f, cols, o('rays', true)), ctx.code(o('rays', true) ? f.biplot_code : withChoice(f.biplot_code, KM_RAYS, 'show_rays = False   # Biplot Rays')));
+    if (o('pcp', false)) ob.add(kmParallel(ctx, res, f, cols), ctx.code(f.parallel_code));
     if (o('splom', false)) ob.add(kmSplom(ctx, res, f, cols));
   }
 
@@ -1680,7 +1820,11 @@
 
   function kmSplom(ctx, res, f, cols) {
     const box = el('div');
-    box.append(scatterMatrix(ctx, cols, res.rows, { format: 'lower', points: true, ellipses: false, corr: false, hist: false, fit: false, level: 0.9 }));
+    const names = cols.map((c) => c.name), w = ctx.name('weight'), fq = ctx.name('freq');
+    const frame = w || fq
+      ? [`X = df[${J(names)}]`, `w = ${[w, fq].filter(Boolean).map((c) => `df[${J(c)}]`).join(' * ')}`, 'X = X[X.notna().all(axis=1) & w.gt(0)]   # the rows the clusters were fitted to: every column and a positive weight']
+      : [`X = df[${J(names)}].dropna()   # the rows the clusters were fitted to: every column`];
+    box.append(...scatterMatrix(ctx, cols, res.rows, { format: 'lower', points: true, ellipses: false, corr: false, hist: false, fit: false, level: 0.9 }, frame).filter(Boolean));
     box.append(ctx.note('Colour the rows by cluster (Save Colors to Table) to see the clusters here.'));
     return box;
   }
@@ -1760,7 +1904,7 @@
 
   async function rsRender(ctx) {
     const o = (k, d) => ctx.opt(k, d);
-    const res = await ctx.call('respscreen.fit', { y: ctx.names('y'), x: ctx.names('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha, max_logworth: o('maxLogworth', 1000) });
+    const res = await mcall(ctx, 'respscreen.fit', { y: ctx.names('y'), x: ctx.names('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), alpha: ctx.alpha, max_logworth: o('maxLogworth', 1000) });
     const box = ctx.container;
     const all = res.results;
     const tested = all.filter((r) => r.p != null);
@@ -1783,7 +1927,7 @@
         { type: 'scatter', mode: 'markers', x: rf, y: byRank.map((i) => floor(all[i].fdr_p)), customdata: byRank, marker: { color: '#2f6ec7', size: 6, symbol: 'diamond' }, name: 'FDR PValue', hovertext: byRank.map((i) => hover[idx.indexOf(i)]), hovertemplate: '%{hovertext}<extra>FDR PValue</extra>' },
         { type: 'scatter', mode: 'lines', x: [0, 1], y: [a, a], line: { color: '#2f6ec7', width: 1.2 }, hoverinfo: 'skip', name: `α = ${a}` },
         { type: 'scatter', mode: 'lines', x: Array.from({ length: 51 }, (_, q) => Math.max(1e-3, q / 50)), y: Array.from({ length: 51 }, (_, q) => a * Math.max(1e-3, q / 50)), line: { color: RED, width: 1.2, dash: 'dot' }, hoverinfo: 'skip', name: 'FDR threshold for p' },
-      ], { showlegend: true, legend: { orientation: 'h', y: -0.25 }, xaxis: { title: { text: 'Rank Fraction' }, range: [0, 1.02] }, yaxis: { title: { text: 'PValue' }, type: 'log', exponentformat: 'power' } }, { width: fitW(520), height: 340, title: 'FDR PValue Plot', select: false, onDraw: click }),
+      ], { showlegend: true, legend: { orientation: 'h', y: -0.25 }, xaxis: { title: { text: 'Rank Fraction' }, range: [0, 1.02] }, yaxis: { title: { text: 'PValue' }, type: 'log', exponentformat: 'power' } }, { width: fitW(520), height: 340, title: 'FDR PValue Plot', select: false, onDraw: click }), ctx.code(res.fdr_code),
       ctx.note('The p-values (red) and the FDR-adjusted p-values (blue) in order of significance. A test is significant at the false discovery rate α where its FDR p-value is below the blue line, or equally where its p-value is below the dotted red line. Click a point for its Fit Y by X.'));
     }
     if (o('lwEffect', true)) {
@@ -1791,13 +1935,13 @@
         type: 'scatter', mode: 'markers', x: idx.map((i) => all[i].effect), y: idx.map((i) => all[i].fdr_logworth), customdata: idx, hovertext: hover, hovertemplate: '%{hovertext}<br>effect size %{x:.4g}<extra></extra>',
         marker: { size: 7, color: idx.map((i) => (all[i].fdr_p < a ? RED : SM.util.themeColors().muted)) },
       }], { xaxis: { title: { text: 'Effect Size' }, rangemode: 'tozero' }, yaxis: { title: { text: 'FDR LogWorth' }, rangemode: 'tozero' }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 2, y1: 2, line: { color: RED, width: 1, dash: 'dot' } }] },
-      { width: fitW(500), height: 320, title: 'FDR LogWorth by Effect Size', select: false, onDraw: click }),
+      { width: fitW(500), height: 320, title: 'FDR LogWorth by Effect Size', select: false, onDraw: click }), ctx.code(res.effect_code),
       ctx.note('FDR LogWorth −log10(FDR p) against the effect size: √(model mean square)/robust σ for a continuous Y (σ from the IQR/1.349 unless the IQR is too small), √(χ²/DF) for a categorical one. The dotted line is FDR p = 0.01. Click a point for its Fit Y by X.'));
     }
     if (o('lwR2', false)) {
       const cy = idx.filter((i) => all[i].r2 != null);
       ctx.outline('FDR LogWorth by RSquare', { key: 'lwr2' }).add(ctx.plot([{ type: 'scatter', mode: 'markers', x: cy.map((i) => all[i].r2), y: cy.map((i) => all[i].fdr_logworth), customdata: cy, hovertext: cy.map((i) => hover[idx.indexOf(i)]), hovertemplate: '%{hovertext}<br>RSquare %{x:.4f}<extra></extra>', marker: { size: 7, color: SM.report.BASE } }],
-        { xaxis: { title: { text: 'RSquare' }, range: [0, 1] }, yaxis: { title: { text: 'FDR LogWorth' }, rangemode: 'tozero' } }, { width: fitW(480), height: 300, title: 'FDR LogWorth by RSquare', select: false, onDraw: click }));
+        { xaxis: { title: { text: 'RSquare' }, range: [0, 1] }, yaxis: { title: { text: 'FDR LogWorth' }, rangemode: 'tozero' } }, { width: fitW(480), height: 300, title: 'FDR LogWorth by RSquare', select: false, onDraw: click }), ctx.code(res.r2_code));
     }
     const rows = all.slice().sort((p, q) => (q.fdr_logworth ?? -1) - (p.fdr_logworth ?? -1));
     ctx.outline('PValues', { key: 'pvalues' }).add(ctx.rt({
@@ -1904,7 +2048,7 @@
   async function qroOutline(ctx, names) {
     const o = (k, d) => ctx.opt(k, d);
     const tail = o('tail', 0.1), q = o('q', 3), ints = o('integers', false), only = o('onlyOutliers', false);
-    const r = await ctx.call('outliers.quantile', { columns: names, tail, q, integers: ints });
+    const r = await mcall(ctx, 'outliers.quantile', { columns: names, tail, q, integers: ints });
     const ob = ctx.outline('Quantile Range Outliers', { key: 'qro', info: 'eo:qro', menu: () => [{ label: 'Close', action: () => ctx.set('qro', false) }] });
     const ib = el('input', { type: 'checkbox', 'aria-label': 'Restrict search to integers' });
     ib.checked = !!ints;
@@ -1936,7 +2080,7 @@
   async function rfoOutline(ctx, names) {
     const o = (k, d) => ctx.opt(k, d);
     const method = o('rfMethod', 'huber'), K = o('kSigma', 4);
-    const r = await ctx.call('outliers.robust', { columns: names, method, k: K });
+    const r = await mcall(ctx, 'outliers.robust', { columns: names, method, k: K });
     const ob = ctx.outline('Robust Fit Outliers', { key: 'rfo', info: 'eo:rfo', menu: () => [{ label: 'Close', action: () => ctx.set('rfo', false) }] });
     ob.add(controls(control('Method', selectEl(method, [['huber', 'Huber'], ['cauchy', 'Cauchy'], ['quartile', 'Quartile']], (v) => ctx.set('rfMethod', v), 'Robust method')), control('K Sigma', numberEl(K, (v) => { if (v > 0) ctx.set('kSigma', v); }, { size: 4, aria: 'K sigma' }))));
     const cols = r.columns.filter((c) => c.center != null);
@@ -1950,7 +2094,7 @@
   }
 
   async function mroOutline(ctx, names) {
-    const r = await ctx.call('outliers.multivariate', { columns: names, alpha: ctx.alpha });
+    const r = await mcall(ctx, 'outliers.multivariate', { columns: names, alpha: ctx.alpha });
     const ob = ctx.outline('Multivariate Robust Outliers', { key: 'mro', info: 'eo:mro', menu: () => [
       { label: 'Save Robust Distances', action: () => { if (!r.error) ctx.saveColumn('Robust Distance', { rows: r.rows, values: r.robust }, { notes: `robust Mahalanobis distance (reweighted MCD); limit ${fmt(r.limit)}` }); } },
       { label: 'Close', action: () => ctx.set('mro', false) },
@@ -1958,20 +2102,20 @@
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const out = r.rows.filter((_, k) => r.robust[k] > r.limit);
     ob.add(eoActions(ctx, () => out, `${out.length} row${out.length === 1 ? '' : 's'} above the limit`),
-      ctx.row(rowPlot(ctx, { rows: r.rows, y: r.robust, limit: r.limit, limitLabel: `√χ²(${fmt(1 - ctx.alpha)}, ${r.p})`, ytitle: 'Robust Distance', title: 'Robust distances by row', width: 520 }),
-        ctx.plot([{ type: 'scatter', mode: 'markers', x: r.classical, y: r.robust, rows: r.rows, hovertext: rowLabels(ctx, r.rows), hovertemplate: '%{hovertext}<br>classical %{x:.3f}, robust %{y:.3f}<extra></extra>', marker: { size: 5 } }],
+      ctx.row(withCode(rowPlot(ctx, { rows: r.rows, y: r.robust, limit: r.limit, limitLabel: `√χ²(${fmt(1 - ctx.alpha)}, ${r.p})`, ytitle: 'Robust Distance', title: 'Robust distances by row', width: 520 }), ctx.code(r.robust_code)),
+        withCode(ctx.plot([{ type: 'scatter', mode: 'markers', x: r.classical, y: r.robust, rows: r.rows, hovertext: rowLabels(ctx, r.rows), hovertemplate: '%{hovertext}<br>classical %{x:.3f}, robust %{y:.3f}<extra></extra>', marker: { size: 5 } }],
           { xaxis: { title: { text: 'Mahalanobis Distance' }, rangemode: 'tozero' }, yaxis: { title: { text: 'Robust Distance' }, rangemode: 'tozero' }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.limit, y1: r.limit, line: { color: RED, width: 1, dash: 'dash' } }, { type: 'line', yref: 'paper', x0: r.limit, x1: r.limit, y0: 0, y1: 1, line: { color: RED, width: 1, dash: 'dash' } }] },
-          { width: 360, height: 250, title: 'Distance-distance plot' })),
+          { width: 360, height: 250, title: 'Distance-distance plot' }), ctx.code(r.dd_code))),
       ctx.note(`Robust distances from the reweighted minimum covariance determinant estimate (FAST-MCD, the ${r.h} rows of ${r.n} with the smallest covariance determinant, then reweighted), against the classical Mahalanobis distances. Outliers mask one another in the classical distances; the robust ones show them. The limit is the square root of the ${fmt(1 - ctx.alpha)} χ² quantile with ${r.p} df.`), ctx.code(r.code));
   }
 
   async function knnOutline(ctx, names) {
     const K = ctx.opt('knnK', 8);
-    const r = await ctx.call('outliers.knn', { columns: names, k: K });
+    const r = await mcall(ctx, 'outliers.knn', { columns: names, k: K });
     const ob = ctx.outline('Multivariate k-Nearest Neighbor Outliers', { key: 'knn', info: 'eo:knn', menu: () => [{ label: 'Close', action: () => ctx.set('knn', false) }] });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     ob.add(controls(control('K', numberEl(K, (v) => { if (v >= 1) ctx.set('knnK', Math.round(v)); }, { size: 3, aria: 'K' }))));
-    const plots = r.ks.map((k) => rowPlot(ctx, { rows: r.rows, y: r.dist[String(k)], ytitle: `Distance to neighbor ${k}`, title: `k = ${k}`, width: 380, height: 220 }));
+    const plots = r.ks.map((k, i) => withCode(rowPlot(ctx, { rows: r.rows, y: r.dist[String(k)], ytitle: `Distance to neighbor ${k}`, title: `k = ${k}`, width: 380, height: 220 }), ctx.code(r.plots && r.plots[i] ? r.plots[i].plot_code : null)));
     ob.add(ctx.row(...plots), ctx.note('The Euclidean distance from each row to its kth nearest neighbour (scipy cKDTree), for k = 1, 2, 3, 5, 8, … up to K, on columns centred at the median and scaled by max(Q3 − median, median − Q1)/z(0.75). An isolated row stands out for small k; a small group of outliers only once k passes its size. Drag over points to select them.'), ctx.code(r.code));
   }
 
@@ -2051,7 +2195,7 @@
   async function mcaRender(ctx) {
     const cols = ctx.roles('y');
     const o = (k, d) => ctx.opt(k, d);
-    const res = await ctx.call('mca.fit', { columns: cols.map((c) => c.name), freq: ctx.name('freq') });
+    const res = await mcall(ctx, 'mca.fit', { columns: cols.map((c) => c.name), freq: ctx.name('freq'), plot: { x: o('dx', 0), y: o('dy', 1) } });
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     const K = res.K;
@@ -2067,12 +2211,12 @@
         const L = res.levels.filter((lv) => lv.column === c.name);
         return { type: 'scatter', mode: L.length <= 40 ? 'markers+text' : 'markers', x: L.map((lv) => lv.coords[a]), y: L.map((lv) => (K > 1 ? lv.coords[b] : 0)), text: L.map(lab), textposition: 'top center', textfont: { size: 10, color: tc.text }, marker: { size: 8, color: pal(i), symbol: ['circle', 'square', 'diamond', 'triangle-up', 'cross', 'x'][i % 6] }, name: c.name, hovertemplate: `${tpl(c.name)}: %{text}<br>(%{x:.3f}, %{y:.3f})<extra></extra>` };
       });
-      ob.add(ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', y: -0.22 }, xaxis: { title: { text: dimLabel(a) }, zeroline: true }, yaxis: { title: { text: K > 1 ? dimLabel(b) : '' }, zeroline: true } }, { width: fitW(560), height: 440, title: 'Correspondence Analysis', select: false }),
+      ob.add(ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', y: -0.22 }, xaxis: { title: { text: dimLabel(a) }, zeroline: true }, yaxis: { title: { text: K > 1 ? dimLabel(b) : '' }, zeroline: true } }, { width: fitW(560), height: 440, title: 'Correspondence Analysis', select: false }), ctx.code(res.plot_code),
         dimPickers(ctx, K, a, b), ctx.note('The levels in principal coordinates: levels near each other are chosen by the same rows; a level far from the origin is rare or distinctive.'));
     }
     if (o('rowplot', false)) {
       ctx.outline('Row Plot', { key: 'rowplot' }).add(ctx.plot([{ type: 'scatter', mode: 'markers', x: res.row_coords.map((r) => r[Math.min(a, r.length - 1)]), y: res.row_coords.map((r) => (r.length > 1 ? r[Math.min(b, r.length - 1)] : 0)), rows: res.rows, hovertext: rowLabels(ctx, res.rows), hovertemplate: '%{hovertext}<extra></extra>', marker: { size: 5 } }],
-        { xaxis: { title: { text: dimLabel(Math.min(a, 3)) }, zeroline: true }, yaxis: { title: { text: K > 1 ? dimLabel(Math.min(b, 3)) : '' }, zeroline: true } }, { width: fitW(480), height: 380, title: 'MCA row plot' }),
+        { xaxis: { title: { text: dimLabel(Math.min(a, 3)) }, zeroline: true }, yaxis: { title: { text: K > 1 ? dimLabel(Math.min(b, 3)) : '' }, zeroline: true } }, { width: fitW(480), height: 380, title: 'MCA row plot' }), ctx.code(res.rows_code),
       ctx.note('Each row in principal coordinates (rows with the same levels coincide). Drag over points to select rows.'));
     }
     if (o('details', true)) {
@@ -2131,7 +2275,7 @@
         ctx.check('Show Plot', 'plot', null, true), ctx.check('Show Row Plot', 'rowplot', null, false), ctx.check('Show Detail', 'details', null, true), ctx.check('Show Adjusted Inertia', 'adjusted', null, false),
         ctx.check('Show Coordinates', 'coords', null, false), ctx.check('Show Summary Statistics', 'summary', null, false), ctx.check('Cross Table', 'cross', null, false),
         { separator: true },
-        { label: 'Save Row Coordinates', action: async () => { const r = await ctx.call('mca.fit', { columns: ctx.names('y'), freq: ctx.name('freq') }); if (r.error) { SM.ui.toast(r.error, { error: true }); return; } for (let j = 0; j < Math.min(2, r.K); j++) ctx.saveColumn(`MCA c${j + 1}`, { rows: r.rows, values: r.row_coords.map((x) => x[j]) }, { notes: `row coordinate ${j + 1} of the multiple correspondence analysis` }); } },
+        { label: 'Save Row Coordinates', action: async () => { const r = await mcall(ctx, 'mca.fit', { columns: ctx.names('y'), freq: ctx.name('freq') }); if (r.error) { SM.ui.toast(r.error, { error: true }); return; } for (let j = 0; j < Math.min(2, r.K); j++) ctx.saveColumn(`MCA c${j + 1}`, { rows: r.rows, values: r.row_coords.map((x) => x[j]) }, { notes: `row coordinate ${j + 1} of the multiple correspondence analysis` }); } },
       ];
     },
     render: mcaRender,
@@ -2144,7 +2288,7 @@
     const o = (k, d) => ctx.opt(k, d);
     const names = ctx.names('y');
     const matrix = o('format', 'attributes') === 'matrix';
-    const res = await ctx.call('mds.fit', { columns: names, standardize: o('standardize', true), matrix });
+    const res = await mcall(ctx, 'mds.fit', { columns: names, standardize: o('standardize', true), matrix, label: labelName(ctx) });
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     box.append(ctx.note(`${res.n} objects; classical (Torgerson) scaling of ${matrix ? 'the distance matrix in the columns' : `the Euclidean distances between the rows over ${names.length} column${names.length > 1 ? 's' : ''}${o('standardize', true) ? ', standardized' : ''}`}.`));
@@ -2153,7 +2297,7 @@
     const X = res.coords;
     const two = res.k >= 2;
     ctx.outline('Multidimensional Scaling Plot', { key: 'plot', info: 'p:mds' }).add(ctx.plot([{ type: 'scatter', mode: res.n <= 60 ? 'markers+text' : 'markers', x: X.map((r) => r[0]), y: X.map((r) => (two ? r[1] : 0)), rows: res.rows, text: res.n <= 60 ? lab : undefined, textposition: 'top center', textfont: { size: 9.5, color: tc.text }, hovertext: lab, hovertemplate: '%{hovertext}<br>(%{x:.3f}, %{y:.3f})<extra></extra>', marker: { size: 6 } }],
-      { xaxis: { title: { text: 'Dimension 1' }, zeroline: true }, yaxis: { title: { text: two ? 'Dimension 2' : '' }, zeroline: true, scaleanchor: 'x' } }, { width: fitW(520), height: 440, title: 'Multidimensional Scaling Plot' }),
+      { xaxis: { title: { text: 'Dimension 1' }, zeroline: true }, yaxis: { title: { text: two ? 'Dimension 2' : '' }, zeroline: true, scaleanchor: 'x' } }, { width: fitW(520), height: 440, title: 'Multidimensional Scaling Plot' }), ctx.code(res.plot_code),
     ctx.note('Objects close together in the map are close in the data. Drag over points to select rows.'));
     if (o('shepard', true)) {
       const S = res.shepard;
@@ -2161,7 +2305,7 @@
       ctx.outline('Shepard Diagram', { key: 'shepard' }).add(ctx.plot([
         { type: scatterType(S.d.length, 3000), mode: 'markers', x: S.d, y: S.dhat, marker: { size: 3, color: SM.report.BASE, opacity: 0.6 }, hoverinfo: 'skip' },
         { type: 'scatter', mode: 'lines', x: [0, mx], y: [0, mx], line: { color: RED, width: 1 }, hoverinfo: 'skip' },
-      ], { xaxis: { title: { text: 'Distance' }, rangemode: 'tozero' }, yaxis: { title: { text: 'Map Distance' }, rangemode: 'tozero' } }, { width: fitW(380), height: 320, title: 'Shepard Diagram', select: false }),
+      ], { xaxis: { title: { text: 'Distance' }, rangemode: 'tozero' }, yaxis: { title: { text: 'Map Distance' }, rangemode: 'tozero' } }, { width: fitW(380), height: 320, title: 'Shepard Diagram', select: false }), ctx.code(res.shepard_code),
       ctx.note(`The distances in the data against those in the two-dimensional map${res.n_pairs > S.d.length ? ` (a sample of ${S.d.length} of the ${res.n_pairs} pairs)` : ''}; on the line the map is exact.`));
     }
     if (o('fit', true)) ctx.outline('Fit Details', { key: 'fit' }).add(ctx.kv([['Stress (Kruskal, 2 dimensions)', res.stress], ['RSquare of the distances', res.r2], ['Objects', res.n, 'int'], ['Negative eigenvalues (share)', res.negative]]),
@@ -2205,7 +2349,7 @@
       return [
         ctx.check('Shepard Diagram', 'shepard', null, true), ctx.check('Fit Details', 'fit', null, true), ctx.check('Eigenvalues', 'eigen', null, false),
         { separator: true },
-        { label: 'Save Coordinates', action: async () => { const r = await ctx.call('mds.fit', { columns: ctx.names('y'), standardize: ctx.opt('standardize', true), matrix: ctx.opt('format', 'attributes') === 'matrix' }); if (r.error) { SM.ui.toast(r.error, { error: true }); return; } for (let j = 0; j < Math.min(2, r.k); j++) ctx.saveColumn(`MDS Dimension ${j + 1}`, { rows: r.rows, values: r.coords.map((x) => x[j]) }, { notes: `classical multidimensional scaling, dimension ${j + 1}` }); } },
+        { label: 'Save Coordinates', action: async () => { const r = await mcall(ctx, 'mds.fit', { columns: ctx.names('y'), standardize: ctx.opt('standardize', true), matrix: ctx.opt('format', 'attributes') === 'matrix', label: labelName(ctx) }); if (r.error) { SM.ui.toast(r.error, { error: true }); return; } for (let j = 0; j < Math.min(2, r.k); j++) ctx.saveColumn(`MDS Dimension ${j + 1}`, { rows: r.rows, values: r.coords.map((x) => x[j]) }, { notes: `classical multidimensional scaling, dimension ${j + 1}` }); } },
       ];
     },
     render: mdsRender,

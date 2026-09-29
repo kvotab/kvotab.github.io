@@ -322,4 +322,210 @@ for d in ('ff:16', 'pb:12', 'full'):
     check(f'the {d} screening code shows orthogonal columns', run_code(r['code']).strip().startswith('[['), True)
 run_code(call('doe.full_factorial', factors=fs, seed=3)['code'])
 check('the full factorial code runs', True, True)
+
+# ---------------------------------------------------------------------------
+# The graphs' matplotlib code (and the Design Diagnostics' code), run on the whole table's CSV
+import os  # noqa: E402
+import tempfile  # noqa: E402
+import warnings  # noqa: E402
+
+import pandas as pd  # noqa: E402
+
+from test_charts import run_snippet  # noqa: E402
+
+work = tempfile.mkdtemp(prefix='smui-doe-')
+
+
+def md(a, b):
+    a, b = np.asarray(a, float).ravel(), np.asarray(b, float).ravel()
+    return float(np.max(np.abs(a - b))) if a.shape == b.shape and a.size else float('inf')
+
+
+def figure(label, code, frame):
+    figs, err = run_snippet(code, frame, 'data', work)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1], 'plt.show()')
+    check(f'{label}: one figure', len(figs or []), 1)
+    return figs[0] if figs else None
+
+
+def code_vars(code, frame, label):
+    frame.to_csv(os.path.join(work, 'data.csv'), index=False)
+    ns, here = {}, os.getcwd()
+    os.chdir(work)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(compile(code, label, 'exec'), ns)
+    except Exception as ex:   # the check below reports it
+        ns['__error__'] = f'{type(ex).__name__}: {ex}'
+    finally:
+        os.chdir(here)
+    check(f'{label}: the code runs', ns.get('__error__'), None)
+    return ns
+
+
+def evaluate_checks(tag, e, frame, factors):
+    dg = {row[0]: row[1] for row in e['diagnostics']}
+    ns = code_vars(e['code'], frame, f'{tag}: the Design Diagnostics\' code')
+    if 'V' in ns:
+        check.near(f'{tag}: its variances are the report\'s', md(np.diag(ns['V']), [r_['variance'] for r_ in e['variance']['rows']]), 0.0, abs_=1e-12)
+        check.near(f'{tag}: its powers', md(ns['power'], [r_['power'] if r_['power'] is not None else np.nan for r_ in e['power']['rows']]), 0.0, abs_=1e-12)
+        check.near(f'{tag}: its D, G and A efficiencies', md([ns['d_efficiency'], ns['g_efficiency'], ns['a_efficiency']], [dg['D Efficiency'], dg['G Efficiency'], dg['A Efficiency']]), 0.0, abs_=1e-9)
+        check.near(f'{tag}: its average and largest prediction variance', md([ns['pv'].mean(), ns['pmax']], [dg['Average Variance of Prediction'], dg['Maximum Relative Prediction Variance']]), 0.0, abs_=1e-12)
+    top = 1.08 * max(max(p['variance']) for p in e['profile'])
+    for p, code in zip(e['profile'], e['plot_code']['profile']):
+        F = figure(f'{tag}: prediction variance of {p["factor"]}', code, frame)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        ln = ax['lines'][0] if ax['lines'] else {'x': [], 'y': []}
+        xs = p['x'] if p['kind'] == 'continuous' else list(range(len(p['x'])))
+        check.near(f'{tag}: prediction variance of {p["factor"]}: the curve is the report\'s', max(md(ln['x'], xs), md(ln['y'], p['variance'])), 0.0, abs_=1e-12)
+        check.near(f'{tag}: prediction variance of {p["factor"]}: the scale every factor shares', ax['ylim'][1], top, abs_=1e-12)
+        if p['kind'] != 'continuous':
+            check(f'{tag}: prediction variance of {p["factor"]}: its levels, as markers', ([t for t in ax['xticklabels'] if t], ln['marker']), (p['x'], 'o'))
+        check(f'{tag}: prediction variance of {p["factor"]}: the titles and the size', (ax['xlabel'], ax['ylabel'], ax['title'], F['size']), (p['factor'], 'Variance', f'Prediction variance {p["factor"]}', [2.0, 2.0]))
+    F = figure(f'{tag}: fraction of design space', e['plot_code']['fds'], frame)
+    if F:
+        ax = F['axes'][0]
+        ln = ax['lines'][0] if ax['lines'] else {'x': [], 'y': []}
+        check.near(f'{tag}: fraction of design space: the curve is the report\'s (the same sample)', max(md(ln['x'], e['fds']['fraction']), md(ln['y'], e['fds']['variance'])), 0.0, abs_=1e-12)
+        check(f'{tag}: fraction of design space: the axes, the titles and the size', (ax['xlim'], ax['ylim'][0], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              ([0.0, 1.0], 0.0, 'Fraction of Space', 'Prediction Variance', 'Fraction of design space', [3.8, 2.6]))
+    F = figure(f'{tag}: color map on correlations', e['plot_code']['colormap'], frame)
+    if F:
+        ax = F['axes'][0]
+        C = e['correlation']
+        k = len(C['names'])
+        img = ax['images'][0] if ax['images'] else {'shape': [], 'data': []}
+        check.near(f'{tag}: color map: the absolute correlations of the terms and the alias terms', md(img['data'], np.abs(np.asarray(C['matrix'], float))) if img['shape'] == [k, k] else 1e9, 0.0, abs_=1e-12)
+        check(f'{tag}: color map: the names on both axes', ([t for t in ax['xticklabels'] if t], [t for t in ax['yticklabels'] if t]), (C['names'], C['names']))
+        vl = [ln['x'][0] for ln in ax['lines'] if len(ln['x']) == 2 and ln['x'][0] == ln['x'][1]]
+        check(f'{tag}: color map: the dotted line before the alias terms', vl, [C['n_model'] - 0.5] if C['n_model'] < k else [])
+        check(f'{tag}: color map: the colour bar, the title and the size', (F['axes'][1]['ylabel'] if len(F['axes']) > 1 else None, ax['title'], F['size']),
+              ('|r|', 'Color map on correlations', [max(320, min(720, 140 + 26 * k)) / 100, max(300, min(720, 120 + 26 * k)) / 100]))
+
+
+# a full factorial with a categorical factor and center points; one continuous factor coded in its notes, one by the data's range
+ffd = call('doe.full_factorial', factors=[cf('Temp', 150, 200), cf('Time', 10, 20), {'name': 'Cat', 'kind': 'categorical', 'levels': ['a', 'b', 'c']}], center_points=3, seed=5)
+cols_d = {c['name']: c['values'] for c in ffd['columns'] if c['name'] != 'Y'}
+nd = len(cols_d['Temp'])
+cols_d['blk'] = ['u' if i % 4 else 'v' for i in range(nd)]
+t_d = table(cols_d, levels={'Cat': ['a', 'b', 'c']})
+frame_d = pd.DataFrame(cols_d)
+kept_d = [i for i in range(nd) if i not in (4, 9)]
+e = call('doe.evaluate', table=t_d, factors=['Temp', 'Time', 'Cat'], model='2fi', coding={'Temp': [150, 200]}, rows=kept_d, table_name='data')
+check('Evaluate Design with rows left out: the code drops them', 'df = df.drop(index=[4, 9])   # the rows the report leaves out' in e['code'], True)
+evaluate_checks('Evaluate Design (2FI, rows left out)', e, frame_d, ['Temp', 'Time', 'Cat'])
+grp_d = [i for i in range(nd) if cols_d['blk'][i] == 'u' and i != 9]
+e = call('doe.evaluate', table=t_d, factors=['Temp', 'Time', 'Cat'], model='main', rows=grp_d, where=[{'column': 'blk', 'value': 'u'}], alpha=0.1, rmse=2, coefficient=1.5, table_name='data')
+check('Evaluate Design in a By group: the code keeps the group, drops the row left out', ('df = df[df["blk"] == "u"]' in e['code'], 'df = df.drop(index=[9])' in e['code']), (True, True))
+evaluate_checks('Evaluate Design (main effects, a By group, power settings)', e, frame_d, ['Temp', 'Time', 'Cat'])
+# a rotatable CCD with a numeric nominal factor (levels 1 and 2), the response surface model
+ccd2 = call('doe.rsm', factors=[cf('A'), cf('B')], design='ccd:rotatable', order='keep', replicates=1)
+cols_c = {c['name']: c['values'] for c in ccd2['columns'] if c['name'] in ('A', 'B')}
+cols_c['G'] = [1.0] * 8 + [2.0] * 8 + [float(1 + i % 2) for i in range(len(cols_c['A']) - 16)]   # the second copy of the design at the other level
+t_c = table(cols_c, types={'G': 'nominal'})
+e = call('doe.evaluate', table=t_c, factors=['A', 'B', 'G'], model='rsm', coding={'A': [-1, 1], 'B': [-1, 1]}, table_name='data')
+check('RSM with a numeric categorical factor: its levels as text', e['factors'][2]['levels'], ['1', '2'])
+evaluate_checks('Evaluate Design (RSM, a numeric categorical factor)', e, pd.DataFrame(cols_c), ['A', 'B', 'G'])
+
+# Sample Size and Power: each situation, with each field computed, and its two curves
+cases = [('one_mean', dict(sd=2, diff=1, power=0.8)), ('one_mean', dict(sd=1, diff=0.5, n=34)), ('one_mean', dict(sd=1, n=34, power=0.8)),
+         ('one_mean', dict(sd=1, diff=-0.4, n=40, sides=1)), ('one_mean', dict(sd=1, diff=0.5, n=30, extra=2)), ('one_mean', dict(sd=1, diff=0.5)),
+         ('two_means', dict(sd=1, diff=0.5, power=0.8)), ('two_means', dict(sd=1, diff=0.5, n=100, ratio=1.5)), ('two_means', dict(sd=1.5, n=80, power=0.9)),
+         ('k_means', dict(sd=1, means=[0, 0, 0.5, 0.5], power=0.8)), ('k_means', dict(sd=1, means=[10, 11, 12], n=30, extra=1)),
+         ('one_prop', dict(p0=0.5, p1=0.6, power=0.8)), ('one_prop', dict(p0=0.5, p1=0.4, n=120, sides=1)), ('one_prop', dict(p0=0.3, n=80, power=0.8)),
+         ('two_props', dict(p1=0.6, p2=0.5, power=0.8)), ('two_props', dict(p1=0.6, p2=0.5, n=300, n2=450)), ('two_props', dict(p2=0.5, n=200, power=0.8)),
+         ('two_props', dict(p1=0.35, p2=0.5, n=150, sides=1)),
+         ('two_props', dict(p1=0.65, p2=0.5, n=200, null_diff=0.05, sides=1)), ('two_props', dict(p1=0.65, p2=0.5, power=0.8, null_diff=0.05)),
+         ('two_props', dict(p2=0.5, n=200, power=0.8, null_diff=0.05, sides=1)), ('two_props', dict(p1=0.35, p2=0.5, n=150, n2=225, null_diff=-0.05)),
+         ('one_var', dict(var0=1, dvar=1, n=20, sides=1)), ('one_var', dict(var0=1, dvar=-0.5, n=30, sides=1)), ('one_var', dict(var0=2, dvar=1, power=0.8)),
+         ('one_var', dict(var0=1, n=25, power=0.8, sides=1)),
+         ('poisson', dict(lam0=2, dlam=0.5, n=50, sides=1)), ('poisson', dict(lam0=2, dlam=0.5, power=0.8)), ('poisson', dict(lam0=3, n=40, power=0.9))]
+EFFECT = {'one_mean': 'diff', 'two_means': 'diff', 'one_prop': 'p1', 'two_props': 'p1', 'one_var': 'dvar', 'poisson': 'dlam'}
+blank = pd.DataFrame({'x': [0.0]})
+for sit, kw in cases:
+    r = P(situation=sit, **kw)
+    tag = f'Sample Size and Power, {sit} {", ".join(f"{k}={v}" for k, v in kw.items())}'
+    check(f'{tag}: a block for each curve', sorted((r.get('plot_code') or {}).keys()), sorted(r['curves'].keys()))
+    for key, c in r['curves'].items():
+        code = r['plot_code'][key]
+        check(f'{tag}, {key} curve: no table to read', 'read_csv' in code, False)
+        F = figure(f'{tag}, {key} curve', code, blank)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        main = [ln for ln in ax['lines'] if ln['label'] in ('Power', 'Normal approximation')]
+        check.near(f'{tag}, {key} curve: the power along the report\'s grid', max(md(main[0]['x'], c['x']), md(main[0]['y'], [np.nan if v is None else v for v in c['y']])) if main else 1e9, 0.0, abs_=1e-9)
+        ex = [ln for ln in ax['lines'] if ln['label'] == 'Exact']
+        if c.get('y_exact') is not None:
+            check.near(f'{tag}, {key} curve: the exact power', md(ex[0]['y'], c['y_exact']) if ex else 1e9, 0.0, abs_=1e-12)
+            check(f'{tag}, {key} curve: the exact power in steps along n, the legend under the graph', (ex[0]['drawstyle'] if ex else None, F['legend'][:2]),
+                  ('steps-post' if key == 'n' else 'default', ['Normal approximation', 'Exact']))
+        else:
+            check(f'{tag}, {key} curve: one curve, no legend', (len(ex), F['legend']), (0, []))
+        here = [ln for ln in ax['lines'] if ln['label'] == 'Here']
+        ekey = 'n' if key == 'n' else EFFECT.get(sit)
+        want_at = (r['values'].get(ekey), r['values'].get('power'))
+        if all(v is not None and np.isfinite(v) for v in want_at):
+            check.near(f'{tag}, {key} curve: the report\'s point', md(here[0]['x'] + here[0]['y'], list(want_at)) if here else 1e9, 0.0, abs_=1e-7)
+        else:
+            check(f'{tag}, {key} curve: no point without a value', here, [])
+        level = [ln for ln in ax['lines'] if ln['ls'] == ':']
+        check.near(f'{tag}, {key} curve: the line at α', level[0]['y'][0] if level else None, r['alpha'], abs_=1e-15)
+        check(f'{tag}, {key} curve: the axes, the titles and the size', (ax['ylim'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              ([0.0, 1.02], c['label'], 'Power', f'Power vs {c["label"]}', [3.8, 3.0 if c.get('y_exact') is not None else 2.7]))
+
+# ---- Two Sample Proportions with a margin (a Null Difference δ0 other than 0): the normal approximation with
+# unpooled variances (Chow, Shao and Wang, Sample Size Calculations in Clinical Research), worked here by hand;
+# with δ0 = 0 the pooled z test of statsmodels, as before
+def by_hand_power(p1, p2, n1, n2, d0, alpha, two):
+    z = abs(p1 - p2 - d0) / math.sqrt(p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2)
+    return stats.norm.cdf(z - stats.norm.ppf(1 - alpha / 2 if two else 1 - alpha))
+
+
+def by_hand_n(p1, p2, d0, alpha, power, two, r=1.0):
+    c = stats.norm.ppf(1 - alpha / 2 if two else 1 - alpha)
+    return (c + stats.norm.ppf(power)) ** 2 * (p1 * (1 - p1) + p2 * (1 - p2) / r) / (p1 - p2 - d0) ** 2
+
+
+for kw, n2_, two in ((dict(p1=0.65, p2=0.5, n=200, null_diff=0.05, sides=1), 200, False), (dict(p1=0.65, p2=0.5, n=200, null_diff=0.05), 200, True),
+                     (dict(p1=0.35, p2=0.5, n=150, n2=225, null_diff=-0.05, sides=1), 225, False), (dict(p1=0.58, p2=0.5, n=400, null_diff=-0.1, alpha=0.1), 400, True)):
+    r = P(situation='two_props', **kw)
+    want = by_hand_power(kw['p1'], kw['p2'], kw['n'], n2_, kw['null_diff'], kw.get('alpha', 0.05), two)
+    check.near(f'two proportions with a margin {kw}: the power, worked by hand', r['values']['power'], float(want), rel=1e-12)
+    check(f'... the note names the method ({kw})', ('Chow, Shao and Wang' in r['notes'][0], 'unpooled' in r['notes'][0], 'two-sided' in r['notes'][0]), (True, True, two))
+    o = run_code(r['code']).split()
+    check.near(f'... its code prints that power ({kw})', float(o[0]), r['values']['power'], rel=1e-12)
+    check.near(f'... and gives back the sample size from it ({kw})', float(o[1]), kw['n'], rel=1e-9)
+for kw, two in ((dict(p1=0.65, p2=0.5, power=0.8, null_diff=0.05, sides=1), False), (dict(p1=0.65, p2=0.5, power=0.9, null_diff=0.05), True),
+                (dict(p1=0.85, p2=0.65, power=0.8, null_diff=-0.1, sides=1), False), (dict(p1=0.3, p2=0.5, power=0.8, null_diff=-0.1), True)):
+    r = P(situation='two_props', **kw)
+    want = by_hand_n(kw['p1'], kw['p2'], kw['null_diff'], 0.05, kw['power'], two)
+    check.near(f'two proportions with a margin {kw}: the sample size, worked by hand', r['values']['n'], float(want), rel=1e-12)
+    check.near(f'... it has the power', float(by_hand_power(kw['p1'], kw['p2'], r['values']['n'], r['values']['n'], kw['null_diff'], 0.05, two)), kw['power'], rel=1e-12)
+    whole = next(row for row in r['rows'] if row[0].startswith('Whole sample size'))[1]
+    check(f'... the whole sample size is the first with the power ({kw})',
+          (by_hand_power(kw['p1'], kw['p2'], whole, whole, kw['null_diff'], 0.05, two) >= kw['power'], by_hand_power(kw['p1'], kw['p2'], whole - 1, whole - 1, kw['null_diff'], 0.05, two) < kw['power']), (True, True))
+    o = run_code(r['code']).split()
+    check.near(f'... its code prints the power at that size and the size ({kw})', max(abs(float(o[0]) - kw['power']), abs(float(o[1]) - r['values']['n']) / r['values']['n']), 0.0, abs_=1e-12)
+check.near('the example of 0.85 against 0.65 with the margin −0.1, one-sided: n = (z(0.95) + z(0.8))² (0.85·0.15 + 0.65·0.35) / 0.3²',
+           P(situation='two_props', p1=0.85, p2=0.65, power=0.8, null_diff=-0.1, sides=1)['values']['n'], (stats.norm.ppf(0.95) + stats.norm.ppf(0.8)) ** 2 * (0.85 * 0.15 + 0.65 * 0.35) / 0.3 ** 2, rel=1e-12)
+r = P(situation='two_props', p2=0.5, n=200, power=0.8, null_diff=0.05, sides=1)
+check('with a margin, Proportion 1 from the sample size and the power: above p2 + δ0, with the power',
+      (r['solved'], r['values']['p1'] > 0.55, abs(by_hand_power(r['values']['p1'], 0.5, 200, 200, 0.05, 0.05, False) - 0.8) < 1e-9), ('p1', True, True))
+r = P(situation='two_props', p1=0.55, p2=0.5, power=0.8, null_diff=0.05)
+check('with a margin: no sample size when p1 − p2 is the margin itself (and no error)', (r.get('error'), r['values']['n']), (None, None))
+# δ0 = 0: statsmodels' pooled test, unchanged
+r = P(situation='two_props', p1=0.6, p2=0.5, n=300, n2=450)
+check.near('δ0 = 0: the pooled test\'s power (power_proportions_2indep), unchanged', r['values']['power'], power_proportions_2indep(0.1, 0.5, 300, ratio=1.5, alpha=0.05).power, rel=1e-12)
+check('δ0 = 0: the note and the code are the pooled test\'s', ('pooled variance' in r['notes'][0], 'power_proportions_2indep(' in r['code'], 'Chow' in r['code']), (True, True, False))
+check('δ0 = 0: the graphs\' code too', all('power_proportions_2indep(' in c and 'unpooled' not in c for c in r['plot_code'].values()), True)
+r = P(situation='two_props', p1=0.6, p2=0.5, power=0.8)
+check.near('δ0 = 0: the sample size, unchanged (387.3 per group)', r['values']['n'], n_fleiss, rel=1e-3)
+r = P(situation='two_props', p1=0.65, p2=0.5, power=0.8, null_diff=0.05)
+check('with a margin: the graphs\' code is the formula\'s, the sample size solved from it', (all('unpooled' in c and 'power_proportions_2indep' not in c for c in r['plot_code'].values()),
+      all('max(2.0, zsum ** 2' in c for c in r['plot_code'].values())), (True, True))
 sys.exit(check.done())

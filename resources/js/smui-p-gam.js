@@ -118,6 +118,20 @@
     ctx.set(key, value, col.id);
   }
 
+  /* ---- the graphs' code -------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table: gam.plot_code writes it, the model fitted as the report fits it
+     (its penalty search included), from what the page chose (a term's band,
+     residuals, rug and intercept, the surface's terms). The Prediction
+     Profiler is interactive and has none; a headless run (Bootstrap) draws
+     no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-gam-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, payload, kind, plot) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('gam.plot_code', { ...payload, alpha: ctx.alpha, kind, plot });
+    return r && !r.error ? r.plot_code : null;
+  }
+
   /* A scatter of rows (linked to the table) with reference lines. */
   function rowPlot(ctx, { x, y, rows, xTitle, yTitle, lines = [], hlines = [], width = 380, height = 300, title }) {
     const P = pal();
@@ -199,7 +213,7 @@
     ];
   }
 
-  function termOutline(ctx, parent, t, res, payload, col) {
+  async function termOutline(ctx, parent, t, res, payload, col) {
     const P = pal();
     const o = termOptions(ctx, col, res);
     const title = `s(${t.name})${t.basis === 'cc' ? ', cyclic' : ''}`;
@@ -211,6 +225,7 @@
       margin: { l: 56, r: 10, t: 8, b: 42 }, showlegend: false,
     };
     const box = ctx.plot(tr.traces, layout, { width: W(380), height: 280, title: `${t.name} partial effect` });
+    const code = await plotCode(ctx, payload, 'term', { index: t.index, band: o.band, resid: o.resid, rug: o.rug, constant: o.constant });
     // the penalty slider: log10(alpha) about the term's scale
     const a0 = Math.log10(t.a0 > 0 ? t.a0 : 1);
     const cur = t.alpha > 0 ? Math.log10(t.alpha) : a0 - 4;
@@ -253,7 +268,7 @@
     const schedule = SM.util.debounce(preview, 110);
     slider.addEventListener('input', () => { aText.textContent = fmtA(10 ** Number(slider.value)); schedule(); });
     slider.addEventListener('change', () => { alive = false; setPenalty(ctx, res, t.index, +(10 ** Number(slider.value)).toPrecision(6)); });
-    ob.add(box, info, sliderRow, critText);
+    ob.add(box, code ? ctx.code(code) : null, info, sliderRow, critText);
     return ob;
   }
 
@@ -306,7 +321,7 @@
   }
 
   /* ---- diagnostics -------------------------------------------------------------------------------- */
-  function diagnostics(ctx, res) {
+  async function diagnostics(ctx, res, payload) {
     const P = pal();
     const d = res.diag;
     const y = res.model.response;
@@ -314,12 +329,14 @@
     if (ctx.opt('actual', true)) {
       const ob = ctx.outline('Actual by Predicted Plot', { key: 'actpred' });
       const [lo, hi] = extent(d.predicted, d.actual);
-      ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${y} Predicted`, yTitle: res.model.event != null ? `${y} (${res.model.event} = 1)` : `${y} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit, 'solid', 1.4)], width: 380, height: 300, title: `${y} actual by predicted` }));
+      const code = await plotCode(ctx, payload, 'actual', {});
+      ob.add(withCode(ctx, rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${y} Predicted`, yTitle: res.model.event != null ? `${y} (${res.model.event} = 1)` : `${y} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit, 'solid', 1.4)], width: 380, height: 300, title: `${y} actual by predicted` }), code));
       plots.push(ob.el);
     }
     if (ctx.opt('residual', true)) {
       const ob = ctx.outline('Residual by Predicted Plot', { key: 'residpred' });
-      ob.add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${y} Predicted`, yTitle: `${y} Residual`, hlines: [{ y: 0, color: P.mean }], width: 380, height: 300, title: `${y} residual by predicted` }));
+      const code = await plotCode(ctx, payload, 'residual', {});
+      ob.add(withCode(ctx, rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${y} Predicted`, yTitle: `${y} Residual`, hlines: [{ y: 0, color: P.mean }], width: 380, height: 300, title: `${y} residual by predicted` }), code));
       plots.push(ob.el);
     }
     if (plots.length > 1) ctx.container.append(ctx.row(...plots));
@@ -333,8 +350,10 @@
       const m = yv.reduce((a, b) => a + b, 0) / n;
       const sd = Math.sqrt(yv.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, n - 1));
       const [zl, zh] = extent(z);
-      ctx.outline('Deviance Residual Normal Quantile Plot', { key: 'devqq' }).add(
-        rowPlot(ctx, { x: z, y: yv, rows: order.map((k) => d.rows[k]), xTitle: 'Normal Quantile', yTitle: 'Deviance Residual', lines: [lineTrace([zl, zh], [m + sd * zl, m + sd * zh], P.fit)], width: 360, height: 290, title: `${y} deviance residual normal quantile plot` }),
+      const ob = ctx.outline('Deviance Residual Normal Quantile Plot', { key: 'devqq' });
+      const code = await plotCode(ctx, payload, 'devqq', {});
+      ob.add(
+        withCode(ctx, rowPlot(ctx, { x: z, y: yv, rows: order.map((k) => d.rows[k]), xTitle: 'Normal Quantile', yTitle: 'Deviance Residual', lines: [lineTrace([zl, zh], [m + sd * zl, m + sd * zh], P.fit)], width: 360, height: 290, title: `${y} deviance residual normal quantile plot` }), code),
         ctx.note('Each deviance residual against Φ⁻¹(r/(n+1)), r its rank; the line has the residuals\' mean and standard deviation.'));
     }
   }
@@ -374,7 +393,8 @@
       { type: 'scatter', mode: 'markers', x: r.points.x, y: r.points.y, rows: r.points.rows, marker: { size: 5, color: 'rgba(255,255,255,0.85)', line: { width: 1, color: '#222' } }, name: 'Rows' },
     ];
     ob.setTitle(`Surface Plot: s(${r.xname}) + s(${r.yname})`);
-    ob.add(ctx.plot(traces, { xaxis: { title: { text: r.xname } }, yaxis: { title: { text: r.yname } }, margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(470), height: 380, title: `${r.xname} and ${r.yname} surface` }),
+    const code = await plotCode(ctx, payload, 'surface', { first: a, second: b, n: 40 });
+    ob.add(withCode(ctx, ctx.plot(traces, { xaxis: { title: { text: r.xname } }, yaxis: { title: { text: r.yname } }, margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(470), height: 380, title: `${r.xname} and ${r.yname} surface` }), code),
       ctx.note('The sum of the two partial effects on the scale of the linear predictor (an additive model has no interaction: the contours are the two curves added). The points are the rows (linked).'));
   }
 
@@ -695,12 +715,12 @@
       const terms = ctx.outline('Smooth Terms', { key: 'smooth', info: 'p:gam:smooth' });
       const wrap = el('div', { class: 'sm-gam-terms' });
       terms.add(wrap);
-      res.terms.forEach((t, j) => termOutline(ctx, wrap, t, res, payload, smooth[j]));
+      for (const [j, t] of res.terms.entries()) await termOutline(ctx, wrap, t, res, payload, smooth[j]);
       terms.add(ctx.note(`Each curve is the term's partial effect on the scale of the linear predictor (${m.link.toLowerCase()} link), centred to sum to zero over the rows, with a pointwise ${fmt(100 * (1 - ctx.alpha))}% band from the penalized (Bayesian) covariance, as mgcv draws it. Points: partial residuals (the curve plus the working residual), linked to the rows. The slider sets the term's penalty α.`));
       if (ctx.opt('summary', true)) modelSummary(ctx, res, pen.byHand);
       if (ctx.opt('tests', true)) testsOutline(ctx, res);
       if (ctx.opt('estimates', true)) estimatesOutline(ctx, res);
-      diagnostics(ctx, res);
+      await diagnostics(ctx, res, payload);
       if (ctx.opt('profiler', true)) await profiler(ctx, payload);
       if (ctx.opt('surface', false)) await surface(ctx, res, payload);
       if (ctx.opt('compare', false)) await compareOutline(ctx, payload);

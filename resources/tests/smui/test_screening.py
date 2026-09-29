@@ -728,4 +728,94 @@ for label, kw, data in (
         worst = max([worst] + [abs(np.mean([f_[k] for f_ in fl]) - wv[k]) for k in wv if wv[k] is not None and k != 'n'])
     check(f'the code gives the report\'s numbers exactly, every method: {label}', (worst, len({d['method'] for d in got}) == len(rr['methods']), bool(folds) == bool(kw.get('kfold'))), (0.0, True, True))
 
+
+# ============================================================================
+# the graphs' matplotlib code, run on a CSV export: every comparison's graph
+# ============================================================================
+from test_charts import find_line  # noqa: E402
+from test_predictive import SEP, run_graph, scatter_pts, subset_in_order  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-screening-charts-')
+graphs = 0
+
+
+def gcheck(label, code, tid):
+    """The figure of a graph's code (None when it fails, which is checked)."""
+    global graphs
+    F, err = run_graph(code, tid, GTMP)
+    check(f'{label}: the code runs, ending in plt.show()', (err, code.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if F:
+        graphs += 1
+        return F, F['axes'][0]
+    return None, None
+
+
+for label, tid, kw, th_kw in (
+        ('two levels, a Validation column, a frequency', T, dict(y='cls', x=X4, validation='v', freq='f', methods=['tree', 'forest', 'knn', 'linear']), dict(cut=0.4, level=1)),
+        ('three levels, a holdback, rows of the report, other levels picked', T, dict(y='three', x=X4, portion=0.3, methods=['tree', 'knn', 'linear', 'nb'], rows=list(range(0, 330)), plot={'roc': 2, 'lift': 0}), None),
+        ('two levels, 3-fold crossvalidation repeated twice', Ts, dict(y='cls', x=X4, kfold=3, repeats=2, methods=['tree', 'knn', 'linear', 'nb']), dict(cut=0.6, level=0)),
+        ('continuous, a Validation column, the test rows shown', T, dict(y='y', x=X4, validation='v', methods=['tree', 'knn', 'linear', 'lasso'], plot={'abp': 'Test'}), None),
+        ('continuous, 3-fold crossvalidation, the out-of-fold predictions shown', Ts, dict(y='y', x=X4, kfold=3, methods=['tree', 'linear'], plot={'abp': 'Crossvalidation'}), None)):
+    lab = f'graphs: {label}'
+    rr, _ = quiet(call, 'screening.fit', table=tid, seed=SEED, table_name='data', **kw)
+    pl = rr['plots']
+    head = pl['head_code']
+    lab_of = {m['key']: m['label'] for m in rr['methods']}
+    if 'rows' in kw:
+        check(f'{lab}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in head, True)
+    if rr['kind'] == 'categorical':
+        nl = len(rr['levels'])
+        for kind in ('roc', 'lift'):
+            v = (kw.get('plot') or {}).get(kind)
+            lv = v if v is not None else (1 if nl == 2 else 0)
+            level = rr['levels'][lv]
+            check(f'{lab}: {kind}: a graph per set shown', list(pl[kind]), rr['shown_sets'])
+            for i, st in enumerate(rr['shown_sets']):
+                F, ax = gcheck(f'{lab}: {kind} {st} {level}', head + SEP + pl[kind][st], tid)
+                if not F:
+                    continue
+                last = i == len(rr['shown_sets']) - 1
+                ok, names = [], []
+                for key in rr['order']:
+                    c_ = next((c for c in rr[kind][key] if c['set'] == st and c['level'] == level), None)
+                    if c_ is None:
+                        continue
+                    name = f'{lab_of[key]} ({c_["auc"]:.3f})' if kind == 'roc' else lab_of[key]
+                    names.append(name)
+                    ln = next((q for q in ax['lines'] if q['label'] == name), None)
+                    pts = list(zip(c_['fpr'], c_['tpr'])) if kind == 'roc' else list(zip(c_['portion'], c_['lift']))
+                    ok.append(bool(ln) and subset_in_order(pts, list(zip(ln['x'], ln['y']))) and ln['color'][:7] == S.COLORS[key])
+                check(f'{lab}: {kind} {st} {level}: every method\'s curve (the report\'s points on it), named and coloured as the page\'s', (len(ok) > 0, ok), (True, [True] * len(ok)))
+                check(f'{lab}: {kind} {st} {level}: the legend on the last graph, the reference, the titles, the size',
+                      (F['legend'], find_line(ax, [0, 1], [0, 1] if kind == 'roc' else [1, 1]) is not None, ax['xlabel'], ax['title'], F['size']),
+                      (names if last else [], True, '1 - Specificity' if kind == 'roc' else 'Portion', f'{"ROC" if kind == "roc" else "Lift"} {st} {level}', [5.6 if last else 3.6, 3.3]))
+        if th_kw:
+            th, _ = quiet(call, 'screening.threshold', table=tid, seed=SEED, table_name='data', **{k_: v_ for k_, v_ in kw.items() if k_ != 'plot'}, **th_kw, plot={'order': rr['order']})
+            F, ax = gcheck(f'{lab}: Decision Threshold', head + SEP + th['plot_code'], tid)
+            if F:
+                cmp = rr['compare']
+                ms = [next(m for m in th['methods'] if m['key'] == k_) for k_ in rr['order']]
+                check(f'{lab}: Decision Threshold: each method\'s misclassification rate at every cut ({cmp}), in the page\'s order and colours',
+                      [(q['label'], q['color'][:7], bool(np.allclose(q['y'], m['curves'][cmp], rtol=0, atol=1e-12)), q['x'] == th['grid']) for q, m in zip([q for q in ax['lines'] if not q['label'].startswith('_')], ms)],
+                      [(m['label'], S.COLORS[m['key']], True, True) for m in ms])
+                check(f'{lab}: Decision Threshold: the threshold dashed, the legend, the titles', (any(q['x'] == [th_kw['cut']] * 2 and q['ls'] == '--' for q in ax['lines']), F['legend'], ax['xlabel'], ax['title'], F['size']),
+                      (True, [m['label'] for m in ms], f'Threshold on the probability of {th["level"]}', 'Misclassification by threshold', [5.6, 3.3]))
+    else:
+        st = (kw.get('plot') or {}).get('abp') or rr['compare']
+        res = rr['residuals']
+        k_ = S.SETS.index(st) if st in S.SETS else None
+        idx = [i for i, sv_ in enumerate(res['set']) if k_ is None or sv_ == k_]
+        check(f'{lab}: a graph per method, in the Summary\'s order', list(pl['abp']), [k for k in rr['order'] if k in (res['oof'] if st == S.CV else res['predicted'])])
+        for key, tail in pl['abp'].items():
+            F, ax = gcheck(f'{lab}: actual by predicted {lab_of[key]} {st}', head + SEP + tail, tid)
+            if not F:
+                continue
+            pred = res['oof'][key] if st == S.CV else res['predicted'][key]
+            want = [(pred[i], res['actual'][i]) for i in idx]
+            vv = [q for pq in want for q in pq]
+            check.near(f'{lab}: actual by predicted {lab_of[key]} {st}: every row at its prediction and value', mx(scatter_pts(ax), want), 0.0, abs_=1e-9)
+            check(f'{lab}: actual by predicted {lab_of[key]} {st}: the line of equality, the titles, the size', (find_line(ax, [min(vv), max(vv)], [min(vv), max(vv)], rel=1e-9) is not None, ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+                  (True, 'Predicted', 'Actual', f'Actual by predicted {lab_of[key]} {st}', [2.5, 2.35]))
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 22)
+
 sys.exit(check.done())

@@ -494,4 +494,582 @@ check('a row subset: 10 subgroups', len(r['units']), 10)
 check('rows=None is every row', len(call('quality.control_chart', table=tid, y='d', subgroup='subgroup', rows=None)['units']), 25)
 check('no values: an error', 'error' in call('quality.control_chart', table=tid, y='d', rows=[]), True)
 check('XBar without subgroups: an error that says what to do', 'Subgroup' in call('quality.control_chart', table=tid3, y='x', chart='xbar_r').get('error', ''), True)
+# ---------------------------------------------------------------------------
+# The code keeps the report's rows, and the graphs' code
+# ---------------------------------------------------------------------------
+# Each result's code runs on the whole table as File > Export CSV writes it
+# (a date as YYYY-MM-DD text) and keeps the report's rows: a By group's
+# where lines, and the drop of the group's rows the report leaves out. Each
+# graph's matplotlib code (plot_code) runs with the Agg backend there, and
+# its figure is checked against the report's numbers drawn as the page draws
+# them (smui-p-quality.js).
+import tempfile as _tempfile  # noqa: E402
+
+from smui import util as U  # noqa: E402
+from test_charts import close, maxdiff, run_snippet  # noqa: E402
+
+CTMP = _tempfile.mkdtemp(prefix='smui-quality-')
+U_PAL = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+QC = {'point': '#2f6690', 'line': '#2f66908c', 'limit': '#c0392b', 'center': '#2e7d32', 'flag': '#d62728', 'zone': '#3c281e4c', 'muted': '#786b5d'}
+
+
+def export(tid):
+    """The table as File > Export CSV writes it: every column, a date as YYYY-MM-DD text."""
+    from smui import data as D
+    t = D.TABLES[tid]
+    cols = {}
+    for name, v in t['cols'].items():
+        m = t['meta'][name]
+        if m.get('dataType') == 'numeric':
+            v = np.asarray(v, dtype=float)
+            if (m.get('format') or {}).get('kind') == 'date':
+                v = pd.Series([pd.Timestamp(int(x), unit='ms').strftime('%Y-%m-%d') if np.isfinite(x) else None for x in v], dtype=object)
+        else:
+            v = pd.Series(list(v), dtype=object)
+        cols[name] = v
+    return pd.DataFrame(cols)
+
+
+def dated(code, tid):
+    """The code as the page shows it: ctx.code turns a date column it names back into the page's number."""
+    return U.dated_code(code, U.date_columns(tid))
+
+
+def jmp_q(v, p):
+    """JMP's quantile, written out: the (n + 1)p-th of the sorted values, interpolated; before the first or after the last, that value."""
+    s_ = sorted(float(x_) for x_ in v)
+    h = (len(s_) + 1) * p
+    if h <= 1:
+        return s_[0]
+    if h >= len(s_):
+        return s_[-1]
+    k_ = int(math.floor(h))
+    return s_[k_ - 1] + (h - k_) * (s_[k_] - s_[k_ - 1])
+
+
+def jmp_box(v):
+    """A box as JMP draws it: the (n + 1)p quartiles, the whiskers to the furthest values within 1.5 IQR of the box."""
+    q1, med, q3 = jmp_q(v, 0.25), jmp_q(v, 0.5), jmp_q(v, 0.75)
+    iqr = q3 - q1
+    return q1, med, q3, min(x_ for x_ in v if x_ >= q1 - 1.5 * iqr), max(x_ for x_ in v if x_ <= q3 + 1.5 * iqr)
+
+
+def bxp_boxes(ax, width):
+    """The boxes matplotlib's bxp drew (patch_artist): each as (median, q1, q3, lower whisker, upper whisker), in drawing order."""
+    meds = [ln['y'][0] for ln in ax['lines'] if len(ln['y']) == 2 and ln['y'][0] == ln['y'][1] and abs(ln['x'][1] - ln['x'][0] - width) < 1e-9]
+    pats = [sorted({p_[1] for p_ in pa['xy'] if p_[1] is not None}) for pa in ax['patches'] if pa['type'] == 'PathPatch']
+    whisk = [ln['y'] for ln in ax['lines'] if len(ln['x']) == 2 and ln['x'][0] == ln['x'][1] and len(ln['y']) == 2]
+    lows = [min(w_) for w_ in whisk[0::2]]
+    highs = [max(w_) for w_ in whisk[1::2]]
+    return [(m_, b_[0], b_[-1], lo_, hi_) for m_, b_, lo_, hi_ in zip(meds, pats, lows, highs)]
+
+
+def run_graph_code(label, code, tid, n_figs=1):
+    """Run a graph's code on the table's CSV: its figures (checked to run, to end in plt.show())."""
+    figs, err = run_snippet(dated(code, tid), export(tid), 'data', CTMP)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends in plt.show() and draws {n_figs} figure{"s" if n_figs > 1 else ""}', (code.rstrip().split('\n')[-1], len(figs or [])), ('plt.show()', n_figs))
+    return figs or []
+
+
+def run_ns(code, tid):
+    """Run a result's code on the table's CSV: its variables."""
+    here = os.getcwd()
+    export(tid).to_csv(os.path.join(CTMP, 'data.csv'), index=False)
+    os.chdir(CTMP)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(dated(code, tid), 'code', 'exec'), ns)
+    finally:
+        os.chdir(here)
+    return ns
+
+
+def line_like(ax, X, Y, color=None, ls=None, rel=1e-9, abs_=1e-12):
+    """A line of the axes with these points, colour (as a prefix: the probe keeps the alpha) and line style."""
+    for ln in ax['lines']:
+        if color is not None and not (ln['color'] or '').startswith(color):
+            continue
+        if ls is not None and ln['ls'] != ls:
+            continue
+        if close(ln['x'], X, rel, abs_) and close(ln['y'], Y, rel, abs_):
+            return ln
+    return None
+
+
+def nums(a):
+    return [None if v is None or (isinstance(v, float) and not math.isfinite(v)) else float(v) for v in a]
+
+
+def step_line(xs, ys, breaks):
+    """smui-p-quality.js stepLine: each point's value over [x - 1/2, x + 1/2], broken where the phase changes or a value is missing."""
+    X, Y = [], []
+    for i in range(len(xs)):
+        y = ys[i]
+        if y is None:
+            continue
+        if (i == 0 or i in breaks or ys[i - 1] is None) and X:
+            X.append(None)
+            Y.append(None)
+        X.append(xs[i] - 0.5)
+        Y.append(y)
+        if i == len(xs) - 1 or (i + 1) in breaks or ys[i + 1] is None:
+            X.append(xs[i] + 0.5)
+            Y.append(y)
+    return X, Y
+
+
+def fmt5(v):
+    """SM.util.fmt(v, {sig: 5}) for the usual range of limits."""
+    s_ = str(int(v)) if float(v).is_integer() and abs(v) < 1e15 else f'{v:.5g}'
+    return s_.replace('-', '−')
+
+
+def page_chart(res, o):
+    """What the page draws of each chart (chartFigure), from the report's numbers."""
+    units = res['units']
+    N = len(units)
+    xs = list(range(1, N + 1))
+    breaks = {i for i in range(1, N) if units[i]['phase'] != units[i - 1]['phase']}
+    out = []
+    for pn in res['panels']:
+        P = {'steps': [], 'zones': [], 'labels': [], 'ylabel': pn['ylabel']}
+        vals = nums(pn['values'])
+        lower = nums(pn['lower']) if pn.get('lower') is not None else None
+        cl, sd = nums(pn['cl']), nums(pn['sd'])
+        kz = (pn.get('k') or res['k']) / 3
+        span = [v for v in vals + (lower or []) if v is not None]
+        if (o.get('zones') or o.get('shade')) and pn['zones']:
+            for m in (1, 2):
+                for sg in (-1, 1):
+                    ys = [c + sg * m * kz * q if c is not None and q is not None else None for c, q in zip(cl, sd)]
+                    P['zones'].append(step_line(xs, ys, breaks))
+                    span += [v for v in ys if v is not None]
+        P['shade'] = bool(o.get('shade') and pn['zones'])
+        if o.get('limits', True) and pn['key'] != 'run':
+            for key in ('ucl', 'lcl'):
+                ys = nums(pn[key])
+                if any(v is not None for v in ys):
+                    P['steps'].append((step_line(xs, ys, breaks), QC['limit']))
+                    span += [v for v in ys if v is not None]
+        if o.get('center', True):
+            P['steps'].append((step_line(xs, cl, breaks), QC['center']))
+            span += [v for v in cl if v is not None]
+        if pn.get('data') is not None:
+            P['data'] = nums(pn['data'])
+            span += [v for v in P['data'] if v is not None]
+        flagged = [bool(t) for t in pn['tests']]
+        if pn['key'] == 'cusum':
+            P['red'] = [f_ and v is not None and u is not None and v > u for f_, v, u in zip(flagged, vals, nums(pn['ucl']))]
+            P['lower_red'] = [f_ and v is not None and u is not None and v < u for f_, v, u in zip(flagged, lower, nums(pn['lcl']))]
+        else:
+            P['red'] = flagged
+        J_ = []
+        for i, v in enumerate(vals):
+            if i in breaks:
+                J_.append((None, None))
+            J_.append((xs[i], v))
+        P['joined'] = ([a for a, _ in J_], [b for _, b in J_])
+        P['points'] = vals
+        P['lower'] = lower
+        texts = []
+        for i, t in enumerate(pn['tests']):
+            if not t:
+                continue
+            yv = vals[i] if vals[i] is not None else (lower[i] if lower else None)
+            if yv is None:
+                continue
+            if pn['key'] == 'cusum' and lower and lower[i] is not None and abs(lower[i]) > abs(vals[i] or 0):
+                yv = lower[i]
+            texts.append((xs[i], yv, ','.join(str(v) for v in t)))
+        P['texts'] = texts
+
+        def last(a):
+            return next((v for v in reversed(a) if v is not None), None)
+        if o.get('limits', True) and pn['key'] != 'run':
+            for name, key in (('UCL', 'ucl'), ('LCL', 'lcl')):
+                v = last(nums(pn[key]))
+                if v is not None:
+                    P['labels'].append(f'{name}={fmt5(v)}')
+        if o.get('center', True) and last(cl) is not None:
+            P['labels'].append(f'{"Target" if pn["key"] == "cusum" else "Avg"}={fmt5(last(cl))}')
+        lo, hi = min(span), max(span)
+        dd = (hi - lo) * 0.1 if hi > lo else (abs(lo) * 0.05 or 1)
+        P['range'] = [lo - dd, hi + dd]
+        out.append(P)
+    return out, breaks
+
+
+def check_chart(label, res, F, o, x_title, ticks=None):
+    """A control chart's figure against the page's drawing of the report's numbers."""
+    want, breaks = page_chart(res, o)
+    axes = F['axes']
+    check(f'{label}: a plot for each chart', len(axes), len(want))
+    N = len(res['units'])
+    xs = list(range(1, N + 1))
+    for ax, P in zip(axes, want):
+        tag = f'{label} ({P["ylabel"]})'
+        check(f'{tag}: the limits and the center line, by point and phase', bool(P['steps']) and all(line_like(ax, X, Y, color=c, ls='-') is not None for (X, Y), c in P['steps']), True)
+        if P['zones']:
+            check(f'{tag}: the zones, dotted', all(line_like(ax, X, Y, color=QC['zone'], ls=':') is not None for X, Y in P['zones']), True)
+        if P['shade']:
+            check(f'{tag}: the zones shaded, five bands', len(ax['polys']), 5)
+        check(f'{tag}: the points joined, broken between phases', line_like(ax, *P['joined'], color=QC['line'], rel=1e-12) is not None, True)
+        main = [s_ for s_ in ax['scatter'] if len(s_['xy']) == N and s_['colors'] and s_['colors'][0][:7] in (QC['point'], QC['flag'])]
+        got = main[0] if main else {'xy': [], 'colors': []}
+        check(f'{tag}: the points', close([q for p_ in got['xy'] for q in p_], [q for x_, v in zip(xs, P['points']) for q in (x_, v)], 1e-12, 1e-12), True)
+        want_c = [QC['flag'] if r_ else QC['point'] for r_ in P['red']]
+        got_c = [c[:7] for c in got['colors']]
+        check(f'{tag}: the points failing a test in red', got_c == want_c or (len(set(want_c)) == 1 and set(got_c) == set(want_c)), True)
+        if P['lower'] is not None:
+            gl = main[1] if len(main) > 1 else {'xy': []}
+            check(f'{tag}: the lower sums', close([q for p_ in gl['xy'] for q in p_], [q for x_, v in zip(xs, P['lower']) for q in (x_, v)], 1e-12, 1e-12), True)
+        if P.get('data') is not None:
+            dd = [s_ for s_ in ax['scatter'] if len(s_['xy']) == N and not s_['colors']]
+            check(f'{tag}: the subgroup means, open circles', bool(dd) and close([p_[1] for p_ in dd[0]['xy']], P['data'], 1e-12, 1e-12), True)
+        texts = sorted((round(t['x'], 9), round(t['y'], 9), t['s']) for t in ax['texts'] if t['s'][:1].isdigit())
+        check(f'{tag}: the tests\' numbers over the failing points', texts, sorted((round(a, 9), round(b, 9), s_) for a, b, s_ in P['texts']))
+        check(f'{tag}: the limits\' values at the right', [t['s'] for t in ax['texts'] if t['x'] is not None and abs(t['x'] - 1.004) < 1e-12], P['labels'])
+        check(f'{tag}: the y range, a tenth beyond what is drawn, and the title', (close(ax['ylim'], P['range'], 1e-9, 1e-12), ax['ylabel']), (True, P['ylabel']))
+    bottom = axes[-1]
+    check(f'{label}: the x axis', (bottom['xlabel'], close(bottom['xlim'], [0.5, N + 0.5], 1e-12)), (x_title, True))
+    if ticks is not None:
+        check(f'{label}: the subgroups on the axis, as the page labels them', [t for t in bottom['xticklabels'] if t], ticks)
+    vlines = [ln for ln in axes[0]['lines'] if ln['ls'] == '--' and (ln['color'] or '')[:7] == QC['muted']]
+    check(f'{label}: a dashed line between phases', sorted(ln['x'][0] for ln in vlines), sorted(b + 0.5 for b in breaks))
+    if breaks:
+        bounds = [0, *sorted(breaks), N]
+        names = [next((q['label'] for q in res['phases'] if q['code'] == res['units'][a]['phase']), '') for a in bounds[:-1]]
+        check(f'{label}: the phases named above', [t['s'] for t in axes[0]['texts'] if t['y'] == 1.0], names)
+
+
+# the Process data again, with a date for each subgroup, operators and attribute counts
+days = np.datetime64('2026-03-02') + (sub - 1)
+ms = (days.astype('datetime64[ms]').astype(np.int64)).astype(float)
+oper = rng.choice(['Ann', 'Bo'], 125).tolist()
+insp = rng.integers(80, 121, 125).astype(float)
+defects = rng.binomial(insp.astype(int), 0.06).astype(float)
+tq = table({'subgroup': sub, 'day': ms, 'd': x, 'phase': list(ph), 'operator': oper, 'n': insp, 'bad': defects},
+           types={'subgroup': 'ordinal'}, levels={'phase': ['before', 'after']})
+from smui import data as _D  # noqa: E402
+_D.TABLES[tq]['meta']['day']['format'] = {'kind': 'date'}
+left_out = [2, 7, 61]
+rows_q = [i for i in range(125) if i not in left_out]
+charts = [('xbar_r', {}, {'zones': True, 'shade': True}), ('xbar_s', {'tests': [1, 2, 5, 6]}, {}), ('ir', {'subgroup': None, 'tests': [1, 2, 3, 4, 5, 6, 7, 8]}, {'zones': True}),
+          ('lj', {'subgroup': None}, {'center': False}), ('run', {'tests': [2, 3, 4]}, {}), ('ewma', {'lam': 0.3}, {}), ('cusum', {'target': 10.0, 'head_start': True}, {'limits': False}),
+          ('p', {'y': 'bad', 'n_trials': 'n'}, {}), ('np', {'y': 'bad', 'n_trials': 'n'}, {}), ('c', {'y': 'bad'}, {}), ('u', {'y': 'bad', 'n_trials': 'n'}, {'zones': True}),
+          ('xbar_r', {'phase': 'phase', 'tests': [1, 2, 3, 4, 5, 6, 7, 8], 'dispersion_tests': True}, {'zones': True}),
+          ('ir', {'subgroup': None, 'phase': 'phase', 'sigma': 'mmr', 'mr_span': 3}, {}), ('xbar_r', {'subgroup': None, 'subgroup_size': 5, 'phase': 'phase'}, {}),
+          ('xbar_s', {'subgroup': 'day', 'sigma': 'pooled', 'rows': rows_q, 'known_mean': 10.05}, {}),
+          ('xbar_r', {'where': [{'column': 'operator', 'value': 'Ann'}], 'rows': [i for i in range(125) if oper[i] == 'Ann' and i not in left_out]}, {'shade': True})]
+for chart, kw, o in charts:
+    kw = dict(kw)
+    args = dict(table=tq, y=kw.pop('y', 'd'), subgroup=kw.pop('subgroup', 'subgroup'), chart=chart, plot=o, tests=kw.pop('tests', [1]), table_name='data', **kw)
+    r = call('quality.control_chart', **args)
+    tag = f'control chart code: {r["chart_label"]} ({", ".join(f"{k}={v}" for k, v in kw.items() if k != "rows") or "defaults"}{", rows left out" if "rows" in kw else ""})'
+    figs = run_graph_code(tag, r['plot_code'], tq)
+    if figs:
+        ticks = [u['label'] for u in r['units']] if args['subgroup'] == 'day' else None
+        check_chart(tag, r, figs[0], o, args['subgroup'] or 'Sample', ticks)
+        check(f'{tag}: the figure\'s size, the title', (figs[0]['size'], figs[0]['suptitle']),
+              ([max(520, min(820, 170 + 18 * len(r['units']))) / 100, (440 if len(r['panels']) > 1 else 300) / 100], r['chart_label'] + ('' if r['chart_label'].endswith('Chart') else ' chart') + f' of {args["y"]}'))
+    if chart in ('xbar_r', 'xbar_s', 'ir', 'lj', 'ewma', 'cusum') and 'where' not in kw and 'phase' not in kw:   # the code's sigma is over every phase
+        ns = run_ns(r['code'], tq)
+        s_want = r['summary']['sigma'][-1]['sigma']
+        check.near(f'{tag}: its statistics code gives the report\'s sigma', float(ns.get('sigma', np.nan)), s_want, rel=1e-9)
+# a date subgroup: the code's ticks are the dates the page shows
+r = call('quality.control_chart', table=tq, y='d', subgroup='day', chart='xbar_r', plot={}, table_name='data')
+check('a date subgroup: the page labels the points by their dates', [u['label'] for u in r['units']][:2], ['2026-03-02', '2026-03-03'])
+check('... and the code turns the column back into the page\'s number after reading it', dated(r['plot_code'], tq).count('pd.to_datetime(df["day"])'), 1)
+# By and rows left out: the statistics code keeps the report's rows
+wh = [{'column': 'operator', 'value': 'Bo'}]
+rows_bo = [i for i in range(125) if oper[i] == 'Bo' and i not in left_out]
+r = call('quality.control_chart', table=tq, y='d', subgroup='subgroup', chart='xbar_r', where=wh, rows=rows_bo, table_name='data')
+drop_bo = [i for i in left_out if oper[i] == 'Bo']
+check('the code keeps the By group\'s rows and drops the ones the report leaves out',
+      [ln for ln in r['code'].split('\n') if 'only the rows where' in ln or 'leaves out' in ln],
+      ['df = df[df["operator"] == "Bo"]   # only the rows where operator is Bo'] + ([f'df = df.drop(index=[{", ".join(map(str, drop_bo))}])   # the rows the report leaves out'] if drop_bo else []))
+ns = run_ns(r['code'], tq)
+check.near('... and gives the group\'s sigma', float(ns['sigma']), r['summary']['sigma'][0]['sigma'], rel=1e-9)
+check.near('... and its grand mean', float(ns['center']), r['summary']['sigma'][0]['center'], rel=1e-12)
+rt = call('quality.runs_test', table=tq, y='d', subgroup='subgroup', where=wh, rows=rows_bo, table_name='Process')
+check('the runs test\'s code reads the report\'s table, not data.csv', ('"Process.csv"' in rt['code'], 'df = df[df["operator"] == "Bo"]' in rt['code']), (True, True))
+
+# ---- Process Capability: the histograms, the goal plot, the box plots, the index plot
+
+
+def nice_bins(v):
+    """SM.report.niceBins: bins at round numbers, about as many as Sturges' rule asks for."""
+    n_, lo, hi = len(v), min(v), max(v)
+    if lo == hi:
+        return lo - 0.5, 1.0, 1
+    k_ = max(5, min(40, math.ceil(math.log2(n_) + 1)))
+    raw = (hi - lo) / k_
+    p_ = 10 ** math.floor(math.log10(raw))
+    size_ = min((m_ * p_ for m_ in (1, 2, 2.5, 5, 10)), key=lambda s_: abs(math.log(s_ / raw)))
+    start = math.floor(lo / size_) * size_
+    end = math.ceil(hi / size_) * size_
+    if end <= hi:
+        end += size_
+    return start, size_, max(1, round((end - start) / size_))
+
+
+c1 = np.round(10 + rng.normal(0, 0.15, 125), 3)
+c2 = np.round(rng.lognormal(1.0, 0.3, 125), 3)
+c3 = np.round(5 + rng.normal(0, 0.3, 125), 3)
+c1[9] = np.nan
+tc = table({'subgroup': sub, 'a': c1, 'b': c2, 'c': c3, 'operator': oper}, types={'subgroup': 'ordinal'})
+specs_c = {'a': {'lsl': 9.5, 'target': 10.0, 'usl': 10.6}, 'b': {'lsl': 0.8, 'usl': 7.5}, 'c': {'usl': 6.2}}
+fc = export(tc)
+for sg, within, dist, goal_w, rows_c in ((None, None, {'b': 'lognormal'}, False, None), ('subgroup', None, {'b': 'best'}, True, rows_q), ('subgroup', 'std', {}, False, None),
+                                         (None, 'mmr', {'b': 'weibull', 'c': 'gamma'}, True, rows_q), ('subgroup', 'pooled', {}, True, None)):
+    bins = {}
+    for c_ in ('a', 'b', 'c'):
+        v_ = fc.loc[rows_c if rows_c else fc.index, c_].dropna().to_numpy()
+        start, size_, nb = nice_bins(list(v_))
+        bins[c_] = {'start': start, 'size': size_, 'nb': nb, 'end': start + nb * size_}
+    plot = {'bins': bins, 'curves': {'a': {'within': True, 'overall': True}, 'c': {'within': False, 'overall': True}}, 'goal': {'ppk': 1.2, 'within': goal_w}}
+    r = call('quality.capability', table=tc, columns=['a', 'b', 'c'], rows=rows_c, specs=specs_c, subgroup=sg, within=within, dist=dist, plot=plot, table_name='data')
+    tag = f'capability code ({sg or "moving range"}, {within or "default"} within sigma, {dist or "normal"}{", rows left out" if rows_c else ""})'
+    pc = r['plot_code']
+    for cr in r['columns']:
+        c_ = cr['column']
+        F = run_graph_code(f'{tag}: {c_} histogram', pc['hist'][c_], tc)
+        if not F:
+            continue
+        ax = F[0]['axes'][0]
+        v_ = fc.loc[rows_c if rows_c else fc.index, c_].dropna().to_numpy()
+        b = bins[c_]
+        cnt = np.bincount(np.clip(np.floor((v_ - b['start']) / b['size'] + 1e-9), 0, b['nb'] - 1).astype(int), minlength=b['nb'])
+        check(f'{tag}: {c_}: the bars are the page\'s counts in its bins', ([bb['h'] for bb in ax['bars']], close([bb['w'] for bb in ax['bars']], [b['size']] * b['nb'])), ([float(q) for q in cnt], True))
+        lims = [q for q in (cr.get('lsl'), cr.get('target'), cr.get('usl')) if q is not None]
+        lo_, hi_ = min([b['start']] + lims), max([b['end']] + lims)
+        pad = 0.04 * (hi_ - lo_ or 1)
+        grid = np.linspace(lo_ - pad, hi_ + pad, 160)
+        scale_ = len(v_) * b['size']
+        lines_ = {ln['label']: ln for ln in ax['lines'] if not ln['label'].startswith('_')}
+        cur = plot['curves'].get(c_, {'within': True, 'overall': True})
+        if cr['dist'] == 'normal':
+            for key, sdk in (('Overall', 'sd_overall'), ('Within', 'sd_within')):
+                on = cur['overall' if key == 'Overall' else 'within'] and cr.get(sdk) and cr[sdk] > 0
+                if on:
+                    want = scale_ * stats.norm.pdf(grid, cr['mean'], cr[sdk])
+                    check.near(f'{tag}: {c_}: the {key.lower()} normal curve (the report\'s mean and sigma)', maxdiff(lines_.get(key, {}).get('y'), list(want)) / max(want), 0, abs_=1e-9)
+                else:
+                    check(f'{tag}: {c_}: no {key.lower()} curve', key in lines_, False)
+        else:
+            want = [scale_ * q for q in cr['curve']['pdf']]
+            ln = lines_.get(cr['fit']['label'])
+            check.near(f'{tag}: {c_}: the fitted {cr["fit"]["label"]} density on its grid', maxdiff(ln and ln['x'], cr['curve']['x']) + maxdiff(ln and ln['y'], want) / max(want), 0, abs_=1e-6)
+        check(f'{tag}: {c_}: the spec limits and their names', (sorted(ln['x'][0] for ln in ax['lines'] if len(set(ln['x'])) == 1), sorted(t['s'] for t in ax['texts'])),
+              (sorted(lims), sorted(n_ for n_, v in (('LSL', cr.get('lsl')), ('Target', cr.get('target')), ('USL', cr.get('usl'))) if v is not None)))
+        check(f'{tag}: {c_}: the range and the titles', (close(ax['xlim'], [lo_ - pad, hi_ + pad], 1e-12), ax['xlabel'], ax['ylabel'], F[0]['suptitle']), (True, c_, 'Count', f'{c_} capability histogram'))
+    F = run_graph_code(f'{tag}: goal plot', pc['goal'], tc)
+    if F:
+        ax = F[0]['axes'][0]
+        pts = [q for q in r['columns'] if q.get('goal')]
+        want = [[q['goal']['x'], q['goal']['y_within' if goal_w else 'y_overall']] for q in pts]
+        check.near(f'{tag}: goal plot: each column at its spec-normalised mean shift and {"within" if goal_w else "overall"} sigma', maxdiff([a for p_ in ax['scatter'][0]['xy'] for a in p_], [a for p_ in want for a in p_]), 0, abs_=1e-9)
+        tri = [p_ for p_ in ax['patches'] if p_['type'] == 'Polygon'][0]['xy']
+        check.near(f'{tag}: goal plot: the triangle of the goal Ppk 1.2', maxdiff([a for p_ in tri[:3] for a in p_], [-0.5, 0, 0, 1 / 7.2, 0.5, 0]), 0, abs_=1e-12)
+        ymax, xmax = max(1 / 7.2 * 1.4, max(p_[1] for p_ in want) * 1.15), max(0.55, max(abs(p_[0]) for p_ in want) * 1.15)
+        check(f'{tag}: goal plot: the ranges, the labels', (close(ax['xlim'], [-xmax, xmax]), close(ax['ylim'], [0, ymax]), ax['ylabel'], [t['s'] for t in ax['texts']]),
+              (True, True, f'Spec-Normalized {"Within" if goal_w else "Overall"} Std Dev', [q['column'] for q in pts]))
+    F = run_graph_code(f'{tag}: box plots', pc['boxes'], tc)
+    if F:
+        ax = F[0]['axes'][0]
+        both = [q for q in r['columns'] if q.get('lsl') is not None and q.get('usl') is not None]
+        want, fl = [], []
+        for q in both:
+            t_ = q['target'] if q['target'] is not None else (q['lsl'] + q['usl']) / 2
+            v_ = list((fc.loc[rows_c if rows_c else fc.index, q['column']].dropna().to_numpy() - t_) / (q['usl'] - q['lsl']))
+            q1, med, q3, lo_w, hi_w = jmp_box(v_)
+            want.append((med, q1, q3, lo_w, hi_w))
+            fl.append(sorted(x_ for x_ in v_ if x_ < lo_w or x_ > hi_w))
+        check(f'{tag}: box plots: each box as JMP draws it (the (n + 1)p quartiles, the whiskers within 1.5 IQR)', close([a for b_ in bxp_boxes(ax, 0.5) for a in b_], [a for w_ in want for a in w_], 1e-9, 1e-12), True)
+        got_fl = [sorted(ln['y']) for ln in ax['lines'] if ln['marker'] == 'o']
+        check(f'{tag}: box plots: the values beyond the whiskers as points', [g_ for g_ in got_fl if g_] == [f_ for f_ in fl if f_] and len(got_fl) == len(fl), True)
+        lo_ = [((q['lsl'] - (q['target'] if q['target'] is not None else (q['lsl'] + q['usl']) / 2)) / (q['usl'] - q['lsl'])) for q in both[:1]][0]
+        check(f'{tag}: box plots: the limits and the target', sorted(round(ln['y'][0], 12) for ln in ax['lines'] if len(set(ln['y'])) == 1 and len(ln['x']) == 2 and ln['x'] == [0.0, 1.0]),
+              sorted(round(v, 12) for v in (lo_, lo_ + 1, 0.0)))
+    F = run_graph_code(f'{tag}: index plot', pc['index'], tc)
+    if F:
+        ax = F[0]['axes'][0]
+        idx_ = lambda q, nm: next((a['estimate'] for a in (q.get('within') or []) + (q.get('overall') or []) if a['index'] == nm), None)  # noqa: E731
+        got_p = [bb['h'] for bb in ax['bars'] if bb['fc'].startswith('#b0413e')]
+        got_c = [None if bb['h'] != bb['h'] else bb['h'] for bb in ax['bars'] if bb['fc'].startswith('#2e7d32')]
+        check.near(f'{tag}: index plot: Ppk of every column', maxdiff(got_p, [idx_(q, 'Ppk') for q in r['columns']]), 0, abs_=1e-9)
+        check(f'{tag}: index plot: Cpk (none for a nonnormal fit)', close(got_c, [idx_(q, 'Cpk') for q in r['columns']], 1e-9), True)
+    ns = run_ns(r['code'], tc)
+    last_ = r['columns'][-1]
+    check.near(f'{tag}: the statistics code gives the last column\'s within sigma', float(ns['sw']), last_['sd_within'], rel=1e-9)
+    check.near(f'{tag}: ... and its overall one', float(ns['so']), last_['sd_overall'], rel=1e-12)
+
+# a small case where Hazen's rule (Plotly's own) gives other quartiles than JMP's (n + 1)p rule
+tsm = table({'x': [1.0, 2, 3, 4, 5, 6, 7, 8, 9, 30], 'g': ['a'] * 5 + ['b'] * 5, 'y': [1.0, 2, 3, 4, 20, 5, 6, 7, 8, 9]})
+v10 = [1.0, 2, 3, 4, 5, 6, 7, 8, 9, 30]
+check('the small case: Hazen\'s quartiles differ from the (n + 1)p ones', (list(np.quantile(v10, [0.25, 0.75], method='hazen')), [jmp_q(v10, 0.25), jmp_q(v10, 0.75)]), ([3.0, 8.0], [2.75, 8.25]))
+check('the small case: np.quantile(method="weibull") is the (n + 1)p rule', list(np.quantile(v10, [0.25, 0.5, 0.75], method='weibull')), [jmp_q(v10, 0.25), jmp_q(v10, 0.5), jmp_q(v10, 0.75)])
+r = call('quality.capability', table=tsm, columns=['x'], specs={'x': {'lsl': 0.0, 'target': 20.0, 'usl': 40.0}}, plot={'bins': {}}, table_name='data')
+F = run_graph_code('capability box plot code, the small case', r['plot_code']['boxes'], tsm)
+if F:
+    b_ = bxp_boxes(F[0]['axes'][0], 0.5)
+    sc = [(v - 20) / 40 for v in v10]
+    check('the small case: the box is JMP\'s: quartiles (2.75, 5.5, 8.25), whiskers 1 and 9, the value 30 beyond them', (close([a for q in b_ for a in q], [(5.5 - 20) / 40, (2.75 - 20) / 40, (8.25 - 20) / 40, (1 - 20) / 40, (9 - 20) / 40], 1e-12), [ln['y'] for ln in F[0]['axes'][0]['lines'] if ln['marker'] == 'o']),
+          (True, [[(30 - 20) / 40]]))
+r = call('quality.variability', table=tsm, y='y', xs=['g'], plot={'boxes': True}, table_name='data')
+F = run_graph_code('variability box plot code, the small case', r['plot_code'], tsm)
+if F:
+    want = [jmp_box([1.0, 2, 3, 4, 20]), jmp_box([5.0, 6, 7, 8, 9])]
+    check('the small case: each cell\'s box is JMP\'s (quartiles 1.5, 3, 12 of a; the whiskers 1 and 20)', close([a for q in bxp_boxes(F[0]['axes'][0], 0.5) for a in q], [a for q1, med, q3, lo_w, hi_w in want for a in (med, q1, q3, lo_w, hi_w)], 1e-12), True)
+    check('... where Hazen\'s rule gives other quartiles of a', list(np.quantile([1.0, 2, 3, 4, 20], [0.25, 0.75], method='hazen')) != [want[0][0], want[0][2]], True)
+
+# ---- Pareto
+rq = np.random.default_rng(4)
+causes2 = rq.choice(['scratch', 'dent', 'crack', 'stain', 'burr', 'chip'], 300, p=[.4, .25, .15, .1, .06, .04]).tolist()
+shift2 = rq.choice(['night', 'day'], 300).tolist()
+line2 = rq.choice(['L1', 'L2'], 300).tolist()
+w2 = rq.integers(0, 4, 300).astype(float)
+num2 = rq.choice([1, 2, 10, 20], 300, p=[.4, .3, .2, .1]).astype(float)
+tp2 = table({'cause': causes2, 'shift': shift2, 'line': line2, 'w': w2, 'num': num2}, types={'num': 'nominal'}, levels={'shift': ['night', 'day']})
+rows_p = [i for i in range(300) if i % 17]
+for kw, plot in (({}, {}), ({'freq': 'w'}, {'percent': True, 'legend': True, 'nLegend': True, 'cumLabels': True}), ({'combine': {'below': 8}}, {'cumAxis': False}),
+                 ({'combine': {'top': 3}, 'rows': rows_p}, {'cumPoints': False}), ({'groups': ['shift']}, {}), ({'groups': ['shift', 'line'], 'freq': 'w'}, {'percent': True, 'cumAxis': False}),
+                 ({'cause': 'num'}, {}), ({'groups': ['shift']}, {'ungroup': 'overall'})):
+    kw = dict(kw)
+    args = dict(table=tp2, cause=kw.pop('cause', 'cause'), plot=plot, table_name='data', **kw)
+    r = call('quality.pareto', **args)
+    tag = f'Pareto code ({", ".join(f"{k}={v}" for k, v in kw.items() if k != "rows") or "counts"}{", rows left out" if "rows" in kw else ""}; {", ".join(sorted(plot)) or "the defaults"})'
+    cells = r.get('groups') if (r.get('groups') and plot.get('ungroup') != 'overall') else None
+    want_sets = [(g_['counts'], g_['total'] or 1, g_) for g_ in cells] if cells else [([c_['count'] for c_ in r['causes']], r['total'], None)]
+    codes = r['plot_code']['cells'] if cells else [r['plot_code']['overall']]
+    check(f'{tag}: a code block for each plot', len(codes), len(want_sets))
+    for code, (cnt, total, g_) in zip(codes, want_sets):
+        F = run_graph_code(f'{tag}{": " + g_["label"] if g_ else ""}', code, tp2)
+        if not F:
+            continue
+        ax = F[0]['axes'][0]
+        pct = plot.get('percent')
+        hs = [100 * c_ / total for c_ in cnt] if pct else list(cnt)
+        check.near(f'{tag}: the bars', maxdiff([b_['h'] for b_ in ax['bars']], hs), 0, abs_=1e-9)
+        check(f'{tag}: the causes, largest first, Other last', [t for t in ax['xticklabels'] if t], [c_['cause'] for c_ in r['causes']])
+        cum = list(np.cumsum(cnt) * 100 / total)
+        ymax = 100 if pct else max(max(hs), 1)
+        if plot.get('cumAxis', True):
+            cx = F[0]['axes'][1]
+            check(f'{tag}: the cumulative percent on its own axis', (close(cx['lines'][0]['y'], cum, 1e-9), close(cx['ylim'], [0, 105]), cx['lines'][0]['marker']), (True, True, 'None' if plot.get('cumPoints', True) is False else 'o'))
+        else:
+            check(f'{tag}: the cumulative percent on the bars\' axis', close(ax['lines'][0]['y'], cum if pct else [c_ / 100 * ymax for c_ in cum], 1e-9), True)
+        check(f'{tag}: the y range and title', (close(ax['ylim'], [0, ymax * 1.05], 1e-9), ax['ylabel']), (True, 'Percent' if pct else 'Count'))
+        want_title = 'Pareto plot' + (f' {", ".join(args["groups"])} = {g_["label"]} (N {g_["total"]:g})' if g_ else '')
+        check(f'{tag}: the title', F[0]['suptitle'], want_title)
+        if plot.get('legend'):
+            check(f'{tag}: the Category Legend\'s colours', [b_['fc'][:7] for b_ in ax['bars']], U_PAL[:len(cnt)])
+        if plot.get('nLegend'):
+            check(f'{tag}: the N Legend', [t['s'] for t in ax['texts'] if t['s'].startswith('N = ')], [f'N = {total:g}'])
+    ns = run_ns(r['code'], tp2)
+    got = [((f'{i:.10g}' if isinstance(i, float) else str(i)), float(v)) for i, v in ns['counts'].items()]
+    check(f'{tag}: the statistics code counts the report\'s rows, in its order, the small causes combined as it combines them', got, [(c_['cause'], c_['count']) for c_ in r['causes']])
+# the rate test's code on every cell of the report's grid: an empty cell (no chip at night), two grouping columns, combined causes
+rows_e = [i for i in range(300) if not (causes2[i] == 'chip' and shift2[i] == 'night')]
+for kw in ({'groups': ['shift']}, {'groups': ['shift', 'line'], 'freq': 'w'}, {'groups': ['shift'], 'combine': {'below': 8}}):
+    r = call('quality.pareto', table=tp2, cause='cause', rows=rows_e, table_name='data', **kw)
+    ns = run_ns(r['code'], tp2)
+    tag = f'Pareto code, Test Rates Across Groups ({", ".join(f"{k}={v}" for k, v in kw.items())}, an empty cell)'
+    check.near(f'{tag}: the deviance is the report\'s likelihood ratio', float(ns['fit'].deviance), r['test']['lr'], rel=1e-9)
+    check(f'{tag}: its degrees of freedom', int(ns['fit'].df_resid), r['test']['df'])
+
+# ---- the variability chart and the attribute gauge's graphs
+rv = np.random.default_rng(5)
+ops_, parts_, reps_ = 3, 8, 3
+pe_, oe_ = rv.normal(0, 2.0, parts_), rv.normal(0, 0.5, ops_)
+vrows = [(['Cy', 'Ann', 'Bo'][o_], p_ + 1, round(10 + pe_[p_] + oe_[o_] + rv.normal(0, 0.4), 4)) for o_ in range(ops_) for p_ in range(parts_) for _ in range(reps_)]
+vd = pd.DataFrame(vrows, columns=['Operator', 'Part', 'Y'])
+vd.loc[5, 'Y'] = np.nan
+vd['day'] = (np.datetime64('2026-01-05') + (vd['Part'].to_numpy() - 1) * 7).astype('datetime64[ms]').astype(np.int64).astype(float)
+tv = table({'Operator': vd['Operator'].tolist(), 'Part': vd['Part'].tolist(), 'Y': vd['Y'].tolist(), 'day': vd['day'].tolist()}, types={'Part': 'nominal'}, levels={'Operator': ['Cy', 'Ann', 'Bo']})
+_D.TABLES[tv]['meta']['day']['format'] = {'kind': 'date'}
+keep_v = [i for i in range(len(vd)) if i not in (0, 40)]
+for kw, plot in (({}, {}), ({'rows': keep_v}, {'points': True, 'boxes': True, 'jitter': True, 'connect': True, 'groupMeans': True, 'grandMean': True, 'grandMedian': True, 'sLimits': True}),
+                 ({'xs': ['Part']}, {'sdChart': False}), ({'components': True, 'gauge': True}, {'meanSd': False, 'rangeBars': False}), ({'xs': ['Operator', 'day']}, {})):
+    kw = dict(kw)
+    args = dict(table=tv, y='Y', xs=kw.pop('xs', ['Operator', 'Part']), plot=plot, table_name='data', **kw)
+    r = call('quality.variability', **args)
+    tag = f'variability chart code ({" / ".join(args["xs"])}{", rows left out" if "rows" in kw else ""}; {", ".join(sorted(plot)) or "the defaults"})'
+    F = run_graph_code(tag, r['plot_code'], tv)
+    if not F:
+        continue
+    ax = F[0]['axes'][0]
+    cells_ = r['cells']
+    m_ = len(cells_)
+    o = lambda k, d=False: plot.get(k, d)  # noqa: E731
+    if o('cellMeans', True):
+        ln = [q for q in ax['lines'] if q['marker'] == '_']
+        check(f'{tag}: the cell means', bool(ln) and close(ln[0]['y'], [c_['mean'] for c_ in cells_], 1e-12) and ln[0]['ls'] == ('-' if o('connect') else 'None'), True)
+    if o('points', True):
+        pts = ax['scatter'][0]['xy']
+        wy = [v for c_ in cells_ for v in vd.loc[c_['rows'], 'Y']]
+        wx = [i + 1 for i, c_ in enumerate(cells_) for _ in c_['rows']]
+        check(f'{tag}: each point at its cell{" (jittered)" if o("jitter") else ""}, its value', len(pts) == len(wy) and all(abs(p_[1] - v) < 1e-12 and abs(p_[0] - x_) <= (0.18 + 1e-9 if o('jitter') else 1e-12) for p_, v, x_ in zip(pts, wy, wx)), True)
+    if o('rangeBars', True):
+        segs = [s_ for c_ in ax['segments'] for s_ in c_['segs']]
+        check(f'{tag}: the range bars', sorted((s_[0][0], s_[0][1], s_[1][1]) for s_ in segs), sorted((i + 1, c_['min'], c_['max']) for i, c_ in enumerate(cells_) if c_['n'] > 1))
+    if o('grandMean'):
+        check(f'{tag}: the grand mean', any(close(q['y'], [r['grand_mean']] * 2, 1e-12) for q in ax['lines']), True)
+    if o('grandMedian'):
+        check(f'{tag}: the grand median, dashed', any(close(q['y'], [r['grand_median']] * 2, 1e-12) and q['ls'] == '--' for q in ax['lines']), True)
+    if o('groupMeans'):
+        check(f'{tag}: the group means', all(any(close(q['x'], [g_['first'] + 0.6, g_['last'] + 1.4]) and close(q['y'], [g_['mean']] * 2, 1e-12) for q in ax['lines']) for g_ in r['group_means']), True)
+    if o('boxes'):
+        want = [jmp_box(list(vd.loc[c_['rows'], 'Y'].to_numpy(float))) for c_ in cells_]
+        check(f'{tag}: each cell\'s box as JMP draws it (the (n + 1)p quartiles, the whiskers within 1.5 IQR)', close([a for b_ in bxp_boxes(ax, 0.5) for a in b_], [a for q1, med, q3, lo_w, hi_w in want for a in (med, q1, q3, lo_w, hi_w)], 1e-9, 1e-12), True)
+    lo_, hi_ = min(c_['min'] for c_ in cells_), max(c_['max'] for c_ in cells_)
+    check(f'{tag}: the y range', close(ax['ylim'], [lo_ - 0.06 * (hi_ - lo_), hi_ + 0.06 * (hi_ - lo_)], 1e-9), True)
+    bottom = F[0]['axes'][-1]
+    check(f'{tag}: the inner levels as ticks, as the page labels them; the title', ([t for t in bottom['xticklabels'] if t], bottom['xlabel']), ([c_['levels'][-1] for c_ in cells_], ' / '.join(r['factors'])))
+    if len(r['factors']) > 1:
+        want, start = [], 0
+        for i in range(1, m_ + 1):
+            if i < m_ and cells_[i]['levels'][:1] == cells_[start]['levels'][:1]:
+                continue
+            want.append(cells_[start]['levels'][0])
+            start = i
+        check(f'{tag}: the outer levels under the inner ones', [t['s'] for t in bottom['texts']], want)
+    if o('sdChart', True):
+        bx = F[0]['axes'][1]
+        check(f'{tag}: the cells\' standard deviations', close([q for q in bx['lines'] if q['marker'] == 'o'][0]['y'], [c_['sd'] for c_ in cells_], 1e-12), True)
+        if o('meanSd', True):
+            check(f'{tag}: their mean', any(close(q['y'], [r['mean_sd']] * 2, 1e-12) for q in bx['lines']), True)
+        if o('sLimits'):
+            for key in ('ucl', 'lcl'):
+                X_, Y_ = step_line(list(range(1, m_ + 1)), [s_[key] if s_ else None for s_ in r['s_limits']], set())
+                check(f'{tag}: the S chart\'s {key.upper()}', any(close(q['x'], X_) and close(q['y'], Y_, 1e-9) for q in bx['lines']), True)
+    ns = run_ns(r['code'], tv)
+    check(f'{tag}: the statistics code gives the report\'s cells', close(list(ns['cells']['mean']), [c_['mean'] for c_ in cells_], 1e-12), True)
+r = call('quality.variability', table=tv, y='Y', xs=['day'], plot={}, table_name='data')
+check('a date factor: the page labels the cells by their dates', r['cells'][0]['levels'], ['2026-01-05'])
+ta = np.random.default_rng(6)
+truth2 = ta.choice(['good', 'bad', 'fair'], 12)
+arows2 = [(p_ + 1, rater, truth2[p_] if ta.uniform() > 0.2 else ta.choice(['good', 'bad', 'fair']), truth2[p_]) for p_ in range(12) for rater in ['C', 'A', 'B'] for _ in range(2)]
+ad2 = pd.DataFrame(arows2, columns=['part', 'rater', 'rating', 'std'])
+ta2 = table({c_: ad2[c_].tolist() for c_ in ad2.columns}, types={'part': 'nominal'}, levels={'rater': ['C', 'A', 'B']})
+for kw in ({}, {'standard': 'std', 'rows': [i for i in range(len(ad2)) if i % 11]}):
+    r = call('quality.attribute_gauge', table=ta2, y='rating', rater='rater', part='part', plot={}, table_name='data', **kw)
+    tag = f'attribute gauge code{" (a standard, rows left out)" if kw else ""}'
+    for key, what, title in (('parts', 'parts', 'Agreement by part'), ('raters', 'rater_table', 'Agreement by rater')):
+        F = run_graph_code(f'{tag}: {title}', r['plot_code'][key], ta2)
+        if not F:
+            continue
+        ax = F[0]['axes'][0]
+        got = ax['lines'][0]['y'] if key == 'parts' else [p_[1] for p_ in ax['scatter'][0]['xy']]
+        check(f'{tag}: {title}: the agreements', close(got, [None if q['agree'] is None else 100 * q['agree'] for q in r[what]], 1e-12), True)
+        check(f'{tag}: {title}: the ticks, the range, the title', ([t for t in ax['xticklabels'] if t], close(ax['ylim'], [-5, 105]), F[0]['suptitle']),
+              ([q['part' if key == 'parts' else 'rater'] for q in r[what]], True, title))
+    ns = run_ns(r['code'], ta2)
+    if r.get('fleiss'):
+        check.near(f'{tag}: the statistics code gives the report\'s Fleiss kappa', float(ns['fleiss_kappa'](ns['counts'].to_numpy(), method='fleiss')), r['fleiss']['rows'][-1]['kappa'], rel=1e-12)
+    else:
+        check(f'{tag}: the parts rated unequally often: no Fleiss kappa in the report, and the code runs without it', (r.get('fleiss_note') is not None, int(ns['counts'].sum(axis=1).nunique()) > 1), (True, True))
+
 sys.exit(check.done())

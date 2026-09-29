@@ -502,4 +502,195 @@ check.near('the data\'s tail concentration by hand', mx(tl['empirical'], emp_), 
 cq = ClaytonCopula().cdf(np.column_stack([qq, qq]), args=(th,))
 check.near('the fit\'s: C(q, q)/q and (1 - 2q + C(q, q))/(1 - q)', mx(tl['fits'][0]['values'], np.where(qq <= 0.5, cq / qq, (1 - 2 * qq + cq) / (1 - qq))), 0.0, abs_=1e-12)
 
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+chart_dir = tempfile.mkdtemp(prefix='smui-copula-charts-')
+CONTOUR_C = '#b0413eff'
+
+
+def cop_graph(kind, plot, label, tid_, frame_, columns, method='mpl', names=(), rows=None):
+    rr = call('copula.plot_code', table=tid_, columns=columns, kind=kind, plot=plot, method=method, rows=rows)
+    code = rr.get('plot_code') or ''
+    check(f'{label}: the code is written', rr.get('error'), None)
+    out, err = run_snippet_more(code, frame_, 'data', chart_dir, names=names)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return (out['figures'][0] if out and out['figures'] else None), (out['vars'] if out else {}), code
+
+
+def rel_gap(a, b):
+    a, b = np.asarray(a, dtype=float).ravel(), np.asarray(b, dtype=float).ravel()
+    if a.shape != b.shape:
+        return float('inf')
+    ok = np.isfinite(a) & np.isfinite(b)
+    if not np.array_equal(np.isfinite(a), np.isfinite(b)):
+        return float('inf')
+    return float(np.max(np.abs(a[ok] - b[ok]) / np.maximum(1e-300, np.maximum(np.abs(a[ok]), np.abs(b[ok]))))) if ok.any() else 0.0
+
+
+def contour_levels(A):
+    return [p_['contour'][0] for p_ in A['polys'] if 'contour' in p_]
+
+
+def nice_bins_c(v):
+    lo, hi = float(np.min(v)), float(np.max(v))
+    k = max(5, min(40, math.ceil(math.log2(len(v)) + 1)))
+    raw = (hi - lo) / k
+    p_ = 10 ** math.floor(math.log10(raw))
+    size = min((m_ * p_ for m_ in (1, 2, 2.5, 5, 10)), key=lambda s_: abs(math.log(s_ / raw)))
+    start = math.floor(lo / size) * size
+    end = math.ceil(hi / size) * size
+    if end <= hi:
+        end += size
+    return {'start': start, 'end': end, 'size': size}
+
+
+cnames = list(cols)
+cframe = pd.DataFrame(cols)
+for method in ('mpl', 'itau'):
+    frc = call('copula.fit', table=tc, columns=cnames, method=method, rotations='all')
+    oks = [f_ for f_ in frc['fits'] if 'error' not in f_]
+    U = np.array(frc['u']).T
+    for f_ in oks:
+        for scale in ('uniform', 'normal'):
+            if method == 'itau' and scale == 'normal' and f_['family'] not in ('clayton', 't'):
+                continue
+            lab = f'pseudo-observations, {f_["family"]} ({method}, {scale})'
+            F, V, code = cop_graph('pseudo', {'family': f_['family'], 'pair': [0, 1], 'scale': scale, 'n': frc['n']}, lab, tc, cframe, cnames, method, names=('params', 'z', 'levels'))
+            if not F:
+                continue
+            A = F['axes'][0]
+            check.near(f'{lab}: the code\'s fit is the report\'s', rel_gap(V.get('params') or [], f_['values']) if f_['values'] else 0.0, 0.0, abs_=1e-9)
+            pts = np.asarray(A['scatter'][0]['xy'])
+            want = stats.norm.ppf(U) if scale == 'normal' else U
+            check.near(f'{lab}: the points are the report\'s pseudo-observations', rel_gap(pts, want), 0.0, abs_=1e-12)
+            dn_ = call('copula.density', family=f_['family'], params=f_['values'], scale=scale)
+            want_lv = [x['level'] for x in dn_['levels']]
+            if f_['family'] == 'indep':
+                check(f'{lab}: no contours', contour_levels(A), [])
+                continue
+            check.near(f'{lab}: the density grid is the report\'s', rel_gap(V.get('z'), dn_['z']), 0.0, abs_=1e-7)
+            check.near(f'{lab}: the contour levels are the report\'s', rel_gap(contour_levels(A), want_lv), 0.0, abs_=1e-7)
+            if scale == 'uniform':
+                check(f'{lab}: labelled, as the page\'s density contours', len(A['texts']) > 0 or not want_lv, True)
+            check(f'{lab}: the titles', (A['xlabel'], A['title']), (f'{cnames[0]}: {"normal score" if scale == "normal" else "rank/(n + 1)"}', f'Pseudo-observations of {cnames[0]} and {cnames[1]}'))
+    # the tail concentration of every fitted copula (the page leaves the independence copula out)
+    fams = [f_['family'] for f_ in oks if f_['family'] != 'indep']
+    F, V, code = cop_graph('tails', {'fits': fams, 'pair': [0, 1]}, f'tail concentration ({method})', tc, cframe, cnames, method)
+    tl = call('copula.tails', table=tc, columns=cnames, pair=[0, 1], fits=[{'family': f_['family'], 'params': f_['values']} for f_ in oks if f_['family'] != 'indep'])
+    if F:
+        axs = [a_ for a_ in F['axes'] if a_['title']]
+        check(f'tail concentration ({method}): a panel for each copula, titled as the page', [a_['title'] for a_ in axs], [C.LABEL[k_] for k_ in fams])
+        ok_d = all(rel_gap([p_[1] for p_ in a_['scatter'][0]['xy']], tl['empirical']) < 1e-12 and rel_gap([p_[0] for p_ in a_['scatter'][0]['xy']], tl['q']) < 1e-12 for a_ in axs)
+        check(f'tail concentration ({method}): the data\'s dots in every panel, the report\'s', ok_d, True)
+        worst = max(rel_gap([ln for ln in a_['lines'] if ln['color'] == CONTOUR_C][0]['y'], m_['values']) for a_, m_ in zip(axs, tl['fits']))
+        check.near(f'tail concentration ({method}): each copula\'s line, the report\'s', worst, 0.0, abs_=1e-8)
+        check(f'tail concentration ({method}): the dotted line at q = ½, the ranges', all([ln['x'] for ln in a_['lines'] if ln['ls'] == ':'] == [[0.5, 0.5]] and a_['xlim'] == [0.0, 1.0] and a_['ylim'] == [0.0, 1.02] for a_ in axs), True)
+# the joint model and the margins, with the margins chosen by AICc and others
+for choice in ({}, {'soil moisture (%)': 'normal', 'flow "m3/s"': 'empirical'}, {'soil moisture (%)': 'weibull', 'flow "m3/s"': 't'}):
+    mg_ = call('copula.margins', table=tc, columns=cnames, choice=choice)
+    specs_ = [{'dist': c_['chosen']['dist'], 'values': c_['chosen']['values']} for c_ in mg_['columns']]
+    dists_ = {str(q): c_['chosen']['dist'] for q, c_ in enumerate(mg_['columns'])}
+    tag = '/'.join(dists_.values())
+    frc = call('copula.fit', table=tc, columns=cnames)
+    for fam in ('clayton', 'gumbel180', 'indep'):
+        f_ = next(x for x in frc['fits'] if x.get('family') == fam)
+        lab = f'joint model, {fam} with {tag} margins'
+        F, V, code = cop_graph('joint', {'family': fam, 'pair': [0, 1], 'margins': dists_}, lab, tc, cframe, cnames, names=('z', 'gx', 'gy'))
+        if not F:
+            continue
+        A = F['axes'][0]
+        jd = call('copula.joint', table=tc, columns=cnames, family=fam, params=f_['values'], margins=specs_, pair=[0, 1])
+        check.near(f'{lab}: the data\'s points', rel_gap(A['scatter'][0]['xy'], np.column_stack([cols[cnames[0]], cols[cnames[1]]])), 0.0, abs_=1e-12)
+        # the code fits the margins by scipy's maximum likelihood (as the Margins code shows), the report by Distribution's refinement of
+        # it: the same maximum (a Weibull's log likelihoods agree to 5e-8), a flat one, so the densities agree to about 1e-3 in the grid's corners
+        check.near(f'{lab}: the grid, the report\'s', max(rel_gap(V.get('gx'), jd['x']), rel_gap(V.get('gy'), jd['y'])), 0.0, abs_=1e-6)
+        check.near(f'{lab}: the joint density on it, the report\'s', rel_gap(V.get('z'), jd['z']), 0.0, abs_=1e-3)
+        check.near(f'{lab}: the highest-density levels, the report\'s', rel_gap(contour_levels(A), [x['level'] for x in jd['levels']]), 0.0, abs_=1e-3)
+        check(f'{lab}: the titles', (A['xlabel'], A['ylabel'], A['title']), (cnames[0], cnames[1], f'{cnames[0]} and {cnames[1]} with the joint model'))
+    for q, c_ in enumerate(mg_['columns']):
+        xv = np.asarray(cols[cnames[q]], dtype=float)
+        bins = nice_bins_c(xv)
+        lab = f'{c_["column"]} histogram with its {c_["chosen"]["dist"]} margin'
+        F, V, code = cop_graph('margin', {'column': q, 'dist': c_['chosen']['dist'], 'bins': bins}, lab, tc, cframe, cnames)
+        if not F:
+            continue
+        A = F['axes'][0]
+        nb = max(1, round((bins['end'] - bins['start']) / bins['size']))
+        cnt = np.zeros(nb)
+        for v in xv:
+            cnt[min(nb - 1, max(0, math.floor((v - bins['start']) / bins['size'] + 1e-9)))] += 1
+        check(f'{lab}: the bars count the rows in the page\'s bins', [b_['h'] for b_ in A['bars']], cnt.tolist())
+        cv = c_['chosen']['curve']
+        ln = A['lines'][0] if A['lines'] else {'x': [], 'y': []}
+        check.near(f'{lab}: the curve is the report\'s margin as counts per bin', max(rel_gap(ln['x'], cv['x']), rel_gap(ln['y'], np.asarray(cv['pdf']) * len(xv) * bins['size'])), 0.0, abs_=1e-3)
+        check(f'{lab}: the titles', (A['xlabel'], A['ylabel'], A['title']), (c_['column'], 'Count', f'{c_["column"]} histogram with its margin'))
+    # simulated draws of the joint model: the report's (the same seed), on the data scale and the copula's
+    for fam, sc_ in (('clayton', 'data'), ('frank', 'uniform'), ('t', 'data'), ('gumbel180', 'data')):
+        f_ = next(x for x in frc['fits'] if x.get('family') == fam)
+        lab = f'simulated and observed, {fam} ({sc_}, {tag} margins)'
+        F, V, code = cop_graph('simulate', {'family': fam, 'pair': [0, 1], 'margins': dists_, 'n': 300, 'seed': 7, 'scale': sc_, 'n_obs': frc['n']}, lab, tc, cframe, cnames)
+        if not F:
+            continue
+        A = F['axes'][0]
+        sim_ = call('copula.simulate', table=tc, columns=cnames, family=fam, params=f_['values'], margins=specs_ if sc_ == 'data' else None, n=300, seed=7, scale=sc_)
+        got = [x for x in A['scatter'] if x['label'] == 'Simulated']
+        check.near(f'{lab}: the draws are the report\'s', rel_gap(got[0]['xy'] if got else [], np.column_stack(sim_['values'][:2])), 0.0, abs_=1e-9 if sc_ == 'uniform' else 1e-3)
+        obs = [x for x in A['scatter'] if x['label'] == 'Observed']
+        want = np.array(frc['u']).T if sc_ == 'uniform' else np.column_stack([cols[cnames[0]], cols[cnames[1]]])
+        check.near(f'{lab}: the observed rows', rel_gap(obs[0]['xy'] if obs else [], want), 0.0, abs_=1e-12)
+        check(f'{lab}: the legend and the title', (F['legend'], A['title']), (['Simulated', 'Observed'], f'Simulated and observed {cnames[0]} and {cnames[1]}'))
+# three columns: the scatterplot matrix, and a pair of the fit's margins
+fr3 = call('copula.fit', table=tid3, columns=['p', 'q', 'r'])
+frame3 = pd.DataFrame({'p': u3[:, 0], 'q': u3[:, 1], 'r': u3[:, 2]})
+U3 = np.array(fr3['u']).T
+for fam in ('gaussian', 't'):
+    f_ = next(x for x in fr3['fits'] if x.get('family') == fam)
+    for scale in ('uniform', 'normal'):
+        lab = f'scatterplot matrix, {fam} ({scale})'
+        F, V, code = cop_graph('splom', {'family': fam, 'scale': scale, 'size': 120, 'n': fr3['n']}, lab, tid3, frame3, ['p', 'q', 'r'], names=('params',))
+        if not F:
+            continue
+        check.near(f'{lab}: the code\'s fit is the report\'s', rel_gap(V.get('params'), f_['values']), 0.0, abs_=1e-7)
+        vis = [a_ for a_ in F['axes'] if a_['shown']]
+        check(f'{lab}: the lower triangle, three cells', len(vis), 3)
+        ok_p, ok_l = True, True
+        cells = [(c_, r_) for r_ in range(1, 3) for c_ in range(r_)]
+        for a_, (c_, r_) in zip(vis, cells):
+            want = stats.norm.ppf(U3) if scale == 'normal' else U3
+            ok_p &= rel_gap(a_['scatter'][0]['xy'], want[:, [c_, r_]]) < 1e-12
+            qq = C.bivariate(fam, f_['values'], c_, r_, 3)
+            dn_ = call('copula.density', family=fam, params=qq, scale=scale, m=40)
+            ok_l &= rel_gap(contour_levels(a_), [x['level'] for x in dn_['levels']]) < 1e-6
+        check(f'{lab}: each cell\'s points, the report\'s pseudo-observations', ok_p, True)
+        check(f'{lab}: each cell\'s contours, the report\'s pair margin\'s levels', ok_l, True)
+        check(f'{lab}: the column names on the edges, the title', ([a_['xlabel'] for a_ in vis], [a_['ylabel'] for a_ in vis], F['suptitle']),
+              (['', 'p', 'q'], ['q', 'r', ''], 'Scatterplot matrix of the pseudo-observations'))
+    lab = f'pseudo-observations of q and r, {fam} (three columns)'
+    F, V, code = cop_graph('pseudo', {'family': fam, 'pair': [1, 2], 'scale': 'uniform', 'n': fr3['n']}, lab, tid3, frame3, ['p', 'q', 'r'], names=('z',))
+    if F:
+        dn_ = call('copula.density', family=fam, params=C.bivariate(fam, f_['values'], 1, 2, 3), scale='uniform')
+        check.near(f'{lab}: the pair\'s margin of the fit, the report\'s density', rel_gap(V.get('z'), dn_['z']), 0.0, abs_=1e-6)
+        check.near(f'{lab}: the points', rel_gap(F['axes'][0]['scatter'][0]['xy'], U3[:, [1, 2]]), 0.0, abs_=1e-12)
+# the report's rows (a row list) and negative dependence
+rows_ = list(range(0, 400, 2))
+frc = call('copula.fit', table=tc, columns=cnames, rows=rows_)
+f_ = next(x for x in frc['fits'] if x.get('family') == 'clayton')
+F, V, code = cop_graph('pseudo', {'family': 'clayton', 'pair': [0, 1], 'scale': 'uniform'}, 'pseudo-observations of every other row', tc, cframe, cnames, rows=rows_, names=('params',))
+if F:
+    check('every other row: the code keeps the report\'s rows', 'df = df.loc[' in code, True)
+    check.near('every other row: its fit is the report\'s', rel_gap(V.get('params'), f_['values']), 0.0, abs_=1e-9)
+    check.near('every other row: the points', rel_gap(F['axes'][0]['scatter'][0]['xy'], np.array(frc['u']).T), 0.0, abs_=1e-12)
+frn = call('copula.fit', table=tn, columns=['a', 'b'])
+for fam in [x['family'] for x in frn['fits'] if 'error' not in x and x['family'] in ('clayton90', 'gumbel270', 'frank')]:
+    f_ = next(x for x in frn['fits'] if x['family'] == fam)
+    F, V, code = cop_graph('pseudo', {'family': fam, 'pair': [0, 1], 'scale': 'uniform'}, f'negative dependence, {fam}', tn, pd.DataFrame({'a': un[:, 0], 'b': un[:, 1]}), ['a', 'b'], names=('params', 'levels'))
+    if F:
+        dn_ = call('copula.density', family=fam, params=f_['values'], scale='uniform')
+        check.near(f'negative dependence, {fam}: the fit and the levels are the report\'s', max(rel_gap(V.get('params'), f_['values']), rel_gap(contour_levels(F['axes'][0]), [x['level'] for x in dn_['levels']])), 0.0, abs_=1e-7)
+check('an unknown graph is refused', 'error' in call('copula.plot_code', table=tc, columns=cnames, kind='pie'), True)
+check('an unknown copula is refused', 'error' in call('copula.plot_code', table=tc, columns=cnames, kind='pseudo', plot={'family': 'nope'}), True)
+
 sys.exit(check.done())

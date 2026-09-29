@@ -553,4 +553,119 @@ p_ = run(fit_code + '\n' + bd['code'] + '\nprint("dec", *np.ravel(dec))')
 if check('the decision boundary\'s code runs after the fit\'s', p_.returncode, 0):
     check.near('... and gives the grid of the report', mx(printed(p_.stdout, 'dec')[0], np.ravel(bd['decision'])), 0.0, abs_=1e-9)
 
+# =======================================================================================================================
+# the graphs' matplotlib code, run on a CSV export: every graph of the reports
+# =======================================================================================================================
+from test_charts import find_line  # noqa: E402
+from test_predictive import SEP, check_shared_native, joined, run_graph as run_graph_native  # noqa: E402
+
+from smui.learners import HUES  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-learners-charts-')
+graphs = 0
+
+
+def pts_of(sc):
+    return sorted((round(a, 9), round(b, 9)) for a, b in sc['xy'])
+
+
+for label, kw in [('graphs: K Nearest Neighbors, two levels, a Validation column', dict(y='cls', x=['x1', 'x2', 'g'], k=10, validation='v')),
+                  ('graphs: K Nearest Neighbors, continuous, K = 3 picked, rows of the report', dict(y='yc', x=['x1', 'x2', 'g'], k=8, chosen=3, validation='vt', rows=list(range(20, 220)))),
+                  ('graphs: K Nearest Neighbors, three levels, Informative Missing, no validation', dict(y='three', x=['x1m', 'gm', 'x2'], k=6))]:
+    res = call('knn.fit', table=T, table_name='data', seed=4, **kw)
+    plots = res['fit']['plots']
+    if 'rows' in kw:
+        check(f'{label}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in plots['head_code'], True)
+    graphs += check_shared_native(check, label, res['fit'], T, GTMP)
+    F, err = run_graph_native(joined(plots, 'selection'), T, GTMP)
+    check(f'{label}: Model Selection: the code runs, ending in plt.show()', (err, plots['selection'].rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if not F:
+        continue
+    graphs += 1
+    ax = F['axes'][0]
+    cat = res['kind'] == 'categorical'
+    key = 'rate' if cat else 'rase'
+    what = 'Misclassification Rate' if cat else 'RASE'
+    shown = [s for s in range(3) if f'{key}{s}' in res['path']['rows'][0]]
+    ks = [row['k'] for row in res['path']['rows']]
+    ok = []
+    for i, s in enumerate(shown):
+        ln = find_line(ax, ks, [row[f'{key}{s}'] for row in res['path']['rows']], rel=1e-12)
+        ok.append(ln is not None and ln['label'] == pv.SETS[s] and ln['color'][:7] == HUES[i])
+    check(f'{label}: Model Selection: each set\'s {what} by K, as the report has it, in its colour', ok, [True] * len(shown))
+    check(f'{label}: Model Selection: the best K dotted and named', (any(q['x'] == [res['best']] * 2 and q['ls'] == ':' for q in ax['lines']), [t['s'] for t in ax['texts']]), (True, [f' best K = {res["best"]}']))
+    check(f'{label}: Model Selection: the K shown (when picked), solid', any(q['x'] == [res['chosen']] * 2 and q['ls'] == '-' for q in ax['lines']), res['chosen'] != res['best'])
+    check(f'{label}: Model Selection: the legend, the titles, the size', (F['legend'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']), ([pv.SETS[s] for s in shown], 'K', what, f'{what} by K', [4.3, 3.0]))
+
+for label, kw in [('graphs: Naive Bayes, three levels, weights, Freq, a Validation column', dict(y='three', x=['x1', 'x2', 'g'], validation='v', weight='w', freq='f')),
+                  ('graphs: Naive Bayes, Informative Missing, rows of the report', dict(y='cls', x=['x1m', 'gm', 'x2'], validation='vt', rows=list(range(0, 240, 2))))]:
+    res = call('naivebayes.fit', table=T, table_name='data', seed=4, **kw)
+    graphs += check_shared_native(check, label, res['fit'], T, GTMP)
+
+for label, kw in [('graphs: Support Vector Machines, three levels, weights, a Validation column', dict(y='three', x=['x1', 'x2', 'g'], validation='v', weight='w')),
+                  ('graphs: Support Vector Machines, the tuning design on the validation rows', dict(y='cls', x=['x1', 'x2', 'g'], validation='v', tune=True, points=6)),
+                  ('graphs: Support Vector Machines, SVR, the linear kernel tuned by cross-validation', dict(y='yc', x=['x1', 'x2'], tune=True, points=3, kernel='linear')),
+                  ('graphs: Support Vector Machines, SVR, Informative Missing, rows of the report', dict(y='yc', x=['x1m', 'gm'], cost=2, gamma=0.5, rows=list(range(30, 240))))]:
+    res = call('svm.fit', table=T, table_name='data', seed=9, **kw)
+    plots = res['fit']['plots']
+    graphs += check_shared_native(check, label, res['fit'], T, GTMP)
+    if 'tuning' not in res:
+        check(f'{label}: no tuning design, no graph of it', 'tuning' in plots, False)
+        continue
+    F, err = run_graph_native(joined(plots, 'tuning'), T, GTMP)
+    check(f'{label}: the tuning design: the code runs, ending in plt.show()', (err, plots['tuning'].rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if not F:
+        continue
+    graphs += 1
+    ax = F['axes'][0]
+    rows_, best = res['tuning']['rows'], res['tuning']['rows'][res['tuning']['best']]
+    what = res['tuning']['label']
+    if res['summary']['kernel'] == 'rbf':
+        check.near(f'{label}: the tuning design: a square per Cost and Gamma', mx(ax['scatter'][0]['xy'], [[q['cost'], q['gamma']] for q in rows_]), 0.0, abs_=1e-12)
+        check.near(f'{label}: the tuning design: the best ringed', mx(ax['scatter'][1]['xy'], [[best['cost'], best['gamma']]]), 0.0, abs_=1e-12)
+        check(f'{label}: the tuning design: coloured by the criterion (the colour bar), log axes, the titles', (F['axes'][1]['ylabel'], ax['xscale'], ax['yscale'], ax['xlabel'], ax['ylabel'], ax['title']),
+              (what, 'log', 'log', 'Cost', 'Gamma', 'Tuning design'))
+    else:
+        check(f'{label}: the tuning design: the criterion by Cost', find_line(ax, [q['cost'] for q in rows_], [q['crit'] for q in rows_], rel=1e-9) is not None, True)
+        check(f'{label}: the tuning design: the best ringed', find_line(ax, [best['cost']], [best['crit']], rel=1e-9) is not None, True)
+        judged = 'Validation' if res['tuning']['how'] == 'validation' else 'Cross-Validated'
+        check(f'{label}: the tuning design: a log axis, the titles', (ax['xscale'], ax['xlabel'], ax['ylabel'], ax['title']), ('log', 'Cost', f'{judged} {what}', 'Tuning design'))
+
+for label, kw, bk in [('graphs: the decision boundary, two levels, the other factors held, support vectors ringed', dict(y='cls', x=['x1', 'x2', 'g'], validation='v', seed=9), dict(m=15, current={'g': 'c', 'x2': 0.2}, pair=['x1', 'x2'], plot={'sv': True})),
+                      ('graphs: the decision boundary, three levels, no rings', dict(y='three', x=['x1', 'x2'], seed=5, portion=0.25), dict(m=11, plot={'sv': False})),
+                      ('graphs: the prediction surface, a continuous response', dict(y='yc', x=['x1', 'x2', 'g'], validation='v', seed=3, cost=4, gamma=0.3), dict(m=21, current={'g': 'b'}))]:
+    res = call('svm.fit', table=T, table_name='data', **kw)
+    bd = call('svm.boundary', table=T, table_name='data', **kw, **bk)
+    code = res['fit']['plots']['head_code'] + SEP + bd['plot_code']
+    F, err = run_graph_native(code, T, GTMP)
+    check(f'{label}: the code runs, ending in plt.show()', (err, code.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if not F:
+        continue
+    graphs += 1
+    ax = F['axes'][0]
+    two = 'decision' in bd
+    want_img = np.clip(bd['decision'], -2.5, 2.5) if two else np.asarray(bd['most'] if bd['kind'] == 'categorical' else bd['pred'], float)
+    check.near(f'{label}: the shading is the report\'s grid (the decision function, the most likely level or the prediction)', mx(ax['images'][0]['data'], np.ravel(want_img)), 0.0, abs_=1e-9)
+    if two:
+        check(f'{label}: the boundary (0) and the margins (-1, 1)', sorted(v for c in ax['polys'] if 'contour' in c for v in c['contour']), [-1.0, 0.0, 1.0])
+    elif bd['kind'] != 'categorical':
+        check(f'{label}: the prediction\'s contours, labelled; the colour bar', (len([c for c in ax['polys'] if 'contour' in c]) == 1, len(ax['texts']) > 0, F['axes'][1]['ylabel']), (True, True, 'yc'))
+    P_ = bd['points']
+    rings = [sc for sc in ax['scatter'] if sc['sizes'][:1] == [100.0]]
+    dots = [sc for sc in ax['scatter'] if sc['sizes'][:1] != [100.0]]
+    open_ = [not sc['colors'] or all(c_ == '#00000000' for c_ in sc['colors']) for sc in dots]   # facecolors "none": no face colours
+    filled = sorted(q for sc, o in zip(dots, open_) if not o for q in pts_of(sc))
+    hollow = sorted(q for sc, o in zip(dots, open_) if o for q in pts_of(sc))
+    want_f = sorted((round(a, 9), round(b, 9)) for a, b, st in zip(P_['x'], P_['y'], P_['set']) if st == 0)
+    want_h = sorted((round(a, 9), round(b, 9)) for a, b, st in zip(P_['x'], P_['y'], P_['set']) if st != 0)
+    check(f'{label}: every row at its two values: the training rows filled, the others open', (len(filled), filled == want_f, len(hollow), hollow == want_h), (len(want_f), True, len(want_h), True))
+    want_r = sorted((round(a, 9), round(b, 9)) for a, b, v in zip(P_['x'], P_['y'], P_['sv']) if v) if bk.get('plot', {}).get('sv', bd['kind'] == 'categorical') else []
+    check(f'{label}: the support vectors ringed as the page rings them', sorted(q for sc in rings for q in pts_of(sc)), want_r)
+    want_legend = (['Boundary', 'Margins (±1)'] if two else []) + ([lv for j, lv in enumerate(bd['levels']) if any(int(v) == j for v in P_['value'])] if bd['kind'] == 'categorical' else ['Rows']) + (['Support vectors'] if want_r else [])
+    check(f'{label}: the legend', F['legend'], want_legend)
+    what = ('Decision boundary' if bd['kind'] == 'categorical' else 'Prediction surface') + f' over {bd["pair"][0]} and {bd["pair"][1]}'
+    check(f'{label}: the grid\'s range, the titles, the size', (ax['xlim'], ax['ylim'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+          ([bd['x'][0], bd['x'][-1]], [bd['y'][0], bd['y'][-1]], bd['pair'][0], bd['pair'][1], what, [5.0, 4.4]))
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 45)
+
 sys.exit(check.done())

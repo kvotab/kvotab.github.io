@@ -1427,6 +1427,80 @@ for fn_, label_ in (('matchedpairs.effect', 'the paired effect sizes'), ('matche
     if 'bf' in ns:
         check.near('its code: the paired BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-7)
 
+# ---- Matched Pairs: the two graphs' matplotlib code, run on the whole table's CSV --------------
+# (dates as the page exports them: text; the code turns them back into milliseconds)
+import datetime as _dt  # noqa: E402
+from backend import data as _data  # noqa: E402
+from test_charts import run_snippet  # noqa: E402
+
+rng_mp = np.random.default_rng(20260929)
+n_mp = 36
+b_mp = rng_mp.normal(50, 8, n_mp).round(2)
+a_mp = (b_mp + 3 + rng_mp.normal(0, 4, n_mp)).round(2)
+a_mp[4] = np.nan
+g_mp = rng_mp.choice(['lo', 'mid', 'hi'], n_mp).tolist()
+g_mp[9] = None
+day0 = _dt.datetime(2024, 1, 1)
+start_ms = np.array([(day0 + _dt.timedelta(days=int(d)) - _dt.datetime(1970, 1, 1)).total_seconds() * 1000 for d in rng_mp.integers(0, 300, n_mp)])
+end_ms = start_ms + rng_mp.integers(1, 40, n_mp) * 86400000.0
+by_mp = ['u' if i % 3 else 'v' for i in range(n_mp)]
+cols_mp = {'before': b_mp, 'after': a_mp, 'grp': g_mp, 'start': start_ms, 'end': end_ms, 'by': by_mp}
+tmp_ = table(cols_mp, levels={'grp': ['lo', 'mid', 'hi']})
+for c_ in ('start', 'end'):
+    _data.TABLES[tmp_]['meta'][c_]['format'] = {'kind': 'date'}
+csv_mp = pd.DataFrame({**{k: v for k, v in cols_mp.items() if k not in ('start', 'end')},
+                       **{c_: [(_dt.datetime(1970, 1, 1) + _dt.timedelta(milliseconds=float(v))).strftime('%Y-%m-%d') for v in cols_mp[c_]] for c_ in ('start', 'end')}})
+work_mp = tempfile.mkdtemp(prefix='smui-mp-')
+pal_mp = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+
+
+def mp_figure(label, code):
+    figs, err = run_snippet(code, csv_mp, 'data', work_mp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1], 'plt.show()')
+    check(f'{label}: one figure', len(figs or []), 1)
+    return figs[0] if figs else None
+
+
+def mx(a, b):
+    """The largest difference of two equal-length lists of numbers or pairs (inf when their lengths differ)."""
+    a, b = np.asarray(a, float).ravel(), np.asarray(b, float).ravel()
+    return float(np.max(np.abs(a - b))) if a.shape == b.shape and a.size else float('inf')
+
+
+def hlines_of(ax):
+    return sorted(ln['y'][0] for ln in ax['lines'] if len(ln['y']) == 2 and ln['y'][0] == ln['y'][1])
+
+
+excl_mp = [2, 7, 20]
+for tag, kw in (('Matched Pairs graphs, a group', {'y1': 'before', 'y2': 'after', 'group': 'grp'}),
+                ('Matched Pairs graphs, rows left out, 90%', {'y1': 'before', 'y2': 'after', 'rows': [i for i in range(n_mp) if i not in excl_mp], 'alpha': 0.1}),
+                ('Matched Pairs graphs, dates, a By group with rows left out', {'y1': 'start', 'y2': 'end', 'group': 'grp', 'where': [{'column': 'by', 'value': 'u'}],
+                                                                                'rows': [i for i in range(n_mp) if by_mp[i] == 'u' and i not in excl_mp]})):
+    r_ = call('matchedpairs.analyze', table=tmp_, table_name='data', **kw)
+    y1_, y2_ = kw['y1'], kw['y2']
+    Fg = mp_figure(f'{tag}: Plot Dif by Mean', r_['plot_code'])
+    if Fg:
+        ax = Fg['axes'][0]
+        pts = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'{tag}: the points are the report\'s (mean, difference) of each pair', mx(pts, list(zip(r_['m'], r_['d']))) if len(pts) == r_['n'] else 1e9, 0.0, abs_=1e-9)
+        want_c = [pal_mp[g % 12] for g in r_['group_code']] if 'group_code' in r_ else ['#2f6690'] * r_['n']
+        check(f'{tag}: each pair in the colour of its group', [c[:7] for c in ax['scatter'][0]['colors']] if ax['scatter'] else [], want_c if 'group_code' in r_ else ['#2f6690'])
+        check.near(f'{tag}: the lines at 0, the mean difference and its confidence limits', mx(hlines_of(ax), sorted([0.0, r_['diff'], r_['lower'], r_['upper']])), 0.0, abs_=1e-9)
+        check(f'{tag}: the axis titles, the title and the size', (ax['xlabel'], ax['ylabel'], ax['title'], Fg['size']),
+              (f'Mean: ({y1_}+{y2_})/2', f'Difference: {y2_}-{y1_}', f'{y2_}-{y1_} by mean', [4.8, 3.6]))
+    Fg = mp_figure(f'{tag}: Plot Dif by Row', r_['row_code'])
+    if Fg:
+        ax = Fg['axes'][0]
+        pts = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'{tag}: each difference at its row number', mx(pts, list(zip([q + 1 for q in r_['rows']], r_['d']))) if len(pts) == r_['n'] else 1e9, 0.0, abs_=1e-9)
+        check.near(f'{tag}: the line at the mean difference', mx(hlines_of(ax), [r_['diff']]), 0.0, abs_=1e-9)
+        check(f'{tag}: the axis titles, the title and the size', (ax['xlabel'], ax['ylabel'], ax['title'], Fg['size']),
+              ('Row', f'Difference: {y2_}-{y1_}', f'{y2_}-{y1_} by row', [4.2, 3.0]))
+    if 'where' in kw:
+        check(f'{tag}: the code keeps the By group\'s rows and drops the ones left out', ('df = df[df["by"] == "u"]' in r_['plot_code'], f'df = df.drop(index={[i for i in excl_mp if by_mp[i] == "u"]})' in r_['plot_code']), (True, True))
+        check(f'{tag}: the dates turned back into milliseconds', r_['plot_code'].count('pd.to_datetime(df["start"])') == 1 and r_['plot_code'].count('pd.to_datetime(df["end"])') == 1, True)
+
 # ---- errors and row lists ---------------------------------------------------------------------
 check('Y and X the same column', 'error' in call('fitybyx.fit_poly', table=tid, y='before', x='before'), True)
 check('one level: no t test', 'error' in call('fitybyx.oneway_ttest', table=tid, y='before', x='grp', rows=[i for i in range(n) if grp[i] == 'x']), True)

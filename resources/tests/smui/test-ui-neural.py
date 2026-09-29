@@ -32,11 +32,18 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -281,6 +288,49 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+def neural_compare(lab, g, F):
+    if 'rects' in g:
+        UP.check_network(check, lab, g, F)
+    else:
+        check(f'{lab}: a graph this test knows', g['label'], None)
+
+
+def model(mid, **kw):
+    """A model of the Model Launch, as Go adds it (JMP's defaults, and kw)."""
+    m = {'id': mid, 'method': 'holdback', 'portion': 0.3333, 'folds': 5, 'activation': 'tanh', 'n1': 3, 'n2': 0, 'boost': 0, 'rate': 0.1,
+         'transform': False, 'penalty': 'squared', 'tours': 1, 'max_iter': 200}
+    m.update(kw)
+    return m
+
+
+async def charts(page):
+    """Every graph of Neural's reports: the Diagram of each network, actual and residual by predicted,
+    ROC and lift: its block under it (the networks fitted with the seed), run in the page, its figure
+    the graph's."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Reactor')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    last = 'SM.app.reports.at(-1)'
+    every = lambda mid: {f'{mid}|{k}': True for k in ('diagram', 'abp', 'rbp', 'roc', 'lift')}
+    specs = [
+        ('two continuous responses and grade, two layers', {'y': [Y, 'purity (%)', 'grade'], 'x': XS}, {'models': [model('m1', n2=2)], 'modelSeq': 1, 'seed': '7', **every('m1')}),
+        ('grade, boosted, KFold', {'y': ['grade'], 'x': XS}, {'models': [model('m1', n1=2, boost=3, method='kfold', folds=3)], 'modelSeq': 1, 'seed': '3', **every('m1')}),
+        ('yield, ReLU, Transform Covariates, two models', {'y': [Y], 'x': XS}, {'models': [model('m1', activation='relu', transform=True), model('m2', activation='logistic', n1=2)], 'modelSeq': 2, 'seed': '11',
+                                                                              **every('m1'), 'm2|diagram': True, 'm2|rbp': True}),
+        ('yield By supplier', {'y': [Y], 'x': XS[:5], 'by': ['supplier']}, {'models': [model('m1', n1=2)], 'modelSeq': 1, 'seed': '5', 'm1|diagram': True, 'm1|abp': True}),
+    ]
+    total = 0
+    for label, roles, opts in specs:
+        r = await page.ev(open_report_js('neural', roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, neural_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    check('charts: the blocks ran and drew the page\'s graphs', total >= 30, True)
 
 
 async def main():
@@ -614,6 +664,9 @@ async def main():
           (13, [], ['Validation Method', 'Hidden Layer Structure', 'Boosting', 'Fitting Options', 'Go']))
     check('... each with what it does', all(len(t) > 40 for cs in s['sections'].values() for _, t in cs), True)
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "neural" && (r.spec.options.models || []).length === 3)))')
     light = await page.ev('getComputedStyle(SM.app.reports.find(r => r.platform.id === "neural" && (r.spec.options.models || []).length === 3).body.querySelector(".sm-nn-in rect")).fill')
@@ -647,5 +700,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

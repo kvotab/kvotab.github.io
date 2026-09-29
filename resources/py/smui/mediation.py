@@ -528,7 +528,17 @@ def _notes(S, info, out):
 
 
 def _code(S, info, table, table_name, rows, n_rep, method, seed, alpha):
-    lines = [code_head(table_name, ['from statsmodels.stats.mediation import Mediation'])]
+    lines = _fit_code(S, info, table, table_name, rows, n_rep, method, seed)
+    lines.append(f'print(med.summary(alpha={alpha!r}))')
+    lines.append('print(outcome_model.fit().summary(), mediator_model.fit().summary())')
+    return '\n'.join(lines)
+
+
+def _fit_code(S, info, table, table_name, rows, n_rep, method, seed, extra_imports=()):
+    """The code that reads the table, recodes the treatment (and a binary
+    outcome or mediator), sets up the two models and runs the simulations,
+    as the report does: up to med = Mediation(...).fit(...)."""
+    lines = [code_head(table_name, [*extra_imports, 'from statsmodels.stats.mediation import Mediation'])]
     if rows is not None:
         n_all = data.TABLES[table]['n']
         keep = sorted(int(r) for r in rows)
@@ -569,6 +579,192 @@ def _code(S, info, table, table_name, rows, n_rep, method, seed, alpha):
     lines.append(f'np.random.seed({seed})   # statsmodels draws from numpy\'s global generator')
     lines.append('# the formula path builds both designs again for every simulation: some seconds per thousand')
     lines.append(f'med = Mediation(outcome_model, mediator_model, {J(t)}, {J(m)}).fit(method={J(method)}, n_rep={n_rep})')
-    lines.append(f'print(med.summary(alpha={alpha!r}))')
-    lines.append('print(outcome_model.fit().summary(), mediator_model.fit().summary())')
-    return '\n'.join(lines)
+    return lines
+
+
+# ---- the graphs as matplotlib code ----------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the two
+# models and the simulations as the report's code sets them up (the formula
+# path, the same seed: the same numbers), the light theme's colours, the
+# graph's size at 100 pixels an inch. The page sends what it chose (the
+# diagram's layout and the treatment's labels, the histograms' bins);
+# mediation.plot_code writes the code of one graph.
+ACME, ADE, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#352921', '#786b5d', '#fcf7f2'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+SM_ROW = {mine: theirs for mine, theirs, _ in EFFECTS}   # the report's names of the effects -> statsmodels' summary() rows
+COEF_SCALE = {'ols': '', 'logit': ' (log odds)', 'probit': ' (probit)', 'poisson': ' (log)'}
+
+SIG_LINES = ['def sig(v, digits=4):   # a number as the page writes it: 4 significant digits, no trailing zeros, a minus sign',
+             '    v = float(v)',
+             '    if v.is_integer() and abs(v) < 1e15:',
+             '        s = str(int(v))',
+             '    elif abs(v) >= 1e9 or abs(v) < 1e-4:',
+             '        m, e = f"{v:.{min(digits, 5) - 1}e}".split("e")',
+             '        s = f"{m}e{int(e)}"',
+             '    else:',
+             '        s = f"{v:.{digits}g}"',
+             '        s = str(int(float(s))) if "e" in s else (s.rstrip("0").rstrip(".") if "." in s else s)',
+             '    return "−" + s[1:] if s.startswith("-") else s']
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _effects_code(S, info, head, plot, alpha):
+    names = ['ACME (control)', 'ACME (treated)', 'ACME (average)', 'ADE (control)', 'ADE (treated)', 'ADE (average)', 'Total Effect']
+    kinds = {n: k for n, _, k in EFFECTS}
+    binary = S['outcome_model'] in ('logit', 'probit') or info['y_levels'] is not None
+    c = head + [f'smry = med.summary(alpha={alpha!r})',
+                f'names = {J(names)}   # the report\'s names, top down',
+                'rows = ' + J({n: SM_ROW[n] for n in names}) + '   # their rows in statsmodels\' summary()',
+                f'kinds = {J({n: kinds[n] for n in names})}',
+                'fig, ax = plt.subplots(figsize=(4.3, 2.9), layout="constrained")',
+                f'style = {{"acme": ("ACME (indirect)", "o", "{ACME}", {_pt(9)}), "ade": ("ADE (direct)", "s", "{ADE}", {_pt(9)}), "total": ("Total", "D", "{TEXT}", {_pt(11)})}}',
+                'for kind, (label, marker, color, size) in style.items():',
+                '    at = [i for i, n in enumerate(names) if kinds[n] == kind]',
+                '    e, lo, hi = (smry.loc[[rows[names[i]] for i in at], col].to_numpy(float) for col in ("Estimate", "Lower CI bound", "Upper CI bound"))',
+                f'    ax.errorbar(e, at, xerr=[e - lo, hi - e], fmt=marker, color=color, ecolor=color, elinewidth={_pt(2)}, capsize={_pt(2.5)}, markersize=size, mec="{SURFACE}", mew={_pt(2)}, label=label)',
+                'ax.set_yticks(range(len(names)), names); ax.invert_yaxis()   # the first at the top',
+                'lo, hi = smry.loc[list(rows.values()), "Lower CI bound"].min(), smry.loc[list(rows.values()), "Upper CI bound"].max()',
+                'if lo <= 0 <= hi:',
+                f'    ax.axvline(0, color="{MUTED}", linewidth={_pt(1)})   # no effect',
+                f'ax.set_xlabel({J(f"Effect on P({S[chr(121)]})" if binary else f"Effect on {S[chr(121)]}")})',
+                f'fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize={_pt(11)})',
+                'ax.set_title("mediation effects")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _draws_code(S, info, head, plot, alpha):
+    name = 'ADE (average)' if plot.get('name') == 'ADE (average)' else 'ACME (average)'
+    what = 'ADE' if name.startswith('ADE') else 'ACME'
+    color = ADE if what == 'ADE' else ACME
+    b = plot.get('bins') or {'start': 0.0, 'end': 1.0, 'size': 1.0}
+    start, end, size = float(b['start']), float(b['end']), float(b['size'])
+    nb = max(1, int(round((end - start) / size)))
+    c = head + [f'smry = med.summary(alpha={alpha!r})',
+                f'v = (np.asarray(med.{what}_ctrl) + np.asarray(med.{what}_tx)) / 2   # the {name} of each simulation',
+                f'start, end, size, nb = {start!r}, {end!r}, {size!r}, {nb}   # the page\'s bins',
+                'k = np.clip(np.floor((v - start) / size + 1e-9), 0, nb - 1).astype(int)',
+                'counts = np.bincount(k, minlength=nb)',
+                'fig, ax = plt.subplots(figsize=(3.6, 2.4), layout="constrained")',
+                f'ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=size, color="{color}", alpha=0.75, edgecolor="{SURFACE}", linewidth={_pt(1)})',
+                f'e = smry.loc[{J(SM_ROW[name])}]',
+                f'ax.axvline(e["Estimate"], color="{TEXT}", linewidth={_pt(2)})   # the estimate: the mean of the simulations',
+                f'for bound in (e["Lower CI bound"], e["Upper CI bound"]):   # the {100 * (1 - alpha):g}% interval: their percentiles',
+                f'    ax.axvline(bound, color="{TEXT}", linewidth={_pt(1.5)}, linestyle=":")']
+    if start < 0 < end:
+        c.append(f'ax.axvline(0, color="{MUTED}", linewidth={_pt(1)})   # no effect')
+    c += ['ax.set_ylim(bottom=0)', f'ax.set_xlabel({J(name)})', 'ax.set_ylabel("Simulations")', f'ax.set_title({J(name + " simulated")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _diagram_code(S, info, head, plot, alpha):
+    """The path diagram: the three boxes in a triangle, the arrows (the
+    indirect path in blue, the direct one in rose), the models'
+    coefficients on them and the simulated effects, as the page lays them
+    out (compact: at phone width)."""
+    compact = bool(plot.get('compact'))
+    width, height = float(plot.get('width') or 620), (380 if compact else 330)
+    bw, bh = (3.9, 1.25) if compact else (2.7, 1.05)
+    T, M, Y = ((2.15 if compact else 1.55), 0.95), (5.0, 4.25), ((7.85 if compact else 8.45), 0.95)
+    f = {'node': 10.5, 'sub': 9, 'lab': 9.5, 'eff': 10} if compact else {'node': 11.5, 'sub': 10, 'lab': 11, 'eff': 11}
+    t, m = info['t_alias'], info['m_alias']
+    ms, os_ = COEF_SCALE[S['mediator_model']], COEF_SCALE[S['outcome_model']]
+    inter = S['interaction']
+    lv = f'{100 * (1 - alpha):g}'
+    mlabel = {'ols': 'Least Squares', 'logit': 'Logistic (logit)', 'probit': 'Probit', 'poisson': 'Poisson (log)'}
+
+    def line(text, bold=False, size=None):   # one line of a label, as Python: (an f-string, bold, size)
+        return f'(f{J(text)}, {bold}, {size or f["lab"]})'
+
+    # the aliases are plain names (treat, med): single quotes inside the labels' f-strings
+    se_a = [] if compact else [line(f"(SE {{sig(mm.bse['{t}'])}})")]
+    se_b = [] if compact else [line(f"(SE {{sig(om.bse['{m}'])}})")]
+    a_lines = [line(f'a = {{sig(a)}}{ms}')] + se_a
+    csz = f['lab'] if compact else 10.5
+    if inter:
+        b_lines = [line('b = {sig(b)} at control,'), line(f'{{sig(b + i)}} at treated{os_}')]
+        if compact:
+            c_lines = [line(f'c′ = {{sig(cp)}} at {S["mediator"]} = 0, T×M {{sig(i)}}{os_}', size=csz)]
+        else:
+            c_lines = [line(f'c′ = {{sig(cp)}} at {S["mediator"]} = 0', size=csz), line(f'T×M {{sig(i)}}{os_}', size=csz)]
+    else:
+        b_lines = [line(f'b = {{sig(b)}}{os_}')] + se_b
+        c_lines = [line(f"c′ = {{sig(cp)}}{os_} (SE {{sig(om.bse['{t}'])}})", size=csz)]
+    mediated = "{sig(100 * prop['Estimate'], 3)}% mediated"
+    c = head + SIG_LINES + ['',
+         'def edge(a, b, pad=0.12):   # where the line from the box at a to the box at b leaves the first box',
+         '    dx, dy = b[0] - a[0], b[1] - a[1]',
+         f'    t = min(({bw} / 2 + pad) / abs(dx) if dx else np.inf, ({bh} / 2 + pad) / abs(dy) if dy else np.inf)',
+         '    return a[0] + t * dx, a[1] + t * dy',
+         '',
+         'def label(x, y, lines, ha="center"):   # lines of (text, bold, size in pixels) centred on (x, y), as the page\'s annotations',
+         '    k = len(lines)',
+         '    for i, (text, bold, size) in enumerate(lines):',
+         f'        ax.annotate(text, (x, y), xytext=(0, ((k - 1) / 2 - i) * 1.3 * size * {PX}), textcoords="offset points", ha=ha, va="center",',
+         f'                    fontsize=size * {PX}, fontweight="bold" if bold else "normal", color="{TEXT}")',
+         '',
+         f'smry = med.summary(alpha={alpha!r})',
+         'om, mm = outcome_model.fit(), mediator_model.fit()',
+         f'a, b, cp = mm.params[{J(t)}], om.params[{J(m)}], om.params[{J(t)}]   # the paths: the treatment on the mediator, the mediator on the outcome, the treatment on the outcome']
+    if inter:
+        c.append(f'i = om.params[{J(t + ":" + m)}]   # the treatment × mediator interaction')
+    c += ['acme, ade, tot, prop = (smry.loc[r] for r in ("ACME (average)", "ADE (average)", "Total effect", "Prop. mediated (average)"))',
+          'ci = lambda e: f"{sig(e[\'Lower CI bound\'])} to {sig(e[\'Upper CI bound\'])}"',
+          f'fig = plt.figure(figsize=({width / 100:g}, {(height + 24) / 100:g}))',
+          f'ax = fig.add_axes([6 / {width:g}, 6 / {height + 24:g}, 1 - 12 / {width:g}, 1 - 30 / {height + 24:g}])   # the page\'s margins, and room for the title',
+          f'ax.set_xlim(-0.1, 10.1); ax.set_ylim({-1.65 if compact else -0.75}, 5.6); ax.axis("off")',
+          f'T, M, Y = {T}, {M}, {Y}   # the boxes\' centres: the treatment and the outcome below, the mediator above',
+          'for p in (T, M, Y):',
+          f'    ax.add_patch(plt.Rectangle((p[0] - {bw} / 2, p[1] - {bh} / 2), {bw}, {bh}, facecolor=(0, 0, 0, 0.025), edgecolor="{TEXT}", linewidth={_pt(1.2)}))',
+          f'for p, q, color in ((T, M, "{ACME}"), (M, Y, "{ACME}"), (T, Y, "{ADE}")):   # the indirect path in blue, the direct path in rose',
+          f'    ax.annotate("", xy=edge(q, p), xytext=edge(p, q), color=color, arrowprops={{"arrowstyle": "-|>", "color": color, "lw": {_pt(2)}, "shrinkA": 0, "shrinkB": 0, "mutation_scale": 12}})',
+          f'label(*T, [("Treatment", True, {f["node"]}), ({J(S["treatment"])}, False, {f["node"]}), ({J(plot.get("tlabel") or "")}, False, {f["sub"]})])',
+          f'label(*M, [("Mediator", True, {f["node"]}), ({J(S["mediator"])}, False, {f["node"]}), ({J(mlabel[S["mediator_model"]])}, False, {f["sub"]})])',
+          f'label(*Y, [("Outcome", True, {f["node"]}), ({J(S["y"])}, False, {f["node"]}), ({J(mlabel[S["outcome_model"]])}, False, {f["sub"]})])']
+    est = {k: f"{{sig({k}['Estimate'])}}" for k in ('acme', 'ade', 'tot')}
+    if compact:
+        acme_l = [line(f"ACME {est['acme']}", True, f['eff']), f"(ci(acme), False, {f['eff']})"]
+        ade_l = [line(f"ADE {est['ade']}  {{ci(ade)}}", True, f['eff'])]
+        tot_l = [line(f"Total {est['tot']}, {mediated}")]
+        places = [(3.3, 2.65, a_lines, 'right'), (6.7, 2.65, b_lines, 'left'), (5, 2.3, acme_l, None), (5, 0.0, c_lines, None), (5, -0.6, ade_l, None), (5, -1.2, tot_l, None)]
+    else:
+        acme_l = [line(f"ACME {est['acme']}", True, f['eff']), line(f"{lv}%: {{ci(acme)}}", False, f['eff'])]
+        ade_l = [line(f"ADE {est['ade']}  {lv}%: {{ci(ade)}}", True, f['eff'])]
+        tot_l = [line(f"Total effect {est['tot']} ({{ci(tot)}}), {mediated}", False, 10.5)]
+        places = [(2.9, 2.85, a_lines, 'right'), (7.1, 2.85, b_lines, 'left'), (5, 1.45 if inter else 1.28, c_lines, None), (5, 2.45, acme_l, None), (5, 0.1, ade_l, None), (5, -0.42, tot_l, None)]
+    for x, y, lines, ha in places:
+        c.append(f'label({x}, {y}, [{", ".join(lines)}]' + (f', ha="{ha}"' if ha else '') + ')' + ('   # the page bolds only the estimate' if lines is ade_l else ''))
+    if S['covariates']:
+        adj = f'Adjusted for {", ".join(S["covariates"])}'
+        if compact and len(adj) > 44:
+            adj = f'Adjusted for {len(S["covariates"])} covariates'
+        c.append(f'label(0.05, 5.4, [({J(adj)}, False, {9 if compact else 10})], ha="left")')
+    c += ['ax.set_title("mediation path diagram")', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('mediation.plot_code')
+def plot_code(table, y, treatment, mediator, kind='effects', plot=None, covariates=None, rows=None, outcome_model=None, mediator_model=None, interaction=False,
+              control=None, treated=None, n_rep=1000, method='parametric', seed=1, alpha=0.05, table_name='data'):
+    """The Python that draws one of the report's graphs with matplotlib
+    (kind: diagram, effects, draws), the models and simulations as the
+    report's code runs them, from what the page chose (plot)."""
+    try:
+        S = _spec(table, y, treatment, mediator, covariates, outcome_model, mediator_model, interaction, control, treated)
+        _, info = _frame(table, S, rows)
+    except UserError as e:
+        return {'error': str(e)}
+    method = method if method in METHODS else 'parametric'
+    seed = int(seed if seed is not None else 1) % (2 ** 32)
+    head = _fit_code(S, info, table, table_name, rows, int(n_rep or 1000), method, seed, ['import matplotlib.pyplot as plt'])
+    plot = plot or {}
+    if kind == 'effects':
+        return {'plot_code': _effects_code(S, info, head, plot, alpha)}
+    if kind == 'draws':
+        return {'plot_code': _draws_code(S, info, head, plot, alpha)}
+    if kind == 'diagram':
+        return {'plot_code': _diagram_code(S, info, head, plot, alpha)}
+    return {'error': f'no graph {kind!r}'}

@@ -374,4 +374,72 @@ check('datetimes become milliseconds with a date format, booleans 0/1', (rdt['re
 rwarn = call('tables.run_script', table=tid, code='import warnings\nwarnings.warn("careful")')
 check('warnings come back', any('careful' in w for w in rwarn.get('warnings', [])), True)
 
+# ---- the reports' code keeps the report's rows (a By group, rows excluded) and gives its numbers -------------
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+import warnings  # noqa: E402
+
+work_t = tempfile.mkdtemp(prefix='smui-tables-')
+df.to_csv(os.path.join(work_t, 'data.csv'), index=False)
+
+
+def code_vars(code, label):
+    """A report's code run on the whole table's CSV: its variables."""
+    ns = {}
+    here = os.getcwd()
+    os.chdir(work_t)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(compile(code, label, 'exec'), ns)
+    except Exception as e:   # the check below reports it
+        ns['__error__'] = f'{type(e).__name__}: {e}'
+    finally:
+        os.chdir(here)
+    check(f'{label}: the code runs', ns.get('__error__'), None)
+    return ns
+
+
+out_rows = {3, 8, 15, 40, 41, 200}
+grp_a = [i for i in range(N) if g1[i] == 'a' and i not in out_rows]
+rep_a = call('tables.missing_report', table=tid, columns=['x', 's'], rows=grp_a, where=[{'column': 'g1', 'value': 'a'}], table_name='data')
+ns = code_vars(rep_a['code'], 'Explore Missing Values, the By group g1 = a with rows excluded')
+if 'd' in ns:
+    check('... its rows are the report\'s', sorted(ns['d'].index.tolist()), grp_a)
+    check('... and its missing counts', [int(ns['d'][c].isna().sum()) for c in ('x', 's')], [c['n_missing'] for c in rep_a['columns']])
+kept_t = [i for i in range(N) if i not in out_rows]
+cv2 = call('tables.colviewer', table=tid, columns=['x', 'g1', 'g2'], rows=kept_t, table_name='data')
+ns = code_vars(cv2['code'], 'the Columns Viewer with rows excluded')
+if 'd' in ns:
+    check('... its N and N Missing are the report\'s', [(int(ns['d'][c].count()), int(ns['d'][c].isna().sum())) for c in ('x', 'g1', 'g2')], [(r_['n'], r_['n_missing']) for r_ in cv2['rows']])
+    close('... and so is its mean', [ns['num']['x'].mean()], [cv2['rows'][0]['mean']])
+# the Tables commands on the included (or selected) rows: their code, in the new table's notes, takes the same rows
+sm_ = call('tables.summary', table=tid, group=['g1'], columns=['x'], stats=['N', 'Mean'], rows=kept_t, table_name='data')
+ns = code_vars(sm_['code'], 'Summary of the included rows')
+if 'out' in ns:
+    got_ = {k: float(v) for k, v in ns['out']['N Rows'].items()}
+    want_ = dict(zip([str(v) if v is not None else 'nan' for v in {c['name']: c for c in sm_['columns']}['g1']['values']], {c['name']: c for c in sm_['columns']}['N Rows']['values']))
+    check('... its group sizes are the new table\'s', {str(k) if k == k else 'nan': v for k, v in got_.items()}, want_)
+mp_ = call('tables.missing_pattern', table=tid, columns=['g1', 'x', 's'], rows=kept_t, table_name='data')
+ns = code_vars(mp_['code'], 'Missing Data Pattern of the included rows')
+if 'pattern' in ns:
+    cm_ = {c['name']: c['values'] for c in mp_['columns']}
+    check('... its pattern counts are the new table\'s', dict(ns['pattern'].value_counts().sort_index()), dict(zip(cm_['Patterns'], [int(v) for v in cm_['Count']])))
+st_ = call('tables.stack', table=tid, columns=['x', 'y'], rows=kept_t, table_name='data')
+ns = code_vars(st_['code'], 'Stack of the included rows')
+if 'long' in ns:
+    check('... as many rows as the new table', len(ns['long']), st_['nrows'])
+tr_ = call('tables.transpose', table=tid, columns=['x', 'y'], rows=[3, 8, 15], table_name='data')
+ns = code_vars(tr_['code'], 'Transpose of the selected rows')
+if 't' in ns:
+    check('... the selected rows as its columns', ns['t'].shape, (2, 3))
+tb2 = call('tables.tabulate', table=tid, row_chains=[['g1']], col_chains=[['s']], rows=kept_t, table_name='data')
+ns = code_vars(tb2['code'], 'Tabulate with rows excluded')
+if 'df' in ns:
+    ct_ = pd.crosstab(ns['df']['g1'], ns['df']['s'])
+    got_ = [float(ct_.loc[a, b]) if a in ct_.index and b in ct_.columns else 0.0 for a in ('c', 'a', 'b') for b in ('p', 'q', 'r', 's')]
+    check('... its counts are the report\'s', got_, [v for line in tb2['values'] for v in line])
+
 sys.exit(check.done())

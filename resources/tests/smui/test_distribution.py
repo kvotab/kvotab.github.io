@@ -366,6 +366,14 @@ rct = call('distribution.categorical', table=tid, column='g', rows=keep_)
 ns = code_ns({'x': x, 'g': g, 'w': w}, rct['code'], 'the frequencies with rows excluded')
 check("... the frequencies' code counts only the report's rows", int(ns['counts'].sum()) if 'counts' in ns else None, len([i for i in keep_ if g[i] is not None]))
 
+# levels named None, NA and null: text in the CSV, and the code reads them as text (pandas'
+# default would take them for missing values)
+tna = table({'g': ['None', 'NA', 'a', 'None', 'null', 'a', None]})
+rna = call('distribution.categorical', table=tna, column='g')
+ns = code_ns({'g': ['None', 'NA', 'a', 'None', 'null', 'a', None]}, rna['code'], 'the frequencies of levels named None, NA and null')
+check("levels named None, NA and null are levels in the code's counts, and the empty value is missing",
+      sorted((str(k), int(v)) for k, v in ns['counts'].items()) if 'counts' in ns else None, [('NA', 1), ('None', 2), ('a', 2), ('null', 1)])
+
 # rows subset and the error path
 check('rows subset (row 5 is missing)', call('distribution.continuous', table=tid, column='x', rows=list(range(10)))['moments']['n'], 9.0)
 check('no values', 'error' in call('distribution.continuous', table=tid, column='x', rows=[5]), True)

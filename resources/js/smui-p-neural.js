@@ -297,16 +297,18 @@
     if (!r) return;
     const ob = ctx.outline('Residual by Predicted Plot', { parent, key, info: 'p:neural:residual' });
     const muted = SM.util.themeColors().muted;
+    const pc = fit.plots || {};
     const plots = fit.sets.map((set) => {
       const k = ['Training', 'Validation', 'Test'].indexOf(set);
       const idx = r.set.map((s, i) => (s === k ? i : -1)).filter((i) => i >= 0);
       const xs = idx.map((i) => r.predicted[i]), ys = idx.map((i) => r.actual[i] - r.predicted[i]);
       let lo = Infinity, hi = -Infinity;
       for (const v of xs) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      return ctx.plot([
+      return SM.predict.plotWithCode(ctx, [
         { type: 'scatter', mode: 'markers', x: xs, y: ys, rows: idx.map((i) => r.rows[i]), marker: { size: 5 }, name: set },
         { type: 'scatter', mode: 'lines', x: [lo, hi], y: [0, 0], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false },
-      ], { title: { text: set, font: { size: 12 } }, margin: { l: 56, r: 12, t: 28, b: 42 }, xaxis: { title: { text: 'Predicted' } }, yaxis: { title: { text: 'Residual' }, zeroline: false } }, { width: W(320), height: 280, title: `Residual by predicted ${set}` });
+      ], { title: { text: set, font: { size: 12 } }, margin: { l: 56, r: 12, t: 28, b: 42 }, xaxis: { title: { text: 'Predicted' } }, yaxis: { title: { text: 'Residual' }, zeroline: false } }, { width: W(320), height: 280, title: `Residual by predicted ${set}` },
+      pc.head_code, pc.rbp && pc.rbp[set]);
     });
     ob.add(ctx.row(...plots), ctx.note('The actual value less the prediction, against the prediction: a pattern means the network misses a shape in the data; a funnel, a spread that changes with the level.'));
   }
@@ -452,7 +454,8 @@
     const ob = ctx.outline('Diagram', { parent, key: `diagram:${m.id}`, info: 'p:neural:diagram', menu: () => [{ label: 'Remove', action: () => ctx.set('diagram', false, m.id) }] });
     for (const net of res.nets) {
       if (res.nets.length > 1) ob.add(el('p', { class: 'sm-nn-caption', text: `The network of ${net.responses.join(', ')}` }));
-      ob.add(el('div', { class: 'sm-nn-scroll sm-nn-diagram' }, diagramSVG(net.diagram)));
+      // the diagram with its code block right under it: the networks fitted (the model's head), then drawn
+      ob.add(el('div', { class: 'sm-nn-scroll sm-nn-diagram' }, diagramSVG(net.diagram)), SM.predict.graphCode(ctx, res.plots && res.plots.head_code, net.diagram_code) || '');
     }
     const act = ACT_NAME[m.activation] || m.activation;
     ob.add(ctx.note(`The X columns on the left (a categorical one is one box for its level columns), the hidden nodes (${act}) in the middle, the response${res.responses.length > 1 ? 's' : ''} on the right; every line is a weight: hover it for its value, or a node for its intercept.${res.nets.length > 1 ? ' scikit-learn fits a categorical response in a network of its own, so there is one diagram per network.' : ''}`));

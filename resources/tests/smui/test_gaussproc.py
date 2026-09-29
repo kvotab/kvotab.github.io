@@ -388,4 +388,63 @@ for label, kw in (('Gaussian with a nugget', {'y': 'yn', 'x': XN, 'nugget': True
     check.near(f'the code prints the report\'s numbers: {label}', worst, 0.0, abs_=1e-6 if 'noiseless' in label else 1e-9)
     check(f'... and fits the same rows: {label}', got['fit'], r['fit_rows'])
 
+# ---- the graphs' matplotlib code, run on a CSV export: every graph of the report ----------------------------------------------------
+from test_charts import find_line  # noqa: E402
+from test_predictive import SEP, run_graph  # noqa: E402
+
+from smui import predictive as pv  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-gaussproc-charts-')
+# a date factor: its text in the CSV, the page's number (milliseconds since 1970) in the code
+days = (np.datetime64('2024-01-01') + rng.integers(0, 700, 40).astype('timedelta64[D]')).astype('datetime64[ms]').astype(np.int64).astype(float)
+Td = table({'day': list(days), 'x1': list(Xs[:40, 0]), 'yd': list(np.sin(days / 8.64e7 / 90) + Xs[:40, 0] + rng.normal(0, 0.1, 40))})
+from smui import data as sdata  # noqa: E402
+sdata.TABLES[Td]['meta']['day']['format'] = {'kind': 'date'}
+graphs = 0
+for label, tid, kw in (('Gaussian with a nugget', T, {'y': 'yn', 'x': XN, 'nugget': True}),
+                       ('Gaussian, noiseless, a row list and Rows to Fit 20 (the others predicted), one restart', T, {'y': 'y', 'x': XN, 'rows': list(range(5, 55)), 'max_rows': 20, 'restarts': 1}),
+                       ('Matérn 5/2 with a nugget, missing values', T, {'y': 'ym', 'x': ['x1', 'x2', 'x3m'], 'nugget': True, 'correlation': 'matern52'}),
+                       ('one factor, Matérn 3/2', T, {'y': 'yn', 'x': ['x1'], 'correlation': 'matern32'}),
+                       ('two factors, a date among them, Rows to Fit 30', Td, {'y': 'yd', 'x': ['day', 'x1'], 'nugget': True, 'max_rows': 30})):
+    lab = f'graphs: {label}'
+    r = call('gaussproc.fit', table=tid, seed=31, table_name='data', **kw)
+    pl = r['plots']
+    if tid == Td:
+        check(f'{lab}: the head turns the date\'s text back into the page\'s number', 'df["day"] = (pd.to_datetime(df["day"]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)' in pl['head_code'], True)
+    if 'rows' in kw:
+        check(f'{lab}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in pl['head_code'], True)
+    tol = 1e-6 if 'noiseless' in label else 1e-9   # noiseless: the near-singular K turns round-off into 1e-8
+    span = max(1.0, float(np.ptp(r['actual'])))
+    F, err = run_graph(pl['head_code'] + SEP + pl['abp'], tid, GTMP)
+    check(f'{lab}: Actual by Predicted: the code runs, ending in plt.show()', (err, pl['abp'].rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if F:
+        graphs += 1
+        ax = F['axes'][0]
+        two = len(r['other_rows']) > 0
+        check.near(f'{lab}: Actual by Predicted: each row fitted at its jackknife prediction and value', mx(ax['scatter'][0]['xy'], list(zip(r['jackknife'], r['actual']))) / span, 0.0, abs_=tol)
+        if two:
+            check.near(f'{lab}: Actual by Predicted: the rows not fitted at the whole model\'s prediction', mx(ax['scatter'][1]['xy'], list(zip(r['other_pred'], r['other_actual']))) / span, 0.0, abs_=tol)
+        check(f'{lab}: Actual by Predicted: the colours (the rows not fitted green)', [sc['colors'][0][:7] for sc in ax['scatter']], [pv.BASE] + ([G.OTHER] if two else []))
+        v = np.r_[r['jackknife'], r['actual'], r['other_pred'], r['other_actual']]
+        check(f'{lab}: Actual by Predicted: the line of equality over every point', find_line(ax, [v.min(), v.max()], [v.min(), v.max()], rel=1e-6) is not None, True)
+        check(f'{lab}: Actual by Predicted: the legend, the titles, the size', (F['legend'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              (['Jackknife (rows fitted)', 'Predicted (not fitted)'] if two else [], f'{kw["y"]} Jackknife Predicted', kw['y'], f'{kw["y"]} actual by jackknife predicted', [4.3, 3.8]))
+    lo_ = min(min(m_['f']) for m_ in r['marginal'])
+    hi_ = max(max(m_['f']) for m_ in r['marginal'])
+    pad = 0.06 * ((hi_ - lo_) or abs(hi_) or 1)
+    check(f'{lab}: a marginal model plot per factor', len(pl['marginal']), len(r['x']))
+    for k_, (m_, tail) in enumerate(zip(r['marginal'], pl['marginal'])):
+        F, err = run_graph(pl['head_code'] + SEP + tail, tid, GTMP)
+        check(f'{lab}: marginal model plot of {m_["x"]}: the code runs, ending in plt.show()', (err, tail.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+        if not F:
+            continue
+        graphs += 1
+        ax = F['axes'][0]
+        ln = ax['lines'][0]
+        check.near(f'{lab}: marginal model plot of {m_["x"]}: the main effect curve, as the report has it', max(mx(ln['x'], m_['t']) / max(1.0, float(np.ptp(m_['t']))), mx(ln['y'], m_['f']) / span), 0.0, abs_=tol)
+        check.near(f'{lab}: marginal model plot of {m_["x"]}: the scale every factor\'s plot shares', mx(ax['ylim'], [lo_ - pad, hi_ + pad]) / span, 0.0, abs_=tol)
+        check(f'{lab}: marginal model plot of {m_["x"]}: the colour, the titles, the size', (ln['color'][:7], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              (pv.BASE, m_['x'], kw['y'], f'{kw["y"]} marginal model plot of {m_["x"]}', [2.6 if len(r['x']) > 3 else 3.0, 2.3]))
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 17)
+
 sys.exit(check.done())

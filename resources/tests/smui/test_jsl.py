@@ -456,7 +456,7 @@ check('a note that the streams are not JMP\'s', has_note(r, 1, 'streams differ',
 # ==========================================================================================================
 r = conv('dt = Open( "$SAMPLE_DATA/Students.jmp" ); n = N Rows( dt ); k = N Cols( dt ); nm = dt << Get Name; cols = dt << Get Column Names( String );')
 ns = run(r)
-check('Open() of a .jmp the page has: its CSV, as the page\'s code reads it', 'pd.read_csv("Students.csv", float_precision="round_trip")' in r['python'], True)
+check('Open() of a .jmp the page has: its CSV, as the page\'s code reads it', 'pd.read_csv("Students.csv", float_precision="round_trip"' in r['python'], True)
 check('N Rows, N Cols, Get Name, Get Column Names', (ns['n'], ns['k'], ns['nm'], ns['cols']), (12, 5, 'Students', list(STUDENTS.columns)))
 r = conv('dt = Open( "students.JMP" );')
 check('the table is found by its name without the extension, whatever its case', 'Students.csv' in r['python'], True)

@@ -808,4 +808,769 @@ if not err:
     check.near("... its W is the report's", float(ns_k['W']), kt['w'], rel=1e-12)
     check.near("... its chi-square", float(ns_k['chi2']), kt['chi2'], rel=1e-12)
 
+
+# ======================================================================================================================
+# The graphs' matplotlib code, and the rows the code leaves out
+# ======================================================================================================================
+# Every graph's code block is run with matplotlib's Agg backend on the whole
+# table's CSV export (as File > Export CSV writes it: a date as text), and its
+# figure is checked against the report's numbers: the points, lines, bars,
+# heatmaps, bands, texts, labels and titles (test_charts' figure probe). The
+# report runs on a By group with rows excluded, so the code must keep the group
+# (its where line) and drop the rows the report leaves out. The scatterplot
+# matrix's code is the page's: test-ui-multivariate.py checks it.
+import datetime as _dt  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+
+from backend import data  # noqa: E402
+from test_charts import close, run_snippet  # noqa: E402
+
+PAL = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+_tmp = _tempfile.mkdtemp(prefix='smui-mv-charts-')
+
+
+def export(tid):
+    """The table as File > Export CSV writes it: every column; a date column as its day."""
+    t = data.TABLES[tid]
+    out = {}
+    for name, v in t['cols'].items():
+        m = t['meta'][name]
+        if m.get('dataType') == 'numeric' and (m.get('format') or {}).get('kind') == 'date':
+            out[name] = [(_dt.datetime(1970, 1, 1) + _dt.timedelta(milliseconds=float(x))).strftime('%Y-%m-%d') if np.isfinite(x) else '' for x in v]
+        elif m.get('dataType') == 'numeric':
+            out[name] = np.asarray(v, dtype=float)
+        else:
+            out[name] = pd.Series(list(v), dtype=object)
+    return pd.DataFrame(out)
+
+
+def figure(label, code, tid):
+    """Run a graph's code on the table's CSV; its one figure (as the probe reads it), or a blank one."""
+    figs, err = run_snippet(code, export(tid), 'data', _tmp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1], 'plt.show()')
+    check(f'{label}: one figure', len(figs or []), 1)
+    blank = {'lines': [], 'bars': [], 'scatter': [], 'polys': [], 'patches': [], 'texts': [], 'segments': [], 'legend': [], 'images': [],
+             'title': '', 'xlabel': '', 'ylabel': '', 'xticklabels': [], 'yticklabels': [], 'xlim': [], 'ylim': [], 'visible': True}
+    return figs[0] if figs else {'axes': [blank, blank], 'suptitle': '', 'legend': []}
+
+
+def arr(v):
+    return np.array([np.nan if x is None else x for x in np.asarray(v, dtype=object).ravel()], dtype=float)
+
+
+def gap(a, b):
+    """The largest difference of two arrays, NaN where both are NaN; inf when they differ in shape or NaN."""
+    a, b = arr(a), arr(b)
+    if a.shape != b.shape or not a.size or (np.isnan(a) != np.isnan(b)).any():
+        return float('inf')
+    ok = ~np.isnan(a)
+    return float(np.max(np.abs(a[ok] - b[ok]))) if ok.any() else 0.0
+
+
+def pts(ax, k=0):
+    return np.asarray(ax['scatter'][k]['xy'], dtype=float) if len(ax['scatter']) > k and ax['scatter'][k]['xy'] else np.zeros((0, 2))
+
+
+def texts(ax):
+    return [t['s'] for t in ax['texts'] if t['s']]
+
+
+def page_ellipse(mx, my, sx, sy, r, level):
+    """The page's density ellipse (smui-p-multivariate.js), written again here."""
+    c = math.sqrt(-2 * math.log(1 - level))
+    rr = max(-0.999999, min(0.999999, r or 0))
+    t = [2 * math.pi * k / 72 for k in range(73)]
+    return [mx + c * sx * math.cos(u) for u in t], [my + c * sy * (rr * math.cos(u) + math.sqrt(1 - rr * rr) * math.sin(u)) for u in t]
+
+
+def has_line(ax, x, y, rel=1e-9, color=None, **props):
+    """Whether the axes have a line with these data (None: any) and properties, its colour by its hex (without alpha)."""
+    for ln in ax['lines']:
+        if x is not None and not close(ln['x'], x, rel, 1e-9):
+            continue
+        if y is not None and not close(ln['y'], y, rel, 1e-9):
+            continue
+        if color is not None and (ln['color'] or '')[:7] != color:
+            continue
+        if any(ln.get(k) != v for k, v in props.items()):
+            continue
+        return True
+    return False
+
+
+def keeps(label, code, where_line, dropped):
+    """The code keeps the By group's rows and drops those the report leaves out."""
+    check(f'{label}: the code keeps the By group', where_line in code, True)
+    check(f'{label}: ... and drops the rows the report leaves out', f'df = df.drop(index={dropped})   # the rows the report leaves out' in code, True)
+
+
+cr_ = np.random.default_rng(20260929)
+nq = 90
+zq = cr_.normal(size=(nq, 2))
+Xq = np.column_stack([zq[:, 0] + 0.3 * cr_.normal(size=nq), zq[:, 0] + 0.5 * cr_.normal(size=nq), zq[:, 1] + 0.4 * cr_.normal(size=nq),
+                      zq[:, 1] - 0.3 * zq[:, 0] + 0.6 * cr_.normal(size=nq), 0.5 * zq[:, 0] + 0.5 * zq[:, 1] + 0.7 * cr_.normal(size=nq)]).round(4)
+Xq[7, 1] = np.nan
+day0 = _dt.datetime(2024, 1, 1)
+dts = [((day0 + _dt.timedelta(days=int(d))) - _dt.datetime(1970, 1, 1)).total_seconds() * 1000 for d in (40 * zq[:, 0] + 3 * np.arange(nq)).round()]
+gq = ['hi' if v > 0.3 else 'lo' if v < -0.5 else 'mid' for v in zq[:, 0]]
+kq = np.arange(nq) % 3
+uq = (np.array([0, 6, 0])[kq] + cr_.normal(size=nq)).round(3)
+vq = (np.array([0, 0, 6])[kq] + cr_.normal(size=nq)).round(3)
+q1 = [['A', 'B', 'C'][k] if cr_.uniform() < 0.7 else ['A', 'B', 'C'][int(cr_.integers(3))] for k in kq]
+q2 = [['x', 'y', 'y'][k] if cr_.uniform() < 0.6 else ['x', 'y'][int(cr_.integers(2))] for k in kq]
+q3 = [float(1 + (i % 2)) if cr_.uniform() < 0.8 else 3.0 for i in range(nq)]
+wq = cr_.uniform(0.5, 2, nq).round(3)
+fq = cr_.integers(1, 4, nq).astype(float)
+fq[11] = 0.0
+ybq = ['yes' if a > 0.2 else 'no' for a in np.nan_to_num(Xq[:, 0])]
+colsq = ['a', 'b', 'c', 'd', 'e']
+tq = table({'id': [f'R{i + 1}' for i in range(nq)], **{c: Xq[:, j] for j, c in enumerate(colsq)}, 'dt': dts, 'g': gq, 'w': wq, 'f': fq,
+            'u': uq, 'v': vq, 'q1': q1, 'q2': q2, 'q3': q3, 'yb': ybq},
+           types={'q3': 'nominal'}, levels={'g': ['mid', 'hi', 'lo'], 'q1': ['C', 'A', 'B'], 'q2': ['y', 'x'], 'q3': [2.0, 1.0, 3.0], 'yb': ['no', 'yes']})
+data.TABLES[tq]['meta']['dt']['format'] = {'kind': 'date'}      # a date column: milliseconds in the page, a day in the CSV
+hi = [i for i in range(nq) if gq[i] == 'hi']
+excluded = sorted({hi[0], hi[3], 5, 30, 41})                     # rows excluded in the page, two of them in the group g = hi
+grp_rows = [i for i in hi if i not in excluded]                  # the By group g = hi, with some rows excluded
+grp_drop = [i for i in hi if i in excluded]
+where_hi = [{'column': 'g', 'value': 'hi'}]
+WHERE_HI = 'df = df[df["g"] == "hi"]   # only the rows where g is hi'
+all_rows = [i for i in range(nq) if i not in excluded]           # every group, some rows excluded
+
+# ---- Multivariate: the colour maps (a date column among the Y columns) -----------------------------------------------
+cm_cols = ['a', 'b', 'c', 'dt', 'e']
+for label, kw in (('row-wise', {}), ('pairwise', {'method': 'pairwise'}), ('row-wise, Freq', {'freq': 'f'}), ('pairwise, Weight and Freq', {'method': 'pairwise', 'weight': 'w', 'freq': 'f'})):
+    r = call('multivariate.fit', table=tq, columns=cm_cols, rows=grp_rows, where=where_hi, **kw)
+    R_ = arr(r['corr']).reshape(5, 5)
+    P_ = arr(r['p']).reshape(5, 5)
+    order_ = call('multivariate.cluster_order', corr=r['corr'])['order']
+    for key, title, Z, names_, txt in (('cm_corr_code', 'Color Map On Correlations', R_, cm_cols, lambda v: f'{v:.2f}'.replace('-', '−')),
+                                       ('cm_p_code', 'Color Map On p-values', P_, cm_cols, None),
+                                       ('cm_cluster_code', 'Cluster the Correlations', R_[np.ix_(order_, order_)], [cm_cols[k] for k in order_], lambda v: f'{v:.2f}'.replace('-', '−'))):
+        tag = f'{title} ({label})'
+        code_ = r[key]
+        if key == 'cm_corr_code' and label == 'row-wise':
+            keeps(tag, code_, WHERE_HI, grp_drop)
+            check(f'{tag}: the date column turned back into the page\'s number', 'df["dt"] = (pd.to_datetime(df["dt"]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)' in code_, True)
+        F = figure(tag, code_, tq)
+        ax = F['axes'][0]
+        img = arr(ax['images'][0]['data']).reshape(5, 5) if ax['images'] else np.zeros((5, 5))
+        check.near(f'{tag}: the cells are the report\'s {"p-values" if "p-values" in title else "correlations"}', gap(img, Z), 0.0, abs_=1e-12)
+        check(f'{tag}: the columns in the page\'s order, the first at the top', ([t for t in ax['xticklabels'] if t], [t for t in ax['yticklabels'] if t], ax['yinverted']), (names_, names_, True))
+        want_txt = [txt(v) for v in Z.ravel()] if txt else [('' if i == j else ('.' if np.isnan(Z[i, j]) else ('<.0001' if Z[i, j] < 0.0001 else f'{Z[i, j]:.4f}') + ('*' if Z[i, j] < 0.05 else ''))) for i in range(5) for j in range(5)]
+        check(f'{tag}: the values in the cells, as the page writes them', [t['s'] for t in ax['texts']], want_txt)
+        check(f'{tag}: the title and a colour bar', (ax['title'], len(F['axes'])), (title, 2))
+
+# ---- Multivariate: the outlier distances ----------------------------------------------------------------------------
+o_ = call('multivariate.outliers', table=tq, columns=colsq, rows=grp_rows, where=where_hi)
+for key, field, ucl, title, ytitle in (('mahal_code', 'mahal', 'ucl_mahal', 'Mahalanobis Distances', 'Mahalanobis Distance'), ('jack_code', 'jack', 'ucl_jack', 'Jackknife Distances', 'Jackknife Distance'),
+                                       ('t2_code', 't2', 'ucl_t2', 'T²', 'T²')):
+    F = figure(title, o_[key], tq)
+    ax = F['axes'][0]
+    P = pts(ax)
+    check.near(f'{title}: the points are the rows (row number, distance)', max(gap(P[:, 0], np.array(o_['rows']) + 1), gap(P[:, 1], o_[field])), 0.0, abs_=1e-9)
+    check(f'{title}: the dashed UCL', has_line(ax, None, [o_[ucl], o_[ucl]], ls='--', color='#c0392b'), True)
+    check(f'{title}: the UCL written at its line, as the page writes it', texts(ax), [f'UCL {o_[ucl]:.5g}'])
+    check(f'{title}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Row Number', ytitle, title))
+keeps('Mahalanobis Distances', o_['mahal_code'], WHERE_HI, grp_drop)
+
+# ---- Principal Components ----------------------------------------------------------------------------------------------
+for label, kw, a_, b_ in (('on correlations, Prin2 by Prin3, ellipse, varimax', {'rotation': 'varimax', 'n_rotate': 2}, 1, 2),
+                          ('on covariances, Freq, promax of 3', {'on': 'covariances', 'freq': 'f', 'rotation': 'promax', 'n_rotate': 3}, 0, 1),
+                          ('unscaled, Weight, the same component twice', {'on': 'unscaled', 'weight': 'w', 'rotation': 'quartimin', 'n_rotate': 2, 'kaiser': False}, 2, 2)):
+    pc_ = call('pca.fit', table=tq, columns=colsq, rows=all_rows, plot={'x': a_, 'y': b_, 'ellipse': True}, **kw)
+    ev_, sc_, ld_ = np.array(pc_['eigenvalues']), arr(pc_['scores']).reshape(-1, 5), arr(pc_['loadings']).reshape(5, 5)
+    on_ = kw.get('on', 'correlations')
+    F = figure(f'PCA {label}: eigenvalues', pc_['eigen_code'], tq)
+    ax = F['axes'][0]
+    check.near(f'PCA {label}: the bars are the eigenvalues', gap([b['h'] for b in ax['bars']], ev_), 0.0, abs_=1e-12)
+    check(f'PCA {label}: the dotted line at an eigenvalue of 1, on correlations only', has_line(ax, None, [1, 1], ls=':'), on_ == 'correlations')
+    F = figure(f'PCA {label}: scree plot', pc_['scree_code'], tq)
+    ax = F['axes'][0]
+    check(f'PCA {label}: the scree line', has_line(ax, list(range(1, 6)), list(ev_), rel=1e-12), True)
+    check(f'PCA {label}: the scree plot\'s titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Number of Components', 'Eigenvalue', 'Scree Plot'))
+    for key, size in (('score_summary_code', [3.0, 2.8]), ('score_code', [4.4, 3.8])):
+        F = figure(f'PCA {label}: {key}', pc_[key], tq)
+        ax = F['axes'][0]
+        P = pts(ax)
+        check.near(f'PCA {label}: {key}: the points are the report\'s scores', max(gap(P[:, 0], sc_[:, a_]), gap(P[:, 1], sc_[:, b_])), 0.0, abs_=1e-9)
+        x_, y_ = sc_[:, a_], sc_[:, b_]
+        ex, ey = page_ellipse(x_.mean(), y_.mean(), x_.std(ddof=1), y_.std(ddof=1), 0 if a_ == b_ else float(np.corrcoef(x_, y_)[0, 1]), 0.95)
+        check(f'PCA {label}: {key}: the 95% ellipse of the scores', has_line(ax, ex, ey, rel=1e-7), True)
+        check(f'PCA {label}: {key}: the titles and the size', (ax['xlabel'], ax['ylabel'], ax['title'], F['size']), (f'Prin{a_ + 1}', f'Prin{b_ + 1}', 'Score Plot', size))
+    for key in ('loading_summary_code', 'loading_code'):
+        F = figure(f'PCA {label}: {key}', pc_[key], tq)
+        ax = F['axes'][0]
+        P = pts(ax)
+        check.near(f'PCA {label}: {key}: the diamonds are the loadings', max(gap(P[:, 0], ld_[:, a_]), gap(P[:, 1], ld_[:, b_])), 0.0, abs_=1e-9)
+        check(f'PCA {label}: {key}: a ray to each column', all(has_line(ax, [0, ld_[i, a_]], [0, ld_[i, b_]], color='#786b5d') for i in range(5)), True)
+        check(f'PCA {label}: {key}: the names at the ends', texts(ax), colsq)
+        circ = [p for p in ax['patches'] if p['type'] == 'ellipse']
+        unit = on_ != 'unscaled'
+        check(f'PCA {label}: {key}: the unit circle (not unscaled), the axes to ±1.15', (len(circ) == 1 and close(circ[0]['center'], [0, 0]) and close([circ[0]['w'], circ[0]['h']], [2, 2]), ax['xlim'] == [-1.15, 1.15]) if unit else (len(circ), False), (True, True) if unit else (0, False))
+    F = figure(f'PCA {label}: biplot', pc_['biplot_code'], tq)
+    ax = F['axes'][0]
+    P = pts(ax)
+    s_ = 0.85 * max(np.abs(sc_[:, a_]).max(), np.abs(sc_[:, b_]).max()) / max(np.abs(ld_[:, a_]).max(), np.abs(ld_[:, b_]).max())
+    check.near(f'PCA {label}: biplot: the points', max(gap(P[:, 0], sc_[:, a_]), gap(P[:, 1], sc_[:, b_])), 0.0, abs_=1e-9)
+    check(f'PCA {label}: biplot: the rays scaled to the spread of the scores', all(has_line(ax, [0, s_ * ld_[i, a_]], [0, s_ * ld_[i, b_]], rel=1e-9, color='#c0392b') for i in range(5)), True)
+    rl_ = arr(pc_['rotation']['loadings']).reshape(5, -1)
+    F = figure(f'PCA {label}: rotated components', pc_['rotated_code'], tq)
+    ax = F['axes'][0]
+    P = pts(ax)
+    check.near(f'PCA {label}: the rotated loadings ({pc_["rotation"]["label"]})', max(gap(P[:, 0], rl_[:, 0]), gap(P[:, 1], rl_[:, 1])), 0.0, abs_=1e-9)
+    check(f'PCA {label}: the rotated loading plot\'s titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Factor 1', 'Factor 2', 'Loading Plot'))
+
+# ---- Factor Analysis -------------------------------------------------------------------------------------------------------
+fe_ = call('factor.eigen', table=tq, columns=colsq, rows=grp_rows, where=where_hi)
+F = figure('Factor Analysis: scree plot', fe_['scree_code'], tq)
+ax = F['axes'][0]
+check('Factor Analysis: the scree line is the eigenvalues of the correlations', has_line(ax, list(range(1, 6)), fe_['eigen']['values'], rel=1e-12), True)
+keeps('Factor Analysis: scree plot', fe_['scree_code'], WHERE_HI, grp_drop)
+for label, kw, a_, b_ in (('ML, varimax', {'n_factors': 2, 'method': 'ml', 'rotation': 'varimax'}, 0, 1), ('principal axis, promax, Freq, 3 factors', {'n_factors': 3, 'method': 'pa', 'rotation': 'promax', 'freq': 'f'}, 2, 1),
+                          ('ML, one factor, Weight', {'n_factors': 1, 'method': 'ml', 'rotation': 'varimax', 'weight': 'w'}, 0, 1), ('ML, the default number, oblimin', {'n_factors': None, 'method': 'ml', 'rotation': 'oblimin', 'gamma': 0.3}, 0, 1)):
+    fa_ = call('factor.fit', table=tq, columns=colsq, rows=all_rows, plot={'x': a_, 'y': b_}, **kw)
+    kk_ = fa_['k']
+    a2, b2 = min(a_, kk_ - 1), min(b_, kk_ - 1)
+    L_, S_ = arr(fa_['rotated']).reshape(5, kk_), arr(fa_['scores']).reshape(-1, kk_)
+    if kk_ >= 2:
+        F = figure(f'Factor Analysis {label}: loading plot', fa_['loading_code'], tq)
+        ax = F['axes'][0]
+        P = pts(ax)
+        check.near(f'Factor Analysis {label}: the loadings plotted are the report\'s', max(gap(P[:, 0], L_[:, a2]), gap(P[:, 1], L_[:, b2])), 0.0, abs_=1e-9)
+        check(f'Factor Analysis {label}: the loading plot\'s titles', (ax['xlabel'], ax['ylabel']), (f'Factor {a2 + 1}', f'Factor {b2 + 1}'))
+    else:
+        check(f'Factor Analysis {label}: one factor, no loading plot', 'loading_code' in fa_, False)
+    F = figure(f'Factor Analysis {label}: score plot', fa_['score_code'], tq)
+    ax = F['axes'][0]
+    P = pts(ax)
+    check.near(f'Factor Analysis {label}: the scores plotted are the report\'s', max(gap(P[:, 0], S_[:, a2]), gap(P[:, 1], S_[:, b2] if kk_ > 1 else np.zeros(len(S_)))), 0.0, abs_=1e-9)
+
+# ---- Discriminant -----------------------------------------------------------------------------------------------------------
+for label, kw, xc in (('linear', {}, 'g'), ('quadratic, Freq', {'method': 'quadratic', 'freq': 'f'}, 'g'), ('regularized, proportional priors', {'method': 'regularized', 'lam': 0.3, 'gam': 0.2, 'priors': 'proportional'}, 'g'),
+                      ('two groups (one canonical variable), priors given', {'priors': 'other', 'prior_values': {'no': 1, 'yes': 3}}, 'yb')):
+    dr_ = call('discriminant.fit', table=tq, y=['a', 'c', 'd', 'e'], x=xc, rows=all_rows, plot={'points': True, 'cl': True, 'c50': True, 'rays': True}, **kw)
+    C_ = dr_['canonical']
+    m_ = C_['m']
+    cs_, cm_, std_ = arr(C_['scores']).reshape(-1, m_), arr(C_['means']).reshape(-1, m_), arr(C_['std']).reshape(4, m_)
+    labs = [str(v) for v in dr_['levels']]
+    F = figure(f'Discriminant {label}: canonical plot', dr_['canonical_code'], tq)
+    ax = F['axes'][0]
+    P = pts(ax)
+    act = np.array(dr_['actual'])
+    if m_ >= 2:
+        check.near(f'Discriminant {label}: the rows\' canonical scores', max(gap(P[:, 0], cs_[:, 0]), gap(P[:, 1], cs_[:, 1])), 0.0, abs_=1e-9)
+    else:
+        hh_ = np.sin(np.arange(len(act)) * 12.9898 + 78.233) * 43758.5453
+        check.near(f'Discriminant {label}: the rows by their group, jittered as the page', max(gap(P[:, 0], cs_[:, 0]), gap(P[:, 1], act + (hh_ - np.floor(hh_) - 0.5) * 0.5)), 0.0, abs_=1e-9)
+    check(f'Discriminant {label}: each row in its group\'s colour', [c_[:7] for c_ in ax['scatter'][0]['colors']] if ax['scatter'] else None, [PAL[t % 12] for t in act])
+    two = m_ >= 2
+    means_ok, cl_ok, c50_ok = True, True, True
+    for t, n_t in enumerate(dr_['counts']):
+        mx, my = cm_[t, 0], (cm_[t, 1] if two else t)
+        means_ok &= has_line(ax, [mx], [my], marker='+', color=PAL[t])
+        if two:
+            ex, ey = page_ellipse(mx, my, 1 / math.sqrt(n_t), 1 / math.sqrt(n_t), 0, 0.95)
+            cl_ok &= has_line(ax, ex, ey, rel=1e-7, color=PAL[t])
+            ex, ey = page_ellipse(mx, my, 1, 1, 0, 0.5)
+            c50_ok &= has_line(ax, ex, ey, rel=1e-7, color=PAL[t], ls=':')
+        else:
+            hw = 1.96 / math.sqrt(n_t)
+            cl_ok &= has_line(ax, [mx - hw, mx + hw], [my, my], color=PAL[t])
+            c50_ok &= has_line(ax, [mx - 0.6745, mx + 0.6745], [my + 0.3, my + 0.3], color=PAL[t], ls=':')
+    check(f'Discriminant {label}: a + at each group\'s mean, in its colour', means_ok, True)
+    check(f'Discriminant {label}: the 95% confidence regions of the means', cl_ok, True)
+    check(f'Discriminant {label}: the normal 50% contours', c50_ok, True)
+    oy = 0 if two else len(labs) - 0.5
+    check(f'Discriminant {label}: the biplot rays, 1.5 × the standardized coefficients', all(has_line(ax, [0, 1.5 * std_[j, 0]], [oy, oy + (1.5 * std_[j, 1] if two else 0.25 * (j + 1) / 4)], color='#786b5d') for j in range(4)), True)
+    check(f'Discriminant {label}: the covariates at the rays\' ends, the groups in the legend', (texts(ax), ax['legend']), (['a', 'c', 'd', 'e'], labs))
+    check(f'Discriminant {label}: the canonical plot\'s axes', (ax['xlabel'], ax['ylabel'] if two else [t_ for t_ in ax['yticklabels'] if t_]), ('Canonical1', 'Canonical2' if two else labs))
+    F = figure(f'Discriminant {label}: scores by row', dr_['scores_code'], tq)
+    ax = F['axes'][0]
+    mis = np.array(dr_['misclassified'], bool)
+    rows_ = np.array(dr_['rows']) + 1
+    nll_ = arr(dr_['neg_log_prob'])
+    P0, P1 = pts(ax, 0), pts(ax, 1)
+    check.near(f'Discriminant {label}: the rows\' −log(probability of their group)', max(gap(P0[:, 0], rows_[~mis]), gap(P0[:, 1], nll_[~mis])), 0.0, abs_=1e-9)
+    check.near(f'Discriminant {label}: the misclassified rows, apart in red', max(gap(P1[:, 0], rows_[mis]), gap(P1[:, 1], nll_[mis])) if mis.any() else 0.0, 0.0, abs_=1e-9)
+    check(f'Discriminant {label}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Row Number', '−Log(Prob(Actual))', 'Discriminant scores by row'))
+dr_ = call('discriminant.fit', table=tq, y=['a', 'c'], x='q1', rows=grp_rows, where=where_hi, plot={})
+keeps('Discriminant: canonical plot', dr_['canonical_code'], WHERE_HI, grp_drop)
+
+# ---- Hierarchical Cluster ------------------------------------------------------------------------------------------------------
+HC_K = "k = None   # Number of Clusters: None takes the report's default"
+for label, kw in (('Ward, unstandardized', {'method': 'ward', 'standardize': 'none'}), ('average, columns standardized', {'method': 'average'}),
+                  ('centroid, rows standardized', {'method': 'centroid', 'standardize': 'rows'}), ('single', {'method': 'single'}), ('complete', {'method': 'complete'})):
+    hc_ = call('hcluster.fit', table=tq, columns=['u', 'v', 'a'], rows=all_rows, label='id', two_way=True, **kw)
+    n_ = hc_['n']
+    merges_, heights_, order_ = np.array(hc_['merges']), np.array(hc_['heights']), np.array(hc_['order'])
+    best, ratio = min(3, n_), -np.inf              # the page's default number of clusters
+    for q in range(2, min(10, n_ - 1) + 1):
+        up, down = heights_[n_ - q], heights_[n_ - q - 1]
+        rr = up / down if down > 0 else (np.inf if up > 0 else 0)
+        if rr > ratio:
+            best, ratio = q, rr
+    pos = np.zeros(2 * n_ - 1)
+    hh = np.zeros(2 * n_ - 1)
+    pos[order_] = np.arange(n_)
+    for s_, (a1, b1) in enumerate(merges_):
+        pos[n_ + s_], hh[n_ + s_] = (pos[a1] + pos[b1]) / 2, heights_[s_]
+    segs = [[[hh[a1], pos[a1]], [heights_[s_], pos[a1]], [heights_[s_], pos[b1]], [hh[b1], pos[b1]]] for s_, (a1, b1) in enumerate(merges_)]
+    names_ = [f'R{r + 1}' for r in hc_['rows']]
+    for k_, colored in ((None, False), (5, True)):
+        kk_ = best if k_ is None else k_
+        code_ = hc_['dendro_code'] if k_ is None else call('hcluster.fit', table=tq, columns=['u', 'v', 'a'], rows=all_rows, label='id', two_way=True, n_clusters=k_, **kw)['dendro_code']
+        if colored:     # the page writes Color Clusters into the code
+            code_ = code_.replace('color_clusters = False   # Color Clusters', 'color_clusters = True   # Color Clusters')
+        tag = f'dendrogram ({label}, {"the default" if k_ is None else k_} clusters{", coloured" if colored else ""})'
+        F = figure(tag, code_, tq)
+        ax = F['axes'][0]
+        got = ax['segments'][0]['segs'] if ax['segments'] else []
+        check.near(f'{tag}: each join where the page draws it', max(gap(np.array(g_, float), np.array(w_, float)) for g_, w_ in zip(got, segs)) if len(got) == len(segs) else 1e9, 0.0, abs_=1e-9)
+        cut = (heights_[n_ - kk_ - 1] + heights_[n_ - kk_]) / 2
+        check(f'{tag}: the cut between the joins, at {kk_} clusters', (has_line(ax, [cut, cut], None, ls='--'), texts(ax)), (True, [f' {kk_} clusters']))
+        P = pts(ax)
+        check.near(f'{tag}: a leaf for each row, in the order of the tree', max(gap(P[:, 0], np.zeros(n_)), gap(P[:, 1], np.arange(n_))), 0.0, abs_=0)
+        check(f'{tag}: the rows\' labels', [t_ for t_ in ax['yticklabels'] if t_], [names_[i] for i in order_])
+        if colored:
+            root = np.arange(2 * n_ - 1)
+            parent = np.full(2 * n_ - 1, -1)
+            for s_, (a1, b1) in enumerate(merges_):
+                parent[a1] = parent[b1] = n_ + s_
+            for v_ in range(2 * n_ - kk_ - 1, -1, -1):
+                if 0 <= parent[v_] < 2 * n_ - kk_:
+                    root[v_] = root[parent[v_]]
+            num = {}
+            for leaf in order_:
+                num.setdefault(root[leaf], len(num))
+            check(f'{tag}: the leaves in their clusters\' colours', [c_[:7] for c_ in ax['scatter'][0]['colors']], [PAL[num[root[leaf]] % 12] for leaf in order_])
+    F = figure(f'distance graph ({label})', hc_['distgraph_code'], tq)
+    ax = F['axes'][0]
+    ks_ = np.arange(1, min(n_ - 1, 60) + 1)
+    check(f'distance graph ({label}): the distance of the last joins by the clusters left', has_line(ax, list(ks_), list(heights_[n_ - 1 - ks_]), rel=1e-12), True)
+    check(f'distance graph ({label}): the dashed line at the clusters shown, the axis reversed', (has_line(ax, [best, best], None, ls='--'), ax['xlim'][0] > ax['xlim'][1]), (True, True))
+    F = figure(f'cubic clustering criterion ({label})', hc_['ccc_code'], tq)
+    ax = F['axes'][0]
+    crit_ = [c_['ccc'] for c_ in hc_['criterion']]
+    check(f'cubic clustering criterion ({label}): the CCC of each number of clusters', has_line(ax, [c_['k'] for c_ in hc_['criterion']], crit_, rel=1e-9), True)
+    F = figure(f'two way clustering ({label})', hc_['twoway_code'], tq)
+    ax = F['axes'][0]
+    Xs_ = arr(hc_['data']).reshape(n_, 3)
+    col_order = hc_['col_order']
+    check.near(f'two way clustering ({label}): the values, rows in the dendrogram\'s order and columns in theirs', gap(arr(ax['images'][0]['data']).reshape(n_, 3) if ax['images'] else [], Xs_[np.ix_(order_, col_order)]), 0.0, abs_=1e-12)
+    check(f'two way clustering ({label}): the columns and rows named', ([t_ for t_ in ax['xticklabels'] if t_], [t_ for t_ in ax['yticklabels'] if t_][:3]), ([['u', 'v', 'a'][j] for j in col_order], [names_[i] for i in order_[:3]]))
+hc_ = call('hcluster.fit', table=tq, columns=['u', 'v'], rows=grp_rows, where=where_hi)
+keeps('dendrogram', hc_['dendro_code'], WHERE_HI, grp_drop)
+
+# ---- K Means ----------------------------------------------------------------------------------------------------------------------
+KM_RAYS = 'show_rays = True   # Biplot Rays'
+for label, kw in (('2 to 4 clusters, in their units', {'k_min': 2, 'k_max': 4, 'standardize': False}), ('3 clusters, scaled, Freq', {'k_min': 3, 'freq': 'f'}),
+                  ('2 to 3 clusters, Weight, 4 restarts', {'k_min': 2, 'k_max': 3, 'weight': 'w', 'restarts': 4})):
+    km_ = call('kmeans.fit', table=tq, columns=['u', 'v', 'a'], rows=all_rows, **kw)
+    pcs_ = arr(km_['pca']['scores']).reshape(-1, 3)
+    V_ = arr(km_['pca']['vectors']).reshape(3, 3)
+    for f_ in km_['fits']:
+        tag = f'K Means {label}: k = {f_["k"]}'
+        lab_ = np.array(f_['labels'])
+        for rays in (True, False):
+            code_ = f_['biplot_code'] if rays else f_['biplot_code'].replace(KM_RAYS, 'show_rays = False   # Biplot Rays')
+            F = figure(f'{tag}: biplot{"" if rays else " without rays"}', code_, tq)
+            ax = F['axes'][0]
+            P = pts(ax)
+            check.near(f'{tag}: the rows on the first two principal components', max(gap(P[:, 0], pcs_[:, 0]), gap(P[:, 1], pcs_[:, 1])), 0.0, abs_=1e-9)
+            check(f'{tag}: each row in its cluster\'s colour', [c_[:7] for c_ in ax['scatter'][0]['colors']], [PAL[c_ % 12] for c_ in lab_])
+            cen = [s_ for s_ in ax['scatter'][1:] if s_['label'].startswith('Cluster')]
+            want_c = [[pcs_[lab_ == c_, 0].mean(), pcs_[lab_ == c_, 1].mean()] for c_ in range(f_['k'])]
+            check.near(f'{tag}: a circle at each cluster\'s mean', gap([q_['xy'][0] for q_ in cen], want_c), 0.0, abs_=1e-9)
+            check.near(f'{tag}: ... as large as its share of the rows', gap([q_['sizes'][0] for q_ in cen], [(0.72 * (10 + 22 * math.sqrt(cnt / km_['n']))) ** 2 for cnt in f_['counts']]), 0.0, abs_=1e-9)
+            ell_ok = True
+            for c_ in range(f_['k']):
+                xs_, ys_ = pcs_[lab_ == c_, 0], pcs_[lab_ == c_, 1]
+                if len(xs_) > 2:
+                    Cv = np.cov(xs_, ys_)
+                    ex, ey = page_ellipse(xs_.mean(), ys_.mean(), math.sqrt(Cv[0, 0]), math.sqrt(Cv[1, 1]), Cv[0, 1] / math.sqrt(Cv[0, 0] * Cv[1, 1]), 0.9)
+                    ell_ok &= has_line(ax, ex, ey, rel=1e-7, color=PAL[c_])
+            check(f'{tag}: the 90% ellipse of each cluster', ell_ok, True)
+            s_ = 0.8 * np.abs(pcs_[:, :2]).max() / np.abs(V_[:, :2]).max()
+            got_rays = all(has_line(ax, [0, s_ * V_[j, 0]], [0, s_ * V_[j, 1]], rel=1e-9, color='#786b5d') for j in range(3))
+            check(f'{tag}: the columns\' rays {"drawn" if rays else "left out (Biplot Rays off)"}', (got_rays, sorted(t_ for t_ in texts(ax) if t_ in ('u', 'v', 'a'))), (rays, ['a', 'u', 'v'] if rays else []))
+            ev_k = np.array(km_['pca']['eigenvalues'])
+            check(f'{tag}: the axes\' shares of the variance, the title', (ax['xlabel'], ax['ylabel'], ax['title']),
+                  (f'Prin1 ({100 * ev_k[0] / np.maximum(ev_k, 0).sum():.1f}%)', f'Prin2 ({100 * ev_k[1] / np.maximum(ev_k, 0).sum():.1f}%)', f'Biplot, {f_["k"]} clusters'))
+        F = figure(f'{tag}: parallel coordinates', f_['parallel_code'], tq)
+        ax = F['axes'][0]
+        mu_, sd_ = np.array(km_['mean']), np.array(km_['sd'])
+        means_ = arr(f_['means']).reshape(f_['k'], 3)
+        check(f'{tag}: each cluster\'s standardized mean', all(has_line(ax, [0, 1, 2], list((means_[c_] - mu_) / sd_), rel=1e-9, marker='o', label=f'Cluster {c_ + 1}') for c_ in range(f_['k'])), True)
+        check(f'{tag}: a line for each row, in its cluster\'s set', [len(s_['segs']) for s_ in ax['segments']], [int((lab_ == c_).sum()) for c_ in range(f_['k'])])
+        check(f'{tag}: the columns on the axis', [t_ for t_ in ax['xticklabels'] if t_], ['u', 'v', 'a'])
+
+# ---- Response Screening ------------------------------------------------------------------------------------------------------------
+for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight, rows left out)', {'weight': 'w', 'rows': all_rows})):
+    rs_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
+    R_ = rs_['results']
+    good = [x_ for x_ in R_ if x_['p'] is not None]
+    F = figure(f'FDR PValue Plot{label}', rs_['fdr_code'], tq)
+    ax = F['axes'][0]
+    byr = sorted(good, key=lambda x_: x_['rank_fraction'])
+    check.near(f'FDR PValue Plot{label}: the p-values by rank fraction', gap(pts(ax, 0), [[x_['rank_fraction'], max(x_['p'], 1e-300)] for x_ in byr]), 0.0, abs_=1e-12)
+    check.near(f'FDR PValue Plot{label}: the FDR p-values', gap(pts(ax, 1), [[x_['rank_fraction'], max(x_['fdr_p'], 1e-300)] for x_ in byr]), 0.0, abs_=1e-12)
+    qs_ = [max(1e-3, q_ / 50) for q_ in range(51)]
+    check(f'FDR PValue Plot{label}: the α line and the FDR threshold α × rank fraction', (has_line(ax, [0, 1], [0.05, 0.05]), has_line(ax, qs_, [0.05 * q_ for q_ in qs_], ls=':')), (True, True))
+    check(f'FDR PValue Plot{label}: a log axis, the legend', (ax['yscale'], ax['legend']), ('log', ['PValue', 'FDR PValue', 'α = 0.05', 'FDR threshold for p']))
+    F = figure(f'FDR LogWorth by Effect Size{label}', rs_['effect_code'], tq)
+    ax = F['axes'][0]
+    check.near(f'FDR LogWorth by Effect Size{label}: the tests', gap(pts(ax), [[x_['effect'], x_['fdr_logworth']] for x_ in good]), 0.0, abs_=1e-9)
+    check(f'FDR LogWorth by Effect Size{label}: red where significant', [c_[:7] for c_ in ax['scatter'][0]['colors']], ['#c0392b' if x_['fdr_p'] < 0.05 else '#786b5d' for x_ in good])
+    F = figure(f'FDR LogWorth by RSquare{label}', rs_['r2_code'], tq)
+    ax = F['axes'][0]
+    check.near(f'FDR LogWorth by RSquare{label}: the continuous responses\' tests', gap(pts(ax), [[x_['r2'], x_['fdr_logworth']] for x_ in good if x_['r2'] is not None]), 0.0, abs_=1e-9)
+
+# ---- Explore Outliers ---------------------------------------------------------------------------------------------------------------------
+mo_ = call('outliers.multivariate', table=tq, columns=['a', 'c', 'd'], rows=grp_rows, where=where_hi, alpha=0.1)
+F = figure('Multivariate Robust Outliers: robust distances by row', mo_['robust_code'], tq)
+ax = F['axes'][0]
+check.near('robust distances by row: the report\'s robust distances (the same FAST-MCD, seed and reweighting)', max(gap(pts(ax)[:, 0], np.array(mo_['rows']) + 1), gap(pts(ax)[:, 1], mo_['robust'])), 0.0, abs_=1e-9)
+check('robust distances by row: the limit and its label', (has_line(ax, None, [mo_['limit']] * 2, ls='--'), texts(ax)), (True, [f'√χ²(0.9, 3) {mo_["limit"]:.5g}']))
+keeps('robust distances by row', mo_['robust_code'], WHERE_HI, grp_drop)
+F = figure('Multivariate Robust Outliers: distance-distance plot', mo_['dd_code'], tq)
+ax = F['axes'][0]
+check.near('distance-distance plot: classical against robust', gap(pts(ax), np.column_stack([mo_['classical'], mo_['robust']])), 0.0, abs_=1e-9)
+check('distance-distance plot: the limit on both axes', (has_line(ax, None, [mo_['limit']] * 2, ls='--'), has_line(ax, [mo_['limit']] * 2, None, ls='--')), (True, True))
+bigo = np.random.default_rng(31).normal(size=(1600, 2)) @ np.array([[1, 0.6], [0, 0.8]])
+bigo[:20] += 4
+tbo = table({'p1': bigo[:, 0], 'p2': bigo[:, 1]})
+mb_ = call('outliers.multivariate', table=tbo, columns=['p1', 'p2'])
+F = figure('robust distances of 1600 rows (FAST-MCD on a subsample)', mb_['robust_code'], tbo)
+check.near('robust distances of 1600 rows: the report\'s', gap(pts(F['axes'][0])[:, 1], mb_['robust']), 0.0, abs_=1e-9)
+ko_ = call('outliers.knn', table=tq, columns=['a', 'c', 'd'], rows=all_rows, k=5)
+check('k nearest neighbours: a graph\'s code for each k', [x_['k'] for x_ in ko_['plots']], ko_['ks'])
+for x_ in ko_['plots']:
+    F = figure(f'k = {x_["k"]}', x_['plot_code'], tq)
+    ax = F['axes'][0]
+    check.near(f'k = {x_["k"]}: the distance of each row to its neighbour', gap(pts(ax), np.column_stack([np.array(ko_['rows']) + 1, ko_['dist'][str(x_['k'])]])), 0.0, abs_=1e-12)
+    check(f'k = {x_["k"]}: the titles', (ax['ylabel'], ax['title']), (f'Distance to neighbor {x_["k"]}', f'k = {x_["k"]}'))
+
+# ---- Multiple Correspondence Analysis, Multidimensional Scaling -----------------------------------------------------------------------------
+for label, kw, pl in (('c1 by c2', {}, {'x': 0, 'y': 1}), ('c3 by c2, Freq, a By group', {'freq': 'f', 'rows': grp_rows, 'where': where_hi}, {'x': 2, 'y': 1})):
+    mc_ = call('mca.fit', table=tq, columns=['q1', 'q2', 'q3'], plot=pl, **kw)
+    K_ = mc_['K']
+    a_, b_ = min(pl['x'], K_ - 1), min(pl['y'], K_ - 1)
+    F = figure(f'MCA ({label}): correspondence analysis', mc_['plot_code'], tq)
+    ax = F['axes'][0]
+    for i, c_ in enumerate(['q1', 'q2', 'q3']):
+        L_ = [lv for lv in mc_['levels'] if lv['column'] == c_]
+        check.near(f'MCA ({label}): the levels of {c_} in principal coordinates', gap(pts(ax, i), [[lv['coords'][a_], lv['coords'][b_]] for lv in L_]), 0.0, abs_=1e-12)
+    want_t = [str(int(lv['level'])) if isinstance(lv['level'], float) else str(lv['level']) for lv in mc_['levels']]
+    check(f'MCA ({label}): the levels named, the columns in the legend', (texts(ax), ax['legend']), (want_t, ['q1', 'q2', 'q3']))
+    check(f'MCA ({label}): the axes\' shares of the inertia', (ax['xlabel'], ax['ylabel']), (f'c{a_ + 1} ({mc_["percent"][a_]:.1f}%)', f'c{b_ + 1} ({mc_["percent"][b_]:.1f}%)'))
+    F = figure(f'MCA ({label}): row plot', mc_['rows_code'], tq)
+    Fr = arr(mc_['row_coords']).reshape(len(mc_['rows']), -1)
+    check.near(f'MCA ({label}): the rows in principal coordinates', gap(pts(F['axes'][0]), Fr[:, [min(a_, Fr.shape[1] - 1), min(b_, Fr.shape[1] - 1)]]), 0.0, abs_=1e-12)
+    if 'where' in kw:
+        keeps(f'MCA ({label})', mc_['plot_code'], WHERE_HI, grp_drop)
+for label, kw, tbl_ in (('standardized, labels', {'label': 'id', 'rows': grp_rows, 'where': where_hi}, tq), ('in their units', {'standardize': False}, tq)):
+    md_ = call('mds.fit', table=tbl_, columns=['a', 'c', 'd', 'e'], **kw)
+    F = figure(f'MDS ({label}): the map', md_['plot_code'], tbl_)
+    ax = F['axes'][0]
+    X_ = arr(md_['coords']).reshape(md_['n'], -1)
+    check.near(f'MDS ({label}): the objects\' coordinates', gap(pts(ax), X_[:, :2]), 0.0, abs_=1e-9)
+    check(f'MDS ({label}): the objects named (up to 60)', texts(ax), ([f'R{r + 1}' for r in md_['rows']] if 'label' in kw else [str(r + 1) for r in md_['rows']]) if md_['n'] <= 60 else [])
+    F = figure(f'MDS ({label}): the Shepard diagram', md_['shepard_code'], tbl_)
+    ax = F['axes'][0]
+    check.near(f'MDS ({label}): each pair\'s distance in the data and in the map', gap(pts(ax), np.column_stack([md_['shepard']['d'], md_['shepard']['dhat']])), 0.0, abs_=1e-9)
+    mx_ = max(max(md_['shepard']['d']), max(md_['shepard']['dhat']))
+    check(f'MDS ({label}): the line on which the map is exact', has_line(ax, [0, mx_], [0, mx_], rel=1e-12), True)
+    if 'where' in kw:
+        keeps(f'MDS ({label})', md_['plot_code'], WHERE_HI, grp_drop)
+pbig = np.random.default_rng(33).normal(size=(95, 3))
+tbm = table({'x1': pbig[:, 0], 'x2': pbig[:, 1], 'x3': pbig[:, 2]})
+md_ = call('mds.fit', table=tbm, columns=['x1', 'x2', 'x3'])
+F = figure('MDS of 95 objects: the Shepard diagram of a sample of 3000 pairs', md_['shepard_code'], tbm)
+check.near('MDS of 95 objects: the sampled pairs are the report\'s', gap(pts(F['axes'][0]), np.column_stack([md_['shepard']['d'], md_['shepard']['dhat']])), 0.0, abs_=1e-9)
+Dm2 = np.sqrt(((pbig[:12, None, :2] - pbig[None, :12, :2]) ** 2).sum(2))
+tdm2 = table({f'd{j}': Dm2[:, j] for j in range(12)})
+mm2 = call('mds.fit', table=tdm2, columns=[f'd{j}' for j in range(12)], matrix=True)
+F = figure('MDS of a distance matrix: the map', mm2['plot_code'], tdm2)
+check.near('MDS of a distance matrix: the coordinates', gap(pts(F['axes'][0]), arr(mm2['coords']).reshape(12, -1)[:, :2]), 0.0, abs_=1e-9)
+
+# ---- the statistics' code leaves out the rows the report leaves out --------------------------------------------------------------------------
+# A By group (g = hi) with rows excluded: every result's code keeps the group
+# and drops those rows, and run on the whole table's CSV gives the report's numbers.
+def ns_of(res, label):
+    here_ = os.getcwd()
+    export(tq).to_csv(os.path.join(_tmp, 'data.csv'), index=False)
+    os.chdir(_tmp)
+    ns_ = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(compile(res['code'], label, 'exec'), ns_)
+        err_ = None
+    except Exception as ex:  # reported as a failed check
+        err_ = f'{type(ex).__name__}: {ex}'
+    finally:
+        os.chdir(here_)
+    check(f'{label}: the code runs on the whole table\'s CSV', err_, None)
+    keeps(label, res['code'], WHERE_HI, grp_drop)
+    return ns_
+
+
+G = dict(rows=grp_rows, where=where_hi)
+X4 = ['a', 'c', 'd', 'e']
+Xg = pd.DataFrame(Xq, columns=colsq).loc[grp_rows, X4].dropna()
+r_ = call('multivariate.fit', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'the correlations of a By group')
+check.near('... its correlations are the report\'s', gap(np.asarray(ns.get('R', np.zeros((4, 4)))), arr(r_['corr']).reshape(4, 4)), 0.0, abs_=1e-12)
+check('... on the group\'s rows', len(ns.get('Xc', [])), len(Xg))
+r_ = call('multivariate.nonparametric', table=tq, columns=X4, measure='spearman', **G)
+ns = ns_of(r_, 'Spearman\'s ρ of a By group')
+check.near('... ρ of the first pair is the report\'s', float(stats.spearmanr(ns.get('x', [0, 1, 2]), ns.get('y', [0, 1, 2])).statistic), r_['pairs'][0]['value'], rel=1e-12)
+r_ = call('multivariate.distance', table=tq, columns=['a', 'c'], **G)
+ns = ns_of(r_, 'the distance correlation of a By group')
+check.near('... dCor is the report\'s', float(distance_statistics(ns.get('x', np.zeros(4)), ns.get('y', np.zeros(4))).distance_correlation), r_['pairs'][0]['dcor'], rel=1e-12)
+r_ = call('multivariate.outliers', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'the outlier distances of a By group')
+check.near('... T² is the report\'s', gap(ns.get('M2', []), r_['t2']), 0.0, abs_=1e-9)
+r_ = call('multivariate.reliability', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'Cronbach\'s α of a By group')
+check.near('... α is the report\'s', float(ns['k'] * ns['c'] / (ns['v'] + (ns['k'] - 1) * ns['c'])) if 'c' in ns else None, r_['alpha'], rel=1e-12)
+r_ = call('multivariate.icc', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'the intraclass correlations of a By group')
+check.near('... ICC(C,1) is the report\'s', float(ns.get('icc', {}).get('ICC(C,1)', 0)), {x_['form']: x_ for x_ in r_['icc']}['ICC(C,1)']['icc'], rel=1e-12)
+r_ = call('multivariate.kendall_w', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'Kendall\'s W of a By group')
+check.near('... W is the report\'s', float(ns.get('W', 0)), r_['w'], rel=1e-12)
+r_ = call('pca.fit', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'principal components of a By group')
+check.near('... the eigenvalues are the report\'s', gap(np.asarray(ns.get('eig', [])), r_['eigenvalues']), 0.0, abs_=1e-12)
+r_ = call('factor.eigen', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'the factor analysis eigenvalues of a By group')
+check.near('... the eigenvalues are the report\'s', gap(ns.get('ev', []), r_['eigen']['values']), 0.0, abs_=1e-12)
+r_ = call('factor.fit', table=tq, columns=['a', 'b', 'c', 'd', 'e'], n_factors=1, method='pa', rotation=None, **G)
+ns = ns_of(r_, 'a factor fit of a By group')
+check.near('... the communalities are the report\'s', gap(np.asarray(ns['res'].communality) if 'res' in ns else [], r_['communality']), 0.0, abs_=1e-6)
+r_ = call('discriminant.fit', table=tq, y=['a', 'c'], x='q2', **G)
+ns = ns_of(r_, 'a discriminant analysis of a By group')
+check.near('... the posterior probabilities are the report\'s (linear, equal priors; the groups in either order)', gap(np.sort(np.asarray(ns.get('P', np.zeros((1, 1)))), axis=1), np.sort(arr(r_['prob']).reshape(len(r_['rows']), -1), axis=1)), 0.0, abs_=1e-9)
+r_ = call('hcluster.fit', table=tq, columns=['u', 'v'], **G)
+ns = ns_of(r_, 'a hierarchical clustering of a By group')
+check('... the joins are the report\'s', np.asarray(ns['Z'])[:, :2].astype(int).tolist() if 'Z' in ns else None, r_['merges'])
+r_ = call('kmeans.fit', table=tq, columns=['u', 'v'], k_min=3, **G)
+ns = ns_of(r_, 'k-means of a By group')
+check('... on the group\'s rows', len(ns.get('X', [])), len(r_['rows']))
+r_ = call('respscreen.fit', table=tq, y=['a', 'q1'], x=['c', 'q2'], **G)
+ns = ns_of(r_, 'response screening of a By group')
+check.near('... the p-values are the report\'s', gap(ns['res']['PValue'] if 'res' in ns else [], [x_['p'] for x_ in r_['results']]), 0.0, abs_=1e-12)
+for fn_, extra in (('outliers.quantile', {}), ('outliers.robust', {})):
+    r_ = call(fn_, table=tq, columns=['a', 'c'], **G, **extra)
+    ns = ns_of(r_, f'{fn_} of a By group')
+    check(f'... {fn_}: the rows of the group', len(ns.get('v', [])), int(np.isfinite(Xq[grp_rows, 2]).sum()))
+r_ = call('outliers.multivariate', table=tq, columns=['a', 'c'], **G)
+ns = ns_of(r_, 'the classical distances of Multivariate Robust Outliers, a By group')
+check.near('... the classical distances are the report\'s', gap(ns.get('md', []), r_['classical']), 0.0, abs_=1e-9)
+r_ = call('outliers.knn', table=tq, columns=['a', 'c'], k=3, **G)
+ns = ns_of(r_, 'the k nearest neighbours of a By group')
+check('... on the group\'s rows', len(ns.get('X', [])), len(r_['rows']))
+r_ = call('mca.fit', table=tq, columns=['q1', 'q2'], **G)
+ns = ns_of(r_, 'multiple correspondence analysis of a By group')
+check.near('... the inertias are the report\'s', gap(ns.get('inertia', []), r_['inertia']), 0.0, abs_=1e-12)
+r_ = call('mds.fit', table=tq, columns=X4, **G)
+ns = ns_of(r_, 'multidimensional scaling of a By group')
+check.near('... the eigenvalues are the report\'s', gap(np.asarray(ns.get('ev', []))[:len(r_['eigenvalues'])], r_['eigenvalues']), 0.0, abs_=1e-9)
+
+
+# ---- the statistics' code of Discriminant, K Means, Response Screening, Factor Analysis and Hierarchical Cluster -----------
+# Each result's code, run on the whole table's CSV, gives the report's numbers:
+# the report's method, priors, weights and order of the categories; its own
+# seeded k-means with the restarts; the tests with Weight and Freq; the
+# weighted correlations and the report's rotation with its normalization; the
+# clusters at the report's number, or at the page's default.
+def run_code(label, code, tid):
+    here_ = os.getcwd()
+    export(tid).to_csv(os.path.join(_tmp, 'data.csv'), index=False)
+    os.chdir(_tmp)
+    ns_ = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(compile(code, label, 'exec'), ns_)
+        err_ = None
+    except Exception as ex:  # reported as a failed check
+        import traceback
+        err_ = f'{type(ex).__name__}: {ex} {traceback.format_exc(limit=-2)}'
+    finally:
+        os.chdir(here_)
+    check(f'{label}: the code runs on the whole table\'s CSV', err_, None)
+    return ns_ if err_ is None else None
+
+
+def val(ns_, key, dflt=None):
+    return ns_.get(key, dflt) if ns_ else dflt
+
+
+# Discriminant: every method, the priors, the weights, the table's order of the categories, a By group
+for label, kw in (('linear, equal priors', {'y': ['a', 'c', 'd', 'e'], 'x': 'g'}),
+                  ('quadratic, Freq', {'y': ['a', 'c', 'd'], 'x': 'g', 'method': 'quadratic', 'freq': 'f'}),
+                  ('regularized, proportional priors, Weight', {'y': ['a', 'c', 'd', 'e'], 'x': 'g', 'method': 'regularized', 'lam': 0.3, 'gam': 0.2, 'priors': 'proportional', 'weight': 'w'}),
+                  ('two groups, priors given, Weight and Freq', {'y': ['a', 'c'], 'x': 'yb', 'priors': 'other', 'prior_values': {'no': 1, 'yes': 3}, 'weight': 'w', 'freq': 'f'}),
+                  ('the categories of a nominal number, a By group with excluded rows', {'y': ['a', 'c'], 'x': 'q3', 'rows': grp_rows, 'where': where_hi})):
+    r_ = call('discriminant.fit', table=tq, **kw)
+    tag = f'discriminant.fit\'s code ({label})'
+    ns = run_code(tag, r_['code'], tq)
+    if not ns:
+        continue
+    check(tag + ': the categories in the table\'s order', [str(int(v)) if isinstance(v, float) else str(v) for v in ns['levels']], [str(int(v)) if isinstance(v, float) else str(v) for v in r_['levels']])
+    check.near(tag + ': the posterior probabilities are the report\'s', gap(ns['P'], r_['prob']), 0.0, abs_=1e-9)
+    check.near(tag + ': the squared distances (SqDist)', gap(ns['SqDist'], r_['sqdist']), 0.0, abs_=1e-9)
+    check.near(tag + ': the confusion matrix', gap(ns['conf'], r_['confusion']), 0.0, abs_=1e-9)
+    S_ = r_['summary']
+    got_ = [float(ns['w'][ns['mis']].sum()), float(100 * ns['w'][ns['mis']].sum() / ns['w'].sum()), float(1 - ns['ll'] / ns['ll0']), float(-2 * ns['ll'])]
+    check.near(tag + ': the Score Summaries: misclassified, percent, entropy RSquare, −2LogLikelihood', gap(got_, [S_['n_mis'], S_['pct_mis'], S_['entropy_r2'], S_['m2ll']]), 0.0, abs_=1e-9)
+    check.near(tag + ': the canonical correlations', gap(ns['cancorr'], r_['canonical']['cancorr']), 0.0, abs_=1e-9)
+    names_ = {"Wilks' lambda": "Wilks' Lambda", "Pillai's trace": "Pillai's Trace", 'Hotelling-Lawley trace': 'Hotelling-Lawley', "Roy's greatest root": "Roy's Max Root"}
+    tst = ns['tests']
+    got_ = [[float(tst.loc[k_, c_]) for c_ in ('Value', 'F Value', 'Num DF', 'Den DF', 'Pr > F')] for k_ in names_]
+    want_ = [[x_[c_] for c_ in ('value', 'F', 'numdf', 'dendf', 'p')] for x_ in r_['tests']]
+    check.near(tag + ': the multivariate tests (Wilks, Pillai, Hotelling-Lawley, Roy)', gap(got_, want_), 0.0, abs_=1e-9)
+    if kw.get('method') in (None, 'linear') and kw.get('priors') in (None, 'equal') and not kw.get('weight') and not kw.get('freq'):
+        continue
+    check(tag + ': says which method and priors', ({'quadratic': 'quadratic:', 'regularized': 'regularized:'}.get(kw.get('method'), 'linear:') in r_['code'],
+                                                   {'proportional': 'proportional to occurrence', 'other': 'the priors given'}.get(kw.get('priors'), 'equal probabilities') in r_['code']), (True, True))
+
+# K Means: the report's own k-means (seeded k-means++ starts, Lloyd, the best of the restarts) over a range of k
+for label, kw in (('2 to 5 clusters, in their units', {'columns': ['u', 'v', 'a'], 'k_min': 2, 'k_max': 5, 'standardize': False}),
+                  ('3 clusters, scaled, Freq', {'columns': ['u', 'v', 'a'], 'k_min': 3, 'freq': 'f'}),
+                  ('2 to 4 clusters, Weight, 4 restarts, another seed', {'columns': ['u', 'v'], 'k_min': 2, 'k_max': 4, 'weight': 'w', 'restarts': 4, 'seed': 7}),
+                  ('a By group with excluded rows', {'columns': ['u', 'v', 'c'], 'k_min': 2, 'k_max': 3, 'rows': grp_rows, 'where': where_hi})):
+    r_ = call('kmeans.fit', table=tq, **kw)
+    tag = f'kmeans.fit\'s code ({label})'
+    ns = run_code(tag, r_['code'], tq)
+    if not ns:
+        continue
+    check(tag + ': the report\'s own k-means, not scipy\'s single start', ('kmeans2' in r_['code'], f'default_rng({r_["seed"]})' in r_['code']), (False, True))
+    comp = {c_['NCluster']: c_ for c_ in ns['comparison']}
+    for f_ in r_['fits']:
+        k_ = f_['k']
+        check(tag + f': k = {k_}: each row\'s cluster is the report\'s', ns['fits'][k_].tolist() if k_ in ns['fits'] else None, f_['labels'])
+        c_ = comp.get(k_, {})
+        check.near(tag + f': k = {k_}: the Cluster Comparison (CCC, pseudo F, RSquare, within SS)', gap([c_.get('CCC'), c_.get('Pseudo F'), c_.get('RSquare'), c_.get('Within SS')],
+                                                                                                        [f_['ccc'], f_['pseudo_f'], f_['r2'], f_['wss']]), 0.0, abs_=1e-9)
+        check(tag + f': k = {k_}: the steps and the criterion', (c_.get('Step'), close(c_.get('Criterion'), f_['criterion'], 1e-9, 1e-15)), (f_['iterations'], True))
+    lab_ = ns['fits'][r_['fits'][-1]['k']]
+    w_, X0_ = ns['w'], ns['X0']
+    kk_ = r_['fits'][-1]['k']
+    means_ = [(w_[lab_ == c_, None] * X0_[lab_ == c_]).sum(0) / w_[lab_ == c_].sum() for c_ in range(kk_)]
+    check.near(tag + ': the last fit\'s Cluster Means', gap(means_, r_['fits'][-1]['means']), 0.0, abs_=1e-9)
+
+# Response Screening: every test with Weight and Freq as the report uses them
+for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight)', {'weight': 'w'}), (' (Weight and Freq, rows excluded)', {'weight': 'w', 'freq': 'f', 'rows': all_rows}),
+                  (' (a By group)', {'rows': grp_rows, 'where': where_hi})):
+    r_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
+    tag = f'respscreen.fit\'s code{label}'
+    ns = run_code(tag, r_['code'], tq)
+    if not ns:
+        continue
+    res_ = ns['res']
+    R_ = r_['results']
+    check(tag + ': a line for each pair, in the report\'s order', list(zip(res_['Y'], res_['X'])), [(x_['y'], x_['x']) for x_ in R_])
+    for col_, key_ in (('PValue', 'p'), ('FDR_PValue', 'fdr_p'), ('LogWorth', 'logworth'), ('FDR_LogWorth', 'fdr_logworth'), ('Effect_Size', 'effect'), ('Rank_Fraction', 'rank_fraction'),
+                       ('RSquare', 'r2'), ('Count', 'count'), ('Statistic', 'stat'), ('DF', 'df')):
+        check.near(tag + f': its {col_} are the report\'s', gap(res_[col_], [x_[key_] for x_ in R_]), 0.0, abs_=1e-9)
+    check(tag + ': the tests named as the report names them', [None if t_ is None else t_ for t_ in res_['Test']], [x_['test'] for x_ in R_])
+    if kw.get('weight') or kw.get('freq'):
+        check(tag + ': Weight and Freq as frequency weights', 'frequency weights' in r_['code'], True)
+
+# Factor Analysis: the weighted correlations, the report's rotation with Kaiser's normalization (or without it)
+for label, kw in (('ML, varimax', {'n_factors': 2, 'method': 'ml', 'rotation': 'varimax'}),
+                  ('ML, varimax without Kaiser\'s normalization', {'n_factors': 2, 'method': 'ml', 'rotation': 'varimax', 'kaiser': False}),
+                  ('principal axis, promax, Freq, 3 factors', {'n_factors': 3, 'method': 'pa', 'rotation': 'promax', 'freq': 'f'}),
+                  ('ML, quartimin, Weight', {'n_factors': 2, 'method': 'ml', 'rotation': 'quartimin', 'weight': 'w'}),
+                  ('ML, the default number, oblimin γ 0.3, Weight and Freq', {'n_factors': None, 'method': 'ml', 'rotation': 'oblimin', 'gamma': 0.3, 'weight': 'w', 'freq': 'f'}),
+                  ('principal axis, equamax, prior 1', {'n_factors': 2, 'method': 'pa', 'prior': 'pc', 'rotation': 'equamax'}),
+                  ('ML, no rotation, a By group', {'n_factors': 1, 'method': 'ml', 'rotation': None, 'rows': grp_rows, 'where': where_hi})):
+    r_ = call('factor.fit', table=tq, columns=['a', 'b', 'c', 'd', 'e'], **kw)
+    tag = f'factor.fit\'s code ({label})'
+    ns = run_code(tag, r_['code'], tq)
+    if not ns:
+        continue
+    kk_ = r_['k']
+    check(tag + ': the number of factors', int(ns['k']), kk_)
+    check.near(tag + ': the (rotated) loadings are the report\'s', gap(ns['L'], r_['rotated']), 0.0, abs_=1e-9)
+    check.near(tag + ': the rotation matrix', gap(ns['T'], r_['rotation_matrix']), 0.0, abs_=1e-9)
+    check.near(tag + ': the communalities and uniquenesses', max(gap(ns['comm'], r_['communality']), gap(ns['uniq'], r_['uniqueness'])), 0.0, abs_=1e-9)
+    check.near(tag + ': the variance explained by each factor', gap(ns['variance'], [v_['variance'] for v_ in r_['variance']]), 0.0, abs_=1e-9)
+    if r_.get('oblique'):
+        check.near(tag + ': the factors\' correlations', gap(ns['Phi'], r_['phi']), 0.0, abs_=1e-9)
+    if kw['method'] == 'ml':
+        t_ = r_['ml_test']
+        check.near(tag + ': the test that the factors are enough (Bartlett\'s chi-square, DF)', gap([ns['chi2'], ns['dfm']], [t_['chi2'], t_['df']]), 0.0, abs_=1e-9)
+    check.near(tag + ': the factor scores (Save Rotated Components)', gap(ns['scores'], r_['scores']), 0.0, abs_=1e-9)
+    if kw.get('rotation') and kk_ > 1:
+        check(tag + ': Kaiser\'s normalization when the report uses it', ("Kaiser's normalization" in r_['code']), kw.get('kaiser', True))
+
+# Hierarchical Cluster: the clusters at the report's number of clusters, or the page's default
+
+
+def page_clusters(merges, n, k, order):
+    """The page's clustersAt (smui-p-multivariate.js), written again here: the
+    union of the first n - k joins, the clusters numbered in the order of the leaves."""
+    root = list(range(2 * n - 1))
+
+    def find(i):
+        while root[i] != i:
+            root[i] = root[root[i]]
+            i = root[i]
+        return i
+    for s_ in range(n - k):
+        a_, b_ = merges[s_]
+        root[find(a_)] = n + s_
+        root[find(b_)] = n + s_
+    lab, num = [0] * n, {}
+    for leaf in order:
+        r0 = find(leaf)
+        num.setdefault(r0, len(num))
+        lab[leaf] = num[r0]
+    return lab
+
+
+def page_default(heights, n):
+    """The page's defaultClusters, written again here."""
+    best, ratio = min(3, n), -math.inf
+    for q_ in range(2, min(10, n - 1) + 1):
+        up, down = heights[n - q_], heights[n - q_ - 1]
+        rr = up / down if down > 0 else (math.inf if up > 0 else 0)
+        if rr > ratio:
+            best, ratio = q_, rr
+    return best
+
+
+for label, kw in (('Ward, unstandardized, 4 clusters chosen', {'method': 'ward', 'standardize': 'none', 'n_clusters': 4}),
+                  ('average, the page\'s default', {'method': 'average'}),
+                  ('centroid, rows standardized, 2 clusters', {'method': 'centroid', 'standardize': 'rows', 'n_clusters': 2}),
+                  ('single, the default, the rows named', {'method': 'single', 'label': 'id'}),
+                  ('complete, 7 clusters, a By group with excluded rows', {'method': 'complete', 'n_clusters': 7, 'rows': grp_rows, 'where': where_hi})):
+    r_ = call('hcluster.fit', table=tq, columns=['u', 'v', 'a'], **kw)
+    tag = f'hcluster.fit\'s code ({label})'
+    ns = run_code(tag, r_['code'], tq)
+    if not ns:
+        continue
+    n_ = r_['n']
+    kk_ = kw.get('n_clusters') or page_default(r_['heights'], n_)
+    check(tag + f': the number of clusters: {"the report\'s" if kw.get("n_clusters") else "the page\'s default"}', int(ns['k']), kk_)
+    want_ = [c_ + 1 for c_ in page_clusters(r_['merges'], n_, kk_, r_['order'])]
+    check(tag + ': each row\'s cluster, as the page numbers them (Save Clusters)', ns['cluster'].tolist(), want_)
+    Xc_ = export(tq).loc[r_['rows'], ['u', 'v', 'a']]
+    check.near(tag + ': the Cluster Means', gap(ns['X'].groupby(ns['cluster']).mean().to_numpy(), Xc_.groupby(want_).mean().to_numpy()), 0.0, abs_=1e-12)
+    check.near(tag + ': the Clustering History\'s distances', gap([h_[1] for h_ in ns['history']], r_['heights']), 0.0, abs_=1e-12)
+    rep_ = list(range(n_)) + [0] * (n_ - 1)
+    lj = []
+    for s_, (a_, b_) in enumerate(r_['merges']):
+        lead, join = sorted((rep_[a_], rep_[b_]))
+        rep_[n_ + s_] = lead
+        lj.append((lead, join))
+    names_ = [f'R{r0 + 1}' if kw.get('label') else str(r0 + 1) for r0 in r_['rows']]
+    check(tag + ': the leaders and joiners', [(h_[2], h_[3]) for h_ in ns['history']], [(names_[a_], names_[b_]) for a_, b_ in lj])
+    check(tag + ': the graphs\' code at the same number of clusters', all(f'k = {kk_}   #' in r_[k2] for k2 in ('dendro_code', 'distgraph_code')) if kw.get('n_clusters') else all("k = None   # Number of Clusters: None takes the report's default" in r_[k2] for k2 in ('code', 'dendro_code', 'distgraph_code')), True)
+
 sys.exit(check.done())

@@ -411,6 +411,151 @@ for label, kw, frame, name in (
         continue
     same_as(f'code ({label}): its summary() is the report', rr, ns['med'].summary(alpha=0.05), rel=1e-10)
 
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+ACME_C, ADE_C, TEXT_C = '#2e6fbaff', '#b8406eff', '#352921ff'
+ORDER7 = ['ACME (control)', 'ACME (treated)', 'ACME (average)', 'ADE (control)', 'ADE (treated)', 'ADE (average)', 'Total Effect']
+
+
+def page_sig(v, digits=4):
+    """SM.util.fmt(v, { sig }), as the page writes the diagram's numbers."""
+    v = float(v)
+    if v.is_integer() and abs(v) < 1e15:
+        s_ = str(int(v))
+    elif abs(v) >= 1e9 or abs(v) < 1e-4:
+        m_, e_ = f'{v:.{min(digits, 5) - 1}e}'.split('e')
+        s_ = f'{m_}e{int(e_)}'
+    else:
+        s_ = f'{v:.{digits}g}'
+        s_ = str(int(float(s_))) if 'e' in s_ else (s_.rstrip('0').rstrip('.') if '.' in s_ else s_)
+    return '−' + s_[1:] if s_.startswith('-') else s_
+
+
+check('the diagram\'s numbers as the page writes them', [page_sig(x) for x in (6.2012, -0.094341, 1234.56, 0.000012346, 2.0, 12345.6, 0.5, 3e-5)],
+      ['6.201', '−0.09434', '1235', '1.235e-5', '2', '12350', '0.5', '3.000e-5'])
+
+
+def med_graph(kind, plot, label, kw, frame_, name):
+    rr = call('mediation.plot_code', kind=kind, plot=plot, table_name=name, **kw)
+    code = rr.get('plot_code') or ''
+    check(f'{label}: the code is written', rr.get('error'), None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        out, err = run_snippet_more(code, frame_, name, tmp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return (out['figures'][0] if out and out['figures'] else None), code
+
+
+def nice_bins(v):
+    lo, hi = min(v), max(v)
+    k = max(5, min(40, math.ceil(math.log2(len(v)) + 1)))
+    raw = (hi - lo) / k
+    p_ = 10 ** math.floor(math.log10(raw))
+    size = min((m_ * p_ for m_ in (1, 2, 2.5, 5, 10)), key=lambda s_: abs(math.log(s_ / raw)))
+    start = math.floor(lo / size) * size
+    end = math.ceil(hi / size) * size
+    if end <= hi:
+        end += size
+    return {'start': start, 'end': end, 'size': size}
+
+
+def expected_lines(res, compact, tlabel):
+    """The diagram's lines of text as the page writes them (smui-p-mediation.js pathDiagram)."""
+    P = res['paths']
+    e = effects(res)
+    ms = {'ols': '', 'logit': ' (log odds)', 'probit': ' (probit)', 'poisson': ' (log)'}[res['mediator_model']]
+    os_ = {'ols': '', 'logit': ' (log odds)', 'probit': ' (probit)', 'poisson': ' (log)'}[res['outcome_model']]
+    lab = {'ols': 'Least Squares', 'logit': 'Logistic (logit)', 'probit': 'Probit', 'poisson': 'Poisson (log)'}
+    ci = lambda x: f'{page_sig(x["lower"])} to {page_sig(x["upper"])}'
+    acme, ade, tot, prop = e['ACME (average)'], e['ADE (average)'], e['Total Effect'], e['Prop. Mediated (average)']
+    mediated = f'{page_sig(100 * prop["estimate"], 3)}% mediated'
+    L = ['Treatment', res['treatment'], tlabel, 'Mediator', res['mediator'], lab[res['mediator_model']], 'Outcome', res['y'], lab[res['outcome_model']]]
+    L += [f'a = {page_sig(P["a"]["estimate"])}{ms}'] + ([] if compact else [f'(SE {page_sig(P["a"]["se"])})'])
+    if P['i']:
+        L += [f'b = {page_sig(P["b"]["estimate"])} at control,', f'{page_sig(P["b"]["estimate"] + P["i"]["estimate"])} at treated{os_}']
+    else:
+        L += [f'b = {page_sig(P["b"]["estimate"])}{os_}'] + ([] if compact else [f'(SE {page_sig(P["b"]["se"])})'])
+    if compact:
+        c_ = [f'c′ = {page_sig(P["c"]["estimate"])} at {res["mediator"]} = 0, T×M {page_sig(P["i"]["estimate"])}{os_}'] if P['i'] else [f'c′ = {page_sig(P["c"]["estimate"])}{os_} (SE {page_sig(P["c"]["se"])})']
+        L += [f'ACME {page_sig(acme["estimate"])}', ci(acme)] + c_ + [f'ADE {page_sig(ade["estimate"])}  {ci(ade)}', f'Total {page_sig(tot["estimate"])}, {mediated}']
+    else:
+        c_ = [f'c′ = {page_sig(P["c"]["estimate"])} at {res["mediator"]} = 0', f'T×M {page_sig(P["i"]["estimate"])}{os_}'] if P['i'] else [f'c′ = {page_sig(P["c"]["estimate"])}{os_} (SE {page_sig(P["c"]["se"])})']
+        L += c_ + [f'ACME {page_sig(acme["estimate"])}', f'95%: {ci(acme)}', f'ADE {page_sig(ade["estimate"])}  95%: {ci(ade)}', f'Total effect {page_sig(tot["estimate"])} ({ci(tot)}), {mediated}']
+    if res['covariates']:
+        adj = f'Adjusted for {", ".join(res["covariates"])}'
+        L.append(adj if not (compact and len(adj) > 44) else f'Adjusted for {len(res["covariates"])} covariates')
+    return L
+
+
+for label, kw, frame_, name, tl in (
+        ('continuous outcome', dict(base), df, 'Coaching study', 'coaching vs control'),
+        ('interaction, a probit outcome', dict(base, y='passed', outcome_model='probit', interaction=True), df, 'Coaching study', 'coaching vs control'),
+        ('continuous treatment', dict(base, treatment='baseline', covariates=['age', 'sex'], control=45, treated=55), df, 'Coaching study', '55 vs 45'),
+        ('rows and missing values, the bootstrap', dict(base, table=tidm, rows=sub, method='bootstrap'), dm, 'Coaching study (missing)', 'coaching vs control')):
+    kw = dict(kw, n_rep=60, seed=21)
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = call('mediation.fit', **kw)
+    e = effects(res)
+    # the effects plot: each effect and its interval, the report's
+    F, code = med_graph('effects', {}, f'effects plot ({label})', kw, frame_, name)
+    if F:
+        A = F['axes'][0]
+        check(f'effects plot ({label}): the effects, top down, as the page lists them', A['yticklabels'], ORDER7)
+        pts = {int(round(y_)): (x_, ln['marker'], ln['color']) for ln in A['lines'] if ln['marker'] in ('o', 's', 'D') for x_, y_ in zip(ln['x'], ln['y'])}
+        ok = len(pts) == 7 and all(abs(pts[i][0] - e[nm]['estimate']) <= 1e-9 * max(1, abs(e[nm]['estimate'])) for i, nm in enumerate(ORDER7))
+        check(f'effects plot ({label}): each estimate is the report\'s', ok, True)
+        want_m = {i: ({'acme': 'o', 'ade': 's', 'total': 'D'}[e[nm]['kind']], {'acme': ACME_C, 'ade': ADE_C, 'total': TEXT_C}[e[nm]['kind']]) for i, nm in enumerate(ORDER7)}
+        check(f'effects plot ({label}): ACME circles, ADE squares, the total a diamond, in their colours', {i: v[1:] for i, v in pts.items()}, want_m)
+        segs = {int(round(s_[0][1])): (min(s_[0][0], s_[1][0]), max(s_[0][0], s_[1][0])) for c_ in A['segments'] for s_ in c_['segs']}
+        check(f'effects plot ({label}): each interval is the report\'s', len(segs) == 7 and all(abs(segs[i][0] - e[nm]['lower']) < 1e-9 * max(1, abs(e[nm]['lower'])) and abs(segs[i][1] - e[nm]['upper']) < 1e-9 * max(1, abs(e[nm]['upper']))
+                                                                                          for i, nm in enumerate(ORDER7)), True)
+        lo_, hi_ = min(e[nm]['lower'] for nm in ORDER7), max(e[nm]['upper'] for nm in ORDER7)
+        check(f'effects plot ({label}): the zero line when the intervals straddle it', len([ln for ln in A['lines'] if ln['marker'] == 'None' and ln['x'] == [0.0, 0.0]]), 1 if lo_ <= 0 <= hi_ else 0)
+        check(f'effects plot ({label}): the titles and the legend', (A['xlabel'], A['title'], F['legend']),
+              (f'Effect on P({res["y"]})' if res['outcome_binary'] else f'Effect on {res["y"]}', 'mediation effects', ['ACME (indirect)', 'ADE (direct)', 'Total']))
+    # the simulated distributions, in the page's bins
+    for nm, key in (('ACME (average)', 'acme'), ('ADE (average)', 'ade')):
+        vals = [(a + b) / 2 for a, b in zip(res['draws'][f'{key}_ctrl'], res['draws'][f'{key}_tx'])]
+        bins = nice_bins(vals)
+        F, code = med_graph('draws', {'name': nm, 'bins': bins}, f'{nm} simulated ({label})', kw, frame_, name)
+        if not F:
+            continue
+        A = F['axes'][0]
+        nb = max(1, round((bins['end'] - bins['start']) / bins['size']))
+        cnt = [0] * nb
+        for v in vals:
+            cnt[min(nb - 1, max(0, math.floor((v - bins['start']) / bins['size'] + 1e-9)))] += 1
+        check(f'{nm} simulated ({label}): the bars count the report\'s simulations in the page\'s bins', [b_['h'] for b_ in A['bars']], [float(c_) for c_ in cnt])
+        vl = sorted(round(ln['x'][0], 9) for ln in A['lines'] if ln['color'] == TEXT_C)
+        check(f'{nm} simulated ({label}): the estimate and the interval, the report\'s', vl, sorted(round(e[nm][k], 9) for k in ('estimate', 'lower', 'upper')))
+        check(f'{nm} simulated ({label}): the zero line when the bins straddle it', len([ln for ln in A['lines'] if ln['color'] == '#786b5dff']), 1 if bins['start'] < 0 < bins['end'] else 0)
+        check(f'{nm} simulated ({label}): the titles', (A['xlabel'], A['ylabel'], A['title']), (nm, 'Simulations', f'{nm} simulated'))
+    # the path diagram, wide and compact
+    for compact in (False, True):
+        tag = f'path diagram ({label}{", compact" if compact else ""})'
+        F, code = med_graph('diagram', {'compact': compact, 'width': 400 if compact else 620, 'tlabel': tl}, tag, kw, frame_, name)
+        if not F:
+            continue
+        A = F['axes'][0]
+        texts = [a_['s'] for a_ in A['annotations'] if a_['s']]
+        check(f'{tag}: its texts are the page\'s, from the report\'s coefficients and effects', texts, expected_lines(res, compact, tl))
+        tips = [(round(a_['xy'][0], 9), round(a_['xy'][1], 9), a_['color']) for a_ in A['annotations'] if a_['s'] == '']
+        bw, bh = (3.9, 1.25) if compact else (2.7, 1.05)
+        T_, M_, Y_ = ((2.15 if compact else 1.55), 0.95), (5.0, 4.25), ((7.85 if compact else 8.45), 0.95)
+
+        def edge(a_, b_, pad=0.12):
+            dx, dy = b_[0] - a_[0], b_[1] - a_[1]
+            t_ = min((bw / 2 + pad) / abs(dx) if dx else math.inf, (bh / 2 + pad) / abs(dy) if dy else math.inf)
+            return a_[0] + t_ * dx, a_[1] + t_ * dy
+        want = [(round(edge(q, p_)[0], 9), round(edge(q, p_)[1], 9), c_) for p_, q, c_ in ((T_, M_, '#2e6fba'), (M_, Y_, '#2e6fba'), (T_, Y_, '#b8406e'))]
+        check(f'{tag}: the three arrows end where the page\'s do, in their colours', tips, want)
+        boxes = sorted((round(b_['x'], 9), round(b_['y'], 9), b_['w'], b_['h']) for b_ in A['bars'])
+        check(f'{tag}: the three boxes', boxes, sorted((round(p_[0] - bw / 2, 9), round(p_[1] - bh / 2, 9), bw, bh) for p_ in (T_, M_, Y_)))
+        check(f'{tag}: the page\'s ranges, no axes, the title', (A['xlim'], A['ylim'], A['visible'], A['title']), ([-0.1, 10.1], [-1.65 if compact else -0.75, 5.6], False, 'mediation path diagram'))
+check('an unknown graph is refused', 'error' in call('mediation.plot_code', kind='pie', **base), True)
+
 # ---- refusals said in words ---------------------------------------------------------------------------------------------------------
 tid3 = table({'y': list(range(9)), 't': ['a', 'b', 'c'] * 3, 'm': [1.0, 2, 3, 1, 2, 5, 2, 2, 1]})
 for label, kw, want in (

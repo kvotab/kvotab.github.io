@@ -54,6 +54,39 @@
 
   const pct = (x) => fmt(x, { sig: 3 });
 
+  /* ---- the graphs' code ------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table; treatment.plot_code writes it (the models fitted as the report
+     fits them), from what the page chose here: the bins, mirrored or
+     overlaid, the balance weights, threshold and order, the estimators
+     shown. A headless run (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-te-plotcode' }, graph, ctx.code(code)) : graph);
+
+  function weightValues(ctx, res) {
+    const wt = ctx.opt('wType', 'ate');
+    // JSON has no infinity: a weight of a row predicted with certainty comes as the text 'Infinity'
+    const w = (wt === 'att' ? res.scores.w_att : res.scores.w_ate).map((v) => (typeof v === 'number' ? v : v === 'Infinity' ? Infinity : NaN));
+    return { wt, w, bins: SM.report.niceBins(w.filter(Number.isFinite)) };
+  }
+
+  async function plotCodes(ctx, base, res, ate, att) {
+    if (ctx.headless) return {};
+    const want = [];
+    if (!ate.error && ctx.opt('forest', true)) {
+      const ok = (x) => (x ? x.estimates.filter((e) => !e.error).map((e) => e.key) : []);
+      want.push(['estimates', { ate: ok(ate), att: ok(att) }]);
+    }
+    if (ctx.opt('overlap', true)) want.push(['overlap', { size: ctx.opt('psBin', 0.05), mirror: ctx.opt('mirror', true), support: ctx.opt('support', true) }]);
+    if (ctx.opt('balance', true) && ctx.opt('love', true)) want.push(['love', { suffix: ctx.opt('balW', 'ate') === 'att' ? '_att' : '_w', thr: ctx.opt('smdThreshold', 0.1), sort: ctx.opt('loveSort', true) }]);
+    if (ctx.opt('weights', true)) { const W8 = weightValues(ctx, res); want.push(['weights', { wtype: W8.wt, bins: W8.bins, mirror: ctx.opt('mirror', true) }]); }
+    const out = {};
+    for (const [kind, plot] of want) {
+      const r = await ctx.call('treatment.plot_code', { ...base, kind, plot });
+      out[kind] = r && !r.error ? r.plot_code : null;
+    }
+    return out;
+  }
+
   /* ---- histograms of two groups, mirrored or overlaid, bins linked to rows -------- */
   function niceStep(max, n = 4) {
     const raw = Math.max(max, 1) / n;
@@ -170,7 +203,7 @@
     }, { width: W(470), height: Math.max(190, 72 + 26 * items.length), title: 'estimate comparison', select: false });
   }
 
-  function estimatesOutline(ctx, res, ate, att, lab) {
+  function estimatesOutline(ctx, res, ate, att, lab, code) {
     const ob = ctx.outline('Treatment Effect Estimates', { key: 'estimates', info: 'p:treatment:estimates', menu: () => estimatesMenu(ctx) });
     const n = res.naive;
     ob.add(estimatesTable(ctx, [{ label: 'Difference in Means (unadjusted)', ...n }, ...effectRows(ate.estimates)], `Average Treatment Effect (ATE): ${lab.treated} vs ${lab.control}`, 'ate'));
@@ -194,7 +227,7 @@
         rows,
       }, { caption: `Potential Outcome Means: the mean ${res.y} if every row had the level`, sortable: false, key: 'pom' }));
     }
-    if (ctx.opt('forest', true)) ob.add(forestPlot(ctx, res, ate, att));
+    if (ctx.opt('forest', true)) ob.add(withCode(ctx, forestPlot(ctx, res, ate, att), code));
     const notes = [`The effect of ${lab.treated} against ${lab.control} on ${res.y}, averaged over all ${res.n} rows (ATE)${att ? ' and over the treated (ATT)' : ''}. The adjusted estimates are causal effects only when no confounder is missing from the covariates and the groups overlap (see Assumptions and Estimators).`];
     if (res.binary_y) notes.push(`${res.y} is 0/1: the effects are differences in the proportion with ${res.y} = 1, from linear outcome models.`);
     notes.push('Standard errors: statsmodels\' GMM of the propensity model, the outcome models and the effect together (robust, HC0), with z tests and normal intervals. The unadjusted difference has the unequal-variance standard error.');
@@ -267,7 +300,7 @@
     if (v) ctx.set('trim', v.eps > 0 ? v.eps : null);
   }
 
-  function overlapOutline(ctx, res, lab) {
+  function overlapOutline(ctx, res, lab, code) {
     const ob = ctx.outline('Overlap', { key: 'overlap', info: 'p:treatment:overlap', menu: () => overlapMenu(ctx, res) });
     const sc = res.scores;
     const ov = res.overlap;
@@ -289,7 +322,7 @@
       ['Rows outside it', `${ov.n_outside} (${ov.n_outside_treated} treated, ${ov.n_outside_control} control)`, 'text'],
     ];
     if (res.trim) kvs.push(['Trimmed', `${res.trim.n_dropped} of ${res.trim.n_before} (${res.trim.n_dropped_treated} treated, ${res.trim.n_dropped_control} control) outside [${fmt(res.trim.eps)}, ${fmt(1 - res.trim.eps)}]`, 'text']);
-    ob.add(ctx.row(graph, el('div', { class: 'sm-te-side' }, ctx.kv(kvs, { caption: 'Propensity Scores' }))));
+    ob.add(ctx.row(withCode(ctx, graph, code), el('div', { class: 'sm-te-side' }, ctx.kv(kvs, { caption: 'Propensity Scores' }))));
     ob.add(ctx.note(`The treated above the axis, the controls ${ctx.opt('mirror', true) ? 'below' : 'overlaid'}. Where one group has scores the other lacks (shaded: outside the common support), its rows have no comparable counterparts, and the estimates there rest on the models' extrapolation. Click a bar to select its rows.`));
     if (res.trim) ob.add(ctx.note(`Trimming: the ${res.trim.n_dropped} rows with a score outside [${fmt(res.trim.eps)}, ${fmt(1 - res.trim.eps)}] in the model on all ${res.trim.n_before} rows are left out, and everything in the report is fitted again on the ${res.n} left (the scores here are that model's). The effects are then for the population with overlap, not for the whole sample.`));
   }
@@ -317,7 +350,7 @@
     }, { width: W(420), height: Math.max(200, 76 + 24 * list.length), title: 'Love plot', select: false });
   }
 
-  function balanceOutline(ctx, res) {
+  function balanceOutline(ctx, res, code) {
     const bw = ctx.opt('balW', 'ate');
     const suffix = bw === 'att' ? '_att' : '_w';
     const thr = ctx.opt('smdThreshold', 0.1);
@@ -341,18 +374,16 @@
         { key: 'smd_x', label: `Std Mean Diff (${wl})`, digits: 3 }, { key: 'vr_x', label: `Variance Ratio (${wl})`, digits: 3 }],
       rows,
     }, { caption: 'Balance', key: 'balance' });
-    ob.add(ctx.opt('love', true) ? ctx.row(table, lovePlot(ctx, res.balance, suffix, thr)) : table);
+    ob.add(ctx.opt('love', true) ? ctx.row(table, withCode(ctx, lovePlot(ctx, res.balance, suffix, thr), code)) : table);
     const over = (k) => res.balance.filter((b) => b[k] != null && Math.abs(b[k]) > thr).length;
     const n = res.balance.length;
     ob.add(ctx.note(`Treated minus control, in standard deviations: the standardized mean difference (SMD) is the difference in means over √((treated variance + control variance)/2), after weighting with weighted means and variances; for a level of a categorical covariate, of its 0/1 indicator, whose variance is p(1 − p). The variance ratio, treated variance over control variance, is for continuous covariates. ${over('smd')} of ${n} have |SMD| above ${fmt(thr)} before weighting, ${over(`smd${suffix}`)} after. Right click the table to show the means.`));
   }
 
   /* ---- the weights ------------------------------------------------------------------------------- */
-  function weightsOutline(ctx, res, lab) {
-    const wt = ctx.opt('wType', 'ate');
+  function weightsOutline(ctx, res, lab, code) {
+    const { wt, w, bins } = weightValues(ctx, res);
     const sc = res.scores;
-    // JSON has no infinity: a weight of a row predicted with certainty comes as the text 'Infinity'
-    const w = (wt === 'att' ? sc.w_att : sc.w_ate).map((v) => (typeof v === 'number' ? v : v === 'Infinity' ? Infinity : NaN));
     const WS = res.weights[wt === 'att' ? 'att' : 'ate'];
     const ob = ctx.outline('Weights', { key: 'weights', info: 'p:treatment:weights', menu: () => [
       { label: 'IPW (for the ATE)', checked: wt === 'ate', action: () => ctx.set('wType', 'ate') },
@@ -363,7 +394,6 @@
       { label: 'Save IPW Weight', action: () => saveScores(ctx, 'w_ate') },
       { label: 'Save ATT Weight', action: () => saveScores(ctx, 'w_att') },
     ] });
-    const bins = SM.report.niceBins(w.filter(Number.isFinite));
     const graph = groupHistogram(ctx, { values: w, t: sc.t, rows: sc.rows, bins, mirror: ctx.opt('mirror', true), lab, xTitle: wt === 'att' ? 'ATT Weight' : 'IPW Weight', title: 'weights histogram' });
     const summ = ctx.rt({
       columns: [{ key: 'group', label: 'Group', fmt: 'text' }, { key: 'n', label: 'N', fmt: 'int' }, { key: 'sum', label: 'Sum' }, { key: 'mean', label: 'Mean' },
@@ -377,7 +407,7 @@
       columns: [{ key: 'row', label: 'Row', fmt: 'int' }, { key: 'group', label: 'Group', fmt: 'text' }, { key: 'ps', label: 'Propensity', sig: 4 }, { key: 'w', label: 'Weight', sig: 5 }, { key: 'y', label: res.y }],
       rows: order.map((k) => ({ row: sc.rows[k] + 1, group: sc.t[k] === 1 ? lab.treated : lab.control, ps: sc.ps[k], w: w[k], y: yc ? yc.values[sc.rows[k]] : null })),
     }, { caption: `The ${Math.min(N, order.length)} Largest Weights`, sortable: false, key: 'largest', onRow: (r, ev) => ctx.table.select([r.row - 1], ev && ev.shiftKey ? 'add' : (ev && (ev.metaKey || ev.ctrlKey)) ? 'toggle' : 'replace') });
-    ob.add(ctx.row(graph, el('div', { class: 'sm-te-side' }, summ, largest)));
+    ob.add(ctx.row(withCode(ctx, graph, code), el('div', { class: 'sm-te-side' }, summ, largest)));
     const what = wt === 'att' ? 'For the effect on the treated a treated row weighs 1 and a control p/(1 − p), so that the controls stand for the treated.' : 'A treated row weighs 1/p and a control 1/(1 − p), p its propensity score, so that each group stands for the whole sample.';
     ob.add(ctx.note(`${what} The effective N, (Σw)²/Σw², is what the weighted group is worth in unweighted rows. ${WS.n_over_10 ? `${WS.n_over_10} row${WS.n_over_10 === 1 ? ' weighs' : 's weigh'} more than 10: rows like them are rare in their group, and IPW leans on them.` : 'No row weighs more than 10.'} Click a line of the list, or a bar, to select the rows.`));
   }
@@ -673,13 +703,15 @@
         ctx.call('treatment.estimates', { ...base, estimators }),
         wantAtt ? ctx.call('treatment.estimates', { ...base, estimators: attKeys, effect_group: 1 }) : Promise.resolve(null),
       ]);
+      const attOk = att && !att.error ? att : null;
+      const codes = await plotCodes(ctx, base, res, ate, attOk);
       summary(ctx, res, lab);
       if (ate.error) ctx.container.append(ctx.warn(ate.error));
-      else estimatesOutline(ctx, res, ate, att && !att.error ? att : null, lab);
+      else estimatesOutline(ctx, res, ate, attOk, lab, codes.estimates);
       if (ctx.opt('psModel', true)) propensityOutline(ctx, res, lab);
-      if (ctx.opt('overlap', true)) overlapOutline(ctx, res, lab);
-      if (ctx.opt('balance', true)) balanceOutline(ctx, res);
-      if (ctx.opt('weights', true)) weightsOutline(ctx, res, lab);
+      if (ctx.opt('overlap', true)) overlapOutline(ctx, res, lab, codes.overlap);
+      if (ctx.opt('balance', true)) balanceOutline(ctx, res, codes.love);
+      if (ctx.opt('weights', true)) weightsOutline(ctx, res, lab, codes.weights);
       if (ctx.opt('outcomeModels', false)) await outcomeOutline(ctx, base, res, lab);
       if (ctx.opt('about', true)) aboutOutline(ctx);
     },

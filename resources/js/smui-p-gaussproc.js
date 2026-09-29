@@ -102,10 +102,11 @@
     if (res.other_rows.length) traces.push({ type: scatterType(res.other_rows.length), mode: 'markers', x: res.other_pred, y: res.other_actual, rows: res.other_rows, marker: { size: markerSize(n), color: col.other, symbol: 'diamond' }, name: 'Predicted (not fitted)' });
     traces.push({ type: 'scatter', mode: 'lines', x: [lo, hi], y: [lo, hi], line: { color: col.muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false });
     const two = res.other_rows.length > 0;
-    ob.add(ctx.row(ctx.plot(traces, {
+    const pc = res.plots || {};
+    ob.add(ctx.row(SM.predict.plotWithCode(ctx, traces, {
       xaxis: { title: { text: `${T(y.name)} Jackknife Predicted` } }, yaxis: { title: { text: T(y.name) } }, margin: { l: 58, r: 12, t: two ? 26 : 8, b: 44 },
       showlegend: two, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
-    }, { width: W(430), height: 380, title: `${y.name} actual by jackknife predicted` }),
+    }, { width: W(430), height: 380, title: `${y.name} actual by jackknife predicted` }, pc.head_code, pc.abp),
     ctx.kv([['Jackknife RSquare', res.jack_rsquare], ['Jackknife RASE', res.jack_rase], ['N (rows fitted)', res.n_fit, 'int']])));
     ob.add(ctx.note(`Each row the model is fitted to, against its jackknife prediction: the prediction of the model without that row, the kernel and the mean and scale held (in closed form, y − [K⁻¹y]ᵢ/[K⁻¹]ᵢᵢ: Rasmussen and Williams 2006, eq. 5.12)${two ? '; the diamonds are the rows not fitted, predicted by the whole model' : ''}. JMP's Gaussian Process has no validation rows: this plot is its check. The RSquare and RASE of the jackknife predictions are not in JMP's report. Drag over points to select rows.`));
   }
@@ -137,9 +138,10 @@
     for (const m of res.marginal) for (const v of m.f) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     const pad = 0.06 * ((hi - lo) || Math.abs(hi) || 1);
     const k = res.marginal.length;
-    const plots = res.marginal.map((m) => ctx.plot([{ type: 'scatter', mode: 'lines', x: m.t, y: m.f, line: { color: col.point, width: 2 }, hovertemplate: `${T(m.x)} %{x:.5g}<br>${T(y.name)} %{y:.5g}<extra></extra>`, name: T(m.x) }],
+    const pc = res.plots || {};
+    const plots = res.marginal.map((m, j) => SM.predict.plotWithCode(ctx, [{ type: 'scatter', mode: 'lines', x: m.t, y: m.f, line: { color: col.point, width: 2 }, hovertemplate: `${T(m.x)} %{x:.5g}<br>${T(y.name)} %{y:.5g}<extra></extra>`, name: T(m.x) }],
       { xaxis: { title: { text: T(m.x) } }, yaxis: { title: { text: T(y.name) }, range: [lo - pad, hi + pad] }, margin: { l: 58, r: 8, t: 8, b: 42 } },
-      { width: W(k > 3 ? 240 : 300), height: 230, title: `${y.name} marginal model plot of ${m.x}`, select: false }));
+      { width: W(k > 3 ? 240 : 300), height: 230, title: `${y.name} marginal model plot of ${m.x}`, select: false }, pc.head_code, (pc.marginal || [])[j]));
     ob.add(ctx.row(...plots), ctx.note(`Each factor's main effect: the prediction averaged over the other factors, each uniform over its range (${res.fanova === 'quadrature' ? 'in closed form' : 'by quasi-Monte Carlo, 256 points'}). The plots share the ${y.name} scale, so a flat one is a factor with little effect.`));
   }
 

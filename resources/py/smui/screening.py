@@ -891,9 +891,11 @@ def dominant(rows, keys):
 
 @api('screening.fit', packages=pv.SK)
 def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None, missing='informative',
-        methods=None, kfold=0, repeats=1, table_name='data'):
+        methods=None, kfold=0, repeats=1, plot=None, table_name='data'):
     """Every chosen method on the same rows and sets: the Measures of Fit per method and set, the crossvalidated
-    measures (K-fold), the best and the dominant methods, and the curves and predictions the comparisons draw."""
+    measures (K-fold), the best and the dominant methods, and the curves and predictions the comparisons draw.
+    plot: the page's choices for the graphs' code (the level of the ROC and lift curves, the set of Actual by
+    Predicted)."""
     s = _spec(locals())
     P = _P(table, rows, s)
     keys = _methods(methods, P)
@@ -969,6 +971,7 @@ def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion
                             'predicted': {r['key']: fitted[r['key']].tolist() for r in ok},
                             'oof': {r['key']: fitted[(r['key'], CV)].tolist() for r in ok if (r['key'], CV) in fitted}}
     out['code'] = _code(P, table_name, rows, [r['key'] for r in ok], s, K, repeats)
+    out['plots'] = _plots(P, out, table_name, rows, [r['key'] for r in ok], s, K, plot or {})
     return out
 
 
@@ -1026,6 +1029,166 @@ def _code(P, table_name, rows, keys, s, K, repeats):
     return '\n'.join(L)
 
 
+# ---- the graphs' code (smui-p-screening.js puts each under its graph) -----------------------------
+
+# each method's colour (smui-p-screening.js LIGHT, by the methods' order)
+COLORS = dict(zip([k for k, _ in METHODS], ['#2f6690', '#c46a12', '#3a7d44', '#b0413e', '#6c5b7b', '#1a8a78', '#8f7600', '#8c564b', '#b8428f',
+                                            '#666666', '#107f8f', '#7b5bb5']))
+
+
+def _graph_head(P, table_name, rows, keys, s, K):
+    """The head of the comparisons' graphs: every method fitted as the report fits it (tuned on the validation
+    rows), fitted (each method's prediction of every row) and with K-fold oof (each row predicted by the model
+    fitted without its fold, the first repeat)."""
+    n_levels = len(P.levels) if P.kind == 'categorical' else 0
+    L = P.code(table_name, rows, extra_imports=['import json', 'import math', 'import warnings', pv.PLT])
+    L[0] = _exact_csv(L[0], table_name)
+    L += ['valid = sets == 1',
+          'tune = valid if valid.any() else None   # the rows that tune a method: the validation rows, or none',
+          f'n_levels = {n_levels}   # the levels of the response (0: a continuous response)',
+          f'factors = {factors_of(P)!r}   # each factor\'s columns of X',
+          f'seed = {int(s["seed"])}', '', '']
+    fns = list(COMMON)
+    for k in keys:
+        fns += NEEDS[k]
+    fns += [FITTERS[k] for k in keys] + ([crossvalidation] if K else [])
+    L.append(_src(fns))
+    L += ['', '', 'methods = {']
+    for k in keys:
+        kw = dict(EXTRA.get(k, {}))
+        if k in ('linear', 'stepwise') and _ordinal(P):
+            kw['ordinal'] = True
+        args = ''.join(f', {a}={v!r}' for a, v in kw.items())
+        L.append(f'    {json.dumps(label_of(k, P))}: lambda *a: {FITTERS[k].__name__}(*a{args}),')
+    L += ['}',
+          'fitted = {}   # each method\'s prediction of every row' + (' (the probability of every level)' if n_levels else ''),
+          'for name, fit in methods.items():',
+          '    predict, info = fit(X, y, w, train, tune, n_levels, factors, seed)',
+          '    fitted[name] = predict(X)']
+    if K:
+        L += ['oof = {}   # each row predicted by the model fitted without its fold (the first repeat)',
+              'for name, fit in methods.items():',
+              '    oof[name] = np.zeros_like(fitted[name])',
+              f'    for r, j, fit_rows, held in crossvalidation(train, {K}, 1, seed):',
+              '        predict, info = fit(X, y, w, fit_rows, None, n_levels, factors, seed)',
+              '        oof[name][held] = predict(X)[held]']
+    return '\n'.join(L)
+
+
+def _set_lines(st):
+    """m, the rows of a set, and pred, the predictions the report draws for it."""
+    if st == CV:
+        return ['m = np.ones(len(d), dtype=bool)   # every row, each predicted by the model fitted without its fold', 'pred = oof']
+    k = SETS.index(st)
+    return [f'm = sets == {k}   # the {st.lower()} rows', 'pred = fitted']
+
+
+def _order_lines(P, keys):
+    return [f'order = {json.dumps([label_of(k, P) for k in keys])}   # the methods, in the Summary\'s order',
+            f'colors = {json.dumps({label_of(k, P): COLORS[k] for k in keys})}   # each method\'s colour, the same in every graph']
+
+
+def _legend_beside():
+    return 'fig.legend(loc="outside right upper", frameon=False, fontsize=7.1)   # every method, beside the graph'
+
+
+def _curve_tail(P, kind, st, lv, keys, last):
+    """ROC or lift curves of one set, every method's for one level."""
+    level = P.labels[lv]
+    roc = kind == 'roc'
+    L = [f'lv = {lv}   # the level {level} (Level in the red triangle)', *_order_lines(P, keys), pv.freq_line(P), *_set_lines(st)]
+    if roc:
+        L += ['', '',
+              'def roc(p, pos, f):',
+              '    """1 - specificity and sensitivity at each cut on p, highest first; tied values move together; f counts the rows."""',
+              '    o = np.argsort(-p, kind="mergesort")',
+              '    s, tp, fp = p[o], np.cumsum(np.where(pos[o], f[o], 0.0)), np.cumsum(np.where(pos[o], 0.0, f[o]))',
+              '    last = np.r_[s[1:] != s[:-1], True]   # the end of each run of equal values',
+              '    return np.r_[0.0, fp[last] / fp[-1]], np.r_[0.0, tp[last] / tp[-1]]', '', '']
+    L += [pv.figure(560 if last else 360, 330),
+          'pos = y[m] == lv',
+          'for name in order:']
+    if roc:
+        L += ['    if not (f[m][pos].sum() > 0 and f[m][~pos].sum() > 0):',
+              '        continue   # the level has no rows here, or every row: no curve',
+              '    fpr, tpr = roc(pred[name][m][:, lv], pos, f[m])',
+              '    auc = np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) / 2)   # the area under the curve',
+              '    ax.plot(fpr, tpr, color=colors[name], linewidth=1.6, label=f"{name} ({auc:.3f})")',
+              f'ax.plot([0, 1], [0, 1], color="{pv.MUTED}", linewidth=1, linestyle=":")',
+              'ax.set_xlim(0, 1)', 'ax.set_ylim(0, 1.01)', 'ax.set_xlabel("1 - Specificity")', 'ax.set_ylabel("Sensitivity")']
+    else:
+        L += ['    tot = f[m].sum()',
+              '    base = f[m][pos].sum() / tot   # the level\'s rate in the set',
+              '    if not base > 0:',
+              '        continue',
+              '    o = np.argsort(-pred[name][m][:, lv], kind="mergesort")',
+              '    cw, hits = np.cumsum(f[m][o]), np.cumsum(np.where(pos[o], f[m][o], 0.0))',
+              '    ax.plot(cw / tot, hits / cw / base, color=colors[name], linewidth=1.6, label=name)   # the level\'s rate among the rows taken over its rate in the set',
+              f'ax.plot([0, 1], [1, 1], color="{pv.MUTED}", linewidth=1, linestyle=":")',
+              'ax.set_xlim(0, 1)', 'ax.set_xlabel("Portion")', 'ax.set_ylabel("Lift")']
+    L.append(f'ax.set_title({json.dumps(("ROC " if roc else "Lift ") + st + " " + level)})')
+    if last:
+        L.append(_legend_beside())
+    L.append('plt.show()')
+    return '\n'.join(L)
+
+
+def _abp_tail(P, key, st, n_rows):
+    """Actual by predicted of one method, the rows of one set."""
+    lab = label_of(key, P)
+    return '\n'.join([
+        f'name = {json.dumps(lab)}',
+        *_set_lines(st),
+        pv.figure(250, 235),
+        f'ax.scatter(pred[name][m], y[m], s={5 if n_rows > 1500 else 11}, color="{pv.BASE}")',
+        'v = np.r_[pred[name][m], y[m]]',
+        'v = v[np.isfinite(v)]',
+        f'ax.plot([v.min(), v.max()], [v.min(), v.max()], color="{pv.MUTED}", linewidth=1, linestyle=":")   # actual = predicted',
+        'ax.set_xlabel("Predicted", fontsize=10)', 'ax.set_ylabel("Actual", fontsize=10)',
+        f'ax.set_title({json.dumps("Actual by predicted " + lab + " " + st)}, fontsize=9, wrap=True)', 'plt.show()'])
+
+
+def _plots(P, out, table_name, rows, keys, s, K, plot):
+    """The head and the tails of the comparisons' graphs, for the level and the set the page shows."""
+    res = {'head_code': _graph_head(P, table_name, rows, keys, s, K)}
+    order = [k for k in out['order'] if k in keys]
+    if P.kind == 'categorical':
+        n = len(P.labels)
+        for kind in ('roc', 'lift'):
+            v = plot.get(kind)
+            lv = v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < n else (1 if n == 2 else 0)
+            shown = out['shown_sets']
+            res[kind] = {st: _curve_tail(P, kind, st, lv, order, i == len(shown) - 1) for i, st in enumerate(shown)}
+    else:
+        st = plot.get('abp') if plot.get('abp') in out['shown_sets'] else out['compare']
+        have = out['residuals']['oof'] if st == CV else out['residuals']['predicted']   # the methods the page draws
+        n_rows = len(P.index) if st == CV else int(P.mask(SETS.index(st)).sum())
+        res['abp'] = {k: _abp_tail(P, k, st, n_rows) for k in order if k in have}
+    return res
+
+
+def _threshold_tail(P, lv, cut, st, labels, keys):
+    """Decision Threshold's graph: each method's misclassification rate of one set at every cut from 0 to 1."""
+    level = P.labels[lv]
+    return '\n'.join([
+        f'lv = {lv}   # the target level, {level}',
+        f'cut = {float(cut)!r}   # the threshold (Set Threshold, or the field above the tables)',
+        f'order = {json.dumps(labels)}   # the methods, in the Summary\'s order',
+        f'colors = {json.dumps({label_of(k, P): COLORS[k] for k in keys})}   # each method\'s colour, the same in every graph',
+        pv.freq_line(P), *_set_lines(st),
+        'grid = np.round(np.linspace(0, 1, 101), 2)',
+        'target, fr = y[m] == lv, f[m]',
+        pv.figure(560, 330),
+        'for name in order:',
+        '    p1 = pred[name][m][:, lv]',
+        '    rate = [(fr[(p1 >= t) & ~target].sum() + fr[(p1 < t) & target].sum()) / max(fr.sum(), 1e-300) for t in grid]   # called the level but not it, or it but not called',
+        '    ax.plot(grid, rate, color=colors[name], linewidth=1.5, label=name)',
+        f'ax.axvline(cut, color="{pv.MUTED}", linewidth=1.2, linestyle="--")',
+        'ax.set_xlim(0, 1)', 'ax.set_ylim(bottom=0)',
+        f'ax.set_xlabel({json.dumps("Threshold on the probability of " + level)})', 'ax.set_ylabel("Misclassification Rate")',
+        'ax.set_title("Misclassification by threshold")', _legend_beside(), 'plt.show()'])
+
+
 # ---- the profiler, Save Columns, Decision Threshold ------------------------------------------------
 
 def _profile_build(table, rows=None, method=None, **kw):
@@ -1073,9 +1236,10 @@ def _rates(tp, fp, fn, tn):
 
 
 @api('screening.threshold', packages=pv.SK)
-def threshold(table, rows=None, methods=None, cut=0.5, level=1, repeats=1, table_name='data', **kw):
+def threshold(table, rows=None, methods=None, cut=0.5, level=1, repeats=1, plot=None, table_name='data', **kw):
     """Decision Threshold for a response with two levels: each method's confusion counts and rates at a cut on the
-    probability of one level, per set, and the misclassification rate of every cut from 0 to 1."""
+    probability of one level, per set, and the misclassification rate of every cut from 0 to 1. plot: the order
+    of the methods on the page (its graph's code draws them in it)."""
     s = _spec(kw)
     P = _P(table, rows, s)
     if P.kind != 'categorical' or len(P.levels) != 2:
@@ -1103,6 +1267,14 @@ def threshold(table, rows=None, methods=None, cut=0.5, level=1, repeats=1, table
             r['sets'][name] = _rates(*_confusion_at(target, p1, fr, cut))
             r['curves'][name] = [(lambda c: (c[1] + c[2]) / max(fr.sum(), 1e-300))(_confusion_at(target, p1, fr, t)) for t in grid]
         out['methods'].append(r)
+    ok = [r['key'] for r in out['methods'] if 'error' not in r]
+    want = [k for k in ((plot or {}).get('order') or ok) if k in ok]
+    order = want + [k for k in ok if k not in want]
+    sets = [SETS[k] for k in range(3) if P.has(k)] + ([CV] if K else [])
+    cmp = 'Validation' if P.has(1) else (CV if K else 'Training')     # the set the page draws: the report's comparison set
+    if cmp not in sets:
+        cmp = sets[0]
+    out['plot_code'] = _threshold_tail(P, level, cut, cmp, [label_of(k, P) for k in order], order)
     return out
 
 

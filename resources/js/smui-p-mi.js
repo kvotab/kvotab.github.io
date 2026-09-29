@@ -77,6 +77,19 @@
 
   const missingRows = (ctx, cols, fn) => ctx.rows.filter((r) => fn(cols.map((c) => isMissing(c.values[r]))));
 
+  /* ---- the graphs' code ------------------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table: mi.plot_code writes it, the imputer and the analysis model set
+     up as the report's code sets them up (the same seed: the same draws),
+     from what the page chose (the bins, the level names). A headless run
+     (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-mi-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, kind, plot) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('mi.plot_code', { ...payloadOf(ctx), kind, plot });
+    return r && !r.error ? r.plot_code : null;
+  }
+
   /* ---- the summary ----------------------------------------------------------------------- */
   function summary(ctx, res) {
     const secs = res.cached ? '' : `, ${fmt(res.seconds, { sig: 2 })} s`;
@@ -148,7 +161,7 @@
     return ctx.plot(traces, layout, { width: W(520), height: h, title: 'pooled and complete-case estimates', select: false });
   }
 
-  function pooledOutline(ctx, res) {
+  async function pooledOutline(ctx, res) {
     const A = res.analysis;
     const showCC = ctx.opt('cc', true) && A.cc;
     const ob = ctx.outline('Pooled Estimates', { key: 'pooled', info: 'p:mi:pooled', menu: () => [ctx.check('Complete-Case Fit', 'cc', null, true), ctx.check('Comparison Plot', 'compare', null, true)] });
@@ -158,7 +171,7 @@
     const pooled = ctx.rt(A.pooled, { caption: `Pooled over ${res.m} imputations (Rubin's rules)`, sortable: false, key: 'pooled', name: 'Pooled Estimates' });
     const cc = showCC ? ctx.rt(A.cc, { caption: `Complete cases only (${A.n_cc} rows)`, sortable: false, key: 'cc', name: 'Complete-Case Fit' }) : null;
     ob.add(ctx.row(el('div', { class: 'sm-mi-table' }, pooled), cc ? el('div', { class: 'sm-mi-table' }, cc) : null));
-    if (showCC && ctx.opt('compare', true)) ob.add(el('div', { class: 'sm-mi-scroll' }, comparePlot(ctx, res)));
+    if (showCC && ctx.opt('compare', true)) ob.add(el('div', { class: 'sm-mi-scroll' }, withCode(ctx, comparePlot(ctx, res), await plotCode(ctx, 'compare', { cc: true }))));
     const notes = [
       `Rubin's rules: the estimate is the mean of the ${res.m} imputations' estimates; its variance is W + (1 + 1/m) B, W the mean of their variances (within) and B the variance of their estimates (between). FMI, the fraction of missing information, is statsmodels' (1 + 1/m) B / T (R's mice calls it lambda). z tests and normal intervals, as statsmodels pools; the right-click Columns menu adds W, B and T, the relative increase in variance, the Barnard–Rubin degrees of freedom with their t test and R mice's FMI.`,
       A.cc ? `The complete-case fit uses only the ${A.n_cc} rows with every model column observed. It is unbiased when missingness depends on the covariates alone; when it depends on the response (or on anything else that the imputation uses), the complete cases are a skewed sample and the two fits part.` : null,
@@ -167,14 +180,19 @@
   }
 
   /* ---- Imputation Diagnostics ------------------------------------------------------------------------- */
-  function densityPlot(ctx, res, imp, c) {
-    const C = colors();
+  /* The observed values of an imputed column and its imputed ones (every imputation), and the page's bins of them. */
+  function densityData(res, imp, c) {
     const obs = [], obsRows = [];
     const missing = new Set(imp.rows);
     for (const r of res.rows) { if (missing.has(r)) continue; const v = c.values[r]; if (typeof v === 'number' && Number.isFinite(v)) { obs.push(v); obsRows.push(r); } }
     const drawn = [], drawnRows = [];
     for (const d of imp.draws) d.forEach((v, k) => { drawn.push(v); drawnRows.push(imp.rows[k]); });
-    const b = SM.report.niceBins(obs.concat(drawn));
+    return { obs, obsRows, drawn, drawnRows, b: SM.report.niceBins(obs.concat(drawn)) };
+  }
+
+  function densityPlot(ctx, res, imp, c) {
+    const C = colors();
+    const { obs, obsRows, drawn, drawnRows, b } = densityData(res, imp, c);
     const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
     const bars = (vals, rows) => {
       const counts = new Array(nb).fill(0), members = Array.from({ length: nb }, () => []);
@@ -237,7 +255,7 @@
     }, { width: W(430), height: 270, title: `${c.name} trace`, select: false });
   }
 
-  function diagnosticsOutline(ctx, res) {
+  async function diagnosticsOutline(ctx, res) {
     const ob = ctx.outline('Imputation Diagnostics', { key: 'diag', info: 'p:mi:diagnostics' });
     if (!res.imputed.length) { ob.add(ctx.note('No missing values in these columns: nothing was imputed.')); return; }
     for (const imp of res.imputed) {
@@ -249,8 +267,13 @@
         { label: 'Select Rows Imputed', action: () => ctx.table.select(imp.rows) },
       ] });
       const plots = [];
-      if (ctx.opt('miDist', true, sc)) plots.push(res.kinds[imp.column] === 'categorical' ? levelPlot(ctx, res, imp, c) : densityPlot(ctx, res, imp, c));
-      if (ctx.opt('miTrace', true, sc)) plots.push(tracePlot(ctx, res, imp, c));
+      if (ctx.opt('miDist', true, sc)) {
+        const cat = res.kinds[imp.column] === 'categorical';
+        const code = cat ? await plotCode(ctx, 'levels', { column: imp.column, labels: (res.levels[imp.column] || []).map((v) => SM.grid.cellText(c, v)) })
+          : await plotCode(ctx, 'observed', { column: imp.column, bins: densityData(res, imp, c).b });
+        plots.push(withCode(ctx, cat ? levelPlot(ctx, res, imp, c) : densityPlot(ctx, res, imp, c), code));
+      }
+      if (ctx.opt('miTrace', true, sc)) plots.push(withCode(ctx, tracePlot(ctx, res, imp, c), await plotCode(ctx, 'trace', { column: imp.column })));
       if (plots.length) sub.add(ctx.row(...plots));
     }
     ob.add(ctx.note(`Left, the observed values of each column and its imputed ones (all ${res.m} imputations together), as densities (proportions of the levels for a categorical column); click a bar to select its rows. Imputed values that sit where the observed are rare can be right (the data are missing at random, not completely at random) or a sign of a poor imputation model. Right, the mean of the imputed values after every cycle of the imputer: after the shaded burn-in it should wander around a level with no trend; the dots are the cycles whose values became the imputations.`));
@@ -547,8 +570,8 @@
     ctx.mi = { res };
     summary(ctx, res);
     if (ctx.opt('missingData', true)) missingOutline(ctx, res);
-    if (res.analysis && ctx.opt('pooled', true)) pooledOutline(ctx, res);
-    if (ctx.opt('diagnostics', true)) diagnosticsOutline(ctx, res);
+    if (res.analysis && ctx.opt('pooled', true)) await pooledOutline(ctx, res);
+    if (ctx.opt('diagnostics', true)) await diagnosticsOutline(ctx, res);
     if (!res.analysis || !ctx.opt('pooled', true)) ctx.container.append(ctx.code(res.code));
     if (ctx.opt('about', true)) aboutOutline(ctx);
   }

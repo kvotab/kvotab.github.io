@@ -4019,7 +4019,44 @@ def matched_pairs(table, y1, y2, group=None, rows=None, alpha=0.05, where=None, 
     if group:
         c.append(f'print(stats.f_oneway(*[g for _, g in dif.groupby(d[{J(group)}])]))   # the mean difference across the groups')
     out['code'] = '\n'.join(c)
+    out['plot_code'], out['row_code'] = _mp_plot_codes(table, rows, where, table_name, y1, y2, group, out.get('group_levels'), alpha)
     return out
+
+
+def _mp_plot_codes(table, rows, where, table_name, y1, y2, group, levels, alpha):
+    """Matched Pairs' two graphs as matplotlib code: the Tukey mean-difference
+    plot (Plot Dif by Mean: each pair's difference against its mean, the
+    mean difference and its confidence interval; the points coloured by
+    group) and the differences by row (Plot Dif by Row)."""
+    names = [c for c in dict.fromkeys((y1, y2, group)) if c]
+
+    def head(imports=()):
+        return _plot_head(table, rows, where, table_name, imports) + [
+            f'd = df[{J(names)}].dropna()   # the complete pairs{", with a group" if group else ""}, as the report takes them',
+            f'a, b = d[{J(y1)}].to_numpy(float), d[{J(y2)}].to_numpy(float)',
+            'dif, mean = b - a, (a + b) / 2   # each pair\'s difference and mean']
+    lv = f'{100 * (1 - alpha):g}%'
+    p = head(['from statsmodels.stats.weightstats import DescrStatsW']) + ['ds = DescrStatsW(dif, ddof=1)',
+                f'lower, upper = ds.tconfint_mean({alpha!r})   # the {lv} confidence interval of the mean difference',
+                _figure(480, 360)]
+    if group:
+        p += [f'levels = [{", ".join(_lvcode(v) for v in levels or [])}]   # the levels of {group} in these pairs, in the table\'s order',
+              f'palette = {J(PALETTE)}',
+              'color_of = {v: palette[i % len(palette)] for i, v in enumerate(levels)}',
+              f'ax.scatter(mean, dif, s=18, color=[color_of[v] for v in d[{J(group)}]])   # each pair in the colour of its group']
+    else:
+        p.append(f'ax.scatter(mean, dif, s=18, color="{BASE}")')
+    p += [f'ax.axhline(0, color="{GREY}", linewidth=0.72)',
+          f'ax.axhline(ds.mean, color="{RED}", linewidth=1.15)   # the mean difference',
+          f'ax.axhline(lower, color="{RED}", linewidth=0.72, linestyle="--")   # and its {lv} confidence interval',
+          f'ax.axhline(upper, color="{RED}", linewidth=0.72, linestyle="--")',
+          f'ax.set_xlabel({J(f"Mean: ({y1}+{y2})/2")})', f'ax.set_ylabel({J(f"Difference: {y2}-{y1}")})',
+          f'ax.set_title({J(f"{y2}-{y1} by mean")})', 'plt.show()']
+    r = head() + [_figure(420, 300),
+                f'ax.scatter(d.index + 1, dif, s=18, color="{BASE}")   # each pair at its row number',
+                f'ax.axhline(dif.mean(), color="{RED}", linewidth=1)   # the mean difference',
+                'ax.set_xlabel("Row")', f'ax.set_ylabel({J(f"Difference: {y2}-{y1}")})', f'ax.set_title({J(f"{y2}-{y1} by row")})', 'plt.show()']
+    return '\n'.join(p), '\n'.join(r)
 
 
 def _pairs_of(table, y1, y2, rows):

@@ -382,4 +382,72 @@ check('the outlier cluster\'s code carries its EM (outlier_em and mixture_log_pa
 code = call('mixtures.fit', table=tB, columns=cols, k_min=3, seed=3, table_name='data')['code']
 check('the normal clusters\' code is GaussianMixture\'s', ('GaussianMixture(n_components=k' in code and 'outlier_em' not in code), True)
 
+# ---- the graphs' code: the criteria graph whole, the lines the page's graphs start with -------------------------
+# (the page adds the drawing: its choices; test-ui-mixtures.py runs those blocks in the page)
+from test_charts import run_snippet  # noqa: E402
+
+
+def frag_vars(code, csv_name, label):
+    """A fragment run on the whole table's CSV: its variables."""
+    ns, here = {}, os.getcwd()
+    os.chdir(work)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(compile(code.replace('data.csv', csv_name), label, 'exec'), ns)
+    except Exception as e:   # the check below reports it
+        ns['__error__'] = f'{type(e).__name__}: {e}'
+    finally:
+        os.chdir(here)
+    check(f'{label}: runs', ns.get('__error__'), None)
+    return ns
+
+
+def graph_checks(res, label, csv_name='data.csv', frame=None):
+    ok = [f for f in res['fits'] if 'error' not in f]
+    if len(ok) >= 3:
+        figs, err = run_snippet(res['criteria_code'].replace('data.csv', csv_name), frame, csv_name[:-4], work)
+        check(f'the Cluster Criteria graph\'s code runs ({label})', (err, len(figs or [])), (None, 1))
+        if figs:
+            ax = figs[0]['axes'][0]
+            by = {ln['label']: ln for ln in ax['lines']}
+            ks = [f['k'] for f in ok]
+            check.near(f'... BIC and AICc of each number of clusters ({label})', max(mx(by['BIC']['y'], [f['bic'] for f in ok]), mx(by['AICc']['y'], [f['aicc'] for f in ok]), mx(by['BIC']['x'], ks)), 0.0, abs_=1e-8)
+            check(f'... the titles and the size ({label})', (ax['xlabel'], ax['ylabel'], ax['title'], figs[0]['size'], [float(k) for k in ks] == ax['xticks'][:len(ks)] or ax['xticks'] == [float(k) for k in ks]),
+                  ('NCluster', 'Criterion', 'Cluster criteria', [4.6, 2.5], True))
+    else:
+        check(f'fewer than three fits: no criteria graph ({label})', 'criteria_code' in res, False)
+    f = next(f for f in ok if f['k'] == res['best'])
+    ns = frag_vars(f['fit_head'] + ('\n' + res['pca_lines'] if res.get('pca_lines') else ''), csv_name, f'the lines under the graphs of {f["k"]} clusters ({label})')
+    if 'cluster' not in ns:
+        return
+    check(f'... each row\'s cluster is the report\'s ({label})', ns['cluster'].tolist(), f['labels'])
+    props = f['weights'] + ([f['outlier_weight']] if f['outlier_weight'] is not None else [])
+    check.near(f'... and so are the proportions, means and covariances in the columns\' units ({label})',
+               max(mx(ns['w'], props), mx(ns['means'][:f['k']], f['means']), mx(ns['covs'][:f['k']], f['covs'])), 0.0, abs_=1e-9)
+    if f['outlier_weight'] is not None:
+        check.near(f'... and the outlier cluster\'s density ({label})', float(ns['box_density']), f['outlier_density'], rel=1e-12)
+    if res.get('pca_lines'):
+        check.near(f'... the rows\' principal component scores and eigenvalues ({label})', max(mx(ns['scores'], res['pca']['scores']), mx(ns['evals'], res['pca']['eigenvalues'])), 0.0, abs_=1e-9)
+        check.near(f'... each cluster carried onto the components ({label})', max(mx(ns['pc_means'], f['pc_means']), mx(ns['pc_covs'], f['pc_covs'])), 0.0, abs_=1e-9)
+
+
+frameB = pd.DataFrame({c: XB[:, j] for j, c in enumerate(cols)})
+graph_checks(call('mixtures.fit', table=tB, columns=cols, k_min=1, k_max=4, seed=3, tours=3, table_name='data'), 'normal clusters, a range', frame=frameB)
+graph_checks(call('mixtures.fit', table=tB, columns=cols, k_min=2, k_max=4, seed=3, tours=3, outlier=True, table_name='data'), 'the outlier cluster', frame=frameB)
+graph_checks(call('mixtures.fit', table=tB, columns=cols, k_min=2, k_max=3, seed=8, tours=2, covariance='spherical', standardize=False, table_name='data'), 'spherical, unscaled', frame=frameB)
+graph_checks(call('mixtures.fit', table=tF3, columns=cols, freq='count (n)', k_min=2, k_max=4, seed=5, tours=2, table_name='freq'), 'Freq', 'freq.csv',
+             pd.DataFrame({**{c: XB[:, j] for j, c in enumerate(cols)}, 'count (n)': fq3}))
+# a By group (its where line) with rows left out; one column (the density's lines)
+grpB = ['u' if i % 3 else 'v' for i in range(len(XB))]
+tG = table({**{c: XB[:, j] for j, c in enumerate(cols)}, 'grp': grpB})
+frameG = pd.DataFrame({**{c: XB[:, j] for j, c in enumerate(cols)}, 'grp': grpB})
+frameG.to_csv(os.path.join(work, 'bygroup.csv'), index=False)
+rows_u = [i for i in range(len(XB)) if grpB[i] == 'u' and i not in (1, 2, 4)]
+rg = call('mixtures.fit', table=tG, columns=cols, rows=rows_u, where=[{'column': 'grp', 'value': 'u'}], k_min=2, k_max=4, seed=4, tours=2, table_name='bygroup')
+check('a By group: the code keeps its rows, drops the ones left out', all('df = df[df["grp"] == "u"]' in c and 'df = df.drop(index=[1, 2, 4])' in c for c in [rg['code'], rg['criteria_code'], rg['fits'][0]['fit_head'], rg['fits'][0]['code']]), True)
+graph_checks(rg, 'a By group, rows left out', 'bygroup.csv', frameG)
+r1 = call('mixtures.fit', table=tB, columns=[cols[0]], k_min=2, seed=3, tours=2, outlier=True, table_name='data')
+graph_checks(r1, 'one column with the outlier cluster', frame=frameB)
+
 sys.exit(check.done())

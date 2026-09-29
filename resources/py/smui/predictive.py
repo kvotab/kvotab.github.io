@@ -188,8 +188,13 @@ class Prepared:
     # ---- the code under the report
     def code(self, table_name, rows=None, extra_imports=()):
         """Lines that read the exported table and build d, X, y, w and sets
-        exactly as the report does."""
+        exactly as the report does. The table is read with an empty field as
+        its only missing value: File > Export CSV writes a missing value so,
+        and pandas' default would take a level named None, NA or null for
+        missing too (the Churn example's internet has the level None)."""
         L = [code_head(table_name, list(extra_imports))]
+        L[0] = L[0].replace('float_precision="round_trip")   # the table, as File > Export CSV writes it',
+                            'float_precision="round_trip", keep_default_na=False, na_values=[""])   # the table, as File > Export CSV writes it (an empty field is missing)')
         n_all = data.TABLES[self.table]['n'] if self.table in data.TABLES else None
         if rows is not None:
             keep = [int(r) for r in rows]
@@ -639,10 +644,13 @@ def residuals(P, fitted):
             'set': P.sets.tolist()}
 
 
-def contributions(P, values, label='Contribution', extra=None):
+def contributions(P, values, label='Contribution', extra=None, code=None, title='Column Contributions'):
     """A per-feature quantity (an importance) summed back to the x columns:
     [{'column', 'value', 'portion'}], largest first. extra: more columns
-    for the table, {label: {x column: value}} (JMP's Number of Splits)."""
+    for the table, {label: {x column: value}} (JMP's Number of Splits).
+    code: the lines (after a graph's head) that make `contrib`, each x
+    column's value, from the model; the bars' code is then 'plot_code'
+    (graph_code in smui-predict.js puts the head before it)."""
     values = np.asarray(values, dtype=float)
     rows = []
     for c in P.x:
@@ -654,7 +662,10 @@ def contributions(P, values, label='Contribution', extra=None):
         for j, (lab, by) in enumerate((extra or {}).items()):
             r[f'extra{j}'] = by.get(r['column'])
     rows.sort(key=lambda r: -(r['value'] if r['value'] is not None else -math.inf))
-    return {'rows': rows, 'label': label, 'extra': list((extra or {}).keys())}
+    out = {'rows': rows, 'label': label, 'extra': list((extra or {}).keys())}
+    if code is not None:
+        out['plot_code'] = '\n'.join(list(code) + contribution_lines(len(P.x), title))
+    return out
 
 
 def saved(P, predict, proba=None):
@@ -673,10 +684,13 @@ def saved(P, predict, proba=None):
             'ordinal': data.meta(P.table, P.y).get('modelingType') == 'ordinal'}
 
 
-def report(P, fitted, roc_curves=True):
+def report(P, fitted, roc_curves=True, head=None, select=()):
     """The pieces every platform shows: the Measures of Fit, and for a
     categorical response the confusion matrices and the ROC and lift
-    curves; for a continuous one actual by predicted."""
+    curves; for a continuous one actual by predicted. head: the code of
+    the platform's model (graph_codes), which adds 'plots', the code of
+    those graphs; select: lines that pick this response's y and fitted
+    from what the head makes (a network of several responses)."""
     out = {'kind': P.kind, 'measures': measures(P, fitted), 'measure_columns': measure_columns(P.kind), 'sets': [SETS[k] for k in range(3) if P.has(k)],
            'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)}, 'notes': list(P.notes), 'features': list(P.features)}
     if P.kind == 'categorical':
@@ -687,6 +701,8 @@ def report(P, fitted, roc_curves=True):
             out['lift'] = lift(P, fitted)
     else:
         out['residuals'] = residuals(P, fitted)
+    if head is not None:
+        out['plots'] = graph_codes(P, head, select, roc_curves)
     return out
 
 
@@ -718,3 +734,149 @@ def predictor(P, model, predict=None, proba=None):
     frame = data.frame(P.table, P.x, P.index[P.train()], dropna=False)
     observed = {c: [None if (isinstance(v, float) and math.isnan(v)) else (v.item() if hasattr(v, 'item') else v) for v in frame[c].astype(object)] for c in P.x}
     return Predictor(P.factors(), run, observed)
+
+
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code
+# ---------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table, as the notebook runs it. A graph's code is a
+# head and a tail joined by SEP (graph_code in smui-predict.js joins them):
+# the head reads the table, keeps the report's rows, makes the sets and fits
+# the model as the platform's own code fits it (with the same seed), and ends
+# with `fitted`, every row's prediction or its probability of each level; the
+# tail computes the graph's numbers from the model and draws them in the
+# light theme's colours at the graph's size (100 pixels an inch). The head
+# names d (the rows), y (a number, or the level's index), sets (0 training,
+# 1 validation, 2 test) and fitted.
+
+PLT = 'import matplotlib.pyplot as plt'
+SEP = '\n\n# ----\n'
+BASE, BAR, TEXT, MUTED, FIT = '#2f6690', '#8fa9c2', '#352921', '#786b5d', '#c0392b'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+
+
+def figure(w, h, names='fig, ax', extra=''):
+    """The line that makes a figure of the page's graph's size, w x h pixels at 100 an inch."""
+    return f'{names} = plt.subplots(figsize=({w / 100:g}, {h / 100:g}), layout="constrained"{extra})'
+
+
+def freq_line(P):
+    """f: each row's Freq, which the ROC and lift curves count the rows by (a weight does not)."""
+    c = P.spec.get('freq')
+    return (f'f = d[{json.dumps(c)}].to_numpy(float)   # each row\'s frequency: the curves count the rows by it' if c
+            else 'f = np.ones(len(d))   # every row counts once')
+
+
+def names_line(P):
+    return f'names = {json.dumps(list(P.labels))}   # the levels, as the report names them'
+
+
+def roc_lines(P, k):
+    """The ROC curves of one set (predictive.roc), every level against the others."""
+    s = SETS[k]
+    return [f'# ROC curves of the {s.lower()} rows: each level against the others, as the cut on its probability falls',
+            'def roc(p, pos, f):',
+            '    """1 - specificity and sensitivity at each cut on p, highest first; tied values move together; f counts the rows."""',
+            '    o = np.argsort(-p, kind="mergesort")',
+            '    s, tp, fp = p[o], np.cumsum(np.where(pos[o], f[o], 0.0)), np.cumsum(np.where(pos[o], 0.0, f[o]))',
+            '    last = np.r_[s[1:] != s[:-1], True]   # the end of each run of equal values',
+            '    return np.r_[0.0, fp[last] / fp[-1]], np.r_[0.0, tp[last] / tp[-1]]',
+            '',
+            '',
+            freq_line(P), names_line(P), f'colors = {json.dumps(PALETTE)}',
+            f'm = sets == {k}   # the {s.lower()} rows',
+            figure(330, 320),
+            'i = 0',
+            'for j, name in enumerate(names):',
+            '    pos = y[m] == j',
+            '    if not (f[m][pos].sum() > 0 and f[m][~pos].sum() > 0):',
+            '        continue   # a level with no rows here, or with every row: no curve',
+            '    fpr, tpr = roc(fitted[m][:, j], pos, f[m])',
+            '    auc = np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) / 2)   # the area under the curve',
+            '    ax.plot(fpr, tpr, color=colors[i % len(colors)], linewidth=1.8, label=f"{name} ({auc:.4f})")',
+            '    i += 1',
+            f'ax.plot([0, 1], [0, 1], color="{MUTED}", linewidth=1, linestyle=":")',
+            'ax.set_xlim(0, 1)', 'ax.set_ylim(0, 1.01)',
+            'ax.set_xlabel("1 - Specificity")', 'ax.set_ylabel("Sensitivity")',
+            f'ax.set_title({json.dumps(f"ROC {s}")})',
+            'ax.legend(loc="lower right", frameon=False, fontsize=8)',
+            'plt.show()']
+
+
+def lift_lines(P, k):
+    """The lift curves of one set (predictive.lift)."""
+    s = SETS[k]
+    return [f'# lift curves of the {s.lower()} rows: the rows taken by the probability of each level, highest first',
+            freq_line(P), names_line(P), f'colors = {json.dumps(PALETTE)}',
+            f'm = sets == {k}   # the {s.lower()} rows',
+            'tot = f[m].sum()',
+            figure(330, 300),
+            'i = 0',
+            'for j, name in enumerate(names):',
+            '    pos = y[m] == j',
+            '    base = f[m][pos].sum() / tot   # the level\'s rate in the set',
+            '    if not base > 0:',
+            '        continue',
+            '    o = np.argsort(-fitted[m][:, j], kind="mergesort")',
+            '    cw, hits = np.cumsum(f[m][o]), np.cumsum(np.where(pos[o], f[m][o], 0.0))',
+            '    ax.plot(cw / tot, hits / cw / base, color=colors[i % len(colors)], linewidth=1.8, label=name)   # its rate among the rows taken over its rate in the set',
+            '    i += 1',
+            f'ax.plot([0, 1], [1, 1], color="{MUTED}", linewidth=1, linestyle=":")',
+            'ax.set_xlim(0, 1)', 'ax.set_xlabel("Portion")', 'ax.set_ylabel("Lift")',
+            f'ax.set_title({json.dumps(f"Lift {s}")})',
+            'ax.legend(frameon=False, fontsize=8)',
+            'plt.show()']
+
+
+def abp_lines(k, title=None, residual=False):
+    """Actual (or the residual) by predicted of one set: every row's y against its fitted value."""
+    s = SETS[k]
+    if residual:
+        return [f'm = sets == {k}   # the {s.lower()} rows', figure(320, 280),
+                f'ax.scatter(fitted[m], y[m] - fitted[m], s=14, color="{BASE}")   # the actual value less the prediction',
+                'v = fitted[m][np.isfinite(fitted[m])]',
+                f'ax.plot([v.min(), v.max()], [0, 0], color="{MUTED}", linewidth=1, linestyle=":")',
+                'ax.set_xlabel("Predicted")', 'ax.set_ylabel("Residual")', f'ax.set_title({json.dumps(title or f"Residual by predicted {s}")}, wrap=True)', 'plt.show()']
+    return [f'm = sets == {k}   # the {s.lower()} rows', figure(320, 300),
+            f'ax.scatter(fitted[m], y[m], s=14, color="{BASE}")',
+            'v = np.r_[fitted[m], y[m]]',
+            'v = v[np.isfinite(v)]',
+            f'ax.plot([v.min(), v.max()], [v.min(), v.max()], color="{MUTED}", linewidth=1, linestyle=":")   # actual = predicted',
+            'ax.set_xlabel("Predicted")', 'ax.set_ylabel("Actual")', f'ax.set_title({json.dumps(title or f"Actual by predicted {s}")}, wrap=True)', 'plt.show()']
+
+
+def contribution_lines(n, title='Column Contributions'):
+    """Column Contributions' bars from contrib, each x column's value (in the columns' order)."""
+    return ['cols = sorted(contrib, key=lambda c: -contrib[c])   # the largest first (a tie keeps the columns\' order)',
+            'tot = sum(max(v, 0.0) for v in contrib.values())',
+            'portion = [contrib[c] / tot if tot > 0 else 0.0 for c in cols]   # each column\'s share of the total',
+            figure(340, max(120, 24 * n + 50)),
+            f'ax.barh(cols, portion, color="{BAR}")',
+            'ax.invert_yaxis()   # the largest at the top',
+            'ax.set_xlim(0, 1)', 'ax.set_xlabel("Portion")', f'ax.set_title({json.dumps(title)})', 'plt.show()']
+
+
+def graph_codes(P, head, select=(), curves=True):
+    """The code of the graphs every predictive platform shows, per set: the
+    ROC and lift curves (a categorical response) or actual by predicted,
+    each the lines after the head (with select before them)."""
+    pre = list(select or [])
+    out = {'head_code': head}
+    sets = [k for k in range(3) if P.has(k)]
+    if P.kind == 'categorical':
+        if curves:
+            out['roc'] = {SETS[k]: '\n'.join(pre + roc_lines(P, k)) for k in sets}
+            out['lift'] = {SETS[k]: '\n'.join(pre + lift_lines(P, k)) for k in sets}
+    else:
+        out['abp'] = {SETS[k]: '\n'.join(pre + abp_lines(k)) for k in sets}
+    return out
+
+
+def fitted_line(P, var='model'):
+    """fitted from a scikit-learn model of X (every level's probability in the table's order: a level the
+    training rows lack gets 0, as P.proba does)."""
+    if P.kind == 'categorical':
+        return [f'fitted = np.zeros((len(X), len(levels)))',
+                f'fitted[:, {var}.classes_] = {var}.predict_proba(X)   # each row\'s probability of every level (0 for a level the model never saw)']
+    return [f'fitted = {var}.predict(X)   # each row\'s prediction']

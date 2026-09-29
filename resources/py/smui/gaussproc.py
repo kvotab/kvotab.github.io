@@ -29,6 +29,7 @@ the total variance over scrambled Sobol points. Matern is not a product
 over the factors: its indices are pick-freeze quasi-Monte Carlo estimates.
 """
 import inspect
+import json
 import math
 import warnings
 
@@ -375,15 +376,10 @@ def _marginals(M, grid=61):
 # the code under the report
 # ---------------------------------------------------------------------------
 
-def _code(M, table_name, rows, fanova_method):
-    P = M.P
-    imports = ['from scipy.linalg import cho_solve', 'from scipy.special import erf', 'from scipy.stats import qmc',
-               'from sklearn.gaussian_process import GaussianProcessRegressor',
-               'from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel']
-    L = P.code(table_name, rows, extra_imports=imports)
-    L.append('')
-    n = len(P.index)
-    if n > M.max_rows:
+def _fit_lines(M):
+    """The model as the report fits it: the rows fitted, the kernel, the fit and its parameters."""
+    L = []
+    if len(M.P.index) > M.max_rows:
         L.append(f'fit = np.sort(np.random.default_rng({M.seed}).choice(len(d), {M.max_rows}, replace=False))   # the {M.max_rows} rows the model is fitted to')
     else:
         L.append('fit = np.arange(len(d))   # every row fits the model')
@@ -396,6 +392,17 @@ def _code(M, table_name, rows, fanova_method):
     L.append('prod = k.k1   # (ConstantKernel * correlation) + WhiteKernel' if M.nugget else 'prod = k   # ConstantKernel * correlation')
     L.append('c, ell = prod.k1.constant_value, np.atleast_1d(prod.k2.length_scale) * np.ones(X.shape[1])')
     L.append('mu, s = yf.mean(), yf.std()   # normalize_y')
+    return L
+
+
+def _code(M, table_name, rows, fanova_method):
+    P = M.P
+    imports = ['from scipy.linalg import cho_solve', 'from scipy.special import erf', 'from scipy.stats import qmc',
+               'from sklearn.gaussian_process import GaussianProcessRegressor',
+               'from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel']
+    L = P.code(table_name, rows, extra_imports=imports)
+    L.append('')
+    L += _fit_lines(M)
     if M.correlation == 'gaussian':
         L.append('print("Theta", 1 / (2 * ell ** 2))   # JMP\'s exp(-Σ θ (x - x\')²) is exp(-Σ (x - x\')² / (2 ℓ²))')
     L.append('print("Length Scale", ell)')
@@ -425,6 +432,76 @@ def _code(M, table_name, rows, fanova_method):
     else:
         L.append(f'curve = marginal_mc(gp.predict, lo, hi, 0, np.linspace(lo[0], hi[0], 61), seed={M.seed}, m={QMC_PICK})')
     return '\n'.join(L)
+
+
+# ---------------------------------------------------------------------------
+# the graphs' code (smui-p-gaussproc.js puts each under its graph)
+# ---------------------------------------------------------------------------
+
+OTHER = '#3a7d44'   # the rows not fitted (smui-p-gaussproc.js colors().other, light theme)
+
+
+def _graph_head(M, table_name, rows, how):
+    """The head of the report's graphs: the model fitted as the report fits it, the jackknife
+    predictions of the rows fitted, the other rows predicted by the whole model, and the helper of the
+    marginal model curves."""
+    imports = ['from sklearn.gaussian_process import GaussianProcessRegressor',
+               'from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel', predictive.PLT]
+    L = M.P.code(table_name, rows, extra_imports=imports)
+    L.append('')
+    L += _fit_lines(M)
+    L += ['', _source(jackknife), '',
+          'jack, jack_sd = jackknife(gp, yf)   # each fitted row predicted without it, the kernel held',
+          'other = np.setdiff1d(np.arange(len(d)), fit)   # the rows not fitted (more than Rows to Fit), predicted by the whole model',
+          'opred = gp.predict(X[other]) if len(other) else np.zeros(0)', '']
+    if how == 'quadrature':
+        L += [_source(marginal_rbf), '',
+              'w = s * c * np.ravel(gp.alpha_)   # the fitted mean is mu + Σ_i w_i Π_k exp(-(x_k - x_ik)² / (2 ℓ_k²))']
+    else:
+        L += [_source(marginal_mc)]
+    return '\n'.join(L)
+
+
+def _abp_tail(M, n, n_other):
+    """Actual by Predicted Plot: each row fitted against its jackknife prediction, the other rows
+    (diamonds) against the whole model's."""
+    J = json.dumps
+    size = 14 if n <= 600 else 8 if n <= 2000 else 5   # the page's marker size by the number of rows
+    L = [predictive.figure(430, 380),
+         f'ax.scatter(jack, yf, s={size}, color="{predictive.BASE}", label="Jackknife (rows fitted)")']
+    if n_other:
+        L.append(f'ax.scatter(opred, y[other], s={size}, marker="D", color="{OTHER}", label="Predicted (not fitted)")')
+    L += ['v = np.r_[jack, yf, opred, y[other]]',
+          'v = v[np.isfinite(v)]',
+          f'ax.plot([v.min(), v.max()], [v.min(), v.max()], color="{predictive.MUTED}", linewidth=1, linestyle=":")   # actual = predicted',
+          f'ax.set_xlabel({J(M.y + " Jackknife Predicted")})', f'ax.set_ylabel({J(M.y)})',
+          f'ax.set_title({J(M.y + " actual by jackknife predicted")}, wrap=True)']
+    if n_other:
+        L.append('fig.legend(loc="outside upper left", ncols=2, frameon=False, fontsize=8)')
+    L.append('plt.show()')
+    return '\n'.join(L)
+
+
+def _marginal_tail(M, k, how, grid=61):
+    """Marginal Model Plot of factor k: its main effect E[f | x_k] over its range in the rows fitted, on
+    the scale every factor's plot shares (from the lowest to the highest of all the curves)."""
+    J = json.dumps
+    d = len(M.x)
+    if how == 'quadrature':
+        curve = 'marginal_rbf(Xf, w, mu, ell, lo, hi, j, ts[j])'
+    else:
+        curve = f'marginal_mc(gp.predict, lo, hi, j, ts[j], seed={M.seed}, m={QMC_PICK})'
+    return '\n'.join([
+        f'ts = [np.linspace(lo[j], hi[j], {grid}) for j in range(X.shape[1])]',
+        f'curves = [{curve} for j in range(X.shape[1])]   # every factor\'s curve: the plots share the scale',
+        'f_lo, f_hi = min(f.min() for f in curves), max(f.max() for f in curves)',
+        'pad = 0.06 * ((f_hi - f_lo) or abs(f_hi) or 1)',
+        predictive.figure(260 if d > 3 else 300, 230),   # the page's width (240 for more than three factors, 260 at least)
+        f'ax.plot(ts[{k}], curves[{k}], color="{predictive.BASE}", linewidth=2)   # {M.x[k]}',
+        'ax.set_ylim(f_lo - pad, f_hi + pad)',
+        f'ax.set_xlabel({J(M.x[k])})', f'ax.set_ylabel({J(M.y)})',
+        f'ax.set_title({J(M.y + " marginal model plot of " + M.x[k])}, wrap=True)',   # wrapped when longer than the graph is wide
+        'plt.show()'])
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +559,8 @@ def fit(table, y, x, rows=None, correlation='gaussian', nugget=False, max_rows=4
         'jack_rsquare': 1 - float(np.sum(r * r)) / sst if sst > 0 else None, 'jack_rase': math.sqrt(float(np.mean(r * r))),
         'marginal': _marginals(M), 'ranges': [[float(a), float(b)] for a, b in zip(M.lo, M.hi)],
         'notes': notes, 'code': _code(M, table_name, rows, how),
+        'plots': {'head_code': _graph_head(M, table_name, rows, how), 'abp': _abp_tail(M, n, len(other)),
+                  'marginal': [_marginal_tail(M, k, how) for k in range(d)]},
     }
 
 

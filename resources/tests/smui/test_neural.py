@@ -593,4 +593,57 @@ for label, kw, what in cases:
         line = [ln for ln in stdout.splitlines() if ln.startswith('Validation RSquare')]
         check.near('... and prints the validation RSquare of the report (to numpy\'s eight digits)', float(line[0].split('[')[1].split(']')[0]), measures(rc)['Validation']['rsquare'], rel=1e-7)
 
+# ---- the graphs' matplotlib code, run on a CSV export: every graph of the report -------------------------------------------------
+from test_predictive import SEP, check_shared_native, joined, run_graph as run_graph_native, scatter_pts  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-neural-charts-')
+graphs = 0
+for label, kw in [
+        ('graphs: two continuous responses and a level one, two layers, a Validation column', dict(y=('y', 'y2', 'three'), model={'n1': 3, 'n2': 2}, validation='v')),
+        ('graphs: boosted, two levels, Freq, Holdback', dict(y=('cls',), model={'n1': 2, 'boost': 3}, freq='f')),
+        ('graphs: KFold, ReLU, Transform Covariates, rows left out', dict(y=('ym',), x=('x1m', 'x2', 'x3', 'g'), model={'method': 'kfold', 'folds': 3, 'activation': 'relu', 'transform': True}, rows=list(range(20, 300))))]:
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        res = fit(table_name='data', **kw)
+    head = res['plots']['head_code']
+    if 'rows' in kw:
+        # the rows left out, and those with no response (the networks take only rows with every response)
+        kept_ = [r_ for r_ in kw['rows'] if all(cols[c][r_] is not None and not (isinstance(cols[c][r_], float) and math.isnan(cols[c][r_])) for c in kw['y'])]
+        check(f'{label}: the head leaves out the rows the report leaves out, and those with no response', f'df = df.drop(index={sorted(set(range(n)) - set(kept_))})   # the rows the report leaves out' in head, True)
+    for r_ in res['responses']:
+        fit_ = r_['fit']
+        lab = f'{label}: {r_["y"]}'
+        check(f'{lab}: every graph\'s code shares the model\'s head', fit_['plots']['head_code'] == head, True)
+        graphs += check_shared_native(check, lab, fit_, T, GTMP)
+        if r_['kind'] == 'continuous':
+            rr_ = fit_['residuals']
+            for k, s_ in enumerate(pv.SETS):
+                if s_ not in fit_['sets']:
+                    continue
+                F, err = run_graph_native(joined(fit_['plots'], 'rbp', s_), T, GTMP)
+                check(f'{lab}: residual by predicted {s_}: the code runs', err, None)
+                if not F:
+                    continue
+                graphs += 1
+                ax = F['axes'][0]
+                want = [(p_, a_ - p_) for p_, a_, st_ in zip(rr_['predicted'], rr_['actual'], rr_['set']) if st_ == k]
+                check(f'{lab}: residual by predicted {s_}: the rows\' points', len(scatter_pts(ax)) == len(want) and np.allclose(scatter_pts(ax), want, rtol=1e-9, atol=1e-9), True)
+                check(f'{lab}: residual by predicted {s_}: the zero line, the titles', (any(q['y'] == [0.0, 0.0] for q in ax['lines']), ax['xlabel'], ax['ylabel'], ax['title']), (True, 'Predicted', 'Residual', f'Residual by predicted {s_}'))
+    for k, net in enumerate(res['nets']):
+        F, err = run_graph_native(head + SEP + net['diagram_code'], T, GTMP)
+        check(f'{label}: the diagram of network {k + 1}: the code runs', err, None)
+        if not F:
+            continue
+        graphs += 1
+        ax = F['axes'][0]
+        d = net['diagram']
+        layers = [h['n'] for h in d['hidden']]
+        edges = len(d['inputs']) * layers[0] + sum(a * b for a, b in zip(layers, layers[1:])) + layers[-1] * len(d['outputs'])
+        check(f'{label}: the diagram of network {k + 1}: a box per X column and response, a circle per hidden node, a line per connection',
+              (len(ax['bars']), sum(1 for p_ in ax['patches'] if p_['type'] == 'ellipse'), sum(len(c['segs']) for c in ax['segments'])), (len(d['inputs']) + len(d['outputs']), sum(layers), edges))
+        check(f'{label}: the diagram of network {k + 1}: the names, the layers\' captions', sorted(t['s'] for t in ax['texts']),
+              sorted([c['name'] for c in d['inputs']] + [o['name'] for o in d['outputs']] + ['Inputs', 'Outputs'] + [h['name'] for h in d['hidden']]))
+        check(f'{label}: the diagram of network {k + 1}: its title', ax['title'], f'Network diagram: {len(d["inputs"])} inputs, {" and ".join(str(v) for v in layers)} hidden nodes, {len(d["outputs"])} output{"s" if len(d["outputs"]) > 1 else ""}')
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 30)
+
 sys.exit(check.done())

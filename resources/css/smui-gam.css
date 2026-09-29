@@ -32,6 +32,9 @@
 .sm-gam-slider { flex: 1 1 auto; min-width: 90px; margin: 0; accent-color: var(--color-kvot-accent); }
 .sm-gam-crit { display: block; min-height: 1.3em; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
+/* a graph with its matplotlib code under it */
+.sm-gam-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+
 /* ---- the Prediction Profiler ------------------------------------------------------------ */
 
 @media (max-width: 760px) {

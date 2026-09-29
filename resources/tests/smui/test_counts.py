@@ -548,4 +548,134 @@ me = call('counts.margeff', model='poisson', at='overall', table_name='visits', 
 ns, err = run_code(me['code'], frame, 'visits')
 check('code of the marginal effects runs', err, None)
 
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+COLOR = {k: c for k, c in zip(ALL, ['#b0413e', '#2f6690', '#3a7d44', '#6c5b7b', '#1f8a78', '#9c8200', '#8c564b', '#b8408f', '#12808f'])}
+
+
+def page_ticks(d):
+    """The rootogram's ticks as the page puts them: about a dozen at round steps, the tail's '≥K' last."""
+    K = len(d['k']) - 1
+    step = next((s_ for s_ in (1, 2, 5, 10, 20, 25, 50) if (K + 1) / s_ <= 12), 50)
+    tv = [v for v in d['k'] if v % step == 0 and (not d['tail'] or K - v >= step / 2)]
+    if d['tail']:
+        tv.append(K)
+    return tv, [f'≥{v}' if (v == K and d['tail']) else str(v) for v in tv]
+
+
+def graph(kind, label, frame_, name, **kw):
+    r = call('counts.plot_code', kind=kind, table_name=name, **kw)
+    check(f'{label}: the code is written', r.get('error'), None)
+    code = r.get('plot_code') or ''
+    out, err = run_snippet_more(code, frame_, name, tmp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return out['figures'][0] if out and out['figures'] else None
+
+
+def page_groups(f):
+    """Zero Probability's squares as the page makes them: the rows by predicted mean in ten groups at most."""
+    mean, y_, w = np.asarray(f['mean']), np.asarray(f['y']), np.asarray(f['freq'] if f['freq'] else np.ones(len(f['y'])), dtype=float)
+    order = sorted(range(len(mean)), key=lambda i: mean[i])
+    m_ = len(mean)
+    g = max(1, min(10, m_ // 15))
+    out = []
+    for j in range(g):
+        idx = order[(j * m_) // g:((j + 1) * m_) // g]
+        sw = w[idx].sum()
+        if sw:
+            out.append((float((w[idx] * mean[idx]).sum() / sw), float((w[idx] * (y_[idx] == 0)).sum() / sw)))
+    return out
+
+
+for tag, B, fr_, nm in (('exposure', BASE, frame, 'visits'), ('Freq', dict(table=ftid, y='visits', x=X_EFF, exposure='years', freq='f'), pd.concat([frame, pd.Series(fr, name='f')], axis=1), 'visitsf'),
+                        ('a subset of rows', dict(BASE, rows=sub), frame, 'visits')):
+    keys = ALL if tag == 'exposure' else ['poisson', 'zinb', 'hnb']
+    for key in keys:
+        f = call('counts.fit', model=key, **B)
+        if f.get('error'):
+            check(f'charts {key} ({tag}): the model fits', f['error'], None)
+            continue
+        d = f['dist']
+        tv, tt = page_ticks(d)
+        so, se = np.sqrt(d['observed']), np.sqrt(np.maximum(d['expected'], 0))
+        styles = ('hanging', 'standing', 'suspended') if key == 'nb2' and tag == 'exposure' else ('hanging',)
+        for style in styles:
+            lab = f'rootogram, {style} ({key}, {tag})'
+            F = graph('rootogram', lab, fr_, nm, model=key, plot={'style': style, 'tickvals': tv, 'ticktext': tt, 'width': 340}, **B)
+            if not F:
+                continue
+            A = F['axes'][0]
+            bars = A['bars']
+            if style == 'hanging':
+                want_h, want_b = so, se - so
+            elif style == 'standing':
+                want_h, want_b = so, np.zeros(len(so))
+            else:
+                want_h, want_b = se - so, np.zeros(len(so))
+            check(f'{lab}: a bar for each count', len(bars), len(d['k']))
+            if len(bars) == len(d['k']):
+                check(f'{lab}: the bars, from the report\'s observed and expected frequencies', maxdiff([b['h'] for b in bars], want_h) < 1e-8 and maxdiff([b['y'] for b in bars], want_b) < 1e-8
+                      and maxdiff([b['x'] + b['w'] / 2 for b in bars], d['k']) < 1e-12, True)
+            curve = [ln for ln in A['lines'] if len(ln['x']) == len(d['k']) and ln['marker'] == 'o']
+            if style == 'suspended':
+                check(f'{lab}: no curve', curve, [])
+            else:
+                check(f'{lab}: the curve √expected, in the model\'s colour', bool(curve) and maxdiff(curve[0]['y'], se) < 1e-8 and curve[0]['color'] == COLOR[key] + 'ff', True)
+            check(f'{lab}: the page\'s ticks', (A['xticks'], A['xticklabels']), ([float(v) for v in tv], tt))
+            check(f'{lab}: the titles', (A['xlabel'], A['ylabel'], A['title']), ('visits', '√Expected − √Observed' if style == 'suspended' else '√Frequency', counts.LABEL[key]))
+        if tag == 'exposure' and key not in ('poisson', 'nb2', 'zinb', 'hnb', 'gp'):
+            continue   # the rows' graphs for five of the models (with the exposure), and each model of the other runs
+        n_ = len(f['rows'])
+        lab = f'zero probability ({key}, {tag})'
+        F = graph('zero', lab, fr_, nm, model=key, **B)
+        if F:
+            A = F['axes'][0]
+            rows_pts = [x for x in A['scatter'] if x['label'] == 'Rows']
+            check(f'{lab}: a point for each row, (mean, P(Y = 0)) of the report', bool(rows_pts) and len(rows_pts[0]['xy']) == n_
+                  and maxdiff([p_[0] for p_ in rows_pts[0]['xy']], f['mean']) < 1e-8 and maxdiff([p_[1] for p_ in rows_pts[0]['xy']], f['p0']) < 1e-8, True)
+            sq = [x for x in A['scatter'] if x['label'] == 'Observed share of zeros']
+            want = page_groups(f)
+            check(f'{lab}: the squares, the page\'s groups', bool(sq) and len(sq[0]['xy']) == len(want) and all(abs(a[0] - b[0]) < 1e-8 and abs(a[1] - b[1]) < 1e-12 for a, b in zip(sq[0]['xy'], want)), True)
+            ex = [ln for ln in A['lines'] if ln['label'] == 'Poisson exp(−μ)']
+            lo_, hi_ = min(f['mean']), max(f['mean'])
+            check(f'{lab}: exp(−μ) over the range of the means', bool(ex) and len(ex[0]['x']) == 80 and abs(ex[0]['x'][0] - lo_) < 1e-9 and abs(ex[0]['x'][-1] - hi_) < 1e-9
+                  and maxdiff(ex[0]['y'], np.exp(-np.asarray(ex[0]['x']))) < 1e-12, True)
+            check(f'{lab}: the range and the titles', (A['ylim'], A['xlabel'], A['ylabel'], A['title']), ([-0.02, 1.02], 'Predicted mean of visits', 'P(visits = 0)', f'visits zero probability, {counts.SHORT[key]}'))
+        lab = f'Pearson residuals ({key}, {tag})'
+        F = graph('pearson', lab, fr_, nm, model=key, **B)
+        if F:
+            A = F['axes'][0]
+            pts = A['scatter'][0]['xy'] if A['scatter'] else []
+            check(f'{lab}: a point for each row, (mean, Pearson residual) of the report', len(pts) == n_ and maxdiff([p_[0] for p_ in pts], f['mean']) < 1e-8
+                  and maxdiff([p_[1] for p_ in pts], f['resid_pearson']) < 1e-7, True)
+            check(f'{lab}: the zero line and the titles', ([ln['y'] for ln in A['lines']], A['ylabel'], A['title']), ([[0.0, 0.0]], 'Pearson Residual', f'visits Pearson residuals by predicted, {counts.SHORT[key]}'))
+        lab = f'quantile residuals ({key}, {tag})'
+        F = graph('quantile', lab, fr_, nm, model=key, seed=1, **B)
+        if F:
+            A = F['axes'][0]
+            pts = A['scatter'][0]['xy'] if A['scatter'] else []
+            rq = np.sort(np.asarray([v for v in f['resid_quantile'] if v is not None and math.isfinite(v)]))
+            z = stats.norm.ppf(np.arange(1, len(rq) + 1) / (len(rq) + 1))
+            check(f'{lab}: the report\'s randomized quantile residuals (seed 1), sorted, against the normal quantiles', len(pts) == len(rq) and maxdiff([p_[1] for p_ in pts], rq) < 1e-7
+                  and maxdiff([p_[0] for p_ in pts], z) < 1e-12, True)
+            ln = [x for x in A['lines'] if len(x['x']) == 2]
+            check(f'{lab}: the line y = x over the quantiles', bool(ln) and maxdiff(ln[0]['x'], [z.min(), z.max()]) < 1e-12 and ln[0]['x'] == ln[0]['y'], True)
+fo = call('counts.fit', model='poisson', **BASE)
+tv, tt = page_ticks(fo['dist'])
+keys = ['poisson', 'nb2', 'zip', 'zinb']
+F = graph('overlay', 'rootogram, the models overlaid', frame, 'visits', models=keys, plot={'tickvals': tv, 'ticktext': tt, 'width': 520}, **BASE)
+if F:
+    A = F['axes'][0]
+    check('overlay: standing bars of √observed', maxdiff([b['h'] for b in A['bars']], np.sqrt(fo['dist']['observed'])) < 1e-12 and all(b['y'] == 0 for b in A['bars']), True)
+    for key in keys:
+        e = call('counts.fit', model=key, **BASE)['dist']['expected']
+        ln = [x for x in A['lines'] if x['label'] == counts.SHORT[key]]
+        check(f'overlay: the curve of {key}, √expected, in its colour', bool(ln) and maxdiff(ln[0]['y'], np.sqrt(np.maximum(e, 0))) < 1e-8 and ln[0]['color'] == COLOR[key] + 'ff', True)
+    check('overlay: the legend, the title', (F['legend'], A['title']), (['Observed'] + [counts.SHORT[k] for k in keys], 'visits rootogram, the models overlaid'))
+check('an unknown graph is refused', 'error' in call('counts.plot_code', kind='pie', model='poisson', **BASE), True)
+check('a model that cannot be fitted says so', 'error' in call('counts.plot_code', kind='zero', model='zip', table=table({'y': [1.0, 2, 3, 4, 5]}), y='y'), True)
+
 sys.exit(check.done())

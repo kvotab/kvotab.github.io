@@ -35,6 +35,8 @@
   }
 
   const fitWidth = (ctx, w, min) => (SM.quality ? SM.quality.fitWidth(ctx, w, min) : w);
+  // A graph with its matplotlib code under it (the backend's: plot_code), as one item of a row.
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-doe-plotcode' }, graph, ctx.code(code)) : graph);
 
   async function engineCall(fn, payload) {
     if (SM.engine.state !== 'ready') SM.ui.toast('Waiting for the Python engine to load…');
@@ -460,7 +462,8 @@
     const coding = {};
     for (const c of factors) if (!c.isCategorical) { const cd = codingOf(c); if (cd) coding[c.name] = cd; }
     const pw = ctx.opt('powerSettings', { alpha: 0.05, rmse: 1, coefficient: 1 }) || {};
-    const res = await ctx.call('doe.evaluate', { factors: factors.map((c) => c.name), model, alpha: pw.alpha ?? 0.05, rmse: pw.rmse ?? 1, coefficient: pw.coefficient ?? 1, coding });
+    const res = await ctx.call('doe.evaluate', { factors: factors.map((c) => c.name), model, alpha: pw.alpha ?? 0.05, rmse: pw.rmse ?? 1, coefficient: pw.coefficient ?? 1, coding, where: ctx.where || [] });
+    const pc = res.plot_code || {};
     const c = colors();
     const fo = ctx.outline('Factors', { key: 'factors' });
     fo.add(ctx.rt({ columns: [{ key: 'name', label: 'Factor', fmt: 'text' }, { key: 'role', label: 'Role', fmt: 'text' }, { key: 'values', label: 'Values', fmt: 'text' }],
@@ -479,16 +482,16 @@
     // prediction variance profile
     const pv = ctx.outline('Prediction Variance Profile', { parent: de, key: 'profile' });
     const ymax = Math.max(...res.profile.flatMap((p) => p.variance)) * 1.08;
-    pv.add(ctx.row(...res.profile.map((p) => ctx.plot([
+    pv.add(ctx.row(...res.profile.map((p, i) => withCode(ctx, ctx.plot([
       p.kind === 'continuous'
         ? { type: 'scatter', mode: 'lines', x: p.x, y: p.variance, line: { color: c.curve, width: 2 }, hovertemplate: `${esc(p.factor)} %{x}: %{y:.4f}<extra></extra>` }
         : { type: 'scatter', mode: 'markers+lines', x: p.x.map(esc), y: p.variance, line: { color: c.curve, width: 1 }, marker: { size: 7, color: c.curve }, hovertemplate: `${esc(p.factor)} %{x}: %{y:.4f}<extra></extra>` },
-    ], { xaxis: { title: { text: esc(p.factor) }, type: p.kind === 'continuous' ? 'linear' : 'category' }, yaxis: { title: { text: 'Variance' }, range: [0, ymax] }, margin: { l: 50, r: 8, t: 8, b: 40 } }, { width: 200, height: 200, title: `Prediction variance ${p.factor}`, select: false }))),
+    ], { xaxis: { title: { text: esc(p.factor) }, type: p.kind === 'continuous' ? 'linear' : 'category' }, yaxis: { title: { text: 'Variance' }, range: [0, ymax] }, margin: { l: 50, r: 8, t: 8, b: 40 } }, { width: 200, height: 200, title: `Prediction variance ${p.factor}`, select: false }), (pc.profile || [])[i]))),
     ctx.note('The relative prediction variance x′(XᵀX)⁻¹x (the variance of the predicted mean over σ²) along each factor, the others at their center (categorical: the first level).'));
     // fraction of design space
     const fd = ctx.outline('Fraction of Design Space Plot', { parent: de, key: 'fds' });
-    fd.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: res.fds.fraction, y: res.fds.variance, line: { color: c.curve, width: 2 }, hovertemplate: 'fraction %{x:.2f}: %{y:.4f}<extra></extra>' }],
-      { xaxis: { title: { text: 'Fraction of Space' }, range: [0, 1] }, yaxis: { title: { text: 'Prediction Variance' }, rangemode: 'tozero' }, margin: { l: 54, r: 10, t: 8, b: 42 } }, { width: fitWidth(ctx, 380, 240), height: 260, title: 'Fraction of design space', select: false }),
+    fd.add(withCode(ctx, ctx.plot([{ type: 'scatter', mode: 'lines', x: res.fds.fraction, y: res.fds.variance, line: { color: c.curve, width: 2 }, hovertemplate: 'fraction %{x:.2f}: %{y:.4f}<extra></extra>' }],
+      { xaxis: { title: { text: 'Fraction of Space' }, range: [0, 1] }, yaxis: { title: { text: 'Prediction Variance' }, rangemode: 'tozero' }, margin: { l: 54, r: 10, t: 8, b: 42 } }, { width: fitWidth(ctx, 380, 240), height: 260, title: 'Fraction of design space', select: false }), pc.fds),
     ctx.note('The share of the design space (4096 Sobol points of the coded cube; categorical levels equally likely) where the relative prediction variance is at most the value on the curve.'));
     // estimation efficiency
     const ee = ctx.outline('Estimation Efficiency', { parent: de, key: 'efficiency' });
@@ -507,9 +510,9 @@
     const names = res.correlation.names.map(esc);
     const Z = res.correlation.matrix.map((row) => row.map((v) => Math.abs(v)));
     const dark = SM.util.themeColors().dark;
-    cm.add(ctx.plot([{ type: 'heatmap', x: names, y: names, z: Z, zmin: 0, zmax: 1, colorscale: dark ? [[0, '#1f2a36'], [0.5, '#6f86a3'], [1, '#ff6b5c']] : [[0, '#f4f7fb'], [0.5, '#8fa9c2'], [1, '#c0392b']], colorbar: { thickness: 10, title: { text: '|r|' } }, hovertemplate: '%{y} × %{x}: |r| = %{z:.3f}<extra></extra>' }],
+    cm.add(withCode(ctx, ctx.plot([{ type: 'heatmap', x: names, y: names, z: Z, zmin: 0, zmax: 1, colorscale: dark ? [[0, '#1f2a36'], [0.5, '#6f86a3'], [1, '#ff6b5c']] : [[0, '#f4f7fb'], [0.5, '#8fa9c2'], [1, '#c0392b']], colorbar: { thickness: 10, title: { text: '|r|' } }, hovertemplate: '%{y} × %{x}: |r| = %{z:.3f}<extra></extra>' }],
       { xaxis: { type: 'category', tickangle: -45, showgrid: false }, yaxis: { type: 'category', autorange: 'reversed', showgrid: false }, margin: { l: 90, r: 10, t: 8, b: 90 }, shapes: res.correlation.n_model < names.length ? [{ type: 'line', xref: 'x', yref: 'paper', x0: res.correlation.n_model - 0.5, x1: res.correlation.n_model - 0.5, y0: 0, y1: 1, line: { color: c.text, width: 1, dash: 'dot' } }] : [] },
-      { width: fitWidth(ctx, Math.max(320, Math.min(720, 140 + 26 * names.length))), height: Math.max(300, Math.min(720, 120 + 26 * names.length)), title: 'Color map on correlations', select: false }),
+      { width: fitWidth(ctx, Math.max(320, Math.min(720, 140 + 26 * names.length))), height: Math.max(300, Math.min(720, 120 + 26 * names.length)), title: 'Color map on correlations', select: false }), pc.colormap),
     ctx.note('The absolute correlations of the model terms and, right of the dotted line, the alias terms, in coded units.'));
     // diagnostics
     const dd = ctx.outline('Design Diagnostics', { parent: de, key: 'diagnostics' });
@@ -697,10 +700,11 @@
         showlegend: !!curve.y_exact, legend: { orientation: 'h', y: -0.28 }, margin: { l: 52, r: 12, t: 10, b: curve.y_exact ? 64 : 44 },
       }, { width: fitWidth(ctx, 380, 240), height: curve.y_exact ? 300 : 270, title: `Power vs ${xTitle}`, select: false });
     };
-    if (r.curves.n && ctx.opt('plotN', true)) out.push(mk(r.curves.n, r.curves.n.label, cur.n, cur.power, 'n'));
+    const pc = r.plot_code || {};
+    if (r.curves.n && ctx.opt('plotN', true)) out.push(withCode(ctx, mk(r.curves.n, r.curves.n.label, cur.n, cur.power, 'n'), pc.n));
     if (r.curves.diff && ctx.opt('plotDiff', true)) {
       const key = sit === 'one_prop' || sit === 'two_props' ? 'p1' : sit === 'one_var' ? 'dvar' : sit === 'poisson' ? 'dlam' : 'diff';
-      out.push(mk(r.curves.diff, r.curves.diff.label, cur[key], cur.power, 'diff'));
+      out.push(withCode(ctx, mk(r.curves.diff, r.curves.diff.label, cur[key], cur.power, 'diff'), pc.diff));
     }
     return out;
   }
@@ -714,7 +718,7 @@
         kicker: 'DOE > Sample Size Explorers', title: 'Sample Size and Power',
         lead: 'Pick a situation, fill in the fields and leave one of the fields marked ◦ empty: Continue (or Enter) computes it. With only the difference, or only the sample size, the graphs show the power curve.',
         sections: [
-          { heading: 'Situations', choices: [['One and Two Sample Means', 't tests (statsmodels TTestPower, TTestIndPower); for two means the sample size is the total of both groups; Extra Parameters take error degrees of freedom.'], ['k Sample Means', 'One-way ANOVA from the means and σ (Cohen\'s f, FTestAnovaPower); the sample size is the total.'], ['Proportions', 'One sample: the normal approximation on Cohen\'s h and the exact binomial power. Two samples: the pooled z test (power_proportions_2indep).'], ['One Sample Variance', 'The χ² test of σ₀² against σ₀² + the difference; exact.'], ['Counts per Unit', 'A Poisson rate per unit against the baseline plus the difference; normal approximation and exact.'], ['Sigma Quality Level', 'Φ⁻¹(1 − defects/opportunities) + 1.5.']] },
+          { heading: 'Situations', choices: [['One and Two Sample Means', 't tests (statsmodels TTestPower, TTestIndPower); for two means the sample size is the total of both groups; Extra Parameters take error degrees of freedom.'], ['k Sample Means', 'One-way ANOVA from the means and σ (Cohen\'s f, FTestAnovaPower); the sample size is the total.'], ['Proportions', 'One sample: the normal approximation on Cohen\'s h and the exact binomial power. Two samples: the pooled z test (power_proportions_2indep); with a Null Difference other than 0, the normal approximation with unpooled variances (Chow, Shao and Wang).'], ['One Sample Variance', 'The χ² test of σ₀² against σ₀² + the difference; exact.'], ['Counts per Unit', 'A Poisson rate per unit against the baseline plus the difference; normal approximation and exact.'], ['Sigma Quality Level', 'Φ⁻¹(1 − defects/opportunities) + 1.5.']] },
           { heading: 'Whole numbers', text: 'A computed sample size is fractional; the report also gives the smallest whole one that reaches the power, and for proportions and counts the smallest with the exact power.' },
           { heading: 'In the report', choices: [
             ['The situation buttons', 'Above the report: each situation has its own fields, and the values entered in them are kept when you come back to it.'],
@@ -735,7 +739,7 @@
             ['Null Proportion', 'One Sample Proportion: p₀, the proportion under the null hypothesis.'],
             ['Proportion', 'One Sample Proportion: the true proportion to detect.'],
             ['Proportion 1, Proportion 2', 'Two Sample Proportions: the first group\'s proportion to detect, and the second group\'s.'],
-            ['Null Difference in Proportion', 'Two Sample Proportions: p₁ − p₂ under the null hypothesis. 0 tests equal proportions; another value a difference of that margin (non-inferiority or superiority).'],
+            ['Null Difference in Proportion', 'Two Sample Proportions: p₁ − p₂ under the null hypothesis. 0 tests equal proportions (the pooled z test); another value a difference of that margin (non-inferiority or superiority), by the normal approximation with unpooled variances of Chow, Shao and Wang: the power Φ(|p₁ − p₂ − δ₀|/√(p₁(1 − p₁)/n₁ + p₂(1 − p₂)/n₂) − z), z the one- or two-sided critical value, and the sample size solved from it. The report\'s note says which.'],
             ['Sample Size 1', 'The size of the first group.'],
             ['Sample Size 2 (empty: as group 1)', 'The size of the second group: with Sample Size 1 given, their ratio. When Sample Size 1 is the field computed, the groups are taken as equal.']] },
           { heading: 'Variance, counts and sigma', choices: [

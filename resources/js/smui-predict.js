@@ -28,6 +28,29 @@
 
   const W = (w) => Math.max(260, Math.min(w, (root.innerWidth || 1200) - 110));
 
+  /* ---- the graphs' matplotlib code ---------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table (the backend writes it: predictive.graph_codes and the platforms'
+     own). A graph's code is a head (the table, the rows, the sets, the model
+     fitted as the platform fits it) and the graph's own lines, joined as
+     predictive.SEP joins parts: Save Python Script takes a head shared by
+     several graphs once. */
+  const SEP = '\n\n# ----\n';
+  function graphCode(ctx, head, tail) {
+    if (!tail) return null;
+    return ctx.code(head ? `${head}${SEP}${tail}` : tail);
+  }
+
+  /* A graph with its code block right under it, as one item of a row. */
+  function withCode(graph, code) {
+    return code ? el('div', { class: 'sm-pred-plotcode', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: '0', maxWidth: '100%' } }, graph, code) : graph;
+  }
+
+  /* A graph and its block: ctx.plot's arguments, and the head and tail of its code. */
+  function plotWithCode(ctx, traces, layout, opts, head, tail) {
+    return withCode(ctx.plot(traces, layout, opts), graphCode(ctx, head, tail));
+  }
+
   /* The roles after Y and X. */
   function roles({ weight = true, freq = true, validation = true, by = true } = {}) {
     return [
@@ -109,11 +132,13 @@
   function rocCurves(ctx, parent, fit, prefix = '') {
     const ob = ctx.outline('ROC Curve', { parent, key: `${prefix}roc`, info: 'p:predict:roc' });
     const muted = SM.util.themeColors().muted;
+    const pc = fit.plots || {};
     const plots = fit.sets.map((set) => {
       const cur = fit.roc.filter((r) => r.set === set);
       const traces = cur.map((r, i) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, name: `${SM.report.plotlyText(r.level)} (${r.auc == null ? '.' : r.auc.toFixed(4)})`, line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.8 } }));
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: [0, 1], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false });
-      return ctx.plot(traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, title: { text: set, font: { size: 12 } }, margin: { l: 50, r: 12, t: 28, b: 40 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(330), height: 320, title: `ROC ${set}`, select: false });
+      return plotWithCode(ctx, traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, title: { text: set, font: { size: 12 } }, margin: { l: 50, r: 12, t: 28, b: 40 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(330), height: 320, title: `ROC ${set}`, select: false },
+        pc.head_code, pc.roc && pc.roc[set]);
     });
     ob.add(ctx.row(...plots), ctx.rt({ columns: [{ key: 'set', label: 'Set', fmt: 'text' }, { key: 'level', label: 'Level', fmt: 'text' }, { key: 'auc', label: 'AUC' }], rows: fit.roc.map((r) => ({ set: r.set, level: r.level, auc: r.auc })) }, { key: `${prefix}auc`, sortable: false }),
       ctx.note('Each level against all the others, by its predicted probability; the AUC is the area under the curve (0.5: no better than chance).'));
@@ -123,11 +148,13 @@
   function liftCurves(ctx, parent, fit, prefix = '') {
     const ob = ctx.outline('Lift Curve', { parent, key: `${prefix}lift`, info: 'p:predict:lift' });
     const muted = SM.util.themeColors().muted;
+    const pc = fit.plots || {};
     const plots = fit.sets.map((set) => {
       const cur = fit.lift.filter((r) => r.set === set);
       const traces = cur.map((r, i) => ({ type: 'scatter', mode: 'lines', x: r.portion, y: r.lift, name: SM.report.plotlyText(r.level), line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.8 } }));
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: [1, 1], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false });
-      return ctx.plot(traces, { showlegend: true, title: { text: set, font: { size: 12 } }, margin: { l: 50, r: 12, t: 28, b: 40 }, xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { title: { text: 'Lift' } } }, { width: W(330), height: 300, title: `Lift ${set}`, select: false });
+      return plotWithCode(ctx, traces, { showlegend: true, title: { text: set, font: { size: 12 } }, margin: { l: 50, r: 12, t: 28, b: 40 }, xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { title: { text: 'Lift' } } }, { width: W(330), height: 300, title: `Lift ${set}`, select: false },
+        pc.head_code, pc.lift && pc.lift[set]);
     });
     ob.add(ctx.row(...plots), ctx.note('The rows taken in order of the level\'s predicted probability: the lift is the level\'s rate among them over its rate in the set.'));
     return ob;
@@ -139,27 +166,77 @@
     const r = fit.residuals;
     const ob = ctx.outline('Actual by Predicted Plot', { parent, key, info: 'p:predict:measures' });
     const muted = SM.util.themeColors().muted;
+    const pc = fit.plots || null;
+    const later = pc || ctx.headless ? null : fromCall(ctx, fit);
     const plots = fit.sets.map((set) => {
       const k = ['Training', 'Validation', 'Test'].indexOf(set);
       const idx = r.set.map((s, i) => (s === k ? i : -1)).filter((i) => i >= 0);
       const xs = idx.map((i) => r.predicted[i]), ys = idx.map((i) => r.actual[i]);
       let lo = Infinity, hi = -Infinity;
       for (const v of [...xs, ...ys]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      return ctx.plot([
+      const graph = ctx.plot([
         { type: 'scatter', mode: 'markers', x: xs, y: ys, rows: idx.map((i) => r.rows[i]), marker: { size: 5 }, name: set },
         { type: 'scatter', mode: 'lines', x: [lo, hi], y: [lo, hi], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false },
       ], { title: { text: set, font: { size: 12 } }, margin: { l: 56, r: 12, t: 28, b: 42 }, xaxis: { title: { text: 'Predicted' } }, yaxis: { title: { text: 'Actual' } } }, { width: W(320), height: 300, title: `Actual by predicted ${set}` });
+      if (pc) return withCode(graph, graphCode(ctx, pc.head_code, pc.abp && pc.abp[set]));
+      if (!later) return graph;
+      // the block of a fit that came without its code, once its call's result is found
+      const box = withCode(graph, el('span', { hidden: true }));
+      later.then((res) => { const code = res && genregCode(res, set, k); if (code) box.lastChild.replaceWith(ctx.code(code)); else box.lastChild.remove(); });
+      return box;
     });
     ob.add(ctx.row(...plots));
     return ob;
   }
 
-  /* Column Contributions: predictive.contributions() as a table and bars. */
-  function contributions(ctx, parent, c, { title = 'Column Contributions', key = 'contrib', note = null } = {}) {
+  /* A fit of another platform that comes without its graphs' code: Fit
+     Model's Generalized Regression hands over its rows, actual and
+     predicted values (smui-p-fitmodel.js). Its block is made from the code
+     of the call those arrays came from (fitmodel.genreg), found in the
+     report's cache by the very arrays; that code fits the chosen model and
+     ends its fit with e, every row's linear predictor. The call has
+     returned already, so the block is in place when the report is done. */
+  function fromCall(ctx, fit) {
+    const want = fit.residuals && fit.residuals.predicted;
+    const cache = ctx.report && ctx.report.cache;
+    if (!want || !cache || typeof cache.entries !== 'function') return null;
+    const calls = [...cache.entries()].filter(([k]) => String(k).startsWith('fitmodel.genreg\u0001')).map(([, p]) => Promise.resolve(p).catch(() => null));
+    if (!calls.length) return null;
+    return Promise.all(calls).then((rs) => rs.find((x) => x && x.diag && x.diag.predicted === want) || null);
+  }
+
+  /* Generalized Regression's Actual by Predicted Plot as code: its own code
+     up to e (the linear predictor of the chosen model), then the prediction
+     (the mean: e, or exp(e) for the Poisson's log link) against the actual
+     values of the set's rows (train, valid and sets as that code names them). */
+  function genregCode(res, set, k) {
+    const lines = String(res.code || '').split('\n');
+    const read = lines.findIndex((l) => /^df = pd\.read_csv\(/.test(l));
+    const at = lines.findIndex((l) => /^e = /.test(l));
+    if (read < 0 || at < read || !res.model || k < 0) return null;
+    const head = [...lines.slice(0, read), 'import matplotlib.pyplot as plt', ...lines.slice(read, at + 1)];
+    const log = res.model.distribution === 'Poisson';
+    const muted = '#786b5d', base = '#2f6690';
+    const tail = [
+      log ? 'mu = np.exp(e)   # the prediction: the mean at the linear predictor (log link)' : 'mu = e   # the prediction (identity link)',
+      `m = ${['train', 'valid', 'sets == 2'][k]}   # the ${set.toLowerCase()} rows`,
+      'fig, ax = plt.subplots(figsize=(3.2, 3), layout="constrained")',
+      `ax.scatter(mu[m], y[m], s=14, color="${base}")`,
+      'v = np.r_[mu[m], y[m]]',
+      'v = v[np.isfinite(v)]',
+      `ax.plot([v.min(), v.max()], [v.min(), v.max()], color="${muted}", linewidth=1, linestyle=":")   # actual = predicted`,
+      'ax.set_xlabel("Predicted")', 'ax.set_ylabel("Actual")', `ax.set_title(${JSON.stringify(`Actual by predicted ${set}`)})`, 'plt.show()'];
+    return `${head.join('\n')}${SEP}${tail.join('\n')}`;
+  }
+
+  /* Column Contributions: predictive.contributions() as a table and bars.
+     head: the code the bars' code (c.plot_code) follows, the model's. */
+  function contributions(ctx, parent, c, { title = 'Column Contributions', key = 'contrib', note = null, head = null } = {}) {
     const ob = ctx.outline(title, { parent, key, info: 'p:predict:contrib' });
     const rows = c.rows;
-    const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: rows.map((r) => SM.report.plotlyText(r.column)), x: rows.map((r) => r.portion), marker: { color: SM.report.BAR }, hovertemplate: '%{y}: %{x:.4f}<extra></extra>' }],
-      { margin: { l: 110, r: 12, t: 6, b: 34 }, xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { autorange: 'reversed' } }, { width: W(340), height: Math.max(120, 24 * rows.length + 50), title: title, select: false });
+    const bars = plotWithCode(ctx, [{ type: 'bar', orientation: 'h', y: rows.map((r) => SM.report.plotlyText(r.column)), x: rows.map((r) => r.portion), marker: { color: SM.report.BAR }, hovertemplate: '%{y}: %{x:.4f}<extra></extra>' }],
+      { margin: { l: 110, r: 12, t: 6, b: 34 }, xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { autorange: 'reversed' } }, { width: W(340), height: Math.max(120, 24 * rows.length + 50), title: title, select: false },
+      head || c.head_code, c.plot_code);
     const extra = (c.extra || []).map((lab, i) => ({ key: `extra${i}`, label: lab }));
     ob.add(ctx.row(ctx.rt({ columns: [{ key: 'column', label: 'Term', fmt: 'text' }, ...extra, { key: 'value', label: c.label }, { key: 'portion', label: 'Portion' }], rows }, { key: 'contrib' }), bars));
     if (note) ob.add(ctx.note(note));
@@ -188,7 +265,8 @@
     return [{ label: 'Save Columns', submenu: () => items }];
   }
 
-  SM.predict = Object.freeze({ roles, options, payload, seed, measures, classification, classificationItems, confusion, rocCurves, liftCurves, actualByPredicted, contributions, saveItems });
+  SM.predict = Object.freeze({ roles, options, payload, seed, measures, classification, classificationItems, confusion, rocCurves, liftCurves, actualByPredicted, contributions, saveItems,
+    SEP, graphCode, withCode, plotWithCode });
 
   SM.info.add({
     'p:predict:validation': {

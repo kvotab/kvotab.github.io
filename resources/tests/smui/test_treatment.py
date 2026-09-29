@@ -551,6 +551,10 @@ check('with clipping, the GMM solution of IPW moves from the closed form', ex['e
 tmp = tempfile.mkdtemp(prefix='smui-treatment-')
 
 
+def maxdiff_(a, b):
+    return max((abs(x - y) for x, y in zip(a, b)), default=0.0) if len(a) == len(b) else float('inf')
+
+
 def run_code(code, frame, name):
     frame.to_csv(os.path.join(tmp, f'{name}.csv'), index=False)
     ns = {}
@@ -615,5 +619,127 @@ if not err:
 rnm = call('treatment.fit', table=tm_, y='earnings', treatment='program', treated=1, outcome=COVS, table_name='missing')
 ns, err = run_code(rnm['code'], dm, 'missing')
 check('missing values: the code runs and drops the same rows', (err, None if err else int(len(ns['t']))), (None, 997))
+
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+TREATED, CONTROL, MUTED, ACCENT = '#b8406eff', '#2e6fbaff', '#786b5dff', '#bb6c5dff'
+
+
+def nice_bins(v):
+    """SM.report.niceBins, as the page chooses the weights' bins."""
+    v = [x for x in v if isinstance(x, (int, float)) and math.isfinite(x)]
+    lo, hi = min(v), max(v)
+    k = max(5, min(40, math.ceil(math.log2(len(v)) + 1)))
+    raw = (hi - lo) / k
+    p_ = 10 ** math.floor(math.log10(raw))
+    size = min((m * p_ for m in (1, 2, 2.5, 5, 10)), key=lambda s_: abs(math.log(s_ / raw)))
+    start = math.floor(lo / size) * size
+    end = math.ceil(hi / size) * size
+    if end <= hi:
+        end += size
+    return {'start': start, 'end': end, 'size': size}
+
+
+def chart(kind, plot, label, **kw):
+    r = call('treatment.plot_code', kind=kind, plot=plot, **{**base, **kw})
+    check(f'{label}: the code is written', r.get('error'), None)
+    code = r.get('plot_code') or ''
+    out, err = run_snippet_more(code, df, 'data', tmp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return (out['figures'][0] if out and out['figures'] else None), code
+
+
+def page_counts(values, t_, bins):
+    """The two groups' counts in the page's bins (groupHistogram)."""
+    nb = max(1, round((bins['end'] - bins['start']) / bins['size']))
+    c1, c0 = np.zeros(nb), np.zeros(nb)
+    for v, g in zip(values, t_):
+        if not (isinstance(v, (int, float)) and math.isfinite(v)):
+            continue
+        j = min(nb - 1, max(0, math.floor((v - bins['start']) / bins['size'] + 1e-9)))
+        (c1 if g == 1 else c0)[j] += 1
+    return c1, c0
+
+
+for tag, plot, kw in (('mirrored, the common support', {'size': 0.05, 'mirror': True, 'support': True}, {}),
+                      ('overlaid, bins of 0.1, trimmed at 0.03', {'size': 0.1, 'mirror': False, 'support': False}, {'trim': 0.03})):
+    F, code = chart('overlap', plot, f'overlap ({tag})', **kw)
+    rr = call('treatment.fit', **{**base, **kw})
+    if not F:
+        continue
+    A = F['axes'][0]
+    sc = rr['scores']
+    c1, c0 = page_counts(sc['ps'], sc['t'], {'start': 0.0, 'end': 1.0, 'size': plot['size']})
+    b1 = [b for b in A['bars'] if b['fc'] == (TREATED if plot['mirror'] else TREATED[:7] + '9e')]
+    b0 = [b for b in A['bars'] if b['fc'] == (CONTROL if plot['mirror'] else CONTROL[:7] + '9e')]
+    check(f'overlap ({tag}): the treated bars are the page\'s counts of the report\'s propensity scores', [b['h'] for b in b1], c1.tolist())
+    check(f'overlap ({tag}): the controls\' {"below the axis" if plot["mirror"] else "overlaid"}', [b['h'] for b in b0], (-c0 if plot['mirror'] else c0).tolist())
+    check.near(f'overlap ({tag}): the bins\' width', b1[0]['w'] if b1 else None, plot['size'], rel=1e-12)
+    if plot['mirror']:
+        top = max(1, c1.max(), c0.max())
+        check(f'overlap ({tag}): the range, 1.1 times the largest count either way', A['ylim'], [-1.1 * top, 1.1 * top])
+    spans = [b for b in A['bars'] if b['fc'] == '#5a504617']
+    lo_, hi_ = rr['overlap']['support']
+    want = ([(0.0, lo_)] if lo_ > 0 else []) + ([(hi_, 1.0)] if hi_ < 1 else [])
+    check(f'overlap ({tag}): outside the report\'s common support shaded', [(round(b['x'], 12), round(b['x'] + b['w'], 12)) for b in spans], [(round(a, 12), round(b, 12)) for a, b in want] if plot['support'] else [])
+    trims = [ln for ln in A['lines'] if ln['color'] == ACCENT]
+    check(f'overlap ({tag}): the trimming thresholds', [ln['x'][0] for ln in trims], [kw['trim'], 1 - kw['trim']] if 'trim' in kw else [])
+    check(f'overlap ({tag}): the titles and the legend', (A['xlabel'], A['ylabel'], A['title'], F['legend']), ('Propensity Score, P(program = 1)', 'Count', 'propensity score overlap', ['program = 1', 'program = 0']))
+rr = call('treatment.fit', **base)
+for wt in ('ate', 'att'):
+    w = rr['scores']['w_' + wt]
+    bins = nice_bins(w)
+    F, code = chart('weights', {'wtype': wt, 'bins': bins, 'mirror': True}, f'weights ({wt})')
+    if F:
+        A = F['axes'][0]
+        c1, c0 = page_counts(w, rr['scores']['t'], bins)
+        check(f'weights ({wt}): the bars are the page\'s counts in its bins of the report\'s weights', ([b['h'] for b in A['bars'] if b['fc'] == TREATED], [b['h'] for b in A['bars'] if b['fc'] == CONTROL]), (c1.tolist(), (-c0).tolist()))
+        check(f'weights ({wt}): the x range, the titles', (A['xlim'], A['xlabel'], A['title']), ([bins['start'], bins['end']], 'ATT Weight' if wt == 'att' else 'IPW Weight', 'weights histogram'))
+for tag, plot in (('IPW, sorted', {'suffix': '_w', 'thr': 0.1, 'sort': True}), ('ATT, in the covariates\' order, threshold 0.2', {'suffix': '_att', 'thr': 0.2, 'sort': False})):
+    F, code = chart('love', plot, f'Love plot ({tag})')
+    if not F:
+        continue
+    A = F['axes'][0]
+    bal = [b for b in rr['balance'] if b['smd'] is not None]
+    if plot['sort']:
+        bal = sorted(bal, key=lambda b: -abs(b['smd']))
+    check(f'Love plot ({tag}): the covariates, top down, in the page\'s order', A['yticklabels'], [b['term'] for b in bal])
+    un = [x for x in A['scatter'] if x['label'] == 'Unweighted']
+    wtd = [x for x in A['scatter'] if x['label'].startswith('Weighted')]
+    sfx = plot['suffix']
+    check(f'Love plot ({tag}): the unweighted |SMD| of the report', bool(un) and maxdiff_([p_[0] for p_ in un[0]['xy']], [abs(b['smd']) for b in bal]) < 1e-9, True)
+    check(f'Love plot ({tag}): the weighted |SMD| of the report', bool(wtd) and maxdiff_([p_[0] for p_ in wtd[0]['xy']], [abs(b['smd' + sfx]) for b in bal]) < 1e-7, True)
+    check(f'Love plot ({tag}): the legend names the weights', F['legend'], ['Unweighted', f'Weighted ({"ATT" if sfx == "_att" else "IPW"} weights)'])
+    thr_ = [ln for ln in A['lines'] if ln['color'] == ACCENT]
+    check(f'Love plot ({tag}): the threshold line', [ln['x'][0] for ln in thr_], [plot['thr']])
+    mx = max([plot['thr'] * 1.4] + [abs(b['smd']) for b in bal] + [abs(b['smd' + sfx]) for b in bal])
+    check.near(f'Love plot ({tag}): the x range as the page\'s', A['xlim'][1], mx * 1.06, rel=1e-7)
+    check(f'Love plot ({tag}): the titles', (A['xlabel'], A['title']), ('|Standardized Mean Difference|', 'Love plot'))
+ate_r = call('treatment.estimates', **base)
+att_r = call('treatment.estimates', effect_group=1, estimators=['ipw', 'ra', 'ipw_ra'], **base)
+F, code = chart('estimates', {'ate': ['ipw', 'aipw', 'aipw_wls', 'ra', 'ipw_ra'], 'att': ['ipw', 'ra', 'ipw_ra']}, 'estimate comparison')
+if F:
+    A = F['axes'][0]
+    want = [('Difference in Means', rr['naive']['estimate'], rr['naive']['lower'], rr['naive']['upper'])]
+    want += [(e['label'], e['ate']['estimate'], e['ate']['lower'], e['ate']['upper']) for e in ate_r['estimates']]
+    want += [(e['label'] + ' (ATT)', e['ate']['estimate'], e['ate']['lower'], e['ate']['upper']) for e in att_r['estimates']]
+    check('estimate comparison: the items, top down, as the page lists them', A['yticklabels'], [w_[0] for w_ in want])
+    pts = sorted((y_, x_) for ln in A['lines'] if ln['marker'] in ('s', 'o', 'D') for x_, y_ in zip(ln['x'], ln['y']))
+    check('estimate comparison: each estimate the report\'s, in its row', len(pts) == len(want) and all(int(y_) == i and abs(x_ - w_[1]) <= 1e-7 * abs(w_[1]) for (y_, x_), (i, w_) in zip(pts, enumerate(want))), True)
+    segs = sorted((min(s_[0][0], s_[1][0]), max(s_[0][0], s_[1][0]), s_[0][1]) for c_ in A['segments'] for s_ in c_['segs'])
+    segs = sorted(segs, key=lambda z: z[2])
+    check('estimate comparison: each interval the report\'s', len(segs) == len(want) and all(abs(a - w_[2]) <= 1e-6 * abs(w_[2]) + 1e-9 and abs(b - w_[3]) <= 1e-6 * abs(w_[3]) + 1e-9
+                                                                                 for (a, b, _), w_ in zip(segs, want)), True)
+    marks = {ln['marker']: (ln['color'], sorted(int(v) for v in ln['y'])) for ln in A['lines'] if ln['marker'] in ('s', 'o', 'D')}
+    check('estimate comparison: the unadjusted square, the ATE circles, the ATT diamonds, in their colours', marks,
+          {'s': (MUTED, [0]), 'o': ('#352921ff', [1, 2, 3, 4, 5]), 'D': (ACCENT, [6, 7, 8])})
+    check('estimate comparison: the titles and the legend', (A['xlabel'], A['title'], F['legend']), ('Effect on earnings', 'estimate comparison', ['Unadjusted', 'ATE', 'ATT']))
+F, code = chart('estimates', {'ate': ['ipw', 'ra'], 'att': []}, 'estimate comparison (IPW and RA, no ATT)')
+if F:
+    check('estimate comparison (IPW and RA): no patch, no ATT', ('inspect.getsource' in code, F['axes'][0]['yticklabels']), (False, ['Difference in Means', 'IPW', 'RA']))
+check('an unknown graph is refused', 'error' in call('treatment.plot_code', kind='pie', **base), True)
 
 sys.exit(check.done())

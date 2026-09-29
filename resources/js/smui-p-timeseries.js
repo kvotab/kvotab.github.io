@@ -56,6 +56,35 @@
     return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
   }
 
+  /* ---- the graphs as matplotlib code ----------------------------------------------
+     Under each graph (and each diagnostics chart), Python that draws it with
+     matplotlib from a CSV export of the table, as the notebook runs it. The
+     function that makes a graph's numbers writes its code as a recipe
+     (plot_code in its result, resources/py/smui/timeseries.py): lines, the
+     places for the graph's size and a model's colour, and parts that the
+     report's display options keep or leave out (Show Points, Show Prediction
+     Interval ...), so that neither those options nor the room there is fit a
+     model again. recipe() puts one together. Model Comparison's plots, of the
+     models whose Graph box is checked, and the lag plot, whose pairs are made
+     here, are put together here from the backend's fragments (plot_frag). */
+  const J = JSON.stringify;
+  const inches = (px) => String(Math.round(px) / 100);
+  function recipe(parts, { flags = {}, size = null, color = null } = {}) {
+    const on = (f) => (f.startsWith('!') ? !flags[f.slice(1)] : !!flags[f]);
+    const out = [];
+    for (const p of parts || []) {
+      if (typeof p === 'string') out.push(p);
+      else if (p && p.set === 'size') out.push(`size = (${inches(size[0])}, ${inches(size[1])})   # the graph's size in the report, in inches (100 pixels an inch)`);
+      else if (p && p.set === 'color') out.push(`color = "${color}"   # the model's colour in the report`);
+      else if (p && (p.if || []).every(on) && p.lines && p.lines.length) out.push(recipe(p.lines, { flags, size, color }));
+    }
+    return out.join('\n');
+  }
+  // A recipe as a code block (none when the result has no graph code).
+  const graphCode = (ctx, parts, opts) => (parts && parts.length ? ctx.code(recipe(parts, opts)) : null);
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-ts-plotcode' }, graph, code) : graph);
+
   /* ---- the launch options -------------------------------------------------- */
   const nlags = (ctx) => Math.max(2, int(ctx.opt('nlags', 25), 25));
   const horizon = (ctx) => Math.max(0, Math.min(1000, int(ctx.opt('forecast', 25), 25)));
@@ -193,14 +222,16 @@
     return barTable(ctx, { caption: 'AR Coefficients', columns: [{ key: 'lag', label: 'Lag', fmt: 'int' }, { key: 'c', label: 'AR Coef', digits: 4 }], rows, value: (r) => r.c, range: 'auto', name: 'AR Coefficients' });
   }
 
-  /* The diagnostics of a series (the original, a difference, residuals). */
-  function diagnosticsBlock(ctx, D, { acf = true, pacf = true, variogram = false, ar = false, residual = false } = {}) {
+  /* The diagnostics of a series (the original, a difference, residuals), each
+     chart with its code under it (codes: the result's plot_code). */
+  function diagnosticsBlock(ctx, D, { acf = true, pacf = true, variogram = false, ar = false, residual = false, codes = null } = {}) {
     if (!D || D.error) return D && D.error ? ctx.note(D.error) : null;
     const left = [], right = [];
-    if (acf) left.push(acfTable(ctx, D, { residual }));
-    if (pacf) right.push(pacfTable(ctx, D, { residual }));
-    if (variogram) left.push(variogramTable(ctx, D));
-    if (ar) right.push(arTable(ctx, D));
+    const code = (key) => graphCode(ctx, codes && codes[key]);
+    if (acf) left.push(acfTable(ctx, D, { residual }), code('acf'));
+    if (pacf) right.push(pacfTable(ctx, D, { residual }), code('pacf'));
+    if (variogram) left.push(variogramTable(ctx, D), code('variogram'));
+    if (ar) right.push(arTable(ctx, D), code('ar'));
     if (!left.length && !right.length) return null;
     const box = ctx.row(left.length ? el('div', { class: 'sm-ts-col' }, ...left) : null, right.length ? el('div', { class: 'sm-ts-col' }, ...right) : null);
     const notes = [];
@@ -215,13 +246,17 @@
     return { type: S.t.length > 5000 ? 'scattergl' : 'scatter', mode, x: S.x, y: values, rows: S.rowsLinked, name: ptext(name), connectgaps: false, line: { color, width: 1.2 }, marker: { size: 5, color } };
   }
 
-  function seriesPlot(ctx, S, values, name, { points = true, lines = true, meanLine = null, extra = [], height = 260, width = 560, title } = {}) {
+  /* A series graph, with its code under it when the result has one (code: its recipe). */
+  function seriesPlot(ctx, S, values, name, { points = true, lines = true, meanLine = null, extra = [], height = 260, width = 560, title, code = null } = {}) {
     const shapes = [];
-    if (meanLine != null && Number.isFinite(meanLine)) shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: meanLine, y1: meanLine, line: { color: '#b0413e', width: 1, dash: 'dot' } });
+    const mean = meanLine != null && Number.isFinite(meanLine);
+    if (mean) shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: meanLine, y1: meanLine, line: { color: '#b0413e', width: 1, dash: 'dot' } });
     const traces = [];
     if (points || lines) traces.push(seriesTrace(S, values, name, { points, lines }));
     traces.push(...extra);
-    return ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(name) } }, shapes }, { width: plotWidth(ctx, width), height, title: title || `${name} time series` });
+    const w = plotWidth(ctx, width);
+    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(name) } }, shapes }, { width: w, height, title: title || `${name} time series` });
+    return withCode(plot, graphCode(ctx, code, { flags: { points, lines, mean }, size: [w, height] }));
   }
 
   function summaryPairs(D, st) {
@@ -255,14 +290,14 @@
     for (const n of S.notes || []) box.add(ctx.note(n));
 
     if (o('graph', true)) {
-      const plot = seriesPlot(ctx, S, S.values, col.name, { points: o('points', true), lines: o('lines', true), meanLine: o('meanLine', false) ? S.diag.mean : null });
+      const plot = seriesPlot(ctx, S, S.values, col.name, { points: o('points', true), lines: o('lines', true), meanLine: o('meanLine', false) ? S.diag.mean : null, code: S.plot_code && S.plot_code.series });
       box.add(ctx.row(plot, el('div', null, ctx.kv(summaryPairs(S.diag, S.stationarity)), S.freq_label ? ctx.note(`${S.freq_label[0].toUpperCase()}${S.freq_label.slice(1)} data; seasonal period ${period}.`) : null)));
     } else box.add(ctx.kv(summaryPairs(S.diag, S.stationarity)));
 
     const flags = { acf: o('acf', true), pacf: o('pacf', true), variogram: o('variogram', false), ar: o('arcoef', false) };
     if (flags.acf || flags.pacf || flags.variogram || flags.ar) {
       const ob = ctx.outline('Time Series Basic Diagnostics', { parent: box, key: `${sc}:diag`, info: 'p:timeseries:diagnostics' });
-      ob.add(diagnosticsBlock(ctx, S.diag, flags));
+      ob.add(diagnosticsBlock(ctx, S.diag, { ...flags, codes: S.plot_code }));
       ob.add(ctx.code(S.code));
     }
     // Each part on its own: an error in one shows there, the rest still draws.
@@ -315,9 +350,10 @@
     ] });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const name = `${col.name} differenced`;
-    if (flag('graph', true)) ob.add(ctx.row(seriesPlot(ctx, S, r.values, name, { points: flag('points', true), lines: flag('lines', true), meanLine: flag('meanLine', false) ? r.diag.mean : null, title: `${name} time series` }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
+    const pc = r.plot_code || {};
+    if (flag('graph', true)) ob.add(ctx.row(seriesPlot(ctx, S, r.values, name, { points: flag('points', true), lines: flag('lines', true), meanLine: flag('meanLine', false) ? r.diag.mean : null, title: `${name} time series`, code: pc.series }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
     else ob.add(ctx.kv(summaryPairs(r.diag, r.stationarity)));
-    ob.add(diagnosticsBlock(ctx, r.diag, { acf: flag('acf', true), pacf: flag('pacf', true), variogram: flag('variogram', false) }));
+    ob.add(diagnosticsBlock(ctx, r.diag, { acf: flag('acf', true), pacf: flag('pacf', true), variogram: flag('variogram', false), codes: pc }));
     ob.add(ctx.note(`w_t = (1 − B)^${spec.d} (1 − B^${spec.s})^${spec.D} y_t: ${r.start} observation${r.start === 1 ? '' : 's'} at the start are lost to the differencing.`), ctx.code(r.code));
   }
 
@@ -348,10 +384,11 @@
         ob.add(ctx.kv(r.params.map((p) => [p.term, p.estimate])), ctx.note('Cycle_t = C + A cos(2π t/U + P) by least squares on a cosine and a sine, t = 0, 1, … (one less than the observation number); the decycled series is y_t − Cycle_t.'));
       }
       const fit = spec.kind === 'trend' ? r.trend : r.cycle;
-      ob.add(seriesPlot(ctx, S, S.values, col.name, { extra: [{ type: 'scatter', mode: 'lines', x: S.x, y: fit, line: { color: '#b0413e', width: 1.6 }, name: label, hoverinfo: 'skip' }], title: `${col.name} ${label.toLowerCase()}`, height: 230 }));
+      const pc = r.plot_code || {};
+      ob.add(seriesPlot(ctx, S, S.values, col.name, { extra: [{ type: 'scatter', mode: 'lines', x: S.x, y: fit, line: { color: '#b0413e', width: 1.6 }, name: label, hoverinfo: 'skip' }], title: `${col.name} ${label.toLowerCase()}`, height: 230, code: pc.fit }));
       const sub = ctx.outline(`Time Series ${dname}`, { parent: ob, key: `${sc}:dec:${spec.id}:series` });
-      sub.add(ctx.row(seriesPlot(ctx, S, r.values, dname, { title: `${dname} time series`, height: 230 }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
-      sub.add(diagnosticsBlock(ctx, r.diag, { acf: true, pacf: true }), ctx.code(r.code));
+      sub.add(ctx.row(seriesPlot(ctx, S, r.values, dname, { title: `${dname} time series`, height: 230, code: pc.series }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
+      sub.add(diagnosticsBlock(ctx, r.diag, { acf: true, pacf: true, codes: pc }), ctx.code(r.code));
       return;
     }
     const r = await ctx.call('timeseries.decompose', { ...base, method: spec.kind === 'stl' ? 'stl' : 'classical', period: spec.period, model: spec.model || 'additive', robust: !!spec.robust });
@@ -378,7 +415,8 @@
     const layout = { xaxis: xAxis(S, { anchor: 'y4' }), height: 520, margin: { l: 60, r: 12, t: 8, b: 40 },
       annotations: titles.map((t, i) => ({ text: t, xref: 'paper', yref: 'paper', x: 0, y: dom[i][1], xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } })) };
     dom.forEach((d, i) => { layout[`yaxis${i ? i + 1 : ''}`] = { domain: d, title: { text: '' } }; });
-    ob.add(ctx.plot(traces, layout, { width: plotWidth(ctx, 620), height: 520, title: label }));
+    const w = plotWidth(ctx, 620);
+    ob.add(ctx.plot(traces, layout, { width: w, height: 520, title: label }), graphCode(ctx, r.plot_code && r.plot_code.decomp, { size: [w, 520] }));
     ob.add(ctx.note(spec.kind === 'stl' ? 'STL: seasonal and trend by loess (statsmodels\' STL). The seasonally adjusted series is y − seasonal.' : `Moving averages (statsmodels' seasonal_decompose): the trend is a centred moving average over the period, so it is missing at the ends. The adjusted series is ${spec.model === 'multiplicative' ? 'y / seasonal' : 'y − seasonal'}. JMP's X11 needs the Census Bureau's program, which does not run in the browser.`));
     for (const n of r.notes || []) ob.add(ctx.note(n));
     ob.add(ctx.code(r.code));
@@ -397,10 +435,11 @@
     const dn = { type: 'scatter', mode: 'lines', line: { color: '#b0413e', width: 1.8 }, name: 'Spectral density', hovertemplate: 'density %{y:.4g}<extra></extra>' };
     const w = plotWidth(ctx, 420);
     const yl = { title: { text: 'Spectral density' } };
+    const pc = r.plot_code || {};
     const byPeriod = ctx.plot([{ ...dn, x: r.period, y: r.density }], { xaxis: { title: { text: 'Period' }, type: 'log' }, yaxis: yl }, { width: w, height: 250, title: `${col.name} spectral density by period` });
     const byFreq = ctx.plot([{ ...pg, x: r.frequency, y: r.periodogram.map((v) => v / (4 * Math.PI)) }, { ...dn, x: r.frequency, y: r.density }],
       { xaxis: { title: { text: 'Frequency' } }, yaxis: yl, showlegend: true, legend: { orientation: 'h', y: -0.3 } }, { width: w, height: 270, title: `${col.name} spectral density by frequency` });
-    ob.add(ctx.row(byPeriod, byFreq));
+    ob.add(ctx.row(withCode(byPeriod, graphCode(ctx, pc.period, { size: [w, 250] })), withCode(byFreq, graphCode(ctx, pc.frequency, { size: [w, 270] }))));
     const wn = ctx.outline('White Noise Test', { parent: ob, key: `${sc}:spec:wn` });
     wn.add(ctx.kv([["Fisher's Kappa", r.kappa], ['Prob > Kappa', r.p_kappa, 'p'], ["Bartlett's Kolmogorov-Smirnov", r.bartlett], ['Prob > KS (asymptotic)', r.p_bartlett, 'p'],
       ['5% critical value (1.36/√q)', r.crit5], ['1% critical value (1.63/√q)', r.crit1]]),
@@ -446,9 +485,25 @@
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); go(input.value); } });
     const btn = (label, d) => { const b = el('button', { type: 'button', class: 'sm-btn small', text: label, 'aria-label': d < 0 ? 'Previous lag' : 'Next lag' }); b.addEventListener('click', () => go(lag + d)); return b; };
     ob.add(el('div', { class: 'sm-ts-lagctl' }, el('label', null, 'Lag p ', input), btn('−', -1), btn('+', 1)));
+    const w = plotWidth(ctx, 360);
     const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x, y, rows, name: ptext(`${col.name} at t and t − ${lag}`) }],
-      { xaxis: { title: { text: ptext(`${col.name}(t − ${lag})`) } }, yaxis: { title: { text: ptext(`${col.name}(t)`) } } }, { width: plotWidth(ctx, 360), height: 320, title: `${col.name} lag plot` });
-    ob.add(ctx.row(plot, ctx.kv([['Lag', lag, 'int'], ['Pairs', n, 'int'], ['Correlation', r]])), ctx.note('Each point is an observation (y axis) against the one p periods before it; clicking selects the later row.'));
+      { xaxis: { title: { text: ptext(`${col.name}(t − ${lag})`) } }, yaxis: { title: { text: ptext(`${col.name}(t)`) } } }, { width: w, height: 320, title: `${col.name} lag plot` });
+    ob.add(ctx.row(withCode(plot, lagCode(ctx, S, col, lag, [w, 320])), ctx.kv([['Lag', lag, 'int'], ['Pairs', n, 'int'], ['Correlation', r]])),
+      ctx.note('Each point is an observation (y axis) against the one p periods before it; clicking selects the later row.'));
+  }
+
+  /* The lag plot's code: its pairs are made here, from the series as the
+     backend's lines build it (plot_frag of timeseries.series). */
+  function lagCode(ctx, S, col, lag, size) {
+    const frag = S.plot_frag;
+    if (!frag || !frag.series) return null;
+    return ctx.code([SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt']), ...frag.series,
+      `lag = ${lag}   # the report's lag (Lag p)`,
+      'x, v = y.to_numpy()[:-lag], y.to_numpy()[lag:]   # each value (v) and the one lag periods before it (x)',
+      'ok = np.isfinite(x) & np.isfinite(v)   # the pairs with both values',
+      '', recipe([{ set: 'size' }], { size }), 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+      'ax.plot(x[ok], v[ok], color="#2f6690", linestyle="", marker="o", markersize=4.32)',
+      `ax.set_xlabel(${J(`${col.name}(t − ${lag})`)})`, `ax.set_ylabel(${J(`${col.name}(t)`)})`, `ax.set_title(${J(`${col.name} lag plot`)})`, 'plt.show()'].join('\n'));
   }
 
   /* ---- Cross Correlation ---------------------------------------------------------------------------- */
@@ -462,7 +517,8 @@
       const rows = c.lag.map((lag, i) => ({ lag, r: c.r[i], se: c.se[i] }));
       return barTable(ctx, { caption: `${col.name} with ${c.input}`, columns: [{ key: 'lag', label: 'Lag', fmt: 'int' }, { key: 'r', label: 'Cross Corr', digits: 4 }], rows, value: (x) => x.r, se: (x) => x.se, name: `Cross correlation ${c.input}` });
     });
-    ob.add(ctx.row(...tables), ctx.note(`Lag k is the correlation of ${col.name} at t + k with the input at t, so positive lags are the input leading. Ticks: ±2 standard errors, 1/√(n − |k|).`), ctx.code(r.code));
+    ob.add(ctx.row(...tables), graphCode(ctx, r.plot_code && r.plot_code.ccf),
+      ctx.note(`Lag k is the correlation of ${col.name} at t + k with the input at t, so positive lags are the input leading. Ticks: ±2 standard errors, 1/√(n − |k|).`), ctx.code(r.code));
   }
 
   /* ---- Input Time Series Panel ------------------------------------------------------------------------- */
@@ -470,13 +526,14 @@
     const sc = scopeOf(col);
     const ob = ctx.outline('Input Time Series Panel', { parent: box, key: `${sc}:inputs`, closed: true, menu: () => [{ label: 'Remove', action: () => ctx.set('inputPanel', false, sc) }] });
     for (const c of inputs) {
-      const r = await ctx.call('timeseries.input', { y: c.name, time: base.time, rows: base.rows, nlags: base.nlags });
+      const r = await ctx.call('timeseries.input', { y: c.name, time: base.time, rows: base.rows, nlags: base.nlags, where: base.where });
       const sub = ctx.outline(`Input Series ${c.name}`, { parent: ob, key: `${sc}:input:${c.name}` });
       if (r.error) { sub.add(ctx.warn(r.error)); continue; }
       r.rowsLinked = r.rows.map((x) => (x == null ? -1 : x));
       const R = withX({ ...r, time: base.time });
-      sub.add(ctx.row(seriesPlot(ctx, R, r.values, c.name, { height: 220, width: 480 }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
-      sub.add(diagnosticsBlock(ctx, r.diag, { acf: true, pacf: false }));
+      const pc = r.plot_code || {};
+      sub.add(ctx.row(seriesPlot(ctx, R, r.values, c.name, { height: 220, width: 480, code: pc.series }), ctx.kv(summaryPairs(r.diag, r.stationarity))));
+      sub.add(diagnosticsBlock(ctx, r.diag, { acf: true, pacf: false, codes: pc }));
     }
   }
 
@@ -515,8 +572,9 @@
       const dates = [...at.keys()];
       const shapes = dates.map((k, i) => { const x = fx(S, [Number(k)])[0]; return { type: 'line', x0: x, x1: x, yref: 'paper', y0: 0, y1: 1, line: { color: '#b0413e', width: 1.3, dash: ZA_DASH[i % 3] } }; });
       const annotations = dates.map((k, i) => ({ x: fx(S, [Number(k)])[0], y: 1 - 0.1 * i, yref: 'paper', xanchor: 'left', yanchor: 'top', showarrow: false, text: ` ${at.get(k).join(', ')}`, font: { size: 10, color: muted } }));
+      const w = plotWidth(ctx, 560);
       ob.add(ctx.plot([seriesTrace(S, S.values, col.name)], { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes, annotations },
-        { width: plotWidth(ctx, 560), height: 220, title: `${col.name} Zivot-Andrews breaks` }));
+        { width: w, height: 220, title: `${col.name} Zivot-Andrews breaks` }), graphCode(ctx, r.plot_code && r.plot_code.breaks, { size: [w, 220] }));
     }
     for (const n of r.notes || []) ob.add(ctx.note(n));
     ob.add(ctx.code(r.code));
@@ -557,11 +615,12 @@
       line: { color: SM.report.BASE, width: 1.2 }, marker: { size: 5, color: SM.report.BASE }, hovertext: s.t.map((t) => tLabel(S, t)), hovertemplate: `${s.label}, %{hovertext}: %{y:.5g}<extra></extra>` }));
     const shapes = r.seasons.filter((s) => s.mean != null).map((s) => ({ type: 'line', x0: s.x[0] - 0.35, x1: s.x[s.x.length - 1] + 0.35, y0: s.mean, y1: s.mean, line: { color: '#b0413e', width: 2.5 } }));
     const [what, fn] = SUB_BY[r.by] || SUB_BY.position;
+    const w = plotWidth(ctx, 720);
     ob.add(ctx.plot(traces, {
       xaxis: { tickvals: r.seasons.map((s) => (s.x[0] + s.x[s.x.length - 1]) / 2), ticktext: r.seasons.map((s) => s.label), showgrid: false, zeroline: false,
         title: { text: r.by === 'position' ? `Position in the period of ${r.period}` : '' } },
       yaxis: { title: { text: ptext(col.name) } }, shapes,
-    }, { width: plotWidth(ctx, 720), height: 300, title: `${col.name} seasonal subseries` }));
+    }, { width: w, height: 300, title: `${col.name} seasonal subseries` }), graphCode(ctx, r.plot_code && r.plot_code.subseries, { size: [w, 300] }));
     ob.add(ctx.note(`Each small series is one ${what} over the years, in time order, and the red line is its mean (statsmodels' ${fn}). Points are linked to the rows.`));
     for (const n of r.notes || []) ob.add(ctx.note(n));
     const tb = ctx.outline('Season Means', { parent: ob, key: `${sc}:subseries:means`, closed: true });
@@ -602,7 +661,8 @@
     const layout = { xaxis: xAxis(S, { anchor: 'y2' }), yaxis: { domain: [0.47, 1], title: { text: name } }, yaxis2: { domain: [0, 0.37], title: { text: 'Cycle' }, zeroline: true },
       margin: { l: 60, r: 12, t: 16, b: 40 },
       annotations: titles.map(([t, y]) => ({ text: ptext(t), xref: 'paper', yref: 'paper', x: 0, y, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } })) };
-    ob.add(ctx.row(ctx.plot(traces, layout, { width: plotWidth(ctx, 620), height: 400, title: r.label }),
+    const w = plotWidth(ctx, 620);
+    ob.add(ctx.row(withCode(ctx.plot(traces, layout, { width: w, height: 400, title: r.label }), graphCode(ctx, r.plot_code && r.plot_code.filter, { size: [w, 400] })),
       ctx.kv([spec.kind === 'hp' ? ['λ', r.lamb] : ['Band (periods)', `${fmt(r.low)} to ${fmt(r.high)}`, 'text'], spec.kind === 'bk' ? ['K', r.K, 'int'] : null,
         spec.kind === 'cf' ? ['Drift removed', r.drift ? 'Yes' : 'No', 'text'] : null, ['Std Dev of the cycle', r.cycle_sd], ['N (cycle)', r.cycle_n, 'int']])));
     for (const n of r.notes || []) ob.add(ctx.note(n));
@@ -809,25 +869,62 @@
     const traces = [{ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false }];
     for (const { s, r } of shown) traces.push(...forecastTraces(S, r, colorOf(s.id), { pi: true, name: r.name, legend: true, oneStepPI: false }));
     const end = S.x[S.x.length - 1];
+    const size = [plotWidth(ctx, 640), 320 + 18 * Math.ceil(shown.length / 2)];
     const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, showlegend: true, legend: { orientation: 'h', y: -0.22 },
       shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
-    { width: plotWidth(ctx, 640), height: 320 + 18 * Math.ceil(shown.length / 2), title: `${col.name} model comparison forecasts` });
+    { width: size[0], height: size[1], title: `${col.name} model comparison forecasts` });
     const acfOver = (key, label) => {
-      const tr = [];
+      const tr = [], used = [];
       let n = 0;
-      for (const { s, r } of shown) {
+      for (const x of shown) {
+        const { s, r } = x;
         const D = r.resid_diag;
         if (!D || D.error) continue;
         n = Math.max(n, D.n);
+        used.push(x);
         tr.push({ type: 'scatter', mode: 'lines+markers', x: D[key].lag.slice(1), y: D[key].r.slice(1), name: ptext(r.name), line: { color: colorOf(s.id), width: 1.2 }, marker: { size: 4, color: colorOf(s.id) }, hovertemplate: `${ptext(r.name)}: lag %{x}, %{y:.4f}<extra></extra>` });
       }
       if (!tr.length) return null;
       const b = 2 / Math.sqrt(n);
-      return ctx.plot(tr, { xaxis: { title: { text: 'Lag' } }, yaxis: { title: { text: label }, range: [-1, 1] },
+      const title = `${col.name} residual ${label.toLowerCase()}`;
+      const w = plotWidth(ctx, 320);
+      return withCode(ctx.plot(tr, { xaxis: { title: { text: 'Lag' } }, yaxis: { title: { text: label }, range: [-1, 1] },
         shapes: [b, -b].map((v) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: v, y1: v, line: { color: '#2f6ec7', width: 1, dash: 'dash' } })) },
-      { width: plotWidth(ctx, 320), height: 220, title: `${col.name} residual ${label.toLowerCase()}` });
+      { width: w, height: 220, title }), comparisonCode(ctx, col, used, [w, 220], key === 'acf' ? 'racf' : 'rpacf', { label, title }));
     };
-    ob.add(plot, ctx.row(acfOver('acf', 'Autocorrelation'), acfOver('pacf', 'Partial Autocorrelation')));
+    ob.add(plot, comparisonCode(ctx, col, shown, size, 'forecast', { title: `${col.name} model comparison forecasts` }),
+      ctx.row(acfOver('acf', 'Autocorrelation'), acfOver('pacf', 'Partial Autocorrelation')));
+  }
+
+  /* Model Comparison's plots as code: the series once, then each model whose
+     Graph box is checked, fitted as in its report and drawn in its colour
+     (its fragment, plot_frag: the fit, the draw and the residual
+     correlations), then the lines and labels of the plot. */
+  function comparisonCode(ctx, col, shown, size, kind, { label = null, title }) {
+    if (!shown.length || shown.some((x) => !x.r.plot_frag)) return null;
+    const imports = new Set(['import matplotlib.pyplot as plt']);
+    for (const { r } of shown) for (const i of r.plot_frag.imports || []) imports.add(i);
+    if (kind !== 'forecast') imports.add('from statsmodels.tsa.stattools import acf, levinson_durbin');
+    const forecast = kind === 'forecast';
+    const L = [SM.report.codeHead(ctx.table.name, [...imports]), ...shown[0].r.plot_frag.series, '', recipe([{ set: 'size' }], { size }),
+      'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+      forecast ? 'ax.plot(t, y, color="#2f6690", linestyle="", marker="o", markersize=3.6)   # the data' : 'nmax = 0   # the most residuals of any model, for the ±2/√n lines'];
+    for (const { s, r } of shown) {
+      const flags = { pi: true, onestep: false, legend: true, smpi: s.kind === 'theta' && !!s.smpi };
+      L.push('', `# ${r.name}, fitted as in its report`, recipe(r.plot_frag.fit, { flags }), recipe([{ set: 'color' }], { color: colorOf(s.id) }),
+        recipe(forecast ? r.plot_frag.draw : r.plot_frag[kind], { flags }));
+    }
+    L.push('');
+    if (forecast) {
+      L.push('ax.axvline(t[-1], color="#786b5d", linewidth=0.72, linestyle=":")   # the end of the data',
+        `ax.set_xlabel(${J(ctx.name('time') || 'Row')})`, `ax.set_ylabel(${J(col.name)})`, `ax.set_title(${J(title)})`,
+        'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)   # the models');
+    } else {
+      L.push('b = 2 / np.sqrt(nmax)', 'for v in (b, -b):   # ±2/√n', '    ax.axhline(v, color="#2f6ec7", linewidth=0.72, linestyle="--")',
+        'ax.set_ylim(-1, 1)', 'ax.set_xlabel("Lag")', `ax.set_ylabel(${J(label)})`, `ax.set_title(${J(title)})`);
+    }
+    L.push('plt.show()');
+    return ctx.code(L.join('\n'));
   }
 
   /* JMP's model names, as the backend gives them (for a model whose fit failed). */
@@ -972,24 +1069,30 @@
     if (flag('points')) traces.push({ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false });
     traces.push(...forecastTraces(S, r, color, { pi: flag('pi'), name }));
     const end = S.x[S.x.length - 1];
+    // the model's graphs' code: its fit, and what the red triangle shows
+    const pc = r.plot_code || {};
+    const opts = (size) => ({ flags: { points: flag('points'), pi: flag('pi'), onestep: true, smpi: flag('smpi', false) }, size, color });
+    const wide = plotWidth(ctx, 620);
     fcOb.add(ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
-      { width: plotWidth(ctx, 620), height: 300, title: `${name} forecast` }));
+      { width: wide, height: 300, title: `${name} forecast` }), graphCode(ctx, pc.forecast, opts([wide, 300])));
     const fc = r.forecast;
     if (fc && fc.t.length) fcOb.add(ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * r.level)}% prediction intervals; to the left of the dotted line the one-step-ahead forecasts.`));
     // the residuals
     const resOb = ctx.outline(spec.kind === 'ets' ? 'One-Step-Ahead Forecasting Errors' : 'Residuals', { parent: ob, key: `${sc}:model:${spec.id}:res` });
     resOb.add(ctx.plot([{ type: 'scatter', mode: 'markers', x: S.x, y: r.resid, rows: S.rowsLinked, name: 'Residual', marker: { size: 5, color } }],
       { xaxis: xAxis(S), yaxis: { title: { text: 'Residual' }, zeroline: true }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: SM.util.themeColors().muted, width: 1 } }] },
-    { width: plotWidth(ctx, 620), height: 220, title: `${name} residuals` }));
-    resOb.add(diagnosticsBlock(ctx, r.resid_diag, { acf: flag('racf'), pacf: flag('rpacf'), variogram: flag('rvario', false), ar: flag('rar', false), residual: true }));
+    { width: wide, height: 220, title: `${name} residuals` }), graphCode(ctx, pc.resid, opts([wide, 220])));
+    resOb.add(diagnosticsBlock(ctx, r.resid_diag, { acf: flag('racf'), pacf: flag('rpacf'), variogram: flag('rvario', false), ar: flag('rar', false), residual: true, codes: pc }));
     if (r.resid_diag && r.resid_diag.model_df) resOb.add(ctx.note(`Ljung-Box on the residuals: degrees of freedom are the lag less the ${r.resid_diag.model_df} ${spec.kind === 'smooth' || spec.kind === 'theta' ? `smoothing weight${r.resid_diag.model_df > 1 ? 's' : ''}` : spec.kind === 'ardl' ? `lag${r.resid_diag.model_df > 1 ? 's' : ''} of the series` : 'ARMA parameters'}.`));
     if (spec.kind === 'uc' && flag('comps')) componentsReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'markov') regimeReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'ardl') ardlReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'ets' && r.states && Object.keys(r.states).length) {
       const cs = ctx.outline('Component States', { parent: ob, key: `${sc}:model:${spec.id}:states`, closed: true });
+      const ws = plotWidth(ctx, 520);
       for (const [k, v] of Object.entries(r.states)) {
-        cs.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: S.x, y: v, name: k, line: { color, width: 1.4 } }], { xaxis: xAxis(S), yaxis: { title: { text: k[0].toUpperCase() + k.slice(1) } } }, { width: plotWidth(ctx, 520), height: 180, title: `${name} ${k}` }));
+        cs.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: S.x, y: v, name: k, line: { color, width: 1.4 } }], { xaxis: xAxis(S), yaxis: { title: { text: k[0].toUpperCase() + k.slice(1) } } }, { width: ws, height: 180, title: `${name} ${k}` }),
+          graphCode(ctx, pc.states && pc.states[k], opts([ws, 180])));
       }
     }
     if (Array.isArray(r.iterations) && r.iterations.length) {
@@ -1030,7 +1133,9 @@
       }
       traces.push({ type: 'scatter', mode: 'lines', x: S.x, y: c.mean, xaxis: 'x', yaxis: ax, line: { color, width: 1.5 }, name: c.label, hovertemplate: `${c.label}: %{y:.5g}<extra></extra>` });
     });
-    cp.add(ctx.plot(traces, layout, { width: plotWidth(ctx, 640), height: Math.max(260, 125 * n + 60), title: `${r.name} components` }));
+    const size = [plotWidth(ctx, 640), Math.max(260, 125 * n + 60)];
+    cp.add(ctx.plot(traces, layout, { width: size[0], height: size[1], title: `${r.name} components` }),
+      graphCode(ctx, r.plot_code && r.plot_code.components, { size, color, flags: { smpi: false } }));
     cp.add(ctx.note(`The smoothed components (Kalman smoother: each uses all the data) with ${fmt(100 * r.level)}% bands from their smoothed variances, as statsmodels' plot_components draws them; the level panel also shows the data, linked to the rows. They add up to the series: level + seasonal + cycle + autoregressive + regression effect + irregular.${r.burn ? ` The first ${r.burn} one-step predictions are diffuse and left out of the fit.` : ''}`));
   }
 
@@ -1065,14 +1170,16 @@
     const legend = rc.map((c, j) => ({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${c.label} most likely`, marker: { symbol: 'square', size: 11, color: rgba(regimeColor(j), 0.45) }, hoverinfo: 'skip' }));
     // the series in the theme's ink, which reads on either shading; the regime is the shading's
     const ink = SM.util.themeColors().text;
+    const pc = r.plot_code || {};
+    const w = plotWidth(ctx, 620);
     pr.add(ctx.plot([seriesTrace(S, S.values, col.name, { color: ink }), ...legend], { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes, showlegend: true, legend: { orientation: 'h', y: -0.25 } },
-      { width: plotWidth(ctx, 620), height: 290, title: `${r.name} regimes`, rowColors: false }));
+      { width: w, height: 290, title: `${r.name} regimes`, rowColors: false }), graphCode(ctx, pc.regimes, { size: [w, 290] }));
     const flag = spec.fprob === true;
     const ptr = r.prob.map((p, j) => ({ type: 'scatter', mode: 'lines+markers', x: S.x, y: p, rows: S.rowsLinked, name: `Regime ${j}`, line: { color: regimeColor(j), width: 1.5 },
       marker: { size: 3, color: regimeColor(j) }, hovertemplate: `P(regime ${j}) %{y:.3f}<extra></extra>` }));
     if (flag) r.fprob.forEach((p, j) => ptr.push({ type: 'scatter', mode: 'lines', x: S.x, y: p, name: `Regime ${j} filtered`, line: { color: regimeColor(j), width: 1, dash: 'dot' }, hovertemplate: `filtered P(regime ${j}) %{y:.3f}<extra></extra>` }));
     pr.add(ctx.plot(ptr, { xaxis: xAxis(S), yaxis: { title: { text: 'Smoothed probability' }, range: [-0.03, 1.03] }, showlegend: true, legend: { orientation: 'h', y: -0.25 } },
-      { width: plotWidth(ctx, 620), height: 260, title: `${r.name} smoothed probabilities`, rowColors: false }));
+      { width: w, height: 260, title: `${r.name} smoothed probabilities`, rowColors: false }), graphCode(ctx, pc.prob, { flags: { fprob: flag }, size: [w, 260] }));
     pr.add(ctx.note(`Shaded: the regime with the highest smoothed probability, P(regime at t | all the data)${flag ? '; dotted: the filtered probabilities, P(regime at t | the data up to t)' : ''}. Points are linked to the rows.`));
     const st = ctx.outline('Starts', { parent: ob, key: `${sc}:model:${spec.id}:starts`, closed: true });
     st.add(ctx.rt({ columns: [{ key: 'start', label: 'Start', fmt: 'text' }, { key: 'm2ll', label: '−2LogLikelihood' }, { key: 'converged', label: 'Converged', fmt: 'text' }, { key: 'best', label: '', fmt: 'text' }, { key: 'note', label: 'Note', fmt: 'text' }], rows: r.starts },

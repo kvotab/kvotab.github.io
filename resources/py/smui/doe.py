@@ -36,7 +36,7 @@ from scipy.stats import qmc
 
 from . import data
 from .registry import api
-from .util import col, table as rtable
+from .util import code_head, col, table as rtable
 
 # ---------------------------------------------------------------------------
 # Common pieces
@@ -736,9 +736,11 @@ def _corners(factors):
 
 
 @api('doe.evaluate')
-def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coefficient=1.0, coding=None, table_name='data'):
+def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coefficient=1.0, coding=None, where=None, table_name='data'):
     """factors: column names; coding: {name: [low, high]} for continuous
-    factors (else the column's range)."""
+    factors (else the column's range). The code under the report and under
+    its graphs comes back as 'code' and 'plot_code' (profile: one for each
+    factor; fds; colormap)."""
     coding = coding or {}
     df = data.frame(table, factors, rows, dropna=True, as_category=True)
     if len(df) < 2:
@@ -864,11 +866,241 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
         Xp, _n, _s = M.matrix(fr, terms)
         prof.append({'factor': f['name'], 'kind': f['kind'], 'x': grid.tolist(), 'variance': np.einsum('ij,jk,ik->i', Xp, V, Xp)})
     out['profile'] = prof
-    out['code'] = '\n'.join([
-        'import numpy as np, pandas as pd', f'df = pd.read_csv({json.dumps(table_name + ".csv")})',
-        '# coded units: continuous (x - mid) / half range; categorical effect coded',
-        *[f'x{j} = (df[{json.dumps(f["name"])}] - {(f["low"] + f["high"]) / 2!r}) / {(f["high"] - f["low"]) / 2!r}' for j, f in enumerate(fs) if f['kind'] == 'continuous'],
-        '# X: the model matrix (intercept, then the terms); V = inv(X.T @ X)',
-        f'# D efficiency = 100 det(X.T X / N)^(1/p); A = 100 p / (N trace V); power of a term: ncf.sf(F(1-{alpha}, 1, N-p), 1, N-p, (coef/rmse)^2 / V_jj)',
-    ])
+    E = _EvalCode(table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2)
+    out['code'] = E.diagnostics(alpha, rmse, coefficient, df_e, corners is not None)
+    out['plot_code'] = _dated({'profile': [E.profile(f) for f in fs], 'fds': E.fds(), 'colormap': E.colormap(len(names) - 1)}, table)
     return out
+
+
+# ---- Evaluate Design as code --------------------------------------------------------------------------
+# The code under the report and under each of its graphs: from a CSV export of
+# the table, the report's rows, the factors coded as the report codes them, the
+# model matrix and V = (X'X)^-1, then the diagnostics or a graph (matplotlib,
+# the light theme's colours, the graph's size at 100 pixels an inch).
+MODEL_LABELS = {'main': 'Main Effects', '2fi': 'Main Effects and Two-Factor Interactions', 'rsm': 'Response Surface (with squares)', 'full': 'Full Factorial'}
+BASE, TEXT, MUTED = '#2f6690', '#352921', '#786b5d'
+J = json.dumps
+
+
+def _dated(obj, table):
+    """Code that reads the table's CSV (a string, or the strings of a list
+    or dict) with the line that turns each date column it names back into
+    the page's number, as dispatch does for the keys code and *_code."""
+    from .util import date_columns, dated_code
+    cols = date_columns(table)
+    if not cols:
+        return obj
+    if isinstance(obj, str):
+        return dated_code(obj, cols)
+    if isinstance(obj, list):
+        return [_dated(v, table) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _dated(v, table) for k, v in obj.items()}
+    return obj
+
+
+def _lit(v):
+    """A value as a Python literal: 12.0 as 12, text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    return J(str(v))
+
+
+def _keep_lines(table, rows, where=None):
+    """After the code's head: the By group's rows (its where lines) and, of
+    those, the ones the report uses (excluded and filtered rows dropped)."""
+    L = []
+    n = data.TABLES[table]['n'] if table in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        num = data.meta(table, w['column']).get('dataType') == 'numeric'
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows of the report']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+    return L
+
+
+class _EvalCode:
+    """Evaluate Design's code, a snippet at a time."""
+
+    def __init__(self, table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2):
+        self.table, self.rows, self.where, self.table_name = table, rows, where, table_name
+        self.fs, self.coding, self.model = fs, coding, model
+        self.terms, self.alias_terms, self.names, self.names2 = terms, alias_terms, names, names2
+
+    def _terms_lit(self, terms):
+        return '[' + ', '.join('(' + ', '.join(J(self.fs[j]['name']) for j in t) + (',)' if len(t) == 1 else ')') for t in terms) + ']'
+
+    def design(self, imports=()):
+        """The head, the report's runs, the coding, the model matrix X and V."""
+        fs = self.fs
+        L = [code_head(self.table_name, ['import itertools', *imports])] + _keep_lines(self.table, self.rows, self.where)
+        L.append(f'factors = {J([f["name"] for f in fs])}')
+        L.append('d = df[factors].dropna()   # the runs with every factor')
+        cont = [f for f in fs if f['kind'] == 'continuous']
+        cat = [f for f in fs if f['kind'] != 'continuous']
+        if cont:
+            L.append('coding = {   # each continuous factor\'s low and high values: -1 and +1 in coded units')
+            for f in cont:
+                nm = J(f['name'])
+                if f['name'] in self.coding:
+                    L.append(f'    {nm}: ({_lit(f["low"])}, {_lit(f["high"])}),   # from its column notes (Coding [low, high])')
+                else:
+                    L.append(f'    {nm}: (d[{nm}].min(), d[{nm}].max()),   # the data\'s range (its notes give no coding)')
+            L.append('}')
+        else:
+            L.append('coding = {}')
+        if cat:
+            L.append('levels = {   # each categorical factor\'s levels in these runs, in the table\'s order')
+            for f in cat:
+                L.append(f'    {J(f["name"])}: {J(f["levels"])},')
+            L.append('}')
+            L += ['label = lambda v: str(int(v)) if isinstance(v, (int, float, np.number)) and float(v).is_integer() else str(v)   # a level as text: 12.0 as 12',
+                  'for f in levels:', '    d[f] = d[f].map(label)']
+        else:
+            L.append('levels = {}')
+        L += ['',
+              'def columns(f, v):',
+              '    """A factor\'s columns of the model matrix in coded units: a continuous factor from -1 at its low',
+              '    value to +1 at its high one; a categorical one effect coded, a column for each level but the last',
+              '    (1 at that level, -1 at the last, 0 at the others)."""',
+              '    if f in coding:',
+              '        lo, hi = coding[f]',
+              '        return [(np.asarray(v, dtype=float) - (lo + hi) / 2) / ((hi - lo) / 2)]',
+              '    v, lv = np.asarray(v, dtype=object), levels[f]',
+              '    return [np.where(v == a, 1.0, np.where(v == lv[-1], -1.0, 0.0)) for a in lv[:-1]]',
+              '',
+              '',
+              'def model_matrix(frame, terms):',
+              '    """The intercept, then the columns of each term: the products of its factors\' columns (a factor',
+              '    twice is its square)."""',
+              '    n = len(frame[factors[0]])',
+              '    cols = [np.ones(n)]',
+              '    for t in terms:',
+              '        for combo in itertools.product(*[columns(f, frame[f]) for f in t]):',
+              '            v = np.ones(n)',
+              '            for c in combo:',
+              '                v = v * c',
+              '            cols.append(v)',
+              '    return np.column_stack(cols)',
+              '',
+              '',
+              f'terms = {self._terms_lit(self.terms)}   # the model: {MODEL_LABELS.get(self.model, self.model)}',
+              'X = model_matrix({f: d[f].to_numpy() for f in factors}, terms)',
+              'V = np.linalg.inv(X.T @ X)   # the variances and covariances of the estimates, over sigma squared']
+        return L
+
+    def sample(self):
+        """The design space: 4096 points, as the report samples it (the same seed)."""
+        cont = [f['name'] for f in self.fs if f['kind'] == 'continuous']
+        L = ['rng = np.random.default_rng(20260926)   # the report\'s seed']
+        if cont:
+            kw = _rng_kw(qmc.Sobol)
+            L += [f'cont = {J(cont)}',
+                  f'u = qmc.Sobol(len(cont), scramble=True, {kw}=rng).random(4096)   # continuous factors: a scrambled Sobol sample of the coded cube',
+                  'space = {f: coding[f][0] + (coding[f][1] - coding[f][0]) * u[:, i] for i, f in enumerate(cont)}']
+        else:
+            L.append('space = {}')
+        if any(f['kind'] != 'continuous' for f in self.fs):
+            L += ['for f in factors:   # categorical factors: every level equally likely',
+                  '    if f in levels:',
+                  '        space[f] = np.array(levels[f], dtype=object)[rng.integers(len(levels[f]), size=4096)]']
+        L += ['Xs = model_matrix(space, terms)',
+              'pv = np.einsum("ij,jk,ik->i", Xs, V, Xs)   # the relative prediction variance x\'Vx at each point']
+        return L
+
+    def diagnostics(self, alpha, rmse, coefficient, df_e, corners):
+        L = self.design(['from scipy import stats', 'from scipy.stats import qmc']) + ['', 'N, p = X.shape']
+        L.append(f'names = {J(self.names)}   # the parameters, as the report names them')
+        if df_e > 0:
+            L += [f'alpha, rmse, coefficient = {alpha!r}, {rmse!r}, {coefficient!r}   # Power Settings',
+                  'crit = stats.f.ppf(1 - alpha, 1, N - p)',
+                  'power = stats.ncf.sf(crit, 1, N - p, (coefficient / rmse) ** 2 / np.diag(V))   # each parameter\'s test when it is the anticipated coefficient']
+        else:
+            L.append('power = np.full(p, np.nan)   # no error degrees of freedom: nothing can be tested')
+        L += self.sample()
+        runs = ['pv', 'np.einsum("ij,jk,ik->i", X, V, X)']
+        if corners:
+            L += ['vertices = list(itertools.product(*[coding[f] if f in coding else levels[f] for f in factors]))   # the corners of the design space',
+                  'Xc = model_matrix({f: np.array([v[i] for v in vertices], dtype=float if f in coding else object) for i, f in enumerate(factors)}, terms)']
+            runs.append('np.einsum("ij,jk,ik->i", Xc, V, Xc)')
+        L += [f'pmax = max(c.max() for c in ({", ".join(runs)}))   # the largest prediction variance: the sample, the runs{", the corners" if corners else ""}',
+              'd_efficiency = 100 * np.exp(np.linalg.slogdet(X.T @ X / N)[1] / p)',
+              'a_efficiency = 100 * p / (N * np.trace(V))',
+              'g_efficiency = 100 * np.sqrt(p / N) / np.sqrt(pmax)',
+              'print(pd.DataFrame({"Term": names, "Power": power, "Variance": np.diag(V), "Relative Std Error": np.sqrt(np.diag(V))}))',
+              'print("D, G and A efficiency:", d_efficiency, g_efficiency, a_efficiency)',
+              'print("Average variance of prediction:", pv.mean(), "maximum:", pmax)']
+        return '\n'.join(L)
+
+    def profile(self, f):
+        """The prediction variance profile of one factor, the others at their centre."""
+        L = self.design(['import matplotlib.pyplot as plt']) + [
+            '',
+            'def profile(f):',
+            '    """The relative prediction variance along one factor, the others at their centre (a categorical',
+            '    factor at its first level)."""',
+            '    grid = np.linspace(*coding[f], 41) if f in coding else np.array(levels[f], dtype=object)',
+            '    frame = {g: grid if g == f else np.full(len(grid), (coding[g][0] + coding[g][1]) / 2) if g in coding',
+            '             else np.array([levels[g][0]] * len(grid), dtype=object) for g in factors}',
+            '    Xp = model_matrix(frame, terms)',
+            '    return grid, np.einsum("ij,jk,ik->i", Xp, V, Xp)',
+            '',
+            '',
+            'top = 1.08 * max(profile(g)[1].max() for g in factors)   # the same scale for every factor\'s graph',
+            f'grid, var = profile({J(f["name"])})',
+            'fig, ax = plt.subplots(figsize=(2, 2), layout="constrained")']
+        if f['kind'] == 'continuous':
+            L.append(f'ax.plot(grid, var, color="{BASE}", linewidth=1.44)')
+        else:
+            L += [f'ax.plot(range(len(grid)), var, color="{BASE}", linewidth=0.72, marker="o", markersize=5)',
+                  'ax.set_xticks(range(len(grid)), grid)   # the levels']
+        L += ['ax.set_ylim(0, top)', f'ax.set_xlabel({J(f["name"])})', 'ax.set_ylabel("Variance")',
+              f'ax.set_title({J("Prediction variance " + f["name"])})', 'plt.show()']
+        return '\n'.join(L)
+
+    def fds(self):
+        """The Fraction of Design Space plot."""
+        L = self.design(['from scipy.stats import qmc', 'import matplotlib.pyplot as plt']) + [''] + self.sample() + [
+            'fraction = np.linspace(0, 1, 101)',
+            'variance = np.quantile(pv, fraction)   # the share of the design space with at most this prediction variance',
+            'fig, ax = plt.subplots(figsize=(3.8, 2.6), layout="constrained")',
+            f'ax.plot(fraction, variance, color="{BASE}", linewidth=1.44)',
+            'ax.set_xlim(0, 1)', 'ax.set_ylim(bottom=0)',
+            'ax.set_xlabel("Fraction of Space")', 'ax.set_ylabel("Prediction Variance")', 'ax.set_title("Fraction of design space")', 'plt.show()']
+        return '\n'.join(L)
+
+    def colormap(self, n_model):
+        """The colour map on the correlations of the model terms and the alias terms."""
+        names = self.names[1:] + self.names2
+        k = len(names)
+        w, h = max(320, min(720, 140 + 26 * k)), max(300, min(720, 120 + 26 * k))
+        L = self.design(['from matplotlib.colors import LinearSegmentedColormap', 'import matplotlib.pyplot as plt'])
+        if self.alias_terms:
+            L += [f'alias_terms = {self._terms_lit(self.alias_terms)}   # the terms left out of the model',
+                  'Z = np.column_stack([X[:, 1:], model_matrix({f: d[f].to_numpy() for f in factors}, alias_terms)[:, 1:]])']
+        else:
+            L.append('Z = X[:, 1:]')
+        L += [f'names = {J(names)}   # the model\'s terms, then the alias terms',
+              'with np.errstate(invalid="ignore", divide="ignore"):',
+              '    R = np.corrcoef(Z, rowvar=False) if Z.shape[1] > 1 else np.ones((1, 1))',
+              'R = np.nan_to_num(np.atleast_2d(R), nan=0.0)',
+              'cmap = LinearSegmentedColormap.from_list("corr", ["#f4f7fb", "#8fa9c2", "#c0392b"])   # the page\'s colours for |r| from 0 to 1',
+              f'fig, ax = plt.subplots(figsize=({w / 100:g}, {h / 100:g}), layout="constrained")',
+              'im = ax.imshow(np.abs(R), cmap=cmap, vmin=0, vmax=1)',
+              'ax.set_xticks(range(len(names)), names, rotation=45, ha="right")',
+              'ax.set_yticks(range(len(names)), names)']
+        if n_model < k:
+            L.append(f'ax.axvline({n_model - 0.5:g}, color="{TEXT}", linewidth=0.72, linestyle=":")   # right of the line: the alias terms (after the model\'s {n_model})')
+        L += ['fig.colorbar(im, ax=ax, label="|r|")', 'ax.set_title("Color map on correlations")', 'plt.show()']
+        return '\n'.join(L)

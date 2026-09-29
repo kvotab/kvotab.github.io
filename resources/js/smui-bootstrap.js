@@ -206,12 +206,57 @@
     }
   }
 
+  /* ---- the graph as matplotlib code -------------------------------------------
+     Under each histogram, Python that draws it with matplotlib from a CSV
+     export of the Bootstrap Results table, as the notebook runs it: the
+     report's rows, the page's bins (its niceBins), the limits computed from
+     the values as bootstrap.py computes them, the light theme's colours, the
+     graph's size at 100 pixels an inch. */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+
+  // After the head: the By group's rows (its where lines) and, of those, the
+  // ones the report uses (excluded and filtered rows dropped).
+  function keepLines(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${SM.grid.cellText(t.col(w.column), w.value)}`);
+    const cols = where.map((w) => t.col(w.column));
+    const keep = new Set(ctx.rows), drop = [];
+    for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
+    if (!drop.length) return L;
+    if (!where.length && ctx.rows.length <= t.nrows / 2) return [`df = df.loc[[${ctx.rows.join(', ')}]]   # the rows of the report`];
+    return [...L, `df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out`];
+  }
+
+  function histCode(ctx, s, bins, L95, red) {
+    const c = J(s.column);
+    const nb = Math.max(1, Math.round((bins.end - bins.start) / bins.size));
+    const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt']), ...keepLines(ctx),
+      `x = df.loc[df["BootID"] > 0, ${c}].to_numpy(float)`, 'x = x[np.isfinite(x)]   # the bootstrap values (BootID 1, 2, ...)'];
+    if (Number.isFinite(s.original)) L.push(`t0 = df.loc[df["BootID"] == 0, ${c}].iloc[0]   # the original estimate: BootID 0, the report itself`);
+    L.push('lower, upper = np.quantile(x, [0.025, 0.975], method="weibull")   # the 95% percentile limits, JMP\'s quantiles ((n + 1)p)',
+      `start, size, nb = ${pyNum(bins.start)}, ${pyNum(bins.size)}, ${nb}   # the page's bins`,
+      'k = np.floor((x - start) / size + 1e-9).astype(int)   # each value\'s bin, as the graph counts it',
+      'counts = np.bincount(k[(k >= 0) & (k < nb)], minlength=nb)',
+      'fig, ax = plt.subplots(figsize=(3.8, 2.4), layout="constrained")',
+      `ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=0.98 * size, color="${SM.report.BAR}", edgecolor="#fcf7f2", linewidth=0.43)`);
+    if (Number.isFinite(s.original)) L.push(`ax.axvline(t0, color="${red}", linewidth=1.3)   # solid: the original estimate`);
+    if (Number.isFinite(L95.pct_lower)) L.push(`ax.axvline(lower, color="${red}", linewidth=0.86, linestyle="--")   # dashed: the 95% percentile limits`);
+    if (Number.isFinite(L95.pct_upper)) L.push(`ax.axvline(upper, color="${red}", linewidth=0.86, linestyle="--")`);
+    L.push(`ax.set_xlabel(${c})`, 'ax.set_ylabel("Samples")', `ax.set_title(${J(`${s.column} bootstrap values`)})`, 'plt.show()');
+    return L.join('\n');
+  }
+
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: '0', maxWidth: '100%' } }, graph, code) : graph);
+
   /* ---- the Bootstrap report ------------------------------------------------ */
   async function render(ctx) {
     const o = ctx.spec.options || {};
     const ys = ctx.roles('y');
     if (!ctx.table.col('BootID')) { ctx.top.add(ctx.warn('A Bootstrap report needs the BootID column of a Bootstrap Results table.')); return; }
-    const r = await ctx.call('bootstrap.report', { columns: ys.map((c) => c.name), jackknife: o.jackknife || null });
+    const r = await ctx.call('bootstrap.report', { columns: ys.map((c) => c.name), jackknife: o.jackknife || null, where: ctx.where || [] });
     ctx.top.add(ctx.note(`${o.statistic || 'The statistic'} of ${o.where || 'a report table'} in ${o.source || 'a report'}: ${o.samples || '?'} bootstrap samples (seed ${o.seed ?? '?'}). The original estimate is BootID 0.`));
     const bca = !!o.jackknife;
     const P = SM.util.themeColors();
@@ -230,7 +275,7 @@
       const summary = ctx.kv([['Original Estimate', s.original], ['Bootstrap Mean', s.mean], ['Bias', s.bias], ['Bootstrap Std Error', s.std_error], ['Samples', s.n_samples, 'int'], s.n_missing ? ['Missing', s.n_missing, 'int'] : null]);
       const cols = [{ key: 'coverage', label: 'Coverage' }, { key: 'pct_lower', label: 'Pct Lower' }, { key: 'pct_upper', label: 'Pct Upper' }, { key: 'bc_lower', label: 'BC Lower' }, { key: 'bc_upper', label: 'BC Upper' }];
       if (bca) cols.push({ key: 'bca_lower', label: 'BCa Lower' }, { key: 'bca_upper', label: 'BCa Upper' });
-      ob.add(ctx.row(plot, summary), ctx.rt({ columns: cols, rows: s.limits }, { caption: 'Bootstrap Confidence Limits', key: 'limits', sortable: false }));
+      ob.add(ctx.row(withCode(plot, ctx.code(histCode(ctx, s, bins, L95, '#c0392b'))), summary), ctx.rt({ columns: cols, rows: s.limits }, { caption: 'Bootstrap Confidence Limits', key: 'limits', sortable: false }));
     }
     ctx.top.add(ctx.note('Solid: the original estimate; dashed: the 95% percentile limits. BC: bias-corrected (for the share of samples below the original)' + (bca ? '; BCa: also for the acceleration, from the jackknife.' : '.')), ctx.code(r.code));
   }

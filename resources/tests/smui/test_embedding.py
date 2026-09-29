@@ -193,4 +193,38 @@ for label, kw in (('standardized, two dimensions', {}), ('raw columns, three dim
     check(f'... and gives the report\'s map, KL divergence, iterations and learning rate ({label})',
           (mx(got['E'], r['coords']), got['index'] == r['rows'], kl == r['kl'], int(iters) == r['iterations'], lr == r['learning_rate']), (0.0, True, True, True, True))
 
+# ---- the map's code starts with the fit's own lines (map_head; the page adds the drawing, which
+# test-ui-embedding.py runs in the page): a date column (text in the CSV), a column with a single
+# value and a gap (its row left out, as the report leaves it out), a By group with rows left out
+import datetime as _dt  # noqa: E402
+
+from smui import data as _data  # noqa: E402
+
+day0 = _dt.datetime(2024, 1, 1)
+when = np.array([(day0 + _dt.timedelta(days=int(3 * i + (i % 5))) - _dt.datetime(1970, 1, 1)).total_seconds() * 1000 for i in range(n)])
+flat = np.full(n, 4.0)
+flat[9] = np.nan
+grpE = ['u' if i % 4 else 'v' for i in range(n)]
+colsE = {**{c: XM[:, j] for j, c in enumerate(cols)}, 'when': when, 'flat': flat, 'grp': grpE}
+tE = table(colsE)
+_data.TABLES[tE]['meta']['when']['format'] = {'kind': 'date'}
+pd.DataFrame({**{c: XM[:, j] for j, c in enumerate(cols)}, 'when': [(_dt.datetime(1970, 1, 1) + _dt.timedelta(milliseconds=float(v))).strftime('%Y-%m-%d') for v in when],
+              'flat': flat, 'grp': grpE}).to_csv(os.path.join(work, 'dated.csv'), index=False)
+rows_u = [i for i in range(n) if grpE[i] == 'u' and i not in (5, 6)]
+for label, kw in (('a date column, a constant column with a gap', {'columns': cols[:3] + ['when', 'flat']}),
+                  ('a By group with rows left out', {'columns': cols[:3] + ['when'], 'rows': rows_u, 'where': [{'column': 'grp', 'value': 'u'}]})):
+    r = call('embedding.fit', table=tE, seed=21, max_iter=300, table_name='dated', **kw)
+    head = r['map_head']   # the backend dates it (and the page's datedCode then leaves it as it is)
+    check(f'the map\'s lines turn the date back into milliseconds ({label})', head.count('pd.to_datetime(df["when"])'), 1)
+    if 'where' in kw:
+        check(f'... keep the By group and drop the rows left out ({label})', ('df = df[df["grp"] == "u"]' in head, 'df = df.drop(index=[5, 6])' in head), (True, True))
+    else:
+        want_n = int(np.sum(np.isfinite(XM[:, :3]).all(axis=1) & np.isfinite(flat)))
+        check(f'... and leave out the row whose constant column has a gap, as the report does ({label})', (r['n'], 'without flat' in head, r['dropped']), (want_n, True, ['flat']))
+    p_ = run(head.replace('import matplotlib.pyplot as plt\n', ''))
+    if not check(f'the map\'s lines run ({label})', p_.returncode, 0):
+        continue
+    got = json.loads(next(ln for ln in p_.stdout.splitlines() if ln.startswith('JSON '))[5:])
+    check(f'... and give the report\'s map ({label})', (mx(got['E'], r['coords']), got['index'] == r['rows']), (0.0, True))
+
 sys.exit(check.done())

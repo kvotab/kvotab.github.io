@@ -45,3 +45,6 @@
   .sm-mix-controls { gap: 6px 10px; }
   .sm-mix-control { flex-wrap: wrap; }
 }
+
+/* ---- a graph with its matplotlib code under it ---- */
+.sm-mix-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

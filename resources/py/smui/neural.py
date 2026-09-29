@@ -45,6 +45,7 @@ Everything random comes from the report's seed: the holdback, the folds
 and every random_state (from the seed, the tour and the base model).
 """
 import copy
+import inspect
 import json
 import math
 import sys
@@ -855,22 +856,30 @@ def fit(table, y, x, rows=None, freq=None, validation=None, seed=None, missing='
     name = name_of(s)
     _warn_chosen(M, name)
     fitted = [net.fitted(M.X) for net in M.nets]
+    head = _code(M, table_name, graph=True)
     resp_out = []
     for j, (net, jj) in enumerate(_by_response(M)):
         P = M.Ps[j]
-        f = fitted[M.nets.index(net)]
-        rep = predictive.report(P, f[:, jj] if net.kind == 'continuous' else f)
+        k = M.nets.index(net)
+        f = fitted[k]
+        if net.kind == 'continuous':
+            select = [f'y, fitted = fits[{k}]["Y"][:, {jj}], fits[{k}]["pred"][:, {jj}]   # the response {P.y}: its values and the network\'s prediction']
+        else:
+            select = [f'y, fitted, levels = fits[{k}]["y"], fits[{k}]["proba"], fits[{k}]["levels"]   # the response {P.y}: its levels and the network\'s probabilities']
+        rep = predictive.report(P, f[:, jj] if net.kind == 'continuous' else f, head=head, select=select)
+        if net.kind == 'continuous':
+            rep['plots']['rbp'] = {predictive.SETS[q]: '\n'.join(select + predictive.abp_lines(q, residual=True)) for q in range(3) if P.has(q)}
         rep['notes'] = []
-        resp_out.append({'y': P.y, 'kind': P.kind, 'net': M.nets.index(net), 'fit': rep})
+        resp_out.append({'y': P.y, 'kind': P.kind, 'net': k, 'fit': rep})
     nets_out = []
-    for net in M.nets:
+    for k, net in enumerate(M.nets):
         info = net.info
         nets_out.append({
             'responses': [M.ys[j] for j in net.resp], 'kind': net.kind, 'alpha': info['alpha'], 'penalty': s['penalty'],
             'iterations': info['iterations'], 'max_iter': s['max_iter'], 'path': info['path'],
             'boosted': net.boosted, 'boost': info['boost'], 'components': len(net.parts), 'steps': info.get('steps'),
             'random_states': info['random_states'][:len(net.parts)] if net.boosted else info['random_states'],
-            'estimates': _estimates(M, net), 'diagram': _diagram(M, net),
+            'estimates': _estimates(M, net), 'diagram': _diagram(M, net), 'diagram_code': _diagram_tail(M, net, k),
             'transformed': [M.Ps[0].features[j] for j in net.transform.cols] if net.transform else [],
         })
     P0 = M.Ps[0]
@@ -883,7 +892,7 @@ def fit(table, y, x, rows=None, freq=None, validation=None, seed=None, missing='
         'tours': M.tours, 'tour': M.tour + 1, 'folds': M.fold_rows,
         'sets': [predictive.SETS[k] for k in range(3) if P0.has(k)], 'n': {predictive.SETS[k]: int(P0.mask(k).sum()) for k in range(3)},
         'notes': notes, 'features': list(P0.features), 'x': list(M.x),
-        'code': _code(M, table_name),
+        'code': _code(M, table_name), 'plots': {'head_code': head},
     }
 
 
@@ -964,6 +973,88 @@ profile.expose('neural', _predictor, packages=SK)
 # the code under a model: the same fits, from a CSV export of the table
 # ---------------------------------------------------------------------------
 
+def _layers_code(s, net):
+    """The hidden layers of a network, as the Diagram draws them: a plain network's from the fitted model
+    (scikit-learn's layers, the one next to the X's first); a boosted one's base models side by side."""
+    if net.boosted:
+        return f'[{s["n1"]} * {len(net.parts)}]'
+    return '[c.shape[1] for c in net[-1].coefs_[:-1]]'
+
+
+def draw_network(inputs, layers, outputs, activation='tanh'):
+    """The network as the report's Diagram draws it (smui-p-neural.js), with matplotlib: the X columns as
+    boxes on the left, the hidden nodes as circles with their activation's curve (the layer next to the
+    X's first), the responses as boxes on the right, and a line for every connection. The sizes are the
+    page's, in pixels at 100 an inch; the title the page's name of the diagram."""
+    import math
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import Circle, PathPatch, Rectangle
+    from matplotlib.path import Path
+    pt = 0.72   # points per pixel
+    ink, muted = '#352921', '#786b5d'
+    fills = {'in': ('#dce8f4', '#2f6690'), 'hid': ('#ddf0da', '#3a7d44'), 'out': ('#d4efeb', '#1b7a70')}
+    M_, L_, C_ = Path.MOVETO, Path.LINETO, Path.CURVE4
+    glyphs = {'tanh': ([(-6, 4), (-1.5, 4), (1.5, -4), (6, -4)], [M_, C_, C_, C_]),
+              'logistic': ([(-6, 4.5), (-1, 4.5), (1, -4.5), (6, -4.5), (-6, 6.5), (6, 6.5)], [M_, C_, C_, C_, M_, L_]),
+              'relu': ([(-6, 3), (0, 3), (6, -5)], [M_, L_, L_]), 'identity': ([(-6, 5), (6, -5)], [M_, L_])}
+
+    def short(v, n=22):
+        v = str(v)
+        return v[:n - 1] + '…' if len(v) > n else v
+    n_in, n_out, nh = len(inputs), len(outputs), len(layers)
+    most = max([n_in, n_out] + list(layers))
+    sp = 34 if most <= 12 else 24 if most <= 30 else 16
+    r = 11 if sp >= 30 else 9 if sp >= 24 else 6
+    pad, top, gap = 16, 28, 120
+    in_w = min(170, max(56, 7 * max(len(short(c)) for c in inputs) + 16))
+    out_w = min(170, max(56, 7 * max(len(short(c)) for c in outputs) + 16))
+    cols = [pad + in_w / 2] + [pad + in_w + gap * (i + 1) for i in range(nh)] + [pad + in_w + gap * (nh + 1) + out_w / 2]
+    W, H = math.ceil(cols[-1] + out_w / 2 + pad), math.ceil(top + most * sp + pad)
+
+    def y_of(i, n):
+        return top + most * sp / 2 + (i - (n - 1) / 2) * sp
+    fig = plt.figure(figsize=(W / 100, (H + 30) / 100))   # and a line for the title
+    ax = fig.add_axes([0, 0, 1, H / (H + 30)])
+    ax.set_xlim(0, W)
+    ax.set_ylim(H, 0)   # y down, as on the page
+    ax.axis('off')
+    ax.set_title(f'Network diagram: {n_in} inputs, {" and ".join(str(n) for n in layers)} hidden nodes, {n_out} output{"s" if n_out > 1 else ""}', fontsize=9)
+    names = ['H2', 'H1'] if nh == 2 else ['H1']
+    for i, c in enumerate(['Inputs'] + names[:nh] + ['Outputs']):
+        ax.text(cols[i], 14, c, ha='center', fontsize=10.5 * pt, color=muted)
+    segs = [[(cols[0] + in_w / 2, y_of(j, n_in)), (cols[1] - r, y_of(k, layers[0]))] for j in range(n_in) for k in range(layers[0])]
+    for li in range(1, nh):
+        segs += [[(cols[li] + r, y_of(a, layers[li - 1])), (cols[li + 1] - r, y_of(b, layers[li]))] for a in range(layers[li - 1]) for b in range(layers[li])]
+    segs += [[(cols[nh] + r, y_of(a, layers[-1])), (cols[nh + 1] - out_w / 2, y_of(i, n_out))] for a in range(layers[-1]) for i in range(n_out)]
+    ax.add_collection(LineCollection(segs, colors=muted, alpha=0.5, linewidths=pt, zorder=0.5))   # every weight
+    for j, c in enumerate(inputs):
+        y0 = y_of(j, n_in)
+        ax.add_patch(Rectangle((cols[0] - in_w / 2, y0 - 10), in_w, 20, facecolor=fills['in'][0], edgecolor=fills['in'][1], linewidth=1.2 * pt))
+        ax.text(cols[0], y0 + 4, short(c), ha='center', fontsize=11 * pt, color=ink)
+    vs, codes = glyphs.get(activation, glyphs['tanh'])
+    for li, n in enumerate(layers):
+        for k in range(n):
+            x0, y0 = cols[li + 1], y_of(k, n)
+            ax.add_patch(Circle((x0, y0), r, facecolor=fills['hid'][0], edgecolor=fills['hid'][1], linewidth=1.4 * pt))
+            if r >= 9:   # the activation's curve, as the page draws it
+                ax.add_patch(PathPatch(Path([(x0 + u * r / 11, y0 + v * r / 11) for u, v in vs], codes), facecolor='none', edgecolor=ink, linewidth=1.5 * pt, capstyle='round'))
+    for i, c in enumerate(outputs):
+        y0 = y_of(i, n_out)
+        ax.add_patch(Rectangle((cols[-1] - out_w / 2, y0 - 10), out_w, 20, facecolor=fills['out'][0], edgecolor=fills['out'][1], linewidth=1.2 * pt))
+        ax.text(cols[-1], y0 + 4, short(c), ha='center', fontsize=11 * pt, color=ink)
+    return fig, ax
+
+
+def _diagram_tail(M, net, k):
+    """The Diagram of network k: draw_network on its inputs, fitted hidden layers and responses."""
+    d = _diagram(M, net)
+    ins, outs = [c['name'] for c in d['inputs']], [o['name'] for o in d['outputs']]
+    return '\n'.join([inspect.getsource(draw_network).rstrip(), '', '',
+                      f'draw_network({json.dumps(ins)}, fits[{k}]["layers"], {json.dumps(outs)}, {json.dumps(M.spec["activation"])})   # the X columns, the hidden layers fitted, the responses',
+                      'plt.show()'])
+
+
 def _levels_code(P, var):
     """The lines that make a categorical response's level index, as P.code does."""
     lv = '[' + ', '.join(predictive._pylit(v) for v in P.levels) + ']'
@@ -981,7 +1072,11 @@ def _alpha_list(a):
     return '[' + ', '.join(repr(float(v)) for v in a) + ']'
 
 
-def _code(M, table_name):
+def _code(M, table_name, graph=False):
+    """The code under a model: the networks fitted as the report fits them, from a CSV export of the
+    table, printing each set's measures. graph: the head of the graphs' code instead
+    (predictive.graph_codes): matplotlib imported, no printing, and each network's results in fits (the
+    responses and predictions, or the levels and probabilities, and its hidden layers)."""
     s = M.spec
     P0 = M.Ps[0]
     kinds = {net.kind for net in M.nets}
@@ -990,7 +1085,7 @@ def _code(M, table_name):
         mlps.append('MLPRegressor')
     if 'categorical' in kinds and not s['boost']:
         mlps.append('MLPClassifier')
-    imports = [f'from sklearn.neural_network import {", ".join(mlps)}', 'from sklearn.pipeline import Pipeline', 'from sklearn.preprocessing import StandardScaler']
+    imports = ([predictive.PLT] if graph else []) + [f'from sklearn.neural_network import {", ".join(mlps)}', 'from sklearn.pipeline import Pipeline', 'from sklearn.preprocessing import StandardScaler']
     if s['transform']:
         imports[-1] = 'from sklearn.preprocessing import PowerTransformer, StandardScaler'
     if s['boost'] and 'categorical' in kinds:
@@ -1027,13 +1122,16 @@ def _code(M, table_name):
         L.append(f'cont = {net0.transform.cols}   # the continuous factors\' columns: Transform Covariates makes them near normal')
         L.append('pt = PowerTransformer().fit(X[train][:, cont])   # Yeo-Johnson, standardized')
         L.append('X = X.copy(); X[:, cont] = pt.transform(X[:, cont])')
-    for net in M.nets:
+    if graph:
+        L.append('fits = {}   # each network\'s results, for the graphs')
+    for k, net in enumerate(M.nets):
         L.append('')
-        L += _net_code(M, net)
+        L += _net_code(M, net, k if graph else None)
     return '\n'.join(L)
 
 
-def _net_code(M, net):
+def _net_code(M, net, graph=None):
+    """One network's code; graph (the network's number): its results kept in fits[graph], not printed."""
     s = M.spec
     info = net.info
     names = [M.ys[j] for j in net.resp]
@@ -1068,6 +1166,9 @@ def _net_code(M, net):
             L.append('        net.set_params(mlp__alpha=alpha).fit(X[train], (Z - F)[train], **fit_w)   # what the models before leave')
             L.append(f'    F = F + ({float(s["rate"])!r} if k < {K - 1} else 1.0) * net.predict(X).reshape(F.shape)   # scaled by the learning rate, but the last')
             L.append('pred = mu + sd * F.reshape(len(X), -1)')
+        if graph is not None:
+            L.append(f'fits[{graph}] = {{"Y": Y, "pred": pred, "layers": {_layers_code(s, net)}}}   # the responses, the predictions, the hidden layers (the one next to the X\'s first)')
+            return L
         L.append('for k, name in enumerate(["Training", "Validation", "Test"]):')
         L.append('    m = sets == k')
         L.append('    if m.any():')
@@ -1105,6 +1206,9 @@ def _net_code(M, net):
         L.append(f'    G = G + ({float(s["rate"])!r} * rho if k < {K - 1} else rho) * f   # scaled by the learning rate, but the last')
         L.append('proba = softmax(G)')
     L.append('proba = np.clip(proba, 1e-15, 1 - 1e-15); proba /= proba.sum(axis=1, keepdims=True)   # never exactly 0 or 1')
+    if graph is not None:
+        L.append(f'fits[{graph}] = {{"y": yc, "proba": proba, "levels": levels, "layers": {_layers_code(s, net)}}}   # the levels, the probabilities, the hidden layers')
+        return L
     L.append('for k, name in enumerate(["Training", "Validation", "Test"]):')
     L.append('    m = sets == k')
     L.append('    if m.any():')

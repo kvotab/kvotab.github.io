@@ -37,11 +37,18 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -352,6 +359,74 @@ async def form_help(page, opener, fields, name):
     return f
 
 
+def learners_compare(lab, g, F):
+    t = g['label']
+    ax = F['axes'][0]
+    if t.endswith(' by K'):
+        UP.check_lines(check, lab, g, F)
+        check(f'{lab}: the best K named', [x['s'].strip() for x in ax['texts']], g['annotations'])
+        check(f'{lab}: the sets in the legend', F['legend'], [tr['name'] for tr in g['traces'] if tr.get('mode') == 'lines+markers'])
+    elif t == 'Tuning design':
+        design = next(tr for tr in g['traces'] if tr.get('name') == 'Design')
+        best = next(tr for tr in g['traces'] if tr.get('name') == 'Best')
+        if design.get('mode') == 'markers':
+            check.near(f'{lab}: every point of the design at its Cost and Gamma', UP.maxdiff(UP.flat(ax['scatter'][0]['xy']), UP.flat(UP.curve_pts(design))), 0, 1e-9)
+            check.near(f'{lab}: ... coloured by its criterion: the best marked', UP.maxdiff(ax['scatter'][1]['xy'][0], [best['x'][0], best['y'][0]]), 0, 1e-9)
+            check(f'{lab}: log axes, the titles', (ax['xscale'], ax['yscale'], ax['xlabel'], ax['ylabel'], ax['title']), ('log', 'log', 'Cost', 'Gamma', t))
+        else:
+            check(f'{lab}: the criterion by Cost', UP.find_line(ax, design['x'], design['y'], rel=1e-9) is not None, True)
+            check(f'{lab}: the best marked', any(ln['marker'] == 'o' and UP.close(ln['x'], best['x'], 1e-9) and UP.close(ln['y'], best['y'], 1e-9) for ln in ax['lines']), True)
+            check(f'{lab}: a log axis, the titles', (ax['xscale'], ax['xlabel'], ax['ylabel'], ax['title']), ('log', 'Cost', g['titles']['y'], t))
+        check(f'{lab}: the graph\'s size', F['size'], [g['w'] / 100, g['h'] / 100])
+    elif t.startswith('Decision boundary over') or t.startswith('Prediction surface over'):
+        surf = next(tr for tr in g['traces'] if tr.get('type') in ('heatmap', 'contour') and tr.get('z') is not None)
+        z = [v for row in surf['z'] for v in row]
+        check.near(f'{lab}: the model over the grid (the shading), the other factors held', UP.maxdiff(ax['images'][0]['data'] if ax['images'] else [], z), 0, 1e-6)
+        levels = sorted(v for c in ax['polys'] if 'contour' in c for v in c['contour'])
+        if t.startswith('Decision boundary') and any(tr.get('name') == 'Boundary' for tr in g['traces']):
+            check(f'{lab}: the boundary (0) and the margins (±1)', levels, [-1.0, 0.0, 1.0])
+        pts = sorted((round(a, 9), round(b, 9)) for tr in g['traces'] if tr.get('type') == 'scatter' and tr.get('name') != 'Support vectors' for a, b in UP.curve_pts(tr))
+        got = sorted((round(a, 9), round(b, 9)) for sc in ax['scatter'] if sc['sizes'][:1] != [100.0] for a, b in sc['xy'])
+        check(f'{lab}: every row at its two factors\' values', (len(got), got == pts), (len(pts), True))
+        rings = [tr for tr in g['traces'] if tr.get('name') == 'Support vectors']
+        got_r = sorted((round(a, 9), round(b, 9)) for sc in ax['scatter'] if sc['sizes'][:1] == [100.0] for a, b in sc['xy'])
+        check(f'{lab}: the support vectors ringed (when the page rings them)', got_r, sorted((round(a, 9), round(b, 9)) for tr in rings for a, b in UP.curve_pts(tr)))
+        check(f'{lab}: the legend', F['legend'], [tr['name'] for tr in g['traces'] if tr.get('showlegend')])
+        check(f'{lab}: the grid\'s range, the titles', (ax['xlim'], ax['ylim'], ax['xlabel'], ax['ylabel'], ax['title']),
+              ([surf['x'][0], surf['x'][-1]], [surf['y'][0], surf['y'][-1]], g['titles']['x'], g['titles']['y'], t))
+        check(f'{lab}: the graph\'s size', F['size'], [g['w'] / 100, g['h'] / 100])
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every graph of K Nearest Neighbors', Naive Bayes' and Support Vector Machines' reports: its block
+    under it, run in the page, its figure the graph's."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Orchard')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    last = 'SM.app.reports.at(-1)'
+    val = {'validation': ['Validation']}
+    specs = [
+        ('knn', 'K Nearest Neighbors, variety', {'y': ['variety'], 'x': XS, **val}, {'k': 8, 'roc': True, 'lift': True}),
+        ('knn', 'K Nearest Neighbors, shelf life, K = 3 picked', {'y': ['shelf life (days)'], 'x': XS, **val}, {'k': 6, 'knnK': 3}),
+        ('naivebayes', 'Naive Bayes, grade', {'y': ['grade'], 'x': XS, **val}, {'roc': True, 'lift': True}),
+        ('svm', 'Support Vector Machines, grade, a tuning design', {'y': ['grade'], 'x': XS, **val}, {'tune': True, 'points': 8, 'roc': True, 'lift': True, 'seed': '4'}),
+        ('svm', 'Support Vector Machines, variety, linear, no support vectors ringed', {'y': ['variety'], 'x': [W, S], **val}, {'kernel': 'linear', 'tune': True, 'points': 5, 'svmSV': False, 'roc': True, 'seed': '4'}),
+        ('svm', 'Support Vector Machines, shelf life', {'y': ['shelf life (days)'], 'x': [W, F, S, 'skin']}, {'svmPair': None, 'portion': 0.3, 'seed': '6'}),
+    ]
+    total = 0
+    for pid, label, roles, opts in specs:
+        r = await page.ev(open_report_js(pid, roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, learners_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    check('charts: the blocks ran and drew the page\'s graphs', total >= 25, True)
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=orchard', height=1200)
     st = await wait_engine(page)
@@ -643,6 +718,9 @@ async def main():
     check('a project: the SVM keeps its linear kernel and tuning design, on its own table', (svm_back['newTable'], svm_back['kernel'], svm_back['tune'], 'Tuning Design' in svm_back['heads'], svm_back['errors']), (True, 'linear', True, True, 0))
     check('... and K Nearest Neighbors its chosen K', (knn_back['k'], knn_back['kv'][0][0] if knn_back['kv'] else None, knn_back['errors']), (4, ['K', '4'], 0))
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ======================================================================= (i), Help, themes, phone
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -697,5 +775,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

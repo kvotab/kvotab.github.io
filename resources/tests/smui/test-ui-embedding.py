@@ -35,6 +35,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, more_from_outputs, page_probe_more, points_of, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -555,6 +556,9 @@ async def main():
     check('an opened project has its own table, the perplexity, and the Color By column by its new id', (r['newTable'], r['perplexity'], r['colorCol'], r['remapped']), (True, 30, 'type (true)', True))
     check('... and draws the same map without errors', (r['same'], r['errors']), (True, 0))
 
+    # ---- the map's matplotlib code, run in the page
+    await map_code(page)
+
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -598,6 +602,98 @@ async def main():
     await shot(page, 'emb-04-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the map's matplotlib code -----------------------------------------------------------------------------
+# The block right under the map (ending in plt.show()) runs in the page's own Python (the notebook's
+# runner): t-SNE again from the CSV with the report's seed, and the figure is the Plotly map: the rows'
+# places, their colours from the Color column (the palette by level, the blue-grey-red ramp over a
+# continuous one's range), the legend or colour bar, the axes, the title and the size; in three
+# dimensions as a 3-D scatter or as three pairs of axes; in a By group with rows excluded.
+OPEN_EMB = r'''(async (roles, options) => {
+  const t = SM.app.tables.find((x) => x.name === 'Cell profiles');
+  SM.app.showTab(SM.app.tabOf(t));
+  const ids = {};
+  for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => t.col(n).id);
+  const rep = SM.app.openReport(SM.platforms.get('embedding'), { roles: ids, options }, t);
+  await new Promise((res) => rep.on('done', res));
+  return { g: await __gr.graphs(rep), undrawn: __gr.take(), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent) };
+})'''
+
+
+def hexcol(c):
+    """A Plotly colour (#rrggbb or rgb(r, g, b)) as #rrggbb."""
+    if isinstance(c, str) and c.startswith('rgb('):
+        return '#' + ''.join(f'{int(v):02x}' for v in c[4:-1].split(','))
+    return c
+
+
+async def run_more(page, g, table_js):
+    """A block run in the page's own Python with test_charts.PROBE_MORE (3-D scatters as data)."""
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=600)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+async def map_code(page):
+    await page.ev(GRAPHS_JS)
+    table_js = "SM.app.tables.find((x) => x.name === 'Cell profiles')"
+    runs = [('Color by a level', {'y': M[:8], 'color': ['type (true)']}, {'iterations': 300}),
+            ('Color by a continuous column', {'y': M[:8], 'color': ['m12']}, {'iterations': 300, 'standardize': False}),
+            ('three dimensions, turning', {'y': M[:8], 'color': ['type (true)']}, {'iterations': 300, 'dimension': 3, 'view3d': 'rotate'}),
+            ('three dimensions in pairs, the rows\' colours', {'y': M[:8]}, {'iterations': 300, 'dimension': 3, 'view3d': 'pairs', 'init': 'random', 'seed': 5}),
+            ('By donor, rows excluded', {'y': M[:8], 'by': ['donor']}, {'iterations': 300})]
+    ex, levels = None, None
+    for tag, roles, options in runs:
+        if tag.startswith('By'):   # a row of each donor excluded
+            ex = await page.ev(f'(() => {{ const t = {table_js}; const d = t.col("donor").values; const ex = [d.indexOf("A"), d.indexOf("B")]; t.setState(ex, "excluded", true); return ex; }})()')
+        r = await page.ev(f'({OPEN_EMB})({json.dumps(roles)}, {json.dumps(options)})', timeout=900)
+        check(f'the map\'s code ({tag}): no errors, the map drawn, its code block right under it ending in plt.show()',
+              (r['errors'], r['undrawn'], [bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()' for g in r['g']]), ([], [], [True] * (2 if tag.startswith('By') else 1)))
+        for g in r['g']:
+            lab = f'the map\'s code ({tag}): {g["label"]}'
+            three = 'turning' in tag
+            F, err = await (run_more(page, g, table_js) if three else run_graph(page, g, table_js))
+            check(f'{lab}: runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            pts = [t for t in g['traces'] if t.get('mode') == 'markers' and t.get('x') and t['x'][0] is not None]
+            if three:
+                ax = F['axes'][0]
+                s3 = ax['scatter3d'][0] if ax['scatter3d'] else {'xyz': [[], [], []], 'colors': []}
+                t = pts[0]
+                check.near(f'{lab}: every row at its place in three dimensions', max(maxdiff(s3['xyz'][0], t['x']), maxdiff(s3['xyz'][1], t['y']), maxdiff(s3['xyz'][2], t['z'])), 0, 1e-9)
+                check(f'{lab}: each row in its level\'s colour', [c[:7] for c in s3['colors']], [hexcol(c) for c in t['mcolor']])
+                check(f'{lab}: the axes and the title', (ax['xlabel'], ax['ylabel'], ax['zlabel'], ax['title']), ('t-SNE 1', 't-SNE 2', 't-SNE 3', g['label']))
+                check(f'{lab}: the levels in a legend, as the flat map\'s', ax['legend'] or F['legend'], levels)
+                check(f'{lab}: the size', F['size'], [g['w'] / 100, g['h'] / 100])
+                continue
+            axes = [a for a in F['axes'] if a['visible'] and a['scatter']]
+            check(f'{lab}: a plot for each pair of dimensions', len(axes), len(pts))
+            for ax, t in zip(axes, pts):
+                got = ax['scatter'][0]['xy']
+                check.near(f'{lab}: {t.get("name", "the map")}: every row at its place', maxdiff([q for p in got for q in p], [q for p in points_of(t) for q in p]), 0, 1e-9)
+                want_c = [hexcol(c) for c in t['mcolor']] if isinstance(t['mcolor'], list) else [t['mcolor']]
+                check(f'{lab}: {t.get("name", "the map")}: the rows\' colours', [c[:7] for c in ax['scatter'][0]['colors']], want_c)
+            ax = axes[0] if axes else F['axes'][0]
+            legend = [t['name'] for t in g['traces'] if t.get('showlegend')]
+            if legend and levels is None:
+                levels = legend
+            if legend:
+                check(f'{lab}: the levels in a legend', ax['legend'] or F['legend'], legend)
+            if 'continuous' in tag:
+                check(f'{lab}: the colour bar', [a['ylabel'] for a in F['axes'] if not a['scatter']], ['m12'])
+            titles = (F['suptitle'] or ax['title'])
+            check(f'{lab}: the title and the size', (titles, F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+            if 'pairs' not in tag:
+                check(f'{lab}: the axes', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+            if tag.startswith('By'):
+                check(f'{lab}: keeps its donor\'s rows, drops the excluded one', ('df = df[df["donor"] == ' in g['code'], 'df = df.drop(index=[' in g['code']), (True, True))
+    await page.ev(f'{table_js}.setState({json.dumps(ex)}, "excluded", false)')
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.platform.id === 'embedding').slice(-5)) SM.app.closeReport(r)")
 
 
 asyncio.run(main())

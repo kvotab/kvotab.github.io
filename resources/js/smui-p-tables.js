@@ -1230,7 +1230,7 @@
         return;
       }
       const fc = resolveRef(t, state.freq);
-      const res = await ctx.call('tables.tabulate', { row_chains: rows, col_chains: cols, analysis, stats: state.stats, all_rows: !!state.allRows, all_cols: !!state.allCols, include_missing: !!state.missing, quantiles: state.quantiles && state.quantiles.length ? state.quantiles : [25, 75], freq: fc ? fc.name : null });
+      const res = await ctx.call('tables.tabulate', { row_chains: rows, col_chains: cols, analysis, stats: state.stats, all_rows: !!state.allRows, all_cols: !!state.allCols, include_missing: !!state.missing, quantiles: state.quantiles && state.quantiles.length ? state.quantiles : [25, 75], freq: fc ? fc.name : null, where: ctx.where || [] });
       out.append(tabResult(ctx, res));
       if (!res.n) out.append(ctx.warn('No rows to tabulate: every row is excluded or has a missing grouping value.'));
       out.append(ctx.note(`${res.n} rows${fc ? `, each counted ${fc.name} times` : ''}.${state.missing ? '' : ' Rows with a missing grouping value are left out.'}`), ctx.code(res.code));
@@ -1310,6 +1310,34 @@
   }
 
   /* ---- Analyze > Screening > Explore Missing Values ------------------------------------------------------------ */
+  /* The snapshot as matplotlib code under it: from a CSV export of the table,
+     as the notebook runs it, the report's rows (the By group's where lines, the
+     rows left out dropped), a mark for each missing cell, the light theme's
+     colours and the graph's size at 100 pixels an inch; the mark size is the
+     page's choice. */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+  function keepLines(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${SM.grid.cellText(t.col(w.column), w.value)}`);
+    const wc = where.map((w) => t.col(w.column));
+    const keep = new Set(ctx.rows), drop = [];
+    for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => wc[k] && wc[k].values[r] === w.value)) drop.push(r);
+    if (!drop.length) return L;
+    if (!where.length && ctx.rows.length <= t.nrows / 2) return [`df = df.loc[[${ctx.rows.join(', ')}]]   # the rows of the report`];
+    return [...L, `df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out`];
+  }
+  function snapshotCode(ctx, cols, { width, height, size, color }) {
+    return [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt']), ...keepLines(ctx),
+      `cols = ${J(cols.map((c) => c.name))}`,
+      'r, j = np.nonzero(df[cols].isna().to_numpy())   # each missing cell: its row and column, row by row as the page draws them',
+      `fig, ax = plt.subplots(figsize=(${Math.round(width) / 100}, ${Math.round(height) / 100}), layout="constrained")`,
+      `ax.scatter(j, df.index[r] + 1, marker="s", s=${Math.round(100 * (size * 0.72) ** 2) / 100}, color="${color}", linewidths=0)   # a mark at the row number (1, 2, ...) and the column`,
+      'ax.set_xticks(range(len(cols)), cols)', 'ax.set_xlim(-0.6, len(cols) - 0.4)', 'ax.invert_yaxis()   # the first row at the top',
+      'ax.set_ylabel("Row")', 'ax.set_title("Missing value snapshot")', 'plt.show()'].join('\n');
+  }
+
   function missingRows(ctx, cols, fn) {
     const out = [];
     for (const r of ctx.rows) if (fn(cols.map((c) => isMissing(c.values[r])))) out.push(r);
@@ -1401,7 +1429,7 @@
     async render(ctx) {
       const t = ctx.table;
       const cols = ctx.roles('y');
-      const res = await ctx.call('tables.missing_report', { columns: cols.map((c) => c.name) });
+      const res = await ctx.call('tables.missing_report', { columns: cols.map((c) => c.name), where: ctx.where || [] });
       const b = (label, fn) => { const x = el('button', { type: 'button', class: 'sm-btn small', text: label }); x.addEventListener('click', fn); return x; };
       const menu = (label, items) => { const x = el('button', { type: 'button', class: 'sm-btn small', text: `${label} ▾`, 'aria-haspopup': 'menu' }); x.addEventListener('click', () => SM.ui.menu(items(), x, { returnFocus: x })); return x; };
       ctx.container.append(el('div', { class: 'smt-mvbar' },
@@ -1428,9 +1456,12 @@
         else if (xs.length > 60000) o.add(ctx.note(`${xs.length} missing cells: too many to draw one by one. Use the reports above.`));
         else {
           const h = Math.max(220, Math.min(560, 90 + Math.min(ctx.rows.length, 900) * 0.5));
-          o.add(ctx.plot([{ type: xs.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: ys, rows, marker: { symbol: 'square', size: Math.max(3, Math.min(9, 420 / Math.max(10, ctx.rows.length ** 0.5 * 3))), color: SM.util.themeColors().text }, hovertemplate: '%{text}<extra></extra>', text: xs.map((j, k) => `row ${ys[k]}: ${cols[j].name} missing`), name: 'missing' }],
+          const w = Math.max(300, Math.min(760, 120 + 70 * cols.length));
+          const size = Math.max(3, Math.min(9, 420 / Math.max(10, ctx.rows.length ** 0.5 * 3)));
+          o.add(ctx.plot([{ type: xs.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: xs, y: ys, rows, marker: { symbol: 'square', size, color: SM.util.themeColors().text }, hovertemplate: '%{text}<extra></extra>', text: xs.map((j, k) => `row ${ys[k]}: ${cols[j].name} missing`), name: 'missing' }],
             { xaxis: { tickvals: cols.map((_, j) => j), ticktext: cols.map((c) => c.name), range: [-0.6, cols.length - 0.4], showgrid: false, zeroline: false }, yaxis: { autorange: 'reversed', title: { text: 'Row' }, zeroline: false } },
-            { width: Math.max(300, Math.min(760, 120 + 70 * cols.length)), height: h, title: 'Missing value snapshot' }),
+            { width: w, height: h, title: 'Missing value snapshot' }),
+          ctx.code(snapshotCode(ctx, cols, { width: w, height: h, size, color: '#352921' })),
           ctx.note('A mark for each missing cell. Drag over marks to select their rows; selected rows show in the accent colour.'));
         }
       }

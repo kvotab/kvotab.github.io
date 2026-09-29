@@ -37,6 +37,7 @@ import sys
 from statistics import NormalDist
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -495,7 +496,7 @@ async def main():
       await done;
       const p = rep.plots.find(p => /^Pseudo-observations of/.test(p.opts.title));
       const bold = [...rep.body.querySelectorAll('td.sm-cop-shown')].map(td => td.textContent).filter(t => /^[A-Z]/.test(t));
-      return { shown: rep.spec.options.shown, note: p.box.parentElement.parentElement.textContent.includes('fitted Gaussian copula'), bold: [...new Set(bold)] };
+      return { shown: rep.spec.options.shown, note: p.box.closest('.sm-ob-body').textContent.includes('fitted Gaussian copula'), bold: [...new Set(bold)] };
     })()''')
     check('a click on the Gaussian line shows the Gaussian copula', (r['shown'], r['note']), ('gaussian', True))
     check('and marks it in the tables', 'Gaussian' in r['bold'] and 'Clayton' not in r['bold'], True)
@@ -726,8 +727,168 @@ async def main():
     await check_controls_help(page, rep, 'Copula Comparison', ['A line of the Fits table', 'Right click a table'], 'copula: Copula Comparison')
     await check_controls_help(page, rep, 'Margins', ['A line of Fitted Distributions', 'A column\'s red triangle'], 'copula: Margins')
     await check_controls_help(page, rep, 'Joint Probabilities', ['x and y', 'Compute'], 'copula: Joint Probabilities')
+    await chart_code(page)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code -------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE_MORE in place of
+# plt.show() (and the code's density grid z asked for), and the figure it
+# draws is compared with the Plotly graph above it. __kc adds the tail
+# panels' titles (annotations), which GRAPHS_JS does not collect.
+CHART_JS = r'''
+window.__kc = {
+  ann(rep) { return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => ((p.layout || {}).annotations || []).map((a) => a.text)); },
+};
+'''
+
+
+async def run_more(page, g, table_js, names=()):
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"], names))}, {table_js})', timeout=900)
+    if isinstance(out, str):
+        return None, None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), (got['vars'] if got else None), err
+
+
+def rgap(a, b):
+    """The largest relative difference of two lists of numbers (inf when their lengths or gaps differ)."""
+    a, b = list(a or []), list(b or [])
+    if len(a) != len(b):
+        return float('inf')
+    worst = 0.0
+    for x, y in zip(a, b):
+        if (x is None) != (y is None):
+            return float('inf')
+        if x is None:
+            continue
+        worst = max(worst, abs(x - y) / max(1e-300, abs(x), abs(y)))
+    return worst
+
+
+def pts_gap(xy, t, abs_=0.0):
+    """The points of a probe's scatter against a Plotly trace's: the largest
+    relative difference, differences below abs_ counted as none."""
+    if not xy or len(xy) != len(t['x'] or []):
+        return float('inf')
+    worst = 0.0
+    for (a, b), x, y in zip(xy, t['x'], t['y']):
+        for p, q in ((a, x), (b, y)):
+            if abs(p - q) > abs_:
+                worst = max(worst, abs(p - q) / max(1e-300, abs(p), abs(q)))
+    return worst
+
+
+def levels_of(ax):
+    return [p['contour'][0] for p in ax['polys'] if 'contour' in p]
+
+
+def flat(z):
+    return [v for row in z for v in row]
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev('__gr.idle()')
+    await page.ev('''(() => {
+      const r = SM.util.rng('three columns for the charts');
+      const n = 240, a = [], b = [], c = [];
+      for (let i = 0; i < n; i++) { const z1 = r.normal(), z2 = 0.6 * z1 + 0.8 * r.normal(), z3 = -0.5 * z1 + Math.sqrt(0.75) * r.normal(); a.push(z1); b.push(Math.exp(z2)); c.push(z3 * 3 + 10); }
+      SM.app.addTable(new SM.Table({ name: 'Three charts', source: 'simulated', columns: [{ name: 'a', dataType: 'numeric', values: a }, { name: 'b', dataType: 'numeric', values: b }, { name: 'c', dataType: 'numeric', values: c }] }));
+    })()''')
+    runs = [
+        ('Drought, Clayton shown, two rows excluded', 'Drought', [X, Y], [1, 4], {'margins': True, 'tails': True, 'shown': 'clayton', 'simCompare': {'n': 300, 'seed': 3, 'scale': 'data'}}, {}),
+        ('Drought, normal scores, survival Gumbel, a normal and an empirical margin', 'Drought', [X, Y], [], {'margins': True, 'scale': 'normal', 'shown': 'gumbel180', 'simCompare': {'n': 200, 'seed': 5, 'scale': 'uniform'}},
+         {X: 'normal', Y: 'empirical'}),
+        ('Drought, from Kendall\'s τ, the t copula shown', 'Drought', [X, Y], [], {'method': 'itau', 'tails': True, 'shown': 't', 'margins': True, 'simCompare': {'n': 150, 'seed': 2, 'scale': 'data'}}, {}),
+        ('three columns, the pair b and c', 'Three charts', ['a', 'b', 'c'], [], {'pair': [1, 2], 'margins': True, 'shown': 'gaussian'}, {}),
+    ]
+    for label, tname, ys, excl, options, margins in runs:
+        tj = f"SM.app.tables.find((t) => t.name === {json.dumps(tname)})"
+        if excl:
+            await page.ev(f"{tj}.setState({json.dumps(excl)}, 'excluded', true)")
+        r = await page.ev(f'''(async () => {{ const t = {tj}; SM.app.showTab(SM.app.tabOf(t)); const o = {json.dumps(options)};
+          for (const [n, v] of Object.entries({json.dumps(margins)})) o[t.col(n).id + '|marginFamily'] = v;
+          const rep = SM.app.openReport(SM.platforms.get('copula'), {{ roles: {{ y: {json.dumps(ys)}.map((n) => t.col(n).id) }}, options: o }}, t);
+          await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep));
+          return {{ g: await __gr.graphs(rep), ann: __kc.ann(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=1200)
+        if excl:
+            await page.ev(f"{tj}.setState({json.dumps(excl)}, 'excluded', false)")
+        if not isinstance(r, dict):
+            check(f'charts: {label}: the report', r, 'opens')
+            continue
+        check(f'charts: {label}: no errors', r['errors'], [])
+        check(f'charts: {label}: every graph of the report drawn', r['undrawn'], [])
+        labels = [g['label'] for g in r['g']]
+        want = (['Scatterplot matrix of the pseudo-observations'] if len(ys) > 2 else []) + [f'Pseudo-observations of {ys[options.get("pair", [0, 1])[0]]} and {ys[options.get("pair", [0, 1])[1]]}']
+        check(f'charts: {label}: the graphs begin as the page\'s', labels[:len(want)], want)
+        for g, ann in zip(r['g'], r['ann']):
+            lab = f'charts: {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if excl:
+                check(f'{lab}: the code leaves out the excluded rows', f'df = df.drop(index={excl})' in g['code'], True)
+            F, V, err = await run_more(page, g, tj, ('z',))
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            t0 = g['traces']
+            if g['label'].startswith('Pseudo-observations') or g['label'].endswith('with the joint model'):
+                ax = F['axes'][0]
+                pts = [t for t in t0 if t.get('mode') == 'markers' and t.get('name') in ('Pseudo-observations', 'Data')][0]
+                # normal scores: the page's Φ⁻¹ is Acklam's approximation (relative error 1.2e-9), the code's scipy's
+                check(f'{lab}: the points, the page\'s', pts_gap(ax['scatter'][0]['xy'], pts, 1e-8) < 1e-9, True)
+                cons = [t for t in t0 if t.get('type') == 'contour']
+                tol = 1e-3 if g['label'].endswith('joint model') else 1e-7   # the joint model's margins: scipy's fit against the report's refinement of it
+                check(f'{lab}: the contour levels, the page\'s', rgap(levels_of(ax), [t['contours']['start'] for t in cons]) < tol, True)
+                if cons:
+                    check(f'{lab}: the density grid under them, the page\'s', rgap(V.get('z'), flat(cons[0]['z'])) < tol, True)
+                check(f'{lab}: the axis titles and the title', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+            elif g['label'].startswith('Scatterplot matrix'):
+                cells = [a for a in F['axes'] if a['shown']]
+                sc = [t for t in t0 if t.get('mode') == 'markers']
+                check(f'{lab}: a cell for each pair', len(cells), len(sc))
+                ok_p = all(pts_gap(a['scatter'][0]['xy'], t, 1e-8) < 1e-9 for a, t in zip(cells, sc))
+                check(f'{lab}: each cell\'s points, the page\'s', ok_p, True)
+                ok_l = True
+                for a, t in zip(cells, sc):
+                    cons = [c for c in t0 if c.get('type') == 'contour' and c.get('xaxis') == t.get('xaxis') and c.get('yaxis') == t.get('yaxis')]
+                    ok_l &= rgap(levels_of(a), [c['contours']['start'] for c in cons]) < 1e-7
+                check(f'{lab}: each cell\'s contour levels, the page\'s', ok_l, True)
+                check(f'{lab}: the title', F['suptitle'], g['label'])
+            elif g['label'].startswith('Tail concentration'):
+                panels = [a for a in F['axes'] if a['shown']]
+                check(f'{lab}: a panel for each copula, titled as the page\'s', [a['title'] for a in panels], ann)
+                data_t = [t for t in t0 if t.get('name') == 'Data']
+                line_t = [t for t in t0 if t.get('mode') == 'lines']
+                ok_d = all(pts_gap(a['scatter'][0]['xy'], d) < 1e-12 for a, d in zip(panels, data_t))
+                check(f'{lab}: the data\'s dots in each panel, the page\'s', ok_d, True)
+                ok_l = all(rgap([ln for ln in a['lines'] if ln['color'].startswith('#b0413e')][0]['y'], t['y']) < 1e-7 for a, t in zip(panels, line_t))
+                check(f'{lab}: each copula\'s line, the page\'s', ok_l, True)
+                check(f'{lab}: the title', F['suptitle'], g['label'])
+            elif g['label'].endswith('histogram with its margin'):
+                ax = F['axes'][0]
+                b = [t for t in t0 if t.get('type') == 'bar' and t.get('name')][0]
+                check(f'{lab}: the bars, the page\'s', rgap([q['x'] + q['w'] / 2 for q in ax['bars']], b['x']) < 1e-9 and [q['h'] for q in ax['bars']] == list(b['y']) and rgap([ax['bars'][0]['w']], [b['width']]) < 1e-12, True)
+                cv = [t for t in t0 if t.get('mode') == 'lines']
+                check(f'{lab}: the margin\'s curve, the page\'s', bool(cv) and rgap(ax['lines'][0]['x'], cv[0]['x']) < 1e-9 and rgap(ax['lines'][0]['y'], cv[0]['y']) < 1e-3, True)
+                check(f'{lab}: the axis titles and the title', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+            else:
+                ax = F['axes'][0]
+                sim = [t for t in t0 if t.get('name') == 'Simulated'][0]
+                obs = [t for t in t0 if t.get('name') == 'Observed'][0]
+                got = {x['label']: x['xy'] for x in ax['scatter']}
+                uniform = options['simCompare']['scale'] == 'uniform'
+                check(f'{lab}: the draws, the page\'s (the same seed)', pts_gap(got.get('Simulated'), sim) < (1e-9 if uniform else 1e-3), True)
+                check(f'{lab}: the observed rows, the page\'s', pts_gap(got.get('Observed'), obs) < 1e-12, True)
+                check(f'{lab}: the legend, the axis titles, the title', (F['legend'], ax['xlabel'], ax['ylabel'], ax['title']), (['Simulated', 'Observed'], g['titles']['x'], g['titles']['y'], g['label']))
+        await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
 
 
 asyncio.run(main())

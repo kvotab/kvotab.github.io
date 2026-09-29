@@ -559,6 +559,32 @@ def _code_standardize(S):
             f'teff = TreatmentEffect(sm.OLS(y, standardize(X)), t, results_select={fit}(t, standardize(Z)).fit(disp=0))']
 
 
+def _balance_lines(S):
+    """The code of the balance of each covariate: a function of the weights,
+    and the covariates as the page lists them (a level of a categorical one
+    as its 0/1 indicator)."""
+    lines = ['def balance(x, w, binary):',
+             '    """Treated minus control: the standardized mean difference and the variance ratio, with weights w."""',
+             '    def mv(x, w):',
+             '        m = np.average(x, weights=w)',
+             '        if binary:',
+             '            return m, m * (1 - m)',
+             '        return m, np.sum(w * (x - m) ** 2) * w.sum() / (w.sum() ** 2 - np.sum(w ** 2))',
+             '    (m1, v1), (m0, v0) = mv(x[t == 1], w[t == 1]), mv(x[t == 0], w[t == 0])',
+             '    return (m1 - m0) / np.sqrt((v1 + v0) / 2), (None if binary else v1 / v0)',
+             '',
+             'covariates = {   # name: (values, whether a level\'s 0/1 indicator)']
+    for name, (kind, s, lv) in _covariate_frame(S).items():
+        if kind == 'cat':
+            src = f'd[{J(name)}]' if all(isinstance(v, str) for v in lv) else f'd[{J(name)}].astype(float)'
+            for v in lv:
+                lines.append(f'    {J(f"{name}[{_lvtext(v)}]")}: (({src} == {_lit(v)}).to_numpy(float), True),')
+        else:
+            lines.append(f'    {J(name)}: (d[{J(name)}].to_numpy(float), False),')
+    lines.append('}')
+    return lines
+
+
 # ---- the entry points --------------------------------------------------------------------------
 
 def _guard(fn):
@@ -603,27 +629,9 @@ def fit(table, y, treatment, treated=None, outcome=None, covariates=None, rows=N
               'p = ps.predict()   # the propensity scores',
               'w = t / p + (1 - t) / (1 - p)   # IPW weights (for the ATE)',
               'w_att = t + (1 - t) * p / (1 - p)   # weights for the effect on the treated',
-              '',
-              'def balance(x, w, binary):',
-              '    """Treated minus control: the standardized mean difference and the variance ratio, with weights w."""',
-              '    def mv(x, w):',
-              '        m = np.average(x, weights=w)',
-              '        if binary:',
-              '            return m, m * (1 - m)',
-              '        return m, np.sum(w * (x - m) ** 2) * w.sum() / (w.sum() ** 2 - np.sum(w ** 2))',
-              '    (m1, v1), (m0, v0) = mv(x[t == 1], w[t == 1]), mv(x[t == 0], w[t == 0])',
-              '    return (m1 - m0) / np.sqrt((v1 + v0) / 2), (None if binary else v1 / v0)',
-              '',
-              'covariates = {   # name: (values, whether a level\'s 0/1 indicator)']
-    for name, (kind, s, lv) in _covariate_frame(S).items():
-        if kind == 'cat':
-            src = f'd[{J(name)}]' if all(isinstance(v, str) for v in lv) else f'd[{J(name)}].astype(float)'
-            for v in lv:
-                lines.append(f'    {J(f"{name}[{_lvtext(v)}]")}: (({src} == {_lit(v)}).to_numpy(float), True),')
-        else:
-            lines.append(f'    {J(name)}: (d[{J(name)}].to_numpy(float), False),')
-    lines += ['}',
-              'one = np.ones(len(t))',
+              '']
+    lines += _balance_lines(S)
+    lines += ['one = np.ones(len(t))',
               'smd = pd.DataFrame({name: [*balance(x, one, b), *balance(x, w, b)] for name, (x, b) in covariates.items()},',
               '                   index=["SMD", "Variance Ratio", "SMD (weighted)", "Variance Ratio (weighted)"]).T',
               'print(smd)',
@@ -732,3 +740,185 @@ def outcome_models(table, y, treatment, treated=None, outcome=None, covariates=N
               f'print(fits[0].summary(alpha={alpha!r}))   # control: least squares, HC0 standard errors',
               f'print(fits[1].summary(alpha={alpha!r}))   # treated']
     return {'groups': groups, 'code': '\n'.join(lines), 'alpha': alpha}
+
+
+# ---- the graphs as matplotlib code --------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the
+# models fitted as the report fits them, the light theme's colours, the
+# graph's size at 100 pixels an inch. The page sends what it chose (bins,
+# mirrored or overlaid, the balance threshold and order, the estimators it
+# shows); treatment.plot_code writes the code of one graph.
+TREATED, CONTROL = '#b8406e', '#2e6fba'
+TEXT, MUTED, GRID, SURFACE, ACCENT = '#352921', '#786b5d', '#e0d7ce', '#fcf7f2', '#bb6c5d'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _area(px):
+    return f'{(px * PX) ** 2:.3g}'
+
+
+def _labels(S):
+    return f'{S.t_name} = {_lvtext(S.treated)}', f'{S.t_name} = {_lvtext(S.control)}'
+
+
+def _legend_line():
+    return f'fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize={_pt(11)})'
+
+
+def _hist_lines(v, bins, mirror, S, what):
+    """Two groups' histograms of the values v (a name in the code), mirrored
+    (the controls below the axis) or overlaid, in the page's bins."""
+    lab_t, lab_c = _labels(S)
+    start, end, size = float(bins['start']), float(bins['end']), float(bins['size'])
+    nb = max(1, int(round((end - start) / size)))
+    c = [f'start, end, size, nb = {start!r}, {end!r}, {size!r}, {nb}   # the page\'s bins{what}',
+         f'ok = np.isfinite({v})   # a weight of a row predicted with certainty is infinite: not drawn',
+         f'k = np.clip(np.floor(({v}[ok] - start) / size + 1e-9), 0, nb - 1).astype(int)   # each row\'s bin, as the page counts',
+         'n1, n0 = np.bincount(k[t[ok] == 1], minlength=nb), np.bincount(k[t[ok] == 0], minlength=nb)   # the treated and the controls in each bin',
+         'mids = start + (np.arange(nb) + 0.5) * size',
+         'fig, ax = plt.subplots(figsize=(4.7, 2.8), layout="constrained")',
+         f'ax.bar(mids, n1, width=size, color="{TREATED}", edgecolor="{SURFACE}", linewidth={_pt(0.8)}{"" if mirror else ", alpha=0.62"}, label={J(lab_t)})']
+    if mirror:
+        c += [f'ax.bar(mids, -n0, width=size, color="{CONTROL}", edgecolor="{SURFACE}", linewidth={_pt(0.8)}, label={J(lab_c)})   # mirrored: the controls below the axis',
+              'top = max(1, n1.max(), n0.max())',
+              'ax.set_ylim(-1.1 * top, 1.1 * top)',
+              'ax.yaxis.set_major_formatter(lambda v, pos: f"{abs(v):g}")   # counts on both sides of the axis',
+              f'ax.axhline(0, color="{TEXT}", linewidth={_pt(1)})']
+    else:
+        c += [f'ax.bar(mids, n0, width=size, color="{CONTROL}", edgecolor="{SURFACE}", linewidth={_pt(0.8)}, alpha=0.62, label={J(lab_c)})   # overlaid',
+              'ax.set_ylim(bottom=0)']
+    c += ['ax.set_xlim(start, end)', 'ax.set_ylabel("Count")']
+    return c
+
+
+def _weights_line(which):
+    if which == 'att':
+        return 'w = t + (1 - t) * p / (1 - p)   # ATT weights: a treated row 1, a control p/(1 − p)'
+    return 'w = t / p + (1 - t) / (1 - p)   # IPW weights: a treated row 1/p, a control 1/(1 − p)'
+
+
+def _overlap_code(S, table, table_name, rows, plot):
+    c = _code_prep(S, table, table_name, rows, ['import matplotlib.pyplot as plt'])
+    c.append('p = ps.predict()   # the propensity scores' + (' of the rows left, from the model refitted on them' if S.trim and S.trim['n_dropped'] else ''))
+    size = float(plot.get('size') or 0.05)
+    c += _hist_lines('p', {'start': 0.0, 'end': 1.0, 'size': size}, plot.get('mirror', True) is not False, S, f' (bin width {size:g})')
+    if plot.get('support', True) is not False:
+        c += ['lo, hi = max(p[t == 1].min(), p[t == 0].min()), min(p[t == 1].max(), p[t == 0].max())   # the common support: where both groups have scores',
+              'if lo <= hi:   # outside it, shaded',
+              '    if lo > 0:',
+              '        ax.axvspan(0, lo, color="#5a5046", alpha=0.09, linewidth=0)',
+              '    if hi < 1:',
+              '        ax.axvspan(hi, 1, color="#5a5046", alpha=0.09, linewidth=0)']
+    if S.trim:
+        c.append(f'for e in ({S.eps!r}, {1 - S.eps!r}):   # the trimming thresholds, ε and 1 − ε')
+        c.append(f'    ax.axvline(e, color="{ACCENT}", linewidth={_pt(1.3)}, linestyle="--")')
+    lab_t, _ = _labels(S)
+    c += [f'ax.set_xlabel({J(f"Propensity Score, P({lab_t})")})', _legend_line(), 'ax.set_title("propensity score overlap")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _weights_code(S, table, table_name, rows, plot):
+    which = 'att' if plot.get('wtype') == 'att' else 'ate'
+    c = _code_prep(S, table, table_name, rows, ['import matplotlib.pyplot as plt'])
+    c += ['p = ps.predict()   # the propensity scores', _weights_line(which)]
+    c += _hist_lines('w', plot.get('bins') or {'start': 0.0, 'end': 1.0, 'size': 1.0}, plot.get('mirror', True) is not False, S, '')
+    c += [f'ax.set_xlabel("{"ATT Weight" if which == "att" else "IPW Weight"}")', _legend_line(), 'ax.set_title("weights histogram")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _love_code(S, table, table_name, rows, plot):
+    which = 'att' if plot.get('suffix') == '_att' else 'ate'
+    thr = float(plot.get('thr') or 0.1)
+    c = _code_prep(S, table, table_name, rows, ['import matplotlib.pyplot as plt'])
+    c += ['p = ps.predict()   # the propensity scores', _weights_line(which), '']
+    c += _balance_lines(S)
+    c += ['one = np.ones(len(t))',
+          'smd = {name: (abs(balance(x, one, b)[0]), abs(balance(x, w, b)[0])) for name, (x, b) in covariates.items()}   # |SMD| unweighted, weighted']
+    if plot.get('sort', True) is not False:
+        c.append('names = sorted(smd, key=lambda name: -smd[name][0])   # Sort by Unweighted |SMD|: the largest first')
+    else:
+        c.append('names = list(smd)   # in the order of the covariates')
+    k = len(_balance_names(S))
+    c += ['a, b = np.array([smd[nm][0] for nm in names]), np.array([smd[nm][1] for nm in names])',
+          'yy = np.arange(len(names))',
+          f'fig, ax = plt.subplots(figsize=(4.2, {max(200, 76 + 24 * k) / 100:g}), layout="constrained")',
+          f'ax.hlines(yy, np.minimum(a, b), np.maximum(a, b), color="{GRID}", linewidth={_pt(1.4)})',
+          f'ax.scatter(a, yy, s={_area(9)}, facecolors="none", edgecolors="{MUTED}", linewidths={_pt(1.8)}, label="Unweighted")',
+          f'ax.scatter(b, yy, s={_area(9)}, color="{CONTROL}", label="Weighted ({"ATT weights" if which == "att" else "IPW weights"})")',
+          f'thr = {thr!r}   # the balance threshold (Set Threshold…)',
+          f'ax.axvline(thr, color="{ACCENT}", linewidth={_pt(1.3)}, linestyle="--")',
+          'ax.set_yticks(yy, names); ax.invert_yaxis()   # the first at the top',
+          'ax.set_xlim(0, max(thr * 1.4, a.max(), b.max()) * 1.06)',
+          'ax.set_xlabel("|Standardized Mean Difference|")', _legend_line(), 'ax.set_title("Love plot")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _balance_names(S):
+    out = []
+    for name, (kind, s, lv) in _covariate_frame(S).items():
+        out += [f'{name}[{_lvtext(v)}]' for v in lv] if kind == 'cat' else [name]
+    return out
+
+
+def _estimates_code(S, table, table_name, rows, plot, alpha):
+    ate = [k for k, _ in ESTIMATORS if k in (plot.get('ate') or [])]
+    att = [k for k, _ in ESTIMATORS if k in (plot.get('att') or []) and k in ATT_OK]
+    patch = any(k in ('aipw_wls', 'ipw_ra') for k in ate + att)
+    imports = ['import matplotlib.pyplot as plt'] + (['import inspect', 'import statsmodels.treatment.treatment_effects as te'] if patch else []) + [
+        'from statsmodels.stats.weightstats import CompareMeans, DescrStatsW', 'from statsmodels.treatment.treatment_effects import TreatmentEffect']
+    c = _code_prep(S, table, table_name, rows, imports)
+    if patch:
+        c += ['# statsmodels 0.14 takes the last six parameters as the propensity model\'s in the moment conditions of AIPW (WLS)',
+              f'# and IPW-RA, right only for a model with six (this one has {S.Z.shape[1]}); give them the ones after the outcome models\':',
+              'for name in ("_AIPWWLSGMM", "_IPWRAGMM"):',
+              '    src = inspect.getsource(getattr(te, name))',
+              '    exec(src.replace("params[-6:]", "params[2 * k + 1:]"), te.__dict__)']
+    c += _code_standardize(S)
+    c.append('ate = {' + ', '.join(f'{J(LABEL[k])}: teff.{k}()' for k in ate) + '}   # the average effect (ATE): GMM standard errors')
+    if att:
+        c.append('att = {' + ', '.join(f'{J(LABEL[k] + " (ATT)")}: teff.{k}(effect_group=1)' for k in att) + '}   # the effect on the treated')
+    c += ['cm = CompareMeans(DescrStatsW(y[t == 1]), DescrStatsW(y[t == 0]))',
+          f'lo, hi = cm.zconfint_diff(alpha={alpha!r}, usevar="unequal")   # the difference in means, unadjusted',
+          'items = [("Difference in Means", y[t == 1].mean() - y[t == 0].mean(), lo, hi, "naive")]',
+          'for kind, res in (("ate", ate), ("att", att)):' if att else 'for kind, res in (("ate", ate),):',
+          '    for name, r in res.items():',
+          f'        ci = np.asarray(r.conf_int(alpha={alpha!r}))',
+          '        items.append((name, r.effect[0], ci[0, 0], ci[0, 1], kind))',
+          f'fig, ax = plt.subplots(figsize=(4.7, {max(190, 72 + 26 * (1 + len(ate) + len(att))) / 100:g}), layout="constrained")',
+          f'style = {{"naive": ("Unadjusted", "s", "none", "{MUTED}"), "ate": ("ATE", "o", "{TEXT}", "{TEXT}"), "att": ("ATT", "D", "{ACCENT}", "{ACCENT}")}}',
+          'for kind, (label, marker, face, color) in style.items():',
+          '    at = [i for i, it in enumerate(items) if it[4] == kind]',
+          '    if at:',
+          '        e, l, u = (np.array([items[i][j] for i in at]) for j in (1, 2, 3))',
+          f'        ax.errorbar(e, at, xerr=[e - l, u - e], fmt=marker, mfc=face, mec=color, color=color, ecolor=color, elinewidth={_pt(1.5)}, capsize={_pt(2.5)}, markersize={_pt(9)}, label=label)',
+          'ax.set_yticks(range(len(items)), [it[0] for it in items]); ax.invert_yaxis()   # the first at the top',
+          'if min(it[2] for it in items) < 0 < max(it[3] for it in items):',
+          f'    ax.axvline(0, color="{MUTED}", linewidth={_pt(1)}, linestyle=":")   # no effect',
+          f'ax.set_xlabel({J(f"Effect on {S.y_name}")})', _legend_line(), 'ax.set_title("estimate comparison")', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('treatment.plot_code')
+@_guard
+def plot_code(table, y, treatment, kind='overlap', plot=None, treated=None, outcome=None, covariates=None, rows=None, link='logit', trim=None,
+              alpha=0.05, table_name='data'):
+    """The Python that draws one of the report's graphs with matplotlib (kind:
+    overlap, weights, love, estimates), from what the page chose (plot)."""
+    S = _sample(table, y, treatment, treated, outcome, covariates, rows, link, trim)
+    plot = plot or {}
+    if kind == 'overlap':
+        code = _overlap_code(S, table, table_name, rows, plot)
+    elif kind == 'weights':
+        code = _weights_code(S, table, table_name, rows, plot)
+    elif kind == 'love':
+        code = _love_code(S, table, table_name, rows, plot)
+    elif kind == 'estimates':
+        code = _estimates_code(S, table, table_name, rows, plot, alpha)
+    else:
+        raise UserError(f'no graph {kind!r}')
+    return {'plot_code': code}

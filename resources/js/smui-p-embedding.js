@@ -81,6 +81,82 @@
     return { cat: false, col: c, range, color: (r) => { const v = c.values[r]; if (!Number.isFinite(v) || !range) return grey; return SM.util.ramp(range[1] > range[0] ? (v - range[0]) / (range[1] - range[0]) : 0.5); }, text: (r) => (Number.isFinite(c.values[r]) ? fmt(c.values[r]) : '.') };
   }
 
+  /* ---- the map as matplotlib code ------------------------------------------------------
+     Under the map, Python that draws it with matplotlib from a CSV export of the
+     table, as the notebook runs it: the backend's lines (res.map_head: the
+     report's rows and the t-SNE fit, the same seed), then the colours computed
+     from the Color column as the page computes them (the palette by level, or
+     the blue-grey-red ramp over its range; the rows' own colours are the
+     table's, not the code's), the light theme's, the graph's size at 100
+     pixels an inch. */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+  const pyList = (a) => `[${a.join(', ')}]`;
+  const inches = (px) => String(Math.round(px) / 100);
+  const area = (px) => Math.round(100 * (px * 0.72) ** 2) / 100;   // a marker's diameter in pixels as matplotlib's area in points²
+  const GREY = '#aaaaaa';
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-emb-plotcode' }, graph, code) : graph);
+
+  function colorLines(ctx, C, rows) {
+    if (!C) return ['color = "#2f6690"   # the points\' colour (the rows\' own colours are the table\'s)'];
+    const c = J(C.col.name);
+    if (C.cat) {
+      const present = new Set(rows.map((r) => C.col.values[r]).filter((v) => !SM.table.isMissing(v)));
+      const lv = ctx.table.levels(C.col).filter((v) => present.has(v));
+      return [`levels = ${pyList(lv.map(pyLit))}   # the levels of ${C.col.name} in these rows, in the table's order`,
+        `palette = ${pyList(lv.map((_, i) => J(PALETTE[i % PALETTE.length])))}   # a colour for each, the page's palette`,
+        'color_of = dict(zip(levels, palette))',
+        `color = [color_of.get(v, "${GREY}") for v in df.loc[d.index, ${c}]]   # grey: a missing value`];
+    }
+    return [`v = df.loc[d.index, ${c}].to_numpy(float)`, 'fin = np.isfinite(v)',
+      'lo, hi = (v[fin].min(), v[fin].max()) if fin.any() else (0.0, 1.0)', '', '',
+      'def ramp(t):',
+      '    """The page\'s blue-grey-red colour of t from 0 (low) to 1 (high)."""',
+      '    stops = [(47, 110, 199), (176, 176, 176), (192, 57, 43)]',
+      '    k, u = (0, t / 0.5) if t < 0.5 else (1, (t - 0.5) / 0.5)',
+      '    return "#" + "".join(f"{int(np.floor(a + u * (b - a) + 0.5)):02x}" for a, b in zip(stops[k], stops[k + 1]))', '', '',
+      `color = [ramp((x - lo) / (hi - lo) if hi > lo else 0.5) if ok else "${GREY}" for x, ok in zip(v, fin)]   # grey: a missing value`];
+  }
+
+  function legendLines(C, right) {
+    if (!C) return [];
+    if (C.cat) {
+      return ['for lab, col_ in zip(' + pyList(C.labels.slice(0, 40).map((l) => J(l))) + ', palette):   # the legend: each level\'s colour',
+        `    ax.scatter([], [], s=${area(8)}, color=col_, label=lab)`,
+        right ? `ax.legend(title=${J(C.col.name)}, loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=7.5)`
+          : `fig.legend(title=${J(C.col.name)}, loc="outside upper center", ncols=4, frameon=False, fontsize=7.5)`];
+    }
+    return ['from matplotlib.cm import ScalarMappable', 'from matplotlib.colors import LinearSegmentedColormap',
+      'ramp_map = LinearSegmentedColormap.from_list("ramp", ["#2f6ec7", "#b0b0b0", "#c0392b"])   # the same blue-grey-red',
+      `fig.colorbar(ScalarMappable(norm=plt.Normalize(lo, hi), cmap=ramp_map), ax=ax, shrink=0.7, label=${J(C.col.name)})`];
+  }
+
+  function mapCode(ctx, res, C, { view, size, W, H, room }) {
+    const L = [res.map_head, '', ...colorLines(ctx, C, res.rows)];
+    const n = res.names;
+    if (res.dimension === 3 && view === 'pairs') {
+      L.push(`fig, axs = plt.subplots(2, 2, figsize=(${inches(W)}, ${inches(W)}), sharex="col", sharey="row", layout="constrained")`,
+        'axs[0][1].set_axis_off()', 'cells = [(axs[0][0], 1, 0), (axs[1][0], 2, 0), (axs[1][1], 2, 1)]   # each dimension against each one before it',
+        `names = ${pyList(n.map((x) => J(x)))}`,
+        'for ax, i, j in cells:', `    ax.scatter(E[:, j], E[:, i], s=${area(Math.max(2.5, size - 1))}, color=color, linewidths=0)`,
+        '    if i == 2:', '        ax.set_xlabel(names[j])', '    if j == 0:', '        ax.set_ylabel(names[i])', 'ax = axs[0][0]',
+        ...(C && C.cat ? ['for lab, col_ in zip(' + pyList(C.labels.slice(0, 40).map((l) => J(l))) + ', palette):   # the legend: each level\'s colour',
+          `    ax.scatter([], [], s=${area(8)}, color=col_, label=lab)`, `fig.legend(title=${J(C.col.name)}, loc="upper right", bbox_to_anchor=(0.98, 0.98), frameon=False, fontsize=7.5)`] : legendLines(C, true)),
+        'fig.suptitle("t-SNE map, three dimensions in pairs", fontsize=10)', 'plt.show()');
+    } else if (res.dimension === 3) {
+      L.push(`fig = plt.figure(figsize=(${inches(W)}, ${inches(H)}), layout="constrained")`, 'ax = fig.add_subplot(projection="3d")',
+        `ax.scatter(E[:, 0], E[:, 1], E[:, 2], s=${area(size - 1)}, color=color, linewidths=0)`,
+        `ax.set_xlabel(${J(n[0])})`, `ax.set_ylabel(${J(n[1])})`, `ax.set_zlabel(${J(n[2])})`, ...legendLines(C, true),
+        'ax.set_title("t-SNE map, three dimensions")', 'plt.show()');
+    } else {
+      L.push(`fig, ax = plt.subplots(figsize=(${inches(W)}, ${inches(H)}), layout="constrained")`,
+        `ax.scatter(E[:, 0], E[:, 1], s=${area(size)}, color=color, linewidths=0)`, ...legendLines(C, room >= 560),
+        `ax.set_xlabel(${J(n[0])})`, `ax.set_ylabel(${J(n[1])})`, 'ax.set_title("t-SNE map")', 'plt.show()');
+    }
+    return L.join('\n');
+  }
+
   /* ---- the payload: every option that changes the map -------------------------------- */
   function payloadOf(ctx) {
     const o = (k, d) => ctx.opt(k, d);
@@ -88,7 +164,7 @@
     return {
       columns: ctx.names('y'), dimension: Number(o('dimension', 2)) === 3 ? 3 : 2, perplexity: Number(o('perplexity', 30)) || 30,
       max_iter: Math.round(Number(o('iterations', 1000)) || 1000), learning_rate: lr === '' || lr == null ? 'auto' : String(lr),
-      init: o('init', 'pca'), standardize: !!o('standardize', true), seed: SM.predict.seed(ctx),
+      init: o('init', 'pca'), standardize: !!o('standardize', true), seed: SM.predict.seed(ctx), where: ctx.where || [],
     };
   }
 
@@ -147,16 +223,18 @@
     const size = n > 3000 ? 3 : n > 1000 ? 4 : 5.5;
     const colors = C ? rows.map((r) => C.color(r)) : null;
     const room = roomOf(ctx);
-    let box;
+    let box, W, H;
     const view = view3d(ctx);
     if (res.dimension === 3 && view === 'pairs') {
       box = pairsPlot(ctx, res, { rows, colors, hover, size, C, room });
+      W = H = Math.min(620, room);
     } else if (res.dimension === 3) {
       const tc = SM.util.themeColors();
       const X = res.coords.map((c) => c[0]), Y = res.coords.map((c) => c[1]), Z = res.coords.map((c) => c[2]);
       const base = colors || SM.report.BASE;
       const ax = (name) => ({ title: { text: name }, gridcolor: tc.grid, zerolinecolor: tc.grid, linecolor: tc.muted, color: tc.text, showbackground: false, backgroundcolor: 'rgba(0,0,0,0)' });
       const w = Math.min(720, room);
+      W = w; H = Math.round(Math.min(600, w * 0.85));
       box = ctx.plot([{ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: size - 1, color: base, line: { width: 0 } }, hovertext: hover, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }],
         { scene: { xaxis: ax(res.names[0]), yaxis: ax(res.names[1]), zaxis: ax(res.names[2]), bgcolor: 'rgba(0,0,0,0)', aspectmode: 'cube' }, margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } },
         { width: w, height: Math.round(Math.min(600, w * 0.85)), title: 't-SNE map, three dimensions', rowColors: !C });
@@ -167,13 +245,14 @@
       traces.push(...legendTraces(C));
       const legendRight = C && C.cat && room >= 560;
       const w = Math.min(640, room);
+      W = w; H = Math.round(Math.min(520, Math.max(300, w * 0.85)));
       box = ctx.plot(traces, {
         showlegend: !!(C && C.cat), legend: legendRight ? { orientation: 'v', x: 1.02, y: 1, title: { text: T(C.col.name) } } : { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
         xaxis: { title: { text: res.names[0] }, zeroline: false }, yaxis: { title: { text: res.names[1] }, zeroline: false },
         margin: { l: 52, r: legendRight ? 130 : (C && !C.cat ? 70 : 12), t: C && C.cat && !legendRight ? 34 : 8, b: 42 },
       }, { width: w, height: Math.round(Math.min(520, Math.max(300, w * 0.85))), title: 't-SNE map', rowColors: !C });
     }
-    ob.add(ctx.row(box));
+    ob.add(ctx.row(withCode(box, ctx.code(mapCode(ctx, res, C, { view, size, W, H, room })))));
     if (res.dimension === 3 && view !== 'pairs' && C) ob.add(htmlLegend(C));
     if (res.dimension === 3 && view === 'pairs' && ctx.opt('view3d', null) == null) ob.add(ctx.note('This browser has no WebGL, which a turning 3-D plot needs: the three dimensions are drawn in pairs.'));
     const how = C ? `coloured by ${C.col.name}${C.cat ? '' : ' (blue low, red high)'}` : 'in the rows\' colours (Rows > Color or Mark by Column, or Color By in the red triangle)';

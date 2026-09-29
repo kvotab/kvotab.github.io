@@ -89,6 +89,19 @@
     return m;
   }
 
+  /* ---- the graphs' code -------------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export
+     of the table: counts.plot_code writes it, the model fitted as the
+     report fits it, from what the page chose (the rootogram's style and
+     ticks, the models of an overlay, the residuals' seed). A headless run
+     (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-cr-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, base, kind, extra) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('counts.plot_code', { ...base, kind, ...extra });
+    return r && !r.error ? r.plot_code : null;
+  }
+
   function countLabels(d) {
     const K = d.k.length - 1;
     return d.k.map((v, i) => (i === K && d.tail ? `≥${v}` : String(v)));
@@ -109,7 +122,7 @@
       return;
     }
     if (ctx.opt('comparison', true)) await comparison(ctx, parent, base, keys);
-    if (ctx.opt('rootogram', true)) rootograms(ctx, parent, y, ok, fits);
+    if (ctx.opt('rootogram', true)) await rootograms(ctx, parent, y, ok, fits, base);
     if (ctx.opt('countTable', true)) countTable(ctx, parent, y, ok, fits);
     for (const k of keys) await modelOutline(ctx, parent, y, base, k, fits[k]);
   }
@@ -191,7 +204,7 @@
       customdata: f.dist.expected, hovertemplate: `${SHORT[key]}: expected %{customdata:.4~g}<extra></extra>`, name: SHORT[key], showlegend: !!legend };
   }
 
-  function rootograms(ctx, parent, y, keys, fits) {
+  async function rootograms(ctx, parent, y, keys, fits, base) {
     const P = pal();
     const style = ctx.opt('rootStyle', 'hanging');
     const overlay = ctx.opt('rootOverlay', false);
@@ -206,18 +219,23 @@
     if (f0.dist.tail) tv.push(K);
     const xaxis = { title: { text: y.name }, tickmode: 'array', tickvals: tv, ticktext: tv.map((v) => lab[v]), zeroline: false };
     const shapes = [hline(0, P.muted)];
+    const ticks = { tickvals: tv, ticktext: tv.map((v) => lab[v]) };
     if (overlay) {
       const traces = [rootBars(f0, 'standing', mem), ...keys.map((k) => rootCurve(fits[k], k, true))];
-      ob.add(ctx.plot(traces, { xaxis, yaxis: { title: { text: '√Frequency' } }, shapes, showlegend: true, legend: { orientation: 'h', y: -0.25 }, bargap: 0.1, margin: { l: 52, r: 12, t: 8, b: 70 } },
-        { width: W(520), height: 320, title: `${y.name} rootogram, the models overlaid` }),
+      const code = await plotCode(ctx, base, 'overlay', { models: keys, plot: { ...ticks, width: 520 } });
+      ob.add(withCode(ctx, ctx.plot(traces, { xaxis, yaxis: { title: { text: '√Frequency' } }, shapes, showlegend: true, legend: { orientation: 'h', y: -0.25 }, bargap: 0.1, margin: { l: 52, r: 12, t: 8, b: 70 } },
+        { width: W(520), height: 320, title: `${y.name} rootogram, the models overlaid` }), code),
       ctx.note('Standing bars: √(observed frequency) of each count; lines: √(expected frequency) under each model.'));
     } else {
-      const plots = keys.map((k) => {
+      const width = keys.length > 1 ? 340 : 440;
+      const plots = [];
+      for (const k of keys) {
         const traces = [rootBars(fits[k], style, mem)];
         if (style !== 'suspended') traces.push(rootCurve(fits[k], k, false));
-        return ctx.plot(traces, { title: { text: LABEL[k], font: { size: 11.5 } }, xaxis, yaxis: { title: { text: style === 'suspended' ? '√Expected − √Observed' : '√Frequency' } }, shapes, bargap: 0.1, margin: { l: 52, r: 10, t: 28, b: 42 } },
-          { width: W(keys.length > 1 ? 340 : 440), height: 270, title: `${y.name} ${STYLES.find((s) => s[0] === style)[1].toLowerCase()} rootogram, ${SHORT[k]}` });
-      });
+        const code = await plotCode(ctx, base, 'rootogram', { model: k, plot: { ...ticks, style, width } });
+        plots.push(withCode(ctx, ctx.plot(traces, { title: { text: LABEL[k], font: { size: 11.5 } }, xaxis, yaxis: { title: { text: style === 'suspended' ? '√Expected − √Observed' : '√Frequency' } }, shapes, bargap: 0.1, margin: { l: 52, r: 10, t: 28, b: 42 } },
+          { width: W(width), height: 270, title: `${y.name} ${STYLES.find((s) => s[0] === style)[1].toLowerCase()} rootogram, ${SHORT[k]}` }), code));
+      }
       ob.add(ctx.row(...plots));
       ob.add(ctx.note({
         hanging: 'Hanging rootograms (Kleiber and Zeileis 2016): each bar is √(observed frequency) hanging from the curve of √(expected frequency), the sum of the predicted probabilities of that count over the rows. A bar that stops above zero: the model expects more of that count than there are; below zero: fewer. The square root makes the discrepancies of small and large frequencies comparable. Click a bar to select its rows.',
@@ -286,8 +304,8 @@
     if (o('ratios', false)) ratiosOutline(ctx, ob, key, f, sc);
     if (o('effectTests', true)) await effectsOutline(ctx, ob, base, key, f, sc);
     if (key === 'poisson' && f.poisson_tests) overdispersion(ctx, ob, f);
-    if (o('zeroPlot', true)) zeroPlot(ctx, ob, y, key, f);
-    if (o('residPlots', true)) residPlots(ctx, ob, y, key, f);
+    if (o('zeroPlot', true)) await zeroPlot(ctx, ob, y, key, f, base);
+    if (o('residPlots', true)) await residPlots(ctx, ob, y, key, f, base);
     const me = o('margeff', null);
     if (me && f.margeff) await margeffOutline(ctx, ob, base, key, me, sc);
     if (o('profiler', false)) await profiler(ctx, ob, base, key, sc);
@@ -370,7 +388,7 @@
 
   /* P(Y = 0) of each row by its predicted mean, the observed share of zeros in
      ten groups of rows by predicted mean, and a Poisson's exp(−μ). */
-  function zeroPlot(ctx, parent, y, key, f) {
+  async function zeroPlot(ctx, parent, y, key, f, base) {
     const P = pal();
     const ob = ctx.outline('Zero Probability', { parent, key: 'zeroplot', closed: true, info: 'p:counts:residuals' });
     const n = f.rows.length;
@@ -392,12 +410,13 @@
       { type: 'scatter', mode: 'markers', x: gx, y: gy, rows: grows, marker: { size: 10, symbol: 'square-open', color: P.text, line: { width: 1.6, color: P.text } }, text: gtxt, hovertemplate: '%{text}<br>mean %{x:.3g}<extra></extra>', name: 'Observed share of zeros' },
       { ...lineTrace(cx, cx.map((m) => Math.exp(-m)), P.muted, 'dash', 1.2), name: 'Poisson exp(−μ)' },
     ];
-    ob.add(ctx.plot(traces, { xaxis: { title: { text: `Predicted mean of ${y.name}` } }, yaxis: { title: { text: `P(${y.name} = 0)` }, range: [-0.02, 1.02] }, margin: { l: 58, r: 12, t: 8, b: 46 } },
-      { width: W(440), height: 310, title: `${y.name} zero probability, ${SHORT[key]}` }),
+    const code = await plotCode(ctx, base, 'zero', { model: key });
+    ob.add(withCode(ctx, ctx.plot(traces, { xaxis: { title: { text: `Predicted mean of ${y.name}` } }, yaxis: { title: { text: `P(${y.name} = 0)` }, range: [-0.02, 1.02] }, margin: { l: 58, r: 12, t: 8, b: 46 } },
+      { width: W(440), height: 310, title: `${y.name} zero probability, ${SHORT[key]}` }), code),
     ctx.note('Each row\'s predicted probability of a zero by its predicted mean; squares: the share of zeros observed in ten groups of rows by predicted mean (click one to select the group); dashed: exp(−μ), the zeros a Poisson with the same mean would have. Points above the dashed line are zeros the model adds to a Poisson\'s.'));
   }
 
-  function residPlots(ctx, parent, y, key, f) {
+  async function residPlots(ctx, parent, y, key, f, base) {
     const P = pal();
     const ob = ctx.outline('Residual Plots', { parent, key: 'resid', closed: true, info: 'p:counts:residuals' });
     const n = f.rows.length;
@@ -414,7 +433,9 @@
       lineTrace([zl, zh], [zl, zh], P.ref)],
     { xaxis: { title: { text: 'Normal Quantile' } }, yaxis: { title: { text: 'Randomized Quantile Residual' } }, margin: { l: 58, r: 12, t: 8, b: 46 } },
     { width: W(360), height: 300, title: `${y.name} quantile residuals normal quantile plot, ${SHORT[key]}` });
-    ob.add(ctx.row(p1, p2), ctx.note(`Left: (y − E[Y])/√Var(Y) from the model's own mean and variance. Right: randomized quantile residuals (Dunn and Smyth 1996): u uniform between F(y − 1) and F(y), then Φ⁻¹(u); if the model is right they are standard normal and lie on the line. The randomness is numpy's generator with seed ${f.seed} (the top red triangle's Quantile Residual Seed), so Save Columns gives the same values.`));
+    const c1 = await plotCode(ctx, base, 'pearson', { model: key });
+    const c2 = await plotCode(ctx, base, 'quantile', { model: key, seed: f.seed });
+    ob.add(ctx.row(withCode(ctx, p1, c1), withCode(ctx, p2, c2)), ctx.note(`Left: (y − E[Y])/√Var(Y) from the model's own mean and variance. Right: randomized quantile residuals (Dunn and Smyth 1996): u uniform between F(y − 1) and F(y), then Φ⁻¹(u); if the model is right they are standard normal and lie on the line. The randomness is numpy's generator with seed ${f.seed} (the top red triangle's Quantile Residual Seed), so Save Columns gives the same values.`));
   }
 
   async function margeffOutline(ctx, parent, base, key, at, sc) {

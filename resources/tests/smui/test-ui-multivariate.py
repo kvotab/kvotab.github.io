@@ -11,7 +11,12 @@ colours follow the clusters; By gives one report per level; Response
 Screening opens Fit Y by X when that platform is loaded; the distance
 correlations agree with the doubly centred distances computed in the page;
 Item Reliability's intraclass correlations and Kendall's W agree with an ANOVA
-and ranks computed in the page, and Bootstrap reruns them; the dark theme and
+and ranks computed in the page, and Bootstrap reruns them; every graph's
+matplotlib code (a block right under it) runs in the page's Python and draws
+that graph (with By and excluded rows, the code keeps the group's rows and
+leaves out the excluded ones); the statistics code of Discriminant, K Means,
+Response Screening, Factor Analysis and Hierarchical Cluster gives the numbers
+their reports show, the clusters those of Save Clusters; the dark theme and
 phone width draw.
 
 Start a server on the repository root and headless Chrome on
@@ -23,11 +28,14 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import bisect
 import json
 import os
+import re
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, PROBE, close, figures_from_outputs, strip_show
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -208,6 +216,641 @@ async def run_menu(page, label, sub=None):
       if (rep.seq !== before) await Promise.race([done, new Promise(r => setTimeout(r, 60000))]);
       return 'ok';
     }})()''')
+
+
+# ---- the graphs' matplotlib code --------------------------------------------------------------------------------------
+# Every graph of these reports has a code block right under it; each block is
+# run in the page's own Python (the notebook's runner, as test_charts' GRAPHS_JS
+# runs it) and its figure is compared with the Plotly graph: every line (split
+# at its gaps), every point, the bars, the heatmap cells, the texts and
+# annotations, the reference lines and the unit circle, the colours of points
+# coloured one by one and of the lines, the axis titles, the fixed ranges and
+# the tick labels, the legend, the title and the size.
+
+# The probe of test_charts, and per axes whether it is shown, the colours of its
+# line collections, and its images' colour scales.
+MV_PROBE = PROBE + r'''
+def _mv_figures():
+    import matplotlib.pyplot as _plt
+    from matplotlib.collections import LineCollection as _LC
+    from matplotlib.colors import to_hex as _hex
+    figs = _smui_figures()
+    for F, n in zip(figs, _plt.get_fignums()):
+        fig = _plt.figure(n)
+        for A, ax in zip(F['axes'], fig.axes):
+            A['shown'] = bool(ax.get_visible())
+            A['segcolors'] = [[_hex(c) for c in coll.get_colors()] for coll in ax.collections if isinstance(coll, _LC)]
+            A['imscale'] = [{'lo': _hex(im.cmap(0.0)), 'mid': _hex(im.cmap(0.5)), 'hi': _hex(im.cmap(1.0)), 'clim': [float(v) for v in im.get_clim()]} for im in ax.images]
+            A['polygons'] = sum(1 for p in ax.patches if type(p).__name__ == 'Polygon')
+    return figs
+'''
+
+
+async def run_mv(page, code, table_js):
+    """A graph's code run in the page's Python, with the probe: (figures, error)."""
+    probe = strip_show(code) + '\n' + MV_PROBE + '\nimport json as _json\nprint("SMUI-FIGURES " + _json.dumps(_mv_figures()))\n'
+    out = await page.ev(f'__gr.run({json.dumps(probe)}, {table_js})', timeout=300)
+    if isinstance(out, str):
+        return None, out
+    return figures_from_outputs(out.get('outputs'))
+
+
+# The table for the graphs' code: correlated columns with a missing value, a
+# date column, groups, clusters, categories, a weight and a frequency (with a
+# zero); each report's graphs with more of their layout than __gr.graphs gives.
+CHART_TABLE = r'''
+(() => {
+  const r = SM.util.rng('mv-charts'); const n = 72;
+  const c = { id: [], a: [], b: [], c: [], d: [], e: [], dt: [], grp: [], yb: [], u: [], v: [], q1: [], q2: [], q3: [], w: [], f: [] };
+  for (let i = 0; i < n; i++) {
+    const z1 = r.normal(), z2 = r.normal();
+    c.id.push(`P${i + 1}`);
+    c.a.push(+(z1 + 0.3 * r.normal()).toFixed(4)); c.b.push(+(z1 + 0.5 * r.normal()).toFixed(4));
+    c.c.push(+(z2 + 0.4 * r.normal()).toFixed(4)); c.d.push(+(z2 - 0.3 * z1 + 0.6 * r.normal()).toFixed(4));
+    c.e.push(+(0.5 * z1 + 0.5 * z2 + 0.7 * r.normal()).toFixed(4));
+    c.dt.push(Date.UTC(2024, 0, 1) + 86400000 * Math.round(30 * z1 + 2 * i));
+    c.grp.push(z1 > 0.3 ? 'hi' : (z2 > 0 ? 'mid' : 'lo')); c.yb.push(z1 + 0.5 * r.normal() > 0 ? 'yes' : 'no');
+    const k = i % 3;
+    c.u.push(+([0, 6, 0][k] + r.normal()).toFixed(3)); c.v.push(+([0, 0, 6][k] + r.normal()).toFixed(3));
+    c.q1.push(r.u() < 0.7 ? ['A', 'B', 'C'][k] : r.pick(['A', 'B', 'C'])); c.q2.push(r.u() < 0.6 ? ['x', 'y', 'y'][k] : r.pick(['x', 'y']));
+    c.q3.push(1 + ((i + (r.u() < 0.3 ? 1 : 0)) % 2));
+    c.w.push(+(0.5 + 1.5 * r.u()).toFixed(3)); c.f.push(i === 11 ? 0 : 1 + (i % 3));
+  }
+  c.b[7] = NaN;
+  const t = new SM.Table({ name: 'MV charts', source: 'simulated', columns: [
+    { name: 'id', dataType: 'character', values: c.id, role: 'label' },
+    ...['a', 'b', 'c', 'd', 'e'].map((k) => ({ name: k, dataType: 'numeric', values: c[k] })),
+    { name: 'dt', dataType: 'numeric', format: { kind: 'date' }, values: c.dt },
+    { name: 'grp', dataType: 'character', values: c.grp }, { name: 'yb', dataType: 'character', values: c.yb },
+    { name: 'u', dataType: 'numeric', values: c.u }, { name: 'v', dataType: 'numeric', values: c.v },
+    { name: 'q1', dataType: 'character', values: c.q1 }, { name: 'q2', dataType: 'character', values: c.q2 },
+    { name: 'q3', dataType: 'numeric', modelingType: 'nominal', values: c.q3 },
+    { name: 'w', dataType: 'numeric', values: c.w }, { name: 'f', dataType: 'numeric', values: c.f },
+  ] });
+  SM.app.addTable(t);
+  return t.nrows;
+})()
+'''
+
+MVG_JS = r'''
+window.__mvg = {
+  table(name) { return SM.app.tables.find((t) => t.name === name); },
+  async open(tname, platform, roles, options) {
+    const t = this.table(tname);
+    SM.app.showTab(SM.app.tabOf(t));
+    const ids = {};
+    for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => { const c = t.col(n); if (!c) throw new Error('no column ' + n); return c.id; });
+    const rep = SM.app.openReport(SM.platforms.get(platform), { roles: ids, options: options || {} }, t);
+    await new Promise((res) => rep.on('done', res));
+    return rep;
+  },
+  // the closed outlines that hold graphs opened (a K Means fit other than the one shown)
+  openAll(rep) { rep.body.querySelectorAll('.sm-ob.is-closed').forEach((s) => { if (s.querySelector('.sm-plot') && s._outline) s._outline.setOpen(true); }); },
+  errors(rep) { return [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent.slice(0, 300)); },
+  // each graph's layout (every axis, the annotations, the shapes) and its traces as drawn
+  more(rep) {
+    const txt = (a) => (a && a.title ? (typeof a.title === 'string' ? a.title : a.title.text) : null);
+    const arr = (v) => (v == null ? v : Array.isArray(v) ? v.map((x) => (Array.isArray(x) ? [...x] : x)) : ArrayBuffer.isView(v) ? Array.from(v) : v);
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const axes = {};
+      const full = p._fullLayout || {};
+      for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) { const a = L[k]; axes[k] = { title: txt(a), range: a.range ? [...a.range] : null, autorange: full[k] ? full[k].autorange : a.autorange, scaleanchor: a.scaleanchor || null, domain: a.domain ? [...a.domain] : null, type: a.type, ticktext: arr(a.ticktext), tickvals: arr(a.tickvals) }; }
+      return { axes, showlegend: !!L.showlegend,
+        annotations: (L.annotations || []).map((a) => ({ text: a.text, x: a.x, y: a.y, xref: a.xref, yref: a.yref })),
+        shapes: (L.shapes || []).map((s) => ({ type: s.type, x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, xref: s.xref, yref: s.yref, dash: s.line && s.line.dash, color: s.line && s.line.color })),
+        traces: (p.data || []).map((d) => ({ type: d.type || 'scatter', mode: d.mode, name: d.name, showlegend: d.showlegend, xaxis: d.xaxis, yaxis: d.yaxis, x: arr(d.x), y: arr(d.y), z: arr(d.z), text: arr(d.text),
+          texttemplate: d.texttemplate, base: arr(d.base), width: arr(d.width), orientation: d.orientation, fill: d.fill, zmin: d.zmin, zmax: d.zmax, zmid: d.zmid,
+          colorscale: Array.isArray(d.colorscale) ? d.colorscale : null, mcolor: d.marker ? arr(d.marker.color) : null, lcolor: d.line ? d.line.color : null, dash: d.line ? d.line.dash : null })) };
+    });
+  },
+};
+'''
+
+
+def hexc(c):
+    """A colour as #rrggbb: from #rgb, #rrggbb(aa), rgb() or rgba(); None for anything else."""
+    if not isinstance(c, str):
+        return None
+    c = c.strip().lower()
+    m = re.match(r'^#([0-9a-f]{6})', c)
+    if m:
+        return '#' + m.group(1)
+    m = re.match(r'^#([0-9a-f])([0-9a-f])([0-9a-f])$', c)
+    if m:
+        return '#' + ''.join(x * 2 for x in m.groups())
+    m = re.match(r'^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)', c)
+    if m:
+        return '#' + ''.join(f'{int(round(float(x))):02x}' for x in m.groups())
+    return None
+
+
+def near(a, b, tol):
+    return abs(a - b) <= tol * max(1.0, abs(a), abs(b))
+
+
+def pieces(xs, ys):
+    """The points of a trace or a line, split at its gaps: lists of two or more (x, y)."""
+    out, cur = [], []
+    for a, b in zip(xs or [], ys or []):
+        if a is None or b is None:
+            if len(cur) > 1:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append((float(a), float(b)))
+    if len(cur) > 1:
+        out.append(cur)
+    return out
+
+
+def same_piece(p, q, tol):
+    return len(p) == len(q) and all(near(a[0], b[0], tol) and near(a[1], b[1], tol) for a, b in zip(p, q))
+
+
+def fig_pieces(ax):
+    """The figure's lines (split at gaps) and line collections' segments, each with its colour."""
+    out = [(pc, hexc(ln['color'])) for ln in ax['lines'] for pc in pieces(ln['x'], ln['y'])]
+    for c, cols in zip(ax['segments'], ax.get('segcolors') or [[]] * len(ax['segments'])):
+        for k, s in enumerate(c['segs']):
+            col = cols[k % len(cols)] if cols else None
+            out += [(pc, hexc(col)) for pc in pieces([q[0] for q in s], [q[1] for q in s])]
+    return out
+
+
+def fig_points(ax):
+    """Every point the figure marks: its scatters' points and the vertices of its lines with markers."""
+    P = [(q[0], q[1]) for s in ax['scatter'] for q in s['xy'] if q[0] is not None and q[1] is not None]
+    for ln in ax['lines']:
+        if ln['marker'] not in ('None', 'none', '', ' ', 'nothing'):
+            P += [(a, b) for a, b in zip(ln['x'], ln['y']) if a is not None and b is not None]
+    return sorted(P)
+
+
+def missing_points(want, have, tol):
+    """How many of the wanted points the figure does not mark."""
+    xs = [p[0] for p in have]
+    miss = 0
+    for a, b in want:
+        k = bisect.bisect_left(xs, a - tol * max(1.0, abs(a)))
+        found = False
+        while k < len(have) and have[k][0] <= a + tol * max(1.0, abs(a)):
+            if near(have[k][1], b, tol):
+                found = True
+                break
+            k += 1
+        miss += not found
+    return miss
+
+
+def fig_texts(ax):
+    return [t['s'].strip() for t in ax['texts'] if t['s'] and t['s'].strip()]
+
+
+def trace_points(t, xcats=None):
+    xs = [xcats.index(v) if xcats and isinstance(v, str) else v for v in (t.get('x') or [])]
+    return xs, list(t.get('y') or [])
+
+
+def check_plot(lab, g, M, F, ax_index=0, tol=1e-8, xcats=None, size=True):
+    """The figure of a graph against its Plotly graph: see the section's comment."""
+    ax = F['axes'][ax_index]
+    check(f'{lab}: the title', ax['title'] or F['suptitle'], g['label'])
+    if size:
+        check(f'{lab}: the size, at 100 pixels an inch', F['size'], [g['w'] / 100, g['h'] / 100])
+    xa, ya = M['axes'].get('xaxis') or {}, M['axes'].get('yaxis') or {}
+    check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (xa.get('title') or '', ya.get('title') or ''))
+    anchored = any(a_.get('scaleanchor') for a_ in M['axes'].values())   # Plotly widens one of those ranges to keep the aspect
+    for key, lim, name in ((xa, 'xlim', 'x'), (ya, 'ylim', 'y')):
+        if key.get('autorange') is False and key.get('range') and not anchored:
+            check(f'{lab}: the {name} axis over the page\'s range', close(ax[lim], key['range'], 1e-9, 1e-12), True)
+        if key.get('ticktext') is not None and len(key.get('ticktext') or []):
+            check(f'{lab}: the {name} axis\'s tick labels', [t for t in ax[f'{name}ticklabels'] if t], [str(t) for t in key['ticktext']])
+    lines, points, texts, colored, line_colors = [], [], [], [], []
+    for t in M['traces']:
+        if t['type'] in ('scatter', 'scattergl'):
+            xs, ys = trace_points(t, xcats)
+            mode = t.get('mode') or 'markers'
+            if 'lines' in mode:
+                for pc in pieces(xs, ys):
+                    lines.append(pc)
+                    line_colors.append(hexc(t.get('lcolor')))
+            if 'markers' in mode:
+                pts = [(float(a), float(b)) for a, b in zip(xs, ys) if a is not None and b is not None]
+                points += pts
+                if isinstance(t.get('mcolor'), list) and pts:
+                    colored.append((pts, [hexc(c) for c, a, b in zip(t['mcolor'], xs, ys) if a is not None and b is not None]))
+            if 'text' in mode and t.get('text'):
+                texts += [str(s).strip() for s in (t['text'] if isinstance(t['text'], list) else [t['text']]) if s is not None and str(s).strip()]
+    fl = fig_pieces(ax)
+    miss = [pc for pc in lines if not any(same_piece(q, pc, tol) for q, _ in fl)]
+    check(f'{lab}: every line of the graph ({len(lines)}) in the figure', len(miss), 0)
+    wrong = [i for i, pc in enumerate(lines) if line_colors[i] and not any(same_piece(q, pc, tol) and c == line_colors[i] for q, c in fl)]
+    check(f'{lab}: ... in its colour', len(wrong), 0)
+    check(f'{lab}: every point of the graph ({len(points)}) in the figure', missing_points(points, fig_points(ax), tol), 0)
+    marks = sorted((q[0], q[1], hexc(s['colors'][k if len(s['colors']) > 1 else 0]) if s['colors'] else None)
+                   for s in ax['scatter'] for k, q in enumerate(s['xy']) if q[0] is not None and q[1] is not None)
+    for pts, cols in colored:      # points coloured one by one: each where the figure marks it, in its colour
+        xs_ = [m_[0] for m_ in marks]
+        bad = 0
+        for (a, b), c in zip(pts, cols):
+            k = bisect.bisect_left(xs_, a - tol * max(1.0, abs(a)))
+            ok = False
+            while k < len(marks) and marks[k][0] <= a + tol * max(1.0, abs(a)):
+                if near(marks[k][1], b, tol) and marks[k][2] == c:
+                    ok = True
+                    break
+                k += 1
+            bad += not ok
+        check(f'{lab}: {len(pts)} points coloured one by one, each in its colour', bad, 0)
+    for t in M['traces']:
+        if t['type'] == 'bar' and t.get('x') and t.get('y'):
+            base = t.get('base')
+            want = [(float(a), float(b), float(base[i] if isinstance(base, list) else (base or 0))) for i, (a, b) in enumerate(zip(t['x'], t['y']))]
+            got = [(b_['x'] + b_['w'] / 2, b_['h'], b_['y']) for b_ in ax['bars']]
+            check(f'{lab}: the bars (their places, heights and bottoms)', len(got) == len(want) and all(near(p[0], q[0], tol) and near(p[1], q[1], tol) and near(p[2], q[2], tol) for p, q in zip(got, want)), True)
+    ann = [str(a['text']).strip() for a in M['annotations'] if a.get('text') and str(a['text']).strip()]
+    have = fig_texts(ax)
+    check(f'{lab}: the texts and annotations of the graph in the figure', [s for s in texts + ann if s not in have], [])
+    for s in M['shapes']:
+        if s['type'] == 'line' and s['x0'] == s['x1'] and s.get('xref') != 'paper':
+            ok = any(close(ln['x'], [s['x0'], s['x0']], 1e-9, 1e-12) for ln in ax['lines'])
+            check(f'{lab}: the vertical line at {s["x0"]:.6g}', ok, True)
+        elif s['type'] == 'line' and s['y0'] == s['y1'] and s.get('yref') != 'paper':
+            ok = any(close(ln['y'], [s['y0'], s['y0']], 1e-9, 1e-12) for ln in ax['lines'])
+            check(f'{lab}: the horizontal line at {s["y0"]:.6g}', ok, True)
+        elif s['type'] == 'circle':
+            ok = any(p['type'] == 'ellipse' and close(p['center'], [(s['x0'] + s['x1']) / 2, (s['y0'] + s['y1']) / 2], 1e-9, 1e-12) and close([p['w'], p['h']], [s['x1'] - s['x0'], s['y1'] - s['y0']], 1e-9, 1e-12) for p in ax['patches'])
+            check(f'{lab}: the circle', ok, True)
+    shown = [t['name'] for t in M['traces'] if M['showlegend'] and t.get('showlegend') is not False and t['type'] in ('scatter', 'scattergl', 'bar') and (t.get('x') or []) and t.get('name')]
+    check(f'{lab}: the legend', ax['legend'] or F['legend'], shown)
+
+
+def check_heat(lab, g, M, F):
+    """A heatmap (a colour map, two-way clustering): the cells, the names, the texts, the colour scale."""
+    ax = F['axes'][0]
+    t = M['traces'][0]
+    z = [None if v is None else float(v) for row in t['z'] for v in row]
+    im = ax['images'][0] if ax['images'] else {'shape': [], 'data': []}
+    ok = im['shape'] == [len(t['z']), len(t['z'][0])] and len(im['data']) == len(z) and all(
+        (a is None) == (b is None) and (a is None or near(a, b, 1e-12)) for a, b in zip(im['data'], z))
+    check(f'{lab}: the cells are the page\'s, row by row', ok, True)
+    check(f'{lab}: the title and the size', (ax['title'], F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+    check(f'{lab}: the columns along the bottom', [s for s in ax['xticklabels'] if s], [str(s) for s in t['x']])
+    ya = M['axes'].get('yaxis') or {}
+    want_y = [str(s) for s in ya['ticktext']] if ya.get('ticktext') is not None else [str(s) for s in t['y']]
+    check(f'{lab}: the rows down the side, the first at the top', ([s for s in ax['yticklabels'] if s], ax['yinverted']), (want_y, True))
+    if t.get('texttemplate'):
+        check(f'{lab}: the values written in the cells', [s['s'] for s in ax['texts']], [str(s) for row in t['text'] for s in row])
+    else:
+        check(f'{lab}: no values written in the cells (more than twelve columns)', ax['texts'], [])
+    sc = ax['imscale'][0] if ax.get('imscale') else {}
+    if t.get('colorscale'):
+        cs = t['colorscale']
+        mid = hexc(cs[len(cs) // 2][1])
+        mid_ok = bool(sc.get('mid')) and all(abs(int(sc['mid'][k:k + 2], 16) - int(mid[k:k + 2], 16)) <= 3 for k in (1, 3, 5))   # (256 steps: the middle one a step off)
+        check(f'{lab}: the page\'s colour scale', (sc.get('lo'), mid_ok, sc.get('hi')), (hexc(cs[0][1]), True, hexc(cs[-1][1])))
+    if t.get('zmin') is not None:
+        check(f'{lab}: its range', sc.get('clim'), [t['zmin'], t['zmax']])
+    elif t.get('zmid') == 0:
+        check(f'{lab}: centred at 0', close(sc.get('clim', [0, 1])[0], -sc.get('clim', [0, 1])[1], 1e-12, 1e-12) and sc['clim'][1] > 0, True)
+    check(f'{lab}: a colour bar', len(F['axes']), 2)
+
+
+def splom_cells(fmt_, p):
+    if fmt_ == 'lower':
+        return [(i, j, i - 1, j) for i in range(1, p) for j in range(i)]
+    if fmt_ == 'upper':
+        return [(i, j, i, j - 1) for i in range(p - 1) for j in range(i + 1, p)]
+    return [(i, j, i, j) for i in range(p) for j in range(p)]
+
+
+def check_splom(lab, g, M, F, fmt_, names, opts):
+    """The scatterplot matrix: every cell's points, ellipse, fit line and
+    correlation, the diagonal's names and histograms, each axis's range, the
+    cells the format leaves out hidden."""
+    p = len(names)
+    cells = splom_cells(fmt_, p)
+    G = p if fmt_ == 'square' else p - 1
+    check(f'{lab}: a grid of {G} × {G} cells, the title and the size', (len(F['axes']), F['suptitle'], F['size']), (G * G, 'Scatterplot Matrix', [g['w'] / 100, g['h'] / 100]))
+    if len(F['axes']) != G * G:
+        return
+    used = set()
+    worst, bad_ranges, bad_titles, bad_text, bad_bars = [], [], [], [], []
+    for k, (i, j, gi, gj) in enumerate(cells):
+        a = k + 1
+        xa, ya = ('x' if a == 1 else f'x{a}'), ('y' if a == 1 else f'y{a}')
+        ax = F['axes'][gi * G + gj]
+        used.add(gi * G + gj)
+        X, Y = M['axes'][f'xaxis{"" if a == 1 else a}'], M['axes'][f'yaxis{"" if a == 1 else a}']
+        if not (close(ax['xlim'], X['range'], 1e-9, 1e-12) and close(ax['ylim'], Y['range'], 1e-9, 1e-12)):
+            bad_ranges.append((i, j))
+        if (ax['xlabel'] or None) != (X['title'] or None) or (ax['ylabel'] or None) != (Y['title'] or None):
+            bad_titles.append((i, j, ax['xlabel'], X['title'], ax['ylabel'], Y['title']))
+        trs = [t for t in M['traces'] if (t.get('xaxis') or 'x') == xa and (t.get('yaxis') or 'y') == ya]
+        anns = [str(an['text']) for an in M['annotations'] if an.get('xref') == f'{xa} domain']
+        if sorted(fig_texts(ax)) != sorted(s.strip() for s in anns):
+            bad_text.append((i, j, fig_texts(ax), anns))
+        if i == j:
+            for t in [t for t in trs if t['type'] == 'bar' and t.get('x')]:
+                want = [(float(x_), float(h_), float(t['base']), float(t['width'])) for x_, h_ in zip(t['x'], t['y'])]
+                got = [(b['x'] + b['w'] / 2, b['h'], b['y'], b['w']) for b in ax['bars']]
+                if not (len(got) == len(want) and all(all(near(u, v, 1e-9) for u, v in zip(p_, q_)) for p_, q_ in zip(got, want))):
+                    bad_bars.append((i, len(got), len(want)))
+            continue
+        for t in trs:
+            mode = t.get('mode') or ''
+            if 'markers' in mode and (t.get('x') or [None])[0] is not None:
+                pts = [(float(x_), float(y_)) for x_, y_ in zip(t['x'], t['y'])]
+                got = [tuple(q) for s in ax['scatter'] for q in s['xy']]
+                worst.append(max((max(abs(u[0] - v[0]), abs(u[1] - v[1])) for u, v in zip(got, pts)), default=0.0) if len(got) == len(pts) else float('inf'))
+            if mode == 'lines':
+                pc = pieces(t['x'], t['y'])[0]
+                hit = [ln for ln in ax['lines'] if same_piece(pieces(ln['x'], ln['y'])[0] if pieces(ln['x'], ln['y']) else [], pc, 1e-8)]
+                worst.append(0.0 if hit and hexc(hit[0]['color']) == hexc(t['lcolor']) else float('inf'))
+                if t.get('fill') == 'toself':
+                    worst.append(0.0 if any(pp['type'] == 'Polygon' and len(pp['xy']) >= len(pc) for pp in ax['patches']) else float('inf'))
+    check.near(f'{lab}: every cell\'s points, ellipse and fit line as the page draws them (in their colours)', max(worst, default=0.0), 0.0, 1e-8)
+    check(f'{lab}: each cell\'s axes over the page\'s ranges', bad_ranges, [])
+    check(f'{lab}: the columns named along the bottom and the left', bad_titles, [])
+    check(f'{lab}: the diagonal\'s names{" and the correlations" if opts.get("corr") else ""}', bad_text, [])
+    if opts.get('hist'):
+        check(f'{lab}: the histograms on the diagonal, in the page\'s bins', bad_bars, [])
+    check(f'{lab}: the cells the format leaves out are hidden', [k for k in range(G * G) if (k in used) != F['axes'][k].get('shown', True)], [])
+
+
+def check_code_block(lab, g):
+    check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g.get('code')) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+
+
+async def graphs_of(page, js):
+    """Open reports (js returns them in a list, and may change the table after
+    taking their graphs), every graph drawn: their graphs, each with its layout."""
+    return await page.ev(f'''(async () => {{
+      const take = async (rep) => {{ __mvg.openAll(rep); const g = await __gr.graphs(rep); const m = __mvg.more(rep); return g.map((x, i) => ({{ ...x, more: m[i] }})); }};
+      const out = await ({js})(take);
+      return {{ ...out, undrawn: __gr.take() }};
+    }})()''', timeout=600)
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(MVG_JS)
+    await page.ev('__gr.idle()')
+    check('charts: the table for the graphs\' code', await page.ev(CHART_TABLE), 72)
+    tbl = "__mvg.table('MV charts')"
+    await page.ev("__mvg.table('MV charts').clearRowStates && __mvg.table('MV charts').clearRowStates()")
+    names5 = ['a', 'b', 'c', 'dt', 'e']
+    splom_all = {'spHist': True, 'spCorr': True, 'spFit': True, 'spShaded': True, 'spLevel': 0.9}
+    cases = [
+        ('Multivariate (every graph)', "(t) => __mvg.open('MV charts', 'multivariate', { y: " + json.dumps(names5) + " }, " + json.dumps({**splom_all, 'cmCorr': True, 'cmP': True, 'cmCluster': True, 'mahal': True, 'jack': True, 't2': True}) + ")",
+         {'splom': ('square', names5, {'hist': True, 'corr': True})}),
+        ('Multivariate (pairwise, Weight and Freq, lower triangular)', "(t) => __mvg.open('MV charts', 'multivariate', { y: ['a', 'b', 'c', 'e'], weight: ['w'], freq: ['f'] }, { method: 'pairwise', matrixFormat: 'lower', cmCorr: true, cmP: true, mahal: true })",
+         {'splom': ('lower', ['a', 'b', 'c', 'e'], {})}),
+        ('Principal Components (on correlations, Prin2 by Prin3, varimax)', "(t) => __mvg.open('MV charts', 'pca', { y: " + json.dumps(names5) + " }, { scree: true, score: true, loadplot: true, biplot: true, ellipse: true, pcx: 1, pcy: 2, rotation: { k: 2, method: 'varimax', kaiser: true } })", {}),
+        ('Principal Components (on covariances, Freq, promax of 3)', "(t) => __mvg.open('MV charts', 'pca', { y: ['a', 'b', 'c', 'e'], freq: ['f'] }, { on: 'covariances', scree: true, biplot: true, rotation: { k: 3, method: 'promax', kaiser: true } })", {}),
+        ('Principal Components (unscaled, Weight)', "(t) => __mvg.open('MV charts', 'pca', { y: ['a', 'b', 'c', 'e'], weight: ['w'] }, { on: 'unscaled', loadplot: true })", {}),
+        ('Factor Analysis (two fits)', "(t) => __mvg.open('MV charts', 'factor', { y: ['a', 'b', 'c', 'd', 'e'] }, { fits: [{ method: 'ml', prior: 'smc', k: 2, rotation: 'varimax', kaiser: true }, { method: 'pa', prior: 'smc', k: 3, rotation: 'promax', kaiser: true, id: 1 }], 'fa0|scoreplot': true, 'fa1|scoreplot': true, 'fa1|fx': 2, 'fa1|fy': 0 })", {}),
+        ('Discriminant (three groups, the 50% contours)', "(t) => __mvg.open('MV charts', 'discriminant', { y: ['a', 'c', 'd', 'e'], x: ['grp'] }, { cp50: true })", {}),
+        ('Discriminant (quadratic, Freq, proportional priors)', "(t) => __mvg.open('MV charts', 'discriminant', { y: ['a', 'c', 'd'], x: ['grp'], freq: ['f'] }, { method: 'quadratic', priors: 'proportional' })", {}),
+        ('Discriminant (two groups, priors given)', "(t) => __mvg.open('MV charts', 'discriminant', { y: ['a', 'c', 'd'], x: ['yb'] }, { priors: 'other', priorValues: { no: 1, yes: 2 } })", {}),
+        ('Hierarchical Cluster (4 clusters chosen, coloured, two-way, criterion)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['u', 'v', 'a'] }, { method: 'ward', standardize: 'none', criterion: true, twoWay: true, colorClusters: true, ncluster: 4 })", {}),
+        ('Hierarchical Cluster (average, the default number)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['u', 'v'] }, { method: 'average', twoWay: true })", {}),
+        ('K Means (2 to 4 clusters, every graph)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v', 'a'] }, { k: 2, kRange: 4, scaled: false, 'k2|pcp': true, 'k3|pcp': true, 'k3|splom': true, 'k3|rays': false, 'k4|splom': true })",
+         {'splom': ('lower', ['u', 'v', 'a'], {'points_only': True})}),
+        ('K Means (3 clusters, scaled, Weight)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v'], weight: ['w'] }, { k: 3, 'k3|pcp': true, 'k3|splom': true })",
+         {'splom': ('lower', ['u', 'v'], {'points_only': True})}),
+        ('Response Screening (every graph)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb', 'q3'], x: ['c', 'grp', 'd', 'q3'] }, { lwR2: true })", {}),
+        ('Response Screening (Freq)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'yb'], x: ['c', 'q1'], freq: ['f'] }, { lwR2: true })", {}),
+        ('Explore Outliers', "(t) => __mvg.open('MV charts', 'outliers', { y: ['a', 'c', 'd'] }, { mro: true, knn: true, knnK: 5, qro: true })", {}),
+        ('Multiple Correspondence Analysis (c3 by c2, the rows)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1', 'q2', 'q3'] }, { rowplot: true, dx: 2, dy: 1 })", {}),
+        ('Multiple Correspondence Analysis (Freq)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1'], freq: ['f'] }, { rowplot: true })", {}),
+        ('Multidimensional Scaling (the rows named)', "(t) => __mvg.open('MV charts', 'mds', { y: ['a', 'c', 'd', 'e'] }, {})", {}),
+        ('Multidimensional Scaling (in their units)', "(t) => __mvg.open('MV charts', 'mds', { y: ['u', 'v'] }, { standardize: false })", {}),
+    ]
+    total = 0
+    for name, opener, spec in cases:
+        r = await graphs_of(page, f'''async (take) => {{ const rep = await ({opener})(); const g = await take(rep); const errors = __mvg.errors(rep);
+          const script = rep.pythonScript(); const inScript = g.map((x) => !!x.code && script.includes(x.code));
+          await __mvg.table('MV charts').clearRowStates(); SM.app.closeReport(rep); return {{ g, errors, inScript }}; }}''')
+        if not isinstance(r, dict):
+            check(f'charts, {name}: the report opens', r, 'a report')
+            continue
+        check(f'charts, {name}: no errors, every graph drawn', (r['errors'], r['undrawn']), ([], []))
+        check(f'charts, {name}: every graph\'s code in Save Python Script', all(r['inScript']), True)
+        for k, g in enumerate(r['g']):
+            lab = f'{name}: {g["label"]} ({k + 1})'
+            check_code_block(lab, g)
+            if not g.get('code'):
+                continue
+            F, err = await run_mv(page, g['code'], tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            total += 1
+            F, M = F[0], g['more']
+            label = g['label']
+            if label == 'Scatterplot Matrix':
+                fmt_, cols_, opts_ = spec['splom']
+                check_splom(lab, g, M, F, fmt_, cols_, opts_)
+            elif label in ('Color Map On Correlations', 'Color Map On p-values', 'Cluster the Correlations', 'Two way clustering'):
+                check_heat(lab, g, M, F)
+            elif label.startswith('Parallel coordinates'):
+                cats = [v for v in dict.fromkeys(v for t in M['traces'] for v in (t.get('x') or []) if isinstance(v, str))]
+                check_plot(lab, g, M, F, xcats=cats)
+                check(f'{lab}: the columns along the axis', [s for s in F['axes'][0]['xticklabels'] if s], cats)
+            else:
+                check_plot(lab, g, M, F)
+    check('charts: the graphs checked', total >= 60, True)
+
+    # ---- By, with rows excluded: each group's graphs keep the group's rows and leave out the excluded ones
+    r = await graphs_of(page, '''async (take) => {
+      const t = __mvg.table('MV charts'); const hi = []; for (let i = 0; i < t.nrows; i++) if (t.col('grp').values[i] === 'hi') hi.push(i);
+      const ex = [hi[0], hi[2], 5, 9].filter((v, i, a) => a.indexOf(v) === i);
+      t.setState(ex, 'excluded', true);
+      const rep = await __mvg.open('MV charts', 'multivariate', { y: ['a', 'c', 'dt'], by: ['grp'] }, { matrixFormat: 'upper', mahal: true, cmCorr: true });
+      const rep2 = await __mvg.open('MV charts', 'kmeans', { y: ['u', 'v'], by: ['grp'] }, { k: 2, 'k2|splom': true });
+      const rep3 = await __mvg.open('MV charts', 'hcluster', { y: ['u', 'v'], by: ['grp'] }, {});
+      const g = [...await take(rep), ...await take(rep2), ...await take(rep3)];
+      const errors = [rep, rep2, rep3].flatMap((x) => __mvg.errors(x));
+      const groups = [rep, rep2, rep3].map((x) => x.groups().map((q) => ({ label: q.label, rows: q.rows, where: q.where })));
+      t.setState(ex, 'excluded', false);
+      for (const x of [rep, rep2, rep3]) SM.app.closeReport(x);
+      return { g, errors, groups, ex, hi };
+    }''')
+    check('charts, By with excluded rows: no errors, every graph drawn', (r['errors'], r['undrawn']), ([], []))
+    labels = [g['label'] for g in r['g']]
+    check('charts, By: each group\'s graphs', (labels.count('Scatterplot Matrix'), labels.count('Mahalanobis Distances'), labels.count('Color Map On Correlations'), labels.count('Biplot, 2 clusters'), labels.count('Dendrogram')),
+          (6, 3, 3, 3, 3))
+    groups = r['groups'][0]
+    where_lines = {q['label']: f'df = df[df["grp"] == {json.dumps(q["where"][0]["value"])}]   # only the rows where grp is {q["where"][0]["value"]}' for q in groups}
+    hi_drop = sorted(set(r['hi']) & set(r['ex']))
+    drop_hi = f'df = df.drop(index={json.dumps(hi_drop)})   # the rows the report leaves out'
+    for g in r['g']:
+        check_code_block(f'By: {g["label"]}', g)
+    for k, g in enumerate(r['g']):
+        code = g.get('code') or ''
+        grp = next((lab_ for lab_, line in where_lines.items() if line in code), None)
+        lab = f'By: {g["label"]} ({grp})'
+        check(f'{lab}: the code keeps its group', grp is not None, True)
+        if grp == 'grp=hi':
+            check(f'{lab}: ... and leaves out the group\'s excluded rows', drop_hi in code, True)
+        if not code:
+            continue
+        F, err = await run_mv(page, code, tbl)
+        check(f'{lab}: the code runs in the page', err, None)
+        if not F:
+            continue
+        F, M = F[0], g['more']
+        if g['label'] == 'Scatterplot Matrix':
+            cols_ = ['a', 'c', 'dt'] if len(F['axes']) == 4 else ['u', 'v']
+            check_splom(lab, g, M, F, 'upper' if cols_[0] == 'a' else 'lower', cols_, {})
+        elif g['label'] == 'Color Map On Correlations':
+            check_heat(lab, g, M, F)
+        else:
+            check_plot(lab, g, M, F)
+    check('charts, By: a date column\'s code turns it back into the page\'s number', all('df["dt"] = (pd.to_datetime(df["dt"]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)' in g['code'] for g in r['g'] if g['label'] in ('Scatterplot Matrix', 'Mahalanobis Distances', 'Color Map On Correlations') and '"dt"' in g['code']), True)
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Multivariate test')))")
+
+
+# ---- the statistics' code of five reports, run in the page ---------------------------------------------------------
+# Discriminant, K Means, Response Screening, Factor Analysis and Hierarchical
+# Cluster: each report's own code (its Save Python Script part) runs in the
+# page's Python on the table's CSV, and gives the numbers the report shows (to
+# the digits it shows them), its clusters those of Save Clusters.
+STATS_JS = r'''
+window.__mvs = {
+  // the report's code that holds this text, from what Save Python Script collects
+  code(rep, marker) { return rep.pyCode.find((c) => c.includes(marker)) || null; },
+  // a report table under an outline (its title, or the start of it), as cell texts
+  table(rep, title, n = 0) {
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => { const t = x.querySelector('h2, h3, h4').textContent; return t === title || t.startsWith(title); });
+    if (!h) return null;
+    const t = h.parentElement.querySelector(':scope > .sm-ob-body').querySelectorAll('table.sm-rt, table.sm-kv')[n];
+    return t ? this.cells(t) : null;
+  },
+  cells(t) { return [...t.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => c.textContent.trim())); },
+  // a report table by its caption
+  captioned(rep, caption) { const t = [...rep.body.querySelectorAll('table.sm-rt')].find((x) => x.caption && x.caption.textContent.trim() === caption); return t ? this.cells(t) : null; },
+};
+'''
+
+
+def page_num(s):
+    """A number as the page shows it: − for minus, <.0001 as 0.0001."""
+    s = str(s).strip().replace('−', '-').replace('*', '')
+    if s.startswith('<'):
+        return float(s[1:])
+    return float(s)
+
+
+def shown(got, text, digits=None):
+    """A number as the report shows it: to its digits (fixed), or to seven significant ones."""
+    if text in ('.', '', None):
+        return got is None or got != got
+    want = page_num(text)
+    if str(text).strip().startswith('<'):
+        return got < want
+    if digits is not None:
+        return abs(got - want) <= 0.5 * 10 ** -digits + 1e-12
+    return abs(got - want) <= 5e-7 * max(1.0, abs(want))
+
+
+async def run_stats(page, code, probe, table_js):
+    """A report's code run in the page's Python, then probe (a Python expression) printed as JSON."""
+    src = code + '\nimport json as _json\nprint("MV-STATS " + _json.dumps(' + probe + ', default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o)))\n'
+    out = await page.ev(f'__gr.run({json.dumps(src)}, {table_js})', timeout=300)
+    if isinstance(out, str):
+        return None, out
+    text = ''.join(o.get('text', '') for o in out.get('outputs') or [] if o.get('type') == 'stream' and o.get('name') == 'stdout')
+    errs = [f"{o.get('ename')}: {o.get('evalue')}" for o in out.get('outputs') or [] if o.get('type') == 'error']
+    for line in text.split('\n'):
+        if line.startswith('MV-STATS '):
+            return json.loads(line[len('MV-STATS '):]), None
+    return None, errs[0] if errs else 'the probe printed nothing'
+
+
+async def stats_code(page):
+    await page.ev(STATS_JS)
+    tbl = "__mvg.table('MV charts')"
+    ex = [5, 17, 30]
+    await page.ev(f"__mvg.table('MV charts').setState({json.dumps(ex)}, 'excluded', true)")
+    # ---- Discriminant (quadratic, proportional priors, Weight and Freq): the Score Summaries and the confusion matrix
+    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'discriminant', { y: ['a', 'c', 'd'], x: ['grp'], weight: ['w'], freq: ['f'] }, { method: 'quadratic', priors: 'proportional' });
+      const out = { code: __mvs.code(rep, 'tests = MANOVA('), summary: __mvs.table(rep, 'Score Summaries', 0), conf: __mvs.table(rep, 'Score Summaries', 1), errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
+    check('Discriminant\'s code: the report\'s, without errors', (bool(r['code']), r['errors']), (True, []))
+    got, err = await run_stats(page, r['code'], '{"mis": float(w[mis].sum()), "pct": float(100 * w[mis].sum() / w.sum()), "er2": float(1 - ll / ll0), "m2ll": float(-2 * ll), "conf": conf, "labels": labels}', tbl)
+    check('Discriminant\'s code runs in the page', err, None)
+    if got:
+        row = r['summary'][1]
+        check('Discriminant\'s code: the Score Summaries as the report shows them (misclassified, percent, entropy RSquare, −2LogLikelihood)',
+              (shown(got['mis'], row[1]), shown(got['pct'], row[2], 4), shown(got['er2'], row[3], 4), shown(got['m2ll'], row[4], 5)), (True, True, True, True))
+        conf = r['conf']
+        check('Discriminant\'s code: the confusion matrix, in the table\'s order of the categories', ([c[0] for c in conf[1:]], all(shown(v, t, 0) for vr, tr in zip(got['conf'], conf[1:]) for v, t in zip(vr, tr[1:]))), (got['labels'], True))
+    # ---- K Means (2 to 4 clusters, Weight): the Cluster Comparison and each fit's clusters
+    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'kmeans', { y: ['u', 'v', 'a'], weight: ['w'] }, { k: 2, kRange: 4, restarts: 5, seed: 99 });
+      __mvg.openAll(rep);
+      const sizes = [2, 3, 4].map((k) => { const h = [...rep.body.querySelectorAll('.sm-ob-head h3')].find((x) => x.textContent === `K Means NCluster=${k}`); const t = h.closest('.sm-ob').querySelector('table.sm-rt'); return [...t.querySelectorAll('tbody tr')].map((tr) => tr.children[1].textContent); });
+      const out = { code: __mvs.code(rep, 'comparison, fits = [], {}'), comparison: __mvs.table(rep, 'Cluster Comparison'), sizes, errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
+    check('K Means\' code: the report\'s own seeded k-means with its restarts, without errors', (bool(r['code']) and 'default_rng(99)' in r['code'] and 'for _ in range(5):' in r['code'] and 'kmeans2' not in r['code'], r['errors']), (True, []))
+    got, err = await run_stats(page, r['code'], '{"comparison": [{k: (None if v != v else v) for k, v in c.items()} for c in comparison], "counts": {str(k): [float(w[lab == c].sum()) for c in range(k)] for k, lab in fits.items()}}', tbl)
+    check('K Means\' code runs in the page', err, None)
+    if got:
+        head, rows = r['comparison'][0], r['comparison'][1:]
+        col = {h: i for i, h in enumerate(head)}
+        ok = len(rows) == len(got['comparison']) and all(
+            int(tr[col['NCluster']]) == c['NCluster'] and shown(c['CCC'], tr[col['CCC']], 4) and shown(c['Pseudo F'], tr[col['Pseudo F']], 5)
+            and shown(c['RSquare'], tr[col['RSquare']], 4) and shown(c['Within SS'], tr[col['Within SS']], 6) for tr, c in zip(rows, got['comparison']))
+        check('K Means\' code: the Cluster Comparison as the report shows it (CCC, pseudo F, RSquare, within SS)', ok, True)
+        check('K Means\' code: each fit\'s cluster sizes (Weight summed)', [[shown(v, t) for v, t in zip(got['counts'][str(k)], r['sizes'][i])] for i, k in enumerate((2, 3, 4))],
+              [[True] * k for k in (2, 3, 4)])
+    # ---- Response Screening (Weight and Freq): the PValues table
+    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb'], x: ['c', 'q1', 'd'], weight: ['w'], freq: ['f'] }, {});
+      const out = { code: __mvs.code(rep, 'print(res.sort_values("FDR_LogWorth"'), table: __mvs.table(rep, 'PValues'), errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
+    check('Response Screening\'s code: Weight and Freq as frequency weights, without errors', (bool(r['code']) and 'frequency weights: Weight times Freq' in r['code'], r['errors']), (True, []))
+    got, err = await run_stats(page, r['code'], '[{"y": a, "x": b, "p": None if p_ != p_ else p_, "fdr": None if q_ != q_ else q_, "lw": None if l_ != l_ else l_, "e": None if e_ != e_ else e_, "n": c_} for a, b, p_, q_, l_, e_, c_ in zip(res["Y"], res["X"], res["PValue"], res["FDR_PValue"], res["FDR_LogWorth"], res["Effect_Size"], res["Count"])]', tbl)
+    check('Response Screening\'s code runs in the page', err, None)
+    if got:
+        head, rows = r['table'][0], r['table'][1:]
+        col = {h: i for i, h in enumerate(head)}
+        by = {(x['y'], x['x']): x for x in got}
+        ok = len(rows) == len(got) and all(
+            (tr[col['Y']], tr[col['X']]) in by and shown(by[(tr[col['Y']], tr[col['X']])]['p'], tr[col['PValue']], 4) and shown(by[(tr[col['Y']], tr[col['X']])]['fdr'], tr[col['FDR PValue']], 4)
+            and shown(by[(tr[col['Y']], tr[col['X']])]['lw'], tr[col['FDR LogWorth']], 4) and shown(by[(tr[col['Y']], tr[col['X']])]['e'], tr[col['Effect Size']], 4)
+            and shown(by[(tr[col['Y']], tr[col['X']])]['n'], tr[col['Count']]) for tr in rows)
+        check('Response Screening\'s code: every test as the PValues table shows it (p, FDR p, FDR LogWorth, effect size, count)', ok, True)
+    # ---- Factor Analysis (ML, promax with Kaiser's normalization, Freq): the communalities and the rotated loadings
+    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'factor', { y: ['a', 'b', 'c', 'd', 'e'], freq: ['f'] }, { fits: [{ method: 'ml', prior: 'smc', k: 2, rotation: 'promax', kaiser: true }] });
+      const out = { code: __mvs.code(rep, "coef = np.asarray(res.factor_score_params(method=\\"regression\\"))   # Thurstone's regression scores (Save Rotated Components)"),
+        comm: __mvs.captioned(rep, 'Final Communality Estimates'), load: __mvs.captioned(rep, 'Rotated Factor Loading'),
+        errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
+    check('Factor Analysis\' code: the report\'s rotation with Kaiser\'s normalization, without errors', (bool(r['code']) and "Kaiser's normalization" in r['code'] and 'promax' in r['code'], r['errors']), (True, []))
+    got, err = await run_stats(page, r['code'], '{"names": names, "comm": comm, "L": L}', tbl)
+    check('Factor Analysis\' code runs in the page', err, None)
+    if got and r['load']:
+        comm = {row[0]: row[1] for row in (r['comm'] or [])[1:]}
+        check('Factor Analysis\' code: the Final Communality Estimates as the report shows them', all(shown(v, comm.get(nm), 4) for nm, v in zip(got['names'], got['comm'])), True)
+        load = {row[0]: row[1:] for row in r['load'][1:]}
+        check('Factor Analysis\' code: the rotated factor loadings', all(shown(v, t, 4) for nm, lr in zip(got['names'], got['L']) for v, t in zip(lr, load.get(nm, []))) and len(load) == 5, True)
+    # ---- Hierarchical Cluster: the clusters at the number chosen, and at the page's default
+    for opts, what in (({'ncluster': 5}, 'the number of clusters chosen (5)'), ({}, 'the page\'s default number of clusters')):
+        r = await page.ev(f'''(async () => {{ const rep = await __mvg.open('MV charts', 'hcluster', {{ y: ['u', 'v', 'a'] }}, {json.dumps({'method': 'average', **opts})});
+          const legend = [...rep.body.querySelectorAll('.mv-legend button')].map((b) => b.textContent);
+          const t = rep.table; const before = t.columns.length; const ctx = new SM.report.Ctx(rep, {{ rows: rep.groups()[0].rows, where: [] }}, rep.content, '');
+          await rep.platform.triangle(ctx).find((i) => i.label === 'Save Clusters').action();
+          const c = t.columns[t.columns.length - 1]; const saved = t.columns.length > before ? c.values.slice() : null; if (saved) t.removeColumn(c.id);
+          const out = {{ code: __mvs.code(rep, 'cluster = np.array([number[root[i]] + 1 for i in range(n)])'), legend, saved, errors: __mvg.errors(rep) }}; SM.app.closeReport(rep); return out; }})()''')
+        check(f'Hierarchical Cluster\'s code ({what}): the report\'s, without errors', (bool(r['code']), r['errors']), (True, []))
+        got, err = await run_stats(page, r['code'], '{"k": int(k), "rows": X.index.tolist(), "cluster": cluster}', tbl)
+        check(f'Hierarchical Cluster\'s code ({what}) runs in the page', err, None)
+        if got:
+            check(f'Hierarchical Cluster\'s code ({what}): the report\'s number of clusters', got['k'], len(r['legend']))
+            sizes = [sum(1 for c in got['cluster'] if c == j + 1) for j in range(got['k'])]
+            check(f'Hierarchical Cluster\'s code ({what}): the clusters\' sizes as the legend shows them', [f'{j + 1}: {s}' for j, s in enumerate(sizes)], r['legend'])
+            saved = r['saved'] or []
+            check(f'Hierarchical Cluster\'s code ({what}): each row\'s cluster is Save Clusters\'', [saved[i] if i < len(saved) else None for i in got['rows']], got['cluster'])
+            check(f'Hierarchical Cluster\'s code ({what}): it leaves out the excluded rows', ('df = df.drop(index=[5, 17, 30])   # the rows the report leaves out' in r['code'], any(i in ex for i in got['rows'])), (True, False))
+    await page.ev(f"__mvg.table('MV charts').setState({json.dumps(ex)}, 'excluded', false)")
 
 
 async def main():
@@ -640,6 +1283,10 @@ async def main():
       const txt = rep.content.textContent; t.setState([0, 1, 2, 3, 4, 5], 'excluded', false); return txt.includes('144 observations');
     }})()''')
     check('exclude rows and Redo: 144 observations', r, True)
+
+    # ---- the graphs' matplotlib code, and five reports' statistics code, run in the page -------------------------------
+    await chart_code(page)
+    await stats_code(page)
 
     # ---- dark theme, phone width ------------------------------------------------------------------------------------
     r = await page.ev(open_report_js('multivariate', {'y': ['a', 'b', 'c', 'd', 'e']}, {'cmCells': True, 'pairwise': True, 'mahal': True, 'dcor': True, 'icc': True, 'kendallw': True}), timeout=240)

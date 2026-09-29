@@ -520,4 +520,46 @@ if p_.returncode:
 gotp = {ln.split()[1]: float(ln.split()[2]) for ln in p_.stdout.splitlines() if ln.startswith('permutation ')}
 check.near('the permutation importance code gives the report\'s numbers', max((abs(gotp.get(row['column'], math.inf) - row['value']) for row in pmb['contributions']['rows']), default=math.inf), 0.0, abs_=1e-9)
 
+# ---- the graphs' matplotlib code, run on a CSV export: every graph of the report --------------------------------
+from test_predictive import SEP, check_contrib_native, check_shared_native, joined, run_graph as run_graph_native  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-ensemble-charts-')
+graphs = 0
+for label, kw in [
+        ('graphs: forest, three levels, a Validation column, weight and Freq', dict(y='three', kind='forest', validation='v', weight='w', freq='f', settings={'trees': 25})),
+        ('graphs: forest, continuous, a validation portion, Informative Missing, RASE', dict(y='y', kind='forest', portion=0.3, settings={'trees': 20, 'stop': 'none'}, plot={'stat': 'rase'})),
+        ('graphs: forest, two levels, rows left out, Mean -Log p', dict(y='cls', kind='forest', rows=list(range(30, 900)), settings={'trees': 15}, plot={'stat': 'mean_neg_log_p'})),
+        ('graphs: boosted, two levels, a Validation column', dict(y='cls', kind='boosted', validation='v', settings={'layers': 30})),
+        ('graphs: boosted, continuous, row sampling, no validation', dict(y='y', kind='boosted', freq='f', settings={'layers': 15, 'rowRate': 0.7}))]:
+    xs = ['x1m', 'x2', 'gm', 'x3', 'x4'] if 'portion' in kw else XS
+    res, _ = quiet(call, 'ensemble.fit', table=T, x=xs, seed=SEED, table_name='data', **kw)
+    pc = res['fit']['plots']
+    head = pc['head_code']
+    if 'rows' in kw:
+        check(f'{label}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in head, True)
+    # Cumulative Validation: each set's statistic after each tree or layer, and out of bag
+    c = res['cumulative']
+    stat = (kw.get('plot') or {}).get('stat') or c['keys'][0]
+    F, err = run_graph_native(joined(pc, 'cumulative'), T, GTMP)
+    check(f'{label}: Cumulative Validation: the code runs', err, None)
+    if F:
+        graphs += 1
+        ax = F['axes'][0]
+        for srs in c['series']:
+            ln = next((q for q in ax['lines'] if q['label'] == srs['set']), None)
+            want = [math.nan if v is None else v for v in srs['stats'][stat]]
+            ok = ln is not None and ln['x'] == [float(k) for k in c['x']] and np.allclose([math.nan if v is None else v for v in ln['y']], want, rtol=1e-9, atol=1e-12, equal_nan=True)
+            check(f'{label}: Cumulative Validation: the {srs["set"].lower()} {stat} after each of the {c["grown"]} {"trees" if kw["kind"] == "forest" else "layers"}', ok, True)
+        on = next((srs for srs in c['series'] if srs['set'] == 'Validation'), None) or next((srs for srs in c['series'] if srs['set'] == 'Out of Bag'), None) or c['series'][0]
+        mark = [q for q in ax['lines'] if q['marker'] == 'D']
+        check(f'{label}: Cumulative Validation: the {c["kept"]} kept, marked on the {on["set"].lower()} curve and by the dashed line',
+              (len(mark) == 1 and mark[0]['x'] == [float(c['kept'])] and math.isclose(mark[0]['y'][0], on['stats'][stat][c['kept'] - 1], rel_tol=1e-9), any(q['ls'] == '--' and q['x'][:2] == [c['kept'], c['kept']] for q in ax['lines'])), (True, True))
+        check(f'{label}: Cumulative Validation: the titles', (ax['xlabel'], ax['ylabel'], ax['title']),
+              (f'Number of {"Trees" if kw["kind"] == "forest" else "Layers"}', E.STAT_LABELS[stat], f'Cumulative Validation of {"Bootstrap Forest" if kw["kind"] == "forest" else "Boosted Tree"}'))
+    graphs += check_contrib_native(check, label, res['contributions'], head, T, GTMP)
+    graphs += check_shared_native(check, label, res['fit'], T, GTMP)
+    pm, _ = quiet(call, 'ensemble.permutation', table=T, x=xs, seed=SEED, repeats=2, table_name='data', **{k: v for k, v in kw.items() if k != 'plot'})
+    graphs += check_contrib_native(check, label, pm['contributions'], head, T, GTMP, title='Permutation Importance')
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 32)
+
 sys.exit(check.done())

@@ -105,10 +105,27 @@ def _freq_code(freq):
     return f'd = d[d[{J(freq)}] > 0]; d = d.loc[d.index.repeat(d[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times'
 
 
-def _head(table_name, where, cols, freq, extra=()):
-    lines = [code_head(table_name, ['from scipy import stats', *extra])]
+def _rows_drop(table, rows, where):
+    """The line that leaves out the rows of the group (the By's where) that
+    the report does not use: excluded, or filtered out."""
+    if rows is None or table is None or table not in data.TABLES:
+        return []
+    n = data.TABLES[table]['n']
+    mask = np.ones(n, dtype=bool)
     for w in where or []:
-        lines.append(f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {w["value"]}')
+        mask &= np.asarray(data.raw(table, w['column']) == w['value'], dtype=bool)
+    drop = sorted(set(np.flatnonzero(mask).tolist()) - {int(r) for r in rows})
+    return [f'df = df.drop(index={drop})   # the rows the report leaves out (excluded, or filtered out)'] if drop else []
+
+
+def _where_lines(where):
+    return [f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {w["value"]}' for w in where or []]
+
+
+def _head(table_name, where, cols, freq, extra=(), table=None, rows=None):
+    lines = [code_head(table_name, ['from scipy import stats', *extra])]
+    lines += _where_lines(where)
+    lines += _rows_drop(table, rows, where)
     lines.append(f'd = df[[{", ".join(J(c) for c in [*cols, freq] if c)}]].dropna()')
     if freq:
         lines.append(_freq_code(freq))
@@ -233,9 +250,12 @@ def mean_ci(n, R, rho2, alpha):
 # ---- the summary ------------------------------------------------------------------
 
 @api('circular.summary')
-def summary(table, column, rows=None, units='degrees', period=None, alpha=0.05, v_dir=None, freq=None, where=None, table_name='data'):
+def summary(table, column, rows=None, units='degrees', period=None, alpha=0.05, v_dir=None, freq=None, where=None, plot=None, table_name='data'):
     """Summary Statistics of one column of angles, the intervals for the
-    mean direction, the Rayleigh test and (a direction given) the V test."""
+    mean direction, the Rayleigh test and (a direction given) the V test.
+    plot: the page's choices for the circular dot plot and the rose diagram
+    (compass, ticks, bins, area, vm, group, labels), whose code comes back
+    as dot_code and rose_code."""
     P = _period(units, period)
     df = _frame(table, [column], rows, freq)
     x = df[column].to_numpy(float)
@@ -275,7 +295,7 @@ def summary(table, column, rows=None, units='degrees', period=None, alpha=0.05, 
         u = V * math.sqrt(2 / n)
         out['vtest'] = {'dir': float(v_dir), 'V': V, 'u': u, 'p': float(stats.norm.sf(u))}
     back = _back_code(units, P)
-    c = _head(table_name, where, [column], freq)
+    c = _head(table_name, where, [column], freq, table=table, rows=rows)
     c.append(f'x = d[{J(column)}].to_numpy(); n = len(x)')
     c.append(_units_code(units, P))
     c.append('C, S = np.cos(theta).mean(), np.sin(theta).mean(); R = np.hypot(C, S); m = np.arctan2(S, C) % (2*np.pi)')
@@ -290,7 +310,41 @@ def summary(table, column, rows=None, units='degrees', period=None, alpha=0.05, 
     if v_dir is not None:
         c.append(f'mu0 = {float(v_dir)!r} * 2*np.pi / {P!r}; V = n*R*np.cos(m - mu0); print(V, stats.norm.sf(V*np.sqrt(2/n)))   # the V test of a mean direction {float(v_dir):g}')
     out['code'] = '\n'.join(c)
+    if plot:
+        _plot_codes(out, table, column, rows, units, P, freq, alpha, where, table_name, plot, R, vm)
     return out
+
+
+def _lit(v):
+    """A level as a Python literal for the code: a number as a number (the
+    CSV's numbers are floats), text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        return repr(float(v))
+    return J(str(v))
+
+
+def _lvtext(v):
+    """A level as the page shows it by default: 12.0 as 12."""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def _plot_codes(out, table, column, rows, units, P, freq, alpha, where, table_name, plot, R, h_vm):
+    """The dot plot's and the rose diagram's code (see the graphs, below)."""
+    d0 = data.frame(table, [column, freq], rows, as_category=False)
+    ok = np.isfinite(d0[column].to_numpy(float))
+    if freq:
+        fv = d0[freq].to_numpy(float)
+        ok &= np.isfinite(fv) & (fv > 0)
+    groups = None
+    gp = _groups_of(table, column, plot.get('group'), rows, freq)
+    if gp and len(gp[0]) >= 2:
+        labels = list(plot.get('labels') or [])
+        names = [labels[gp[1].index(v)] if gp[1].index(v) < len(labels) else _lvtext(v) for v in gp[0]]
+        groups = (gp[0], names)
+    out['dot_code'] = _dot_code(table, column, rows, units, P, freq, alpha, where, table_name, plot, int(ok.sum()), R, h_vm, groups)
+    out['rose_code'] = _rose_code(table, column, rows, units, P, freq, alpha, where, table_name, plot, R, bool(plot.get('vm')) and R < 1)
 
 
 # ---- the von Mises fit ------------------------------------------------------------
@@ -356,7 +410,7 @@ def vonmises(table, column, rows=None, units='degrees', period=None, alpha=0.05,
         notes.append(f'With {n} angles κ̂ is biased upward; Best and Fisher\'s (1981) small-sample value is {k_small:.4g}.')
     out['notes'] = notes
     back = _back_code(units, P)
-    c = _head(table_name, where, [column], freq, ['from scipy import optimize, special'])
+    c = _head(table_name, where, [column], freq, ['from scipy import optimize, special'], table=table, rows=rows)
     c.append(f'x = d[{J(column)}].to_numpy(); n = len(x)')
     c.append(_units_code(units, P))
     c.append('kappa, mu, _ = stats.vonmises.fit(theta, fscale=1); print(kappa, ' + back.format('mu % (2*np.pi)') + ')   # the maximum likelihood κ and μ')
@@ -372,7 +426,7 @@ def vonmises(table, column, rows=None, units='degrees', period=None, alpha=0.05,
 # ---- with an X column -------------------------------------------------------------
 
 @api('circular.linear')
-def linear(table, y, x, rows=None, units='degrees', period=None, freq=None, alpha=0.05, where=None, table_name='data'):
+def linear(table, y, x, rows=None, units='degrees', period=None, freq=None, alpha=0.05, where=None, plot=None, table_name='data'):
     """The circular-linear correlation of the angle Y with a continuous X
     (Mardia 1976; Mardia and Jupp 2000, §11.2.1): R² = (r_xc² + r_xs² −
     2r_xc r_xs r_cs)/(1 − r_cs²) from the correlations of x, cos θ and sin
@@ -394,17 +448,19 @@ def linear(table, y, x, rows=None, units='degrees', period=None, freq=None, alph
     R2 = min(max(R2, 0.0), 1.0)
     chi = n * R2
     out = {'n': n, 'r': math.sqrt(R2), 'r2': R2, 'r_xc': rxc, 'r_xs': rxs, 'r_cs': rcs, 'chisq': chi, 'df': 2, 'p': float(stats.chi2.sf(chi, 2))}
-    c = _head(table_name, where, [y, x], freq)
+    c = _head(table_name, where, [y, x], freq, table=table, rows=rows)
     c.append(f'x = d[{J(y)}].to_numpy(); v = d[{J(x)}].to_numpy(); n = len(x)')
     c.append(_units_code(units, P))
     c.append('rxc, rxs, rcs = [np.corrcoef(a, b)[0, 1] for a, b in ((v, np.cos(theta)), (v, np.sin(theta)), (np.cos(theta), np.sin(theta)))]')
     c.append('R2 = (rxc**2 + rxs**2 - 2*rxc*rxs*rcs) / (1 - rcs**2); print(np.sqrt(R2), R2, n*R2, stats.chi2.sf(n*R2, 2))   # the circular-linear correlation (Mardia 1976)')
     out['code'] = '\n'.join(c)
+    if plot:
+        out['plot_code'] = _scatter_code(table, y, x, rows, P, freq, where, table_name, plot.get('ticks') or [], False, f'{y} by {x}', (380, 300))
     return out
 
 
 @api('circular.circular')
-def circular_corr(table, y, x, rows=None, units='degrees', period=None, freq=None, alpha=0.05, where=None, table_name='data'):
+def circular_corr(table, y, x, rows=None, units='degrees', period=None, freq=None, alpha=0.05, where=None, plot=None, table_name='data'):
     """The circular-circular correlation of two columns of angles
     (Jammalamadaka and SenGupta 2001, §8.2): r = Σ sin(α − ᾱ) sin(β − β̄)/√(Σ
     sin²(α − ᾱ) Σ sin²(β − β̄)), with its large-sample z = r√(n λ₂₀λ₀₂/λ₂₂),
@@ -425,11 +481,13 @@ def circular_corr(table, y, x, rows=None, units='degrees', period=None, freq=Non
     l20, l02, l22 = float(np.mean(sa ** 2)), float(np.mean(sb ** 2)), float(np.mean(sa ** 2 * sb ** 2))
     z = r * math.sqrt(n * l20 * l02 / l22) if l22 > 0 else math.inf
     out = {'n': n, 'r': r, 'z': z, 'p': float(2 * stats.norm.sf(abs(z)))}
-    c = _head(table_name, where, [y, x], freq)
+    c = _head(table_name, where, [y, x], freq, table=table, rows=rows)
     c.append(f'n = len(d); a = {_rad_expr(units, P, "d[" + J(y) + "].to_numpy()")}; b = {_rad_expr(units, P, "d[" + J(x) + "].to_numpy()")}   # the angles in radians')
     c.append('sa, sb = np.sin(a - stats.circmean(a)), np.sin(b - stats.circmean(b)); r = (sa*sb).sum() / np.sqrt((sa**2).sum() * (sb**2).sum())')
     c.append('z = r * np.sqrt(n * (sa**2).mean() * (sb**2).mean() / (sa**2 * sb**2).mean()); print(r, z, 2*stats.norm.sf(abs(z)))   # Jammalamadaka and SenGupta (2001)')
     out['code'] = '\n'.join(c)
+    if plot:
+        out['plot_code'] = _scatter_code(table, y, x, rows, P, freq, where, table_name, plot.get('ticks') or [], True, f'{y} by {x}', (340, 320))
     return out
 
 
@@ -496,7 +554,7 @@ def groups(table, y, x, rows=None, units='degrees', period=None, freq=None, alph
         notes.append('Tied angles share their average rank in the uniform-scores test.')
     out = {'groups': grp, 'levels': levels, 'n': n, 'rbar': Rall, 'mean': _to_units(mall, P), 'resultant_sum': Rsum, 'ww': ww, 'uscores': usc, 'notes': notes}
     back = _back_code(units, P)
-    c = _head(table_name, where, [y, x], freq)
+    c = _head(table_name, where, [y, x], freq, table=table, rows=rows)
     c.append(f'x = d[{J(y)}].to_numpy(); g = d[{J(x)}].to_numpy(); n = len(x)')
     c.append(_units_code(units, P))
     c.append('lv = pd.unique(g); q = len(lv); Rj = np.array([np.abs(np.exp(1j*theta[g == v]).sum()) for v in lv]); nj = np.array([(g == v).sum() for v in lv])')
@@ -508,3 +566,188 @@ def groups(table, y, x, rows=None, units='degrees', period=None, freq=None, alph
     c.append('print(W, stats.chi2.sf(W, 2*(q - 1)))   # the uniform-scores test (Mardia-Watson-Wheeler)')
     out['code'] = '\n'.join(c)
     return out
+
+
+# ---- the graphs as matplotlib code ------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the
+# light theme's colours, the graph's size at 100 pixels an inch. The page
+# sends what it chose (the orientation, the labels around the circle, the
+# rose's bins, the level names); the rest is computed from the rows as the
+# report computes it: a dot or a point for each row, Freq counting in the
+# statistics (and the rose's bars).
+BASE, BAR, RED, GREEN, MUTED, SURFACE = '#2f6690', '#8fa9c2', '#b0413e', '#3a7d44', '#786b5d', '#fcf7f2'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def _pt(px):
+    """A line width, marker size or font size in points from the page's pixels."""
+    return f'{px * PX:.3g}'
+
+
+def _area(px):
+    """A marker's area in points² (matplotlib's s) from the page's diameter in pixels."""
+    return f'{(px * PX) ** 2:.3g}'
+
+
+def _plot_head(table, rows, where, table_name, cols, freq):
+    """The top of a graph's code: the table, the report's rows, the rows with
+    every value and a positive Freq (each drawn once)."""
+    lines = [code_head(table_name, ['import matplotlib.pyplot as plt', 'from scipy import stats'])]
+    lines += _where_lines(where)
+    lines += _rows_drop(table, rows, where)
+    lines.append(f'd = df[[{", ".join(J(c) for c in [*cols, freq] if c)}]].dropna()   # the rows with {"an angle" if len(cols) == 1 else "both values"}')
+    if freq:
+        lines.append(f'd = d[d[{J(freq)}] > 0]   # and a positive Freq')
+    return lines
+
+
+def _ticks_code(ticks):
+    """The labels around the circle as the page puts them: (fraction of a turn, text)."""
+    return 'ticks = [' + ', '.join(f'({float(f)!r}, {json.dumps(str(t), ensure_ascii=False)})' for f, t in ticks) + ']   # the labels around the circle, as the page puts them'
+
+
+def _xy_lines(compass):
+    if compass:
+        return ['def xy(f, r):   # the point at a fraction f of a turn and radius r: zero at the top, clockwise (compass, clock)',
+                '    return r * np.sin(2*np.pi*f), r * np.cos(2*np.pi*f)']
+    return ['def xy(f, r):   # the point at a fraction f of a turn and radius r: zero at the right, counterclockwise (mathematics)',
+            '    return r * np.cos(2*np.pi*f), r * np.sin(2*np.pi*f)']
+
+
+def _angle_lines(column, units, P, freq):
+    """x, f (each angle as a fraction of a turn, as the page places it) and
+    theta (the angles in radians, each row counted Freq times)."""
+    c = [f'x = d[{J(column)}].to_numpy()',
+         f'f = (x % {P!r}) / {P!r}   # each angle as a fraction of a turn']
+    c.append(_units_code(units, P))
+    if freq:
+        c.append(f'reps = d[{J(freq)}].round().astype(int).to_numpy()   # Freq: the statistics count a row that many times, the plot draws it once')
+        c.append('theta = np.repeat(theta, reps)')
+    return c
+
+
+MEAN_LINES = ['C, S = np.cos(theta).mean(), np.sin(theta).mean(); R = np.hypot(C, S); m = np.arctan2(S, C) % (2*np.pi)   # the mean direction and R̄']
+
+
+def _dot_code(table, column, rows, units, P, freq, alpha, where, table_name, plot, n, R, h_vm, groups):
+    """The circular dot plot: each row a dot outside the unit circle, stacked
+    in 72 bins, the mean vector (R̄ long) and the von Mises interval of the
+    mean direction; with groups, the dots in the groups' colours and each
+    group's mean vector."""
+    compass = plot.get('compass', True) is not False
+    size = 3 if n > 3000 else 4 if n > 600 else 6
+    c = _plot_head(table, rows, where, table_name, [column], freq)
+    c += _angle_lines(column, units, P, freq)
+    c += _xy_lines(compass) + [_ticks_code(plot.get('ticks') or [])]
+    c += ['k = np.minimum(71, np.floor(f * 72)).astype(int)   # 72 bins around the circle',
+          's = pd.Series(k).groupby(k).cumcount().to_numpy()   # the dots before each one in its bin (in row order): stacked outward',
+          'most = max(1, np.bincount(k, minlength=72).max())',
+          'step = min(0.065, 0.55 / most)',
+          'px, py = xy(f, 1.07 + s * step)',
+          'L = max(1.25, 1.07 + (most - 1) * step + 0.08)',
+          f'fig, ax = plt.subplots(figsize=(3.4, {3.64 if groups else 3.4}), layout="constrained")',
+          f'ax.plot(*xy(np.arange(181) / 180, 1), color="{MUTED}", linewidth={_pt(1)})   # the unit circle',
+          'for t, label in ticks:',
+          '    (x0, y0), (x1, y1) = xy(t, 0.94), xy(t, 1)',
+          f'    ax.plot([x0, x1], [y0, y1], color="{MUTED}", linewidth={_pt(1)})   # a tick mark just inside the circle',
+          f'    ax.text(*xy(t, 0.8), label, ha="center", va="center", fontsize={_pt(10)}, color="{MUTED}")']
+    def arrow(color):   # the arrow of a mean vector; color is Python (a literal or a name)
+        return f'arrowprops={{"arrowstyle": "-|>", "color": {color}, "lw": {_pt(2)}, "shrinkA": 0, "shrinkB": 0}}'
+    if groups:
+        levels, names = groups
+        c += [f'g = df.loc[d.index, {J(plot["group"])}]   # the group of each row; a row without one keeps its place in the stacks, undrawn',
+              f'levels = [{", ".join(_lit(v) for v in levels)}]   # the levels of {plot["group"]} with angles, in the table\'s order',
+              f'names = {J(names)}',
+              f'colors = {J(PALETTE)}']
+        if freq:
+            c.append('gr = np.repeat(g.to_numpy(), reps)   # the group of each angle the statistics count')
+        c += ['for i, v in enumerate(levels):',
+              '    sel = (g == v).to_numpy()',
+              f'    ax.scatter(px[sel], py[sel], s={_area(size)}, color=colors[i % len(colors)], label=names[i])',
+              f'    th = theta[gr == v]' if freq else '    th = theta[sel]',
+              '    Cj, Sj = np.cos(th).mean(), np.sin(th).mean(); Rj = np.hypot(Cj, Sj)',
+              '    if Rj > 1e-12:   # the group\'s mean vector: its mean direction, R̄ long',
+              f'        ax.annotate("", xy=xy((np.arctan2(Sj, Cj) % (2*np.pi)) / (2*np.pi), Rj), xytext=(0, 0), color=colors[i % len(colors)], {arrow("colors[i % len(colors)]")})',
+              f'fig.legend(loc="outside lower center", ncols={min(4, len(levels))}, frameon=False, fontsize={_pt(11)})']
+    else:
+        c.append(f'ax.scatter(px, py, s={_area(size)}, color="{BASE}")')
+        c += MEAN_LINES
+        if R > 1e-12:
+            c.append(f'ax.annotate("", xy=xy(m / (2*np.pi), R), xytext=(0, 0), color="{RED}", {arrow(J(RED))})   # the mean vector: the mean direction, R̄ long')
+        if h_vm is not None:
+            c.append(f'n, c2 = len(theta), stats.chi2.ppf({1 - alpha!r}, 1); Rn = n*R   # the von Mises interval of the mean direction (Upton 1986, as Zar gives it)')
+            if R < 0.9:
+                c.append('h = np.arccos(min(1.0, np.sqrt(2*n*(2*Rn**2 - n*c2) / (4*n - c2)) / Rn))')
+            else:
+                c.append('h = np.arccos(min(1.0, np.sqrt(n**2 - (n**2 - Rn**2)*np.exp(c2/n)) / Rn))')
+            c += ['f0, f1 = ((m - h) % (2*np.pi)) / (2*np.pi), ((m + h) % (2*np.pi)) / (2*np.pi)',
+                  'f1 = f1 + 1 if f1 < f0 else f1   # from the lower limit to the upper, the way the angles grow',
+                  f'ax.plot(*xy(f0 + (f1 - f0) * np.arange(41) / 40, 0.97), color="{RED}", linewidth={_pt(3)})   # the interval, an arc just inside the circle']
+    c += ['ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal"); ax.axis("off")',
+          f'ax.set_title({J(column + " circular dot plot")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _rose_code(table, column, rows, units, P, freq, alpha, where, table_name, plot, R, with_vm):
+    """The rose diagram: a histogram on the circle (the radius the square
+    root of the count, or the count), the fitted von Mises as counts per bin,
+    the mean direction R̄ times the longest bar long."""
+    compass = plot.get('compass', True) is not False
+    nb = int(plot.get('bins') or 24)
+    area = plot.get('area', True) is not False
+    c = _plot_head(table, rows, where, table_name, [column], freq)
+    c += _angle_lines(column, units, P, freq)
+    c += [_ticks_code(plot.get('ticks') or []),
+          f'nb = {nb}   # the page\'s bins',
+          'k = np.minimum(nb - 1, np.floor(f * nb)).astype(int)',
+          f'counts = np.bincount(k, weights={"reps" if freq else "None"}, minlength=nb)' + ('   # Freq: a row counts that many times' if freq else ''),
+          'rof = np.sqrt   # Rose Area Proportional to Count: the radius is the square root of the count (Fisher 1993)' if area else 'rof = lambda v: v   # the radius is the count',
+          'r = rof(counts)', 'top = max(r.max(), 1e-9)']
+    c += MEAN_LINES
+    c += ['fig, ax = plt.subplots(figsize=(3.3, 3.3), layout="constrained", subplot_kw={"projection": "polar"})',
+          'ax.set_theta_zero_location("N"); ax.set_theta_direction(-1)   # zero at the top, clockwise (compass, clock)' if compass
+          else 'ax.set_theta_zero_location("E"); ax.set_theta_direction(1)   # zero at the right, counterclockwise (mathematics)',
+          f'ax.bar(2*np.pi * (np.arange(nb) + 0.5) / nb, r, width=2*np.pi / nb, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.8)})']
+    if with_vm:
+        c += ['kappa, mu, _ = stats.vonmises.fit(theta, fscale=1)   # the fitted von Mises (maximum likelihood), as Fit von Mises',
+              'g = np.linspace(0, 2*np.pi, 361)',
+              f'ax.plot(g, rof(len(theta) * stats.vonmises.pdf(g, kappa, loc=m) * 2*np.pi / nb), color="{GREEN}", linewidth={_pt(1.8)}, label="von Mises")   # as counts per bin']
+    if R > 1e-12:
+        c += [f'ax.plot([m, m], [0, R * top], color="{RED}", linewidth={_pt(2.2)})   # the mean direction, R̄ times the longest bar',
+              f'ax.plot([m], [R * top], marker="o", markersize={_pt(7)}, color="{RED}")']
+    c += ['ax.set_ylim(0, top * 1.04)',
+          'ax.set_xticks([2*np.pi * t for t, _ in ticks], [label for _, label in ticks])',
+          f'ax.tick_params(axis="y", labelsize={_pt(9)}, labelcolor="{MUTED}")',
+          f'ax.set_title({J(column + " rose diagram")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _scatter_code(table, y, x, rows, P, freq, where, table_name, ticks, both, title, size):
+    """An angle by an X: each row a point, the angle on its circle (0 to one
+    turn) with the labels of the circle; with an X of angles, both axes so."""
+    c = _plot_head(table, rows, where, table_name, [y, x], freq)
+    c += [_ticks_code(ticks),
+          f'a = d[{J(y)}].to_numpy() % {P!r}   # the angle, 0 to one turn']
+    c.append(f'b = d[{J(x)}].to_numpy() % {P!r}   # the other angle' if both else f'b = d[{J(x)}].to_numpy()')
+    c += [f'fig, ax = plt.subplots(figsize=({size[0] / 100:g}, {size[1] / 100:g}), layout="constrained")',
+          f'ax.scatter(b, a, s={_area(6)}, color="{BASE}")',
+          f'ax.set_ylim(0, {P!r}); ax.set_yticks([t * {P!r} for t, _ in ticks], [label for _, label in ticks])']
+    if both:
+        c.append(f'ax.set_xlim(0, {P!r}); ax.set_xticks([t * {P!r} for t, _ in ticks], [label for _, label in ticks])')
+    c += [f'ax.set_xlabel({J(x)})', f'ax.set_ylabel({J(y)})', f'ax.set_title({J(title)})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _groups_of(table, y, group, rows, freq):
+    """The levels of the grouping column that have angles (the report's
+    order), and their names from the page's labels (the table's levels in
+    order); None when fewer than two."""
+    if not group or not data.is_categorical(table, group):
+        return None
+    df = _frame(table, [y], rows, freq)
+    s = data.series(table, group, df.index.unique())
+    cats = list(s.cat.categories)
+    present = [lv for lv in cats if (s == lv).any()]
+    return present, cats

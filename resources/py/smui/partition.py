@@ -609,6 +609,37 @@ class Tree:
     def predict_proba(self, X):
         return np.array([nd.prob for nd in self.leaves()])[self.leaf_index(X)]
 
+    def boxes(self):
+        """Every node as the report's tree draws it, parents before children and left before right: its path
+        ('' the root, then L and R down to it), its condition (label), count, and mean and std dev, or its
+        level rates, probabilities (Prob) and weights (counts) and G^2; lo and hi, the first and last leaf
+        under it (the leaves numbered left to right from 0); and the split made there: the column, its
+        LogWorth and statistic (SS or G^2), and the left child's mean less the right child's."""
+        at = {id(nd): i for i, nd in enumerate(self.leaves())}
+        span = {}
+
+        def walk(nd):
+            if nd.children is None:
+                span[id(nd)] = (at[id(nd)], at[id(nd)])
+            else:
+                span[id(nd)] = (walk(nd.children[0])[0], walk(nd.children[1])[1])
+            return span[id(nd)]
+        walk(self.root)
+        out = []
+        for nd in self.nodes():
+            d = {'path': nd.path, 'label': nd.label, 'count': nd.count, 'leaf': nd.children is None,
+                 'lo': span[id(nd)][0], 'hi': span[id(nd)][1], 'split': None}
+            if self.L:
+                d.update(rates=nd.rate.tolist(), probs=nd.prob.tolist(), counts=nd.n.tolist(), g2=nd.g2)
+            else:
+                d.update(mean=nd.mean, sd=nd.sd)
+            if nd.children:
+                c = nd.cand
+                d['split'] = {'column': self.cols[c['j']].name, 'logworth': c['logworth'], 'stat': c['stat'],
+                              'difference': None if self.L else nd.children[0].mean - nd.children[1].mean}
+            out.append(d)
+        return out
+
     def text(self):
         """The tree as lines: each node's condition, count and mean (or Prob), and its split's LogWorth."""
         lines = []
@@ -646,6 +677,7 @@ def kfold(cols, X, y, L, w, cnt, sets, k=5, seed=0, splits=0, minsize=5, informa
     return pred, fold, out
 # ==== END OF ENGINE ====
 
+import inspect  # noqa: E402
 import json  # noqa: E402
 
 from . import data, predictive, profile  # noqa: E402
@@ -741,18 +773,14 @@ def _leaf_labels(t):
     return out
 
 
-def _node_json(P, t, nd, lo, hi, number):
-    d = {'path': nd.path, 'parent': nd.parent.path if nd.parent is not None else None, 'label': nd.label, 'count': nd.count,
-         'w': nd.W, 'leaf': nd.children is None, 'lo': lo, 'hi': hi, 'number': number, 'split': None}
-    if t.L:
-        d.update(rates=nd.rate.tolist(), probs=nd.prob.tolist(), counts=nd.n.tolist(), g2=nd.g2)
-    else:
-        d.update(mean=nd.mean, sd=nd.sd, ss=nd.ss)
+def _node_json(P, t, nd, box):
+    """A node of the report: what the tree draws of it (Tree.boxes, which the code under the tree calls too),
+    its parent, weight and leaf number, the split's order and children, and every column's best split there."""
+    d = dict(box, parent=nd.parent.path if nd.parent is not None else None, w=nd.W, number=box['lo'] + 1 if box['leaf'] else None)
+    if not t.L:
+        d['ss'] = nd.ss
     if nd.children:
-        c = nd.cand
-        d['split'] = {'column': t.cols[c['j']].name, 'logworth': c['logworth'], 'stat': c['stat'], 'order': nd.order,
-                      'children': [ch.path for ch in nd.children],
-                      'difference': None if t.L else nd.children[0].mean - nd.children[1].mean}
+        d['split'] = dict(box['split'], order=nd.order, children=[ch.path for ch in nd.children])
     cands = []
     best = nd.best()
     for j, c in enumerate(nd.candidates()):
@@ -767,20 +795,7 @@ def _node_json(P, t, nd, lo, hi, number):
 
 
 def _tree_json(P, t):
-    leaves = t.leaves()
-    at = {id(nd): i for i, nd in enumerate(leaves)}
-    span = {}
-
-    def walk(nd):
-        if nd.children is None:
-            span[id(nd)] = (at[id(nd)], at[id(nd)])
-        else:
-            a = walk(nd.children[0])
-            b = walk(nd.children[1])
-            span[id(nd)] = (a[0], b[1])
-        return span[id(nd)]
-    walk(t.root)
-    return [_node_json(P, t, nd, *span[id(nd)], at[id(nd)] + 1 if nd.children is None else None) for nd in t.nodes()]
+    return [_node_json(P, t, nd, box) for nd, box in zip(t.nodes(), t.boxes())]
 
 
 def _summary(P, splits, fit):
@@ -839,16 +854,404 @@ def _fit_code(P, t, sp, ms, group):
 SEP = '\n\n# ----\n'
 
 
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code (predictive.graph_codes has the scheme)
+# ---------------------------------------------------------------------------
+# Every graph of the report is drawn from the tree the code grows: the head
+# reads the table, replays the report's steps (the engine's, or CART's
+# scikit-learn tree) and ends with fitted, leaf (each row's leaf, numbered
+# left to right) and nodes (every node as the tree draws it: Tree.boxes, or
+# cart_boxes). The tails draw the partition graph, the tree and the small
+# tree (draw_tree), the split history, the leaf report and the column
+# contributions; predictive.graph_codes the ROC, lift and actual by
+# predicted. The page's display choices come in `plot` (Show Points, the
+# Show Split options).
+
+def draw_tree(nodes, levels=None, small=False, stats=True, bar=True, prob=True, count=True, cart=False, title='Decision tree'):
+    """The tree as the report draws it (smui-p-partition.js), with matplotlib: a box per node, the parents
+    above their children and the leaves side by side from the left, joined by elbow lines. A box shows the
+    node's condition, count, mean and std dev, and the split's LogWorth (CART: its SS) and Difference; or
+    its G^2 and a line per level: the rate as a bar, Rate, Prob and Count. small: the Small Tree View's
+    boxes (the condition, the rows, the mean or the most likely level). The sizes are the page's, in pixels
+    at 100 an inch; stats, bar, prob and count are its Show Split options."""
+    import math
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    palette = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+    ink, second, muted, border, surface, band = '#352921', '#6b5d4f', '#786b5d', '#e0d7ce', '#fcf7f2', '#f6efe8'
+    pt = 0.72   # points per pixel, at 100 pixels an inch
+
+    def fmt(v, sig=7):
+        """A number as the report writes it: an integer as it is, else sig significant digits."""
+        if v is None or v != v:
+            return '.'
+        if math.isinf(v):
+            return '∞' if v > 0 else '−∞'
+        if float(v).is_integer() and abs(v) < 1e15:
+            s = str(int(v))
+        elif abs(v) >= 1e9 or abs(v) < 1e-4:
+            m, e = f'{v:.{min(sig, 5) - 1}e}'.split('e')
+            s = f'{m}e{int(e)}'
+        else:
+            s = f'{v:.{sig}g}'
+            if 'e' in s:
+                s = repr(float(s))
+            if '.' in s:
+                s = s.rstrip('0').rstrip('.')
+        return '−' + s[1:] if s.startswith('-') else s
+
+    def clip(s, px, cw=6.4):
+        n = max(3, int(px // cw))
+        s = str(s)
+        return s[:n - 1] + '…' if len(s) > n else s
+
+    def at(v):
+        return math.floor(v + 0.5)   # a pixel, rounded as the page rounds
+
+    cat = levels is not None
+    L = len(levels) if cat else 0
+    TITLE, ROW, GAP, VGAP, PAD = (17, 12, 8, 18, 6) if small else (20, 14, 14, 28, 6)
+    level_w = bar_w = num_w = cnt_w = 0
+    if small:
+        BW = 118
+    elif cat:
+        level_w = max(38, min(96, at(6.3 * max([5] + [len(str(v)) for v in levels]))))
+        bar_w, num_w, cnt_w = (38 if bar else 0), 46, (42 if count else 0)
+        BW = max(184, 10 + level_w + bar_w + num_w * (2 if prob else 1) + cnt_w)
+    else:
+        BW = 184
+
+    def height(nd):
+        if small:
+            return TITLE + ROW + 5
+        h = TITLE + PAD
+        if cat:
+            h += (ROW * (3 if nd['split'] else 2) if stats else 0) + ROW * (L + 1)
+        else:
+            h += ROW * ((3 + (2 if nd['split'] else 0)) if stats else 1)
+        return h + 6
+
+    def depth(nd):
+        return len(nd['path'])
+    D = max(depth(nd) for nd in nodes)
+    row_h = [0] * (D + 1)
+    for nd in nodes:
+        row_h[depth(nd)] = max(row_h[depth(nd)], height(nd))
+    ys, yy = [], PAD
+    for d in range(D + 1):
+        ys.append(yy)
+        yy += row_h[d] + VGAP
+    H = math.ceil(yy - VGAP + PAD)
+    W = math.ceil(GAP + sum(1 for nd in nodes if nd['leaf']) * (BW + GAP))
+
+    def cx(nd):
+        return GAP + (nd['lo'] + nd['hi']) / 2 * (BW + GAP) + BW / 2
+    top = 30 if title else 0   # room for the title
+    fig = plt.figure(figsize=(W / 100, (H + top) / 100))
+    ax = fig.add_axes([0, 0, 1, H / (H + top)])
+    ax.set_xlim(0, W)
+    ax.set_ylim(H, 0)   # y down, as on the page
+    ax.axis('off')
+    if title:
+        ax.set_title(title, fontsize=9)
+    by = {nd['path']: nd for nd in nodes}
+    for nd in nodes:   # the lines from each split node down to its two children
+        if nd['split']:
+            d = depth(nd)
+            x0, y0, ym = cx(nd), ys[d] + height(nd), ys[d] + row_h[d] + VGAP / 2
+            for side in 'LR':
+                ch = by[nd['path'] + side]
+                ax.plot([x0, x0, cx(ch), cx(ch)], [y0, ym, ym, ys[d + 1]], color=muted, linewidth=1.2 * pt)
+    for nd in nodes:
+        x, y0, h = at(cx(nd) - BW / 2), ys[depth(nd)], height(nd)
+        ax.add_patch(Rectangle((x + 0.5, y0 + 0.5), BW - 1, h - 1, facecolor=surface, edgecolor=muted if nd['leaf'] else border, linewidth=pt))
+        if small:
+            ax.text(x + 5, y0 + TITLE - 5, clip(nd['label'], BW - 8, 6.2), fontsize=9.5 * pt, color=ink)
+            if cat:
+                j = nd['probs'].index(max(nd['probs']))   # the most likely level
+                right = f'{clip(levels[j], 36, 5.6)} {nd["probs"][j]:.3f}'
+            else:
+                right = fmt(nd['mean'], 4)
+            ax.text(x + 5, y0 + TITLE + ROW - 2, f'{fmt(nd["count"])} rows', fontsize=9 * pt, color=second)
+            ax.text(x + BW - 5, y0 + TITLE + ROW - 2, right, fontsize=9 * pt, color=ink, ha='right')
+            continue
+        ax.add_patch(Rectangle((x + 0.5, y0 + 0.5), BW - 1, TITLE - 0.5, facecolor=band, edgecolor='none'))   # the heading
+        ax.text(x + 18, y0 + TITLE - 6, clip(nd['label'], BW - 24, 7.1), fontsize=11 * pt, fontweight='bold', color=ink)
+        rows = []   # (name, value) lines under the heading
+        s = nd['split']
+        if not cat:
+            if stats:
+                rows += [('Count', fmt(nd['count'])), ('Mean', fmt(nd['mean'], 6)), ('Std Dev', fmt(nd['sd'], 6))]
+                if s:
+                    rows += [('SS' if cart else 'LogWorth', fmt(s['stat'] if cart else s['logworth'], 6)), ('Difference', fmt(s['difference'], 6))]
+            else:
+                rows.append(('Mean', fmt(nd['mean'], 6)))
+        elif stats:
+            rows += [('Count', fmt(nd['count'])), ('G^2', fmt(nd['g2'], 6))]
+            if s:
+                rows.append(('Split G^2' if cart else 'LogWorth', fmt(s['stat'] if cart else s['logworth'], 6)))
+        yy = y0 + TITLE + PAD + ROW - 3
+        for k, v in rows:
+            ax.text(x + 7, yy, k, fontsize=10.5 * pt, color=second)
+            ax.text(x + BW - 7, yy, v, fontsize=10.5 * pt, color=ink, ha='right')
+            yy += ROW
+        if not cat:
+            continue
+        # the level table: Level, a bar, Rate, Prob, Count
+        x_bar = x + 7 + level_w
+        x_rate = x_bar + bar_w + num_w - 4
+        x_prob = x_rate + num_w if prob else None
+        x_cnt = x_bar + bar_w + num_w * (2 if prob else 1) + cnt_w - 4
+        heads = [(x + 7, 'Level', 'left'), (x_rate, 'Rate', 'right')] + ([(x_prob, 'Prob', 'right')] if prob else []) + ([(x_cnt, 'Count', 'right')] if count else [])
+        for hx, ht, ha in heads:
+            ax.text(hx, yy, ht, fontsize=9.5 * pt, color=muted, ha=ha)
+        yy += ROW
+        for j, lv in enumerate(levels):
+            ax.text(x + 7, yy, clip(lv, level_w - 4), fontsize=10.5 * pt, color=second)
+            if bar:
+                ax.add_patch(Rectangle((x_bar, yy - 8), bar_w - 6, 8, facecolor=border, edgecolor='none'))
+                ax.add_patch(Rectangle((x_bar, yy - 8), max(0.0, (bar_w - 6) * nd['rates'][j]), 8, facecolor=palette[j % len(palette)], edgecolor='none'))
+            ax.text(x_rate, yy, f'{nd["rates"][j]:.4f}', fontsize=10.5 * pt, color=ink, ha='right')
+            if prob:
+                ax.text(x_prob, yy, f'{nd["probs"][j]:.4f}', fontsize=10.5 * pt, color=ink, ha='right')
+            if count:
+                ax.text(x_cnt, yy, fmt(math.floor(nd['counts'][j] * 1000 + 0.5) / 1000), fontsize=10.5 * pt, color=ink, ha='right')
+            yy += ROW
+    return fig, ax
+
+
+def _graph_head(P, t, sp, ms, group, table_name, rows):
+    """The head of every graph's code: the table and the tree the engine grows (the report's steps), then
+    fitted, leaf and nodes."""
+    L = len(P.levels) if P.kind == 'categorical' else 0
+    lines = P.code(table_name, rows, extra_imports=[predictive.PLT])
+    f = sp['freq']
+    lines.append(f'cnt = d[{json.dumps(f)}].to_numpy(float)   # the frequencies: the minimum size and the degrees of freedom count them'
+                 if f else 'cnt = None   # every row counts once')
+    fit = [f'# Partition for {P.y}{f" ({group})" if group else ""}: the report\'s steps replayed from the root', 'columns = [']
+    fit += [f'    {c!r},' for c in t.cols]
+    fit.append(']')
+    if float(sp['minsize']) < 1:
+        fit.append(f'# Minimum Size Split {sp["minsize"]!r}: that share of the training rows, {num_text(ms)} rows')
+    fit.append(f'tree = Tree(columns, X, y, {L}, w, cnt, sets, minsize={num_text(ms)}, informative={P.missing == "informative"}'
+               + (f', levels={json.dumps(list(P.labels))})' if L else ')'))
+    fit.append(f'tree.run({_py(sp["steps"])})')
+    fit += ['fitted = tree.fitted()   # each row\'s prediction: its leaf\'s mean, or its leaf\'s probability of every level',
+            'leaf = np.zeros(len(y), dtype=int)   # each row\'s leaf, numbered from the left from 0',
+            'for i, nd in enumerate(tree.leaves()):',
+            '    leaf[nd.rows] = i',
+            'nodes = tree.boxes()   # every node as the tree draws it']
+    return SEP.join(['\n'.join(lines), engine_source(), '\n'.join(fit)])
+
+
+def _partition_tail(P, plot):
+    """The partition graph: the training rows side by side in their leaves, each leaf as wide as its rows."""
+    J = json.dumps
+    points = plot.get('points', True) is not False
+    n = int(P.train().sum())
+    L = ['leaves = [nd for nd in nodes if nd["leaf"]]   # left to right',
+         'idx = [np.flatnonzero((leaf == l) & train) for l in range(len(leaves))]   # each leaf\'s training rows, in the table\'s order',
+         'edges = np.r_[0, np.cumsum([len(r) for r in idx])] / sum(len(r) for r in idx)   # each leaf\'s band: as wide as its rows',
+         'centers = (edges[:-1] + edges[1:]) / 2']
+    if P.kind == 'continuous':
+        size = 3.5 if n > 1500 else 5
+        L += [predictive.figure(560, 300)]
+        if points:
+            L += ['for l, r in enumerate(idx):',
+                  '    lo, hi = edges[l], edges[l + 1]',
+                  f'    ax.scatter(lo + (np.arange(len(r)) + 0.5) / len(r) * (hi - lo), y[r], s={size * size * 0.55:g}, color="{predictive.BASE}")   # the rows evenly across the band, in order']
+        L += ['for l, nd in enumerate(leaves):',
+              f'    ax.plot([edges[l], edges[l + 1]], [nd["mean"], nd["mean"]], color="{predictive.FIT}", linewidth=2)   # the leaf\'s mean',
+              f'ax.set_ylabel({J(P.y)})']
+    else:
+        size = 3 if n > 1500 else 4.5
+        L += [f'names = {J(list(P.labels))}   # the levels, as the report names them',
+              f'colors = {J(predictive.PALETTE)}',
+              'rates = np.array([nd["rates"] for nd in leaves])',
+              'cum = np.c_[np.zeros(len(leaves)), np.cumsum(rates, axis=1)]   # the rates stacked in each band',
+              predictive.figure(560, 300),
+              'for j, name in enumerate(names):',
+              f'    ax.bar(centers, rates[:, j], bottom=cum[:, j], width=np.maximum(np.diff(edges), 1e-6), color=colors[j % len(colors)], alpha={0.28 if points else 0.8}, linewidth=0, label=name)']
+        if points:
+            L += ['rng = np.random.default_rng(1)   # each row at random in its level\'s part of its band, as the page places it (with random numbers of its own)',
+                  'for l, r in enumerate(idx):',
+                  '    lo, hi, j = edges[l], edges[l + 1], y[r]',
+                  f'    ax.scatter(lo + (0.08 + 0.84 * rng.uniform(size=len(r))) * (hi - lo), cum[l, j] + (0.1 + 0.8 * rng.uniform(size=len(r))) * rates[l, j], s={size * size * 0.55:g}, color="{predictive.BASE}")']
+        L += ['ax.set_ylim(0, 1)', f'ax.set_ylabel({J(P.y + ": rate")})',
+              'fig.legend(loc="outside upper left", ncols=min(len(names), 6), frameon=False, fontsize=8)']
+    L += ['for e in edges[1:-1]:',
+          f'    ax.axvline(e, color="{predictive.MUTED}", linewidth=1, linestyle=":")   # the leaves\' edges',
+          'ax.set_xlim(0, 1)',
+          'if len(leaves) <= 40:',
+          '    ax.set_xticks(centers, [str(l + 1) for l in range(len(leaves))])   # the Leaf Report\'s numbers',
+          'else:',
+          '    ax.set_xticks([])',
+          'ax.set_xlabel("Leaves (the Leaf Report\'s numbers)")',
+          f'ax.set_title({J("Partition of " + P.y)}, wrap=True)',
+          'plt.show()']
+    return '\n'.join(L)
+
+
+def _tree_tail(P, plot, small, cart):
+    """The tree, or the Small Tree View: draw_tree on the nodes."""
+    src = inspect.getsource(draw_tree).rstrip()
+    lv = f'levels={json.dumps(list(P.labels))}' if P.kind == 'categorical' else 'levels=None'
+    opts = '' if small else f', stats={plot.get("stats", True) is not False}, bar={plot.get("bar", True) is not False}, prob={plot.get("prob", True) is not False}, count={plot.get("count", True) is not False}'
+    call = f'draw_tree(nodes, {lv}, small={small}{opts}, cart={cart}, title={json.dumps("Small tree view" if small else "Decision tree")})'
+    return '\n'.join([src, '', '', call + ('' if small else '   # the page\'s Show Split options'), 'plt.show()'])
+
+
+def _history_tail(P, go, cart=False):
+    """The split history: each set's RSquare (or entropy RSquare) after each split, in the order made
+    (the engine's Tree.history, or cart_history), and after Go the splits it looked at past the best."""
+    sets = [k for k in range(3) if P.has(k)]
+    colors = {0: predictive.BASE, 1: '#b8641d', 2: '#3a7d44'}
+    L = [inspect.getsource(cart_history).rstrip(), '', '',
+         'hist = cart_history(model, X, y, w, sets, nodes, root, L)   # each set\'s RSquare after 0, 1, ... splits, in the order best-first growth made them'] if cart else [
+         'hist = tree.history()   # each set\'s RSquare after 0, 1, ... splits, in the order the splits were made']
+    L += [
+         f'colors = {json.dumps({str(k): colors[k] for k in sets})}',
+         f'sets = {json.dumps([[k, predictive.SETS[k]] for k in sets])}',
+         predictive.figure(460, 280),
+         'for k, name in sets:',
+         '    ax.plot(range(len(hist)), [h[k] for h in hist], color=colors[str(k)], linewidth=1.8, marker="o", markersize=3.6, label=name)']
+    if go:
+        L += [('g = go' if cart else 'g = tree.go_trace') + '   # Go: the splits it looked at, and the number it kept',
+              'after = [e for e in g["trace"] if e["splits"] > g["best"]]',
+              'kept = next(e for e in g["trace"] if e["splits"] == g["best"])',
+              'for k, name in sets:',
+              '    ax.plot([g["best"]] + [e["splits"] for e in after], [kept[k]] + [e[k] for e in after], color=colors[str(k)], linewidth=1.2, linestyle=":",',
+              '            marker="o", markersize=2.9, markerfacecolor="none")   # looked at past the best, then pruned',
+              f'ax.axvline(g["best"], color="{predictive.MUTED}", linewidth=1, linestyle="--")']
+    L += ['ax.set_xlim(left=0)', 'ax.set_xlabel("Number of Splits")',
+          f'ax.set_ylabel("{"Entropy RSquare" if P.kind == "categorical" else "RSquare"}")',
+          'ax.set_title("Split history")']
+    if len(sets) > 1:
+        L.append('fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize=8)')
+    L.append('plt.show()')
+    return '\n'.join(L)
+
+
+def _leaves_tail(P, nl):
+    """The Leaf Report's bars: each leaf's mean, or its probabilities stacked."""
+    h = max(160, min(560, 48 + 22 * nl))
+    L = ['leaves = [nd for nd in nodes if nd["leaf"]]   # left to right, numbered from 1',
+         'numbers = [str(l + 1) for l in range(len(leaves))]']
+    if P.kind == 'continuous':
+        L += [predictive.figure(320, h),
+              f'ax.barh(numbers, [nd["mean"] for nd in leaves], height=0.75, color="{predictive.BAR}")',
+              'ax.invert_yaxis()   # leaf 1 at the top',
+              f'ax.set_xlabel({json.dumps("Mean " + P.y)})', 'ax.set_ylabel("Leaf")', 'ax.set_title("Leaf means")']
+    else:
+        L += [f'names = {json.dumps(list(P.labels))}', f'colors = {json.dumps(predictive.PALETTE)}',
+              'probs = np.array([nd["probs"] for nd in leaves])',
+              predictive.figure(340, h + 20),
+              'for j, name in enumerate(names):',
+              '    ax.barh(numbers, probs[:, j], left=probs[:, :j].sum(axis=1), height=0.75, color=colors[j % len(colors)], label=name)',
+              'ax.invert_yaxis()   # leaf 1 at the top', 'ax.set_xlim(0, 1)',
+              'ax.set_xlabel("Prob")', 'ax.set_ylabel("Leaf")', 'ax.set_title("Leaf probabilities")',
+              'fig.legend(loc="outside upper left", ncols=min(len(names), 4), frameon=False, fontsize=8)']
+    L.append('plt.show()')
+    return '\n'.join(L)
+
+
+def _contrib_lines(P):
+    """contrib: the SS (or G^2) of each column's splits, from the nodes."""
+    return [f'contrib = {{c: 0.0 for c in {json.dumps(list(P.x))}}}   # the X columns',
+            'for nd in nodes:',
+            '    if nd["split"]:',
+            '        contrib[nd["split"]["column"]] += nd["split"]["stat"]   # what the split explains (SS or G^2)']
+
+
+def _plots(P, head, plot, nl, go, cart):
+    """The graphs' code of a tree (every tail after head)."""
+    return {'partition': _partition_tail(P, plot), 'tree': _tree_tail(P, plot, False, cart), 'small': _tree_tail(P, plot, True, cart),
+            'history': _history_tail(P, go, cart), 'leaves': _leaves_tail(P, nl)}
+
+
+def _cart_head(P, c, sp, group, table_name, rows):
+    """The head of a CART tree's graphs: the table, and the report's steps replayed on scikit-learn's tree
+    grown best first (Go's loop too, as _cart_grown runs it), then fitted, leaf and nodes (cart_boxes)."""
+    L = c.L
+    cls = 'DecisionTreeClassifier' if L else 'DecisionTreeRegressor'
+    lines = P.code(table_name, rows, extra_imports=[predictive.PLT, f'from sklearn.tree import {cls}'])
+    f = sp['freq']
+    lines.append(f'cnt = d[{json.dumps(f)}].to_numpy(float)   # the frequencies: a node\'s count counts them'
+                 if f else 'cnt = None   # every row counts once')
+    helpers = '\n\n\n'.join(inspect.getsource(fn).rstrip() for fn in (cart_r2, cart_boxes))
+    crit = 'criterion="log_loss", ' if L else ''
+    steps = sp['steps']
+    F = [f'# Partition for {P.y}{f" ({group})" if group else ""} by CART: scikit-learn\'s tree grown best first, the report\'s steps replayed',
+         f'L = {L}   # the levels of the response (0: a continuous response)',
+         'wt = np.ones(len(y)) if w is None else w', '', '',
+         'def grow(k):',
+         '    """The CART tree of k leaves, grown best first (None: one leaf, no split)."""',
+         '    if k < 2:',
+         '        return None',
+         f'    return {cls}({crit}max_leaf_nodes=int(k), min_samples_leaf={max(1, int(math.ceil(c.ms)))}, random_state={int(sp["seed"] or 0)}).fit(X[train], y[train], sample_weight=wt[train])',
+         '', '',
+         'def predict(model):',
+         '    """Every row\'s prediction: its leaf\'s rates (a column for every level) or its mean; with no split the root\'s."""',
+         '    if model is None:',
+         '        return np.tile(root, (len(y), 1)) if L else np.full(len(y), root)',
+         '    if not L:',
+         '        return model.predict(X)',
+         '    out = np.zeros((len(X), L))',
+         '    out[:, model.classes_.astype(int)] = model.predict_proba(X)',
+         '    return out', '', '',
+         'root = np.bincount(y[train], weights=wt[train], minlength=L) / wt[train].sum() if L else float(np.sum(wt[train] * y[train]) / wt[train].sum())   # with no split',
+         'full = grow(2 ** 20)',
+         'n_max = 1 if full is None else int(full.get_n_leaves())   # the leaves of the whole tree']
+    if float(sp['minsize']) < 1:
+        F.insert(1, f'# Minimum Size Split {sp["minsize"]!r}: that share of the training rows, {num_text(c.ms)} rows')
+    if any(st.get('op') == 'go' for st in steps):
+        F += ['', '',
+              'def go_from(n0):',
+              '    """Go: a leaf more at a time until the validation RSquare has not improved for 10 leaves; the number of',
+              '    leaves with the best, and what it looked at."""',
+              '    trace, best, k_best, k = [], None, n0, n0',
+              f'    while k - k_best <= {AHEAD} and k <= n_max:',
+              '        f = predict(grow(k))',
+              '        r = cart_r2(f, y, w, sets, 1, L)',
+              '        trace.append({"splits": k - 1, **{q: cart_r2(f, y, w, sets, q, L) for q in (0, 1, 2) if (sets == q).any()}})',
+              '        if best is None or r > best + 1e-12:',
+              '            best, k_best = r, k',
+              '        k += 1',
+              '    return k_best, {"start": n0 - 1, "best": k_best - 1, "trace": trace}', '', '']
+    F += [f'steps = {_py(steps)}   # the report\'s steps: CART splits and prunes the whole tree, not one node',
+          'n, go = 1, None',
+          'for st in steps:',
+          '    if st["op"] == "split" and not st.get("node"):',
+          '        n = min(n_max, n + max(1, int(st.get("n") or 1)))',
+          '    elif st["op"] == "prune" and not st.get("node"):',
+          '        n = max(1, n - 1)']
+    if any(st.get('op') == 'go' for st in steps):
+        F += ['    elif st["op"] == "go" and (sets == 1).any():', '        n, go = go_from(n)']
+    F += ['if not steps or steps[-1]["op"] != "go":',
+          '    go = None   # the split history shows what Go looked at right after it',
+          'model = grow(n)',
+          'fitted = predict(model)   # each row\'s prediction: its leaf\'s mean, or its leaf\'s rates',
+          f'features = {json.dumps(list(P.features))}   # the columns of X',
+          'columns = [' + ', '.join(f'({json.dumps(n)}, {cont}, {cols})' for n, cont, cols in _cart_columns(P)) + ']   # each X column: continuous or not, its columns of X',
+          'nodes, leaf_rows, _ = cart_boxes(model, X, y, w, cnt, train, L, features, columns, root)   # every node as the tree draws it',
+          'leaf = np.zeros(len(y), dtype=int)   # each row\'s leaf, numbered from the left from 0',
+          'for i, r in enumerate(leaf_rows):',
+          '    leaf[r] = i']
+    return SEP.join(['\n'.join(lines), helpers, '\n'.join(F)])
+
+
 @api('partition.fit')
 def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None, missing='informative',
-        minsize=5, ordinal_order=True, steps=None, group=None, table_name='data'):
+        minsize=5, ordinal_order=True, steps=None, group=None, plot=None, table_name='data'):
     """The tree of the report's steps: its nodes (with every column's best
     split), the Measures of Fit, the summary line, the split history, the
-    leaves, the column contributions, and each row's leaf."""
+    leaves, the column contributions, and each row's leaf. plot: the page's
+    display choices for the graphs' code (points, stats, bar, prob, count)."""
     sp = _spec(y, x, weight, freq, validation, portion, seed, missing, minsize, ordinal_order, steps)
     P, t, ms = _grown(table, rows, sp)
     fitted = t.fitted()
-    rep = predictive.report(P, fitted)
+    head = _graph_head(P, t, sp, ms, group, table_name, rows)
+    rep = predictive.report(P, fitted, head=head)
     leaves = t.leaves()
     labels = _leaf_labels(t)
     leaf_of = np.zeros(len(P.index), dtype=int)
@@ -869,9 +1272,12 @@ def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion
         g = t.go_trace
         go = {'start': g['start'], 'best': g['best'], 'trace': [{'splits': e['splits'], **{predictive.SETS[k]: e[k] for k in (0, 1, 2) if k in e}} for e in g['trace']]}
     script = SEP.join([_head_code(P, sp, table_name, rows), engine_source(), _fit_code(P, t, sp, ms, group)])
+    rep['plots'].update(_plots(P, head, plot or {}, len(leaves), go is not None, False))
+    contrib = _contributions(P, t)
+    contrib['plot_code'] = '\n'.join(_contrib_lines(P) + predictive.contribution_lines(len(P.x)))
     return {'kind': P.kind, 'y': P.y, 'levels': list(P.labels), 'nodes': _tree_json(P, t), 'leaves': leaf_json,
             'assign': {'rows': P.index.tolist(), 'leaf': leaf_of.tolist(), 'set': P.sets.tolist(), 'y': P.target.tolist()},
-            'fit': rep, 'summary': _summary(P, t.splits(), rep), 'history': hist, 'go': go, 'contributions': _contributions(P, t),
+            'fit': rep, 'summary': _summary(P, t.splits(), rep), 'history': hist, 'go': go, 'contributions': contrib,
             'splits': t.splits(), 'minsize': ms, 'notes': list(t.notes), 'has_validation': bool(P.has(1)),
             'columns': [{'name': c.name, 'kind': c.kind} for c in t.cols], 'method': 'jmp', 'script': script}
 
@@ -993,12 +1399,33 @@ def _cart_root(P):
     return float(np.sum(w * P.target[tr]) / w.sum())
 
 
-def _cart_r2(P, fitted, k):
-    m = next((x for x in predictive.measures(P, fitted) if x['set'] == predictive.SETS[k]), None)
-    if m is None:
+def cart_r2(fitted, y, w, sets, k, L):
+    """The RSquare of the rows of set k (0 training, 1 validation, 2 test): 1 - SSE/SST about their own
+    mean, or for a categorical response (L levels) the entropy RSquare 1 - LL/LL0, LL0 from the training
+    rows' shares of the levels, as the Measures of Fit have them; nan for a set with no rows."""
+    import math
+    import numpy as np
+    m = sets == k
+    if not m.any():
         return math.nan
-    v = m['entropy_rsquare'] if P.kind == 'categorical' else m['rsquare']
-    return math.nan if v is None else v
+    wt = np.ones(len(y)) if w is None else w
+    if L:
+        tr = sets == 0
+        share = np.array([wt[tr][y[tr] == j].sum() for j in range(L)]) / wt[tr].sum()
+        ym, p, wm = y[m], fitted[m], wt[m]
+        ll = float(np.sum(wm * np.log(np.clip(p[np.arange(len(ym)), ym], 1e-15, 1.0))))
+        ll0 = float(np.sum(wm * np.log(np.clip(share[ym], 1e-15, 1.0))))
+        return 1 - ll / ll0 if ll0 < 0 else math.nan
+    ym, f, wm = y[m], fitted[m], wt[m]
+    r = ym - f
+    N = float(wm.sum())
+    sse = float(np.sum(wm * r * r))
+    sst = float(np.sum(wm * (ym - float(np.sum(wm * ym) / N)) ** 2))
+    return 1 - sse / sst if sst > 0 else math.nan
+
+
+def _cart_r2(P, fitted, k):
+    return cart_r2(np.asarray(fitted, dtype=float), P.target, P.w, P.sets, k, len(P.levels) if P.kind == 'categorical' else 0)
 
 
 def _cart_go(P, n0, n_max, ms, seed, root):
@@ -1049,52 +1476,56 @@ def _cart_grown(table, rows, sp):
     return predictive.cached('partition.cart', table, rows, sp, build)
 
 
-def _cart_nodes(P, c):
-    """The fitted tree as the engine's nodes: rows, conditions, statistics."""
-    tr_mask = P.train()
-    w, cnt = P.weights(), P.counts()
-    L = c.L
-    model = c.model
+def cart_boxes(model, X, y, w, cnt, train, L, features, columns, root=None):
+    """A fitted scikit-learn tree as the report's tree draws it (the engine's is Tree.boxes): every node,
+    parents before children and left before right, with its path ('' the root, then L and R), its
+    condition (scikit-learn's cut, halfway between two values, shown to 6 digits; for a categorical X
+    the level against the others its training rows have), its training rows' count, weight, and mean
+    and std dev, or level weights, rates and G^2 (CART does not smooth its rates: Prob is the rate), the
+    first and last leaf under it, and the split made there: its column, its SS or G^2 (the node's less
+    its children's), the order best-first growth made it in, and the left child's mean less the right's.
+    y: numbers, or level numbers 0..L-1 (L 0 for a continuous response); w: the weights, cnt the
+    counts (Freq), each None for ones; features: the names of X's columns; columns: [(x column, whether
+    it is continuous, its columns of X)]; root: the prediction with no split. Returns the nodes, each
+    leaf's rows (every row, not only training ones) and each leaf's label."""
+    import math
+    import numpy as np
+    from scipy.special import xlogy
+    w = np.ones(len(y)) if w is None else w
+    cnt = np.ones(len(y)) if cnt is None else cnt
 
     def stats_of(r):
-        t = r[tr_mask[r]]
+        t = r[train[r]]
         d = {'count': float(cnt[t].sum()), 'w': float(w[t].sum())}
         if L:
-            nvec = np.bincount(P.target[t], weights=w[t], minlength=L)
-            rate = nvec / nvec.sum() if nvec.sum() > 0 else np.full(L, 1.0 / L)
-            d.update(counts=nvec.tolist(), rates=rate.tolist(), probs=rate.tolist(), g2=float(-2 * _H(nvec, nvec.sum())))
+            n = np.bincount(y[t], weights=w[t], minlength=L)
+            rate = n / n.sum() if n.sum() > 0 else np.full(L, 1.0 / L)
+            d.update(counts=n.tolist(), rates=rate.tolist(), probs=rate.tolist(), g2=float(-2 * (np.sum(xlogy(n, n)) - xlogy(n.sum(), n.sum()))))
         else:
-            yv = P.target[t]
-            mean = float(np.sum(w[t] * yv) / w[t].sum())
-            ss = float(np.sum(w[t] * (yv - mean) ** 2))
+            mean = float(np.sum(w[t] * y[t]) / w[t].sum())
+            ss = float(np.sum(w[t] * (y[t] - mean) ** 2))
             d.update(mean=mean, ss=ss, sd=math.sqrt(ss / (d['count'] - 1)) if d['count'] > 1 else None)
         return d
     if model is None:
-        d = {'path': '', 'parent': None, 'label': 'All Rows', 'leaf': True, 'lo': 0, 'hi': 0, 'number': 1, 'cands': [], 'split': None, **stats_of(np.arange(len(P.index)))}
-        return [d], [np.arange(len(P.index))], ['All Rows']
+        d = {'path': '', 'parent': None, 'label': 'All Rows', 'leaf': True, 'lo': 0, 'hi': 0, 'number': 1, 'cands': [], 'split': None, **stats_of(np.arange(len(y)))}
+        return [d], [np.arange(len(y))], ['All Rows']
     tr = model.tree_
-    path = model.decision_path(P.X).tocsc()
+    path = model.decision_path(X).tocsc()
     rows_of = [path[:, i].nonzero()[0] for i in range(tr.node_count)]
-    feats = P.features
-
-    def present_levels(name, r):
-        """The levels of a nominal X among the training rows r (for the conditions)."""
-        idx = P.groups[name]
-        t = r[tr_mask[r]]
-        return [feats[q][len(name) + 1:-1] for q in idx if P.X[t, q].sum() > 0]
+    column_of = {j: (name, cont, cols) for name, cont, cols in columns for j in cols}
 
     def labels(i):
         f, thr = int(tr.feature[i]), float(tr.threshold[i])
-        name = feats[f]
-        col = next(cn for cn in P.x if f in P.groups[cn])
-        e = next(e for e in P.enc if e['name'] == col)
-        if e['type'] == 'continuous':
-            if name.endswith(' Missing') and f != P.groups[col][0]:
+        col, cont, cols = column_of[f]
+        name = features[f]
+        if cont:
+            if name.endswith(' Missing') and f != cols[0]:
                 return [f'{col} not Missing', f'{col} Missing']
-            return [f'{col}<={thr:.6g}', f'{col}>{thr:.6g}']   # scikit-learn's cut, halfway between two values (shown to 6 digits)
+            return [f'{col}<={thr:.6g}', f'{col}>{thr:.6g}']   # scikit-learn's cut, halfway between two values
+        t = rows_of[i][train[rows_of[i]]]
+        present = [features[q][len(col) + 1:-1] for q in cols if X[t, q].sum() > 0]   # the levels its training rows have
         lev = name[len(col) + 1:-1]
-        rest = [x for x in present_levels(col, rows_of[i]) if x != lev]
-        return [f'{col}({", ".join(rest)})', f'{col}({lev})']
+        return [f'{col}({", ".join(x for x in present if x != lev)})', f'{col}({lev})']
     out, nodes, leaves = [], [], []
 
     def walk(i, p, parent, label):
@@ -1109,45 +1540,38 @@ def _cart_nodes(P, c):
     lat = {i: k for k, i in enumerate(leaves)}
     span = {}
 
-    def rng(i):
+    def reach(i):
         if tr.children_left[i] == -1:
             span[i] = (lat[i], lat[i])
         else:
-            a, b = rng(int(tr.children_left[i])), rng(int(tr.children_right[i]))
-            span[i] = (a[0], b[1])
+            span[i] = (reach(int(tr.children_left[i]))[0], reach(int(tr.children_right[i]))[1])
         return span[i]
-    rng(0)
+    reach(0)
     by = {}
     for i, p, parent, label in nodes:
         d = {'path': p, 'parent': parent, 'label': label, 'leaf': bool(tr.children_left[i] == -1), 'lo': span[i][0], 'hi': span[i][1],
              'number': lat[i] + 1 if i in lat else None, 'cands': [], 'split': None, **stats_of(rows_of[i])}
         by[p] = d
         out.append(d)
-    k = 0
-    # the splits' statistics and the order scikit-learn made them in (largest impurity decrease first, as best-first growth does)
-    for d in out:
+    node_at = {p: i for i, p, _, _ in nodes}
+    for d in out:   # the splits' statistics
         if not d['leaf']:
             a, b = by[d['path'] + 'L'], by[d['path'] + 'R']
             stat = d['g2'] - a['g2'] - b['g2'] if L else d['ss'] - a['ss'] - b['ss']
-            i = next(q for q, p, _, _ in nodes if p == d['path'])
-            f = int(tr.feature[i])
-            col = next(cn for cn in P.x if f in P.groups[cn])
-            d['split'] = {'column': col, 'logworth': None, 'stat': stat, 'order': None, 'children': [a['path'], b['path']],
-                          'difference': None if L else a['mean'] - b['mean']}
-    inner = sorted((d for d in out if not d['leaf']), key=lambda d: (-d['split']['stat'], len(d['path'])))
-    # best first: a node is split only after its parent
-    done = {''}
-    pending = list(inner)
+            d['split'] = {'column': column_of[int(tr.feature[node_at[d['path']]])][0], 'logworth': None, 'stat': stat, 'order': None,
+                          'children': [a['path'], b['path']], 'difference': None if L else a['mean'] - b['mean']}
+    # the order best-first growth made the splits in: the largest decrease first, a node only after its parent
+    pending = sorted((d for d in out if not d['leaf']), key=lambda d: (-d['split']['stat'], len(d['path'])))
+    done, k = {''}, 0
     while pending:
-        nxt = next(d for d in pending if (d['parent'] in done or d['parent'] is None))
+        nxt = next(d for d in pending if d['parent'] in done or d['parent'] is None)
         pending.remove(nxt)
         done.add(nxt['path'])
         nxt['split']['order'] = k
         k += 1
     leaf_labels = []
     for i in leaves:
-        p = next(pp for q, pp, _, _ in nodes if q == i)
-        parts, cur = [], by[p]
+        parts, cur = [], by[next(pp for q, pp, _, _ in nodes if q == i)]
         while cur['parent'] is not None:
             parts.append(cur['label'])
             cur = by[cur['parent']]
@@ -1155,33 +1579,47 @@ def _cart_nodes(P, c):
     return out, [rows_of[i] for i in leaves], leaf_labels
 
 
-def _cart_history(P, c, nodes, leaf_rows):
-    """RSquare per set after each split, in best-first order."""
-    root = c._root_value
-    L = c.L
-    by = {d['path']: d for d in nodes}
-    tr_rows = {}
-    path = c.model.decision_path(P.X).tocsc() if c.model is not None else None
-    if c.model is not None:
-        walk = []
+def cart_history(model, X, y, w, sets, nodes, root, L):
+    """Each set's RSquare (cart_r2) after 0, 1, ... splits of a CART tree, in the order best-first growth
+    made them: the rows that reach a new pair of children take the children's rates (or means)."""
+    import numpy as np
+    pred = np.tile(root, (len(y), 1)) if L else np.full(len(y), float(root))
+    present = [k for k in (0, 1, 2) if np.any(sets == k)]
+    out = [{k: cart_r2(pred, y, w, sets, k, L) for k in present}]
+    if model is None:
+        return out
+    t = model.tree_
+    path = model.decision_path(X).tocsc()
+    number = {}
 
-        def collect(i, p):
-            walk.append((i, p))
-            if c.model.tree_.children_left[i] != -1:
-                collect(int(c.model.tree_.children_left[i]), p + 'L')
-                collect(int(c.model.tree_.children_right[i]), p + 'R')
-        collect(0, '')
-        for i, p in walk:
-            tr_rows[p] = path[:, i].nonzero()[0]
-    pred = np.tile(root, (len(P.index), 1)) if L else np.full(len(P.index), root)
-    out = [{'splits': 0, **{predictive.SETS[q]: _cart_r2(P, pred, q) for q in (0, 1, 2) if P.has(q)}}]
-    inner = sorted((d for d in nodes if not d['leaf']), key=lambda d: d['split']['order'])
-    for s, d in enumerate(inner, 1):
-        for ch in d['split']['children']:
-            e = by[ch]
-            pred[tr_rows[ch]] = np.array(e['probs']) if L else e['mean']
-        out.append({'splits': s, **{predictive.SETS[q]: _cart_r2(P, pred, q) for q in (0, 1, 2) if P.has(q)}})
+    def walk(i, p):
+        number[p] = i
+        if t.children_left[i] != -1:
+            walk(int(t.children_left[i]), p + 'L')
+            walk(int(t.children_right[i]), p + 'R')
+    walk(0, '')
+    by = {d['path']: d for d in nodes}
+    for d in sorted((d for d in nodes if d['split']), key=lambda d: d['split']['order']):
+        for ch in (d['path'] + 'L', d['path'] + 'R'):
+            pred[path[:, number[ch]].nonzero()[0]] = np.array(by[ch]['probs']) if L else by[ch]['mean']
+        out.append({k: cart_r2(pred, y, w, sets, k, L) for k in present})
     return out
+
+
+def _cart_columns(P):
+    """cart_boxes' columns: each x column, whether it is continuous, its columns of X."""
+    return [(e['name'], e['type'] == 'continuous', list(P.groups[e['name']])) for e in P.enc]
+
+
+def _cart_nodes(P, c):
+    """The fitted tree as the engine's nodes: rows, conditions, statistics (cart_boxes)."""
+    return cart_boxes(c.model, P.X, P.target, P.w, P.freq, P.train(), c.L, list(P.features), _cart_columns(P), c._root_value)
+
+
+def _cart_history(P, c, nodes, leaf_rows):
+    """RSquare per set after each split, in best-first order (cart_history)."""
+    h = cart_history(c.model, P.X, P.target, P.w, P.sets, nodes, c._root_value, c.L)
+    return [{'splits': i, **{predictive.SETS[k]: v for k, v in e.items()}} for i, e in enumerate(h)]
 
 
 def _cart_code(P, c, sp, table_name, rows, group):
@@ -1206,12 +1644,14 @@ def _cart_payload(table, y, x, rows, kw):
 
 
 @api('partition.cart_fit', packages=predictive.SK)
-def cart_fit(table, y, x, rows=None, group=None, table_name='data', **kw):
-    """The report of a CART tree (scikit-learn) with as many leaves as the steps ask for."""
+def cart_fit(table, y, x, rows=None, group=None, plot=None, table_name='data', **kw):
+    """The report of a CART tree (scikit-learn) with as many leaves as the steps ask for. plot: the
+    page's display choices for the graphs' code, as partition.fit takes them."""
     sp, P, c = _cart_payload(table, y, x, rows, kw)
     nodes, leaf_rows, labels = _cart_nodes(P, c)
     fitted = _cart_fitted(P, c.model, c._root_value)
-    rep = predictive.report(P, fitted)
+    head = _cart_head(P, c, sp, group, table_name, rows)
+    rep = predictive.report(P, fitted, head=head)
     leaf_of = np.zeros(len(P.index), dtype=int)
     for i, r in enumerate(leaf_rows):
         leaf_of[r] = i
@@ -1230,6 +1670,8 @@ def cart_fit(table, y, x, rows=None, group=None, table_name='data', **kw):
     contrib = predictive.contributions(P, contrib_vals, 'SS' if P.kind == 'continuous' else 'G^2')
     for r in contrib['rows']:
         r['splits'] = count[r['column']]
+    contrib['plot_code'] = '\n'.join(_contrib_lines(P) + predictive.contribution_lines(len(P.x)))
+    rep['plots'].update(_plots(P, head, plot or {}, len(leaf_json), c.go is not None, True))
     return {'kind': P.kind, 'y': P.y, 'levels': list(P.labels), 'nodes': nodes, 'leaves': leaf_json,
             'assign': {'rows': P.index.tolist(), 'leaf': leaf_of.tolist(), 'set': P.sets.tolist(), 'y': P.target.tolist()},
             'fit': rep, 'summary': _summary(P, splits, rep), 'history': _cart_history(P, c, nodes, leaf_rows), 'go': c.go,

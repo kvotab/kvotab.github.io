@@ -728,14 +728,18 @@ def _model_args(table, rows, y, x, kind, weight, freq, validation, portion, seed
 
 @api('ensemble.fit', packages=SK)
 def fit(table, y, x, kind='forest', rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None,
-        missing='informative', settings=None, shown=None, table_name='data'):
-    """Everything the Bootstrap Forest or Boosted Tree report shows."""
+        missing='informative', settings=None, shown=None, plot=None, table_name='data'):
+    """Everything the Bootstrap Forest or Boosted Tree report shows. plot:
+    the page's choices for the graphs' code ({'stat': the statistic
+    Cumulative Validation shows})."""
     M = _model_args(table, rows, y, x, kind, weight, freq, validation, portion, seed, missing, settings)
     P, st = M.P, M.st
     i = _shown(M, shown)
     F = M.fits[i]
     cat = P.kind == 'categorical'
-    rep = predictive.report(P, F.fitted)
+    head = _code(P, M, F, table_name, rows, graph=True)
+    rep = predictive.report(P, F.fitted, head=head)
+    rep['plots']['cumulative'] = _cumulative_tail(P, F, (plot or {}).get('stat'))
     out = {'kind': kind, 'response': P.kind, 'fit': rep, 'shown': i, 'best': M.best, 'multi': len(M.fits) > 1, 'by': M.by,
            'notes': list(M.notes), 'seed': M.seed, 'terms': len(P.x), 'n_features': int(P.X.shape[1])}
     out['spec'] = _spec_rows(P, M, F, table, validation)
@@ -752,6 +756,7 @@ def fit(table, y, x, kind='forest', rows=None, weight=None, freq=None, validatio
             oo = [math.sqrt(r['oob_sse_n']) for r in rows_ if r['oob_sse_n'] is not None]
             out['individual'] = [{'what': 'In Bag', 'rase': float(np.mean(ib))}, {'what': 'Out of Bag', 'rase': float(np.mean(oo)) if oo else None}]
     out['contributions'] = _contributions(P, F)
+    out['contributions']['plot_code'] = '\n'.join(_contrib_lines(P, F) + predictive.contribution_lines(len(P.x)))
     notes = []
     if kind == 'forest':
         short = sum(1 for T in F.trees[:F.kept] if T['total'] < st['minSplits'])
@@ -878,15 +883,18 @@ def _contributions(P, F):
 # the code under the report
 # ---------------------------------------------------------------------------
 
-def _code(P, M, F, table_name, rows):
+def _code(P, M, F, table_name, rows, graph=False):
     """Python that builds the same model from a CSV export of the table and
-    prints the Cumulative Validation curves and the Overall Statistics."""
+    prints the Cumulative Validation curves and the Overall Statistics.
+    graph: the head of the graphs' code instead (predictive.graph_codes):
+    matplotlib imported, each tree's out-of-bag rows and kept splits kept
+    (oobs, kept_of), no printing, and fitted, every row's prediction."""
     cat = P.kind == 'categorical'
     st = M.st
     p = F.params
     forest = F.kind == 'forest'
     cls = ('RandomForestClassifier' if cat else 'RandomForestRegressor') if forest else ('GradientBoostingClassifier' if cat else 'GradientBoostingRegressor')
-    L = P.code(table_name, rows, extra_imports=[f'from sklearn.ensemble import {cls}'])
+    L = P.code(table_name, rows, extra_imports=([predictive.PLT] if graph else []) + [f'from sklearn.ensemble import {cls}'])
     L += ['', 'SETS = ["Training", "Validation", "Test"]', "ww = np.ones(len(y)) if w is None else w   # each row's weight"]
     if cat:
         L.append('share = np.array([ww[train][y[train] == j].sum() for j in range(len(levels))]) / ww[train].sum()   # the training shares of the levels')
@@ -915,6 +923,8 @@ def _code(P, M, F, table_name, rows):
         if cat:
             L.append("ycol = np.searchsorted(rf.classes_, y[train])   # each training row's level among the forest's columns")
         L.append('forest = []   # each tree cut back: the tree, its estimate at every node, the node each node falls in')
+        if graph:
+            L.append('oobs, kept_of = [], []   # each tree\'s out-of-bag rows (of the training rows) and the splits it keeps')
         L.append('for tree, drawn in zip(rf.estimators_, rf.estimators_samples_):')
         L.append('    oob = np.bincount(drawn, minlength=int(train.sum())) == 0   # the training rows the tree did not see')
         if cat:
@@ -929,6 +939,9 @@ def _code(P, M, F, table_name, rows):
         else:
             L.append('    kept = len(loss) - 1   # every split: the tree as scikit-learn grew it')
         L.append('    forest.append((tree, full, stands_for(parents(tree), kept)))')
+        if graph:
+            L.append('    oobs.append(oob)')
+            L.append('    kept_of.append(kept)')
         L.append("each = [est[rep[tree.apply(X)]] for tree, est, rep in forest]   # every tree's prediction of every row")
         L.append('cum = np.cumsum(each, axis=0) / np.arange(1, len(each) + 1).reshape((-1,) + (1,) * each[0].ndim)   # the forest of the first k trees')
         L.append(f'KEPT = {F.kept}')
@@ -963,6 +976,9 @@ def _code(P, M, F, table_name, rows):
         L.append('    """The boosted tree of the layers kept."""')
         L.append('    return full(kept.predict_proba(Xnew))' if cat else '    return kept.predict(Xnew)')
     what = 'trees' if forest else 'layers'
+    if graph:
+        L.append('fitted = predict(X)   # each row\'s prediction, or its probability of every level')
+        return '\n'.join(L)
     L.append('')
     L.append(f'# Cumulative Validation: {STAT_LABELS[_main_stat(P)]} of each set against the number of {what}')
     L.append('for k, name in enumerate(SETS):')
@@ -975,6 +991,91 @@ def _code(P, M, F, table_name, rows):
     L.append('    if (sets == k).any():')
     L.append('        print("measures", name, *[float(v) for v in stats(fitted, sets == k)])')
     return '\n'.join(L)
+
+
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code (predictive.graph_codes has the scheme): the
+# head is the model's code (_code with graph=True), the tails Cumulative
+# Validation and the column contributions; predictive's the ROC and lift
+# curves and actual by predicted
+# ---------------------------------------------------------------------------
+
+SET_COLORS = {'Training': predictive.BASE, 'Validation': '#c0620f', 'Test': '#2e7d3a', 'Out of Bag': '#6c5b7b'}   # smui-p-ensemble.js, light theme
+
+
+def _cumulative_tail(P, F, stat):
+    """Cumulative Validation: the statistic shown of each set after 1, 2, ... trees or layers (the model
+    of the first k), and for a forest of the training rows out of bag; the number kept marked."""
+    keys = list(STAT_KEYS[P.kind])
+    stat = stat if stat in keys else keys[0]
+    forest = F.kind == 'forest'
+    what = 'Trees' if forest else 'Layers'
+    L = [f'stat = {keys.index(stat)}   # the statistic shown (Statistic in the red triangle): {STAT_LABELS[stat]}, of what stats() gives',
+         'curves = {name: [stats(c, sets == k)[stat] for c in cum] for k, name in enumerate(SETS) if (sets == k).any()}   # the model of the first k, for each k']
+    if forest:
+        L += ['# out of bag: each training row predicted by those of the first k trees that did not see it',
+              'tr_idx = np.flatnonzero(train)',
+              'oob_sum, oob_cnt = np.zeros((len(tr_idx),) + each[0].shape[1:]), np.zeros(len(tr_idx))',
+              'curves["Out of Bag"] = []',
+              'for j in range(len(forest)):',
+              '    oob_sum[oobs[j]] += each[j][tr_idx][oobs[j]]',
+              '    oob_cnt[oobs[j]] += 1',
+              '    ok = oob_cnt > 0',
+              '    m = np.zeros(len(y), dtype=bool)',
+              '    m[tr_idx[ok]] = True',
+              '    f = np.zeros_like(each[0])',
+              '    f[tr_idx[ok]] = oob_sum[ok] / (oob_cnt[ok][:, None] if f.ndim == 2 else oob_cnt[ok])',
+              '    curves["Out of Bag"].append(stats(f, m)[stat])']
+    L += [f'colors = {json.dumps({k: v for k, v in SET_COLORS.items() if forest or k != "Out of Bag"})}',
+          'x = np.arange(1, len(cum) + 1)',
+          predictive.figure(540, 310),
+          'for name, v in curves.items():',
+          '    ax.plot(x, v, color=colors[name], linewidth=2.2 if name == "Validation" else 1.5, linestyle=":" if name == "Out of Bag" else "-",',
+          '            marker="o" if len(x) == 1 else "None", label=name)',
+          'on = "Validation" if "Validation" in curves else "Out of Bag" if "Out of Bag" in curves else next(iter(curves))',
+          f'ax.plot([KEPT], [curves[on][KEPT - 1]], linestyle="none", marker="D", markersize=7, color=colors[on], markeredgecolor="#fcf7f2")   # the number kept',
+          f'ax.axvline(KEPT, color="{predictive.MUTED}", linewidth=1.2, linestyle="--")',
+          'ax.set_xlim(0.5, len(cum) + 0.5)',
+          f'ax.set_xlabel("Number of {what}")', f'ax.set_ylabel("{STAT_LABELS[stat]}")',
+          f'ax.set_title({json.dumps("Cumulative Validation of " + ("Bootstrap Forest" if forest else "Boosted Tree"))})',
+          'fig.legend(loc="outside upper left", ncols=4, frameon=False, fontsize=8)',
+          'plt.show()']
+    return '\n'.join(L)
+
+
+def _contrib_lines(P, F):
+    """contrib: the SS or G^2 of the splits on each X column, over the kept trees (as cut back) or every
+    layer's trees, from the model the head fits (_contributions)."""
+    cat = P.kind == 'categorical'
+    L = [f'groups = {json.dumps({c: [int(j) for j in P.groups[c]] for c in P.x})}   # the columns of X of each X column',
+         'column_of = {j: c for c, js in groups.items() for j in js}',
+         'contrib = {c: 0.0 for c in groups}',
+         '',
+         '',
+         'def node_loss(t, cat):',
+         '    """Each node\'s SS (a continuous response) or G^2 (a categorical one: -2 n log(n / N) of its level counts)."""',
+         '    N = t.weighted_n_node_samples',
+         '    if not cat:',
+         '        return t.impurity * N',
+         '    n = t.value[:, 0, :] * N[:, None]',
+         '    with np.errstate(divide="ignore", invalid="ignore"):',
+         '        g = np.where(n > 0, n * np.log(n / N[:, None]), 0.0)',
+         '    return -2.0 * g.sum(axis=1)',
+         '', '']
+    if F.kind == 'forest':
+        L += ['for (tree, est, rep), k in zip(forest[:KEPT], kept_of[:KEPT]):   # the kept trees, each with the splits it keeps',
+              '    t, parent = tree.tree_, parents(tree)',
+              f'    loss = node_loss(t, {cat})',
+              '    for s in range(1, k + 1):   # the s-th split made nodes 2s - 1 and 2s',
+              '        node = parent[2 * s - 1]',
+              '        contrib[column_of[int(t.feature[node])]] += float(loss[node] - loss[2 * s - 1] - loss[2 * s])']
+    else:
+        L += ['for tree in kept.estimators_.ravel():   # every layer\'s trees (a tree per level of a categorical response)',
+              '    t = tree.tree_',
+              '    loss = node_loss(t, False)   # the SS of the residuals the tree fits',
+              '    for node in np.flatnonzero(t.children_left >= 0):',
+              '        contrib[column_of[int(t.feature[node])]] += float(loss[node] - loss[t.children_left[node]] - loss[t.children_right[node]])']
+    return L
 
 
 # ---------------------------------------------------------------------------
@@ -1124,4 +1225,21 @@ def permutation(table, y, x, kind='forest', rows=None, weight=None, freq=None, v
         '        drops.append(base - stats(predict(Xall), m)[0])',
         '    print("permutation", c, np.mean(drops))',
     ])
-    return {'contributions': {'rows': rows_, 'label': label}, 'set': SET_NAMES[on], 'repeats': repeats, 'base': base, 'code': code}
+    # the bars' code, after the head of the model's graphs (ensemble.fit's plots.head_code)
+    plot = [f'# Permutation Importance: the fall in {STAT_LABELS[key]} of the {SET_NAMES[on].lower()} rows when one X column\'s values are shuffled over them',
+            f'groups = {json.dumps({c: [int(j) for j in P.groups[c]] for c in P.x})}   # the columns of X of each X column (a categorical one\'s move together)',
+            f'rng = np.random.default_rng({int(M.seed)})   # the report\'s seed',
+            f'm = sets == {on}',
+            'base = stats(fitted, m)[0]',
+            'contrib = {}',
+            'for c, idx in groups.items():',
+            '    drops = []',
+            f'    for _ in range({repeats}):   # the shuffles',
+            '        Xp = X[m].copy()',
+            '        Xp[:, idx] = X[m][rng.permutation(int(m.sum()))][:, idx]',
+            '        Xall = X.copy()',
+            '        Xall[m] = Xp',
+            '        drops.append(base - stats(predict(Xall), m)[0])',
+            '    contrib[c] = float(np.mean(drops))']
+    return {'contributions': {'rows': rows_, 'label': label, 'plot_code': '\n'.join(plot + predictive.contribution_lines(len(P.x), 'Permutation Importance'))},
+            'set': SET_NAMES[on], 'repeats': repeats, 'base': base, 'code': code}

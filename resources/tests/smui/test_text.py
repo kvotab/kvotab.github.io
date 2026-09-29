@@ -454,6 +454,71 @@ for kw in ({'weighting': 'binary', 'max_terms': 12}, {'weighting': 'tfidf', 'ter
         continue
     check(f'it gives the saved values ({kw})', (o['dtm']['columns'], mx(np.array(o['dtm']['data']).T, r['values'])), (r['terms'], 0.0))
 
+# ---- the graphs' code: the singular values' bars and the topic scores whole; the lines the word cloud's and the SVD plots'
+# code start with (the page adds its layout and drawing: test-ui-text.py runs those blocks in the page); By groups
+from test_charts import run_snippet  # noqa: E402
+
+frame_c = pd.read_csv(os.path.join(work, 'Comments.csv'), dtype=str, keep_default_na=False)   # the CSV as written, written again the same
+
+
+def fig_of(code, label):
+    figs, err = run_snippet(code, frame_c, 'Comments', work)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1], 'plt.show()')
+    return figs[0] if figs else None
+
+
+for kw in ({}, {'centering': 'uncentered', 'weighting': 'logfreq', 'k': 40}, {'id_col': 'customer', 'k': 20}):
+    r = call('text.lsa', table=tid2, column='comment', min_freq=2, max_terms=80, show=2, seed=5, table_name='Comments', **{'k': 6, **kw})
+    F = fig_of(r['plot_code']['singular'], f'the singular values\' bars ({kw})')
+    if F:
+        ax = F['axes'][0]
+        top = r['singular'][:30]
+        check.near(f'the singular values\' bars: the percents of the first {len(top)} ({kw})', mx([b['w'] for b in ax['bars']], [x['percent'] for x in top]), 0.0, abs_=1e-12)
+        check.near(f'... each at its number, the first at the top ({kw})', mx([b['y'] + b['h'] / 2 for b in ax['bars']], [x['number'] for x in top]), 0.0, abs_=1e-12)
+        check(f'... the titles and the size ({kw})', (ax['yinverted'], ax['xlabel'], ax['title'], F['size']), (True, 'Percent', 'Singular values, percent', [2.8, max(140, 13 * len(top) + 50) / 100]))
+    o = run(r['svd_head'].replace('import matplotlib.pyplot as plt\n', ''))
+    if check(f'the SVD plots\' lines run ({kw})', o is not None, True):
+        check.near(f'... and give the documents\' and the terms\' coordinates ({kw})', max(mx(np.array(o['docs'])[:, :2].T, r['docs']), mx(np.array(o['terms'])[:, :2].T, r['term_vectors'])), 0.0, abs_=1e-12)
+        check(f'... and the terms in the report\'s order ({kw})', o['chosen'], r['terms'])
+for kw in ({'method': 'varimax'}, {'method': 'nmf', 'weighting': 'frequency'}, {'method': 'lda'}, {'method': 'varimax', 'id_col': 'customer'}):
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = call('text.topics', table=tid2, column='comment', n_topics=3, min_freq=2, max_terms=60, seed=7, scores=2, table_name='Comments', **kw)
+    F = fig_of(r['plot_code']['scores'], f'the topic scores ({kw})')
+    if F:
+        ax = F['axes'][0]
+        pts = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'the topic scores: each document\'s scores on the first two topics ({kw})', mx(np.array(pts).T, r['scores']) if len(pts) == len(r['scores'][0]) else 1e9, 0.0, abs_=1e-12)
+        tops = [', '.join(x['term'] for x in r['top'][t][:3]) for t in (0, 1)]
+        check(f'... the topics\' three largest terms on the axes, the title and the size ({kw})', (ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              (f'Topic 1 ({tops[0]})', f'Topic 2 ({tops[1]})', 'Topic scores of comment', [4.4, 3.6]))
+with contextlib.redirect_stdout(io.StringIO()):
+    r1 = call('text.topics', table=tid2, column='comment', n_topics=1, min_freq=2, max_terms=60, seed=7, table_name='Comments')
+check('one topic: no topic scores plot', r1['plot_code'], {})
+for kw in ({}, {'id_col': 'customer', 'stemming': 'combine'}):
+    r = call('text.explore', table=tid2, column='comment', table_name='Comments', **kw)
+    o = run(r['cloud_head'].replace('import matplotlib.pyplot as plt\n', ''))
+    if check(f'the word cloud\'s lines run ({kw})', o is not None, True):
+        check(f'... and give the Term List the cloud takes its words from ({kw})', o['term_list']['data'], [[x['term'], x['count']] for x in r['terms']])
+    check(f'... and keep every row of the report before the rows without an ID ({kw})', 'every = df' in r['cloud_head'], bool(kw))
+# a By group (its where line) with rows left out: the code of every result keeps the group and drops the rows
+grp_rows = [i for i in range(400) if groups[i] == groups[0] and i not in (0, 5)]
+where = [{'column': 'g', 'value': groups[0]}]
+dropped = [i for i in (0, 5) if groups[i] == groups[0]]
+r = call('text.explore', table=tid2, column='comment', rows=grp_rows, where=where, table_name='Comments')
+L_ = call('text.lsa', table=tid2, column='comment', rows=grp_rows, where=where, min_freq=2, max_terms=60, k=4, show=2, seed=5, table_name='Comments')
+with contextlib.redirect_stdout(io.StringIO()):
+    T_ = call('text.topics', table=tid2, column='comment', rows=grp_rows, where=where, n_topics=3, min_freq=2, max_terms=60, seed=7, table_name='Comments')
+codes = [r['code'], r['cloud_head'], L_['code'], L_['svd_head'], L_['plot_code']['singular'], T_['code'], T_['plot_code']['scores']]
+check('a By group: every code keeps its rows and drops the ones left out', all(f'df = df[df["g"] == {json.dumps(groups[0])}]' in c and f'df = df.drop(index={dropped})' in c for c in codes), True)
+o = run(r['code'])
+if check('a By group: the Summary and lists code runs', o is not None, True):
+    check('... and gives the group\'s Term List', o['term_list']['data'], [[x['term'], x['count']] for x in r['terms']])
+F = fig_of(T_['plot_code']['scores'], 'a By group: the topic scores')
+if F:
+    pts = F['axes'][0]['scatter'][0]['xy']
+    check.near('... on the group\'s documents', mx(np.array(pts).T, T_['scores']) if len(pts) == len(T_['scores'][0]) else 1e9, 0.0, abs_=1e-12)
+
 # ---- the defaults on 5,000 rows -------------------------------------------------------------------------------------------------------------------------
 big = [''.join(sentence(rng) for _ in range(rng.integers(1, 4))) for _ in range(5000)]
 tb = table({'comment': big})

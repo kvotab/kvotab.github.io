@@ -68,6 +68,78 @@
   };
 
   const wide = (tbl) => el('div', { class: 'sm-tx-scroll' }, tbl);
+
+  /* ---- the graphs as matplotlib code -----------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table, as the notebook runs it. The singular values' bars and the topic
+     scores come whole from the backend (plot_code); the word cloud and the SVD
+     plots start with the backend's lines (cloud_head: the texts read as the
+     report reads them, the terms and their counts; svd_head: the SVD) and end
+     with the page's choices: the cloud's layout (each word where the page put
+     it, the font sizes from the room it had), the terms named on the plot. The
+     light theme's colours, the graph's size at 100 pixels an inch. */
+  const J = JSON.stringify;
+  const pyList = (a) => `[${a.map((v) => J(v)).join(', ')}]`;
+  const area = (px) => Math.round(100 * (px * 0.72) ** 2) / 100;   // a marker's diameter in pixels as matplotlib's area in points²
+  const BASE = '#2f6690', INK_TEXT = '#352921', ZERO = '#e0d7ce';
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-tx-plotcode' }, graph, code) : graph);
+  const zeroLines = [`ax.axhline(0, color="${ZERO}", linewidth=0.72, zorder=0)`, `ax.axvline(0, color="${ZERO}", linewidth=0.72, zorder=0)`];
+
+  function cloudCode(S, { words, box, layout, coloring, byCol, minF, maxF }) {
+    const L = [S.res.cloud_head, '',
+      `n, min_size, max_size = ${words.length}, ${minF}, ${+maxF.toFixed(3)}   # the most frequent terms shown; the page's font sizes in pixels (the largest from the room it had)`,
+      'words = term_list.head(n)   # the most frequent first, ties alphabetically',
+      'c0, c1 = words["Count"].iloc[-1], words["Count"].iloc[0]',
+      'size = (min_size + (max_size - min_size) * np.sqrt((words["Count"] - c0) / (c1 - c0))) if c1 > c0 else np.full(n, (min_size + max_size) / 2)   # the font grows with the square root of the count',
+      `place = {   # each word's centre where the page put it, in its pixels (${layout === 'ordered' ? 'Ordered: alphabetically, in lines' : 'Centered: the largest in the middle, each next word along a spiral where it overlaps none'})`,
+      ...words.map((w) => `    ${J(w.term)}: (${w.cx.toFixed(1)}, ${w.cy.toFixed(1)}),`), '}'];
+    const inkLight = INK.light;
+    if (byCol) {
+      const every = S.res.id ? 'every' : 'df';
+      L.push(`v = pd.to_numeric(${every}[${J(byCol.name)}], errors="coerce")   # By Column: ${byCol.name}, a number`,
+        'centre = v.mean() if v.notna().any() else 0.0   # its mean over the report\'s rows',
+        'holds = {}   # the rows that hold each term', 'for r, ts in zip(df.index, terms):', '    for t in set(ts):', '        holds.setdefault(t, []).append(r)',
+        'means = np.array([v.loc[holds.get(t, [])].mean() for t in words["Term"]])   # each word\'s mean over the rows that hold it',
+        'dev = np.nanmax(np.abs(means - centre)) if np.isfinite(means).any() else 0.0',
+        `low, mid, high = "${inkLight.low}", "${inkLight.mid}", "${inkLight.high}"   # blue below the mean, red above`, '', '',
+        'def mix(a, b, t):', '    """The colour t of the way from a to b, as the page mixes them."""',
+        '    x, y = [int(a[i:i + 2], 16) for i in (1, 3, 5)], [int(b[i:i + 2], 16) for i in (1, 3, 5)]',
+        '    return "#" + "".join(f"{int(np.floor(p + t * (q - p) + 0.5)):02x}" for p, q in zip(x, y))', '', '',
+        'color = [(mix(mid, low, min(1, -(m - centre) / dev)) if m < centre else mix(mid, high, min(1, (m - centre) / dev))) if np.isfinite(m) and dev > 0 else mid for m in means]');
+    } else if (coloring === 'colors' || coloring === 'grays') {
+      L.push(`palette = ${pyList(coloring === 'colors' ? inkLight.colors : inkLight.grays)}   # Arbitrary ${coloring === 'colors' ? 'Colors' : 'Grays'}: by each word's place in the list`,
+        'color = [palette[i % len(palette)] for i in range(n)]');
+    } else L.push(`color = ["${INK_TEXT}"] * n   # Uniform: the text colour`);
+    L.push(`x0, y0, w, h = ${box.x0.toFixed(1)}, ${box.y0.toFixed(1)}, ${box.w.toFixed(1)}, ${box.h.toFixed(1)}   # the page's view of the cloud`);
+    if (byCol) {
+      L.push('from matplotlib.cm import ScalarMappable', 'from matplotlib.colors import LinearSegmentedColormap',
+        'H = h / 100 + 0.5   # room under the cloud for the colour legend',
+        'fig = plt.figure(figsize=(w / 100, H))', 'ax = fig.add_axes([0, 0.5 / H, 1, (h / 100) / H])',
+        'cax = fig.add_axes([0.3, 0.2 / H, 0.4, 0.1 / H])',
+        `fig.colorbar(ScalarMappable(norm=plt.Normalize(centre - dev, centre + dev), cmap=LinearSegmentedColormap.from_list("mean", [low, mid, high])), cax=cax, orientation="horizontal", label=${J(`Mean ${byCol.name}`)})`);
+    } else L.push('fig = plt.figure(figsize=(w / 100, h / 100))', 'ax = fig.add_axes([0, 0, 1, 1])');
+    L.push('ax.set_xlim(x0, x0 + w)', 'ax.set_ylim(y0 + h, y0)   # y down, as the page draws', 'ax.set_axis_off()',
+      'for term, s_, c_ in zip(words["Term"], size, color):',
+      '    ax.text(*place[term], term, fontsize=0.72 * s_, ha="center", va="center", color=c_)   # the size in points: 0.72 a pixel',
+      'plt.show()');
+    return L.join('\n');
+  }
+
+  function svdCode(r, kind, named) {
+    const L = [r.svd_head, '', 'fig, ax = plt.subplots(figsize=(4, 3.6), layout="constrained")', ...zeroLines];
+    if (kind === 'docs') {
+      L.push(`ax.scatter(docs[:, 0], docs[:, 1], s=${area(r.doc_rows.length > 2000 ? 4 : 6)}, color="${BASE}", linewidths=0)   # each document: U S on the first two vectors`,
+        'ax.set_xlabel("Doc Vec1")', 'ax.set_ylabel("Doc Vec2")', 'ax.set_title("Documents")');
+    } else {
+      L.push(`named = ${pyList(named)}   # the terms the page names: the furthest out, where their labels meet none named before`,
+        `ax.scatter(terms[:, 0], terms[:, 1], s=${area(6)}, color="${BASE}", linewidths=0)   # each term: V S on the first two vectors`,
+        'for j, t in enumerate(chosen):', '    if t in named:',
+        `        ax.annotate(t, (terms[j, 0], terms[j, 1]), textcoords="offset points", xytext=(0, 4), ha="center", va="bottom", fontsize=7.56, color="${INK_TEXT}")`,
+        'ax.set_xlabel("Term Vec1")', 'ax.set_ylabel("Term Vec2")', 'ax.set_title("Terms")');
+    }
+    L.push('plt.show()');
+    return L.join('\n');
+  }
   const snippet = (s, n = 90) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
   const scatterType = (n) => (n > 4000 && SM.report.hasWebGL() ? 'scattergl' : 'scatter');
 
@@ -92,6 +164,7 @@
       stemming: o('stemming', 'none'), tokenizing: o('tokenizing', 'regex'),
       regex: o('customRegex', false) ? (String(o('regex', '') || '').trim() || null) : null,
       stop_add: listOpt(ctx, 'stopAdd', sc, []), recodes: listOpt(ctx, 'recodes', sc, {}), phrases: listOpt(ctx, 'phrasesAdd', sc, []),
+      where: ctx.where || [],
     };
   }
 
@@ -458,14 +531,16 @@
       cloud.append(t);
       S.words.push({ term: w.term, el: t });
     });
-    ob.add(el('div', { class: 'sm-tx-cloudbox' }, cloud));
+    // the cloud and its legend, then its code
+    const cbox = el('div', { class: 'sm-tx-cloudbox' }, cloud);
     if (byCol) {
       const lo = center - dev, hi = center + dev;
-      ob.add(el('div', { class: 'sm-tx-legend' },
+      cbox.append(el('div', { class: 'sm-tx-legend' },
         el('span', { text: `Mean ${byCol.name}` }), el('span', { text: fmt(lo, { sig: 4 }) }),
         el('span', { class: 'sm-tx-ramp', style: { background: `linear-gradient(90deg, ${P.low}, ${P.mid}, ${P.high})` } }),
         el('span', { text: fmt(hi, { sig: 4 }) })));
     }
+    ob.add(cbox, ctx.code(cloudCode(S, { words, box, layout, coloring, byCol, minF, maxF })));
     ob.add(ctx.note(`The ${words.length} most frequent terms, each sized by its count (font size ∝ √count); ${layout === 'ordered' ? 'alphabetically' : 'the most frequent in the middle'}.${byCol ? ` Coloured by the mean of ${byCol.name} over the rows that hold each term, around its mean over all the rows (${fmt(center, { sig: 4 })}).` : ''} Click a word to select its rows.`));
   }
 
@@ -538,7 +613,8 @@
     const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: top.map((x) => x.number), x: top.map((x) => x.percent), marker: { color: SM.report.BAR }, hovertemplate: '%{y}: %{x:.2f}%<extra></extra>' }],
       { margin: { l: 36, r: 12, t: 6, b: 34 }, xaxis: { title: { text: 'Percent' }, rangemode: 'tozero' }, yaxis: { autorange: 'reversed', dtick: top.length > 15 ? 5 : 1 }, bargap: 0.2 },
       { width: 280, height: Math.max(140, 13 * top.length + 50), title: 'Singular values, percent', select: false });
-    sv.add(ctx.row(el('div', { class: 'sm-tx-list' }, ctx.rt({ columns: [{ key: 'number', label: 'Number', fmt: 'int' }, { key: 'value', label: 'Singular Value' }, { key: 'percent', label: 'Percent', digits: 4 }, { key: 'cum', label: 'Cum Percent', digits: 4 }], rows }, { key: K(S, 'singular'), sortable: false })), bars),
+    sv.add(ctx.row(el('div', { class: 'sm-tx-list' }, ctx.rt({ columns: [{ key: 'number', label: 'Number', fmt: 'int' }, { key: 'value', label: 'Singular Value' }, { key: 'percent', label: 'Percent', digits: 4 }, { key: 'cum', label: 'Cum Percent', digits: 4 }], rows }, { key: K(S, 'singular'), sortable: false })),
+      withCode(bars, ctx.code((r.plot_code || {}).singular))),
       ctx.note(`${fmt(r.n_docs)} documents by ${fmt(r.n_terms)} terms (those seen ${r.min_freq} or more times, at most ${fmt(r.max_terms)}), ${labelOf(WEIGHTINGS, r.weighting)} weighting, ${labelOf(CENTERING, r.centering).toLowerCase()}; ${r.k} singular vectors by scikit-learn's ${r.solver}. Percent: each singular value's share of the matrix's sum of squares (s² over the total).`));
     if (r.k >= 2 && !ctx.headless) svdPlots(ctx, S, ob, r);
     else if (r.k < 2) ob.add(ctx.note('One singular vector: no plots.'));
@@ -559,9 +635,12 @@
       hovertext: r.terms.map((t, j) => `${T(t)}: ${fmt(r.term_counts[j])}`), hovertemplate: '%{hovertext}<br>(%{x:.4g}, %{y:.4g})<extra></extra>', marker: { size: 6, color: SM.report.BASE }, name: 'Terms',
     };
     const ax = (t) => ({ title: { text: t }, zeroline: true });
+    const named = r.terms.filter((_, j) => lab.has(j));
     po.add(ctx.row(
-      ctx.plot([docTrace], { xaxis: ax('Doc Vec1'), yaxis: ax('Doc Vec2'), margin: { l: 56, r: 10, t: 24, b: 44 }, title: { text: 'Documents', font: { size: 12 } } }, { width: 400, height: 360, title: `Document singular vectors of ${S.col.name}` }),
-      ctx.plot([termTrace], { xaxis: ax('Term Vec1'), yaxis: ax('Term Vec2'), margin: { l: 56, r: 16, t: 24, b: 44 }, title: { text: 'Terms', font: { size: 12 } } }, { width: 400, height: 360, title: `Term singular vectors of ${S.col.name}` })),
+      withCode(ctx.plot([docTrace], { xaxis: ax('Doc Vec1'), yaxis: ax('Doc Vec2'), margin: { l: 56, r: 10, t: 24, b: 44 }, title: { text: 'Documents', font: { size: 12 } } }, { width: 400, height: 360, title: `Document singular vectors of ${S.col.name}` }),
+        ctx.code(svdCode(r, 'docs'))),
+      withCode(ctx.plot([termTrace], { xaxis: ax('Term Vec1'), yaxis: ax('Term Vec2'), margin: { l: 56, r: 16, t: 24, b: 44 }, title: { text: 'Terms', font: { size: 12 } } }, { width: 400, height: 360, title: `Term singular vectors of ${S.col.name}` }),
+        ctx.code(svdCode(r, 'terms', named)))),
     ctx.note('Each point on the left is a document (U S: its weighted terms projected on the first two singular vectors), on the right a term (V S), as latent semantic analysis compares them; the terms furthest out are named. Documents near each other use the same terms; a term point stands for the rows that hold it. Click or drag to select rows.'));
   }
 
@@ -664,7 +743,8 @@
       const tr = { type: scatterType(r.doc_rows.length), mode: 'markers', x: r.scores[0], y: r.scores[1], marker: { size: r.doc_rows.length > 2000 ? 4 : 6 }, hovertext: labelsFor(ctx, S, r), hovertemplate: '%{hovertext}<extra></extra>', name: 'Documents' };
       tr.rows = S.res.id ? r.doc_rows : r.doc_rows.map((d) => d[0]);
       const tops = (t) => r.top[t].slice(0, 3).map((x) => x.term).join(', ');
-      so.add(ctx.row(ctx.plot([tr], { xaxis: { title: { text: `Topic 1 (${T(tops(0))})` } }, yaxis: { title: { text: `Topic 2 (${T(tops(1))})` } }, margin: { l: 60, r: 10, t: 8, b: 48 } }, { width: 440, height: 360, title: `Topic scores of ${S.col.name}` })),
+      so.add(ctx.row(withCode(ctx.plot([tr], { xaxis: { title: { text: `Topic 1 (${T(tops(0))})` } }, yaxis: { title: { text: `Topic 2 (${T(tops(1))})` } }, margin: { l: 60, r: 10, t: 8, b: 48 } }, { width: 440, height: 360, title: `Topic scores of ${S.col.name}` }),
+        ctx.code((r.plot_code || {}).scores))),
         ctx.note(varimax ? 'Each document\'s scores on the first two topics (standardized: mean 0 and variance 1 when centered). Click or drag to select rows.' : `Each document's ${r.method === 'lda' ? 'share of' : 'weight on'} the first two topics. Click or drag to select rows.`));
     }
     ob.add(ctx.note(`${labelOf(METHODS, r.method)}: ${r.k} topics from ${fmt(r.n_docs)} documents and ${fmt(r.terms.length)} terms (seen ${r.min_freq} or more times), ${labelOf(WEIGHTINGS, r.weighting)} weighting${varimax ? `, ${labelOf(CENTERING, r.centering).toLowerCase()}` : ''}${r.method === 'lda' ? ' (LDA takes the counts)' : ''}.${varimax ? '' : ` Seed ${r.seed}.`}`), ctx.code(r.code));

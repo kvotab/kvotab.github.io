@@ -313,11 +313,18 @@ def _rows_code(table, rows):
     return [f'df = df.loc[{keep}]   # the rows of the report']
 
 
-def _code(M, table, table_name, rows, alpha):
+def _code(M, table, table_name, rows, alpha, graph=False):
+    """The code under the report; graph: the head of its graphs (matplotlib imported, the numbers
+    exactly as exported, no printing, and every row's table row number)."""
     ys, xs, v = M.ys, M.xs, M.P.spec.get('validation')
     L = ['import numpy as np', 'import pandas as pd', 'from scipy import stats',
-         'from sklearn.cross_decomposition import PLSRegression', 'from sklearn.model_selection import KFold, LeaveOneOut',
-         f'df = pd.read_csv({json.dumps(table_name + ".csv")})   # the table, as File > Export CSV writes it']
+         'from sklearn.cross_decomposition import PLSRegression', 'from sklearn.model_selection import KFold, LeaveOneOut']
+    if graph:
+        L += [predictive.PLT, '# the table, as File > Export CSV writes it (an empty field is missing)',
+              f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip", keep_default_na=False, na_values=[""])']
+    else:
+        L += ['# the table, as File > Export CSV writes it (an empty field is missing)',
+              f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip", keep_default_na=False, na_values=[""])']
     L += _rows_code(table, rows)
     cols = list(dict.fromkeys(ys + xs + ([v] if v else [])))
     L.append(f'd = df[{json.dumps(cols)}].dropna()   # rows with every Y and X' + (' and a validation value' if v else ''))
@@ -338,6 +345,8 @@ def _code(M, table, table_name, rows, alpha):
     L.append(f'center, scale = {M.center}, {M.scale}   # Centering, Scaling')
     L.append('')
     for h in _HELPERS:
+        if graph and h is van_der_voet:   # no graph shows the test
+            continue
         L.append(_source(h))
         L.append('')
     if M.cv is not None:
@@ -346,23 +355,152 @@ def _code(M, table, table_name, rows, alpha):
         L.append(f'at, E = cv_residuals(X, Y, sets, {json.dumps(M.method)}, {M.folds}, {M.A_max}, center, scale, {M.seed}, ysd)')
         L.append('rmpress = [np.sqrt(np.mean(e ** 2)) for e in E]   # Root Mean PRESS for 0, 1, ... factors')
         L.append('best = int(np.argmin(rmpress))')
-        L.append(f'vdv = van_der_voet(E, best, {M.seed}, {N_SIM})   # van der Voet T² and Prob > T²')
-        L.append('print("Root Mean PRESS", rmpress)')
-        L.append('print("van der Voet", vdv)')
+        if not graph:
+            L.append(f'vdv = van_der_voet(E, best, {M.seed}, {N_SIM})   # van der Voet T² and Prob > T²')
+            L.append('print("Root Mean PRESS", rmpress)')
+            L.append('print("van der Voet", vdv)')
         L.append('a = max(1, best)   # the number of factors fitted')
     else:
         L.append(f'a = {M.a}   # the Initial Number of Factors (as many as the rows and X\'s allow)')
     L.append('fit = pls_fit(X[train], Y[train], a, center, scale)')
     L.append('B, Bo, b0 = pls_coef(fit, a)')
-    L.append('print("Model Coefficients for Centered and Scaled Data", B)')
-    L.append('print("Model Coefficients for Original Data: Intercept", b0, "and", Bo)')
+    if not graph:
+        L.append('print("Model Coefficients for Centered and Scaled Data", B)')
+        L.append('print("Model Coefficients for Original Data: Intercept", b0, "and", Bo)')
     L.append('xe, ye, vip = pls_summary(fit, a)')
-    L.append('print("Percent Variation Explained: X", xe, "Y", ye, "cumulative", np.cumsum(xe), np.cumsum(ye))')
-    L.append('print("VIP", vip)')
+    if not graph:
+        L.append('print("Percent Variation Explained: X", xe, "Y", ye, "cumulative", np.cumsum(xe), np.cumsum(ye))')
+        L.append('print("VIP", vip)')
     L.append('dmodx, dmody, t2 = pls_distances(fit, a, X, Y, train)')
     L.append(f'n = int(train.sum()); ucl = (n - 1) ** 2 / n * stats.beta.ppf({1 - alpha!r}, a / 2, (n - a - 1) / 2)   # T² limit, training rows')
     L.append('T, U = pls_scores(fit, a, X, Y)   # the X and Y scores of every row')
+    if graph:
+        L.append('rownum = d.index.to_numpy() + 1   # each row\'s number in the table')
     return '\n'.join(L)
+
+
+# ---------------------------------------------------------------------------
+# the graphs' code (smui-p-pls.js puts each under its graph): a tail each, after the head (_code, graph)
+# ---------------------------------------------------------------------------
+
+SET_COLORS = [predictive.BASE, '#3a7d44', '#6c5b7b']   # smui-p-pls.js setColors(), light theme
+GRID = '#e0d7ce'                                        # the zero lines (the theme's grid colour)
+
+
+def _width(w):
+    """The page's width of a graph asked w pixels wide (W in smui-p-pls.js at a desktop width: 260 at least)."""
+    return max(260, w)
+
+
+def _by_set_lines(present, xv, yv, size):
+    """Points of rows by set (training circles, validation diamonds, test squares), as bySet draws them."""
+    L = [f'colors, markers = {json.dumps(SET_COLORS)}, ["o", "D", "s"]']
+    for k in present:
+        L += [f'm = sets == {k}   # the {predictive.SETS[k].lower()} rows',
+              f'ax.scatter({xv}[m], {yv}[m], s={size}, color=colors[{k}], marker=markers[{k}], label="{predictive.SETS[k]}")']
+    return L
+
+
+def _ticks_line(n):
+    rot = 'rotation=45, ha="right"' if n > 8 else 'rotation=0'
+    return f'ax.set_xticks(range(len(names)), names, {rot})'
+
+
+def _plots(M, n_rows, present, thr):
+    """The tails of every graph of a fit (thr: the page's VIP threshold)."""
+    J = json.dumps
+    a, xs, ys = M.a, M.xs, M.ys
+    size = 14 if n_rows <= 600 else 8 if n_rows <= 2000 else 5   # the page's marker size by the number of rows
+    several = len(present) > 1
+    legend = ['fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize=8)'] if several else []
+    B, MUT, RED, BAR, TXT = predictive.BASE, predictive.MUTED, predictive.FIT, predictive.BAR, predictive.TEXT
+    out = {}
+    if M.cv is not None:
+        ticks = 'k_[::2]' if M.A_max + 1 > 12 else 'k_'
+        out['cv'] = '\n'.join([
+            'k_ = np.arange(len(rmpress))   # 0, 1, ... factors',
+            predictive.figure(_width(360), 260),
+            f'ax.plot(k_, rmpress, color="{B}", linewidth=1.6, marker="o", markersize=4.5)',
+            f'ax.plot([best], [rmpress[best]], linestyle="none", marker="o", markersize=8.3, markerfacecolor="none", markeredgecolor="{RED}", markeredgewidth=2)   # the minimum',
+            f'ax.set_xticks({ticks})',
+            'ax.set_xlabel("Number of Factors")', 'ax.set_ylabel("Root Mean PRESS")', 'ax.set_title("Root Mean PRESS by number of factors", wrap=True)', 'plt.show()'])
+    out['xy'] = []
+    for k in range(a):
+        out['xy'].append('\n'.join([
+            predictive.figure(_width(250 if a > 2 else 300), 240),
+            *_by_set_lines(present, f'T[:, {k}]', f'U[:, {k}]', size),
+            f'tt, tu = T[train, {k}] @ T[train, {k}], T[train, {k}] @ U[train, {k}]',
+            'b = tu / tt if tt > 0 else 0.0   # the inner relation u = b t, fitted to the training rows',
+            f't_ = T[:, {k}][np.isfinite(T[:, {k}])]',
+            f'ax.plot([t_.min(), t_.max()], [b * t_.min(), b * t_.max()], color="{MUT}", linewidth=1, linestyle=":")',
+            f'ax.set_xlabel("X Score {k + 1}")', f'ax.set_ylabel("Y Score {k + 1}")', f'ax.set_title("X-Y scores of factor {k + 1}")', 'plt.show()']))
+    out['percent'] = {}
+    for key, var, title in (('x', 'xe', 'X Effect'), ('y', 'ye', 'Y Effect')):
+        out['percent'][key] = '\n'.join([
+            'f_ = np.arange(1, a + 1)',
+            predictive.figure(_width(300), 230),
+            f'ax.bar(f_, {var}, color="{BAR}")   # each factor\'s percent',
+            f'ax.plot(f_, np.cumsum({var}), color="{RED}", linewidth=1.6, marker="o", markersize=3.75)   # the cumulative percent',
+            'ax.set_xticks(f_)', 'ax.set_ylim(0, 102)',
+            'ax.set_xlabel("Number of Factors")', f'ax.set_ylabel("{title} (%)")', f'ax.set_title("{title}")', 'plt.show()'])
+    p = len(xs)
+    out['vip'] = '\n'.join([
+        f'thr = {float(thr)!r}   # the VIP threshold (Set VIP Threshold)',
+        f'names = {J(xs)}',
+        predictive.figure(_width(max(320, min(760, 70 + 34 * p))), 270),
+        f'ax.plot(range(len(names)), vip, color="{B}", linewidth=1.4)',
+        f'ax.scatter(range(len(names)), vip, s=28, color=["{B}" if v > thr else "{MUT}" for v in vip], zorder=3)   # below the threshold: grey',
+        f'ax.axhline(thr, color="{RED}", linewidth=1.3, linestyle="--")',
+        _ticks_line(p),
+        'ax.set_ylim(bottom=0)', 'ax.set_ylabel("VIP")', 'ax.set_title("Variable importance")', 'plt.show()'])
+    out['vipcoef'] = []
+    for k, ynm in enumerate(ys):
+        out['vipcoef'].append('\n'.join([
+            f'thr = {float(thr)!r}   # the VIP threshold (Set VIP Threshold)',
+            f'names = {J(xs)}',
+            f'c_ = B[:, {k}]   # the centred and scaled coefficients for {ynm}',
+            'm_ = 1.15 * np.abs(c_).max() or 1.0',
+            predictive.figure(_width(360), 300),
+            f'ax.axvline(0, color="{GRID}", linewidth=1, zorder=0)',
+            f'ax.scatter(c_, vip, s=28, color="{B}")',
+            'for x_, v_, nm in zip(c_, vip, names):',
+            f'    ax.annotate(nm, (x_, v_), xytext=(0, 5), textcoords="offset points", ha="center", va="bottom", fontsize=7.1, color="{TXT}")',
+            f'ax.axhline(thr, color="{RED}", linewidth=1.2, linestyle="--")',
+            'ax.set_xlim(-m_, m_)', 'ax.set_ylim(bottom=0)',
+            f'ax.set_xlabel({J("Coefficient for " + ynm + " (centred and scaled)")})', 'ax.set_ylabel("VIP")',
+            f'ax.set_title({J("VIP vs coefficients for " + ynm)}, wrap=True)', 'plt.show()']))
+    out['loadings'] = {}
+    for key, names, mat, title in (('x', xs, 'P', 'X Loadings'), ('y', ys, 'Q', 'Y Loadings')):
+        out['loadings'][key] = '\n'.join([
+            f'names = {J(names)}',
+            f'L_ = fit["{mat}"][:, :a]   # the {title[0]} loadings, a column per factor',
+            f'colors = {J(predictive.PALETTE)}',
+            predictive.figure(_width(max(320, min(760, 80 + 34 * len(names)))), 290),
+            f'ax.axhline(0, color="{GRID}", linewidth=1, zorder=0)',
+            'for j in range(a):',
+            '    ax.plot(range(len(names)), L_[:, j], color=colors[j % len(colors)], linewidth=1.4, marker="o", markersize=3.75, label=f"Factor {j + 1}")',
+            _ticks_line(len(names)),
+            f'ax.set_ylabel("{title}")', f'ax.set_title("{title}")',
+            'fig.legend(loc="outside upper left", ncols=min(a, 6), frameon=False, fontsize=8)', 'plt.show()'])
+    out['distance'] = {}
+    for key, xv, yv, xt, yt, title in (('dmodx', 'rownum', 'dmodx', 'Row', 'DModX', 'Distance to the X model by row'),
+                                       ('dmody', 'rownum', 'dmody', 'Row', 'DModY', 'Distance to the Y model by row'),
+                                       ('both', 'dmodx', 'dmody', 'DModX', 'DModY', 'Distance to the Y model by distance to the X model')):
+        if key != 'dmody' and not len(xs) > a:
+            continue
+        out['distance'][key] = '\n'.join([
+            predictive.figure(_width(320), 250),
+            *_by_set_lines(present, xv, yv, size),
+            'ax.set_ylim(bottom=0)',
+            f'ax.set_xlabel("{xt}")', f'ax.set_ylabel("{yt}")', f'ax.set_title("{title}", wrap=True)', *legend, 'plt.show()'])
+    out['t2'] = '\n'.join([
+        predictive.figure(_width(560), 270),
+        *_by_set_lines(present, 'rownum', 't2', size),
+        f'ax.axhline(ucl, color="{RED}", linewidth=1.3, linestyle="--")',
+        f'ax.text(1, ucl, f"UCL {{ucl:.4g}}", transform=ax.get_yaxis_transform(), ha="right", va="bottom", fontsize=7.5, color="{RED}")',
+        'ax.set_ylim(bottom=0)',
+        'ax.set_xlabel("Row")', 'ax.set_ylabel("T²")', 'ax.set_title("T² by row")', *legend, 'plt.show()'])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +508,8 @@ def _code(M, table, table_name, rows, alpha):
 # ---------------------------------------------------------------------------
 
 @api('pls.fit', packages=predictive.SK)
-def fit(table, y, x, rows=None, validation=None, method='kfold', folds=7, holdback=0.2, factors=15, center=True, scale=True, seed=None, alpha=0.05, table_name='data'):
+def fit(table, y, x, rows=None, validation=None, method='kfold', folds=7, holdback=0.2, factors=15, center=True, scale=True, seed=None, alpha=0.05, plot=None,
+        table_name='data'):
     """One NIPALS fit: the cross validation, the percent variation
     explained, the coefficients, VIP, scores, loadings, distances and T^2."""
     from scipy import stats
@@ -404,6 +543,8 @@ def fit(table, y, x, rows=None, validation=None, method='kfold', folds=7, holdba
         'dist': {'rows': idx.tolist(), 'set': sets.tolist(), 'dmodx': dmodx.tolist(), 'dmody': dmody.tolist(), 't2': t2.tolist()},
         'dmodx_ok': bool(len(M.xs) > a), 'ucl': ucl,
         'code': _code(M, table, table_name, rows, float(alpha)),
+        'plots': {'head_code': _code(M, table, table_name, rows, float(alpha), graph=True),
+                  **_plots(M, len(idx), sorted({int(v) for v in sets}), float((plot or {}).get('vip', 0.8)))},
     }
 
 

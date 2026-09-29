@@ -37,6 +37,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, points_of, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -640,6 +641,9 @@ async def main():
     check('each lake has its comparison, which combine into one table', (r['n'], r['groups'], r['rows']), (2, ['lake=North', 'lake=South'], 2))
     check('each lake fits its own rows', r['notes'][0].startswith(f"{r['north']} observations"), True)
 
+    # ---- the graphs' matplotlib code, run in the page
+    await chart_code(page)
+
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -681,6 +685,128 @@ async def main():
     await shot(page, 'mix-05-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code --------------------------------------------------------------------------
+# Each graph has its code block right under it, ending in plt.show(); the block runs in the page's own
+# Python (the notebook's runner) and draws the Plotly graph above it: the rows in their clusters' colours,
+# each cluster's ellipse, the biplot's centres and rays, the mixture density's bars and curves, the
+# criteria of a range of fits, the titles and the size. The profiler has no code: it is interactive.
+OPEN_MIX = r'''(async (roles, options) => {
+  const t = SM.app.tables.find((x) => x.name === 'Fish ages');
+  SM.app.showTab(SM.app.tabOf(t));
+  const ids = {};
+  for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => t.col(n).id);
+  const rep = SM.app.openReport(SM.platforms.get('mixtures'), { roles: ids, options }, t);
+  await new Promise((res) => rep.on('done', res));
+  // every fit's outline open, so that each draws its graphs
+  for (const b of rep.body.querySelectorAll('.sm-ob.is-closed > .sm-ob-head .sm-ob-toggle')) b.click();
+  await new Promise((r) => setTimeout(r, 600));
+  return { g: await __gr.graphs(rep), undrawn: __gr.take(), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent) };
+})'''
+
+
+def cells_of(F):
+    return [a for a in F['axes'] if a['visible'] and (a['scatter'] or a['lines'])]
+
+
+def check_splom(lab, g, F):
+    tr = g['traces']
+    pts = [t for t in tr if t.get('mode') == 'markers']
+    axes = cells_of(F)
+    check(f'{lab}: a plot for each pair below the diagonal', len(axes), len(pts))
+    for ax, t in zip(axes, pts):
+        got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'{lab}: {t["name"]}: the rows', maxdiff([q for p in got for q in p], [q for p in points_of(t) for q in p]), 0, 1e-12)
+        check(f'{lab}: {t["name"]}: each row in its cluster\'s colour', [c[:7] for c in ax['scatter'][0]['colors']] if ax['scatter'] else [], t['mcolor'])
+    ells = [t for t in tr if t.get('mode') == 'lines']
+    got = [ln for ax in axes for ln in ax['lines']]
+    check(f'{lab}: an ellipse for each cluster in each plot', len(got), len(ells))
+    check.near(f'{lab}: the ellipses are the page\'s', max((max(maxdiff(a['x'], b['x']), maxdiff(a['y'], b['y'])) for a, b in zip(got, ells)), default=0), 0, 1e-9)
+    check(f'{lab}: the ellipses in their clusters\' colours', [ln['color'][:7] for ln in got], [t['color'] for t in ells])
+    names = [t['name'] for t in pts]
+    labels = [f'{a["ylabel"]} by {a["xlabel"]}' for a in axes if a['xlabel'] and a['ylabel']]
+    check(f'{lab}: the columns on the axes', all(x in names for x in labels) and len(labels) >= 1, True)
+    check(f'{lab}: the title and the size', ((F['suptitle'] or axes[0]['title']), F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+
+
+def check_biplot(lab, g, F):
+    ax = F['axes'][0]
+    tr = g['traces']
+    got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+    check.near(f'{lab}: the rows on the principal components', maxdiff([q for p in got for q in p], [q for p in points_of(tr[0]) for q in p]), 0, 1e-9)
+    check(f'{lab}: each row in its cluster\'s colour', [c[:7] for c in ax['scatter'][0]['colors']] if ax['scatter'] else [], tr[0]['mcolor'])
+    centres = [t for t in tr if t.get('mode') == 'markers+text']
+    cs = [s['xy'][0] for s in ax['scatter'][1:1 + len(centres)] if s['xy']]
+    check.near(f'{lab}: each cluster\'s centre', maxdiff([q for p in cs for q in p], [q for t in centres for q in (t['x'][0], t['y'][0])]), 0, 1e-9)
+    fills = [t for t in tr if t.get('fill') == 'toself']
+    outl = [ln for ln in ax['lines'] if len(ln['x']) == 73]
+    check.near(f'{lab}: each cluster\'s ellipse', max((max(maxdiff(a['x'], b['x']), maxdiff(a['y'], b['y'])) for a, b in zip(outl, fills)), default=1e9) if len(outl) == len(fills) else 1e9, 0, 1e-9)
+    rays = [t for t in tr if t.get('mode') == 'lines' and not t.get('fill')]
+    if rays:
+        want = [(a, b) for a, b in zip(rays[0]['x'], rays[0]['y']) if a is not None and not (a == 0 and b == 0)]
+        ends = [(ln['x'][1], ln['y'][1]) for ln in ax['lines'] if len(ln['x']) == 2 and (ln['color'] or '')[:7] == '#786b5d']
+        check.near(f'{lab}: the rays of the columns', maxdiff([q for p in ends for q in p], [q for p in want for q in p]), 0, 1e-9)
+        text = [t for t in tr if t.get('mode') == 'text'][0]
+        check(f'{lab}: the columns named at the rays\' ends', [t_['s'] for t_ in ax['texts']][-len(text['text']):], text['text'])
+    check(f'{lab}: the legend: the clusters', [t for t in (ax['legend'] or F['legend'])], [t['name'] for t in tr if t.get('showlegend')])
+    check(f'{lab}: the titles and the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']), (g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+
+
+def check_density(lab, g, F):
+    ax = F['axes'][0]
+    tr = g['traces']
+    bar = [t for t in tr if t.get('type') == 'bar' and t.get('name') not in (None, '')][0]
+    check.near(f'{lab}: the bars: the page\'s bins\' counts', max(maxdiff([b['h'] for b in ax['bars']], bar['y']), maxdiff([b['x'] + b['w'] / 2 for b in ax['bars']], bar['x'])), 0, 1e-9)
+    for t in [t for t in tr if t.get('type') == 'scatter']:
+        ln = [x for x in ax['lines'] if x['label'] == t['name']]
+        check.near(f'{lab}: the curve of {t["name"]}', max(maxdiff(ln[0]['x'], t['x']), maxdiff(ln[0]['y'], t['y'])) if ln else 1e9, 0, 1e-9)
+    check(f'{lab}: the legend', ax['legend'], [t['name'] for t in tr if t.get('showlegend') is not False and t.get('name')])
+    check(f'{lab}: the titles and the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']), (g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    table_js = "SM.app.tables.find((x) => x.name === 'Fish ages')"
+    runs = [('three columns', {'y': Y}, {'k': 3, 'seed': 11}),
+            ('a range of fits, 95% ellipses', {'y': Y}, {'k': 2, 'kRange': 4, 'seed': 12, 'tours': 3, 'k2|level': 0.95, 'k3|level': 0.95, 'k4|level': 0.95}),
+            ('the outlier cluster, unscaled, no rays', {'y': Y}, {'k': 3, 'seed': 13, 'outlier': True, 'scaled': False, 'rays': False}),
+            ('two columns, no ellipses', {'y': Y[:2]}, {'k': 3, 'seed': 14, 'ellipses': False}),
+            ('one column, the outlier cluster', {'y': Y[:1]}, {'k': 3, 'seed': 15, 'outlier': True}),
+            ('Freq, By lake, rows excluded', {'y': Y, 'freq': ['n'], 'by': ['lake']}, {'k': 2, 'seed': 16, 'tours': 2})]
+    for tag, roles, options in runs:
+        if tag.startswith('Freq'):   # a row of each lake excluded, and one more
+            ex = await page.ev(f'(() => {{ const t = {table_js}; const lake = t.col("lake").values; const ex = [lake.indexOf("North"), lake.indexOf("South"), 30]; t.setState(ex, "excluded", true); return ex; }})()')
+        r = await page.ev(f'({OPEN_MIX})({json.dumps(roles)}, {json.dumps(options)})', timeout=600)
+        check(f'the graphs\' code ({tag}): no errors, every graph drawn', (r['errors'], r['undrawn']), ([], []))
+        labels = [g['label'] for g in r['g']]
+        for g in r['g']:
+            check(f'the graphs\' code ({tag}): {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+        if tag == 'a range of fits, 95% ellipses':
+            check('a range of fits: the criteria graph and each fit\'s graphs', labels, ['Cluster criteria'] + [x for k in (2, 3, 4) for x in (f'Scatterplot Matrix, {k} clusters', f'Biplot, {k} clusters')])
+        for g in r['g']:
+            lab = f'the graphs\' code ({tag}): {g["label"]}'
+            F, err = await run_graph(page, g, table_js)
+            check(f'{lab}: runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            if g['label'].startswith('Scatterplot'):
+                check_splom(lab, g, F)
+            elif g['label'].startswith('Biplot'):
+                check_biplot(lab, g, F)
+            elif ' with the mixture' in g['label']:
+                check_density(lab, g, F)
+            elif g['label'] == 'Cluster criteria':
+                ax = F['axes'][0]
+                for t in g['traces']:
+                    ln = [x for x in ax['lines'] if x['label'] == t['name']]
+                    check.near(f'{lab}: {t["name"]} of each number of clusters', max(maxdiff(ln[0]['x'], t['x']), maxdiff(ln[0]['y'], t['y'])) if ln else 1e9, 0, 1e-9)
+                check(f'{lab}: the titles and the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']), (g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+            if tag.startswith('Freq'):
+                check(f'{lab}: keeps its lake\'s rows and drops the excluded ones', ('df = df[df["lake"] == ' in g['code'], 'df = df.drop(index=[' in g['code']), (True, True))
+    await page.ev(f'{table_js}.setState({json.dumps(ex)}, "excluded", false)')
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.platform.id === 'mixtures').slice(-6)) SM.app.closeReport(r)")
 
 
 asyncio.run(main())

@@ -126,14 +126,25 @@ def constants(n_max=25, k=3.0):
     return {'table': rtable(cols, rows)}
 
 
+# The constants in the code shown: d2 and d3 by the same Gauss-Legendre
+# quadrature as _range_moments (the report's numbers exactly, and fast: the
+# double integral by scipy's dblquad took seconds for each subgroup size).
 _CONST_CODE = '''from scipy import integrate, special, stats
+def d2d3(n):   # the mean and the standard deviation of the range of n standard normal values: P(range > w) by Gauss-Legendre quadrature
+    if n < 2:   # one value has no range
+        return np.nan, np.nan
+    xg, wg = np.polynomial.legendre.leggauss(200)
+    x, wx, w, ww = 10.0 * xg, 10.0 * wg, 8.0 * (xg + 1.0), 8.0 * wg
+    X, W = np.meshgrid(x, w, indexing="ij")
+    surv = 1.0 - (n * stats.norm.pdf(X) * (stats.norm.cdf(X + W) - stats.norm.cdf(X)) ** (n - 1)).T @ wx
+    mean = surv @ ww
+    return mean, np.sqrt(max(2.0 * (w * surv) @ ww - mean * mean, 0.0))
 def d2(n):   # the mean range of n standard normal values
-    return integrate.quad(lambda x: 1 - stats.norm.cdf(x) ** n - stats.norm.sf(x) ** n, -np.inf, np.inf)[0]
+    return d2d3(n)[0]
 def d3(n):   # the standard deviation of that range
-    ew2 = integrate.dblquad(lambda w, x: w * w * n * (n - 1) * stats.norm.pdf(x) * stats.norm.pdf(x + w) * (stats.norm.cdf(x + w) - stats.norm.cdf(x)) ** (n - 2), -10, 10, 0, 16)[0]
-    return np.sqrt(ew2 - d2(n) ** 2)
+    return d2d3(n)[1]
 def c4(n):
-    return np.sqrt(2 / (n - 1)) * np.exp(special.gammaln(n / 2) - special.gammaln((n - 1) / 2))'''
+    return np.sqrt(2 / (n - 1)) * np.exp(special.gammaln(n / 2) - special.gammaln((n - 1) / 2)) if n >= 2 else np.nan'''
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +163,34 @@ def _label(v):
     return str(v)
 
 
+def _date_kind(tid, name):
+    """'date' or 'datetime' for a number column shown as dates, else None."""
+    try:
+        m = data.meta(tid, name)
+    except KeyError:
+        return None
+    kind = (m.get('format') or {}).get('kind')
+    return kind if m.get('dataType') == 'numeric' and kind in ('date', 'datetime') else None
+
+
+def _labeler(tid, name):
+    """The function that writes a value of the column as the page labels it:
+    a date as the page shows a date (UTC), 12.0 as 12."""
+    kind = _date_kind(tid, name)
+    if not kind:
+        return _label
+    form = '%Y-%m-%d' if kind == 'date' else '%Y-%m-%d %H:%M:%S'
+    return lambda v: '' if v is None or not math.isfinite(float(v)) else pd.Timestamp(int(round(float(v))), unit='ms').strftime(form)
+
+
 def _codes(tid, name, rows):
     """Integer codes (-1 for missing) in the page's level order, and the
     labels of the levels. A continuous column's levels are its sorted
     distinct values."""
     s = data.series(tid, name, rows, as_category=True)
+    lab = _labeler(tid, name)
     if isinstance(s.dtype, pd.CategoricalDtype):
-        return s.cat.codes.to_numpy().astype(int), [_label(v) for v in s.cat.categories]
+        return s.cat.codes.to_numpy().astype(int), [lab(v) for v in s.cat.categories]
     v = s.to_numpy(dtype=float) if data.meta(tid, name).get('dataType') == 'numeric' else None
     if v is None:
         vals = s.to_numpy(dtype=object)
@@ -169,11 +201,145 @@ def _codes(tid, name, rows):
     u = np.unique(v[ok])
     codes = np.full(len(v), -1, dtype=int)
     codes[ok] = np.searchsorted(u, v[ok])
-    return codes, [_label(x) for x in u]
+    return codes, [lab(x) for x in u]
 
 
 def _num(tid, name, rows):
     return data.series(tid, name, rows, as_category=False).to_numpy(dtype=float)
+
+
+# ---------------------------------------------------------------------------
+# The code shown: the report's rows, and the graphs as matplotlib code
+# ---------------------------------------------------------------------------
+# Every result's code reads the whole table as File > Export CSV writes it
+# and keeps the report's rows: a By group's (its where lines), without the
+# rows of the group the report leaves out (excluded, filtered out). Under
+# each graph the report shows Python that draws it with matplotlib, with the
+# light theme's colours and the graph's size at 100 pixels an inch.
+
+J = json.dumps
+PLT = 'import matplotlib.pyplot as plt'
+# the page's colours (smui-p-quality.js colors(), light theme)
+COL = {'point': '#2f6690', 'line': '#2f66908c', 'limit': '#c0392b', 'center': '#2e7d32', 'flag': '#d62728', 'zone': '#3c281e4c',
+       'spec': '#b35900', 'target': '#6c5b7b', 'within': '#2e7d32', 'overall': '#b0413e', 'mean': '#8c6d00', 'text': '#352921',
+       'muted': '#786b5d', 'grid': '#e0d7ce', 'bar': '#8fa9c2', 'shadeA': '#d627281f', 'shadeB': '#e6aa0021', 'shadeC': '#2e7d321f'}
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+
+
+def _lit(v):
+    """A value as a Python literal: text quoted, a whole number without a point."""
+    if isinstance(v, str):
+        return J(v)
+    if isinstance(v, (bool, np.bool_)):
+        return 'True' if v else 'False'
+    if v is None:
+        return 'None'
+    v = float(v)
+    if not math.isfinite(v):
+        return 'np.nan' if v != v else ('np.inf' if v > 0 else '-np.inf')
+    return str(int(v)) if v.is_integer() and abs(v) < 1e15 else repr(v)
+
+
+def _value_text(table, name, v):
+    """A value as the table shows it, for a comment: a date as a date."""
+    try:
+        kind = ((data.meta(table, name).get('format') or {}).get('kind') or '')
+    except KeyError:
+        kind = ''
+    if kind.startswith('date') and isinstance(v, (int, float)) and math.isfinite(v):
+        ts = pd.Timestamp(int(v), unit='ms')
+        return ts.strftime('%Y-%m-%d' if kind == 'date' else '%Y-%m-%d %H:%M:%S')
+    return _label(v)
+
+
+def keep_lines(table, rows, where=None):
+    """After the head: the By group's rows (its where lines), then the drop
+    of the rows of the group that the report leaves out."""
+    if table not in data.TABLES:
+        return []
+    n = data.TABLES[table]['n']
+    match = np.ones(n, dtype=bool)
+    out = []
+    for w in where or []:
+        c, v = w['column'], w['value']
+        raw = data.raw(table, c)
+        if data.meta(table, c).get('dataType') == 'numeric':
+            match &= np.asarray(raw, dtype=float) == float(v)
+        else:
+            match &= np.array([x == v for x in raw], dtype=bool)
+        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {c} is {_value_text(table, c, v)}')
+    if rows is not None:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep)
+        if len(drop):
+            out.append(f'df = df.drop(index=[{", ".join(str(int(r)) for r in drop)}])   # the rows the report leaves out')
+    return out
+
+
+def _head(table, rows, where, table_name, imports=()):
+    """code_head and the report's rows, as a list of lines."""
+    return [code_head(table_name, list(imports))] + keep_lines(table, rows, where)
+
+
+def _rows_text(table, rows, where):
+    """keep_lines as text to follow a code head ('' for every row)."""
+    return ''.join('\n' + ln for ln in keep_lines(table, rows, where))
+
+
+def _inch(px):
+    return f'{round(float(px)) / 100:g}'
+
+
+def _label_lines(table, names):
+    """The code's functions that write a value as the page labels it:
+    label(v), 12 for 12.0, and date(v) or datetime(v) for the date columns
+    among names (a number in the code, milliseconds since 1970)."""
+    L = ['def label(v):   # a value as the page writes a level: 12 for 12.0',
+         '    return f"{v:.10g}" if isinstance(v, float) else str(v)']
+    kinds = {_date_kind(table, n) for n in names if n}
+    if 'date' in kinds:
+        L += ['def date(v):   # a date as the page shows it', '    return pd.Timestamp(v, unit="ms").strftime("%Y-%m-%d")']
+    if 'datetime' in kinds:
+        L += ['def datetime(v):   # a date and time as the page shows them', '    return pd.Timestamp(v, unit="ms").strftime("%Y-%m-%d %H:%M:%S")']
+    return L
+
+
+def _lab(table, name):
+    """The name of the code's function that labels a column's values (_label_lines)."""
+    return _date_kind(table, name) or 'label'
+
+
+def _fit(w, plot, least=300):
+    """A graph's width as the page's fitWidth gives it: no wider than the
+    room the report has (plot['room']), when that is more than least."""
+    room = (plot or {}).get('room') or 0
+    return min(w, room) if room > least else w
+
+
+def _levels_of(table, name):
+    """The page's level order of a column when it is not the sorted order of
+    its values (the code then names it), else None."""
+    m = data.meta(table, name)
+    lv = m.get('levels') if m.get('modelingType') in ('nominal', 'ordinal') else None
+    if not lv:
+        return None
+    vals = [float(v) for v in lv] if m.get('dataType') == 'numeric' else [str(v) for v in lv]
+    return None if vals == sorted(vals) else vals
+
+
+def _with_imports(lines, table_name, extra=()):
+    """The code's head for these lines: matplotlib, and the constants' and
+    scipy's imports only when the lines use them."""
+    body = '\n'.join(lines)
+    imports = [PLT, *extra]
+    if any(f'{f}(' in body for f in ('d2', 'd3', 'c4', 'd4')):
+        imports.append(_CONST_CODE)
+        if 'd4(' in body and 'def d4' not in body:
+            imports.append(_D4_CODE)
+    elif 'stats.' in body:
+        imports.append('from scipy import stats')
+    return imports
 
 
 # ---------------------------------------------------------------------------
@@ -451,10 +617,12 @@ def _cusum_arl(k, h, shift):
 def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None, n_trials=None, subgroup_size=None,
                   sigma=None, k=3.0, mr_span=2, known_mean=None, known_sigma=None, lam=0.2, ewma_l=3.0, target=None,
                   cusum_h=4.0, cusum_k=0.5, head_start=False, tests=None, test_n=None, dispersion_tests=False,
-                  spec=None, alpha=0.05, table_name='data'):
+                  spec=None, alpha=0.05, where=None, plot=None, table_name='data'):
     """One process column: the points, center lines, limits and zones of each
     chart, the tests, the limit summaries and (with spec limits) a short
-    capability analysis."""
+    capability analysis. where: the By group's (for the code); plot: the
+    graph's display options (zones, shade, limits, center, width, height,
+    x_title), for its code (plot_code)."""
     chart = chart or 'xbar_r'
     if chart not in CHART_LABEL:
         return {'error': f'unknown chart type {chart}'}
@@ -563,7 +731,9 @@ def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None
         for p in phases:
             sel = [i for i in range(nu) if ph[i] == p]
             cl[sel] = float(np.mean(x[sel]))
-        panels.append(panel('run', 'Run Chart', ylab if all(u['n'] == 1 for u in units) else f'Mean({ylab})', x, cl, arr(), arr(), arr(), zones=False))
+        # no sigma: a standard error of 1 only gives the tests the side of
+        # the center line (test 2); tests 3 and 4 use the points alone
+        panels.append(panel('run', 'Run Chart', ylab if all(u['n'] == 1 for u in units) else f'Mean({ylab})', x, cl, arr(1.0), arr(), arr(), zones=False))
     elif attribute:
         vals, cl, sd, lcl, ucl = arr(), arr(), arr(), arr(), arr()
         for p in phases:
@@ -734,13 +904,17 @@ def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None
         if len(phases) > 1:
             cap['note'] = 'With phases, the within sigma pools the whole chart (the phases\' own sigmas are in the Limit Summaries).'
         out['capability'] = cap
-    out['code'] = _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span, lam, ewma_l, cusum_h, cusum_k, known_mean, known_sigma, target)
+    out['code'] = _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span, lam, ewma_l, cusum_h, cusum_k, known_mean, known_sigma, target,
+                              keep_lines(table, rows, where))
+    if plot is not None:
+        out['plot_code'] = _chart_plot(table, rows, where, table_name, out, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span,
+                                       lam, ewma_l, cusum_h, cusum_k, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot)
     return out
 
 
-def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span, lam, ewma_l, h, kk, known_mean, known_sigma, target):
+def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span, lam, ewma_l, h, kk, known_mean, known_sigma, target, keep=()):
     Y = json.dumps(y)
-    lines = [code_head(table_name, [_CONST_CODE])]
+    lines = [code_head(table_name, [_CONST_CODE])] + list(keep)
     keep = [y] + [c for c in (subgroup, phase, n_trials) if c]
     lines.append(f'df = df.dropna(subset={json.dumps(keep)})')
     if phase:
@@ -787,9 +961,9 @@ def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, 
     if known_sigma is not None:
         lines.append(f'sigma = {known_sigma!r}   # given')
     elif method == 'std':
-        lines.append('sigma = (s / n.map(c4)).mean()   # the mean of s_i / c4(n_i)')
+        lines.append('sigma = (s / n.map(c4))[n >= 2].mean()   # the mean of s_i / c4(n_i), over the subgroups of two or more')
     elif method == 'pooled':
-        lines.append('dof = (n - 1).sum(); sigma = np.sqrt(((n - 1) * s ** 2).sum() / dof) / c4(dof + 1)')
+        lines.append('dof = (n - 1).sum(); sigma = np.sqrt(((n - 1) * s ** 2)[n >= 2].sum() / dof) / c4(dof + 1)')
     elif method in ('mr', 'mmr'):
         mrs = 'np.abs(np.diff(xbar))' if span == 2 else f'xbar.rolling({span}).apply(np.ptp).dropna()'
         if method == 'mr':
@@ -801,7 +975,7 @@ def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, 
     elif method == 'lj':
         lines.append(f'sigma = df[{Y}].std(ddof=1)')
     else:
-        lines.append('sigma = (r / n.map(d2)).mean()   # the mean of R_i / d2(n_i)')
+        lines.append('sigma = (r / n.map(d2))[n >= 2].mean()   # the mean of R_i / d2(n_i), over the subgroups of two or more')
     lines.append(f'center = {known_mean!r}' if known_mean is not None else (f'center = {target!r}' if (target is not None and chart in ('ewma', 'cusum')) else f'center = df[{Y}].mean()'))
     if chart in ('xbar_r', 'xbar_s'):
         lines.append(f'print(pd.DataFrame({{"XBar": xbar, "LCL": center - {k:g} * sigma / np.sqrt(n), "UCL": center + {k:g} * sigma / np.sqrt(n)}}))')
@@ -825,8 +999,416 @@ def _chart_code(table_name, y, chart, subgroup, phase, n_trials, subgroup_size, 
     return '\n'.join(lines)
 
 
+def _tests_code(chosen, nn, k):
+    """A function of the code that runs the chosen tests on one phase's points
+    of a chart (its frame: value, cl, se, lcl, ucl), as nelson() does."""
+    L = ['def tests(c, use):',
+         '    """The tests in use that each point fails, on the point that completes the pattern (Western Electric and Nelson): within one phase, over its points with a value."""',
+         '    v, cl = c["value"].to_numpy(float), c["cl"].to_numpy(float)',
+         '    ok = np.isfinite(v) & np.isfinite(cl)',
+         '    at, x = np.flatnonzero(ok), v[ok]',
+         '    out = [[] for _ in v]',
+         '    def fail(j, t):',
+         '        if t not in out[at[j]]:',
+         '            out[at[j]].append(t)']
+    if any(t in chosen for t in (2, 5, 6, 7, 8)):
+        L += ['    se = c["se"].to_numpy(float)[ok]',
+              '    z = np.where(se > 0, (x - cl[ok]) / (se * k / 3), 0.0)   # the zones: within 1 is zone C, within 2 zone B, within 3 zone A']
+    if 1 in chosen:
+        L += ['    if 1 in use:   # Test 1: one point beyond the limits',
+              '        for j in np.flatnonzero((x > c["ucl"].to_numpy(float)[ok]) | (x < c["lcl"].to_numpy(float)[ok])):',
+              '            fail(j, 1)']
+    if 2 in chosen:
+        L += [f'    if 2 in use:   # Test 2: {nn[2]} points in a row on one side of the center line',
+              '        run = side = 0',
+              '        for j in range(len(x)):',
+              '            s = np.sign(z[j])',
+              '            run, side = (run + 1, side) if s != 0 and s == side else ((1, s) if s != 0 else (0, 0))',
+              f'            if run >= {nn[2]}:',
+              '                fail(j, 2)']
+    if 3 in chosen:
+        L += [f'    if 3 in use:   # Test 3: {nn[3]} points in a row steadily increasing or decreasing',
+              '        run, way = 1, 0',
+              '        for j in range(1, len(x)):',
+              '            s = np.sign(x[j] - x[j - 1])',
+              '            run, way = (run + 1, way) if s != 0 and s == way else ((2, s) if s != 0 else (1, 0))',
+              f'            if run >= {nn[3]}:',
+              '                fail(j, 3)']
+    if 4 in chosen:
+        L += [f'    if 4 in use:   # Test 4: {nn[4]} points in a row alternating up and down',
+              '        run, last = 1, 0',
+              '        for j in range(1, len(x)):',
+              '            s = np.sign(x[j] - x[j - 1])',
+              '            run = run + 1 if s != 0 and last != 0 and s == -last else (2 if s != 0 else 1)',
+              '            last = s',
+              f'            if run >= {nn[4]}:',
+              '                fail(j, 4)']
+    for t, lim, zone in ((5, 2, 'A'), (6, 1, 'B')):
+        if t in chosen:
+            m_, w_ = nn[t]
+            L += [f'    if {t} in use:   # Test {t}: {m_} out of {w_} points in a row in zone {zone} or beyond, on one side',
+                  '        for j in range(len(x)):',
+                  '            for s in (1, -1):',
+                  f'                if s * z[j] > {lim} and np.sum(s * z[max(0, j - {w_ - 1}):j + 1] > {lim}) >= {m_}:',
+                  f'                    fail(j, {t})']
+    if 7 in chosen:
+        L += [f'    if 7 in use:   # Test 7: {nn[7]} points in a row in zone C, on both sides of the center line',
+              '        run = 0',
+              '        for j in range(len(x)):',
+              '            run = run + 1 if abs(z[j]) < 1 else 0',
+              f'            if run >= {nn[7]}:',
+              '                fail(j, 7)']
+    if 8 in chosen:
+        L += [f'    if 8 in use:   # Test 8: {nn[8]} points in a row on both sides of the center line with none in zone C',
+              '        run = 0',
+              '        for j in range(len(x)):',
+              '            run = run + 1 if abs(z[j]) > 1 else 0',
+              f'            if run >= {nn[8]}:',
+              '                fail(j, 8)']
+    L.append('    return out')
+    return L
+
+
+def _chart_plot(table, rows, where, table_name, res, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span,
+                lam, ewma_l, h, kk, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot):
+    """The control chart as the page draws it (smui-p-quality.js chartFigure):
+    the points in the order of the subgroups' levels, each phase with its own
+    sigma, center line and limits, the chosen tests (a failing point red with
+    its tests' numbers), the zones and their shading when shown, the limits'
+    values at the right, the phases named above their dashed lines."""
+    o = lambda key, dflt=True: bool(plot.get(key, dflt))  # noqa: E731
+    show_zones, shade, show_limits, show_center = o('zones', False), o('shade', False), o('limits'), o('center')
+    Y, S, P, N = y, subgroup, phase, n_trials
+    individual = chart in ('ir', 'lj') or (not S and not subgroup_size)
+    attribute = chart in ('p', 'np', 'c', 'u')
+    L = []
+    w = L.append
+    keep = [c for c in (Y, S, P, N) if c]
+    w(f'Y = {J(Y)}')
+    if P or S:
+        L += _label_lines(table, [S, P])
+    w(f'd = df.dropna(subset={J(keep)}).copy()   # the rows with every value the chart uses')
+    if N:
+        w(f'd = d[d[{J(N)}] >= 0]')
+    # ---- the points
+    levels = _levels_of(table, S) if S else None
+    if levels is not None:
+        w(f'levels = {J(levels) if isinstance(levels[0], str) else "[" + ", ".join(_lit(v) for v in levels) + "]"}   # the order of {S}\'s levels in the table')
+    if individual:
+        if S:
+            if levels is not None:
+                w(f'd = d.iloc[np.argsort(pd.Categorical(d[{J(S)}], categories=levels).codes, kind="stable")]   # a point for each row, in the order of {S}')
+            else:
+                w(f'd = d.sort_values({J(S)}, kind="stable")   # a point for each row, in the order of {S}')
+        w('d["point"] = np.arange(len(d))' + ('' if S else '   # a point for each row'))
+    elif not S:
+        size = max(1, int(subgroup_size))
+        if P:
+            w(f'run = (d[{J(P)}] != d[{J(P)}].shift()).cumsum()   # the runs of consecutive rows of one phase')
+            w(f'd["point"] = (d.groupby(run).cumcount() % {size} == 0).cumsum() - 1   # consecutive rows in subgroups of {size}, a new one also where the phase changes')
+        else:
+            w(f'd["point"] = np.arange(len(d)) // {size}   # consecutive rows in subgroups of {size}')
+    else:
+        code = f'pd.Categorical(d[{J(S)}], categories=levels).codes' if levels is not None else f'd.groupby({J(S)}, sort=True).ngroup()'
+        if P:
+            w(f'd["code"] = {code}   # each row\'s subgroup, in the order of the levels')
+            w(f'first = d.index.to_series().groupby([d["code"], d[{J(P)}]]).transform("min")')
+            w(f'd["point"] = d.groupby([d["code"], first]).ngroup()   # a point for each subgroup (and phase), in the order of the levels')
+        else:
+            w(f'd["point"] = {code}   # a point for each subgroup, in the order of its levels')
+    w(f'k = {k:g}   # the limits at k sigma')
+    # ---- one phase: the statistics, center lines and limits
+    ylab = {'xbar_r': [f'Mean({Y})', f'Range({Y})'], 'xbar_s': [f'Mean({Y})', f'Std Dev({Y})'], 'ir': [Y, f'Moving Range({Y})'], 'lj': [Y],
+            'p': [f'Proportion({Y})'], 'np': [f'Count({Y})'], 'c': [f'Count({Y})'], 'u': [f'Rate({Y})'], 'ewma': [f'EWMA({Y})']}.get(chart)
+    if chart == 'run':
+        ylab = [res['panels'][0]['ylabel']]
+    if chart == 'cusum':
+        ylab = [res['panels'][0]['ylabel']]
+    if chart == 'cusum':
+        w('same = d.groupby("point").size().nunique() == 1   # subgroups of one size: the sums drawn in the units of the data, else standardized')
+    w('')
+    w('def chart(s):')
+    w('    """One phase\'s rows (each phase has its own sigma, center line and limits): each chart\'s points, center line, standard error and limits, and the tests they fail."""')
+    if attribute:
+        w('    g = s.groupby("point")')
+        w(f'    count = g[Y].sum()   # {"the defective units" if chart in ("p", "np") else "the defects"} of each subgroup')
+        w(f'    size = g[{J(N)}].sum()   # the units inspected (n Trials)' if N else '    size = g.size()   # the rows of each subgroup: the units inspected')
+    else:
+        w('    g = s.groupby("point")[Y]')
+        w('    n, xbar = g.size(), g.mean()')
+    # sigma within, and the center line
+    if not attribute and chart != 'run':
+        if known_sigma is not None:
+            w(f'    sigma = {float(known_sigma)!r}   # Specify Stats: the sigma given')
+        elif method == 'range':
+            w('    sigma = ((g.max() - g.min()) / n.map(d2))[n >= 2].mean()   # sigma within: the mean of R_i / d2(n_i)')
+        elif method == 'std':
+            w('    sigma = (g.std(ddof=1) / n.map(c4))[n >= 2].mean()   # sigma within: the mean of s_i / c4(n_i)')
+        elif method == 'pooled':
+            w('    dof = (n - 1).sum()')
+            w('    sigma = np.sqrt(((n - 1) * g.var(ddof=1))[n >= 2].sum() / dof) / c4(dof + 1)   # the pooled standard deviation over c4')
+        elif method in ('mr', 'mmr'):
+            mrs = 'xbar.diff().abs()' if span == 2 else f'xbar.rolling({span}).apply(np.ptp)'
+            what = 'the values' if individual else 'the subgroup means'
+            if method == 'mr':
+                w(f'    sigma = {mrs}.mean() / d2({span})   # the average moving range of {what} over d2({span})')
+            elif span == 2:
+                w(f'    sigma = {mrs}.median() / (np.sqrt(2) * stats.norm.ppf(0.75))   # the median moving range of {what} over 0.954')
+            else:
+                w(f'    sigma = {mrs}.median() / d4({span})   # the median moving range of {what} over d4({span})')
+        elif method == 'lj':
+            w('    sigma = s[Y].std(ddof=1)   # Levey Jennings: the overall standard deviation')
+        if known_mean is not None:
+            w(f'    center = {float(known_mean)!r}   # Specify Stats: the mean given')
+        elif chart in ('ewma', 'cusum') and target is not None:
+            w(f'    center = {float(target)!r}   # the target')
+        else:
+            w('    center = s[Y].mean()   # the grand mean')
+    use_top = [t for t in chosen]
+    use_disp = chosen if dispersion_tests else ([1] if 1 in chosen else [])
+    panels = []   # (frame name, uses, has zones, has limits)
+    if chart in ('xbar_r', 'xbar_s'):
+        w('    top = pd.DataFrame({"value": xbar, "cl": center, "se": sigma / np.sqrt(n)})')
+        if chart == 'xbar_r':
+            w('    low = pd.DataFrame({"value": g.max() - g.min(), "cl": n.map(d2) * sigma, "se": n.map(d3) * sigma}).where(n >= 2)   # the ranges (a subgroup of one value has none)')
+        else:
+            w('    low = pd.DataFrame({"value": g.std(ddof=1), "cl": n.map(c4) * sigma, "se": sigma * np.sqrt(1 - n.map(c4) ** 2)}).where(n >= 2)   # the standard deviations (a subgroup of one value has none)')
+        panels = [('top', use_top, True, True), ('low', use_disp, True, True)]
+    elif chart in ('ir', 'lj'):
+        w('    top = pd.DataFrame({"value": xbar, "cl": center, "se": sigma})')
+        if chart == 'ir':
+            mrs = 'xbar.diff().abs()' if span == 2 else f'xbar.rolling({span}).apply(np.ptp)'
+            w(f'    low = pd.DataFrame({{"value": {mrs}, "cl": d2({span}) * sigma, "se": d3({span}) * sigma}}, index=xbar.index)   # the moving ranges')
+            panels = [('top', use_top, True, True), ('low', use_disp, True, True)]
+        else:
+            panels = [('top', use_top, True, True)]
+    elif chart == 'run':
+        w('    top = pd.DataFrame({"value": xbar, "cl": xbar.mean(), "se": 1.0})   # no limits: the center line is the mean of the points')
+        panels = [('top', [t for t in chosen if t in (2, 3, 4)], False, False)]
+    elif attribute:
+        if chart in ('p', 'np'):
+            w('    pbar = count.sum() / size.sum()   # the proportion defective')
+            if chart == 'p':
+                w('    top = pd.DataFrame({"value": (count / size).where(size > 0), "cl": pbar, "se": np.sqrt(pbar * (1 - pbar) / size).where(size > 0)})')
+            else:
+                w('    top = pd.DataFrame({"value": count, "cl": size * pbar, "se": np.sqrt(size * pbar * (1 - pbar))})')
+        elif chart == 'c':
+            w('    cbar = count.mean()   # the mean count')
+            w('    top = pd.DataFrame({"value": count, "cl": cbar, "se": np.sqrt(cbar)}, index=count.index)')
+        else:
+            w('    ubar = count.sum() / size.sum()   # the defects per unit')
+            w('    top = pd.DataFrame({"value": (count / size).where(size > 0), "cl": ubar, "se": np.sqrt(ubar / size).where(size > 0)})')
+        panels = [('top', use_top, True, True)]
+    elif chart == 'ewma':
+        w(f'    lam, L = {float(lam)!r}, {float(ewma_l)!r}   # λ, the weight of the newest mean; the limits at L sigma')
+        w('    z, var, zs, ses = center, 0.0, [], []')
+        w('    for m, k_ in zip(xbar, n):   # the average from the center on, and its exact variance')
+        w('        z = lam * m + (1 - lam) * z')
+        w('        var = (1 - lam) ** 2 * var + lam ** 2 * sigma ** 2 / k_')
+        w('        zs.append(z)')
+        w('        ses.append(np.sqrt(var))')
+        w('    top = pd.DataFrame({"value": zs, "cl": center, "se": ses, "mean": xbar}, index=xbar.index)')
+        w('    top["lcl"], top["ucl"] = center - L * top["se"], center + L * top["se"]')
+        panels = [('top', [1] if 1 in chosen else [], False, True)]
+    elif chart == 'cusum':
+        w(f'    h, kk = {float(h)!r}, {float(kk)!r}   # the decision interval and the reference value, in standard errors of the subgroup mean')
+        w('    se = sigma / np.sqrt(n)')
+        w(f'    cp = cm = {float(h) / 2.0 if head_start else 0.0!r}{"   # the head start: h/2" if head_start else ""}')
+        w('    up, dn = [], []')
+        w('    for zi in (xbar - center) / se:   # the upper and lower sums')
+        w('        cp, cm = max(0.0, cp + zi - kk), max(0.0, cm - zi - kk)')
+        w('        up.append(cp)')
+        w('        dn.append(-cm)')
+        w('    f = se if same else pd.Series(1.0, index=se.index)')
+        w('    top = pd.DataFrame({"value": np.array(up) * f, "lower": np.array(dn) * f, "cl": 0.0, "se": f, "lcl": -h * f, "ucl": h * f})')
+        panels = [('top', [1] if 1 in chosen else [], False, True)]
+    names = [p[0] for p in panels]
+    if chart not in ('ewma', 'cusum', 'run'):
+        w(f'    for c in ({", ".join(names)}{"," if len(names) == 1 else ""}):')
+        w('        c["lcl"], c["ucl"] = c["cl"] - k * c["se"], c["cl"] + k * c["se"]')
+        if chart in ('xbar_r', 'xbar_s', 'ir'):
+            w(f'    low["lcl"] = low["lcl"].clip(lower=0)   # {"a range" if chart != "xbar_s" else "a standard deviation"} is never below 0')
+        if chart == 'p':
+            w('    top["lcl"], top["ucl"] = top["lcl"].clip(lower=0), top["ucl"].clip(upper=1)   # a proportion lies between 0 and 1')
+        elif chart == 'np':
+            w('    top["lcl"], top["ucl"] = top["lcl"].clip(lower=0), np.minimum(top["ucl"], size)   # a count lies between 0 and the units inspected')
+        elif chart in ('c', 'u'):
+            w('    top["lcl"] = top["lcl"].clip(lower=0)   # a count is never below 0')
+    elif chart == 'run':
+        w('    top["lcl"] = top["ucl"] = np.nan')
+    for name, use, _z, _l in panels:
+        if chart == 'cusum':
+            if use:
+                w(f'    {name}["tests"] = [[1] if u > hi or lo_ < -hi else [] for u, lo_, hi in zip({name}["value"], {name}["lower"], {name}["ucl"])]   # Test 1: a sum beyond the decision interval')
+            else:
+                w(f'    {name}["tests"] = [[] for _ in range(len({name}))]')
+        elif use:
+            w(f'    {name}["tests"] = tests({name}, {use})')
+        else:
+            w(f'    {name}["tests"] = [[] for _ in range(len({name}))]')
+    w(f'    return {", ".join(names)}')
+    w('')
+    frames = ', '.join(names)
+    if P:
+        w(f'parts = [chart(s) for _, s in d.groupby({J(P)}, sort=False)]   # each phase its own limits')
+        if len(names) == 1:
+            w(f'{names[0]} = pd.concat(parts).sort_index()')
+        else:
+            w(f'{frames} = (pd.concat(c).sort_index() for c in zip(*parts))')
+        w(f'phase = d.groupby("point")[{J(P)}].first().map({_lab(table, P)}).to_numpy()   # the phase of each point')
+    else:
+        w(f'{frames} = chart(d)')
+    # ---- the drawing
+    need_tests = any(p[1] for p in panels) and chart != 'cusum'
+    body = []
+    b = body.append
+    m_units = len(res['units'])
+    b(f'm = len({names[0]})')
+    b('x = np.arange(1, m + 1)')
+    if P:
+        b('breaks = {i for i in range(1, m) if phase[i] != phase[i - 1]}   # where the phase changes')
+    else:
+        b('breaks = set()')
+    b(f'POINT, LINE, LIMIT, CENTER, FLAG, ZONE, MUTED = "{COL["point"]}", "{COL["line"]}", "{COL["limit"]}", "{COL["center"]}", "{COL["flag"]}", "{COL["zone"]}", "{COL["muted"]}"   # the page\'s colours')
+    b('')
+    b('def steps(v):')
+    b('    """A line as the page draws a limit: each point\'s value over [x - 1/2, x + 1/2], broken where the phase changes or a value is missing."""')
+    b('    v = np.asarray(v, float)')
+    b('    X, V = [], []')
+    b('    for i in range(m):')
+    b('        if not np.isfinite(v[i]):')
+    b('            continue')
+    b('        if X and (i in breaks or i == 0 or not np.isfinite(v[i - 1])):')
+    b('            X.append(np.nan)')
+    b('            V.append(np.nan)')
+    b('        X.append(i + 0.5)')
+    b('        V.append(v[i])')
+    b('        if i == m - 1 or i + 1 in breaks or not np.isfinite(v[i + 1]):')
+    b('            X.append(i + 1.5)')
+    b('            V.append(v[i])')
+    b('    return X, V')
+    b('')
+    b('def joined(v):')
+    b('    """The points joined, the line broken between phases."""')
+    b('    X, V = [], []')
+    b('    for i, vi in enumerate(np.asarray(v, float)):')
+    b('        if i in breaks:')
+    b('            X.append(np.nan)')
+    b('            V.append(np.nan)')
+    b('        X.append(i + 1)')
+    b('        V.append(vi)')
+    b('    return X, V')
+    b('')
+    b('def last(v):')
+    b('    v = np.asarray(v, float)[np.isfinite(np.asarray(v, float))]')
+    b('    return v[-1] if len(v) else None')
+    b('')
+    b('def draw(ax, c, ylabel, zones):')
+    b('    """One chart: ' + ('the shaded zones, ' if shade else '') + ('the zones, ' if show_zones or shade else '') + ('the limits, ' if show_limits and chart != 'run' else '') +
+      ('the center line, ' if show_center else '') + 'the points joined (red where they fail a test, with the tests\' numbers)."""')
+    b('    drawn = [c["value"]' + (', c["lower"]' if chart == 'cusum' else '') + (', c["mean"]' if chart == 'ewma' else '') + ']')
+    has_zones = any(p[2] for p in panels)
+    if shade and has_zones:
+        b('    if zones:   # Shade Zones: A, B and C between the lines at 1, 2 and 3 thirds of the way to the limits')
+        b('        for (a, b), fill in zip(((-3, -2), (-2, -1), (-1, 1), (1, 2), (2, 3)), ("' + COL['shadeA'] + '", "' + COL['shadeB'] + '", "' + COL['shadeC'] + '", "' + COL['shadeB'] + '", "' + COL['shadeA'] + '")):')
+        b('            X, lo = steps(c["cl"] + a * k / 3 * c["se"])')
+        b('            X, hi = steps(c["cl"] + b * k / 3 * c["se"])')
+        b('            ax.fill_between(X, lo, hi, step="post", color=fill, linewidth=0)')
+    if (show_zones or shade) and has_zones:
+        b('    if zones:   # Show Zones: the lines one and two thirds of the way to the limits')
+        b('        for j in (1, 2):')
+        b('            for s in (-1, 1):')
+        b('                band = c["cl"] + s * j * k / 3 * c["se"]')
+        b('                ax.plot(*steps(band), color=ZONE, linewidth=1, linestyle=":")')
+        b('                drawn.append(band)')
+    if show_limits and chart != 'run':
+        b('    for q in ("ucl", "lcl"):   # the control limits')
+        b('        ax.plot(*steps(c[q]), color=LIMIT, linewidth=1.4)')
+        b('        drawn.append(c[q])')
+    if show_center:
+        b('    ax.plot(*steps(c["cl"]), color=CENTER, linewidth=1.4)   # the center line')
+        b('    drawn.append(c["cl"])')
+    if chart == 'ewma':
+        b(f'    ax.scatter(x, c["mean"], s=13, facecolors="none", edgecolors=MUTED, linewidths=1, zorder=3)   # the subgroup means')
+    b('    ax.plot(*joined(c["value"]), color=LINE, linewidth=1)')
+    if chart == 'cusum':
+        b('    ax.plot(*joined(c["lower"]), color=LINE, linewidth=1, linestyle="--")')
+    size = 8 if m_units > 160 else 18
+    if chart == 'cusum':
+        b('    red = np.array([bool(t) for t in c["tests"]])')
+        b(f'    ax.scatter(x, c["value"], s={size}, color=np.where(red & (c["value"] > c["ucl"]).to_numpy(), FLAG, POINT), zorder=3)   # the upper sums')
+        b(f'    ax.scatter(x, c["lower"], s={size}, marker="D", color=np.where(red & (c["lower"] < c["lcl"]).to_numpy(), FLAG, POINT), zorder=3)   # the lower sums')
+        b('    for xi, u, lo_, t in zip(x, c["value"], c["lower"], c["tests"]):')
+        b('        if t:')
+        b('            ax.text(xi, lo_ if abs(lo_) > abs(u) else u, ",".join(map(str, t)), ha="center", va="bottom", fontsize=8, color=FLAG)   # the tests failed')
+    else:
+        b('    red = np.array([bool(t) for t in c["tests"]])')
+        b(f'    ax.scatter(x, c["value"], s={size}, color=np.where(red, FLAG, POINT), zorder=3)')
+        b('    for xi, v, t in zip(x, c["value"], c["tests"]):')
+        b('        if t and np.isfinite(v):')
+        b('            ax.text(xi, v, ",".join(map(str, t)), ha="center", va="bottom", fontsize=8, color=FLAG)   # the tests failed')
+    labels = []
+    if show_limits and chart != 'run':
+        labels += [('UCL', 'ucl', 'LIMIT'), ('LCL', 'lcl', 'LIMIT')]
+    if show_center:
+        labels.append(('Target' if chart == 'cusum' else 'Avg', 'cl', 'CENTER'))
+    if labels:
+        b(f'    for name, q, color in ({", ".join(f"({J(a)}, {J(q)}, {col_})" for a, q, col_ in labels)}{"," if len(labels) == 1 else ""}):   # the values at the right')
+        b('        v = last(c[q])')
+        b('        if v is not None:')
+        b('            ax.text(1.004, v, f"{name}={v:.5g}".replace("-", "−"), transform=ax.get_yaxis_transform(), va="center", fontsize=8, color=color)')
+    b('    vals = np.concatenate([np.asarray(v, float) for v in drawn])')
+    b('    vals = vals[np.isfinite(vals)]')
+    b('    lo, hi = (vals.min(), vals.max()) if len(vals) else (0.0, 1.0)')
+    b('    pad = 0.1 * (hi - lo) if hi > lo else (abs(lo) * 0.05 or 1)')
+    b('    ax.set_ylim(lo - pad, hi + pad)   # what is drawn, and a tenth more (the page\'s range)')
+    b('    ax.set_ylabel(ylabel)')
+    b('')
+    W, H = plot.get('width') or _fit(max(520, min(820, 170 + 18 * m_units)), plot), plot.get('height') or (440 if len(panels) > 1 else 300)
+    if len(panels) > 1:
+        b(f'fig, axes = plt.subplots(2, 1, sharex=True, figsize=({_inch(W)}, {_inch(H)}), layout="constrained", gridspec_kw={{"height_ratios": [57, 33]}})')
+    else:
+        b(f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")')
+        b('axes = [ax]')
+    pairs = ', '.join(f'({nm}, {J(lb)}, {bool(zn)})' for (nm, _u, zn, _l), lb in zip(panels, ylab))
+    b(f'for ax, (c, ylabel, zones) in zip(axes, ({pairs}{"," if len(panels) == 1 else ""})):')
+    b('    draw(ax, c, ylabel, zones)')
+    if P:
+        b('bounds = [0, *sorted(breaks), m]')
+        b('for a, b in zip(bounds[:-1], bounds[1:]):   # the phases: a dashed line between them, their names above')
+        b('    axes[0].text((a + b + 1) / 2, 1.0, phase[a], transform=axes[0].get_xaxis_transform(), ha="center", va="bottom", fontsize=8, color=MUTED)')
+        b('for b in sorted(breaks):')
+        b('    for ax in axes:')
+        b('        ax.axvline(b + 0.5, color=MUTED, linewidth=1, linestyle="--")')
+    ticks = [u['label'] for u in res['units']]
+    x_title = plot.get('x_title') or S or 'Sample'
+    b('axes[-1].set_xlim(0.5, m + 0.5)')
+    if ticks != [str(i + 1) for i in range(len(ticks))]:
+        step = max(1, math.ceil(len(ticks) / 30))
+        if S:
+            lab = f'd.groupby("point")[{J(S)}].first()'
+            b(f'labels = {lab}.map({_lab(table, S)}).to_list()   # the subgroups, as the page labels them')
+        else:
+            b('labels = [str(i) for i in x]')
+        b(f'axes[-1].set_xticks(x[::{step}], labels[::{step}])' + (f'   # every {step}th subgroup' if step > 1 else ''))
+    b(f'axes[-1].set_xlabel({J(x_title)})')
+    b(f'fig.suptitle({J(plot.get("title") or _chart_title(res))}, fontsize=10)')
+    b('plt.show()')
+    if need_tests:   # the tests' function just before the chart's, which calls it
+        at = L.index('def chart(s):')
+        L[at:at] = _tests_code(chosen, nn, k) + ['']
+    all_lines = L + [''] + body
+    head = _head(table, rows, where, table_name, _with_imports(all_lines, table_name))
+    return '\n'.join(head + all_lines)
+
+
+def _chart_title(res):
+    lab = res['chart_label']
+    return f'{lab}{"" if lab.endswith("Chart") else " chart"} of {res["y"]}'
+
+
 @api('quality.runs_test')
-def runs_test(table, y, rows=None, subgroup=None):
+def runs_test(table, y, rows=None, subgroup=None, where=None, table_name='data'):
     """The runs test about the median of a run chart's points (statsmodels'
     runstest_1samp): too few runs means clustering or a trend, too many
     means mixing or oscillation."""
@@ -844,7 +1426,7 @@ def runs_test(table, y, rows=None, subgroup=None):
     expected = 1 + 2 * n1 * n2 / (n1 + n2) if n1 + n2 else float('nan')
     return {'median': med, 'runs': runs, 'expected': expected, 'z': float(z), 'p': float(p),
             'p_clustering': float(stats.norm.cdf(z)), 'p_mixtures': float(stats.norm.sf(z)), 'n_above': n1, 'n_below': n2,
-            'code': '\n'.join([code_head('data', ['from statsmodels.sandbox.stats.runs import runstest_1samp']),
+            'code': '\n'.join([code_head(table_name, ['from statsmodels.sandbox.stats.runs import runstest_1samp'])] + keep_lines(table, rows, where) + [
                                f'x = df[{json.dumps(y)}].dropna()' + (f'.groupby(df[{json.dumps(subgroup)}]).mean()' if subgroup else ''),
                                'print(runstest_1samp(x, cutoff=np.median(x), correction=True))   # z, p (two-sided)'])}
 
@@ -1023,25 +1605,27 @@ def _fit_nonnormal(x, dist):
 
 @api('quality.capability')
 def capability(table, columns, rows=None, specs=None, subgroup=None, within=None, dist=None, alpha=0.05, mr_span=2,
-               historical=None, table_name='data'):
+               historical=None, where=None, plot=None, table_name='data'):
     """Process Capability of several columns. specs: {column: {lsl, target,
     usl}}; within: the within-sigma method ('range', 'std', 'pooled' with a
     subgroup; 'mr', 'mmr' without); dist: {column: 'normal' | 'lognormal' |
-    'weibull' | 'gamma' | 'best'}; historical: {column: sigma}."""
+    'weibull' | 'gamma' | 'best'}; historical: {column: sigma}. where: the By
+    group's; plot: the graphs' options (the histograms' bins and curves, the
+    goal plot's Ppk and sigma, the sizes), for their code (plot_code)."""
     specs = specs or {}
     dist = dist or {}
     historical = historical or {}
     out = []
+    method = within or ('range' if subgroup else 'mr')
+    if subgroup and method in ('mr', 'mmr'):
+        method = 'range'
+    if not subgroup and method in ('range', 'std', 'pooled'):
+        method = 'mr'
     for c in columns:
         sp = specs.get(c) or {}
         units, _ = _units(table, c, rows, subgroup)
         x = np.concatenate([u['y'] for u in units]) if units else np.array([])
         rowsx = [r for u in units for r in u['rows']]
-        method = within or ('range' if subgroup else 'mr')
-        if subgroup and method in ('mr', 'mmr'):
-            method = 'range'
-        if not subgroup and method in ('range', 'std', 'pooled'):
-            method = 'mr'
         if historical.get(c):
             s_w, nu_w, label = float(historical[c]), float('inf'), 'Historical'
         else:
@@ -1055,16 +1639,11 @@ def capability(table, columns, rows=None, specs=None, subgroup=None, within=None
         r['subgroup_sizes'] = sorted({u['n'] for u in units}) if subgroup else None
         r['rows'] = rowsx
         out.append(r)
-    code = [code_head(table_name, ['from scipy import stats', _CONST_CODE])]
+    code = _head(table, rows, where, table_name, ['from scipy import stats', _CONST_CODE])
     for r in out:
         c = r['column']
-        code.append(f'x = df[{json.dumps(c)}].dropna()')
-        if subgroup:
-            code.append(f'g = df.dropna(subset=[{json.dumps(c)}]).groupby({json.dumps(subgroup)})[{json.dumps(c)}]; n = g.size()')
-            code.append({'range': 'sw = ((g.max() - g.min()) / n.map(d2)).mean()', 'std': 'sw = (g.std(ddof=1) / n.map(c4)).mean()',
-                         'pooled': 'dof = (n - 1).sum(); sw = np.sqrt(((n - 1) * g.var(ddof=1)).sum() / dof) / c4(dof + 1)'}.get(within or 'range', 'sw = ((g.max() - g.min()) / n.map(d2)).mean()'))
-        else:
-            code.append('sw = np.abs(np.diff(x)).mean() / d2(2)   # average moving range / 1.128' if (within or 'mr') == 'mr' else 'sw = np.median(np.abs(np.diff(x))) / (np.sqrt(2) * stats.norm.ppf(0.75))')
+        code.append(f'x = df.dropna(subset={J([c, subgroup])})[{J(c)}]   # the rows with a value and a subgroup' if subgroup else f'x = df[{J(c)}].dropna()')
+        code += _within_lines(c, subgroup, method, mr_span, historical.get(c), 'sw')
         code.append('m, so = x.mean(), x.std(ddof=1)')
         if r.get('lsl') is not None and r.get('usl') is not None:
             code.append(f'lsl, usl = {r["lsl"]!r}, {r["usl"]!r}; print("Cp", (usl - lsl) / (6 * sw), "Cpk", min(usl - m, m - lsl) / (3 * sw), "Pp", (usl - lsl) / (6 * so), "Ppk", min(usl - m, m - lsl) / (3 * so))')
@@ -1073,9 +1652,262 @@ def capability(table, columns, rows=None, specs=None, subgroup=None, within=None
         elif r.get('usl') is not None:
             code.append(f'usl = {r["usl"]!r}; print("Cpu", (usl - m) / (3 * sw), "Ppu", (usl - m) / (3 * so))')
         if r.get('dist') not in (None, 'normal'):
-            sc = {'lognormal': 'lognorm', 'weibull': 'weibull_min', 'gamma': 'gamma'}[r['dist']]
+            sc = _SCIPY_FAMILY[r['dist']]
             code.append(f'f = stats.{sc}(*stats.{sc}.fit(x, floc=0)); p = f.ppf([0.00135, 0.5, 0.99865])   # the percentile method')
-    return {'columns': out, 'code': '\n'.join(code)}
+    res = {'columns': out, 'code': '\n'.join(code)}
+    if plot is not None:
+        ctx = {'table': table, 'rows': rows, 'where': where, 'table_name': table_name, 'subgroup': subgroup, 'method': method, 'span': mr_span,
+               'historical': historical, 'specs': specs}
+        res['plot_code'] = {'hist': {r['column']: _cap_hist_code(ctx, r, plot) for r in out if not r.get('error')},
+                            'goal': _cap_goal_code(ctx, out, plot), 'boxes': _cap_box_code(ctx, out, plot), 'index': _cap_index_code(ctx, out, plot)}
+    return res
+
+
+_SCIPY_FAMILY = {'lognormal': 'lognorm', 'weibull': 'weibull_min', 'gamma': 'gamma', 'normal': 'norm'}
+
+
+def _within_lines(c, subgroup, method, span, historical, var='sw', frame='df'):
+    """The lines that give a column's within sigma (var) as the report takes
+    it: from the subgroups (ranges, standard deviations, pooled) or from the
+    moving ranges of the values in row order, or the historical sigma."""
+    if historical:
+        return [f'{var} = {float(historical)!r}   # Historical Sigma: given']
+    if subgroup:
+        L = [f'g = {frame}.dropna(subset={J([c, subgroup])}).groupby({J(subgroup)})[{J(c)}]', 'n = g.size()']
+        if method == 'std':
+            L.append(f'{var} = (g.std(ddof=1) / n.map(c4))[n >= 2].mean()   # within sigma: the average of the subgroups\' standard deviations over c4(n)')
+        elif method == 'pooled':
+            L.append(f'{var} = np.sqrt(((n - 1) * g.var(ddof=1))[n >= 2].sum() / (n - 1).sum()) / c4((n - 1).sum() + 1)   # within sigma: the pooled standard deviation over c4')
+        else:
+            L.append(f'{var} = ((g.max() - g.min()) / n.map(d2))[n >= 2].mean()   # within sigma: the average of the subgroups\' ranges over d2(n)')
+        return L
+    mrs = f'{frame}[{J(c)}].dropna().diff().abs()' if span == 2 else f'{frame}[{J(c)}].dropna().rolling({span}).apply(np.ptp)'
+    if method == 'mmr':
+        div = '(np.sqrt(2) * stats.norm.ppf(0.75))' if span == 2 else f'd4({span})'
+        return [f'{var} = {mrs}.median() / {div}   # within sigma: the median moving range (row order) over {"0.954" if span == 2 else f"d4({span})"}']
+    return [f'{var} = {mrs}.mean() / d2({span})   # within sigma: the average moving range (row order) over d2({span})']
+
+
+def _cap_values(c, subgroup, var='x'):
+    return f'{var} = df.dropna(subset={J([c, subgroup])})[{J(c)}]   # the rows with a value and a subgroup, as the report takes them' if subgroup else f'{var} = df[{J(c)}].dropna()'
+
+
+def _cap_head(ctx, lines, extra=()):
+    return _head(ctx['table'], ctx['rows'], ctx['where'], ctx['table_name'], _with_imports(lines, ctx['table_name'], ['from scipy import stats', *extra]))
+
+
+def _fit_lines(r, var='fr', x='x'):
+    """The nonnormal fit of a column, as the report makes it (scipy, the threshold at 0)."""
+    fam = _SCIPY_FAMILY[r['dist']]
+    what = f'{r["fit"]["label"]}, the Best Fit (the smallest AICc of Compare Distributions)' if r['fit'].get('best') else r['fit']['label']
+    if r['dist'] == 'normal':
+        return [f'{var} = stats.norm(*stats.norm.fit({x}))   # {what}, by maximum likelihood']
+    return [f'{var} = stats.{fam}(*stats.{fam}.fit({x}, floc=0))   # {what}, by maximum likelihood with the threshold at 0']
+
+
+def _cap_hist_code(ctx, r, plot):
+    """A column's capability histogram (capHistogram): the page's bins, the
+    normal curves of the overall and the within sigma (or the fitted
+    distribution's density), scaled to the counts, and the spec limits."""
+    c = r['column']
+    b = (plot.get('bins') or {}).get(c)
+    if not b:
+        return None
+    start, size, nb = float(b['start']), float(b['size']), int(b['nb'])
+    cur = (plot.get('curves') or {}).get(c) or {}
+    W, H = plot.get('hist_size') or [_fit(420, plot), 290]
+    L = [f'c = {J(c)}',
+         'x = df[c].dropna().to_numpy()   # the values the page\'s histogram counts',
+         f'start, size, nb = {_lit(start)}, {_lit(size)}, {nb}   # the page\'s bins',
+         'k = np.clip(np.floor((x - start) / size + 1e-9), 0, nb - 1).astype(int)   # each value\'s bin, as the page counts',
+         'counts = np.bincount(k, minlength=nb)',
+         'mids = start + (np.arange(nb) + 0.5) * size']
+    normal = r.get('dist') in (None, 'normal')
+    lims = [(r.get('lsl'), 'LSL', '-', 'spec'), (r.get('target'), 'Target', ':', 'target'), (r.get('usl'), 'USL', '-', 'spec')]
+    lims = [q for q in lims if q[0] is not None]
+    L.append(f'limits = [{", ".join(f"({_lit(v)}, {J(n)}, {J(ls)}, {J(COL[k])})" for v, n, ls, k in lims)}]   # the spec limits: value, name, line, colour')
+    L += ['lo, hi = min([start] + [v for v, *_ in limits]), max([start + nb * size] + [v for v, *_ in limits])',
+          'pad = 0.04 * (hi - lo or 1)',
+          'grid = np.linspace(lo - pad, hi + pad, 160)',
+          'scale = len(x) * size   # a density on the count axis']
+    curves = []
+    if normal:
+        stats_x = _cap_values(c, ctx['subgroup'], 'v')
+        L += [stats_x, 'm, so = v.mean(), v.std(ddof=1)   # the mean and the overall standard deviation']
+        if cur.get('overall', True) and r.get('sd_overall') and r['sd_overall'] > 0:
+            curves.append(('scale * stats.norm.pdf(grid, m, so)', 'Overall', COL['overall'], '-'))
+        if cur.get('within', True) and r.get('sd_within') and np.isfinite(r['sd_within']) and r['sd_within'] > 0:
+            L += _within_lines(c, ctx['subgroup'], ctx['method'], ctx['span'], ctx['historical'].get(c), 'sw')
+            curves.append(('scale * stats.norm.pdf(grid, m, sw)', 'Within', COL['within'], '--'))
+    elif r.get('curve'):
+        L += [_cap_values(c, ctx['subgroup'], 'v')] + _fit_lines(r, 'fr', 'v')
+        L += ['span = v.max() - v.min() if v.max() > v.min() else abs(v.max()) + 1',
+              'g = np.linspace(max(v.min() - 0.2 * span, 1e-9), v.max() + 0.2 * span, 200)   # the fit\'s own grid']
+        curves.append(('scale * fr.pdf(g)', r['fit']['label'], COL['overall'], '-'))
+    L += [f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          f'ax.bar(mids, counts, width=size, color="{COL["bar"]}", edgecolor="#fcf7f2", linewidth=0.8, label="Histogram")']
+    for expr, name, color, ls in curves:
+        xs = 'g' if 'fr.pdf' in expr else 'grid'
+        L.append(f'ax.plot({xs}, {expr}, color="{color}", linewidth=2{", linestyle=" + J(ls) if ls != "-" else ""}, label={J(name)})')
+    L += ['for v_, name, ls, color in limits:',
+          '    ax.axvline(v_, color=color, linewidth=1.6, linestyle=ls)',
+          '    ax.text(v_, 1.0, name, transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=8, color=color)',
+          'ax.set_xlim(lo - pad, hi + pad)',
+          'ax.set_ylim(bottom=0)',
+          'ax.set_xlabel(c)',
+          'ax.set_ylabel("Count")']
+    if len(curves) + 1 > 2:
+        L.append(f'ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol={len(curves) + 1}, frameon=False, fontsize=8)')
+    L += [f'fig.suptitle({J(c + " capability histogram")}, fontsize=10)', 'plt.show()']
+    return '\n'.join(_cap_head(ctx, L) + L)
+
+
+def _cap_goal_code(ctx, out, plot):
+    """The goal plot (goalPlot): each column with both spec limits at its
+    spec-normalised mean shift and standard deviation (overall or within),
+    and the triangle inside which Ppk is above the goal."""
+    pts = [r for r in out if r.get('goal') and not r.get('error')]
+    if not pts:
+        return None
+    g = plot.get('goal') or {}
+    K = float(g.get('ppk') or 1)
+    use_within = bool(g.get('within'))
+    W, H = g.get('size') or [_fit(400, plot), 320]
+    L = [f'specs = {{{", ".join(f"{J(r["column"])}: ({_lit(r["lsl"])}, {_lit(r["target"])}, {_lit(r["usl"])})" for r in pts)}}}   # LSL, target, USL of each column with both limits',
+         f'K = {K:g}   # the goal Ppk of the triangle (the Goal slider)',
+         'names, gx, gy = [], [], []',
+         'for c, (lsl, target, usl) in specs.items():',
+         f'    {_cap_values_in_loop(ctx)}',
+         '    t = target if target is not None else (lsl + usl) / 2   # the target, else the middle of the limits',
+         '    w = usl - lsl']
+    if use_within:
+        L += ['    ' + ln for ln in _within_lines_loop(ctx)]
+        L.append('    names.append(c); gx.append((x.mean() - t) / w); gy.append(sw / w)   # Within Sigma (Cpk) instead of Overall')
+    else:
+        L.append('    names.append(c); gx.append((x.mean() - t) / w); gy.append(x.std(ddof=1) / w)')
+    L += ['ymax = max(1 / (6 * K) * 1.4, max(gy) * 1.15)', 'xmax = max(0.55, max(abs(v) for v in gx) * 1.15)',
+          f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          f'ax.fill([-0.5, 0, 0.5], [0, 1 / (6 * K), 0], facecolor="#2e7d3212", edgecolor="{COL["limit"]}", linewidth=1.4, label=f"Ppk = {{K:g}}")   # the goal triangle',
+          f'ax.axvline(0, color="{COL["grid"]}", linewidth=1)',
+          f'ax.scatter(gx, gy, s=33, color="{COL["point"]}", edgecolors="#fcf7f2", linewidths=1, zorder=3)',
+          'for nm, a, b in zip(names, gx, gy):',
+          f'    ax.annotate(nm, (a, b), xytext=(4, 4), textcoords="offset points", fontsize=8, color="{COL["text"]}")',
+          'ax.set_xlim(-xmax, xmax)', 'ax.set_ylim(0, ymax)',
+          'ax.set_xlabel("Spec-Normalized Mean Shift")', f'ax.set_ylabel("Spec-Normalized {"Within" if use_within else "Overall"} Std Dev")',
+          'fig.suptitle("Goal plot", fontsize=10)', 'plt.show()']
+    return '\n'.join(_cap_head(ctx, L) + L)
+
+
+def _cap_values_in_loop(ctx):
+    S = ctx['subgroup']
+    return f'x = df.dropna(subset=[c, {J(S)}])[c]   # the rows with a value and a subgroup' if S else 'x = df[c].dropna()'
+
+
+def _within_lines_loop(ctx):
+    """_within_lines for the column c of a loop over the columns (the same method for every column)."""
+    S, method, span, hist = ctx['subgroup'], ctx['method'], ctx['span'], ctx['historical']
+    L = []
+    if hist:
+        L.append(f'historical = {{{", ".join(f"{J(k)}: {float(v)!r}" for k, v in hist.items() if v)}}}   # Historical Sigma, where given')
+    if S:
+        L += [f'g = df.dropna(subset=[c, {J(S)}]).groupby({J(S)})[c]', 'n = g.size()']
+        if method == 'std':
+            L.append('sw = (g.std(ddof=1) / n.map(c4))[n >= 2].mean()   # within sigma: the average of the standard deviations over c4(n)')
+        elif method == 'pooled':
+            L.append('sw = np.sqrt(((n - 1) * g.var(ddof=1))[n >= 2].sum() / (n - 1).sum()) / c4((n - 1).sum() + 1)   # within sigma: pooled, over c4')
+        else:
+            L.append('sw = ((g.max() - g.min()) / n.map(d2))[n >= 2].mean()   # within sigma: the average of the ranges over d2(n)')
+    else:
+        mrs = 'df[c].dropna().diff().abs()' if span == 2 else f'df[c].dropna().rolling({span}).apply(np.ptp)'
+        if method == 'mmr':
+            L.append(f'sw = {mrs}.median() / {"(np.sqrt(2) * stats.norm.ppf(0.75))" if span == 2 else f"d4({span})"}   # within sigma: the median moving range')
+        else:
+            L.append(f'sw = {mrs}.mean() / d2({span})   # within sigma: the average moving range over d2({span})')
+    if hist:
+        L.append('sw = historical.get(c, sw)')
+    return L
+
+
+def _cap_box_code(ctx, out, plot):
+    """The capability box plots (capBoxPlots): each column centred at its
+    target and scaled by its tolerance, the box plots as the page draws them
+    (JMP's quartiles, the (n + 1)p-th values; the whiskers to the furthest
+    values within 1.5 IQR of the box; the values beyond them as points), the
+    first column's spec limits and the target."""
+    cols = [r for r in out if not r.get('error') and r.get('lsl') is not None and r.get('usl') is not None]
+    if not cols:
+        return None
+    W, H = (plot.get('boxes') or {}).get('size') or [_fit(max(300, min(760, 140 + 70 * len(cols))), plot), 300]
+    L = [f'specs = {{{", ".join(f"{J(r["column"])}: ({_lit(r["lsl"])}, {_lit(r["target"])}, {_lit(r["usl"])})" for r in cols)}}}   # LSL, target, USL of each column with both limits',
+         'names, values = [], []',
+         'for c, (lsl, target, usl) in specs.items():',
+         '    t = target if target is not None else (lsl + usl) / 2',
+         '    names.append(c)',
+         '    values.append((df[c].dropna().to_numpy() - t) / (usl - lsl))   # centred at the target, scaled by the tolerance',
+         'boxes = []',
+         'for v in values:',
+         '    q1, med, q3 = np.quantile(v, [0.25, 0.5, 0.75], method="weibull")   # JMP\'s quartiles, the (n + 1)p-th values',
+         '    lo, hi = v[v >= q1 - 1.5 * (q3 - q1)].min(), v[v <= q3 + 1.5 * (q3 - q1)].max()   # the whiskers: the furthest values within 1.5 IQR of the box',
+         '    boxes.append({"q1": q1, "med": med, "q3": q3, "whislo": lo, "whishi": hi, "fliers": v[(v < lo) | (v > hi)]})',
+         'lsl, target, usl = next(iter(specs.values()))   # the lines: the first column\'s limits',
+         't = target if target is not None else (lsl + usl) / 2',
+         'lo_, hi_ = (lsl - t) / (usl - lsl), (usl - t) / (usl - lsl)',
+         f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+         f'edge = {{"color": "{COL["text"]}", "linewidth": 1}}',
+         'ax.bxp(boxes, positions=range(len(names)), widths=0.5, patch_artist=True, boxprops={"facecolor": "#8fa9c247", "edgecolor": "' + COL['text'] + '", "linewidth": 1},',
+         f'       medianprops=edge, whiskerprops=edge, capprops=edge, flierprops={{"marker": "o", "markersize": 3.6, "markerfacecolor": "{COL["point"]}", "markeredgecolor": "none"}})',
+         f'for y, name in ((lo_, "LSL"), (hi_, "USL")):',
+         f'    ax.axhline(y, color="{COL["spec"]}", linewidth=1.3)',
+         f'    ax.text(1.0, y, " " + name, transform=ax.get_yaxis_transform(), va="center", fontsize=8, color="{COL["spec"]}")',
+         f'ax.axhline(0, color="{COL["target"]}", linewidth=1, linestyle=":")   # the target',
+         'allv = np.concatenate(values + [np.array([lo_, hi_])])',
+         'pad = 0.08 * (allv.max() - allv.min())',
+         'ax.set_ylim(allv.min() - pad, allv.max() + pad)',
+         'ax.set_xticks(range(len(names)), names)',
+         'ax.set_ylabel("(X − Target)/(USL − LSL)")',
+         'fig.suptitle("Capability box plots", fontsize=10)', 'plt.show()']
+    return '\n'.join(_cap_head(ctx, L) + L)
+
+
+def _cap_index_code(ctx, out, plot):
+    """The capability index plot: Ppk and Cpk of each column side by side,
+    and a dotted line at 1."""
+    cols = [r for r in out if not r.get('error')]
+    if not cols:
+        return None
+    W, H = (plot.get('index') or {}).get('size') or [max(320, 120 + 60 * len(cols)), 260]
+    L = [f'specs = {{{", ".join(f"{J(r["column"])}: ({_lit(r["lsl"])}, {_lit(r["target"])}, {_lit(r["usl"])})" for r in cols)}}}   # LSL, target, USL']
+    fitted = [r for r in cols if r.get('fit')]
+    if fitted:
+        L.append('fitted = {}   # the distributions fitted (Distribution), for the percentile method')
+        for r in fitted:
+            L += [_cap_values(r['column'], ctx['subgroup'], 'x')] + _fit_lines(r, f'fitted[{J(r["column"])}]', 'x')
+    else:
+        L.append('fitted = {}')
+    L += ['names, ppk, cpk = [], [], []',
+         'for c, (lsl, target, usl) in specs.items():',
+         f'    {_cap_values_in_loop(ctx)}',
+         '    names.append(c)',
+         '    if c in fitted:   # Ppk by the percentiles of the fitted distribution; no within indices',
+         '        p_lo, p50, p_hi = fitted[c].ppf([0.00135, 0.5, 0.99865])',
+         '        ppk.append(min(v for v in ((p50 - lsl) / (p50 - p_lo) if lsl is not None else None, (usl - p50) / (p_hi - p50) if usl is not None else None) if v is not None))',
+         '        cpk.append(np.nan)',
+         '        continue',
+         '    m, so = x.mean(), x.std(ddof=1)']
+    L += ['    ' + ln for ln in _within_lines_loop(ctx)]
+    L += ['    one = lambda s: min(v for v in ((m - lsl) / (3 * s) if lsl is not None else None, (usl - m) / (3 * s) if usl is not None else None) if v is not None)',
+          '    ppk.append(one(so))',
+          '    cpk.append(one(sw))',
+          'at = np.arange(len(names))',
+          f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          f'ax.bar(at - 0.2, ppk, width=0.4, color="{COL["overall"]}", label="Ppk")',
+          f'ax.bar(at + 0.2, cpk, width=0.4, color="{COL["within"]}", label="Cpk")',
+          f'ax.axhline(1, color="{COL["limit"]}", linewidth=1, linestyle=":")',
+          'ax.set_xticks(at, names)',
+          'ax.set_ylabel("Index")',
+          'ax.legend(frameon=False, fontsize=8)',
+          'fig.suptitle("Capability index plot", fontsize=10)', 'plt.show()']
+    return '\n'.join(_cap_head(ctx, L) + L)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,11 +1915,12 @@ def capability(table, columns, rows=None, specs=None, subgroup=None, within=None
 # ---------------------------------------------------------------------------
 
 @api('quality.pareto')
-def pareto(table, cause, rows=None, freq=None, groups=None, combine=None, table_name='data'):
+def pareto(table, cause, rows=None, freq=None, groups=None, combine=None, where=None, plot=None, table_name='data'):
     """Counts of each cause, largest first, with percents and the cumulative
     percent; the rows of each cause for linking; the same per level of the
     X, Grouping columns, and a test that the rates are equal across the
-    groups (a Poisson log-linear model, statsmodels' GLM)."""
+    groups (a Poisson log-linear model, statsmodels' GLM). where: the By
+    group's; plot: the graphs' display options, for their code (plot_code)."""
     groups = [g for g in (groups or []) if g]
     names = [cause] + groups + ([freq] if freq else [])
     df = data.frame(table, names, rows, dropna=True, as_category=True)
@@ -1107,7 +1940,8 @@ def pareto(table, cause, rows=None, freq=None, groups=None, combine=None, table_
         levels = sorted(pd.unique(cs.dropna()))
         m = {v: i for i, v in enumerate(levels)}
         codes = np.array([m[v] for v in cs])
-    labels = [_label(v) for v in levels]
+    lab = _labeler(table, cause)
+    labels = [lab(v) for v in levels]
     counts = np.bincount(codes, weights=w, minlength=len(levels)).astype(float)
     idx = df.index.to_numpy()
     members = [[] for _ in levels]
@@ -1146,14 +1980,15 @@ def pareto(table, cause, rows=None, freq=None, groups=None, combine=None, table_
         glabels = []
         for g in groups:
             s = df[g]
+            glab = _labeler(table, g)
             if isinstance(s.dtype, pd.CategoricalDtype):
                 gcodes.append(s.cat.codes.to_numpy())
-                glabels.append([_label(v) for v in s.cat.categories])
+                glabels.append([glab(v) for v in s.cat.categories])
             else:
                 u = sorted(pd.unique(s))
                 mm = {v: i for i, v in enumerate(u)}
                 gcodes.append(np.array([mm[v] for v in s]))
-                glabels.append([_label(v) for v in u])
+                glabels.append([glab(v) for v in u])
         cell_key = list(zip(*gcodes))
         cells = sorted(set(cell_key))
         pos = {c: i for i, c in enumerate(cells)}
@@ -1172,14 +2007,128 @@ def pareto(table, cause, rows=None, freq=None, groups=None, combine=None, table_
         out['group_names'] = groups
         # Test Rates Across Groups: counts ~ cause + group against the saturated model
         out['test'] = _rates_test(grid)
-    out['code'] = '\n'.join([code_head(table_name),
-                             (f'counts = df.groupby({json.dumps(cause)})[{json.dumps(freq)}].sum()' if freq else f'counts = df[{json.dumps(cause)}].value_counts()') + '.sort_values(ascending=False, kind="stable")',
-                             'pareto = pd.DataFrame({"Count": counts, "Percent": 100 * counts / counts.sum(), "Cum Percent": 100 * counts.cumsum() / counts.sum()})',
-                             'print(pareto)'] + ([
-                                 '# Test Rates Across Groups: a Poisson log-linear model without the cause-by-group interaction',
-                                 f'cells = df.groupby([{json.dumps(cause)}, {json.dumps(groups[0])}], observed=True)' + (f'[{json.dumps(freq)}].sum()' if freq else '.size()') + '.rename("n").reset_index()',
-                                 f'fit = smf.glm({"n ~ C(Q(" + json.dumps(cause) + ")) + C(Q(" + json.dumps(groups[0]) + "))"!r}, cells, family=sm.families.Poisson()).fit()',
-                                 'print(fit.deviance, fit.df_resid)   # the likelihood-ratio chi-square and its degrees of freedom'] if groups else []))
+    # the code: the counts of the causes, largest first (ties in the order of the levels), the small ones
+    # combined into Other as the report combines them; the test of equal rates on every cell of the report's grid
+    cols_ = [cause] + groups + ([freq] if freq else [])
+    C = J(cause)
+    L = [f'd = df.dropna(subset={J(cols_)})   # the rows with every value']
+    if freq:
+        L.append(f'd = d[d[{J(freq)}] > 0]   # the rows with a positive count')
+    L.append(f'counts = d.groupby({C})' + (f'[{J(freq)}].sum()' if freq else '.size()'))
+    lv = _levels_of(table, cause)
+    if lv is not None:
+        lits = J(lv) if isinstance(lv[0], str) else '[' + ', '.join(_lit(v) for v in lv) + ']'
+        L.append(f'counts = counts.reindex([v for v in {lits} if v in counts.index])   # the causes in the order of their levels in the table')
+    L.append('counts = counts[counts > 0].sort_values(ascending=False, kind="stable")   # largest first, ties in the order of the levels')
+    if combined:
+        if combine.get('below') is not None:
+            L.append(f'small = counts.index[counts / counts.sum() < {float(combine["below"]) / 100!r}]   # Combine Causes: those below {float(combine["below"]):g}% of the total, into Other')
+        else:
+            L.append(f'small = counts.index[{int(combine["top"])}:]   # Combine Causes: all but the {int(combine["top"])} largest, into Other')
+        L.append('counts = pd.concat([counts.drop(small), pd.Series({"Other": counts[small].sum()})])   # Other last')
+    L += ['pareto = pd.DataFrame({"Count": counts, "Percent": 100 * counts / counts.sum(), "Cum Percent": 100 * counts.cumsum() / counts.sum()})',
+          'print(pareto)']
+    if groups:
+        L.append('# Test Rates Across Groups: a Poisson log-linear model of the counts in every cell of cause and group (the empty ones too), without their interaction')
+        if combined:
+            L.append(f'd = d.assign(**{{{C}: d[{C}].where(~d[{C}].isin(small), "Other")}})   # the combined causes as one')
+        if len(groups) > 1:
+            L.append(f'd = d.assign(_cell=d[{J(groups[0])}].astype(str) + ", " + d[{J(groups[1])}].astype(str))   # each combination of {groups[0]} and {groups[1]}')
+        G = J(groups[0]) if len(groups) == 1 else '"_cell"'
+        L += [f'n = d.groupby([{C}, {G}])' + (f'[{J(freq)}].sum()' if freq else '.size()') + '.unstack(fill_value=0)',
+              'cells = n.stack().rename("n").reset_index()',
+              f'fit = smf.glm({"n ~ C(Q(" + C + ")) + C(Q(" + G + "))"!r}, cells, family=sm.families.Poisson()).fit()',
+              'print(fit.deviance, fit.df_resid)   # the likelihood-ratio chi-square and its degrees of freedom']
+    out['code'] = '\n'.join(_head(table, rows, where, table_name) + L)
+    if plot is not None:
+        out['plot_code'] = _pareto_plot(table, rows, where, table_name, out, cause, freq, groups, combine, plot)
+    return out
+
+
+def _pareto_plot(table, rows, where, table_name, res, cause, freq, groups, combine, plot):
+    """The Pareto plots as the page draws them (paretoChart): the causes'
+    bars largest first (Other last), counts or percents, the cumulative
+    percent curve on its own axis or scaled to the bars'. With X, Grouping
+    a plot for each cell, the causes in the overall order: its own code.
+    {'overall': code, 'cells': [code of each cell]}."""
+    o = lambda k, dflt=False: bool(plot.get(k, dflt))  # noqa: E731
+    pct, legend, n_legend = o('percent'), o('legend'), o('nLegend')
+    cum_curve, cum_axis, cum_points, cum_labels = o('cumCurve', True), o('cumAxis', True), o('cumPoints', True), o('cumLabels')
+    cols_ = [cause] + groups + ([freq] if freq else [])
+    C = J(cause)
+    L = _label_lines(table, [cause] + groups) + [
+         'def num(v):   # a number as the page writes it',
+         '    return str(int(v)) if float(v).is_integer() else f"{v:.7g}"',
+         f'd = df.dropna(subset={J(cols_)})   # the rows with every value']
+    if freq:
+        L.append(f'd = d[d[{J(freq)}] > 0]   # the rows with a positive count (Freq)')
+    levels = _levels_of(table, cause)
+    count = f'd.groupby({C})[{J(freq)}].sum()' if freq else f'd.groupby({C}).size()'
+    L.append(f'counts = {count}   # each cause\'s count{" (Freq summed)" if freq else ""}')
+    L.append(f'counts.index = counts.index.map({_lab(table, cause)})   # the causes as the page writes them')
+    if levels is not None:
+        L.append(f'levels = {J([_labeler(table, cause)(v) for v in levels])}   # the causes in the order of their levels in the table')
+        L.append('counts = counts.reindex([v for v in levels if v in counts.index])')
+    L.append('counts = counts[counts > 0].sort_values(ascending=False, kind="stable")   # largest first, ties in the order of the levels')
+    other = next((c_ for c_ in res['causes'] if c_.get('combined')), None)
+    if other:
+        if combine.get('below') is not None:
+            L.append(f'small = counts.index[counts / counts.sum() < {float(combine["below"]) / 100!r}]   # Combine Causes: those below {float(combine["below"]):g}% of the total, into Other')
+        else:
+            L.append(f'small = counts.index[{int(combine["top"])}:]   # Combine Causes: all but the {int(combine["top"])} largest, into Other')
+        L.append('merged = {v: ("Other" if v in small else v) for v in counts.index}')
+        L.append('counts = pd.concat([counts.drop(small), pd.Series({"Other": counts[small].sum()})])   # Other last')
+    else:
+        L.append('merged = {v: v for v in counts.index}')
+    L.append('causes = list(counts.index)')
+    n = len(res['causes'])
+
+    def drawing(small):
+        angled = n > (3 if small else 6)
+        B = ['', 'def pareto(ax, counts):', '    """One Pareto plot: the bars, the cumulative percent, the axes."""',
+             '    total = counts.sum() or 1',
+             f'    heights = {"100 * counts / total   # Percent Scale" if pct else "counts"}',
+             '    at = np.arange(len(counts))']
+        if legend:
+            B += [f'    colors = {J(PALETTE)}   # Category Legend: a colour for each cause',
+                  '    ax.bar(at, heights, width=0.82, color=[colors[i % len(colors)] for i in range(len(counts))])']
+        else:
+            B.append(f'    ax.bar(at, heights, width=0.82, color="{COL["bar"]}")')
+        B.append(f'    ymax = {"100" if pct else "max(heights.max(), 1)"}')
+        if cum_curve:
+            B.append('    cum = 100 * counts.cumsum() / total   # the cumulative percent')
+            if cum_axis:
+                B += ['    cx = ax.twinx()   # its own axis, at the right', '    cx.set_ylim(0, 105)', '    cx.set_ylabel("Cum Percent")',
+                      '    cx.yaxis.set_major_formatter(lambda v, _: f"{v:g}%")', '    cy = cum']
+            else:
+                B += ['    cx = ax', '    cy = cum' + ('' if pct else ' / 100 * ymax   # on the bars\' axis: 100% at the tallest bar')]
+            B.append(f'    cx.plot(at, cy, color="{COL["limit"]}", linewidth=1.6' + (', marker="o", markersize=4.3' if cum_points else '') + ')')
+            if cum_labels:
+                B += ['    for a, v, q in zip(at, cy, cum):   # Label Cum Percent Points',
+                      f'        cx.annotate(f"{{q:.1f}}%", (a, v), xytext=(-3, 3), textcoords="offset points", ha="right", fontsize=7.5, color="{COL["limit"]}")']
+        B += ['    ax.set_ylim(0, ymax * 1.05)', f'    ax.set_ylabel("{"Percent" if pct else "Count"}")',
+              '    ax.set_xticks(at, [str(v) for v in counts.index]' + (', rotation=35, ha="right")' if angled else ')'),
+              '    ax.set_xlim(-0.5, len(counts) - 0.5)']
+        if n_legend:
+            B.append(f'    ax.text(0.99, 0.98, "N = " + num(counts.sum()), transform=ax.transAxes, ha="right", va="top", fontsize=8, color="{COL["muted"]}")   # N Legend')
+        B.append('')
+        W = plot.get('width') or _fit(max(260, min(420, 90 + 34 * n)) if small else max(380, min(760, 140 + 52 * n)), plot, 240)
+        H = plot.get('height') or (260 if small else 330)
+        B.append(f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")')
+        return B
+
+    head = _head(table, rows, where, table_name, [PLT])
+    overall = L + drawing(False) + ['pareto(ax, counts)', 'fig.suptitle("Pareto plot", fontsize=10)', 'plt.show()']
+    out = {'overall': '\n'.join(head + overall), 'cells': []}
+    for g in res.get('groups') or []:
+        sel = ' & '.join(f'(d[{J(gc)}].map({_lab(table, gc)}) == {J(lv)})' for gc, lv in zip(groups, g['levels']))
+        title = f'{", ".join(groups)} = {g["label"]}'
+        by = f's[{C}].map({_lab(table, cause)}).map(merged)'
+        cell = L + [f's = d[{sel}]   # the cell {title}',
+                    f'c_ = s.groupby({by})[{J(freq)}].sum().reindex(causes, fill_value=0)' if freq else f'c_ = s.groupby({by}).size().reindex(causes, fill_value=0)',
+                    f'title = {J(title)} + " (N " + num(c_.sum()) + ")"']
+        cell += drawing(True) + ['pareto(ax, c_)', 'fig.suptitle("Pareto plot " + title, fontsize=10)', 'plt.show()']
+        out['cells'].append('\n'.join(head + cell))
     return out
 
 
@@ -1352,10 +2301,19 @@ def _reml(df, y, factors, terms):
 
 @api('quality.variability')
 def variability(table, y, xs, rows=None, part=None, model=None, method='best', gauge=False, k_mult=6.0, tolerance=None,
-                lsl=None, usl=None, historical_sigma=None, components=True, table_name='data'):
+                lsl=None, usl=None, historical_sigma=None, components=True, where=None, plot=None, table_name='data'):
     """The cells of a variability chart (every combination of the X levels,
     outer to inner) with their means, standard deviations and ranges, the
-    variance components, and the Gauge R&R."""
+    variance components, and the Gauge R&R. where: the By group's; plot: the
+    chart's display options, for its code (plot_code)."""
+    keep = keep_lines(table, rows, where)
+    out = _variability(table, y, xs, rows, part, model, method, gauge, k_mult, tolerance, lsl, usl, historical_sigma, components, table_name, keep)
+    if plot is not None and not out.get('error'):
+        out['plot_code'] = _var_plot(table, rows, where, table_name, out, plot)
+    return out
+
+
+def _variability(table, y, xs, rows, part, model, method, gauge, k_mult, tolerance, lsl, usl, historical_sigma, components, table_name, keep):
     factors = list(dict.fromkeys([x for x in xs if x] + ([part] if part and part not in xs else [])))
     if not factors:
         return {'error': 'give at least one X, Grouping column'}
@@ -1367,15 +2325,16 @@ def variability(table, y, xs, rows=None, part=None, model=None, method='best', g
     codes, labels = [], []
     for f in factors:
         s = df[f]
+        lab = _labeler(table, f)
         if isinstance(s.dtype, pd.CategoricalDtype):
             s = s.cat.remove_unused_categories()
             codes.append(s.cat.codes.to_numpy())
-            labels.append([_label(v) for v in s.cat.categories])
+            labels.append([lab(v) for v in s.cat.categories])
         else:
             u = sorted(pd.unique(s))
             m = {v: i for i, v in enumerate(u)}
             codes.append(np.array([m[v] for v in s]))
-            labels.append([_label(v) for v in u])
+            labels.append([lab(v) for v in u])
     key = list(zip(*codes))
     cells_keys = sorted(set(key))
     pos = {c: i for i, c in enumerate(cells_keys)}
@@ -1412,7 +2371,7 @@ def variability(table, y, xs, rows=None, part=None, model=None, method='best', g
         out['s_limits'] = [{'cl': c4(c['n']) * sig, 'ucl': (c4(c['n']) + 3 * math.sqrt(1 - c4(c['n']) ** 2)) * sig,
                             'lcl': max(0.0, (c4(c['n']) - 3 * math.sqrt(1 - c4(c['n']) ** 2)) * sig)} if c['n'] > 1 else None for c in cells]
     if not components and not gauge:
-        out['code'] = _var_code(table_name, y, factors, None, None)
+        out['code'] = _var_code(table_name, y, factors, None, None, keep, table)
         return out
     # ---- variance components
     model = model or ('crossed' if len(factors) > 1 else 'main')
@@ -1429,7 +2388,7 @@ def variability(table, y, xs, rows=None, part=None, model=None, method='best', g
         if not terms:
             out['components_error'] = 'With one value in every cell and a single grouping factor there is nothing left to estimate the within variation from: variance components need replicates.'
             out['notes'] = notes
-            out['code'] = _var_code(table_name, y, factors, None, None)
+            out['code'] = _var_code(table_name, y, factors, None, None, keep, table)
             return out
     use = method
     if method == 'best':
@@ -1453,7 +2412,7 @@ def variability(table, y, xs, rows=None, part=None, model=None, method='best', g
     except Exception as e:  # e.g. a singular design
         out['components_error'] = str(e)
         out['notes'] = notes
-        out['code'] = _var_code(table_name, y, factors, terms, use)
+        out['code'] = _var_code(table_name, y, factors, terms, use, keep, table)
         return out
     total = sum(comp.values()) + within
     for label_, _fs in terms:
@@ -1526,15 +2485,141 @@ def variability(table, y, xs, rows=None, part=None, model=None, method='best', g
         }
         if not ops:
             out['gauge']['note'] = 'With only the part as a factor there is no reproducibility: the Gauge R&R is the repeatability alone.'
-    out['code'] = _var_code(table_name, y, factors, terms, use)
+    out['code'] = _var_code(table_name, y, factors, terms, use, keep, table)
     return out
 
 
-def _var_code(table_name, y, factors, terms, use):
+def _factor_levels_lines(table, factors, frame='d'):
+    """Lines that give the factors whose level order in the table is not the
+    sorted order their order (the cells follow the levels)."""
+    L = []
+    for f in factors:
+        lv = _levels_of(table, f)
+        if lv is not None:
+            lits = J(lv) if isinstance(lv[0], str) else '[' + ', '.join(_lit(v) for v in lv) + ']'
+            L.append(f'{frame}[{J(f)}] = pd.Categorical({frame}[{J(f)}], categories={lits})   # the order of {f}\'s levels in the table')
+    return L
+
+
+def _var_plot(table, rows, where, table_name, res, plot):
+    """The variability chart as the page draws it (variabilityChart): each
+    cell's points (jittered, with random numbers of its own), box plots,
+    range bars and means, the group means, the grand mean and median, the
+    outer factors' levels under the inner ones, and below it the cells'
+    standard deviations with their mean and S chart limits."""
+    o = lambda k, dflt=False: bool(plot.get(k, dflt))  # noqa: E731
+    points, range_bars, cell_means, connect = o('points', True), o('rangeBars', True), o('cellMeans', True), o('connect')
+    group_means, grand_mean, grand_median, boxes, jitter = o('groupMeans'), o('grandMean'), o('grandMedian'), o('boxes'), o('jitter')
+    sd_chart, mean_sd, s_limits = o('sdChart', True), o('meanSd', True), o('sLimits')
+    y, factors = res['y'], res['factors']
+    k = len(factors)
+    m = len(res['cells'])
+    L = [f'Y, factors = {J(y)}, {J(factors)}   # the response, and the grouping factors outer to inner'] + _label_lines(table, factors) + [
+         f'labelers = [{", ".join(_lab(table, f) for f in factors)}]   # how the page writes each factor\'s levels',
+         'd = df.dropna(subset=[Y, *factors]).copy()   # the rows with every value']
+    L += _factor_levels_lines(table, factors)
+    L += ['cells = d.groupby(factors, sort=True, observed=True)[Y]   # the cells: every combination of the levels, outer to inner',
+          'st = cells.agg(["size", "mean", "std", "min", "max"])',
+          'vals = [s.to_numpy() for _, s in cells]',
+          'keys = [tuple(f(v) for f, v in zip(labelers, key if isinstance(key, tuple) else (key,))) for key in st.index]   # each cell\'s levels',
+          'm = len(st)',
+          'pos = np.arange(1, m + 1)',
+          f'POINT, LINE, CENTER, OVERALL, MEAN, MUTED, GRID, TEXT = "{COL["point"]}", "{COL["line"]}", "{COL["center"]}", "{COL["overall"]}", "{COL["mean"]}", "{COL["muted"]}", "{COL["grid"]}", "{COL["text"]}"   # the page\'s colours']
+    W = plot.get('width') or _fit(max(460, min(820, 140 + 22 * m)), plot)
+    H = plot.get('height') or (470 if sd_chart else 330)
+    if sd_chart:
+        L.append(f'fig, (ax, bx) = plt.subplots(2, 1, sharex=True, figsize=({_inch(W)}, {_inch(H)}), layout="constrained", gridspec_kw={{"height_ratios": [58, 32]}})')
+    else:
+        L.append(f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")')
+    if points:
+        L.append('X = np.concatenate([np.full(len(v), p, dtype=float) for p, v in zip(pos, vals)])')
+        if jitter:
+            L.append('rng = np.random.default_rng(1)   # Points Jittered: across the cell, as the page does (with random numbers of its own)')
+            L.append('X = X + (rng.uniform(size=len(X)) - 0.5) * 0.36')
+        L.append('ax.scatter(X, np.concatenate(vals), s=16, color=POINT, zorder=3)   # Show Points')
+    if boxes:
+        L += ['boxes = []',
+              'for v in vals:',
+              '    q1, med, q3 = np.quantile(v, [0.25, 0.5, 0.75], method="weibull")   # JMP\'s quartiles, the (n + 1)p-th values',
+              '    boxes.append({"q1": q1, "med": med, "q3": q3, "whislo": v[v >= q1 - 1.5 * (q3 - q1)].min(), "whishi": v[v <= q3 + 1.5 * (q3 - q1)].max()})   # the whiskers: the furthest values within 1.5 IQR of the box',
+              'edge = {"color": MUTED, "linewidth": 1}',
+              'ax.bxp(boxes, positions=pos, widths=0.5, showfliers=False, patch_artist=True, manage_ticks=False, boxprops={"facecolor": "#8fa9c22e", "edgecolor": MUTED, "linewidth": 1},',
+              '       medianprops=edge, whiskerprops=edge, capprops=edge)   # Show Box Plots']
+    if range_bars:
+        L.append('two = (st["size"] > 1).to_numpy()')
+        L.append('ax.vlines(pos[two], st["min"][two], st["max"][two], color=MUTED, linewidth=1.4)   # Show Range Bars: each cell\'s smallest to largest value')
+    if cell_means:
+        L.append(f'ax.plot(pos, st["mean"], color=OVERALL, linewidth=1, linestyle="{"-" if connect else "none"}", marker="_", markersize=10, markeredgewidth=2)   # Show Cell Means{" (Connect Cell Means)" if connect else ""}')
+    if group_means and k > 1:
+        L += ['for depth in range(1, len(factors)):   # Show Group Means: the mean of each group of the outer factors',
+              '    prefixes = [key[:depth] for key in keys]',
+              '    for pre in dict.fromkeys(prefixes):',
+              '        at = [i for i, q in enumerate(prefixes) if q == pre]',
+              '        g = np.concatenate([vals[i] for i in at]).mean()',
+              '        ax.plot([at[0] + 1 - 0.4, at[-1] + 1 + 0.4], [g, g], color=MEAN, linewidth=1.6)']
+    if grand_mean:
+        L.append('ax.axhline(d[Y].mean(), color=CENTER, linewidth=1.2)   # Show Grand Mean')
+    if grand_median:
+        L.append('ax.axhline(d[Y].median(), color=CENTER, linewidth=1.2, linestyle="--")   # Show Grand Median')
+    L += ['lo, hi = st["min"].min(), st["max"].max()',
+          'pad = 0.06 * (hi - lo) if hi > lo else (abs(lo) * 0.05 or 1)',
+          'ax.set_ylim(lo - pad, hi + pad)',
+          'ax.set_ylabel(Y)']
+    axes = '(ax, bx)' if sd_chart else '(ax,)'
+    if k > 1:
+        L += ['for depth in range(len(factors) - 2, -1, -1):   # the outer levels: a line between their groups, their names under the inner ones',
+              '    start = 0',
+              '    for i in range(1, m + 1):',
+              '        if i < m and keys[i][:depth + 1] == keys[start][:depth + 1]:',
+              '            continue',
+              f'        {"bx" if sd_chart else "ax"}.annotate(keys[start][depth], ((start + i + 1) / 2, 0), xycoords=("data", "axes fraction"), xytext=(0, -22 - 12 * (len(factors) - 2 - depth)), textcoords="offset points", ha="center", va="top", fontsize=8, color=TEXT)',
+              '        if i < m:',
+              f'            for a in {axes}:',
+              '                a.axvline(i + 0.5, color=GRID, linewidth=1.4 if depth == 0 else 0.8)',
+              '        start = i']
+    inner = [cl['levels'][-1] for cl in res['cells']]
+    step = 1 if inner == [str(i + 1) for i in range(m)] else max(1, math.ceil(m / 60))
+    last = 'bx' if sd_chart else 'ax'
+    L.append(f'{last}.set_xticks(pos[::{step}], [q[-1] for q in keys][::{step}]' + (', rotation=45, ha="right")' if m > 16 else ')') + ('   # the innermost levels' if step == 1 else f'   # every {step}th cell'))
+    L.append(f'{last}.set_xlim(0.5, m + 0.5)')
+    L.append(f'{last}.set_xlabel(" / ".join(factors), labelpad={6 + 12 * max(0, k - 1)})')
+    if sd_chart:
+        L += ['bx.plot(pos, st["std"], color=LINE, linewidth=1, marker="o", markersize=4.3, markerfacecolor=POINT, markeredgecolor=POINT)   # Std Dev Chart: each cell\'s standard deviation',
+              'shown = list(st["std"].dropna())']
+        if mean_sd and res.get('mean_sd') is not None:
+            L += ['bx.plot([0.5, m + 0.5], [st["std"].mean()] * 2, color=CENTER, linewidth=1.2)   # Mean of Std Dev',
+                  'shown.append(st["std"].mean())']
+        if s_limits and res.get('s_limits'):
+            L += ['c = st["size"].where(st["size"] > 1).map(c4)   # S Control Limits: c4(n) sigma ± 3 sigma √(1 − c4²), sigma the mean of s/c4(n)',
+                  'sigma = (st["std"] / c).mean()',
+                  'for lim in (((c + 3 * np.sqrt(1 - c ** 2)) * sigma), ((c - 3 * np.sqrt(1 - c ** 2)) * sigma).clip(lower=0)):',
+                  '    X, V = [], []',
+                  '    for i, v in enumerate(lim):   # each cell\'s limit over [x - 1/2, x + 1/2]',
+                  '        if not np.isfinite(v):',
+                  '            continue',
+                  '        if X and not np.isfinite(lim.iloc[i - 1]):',
+                  '            X.append(np.nan)',
+                  '            V.append(np.nan)',
+                  '        X.append(i + 0.5)',
+                  '        V.append(v)',
+                  '        if i == m - 1 or not np.isfinite(lim.iloc[i + 1]):',
+                  '            X.append(i + 1.5)',
+                  '            V.append(v)',
+                  f'    bx.plot(X, V, color="{COL["limit"]}", linewidth=1.2, drawstyle="steps-post")',
+                  '    shown += list(lim.dropna())']
+        L += ['top = max(shown) if shown else 1.0',
+              'lo_ = min(shown) if shown else 0.0',
+              'bx.set_ylim(0, top + 0.12 * (top - lo_) if top > lo_ else top + (abs(top) * 0.05 or 1))',
+              'bx.set_ylabel("Std Dev")']
+    L += [f'fig.suptitle({J("Variability chart for " + y)}, fontsize=10)', 'plt.show()']
+    return '\n'.join(_head(table, rows, where, table_name, _with_imports(L, table_name)) + L)
+
+
+def _var_code(table_name, y, factors, terms, use, keep=(), table=None):
     Y = json.dumps(y)
     q = lambda n: n if n.isidentifier() else f'Q({json.dumps(n)})'
-    lines = [code_head(table_name), f'df = df.dropna(subset={json.dumps([y] + factors)})',
-             f'cells = df.groupby({json.dumps(factors)})[{Y}].agg(["mean", "std", "min", "max", "size"])', 'print(cells)']
+    lines = [code_head(table_name), *keep, f'df = df.dropna(subset={json.dumps([y] + factors)})', *(_factor_levels_lines(table, factors, 'df') if table else []),
+             f'cells = df.groupby({json.dumps(factors)}, observed=True)[{Y}].agg(["mean", "std", "min", "max", "size"])   # the cells, outer to inner', 'print(cells)']
     if terms:
         rhs = ' + '.join(':'.join(f'C({q(f)})' for f in fs) for _l, fs in terms)
         if use == 'ems':
@@ -1548,7 +2633,7 @@ def _var_code(table_name, y, factors, terms, use):
 
 
 @api('quality.attribute_gauge')
-def attribute_gauge(table, y, rater, part, rows=None, standard=None, table_name='data'):
+def attribute_gauge(table, y, rater, part, rows=None, standard=None, where=None, plot=None, table_name='data'):
     """Attribute gauge: agreement of raters who classify parts, within each
     rater over repeated trials, between raters (Cohen's kappa for each pair)
     and over all (Fleiss' kappa), and against a standard (effectiveness)."""
@@ -1557,19 +2642,20 @@ def attribute_gauge(table, y, rater, part, rows=None, standard=None, table_name=
     df = data.frame(table, names, rows, dropna=True, as_category=True)
     if len(df) < 2:
         return {'error': 'fewer than two ratings'}
-    Yv = df[y].map(_label) if not isinstance(df[y].dtype, pd.CategoricalDtype) else df[y].astype(object).map(_label)
-    Rv = df[rater].astype(object).map(_label)
-    Pv = df[part].astype(object).map(_label)
-    cats = [_label(v) for v in (df[y].cat.categories if isinstance(df[y].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[y])))]
+    ly, lr, lp = _labeler(table, y), _labeler(table, rater), _labeler(table, part)
+    Yv = df[y].map(ly) if not isinstance(df[y].dtype, pd.CategoricalDtype) else df[y].astype(object).map(ly)
+    Rv = df[rater].astype(object).map(lr)
+    Pv = df[part].astype(object).map(lp)
+    cats = [ly(v) for v in (df[y].cat.categories if isinstance(df[y].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[y])))]
     cats = [c for c in cats if c in set(Yv)]
-    raters = [_label(v) for v in (df[rater].cat.categories if isinstance(df[rater].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[rater])))]
+    raters = [lr(v) for v in (df[rater].cat.categories if isinstance(df[rater].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[rater])))]
     raters = [r for r in raters if r in set(Rv)]
-    parts = [_label(v) for v in (df[part].cat.categories if isinstance(df[part].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[part])))]
+    parts = [lp(v) for v in (df[part].cat.categories if isinstance(df[part].dtype, pd.CategoricalDtype) else sorted(pd.unique(df[part])))]
     parts = [p for p in parts if p in set(Pv)]
     d = pd.DataFrame({'y': Yv.to_numpy(), 'r': Rv.to_numpy(), 'p': Pv.to_numpy()}, index=df.index)
     d['trial'] = d.groupby(['p', 'r']).cumcount()
     if standard:
-        d['std'] = (df[standard].astype(object).map(_label)).to_numpy()
+        d['std'] = (df[standard].astype(object).map(_labeler(table, standard))).to_numpy()
     # per part: the share of agreeing pairs among all its ratings
     part_rows = []
     for p in parts:
@@ -1650,9 +2736,71 @@ def attribute_gauge(table, y, rater, part, rows=None, standard=None, table_name=
         out['effectiveness'] = rtable([col('rater', 'Rater', 'text'), col('correct', 'Correct', 'int'), col('incorrect', 'Incorrect', 'int'), col('effectiveness', 'Effectiveness', 'pct')], eff)
         mis = pd.crosstab(d['std'], d['y'])
         out['misclassification'] = {'standard': [str(i) for i in mis.index], 'rated': [str(c) for c in mis.columns], 'counts': mis.to_numpy().tolist()}
-    out['code'] = '\n'.join([code_head(table_name, ['from statsmodels.stats.inter_rater import aggregate_raters, cohens_kappa, fleiss_kappa']),
+    names_ = [y, rater, part] + ([standard] if standard else [])
+    out['code'] = '\n'.join(_head(table, rows, where, table_name, ['from statsmodels.stats.inter_rater import aggregate_raters, cohens_kappa, fleiss_kappa']) + [
+                             f'df = df.dropna(subset={J(names_)})   # the ratings with every value',
                              f'counts = df.groupby({json.dumps(part)})[{json.dumps(y)}].value_counts().unstack(fill_value=0)',
-                             "print(fleiss_kappa(counts.to_numpy(), method='fleiss'))   # all raters and trials",
+                             "if counts.sum(axis=1).nunique() == 1:   # Fleiss' kappa needs as many ratings of every part",
+                             "    print(fleiss_kappa(counts.to_numpy(), method='fleiss'))   # all raters and trials",
                              f'wide = df.assign(trial=df.groupby([{json.dumps(part)}, {json.dumps(rater)}]).cumcount()).pivot_table(index=[{json.dumps(part)}, "trial"], columns={json.dumps(rater)}, values={json.dumps(y)}, aggfunc="first")',
                              'a, b = wide.columns[:2]; print(cohens_kappa(pd.crosstab(wide[a], wide[b]).to_numpy()))'])
+    if plot is not None:
+        out['plot_code'] = _attr_plot(table, rows, where, table_name, out, y, rater, part, standard, plot)
+    return out
+
+
+def _attr_plot(table, rows, where, table_name, res, y, rater, part, standard, plot):
+    """The attribute gauge's two graphs (attributeRender): the agreement of
+    every part (the share of agreeing pairs among all its ratings) and of
+    every rater (its ratings paired with every other rating of the part)."""
+    names_ = [y, rater, part] + ([standard] if standard else [])
+    pre = _label_lines(table, [y, rater, part]) + [
+           f'd = df.dropna(subset={J(names_)})   # the ratings with every value',
+           f'Y, R, P = {J(y)}, {J(rater)}, {J(part)}   # the rating, the rater, the part',
+           f'd = d.assign(**{{Y: d[Y].map({_lab(table, y)}), R: d[R].map({_lab(table, rater)}), P: d[P].map({_lab(table, part)})}})   # the values as the page writes them']
+    out = {}
+    parts = [p['part'] for p in res['parts']]
+    raters = [r['rater'] for r in res['rater_table']]
+    sizes = plot.get('sizes') or {}
+    W, H = sizes.get('parts') or [_fit(max(360, min(760, 120 + 22 * len(parts))), plot), 260]
+    L = pre + [f'parts = {J(parts)}   # the parts in the order of their levels',
+               'agree = []',
+               'for p in parts:   # of all the pairs of the part\'s ratings, the share that agree',
+               '    c = d.loc[d[P] == p, Y].value_counts()',
+               '    n = c.sum()',
+               '    agree.append(100 * (c * (c - 1) / 2).sum() / (n * (n - 1) / 2) if n > 1 else np.nan)',
+               'at = np.arange(1, len(parts) + 1)',
+               f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+               f'ax.plot(at, agree, color="{COL["line"]}", marker="o", markersize=5, markerfacecolor="{COL["point"]}", markeredgecolor="{COL["point"]}")',
+               'ax.set_xticks(at, parts)',
+               'ax.set_xlim(0.5, len(parts) + 0.5)',
+               'ax.set_ylim(-5, 105)',
+               'ax.set_xlabel(P)',
+               'ax.set_ylabel("% Agreement")',
+               'fig.suptitle("Agreement by part", fontsize=10)',
+               'plt.show()']
+    out['parts'] = '\n'.join(_head(table, rows, where, table_name, [PLT]) + L)
+    W, H = sizes.get('raters') or [max(260, 120 + 50 * len(raters)), 260]
+    L = pre + [f'raters = {J(raters)}   # the raters in the order of their levels',
+               'agree = []',
+               'for r in raters:   # each of the rater\'s ratings of a part, paired with every other rating of that part: the share that agree',
+               '    same = pairs = 0',
+               '    for _, s in d.groupby(P):',
+               '        mine, others = s.loc[s[R] == r, Y].tolist(), s.loc[s[R] != r, Y].tolist()',
+               '        for i, a in enumerate(mine):',
+               '            for b in mine[i + 1:] + others:',
+               '                pairs += 1',
+               '                same += a == b',
+               '    agree.append(100 * same / pairs if pairs else np.nan)',
+               'at = np.arange(1, len(raters) + 1)',
+               f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+               f'ax.scatter(at, agree, s=42, color="{COL["overall"]}", zorder=3)',
+               'ax.set_xticks(at, raters)',
+               'ax.set_xlim(0.5, len(raters) + 0.5)',
+               'ax.set_ylim(-5, 105)',
+               'ax.set_xlabel(R)',
+               'ax.set_ylabel("% Agreement")',
+               'fig.suptitle("Agreement by rater", fontsize=10)',
+               'plt.show()']
+    out['raters'] = '\n'.join(_head(table, rows, where, table_name, [PLT]) + L)
     return out

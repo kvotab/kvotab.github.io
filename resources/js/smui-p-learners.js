@@ -152,7 +152,8 @@
     }, { width: W(430), height: 300, title: `${crit} by K`, select: false,
       onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isInteger(pt.x)) ctx.set('knnK', pt.x === r.best ? null : pt.x); }) });
     const scaled = r.scaled.length ? `${r.scaled.join(', ')} standardized by the training rows' mean and standard deviation` : 'no continuous factor to standardize';
-    ob.add(ctx.row(tbl, plot),
+    const pc = r.fit.plots || {};
+    ob.add(ctx.row(tbl, SM.predict.withCode(plot, SM.predict.graphCode(ctx, pc.head_code, pc.selection))),
       ctx.note(`Every K from 1 to ${r.k}: each row is predicted from its K nearest training rows by Euclidean distance on the factors (${scaled}; a level of a categorical factor is a 0/1 column as it is, so a different level adds 2 to the squared distance). A training row is not its own neighbour. The best K (${r.best}, marked) has the smallest ${crit.toLowerCase()} on the ${r.by.toLowerCase()} rows (of equal ones the smallest K)${r.chosen !== r.best ? `; K = ${r.chosen} is shown below` : ''}. Click a line or a point to see another K.`),
       ctx.code(r.code));
   }
@@ -335,7 +336,8 @@
       ], { margin: { l: 62, r: 10, t: 8, b: 44 }, xaxis: { title: { text: 'Cost' }, type: 'log', dtick: 1 }, yaxis: { title: { text: `${judged} ${t.label}` }, rangemode: 'tozero' } }, { width: W(400), height: 300, title: 'Tuning design', select: false });
     }
     const failed = t.rows.length - good.length;
-    ob.add(ctx.row(tbl, plot), ctx.note(`${t.rows.length} points: ${rbf ? `Cost from 0.1 to 1000 and Gamma from 1/100 to 10 times ${fmt(t.gamma0, { sig: 4 })} (one over the columns of X), evenly on the log scale and crossed` : 'Cost from 0.01 to 100, evenly on the log scale'}. Each is fitted to the training rows and judged by ${t.how === 'validation' ? 'the validation rows' : `${t.how} of the training rows (no validation rows; the folds from the seed)`}; the smallest ${t.label.toLowerCase()} wins (of equal ones the smaller Cost, then the smaller Gamma), and the model is fitted again with it and with Platt's probabilities.${failed ? ` ${failed} point${failed === 1 ? '' : 's'} could not be fitted (a fold with one level).` : ''}`));
+    const pc = r.fit.plots || {};
+    ob.add(ctx.row(tbl, SM.predict.withCode(plot, SM.predict.graphCode(ctx, pc.head_code, pc.tuning))), ctx.note(`${t.rows.length} points: ${rbf ? `Cost from 0.1 to 1000 and Gamma from 1/100 to 10 times ${fmt(t.gamma0, { sig: 4 })} (one over the columns of X), evenly on the log scale and crossed` : 'Cost from 0.01 to 100, evenly on the log scale'}. Each is fitted to the training rows and judged by ${t.how === 'validation' ? 'the validation rows' : `${t.how} of the training rows (no validation rows; the folds from the seed)`}; the smallest ${t.label.toLowerCase()} wins (of equal ones the smaller Cost, then the smaller Gamma), and the model is fitted again with it and with Platt's probabilities.${failed ? ` ${failed} point${failed === 1 ? '' : 's'} could not be fitted (a fold with one level).` : ''}`));
   }
 
   async function tuneDialog(ctx) {
@@ -386,7 +388,8 @@
       return items;
     } });
     let g;
-    try { g = await ctx.call('svm.boundary', { ...b, pair, current, m: 61 }); } catch (e) { ob.add(ctx.error(e)); return; }
+    // the page's choice the graph's code draws with: the support vectors ringed or not
+    try { g = await ctx.call('svm.boundary', { ...b, pair, current, m: 61, plot: { sv: !!ringsOn } }); } catch (e) { ob.add(ctx.error(e)); return; }
     const C = SM.util.themeColors();
     const traces = [];
     const cat = g.kind === 'categorical';
@@ -433,7 +436,7 @@
     const held = g.held.length ? ` The other factors are held at ${g.held.map((h) => `${h.name} = ${typeof h.value === 'number' ? fmt(h.value, { sig: 5 }) : h.value}`).join(', ')} (the Prediction Profiler's current values: the means and first levels until you move them).` : '';
     const what = cat && g.decision ? `The shading is the decision function, toward ${g.positive} where positive and ${g.negative} where negative; the solid line is the boundary (0), the dashed lines the margins (−1 and 1).`
       : cat ? 'The shading is the most likely level at each point (the largest Platt probability).' : 'The shading and its contours are the predicted response.';
-    ob.add(ctx.row(plot), ctx.note(`${what} Each point is a row: filled for training rows, open for validation and test rows${nsv && ringsOn ? '; rings mark the support vectors' : ` (${nsv} of the ${r.summary.n_train} training rows are support vectors: Support Vectors in the red triangle rings them)`}. Click or drag to select rows.${held}${g.n_missing ? ` ${g.n_missing} rows missing one of the two are not drawn.` : ''}`), ctx.code(g.code));
+    ob.add(ctx.row(SM.predict.withCode(plot, SM.predict.graphCode(ctx, (r.fit.plots || {}).head_code, g.plot_code))), ctx.note(`${what} Each point is a row: filled for training rows, open for validation and test rows${nsv && ringsOn ? '; rings mark the support vectors' : ` (${nsv} of the ${r.summary.n_train} training rows are support vectors: Support Vectors in the red triangle rings them)`}. Click or drag to select rows.${held}${g.n_missing ? ` ${g.n_missing} rows missing one of the two are not drawn.` : ''}`), ctx.code(g.code));
   }
 
   function svmTriangle(ctx) {

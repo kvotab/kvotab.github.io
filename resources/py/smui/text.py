@@ -42,12 +42,30 @@ from . import data, predictive
 from .registry import api
 
 SK = predictive.SK
+BASE, BAR = '#2f6690', '#8fa9c2'   # the points' and the bars' colours, light theme
 STEMMING = ('none', 'combine', 'all')
 TOKENIZING = ('regex', 'basic')
 WEIGHTINGS = {'binary': 'Binary', 'ternary': 'Ternary', 'frequency': 'Frequency', 'logfreq': 'Log Freq', 'tfidf': 'TF IDF'}
 CENTERING = {'uncentered': 'Uncentered', 'centered': 'Centered', 'scaled': 'Centered and Scaled'}
 TOPIC_METHODS = {'varimax': 'Rotated SVD (varimax)', 'nmf': 'Non-negative Matrix Factorization', 'lda': 'Latent Dirichlet Allocation'}
 MAX_PHRASE_WORDS = 12
+
+
+def _dated(obj, table):
+    """Code that reads the table's CSV (a string, or the strings of a list
+    or dict) with the line that turns each date column it names back into
+    the page's number, as dispatch does for the keys code and *_code."""
+    from .util import date_columns, dated_code
+    cols = date_columns(table)
+    if not cols:
+        return obj
+    if isinstance(obj, str):
+        return dated_code(obj, cols)
+    if isinstance(obj, list):
+        return [_dated(v, table) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _dated(v, table) for k, v in obj.items()}
+    return obj
 
 
 # >>> reading the texts
@@ -572,25 +590,58 @@ def _py(v):
     return json.dumps(v, ensure_ascii=False)
 
 
-def _code_head(table, table_name, column, rows, id_col, cfg, extra_imports=()):
+def _lit(v):
+    """A value as a Python literal: 12.0 as 12, text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    return _py(str(v))
+
+
+def _keep_lines(table, rows, where=None):
+    """After the code's read_csv line: the By group's rows (its where lines:
+    a character By column is read as text, a numeric one compared as a
+    number) and, of those, the ones the report uses (excluded and filtered
+    rows dropped)."""
+    L = []
+    n = data.TABLES[table]['n'] if table in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        num = data.meta(table, w['column']).get('dataType') == 'numeric'
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
+        test = f'pd.to_numeric(df[{_py(w["column"])}], errors="coerce") == {_lit(w["value"])}' if num else f'df[{_py(w["column"])}] == {_lit(w["value"])}'
+        L.append(f'df = df[{test}]   # only the rows where {w["column"]} is {shown}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows of the report']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+    return L
+
+
+def _code_head(table, table_name, column, rows, id_col, cfg, extra_imports=(), where=None, keep_every=False):
     """Read the exported table, keep the report's rows, and read the texts
-    as the report does: the lines up to the terms of every document."""
+    as the report does: the lines up to the terms of every document.
+    keep_every: with an ID, keep the report's rows before the rows without
+    one are left out (as every), for the word cloud's By Column colouring."""
     dtypes = {column: 'str'}
     if id_col:
         dtypes[id_col] = 'str'
+    for w in where or []:
+        if data.meta(table, w['column']).get('dataType') != 'numeric':
+            dtypes[w['column']] = 'str'
     L = ['import re', 'import numpy as np', 'import pandas as pd',
          'from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS', *extra_imports, '',
          f'df = pd.read_csv({_py(table_name + ".csv")}, dtype={_py(dtypes)}, keep_default_na=False)   # the table as File > Export CSV writes it; the text as it is']
-    if rows is not None:
-        n_all = data.TABLES[table]['n'] if table in data.TABLES else None
-        keep = [int(r) for r in rows]
-        if n_all is not None and len(keep) > n_all / 2:
-            drop = sorted(set(range(n_all)) - set(keep))
-            if drop:
-                L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
-        else:
-            L.append(f'df = df.loc[{keep}]   # the rows of the report')
+    L += _keep_lines(table, rows, where)
     if id_col:
+        if keep_every:
+            L.append('every = df   # the report\'s rows, with an ID or without')
         L.append(f'df = df[df[{_py(id_col)}] != ""]   # the rows with an ID')
     L += ['', _block('reading the texts'), '']
     if cfg['stemming'] != 'none':
@@ -641,10 +692,11 @@ def _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming
 
 @api('text.explore', packages=SK)
 def explore(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
-            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), table_name='data'):
+            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), where=None, table_name='data'):
     """Summary Counts, the Term List and the Phrase List of a column, with
     the rows that hold each term and phrase (for linking), the stems, and
-    the stop words."""
+    the stop words; the code, and the lines the word cloud's code starts
+    with (cloud_head: the page adds its layout)."""
     try:
         cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
         C = _corpus(table, column, rows, id_col, cfg)
@@ -712,7 +764,7 @@ def explore(table, column, rows=None, id_col=None, language='english', max_words
     notes = list(C.notes)
     if empty:
         notes.append(f'{empty} of the {len(C.texts)} rows have no text.')
-    code = _code_head(table, table_name, column, rows, id_col, cfg) + [
+    code = _code_head(table, table_name, column, rows, id_col, cfg, where=where) + [
         'summary = {"Number of Terms": X.shape[1], "Number of Cases": X.shape[0], "Total Tokens": int(X.sum()),',
         '           "Tokens per Case": X.sum() / X.shape[0], "Portion Non-empty": float(np.mean(X.getnnz(axis=1) > 0))}',
         f'stop = ENGLISH_STOP_WORDS | set({_py(cfg["stop_add"])})' if cfg['stop_add'] else 'stop = ENGLISH_STOP_WORDS',
@@ -725,7 +777,8 @@ def explore(table, column, rows=None, id_col=None, language='english', max_words
     return {'column': column, 'id': id_col, 'n_rows': len(C.texts), 'summary': summary, 'terms': terms, 'term_rows': term_rows,
             'phrases': phrases_out, 'phrase_rows': prow, 'forms': forms, 'stems': stems, 'doc_labels': C.labels if id_col else None,
             'stop_words': sorted(C.stop), 'user_stop': cfg['stop_add'], 'recodes': cfg['recodes'], 'added_phrases': cfg['phrases'],
-            'settings': cfg, 'notes': notes, 'code': '\n'.join(code)}
+            'settings': cfg, 'notes': notes, 'code': '\n'.join(code),
+            'cloud_head': _dated('\n'.join(_code_head(table, table_name, column, rows, id_col, cfg, ['import matplotlib.pyplot as plt'], where, keep_every=True)), table)}
 
 
 def _dtm_spec(weighting, min_freq, max_terms):
@@ -755,8 +808,8 @@ def _svd(table, column, rows, id_col, cfg, weighting, centering, min_freq, max_t
     return C, predictive.cached('text.svd', table, rows, spec, build)
 
 
-def _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed):
-    L = _code_head(table, table_name, column, rows, id_col, cfg) + [''] + [_block('the document term matrix'), ''] + _code_dtm_columns(min_freq, max_terms) + [
+def _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed, where=None, extra_imports=()):
+    L = _code_head(table, table_name, column, rows, id_col, cfg, extra_imports, where) + [''] + [_block('the document term matrix'), ''] + _code_dtm_columns(min_freq, max_terms) + [
         f'Xw = weigh(X[:, cols], {_py(weighting)})   # {WEIGHTINGS[weighting]}',
         f'docs, terms, s, total = lsa_svd(Xw, k={k}, centering={_py(centering)}, seed={int(seed)})   # {CENTERING[centering]}',
     ]
@@ -766,9 +819,11 @@ def _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering
 @api('text.lsa', packages=SK)
 def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
         stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), weighting='tfidf',
-        centering='centered', min_freq=4, max_terms=1000, k=100, seed=0, show=2, table_name='data'):
+        centering='centered', min_freq=4, max_terms=1000, k=100, seed=0, show=2, where=None, table_name='data'):
     """Latent Semantic Analysis: the singular values, and the first `show`
-    coordinates of every document and of every term of the matrix."""
+    coordinates of every document and of every term of the matrix; the code,
+    the singular values' bar chart's (plot_code) and the lines the SVD
+    plots' code starts with (svd_head: the page adds the drawing)."""
     try:
         cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
         min_freq, max_terms = _dtm_spec(weighting, min_freq, max_terms)
@@ -785,14 +840,25 @@ def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, 
     pct = 100 * s ** 2 / total if total > 0 else np.full(len(s), np.nan)
     singular = [{'number': i + 1, 'value': float(s[i]), 'percent': float(pct[i]), 'cum': float(np.sum(pct[:i + 1]))} for i in range(k)]
     doc_rows = [[int(C.rows[i]) for i in d] for d in C.docs]
-    code = _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed) + [
+    code = _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed, where) + [
         'pct = 100 * s ** 2 / total   # the share of the matrix\'s sum of squares',
         'singular_values = pd.DataFrame({"Number": np.arange(1, len(s) + 1), "Singular Value": s, "Percent": pct, "Cum Percent": np.cumsum(pct)})',
         'print(singular_values.head(10).to_string(index=False))',
         'print(pd.DataFrame(terms[:, :2], index=chosen, columns=["Term Vec1", "Term Vec2"]).head(10))',
     ]
+    head = _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed, where, ['import matplotlib.pyplot as plt'])
+    top = min(30, k)
+    bars = head + [
+        'pct = 100 * s ** 2 / total   # each singular value\'s share of the matrix\'s sum of squares',
+        f'top = min(30, len(s))   # the first {top}',
+        f'fig, ax = plt.subplots(figsize=(2.8, {max(140, 13 * top + 50) / 100:g}), layout="constrained")',
+        f'ax.barh(np.arange(1, top + 1), pct[:top], height=0.8, color="{BAR}")',
+        'ax.invert_yaxis()   # the first at the top',
+        f'ax.set_yticks({"np.arange(5, top + 1, 5)" if top > 15 else "np.arange(1, top + 1)"})',
+        'ax.set_xlim(left=0)', 'ax.set_xlabel("Percent")', 'ax.set_title("Singular values, percent")', 'plt.show()']
     return {'column': column, 'k': k, 'n_docs': C.n_docs, 'n_terms': len(S['cols']), 'weighting': weighting, 'centering': centering,
             'min_freq': min_freq, 'max_terms': max_terms, 'seed': seed, 'total': total,
+            'plot_code': _dated({'singular': '\n'.join(bars)}, table), 'svd_head': _dated('\n'.join(head), table),
             'solver': 'TruncatedSVD (arpack)' if centering == 'uncentered' else f'PCA ({"covariance_eigh" if len(S["cols"]) <= 1500 else "arpack"})',
             'singular': singular, 'terms': [str(C.vocab[j]) for j in S['cols']], 'term_counts': [int(C.counts[j]) for j in S['cols']],
             'docs': S['docs'][:, :show].T.tolist(), 'term_vectors': S['terms'][:, :show].T.tolist(), 'doc_rows': doc_rows,
@@ -803,7 +869,7 @@ def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, 
 def topics(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), method='varimax',
            n_topics=10, weighting='tfidf', centering='centered', min_freq=4, max_terms=1000, seed=0, top=10, scores=2,
-           table_name='data'):
+           where=None, table_name='data'):
     """Topic Analysis: varimax-rotated SVD (JMP's), or NMF or LDA. The top
     terms of each topic, every term's loadings, the variance of each topic
     and the first `scores` topic scores of every document."""
@@ -870,7 +936,9 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
     var = np.asarray(T['variance'], dtype=float)
     pct = 100 * var / total if total > 0 else np.full(k, np.nan)
     ns = max(0, min(int(scores or 0), k))
-    head = _code_head(table, table_name, column, rows, id_col, cfg) + ['', _block('the document term matrix'), '']
+    def with_head(extra_imports=()):
+        return _code_head(table, table_name, column, rows, id_col, cfg, extra_imports, where) + ['', _block('the document term matrix'), '']
+    head = with_head()
     if method == 'varimax':
         code = head + ['', _block('the topics'), ''] + _code_dtm_columns(min_freq, max_terms) + [
             f'Xw = weigh(X[:, cols], {_py(weighting)})   # {WEIGHTINGS[weighting]}',
@@ -891,9 +959,20 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
                      'load = (model.components_ / model.components_.sum(axis=1, keepdims=True)).T   # each topic\'s term probabilities',
                      'order = np.argsort(-scores.sum(axis=0), kind="stable")   # the largest topic first']
         code += ['load, scores = load[:, order], scores[:, order]']
+    fitted = code[len(head):]   # the lines from the document term matrix to the topics
     code += ['loadings = pd.DataFrame(load, index=chosen, columns=[f"Topic {t + 1}" for t in range(load.shape[1])])',
              f'for t in loadings: print(t, ", ".join(loadings[t].sort_values(ascending=False, kind="stable").index[:{top}]))']
-    return {'column': column, 'method': method, 'k': k, 'n_docs': C.n_docs, 'weighting': weighting, 'centering': centering if method == 'varimax' else None,
+    plot_code = {}
+    if k >= 2:
+        what = 'scores' if method == 'varimax' else ('share of the topic' if method == 'lda' else 'weight on the topic')
+        plot_code['scores'] = '\n'.join(with_head(['import matplotlib.pyplot as plt']) + fitted + [
+            'top3 = [", ".join(chosen[j] for j in np.argsort(-load[:, t], kind="stable")[:3]) for t in (0, 1)]   # each topic\'s three largest terms',
+            f'size = {"6" if C.n_docs <= 2000 else "4"}',
+            'fig, ax = plt.subplots(figsize=(4.4, 3.6), layout="constrained")',
+            f'ax.scatter(scores[:, 0], scores[:, 1], s=(0.72 * size) ** 2, color="{BASE}", linewidths=0)   # each document\'s {what}',
+            'ax.set_xlabel(f"Topic 1 ({top3[0]})")', 'ax.set_ylabel(f"Topic 2 ({top3[1]})")',
+            f'ax.set_title({_py("Topic scores of " + column)})', 'plt.show()'])
+    return {'column': column, 'method': method, 'plot_code': _dated(plot_code, table), 'k': k, 'n_docs': C.n_docs, 'weighting': weighting, 'centering': centering if method == 'varimax' else None,
             'min_freq': min_freq, 'max_terms': max_terms, 'seed': seed, 'terms': names, 'top': tops, 'loadings': load.T.tolist(),
             'variance': [{'topic': t + 1, 'variance': float(var[t]), 'percent': float(pct[t]), 'cum': float(np.sum(pct[:t + 1]))} for t in range(k)],
             'scores': T['scores'][:, :ns].T.tolist(), 'doc_rows': [[int(C.rows[i]) for i in d] for d in C.docs],
@@ -903,7 +982,7 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
 @api('text.dtm', packages=SK)
 def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
         stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), weighting='binary',
-        min_freq=1, max_terms=100, terms=None, table_name='data'):
+        min_freq=1, max_terms=100, terms=None, where=None, table_name='data'):
     """Save Document Term Matrix: one column per term (the given terms, or
     the most frequent), each row the value of its document."""
     try:
@@ -919,7 +998,7 @@ def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, 
     row_doc = np.empty(len(C.rows), dtype=int)
     for d, members in enumerate(C.docs):
         row_doc[members] = d
-    code = _code_head(table, table_name, column, rows, id_col, cfg) + ['', _block('the document term matrix'), ''] + _code_dtm_columns(min_freq, max_terms, terms) + [
+    code = _code_head(table, table_name, column, rows, id_col, cfg, where=where) + ['', _block('the document term matrix'), ''] + _code_dtm_columns(min_freq, max_terms, terms) + [
         f'dtm = pd.DataFrame(weigh(X[:, cols], {_py(weighting)}).toarray(), columns=chosen)   # {WEIGHTINGS[weighting]}; a document per line',
         'print(dtm.head(10))']
     return {'column': column, 'weighting': weighting, 'terms': [str(C.vocab[j]) for j in cols], 'rows': [int(r) for r in C.rows],
@@ -929,17 +1008,17 @@ def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, 
 @api('text.vectors', packages=SK)
 def vectors(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
             stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), kind='svd', method='varimax',
-            weighting='tfidf', centering='centered', min_freq=4, max_terms=1000, k=100, n_topics=10, seed=0, count=10, table_name='data'):
+            weighting='tfidf', centering='centered', min_freq=4, max_terms=1000, k=100, n_topics=10, seed=0, count=10, where=None, table_name='data'):
     """Save Document Singular Vectors (kind 'svd') or Save Topic Scores
     (kind 'topics'): the first `count` of them for every row, each row the
     value of its document."""
     if kind == 'svd':
         r = lsa(table, column, rows, id_col, language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add,
-                recodes, phrases, weighting, centering, min_freq, max_terms, k, seed, show=count, table_name=table_name)
+                recodes, phrases, weighting, centering, min_freq, max_terms, k, seed, show=count, where=where, table_name=table_name)
         vals = r.get('docs')
     else:
         r = topics(table, column, rows, id_col, language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add,
-                   recodes, phrases, method, n_topics, weighting, centering, min_freq, max_terms, seed, scores=count, table_name=table_name)
+                   recodes, phrases, method, n_topics, weighting, centering, min_freq, max_terms, seed, scores=count, where=where, table_name=table_name)
         vals = r.get('scores')
     if 'error' in r:
         return r

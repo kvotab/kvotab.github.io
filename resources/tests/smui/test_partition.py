@@ -538,4 +538,132 @@ got, out = run_code(ckx['script'], '')
 check('the CART K Fold code prints the folded RSquare', any(ln.startswith('Folded RSquare') and math.isclose(float(ln.split()[-1]), ckx['folded']['rsquare'], rel_tol=1e-9) for ln in out.splitlines()), True)
 check('the engine the code shows is the module\'s own', pt.engine_source().startswith('# ==== ENGINE') and 'class Tree:' in pt.engine_source() and 'from . import' not in pt.engine_source(), True)
 
+# ---- the graphs' matplotlib code, run on a CSV export: every graph of the report -------------------------------------------------
+from test_predictive import check_contrib_native, check_shared_native, joined, run_graph as run_graph_native, scatter_pts  # noqa: E402
+from smui import data as sdata, util  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-partition-charts-')
+BOX, TRACK = '#fcf7f2ff', '#e0d7ceff'
+
+
+def clipped(s, px, cw):
+    """A label as the tree's box shortens it (smui-p-partition.js clip)."""
+    k = max(3, int(px // cw))
+    return s[:k - 1] + '…' if len(s) > k else s
+
+
+def graph_checks(label, res, tid, plot=None):
+    """Every graph of a Partition report: its code run on the CSV, the figure against the report."""
+    Pc = res['fit']['plots']
+    plot = plot or {}
+    points, prob = plot.get('points', True), plot.get('prob', True)
+    a = res['assign']
+    L = len(res['levels']) if res['kind'] == 'categorical' else 0
+    nl = len(res['leaves'])
+    idx = [[i for i in range(len(a['rows'])) if a['set'][i] == 0 and a['leaf'][i] == lf] for lf in range(nl)]
+    edges = np.r_[0, np.cumsum([len(r) for r in idx])] / sum(len(r) for r in idx)
+    # the partition graph
+    F, err = run_graph_native(joined(Pc, 'partition'), tid, GTMP)
+    check(f'{label}: the partition graph\'s code runs', err, None)
+    if F:
+        ax = F['axes'][0]
+        check(f'{label}: ... the leaves\' edges', sorted(ln['x'][0] for ln in ax['lines'] if ln['ls'] == ':'), sorted(edges[1:-1].tolist()))
+        check(f'{label}: ... the leaves numbered at their bands\' centres', (np.allclose(ax['xticks'], (edges[:-1] + edges[1:]) / 2), [t for t in ax['xticklabels'] if t]), (True, [str(k + 1) for k in range(nl)]))
+        if not L:
+            want = [(edges[lf] + (k + 0.5) / len(r) * (edges[lf + 1] - edges[lf]), a['y'][i]) for lf, r in enumerate(idx) for k, i in enumerate(r)]
+            got = scatter_pts(ax)
+            check(f'{label}: ... the training rows in their leaves\' bands, in order', len(got) == len(want) and np.allclose(got, want, rtol=1e-12, atol=1e-12), True)
+            means = sorted((round(ln['x'][0], 12), round(ln['y'][0], 9)) for ln in ax['lines'] if ln['ls'] == '-')
+            check(f'{label}: ... each leaf\'s mean across its band', means, sorted((round(edges[lf], 12), round(res['leaves'][lf]['mean'], 9)) for lf in range(nl)))
+        else:
+            rates = np.array([lf['rates'] for lf in res['leaves']])
+            cum = np.c_[np.zeros(nl), np.cumsum(rates, axis=1)]
+            want = sorted((round(edges[lf], 9), round(cum[lf, j], 9), round(rates[lf, j], 9)) for j in range(L) for lf in range(nl))
+            got = sorted((round(b['x'], 9), round(b['y'], 9), round(b['h'], 9)) for b in ax['bars'])
+            check(f'{label}: ... each leaf\'s rates stacked in its band', got, want)
+            inside = 0
+            for x_, y_ in scatter_pts(ax):
+                lf = int(np.searchsorted(edges, x_) - 1)
+                inside += any(cum[lf, j] + 0.1 * rates[lf, j] - 1e-12 <= y_ <= cum[lf, j] + 0.9 * rates[lf, j] + 1e-12 for j in range(L)) and edges[lf] < x_ < edges[lf + 1]
+            want_n = sum(len(r) for r in idx) if points else 0
+            check(f'{label}: ... every training row inside its leaf, in its level\'s part{"" if points else " (Show Points off: none)"}', (inside, len(scatter_pts(ax))), (want_n, want_n))
+            check(f'{label}: ... the levels in the legend', F['legend'], res['levels'])
+    # the tree and the small tree view
+    for key, small in (('tree', False), ('small', True)):
+        F, err = run_graph_native(joined(Pc, key), tid, GTMP)
+        check(f'{label}: the {"small tree" if small else "tree"}\'s code runs', err, None)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        boxes = [b for b in ax['bars'] if b['fc'] == BOX]
+        texts = [t['s'] for t in ax['texts']]
+        check(f'{label}: ... a box per node, two lines per split', (len(boxes), len(ax['lines'])), (len(res['nodes']), 2 * res['splits']))
+        bw = 118 if small else (184 if not L else None)
+        if bw:
+            want = sorted(clipped(nd['label'], bw - (8 if small else 24), 6.2 if small else 7.1) for nd in res['nodes'])
+            check(f'{label}: ... every node\'s condition', sorted(t for t in texts if t in want), want)
+        if not small:
+            if L:
+                check(f'{label}: ... every node\'s rates{" and probabilities" if prob else " (Show Split Prob off)"}', sorted(t for t in texts if len(t) == 6 and t[1] == '.'),
+                      sorted([f'{v:.4f}' for nd in res['nodes'] for v in nd['rates'] + (nd['probs'] if prob else [])]))
+            else:
+                check(f'{label}: ... every node\'s count', sorted(t for t in texts if t.isdigit()), sorted(str(int(nd['count'])) for nd in res['nodes']))
+    # the split history
+    if 'history' in res and res['history']:
+        F, err = run_graph_native(joined(Pc, 'history'), tid, GTMP)
+        check(f'{label}: the split history\'s code runs', err, None)
+        if F:
+            ax = F['axes'][0]
+            for s in ('Training', 'Validation', 'Test'):
+                if s in res['history'][0]:
+                    ln = next((q for q in ax['lines'] if q['label'] == s), None)
+                    check(f'{label}: ... the {s.lower()} RSquare after each split', ln is not None and np.allclose(ln['y'], [h[s] for h in res['history']], rtol=1e-12, atol=1e-12) and ln['x'] == list(range(len(res['history']))), True)
+            dotted = [q for q in ax['lines'] if q['ls'] == ':']
+            if res['go']:
+                g = res['go']
+                after = [e for e in g['trace'] if e['splits'] > g['best']]
+                check(f'{label}: ... what Go looked at past the best, dotted, and the best marked', (len(dotted), any(q['ls'] == '--' and q['x'][:2] == [g['best'], g['best']] for q in ax['lines']),
+                                                                                                         all(q['x'] == [g['best']] + [e['splits'] for e in after] for q in dotted)), (len([s for s in res['history'][0] if s != 'splits']), True, True))
+            else:
+                check(f'{label}: ... no Go: nothing dotted', dotted, [])
+            check(f'{label}: ... the titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Number of Splits', 'Entropy RSquare' if L else 'RSquare', 'Split history'))
+    # the leaf report's bars
+    F, err = run_graph_native(joined(Pc, 'leaves'), tid, GTMP)
+    check(f'{label}: the leaf report\'s code runs', err, None)
+    if F:
+        ax = F['axes'][0]
+        check(f'{label}: ... a bar per leaf, the first at the top', ([t for t in ax['yticklabels'] if t], ax['yinverted']), ([str(k + 1) for k in range(nl)], True))
+        if L:
+            probs = np.array([lf['probs'] for lf in res['leaves']])
+            want = [(round(probs[lf, :j].sum(), 9), round(probs[lf, j], 9)) for j in range(L) for lf in range(nl)]
+            check(f'{label}: ... each leaf\'s probabilities stacked', [(round(b['x'], 9), round(b['w'], 9)) for b in ax['bars']], want)
+        else:
+            check(f'{label}: ... each leaf\'s mean', np.allclose([b['w'] for b in ax['bars']], [lf['mean'] for lf in res['leaves']], rtol=1e-12), True)
+    check_contrib_native(check, label, res['contributions'], Pc['head_code'], tid, GTMP)
+    check_shared_native(check, label, res['fit'], tid, GTMP)
+
+
+# a date factor (text in the CSV) and a level named None, beside the table's own columns
+days = (np.datetime64('2023-06-01') + rng.integers(0, 500, n).astype('timedelta64[D]')).astype('datetime64[ms]').astype(np.int64).astype(float)
+TD = table({**cols, 'day': list(days), 'net': list(np.where(x2 < 3, 'None', np.where(x2 < 7, 'DSL', 'Fiber')))}, types={**TYPES, 'net': 'nominal'}, levels={**LEVELS, 'net': ['None', 'DSL', 'Fiber']})
+sdata.TABLES[TD]['meta']['day']['format'] = {'kind': 'date'}
+check('the table with a date column: the dispatch dates the graphs\' code', 'date' in [m.get('format', {}) and m['format'].get('kind') for m in sdata.TABLES[TD]['meta'].values() if m.get('format')], True)
+for label, kw, cart in [
+        ('graphs: categorical, a validation column, Go', dict(y='three', x=['x1', 'g', 'o', 'net'], validation='v', steps=[{'op': 'split', 'n': 2}, {'op': 'go'}]), False),
+        ('graphs: two levels, weight and frequency, the Show Split options off', dict(y='cls', x=['x1m', 'gm', 'x2'], weight='w', freq='f', steps=[{'op': 'split', 'n': 3}], plot={'points': False, 'stats': False, 'bar': False, 'prob': False, 'count': False}), False),
+        ('graphs: continuous, a validation portion, a date factor', dict(y='y', x=['x1', 'day', 'g', 'net'], portion=0.3, seed=5, steps=[{'op': 'split', 'n': 4}]), False),
+        ('graphs: continuous, Informative Missing off, rows left out', dict(y='ym', x=['x1m', 'gm'], missing='drop', rows=list(range(15, 390)), steps=[{'op': 'split', 'n': 3}]), False),
+        ('graphs: CART, categorical, a validation column, Go', dict(y='three', x=['x1', 'g', 'net'], validation='v', seed=4, steps=[{'op': 'split', 'n': 2}, {'op': 'go'}]), True),
+        ('graphs: CART, continuous, weight, rows left out', dict(y='y', x=['x1m', 'day', 'gm'], weight='w', seed=2, rows=list(range(0, 380)), steps=[{'op': 'split', 'n': 3}, {'op': 'prune'}]), True)]:
+    res = call('partition.cart_fit' if cart else 'partition.fit', table=TD, table_name='data', **kw)
+    if 'error' in res:
+        check(f'{label}: fits', res['error'], None)
+        continue
+    if 'day' in kw['x']:
+        check(f'{label}: the head turns the date text back into the page\'s number', 'df["day"] = (pd.to_datetime(df["day"])' in res['fit']['plots']['head_code'], True)
+    if 'rows' in kw:
+        check(f'{label}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in res['fit']['plots']['head_code'], True)
+    check(f'{label}: the go trace shown', res['go'] is not None, kw['steps'][-1]['op'] == 'go')
+    graph_checks(label, res, TD, kw.get('plot'))
+
 sys.exit(check.done())

@@ -35,13 +35,320 @@ SMUI_SHOTS=<folder> saves screenshots. Exit status 0 when every check passes.
 """
 import asyncio
 import json
+import math
 import os
+import re
 import sys
+from datetime import datetime
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, PROBE_MORE, close, figures_from_outputs, strip_show
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
+
+
+# ---- the graphs' matplotlib code --------------------------------------------------------------
+# Every graph of a report (and every diagnostics chart, a table with a bar per
+# row) has a code block under it, ending in plt.show(); the block runs in the
+# page's own Python (SM.engine.runCell, as test_charts.GRAPHS_JS.run does it),
+# with PROBE_MORE and the axes' left titles in place of plt.show(), and the
+# figure it draws is compared with the Plotly graph: every line and set of
+# points in its panel (dates in days), the bands, the reference lines, the
+# shading, the panels' labels, the legend, the axis titles, the size.
+LEFT = r'''
+def _ts_left():
+    import matplotlib.pyplot as _plt
+    return [[ax.get_title(loc="left") for ax in _plt.figure(n).axes] for n in _plt.get_fignums()]
+'''
+
+
+def page_probe_ts(code):
+    """The block, then its figures (PROBE_MORE, with each axes' left title) as one JSON line."""
+    return (strip_show(code) + '\n' + PROBE_MORE + LEFT + '\nimport json as _json\n_f = _smui_figures_more()\n'
+            'for _F, _L in zip(_f["figures"], _ts_left()):\n    for _A, _t in zip(_F["axes"], _L):\n        _A["left"] = _t\n'
+            'print("SMUI-FIGURES " + _json.dumps(_f))\n')
+
+
+# What else the graphs of a report hold (after __gr.graphs, in the same order):
+# the line widths, the axes' types and ticks, the annotations, the legend;
+# and the diagnostics charts, each with its rows and the block under it (under
+# its row, for Cross Correlation's tables side by side).
+TSG_JS = r'''
+window.__tsg = {
+  openAll(rep) { rep.body.querySelectorAll('.sm-ob.is-closed').forEach((s) => s._outline && s._outline.setOpen(true)); },
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const axes = {};
+      for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) axes[k] = { type: L[k].type || null, ticktext: L[k].ticktext || null, title: L[k].title ? (typeof L[k].title === 'string' ? L[k].title : L[k].title.text) : null };
+      return { widths: (p.data || []).map((d) => (d.line && d.line.width != null ? d.line.width : null)), axes, showlegend: !!L.showlegend,
+        annotations: (L.annotations || []).map((a) => a.text), shapes: (L.shapes || []).map((s) => ({ type: s.type, xref: s.xref || 'x', yref: s.yref || 'y', x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1 })) };
+    });
+  },
+  charts(rep) {
+    return [...rep.body.querySelectorAll('table.sm-ts-corr')].map((t) => {
+      const row = t.parentElement && t.parentElement.classList.contains('sm-ob-row') ? t.parentElement : null;
+      const n = row ? row.nextElementSibling : t.nextElementSibling;
+      return { caption: (t.querySelector('caption') || {}).textContent || '', rows: t._rt ? t._rt.rows : [], keys: t._rt ? t._rt.columns.map((c) => c.key) : [],
+        code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null };
+    });
+  },
+};
+true
+'''
+EPOCH = datetime(1970, 1, 1)
+
+
+def to_days(v):
+    """A value of a Plotly date axis (ISO text, or milliseconds) in matplotlib's units, days since 1970."""
+    if isinstance(v, str):
+        return (datetime.fromisoformat(v.replace(' ', 'T')) - EPOCH).total_seconds() / 86400
+    return None if v is None else v / 86400000
+
+
+def axis_at(ref):
+    """The panel of a Plotly axis reference: y → 0, y2 or 'y2 domain' → 1."""
+    m = re.match(r'^[xy](\d*)', ref or 'y')
+    return int(m.group(1)) - 1 if m and m.group(1) else 0
+
+
+def finite_pairs(xs, ys):
+    return [(a, b) for a, b in zip(xs, ys) if isinstance(a, (int, float)) and isinstance(b, (int, float)) and math.isfinite(a) and math.isfinite(b)]
+
+
+def same_points(p, q, rel=1e-6):
+    return len(p) == len(q) and all(close(a, c, rel, 1e-9) and close(b, d, rel, 1e-9) for (a, b), (c, d) in zip(p, q))
+
+
+def mpl_sets(A):
+    """Every line and scatter of an axes as finite points (x in the axis's units)."""
+    out = [finite_pairs([q[0] for q in xy], [q[1] for q in xy]) for xy in A['xy_lines']]
+    return out + [finite_pairs([q[0] for q in s['xy']], [q[1] for q in s['xy']]) for s in A['scatter']]
+
+
+def check_graph(tag, g, ex, F, rel=1e-6):
+    """A Plotly graph against the figure its code draws."""
+    date = (ex['axes'].get('xaxis') or {}).get('type') == 'date'
+    X = to_days if date else (lambda v: v)
+    axes = [A for A in F['axes'] if not A.get('colorbar')]
+    check(f'{tag}: the figure has the graph\'s size', F['size'], [g['w'] / 100, g['h'] / 100])
+    check(f'{tag}: the graph\'s title', g['label'] in [F['suptitle']] + [A['title'] for A in axes], True)
+    missing = []
+    fills = [0] * len(axes)
+    for tr, width in zip(g['traces'], ex['widths']):
+        if tr.get('type') not in ('scatter', 'scattergl'):
+            continue
+        pts = finite_pairs([X(v) for v in tr.get('x') or []], tr.get('y') or [])
+        if not pts:
+            continue
+        A = axes[axis_at(tr.get('yaxis'))]
+        if tr.get('fill') in ('tonexty', 'tozeroy', 'toself'):
+            fills[axis_at(tr.get('yaxis'))] += 1
+        if width == 0:   # a band's edge that Plotly does not draw: the band is its fill
+            continue
+        if not any(same_points(pts, p, rel) for p in mpl_sets(A)):
+            missing.append(tr.get('name'))
+    check(f'{tag}: every line and set of points, in its panel', missing, [])
+    check(f'{tag}: every band, in its panel', [len(A['polys']) for A in axes], fills)
+    wrong = []
+    for s in ex['shapes']:
+        A = axes[axis_at(s['yref'])] if s['yref'] not in ('paper',) else axes[0]
+        if s['type'] == 'rect':
+            ok = any(close([b['x'], b['x'] + b['w']], [X(s['x0']), X(s['x1'])], 1e-9) for b in A['bars'])
+        elif s['x0'] == s['x1'] and s['yref'] in ('paper',) or (s['x0'] == s['x1'] and s['yref'].endswith('domain')):
+            ok = any(same_points(p, [(X(s['x0']), 0), (X(s['x0']), 1)], 1e-9) for p in mpl_sets(A))
+        elif s['xref'] == 'paper':
+            ok = any(same_points(p, [(0, s['y0']), (1, s['y0'])], 1e-6) for p in mpl_sets(A))
+        else:
+            ok = any(same_points(p, [(X(s['x0']), s['y0']), (X(s['x1']), s['y1'])], 1e-6) for p in mpl_sets(A))
+        if not ok:
+            wrong.append(s)
+    check(f'{tag}: every reference line and shading of the graph', wrong, [])
+    words = [w for A in axes for w in (A['title'], A.get('left', ''))] + [t['s'] for A in axes for t in A['texts']]
+    check(f'{tag}: the panels\' labels', [a for a in ex['annotations'] if a.replace('<br>', ' ') not in [w.replace('\n', ' ') for w in words]], [])
+    if ex['showlegend']:
+        want = [tr.get('name') for tr in g['traces'] if tr.get('showlegend') is not False and tr.get('name')]
+        check(f'{tag}: the legend', F['legend'], want)
+    if g['titles']['x']:
+        check(f'{tag}: the x axis title', g['titles']['x'] in [A['xlabel'] for A in axes], True)
+    if g['titles']['y'] is not None:
+        check(f'{tag}: the y axis title', axes[0]['ylabel'], g['titles']['y'])
+    if (ex['axes'].get('xaxis') or {}).get('type') == 'log':
+        check(f'{tag}: a log axis', axes[0]['xscale'], 'log')
+    tt = (ex['axes'].get('xaxis') or {}).get('ticktext')
+    if tt:
+        check(f'{tag}: the ticks, named', axes[0]['xticklabels'], tt)
+
+
+CORR_CAPTIONS = ('Autocorrelation', 'Partial Autocorrelation', 'Residual Autocorrelation', 'Residual Partial Autocorrelation')
+
+
+def check_chart(tag, c, F):
+    """A diagnostics chart (a table with a bar per row) against its figure: the
+    panel titled as the table's caption (Cross Correlation has one per input)."""
+    A = next((a for a in F['axes'] if a['title'] == c['caption']), None)
+    check(f'{tag}: a panel titled as the table', A is not None, True)
+    if A is None:
+        return
+    key = next(k for k in ('r', 'v', 'c') if k in c['keys'])
+    vals = [row.get(key) for row in c['rows']]
+    check(f'{tag}: a bar per row, as long as the value', (len(A['bars']), close([b['w'] for b in A['bars']], vals, 1e-7, 1e-9)), (len(vals), True))
+    check(f'{tag}: at the lags, lag by lag down', ([round(b['y'] + b['h'] / 2) for b in A['bars']], A['yinverted']), ([row['lag'] for row in c['rows']], True))
+    if any('se' in row for row in c['rows']):
+        # the correlations' marks from lag 1, cross correlations' at every lag (as the page draws them)
+        every = c['caption'] not in CORR_CAPTIONS
+        marks = sorted((round(y), x) for ln, xy in zip(A['lines'], A['xy_lines']) if ln['marker'] == '|' for x, y in xy)
+        want = sorted((row['lag'], s * 2 * row['se']) for row in c['rows'] if row['lag'] or every for s in (1, -1))
+        check(f'{tag}: the ±2 standard error marks', ([m[0] for m in marks] == [w[0] for w in want], close([m[1] for m in marks], [w[1] for w in want], 1e-7, 1e-12)), (True, True))
+
+
+async def run_ts(page, code, table_js):
+    """A block run in the page's Python: its figures, or an error."""
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_ts(code))}, {table_js})', timeout=600)
+    if isinstance(out, str):
+        return None, out
+    try:
+        got, err = figures_from_outputs(out.get('outputs'))
+    except ValueError:
+        return None, 'the figures do not fit in one output of the page\'s runner'
+    return (got['figures'], None) if got is not None else (None, err)
+
+
+def open_js(table, roles, options, before='', after=''):
+    """JS that opens a Time Series report on the table named so (before: JS run
+    first, with t the table; after: JS run once it is done, with rep), keeps it
+    as window.__tsc and returns its title and problems."""
+    return f'''(async () => {{ const t = SM.app.tables.find((x) => x.name === {json.dumps(table)}); SM.app.showTab(SM.app.tabOf(t));
+      const id = (n) => t.col(n).id; const roles = {{}};
+      for (const [k, names] of Object.entries({json.dumps(roles)})) roles[k] = names.map(id);
+      {before}
+      const rep = SM.app.openReport(SM.platforms.get('timeseries'), {{ roles, options: {json.dumps(options)} }}, t);
+      await __ts.done(rep);
+      {after}
+      window.__tsc = rep;
+      return {{ title: rep.title, ...__ts.problems(rep) }}; }})()'''
+
+
+async def check_report_graphs(page, rep_js, table_js, what):
+    """Every graph and diagnostics chart of a report: its block, run, against the page."""
+    await page.ev(f'__tsg.openAll({rep_js})')
+    r = await page.ev(f'(async () => {{ const rep = {rep_js}; const g = await __gr.graphs(rep); return {{ g, ex: __tsg.extra(rep), charts: __tsg.charts(rep), undrawn: __gr.take() }}; }})()', timeout=900)
+    check(f'{what}: every graph of the report drawn', r['undrawn'], [])
+    check(f'{what}: every graph with its code block under it, ending in plt.show()', [g['label'] for g in r['g'] if not (g['code'] and g['code'].rstrip().split('\n')[-1] == 'plt.show()')], [])
+    check(f'{what}: every diagnostics chart with its code block under it', [c['caption'] for c in r['charts'] if not (c['code'] and c['code'].rstrip().split('\n')[-1] == 'plt.show()')], [])
+    for g, ex in zip(r['g'], r['ex']):
+        if not g['code']:
+            continue
+        F, err = await run_ts(page, g['code'], table_js)
+        check(f'{what}: {g["label"]}: the code runs in the page, one figure', (err, len(F or [])), (None, 1))
+        if F:
+            check_graph(f'{what}: {g["label"]}', g, ex, F[0])
+    for i, c in enumerate(r['charts']):
+        if not c['code']:
+            continue
+        F, err = await run_ts(page, c['code'], table_js)
+        check(f'{what}: chart {i + 1} ({c["caption"]}): the code runs in the page, one figure', (err, len(F or [])), (None, 1))
+        if F:
+            check_chart(f'{what}: chart {i + 1} ({c["caption"]})', c, F[0])
+    return r
+
+
+async def chart_code(page):
+    """Reports that between them draw every kind of graph of the platform, with
+    their options; every graph and chart checked against its code's figure."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(TSG_JS)
+    await page.ev('__gr.idle()')   # the reports run again by a change of theme are done
+    rep, tbl = 'window.__tsc', 'window.__tsc.table'
+    close_js = 'SM.app.closeReport(window.__tsc)'
+
+    # the series and everything made from it: two rows excluded (gaps in the graphs), lines only, the Mean Line,
+    # the variogram and AR coefficients, differences, the decompositions, the filters, the spectral density, a lag
+    # plot, the subseries plot, cross correlations and the inputs' panel; the Zivot-Andrews test is on by default
+    S = 'ts:sales|'
+    opts = {'forecast': 12, S + 'points': False, S + 'meanLine': True, S + 'variogram': True, S + 'arcoef': True, S + 'spectral': True, S + 'lagPlot': 3,
+            S + 'subseries': True, S + 'ccf': True,
+            S + 'diffs': [{'id': 1, 'd': 1, 'D': 1, 's': 12, 'variogram': True, 'meanLine': True}, {'id': 2, 'd': 1, 'D': 0, 's': 12, 'lines': False}],
+            S + 'decomps': [{'id': 1, 'kind': 'trend'}, {'id': 2, 'kind': 'cycle', 'units': 12, 'constant': True}, {'id': 3, 'kind': 'classical', 'period': 12, 'model': 'multiplicative'},
+                            {'id': 4, 'kind': 'stl', 'period': 12, 'robust': True}],
+            S + 'filters': [{'id': 1, 'kind': 'hp'}, {'id': 2, 'kind': 'bk'}, {'id': 3, 'kind': 'cf', 'drift': True}]}
+    r = await page.ev(open_js('Monthly sales', {'y': ['sales'], 'time': ['month'], 'inputs': ['promotion', 'temperature']}, opts,
+                              before="t.setState([30, 31], 'excluded', true);"), timeout=900)
+    check('charts: the series report opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: series')
+    labels = [x['label'] for x in g['g']]
+    check('charts: series: its graphs', [x for x in ('sales time series', 'sales Zivot-Andrews breaks', 'sales spectral density by period', 'sales spectral density by frequency', 'sales lag plot',
+                                                     'sales seasonal subseries', 'sales differenced time series', 'sales linear trend', 'Detrended sales time series', 'sales cycle',
+                                                     'Decycled sales time series', 'Seasonal Decomposition (multiplicative, period 12)', 'STL Decomposition (period 12, robust)',
+                                                     'Hodrick-Prescott Filter (λ = 129600)', 'promotion time series', 'temperature time series') if x not in labels], [])
+    check('charts: series: its diagnostics charts', sorted({c['caption'] for c in g['charts']}),
+          sorted({'Autocorrelation', 'Partial Autocorrelation', 'Variogram', 'AR Coefficients', 'sales with promotion', 'sales with temperature'}))
+    await page.ev(f"{close_js}; SM.app.tables.find((x) => x.name === 'Monthly sales').setState([30, 31], 'excluded', false)")
+
+    # the models, with their display options: no points, no interval, the residual variogram and AR coefficients,
+    # the Theta model's own intervals, a model group's best; three of them on Model Comparison's plots
+    arima = {'kind': 'arima', 'd': 0, 'P': 0, 'D': 0, 'Q': 0, 's': 0, 'intercept': True, 'constrain': True, 'level': 0.95}
+    models = [{**arima, 'id': 1, 'p': 1, 'q': 1, 'points': False},
+              {**arima, 'id': 2, 'p': 1, 'q': 0, 'D': 1, 'Q': 1, 's': 12, 'pi': False, 'rvario': True, 'rar': True, 'graph': False},
+              {**arima, 'id': 3, 'p': 1, 'q': 0, 'inputs': [{'name': 'promotion', 'lag': 0, 'num': 1}], 'graph': False},
+              {'id': 4, 'kind': 'smooth', 'method': 'winters', 's': 12, 'level': 0.95, 'multiplicative': False},
+              {'id': 5, 'kind': 'smooth', 'method': 'double', 's': 0, 'level': 0.9, 'multiplicative': False, 'graph': False},
+              {'id': 6, 'kind': 'ets', 'error': 'add', 'trend': 'N', 'seasonal': 'N', 's': 0, 'level': 0.95, 'group': 1, 'graph': False},
+              {'id': 7, 'kind': 'ets', 'error': 'add', 'trend': 'A', 'seasonal': 'N', 's': 0, 'level': 0.95, 'group': 1, 'graph': False},
+              {'id': 8, 'kind': 'uc', 'trend': 'local linear trend', 'seasonal': 12, 'inputs': ['promotion'], 'level': 0.95, 'graph': False},
+              {'id': 9, 'kind': 'theta', 'theta': 2, 'deseasonalize': True, 'period': 12, 'level': 0.95, 'smpi': True}]
+    r = await page.ev(open_js('Monthly sales', {'y': ['sales'], 'time': ['month'], 'inputs': ['promotion']},
+                              {'forecast': 12, S + 'models': models, S + 'acf': False, S + 'pacf': False, S + 'stationarity': False, S + 'inputPanel': False}), timeout=900)
+    check('charts: the models report opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: models')
+    labels = [x['label'] for x in g['g']]
+    want = ['sales model comparison forecasts', 'sales residual autocorrelation', 'sales residual partial autocorrelation', 'ARMA(1, 1) forecast', 'ARMA(1, 1) residuals',
+            'Seasonal ARIMA(1, 0, 0)(0, 1, 1)12 forecast', 'Transfer Function AR(1) with promotion (lags 0–1) forecast', 'Winters Method (Additive)(12) forecast',
+            'Double (Brown) Exponential Smoothing forecast', 'Structural: local linear trend + seasonal(12) + promotion components', 'Theta Model (θ = 2) forecast']
+    check('charts: models: their graphs', [x for x in want if x not in labels], [])
+    check('charts: models: the best of the group shows its report and its component states', sum(1 for x in labels if x.startswith('State Space Smoothing ETS(') and x.endswith(' forecast')), 1)
+    check('charts: models: the residual variogram and AR coefficients of the seasonal ARIMA', sum(1 for c in g['charts'] if c['caption'] in ('Variogram', 'AR Coefficients')), 2)
+    await page.ev(close_js)
+
+    # beyond JMP on the Business cycle: regime switching (its predictions, regimes and probabilities, the
+    # filtered ones), and ARDL with the future costs
+    r = await page.ev(open_js('Business cycle', {'y': ['growth'], 'time': ['quarter']},
+                              {'forecast': 8, 'ts:growth|models': [{'id': 1, 'kind': 'markov', 'k': 2, 'order': 1, 'trend': 'c', 'swTrend': True, 'swVar': False, 'swAr': False, 'starts': 0,
+                                                                      'level': 0.95, 'fprob': True}]}), timeout=900)
+    check('charts: the regime switching report opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: regimes')
+    check('charts: regimes: the regimes and the probabilities', [x['label'] for x in g['g'] if x['label'].endswith(('regimes', 'smoothed probabilities'))],
+          ['Regime Switching: 2 regimes, AR(1), switching mean regimes', 'Regime Switching: 2 regimes, AR(1), switching mean smoothed probabilities'])
+    await page.ev(close_js)
+    r = await page.ev(open_js('Business cycle', {'y': ['price'], 'time': ['quarter'], 'inputs': ['cost']},
+                              {'forecast': 8, 'ts:price|models': [{'id': 1, 'kind': 'ardl', 'inputs': ['cost'], 'maxlag': 2, 'maxorder': 2, 'ic': 'aic', 'trend': 'c', 'level': 0.95}],
+                               'ts:price|stationarity': False}), timeout=900)
+    check('charts: the ARDL report opens without errors', r['errors'], [])
+    await check_report_graphs(page, rep, tbl, 'charts: ARDL')
+    await page.ev(close_js)
+
+    # By, a Local Data Filter and an excluded row, no Time ID: the code drops the rows the filter takes out,
+    # keeps the group, and draws on the row numbers as the page does
+    r = await page.ev('''(() => { const rng = SM.util.rng('ts-charts'); const n = 96; let w = 20; const x = [], z = [];
+      for (let i = 0; i < n; i++) { w += rng.normal(0, 1); x.push(Math.round(1000 * w) / 1000); z.push(Math.round(1000 * rng.normal(0, 1)) / 1000); }
+      const t = new SM.Table({ name: 'TS chart rows', columns: [
+        { name: 'region', dataType: 'character', values: x.map((_, i) => (i % 2 ? 'South' : 'North')) },
+        { name: 'keep', dataType: 'character', values: x.map((_, i) => ([10, 12, 14].includes(i) ? 'no' : 'yes')) },
+        { name: 'x', dataType: 'numeric', values: x }, { name: 'z', dataType: 'numeric', values: z }] });
+      SM.app.addTable(t); t.setState([20], 'excluded', true); return t.nrows; })()''')
+    check('charts: a table of our own for By and a filter', r, 96)
+    r = await page.ev(open_js('TS chart rows', {'y': ['x'], 'inputs': ['z'], 'by': ['region']},
+                              {'forecast': 5, 'ts:x|lagPlot': 1, 'ts:x|spectral': True, 'ts:x|ccf': True, 'ts:x|models': [{**arima, 'id': 1, 'p': 1, 'q': 0}]},
+                              after="rep.toggleFilter(true); await __ts.done(rep); rep.spec.filter.push({ col: t.col('keep').id, levels: ['yes'] }); { const d = __ts.done(rep); rep.run(); await d; }"),
+                      timeout=900)
+    check('charts: By with a Local Data Filter opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: By and a filter')
+    codes = [x['code'] for x in g['g'] if x['label'] == 'x time series']
+    check('charts: By and a filter: each group\'s graph keeps its group; the filtered rows are dropped, the excluded one missing',
+          [('df = df[df["region"] == \'North\']' in c_, 'df = df.drop(index=[10, 12, 14])   # the rows the report leaves out' in c_, 'y.iloc[' in c_) for c_ in codes],
+          [(True, True, True), (False, False, False)])
+    await page.ev(f"{close_js}; SM.app.closeTable(SM.app.tables.find((x) => x.name === 'TS chart rows')); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach((b) => b.click());")
 
 # Helpers in the page: pick from a red triangle, fill a form, wait for a report.
 HELPERS = r'''
@@ -822,6 +1129,9 @@ async def main():
     await check_controls_help(page, rep, 'Lag Plot (lag 1)', ['Lag p', '− and +', 'A point'], 'timeseries: Lag Plot')
     await check_controls_help(page, rep, 'Model Comparison', ['Report', 'Graph', 'A column heading', 'Right click the table'], 'timeseries: Model Comparison')
     await check_controls_help(page, rep, 'State Space Smoothing Model Selection 1', ['A line of the selection table'], 'timeseries: State Space Smoothing Model Selection')
+
+    # ---- the graphs' matplotlib code, every graph of every kind
+    await chart_code(page)
 
     check('no script errors', page.errors, [])
     await page.close()

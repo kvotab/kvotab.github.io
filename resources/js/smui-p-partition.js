@@ -99,7 +99,7 @@
   function state(ctx, res, base) {
     const a = res.assign;
     const nl = res.leaves.length;
-    const S = { ctx, res, base, F: fns(ctx), cat: res.kind === 'categorical', cart: res.method === 'cart', by: new Map(res.nodes.map((nd) => [nd.path, nd])) };
+    const S = { ctx, res, base, F: fns(ctx), cat: res.kind === 'categorical', cart: res.method === 'cart', by: new Map(res.nodes.map((nd) => [nd.path, nd])), plots: (res.fit && res.fit.plots) || {} };
     S.leafAll = Array.from({ length: nl }, () => []);
     S.leafTrain = Array.from({ length: nl }, () => []);
     S.leafIdx = Array.from({ length: nl }, () => []);
@@ -127,24 +127,33 @@
   /* ======================================================================
      RENDER
      ====================================================================== */
+  /* The page's display choices the graphs' code draws with (partition.fit's plot). */
+  function plotOpts(ctx) {
+    const o = (k, d) => ctx.opt(k, d) !== false;
+    return { points: o('showPoints', true), stats: o('splitStats', true), bar: o('splitBar', true), prob: o('splitProb', true), count: o('splitCount', true) };
+  }
+
+  /* A graph's code block: the head of the tree's graphs (the table and the tree grown) and its own lines. */
+  const blockOf = (ctx, S, key) => SM.predict.graphCode(ctx, S.plots.head_code, S.plots[key]);
+
   async function render(ctx) {
     const base = payloadOf(ctx);
     const F = fns(ctx);
-    const res = await ctx.call(F.fit, base);
+    const res = await ctx.call(F.fit, { ...base, plot: plotOpts(ctx) });
     const S = state(ctx, res, base);
     ctx._part = S;
     const box = ctx.container;
     const o = (k, d) => ctx.opt(k, d);
     // the graph and the small tree view
     const top = [];
-    if (o('showGraph', true)) top.push(partitionGraph(ctx, S));
-    if (o('smallTree', false)) top.push(treeBox(ctx, S, true));
+    if (o('showGraph', true)) top.push(SM.predict.withCode(partitionGraph(ctx, S), blockOf(ctx, S, 'partition')));
+    if (o('smallTree', false)) top.push(SM.predict.withCode(treeBox(ctx, S, true), blockOf(ctx, S, 'small')));
     if (top.length) box.append(ctx.row(...top));
     box.append(buttons(ctx, S));
     box.append(summaryTable(ctx, S));
     const notes = [...(res.notes || []), ...((res.fit && res.fit.notes) || [])];
     if (notes.length) box.append(...notes.map((t) => (/was not done/.test(t) ? ctx.warn(t) : ctx.note(t))));
-    if (o('showTree', true)) box.append(treeBox(ctx, S, false));
+    if (o('showTree', true)) box.append(treeBox(ctx, S, false), blockOf(ctx, S, 'tree') || '');
     box.append(ctx.note(treeNote(S)));
     box.append(ctx.code(res.script));
     if (!ctx.headless) watchSelection(ctx, S);
@@ -561,7 +570,7 @@
       for (const s of sets) if (after.length) traces.push({ type: 'scatter', mode: 'lines+markers', x: [res.go.best, ...after.map((e) => e.splits)], y: [res.go.trace.find((e) => e.splits === res.go.best)?.[s] ?? null, ...after.map((e) => e[s])], line: { color: setColor(s), width: 1.2, dash: 'dot' }, marker: { size: 4, color: setColor(s), symbol: 'circle-open' }, showlegend: false, hovertemplate: `${s}, looked at by Go: %{x} splits, RSquare %{y:.4f}<extra></extra>` });
       shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: res.go.best, x1: res.go.best, y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dash' } });
     }
-    ob.add(ctx.row(ctx.plot(traces, { showlegend: sets.length > 1, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, margin: { l: 56, r: 12, t: sets.length > 1 ? 26 : 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: S.cat ? 'Entropy RSquare' : 'RSquare' } } }, { width: W(460), height: 280, title: 'Split history', select: false })),
+    ob.add(ctx.row(SM.predict.withCode(ctx.plot(traces, { showlegend: sets.length > 1, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, margin: { l: 56, r: 12, t: sets.length > 1 ? 26 : 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: S.cat ? 'Entropy RSquare' : 'RSquare' } } }, { width: W(460), height: 280, title: 'Split history', select: false }), blockOf(ctx, S, 'history'))),
       ctx.note(`${S.cat ? 'The entropy RSquare' : 'RSquare'} of each set after each split of the tree, in the order the splits were made.${res.go ? ` Go looked ${res.go.trace.length - 1} splits past ${res.go.start} (dotted) and kept ${res.go.best}, the best validation RSquare: the next 10 splits did not beat it.` : ''}${sets.length > 1 ? ' A validation curve that turns down while the training curve still rises is the tree learning noise.' : ''}`));
   }
 
@@ -579,7 +588,7 @@
       const t = ctx.rt({ columns: [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev', hidden: true }, { key: 'count', label: 'Count', fmt: 'int' }], rows }, { key: 'leafreport', caption: 'Response Means' });
       const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: labels, x: res.leaves.map((lf) => lf.mean), rows: S.leafTrain, rowsScale: res.leaves.map((lf, l) => (S.leafTrain[l].length ? lf.mean / S.leafTrain[l].length : 0)), marker: { color: SM.report.BAR }, hovertext: res.leaves.map((lf) => `leaf ${lf.number}: ${T(lf.label)}<br>mean ${sig(lf.mean)}, ${fmt(lf.count)} rows`), hovertemplate: '%{hovertext}<extra></extra>' }],
         { margin: { l: 44, r: 12, t: 6, b: 38 }, xaxis: { title: { text: `Mean ${res.y}` }, zeroline: true }, yaxis: { type: 'category', autorange: 'reversed', title: { text: 'Leaf' } }, bargap: 0.25 }, { width: W(320), height: h, title: 'Leaf means', select: false });
-      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, t), bars));
+      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, t), SM.predict.withCode(bars, blockOf(ctx, S, 'leaves'))));
     } else {
       const L = res.levels.length;
       const pcols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, ...res.levels.map((lv, j) => ({ key: `p${j}`, label: `Prob(${lv})`, digits: 4 }))];
@@ -594,7 +603,7 @@
         traces.push({ type: 'bar', orientation: 'h', y: labels, x: res.leaves.map((lf) => lf.probs[j]), base: cum, rows: rowsJ, rowsScale: res.leaves.map((lf, l) => (rowsJ[l].length ? lf.probs[j] / rowsJ[l].length : 0)), name: T(lv(res, j)), marker: { color: SM.util.PALETTE[j % SM.util.PALETTE.length] }, hovertext: res.leaves.map((lf) => `leaf ${lf.number}: ${T(lf.label)}<br>Prob(${T(lv(res, j))}) ${f4(lf.probs[j])}`), hovertemplate: '%{hovertext}<extra></extra>' });
       }
       const bars = ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 44, r: 12, t: 26, b: 38 }, xaxis: { title: { text: 'Prob' }, range: [0, 1] }, yaxis: { type: 'category', autorange: 'reversed', title: { text: 'Leaf' } }, bargap: 0.25 }, { width: W(340), height: h + 20, title: 'Leaf probabilities', select: false });
-      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: pcols, rows: prows }, { key: 'leafprob', caption: 'Response Prob' })), bars),
+      ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: pcols, rows: prows }, { key: 'leafprob', caption: 'Response Prob' })), SM.predict.withCode(bars, blockOf(ctx, S, 'leaves'))),
         el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: ccols, rows: crows }, { key: 'leafcount', caption: 'Response Counts' })));
     }
     ob.add(ctx.note(`The leaves from left to right, numbered as Save Leaf Numbers numbers them; the label is the path of conditions from the root (Save Leaf Labels). ${S.cat ? 'Prob is the smoothed probability the tree predicts; the counts are the training rows (by weight).' : 'The mean is the tree\'s prediction for the leaf\'s rows.'} A bar selects the leaf's training rows.`));
@@ -607,7 +616,7 @@
   function contributionsOutline(ctx, S) {
     const c = S.res.contributions;
     const splits = c.rows.map((r) => `${r.column} ${r.splits}`).join(', ');
-    SM.predict.contributions(ctx, null, c, { note: `Number of Splits: ${splits}. ${S.cat ? 'G^2' : 'SS'} is the sum over the column's splits of what each explains; the portion is its share of the total.` });
+    SM.predict.contributions(ctx, null, c, { head: S.plots.head_code, note: `Number of Splits: ${splits}. ${S.cat ? 'G^2' : 'SS'} is the sum over the column's splits of what each explains; the portion is its share of the total.` });
   }
 
   /* ======================================================================

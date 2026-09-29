@@ -40,3 +40,6 @@
   .sm-doe-designs { grid-template-columns: auto auto minmax(0, 1fr) auto; font-size: 11.5px; }
   .sm-pw-form { max-width: 100%; }
 }
+
+/* ---- a graph with its matplotlib code under it ---- */
+.sm-doe-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

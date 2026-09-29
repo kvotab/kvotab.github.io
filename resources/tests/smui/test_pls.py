@@ -338,4 +338,119 @@ for label, kw in (('KFold, two Y\'s', {'y': YN, 'x': xs_names, 'method': 'kfold'
     check(f'the code fits {r["factors"]} factors to the same rows: {label}', (got['a'], got['rows']), (r['factors'], r['dist']['rows']))
     check.near(f'... and prints the report\'s numbers: {label}', worst, 0.0, abs_=1e-9)
 
+# ---- the graphs' matplotlib code, run on a CSV export: every graph of the report ----------------------------------------------------
+from test_charts import close, find_line  # noqa: E402
+from test_predictive import PALETTE, SEP, run_graph  # noqa: E402
+
+GTMP = tempfile.mkdtemp(prefix='smui-pls-charts-')
+SETC = [predictive.BASE, '#3a7d44', '#6c5b7b']
+graphs = 0
+
+
+def by_set_ok(ax, r, xs_, ys_):
+    """The points of each set present, in the set's colour: (x, y) of every row of it."""
+    present = sorted(set(r['dist']['set']))
+    ok = len(ax['scatter']) == len(present)
+    for sc, k in zip(ax['scatter'], present):
+        want = [(a_, b_) for a_, b_, st in zip(xs_, ys_, r['dist']['set']) if st == k]
+        ok &= len(sc['xy']) == len(want) and mx(sc['xy'], want) < 1e-9 * max(1.0, float(np.max(np.abs(want)))) and sc['colors'][0][:7] == SETC[k]
+    return bool(ok), present
+
+
+for label, kw in (('KFold, two Y\'s', {'y': YN, 'x': xs_names, 'method': 'kfold', 'factors': 6}),
+                  ('Leave-One-Out, one Y, a row list', {'y': ['y1'], 'x': xs_names, 'method': 'loo', 'factors': 4, 'rows': list(range(10, 80))}),
+                  ('Holdback 0.25, missing values, VIP threshold 1.1', {'y': ['y1m', 'y2'], 'x': xs_names[:4] + ['x5m'], 'method': 'holdback', 'holdback': 0.25, 'factors': 4, 'plot': {'vip': 1.1}}),
+                  ('a Training/Validation/Test column', {'y': YN, 'x': xs_names, 'validation': 'vt', 'factors': 5}),
+                  ('None, not centred, not scaled, as many factors as X\'s', {'y': YN, 'x': xs_names[:3], 'method': 'none', 'factors': 3, 'center': False, 'scale': False})):
+    lab = f'graphs: {label}'
+    r = call('pls.fit', table=T_, seed=77, table_name='data', **kw)
+    pl = r['plots']
+    thr = (kw.get('plot') or {}).get('vip', 0.8)
+    a = r['factors']
+    rn = [v + 1 for v in r['dist']['rows']]
+    if 'rows' in kw:
+        check(f'{lab}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in pl['head_code'], True)
+
+    def run(tail, what):
+        global graphs
+        F, err = run_graph(pl['head_code'] + SEP + tail, T_, GTMP)
+        check(f'{lab}: {what}: the code runs, ending in plt.show()', (err, tail.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+        if F:
+            graphs += 1
+            return F, F['axes'][0]
+        return None, None
+
+    if r['cv']:
+        F, ax = run(pl['cv'], 'Root Mean PRESS')
+        if F:
+            rows_ = r['cv']['rows']
+            check(f'{lab}: Root Mean PRESS by number of factors, the minimum ringed', (find_line(ax, [q['factors'] for q in rows_], [q['rmpress'] for q in rows_], rel=1e-9) is not None,
+                  find_line(ax, [r['cv']['best']], [rows_[r['cv']['best']]['rmpress']], rel=1e-9) is not None), (True, True))
+            check(f'{lab}: Root Mean PRESS: the ticks, the titles, the size', (ax['xticks'][:3], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+                  ([0.0, 2.0, 4.0] if len(rows_) > 12 else [0.0, 1.0, 2.0], 'Number of Factors', 'Root Mean PRESS', 'Root Mean PRESS by number of factors', [3.6, 2.6]))
+    else:
+        check(f'{lab}: no validation, no Root Mean PRESS graph', 'cv' in pl, False)
+    check(f'{lab}: an X-Y scores graph per factor', len(pl['xy']), a)
+    t_, u_ = np.array(r['scores']['t']), np.array(r['scores']['u'])
+    tr_ = np.array(r['scores']['set']) == 0
+    for k in range(a):
+        F, ax = run(pl['xy'][k], f'X-Y scores of factor {k + 1}')
+        if not F:
+            continue
+        ok, present = by_set_ok(ax, r, t_[:, k], u_[:, k])
+        b = float(t_[tr_, k] @ u_[tr_, k] / (t_[tr_, k] @ t_[tr_, k]))
+        lo_, hi_ = float(t_[:, k].min()), float(t_[:, k].max())
+        check(f'{lab}: X-Y scores of factor {k + 1}: each row at its scores, by set; the inner relation', (ok, find_line(ax, [lo_, hi_], [b * lo_, b * hi_], rel=1e-9) is not None), (True, True))
+        check(f'{lab}: X-Y scores of factor {k + 1}: the titles, the size', (ax['xlabel'], ax['ylabel'], ax['title'], F['size']), (f'X Score {k + 1}', f'Y Score {k + 1}', f'X-Y scores of factor {k + 1}', [2.6 if a > 2 else 3.0, 2.4]))
+    for key, title in (('x', 'X Effect'), ('y', 'Y Effect')):
+        F, ax = run(pl['percent'][key], title)
+        if not F:
+            continue
+        check.near(f'{lab}: {title}: a bar per factor, its percent', mx([b_['h'] for b_ in ax['bars']], [q[key] for q in r['percent']]), 0.0, abs_=1e-9)
+        check(f'{lab}: {title}: the cumulative percent, the scale, the titles', (find_line(ax, [q['factor'] for q in r['percent']], [q['cum' + key] for q in r['percent']], rel=1e-9) is not None, ax['ylim'], ax['title'], ax['ylabel']),
+              (True, [0.0, 102.0], title, f'{title} (%)'))
+    F, ax = run(pl['vip'], 'Variable importance')
+    if F:
+        check(f'{lab}: Variable importance: each X\'s VIP, grey below the threshold', (mx(ax['lines'][0]['y'], r['vip']) < 1e-9, [c_[:7] for c_ in ax['scatter'][0]['colors']]),
+              (True, [predictive.BASE if v > thr else predictive.MUTED for v in r['vip']]))
+        check(f'{lab}: Variable importance: the threshold dashed, the X\'s named, the titles', (any(q['y'] == [thr, thr] and q['ls'] == '--' for q in ax['lines']), ax['xticklabels'], ax['ylim'][0], ax['ylabel'], ax['title']),
+              (True, r['x'], 0.0, 'VIP', 'Variable importance'))
+    check(f'{lab}: a VIP vs coefficients graph per Y', len(pl['vipcoef']), len(r['y']))
+    for k, ynm in enumerate(r['y']):
+        F, ax = run(pl['vipcoef'][k], f'VIP vs coefficients for {ynm}')
+        if not F:
+            continue
+        cs_ = [row[k] for row in r['coef']]
+        m_ = 1.15 * max(abs(v) for v in cs_)
+        check.near(f'{lab}: VIP vs coefficients for {ynm}: each X at its coefficient and VIP', mx(ax['scatter'][0]['xy'], list(zip(cs_, r['vip']))), 0.0, abs_=1e-9)
+        check(f'{lab}: VIP vs coefficients for {ynm}: named, the threshold, the symmetric range, the titles', ([t['s'] for t in ax['texts']], any(q['y'] == [thr, thr] for q in ax['lines']), bool(np.allclose(ax['xlim'], [-m_, m_], rtol=1e-12)), ax['xlabel'], ax['title']),
+              (r['x'], True, True, f'Coefficient for {ynm} (centred and scaled)', f'VIP vs coefficients for {ynm}'))
+    for key, names, L_, title in (('x', r['x'], r['x_loadings'], 'X Loadings'), ('y', r['y'], r['y_loadings'], 'Y Loadings')):
+        F, ax = run(pl['loadings'][key], title)
+        if not F:
+            continue
+        lines_ = [q for q in ax['lines'] if q['label'].startswith('Factor ')]
+        check(f'{lab}: {title}: a line per factor, its loadings, in the palette', (len(lines_), all(mx(q['y'], [row[j] for row in L_]) < 1e-9 and q['color'][:7] == PALETTE[j] for j, q in enumerate(lines_))), (a, True))
+        check(f'{lab}: {title}: the names, the legend, the titles', (ax['xticklabels'], F['legend'], ax['title']), (names, [f'Factor {j + 1}' for j in range(a)], title))
+    d_ = r['dist']
+    for key, xs_, ys_, what in (('dmodx', rn, d_['dmodx'], 'Distance to the X model by row'), ('dmody', rn, d_['dmody'], 'Distance to the Y model by row'),
+                                ('both', d_['dmodx'], d_['dmody'], 'Distance to the Y model by distance to the X model')):
+        if key != 'dmody' and not r['dmodx_ok']:
+            check(f'{lab}: {what}: no graph without DModX (as many factors as X\'s)', key in pl['distance'], False)
+            continue
+        F, ax = run(pl['distance'][key], what)
+        if not F:
+            continue
+        ok, present = by_set_ok(ax, r, xs_, ys_)
+        check(f'{lab}: {what}: each row, by set; the legend when several sets; the titles', (ok, F['legend'], ax['ylim'][0], ax['title']),
+              (True, [predictive.SETS[k_] for k_ in present] if len(present) > 1 else [], 0.0, what))
+    F, ax = run(pl['t2'], 'T² by row')
+    if F:
+        ok, present = by_set_ok(ax, r, rn, d_['t2'])
+        check(f'{lab}: T² by row: each row, by set; the limit dashed and named', (ok, any(close(q['y'], [r['ucl']] * 2, 1e-9) and q['ls'] == '--' for q in ax['lines']), [t['s'] for t in ax['texts']]),
+              (True, True, [f'UCL {r["ucl"]:.4g}']))
+        check(f'{lab}: T² by row: the legend, the titles, the size', (F['legend'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
+              ([predictive.SETS[k_] for k_ in present] if len(present) > 1 else [], 'Row', 'T²', 'T² by row', [5.6, 2.7]))
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 71)
+
 sys.exit(check.done())

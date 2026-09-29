@@ -431,4 +431,142 @@ top = [t for t in rr['terms'] if t['alpha'] > t['a0'] * 1e6]
 check('penalties stay within 1e7 times the term\'s scale', all(t['alpha'] <= t['a0'] * 1e7 * (1 + 1e-9) for t in rr['terms']), True)
 check('and a B-spline term\'s EDF at least 1 (its straight line is not penalized)', all(t['edf'] > 0.999 for t in rr['terms'] if t['basis'] == 'bs'), True)
 
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers --------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+
+def graph(kind, plot, label, frame_, name, **model):
+    rr = call('gam.plot_code', table=tid, kind=kind, plot=plot, table_name=name, **model)
+    code = rr.get('plot_code') or ''
+    out, err = run_snippet_more(code, frame_, name, TMP)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return (out['figures'][0] if out and out['figures'] else None), code
+
+
+def close_to(a, b, rel=1e-7, abs_=1e-9):
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= np.maximum(abs_, rel * np.maximum(np.abs(a), np.abs(b)))))
+
+
+def check_term(label, F, t, intercept, opts, alpha=0.05):
+    A = F['axes'][0]
+    c0 = intercept if opts.get('constant') else 0.0
+    se = np.asarray(t['curve']['se_c'] if opts.get('constant') else t['curve']['se'])
+    f_ = np.asarray(t['curve']['f']) + c0
+    z = stats.norm.ppf(1 - alpha / 2)
+    curve = [ln for ln in A['lines'] if len(ln['x']) == len(t['curve']['x']) and ln['color'] == '#c0392bff']
+    check(f'{label}: the curve, the report\'s partial effect on its grid', bool(curve) and close_to(curve[0]['x'], t['curve']['x'], 1e-12) and close_to(curve[0]['y'], f_), True)
+    band = [p_ for p_ in A['polys'] if p_['colors'] and p_['colors'][0] == '#c0392b21']
+    if opts.get('band', True):
+        v = np.asarray(band[0]['paths'][0]) if band else np.zeros((0, 2))
+        m_ = len(t['curve']['x'])
+        lo_ok = band and close_to(v[1:m_ + 1, 1], f_ - z * se, 1e-6)   # fill_between: along the lower edge, then back along the upper
+        hi_ok = band and close_to(v[m_ + 2:2 * m_ + 2, 1][::-1], f_ + z * se, 1e-6)
+        check(f'{label}: the pointwise band from the report\'s standard errors', bool(lo_ok and hi_ok), True)
+    else:
+        check(f'{label}: no band', band, [])
+    pts = [x for x in A['scatter'] if x['label'] == 'Partial residuals']
+    if opts.get('resid', True):
+        xy = np.asarray(pts[0]['xy']) if pts else np.zeros((0, 2))
+        check(f'{label}: the partial residuals at the rows, the report\'s', bool(pts) and close_to(xy[:, 0], t['points']['x'], 1e-12) and close_to(xy[:, 1], np.asarray(t['points']['partial']) + c0, 1e-6), True)
+    else:
+        check(f'{label}: no partial residuals', pts, [])
+    rug = [ln for ln in A['lines'] if ln['marker'] == '|']
+    if opts.get('rug', True):
+        check(f'{label}: the rug at the rows\' values', bool(rug) and close_to(rug[0]['x'], t['points']['x'], 1e-12) and set(rug[0]['y']) == {0.035}, True)
+    else:
+        check(f'{label}: no rug', rug, [])
+    check(f'{label}: the titles', (A['xlabel'], A['ylabel'], A['title']), (t['name'], f'Intercept + s({t["name"]})' if opts.get('constant') else f's({t["name"]})', f'{t["name"]} partial effect'))
+
+
+def check_diag(label, F, kind, rep, yname):
+    A = F['axes'][0]
+    d_ = rep['diag']
+    pts = np.asarray(A['scatter'][0]['xy']) if A['scatter'] else np.zeros((0, 2))
+    if kind == 'actual':
+        check(f'{label}: (predicted, actual) of the report\'s rows', close_to(pts[:, 0], d_['predicted']) and close_to(pts[:, 1], d_['actual'], 1e-12), True)
+        lo_, hi_ = min(min(d_['predicted']), min(d_['actual'])), max(max(d_['predicted']), max(d_['actual']))
+        check(f'{label}: the line actual = predicted over both ranges', [(ln['x'], ln['y']) for ln in A['lines']] and close_to(A['lines'][0]['x'], [lo_, hi_]) and A['lines'][0]['x'] == A['lines'][0]['y'], True)
+    elif kind == 'residual':
+        check(f'{label}: (predicted, residual) of the report\'s rows', close_to(pts[:, 0], d_['predicted']) and close_to(pts[:, 1], d_['residual'], 1e-6, 1e-8), True)
+        check(f'{label}: the zero line', [ln['y'] for ln in A['lines']], [[0.0, 0.0]])
+    else:
+        r_ = np.asarray(d_['resid_dev'])
+        o = np.argsort(r_, kind='stable')
+        zq = stats.norm.ppf(stats.rankdata(r_) / (len(r_) + 1))
+        check(f'{label}: the report\'s deviance residuals, sorted, at their normal quantiles', close_to(pts[:, 1], r_[o], 1e-6, 1e-8) and close_to(pts[:, 0], zq[o], 1e-12), True)
+        ln = A['lines'][0] if A['lines'] else {'x': [], 'y': []}
+        check(f'{label}: the line with their mean and SD', close_to(ln['y'], [r_.mean() + r_.std(ddof=1) * zq.min(), r_.mean() + r_.std(ddof=1) * zq.max()], 1e-6, 1e-8), True)
+
+
+fixed = dict(base, penalty=pen)
+rf = call('gam.fit', table=tid, **fixed)
+for j, t in enumerate(rf['terms']):
+    for opts in ({'band': True, 'resid': True, 'rug': True, 'constant': False},) + (({'band': False, 'resid': False, 'rug': False, 'constant': False}, {'band': True, 'resid': True, 'rug': True, 'constant': True}) if j == 0 else ()):
+        tag = f's({t["name"]}), fixed penalties' + ('' if opts['band'] else ', no band, residuals or rug') + (', with the intercept' if opts['constant'] else '')
+        F, code = graph('term', dict(opts, index=j), tag, DF, 'gamplot', **fixed)
+        if F:
+            check_term(tag, F, t, rf['intercept'], opts)
+for kind in ('actual', 'residual', 'devqq'):
+    F, code = graph(kind, {}, f'{kind} (fixed penalties)', DF, 'gamplot', **fixed)
+    if F:
+        check_diag(f'{kind} (fixed penalties)', F, kind, rf, 'ozone')
+        check(f'{kind} (fixed penalties): the title', F['axes'][0]['title'], {'actual': 'ozone actual by predicted', 'residual': 'ozone residual by predicted', 'devqq': 'ozone deviance residual normal quantile plot'}[kind])
+sf = call('gam.surface', table=tid, first=0, second=2, n=40, **fixed)
+F, code = graph('surface', {'first': 0, 'second': 2, 'n': 40}, 'surface of temperature and day of year', DF, 'gamplot', **fixed)
+if F:
+    out2, _ = run_snippet_more(code, DF, 'gamplot', TMP)
+    A = out2['figures'][0]['axes'][0] if out2 else {}
+    mesh = A.get('meshes', [])
+    check('surface: the heatmap is the report\'s grid of s(temperature) + s(day of year)', bool(mesh) and close_to(mesh[0]['z'], np.asarray(sf['z']).ravel()) and close_to(mesh[0]['x'], sf['x'], 1e-12)
+          and close_to(mesh[0]['y'], sf['y'], 1e-12), True)
+    pts = np.asarray(A['scatter'][0]['xy']) if A.get('scatter') else np.zeros((0, 2))
+    check('surface: the rows\' points', close_to(pts[:, 0], sf['points']['x'], 1e-12) and close_to(pts[:, 1], sf['points']['y'], 1e-12), True)
+    lv = [p_['contour'] for p_ in A.get('polys', []) if 'contour' in p_]
+    zz = np.asarray(sf['z'])
+    steps = np.diff(lv[0]) if lv else []
+    check('surface: contour levels at a round step, inside the range, about fifteen or fewer', bool(lv) and len(lv[0]) <= 16 and np.allclose(steps, steps[0]) and zz.min() < lv[0][0] and lv[0][-1] < zz.max(), True)
+    check('surface: the colour bar and the titles', (out2['figures'][0]['colorbars'], A['xlabel'], A['ylabel'], A['title']),
+          (['s(temperature) + s(day of year)'], 'temperature', 'day of year', 'temperature and day of year surface'))
+# the penalties chosen by AIC: the code searches as the report does and draws its curve
+ra = call('gam.fit', table=tid, **base, smoothing='aic')
+F, code = graph('term', {'index': 1, 'band': True, 'resid': True, 'rug': True}, 's(wind speed), penalties by AIC', DF, 'gamplot', **base, smoothing='aic')
+if F:
+    check('penalties by AIC: the code runs the search', 'select_penweight' in code, True)
+    check_term('s(wind speed), penalties by AIC', F, ra['terms'][1], ra['intercept'], {'band': True, 'resid': True, 'rug': True}, )
+# Freq repeats rows for the fit: one point, residual and rug mark a row; rows the report leaves out
+subset = [i for i in range(n) if i not in (5, 6, 7, 100)]
+rq = call('gam.fit', table=tid, **base, freq='f', penalty=pen, rows=subset)
+for kind in ('term', 'actual', 'devqq'):
+    F, code = graph(kind, {'index': 2}, f'{kind} with Freq and rows left out', DF, 'gamplot', **base, freq='f', penalty=pen, rows=subset)
+    if F:
+        check(f'{kind} with Freq and rows left out: the code drops them', 'df = df.drop(index=[5, 6, 7, 100])' in code, True)
+        if kind == 'term':
+            check_term(f'{kind} with Freq and rows left out', F, rq['terms'][2], rq['intercept'], {'band': True, 'resid': True, 'rug': True})
+        else:
+            check_diag(f'{kind} with Freq and rows left out', F, kind, rq, 'ozone')
+# a two-level Y (binomial): the event in the axis title, no residuals by default
+rb = call('gam.fit', table=tid, y='level', smooth=S3[:2], family='binomial', penalty=[30.0, 5.0])
+F, code = graph('actual', {}, 'binomial actual by predicted', DF, 'gamplot', y='level', smooth=S3[:2], family='binomial', penalty=[30.0, 5.0])
+if F:
+    check_diag('binomial actual by predicted', F, 'actual', rb, 'level')
+    check('binomial actual by predicted: the event in the axis title', F['axes'][0]['ylabel'], 'level (low = 1)')
+F, code = graph('term', {'index': 0, 'band': True, 'resid': False, 'rug': True}, 'binomial s(temperature)', DF, 'gamplot', y='level', smooth=S3[:2], family='binomial', penalty=[30.0, 5.0])
+if F:
+    check_term('binomial s(temperature)', F, rb['terms'][0], rb['intercept'], {'band': True, 'resid': False, 'rug': True})
+# a cyclic term
+terms_c = [{'basis': 'bs', 'df': 8, 'degree': 3}, {'basis': 'bs', 'df': 7, 'degree': 2}, {'basis': 'cc', 'df': 12}]
+rc_ = call('gam.fit', table=tid, **base, penalty=pen, terms=terms_c)
+F, code = graph('term', {'index': 2}, 'a cyclic s(day of year)', DF, 'gamplot', **base, penalty=pen, terms=terms_c)
+if F:
+    check_term('a cyclic s(day of year)', F, rc_['terms'][2], rc_['intercept'], {'band': True, 'resid': True, 'rug': True})
+try:
+    call('gam.plot_code', table=tid, kind='pie', **fixed)
+    refused = False
+except Exception:
+    refused = True
+check('an unknown graph is refused', refused, True)
+
 sys.exit(check.done())

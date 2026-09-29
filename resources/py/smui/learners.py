@@ -267,11 +267,89 @@ def knn_fit(table, y, x, rows=None, k=10, chosen=None, weight=None, freq=None, v
     notes = []
     if asked > K:
         notes.append(f'K is {K}, one less than the {K + 1} training rows (a training row is not its own neighbour); {asked} was asked for.')
+    head = '\n'.join(_knn_head(P, K, None if chosen in (None, '') else ck, table_name, rows))
+    rep = pv.report(P, fitted, head=head)
+    rep['plots']['selection'] = _knn_selection_tail(P, K)
     return {'kind': P.kind, 'k': K, 'best': best, 'chosen': ck, 'by': pv.SETS[by],
             'path': {'columns': _knn_columns(P), 'rows': path},
-            'fit': pv.report(P, fitted), 'n_train': int(P.train().sum()), 'notes': notes,
+            'fit': rep, 'n_train': int(P.train().sum()), 'notes': notes,
             'features': list(P.features), 'scaled': [P.features[j] for j in _cont_columns(P)],
             'code': '\n'.join(_knn_code(P, K, table_name, rows))}
+
+
+# the levels' colours and markers of the learners' graphs (smui-p-learners.js, light theme)
+HUES = ['#2a78d6', '#1baf7a', '#e34948', '#4a3aa7', '#b07c00', '#d55181', '#3d8b1f']
+MARKERS = ['o', 's', 'D', '^', 'v', '*', 'h', 'p']
+
+
+def _knn_head(P, K, picked, table_name, rows):
+    """The head of K Nearest Neighbors' graphs: the neighbours found as the report finds them, each set's
+    criterion for every K (crit), the best K, and fitted, the chosen K's prediction (picked: the K picked
+    in Model Selection, or None for the best)."""
+    cat = P.kind == 'categorical'
+    cls = 'KNeighborsClassifier' if cat else 'KNeighborsRegressor'
+    L = P.code(table_name, rows=rows, extra_imports=[pv.PLT, f'from sklearn.neighbors import {cls}'])
+    L += [''] + _scale_code(P) + ['']
+    L += [f'K = {K}',
+          f'knn = {cls}(n_neighbors=K).fit(Z[train], y[train])',
+          'near = np.empty((len(Z), K), dtype=int)   # each row\'s K nearest training rows (their positions in Z[train]), nearest first',
+          'near[train] = knn.kneighbors(return_distance=False)   # a training row is not its own neighbour']
+    if (~P.train()).any():
+        L.append('near[~train] = knn.kneighbors(Z[~train], return_distance=False)')
+    L.append('ytr = y[train]')
+    L.append('crit = {s: [] for s in (0, 1, 2) if (sets == s).any()}   # each set\'s ' + ('misclassification rate' if cat else 'RASE') + ' for K = 1, 2, ...')
+    if cat:
+        L += ['L = len(levels)', '', '',
+              'def predict(k):',
+              '    """The prediction of the k nearest: each level\'s share of their votes, with a prior of 1/L."""',
+              '    counts = np.zeros((len(Z), L))',
+              '    for j in range(k):',
+              '        counts[np.arange(len(Z)), ytr[near[:, j]]] += 1',
+              '    return (counts + 1 / L) / (k + 1)', '', '',
+              'counts = np.zeros((len(Z), L))',
+              'for k in range(1, K + 1):',
+              '    counts[np.arange(len(Z)), ytr[near[:, k - 1]]] += 1   # the votes of the k nearest',
+              '    pred = ((counts + 1 / L) / (k + 1)).argmax(1)   # a tied vote goes to the level first in the value order',
+              '    for s in crit:',
+              '        crit[s].append(np.mean(pred[sets == s] != y[sets == s]))']
+    else:
+        L += ['', '',
+              'def predict(k):',
+              '    """The mean response of the k nearest."""',
+              '    total = np.zeros(len(Z))',
+              '    for j in range(k):',
+              '        total += ytr[near[:, j]]',
+              '    return total / k', '', '',
+              'total = np.zeros(len(Z))',
+              'for k in range(1, K + 1):',
+              '    total += ytr[near[:, k - 1]]',
+              '    pred = total / k',
+              '    for s in crit:',
+              '        crit[s].append(np.sqrt(np.mean((y[sets == s] - pred[sets == s]) ** 2)))']
+    L += ['best = int(np.argmin(crit[1 if 1 in crit else 0])) + 1   # the smallest on the validation rows (or the training rows); of equal ones the smallest K',
+          f'chosen = {picked}   # the K picked in Model Selection' if picked is not None else 'chosen = best',
+          'fitted = predict(chosen)   # the chosen K\'s prediction of every row']
+    return L
+
+
+def _knn_selection_tail(P, K):
+    """Model Selection's plot: each set's criterion by K, the best K dotted (and a K picked, solid)."""
+    what = 'Misclassification Rate' if P.kind == 'categorical' else 'RASE'
+    return '\n'.join([
+        f'colors, markers, styles = {json.dumps(HUES)}, {json.dumps(MARKERS)}, ["-", "--", ":"]',
+        pv.figure(430, 300),
+        'for i, (s, v) in enumerate(crit.items()):',
+        '    ax.plot(range(1, K + 1), v, color=colors[i], linewidth=2, linestyle=styles[i], marker=markers[i], markersize=5.6, label=["Training", "Validation", "Test"][s])',
+        f'ax.axvline(best, color="{pv.MUTED}", linewidth=1.2, linestyle=":")',
+        f'ax.text(best, 1, f" best K = {{best}}", transform=ax.get_xaxis_transform(), ha="left", va="top", fontsize=7.5, color="{pv.MUTED}")',
+        'if chosen != best:',
+        f'    ax.axvline(chosen, color="{pv.TEXT}", linewidth=1.2)   # the K shown',
+        f'ax.set_xlim(0.5, K + 0.5)',
+        *(['ax.set_xticks(range(1, K + 1))'] if K <= 20 else []),
+        'ax.set_ylim(bottom=0)',
+        'ax.set_xlabel("K")', f'ax.set_ylabel("{what}")', f'ax.set_title("{what} by K")',
+        'fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize=8)',
+        'plt.show()'])
 
 
 def _knn_code(P, K, table_name, rows):
@@ -521,7 +599,7 @@ def nb_fit(table, y, x, rows=None, weight=None, freq=None, validation=None, port
         return {'error': str(e)}
     frame = data.frame(P.table, P.x, P.index, dropna=False)
     prob = _nb_proba(P, M, _nb_features(P, frame), len(frame))
-    rep = pv.report(P, prob)
+    rep = pv.report(P, prob, head='\n'.join(_nb_code(P, M, table_name, rows, graph=True)))
     notes = []
     absent = [lab for lab, c in zip(P.labels, M['count']) if not c > 0]
     if absent:
@@ -531,8 +609,9 @@ def nb_fit(table, y, x, rows=None, weight=None, freq=None, validation=None, port
             'code': '\n'.join(_nb_code(P, M, table_name, rows))}
 
 
-def _nb_code(P, M, table_name, rows):
-    L = P.code(table_name, rows=rows)
+def _nb_code(P, M, table_name, rows, graph=False):
+    """The code under the report; graph: the head of its graphs (matplotlib imported, no printing, fitted)."""
+    L = P.code(table_name, rows=rows, extra_imports=[pv.PLT] if graph else [])
     L += ['',
           '# Naive Bayes: log P(level) plus, for every factor, log P(factor | level); a factor a row lacks is left out',
           'L = len(levels)',
@@ -596,6 +675,8 @@ def _nb_code(P, M, table_name, rows):
     L += ['prob = np.exp(logp - logp.max(1, keepdims=True))',
           f'prob = np.clip(prob / prob.sum(1, keepdims=True), {EPS_P!r}, 1 - {EPS_P!r})',
           'most = prob.argmax(1)   # the most likely level']
+    if graph:
+        return L + ['fitted = prob   # each row\'s probability of every level']
     L += _print_sets_code(P, '"misclassification", np.average(most[m] != y[m], weights=wt[m]), "mean -log p", np.average(-np.log(prob[m, y[m]]), weights=wt[m])')
     return L
 
@@ -786,7 +867,9 @@ def svm_fit(table, y, x, rows=None, weight=None, freq=None, validation=None, por
         return {'error': str(e)}
     m = M['model']
     fitted = _svm_fitted(P, M, P.X)
-    rep = pv.report(P, fitted)
+    rep = pv.report(P, fitted, head='\n'.join(_svm_code(P, M, table_name, rows, graph=True)))
+    if M['tuning']:
+        rep['plots']['tuning'] = _svm_tuning_tail(P, M)
     tr = P.train()
     summary = {'kernel': M['kernel'], 'kernel_label': KERNELS[M['kernel']], 'cost': M['C'], 'gamma': M['gamma'] if M['kernel'] == 'rbf' else None,
                'gamma0': M['gamma0'], 'n_sv': int(len(m.support_)), 'n_train': int(tr.sum()), 'n_columns': int(P.X.shape[1]), 'seed': M['seed']}
@@ -807,10 +890,11 @@ def svm_fit(table, y, x, rows=None, weight=None, freq=None, validation=None, por
     return out
 
 
-def _svm_code(P, M, table_name, rows):
+def _svm_code(P, M, table_name, rows, graph=False):
+    """The code under the report; graph: the head of its graphs (matplotlib imported, no printing, fitted)."""
     cat = P.kind == 'categorical'
     kernel = M['kernel']
-    L = P.code(table_name, rows=rows)
+    L = P.code(table_name, rows=rows, extra_imports=[pv.PLT] if graph else [])
     L += [''] + _scale_code(P) + ['']
     cls = 'SVC' if cat else 'SVR'
     wtr = 'None if w is None else w[train]'
@@ -856,7 +940,7 @@ def _svm_code(P, M, table_name, rows):
                   '        err += np.sum(wt[b] * (y[b] - pred) ** 2)']
         L += ['        tot += np.sum(wt[b])',
               f'    results.append(({"err / tot" if cat else "np.sqrt(err / tot)"}, c, 0.0 if g is None else g))',
-              '    print("design", c, g, results[-1][0])',
+              *([] if graph else ['    print("design", c, g, results[-1][0])']),
               'crit, C, gamma = min(results)   # the smallest; of equal ones the smaller Cost, then Gamma',
               'gamma = gamma if gamma > 0 else gamma0',
               '']
@@ -870,18 +954,49 @@ def _svm_code(P, M, table_name, rows):
               'prob[:, svm.classes_] = svm.predict_proba(Z)',
               'most = prob.argmax(1)   # the most likely level: the largest probability (svm.predict, from the decision function, can differ near the boundary)',
               'wt = np.ones(len(d)) if w is None else w']
+        if graph:
+            return L + ['fitted = prob   # each row\'s probability of every level']
         L += _print_sets_code(P, '"misclassification", np.average(most[m] != y[m], weights=wt[m]), "mean -log p", np.average(-np.log(np.clip(prob[m, y[m]], 1e-15, 1)), weights=wt[m])')
     else:
         L += [f'svm = SVR(kernel="{kernel}", {cg}, epsilon=0.1).fit(Z[train], (y[train] - ym) / ys, sample_weight={wtr})',
               'pred = ym + ys * svm.predict(Z)',
               'wt = np.ones(len(d)) if w is None else w']
+        if graph:
+            return L + ['fitted = pred   # each row\'s prediction']
         L += _print_sets_code(P, '"RASE", np.sqrt(np.average((y[m] - pred[m]) ** 2, weights=wt[m]))')
     return L
 
 
+RAMP = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b']   # smui-p-learners.js ramp(), light theme
+
+
+def _svm_tuning_tail(P, M):
+    """The tuning design's plot: each Cost and Gamma coloured by its criterion (the radial basis function)
+    or the criterion by Cost (linear), the best marked; the design as the head ran it (results)."""
+    t = M['tuning']
+    what = 'Misclassification Rate' if P.kind == 'categorical' else 'RASE'
+    judged = 'Validation' if t['how'] == 'validation' else 'Cross-Validated'
+    L = ['crit_, cost_, gamma_ = (np.array(v, dtype=float) for v in zip(*results))   # each design point\'s criterion, Cost and Gamma']
+    if M['kernel'] == 'rbf':
+        L += ['from matplotlib.colors import LinearSegmentedColormap',
+              f'ramp = LinearSegmentedColormap.from_list("ramp", {json.dumps(RAMP)})',
+              pv.figure(400, 320),
+              'sc = ax.scatter(cost_, gamma_, c=crit_, cmap=ramp, marker="s", s=75, edgecolors="#fcf7f2", linewidths=0.7)',
+              f'ax.scatter([C], [gamma], marker="s", s=150, facecolors="none", edgecolors="{pv.TEXT}", linewidths=1.5)   # the best, fitted again',
+              f'fig.colorbar(sc, ax=ax, label="{what}")',
+              'ax.set_xscale("log")', 'ax.set_yscale("log")', 'ax.set_xlabel("Cost")', 'ax.set_ylabel("Gamma")']
+    else:
+        L += [pv.figure(400, 300),
+              f'ax.plot(cost_, crit_, color="{HUES[0]}", linewidth=2, marker="o", markersize=5.6)',
+              f'ax.plot([C], [crit], linestyle="none", marker="o", markersize=11, markerfacecolor="none", markeredgecolor="{pv.TEXT}", markeredgewidth=1.5)   # the best, fitted again',
+              'ax.set_xscale("log")', 'ax.set_ylim(bottom=0)', 'ax.set_xlabel("Cost")', f'ax.set_ylabel("{judged} {what}")']
+    L += ['ax.set_title("Tuning design")', 'plt.show()']
+    return '\n'.join(L)
+
+
 @api('svm.boundary', packages=SK)
 def svm_boundary(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None, missing='informative',
-                 kernel='rbf', cost=1.0, gamma=None, tune=False, points=20, pair=None, current=None, m=61, table_name='data'):
+                 kernel='rbf', cost=1.0, gamma=None, tune=False, points=20, pair=None, current=None, m=61, plot=None, table_name='data'):
     """The decision function (two levels), the most likely level (more) or
     the prediction (a continuous response) over a grid of two continuous
     factors, the other factors at their current values (as the profiler
@@ -952,7 +1067,82 @@ def svm_boundary(table, y, x, rows=None, weight=None, freq=None, validation=None
     else:
         lines.append('pred_grid = (ym + ys * svm.predict(Zg)).reshape(XX.shape)')
     out['code'] = '\n'.join(lines)
+    out['plot_code'] = _boundary_tail(P, M, a, b, m, cur, held_py, len(model.classes_) == 2 if P.kind == 'categorical' else False,
+                                      plot or {})
     return out
+
+
+def _boundary_tail(P, M, a, b, m, cur, held_py, two, plot):
+    """The decision boundary (or the prediction surface) over two continuous factors, after the head: the
+    grid over the rows' ranges, the model on it with the other factors held, the rows on it (filled:
+    training, open: the others), the support vectors ringed (Support Vectors in the red triangle)."""
+    J = json.dumps
+    cat = P.kind == 'categorical'
+    rings = plot.get('sv', cat) is not False
+    L = [f'# the {"decision boundary" if cat else "prediction surface"} over {a} and {b}, the other factors held',
+         f'va, vb = pd.to_numeric(d[{J(a)}], errors="coerce").to_numpy(float), pd.to_numeric(d[{J(b)}], errors="coerce").to_numpy(float)', '', '',
+         'def span(v):',
+         '    """The grid over the rows\' range, with 4% more at each end."""',
+         '    v = v[np.isfinite(v)]',
+         '    pad = 0.04 * (v.max() - v.min()) if v.max() > v.min() else 0.5',
+         f'    return np.linspace(v.min() - pad, v.max() + pad, {m})', '', '',
+         'gx, gy = span(va), span(vb)',
+         'XX, YY = np.meshgrid(gx, gy)',
+         f'held = {{{held_py}}}   # the other factors, at the Prediction Profiler\'s current values (the means and the first levels until moved)' if held_py else 'held = {}',
+         f'grid = pd.DataFrame({{**{{k: [v] * XX.size for k, v in held.items()}}, {J(a)}: XX.ravel(), {J(b)}: YY.ravel()}})',
+         'Zg = (encode(grid) - center) / scale',
+         f'colors, markers = {J(HUES)}, {J(MARKERS)}',
+         'ok = np.isfinite(va) & np.isfinite(vb)   # the rows with both',
+         'sv = np.zeros(len(d), dtype=bool)',
+         'sv[np.flatnonzero(train)[svm.support_]] = True   # the training rows that are support vectors',
+         'from matplotlib.colors import LinearSegmentedColormap, ListedColormap',
+         'from matplotlib.lines import Line2D',
+         pv.figure(500, 440),
+         'extent = (gx[0], gx[-1], gy[0], gy[-1])',
+         'handles = []']
+    if cat and two:
+        L += ['pg = np.zeros((len(grid), len(levels)))', 'pg[:, svm.classes_] = svm.predict_proba(Zg)',
+              'dec = svm.decision_function(Zg).reshape(XX.shape)   # 0 on the boundary, -1 and 1 on the margins',
+              'neg, pos = colors[int(svm.classes_[0])], colors[int(svm.classes_[1])]   # toward the second level where positive',
+              'ax.imshow(np.clip(dec, -2.5, 2.5), extent=extent, origin="lower", aspect="auto", cmap=LinearSegmentedColormap.from_list("dec", [neg, "#fcf7f2", pos]), vmin=-2.5, vmax=2.5, alpha=0.24, interpolation="bilinear")',
+              f'ax.contour(gx, gy, dec, levels=[0], colors="{pv.TEXT}", linewidths=1.44)',
+              f'ax.contour(gx, gy, dec, levels=[-1, 1], colors="{pv.MUTED}", linewidths=0.86, linestyles="--")',
+              f'handles += [Line2D([], [], color="{pv.TEXT}", linewidth=1.44, label="Boundary"), Line2D([], [], color="{pv.MUTED}", linewidth=0.86, linestyle="--", label="Margins (±1)")]']
+    elif cat:
+        L += ['pg = np.zeros((len(grid), len(levels)))', 'pg[:, svm.classes_] = svm.predict_proba(Zg)',
+              'most_grid = pg.argmax(1).reshape(XX.shape)   # the most likely level at each point',
+              'ax.imshow(most_grid, extent=extent, origin="lower", aspect="auto", cmap=ListedColormap(colors[:len(levels)]), vmin=-0.5, vmax=len(levels) - 0.5, alpha=0.24, interpolation="nearest")']
+    else:
+        L += ['pred_grid = (ym + ys * svm.predict(Zg)).reshape(XX.shape)',
+              f'ramp = LinearSegmentedColormap.from_list("ramp", {J(RAMP)})',
+              'im = ax.imshow(pred_grid, extent=extent, origin="lower", aspect="auto", cmap=ramp, alpha=0.45, interpolation="bilinear")',
+              'cs = ax.contour(gx, gy, pred_grid, colors="#fcf7f2", linewidths=0.43)',
+              f'ax.clabel(cs, fontsize=6.8, colors="{pv.TEXT}")',
+              f'fig.colorbar(im, ax=ax, label={J(P.y)})']
+    if cat:
+        L += ['for j, name in enumerate(levels):',
+              '    for train_rows, face in ((True, True), (False, False)):',
+              '        r = ok & (y == j) & (train == train_rows)',
+              '        if r.any():',
+              '            ax.scatter(va[r], vb[r], s=34, marker=markers[j % len(markers)], facecolors=colors[j % len(colors)] if face else "none", edgecolors=colors[j % len(colors)] if not face else "#fcf7f2", linewidths=0.8)',
+              '    if (ok & (y == j)).any():',
+              '        handles.append(Line2D([], [], linestyle="none", marker=markers[j % len(markers)], color=colors[j % len(colors)], label=str(name)))']
+    else:
+        L += ['for train_rows, face in ((True, True), (False, False)):',
+              '    r = ok & (train == train_rows)',
+              '    if r.any():',
+              f'        ax.scatter(va[r], vb[r], s=26, marker="o", facecolors="{pv.TEXT}" if face else "none", edgecolors="{pv.TEXT}" if not face else "#fcf7f2", linewidths=0.6)',
+              f'handles.append(Line2D([], [], linestyle="none", marker="o", color="{pv.TEXT}", label="Rows"))']
+    if rings:
+        L += ['if (sv & ok).any():',
+              f'    ax.scatter(va[sv & ok], vb[sv & ok], s=100, facecolors="none", edgecolors="{pv.MUTED}", linewidths=0.72)   # Support Vectors',
+              f'    handles.append(Line2D([], [], linestyle="none", marker="o", markersize=8, markerfacecolor="none", color="{pv.MUTED}", label="Support vectors"))']
+    L += ['ax.set_xlim(gx[0], gx[-1])', 'ax.set_ylim(gy[0], gy[-1])',
+          f'ax.set_xlabel({J(a)})', f'ax.set_ylabel({J(b)})',
+          f'ax.set_title({J(("Decision boundary" if cat else "Prediction surface") + " over " + a + " and " + b)}, wrap=True)',
+          'fig.legend(handles=handles, loc="outside upper left", ncols=4, frameon=False, fontsize=8)',
+          'plt.show()']
+    return '\n'.join(L)
 
 
 @api('svm.save', packages=SK)

@@ -392,10 +392,82 @@ def _expand(t, e, f):
     return np.repeat(t, f), np.repeat(e, f)
 
 
-def _read_code(table_id, table_name, time, censor, code, freq, cols, imports):
-    lines = [code_head(table_name, imports), f'd = df.dropna(subset={json.dumps([c for c in cols if c])})']
+# ---- the code shown: the report's rows, and the graphs as matplotlib code ---------
+# Every result's code reads the whole table as File > Export CSV writes it
+# and keeps the report's rows: a By group's (its where lines), without the
+# group's rows that the report leaves out (excluded, filtered out). Under
+# each graph the report shows Python that draws it with matplotlib, with the
+# light theme's colours and the graph's size at 100 pixels an inch.
+J = json.dumps
+PLT = 'import matplotlib.pyplot as plt'
+BASE, TEXT, MUTED = '#2f6690', '#352921', '#786b5d'
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+# smui-p-survival.js FIT_COLORS: a fitted distribution's colour, by its place in DISTS
+FIT_COLORS = ['#b0413e', '#3a7d44', '#6c5b7b', '#c0a000', '#1f9e89', '#8c564b', '#e377c2', '#17becf', '#7f7f7f', '#2f6690']
+DISTS = ['weibull', 'lognormal', 'exponential', 'frechet', 'loglogistic', 'normal', 'sev', 'logistic', 'lev']
+
+
+def _lit(v):
+    """A value as a Python literal: text quoted, a whole number without a point."""
+    if isinstance(v, str):
+        return J(v)
+    if v is None:
+        return 'None'
+    v = float(v)
+    if not math.isfinite(v):
+        return 'np.nan' if v != v else ('np.inf' if v > 0 else '-np.inf')
+    return str(int(v)) if v.is_integer() and abs(v) < 1e15 else repr(v)
+
+
+def _level_text(v):
+    if isinstance(v, (float, np.floating)) and math.isfinite(v):
+        return str(int(v)) if float(v).is_integer() and abs(v) < 1e15 else f'{float(v):.10g}'
+    return str(v)
+
+
+def _value_text(table, name, v):
+    """A value as the table shows it, for a comment: a date as a date."""
+    kind = ((data.meta(table, name).get('format') or {}).get('kind') or '') if table in data.TABLES else ''
+    if kind.startswith('date') and isinstance(v, (int, float)) and math.isfinite(v):
+        ts = pd.Timestamp(int(v), unit='ms')
+        return ts.strftime('%Y-%m-%d' if kind == 'date' else '%Y-%m-%d %H:%M:%S')
+    return _level_text(v)
+
+
+def keep_lines(table, rows, where=None):
+    """After the head: the By group's rows (its where lines), then the drop
+    of the rows of the group that the report leaves out."""
+    if table not in data.TABLES:
+        return []
+    n = data.TABLES[table]['n']
+    match = np.ones(n, dtype=bool)
+    out = []
+    for w in where or []:
+        c, v = w['column'], w['value']
+        raw = data.raw(table, c)
+        if data.meta(table, c).get('dataType') == 'numeric':
+            match &= np.asarray(raw, dtype=float) == float(v)
+        else:
+            match &= np.array([x == v for x in raw], dtype=bool)
+        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {c} is {_value_text(table, c, v)}')
+    if rows is not None:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep)
+        if len(drop):
+            out.append(f'df = df.drop(index=[{", ".join(str(int(r)) for r in drop)}])   # the rows the report leaves out')
+    return out
+
+
+def _inch(px):
+    return f'{round(float(px)) / 100:g}'
+
+
+def _read_code(table_id, table_name, time, censor, code, freq, cols, imports, keep=()):
+    lines = [code_head(table_name, imports), *keep, f'd = df.dropna(subset={json.dumps([c for c in cols if c])})']
     if freq:
-        lines.append(f'd = d.loc[d.index.repeat(d[{json.dumps(freq)}].astype(int))]   # Freq: each row as many times as its count')
+        lines.append(f'd = d[d[{J(freq)}] >= 1]   # a count of at least 1')
+        lines.append(f'd = d.loc[d.index.repeat(np.floor(d[{json.dumps(freq)}] + 1e-9).astype(int))]   # Freq: each row as many times as its count')
     if censor:
         is_num = data.meta(table_id, censor).get('dataType') == 'numeric'
         lhs = f'd[{json.dumps(censor)}]' if is_num else f'd[{json.dumps(censor)}].astype(str)'
@@ -534,9 +606,10 @@ def _row_points(t, e, rows, steps):
 
 @api('survival.km')
 def km(table, time, rows=None, censor=None, censor_code=1, group=None, freq=None, alpha=0.05,
-       times=None, probs=None, simultaneous=False, table_name='data'):
+       times=None, probs=None, simultaneous=False, where=None, plot=None, table_name='data'):
     """Survival: the product-limit estimate per group (and combined), the
-    summaries, and the tests between groups."""
+    summaries, and the tests between groups. where: the By group's; plot:
+    the graphs' display options, for their code (plot_code)."""
     r = read(table, time, rows, censor, censor_code, group, freq)
     t, e, f, rws, codes = r['t'], r['event'], r['freq'], r['rows'], r['codes']
     if not len(t):
@@ -569,9 +642,9 @@ def km(table, time, rows=None, censor=None, censor_code=1, group=None, freq=None
         out['combined'] = None
         out['tests'] = None
     lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, group, freq],
-                       ['from statsmodels.duration.survfunc import SurvfuncRight, survdiff'])
+                       ['from statsmodels.duration.survfunc import SurvfuncRight, survdiff'], keep_lines(table, rows, where))
     if group:
-        lines += [f'for level, s in d.groupby({json.dumps(group)}):',
+        lines += [f'for level in [{", ".join(_lit(v) for v in r["levels"])}]:   # the levels of {group} with rows, in the table\'s order',
                   f'    sf = SurvfuncRight(t[d[{json.dumps(group)}] == level], event[d[{json.dumps(group)}] == level])',
                   '    print(level, sf.quantile(0.5), sf.quantile_ci(0.5, alpha=%g, method="cloglog"))' % alpha,
                   '    print(sf.summary())',
@@ -585,11 +658,191 @@ def km(table, time, rows=None, censor=None, censor_code=1, group=None, freq=None
                   'print(sf.summary())   # time, survival, its standard error (Greenwood), at risk, failures',
                   'print(sf.quantile(0.5), sf.quantile_ci(0.5, alpha=%g, method="cloglog"))' % alpha]
     out['code'] = '\n'.join(lines)
+    if plot is not None:
+        ctx = dict(table=table, rows=rows, where=where, table_name=table_name, time=time, censor=censor, code=censor_code, group=group, freq=freq,
+                   levels=r['levels'], alpha=alpha)
+        out['plot_code'] = {'survival': _km_plot(ctx, plot, False), 'failure': _km_plot(ctx, plot, True),
+                            'lin': {k: _lin_plot(ctx, plot, k, bool((plot.get('lin') or {}).get(k))) for k in ('exponential', 'weibull', 'lognormal')}}
     return out
 
 
+def _plot_read(ctx):
+    """The lines that read a survival graph's rows: a time and every value
+    the report uses, a count of at least 1 (Freq), and each row's event."""
+    T, C, G, F = ctx['time'], ctx['censor'], ctx.get('group'), ctx['freq']
+    L = [f'T = {J(T)}', f'd = df.dropna(subset={J([c for c in (T, C, G, F) if c])}).copy()   # the rows with a time and every value the report uses']
+    if F:
+        L += [f'd = d[np.floor(d[{J(F)}] + 1e-9) >= 1]   # a count of at least 1 (Freq)', f'd["n"] = np.floor(d[{J(F)}] + 1e-9).astype(int)   # each row counts that many times']
+    else:
+        L.append('d["n"] = 1')
+    if C:
+        is_num = data.meta(ctx['table'], C).get('dataType') == 'numeric'
+        lhs = f'd[{J(C)}]' if is_num else f'd[{J(C)}].astype(str)'
+        L.append(f'd["event"] = ({lhs} != {_code_literal(ctx["table"], C, ctx["code"])}).astype(int)   # 1 a failure, 0 censored (the Censor Code marks a censored row)')
+    else:
+        L.append('d["event"] = 1   # no Censor column: every time is a failure')
+    return L
+
+
+def _groups_lines(ctx, plot):
+    """The groups (the Grouping's levels in the table's order), their names
+    as the page writes them and their colours; and whether there are several."""
+    levels = ctx['levels']
+    if not ctx.get('group'):
+        return [f'groups = [(d, {J(ctx["time"])}, "{BASE}")]   # one curve of every row'], False
+    # the page's names of the levels ([[value, name], ...]); else as the page writes a value
+    names = {(float(v) if isinstance(v, (int, float)) else str(v)): nm for v, nm in (plot.get('labels') or [])}
+    labels = [names.get(float(v) if isinstance(v, (int, float, np.floating)) else str(v), _level_text(v)) for v in levels]
+    multi = len(levels) > 1
+    colors = [PALETTE[i % len(PALETTE)] if multi else BASE for i in range(len(levels))]
+    G = J(ctx['group'])
+    return [f'levels = [{", ".join(_lit(v) for v in levels)}]   # the levels of {ctx["group"]} with rows, in the table\'s order',
+            f'names = {J(labels)}   # as the page writes them',
+            f'colors = {J(colors)}   # the page\'s palette',
+            f'groups = [(d[d[{G}] == v], name, color) for v, name, color in zip(levels, names, colors)]'], multi
+
+
+_KM_FN = [
+    'def km(s):',
+    '    """The product-limit estimate of the rows s, each row as many times as its count (statsmodels SurvfuncRight): the failure times, the estimate, its standard error (Greenwood)."""',
+    '    t, e = np.repeat(s[T].to_numpy(float), s["n"]), np.repeat(s["event"].to_numpy(), s["n"])',
+    '    if e.sum() == 0:   # no failures: the curve stays at 1',
+    '        return np.zeros(0), np.zeros(0), np.zeros(0), t, None',
+    '    sf = SurvfuncRight(t, e)',
+    '    return np.asarray(sf.surv_times, float), np.asarray(sf.surv_prob, float), np.asarray(sf.surv_prob_se, float), t, sf',
+    '',
+    'def at(s, et, sp):',
+    '    """Each row\'s estimate at its own time (after the step there)."""',
+    '    k = np.searchsorted(et, s[T].to_numpy(float), side="right") - 1',
+    '    return np.where(k >= 0, sp[np.maximum(k, 0)] if len(sp) else 1.0, 1.0)']
+
+
+def _km_plot(ctx, plot, failure):
+    """The survival (or failure) plot as the page draws it (kmPlot): a step
+    curve per group from (min(0, the first time), 1) to the largest time,
+    the pointwise and simultaneous bands when shown, the combined curve, the
+    censored rows as ticks and the failures as points when shown."""
+    o = lambda k: bool(plot.get(k))  # noqa: E731
+    ci, pts, comb, sim = o('showCI'), o('showPoints'), o('showCombined'), o('simCI') and abs(ctx['alpha'] - 0.05) < 1e-12
+    tr = (lambda e: f'1 - {e}') if failure else (lambda e: e)
+    L = _plot_read(ctx)
+    G, multi = _groups_lines(ctx, plot)
+    L += G
+    if ci:
+        L.append(f'z = stats.norm.ppf({1 - ctx["alpha"] / 2!r})   # for the pointwise limits')
+    L += [''] + _KM_FN + ['']
+    L += ['def curve(s):',
+          '    """The steps as the page draws them' + (', with the pointwise limits (Greenwood, on the log(-log) scale)' if ci else '') +
+          (' and the Hall-Wellner bands' if sim else '') + '."""',
+          '    et, sp, se, t, sf = km(s)',
+          '    x = np.r_[min(0.0, t.min()), et, t.max()]',
+          '    y = np.r_[1.0, sp, sp[-1] if len(sp) else 1.0]']
+    if ci:
+        L += ['    with np.errstate(all="ignore"):',
+              '        ok = (sp > 0) & (sp < 1) & np.isfinite(se) & (se > 0)',
+              '        v = np.where(ok, se / np.abs(sp * np.log(np.where(ok, sp, 0.5))), np.nan)',
+              '        lo, hi = np.where(ok, sp ** np.exp(z * v), np.nan), np.where(ok, sp ** np.exp(-z * v), np.nan)',
+              '    end = lambda b: (b[-1] if np.isfinite(b[-1]) else sp[-1]) if len(sp) else 1.0',
+              '    lower = np.r_[1.0, np.where(np.isfinite(lo), lo, sp), end(lo)]',
+              '    upper = np.r_[1.0, np.where(np.isfinite(hi), hi, sp), end(hi)]']
+    else:
+        L.append('    lower = upper = None')
+    if sim:
+        L += ['    lcb = ucb = None',
+              '    if sf is not None:   # Hall-Wellner 95% simultaneous bands (log transform), left out where more than three times as wide as the pointwise interval (log(-log) scale)',
+              '        with np.errstate(all="ignore"):',
+              '            lcb, ucb = sf.simultaneous_cb(alpha=0.05, method="hw", transform="log")',
+              '            wide = np.abs(np.log(-np.log(lcb)) - np.log(-np.log(sp)))',
+              '            point = stats.norm.ppf(0.975) * se / np.abs(sp * np.log(sp))',
+              '            keep = np.isfinite(wide) & np.isfinite(point) & (wide <= 3 * point) & (sp > 0)',
+              '        lcb, ucb = np.where(keep, lcb, np.nan), np.where(keep, ucb, np.nan)',
+              '        lcb, ucb = np.r_[np.nan, lcb, lcb[-1]], np.r_[np.nan, ucb, ucb[-1]]',
+              '    return x, y, lower, upper, et, sp, lcb, ucb']
+    else:
+        L.append('    return x, y, lower, upper, et, sp, None, None')
+    W, H = plot.get('size') or [560, 350]
+    L += ['', f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          'for s, name, color in groups:',
+          '    x, y, lower, upper, et, sp, lcb, ucb = curve(s)']
+    if ci:
+        a, b = (tr('upper'), tr('lower')) if failure else ('lower', 'upper')
+        L.append(f'    ax.fill_between(x, {a}, {b}, step="post", color=color, alpha=0.15, linewidth=0)   # Show Confid Interval')
+    if sim:
+        L += ['    if lcb is not None:   # Show Simultaneous CI',
+              '        for band in (lcb, ucb):',
+              f'            ax.plot(x, {tr("band")}, drawstyle="steps-post", color=color, linewidth=1, linestyle=":")']
+    L.append(f'    ax.plot(x, {tr("y")}, drawstyle="steps-post", color=color, linewidth=1.8, label=name)')
+    if comb and multi:
+        L += ['x, y = curve(d)[:2]   # Show Combined: every row together',
+              f'ax.plot(x, {tr("y")}, drawstyle="steps-post", color="{MUTED}", linewidth=1.5, linestyle="--", label="Combined")']
+    L += ['for s, name, color in groups:',
+          '    et, sp = curve(s)[4:6]',
+          f'    S = {tr("at(s, et, sp)")}',
+          '    cens = s["event"].to_numpy() == 0',
+          '    ax.plot(s[T].to_numpy()[cens], S[cens], linestyle="none", marker="|", markersize=6.5, markeredgewidth=1.6, color=color)   # the censored rows']
+    if pts:
+        L.append('    ax.plot(s[T].to_numpy()[~cens], S[~cens], linestyle="none", marker="o", markersize=3.6, color=color)   # Show Points: the failures')
+    L += ['ax.set_ylim(-0.02, 1.02)', 'ax.set_xlabel(T)', f'ax.set_ylabel("{"Failure" if failure else "Surviving"}")']
+    if multi:
+        L.append(f'ax.legend(loc="{"lower right" if failure else "upper right"}", frameon=False, fontsize=8)')
+    L += [f'fig.suptitle(T + " {"failure" if failure else "survival"} plot", fontsize=10)', 'plt.show()']
+    imports = [PLT, 'from statsmodels.duration.survfunc import SurvfuncRight'] + (['from scipy import stats'] if ci or sim else [])
+    return '\n'.join([code_head(ctx['table_name'], imports)] + keep_lines(ctx['table'], ctx['rows'], ctx['where']) + L)
+
+
+_LIN = {  # the linearizing plots (LINPLOTS): the title, a log time axis, the y of an estimate S, the y title
+    'exponential': ('Exponential Plot', False, '-np.log(S)', '−Log(Surviving)'),
+    'weibull': ('Weibull Plot', True, 'np.log(-np.log(S))', 'Log(−Log(Surviving))'),
+    'lognormal': ('Lognormal Plot', True, 'stats.norm.ppf(1 - S)', 'Normal Quantile of Failure'),
+}
+
+
+def _lin_plot(ctx, plot, kind, with_fit):
+    """An exponential, Weibull or lognormal plot as the page draws it
+    (linPlot): a point per failed row on axes where the distribution is a
+    straight line, and with the fit its line, fitted as the report's code
+    fits it (censored maximum likelihood with scipy)."""
+    title, logx, yexpr, ylab = _LIN[kind]
+    L = _plot_read(ctx)
+    G, multi = _groups_lines(ctx, plot)
+    L += G + [''] + _KM_FN + ['']
+    W, H = plot.get('lin_size') or [420, 300]
+    L += [f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          'xs = []',
+          'for s, name, color in groups:',
+          '    et, sp, se, t, sf = km(s)',
+          '    S = at(s, et, sp)',
+          '    keep = (s["event"].to_numpy() == 1) & (S > 0) & (S < 1)' + (' & (s[T].to_numpy() > 0)' if logx else '') + '   # the failed rows',
+          f'    x = {"np.log(s[T].to_numpy()[keep])" if logx else "s[T].to_numpy()[keep]"}',
+          '    S = S[keep]',
+          f'    ax.scatter(x, {yexpr}, s=18, color=color, label=name)',
+          '    xs += list(x)']
+    if with_fit:
+        L += ['lo = ' + ('min(xs) - 0.1 * (max(xs) - min(xs))' if logx else '0.0'), 'hi = max(xs) + 0.1 * (max(xs) - min(xs))',
+              'for s, name, color in groups:   # the fits: on these axes a straight line',
+              '    t, e = np.repeat(s[T].to_numpy(float), s["n"]), np.repeat(s["event"].to_numpy(), s["n"])',
+              '    if e.sum() == 0' + (' or (t <= 0).any()' if logx or kind == 'exponential' else '') + ':   # no fit: no failures, or a time not above zero',
+              '        continue']
+        if kind == 'exponential':
+            L += ['    mu = np.log(t.sum() / e.sum())   # the exponential MLE: theta is the total time over the failures',
+                  '    ax.plot([lo, hi], [lo / np.exp(mu), hi / np.exp(mu)], color=color, linewidth=1.3, linestyle="--")']
+        else:
+            L.append('    data = stats.CensoredData(uncensored=t[e == 1], right=t[e == 0])   # censored maximum likelihood, as the report\'s code fits it')
+            if kind == 'weibull':
+                L += ['    c, _, scale = stats.weibull_min.fit(data, floc=0)   # beta (the shape), 0, alpha (the scale)', '    mu, sigma = np.log(scale), 1 / c']
+            else:
+                L += ['    sigma, _, scale = stats.lognorm.fit(data, floc=0)   # sigma, 0, exp(mu)', '    mu = np.log(scale)']
+            L.append('    ax.plot([lo, hi], [(lo - mu) / sigma, (hi - mu) / sigma], color=color, linewidth=1.3, linestyle="--")')
+    L += ['ax.set_xlabel("Log(" + T + ")")' if logx else 'ax.set_xlabel(T)', f'ax.set_ylabel({J(ylab)})']
+    if multi:
+        L.append('ax.legend(loc="upper left", frameon=False, fontsize=8)')
+    L += [f'fig.suptitle(T + " {title}", fontsize=10)', 'plt.show()']
+    imports = [PLT, 'from scipy import stats', 'from statsmodels.duration.survfunc import SurvfuncRight']
+    return '\n'.join([code_head(ctx['table_name'], imports)] + keep_lines(ctx['table'], ctx['rows'], ctx['where']) + L)
+
+
 @api('survival.fit_groups')
-def fit_groups(table, time, rows=None, censor=None, censor_code=1, group=None, freq=None, dists=('weibull',), alpha=0.05, table_name='data'):
+def fit_groups(table, time, rows=None, censor=None, censor_code=1, group=None, freq=None, dists=('weibull',), alpha=0.05, where=None, table_name='data'):
     """Survival's Exponential, Weibull and Lognormal fits, per group."""
     r = read(table, time, rows, censor, censor_code, group, freq)
     t, e, f, codes = r['t'], r['event'], r['freq'], r['codes']
@@ -626,7 +879,7 @@ def fit_groups(table, time, rows=None, censor=None, censor_code=1, group=None, f
         out['fits'].append({'dist': key, 'label': label, 'params': rows_p, 'fit': rows_f})
     for n_ in notes:
         warnings.warn(n_)
-    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, group, freq], ['from scipy import stats'])
+    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, group, freq], ['from scipy import stats'], keep_lines(table, rows, where))
     lines += ['# censored maximum likelihood with scipy: the failures as exact values, the censored as right-censored',
               'data = stats.CensoredData(uncensored=t[event == 1], right=t[event == 0])']
     for key in dists:
@@ -679,7 +932,7 @@ def _grids(t):
 
 @api('lifedist.fit')
 def lifedist_fit(table, time, rows=None, censor=None, censor_code=1, freq=None, dists=('weibull', 'lognormal'), alpha=0.05,
-                 times=None, probs=None, table_name='data'):
+                 times=None, probs=None, where=None, plot=None, table_name='data'):
     """Life Distribution: the nonparametric estimate, the chosen
     distributions fitted with censoring, their comparison, and the
     probabilities and quantiles asked for."""
@@ -743,7 +996,8 @@ def lifedist_fit(table, time, rows=None, censor=None, censor_code=1, freq=None, 
             c['weight'] = math.exp(-0.5 * (c['aicc'] - best)) / tot if math.isfinite(c['aicc']) and tot > 0 else None
     out['comparison'] = rtable([col('label', 'Distribution', 'text'), col('k', 'Nparm', 'int'), col('m2ll', '−2LogLikelihood'), col('aicc', 'AICc'),
                                col('weight', 'AICc Weight'), col('bic', 'BIC')], comp)
-    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, freq], ['from scipy import stats, optimize', 'from scipy.special import log_ndtr'])
+    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, freq], ['from scipy import stats, optimize', 'from scipy.special import log_ndtr'],
+                       keep_lines(table, rows, where))
     lines += ['# each distribution: log f for the failures, log S for the censored; the log-time families',
               '# (Weibull, Lognormal, Loglogistic, Frechet, Exponential) are location-scale models for log t',
               'X = np.ones((len(t), 1))   # the location only']
@@ -751,6 +1005,9 @@ def lifedist_fit(table, time, rows=None, censor=None, censor_code=1, freq=None, 
         if key in FAMILIES:
             lines.append(_nll_code(key, 'X'))
     out['code'] = '\n'.join(lines)
+    if plot is not None:
+        ctx = dict(table=table, rows=rows, where=where, table_name=table_name, time=time, censor=censor, code=censor_code, group=None, freq=freq, alpha=alpha)
+        out['plot_code'] = {'prob': _life_prob_plot(ctx, out, plot), 'cdf': {f['dist']: _life_cdf_plot(ctx, out, f, plot) for f in out['fits'] if not f.get('error')}}
     return out
 
 
@@ -776,6 +1033,200 @@ def _nll_code(key, X='X'):
         f'    return -np.sum(np.where(event == 1, {lf} - np.log(s){jac}, {ls}))',
         f'fit = optimize.minimize(nll_{key}, {k0}, method="BFGS"); print("{label}", fit.x, 2 * fit.fun)   # -2 log L',
     ])
+
+
+# ---- Life Distribution's graphs as code ------------------------------------------------
+# The scales of the probability plot (smui-p-survival.js SCALES): the
+# vertical axis is q(F), q the quantile function of the scale's standard
+# distribution; the log-time families have a log time axis.
+_SCALE_CODE = {
+    'nonparametric': ('Nonparametric', False, 'p'), 'weibull': ('Weibull', True, 'np.log(-np.log(1 - p))'),
+    'lognormal': ('Lognormal', True, 'stats.norm.ppf(p)'), 'exponential': ('Exponential', False, '-np.log(1 - p)'),
+    'frechet': ('Fréchet', True, '-np.log(-np.log(p))'), 'loglogistic': ('Loglogistic', True, 'np.log(p / (1 - p))'),
+    'normal': ('Normal', False, 'stats.norm.ppf(p)'), 'sev': ('SEV', False, 'np.log(-np.log(1 - p))'),
+    'logistic': ('Logistic', False, 'np.log(p / (1 - p))'), 'lev': ('LEV', False, '-np.log(-np.log(p))'),
+}
+_BASE_CDF = {'normal': 'stats.norm.cdf(z)', 'logistic': '1 / (1 + np.exp(-z))', 'sev': '-np.expm1(-np.exp(z))', 'lev': 'np.exp(-np.exp(-z))'}
+_PROB_TICKS = [0.0001, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.999, 0.9999]
+
+
+def _life_fit_lines(keys):
+    """The lines that fit each distribution as the report's code does (its
+    negative log-likelihood minimised by BFGS), with the covariance of
+    (location, log scale) from the Hessian, and give its CDF with pointwise
+    Wald limits on z."""
+    L = ['X = np.ones((len(t), 1))   # the location only',
+         'zc = stats.norm.ppf(1 - alpha / 2)', '',
+         'def fitted(nll, x0):',
+         '    """The maximum likelihood estimates and their covariance: the inverse Hessian of -log L."""',
+         '    r = optimize.minimize(nll, x0, method="BFGS")',
+         '    return r.x, np.linalg.inv(np.atleast_2d(approx_hess3(r.x, nll)))',
+         '',
+         'def cdf(p, V, base, logt, x):',
+         '    """F(x) of a fit, with its pointwise limits by the delta method on z = (g(x) - mu)/sigma, g the log for the log-time families."""',
+         '    mu, logs = p[0], (p[1] if len(p) > 1 else 0.0)',
+         '    V = V if V.shape == (2, 2) else np.array([[V[0, 0], 0.0], [0.0, 0.0]])',
+         '    sig = np.exp(logs)',
+         '    x = np.asarray(x, float)',
+         '    with np.errstate(all="ignore"):',
+         '        g = np.where(x > 0, np.log(np.where(x > 0, x, 1.0)), -np.inf) if logt else x',
+         '        u = (g - mu) / sig',
+         '        sd = np.sqrt(np.maximum(V[0, 0] / sig ** 2 + 2 * u * V[0, 1] / sig + u * u * V[1, 1], 0))',
+         '        F, lo, hi = (base(q) for q in (u, u - zc * sd, u + zc * sd))',
+         '    return (tuple(np.where(x > 0, a, 0.0) for a in (F, lo, hi)) if logt else (F, lo, hi))',
+         '']
+    for key in keys:
+        label, base, logt, fixed = FAMILIES[key]
+        L += [_nll_code(key, 'X').split('\nfit = ')[0],
+              f'fits[{J(key)}] = fitted(nll_{key}, np.r_[{"np.log(t)" if logt else "t"}.mean(){"" if fixed is not None else ", 0.0"}]) + (lambda z: {_BASE_CDF[base]}, {logt})   # {label}: (mu{"" if fixed is not None else ", log sigma"}), their covariance, the standard CDF, a log-time family']
+    return L
+
+
+def _life_head(ctx):
+    imports = [PLT, 'from scipy import stats, optimize', 'from scipy.special import log_ndtr', 'from statsmodels.tools.numdiff import approx_hess3',
+               'from statsmodels.duration.survfunc import SurvfuncRight']
+    L = _plot_read(ctx)
+    L += ['t, event = np.repeat(d[T].to_numpy(float), d["n"]), np.repeat(d["event"].to_numpy(), d["n"])   # each row as many times as its count',
+          f'alpha = {ctx["alpha"]!r}']
+    return [code_head(ctx['table_name'], imports)] + keep_lines(ctx['table'], ctx['rows'], ctx['where']), L
+
+
+def _life_prob_plot(ctx, res, plot):
+    """Compare Distributions' probability plot as the page draws it
+    (probPlot): the nonparametric estimate at each failed row on the
+    scale's probability paper, each fitted distribution's CDF, with the
+    pointwise limits of the one whose scale is shown."""
+    scale = plot.get('scale') or 'weibull'
+    label, log_scale, qexpr = _SCALE_CODE.get(scale, _SCALE_CODE['weibull'])
+    shown = [f for f in res['fits'] if not f.get('error')]
+    bands = bool(plot.get('bands', True))
+    show_np = bool(plot.get('showNP', True))
+    W, H = plot.get('prob_size') or [640, 380]
+    head, L = _life_head(ctx)
+    L += ['# the nonparametric estimate: at each failed row, the Kaplan-Meier estimate of the failure probability at the middle of its jump (Meeker and Escobar)',
+          'sf = SurvfuncRight(t, event)',
+          'et, sp = np.asarray(sf.surv_times, float), np.asarray(sf.surv_prob, float)',
+          'tr, er = d[T].to_numpy(float), d["event"].to_numpy()',
+          'j = np.searchsorted(et, tr, side="left")',
+          'before = np.where(j > 0, sp[np.maximum(j - 1, 0)], 1.0)',
+          'after = np.where(j < len(sp), sp[np.minimum(j, len(sp) - 1)], 1.0)',
+          'pt, pp = tr[er > 0], (1 - (before + after) / 2)[er > 0]',
+          'fits = {}']
+    L += _life_fit_lines([f['dist'] for f in shown])
+    L += ['', f'def q(p):   # the {label} scale',
+          '    with np.errstate(all="ignore"):',
+          f'        return {qexpr}',
+          '',
+          'pq = q(pp)',
+          'keep = np.isfinite(pq)' + (' & (pt > 0)' if log_scale else ''),
+          'px, py = pt[keep], pq[keep]']
+    if scale == 'nonparametric':
+        L.append('ylo, yhi = -0.02, 1.02')
+    else:
+        L += ['ylo, yhi = (py.min(), py.max()) if len(py) else (q(0.05), q(0.95))',
+              'pad = 0.15 * (yhi - ylo or 1) + 0.15',
+              'ylo, yhi = max(q(0.0001), ylo - pad), min(q(0.9999), yhi + pad)   # the points, and some room']
+    L += ['tp = px if len(px) else pt' + ('[pt > 0]' if log_scale else '') + '   # the failed rows\' times',
+          'xlo, xhi = tp.min(), tp.max()']
+    if log_scale:
+        L += ['xr = (xlo / 1.6, xhi * 1.6)',
+              'grid = np.geomspace(tr[tr > 0].min() / 5, tr[tr > 0].max() * 5, 181)   # the report\'s grid']
+    else:
+        L += ['xr = (xlo - 0.12 * (xhi - xlo or 1), xhi + 0.12 * (xhi - xlo or 1))',
+              'grid = np.linspace(tr.min() - 0.6 * (tr.max() - tr.min() or abs(tr.max()) + 1), tr.max() + 0.6 * (tr.max() - tr.min() or abs(tr.max()) + 1), 181)   # the report\'s grid']
+    L += ['inside = (grid > 0) & (grid >= xr[0]) & (grid <= xr[1])' if log_scale else 'inside = (grid >= xr[0]) & (grid <= xr[1])',
+          f'colors = {{{", ".join(f"{J(k)}: {J(FIT_COLORS[DISTS.index(k) % len(FIT_COLORS)])}" for k in [f["dist"] for f in shown])}}}   # the page\'s colours for the distributions',
+          f'names = {{{", ".join(f"{J(f["dist"])}: {J(f["label"])}" for f in shown)}}}',
+          f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          'for key, (p, V, base, logt) in fits.items():',
+          '    F, lo, hi = cdf(p, V, base, logt, grid)',
+          '    y = q(F)',
+          '    ok = inside & np.isfinite(y) & (y >= ylo - 1) & (y <= yhi + 1)',
+          '    x = grid[ok]']
+    if bands and scale in [f['dist'] for f in shown]:
+        L += [f'    if key == {J(scale)}:   # Show Confidence Bands: the pointwise limits of the fit whose scale is shown',
+              '        L_, U_ = q(lo[ok]), q(hi[ok])',
+              '        L_, U_ = np.where(np.isfinite(L_), L_, np.nan), np.where(np.isfinite(U_), U_, np.nan)',
+              '        ax.plot(x, L_, color=colors[key], linewidth=0.8, linestyle=":")',
+              '        ax.plot(x, U_, color=colors[key], linewidth=0.8, linestyle=":")',
+              '        ax.fill_between(x, L_, U_, color=colors[key], alpha=0.1, linewidth=0)']
+    L.append('    ax.plot(x, y[ok], color=colors[key], linewidth=1.8, label=names[key])')
+    if show_np:
+        L.append(f'ax.scatter(px, py, s=18, color="{TEXT}", label="Nonparametric", zorder=3)')
+    if scale == 'nonparametric':
+        L.append('ticks = [0, 0.2, 0.4, 0.6, 0.8, 1]')
+    else:
+        L += [f'ticks, last = [], -np.inf   # the probabilities at least a twelfth of the axis apart',
+              f'for p in {_PROB_TICKS!r}:',
+              '    v = q(p)',
+              '    if v < ylo or v > yhi or v - last < (yhi - ylo) / 12:',
+              '        continue',
+              '    ticks.append(p)',
+              '    last = v']
+    L += ['ax.set_yticks([q(p) for p in ticks], [str(p) for p in ticks])', 'ax.set_ylim(ylo, yhi)', 'ax.set_xlim(*xr)']
+    if log_scale:
+        L += ['ax.set_xscale("log")',
+              'e0, e1 = int(np.floor(np.log10(xr[0]))), int(np.ceil(np.log10(xr[1])))   # ticks at 1, 2 and 5 times the powers of ten (the powers alone over many decades)',
+              'xt = [float(f"{m * 10.0 ** e:.6g}") for e in range(e0, e1 + 1) for m in ((1,) if e1 - e0 > 5 else (1, 2, 5)) if xr[0] <= m * 10.0 ** e <= xr[1]]',
+              'ax.set_xticks(xt, [f"{v:g}" for v in xt])',
+              'ax.minorticks_off()',
+              'ax.set_xlim(*xr)']
+    L += ['ax.set_xlabel(T)', 'ax.set_ylabel("Probability")']
+    L.append('ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=8)' if W >= 560 else 'ax.legend(loc="upper left", frameon=False, fontsize=8)')
+    L += [f'fig.suptitle(T + " {label} probability plot", fontsize=10)', 'plt.show()']
+    return '\n'.join(head + L)
+
+
+def _life_cdf_plot(ctx, res, f, plot):
+    """A fit's Distribution Plot (cdfPlot): its CDF with the pointwise
+    limits over the nonparametric estimate of the failure probability."""
+    color = FIT_COLORS[DISTS.index(f['dist']) % len(FIT_COLORS)]
+    W, H = plot.get('cdf_size') or [400, 250]
+    head, L = _life_head(ctx)
+    L += ['sf = SurvfuncRight(t, event)',
+          'et, sp = np.asarray(sf.surv_times, float), np.asarray(sf.surv_prob, float)',
+          'ut = np.unique(t)   # every distinct time',
+          'k = np.searchsorted(et, ut, side="right") - 1',
+          'Fn = 1 - np.where(k >= 0, sp[np.maximum(k, 0)], 1.0)   # the nonparametric estimate of the failure probability',
+          'fits = {}']
+    L += _life_fit_lines([f['dist']])
+    lo = '0.0' if f['logt'] else 'ut.min() - 0.1 * (ut.max() - ut.min() or 1)'
+    L += ['', f'lo, hi = {lo}, ut.max() + 0.1 * (ut.max() - ut.min() or 1)',
+          'tr = d[T].to_numpy(float)',
+          'pad = 0.6 * (tr.max() - tr.min() or abs(tr.max()) + 1)',
+          'grid = np.linspace(tr.min() - pad, tr.max() + pad, 181)   # the report\'s grid',
+          'grid = grid[(grid >= lo) & (grid <= hi)' + (' & (grid > 0)]' if f['logt'] else ']'),
+          f'p, V, base, logt = fits[{J(f["dist"])}]',
+          'F, L_, U_ = cdf(p, V, base, logt, grid)',
+          f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+          f'ax.fill_between(grid, L_, U_, color="{color}", alpha=0.15, linewidth=0)   # the pointwise limits',
+          f'ax.plot(np.r_[min(0.0, ut.min()), ut], np.r_[0.0, Fn], drawstyle="steps-post", color="{TEXT}", linewidth=1.2, label="Nonparametric")',
+          f'ax.plot(grid, F, color="{color}", linewidth=2, label={J(f["label"])})',
+          'ax.set_xlim(lo, hi)', 'ax.set_ylim(-0.02, 1.02)', 'ax.set_xlabel(T)', 'ax.set_ylabel("Probability")',
+          'ax.legend(loc="lower right", frameon=False, fontsize=8)',
+          f'fig.suptitle(T + {J(" " + f["label"] + " distribution")}, fontsize=10)', 'plt.show()']
+    return '\n'.join(head + L)
+
+
+def _ph_plot(ctx, rhs, ties, plot):
+    """Proportional hazards' Baseline Survival: the fit as the report's code
+    makes it, then Breslow's estimate at the means of the design columns."""
+    W, H = plot.get('size') or [460, 300]
+    lines = _read_code(ctx['table'], ctx['table_name'], ctx['time'], ctx['censor'], ctx['code'], ctx['freq'], ctx['cols'],
+                       [PLT, 'from statsmodels.duration.hazard_regression import PHReg'], keep_lines(ctx['table'], ctx['rows'], ctx['where']))
+    lines[-1] = lines[-1].replace('t = ', 'd["_time"] = ')
+    lines += [f'm = PHReg.from_formula({J("_time ~ " + rhs)}, d, status=event, ties={ties!r})',
+              'r = m.fit()',
+              'X, t, e = m.exog, m.endog, m.status   # the design columns (effect coded), a row for each count',
+              'lp = (X - X.mean(axis=0)) @ r.params   # each row\'s linear predictor against a subject at the means of the design columns',
+              'ut = np.unique(t[e > 0])   # the failure times',
+              '# Breslow\'s estimate of the cumulative hazard (statsmodels\' baseline_cumulative_hazard holds the value just before each failure time)',
+              'H = np.cumsum([((t == u) & (e > 0)).sum() / np.exp(lp[t >= u]).sum() for u in ut])',
+              f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
+              f'ax.plot(np.r_[min(0.0, t.min()), ut, t.max()], np.r_[1.0, np.exp(-H), np.exp(-H[-1])], drawstyle="steps-post", color="{BASE}", linewidth=1.8)',
+              'ax.set_ylim(-0.02, 1.02)', f'ax.set_xlabel({J(ctx["time"])})', 'ax.set_ylabel("Surviving")',
+              'fig.suptitle("Baseline survival", fontsize=10)', 'plt.show()']
+    return '\n'.join(lines)
 
 
 # ---- Fit Parametric Survival ------------------------------------------------------------
@@ -807,7 +1258,7 @@ def _events_of(table_id, d, censor, censor_code):
 
 @api('parametric.fit')
 def parametric_fit(table, time, effects=(), rows=None, censor=None, censor_code=1, freq=None, dist='weibull', alpha=0.05,
-                   corr=False, table_name='data'):
+                   corr=False, where=None, table_name='data'):
     """Fit Parametric Survival: an accelerated failure time regression, the
     location mu = x'beta of a censored location-scale model."""
     if dist not in FAMILIES:
@@ -880,7 +1331,8 @@ def parametric_fit(table, time, effects=(), rows=None, censor=None, censor_code=
         labels = names + ([] if fixed is not None else ['log σ'])
         out['corr'] = rtable([col('term', 'Term', 'text')] + [col(f'c{j}', nm) for j, nm in enumerate(labels)],
                             [{'term': nm, **{f'c{j}': R[i, j] for j in range(len(labels))}} for i, nm in enumerate(labels)])
-    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, freq] + list(effects), ['import patsy', 'from scipy import stats, optimize', 'from scipy.special import log_ndtr'])
+    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor, freq] + list(effects), ['import patsy', 'from scipy import stats, optimize', 'from scipy.special import log_ndtr'],
+                       keep_lines(table, rows, where))
     rhs = models.code_formula(d).split('~', 1)[1].strip() if '~' in models.code_formula(d) else '1'
     lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(rhs)}, d))   # the design, with an intercept; effect coding for nominal effects')
     lines.append(_nll_code(dist, 'X'))
@@ -934,7 +1386,7 @@ def _breslow(t, ev, lp):
 
 
 @api('phreg.fit')
-def phreg_fit(table, time, effects=(), rows=None, censor=None, censor_code=1, freq=None, ties='breslow', alpha=0.05, table_name='data'):
+def phreg_fit(table, time, effects=(), rows=None, censor=None, censor_code=1, freq=None, ties='breslow', alpha=0.05, where=None, plot=None, table_name='data'):
     """Fit Proportional Hazards: Cox regression with statsmodels' PHReg."""
     effects = list(effects)
     if not effects:
@@ -1043,9 +1495,13 @@ def phreg_fit(table, time, effects=(), rows=None, censor=None, censor_code=1, fr
            'summary': {'n': int(len(t)), 'events': int(ev.sum()), 'censored': int(len(t) - ev.sum())},
            'baseline': {'time': np.r_[min(0.0, float(t.min())), ut, float(t.max())], 'surv': np.r_[1.0, np.exp(-H), np.exp(-H[-1])]},
            'scores': {'rows': idx0, 'risk': risk0, 'lp': X0 @ b}}
-    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor] + effects, ['from statsmodels.duration.hazard_regression import PHReg'])
+    lines = _read_code(table, table_name, time, censor, censor_code, freq, [time, censor] + effects, ['from statsmodels.duration.hazard_regression import PHReg'],
+                       keep_lines(table, rows, where))
     lines[-1] = lines[-1].replace('t = ', 'd["_time"] = ')
     rhs = models.code_formula(d).split('~', 1)[1].strip()
+    if plot is not None:
+        ctx = dict(table=table, rows=rows, where=where, table_name=table_name, time=time, censor=censor, code=censor_code, freq=freq, cols=[time, censor] + effects)
+        out['plot_code'] = _ph_plot(ctx, rhs, ties, plot)
     lines += [f'm = PHReg.from_formula({json.dumps("_time ~ " + rhs)}, d, status=event, ties={ties!r})',
               'r = m.fit()',
               'print(r.summary())   # coefficients, standard errors, hazard ratios exp(coef)',

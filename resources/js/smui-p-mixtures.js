@@ -53,6 +53,109 @@
   /* A wide table in its own sideways scroller (a phone scrolls it, not the report). */
   const wide = (node) => el('div', { class: 'sm-mix-scroll' }, node);
 
+  /* ---- the graphs as matplotlib code --------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table, as the notebook runs it: the fit's own lines from the backend
+     (f.fit_head: the report's rows, the fit, each row's cluster, the means and
+     covariances in the columns' units; res.pca_lines for the biplot), then the
+     drawing with the page's choices (the columns shown, the ellipses' coverage,
+     the bins), the light theme's colours and the graph's size at 100 pixels an
+     inch. The Cluster Criteria graph's code is the backend's whole
+     (res.criteria_code). The profiler is interactive and has no code. */
+  const J = JSON.stringify;
+  const pyList = (a) => `[${a.map((v) => J(v)).join(', ')}]`;   // a list as Python writes it
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const inches = (px) => String(Math.round(px) / 100);
+  const area = (px) => Math.round(100 * (px * 0.72) ** 2) / 100;   // a marker's diameter in pixels as matplotlib's area in points²
+  const INK = '#352921', MUTED_INK = '#786b5d', ZERO = '#e0d7ce';
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-mix-plotcode' }, graph, code) : graph);
+  const paletteLines = (f, out) => [`palette = ${pyList(Array.from({ length: f.k + (out ? 1 : 0) }, (_, c) => colorOf(c, f.k, out)))}   # each cluster's colour${out ? ' (grey: the outlier cluster, last)' : ''}`,
+    'color = [palette[c] for c in cluster]   # each row in its most likely cluster\'s colour'];
+  const ellipseLines = (level) => [`level = ${pyNum(level)}   # Ellipse Coverage`,
+    'r = np.sqrt(-2 * np.log(1 - level))   # the normal ellipse that holds this share of its cluster',
+    'ang = 2 * np.pi * np.arange(73) / 72', '', '',
+    'def ellipse(mx, my, sxx, sxy, syy):',
+    '    """The points of the ellipse about (mx, my) of a 2 x 2 covariance [[sxx, sxy], [sxy, syy]], by its Cholesky factor."""',
+    '    a = np.sqrt(max(sxx, 0))', '    b = sxy / a if a > 0 else 0', '    c = np.sqrt(max(syy - b * b, 0))',
+    '    return mx + r * a * np.cos(ang), my + r * (b * np.cos(ang) + c * np.sin(ang))', '', ''];
+
+  function splomCode(S, f, { use, level, showEll, W, H, msize, title }) {
+    const out = S.res.outlier, q = use.length;
+    const L = [f.fit_head, '', ...paletteLines(f, out),
+      `shown = ${pyList(use.map((c) => S.cols.indexOf(c)))}   # the columns shown (of X)${q < S.cols.length ? `: the first ${q}` : ''}`, `names = ${pyList(use.map((c) => c.name))}`];
+    if (showEll) L.push(...ellipseLines(level));
+    if (q === 2) L.push(`fig, ax = plt.subplots(figsize=(${inches(W)}, ${inches(H)}), layout="constrained")`, 'cells = [(ax, 1, 0)]');
+    else {
+      L.push(`g = ${q - 1}`, `fig, axs = plt.subplots(g, g, figsize=(${inches(W)}, ${inches(H)}), sharex="col", sharey="row", squeeze=False, layout="constrained")`,
+        'cells = []', 'for i in range(1, g + 1):   # below the diagonal: each column against each one before it', '    for j in range(g):',
+        '        if j < i:', '            cells.append((axs[i - 1][j], i, j))', '        else:', '            axs[i - 1][j].set_axis_off()');
+    }
+    L.push('for ax, i, j in cells:', '    xj, yi = shown[j], shown[i]', `    ax.scatter(X[:, xj], X[:, yi], s=${area(msize)}, color=color, linewidths=0)`);
+    if (showEll) {
+      L.push(`    for k_ in range(${f.k}):   # each normal cluster's ellipse, from its mean and covariance for the pair`,
+        '        ex, ey = ellipse(means[k_, xj], means[k_, yi], covs[k_, xj, xj], covs[k_, xj, yi], covs[k_, yi, yi])',
+        '        ax.plot(ex, ey, color=palette[k_], linewidth=1)');
+    }
+    if (q === 2) L.push('    ax.set_xlabel(names[j])', '    ax.set_ylabel(names[i])', `ax.set_title(${J(title)})`);
+    else L.push('    if i == g:', '        ax.set_xlabel(names[j])', '    if j == 0:', '        ax.set_ylabel(names[i])', `fig.suptitle(${J(title)}, fontsize=10)`);
+    L.push('plt.show()');
+    return L.join('\n');
+  }
+
+  function densityCode(S, f, { col, bins, nb, W }) {
+    const out = S.res.outlier;
+    const L = [f.fit_head, '', paletteLines(f, out)[0], 'x = X[:, 0]',
+      `start, size, nb = ${pyNum(bins.start)}, ${pyNum(bins.size)}, ${nb}   # the page's bins`,
+      'b = np.clip(np.floor((x - start) / size + 1e-9), 0, nb - 1).astype(int)   # each row\'s bin, as the page counts',
+      `counts = np.bincount(b, weights=${S.base.freq ? 'f' : 'None'}, minlength=nb)${S.base.freq ? '   # each row counted its Freq times' : ''}`,
+      `grid = start + (${pyNum(bins.end)} - start) * np.arange(201) / 200   # the curves' points, over the bins`,
+      'scale = N * size   # the densities scaled to counts',
+      `fig, ax = plt.subplots(figsize=(${inches(W)}, 3.2), layout="constrained")`,
+      `bars = ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=size, color="${SM.report.BAR}", edgecolor="#fcf7f2", linewidth=0.58, label=${J(col.name)})`,
+      'total, curves = np.zeros(len(grid)), []',
+      `for k_ in range(${f.k}):   # each normal cluster: its proportion times its normal density`,
+      '    sd = np.sqrt(covs[k_, 0, 0])',
+      '    y = w[k_] * np.exp(-0.5 * ((grid - means[k_, 0]) / sd) ** 2) / (sd * np.sqrt(2 * np.pi)) * scale',
+      '    total += y',
+      '    curves += ax.plot(grid, y, color=palette[k_], linewidth=1.15, label=f"Cluster {k_ + 1}")'];
+    if (out) {
+      L.push('a, z = x.min(), x.max()   # the outlier cluster: uniform over the rows\' range', `yy = w[${f.k}] * box_density * scale`,
+        'total += np.where((grid >= a) & (grid <= z), yy, 0)', `curves += ax.plot([a, a, z, z], [0, yy, yy, 0], color=palette[${f.k}], linewidth=1, linestyle=":", label="Outlier")`);
+    }
+    L.push(`curves += ax.plot(grid, total, color="${INK}", linewidth=0.86, linestyle="--", label="Mixture")   # their sum`,
+      'ax.set_ylim(bottom=0)', `ax.set_xlabel(${J(col.name)})`, 'ax.set_ylabel("Count")',
+      'ax.legend(handles=[bars, *curves], frameon=False, fontsize=7.5)', `ax.set_title(${J(`${col.name} with the mixture, ${f.k} clusters`)})`, 'plt.show()');
+    return L.join('\n');
+  }
+
+  function biplotCode(S, f, { level, showEll, rays, W, msize, legendRight, title }) {
+    const out = S.res.outlier;
+    const L = [f.fit_head, S.res.pca_lines, '', ...paletteLines(f, out)];
+    if (showEll) L.push(...ellipseLines(level));
+    L.push(`fig, ax = plt.subplots(figsize=(${inches(W)}, 4.4), layout="constrained")`,
+      `ax.axhline(0, color="${ZERO}", linewidth=0.72, zorder=0)`, `ax.axvline(0, color="${ZERO}", linewidth=0.72, zorder=0)`,
+      `ax.scatter(scores[:, 0], scores[:, 1], s=${area(msize)}, color=color, linewidths=0)`,
+      `for k_ in range(${f.k}):`);
+    if (showEll) {
+      L.push('    ex, ey = ellipse(pc_means[k_, 0], pc_means[k_, 1], pc_covs[k_, 0, 0], pc_covs[k_, 0, 1], pc_covs[k_, 1, 1])',
+        '    ax.fill(ex, ey, color=palette[k_], alpha=31 / 255, linewidth=0)', '    ax.plot(ex, ey, color=palette[k_], linewidth=0.86)');
+    }
+    L.push('    ax.scatter([pc_means[k_, 0]], [pc_means[k_, 1]], s=(0.72 * (11 + 20 * np.sqrt(w[k_]))) ** 2, facecolors="none", edgecolors=palette[k_], linewidths=1.44,',
+      '               label=f"Cluster {k_ + 1}")   # its centre: the circle grows with its proportion',
+      `    ax.text(pc_means[k_, 0], pc_means[k_, 1], str(k_ + 1), ha="center", va="center", fontsize=7.2, color="${INK}")`);
+    if (out) L.push(`ax.scatter([], [], s=${area(8)}, color=palette[${f.k}], label="Outlier")`);
+    if (rays) {
+      L.push('smax, lmax = np.abs(scores).max(), np.abs(E2).max()', 'sc = 0.8 * smax / lmax if lmax > 0 else 1   # the longest ray reaches 80% of the farthest row',
+        `for j, name in enumerate(${pyList(S.cols.map((c) => c.name))}):   # a ray for each column: its loadings`,
+        `    ax.plot([0, sc * E2[j, 0]], [0, sc * E2[j, 1]], color="${MUTED_INK}", linewidth=0.72)`,
+        `    ax.text(sc * E2[j, 0], sc * E2[j, 1], name, ha="center", va="center", fontsize=7.2, color="${INK}")`);
+    }
+    L.push('tot = np.maximum(evals, 0).sum()', 'ax.set_xlabel(f"Prin1 ({100 * evals[0] / tot:.1f}%)")', 'ax.set_ylabel(f"Prin2 ({100 * evals[1] / tot:.1f}%)")',
+      legendRight ? 'ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1), frameon=False, fontsize=7.5)' : 'fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=7.5)',
+      `ax.set_title(${J(title)})`, 'plt.show()');
+    return L.join('\n');
+  }
+
   function rowLabels(ctx, rows) {
     const lab = ctx.table ? ctx.table.labelColumn() : null;
     return rows.map((r) => (lab && !SM.table.isMissing(lab.values[r]) ? `${T(SM.grid.cellText(lab, lab.values[r]))} (row ${r + 1})` : `row ${r + 1}`));
@@ -104,7 +207,7 @@
       ctx.report.noteEl.textContent = text;
     });
     let res;
-    try { res = await ctx.call('mixtures.fit', base); } finally { off(); status.remove(); }
+    try { res = await ctx.call('mixtures.fit', { ...base, where: ctx.where || [] }); } finally { off(); status.remove(); }
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
     const S = { res, cols, base, open: null };
     const ok = res.fits.filter((f) => !f.error);
@@ -226,11 +329,11 @@
     if (ok.length >= 3) {
       const tc = SM.util.themeColors();
       const ks = ok.map((f) => f.k);
-      ob.add(ctx.plot([
+      ob.add(withCode(ctx.plot([
         { type: 'scatter', mode: 'lines+markers', x: ks, y: ok.map((f) => f.bic), name: 'BIC', line: { color: SM.report.BASE, width: 1.6 }, marker: { size: 6 }, hovertemplate: '%{x} clusters: BIC %{y:.1f}<extra></extra>' },
         { type: 'scatter', mode: 'lines+markers', x: ks, y: ok.map((f) => f.aicc), name: 'AICc', line: { color: tc.dark ? '#e8904f' : '#b0413e', width: 1.4, dash: 'dot' }, marker: { size: 5, symbol: 'square' }, hovertemplate: '%{x} clusters: AICc %{y:.1f}<extra></extra>' },
       ], { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, xaxis: { title: { text: 'NCluster' }, dtick: 1 }, yaxis: { title: { text: 'Criterion' } }, margin: { l: 60, r: 12, t: 26, b: 42 } },
-      { width: Math.min(460, roomOf(ctx)), height: 250, title: 'Cluster criteria', select: false }));
+      { width: Math.min(460, roomOf(ctx)), height: 250, title: 'Cluster criteria', select: false }), ctx.code(res.criteria_code)));
     }
     ob.add(ctx.note(`-2LogLikelihood of the fitted mixture in the columns' units; AICc = −2 log L + 2q + 2q(q + 1)/(N − q − 1) and BIC = −2 log L + q ln N, q the number of parameters (means, covariances${res.outlier ? ', the proportions and the outlier cluster\'s' : ' and proportions'}), N ${fmt(res.n)}. Smaller is better: the best by ${crit} is marked. Click a line to open its report.`),
       ctx.code(res.code));
@@ -384,7 +487,8 @@
         }
       }
     }
-    sub.add(ctx.row(ctx.plot(traces, layout, { width: W, height: H, title: `${title}, ${f.k} clusters`, rowColors: false })),
+    sub.add(ctx.row(withCode(ctx.plot(traces, layout, { width: W, height: H, title: `${title}, ${f.k} clusters`, rowColors: false }),
+      ctx.code(splomCode(S, f, { use, level, showEll, W, H, msize, title: `${title}, ${f.k} clusters` })))),
       ctx.note(`Each row in the colour of its most likely cluster${out ? ' (grey: the outlier cluster)' : ''}${showEll ? `; each cluster's ${fmt(100 * level)}% normal ellipse, from its fitted mean and covariance` : ''}.${p > MAX_SPLOM ? ` The first ${MAX_SPLOM} of the ${p} columns.` : ''} Drag over points to select rows.`));
   }
 
@@ -419,8 +523,9 @@
       traces.push({ type: 'scatter', mode: 'lines', x: [a, a, z, z], y: [0, yy, yy, 0], line: { color: colorOf(f.k, f.k, true), width: 1.4, dash: 'dot' }, hoverinfo: 'skip', name: 'Outlier' });
     }
     traces.push({ type: 'scatter', mode: 'lines', x: xs, y: tot, line: { color: tc.text, width: 1.2, dash: 'dash' }, hovertemplate: 'mixture: %{y:.1f}<extra></extra>', name: 'Mixture' });
-    sub.add(ctx.row(ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, xaxis: { title: { text: T(col.name) } }, yaxis: { title: { text: 'Count' }, rangemode: 'tozero' }, bargap: 0.02, margin: { l: 56, r: 12, t: 28, b: 42 } },
-      { width: Math.min(560, roomOf(ctx)), height: 320, title: `${col.name} with the mixture, ${f.k} clusters` })),
+    const W = Math.min(560, roomOf(ctx));
+    sub.add(ctx.row(withCode(ctx.plot(traces, { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, xaxis: { title: { text: T(col.name) } }, yaxis: { title: { text: 'Count' }, rangemode: 'tozero' }, bargap: 0.02, margin: { l: 56, r: 12, t: 28, b: 42 } },
+      { width: W, height: 320, title: `${col.name} with the mixture, ${f.k} clusters` }), ctx.code(densityCode(S, f, { col, bins: b, nb, W })))),
     ctx.note('The histogram of the rows (click a bar to select them) with each cluster\'s normal density times its proportion, and their sum, scaled to counts.'));
   }
 
@@ -463,8 +568,10 @@
     const ev = P.eigenvalues;
     const tot = ev.reduce((acc, v) => acc + Math.max(v, 0), 0) || 1;
     const room = roomOf(ctx);
-    sub.add(ctx.row(ctx.plot(traces, { showlegend: true, legend: room < 520 ? { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' } : { orientation: 'v', x: 1.02, y: 1 }, xaxis: { title: { text: `Prin1 (${(100 * ev[0] / tot).toFixed(1)}%)` }, zeroline: true }, yaxis: { title: { text: `Prin2 (${(100 * ev[1] / tot).toFixed(1)}%)` }, zeroline: true }, margin: { l: 56, r: room < 520 ? 12 : 110, t: room < 520 ? 30 : 8, b: 42 } },
-      { width: Math.min(600, room), height: 440, title: `Biplot, ${f.k} clusters`, rowColors: false })),
+    const W = Math.min(600, room);
+    sub.add(ctx.row(withCode(ctx.plot(traces, { showlegend: true, legend: room < 520 ? { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' } : { orientation: 'v', x: 1.02, y: 1 }, xaxis: { title: { text: `Prin1 (${(100 * ev[0] / tot).toFixed(1)}%)` }, zeroline: true }, yaxis: { title: { text: `Prin2 (${(100 * ev[1] / tot).toFixed(1)}%)` }, zeroline: true }, margin: { l: 56, r: room < 520 ? 12 : 110, t: room < 520 ? 30 : 8, b: 42 } },
+      { width: W, height: 440, title: `Biplot, ${f.k} clusters`, rowColors: false }),
+    ctx.code(biplotCode(S, f, { level, showEll: ctx.opt('ellipses', true, sc), rays: ctx.opt('rays', true, sc), W, msize: n > 2000 ? 3.5 : 5, legendRight: room >= 520, title: `Biplot, ${f.k} clusters` })))),
     ctx.note(`The rows on the first two principal components of the ${res.standardize ? 'standardized columns (their correlations)' : 'columns (their covariances)'}, in the colour of their most likely cluster; each cluster's ${fmt(100 * level)}% normal ellipse is its fitted mean and covariance carried onto the same two components, and its centre's circle grows with its proportion. The rays are the columns' loadings.`));
   }
 

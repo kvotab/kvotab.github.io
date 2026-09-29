@@ -31,12 +31,19 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import math
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, maxdiff
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -276,6 +283,107 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+# A smaller table for the graphs' code (every block fits every method again): the same columns, and a count.
+MAKE_CHARTS = '''
+((n) => {
+  const r = SM.util.rng('model screening charts');
+  const c = { y: [], cls: [], three: [], x1: [], x2: [], x3: [], g: [], count: [] };
+  for (let i = 0; i < n; i++) {
+    const x1 = r.normal(), x2 = r.u() * 4 - 2, x3 = r.normal(), g = ['a', 'b', 'c'][Math.floor(r.u() * 3)];
+    const eta = x1 - 0.8 * x2 + 0.6 * x1 * x3 + (g === 'b' ? 0.7 : 0);
+    c.y.push(eta + r.normal());
+    c.cls.push(eta + Math.log(1 / r.u() - 1) > 0 ? 'yes' : 'no');
+    const e3 = eta + Math.log(1 / r.u() - 1);
+    c.three.push(e3 < -1 ? 'lo' : e3 < 1 ? 'mid' : 'hi');
+    c.x1.push(x1); c.x2.push(x2); c.x3.push(x3); c.g.push(g);
+    const mu = Math.exp(0.3 + 0.4 * x1), u = r.u();   // a Poisson count of mean mu, by inversion
+    let k = 0, q = Math.exp(-mu), sum = q;
+    while (u > sum && k < 100) { k += 1; q *= mu / k; sum += q; }
+    c.count.push(k);
+  }
+  const cols = Object.entries(c).map(([name, values]) => ({ name, values, dataType: typeof values[0] === 'string' ? 'character' : 'numeric',
+    modelingType: name === 'three' ? 'ordinal' : undefined, valueOrder: name === 'three' ? ['lo', 'mid', 'hi'] : undefined }));
+  SM.app.addTable(new SM.Table({ name: 'ScreenCharts', source: 'simulated', columns: cols }));
+  return SM.app.current.nrows;
+})
+'''
+
+# Fit Model's Generalized Regression on the charts' table: its effects, one per X.
+OPEN_GENREG = '''
+(async (yname, xs, options) => {
+  const t = SM.app.tables.find((q) => q.name === 'ScreenCharts');
+  const effects = xs.map((n) => ({ cols: [t.col(n).id], names: [n], nest: [], nestNames: [], random: false }));
+  const rep = SM.app.openReport(SM.platforms.get('fitmodel'), { roles: { y: [t.col(yname).id], weight: [], freq: [], by: [] }, effects, options }, t);
+  await new Promise((res) => rep.on('done', res));
+  return { errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent.slice(0, 300)) };
+})
+'''
+
+
+def screening_compare(lab, g, F):
+    """The comparisons' graphs (ROC and lift curves and Actual by predicted are check_shared's)."""
+    t = g['label']
+    ax = F['axes'][0]
+    if t == 'Misclassification by threshold':
+        curves = [tr for tr in g['traces'] if tr.get('mode') == 'lines']
+        got = [q for q in ax['lines'] if not q['label'].startswith('_')]
+        check(f'{lab}: a curve per method, named and coloured as the page\'s', [(q['label'], q['color'][:7]) for q in got], [(tr['name'], tr['color']) for tr in curves])
+        check.near(f'{lab}: each method\'s misclassification rate at every threshold', max((maxdiff(q['y'], tr['y']) + maxdiff(q['x'], tr['x']) for q, tr in zip(got, curves)), default=1.0), 0, 1e-12)
+        check(f'{lab}: the threshold dashed, the legend', (any(q['x'] == [g['shapes'][0]['x0']] * 2 and q['ls'] == '--' for q in ax['lines']), F['legend']), (True, [tr['name'] for tr in curves]))
+        UP.check_titles(check, lab, g, F)
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every comparison's graph of Model Screening: its block under it, run in the page (every method fitted
+    again), its figure the graph's; and Fit Model's Generalized Regression's Actual by Predicted Plot, whose
+    block smui-predict.js makes from the code of its call."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    if not await page.ev("!!SM.app.tables.find((t) => t.name === 'ScreenCharts')"):
+        check('charts: the table for the graphs', await page.ev(f'({MAKE_CHARTS})(240)'), 240)
+    tbl = "SM.app.tables.find((t) => t.name === 'ScreenCharts')"
+    await page.ev(f'SM.app.showTable({tbl}.id)')
+    last = 'SM.app.reports.at(-1)'
+    xs = ['x1', 'x2', 'x3', 'g']
+    specs = [
+        ('cls, a validation portion, ROC, lift and Decision Threshold', {'y': ['cls'], 'x': xs}, {'portion': 0.3, 'seed': '5', 'methods': ['tree', 'knn', 'linear', 'nb'], 'roc': True, 'lift': True, 'threshold': True, 'cut': 0.35}),
+        ('three, 3-fold crossvalidation, other levels', {'y': ['three'], 'x': xs}, {'kfold': True, 'folds': 3, 'repeats': 1, 'seed': '9', 'methods': ['tree', 'knn', 'linear'], 'roc': True, 'lift': True, 'rocLevel': 2, 'liftLevel': 0}),
+        ('y, a validation portion, Actual by Predicted', {'y': ['y'], 'x': xs}, {'portion': 0.25, 'seed': '3', 'methods': ['tree', 'knn', 'linear', 'lasso'], 'abp': True}),
+        ('y, 3-fold crossvalidation, Actual by Predicted of the out-of-fold predictions', {'y': ['y'], 'x': xs}, {'kfold': True, 'folds': 3, 'seed': '3', 'methods': ['tree', 'linear'], 'abp': True, 'abpSet': 'Crossvalidation'}),
+    ]
+    total = 0
+    for label, roles, opts in specs:
+        r = await page.ev(open_report_js('screening', roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, screening_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    check('charts: the blocks ran and drew the page\'s graphs', total, 5 + 4 + 4 + 2)
+    # Fit Model's Generalized Regression: the Actual by Predicted Plot (smui-predict.js), its block from the call's code
+    for label, yname, options, sets in (
+            ('Generalized Regression, the lasso, a holdback', 'y', {'personality': 'genreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
+            ('Generalized Regression, Poisson (the log link), AICc', 'count', {'personality': 'genreg', 'dist': 'poisson', 'gr:method': 'lasso', 'gr:diag': True}, ['Training'])):
+        r = await page.ev(f'({OPEN_GENREG})({json.dumps(yname)}, {json.dumps(xs)}, {json.dumps(options)})', timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        gs = [g for g in await page.ev(f'__pm.graphs({last})', timeout=600) if g['label'].startswith('Actual by predicted')]
+        check(f'charts: {label}: the Actual by Predicted Plot, a graph per set, each with its block, ending in plt.show()',
+              [(g['label'], bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()') for g in gs], [(f'Actual by predicted {s_}', True) for s_ in sets])
+        for g in gs:
+            if not g['code']:
+                continue
+            lab = f'charts: {label}: {g["label"]}'
+            F, err = await UP.run_graph(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if F:
+                check(f'{lab}: one figure', len(F), 1)
+                check(f'{lab}: a graph check_shared knows', UP.check_shared(check, lab, g, F[0]), True)
+        await page.ev(f'SM.app.closeReport({last})')
+    await page.ev("(() => { const t = SM.app.tables.find((q) => q.name === 'Screen'); if (t) SM.app.showTable(t.id); })()")
 
 
 async def main():
@@ -603,6 +711,9 @@ async def main():
     check('a project: its own table, the By column found again', (r['newTable'], r['by']), (True, ['g']))
     check('... the options kept, the same Summary, no errors', (r['opts'], r['same'], r['heads'], r['errors']), ([True, 'linear', ['tree', 'linear', 'nb']], True, 6, 0))
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -658,5 +769,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

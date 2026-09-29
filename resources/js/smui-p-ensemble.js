@@ -224,7 +224,8 @@
     ctx.ens = null;
     const base = payloadOf(ctx, kind);
     if (!base.y || !base.x.length) { ctx.container.append(ctx.warn('Choose a Y, Response and at least one X, Factor (Model Dialog in the red triangle).')); return; }
-    const r = await withProgress(ctx, 'ensemble.fit', base, kind, K.label, K.what);
+    // the fit, with the page's choice the graphs' code draws with (the statistic Cumulative Validation shows)
+    const r = await withProgress(ctx, 'ensemble.fit', { ...base, plot: { stat: ctx.opt('cumStat', null) } }, kind, K.label, K.what);
     ctx.ens = { r, base, kind };
     const box = ctx.container;
     for (const t of r.notes || []) box.append(ctx.note(t));
@@ -320,7 +321,8 @@
       words.push(c.stopped ? `: layer ${c.grown} did not improve the validation ${STAT_LABEL[keys[0]]}, so the fit stopped there and kept the layers before it` : '');
     }
     const tail = valid ? '' : ` JMP shows this report only with validation rows; here are the training${K.id === 'forest' ? ' and out-of-bag' : ''} curves.`;
-    ob.add(ctx.row(ctx.plot(traces, layout, { width: W(540), height: 310, title: `Cumulative Validation of ${K.label}`, select: false })), ctx.note(`${words.join('')}.${tail}`));
+    const pc = r.fit.plots || {};
+    ob.add(ctx.row(SM.predict.plotWithCode(ctx, traces, layout, { width: W(540), height: 310, title: `Cumulative Validation of ${K.label}`, select: false }, pc.head_code, pc.cumulative)), ctx.note(`${words.join('')}.${tail}`));
     const det = ctx.outline('Cumulative Details', { parent: ob, key: 'cumdetails', closed: true });
     det.add(wide(ctx.rt(detailsTable(r, K), { key: 'cumdetails', sortable: false, maxRows: 300 })));
   }
@@ -364,9 +366,9 @@
     const rows = c.rows;
     const ob = ctx.outline('Column Contributions', { key: 'contrib', info: 'p:ensemble:contrib' });
     const tbl = ctx.rt({ columns: [{ key: 'column', label: 'Term', fmt: 'text' }, { key: 'splits', label: 'Number of Splits', fmt: 'int' }, { key: 'value', label: c.label }, { key: 'portion', label: 'Portion', digits: 4 }], rows }, { key: 'contrib' });
-    const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: rows.map((x) => T(x.column)), x: rows.map((x) => x.portion), marker: { color: SM.report.BAR }, hovertemplate: '%{y}: %{x:.4f}<extra></extra>' }],
+    const bars = SM.predict.plotWithCode(ctx, [{ type: 'bar', orientation: 'h', y: rows.map((x) => T(x.column)), x: rows.map((x) => x.portion), marker: { color: SM.report.BAR }, hovertemplate: '%{y}: %{x:.4f}<extra></extra>' }],
       { margin: { l: 110, r: 12, t: 6, b: 34 }, xaxis: { title: { text: 'Portion' }, range: [0, 1] }, yaxis: { autorange: 'reversed', type: 'category' } },
-      { width: W(340), height: Math.max(120, 24 * rows.length + 50), title: 'Column Contributions', select: false });
+      { width: W(340), height: Math.max(120, 24 * rows.length + 50), title: 'Column Contributions', select: false }, (r.fit.plots || {}).head_code, c.plot_code);
     const what = K.id === 'forest' ? `the kept trees (as they were cut back)${r.response === 'categorical' ? '; G² is 2 × the change in entropy (natural log) of the in-bag counts' : '; SS is the fall in the in-bag sum of squares'}`
       : `every layer; SS is the fall in the sum of squares of the residuals the layer fits${r.response === 'categorical' ? ' (JMP reports G² for a categorical response)' : ''}`;
     ob.add(ctx.row(wide(tbl), bars), ctx.note(`The splits on each column over ${what}. A categorical column's levels are its 0/1 columns added together.`));
@@ -376,7 +378,7 @@
   async function permutationOutline(ctx, base, r, K) {
     const res = await withProgress(ctx, 'ensemble.permutation', { ...base, repeats: ctx.opt('permRepeats', 5) }, 'permutation', 'Permutation Importance', 'shuffles');
     const ob = SM.predict.contributions(ctx, ctx.container, res.contributions, {
-      title: 'Permutation Importance', key: 'permutation',
+      title: 'Permutation Importance', key: 'permutation', head: (r.fit.plots || {}).head_code,
       note: `The fall in the ${res.set.toLowerCase()} rows' ${res.contributions.label.replace(/^Decrease in /, '')} (${fmt(res.base, { sig: 5 })} as fitted) when one column's values are shuffled over those rows, the model left as it is: the mean over ${res.repeats} shuffles, seeded by the report's seed. A categorical column's 0/1 columns move together. Not in JMP (its profiler has Assess Variable Importance); scikit-learn's permutation_importance does the same one column of X at a time.`,
     });
     scrollTables(ob);

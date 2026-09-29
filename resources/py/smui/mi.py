@@ -560,7 +560,36 @@ def _completer(info, used, d, xcols, mean, sd):
 # ---- the code shown -------------------------------------------------------------------------------------
 
 def _code(table, table_name, rows, used, info, d, A, method, m, burnin, skip, seed, alpha):
-    lines = [code_head(table_name, ['from statsmodels.imputation.mice import MICEData, MICE' if method == 'mice'
+    lines = _prep_lines(table, table_name, rows, used, info, d, method, seed)
+    if A:
+        lines += _model_lines(A, info, used, method, m, burnin, skip)
+        lines.append(f'print(res.summary(alpha={alpha!r}))')
+        lines.append(_cc_code(A, info, alpha))
+    elif method == 'mice':
+        lines.append(f'imp.update_all({burnin})   # the burn-in')
+        lines.append('imputations = []')
+        lines.append(f'for j in range({m}):')
+        lines.append(f'    imp.update_all({skip + 1})   # the cycles between imputations, as MICE.fit spaces them (n_skip + 1)')
+        lines.append('    imputations.append(imp.data.copy())')
+        lines.append('print(imputations[0].describe())')
+    else:
+        lines.append(f'for k in range({burnin}):   # the burn-in')
+        lines.append('    imp.update()')
+        lines.append('imputations = []')
+        lines.append(f'for j in range({m}):')
+        lines.append(f'    for k in range({skip + 1}):   # the cycles between imputations, as MI.fit spaces them (skip + 1)')
+        lines.append('        imp.update()')
+        lines.append('    imputations.append(imp.data * sd + mean)')
+        lines.append('print(imputations[0].describe())')
+    return '\n'.join(lines)
+
+
+def _prep_lines(table, table_name, rows, used, info, d, method, seed, extra_imports=()):
+    """The code that reads the table, keeps the report's rows, gives the
+    columns plain names (a categorical one its level codes) and sets up the
+    imputer with the report's seed: up to imp = MICEData(...) or
+    BayesGaussMI(...) (the normal's columns standardized)."""
+    lines = [code_head(table_name, [*extra_imports, 'from statsmodels.imputation.mice import MICEData, MICE' if method == 'mice'
                                     else 'from statsmodels.imputation.bayes_mi import BayesGaussMI, MI'])]
     if rows is not None:
         n_all = data.TABLES[table]['n']
@@ -588,62 +617,49 @@ def _code(table, table_name, rows, used, info, d, A, method, m, burnin, skip, se
         lines.append('imp = MICEData(d.reset_index(drop=True))')
         for a, f in _imputation_formulas(used, info, d.reset_index(drop=True)).items():
             lines.append(f'imp.set_imputer({J(a)}, formula={J(f)})   # a categorical predictor as C()')
-        if A:
-            klass = 'sm.OLS' if A['kind'] == 'ols' else 'sm.GLM'
-            kw = '' if A['kind'] == 'ols' else f', init_kwds={{"family": {_family_code(A["kind"])}}}'
-            lines.append(f'mice = MICE({J(A["formula"])}, {klass}, imp, n_skip={skip}{kw})')
-            lines.append(f'res = mice.fit(n_burnin={burnin}, n_imputations={m})   # pooled by Rubin\'s rules')
-            lines.append(f'print(res.summary(alpha={alpha!r}))')
-            lines.append(_cc_code(A, info, alpha))
-        else:
-            lines.append(f'imp.update_all({burnin})   # the burn-in')
-            lines.append('imputations = []')
-            lines.append(f'for j in range({m}):')
-            lines.append(f'    imp.update_all({skip + 1})   # the cycles between imputations, as MICE.fit spaces them (n_skip + 1)')
-            lines.append('    imputations.append(imp.data.copy())')
-            lines.append('print(imputations[0].describe())')
+        return lines
+    cat_cols = [c for c in used if info['cat'][c]]
+    if not cat_cols:
+        lines.append('X = d.copy()')
     else:
-        cat_cols = [c for c in used if info['cat'][c]]
-        if not cat_cols:
-            lines.append('X = d.copy()')
-        else:
-            lines.append('X = pd.DataFrame(index=d.index)   # the columns the normal is fitted to, a categorical one as indicators')
-            for c in used:
-                a = info['alias'][c]
-                if info['cat'][c]:
-                    for j in range(1, len(info['levels'][c])):
-                        lines.append(f'X[{J(f"{a}_{j}")}] = (d[{J(a)}] == {j}).astype(float)   # {c} = {_text(info["levels"][c][j])}')
-                else:
-                    lines.append(f'X[{J(a)}] = d[{J(a)}]')
-        lines.append('mean, sd = X.mean(), X.std().replace(0, 1.0)')
-        lines.append('Z = (X - mean) / sd   # standardized: BayesGaussMI\'s priors (the mean N(0, I), the covariance inverse Wishart(I, 1)) suit data on the unit scale')
-        lines.append(f'np.random.seed({seed})   # statsmodels draws from numpy\'s global generator')
-        lines.append('imp = BayesGaussMI(Z.reset_index(drop=True))')
-        if A:
-            cont = [info['alias'][c] for c in used if not info['cat'][c]]
-            lines.append('def complete(z):   # the imputed table in its own units' + (', the categorical codes beside it' if cat_cols else ''))
-            lines.append('    z = pd.DataFrame(np.asarray(z), columns=X.columns)')
-            lines.append(f'    f = pd.DataFrame({{a: z[a] * sd[a] + mean[a] for a in {cont!r}}})')
-            for c in cat_cols:
-                a = info['alias'][c]
-                lines.append(f'    f[{J(a)}] = d[{J(a)}].to_numpy()')
-            lines.append('    return f')
-            kw = '' if A['kind'] == 'ols' else f', model_kwds_fn=lambda f: {{"family": {_family_code(A["kind"])}}}'
-            klass = 'sm.OLS' if A['kind'] == 'ols' else 'sm.GLM'
-            lines.append(f'mi = MI(imp, {klass}, formula={J(A["formula"])}, model_args_fn=lambda f: [f]{kw}, xfunc=complete, burn={burnin}, nrep={m}, skip={skip})')
-            lines.append('res = mi.fit()   # pooled by Rubin\'s rules')
-            lines.append(f'print(res.summary(alpha={alpha!r}))')
-            lines.append(_cc_code(A, info, alpha))
-        else:
-            lines.append(f'for k in range({burnin}):   # the burn-in')
-            lines.append('    imp.update()')
-            lines.append('imputations = []')
-            lines.append(f'for j in range({m}):')
-            lines.append(f'    for k in range({skip + 1}):   # the cycles between imputations, as MI.fit spaces them (skip + 1)')
-            lines.append('        imp.update()')
-            lines.append('    imputations.append(imp.data * sd + mean)')
-            lines.append('print(imputations[0].describe())')
-    return '\n'.join(lines)
+        lines.append('X = pd.DataFrame(index=d.index)   # the columns the normal is fitted to, a categorical one as indicators')
+        for c in used:
+            a = info['alias'][c]
+            if info['cat'][c]:
+                for j in range(1, len(info['levels'][c])):
+                    lines.append(f'X[{J(f"{a}_{j}")}] = (d[{J(a)}] == {j}).astype(float)   # {c} = {_text(info["levels"][c][j])}')
+            else:
+                lines.append(f'X[{J(a)}] = d[{J(a)}]')
+    lines.append('mean, sd = X.mean(), X.std().replace(0, 1.0)')
+    lines.append('Z = (X - mean) / sd   # standardized: BayesGaussMI\'s priors (the mean N(0, I), the covariance inverse Wishart(I, 1)) suit data on the unit scale')
+    lines.append(f'np.random.seed({seed})   # statsmodels draws from numpy\'s global generator')
+    lines.append('imp = BayesGaussMI(Z.reset_index(drop=True))')
+    return lines
+
+
+def _model_lines(A, info, used, method, m, burnin, skip):
+    """The analysis model fitted to every imputation and pooled, as the report does: res."""
+    lines = []
+    if method == 'mice':
+        klass = 'sm.OLS' if A['kind'] == 'ols' else 'sm.GLM'
+        kw = '' if A['kind'] == 'ols' else f', init_kwds={{"family": {_family_code(A["kind"])}}}'
+        lines.append(f'mice = MICE({J(A["formula"])}, {klass}, imp, n_skip={skip}{kw})')
+        lines.append(f'res = mice.fit(n_burnin={burnin}, n_imputations={m})   # pooled by Rubin\'s rules')
+        return lines
+    cat_cols = [c for c in used if info['cat'][c]]
+    cont = [info['alias'][c] for c in used if not info['cat'][c]]
+    lines.append('def complete(z):   # the imputed table in its own units' + (', the categorical codes beside it' if cat_cols else ''))
+    lines.append('    z = pd.DataFrame(np.asarray(z), columns=X.columns)')
+    lines.append(f'    f = pd.DataFrame({{a: z[a] * sd[a] + mean[a] for a in {cont!r}}})')
+    for c in cat_cols:
+        a = info['alias'][c]
+        lines.append(f'    f[{J(a)}] = d[{J(a)}].to_numpy()')
+    lines.append('    return f')
+    kw = '' if A['kind'] == 'ols' else f', model_kwds_fn=lambda f: {{"family": {_family_code(A["kind"])}}}'
+    klass = 'sm.OLS' if A['kind'] == 'ols' else 'sm.GLM'
+    lines.append(f'mi = MI(imp, {klass}, formula={J(A["formula"])}, model_args_fn=lambda f: [f]{kw}, xfunc=complete, burn={burnin}, nrep={m}, skip={skip})')
+    lines.append('res = mi.fit()   # pooled by Rubin\'s rules')
+    return lines
 
 
 def _cc_code(A, info, alpha):
@@ -651,3 +667,170 @@ def _cc_code(A, info, alpha):
     fn = 'smf.ols' if A['kind'] == 'ols' else 'smf.glm'
     return (f'cc = {fn}({J(A["formula"])}, data=d.dropna(subset={J(A["aliases"])}){fam}).fit()   # the complete cases, for contrast\n'
             f'print(cc.summary(alpha={alpha!r}))')
+
+
+# ---- the graphs as matplotlib code ----------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the
+# imputer set up as the report's code sets it up (the same seed: the same
+# draws), the light theme's colours, the graph's size at 100 pixels an inch.
+# The diagnostics run the imputer one cycle at a time (the same draws as
+# MICE.fit and MI.fit make: fitting the analysis model draws nothing) and
+# keep what the graph shows. The page sends what it chose (the bins, the
+# level names); mi.plot_code writes the code of one graph.
+OBS, IMP, TEXT, MUTED, SURFACE = '#2e6fba', '#b8406e', '#352921', '#786b5d', '#fcf7f2'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _cycle_lines(info, used, d, column, method, m, burnin, skip, keep_means):
+    """The imputer run one cycle at a time: after each, the column's imputed
+    values; at the cycles MICE.fit and MI.fit take (after the burn-in, every
+    skip + 1 cycles) an imputation of them."""
+    a = info['alias'][column]
+    c = [f'a = {J(a)}   # {column}',
+         f'burnin, step, m = {burnin}, {skip + 1}, {m}   # the burn-in, an imputation every skip + 1 cycles, m of them']
+    if method == 'mice':
+        c += ['miss = d[a].isna().to_numpy()   # the rows whose value is imputed',
+              'means, draws = [], []',
+              'for cycle in range(1, burnin + m * step + 1):',
+              '    imp.update_all(1)   # one cycle of the chained equations',
+              '    v = imp.data[a].to_numpy()[miss]']
+    else:
+        c += ['miss = X[a].isna().to_numpy()   # the rows whose value is imputed',
+              'j = list(X.columns).index(a)',
+              'means, draws = [], []',
+              'for cycle in range(1, burnin + m * step + 1):',
+              '    imp.update()   # one cycle of the Gibbs sampler',
+              '    v = np.asarray(imp.data)[miss, j] * sd[a] + mean[a]   # back in the column\'s units (imp.data is a DataFrame after an update)']
+    if keep_means:
+        c.append('    means.append(v.mean())')
+    c += ['    if cycle > burnin and (cycle - burnin) % step == 0:',
+          '        draws.append(v.copy())']
+    return c
+
+
+def _observed_code(head, info, used, d, column, method, m, burnin, skip, plot):
+    b = plot.get('bins') or {'start': 0.0, 'end': 1.0, 'size': 1.0}
+    start, end, size = float(b['start']), float(b['end']), float(b['size'])
+    nb = max(1, int(round((end - start) / size)))
+    c = head + _cycle_lines(info, used, d, column, method, m, burnin, skip, False)
+    c += ['obs = d[a].to_numpy()[~miss]   # the observed values', 'drawn = np.concatenate(draws)   # the imputed ones, every imputation',
+          f'start, end, size, nb = {start!r}, {end!r}, {size!r}, {nb}   # the page\'s bins',
+          'bin_of = lambda v: np.clip(np.floor((v - start) / size + 1e-9), 0, nb - 1).astype(int)',
+          'mids = start + (np.arange(nb) + 0.5) * size',
+          'fig, ax = plt.subplots(figsize=(4.0, 2.7), layout="constrained")',
+          f'for v, name, color in ((obs, "Observed", "{OBS}"), (drawn, "Imputed", "{IMP}")):   # as densities: the counts over n times the bin width',
+          f'    ax.bar(mids, np.bincount(bin_of(v), minlength=nb) / (max(1, len(v)) * size), width=size, color=color, alpha=0.55, edgecolor="{SURFACE}", linewidth={_pt(1)}, label=f"{{name}} ({{len(v)}})")',
+          'ax.set_xlim(start, end); ax.set_ylim(bottom=0)',
+          f'ax.set_xlabel({J(column)})', 'ax.set_ylabel("Density")',
+          f'fig.legend(loc="outside upper left", ncols=2, frameon=False, fontsize={_pt(11)})',
+          f'ax.set_title({J(f"{column} observed and imputed")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _levels_code(head, info, used, d, column, method, m, burnin, skip, plot):
+    labels = [str(x) for x in (plot.get('labels') or [_text(v) for v in info['levels'][column]])]
+    c = head + _cycle_lines(info, used, d, column, method, m, burnin, skip, False)
+    c += [f'labels = {J(labels)}   # the levels, as the page names them', 'k = len(labels)',
+          'obs = d[a].to_numpy()[~miss].astype(int)   # the observed levels\' codes',
+          'drawn = np.round(np.concatenate(draws)).astype(int)   # the imputed codes, every imputation',
+          'po, pi = np.bincount(obs, minlength=k)[:k] / max(1, len(obs)), np.bincount(drawn, minlength=k)[:k] / max(1, len(drawn))',
+          'fig, ax = plt.subplots(figsize=(3.4, 2.7), layout="constrained")',
+          f'ax.bar(np.arange(k) - 0.4, po, width=0.38, align="edge", color="{OBS}", edgecolor="{SURFACE}", linewidth={_pt(1)}, label=f"Observed ({{len(obs)}})")',
+          f'ax.bar(np.arange(k) + 0.02, pi, width=0.38, align="edge", color="{IMP}", edgecolor="{SURFACE}", linewidth={_pt(1)}, label=f"Imputed ({{len(drawn)}})")',
+          'ax.set_xticks(range(k), labels); ax.set_ylim(bottom=0)',
+          f'ax.set_xlabel({J(column)})', 'ax.set_ylabel("Proportion")',
+          f'fig.legend(loc="outside upper left", ncols=2, frameon=False, fontsize={_pt(11)})',
+          f'ax.set_title({J(f"{column} observed and imputed levels")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _trace_code(head, info, used, d, column, method, m, burnin, skip):
+    cat = info['cat'][column]
+    c = head + _cycle_lines(info, used, d, column, method, m, burnin, skip, True)
+    c += ['x = np.arange(1, len(means) + 1)',
+          'takes = burnin + step * np.arange(1, m + 1)   # the cycles whose values became the imputations',
+          'om = np.nanmean(d[a].to_numpy())   # the observed mean' + (' (of the codes)' if cat else ''),
+          'fig, ax = plt.subplots(figsize=(4.3, 2.7), layout="constrained")']
+    if burnin > 0:
+        c += [f'ax.axvspan(0.5, burnin + 0.5, color="{MUTED}", alpha=0.1, linewidth=0)   # the burn-in',
+              f'ax.text(1, 1, "burn-in", transform=ax.get_xaxis_transform(), ha="left", va="top", fontsize={_pt(10)}, color="{MUTED}")']
+    c += [f'ax.plot(x, means, color="{OBS}", linewidth={_pt(2)}, label="Mean of the imputed values")',
+          f'ax.plot(takes, np.asarray(means)[takes - 1], linestyle="none", marker="o", markersize={_pt(8)}, color="{IMP}", mec="{SURFACE}", mew={_pt(2)}, label="An imputation")',
+          f'ax.axhline(om, color="{MUTED}", linewidth={_pt(1.2)}, linestyle=":")',
+          f'ax.text(1, om, f"observed mean {{om:.4g}}", transform=ax.get_yaxis_transform(), ha="right", va="bottom", fontsize={_pt(10)}, color="{MUTED}")',
+          'ax.set_xlim(0.5, max(2, len(means)) + 0.5)',
+          'ax.set_xlabel("Cycle")', f'ax.set_ylabel({J(f"Mean of imputed {column}" + (" (codes)" if cat else ""))})',
+          f'fig.legend(loc="outside upper left", ncols=2, frameon=False, fontsize={_pt(11)})',
+          f'ax.set_title({J(f"{column} trace")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _compare_code(head, A, info, used, method, m, burnin, skip, alpha, cc_ok):
+    terms = [(nm, A['labels'].get(nm, nm)) for nm in A['order']][:12]
+    k = len(terms)
+    fam = '' if A['kind'] == 'ols' else f', family={_family_code(A["kind"])}'
+    fn = 'smf.ols' if A['kind'] == 'ols' else 'smf.glm'
+    c = head + _model_lines(A, info, used, method, m, burnin, skip)
+    c += [f'cc = {fn}({J(A["formula"])}, data=d.dropna(subset={J(A["aliases"])}){fam}).fit()   # the complete cases' if cc_ok else 'cc = None   # the complete-case fit failed',
+          'names = list(getattr(res, "exog_names", None) or res.model.exog_names)',
+          f'ci = np.asarray(res.conf_int({alpha!r}))',
+          'pooled = {nm: (res.params[q], ci[q, 0], ci[q, 1]) for q, nm in enumerate(names)}']
+    if cc_ok:
+        c += [f'cci = np.asarray(cc.conf_int({alpha!r}))',
+              'complete = {nm: (cc.params.iloc[q], cci[q, 0], cci[q, 1]) for q, nm in enumerate(cc.params.index)}']
+    else:
+        c.append('complete = {}')
+    c += ['terms = [' + ', '.join(f'({J(nm)}, {J(lab)})' for nm, lab in terms) + ']   # the report\'s terms, in its order (at most twelve), and its names for them',
+          f'fig, axs = plt.subplots(len(terms), 1, figsize=(5.2, {(64 + 56 * k) / 100:g}), layout="constrained", squeeze=False)',
+          'for ax, (nm, label) in zip(axs[:, 0], terms):',
+          f'    for fit, yv, name, color, marker in ((pooled, 1, "Pooled ({m} imputations)", "{OBS}", "o"), (complete, 0, "Complete cases", "{IMP}", "s")):',
+          '        if nm in fit:',
+          '            e, lo, hi = fit[nm]',
+          f'            ax.errorbar([e], [yv], xerr=[[e - lo], [hi - e]], fmt=marker, color=color, ecolor=color, elinewidth={_pt(2)}, capsize={_pt(2)}, markersize={_pt(9)}, mec="{SURFACE}", mew={_pt(2)}, label=name)',
+          '    ax.set_ylim(-0.7, 1.7); ax.set_yticks([])',
+          f'    ax.set_ylabel(label, rotation=0, ha="right", va="center", fontsize={_pt(11)})',
+          f'fig.legend(*axs[0, 0].get_legend_handles_labels(), loc="outside upper left", ncols=2, frameon=False, fontsize={_pt(11)})',
+          'fig.suptitle("pooled and complete-case estimates")', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('mi.plot_code')
+def plot_code(table, columns, kind='compare', plot=None, rows=None, response=None, effects=None, model=None, method='mice', m=20, burnin=None,
+              skip=None, seed=1, alpha=0.05, table_name='data'):
+    """The Python that draws one of the report's graphs with matplotlib (kind:
+    compare, observed, levels, trace), the imputer and the analysis model as
+    the report's code sets them up, from what the page chose (plot)."""
+    method = method if method in METHODS else 'mice'
+    plot = plot or {}
+    try:
+        used, effects = _columns(table, columns, response, effects)
+        d, info = _frame(table, used, rows, method)
+        kind_m = (model or ('logit' if info['cat'][response] else 'ols')) if response else None
+    except UserError as e:
+        return {'error': str(e)}
+    m = int(m or 20)
+    b0, s0 = DEFAULTS[method]
+    burnin = int(b0 if burnin is None else burnin)
+    skip = int(s0 if skip is None else skip)
+    seed = int(seed if seed is not None else 1) % (2 ** 32)
+    head = _prep_lines(table, table_name, rows, used, info, d, method, seed, ['import matplotlib.pyplot as plt'])
+    if kind == 'compare':
+        if not response:
+            return {'error': 'no analysis model'}
+        A = _analysis(response, effects, kind_m, d, info)
+        return {'plot_code': _compare_code(head, A, info, used, method, m, burnin, skip, alpha, plot.get('cc', True) is not False)}
+    column = plot.get('column')
+    if column not in used:
+        return {'error': f'{column!r} is not a column of the imputation'}
+    if kind == 'observed':
+        return {'plot_code': _observed_code(head, info, used, d, column, method, m, burnin, skip, plot)}
+    if kind == 'levels':
+        return {'plot_code': _levels_code(head, info, used, d, column, method, m, burnin, skip, plot)}
+    if kind == 'trace':
+        return {'plot_code': _trace_code(head, info, used, d, column, method, m, burnin, skip)}
+    return {'error': f'no graph {kind!r}'}

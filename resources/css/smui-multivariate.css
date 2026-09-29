@@ -49,6 +49,9 @@
 .mv-legend button:hover { border-color: var(--border-color); }
 .mv-legend .mv-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 
+/* a graph with its Python code block right under it, as one item of a row */
+.mv-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+
 /* Response Screening: the summary line */
 .mv-summary { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 2px 0 8px; font-size: 12px; color: var(--text-secondary); }
 .mv-summary strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }

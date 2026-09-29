@@ -317,6 +317,7 @@ def load(table, y, time=None, rows=None, excluded=None, inputs=None):
         S.step = step
         t = tv
     S.y, S.t, S.rows, S.X = yv, np.asarray(t, dtype=float), rows_, X
+    S.table, S.rows_arg = table, (None if rows is None else [int(r) for r in rows])
     S.excluded_pos = [k for k, r in enumerate(rows_) if r is not None and r in ex_set]
     if S.excluded_pos:
         S.notes.append(f'{len(S.excluded_pos)} excluded row{"s" if len(S.excluded_pos) > 1 else ""} count as missing values, '
@@ -336,13 +337,37 @@ def _filled(S):
 
 # ---- code shown under the results -------------------------------------------
 
+def left_out(table, rows, where=None):
+    """The rows of the report's By group that it leaves out (filtered out by
+    the Local Data Filter), as the table's row numbers: the code drops them,
+    as the page never sends them. Excluded rows are not among them: they are
+    sent, and count as missing values in their place."""
+    if rows is None or table not in data.TABLES:
+        return []
+    mask = np.ones(data.TABLES[table]['n'], dtype=bool)
+    for w in where or []:
+        mask &= np.asarray(data.raw(table, w.get('column')) == w.get('value'), dtype=bool)
+    keep = {int(r) for r in rows}
+    return [int(r) for r in np.flatnonzero(mask) if int(r) not in keep]
+
+
 def _code_series(S, table_name, where=None, imports=()):
     """Python that builds, from a CSV export of the table, d (the table in
     time order, indexed by the Time ID) and y (the series over its span)."""
+    return [code_head(table_name, list(imports))] + _series_lines(S, where)
+
+
+def _series_lines(S, where=None, graph=False):
+    """The lines of _code_series after its head; a graph's code also gets t,
+    the time axis as the page draws it (the dates, the Time ID's values, or
+    the row numbers of the table)."""
     Y = json.dumps(S.y_name)
-    lines = [code_head(table_name, list(imports))]
+    lines = []
     for w in where or []:
         lines.append(f'df = df[df[{json.dumps(w.get("column"))}] == {w.get("value")!r}]   # the By group')
+    drop = left_out(getattr(S, 'table', None), getattr(S, 'rows_arg', None), where)
+    if drop:
+        lines.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
     if S.time_name:
         T = json.dumps(S.time_name)
         if S.kind in DATE_KINDS:
@@ -361,7 +386,227 @@ def _code_series(S, table_name, where=None, imports=()):
     lines.append('y = y.loc[y.first_valid_index():y.last_valid_index()]')
     if S.excluded_pos:
         lines.append(f'y.iloc[{S.excluded_pos}] = np.nan   # rows excluded in the table count as missing')
+    if graph:
+        if S.time_name:
+            lines.append(f't = y.index   # the time axis: {"the dates" if S.kind in DATE_KINDS else S.time_name}')
+        else:
+            lines.append('t = df.index.to_numpy()[y.index] + 1   # the time axis: the row numbers, as the page has them')
     return lines
+
+
+# ---- the graphs as matplotlib code ---------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from a
+# CSV export of the table, as the notebook runs it: the report's rows, the light
+# theme's colours, the graph's size. The function that makes a graph's numbers
+# writes its code, as a recipe (a list) that the page puts together: lines;
+# {'set': 'size'} and {'set': 'color'}, where the page writes the graph's size
+# in the report (inches, at 100 pixels an inch) and a model's colour; and
+# {'if': [flags], 'lines': [...]}, parts the page keeps when its display
+# options say so (Show Points, Show Prediction Interval, the Mean Line ...;
+# '!flag': when it is off). So neither a display option nor the room there is
+# fits a model again. assemble() puts a recipe together as the page does.
+BASE, RED, MUTED, INK = '#2f6690', '#b0413e', '#786b5d', '#352921'   # the report's points, fits, muted and text, light theme
+BAR_FILL, BAND = '#6f93b8', '#2f6ec7'   # the diagnostics charts' bars and ±2 standard error marks (smui-timeseries.css)
+REGIMES = ['#2a78d6', '#eb6834', '#1baf7a']   # the regimes, light theme (smui-p-timeseries.js)
+PT = 0.72   # points per pixel, at 100 pixels an inch
+SIZE, COLOR = {'set': 'size'}, {'set': 'color'}
+J = json.dumps
+DIAG_IMPORT = 'from statsmodels.tsa.stattools import acf, levinson_durbin'
+
+
+def assemble(parts, flags=None, size=None, color=None):
+    """A recipe put together as the page's recipe() does it: its lines, the
+    parts whose flags all hold (a flag '!x' holds when x is off), and
+    size = (w, h) in inches and color = "#..." where it asks for them."""
+    flags = flags or {}
+
+    def on(f):
+        return not flags.get(f[1:]) if f.startswith('!') else bool(flags.get(f))
+
+    out = []
+    for p in parts or []:
+        if isinstance(p, str):
+            out.append(p)
+        elif 'set' in p:
+            if p['set'] == 'size':
+                out.append(f'size = ({size[0] / 100:g}, {size[1] / 100:g})   # the graph\'s size in the report, in inches (100 pixels an inch)')
+            elif p['set'] == 'color':
+                out.append(f'color = "{color}"   # the model\'s colour in the report')
+        elif all(on(f) for f in p.get('if', [])) and p.get('lines'):
+            out.append(assemble(p['lines'], flags, size, color))
+    return '\n'.join(out)
+
+
+def _pt(px):
+    """A width or a marker size of the page, in pixels, in points."""
+    return f'{px * PT:.3g}'
+
+
+def _when(flags, *lines):
+    return {'if': list(flags), 'lines': list(lines)}
+
+
+def _head(S, table_name, where=None, imports=()):
+    """The top of a graph's code: the table, the series (y) and its time axis (t)."""
+    return [code_head(table_name, ['import matplotlib.pyplot as plt', *imports])] + _series_lines(S, where, graph=True)
+
+
+def _xlabel(S):
+    return S.time_name or 'Row'
+
+
+def _labels(S, ylabel, title, ax='ax'):
+    return [f'{ax}.set_xlabel({J(_xlabel(S))})', f'{ax}.set_ylabel({J(ylabel)})', f'{ax}.set_title({J(title)})']
+
+
+def _trace(x, v, points=True, lines=True, color=BASE, ax='ax', size=5, width=1.2, extra=''):
+    """One series as the page's seriesTrace draws it: points, the lines between
+    them, or both. color: a colour, or a Python name that holds one."""
+    c = f'"{color}"' if color.startswith('#') else color
+    if points and lines:
+        return f'{ax}.plot({x}, {v}, color={c}, linewidth={_pt(width)}, marker="o", markersize={_pt(size)}{extra})'
+    if points:
+        return f'{ax}.plot({x}, {v}, color={c}, linestyle="", marker="o", markersize={_pt(size)}{extra})'
+    return f'{ax}.plot({x}, {v}, color={c}, linewidth={_pt(width)}{extra})'
+
+
+def _series_draw(x, v, mean=None, ax='ax'):
+    """The page's seriesPlot: the series as Show Points and Connecting Lines
+    choose, and the Mean Line."""
+    parts = [_when(['points', 'lines'], _trace(x, v, ax=ax) + '   # Show Points and Connecting Lines'),
+             _when(['points', '!lines'], _trace(x, v, lines=False, ax=ax) + '   # Show Points'),
+             _when(['!points', 'lines'], _trace(x, v, points=False, ax=ax) + '   # Connecting Lines')]
+    if mean:
+        parts.append(_when(['mean'], f'{ax}.axhline({mean}, color="{RED}", linewidth={_pt(1)}, linestyle=":")   # Mean Line: the mean of the series'))
+    return parts
+
+
+def _series_recipe(head, x, v, name, title, S, mean=None, before=()):
+    """A series graph (seriesPlot): its points or lines, the mean line, the labels."""
+    return [*head, *before, '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+            *_series_draw(x, v, mean), *_labels(S, name, title), 'plt.show()']
+
+
+def _fixed_series_recipe(head, x, v, name, title, S, before=(), extra=()):
+    """A series graph with its points and lines always shown (and more on it)."""
+    return [*head, *before, '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+            _trace(x, v), *extra, *_labels(S, name, title), 'plt.show()']
+
+
+def _future_line(S, h):
+    """t_f: the times of the h forecast periods, as S.future has them."""
+    if S.kind in DATE_KINDS and S.offset is not None:
+        return f't_f = pd.date_range(t[-1], periods={h + 1}, freq={S.freq!r})[1:]   # the next {h} dates of the calendar'
+    if S.kind in DATE_KINDS:
+        return f't_f = t[-1] + pd.to_timedelta({S.step!r} * np.arange(1, {h + 1}), unit="ms")   # the median spacing of the dates'
+    return f't_f = t[-1] + {S.step!r} * np.arange(1, {h + 1})   # the next {h} steps of the time axis'
+
+
+def _diag_recipes(head, x_lines, nlags, residual=False):
+    """The four diagnostics charts of the page, as JMP draws them in its
+    tables: a bar per lag (lag 0 at the top), the Autocorrelation with ±2
+    Bartlett standard errors, the Partial Autocorrelation with ±2/√N, the
+    Variogram and the AR Coefficients, all from x as the report takes it."""
+    K = max(1, int(nlags or 25))
+    calc = [*x_lines,
+            'v = x.loc[x.first_valid_index():x.last_valid_index()]   # from its first value to its last',
+            'n = int(v.count())',
+            f'K = min({K}, n - 1)   # the lags: Autocorrelation Lags of the launch, at most n − 1',
+            'r = acf(v, nlags=K, fft=False, missing="conservative")   # a missing value inside is left out pairwise']
+
+    def chart(extra, value, label, title, lags='np.arange(K + 1)', rng='-1, 1', band=None):
+        L = [*head, *calc, *extra, f'lags = {lags}',
+             'fig, ax = plt.subplots(figsize=(3.4, 0.9 + 0.16 * len(lags)), layout="constrained")',
+             f'ax.barh(lags, {value}, height=0.7, color="{BAR_FILL}")']
+        if band:
+            L += [f'for side in (1, -1):   # {band[1]}',
+                  f'    ax.plot(side * {band[0]}, lags[1:], linestyle="", marker="|", markersize=7, markeredgewidth={_pt(1.3)}, color="{BAND}")']
+        L += [f'ax.axvline(0, color="{MUTED}", linewidth={_pt(1)})', f'ax.set_xlim({rng})', 'ax.invert_yaxis()   # lag by lag down the chart, as the table has them',
+              f'ax.set_xlabel({J(label)})', 'ax.set_ylabel("Lag")', f'ax.set_title({J(title)})', 'plt.show()']
+        return L
+
+    auto = ('m = max(1e-12, np.nanmax(np.abs({0}))); lo = -m if (np.asarray({0}) < 0).any() else 0.0'
+            '   # the range of the values, as the page scales these bars')
+    return {
+        'acf': chart(['se = np.sqrt(np.r_[0.0, 1 / n, (1 + 2 * np.cumsum(r[1:-1] ** 2)) / n])[:K + 1]   # Bartlett\'s large-lag standard errors'],
+                     'r', 'AutoCorr', 'Residual Autocorrelation' if residual else 'Autocorrelation', band=('2 * se[1:]', '±2 standard errors')),
+        'pacf': chart(['_, _, pac, _, _ = levinson_durbin(r, nlags=K, isacov=True)   # Levinson-Durbin on the autocorrelations (pacf\'s "ldb")'],
+                      'pac', 'Partial', 'Residual Partial Autocorrelation' if residual else 'Partial Autocorrelation', band=('np.full(K, 2 / np.sqrt(n))', '±2/√N')),
+        'variogram': chart(['vario = (1 - r[1:]) / (1 - r[1])   # the variance of differences k apart over that of differences one apart',
+                            auto.format('vario')], 'vario', 'Variogram', 'Variogram', lags='np.arange(1, K + 1)', rng='lo, m'),
+        'ar': chart(['_, arc, _, _, _ = levinson_durbin(r, nlags=K, isacov=True)   # the AR(K) coefficients (Yule-Walker)', auto.format('arc')],
+                    'arc', 'AR Coef', 'AR Coefficients', lags='np.arange(1, K + 1)', rng='lo, m'),
+    }
+
+
+# A model's graphs. Its fit lines (the model fitted as its code in the report
+# fits it) leave, over the slots of the series: fitted (the one-step-ahead
+# predictions), fit_lo and fit_hi (their prediction interval), resid; and with
+# forecasts t_f, f_mean, f_lower and f_upper. Its draw lines put the model on
+# ax in its colour, as the page's forecastTraces: the predictions, the
+# forecasts from the last of them, the band (pi) and the one-step intervals
+# (onestep), with its name in the legend (legend) on Model Comparison's plot.
+def _model_draw(S, name, h, onestep=True):
+    L = [_when(['legend'], f'ax.plot(t, fitted, color=color, linewidth={_pt(1.3)}, label={J(name)})   # the one-step-ahead predictions'),
+         _when(['!legend'], f'ax.plot(t, fitted, color=color, linewidth={_pt(1.3)})   # the one-step-ahead predictions')]
+    if h:
+        L += ['x_f = t[-1:].append(t_f)' if S.kind in DATE_KINDS else 'x_f = np.r_[t[-1], t_f]',
+              'y0 = fitted[-1] if np.isfinite(fitted[-1]) else y.iloc[-1]   # the forecasts go on from the last prediction',
+              _when(['pi'], 'lo0 = fit_lo[-1] if np.isfinite(fit_lo[-1]) else f_lower[0]', 'hi0 = fit_hi[-1] if np.isfinite(fit_hi[-1]) else f_upper[0]',
+                    f'ax.plot(x_f, np.r_[hi0, f_upper], color=color, alpha=0.6, linewidth={_pt(1)})',
+                    f'ax.plot(x_f, np.r_[lo0, f_lower], color=color, alpha=0.6, linewidth={_pt(1)})',
+                    'ax.fill_between(x_f, np.r_[lo0, f_lower], np.r_[hi0, f_upper], color=color, alpha=0.13, linewidth=0)   # the prediction interval'),
+              f'ax.plot(x_f, np.r_[y0, f_mean], color=color, linewidth={_pt(2)}, marker="o", markersize={_pt(3)})   # the forecasts']
+    if onestep:
+        L.append(_when(['pi', 'onestep'], f'ax.plot(t, fit_hi, color=color, alpha=0.45, linewidth={_pt(0.8)}, linestyle=":")   # the one-step prediction interval',
+                       f'ax.plot(t, fit_lo, color=color, alpha=0.45, linewidth={_pt(0.8)}, linestyle=":")'))
+    return L
+
+
+def _resid_corr(name, nlags, partial=False):
+    """The model's residual autocorrelations (or partial ones) on ax, for the
+    overlays under Model Comparison's plot; nmax keeps the most residuals,
+    for the ±2/√n lines."""
+    L = ['e = pd.Series(resid); e = e.loc[e.first_valid_index():e.last_valid_index()]   # the residuals, from the first to the last',
+         f'n_e = int(e.count()); K = min({max(1, int(nlags or 25))}, n_e - 1); nmax = max(nmax, n_e)',
+         'r = acf(e, nlags=K, fft=False, missing="conservative")']
+    if partial:
+        L.append('_, _, r, _, _ = levinson_durbin(r, nlags=K, isacov=True)   # the partial autocorrelations')
+    L.append(f'ax.plot(np.arange(1, K + 1), r[1:], color=color, linewidth={_pt(1.2)}, marker="o", markersize={_pt(4)}, label={J(name)})')
+    return L
+
+
+def _model_plots(S, table_name, where, name, imports, fit, h, nlags, onestep=True):
+    """A model's graphs as recipes (the forecast, the residuals, the residual
+    diagnostics), and its fragment for the page's Model Comparison: the
+    imports, the series lines, the fit, the draw and the residual
+    correlations."""
+    imports = ['from scipy import stats', *imports]
+    body = [*_head(S, table_name, where, imports), *fit]
+    draw = _model_draw(S, name, h, onestep)
+    fig = ['', SIZE, COLOR, 'fig, ax = plt.subplots(figsize=size, layout="constrained")']
+    codes = {
+        'forecast': [*body, *fig, _when(['points'], _trace('t', 'y', lines=False) + '   # Show Points: the data'), *draw,
+                     f'ax.axvline(t[-1], color="{MUTED}", linewidth={_pt(1)}, linestyle=":")   # the end of the data',
+                     *_labels(S, S.y_name, f'{name} forecast'), 'plt.show()'],
+        'resid': [*body, *fig, _trace('t', 'resid', lines=False, color='color') + '   # the residuals',
+                  f'ax.axhline(0, color="{MUTED}", linewidth={_pt(1)})', *_labels(S, 'Residual', f'{name} residuals'), 'plt.show()'],
+        **_diag_recipes([*_head(S, table_name, where, [*imports, DIAG_IMPORT]), *fit], ['x = pd.Series(resid)   # the residuals'], nlags, residual=True),
+    }
+    frag = {'name': name, 'imports': imports, 'series': _series_lines(S, where, graph=True), 'fit': fit, 'draw': draw,
+            'racf': _resid_corr(name, nlags), 'rpacf': _resid_corr(name, nlags, partial=True)}
+    return codes, frag
+
+
+def _z_line(level):
+    return f'z = stats.norm.ppf({0.5 + level / 2:.6g})   # {100 * level:g}% intervals'
+
+
+def _band_lines(valid='ok', fitted='fv', se='se', resid=None):
+    """fitted, fit_lo, fit_hi and resid over the slots, where the fit statistics take them."""
+    return [f'fitted = np.where({valid}, {fitted}, np.nan)',
+            f'fit_lo, fit_hi = fitted - z * {se}, fitted + z * {se}',
+            f'resid = np.where({valid}, {resid}, np.nan)' if resid else f'resid = np.where({valid}, y.to_numpy() - {fitted}, np.nan)']
 
 
 # ---- the diagnostics ---------------------------------------------------------
@@ -489,19 +734,25 @@ def series(table, y, time=None, rows=None, excluded=None, nlags=25, where=None, 
           '    print(reg, adfuller(y.dropna(), regression=reg, autolag="AIC")[:4])',
           'print(kpss(y.dropna(), regression="c", nlags="auto"), kpss(y.dropna(), regression="ct", nlags="auto"))']
     out['code'] = '\n'.join(c)
+    out['plot_code'] = {'series': _series_recipe(_head(S, table_name, where), 't', 'y', y, f'{y} time series', S, mean='y.mean()'),
+                        **_diag_recipes(_head(S, table_name, where, [DIAG_IMPORT]), ['x = y   # the series'], nlags)}
+    # the lines that build y and t, for the graphs the page works out (the lag plot)
+    out['plot_frag'] = {'series': _series_lines(S, where, graph=True)}
     return out
 
 
 @api('timeseries.input')
 @_quietly
-def input_series(table, y, time=None, rows=None, nlags=25, table_name='data'):
+def input_series(table, y, time=None, rows=None, nlags=25, where=None, table_name='data'):
     """An input series (Input List), for the Input Time Series Panel."""
     try:
         S = load(table, y, time, rows)
     except NoSeries as e:
         return {'error': str(e)}
     return {'y': y, 'kind': S.kind, 't': _arr(S.t), 'values': _arr(S.y), 'rows': S.rows, 'diag': diagnostics(S.y, nlags),
-            'stationarity': stationarity(S.y)}
+            'stationarity': stationarity(S.y),
+            'plot_code': {'series': _fixed_series_recipe(_head(S, table_name, where), 't', 'y', y, f'{y} time series', S),
+                          **_diag_recipes(_head(S, table_name, where, [DIAG_IMPORT]), ['x = y   # the input series'], nlags)}}
 
 
 # ---- differencing and decomposition -------------------------------------------
@@ -533,6 +784,13 @@ def difference(table, y, time=None, rows=None, excluded=None, d=1, D=0, s=12, nl
     c += [f'w = diff(y, k_diff={d}, k_seasonal_diff={D}, seasonal_periods={s if D else 1})   # (1 - B)^{d} (1 - B^{s})^{D} y',
           f'print(w.describe()); print(acf(w, nlags={out["diag"].get("K", nlags)}, fft=False, missing="conservative"))']
     out['code'] = '\n'.join(c)
+    imp = 'from statsmodels.tsa.statespace.tools import diff'
+    wl = [f'w = diff(y, k_diff={d}, k_seasonal_diff={D}, seasonal_periods={s if D else 1})   # (1 − B)^{d} (1 − B^{s})^{D} y: '
+          f'the first {out["start"]} value{"s" if out["start"] != 1 else ""} lost']
+    name = f'{y} differenced'
+    out['plot_code'] = {'series': _series_recipe(_head(S, table_name, where, [imp]), 't[len(t) - len(w):]', 'w', name, f'{name} time series', S,
+                                                 mean='w.mean()', before=wl),
+                        **_diag_recipes(_head(S, table_name, where, [imp, DIAG_IMPORT]), [*wl, 'x = w'], nlags)}
     return out
 
 
@@ -554,7 +812,22 @@ def detrend(table, y, time=None, rows=None, excluded=None, nlags=25, where=None,
     c += ['t = np.arange(1, len(y) + 1)', 'res = sm.OLS(y.to_numpy(), sm.add_constant(t), missing="drop").fit(); print(res.summary())',
           'detrended = y - (res.params[0] + res.params[1] * t)']
     out['code'] = '\n'.join(c)
+    fit = ['k = np.arange(1, len(y) + 1)   # 1, 2, … the observation number',
+           'res = sm.OLS(y.to_numpy(), sm.add_constant(k), missing="drop").fit()',
+           'trend = res.params[0] + res.params[1] * k   # the least squares line']
+    out['plot_code'] = _derived_plots(S, table_name, where, fit, 'trend', 'Linear Trend', f'Detrended {y}', nlags)
     return out
+
+
+def _derived_plots(S, table_name, where, fit, part, label, dname, nlags):
+    """Remove Linear Trend and Remove Cycle: the series with the fitted line
+    (fit), the series with it removed (series) and that one's diagnostics."""
+    y = S.y_name
+    head = _head(S, table_name, where)
+    return {'fit': _fixed_series_recipe(head, 't', 'y', y, f'{y} {label.lower()}', S, before=fit,
+                                        extra=[f'ax.plot(t, {part}, color="{RED}", linewidth={_pt(1.6)})   # the {label.lower()}']),
+            'series': _fixed_series_recipe(head, 't', f'y - {part}', dname, f'{dname} time series', S, before=fit),
+            **_diag_recipes(_head(S, table_name, where, [DIAG_IMPORT]), [*fit, f'x = y - {part}   # {dname[0].lower()}{dname[1:]}'], nlags)}
 
 
 @api('timeseries.decycle')
@@ -588,6 +861,13 @@ def decycle(table, y, time=None, rows=None, excluded=None, units=12, constant=Tr
           f'a, b = res.params[{1 if constant else 0}:]; A, P = np.hypot(a, b), np.arctan2(-b, a)   # amplitude, phase',
           f'cycle = {"res.params[0] + " if constant else ""}A * np.cos(2*np.pi*t/{U!r} + P); decycled = y - cycle']
     out['code'] = '\n'.join(c)
+    design = 'sm.add_constant(X, has_constant="add")' if constant else 'X'
+    fit = ['k = np.arange(len(y))   # 0, 1, … one less than the observation number',
+           f'X = np.column_stack([np.cos(2 * np.pi * k / {U!r}), np.sin(2 * np.pi * k / {U!r})])',
+           f'res = sm.OLS(y.to_numpy(), {design}, missing="drop").fit()',
+           f'a, b = res.params[{1 if constant else 0}:]; A, P = np.hypot(a, b), np.arctan2(-b, a)   # the amplitude and the phase',
+           f'cycle = {"res.params[0] + " if constant else ""}A * np.cos(2 * np.pi * k / {U!r} + P)']
+    out['plot_code'] = _derived_plots(S, table_name, where, fit, 'cycle', 'Cycle', f'Decycled {y}', nlags)
     return out
 
 
@@ -630,6 +910,22 @@ def decompose(table, y, time=None, rows=None, excluded=None, method='classical',
         c.append(f'res = seasonal_decompose(y, model={("multiplicative" if mult else "additive")!r}, period={s})')
     c.append('print(res.trend, res.seasonal, res.resid)   # adjusted: ' + ('y / res.seasonal' if mult else 'y - res.seasonal'))
     out['code'] = '\n'.join(c)
+    label = f'STL Decomposition (period {s}{", robust" if robust else ""})' if method == 'stl' else f'Seasonal Decomposition ({model or "additive"}, period {s})'
+    p = [*_head(S, table_name, where, ['from statsmodels.tsa.seasonal import STL' if method == 'stl' else 'from statsmodels.tsa.seasonal import seasonal_decompose']),
+         'yf = y.interpolate(limit_direction="both")   # the missing values filled for the decomposition' if miss.any() else 'yf = y',
+         f'res = STL(yf, period={s}, robust={bool(robust)}).fit()' if method == 'stl' else f'res = seasonal_decompose(yf, model={("multiplicative" if mult else "additive")!r}, period={s})',
+         f'adjusted, resid = yf {"/" if mult else "-"} res.seasonal, res.resid.copy()   # the seasonally adjusted series, the irregular part']
+    if miss.any():
+        p.append('adjusted[y.isna()] = np.nan; resid[y.isna()] = np.nan   # missing where the series is')
+    p += ['', SIZE, 'fig, axes = plt.subplots(4, 1, sharex=True, figsize=size, layout="constrained", gridspec_kw={"height_ratios": [27, 20, 20, 21]})',
+          _trace('t', 'y', ax='axes[0]') + '   # the series',
+          f'axes[0].plot(t, adjusted, color="{RED}", linewidth={_pt(1.2)})   # seasonally adjusted',
+          'for ax, part in zip(axes[1:], (res.trend, res.seasonal, resid)):',
+          f'    ax.plot(t, part, color="{BASE}", linewidth={_pt(1.2)})',
+          'for ax, title in zip(axes, ("Original and adjusted", "Trend", "Seasonal", "Irregular")):',
+          '    ax.set_title(title, loc="left", fontsize=8)',
+          f'axes[-1].set_xlabel({J(_xlabel(S))})', f'fig.suptitle({J(label)}, fontsize=10)', 'plt.show()']
+    out['plot_code'] = {'decomp': p}
     return out
 
 
@@ -709,6 +1005,27 @@ def spectral(table, y, time=None, rows=None, excluded=None, nlags=None, where=No
           'D = np.abs(np.cumsum(Iq)/Iq.sum() - np.arange(1, q + 1)/q).max()   # Bartlett\'s Kolmogorov-Smirnov',
           'print(kappa, D, stats.kstwobign.sf(D*np.sqrt(q)))']
     out['code'] = '\n'.join(c)
+    p = [*_head(S, table_name, where),
+         'v = y.dropna().to_numpy(); N = len(v); i = np.arange(N)   # the values present',
+         'C = np.exp(-2j * np.pi * i / N) * np.fft.fft(v)   # sums over t = 1 … N',
+         'a, b = 2 / N * C.real, -2 / N * C.imag; I = N / 2 * (a ** 2 + b ** 2)   # the Fourier coefficients and the periodogram at i/N',
+         'q = N // 2 if N % 2 == 0 else (N - 1) // 2; Iq, freq = I[1:q + 1], i[1:q + 1] / N']
+    if q > m + 1:
+        p += ['m = max(1, int(round(q ** 0.5 / 2)))   # the smoothing\'s half-width',
+              'w = m + 1 - np.abs(np.arange(-m, m + 1)); w = w / w.sum()   # triangular weights over 2m + 1 frequencies',
+              'ext = np.concatenate([Iq[1:m + 1][::-1], Iq, Iq[-m - 1:-1][::-1]])   # the periodogram reflected at the ends',
+              'density = np.convolve(ext, w, mode="valid") / (4 * np.pi)   # the smoothed periodogram, scaled by 1/(4π)']
+    else:
+        p.append('density = Iq / (4 * np.pi)   # too few frequencies to smooth')
+    p += ['', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")']
+    line = f'color="{RED}", linewidth={_pt(1.8)}'
+    out['plot_code'] = {
+        'period': [*p, f'ax.plot(1 / freq, density, {line})', 'ax.set_xscale("log")',
+                   'ax.set_xlabel("Period")', 'ax.set_ylabel("Spectral density")', f'ax.set_title({J(y + " spectral density by period")})', 'plt.show()'],
+        'frequency': [*p, f'ax.plot(freq, Iq / (4 * np.pi), color="{BASE}80", linestyle="", marker="o", markersize={_pt(4)}, label="Periodogram")   # scaled as the density',
+                      f'ax.plot(freq, density, {line}, label="Spectral density")',
+                      'ax.set_xlabel("Frequency")', 'ax.set_ylabel("Spectral density")', f'ax.set_title({J(y + " spectral density by frequency")})',
+                      'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)', 'plt.show()']}
     return out
 
 
@@ -755,11 +1072,43 @@ def cross_correlation(table, y, inputs=None, time=None, rows=None, excluded=None
             continue
         r = _ccf_pair(S.y, xv, K)
         res.append({'input': c, 'lag': lags, 'r': _arr(r), 'se': [1 / math.sqrt(max(1, n - abs(k))) for k in lags]})
-    c = _code_series(S, table_name, None, ['from statsmodels.tsa.stattools import ccf'])
+    c = _code_series(S, table_name, where, ['from statsmodels.tsa.stattools import ccf'])
     for name in S.inputs:
         c.append(f'x = d.loc[y.index, {json.dumps(name)}]')
         c.append(f'print(ccf(y, x, adjusted=False, fft=False)[:{K + 1}])   # lags 0..{K}: corr(y[t+k], x[t]); ccf(x, y) for the negative lags')
-    return {'lags': lags, 'n': n, 'inputs': res, 'code': '\n'.join(c)}
+    return {'lags': lags, 'n': n, 'inputs': res, 'code': '\n'.join(c), 'plot_code': {'ccf': _ccf_recipe(S, table_name, where, res, nlags)}}
+
+
+def _ccf_recipe(S, table_name, where, res, nlags):
+    """Cross Correlation's charts, a panel for each input the report has, as
+    its tables draw them: a bar per lag from −K to K, ±2 standard errors."""
+    ok = [c['input'] for c in res if not c.get('error')]
+    if not ok:
+        return None
+    complete = all(np.isfinite(S.y).all() and np.isfinite(S.X[c]).all() for c in ok)
+    p = [*_head(S, table_name, where, ['from statsmodels.tsa.stattools import ccf'] if complete else []),
+         'n = int(y.count())',
+         f'K = min({max(1, int(nlags or 25))}, n - 2)   # the lags either way: Autocorrelation Lags of the launch, at most n − 2',
+         'lags = np.arange(-K, K + 1)',
+         'se = 1 / np.sqrt(np.maximum(1, n - np.abs(lags)))   # the standard error of each lag, 1/√(n − |k|)',
+         f'inputs = {J(ok)}',
+         'fig, axes = plt.subplots(1, len(inputs), figsize=(3.4 * len(inputs), 0.9 + 0.16 * len(lags)), squeeze=False, layout="constrained")',
+         'for ax, name in zip(axes[0], inputs):',
+         '    x = d.loc[y.index, name]']
+    if complete:
+        p.append('    r = np.r_[ccf(x, y, adjusted=False, fft=False)[1:K + 1][::-1], ccf(y, x, adjusted=False, fft=False)[:K + 1]]   # corr(y[t+k], x[t]) for k = −K … K')
+    else:   # as the report: over the pairs present, each series about its own mean
+        p += ['    ok = (y.notna() & x.notna()).to_numpy(); m = int(ok.sum())',
+              '    yc, xc = np.nan_to_num((y - y.mean()).to_numpy()), np.nan_to_num((x - x.mean()).to_numpy())   # missing values count as 0',
+              '    r = np.array([np.sum(yc[k:] * xc[:len(xc) - k]) if k >= 0 else np.sum(yc[:k] * xc[-k:]) for k in lags]) / (m * y.std(ddof=0) * x.std(ddof=0))']
+    p += [f'    ax.barh(lags, r, height=0.7, color="{BAR_FILL}")',
+          '    for side in (1, -1):   # ±2 standard errors',
+          f'        ax.plot(side * 2 * se, lags, linestyle="", marker="|", markersize=7, markeredgewidth={_pt(1.3)}, color="{BAND}")',
+          f'    ax.axvline(0, color="{MUTED}", linewidth={_pt(1)})',
+          '    ax.set_xlim(-1, 1); ax.invert_yaxis()   # lag by lag down the chart, as the table has them',
+          f'    ax.set_xlabel("Cross Corr"); ax.set_ylabel("Lag"); ax.set_title({J(S.y_name + " with ")} + name)',
+          'plt.show()']
+    return p
 
 
 # ---- models: the common parts -----------------------------------------------------
@@ -1032,8 +1381,30 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
         c.append(f'# JMP\'s Intercept (the mean of the differenced series) is the trend coefficient times {mu_factor}')
     if h:
         c.append(f'print(res.get_forecast({h}{", exog=X_future" if specs else ""}).summary_frame(alpha={1 - level:.6g}))')
+    # the graphs: the model fitted as above, then its predictions over the slots of the series
+    fit = []
+    if specs:
+        fit.append('X = pd.DataFrame({' + ', '.join(cols_code) + '})   # the inputs, lagged as in the model')
+        fit.append(f'yf, Xf = y.iloc[{start}:], X.iloc[{start}:]   # the first {start} have no lagged inputs' if start else 'yf, Xf = y, X')
+        if h:
+            fit.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods')
+    else:
+        fit.append('yf = y   # the series the model is fitted to')
+    fit += [f'res = ARIMA(yf{", exog=Xf" if specs else ""}, order=({p}, {d}, {q}), seasonal_order=({P}, {D}, {Q}, {s}), trend={trend_code}, '
+            f'enforce_stationarity={bool(constrain)}, enforce_invertibility={bool(constrain)}).fit(method_kwargs={{"maxiter": {int(maxiter or 200)}}})',
+            _z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
+            'ok = yf.notna().to_numpy() & (np.arange(len(yf)) >= res.loglikelihood_burn) & np.isfinite(fv)   # the predictions the fit statistics take',
+            'se = np.asarray(res.get_prediction().se_mean, dtype=float)']
+    fit += _band_lines(resid='np.asarray(res.resid, dtype=float)')
+    if start:
+        fit.append(f'fitted, fit_lo, fit_hi, resid = (np.r_[np.full({start}, np.nan), v] for v in (fitted, fit_lo, fit_hi, resid))   # on the slots of the series')
+    if h:
+        fit += [f'fc = res.get_forecast({h}{", exog=X_future" if specs else ""})',
+                f'f_mean, (f_lower, f_upper) = fc.predicted_mean.to_numpy(), fc.conf_int(alpha={1 - level:.6g}).to_numpy().T', _future_line(S, h)]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.arima.model import ARIMA'], fit, h, nlags)
     return _model_out(S, 'arima', name, pad(fitted), pad(resid), pad(fit_se), level, fcd, st, summary,
                       {'columns': 'arima', 'rows': rows_p}, nlags, p + q + P + Q, notes, '\n'.join(c),
+                      plot_code=plot_code, plot_frag=plot_frag,
                       constant=constant, iterations=history, converged=conv, n_iter=n_iter, stable=stable, invertible=invertible,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'aicc': _f(res.aicc), 'llf': _f(res.llf), 'sigma2': _f(sigma2)},
                       spec={'p': p, 'd': d, 'q': q, 'P': P, 'D': D, 'Q': Q, 's': s, 'intercept': bool(intercept), 'constrain': bool(constrain)})
@@ -1263,8 +1634,43 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
     else:
         c.append(f'res = {mk}.fit()')
     c += ['print(res.params_formatted)', f'print(res.forecast({h}))' if h else 'print(res.fittedvalues)']
+    # the graphs: the model fitted as above; the intervals from its moving-average weights, as the report's
+    fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y']
+    mk_i = mk.replace('ExponentialSmoothing(y,', 'ExponentialSmoothing(yi,', 1)
+    if method == 'double':
+        fit += ['def fit_at(a):   # Brown\'s method is Holt\'s with level a(2 − a) and trend a/(2 − a)',
+                f'    m = {mk_i}',
+                '    with m.fix_params({"smoothing_level": a * (2 - a), "smoothing_trend": a / (2 - a)}):',
+                '        return m.fit()',
+                'a = minimize_scalar(lambda a: fit_at(a).sse, bounds=(1e-4, 1 - 1e-6), method="bounded", options={"xatol": 1e-7}).x   # the least squared one-step errors',
+                'res = fit_at(a)']
+    else:
+        fit.append(f'res = {mk_i}.fit()')
+    fit += [_z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
+            'ok = y.notna().to_numpy() & np.isfinite(fv)   # the one-step errors the fit statistics take',
+            f'sd = np.sqrt(np.sum((yi.to_numpy() - fv)[ok] ** 2) / (ok.sum() - {k}))   # the standard deviation of the one-step errors ({k} weight{"s" if k > 1 else ""} fitted)',
+            *_band_lines(se='sd', resid='yi.to_numpy() - fv')]
+    if h:
+        fit.append(f'f_mean = np.asarray(res.forecast({h}), dtype=float)')
+        if mult:
+            fit += [f'sims = np.asarray(res.simulate({h}, repetitions=2000, error="add", random_state={SEED}), dtype=float).reshape({h}, -1)',
+                    f'f_lower, f_upper = np.quantile(sims, [{0.5 - level / 2:.6g}, {0.5 + level / 2:.6g}], axis=1)   # the quantiles of 2000 simulated paths (a fixed seed)']
+        else:
+            a = 'a' if method == 'double' else 'res.params["smoothing_level"]'
+            psi = {'simple': f'np.full({h - 1}, {a})', 'double': 'a * (2 + (j - 1) * a)',
+                   'linear': f'{a} * (1 + j * res.params["smoothing_trend"])',
+                   'damped': f'{a} * (1 + res.params["smoothing_trend"] * np.cumsum(res.params["damping_trend"] ** j))',
+                   'seasonal': f'{a} + (j % {s} == 0) * res.params["smoothing_seasonal"]',
+                   'winters': f'{a} * (1 + j * res.params["smoothing_trend"]) + (j % {s} == 0) * res.params["smoothing_seasonal"]'}[method]
+            fit += [f'j = np.arange(1, {h})   # the moving-average weights ψ_j of the model\'s ARIMA form (JMP\'s statistical details)',
+                    f'psi = {psi}',
+                    'f_se = sd * np.sqrt(np.r_[1.0, 1.0 + np.cumsum(psi ** 2)])   # the h-step forecast error: σ²(1 + Σ ψ_j²)',
+                    'f_lower, f_upper = f_mean - z * f_se, f_mean + z * f_se']
+        fit.append(_future_line(S, h))
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.holtwinters import ExponentialSmoothing',
+                                                                     *(['from scipy.optimize import minimize_scalar'] if method == 'double' else [])], fit, h, nlags)
     return _model_out(S, 'smooth', name, fitted_v, resid, np.where(valid, sig, np.nan), level, fcd, st, summary,
-                      {'columns': 'smooth', 'rows': rows_p}, nlags, k, notes, '\n'.join(c),
+                      {'columns': 'smooth', 'rows': rows_p}, nlags, k, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       weights=th, sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'sse': _f(res.sse)},
                       spec={'method': method, 's': s, 'multiplicative': mult})
 
@@ -1367,8 +1773,27 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
         c.append(f'print(res.get_prediction(start=len(y), end=len(y) + {h - 1}).summary_frame(alpha={1 - level:.6g}))')
     fitted_v = np.where(valid, fitted, np.nan)
     resid = np.where(valid, x - fitted, np.nan)
-    return _model_out(S, 'ets', ets_name(error, trend, seasonal, s), fitted_v, resid, np.where(valid, fit_se, np.nan), level, fcd, st, summary,
-                      {'columns': 'ets', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c),
+    # the graphs: the model fitted as above (the page's iterations), its predictions and the simulated or exact intervals
+    fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y',
+           f'res = ETSModel(yi.reset_index(drop=True), error={error!r}, trend={("add" if trend != "N" else None)!r}, damped_trend={trend == "Ad"}, '
+           f'seasonal={({"A": "add", "M": "mul"}.get(seasonal))!r}{", seasonal_periods=" + str(s) if seasonal != "N" else ""}, '
+           f'initialization_method="estimated").fit(disp=False, maxiter={int(maxiter or 1000)})',
+           _z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
+           'ok = y.notna().to_numpy() & np.isfinite(fv)   # the one-step errors the fit statistics take',
+           'se = np.sqrt(res.mse)' + (' * np.abs(fv)   # multiplicative errors: relative to the prediction' if error == 'mul' else '   # the standard deviation of the one-step errors'),
+           *_band_lines(resid='yi.to_numpy() - fv')]
+    if h:
+        fit += [f'fr = res.get_prediction(start=len(yi), end=len(yi) + {h - 1}, simulate_repetitions=2000, random_state={SEED}).summary_frame(alpha={1 - level:.6g})',
+                'f_mean, f_lower, f_upper = (fr[k].to_numpy() for k in ("mean", "pi_lower", "pi_upper"))'
+                + ('   # simulated (a fixed seed)' if error == 'mul' or seasonal == 'M' else ''), _future_line(S, h)]
+    name = ets_name(error, trend, seasonal, s)
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.exponential_smoothing.ets import ETSModel'], fit, h, nlags)
+    head = _head(S, table_name, where, plot_frag['imports'])
+    plot_code['states'] = {k2: [*head, *fit, '', SIZE, COLOR, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+                                f'ax.plot(t, res.states[{J(k2)}].to_numpy(), color=color, linewidth={_pt(1.4)})   # the {k2} state',
+                                *_labels(S, k2[:1].upper() + k2[1:], f'{name} {k2}'), 'plt.show()'] for k2 in comp}
+    return _model_out(S, 'ets', name, fitted_v, resid, np.where(valid, fit_se, np.nan), level, fcd, st, summary,
+                      {'columns': 'ets', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       states=comp, sigma=sigma, nparm=nparm, sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'llf': _f(res.llf)},
                       spec={'error': error, 'trend': trend, 'seasonal': seasonal, 's': s})
 
@@ -1637,8 +2062,51 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
     fitted_v = np.where(valid, fitted, np.nan)
     resid = np.where(valid, S.y - fitted, np.nan)
     fit_se = np.where(valid, fit_se, np.nan)
+    # the graphs: the model fitted as above, its one-step predictions after the diffuse start, the forecasts
+    fit = []
+    if names_in:
+        fit.append(f'X = d.loc[y.index, {json.dumps(names_in)}]' + ('' if dated else '.reset_index(drop=True)') + '   # the inputs')
+        if h:
+            fit.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods')
+    fit += [c[next(i for i, ln in enumerate(c) if ln.startswith('mod = UnobservedComponents('))],
+            f'res = mod.fit(method="lbfgs", maxiter={int(maxiter or 200)}, pgtol=1e-7, factr=1e4, disp=False)',
+            _z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
+            'burn = max(res.loglikelihood_burn, res.nobs_diffuse or 0)   # the diffuse start, left out of the fit statistics',
+            'ok = y.notna().to_numpy() & (np.arange(len(y)) >= burn) & np.isfinite(fv)',
+            'se = np.asarray(res.get_prediction().se_mean, dtype=float)', *_band_lines()]
+    if h:
+        fit += [f'fc = res.get_forecast({h}{", exog=X_future" if names_in else ""})',
+                f'f_mean, (f_lower, f_upper) = np.asarray(fc.predicted_mean, dtype=float), np.asarray(fc.conf_int(alpha={1 - level:.6g}), dtype=float).T', _future_line(S, h)]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.statespace.structural import UnobservedComponents'], fit, h, nlags)
+    part = {'level': 'res.level', 'trend': 'res.trend', 'seasonal': 'res.seasonal', 'cycle': 'res.cycle', 'autoregressive': 'res.autoregressive'}
+    cp = [*_head(S, table_name, where, plot_frag['imports']), *fit,
+          'parts = []   # the smoothed components (label, mean, lower, upper), with their bands from the smoothed variances']
+    for comp_ in comps:
+        key, label = comp_['key'], comp_['label']
+        if key in part or key.startswith('freq_seasonal'):
+            src = part.get(key) or f'res.freq_seasonal[{int(key[len("freq_seasonal"):])}]'
+            cp.append(f'm, s = np.asarray({src}.smoothed, dtype=float), np.sqrt(np.clip(np.asarray({src}.smoothed_cov, dtype=float), 0, None)); '
+                      f'parts.append(({J(label)}, m, m - z * s, m + z * s))')
+        elif key == 'regression':
+            cp.append(f'beta = np.asarray(res.params)[[res.model.param_names.index("beta." + c) for c in {json.dumps(xnames)}]]; '
+                      f'parts.append(({J(label)}, np.asarray(X, dtype=float) @ beta, None, None))   # the inputs times their coefficients')
+        elif key == 'irregular':
+            cp.append('e = res.smoother_results; m = np.asarray(e.smoothed_measurement_disturbance[0], dtype=float); '
+                      's = np.sqrt(np.clip(np.asarray(e.smoothed_measurement_disturbance_cov[0, 0], dtype=float), 0, None)); '
+                      f'parts.append(({J(label)}, m, m - z * s, m + z * s))')
+    cp += ['', SIZE, COLOR, 'fig, axes = plt.subplots(len(parts), 1, sharex=True, squeeze=False, figsize=size, layout="constrained")',
+           'for ax, (label, m, lo, hi) in zip(axes[:, 0], parts):',
+           '    if label == "Level":',
+           '        ' + _trace('t', 'y', lines=False, color=MUTED, size=4) + '   # the data',
+           '    if lo is not None:',
+           f'        ax.fill_between(t, lo, hi, color=color, alpha=0.18, linewidth=0)   # the {100 * level:g}% band',
+           f'    ax.plot(t, m, color=color, linewidth={_pt(1.5)})',
+           '    ax.set_title(label, loc="left", fontsize=8)',
+           f'axes[-1, 0].set_xlabel({J(_xlabel(S))})', f'fig.suptitle({J(name + " components")}, fontsize=10)', 'plt.show()']
+    plot_code['components'] = cp
     return _model_out(S, 'uc', name, fitted_v, resid, fit_se, level, fcd, st, summary, {'columns': 'uc', 'rows': rows_p}, nlags, 0, notes,
                       '\n'.join(c), components=comps, iterations=history, converged=conv, n_iter=n_iter, burn=burn,
+                      plot_code=plot_code, plot_frag=plot_frag,
                       cycle_bounds=[_f(2 * math.pi / hi_f), _f(2 * math.pi / lo_f) if lo_f and lo_f > 0 else None] if cycle else None,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'aicc': _f(res.aicc), 'llf': _f(res.llf), 'df_model': int(res.df_model)},
                       spec={'trend': trend, 'seasonal': seasonal, 'freq': freq, 'cycle': bool(cycle), 'ar': ar, 'inputs': names_in, 'exact': bool(exact)})
@@ -1832,7 +2300,8 @@ def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c
         notes.append(f'{_plural(int(miss.sum()), "missing value")} filled by linear interpolation for the fit: the Hamilton filter needs every value. '
                      'They are left out of the fit statistics.')
     cls = 'MarkovAutoregression' if order else 'MarkovRegression'
-    c = _code_series(S, table_name, where, [f'from statsmodels.tsa.regime_switching.{"markov_autoregression" if order else "markov_regression"} import {cls}'])
+    imp = f'from statsmodels.tsa.regime_switching.{"markov_autoregression" if order else "markov_regression"} import {cls}'
+    c = _code_series(S, table_name, where, [imp])
     if miss.any():
         c.append('y = y.interpolate(limit_direction="both")   # the Hamilton filter needs every value')
     args = [f'k_regimes={k}'] + ([f'order={order}'] if order else []) + [f'trend={trend!r}', f'switching_trend={switching_trend}']
@@ -1867,8 +2336,42 @@ def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c
           'print(res.smoothed_marginal_probabilities)   # P(regime at t | all the data)']
     name = markov_name(k, order, trend, switching_trend, switching_variance, switching_ar)
     resid = np.where(valid, x - fitted_full, np.nan)
+    # the graphs: the model fitted as above (the same starts, the same seed), its one-step predictions and probabilities
+    i0, i1 = c.index(f'x = y.to_numpy(); k = {k}'), c.index('res = mod.smooth(best, cov_type="approx")')
+    fit = ['yi = y.interpolate(limit_direction="both")   # the Hamilton filter needs every value' if miss.any() else 'yi = y',
+           f'x = yi.to_numpy(); k = {k}', *c[i0 + 1:i1 + 1],
+           f'fv = np.r_[np.full({order}, np.nan), res.predict(probabilities="predicted")]   # E[y_t | y before t], from the predicted regime probabilities',
+           f'ok = y.notna().to_numpy() & np.isfinite(fv) & (np.arange(len(y)) >= {order})',
+           'fitted, resid = np.where(ok, fv, np.nan), np.where(ok, x - fv, np.nan)   # statsmodels gives these models no prediction intervals',
+           f'prob = np.vstack([np.full(({order}, k), np.nan), res.smoothed_marginal_probabilities])   # P(regime at t | all the data)']
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, [imp], fit, 0, nlags, onestep=False)
+    head = [*_head(S, table_name, where, plot_frag['imports']), *fit]
+    tnum = '((t - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)).to_numpy()' if S.kind in DATE_KINDS else 'np.asarray(t, dtype=float)'
+    back = 'pd.to_datetime(edges, unit="ms")' if S.kind in DATE_KINDS else 'edges'
+    plot_code['regimes'] = [
+        *head, f'most = np.r_[np.full({order}, -1), np.argmax(res.smoothed_marginal_probabilities, axis=1)]   # the most likely regime at each time',
+        f'tn = {tnum}; step = (tn[-1] - tn[0]) / (len(tn) - 1) if len(tn) > 1 else 1.0',
+        f'edges = {back.replace("edges", "np.r_[tn[0] - step / 2, (tn[:-1] + tn[1:]) / 2, tn[-1] + step / 2]")}   # halfway between the times',
+        f'colors = {J(REGIMES)}   # the regimes\' colours', '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+        'i = 0', 'while i < len(most):   # a band over each run of one regime', '    j = i + 1',
+        '    while j < len(most) and most[j] == most[i]:', '        j += 1',
+        '    if most[i] >= 0:', '        ax.axvspan(edges[i], edges[j], color=colors[most[i]], alpha=0.16, linewidth=0)', '    i = j',
+        _trace('t', 'y', color=INK, extra=f', label={J(S.y_name)}') + '   # the series, in the ink that reads on every band',
+        'from matplotlib.patches import Patch',
+        'handles = ax.get_legend_handles_labels()[0] + [Patch(color=colors[j], alpha=0.45, label=f"Regime {j} most likely") for j in range(k)]',
+        'fig.legend(handles=handles, loc="outside lower center", ncols=min(4, len(handles)), frameon=False, fontsize=8)',
+        *_labels(S, S.y_name, f'{name} regimes'), 'plt.show()']
+    plot_code['prob'] = [
+        *head, f'colors = {J(REGIMES)}   # the regimes\' colours', '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+        'for j in range(k):',
+        f'    ax.plot(t, prob[:, j], color=colors[j], linewidth={_pt(1.5)}, marker="o", markersize={_pt(3)}, label=f"Regime {{j}}")',
+        _when(['fprob'], f'fprob = np.vstack([np.full(({order}, k), np.nan), res.filtered_marginal_probabilities])   # P(regime at t | the data up to t)',
+              'for j in range(k):   # Filtered Probabilities',
+              f'    ax.plot(t, fprob[:, j], color=colors[j], linewidth={_pt(1)}, linestyle=":", label=f"Regime {{j}} filtered")'),
+        'ax.set_ylim(-0.03, 1.03)', 'fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=8)',
+        *_labels(S, 'Smoothed probability', f'{name} smoothed probabilities'), 'plt.show()']
     return _model_out(S, 'markov', name, np.where(valid, fitted_full, np.nan), resid, None, level, _forecast(S, 0, [], [], [], []), st, summary,
-                      {'columns': 'markov', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c),
+                      {'columns': 'markov', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       k=k, order=order, per_regime=list(per.values()), transition=trans, regimes=regimes, prob=prob, fprob=fprob,
                       starts=tried, most=[None] * order + [int(v) for v in most],
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf)},
@@ -1969,6 +2472,25 @@ def filter_series(table, y, time=None, rows=None, excluded=None, method='hp', la
         c.append('y = y.interpolate(limit_direction="both")')
     c += [call, 'print(trend, cycle)']
     out['code'] = '\n'.join(c)
+    p = [*_head(S, table_name, where, imports),
+         'yf = y.interpolate(limit_direction="both")   # the missing values filled for the filter' if miss.any() else 'yf = y']
+    if method == 'hp':
+        p.append(f'cycle, trend = hpfilter(yf, lamb={out["lamb"]!r})')
+    elif method == 'bk':
+        p += [f'cycle = bkfilter(yf, low={out["low"]!r}, high={out["high"]!r}, K={out["K"]}).reindex(yf.index)   # K values lost at each end',
+              'trend = yf - cycle   # y − cycle']
+    else:
+        p.append(f'cycle, trend = cffilter(yf, low={out["low"]!r}, high={out["high"]!r}, drift={bool(drift)})')
+    if miss.any():
+        p.append('cycle[y.isna()] = np.nan   # missing where the series is')
+    p += ['', SIZE, 'fig, (ax, cx) = plt.subplots(2, 1, sharex=True, figsize=size, layout="constrained", gridspec_kw={"height_ratios": [53, 37]})',
+          _trace('t', 'y', lines=False) + '   # the series',
+          f'ax.plot(t, trend, color="{RED}", linewidth={_pt(1.8)})   # {"y − cycle" if method == "bk" else "the trend"}',
+          f'cx.plot(t, cycle, color="{BASE}", linewidth={_pt(1.4)})   # the cycle',
+          f'ax.set_title({J(S.y_name + (" and y − cycle" if method == "bk" else " and trend"))}, loc="left", fontsize=8); cx.set_title("Cycle", loc="left", fontsize=8)',
+          f'ax.set_ylabel({J(S.y_name)}); cx.set_ylabel("Cycle"); cx.set_xlabel({J(_xlabel(S))})',
+          f'fig.suptitle({J(out["label"])}, fontsize=10)', 'plt.show()']
+    out['plot_code'] = {'filter': p}
     return out
 
 
@@ -2041,7 +2563,25 @@ def subseries(table, y, time=None, rows=None, excluded=None, period=12, nlags=No
         c += [f'season = np.arange(len(y)) % {s}   # the position in the period, from the first value',
               f'seasonal_plot(y.groupby(season), {json.dumps([x["label"] for x in seasons])})   # matplotlib',
               'print(y.groupby(season).mean())']
-    return {'by': by, 'period': s if by == 'position' else len(labels), 'seasons': seasons, 'notes': notes, 'code': '\n'.join(c)}
+    season_of = {'month': 'season = np.asarray(t.month) - 1   # the calendar month', 'quarter': 'season = np.asarray(t.quarter) - 1   # the quarter',
+                 'weekday': 'season = np.asarray(t.dayofweek)   # the weekday, Monday first',
+                 'position': f'season = np.arange(len(y)) % {s}   # the position in the period, from the first value'}[by]
+    plot = [*_head(S, table_name, where), season_of, f'labels = {J(labels)}',
+            '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+            'start, ticks, names = 0, [], []',
+            'for j, label in enumerate(labels):   # each season\'s values side by side, in time order',
+            '    v = y.to_numpy()[season == j]',
+            '    if not len(v):', '        continue',
+            '    x = start + np.arange(len(v))',
+            '    ' + _trace('x', 'v'),
+            '    if np.isfinite(v).any():',
+            f'        ax.plot([x[0] - 0.35, x[-1] + 0.35], [np.nanmean(v)] * 2, color="{RED}", linewidth={_pt(2.5)})   # the mean of the season',
+            '    ticks.append((x[0] + x[-1]) / 2); names.append(label); start += len(v)',
+            'ax.set_xticks(ticks, names)',
+            f'ax.set_xlabel({J("Position in the period of " + str(s) if by == "position" else "")})', f'ax.set_ylabel({J(y)})',
+            f'ax.set_title({J(y + " seasonal subseries")})', 'plt.show()']
+    return {'by': by, 'period': s if by == 'position' else len(labels), 'seasons': seasons, 'notes': notes, 'code': '\n'.join(c),
+            'plot_code': {'subseries': plot}}
 
 
 # ---- the theta model ---------------------------------------------------------------------------------------
@@ -2156,8 +2696,31 @@ def theta_model(table, y, time=None, rows=None, excluded=None, period=12, deseas
     fitted_v = np.where(valid, fitted, np.nan)
     resid = np.where(valid, x - fitted, np.nan)
     sd = st['sd'] if st['sd'] is not None else float('nan')
-    return _model_out(S, 'theta', f'Theta Model (θ = {th:.6g})', fitted_v, resid, np.where(valid, sd, np.nan), level, fcd, st, summary,
-                      {'columns': 'theta', 'rows': rows_p}, nlags, 1, notes, '\n'.join(c),
+    # the graphs: the model fitted as above, and the one-step theta forecasts from each origin as the report makes them
+    name = f'Theta Model (θ = {th:.6g})'
+    fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y',
+           f'mod = ThetaModel(yi.to_numpy(), period={s if des else None}, deseasonalize={des}, use_test={bool(use_test)}, method={method!r})',
+           f'res = mod.fit(use_mle={bool(use_mle)})', f'theta, b0, alpha = {th!r}, res.params["b0"], res.params["alpha"]',
+           'yd, fac = mod._deseasonalize_data() if mod._has_seasonality else (yi.to_numpy(), None)   # the series as the fit takes it (statsmodels\' own deseasonalizing)',
+           'lev = np.empty(len(yd)); prev = yd[0]',
+           'for j in range(len(yd)):   # simple exponential smoothing: the forecast of each value from the ones before it',
+           '    lev[j] = prev; prev = prev + alpha * (yd[j] - prev)',
+           'fv = (theta - 1) / theta * b0 * (1 / alpha - (1 - alpha) ** np.arange(len(yd)) / alpha) + lev   # with the drift of the theta line']
+    if seasonal_found:
+        fit.append(f'fv = fv * fac[np.arange(len(yd)) % {s}] if mod.method.startswith("mul") else fv + fac[np.arange(len(yd)) % {s}]   # the seasonal pattern put back')
+    fit += ['fv[0] = np.nan   # the first value has no forecast', _z_line(level), 'ok = y.notna().to_numpy() & np.isfinite(fv)',
+            'sd = np.sqrt(np.sum((yi.to_numpy() - fv)[ok] ** 2) / (ok.sum() - 2))   # the standard deviation of the one-step errors (α and b0 fitted)',
+            *_band_lines(se='sd', resid='yi.to_numpy() - fv')]
+    if h:
+        fit += [f'f_mean = np.asarray(res.forecast({h}, theta=theta), dtype=float)',
+                f'f_se = np.sqrt(res.sigma2 * (1 + np.arange({h}) * alpha ** 2))   # the IMA(1, 1) with drift that the method is: σ²(1 + (h − 1)α²)',
+                'f_lower, f_upper = f_mean - z * f_se, f_mean + z * f_se',
+                _when(['smpi'], f'pi = res.prediction_intervals({h}, theta=theta, alpha={1 - level:.6g})   # statsmodels\' Prediction Intervals (the red triangle)',
+                      'f_lower, f_upper = pi["lower"].to_numpy(), pi["upper"].to_numpy()'),
+                _future_line(S, h)]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.forecasting.theta import ThetaModel'], fit, h, nlags)
+    return _model_out(S, 'theta', name, fitted_v, resid, np.where(valid, sd, np.nan), level, fcd, st, summary,
+                      {'columns': 'theta', 'rows': rows_p}, nlags, 1, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       b0=_f(b0), alpha=_f(alpha), sigma2=_f(sigma2), one_step=_f(one), seasonal_found=seasonal_found, method=meth,
                       spec={'theta': th, 'period': s, 'deseasonalize': des, 'use_test': bool(use_test), 'use_mle': bool(use_mle)})
 
@@ -2207,7 +2770,24 @@ def zivot(table, y, time=None, rows=None, excluded=None, trim=0.15, maxlag=None,
              'simulated tables, which are close to Zivot and Andrews\' (1992).']
     if len(v) < S.n:
         notes.append(f'{_plural(S.n - len(v), "missing value")} left out, as in the ADF tests.')
-    return {'tests': out, 'n': int(len(v)), 'trim': trim, 'notes': notes, 'code': '\n'.join(c)}
+    regs = [(t['regression'], {'c': 'intercept', 't': 'trend', 'ct': 'both'}[t['regression']]) for t in out if not t.get('error')]
+    plot = None
+    if regs:
+        dated = S.kind in DATE_KINDS
+        plot = [*_head(S, table_name, where, ['from statsmodels.tsa.stattools import zivot_andrews', *(['import matplotlib.dates as mdates'] if dated else [])]),
+                'pos = np.flatnonzero(y.notna().to_numpy()); v = y.to_numpy()[pos]   # the values present',
+                'breaks = {}   # each break date, with the models that put the break there',
+                f'for reg, short in {tuple(regs)!r}:',
+                f'    bp = zivot_andrews(v, trim={trim!r}, maxlag={ml!r}, regression=reg, autolag={al!r})[4]',
+                ('    when = mdates.date2num(t[pos[bp]])   # the last observation before the shift, in the date axis\'s days' if dated else
+                 '    when = float(t[pos[bp]])   # the last observation before the shift'),
+                '    breaks.setdefault(when, []).append(short)',
+                '', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")', _trace('t', 'y'),
+                'for i, (when, models) in enumerate(breaks.items()):',
+                f'    ax.axvline(when, color="{RED}", linewidth={_pt(1.3)}, linestyle=(":", "--", "-.")[i % 3])',
+                f'    ax.text(when, 1 - 0.1 * i, " " + ", ".join(models), transform=ax.get_xaxis_transform(), ha="left", va="top", fontsize=7, color="{MUTED}")',
+                *_labels(S, S.y_name, f'{S.y_name} Zivot-Andrews breaks'), 'plt.show()']
+    return {'tests': out, 'n': int(len(v)), 'trim': trim, 'notes': notes, 'code': '\n'.join(c), 'plot_code': {'breaks': plot}}
 
 
 # ---- ARDL, the error correction form and the bounds test --------------------------------------------------
@@ -2436,8 +3016,25 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
         c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
         c.append(f'print(res.get_prediction(start=len(Y), end=len(Y) + {h - 1}, exog_oos=X_future).summary_frame(alpha={1 - level:.6g}))')
     resid = np.where(valid, x - fitted, np.nan)
+    # the graphs: the model fitted as above (the same order search), its predictions after the lags' starting values, the forecasts
+    fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y',
+           f'Y = pd.Series(yi.to_numpy(), name={json.dumps(y)})', f'X = d.loc[y.index, {json.dumps(names_in)}].reset_index(drop=True)   # the inputs']
+    if order:
+        fit.append(f'res = ARDL(Y, {int(order.get("p") or 0) or None}, X[{json.dumps(use)}], {qd}{extra}).fit()')
+    else:
+        fit.append(f'res = ardl_select_order(Y, {maxlag}, X, {maxorder}, ic={ic!r}{", glob=True" if glob else ""}{extra}).model.fit()   # the orders by {ic.upper()}')
+    fit += [_z_line(level), 'pad = np.full(len(Y) - len(res.fittedvalues), np.nan)   # the first observations give the lags their starting values',
+            'fv = np.r_[pad, np.asarray(res.fittedvalues, dtype=float)]',
+            'se = np.r_[pad, np.asarray(res.get_prediction().se_mean, dtype=float)[-len(res.fittedvalues):]]',
+            'ok = y.notna().to_numpy() & np.isfinite(fv)', *_band_lines(resid='yi.to_numpy() - fv')]
+    if h:
+        fit += ['X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods',
+                f'sf = res.get_prediction(start=len(Y), end=len(Y) + {h - 1}, exog_oos=X_future).summary_frame(alpha={1 - level:.6g})',
+                'f_mean, f_lower, f_upper = (sf[k].to_numpy() for k in ("mean", "mean_ci_lower", "mean_ci_upper"))', _future_line(S, h)]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.ardl import ARDL' if order else 'from statsmodels.tsa.ardl import ardl_select_order'],
+                                        fit, h, nlags)
     return _model_out(S, 'ardl', name, np.where(valid, fitted, np.nan), resid, np.where(valid, fse_in, np.nan), level, fcd, st, summary,
-                      {'columns': 'ardl', 'rows': rows_p}, nlags, len(ar_lags), notes, '\n'.join(c),
+                      {'columns': 'ardl', 'rows': rows_p}, nlags, len(ar_lags), notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       order=list(ordr), inputs_used=inc, long_run=lr, bounds=bounds, ecm=ecm, speed=speed, selection=selection,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf), 'sigma2': _f(res.sigma2)},
                       spec={'trend': trend, 'ic': ic, 'glob': bool(glob), 'maxlag': maxlag, 'maxorder': maxorder, 'case': case,

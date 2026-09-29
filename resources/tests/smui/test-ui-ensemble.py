@@ -32,11 +32,18 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -277,6 +284,54 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+def ensemble_compare(lab, g, F):
+    t = g['label']
+    if t.startswith('Cumulative Validation of'):
+        UP.check_lines(check, lab, g, F)
+        ax = F['axes'][0]
+        kept = [tr for tr in g['traces'] if tr.get('mode') == 'markers' and len(tr.get('x') or []) == 1]
+        check(f'{lab}: the number kept marked on its curve', all(any(ln['marker'] == 'D' and UP.close(ln['x'], k['x'], 1e-12) and UP.close(ln['y'], k['y'], 1e-9) for ln in ax['lines']) for k in kept) and len(kept) == 1, True)
+        check(f'{lab}: the legend: the sets (and out of bag)', F['legend'], [tr['name'] for tr in g['traces'] if tr.get('showlegend') is not False and len(tr.get('x') or []) > 1])
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every graph of Bootstrap Forest's and Boosted Tree's reports, categorical and continuous: its block
+    under it, run in the page, its figure the graph's (the model refitted in the block with the seed)."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Subscribers')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    last = 'SM.app.reports.at(-1)'
+    cat = {'y': ['churned'], 'x': XS, 'validation': ['Validation']}
+    cont = {'y': ['satisfaction'], 'x': XS}
+    specs = [
+        ('forest', 'Bootstrap Forest, churned, a Validation column', cat, {'settings': {'trees': 30}, 'roc': True, 'lift': True, 'permutation': True, 'permRepeats': 2, 'seed': '5'}),
+        ('forest', 'Bootstrap Forest, satisfaction, a validation portion, RASE', cont, {'settings': {'trees': 30}, 'abp': True, 'permutation': True, 'permRepeats': 2, 'cumStat': 'rase', 'portion': 0.3, 'seed': '9'}),
+        ('boosted', 'Boosted Tree, churned, a Validation column', cat, {'settings': {'layers': 25}, 'roc': True, 'lift': True, 'seed': '5'}),
+        ('boosted', 'Boosted Tree, satisfaction, every row trains', cont, {'settings': {'layers': 20, 'rowRate': 0.8}, 'abp': True, 'permutation': True, 'permRepeats': 2, 'seed': '3'}),
+    ]
+    total = 0
+    for pid, label, roles, opts in specs:
+        r = await page.ev(open_report_js(pid, roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, ensemble_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    # By contract, rows excluded: the blocks keep the group's rows
+    out = [1, 4, 6, 10]
+    await page.ev(f'{tbl}.setState({out}, "excluded", true)')
+    r = await page.ev(open_report_js('forest', {'y': ['satisfaction'], 'x': ['tenure (months)', 'monthly charge', 'support calls'], 'by': ['contract']}, {'settings': {'trees': 10}, 'abp': True, 'seed': '2'}), timeout=900)
+    check('charts: By contract, rows excluded: no errors', r['errors'], [])
+    n, _ = await UP.chart_blocks(page, check, 'By contract, rows excluded', tbl, last, ensemble_compare)
+    total += n
+    await page.ev(f'SM.app.closeReport({last})')
+    await page.ev(f'{tbl}.setState({out}, "excluded", false)')
+    check('charts: the blocks ran and drew the page\'s graphs', total >= 30, True)
 
 
 async def main():
@@ -649,6 +704,9 @@ async def main():
     check('Tree Views\' (i) explains its controls and the Show Trees choices', ([c[0] for c in s['sections'].get('The controls', [])], [c[0] for c in s['sections'].get('Show Trees (red triangle)', [])]),
           (['‹ and ›', 'Tree, Layer'], ['Show names', 'Show names categories', 'Show names categories estimates', 'Hide Trees']))
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "forest" && r.spec.options.abp)))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
@@ -695,5 +753,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

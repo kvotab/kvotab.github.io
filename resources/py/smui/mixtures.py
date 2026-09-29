@@ -39,6 +39,23 @@ MAX_FITS = 20             # numbers of clusters in one range
 J = json.dumps
 
 
+def _dated(obj, table):
+    """Code that reads the table's CSV (a string, or the strings of a list
+    or dict) with the line that turns each date column it names back into
+    the page's number, as dispatch does for the keys code and *_code."""
+    from .util import date_columns, dated_code
+    cols = date_columns(table)
+    if not cols:
+        return obj
+    if isinstance(obj, str):
+        return dated_code(obj, cols)
+    if isinstance(obj, list):
+        return [_dated(v, table) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _dated(v, table) for k, v in obj.items()}
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # the EM with an outlier cluster (its source goes into the code shown)
 # ---------------------------------------------------------------------------
@@ -391,23 +408,41 @@ def _fit_out(D, M, k, spec, pca):
     return out
 
 
-def _rows_line(table, rows):
-    if rows is None:
-        return None
-    n_all = data.TABLES[table]['n'] if table in data.TABLES else None
-    keep = [int(r) for r in rows]
-    if n_all is not None and len(keep) > n_all / 2:
-        drop = sorted(set(range(n_all)) - set(keep))
-        return f'df = df.drop(index={drop})   # the rows the report leaves out' if drop else None
-    return f'df = df.loc[{keep}]   # the rows of the report'
+def _lit(v):
+    """A value as a Python literal: 12.0 as 12, text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    return J(str(v))
 
 
-def _code_data(D, table_name, extra):
+def _keep_lines(table, rows, where=None):
+    """After the code's head: the By group's rows (its where lines) and, of
+    those, the ones the report uses (excluded and filtered rows dropped)."""
+    L = []
+    n = data.TABLES[table]['n'] if table in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        num = data.meta(table, w['column']).get('dataType') == 'numeric'
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows of the report']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+    return L
+
+
+def _code_data(D, table_name, extra, where=None):
     """The lines that build X, Xf, the scale and Z, Zf as the report does."""
     L = [code_head(table_name, extra)]
-    line = _rows_line(D.table, D.rows_in)
-    if line:
-        L.append(line)
+    L += _keep_lines(D.table, D.rows_in, where)
     names = D.cols + ([D.freq] if D.freq else [])
     L.append(f'd = df[{J(names)}].dropna()   # the rows with every column')
     if D.freq:
@@ -455,8 +490,8 @@ def _code_functions(spec):
         return ['# (the source of outlier_em is in resources/py/smui/mixtures.py)']
 
 
-def _code_comparison(D, spec, table_name):
-    L = _code_data(D, table_name, _code_extra(spec)) + _code_functions(spec)
+def _code_comparison(D, spec, table_name, where=None):
+    L = _code_data(D, table_name, _code_extra(spec), where) + _code_functions(spec)
     L.append(f'for k in range({spec["k_min"]}, {spec["k_max"] + 1}):')
     L += _code_fit_lines(spec, 'k', '    ')
     L.append('    ll -= N * np.log(s).sum()   # the log likelihood in the columns\' own units')
@@ -467,8 +502,10 @@ def _code_comparison(D, spec, table_name):
     return '\n'.join(L)
 
 
-def _code_detail(D, spec, k, table_name):
-    L = _code_data(D, table_name, _code_extra(spec)) + _code_functions(spec)
+def _code_fitted(D, spec, k, table_name, where=None, extra=()):
+    """The lines up to one fit's proportions w, means mu and covariances cov
+    on the fitting scale, each row's probabilities and its cluster."""
+    L = _code_data(D, table_name, _code_extra(spec) + list(extra), where) + _code_functions(spec)
     L += _code_fit_lines(spec, str(k))
     if spec['outlier']:
         L.append(f'w, mu, cov = fit["weights"], fit["means"], fit["covariances"]')
@@ -490,6 +527,11 @@ def _code_detail(D, spec, k, table_name):
             L.append('cov = np.array([v * np.eye(p) for v in gm.covariances_[order]])')
         L.append('prob = gm.predict_proba(Z)[:, order]   # each row\'s probability of each cluster')
     L.append('cluster = prob.argmax(axis=1)   # the most likely cluster' + (f' ({k}: the outlier cluster)' if spec['outlier'] else ''))
+    return L
+
+
+def _code_detail(D, spec, k, table_name, where=None):
+    L = _code_fitted(D, spec, k, table_name, where)
     L.append(f'count = np.bincount(cluster, weights={"f" if D.freq else "None"}, minlength=prob.shape[1])')
     L.append('means = m + mu * s   # in the columns\' own units')
     L.append('sds = np.sqrt(np.diagonal(cov, axis1=1, axis2=2)) * s')
@@ -501,16 +543,70 @@ def _code_detail(D, spec, k, table_name):
     return '\n'.join(L)
 
 
+# ---- the graphs as matplotlib code -------------------------------------------------
+# The page draws the scatterplot matrix, the mixture density and the biplot
+# with its own choices (the columns shown, the ellipses' coverage, the bins,
+# the size): their code is the fit's own lines (fit_head: the fit, each row's
+# cluster, the means and covariances in the columns' units), the principal
+# components' (pca_lines) for the biplot, and the page's drawing. The Cluster
+# Criteria graph's code is whole (criteria_code).
+BASE, RED = '#2f6690', '#b0413e'
+
+
+def _code_plot_head(D, spec, k, table_name, where=None):
+    """The fit's lines for its graphs: the rows, the fit, and in the columns'
+    own units the means and covariances (and the outlier cluster's density)."""
+    L = _code_fitted(D, spec, k, table_name, where, ['import matplotlib.pyplot as plt'])
+    L.append('means = m + mu * s   # the clusters\' means in the columns\' own units')
+    L.append('covs = cov * np.outer(s, s)   # and their covariances')
+    if spec['outlier']:
+        L.append('box_density = np.exp(fit["log_box"]) / np.prod(s)   # the outlier cluster: uniform over the box that holds the rows')
+    return '\n'.join(L)
+
+
+PCA_LINES = [
+    'c = Xf.mean(axis=0)   # the principal components of the columns as fitted (scaled: of their correlations)',
+    'evals, evecs = np.linalg.eigh(np.atleast_2d(np.cov((Xf - c) / s, rowvar=False, ddof=1)))',
+    'o = np.argsort(evals)[::-1]',
+    'evals, evecs = evals[o], evecs[:, o]',
+    'for j in range(evecs.shape[1]):   # each component signed so that its largest loading is positive',
+    '    if evecs[np.argmax(np.abs(evecs[:, j])), j] < 0:',
+    '        evecs[:, j] = -evecs[:, j]',
+    'E2 = evecs[:, :2]',
+    'scores = ((X - c) / s) @ E2   # the rows on the first two components',
+    'pc_means = ((means - c) / s) @ E2   # each cluster\'s normal distribution carried onto them',
+    'pc_covs = np.array([E2.T @ (cv / np.outer(s, s)) @ E2 for cv in covs])']
+
+
+def _code_criteria(D, spec, ks, table_name, where=None):
+    """The Cluster Criteria graph: BIC and AICc of each number of clusters."""
+    L = _code_data(D, table_name, _code_extra(spec) + ['import matplotlib.pyplot as plt'], where) + _code_functions(spec)
+    L += [f'ks = {list(ks)}   # the numbers of clusters fitted', 'bic, aicc = [], []', 'for k in ks:']
+    L += _code_fit_lines(spec, 'k', '    ')
+    L += ['    ll -= N * np.log(s).sum()   # the log likelihood in the columns\' own units',
+          f'    q = {_q_expr(spec["covariance"], spec["outlier"])}   # covariances, means and proportions',
+          '    aicc.append(-2 * ll + 2 * q + 2 * q * (q + 1) / (N - q - 1) if N - q - 1 > 0 else np.inf)',
+          '    bic.append(-2 * ll + q * np.log(N))',
+          'fig, ax = plt.subplots(figsize=(4.6, 2.5), layout="constrained")',
+          f'ax.plot(ks, bic, color="{BASE}", linewidth=1.15, marker="o", markersize=4.3, label="BIC")',
+          f'ax.plot(ks, aicc, color="{RED}", linewidth=1, linestyle=":", marker="s", markersize=3.6, label="AICc")',
+          'ax.set_xticks(ks)', 'ax.set_xlabel("NCluster")', 'ax.set_ylabel("Criterion")',
+          'ax.legend(frameon=False, fontsize=7.5)', 'ax.set_title("Cluster criteria")', 'plt.show()']
+    return '\n'.join(L)
+
+
 # ---------------------------------------------------------------------------
 # the entry points
 # ---------------------------------------------------------------------------
 
 @api('mixtures.fit', packages=SK)
 def fit(table, columns, rows=None, freq=None, k_min=3, k_max=None, covariance='full', tours=10, outlier=False,
-        standardize=True, seed=None, max_iter=500, tol=1e-6, choose='bic', table_name='data'):
+        standardize=True, seed=None, max_iter=500, tol=1e-6, choose='bic', where=None, table_name='data'):
     """Normal mixtures for each number of clusters from k_min to k_max: the
     Cluster Comparison, and for every fit its proportions, means, standard
-    deviations, correlations and the most likely cluster of each row."""
+    deviations, correlations and the most likely cluster of each row; the
+    code of each (and the lines its graphs' code starts with: fit_head,
+    pca_lines; and the whole criteria_code)."""
     try:
         spec = _spec(columns, freq, k_min, k_max, covariance, tours, outlier, standardize, seed, max_iter, tol)
         D, fits = _fits(table, rows, spec)
@@ -523,7 +619,8 @@ def fit(table, columns, rows=None, freq=None, k_min=3, k_max=None, covariance='f
             out_fits.append({'k': k, 'error': M})
         else:
             f = _fit_out(D, M, k, spec, pca)
-            f['code'] = _code_detail(D, spec, k, table_name)
+            f['code'] = _code_detail(D, spec, k, table_name, where)
+            f['fit_head'] = _dated(_code_plot_head(D, spec, k, table_name, where), table)
             out_fits.append(f)
     key = 'aicc' if choose == 'aicc' else 'bic'
     ok = [f for f in out_fits if 'error' not in f and f[key] is not None and math.isfinite(f[key])]
@@ -533,10 +630,14 @@ def fit(table, columns, rows=None, freq=None, k_min=3, k_max=None, covariance='f
            'choose': key, 'seed': spec['seed'], 'tours': spec['tours'], 'covariance': spec['covariance'], 'outlier': spec['outlier'],
            'max_iter': spec['max_iter'], 'tol': spec['tol'], 'p': D.p,
            'box': {'lo': D.X.min(axis=0).tolist(), 'hi': D.X.max(axis=0).tolist()} if spec['outlier'] else None,
-           'code': _code_comparison(D, spec, table_name)}
+           'code': _code_comparison(D, spec, table_name, where)}
+    good = [f['k'] for f in out_fits if 'error' not in f]
+    if len(good) >= 3:
+        out['criteria_code'] = _code_criteria(D, spec, good, table_name, where)
     if pca is not None:
         c, sc, evals, E = pca
         out['pca'] = {'eigenvalues': evals.tolist(), 'vectors': _mat(E[:, :2]), 'scores': _mat(((D.X - c) / sc) @ E[:, :2])}
+        out['pca_lines'] = '\n'.join(PCA_LINES)
     return out
 
 

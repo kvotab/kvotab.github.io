@@ -24,3 +24,9 @@
    scrolls sideways inside the report instead of widening the page --------- */
 .sm-meta-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
 .sm-meta-scroll > .sm-plot { flex: none; }
+/* the forest plot's matplotlib code, under it inside the scroller: it stays
+   in view when the plot is scrolled sideways */
+.sm-meta-scroll > .sm-code { position: sticky; left: 0; }
+
+/* a graph with its matplotlib code under it, as one item of a row */
+.sm-meta-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

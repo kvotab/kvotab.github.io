@@ -31,6 +31,7 @@ import sys
 import time
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -561,8 +562,145 @@ async def main():
     rep = 'SM.app.reports[SM.app.reports.length - 1]'
     await check_form_help(page, f"await __hp.menu({rep}, 'direction (°)', ['V Test…'])", ['Expected mean direction'], 'circular: V Test…')
     await check_form_help(page, f"await __hp.menu({rep}, null, ['Units', 'Clock…'])", ['Period'], 'circular: Units > Clock…')
+    await chart_code(page)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code ----------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE_MORE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it. GRAPHS_JS does not collect a graph's annotations or its polar axes:
+# __cc reads them.
+CHART_JS = r'''
+window.__cc = {
+  layouts(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const ax = (a) => (L[a] ? { range: L[a].range || null, tickvals: L[a].tickvals || null, ticktext: L[a].ticktext || null } : null);
+      return { label: p.getAttribute('aria-label'), ann: (L.annotations || []).map((a) => ({ x: a.x, y: a.y, text: a.text, arrow: !!a.showarrow, color: a.arrowcolor || null })),
+        polar: L.polar ? { range: L.polar.radialaxis.range, dir: L.polar.angularaxis.direction, rot: L.polar.angularaxis.rotation, tickvals: L.polar.angularaxis.tickvals, ticktext: L.polar.angularaxis.ticktext } : null,
+        xaxis: ax('xaxis'), yaxis: ax('yaxis'), traces: (p.data || []).map((d) => ({ type: d.type, mode: d.mode, name: d.name, r: d.r || null, theta: d.theta || null, width: d.width || null })) };
+    });
+  },
+};
+'''
+
+
+async def run_more(page, g, table_js):
+    """A graph's code block run in the page's Python with PROBE_MORE; its figures, or an error."""
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=600)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+def near_pts(a, b, tol=1e-9):
+    return len(a) == len(b) and all(abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol for p, q in zip(a, b))
+
+
+def xy_of(trace):
+    return [(a, b) for a, b in zip(trace.get('x') or [], trace.get('y') or []) if a is not None and b is not None]
+
+
+def check_dot(lab, g, lay, F, grouped):
+    ax = F['axes'][0]
+    check(f'{lab}: the title', ax['title'], g['label'])
+    pts = [t for t in g['traces'] if t.get('mode') == 'markers']
+    if grouped:
+        for t in pts:
+            sc = [x for x in ax['scatter'] if x['label'] == t['name']]
+            check(f'{lab}: the {t["name"]} dots where the page puts them', bool(sc) and near_pts(sc[0]['xy'], xy_of(t)), True)
+            mc = t['mcolor'][0] if isinstance(t['mcolor'], list) else t['mcolor']
+            check(f'{lab}: in the page\'s colour for {t["name"]}', sc[0]['colors'][0][:7] if sc else None, (mc or '')[:7].lower())
+    else:
+        check(f'{lab}: a dot for each point of the page, where the page puts it', bool(ax['scatter']) and near_pts(ax['scatter'][0]['xy'], xy_of(pts[0])), True)
+    circle = [t for t in g['traces'] if t.get('mode') == 'lines' and len(t.get('x') or []) == 181]
+    check(f'{lab}: the unit circle', bool(circle) and any(near_pts(list(zip(ln['x'], ln['y'])), xy_of(circle[0]), 1e-12) for ln in ax['lines']), True)
+    arcs = [t for t in g['traces'] if t.get('mode') == 'lines' and len(t.get('x') or []) == 41]
+    got = [ln for ln in ax['lines'] if len(ln['x']) == 41]
+    check(f'{lab}: the interval\'s arc (or none) as the page draws it', (len(got), bool(arcs) and bool(got) and near_pts(list(zip(got[0]['x'], got[0]['y'])), xy_of(arcs[0]), 1e-9)), (len(arcs), bool(arcs)))
+    arrows = [(a['x'], a['y'], (a['color'] or '').lower()) for a in lay['ann'] if a['arrow']]
+    tips = [(a['xy'][0], a['xy'][1], a['color']) for a in ax['annotations'] if a['s'] == '']
+    check(f'{lab}: the mean vectors: where the page\'s arrows point, in their colours', len(arrows) == len(tips) and all(abs(p[0] - q[0]) < 1e-9 and abs(p[1] - q[1]) < 1e-9 and p[2] == q[2] for p, q in zip(sorted(arrows), sorted(tips))), True)
+    labels = [(a['text'], a['x'], a['y']) for a in lay['ann'] if not a['arrow']]
+    texts = [(a['s'], a['xy'][0], a['xy'][1]) for a in ax['annotations'] if a['s']]
+    check(f'{lab}: the labels around the circle, the page\'s, in their places', [t[0] for t in texts] == [t[0] for t in labels] and near_pts([t[1:] for t in texts], [t[1:] for t in labels], 1e-9), True)
+    # the page asks for [-L, L] on both axes, x scaled like y (Plotly widens x in a plot area that is not square, as
+    # matplotlib's equal aspect narrows the box instead): the y axis keeps the range asked for
+    check(f'{lab}: the page\'s range, no axes', (ax['xlim'], ax['ylim'], ax['visible']), (lay['yaxis']['range'], lay['yaxis']['range'], False))
+
+
+def check_rose(lab, g, lay, F):
+    import math
+    ax = F['axes'][0]
+    pol = lay['polar']
+    bars = lay['traces'][0]
+    check(f'{lab}: the title', ax['title'], g['label'])
+    check(f'{lab}: a bar for each of the page\'s', len(ax['bars']), len(bars['r']))
+    check(f'{lab}: the bars\' radii', maxdiff([b['h'] for b in ax['bars']], bars['r']) < 1e-9, True)
+    check(f'{lab}: the bars\' angles and widths', maxdiff([math.degrees(b['x'] + b['w'] / 2) for b in ax['bars']], bars['theta']) < 1e-9 and maxdiff([math.degrees(b['w']) for b in ax['bars']], bars['width']) < 1e-9, True)
+    for t in lay['traces'][1:]:
+        ln = [x for x in ax['lines'] if len(x['x']) == len(t['r'])]
+        check(f'{lab}: the {t["name"]} line, the page\'s', bool(ln) and maxdiff(ln[0]['y'], t['r']) < 1e-6 * max(1.0, max(t['r'])) and maxdiff([math.degrees(v) for v in ln[0]['x']], t['theta']) < 1e-6, True)
+    check(f'{lab}: the radial range', maxdiff(ax['ylim'], pol['range']) < 1e-9, True)
+    check(f'{lab}: the labels around the circle', ax['xticklabels'], pol['ticktext'])
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev('__gr.idle()')
+    tbl = "__ci.table('Wind')"
+    # rows excluded in the page: the code leaves them out
+    await page.ev("__ci.table('Wind').setState([2, 9, 30, 41], 'excluded', true)")
+    runs = [
+        ('direction, the von Mises fit', {'y': ['direction (°)']}, {'vm': True}, ['direction (°) circular dot plot', 'direction (°) rose diagram']),
+        ('direction by season', {'y': ['direction (°)'], 'x': ['season']}, {}, ['direction (°) circular dot plot', 'direction (°) rose diagram']),
+        ('direction by speed', {'y': ['direction (°)'], 'x': ['speed (m/s)']}, {'roseArea': False, 'bins': 12}, ['direction (°) circular dot plot', 'direction (°) rose diagram', 'direction (°) by speed (m/s)']),
+        ('direction by direction B', {'y': ['direction (°)'], 'x': ['direction B (°)']}, {'xAngle': True}, ['direction (°) circular dot plot', 'direction (°) rose diagram', 'direction (°) by direction B (°)']),
+        ('hour of peak gust, a clock', {'y': ['hour of peak gust']}, {'units': 'clock', 'period': 24}, ['hour of peak gust circular dot plot', 'hour of peak gust rose diagram']),
+        ('direction in radians, by season (By)', {'y': ['direction (°)'], 'by': ['season']}, {'units': 'radians'}, ['direction (°) circular dot plot', 'direction (°) rose diagram'] * 2),
+    ]
+    for label, roles, options, want in runs:
+        o = await page.ev(f'''(() => {{ const t = __ci.table('Wind'); const o = {json.dumps(options)}; const out = {{}};
+          for (const [k, v] of Object.entries(o)) out[['units', 'period', 'xAngle', 'bins'].includes(k) ? k : t.col({json.dumps(roles['y'][0])}).id + '|' + k] = v;
+          return out; }})()''')
+        r = await page.ev(f'''(async () => {{ const rep = await __ci.open('Wind', {json.dumps(roles)}, {json.dumps(o)});
+          return {{ g: await __gr.graphs(rep), lay: __cc.layouts(rep), errors: __ci.errors(rep), undrawn: __gr.take() }}; }})()''', timeout=600)
+        if not isinstance(r, dict):
+            check(f'charts: {label}: the report', r, 'opens')
+            continue
+        check(f'charts: {label}: no errors', r['errors'], [])
+        check(f'charts: {label}: every graph of the report drawn', r['undrawn'], [])
+        check(f'charts: {label}: the graphs', [g['label'] for g in r['g']], want)
+        for g, lay in zip(r['g'], r['lay']):
+            lab = f'charts: {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if 'By' not in label:
+                check(f'{lab}: the code leaves out the excluded rows', 'df = df.drop(index=[2, 9, 30, 41])' in g['code'], True)
+            F, err = await run_more(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            if g['label'].endswith('circular dot plot'):
+                check_dot(lab, g, lay, F, 'season' in label and 'By' not in label)
+            elif g['label'].endswith('rose diagram'):
+                check_rose(lab, g, lay, F)
+            else:
+                ax = F['axes'][0]
+                t = g['traces'][0]
+                check(f'{lab}: the points, the page\'s', bool(ax['scatter']) and near_pts(ax['scatter'][0]['xy'], xy_of(t), 1e-9), True)
+                check(f'{lab}: the angle axis and its labels', (ax['ylim'], ax['yticklabels']), (lay['yaxis']['range'], lay['yaxis']['ticktext']))
+                check(f'{lab}: the axis titles and the title', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+        await page.ev('SM.app.closeReport(__ci.rep())')
+    await page.ev("__ci.table('Wind').setState([2, 9, 30, 41], 'excluded', false)")
 
 
 asyncio.run(main())

@@ -66,10 +66,47 @@
 
   /* A graph no wider than the report (phones): the report's width, less
      the outlines' indentation. */
-  function fitWidth(ctx, w, min = 300) {
+  function roomOf(ctx) {
     const b = ctx.report && ctx.report.body;
-    const avail = b ? b.clientWidth - 72 : 0;
+    return b ? b.clientWidth - 72 : 0;
+  }
+  function fitWidth(ctx, w, min = 300) {
+    const avail = roomOf(ctx);
     return avail > min ? Math.min(w, avail) : w;
+  }
+
+  /* Under each graph, Python that draws it with matplotlib from a CSV export
+     of the table (res.plot_code from quality.py, which makes the graph's
+     numbers): the report's rows, the light theme's colours, the graph's size
+     at 100 pixels an inch. The graph's display options go with the call
+     (plot), with the room the report has, so that the code sizes the figure
+     as the page sizes the graph. A graph in a row takes its code with it. */
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-q-plotcode' }, graph, code) : graph);
+  const where = (ctx) => ctx.where || [];
+
+  /* JMP's quantile of sorted values: the (n + 1)p-th value, interpolated
+     between its neighbours (numpy's method="weibull"); before the first
+     value or after the last, that value. */
+  function jmpQuantile(sorted, p) {
+    const n = sorted.length;
+    if (!n) return NaN;
+    const h = (n + 1) * p;
+    if (h <= 1) return sorted[0];
+    if (h >= n) return sorted[n - 1];
+    const k = Math.floor(h);
+    return sorted[k - 1] + (h - k) * (sorted[k] - sorted[k - 1]);
+  }
+
+  /* A box plot as JMP draws it (Distribution's outlier box plot): the
+     quartiles by the (n + 1)p rule, the whiskers to the furthest values
+     within 1.5 IQR of the box. Plotly gets these numbers, not the values. */
+  function boxStats(values) {
+    const s = values.filter((v) => typeof v === 'number' && Number.isFinite(v)).sort((a, b) => a - b);
+    const q1 = jmpQuantile(s, 0.25), med = jmpQuantile(s, 0.5), q3 = jmpQuantile(s, 0.75);
+    const iqr = q3 - q1;
+    let lf = Infinity, uf = -Infinity;
+    for (const v of s) { if (v >= q1 - 1.5 * iqr && v < lf) lf = v; if (v <= q3 + 1.5 * iqr && v > uf) uf = v; }
+    return { q1, med, q3, lf, uf };
   }
 
   function tickAxis(labels, max = 30) {
@@ -381,13 +418,14 @@
         lam: ew.lam ?? 0.2, ewma_l: ew.L ?? 3, target: chart === 'cusum' ? (cu.target ?? null) : (ew.target ?? null),
         cusum_h: cu.h ?? 4, cusum_k: cu.k ?? 0.5, head_start: !!cu.headStart,
         tests, test_n: ctx.opt('testN', {}), dispersion_tests: ctx.opt('dispTests', false),
-        spec: ctx.opt('capability', true) && spec ? spec : null, alpha: ctx.alpha,
+        spec: ctx.opt('capability', true) && spec ? spec : null, alpha: ctx.alpha, where: where(ctx),
+        plot: { zones: o.zones, shade: o.shade, limits: o.limits, center: o.center, x_title: xTitle, room: roomOf(ctx) },
       };
       const res = await ctx.call('quality.control_chart', payload);
       const outline = ctx.outline(res.error ? col.name : chartTitle(res, col.name), { key: `y:${col.id}`, menu: () => columnMenu(ctx, col, res) });
       if (res.error) { outline.add(ctx.warn(`${col.name}: ${res.error}`)); continue; }
       results.push({ col, res });
-      outline.add(chartFigure(ctx, res, o, xTitle));
+      outline.add(chartFigure(ctx, res, o, xTitle), ctx.code(res.plot_code));
       const s = res.summary;
       const sig = s.sigma.filter((x) => x.sigma != null);
       const notes = [];
@@ -426,7 +464,7 @@
         }
       }
       if (chart === 'run') {
-        const rt = await ctx.call('quality.runs_test', { y: col.name, subgroup: ctx.name('subgroup') });
+        const rt = await ctx.call('quality.runs_test', { y: col.name, subgroup: ctx.name('subgroup'), where: where(ctx) });
         const ro = ctx.outline('Runs Test', { parent: outline, key: `runs:${col.id}` });
         if (rt.error) ro.add(ctx.note(rt.error));
         else ro.add(ctx.kv([['Median', rt.median], ['Points above / below', `${rt.n_above} / ${rt.n_below}`, 'text'], ['Runs about the median', rt.runs, 'int'], ['Expected runs', rt.expected], ['Z', rt.z], ['Prob > |Z|', rt.p, 'p'], ['Prob < Z (clustering, trends)', rt.p_clustering, 'p'], ['Prob > Z (mixtures, oscillation)', rt.p_mixtures, 'p']]),
@@ -696,7 +734,7 @@
       { width: fitWidth(ctx, 420), height: 290, title: `${col.name} capability histogram` });
   }
 
-  function goalPlot(ctx, cols, res) {
+  function goalPlot(ctx, cols, res, code) {
     const c = colors();
     const within = ctx.opt('goalWithin', false);
     const K = ctx.opt('goalPpk', 1);
@@ -729,20 +767,31 @@
     const out = el('output', { text: `Ppk ${fmt(K)}` });
     slider.addEventListener('input', () => { out.textContent = `Ppk ${fmt(Number(slider.value))}`; });
     slider.addEventListener('change', () => ctx.set('goalPpk', Number(slider.value)));
-    return el('div', null, box, el('label', { class: 'sm-slider' }, 'Goal', slider, out));
+    return el('div', null, box, code, el('label', { class: 'sm-slider' }, 'Goal', slider, out));
   }
 
   function capBoxPlots(ctx, cols, res) {
     const c = colors();
-    const traces = [];
+    const traces = [], all = [];
+    let boxes = 0;
     res.columns.forEach((r, i) => {
       if (r.error || r.lsl == null || r.usl == null) return;
       const t = r.target != null ? r.target : (r.lsl + r.usl) / 2;
       const w = r.usl - r.lsl;
       const { vals, rows } = valuesOf(ctx, cols[i]);
-      traces.push({ type: 'box', y: vals.map((v) => (v - t) / w), x: vals.map(() => esc(cols[i].name)), rows, name: esc(cols[i].name), boxpoints: 'outliers', marker: { color: c.point, size: 5 }, line: { color: c.text, width: 1 }, fillcolor: 'rgba(143,169,194,0.28)', hoverinfo: 'y' });
+      const y = vals.map((v) => (v - t) / w);
+      const b = boxStats(y);
+      const name = esc(cols[i].name);
+      boxes++;
+      all.push(...y);
+      // the box as JMP draws it, and the values beyond the whiskers as points (linked to their rows)
+      traces.push({ type: 'box', x: [name], q1: [b.q1], median: [b.med], q3: [b.q3], lowerfence: [b.lf], upperfence: [b.uf], name, boxpoints: false,
+        line: { color: c.text, width: 1 }, fillcolor: 'rgba(143,169,194,0.28)', hoverinfo: 'y' });
+      const ox = [], oy = [], orows = [];
+      y.forEach((v, k) => { if (v < b.lf || v > b.uf) { ox.push(name); oy.push(v); orows.push(rows[k]); } });
+      if (oy.length) traces.push({ type: 'scatter', mode: 'markers', x: ox, y: oy, rows: orows, name: `${name} outliers`, marker: { color: c.point, size: 5 } });
     });
-    if (!traces.length) return null;
+    if (!boxes) return null;
     // the limits of the first column with both (the same for every column whose target is the middle)
     const first = res.columns.find((r) => !r.error && r.lsl != null && r.usl != null);
     const tt = first.target != null ? first.target : (first.lsl + first.usl) / 2;
@@ -750,9 +799,9 @@
     const shapes = [lo, hi].map((y) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: y, y1: y, line: { color: c.spec, width: 1.3 } }));
     shapes.push({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 0, line: { color: c.target, width: 1, dash: 'dot' } });
     const annotations = [[lo, 'LSL'], [hi, 'USL']].map(([y, t]) => ({ xref: 'paper', x: 1, xanchor: 'left', yref: 'y', y, text: t, showarrow: false, font: { size: 10, color: c.spec } }));
-    const all = traces.flatMap((t) => t.y).concat([lo, hi]);
+    all.push(lo, hi);
     return ctx.plot(traces, { yaxis: { title: { text: '(X − Target)/(USL − LSL)' }, zeroline: false, range: span(all, 0.08) }, xaxis: { type: 'category' }, shapes, annotations, margin: { l: 58, r: 36, t: 10, b: 60 } },
-      { width: fitWidth(ctx, Math.max(300, Math.min(760, 140 + 70 * traces.length))), height: 300, title: 'Capability box plots' });
+      { width: fitWidth(ctx, Math.max(300, Math.min(760, 140 + 70 * boxes))), height: 300, title: 'Capability box plots' });
   }
 
   async function capabilityRender(ctx) {
@@ -765,19 +814,28 @@
       const h = ctx.opt('historical', null, c.id);
       if (h) historical[c.name] = h;
     }
-    const res = await ctx.call('quality.capability', { columns: cols.map((c) => c.name), specs, subgroup: ctx.name('subgroup'), within: ctx.opt('within', null), dist, historical, alpha: ctx.alpha });
+    // the graphs' code: each histogram's bins and curves as the page draws them, the goal's Ppk and sigma
+    const bins = {}, curves = {};
+    for (const c of cols) {
+      const { vals } = valuesOf(ctx, c);
+      if (vals.length) { const b = SM.report.niceBins(vals); bins[c.name] = { start: b.start, size: b.size, end: b.end, nb: Math.max(1, Math.round((b.end - b.start) / b.size)) }; }
+      curves[c.name] = { within: ctx.opt('curveWithin', true, c.id), overall: ctx.opt('curveOverall', true, c.id) };
+    }
+    const plot = { bins, curves, room: roomOf(ctx), goal: { ppk: ctx.opt('goalPpk', 1), within: ctx.opt('goalWithin', false) } };
+    const res = await ctx.call('quality.capability', { columns: cols.map((c) => c.name), specs, subgroup: ctx.name('subgroup'), within: ctx.opt('within', null), dist, historical, alpha: ctx.alpha, where: where(ctx), plot });
+    const pc = res.plot_code || {};
     const ppm = ctx.opt('ppm', false);
     const missing = cols.filter((c) => !specs[c.name]);
     if (missing.length) ctx.container.append(ctx.warn(`No spec limits for ${missing.map((c) => c.name).join(', ')}: set them with Spec Limits… in the red triangle, or as the column's Spec Limits property.`));
     const graphs = [];
     if (ctx.opt('goal', true)) {
-      const g = goalPlot(ctx, cols, res);
+      const g = goalPlot(ctx, cols, res, ctx.code(pc.goal));
       if (g) { const ob = ctx.outline('Goal Plot', { key: 'goal', info: 'cap:goal', menu: () => [ctx.check('Within Sigma (Cpk) instead of Overall', 'goalWithin', null, false), { label: 'Goal Ppk…', action: async () => { const v = await SM.ui.form({ title: 'Goal Plot', fields: [{ key: 'k', label: 'Ppk of the triangle', type: 'number', value: ctx.opt('goalPpk', 1),
         help: 'The Ppk the triangle stands for: a column inside it has a larger Ppk (with the target at the middle of the limits). 1 by default; the Goal slider under the plot sets it too, from 0.5 to 2.5. Positive.' }] }); if (v && v.k > 0) ctx.set('goalPpk', v.k); } }] }); ob.add(g, ctx.note('Each column at (mean − target)/(USL − LSL) and standard deviation/(USL − LSL); inside the triangle its Ppk is above the goal (with the target at the middle of the limits). Click a point to select the column.')); graphs.push(ob.el); }
     }
     if (ctx.opt('boxplots', true)) {
       const b = capBoxPlots(ctx, cols, res);
-      if (b) { const ob = ctx.outline('Capability Box Plots', { key: 'boxes' }); ob.add(b, ctx.note('The values centred at the target and scaled by the tolerance: the limits are at ±½ when the target is the middle.')); graphs.push(ob.el); }
+      if (b) { const ob = ctx.outline('Capability Box Plots', { key: 'boxes' }); ob.add(b, ctx.code(pc.boxes), ctx.note('The values centred at the target and scaled by the tolerance: the limits are at ±½ when the target is the middle.')); graphs.push(ob.el); }
     }
     if (graphs.length) ctx.container.append(ctx.row(...graphs));
     if (ctx.opt('indexPlot', false)) {
@@ -788,7 +846,8 @@
       ob.add(ctx.plot([
         { type: 'bar', x: ok.map((x) => esc(x.col.name)), y: ok.map((x) => idx(x.r, 'Ppk')), name: 'Ppk', marker: { color: c.overall } },
         { type: 'bar', x: ok.map((x) => esc(x.col.name)), y: ok.map((x) => idx(x.r, 'Cpk')), name: 'Cpk', marker: { color: c.within } },
-      ], { barmode: 'group', showlegend: true, yaxis: { title: { text: 'Index' } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 1, y1: 1, line: { color: c.limit, dash: 'dot' } }] }, { width: Math.max(320, 120 + 60 * ok.length), height: 260, title: 'Capability index plot', select: false }));
+      ], { barmode: 'group', showlegend: true, yaxis: { title: { text: 'Index' } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 1, y1: 1, line: { color: c.limit, dash: 'dot' } }] }, { width: Math.max(320, 120 + 60 * ok.length), height: 260, title: 'Capability index plot', select: false }),
+      ctx.code(pc.index));
     }
     if (ctx.opt('summary', true)) {
       const ob = ctx.outline('Capability Summary Report', { key: 'summary' });
@@ -816,7 +875,7 @@
           r.dist === 'normal' ? ['Std Dev (Within)', r.sd_within] : null, ['Std Dev (Overall)', r.sd_overall], r.dist === 'normal' ? ['Stability Index', r.stability] : null,
           r.dist === 'normal' ? ['Within Sigma', r.within_method, 'text'] : ['Distribution', r.fit.label, 'text'],
           r.n_subgroups ? ['Subgroups', r.n_subgroups, 'int'] : null].filter((x) => x && x[1] != null), { caption: 'Process Summary' });
-        ob.add(ctx.row(capHistogram(ctx, col, r, { within: o('curveWithin', true), overall: o('curveOverall', true) }), summ));
+        ob.add(ctx.row(withCode(capHistogram(ctx, col, r, { within: o('curveWithin', true), overall: o('curveOverall', true) }), ctx.code((pc.hist || {})[col.name])), summ));
         if (r.dist !== 'normal' && r.fit) {
           ob.add(ctx.kv(Object.entries(r.fit.params).map(([k, v]) => [k, v]).concat([['−2 log(Likelihood)', -2 * r.fit.loglik], ['AICc', r.fit.aicc], ['P0.135', r.percentiles.p00135], ['P50', r.percentiles.p50], ['P99.865', r.percentiles.p99865]]), { caption: `Fitted ${r.fit.label}` }));
           if (r.fit.compared) ob.add(ctx.rt({ columns: [{ key: 'label', label: 'Distribution', fmt: 'text' }, { key: 'aicc', label: 'AICc' }], rows: r.fit.compared }, { caption: 'Compare Distributions', sortable: false, key: 'compare' }));
@@ -975,12 +1034,13 @@
     const cause = ctx.role('y');
     const combine = ctx.opt('combine', null);
     const groups = ctx.names('x');
-    const res = await ctx.call('quality.pareto', { cause: cause.name, freq: ctx.name('freq'), groups, combine });
-    if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
     const o = {
       percent: ctx.opt('percent', false), legend: ctx.opt('legend', false), nLegend: ctx.opt('nLegend', false), cumCurve: ctx.opt('cumCurve', true),
       cumAxis: ctx.opt('cumAxis', true), cumPoints: ctx.opt('cumPoints', true), cumLabels: ctx.opt('cumLabels', false),
     };
+    const res = await ctx.call('quality.pareto', { cause: cause.name, freq: ctx.name('freq'), groups, combine, where: where(ctx), plot: { ...o, ungroup: ctx.opt('ungroup', false), room: roomOf(ctx) } });
+    if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
+    const pc = res.plot_code || {};
     const causes = res.causes;
     if (o.legend) {
       // the Category Legend, once for every chart
@@ -988,10 +1048,10 @@
         el('span', { class: 'sm-q-swatch', style: { background: SM.util.PALETTE[i % SM.util.PALETTE.length] } }), x.cause))));
     }
     if (!res.groups || ctx.opt('ungroup', false) === 'overall') {
-      ctx.container.append(paretoChart(ctx, causes, causes.map((x) => x.count), causes.map((x) => x.rows), res.total, o, null, false));
+      ctx.container.append(...[paretoChart(ctx, causes, causes.map((x) => x.count), causes.map((x) => x.rows), res.total, o, null, false), ctx.code(pc.overall)].filter(Boolean));
     } else {
       const wrap = el('div', { class: 'sm-q-cells' });
-      for (const g of res.groups) wrap.append(paretoChart(ctx, causes, g.counts, g.rows, g.total || 1, o, `${groups.join(', ')} = ${g.label} (N ${fmt(g.total)})`, true));
+      res.groups.forEach((g, i) => wrap.append(withCode(paretoChart(ctx, causes, g.counts, g.rows, g.total || 1, o, `${groups.join(', ')} = ${g.label} (N ${fmt(g.total)})`, true), ctx.code((pc.cells || [])[i]))));
       ctx.container.append(wrap);
     }
     if (causes.some((x) => x.combined)) {
@@ -1111,9 +1171,10 @@
       traces.push({ type: 'scatter', mode: 'markers', x: X, y: Y, rows: R, marker: { size: 5.5, color: c.point }, name: y.name, xaxis: 'x', yaxis: 'y' });
     }
     if (o.boxes) {
-      const X = [], Y = [];
-      cells.forEach((cl, i) => cl.rows.forEach((row) => { const v = y.values[row]; if (Number.isFinite(v)) { X.push(pos[i]); Y.push(v); } }));
-      traces.push({ type: 'box', x: X, y: Y, boxpoints: false, line: { color: c.muted, width: 1 }, fillcolor: 'rgba(143,169,194,0.18)', hoverinfo: 'skip', width: 0.5, xaxis: 'x', yaxis: 'y' });
+      // each cell's box as JMP draws it: the (n + 1)p quartiles, the whiskers to the furthest values within 1.5 IQR
+      const st = cells.map((cl) => boxStats(cl.rows.map((row) => y.values[row])));
+      traces.push({ type: 'box', x: pos, q1: st.map((b) => b.q1), median: st.map((b) => b.med), q3: st.map((b) => b.q3), lowerfence: st.map((b) => b.lf), upperfence: st.map((b) => b.uf),
+        boxpoints: false, line: { color: c.muted, width: 1 }, fillcolor: 'rgba(143,169,194,0.18)', hoverinfo: 'skip', width: 0.5, xaxis: 'x', yaxis: 'y' });
     }
     if (o.rangeBars) {
       const X = [], Y = [];
@@ -1176,18 +1237,20 @@
     const xs = ctx.names('x');
     const part = ctx.name('part');
     const spec = y.specLimits || {};
+    const show = {
+      points: o('points', true), rangeBars: o('rangeBars', true), cellMeans: o('cellMeans', true), connect: o('connect', false), groupMeans: o('groupMeans', false),
+      grandMean: o('grandMean', false), grandMedian: o('grandMedian', false), boxes: o('boxes', false), jitter: o('jitter', false),
+      sdChart: o('sdChart', true), meanSd: o('meanSd', true), sLimits: o('sLimits', false),
+    };
     const res = await ctx.call('quality.variability', {
       y: y.name, xs, part, model: o('model', null), method: o('method', 'best'), gauge: !!gauge, components: vc,
       k_mult: gauge ? gauge.k ?? 6 : 6, tolerance: gauge ? gauge.tolerance ?? null : null,
       lsl: gauge ? (gauge.lsl ?? spec.lsl ?? null) : null, usl: gauge ? (gauge.usl ?? spec.usl ?? null) : null, historical_sigma: gauge ? gauge.historical ?? null : null,
+      where: where(ctx), plot: o('chart', true) ? { ...show, room: roomOf(ctx) } : null,
     });
     const outline = ctx.outline(`Variability Chart for ${y.name}`, { key: `y:${y.id}`, info: 'p:variability' });
     if (res.error) { outline.add(ctx.warn(res.error)); return; }
-    if (o('chart', true)) outline.add(variabilityChart(ctx, y, res, {
-      points: o('points', true), rangeBars: o('rangeBars', true), cellMeans: o('cellMeans', true), connect: o('connect', false), groupMeans: o('groupMeans', false),
-      grandMean: o('grandMean', false), grandMedian: o('grandMedian', false), boxes: o('boxes', false), jitter: o('jitter', false),
-      sdChart: o('sdChart', true), meanSd: o('meanSd', true), sLimits: o('sLimits', false),
-    }));
+    if (o('chart', true)) outline.add(variabilityChart(ctx, y, res, show), ctx.code(res.plot_code));
     if (o('summaryReport', false)) {
       const ob = ctx.outline('Variability Summary Report', { parent: outline, key: `sum:${y.id}` });
       const cols = res.factors.map((f, j) => ({ key: `f${j}`, label: f, fmt: 'text' })).concat([{ key: 'n', label: 'N', fmt: 'int' }, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev' }, { key: 'range', label: 'Range' }, { key: 'min', label: 'Min' }, { key: 'max', label: 'Max' }]);
@@ -1250,7 +1313,8 @@
     const rater = raters.find((c) => !part || c.id !== part.id);
     const ob = ctx.outline(`Attribute Gauge for ${y.name}`, { key: `ag:${y.id}`, info: 'p:variability' });
     if (!rater || !part) { ob.add(ctx.warn('An attribute gauge needs the raters (X, Grouping) and the parts (Part, Sample ID, or a second X column).')); return; }
-    const res = await ctx.call('quality.attribute_gauge', { y: y.name, rater: rater.name, part: part.name, standard: ctx.name('standard') });
+    const res = await ctx.call('quality.attribute_gauge', { y: y.name, rater: rater.name, part: part.name, standard: ctx.name('standard'), where: where(ctx), plot: { room: roomOf(ctx) } });
+    const pc = res.plot_code || {};
     if (res.error) { ob.add(ctx.warn(res.error)); return; }
     const c = colors();
     const parts = res.parts;
@@ -1265,7 +1329,7 @@
     const fig2 = groupPlot(ctx, [{ type: 'scatter', mode: 'markers', x: rx, y: ra, marker: { size: 9, color: c.overall }, hovertext: rt.map((r) => `${esc(r.rater)}: ${fmt(pct(r.agree), { sig: 4 })}%`), hovertemplate: '%{hovertext}<extra></extra>' }],
       { xaxis: { range: [0.5, rt.length + 0.5], title: { text: esc(rater.name) }, tickmode: 'array', tickvals: rx, ticktext: rt.map((r) => esc(r.rater)) }, yaxis: { title: { text: '% Agreement' }, range: [-5, 105] }, margin: { l: 56, r: 12, t: 10, b: 46 } },
       { width: Math.max(260, 120 + 50 * rt.length), height: 260, title: 'Agreement by rater' }, [{ trace: 0, xs: rx, ys: ra, rows: rt.map((r) => r.rows) }]);
-    ob.add(ctx.row(fig1, fig2));
+    ob.add(ctx.row(withCode(fig1, ctx.code(pc.parts)), withCode(fig2, ctx.code(pc.raters))));
     const ar = ctx.outline('Agreement Report', { parent: ob, key: 'agree' });
     const cols = [{ key: 'rater', label: rater.name, fmt: 'text' }, { key: 'agree', label: '% Agreement', fmt: 'pct' }, { key: 'within', label: 'Within Rater Agreement', fmt: 'pct' }];
     if (ctx.name('standard')) cols.push({ key: 'effectiveness', label: 'Effectiveness', fmt: 'pct' });

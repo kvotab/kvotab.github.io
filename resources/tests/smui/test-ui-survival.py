@@ -27,9 +27,11 @@ import asyncio
 import json
 import math
 import os
+import re
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, maxdiff, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -338,6 +340,11 @@ async def main():
     r = await page.ev(open_report_js('nonlinear', {'y': ['y']}, {'model': "__import__('os').getcwd()", 'start': ''}))
     check('a model outside the language is refused', any('quotes' in w for w in r['warnings']), True)
 
+    # ---- the graphs' matplotlib code, run in the page
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Clinical study")))')
+    await chart_code(page)
+    check('no script errors from the graphs\' code', page.errors, [])
+
     # ---- help for every input: the launch dialogs, the red-triangle forms, the controls in the reports
     await help_inputs(page)
 
@@ -498,6 +505,220 @@ async def help_inputs(page):
     check('Compare Distributions\' (i): its check boxes and scale buttons', r['compare'], ['Show', 'Scale'])
     check('the Distribution Calculator has an (i) for its boxes', r['calc'], ['Probability of failure by the time', 'Time by which a fraction has failed'])
     check('every (i) of these reports has a topic', r['noTopic'], [])
+
+
+
+# ---- the graphs' matplotlib code ------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell)
+# with test_charts.PROBE in place of plt.show(), and its figure is compared
+# with the Plotly graph above it. Rows excluded and By are among the cases.
+SG_JS = r'''
+window.__sg = {
+  table(name) { return SM.app.tables.find((t) => t.name === name); },
+  async open(tableName, platform, roles, options) {
+    const t = this.table(tableName);
+    SM.app.showTab(SM.app.tabOf(t));
+    const ids = {};
+    for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => t.col(n).id);
+    const rep = SM.app.openReport(SM.platforms.get(platform), { roles: ids, options: options || {} }, t);
+    await new Promise((res) => rep.on('done', res));
+    return rep;
+  },
+  errors(rep) { return [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent.slice(0, 300)); },
+  details(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const axes = {};
+      for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) axes[k] = { range: L[k].range || null, type: L[k].type || null, tickvals: L[k].tickvals || null, ticktext: L[k].ticktext || null };
+      return { axes, traces: (p.data || []).map((d) => ({ lwidth: d.line ? d.line.width : null, symbol: d.marker ? d.marker.symbol : null, showlegend: d.showlegend, fill: d.fill || null })),
+        legend: (p.data || []).filter((d) => d.showlegend !== false && d.name && L.showlegend !== false).map((d) => d.name) };
+    });
+  },
+};
+'''
+
+CURVE_TABLES = r'''(() => {
+  const r = SM.util.rng('survival-charts');
+  const dose = [], resp = [], batch = [], n = [], w = [];
+  const shift = { A: 4, B: 5, C: 6.5 };
+  for (const g of ['A', 'B', 'C']) for (let i = 0; i < 25; i++) { const x = 0.2 + 10 * i / 24; dose.push(x); batch.push(g); resp.push(2 + 10 / (1 + Math.exp(-1.2 * (x - shift[g]))) + r.normal(0, 0.3)); n.push(1 + i % 3); w.push(0.5 + (i % 4) / 2); }
+  SM.app.addTable(new SM.Table({ name: 'Chart curves', columns: [{ name: 'dose', dataType: 'numeric', values: dose }, { name: 'response', dataType: 'numeric', values: resp },
+    { name: 'batch', dataType: 'character', values: batch }, { name: 'n', dataType: 'numeric', values: n }, { name: 'w', dataType: 'numeric', values: w }] }));
+  const y = [10.07, 14.73, 17.94, 23.93, 29.61, 35.18, 40.02, 44.82, 50.76, 55.05, 61.01, 66.40, 75.47, 81.78];
+  const x = [77.6, 114.9, 141.1, 190.8, 239.9, 289.0, 332.8, 378.4, 434.8, 477.3, 536.8, 593.1, 689.1, 760.0];
+  SM.app.addTable(new SM.Table({ name: 'Chart misra', columns: [{ name: 'y', dataType: 'numeric', values: y }, { name: 'x (volume)', dataType: 'numeric', values: x },
+    { name: 'part', dataType: 'character', values: x.map((_, i) => (i % 2 ? 'b' : 'a')) }] }));
+})()'''
+
+
+def mplc(c):
+    """A Plotly colour as the start of matplotlib's hex (#rrggbb, and the alpha when it has one)."""
+    m = re.match(r'rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)', c or '')
+    if not m:
+        return (c or '').lower()
+    return '#%02x%02x%02x' % (int(m[1]), int(m[2]), int(m[3])) + ('%02x' % round(float(m[4]) * 255) if m[4] is not None and float(m[4]) < 1 else '')
+
+
+def mline(ax, x, y, color=None, ls=None, rel=1e-9, abs_=1e-12, drawstyle=None):
+    for ln in ax['lines']:
+        if color and not (ln['color'] or '').startswith(color):
+            continue
+        if ls is not None and ln['ls'] != ls:
+            continue
+        if drawstyle is not None and ln['drawstyle'] != drawstyle:
+            continue
+        if close(ln['x'], x, rel, abs_) and close(ln['y'], y, rel, abs_):
+            return ln
+    return None
+
+
+def near_line(ax, x, y, tol, color=None, ls=None):
+    """A line with these x and y within tol of the largest |y| (a fit the code makes itself, against the report's)."""
+    scale = max([abs(v) for v in y if v is not None] or [1.0])
+    for ln in ax['lines']:
+        if color and not (ln['color'] or '').startswith(color):
+            continue
+        if ls is not None and ln['ls'] != ls:
+            continue
+        if close(ln['x'], x, 1e-9, 1e-12) and maxdiff(ln['y'], y) <= tol * max(1.0, scale):
+            return ln
+    return None
+
+
+def pts_of(t):
+    return sorted((a, b) for a, b in zip(t.get('x') or [], t.get('y') or []) if a is not None and b is not None)
+
+
+def same_points(a, b, rel=1e-8):
+    """Two sets of points alike within rel (the page's normal quantiles are its own approximation, relative error below 1.2e-9)."""
+    return len(a) == len(b) and all(abs(p[0] - q[0]) <= rel * max(1.0, abs(q[0])) and abs(p[1] - q[1]) <= rel * max(1.0, abs(q[1])) for p, q in zip(a, b))
+
+
+def check_generic(lab, g, D, F, fit_tol=None):
+    """Every visible line of the Plotly graph (steps, curves, limits) as a line of the figure, the fills as fills,
+    the markers as points; the axes' titles; the size."""
+    ax = F['axes'][0]
+    check(f'{lab}: the size, the axis titles', (F['size'], ax['xlabel'], ax['ylabel']), ([g['w'] / 100, g['h'] / 100], g['titles']['x'], g['titles']['y']))
+    for t, d in zip(g['traces'], D['traces']):
+        if t.get('type') != 'scatter':
+            continue
+        mode = t.get('mode') or ''
+        if mode == 'lines' and d.get('lwidth') != 0:
+            ls = {'dot': ':', 'dash': '--'}.get(t.get('dash'), '-')
+            ds = 'steps-post' if t.get('shape') == 'hv' else None
+            x = t.get('x') or []
+            y = t.get('y') or []
+            if fit_tol and not ds:
+                ok = near_line(ax, x, y, fit_tol, mplc(t.get('color')), ls) is not None
+                check(f'{lab}: the {"dotted limit" if ls == ":" else "line"} of {t.get("name") or "a fit"} (the code\'s own fit, within {fit_tol:g})', ok, True)
+            else:
+                ok = mline(ax, x, y, mplc(t.get('color')), ls, 1e-9, 1e-12, ds) is not None
+                check(f'{lab}: the {"steps" if ds else "line"} of {t.get("name") or "a line"}{", " + {":": "dotted", "--": "dashed"}[ls] if ls != "-" else ""}', ok, True)
+        elif mode.startswith('markers') and t.get('x'):
+            want = pts_of(t)
+            got = [sorted((a, b) for a, b in s['xy']) for s in ax['scatter']] + \
+                  [sorted((a, b) for a, b in zip(ln['x'], ln['y']) if a is not None and b is not None) for ln in ax['lines'] if ln['marker'] not in ('None', '')]
+            check(f'{lab}: the points of {t.get("name") or "a trace"}', any(same_points(q, want) for q in got), True)
+    check(f'{lab}: the legend', ax['legend'], D['legend'])
+    fills = [t for t in g['traces'] if t.get('fill') in ('tonexty', 'toself')]
+    check(f'{lab}: the shaded bands', len(ax['polys']), len(fills))
+    for t, p in zip(fills, ax['polys']):
+        ys = [q[1] for q in p['paths'][0] if q[1] is not None]
+        prev = g['traces'][g['traces'].index(t) - 1]
+        both = [v for v in (t.get('y') or []) + (prev.get('y') or []) if v is not None]
+        tol = 1e-12 if not fit_tol else fit_tol * max(1.0, max(abs(v) for v in both))
+        check(f'{lab}: a band spans the page\'s', bool(ys) and max(abs(min(ys) - min(both)), abs(max(ys) - max(both))) <= tol, True)
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(SG_JS)
+    await page.ev('__gr.idle()')
+    await page.ev(CURVE_TABLES)
+    tbl = "__sg.table('Clinical study')"
+    r = await page.ev('''(async () => {
+      const t = __sg.table('Clinical study'); t.setState([2, 9, 57, 120], 'excluded', true);
+      const cc = { censorCode: '1' };
+      const reps = [
+        await __sg.open('Clinical study', 'survival', { y: ['months'], censor: ['censored'], group: ['treatment'] },
+          { ...cc, showCI: true, showPoints: true, showCombined: true, simCI: true, failPlot: true, 'plot:weibull': true, 'fit:weibull': true, 'plot:exponential': true, 'fit:exponential': true, 'plot:lognormal': true }),
+        await __sg.open('Clinical study', 'survival', { y: ['months'], censor: ['censored'], by: ['sex'] }, { ...cc, failure: true, showCI: true }),
+        await __sg.open('Clinical study', 'phreg', { y: ['months'], censor: ['censored'], x: ['treatment', 'age'] }, cc),
+        await __sg.open('Clinical study', 'phreg', { y: ['months'], censor: ['censored'], x: ['age'], by: ['sex'] }, cc),
+        await __sg.open('Clinical study', 'lifedist', { y: ['months'], censor: ['censored'] }, { ...cc, dists: ['weibull', 'lognormal', 'loglogistic'], scale: 'lognormal' }),
+        await __sg.open('Clinical study', 'lifedist', { y: ['months'], censor: ['censored'] }, { ...cc, dists: ['normal', 'exponential', 'sev', 'lev', 'logistic', 'frechet'], scale: 'exponential' }),
+        await __sg.open('Clinical study', 'lifedist', { y: ['months'], censor: ['censored'] }, { ...cc, dists: ['weibull'], scale: 'nonparametric', showNP: true })];
+      const out = [];
+      for (const rep of reps) out.push({ title: rep.title, graphs: await __gr.graphs(rep), details: __sg.details(rep), errors: __sg.errors(rep) });
+      return { reps: out, undrawn: __gr.take() };
+    })()''', timeout=900)
+    check('survival code: no errors in the reports', [x['errors'] for x in r['reps']], [[]] * len(r['reps']))
+    check('survival code: every graph drawn', r['undrawn'], [])
+    check('survival code: the graphs of the first report', [g['label'] for g in r['reps'][0]['graphs']],
+          ['months survival plot', 'months failure plot', 'months Exponential Plot', 'months Weibull Plot', 'months Lognormal Plot'])
+    for i, rep in enumerate(r['reps']):
+        for g, D in zip(rep['graphs'], rep['details']):
+            lab = f'survival code {i + 1}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            F, err = await run_graph(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            if g['label'].endswith('probability plot'):
+                # the fitted lines and their limits come from the code's own maximum likelihood fits (BFGS), within 1e-4
+                check_generic(lab, g, D, F, fit_tol=1e-4)
+                ya, xa = D['axes']['yaxis'], D['axes']['xaxis']
+                check(f'{lab}: the probability axis: its range and ticks', (close(ax['ylim'], ya['range'], 1e-9, 1e-12), [t for t in ax['yticklabels'] if t], close(ax['yticks'], ya['tickvals'], 1e-8, 1e-10)),
+                      (True, ya['ticktext'], True))
+                logx = xa.get('type') == 'log'
+                check(f'{lab}: the time axis{" (log)" if logx else ""}: its range and ticks', (ax['xscale'], close(ax['xlim'], [10 ** v for v in xa['range']] if logx else xa['range'], 1e-9, 1e-12),
+                                                                                              [t for t in ax['xticklabels'] if t] if logx else None),
+                      ('log' if logx else 'linear', True, xa['ticktext'] if logx else None))
+            elif g['label'].endswith('distribution'):
+                check_generic(lab, g, D, F, fit_tol=1e-4)
+                check(f'{lab}: the range', close(ax['xlim'], D['axes']['xaxis']['range'], 1e-12), True)
+            elif g['label'].endswith('Plot') and not g['label'].endswith('survival plot'):
+                # the fitted lines are scipy's censored fits in the code, statsmodels' in the report: within 2e-4
+                check_generic(lab, g, D, F, fit_tol=2e-4)
+            else:
+                check_generic(lab, g, D, F)
+                if g['label'].endswith(('survival plot', 'failure plot')):
+                    check(f'{lab}: the range', close(ax['ylim'], [-0.02, 1.02]), True)
+    check('By: a failure plot for each sex, each with its code', [g['label'] for g in r['reps'][1]['graphs']], ['months failure plot'] * 2)
+    # ---- Fit Curve (groups, two models, confidence curves; Weight and Freq) and Nonlinear
+    r = await page.ev('''(async () => {
+      __sg.table('Clinical study').setState([2, 9, 57, 120], 'excluded', false);
+      const t = __sg.table('Chart curves'); t.setState([4, 30], 'excluded', true);
+      const reps = [
+        await __sg.open('Chart curves', 'fitcurve', { y: ['response'], x: ['dose'], group: ['batch'] }, { first: 'logistic4', models: ['logistic4', 'gompertz4'], 'ci:logistic4': true }),
+        await __sg.open('Chart curves', 'fitcurve', { y: ['response'], x: ['dose'], weight: ['w'], freq: ['n'] }, { first: 'logistic4', models: ['logistic4', 'probit4'], 'ci:probit4': true }),
+        await __sg.open('Chart misra', 'nonlinear', { y: ['y'] }, { model: 'b1 * (1 - exp(-b2 * :"x (volume)"))', start: 'b1 = 500, b2 = 0.0001', ci: true }),
+        await __sg.open('Chart misra', 'nonlinear', { y: ['y'], by: ['part'] }, { model: 'b1 * (1 - exp(-b2 * :"x (volume)"))', start: 'b1 = 500, b2 = 0.0001' })];
+      const out = [];
+      for (const rep of reps) out.push({ title: rep.title, graphs: await __gr.graphs(rep), details: __sg.details(rep), errors: __sg.errors(rep), table: rep.table.name });
+      return { reps: out, undrawn: __gr.take() };
+    })()''', timeout=900)
+    check('Fit Curve and Nonlinear code: no errors in the reports', [x['errors'] for x in r['reps']], [[]] * len(r['reps']))
+    check('Fit Curve and Nonlinear code: every graph drawn', r['undrawn'], [])
+    check('Fit Curve: the plot of every fit, and a plot for each', [g['label'] for g in r['reps'][0]['graphs']], ['response by dose', 'response by dose Logistic 4P', 'response by dose Gompertz 4P'])
+    for i, rep in enumerate(r['reps']):
+        for g, D in zip(rep['graphs'], rep['details']):
+            lab = f'{"Fit Curve" if i < 2 else "Nonlinear"} code {i + 1}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            F, err = await run_graph(page, g, f"__sg.table({json.dumps(rep['table'])})")
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            # the curves are refitted in the code (curve_fit, least_squares) from the report's estimates or starting values: within 1e-6, the bands 1e-5
+            check_generic(lab, g, D, F[0], fit_tol=1e-5)
+    await page.ev("__sg.table('Chart curves').setState([4, 30], 'excluded', false); for (const r of SM.app.reports.filter((x) => x.table && x.table.name.startsWith('Chart '))) SM.app.closeReport(r); for (const n of ['Chart curves', 'Chart misra']) SM.app.closeTable(__sg.table(n));")
 
 
 asyncio.run(main())

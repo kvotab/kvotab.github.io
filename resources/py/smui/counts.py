@@ -1430,10 +1430,10 @@ profile_mod.expose('counts', _predictor, alpha=True)
 # the Python code under the reports
 # ---------------------------------------------------------------------------
 
-def _code_frame(P, table_name):
+def _code_frame(P, table_name, extra=()):
     """Read the exported table, keep the report's rows and the model's
     columns, the page's level order; Freq repeats rows."""
-    lines = [code_head(table_name, ['import patsy', 'from scipy import stats'])]
+    lines = [code_head(table_name, [*extra, 'import patsy', 'from scipy import stats'])]
     rows = P['rows']
     tid = P['tid']
     if rows is not None:
@@ -1726,3 +1726,212 @@ def _code_compare(P, fits, table_name):
             else:
                 lines.append(f'print("{SHORT[b]} vs {SHORT[a]}", vuong({b!r}, {a!r}))')
     return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code
+# ---------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the
+# models fitted as the report fits them (the code under each model), the
+# light theme's colours, the graph's size at 100 pixels an inch. The page
+# sends what it chose (the rootogram's style and ticks, the models of an
+# overlay); counts.plot_code writes the code of one graph.
+COLORS = {k: c for k, c in zip(ORDER, ['#b0413e', '#2f6690', '#3a7d44', '#6c5b7b', '#1f8a78', '#9c8200', '#8c564b', '#b8408f', '#12808f'])}
+BAR, POINT, TEXT, MUTED, SURFACE, REF = '#8fa9c2', '#2f6690', '#352921', '#786b5d', '#fcf7f2', '#c0392b'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _area(px):
+    return f'{(px * PX) ** 2:.3g}'
+
+
+def _code_var_lines(P, key, m):
+    """The variance of Y in each row, from the fitted distribution (as the
+    report's Pearson residuals take it)."""
+    fam = 'poisson' if m['boundary'] == 'alpha' else FAMILY[key]
+    base = {'poisson': 'lam', 'nb': f'lam + a * lam ** {P_OF.get(key, 2)}', 'gp': 'lam * (1 + a) ** 2'}[fam]
+    zero = ZERO.get(key)
+    if zero == 'zi':
+        return [f'var = (1 - w) * ({base} + lam ** 2) - mean ** 2   # Var(Y): the count distribution\'s ({base}), mixed with the structural zeros']
+    if zero == 'hurdle':
+        return [f'var = w * ({base} + lam ** 2) / (1 - f0) - mean ** 2   # Var(Y): the count distribution\'s ({base}), truncated at zero, behind the hurdle']
+    return [f'var = {base}   # Var(Y)']
+
+
+def _model_lines(P, key, m, table_name):
+    """Read, keep the report's rows, fit the model as the report does, and
+    its distribution per row: pmf, cdf, mean."""
+    return (_code_frame(P, table_name, ['import matplotlib.pyplot as plt']) + _code_designs(P) + _code_fit_lines(P, key, m, 'fit')
+            + _code_dist_lines(P, key, m, 'fit') + [f'y = d[{json.dumps(P["spec"]["y"])}].to_numpy()'])
+
+
+def _one_lines(P):
+    """The rows once each (Freq repeats them for the fit)."""
+    if P['spec']['freq']:
+        return ['one = ~d.index.duplicated()   # each row once (the fit repeats a row Freq times)']
+    return ['one = np.ones(len(y), dtype=bool)']
+
+
+def _expected_lines(P):
+    K = min(int(np.max(P['y'])), KMAX)
+    tail = int(np.max(P['y'])) > KMAX
+    c = [f'K = {K}   # the counts 0 to {K}' + (f', the last bin holding {K} and above' if tail else '')]
+    if tail:
+        c.append('expected = np.array([pmf(np.full(len(y), j)).sum() for j in range(K)] + [(1 - cdf(np.full(len(y), K - 1))).sum()])   # the sums of the predicted probabilities')
+    else:
+        c.append('expected = np.array([pmf(np.full(len(y), j)).sum() for j in range(K + 1)])   # the sums of the predicted probabilities')
+    c.append('observed = np.bincount(np.minimum(y, K).astype(int), minlength=K + 1)' + ('   # Freq: a row counted that many times' if P['spec']['freq'] else ''))
+    return c
+
+
+def _ticks_line(plot):
+    tv = [int(v) for v in plot.get('tickvals') or []]
+    tt = [str(t) for t in plot.get('ticktext') or []]
+    return f'ax.set_xticks({tv}, {json.dumps(tt, ensure_ascii=False)})   # the page\'s ticks'
+
+
+def _rootogram_code(P, key, m, table_name, plot):
+    style = plot.get('style') if plot.get('style') in ('hanging', 'standing', 'suspended') else 'hanging'
+    yname = P['spec']['y']
+    c = _model_lines(P, key, m, table_name) + _expected_lines(P)
+    c += ['k = np.arange(K + 1)', 'so, se = np.sqrt(observed), np.sqrt(np.maximum(expected, 0))',
+          f'fig, ax = plt.subplots(figsize=({float(plot.get("width") or 340) / 100:g}, 2.7), layout="constrained")']
+    if style == 'hanging':
+        c.append(f'ax.bar(k, so, bottom=se - so, width=0.8, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.6)})   # √observed, hanging from the curve of √expected')
+    elif style == 'standing':
+        c.append(f'ax.bar(k, so, width=0.8, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.6)})   # √observed, from zero')
+    else:
+        c.append(f'ax.bar(k, se - so, width=0.8, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.6)})   # √expected − √observed, from zero')
+    if style != 'suspended':
+        c.append(f'ax.plot(k, se, color="{COLORS[key]}", linewidth={_pt(1.8)}, marker="o", markersize={_pt(5)})   # √expected')
+    c += [f'ax.axhline(0, color="{MUTED}", linewidth={_pt(1)})', _ticks_line(plot), f'ax.set_xlabel({json.dumps(yname)})',
+          f'ax.set_ylabel("{"√Expected − √Observed" if style == "suspended" else "√Frequency"}")', f'ax.set_title({json.dumps(LABEL[key])})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _overlay_code(P, keys, tid, rows, spec, table_name, plot):
+    yname = P['spec']['y']
+    c = _code_frame(P, table_name, ['import matplotlib.pyplot as plt']) + _code_designs(P)
+    c += [f'y = d[{json.dumps(yname)}].to_numpy()'] + [ln for ln in _expected_lines(P) if not ln.startswith('expected')]
+    c.append('expected = {}   # each model\'s expected frequencies: the sums of its predicted probabilities')
+    tail = int(np.max(P['y'])) > KMAX
+    for key in keys:
+        m = _get(tid, rows, spec, key)
+        c.append(f'# {LABEL[key]}')
+        c += _code_fit_lines(P, key, m, f'fit_{key}') + _code_dist_lines(P, key, m, f'fit_{key}')
+        if tail:
+            c.append(f'expected[{key!r}] = np.array([pmf(np.full(len(y), j)).sum() for j in range(K)] + [(1 - cdf(np.full(len(y), K - 1))).sum()])')
+        else:
+            c.append(f'expected[{key!r}] = np.array([pmf(np.full(len(y), j)).sum() for j in range(K + 1)])')
+    names = {k: SHORT[k] for k in keys}
+    colors = {k: COLORS[k] for k in keys}
+    c += ['k = np.arange(K + 1)',
+          f'names, colors = {json.dumps(names)}, {json.dumps(colors)}',
+          f'fig, ax = plt.subplots(figsize=({float(plot.get("width") or 520) / 100:g}, 3.2), layout="constrained")',
+          f'bars = ax.bar(k, np.sqrt(observed), width=0.8, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.6)}, label="Observed")   # √observed, standing',
+          'curves = []',
+          'for key, e in expected.items():',
+          f'    curves += ax.plot(k, np.sqrt(np.maximum(e, 0)), color=colors[key], linewidth={_pt(1.8)}, marker="o", markersize={_pt(5)}, label=names[key])   # √expected',
+          f'ax.axhline(0, color="{MUTED}", linewidth={_pt(1)})', _ticks_line(plot), f'ax.set_xlabel({json.dumps(yname)})', 'ax.set_ylabel("√Frequency")',
+          f'fig.legend(handles=[bars, *curves], loc="outside lower center", ncols={min(6, len(keys) + 1)}, frameon=False, fontsize={_pt(11)})',
+          f'ax.set_title({json.dumps(f"{yname} rootogram, the models overlaid")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _zero_code(P, key, m, table_name):
+    yname = P['spec']['y']
+    fq = P['spec']['freq']
+    n = len(P['y'])
+    c = _model_lines(P, key, m, table_name) + _one_lines(P)
+    c += ['p0 = pmf(np.zeros(len(y)))   # P(Y = 0) per row',
+          'mu, pz, yy = np.asarray(mean, dtype=float)[one], np.asarray(p0, dtype=float)[one], y[one]',
+          f'w = d[{json.dumps(fq)}].to_numpy(float)[one]   # Freq weighs the observed shares' if fq else 'w = np.ones(len(yy))',
+          'order = np.argsort(mu, kind="stable"); m = len(mu); g = max(1, min(10, m // 15))   # the rows by predicted mean, in ten groups at most',
+          'gx, gy = [], []',
+          'for j in range(g):',
+          '    i = order[j * m // g:(j + 1) * m // g]',
+          '    if w[i].sum() > 0:',
+          '        gx.append((w[i] * mu[i]).sum() / w[i].sum()); gy.append((w[i] * (yy[i] == 0)).sum() / w[i].sum())   # the group\'s mean and its share of zeros',
+          'lo, hi = (mu.min(), mu.max()) if mu.max() > mu.min() else (mu.min() - 0.5, mu.max() + 0.5)',
+          'cx = np.linspace(lo, hi, 80)',
+          'fig, ax = plt.subplots(figsize=(4.4, 3.1), layout="constrained")',
+          f'ax.scatter(mu, pz, s={_area(4 if n > 500 else 6)}, color="{COLORS[key]}", label="Rows")',
+          f'ax.scatter(gx, gy, s={_area(10)}, marker="s", facecolors="none", edgecolors="{TEXT}", linewidths={_pt(1.6)}, label="Observed share of zeros")',
+          f'ax.plot(cx, np.exp(-cx), color="{MUTED}", linewidth={_pt(1.2)}, linestyle="--", label="Poisson exp(−μ)")   # the zeros of a Poisson with the same mean',
+          'ax.set_ylim(-0.02, 1.02)', f'ax.set_xlabel({json.dumps(f"Predicted mean of {yname}")})', f'ax.set_ylabel({json.dumps(f"P({yname} = 0)")})',
+          f'ax.set_title({json.dumps(f"{yname} zero probability, {SHORT[key]}")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _pearson_code(P, key, m, table_name):
+    yname = P['spec']['y']
+    n = len(P['y'])
+    c = _model_lines(P, key, m, table_name) + _code_var_lines(P, key, m) + _one_lines(P)
+    c += ['mu = np.asarray(mean, dtype=float)',
+          'r = ((y - mu) / np.sqrt(np.asarray(var, dtype=float)))[one]   # Pearson residuals: (y − E[Y])/√Var(Y), from the model\'s own mean and variance',
+          'fig, ax = plt.subplots(figsize=(3.8, 3.0), layout="constrained")',
+          f'ax.scatter(mu[one], r, s={_area(4 if n > 500 else 6)}, color="{POINT}")',
+          f'ax.axhline(0, color="{POINT}", linewidth={_pt(1)})',
+          f'ax.set_xlabel({json.dumps(f"Predicted mean of {yname}")})', 'ax.set_ylabel("Pearson Residual")',
+          f'ax.set_title({json.dumps(f"{yname} Pearson residuals by predicted, {SHORT[key]}")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _quantile_code(P, key, m, table_name, seed):
+    yname = P['spec']['y']
+    n = len(P['y'])
+    c = _model_lines(P, key, m, table_name) + _one_lines(P)
+    c += [f'u = np.random.default_rng({int(seed)}).uniform(cdf(y - 1)[one], cdf(y)[one])   # randomized quantile residuals (Dunn and Smyth 1996), seed {int(seed)}',
+          'r = stats.norm.ppf(np.clip(u, 1e-15, 1 - 1e-15))',
+          'r = np.sort(r[np.isfinite(r)])',
+          'z = stats.norm.ppf(np.arange(1, len(r) + 1) / (len(r) + 1))   # each residual\'s normal quantile, Φ⁻¹(r/(n+1)) with r its rank',
+          'fig, ax = plt.subplots(figsize=(3.6, 3.0), layout="constrained")',
+          f'ax.scatter(z, r, s={_area(4 if n > 500 else 6)}, color="{POINT}")',
+          f'ax.plot([z.min(), z.max()], [z.min(), z.max()], color="{REF}", linewidth={_pt(1.3)})   # the standard normal: residual = quantile',
+          'ax.set_xlabel("Normal Quantile")', 'ax.set_ylabel("Randomized Quantile Residual")',
+          f'ax.set_title({json.dumps(f"{yname} quantile residuals normal quantile plot, {SHORT[key]}")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('counts.plot_code')
+def plot_code(table, y, kind='rootogram', model='poisson', models=None, plot=None, rows=None, x=(), degree=1, zx=(), zero_same=True, exposure=None,
+              offset=None, freq=None, seed=1, table_name='data'):
+    """The Python that draws one of the report's graphs with matplotlib (kind:
+    rootogram, overlay, zero, pearson, quantile), from the models fitted as
+    the report fits them and what the page chose (plot)."""
+    spec = _spec(y, x, degree, zx, zero_same, exposure, offset, freq)
+    plot = plot or {}
+    try:
+        if kind == 'overlay':
+            keys = [k for k in ORDER if k in (models or [])]
+            ok = []
+            for k in keys:
+                try:
+                    _get(table, rows, spec, k)
+                    ok.append(k)
+                except Exception:  # noqa: BLE001 - a model that cannot be fitted is not drawn
+                    pass
+            if not ok:
+                return {'error': 'no model could be fitted'}
+            P = _get(table, rows, spec, ok[0])['P']
+            return {'plot_code': _overlay_code(P, ok, table, rows, spec, table_name, plot)}
+        m = _get(table, rows, spec, model)
+    except Exception as e:  # noqa: BLE001 - said where the graph is
+        return {'error': str(e) or type(e).__name__}
+    P = m['P']
+    if kind == 'rootogram':
+        code = _rootogram_code(P, model, m, table_name, plot)
+    elif kind == 'zero':
+        code = _zero_code(P, model, m, table_name)
+    elif kind == 'pearson':
+        code = _pearson_code(P, model, m, table_name)
+    elif kind == 'quantile':
+        code = _quantile_code(P, model, m, table_name, seed)
+    else:
+        return {'error': f'no graph {kind!r}'}
+    return {'plot_code': code}

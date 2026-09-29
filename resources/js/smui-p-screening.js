@@ -94,7 +94,9 @@
       });
     }
     let r;
-    try { r = await ctx.call('screening.fit', pay); } finally { if (off) off(); if (note) note.remove(); }
+    // plot: what the graphs' code draws (the curves' level, the set of Actual by Predicted)
+    const plot = { roc: ctx.opt('rocLevel', null), lift: ctx.opt('liftLevel', null), abp: ctx.opt('abpSet', null) };
+    try { r = await ctx.call('screening.fit', { ...pay, plot }); } finally { if (off) off(); if (note) note.remove(); }
     const S = { r, spec, pay, yc, xs, binary: r.kind === 'categorical' && r.levels.length === 2 };
     ctx.scr = S;
     ctx.container.append(ctx.note(setsNote(ctx, S)));
@@ -269,10 +271,11 @@
       }
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: roc ? [0, 1] : [1, 1], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false });
       // the legend once, on the last graph: the colours are the same in every graph
-      return ctx.plot(traces, {
+      return SM.predict.plotWithCode(ctx, traces, {
         showlegend: last, legend: lg.legend, title: { text: set, font: { size: 12 } }, margin: { l: 50, r: 8, t: 28, b: lg.bottom },
         xaxis: { title: { text: roc ? '1 - Specificity' : 'Portion' }, range: [0, 1] }, yaxis: roc ? { title: { text: 'Sensitivity' }, range: [0, 1.01] } : { title: { text: 'Lift' } },
-      }, { width: last ? lg.width : W(360), height: last ? lg.height : 330, title: `${roc ? 'ROC' : 'Lift'} ${set} ${level}`, select: false });
+      }, { width: last ? lg.width : W(360), height: last ? lg.height : 330, title: `${roc ? 'ROC' : 'Lift'} ${set} ${level}`, select: false },
+      (r.plots || {}).head_code, ((r.plots || {})[kind] || {})[set]);
     });
     ob.add(ctx.row(...plots));
     if (roc) {
@@ -306,11 +309,11 @@
       const xs = idx.map((i) => pred[i]), ys = idx.map((i) => res.actual[i]);
       let lo = Infinity, hi = -Infinity;
       for (const v of [...xs, ...ys]) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
-      return ctx.plot([
+      return SM.predict.plotWithCode(ctx, [
         { type, mode: 'markers', x: xs, y: ys, rows: idx.map((i) => res.rows[i]), marker: { size: n > 1500 ? 3 : 4.5 }, name: T(labelIn(S, key)) },
         { type: 'scatter', mode: 'lines', x: [lo, hi], y: [lo, hi], line: { color: muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false },
       ], { title: { text: T(labelIn(S, key)), font: { size: 11 } }, margin: { l: 46, r: 8, t: 26, b: 36 }, xaxis: { title: { text: 'Predicted', font: { size: 10 } } }, yaxis: { title: { text: 'Actual', font: { size: 10 } } } },
-      { width: W(250), height: 235, title: `Actual by predicted ${labelIn(S, key)} ${set}` });
+      { width: W(250), height: 235, title: `Actual by predicted ${labelIn(S, key)} ${set}` }, (r.plots || {}).head_code, ((r.plots || {}).abp || {})[key]);
     });
     ob.add(ctx.row(...plots), ctx.note(`${set} rows${set === CV ? ', each predicted by the model fitted without its fold (first repeat)' : ''}: the actual ${S.yc.name} against each method's prediction; points on the dotted line are predicted exactly. Drag over points to select their rows; Set (red triangle) shows another set.`));
   }
@@ -326,7 +329,7 @@
       { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Decision Threshold', fields: [{ key: 't', label: `Probability of ${r.levels[lv]} at or above which a row is called ${r.levels[lv]}`, type: 'number', value: cut, help: 'A probability from 0 to 1 (0.5): a row whose predicted probability of the target level is at least this is called that level. Lower it to catch more of the level\'s rows (a higher sensitivity) at the cost of more false positives; raise it for the opposite.' }], validate: (x) => (x.t >= 0 && x.t <= 1 ? null : 'The threshold is a probability, from 0 to 1') }); if (v) ctx.set('cut', v.t); } },
       { label: 'Remove', action: () => ctx.set('threshold', false) },
     ] });
-    const t = await ctx.call('screening.threshold', { ...S.spec, methods: S.pay.methods, repeats: S.pay.repeats, cut, level: lv });
+    const t = await ctx.call('screening.threshold', { ...S.spec, methods: S.pay.methods, repeats: S.pay.repeats, cut, level: lv, plot: { order: r.order } });
     const input = el('input', { type: 'text', inputmode: 'decimal', size: 6, class: 'sm-scr-input', 'aria-label': 'Probability threshold' });
     input.value = String(cut);
     const apply = () => { const v = SM.table.toNumber(input.value.replace(',', '.')); if (v >= 0 && v <= 1) ctx.set('cut', v); else SM.ui.toast('The threshold is a probability, from 0 to 1', { error: true }); };
@@ -348,9 +351,9 @@
     const vline = { type: 'line', x0: cut, x1: cut, yref: 'paper', y0: 0, y1: 1, line: { color: muted, width: 1.2, dash: 'dash' } };
     const pick = (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('cut', Math.round(pt.x * 100) / 100); });
     const lg = legendFor(ok.length);
-    ob.add(ctx.row(ctx.plot(traces, { showlegend: true, legend: lg.legend, shapes: [vline], hovermode: 'closest', margin: { l: 54, r: 8, t: 26, b: lg.bottom + 2 },
+    ob.add(ctx.row(SM.predict.plotWithCode(ctx, traces, { showlegend: true, legend: lg.legend, shapes: [vline], hovermode: 'closest', margin: { l: 54, r: 8, t: 26, b: lg.bottom + 2 },
       title: { text: `${cmp}: misclassification by threshold`, font: { size: 12 } }, xaxis: { title: { text: `Threshold on the probability of ${T(t.level)}` }, range: [0, 1] }, yaxis: { title: { text: 'Misclassification Rate' }, rangemode: 'tozero' } },
-    { width: lg.width, height: lg.height, title: 'Misclassification by threshold', select: false, onDraw: pick })),
+    { width: lg.width, height: lg.height, title: 'Misclassification by threshold', select: false, onDraw: pick }, (r.plots || {}).head_code, t.plot_code)),
     ctx.note(`A row is called ${t.level} when its predicted probability of ${t.level} is at least the threshold. Sensitivity is the share of ${t.level} rows called ${t.level}, specificity the share of the others called the other level, precision the share of the rows called ${t.level} that are. Click the graph, or type a threshold, to move it; the counts are by the rows' frequencies (right click, Columns).`));
   }
 

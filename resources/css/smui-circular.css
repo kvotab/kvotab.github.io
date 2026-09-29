@@ -5,3 +5,5 @@
    ========================================================================== */
 .sm-circ-wrap { display: block; }
 .sm-circ-wrap > .sm-ob { margin-bottom: 6px; }
+/* a graph with its matplotlib code under it, as one item of a row */
+.sm-circ-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

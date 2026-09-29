@@ -42,8 +42,12 @@ import pandas as pd
 from scipy import stats
 
 from .registry import api
-from .timeseries import DATE_KINDS, NoSeries, load as _load_series
+from .timeseries import BASE, DATE_KINDS, MUTED, SIZE, NoSeries, _pt, _when, left_out, load as _load_series
 from .util import code_head
+
+J = json.dumps
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']   # the page's, light theme
+GRID, SURFACE = '#e0d7ce', '#fcf7f2'   # kvot.css, light theme
 
 SEED = 20260926          # Monte Carlo bands: the same numbers every time
 CRITERIA = ('aic', 'bic', 'hqic', 'fpe')
@@ -271,16 +275,20 @@ def _time_label(P, k):
     return str(P.rows_arg.index(int(r)))
 
 
-def _code_data(P, table_name, where=None, imports=(), levels=False, keep_levels=False):
+def _code_data(P, table_name, where=None, imports=(), levels=False, keep_levels=False, graph=False):
     """Python that builds, from a CSV export of the table, Y (the series as
     analysed, indexed by the Time ID) and X (the exogenous columns). levels:
     stop before the difference (the cointegration tests take the levels);
     keep_levels: keep them as L before differencing (for the forecasts in the
-    units of the table)."""
+    units of the table); graph: a graph's code, which also keeps raw, the
+    table's values over the span (the graphs show those, gaps and all)."""
     S = P.S
-    lines = [code_head(table_name, list(imports))]
+    lines = [code_head(table_name, (['import matplotlib.pyplot as plt'] if graph else []) + list(imports))]
     for w in where or []:
         lines.append(f'df = df[df[{json.dumps(w.get("column"))}] == {w.get("value")!r}]   # the By group')
+    drop = left_out(S.table, P.rows_arg, where)
+    if drop:
+        lines.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
     if S.time_name:
         T = json.dumps(S.time_name)
         if S.kind in DATE_KINDS:
@@ -298,6 +306,8 @@ def _code_data(P, table_name, where=None, imports=(), levels=False, keep_levels=
     lines.append(f'Y = d.loc[{_time_label(P, P.a)}:{_time_label(P, P.b)}, {json.dumps(P.names)}].copy()   # where every series has a value')
     if P.excl_rel:
         lines.append(f'Y.iloc[{P.excl_rel}] = np.nan   # rows excluded in the table count as missing')
+    if graph:
+        lines.append('raw = Y.copy()   # the table\'s values over the span, missing ones as gaps')
     if P.filled:
         lines.append('Y = Y.interpolate(limit_direction="both")   # a VAR needs every time point: missing values filled linearly')
     if P.log:
@@ -317,6 +327,87 @@ def _code_data(P, table_name, where=None, imports=(), levels=False, keep_levels=
 def _fit_code(P, p, trend, order=None):
     Y = f'Y[{json.dumps(list(order))}]' if order and list(order) != P.names else 'Y'
     return f'res = VAR({Y}{", exog=X" if P.exog else ""}).fit({int(p)}, trend={trend!r})'
+
+
+# ---- the graphs as matplotlib code ---------------------------------------------
+# As in Time Series (timeseries.py, which says how): each graph's code is a
+# recipe that the page puts together, with the graph's size in the report
+# where it says {'set': 'size'} and the parts that its options keep.
+
+def _tx(P, frame):
+    """The time axis of a frame of the code (its index), as the page draws it."""
+    return f'{frame}.index' if P.S.time_name else f'df.index.to_numpy()[{frame}.index] + 1   # the row numbers, as the page has them'
+
+
+def _future(P, h, last):
+    """t_f: the times of the h forecast periods, as Prep.future has them."""
+    S = P.S
+    if S.kind in DATE_KINDS and S.offset is not None:
+        return f't_f = pd.date_range({last}, periods={h + 1}, freq={S.freq!r})[1:]   # the next {h} dates of the calendar'
+    if S.kind in DATE_KINDS:
+        return f't_f = {last} + pd.to_timedelta({S.step!r} * np.arange(1, {h + 1}), unit="ms")   # the median spacing of the dates'
+    return f't_f = {last} + {S.step!r} * np.arange(1, {h + 1})   # the next {h} steps of the time axis'
+
+
+def _series_plot(P, table_name, where):
+    """The Time Series Graph: the series as analysed on one axis, or as Small Multiples."""
+    shown = 'raw'
+    if P.log:
+        shown = f'np.log({shown})'
+    if P.diff:
+        shown = f'{shown}.diff().iloc[1:]'
+    xl = J(P.S.time_name or 'Row')
+    pts = f'linewidth={_pt(1.2)}, marker="o", markersize={_pt(4)}'
+    return [*_code_data(P, table_name, where, graph=True),
+            f'shown = {shown}   # the series as analysed, with the gaps of the table' if shown != 'raw' else 'shown = raw',
+            f't = {_tx(P, "shown")}', f'labels = {J([P.label(c) for c in P.names])}', f'palette = {J(PALETTE)}   # the page\'s colours', '', SIZE,
+            _when(['!multiples'], 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+                  'for i, c in enumerate(shown):',
+                  f'    ax.plot(t, shown[c], color=palette[i % len(palette)], {pts}, label=labels[i])',
+                  f'ax.set_xlabel({xl}); ax.set_ylabel({J("Series as analysed" if P.log or P.diff else "Value")})',
+                  'fig.legend(loc="outside lower center", ncols=min(4, len(labels)), frameon=False, fontsize=8)'),
+            _when(['multiples'], 'fig, axes = plt.subplots(len(labels), 1, sharex=True, squeeze=False, figsize=size, layout="constrained")   # Small Multiples',
+                  'for i, (c, ax) in enumerate(zip(shown, axes[:, 0])):',
+                  f'    ax.plot(t, shown[c], color=palette[i % len(palette)], {pts})',
+                  '    ax.set_ylabel(labels[i], fontsize=8)',
+                  f'axes[-1, 0].set_xlabel({xl})'),
+            'fig.suptitle("Time Series Graph", fontsize=10)', 'plt.show()']
+
+
+def _heatmap(labels, rows, cmap, lo, hi, text, title):
+    """The page's heatmap of a matrix M: the colour map, the values in the cells (up to ten columns), the labels."""
+    L = ['', SIZE, 'fig, ax = plt.subplots(figsize=size, layout="constrained")', f'im = ax.imshow(M, vmin={lo}, vmax={hi}, cmap={cmap})']
+    if len(labels) <= 10:
+        L += ['for i in range(M.shape[0]):', '    for j in range(M.shape[1]):', '        if np.isfinite(M[i, j]):',
+              f'            ax.text(j, i, {text}, ha="center", va="center", fontsize=8)']
+    rot = ', rotation=35, ha="right"' if len(labels) > 4 else ''
+    return L + [f'ax.set_xticks(range({len(labels)}), {J(labels)}{rot}); ax.set_yticks(range({len(rows)}), {J(rows)})',
+                'fig.colorbar(im, ax=ax, shrink=0.85)', f'ax.set_title({J(title)})', 'plt.show()']
+
+
+def _forecast_plot(P, title, obs, fitted):
+    """The forecast graph (the page's forecastPlot): a panel for each series,
+    the data, the one-step-ahead predictions (fitted: their name, or None),
+    the forecasts from the last value, their band, the end of the data. The
+    lines before it leave obs (a frame), t_o, t_f, names, f_mean, f_lower and
+    f_upper (h × k)."""
+    L = [f'palette = {J(PALETTE)}   # the page\'s colours', '', SIZE,
+         'fig, axes = plt.subplots(len(names), 1, sharex=True, squeeze=False, figsize=size, layout="constrained")',
+         'x_f = t_o[-1:].append(t_f)' if P.S.kind in DATE_KINDS else 'x_f = np.r_[t_o[-1], t_f]',
+         'for i, ax in enumerate(axes[:, 0]):',
+         '    c = palette[i % len(palette)]',
+         f'    ax.plot(t_o, {obs}.iloc[:, i], color=c + "b3", linewidth={_pt(1)}, marker="o", markersize={_pt(3.5)}, markerfacecolor=c, markeredgecolor=c)   # the data']
+    if fitted:
+        L.append(f'    ax.plot(t_o, {fitted}[:, i], color=c, linewidth={_pt(1)}, linestyle=":")   # the one-step-ahead predictions')
+    L += [f'    y0 = {obs}.iloc[-1, i]   # the forecasts go on from the last value',
+          f'    ax.plot(x_f, np.r_[y0, f_upper[:, i]], color=c, alpha=0.55, linewidth={_pt(0.8)})',
+          f'    ax.plot(x_f, np.r_[y0, f_lower[:, i]], color=c, alpha=0.55, linewidth={_pt(0.8)})',
+          '    ax.fill_between(x_f, np.r_[y0, f_lower[:, i]], np.r_[y0, f_upper[:, i]], color=c, alpha=0.14, linewidth=0)   # the interval',
+          f'    ax.plot(x_f, np.r_[y0, f_mean[:, i]], color=c, linewidth={_pt(2)}, marker="o", markersize={_pt(3)})   # the forecasts',
+          f'    ax.axvline(t_o[-1], color="{MUTED}", linewidth={_pt(1)}, linestyle=":")   # the end of the data',
+          '    ax.set_ylabel(names[i], fontsize=8)',
+          f'axes[-1, 0].set_xlabel({J(P.S.time_name or "Row")})', f'fig.suptitle({J(title)}, fontsize=10)', 'plt.show()']
+    return L
 
 
 def _fit(P, p, trend='c', order=None):
@@ -436,6 +527,7 @@ def series(table, y, time=None, rows=None, excluded=None, exog=None, log=False, 
     c += ['for c in Y:   # ADF (a small p-value: no unit root) and KPSS (a small p-value: not stationary)',
           f'    print(c, adfuller(Y[c], regression={reg!r}, autolag="AIC")[:2], kpss(Y[c], regression={("ct" if reg == "ct" else "c")!r}, nlags="auto")[:2])']
     out['code'] = '\n'.join(c)
+    out['plot_code'] = {'series': _series_plot(P, table_name, where)}
     return out
 
 
@@ -554,6 +646,23 @@ def var_fit(table, y, time=None, rows=None, excluded=None, exog=None, log=False,
           f'print(res.test_whiteness(nlags={wl}, signif={alpha!r}, adjusted={bool(adjusted)}).summary())',
           f'print(res.test_normality(signif={alpha!r}).summary())']
     out['code'] = '\n'.join(c)
+    labels = [P.label(x) for x in P.names]
+    fit = _fit_code(P, p, trend)
+    corr = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from matplotlib.colors import LinearSegmentedColormap'], graph=True), fit,
+            'M = np.asarray(res.resid_corr)   # the correlations of the equations\' residuals',
+            *_heatmap(labels, labels, 'LinearSegmentedColormap.from_list("diverging", ["#2f6ec7", "#f6f3f0", "#c0392b"])', -1, 1,
+                      'f"{M[i, j]:.3f}".replace("-", "−")', 'Residual correlation colour map')]
+    stab = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from statsmodels.tsa.vector_ar.util import comp_matrix'], graph=True), fit,
+            'eig = np.linalg.eigvals(comp_matrix(res.coefs)); eig = eig[np.argsort(-np.abs(eig), kind="stable")]   # the companion matrix\'s eigenvalues, the largest first',
+            'th = np.linspace(0, 2 * np.pi, 121); lim = max(1.15, *(np.abs(eig) + 0.1))', '', SIZE,
+            'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+            f'ax.axhline(0, color="{GRID}", linewidth={_pt(1)}); ax.axvline(0, color="{GRID}", linewidth={_pt(1)})',
+            f'ax.plot(np.cos(th), np.sin(th), color="{MUTED}", linewidth={_pt(1)})   # the unit circle',
+            f'ax.scatter(eig.real, eig.imag, s={(8 * 0.72) ** 2:.4g}, c=["{BASE}" if abs(e) < 1 else "#c0392b" for e in eig], edgecolors="{SURFACE}", linewidths={_pt(1)})'
+            '   # red: on or outside the circle',
+            'ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_aspect("equal")',
+            'ax.set_xlabel("Real"); ax.set_ylabel("Imaginary"); ax.set_title("Companion matrix eigenvalues")', 'plt.show()']
+    out['plot_code'] = {'corr': corr, 'stability': stab}
     return out
 
 
@@ -611,8 +720,21 @@ def granger(table, y, time=None, rows=None, excluded=None, exog=None, log=False,
         c.append(f'    print("all the others ->", caused, res.test_causality(caused, [x for x in names if x != caused], kind={kind!r}).pvalue)')
     c.append('for x in names:   # instantaneous causality: are the residuals correlated?')
     c.append('    print(x, res.test_inst_causality(x).pvalue)')
+    rows = P.names + (['all the others'] if k > 2 else [])
+    a = min(0.5, max(1e-4, float(alpha)))
+    g = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from matplotlib.colors import LinearSegmentedColormap'], graph=True),
+         _fit_code(P, int(res.k_ar), trend), 'names = list(Y.columns); k = len(names)',
+         f'M = np.full(({len(rows)}, k), np.nan)   # the p-values: the row causes the column',
+         'for j, caused in enumerate(names):', '    for i, causing in enumerate(names):', '        if i != j:',
+         f'            M[i, j] = res.test_causality(caused, [causing], kind={kind!r}, signif={alpha!r}).pvalue']
+    if k > 2:
+        g.append(f'    M[k, j] = res.test_causality(caused, [x for x in names if x != caused], kind={kind!r}, signif={alpha!r}).pvalue   # all the others together')
+    g += [f'a = {a!r}   # α: red below it, the deeper the smaller; blue toward 1',
+          'cmap = LinearSegmentedColormap.from_list("p", [(0, "#c0392b"), (a / 10, "#cf5747"), (a, "#ebb3a6"), (a + 1e-6, "#f6f3f0"), (1, "#bccfe6")])',
+          *_heatmap(P.names, rows, 'cmap', 0, 1, f'("<.0001" if M[i, j] < 0.0001 else f"{{M[i, j]:.4f}}") + ("*" if M[i, j] < {alpha!r} else "")',
+                    'Granger causality p-values')]
     return {'kind': kind, 'names': P.names, 'p': int(res.k_ar), 'matrix': M, 'others': [r['p'] for r in others], 'tests': tests,
-            'inst': inst, 'alpha': alpha, 'code': '\n'.join(c)}
+            'inst': inst, 'alpha': alpha, 'code': '\n'.join(c), 'plot_code': {'granger': g}}
 
 
 # ---- impulse responses and the variance decomposition -----------------------------------
@@ -673,10 +795,25 @@ def irf(table, y, time=None, rows=None, excluded=None, exog=None, log=False, dif
     elif bands == 'asym':
         c.append(f'se = irf.{"cum_effect_stderr" if cumulative else "stderr"}(orth={orth}); q = stats.norm.ppf(1 - {alpha!r}/2)')
         c.append('lower, upper = resp - q*se, resp + q*se')
+    # the graph: the same responses and bands, a cell for each response (row) and shock (column)
+    head = c.index(f'irf = res.irf({H})')
+    g = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from scipy import stats'], graph=True), *c[head - 1:],
+         f'names = {J(names)}', f'H = {H}; h = np.arange(H + 1)', '', SIZE,
+         'fig, axes = plt.subplots(len(names), len(names), sharex=True, squeeze=False, figsize=size, layout="constrained")',
+         'for i, response in enumerate(names):   # a row for each responding series',
+         '    for j, impulse in enumerate(names):   # a column for each shock',
+         '        ax = axes[i, j]']
+    if lo is not None:
+        g += [f'        ax.fill_between(h, lower[:, i, j], upper[:, i, j], color="{BASE}", alpha=0.14, linewidth=0)   # the band',
+              f'        ax.plot(h, upper[:, i, j], color="{BASE}", alpha=0.4, linewidth={_pt(0.8)}); ax.plot(h, lower[:, i, j], color="{BASE}", alpha=0.4, linewidth={_pt(0.8)})']
+    g += [f'        ax.plot(h, resp[:, i, j], color="{BASE}", linewidth={_pt(1.6)}, marker="o", markersize={_pt(3.5)})',
+          f'        ax.plot([0, H], [0, 0], color="{MUTED}", linewidth={_pt(0.8)}, linestyle=":")',
+          '        ax.set_title(f"{impulse} → {response}", fontsize=8); ax.set_xlim(-0.3, H + 0.3)',
+          'for ax in axes[-1]:', '    ax.set_xlabel("h")', 'fig.suptitle("Impulse responses", fontsize=10)', 'plt.show()']
     return {'names': names, 'labels': [P.label(x) for x in names], 'horizon': H, 'orth': orth, 'cumulative': cumulative,
             'bands': bands if bands in ('asym', 'mc') else 'none', 'repl': repl, 'seed': SEED, 'alpha': alpha,
             'values': _cube(val), 'lower': _cube(lo) if lo is not None else None, 'upper': _cube(hi) if hi is not None else None,
-            'band_note': band, 'shock_note': shock, 'notes': notes, 'code': '\n'.join(c)}
+            'band_note': band, 'shock_note': shock, 'notes': notes, 'code': '\n'.join(c), 'plot_code': {'irf': g}}
 
 
 @api('multits.fevd')
@@ -693,7 +830,20 @@ def fevd(table, y, time=None, rows=None, excluded=None, exog=None, log=False, di
     fe = res.fevd(H)
     c = _code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR'])
     c += [_fit_code(P, int(res.k_ar), trend, order), f'fevd = res.fevd({H})', 'fevd.summary()   # fevd.decomp[series, h - 1, shock]']
-    return {'names': names, 'labels': [P.label(x) for x in names], 'horizon': H, 'decomp': _cube(fe.decomp), 'code': '\n'.join(c)}
+    g = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from matplotlib.ticker import PercentFormatter'], graph=True),
+         _fit_code(P, int(res.k_ar), trend, order), f'dec = res.fevd({H}).decomp   # dec[series, h − 1, shock]',
+         f'names, labels = {J(names)}, {J([P.label(x) for x in names])}', f'palette = {J(PALETTE)}   # the page\'s colours', f'hs = np.arange(1, {H + 1})', '', SIZE,
+         'fig, axes = plt.subplots(len(names), 1, sharex=True, squeeze=False, figsize=size, layout="constrained")',
+         'for i, ax in enumerate(axes[:, 0]):   # a panel for each series',
+         '    bottom = np.zeros(len(hs))',
+         '    for j, shock in enumerate(names):   # the share of each shock, stacked',
+         '        ax.bar(hs, dec[i, :, j], bottom=bottom, width=0.82, color=palette[j % len(palette)], label=shock)',
+         '        bottom = bottom + dec[i, :, j]',
+         '    ax.set_ylim(0, 1); ax.yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0)); ax.set_ylabel(labels[i], fontsize=8)',
+         'axes[-1, 0].set_xlabel("Steps ahead")',
+         'fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="outside lower center", ncols=min(4, len(names)), frameon=False, fontsize=8)',
+         'fig.suptitle("Variance decomposition", fontsize=10)', 'plt.show()']
+    return {'names': names, 'labels': [P.label(x) for x in names], 'horizon': H, 'decomp': _cube(fe.decomp), 'code': '\n'.join(c), 'plot_code': {'fevd': g}}
 
 
 # ---- forecasts ------------------------------------------------------------------------------
@@ -774,6 +924,23 @@ def forecast(table, y, time=None, rows=None, excluded=None, exog=None, log=False
     elif back and P.log:
         c.append('level, lower_level, upper_level = np.exp(mean), np.exp(lower), np.exp(upper)   # medians, in the units of the table')
     out['code'] = '\n'.join(c)
+    # the graph: the same forecasts, and the one-step-ahead predictions, in the units the page shows
+    g = [*_code_data(P, table_name, where, ['from statsmodels.tsa.api import VAR', 'from scipy import stats'], keep_levels=back and P.diff, graph=True),
+         *c[c.index(_fit_code(P, p, trend)):], 'fv = np.asarray(res.fittedvalues, dtype=float)   # the one-step-ahead predictions']
+    if not back:
+        g += ['obs, t_o = Y, ' + _tx(P, 'Y'), f'fitted = np.vstack([np.full(({p}, {P.k}), np.nan), fv])',
+              'f_mean, f_lower, f_upper = mean, lower, upper', f'names = {J([P.label(x) for x in P.names])}']
+    else:
+        if P.diff:
+            g += ['f_mean, f_lower, f_upper = level, lower_level, upper_level',
+                  f'fitted = np.vstack([np.full(({p + 1}, {P.k}), np.nan), L.to_numpy()[{p}:-1] + fv])   # each level the one before plus the predicted difference']
+            if P.log:
+                g.append('fitted = np.exp(fitted)')
+        else:
+            g += ['f_mean, f_lower, f_upper = level, lower_level, upper_level', f'fitted = np.exp(np.vstack([np.full(({p}, {P.k}), np.nan), fv]))']
+        g += ['obs, t_o = raw, ' + _tx(P, 'raw') + '   # the table\'s values', f'names = {J(P.names)}']
+    g += [_future(P, h, 't_o[-1]'), *_forecast_plot(P, 'VAR forecasts', 'obs', 'fitted')]
+    out['plot_code'] = {'forecast': g}
     return out
 
 
@@ -906,7 +1073,13 @@ def vecm(table, y, time=None, rows=None, excluded=None, exog=None, log=False, di
           f'fc, lower, upper = res.predict(steps={h}, alpha={alpha!r}{", exog_fc=X_future" if P.exog else ""})']
     if P.log:
         c.append('fc, lower, upper = np.exp(fc), np.exp(lower), np.exp(upper)   # in the units of the table')
+    first = next(i for i, ln in enumerate(c) if ln.startswith('X_future = ') or ln.startswith('res = VECM('))
+    g = [*_code_data(P, table_name, where, levels=True, imports=['from statsmodels.tsa.vector_ar.vecm import VECM'], graph=True),
+         *(ln for ln in c[first:] if not ln.startswith('print('))]   # the fit and the forecasts, as above
+    g += ['f_mean, f_lower, f_upper = fc, lower, upper', 'obs, t_o = raw, ' + _tx(P, 'raw') + '   # the table\'s values', f'names = {J(names)}',
+          _future(P, h, 't_o[-1]'), *_forecast_plot(P, 'VECM forecasts', 'obs', None)]
     return {'names': names, 'rank': r, 'k_ar_diff': kd, 'deterministic': det, 'det_label': DETERMINISTIC[det], 'nobs': int(res.nobs),
+            'plot_code': {'forecast': g},
             'llf': _f(res.llf), 'alpha': alpha_rows, 'beta': beta_rows, 'beta_matrix': _mat(B[0]), 'alpha_matrix': _mat(A[0]),
             'gamma': gamma, 'det': det_rows, 'sigma_u': _mat(res.sigma_u),
             'forecast': {'t': t_fc, 'mean': _mat(fc.T), 'lower': _mat(lo.T), 'upper': _mat(hi.T), 'level': 1 - alpha},

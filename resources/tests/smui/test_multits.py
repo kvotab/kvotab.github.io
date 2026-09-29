@@ -485,4 +485,187 @@ check('... and gives the group\'s fit', ns.get('error') or close(ns['res'].param
 ns = run_code(Vy['code'], pd.DataFrame({'year': 1900 + np.arange(400) * 0.25, **{c: x[:, i] for i, c in enumerate(SIM)}}))
 check('the code with a numeric Time ID gives the same fit', ns.get('error') or close(ns['res'].params.T, [[r['estimate'] for r in e['rows']] for e in Vy['equations']], rtol=1e-10), True)
 check('every result has its code', all(bool(r_.get('code')) for r_ in (S, L, V, G, I, FE, F, J, E, EG)), True)
+
+# ==== the graphs' matplotlib code =============================================================================
+# Every graph's recipe (plot_code), put together as the page puts it together
+# (timeseries.assemble, the page's recipe()), runs with matplotlib's Agg
+# backend on the table's CSV export, and the figure it draws is checked against
+# the report's numbers: the series and their gaps, the heatmaps' cells and
+# texts, the eigenvalues on the unit circle, every impulse response with its
+# band, the stacked shares, the forecasts with their bands, labels, titles.
+from test_charts import PROBE_MORE, close as near, strip_show
+from smui.timeseries import assemble
+
+DAY = 86400000.0
+
+
+def draw(label, parts, frame, flags=None, size=(660, 400)):
+    """A recipe put together with the page's flags and size, run on frame (as data.csv): its figure."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    code = assemble(parts, flags or {}, size)
+    plt.close('all')
+    out, err = None, None
+    with tempfile.TemporaryDirectory() as tmp:
+        frame.to_csv(os.path.join(tmp, 'data.csv'), index=False)
+        cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            ns = {'__name__': '__main__'}
+            with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                exec(strip_show(code), ns)
+                exec(PROBE_MORE, ns)
+                out = ns['_smui_figures_more']()
+        except Exception as ex:  # reported as a failed check
+            err = f'{type(ex).__name__}: {ex}'
+        finally:
+            os.chdir(cwd)
+            plt.close('all')
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: one figure, plt.show() last', (len(out['figures']) if out else 0, code.rstrip().rsplit('\n', 1)[-1]), (1, 'plt.show()'))
+    return out['figures'][0] if out and out['figures'] else None
+
+
+def pairs(xs, ys):
+    return [(a, b) for a, b in zip(xs, ys) if a is not None and b is not None and math.isfinite(a) and math.isfinite(b)]
+
+
+def line(A, xs, ys, rel=1e-7, **props):
+    """The line of A with these points (the missing ones left out) and properties, or None."""
+    want = pairs(xs, ys)
+    for ln, xy in zip(A['lines'], A['xy_lines']):
+        p = pairs([q[0] for q in xy], [q[1] for q in xy])
+        if len(p) == len(want) and all(near(a, c, rel, 1e-9) and near(b, d, rel, 1e-9) for (a, b), (c, d) in zip(p, want)) \
+                and all(ln.get(k) == v for k, v in props.items()):
+            return ln
+    return None
+
+
+def vline(A, v):
+    return any(len(xy) == 2 and near([xy[0][1], xy[1][1]], [0, 1]) and near([xy[0][0], xy[1][0]], [v, v]) for xy in A['xy_lines'])
+
+
+def cells(M):
+    return [[np.nan if v is None else v for v in row] for row in M]
+
+
+def check_forecast(label, R, U, frame, obs_t, h, fitted=True, names=None):
+    """forecastPlot's figure: a panel per series with the data, the one-step
+    predictions, the forecasts from the last value and their band."""
+    F = draw(label, R['plot_code']['forecast'], frame, size=(660, max(260, 60 + 130 * len(U['mean']))))
+    if not F:
+        return
+    names = names or R['names']
+    t_f = [v / DAY for v in (R['t'] if 't' in R else R['forecast']['t'])]
+    check(f'{label}: a panel for each series, named', [a['ylabel'] for a in F['axes']], names)
+    for i, A in enumerate(F['axes']):
+        obs = U['observed'][i]
+        check(f'{label}: {names[i]}: the data', line(A, obs_t, obs, marker='o') is not None, True)
+        if fitted:
+            check(f'{label}: {names[i]}: the one-step-ahead predictions, dotted', line(A, obs_t, U['fitted'][i], 1e-7, ls=':') is not None, True)
+        xf = [obs_t[-1]] + t_f
+        check(f'{label}: {names[i]}: the forecasts from the last value', line(A, xf, [obs[-1]] + U['mean'][i], 1e-7, marker='o') is not None, True)
+        check(f'{label}: {names[i]}: the band', (line(A, xf, [obs[-1]] + U['lower'][i]) is not None, line(A, xf, [obs[-1]] + U['upper'][i]) is not None, len(A['polys'])), (True, True, 1))
+        check(f'{label}: {names[i]}: the end of the data', vline(A, obs_t[-1]), True)
+    check(f'{label}: the title', F['suptitle'], 'VAR forecasts' if fitted else 'VECM forecasts')
+
+
+qdays = [v / DAY for v in S['t']]
+F1 = draw('the Time Series Graph', S['plot_code']['series'], csv, size=(660, 300))
+A = F1['axes'][0]
+check('the Time Series Graph: each series as analysed, in the page\'s colours', [line(A, qdays, v, 1e-12, marker='o', color=c) is not None for v, c in zip(S['values'], ('#2f6690ff', '#d9822bff', '#3a7d44ff'))], [True] * 3)
+check('... its legend, labels and title', (F1['legend'], A['xlabel'], A['ylabel'], F1['suptitle'], A['xaxis_date']), (S['labels'], 'quarter', 'Series as analysed', 'Time Series Graph', True))
+F1 = draw('the Time Series Graph as Small Multiples', S['plot_code']['series'], csv, {'multiples': True}, size=(660, 414))
+check('... Small Multiples: a panel for each series, named', ([a['ylabel'] for a in F1['axes']], F1['legend']), (S['labels'], []))
+check('... each series in its panel', [line(a, qdays, v, 1e-12) is not None for a, v in zip(F1['axes'], S['values'])], [True] * 3)
+Si = call('multits.series', table=tid, y=NAMES, time='quarter', excluded=[40, 41])
+F1 = draw('the Time Series Graph with excluded rows', Si['plot_code']['series'], csv, size=(660, 300))
+check('... the excluded rows are gaps, as the page shows them (the VAR fills them)', ([line(F1['axes'][0], [v / DAY for v in Si['t']], v, 1e-12) is not None for v in Si['values']],
+      [F1['axes'][0]['xy_lines'][0][k][1] for k in (40, 41)], F1['axes'][0]['ylabel']), ([True] * 3, [None, None], 'Value'))
+
+F1 = draw('the residual correlation colour map', V['plot_code']['corr'], csv, size=(334, 324))
+A = F1['axes'][0]
+check('the residual correlation colour map: the correlations as the image', (A['images'][0]['shape'], near(A['images'][0]['data'], [v for row in V['resid_corr'] for v in row], 1e-12)), ([3, 3], True))
+check('... each cell\'s value as the page writes it', [t['s'] for t in A['texts']], [f'{v:.3f}'.replace('-', '−') for row in V['resid_corr'] for v in row])
+check('... the labels, the title and the colour bar', (A['xticklabels'], A['yticklabels'], A['title'], len(F1['colorbars'])), (V['labels'], V['labels'], 'Residual correlation colour map', 1))
+F1 = draw('the companion eigenvalues', V['plot_code']['stability'], csv, size=(280, 270))
+A = F1['axes'][0]
+ev = V['stability']['eigenvalues']
+check('the companion eigenvalues: each one where it lies, the largest first', near([q for p in A['scatter'][0]['xy'] for q in p], [q for e in ev for q in (e['real'], e['imag'])], 1e-9), True)
+check('... inside the unit circle in the report\'s blue', A['scatter'][0]['colors'], ['#2f6690ff' if e['modulus'] < 1 else '#c0392bff' for e in ev])
+check('... the unit circle', line(A, [math.cos(2 * math.pi * i / 120) for i in range(121)], [math.sin(2 * math.pi * i / 120) for i in range(121)], 1e-9, color='#786b5dff') is not None, True)
+lim = max(1.15, *(e['modulus'] + 0.1 for e in ev))
+check('... the page\'s square range and labels', (near(A['xlim'], [-lim, lim]), near(A['ylim'], [-lim, lim]), A['xlabel'], A['ylabel'], A['title']), (True, True, 'Real', 'Imaginary', 'Companion matrix eigenvalues'))
+
+F1 = draw('the Granger causality p-values', G['plot_code']['granger'], csv, size=(334, 350))
+A = F1['axes'][0]
+Mg = cells(G['matrix']) + [[np.nan if v is None else v for v in G['others']]]
+check('the Granger p-values: row causes column, and all the others together', (A['images'][0]['shape'], near(A['images'][0]['data'], [v if math.isfinite(v) else None for row in Mg for v in row], 1e-10)), ([4, 3], True))
+ptext = lambda v: ('<.0001' if v < 0.0001 else f'{v:.4f}') + ('*' if v < 0.05 else '')   # noqa: E731  the page's fmtP
+check('... the p-values as the page writes them, the diagonal empty', [t['s'] for t in A['texts']], [ptext(v) for row in Mg for v in row if math.isfinite(v)])
+check('... the rows and columns named', (A['xticklabels'], A['yticklabels'], A['title']), (NAMES, NAMES + ['all the others'], 'Granger causality p-values'))
+
+for Ri, label_ in ((I, 'asymptotic bands'), (Im, 'Monte Carlo bands'), (Io, 'the Cholesky ordering realinv, realgdp, realcons'),
+                   (call('multits.irf', **base, p=2, horizon=6, bands='none', cumulative=True, orth=False), 'cumulative, no bands')):
+    k_, H_ = len(Ri['names']), Ri['horizon']
+    F1 = draw(f'the impulse responses ({label_})', Ri['plot_code']['irf'], csv, size=(60 + 150 * k_, 50 + 117 * k_))
+    ok_, bands_, titles_ = [], [], []
+    for i in range(k_):
+        for j in range(k_):
+            A = F1['axes'][i * k_ + j]
+            ok_.append(line(A, list(range(H_ + 1)), [Ri['values'][h][i][j] for h in range(H_ + 1)], 1e-9, marker='o') is not None)
+            bands_.append(len(A['polys']) == (1 if Ri['lower'] else 0) and (not Ri['lower'] or line(A, list(range(H_ + 1)), [Ri['lower'][h][i][j] for h in range(H_ + 1)], 1e-9) is not None))
+            titles_.append(A['title'])
+    check(f'the impulse responses ({label_}): each response to each shock', ok_, [True] * k_ * k_)
+    check(f'... its band where the page has one', bands_, [True] * k_ * k_)
+    check(f'... impulse → response over each cell', titles_, [f'{Ri["names"][j]} → {Ri["names"][i]}' for i in range(k_) for j in range(k_)])
+
+F1 = draw('the variance decomposition', FE['plot_code']['fevd'], csv, size=(560, 440))
+Hf = FE['horizon']
+got, want = [], []
+for i, A in enumerate(F1['axes']):
+    got.append([(round(b['x'] + b['w'] / 2, 9), round(b['y'], 9), round(b['h'], 9)) for b in A['bars']])
+    w_, cum = [], [0.0] * Hf
+    for j in range(len(FE['names'])):
+        for h in range(Hf):
+            w_.append((h + 1.0, round(cum[h], 9), round(FE['decomp'][i][h][j], 9)))
+            cum[h] += FE['decomp'][i][h][j]
+    want.append(w_)
+check('the variance decomposition: each shock\'s share, stacked, at each step', got, want)
+check('... a panel for each series, the legend, the title', ([a['ylabel'] for a in F1['axes']], F1['legend'], F1['suptitle'], [a['ylim'] for a in F1['axes']]),
+      (FE['labels'], FE['names'], 'Variance decomposition', [[0.0, 1.0]] * len(FE['names'])))
+
+t0 = [v / DAY for v in orig['t_obs']]
+check_forecast('the VAR forecasts in the units of the table (Log and Difference)', F, orig, csv, t0, 5)
+Ft = call('multits.forecast', **base, p=3, h=5, original=False)
+check_forecast('the VAR forecasts of the series as analysed', Ft, Ft['transformed'], csv, [v / DAY for v in Ft['transformed']['t_obs']], 5, names=Ft['labels'])
+Fl = call('multits.forecast', table=tid, y=NAMES, time='quarter', log=True, p=2, h=4)
+check_forecast('the VAR forecasts after Log alone (medians)', Fl, Fl['original'], csv, [v / DAY for v in Fl['original']['t_obs']], 4)
+fx_csv = pd.DataFrame({'quarter': [pd.Timestamp(v, unit='ms').strftime('%Y-%m-%d') for v in quarters + [ms('2009-10-01'), ms('2010-01-01')]],
+                       **{c: md[c].tolist() + [None, None] for c in NAMES}, 'infl': md['infl'].tolist() + [1.5, 2.5]})
+check_forecast('the VAR forecasts with an exogenous column', Fx, Fx['original'], fx_csv, [v / DAY for v in Fx['original']['t_obs']], 4)
+check_forecast('the VECM forecasts', E, {'observed': E['observed']['values'], **E['forecast']}, csv, [v / DAY for v in E['observed']['t']], 5, fitted=False)
+Fy2 = call('multits.forecast', table=yr, y=SIM, time='year', p=2, h=3)
+yr_csv = pd.DataFrame({'year': 1900 + np.arange(400) * 0.25, **{c: x[:, i] for i, c in enumerate(SIM)}})
+F1 = draw('the VAR forecasts on a numeric Time ID', Fy2['plot_code']['forecast'], yr_csv, size=(660, 450))
+check('... the forecasts continue the Time ID\'s step', line(F1['axes'][0], [Fy2['transformed']['t_obs'][-1]] + Fy2['t'], [Fy2['transformed']['observed'][0][-1]] + Fy2['transformed']['mean'][0], 1e-9, marker='o') is not None, True)
+
+# rows the report leaves out: a By group, a Local Data Filter, an exclusion, no Time ID. The
+# page sends the group's rows without the filtered ones; the code drops those (it read them
+# before, and so took the wrong positions of the span), and counts the excluded row as missing.
+filtered_b = [230, 231, 232]
+rows_f = [r for r in range(200, 400) if r not in filtered_b]
+base_f = dict(table=by_tid, y=SIM, rows=rows_f, excluded=[250], where=[{'column': 'region', 'value': 'S'}])
+Vf = call('multits.var', **base_f, p=2)
+check('filtered rows: the VAR code drops them', f'df = df.drop(index={filtered_b})   # the rows the report leaves out' in Vf['code'], True)
+ns = run_code(Vf['code'], by_csv)
+check('... and gives the report\'s fit', ns.get('error') or close(ns['res'].params.T, [[r['estimate'] for r in e['rows']] for e in Vf['equations']], rtol=1e-10), True)
+Sf = call('multits.series', **base_f)
+F1 = draw('the Time Series Graph of the filtered group', Sf['plot_code']['series'], by_csv, size=(660, 300))
+check('... on the row numbers of the table, the excluded row a gap', ([line(F1['axes'][0], Sf['t'], v, 1e-12) is not None for v in Sf['values']], F1['axes'][0]['xlabel']), ([True] * 3, 'Row'))
+Ff = call('multits.forecast', **base_f, p=2, h=3)
+F1 = draw('the VAR forecasts of the filtered group', Ff['plot_code']['forecast'], by_csv, size=(660, 450))
+check('... the forecasts after the last row number', line(F1['axes'][0], [Ff['transformed']['t_obs'][-1]] + Ff['t'], [Ff['transformed']['observed'][0][-1]] + Ff['transformed']['mean'][0], 1e-9, marker='o') is not None, True)
 sys.exit(check.done())

@@ -38,6 +38,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, maxdiff, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -300,6 +301,336 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+# ---- the graphs' matplotlib code ---------------------------------------------------------------------
+# Every graph has a code block right under it (details.sm-code, ending in plt.show()). The block
+# runs in the page's own Python (the notebook's runner: test_charts.GRAPHS_JS.run) with
+# test_charts.PROBE in place of plt.show(), and the figure it draws is compared with the graph
+# above it: a Plotly graph's points, lines, bars, reference lines, ticks, legend and titles, or an
+# SVG diagram's boxes, texts and lines (the tree; the network of test-ui-neural.py). The other
+# predictive platforms' suites load these helpers from this file (see test-ui-ensemble.py).
+
+PM_JS = r'''
+window.__pm = {
+  // __gr.graphs (every Plotly graph drawn, with the block under it) and more of each: the
+  // traces' markers and opacity, the axes' ticks and ranges, the layout's title; profiler: a
+  // graph of the Prediction Profiler (interactive: no block)
+  async graphs(rep) {
+    const gs = await __gr.graphs(rep);
+    const els = [...rep.body.querySelectorAll('.js-plotly-plot')];
+    return gs.map((g, i) => {
+      const p = els[i], L = p.layout || {};
+      const ax = (a) => (L[a] ? { tickvals: L[a].tickvals || null, ticktext: L[a].ticktext || null, range: L[a].range || null, type: L[a].type || null,
+        autorange: L[a].autorange ?? null, showticklabels: L[a].showticklabels ?? null } : null);
+      return { ...g, profiler: !!p.closest('.sm-prof'), title: L.title ? (typeof L.title === 'string' ? L.title : L.title.text) : null,
+        axes: { x: ax('xaxis'), y: ax('yaxis') }, showlegend: L.showlegend ?? null, annotations: (L.annotations || []).map((a) => a.text),
+        more: (p.data || []).map((d) => ({ opacity: d.marker ? d.marker.opacity ?? d.opacity ?? null : d.opacity ?? null, symbol: d.marker ? d.marker.symbol ?? null : null,
+          size: d.marker ? d.marker.size ?? null : null, lw: d.line ? d.line.width ?? null : null, mode: d.mode ?? null, zmin: d.zmin ?? null, zmax: d.zmax ?? null })) };
+    });
+  },
+  // the SVG diagrams (a tree, a network), each with the code block right under it: its boxes,
+  // texts, lines and circles in the SVG's own pixels (the transforms applied)
+  svgs(rep) {
+    return [...rep.body.querySelectorAll('.sm-part-treebox, .sm-nn-diagram')].map((box) => {
+      const s = box.querySelector('svg'), n = box.nextElementSibling;
+      const pt = (el, x, y) => { const q = new DOMPoint(x, y).matrixTransform(el.getCTM()); return [q.x, q.y]; };
+      const num = (el, a) => Number(el.getAttribute(a) || 0);
+      const rects = [...s.querySelectorAll('rect')].filter((r) => !r.closest('.sm-part-menu')).map((r) => { const [x, y] = pt(r, num(r, 'x'), num(r, 'y')); return { cls: r.getAttribute('class') || '', x, y, w: num(r, 'width'), h: num(r, 'height') }; });
+      const texts = [...s.querySelectorAll('text')].map((t) => { const [x, y] = pt(t, num(t, 'x'), num(t, 'y')); return { s: t.textContent, x, y, anchor: t.getAttribute('text-anchor') || 'start', cls: t.getAttribute('class') || '' }; });
+      const paths = [...s.querySelectorAll('.sm-part-links path')].map((p) => p.getAttribute('d'));
+      const circles = [...s.querySelectorAll('circle')].map((c) => { const [x, y] = pt(c, num(c, 'cx'), num(c, 'cy')); return { x, y, r: num(c, 'r') }; });
+      const lines = [...s.querySelectorAll('line')].map((l) => { const [x1, y1] = pt(l, num(l, 'x1'), num(l, 'y1')); const [x2, y2] = pt(l, num(l, 'x2'), num(l, 'y2')); return [x1, y1, x2, y2]; });
+      return { label: s.getAttribute('aria-label'), w: num(s, 'width'), h: num(s, 'height'), rects, texts, paths, circles, lines,
+        code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null };
+    });
+  },
+};
+'''
+
+PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+
+
+def flat(pts):
+    return [v for p in pts for v in p]
+
+
+def curve_pts(t):
+    """A Plotly trace's points, gaps (None) left out."""
+    return [(a, b) for a, b in zip(t.get('x') or [], t.get('y') or []) if a is not None and b is not None]
+
+
+def subset_in_order(want, got, tol=1e-9):
+    """Every point of want is a point of got, in the same order (a curve the page thinned)."""
+    i = 0
+    for w_ in want:
+        while i < len(got) and not (abs(got[i][0] - w_[0]) <= tol * max(1, abs(w_[0])) and abs(got[i][1] - w_[1]) <= tol * max(1, abs(w_[1]))):
+            i += 1
+        if i == len(got):
+            return False
+        i += 1
+    return True
+
+
+def scatter_pts(ax):
+    """Every point of every scatter of an axes, in the order drawn."""
+    return [tuple(p) for sc in ax['scatter'] for p in sc['xy']]
+
+
+def check_titles(check, lab, g, F, ax=None):
+    ax = ax or F['axes'][0]
+    check(f'{lab}: the titles', (ax['xlabel'], ax['ylabel'], ax['title'] or F['suptitle']), (g['titles']['x'] or '', g['titles']['y'] or '', g['label']))
+    check(f'{lab}: the graph\'s size, 100 pixels an inch', F['size'], [g['w'] / 100, g['h'] / 100])
+
+
+def check_shared(check, lab, g, F):
+    """The graphs every predictive platform shows (smui-predict.js): ROC and lift curves, actual by
+    predicted, the column contributions (or permutation importance). False: not one of them."""
+    ax = F['axes'][0]
+    t0 = g['label']
+    curves = [t for t in g['traces'] if t.get('type') == 'scatter' and t.get('mode') == 'lines' and t.get('showlegend') is not False and len(t.get('x') or []) > 2]
+    if t0.startswith('ROC ') or t0.startswith('Lift '):
+        roc = t0.startswith('ROC ')
+        ok = []
+        for i, t in enumerate(curves):
+            ln = next((q for q in ax['lines'] if q['label'] == t['name']), None)
+            got = list(zip(ln['x'], ln['y'])) if ln else []
+            ok.append(bool(ln) and subset_in_order(curve_pts(t), got) and (ln['color'] or '')[:7] == (t.get('color') or PALETTE[i % len(PALETTE)]))
+        check(f'{lab}: every curve (the page\'s points on it), named and coloured as the page\'s', (len(curves) > 0, ok), (True, [True] * len(curves)))
+        # the legend in the axes, or beside them (Model Screening's, on the last graph of a row only)
+        check(f'{lab}: the legend', ax['legend'] or F['legend'], [t['name'] for t in curves] if g.get('showlegend') is not False else [])
+        check(f'{lab}: the dotted reference', find_line(ax, [0, 1], [0, 1] if roc else [1, 1]) is not None, True)
+        check_titles(check, lab, g, F)
+        return True
+    if t0.startswith('Actual by predicted') or t0.startswith('Residual by predicted'):
+        pts = [t for t in g['traces'] if 'markers' in (t.get('mode') or '')]
+        check.near(f'{lab}: the rows\' points', maxdiff(flat(scatter_pts(ax)), flat(curve_pts(pts[0]))), 0, 1e-9)
+        ref = [t for t in g['traces'] if t.get('mode') == 'lines'][0]
+        check(f'{lab}: the dotted reference', find_line(ax, ref['x'], ref['y'], rel=1e-9) is not None, True)
+        check_titles(check, lab, g, F)
+        return True
+    if t0 in ('Column Contributions', 'Permutation Importance'):
+        bar = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('x')][0]
+        check(f'{lab}: a bar per column, in the page\'s order', [x for x in ax['yticklabels'] if x], bar['y'])
+        check.near(f'{lab}: the portions', maxdiff([b['w'] for b in ax['bars']], [v if v is not None else 0.0 for v in bar['x']]), 0, 1e-12)
+        check(f'{lab}: the largest at the top, the portion from 0 to 1', (ax['yinverted'], ax['xlim']), (True, [0.0, 1.0]))
+        check_titles(check, lab, g, F)
+        return True
+    return False
+
+
+def check_tree(check, lab, s, F):
+    """A tree's SVG against the figure: its size, the node boxes, the rate bars, every text, the lines."""
+    ax = F['axes'][0]
+    check(f'{lab}: the size of the page\'s tree (and a line for the title)', F['size'], [s['w'] / 100, (s['h'] + 30) / 100])
+    check(f'{lab}: the title', ax['title'], s['label'])
+
+    def key(r):
+        return (round(r['x'], 3), round(r['y'], 3), round(r['w'], 3), round(r['h'], 3))
+    for cls, fc, what in (('sm-part-box', '#fcf7f2ff', 'a box per node'), ('sm-part-track', '#e0d7ceff', 'the rate bars\' tracks')):
+        check(f'{lab}: {what}, where the page draws them', sorted(key(b) for b in ax['bars'] if b['fc'] == fc), sorted(key(r) for r in s['rects'] if cls in r['cls'].split()))
+    rates = sorted(key(b) for b in ax['bars'] if b['fc'] and b['fc'][:7] in PALETTE and b['fc'][7:] == 'ff')
+    check(f'{lab}: the level rates as bars', rates, sorted(key(r) for r in s['rects'] if 'sm-part-rate' in r['cls'].split()))
+    tx = sorted((t['s'], round(t['x'], 2), round(t['y'], 2)) for t in ax['texts'])
+    want = sorted((t['s'], round(t['x'], 2), round(t['y'], 2)) for t in s['texts'])
+    check(f'{lab}: every text of the boxes, in its place', tx, want)
+    segs = []
+    for d in s['paths']:
+        v = [float(q) for q in d.replace('M', ' ').replace('V', ' ').replace('H', ' ').split()]
+        x0, y0, ym, x1, y1 = v
+        segs.append(((x0, y0), (x0, ym), (x1, ym), (x1, y1)))
+    got = sorted(tuple((round(a, 6), round(b, 6)) for a, b in zip(ln['x'], ln['y'])) for ln in ax['lines'])
+    check(f'{lab}: the lines from each split to its children', got, sorted(tuple((round(a, 6), round(b, 6)) for a, b in sg) for sg in segs))
+
+
+def check_network(check, lab, s, F):
+    """A network's SVG against the figure: its size and name, the X and response boxes, the hidden
+    nodes' circles, every connection's line, every text."""
+    ax = F['axes'][0]
+    check(f'{lab}: the size of the page\'s diagram (and a line for the title)', F['size'], [s['w'] / 100, (s['h'] + 30) / 100])
+    check(f'{lab}: the title, the page\'s name of the diagram', ax['title'], s['label'])
+
+    def r6(v):
+        return round(v, 6)
+    check(f'{lab}: the X columns\' and the responses\' boxes', sorted((r6(b['x']), r6(b['y']), r6(b['w']), r6(b['h'])) for b in ax['bars']), sorted((r6(r['x']), r6(r['y']), r6(r['w']), r6(r['h'])) for r in s['rects']))
+    check(f'{lab}: a circle per hidden node', sorted((r6(p['center'][0]), r6(p['center'][1]), r6(p['w'] / 2)) for p in ax['patches'] if p['type'] == 'ellipse'), sorted((r6(c['x']), r6(c['y']), r6(c['r'])) for c in s['circles']))
+    check(f'{lab}: a line per connection', sorted(tuple(r6(v) for q in sg for v in q) for c in ax['segments'] for sg in c['segs']), sorted(tuple(r6(v) for v in ln) for ln in s['lines']))
+    check(f'{lab}: every text in its place', sorted((t['s'], r6(t['x']), r6(t['y'])) for t in ax['texts']), sorted((t['s'], r6(t['x']), r6(t['y'])) for t in s['texts']))
+
+
+def check_partition(check, lab, g, F):
+    """The partition graph: the rows in their leaves' bands, the leaf means (or the rates stacked), the
+    bands' edges, the leaf numbers."""
+    ax = F['axes'][0]
+    bars = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('x')]
+    pts = [t for t in g['traces'] if 'markers' in (t.get('mode') or '')]
+    edges = sorted(s['x0'] for s in g['shapes'])
+    check(f'{lab}: the leaves\' edges', sorted(ln['x'][0] for ln in ax['lines'] if ln['ls'] == ':' and ln['x'][0] == ln['x'][1]), edges)
+    ticks = g['axes']['x']
+    if ticks and ticks['tickvals']:
+        check.near(f'{lab}: the leaf numbers at the bands\' centres', maxdiff(ax['xticks'], ticks['tickvals']), 0, 1e-12)
+        check(f'{lab}: ... numbered as the Leaf Report', [t for t in ax['xticklabels'] if t], ticks['ticktext'])
+    if not bars:
+        if pts:
+            check.near(f'{lab}: the training rows, in their leaves\' bands in order', maxdiff(flat(scatter_pts(ax)), flat(curve_pts(pts[0]))), 0, 1e-9)
+        means = [t for t in g['traces'] if t.get('mode') == 'lines'][0]
+        segs, cur = [], []
+        for a, b in zip(means['x'], means['y']):
+            if a is None:
+                segs.append(cur)
+                cur = []
+            else:
+                cur.append((a, b))
+        want = sorted(tuple(round(v, 9) for p in sg for v in p) for sg in segs if sg)
+        got = sorted(tuple(round(v, 9) for p in zip(ln['x'], ln['y']) for v in p) for ln in ax['lines'] if ln['ls'] == '-')
+        check(f'{lab}: each leaf\'s mean across its band', got, want)
+    else:
+        want = []
+        for t in bars:
+            for c, h, b, w_ in zip(t['x'], t['y'], t['base'], t['width']):
+                want.append((round(c - w_ / 2, 9), round(b, 9), round(w_, 9), round(h, 9)))
+        got = [(round(q['x'], 9), round(q['y'], 9), round(q['w'], 9), round(q['h'], 9)) for q in ax['bars']]
+        check(f'{lab}: each leaf\'s level rates stacked in its band', sorted(got), sorted(want))
+        check(f'{lab}: the levels in the legend', F['legend'], [t['name'] for t in bars])
+        if pts:
+            # the rows at random in their level's part of their band: the counts in each part, and within it
+            L = len(bars)
+            parts = [(b['x'][k] - b['width'][k] / 2, b['x'][k] + b['width'][k] / 2, b['base'][k], b['base'][k] + b['y'][k]) for b in bars for k in range(len(b['x']))]
+
+            def part_of(x, y):
+                for i, (lo, hi, b0, b1) in enumerate(parts):
+                    if lo + 0.08 * (hi - lo) - 1e-9 <= x <= lo + 0.92 * (hi - lo) + 1e-9 and b0 + 0.1 * (b1 - b0) - 1e-9 <= y <= b0 + 0.9 * (b1 - b0) + 1e-9:
+                        return i
+                return -1
+            cnt_w = [0] * len(parts)
+            cnt_g = [0] * len(parts)
+            for x, y in curve_pts(pts[0]):
+                cnt_w[part_of(x, y)] += 1
+            for x, y in scatter_pts(ax):
+                cnt_g[part_of(x, y)] += 1
+            check(f'{lab}: every row inside its level\'s part of its leaf, as many in each as the page\'s', (cnt_g, sum(cnt_g)), (cnt_w, sum(cnt_w)))
+            check(f'{lab}: ... {L} levels, no point outside', cnt_g.count(0) <= len(parts), True)
+    check_titles(check, lab, g, F)
+
+
+def check_lines(check, lab, g, F, rel=1e-9):
+    """A graph of lines (and markers): every trace of more than one point is a line of the figure, every
+    vertical or horizontal reference too; the titles."""
+    ax = F['axes'][0]
+    for t in g['traces']:
+        if (t.get('type') or 'scatter') not in ('scatter', 'scattergl') or not t.get('x'):
+            continue
+        pts = curve_pts(t)
+        if len(pts) > 1 and 'lines' in (t.get('mode') or ''):
+            check(f'{lab}: the line {t.get("name") or ""} ({len(pts)} points)', find_line(ax, [p[0] for p in pts], [p[1] for p in pts], rel=rel, abs_=1e-12) is not None, True)
+    for s in g['shapes']:
+        if s.get('yref') == 'paper' and s['x0'] == s['x1']:
+            check(f'{lab}: the vertical line at {s["x0"]}', any(ln['x'][:2] == [s['x0'], s['x0']] for ln in ax['lines']), True)
+        elif s.get('xref') == 'paper' and s['y0'] == s['y1']:
+            check(f'{lab}: the horizontal line at {s["y0"]:.4g}', any(close(ln['y'][:2], [s['y0'], s['y0']], rel, 1e-12) for ln in ax['lines']), True)
+    check_titles(check, lab, g, F)
+
+
+def check_hbars(check, lab, g, F, stacked=False):
+    """Horizontal bars by category (the leaf report): the categories top down, each bar's length and start."""
+    ax = F['axes'][0]
+    bars = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('x')]
+    check(f'{lab}: the categories, the first at the top', ([x for x in ax['yticklabels'] if x], ax['yinverted']), (bars[0]['y'], True))
+    want = [(round(t['base'][k] if t.get('base') else 0.0, 9), round(v, 9)) for t in bars for k, v in enumerate(t['x'])]
+    got = [(round(b['x'], 9), round(b['w'], 9)) for b in ax['bars']]
+    check(f'{lab}: each bar\'s start and length', got, want)
+    if stacked:
+        check(f'{lab}: the levels in the legend', F['legend'], [t['name'] for t in bars])
+    check_titles(check, lab, g, F)
+
+
+async def chart_blocks(page, check, label, table_js, rep_js, compare):
+    """Every graph of a report: its code block right under it, ending in plt.show(); the block run in
+    the page's own Python; its figure compared with the graph (check_shared, or compare(lab, g, F) for
+    the platform's own graphs; the SVG diagrams by compare(lab, svg, F) too)."""
+    gs = await page.ev(f'__pm.graphs({rep_js})', timeout=600)
+    check(f'charts: {label}: every graph of the report drawn (none in a closed outline)', (await page.ev('__gr.take()'), len(gs) > 0), ([], True))
+    prof = [g['label'] for g in gs if g['profiler']]
+    check(f'charts: {label}: the profiler\'s graphs are interactive and have no block', [g['label'] for g in gs if g['profiler'] and g['code']], [])
+    gs = [g for g in gs if not g['profiler']]
+    svgs = await page.ev(f'__pm.svgs({rep_js})')
+    shown = [g['label'] for g in gs + svgs]
+    blocks = [g['label'] for g in gs + svgs if g['code'] and g['code'].rstrip().split('\n')[-1] == 'plt.show()']
+    check(f'charts: {label}: every graph has its code block right under it, ending in plt.show()', [t for t in shown if t not in blocks], [])
+    n = 0
+    for g in gs + svgs:
+        if not g['code']:
+            continue
+        F, err = await run_graph(page, g, table_js)
+        lab = f'charts: {label}: {g["label"]}'
+        check(f'{lab}: the code runs in the page', err, None)
+        if not F:
+            continue
+        check(f'{lab}: one figure', len(F), 1)
+        n += 1
+        if 'traces' in g and check_shared(check, lab, g, F[0]):
+            continue
+        compare(lab, g, F[0])
+    return n, prof
+
+
+def partition_compare(lab, g, F):
+    t = g['label']
+    if 'rects' in g:
+        check_tree(check, lab, g, F)
+    elif t.startswith('Partition of'):
+        check_partition(check, lab, g, F)
+    elif t == 'Split history':
+        check_lines(check, lab, g, F)
+    elif t.startswith('Leaf '):
+        check_hbars(check, lab, g, F, stacked=t == 'Leaf probabilities')
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every graph of Partition's reports, categorical and continuous, the Show Split options on and off,
+    rows excluded and By: its block under it, run in the page, its figure the graph's."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Churn')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    every = {'smallTree': True, 'leafReport': True, 'contrib': True, 'history': True}
+    charge = {'y': ['monthly charge (€)'], 'x': ['internet', 'streaming channels', 'region', 'tenure (months)']}
+    specs = [
+        ('churn, Go on the validation column', {'y': ['churn'], 'x': XS, 'validation': ['validation']}, {**every, 'roc': True, 'lift': True, 'steps': [{'op': 'split', 'n': 2}, {'op': 'go'}]}),
+        ('churn, the Show Split options and the points off', {'y': ['churn'], 'x': XS}, {**every, 'splitStats': False, 'splitBar': False, 'splitProb': False, 'splitCount': False, 'showPoints': False, 'roc': True, 'steps': [{'op': 'split', 'n': 3}]}),
+        ('monthly charge, a validation portion', charge, {**every, 'abp': True, 'portion': 0.3, 'seed': '11', 'steps': [{'op': 'split', 'n': 3}]}),
+        ('monthly charge, Show Split Stats off', charge, {'splitStats': False, 'smallTree': True, 'steps': [{'op': 'split', 'n': 2}]}),
+        ('CART: churn, Go on the validation column', {'y': ['churn'], 'x': XS, 'validation': ['validation']}, {**every, 'method': 'cart', 'roc': True, 'lift': True, 'steps': [{'op': 'split', 'n': 2}, {'op': 'go'}]}),
+        ('CART: monthly charge, a validation portion', charge, {**every, 'method': 'cart', 'abp': True, 'portion': 0.3, 'seed': '11', 'steps': [{'op': 'split', 'n': 3}]}),
+    ]
+    total = 0
+    for label, roles, opts in specs:
+        r = await page.ev(open_report_js('partition', roles, opts), timeout=600)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await chart_blocks(page, check, label, tbl, REP, partition_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({REP})')
+    # rows excluded, and By: the blocks keep the report's rows
+    out = [2, 3, 5, 8, 13]
+    await page.ev(f'{tbl}.setState({out}, "excluded", true)')
+    r = await page.ev(open_report_js('partition', {'y': ['churn'], 'x': ['contract', 'tenure (months)', 'support calls'], 'by': ['internet']}, {'contrib': True, 'leafReport': True, 'roc': True, 'steps': [{'op': 'split', 'n': 2}]}), timeout=600)
+    check('charts: By internet, 5 rows excluded: no errors', r['errors'], [])
+    grp = await page.ev(f'''(() => {{ const rep = {REP}; const t = rep.table; const net = t.col('internet').values;
+      const codes = [...rep.body.querySelectorAll('details.sm-code code')].map((c) => c.textContent).filter((s) => s.endsWith('plt.show()'));
+      return {{ codes, groups: ['None', 'DSL', 'Fiber'].map((v) => [...Array(t.nrows).keys()].filter((i) => net[i] === v && !{json.dumps(out)}.includes(i))) }}; }})()''')
+    kept = []
+    for c in grp['codes']:
+        line = next((ln for ln in c.split('\n') if ln.startswith('df = df.loc[')), '')
+        kept.append(json.loads(line[len('df = df.loc['):line.index(']]') + 1]) if line else None)
+    check('charts: By internet: each block keeps the rows of its group, without the excluded ones', (len(kept) > 0, all(k in grp['groups'] for k in kept)), (True, True))
+    n, _ = await chart_blocks(page, check, 'By internet, rows excluded', tbl, REP, partition_compare)
+    total += n
+    await page.ev(f'SM.app.closeReport({REP})')
+    await page.ev(f'{tbl}.setState({out}, "excluded", false)')
+    check('charts: the blocks ran and drew the page\'s graphs', total >= 40, True)
 
 
 async def main():
@@ -730,6 +1061,9 @@ async def main():
           (['Split', 'Prune', 'Go', 'Color Points'], ['A click', 'Split Here', 'Split Best', 'Split Specific…', 'Prune Below', 'Prune Worst', 'Select Rows, Show Candidates']))
     check('... and the report is as it was (the forms closed with nothing done)', (await page.ev(STATE))['nodes'], 7)
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "partition" && r.spec.options.kfold)))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
@@ -768,5 +1102,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

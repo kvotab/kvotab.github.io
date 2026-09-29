@@ -2,9 +2,10 @@
    SMUI.HTML: ANALYZE > SPECIALIZED MODELING > MULTIVARIATE TIME SERIES
    The styles of smui-p-multits.js: the smallest criterion of each column
    of the Lag Order Selection table, the lag (or the cointegration rank) in
-   use, the Johansen statistics beyond their critical values, and a wide
-   table that scrolls on its own at phone width. Colours are kvot.css
-   tokens or pairs that read in both themes; class prefix mts-.
+   use, the Johansen statistics beyond their critical values, a wide table
+   that scrolls on its own at phone width, and a graph with its code.
+   Colours are kvot.css tokens or pairs that read in both themes; class
+   prefix mts-.
    ========================================================================== */
 
 /* Lag Order Selection: * after the smallest AIC, BIC, HQIC and FPE */
@@ -21,6 +22,9 @@
 
 /* a wide table scrolls by itself, not the page */
 .mts-scroll { max-width: 100%; overflow-x: auto; }
+
+/* a graph with its Python code under it, as one item of a row */
+.mts-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
 
 @media (max-width: 760px) {
   .sm-rt.mts-joh th, .sm-rt.mts-joh td { padding-left: 6px; padding-right: 6px; }

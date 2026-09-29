@@ -358,4 +358,237 @@ if heart is not None:
     ref = PHReg(heart['survival'].to_numpy(float), heart[['age']].to_numpy(float), status=heart['censors'].to_numpy(float)).fit(disp=0)
     check.near('heart: PH age coefficient = PHReg', hp['estimates']['rows'][0]['estimate'], float(ref.params[0]), rel=1e-6)
 
+# ---- the code keeps the report's rows, and the graphs' code -------------------------------------
+# Each result's code runs on the whole table as File > Export CSV writes it
+# and keeps the report's rows (a By group's where lines, the drop of the
+# rows it leaves out); each graph's matplotlib code runs with the Agg
+# backend there, and its figure is checked against the report's numbers as
+# the page draws them (smui-p-survival.js).
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+from scipy import special  # noqa: E402
+from test_charts import close, maxdiff, run_snippet  # noqa: E402
+
+STMP = tempfile.mkdtemp(prefix='smui-survival-')
+
+
+def export(tid):
+    """The table as File > Export CSV writes it: every column, by name."""
+    from smui import data as D
+    t = D.TABLES[tid]
+    return pd.DataFrame({n: (np.asarray(v, dtype=float) if t['meta'][n].get('dataType') == 'numeric' else pd.Series(list(v), dtype=object)) for n, v in t['cols'].items()})
+
+
+def graph_code(label, code, tid):
+    figs, err = run_snippet(code, export(tid), 'data', STMP)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends in plt.show() and draws a figure', (code.rstrip().split('\n')[-1], len(figs or [])), ('plt.show()', 1))
+    return figs[0] if figs else None
+
+
+def run_ns(code, tid):
+    export(tid).to_csv(os.path.join(STMP, 'data.csv'), index=False)
+    here = os.getcwd()
+    os.chdir(STMP)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(code, 'code', 'exec'), ns)
+    finally:
+        os.chdir(here)
+    return ns
+
+
+def line_like(ax, X, Y, rel=1e-9, abs_=1e-12, **props):
+    for ln in ax['lines']:
+        if any(not str(ln.get(k, '')).startswith(v) for k, v in props.items()):
+            continue
+        if close(ln['x'], X, rel, abs_) and close(ln['y'], Y, rel, abs_):
+            return ln
+    return None
+
+
+def nn(a):
+    return [None if v is None else float(v) for v in a]
+
+
+rs_ = np.random.default_rng(6)
+ns_ = 150
+grp2 = rs_.choice(['placebo', 'drug', 'high'], ns_).tolist()
+sc2 = np.where(np.array(grp2) == 'placebo', 10.0, np.where(np.array(grp2) == 'drug', 15.0, 19.0))
+t2_ = rs_.weibull(1.4, ns_) * sc2
+c2_ = rs_.uniform(4, 30, ns_)
+obs2 = np.round(np.minimum(t2_, c2_), 2)
+cen2 = (t2_ > c2_).astype(float)
+f2 = rs_.integers(0, 4, ns_).astype(float)
+sex2 = rs_.choice(['F', 'M'], ns_).tolist()
+age2 = np.round(rs_.normal(50, 8, ns_), 1)
+ts = table({'t': obs2, 'c': cen2, 'g': grp2, 'f': f2, 'sex': sex2, 'age': age2}, types={'c': 'nominal'}, levels={'g': ['placebo', 'drug', 'high']})
+left2 = [3, 17, 40, 88]
+rows_s = [i for i in range(ns_) if i not in left2]
+wh_f = [{'column': 'sex', 'value': 'F'}]
+rows_f = [i for i in range(ns_) if sex2[i] == 'F' and i not in left2]
+LIN_XY = {'exponential': (lambda t_: t_, lambda s_: -math.log(s_)), 'weibull': (math.log, lambda s_: math.log(-math.log(s_))), 'lognormal': (math.log, lambda s_: float(stats.norm.ppf(1 - s_)))}
+for kw, plot in (({'group': 'g'}, {'showCI': True, 'showPoints': True, 'showCombined': True, 'simCI': True, 'lin': {'weibull': True, 'lognormal': True, 'exponential': True},
+                                   'labels': [['placebo', 'Placebo'], ['drug', 'Drug'], ['high', 'High dose']]}),
+                 ({}, {'showCI': True}), ({'group': 'g', 'freq': 'f', 'rows': rows_s}, {'showCombined': True, 'lin': {'weibull': True}}),
+                 ({'group': 'g', 'where': wh_f, 'rows': rows_f}, {'lin': {'lognormal': True}})):
+    kw = dict(kw)
+    r = call('survival.km', table=ts, time='t', censor='c', censor_code='1', plot=plot, table_name='data', **kw)
+    fits = call('survival.fit_groups', table=ts, time='t', censor='c', censor_code='1', dists=['exponential', 'weibull', 'lognormal'], **kw)
+    tag = f'survival code ({", ".join(k for k in kw if k != "rows") or "one curve"}{", rows left out" if "rows" in kw else ""})'
+    names = {v: nm for v, nm in plot.get('labels', [])}
+    for which in ('survival', 'failure'):
+        F = graph_code(f'{tag}: the {which} plot', r['plot_code'][which], ts)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        tr = (lambda a: [None if v is None else 1 - v for v in a]) if which == 'failure' else (lambda a: a)
+        ticks = [ln for ln in ax['lines'] if ln['marker'] == '|']
+        dots = [ln for ln in ax['lines'] if ln['marker'] == 'o']
+        for i, g_ in enumerate(r['groups']):
+            p_ = g_['plot']
+            gt = f'{tag}: the {which} plot of {g_["level"] or "every row"}'
+            check(f'{gt}: the steps, from min(0, the first time) to the largest', line_like(ax, nn(p_['x']), tr(nn(p_['y'])), drawstyle='steps-post', ls='-') is not None, True)
+            P = g_['points']
+            want = sorted((round(P['time'][k], 9), round(tr([P['surv'][k]])[0], 12)) for k in range(len(P['rows'])) if P['event'][k] == 0)
+            check(f'{gt}: the censored rows as ticks at their time and estimate', sorted((round(a, 9), round(b, 12)) for a, b in zip(ticks[i]['x'], ticks[i]['y'])) if len(ticks) > i else [], want)
+            if plot.get('showCI'):
+                lo_, hi_ = (tr(nn(p_['upper'])), tr(nn(p_['lower']))) if which == 'failure' else (nn(p_['lower']), nn(p_['upper']))
+                band = [q[1] for q in ax['polys'][i]['paths'][0] if q[1] is not None] if len(ax['polys']) > i else []
+                check.near(f'{gt}: the band spans the pointwise limits', max(abs(min(band) - min(v for v in lo_ if v is not None)), abs(max(band) - max(v for v in hi_ if v is not None))) if band else 9, 0, abs_=1e-12)
+            if plot.get('simCI') and p_.get('lcb'):
+                check(f'{gt}: the simultaneous bands, dotted', all(line_like(ax, nn(p_['x']), tr(nn(p_[k])), ls=':') is not None for k in ('lcb', 'ucb')), True)
+            if plot.get('showPoints'):
+                want = sorted((P['time'][k], tr([P['surv'][k]])[0]) for k in range(len(P['rows'])) if P['event'][k] > 0)
+                check(f'{gt}: the failures as points', sorted(zip(dots[i]['x'], dots[i]['y'])) if len(dots) > i else [], want)
+        if plot.get('showCombined') and r.get('combined'):
+            check(f'{tag}: the {which} plot: the combined curve, dashed', line_like(ax, nn(r['combined']['plot']['x']), tr(nn(r['combined']['plot']['y'])), ls='--') is not None, True)
+        want_legend = [names.get(g_['level'], g_['level']) for g_ in r['groups']] + (['Combined'] if plot.get('showCombined') and r.get('combined') else []) if kw.get('group') else []
+        check(f'{tag}: the {which} plot: the legend, the titles', (ax['legend'], ax['xlabel'], ax['ylabel'], F['suptitle'], close(ax['ylim'], [-0.02, 1.02])),
+              (want_legend, 't', 'Failure' if which == 'failure' else 'Surviving', f't {which} plot', True))
+    for kind, (xf, yf) in LIN_XY.items():
+        F = graph_code(f'{tag}: the {kind} plot', r['plot_code']['lin'][kind], ts)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        xs_all = []
+        for i, g_ in enumerate(r['groups']):
+            P = g_['points']
+            want = [(xf(a), yf(s_)) for a, s_, e_ in zip(P['time'], P['surv'], P['event']) if e_ > 0 and 0 < s_ < 1 and (kind == 'exponential' or a > 0)]
+            xs_all += [a for a, _ in want]
+            check.near(f'{tag}: the {kind} plot of {g_["level"] or "every row"}: a point for each failed row', maxdiff([q for p_ in ax['scatter'][i]['xy'] for q in p_], [q for p_ in want for q in p_]), 0, abs_=1e-9)
+        if (plot.get('lin') or {}).get(kind):
+            fit = [q for q in fits['fits'] if q['dist'] == kind][0]
+            lo_ = 0.0 if kind == 'exponential' else min(xs_all) - 0.1 * (max(xs_all) - min(xs_all))
+            hi_ = max(xs_all) + 0.1 * (max(xs_all) - min(xs_all))
+            for ln, fr in zip([q for q in ax['lines'] if q['ls'] == '--'], [q for q in fit['fit'] if not q.get('error')]):
+                want = [lo_ / math.exp(fr['mu']), hi_ / math.exp(fr['mu'])] if kind == 'exponential' else [(lo_ - fr['mu']) / fr['sigma'], (hi_ - fr['mu']) / fr['sigma']]
+                # scipy's censored fit in the code, the report's own maximum likelihood fit (statsmodels): within 2e-4
+                check.near(f'{tag}: the {kind} plot of {fr["level"] or "every row"}: the fitted line', maxdiff(ln['y'], want) / max(abs(v) for v in want) + maxdiff(ln['x'], [lo_, hi_]), 0, abs_=2e-4)
+        check(f'{tag}: the {kind} plot: the titles', (ax['xlabel'], ax['ylabel'], F['suptitle']), ('t' if kind == 'exponential' else 'Log(t)', {'exponential': '−Log(Surviving)', 'weibull': 'Log(−Log(Surviving))', 'lognormal': 'Normal Quantile of Failure'}[kind], f't {kind.capitalize()} Plot'))
+    # the statistics code: the report's rows
+    ns = run_ns(r['code'], ts)
+    last = r['groups'][-1]
+    check.near(f'{tag}: the statistics code\'s last product-limit median is the report\'s', float(ns['sf'].quantile(0.5)), last['median'], rel=1e-12)
+    ns = run_ns(fits['code'], ts)
+    check(f'{tag}: the fits\' code counts the report\'s failures and censored rows', (len(ns['data']), ns['data'].num_censored()), (int(sum(g_['n'] for g_ in r['groups'])), int(sum(g_['censored'] for g_ in r['groups']))))
+drop_f = [i for i in left2 if sex2[i] == 'F']
+code = call('survival.km', table=ts, time='t', censor='c', censor_code='1', table_name='data', where=wh_f, rows=rows_f)['code']
+check('the code keeps the By group\'s rows and drops the ones the report leaves out', [ln for ln in code.split('\n') if 'only the rows where' in ln or 'leaves out' in ln],
+      ['df = df[df["sex"] == "F"]   # only the rows where sex is F'] + ([f'df = df.drop(index=[{", ".join(map(str, drop_f))}])   # the rows the report leaves out'] if drop_f else []))
+
+# Life Distribution: the probability plot on every scale, each fit's distribution plot
+Q_ = {'nonparametric': lambda p: p, 'weibull': lambda p: math.log(-math.log(1 - p)), 'lognormal': lambda p: float(special.ndtri(p)), 'exponential': lambda p: -math.log(1 - p),
+      'frechet': lambda p: -math.log(-math.log(p)), 'loglogistic': lambda p: math.log(p / (1 - p)), 'normal': lambda p: float(special.ndtri(p)), 'sev': lambda p: math.log(-math.log(1 - p)),
+      'logistic': lambda p: math.log(p / (1 - p)), 'lev': lambda p: -math.log(-math.log(p))}
+LOGS = {'weibull', 'lognormal', 'frechet', 'loglogistic'}
+FCOL = dict(zip(['weibull', 'lognormal', 'exponential', 'frechet', 'loglogistic', 'normal', 'sev', 'logistic', 'lev'], ['#b0413e', '#3a7d44', '#6c5b7b', '#c0a000', '#1f9e89', '#8c564b', '#e377c2', '#17becf', '#7f7f7f']))
+all9 = list(FCOL)
+for kw, dists, scale, bands in (({}, ['weibull', 'lognormal'], 'weibull', True), ({'freq': 'f'}, all9, 'lognormal', True), ({'rows': rows_s}, ['normal', 'exponential'], 'normal', False),
+                                ({}, ['sev', 'lev', 'logistic'], 'nonparametric', True), ({'where': wh_f, 'rows': rows_f}, ['exponential', 'frechet', 'loglogistic'], 'exponential', True)):
+    kw = dict(kw)
+    plot = {'scale': scale, 'bands': bands, 'showNP': True}
+    r = call('lifedist.fit', table=ts, time='t', censor='c', censor_code='1', dists=dists, plot=plot, table_name='data', **kw)
+    tag = f'life distribution code ({scale} scale, {len(dists)} fits{", Freq" if "freq" in kw else ""}{", By" if "where" in kw else ""}{", rows left out" if "rows" in kw else ""})'
+    F = graph_code(f'{tag}: the probability plot', r['plot_code']['prob'], ts)
+    if F:
+        ax = F['axes'][0]
+        q = Q_[scale]
+        pts = [(a, q(p_)) for a, p_ in zip(r['points']['time'], r['points']['prob']) if scale not in LOGS or a > 0]
+        check.near(f'{tag}: the nonparametric points, at the middle of each jump', maxdiff([a for p_ in (ax['scatter'][0]['xy'] if ax['scatter'] else []) for a in p_], [a for p_ in pts for a in p_]), 0, abs_=1e-9)
+        py = [b for _, b in pts]
+        if scale == 'nonparametric':
+            ylo, yhi = -0.02, 1.02
+        else:
+            pad = 0.15 * (max(py) - min(py) or 1) + 0.15
+            ylo, yhi = max(q(0.0001), min(py) - pad), min(q(0.9999), max(py) + pad)
+        xs_ = [a for a, _ in pts]
+        xr = (min(xs_) / 1.6, max(xs_) * 1.6) if scale in LOGS else (min(xs_) - 0.12 * (max(xs_) - min(xs_)), max(xs_) + 0.12 * (max(xs_) - min(xs_)))
+        check(f'{tag}: the axes\' ranges and scale', (close(ax['ylim'], [ylo, yhi], 1e-9), close(ax['xlim'], list(xr), 1e-9), ax['xscale']), (True, True, 'log' if scale in LOGS else 'linear'))
+        lines_ = {ln['label']: ln for ln in ax['lines'] if not ln['label'].startswith('_')}
+        grid = r['grids']['log' if scale in LOGS else 'lin']
+        for fr in (f_ for f_ in r['fits'] if not f_.get('error')):
+            X_, Y_ = [], []
+            for a, F_ in zip(grid, fr['curves']['log' if scale in LOGS else 'lin']['F']):
+                if not xr[0] <= a <= xr[1] or (scale in LOGS and not a > 0):
+                    continue
+                try:
+                    y_ = q(F_)
+                except (ValueError, ZeroDivisionError):
+                    continue
+                if math.isfinite(y_) and ylo - 1 <= y_ <= yhi + 1:
+                    X_.append(a)
+                    Y_.append(y_)
+            ln = lines_.get(fr['label'])
+            # the code fits by BFGS on the report's code's likelihood; the report's own optimum: within 1e-4
+            check(f'{tag}: the {fr["label"]} line in its colour', ln is not None and close(ln['x'], X_, 1e-12, 1e-12) and maxdiff(ln['y'], Y_) < 1e-4 * max(1, max(abs(v) for v in Y_)) and ln['color'][:7] == FCOL[fr['dist']], True)
+            if bands and fr['dist'] == scale:
+                lo_ = [ln_['y'] for ln_ in ax['lines'] if ln_['ls'] == ':' and ln_['color'][:7] == FCOL[scale]]
+                want = []
+                for a, L_ in zip(grid, fr['curves']['log' if scale in LOGS else 'lin']['lower']):
+                    if a in X_:
+                        try:
+                            v_ = q(L_) if L_ is not None else None
+                        except (ValueError, ZeroDivisionError):
+                            v_ = None
+                        want.append(v_ if v_ is not None and math.isfinite(v_) else None)   # drawn where q of the limit is finite
+                check(f'{tag}: the {fr["label"]} pointwise limits, dotted, for the scale shown', bool(lo_) and maxdiff([v for v in lo_[0] if v is not None], [v for v in want if v is not None]) < 1e-4 * max(1, max(abs(v) for v in want if v is not None)), True)
+        ticks = [t_ for t_ in ax['yticklabels'] if t_]
+        check(f'{tag}: the probabilities on the axis', bool(ticks) and all(0 <= float(t_) <= 1 for t_ in ticks) and F['suptitle'] == f't {scale.capitalize() if scale != "sev" and scale != "lev" else scale.upper()} probability plot', True)
+    for dist, code in r['plot_code']['cdf'].items():
+        F = graph_code(f'{tag}: the {dist} distribution plot', code, ts)
+        if not F:
+            continue
+        ax = F['axes'][0]
+        fr = [q_ for q_ in r['fits'] if q_['dist'] == dist][0]
+        N_ = r['nonparametric']
+        tmin, tmax = min(N_['time']), max(N_['time'])
+        lo_, hi_ = (0 if fr['logt'] else tmin - 0.1 * (tmax - tmin)), tmax + 0.1 * (tmax - tmin)
+        X_, Y_ = zip(*[(a, F_) for a, F_ in zip(r['grids']['lin'], fr['curves']['lin']['F']) if lo_ <= a <= hi_ and (not fr['logt'] or a > 0)])
+        lines_ = {ln['label']: ln for ln in ax['lines'] if not ln['label'].startswith('_')}
+        ln = lines_.get(fr['label'])
+        check(f'{tag}: the {dist} CDF', ln is not None and close(ln['x'], list(X_), 1e-12) and maxdiff(ln['y'], list(Y_)) < 1e-4, True)
+        npl = lines_.get('Nonparametric')
+        check(f'{tag}: the {dist} plot: the nonparametric steps and the range', (npl is not None and close(npl['x'], [min(0, tmin)] + N_['time'], 1e-12) and close(npl['y'], [0.0] + N_['fail'], 1e-12), close(ax['xlim'], [lo_, hi_], 1e-12)), (True, True))
+    ns = run_ns(r['code'], ts)
+    last = [f_ for f_ in r['fits'] if not f_.get('error')][-1]
+    check.near(f'{tag}: the statistics code\'s -2 log L of {last["label"]} is the report\'s', 2 * float(ns['fit'].fun), last['m2ll'], rel=1e-6)
+
+# Fit Proportional Hazards: the baseline survival; Fit Parametric Survival: the rows
+for kw in ({}, {'freq': 'f'}, {'ties': 'efron', 'rows': rows_s}, {'where': wh_f, 'rows': rows_f}):
+    r = call('phreg.fit', table=ts, time='t', effects=['age', 'g'], censor='c', censor_code='1', plot={}, table_name='data', **kw)
+    tag = f'proportional hazards code ({", ".join(f"{k}" for k in kw if k != "rows") or "Breslow"}{", rows left out" if "rows" in kw else ""})'
+    F = graph_code(f'{tag}: the baseline survival', r['plot_code'], ts)
+    if F:
+        ln = F['axes'][0]['lines'][0]
+        check.near(f'{tag}: Breslow\'s baseline at the means of the design columns', maxdiff(ln['y'], r['baseline']['surv']) + maxdiff(ln['x'], r['baseline']['time']), 0, abs_=1e-7)
+        check(f'{tag}: the steps and the titles', (ln['drawstyle'], F['axes'][0]['xlabel'], F['axes'][0]['ylabel'], F['suptitle']), ('steps-post', 't', 'Surviving', 'Baseline survival'))
+    ns = run_ns(r['code'], ts)
+    check.near(f'{tag}: the statistics code\'s estimates are the report\'s', maxdiff(list(ns['r'].params), [q['estimate'] for q in r['estimates']['rows']]), 0, abs_=1e-6)
+    p = call('parametric.fit', table=ts, time='t', effects=['age', 'g'], censor='c', censor_code='1', dist='weibull', table_name='data', **{k: v for k, v in kw.items() if k != 'ties'})
+    ns = run_ns(p['code'], ts)
+    check.near(f'{tag}: ... and Fit Parametric Survival\'s code gives its -2 log L on the same rows', 2 * float(ns['fit'].fun), p['summary']['m2ll'], rel=1e-6)
+
 sys.exit(check.done())

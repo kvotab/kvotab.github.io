@@ -48,4 +48,6 @@
 
 /* ---- a wide table scrolls by itself on a narrow screen ------------------------ */
 .sm-cop-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+/* a graph with its matplotlib code under it, as one item of a row */
+.sm-cop-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
 .sm-cop-scroll > table.sm-rt { margin-bottom: 8px; }

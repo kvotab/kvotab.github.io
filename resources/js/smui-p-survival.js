@@ -50,6 +50,40 @@
     return cw > 200 ? Math.max(290, Math.min(w, cw - 48)) : w;
   }
 
+  /* ---- the graphs as matplotlib code -------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export
+     of the table (the notebook runs it): the report's rows, the light theme's
+     colours, the graph's size at 100 pixels an inch. The graphs whose numbers
+     one call makes get their code from it (plot_code, from survival.py and
+     nonlinear.py, with the graph's options and size in the call's plot);
+     Fit Curve's plots, which show several fits, are put together here from
+     each fit's fragment (res.plot: the model, and the function that fits it
+     to a group's rows). */
+  const J = JSON.stringify;
+  const pyNum = (v) => (Number.isFinite(v) ? String(v) : Number.isNaN(v) ? 'float("nan")' : v > 0 ? 'float("inf")' : '-float("inf")');
+  const pyLit = (v) => (typeof v === 'number' ? pyNum(v) : J(String(v)));
+  const inches = (px) => String(Math.round(px) / 100);
+  const LIGHT_BASE = '#2f6690';   // the points' colour of the light theme (SM.report.BASE is the theme's)
+  const MPL_DASH = ['-', '--', ':', '-.'];
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-sv-plotcode' }, graph, code) : graph);
+  const whereOf = (ctx) => ctx.where || [];
+
+  // The By group's rows (as the backend's code has them), and those of it the report leaves out.
+  function whereLines(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${levelLabel(t.col(w.column), w.value)}`);
+    const cols = where.map((w) => t.col(w.column));
+    const keep = new Set(ctx.rows), drop = [];
+    for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
+    if (drop.length) L.push(`df = df.drop(index=[${drop.join(', ')}])   # the rows the report leaves out`);
+    return L;
+  }
+
+  // A group column's levels with their names as the page writes them, [[value, name], ...], for the backend's code.
+  function levelPairs(ctx, col) {
+    return col ? ctx.table.levels(col).map((v) => [v, levelLabel(col, v)]) : null;
+  }
+
   /* The censor role and its code, as every survival call sends them. */
   function censorOf(ctx) {
     const code = String(ctx.opt('censorCode', '1') ?? '1').trim() || '1';
@@ -87,7 +121,7 @@
      SURVIVAL
      ======================================================================== */
   function survPayload(ctx) {
-    return { time: ctx.name('y'), ...censorOf(ctx), group: ctx.name('group'), freq: ctx.name('freq'), alpha: ctx.alpha };
+    return { time: ctx.name('y'), ...censorOf(ctx), group: ctx.name('group'), freq: ctx.name('freq'), alpha: ctx.alpha, where: whereOf(ctx) };
   }
 
   /* The Kaplan-Meier plot: steps per group, censored rows as ticks (linked),
@@ -220,15 +254,20 @@
   async function renderSurvival(ctx) {
     const gcol = ctx.role('group');
     const estTimes = ctx.opt('estTimes', null), estProbs = ctx.opt('estProbs', null);
-    const res = await ctx.call('survival.km', { ...survPayload(ctx), times: estTimes, probs: estProbs, simultaneous: ctx.opt('simCI', false) });
+    // the graphs' options and sizes, for their code
+    const plot = { showCI: ctx.opt('showCI', false), showPoints: ctx.opt('showPoints', false), showCombined: ctx.opt('showCombined', false), simCI: ctx.opt('simCI', false),
+      labels: levelPairs(ctx, gcol), size: [fitWidth(ctx, 560), 350], lin_size: [fitWidth(ctx, 420), 300],
+      lin: Object.fromEntries(['exponential', 'weibull', 'lognormal'].map((k) => [k, ctx.opt(`fit:${k}`, false)])) };
+    const res = await ctx.call('survival.km', { ...survPayload(ctx), times: estTimes, probs: estProbs, simultaneous: ctx.opt('simCI', false), plot });
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
+    const pc = res.plot_code || {};
     const multi = res.groups.length > 1;
     const groups = res.groups.map((g, i) => ({ ...g, label: res.grouped ? levelLabel(gcol, g.level) : '', color: multi ? PALETTE[i % PALETTE.length] : SM.report.BASE }));
     ctx.survRes = { ...res, groups };
     const failureMain = ctx.opt('failure', false);
     if (ctx.opt('survPlot', true)) {
       const ob = ctx.outline(failureMain ? 'Failure Plot' : 'Survival Plot', { key: 'survplot' });
-      ob.add(kmPlot(ctx, groups, res.combined, failureMain));
+      ob.add(kmPlot(ctx, groups, res.combined, failureMain), ctx.code(failureMain ? pc.failure : pc.survival));
       const notes = [];
       if (ctx.opt('showCI', false)) notes.push(`Shaded: pointwise ${pct(ctx.alpha)} limits (Greenwood, on the log(−log) scale).`);
       if (ctx.opt('simCI', false)) notes.push(Math.abs(ctx.alpha - 0.05) > 1e-12 ? 'Simultaneous bands are Hall-Wellner bands at 95% only (statsmodels simultaneous_cb): set α to 0.05 to see them.'
@@ -236,7 +275,7 @@
       notes.push('Ticks mark the censored rows; click or drag over them to select the rows.');
       ob.add(ctx.note(notes.join(' ')));
     }
-    if (ctx.opt('failPlot', false) && !failureMain) ctx.outline('Failure Plot', { key: 'failplot' }).add(kmPlot(ctx, groups, res.combined, true));
+    if (ctx.opt('failPlot', false) && !failureMain) ctx.outline('Failure Plot', { key: 'failplot' }).add(kmPlot(ctx, groups, res.combined, true), ctx.code(pc.failure));
 
     // ---- Summary: counts and means, then the quantiles
     const all = res.combined ? [{ ...res.combined, label: 'Combined' }, ...groups] : groups;
@@ -266,7 +305,7 @@
     for (const k of ['exponential', 'weibull', 'lognormal']) {
       if (!ctx.opt(`plot:${k}`, false)) continue;
       const ob = ctx.outline(LINPLOTS[k].title, { key: `plot:${k}` });
-      ob.add(linPlot(ctx, groups, k, ctx.opt(`fit:${k}`, false) ? fitOf(k) : null),
+      ob.add(linPlot(ctx, groups, k, ctx.opt(`fit:${k}`, false) ? fitOf(k) : null), ctx.code((pc.lin || {})[k]),
         ctx.note({ exponential: 'Straight through the origin when the times are exponential.', weibull: 'Straight when the times are Weibull; the slope is the shape β.', lognormal: 'Straight when the times are lognormal; the slope is 1/σ.' }[k] + (ctx.opt(`fit:${k}`, false) ? ' The dashed lines are the fits.' : '')));
     }
     for (const k of fitKeys) {
@@ -334,7 +373,8 @@
      FIT PROPORTIONAL HAZARDS
      ======================================================================== */
   async function renderPH(ctx) {
-    const res = await ctx.call('phreg.fit', { time: ctx.name('y'), effects: ctx.names('x'), ...censorOf(ctx), freq: ctx.name('freq'), ties: ctx.opt('ties', 'breslow'), alpha: ctx.alpha });
+    const res = await ctx.call('phreg.fit', { time: ctx.name('y'), effects: ctx.names('x'), ...censorOf(ctx), freq: ctx.name('freq'), ties: ctx.opt('ties', 'breslow'), alpha: ctx.alpha,
+      where: whereOf(ctx), plot: { size: [fitWidth(ctx, 460), 300] } });
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
     ctx.phRes = res;
     const wm = ctx.outline('Whole Model', { key: 'whole' });
@@ -354,7 +394,7 @@
       const ob = ctx.outline('Baseline Survival', { key: 'baseline', menu: () => [{ label: 'Remove', action: () => ctx.set('baseline', false) }] });
       ob.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: nums(res.baseline.time), y: nums(res.baseline.surv), line: { shape: 'hv', color: SM.report.BASE, width: 1.8 }, name: 'Baseline', hovertemplate: '%{x}: %{y:.4f}<extra></extra>' }],
         { xaxis: { title: { text: ctx.name('y') } }, yaxis: { title: { text: 'Surviving' }, range: [-0.02, 1.02] } }, { width: fitWidth(ctx, 460), height: 300, title: 'Baseline survival' }),
-      ctx.note('The survival curve of a subject at the means of the model\'s design columns: Breslow\'s estimate of the baseline cumulative hazard.'));
+      ctx.code(res.plot_code), ctx.note('The survival curve of a subject at the means of the model\'s design columns: Breslow\'s estimate of the baseline cumulative hazard.'));
     }
     ctx.container.append(ctx.code(res.code));
   }
@@ -496,8 +536,10 @@
     const dists = ctx.opt('dists', ['weibull', 'lognormal']);
     const scale = ctx.opt('scale', dists[0] || 'weibull');
     const calcT = ctx.opt('calcTimes', null), calcP = ctx.opt('calcProbs', [0.1, 0.5]);
-    const res = await ctx.call('lifedist.fit', { time: ctx.name('y'), ...censorOf(ctx), freq: ctx.name('freq'), dists, alpha: ctx.alpha, times: calcT, probs: calcP });
+    const plot = { scale, bands: ctx.opt('bands', true), showNP: ctx.opt('showNP', true), prob_size: [fitWidth(ctx, 640), 380], cdf_size: [fitWidth(ctx, 400), 250] };
+    const res = await ctx.call('lifedist.fit', { time: ctx.name('y'), ...censorOf(ctx), freq: ctx.name('freq'), dists, alpha: ctx.alpha, times: calcT, probs: calcP, where: whereOf(ctx), plot });
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
+    const pc = res.plot_code || {};
     // ---- Compare Distributions: the check boxes, the scale, the plot
     const cmp = ctx.outline('Compare Distributions', { key: 'compare', info: 'p:lifedist-scale' });
     const grp = SM.util.uid('scale');
@@ -516,7 +558,7 @@
     rowFor('nonparametric', 'Nonparametric', ctx.opt('showNP', true), (on) => ctx.set('showNP', on));
     for (const [k, label] of DISTS) rowFor(k, label, dists.includes(k), (on) => ctx.set('dists', on ? DISTS.map(([x]) => x).filter((x) => x === k || dists.includes(x)) : dists.filter((x) => x !== k)));
     const chooser = el('table', { class: 'sm-rt sm-life-dists' }, el('thead', null, el('tr', null, el('th', { class: 'sm-l', text: 'Distribution' }), el('th', { text: 'Show' }), el('th', { text: 'Scale' }))), body);
-    cmp.add(ctx.row(chooser, probPlot(ctx, res, dists, scale)));
+    cmp.add(ctx.row(chooser, withCode(probPlot(ctx, res, dists, scale), ctx.code(pc.prob))));
     cmp.add(ctx.note(`Points: the nonparametric (Kaplan-Meier) estimate of the failure probability at each failure, plotted at the middle of its jump. Lines: the fitted distributions${ctx.opt('bands', true) && dists.includes(scale) ? `, with pointwise ${pct(ctx.alpha)} limits for the one whose scale is shown` : ''}. On a distribution's own scale its fit is a straight line.`));
 
     // ---- Statistics
@@ -538,7 +580,7 @@
       const color = FIT_COLORS[DISTS.findIndex(([k]) => k === f.dist) % FIT_COLORS.length];
       ob.head.style.setProperty('--fit-color', color);
       ob.el.classList.add('sm-life-fit');
-      if (ctx.opt(`cdf:${f.dist}`, true)) ob.add(cdfPlot(ctx, res, f, color));
+      if (ctx.opt(`cdf:${f.dist}`, true)) ob.add(cdfPlot(ctx, res, f, color), ctx.code((pc.cdf || {})[f.dist]));
       ob.add(ctx.rt(f.params, { sortable: false }));
       if (f.alt) ob.add(ctx.rt(f.alt, { caption: f.dist === 'exponential' ? 'Mean' : 'Weibull α and β', sortable: false }));
       ob.add(ctx.kv([['−2LogLikelihood', num(f.m2ll)], ['AICc', num(f.aicc)], ['BIC', num(f.bic)]]));
@@ -593,7 +635,7 @@
   }
 
   async function renderParametric(ctx) {
-    const res = await ctx.call('parametric.fit', { ...parametricPayload(ctx), alpha: ctx.alpha, corr: ctx.opt('corr', false) });
+    const res = await ctx.call('parametric.fit', { ...parametricPayload(ctx), alpha: ctx.alpha, corr: ctx.opt('corr', false), where: whereOf(ctx) });
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
     ctx.top.setTitle(`${ctx.top.titleEl.textContent.replace(/^Parametric Survival Fit/, `Parametric Survival Fit: ${res.label}`)}`);
     const s = res.summary;
@@ -687,8 +729,49 @@
     });
     pts.forEach((p, i) => traces.push({ type: 'scatter', mode: 'markers', x: p.x, y: p.y, rows: p.rows, name: p.label || ctx.name('y'), showlegend: grouped, marker: { color: gColor(i), size: 6 } }));
     const legend = { x: 0, xanchor: 'left', y: 1, bgcolor: 'rgba(0,0,0,0)', traceorder: 'normal' };
-    return ctx.plot(traces, { xaxis: { title: { text: ctx.name('x') } }, yaxis: { title: { text: ctx.name('y') } }, showlegend: grouped || (!single && fitted.length > 0), legend },
-      { width: fitWidth(ctx, single ? 440 : 540), height: single ? 300 : 360, title: `${ctx.name('y')} by ${ctx.name('x')}${single ? ` ${single}` : ''}` });
+    const width = fitWidth(ctx, single ? 440 : 540), height = single ? 300 : 360;
+    const graph = ctx.plot(traces, { xaxis: { title: { text: ctx.name('x') } }, yaxis: { title: { text: ctx.name('y') } }, showlegend: grouped || (!single && fitted.length > 0), legend },
+      { width, height, title: `${ctx.name('y')} by ${ctx.name('x')}${single ? ` ${single}` : ''}` });
+    return [graph, ctx.code(curveCode(ctx, pts, fitted, { ci, single, color: own, width, height }))];
+  }
+
+  /* Fit Curve's plot as code (curvePlot): the rows, each model's fragment
+     (res.plot: the model and the function that fits it, as the report's code
+     fits it, to a group's rows), each group's fit from the report's
+     estimates, the curves and the points in the page's colours. */
+  function curveCode(ctx, pts, fitted, { ci = false, single = null, color: own = null, width, height }) {
+    const grouped = !!ctx.role('group');
+    const gcol = ctx.role('group');
+    const x = ctx.name('x'), y = ctx.name('y'), w = ctx.name('weight'), f = ctx.name('freq');
+    const ok = fitted.filter((m) => m.res && !m.res.error && m.res.plot);
+    const imports = ['import matplotlib.pyplot as plt', ...new Set(ok.flatMap((m) => m.res.plot.imports))];
+    const L = [SM.report.codeHead(ctx.table.name, imports), ...whereLines(ctx), `X, Y = ${J(x)}, ${J(y)}`,
+      `d = df.dropna(subset=${J([...new Set([x, y, gcol && gcol.name, w, f].filter(Boolean))])})   # the rows with every value`];
+    if (w || f) L.push(`d = d[${[w, f].filter(Boolean).map((c) => `d[${J(c)}]`).join(' * ')} > 0]   # the rows with a positive weight`);
+    for (const m of ok) L.push('', ...m.res.plot.lines);
+    const levelIndex = new Map(pts.map((p, i) => [p.level, i]));
+    const gColor = (i) => (grouped ? PALETTE[i % PALETTE.length] : LIGHT_BASE);
+    const legendCurves = !grouped && !single;
+    const rowsOf = (level) => (grouped ? `d[d[${J(gcol.name)}] == ${pyLit(level)}]` : 'd');
+    L.push('', `fig, ax = plt.subplots(figsize=(${inches(width)}, ${inches(height)}), layout="constrained")`);
+    ok.forEach((m) => {
+      const mi = fitted.indexOf(m);
+      for (const g of m.res.groups) {
+        if (!g.curve || g.error || !g.params) continue;
+        const gi = levelIndex.get(g.level) ?? 0;
+        const color = grouped ? gColor(gi) : (own || FIT_COLORS[mi % FIT_COLORS.length]);
+        const ls = grouped && !single ? MPL_DASH[mi % 4] : '-';
+        L.push(`s = ${rowsOf(g.level)}${grouped ? `   # ${gcol.name} ${levelLabel(gcol, g.level)}` : ''}`,
+          `gx, fy, lo, hi = ${m.res.plot.fit}(s, [${g.params.map((v) => pyNum(num(v))).join(', ')}])   # ${m.label}, from the report's estimates`);
+        if (ci && g.curve.lower) L.push(`ax.fill_between(gx, lo, hi, color="${color}", alpha=0.14, linewidth=0)   # Confidence Curves`);
+        L.push(`ax.plot(gx, fy, color="${color}", linewidth=2${ls !== '-' ? `, linestyle="${ls}"` : ''}${legendCurves ? `, label=${J(m.label)}` : ''})`);
+      }
+    });
+    pts.forEach((p, i) => L.push(`s = ${rowsOf(p.level)}`, `ax.scatter(s[X], s[Y], s=24, color="${gColor(i)}", zorder=3${grouped ? `, label=${J(p.label)}` : ''})   # the rows`));
+    L.push('ax.set_xlabel(X)', 'ax.set_ylabel(Y)');
+    if (grouped || (!single && fitted.length > 0)) L.push('ax.legend(loc="upper left", frameon=False, fontsize=8)');
+    L.push(`fig.suptitle(${J(`${y} by ${x}${single ? ` ${single}` : ''}`)}, fontsize=10)`, 'plt.show()');
+    return L.join('\n');
   }
 
   async function renderCurve(ctx) {
@@ -700,7 +783,7 @@
     const fitted = [];
     for (const m of models) {
       const payload = { y: ctx.name('y'), x: ctx.name('x'), group: ctx.name('group'), weight: ctx.name('weight'), freq: ctx.name('freq'), model: m, alpha: ctx.alpha,
-        ci: ctx.opt(`ci:${m}`, false), parallel: grouped && ctx.opt(`par:${m}`, false), equal: grouped && ctx.opt(`eq:${m}`, false), inverse: ctx.opt(`inv:${m}`, null) };
+        ci: ctx.opt(`ci:${m}`, false), parallel: grouped && ctx.opt(`par:${m}`, false), equal: grouped && ctx.opt(`eq:${m}`, false), inverse: ctx.opt(`inv:${m}`, null), where: whereOf(ctx) };
       let res;
       try { res = await ctx.call('fitcurve.fit', payload); } catch (e) { res = { error: e.message }; }
       fitted.push({ key: m, label: CURVE_LABEL[m] || m, res });
@@ -861,7 +944,7 @@
 
   function nonlinearPayload(ctx) {
     return { y: ctx.name('y'), model: ctx.opt('model', ''), start: parseStart(ctx.opt('start', '')), weight: ctx.name('weight'), freq: ctx.name('freq'),
-      method: ctx.opt('method', 'lm'), max_nfev: ctx.opt('maxEval', null), alpha: ctx.alpha, ci: ctx.opt('ci', false) };
+      method: ctx.opt('method', 'lm'), max_nfev: ctx.opt('maxEval', null), alpha: ctx.alpha, ci: ctx.opt('ci', false), where: whereOf(ctx), plot: { size: [fitWidth(ctx, 480), 320] } };
   }
 
   async function renderNonlinear(ctx) {
@@ -886,7 +969,8 @@
       }
       traces.push({ type: 'scatter', mode: 'lines', x: nums(res.curve.x), y: nums(res.curve.y), line: { color: FIT_COLORS[0], width: 2 }, name: 'Fit', hovertemplate: '%{x}: %{y:.5g}<extra></extra>' });
       traces.push({ type: 'scatter', mode: 'markers', x: px, y: py, rows: pr, name: ctx.name('y'), marker: { size: 6 } });
-      ctx.outline('Plot', { key: 'plot' }).add(ctx.plot(traces, { xaxis: { title: { text: res.x } }, yaxis: { title: { text: ctx.name('y') } } }, { width: fitWidth(ctx, 480), height: 320, title: `${ctx.name('y')} by ${res.x}` }));
+      ctx.outline('Plot', { key: 'plot' }).add(ctx.plot(traces, { xaxis: { title: { text: res.x } }, yaxis: { title: { text: ctx.name('y') } } }, { width: fitWidth(ctx, 480), height: 320, title: `${ctx.name('y')} by ${res.x}` }),
+        ctx.code(res.plot_code));
     }
     const s = res.solution;
     ctx.outline('Solution', { key: 'solution' }).add(ctx.kv([['SSE', s.sse], ['DFE', s.dfe, 'int'], ['MSE', num(s.mse)], ['RMSE', num(s.rmse)], ['R-Square', num(s.rsquare)], ['AICc', num(s.aicc)], ['N', s.n, 'int']]));

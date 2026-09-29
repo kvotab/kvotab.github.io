@@ -31,6 +31,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -251,7 +252,7 @@ async def main():
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
     check('gam imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "gam").map(f => f.error)'), [])
-    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.importance', 'gam.maximize', 'gam.profile', 'gam.surface', 'gam.term'])
+    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.importance', 'gam.maximize', 'gam.plot_code', 'gam.profile', 'gam.surface', 'gam.term'])
     await page.ev(HELPERS)
     t = await page.ev('({ name: SM.app.current.name, rows: SM.app.current.nrows, cols: SM.app.current.columns.map(c => c.name), listed: !!SM.io.EXAMPLES.ozone, date: SM.app.current.col("date").format.kind })')
     check('?example=ozone opens the simulated table', (t['name'], t['rows'], t['listed'], t['date']), ('Ozone', 365, True, 'date'))
@@ -619,9 +620,151 @@ async def main():
     check('gam: Smooth Terms (i) keeps its sections', (info or {}).get('headings'), ['Identifiability', 'Surface Plot'])
     check('gam: ... and explains the Surface Plot\'s two lists', list(help_section(info, 'Surface Plot') or {}), ['Horizontal, Vertical'])
     await check_controls_help(page, rep, 'Prediction Profiler', ['The value box under a plot', 'The slider', 'The red dashed line', 'A desirability plot', 'Remembered Settings'], 'gam: Prediction Profiler')
+    await chart_code(page)
     check('no script errors', page.errors, [])
     check('no errors in the console', [c for c in page.console if 'Error' in c], [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code -------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE_MORE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it. The profiler's graphs are interactive and have no block. __gc adds the
+# contour levels Plotly chose (its full data), which GRAPHS_JS does not
+# collect.
+CHART_JS = r'''
+window.__gc = {
+  levels(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const c = (p._fullData || []).find((d) => d.type === 'contour');
+      return c ? { start: c.contours.start, end: c.contours.end, size: c.contours.size } : null;
+    });
+  },
+};
+'''
+PROFILER = (' profile over ', ' desirability', 'Desirability over ', ' variable importance')
+
+
+async def run_more(page, g, table_js):
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=900)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+def near_list(a, b, rel=1e-6, abs_=1e-9):
+    a, b = list(a or []), list(b or [])
+    return len(a) == len(b) and all(x is not None and y is not None and abs(x - y) <= max(abs_, rel * max(abs(x), abs(y))) for x, y in zip(a, b))
+
+
+def band_edges(poly):
+    """A fill_between polygon's lower and upper edge at each x (its vertices grouped by x)."""
+    edges = {}
+    for x, y in poly:
+        if x is None or y is None:
+            continue
+        lo, hi = edges.get(round(x, 9), (y, y))
+        edges[round(x, 9)] = (min(lo, y), max(hi, y))
+    xs = sorted(edges)
+    return xs, [edges[x][0] for x in xs], [edges[x][1] for x in xs]
+
+
+def check_gam_graph(lab, g, F, lev):
+    ax = F['axes'][0]
+    t0 = g['traces']
+    check(f'{lab}: the title', ax['title'], g['label'])
+    if g['label'].endswith('partial effect'):
+        curve = [t for t in t0 if t.get('mode') == 'lines' and (t.get('name') or '').startswith('s(')]
+        ln = [x for x in ax['lines'] if x['color'].startswith('#c0392b') and len(x['x']) > 2]
+        check(f'{lab}: the curve, the page\'s', bool(curve and ln) and near_list(ln[0]['x'], curve[0]['x'], 1e-12) and near_list(ln[0]['y'], curve[0]['y']), True)
+        fills = [t for t in t0 if t.get('mode') == 'lines' and t.get('fill') == 'tonexty']
+        if fills:
+            lower = [t for t in t0 if t.get('mode') == 'lines' and not t.get('fill') and not t.get('name')][0]
+            poly = [p_ for p_ in ax['polys'] if p_.get('paths')]
+            xs, lo, hi = band_edges(poly[0]['paths'][0]) if poly else ([], [], [])
+            check(f'{lab}: the band, the page\'s', near_list(xs, [round(v, 9) for v in fills[0]['x']], 1e-9) and near_list(lo, lower['y']) and near_list(hi, fills[0]['y']), True)
+        else:
+            check(f'{lab}: no band, as the page', [p_ for p_ in ax['polys'] if p_.get('paths')], [])
+        res = [t for t in t0 if t.get('name') == 'Partial residuals']
+        sc = [x for x in ax['scatter'] if x['label'] == 'Partial residuals']
+        check(f'{lab}: the partial residuals (or none), the page\'s', (len(res), bool(res) and bool(sc) and near_list([p_[0] for p_ in sc[0]['xy']], res[0]['x'], 1e-12)
+                                                                     and near_list([p_[1] for p_ in sc[0]['xy']], res[0]['y'])), (len(sc), bool(res)))
+        rug = [t for t in t0 if t.get('name') == 'Rug']
+        rl = [x for x in ax['lines'] if x['marker'] == '|']
+        check(f'{lab}: the rug (or none), the page\'s', (len(rl), bool(rug) and bool(rl) and near_list(rl[0]['x'], rug[0]['x'], 1e-12)), (len(rug), bool(rug)))
+    elif g['label'].endswith('surface'):
+        con = [t for t in t0 if t.get('type') == 'contour'][0]
+        mesh = ax['meshes'][0] if ax['meshes'] else None
+        check(f'{lab}: the heatmap, the page\'s grid', bool(mesh) and near_list(mesh['z'], [v for row in con['z'] for v in row]) and near_list(mesh['x'], con['x'], 1e-12) and near_list(mesh['y'], con['y'], 1e-12), True)
+        lv = [p_['contour'] for p_ in ax['polys'] if 'contour' in p_]
+        want = []
+        if lev:
+            v = lev['start']
+            while v <= lev['end'] + lev['size'] * 1e-6:
+                want.append(v)
+                v += lev['size']
+        check(f'{lab}: the contour levels Plotly drew', bool(lv) and near_list(lv[0], want, 1e-9, 1e-12), True)
+        pts = [t for t in t0 if t.get('mode') == 'markers'][0]
+        check(f'{lab}: the rows\' points', bool(ax['scatter']) and near_list([p_[0] for p_ in ax['scatter'][0]['xy']], pts['x'], 1e-12) and near_list([p_[1] for p_ in ax['scatter'][0]['xy']], pts['y'], 1e-12), True)
+    else:
+        pts = t0[0]
+        sc = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check(f'{lab}: the points, the page\'s', near_list([p_[0] for p_ in sc], pts['x'], 1e-8) and near_list([p_[1] for p_ in sc], pts['y'], 1e-7, 1e-9), True)
+        lines = [t for t in t0[1:] if t.get('mode') == 'lines']
+        if lines:
+            ln = [x for x in ax['lines'] if len(x['x']) == 2]
+            check(f'{lab}: the line, the page\'s', bool(ln) and near_list(ln[0]['x'], lines[0]['x'], 1e-8) and near_list(ln[0]['y'], lines[0]['y'], 1e-7, 1e-9), True)
+        else:
+            check(f'{lab}: the zero line', [x['y'] for x in ax['lines']], [[s['y0'], s['y1']] for s in g['shapes']])
+    check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    # the code draws in the light theme's colours: compare with the page in it
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.2)
+    await page.ev('__gr.idle()')
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find((t) => t.name === 'Ozone')))")
+    tbl = "SM.app.tables.find((t) => t.name === 'Ozone')"
+    await page.ev(f"{tbl}.setState([2, 3, 40], 'excluded', true)")
+    T, Wn, D = 'temperature (°C)', 'wind (m/s)', 'day of year'
+    runs = [
+        ('fixed penalties, the surface, three rows excluded', BASE3, {'smoothing': 'fixed', 'surface': True}, 7),
+        ('penalties by AIC, a term with the intercept, one without residuals or rug', {'y': ['ozone (ppb)'], 'smooth': [T, Wn]},
+         {f'{T}|constant': True, f'{Wn}|resid': False, f'{Wn}|rug': False, f'{Wn}|band': False}, 5),
+        ('a 0/1 alert, binomial', {'y': ['alert'], 'smooth': [T, D]}, {'family': 'binomial', 'link': 'logit', 'smoothing': 'fixed'}, 5),
+        ('By weekend', {**BASE3, 'linear': [], 'by': ['weekend']}, {'smoothing': 'fixed'}, 12),
+    ]
+    for label, roles, options, want in runs:
+        r = await page.ev(f'''(async () => {{ const st = await {open_js(roles, options)}; const rep = __g.rep();
+          return {{ st, g: await __gr.graphs(rep), lev: __gc.levels(rep), undrawn: __gr.take() }}; }})()''', timeout=1200)
+        if not isinstance(r, dict):
+            check(f'charts: {label}: the report', r, 'opens')
+            continue
+        check(f'charts: {label}: no errors', r['st']['errors'], [])
+        check(f'charts: {label}: every graph of the report drawn', r['undrawn'], [])
+        gs = [(g, lv) for g, lv in zip(r['g'], r['lev']) if not any(k in g['label'] for k in PROFILER)]
+        check(f'charts: {label}: the graphs', len(gs), want)
+        for g, lv in gs:
+            lab = f'charts: {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if 'excluded' in label:
+                check(f'{lab}: the code leaves out the excluded rows', 'df = df.drop(index=[2, 3, 40])' in g['code'], True)
+            if 'AIC' in label:
+                check(f'{lab}: the code searches the penalties as the report does', 'select_penweight' in g['code'], True)
+            F, err = await run_more(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if F:
+                check_gam_graph(lab, g, F[0], lv)
+        await page.ev('SM.app.closeReport(__g.rep())')
+    await page.ev(f"{tbl}.setState([2, 3, 40], 'excluded', false)")
 
 
 asyncio.run(main())

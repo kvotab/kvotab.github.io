@@ -29,6 +29,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, points_of, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -388,6 +389,7 @@ async def main():
         check('Edit > Undo takes the imputation back', r['back'], True)
         check('no errors in the report', r['errors'], [])
     await shot(page, 't02-missing.png')
+    await snapshot_code(page)
 
     # ---- Tabulate: drag into the drop zones, nest, buttons, Done ---------------------------------------------------------
     r = await js(page, r'''
@@ -791,6 +793,57 @@ async def main():
     check('dropped after text: it goes where it is let go', two, '2 * :"height (cm)"')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- Explore Missing Values: the snapshot's matplotlib code --------------------------------------------------------
+# The block under the snapshot runs in the page's own Python (the notebook's runner): a mark for each
+# missing cell of the report's rows at its row number and column, as the Plotly graph has them; with
+# By groups and excluded rows the block keeps each group's rows and drops the excluded ones, and so
+# does the report's own code.
+async def snapshot_code(page):
+    await page.ev(GRAPHS_JS)
+    r = await js(page, r'''
+      const m = SM.app.tables.find((x) => x.name === 'Students with gaps');
+      SM.app.showTab(SM.app.tabOf(m));
+      const P = SM.platforms.get('missing');
+      const ids = (names) => names.map((n) => m.col(n).id);
+      const rep = SM.app.openReport(P, { roles: { y: ids(['sex', 'height (cm)', 'weight (kg)']) }, options: {} }, m);
+      await T.done(rep);
+      const g1 = await __gr.graphs(rep);
+      const sx = m.col('sex').values, ex = [sx.indexOf('F'), sx.indexOf('M'), 30];   // a row of each group, and one with a gap
+      m.setState(ex, 'excluded', true);
+      const rep2 = SM.app.openReport(P, { roles: { y: ids(['height (cm)', 'weight (kg)']), by: ids(['sex']) }, options: {} }, m);
+      await T.done(rep2);
+      const g2 = await __gr.graphs(rep2);
+      const code2 = [...rep2.body.querySelectorAll('details.sm-code code')].map((c) => c.textContent);
+      m.setState(ex, 'excluded', false);
+      const out = { g1, g2, code2, undrawn: __gr.take(), errors: [rep, rep2].flatMap((x) => [...x.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent)) };
+      SM.app.closeReport(rep); SM.app.closeReport(rep2);
+      return out;
+    ''', 'the snapshot\'s code')
+    if not r:
+        return
+    check('the snapshot\'s code: no errors, every graph drawn', (r['errors'], r['undrawn']), ([], []))
+    check('the snapshot\'s code: a snapshot in the report, one in each By group (F, M)', [g['label'] for g in r['g1'] + r['g2']], ['Missing value snapshot'] * 3)
+    for g in r['g1'] + r['g2']:
+        check('the snapshot\'s code: its block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    for i, g in enumerate(r['g1'] + r['g2']):
+        lab = 'the snapshot\'s code' + (' (every row)' if i == 0 else f' (By group {i}, rows excluded)')
+        F, err = await run_graph(page, g, "SM.app.tables.find((x) => x.name === 'Students with gaps')")
+        check(f'{lab}: runs in the page', err, None)
+        if not F:
+            continue
+        F = F[0]
+        ax = F['axes'][0]
+        got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check(f'{lab}: a mark for each missing cell, at its column and row number', [tuple(p) for p in got], [tuple(p) for p in points_of(g['traces'][0])])
+        check(f'{lab}: square marks in the text colour', (ax['scatter'][0]['colors'][0][:7] if ax['scatter'] else None), '#352921')
+        check(f'{lab}: the columns on the axis, the first row at the top', ([t for t in ax['xticklabels'] if t], ax['yinverted']), (g['ticks'], True))
+        check(f'{lab}: the titles and the size', (ax['title'], ax['ylabel'], F['size']), (g['label'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+        if i:
+            check(f'{lab}: the block keeps the group and drops the excluded rows', ('df = df[df["sex"] == ' in g['code'], 'df = df.drop(index=[' in g['code']), (True, True))
+    reports = [c for c in r['code2'] if 'd.isna().sum()' in c]
+    check('the Missing Value Report\'s code keeps each group\'s rows and drops the excluded ones', (len(reports), all('df = df[df["sex"] == ' in c and 'df = df.drop(index=[' in c for c in reports)), (2, True))
 
 
 asyncio.run(main())

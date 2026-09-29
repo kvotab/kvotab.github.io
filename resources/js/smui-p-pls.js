@@ -89,7 +89,7 @@
       const note = ctx.headless ? null : el('p', { class: 'sm-ob-note sm-pls-progress', role: 'status', text: `Fitting: ${validationText({ ...f, method: ctx.role('validation') ? 'column' : f.method })}…` });
       if (note) ctx.container.append(note);
       const off = note ? SM.engine.on('progress', (p) => { if (p && p.what === 'pls') note.textContent = `Leave-One-Out: ${fmt(p.done)} of ${fmt(p.total)} rows…`; }) : null;
-      try { r = await ctx.call('pls.fit', { ...payloadOf(ctx, f), alpha: ctx.alpha }); } catch (e) { r = { error: e.message || String(e) }; } finally { if (off) off(); if (note) note.remove(); }
+      try { r = await ctx.call('pls.fit', { ...payloadOf(ctx, f), alpha: ctx.alpha, plot: { vip: vipThreshold(ctx, f) } }); } catch (e) { r = { error: e.message || String(e) }; } finally { if (off) off(); if (note) note.remove(); }
       results.push(r);
     }
     if (fits.length) comparison(ctx, fits, results);
@@ -185,10 +185,11 @@
     const col = colors();
     ob.add(ctx.row(wide(ctx.rt({ columns: [{ key: 'factors', label: 'Number of Factors', fmt: 'int' }, { key: 'rmpress', label: 'Root Mean PRESS', digits: 5 }, { key: 't2', label: 'van der Voet T²', digits: 4 }, { key: 'p', label: 'Prob > van der Voet T²', fmt: 'p' }], rows: cv.rows },
       { key: 'plscv', sortable: false, cellClass: (row) => (row.factors === cv.best ? 'sm-pls-min' : '') })),
-    ctx.plot([
+    SM.predict.plotWithCode(ctx, [
       { type: 'scatter', mode: 'lines+markers', x: cv.rows.map((q) => q.factors), y: cv.rows.map((q) => q.rmpress), line: { color: col.point, width: 1.6 }, marker: { size: 6, color: col.point }, hovertemplate: '%{x} factors: %{y:.5g}<extra></extra>', name: 'Root Mean PRESS' },
       { type: 'scatter', mode: 'markers', x: [cv.best], y: [cv.rows[cv.best].rmpress], marker: { size: 11, color: 'rgba(0,0,0,0)', line: { color: col.line, width: 2 } }, hoverinfo: 'skip', name: 'minimum' },
-    ], { xaxis: { title: { text: 'Number of Factors' }, dtick: cv.rows.length > 12 ? 2 : 1 }, yaxis: { title: { text: 'Root Mean PRESS' } }, margin: { l: 58, r: 10, t: 8, b: 42 } }, { width: W(360), height: 260, title: 'Root Mean PRESS by number of factors', select: false })));
+    ], { xaxis: { title: { text: 'Number of Factors' }, dtick: cv.rows.length > 12 ? 2 : 1 }, yaxis: { title: { text: 'Root Mean PRESS' } }, margin: { l: 58, r: 10, t: 8, b: 42 } }, { width: W(360), height: 260, title: 'Root Mean PRESS by number of factors', select: false },
+    (r.plots || {}).head_code, (r.plots || {}).cv)));
     const how = r.method === 'kfold' ? `each training row predicted by the model fitted to the other ${r.folds - 1} of ${r.folds} random folds (seed ${r.seed})`
       : r.method === 'loo' ? 'each training row predicted by the model fitted to the others'
         : 'the validation rows predicted by the model fitted to the training rows';
@@ -219,8 +220,8 @@
       const tt = tr.reduce((s0, i) => s0 + sc.t[i][a] ** 2, 0), tu = tr.reduce((s0, i) => s0 + sc.t[i][a] * sc.u[i][a], 0);
       const b = tt > 0 ? tu / tt : 0;
       if (Number.isFinite(lo)) traces.push({ type: 'scatter', mode: 'lines', x: [lo, hi], y: [b * lo, b * hi], line: { color: colors().muted, dash: 'dot', width: 1 }, hoverinfo: 'skip', showlegend: false });
-      plots.push(ctx.plot(traces, { xaxis: { title: { text: `X Score ${a + 1}` }, zeroline: false }, yaxis: { title: { text: `Y Score ${a + 1}` }, zeroline: false }, margin: { l: 52, r: 8, t: 8, b: 42 }, showlegend: false },
-        { width: W(k > 2 ? 250 : 300), height: 240, title: `X-Y scores of factor ${a + 1}` }));
+      plots.push(SM.predict.plotWithCode(ctx, traces, { xaxis: { title: { text: `X Score ${a + 1}` }, zeroline: false }, yaxis: { title: { text: `Y Score ${a + 1}` }, zeroline: false }, margin: { l: 52, r: 8, t: 8, b: 42 }, showlegend: false },
+        { width: W(k > 2 ? 250 : 300), height: 240, title: `X-Y scores of factor ${a + 1}` }, (r.plots || {}).head_code, ((r.plots || {}).xy || [])[a]));
     }
     const several = new Set(sc.set).size > 1;
     ob.add(ctx.row(...plots), ctx.note(`Each row's X score against its Y score on each factor; the dotted line is the inner relation u = b t fitted to the training rows (with one Y, b is 1).${several ? ' Circles: training rows; diamonds: validation; squares: test.' : ''} A curve suggests a nonlinear relation, a lone point an outlier. Drag over points to select rows.`));
@@ -232,10 +233,12 @@
     if (ctx.opt('pctPlots', false, f.id)) {
       const col = colors();
       const xs = r.percent.map((q) => q.factor);
-      const mk = (key, cum, title) => ctx.plot([
+      const pc = r.plots || {};
+      const mk = (key, cum, title) => SM.predict.plotWithCode(ctx, [
         { type: 'bar', x: xs, y: r.percent.map((q) => q[key]), marker: { color: SM.report.BAR }, name: title, hovertemplate: '%{x}: %{y:.4g}%<extra></extra>' },
         { type: 'scatter', mode: 'lines+markers', x: xs, y: r.percent.map((q) => q[cum]), line: { color: col.line, width: 1.6 }, marker: { size: 5, color: col.line }, name: 'Cumulative', hovertemplate: '%{x}: %{y:.4g}%<extra></extra>' },
-      ], { xaxis: { title: { text: 'Number of Factors' }, dtick: 1 }, yaxis: { title: { text: `${title} (%)` }, range: [0, 102] }, margin: { l: 52, r: 8, t: 8, b: 42 } }, { width: W(300), height: 230, title, select: false });
+      ], { xaxis: { title: { text: 'Number of Factors' }, dtick: 1 }, yaxis: { title: { text: `${title} (%)` }, range: [0, 102] }, margin: { l: 52, r: 8, t: 8, b: 42 } }, { width: W(300), height: 230, title, select: false },
+      pc.head_code, (pc.percent || {})[key]);
       ob.add(ctx.row(mk('x', 'cumx', 'X Effect'), mk('y', 'cumy', 'Y Effect')));
     }
     ob.add(ctx.note('The percent of the centred and scaled X\'s and Y\'s sum of squares each factor explains in the training rows, and the cumulative percent.'));
@@ -258,11 +261,11 @@
     const thr = vipThreshold(ctx, f);
     const col = colors();
     const labels = r.x.map((nm) => T(nm));
-    const plot = ctx.plot([
+    const plot = SM.predict.plotWithCode(ctx, [
       { type: 'scatter', mode: 'lines+markers', x: labels, y: r.vip, line: { color: col.point, width: 1.4 }, marker: { size: 7, color: r.vip.map((v) => (v > thr ? col.point : col.muted)) }, hovertemplate: '%{x}: VIP %{y:.4f}<extra></extra>', name: 'VIP' },
     ], { xaxis: { type: 'category', tickangle: r.x.length > 8 ? -45 : 0, automargin: true }, yaxis: { title: { text: 'VIP' }, rangemode: 'tozero' }, margin: { l: 52, r: 10, t: 8, b: 50 },
       shapes: [{ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: thr, y1: thr, line: { color: col.line, width: 1.3, dash: 'dash' } }] },
-    { width: W(Math.max(320, Math.min(760, 70 + 34 * r.x.length))), height: 270, title: 'Variable importance', select: false });
+    { width: W(Math.max(320, Math.min(760, 70 + 34 * r.x.length))), height: 270, title: 'Variable importance', select: false }, (r.plots || {}).head_code, (r.plots || {}).vip);
     const tbl = wide(ctx.rt({ columns: [{ key: 'x', label: 'X', fmt: 'text' }, { key: 'vip', label: 'VIP', digits: 4 }], rows: r.x.map((nm, j) => ({ x: nm, vip: r.vip[j] })) }, { key: 'plsvip', cellClass: (row, c) => (c.key === 'vip' && row.vip <= thr ? 'sm-pls-low' : '') }));
     ob.add(ctx.row(plot, tbl), ctx.note(`VIP (Wold's variable importance for the projection) of each X over the ${factorsWord(r.factors).toLowerCase()}: √(p Σₐ SSYₐ w²ⱼₐ / Σₐ SSYₐ), SSYₐ the Y variation factor a explains and w its unit weights. The dashed line is the threshold ${fmt(thr)} (Set VIP Threshold): an X below it contributes little (Wold's rule of thumb, JMP's default 0.8).`));
   }
@@ -276,10 +279,10 @@
       let lo = Infinity, hi = -Infinity;
       for (const v of cs) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
       const m = Math.max(Math.abs(lo), Math.abs(hi)) * 1.15 || 1;
-      return ctx.plot([{ type: 'scatter', mode: 'markers+text', x: cs, y: r.vip, text: r.x.map((nm) => T(nm)), textposition: 'top center', textfont: { size: 9.5, color: col.text }, marker: { size: 7, color: col.point }, hovertemplate: '%{text}: coefficient %{x:.4g}, VIP %{y:.4f}<extra></extra>', name: T(ynm) }],
+      return SM.predict.plotWithCode(ctx, [{ type: 'scatter', mode: 'markers+text', x: cs, y: r.vip, text: r.x.map((nm) => T(nm)), textposition: 'top center', textfont: { size: 9.5, color: col.text }, marker: { size: 7, color: col.point }, hovertemplate: '%{text}: coefficient %{x:.4g}, VIP %{y:.4f}<extra></extra>', name: T(ynm) }],
         { xaxis: { title: { text: `Coefficient for ${T(ynm)} (centred and scaled)` }, range: [-m, m], zeroline: true }, yaxis: { title: { text: 'VIP' }, rangemode: 'tozero' }, margin: { l: 52, r: 10, t: 8, b: 44 },
           shapes: [{ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: thr, y1: thr, line: { color: col.line, width: 1.2, dash: 'dash' } }] },
-        { width: W(360), height: 300, title: `VIP vs coefficients for ${ynm}`, select: false });
+        { width: W(360), height: 300, title: `VIP vs coefficients for ${ynm}`, select: false }, (r.plots || {}).head_code, ((r.plots || {}).vipcoef || [])[k]);
     });
     ob.add(ctx.row(...plots), ctx.note(`Each X's VIP against its centred and scaled coefficient, one plot per response: X's above the dashed line (${fmt(thr)}) and far from 0 matter; those below it with small coefficients are candidates to drop.`));
   }
@@ -287,11 +290,12 @@
   function loadingsOutline(ctx, parent, r) {
     const ob = ctx.outline('Loading Plots', { parent, key: 'loadings', info: 'p:pls:loadings' });
     const k = r.factors;
-    const mk = (names, L, title) => ctx.plot(Array.from({ length: k }, (_, a) => ({
+    const pc = r.plots || {};
+    const mk = (names, L, title, key) => SM.predict.plotWithCode(ctx, Array.from({ length: k }, (_, a) => ({
       type: 'scatter', mode: 'lines+markers', x: names.map((nm) => T(nm)), y: L.map((row) => row[a]), line: { color: SM.util.PALETTE[a % SM.util.PALETTE.length], width: 1.4 }, marker: { size: 5 }, name: `Factor ${a + 1}`, hovertemplate: `Factor ${a + 1}, %{x}: %{y:.4f}<extra></extra>`,
     })), { xaxis: { type: 'category', tickangle: names.length > 8 ? -45 : 0, automargin: true }, yaxis: { title: { text: title }, zeroline: true }, showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 52, r: 10, t: 26, b: 50 } },
-    { width: W(Math.max(320, Math.min(760, 80 + 34 * names.length))), height: 290, title, select: false });
-    ob.add(ctx.row(mk(r.x, r.x_loadings, 'X Loadings'), mk(r.y, r.y_loadings, 'Y Loadings')),
+    { width: W(Math.max(320, Math.min(760, 80 + 34 * names.length))), height: 290, title, select: false }, pc.head_code, (pc.loadings || {})[key]);
+    ob.add(ctx.row(mk(r.x, r.x_loadings, 'X Loadings', 'x'), mk(r.y, r.y_loadings, 'Y Loadings', 'y')),
       ctx.note('The X loadings p (the regression of each centred and scaled X on the factor\'s X scores) and the Y loadings q, factor by factor. The signs of a factor are arbitrary: scikit-learn turns each so that its largest weight is positive.'));
   }
 
@@ -314,9 +318,11 @@
     const several = new Set(d.set).size > 1;
     const lay = (xt, yt) => ({ xaxis: { title: { text: xt }, zeroline: false }, yaxis: { title: { text: yt }, rangemode: 'tozero' }, margin: { l: 52, r: 8, t: several ? 26 : 8, b: 42 }, showlegend: several, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' } });
     const plots = [];
-    if (r.dmodx_ok) plots.push(ctx.plot(bySet(r, (i) => d.rows[i] + 1, (i) => d.dmodx[i]), lay('Row', 'DModX'), { width: W(320), height: 250, title: 'Distance to the X model by row' }));
-    plots.push(ctx.plot(bySet(r, (i) => d.rows[i] + 1, (i) => d.dmody[i]), lay('Row', 'DModY'), { width: W(320), height: 250, title: 'Distance to the Y model by row' }));
-    if (r.dmodx_ok) plots.push(ctx.plot(bySet(r, (i) => d.dmodx[i], (i) => d.dmody[i]), lay('DModX', 'DModY'), { width: W(320), height: 250, title: 'Distance to the Y model by distance to the X model' }));
+    const pc = r.plots || {}, dc = pc.distance || {};
+    const mk = (traces, layout, title, key) => SM.predict.plotWithCode(ctx, traces, layout, { width: W(320), height: 250, title }, pc.head_code, dc[key]);
+    if (r.dmodx_ok) plots.push(mk(bySet(r, (i) => d.rows[i] + 1, (i) => d.dmodx[i]), lay('Row', 'DModX'), 'Distance to the X model by row', 'dmodx'));
+    plots.push(mk(bySet(r, (i) => d.rows[i] + 1, (i) => d.dmody[i]), lay('Row', 'DModY'), 'Distance to the Y model by row', 'dmody'));
+    if (r.dmodx_ok) plots.push(mk(bySet(r, (i) => d.dmodx[i], (i) => d.dmody[i]), lay('DModX', 'DModY'), 'Distance to the Y model by distance to the X model', 'both'));
     ob.add(ctx.row(...plots), ctx.note(`DModX: the root mean square of a row's centred and scaled X residuals after the ${factorsWord(r.factors).toLowerCase()}, over p − k degrees of freedom; DModY the same for the Y's (over the responses); both times √(n/(n − k − 1)) for the n training rows. A good model has both small; a row far out on either is an outlier of the X's or of the fit.${r.dmodx_ok ? '' : ' With as many factors as X\'s the X\'s are reproduced exactly: there is no DModX.'} Drag over points to select rows.`));
   }
 
@@ -325,10 +331,10 @@
     const d = r.dist;
     const col = colors();
     const several = new Set(d.set).size > 1;
-    ob.add(ctx.row(ctx.plot(bySet(r, (i) => d.rows[i] + 1, (i) => d.t2[i]), {
+    ob.add(ctx.row(SM.predict.plotWithCode(ctx, bySet(r, (i) => d.rows[i] + 1, (i) => d.t2[i]), {
       xaxis: { title: { text: 'Row' }, zeroline: false }, yaxis: { title: { text: 'T²' }, rangemode: 'tozero' }, margin: { l: 52, r: 8, t: several ? 26 : 8, b: 42 }, showlegend: several, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' },
       shapes: [{ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: r.ucl, y1: r.ucl, line: { color: col.line, width: 1.3, dash: 'dash' }, label: { text: `UCL ${fmt(r.ucl, { sig: 4 })}`, font: { size: 10, color: col.line }, textposition: 'end' } }],
-    }, { width: W(560), height: 270, title: 'T² by row' })),
+    }, { width: W(560), height: 270, title: 'T² by row' }, (r.plots || {}).head_code, (r.plots || {}).t2)),
     ctx.note(`Hotelling's T² of each row's X scores, Σₐ tₐ²/sₐ² with sₐ² the training variance of factor a: how far the row is from the centre of the model plane. The dashed limit is ((n − 1)²/n) times the ${fmt(100 * (1 - ctx.alpha))}% quantile of Beta(k/2, (n − k − 1)/2) (the training rows' own distribution; α from the report's Set α Level). Drag over points to select rows.`));
   }
 

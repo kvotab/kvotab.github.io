@@ -449,6 +449,126 @@ ra = call('mi.fit', table=tid, columns=COLS, response='sbp', effects=EFF, method
 check('another alpha comes from the cache', ra['cached'], True)
 check.near('alpha 0.1: the interval of statsmodels\' conf_int(0.1)', gap([[x['lower'], x['upper']] for x in ra['analysis']['pooled']['rows']], ref.conf_int(0.1)), 0.0, abs_=1e-10)
 
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------------------------------
+from test_charts import run_snippet_more  # noqa: E402
+
+OBS_C, IMP_C = '#2e6fbaff', '#b8406eff'
+
+
+def nice_bins(v):
+    lo, hi = min(v), max(v)
+    k = max(5, min(40, math.ceil(math.log2(len(v)) + 1)))
+    raw = (hi - lo) / k
+    p_ = 10 ** math.floor(math.log10(raw))
+    size = min((m_ * p_ for m_ in (1, 2, 2.5, 5, 10)), key=lambda s_: abs(math.log(s_ / raw)))
+    start = math.floor(lo / size) * size
+    end = math.ceil(hi / size) * size
+    if end <= hi:
+        end += size
+    return {'start': start, 'end': end, 'size': size}
+
+
+def mi_graph(kind, plot, label, kw, frame_, name):
+    rr = call('mi.plot_code', kind=kind, plot=plot, table_name=name, **kw)
+    code = rr.get('plot_code') or ''
+    check(f'{label}: the code is written', rr.get('error'), None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        out, err = run_snippet_more(code, frame_, name, tmp)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1] if code else None, 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return (out['figures'][0] if out and out['figures'] else None), code
+
+
+def near_seq(a, b, tol=1e-9):
+    return len(a) == len(b) and all(abs(x - y) <= tol * max(1.0, abs(y)) for x, y in zip(a, b))
+
+
+for label, kw, frame_, name in (
+        ('MICE with the model', dict(table=tid, columns=COLS, response='sbp', effects=EFF, seed=1, m=6), D, 'Health survey'),
+        ('the normal with the model, a subset of rows', dict(table=tid, columns=COLS, response='sbp', effects=EFF, method='bayes', seed=1, m=6, burnin=30, skip=2, rows=list(range(9, 400))), D, 'Health survey'),
+        ('categorical, a crossing', dict(table=tid2, columns=C2, response='y', effects=[['x1'], ['x2'], ['group'], ['sex'], ['x1', 'sex']], m=5, seed=4), fr, 'mixed'),
+        ('MICE, imputing only', dict(table=tid, columns=COLS, m=4, seed=8), D, 'Health survey')):
+    rr = call('mi.fit', **kw)
+    if rr.get('error'):
+        check(f'charts ({label}): the report ran', rr['error'], None)
+        continue
+    if rr.get('analysis') and rr['analysis'].get('cc'):
+        F, code = mi_graph('compare', {'cc': True}, f'pooled and complete-case ({label})', kw, frame_, name)
+        if F:
+            P_ = rr['analysis']['pooled']['rows'][:12]
+            C_ = {x['name']: x for x in rr['analysis']['cc']['rows']}
+            axs = F['axes']
+            check(f'pooled and complete-case ({label}): a panel for each term, named as the report', [a_['ylabel'] for a_ in axs], [x['term'] for x in P_])
+            ok_p = ok_c = True
+            for a_, x in zip(axs, P_):
+                pts = {round(ln['y'][0]): ln['x'][0] for ln in a_['lines'] if ln['marker'] in ('o', 's')}
+                segs = {round(s_[0][1]): sorted((s_[0][0], s_[1][0])) for c_ in a_['segments'] for s_ in c_['segs']}
+                ok_p &= abs(pts.get(1, math.nan) - x['estimate']) <= 1e-9 * max(1, abs(x['estimate'])) and near_seq(segs.get(1, []), [x['lower'], x['upper']])
+                c_ = C_.get(x['name'])
+                ok_c &= (c_ is None and 0 not in pts) or (c_ is not None and abs(pts.get(0, math.nan) - c_['estimate']) <= 1e-9 * max(1, abs(c_['estimate'])) and near_seq(segs.get(0, []), [c_['lower'], c_['upper']]))
+            check(f'pooled and complete-case ({label}): the pooled estimates and intervals, the report\'s', ok_p, True)
+            check(f'pooled and complete-case ({label}): the complete-case ones', ok_c, True)
+            check(f'pooled and complete-case ({label}): the legend and the title', (F['legend'], F['suptitle']), ([f'Pooled ({rr["m"]} imputations)', 'Complete cases'], 'pooled and complete-case estimates'))
+    for imp in rr['imputed']:
+        col_ = imp['column']
+        a_ = [c for c in rr['columns']].index(col_)
+        cat = rr['kinds'][col_] == 'categorical'
+        miss = set(imp['rows'])
+        vals = frame_[col_]
+        if cat:
+            lv = rr['levels'][col_]
+            F, code = mi_graph('levels', {'column': col_, 'labels': [str(v) for v in lv]}, f'{col_} observed and imputed levels ({label})', kw, frame_, name)
+            if F:
+                A = F['axes'][0]
+                obs = [lv.index(vals[r]) for r in rr['rows'] if r not in miss and vals[r] in lv]
+                drawn = [int(round(v)) for d_ in imp['draws'] for v in d_]
+                k = len(lv)
+                po = [obs.count(j) / max(1, len(obs)) for j in range(k)]
+                pi_ = [drawn.count(j) / max(1, len(drawn)) for j in range(k)]
+                bo = sorted((b_ for b_ in A['bars'] if b_['fc'] == OBS_C), key=lambda b_: b_['x'])
+                bi = sorted((b_ for b_ in A['bars'] if b_['fc'] == IMP_C), key=lambda b_: b_['x'])
+                check(f'{col_} levels ({label}): the observed and imputed proportions, as the page counts them', (near_seq([b_['h'] for b_ in bo], po), near_seq([b_['h'] for b_ in bi], pi_)), (True, True))
+                check(f'{col_} levels ({label}): side by side at each level', (near_seq([b_['x'] for b_ in bo], [j - 0.4 for j in range(k)]), near_seq([b_['x'] for b_ in bi], [j + 0.02 for j in range(k)])), (True, True))
+                check(f'{col_} levels ({label}): the levels, the legend, the title', (A['xticklabels'], F['legend'], A['title']),
+                      ([str(v) for v in lv], [f'Observed ({len(obs)})', f'Imputed ({len(drawn)})'], f'{col_} observed and imputed levels'))
+        else:
+            obs = [vals[r] for r in rr['rows'] if r not in miss and isinstance(vals[r], float) and math.isfinite(vals[r])]
+            drawn = [v for d_ in imp['draws'] for v in d_]
+            bins = nice_bins(obs + drawn)
+            F, code = mi_graph('observed', {'column': col_, 'bins': bins}, f'{col_} observed and imputed ({label})', kw, frame_, name)
+            if F:
+                A = F['axes'][0]
+                nb = max(1, round((bins['end'] - bins['start']) / bins['size']))
+
+                def dens(v):
+                    c_ = [0] * nb
+                    for x in v:
+                        c_[min(nb - 1, max(0, math.floor((x - bins['start']) / bins['size'] + 1e-9)))] += 1
+                    return [q / (max(1, len(v)) * bins['size']) for q in c_]
+                bo = [b_['h'] for b_ in A['bars'] if b_['fc'].startswith('#2e6fba')]
+                bi = [b_['h'] for b_ in A['bars'] if b_['fc'].startswith('#b8406e')]
+                check(f'{col_} observed and imputed ({label}): the densities of the observed and the report\'s imputed values in the page\'s bins', (near_seq(bo, dens(obs)), near_seq(bi, dens(drawn))), (True, True))
+                check(f'{col_} observed and imputed ({label}): the range, the legend, the title', (A['xlim'], F['legend'], A['title']),
+                      ([bins['start'], bins['end']], [f'Observed ({len(obs)})', f'Imputed ({len(drawn)})'], f'{col_} observed and imputed'))
+        F, code = mi_graph('trace', {'column': col_}, f'{col_} trace ({label})', kw, frame_, name)
+        if F:
+            A = F['axes'][0]
+            means = rr['trace']['means'][col_]
+            ln = [x for x in A['lines'] if x['label'] == 'Mean of the imputed values']
+            check(f'{col_} trace ({label}): the mean of the imputed values after every cycle, the report\'s trace', bool(ln) and near_seq(ln[0]['y'], means, 1e-9) and ln[0]['x'] == [float(i + 1) for i in range(len(means))], True)
+            takes = [rr['trace']['burnin'] + k * rr['trace']['step'] for k in range(1, rr['m'] + 1)]
+            dots = [x for x in A['lines'] if x['label'] == 'An imputation']
+            check(f'{col_} trace ({label}): a dot at each imputation', bool(dots) and dots[0]['x'] == [float(t) for t in takes] and near_seq(dots[0]['y'], [means[t - 1] for t in takes]), True)
+            om = rr['observed_mean'][col_]
+            check(f'{col_} trace ({label}): the observed mean', [round(x['y'][0], 9) for x in A['lines'] if x['ls'] == ':'], [round(om, 9)])
+            burn = [b_ for b_ in A['bars'] if b_['fc'].startswith('#786b5d')]
+            check(f'{col_} trace ({label}): the burn-in shaded', [(b_['x'], b_['x'] + b_['w']) for b_ in burn], [(0.5, rr['trace']['burnin'] + 0.5)] if rr['trace']['burnin'] > 0 else [])
+            check(f'{col_} trace ({label}): the range and the titles', (A['xlim'], A['ylabel'], A['title']),
+                  ([0.5, max(2, len(means)) + 0.5], f'Mean of imputed {col_}' + (' (codes)' if cat else ''), f'{col_} trace'))
+check('an unknown graph is refused', 'error' in call('mi.plot_code', kind='pie', table=tid, columns=COLS, plot={'column': 'bmi'}), True)
+check('a column not in the imputation is refused', 'error' in call('mi.plot_code', kind='trace', table=tid, columns=COLS, plot={'column': 'nope'}), True)
+
 # ---- refusals said in words ---------------------------------------------------------------------------------------------------------------
 frn = fr.copy()
 frn.loc[:30, 'group'] = None

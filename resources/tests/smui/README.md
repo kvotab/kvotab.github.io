@@ -20,42 +20,42 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 
 | Suite | Checks | Against |
 |---|---|---|
-| `test_distribution.py` | 163 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out |
+| `test_distribution.py` | 165 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out |
 | `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
 | `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
 | `test_jmp.py` | 41 | JMPReader.jl's own test tables and the values its runtests.jl expects (the tables are not ours: `fetch-jmp-fixtures.py` puts them in `local/jmp/`, git-ignored; skipped without them) |
-| `test_fit_y_by_x.py` | 563 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
+| `test_fit_y_by_x.py` | 604 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
 | `test_fit_model.py` | 1030 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω² |
-| `test_multivariate.py` | 306 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman |
-| `test_timeseries.py` | 376 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
-| `test_survival.py` | 145 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
-| `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
-| `test_quality.py` | 161 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
-| `test_doe.py` | 160 | design properties, statsmodels power, textbook values |
+| `test_multivariate.py` | 1438 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman |
+| `test_timeseries.py` | 1433 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
+| `test_survival.py` | 469 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
+| `test_nonlinear.py` | 472 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
+| `test_quality.py` | 830 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
+| `test_doe.py` | 844 | design properties, statsmodels power, textbook values |
 | `test_graph.py` | 328 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
-| `test_tables.py` | 129 | pandas group-by, merge, melt/pivot, JMP quantiles |
-| `test_multits.py` | 167 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
-| `test_counts.py` | 432 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
-| `test_meta.py` | 139 | statsmodels directly, the textbook formulas, a small example worked by hand |
-| `test_treatment.py` | 294 | statsmodels directly, the estimators' formulas, analytic sandwiches, simulated truth |
-| `test_gam.py` | 190 | statsmodels GLMGam directly, the penalty search by hand, known true functions |
-| `test_mediation.py` | 158 | statsmodels' Mediation called directly with the same seeds, known truth |
-| `test_partition.py` | 136 | brute-force cut and grouping searches, scikit-learn trees on the same column, scipy's f_oneway and chi2_contingency, the LogWorth adjustment, a Monte Carlo under no effect, smoothing by hand, Freq as repeated rows, the code on a CSV |
-| `test_ensemble.py` | 131 | scikit-learn's forests and boosting called directly (trees, staged curves, probabilities), brute-force out-of-bag losses and permutation importance, JMP's documented probabilities, the code on a CSV |
-| `test_neural.py` | 149 | scikit-learn's MLP replayed exactly, a forward pass from the Estimates, an identity network against OLS, WLS and Logit, the code on a CSV |
-| `test_learners.py` | 128 | scikit-learn's KNeighbors, GaussianNB, CategoricalNB, SVC, SVR and folds called directly, missing-value products by hand, the code on a CSV |
-| `test_gaussproc.py` | 117 | scikit-learn's GaussianProcessRegressor, the closed-form jackknife, known sensitivity indices, the code on a CSV |
-| `test_pls.py` | 120 | scikit-learn's PLSRegression and NIPALS written out, van der Voet's test, VIP by formula, the code on a CSV |
-| `test_mixtures.py` | 213 | GaussianMixture for the four structures, the one-cluster MLE, the likelihood by scipy, AICc/BIC, the EM fixed point, planted outliers, the code on a CSV |
-| `test_embedding.py` | 39 | scikit-learn's TSNE (identical maps), the learning-rate formula, the exact KL divergence of the map, the code on a CSV |
-| `test_text.py` | 188 | Porter's 1980 examples, scikit-learn's stop words and CountVectorizer, independent term and phrase counts, the weightings, numpy's SVD, statsmodels' varimax, NMF and LDA, the code on a CSV |
-| `test_screening.py` | 150 | scikit-learn's estimators called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, the validation column's rounding, the code on a CSV |
-| `test_circular.py` | 126 | scipy's circmean, circvar, circstd and vonmises.fit, pingouin's circ_* (and its bundled Berens data, read at run time), the formulas, interval coverage, test sizes, simulated truth |
+| `test_tables.py` | 145 | pandas group-by, merge, melt/pivot, JMP quantiles |
+| `test_multits.py` | 321 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
+| `test_counts.py` | 817 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
+| `test_meta.py` | 474 | statsmodels directly, the textbook formulas, a small example worked by hand |
+| `test_treatment.py` | 364 | statsmodels directly, the estimators' formulas, analytic sandwiches, simulated truth |
+| `test_gam.py` | 308 | statsmodels GLMGam directly, the penalty search by hand, known true functions |
+| `test_mediation.py` | 328 | statsmodels' Mediation called directly with the same seeds, known truth |
+| `test_partition.py` | 358 | brute-force cut and grouping searches, scikit-learn trees on the same column, scipy's f_oneway and chi2_contingency, the LogWorth adjustment, a Monte Carlo under no effect, smoothing by hand, Freq as repeated rows, the code on a CSV |
+| `test_ensemble.py` | 266 | scikit-learn's forests and boosting called directly (trees, staged curves, probabilities), brute-force out-of-bag losses and permutation importance, JMP's documented probabilities, the code on a CSV |
+| `test_neural.py` | 260 | scikit-learn's MLP replayed exactly, a forward pass from the Estimates, an identity network against OLS, WLS and Logit, the code on a CSV |
+| `test_learners.py` | 318 | scikit-learn's KNeighbors, GaussianNB, CategoricalNB, SVC, SVR and folds called directly, missing-value products by hand, the code on a CSV |
+| `test_gaussproc.py` | 200 | scikit-learn's GaussianProcessRegressor, the closed-form jackknife, known sensitivity indices, the code on a CSV |
+| `test_pls.py` | 335 | scikit-learn's PLSRegression and NIPALS written out, van der Voet's test, VIP by formula, the code on a CSV |
+| `test_mixtures.py` | 258 | GaussianMixture for the four structures, the one-cluster MLE, the likelihood by scipy, AICc/BIC, the EM fixed point, planted outliers, the code on a CSV |
+| `test_embedding.py` | 47 | scikit-learn's TSNE (identical maps), the learning-rate formula, the exact KL divergence of the map, the code on a CSV |
+| `test_text.py` | 241 | Porter's 1980 examples, scikit-learn's stop words and CountVectorizer, independent term and phrase counts, the weightings, numpy's SVD, statsmodels' varimax, NMF and LDA, the code on a CSV |
+| `test_screening.py` | 226 | scikit-learn's estimators called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, the validation column's rounding, the code on a CSV |
+| `test_circular.py` | 216 | scipy's circmean, circvar, circstd and vonmises.fit, pingouin's circ_* (and its bundled Berens data, read at run time), the formulas, interval coverage, test sizes, simulated truth |
 | `test_profile.py` | 38 | scipy's PchipInterpolator and sobol_indices, the Ishigami function's Sobol indices, known optima, a tree's best leaf on a grid |
-| `test_bootstrap.py` | 51 | scipy.stats.bootstrap on the same resamples (percentile, BCa), the formulas, the code on a CSV |
-| `test_predictive.py` | 102 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
-| `test_mi.py` | 120 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
-| `test_copula.py` | 251 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
+| `test_bootstrap.py` | 56 | scipy.stats.bootstrap on the same resamples (percentile, BCa), the formulas, the code on a CSV |
+| `test_predictive.py` | 204 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
+| `test_mi.py` | 327 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
+| `test_copula.py` | 864 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
 | `test_charts.py` | 1405 | every graph's matplotlib code (Distribution, Fit Y by X, Fit Model) run with Agg on the exported CSV, its figure against the report's numbers: points, lines, bands, bars, boxes, texts and titles |
 | `test_notebook.py` | 41 | the notebook's Python: outputs in the order made (streams joined, the last value, a trailing `;`), rich displays (pandas HTML, a statsmodels summary, Plotly dicts, `display()`), figures at `plt.show()` and at the end (SVG; PNG at twice the size for many points), tracebacks from the cell, namespaces, `reset()`, top-level await, `table()`, `table_names()` and `new_table()` |
 | `test_jsl.py` | 437 | JSL to Python: the JSL Syntax Reference's rules (precedence, names, escapes, dates, matrices, scopes, error recovery); every translation compiled, read as Python 3.10, and run on a CSV of a small table of our own against numpy and plain Python; the page's platform specs; 400 damaged scripts |
@@ -73,9 +73,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-28: core 187, distribution 168,
-fitybyx 600, fitmodel 796, graph 1099, notebook 49, jsl 24 and the other platforms'
-(5,742 in 32 suites in all).
+Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 187, counts 304, distribution 168, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
+(13,442 in 33 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -143,6 +142,15 @@ standard head (`util.code_head`, or `SM.report.codeHead` for code the page
 writes), everything computed from `df`, and for a graph's block matplotlib
 ending in `plt.show()`. HTML from an output, a cell's or a file's, goes
 through `kvotSanitizeHtml`; images are `<img>`.
+
+Every graph has a code block right under it (the chart tests find it as the
+graph's next sibling) that draws it with matplotlib from the CSV, except
+the interactive ones (the profilers). The head reads the CSV with
+`keep_default_na=False, na_values=[""]`: missing is an empty field, as the
+page writes it, and a level named None or NA stays that text. The time
+series platforms return a graph's code as a recipe (its lines, with places
+for the graph's size and colour and parts kept or dropped by the display
+options) that the page assembles, so that a display option never refits.
 
 `smui.tables` is the Tables platform's module: the notebook's list of
 tables is `smui.table_names()`. A user-facing name in the package must not

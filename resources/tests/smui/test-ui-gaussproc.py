@@ -29,11 +29,18 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, maxdiff
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -247,6 +254,58 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+def gaussproc_compare(lab, g, F):
+    t = g['label']
+    ax = F['axes'][0]
+    if t.endswith(' actual by jackknife predicted'):
+        pts = [tr for tr in g['traces'] if 'markers' in (tr.get('mode') or '')]
+        check(f'{lab}: a set of points per trace (the rows fitted; the others, diamonds)', len(ax['scatter']), len(pts))
+        for sc, tr in zip(ax['scatter'], pts):
+            check.near(f'{lab}: {tr["name"]}: every row at its prediction and value', maxdiff(UP.flat(sc['xy']), UP.flat(UP.curve_pts(tr))), 0, 1e-9)
+        ref = [tr for tr in g['traces'] if tr.get('mode') == 'lines'][0]
+        check(f'{lab}: the dotted line of equality', find_line(ax, ref['x'], ref['y'], rel=1e-9) is not None, True)
+        check(f'{lab}: the legend (when there are rows not fitted)', F['legend'], [tr['name'] for tr in pts] if g['showlegend'] else [])
+        UP.check_titles(check, lab, g, F)
+    elif ' marginal model plot of ' in t:
+        UP.check_lines(check, lab, g, F)
+        check(f'{lab}: the scale every factor\'s plot shares', close(ax['ylim'], g['axes']['y']['range'], 1e-9), True)
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every graph of Gaussian Process's reports: its block under it, run in the page, its figure the
+    graph's (the model refitted in the block with the seed; the jackknife and the marginal curves)."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Borehole')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    last = 'SM.app.reports.at(-1)'
+    specs = [
+        (f'{Y}, the eight factors, Gaussian', {'y': [Y], 'x': XS}, {'seed': '3'}),
+        (f'{Y}, Matérn 5/2 with a nugget, Rows to Fit 25 (the others predicted)', {'y': [Y], 'x': ['rw', 'Hu', 'Hl', 'L']}, {'correlation': 'matern52', 'nugget': True, 'maxRows': 25, 'seed': '7'}),
+    ]
+    total = 0
+    for label, roles, opts in specs:
+        r = await page.ev(open_report_js('gaussproc', roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, gaussproc_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    # By half, rows excluded: the blocks keep the group's rows
+    await page.ev('''(() => { const t = SM.app.tables.find(t => t.name === 'Borehole'); if (!t.col('half')) t.addColumn({ name: 'half', dataType: 'character', values: t.col('rw').values.map((_, i) => (i < 20 ? 'first' : 'second')) }); })()''')
+    out = [1, 4, 22]
+    await page.ev(f'{tbl}.setState({out}, "excluded", true)')
+    r = await page.ev(open_report_js('gaussproc', {'y': [Y], 'x': ['rw', 'L'], 'by': ['half']}, {'nugget': True, 'seed': '2'}), timeout=900)
+    check('charts: By half, rows excluded: no errors', r['errors'], [])
+    n, _ = await UP.chart_blocks(page, check, 'By half, rows excluded', tbl, last, gaussproc_compare)
+    total += n
+    await page.ev(f'SM.app.closeReport({last})')
+    await page.ev(f'{tbl}.setState({out}, "excluded", false)')
+    check('charts: the blocks ran and drew the page\'s graphs', total, 9 + 5 + 6)
 
 
 async def main():
@@ -514,6 +573,9 @@ async def main():
     check('and keeps a per-response option by the new column id (the profiler) and the correlation', (r['profiler'], r['corr']), (True, 'matern32'))
     check('and draws the same outlines without errors', ('Prediction Profiler' in r['heads'], 'Marginal Model Plots' in r['heads'], r['errors']), (True, False, 0))
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -560,5 +622,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

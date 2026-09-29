@@ -33,6 +33,8 @@
 .sm-med-progress { font-style: italic; }
 .sm-med-about { max-width: 760px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
 .sm-med-about p { margin: 0 0 7px; }
+/* a graph with its matplotlib code under it, as one item of a row */
+.sm-med-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
 @media (max-width: 760px) {
   .sm-med-summary .sm-kv td:first-child { white-space: normal; }
 }

@@ -370,7 +370,7 @@ class _Core:
 
     def read_line(self, var, name, path=None):
         """The line that reads a table the page has, as its own code does."""
-        return f'{var} = pd.read_csv({lit(name + ".csv")}, float_precision="round_trip")   # the table, as File > Export CSV writes it'
+        return f'# the table, as File > Export CSV writes it (an empty field is missing)\n{var} = pd.read_csv({lit(name + ".csv")}, float_precision="round_trip", keep_default_na=False, na_values=[""])'
 
     def current_frame(self, node=None):
         """The current data table; the page's current table when the script

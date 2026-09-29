@@ -31,6 +31,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -254,7 +255,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "counts").map(f => f.error)')
     check('counts imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => n.startsWith("counts.")).sort()')
-    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.importance', 'counts.lr_effects', 'counts.margeff', 'counts.maximize', 'counts.profile'])
+    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.importance', 'counts.lr_effects', 'counts.margeff', 'counts.maximize', 'counts.plot_code', 'counts.profile'])
     await page.ev(HELPERS)
     menu = await page.ev('''(() => { const sub = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling");
       const items = typeof sub.submenu === "function" ? sub.submenu() : sub.submenu; return items.map(i => i.label).filter(Boolean); })()''')
@@ -576,8 +577,116 @@ async def main():
     await check_controls_help(page, rep, 'Rootogram', ['A bar of a rootogram', 'A line of Count Distribution'], 'counts: Rootogram')
     await check_controls_help(page, rep, 'Zero Probability', ['A point', 'A square of Zero Probability'], 'counts: Zero Probability')
     await check_controls_help(page, rep, 'Prediction Profiler', ['The value box under a plot', 'The slider', 'The red dashed line', 'A desirability plot', 'Remembered Settings'], 'counts: Prediction Profiler', heading='In the profiler')
+    await chart_code(page)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code -------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it. The profiler's graphs are interactive and have no block. __cx adds what
+# GRAPHS_JS does not collect: a graph's own title and the x axis's tick values.
+CHART_JS = r'''
+window.__cx = {
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      return { label: p.getAttribute('aria-label'), title: L.title ? (typeof L.title === 'string' ? L.title : L.title.text) : null, tickvals: L.xaxis && L.xaxis.tickvals ? L.xaxis.tickvals : null };
+    });
+  },
+  openAll(rep) { for (const b of rep.body.querySelectorAll('.sm-ob-toggle[aria-expanded="false"]')) b.click(); },
+};
+'''
+
+
+def pts_of(t):
+    return [(a, b) for a, b in zip(t.get('x') or [], t.get('y') or []) if a is not None and b is not None]
+
+
+def same_pts(a, b, rel=1e-8):
+    return len(a) == len(b) and all(abs(p[0] - q[0]) <= rel * max(1.0, abs(q[0])) and abs(p[1] - q[1]) <= rel * max(1.0, abs(q[1])) for p, q in zip(a, b))
+
+
+PROFILER = (' profile over ', ' desirability', 'Desirability over ', ' variable importance')
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Doctor visits')"
+    await page.ev(f"{tbl}.setState([4, 11, 90], 'excluded', true)")
+    runs = [
+        ('four models, hanging, three rows excluded', ROLES, {'models': ['poisson', 'nb2', 'zip', 'zinb']}),
+        ('generalized Poisson and hurdle NB, standing, seed 3', ROLES, {'models': ['gp', 'hnb'], 'rootStyle': 'standing', 'seed': 3}),
+        ('suspended', ROLES, {'models': ['nb1', 'hp'], 'rootStyle': 'suspended', 'zeroPlot': False, 'residPlots': False}),
+        ('the models overlaid, By sex', {**ROLES, 'x': ['age', 'chronic', 'insurance'], 'by': ['sex']}, {'models': ['poisson', 'zinb'], 'rootOverlay': True, 'zeroPlot': False, 'residPlots': False}),
+    ]
+    for label, roles, options in runs:
+        r = await page.ev(f'''(async () => {{ const t = {tbl}; const ids = {{}};
+          for (const [k, v] of Object.entries({json.dumps(roles)})) ids[k] = v.map((n) => t.col(n).id);
+          const rep = SM.app.openReport(SM.platforms.get('counts'), {{ roles: ids, options: {json.dumps(options)} }}, t);
+          await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); __cx.openAll(rep);
+          return {{ g: await __gr.graphs(rep), extra: __cx.extra(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=900)
+        if not isinstance(r, dict):
+            check(f'charts: {label}: the report', r, 'opens')
+            continue
+        check(f'charts: {label}: no errors', r['errors'], [])
+        check(f'charts: {label}: every graph of the report drawn', r['undrawn'], [])
+        gs = [(g, ex) for g, ex in zip(r['g'], r['extra']) if not any(k in g['label'] for k in PROFILER)]
+        nmod = len(options['models'])
+        want = (1 if options.get('rootOverlay') else nmod) + (0 if options.get('zeroPlot') is False else 3 * nmod)
+        check(f'charts: {label}: the graphs', len(gs), want * (2 if 'By' in label else 1))
+        for g, ex in gs:
+            lab = f'charts: {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if 'excluded' in label:
+                check(f'{lab}: the code leaves out the excluded rows', 'df = df.drop(index=[4, 11, 90])' in g['code'], True)
+            F, err = await run_graph(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            t0 = g['traces']
+            if 'rootogram' in g['label']:
+                bars = [t for t in t0 if t.get('type') == 'bar' and t.get('name')]
+                b = bars[0]
+                base_ = b.get('base') or [0] * len(b['y'])
+                got = ax['bars']
+                check(f'{lab}: the bars, the page\'s', len(got) == len(b['y']) and maxdiff([q['h'] for q in got], b['y']) < 1e-8 and maxdiff([q['y'] for q in got], base_) < 1e-8
+                      and maxdiff([q['x'] + q['w'] / 2 for q in got], b['x']) < 1e-12, True)
+                curves = [t for t in t0 if t.get('type') == 'scatter' and 'lines' in (t.get('mode') or '')]
+                lines = [ln for ln in ax['lines'] if ln['marker'] == 'o']
+                check(f'{lab}: the curves, the page\'s, in their colours', len(lines) == len(curves) and all(maxdiff(ln['y'], t['y']) < 1e-8 and ln['color'][:7] == t['color'] for ln, t in zip(lines, curves)), True)
+                check(f'{lab}: the page\'s ticks', (ax['xticks'], ax['xticklabels']), ([float(v) for v in ex['tickvals']], g['ticks']))
+                check(f'{lab}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], ex['title'] or g['label']))
+                if options.get('rootOverlay'):
+                    check(f'{lab}: the legend', F['legend'], ['Observed'] + [t['name'] for t in curves])
+            elif 'zero probability' in g['label']:
+                rows_t, sq_t, ex_t = t0[0], t0[1], t0[2]
+                sc = {x['label']: x['xy'] for x in ax['scatter']}
+                check(f'{lab}: the rows\' points, the page\'s', same_pts(sc.get('Rows', []), pts_of(rows_t)), True)
+                check(f'{lab}: the squares of the groups, the page\'s', same_pts(sc.get('Observed share of zeros', []), pts_of(sq_t)), True)
+                ln = [x for x in ax['lines'] if x['label'] == 'Poisson exp(−μ)']
+                check(f'{lab}: exp(−μ), the page\'s', bool(ln) and same_pts(list(zip(ln[0]['x'], ln[0]['y'])), pts_of(ex_t), 1e-9), True)
+                check(f'{lab}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+            else:
+                pts = ax['scatter'][0]['xy'] if ax['scatter'] else []
+                check(f'{lab}: the points, the page\'s', same_pts(pts, pts_of(t0[0])), True)
+                if 'quantile' in g['label']:
+                    ln = [x for x in ax['lines'] if len(x['x']) == 2]
+                    check(f'{lab}: the line, the page\'s', bool(ln) and same_pts(list(zip(ln[0]['x'], ln[0]['y'])), pts_of(t0[1])), True)
+                else:
+                    check(f'{lab}: the zero line', [x['y'] for x in ax['lines']], [[s['y0'], s['y1']] for s in g['shapes']])
+                check(f'{lab}: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), (g['titles']['x'], g['titles']['y'], g['label']))
+        await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+    await page.ev(f"{tbl}.setState([4, 11, 90], 'excluded', false)")
 
 
 asyncio.run(main())

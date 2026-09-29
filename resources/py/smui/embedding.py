@@ -28,6 +28,23 @@ from .util import code_head
 
 SK = predictive.SK
 J = json.dumps
+
+
+def _dated(obj, table):
+    """Code that reads the table's CSV (a string, or the strings of a list
+    or dict) with the line that turns each date column it names back into
+    the page's number, as dispatch does for the keys code and *_code."""
+    from .util import date_columns, dated_code
+    cols = date_columns(table)
+    if not cols:
+        return obj
+    if isinstance(obj, str):
+        return dated_code(obj, cols)
+    if isinstance(obj, list):
+        return [_dated(v, table) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _dated(v, table) for k, v in obj.items()}
+    return obj
 MAX_ROWS = 10000          # beyond this the page refuses (many minutes in the browser)
 
 
@@ -52,15 +69,35 @@ class _Progress(io.TextIOBase):
         pass
 
 
-def _rows_line(table, rows):
-    if rows is None:
-        return None
-    n_all = data.TABLES[table]['n'] if table in data.TABLES else None
-    keep = [int(r) for r in rows]
-    if n_all is not None and len(keep) > n_all / 2:
-        drop = sorted(set(range(n_all)) - set(keep))
-        return f'df = df.drop(index={drop})   # the rows the report leaves out' if drop else None
-    return f'df = df.loc[{keep}]   # the rows of the report'
+def _lit(v):
+    """A value as a Python literal: 12.0 as 12, text quoted."""
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        f = float(v)
+        return str(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    return J(str(v))
+
+
+def _keep_lines(table, rows, where=None):
+    """After the code's head: the By group's rows (its where lines) and, of
+    those, the ones the report uses (excluded and filtered rows dropped)."""
+    L = []
+    n = data.TABLES[table]['n'] if table in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        num = data.meta(table, w['column']).get('dataType') == 'numeric'
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows of the report']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+    return L
 
 
 def _learning_rate(v):
@@ -92,10 +129,11 @@ def quiet_threadpoolctl():
 
 @api('embedding.fit', packages=SK)
 def fit(table, columns, rows=None, dimension=2, perplexity=30.0, max_iter=1000, learning_rate='auto', init='pca',
-        standardize=True, seed=None, early_exaggeration=12.0, table_name='data'):
+        standardize=True, seed=None, early_exaggeration=12.0, where=None, table_name='data'):
     """t-SNE of the rows over the columns: the map's coordinates of every row
     with a value in every column, the final Kullback-Leibler divergence, the
-    iterations run and the learning rate used."""
+    iterations run and the learning rate used; the code, and the lines the
+    map's code starts with (map_head: the page adds the drawing)."""
     from sklearn.manifold import TSNE
     quiet_threadpoolctl()
     cols = [c for c in dict.fromkeys(columns or []) if c]
@@ -162,20 +200,24 @@ def fit(table, columns, rows=None, dimension=2, perplexity=30.0, max_iter=1000, 
            'learning_rate': float(np.asarray(tsne.learning_rate_)), 'learning_rate_asked': lr, 'perplexity': float(perplexity),
            'perplexity_asked': float(asked), 'max_iter': max_iter, 'early_exaggeration': early, 'init': init, 'standardize': bool(standardize),
            'seed': seed, 'seconds': seconds, 'notes': notes}
-    L = [code_head(table_name, ['from sklearn.manifold import TSNE'])]
-    line = _rows_line(table, rows)
-    if line:
-        L.append(line)
-    L.append(f'd = df[{J(used)}].dropna()   # the rows with every column')
-    L.append('X = d.to_numpy(float)')
-    if standardize:
-        L.append('X = (X - X.mean(axis=0)) / X.std(axis=0, ddof=1)   # standardized')
-    lr_text = J('auto') if lr == 'auto' else repr(lr)
-    L.append(f'tsne = TSNE(n_components={dim}, perplexity={perplexity!r}, early_exaggeration={early!r}, learning_rate={lr_text}, '
-             f'max_iter={max_iter}, init={J(init)}, random_state={seed}, method="barnes_hut", angle=0.5)')
-    L.append('E = tsne.fit_transform(X)   # the map: a row per row of d')
+    def head(extra=()):
+        L = [code_head(table_name, ['from sklearn.manifold import TSNE', *extra])] + _keep_lines(table, rows, where)
+        L.append(f'd = df[{J(cols)}].dropna()   # the rows with every column')
+        if const:
+            L.append(f'X = d[{J(used)}].to_numpy(float)   # without {", ".join(const)}: a single value in these rows')
+        else:
+            L.append('X = d.to_numpy(float)')
+        if standardize:
+            L.append('X = (X - X.mean(axis=0)) / X.std(axis=0, ddof=1)   # standardized')
+        lr_text = J('auto') if lr == 'auto' else repr(lr)
+        L.append(f'tsne = TSNE(n_components={dim}, perplexity={perplexity!r}, early_exaggeration={early!r}, learning_rate={lr_text}, '
+                 f'max_iter={max_iter}, init={J(init)}, random_state={seed}, method="barnes_hut", angle=0.5)')
+        L.append('E = tsne.fit_transform(X)   # the map: a row per row of d')
+        return L
+    L = head()
     L.append('print("kl", tsne.kl_divergence_, tsne.n_iter_ + 1, tsne.learning_rate_)   # the final KL divergence, iterations, learning rate')
     L.append(f'print(pd.DataFrame(E, index=d.index, columns={J(names)}).head())')
     out['code'] = '\n'.join(L)
+    out['map_head'] = _dated('\n'.join(head(['import matplotlib.pyplot as plt'])), table)
     return out
 

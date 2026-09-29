@@ -37,6 +37,7 @@ import sys
 import time
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, more_from_outputs, page_probe_more, points_of, run_graph, strip_show
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -756,6 +757,9 @@ async def main():
     check('5,000 rows: no errors', st['errors'], [])
     check('5,000 rows: the default report in under 8 s, LSA and topics in under 15 s each', (t1 - t0 < 8, t2 - t1 < 15, t3 - t2 < 15), (True, True, True))
 
+    # ---- the graphs' matplotlib code, run in the page
+    await chart_code(page)
+
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -810,6 +814,146 @@ async def main():
     await shot(page, 'text-07-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code ------------------------------------------------------------------------------------------
+# Every graph has its code block right under it (the word cloud's under its box), ending in plt.show(); the block
+# runs in the page's own Python (the notebook's runner) and draws the page's graph: the cloud's words where the page
+# put them, at its font sizes, in its colours (Uniform, Arbitrary Colors, By Column); the singular values' bars;
+# the documents' and terms' coordinates with the terms the page names; the topic scores and their axes' terms; in a
+# By group with rows excluded, with an ID column.
+OPEN_TX = r'''(async (roles, options, byName) => {
+  const t = SM.app.tables.find((x) => x.name === 'Service comments');
+  SM.app.showTab(SM.app.tabOf(t));
+  const ids = {};
+  for (const [k, names] of Object.entries(roles)) ids[k] = names.map((n) => t.col(n).id);
+  if (byName) options.cloudBy = t.col(byName).id;
+  const rep = SM.app.openReport(SM.platforms.get('text'), { roles: ids, options }, t);
+  await new Promise((res) => rep.on('done', res));
+  const g = await __gr.graphs(rep);
+  const titles = Object.fromEntries(rep.plots.map((p) => [p.opts.title, p.box.layout && p.box.layout.title ? p.box.layout.title.text : null]));
+  const clouds = [...rep.body.querySelectorAll('svg.sm-tx-cloud')].map((svg) => {
+    const box = svg.closest('.sm-tx-cloudbox'), n = box.nextElementSibling;
+    return { viewBox: svg.getAttribute('viewBox').split(' ').map(Number), legend: !!box.querySelector('.sm-tx-legend'),
+      code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null,
+      words: [...svg.querySelectorAll('text.sm-tx-word')].map((w) => [w.lastChild.textContent, Number(w.getAttribute('x')), Number(w.getAttribute('y')), Number(w.getAttribute('font-size')), getComputedStyle(w).fill]) };
+  });
+  return { g, titles, clouds, undrawn: __gr.take(), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent) };
+})'''
+
+CLOUD_PROBE = r'''
+def _smui_cloud():
+    import json as _j
+    import matplotlib.pyplot as _plt
+    from matplotlib.colors import to_hex as _hex
+    fig = _plt.figure(_plt.get_fignums()[0])
+    ax = fig.axes[0]
+    return {"size": [float(v) for v in fig.get_size_inches()], "xlim": [float(v) for v in ax.get_xlim()], "ylim": [float(v) for v in ax.get_ylim()],
+            "words": [[t.get_text(), float(t.get_position()[0]), float(t.get_position()[1]), float(t.get_fontsize()), _hex(t.get_color())] for t in ax.texts],
+            "bars": [a.get_xlabel() for a in fig.axes[1:]]}
+print("SMUI-CLOUD " + __import__("json").dumps(_smui_cloud()))
+'''
+
+
+def hexcol(c):
+    """A CSS colour (#rrggbb or rgb(r, g, b)) as #rrggbb."""
+    if isinstance(c, str) and c.startswith('rgb('):
+        return '#' + ''.join(f'{int(v):02x}' for v in c[4:-1].split(','))
+    return c
+
+
+async def run_cloud(page, code):
+    out = await page.ev(f"__gr.run({json.dumps(strip_show(code) + chr(10) + CLOUD_PROBE)}, SM.app.tables.find((x) => x.name === 'Service comments'))", timeout=600)
+    if isinstance(out, str):
+        return None, out
+    text = ''.join(o.get('text', '') for o in out.get('outputs') or [] if o.get('type') == 'stream' and o.get('name') == 'stdout')
+    for line in text.split('\n'):
+        if line.startswith('SMUI-CLOUD '):
+            return json.loads(line[len('SMUI-CLOUD '):]), None
+    errs = [f"{o.get('ename')}: {o.get('evalue')}" for o in out.get('outputs') or [] if o.get('type') == 'error']
+    return None, errs[0] if errs else 'the probe printed nothing'
+
+
+async def run_more(page, g):
+    out = await page.ev(f"__gr.run({json.dumps(page_probe_more(g['code']))}, SM.app.tables.find((x) => x.name === 'Service comments'))", timeout=600)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    lsa = {'k': 10, 'minFreq': 4}
+    runs = [('Uniform, Centered; LSA; rotated SVD topics', {'text': ['comment']}, {'cloud': True, 'lsa': lsa, 'topics': {'k': 4}}, None),
+            ('Arbitrary Colors, Ordered; an ID; NMF topics', {'text': ['comment'], 'id': ['customer']}, {'cloud': True, 'cloudLayout': 'ordered', 'cloudColor': 'colors', 'cloudN': 60, 'lsa': {'k': 4, 'weighting': 'logfreq', 'centering': 'uncentered'}, 'topics': {'k': 3, 'method': 'nmf'}}, None),
+            ('By Column (rating); By channel, rows excluded; LDA', {'text': ['comment'], 'by': ['channel']}, {'cloud': True, 'cloudColor': 'column', 'lsa': lsa, 'topics': {'k': 3, 'method': 'lda'}}, 'rating'),
+            ('By Column with an ID (the rows without one count for the mean)', {'text': ['comment'], 'id': ['customer']}, {'cloud': True, 'cloudColor': 'column', 'cloudN': 40}, 'rating'),
+            ('Arbitrary Grays, 30 terms, stemmed', {'text': ['comment']}, {'cloud': True, 'cloudColor': 'grays', 'cloudN': 30, 'stemming': 'combine'}, None)]
+    table_js = "SM.app.tables.find((x) => x.name === 'Service comments')"
+    ex, cust6 = None, None
+    for tag, roles, options, by_col in runs:
+        if 'rows excluded' in tag:
+            ex = await page.ev(f'(() => {{ const t = {table_js}; const ch = t.col("channel").values; const ex = ["app", "phone", "web"].map((v) => ch.indexOf(v)).concat([3]); t.setState(ex, "excluded", true); return ex; }})()')
+        if 'with an ID' in tag:   # a row without a customer, whose rating still counts for the mean
+            cust6 = await page.ev(f'(() => {{ const t = {table_js}; const v = t.col("customer").values[6]; t.setCell(6, "customer", null); return v; }})()')
+        r = await page.ev(f'({OPEN_TX})({json.dumps(roles)}, {json.dumps(options)}, {json.dumps(by_col)})', timeout=900)
+        if isinstance(r, str):
+            check(f'the graphs\' code ({tag}): the report', r, None)
+            continue
+        check(f'the graphs\' code ({tag}): no errors, every graph drawn', (r['errors'], r['undrawn']), ([], []))
+        for g in r['g']:
+            check(f'the graphs\' code ({tag}): {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+        for c in r['clouds']:
+            check(f'the graphs\' code ({tag}): the word cloud: its code block is right under its box, ending in plt.show()', bool(c['code']) and c['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+        for g in r['g']:
+            lab = f'the graphs\' code ({tag}): {g["label"]}'
+            terms_plot = g['label'].startswith('Term singular vectors')
+            F, err = await (run_more(page, g) if terms_plot else run_graph(page, g, table_js))
+            check(f'{lab}: runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            t0 = g['traces'][0]
+            if g['label'].startswith('Singular values'):
+                check.near(f'{lab}: the bars: the percents, each at its number', max(maxdiff([b['w'] for b in ax['bars']], t0['x']), maxdiff([b['y'] + b['h'] / 2 for b in ax['bars']], t0['y'])), 0, 1e-9)
+                check(f'{lab}: the first at the top', ax['yinverted'], True)
+            else:
+                got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+                check.near(f'{lab}: the points', maxdiff([q for p in got for q in p], [q for p in points_of(t0) for q in p]), 0, 1e-9)
+            if terms_plot:
+                named = [(s, x, y) for s, x, y in zip(t0['text'], t0['x'], t0['y']) if s]
+                ann = ax['annotations']
+                check(f'{lab}: the terms the page names, at their points', ([a['s'] for a in ann], maxdiff([q for a in ann for q in a['xy']], [q for _, x, y in named for q in (x, y)])), ([s for s, _, _ in named], 0))
+            check(f'{lab}: the titles and the size', ((ax['title'] or F['suptitle']), ax['xlabel'] or None, ax['ylabel'] or None, F['size']),
+                  (r['titles'].get(g['label']) or g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+            if 'rows excluded' in tag:
+                check(f'{lab}: keeps its channel\'s rows and drops the excluded ones', ('df = df[df["channel"] == ' in g['code'], 'df = df.drop(index=[' in g['code']), (True, True))
+        for c in r['clouds']:
+            lab = f'the graphs\' code ({tag}): the word cloud'
+            C, err = await run_cloud(page, c['code'])
+            check(f'{lab}: runs in the page', err, None)
+            if not C:
+                continue
+            got, want = C['words'], c['words']
+            check(f'{lab}: the page\'s words, in its order', [w[0] for w in got], [w[0] for w in want])
+            check.near(f'{lab}: each word where the page put it', maxdiff([q for w in got for q in w[1:3]], [q for w in want for q in w[1:3]]), 0, 1e-9)
+            check.near(f'{lab}: at the page\'s font sizes (0.72 point a pixel; the page rounds to 0.1)', maxdiff([w[3] / 0.72 for w in got], [w[3] for w in want]), 0, 0.0501)
+            check(f'{lab}: in the page\'s colours', [w[4] for w in got], [hexcol(w[4]) for w in want])
+            x0, y0, wv, hv = c['viewBox']
+            extra = 0.5 if c['legend'] else 0.0
+            check.near(f'{lab}: the page\'s view and size', maxdiff(C['xlim'] + C['ylim'] + C['size'], [x0, x0 + wv, y0 + hv, y0, wv / 100, hv / 100 + extra]), 0, 1e-9)
+            if c['legend']:
+                check(f'{lab}: the legend of the mean', C['bars'], [f'Mean {by_col}'])
+            if 'rows excluded' in tag:
+                check(f'{lab}: keeps its channel\'s rows and drops the excluded ones', ('df = df[df["channel"] == ' in c['code'], 'df = df.drop(index=[' in c['code']), (True, True))
+        if 'with an ID' in tag:
+            check('the graphs\' code (By Column with an ID): the mean over every row of the report, the rows without an ID too', ('every = df' in r['clouds'][0]['code'], 'v = pd.to_numeric(every["rating"]' in r['clouds'][0]['code']), (True, True))
+            await page.ev(f'{table_js}.setCell(6, "customer", {json.dumps(cust6)})')
+        if 'rows excluded' in tag:
+            await page.ev(f'{table_js}.setState({json.dumps(ex)}, "excluded", false)')
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.platform.id === 'text').slice(-4)) SM.app.closeReport(r)")
 
 
 asyncio.run(main())

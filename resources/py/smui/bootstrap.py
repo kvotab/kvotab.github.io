@@ -74,11 +74,35 @@ def intervals(original, samples, jackknife=None, coverage=COVERAGE, quantile='we
     return out
 
 
+def _keep_lines(table, rows, where=None):
+    """After the code's head: the By group's rows (its where lines) and, of
+    those, the ones the report uses (excluded and filtered rows dropped)."""
+    L = []
+    n = data.TABLES[table]['n'] if table in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(table, w['column'])
+        num = data.meta(table, w['column']).get('dataType') == 'numeric'
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        lit = repr(float(w['value'])) if num else json.dumps(w['value'])
+        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {w["column"]} is {w["value"]}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows of the report']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows the report leaves out')
+    return L
+
+
 @api('bootstrap.report')
-def report(table, columns, rows=None, jackknife=None, coverage=COVERAGE, table_name='data'):
+def report(table, columns, rows=None, jackknife=None, coverage=COVERAGE, where=None, table_name='data'):
     """The Bootstrap report of a Bootstrap Results table: for each column,
     the original estimate (BootID 0), the bootstrap values (BootID > 0) and
-    their limits."""
+    their limits. The code keeps the report's rows (excluded and filtered
+    rows dropped)."""
     cols = [c for c in columns if c != 'BootID']
     df = data.frame(table, ['BootID'] + cols, rows, dropna=False, as_category=False)
     boot = df['BootID'].to_numpy(float)
@@ -91,7 +115,7 @@ def report(table, columns, rows=None, jackknife=None, coverage=COVERAGE, table_n
         res['rows'] = [int(i) for i in df.index[boot > 0]]
         out.append(res)
     name = json.dumps(cols[0]) if cols else '"x"'
-    lines = [code_head(table_name, ['from scipy import stats']),
+    lines = [code_head(table_name, ['from scipy import stats']), *_keep_lines(table, rows, where),
              f'x = df.loc[df["BootID"] > 0, {name}].dropna().to_numpy()   # the bootstrap values',
              f't0 = df.loc[df["BootID"] == 0, {name}].iloc[0]   # the original estimate',
              'print(x.mean(), x.std(ddof=1), x.mean() - t0)   # mean, std error, bias',

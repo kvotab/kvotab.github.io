@@ -169,6 +169,22 @@
      may appear once the report is drawn. */
   const availWidth = (ctx) => { const w = (ctx.report && ctx.report.body && ctx.report.body.clientWidth) || 0; return w > 240 ? w - 100 : 900; };
 
+  /* ---- the graphs' code ---------------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table: meta.plot_code writes it, the studies and their pooling computed
+     as the report's code computes them, from what the page chose (the forest
+     plot's options, its columns and its axis range, the order of a sort by
+     label; the other graphs' sizes, axis ranges and ticks, the funnel's
+     lines). Each graph function fills `info` with those choices. A headless
+     run (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-meta-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, kind, plot, extra = {}) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('meta.plot_code', { ...baseArgs(ctx), ...extra, kind, plot });
+    return r && !r.error ? r.plot_code : null;
+  }
+  const axisOf = (ax) => ({ range: ax.range, tickvals: ax.tickvals || null, ticktext: ax.ticktext || null });
+
   /* ======================================================================
      THE FOREST PLOT
      ====================================================================== */
@@ -232,15 +248,15 @@
         items.push({ kind: 'text', label: `Test for subgroup differences (${showRE ? 'random' : 'fixed'}): Q = ${fmt(tt.q, { digits: 2 })}, df = ${tt.df}, p ${pText(tt.p)}` });
       }
     }
-    return { items, showFE, showRE, both };
+    return { items, showFE, showRE, both, mhOn };
   }
 
-  function forestPlot(ctx, res, o) {
+  function forestPlot(ctx, res, o, info = {}) {
     const c = colors();
     const m = res.measure;
     const tx = m.log ? Math.exp : (x) => x;
     const log = m.log && o('fLog', true);
-    const { items, showRE, both } = forestItems(ctx, res, o);
+    const { items, showFE, showRE, both, mhOn } = forestItems(ctx, res, o);
     const dec = decimals(res);
     // y positions: a gap is half a row
     let y = 0;
@@ -350,13 +366,20 @@
     };
     dW.forEach((d, i) => { layout[`xaxis${4 + i}`] = { ...hidden, domain: d, anchor: 'y' }; });
     const plot = ctx.plot(traces, layout, { width: W, height: Hpx, title: `Forest plot of ${m.plural || m.display}`, fit: false });
+    const sortBy = o('fSort', 'table');
+    Object.assign(info, {
+      showFE, showRE, showPI: o('fShowPI', true), weights, stats: o('fStats', true), pooledLine: o('fPooledLine', true), log, sort: sortBy,
+      subgroups: !!(res.subgroups && o('subgroups', true)), mh: mhOn,
+      labelOrder: sortBy === 'label' ? res.studies.slice().sort((a, b) => SM.table.collator.compare(a.label, b.label)).map((s) => s.row) : null,
+      layout: { W, H: Hpx, lab: dLab, plot: dPlot, ci: dCi, w: dW, ...axisOf(xa) },
+    });
     return el('div', { class: 'sm-meta-scroll' }, plot);
   }
 
   /* ======================================================================
      SMALL PLOTS: leave-one-out, cumulative, funnel, bubbles
      ====================================================================== */
-  function miniForest(ctx, res, rows, labels, full, title) {
+  function miniForest(ctx, res, rows, labels, full, title, info = {}) {
     const c = colors();
     const m = res.measure;
     const tx = m.log ? Math.exp : (x) => x;
@@ -373,14 +396,16 @@
     ];
     const xa = valueAxis(res, rows.flatMap((r) => [r.lower, r.upper]).concat([full]), { log, title: `${m.display}${log ? ' (log scale)' : ''}` });
     const longest = Math.max(4, ...labels.map((l) => String(l).length));
+    const width = Math.min(620, Math.max(380, 300 + 6.6 * longest)), height = Math.round(22 * n + 64);
+    Object.assign(info, { log, width, height, ...axisOf(xa) });
     return ctx.plot(traces, {
       xaxis: { ...xa, showgrid: false },
       yaxis: { tickvals: rows.map((_, i) => i), ticktext: labels.map(T), range: [n - 0.4, -0.6], showgrid: false, zeroline: false, ticks: '', automargin: true },
       margin: { l: Math.min(220, 12 + 6.6 * longest), r: 14, t: 6, b: 42 },
-    }, { width: Math.min(620, Math.max(380, 300 + 6.6 * longest)), height: Math.round(22 * n + 64), title });
+    }, { width, height, title });
   }
 
-  function funnelPlot(ctx, res, b, o) {
+  function funnelPlot(ctx, res, b, o, info = {}) {
     const c = colors();
     const m = res.measure;
     const tx = m.log ? Math.exp : (x) => x;
@@ -401,11 +426,13 @@
       hovertext: b.labels.map((l, i) => `${T(l)}: ${fmt(tx(b.eff[i]), { sig: 4 })}, SE ${fmt(b.se[i], { sig: 4 })}`), hovertemplate: '%{hovertext}<extra></extra>', name: 'Studies' });
     const lim = o('fnLimits', true) ? [b.fe - z * smax, b.fe + z * smax] : [];
     const xa = valueAxis(res, b.eff.concat(lim), { log, title: `${m.display}${log ? ' (log scale)' : ''}`, withNull: false });
+    const width = Math.min(520, Math.max(320, availWidth(ctx) - 20));
+    Object.assign(info, { log, limits: o('fnLimits', true), re: o('fnRE', false), egger: !!(o('fnEggerLine', false) && b.egger), width, height: 340, ...axisOf(xa) });
     return ctx.plot(traces, { xaxis: { ...xa }, yaxis: { title: { text: 'Standard Error' }, range: [smax, 0], zeroline: false }, margin: { l: 58, r: 14, t: 8, b: 42 } },
-      { width: Math.min(520, Math.max(320, availWidth(ctx) - 20)), height: 340, title: `Funnel plot of ${m.plural || m.display}` });
+      { width, height: 340, title: `Funnel plot of ${m.plural || m.display}` });
   }
 
-  function bubblePlot(ctx, mr, cv, res) {
+  function bubblePlot(ctx, mr, cv, res, info = {}) {
     const c = colors();
     const m = mr.measure;
     const tx = m.log ? Math.exp : (x) => x;
@@ -421,8 +448,10 @@
         hovertext: mr.rows.map((r, i) => `${T(mr.labels ? mr.labels[i] : `row ${r + 1}`)}: ${fmt(tx(mr.eff[i]), { sig: 4 })}, weight ${fmt(100 * mr.w[i], { digits: 1 })}%`), hovertemplate: '%{hovertext}<extra></extra>', name: 'Studies' },
     ];
     const ya = valueAxis({ measure: m }, mr.eff.concat(cv.lower, cv.upper), { log, title: `${m.display}${log ? ' (log scale)' : ''}` });
+    const width = Math.min(520, Math.max(320, availWidth(ctx) - 20));
+    Object.assign(info, { covariate: cv.covariate, log, width, height: 330, ...axisOf(ya) });
     return ctx.plot(traces, { xaxis: { title: { text: T(cv.covariate) } }, yaxis: ya, margin: { l: 60, r: 14, t: 8, b: 42 } },
-      { width: Math.min(520, Math.max(320, availWidth(ctx) - 20)), height: 330, title: `Bubble plot of ${m.display} by ${cv.covariate}` });
+      { width, height: 330, title: `Bubble plot of ${m.display} by ${cv.covariate}` });
   }
 
   /* ======================================================================
@@ -556,7 +585,9 @@
     delete args.hksj;   // the funnel's tests do not depend on it
     const b = await ctx.call('meta.bias', args);
     if (b.error) { ob.add(ctx.warn(b.error)); return; }
-    ob.add(funnelPlot(ctx, res, b, o));
+    const fInfo = {};
+    const fg = funnelPlot(ctx, res, b, o, fInfo);
+    ob.add(withCode(ctx, fg, await plotCode(ctx, 'funnel', fInfo, { hksj: false })));
     ob.add(ctx.note(`Each study's ${res.measure.effect.toLowerCase()} against its standard error, the most precise at the top; the dashed lines are the pseudo ${lvText(ctx.alpha)} limits around the fixed effect, where the studies would fall without heterogeneity or small-study effects. Click or drag to select studies.`));
     const lv = lvText(ctx.alpha);
     if (b.same_se) { ob.add(ctx.note('Every study has the same standard error: there is no regression on the precision and no rank correlation with the variance.')); return; }
@@ -585,7 +616,11 @@
     if (r.error) { ob.add(ctx.note(r.error)); return; }
     const m = r.measure;
     const lv = lvText(ctx.alpha);
-    if (ctx.opt('looPlot', true)) ob.add(miniForest(ctx, res, r.rows, r.rows.map((x) => `without ${x.label}`), r.full.est, 'Leave-one-out estimates'));
+    if (ctx.opt('looPlot', true)) {
+      const info = {};
+      const g = miniForest(ctx, res, r.rows, r.rows.map((x) => `without ${x.label}`), r.full.est, 'Leave-one-out estimates', info);
+      ob.add(withCode(ctx, g, await plotCode(ctx, 'loo', info)));
+    }
     const cols = [{ key: 'label', label: 'Study Left Out', fmt: 'text' }, { key: 'est', label: 'Estimate' }, { key: 'lower', label: `Lower ${lv}` }, { key: 'upper', label: `Upper ${lv}` }, { key: 'p', label: r.hksj ? 'Prob>|t|' : 'Prob>|z|', fmt: 'p' }, { key: 'tau2', label: 'τ²' }, { key: 'i2p', label: 'I² (%)' }, { key: 'q', label: 'Q', hidden: true }];
     if (m.log) cols.splice(4, 0, { key: 'ratio', label: m.display }, { key: 'ratio_lower', label: `${SHORT[m.display] || m.display} Lower ${lv}` }, { key: 'ratio_upper', label: `${SHORT[m.display] || m.display} Upper ${lv}` });
     ob.add(ctx.rt({ columns: cols, rows: r.rows.map((x) => ({ ...x, i2p: pct(x.i2) })) }, { onRow: (row) => ctx.table.select([row.row]) }),
@@ -606,7 +641,11 @@
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const m = r.measure;
     const lv = lvText(ctx.alpha);
-    if (ctx.opt('cumPlot', true)) ob.add(miniForest(ctx, res, r.rows, r.rows.map((x) => `+ ${x.label}${byCol ? ` (${x.value ?? '.'})` : ''}`), r.rows[r.rows.length - 1].est, 'Cumulative estimates'));
+    if (ctx.opt('cumPlot', true)) {
+      const info = {};
+      const g = miniForest(ctx, res, r.rows, r.rows.map((x) => `+ ${x.label}${byCol ? ` (${x.value ?? '.'})` : ''}`), r.rows[r.rows.length - 1].est, 'Cumulative estimates', info);
+      ob.add(withCode(ctx, g, await plotCode(ctx, 'cumulative', info, { order_by: byCol ? byCol.name : null, descending: !!cum.desc })));
+    }
     const cols = [{ key: 'label', label: 'Study Added', fmt: 'text' }];
     if (byCol) cols.push({ key: 'value', label: byCol.name, fmt: 'text' });
     cols.push({ key: 'k', label: 'k', fmt: 'int' }, { key: 'est', label: 'Estimate' }, { key: 'lower', label: `Lower ${lv}` }, { key: 'upper', label: `Upper ${lv}` });
@@ -634,7 +673,12 @@
     const tests = [{ what: 'Residual heterogeneity (Q_E)', stat: r.qe, df: r.qe_df, p: r.qe_p }];
     if (r.qm) tests.unshift({ what: r.qm.test === 'F' ? `Moderators (F, ${r.qm.df} and ${r.qm.df_den} DF)` : 'Moderators (Q_M, Wald χ²)', stat: r.qm.stat, df: r.qm.df, p: r.qm.p });
     ob.add(ctx.rt({ caption: 'Tests', columns: [{ key: 'what', label: 'Test', fmt: 'text' }, { key: 'stat', label: 'Statistic' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'p', label: 'p-Value', fmt: 'p' }], rows: tests }, { sortable: false }));
-    const plots = r.curves.map((cv) => bubblePlot(ctx, r, cv, res));
+    const plots = [];
+    for (const cv of r.curves) {
+      const info = {};
+      const g = bubblePlot(ctx, r, cv, res, info);
+      plots.push(withCode(ctx, g, await plotCode(ctx, 'bubble', info, { covariates: covs.map((c) => c.name) })));
+    }
     if (plots.length) ob.add(ctx.row(...plots));
     ob.add(ctx.note(`Weighted least squares (statsmodels WLS) of ${r.measure.effect.toLowerCase()} on the covariates, weights 1/(v + τ²) with τ² the residual between-study variance (${METHOD[r.method]}), ${t ? 'the scale estimated and t tests on k − p degrees of freedom (Knapp–Hartung)' : 'the scale fixed at 1 and z tests'}: the mixed-effects meta-regression of metafor's rma with mods. Nominal covariates are dummy coded against their first level. R² is the share of τ² the covariates explain.${r.n_dropped ? ` ${r.n_dropped} studies with a missing covariate are left out.` : ''} In the bubble plots each bubble's area is proportional to its weight; the other covariates sit at their means (or first levels).`),
       ctx.code(r.code));
@@ -780,7 +824,11 @@
     host.append(ctx.kv([['Studies', k, 'int'], ['Effect', res.measure.effect, 'text'], ['Random-effects method', `${METHOD[res.method]}${res.hksj ? ', Hartung–Knapp' : ''}`, 'text']]));
     if (o('forest', true)) {
       const fo = ctx.outline('Forest Plot', { key: 'forest', info: 'p:meta:forest', menu: () => forestMenu(ctx) });
-      fo.add(forestPlot(ctx, res, o));
+      const info = {};
+      const box = forestPlot(ctx, res, o, info);
+      const code = await plotCode(ctx, 'forest', info);
+      if (code) box.append(ctx.code(code));   // right under the plot, inside its sideways scroller
+      fo.add(box);
       const wWhat = o('fShowRE', true) ? `the random-effects model (${METHOD[res.method]})` : 'the fixed-effect model';
       fo.add(ctx.note(`Squares: the studies, their area proportional to their weight in ${wWhat}; lines: their ${lvText(res.alpha)} confidence intervals. Diamonds: the pooled estimates and their intervals${res.pi && o('fShowPI', true) && o('fShowRE', true) ? '; the red bar is the prediction interval' : ''}. The grey line is no effect (${fmt(res.measure.null)}). Click a square or drag over squares to select the studies' rows.`));
     }

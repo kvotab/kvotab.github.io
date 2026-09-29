@@ -34,7 +34,11 @@ from statsmodels.tools.numdiff import approx_fprime
 
 from . import data
 from .registry import api
+from .survival import keep_lines
 from .util import code_head, col, table as rtable
+
+J = json.dumps
+BASE, FIT0 = '#2f6690', '#b0413e'   # the points' colour and the first fit's (smui-p-survival.js), light theme
 
 LETTERS = 'abcdfghijk'   # JMP skips e, which reads as Euler's number
 
@@ -415,7 +419,7 @@ def _curve_data(table_id, y, x, rows, group, weight, freq):
 
 @api('fitcurve.fit')
 def fitcurve_fit(table, y, x, model, rows=None, group=None, weight=None, freq=None, alpha=0.05, ci=False,
-                 parallel=False, equal=False, inverse=None, table_name='data'):
+                 parallel=False, equal=False, inverse=None, where=None, table_name='data'):
     """Fit Curve: one model of the library, per group, with its summary,
     parameter estimates, curve, and on request the tests across groups and
     inverse predictions."""
@@ -516,28 +520,68 @@ def fitcurve_fit(table, y, x, model, rows=None, group=None, weight=None, freq=No
                 out['equal'] = {'error': str(ex)}
         if parallel and shift is not None:
             out['parallel'] = _parallel(model, xa, ya, wa, ca, idx, fits, sep_sse, sep_df, alpha, levels, cnt[mask_all])
-    lines = [code_head(table_name, ['from scipy.optimize import curve_fit', 'from scipy.special import expit, ndtr']),
-             f'd = df.dropna(subset={json.dumps([c for c in (y, x, group) if c])})']
+    lines = [code_head(table_name, ['from scipy.optimize import curve_fit', 'from scipy.special import expit, ndtr'])] + keep_lines(table, rows, where) + [
+             f'd = df.dropna(subset={json.dumps([c for c in (y, x, group, weight, freq) if c])})   # the rows with every value']
+    wf = ' * '.join(f'd[{J(c)}]' for c in (weight, freq) if c)
+    if wf:
+        lines.append(f'd = d[{wf} > 0]   # the rows with a positive weight')
     args = ', '.join(LETTERS[j] for j in range(k))
     body = MODEL_CODE.get(model) or ' + '.join([LETTERS[0]] + [f'{LETTERS[j]}*x**{j}' for j in range(1, k)])
+    out['plot'] = _curve_fragment(model, label, formula, args, body, k, weight, freq, ci, alpha)
     lines += [f'def f(x, {args}):   # {label}', f'    return {body}']
-    start = [round(float(v), 6) for v in (fits[0]['r'].x if fits[0] is not None else good[0]['r'].x)]
-    sub = f'd[d[{json.dumps(group)}] == level]' if group else 'd'
+    # starting values: this page's estimates, each group its own, to ten significant digits (a small parameter keeps its value)
+    starts = [(lv, [float(f'{float(v):.10g}') for v in q['r'].x]) for lv, q in zip(levels, fits) if q is not None]
+    lit = lambda v: json.dumps(v) if isinstance(v, str) else repr(float(v))  # noqa: E731
     if group:
-        lines.append(f'for level in d[{json.dumps(group)}].unique():')
+        lines.append(f'starts = {{{", ".join(f"{lit(lv)}: {st}" for lv, st in starts)}}}   # each group\'s starting values: this page\'s estimates')
+        lines.append('for level, p0 in starts.items():   # the groups with a fit, in the table\'s order')
         ind = '    '
     else:
+        lines.append(f'p0 = {starts[0][1]}   # starting values: this page\'s estimates')
         ind = ''
     wexpr = ''
     if weight:
         wexpr = f', sigma=1/np.sqrt(s[{json.dumps(weight)}])'
-    lines += [f'{ind}s = {sub}',
-              f'{ind}p, cov = curve_fit(f, s[{json.dumps(x)}], s[{json.dumps(y)}], p0={start}{wexpr})   # starting values: this page\'s estimates',
+    lines += [f'{ind}s = ' + (f'd[d[{json.dumps(group)}] == level]' if group else 'd'),
+              f'{ind}p, cov = curve_fit(f, s[{json.dumps(x)}], s[{json.dumps(y)}], p0=p0{wexpr})',
               f'{ind}print({"level, " if group else ""}p, np.sqrt(np.diag(cov)))   # estimates and standard errors']
     if freq:
-        lines.insert(2, f'd = d.loc[d.index.repeat(d[{json.dumps(freq)}].astype(int))]   # Freq: each row as many times as its count')
+        at = next(i for i, ln in enumerate(lines) if ln.startswith('def f('))
+        lines.insert(at, f'd = d.loc[d.index.repeat(d[{json.dumps(freq)}].astype(int))]   # Freq: each row as many times as its count')
     out['code'] = '\n'.join(lines)
     return out
+
+
+def _curve_fragment(model, label, formula, args, body, k, weight, freq, ci, alpha):
+    """The lines of a Fit Curve model for the page's graph code (the page
+    puts the graphs together: the rows, each group's fit, the points): the
+    model as a function, and a function that fits it to a group's rows s from
+    starting values p0 as the report's code fits it (scipy's curve_fit,
+    weighted by Weight times Freq), giving its curve over the rows' X and,
+    with Confidence Curves, the pointwise limits (the delta method)."""
+    fn = f'f_{model}'
+    w = ' * '.join(f's[{J(c)}].to_numpy(float)' for c in (weight, freq) if c) or 'np.ones(len(s))'
+    L = [f'def {fn}(x, {args}):   # {label}: {formula}', f'    return {body}', '',
+         f'def fit_{model}(s, p0):',
+         f'    """{label} fitted to the rows s by least squares from p0 (curve_fit, as the report\'s code fits it): its curve over the rows\' X{" and the confidence curves" if ci else ""}."""',
+         '    x, y = s[X].to_numpy(float), s[Y].to_numpy(float)',
+         f'    w = {w}   # the weights: Weight times Freq',
+         f'    p, pcov = curve_fit({fn}, x, y, p0=p0, sigma=1 / np.sqrt(w))',
+         '    gx = np.linspace(x.min(), x.max(), 200)',
+         f'    fy = {fn}(gx, *p)']
+    if ci:
+        L += [f'    n, k = {f"s[{J(freq)}].sum()" if freq else "len(s)"}, len(p)   # the observations (Freq counts rows) and the parameters']
+        if freq:
+            L.append('    pcov = pcov * (len(s) - k) / (n - k)   # MSE (J\'WJ)^-1, with N the sum of Freq')
+        L += ['    h = 6e-6 * np.maximum(np.abs(p), 1e-3)',
+              f'    G = np.column_stack([({fn}(gx, *(p + h[j] * np.eye(k)[j])) - {fn}(gx, *(p - h[j] * np.eye(k)[j]))) / (2 * h[j]) for j in range(k)])   # the curve\'s gradient in the parameters',
+              '    se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", G, pcov, G), 0))',
+              f'    tq = stats.t.ppf({1 - alpha / 2!r}, n - k)',
+              '    return gx, fy, fy - tq * se, fy + tq * se']
+    else:
+        L.append('    return gx, fy, None, None')
+    imports = ['from scipy.optimize import curve_fit', 'from scipy.special import expit, ndtr'] + (['from scipy import stats'] if ci else [])
+    return {'imports': imports, 'lines': L, 'fit': f'fit_{model}'}
 
 
 def _parallel(model, xa, ya, wa, ca, idx, fits, sep_sse, sep_df, alpha, levels, counts):
@@ -816,7 +860,7 @@ def nonlinear_parse(table, model, declared=None):
 
 @api('nonlinear.fit')
 def nonlinear_fit(table, y, model, start=None, rows=None, weight=None, freq=None, method='lm', max_nfev=None, alpha=0.05,
-                  ci=False, table_name='data'):
+                  ci=False, where=None, plot=None, table_name='data'):
     """Nonlinear: least squares for a typed model."""
     start = dict(start or {})
     try:
@@ -910,8 +954,12 @@ def nonlinear_fit(table, y, model, start=None, rows=None, weight=None, freq=None
     safe = all(p.isidentifier() and not keyword.iskeyword(p) and p not in _RESERVED_CODE for p in m.params)
     pname = (lambda i: m.params[i]) if safe else (lambda i: f'p[{i}]')
     body = m.code(pname, lambda kk: f'X[{json.dumps(m.columns[kk])}]')
-    lines = [code_head(table_name, ['from scipy.optimize import least_squares']),
-             f'd = df.dropna(subset={json.dumps([y] + m.columns)})']
+    keep = keep_lines(table, rows, where)
+    lines = [code_head(table_name, ['from scipy.optimize import least_squares'])] + keep + [
+             f'd = df.dropna(subset={json.dumps([c for c in [y] + m.columns + [weight, freq] if c])})   # the rows with every value']
+    wf = ' * '.join(f'd[{J(c)}]' for c in (weight, freq) if c)
+    if wf:
+        lines.append(f'd = d[{wf} > 0]   # the rows with a positive weight')
     if freq:
         lines.append(f'd = d.loc[d.index.repeat(d[{json.dumps(freq)}].astype(int))]   # Freq: each row as many times as its count')
     lines += ['def model(p, X):']
@@ -924,4 +972,50 @@ def nonlinear_fit(table, y, model, start=None, rows=None, weight=None, freq=None
               'cov = mse * np.linalg.inv(J.T @ J)',
               f'print(dict(zip({m.params!r}, fit.x)), np.sqrt(np.diag(cov)))   # estimates, approximate standard errors']
     out['code'] = '\n'.join(lines)
+    if plot is not None and len(m.columns) == 1:
+        out['plot_code'] = _nonlinear_plot(table_name, keep, y, m, safe, pname, p0, method, weight, freq, ci, alpha, plot)
     return out
+
+
+def _nonlinear_plot(table_name, keep, y, m, safe, pname, p0, method, weight, freq, ci, alpha, plot):
+    """Nonlinear's plot (a model of one column): the fit as the report's
+    code makes it (least squares from the starting values), the curve over
+    the column's range, with Confidence Curves the pointwise limits (the
+    delta method, MSE (J'J)^-1 with J by central differences), the rows."""
+    c = m.columns[0]
+    k = len(m.params)
+    body = m.code(pname, lambda kk: f'X[{J(m.columns[kk])}]')
+    w = ' * '.join(f'd[{J(v)}].to_numpy(float)' for v in (weight, freq) if v) or 'np.ones(len(d))'
+    W, H = plot.get('size') or [480, 320]
+    L = [f'Y, C = {J(y)}, {J(c)}   # the response and the model\'s column',
+         f'd = df.dropna(subset={J([v for v in [y, c, weight, freq] if v])})   # the rows with every value']
+    if weight or freq:
+        L.append(f'd = d[{" * ".join(f"d[{J(v)}]" for v in (weight, freq) if v)} > 0]   # the rows with a positive weight')
+    L += ['def model(p, X):']
+    if safe:
+        L.append(f'    {", ".join(m.params)}{"," if k == 1 else ""} = p')
+    L += [f'    return {body}',
+          f'w = {w}   # the weights: Weight times Freq',
+          'resid = lambda p: (model(p, d) - d[Y].to_numpy(float)) * np.sqrt(w)',
+          f'fit = least_squares(resid, x0={[float(v) for v in p0]}, method={method!r})   # from the starting values, as the report\'s code fits it',
+          'gx = np.linspace(d[C].min(), d[C].max(), 200)',
+          'fy = model(fit.x, {C: gx})']
+    if ci:
+        L += [f'n, k = {f"d[{J(freq)}].sum()" if freq else "len(d)"}, len(fit.x)   # the observations (Freq counts rows) and the parameters',
+              'mse = np.sum(resid(fit.x) ** 2) / (n - k)',
+              'J = np.atleast_2d(approx_fprime(fit.x, resid, centered=True))',
+              'J = J if J.shape[0] == len(w) else J.T   # a row for each observation',
+              'cov = mse * np.linalg.inv(J.T @ J)   # the approximate covariance of the estimates',
+              'h = 6e-6 * np.maximum(np.abs(fit.x), 1e-3)',
+              'G = np.column_stack([(model(fit.x + h[j] * np.eye(k)[j], {C: gx}) - model(fit.x - h[j] * np.eye(k)[j], {C: gx})) / (2 * h[j]) for j in range(k)])   # the curve\'s gradient in the parameters',
+              'se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", G, cov, G), 0))',
+              f'tq = stats.t.ppf({1 - alpha / 2!r}, n - k)']
+    L += [f'fig, ax = plt.subplots(figsize=({round(float(W)) / 100:g}, {round(float(H)) / 100:g}), layout="constrained")']
+    if ci:
+        L.append(f'ax.fill_between(gx, fy - tq * se, fy + tq * se, color="{FIT0}", alpha=0.14, linewidth=0)   # Confidence Curves')
+    L += [f'ax.plot(gx, fy, color="{FIT0}", linewidth=2, label="Fit")',
+          f'ax.scatter(d[C], d[Y], s=18, color="{BASE}", label=Y, zorder=3)',
+          'ax.set_xlabel(C)', 'ax.set_ylabel(Y)',
+          'fig.suptitle(Y + " by " + C, fontsize=10)', 'plt.show()']
+    imports = ['import matplotlib.pyplot as plt', 'from scipy.optimize import least_squares'] + (['from scipy import stats', 'from statsmodels.tools.numdiff import approx_fprime'] if ci else [])
+    return '\n'.join([code_head(table_name, imports)] + list(keep) + L)

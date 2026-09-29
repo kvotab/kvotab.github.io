@@ -592,9 +592,21 @@ def _notes(m):
 # ---------------------------------------------------------------------------
 
 def _code(m, table_name, rows):
+    k = len(m['spec']['smooth'])
+    return '\n'.join(_fit_lines(m, table_name, rows) + [
+        'print(res.summary())',
+        'print("EDF by term:", [res.edf[model.k_exog_linear:][m].sum() for m in smoother.mask], "total:", res.edf.sum())',
+        'print("deviance", res.deviance, "AIC", res.aic, "BIC", res.bic_llf, "GCV", res.gcv)',
+        f'for i in range({k}):',
+        '    print(smoother.smoothers[i].variable_name, res.test_significance(i))   # Wald χ² on the term\'s EDF',
+        'fit, se = res.partial_values(0, include_constant=False)   # the first term\'s partial effect at the rows'])
+
+
+def _fit_lines(m, table_name, rows, extra_imports=()):
+    """The code that reads the table and fits the model as the report does
+    (the penalty search included), up to res = model.fit()."""
     spec, D, d, ch = m['spec'], m['D'], m['d'], m['choice']
     tid = m['tid']
-    k = len(spec['smooth'])
     cyc = [t['basis'] == 'cc' for t in D['terms']]
     if all(cyc):
         imp = 'from statsmodels.gam.api import GLMGam, CyclicCubicSplines'
@@ -602,7 +614,7 @@ def _code(m, table_name, rows):
         imp = 'from statsmodels.gam.api import GLMGam, BSplines'
     else:
         imp = 'from statsmodels.gam.api import GLMGam\nfrom statsmodels.gam.smooth_basis import GenericSmoothers, UnivariateBSplines, UnivariateCubicCyclicSplines'
-    extra = ['import patsy', imp]
+    extra = [*extra_imports, 'import patsy', imp]
     if ch['mode'] == 'kfold':
         extra.append('from statsmodels.gam.gam_cross_validation.cross_validators import KFold')
     lines = [code_head(table_name, extra)]
@@ -690,14 +702,8 @@ def _code(m, table_name, rows):
     else:
         lines.append(f'alpha = {[float(a) for a in ch["alpha"]]!r}   # the penalty weights, fixed')
     lines += [f'model = GLMGam(y, exog=X, smoother=smoother, alpha=list(alpha), family=fam{wkw})',
-              f'res = model.fit({fkw})',
-              'print(res.summary())',
-              'print("EDF by term:", [res.edf[model.k_exog_linear:][m].sum() for m in smoother.mask], "total:", res.edf.sum())',
-              'print("deviance", res.deviance, "AIC", res.aic, "BIC", res.bic_llf, "GCV", res.gcv)',
-              f'for i in range({k}):',
-              '    print(smoother.smoothers[i].variable_name, res.test_significance(i))   # Wald χ² on the term\'s EDF',
-              'fit, se = res.partial_values(0, include_constant=False)   # the first term\'s partial effect at the rows']
-    return '\n'.join(lines)
+              f'res = model.fit({fkw})']
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -870,3 +876,164 @@ def compare(table, rows=None, alpha=0.05, table_name='data', **model):
     return {'models': models_rows, 'test': test, 'known_scale': known, 'linear': lin, 'code': code,
             'notes': ['Both models are fitted to the same rows. The test is approximate: the additive model is penalized, so the two are not '
                       'nested in the usual sense, and its degrees of freedom (the EDF) are not whole numbers (as mgcv\'s anova.gam).']}
+
+
+# ---------------------------------------------------------------------------
+# the graphs as matplotlib code
+# ---------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from
+# a CSV export of the table (the notebook runs it): the report's rows, the
+# model fitted as the report fits it (its penalty search included), the light
+# theme's colours, the graph's size at 100 pixels an inch. The page sends
+# what it chose (a term's band, residuals, rug and intercept; the surface's
+# two terms); gam.plot_code writes the code of one graph. The Prediction
+# Profiler is interactive and has none.
+FIT, BAND, POINT, MUTED, GRID = '#c0392b', '#c0392b', '#2f6690', '#786b5d', '#e0d7ce'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _area(px):
+    return f'{(px * PX) ** 2:.3g}'
+
+
+def _first_line(spec):
+    if spec['freq']:
+        return 'first = ~d.index.duplicated()   # each row once (the fit repeats a row Freq times)'
+    return 'first = np.ones(len(d), dtype=bool)'
+
+
+def _term_code(m, table_name, rows, plot, alpha):
+    spec = m['spec']
+    j = int(plot.get('index') or 0)
+    name = spec['smooth'][j]
+    band = plot.get('band', True) is not False
+    resid = bool(plot.get('resid', spec['family'] != 'binomial'))
+    rug = bool(plot.get('rug', m['D']['n_rows'] <= 4000))
+    const = bool(plot.get('constant')) and _const(m) is not None
+    n = m['D']['n_rows']
+    c = _fit_lines(m, table_name, rows, ['import matplotlib.pyplot as plt', 'from scipy import stats'])
+    c += [_first_line(spec),
+          f'j = {j}   # the term s({name})',
+          'idx = model.k_exog_linear + np.nonzero(smoother.mask[j])[0]   # its coefficients',
+          'b, V = np.asarray(res.params), np.asarray(res.cov_params())   # the penalized (Bayesian) covariance',
+          'x = xs[:, j]',
+          'g = np.linspace(x.min(), x.max(), 101)',
+          'B = smoother.smoothers[j].transform(g)',
+          'f = B @ b[idx]   # the partial effect, centred',
+          'se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", B, V[np.ix_(idx, idx)], B), 0))']
+    if const:
+        c += ['ic = np.r_[list(X.columns).index("Intercept"), idx]   # Include Intercept: the curve about the intercept, its standard error with it',
+              'Bc = np.column_stack([np.ones(len(g)), B])',
+              'se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", Bc, V[np.ix_(ic, ic)], Bc), 0))',
+              'c = b[ic[0]]']
+    else:
+        c.append('c = 0.0')
+    c += [f'z = stats.norm.ppf({1 - alpha / 2!r})',
+          'fig, ax = plt.subplots(figsize=(3.8, 2.8), layout="constrained")']
+    if band:
+        c.append(f'ax.fill_between(g, c + f - z * se, c + f + z * se, color="{BAND}", alpha=0.13, linewidth=0)   # the pointwise {100 * (1 - alpha):g}% band')
+    if resid:
+        c += ['B1 = smoother.smoothers[j].transform(x[first])',
+              f'ax.scatter(x[first], c + B1 @ b[idx] + np.asarray(res.resid_working)[first], s={_area(4 if n > 500 else 5)}, color="{POINT}", alpha=0.75, label="Partial residuals")   # the term plus the working residual']
+    c.append(f'ax.plot(g, c + f, color="{FIT}", linewidth={_pt(2)})   # s({name})')
+    if rug:
+        c.append(f'ax.plot(x[first], np.full(first.sum(), 0.035), linestyle="none", marker="|", markersize={_pt(9)}, color="{MUTED}", transform=ax.get_xaxis_transform())   # the rug')
+    c += [f'ax.axhline(0, color="{GRID}", linewidth={_pt(1)})',
+          f'ax.set_xlabel({json.dumps(name)})', f'ax.set_ylabel({json.dumps(f"Intercept + s({name})" if const else f"s({name})")})',
+          f'ax.set_title({json.dumps(f"{name} partial effect")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _diag_head(m, table_name, rows, imports=()):
+    spec = m['spec']
+    c = _fit_lines(m, table_name, rows, ['import matplotlib.pyplot as plt', *imports])
+    c += [_first_line(spec), 'mu = np.asarray(res.fittedvalues)[first]   # the predicted mean']
+    return c
+
+
+def _diag_code(m, table_name, rows, kind):
+    spec = m['spec']
+    yname = spec['y']
+    info = m['D']['info']
+    n = m['D']['n_rows']
+    s = _area(4 if n > 500 else 6)
+    if kind == 'actual':
+        c = _diag_head(m, table_name, rows) + ['yy = y[first]']
+        ylab = f'{yname} ({_lvl(info["event"])} = 1)' if info.get('levels') is not None else f'{yname} Actual'
+        c += ['lo, hi = min(mu.min(), yy.min()), max(mu.max(), yy.max())',
+              'fig, ax = plt.subplots(figsize=(3.8, 3.0), layout="constrained")',
+              f'ax.scatter(mu, yy, s={s}, color="{POINT}")',
+              f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth={_pt(1.4)})   # actual = predicted',
+              f'ax.set_xlabel({json.dumps(f"{yname} Predicted")})', f'ax.set_ylabel({json.dumps(ylab)})', f'ax.set_title({json.dumps(f"{yname} actual by predicted")})']
+    elif kind == 'residual':
+        c = _diag_head(m, table_name, rows)
+        c += ['fig, ax = plt.subplots(figsize=(3.8, 3.0), layout="constrained")',
+              f'ax.scatter(mu, y[first] - mu, s={s}, color="{POINT}")',
+              f'ax.axhline(0, color="{POINT}", linewidth={_pt(1)})',
+              f'ax.set_xlabel({json.dumps(f"{yname} Predicted")})', f'ax.set_ylabel({json.dumps(f"{yname} Residual")})', f'ax.set_title({json.dumps(f"{yname} residual by predicted")})']
+    else:
+        c = _diag_head(m, table_name, rows, ['from scipy import stats'])
+        c += ['r = np.asarray(res.resid_deviance)[first]',
+              'z = stats.norm.ppf(stats.rankdata(r) / (len(r) + 1))   # Φ⁻¹(rank/(n+1)), ties by their average rank',
+              'o = np.argsort(r, kind="stable")',
+              'mr, sr = r.mean(), r.std(ddof=1)',
+              'fig, ax = plt.subplots(figsize=(3.6, 2.9), layout="constrained")',
+              f'ax.scatter(z[o], r[o], s={s}, color="{POINT}")',
+              f'ax.plot([z.min(), z.max()], [mr + sr * z.min(), mr + sr * z.max()], color="{FIT}", linewidth={_pt(1.3)})   # the residuals\' mean and standard deviation',
+              'ax.set_xlabel("Normal Quantile")', 'ax.set_ylabel("Deviance Residual")', f'ax.set_title({json.dumps(f"{yname} deviance residual normal quantile plot")})']
+    return '\n'.join(c + ['plt.show()'])
+
+
+LEVELS_LINES = ['def plotly_levels(z, n=15):   # the contour levels the page shows: Plotly\'s own, a round step (2, 5 or 10 times a power of ten) of about (max − min)/15',
+                '    lo, hi = np.nanmin(z), np.nanmax(z)',
+                '    rough = (hi - lo) / n',
+                '    base = 10.0 ** np.floor(np.log10(rough))',
+                '    step = base * min(v for v in (2, 5, 10) if v >= rough / base)',
+                '    start, end = np.ceil(lo / step) * step, np.floor(hi / step) * step',
+                '    start, end = (start + step if start == lo else start), (end - step if end == hi else end)',
+                '    return np.arange(start, end + step / 2, step)']
+
+
+def _surface_code(m, table_name, rows, plot):
+    spec = m['spec']
+    a, b = int(plot.get('first') or 0), int(plot.get('second') or 1)
+    na, nb = spec['smooth'][a], spec['smooth'][b]
+    ng = int(plot.get('n') or 40)
+    c = _fit_lines(m, table_name, rows, ['import matplotlib.pyplot as plt'])
+    c += [_first_line(spec), ''] + LEVELS_LINES + ['',
+          'def partial(j, v):   # the partial effect of term j at the values v, centred',
+          '    return smoother.smoothers[j].transform(v) @ np.asarray(res.params)[model.k_exog_linear + np.nonzero(smoother.mask[j])[0]]',
+          f'a, b = {a}, {b}   # s({na}) across, s({nb}) up',
+          f'ga, gb = np.linspace(xs[:, a].min(), xs[:, a].max(), {ng}), np.linspace(xs[:, b].min(), xs[:, b].max(), {ng})',
+          'z = partial(b, gb)[:, None] + partial(a, ga)[None, :]   # an additive model: the two curves added',
+          'fig, ax = plt.subplots(figsize=(4.7, 3.8), layout="constrained")',
+          'mesh = ax.pcolormesh(ga, gb, z, cmap="viridis", shading="gouraud")',
+          f'lines = ax.contour(ga, gb, z, levels=plotly_levels(z), colors="#444444", linewidths={_pt(0.5)})',
+          f'ax.clabel(lines, fontsize={_pt(9)}, colors="white")',
+          f'ax.scatter(xs[first, a], xs[first, b], s={_area(5)}, color=(1, 1, 1, 0.85), edgecolors="#222222", linewidths={_pt(1)})   # the rows',
+          f'fig.colorbar(mesh, ax=ax, label={json.dumps(f"s({na}) + s({nb})")})',
+          f'ax.set_xlabel({json.dumps(na)})', f'ax.set_ylabel({json.dumps(nb)})', f'ax.set_title({json.dumps(f"{na} and {nb} surface")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('gam.plot_code')
+def plot_code(table, kind='term', plot=None, rows=None, alpha=0.05, table_name='data', **model):
+    """The Python that draws one of the report's graphs with matplotlib (kind:
+    term, actual, residual, devqq, surface), the model fitted as the report
+    fits it, from what the page chose (plot)."""
+    spec = _spec(**model)
+    m = _model(table, rows, spec)
+    plot = plot or {}
+    if kind == 'term':
+        code = _term_code(m, table_name, rows, plot, alpha)
+    elif kind in ('actual', 'residual', 'devqq'):
+        code = _diag_code(m, table_name, rows, kind)
+    elif kind == 'surface':
+        code = _surface_code(m, table_name, rows, plot)
+    else:
+        raise ValueError(f'no graph {kind!r}')
+    return {'plot_code': code}

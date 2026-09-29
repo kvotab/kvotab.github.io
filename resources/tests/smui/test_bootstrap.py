@@ -111,4 +111,23 @@ with tempfile.TemporaryDirectory() as tmp:
         check('the code\'s bias-corrected limits', np.allclose(nums[2], [M['limits'][k]['bc_lower'] for k in range(3)] + [M['limits'][k]['bc_upper'] for k in range(3)]), True)
         check('the code\'s BCa limits', np.allclose(np.r_[nums[3], nums[4]], [M['limits'][k]['bca_lower'] for k in range(3)] + [M['limits'][k]['bca_upper'] for k in range(3)]), True)
 
+# ---- rows the report leaves out (excluded, or filtered out): the code leaves them out too -------------
+kept = [i for i in range(B + 1) if i not in (3, 17, 250, 251)]
+rep2 = call('bootstrap.report', table=T, columns=['Mean'], rows=kept, table_name='boot')
+M2 = rep2['stats'][0]
+check('rows left out: fewer samples in the report', M2['n_samples'], B - 4)
+check('... and the code drops them', 'df = df.drop(index=[3, 17, 250, 251])   # the rows the report leaves out' in rep2['code'], True)
+with tempfile.TemporaryDirectory() as tmp:
+    pd.DataFrame(vals).to_csv(os.path.join(tmp, 'boot.csv'), index=False)
+    with open(os.path.join(tmp, 'code.py'), 'w') as fh:
+        fh.write(rep2['code'])
+    run = subprocess.run([sys.executable, 'code.py'], cwd=tmp, capture_output=True, text=True, timeout=120)
+    lines = [ln for ln in run.stdout.strip().splitlines() if ln.strip()]
+    ok = run.returncode == 0 and len(lines) >= 2
+    check('the code on the whole table\'s CSV runs', ok, True)
+    if ok:
+        nums = [np.array(ln.replace('[', ' ').replace(']', ' ').split(), dtype=float) for ln in lines]
+        check.near('... and gives the report\'s mean, standard error and bias on its rows', float(np.max(np.abs(nums[0] - [M2['mean'], M2['std_error'], M2['bias']]))), 0.0, abs_=1e-12)
+        check('... and its percentile limits (as numpy prints them)', np.allclose(nums[1], [M2['limits'][k]['pct_lower'] for k in range(3)] + [M2['limits'][k]['pct_upper'] for k in range(3)]), True)
+
 sys.exit(check.done())

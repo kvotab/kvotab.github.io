@@ -40,6 +40,31 @@ def _idx(tid, rows):
     return np.arange(_n(tid)) if rows is None else np.asarray(rows, dtype=int)
 
 
+def _keep_lines(tid, rows, where=None, who='the report'):
+    """After a report's code head: the By group's rows (its where lines)
+    and, of those, the ones the report uses (excluded and filtered rows
+    dropped). who: what leaves the rows out (a command: the rows it was
+    not given, excluded or not selected)."""
+    L = []
+    n = _n(tid) if tid in data.TABLES else 0
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        v = data.raw(tid, w['column'])
+        num = _numeric(tid, w['column'])
+        match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
+        lit = repr(float(w['value'])) if num else json.dumps(w['value'])
+        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {w["column"]} is {w["value"]}')
+    if rows is not None and n:
+        keep = np.zeros(n, dtype=bool)
+        keep[np.asarray(rows, dtype=int)] = True
+        drop = np.flatnonzero(match & ~keep).tolist()
+        if drop and not where and keep.sum() <= n / 2:
+            return [f'df = df.loc[{np.flatnonzero(keep).tolist()}]   # the rows {"of the report" if who == "the report" else who + " takes"}']
+        if drop:
+            L.append(f'df = df.drop(index={drop})   # the rows {who} leaves out')
+    return L
+
+
 def _numeric(tid, name):
     return data.meta(tid, name).get('dataType') == 'numeric'
 
@@ -376,13 +401,13 @@ def summary(table, group=(), columns=(), stats=('Mean',), subgroup=(), weight=No
     names = _unique_names([o['name'] for o in out])
     for o, nm in zip(out, names):
         o['name'] = nm
-    return {'columns': out, 'nrows': G, 'code': _summary_code(table_name, group, columns, stats, quantiles, subgroup, weight, freq)}
+    return {'columns': out, 'nrows': G, 'code': _summary_code(table_name, group, columns, stats, quantiles, subgroup, weight, freq, table, rows)}
 
 
-def _summary_code(table_name, group, columns, stats, quantiles, subgroup, weight, freq):
+def _summary_code(table_name, group, columns, stats, quantiles, subgroup, weight, freq, table=None, rows=None):
     fn = {'N': 'count', 'Mean': 'mean', 'Std Dev': 'std', 'Min': 'min', 'Max': 'max', 'Sum': 'sum', 'Variance': 'var',
           'Std Err': 'sem', 'Median': 'median'}
-    lines = [code_head(table_name)]
+    lines = [code_head(table_name), *(_keep_lines(table, rows, who='Summary') if table is not None else [])]
     keys = group + subgroup
     if keys:
         lines.append(f'g = df.groupby({json.dumps(keys)}, dropna=False)   # groups with a missing value are kept')
@@ -450,7 +475,7 @@ def stack(table, columns, keep=(), data_name='Data', label_name='Label', id_name
     names = _unique_names([o['name'] for o in out])
     for o, nm in zip(out, names):
         o['name'] = nm
-    code = '\n'.join([code_head(table_name),
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows, who='Stack'),
                       f'long = df.melt(id_vars={json.dumps(keep)}, value_vars={json.dumps(columns)}, var_name={json.dumps(label_name)}, value_name={json.dumps(data_name)}{", ignore_index=False" if by_row else ""})',
                       *(['long = long.sort_index(kind="stable")   # stacked by row: each row\'s values together'] if by_row else []),
                       *([f'long = long.dropna(subset=[{json.dumps(data_name)}])'] if drop_missing else []),
@@ -500,7 +525,7 @@ def split(table, split_by, columns, group=(), keep=(), rows=None, table_name='da
     names = _unique_names([o['name'] for o in out])
     for o, nm in zip(out, names):
         o['name'] = nm
-    code = '\n'.join([code_head(table_name),
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows, who='Split'),
                       f'd = df.dropna(subset=[{json.dumps(split_by)}]).copy()',
                       f'd["_row"] = d.groupby({json.dumps(group + [split_by])}, dropna=False).cumcount()   # a repeated level makes a new row',
                       f'wide = d.pivot(index={json.dumps(group + ["_row"])}, columns={json.dumps(split_by)}, values={json.dumps(columns if len(columns) > 1 else columns[0])})',
@@ -553,7 +578,7 @@ def transpose(table, columns, label=None, by=(), rows=None, label_name='Label', 
     uniq = _unique_names([o['name'] for o in out])
     for o, nm in zip(out, uniq):
         o['name'] = nm
-    code = '\n'.join([code_head(table_name),
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows, who='Transpose'),
                       f't = df[{json.dumps(columns)}]' + (f'.set_axis(df[{json.dumps(label)}].astype(str))' if label else '') + '.T',
                       f't.index.name = {json.dumps(label_name)}',
                       'print(t.reset_index())'])
@@ -675,7 +700,8 @@ def join(table, with_table, match=(), how='inner', by_row=False, cartesian=False
     for o, nm in zip(out, names):
         o['name'] = nm
     how_pd = {'inner': 'inner', 'left': 'left', 'right': 'right', 'outer': 'outer'}.get(how, 'inner')
-    code = [code_head(table_name), f'other = pd.read_csv({json.dumps(right_name + ".csv")})']
+    code = [code_head(table_name), *_keep_lines(table, rows, who='Join'), f'other = pd.read_csv({json.dumps(right_name + ".csv")}, float_precision="round_trip", keep_default_na=False, na_values=[""])']
+    code += [ln.replace('df = df.', 'other = other.').replace('df.loc[', 'other.loc[') for ln in _keep_lines(with_table, with_rows, who='Join')]
     if cartesian:
         code.append('joined = df.merge(other, how="cross")')
     elif by_row:
@@ -747,7 +773,7 @@ def update(table, with_table, match=(), by_row=False, replace=None, add=None, ig
     for c in addc:
         new = _raw(right, c, ri)
         added.append(_column(c, [new[j] if j is not None else None for j in hit], _numeric(right, c), source=c))
-    code = [code_head(table_name), 'other = pd.read_csv("other.csv")']
+    code = [code_head(table_name), 'other = pd.read_csv("other.csv", float_precision="round_trip", keep_default_na=False, na_values=[""])']
     if pairs:
         code.append(f'first = other.drop_duplicates(subset={json.dumps([b for _, b in pairs])})')
         code.append(f'm = df[{json.dumps([a for a, _ in pairs])}].merge(first, how="left", left_on={json.dumps([a for a, _ in pairs])}, right_on={json.dumps([b for _, b in pairs])})')
@@ -775,7 +801,7 @@ def missing_pattern(table, columns, rows=None, table_name='data'):
            _column('Patterns', keys, False, role='pattern')]
     for j, c in enumerate(columns):
         out.append(_column(c, [float(k[j]) for k in keys], True, role='indicator', column=c))
-    code = '\n'.join([code_head(table_name),
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows, who='Missing Data Pattern'),
                       f'm = df[{json.dumps(columns)}].isna().astype(int)',
                       'pattern = m.astype(str).agg("".join, axis=1)',
                       'print(pattern.value_counts().sort_index())'])
@@ -783,7 +809,7 @@ def missing_pattern(table, columns, rows=None, table_name='data'):
 
 
 @api('tables.missing_report')
-def missing_report(table, columns, rows=None, table_name='data'):
+def missing_report(table, columns, rows=None, where=None, table_name='data'):
     columns = list(columns)
     idx = _idx(table, rows)
     n = len(idx)
@@ -794,7 +820,7 @@ def missing_report(table, columns, rows=None, table_name='data'):
     counts = pd.Series(pats, dtype=object).value_counts() if pats else pd.Series(dtype=object)
     keys = sorted(counts.index.tolist(), key=lambda k: (k.count('1'), k))
     patterns = [{'pattern': k, 'count': int(counts[k]), 'n_missing': k.count('1'), 'columns': [c for c, b in zip(columns, k) if b == '1']} for k in keys]
-    code = '\n'.join([code_head(table_name),
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows, where),
                       f'd = df[{json.dumps(columns)}]',
                       'print(d.isna().sum(), 100 * d.isna().mean())',
                       'print(d.isna().astype(int).astype(str).agg("".join, axis=1).value_counts())'])
@@ -926,7 +952,7 @@ def colviewer(table, columns=None, rows=None, table_name='data'):
     cols = [col('column', 'Columns', 'text'), col('n', 'N', 'int'), col('n_missing', 'N Missing', 'int'), col('n_categories', 'N Categories', 'int'),
             col('min', 'Min'), col('max', 'Max'), col('mean', 'Mean'), col('sd', 'Std Dev'), col('median', 'Median'),
             col('lq', 'Lower Quartile'), col('uq', 'Upper Quartile')]
-    code = '\n'.join([code_head(table_name), f'd = df[{json.dumps(names)}]',
+    code = '\n'.join([code_head(table_name), *_keep_lines(table, rows), f'd = df[{json.dumps(names)}]',
                       'num = d.select_dtypes("number")',
                       'print(pd.DataFrame({"N": d.count(), "N Missing": d.isna().sum(), "N Categories": d.nunique()}))',
                       'print(num.agg(["min", "max", "mean", "std"]).T)',
@@ -959,7 +985,7 @@ def _entries(tid, chains, idx, add_all):
 
 @api('tables.tabulate')
 def tabulate(table, row_chains=(), col_chains=(), analysis=(), stats=('N',), all_rows=False, all_cols=False,
-             include_missing=False, quantiles=(25, 75), freq=None, rows=None, table_name='data'):
+             include_missing=False, quantiles=(25, 75), freq=None, rows=None, where=None, table_name='data'):
     rchains = [list(c) for c in (row_chains or []) if c] or [[]]
     cchains = [list(c) for c in (col_chains or []) if c] or [[]]
     analysis = list(analysis or [])
@@ -1029,7 +1055,7 @@ def tabulate(table, row_chains=(), col_chains=(), analysis=(), stats=('N',), all
     rows_out = [{'levels': [[k, _val(v)] for k, v in re['levels']], 'all': re['all'], 'block': re['block']} for re in rentries]
     cols_out = [{'levels': [[k, _val(v)] for k, v in h['entry']['levels']], 'all': h['entry']['all'] and bool(any(cchains)), 'analysis': h['analysis'],
                  'stat': h['stat'], 'label': h['label']} for h in heads]
-    code = [code_head(table_name)]
+    code = [code_head(table_name), *_keep_lines(table, rows, where)]
     idx_vars = row_vars
     col_vars = list(dict.fromkeys(nm for c in cchains for nm in c))
     agg = {'N': 'count', 'Mean': 'mean', 'Std Dev': 'std', 'Min': 'min', 'Max': 'max', 'Sum': 'sum', 'Median': 'median', 'Variance': 'var', 'Std Err': 'sem'}

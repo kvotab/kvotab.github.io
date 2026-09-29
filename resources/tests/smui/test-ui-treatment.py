@@ -34,6 +34,7 @@ import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -573,9 +574,120 @@ async def main():
     await check_form_help(page, f"await __hp.menu({rep}, 'Covariate Balance', ['Set Threshold…'])", ['Largest |SMD| taken as balanced'], 'treatment: Set Threshold…')
     await check_form_help(page, f"await __hp.menu({rep}, 'Weights', ['Show Largest…'])", ['How many to list'], 'treatment: Show Largest…')
     await check_controls_help(page, rep, 'Weights', ['Effective N', 'Largest weights', 'The histogram', 'Save'], 'treatment: Weights', heading=None)
+    await chart_code(page)
     check('no script errors', page.errors, [])
     check('no console errors', [c for c in page.console if 'error' in c.lower() and 'favicon' not in c.lower()], [])
     await page.close()
+
+
+# ---- the graphs' matplotlib code ---------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it. __tc adds what GRAPHS_JS does not collect: error bars and a category
+# axis's order.
+CHART_JS = r'''
+window.__tc = {
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => ({
+      label: p.getAttribute('aria-label'),
+      cats: p.layout && p.layout.yaxis && p.layout.yaxis.categoryarray ? p.layout.yaxis.categoryarray : null,
+      err: (p.data || []).map((d) => (d.error_x ? { plus: d.error_x.array, minus: d.error_x.arrayminus } : null)),
+    }));
+  },
+};
+'''
+
+
+def te_bars(ax, color):
+    return [b for b in ax['bars'] if (b['fc'] or '').startswith(color)]
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Job training')"
+    await page.ev(f"{tbl}.setState([3, 17, 250], 'excluded', true)")
+    runs = [
+        ('the defaults, three rows excluded', {'y': ['earnings'], 'treatment': ['program'], 'outcome': COVS}, {'treated': 1}),
+        ('overlaid, bins of 0.1, trimmed, ATT balance and weights, IPW and RA', {'y': ['earnings'], 'treatment': ['program'], 'outcome': COVS},
+         {'treated': 1, 'mirror': False, 'psBin': 0.1, 'trim': 0.05, 'balW': 'att', 'smdThreshold': 0.2, 'loveSort': False, 'wType': 'att', 'estimators': ['ipw', 'ra'], 'support': False}),
+        ('By region', {'y': ['earnings'], 'treatment': ['program'], 'outcome': ['age', 'education', 'prior earnings'], 'by': ['region']}, {'treated': 1, 'estimators': ['ipw', 'ra'], 'att': False}),
+    ]
+    for label, roles, options in runs:
+        r = await page.ev(f'''(async () => {{ const t = {tbl}; const id = (n) => t.col(n).id; const roles = {json.dumps(roles)};
+          const ids = {{}}; for (const [k, v] of Object.entries(roles)) ids[k] = v.map(id);
+          const rep = SM.app.openReport(SM.platforms.get('treatment'), {{ roles: ids, options: {json.dumps(options)} }}, t);
+          await new Promise((res) => rep.on('done', res));
+          return {{ g: await __gr.graphs(rep), extra: __tc.extra(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=900)
+        if not isinstance(r, dict):
+            check(f'charts: {label}: the report', r, 'opens')
+            continue
+        check(f'charts: {label}: no errors', r['errors'], [])
+        check(f'charts: {label}: every graph of the report drawn', r['undrawn'], [])
+        want = ['estimate comparison', 'propensity score overlap', 'Love plot', 'weights histogram']
+        check(f'charts: {label}: the graphs', [g['label'] for g in r['g']], want * (4 if 'By' in label else 1))
+        for g, ex in zip(r['g'], r['extra']):
+            lab = f'charts: {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if 'excluded' in label:
+                check(f'{lab}: the code leaves out the excluded rows', 'df = df.drop(index=[3, 17, 250])' in g['code'], True)
+            F, err = await run_graph(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            ax = F['axes'][0]
+            check(f'{lab}: the title', ax['title'], g['label'])
+            if g['label'] in ('propensity score overlap', 'weights histogram'):
+                bars = [t for t in g['traces'] if t.get('type') == 'bar' and t.get('name')]   # not the selection's companions
+                for t, color in zip(bars, ('#b8406e', '#2e6fba')):
+                    got = te_bars(ax, color)
+                    check(f'{lab}: the {t["name"]} bars, the page\'s', ([round(b['x'] + b['w'] / 2, 9) for b in got], [b['h'] for b in got]), ([round(v, 9) for v in t['x']], list(t['y'])))
+                    check.near(f'{lab}: the {t["name"]} bars\' width', got[0]['w'] if got else None, t['width'], 1e-12)
+                check(f'{lab}: the legend', F['legend'], [t['name'] for t in bars])
+                rects = sorted((round(s['x0'], 9), round(s['x1'], 9)) for s in g['shapes'] if s['x0'] != s['x1'])
+                spans = sorted((round(b['x'], 9), round(b['x'] + b['w'], 9)) for b in ax['bars'] if (b['fc'] or '').startswith('#5a5046'))
+                check(f'{lab}: the shaded common support, the page\'s', spans, rects)
+                vl = sorted(round(s['x0'], 9) for s in g['shapes'] if s['x0'] == s['x1'])
+                check(f'{lab}: the trimming lines, the page\'s', sorted(round(ln['x'][0], 9) for ln in ax['lines'] if ln['color'].startswith('#bb6c5d')), vl)
+                check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'].replace('&#61;', '='), g['titles']['y']))
+            elif g['label'] == 'Love plot':
+                cats = list(reversed(ex['cats']))
+                check(f'{lab}: the covariates, top down, as the page orders them', ax['yticklabels'], cats)
+                for t in [t for t in g['traces'] if t.get('mode') == 'markers']:
+                    sc = [x for x in ax['scatter'] if x['label'] == t['name']]
+                    want_pts = sorted((cats.index(yv), xv) for xv, yv in zip(t['x'], t['y']) if xv is not None)
+                    got_pts = sorted((round(p[1]), p[0]) for p in sc[0]['xy']) if sc else []
+                    check(f'{lab}: the {t["name"]} |SMD|, the page\'s', len(got_pts) == len(want_pts) and all(a[0] == b[0] and abs(a[1] - b[1]) < 1e-9 for a, b in zip(got_pts, want_pts)), True)
+                check(f'{lab}: the threshold, the page\'s', [round(ln['x'][0], 12) for ln in ax['lines'] if ln['color'].startswith('#bb6c5d')], [round(s['x0'], 12) for s in g['shapes']])
+                check(f'{lab}: the x axis title', ax['xlabel'], g['titles']['x'])
+            else:
+                cats = list(reversed(ex['cats']))
+                check(f'{lab}: the items, top down, as the page lists them', ax['yticklabels'], cats)
+                pts = {}
+                for ln in ax['lines']:
+                    if ln['marker'] in ('s', 'o', 'D'):
+                        for xv, yv in zip(ln['x'], ln['y']):
+                            pts[cats[round(yv)]] = xv
+                segs = {cats[round(s_[0][1])]: (min(s_[0][0], s_[1][0]), max(s_[0][0], s_[1][0])) for c_ in ax['segments'] for s_ in c_['segs']}
+                ok, ok_ci = True, True
+                for t, er in zip(g['traces'], ex['err']):
+                    for i, (xv, yv) in enumerate(zip(t['x'], t['y'])):
+                        ok &= abs(pts.get(yv, float('nan')) - xv) <= 1e-7 * abs(xv)
+                        lo_, hi_ = xv - er['minus'][i], xv + er['plus'][i]
+                        ok_ci &= yv in segs and abs(segs[yv][0] - lo_) <= 1e-6 * abs(lo_) + 1e-9 and abs(segs[yv][1] - hi_) <= 1e-6 * abs(hi_) + 1e-9
+                check(f'{lab}: each estimate, the page\'s', ok, True)
+                check(f'{lab}: each interval, the page\'s', ok_ci, True)
+                check(f'{lab}: the legend', F['legend'], [t['name'] for t in g['traces']])
+                check(f'{lab}: the zero line when the intervals straddle it', len([ln for ln in ax['lines'] if ln['ls'] == ':']), len(g['shapes']))
+                check(f'{lab}: the x axis title', ax['xlabel'], g['titles']['x'])
+        await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+    await page.ev(f"{tbl}.setState([3, 17, 250], 'excluded', false)")
 
 
 asyncio.run(main())

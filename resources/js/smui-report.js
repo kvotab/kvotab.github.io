@@ -293,7 +293,8 @@
      util.code_head, so that every snippet starts alike and runs on its own. */
   function codeHead(tableName, extraImports = []) {
     return ['import numpy as np', 'import pandas as pd', 'import statsmodels.api as sm', 'import statsmodels.formula.api as smf', ...extraImports,
-      `df = pd.read_csv(${JSON.stringify(`${tableName}.csv`)}, float_precision="round_trip")   # the table, as File > Export CSV writes it`].join('\n');
+      '# the table, as File > Export CSV writes it (an empty field is missing)',
+      `df = pd.read_csv(${JSON.stringify(`${tableName}.csv`)}, float_precision="round_trip", keep_default_na=False, na_values=[""])`].join('\n');
   }
 
   /* A result's Python, folded away until the Python code button (or its

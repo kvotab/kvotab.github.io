@@ -69,6 +69,12 @@ def code_ns(columns, code, label):
     return ns
 
 
+def close_arr(a, b, rel=1e-9):
+    """Two sequences of numbers equal within rel (relative to each value, at least 1e-12)."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return a.shape == b.shape and bool(np.all(np.abs(a - b) <= np.maximum(1e-12, rel * np.maximum(np.abs(a), np.abs(b)))))
+
+
 def cdist(a, b):
     """The circular distance of angles in radians."""
     return np.abs(np.mod(np.asarray(a) - b + np.pi, TAU) - np.pi)
@@ -371,5 +377,186 @@ check('opposite angles: R̄ 0, no mean direction', (round(two['rbar'], 12), two[
 check('opposite angles: no interval', [x['lower'] for x in two['ci']['rows']], [None, None])
 wrap = call('circular.summary', table=table({'a': [350.0, 10.0, 355.0, 5.0]}), column='a')
 check.near('angles on both sides of 0: the mean is 0 (not 180)', min(wrap['mean'], 360 - wrap['mean']), 0.0, abs_=1e-9)
+
+# ---- the code on the whole table's CSV leaves out the rows the report leaves out ----------------
+# (the page sends the report's rows; the code reads the whole table, as File > Export CSV writes it)
+from smui import data as _D  # noqa: E402
+from test_charts import run_snippet_more  # noqa: E402
+
+
+def frame_of(tid):
+    """The table as File > Export CSV writes it: every column, by name."""
+    t = _D.TABLES[tid]
+    out = {}
+    for name, v in t['cols'].items():
+        out[name] = np.asarray(v, dtype=float) if t['meta'][name]['dataType'] == 'numeric' else pd.Series(list(v), dtype=object)
+    return pd.DataFrame(out)
+
+
+def run_whole(tid, code, label):
+    """Run a result's code on the whole table's CSV; its variables."""
+    return code_ns({k: v for k, v in frame_of(tid).items()}, code, label)
+
+
+n_ex = 80
+th_ex = stats.vonmises.rvs(1.8, loc=np.deg2rad(230), size=n_ex, random_state=rng) % TAU
+dir_ex = np.round(np.rad2deg(th_ex), 1)
+sea_ex = rng.choice(['winter', 'summer'], n_ex).tolist()
+sea_ex[4] = None
+fq_ex = rng.integers(1, 4, n_ex).astype(float)
+fq_ex[6] = 0.0
+sp_ex = np.round(4 + 2 * np.cos(th_ex - 1) + rng.normal(0, 1, n_ex), 2)
+dir2_ex = np.round(np.rad2deg((th_ex + stats.vonmises.rvs(4, loc=0.3, size=n_ex, random_state=rng)) % TAU), 1)
+tex = table({'dir': dir_ex, 'season': sea_ex, 'f': fq_ex, 'speed': sp_ex, 'dir2': dir2_ex}, levels={'season': ['winter', 'summer']})
+rows_ex = [r for r in range(n_ex) if r not in (2, 9, 30, 41)]          # four rows excluded in the page
+ex = call('circular.summary', table=tex, column='dir', rows=rows_ex, freq='f')
+check('the code drops the rows the report leaves out', 'df = df.drop(index=[2, 9, 30, 41])' in ex['code'], True)
+ns = run_whole(tex, ex['code'], 'the summary with rows left out')
+if 'R' in ns:
+    check.near('its code on the whole table: the report\'s R̄ (excluded rows left out)', float(ns['R']), ex['rbar'], rel=1e-12)
+    check.near('... and the report\'s mean direction', float(np.rad2deg(ns['m'])), ex['mean'], rel=1e-12)
+winter = [r for r in rows_ex if sea_ex[r] == 'winter']
+exw = call('circular.summary', table=tex, column='dir', rows=winter, freq='f', where=[{'column': 'season', 'value': 'winter'}])
+ns = run_whole(tex, exw['code'], 'a By group with rows left out')
+if 'R' in ns:
+    check('a By group: the where line, then the group\'s rows left out', ('df = df[df["season"] == "winter"]' in exw['code'], 'df = df.drop(index=[' in exw['code']), (True, True))
+    check.near('its code: the group\'s R̄ without its excluded rows', float(ns['R']), exw['rbar'], rel=1e-12)
+for fn, extra, key, what in (('circular.vonmises', {'column': 'dir'}, 'kappa', 'κ'), ('circular.linear', {'y': 'dir', 'x': 'speed'}, 'R2', 'R²'),
+                             ('circular.circular', {'y': 'dir', 'x': 'dir2'}, 'r', 'r'), ('circular.groups', {'y': 'dir', 'x': 'season'}, 'F', 'Watson-Williams F')):
+    res = call(fn, table=tex, rows=rows_ex, freq='f', **extra)
+    ns = run_whole(tex, res['code'], f'{fn} with rows left out')
+    want = {'kappa': res.get('kappa'), 'R2': res.get('r2'), 'r': res.get('r'), 'F': (res.get('ww') or {}).get('F')}[key]
+    if key in ns:
+        check.near(f'{fn}: its code on the whole table gives the report\'s {what}', float(ns[key]), want, rel=1e-8)
+
+# ---- the graphs' matplotlib code, run with Agg on the CSV, against the report's numbers ----------
+PAL = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
+TICKS = [[d / 360, f'{d}°'] for d in (0, 45, 90, 135, 180, 225, 270, 315)]
+tmpdir = tempfile.mkdtemp(prefix='smui-circ-charts-')
+
+
+def figure(code, tid, label):
+    out, err = run_snippet_more(code, frame_of(tid), 'data', tmpdir)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends with plt.show()', code.rstrip().split('\n')[-1], 'plt.show()')
+    check(f'{label}: one figure', len(out['figures']) if out else 0, 1)
+    return out['figures'][0] if out and out['figures'] else None
+
+
+def xy_page(f, r, compass=True):
+    """The page's place on the circle (smui-p-circular.js xy)."""
+    return (r * math.sin(TAU * f), r * math.cos(TAU * f)) if compass else (r * math.cos(TAU * f), r * math.sin(TAU * f))
+
+
+def page_dots(vals, P, compass=True):
+    """The dot plot's dots as the page places them: 72 bins, stacked outward in row order."""
+    fr = [((v % P) / P) for v in vals]
+    idx = [min(71, math.floor(f * 72)) for f in fr]
+    most = max([1] + [idx.count(k) for k in set(idx)])
+    step = min(0.065, 0.55 / most)
+    seen, pos = {}, []
+    for f, k in zip(fr, idx):
+        s_ = seen.get(k, 0)
+        seen[k] = s_ + 1
+        pos.append(xy_page(f, 1.07 + s_ * step, compass))
+    return pos, 1.07 + (most - 1) * step + 0.08
+
+
+def near_pts(a, b, tol=1e-9):
+    return len(a) == len(b) and all(abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol for p, q in zip(a, b))
+
+
+drawn = [r for r in rows_ex if np.isfinite(dir_ex[r]) and fq_ex[r] > 0]      # the dots: each row once
+for compass in (True, False):
+    tag = 'compass' if compass else 'mathematical'
+    plot = {'compass': compass, 'ticks': TICKS, 'bins': 24, 'area': True, 'vm': True}
+    sm_ = call('circular.summary', table=tex, column='dir', rows=rows_ex, freq='f', plot=plot)
+    F = figure(sm_['dot_code'], tex, f'dot plot ({tag})')
+    if F:
+        A = F['axes'][0]
+        pts = A['scatter'][0]['xy'] if A['scatter'] else []
+        want, reach = page_dots([dir_ex[r] for r in drawn], 360.0, compass)
+        check(f'dot plot ({tag}): a dot for each row of the report (Freq draws it once), where the page puts it', near_pts(pts, want), True)
+        check(f'dot plot ({tag}): the dots in the points\' colour', set(A['scatter'][0]['colors']), {'#2f6690ff'})
+        tip = [a for a in A['annotations'] if a['s'] == '']
+        mt = xy_page(sm_['mean'] / 360, sm_['rbar'], compass)
+        check(f'dot plot ({tag}): the mean vector ends at the mean direction, R̄ out', bool(tip) and near_pts([tip[0]['xy']], [mt], 1e-9), True)
+        check(f'dot plot ({tag}): in red', tip[0]['color'] if tip else None, '#b0413e')
+        ci = sm_['ci']['rows'][0]
+        f0, f1 = (ci['lower'] % 360) / 360, (ci['upper'] % 360) / 360
+        f1 = f1 + 1 if f1 < f0 else f1
+        arc = [ln for ln in A['lines'] if len(ln['x']) == 41]
+        check(f'dot plot ({tag}): the von Mises interval as an arc from its lower limit to its upper', bool(arc) and near_pts([(arc[0]['x'][0], arc[0]['y'][0]), (arc[0]['x'][-1], arc[0]['y'][-1])],
+                                                                                                                      [xy_page(f0, 0.97, compass), xy_page(f1, 0.97, compass)], 1e-9), True)
+        circle = [ln for ln in A['lines'] if len(ln['x']) == 181]
+        check(f'dot plot ({tag}): the unit circle', bool(circle) and max(abs(math.hypot(a, b) - 1) for a, b in zip(circle[0]['x'], circle[0]['y'])) < 1e-12, True)
+        labels = [(t['s'], t['xy']) for t in A['annotations'] if t['s']]
+        check(f'dot plot ({tag}): the labels around the circle', [lab for lab, _ in labels], [t for _, t in TICKS])
+        check(f'dot plot ({tag}): at radius 0.8, in their places', near_pts([xy for _, xy in labels], [xy_page(f, 0.8, compass) for f, _ in TICKS]), True)
+        L = max(1.25, reach)
+        check(f'dot plot ({tag}): the range and no axes', (A['xlim'], A['ylim'], A['visible']), ([-L, L], [-L, L], False))
+        check(f'dot plot ({tag}): the title and the size', (A['title'], F['size']), ('dir circular dot plot', [3.4, 3.4]))
+    F = figure(sm_['rose_code'], tex, f'rose diagram ({tag})')
+    if F:
+        A = F['axes'][0]
+        cnt = np.zeros(24)
+        for r in drawn:
+            cnt[min(23, math.floor(((dir_ex[r] % 360) / 360) * 24))] += fq_ex[r]
+        check.near(f'rose ({tag}): the bars are √(the Freq-weighted counts of the 24 bins)', max(abs(b['h'] - w) for b, w in zip(A['bars'], np.sqrt(cnt))) if len(A['bars']) == 24 else 1e9, 0.0, abs_=1e-12)
+        check.near(f'rose ({tag}): each bin a 24th of the turn, from 0', max(abs(b['x'] - TAU * j / 24) + abs(b['w'] - TAU / 24) for j, b in enumerate(A['bars'])) if A['bars'] else 1e9, 0.0, abs_=1e-12)
+        vmr = call('circular.vonmises', table=tex, column='dir', rows=rows_ex, freq='f')
+        top = float(np.sqrt(cnt).max())
+        curve = [ln for ln in A['lines'] if len(ln['x']) == 361]
+        want_r = np.sqrt(vmr['n'] * np.asarray(vmr['curve']['density']) * 360 / 24)
+        check(f'rose ({tag}): the fitted von Mises as counts per bin, the report\'s fit', bool(curve) and close_arr(curve[0]['y'], want_r, 1e-6)
+              and close_arr(curve[0]['x'], np.asarray(vmr['curve']['x']) * TAU / 360, 1e-12), True)
+        mean_ln = [ln for ln in A['lines'] if len(ln['x']) == 2 and ln['color'] == '#b0413eff']
+        check(f'rose ({tag}): the mean direction, R̄ times the longest bar', bool(mean_ln) and close_arr(mean_ln[0]['x'], [np.deg2rad(sm_['mean'])] * 2, 1e-12)
+              and close_arr(mean_ln[0]['y'], [0, sm_['rbar'] * top], 1e-12), True)
+        check.near(f'rose ({tag}): the radial range', A['ylim'][1], top * 1.04, rel=1e-12)
+        check(f'rose ({tag}): the labels around the circle', A['xticklabels'], [t for _, t in TICKS])
+        check(f'rose ({tag}): the title', A['title'], 'dir rose diagram')
+# the rose with the radius the count, 12 bins, no fit
+sm_ = call('circular.summary', table=tex, column='dir', rows=rows_ex, freq='f', plot={'compass': True, 'ticks': TICKS, 'bins': 12, 'area': False, 'vm': False})
+F = figure(sm_['rose_code'], tex, 'rose diagram (the radius the count)')
+if F:
+    A = F['axes'][0]
+    cnt = np.zeros(12)
+    for r in drawn:
+        cnt[min(11, math.floor(((dir_ex[r] % 360) / 360) * 12))] += fq_ex[r]
+    check('rose (the radius the count): 12 bars, the counts, no curve', ([b['h'] for b in A['bars']], [ln for ln in A['lines'] if len(ln['x']) == 361]), (cnt.tolist(), []))
+# grouped by season: the dots in the groups' colours, each group's mean vector
+sm_ = call('circular.summary', table=tex, column='dir', rows=rows_ex, freq='f', plot={'compass': True, 'ticks': TICKS, 'bins': 24, 'area': True, 'vm': False,
+                                                                                         'group': 'season', 'labels': ['Winter', 'Summer']})
+gr_ = call('circular.groups', table=tex, y='dir', x='season', rows=rows_ex, freq='f')
+F = figure(sm_['dot_code'], tex, 'dot plot by season')
+if F:
+    A = F['axes'][0]
+    pos, _ = page_dots([dir_ex[r] for r in drawn], 360.0)
+    for i, lv in enumerate(['winter', 'summer']):
+        sc_ = [x for x in A['scatter'] if x['label'] == ['Winter', 'Summer'][i]]
+        want = [p for p, r in zip(pos, drawn) if sea_ex[r] == lv]
+        check(f'dot plot by season: the {lv} dots, where the page puts them (a row without a season keeps its place, undrawn)', bool(sc_) and near_pts(sc_[0]['xy'], want), True)
+        check(f'dot plot by season: {lv} in the palette\'s colour {i + 1}', set(sc_[0]['colors']) if sc_ else None, {PAL[i] + 'ff'})
+        g = [x for x in gr_['groups'] if x['level'] == lv][0]
+        tips = [a for a in A['annotations'] if a['s'] == '' and a['color'] == PAL[i]]
+        check(f'dot plot by season: the {lv} mean vector, the groups\' report', bool(tips) and near_pts([tips[0]['xy']], [xy_page(g['mean'] / 360, g['rbar'])], 1e-9), True)
+    check('dot plot by season: the legend names the groups as the page does', F['legend'], ['Winter', 'Summer'])
+    check('dot plot by season: no overall mean vector, no interval', ([a for a in A['annotations'] if a['s'] == '' and a['color'] == '#b0413e'], [ln for ln in A['lines'] if len(ln['x']) == 41]), ([], []))
+    check('dot plot by season: the size', F['size'], [3.4, 3.64])
+# an angle by a continuous X, and by another angle
+both = [r for r in rows_ex if fq_ex[r] > 0]
+for fn, xname, sz, two in (('circular.linear', 'speed', [3.8, 3.0], False), ('circular.circular', 'dir2', [3.4, 3.2], True)):
+    res = call(fn, table=tex, y='dir', x=xname, rows=rows_ex, freq='f', plot={'ticks': TICKS})
+    F = figure(res['plot_code'], tex, f'dir by {xname}')
+    if F:
+        A = F['axes'][0]
+        xv = {'speed': sp_ex, 'dir2': dir2_ex}[xname]
+        want = [((xv[r] % 360) if two else xv[r], dir_ex[r] % 360) for r in both]
+        check(f'dir by {xname}: a point for each row (Freq draws it once), the angle on its circle', near_pts(A['scatter'][0]['xy'] if A['scatter'] else [], want, 1e-12), True)
+        check(f'dir by {xname}: the angle axis 0 to 360 with the circle\'s labels', (A['ylim'], A['yticklabels'], A['yticks']), ([0.0, 360.0], [t for _, t in TICKS], [360 * f for f, _ in TICKS]))
+        if two:
+            check(f'dir by {xname}: the other angle too', (A['xlim'], A['xticklabels']), ([0.0, 360.0], [t for _, t in TICKS]))
+        check(f'dir by {xname}: the titles and the size', (A['xlabel'], A['ylabel'], A['title'], F['size']), (xname, 'dir', f'dir by {xname}', sz))
 
 sys.exit(check.done())

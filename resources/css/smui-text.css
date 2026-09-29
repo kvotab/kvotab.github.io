@@ -62,3 +62,6 @@
   .sm-tx-list { max-height: 18em; width: 100%; }
   .sm-tx-topics { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---- a graph with its matplotlib code under it ---- */
+.sm-tx-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

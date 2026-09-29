@@ -1548,3 +1548,508 @@ def tails(table, columns, rows=None, fits=None, pair=None):
             Cqq = cdf(f['family'], np.column_stack([q, q]), list(f.get('params') or []))
         out['fits'].append({'family': f['family'], 'label': LABEL.get(f['family'], f['family']), 'values': conc(Cqq).tolist()})
     return out
+
+
+# ---- the graphs as matplotlib code ------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from a
+# CSV export of the table (the notebook runs it): the report's rows, the
+# pseudo-observations, the copula fitted as the report fits it (the functions
+# it runs are in the code), the margins fitted as the Margins code fits them,
+# the light theme's colours, the graph's size at 100 pixels an inch. The page
+# sends what it chose (the family shown, the pair, the scale, the bins, the
+# simulation's size and seed); copula.plot_code writes the code of one graph.
+CONTOUR, SIM, POINT, BAR, MUTED, TEXT, SURFACE = '#b0413e', '#1baf7a', '#2f6690', '#8fa9c2', '#786b5d', '#352921', '#fcf7f2'
+HDR_WIDTH = (2.2, 1.7, 1.25, 1)
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+_SM_ALL = {'clayton': 'ClaytonCopula', 'gumbel': 'GumbelCopula', 'frank': 'FrankCopula'}
+
+
+def _pt(px):
+    return f'{px * PX:.3g}'
+
+
+def _area(px):
+    return f'{(px * PX) ** 2:.3g}'
+
+
+def _page_marker(n):
+    """The page's marker size (diameter, pixels) for n points."""
+    return 3 if n > 2000 else 4 if n > 600 else 5.5
+
+
+def _lobs_pair(key):
+    """The log density of family key at the rows of w for a pair of columns, a lambda of q and w."""
+    if key == 'indep':
+        return 'lambda q, w: np.zeros(len(w))   # the independence copula: density 1'
+    return _lobs_text(key, 2)
+
+
+def _value_lines(key, method, k):
+    """The code that fits family key to the pseudo-observations u as the
+    report does (copula.fit_family), ending in params, its parameters."""
+    lab = LABEL[key]
+    pairs = _pairs(k)
+    if key == 'indep':
+        return ['params = []   # the independence copula has no parameter']
+    if key in ('gaussian', 't') and k > 2:
+        taus = [f'taus = [stats.kendalltau(x[:, i], x[:, j]).statistic for i, j in {pairs}]   # Kendall\'s τ of each pair']
+        tau_R = ['R = corr_matrix([GaussianCopula().corr_from_tau(t) for t in taus], k)   # the correlations from them (statsmodels corr_from_tau)',
+                 'if np.min(np.linalg.eigvalsh(R)) <= 1e-8:   # made positive definite when they are not',
+                 '    from statsmodels.stats.correlation_tools import corr_nearest',
+                 '    R = corr_nearest(R, threshold=1e-6)']
+        if method == 'itau':
+            c = [f'# {lab}: the correlations from Kendall\'s τ'] + taus + tau_R
+            if key == 'gaussian':
+                return c + ['params = list(R[np.triu_indices(k, 1)])']
+            return c + [f'nu = float(np.exp(fit1(lambda s: -t_logpdf(u, R, np.exp(s)).sum(), 0.0, {LOG_NU!r}, 16)))   # ν by maximum pseudo-likelihood, the correlations held',
+                        'params = list(R[np.triu_indices(k, 1)]) + [nu]']
+        if key == 'gaussian':
+            return [f'# {lab}: maximum pseudo-likelihood over the canonical partial correlations (BFGS), from the normal scores\' correlations',
+                    'y0 = cpc_from_corr(np.corrcoef(stats.norm.ppf(u), rowvar=False))',
+                    "res = optimize.minimize(lambda y: -gauss_logpdf(u, corr_from_cpc(y, k)).sum(), y0, method='BFGS', options={'gtol': 1e-7, 'maxiter': 2000})",
+                    'R = corr_from_cpc(res.x, k)', 'params = list(R[np.triu_indices(k, 1)])']
+        return [f'# {lab}: maximum pseudo-likelihood over the canonical partial correlations and log ν (L-BFGS-B), from the τ correlations'] + taus + [
+            ln.replace('R = corr_matrix', 'R0 = corr_matrix').replace('eigvalsh(R)', 'eigvalsh(R0)').replace('    R = corr_nearest(R,', '    R0 = corr_nearest(R0,') for ln in tau_R] + [
+            'grid = [1.5, 3.0, 6.0, 12.0, 25.0, 50.0, 100.0]',
+            'nu0 = grid[int(np.argmax([t_logpdf(u, R0, g).sum() for g in grid]))]',
+            'm = k * (k - 1) // 2',
+            'f = lambda v: -t_logpdf(u, corr_from_cpc(v[:-1], k), np.exp(v[-1])).sum()',
+            f"res = optimize.minimize(f, np.r_[cpc_from_corr(R0), math.log(nu0)], method='L-BFGS-B', bounds=[(None, None)] * m + [(0.0, {LOG_NU!r})], options={{'ftol': 1e-13, 'gtol': 1e-8, 'maxiter': 3000}})",
+            'R, nu = corr_from_cpc(res.x[:-1], k), float(np.exp(res.x[-1]))',
+            'params = list(R[np.triu_indices(k, 1)]) + [nu]']
+    if method == 'itau':
+        c = [f'# {lab}: from Kendall\'s τ', 'tau = stats.kendalltau(x[:, 0], x[:, 1]).statistic']
+        if key == 'gaussian':
+            return c + ['params = [float(GaussianCopula().corr_from_tau(tau))]   # ρ (statsmodels corr_from_tau)']
+        if key == 't':
+            return c + ['r = float(GaussianCopula().corr_from_tau(tau)); R = [[1, r], [r, 1]]   # ρ from τ',
+                        f'nu = float(np.exp(fit1(lambda s: -t_logpdf(u, R, np.exp(s)).sum(), 0.0, {LOG_NU!r}, 16)))   # ν by maximum pseudo-likelihood, ρ held',
+                        'params = [r, nu]']
+        base = BASE[key]
+        if base == 'frank':
+            return c + ['params = [float(np.sign(tau) * FrankCopula().theta_from_tau(abs(tau)))]   # θ (statsmodels theta_from_tau; by symmetry for a negative τ)']
+        return c + [f'params = [float({_SM_ALL[base]}().theta_from_tau(abs(tau)))]   # θ (statsmodels theta_from_tau)']
+    if key == 'gaussian':
+        lo, hi = S_BOUNDS['gaussian']
+        return [f'# {lab}: maximum pseudo-likelihood over atanh ρ',
+                f'params = [float(np.tanh(fit1(lambda a: -gauss_logpdf(u, [[1, np.tanh(a)], [np.tanh(a), 1]]).sum(), {lo!r}, {hi!r})))]']
+    if key == 't':
+        return [f'# {lab}: maximum pseudo-likelihood; for each ν the best ρ (t_profile), then the best ν over log ν',
+                f'nu = float(np.exp(fit1(lambda s: -t_profile(u, np.exp(s))[0], 0.0, {LOG_NU!r}, 16)))',
+                '_, r = t_profile(u, nu)', 'params = [r, nu]']
+    base = BASE[key]
+    lo, hi = S_BOUNDS[base]
+    back = S_BACK[base]
+    return [f'# {lab}: maximum pseudo-likelihood over {S_NAME[base]}',
+            f'lobs = {_lobs_text(key, k)}   # the log density of each row',
+            f'params = [float({back.format(f"fit1(lambda s: -lobs([{back.format(chr(115))}], u).sum(), {lo!r}, {hi!r})")})]']
+
+
+def _helpers_for(keys, method, k, extra=()):
+    """The source of the functions the code uses, the report's own."""
+    need = []
+
+    def add(*fns):
+        for f in fns:
+            if f not in need:
+                need.append(f)
+    for key in keys:
+        if key == 'indep':
+            continue
+        if (method == 'mpl' and (k == 2 or key not in ('gaussian', 't'))) or (method == 'itau' and key == 't'):
+            add(fit1)
+        if ROT.get(key):
+            add(rotate)
+        if BASE.get(key) == 'frank':
+            add(frank_logpdf)
+        if key == 'gaussian':
+            add(gauss_logpdf)
+        if key == 't':
+            add(t_logpdf)
+            if method == 'mpl' and k == 2:
+                add(t_profile)
+    if k > 2:
+        add(corr_matrix, corr_from_cpc, cpc_from_corr)
+    add(*extra)
+    return need
+
+
+def _pseudo_head(table, table_name, rows, columns, imports=()):
+    c = [code_head(table_name, ['import math', 'import matplotlib.pyplot as plt', 'from scipy import optimize, special, stats',
+                                'from statsmodels.distributions.copula.api import ClaytonCopula, FrankCopula, GaussianCopula, GumbelCopula, IndependenceCopula, StudentTCopula',
+                                *imports])] + _rows_lines(table, rows)
+    c += [f'names = {json.dumps(columns)}',
+          'x = df[names].dropna().to_numpy()   # the rows with a value in every column',
+          'u = stats.rankdata(x, axis=0) / (len(x) + 1)   # pseudo-observations: the ranks (ties averaged) over n + 1',
+          'n, k = u.shape']
+    return c
+
+
+def _pair_params_line(key, i, j, k):
+    """q: the parameters of the fit's bivariate margin for the pair (i, j)."""
+    if key in ('gaussian', 't') and k > 2:
+        q = _pairs(k).index((i, j))
+        return f'q = [params[{q}]' + (', params[-1]]' if key == 't' else ']') + f'   # the fit\'s margin for the pair ({i}, {j})'
+    return 'q = params'
+
+
+def _contour_lines(kind_var='kind', labels=True, target='ax', thin=False):
+    """Draw the contour lines of z on the grid (gx, gy) at levels, as the page
+    styles them: density levels (the unit square) thicker as they grow, below
+    1 dotted, labelled; highest-density levels 50% thickest, 90% and 95%
+    dotted. thin: the scatterplot matrix's, 0.7 of those, at least 0.8 pixels."""
+    c = ['for q_, lv in enumerate(levels):',
+         f'    if {kind_var} == "density":',
+         '        width, style = (1 + 0.4 * np.log2(lv) if lv > 1 else 1), ("dotted" if lv < 1 else "solid")',
+         '    else:',
+         f'        width, style = {list(HDR_WIDTH)}[q_], ("solid" if q_ < 2 else "dotted")']
+    if thin:
+        c.append('    width = max(0.8, 0.7 * width)   # thinner in the matrix')
+    c.append(f'    cs = {target}.contour(gx, gy, z, levels=[lv], colors="{CONTOUR}", linewidths=width * {PX}, linestyles=style)')
+    if labels:
+        c += [f'    if {kind_var} == "density":',
+              f'        {target}.clabel(cs, fmt=lambda v: f"{{v:.3g}}", fontsize={_pt(9.5)}, colors="{CONTOUR}")']
+    return c
+
+
+def _density_lines(scale, m):
+    """z, the fitted copula's density (the pair's margin, q) on a grid, and its levels, as copula.density makes them."""
+    if scale == 'normal':
+        return [f'gx = gy = np.linspace(-3.3, 3.3, {m})   # normal scores',
+                'Z1, Z2 = np.meshgrid(gx, gy)',
+                'lz = lobs2(q, stats.norm.cdf(np.column_stack([Z1.ravel(), Z2.ravel()]))) + stats.norm.logpdf(Z1.ravel()) + stats.norm.logpdf(Z2.ravel())',
+                f'z = np.exp(lz).reshape({m}, {m}); z[~np.isfinite(z)] = np.nan',
+                'kind = "hdr"',
+                'levels = [] if np.nanmax(z) - np.nanmin(z) < 1e-9 * max(1.0, np.nanmax(z)) else [lv["level"] for lv in _hdr(z, (gx[1] - gx[0]) ** 2)]   # the regions holding 50, 75, 90 and 95%']
+    return [f'gx = gy = (np.arange({m}) + 0.5) / {m}   # the unit square',
+            'U, V = np.meshgrid(gx, gy)',
+            f'z = np.exp(lobs2(q, np.column_stack([U.ravel(), V.ravel()]))).reshape({m}, {m}); z[~np.isfinite(z)] = np.nan',
+            'kind = "density"',
+            'levels = [] if np.nanmax(z) - np.nanmin(z) < 1e-9 * max(1.0, np.nanmax(z)) else [lv["level"] for lv in _unit_levels(z)]   # 2, 4, 8, ... and 1/2, 1/4 times as likely as independence']
+
+
+def _unit_source():
+    return [f'UNIT_LEVELS = {UNIT_LEVELS!r}', '', _src(_unit_levels)]
+
+
+def _pseudo_code(table, table_name, rows, columns, method, plot):
+    key = plot.get('family') or 'indep'
+    i, j = (plot.get('pair') or [0, 1])[:2]
+    scale = 'normal' if plot.get('scale') == 'normal' else 'uniform'
+    contours = plot.get('contours', True) is not False and key != 'indep'
+    k = len(columns)
+    c = _pseudo_head(table, table_name, rows, columns)
+    helpers = _helpers_for([key], method, k, [_hdr] if scale == 'normal' else [])
+    c += ([''] + [_src(*helpers)] if helpers else []) + ([''] + _unit_source() if scale != 'normal' and contours else []) + ['']
+    c += _value_lines(key, method, k)
+    c += [f'i, j = {i}, {j}   # the pair drawn: {columns[i]} across, {columns[j]} up']
+    if contours:
+        c += [_pair_params_line(key, i, j, k), f'lobs2 = {_lobs_pair(key)}   # the log density of the pair\'s copula'] + _density_lines(scale, 60)
+    tx = 'stats.norm.ppf' if scale == 'normal' else ''
+    rng = [-3.3, 3.3] if scale == 'normal' else [0, 1]
+    suffix = 'normal score' if scale == 'normal' else 'rank/(n + 1)'
+    c += ['fig, ax = plt.subplots(figsize=(3.8, 3.72), layout="constrained")',
+          f'ax.scatter({tx}(u[:, i]), {tx}(u[:, j]), s={_area(_page_marker(plot.get("n") or 100))}, color="{POINT}")' if tx else
+          f'ax.scatter(u[:, i], u[:, j], s={_area(_page_marker(plot.get("n") or 100))}, color="{POINT}")']
+    if contours:
+        c += _contour_lines()
+    c += [f'ax.set_xlim({rng[0]}, {rng[1]}); ax.set_ylim({rng[0]}, {rng[1]})',
+          f'ax.set_xlabel(f"{{names[i]}}: {suffix}"); ax.set_ylabel(f"{{names[j]}}: {suffix}")',
+          'ax.set_title(f"Pseudo-observations of {names[i]} and {names[j]}")', 'plt.show()']
+    return '\n'.join(c)
+
+
+# A margin fitted as the Margins code fits it (scipy's maximum likelihood; the
+# normal's σ the sample standard deviation, as JMP reports it), as a frozen
+# scipy distribution; the empirical margin as the report's Empirical.
+_MARGIN_FIT = {
+    'normal': ['return stats.norm(xf.mean(), xf.std(ddof=1))   # σ: the sample standard deviation, as JMP reports it'],
+    'lognormal': ['s_, _, scale_ = stats.lognorm.fit(xf, floc=0)', 'return stats.lognorm(s_, scale=scale_)'],
+    'weibull': ['c_, _, scale_ = stats.weibull_min.fit(xf, floc=0)', 'return stats.weibull_min(c_, scale=scale_)'],
+    'exponential': ['_, scale_ = stats.expon.fit(xf, floc=0)', 'return stats.expon(scale=scale_)'],
+    'gamma': ['a_, _, scale_ = stats.gamma.fit(xf, floc=0)', 'return stats.gamma(a_, scale=scale_)'],
+    'beta': ['a_, b_, _, _ = stats.beta.fit(xf, floc=0, fscale=1)', 'return stats.beta(a_, b_)'],
+    'logistic': ['return stats.logistic(*stats.logistic.fit(xf))'],
+    't': ['df_, loc_, scale_ = stats.t.fit(xf)',
+          'nll = lambda p: -np.mean(stats.t.logpdf(xf, p[2], p[0], p[1])) if p[1] > 0 and 0 < p[2] <= 1000 else 1e300   # ν at most 1000',
+          'p = optimize.minimize(nll, [loc_, scale_, min(df_, 200)], method="Nelder-Mead", options={"maxiter": 4000, "xatol": 1e-4, "fatol": 1e-4}).x   # the likelihood maximised, as the report\'s fit',
+          'loc_, scale_, df_ = optimize.minimize(nll, p, method="BFGS", options={"maxiter": 200}).x',
+          'return stats.t(df_, loc_, scale_)'],
+    'empirical': ['return Empirical(xf)   # the empirical distribution: its cdf through i/(n + 1) at the sorted values'],
+}
+
+
+def _margin_lines(dists):
+    """def fit_margin(xf, dist): a column's margin, fitted."""
+    c = ['def fit_margin(xf, dist):   # a column\'s margin, fitted as the Margins code fits it']
+    first = True
+    for d in dict.fromkeys(dists):
+        c.append(f'    {"if" if first else "elif"} dist == {json.dumps(d)}:')
+        c += ['        ' + ln for ln in _MARGIN_FIT[d]]
+        first = False
+    c.append('    raise ValueError(dist)')
+    return c
+
+
+def _joint_code(table, table_name, rows, columns, method, plot):
+    key = plot.get('family') or 'indep'
+    i, j = (plot.get('pair') or [0, 1])[:2]
+    dists = [(plot.get('margins') or {}).get(str(c)) or (plot.get('margins') or {}).get(c) or 'empirical' for c in (i, j)]
+    k = len(columns)
+    contours = plot.get('contours', True) is not False
+    c = _pseudo_head(table, table_name, rows, columns)
+    helpers = _helpers_for([key], method, k, [_hdr])
+    if 'empirical' in dists:
+        helpers.append(Empirical)
+    c += [''] + [_src(*helpers)] + [''] + _value_lines(key, method, k)
+    c += [f'i, j = {i}, {j}   # the pair drawn: {columns[i]} across, {columns[j]} up', ''] + _margin_lines(dists) + [
+          '',
+          f'F = [fit_margin(x[:, i], {json.dumps(dists[0])}), fit_margin(x[:, j], {json.dumps(dists[1])})]   # the margins (Margins)']
+    if contours:
+        c += [_pair_params_line(key, i, j, k), f'lobs2 = {_lobs_pair(key)}   # the log density of the pair\'s copula',
+              'grids = []',
+              'for q_, col in enumerate((i, j)):   # each column\'s range and a tenth more, inside its margin\'s support',
+              '    lo, hi = x[:, col].min(), x[:, col].max()',
+              '    pad = 0.1 * (hi - lo if hi > lo else abs(hi) + 1); span = (hi - lo) or 1.0',
+              '    a, b = F[q_].support()',
+              '    grids.append(np.linspace(max(lo - pad, a + 1e-6 * span if np.isfinite(a) else -np.inf), min(hi + pad, b - 1e-6 * span if np.isfinite(b) else np.inf), 60))',
+              'gx, gy = grids',
+              'GX, GY = np.meshgrid(gx, gy)',
+              'uv = np.clip(np.column_stack([F[0].cdf(GX.ravel()), F[1].cdf(GY.ravel())]), 1e-12, 1 - 1e-12)',
+              'z = np.exp(lobs2(q, uv) + F[0].logpdf(GX.ravel()) + F[1].logpdf(GY.ravel())).reshape(GX.shape)   # c(F1(x), F2(y)) f1(x) f2(y)',
+              'z[~np.isfinite(z)] = np.nan',
+              'kind = "hdr"',
+              'levels = [lv["level"] for lv in _hdr(np.nan_to_num(z), (gx[1] - gx[0]) * (gy[1] - gy[0]))]   # the regions holding 50, 75, 90 and 95%']
+    c += ['fig, ax = plt.subplots(figsize=(3.8, 3.72), layout="constrained")',
+          f'ax.scatter(x[:, i], x[:, j], s={_area(_page_marker(plot.get("n") or 100))}, color="{POINT}")']
+    if contours:
+        c += _contour_lines(labels=False)
+    c += ['ax.set_xlabel(names[i]); ax.set_ylabel(names[j])',
+          'ax.set_title(f"{names[i]} and {names[j]} with the joint model")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _splom_code(table, table_name, rows, columns, method, plot):
+    key = plot.get('family') or 'indep'
+    scale = 'normal' if plot.get('scale') == 'normal' else 'uniform'
+    contours = plot.get('contours', True) is not False and key != 'indep'
+    k = len(columns)
+    size = int(plot.get('size') or 120)
+    g = k - 1
+    W, H = size * g + 70, size * g + 56
+    n = int(plot.get('n') or 100)
+    c = _pseudo_head(table, table_name, rows, columns)
+    helpers = _helpers_for([key], method, k, [_hdr] if scale == 'normal' else [])
+    c += ([''] + [_src(*helpers)] if helpers else []) + ([''] + _unit_source() if scale != 'normal' and contours else []) + ['']
+    c += _value_lines(key, method, k)
+    rng = [-3.3, 3.3] if scale == 'normal' else [0, 1]
+    tx = 'stats.norm.ppf(u)' if scale == 'normal' else 'u'
+    c += [f'w = {tx}   # the points on the {"normal-score" if scale == "normal" else "uniform"} scale',
+          f'fig, axs = plt.subplots(k - 1, k - 1, figsize=({W / 100:g}, {H / 100:g}), layout="constrained", squeeze=False)',
+          'for r in range(1, k):',
+          '    for c in range(k - 1):',
+          '        ax = axs[r - 1, c]',
+          '        if c >= r:',
+          '            ax.set_visible(False)   # the lower triangle only',
+          '            continue',
+          f'        ax.scatter(w[:, c], w[:, r], s={_area(2.5 if n > 500 else 3.5)}, color="{POINT}")']
+    if contours:
+        if key in ('gaussian', 't') and k > 2:
+            c.append(f'        q = [params[{_pairs(k)}.index((c, r))]' + (', params[-1]]' if key == 't' else ']') + '   # the fit\'s margin for the pair')
+        else:
+            c.append('        q = params')
+        c.append(f'        lobs2 = {_lobs_pair(key)}')
+        c += ['        ' + ln for ln in _density_lines(scale, 40)]
+        c += ['        ' + ln for ln in _contour_lines(labels=False, thin=True)]
+    c += [f'        ax.set_xlim({rng[0]}, {rng[1]}); ax.set_ylim({rng[0]}, {rng[1]})',
+          '        if r == k - 1:',
+          f'            ax.set_xlabel(names[c], fontsize={_pt(10.5)})',
+          '        else:',
+          '            ax.set_xticklabels([])',
+          '        if c == 0:',
+          f'            ax.set_ylabel(names[r], fontsize={_pt(10.5)})',
+          '        else:',
+          '            ax.set_yticklabels([])',
+          'fig.suptitle("Scatterplot matrix of the pseudo-observations")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _cdf_line(key, name='C'):
+    """C(w) of the bivariate family key with parameters q, as the report computes it (copula.cdf)."""
+    if key == 'gaussian':
+        return f'{name} = lambda w: np.atleast_1d(GaussianCopula(corr=[[1, q[0]], [q[0], 1]]).cdf(w))'
+    if key == 't':
+        return f'{name} = lambda w: t2_cdf(w, q[0], q[1])   # statsmodels\' StudentTCopula has no cdf: a quadrature'
+    base, rot = BASE[key], ROT[key]
+    if base == 'frank':
+        return f'{name} = lambda w: frank_cdf(w, q[0])'
+    f = f'np.clip({_SM_CLASS[base]}().cdf({{}}, args=(q[0],)), 0.0, 1.0)'
+    if rot == 0:
+        return f'{name} = lambda w: {f.format("w")}'
+    if rot == 90:
+        return f'{name} = lambda w: w[:, 1] - {f.format("np.column_stack([1 - w[:, 0], w[:, 1]])")}   # turned by 90°'
+    if rot == 180:
+        return f'{name} = lambda w: w[:, 0] + w[:, 1] - 1 + {f.format("1 - w")}   # turned by 180°'
+    return f'{name} = lambda w: w[:, 0] - {f.format("np.column_stack([w[:, 0], 1 - w[:, 1]])")}   # turned by 270°'
+
+
+def _tails_code(table, table_name, rows, columns, method, plot):
+    fams = [f for f in (plot.get('fits') or []) if f in ORDER and f != 'indep']
+    i, j = (plot.get('pair') or [0, 1])[:2]
+    k = len(columns)
+    extra = []
+    if 't' in fams:
+        extra += [_cos_nodes, t2_cdf]
+    if any(BASE[f] == 'frank' for f in fams):
+        extra.append(frank_cdf)
+    c = _pseudo_head(table, table_name, rows, columns)
+    helpers = _helpers_for(fams, method, k, extra)
+    c += ([''] + [_src(*helpers)] if helpers else [])
+    if 't' in fams:
+        c.append('_T_NODES = _cos_nodes(64)')
+    c += ['', f'i, j = {i}, {j}   # the pair: {columns[i]} and {columns[j]}',
+          'qs = np.round(np.arange(0.02, 0.99, 0.01), 2)',
+          'lo = qs <= 0.5',
+          'w = stats.rankdata(x[:, [i, j]], axis=0) / (len(x) + 1)   # the pair\'s pseudo-observations',
+          'below = np.array([np.mean((w[:, 0] <= a) & (w[:, 1] <= a)) for a in qs])',
+          'above = np.array([np.mean((w[:, 0] > a) & (w[:, 1] > a)) for a in qs])',
+          'data_curve = np.where(lo, below / qs, above / (1 - qs))   # the data\'s share of both at or below q, over q; both above, over 1 − q',
+          'curves = {}   # each fitted copula\'s C(q, q)/q and (1 − 2q + C(q, q))/(1 − q)']
+    for key in fams:
+        c += [''] + _value_lines(key, method, k) + [_pair_params_line(key, i, j, k), _cdf_line(key),
+              f'Cqq = C(np.column_stack([qs, qs]))',
+              f'curves[{json.dumps(LABEL[key])}] = np.where(lo, Cqq / qs, (1 - 2 * qs + Cqq) / (1 - qs))']
+    per = min(4, max(1, len(fams)))
+    rows_n = max(1, -(-len(fams) // per))
+    W, H = min(190 * per + 70, 840), 150 * rows_n + 60
+    c += ['', f'fig, axs = plt.subplots({rows_n}, {per}, figsize=({W / 100:g}, {H / 100:g}), layout="constrained", sharex=True, sharey=True, squeeze=False)',
+          'for ax in axs.ravel()[len(curves):]:',
+          '    ax.set_visible(False)',
+          'for ax, (label, curve) in zip(axs.ravel(), curves.items()):   # a panel for each copula, the data\'s dots in each',
+          f'    ax.scatter(qs, data_curve, s={_area(3.5)}, color="{POINT}", label="Data")',
+          f'    ax.plot(qs, curve, color="{CONTOUR}", linewidth={_pt(2)}, label=label)',
+          f'    ax.axvline(0.5, color="{MUTED}", linewidth={_pt(0.8)}, linestyle=":")',
+          f'    ax.set_title(label, fontsize={_pt(10.5)})',
+          '    ax.set_xlim(0, 1); ax.set_ylim(0, 1.02)',
+          f'for ax in axs[-1]:', '    ax.set_xlabel("q")',
+          'fig.suptitle(f"Tail concentration of {names[i]} and {names[j]}")', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _margin_graph_code(table, table_name, rows, columns, plot):
+    col = int(plot.get('column') or 0)
+    dist = plot.get('dist') or 'empirical'
+    b = plot.get('bins') or {'start': 0.0, 'end': 1.0, 'size': 1.0}
+    start, end, size = float(b['start']), float(b['end']), float(b['size'])
+    nb = max(1, int(round((end - start) / size)))
+    c = [code_head(table_name, ['import math', 'import matplotlib.pyplot as plt', 'from scipy import optimize, stats'])] + _rows_lines(table, rows)
+    c += [f'names = {json.dumps(columns)}',
+          'x = df[names].dropna().to_numpy()   # the rows with a value in every column, as the copula uses',
+          f'xf = x[:, {col}]   # {columns[col]}']
+    if dist == 'empirical':
+        c += ['kde = stats.gaussian_kde(xf)   # the empirical margin: its curve a kernel density estimate (Scott\'s bandwidth)',
+              'bw = kde.factor * np.std(xf, ddof=1)', 'g = np.linspace(xf.min() - 3 * bw, xf.max() + 3 * bw, 200)', 'pdf = kde(g)']
+    else:
+        c += [''] + _margin_lines([dist]) + ['', f'F = fit_margin(xf, {json.dumps(dist)})',
+              'pad = 0.08 * (xf.max() - xf.min() if xf.max() > xf.min() else abs(xf.max()) + 1)']
+        if dist == 'beta':
+            c.append('g = np.linspace(1e-6, 1 - 1e-6, 200)')
+        elif dist in ('lognormal', 'weibull', 'exponential', 'gamma'):
+            c.append('g = np.linspace(max(xf.min() - pad, 1e-9), xf.max() + pad, 200)')
+        else:
+            c.append('g = np.linspace(xf.min() - pad, xf.max() + pad, 200)')
+        c.append('pdf = F.pdf(g)')
+    c += [f'start, end, size, nb = {start!r}, {end!r}, {size!r}, {nb}   # the page\'s bins',
+          'counts = np.bincount(np.clip(np.floor((xf - start) / size + 1e-9), 0, nb - 1).astype(int), minlength=nb)',
+          'fig, ax = plt.subplots(figsize=(3.3, 2.4), layout="constrained")',
+          f'ax.bar(start + (np.arange(nb) + 0.5) * size, counts, width=size, color="{BAR}", edgecolor="{SURFACE}", linewidth={_pt(0.8)})',
+          f'ax.plot(g, pdf * len(xf) * size, color="{CONTOUR}", linewidth={_pt(2)})   # the margin\'s density as counts per bin',
+          'ax.set_ylim(bottom=0)', f'ax.set_xlabel({json.dumps(columns[col])})', 'ax.set_ylabel("Count")',
+          f'ax.set_title({json.dumps(f"{columns[col]} histogram with its margin")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _rvs_var_text(family, k):
+    """Draws of the fitted copula (its parameters params) as Python, rng the generator."""
+    if family == 'indep':
+        return f'IndependenceCopula(k_dim={k}).rvs(n_sim, random_state=rng)'
+    if family == 'gaussian':
+        return f'GaussianCopula(corr=corr_matrix(params, {k}), k_dim={k}).rvs(n_sim, random_state=rng)'
+    if family == 't':
+        return f'StudentTCopula(corr=corr_matrix(params[:-1], {k}), df=params[-1], k_dim={k}).rvs(n_sim, random_state=rng)'
+    base, rot = BASE[family], ROT[family]
+    if base == 'frank':
+        return 'frank_rvs(n_sim, params[0], rng)'
+    if base == 'gumbel':
+        d = 'IndependenceCopula().rvs(n_sim, random_state=rng) if params[0] <= 1 + 1e-9 else GumbelCopula(theta=params[0]).rvs(n_sim, random_state=rng)'
+        return f'rotate({d}, {rot})' if rot else d
+    d = 'ClaytonCopula(theta=params[0]).rvs(n_sim, random_state=rng)'
+    return f'rotate({d}, {rot})' if rot else d
+
+
+def _simulate_graph_code(table, table_name, rows, columns, method, plot):
+    key = plot.get('family') or 'indep'
+    i, j = (plot.get('pair') or [0, 1])[:2]
+    k = len(columns)
+    uniform = plot.get('scale') == 'uniform'
+    n_sim, seed = int(plot.get('n') or 100), int(plot.get('seed') or 0)
+    dists = [(plot.get('margins') or {}).get(str(c)) or 'empirical' for c in range(k)]
+    extra = []
+    if key in ('gaussian', 't'):
+        extra.append(corr_matrix)
+    if BASE.get(key) == 'frank':
+        extra += [frank_ppfcond, frank_rvs]
+    if ROT.get(key):
+        extra.append(rotate)
+    c = _pseudo_head(table, table_name, rows, columns)
+    helpers = _helpers_for([key], method, k, extra)
+    c += ([''] + [_src(*helpers)] if helpers else []) + [''] + _value_lines(key, method, k)
+    c += [f'n_sim, rng = {n_sim}, np.random.default_rng({seed})   # the page\'s number of draws and seed (Simulate…)',
+          f'sim = {_rvs_var_text(key, k)}   # the copula ({LABEL[key]})']
+    if not uniform:
+        fit = [d for d in dists if d != 'empirical']
+        if fit:
+            c += [''] + _margin_lines(fit) + ['']
+        ppf = []
+        for q in range(k):
+            if dists[q] == 'empirical':
+                ppf.append(f'lambda p: np.quantile(x[:, {q}], p, method="weibull"),   # {columns[q]}: empirical')
+            else:
+                ppf.append(f'fit_margin(x[:, {q}], {json.dumps(dists[q])}).ppf,   # {columns[q]}')
+        c.append('ppf = [' + '\n       '.join(ppf) + '\n]')
+        c.append('# the margins\' quantiles of the copula\'s draws, as statsmodels\' CopulaDistribution.rvs makes them')
+        c.append('sim = np.column_stack([f(0.5 + (1 - 1e-10) * (sim[:, c] - 0.5)) for c, f in enumerate(ppf)])')
+    size = _page_marker(n_sim)
+    c += [f'i, j = {i}, {j}   # the pair drawn: {columns[i]} across, {columns[j]} up',
+          'obs = u   # the pseudo-observations' if uniform else 'obs = x   # the data',
+          'fig, ax = plt.subplots(figsize=(4.2, 4.0), layout="constrained")',
+          f'ax.scatter(sim[:, i], sim[:, j], s={_area(max(3, size - 0.5))}, marker="x", color="{SIM}", linewidths={_pt(1.2)}, label="Simulated")',
+          f'ax.scatter(obs[:, i], obs[:, j], s={_area(_page_marker(plot.get("n_obs") or 100))}, color="{POINT}", label="Observed")',
+          f'ax.set_xlabel(f"{{names[i]}}{" (pseudo-observation)" if uniform else ""}"); ax.set_ylabel(f"{{names[j]}}{" (pseudo-observation)" if uniform else ""}")',
+          f'fig.legend(loc="outside upper left", ncols=2, frameon=False, fontsize={_pt(11)})',
+          'ax.set_title(f"Simulated and observed {names[i]} and {names[j]}")', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('copula.plot_code')
+def plot_code(table, columns, kind='pseudo', plot=None, rows=None, method='mpl', table_name='data'):
+    """The Python that draws one of the report's graphs with matplotlib (kind:
+    pseudo, joint, splom, tails, margin, simulate), the copula fitted as the
+    report fits it, from what the page chose (plot)."""
+    columns = list(columns or [])
+    plot = plot or {}
+    if len(columns) < 2:
+        return {'error': 'choose two or more columns'}
+    method = 'itau' if method == 'itau' else 'mpl'
+    writers = {'pseudo': lambda: _pseudo_code(table, table_name, rows, columns, method, plot),
+               'joint': lambda: _joint_code(table, table_name, rows, columns, method, plot),
+               'splom': lambda: _splom_code(table, table_name, rows, columns, method, plot),
+               'tails': lambda: _tails_code(table, table_name, rows, columns, method, plot),
+               'margin': lambda: _margin_graph_code(table, table_name, rows, columns, plot),
+               'simulate': lambda: _simulate_graph_code(table, table_name, rows, columns, method, plot)}
+    if kind not in writers:
+        return {'error': f'no graph {kind!r}'}
+    fam = plot.get('family')
+    if fam is not None and fam not in ORDER:
+        return {'error': f'no copula {fam!r}'}
+    return {'plot_code': writers[kind]()}

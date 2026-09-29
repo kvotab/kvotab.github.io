@@ -70,7 +70,11 @@ def code_head(table_name, extra_imports=()):
     lines += list(extra_imports)
     # round_trip: every number exactly as exported (the default parser can be
     # off in the last digit, which an iterative fit can feel)
-    lines.append(f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip")   # the table, as File > Export CSV writes it')
+    # keep_default_na=False, na_values=[""]: missing is an empty field, as the
+    # page writes it; a level named None, NA or null stays that text
+    # (the comment on its own line: the read line is long enough as it is)
+    lines.append('# the table, as File > Export CSV writes it (an empty field is missing)')
+    lines.append(f'df = pd.read_csv({json.dumps(table_name + ".csv")}, float_precision="round_trip", keep_default_na=False, na_values=[""])')
     return '\n'.join(lines)
 
 
@@ -123,19 +127,25 @@ def dated_code(code, columns):
 
 
 def dated_result(obj, columns, depth=0):
-    """dated_code() on every code string of a result (the keys code and
-    *_code, at any depth), in place."""
-    if not columns or depth > 5:
+    """dated_code() on every snippet of a result, in place: any string that
+    reads the table's CSV (under any key, in lists too, to some depth). The
+    line goes in only after a line `df = pd.read_csv(...)`, so other text is
+    left as it is."""
+    if not columns or depth > 6:
         return obj
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if isinstance(v, str) and (k == 'code' or k.endswith('_code')):
-                obj[k] = dated_code(v, columns)
+            if isinstance(v, str):
+                if 'pd.read_csv(' in v:
+                    obj[k] = dated_code(v, columns)
             elif isinstance(v, (dict, list)):
                 dated_result(v, columns, depth + 1)
     elif isinstance(obj, list):
-        for v in obj:
-            if isinstance(v, (dict, list)):
+        for i, v in enumerate(obj):
+            if isinstance(v, str):
+                if 'pd.read_csv(' in v:
+                    obj[i] = dated_code(v, columns)
+            elif isinstance(v, (dict, list)):
                 dated_result(v, columns, depth + 1)
     return obj
 

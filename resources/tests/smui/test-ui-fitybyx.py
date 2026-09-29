@@ -932,6 +932,7 @@ async def main():
 
     # ---- the graphs' Python code: a block under each graph, run in the page
     await chart_code(page)
+    await matched_pairs_charts(page)
 
     # ---- a large table stays quick
     t0 = time.time()
@@ -1221,6 +1222,70 @@ def check_oneway(lab, g, F):
         ells = [p for p in cx['patches'] if p['type'] == 'ellipse']
         want = [((max(t['y']) + min(t['y'])) / 2, (max(t['y']) - min(t['y'])) / 2) for t in circles]
         check.near(f'{lab}: the comparison circles\' centres and radii', maxdiff([q for e in ells for q in (e['center'][1], e['h'] / 2)], [q for c in want for q in c]), 0, 1e-6)
+
+
+# ---- Matched Pairs: the two graphs' matplotlib code ---------------------------------------------
+# A group colouring the pairs; then a pair of date columns (text in the CSV, milliseconds in the
+# page) in a By group with rows excluded. Every graph has its block under it, and the figure the
+# block draws in the page's Python is the Plotly graph's: the points and their colours, the lines
+# at 0, the mean difference and its limits, the titles and the size.
+MP_TABLE = r'''(() => {
+  const g = SM.util.rng('matchedpairs-charts'); const n = 45;
+  const b = [], a = [], grp = [], s = [], e = [], by = [];
+  for (let i = 0; i < n; i++) {
+    const x = Math.round(100 * g.normal(60, 9)) / 100; b.push(x); a.push(i === 3 ? NaN : Math.round(100 * (x + 2.5 + g.normal(0, 4))) / 100);
+    grp.push(i === 8 ? null : ['lo', 'mid', 'hi'][i % 3]); const d0 = Date.UTC(2024, 0, 1) + Math.floor(g.u() * 300) * 86400000;
+    s.push(d0); e.push(d0 + (1 + Math.floor(g.u() * 30)) * 86400000); by.push(i % 4 ? 'u' : 'v');
+  }
+  SM.app.addTable(new SM.Table({ name: 'MP charts', columns: [{ name: 'before', values: b }, { name: 'after', values: a },
+    { name: 'grp', dataType: 'character', values: grp, valueOrder: ['lo', 'mid', 'hi'] },
+    { name: 'start', dataType: 'numeric', format: { kind: 'date' }, values: s }, { name: 'end', dataType: 'numeric', format: { kind: 'date' }, values: e },
+    { name: 'by', dataType: 'character', values: by }] }));
+  return n;
+})()'''
+
+
+async def matched_pairs_charts(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(MP_TABLE)
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('MP charts'); const sc = t.col('before').id + '~' + t.col('after').id;
+      const o = {}; o[sc + '|plotRow'] = true;
+      const rep = await __fyx.open('MP charts', 'matchedpairs', { y: ['before', 'after'], x: ['grp'] }, o);
+      const g1 = await __gr.graphs(rep);
+      t.setState([5, 8, 13], 'excluded', true);
+      const sc2 = t.col('start').id + '~' + t.col('end').id; const o2 = {}; o2[sc2 + '|plotRow'] = true; o2.alpha = 0.1;
+      const rep2 = await __fyx.open('MP charts', 'matchedpairs', { y: ['start', 'end'], by: ['by'] }, o2);
+      const g2 = await __gr.graphs(rep2);
+      t.setState([5, 8, 13], 'excluded', false);
+      return { g1, g2, errors: [rep, rep2].flatMap((x) => __fyx.errors(x)), undrawn: __gr.take() };
+    })()''', timeout=300)
+    check('Matched Pairs charts: no errors (a group; dates in a By group with rows excluded)', r['errors'], [])
+    check('Matched Pairs charts: every graph drawn', r['undrawn'], [])
+    check('Matched Pairs charts: the graphs of each report', ([g['label'] for g in r['g1']], [g['label'] for g in r['g2']]),
+          (['after-before by mean', 'after-before by row'], ['end-start by mean', 'end-start by row'] * 2))
+    for g in r['g1'] + r['g2']:
+        check(f'Matched Pairs charts: {g["label"]}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+    for i, g in enumerate(r['g1'] + r['g2']):
+        F, err = await run_graph(page, g, "__fyx.table('MP charts')")
+        lab = f'Matched Pairs charts: {g["label"]} ({"a group" if i < 2 else "By group " + str((i - 2) // 2 + 1)})'
+        check(f'{lab}: the code runs in the page', err, None)
+        if not F:
+            continue
+        F = F[0]
+        ax = F['axes'][0]
+        t0 = g['traces'][0]
+        got = ax['scatter'][0]['xy'] if ax['scatter'] else []
+        check.near(f'{lab}: the points', maxdiff([q for p in got for q in p], [q for p in points_of(t0) for q in p]), 0, 1e-9)
+        if isinstance(t0.get('mcolor'), list):
+            check(f'{lab}: each pair in its group\'s colour', [c[:7] for c in ax['scatter'][0]['colors']], t0['mcolor'])
+        hl = sorted(ln['y'][0] for ln in ax['lines'] if len(ln['y']) == 2 and ln['y'][0] == ln['y'][1])
+        check.near(f'{lab}: the lines (0, the mean difference and its limits; by row the mean difference)', maxdiff(hl, sorted(s['y0'] for s in g['shapes'])), 0, 1e-9)
+        check(f'{lab}: the titles and the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']), (g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+        if i >= 2:
+            check(f'{lab}: the dates turned back into milliseconds, the group\'s rows kept, the excluded ones dropped',
+                  ('pd.to_datetime(df["start"])' in g['code'], 'df = df[df["by"] ==' in g['code'], 'df = df.drop(index=' in g['code']), (True, True, True))
+    await page.ev("for (const r of SM.app.reports.filter((x) => x.table && x.table.name === 'MP charts')) SM.app.closeReport(r); SM.app.closeTable(__fyx.table('MP charts'));")
 
 
 asyncio.run(main())

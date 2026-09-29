@@ -147,6 +147,22 @@
      clientWidth, which in an outline body counts the body's indent.) */
   const wide = (tbl) => el('div', { class: 'sm-cop-scroll' }, tbl);
 
+  /* ---- the graphs' code ------------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table: copula.plot_code writes it, the copula fitted as the report
+     fits it (the functions it runs are in the code) and the margins as the
+     Margins code fits them, from what the page chose (the copula shown, the
+     pair, the scale, the bins, the simulation's size and seed). A headless
+     run (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-cop-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, names, kind, plot) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('copula.plot_code', { columns: names, kind, plot, method: ctx.opt('method', 'mpl') });
+    return r && !r.error ? r.plot_code : null;
+  }
+  // The margin chosen for each column (Margins), by the column's place.
+  const marginDists = (S) => (S.margins && !S.margins.error ? Object.fromEntries(S.margins.columns.map((c, q) => [String(q), c.chosen.dist])) : {});
+
   /* ======================================================================
      RENDER
      ====================================================================== */
@@ -171,7 +187,7 @@
     if (o('dependence', true)) await dependenceOutline(ctx, S);
     if (o('comparison', true)) comparisonOutline(ctx, S);
     if (o('gof', null)) await gofOutline(ctx, S);
-    if (o('margins', false) && S.margins) marginsOutline(ctx, S);
+    if (o('margins', false) && S.margins) await marginsOutline(ctx, S);
     if (o('calc', false) && S.specs) await calcOutline(ctx, S);
     if (o('simCompare', null) && S.fit) await simOutline(ctx, S);
   }
@@ -197,16 +213,18 @@
     const n = res.n;
     const traces = [{ type: scatterType(n), mode: 'markers', x: tx(u[i]), y: tx(u[j]), rows: res.rows, marker: { size: markerSize(n) }, name: 'Pseudo-observations' }, ...contourTraces(dens, col.contour)];
     const ax = (name) => ({ title: { text: `${name}: ${suffix}` }, range, zeroline: false });
-    const plots = [ctx.plot(traces, { xaxis: ax(names[i]), yaxis: ax(names[j]), margin: { l: 58, r: 10, t: 8, b: 46 } },
-      { width: 380, height: 372, title: `Pseudo-observations of ${names[i]} and ${names[j]}` })];
+    const pcode = await plotCode(ctx, names, 'pseudo', { family: f ? f.family : 'indep', pair: [i, j], scale, contours: o('contours', true), n });
+    const plots = [withCode(ctx, ctx.plot(traces, { xaxis: ax(names[i]), yaxis: ax(names[j]), margin: { l: 58, r: 10, t: 8, b: 46 } },
+      { width: 380, height: 372, title: `Pseudo-observations of ${names[i]} and ${names[j]}` }), pcode)];
     // the data themselves, with the joint model's contours
     if (S.specs && o('joint', true)) {
       const specs = [S.specs[i], S.specs[j]];
       const jd = f && o('contours', true) ? await ctx.call('copula.joint', { columns: names, family: f.family, params: fp, margins: specs, pair: [i, j] }) : null;
       const xs = colValues(S.cols[i], res.rows), ys = colValues(S.cols[j], res.rows);
-      plots.push(ctx.plot([{ type: scatterType(n), mode: 'markers', x: xs, y: ys, rows: res.rows, marker: { size: markerSize(n) }, name: 'Data' }, ...contourTraces(jd, col.contour)],
+      const jcode = await plotCode(ctx, names, 'joint', { family: f ? f.family : 'indep', pair: [i, j], margins: marginDists(S), contours: !!(f && o('contours', true)), n });
+      plots.push(withCode(ctx, ctx.plot([{ type: scatterType(n), mode: 'markers', x: xs, y: ys, rows: res.rows, marker: { size: markerSize(n) }, name: 'Data' }, ...contourTraces(jd, col.contour)],
         { xaxis: { title: { text: names[i] }, zeroline: false }, yaxis: { title: { text: names[j] }, zeroline: false }, margin: { l: 58, r: 10, t: 8, b: 46 } },
-        { width: 380, height: 372, title: `${names[i]} and ${names[j]} with the joint model` }));
+        { width: 380, height: 372, title: `${names[i]} and ${names[j]} with the joint model` }), jcode));
     }
     ob.add(ctx.row(...plots));
     const parts = [];
@@ -252,7 +270,8 @@
       }
     }
     const sub = ctx.outline('Scatterplot Matrix', { parent: ob, key: 'splom' });
-    sub.add(ctx.row(ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot matrix of the pseudo-observations' })),
+    const code = await plotCode(ctx, names, 'splom', { family: f ? f.family : 'indep', scale, contours: ctx.opt('contours', true), size, n: res.n });
+    sub.add(ctx.row(withCode(ctx, ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot matrix of the pseudo-observations' }), code)),
       ctx.note(`Every pair of the ${k} columns${f && f.family !== 'indep' ? `, with the contours of the fitted ${f.label} copula's margin for the pair (the same levels as below, unlabelled)` : ''}. Pair (red triangle) picks the pair drawn below and used by the other outlines.`));
   }
 
@@ -338,9 +357,10 @@
       layout.annotations.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.5, y: 1.02, xanchor: 'center', yanchor: 'bottom', text: T(f.label), showarrow: false, font: { size: 10.5, color: col.text } });
     });
     layout.shapes = fits.map((_, q) => { const a = q + 1; return { type: 'line', xref: a === 1 ? 'x' : `x${a}`, yref: `${a === 1 ? 'y' : `y${a}`} domain`, x0: 0.5, x1: 0.5, y0: 0, y1: 1, line: { color: col.muted, width: 0.8, dash: 'dot' } }; });
-    ob.add(ctx.row(ctx.plot(traces, layout, { width: W, height: H, title: `Tail concentration of ${names[i]} and ${names[j]}`, select: false })),
-      ctx.note(`Dots: the data's share of the rows with both columns at or below their q quantile, over q (q ≤ ½), and with both above it, over 1 − q; lines: C(q, q)/q and (1 − 2q + C(q, q))/(1 − q) for each fitted copula C. At the left end the curve tends to the lower tail dependence λL, at the right end to λU. A copula whose line follows the dots at both ends describes the tails; the dots at the very ends rest on few rows.`),
-      ctx.code(`# the data's tail concentration from the pseudo-observations u (see the Copula Comparison code)\nq = np.round(np.arange(0.02, 0.99, 0.01), 2)\nbelow = np.array([np.mean((u[:, 0] <= a) & (u[:, 1] <= a)) for a in q])\nabove = np.array([np.mean((u[:, 0] > a) & (u[:, 1] > a)) for a in q])\nprint(np.where(q <= 0.5, below / q, above / (1 - q)))`));
+    // the graph's code computes the data's curve and each copula's (it takes the place of the snippet of the data's curve alone)
+    const code = await plotCode(ctx, names, 'tails', { fits: fits.map((x) => x.family), pair: [i, j] });
+    ob.add(ctx.row(withCode(ctx, ctx.plot(traces, layout, { width: W, height: H, title: `Tail concentration of ${names[i]} and ${names[j]}`, select: false }), code)),
+      ctx.note(`Dots: the data's share of the rows with both columns at or below their q quantile, over q (q ≤ ½), and with both above it, over 1 − q; lines: C(q, q)/q and (1 − 2q + C(q, q))/(1 − q) for each fitted copula C. At the left end the curve tends to the lower tail dependence λL, at the right end to λU. A copula whose line follows the dots at both ends describes the tails; the dots at the very ends rest on few rows.`));
   }
 
   /* ======================================================================
@@ -437,7 +457,7 @@
   /* ======================================================================
      MARGINS
      ====================================================================== */
-  function marginsOutline(ctx, S) {
+  async function marginsOutline(ctx, S) {
     const m = S.margins;
     const ob = ctx.outline('Margins', { key: 'margins', info: 'p:copula:margins', menu: () => [
       { label: 'All Margins', submenu: () => MARGIN_ITEMS.map(([v, l]) => ({ label: l, action: () => { for (const c of S.cols) ctx.set('marginFamily', v, c.id, { rerun: false }); ctx.report.run(); } })) },
@@ -447,7 +467,7 @@
     const col = colors();
     const wrap = el('div', { class: 'sm-cop-margins' });
     ob.add(wrap);
-    m.columns.forEach((c, q) => {
+    for (const [q, c] of m.columns.entries()) {
       const column = S.cols[q];
       const sub = ctx.outline(c.column, { parent: ob, key: `margin:${column.id}`, menu: () => MARGIN_ITEMS.map(([v, l]) => ({ label: l, checked: ctx.opt('marginFamily', 'auto', column.id) === v, action: () => ctx.set('marginFamily', v, column.id) })) });
       wrap.append(sub.el);
@@ -458,7 +478,8 @@
       vals.forEach((v, t) => { const h = Math.min(nb - 1, Math.max(0, Math.floor((v - bins.start) / bins.size + 1e-9))); counts[h]++; members[h].push(S.res.rows[t]); });
       const traces = [{ type: 'bar', x: counts.map((_, h) => bins.start + (h + 0.5) * bins.size), y: counts, width: bins.size, rows: members, marker: { color: SM.report.BAR, line: { color: col.surface, width: 0.8 } }, hovertemplate: '%{x}: %{y}<extra></extra>', name: c.column }];
       if (c.chosen.curve) traces.push({ type: 'scatter', mode: 'lines', x: c.chosen.curve.x, y: c.chosen.curve.pdf.map((d) => d * vals.length * bins.size), line: { color: col.contour, width: 2 }, hoverinfo: 'skip', name: c.chosen.label });
-      const plot = ctx.plot(traces, { xaxis: { title: { text: c.column } }, yaxis: { title: { text: 'Count' }, rangemode: 'tozero' }, bargap: 0.02 }, { width: 330, height: 240, title: `${c.column} histogram with its margin` });
+      const code = await plotCode(ctx, S.names, 'margin', { column: q, dist: c.chosen.dist, bins });
+      const plot = withCode(ctx, ctx.plot(traces, { xaxis: { title: { text: c.column } }, yaxis: { title: { text: 'Count' }, rangemode: 'tozero' }, bargap: 0.02 }, { width: 330, height: 240, title: `${c.column} histogram with its margin` }), code);
       const cands = c.candidates.map((f) => ({ ...f, params: f.params.map((p) => `${p.name.split(' ')[0]} ${nice(p.estimate)}`).join(', '), chosen: f.dist === c.chosen.dist ? '✓' : '' }));
       const tbl = wide(ctx.rt({ caption: 'Fitted Distributions, Best First by AICc', columns: [{ key: 'chosen', label: '', fmt: 'text' }, { key: 'label', label: 'Distribution', fmt: 'text' }, { key: 'params', label: 'Parameters', fmt: 'text' }, { key: 'k', label: 'Number of Parameters', fmt: 'int', hidden: true },
         { key: 'loglik', label: 'LogLikelihood', hidden: true }, { key: 'aicc', label: 'AICc' }, { key: 'delta', label: 'ΔAICc' }, { key: 'bic', label: 'BIC' }, { key: 'warning', label: 'Note', fmt: 'text', hidden: !cands.some((f) => f.warning) }], rows: cands },
@@ -466,7 +487,7 @@
       sub.add(ctx.row(plot, tbl), ctx.note(c.chosen.dist === 'empirical'
         ? 'The empirical margin: its distribution function steps through i/(n + 1) at the sorted values (interpolated between them), its quantiles are JMP\'s; the curve is a kernel density estimate, used only for the contours.'
         : `${c.chosen.label}${c.want === 'auto' ? ', the smallest AICc' : ''}: ${c.chosen.params.map((p) => `${p.name} = ${nice(p.estimate)}`).join(', ')} (maximum likelihood, as Distribution fits it). Click a line to use another; the red triangle also offers the empirical margin.`));
-    });
+    }
     ob.add(ctx.note('The margins do not change the copula fits (those use only the ranks); they turn the copula into a joint distribution for the contours on the data scale, Joint Probabilities and Simulate.'), ctx.code(m.code));
   }
 
@@ -570,8 +591,9 @@
       { type: scatterType(res.n), mode: 'markers', x: ox, y: oy, rows: res.rows, marker: { size: markerSize(res.n) }, name: 'Observed' },
     ];
     const suffix = uniform ? ' (pseudo-observation)' : '';
-    ob.add(ctx.row(ctx.plot(traces, { xaxis: { title: { text: `${names[i]}${suffix}` }, zeroline: false }, yaxis: { title: { text: `${names[j]}${suffix}` }, zeroline: false }, showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 58, r: 10, t: 26, b: 46 } },
-      { width: 420, height: 400, title: `Simulated and observed ${names[i]} and ${names[j]}` })),
+    const code = await plotCode(ctx, names, 'simulate', { family: f.family, pair: [i, j], margins: marginDists(S), n: sc.n, seed: sc.seed, scale: sc.scale, n_obs: res.n });
+    ob.add(ctx.row(withCode(ctx, ctx.plot(traces, { xaxis: { title: { text: `${names[i]}${suffix}` }, zeroline: false }, yaxis: { title: { text: `${names[j]}${suffix}` }, zeroline: false }, showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 58, r: 10, t: 26, b: 46 } },
+      { width: 420, height: 400, title: `Simulated and observed ${names[i]} and ${names[j]}` }), code)),
     ctx.note(`${fmt(nSim)} draws (×) from the ${f.label} copula${uniform ? '' : ' with the fitted margins'}, seed ${sc.seed}, over the ${fmt(res.n)} observed rows (dots, linked to the table). Where the model is right the two clouds have the same shape${uniform ? '' : ', tails included'}.`), ctx.code(r.code));
   }
 

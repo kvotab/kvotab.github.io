@@ -295,12 +295,16 @@ def _est(est, se, alpha, df=None):
 
 
 def _hat(var, X, t2=0.0):
-    """W and P = W - W X (X'WX)^-1 X'W for weights 1/(var + t2)."""
+    """W and P = W - W X (X'WX)^-1 X'W for weights 1/(var + t2), from a QR
+    factorisation of the weighted design W^(1/2) X (P = W - Z Z' with Z =
+    W^(1/2) Q): forming X'WX squares the design's condition number, and with
+    a covariate such as a year (about 2000, beside the intercept) tau^2 was
+    then good to six or seven digits only. X has full column rank (the
+    meta-regression refuses a collinear design)."""
     w = 1.0 / (var + t2)
-    WX = X * w[:, None]
-    A = np.linalg.pinv(X.T @ WX)
-    P = np.diag(w) - WX @ A @ WX.T
-    return w, P
+    sw = np.sqrt(w)
+    Z = np.linalg.qr(X * sw[:, None])[0] * sw[:, None]
+    return w, np.diag(w) - Z @ Z.T
 
 
 def tau2_dl(eff, var, X=None):
@@ -501,7 +505,8 @@ def _code_pooled_fn(method, alpha, hksj):
         return [f'def pooled(eff, var):   # the random effects of the report ({name}{", Hartung-Knapp" if hksj else ""}): estimate, std error, tau2',
                 '    if len(eff) == 1:',
                 '        return eff[0], np.sqrt(var[0]), 0.0   # one study is its own estimate',
-                f'    r = combine_effects(eff, var, method_re="{mre}", alpha={alpha!r})',
+                '    with np.errstate(invalid="ignore"):   # statsmodels takes the square root of a tau2 below zero, not used then',
+                f'        r = combine_effects(eff, var, method_re="{mre}", alpha={alpha!r})',
                 f'    return (r.mean_effect_re, {se_re}, r.tau2) if r.tau2 > 0 else (r.mean_effect_fe, {se_fe}, 0.0)']
     return [f'def pooled(eff, var):   # the random effects of the report (REML{", Hartung-Knapp" if hksj else ""}): estimate, std error, tau2',
             '    if len(eff) == 1:',
@@ -731,6 +736,30 @@ def leave_one_out(table, inputs, rows=None, method='dl', alpha=0.05, hksj=False,
     return {'measure': _measure_info(m), 'rows': out, 'full': _with_disp(m, full['re_show']), 'method': method, 'hksj': bool(hksj), 'code': '\n'.join(c)}
 
 
+def _order_levels(table, order_by, rows):
+    """The level order of a categorical ordering column (None for a numeric one)."""
+    if not order_by:
+        return None
+    s = data.series(table, order_by, rows, as_category=True)
+    return list(s.cat.categories) if hasattr(s, 'cat') else None
+
+
+def _key_lines(order_by, levels, descending):
+    """Lines that give key, the value each study is ordered by in a cumulative
+    meta-analysis (NaN for a missing one)."""
+    q = json.dumps
+    if order_by and levels is not None:
+        c = [f'key = pd.Categorical(d[{q(order_by)}], categories={_py_levels(levels)}).codes.astype(float)   # the level order of the table',
+             'key[key < 0] = np.nan']
+    elif order_by:
+        c = [f'key = d[{q(order_by)}].to_numpy(float)']
+    else:
+        c = ['key = np.arange(len(eff), dtype=float)   # row order']
+    if descending:
+        c.append('key = -key   # descending')
+    return c
+
+
 @api('meta.cumulative')
 def cumulative(table, inputs, rows=None, order_by=None, descending=False, method='dl', alpha=0.05, hksj=False, table_name='data'):
     """The pooled estimate as the studies come in, in the order of a column."""
@@ -764,17 +793,7 @@ def cumulative(table, inputs, rows=None, order_by=None, descending=False, method
         r = _with_disp(m, p['re_show'])
         out.append({'row': int(S.rows[i]), 'label': S.labels[i], 'value': shown[i], 'k': j, **r, 'fe': p['fe']['est'], 'tau2': p['tau2'],
                     'i2': max(0.0, p['i2']) if p['i2'] is not None else None})
-    q = json.dumps
-    if order_by and levels is not None:
-        keyline = [f'key = pd.Categorical(d[{q(order_by)}], categories={_py_levels(levels)}).codes.astype(float)   # the level order of the table',
-                   'key[key < 0] = np.nan']
-    elif order_by:
-        keyline = [f'key = d[{q(order_by)}].to_numpy(float)']
-    else:
-        keyline = ['key = np.arange(len(eff), dtype=float)   # row order']
-    if descending:
-        keyline.append('key = -key   # descending')
-    c = [code_head(table_name, IMPORTS)] + S.code + [_label_line(S, inputs)] + _code_pooled_fn(method, alpha, hksj) + keyline + [
+    c = [code_head(table_name, IMPORTS)] + S.code + [_label_line(S, inputs)] + _code_pooled_fn(method, alpha, hksj) + _key_lines(order_by, levels, descending) + [
         'order = np.lexsort((np.arange(len(key)), np.where(np.isnan(key), np.inf, key)))   # ties in row order, missing last',
         'for j in range(1, len(eff) + 1):   # the first j studies',
         '    sel = order[:j]',
@@ -858,11 +877,19 @@ def regression(table, inputs, covariates=None, rows=None, method='dl', alpha=0.0
     c = [code_head(table_name, IMPORTS + ['import patsy'])] + S.code + [
         f'X = patsy.dmatrix({q(_formula(d, covariates))}, d, return_type="dataframe")   # nominal covariates dummy coded against their first level',
         'pos = d.index.get_indexer(X.index)   # the studies with every covariate',
-        'X, eff, var = X.to_numpy(float), eff[pos], var[pos]',
-        'def P(t2):   # W - W X (X\'WX)^-1 X\'W with the weights 1/(v + t2)',
-        '    w = 1 / (var + t2); WX = X * w[:, None]',
-        '    return np.diag(w) - WX @ np.linalg.pinv(X.T @ WX) @ WX.T',
-        'k, p = X.shape']
+        'X, eff, var = X.to_numpy(float), eff[pos], var[pos]'] + _mreg_fit_lines(method, hksj) + [
+        f'print(tau2); print(fit.summary(alpha={alpha!r}))']
+    out['code'] = '\n'.join(c)
+    return out
+
+
+def _mreg_fit_lines(method, hksj):
+    """Lines that fit the meta-regression of eff on the design matrix X as
+    meta.regression does: the residual tau2 of the method, then WLS."""
+    c = ['def P(t2):   # W - W X (X\'WX)^-1 X\'W with the weights 1/(v + t2), from a QR of W^(1/2) X (X\'WX would square its condition number)',
+         '    sw = 1 / np.sqrt(var + t2); Z = np.linalg.qr(X * sw[:, None])[0] * sw[:, None]',
+         '    return np.diag(sw ** 2) - Z @ Z.T',
+         'k, p = X.shape']
     if method == 'dl':
         c.append('tau2 = max(0, (eff @ P(0) @ eff - (k - p)) / np.trace(P(0)))   # method of moments (DerSimonian-Laird)')
     elif method == 'pm':
@@ -871,11 +898,9 @@ def regression(table, inputs, covariates=None, rows=None, method='dl', alpha=0.0
     else:
         c += ['score = lambda t2: (P(t2) @ eff) @ (P(t2) @ eff) - np.trace(P(t2))   # REML score',
               'tau2 = 0.0 if score(0) <= 0 else optimize.brentq(score, 0, 100 * (eff.var() + var.max()), xtol=1e-14)']
-    c += [f'fit = sm.WLS(eff, X, weights=1 / (var + tau2)).fit({"" if hksj else "cov_type=" + q("fixed scale")})'
-          + ('   # the scale estimated: Knapp-Hartung' if hksj else '   # the scale fixed at 1: z tests'),
-          f'print(tau2); print(fit.summary(alpha={alpha!r}))']
-    out['code'] = '\n'.join(c)
-    return out
+    c.append(f'fit = sm.WLS(eff, X, weights=1 / (var + tau2)).fit({"" if hksj else "cov_type=" + json.dumps("fixed scale")})'
+             + ('   # the scale estimated: Knapp-Hartung' if hksj else '   # the scale fixed at 1: z tests'))
+    return c
 
 
 def _formula(d, covariates):
@@ -910,3 +935,498 @@ def save(table, inputs, rows=None, method='dl', alpha=0.05):
     return {'rows': [int(r) for r in S.rows], 'eff': S.eff.tolist(), 'se': se.tolist(), 'var': S.var.tolist(),
             'lower': (S.eff - zc * se).tolist(), 'upper': (S.eff + zc * se).tolist(),
             'w_fe': (100 * p['w_fe']).tolist(), 'w_re': (100 * p['w_re']).tolist(), 'measure': _measure_info(S.measure)}
+
+
+# ---- the graphs as matplotlib code -------------------------------------------------------------------------
+# Under each graph the report shows Python that draws it with matplotlib from a
+# CSV export of the table (the notebook runs it): the studies and their pooling
+# computed as the report computes them (the same statsmodels calls), the light
+# theme's colours, the graph's size at 100 pixels an inch. The page sends what
+# it chose: the forest plot's options, its columns and its axis range, the
+# order of a sort by label; the other graphs' axis ranges and ticks and the
+# funnel's lines. meta.plot_code writes the code of one graph.
+STUDY, RE_C, TEXT, MUTED, GRID, SURFACE = '#2a6db3', '#b0413e', '#352921', '#786b5d', '#e0d7ce', '#fcf7f2'
+PX = 0.72   # points per pixel: a figure at 100 pixels an inch
+
+
+def J(v):
+    return json.dumps(v, ensure_ascii=False)
+
+
+def _pt(px):
+    return f'{px * PX:.4g}'
+
+
+def _area(px):
+    return f'{(px * PX) ** 2:.4g}'
+
+
+def _g(v):
+    return f'{float(v):.10g}'
+
+
+# The page's number formats (SM.util.fmt), for the forest plot's texts: fixed
+# decimals round halves away from zero, as JavaScript's toFixed does.
+FMT_LINES = ['def fixed(v, digits):   # a number with so many decimals, as the page writes it: halves away from zero, a minus sign',
+             '    if v is None or not np.isfinite(v):',
+             '        return "."',
+             '    s = str(Decimal(float(v)).quantize(Decimal(1).scaleb(-digits), rounding=ROUND_HALF_UP))',
+             '    return "−" + s[1:] if s.startswith("-") else s',
+             '',
+             'def sig(v, digits):   # a number with so many significant digits, no trailing zeros, a minus sign',
+             '    v = float(v)',
+             '    if v.is_integer() and abs(v) < 1e15:',
+             '        s = str(int(v))',
+             '    elif abs(v) >= 1e9 or abs(v) < 1e-4:',
+             '        m, e = f"{v:.{min(digits, 5) - 1}e}".split("e")',
+             '        s = f"{m}e{int(e)}"',
+             '    else:',
+             '        s = f"{v:.{digits}g}"',
+             '        s = str(int(float(s))) if "e" in s else (s.rstrip("0").rstrip(".") if "." in s else s)',
+             '    return "−" + s[1:] if s.startswith("-") else s',
+             '',
+             'def ptext(p):   # a p-value as the forest plot writes it',
+             '    return "." if p is None or not np.isfinite(p) else ("< 0.0001" if p < 0.0001 else "= " + fixed(p, 4))']
+
+HET_LINES = ['def het(i2, tau2, q, df, p):   # a heterogeneity line',
+             '    parts = [f"I² = {fixed(100 * i2, 0)}%"] if i2 is not None else []',
+             '    if tau2 is not None:',
+             '        parts.append(f"τ² = {sig(tau2, 3)}")',
+             '    if q is not None and df:',
+             '        parts.append(f"Q = {fixed(q, 2)}, df = {df}, p {ptext(p)}")',
+             '    return "Heterogeneity: " + "; ".join(parts) if parts else None']
+
+MH_LINES = ['def mh(ix):   # the Mantel–Haenszel odds ratio of the studies ix (statsmodels\' StratifiedTable), on the log scale; None without one',
+            '    st = StratifiedTable([np.array([[e1[i], n1[i] - e1[i]], [e2[i], n2[i] - e2[i]]]) for i in ix])',
+            '    if not (np.isfinite(st.logodds_pooled) and np.isfinite(st.logodds_pooled_se) and st.logodds_pooled_se > 0):',
+            '        return None',
+            '    lo, hi = st.logodds_pooled_confint(alpha)',
+            '    return {"est": st.logodds_pooled, "lower": lo, "upper": hi}']
+
+
+def _shown_lines(inputs, group=False, value_col=None):
+    """labels (and the subgroups, and the ordering column's values) as the page writes them."""
+    lab = inputs.get('label')
+    c = []
+    if lab or group or value_col:
+        c += ['', 'def shown(v):   # a value as the page writes it: whole numbers without ".0"',
+              '    return (str(int(v)) if v.is_integer() else f"{v:.6g}") if isinstance(v, float) else str(v)']
+    if lab:
+        c.append(f'labels = [f"Row {{i + 1}}" if pd.isna(v) else shown(v) for i, v in d[{J(lab)}].items()]   # the studies\' names')
+    else:
+        c.append('labels = [f"Row {i + 1}" for i in d.index]   # the studies\' names: their rows')
+    if group:
+        c.append(f'groups = [shown(v) for v in d[{J(inputs.get("group"))}]]   # each study\'s subgroup')
+    if value_col:
+        c.append(f'values = ["." if pd.isna(v) else shown(v) for v in d[{J(value_col)}]]   # the ordering column, as the plot names it')
+    return c
+
+
+def _pool_lines(method):
+    """def est(...) and def pool(eff, var): the report's pooling of some
+    studies (meta.pool): the fixed effect, the random effects of the method
+    (normal intervals, and Hartung-Knapp's), tau2, Q with its p-value, I2 and
+    the weights. HK (set in the code) picks the random effects the plot shows."""
+    c = ['def est(e, s, df=None):   # an estimate with its interval and test: normal, or t with df degrees of freedom',
+         '    crit = stats.t.isf(alpha / 2, df) if df else stats.norm.isf(alpha / 2)',
+         '    p = 2 * (stats.t.sf(abs(e / s), df) if df else stats.norm.sf(abs(e / s)))',
+         '    return {"est": e, "se": s, "lower": e - crit * s, "upper": e + crit * s, "z": e / s, "p": p, "df": df}',
+         '',
+         f'def pool(eff, var):   # the fixed effect and the random effects ({METHODS[method]}), as the report pools studies',
+         '    if len(eff) == 1:   # one study is its own estimate',
+         '        one = est(eff[0], np.sqrt(var[0]))',
+         '        return {"fe": one, "re": one, "re_z": one, "tau2": 0.0, "q": 0.0, "df": 0, "p": None, "i2": None, "w_fe": np.ones(1), "w_re": np.ones(1)}',
+         '    with np.errstate(invalid="ignore"):   # statsmodels takes the square root of a τ² below zero, not used then',
+         f'        r = combine_effects(eff, var, method_re="{"iterated" if method == "pm" else "chi2"}")   # the fixed effect, Q and I²'
+         + ('; Paule–Mandel\'s τ²' if method == 'pm' else '; DerSimonian–Laird\'s τ²' if method == 'dl' else ''),
+         '    out = {"fe": est(r.mean_effect_fe, r.sd_eff_w_fe), "q": r.q, "df": len(eff) - 1, "p": r.test_homogeneity().pvalue,',
+         '           "i2": max(0.0, r.i2) if np.isfinite(r.i2) else 0.0, "w_fe": np.asarray(r.weights_rel_fe)}']
+    if method in ('dl', 'pm'):
+        c += ['    if r.tau2 > 0:',
+              '        out.update(re_z=est(r.mean_effect_re, r.sd_eff_w_re), hk=est(r.mean_effect_re, r.sd_eff_w_re_hksj, len(eff) - 1),',
+              '                   w_re=np.asarray(r.weights_rel_re), tau2=r.tau2)',
+              '    else:   # τ² at zero (statsmodels leaves DerSimonian–Laird\'s below it): the random effects are the fixed effect',
+              '        out.update(re_z=out["fe"], hk=est(r.mean_effect_fe, r.sd_eff_w_fe_hksj, len(eff) - 1), w_re=out["w_fe"], tau2=0.0)']
+    else:
+        c += ['    def score(t2):   # the REML score in τ², zero at the REML estimate',
+              '        w = 1 / (var + t2); m = w @ eff / w.sum()',
+              '        return (w ** 2) @ (eff - m) ** 2 - w.sum() + (w ** 2).sum() / w.sum()',
+              '    t2 = 0.0 if score(0) <= 0 else optimize.brentq(score, 0, 100 * (eff.var() + var.max()), xtol=1e-14)',
+              '    w = 1 / (var + t2)',
+              '    f = sm.WLS(eff, np.ones(len(eff)), weights=w).fit(cov_type="fixed scale")',
+              '    f2 = sm.WLS(eff, np.ones(len(eff)), weights=w).fit()   # the scale estimated: Hartung–Knapp',
+              '    out.update(re_z=est(f.params[0], f.bse[0]), hk=est(f2.params[0], f2.bse[0], len(eff) - 1), w_re=w / w.sum(), tau2=t2)']
+    c += ['    out["re"] = out["hk"] if HK else out["re_z"]   # the random effects of the plot',
+          '    return out']
+    return c
+
+
+def _tx_line(ratio):
+    return 'tx = np.exp   # the effects are log ratios: the plot shows the ratios' if ratio else 'tx = lambda v: v   # the effects as they are'
+
+
+def _axis_lines(plot, log, title, axis='x', size=None):
+    """The value axis as the page set it: log or linear, its range, its ticks, its title."""
+    rng = plot.get('range')
+    fs = f', fontsize={size}' if size else ''
+    c = []
+    if log:
+        c.append(f'ax.set_{axis}scale("log")')
+        if rng:
+            c.append(f'ax.set_{axis}lim(10 ** {_g(rng[0])}, 10 ** {_g(rng[1])})   # the page\'s axis range')
+        tv, tt = plot.get('tickvals'), plot.get('ticktext')
+        if tv and tt and len(tv) == len(tt):
+            c += [f'ax.set_{axis}ticks({[float(v) for v in tv]}, {J([str(t) for t in tt])})   # the page\'s ticks', 'ax.minorticks_off()']
+    elif rng:
+        c.append(f'ax.set_{axis}lim({_g(rng[0])}, {_g(rng[1])})   # the page\'s axis range')
+    c.append(f'ax.set_{axis}label({J(title)}{fs})')
+    return c
+
+
+def _head(S, table_name, extra=()):
+    return [code_head(table_name, IMPORTS + ['import matplotlib.pyplot as plt', *extra])] + S.code
+
+
+def _forest_code(S, inputs, method, alpha, hksj, table_name, plot):
+    m = MEASURES[S.measure]
+    ratio = m[3]
+    log = bool(ratio and plot.get('log', True) is not False)
+    on = lambda key: plot.get(key, True) is not False   # noqa: E731
+    show_fe, show_re = on('showFE'), on('showRE')
+    both = show_fe and show_re
+    groups = S.groups is not None and on('subgroups')
+    mh_on = bool(plot.get('mh')) and S.measure == 'or' and S.counts is not None
+    sort = plot.get('sort') if plot.get('sort') in ('effect', 'weight', 'precision', 'label') else 'table'
+    wcols = ([('wfe', 'Weight\nfixed'), ('wre', 'Weight\nrandom')] if both else [('wre' if show_re else 'wfe', 'Weight')]) if on('weights') else []
+    none_both = 'None' if both else '1'
+    c = _head(S, table_name, ['from decimal import Decimal, ROUND_HALF_UP', 'from matplotlib import transforms']
+              + (['from statsmodels.stats.contingency_tables import StratifiedTable'] if mh_on else []))
+    c += _shown_lines(inputs, group=groups)
+    c += [f'alpha, HK = {alpha!r}, {bool(hksj)}   # the level; Hartung–Knapp intervals {"on" if hksj else "off"}',
+          'se = np.sqrt(var)',
+          'lower, upper = eff - stats.norm.isf(alpha / 2) * se, eff + stats.norm.isf(alpha / 2) * se   # each study\'s normal interval',
+          ''] + _pool_lines(method) + ['', 'P = pool(eff, var)   # every study']
+    if mh_on:
+        c += [''] + MH_LINES + ['', 'M = mh(range(len(eff)))   # the fixed effect of the plot: Mantel–Haenszel\'s',
+                                'w_fe = (n1 - e1) * e2 / (n1 + n2)', 'w_fe = w_fe / w_fe.sum()   # the studies\' fixed weights: Mantel–Haenszel\'s b·c/n']
+    else:
+        c.append('w_fe = P["w_fe"]   # the studies\' fixed weights')
+    c += [''] + FMT_LINES + ['', '', _tx_line(ratio)]
+    if ratio:
+        c.append('dec = 2   # the texts\' decimals: two for a ratio')
+    else:
+        c += ['wd = np.sort((upper - lower)[upper > lower])   # the texts\' decimals: from the middle width of the studies\' intervals',
+              'dec = int(max(0, min(4, 1 - np.floor(np.log10(wd[len(wd) // 2] if len(wd) else 1)))))']
+    c += ['ci_text = lambda e, lo, hi: f"{fixed(tx(e), dec)} [{fixed(tx(lo), dec)}, {fixed(tx(hi), dec)}]"', ''] + HET_LINES
+    c += ['',
+          'def row(kind, label=None, e=None, lo=None, hi=None, wfe=None, wre=None, sub=False):   # a row of the plot',
+          '    return {"kind": kind, "label": label, "est": e, "lo": lo, "hi": hi, "wfe": wfe, "wre": wre, "sub": sub}',
+          '',
+          'study = lambda i: row("study", labels[i], eff[i], lower[i], upper[i], w_fe[i], P["w_re"][i])']
+    if sort == 'effect':
+        c.append('order = lambda ix: sorted(ix, key=lambda i: eff[i])   # Sort Studies: By Effect')
+    elif sort == 'weight':
+        c.append('order = lambda ix: sorted(ix, key=lambda i: -P["w_re"][i])   # Sort Studies: By Weight (random effects)')
+    elif sort == 'precision':
+        c.append('order = lambda ix: sorted(ix, key=lambda i: se[i])   # Sort Studies: By Precision')
+    elif sort == 'label':
+        pos = {int(r): i for i, r in enumerate(plot.get('labelOrder') or [])}
+        rank = [pos.get(int(r), len(pos) + i) for i, r in enumerate(S.rows)]
+        c += [f'rank = {rank}   # Sort Studies: By Label, in the page\'s order of the labels (numbers in them by value)',
+              'order = lambda ix: sorted(ix, key=lambda i: rank[i])']
+    else:
+        c.append('order = list   # the table\'s order')
+    c.append('items = [row("head")]   # the plot\'s rows, top down')
+    tau_g, tau_p = ('G["tau2"]', 'P["tau2"]') if show_re else ('None', 'None')
+    if groups:
+        c += [f'levels = {J(S.levels)}   # the subgroups, in the table\'s order of the levels',
+              'tests = []   # each subgroup\'s pooling, for the test of subgroup differences',
+              'for g in levels:',
+              '    ix = [i for i in range(len(eff)) if groups[i] == g]',
+              '    G = pool(eff[ix], var[ix])',
+              '    tests.append(G)',
+              '    items += [row("group", g)] + [study(i) for i in order(ix)]']
+        body = []
+        if show_fe or show_re:
+            body.append('wf, wr = sum(w_fe[i] for i in ix), sum(P["w_re"][i] for i in ix)   # the subgroup\'s share of the weights')
+        if show_fe:
+            if mh_on:
+                body += ['gm, lab = (mh(ix), "Subtotal, fixed effect (M–H)")',
+                         'if gm is None:   # no Mantel–Haenszel estimate for these studies: the inverse-variance one',
+                         '    gm, lab = G["fe"], "Subtotal, fixed effect"',
+                         f'items.append(row("diamond fe", lab, gm["est"], gm["lower"], gm["upper"], wf, {"None" if both else "wr"}, True))']
+            else:
+                body.append(f'items.append(row("diamond fe", "Subtotal, fixed effect", G["fe"]["est"], G["fe"]["lower"], G["fe"]["upper"], wf, {"None" if both else "wr"}, True))')
+        if show_re:
+            body.append(f'items.append(row("diamond re", "Subtotal, random effects", G["re"]["est"], G["re"]["lower"], G["re"]["upper"], {"None" if both else "wf"}, wr, True))')
+        if on('stats'):
+            body += [f't = het(G["i2"], {tau_g}, G["q"], G["df"], G["p"])', 'if t:', '    items.append(row("text", t))']
+        if body:
+            c.append('    if len(ix) > 1:   # a subtotal for two studies or more')
+            c += ['        ' + ln for ln in body]
+        c.append('    items.append(row("gap"))')
+    else:
+        c.append('items += [study(i) for i in order(range(len(eff)))] + [row("gap")]')
+    if show_fe:
+        if mh_on:
+            c.append(f'items.append(row("diamond fe", "Fixed effect (Mantel–Haenszel)", M["est"], M["lower"], M["upper"], 1, {none_both}))')
+        else:
+            c.append(f'items.append(row("diamond fe", "Fixed effect", P["fe"]["est"], P["fe"]["lower"], P["fe"]["upper"], 1, {none_both}))')
+    if show_re:
+        c.append(f'items.append(row("diamond re", {J(f"Random effects ({METHODS[method]}{", HK" if hksj else ""})")}, P["re"]["est"], P["re"]["lower"], P["re"]["upper"], {none_both}, 1))')
+        if on('showPI'):
+            c += ['if len(eff) >= 3:   # the prediction interval: μ̂ ± t(k − 2)·√(τ² + SE²), around the normal-interval estimate',
+                  '    half = stats.t.isf(alpha / 2, len(eff) - 2) * np.sqrt(P["tau2"] + P["re_z"]["se"] ** 2)',
+                  '    items.append(row("pi", "Prediction interval", P["re_z"]["est"], P["re_z"]["est"] - half, P["re_z"]["est"] + half))']
+    if on('stats'):
+        lead = 'Test for overall effect' + (' (random)' if show_re else '')
+        c += [f't = het(P["i2"], {tau_p}, P["q"], P["df"], P["p"])',
+              'if t and len(eff) > 1:',
+              '    items.append(row("text", t))',
+              f'main = P["{"re" if show_re else "fe"}"]',
+              'items.append(row("text", f"' + lead + ': {\'t\' if main[\'df\'] else \'z\'} = {fixed(main[\'z\'], 2)}, p {ptext(main[\'p\'])}"))']
+        if groups:
+            key = 're_z' if show_re else 'fe'
+            c += ['if len(tests) >= 2:   # Q between: the Q of the subgroups\' estimates',
+                  f'    qb = combine_effects(np.array([G["{key}"]["est"] for G in tests]), np.array([G["{key}"]["se"] ** 2 for G in tests]), method_re="chi2").q',
+                  '    items.append(row("text", f"Test for subgroup differences (' + ('random' if show_re else 'fixed')
+                  + '): Q = {fixed(qb, 2)}, df = {len(tests) - 1}, p {ptext(stats.chi2.sf(qb, len(tests) - 1))}"))']
+    # the page's layout: its size, its columns, its axis
+    L = plot.get('layout') or {}
+    W, H = float(L.get('W') or 760), float(L.get('H') or 420)
+    dom = {'lab': L.get('lab') or [0, 0.22], 'plot': L.get('plot') or [0.22, 0.62], 'ci': L.get('ci') or [0.62, 0.82]}
+    for (key, _), d_ in zip(wcols, L.get('w') or [[0.82 + 0.09 * i, 0.91 + 0.09 * i] for i in range(len(wcols))]):
+        dom[key] = d_
+    cols = '{' + ', '.join(f'"{k_}": [{round(float(v[0]), 4)!r}, {round(float(v[1]), 4)!r}]' for k_, v in dom.items()) + '}'
+    null = '1' if ratio else '0'
+    c += ['',
+          'y = 0.0',
+          'for it in items:   # the rows\' places, top down: the header above, a gap half a row',
+          '    if it["kind"] == "head":',
+          '        it["y"] = -1.25',
+          '    elif it["kind"] == "gap":',
+          '        it["y"] = None; y += 0.5',
+          '    else:',
+          '        it["y"] = y; y += 1',
+          'last = y - 1',
+          f'W, H = {W:g}, {H:g}   # the page\'s size in pixels',
+          f'cols = {cols}   # the page\'s columns, as shares of the width less its 8-pixel margins',
+          'fx = lambda c, f: (8 + (cols[c][0] + f * (cols[c][1] - cols[c][0])) * (W - 16)) / W   # a place in a column, as a share of the figure\'s width',
+          'fig = plt.figure(figsize=(W / 100, (H + 26) / 100))   # 26 pixels more for the title',
+          'ax = fig.add_axes((fx("plot", 0), 44 / (H + 26), fx("plot", 1) - fx("plot", 0), (H - 66) / (H + 26)))   # the page\'s margins: 22 pixels at the top, 44 at the bottom',
+          'ax.set_ylim(last + 0.9, -2.15)',
+          'ax.set_yticks([])',
+          'for side in ("left", "right", "top"):',
+          '    ax.spines[side].set_visible(False)',
+          f'ax.tick_params(labelsize={_pt(11)})']
+    c += _axis_lines(plot.get('layout') or {}, log, m[1] + (' (log scale)' if log else ''), size=_pt(11))
+    c += ['x0, x1 = ax.get_xlim()',
+          'rowy = transforms.blended_transform_factory(fig.transFigure, ax.transData)   # x across the figure, y a row of the plot',
+          '',
+          'def put(c, f, y, s, ha, bold=False, muted=False):   # a text in a column, in the page\'s type: 11 pixels, the statistics 10.5',
+          f'    ax.text(fx(c, f), y, s, transform=rowy, ha=ha, va="center", fontsize={_pt(10.5)} if muted else {_pt(11)}, color="{MUTED}" if muted else "{TEXT}",',
+          '            fontweight="bold" if bold else "normal", parse_math=False)',
+          '',
+          'put("lab", 0.01, -1.25, "Study", "left", bold=True)',
+          f'put("ci", 0.99, -1.25, {J(f"{m[1]} [{100 * (1 - alpha):g}% CI]")}, "right", bold=True)']
+    for key, lab in wcols:
+        c.append(f'put("{key}", 0.97, -1.25, {J(lab)}, "right", bold=True)')
+    c += [f'fig.add_artist(plt.Line2D([8 / W, 1 - 8 / W], [-0.55, -0.55], transform=rowy, color="{GRID}", linewidth={_pt(1)}))   # under the header',
+          'cut = lambda s: s if len(s) <= 36 else s[:35] + "…"',
+          'for it in items:',
+          '    if it["kind"] == "text":   # a statistics line, in the muted ink',
+          '        put("lab", 0.01, it["y"], it["label"], "left", muted=True)',
+          '    elif it["kind"] not in ("head", "gap"):',
+          '        bold = it["kind"] == "group" or (it["kind"].startswith("diamond") and not it["sub"])   # the subgroups and the pooled estimates',
+          '        put("lab", 0.01, it["y"], cut(str(it["label"])), "left", bold=bold)',
+          '        if it["kind"] != "group":',
+          '            put("ci", 0.99, it["y"], ci_text(it["est"], it["lo"], it["hi"]), "right", bold=bold)']
+    if wcols:
+        c += [f'            for c_ in {J([k_ for k_, _ in wcols])}:   # the weights, in per cent',
+              '                if it[c_] is not None:',
+              '                    put(c_, 0.97, it["y"], f"{fixed(100 * it[c_], 1)}%", "right")']
+    c += ['st = [it for it in items if it["kind"] == "study"]',
+          'for it in st:   # the studies\' intervals, cut at the axis with an arrow',
+          '    lo, hi = tx(it["lo"]), tx(it["hi"])',
+          f'    ax.plot([max(lo, x0), min(hi, x1)], [it["y"]] * 2, color="{TEXT}", linewidth={_pt(1.2)})',
+          '    if lo < x0:',
+          f'        ax.plot([x0], [it["y"]], marker="<", markersize={_pt(8)}, color="{TEXT}", clip_on=False)',
+          '    if hi > x1:',
+          f'        ax.plot([x1], [it["y"]], marker=">", markersize={_pt(8)}, color="{TEXT}", clip_on=False)',
+          'y0, y1 = -0.5, max(it["y"] for it in items if it["kind"] in ("study", "diamond fe", "diamond re", "pi")) + 0.5',
+          f'ax.plot([{null}, {null}], [y0, y1], color="{MUTED}", linewidth={_pt(1)})   # no effect']
+    if on('pooledLine') and (show_fe or show_re):
+        which = 'diamond re' if show_re else 'diamond fe'
+        c += [f'pooled = next(it for it in items if it["kind"] == "{which}" and not it["sub"])',
+              f'ax.plot([tx(pooled["est"])] * 2, [y0, y1], color="{RE_C if show_re else TEXT}", linewidth={_pt(1)}, linestyle=":")   # the pooled estimate']
+    c += ['for it in items:',
+          '    if it["kind"].startswith("diamond"):   # a pooled estimate, its interval the diamond\'s width',
+          f'        col, h = ("{RE_C}" if it["kind"] == "diamond re" else "{TEXT}"), (0.3 if it["sub"] else 0.36)',
+          '        ax.fill([tx(it["lo"]), tx(it["est"]), tx(it["hi"]), tx(it["est"])], [it["y"], it["y"] - h, it["y"], it["y"] + h],',
+          f'                facecolor=(col, 0.55) if it["sub"] else col, edgecolor=col, linewidth={_pt(1)})',
+          '    elif it["kind"] == "pi":   # the prediction interval, with its ends',
+          f'        ax.plot([tx(it["lo"]), tx(it["hi"])], [it["y"]] * 2, color="{RE_C}", linewidth={_pt(3)})',
+          '        for v in (it["lo"], it["hi"]):',
+          f'            ax.plot([tx(v)] * 2, [it["y"] - 0.22, it["y"] + 0.22], color="{RE_C}", linewidth={_pt(1.5)})',
+          f'wk = np.array([it["{"wre" if show_re else "wfe"}"] for it in st])   # the squares: their areas proportional to the '
+          + ('random-effects' if show_re else 'fixed-effect') + ' weights',
+          'size = np.maximum(5, 17 * np.sqrt(wk / max(wk.max(), 1e-12)))   # their sides in pixels',
+          f'ax.scatter([tx(it["est"]) for it in st], [it["y"] for it in st], s=(size * {PX}) ** 2, marker="s", color="{STUDY}", linewidths=0, zorder=3)',
+          f'fig.suptitle({J("Forest plot of " + m[2])}, fontsize={_pt(12)})',
+          'plt.show()']
+    return '\n'.join(c)
+
+
+def _mini_code(table, S, inputs, method, alpha, hksj, table_name, plot, kind, order_by=None, descending=False):
+    """Leave-one-out ('loo') or cumulative estimates as a small forest plot."""
+    m = MEASURES[S.measure]
+    ratio = m[3]
+    log = bool(ratio and plot.get('log', True) is not False)
+    cum = kind == 'cumulative'
+    c = _head(S, table_name) + _shown_lines(inputs, value_col=order_by if cum else None)
+    c += [f'alpha, HK = {alpha!r}, {bool(hksj)}   # the level; Hartung–Knapp intervals {"on" if hksj else "off"}'] + _code_pooled_fn(method, alpha, hksj)
+    c.append('crit = lambda n: stats.t.isf(alpha / 2, n - 1) if HK and n > 1 else stats.norm.isf(alpha / 2)   # the interval\'s quantile, n studies pooled')
+    if not cum:
+        c += ['rows, names = [], []   # the estimate with each study left out in turn, and its interval',
+              'for i in range(len(eff)):',
+              '    keep = np.arange(len(eff)) != i',
+              '    e, s, _ = pooled(eff[keep], var[keep])',
+              '    rows.append((e, e - crit(keep.sum()) * s, e + crit(keep.sum()) * s))',
+              '    names.append(f"without {labels[i]}")',
+              'full = pooled(eff, var)[0]   # the estimate from every study']
+    else:
+        c += _key_lines(order_by, _order_levels(table, order_by, S.rows), descending)
+        c += ['order = np.lexsort((np.arange(len(key)), np.where(np.isnan(key), np.inf, key)))   # ties in row order, missing last',
+              'rows, names = [], []   # the estimate from the first j studies, and its interval',
+              'for j in range(1, len(eff) + 1):',
+              '    sel = order[:j]',
+              '    e, s, _ = pooled(eff[sel], var[sel])',
+              '    rows.append((e, e - crit(j) * s, e + crit(j) * s))',
+              '    names.append(f"+ {labels[sel[-1]]}' + (' ({values[sel[-1]]})' if order_by else '') + '")',
+              'full = rows[-1][0]   # the estimate from every study']
+    null = '1' if ratio else '0'
+    W, H = float(plot.get('width') or 480), float(plot.get('height') or 300)
+    c += [_tx_line(ratio),
+          'n = len(rows)',
+          f'fig, ax = plt.subplots(figsize=({W / 100:g}, {H / 100:g}), layout="constrained")',
+          f'ax.plot([{null}, {null}], [-0.5, n - 0.5], color="{MUTED}", linewidth={_pt(1)})   # no effect',
+          f'ax.plot([tx(full)] * 2, [-0.5, n - 0.5], color="{RE_C}", linewidth={_pt(1)}, linestyle=":")   # all studies',
+          'for i, (e, lo, hi) in enumerate(rows):',
+          f'    ax.plot([tx(lo), tx(hi)], [i, i], color="{TEXT}", linewidth={_pt(1.2)})   # the interval',
+          f'ax.scatter([tx(e) for e, _, _ in rows], range(n), s={_area(9)}, marker="D", color="{STUDY}", zorder=3)   # the estimates',
+          'ax.set_yticks(range(n), names)',
+          'ax.set_ylim(n - 0.4, -0.6)   # the first line at the top']
+    c += _axis_lines(plot, log, m[1] + (' (log scale)' if log else ''))
+    c += [f'ax.set_title({J("Cumulative estimates" if cum else "Leave-one-out estimates")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _funnel_code(S, inputs, method, alpha, table_name, plot):
+    m = MEASURES[S.measure]
+    ratio = m[3]
+    log = bool(ratio and plot.get('log', True) is not False)
+    limits, re_on, egger_on = plot.get('limits', True) is not False, bool(plot.get('re')), bool(plot.get('egger')) and S.k >= 3
+    c = _head(S, table_name)
+    c += [f'alpha = {alpha!r}', 'se = np.sqrt(var)',
+          'fe = (eff / var).sum() / (1 / var).sum()   # the fixed effect']
+    if re_on:
+        c += _code_pooled_fn(method, alpha, False) + ['re = pooled(eff, var)[0]   # the random effects']
+    if egger_on:
+        c += ['b0, b1 = sm.OLS(eff / se, sm.add_constant(1 / se)).fit().params   # Egger\'s regression: effect = b1 + b0·SE']
+    W, H = float(plot.get('width') or 480), float(plot.get('height') or 340)
+    c += ['smax = 1.08 * se.max()   # the axis reaches a little past the least precise study',
+          'z = stats.norm.isf(alpha / 2)',
+          _tx_line(ratio),
+          f'fig, ax = plt.subplots(figsize=({W / 100:g}, {H / 100:g}), layout="constrained")']
+    if limits:
+        c.append(f'ax.plot(tx(np.array([fe - z * smax, fe, fe + z * smax])), [smax, 0, smax], color="{MUTED}", linewidth={_pt(1)}, linestyle="--")'
+                 f'   # the pseudo {100 * (1 - alpha):g}% limits')
+    c.append(f'ax.plot([tx(fe)] * 2, [0, smax], color="{TEXT}", linewidth={_pt(1)})   # the fixed effect')
+    if re_on:
+        c.append(f'ax.plot([tx(re)] * 2, [0, smax], color="{RE_C}", linewidth={_pt(1)}, linestyle=":")   # the random effects')
+    if egger_on:
+        c.append(f'ax.plot([tx(b1), tx(b1 + b0 * smax)], [0, smax], color="{RE_C}", linewidth={_pt(1.5)})   # Egger\'s line')
+    c += [f'ax.scatter(tx(eff), se, s={_area(8)}, color="{STUDY}", edgecolors="{SURFACE}", linewidths={_pt(1)}, zorder=3)   # the studies',
+          'ax.set_ylim(smax, 0)   # the most precise at the top']
+    c += _axis_lines(plot, log, m[1] + (' (log scale)' if log else ''))
+    c += ['ax.set_ylabel("Standard Error")', f'ax.set_title({J("Funnel plot of " + m[2])})', 'plt.show()']
+    return '\n'.join(c)
+
+
+def _bubble_code(table, S, inputs, covariates, method, alpha, hksj, table_name, plot):
+    """One bubble plot of the meta-regression: the studies against a continuous
+    covariate, the fit and its band with the other covariates at their means
+    (or first levels), as meta.regression's curves."""
+    from . import models
+    m = MEASURES[S.measure]
+    ratio = m[3]
+    log = bool(ratio and plot.get('log', True) is not False)
+    covariates = [cv for cv in (covariates or []) if cv]
+    name = plot.get('covariate')
+    if name not in covariates:
+        return None
+    d = models.build(table, None, [[cv] for cv in covariates], rows=[int(r) for r in S.rows], center=False, coding='treatment')
+    if d.alias[name] in d.categorical:
+        return None
+    c = _head(S, table_name, ['import patsy'])
+    c += [f'alpha = {alpha!r}',
+          f'Xd = patsy.dmatrix({J(_formula(d, covariates))}, d, return_type="dataframe")   # nominal covariates dummy coded against their first level',
+          'pos = d.index.get_indexer(Xd.index)   # the studies with every covariate',
+          'X, eff, var = Xd.to_numpy(float), eff[pos], var[pos]'] + _mreg_fit_lines(method, hksj)
+    c.append('crit = stats.t.isf(alpha / 2, k - p)   # Knapp–Hartung: t on k − p degrees of freedom' if hksj else 'crit = stats.norm.isf(alpha / 2)')
+    others = []
+    for cv in covariates:
+        if cv == name:
+            continue
+        a = d.alias[cv]
+        if a in d.categorical:
+            lv = _py_levels(d.levels[a][:1])[1:-1]
+            others.append(f'{J(cv)}: {lv}')
+        else:
+            others.append(f'{J(cv)}: d.loc[Xd.index, {J(cv)}].mean()')
+    c += [f'x = d.loc[Xd.index, {J(name)}].to_numpy(float)   # the covariate of the plot',
+          'grid = np.linspace(x.min(), x.max(), 60)',
+          f'new = pd.DataFrame({{{J(name)}: grid' + ''.join(', ' + o for o in others) + '})' + ('   # the other covariates at their means, or first levels' if others else ''),
+          'Xn = np.asarray(patsy.build_design_matrices([Xd.design_info], new)[0])',
+          'fitted = Xn @ fit.params',
+          'band = crit * np.sqrt(np.einsum("ij,jk,ik->i", Xn, fit.cov_params(), Xn))   # the confidence band\'s half width',
+          'w = 1 / (var + tau2); w = w / w.sum()   # the studies\' weights',
+          'size = np.maximum(6, 34 * np.sqrt(w / w.max()))   # the bubbles\' diameters in pixels: their areas proportional to the weights',
+          _tx_line(ratio)]
+    W, H = float(plot.get('width') or 480), float(plot.get('height') or 330)
+    null = '1' if ratio else '0'
+    c += [f'fig, ax = plt.subplots(figsize=({W / 100:g}, {H / 100:g}), layout="constrained")',
+          f'ax.fill_between(grid, tx(fitted - band), tx(fitted + band), color=("{RE_C}", 0.13), linewidth=0)   # the {100 * (1 - alpha):g}% confidence band',
+          f'ax.plot(grid, tx(fitted), color="{RE_C}", linewidth={_pt(2)})   # the fit',
+          f'ax.plot([grid[0], grid[-1]], [{null}, {null}], color="{MUTED}", linewidth={_pt(1)})   # no effect',
+          f'ax.scatter(x, tx(eff), s=(size * {PX}) ** 2, color=("{STUDY}", 0.5), edgecolors="{STUDY}", linewidths={_pt(1)}, zorder=3)   # the studies']
+    c += _axis_lines(plot, log, m[1] + (' (log scale)' if log else ''), axis='y')
+    c += [f'ax.set_xlabel({J(name)})', f'ax.set_title({J(f"Bubble plot of {m[1]} by {name}")})', 'plt.show()']
+    return '\n'.join(c)
+
+
+@api('meta.plot_code')
+def plot_code(table, inputs, kind='forest', plot=None, rows=None, method='dl', alpha=0.05, hksj=False, covariates=None, order_by=None,
+              descending=False, table_name='data'):
+    """The matplotlib code of one of the report's graphs: kind 'forest',
+    'loo', 'cumulative', 'funnel' or 'bubble'; plot is what the page chose."""
+    plot = plot or {}
+    method = method if method in METHODS else 'dl'
+    S = load(table, inputs, rows)
+    if S.error or S.k == 0:
+        return {'error': S.error or 'no studies'}
+    if kind == 'forest':
+        code = _forest_code(S, inputs, method, alpha, hksj, table_name, plot)
+    elif kind in ('loo', 'cumulative'):
+        if kind == 'loo' and S.k < 3:
+            return {'error': 'leave-one-out needs three studies or more'}
+        code = _mini_code(table, S, inputs, method, alpha, hksj, table_name, plot, kind, order_by, descending)
+    elif kind == 'funnel':
+        code = _funnel_code(S, inputs, method, alpha, table_name, plot)
+    elif kind == 'bubble':
+        code = _bubble_code(table, S, inputs, covariates, method, alpha, hksj, table_name, plot)
+        if code is None:
+            return {'error': 'no bubble plot for that covariate'}
+    else:
+        return {'error': f'unknown graph {kind!r}'}
+    return {'plot_code': code}

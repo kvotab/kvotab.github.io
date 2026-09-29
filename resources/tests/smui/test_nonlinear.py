@@ -237,6 +237,153 @@ printed = [float(v) for v in re.findall(r'-?\d+\.\d+(?:e-?\d+)?', run.stdout)]
 a_est = rr['estimates']['rows'][2]['estimate']
 check('and prints the report\'s estimate of a', any(abs(v - a_est) <= 1e-5 * abs(a_est) for v in printed), True)
 
+# ---- the code keeps the report's rows, and the graphs' code ------------------------------------------
+# Nonlinear's plot comes whole from nonlinear.fit (plot_code); Fit Curve's
+# plots are put together in the page from each fit's fragment (res.plot: the
+# model, and the function that fits it to a group's rows as the report's
+# code fits it), as curve_plot below puts them together here. Each runs with
+# matplotlib's Agg backend on the whole table's CSV; the figure against the
+# report's curves.
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import json  # noqa: E402
+
+from test_charts import close, maxdiff, run_snippet  # noqa: E402
+
+NTMP = tempfile.mkdtemp(prefix='smui-nonlinear-')
+
+
+def export(tid):
+    from smui import data as D
+    t = D.TABLES[tid]
+    return pd.DataFrame({n: (np.asarray(v, dtype=float) if t['meta'][n].get('dataType') == 'numeric' else pd.Series(list(v), dtype=object)) for n, v in t['cols'].items()})
+
+
+def graph(label, code, tid):
+    figs, err = run_snippet(code, export(tid), 'data', NTMP)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: it ends in plt.show() and draws a figure', (code.rstrip().split('\n')[-1], len(figs or [])), ('plt.show()', 1))
+    return figs[0] if figs else None
+
+
+def run_ns(code, tid):
+    export(tid).to_csv(os.path.join(NTMP, 'data.csv'), index=False)
+    here = os.getcwd()
+    os.chdir(NTMP)
+    ns = {}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(code, 'code', 'exec'), ns)
+    finally:
+        os.chdir(here)
+    return ns
+
+
+def keep_lines(tid, rows, where):
+    from smui import survival as S
+    return S.keep_lines(tid, rows, where)
+
+
+def curve_plot(tid, fits, group=None, weight=None, freq=None, rows=None, where=None, ci=False):
+    """Fit Curve's plot as the page puts its code together (smui-p-survival.js curveCode), from the fits' fragments."""
+    ok = [f_ for f_ in fits if not f_.get('error')]
+    imports = ['import matplotlib.pyplot as plt'] + list(dict.fromkeys(i for f_ in ok for i in f_['plot']['imports']))
+    L = ['import numpy as np', 'import pandas as pd', *imports, 'df = pd.read_csv("data.csv", float_precision="round_trip")', *keep_lines(tid, rows, where),
+         'X, Y = "dose", "response"', f'd = df.dropna(subset={json.dumps([c for c in ("dose", "response", group, weight, freq) if c])})']
+    if weight or freq:
+        L.append(f'd = d[{" * ".join(f"d[{json.dumps(c)}]" for c in (weight, freq) if c)} > 0]')
+    for f_ in ok:
+        L += f_['plot']['lines']
+    L.append('fig, ax = plt.subplots()')
+    for f_ in ok:
+        for g in f_['groups']:
+            if g.get('error'):
+                continue
+            L += [f's = d[d[{json.dumps(group)}] == {json.dumps(g["level"])}]' if group else 's = d',
+                  f'gx, fy, lo, hi = {f_["plot"]["fit"]}(s, {json.dumps(g["params"])})', 'ax.plot(gx, fy, label="curve")']
+            if ci:
+                L += ['ax.plot(gx, lo, label="lo")', 'ax.plot(gx, hi, label="hi")']
+    L.append('plt.show()')
+    return '\n'.join(L)
+
+
+rg_ = np.random.default_rng(8)
+dose_, resp_, batch_, n_, w_ = [], [], [], [], []
+for g_, sh in (('A', 4), ('B', 5), ('C', 6.5)):
+    for i in range(25):
+        xv = 10 * i / 24 + 0.2
+        dose_.append(xv)
+        batch_.append(g_)
+        resp_.append(2 + 10 / (1 + math.exp(-1.2 * (xv - sh))) + rg_.normal(0, 0.3))
+        n_.append(float(1 + i % 3))
+        w_.append(float(0.5 + (i % 4) / 2))
+site_ = ['north' if i % 2 else 'south' for i in range(75)]
+tfc = table({'dose': dose_, 'response': resp_, 'batch': batch_, 'n': n_, 'w': w_, 'site': site_})
+left_n = [4, 30, 52]
+rows_n = [i for i in range(75) if i not in left_n]
+rows_south = [i for i in range(75) if site_[i] == 'south' and i not in left_n]
+# each model on data simulated from it (the groups' curves scaled: still the model), and one misfit
+tabs = {}
+for model in ('logistic4', 'gompertz4', 'quadratic', 'exp3', 'mechanistic', 'michaelis', 'biexp4'):
+    f_ = NL.MODELS[model][4]
+    y_ = [float(f_(np.array([xv]), truth[model])[0]) * (1 + 0.15 * ['A', 'B', 'C'].index(b)) for xv, b in zip(dose_, batch_)]
+    y_ = list(np.asarray(y_) + rg_.normal(0, 0.02 * np.ptp(y_), len(y_)))
+    tabs[model] = table({'dose': dose_, 'response': y_, 'batch': batch_, 'n': n_, 'w': w_, 'site': site_})
+cases_fc = [(m_, tabs[m_], kw_, 1e-7, 1e-5) for m_ in tabs for kw_ in ({'group': 'batch', 'ci': True}, {'ci': True, 'freq': 'n', 'weight': 'w'}, {'ci': False, 'rows': rows_n},
+                                                                          {'ci': True, 'where': [{'column': 'site', 'value': 'south'}], 'rows': rows_south})]
+# a poor model for the data (Exponential 3P on sigmoid curves): the fit is badly conditioned, and
+# curve_fit and the report's least_squares agree to 1e-6 of the curve and 1e-4 of the confidence curves
+cases_fc.append(('exp3', tfc, {'group': 'batch', 'ci': True}, 1e-6, 1e-4))
+for model, tfc_, kw, tol_c, tol_b in cases_fc:
+    for kw in (dict(kw),):
+        r = call('fitcurve.fit', table=tfc_, y='response', x='dose', model=model, alpha=0.05, table_name='data', **kw)
+        tag = f'Fit Curve {r["label"]} ({", ".join(k for k in kw if k not in ("rows", "ci")) or "one curve"}{", confidence curves" if kw["ci"] else ""}{", rows left out" if "rows" in kw else ""})'
+        if r.get('error'):
+            check(f'{tag}: fits', r['error'], None)
+            continue
+        F = graph(f'{tag}: the plot put together from its fragment', curve_plot(tfc_, [r], kw.get('group'), kw.get('weight'), kw.get('freq'), kw.get('rows'), kw.get('where'), kw['ci']), tfc_)
+        if F:
+            ax = F['axes'][0]
+            curves = [q for q in ax['lines'] if q['label'] == 'curve']
+            fitted = [g for g in r['groups'] if not g.get('error')]
+            check(f'{tag}: a curve for each group', len(curves), len(fitted))
+            for q, g in zip(curves, fitted):
+                cv = g['curve']
+                scale = max(abs(v) for v in cv['y'])
+                check.near(f'{tag} {g["level"] or ""}: the curve, refitted from the report\'s estimates', maxdiff(q['x'], cv['x']) + maxdiff(q['y'], cv['y']) / scale, 0, abs_=tol_c)
+                if kw['ci']:
+                    lo_ = [q_ for q_ in ax['lines'] if q_['label'] == 'lo'][fitted.index(g)]
+                    hi_ = [q_ for q_ in ax['lines'] if q_['label'] == 'hi'][fitted.index(g)]
+                    # curve_fit's covariance against the report's MSE (J'J)^-1: within 1e-5 of the curve's size
+                    check.near(f'{tag} {g["level"] or ""}: the confidence curves (the delta method)', max(maxdiff(lo_['y'], cv['lower']), maxdiff(hi_['y'], cv['upper'])) / scale, 0, abs_=tol_b)
+        ns = run_ns(r['code'], tfc_)
+        last = [g for g in r['groups'] if not g.get('error')][-1]   # the code's loop ends with the report's last group
+        check.near(f'{tag}: the statistics code\'s estimates, on the report\'s rows', maxdiff(list(ns['p']), [e['estimate'] for e in last['estimates']]) / max(1, max(abs(e['estimate']) for e in last['estimates'])), 0, abs_=tol_b)
+check('Fit Curve\'s code keeps the By group\'s rows and drops the ones the report leaves out',
+      [ln for ln in call('fitcurve.fit', table=tfc, y='response', x='dose', model='linear', where=[{'column': 'site', 'value': 'south'}], rows=rows_south, table_name='data')['code'].split('\n')
+       if 'only the rows where' in ln or 'leaves out' in ln],
+      ['df = df[df["site"] == "south"]   # only the rows where site is south', f'df = df.drop(index=[{", ".join(str(i) for i in left_n if site_[i] == "south")}])   # the rows the report leaves out'])
+# Nonlinear: its plot, whole from the call
+mis = table({'y': MISRA1A['y'], 'x (volume)': MISRA1A['x'], 'w': [1.0, 2, 1, 1, 3, 1, 1, 2, 1, 1, 1, 2, 1, 1], 'k': [1.0, 1, 2, 1, 1, 1, 3, 1, 1, 2, 1, 1, 1, 1], 'part': ['a', 'b'] * 7})
+for kw in ({'ci': False}, {'ci': True}, {'ci': True, 'freq': 'k'}, {'ci': True, 'weight': 'w', 'rows': list(range(12))}, {'ci': True, 'where': [{'column': 'part', 'value': 'a'}], 'rows': [0, 2, 4, 6, 8, 10]}):
+    kw = dict(kw)
+    r = call('nonlinear.fit', table=mis, y='y', model='b1 * (1 - exp(-b2 * :"x (volume)"))', start={'b1': 500, 'b2': 0.0001}, plot={}, table_name='data', **kw)
+    tag = f'Nonlinear on Misra1a ({", ".join(k for k in kw if k not in ("rows", "ci")) or "unweighted"}{", confidence curves" if kw["ci"] else ""}{", rows left out" if "rows" in kw else ""})'
+    F = graph(f'{tag}: the plot', r['plot_code'], mis)
+    if not F:
+        continue
+    ax = F['axes'][0]
+    ln = [q for q in ax['lines'] if q['label'] == 'Fit'][0]
+    check.near(f'{tag}: the fitted curve over the column\'s range', maxdiff(ln['x'], r['curve']['x']) + maxdiff(ln['y'], r['curve']['y']) / max(r['curve']['y']), 0, abs_=1e-7)
+    if kw['ci']:
+        band = [q[1] for q in ax['polys'][0]['paths'][0]]
+        check.near(f'{tag}: the confidence curves span the report\'s', max(abs(min(band) - min(r['curve']['lower'])), abs(max(band) - max(r['curve']['upper']))) / max(r['curve']['upper']), 0, abs_=1e-6)
+    check(f'{tag}: the rows the report fits, the titles', (sorted(tuple(p_) for p_ in ax['scatter'][0]['xy']), ax['xlabel'], ax['ylabel'], F['suptitle']),
+          (sorted((MISRA1A['x'][i], MISRA1A['y'][i]) for i in r['resid']['rows']), 'x (volume)', 'y', 'y by x (volume)'))
+    ns = run_ns(r['code'], mis)
+    check.near(f'{tag}: the statistics code\'s estimates, on the report\'s rows', maxdiff(list(ns['fit'].x), list(r['estimates_raw'])) / 239.0, 0, abs_=1e-6)
+check('a model of two columns has no plot, and no plot code', 'plot_code' in call('nonlinear.fit', table=mis, y='y', model='b1 * :w + b2 * :k', start={'b1': 1, 'b2': 1}, plot={}), False)
+
 # ---- the model language ----------------------------------------------------------------------------
 tl = table({'y': [1.0, 2, 3, 5, 8], 'x': [1.0, 2, 3, 4, 5], 'dose': [0.5, 1, 2, 4, 8]})
 ok = [('a * exp(-b * :x) + c', ['a', 'b', 'c'], ['x']), ('a*x^2 + b', ['a', 'b'], ['x']), ('where(:x > 2.5, a, b) + c * dose', ['a', 'b', 'c'], ['x', 'dose']),

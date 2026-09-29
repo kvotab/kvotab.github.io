@@ -82,6 +82,21 @@
   }
 
   const treatText = (ctx, res, v) => (res.t_kind === 'categorical' ? SM.grid.cellText(ctx.role('treatment'), v) : fmt(v));
+  const treatLabel = (ctx, res) => (res.t_kind === 'categorical' ? `${treatText(ctx, res, res.treated)} vs ${treatText(ctx, res, res.control)}` : `${fmt(res.treated)} vs ${fmt(res.control)}`);
+
+  /* ---- the graphs' code ---------------------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table: mediation.plot_code writes it, the two models and the
+     simulations set up as the report's code sets them up (the formula path,
+     the same seed: the same numbers), from what the page chose (the
+     diagram's layout, the treatment's labels, the histograms' bins). A
+     headless run (Bootstrap) draws no graphs and asks for none. */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-med-plotcode' }, graph, ctx.code(code)) : graph);
+  async function plotCode(ctx, kind, plot) {
+    if (ctx.headless) return null;
+    const r = await ctx.call('mediation.plot_code', { ...payloadOf(ctx), kind, plot });
+    return r && !r.error ? r.plot_code : null;
+  }
 
   /* ---- the summary ----------------------------------------------------------------------- */
   function summary(ctx, res) {
@@ -122,7 +137,7 @@
     const f = compact ? { node: 10.5, sub: 9, lab: 9.5, eff: 10 } : { node: 11.5, sub: 10, lab: 11, eff: 11 };
     const box = (p, fill) => ({ type: 'rect', xref: 'x', yref: 'y', x0: p.x - bw / 2, x1: p.x + bw / 2, y0: p.y - bh / 2, y1: p.y + bh / 2, line: { color: C.text, width: 1.2 }, fillcolor: fill, layer: 'below' });
     const fill = C.dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)';
-    const tLabel = res.t_kind === 'categorical' ? `${treatText(ctx, res, res.treated)} vs ${treatText(ctx, res, res.control)}` : `${fmt(res.treated)} vs ${fmt(res.control)}`;
+    const tLabel = treatLabel(ctx, res);
     const node = (p, role, name, sub) => ({ x: p.x, y: p.y, xref: 'x', yref: 'y', showarrow: false, align: 'center', font: { size: f.node, color: C.text },
       text: `<b>${role}</b><br>${esc(name)}${sub ? `<br><span style="font-size:${f.sub}px">${esc(sub)}</span>` : ''}` });
     const arrow = (a, b, color) => {
@@ -174,9 +189,11 @@
       { width, height: compact ? 380 : 330, title: 'mediation path diagram', select: false, config: { displayModeBar: false } });
   }
 
-  function diagramOutline(ctx, res) {
+  async function diagramOutline(ctx, res) {
     const ob = ctx.outline('Path Diagram', { key: 'diagram', info: 'p:mediation:diagram', menu: () => [{ label: 'Remove', action: () => ctx.set('diagram', false) }] });
-    ob.add(pathDiagram(ctx, res));
+    const width = W(620);
+    const code = await plotCode(ctx, 'diagram', { compact: width < 470, width, tlabel: treatLabel(ctx, res) });
+    ob.add(withCode(ctx, pathDiagram(ctx, res), code));
     const P = res.paths;
     const notes = [`The arrows carry the models' coefficients: a, the treatment's effect on ${res.mediator} in the mediator model; b, the effect of ${res.mediator} on ${res.y} in the outcome model; c′, the treatment's own effect in the outcome model. Blue is the indirect path, through ${res.mediator}; rose the direct path.`];
     if (res.product) notes.push(`With two least squares models and no interaction the indirect effect is the product a × b = ${sig(res.product.ab)} and the direct effect c′ = ${sig(res.product.c)} (Baron and Kenny's product of coefficients); the simulation gives ACME ${sig(effectOf(res, 'ACME (average)').estimate)} and ADE ${sig(effectOf(res, 'ADE (average)').estimate)}, and it gives the intervals.`);
@@ -226,10 +243,11 @@
     }, { width: W(430), height: 290, title: 'mediation effects', select: false });
   }
 
-  function effectsOutline(ctx, res) {
+  async function effectsOutline(ctx, res) {
     const ob = ctx.outline('Mediation Effects', { key: 'effects', info: 'p:mediation:effects', menu: () => [ctx.check('Effects Plot', 'forest', null, true), ctx.check('Simulated Distributions', 'draws', null, false)] });
     const tbl = effectsTable(ctx, res);
-    ob.add(ctx.opt('forest', true) ? ctx.row(el('div', { class: 'sm-med-table' }, tbl), forestPlot(ctx, res)) : tbl);
+    const code = ctx.opt('forest', true) ? await plotCode(ctx, 'effects', {}) : null;
+    ob.add(ctx.opt('forest', true) ? ctx.row(el('div', { class: 'sm-med-table' }, tbl), withCode(ctx, forestPlot(ctx, res), code)) : tbl);
     const t1 = treatText(ctx, res, res.treated), t0 = treatText(ctx, res, res.control);
     const notes = [
       `ACME, the average causal mediation effect: how ${res.y} changes when ${res.mediator} moves from what it would be under ${t0} to what it would be under ${t1}, with the treatment itself held at ${t0} (the control version) or at ${t1} (the treated version). ADE, the average direct effect: how ${res.y} changes from ${t0} to ${t1} with ${res.mediator} held where it would be under ${t0} (control) or under ${t1} (treated). The total effect is the whole change, ACME + ADE; the proportion mediated ACME / total, which wanders when the total effect is near zero.`,
@@ -242,12 +260,15 @@
   }
 
   /* ---- the simulated distributions ----------------------------------------------------------------------- */
-  function drawsOutline(ctx, res) {
+  async function drawsOutline(ctx, res) {
     const C = colors();
     const ob = ctx.outline('Simulated Distributions', { key: 'draws', info: 'p:mediation:draws', menu: () => [{ label: 'Remove', action: () => ctx.set('draws', false) }] });
     const D = res.draws;
     const avg = (a, b) => a.map((v, i) => (v + b[i]) / 2);
-    const plots = [['ACME (average)', avg(D.acme_ctrl, D.acme_tx), C.acme], ['ADE (average)', avg(D.ade_ctrl, D.ade_tx), C.ade]].map(([name, vals, color]) => {
+    const sets = [['ACME (average)', avg(D.acme_ctrl, D.acme_tx), C.acme], ['ADE (average)', avg(D.ade_ctrl, D.ade_tx), C.ade]];
+    const codes = [];
+    for (const [name, vals] of sets) codes.push(await plotCode(ctx, 'draws', { name, bins: SM.report.niceBins(vals) }));
+    const plots = sets.map(([name, vals, color], q) => {
       const e = effectOf(res, name);
       const b = SM.report.niceBins(vals);
       const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
@@ -257,9 +278,9 @@
       const vline = (v, dash, width = 1.5) => ({ type: 'line', xref: 'x', yref: 'paper', x0: v, x1: v, y0: 0, y1: 1, line: { color: C.text, width, dash } });
       const shapes = [vline(e.estimate, 'solid', 2), vline(e.lower, 'dot'), vline(e.upper, 'dot')];
       if (b.start < 0 && b.end > 0) shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: 0, x1: 0, y0: 0, y1: 1, line: { color: C.muted, width: 1 } });
-      return ctx.plot([{ type: 'bar', x, y: counts, width: b.size, marker: { color, opacity: 0.75, line: { color: C.surface, width: 1 } }, name, hovertemplate: `${name} %{x:.4g}: %{y} simulations<extra></extra>` }],
+      return withCode(ctx, ctx.plot([{ type: 'bar', x, y: counts, width: b.size, marker: { color, opacity: 0.75, line: { color: C.surface, width: 1 } }, name, hovertemplate: `${name} %{x:.4g}: %{y} simulations<extra></extra>` }],
         { xaxis: { title: { text: name } }, yaxis: { title: { text: 'Simulations' }, rangemode: 'tozero' }, shapes, bargap: 0, margin: { l: 52, r: 10, t: 8, b: 42 } },
-        { width: W(360), height: 240, title: `${name} simulated`, select: false });
+        { width: W(360), height: 240, title: `${name} simulated`, select: false }), codes[q]);
     });
     ob.add(ctx.row(...plots), ctx.note(`The ${res.n_rep} simulated values of each average effect, ${res.method === 'bootstrap' ? 'one per bootstrap sample' : 'one per draw of the two models\' parameters'}. The solid line is the estimate (their mean), the dotted lines the ${fmt(100 * (1 - ctx.alpha))}% interval (their percentiles).`));
   }
@@ -496,9 +517,9 @@
     if (res.error) { ctx.container.append(ctx.warn(res.error)); return; }
     ctx.med = { res };
     summary(ctx, res);
-    if (ctx.opt('diagram', true)) diagramOutline(ctx, res);
-    effectsOutline(ctx, res);
-    if (ctx.opt('draws', false)) drawsOutline(ctx, res);
+    if (ctx.opt('diagram', true)) await diagramOutline(ctx, res);
+    await effectsOutline(ctx, res);
+    if (ctx.opt('draws', false)) await drawsOutline(ctx, res);
     if (ctx.opt('mediatorOutline', true)) modelOutline(ctx, res, 'mediator');
     if (ctx.opt('outcomeOutline', true)) modelOutline(ctx, res, 'outcome');
     if (ctx.opt('about', true)) aboutOutline(ctx);

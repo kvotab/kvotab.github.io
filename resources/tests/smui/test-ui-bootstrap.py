@@ -14,10 +14,12 @@ trip, the dark theme and phone width.
 """
 import asyncio
 import json
+import math
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, wait_engine
+from test_charts import GRAPHS_JS, maxdiff, run_graph
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -104,6 +106,7 @@ async def main():
     check('the table notes say what it holds', 'seed 5' in res['notes'] and 'Parameter Estimates' in res['notes'], True)
     check('the report bootstrapped is untouched: plots, cache and Python script', (res['after']['plots'], res['after']['cache'], res['after']['code']), (before['plots'], before['cache'], before['code']))
     await shot(page, 'bootstrap-report.png')
+    await histogram_code(page)
     items = await page.ev(f'({RIGHT})("height (cm)", "Pct Lower")')
     check('no Bootstrap of the Bootstrap report', [i[1] for i in items], [True])
     await page.ev("SM.ui.closeMenus()")
@@ -176,6 +179,73 @@ async def main():
     check('phone width: no sideways scroll', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- the histograms' matplotlib code --------------------------------------------------------------
+# Under each histogram of the Bootstrap report a block that draws it: run in the page's own Python
+# (the notebook's runner), its bars are the page's bins' counts of the bootstrap values, its lines
+# the original estimate and the 95% percentile limits; then with rows of the Bootstrap Results table
+# excluded, which the code leaves out too.
+BINS = '''(() => { const b = SM.app.reports[SM.app.reports.length - 1];
+  // each histogram's bins, and its bars as Plotly counted them (calcdata: each bar's centre p and count s)
+  return b.plots.filter((p) => p.box.isConnected).map((p) => [p.opts.title, { ...p.traces[0].xbins, bars: (p.box.calcdata[0] || []).map((c) => [c.p, c.s]) }]); })()'''
+
+
+def expected_counts(xs, bins):
+    start, size = bins['start'], bins['size']
+    nb = max(1, round((bins['end'] - start) / size))
+    counts = [0] * nb
+    for v in xs:
+        if v is None or not math.isfinite(v):
+            continue
+        k = math.floor((v - start) / size + 1e-9)
+        if 0 <= k < nb:
+            counts[k] += 1
+    return [start + (i + 0.5) * size for i in range(nb)], counts
+
+
+async def check_histograms(page, tag):
+    r = await page.ev('(async () => { const b = SM.app.reports[SM.app.reports.length - 1]; return { g: await __gr.graphs(b), undrawn: __gr.take() }; })()', timeout=300)
+    bins = dict((t, b) for t, b in await page.ev(BINS))
+    check(f'{tag}: a histogram per term, each drawn, each with its code block under it ending in plt.show()',
+          ([g['label'] for g in r['g']], r['undrawn'], [bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()' for g in r['g']]),
+          (['Intercept bootstrap values', 'height (cm) bootstrap values'], [], [True, True]))
+    for g in r['g']:
+        lab = f'{tag}: {g["label"]}'
+        F, err = await run_graph(page, g, 'SM.app.reports[SM.app.reports.length - 1].table')
+        check(f'{lab}: the code runs in the page', err, None)
+        if not F:
+            continue
+        F = F[0]
+        ax = F['axes'][0]
+        mids, counts = expected_counts(g['traces'][0]['x'], bins[g['label']])
+        check(f'{lab}: a bar for each of the page\'s bins, as high as its count of the bootstrap values',
+              (len(ax['bars']), [b['h'] for b in ax['bars']]), (len(counts), [float(c) for c in counts]))
+        drawn = {round(p_, 9): c for p_, c in bins[g['label']]['bars'] if c}
+        check(f'{lab}: the bars Plotly draws, the same counts at the same places',
+              {round(b['x'] + b['w'] / 2, 9): b['h'] for b in ax['bars'] if b['h']}, {k: float(v) for k, v in drawn.items()})
+        check.near(f'{lab}: the bars\' centres', maxdiff([b['x'] + b['w'] / 2 for b in ax['bars']], mids), 0, 1e-9)
+        check.near(f'{lab}: the bars\' width (the bin less the gap)', ax['bars'][0]['w'] if ax['bars'] else None, 0.98 * bins[g['label']]['size'], 1e-12)
+        vl = sorted(ln['x'][0] for ln in ax['lines'] if len(ln['x']) == 2 and ln['x'][0] == ln['x'][1])
+        check.near(f'{lab}: the lines at the original estimate and the 95% percentile limits', maxdiff(vl, sorted(s['x0'] for s in g['shapes'])), 0, 1e-12)
+        check(f'{lab}: solid at the original, dashed at the limits', sorted(ln['ls'] for ln in ax['lines']), sorted(['-' if s['dash'] == 'solid' else '--' for s in g['shapes']]))
+        check(f'{lab}: the titles and the size', (ax['title'], ax['xlabel'], ax['ylabel'], F['size']), (g['label'], g['titles']['x'], g['titles']['y'], [g['w'] / 100, g['h'] / 100]))
+    return r['g']
+
+
+async def histogram_code(page):
+    await page.ev(GRAPHS_JS)
+    await check_histograms(page, 'the Bootstrap report\'s code')
+    await page.ev('''(async () => { const b = SM.app.reports[SM.app.reports.length - 1]; b.table.setState([2, 5, 11], 'excluded', true);
+      const d = new Promise((res) => b.on('done', res)); b.run(); await d; })()''', timeout=300)
+    gs = await check_histograms(page, 'rows of Bootstrap Results excluded')
+    check('rows excluded: the code drops them', all('df = df.drop(index=[2, 5, 11])   # the rows the report leaves out' in g['code'] for g in gs) and len(gs) == 2, True)
+    back = await page.ev('''(async () => { const b = SM.app.reports[SM.app.reports.length - 1];
+      const own = await SM.engine.call('bootstrap.report', { columns: ['Intercept', 'height (cm)'], rows: b.groups()[0].rows }, b.table);
+      return own.code; })()''')
+    check('rows excluded: the report\'s own code drops them too', 'df = df.drop(index=[2, 5, 11])   # the rows the report leaves out' in back, True)
+    await page.ev('''(async () => { const b = SM.app.reports[SM.app.reports.length - 1]; b.table.setState([2, 5, 11], 'excluded', false);
+      const d = new Promise((res) => b.on('done', res)); b.run(); await d; })()''', timeout=300)
 
 
 asyncio.run(main())

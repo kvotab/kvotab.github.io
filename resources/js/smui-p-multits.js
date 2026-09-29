@@ -52,6 +52,28 @@
     return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
   }
   const divergingScale = () => (dark() ? [[0, '#5b9cf0'], [0.5, '#3a3431'], [1, '#e8604f']] : [[0, '#2f6ec7'], [0.5, '#f6f3f0'], [1, '#c0392b']]);
+
+  /* ---- the graphs as matplotlib code -------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export of
+     the table, as the notebook runs it. The function that makes a graph's
+     numbers writes its code (plot_code, resources/py/smui/multits.py) as a
+     recipe, as the Time Series platform's are: lines, the place for the
+     graph's size in the report, and parts an option keeps (Small Multiples).
+     recipe() puts one together. */
+  const inches = (px) => String(Math.round(px) / 100);
+  function recipe(parts, { flags = {}, size = null } = {}) {
+    const on = (f) => (f.startsWith('!') ? !flags[f.slice(1)] : !!flags[f]);
+    const out = [];
+    for (const p of parts || []) {
+      if (typeof p === 'string') out.push(p);
+      else if (p && p.set === 'size') out.push(`size = (${inches(size[0])}, ${inches(size[1])})   # the graph's size in the report, in inches (100 pixels an inch)`);
+      else if (p && (p.if || []).every(on) && p.lines && p.lines.length) out.push(recipe(p.lines, { flags, size }));
+    }
+    return out.join('\n');
+  }
+  const graphCode = (ctx, parts, opts) => (parts && parts.length ? ctx.code(recipe(parts, opts)) : null);
+  // A graph with its code block under it, as one item of a row.
+  const withCode = (graph, code) => (code ? el('div', { class: 'mts-plotcode' }, graph, code) : graph);
   /* p-values: red below α, the deeper the smaller; neutral just above α, pale
      blue toward 1. A linear scale would paint p = 0.06 almost as red as 0. */
   function pScale(alpha) {
@@ -152,7 +174,8 @@
         height = 300;
         layout = { xaxis: xAxis(S), yaxis: { title: { text: S.log || S.diff ? 'Series as analysed' : 'Value' } }, showlegend: true, legend: { orientation: 'h', y: -0.24 } };
       }
-      box.add(ctx.plot(traces, layout, { width: plotWidth(ctx, 660), height, title: 'Time Series Graph' }));
+      const w = plotWidth(ctx, 660);
+      box.add(ctx.plot(traces, layout, { width: w, height, title: 'Time Series Graph' }), graphCode(ctx, S.plot_code && S.plot_code.series, { flags: { multiples }, size: [w, height] }));
     }
     const what = [S.freq_label ? `${S.freq_label[0].toUpperCase()}${S.freq_label.slice(1)} data` : null, `${S.n} time points`,
       S.log && S.diff ? 'the first differences of the logarithms' : S.log ? 'the logarithms' : S.diff ? 'the first differences' : null].filter(Boolean);
@@ -303,12 +326,14 @@
     return V;
   }
 
-  function heatmap(ctx, z, labels, { zmin, zmax, scale, text, title, height, rowLabels = null }) {
+  /* A heatmap, with its code under it (code: its recipe). */
+  function heatmap(ctx, z, labels, { zmin, zmax, scale, text, title, height, rowLabels = null, code = null }) {
     const rl = rowLabels || labels;
     const sz = Math.max(220, Math.min(560, 70 + 58 * labels.length));
-    return ctx.plot([{ type: 'heatmap', z, x: labels.map(esc), y: rl.map(esc), zmin, zmax, colorscale: scale, text, texttemplate: labels.length <= 10 ? '%{text}' : '', hovertemplate: '%{y} × %{x}: %{text}<extra></extra>', xgap: 2, ygap: 2, colorbar: { thickness: 10, len: 0.85 } }],
+    const size = [plotWidth(ctx, sz + 90), height || Math.max(200, sz - 20 + 26 * (rl.length - labels.length))];
+    return withCode(ctx.plot([{ type: 'heatmap', z, x: labels.map(esc), y: rl.map(esc), zmin, zmax, colorscale: scale, text, texttemplate: labels.length <= 10 ? '%{text}' : '', hovertemplate: '%{y} × %{x}: %{text}<extra></extra>', xgap: 2, ygap: 2, colorbar: { thickness: 10, len: 0.85 } }],
       { xaxis: { type: 'category', side: 'bottom', showgrid: false, showline: false, ticks: '', tickangle: labels.length > 4 ? -35 : 0 }, yaxis: { type: 'category', autorange: 'reversed', showgrid: false, showline: false, ticks: '' }, margin: { l: 40, r: 10, t: 8, b: 30 } },
-      { width: plotWidth(ctx, sz + 90), height: height || Math.max(200, sz - 20 + 26 * (rl.length - labels.length)), title, select: false });
+      { width: size[0], height: size[1], title, select: false }), graphCode(ctx, code, { size }));
   }
 
   function residCorr(ctx, V, parent) {
@@ -316,7 +341,7 @@
     const labs = V.labels;
     const text = V.resid_corr.map((row) => row.map((v) => (v == null ? '' : v.toFixed(3).replace('-', '−'))));
     const rows = V.names.map((n, i) => ({ variable: labs[i], ...Object.fromEntries(V.names.map((m, j) => [`c${j}`, V.resid_corr[i][j]])), sd: V.resid_sd[i] }));
-    ob.add(ctx.row(heatmap(ctx, V.resid_corr, labs, { zmin: -1, zmax: 1, scale: divergingScale(), text, title: 'Residual correlation colour map' }),
+    ob.add(ctx.row(heatmap(ctx, V.resid_corr, labs, { zmin: -1, zmax: 1, scale: divergingScale(), text, title: 'Residual correlation colour map', code: V.plot_code && V.plot_code.corr }),
       ctx.rt({ columns: [{ key: 'variable', label: '', fmt: 'text' }, ...labs.map((l, j) => ({ key: `c${j}`, label: l, digits: 4 })), { key: 'sd', label: 'Residual Std Dev' }], rows }, { sortable: false, name: 'Residual correlation' })),
     ctx.note('Correlations of the residuals of the equations (res.resid_corr), red for +1 and blue for −1. Large ones mean shocks hit the series together: the orthogonalized impulse responses then depend on the ordering, and Instantaneous Causality tests them.'));
   }
@@ -339,7 +364,7 @@
     const tbl = ctx.rt({ columns: [{ key: 'i', label: '#', fmt: 'int' }, { key: 'real', label: 'Real' }, { key: 'imag', label: 'Imaginary' }, { key: 'modulus', label: 'Modulus' }, { key: 'period', label: 'Period' }],
       rows: ev.map((e, i) => ({ i: i + 1, ...e })) }, { sortable: false, maxRows: 24, name: 'Companion eigenvalues' });
     ob.add(ctx.kv([['Stable', st.stable ? 'Yes' : 'No', 'text'], ['Largest Modulus', st.max_modulus], ['Eigenvalues', ev.length, 'int']]),
-      ctx.row(plot, tbl),
+      ctx.row(withCode(plot, graphCode(ctx, V.plot_code && V.plot_code.stability, { size: [280, 270] })), tbl),
       st.stable ? ctx.note('Every eigenvalue of the companion matrix lies inside the unit circle: the VAR is stable (statsmodels\' is_stable: the roots of det(I − A₁z − … − Aₚzᵖ) lie outside it). A complex pair gives a cycle of the period shown, in time points.')
         : ctx.warn('An eigenvalue lies on or outside the unit circle: the VAR is not stable, and its impulse responses and forecasts explode. Difference the series, or fit a VECM (Cointegration).'));
   }
@@ -374,7 +399,7 @@
     const cols = [{ key: 'causing', label: 'Causing', fmt: 'text' }, { key: 'caused', label: 'Caused', fmt: 'text' }, { key: 'stat', label: stat }, { key: 'df', label: kind === 'f' ? 'DF Num' : 'DF', fmt: 'int' }];
     if (kind === 'f') cols.push({ key: 'df_den', label: 'DF Den', fmt: 'int' });
     cols.push({ key: 'crit', label: `Critical Value (${fmt(ctx.alpha)})` }, { key: 'p', label: kind === 'f' ? 'Prob > F' : 'Prob > ChiSq', fmt: 'p' });
-    ob.add(ctx.row(heatmap(ctx, z, names, { zmin: 0, zmax: 1, scale: pScale(ctx.alpha), text, title: 'Granger causality p-values', rowLabels: rowNames }),
+    ob.add(ctx.row(heatmap(ctx, z, names, { zmin: 0, zmax: 1, scale: pScale(ctx.alpha), text, title: 'Granger causality p-values', rowLabels: rowNames, code: G.plot_code && G.plot_code.granger }),
       ctx.rt({ columns: cols, rows: tests }, { sortable: true, name: 'Granger causality tests', maxRows: 60 })));
     ob.add(ctx.note(`Row causes column: each cell tests H0 "the row's lags add nothing to the column's equation" (test_causality, ${kind === 'f' ? 'an F test' : 'a Wald χ² test'} of the ${p} lag coefficients${G.others.length ? '; the last row tests all the other series together' : ''}). Red is a p-value below α: the row helps to forecast the column. It is predictive causality in this VAR, not cause and effect.`));
     const io = ctx.outline('Instantaneous Causality', { parent: ob, key: 'granger:inst', info: 'p:multits:granger' });
@@ -455,7 +480,8 @@
       layout.shapes.push({ type: 'line', xref: c.xa, yref: c.ya, x0: 0, x1: H, y0: 0, y1: 0, line: { color: tc.muted, width: 0.8, dash: 'dot' } });
       layout.annotations.push({ text: `${esc(I.names[imp])}${narrow ? '<br>' : ' '}→ ${esc(I.names[resp])}`, xref: 'paper', yref: 'paper', x: (c.xd[0] + c.xd[1]) / 2, y: c.yd[1], xanchor: 'center', yanchor: 'bottom', showarrow: false, font: { size: narrow ? 8.5 : 10 } });
     }
-    ob.add(ctx.plot(traces, layout, { width: 60 + cw * k, height: (narrow ? 70 : 50) + Math.round(cw * (narrow ? 0.98 : 0.78)) * k, title: 'Impulse responses', select: false }));
+    const size = [60 + cw * k, (narrow ? 70 : 50) + Math.round(cw * (narrow ? 0.98 : 0.78)) * k];
+    ob.add(ctx.plot(traces, layout, { width: size[0], height: size[1], title: 'Impulse responses', select: false }), graphCode(ctx, I.plot_code && I.plot_code.irf, { size }));
     ob.add(ctx.note(`${cum ? 'Cumulative responses (the sums from 0 to h). ' : ''}Row: the responding series; column: the shock (impulse → response). ${I.shock_note} ${I.band_note}`));
     for (const n of I.notes || []) ob.add(ctx.note(n));
     const rowsT = [];
@@ -489,7 +515,8 @@
       }
       layout[`yaxis${i ? i + 1 : ''}`] = { domain: dom[i], range: [0, 1], tickformat: '.0%', title: { text: esc(F.labels[i]), font: { size: 10.5 } } };
     }
-    ob.add(ctx.plot(traces, layout, { width: plotWidth(ctx, 560), height: Math.max(260, 80 + 120 * k), title: 'Variance decomposition', select: false }));
+    const size = [plotWidth(ctx, 560), Math.max(260, 80 + 120 * k)];
+    ob.add(ctx.plot(traces, layout, { width: size[0], height: size[1], title: 'Variance decomposition', select: false }), graphCode(ctx, F.plot_code && F.plot_code.fevd, { size }));
     ob.add(ctx.note(`The share of each series' h-step forecast error variance that comes from each orthogonalized shock (res.fevd; the Cholesky ordering ${F.names.join(', ')}, as the impulse responses). The shares of a row add to 1.`));
     F.names.forEach((n, i) => {
       const sub = ctx.outline(`FEVD for ${F.labels[i]}`, { parent: ob, key: `fevd:${n}`, closed: true });
@@ -499,7 +526,7 @@
   }
 
   /* ---- forecasts ------------------------------------------------------------------------------------ */
-  function forecastPlot(ctx, S, names, U, fc, { title, level }) {
+  function forecastPlot(ctx, S, names, U, fc, { title, level, code = null }) {
     const k = names.length;
     const dom = stackDomains(k, 0.06);
     const xo = xOf(S, U.t_obs), xf = xOf(S, fc.t);
@@ -520,8 +547,10 @@
       layout[`yaxis${i ? i + 1 : ''}`] = { domain: dom[i], title: { text: esc(names[i]), font: { size: 10.5 } } };
       if (x0 != null) layout.shapes.push({ type: 'line', xref: 'x', yref: `${ya} domain`, x0, x1: x0, y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } });
     }
-    const plot = ctx.plot(traces, layout, { width: plotWidth(ctx, 660), height: Math.max(260, 60 + 130 * k), title });
-    return [plot, ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * level)}% intervals; to the left of the dotted line the data${U.fitted ? ' and the one-step-ahead predictions' : ''}.`)];
+    const size = [plotWidth(ctx, 660), Math.max(260, 60 + 130 * k)];
+    const plot = ctx.plot(traces, layout, { width: size[0], height: size[1], title });
+    return [plot, graphCode(ctx, code, { size }),
+      ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * level)}% intervals; to the left of the dotted line the data${U.fitted ? ' and the one-step-ahead predictions' : ''}.`)];
   }
 
   function forecastRows(S, names, fc) {
@@ -547,7 +576,7 @@
     const U = F.original || F.transformed;
     const names = F.original ? F.names : F.labels;
     const fc = { t: F.t, mean: U.mean, lower: U.lower, upper: U.upper };
-    ob.add(...forecastPlot(ctx, S, names, U, fc, { title: 'VAR forecasts', level: F.level }));
+    ob.add(...forecastPlot(ctx, S, names, U, fc, { title: 'VAR forecasts', level: F.level, code: F.plot_code && F.plot_code.forecast }));
     if (F.original) ob.add(ctx.note(F.original_note));
     else ob.add(ctx.note(`forecast_interval: ± z standard errors from the forecast MSE of the VAR (Σ Φⱼ Σᵤ Φⱼ'), which leaves out the uncertainty of the estimated coefficients${transformed ? '; the series as analysed, not in the units of the table' : ''}.`));
     for (const n of F.notes || []) ob.add(ctx.note(n));
@@ -681,7 +710,7 @@
       for (const n of E.notes || []) vo.add(ctx.note(n));
       const fo = ctx.outline('VECM Forecast', { parent: vo, key: 'vecm:fc' });
       const U = { t_obs: E.observed.t, observed: E.observed.values, rows: E.observed.rows, fitted: null };
-      fo.add(...forecastPlot(ctx, S, E.names, U, { t: E.forecast.t, mean: E.forecast.mean, lower: E.forecast.lower, upper: E.forecast.upper }, { title: 'VECM forecasts', level: E.forecast.level }));
+      fo.add(...forecastPlot(ctx, S, E.names, U, { t: E.forecast.t, mean: E.forecast.mean, lower: E.forecast.lower, upper: E.forecast.upper }, { title: 'VECM forecasts', level: E.forecast.level, code: E.plot_code && E.plot_code.forecast }));
       fo.add(ctx.note('The forecasts of the levels (statsmodels\' VECMResults.predict, the VECM as a VAR in levels), in the units of the table.'));
       vo.add(ctx.code(E.code));
     }

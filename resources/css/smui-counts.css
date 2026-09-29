@@ -33,3 +33,6 @@
   .sm-cr-models { grid-template-columns: 1fr; }
   .sm-cr-modelline { gap: 2px 12px; }
 }
+
+/* ---- a graph with its matplotlib code under it, as one item of a row ----------------- */
+.sm-cr-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

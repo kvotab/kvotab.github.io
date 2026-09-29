@@ -31,9 +31,11 @@ import asyncio
 import json
 import math
 import os
+import re
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -539,6 +541,9 @@ async def main():
     helps = await page.ev('(() => { SM.app.showHelp("p-meta"); return !!document.getElementById("help-p-meta"); })()')
     check('the platform has its line in Help', helps, True)
 
+    # ---- the graphs' matplotlib code, run in the page
+    await chart_code(page)
+
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "meta" && r.spec.roles.group && r.spec.roles.group.length)))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
@@ -558,6 +563,262 @@ async def main():
     check('no script errors', page.errors, [])
     await page.close()
 
+
+# ---- the graphs' matplotlib code -------------------------------------------------------------------------------------
+# Each graph has a code block right under it (details.sm-code, ending in
+# plt.show()); the block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does) with test_charts.PROBE_MORE in place of
+# plt.show(), and the figure it draws is compared with the Plotly graph above
+# it: the forest plot's texts in their columns, its squares, intervals,
+# arrows, diamonds and prediction interval; the small forests' estimates; the
+# funnel's points and lines; the bubbles, the fit and its band; the axes'
+# ranges and ticks, the sizes and titles. __mt adds what GRAPHS_JS does not
+# collect: the axes' domains and ranges, marker sizes and symbols, fill
+# colours, line widths.
+CHART_JS = r'''
+window.__mt = {
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const ax = (k) => (L[k] ? { domain: L[k].domain || null, range: L[k].range || null, type: L[k].type || null, tickvals: L[k].tickvals || null, ticktext: L[k].ticktext || null } : null);
+      return { label: p.getAttribute('aria-label'), W: L.width, H: L.height, x: ax('xaxis'), x2: ax('xaxis2'), x3: ax('xaxis3'), x4: ax('xaxis4'), x5: ax('xaxis5'), y: ax('yaxis'),
+        traces: (p.data || []).map((d) => ({ name: d.name || null, size: d.marker ? d.marker.size : null, symbol: d.marker ? d.marker.symbol : null, fillcolor: d.fillcolor || null, lw: d.line ? d.line.width : null })) };
+    });
+  },
+};
+'''
+TEXT_C, MUTED_C, RE_C, STUDY_C = '#352921ff', '#786b5dff', '#b0413eff', '#2a6db3ff'
+
+
+async def run_more(page, g, table_js):
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=900)
+    if isinstance(out, str):
+        return None, out
+    got, err = more_from_outputs(out.get('outputs'))
+    return (got['figures'] if got else None), err
+
+
+def unhtml(s):
+    """A Plotly text as matplotlib writes it: no <b>, <br> a new line, the escapes undone."""
+    s = re.sub(r'<br\s*/?>', '\n', str(s or ''))
+    s = re.sub(r'</?b>', '', s)
+    for a, b in (('&lt;', '<'), ('&gt;', '>'), ('&#37;{', '%{'), ('&amp;', '&')):
+        s = s.replace(a, b)
+    return s
+
+
+def near_all(a, b, rel=1e-9, abs_=1e-9):
+    a, b = list(a or []), list(b or [])
+    return len(a) == len(b) and all(x is not None and y is not None and abs(x - y) <= max(abs_, rel * max(abs(x), abs(y))) for x, y in zip(a, b))
+
+
+def segments(t):
+    """A lines trace's segments (x0, x1, y0, y1), split at its gaps."""
+    out, cur = [], []
+    for x, y in list(zip(t.get('x') or [], t.get('y') or [])) + [(None, None)]:
+        if x is None or y is None:
+            if len(cur) == 2:
+                out.append((cur[0][0], cur[1][0], cur[0][1], cur[1][1]))
+            cur = []
+        else:
+            cur.append((x, y))
+    return out
+
+
+def trace(g, name):
+    return [t for t in g['traces'] if t.get('name') == name]
+
+
+def xrange_of(ax_js, ax_fig, which='x'):
+    """The page's axis range and the figure's, both in the page's units (log10 on a log axis)."""
+    lim = ax_fig[f'{which}lim']
+    if ax_js.get('type') == 'log':
+        lim = [math.log10(v) for v in lim]
+    return ax_js.get('range'), lim
+
+
+def check_forest(lab, g, ex, F):
+    ax = F['axes'][0]
+    W, H = ex['W'], ex['H']
+    check(f'{lab}: the page\'s size and title', (F['size'], F['suptitle']), ([W / 100, (H + 26) / 100], g['label']))
+    fx = lambda axis, v: (8 + (ex[axis]['domain'][0] + v * (ex[axis]['domain'][1] - ex[axis]['domain'][0])) * (W - 16)) / W   # noqa: E731
+    want = sorted((unhtml(s), y, fx({'x2': 'x2', 'x3': 'x3', 'x4': 'x4', 'x5': 'x5'}[t['xaxis']], x))
+                  for t in g['traces'] if t.get('mode') == 'text' for x, y, s in zip(t['x'], t['y'], t['text']))
+    got = sorted((t['s'], t['y'], t['x']) for t in ax['texts'])
+    check(f'{lab}: every text of the plot, the page\'s, in its row', [(s, y) for s, y, _ in got], [(s, y) for s, y, _ in want])
+    if [(s, y) for s, y, _ in got] != [(s, y) for s, y, _ in want]:
+        print('   ', sorted(set((s, y) for s, y, _ in want) ^ set((s, y) for s, y, _ in got))[:6])
+    check(f'{lab}: and in its column', len(got) == len(want) and all(abs(a[2] - b[2]) < 2e-4 for a, b in zip(got, want)), True)
+    st = trace(g, 'Studies')[0]
+    sizes = [tr['size'] for tr in ex['traces'] if tr['name'] == 'Studies'][0]
+    sq = ax['scatter'][0]
+    check(f'{lab}: the squares at the page\'s places', near_all([v for xy in sq['xy'] for v in xy], [v for x, y in zip(st['x'], st['y']) for v in (x, y)]), True)
+    check(f'{lab}: and of the page\'s sizes', near_all(sq['sizes'], [(s * 0.72) ** 2 for s in sizes], 1e-9), True)
+    ci = trace(g, 'Confidence intervals')[0]
+    ivs = [(ln['x'][0], ln['x'][1], ln['y'][0], ln['y'][1]) for ln in ax['lines'] if ln['color'] == TEXT_C and ln['marker'] == 'None' and abs(ln['lw'] - 0.864) < 1e-9]
+    if not check(f'{lab}: the studies\' intervals, cut at the axis as the page cuts them', near_all([v for s_ in ivs for v in s_], [v for s_ in segments(ci) for v in s_]), True):
+        print('   ', [(a, b) for a, b in zip([v for s_ in ivs for v in s_], [v for s_ in segments(ci) for v in s_]) if abs(a - b) > 1e-9][:4])
+    arr = sorted((ln['marker'], ln['y'][0]) for ln in ax['lines'] if ln['marker'] in ('<', '>'))
+    arr_js = sorted(({'triangle-left': '<', 'triangle-right': '>'}[tr['symbol']], y) for tr, t in zip(ex['traces'], g['traces']) if tr['name'] == 'Interval continues' for y in t['y'])
+    check(f'{lab}: the arrows of the intervals past the axis', arr, arr_js)
+    dia_js = [(t, tr) for t, tr in zip(g['traces'], ex['traces']) if t.get('fill') == 'toself']
+    polys = [p for p in ax['patches'] if p['type'] == 'Polygon']
+    check(f'{lab}: a diamond per pooled estimate, the page\'s', len(polys) == len(dia_js) and all(near_all([v for q in p['xy'][:4] for v in q], [v for x, y in zip(t['x'][:4], t['y'][:4]) for v in (x, y)]) for p, (t, _) in zip(polys, dia_js)), True)
+    check(f'{lab}: in the page\'s colours', [p['fc'] for p in polys], [tr['fillcolor'] + ('ff' if len(tr['fillcolor']) == 7 else '') for _, tr in dia_js])
+    for name, want_ls in (('No effect', '-'), ('Pooled estimate', ':')):
+        t = trace(g, name)
+        got_l = [ln for ln in ax['lines'] if ln['ls'] == want_ls and ln['x'][0] == ln['x'][-1] and len(ln['x']) == 2 and ln['y'] == [-0.5, ln['y'][1]] and ln['marker'] == 'None']
+        check(f'{lab}: the line "{name}", the page\'s', len(got_l) == len(t) and all(near_all(ln['x'] + ln['y'], t_['x'] + t_['y']) for ln, t_ in zip(got_l, t)), True)
+    pi = trace(g, 'Prediction interval')
+    pl = [ln for ln in ax['lines'] if abs(ln['lw'] - 2.16) < 1e-9]
+    check(f'{lab}: the prediction interval, the page\'s', len(pl) == len(pi) and all(near_all(ln['x'] + ln['y'], t_['x'] + t_['y']) for ln, t_ in zip(pl, pi)), True)
+    rj, rf = xrange_of(ex['x'], ax)
+    if not check(f'{lab}: the page\'s axis range', near_all(rf, rj, 1e-6, 1e-6), True):
+        print('   page', rj, 'figure', rf)
+    check(f'{lab}: its scale and ticks', (ax['xscale'], ax['xticks'] if ex['x']['tickvals'] else None, ax['xticklabels'] if ex['x']['ticktext'] else None),
+          ('log' if ex['x']['type'] == 'log' else 'linear', ex['x']['tickvals'], ex['x']['ticktext']))
+    check(f'{lab}: the axis title', ax['xlabel'], g['titles']['x'])
+
+
+def check_mini(lab, g, ex, F):
+    ax = F['axes'][0]
+    check(f'{lab}: the page\'s size and title', (F['size'], ax['title']), ([ex['W'] / 100, ex['H'] / 100], g['label']))
+    est = trace(g, 'Estimates')[0]
+    check(f'{lab}: the estimates at the page\'s places', near_all([v for xy in ax['scatter'][0]['xy'] for v in xy], [v for x, y in zip(est['x'], est['y']) for v in (x, y)]), True)
+    ivs = [(ln['x'][0], ln['x'][1], ln['y'][0], ln['y'][1]) for ln in ax['lines'] if ln['color'] == TEXT_C]
+    check(f'{lab}: their intervals, the page\'s', near_all([v for s_ in ivs for v in s_], [v for s_ in segments(trace(g, 'Intervals')[0]) for v in s_]), True)
+    for name, ls, col in (('All studies', ':', RE_C), ('No effect', '-', MUTED_C)):
+        t = trace(g, name)[0]
+        got_l = [ln for ln in ax['lines'] if ln['ls'] == ls and ln['color'] == col]
+        check(f'{lab}: the line "{name}", the page\'s', len(got_l) == 1 and near_all(got_l[0]['x'] + got_l[0]['y'], t['x'] + t['y']), True)
+    check(f'{lab}: the lines named as the page names them', ax['yticklabels'], [unhtml(s) for s in ex['y']['ticktext']])
+    rj, rf = xrange_of(ex['x'], ax)
+    check(f'{lab}: the page\'s axis range and scale', (near_all(rf, rj, 1e-6, 1e-6), ax['xscale']), (True, 'log' if ex['x']['type'] == 'log' else 'linear'))
+    check(f'{lab}: the first line at the top', near_all(ax['ylim'], ex['y']['range']), True)
+
+
+def check_funnel(lab, g, ex, F):
+    ax = F['axes'][0]
+    check(f'{lab}: the page\'s size and title', (F['size'], ax['title']), ([ex['W'] / 100, ex['H'] / 100], g['label']))
+    st = trace(g, 'Studies')[0]
+    check(f'{lab}: the studies at the page\'s places', near_all([v for xy in ax['scatter'][0]['xy'] for v in xy], [v for x, y in zip(st['x'], st['y']) for v in (x, y)]), True)
+    # the page's pseudo limits use its normal quantile, Acklam's approximation (good to about 1e-9); the code's is scipy's
+    for name, pick, rel in (('Pseudo 95% limits', lambda ln: ln['ls'] == '--', 1e-7), ('Fixed effect', lambda ln: ln['color'] == TEXT_C, 1e-9), ('Random effects', lambda ln: ln['ls'] == ':', 1e-9),
+                            ("Egger's line", lambda ln: ln['color'] == RE_C and ln['ls'] == '-', 1e-9)):
+        t = trace(g, name)
+        got_l = [ln for ln in ax['lines'] if pick(ln)]
+        check(f'{lab}: the line "{name}"{" (on)" if t else " (off)"}, the page\'s', len(got_l) == len(t) and all(near_all(ln['x'] + ln['y'], t_['x'] + t_['y'], rel) for ln, t_ in zip(got_l, t)), True)
+    check(f'{lab}: the standard errors down the axis, the page\'s range', near_all(ax['ylim'], ex['y']['range']), True)
+    rj, rf = xrange_of(ex['x'], ax)
+    if not check(f'{lab}: the page\'s axis range and scale', (near_all(rf, rj, 1e-6, 1e-6), ax['xscale']), (True, 'log' if ex['x']['type'] == 'log' else 'linear')):
+        print('   page', rj, 'figure', rf)
+    check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (g['titles']['x'], g['titles']['y']))
+
+
+def check_bubble(lab, g, ex, F):
+    ax = F['axes'][0]
+    check(f'{lab}: the page\'s size and title', (F['size'], ax['title']), ([ex['W'] / 100, ex['H'] / 100], g['label']))
+    st = trace(g, 'Studies')[0]
+    sizes = [tr['size'] for tr in ex['traces'] if tr['name'] == 'Studies'][0]
+    sc = ax['scatter'][0]
+    check(f'{lab}: the studies at the page\'s places', near_all([v for xy in sc['xy'] for v in xy], [v for x, y in zip(st['x'], st['y']) for v in (x, y)]), True)
+    check(f'{lab}: the bubbles of the page\'s sizes', near_all(sc['sizes'], [(s * 0.72) ** 2 for s in sizes], 1e-9), True)
+    fit = trace(g, 'Fit')[0]
+    fl = [ln for ln in ax['lines'] if abs(ln['lw'] - 1.44) < 1e-9]
+    check(f'{lab}: the fit, the page\'s curve', len(fl) == 1 and near_all(fl[0]['x'] + fl[0]['y'], fit['x'] + fit['y'], 1e-9, 1e-9), True)
+    up, low = trace(g, 'Upper')[0], [t for t in g['traces'] if t.get('fill') == 'tonexty'][0]
+    verts = [q for p in ax['polys'][0]['paths'] for q in p] if ax['polys'] else []
+    at = {}
+    for x, y in verts:
+        at.setdefault(round(x, 9), []).append(y)
+    ok = bool(verts) and all(any(abs(y - v) <= 1e-9 * max(1, abs(v)) for y in at.get(round(x, 9), [])) for t in (up, low) for x, v in zip(t['x'], t['y']))
+    check(f'{lab}: the confidence band, the page\'s', ok, True)
+    ne = trace(g, 'No effect')[0]
+    check(f'{lab}: the no-effect line, the page\'s', [ln['x'] + ln['y'] for ln in ax['lines'] if ln['color'] == MUTED_C], [ne['x'] + ne['y']])
+    rj, rf = xrange_of(ex['y'], ax, 'y')
+    check(f'{lab}: the page\'s axis range and scale', (near_all(rf, rj, 1e-6, 1e-6), ax['yscale']), (True, 'log' if ex['y']['type'] == 'log' else 'linear'))
+    check(f'{lab}: the axis titles', (ax['xlabel'], ax['ylabel']), (unhtml(g['titles']['x']), g['titles']['y']))
+
+
+async def chart_code(page):
+    await page.ev(GRAPHS_JS)
+    await page.ev(CHART_JS)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.0)
+    await page.ev('__gr.idle()')
+    trials = "SM.app.tables.find((t) => t.name === 'Trials')"
+    await page.ev(f"SM.app.showTab(SM.app.tabOf({trials})); {trials}.setState([2, 11], 'excluded', true)")
+    await page.ev('__gr.idle()')
+    runs = [
+        ('the defaults, two rows excluded, every graph', 'Trials', BIN, {**BIN_OPTS, 'fnRE': True, 'fnEggerLine': True}, {'cum': 'year', 'mreg': ['dose (mg)', 'year']},
+         'd = df.loc[[0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13]]'),
+        ('subgroups, REML with Hartung–Knapp, Mantel–Haenszel, sorted by label', 'Trials', {**BIN, 'group': ['quality']},
+         {**BIN_OPTS, 'method': 'reml', 'hksj': True, 'mhDiamond': True, 'fSort': 'label'}, {'cum': 'quality'}, None),
+        ('By quality', 'Trials', {**BIN, 'by': ['quality']}, {**BIN_OPTS, 'fnLimits': False, 'fWeights': False}, {}, None),
+        ("Hedges' g, the fixed effect only, by precision", 'Means', {'n1': ['n T'], 'mean1': ['mean T'], 'sd1': ['sd T'], 'n2': ['n C'], 'mean2': ['mean C'], 'sd2': ['sd C'], 'label': ['study']},
+         {'layout': 'cont', 'measure': 'smd', 'fShowRE': False, 'fSort': 'precision', 'fnEggerLine': True}, {}, None),
+        ('log hazard ratios on a linear axis, Paule–Mandel, the random effects only', 'Hazards', {'effect': ['log HR'], 'se': ['SE'], 'label': ['trial']},
+         {'layout': 'es', 'logRatio': True, 'fLog': False, 'method': 'pm', 'fShowFE': False, 'fStats': False}, {}, None),
+    ]
+    for label, tname, roles, options, extra, rows_line in runs:
+        tbl = f"SM.app.tables.find((t) => t.name === {json.dumps(tname)})"
+        r = await page.ev(f'''(async () => {{ const t = {tbl}; const ids = {{}};
+          for (const [k, v] of Object.entries({json.dumps(roles)})) ids[k] = v.map((n) => t.col(n).id);
+          const options = {json.dumps(options)}; const extra = {json.dumps(extra)};
+          if (extra.cum) options.cum = {{ by: t.col(extra.cum).id, desc: false }};
+          if (extra.mreg) options.mreg = extra.mreg.map((n) => t.col(n).id);
+          SM.app.showTab(SM.app.tabOf(t));
+          const rep = SM.app.openReport(SM.platforms.get('meta'), {{ roles: ids, options }}, t);
+          await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep));
+          return {{ g: await __gr.graphs(rep), extra: __mt.extra(rep), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), undrawn: __gr.take() }}; }})()''', timeout=1200)
+        if not isinstance(r, dict):
+            check(f'charts: meta, {label}: the report', r, 'opens')
+            continue
+        check(f'charts: meta, {label}: no errors', r['errors'], [])
+        check(f'charts: meta, {label}: every graph of the report drawn', r['undrawn'], [])
+        labels = [g['label'] for g in r['g']]
+        kinds = sorted({lb.split(' of ')[0].split(' by ')[0] for lb in labels})
+        want_kinds = sorted({'Forest plot', 'Funnel plot', 'Leave-one-out estimates'} | ({'Cumulative estimates'} if extra.get('cum') else set()) | ({'Bubble plot'} if extra.get('mreg') else set()))
+        check(f'charts: meta, {label}: the graphs', kinds, want_kinds)
+        if roles.get('by'):
+            check(f'charts: meta, {label}: a forest and a funnel plot per level', (labels.count('Forest plot of Odds Ratios'), labels.count('Funnel plot of Odds Ratios')), (3, 3))
+        if extra.get('mreg'):
+            check(f'charts: meta, {label}: a bubble plot per continuous covariate', [lb for lb in labels if lb.startswith('Bubble plot')], [f'Bubble plot of Odds Ratio by {c}' for c in extra['mreg']])
+        for g, ex in zip(r['g'], r['extra']):
+            lab = f'charts: meta, {label}: {g["label"]}'
+            check(f'{lab}: its code block is right under it, ending in plt.show()', bool(g['code']) and g['code'].rstrip().split('\n')[-1] == 'plt.show()', True)
+            if not g['code']:
+                continue
+            if rows_line:
+                check(f'{lab}: the code keeps the report\'s rows (the excluded ones left out)', rows_line in g['code'], True)
+            F, err = await run_more(page, g, tbl)
+            check(f'{lab}: the code runs in the page', err, None)
+            if not F:
+                continue
+            F = F[0]
+            if g['label'].startswith('Forest plot'):
+                check_forest(lab, g, ex, F)
+            elif g['label'] in ('Leave-one-out estimates', 'Cumulative estimates'):
+                check_mini(lab, g, ex, F)
+            elif g['label'].startswith('Funnel plot'):
+                check_funnel(lab, g, ex, F)
+            elif g['label'].startswith('Bubble plot'):
+                check_bubble(lab, g, ex, F)
+    # the forest plot's code scrolls with it on a narrow screen, and stays in view
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(0.8)
+    sc = await page.ev('''(async () => { const rep = SM.app.reports.filter(r => r.platform.id === 'meta').pop(); const d = new Promise(res => rep.on('done', res)); rep.run(); await d;
+      const s = rep.body.querySelector('.sm-meta-scroll'); const c = s.querySelector(':scope > .sm-plot + details.sm-code');
+      s.scrollLeft = 200; await new Promise(r => setTimeout(r, 100));
+      const sb = s.getBoundingClientRect(), cb = c ? c.getBoundingClientRect() : null;
+      return { code: !!c, inView: cb ? cb.left >= sb.left - 1 && cb.right <= sb.right + 1 : false, wide: document.documentElement.scrollWidth <= innerWidth + 1, scrolled: s.scrollLeft > 0 }; })()''')
+    check('charts: meta at phone width: the forest plot\'s code under it, in its scroller', sc['code'], True)
+    check('charts: meta at phone width: scrolled sideways, the code stays in view', (sc['scrolled'], sc['inView']), (True, True))
+    check('charts: meta at phone width: no horizontal page scroll', sc['wide'], True)
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 1100, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await asyncio.sleep(0.6)
+    await page.ev(f"{trials}.setState([2, 11], 'excluded', false)")
+    await page.ev('__gr.idle()')
 
 # Read the (i) panels: the open panel's title and sections, each with its
 # heading, its choices [name, text] and its paragraphs.

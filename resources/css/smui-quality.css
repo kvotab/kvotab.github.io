@@ -10,6 +10,9 @@
 .sm-q-launch h4 { margin: 0; }
 .sm-q-speclist { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
 
+/* a graph with its Python under it, as one item of a row */
+.sm-q-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+
 /* Pareto plots of the grouping cells, side by side */
 .sm-q-cells { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-start; }
 

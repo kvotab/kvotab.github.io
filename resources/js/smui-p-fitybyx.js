@@ -2126,12 +2126,15 @@
         { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.lower, y1: r.lower, line: { color: RED, width: 1, dash: 'dash' } },
         { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.upper, y1: r.upper, line: { color: RED, width: 1, dash: 'dash' } },
       ];
-      plots.push(ctx.plot([{ type: r.n > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: r.m, y: r.d, rows: r.rows, marker: colors ? { color: colors, size: 6 } : { size: 6 }, name: 'Pairs' }],
-        { xaxis: { title: { text: `Mean: (${y1.name}+${y2.name})/2` }, zeroline: false }, yaxis: { title: { text: `Difference: ${y2.name}-${y1.name}` }, zeroline: false }, shapes: lines }, { width: availWidth(ctx, 480), height: 360, title: `${y2.name}-${y1.name} by mean` }));
+      // each graph with its matplotlib code under it (the backend's: plot_code, row_code)
+      plots.push(withCode(ctx.plot([{ type: r.n > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: r.m, y: r.d, rows: r.rows, marker: colors ? { color: colors, size: 6 } : { size: 6 }, name: 'Pairs' }],
+        { xaxis: { title: { text: `Mean: (${y1.name}+${y2.name})/2` }, zeroline: false }, yaxis: { title: { text: `Difference: ${y2.name}-${y1.name}` }, zeroline: false }, shapes: lines }, { width: availWidth(ctx, 480), height: 360, title: `${y2.name}-${y1.name} by mean` }),
+      ctx.code(r.plot_code)));
     }
     if (o('plotRow', false)) {
-      plots.push(ctx.plot([{ type: 'scatter', mode: 'markers', x: r.rows.map((x) => x + 1), y: r.d, rows: r.rows, marker: { size: 6 } }],
-        { xaxis: { title: { text: 'Row' } }, yaxis: { title: { text: `Difference: ${y2.name}-${y1.name}` } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.diff, y1: r.diff, line: { color: RED, width: 1.4 } }] }, { width: availWidth(ctx, 420), height: 300, title: `${y2.name}-${y1.name} by row` }));
+      plots.push(withCode(ctx.plot([{ type: 'scatter', mode: 'markers', x: r.rows.map((x) => x + 1), y: r.d, rows: r.rows, marker: { size: 6 } }],
+        { xaxis: { title: { text: 'Row' } }, yaxis: { title: { text: `Difference: ${y2.name}-${y1.name}` } }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: r.diff, y1: r.diff, line: { color: RED, width: 1.4 } }] }, { width: availWidth(ctx, 420), height: 300, title: `${y2.name}-${y1.name} by row` }),
+      ctx.code(r.row_code)));
     }
     if (plots.length) ob.add(ctx.row(...plots));
     ob.add(ctx.row(ctx.kv([[y2.name, r.mean2], [y1.name, r.mean1], ['Mean Difference', r.diff], ['Std Error', r.se], [`Upper ${lvl}`, r.upper], [`Lower ${lvl}`, r.lower], ['N', r.n, 'int'], ['Correlation', r.r]]),

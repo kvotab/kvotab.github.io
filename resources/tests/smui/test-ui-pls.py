@@ -29,11 +29,18 @@ With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
 """
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, find_line, maxdiff
+
+# the predictive platforms' chart helpers (test-ui-partition.py has them: PM_JS, chart_blocks, check_*)
+_spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
+UP = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(UP)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -248,6 +255,98 @@ async def form_help(page, opener, fields, name):
     check(f'{name}: the form\'s (i) lists its fields, each with its help', [(x, len(got.get(x, '')) > 30) for x in fields], [(x, True) for x in fields])
     check('... and every (i) has a topic while it is open', f.get('noTopic') if isinstance(f, dict) else f, [])
     return f
+
+
+def hline(ax, y, dash=None):
+    """A horizontal line of the figure at y (dashed when dash)."""
+    return any(len(q['y']) == 2 and close(q['y'], [y, y], 1e-9) and (dash is None or q['ls'] == '--') for q in ax['lines'])
+
+
+def pls_compare(lab, g, F):
+    t = g['label']
+    ax = F['axes'][0]
+    if t == 'Root Mean PRESS by number of factors':
+        UP.check_lines(check, lab, g, F)
+        ring = g['traces'][1]
+        check(f'{lab}: the minimum ringed', find_line(ax, ring['x'], ring['y'], rel=1e-9) is not None, True)
+    elif t.startswith('X-Y scores of factor') or t.startswith('Distance to the') or t == 'T² by row':
+        pts = [tr for tr in g['traces'] if 'markers' in (tr.get('mode') or '')]
+        check(f'{lab}: a set of points per set', len(ax['scatter']), len(pts))
+        for sc, tr in zip(ax['scatter'], pts):
+            check.near(f'{lab}: {tr["name"]}: every row at its values', maxdiff(UP.flat(sc['xy']), UP.flat(UP.curve_pts(tr))), 0, 1e-9)
+            check(f'{lab}: {tr["name"]}: in the set\'s colour', sc['colors'][0][:7], tr['mcolor'])
+        for tr in g['traces']:
+            if tr.get('mode') == 'lines':
+                check(f'{lab}: the dotted inner relation', find_line(ax, tr['x'], tr['y'], rel=1e-9) is not None, True)
+        for sh in g['shapes']:
+            check(f'{lab}: the dashed limit', hline(ax, sh['y0'], '--'), True)
+        check(f'{lab}: the legend (when there are several sets)', F['legend'], [tr['name'] for tr in pts] if g['showlegend'] else [])
+        UP.check_titles(check, lab, g, F)
+    elif t in ('X Effect', 'Y Effect'):
+        bar = [tr for tr in g['traces'] if tr.get('type') == 'bar'][0]
+        check.near(f'{lab}: a bar per factor, its percent', maxdiff([b['h'] for b in ax['bars']], bar['y']), 0, 1e-9)
+        check(f'{lab}: the percent scale', close(ax['ylim'], g['axes']['y']['range'], 1e-12), True)
+        UP.check_lines(check, lab, g, F)
+    elif t == 'Variable importance':
+        tr = g['traces'][0]
+        check.near(f'{lab}: each X\'s VIP', maxdiff(ax['lines'][0]['y'], tr['y']), 0, 1e-9)
+        check(f'{lab}: the points grey below the threshold', [c[:7] for c in ax['scatter'][0]['colors']], tr['mcolor'])
+        check(f'{lab}: the X\'s named in their order', [x for x in ax['xticklabels'] if x], tr['x'])
+        check(f'{lab}: the dashed threshold', hline(ax, g['shapes'][0]['y0'], '--'), True)
+        UP.check_titles(check, lab, g, F)
+    elif t.startswith('VIP vs coefficients for '):
+        tr = g['traces'][0]
+        check.near(f'{lab}: each X at its coefficient and VIP', maxdiff(UP.flat(ax['scatter'][0]['xy']), UP.flat(UP.curve_pts(tr))), 0, 1e-9)
+        check(f'{lab}: each named', [q['s'] for q in ax['texts']], tr['text'])
+        check(f'{lab}: the range, symmetric about 0; the dashed threshold', (close(ax['xlim'], g['axes']['x']['range'], 1e-12), hline(ax, g['shapes'][0]['y0'], '--')), (True, True))
+        UP.check_titles(check, lab, g, F)
+    elif t in ('X Loadings', 'Y Loadings'):
+        lines = [q for q in ax['lines'] if q['label'].startswith('Factor ')]
+        check(f'{lab}: a line per factor', len(lines), len(g['traces']))
+        for q, tr in zip(lines, g['traces']):
+            check.near(f'{lab}: {tr["name"]}: its loadings, in its colour', maxdiff(q['y'], tr['y']) + (0 if q['color'][:7] == tr['color'] else 1), 0, 1e-9)
+        check(f'{lab}: the names, the legend', ([x for x in ax['xticklabels'] if x], F['legend']), (g['traces'][0]['x'], [tr['name'] for tr in g['traces']]))
+        UP.check_titles(check, lab, g, F)
+    else:
+        check(f'{lab}: a graph this test knows', t, None)
+
+
+async def charts(page):
+    """Every graph of Partial Least Squares' reports: its block under it, run in the page, its figure the
+    graph's (the model refitted in the block: the cross validation from the seed, the scores, VIP, the
+    loadings, the distances and T²)."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    await page.ev('__gr.idle()')
+    tbl = "SM.app.tables.find((t) => t.name === 'Spectra')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    await page.ev('''(() => { const t = SM.app.tables.find(t => t.name === 'Spectra'); const g = SM.util.rng('pls sets');
+      if (!t.col('set')) t.addColumn({ name: 'set', dataType: 'numeric', values: t.col('sample').values.map(() => { const u = g.u(); return u < 0.6 ? 0 : u < 0.85 ? 1 : 2; }) });
+      if (!t.col('batch')) t.addColumn({ name: 'batch', dataType: 'character', values: t.col('sample').values.map((_, i) => (i % 2 ? 'odd' : 'even')) }); })()''')
+    last = 'SM.app.reports.at(-1)'
+    every = {'pctPlots': True, 'vipCoef': True, 'loadings': True, 'distance': True, 't2': True}
+    specs = [
+        ('A and B on the 30 wavelengths, KFold, every graph, VIP threshold 1', {'y': YS, 'x': WAVES}, {**every, 'factors': 8, 'vipThreshold': 1.0, 'seed': '4'}),
+        ('A on 10 wavelengths, a Validation column', {'y': ['A (%)'], 'x': WAVES[:10], 'validation': ['set']}, {**every, 'factors': 6}),
+        ('not centred or scaled, as many factors as X\'s (no DModX)', {'y': YS, 'x': WAVES[:3]}, {**every, 'method': 'none', 'factors': 3, 'center': False, 'scale': False}),
+    ]
+    total = 0
+    for label, roles, opts in specs:
+        r = await page.ev(open_report_js('pls', roles, opts), timeout=900)
+        check(f'charts: {label}: no errors', r['errors'], [])
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, pls_compare)
+        total += n
+        await page.ev(f'SM.app.closeReport({last})')
+    # By batch, rows excluded, Holdback: the blocks keep the group's rows and draw its sets
+    out = [2, 5, 11]
+    await page.ev(f'{tbl}.setState({out}, "excluded", true)')
+    r = await page.ev(open_report_js('pls', {'y': YS, 'x': WAVES[:8], 'by': ['batch']}, {'method': 'holdback', 'holdback': 0.25, 'distance': True, 't2': True, 'seed': '6'}), timeout=900)
+    check('charts: By batch, rows excluded, Holdback: no errors', r['errors'], [])
+    n, _ = await UP.chart_blocks(page, check, 'By batch, rows excluded, Holdback', tbl, last, pls_compare)
+    total += n
+    await page.ev(f'SM.app.closeReport({last})')
+    await page.ev(f'{tbl}.setState({out}, "excluded", false)')
+    check('charts: the blocks ran and drew the page\'s graphs', total >= 40, True)
 
 
 async def main():
@@ -520,6 +619,9 @@ async def main():
     check('an opened project has its own table, its X\'s found by name', (r['newTable'], r['x'] == WAVES), (True, True))
     check('and keeps the two fits and their options: the same outlines', (r['fits'], r['heads'] == r['heads0'], 'VIP vs Coefficients Plots' in r['heads'], 'X-Y Scores Plots' in r['heads'], r['errors']), (2, True, True, False, 0))
 
+    # ---- the graphs' matplotlib code
+    await charts(page)
+
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -568,5 +670,6 @@ async def main():
     await page.close()
 
 
-asyncio.run(main())
-sys.exit(check.done())
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(check.done())

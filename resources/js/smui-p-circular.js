@@ -167,6 +167,13 @@
     }, { width: 340, height: grp ? 364 : 340, title: `${col.name} circular dot plot` });
   }
 
+  /* ---- the graphs' code ----------------------------------------------------------
+     Under each graph, Python that draws it with matplotlib from a CSV export
+     of the table: the backend writes it (dot_code, rose_code, plot_code),
+     from what the page chose here (the orientation, the labels around the
+     circle, the rose's bins, the level names). */
+  const withCode = (ctx, graph, code) => (code ? el('div', { class: 'sm-circ-plotcode' }, graph, ctx.code(code)) : graph);
+
   /* ---- one column ------------------------------------------------------------- */
   async function column(ctx, col, parent, S) {
     const sc = col.id;
@@ -176,7 +183,11 @@
     const freq = ctx.name('freq');
     const base = { column: col.name, ...S.payload, freq, alpha: ctx.alpha, where: ctx.where || [] };
     const vdir = o('vdir', null);
-    const sum = await ctx.call('circular.summary', { ...base, v_dir: vdir });
+    const x0 = ctx.role('x');
+    const byGroup = !!x0 && x0.isCategorical && x0.id !== col.id;
+    const plot = { compass: S.compass, ticks: ticks(S), bins: binsOf(ctx, S), area: ctx.opt('roseArea', true, sc), vm: !!o('vm', false),
+      group: byGroup ? x0.name : null, labels: byGroup ? ctx.table.levels(x0).map((v) => SM.grid.cellText(x0, v)) : null };
+    const sum = await ctx.call('circular.summary', { ...base, v_dir: vdir, plot });
     if (sum.error) { outline.add(ctx.warn(`${col.name}: ${sum.error}`)); return; }
     const vm = o('vm', false) ? await ctx.call('circular.vonmises', base) : null;
     const x = ctx.role('x');
@@ -192,8 +203,8 @@
     }
     // ---- the graphs
     const graphs = [];
-    if (o('dot', true)) graphs.push(dotPlot(ctx, col, S, A, sum, grp));
-    if (o('rose', true)) graphs.push(rose(ctx, col, S, A, sum, vm && !vm.error ? vm : null));
+    if (o('dot', true)) graphs.push(withCode(ctx, dotPlot(ctx, col, S, A, sum, grp), sum.dot_code));
+    if (o('rose', true)) graphs.push(withCode(ctx, rose(ctx, col, S, A, sum, vm && !vm.error ? vm : null), sum.rose_code));
     if (graphs.length) outline.add(ctx.row(...graphs));
     if (o('rose', true)) outline.add(ctx.note(`Rose diagram: ${binsOf(ctx, S)} bins; ${ctx.opt('roseArea', true, sc) ? 'the radius is the square root of the count, so that the area shows it (Fisher 1993)' : 'the radius is the count'}${vm && !vm.error ? '; the green curve is the fitted von Mises, as counts per bin' : ''}. The red line is the mean direction, its length R̄ times the longest bar.`));
     // ---- the summary
@@ -235,7 +246,7 @@
 
   async function linearReport(ctx, col, x, parent, S, base) {
     const ob = ctx.outline('Circular-Linear Correlation', { parent, key: `cl:${col.id}`, info: 'p:circular:x' });
-    const r = await ctx.call('circular.linear', { ...base, column: undefined, y: col.name, x: x.name });
+    const r = await ctx.call('circular.linear', { ...base, column: undefined, y: col.name, x: x.name, plot: { ticks: ticks(S) } });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const P = [];
     const f = ctx.role('freq');
@@ -246,16 +257,16 @@
     }
     const tk = ticks(S);
     ob.add(ctx.row(
-      ctx.plot([{ type: P.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: P.map((p) => p[1]), y: P.map((p) => p[2]), rows: P.map((p) => p[0]), marker: { size: 6 } }],
+      withCode(ctx, ctx.plot([{ type: P.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: P.map((p) => p[1]), y: P.map((p) => p[2]), rows: P.map((p) => p[0]), marker: { size: 6 } }],
         { xaxis: { title: { text: SM.report.plotlyText(x.name) } }, yaxis: { title: { text: SM.report.plotlyText(col.name) }, range: [0, S.P], tickvals: tk.map((t) => t[0] * S.P), ticktext: tk.map((t) => t[1]) }, margin: { l: 56, r: 10, t: 8, b: 42 } },
-        { width: 380, height: 300, title: `${col.name} by ${x.name}` }),
+        { width: 380, height: 300, title: `${col.name} by ${x.name}` }), r.plot_code),
       ctx.kv([['Correlation R', r.r], ['R²', r.r2], ['n R² (χ², 2 DF)', r.chisq], ['Prob > ChiSq', r.p, 'p'], ['N', r.n], [`r(${x.name}, cos)`, r.r_xc], [`r(${x.name}, sin)`, r.r_xs], ['r(cos, sin)', r.r_cs]])),
     ctx.note(`How well ${x.name} predicts the direction through cos θ and sin θ (Mardia 1976; Mardia and Jupp 2000): R² = (r²ₓc + r²ₓs − 2rₓc rₓs rcs)/(1 − r²cs), from 0 to 1; nR² is about χ² with 2 DF when they are independent. Set X Is an Angle (the report's red triangle) when ${x.name} is itself an angle.`), ctx.code(r.code));
   }
 
   async function circCorrReport(ctx, col, x, parent, S, base) {
     const ob = ctx.outline('Circular-Circular Correlation', { parent, key: `cc:${col.id}`, info: 'p:circular:x' });
-    const r = await ctx.call('circular.circular', { ...base, column: undefined, y: col.name, x: x.name });
+    const r = await ctx.call('circular.circular', { ...base, column: undefined, y: col.name, x: x.name, plot: { ticks: ticks(S) } });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     const P = [];
     const f = ctx.role('freq');
@@ -267,8 +278,8 @@
     const tk = ticks(S);
     const axis = (name) => ({ title: { text: SM.report.plotlyText(name) }, range: [0, S.P], tickvals: tk.map((t) => t[0] * S.P), ticktext: tk.map((t) => t[1]) });
     ob.add(ctx.row(
-      ctx.plot([{ type: P.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: P.map((p) => p[1]), y: P.map((p) => p[2]), rows: P.map((p) => p[0]), marker: { size: 6 } }],
-        { xaxis: axis(x.name), yaxis: axis(col.name), margin: { l: 56, r: 10, t: 8, b: 42 } }, { width: 340, height: 320, title: `${col.name} by ${x.name}` }),
+      withCode(ctx, ctx.plot([{ type: P.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x: P.map((p) => p[1]), y: P.map((p) => p[2]), rows: P.map((p) => p[0]), marker: { size: 6 } }],
+        { xaxis: axis(x.name), yaxis: axis(col.name), margin: { l: 56, r: 10, t: 8, b: 42 } }, { width: 340, height: 320, title: `${col.name} by ${x.name}` }), r.plot_code),
       ctx.kv([['Circular Correlation r', r.r], ['Z', r.z], ['Prob > |Z|', r.p, 'p'], ['N', r.n]])),
     ctx.note('Jammalamadaka and SenGupta\'s (2001) coefficient: Σ sin(α − ᾱ) sin(β − β̄)/√(Σ sin²(α − ᾱ) Σ sin²(β − β̄)), from −1 to 1, with its large-sample normal test. The plot is on a torus: its edges wrap around.'), ctx.code(r.code));
   }

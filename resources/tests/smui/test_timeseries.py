@@ -873,6 +873,358 @@ ns = run_code(mg['code'], pd.DataFrame({'growth': gs}))
 check('the regime switching code gives the same fit', ns.get('error') or bool(np.isclose(ns['res'].llf, -mg['stats']['m2ll'] / 2, rtol=1e-10)), True)
 check('every new result has its code', all(bool(x.get('code')) for x in (un, rb_, mg, fh, fb, fc_, ss_, th, zr, ad, ap)), True)
 
+# ==== the graphs' matplotlib code =============================================================================
+# Every graph's recipe (plot_code), put together as the page puts it together
+# (timeseries.assemble, the page's recipe()), runs with matplotlib's Agg backend
+# on the table's CSV export as File > Export CSV writes it (every row, dates as
+# text), and the figure it draws is checked against the report's numbers: the
+# series' points and lines with their gaps, the fits, the forecasts from the
+# last prediction with their bands, the one-step intervals, the diagnostics
+# charts' bars and ±2 standard error marks, the panels, labels, titles, size.
+from test_charts import PROBE_MORE, close, strip_show
+
+DAY = 86400000.0
+# The panels' titles are on their left, as the page's labels are: PROBE_MORE
+# reads the centred ones, so each axes' left title is read here too.
+LEFT = r'''
+def _ts_left():
+    import matplotlib.pyplot as _plt
+    return [[ax.get_title(loc="left") for ax in _plt.figure(n).axes] for n in _plt.get_fignums()]
+'''
+
+
+def run_more(code, frame):
+    """test_charts.run_snippet_more, with each axes' left title as 'left'."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    plt.close('all')
+    with tempfile.TemporaryDirectory() as tmp:
+        frame.to_csv(os.path.join(tmp, 'data.csv'), index=False)
+        here = os.getcwd()
+        os.chdir(tmp)
+        ns = {'__name__': '__main__'}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                exec(strip_show(code), ns)
+                exec(PROBE_MORE + LEFT, ns)
+                out, left = ns['_smui_figures_more'](), ns['_ts_left']()
+            for F, L in zip(out['figures'], left):
+                for A, t in zip(F['axes'], L):
+                    A['left'] = t
+            return out, None
+        except Exception as e:  # reported as a failed check
+            return None, f'{type(e).__name__}: {e}'
+        finally:
+            os.chdir(here)
+            plt.close('all')
+
+
+def draw(label, parts, frame, flags=None, size=(620, 300), color='#3a7d44'):
+    """A recipe put together with the page's display flags, size and colour,
+    run on frame (as data.csv): the figure it draws, and the code."""
+    code = ts.assemble(parts, flags or {}, size, color)
+    out, err = run_more(code, frame)
+    check(f'{label}: the code runs', err, None)
+    check(f'{label}: one figure, plt.show() last', (len(out['figures']) if out else 0, code.rstrip().rsplit('\n', 1)[-1]), (1, 'plt.show()'))
+    return (out['figures'][0] if out and out['figures'] else None), code
+
+
+def pairs(xs, ys):
+    return [(a, b) for a, b in zip(xs, ys) if a is not None and b is not None and math.isfinite(a) and math.isfinite(b)]
+
+
+def lines_of(A):
+    """Each line of an axes (its properties, its finite points; x in the
+    axis's units, a date axis in days)."""
+    return [(ln, pairs([q[0] for q in xy], [q[1] for q in xy])) for ln, xy in zip(A['lines'], A['xy_lines'])]
+
+
+def line(A, xs, ys, rel=1e-7, abs_=1e-9, **props):
+    """The line of A with these points (the missing ones left out) and properties, or None."""
+    want = pairs(xs, ys)
+    for ln, p in lines_of(A):
+        if len(p) == len(want) and all(close(a, c, rel, abs_) and close(b, d, rel, abs_) for (a, b), (c, d) in zip(p, want)) \
+                and all(ln.get(k) == v for k, v in props.items()):
+            return ln
+    return None
+
+
+def hline(A, v, rel=1e-9):
+    return any(len(p) == 2 and close([p[0][0], p[1][0]], [0, 1]) and close([p[0][1], p[1][1]], [v, v], rel) for _, p in lines_of(A))
+
+
+def vline(A, v, rel=1e-9):
+    return any(len(p) == 2 and close([p[0][1], p[1][1]], [0, 1]) and close([p[0][0], p[1][0]], [v, v], rel) for _, p in lines_of(A))
+
+
+def worst(got, want):
+    """The largest relative difference of two lists of numbers (inf when their lengths or their gaps differ)."""
+    if len(got) != len(want):
+        return float('inf')
+    d = 0.0
+    for a, b in zip(got, want):
+        if (a is None or not math.isfinite(a)) != (b is None or not math.isfinite(b)):
+            return float('inf')
+        if a is not None and b is not None and math.isfinite(a):
+            d = max(d, abs(a - b) / max(1.0, abs(b)))
+    return d
+
+
+CAPTIONS = {'acf': 'Autocorrelation', 'pacf': 'Partial Autocorrelation', 'variogram': 'Variogram', 'ar': 'AR Coefficients'}
+
+
+def check_diag(label, codes, D, frame, keys=('acf', 'pacf', 'variogram', 'ar'), residual=False):
+    """The diagnostics charts against the report's tables: a bar per lag, its
+    length the value, ±2 standard error marks, the page's range, the caption."""
+    for key in keys:
+        F, _ = draw(f'{label}: the {CAPTIONS[key]} chart', codes[key], frame)
+        if not F:
+            continue
+        A = F['axes'][0]
+        lags, vals = (D[key]['lag'], D[key]['r']) if key in ('acf', 'pacf') else (D[key]['lag'], D[key]['v' if key == 'variogram' else 'coef'])
+        bars = A['bars']
+        check.near(f'{label}: {key}: a bar per lag, as long as the value', worst([b['w'] for b in bars], vals), 0, abs_=1e-9)
+        check(f'{label}: {key}: the bars at the lags, lag by lag down', ([round(b['y'] + b['h'] / 2, 9) for b in bars], A['yinverted']), (lags, True))
+        if key in ('acf', 'pacf'):
+            se = D[key]['se'][1:]
+            marks = [p for ln, p in lines_of(A) if ln['marker'] == '|']
+            want = sorted([(round(2 * s, 9), lg) for s, lg in zip(se, lags[1:])] + [(round(-2 * s, 9), lg) for s, lg in zip(se, lags[1:])])
+            check(f'{label}: {key}: the ±2 standard error marks', sorted((round(a, 9), round(b)) for p in marks for a, b in p), want)
+            check(f'{label}: {key}: from −1 to 1', A['xlim'], [-1.0, 1.0])
+        else:
+            m = max(1e-12, max(abs(v) for v in vals if v is not None))
+            check.near(f'{label}: {key}: over the range of the values, as the page scales them', worst(A['xlim'], [-m if any(v < 0 for v in vals if v is not None) else 0.0, m]), 0, abs_=1e-12)
+        title = ('Residual ' + CAPTIONS[key]) if residual and key in ('acf', 'pacf') else CAPTIONS[key]
+        check(f'{label}: {key}: the caption as its title', A['title'], title)
+
+
+def check_model(label, R, frame, tx, values, flags=None, size=(620, 300), rel=1e-6, yname='sales'):
+    """A model's forecast graph, with and without its points and interval,
+    its residuals and their diagnostics, against its result. tx: the time
+    axis in the axis's units; values: the series."""
+    pc, fc = R['plot_code'], R['forecast']
+    F, _ = draw(f'{label}: the forecast graph', pc['forecast'], frame, {'points': True, 'pi': True, 'onestep': True, **(flags or {})}, size)
+    if not F:
+        return
+    A = F['axes'][0]
+    last = len(tx) - 1
+    check(f'{label}: the data as points', line(A, tx, values, marker='o', ls='None', color='#2f6690ff') is not None, True)
+    check(f'{label}: the one-step-ahead predictions in the model\'s colour', line(A, tx, R['fitted'], rel, marker='None', ls='-', color='#3a7d44ff') is not None, True)
+    onestep = any(v is not None for v in R['fit_lo'])
+    if onestep:
+        check(f'{label}: the one-step prediction interval, dotted', [line(A, tx, R[k], rel, ls=':') is not None for k in ('fit_lo', 'fit_hi')], [True, True])
+    if fc['t']:
+        xf = [tx[last]] + [v / DAY for v in fc['t']] if A['xaxis_date'] else [tx[last]] + fc['t']
+        y0 = R['fitted'][last] if R['fitted'][last] is not None else values[last]
+        lo0 = R['fit_lo'][last] if R['fit_lo'][last] is not None else fc['lower'][0]
+        hi0 = R['fit_hi'][last] if R['fit_hi'][last] is not None else fc['upper'][0]
+        check(f'{label}: the forecasts, from the last prediction', line(A, xf, [y0] + fc['mean'], rel, marker='o') is not None, True)
+        check(f'{label}: the prediction interval\'s edges', [line(A, xf, [hi0] + fc['upper'], rel) is not None, line(A, xf, [lo0] + fc['lower'], rel) is not None], [True, True])
+        check(f'{label}: ... filled', len(A['polys']), 1)
+    check(f'{label}: the end of the data', vline(A, tx[last]), True)
+    check(f'{label}: the labels and the title', (A['ylabel'], A['title'], F['size']), (yname, f'{R["name"]} forecast', [size[0] / 100, size[1] / 100]))
+    F, _ = draw(f'{label}: the forecast graph without points or interval', pc['forecast'], frame, {'onestep': True, **(flags or {})}, size)
+    if F:
+        A = F['axes'][0]
+        dotted = [p for ln, p in lines_of(A) if ln['ls'] == ':' and len(p) > 2]   # the one-step interval (not the end-of-data line)
+        check(f'{label}: ... no points, no band, no one-step interval', (line(A, tx, values, marker='o', ls='None') is None, len(A['polys']), len(dotted)), (True, 0, 0))
+        check(f'{label}: ... the predictions still there', line(A, tx, R['fitted'], rel) is not None, True)
+    F, _ = draw(f'{label}: the residual graph', pc['resid'], frame, size=(620, 220))
+    if F:
+        A = F['axes'][0]
+        check(f'{label}: the residuals as points, in the model\'s colour; the zero line', (line(A, tx, R['resid'], rel, marker='o', color='#3a7d44ff') is not None, hline(A, 0.0)), (True, True))
+        check(f'{label}: ... the labels', (A['ylabel'], A['title']), ('Residual', f'{R["name"]} residuals'))
+    if R['resid_diag'] and not R['resid_diag'].get('error'):
+        check_diag(f'{label} residuals', pc, R['resid_diag'], frame, residual=True)
+
+
+# ---- the series and what is made from it: the monthly sales, two rows excluded
+ex = [30, 31]
+base_g = dict(table=tid, y='sales', time='month', excluded=ex, nlags=25)
+Sg = call('timeseries.series', **base_g)
+tday = [v / DAY for v in Sg['t']]
+F, code = draw('the series graph', Sg['plot_code']['series'], csv, {'points': True, 'lines': True, 'mean': True}, (560, 260))
+A = F['axes'][0]
+check('the series graph: the points and the lines between them', line(A, tday, Sg['values'], marker='o', ls='-', color='#2f6690ff') is not None, True)
+check('... every slot, the excluded rows missing in their place', (len(A['xy_lines'][0]), A['xy_lines'][0][30][1], A['xy_lines'][0][31][1]), (120, None, None))
+check('... the Mean Line at the mean', hline(A, Sg['diag']['mean']), True)
+check('... a date axis, the labels, the title, the size', (A['xaxis_date'], A['xlabel'], A['ylabel'], A['title'], F['size']), (True, 'month', 'sales', 'sales time series', [5.6, 2.6]))
+check('... the table read as exported, the dates parsed as the Time ID', ('pd.read_csv("data.csv"' in code, 'df["month"] = pd.to_datetime(df["month"])' in code), (True, True))
+for flags_, want in (({'points': True}, [('o', 'None')]), ({'lines': True}, [('None', '-')]), ({}, [])):
+    F2, _ = draw(f'the series graph with {", ".join(flags_) or "neither points nor lines"}', Sg['plot_code']['series'], csv, flags_, (560, 260))
+    if F2:
+        check(f'... {", ".join(flags_) or "neither"}: as the page draws it, no mean line', [(ln['marker'], ln['ls']) for ln in F2['axes'][0]['lines']], want)
+check_diag('the series', Sg['plot_code'], Sg['diag'], csv)
+ns = run_code('\n'.join(['import numpy as np', 'import pandas as pd', 'df = pd.read_csv("data.csv", float_precision="round_trip")', *Sg['plot_frag']['series']]), csv)
+check('the series lines for the page\'s lag plot: y and t as the graph has them', ns.get('error') or (worst(list(ns['y'].to_numpy()), Sg['values']), len(ns['t'])), (0.0, 120))
+
+Dg = call('timeseries.difference', **base_g, d=1, D=1, s=12)
+F, _ = draw('the difference graph', Dg['plot_code']['series'], csv, {'points': True, 'lines': True, 'mean': True}, (560, 260))
+A = F['axes'][0]
+check('the difference graph: the differenced series, from the 14th slot', line(A, tday, Dg['values'], marker='o', ls='-') is not None, True)
+check('... its mean line, labels and title', (hline(A, Dg['diag']['mean']), A['ylabel'], A['title']), (True, 'sales differenced', 'sales differenced time series'))
+check_diag('the difference', Dg['plot_code'], Dg['diag'], csv)
+
+for kind_, fn_, extra_, label_, dname_ in (('trend', 'timeseries.detrend', {}, 'linear trend', 'Detrended sales'), ('cycle', 'timeseries.decycle', {'units': 12}, 'cycle', 'Decycled sales')):
+    R = call(fn_, **base_g, **extra_)
+    F, _ = draw(f'the {label_} graph', R['plot_code']['fit'], csv, size=(560, 230))
+    A = F['axes'][0]
+    check(f'the {label_} graph: the series and the fitted {label_} in red', (line(A, tday, Sg['values'], marker='o', ls='-') is not None,
+                                                                          line(A, tday, R[kind_], marker='None', color='#b0413eff') is not None), (True, True))
+    check(f'... its title', A['title'], f'sales {label_}')
+    F, _ = draw(f'the {dname_} graph', R['plot_code']['series'], csv, size=(560, 230))
+    check(f'the {dname_} graph: the series less the {label_}', (line(F['axes'][0], tday, R['values'], marker='o') is not None, F['axes'][0]['title']), (True, f'{dname_} time series'))
+    check_diag(dname_, R['plot_code'], R['diag'], csv, keys=('acf', 'pacf'))
+
+for method_, extra_, label_ in (('stl', {'robust': True}, 'STL Decomposition (period 12, robust)'), ('classical', {'model': 'multiplicative'}, 'Seasonal Decomposition (multiplicative, period 12)')):
+    R = call('timeseries.decompose', **base_g, method=method_, period=12, **extra_)
+    F, _ = draw(label_, R['plot_code']['decomp'], csv, size=(620, 520))
+    ax_ = F['axes']
+    check(f'{label_}: four panels with the page\'s titles, the label as the title', ([a['left'] for a in ax_], F['suptitle'], ax_[3]['xlabel']),
+          (['Original and adjusted', 'Trend', 'Seasonal', 'Irregular'], label_, 'month'))
+    check(f'{label_}: the series and the seasonally adjusted series', (line(ax_[0], tday, Sg['values'], marker='o') is not None, line(ax_[0], tday, R['adjusted'], color='#b0413eff') is not None), (True, True))
+    check(f'{label_}: the trend, the seasonal and the irregular parts', [line(ax_[i], tday, R[k]) is not None for i, k in ((1, 'trend'), (2, 'seasonal'), (3, 'resid'))], [True] * 3)
+
+R = call('timeseries.spectral', **base_g)
+F, _ = draw('the spectral density by period', R['plot_code']['period'], csv, size=(420, 250))
+A = F['axes'][0]
+check('the spectral density by period: the smoothed periodogram, on a log axis', (line(A, R['period'], R['density'], 1e-9, color='#b0413eff') is not None, A['xscale']), (True, 'log'))
+check('... its labels', (A['xlabel'], A['ylabel'], A['title']), ('Period', 'Spectral density', 'sales spectral density by period'))
+F, _ = draw('the spectral density by frequency', R['plot_code']['frequency'], csv, size=(420, 270))
+A = F['axes'][0]
+check('the spectral density by frequency: the periodogram as points, scaled by 1/(4π)', line(A, R['frequency'], [v / (4 * math.pi) for v in R['periodogram']], 1e-9, marker='o', ls='None') is not None, True)
+check('... the density, and the legend', (line(A, R['frequency'], R['density'], 1e-9) is not None, F['legend']), (True, ['Periodogram', 'Spectral density']))
+
+for ex_, label_ in (([], 'every value present'), (ex, 'with missing values')):
+    R = call('timeseries.ccf', table=tid, y='sales', time='month', excluded=ex_, nlags=25, inputs=['promotion', 'temperature'])
+    F, _ = draw(f'the cross correlation charts ({label_})', R['plot_code']['ccf'], csv)
+    for A, c_ in zip(F['axes'], R['inputs']):
+        check.near(f'... {c_["input"]} ({label_}): a bar per lag, as long as the correlation', worst([b['w'] for b in A['bars']], c_['r']), 0, abs_=1e-9)
+        check(f'... {c_["input"]}: at the lags −K … K, the caption as the title', ([round(b['y'] + b['h'] / 2) for b in A['bars']], A['title']), (c_['lag'], f'sales with {c_["input"]}'))
+        marks = sorted((round(a, 9), round(b)) for ln, p in lines_of(A) if ln['marker'] == '|' for a, b in p)
+        check(f'... {c_["input"]}: ±2 standard errors at every lag', marks, sorted([(round(s * 2 * e_, 9), lg) for e_, lg in zip(c_['se'], c_['lag']) for s in (1, -1)]))
+    check(f'... ({label_}) the code keeps the By group and the report\'s rows (the fix: it read every row before)', 'd.loc[y.index, name]' in ts.assemble(R['plot_code']['ccf']), True)
+
+Zg = call('timeseries.zivot', **base_g)
+F, _ = draw('the Zivot-Andrews graph (dates)', Zg['plot_code']['breaks'], csv, size=(560, 220))
+A = F['axes'][0]
+brk = list(dict.fromkeys(t_['break'] for t_ in Zg['tests'] if not t_.get('error')))
+check('the Zivot-Andrews graph: the series, and a line at each break date', (line(A, tday, Sg['values'], marker='o') is not None, [vline(A, b / DAY) for b in brk]), (True, [True] * len(brk)))
+models_at = {b: [{'c': 'intercept', 't': 'trend', 'ct': 'both'}[t_['regression']] for t_ in Zg['tests'] if not t_.get('error') and t_['break'] == b] for b in brk}
+check('... labelled with the models that put it there', [t_['s'] for t_ in A['texts']], [' ' + ', '.join(models_at[b]) for b in brk])
+check('... the dash of each date, as the page draws them', [ln['ls'] for ln in A['lines'][1:]], [[':', '--', '-.'][i % 3] for i in range(len(brk))])
+F, _ = draw('the Zivot-Andrews graph (no Time ID)', zr['plot_code']['breaks'], pd.DataFrame({'x': zb}), size=(560, 220))
+brk = list(dict.fromkeys(t_['break'] for t_ in zr['tests'] if not t_.get('error')))
+check('... on the row numbers: a line at each break', [vline(F['axes'][0], b) for b in brk], [True] * len(brk))
+
+R = call('timeseries.subseries', **base_g, period=12)
+F, _ = draw('the seasonal subseries plot', R['plot_code']['subseries'], csv, size=(720, 300))
+A = F['axes'][0]
+check('the seasonal subseries plot: each month\'s values in time order, side by side', [line(A, s_['x'], s_['values'], marker='o') is not None for s_ in R['seasons']], [True] * 12)
+check('... and its mean', [line(A, [s_['x'][0] - 0.35, s_['x'][-1] + 0.35], [s_['mean']] * 2, 1e-9, color='#b0413eff') is not None for s_ in R['seasons']], [True] * 12)
+check('... the ticks at the seasons, named', (close(A['xticks'], [(s_['x'][0] + s_['x'][-1]) / 2 for s_ in R['seasons']]), A['xticklabels']), (True, [s_['label'] for s_ in R['seasons']]))
+
+for m_ in ('hp', 'bk', 'cf'):
+    R = call('timeseries.filter', **base_g, method=m_)
+    F, _ = draw(R['label'], R['plot_code']['filter'], csv, size=(620, 400))
+    ax_, cx_ = F['axes']
+    check(f'{R["label"]}: the series as points and the trend', (line(ax_, tday, Sg['values'], marker='o', ls='None') is not None, line(ax_, tday, R['trend'], 1e-9, color='#b0413eff') is not None), (True, True))
+    check(f'{R["label"]}: the cycle, missing where the series is', line(cx_, tday, R['cycle'], 1e-9) is not None, True)
+    check(f'{R["label"]}: the panels\' titles, the label as the title', (ax_['left'], cx_['left'], F['suptitle']),
+          ('sales and y − cycle' if m_ == 'bk' else 'sales and trend', 'Cycle', R['label']))
+
+# ---- the models' graphs
+fut_csv = pd.DataFrame({'month': [pd.Timestamp(v, unit='ms').strftime('%Y-%m-%d') for v in months + [ms('2026-01-01'), ms('2026-02-01')]],
+                        'sales': list(y) + [None, None], 'promotion': promo + [1, 0]})
+arma = call('timeseries.arima', **base_g, p=1, q=1, h=12)
+check_model('ARMA(1, 1)', arma, csv, tday, Sg['values'])
+sarima = call('timeseries.arima', **base_g, q=1, D=1, Q=1, s=12, h=12)
+check_model('seasonal ARIMA', sarima, csv, tday, Sg['values'])
+tf = call('timeseries.arima', table=fut_tid, y='sales', time='month', excluded=ex, p=1, h=4, inputs=[{'name': 'promotion', 'lag': 1, 'num': 1}])
+check_model('a transfer function (the future inputs from the table, then held)', tf, fut_csv, tday, Sg['values'])
+for m_ in ('simple', 'double', 'linear', 'damped', 'seasonal', 'winters'):
+    check_model(f'smoothing: {m_}', call('timeseries.smooth', **base_g, method=m_, s=12, h=12), csv, tday, Sg['values'])
+check_model('smoothing: multiplicative Winters (simulated intervals)', call('timeseries.smooth', **base_g, method='winters', s=12, h=12, multiplicative=True), csv, tday, Sg['values'])
+for e_, t_, s_ in (('add', 'A', 'N'), ('mul', 'Ad', 'M')):
+    Eg = call('timeseries.ets', **base_g, error=e_, trend=t_, seasonal=s_, s=12, h=12)
+    check_model(f'ETS({e_}, {t_}, {s_})', Eg, csv, tday, Sg['values'])
+    for k_, v_ in Eg['states'].items():
+        F, _ = draw(f'ETS({e_}, {t_}, {s_}): the {k_} state', Eg['plot_code']['states'][k_], csv, size=(520, 180))
+        check(f'... its line and labels', (line(F['axes'][0], tday, v_, 1e-6, color='#3a7d44ff') is not None, F['axes'][0]['ylabel'], F['axes'][0]['title']),
+              (True, k_[:1].upper() + k_[1:], f'{Eg["name"]} {k_}'))
+Ug = call('timeseries.structural', **base_g, trend='local linear trend', seasonal=12, inputs=['promotion'], h=12)
+check_model('a structural model', Ug, csv, tday, Sg['values'])
+n_ = len(Ug['components'])
+F, _ = draw('the structural model\'s components', Ug['plot_code']['components'], csv, size=(640, max(260, 125 * n_ + 60)))
+check('... a panel for each component, named as the page names them', [a['left'] for a in F['axes']], [c_['label'] for c_ in Ug['components']])
+check('... each smoothed component, in the model\'s colour', [line(a, tday, c_['mean'], 1e-6, color='#3a7d44ff') is not None for a, c_ in zip(F['axes'], Ug['components'])], [True] * n_)
+check('... a band where the page has one', [len(a['polys']) for a in F['axes']], [1 if c_['lower'] else 0 for c_ in Ug['components']])
+check('... the data in the level panel', line(F['axes'][0], tday, Sg['values'], marker='o', ls='None', color='#786b5dff') is not None, True)
+Tg = call('timeseries.theta', **base_g, period=12, h=12)
+check_model('the Theta model', Tg, csv, tday, Sg['values'])
+T2 = dict(Tg, forecast=dict(Tg['forecast'], lower=Tg['forecast']['sm_lower'], upper=Tg['forecast']['sm_upper']))
+check_model('the Theta model with statsmodels\' intervals', T2, csv, tday, Sg['values'], flags={'smpi': True})
+tg_ = [float(i + 1) for i in range(len(gs))]
+g_csv = pd.DataFrame({'growth': gs})
+check_model('regime switching (no Time ID: the row numbers)', mg, g_csv, tg_, list(gs), yname='growth')
+F, _ = draw('the regimes', mg['plot_code']['regimes'], g_csv, size=(620, 290))
+A = F['axes'][0]
+step_ = (tg_[-1] - tg_[0]) / (len(tg_) - 1)
+edges_ = [tg_[0] - step_ / 2] + [(a + b) / 2 for a, b in zip(tg_[:-1], tg_[1:])] + [tg_[-1] + step_ / 2]
+runs, i_ = [], 0
+while i_ < len(mg['most']):
+    j_ = i_ + 1
+    while j_ < len(mg['most']) and mg['most'][j_] == mg['most'][i_]:
+        j_ += 1
+    if mg['most'][i_] is not None:
+        runs.append((edges_[i_], edges_[j_] - edges_[i_]))
+    i_ = j_
+check('the regimes: a band over each run of the most likely regime, as the page shades them', [(round(b['x'], 9), round(b['w'], 9)) for b in A['bars']], [(round(a, 9), round(b, 9)) for a, b in runs])
+check('... the series in ink, the legend', (line(A, tg_, list(gs), marker='o', color='#352921ff') is not None, F['legend']), (True, ['growth', 'Regime 0 most likely', 'Regime 1 most likely']))
+F, _ = draw('the regime probabilities', mg['plot_code']['prob'], g_csv, {'fprob': True}, size=(620, 260))
+A = F['axes'][0]
+check('the regime probabilities: the smoothed ones, with points', [line(A, tg_, p_, 1e-6, marker='o') is not None for p_ in mg['prob']], [True, True])
+check('... the filtered ones dotted (Filtered Probabilities)', [line(A, tg_, p_, 1e-6, ls=':') is not None for p_ in mg['fprob']], [True, True])
+check('... from 0 to 1, the legend', (A['ylim'], F['legend']), ([-0.03, 1.03], ['Regime 0', 'Regime 1', 'Regime 0 filtered', 'Regime 1 filtered']))
+F, _ = draw('the regime probabilities without the filtered ones', mg['plot_code']['prob'], g_csv, size=(620, 260))
+check('... two lines then', len(F['axes'][0]['lines']), 2)
+qday = [ms(t_) / DAY for t_ in qd2[:176]]
+check_model('ARDL (the future costs from the table)', ap, price_csv, qday, list(price_), yname='price')
+check('... its forecasts continue the quarters', [round(v / DAY) for v in ap['forecast']['t'][:2]], [round(ms(t_) / DAY) for t_ in qd2[176:178]])
+Ms_ = call('timeseries.arima', table=tid_sun, y='SUNACTIVITY', time='YEAR', p=2, h=5)
+check_model('AR(2) on a numeric Time ID', Ms_, sun_csv, [float(v) for v in sun['YEAR']], list(sun['SUNACTIVITY']), yname='SUNACTIVITY')
+check('... the forecasts at the next years', Ms_['forecast']['t'], [float(sun['YEAR'].iloc[-1]) + k_ for k_ in range(1, 6)])
+
+# ---- rows the report leaves out: By, a Local Data Filter, an exclusion, no Time ID
+# The page sends a group's rows without those a Local Data Filter takes out; the
+# code drops them (it read them before), and counts an excluded row as missing.
+rng_b = np.random.default_rng(7)
+reg_b = ['North' if i % 2 == 0 else 'South' for i in range(80)]
+x_b = [round(v, 3) for v in np.cumsum(rng_b.normal(size=80)) + 10]
+z_b = [round(v, 3) for v in rng_b.normal(size=80)]
+tid_b = table({'region': reg_b, 'x': x_b, 'z': z_b})
+north = [i for i in range(80) if reg_b[i] == 'North']
+filtered_b = north[5:8]
+rows_b = [i for i in north if i not in filtered_b]
+base_b = dict(table=tid_b, y='x', rows=rows_b, excluded=[north[12]], where=[{'column': 'region', 'value': 'North'}], nlags=10)
+csv_b = pd.DataFrame({'region': reg_b, 'x': x_b, 'z': z_b})
+Sb = call('timeseries.series', **base_b)
+check('filtered rows: the statistics code drops them', f'df = df.drop(index={filtered_b})   # the rows the report leaves out' in Sb['code'], True)
+ns = run_code(Sb['code'], csv_b)
+check('... and gives the report\'s series, the excluded row missing in its place', ns.get('error') or worst(list(ns['y'].to_numpy()), Sb['values']), 0.0)
+check('... the report\'s mean and N', ns.get('error') or (round(float(ns['y'].mean()), 9), int(ns['y'].count())), (round(Sb['diag']['mean'], 9), Sb['diag']['n']))
+F, _ = draw('the series graph (By, a filter, an exclusion, no Time ID)', Sb['plot_code']['series'], csv_b, {'points': True, 'lines': True}, (560, 260))
+check('... on the row numbers of the table, as the page draws it', (line(F['axes'][0], Sb['t'], Sb['values'], marker='o') is not None, F['axes'][0]['xlabel']), (True, 'Row'))
+Cb = call('timeseries.ccf', **base_b, inputs=['z'])
+check('the cross correlation code keeps the By group now (it read every row before)', 'df = df[df["region"] == \'North\']' in Cb['code'], True)
+F, _ = draw('the cross correlation chart (By, a filter)', Cb['plot_code']['ccf'], csv_b)
+check.near('... the report\'s correlations', worst([b['w'] for b in F['axes'][0]['bars']], Cb['inputs'][0]['r']), 0, abs_=1e-9)
+Ab = call('timeseries.arima', **base_b, p=1, h=3)
+check_model('AR(1) on the filtered group', Ab, csv_b, Sb['t'], Sb['values'], yname='x')
+check('... its forecasts continue the row numbers', Ab['forecast']['t'], [Sb['t'][-1] + k_ for k_ in (1, 2, 3)])
+
 # ---- names ------------------------------------------------------------------------------------------------
 check("JMP's ARIMA names", [ts.arima_name(1, 0, 0), ts.arima_name(0, 0, 2), ts.arima_name(1, 0, 1), ts.arima_name(0, 1, 0), ts.arima_name(0, 1, 1), ts.arima_name(2, 1, 0), ts.arima_name(1, 1, 1)],
       ['AR(1)', 'MA(2)', 'ARMA(1, 1)', 'I(1)', 'IMA(1, 1)', 'ARI(2, 1)', 'ARIMA(1, 1, 1)'])

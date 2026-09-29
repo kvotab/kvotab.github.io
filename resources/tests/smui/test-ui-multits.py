@@ -28,13 +28,223 @@ SMUI_SHOTS=<folder> saves screenshots. Exit status 0 when every check passes.
 """
 import asyncio
 import json
+import math
 import os
+import re
 import sys
+from datetime import datetime
 
 from cdp import BASE, Checks, open_page, table_under_js, wait_engine
+from test_charts import GRAPHS_JS, close, more_from_outputs, page_probe_more
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
+
+
+# ---- the graphs' matplotlib code --------------------------------------------------------------
+# Every graph of a report has a code block under it, ending in plt.show(); the
+# block runs in the page's own Python (SM.engine.runCell, as
+# test_charts.GRAPHS_JS.run does it) with PROBE_MORE in place of plt.show(), and
+# the figure it draws is compared with the Plotly graph: every line and set of
+# points in its panel (dates in days), the bands, the heatmaps' cells and their
+# texts, the stacked bars, the reference lines, the cells' labels, the legend,
+# the axis titles, the size.
+MTG_JS = r'''
+window.__mtg = {
+  openAll(rep) { rep.body.querySelectorAll('.sm-ob.is-closed').forEach((s) => s._outline && s._outline.setOpen(true)); },
+  extra(rep) {
+    return [...rep.body.querySelectorAll('.js-plotly-plot')].map((p) => {
+      const L = p.layout || {};
+      const axes = {};
+      for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) axes[k] = { type: L[k].type || null };
+      return { widths: (p.data || []).map((d) => (d.line && d.line.width != null ? d.line.width : null)), axes, showlegend: !!L.showlegend, barmode: L.barmode || null,
+        annotations: (L.annotations || []).map((a) => a.text), shapes: (L.shapes || []).map((s) => ({ type: s.type, xref: s.xref || 'x', yref: s.yref || 'y', x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1 })) };
+    });
+  },
+};
+true
+'''
+EPOCH = datetime(1970, 1, 1)
+
+
+def to_days(v):
+    """A value of a Plotly date axis (ISO text, or milliseconds) in matplotlib's units, days since 1970."""
+    if isinstance(v, str):
+        return (datetime.fromisoformat(v.replace(' ', 'T')) - EPOCH).total_seconds() / 86400
+    return None if v is None else v / 86400000
+
+
+def axis_at(ref):
+    """The panel of a Plotly axis reference: y → 0, y2 or 'y2 domain' → 1."""
+    m = re.match(r'^[xy](\d*)', ref or 'y')
+    return int(m.group(1)) - 1 if m and m.group(1) else 0
+
+
+def finite_pairs(xs, ys):
+    return [(a, b) for a, b in zip(xs, ys) if isinstance(a, (int, float)) and isinstance(b, (int, float)) and math.isfinite(a) and math.isfinite(b)]
+
+
+def same_points(p, q, rel=1e-6):
+    return len(p) == len(q) and all(close(a, c, rel, 1e-9) and close(b, d, rel, 1e-9) for (a, b), (c, d) in zip(p, q))
+
+
+def mpl_sets(A):
+    out = [finite_pairs([q[0] for q in xy], [q[1] for q in xy]) for xy in A['xy_lines']]
+    return out + [finite_pairs([q[0] for q in s['xy']], [q[1] for q in s['xy']]) for s in A['scatter']]
+
+
+def check_graph(tag, g, ex, F, rel=1e-6):
+    """A Plotly graph against the figure its code draws."""
+    date = (ex['axes'].get('xaxis') or {}).get('type') == 'date'
+    X = to_days if date else (lambda v: v)
+    axes = [A for A in F['axes'] if not A.get('colorbar')]
+    check(f'{tag}: the figure has the graph\'s size', F['size'], [g['w'] / 100, g['h'] / 100])
+    check(f'{tag}: the graph\'s title', g['label'] in [F['suptitle']] + [A['title'] for A in axes], True)
+    missing, fills, bars = [], [0] * len(axes), [[] for _ in axes]
+    for tr, width in zip(g['traces'], ex['widths']):
+        kind = tr.get('type') or 'scatter'
+        if kind == 'heatmap':
+            A = axes[0]
+            z = [v for row in tr['z'] for v in row]
+            check(f'{tag}: the colour map\'s cells', (A['images'][0]['shape'] if A['images'] else None, close(A['images'][0]['data'] if A['images'] else [], z, 1e-9, 1e-12)),
+                  ([len(tr['z']), len(tr['z'][0])], True))
+            check(f'{tag}: the cells\' texts, as the page writes them', [t['s'] for t in A['texts']], [s for row in tr['text'] for s in row if s])
+            check(f'{tag}: the rows and columns named', (A['xticklabels'], A['yticklabels']), (tr['x'], tr['y']))
+            continue
+        if kind == 'bar':
+            i = axis_at(tr.get('yaxis'))
+            bars[i].append(tr)
+            continue
+        pts = finite_pairs([X(v) for v in tr.get('x') or []], tr.get('y') or [])
+        if not pts:
+            continue
+        A = axes[axis_at(tr.get('yaxis'))]
+        if tr.get('fill') in ('tonexty', 'tozeroy', 'toself'):
+            fills[axis_at(tr.get('yaxis'))] += 1
+        if width == 0:
+            continue
+        if not any(same_points(pts, p, rel) for p in mpl_sets(A)):
+            missing.append(tr.get('name'))
+    check(f'{tag}: every line and set of points, in its panel', missing, [])
+    check(f'{tag}: every band, in its panel', [len(A['polys']) for A in axes], fills)
+    if any(bars):
+        stacked = ex['barmode'] == 'stack'
+        for i, trs in enumerate(bars):
+            want, base = [], {}
+            for tr in trs:
+                for x, h in zip(tr['x'], tr['y']):
+                    b0 = base.get(x, 0.0) if stacked else 0.0
+                    want.append((x, b0, h))
+                    base[x] = b0 + h
+            got = [(b['x'] + b['w'] / 2, b['y'], b['h']) for b in axes[i]['bars']]
+            check(f'{tag}: panel {i + 1}: the bars{", stacked" if stacked else ""}', (len(got), all(close(list(a), list(b), 1e-9, 1e-12) for a, b in zip(got, want))), (len(want), True))
+    wrong = []
+    for s in ex['shapes']:
+        A = axes[axis_at(s['yref'])] if s['yref'] != 'paper' else axes[0]
+        if s['x0'] == s['x1'] and (s['yref'] == 'paper' or s['yref'].endswith('domain')):
+            ok = any(same_points(p, [(X(s['x0']), 0), (X(s['x0']), 1)], 1e-9) for p in mpl_sets(A))
+        elif s['xref'] == 'paper':
+            ok = any(same_points(p, [(0, s['y0']), (1, s['y0'])], 1e-6) for p in mpl_sets(A))
+        else:
+            ok = any(same_points(p, [(X(s['x0']), s['y0']), (X(s['x1']), s['y1'])], 1e-6) for p in mpl_sets(A))
+        if not ok:
+            wrong.append(s)
+    check(f'{tag}: every reference line of the graph', wrong, [])
+    words = [A['title'] for A in axes] + [t['s'] for A in axes for t in A['texts']]
+    check(f'{tag}: the cells\' labels', [a for a in ex['annotations'] if a.replace('<br>', ' ') not in words], [])
+    if ex['showlegend']:
+        check(f'{tag}: the legend', F['legend'], [tr.get('name') for tr in g['traces'] if tr.get('showlegend') is not False and tr.get('name')])
+    if g['titles']['x']:
+        check(f'{tag}: the x axis title', g['titles']['x'] in [A['xlabel'] for A in axes], True)
+    if g['titles']['y'] is not None:
+        check(f'{tag}: the y axis title', axes[0]['ylabel'], g['titles']['y'])
+
+
+async def check_report_graphs(page, rep_js, table_js, what):
+    """Every graph of a report: its block, run in the page's Python, against the page."""
+    await page.ev(f'__mtg.openAll({rep_js})')
+    r = await page.ev(f'(async () => {{ const rep = {rep_js}; const g = await __gr.graphs(rep); return {{ g, ex: __mtg.extra(rep), undrawn: __gr.take() }}; }})()', timeout=900)
+    check(f'{what}: every graph of the report drawn', r['undrawn'], [])
+    check(f'{what}: every graph with its code block under it, ending in plt.show()', [g['label'] for g in r['g'] if not (g['code'] and g['code'].rstrip().split('\n')[-1] == 'plt.show()')], [])
+    for g, ex in zip(r['g'], r['ex']):
+        if not g['code']:
+            continue
+        out = await page.ev(f'__gr.run({json.dumps(page_probe_more(g["code"]))}, {table_js})', timeout=900)
+        F, err = (None, out) if isinstance(out, str) else more_from_outputs(out.get('outputs'))
+        F = F['figures'] if F else None
+        check(f'{what}: {g["label"]}: the code runs in the page, one figure', (err, len(F or [])), (None, 1))
+        if F:
+            check_graph(f'{what}: {g["label"]}', g, ex, F[0])
+    return r
+
+
+def open_js(table, roles, options, before='', after='', more='{}'):
+    """JS that opens a Multivariate Time Series report on the table named so
+    (before: JS run first, with t the table and id(); after: JS run once it is
+    done, with rep; more: a JS object of options that name columns by id),
+    keeps it as window.__mtc and returns its title and problems."""
+    return f'''(async () => {{ const t = SM.app.tables.find((x) => x.name === {json.dumps(table)}); SM.app.showTab(SM.app.tabOf(t));
+      const id = (n) => t.col(n).id; const roles = {{}};
+      for (const [k, names] of Object.entries({json.dumps(roles)})) roles[k] = names.map(id);
+      {before}
+      const rep = SM.app.openReport(SM.platforms.get('multits'), {{ roles, options: Object.assign({json.dumps(options)}, {more}) }}, t);
+      await __mts.done(rep);
+      {after}
+      window.__mtc = rep;
+      return {{ title: rep.title, ...__mts.problems(rep) }}; }})()'''
+
+
+async def chart_code(page):
+    """Reports that between them draw every kind of graph of the platform, with
+    their options; every graph checked against its code's figure."""
+    await page.ev(GRAPHS_JS)
+    await page.ev(MTG_JS)
+    await page.ev('__gr.idle()')   # the reports run again by a change of theme are done
+    rep, tbl, close_js = 'window.__mtc', 'window.__mtc.table', 'SM.app.closeReport(window.__mtc)'
+    macro = "SM.app.tables.find((x) => x.name === 'Quarterly macro')"
+    # the VAR of the example with every part, two rows excluded (gaps in the graph, filled for the VAR)
+    r = await page.ev(open_js('Quarterly macro', {'y': ['growth', 'inflation', 'interest rate'], 'time': ['quarter']}, {'forecast': 8},
+                              before="t.setState([40, 41], 'excluded', true);"), timeout=900)
+    check('charts: the VAR report opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: VAR')
+    check('charts: VAR: its graphs', [x['label'] for x in g['g']], ['Time Series Graph', 'Residual correlation colour map', 'Companion matrix eigenvalues', 'Granger causality p-values',
+                                                                  'Impulse responses', 'Variance decomposition', 'VAR forecasts'])
+    await page.ev(f"{close_js}; {macro}.setState([40, 41], 'excluded', false)")
+    # the cointegrated pair: Difference (forecasts in the units of the table), Small Multiples, Monte Carlo
+    # bands of cumulative responses to unit shocks, the Cholesky ordering reversed, the VECM's forecasts
+    r = await page.ev(open_js('Quarterly macro', {'y': ['income', 'consumption'], 'time': ['quarter']},
+                              {'forecast': 8, 'diff': True, 'multiples': True, 'coint': True, 'irfBands': 'mc', 'mcRepl': 200, 'irfCum': True, 'irfOrth': False},
+                              more="{ order: [id('consumption'), id('income')] }"), timeout=900)
+    check('charts: the cointegration report opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: cointegration')
+    check('charts: cointegration: the VECM forecasts too', 'VECM forecasts' in [x['label'] for x in g['g']], True)
+    await page.ev(close_js)
+    # Log, the forecasts of the series as analysed, an exogenous column (its future values held)
+    r = await page.ev(open_js('Quarterly macro', {'y': ['income', 'consumption'], 'time': ['quarter'], 'exog': ['growth']},
+                              {'forecast': 6, 'log': True, 'fcTransformed': True, 'granger': False, 'fevd': False}), timeout=900)
+    check('charts: the report of the logarithms opens without errors', r['errors'], [])
+    await check_report_graphs(page, rep, tbl, 'charts: logarithms')
+    await page.ev(close_js)
+    # By, a Local Data Filter and an excluded row, no Time ID
+    r = await page.ev('''(() => { const rng = SM.util.rng('mts-charts'); const n = 160; let a = 0, b = 0; const A = [], B = [];
+      for (let i = 0; i < n; i++) { const a1 = 0.5 * a + 0.2 * b + rng.normal(0, 1); b = 0.3 * a + 0.4 * b + rng.normal(0, 1); a = a1;
+        A.push(Math.round(1000 * a) / 1000); B.push(Math.round(1000 * b) / 1000); }
+      const t = new SM.Table({ name: 'MTS chart rows', columns: [
+        { name: 'region', dataType: 'character', values: A.map((_, i) => (i % 2 ? 'South' : 'North')) },
+        { name: 'keep', dataType: 'character', values: A.map((_, i) => ([30, 32, 34].includes(i) ? 'no' : 'yes')) },
+        { name: 'a', dataType: 'numeric', values: A }, { name: 'b', dataType: 'numeric', values: B }] });
+      SM.app.addTable(t); t.setState([50], 'excluded', true); return t.nrows; })()''')
+    check('charts: a table of our own for By and a filter', r, 160)
+    r = await page.ev(open_js('MTS chart rows', {'y': ['a', 'b'], 'by': ['region']}, {'forecast': 4, 'maxlags': 4},
+                              after="rep.toggleFilter(true); await __mts.done(rep); rep.spec.filter.push({ col: t.col('keep').id, levels: ['yes'] }); { const d = __mts.done(rep); rep.run(); await d; }"),
+                      timeout=900)
+    check('charts: By with a Local Data Filter opens without errors', r['errors'], [])
+    g = await check_report_graphs(page, rep, tbl, 'charts: By and a filter')
+    codes = [x['code'] for x in g['g'] if x['label'] == 'Time Series Graph']
+    check('charts: By and a filter: each group\'s graph keeps its group; the filtered rows are dropped, the excluded one missing',
+          [('df = df[df["region"] == \'North\']' in c_, 'df = df.drop(index=[30, 32, 34])   # the rows the report leaves out' in c_, 'Y.iloc[' in c_) for c_ in codes],
+          [(True, True, True), (False, False, False)])
+    await page.ev(f"{close_js}; SM.app.closeTable(SM.app.tables.find((x) => x.name === 'MTS chart rows')); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach((b) => b.click());")
 
 HELPERS = r'''
 window.__mts = {
@@ -612,6 +822,10 @@ async def main():
     await check_form_help(page, f"await __hp.menu({rep}, 'Cointegration', ['Johansen Test Options…'])", ['Deterministic terms (det_order)', 'Lagged differences (k_ar_diff)', 'Choose the rank by'], 'multits: Johansen Test Options…')
     await check_form_help(page, f"await __hp.menu({rep}, 'Cointegration', ['Cointegration Rank…'])", ['Rank of the VECM (1 to 1)'], 'multits: Cointegration Rank…')
     await check_controls_help(page, rep, 'Lag Order Selection', ['A line of the table'], 'multits: Lag Order Selection')
+
+    # ---- the graphs' matplotlib code, every graph of every kind
+    await chart_code(page)
+
     check('no script errors', page.errors, [])
     await page.close()
 
