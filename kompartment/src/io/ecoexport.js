@@ -68,6 +68,7 @@ import {
 } from '../domain/farfield.js';
 import { pathLayouts, cellEquivalent } from '../sim/pathlayout.js';
 import { ecolegoEquation, readsOf, unsupportedCalls, TO_ROUNDING, WORKED_OTHERWISE } from './ecoequation.js';
+import { countAppParts } from '../domain/apps.js';
 
 export class ExportError extends Error {
 	constructor(message) {
@@ -3010,8 +3011,7 @@ function writeSimulation(w, raw, ctx) {
 	}
 	// So is an app laid out on the model (see ../domain/apps.js): a line, as
 	// the diagram is, since no number of the model is in it.
-	const pages = Array.isArray(raw.app?.pages) ? raw.app.pages : [];
-	const parts = pages.reduce((n, p) => n + (Array.isArray(p?.components) ? p.components.length : 0), 0);
+	const parts = countAppParts(raw);
 	if (parts) {
 		report.warn(`The app built on the model is this tool’s own and is not written (${parts} part`
 			+ `${parts === 1 ? '' : 's'}): an Ecolego project has nothing to hold it.`);

@@ -8,7 +8,7 @@
  * heading that exists.
  */
 
-import { COMPONENTS, STATISTICS } from '../domain/apps.js';
+import { COMPONENTS, STATISTICS, CURVES, THEMES } from '../domain/apps.js';
 
 const KICKER = 'App designer';
 
@@ -51,9 +51,13 @@ const PARTS = {
 		],
 	},
 	button: {
-		lead: 'Runs the model at the values the controls hold, or puts every control back to the value the '
-			+ 'model holds.',
-		list: ['An app set to run only when asked needs a **Run** button, and the app’s title bar has one.'],
+		lead: 'Runs the model at the values the controls hold, samples the spread of the results there, or puts '
+			+ 'every control back to the value the model holds.',
+		list: [
+			'An app set to run only when asked needs a **Run** button, and the app’s title bar has one.',
+			'**Run the spread** runs the model many times at the controls, drawing every input that carries a '
+				+ 'distribution; the results that read the spread show it.',
+		],
 	},
 	chart: {
 		lead: 'The series you name, over time, as the Chart tab draws them: drag to zoom, double-click for '
@@ -61,6 +65,8 @@ const PARTS = {
 		list: [
 			'**Series** — a block, and at which indices; an index left at *every one* draws a line for each.',
 			'**X axis** and **Y axis** — logarithmic or linear. A chart of up to 32 lines.',
+			'**Spread** — the percentile bands of a sampled run behind each line, 5–95 and 25–75; and **the mean** '
+				+ 'of the realisations as a line of its own.',
 		],
 	},
 	value: {
@@ -69,6 +75,8 @@ const PARTS = {
 		list: [
 			'**Limit** — optional. The number turns red above it and green below it, and says which.',
 			'**Digits** — the significant figures it is shown to.',
+			'**Of** — the run at the controls, or the mean, the median or a percentile of a sampled run: the '
+				+ 'peak of the 95th percentile, say.',
 		],
 	},
 	gauge: {
@@ -96,6 +104,33 @@ const PARTS = {
 			'**Rows** — with no times given, this many of the run’s own output times, evenly along its list.',
 		],
 	},
+	panel: {
+		lead: 'A titled box with a grid of its own: the inputs of one kind together, a result and its notes. '
+			+ 'Twelve columns across the panel, and it grows to hold what is put in it.',
+		list: [
+			'Drag parts into it, or select it and click one in the list: it goes into the panel.',
+			'**Take it out** puts a part back onto the page; a part is moved from one panel to another by dragging.',
+			'Panels and tabs go three deep: a panel in a tab of a set of tabs in a panel.',
+		],
+	},
+	tabs: {
+		lead: 'Several grids in the space of one, a tab each, one showing at a time: the inputs on one tab and '
+			+ 'the detail on another, beside a chart that stays.',
+		list: [
+			'Choose a tab on the page to put parts on it; **+** adds one, and right-clicking a tab renames, moves or '
+				+ 'deletes it.',
+			'Somebody using the app chooses the tab; which one is showing is theirs, and is not saved.',
+		],
+	},
+	image: {
+		lead: 'A picture on the page: a sketch of the system, a map of the site, a logo.',
+		list: [
+			'**Choose a picture…**, or drop a picture file onto the page. PNG, JPEG, GIF, WebP or SVG.',
+			'The picture is kept in the model file, so it goes wherever the file goes; a large one is made smaller '
+				+ 'first, to at most 1600 pixels on its longer side.',
+			'**Describes** is what a screen reader says for it; **Fits** shows it whole or fills the box with it.',
+		],
+	},
 	text: {
 		lead: 'Words on the page: a title, a heading, a note, or a paragraph that says what the app is for.',
 		list: [
@@ -116,8 +151,9 @@ export function appTopic(key) {
 		const part = PARTS[type];
 		const spec = COMPONENTS[type];
 		if (!part || !spec) return null;
+		const kind = { input: 'input', output: 'result', layout: 'layout' }[spec.group] ?? 'text and pictures';
 		return {
-			kicker: `${KICKER} · ${spec.group === 'input' ? 'input' : spec.group === 'output' ? 'result' : 'text'}`,
+			kicker: `${KICKER} · ${kind}`,
 			title: spec.name,
 			lead: part.lead,
 			sections: [{ heading: 'Its settings', list: part.list }, {
@@ -125,7 +161,7 @@ export function appTopic(key) {
 					+ 'it; the arrow keys move it a cell at a time and shift with an arrow resizes it. What it '
 					+ 'lands on moves down out of the way.',
 			}],
-			more: 'The parts of an app',
+			more: { panel: 'Panels and tabs', tabs: 'Panels and tabs', image: 'Pictures' }[type] ?? 'The parts of an app',
 		};
 	}
 	switch (key) {
@@ -144,6 +180,8 @@ export function appTopic(key) {
 					'**Select** a part to set it up on the right: what it sets or shows, its range, its title.',
 					'**Start from the model** makes a first app: sliders for the parameters that carry a '
 					+ 'distribution, a chart of the endpoints, and their peak.',
+					'**Panels** and **tabs** hold parts of their own; a **picture** is dropped on the page as a file.',
+					'**Share…** makes a link that opens the model as its app, in anybody’s browser.',
 				],
 			}, {
 				heading: 'What it changes',
@@ -213,6 +251,8 @@ export function appTopic(key) {
 			lead: 'Its title and description head the running app; the rest is how it runs and how it opens.',
 			sections: [{
 				choices: [
+					['Looks', 'one of the styles an app can wear when it runs — Swiss, Newsprint, Terminal and the rest; '
+						+ 'the page shows it as it is designed. See **How an app looks**.'],
 					['Runs the model', '**whenever a control changes** — a slider runs as it is let go, and while '
 						+ 'it is dragged too when the model solves quickly — or **when Run is pressed**, for a model '
 						+ 'that takes long enough that one run at a time is enough.'],
@@ -225,6 +265,43 @@ export function appTopic(key) {
 				],
 			}],
 			more: 'Running an app',
+		};
+		case 'spread': return {
+			kicker: KICKER,
+			title: 'The spread of the results',
+			lead: 'A sampled run of the app: the model run many times at the controls, each time with every input '
+				+ 'that carries a distribution drawn afresh — except what a control has been moved to.',
+			sections: [{
+				list: [
+					'A control moved away from the model’s value **holds** its input there: whoever moved the slider '
+						+ 'has said what it is. One still at the model’s value leaves the input to its distribution.',
+					'A control that sets a **factor** on every index scales the input’s distribution: `Kd ×` at 2 '
+						+ 'samples twice each nuclide’s Kd.',
+					'**Realisations** — how many runs, 200 unless you say. **Sampled** — when **Run the spread** is '
+						+ 'pressed, or after every change of a control.',
+					'A chart draws its **bands** from it, and a value, a gauge, a bar chart or a table reads its '
+						+ '**mean**, its **median** or a percentile:',
+				],
+				choices: Object.entries(CURVES).filter(([k]) => k !== 'run'),
+			}, {
+				text: 'A sample is of the controls as they stood when it ran: move one and its bands go, until it is '
+					+ 'run again.',
+			}],
+			more: 'The spread of the results',
+		};
+		case 'theme': return {
+			kicker: KICKER,
+			title: 'How an app looks',
+			lead: 'The style the app wears — its colours, its type, its lines and shadows — named after the design '
+				+ 'style it follows. The page in the designer wears it too, so it is seen as it is laid out.',
+			sections: [{
+				list: THEMES.map((t) => `**${t.name}**${t.mode === 'dark' ? ', dark' : t.mode === 'light' ? ', light' : ' — this tool’s own, light or dark with the page'}`),
+			}, {
+				text: 'Each has eight chart colours of its own, chosen for its background and checked against it: '
+					+ 'lines next to each other in a chart are told apart with colour-blindness as well as without. '
+					+ 'The fonts are the ones the computer has; nothing is fetched for a style.',
+			}],
+			more: 'How an app looks',
 		};
 		case 'page': return {
 			kicker: KICKER,
@@ -245,5 +322,5 @@ export function appTopic(key) {
 }
 
 /** Every key a topic answers to, for the test that checks them. */
-export const APP_TOPICS = ['designer', 'target', 'series', 'statistic', 'app', 'page',
+export const APP_TOPICS = ['designer', 'target', 'series', 'statistic', 'app', 'page', 'spread', 'theme',
 	...Object.keys(COMPONENTS).map((t) => `part:${t}`)];

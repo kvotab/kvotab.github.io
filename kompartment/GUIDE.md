@@ -2358,6 +2358,10 @@ It is a draft and not a save, and the difference matters:
   save early;
 - a private window, or a browser with site data switched off, keeps nothing.
   Everything still works; there is simply no offer next time.
+- a model opened from a link (see [Handing an app to
+  someone](#handing-an-app-to-someone)) is not written as the draft until it is
+  edited: the link still holds it, and somebody who opens one as an app should
+  not lose a draft of their own they could not see being replaced.
 
 ## Edits that do not need solving again
 
@@ -7030,6 +7034,11 @@ the settings of what is selected on the right.
   distribution has; the scenario, where the model has several; a chart of the
   endpoints, or of the last result the model is built up to; and its peak and
   when it peaked.
+- **Group parts** in a **panel** or a set of **tabs**, which hold a grid of
+  their own: drag a part onto one, or select it and click a part in the list.
+  See [Panels and tabs](#panels-and-tabs).
+- **Drop a picture file** onto the page for a picture there; see
+  [Pictures](#pictures).
 
 With nothing selected, the right-hand column holds the page and the app.
 **Pages** are the tabs across the top of the running app — the controls and
@@ -7050,15 +7059,59 @@ will be before the app is run.
 | **Number field** | Sets a number typed into a box, within an optional **Min** and **Max**. |
 | **Drop-down**, **Option buttons** | Choose one of a list: the model's scenario, or a parameter's value from the **choices** listed under it, each a label and a number. |
 | **Switch** | On or off: whether a block takes part in the run, or a parameter at its **On** or **Off** value — 1 and 0 unless set. |
-| **Button** | **Run the model** at the values the controls hold, or **put the controls back** where the model has them. |
-| **Chart** | The series named, over time, drawn as the Chart tab draws them, on logarithmic or linear axes; drag to zoom, double-click for everything. |
-| **Value** | One number read off one series, large, with its unit. A **Limit** turns it red above and green below, and it says which. |
+| **Button** | **Run the model** at the values the controls hold, **run the spread** there (see [The spread of the results](#the-spread-of-the-results)), or **put the controls back** where the model has them. |
+| **Chart** | The series named, over time, drawn as the Chart tab draws them, on logarithmic or linear axes; drag to zoom, double-click for everything. **Spread** draws the percentile bands of a sampled run behind each line, and the mean as a line of its own. |
+| **Value** | One number read off one series, large, with its unit. A **Limit** turns it red above and green below, and it says which. **Of** reads it off the run at the controls, or off the mean, the median or a percentile of a sampled run. |
 | **Gauge** | One number as an arc on a dial between **Min** and **Max** — left empty, nought and a round number above the value and the limit. |
 | **Bar chart** | One number from each of several series, as bars: the peak dose of every radionuclide. Logarithmic by default, over the six decades below the largest. |
 | **Table** | The series named, a column each, at the **Times** given — or at **Rows** of the run's own output times, spread evenly along its list. |
 | **Text** | Words on the page, as Markdown: `**bold**`, `*italic*`, lists, and web addresses as links. **Style** makes it a title, a heading or a note. |
+| **Panel** | A titled box with a grid of its own, for parts that belong together. |
+| **Tabs** | Several grids in the space of one, a tab each, one showing at a time. |
+| **Picture** | A picture on the page — a sketch of the system, a map of the site — with a caption if it has one. |
 
 A part given no label or title is named after what it sets or shows.
+
+### Panels and tabs
+
+A **panel** is a box with a title and a grid inside it; a set of **tabs** is
+several such grids in the space of one, with a row of tabs to choose between
+them. The inputs of one kind go in a panel together; the detail of a result
+goes on a second tab beside the first, so the page stays short.
+
+The grid inside is the page's own grid: twelve columns across the container,
+and rows of the same height, one of them taken by the title or the tabs. A part
+moved in or out keeps its height in rows. A container grows to hold what is put
+in it, and pushes what is below it down to make room; it cannot be made
+smaller than what it holds.
+
+- **Put a part in** by dragging it onto the container — from the list, from
+  the tree, or from elsewhere on the page — or by selecting the container and
+  clicking a part in the list. **Take it out** in a part's settings puts it
+  back on the page beside the container.
+- **The tabs** are chosen on the page, in the designer as in the running app:
+  choose one to put parts on it. **+** after the last adds a tab, and
+  right-clicking one renames it, moves it or deletes it, with what is on it.
+  Which tab is showing is the reader's choice, and is not saved.
+- Containers go **three deep** — a panel on a tab of a set of tabs in a panel —
+  which is as far as a page stays readable.
+
+Moving or duplicating a container takes its parts with it; deleting one deletes
+them.
+
+### Pictures
+
+A **picture** is dropped onto the page as a file, or chosen in its settings
+with **Choose a picture…**: PNG, JPEG, GIF, WebP or SVG. It is kept in the model
+file itself, so it goes wherever the file goes and the app needs nothing else
+to show it. A large picture is made smaller before it is kept — to at most 1600
+pixels on its longer side, and less if that is still large — since the file
+carries it every time it is saved.
+
+**Fits** shows the whole picture in its box, or fills the box with it and
+crops the rest. **Describes** is what a screen reader says for it, and should
+say what the picture shows. A picture is only drawn: an SVG runs nothing,
+whatever is in it.
 
 ### What an input sets
 
@@ -7114,6 +7167,45 @@ They are read off the run's output times, so a peak between two of them is the
 larger of the two; a peak worked out as a model output is in [Numbers read off
 a finished curve](#numbers-read-off-a-finished-curve).
 
+### The spread of the results
+
+A run of the app is one run, at the values the controls hold. How uncertain the
+answer is at those values is a question for many runs: **Run the spread** — a
+button on the page, or in the title bar of the running app — runs the model
+**Realisations** times at the controls, each time with every input that
+carries a distribution drawn afresh, as a probabilistic run does in the editor.
+
+What the controls say is kept:
+
+- **A control moved away from the model's value holds its input there.**
+  Whoever moved the slider has said what that input is, so it is not drawn. A
+  control still at the model's value leaves its input to the distribution the
+  model gives it.
+- **A factor scales the distribution.** A slider over `Kd ×` at 2 samples twice
+  each nuclide's Kd — the whole distribution, its ends and its middle — which
+  is the question a factor asks of an uncertain input.
+- A compartment's value at the start, the scenario, a block switched off and
+  the end of the run are set, and the realisations share them.
+
+The results read the sample as the controls' parts ask: a **chart** with
+**Spread** at *percentile bands* draws the 5–95 and 25–75 bands behind each
+line, and the mean as a line of its own where asked; a **value**, a **gauge**,
+a **bar chart** or a **table** reads its number off the run, or — under **Of**
+— off the mean, the median, or the 5th, 25th, 75th or 95th percentile of the
+realisations. The peak of the 95th percentile is the peak of that curve, not
+the 95th percentile of the peaks. A part that reads the sample says so under
+it, with how many realisations there were.
+
+A sample is of the controls as they stood when it ran. Move one and its bands
+go, and the parts that read it say the spread is of other values until it is
+run again — or, with **Sampled** at *after every change*, it is run again by
+itself once each run of the app is in, which suits a quick model. It keeps
+only the series the app shows, so a thousand realisations of a large model
+cost what the page needs, not what the model reports. It is also the editor's
+sample: the Chart tab draws it, saying it is at the app's controls, and it
+replaces any sample the editor held — asking first when that one was the
+larger.
+
 ### Running an app
 
 **Run app** shows the app across the whole window: its title and description
@@ -7151,6 +7243,42 @@ app has nowhere else to look. The controls keep their values for as long as the
 page is open; **Reset** puts them back where the model has them, and opening
 another model starts its app there too.
 
+### How an app looks
+
+**Looks**, in the app's settings, is the style the app wears: its colours,
+its type, the lines and shadows of its parts. The page in the designer wears it
+too, so an app is laid out as it will be seen.
+
+| Style | What it is like |
+|---|---|
+| **Kompartment** | this tool's own, light or dark as the page is |
+| **SaaS** | white cards lifted off a cool grey, rounded and quiet |
+| **Swiss** | black rules over each part and no boxes; the type does the work |
+| **Neo-brutalism** | thick black lines, hard shadows, a yellow bar |
+| **Bauhaus** | black frames, square corners, and the three primaries |
+| **Flat** | no lines and no shadows, blocks of colour under a dark bar |
+| **Neumorphism** | everything the colour of the ground, raised out of it or pressed in |
+| **Claymorphism** | soft, puffed-up shapes on a pastel ground |
+| **Newsprint** | paper and ink, a serif face, a masthead over a double rule |
+| **Academia** | parchment, a book face, small capitals, a ruled double frame |
+| **Luxury** | ivory, thin gold lines, capitals spaced wide |
+| **Organic** | sand and moss, no two corners alike |
+| **Retro** | cream, warm outlines, a mustard shadow and stripes |
+| **Modern dark** | slate cards on near-black, with a violet glow |
+| **Terminal** | green on black, one face, a prompt before every label |
+| **Cyberpunk** | a neon grid, cyan lines and a hot pink notch on every part |
+| **Art deco** | gold on night, a double gold frame, a sunburst behind |
+
+The styles follow the design styles of that name, as collected at
+designprompts.dev. A dark style is dark in a light page and the other way
+round: the style is the app's, and the editor around it keeps its own. Each
+has eight chart colours chosen for its own background and checked against it —
+lines next to each other are told apart with colour-blindness as well as
+without — and the series take them in the same order on every chart. The
+fonts are the ones the computer has: a style names a few that give it its
+character where they are installed, and ends in one that is always there.
+Nothing is fetched for it.
+
 ### Handing an app to someone
 
 An app is saved with its model, so the file is the app. Set **Opens as** to *the
@@ -7160,6 +7288,24 @@ is the example's app on its own. Nothing the app does is written to the file,
 so whoever uses it can move every control to its end and leave the model
 exactly as it came. The app is not written into an `.eco` export; see
 [Importing Ecolego projects](#importing-ecolego-projects).
+
+**Share…**, on the designer's toolbar, makes a **link** instead: the whole
+model, compressed, in the address itself, after `#m=`. Opening it opens the
+model — as its app, unless the box for that is cleared — in any browser, with
+nothing stored anywhere: the part of an address after `#` is never sent to a
+server, so the link works from this site's static pages and nobody in between
+sees what is in it. That cuts both ways. Anybody who has the link has the
+whole model, so send it where the file could go.
+
+The link is the model as it was when the link was made; anything changed after
+is not in it, so make a new one then. How long it is depends on the model — the
+example's is about three thousand characters — and the dialog says whether it
+is short enough to go anywhere, long enough that some mail and chat programs
+break it (it still works pasted whole), or too long for a browser to take, when
+the file is the way to send it. A model opened from a link is not kept as this
+tab's draft until it is edited, so opening somebody's link does not replace
+the unsaved work of your own that the tab would offer back; see [The tab
+remembers what you were working on](#the-tab-remembers-what-you-were-working-on).
 
 ## The project format
 
@@ -7205,7 +7351,7 @@ Blocks:
 | `layout` | Diagram geometry per block. Ignored by the solver. |
 | `systems` | The sub-systems the model is organised into, as dotted paths. A block's `system` says which one holds it. |
 | `transports` | Which of those sub-systems are transports — chains of N compartments drawn as two. The parts inside carry `transport`: `begin` or `end` on a compartment, `number`, `counter` or `operation` on an expression. See *Transports*. |
-| `app` | An app laid out on the model: `title`, `description`, `run` (`change` or `button`), `open` (`editor` or `app`), `edit_button`, and `pages`, each a `name` and its `components` — a `type`, an `id`, a place on the grid (`x`, `y`, `w`, `h` in cells), and the settings of its type: `target` for an input, `series` for a result. Ignored by the solver. See [Apps on a model](#apps-on-a-model). |
+| `app` | An app laid out on the model: `title`, `description`, `theme`, `run` (`change` or `button`), `open` (`editor` or `app`), `edit_button`, `realisations` and `spread_when` (`button` or `change`) for its spread, and `pages`, each a `name` and its `components` — a `type`, an `id`, a place on the grid (`x`, `y`, `w`, `h` in cells), and the settings of its type: `target` for an input, `series` for a result, `components` for a panel, `tabs` (each a `name` and its `components`) for a set of tabs, and `src` for a picture, as a `data:image/…;base64,` address. Ignored by the solver. See [Apps on a model](#apps-on-a-model). |
 
 Every block also takes `index_lists` (its dimensions) and `entries` (values per
 index combination).
@@ -7417,6 +7563,7 @@ title beside it. Choosing an entry loads it, over whatever is there.
 `?tab=chart` open on a tab (`build`, `chart`, `table`, `code`, `matrix`,
 `indexlists`, `model`, `app`, `help`; an unknown name opens Build) ·
 `?app` open on the model's app, on its own, and `?app=off` never (see [Apps on a model](#apps-on-a-model)) ·
+`#m=…` open the model the address carries, as **Share…** makes it (see [Handing an app to someone](#handing-an-app-to-someone)) ·
 `?theme=light` / `?theme=dark` force a colour scheme ·
 `?brand=kvotab` use the site palette ·
 `?chrome=kvotab` leave room for the site's own header and footer ·

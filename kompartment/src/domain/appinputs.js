@@ -18,7 +18,9 @@
  */
 
 import * as ed from './edit.js';
-import { allComponents, readApp, INPUT_TYPES, APP_COLUMNS } from './apps.js';
+import {
+	allComponents, readApp, INPUT_TYPES, OUTPUT_TYPES, CURVE_TYPES, APP_COLUMNS, APP_PERCENTILES,
+} from './apps.js';
 import { supportOf, parsePDF, complete as pdfComplete } from './pdf.js';
 
 /** The distributions whose spread is in the logarithm: a slider over one is too. */
@@ -457,7 +459,8 @@ export function componentProblem(raw, c, outputs) {
 		}
 		return null;
 	}
-	if (c.type === 'button' || c.type === 'text') return null;
+	if (c.type === 'button' || c.type === 'text' || c.type === 'panel' || c.type === 'tabs') return null;
+	if (c.type === 'image') return c.src ? null : 'Choose a picture for it.';
 	if (!c.series?.length) return 'Choose what it shows.';
 	if (c.statistic === 'at' && c.at == null) return 'Choose the time it reads the value at.';
 	if (c.type === 'gauge' && c.min != null && c.max != null && !(c.max > c.min)) {
@@ -476,6 +479,119 @@ export function componentProblem(raw, c, outputs) {
 		if (wrong) return wrong;
 	}
 	return null;
+}
+
+// --- the spread ------------------------------------------------------------------------
+
+/**
+ * What each kind of distribution is scaled by, when the quantity it spreads is
+ * multiplied by a factor: the values of its parameters that are in the
+ * quantity's own unit. A standard deviation scales with the mean; a geometric
+ * standard deviation is a ratio, and does not; a percentile's probability does
+ * not either, only where it falls.
+ */
+const SCALE_KEYS = {
+	unif: ['min', 'max'],
+	triang: ['min', 'max', 'mode'],
+	dtriang: ['min', 'max', 'mode'],
+	norm: ['mean', 'sd'],
+	logu: ['min', 'max'],
+	logt: ['min', 'max', 'mode'],
+	logdt: ['min', 'max', 'mode'],
+	Logn4: ['gm'],
+	logn: ['mean', 'sd'],
+	logn5: ['x1', 'x2'],
+};
+
+/**
+ * The distribution of `c` times a quantity, given the quantity's: every
+ * quantile of the one returned is `c` times the quantile of `spec`, and so is
+ * a truncation at a value. Null where it cannot be scaled -- a factor that is
+ * not above zero, a kind this does not know.
+ */
+export function scalePdf(spec, c) {
+	if (!(c > 0) || !Number.isFinite(c)) return null;
+	let from = spec;
+	if (typeof from === 'string') {
+		try { from = parsePDF(from); } catch { return null; /* not a distribution this can read */ }
+	}
+	if (!from || typeof from !== 'object') return null;
+	const out = structuredClone(from);
+	if (from.kind === 'pg') {
+		if (!Array.isArray(from.values)) return null;
+		out.values = from.values.map((v) => (Number.isFinite(Number(v)) ? Number(v) * c : v));
+	} else {
+		const keys = SCALE_KEYS[from.kind];
+		if (!keys) return null;
+		out.params = { ...(from.params ?? {}) };
+		for (const k of keys) if (Number.isFinite(Number(out.params[k]))) out.params[k] = Number(out.params[k]) * c;
+	}
+	for (const k of ['trmin', 'trmax']) if (Number.isFinite(Number(out[k])) && out[k] != null) out[k] = Number(out[k]) * c;
+	return out;
+}
+
+/**
+ * The model a sampled run of the app is made on: a copy at the controls'
+ * values, as a run of the app is, with what the controls say about the spread.
+ *
+ * A control that sets a value **holds** it: it is not sampled, since whoever
+ * moved the slider has said what it is. A control that sets a **factor** on
+ * every index scales the spread instead -- `Kd ×` at 2 samples twice each
+ * nuclide's Kd -- which is the question a factor asks of an uncertain input.
+ * Only a parameter carries a distribution; a compartment's value at the start,
+ * the scenario and the end of the run are set and that is all.
+ *
+ * The percentiles are the five the app's parts read (`APP_PERCENTILES`),
+ * whatever the model's own are.
+ */
+export function sampleModel(raw, changes) {
+	const copy = structuredClone(raw);
+	applyInputs(copy, changes);
+	for (const ch of changes ?? []) {
+		const t = ch.target;
+		if (t?.kind !== 'value') continue;
+		const found = ed.findBlock(copy, t.block);
+		if (!found || found.kind !== 'parameter') continue;
+		const block = found.block;
+		const dims = ed.effectiveDims(copy, block);
+		const fixed = Object.entries(t.index ?? {});
+		const combos = dims.length
+			? ed.indexCombinations(copy, dims).filter((combo) => fixed.every(([l, i]) => combo[l] === i))
+			: [null];
+		// Every distribution read before any is written, as `writeInput` reads
+		// every base: one index's new one must not be the next one's old one.
+		const specs = combos.map((combo) => (combo ? ed.effectiveValue(block, 'pdf', combo) : block.pdf) ?? null);
+		combos.forEach((combo, k) => {
+			if (!specs[k]) return;
+			const next = t.factor ? scalePdf(specs[k], Number(ch.value)) : null;
+			if (combo) ed.setEntryValue(copy, t.block, combo, 'pdf', next);
+			else if (next) block.pdf = next;
+			else delete block.pdf;
+		});
+	}
+	copy.simulation = { ...copy.simulation, percentiles: [...APP_PERCENTILES] };
+	return copy;
+}
+
+/**
+ * The blocks an app's results name, which is all a sampled run of it has to
+ * keep: a thousand realisations of the few series on the page, not of every
+ * series the model has.
+ */
+export function appOutputBlocks(raw) {
+	const app = readApp(raw);
+	const out = new Set();
+	for (const { component: c } of allComponents(app)) {
+		if (OUTPUT_TYPES.has(c.type)) for (const s of c.series ?? []) out.add(s.block);
+	}
+	return [...out];
+}
+
+/** Whether anything on an app reads a sample: a chart's bands, a percentile, a button that samples. */
+export function usesSpread(app) {
+	return allComponents(app).some(({ component: c }) => (c.type === 'chart' && c.spread === 'bands')
+		|| (CURVE_TYPES.has(c.type) && c.curve !== 'run')
+		|| (c.type === 'button' && c.action === 'sample'));
 }
 
 // --- a first app ------------------------------------------------------------------------

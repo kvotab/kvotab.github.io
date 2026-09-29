@@ -10430,9 +10430,15 @@ test('a filter chip under the pointer still says whether it is on', async () => 
 
 	// One step *darker* in both themes, which is the direction that makes
 	// white ink more legible rather than less -- and defined in each of the
-	// three palettes, or one theme falls back to nothing at all.
-	assert((css.match(/--accent-hover:/g) ?? []).length === 3,
+	// three palettes, or one theme falls back to nothing at all. The page's
+	// three: an app's styles come after them, each defining its own.
+	const looks = css.indexOf('/* --- how an app looks');
+	assert(looks > 0, 'the app styles have moved');
+	assert((css.slice(0, looks).match(/--accent-hover:/g) ?? []).length === 3,
 		'--accent-hover is not defined for every theme');
+	for (const m of css.slice(looks).matchAll(/\n\[data-app-theme="([a-z-]+)"\] \{([^}]*--accent: [^}]*)\}/g)) {
+		assert(/--accent-hover: #[0-9a-f]{6};/.test(m[2]), `the app style ${m[1]} has no --accent-hover`);
+	}
 	const [lightAccent, darkAccent] = [...css.matchAll(/--accent: (#[0-9a-f]{6})/g)].map((m) => m[1]);
 	const [lightHover, darkHover] = [...css.matchAll(/--accent-hover: (#[0-9a-f]{6})/g)].map((m) => m[1]);
 	const lum = (hex) => {
@@ -34434,9 +34440,12 @@ test('a specialised block wears its own glyph, and every control takes the theme
 	const root_ = /\n:root \{([^}]*accent-color[^}]*)\}/.exec(css)?.[1];
 	assert(root_ && /accent-color:\s*var\(--accent\)/.test(root_),
 		'the accent is not set for every control at the root');
+	// Except where the accent itself is another: an app's style redefines
+	// `--accent` for what is inside it, and what inherits from the root is
+	// the root's colour, worked out there -- so a styled app says it again.
 	const others = [...css.matchAll(/\n([^\n{]*)\{[^}]*accent-color[^}]*\}/g)]
 		.map((m) => m[1].trim())
-		.filter((sel) => sel !== ':root');
+		.filter((sel) => sel !== ':root' && sel !== '[data-app-theme]');
 	assert(!others.length, `accent-color is set again on ${others.join(', ')}`);
 });
 

@@ -307,6 +307,15 @@ const LEGEND_PAD = 16;
 const AXIS_FONT = '11px ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif';
 const LABEL_FONT = '600 11px ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif';
 
+/**
+ * The two fonts, in the family a page around the chart asks for with
+ * `--chart-font` -- an app's theme sets it, so that a chart on a page set in a
+ * serif or in monospace is lettered as the page is -- and in the chart's own
+ * otherwise.
+ */
+const axisFont = (c) => (c.font ? `11px ${c.font}` : AXIS_FONT);
+const labelFont = (c) => (c.font ? `600 11px ${c.font}` : LABEL_FONT);
+
 export class TimeChart {
 	/**
 	 * @param {HTMLElement} container
@@ -468,6 +477,7 @@ export class TimeChart {
 			band: `color-mix(in oklab, ${v('--accent', '#2a78d6')} 16%, transparent)`,
 			series: Array.from({ length: SERIES_COLORS }, (_, i) =>
 				v(`--series-${i + 1}`, '#2a78d6')),
+			font: v('--chart-font', ''),
 		};
 	}
 
@@ -694,7 +704,7 @@ export class TimeChart {
 		ctx.stroke();
 
 		// --- tick labels (text tokens, never series colour) ---
-		ctx.font = AXIS_FONT;
+		ctx.font = axisFont(c);
 		ctx.fillStyle = c.muted;
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'top';
@@ -741,6 +751,15 @@ export class TimeChart {
 		// so which spread belongs to which line needs no explaining.
 		{
 			const { t: tb } = this.data;
+			// Held to the plot, as the lines are: a band whose lower edge runs
+			// past a log axis's floor -- a percentile falling to nothing at the
+			// end of a run -- was painted down over the time axis and its
+			// labels. Each corner is brought to the plot's edge rather than the
+			// fill clipped, since the surface a picture is drawn on has no
+			// `clip` (see the lines below); where an edge crosses out, the fill
+			// is off by no more than the step to the next point.
+			const bx = (x) => Math.min(plot.x + plot.w, Math.max(plot.x, sx(x)));
+			const by = (y) => Math.min(plot.y + plot.h, Math.max(plot.y, sy(y)));
 			series.forEach((s, si) => {
 				if (!s.bands?.length) return;
 				const { color } = styleOf(s, si);
@@ -771,11 +790,11 @@ export class TimeChart {
 									&& Number.isFinite(lj) && Number.isFinite(hj)
 									&& (!this.yLog || (lj > 0 && hj > 0));
 								if (!okj) break;
-								if (j === i) ctx.moveTo(sx(xj), sy(lj));
-								else ctx.lineTo(sx(xj), sy(lj));
+								if (j === i) ctx.moveTo(bx(xj), by(lj));
+								else ctx.lineTo(bx(xj), by(lj));
 								j++;
 							}
-							for (let k = j - 1; k >= i; k--) ctx.lineTo(sx(tb[k]), sy(band.hi[k]));
+							for (let k = j - 1; k >= i; k--) ctx.lineTo(bx(tb[k]), by(band.hi[k]));
 							ctx.closePath();
 							i = j - 1;
 							open = false;
@@ -847,7 +866,7 @@ export class TimeChart {
 
 		// --- direct labels for up to four series ---
 		if (labelling) {
-			ctx.font = LABEL_FONT;
+			ctx.font = labelFont(c);
 			ctx.textAlign = 'left';
 			ctx.textBaseline = 'middle';
 			// Where each line ends, as far as this window is concerned.
@@ -926,7 +945,7 @@ export class TimeChart {
 		const { series } = this.data;
 		const band = this._legendBand(w);
 		if (!band.rows) return;
-		ctx.font = AXIS_FONT;
+		ctx.font = axisFont(c);
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 		series.forEach((s, si) => {

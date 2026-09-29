@@ -318,6 +318,43 @@ class EditingAModel(unittest.TestCase):
             {'block': 'Downstream', 'index': {'Compartments': 'Lakewater'}},
         ])
 
+    def test_a_rename_reaches_inside_panels_and_tabs_as_the_application_s_does(self):
+        # Parts inside a panel, inside a tab of a set of tabs, and a file
+        # nested far deeper than an app is read: both walks stop at the same
+        # depth, so what follows a rename is the same part for part.
+        deep: Any = {'id': 'z', 'type': 'chart', 'series': [{'block': 'Water', 'index': {'Object': 'Lake'}}]}
+        for i in range(12):
+            deep = {'id': f'd{i}', 'type': 'panel' if i % 2 else 'tabs', 'components': [deep],
+                    'tabs': [{'name': 't', 'components': [deep]}, 'not a tab']}
+        raw = example('landscape')
+        raw['app'] = {'pages': [{'name': 'Main', 'components': [
+            {'id': 'p1', 'type': 'panel', 'title': 'Inputs', 'components': [
+                {'id': 'c1', 'type': 'slider', 'target': {'kind': 'value', 'block': 'Kd', 'index': {'Radionuclides': 'Tc-99'}}},
+                {'id': 't1', 'type': 'tabs', 'tabs': [
+                    {'name': 'One', 'components': [
+                        {'id': 'c2', 'type': 'chart', 'series': [{'block': 'Water', 'index': {'Object': 'Lake'}}]}]},
+                    {'name': 'Two', 'components': [
+                        {'id': 'c3', 'type': 'value', 'series': [{'block': 'Regolith held', 'index': {'Object': 'Mire'}}]}]},
+                ]},
+            ]},
+            deep, 7, None,
+        ]}, 'not a page']}
+        ops = [['renameBlock', 'Water', 'Lakewater'], ['renameBlock', 'Regolith', 'Soil'],
+               ['renameIndex', 'Radionuclides', 'Tc-99', 'Tc99'], ['renameIndexList', 'Object', 'Site']]
+        js = app('edit', model=raw, ops=ops)
+        self.assertNotIn('error', js)
+        m = kp.Model(raw)
+        m.rename_block('Water', 'Lakewater')
+        m.rename_block('Regolith', 'Soil')
+        m.rename_index('Radionuclides', 'Tc-99', 'Tc99')
+        m.rename_index_list('Object', 'Site')
+        self.assertEqual(dumps(m.to_dict()['app']), dumps(js['model']['app']))
+        panel = js['model']['app']['pages'][0]['components'][0]
+        tabs = panel['components'][1]['tabs']
+        self.assertEqual(panel['components'][0]['target']['index'], {'Radionuclides': 'Tc99'})
+        self.assertEqual(tabs[0]['components'][0]['series'], [{'block': 'Lakewater', 'index': {'Site': 'Lake'}}])
+        self.assertEqual(tabs[1]['components'][0]['series'], [{'block': 'Soil held', 'index': {'Site': 'Mire'}}])
+
     def test_an_app_index_that_is_not_a_name_is_passed_over_as_the_application_passes_it(self):
         raw = example('landscape')
         raw['app'] = {'pages': [{'components': [

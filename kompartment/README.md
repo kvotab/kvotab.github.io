@@ -55,10 +55,13 @@ Ten worked examples ship with it — open one from the Help tab or with
 - **Results** as CSV, as HDF5 in the shape the assessment tools read, or as a
   project archive with the run beside it.
 - **An app designer.** Drag sliders, number fields, drop-downs, switches,
-  charts, values, gauges, bar charts and tables onto a page over the model;
-  *Run app* then shows that page and nothing else, and every change to a
-  control runs a copy of the model at the controls' values. The app is saved
-  in the model file and follows every rename.
+  charts, values, gauges, bar charts, tables, pictures, panels and tabs onto a
+  page over the model; *Run app* then shows that page and nothing else, and
+  every change to a control runs a copy of the model at the controls' values.
+  *Run the spread* samples the uncertain inputs there, for percentile bands and
+  percentiles. Seventeen styles, from Swiss to Terminal. The app is saved in
+  the model file, follows every rename, and goes to anyone as a link that
+  carries the whole model.
 - **A Python package** that reads a model into objects, edits it by the same
   rules as the editor — a rename follows every reference, a delete is refused
   while something reads the block — writes it back, and runs it outside the

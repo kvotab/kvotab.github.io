@@ -404,10 +404,13 @@
   ],
   "app": {
     "title": "Dose from a leaking repository",
-    "description": "Move the controls to see what each does to the dose from the well. The model itself is not changed: every run is of a copy at the values the controls hold.",
+    "description": "Move the controls to see what each does to the dose from the well, and run the spread to see how uncertain it is at those values. The model itself is not changed: every run is of a copy at the values the controls hold.",
     "run": "change",
     "open": "editor",
     "edit_button": true,
+    "theme": "standard",
+    "realisations": 200,
+    "spread_when": "button",
     "pages": [
       {
         "name": "Dose",
@@ -442,7 +445,7 @@
               "kind": "value",
               "block": "geoTransit"
             },
-            "min": 2e-05,
+            "min": 0.00002,
             "max": 0.002,
             "step": null,
             "scale": "log"
@@ -514,13 +517,25 @@
             ],
             "x_scale": "log",
             "y_scale": "log",
-            "legend": true
+            "legend": true,
+            "spread": "bands",
+            "mean": false
+          },
+          {
+            "id": "c13",
+            "type": "button",
+            "x": 0,
+            "y": 10,
+            "w": 4,
+            "h": 1,
+            "label": "Run the spread",
+            "action": "sample"
           },
           {
             "id": "c7",
             "type": "value",
             "x": 0,
-            "y": 10,
+            "y": 11,
             "w": 4,
             "h": 2,
             "title": "Peak dose, I-129",
@@ -535,13 +550,14 @@
             "statistic": "max",
             "at": null,
             "digits": 3,
-            "limit": 0.0001
+            "limit": 0.0001,
+            "curve": "run"
           },
           {
             "id": "c8",
             "type": "value",
             "x": 0,
-            "y": 12,
+            "y": 13,
             "w": 4,
             "h": 2,
             "title": "When the I-129 dose peaks",
@@ -556,7 +572,8 @@
             "statistic": "max_time",
             "at": null,
             "digits": 3,
-            "limit": null
+            "limit": null,
+            "curve": "run"
           },
           {
             "id": "c9",
@@ -564,7 +581,7 @@
             "x": 4,
             "y": 10,
             "w": 8,
-            "h": 4,
+            "h": 7,
             "title": "Peak dose of each radionuclide",
             "series": [
               {
@@ -574,7 +591,30 @@
             "statistic": "max",
             "at": null,
             "scale": "log",
-            "sort": true
+            "sort": true,
+            "curve": "run"
+          },
+          {
+            "id": "c14",
+            "type": "value",
+            "x": 0,
+            "y": 15,
+            "w": 4,
+            "h": 2,
+            "title": "Peak dose, I-129, 95th percentile",
+            "series": [
+              {
+                "block": "Dose",
+                "index": {
+                  "Radionuclides": "I-129"
+                }
+              }
+            ],
+            "statistic": "max",
+            "at": null,
+            "digits": 3,
+            "limit": 0.0001,
+            "curve": "p95"
           }
         ]
       },
@@ -582,42 +622,87 @@
         "name": "Inventories",
         "components": [
           {
-            "id": "c10",
-            "type": "chart",
+            "id": "c15",
+            "type": "tabs",
             "x": 0,
             "y": 0,
             "w": 8,
-            "h": 9,
-            "title": "Where the I-129 is",
-            "series": [
+            "h": 11,
+            "tabs": [
               {
-                "block": "Repository",
-                "index": {
-                  "Radionuclides": "I-129"
-                }
+                "name": "Where the I-129 is",
+                "components": [
+                  {
+                    "id": "c10",
+                    "type": "chart",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12,
+                    "h": 10,
+                    "title": "Where the I-129 is",
+                    "series": [
+                      {
+                        "block": "Repository",
+                        "index": {
+                          "Radionuclides": "I-129"
+                        }
+                      },
+                      {
+                        "block": "Geosphere",
+                        "index": {
+                          "Radionuclides": "I-129"
+                        }
+                      },
+                      {
+                        "block": "Soil",
+                        "index": {
+                          "Radionuclides": "I-129"
+                        }
+                      },
+                      {
+                        "block": "Well",
+                        "index": {
+                          "Radionuclides": "I-129"
+                        }
+                      }
+                    ],
+                    "x_scale": "log",
+                    "y_scale": "log",
+                    "legend": true,
+                    "spread": "none",
+                    "mean": false
+                  }
+                ]
               },
               {
-                "block": "Geosphere",
-                "index": {
-                  "Radionuclides": "I-129"
-                }
-              },
-              {
-                "block": "Soil",
-                "index": {
-                  "Radionuclides": "I-129"
-                }
-              },
-              {
-                "block": "Well",
-                "index": {
-                  "Radionuclides": "I-129"
-                }
+                "name": "Dose in numbers",
+                "components": [
+                  {
+                    "id": "c12",
+                    "type": "table",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12,
+                    "h": 10,
+                    "title": "Dose, per radionuclide",
+                    "series": [
+                      {
+                        "block": "Dose"
+                      }
+                    ],
+                    "rows": 10,
+                    "times": [
+                      100,
+                      1000,
+                      10000,
+                      100000,
+                      1000000
+                    ],
+                    "curve": "run"
+                  }
+                ]
               }
-            ],
-            "x_scale": "log",
-            "y_scale": "log",
-            "legend": true
+            ]
           },
           {
             "id": "c11",
@@ -625,32 +710,10 @@
             "x": 8,
             "y": 0,
             "w": 4,
-            "h": 9,
-            "text": "The inventory of each compartment, in becquerels, as the release works its way down the chain: out of the **repository**, through the **geosphere** and the **soil**, and into the **well**.\n\nThe controls are on the first page. Every page reads the same run, so what they do shows here too.",
+            "h": 11,
+            "text": "The inventory of each compartment, in becquerels, as the release works its way down the chain: out of the **repository**, through the **geosphere** and the **soil**, and into the **well**. The other tab has the dose in numbers.\n\nThe controls are on the first page. Every page reads the same run, so what they do shows here too.",
             "style": "note",
             "align": "left"
-          },
-          {
-            "id": "c12",
-            "type": "table",
-            "x": 0,
-            "y": 9,
-            "w": 12,
-            "h": 6,
-            "title": "Dose, per radionuclide",
-            "series": [
-              {
-                "block": "Dose"
-              }
-            ],
-            "rows": 10,
-            "times": [
-              100,
-              1000,
-              10000,
-              100000,
-              1000000
-            ]
           }
         ]
       }

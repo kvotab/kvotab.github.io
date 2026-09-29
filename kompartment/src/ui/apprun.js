@@ -12,9 +12,10 @@
  */
 
 import { el } from './parts.js';
-import { buildComponent } from './appwidgets.js';
-import { placeOnGrid } from './appdesigner.js';
+import { buildComponent, gridItem } from './appwidgets.js';
+import { wearTheme } from './appdesigner.js';
 import * as apps from '../domain/apps.js';
+import { usesSpread } from '../domain/appinputs.js';
 
 let root = null;
 let hooks = null;
@@ -33,8 +34,9 @@ export function resetAppRun(at = 0) {
  *
  * @param {HTMLElement} host
  * @param {object} h  what the page provides: `raw()`, `context()` (see
- *   ./appwidgets.js), `status()` -- `{running, fraction, owed, problem}` --,
- *   `run()`, `stop()`, `canEdit()` and `leave()`
+ *   ./appwidgets.js), `status()` -- `{running, sampling, fraction, owed,
+ *   spreadOwed, problem}` --, `run()`, `sample()`, `stop()`, `canEdit()` and
+ *   `leave()`
  */
 export function renderAppRun(host, h) {
 	root = host;
@@ -44,11 +46,20 @@ export function renderAppRun(host, h) {
 	const app = apps.readApp(hooks.raw());
 	if (!app) { host.replaceChildren(); return; }
 	page = Math.min(page, app.pages.length - 1);
+	wearTheme(host, app);
 
 	const title = app.title || String(hooks.raw()?.name ?? '') || 'App';
 	const run = el('button', { type: 'button', className: 'primary app-run-go', title: 'Run the model at the values the controls hold (⌘↵)' }, 'Run');
 	run.addEventListener('click', () => hooks.run());
 	run.hidden = app.run !== 'button';
+	// The spread, where anything on the app reads it and it is sampled when
+	// asked: the one button that says so, whatever page is showing.
+	const spread = el('button', {
+		type: 'button', className: 'app-run-spread',
+		title: `Run the model ${app.realisations.toLocaleString()} times at the controls, drawing every input that carries a distribution`,
+	}, 'Run the spread');
+	spread.addEventListener('click', () => hooks.sample());
+	spread.hidden = !usesSpread(app) || app.spread_when !== 'button';
 	const stop = el('button', { type: 'button', className: 'app-run-stop', title: 'Stop the run', hidden: true }, 'Stop');
 	stop.addEventListener('click', () => hooks.stop());
 	const edit = el('button', { type: 'button', className: 'ghost app-run-edit', title: 'Back to the editor (Esc)' }, 'Edit');
@@ -61,7 +72,7 @@ export function renderAppRun(host, h) {
 		el('span', { className: 'spacer' }),
 		el('span', { className: 'app-run-status', role: 'status', 'aria-live': 'polite' }),
 		el('progress', { className: 'app-run-progress', max: 1, value: 0, hidden: true }),
-		stop, run, edit);
+		stop, spread, run, edit);
 
 	const tabs = app.pages.length > 1
 		? el('nav', { className: 'app-run-pages', role: 'tablist', 'aria-label': 'Pages' },
@@ -87,10 +98,7 @@ export function renderAppRun(host, h) {
 	// through and stacked in on a narrow window: see `stackOrder`.
 	for (const c of apps.stackOrder(shown)) {
 		const widget = buildComponent(c, ctx);
-		const item = el('div', { className: 'app-item' }, widget.node);
-		item.style.setProperty('--h', String(c.h));
-		placeOnGrid(item, c);
-		grid.append(item);
+		grid.append(gridItem(c, widget.node));
 		drawn.push({ id: c.id, c, widget });
 	}
 	const empty = shown.length ? null : el('p', { className: 'app-run-empty' }, 'This page has nothing on it.');
@@ -146,8 +154,11 @@ export function paintAppRunStatus() {
 	const bar = root.querySelector('.app-run-progress');
 	const banner = root.querySelector('.app-run-banner');
 	if (status) {
-		status.textContent = s.running ? 'Running…' : s.owed ? 'Changed — press Run' : '';
-		status.classList.toggle('is-owed', !s.running && !!s.owed);
+		status.textContent = s.sampling ? 'Sampling the spread…'
+			: s.running ? 'Running…'
+				: s.owed ? 'Changed — press Run'
+					: s.spreadOwed ? 'The spread is of the controls as they were' : '';
+		status.classList.toggle('is-owed', !s.running && (!!s.owed || !!s.spreadOwed));
 	}
 	if (bar) {
 		bar.hidden = !s.running;

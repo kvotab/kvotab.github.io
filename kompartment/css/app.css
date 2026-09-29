@@ -8935,6 +8935,12 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 
 /* --- one part ------------------------------------------------------------ */
 
+/* What a part looks like is read through `--app-…` variables, each falling
+   back to the page's own look: a theme (below) sets the ones it changes, and
+   the standard look sets none. `--app-line-w`/`-c` are the frame, and
+   `--app-top-w`/`-c` a rule over it that a theme may make heavier than the
+   rest; `--app-px` is the room either side, which a rounder corner needs
+   more of. */
 .app-part {
 	display: flex;
 	flex-direction: column;
@@ -8943,10 +8949,12 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
-	padding: 6px 10px;
-	background: var(--surface-1);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
+	padding: 6px var(--app-px, 10px);
+	background: var(--app-part-bg, var(--surface-1));
+	border: var(--app-line-w, 1px) solid var(--app-line-c, var(--border));
+	border-top: var(--app-top-w, var(--app-line-w, 1px)) solid var(--app-top-c, var(--app-line-c, var(--border)));
+	border-radius: var(--app-part-radius, var(--radius));
+	box-shadow: var(--app-part-shadow, none);
 }
 
 .app-part-head {
@@ -8954,6 +8962,7 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
+	font-family: var(--app-label-font, inherit);
 	font-size: 12px;
 	line-height: 1.35;
 	color: var(--text-secondary);
@@ -8965,8 +8974,11 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-weight: 600;
-	color: var(--text-primary);
+	font-size: var(--app-label-size, inherit);
+	font-weight: var(--app-label-weight, 600);
+	letter-spacing: var(--app-label-spacing, normal);
+	text-transform: var(--app-label-case, none);
+	color: var(--app-label-ink, var(--text-primary));
 }
 
 .app-part-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
@@ -8989,7 +9001,7 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 }
 .app-box-wide { width: 14ch; }
 
-.app-slider { gap: 1px; padding: 5px 10px 4px; }
+.app-slider { gap: 1px; padding: 5px var(--app-px, 10px) 4px; }
 .app-range { width: 100%; margin: 2px 0 0; padding: 0; border: 0; background: transparent; }
 .app-range-ends {
 	display: flex;
@@ -9009,13 +9021,20 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 /* A switch: the checkbox kept for the keyboard and the screen reader, and a
    track with a knob drawn for everybody else. Frameless, like a button, so a
    row of them reads as a row of switches rather than of boxes. */
+/* The same 1px of nothing in every style: a style's frame is for the parts
+   that have one, and a heavier one kept here, unseen, took a one-row
+   button's height. */
 .app-part.app-switch,
 .app-part.app-button {
 	padding: 0;
-	border-color: transparent;
+	border: 1px solid transparent;
 	background: transparent;
+	box-shadow: none;
 	justify-content: center;
 }
+/* A theme's button may cast a shadow past its own edge, and the part it
+   fills has nothing else in it to keep in. */
+.app-part.app-button { overflow: visible; }
 .app-switch-row { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
 .app-switch-box { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
 .app-switch-track {
@@ -9044,7 +9063,9 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .app-switch-box:focus-visible + .app-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .app-switch-box:disabled + .app-switch-track { opacity: 0.6; }
 
-.app-go { width: 100%; height: 100%; min-height: 0; padding: 2px 10px; }
+/* A row is 28px, and a button a row tall has to hold its line in what its
+   own border and a style's leave of that. */
+.app-go { width: 100%; height: 100%; min-height: 0; padding: 0 10px; line-height: 1.2; }
 
 /* A chart: the canvas takes whatever the part has left under its title and
    over its legend. `chart-root` gives the main chart a floor of 240px, which a
@@ -9055,13 +9076,14 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 
 /* One number. */
 /* Two rows is 64px, and a title, a number and its caption have to fit in it. */
-.app-value { justify-content: center; gap: 0; padding: 3px 10px; }
+.app-value { justify-content: center; gap: 0; padding: 3px var(--app-px, 10px); }
 .app-value .app-part-head { line-height: 1.25; }
 .app-value-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .app-value-number {
+	font-family: var(--app-number-font, inherit);
 	font-size: 20px;
 	line-height: 1.15;
-	font-weight: 650;
+	font-weight: var(--app-number-weight, 650);
 	letter-spacing: -0.01em;
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
@@ -9114,7 +9136,7 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .app-table-grid tbody th { font-weight: 500; color: var(--text-secondary); }
 
 /* Text: frameless, since it is words on the page and not a control. */
-.app-part.app-text { padding: 2px 4px; border-color: transparent; background: transparent; }
+.app-part.app-text { padding: 2px 4px; border: 1px solid transparent; background: transparent; box-shadow: none; }
 .app-textbody { overflow: auto; min-height: 0; line-height: 1.5; }
 /* A title or a heading is a line, and a row is only just tall enough for one:
    a scroll bar beside a heading is worse than a heading that is clipped. */
@@ -9123,12 +9145,109 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .app-textbody > :last-child { margin-bottom: 0; }
 .app-textbody p, .app-textbody ul, .app-textbody ol { margin: 0 0 0.5em; }
 .app-textbody h1, .app-textbody h2, .app-textbody h3 { margin: 0 0 0.3em; font-size: 1.15em; }
-.app-textbody.is-title { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
-.app-textbody.is-heading { font-size: 15px; font-weight: 650; }
+.app-textbody.is-title, .app-textbody.is-heading {
+	font-family: var(--app-title-font, inherit);
+	text-transform: var(--app-title-case, none);
+}
+.app-textbody.is-title { font-size: 21px; font-weight: var(--app-title-weight, 650); letter-spacing: var(--app-title-spacing, -0.01em); }
+.app-textbody.is-heading { font-size: 15px; font-weight: var(--app-title-weight, 650); letter-spacing: var(--app-title-spacing, normal); }
 .app-textbody.is-note { font-size: 12px; color: var(--text-secondary); }
 .app-textbody.is-center { text-align: center; }
 .app-textbody.is-right { text-align: right; }
 .app-textbody a { color: var(--link); }
+
+/* What a chart or a table says about the spread under it: sampled, of how
+   many, or why there is none to draw. */
+.app-chart-note, .app-table-note {
+	flex: 0 0 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	line-height: 1.3;
+	color: var(--text-muted);
+}
+
+/* --- parts that hold parts ------------------------------------------------ */
+
+/* A panel or a set of tabs: a row for its title or its tabs, and under it a
+   grid of its own with the page's rows and gaps, so a part keeps its height
+   in rows when it is moved in or out. Its whole height is h rows and h-1
+   gaps: the heading's row, then h-1 rows and h-2 gaps inside, then one gap's
+   room at the foot -- which is why nothing here has a border or a padding
+   top or bottom, and the frame is drawn as a shadow inside the box. */
+.app-part:is(.app-panel, .app-tabs) {
+	display: grid;
+	grid-template-rows: var(--app-row) minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0;
+	padding: 0 8px var(--app-gap);
+	border: 0;
+	overflow: visible;
+	box-shadow:
+		inset 0 0 0 var(--app-line-w, 1px) var(--app-line-c, var(--border)),
+		inset 0 var(--app-top-w, 0px) 0 0 var(--app-top-c, transparent),
+		var(--app-part-shadow, 0 0 transparent);
+}
+.app-container-head { padding: 0 2px; }
+.app-inner-grid { min-height: 0; }
+/* The designer's page stretches to the bottom of the view; one inside a
+   part is as tall as its rows. */
+.appd-grid.appd-inner-grid { min-height: 0; }
+
+.app-tab-strip {
+	display: flex;
+	align-items: flex-end;
+	gap: 2px;
+	min-width: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+	border-bottom: 1px solid var(--border);
+}
+.app-tab {
+	flex: none;
+	margin-bottom: -1px;
+	padding: 3px 10px 4px;
+	font-size: 12px;
+	line-height: 1.3;
+	color: var(--text-secondary);
+	background: transparent;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	border-radius: 0;
+}
+.app-tab:hover:not(:disabled) { color: var(--text-primary); }
+.app-tab.is-on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent); }
+.appd-tab-add { padding: 3px 8px 4px; color: var(--text-muted); }
+
+/* --- pictures ------------------------------------------------------------- */
+
+.app-part.app-image { padding: 0; gap: 0; }
+.app-image { display: block; flex: 1 1 auto; width: 100%; min-height: 0; height: 100%; }
+.app-image.is-contain { object-fit: contain; }
+.app-image.is-cover { object-fit: cover; }
+.app-image-empty {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
+	font-size: 11.5px;
+	line-height: 1.35;
+	text-align: center;
+	color: var(--text-muted);
+	background: var(--surface-sunken);
+}
+.app-image-caption {
+	flex: 0 0 auto;
+	padding: 3px var(--app-px, 10px) 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	color: var(--text-secondary);
+}
 
 /* --- the App designer tab -------------------------------------------------- */
 
@@ -9324,6 +9443,8 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 }
 .appd-note { margin: 2px 0; font-size: 11.5px; line-height: 1.4; }
 .appd-option { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 4px; }
+/* A tab's row: its name, and the two buttons that move and delete it. */
+.appd-option.appd-tab-row { grid-template-columns: minmax(0, 1fr) auto auto; }
 .appd-series-block { display: flex; flex-direction: column; gap: 3px; padding: 3px 0 5px; border-bottom: 1px dotted var(--border); }
 .appd-series { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
 .appd-place { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
@@ -9380,9 +9501,17 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	border-bottom: 1px solid var(--border);
 }
 .app-run-titles { min-width: 0; }
-.app-run-title { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+.app-run-title {
+	margin: 0;
+	font-family: var(--app-title-font, inherit);
+	font-size: 17px;
+	font-weight: var(--app-title-weight, 650);
+	letter-spacing: var(--app-title-spacing, -0.01em);
+	text-transform: var(--app-title-case, none);
+}
 .app-run-sub { margin: 1px 0 0; max-width: 90ch; font-size: 12.5px; color: var(--text-secondary); }
 .app-run-status { font-size: 12px; color: var(--text-muted); }
+.app-run-spread { white-space: nowrap; }
 .app-run-status.is-owed { color: var(--warn); font-weight: 600; }
 .app-run-progress { width: 96px; height: 6px; }
 .app-run-pages {
@@ -9420,10 +9549,908 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 .app-run-body .app-part:is(.app-chart, .app-value, .app-gauge, .app-bars, .app-table) { transition: opacity 0.2s; }
 .app-run-body.is-running .app-part:is(.app-chart, .app-value, .app-gauge, .app-bars, .app-table) { opacity: 0.55; transition-delay: 0.25s; }
 
-/* A phone: one column, the parts in reading order at the heights they have. */
+/* --- Share as a link ------------------------------------------------------ */
+
+.share-body { grid-column: 1 / -1; display: flex; flex-direction: column; min-width: min(560px, 100%); }
+.share-as-app { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12.5px; }
+.share-link {
+	width: 100%;
+	min-height: 0;
+	height: auto;
+	padding: 6px 8px;
+	font-size: 11px;
+	line-height: 1.4;
+	word-break: break-all;
+	resize: vertical;
+}
+.share-length { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); }
+.share-length.is-warn { color: var(--warn); }
+.share-problem { margin: 0; color: var(--danger); }
+.share-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* --- how an app looks ------------------------------------------------------ */
+
+/*
+  A theme is the app's, not the page's: set on the running app and on the
+  designer's page (`data-app-theme`, by `wearTheme` in ./src/ui/appdesigner.js)
+  and on nothing else, so the editor keeps its own look around a page that is
+  wearing another. Each redefines the page's colour tokens for what is inside
+  it -- the parts, the controls and the charts all read those -- and sets the
+  `--app-…` variables the parts are drawn through (see `.app-part`).
+
+  Light or dark is the theme's: a dark style is dark in a light page. So each
+  says `color-scheme`, which is what brings the sliders, the boxes and the
+  scroll bars with it, and `accent-color`, which the page sets once on its
+  root and a subtree only gets by setting it again.
+
+  The eight series colours are chosen for each theme's own chart surface and
+  checked there with the data-viz validator: lightness band, chroma floor,
+  colour-blind and normal-vision separation of neighbours. Every set passes;
+  in each light one the yellow is under 3:1 against the surface, which the
+  relief rule allows because an app's chart always has its legend and a
+  table part can show the numbers.
+
+  Fonts are the operating system's -- nothing is fetched -- so each style
+  names a few that give its character where they are installed and ends in
+  one that is always there.
+*/
+[data-app-theme] {
+	--app-font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	--chart-font: var(--app-chart-font, var(--app-font));
+	accent-color: var(--accent);
+	font-family: var(--app-font);
+	color: var(--text-primary);
+}
+.appd-canvas[data-app-theme] { background-color: var(--surface-0); }
+
+[data-app-theme="saas"] {
+	color-scheme: light;
+	--surface-0: #f5f6fa;
+	--surface-1: #ffffff;
+	--surface-2: #ffffff;
+	--surface-sunken: #eceef4;
+	--border: rgba(15, 23, 42, 0.09);
+	--border-strong: rgba(15, 23, 42, 0.18);
+	--text-primary: #0f172a;
+	--text-secondary: #475569;
+	--text-muted: #64748b;
+	--grid: rgba(15, 23, 42, 0.07);
+	--axis: rgba(15, 23, 42, 0.3);
+	--accent: #4f46e5;
+	--accent-ink: #ffffff;
+	--accent-hover: #4338ca;
+	--link: #4f46e5;
+	--select: #4f46e5;
+	--danger: #dc2626;
+	--danger-bg: rgba(220, 38, 38, 0.09);
+	--warn: #b45309;
+	--series-1: #4f46e5;
+	--series-2: #10a970;
+	--series-3: #b0530c;
+	--series-4: #0b9bd5;
+	--series-5: #ca2352;
+	--series-6: #cf9108;
+	--series-7: #9d57de;
+	--series-8: #039393;
+	--radius: 8px;
+	--app-font: var(--app-font-sans);
+}
+
+[data-app-theme="swiss"] {
+	color-scheme: light;
+	--surface-0: #ffffff;
+	--surface-1: #ffffff;
+	--surface-2: #ffffff;
+	--surface-sunken: #ececec;
+	--border: rgba(0, 0, 0, 0.18);
+	--border-strong: rgba(0, 0, 0, 0.55);
+	--text-primary: #000000;
+	--text-secondary: #2e2e2e;
+	--text-muted: #666666;
+	--grid: rgba(0, 0, 0, 0.07);
+	--axis: rgba(0, 0, 0, 0.3);
+	--accent: #d81518;
+	--accent-ink: #ffffff;
+	--accent-hover: #b30f12;
+	--link: #d81518;
+	--select: #d81518;
+	--danger: #d81518;
+	--danger-bg: rgba(216, 21, 24, 0.09);
+	--warn: #9a5b00;
+	--series-1: #d81518;
+	--series-2: #076be3;
+	--series-3: #0d883f;
+	--series-4: #a61b86;
+	--series-5: #04a2af;
+	--series-6: #aa590d;
+	--series-7: #8565e1;
+	--series-8: #cfa517;
+	--radius: 0;
+	--app-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+[data-app-theme="neo-brutalism"] {
+	color-scheme: light;
+	--surface-0: #fff4d6;
+	--surface-1: #ffffff;
+	--surface-2: #ffffff;
+	--surface-sunken: #f1e7c9;
+	--border: #000000;
+	--border-strong: #000000;
+	--text-primary: #000000;
+	--text-secondary: #1f1f1f;
+	--text-muted: #4d4d4d;
+	--grid: rgba(0, 0, 0, 0.07);
+	--axis: rgba(0, 0, 0, 0.3);
+	--accent: #3453f3;
+	--accent-ink: #ffffff;
+	--accent-hover: #2440d8;
+	--link: #3453f3;
+	--select: #3453f3;
+	--danger: #c8102e;
+	--danger-bg: rgba(200, 16, 46, 0.09);
+	--warn: #8a5a00;
+	--series-1: #3453f3;
+	--series-2: #08a883;
+	--series-3: #ae5508;
+	--series-4: #c755e0;
+	--series-5: #be9a02;
+	--series-6: #169ccc;
+	--series-7: #b8112b;
+	--series-8: #3baa18;
+	--radius: 6px;
+	--app-font: var(--app-font-sans);
+}
+
+[data-app-theme="bauhaus"] {
+	color-scheme: light;
+	--surface-0: #efeadf;
+	--surface-1: #fbfaf6;
+	--surface-2: #ffffff;
+	--surface-sunken: #e4ded0;
+	--border: #111111;
+	--border-strong: #111111;
+	--text-primary: #111111;
+	--text-secondary: #333333;
+	--text-muted: #595650;
+	--grid: rgba(17, 17, 17, 0.07);
+	--axis: rgba(17, 17, 17, 0.3);
+	--accent: #d4241b;
+	--accent-ink: #ffffff;
+	--accent-hover: #b31d15;
+	--link: #d4241b;
+	--select: #d4241b;
+	--danger: #b31d15;
+	--danger-bg: rgba(179, 29, 21, 0.09);
+	--warn: #8f5d00;
+	--series-1: #d4241b;
+	--series-2: #1957d2;
+	--series-3: #d0a505;
+	--series-4: #019298;
+	--series-5: #d66f07;
+	--series-6: #a072e6;
+	--series-7: #05893e;
+	--series-8: #db589e;
+	--radius: 0;
+	--app-font: "Futura", "Century Gothic", "Avenir Next", "Trebuchet MS", sans-serif;
+}
+
+[data-app-theme="flat"] {
+	color-scheme: light;
+	--surface-0: #ecf0f1;
+	--surface-1: #ffffff;
+	--surface-2: #f4f6f7;
+	--surface-sunken: #dfe6e9;
+	--border: rgba(44, 62, 80, 0.12);
+	--border-strong: rgba(44, 62, 80, 0.24);
+	--text-primary: #2c3e50;
+	--text-secondary: #46596b;
+	--text-muted: #627384;
+	--grid: rgba(44, 62, 80, 0.07);
+	--axis: rgba(44, 62, 80, 0.3);
+	--accent: #0e74b6;
+	--accent-ink: #ffffff;
+	--accent-hover: #0b639c;
+	--link: #0e74b6;
+	--select: #0e74b6;
+	--danger: #c0392b;
+	--danger-bg: rgba(192, 57, 43, 0.09);
+	--warn: #a45f00;
+	--series-1: #117dc3;
+	--series-2: #d2a405;
+	--series-3: #d4609d;
+	--series-4: #0c874e;
+	--series-5: #8854bb;
+	--series-6: #d57010;
+	--series-7: #159488;
+	--series-8: #db423c;
+	--radius: 4px;
+	--app-font: var(--app-font-sans);
+}
+
+[data-app-theme="neumorphism"] {
+	color-scheme: light;
+	--surface-0: #e4e9f0;
+	--surface-1: #e4e9f0;
+	--surface-2: #e4e9f0;
+	--surface-sunken: #d6dde7;
+	--border: rgba(39, 48, 63, 0.10);
+	--border-strong: rgba(39, 48, 63, 0.20);
+	--text-primary: #27303f;
+	--text-secondary: #434d5e;
+	--text-muted: #586375;
+	--grid: rgba(39, 48, 63, 0.07);
+	--axis: rgba(39, 48, 63, 0.3);
+	--accent: #565fde;
+	--accent-ink: #ffffff;
+	--accent-hover: #4850cc;
+	--link: #565fde;
+	--select: #565fde;
+	--danger: #b83224;
+	--danger-bg: rgba(184, 50, 36, 0.09);
+	--warn: #855400;
+	--series-1: #565fde;
+	--series-2: #db9f1b;
+	--series-3: #05893e;
+	--series-4: #904eba;
+	--series-5: #0b938e;
+	--series-6: #c13f29;
+	--series-7: #108bbf;
+	--series-8: #ca4b85;
+	--radius: 12px;
+	--app-font: "Nunito", "Segoe UI", var(--app-font-sans);
+}
+
+[data-app-theme="claymorphism"] {
+	color-scheme: light;
+	--surface-0: #ede7ff;
+	--surface-1: #fdfbff;
+	--surface-2: #ffffff;
+	--surface-sunken: #e8e0fb;
+	--border: rgba(39, 31, 77, 0.10);
+	--border-strong: rgba(39, 31, 77, 0.2);
+	--text-primary: #271f4d;
+	--text-secondary: #4f4678;
+	--text-muted: #665e8f;
+	--grid: rgba(39, 31, 77, 0.07);
+	--axis: rgba(39, 31, 77, 0.3);
+	--accent: #7550e3;
+	--accent-ink: #ffffff;
+	--accent-hover: #6543d3;
+	--link: #7550e3;
+	--select: #7550e3;
+	--danger: #c62f3a;
+	--danger-bg: rgba(198, 47, 58, 0.09);
+	--warn: #8f5a00;
+	--series-1: #8760eb;
+	--series-2: #078661;
+	--series-3: #cda606;
+	--series-4: #c92f33;
+	--series-5: #1aa2a9;
+	--series-6: #d57010;
+	--series-7: #0d9ccd;
+	--series-8: #bf2f77;
+	--radius: 14px;
+	--app-font: ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", var(--app-font-sans);
+}
+
+[data-app-theme="newsprint"] {
+	color-scheme: light;
+	--surface-0: #f1eee4;
+	--surface-1: #f9f7f1;
+	--surface-2: #fffdf8;
+	--surface-sunken: #e6e1d3;
+	--border: rgba(20, 20, 20, 0.22);
+	--border-strong: rgba(20, 20, 20, 0.6);
+	--text-primary: #141414;
+	--text-secondary: #383631;
+	--text-muted: #5c5850;
+	--grid: rgba(20, 20, 20, 0.07);
+	--axis: rgba(20, 20, 20, 0.3);
+	--accent: #1a1a1a;
+	--accent-ink: #f9f7f1;
+	--accent-hover: #000000;
+	--link: #b6322d;
+	--select: #b6322d;
+	--danger: #b6322d;
+	--danger-bg: rgba(182, 50, 45, 0.09);
+	--warn: #8a5a00;
+	--series-1: #b6322d;
+	--series-2: #7974c5;
+	--series-3: #21763c;
+	--series-4: #5b90dd;
+	--series-5: #994a08;
+	--series-6: #05919d;
+	--series-7: #d5a13c;
+	--series-8: #8b4486;
+	--radius: 0;
+	--app-font: Georgia, "Times New Roman", "Iowan Old Style", serif;
+}
+
+[data-app-theme="academia"] {
+	color-scheme: light;
+	--surface-0: #ede6d6;
+	--surface-1: #faf6ec;
+	--surface-2: #fffcf5;
+	--surface-sunken: #e4dbc7;
+	--border: rgba(60, 38, 20, 0.22);
+	--border-strong: rgba(60, 38, 20, 0.4);
+	--text-primary: #2a1c12;
+	--text-secondary: #55412d;
+	--text-muted: #6c5a46;
+	--grid: rgba(42, 28, 18, 0.07);
+	--axis: rgba(42, 28, 18, 0.3);
+	--accent: #7b2331;
+	--accent-ink: #fdf8ee;
+	--accent-hover: #651b27;
+	--link: #7b2331;
+	--select: #7b2331;
+	--danger: #a3202f;
+	--danger-bg: rgba(163, 32, 47, 0.09);
+	--warn: #8a5700;
+	--series-1: #962c3e;
+	--series-2: #05919d;
+	--series-3: #b2511e;
+	--series-4: #5591dd;
+	--series-5: #da9e3f;
+	--series-6: #8884d5;
+	--series-7: #21763c;
+	--series-8: #9256a0;
+	--radius: 2px;
+	--app-font: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+}
+
+[data-app-theme="luxury"] {
+	color-scheme: light;
+	--surface-0: #f4eee2;
+	--surface-1: #fffdf8;
+	--surface-2: #ffffff;
+	--surface-sunken: #ebe2cf;
+	--border: rgba(127, 97, 40, 0.32);
+	--border-strong: rgba(127, 97, 40, 0.6);
+	--text-primary: #1a1611;
+	--text-secondary: #4a4135;
+	--text-muted: #6a5f4c;
+	--grid: rgba(26, 22, 17, 0.07);
+	--axis: rgba(26, 22, 17, 0.3);
+	--accent: #7f6128;
+	--accent-ink: #fffdf8;
+	--accent-hover: #6a5021;
+	--link: #7f6128;
+	--select: #7f6128;
+	--danger: #a3303c;
+	--danger-bg: rgba(163, 48, 60, 0.09);
+	--warn: #855700;
+	--series-1: #a57710;
+	--series-2: #8f81d3;
+	--series-3: #964d09;
+	--series-4: #668ed8;
+	--series-5: #b44957;
+	--series-6: #05a2af;
+	--series-7: #814a8d;
+	--series-8: #389469;
+	--radius: 0;
+	--app-font: "Avenir Next", "Helvetica Neue", "Segoe UI", sans-serif;
+}
+
+[data-app-theme="organic"] {
+	color-scheme: light;
+	--surface-0: #eee7d8;
+	--surface-1: #faf6ee;
+	--surface-2: #fffdf7;
+	--surface-sunken: #e4dac5;
+	--border: rgba(80, 70, 40, 0.14);
+	--border-strong: rgba(80, 70, 40, 0.28);
+	--text-primary: #2e291e;
+	--text-secondary: #554d3d;
+	--text-muted: #6c6452;
+	--grid: rgba(46, 41, 30, 0.07);
+	--axis: rgba(46, 41, 30, 0.3);
+	--accent: #457f38;
+	--accent-ink: #ffffff;
+	--accent-hover: #3a6b2f;
+	--link: #457f38;
+	--select: #457f38;
+	--danger: #a8392c;
+	--danger-bg: rgba(168, 57, 44, 0.09);
+	--warn: #855600;
+	--series-1: #457f38;
+	--series-2: #a864a2;
+	--series-3: #626a07;
+	--series-4: #d0a43a;
+	--series-5: #9e3d52;
+	--series-6: #3788bb;
+	--series-7: #a24019;
+	--series-8: #0c938e;
+	--radius: 14px;
+	--app-font: "Optima", "Candara", "Gill Sans", "Segoe UI", sans-serif;
+}
+
+[data-app-theme="retro"] {
+	color-scheme: light;
+	--surface-0: #f2e3c6;
+	--surface-1: #fff8ea;
+	--surface-2: #fffdf5;
+	--surface-sunken: #ecdcb9;
+	--border: #3b2a1a;
+	--border-strong: #3b2a1a;
+	--text-primary: #2b1d10;
+	--text-secondary: #58442e;
+	--text-muted: #6f5a42;
+	--grid: rgba(43, 29, 16, 0.07);
+	--axis: rgba(43, 29, 16, 0.3);
+	--accent: #b84b00;
+	--accent-ink: #ffffff;
+	--accent-hover: #9c4000;
+	--link: #b84b00;
+	--select: #b84b00;
+	--danger: #b02a2f;
+	--danger-bg: rgba(176, 42, 47, 0.09);
+	--warn: #835400;
+	--series-1: #c65100;
+	--series-2: #7d45a2;
+	--series-3: #558113;
+	--series-4: #4393e1;
+	--series-5: #b54076;
+	--series-6: #d5a216;
+	--series-7: #039393;
+	--series-8: #d24c50;
+	--radius: 12px;
+	--app-font: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+[data-app-theme="modern-dark"] {
+	color-scheme: dark;
+	--surface-0: #0b0d12;
+	--surface-1: #141821;
+	--surface-2: #1c2130;
+	--surface-sunken: #0f121a;
+	--border: rgba(255, 255, 255, 0.08);
+	--border-strong: rgba(255, 255, 255, 0.18);
+	--text-primary: #e8eaf0;
+	--text-secondary: #a6adbd;
+	--text-muted: #7d8597;
+	--grid: rgba(255, 255, 255, 0.07);
+	--axis: rgba(255, 255, 255, 0.28);
+	--accent: #7c55ea;
+	--accent-ink: #ffffff;
+	--accent-hover: #6d45dc;
+	--link: #7c55ea;
+	--select: #7c55ea;
+	--danger: #f06a6a;
+	--danger-bg: rgba(240, 106, 106, 0.16);
+	--warn: #f0a23a;
+	--series-1: #8e66f1;
+	--series-2: #017d51;
+	--series-3: #db509c;
+	--series-4: #60910f;
+	--series-5: #4a89f2;
+	--series-6: #e16c10;
+	--series-7: #11a3be;
+	--series-8: #c2840f;
+	--radius: 10px;
+	--app-font: var(--app-font-sans);
+}
+
+[data-app-theme="terminal"] {
+	color-scheme: dark;
+	--surface-0: #040704;
+	--surface-1: #0b110b;
+	--surface-2: #101a10;
+	--surface-sunken: #070d07;
+	--border: rgba(57, 211, 83, 0.30);
+	--border-strong: rgba(57, 211, 83, 0.55);
+	--text-primary: #b9f6c5;
+	--text-secondary: #80d291;
+	--text-muted: #5ea86d;
+	--grid: rgba(255, 255, 255, 0.07);
+	--axis: rgba(255, 255, 255, 0.28);
+	--accent: #39d353;
+	--accent-ink: #031003;
+	--accent-hover: #5be472;
+	--link: #39d353;
+	--select: #39d353;
+	--danger: #ff5f56;
+	--danger-bg: rgba(255, 95, 86, 0.16);
+	--warn: #e5c07b;
+	--series-1: #2aaf3d;
+	--series-2: #b139ab;
+	--series-3: #bd8704;
+	--series-4: #7b47bf;
+	--series-5: #129fa5;
+	--series-6: #be2323;
+	--series-7: #568ef9;
+	--series-8: #9f9607;
+	--radius: 0;
+	--app-font: var(--mono);
+}
+
+[data-app-theme="cyberpunk"] {
+	color-scheme: dark;
+	--surface-0: #09050f;
+	--surface-1: #120b1f;
+	--surface-2: #1a1030;
+	--surface-sunken: #0d0818;
+	--border: rgba(21, 165, 178, 0.45);
+	--border-strong: rgba(21, 219, 232, 0.75);
+	--text-primary: #f3eeff;
+	--text-secondary: #c5b9e8;
+	--text-muted: #9489b6;
+	--grid: rgba(255, 255, 255, 0.07);
+	--axis: rgba(255, 255, 255, 0.28);
+	--accent: #f6306c;
+	--accent-ink: #0a0612;
+	--accent-hover: #ff5288;
+	--link: #f6306c;
+	--select: #f6306c;
+	--danger: #ff3b5c;
+	--danger-bg: rgba(255, 59, 92, 0.16);
+	--warn: #f9f871;
+	--series-1: #f6306c;
+	--series-2: #3f7b04;
+	--series-3: #a361fb;
+	--series-4: #c50220;
+	--series-5: #a69301;
+	--series-6: #245fd4;
+	--series-7: #e06d15;
+	--series-8: #15a5b2;
+	--radius: 0;
+	--app-font: var(--app-font-sans);
+}
+
+[data-app-theme="art-deco"] {
+	color-scheme: dark;
+	--surface-0: #0d0e12;
+	--surface-1: #16181f;
+	--surface-2: #1d2029;
+	--surface-sunken: #101217;
+	--border: rgba(212, 175, 55, 0.42);
+	--border-strong: rgba(212, 175, 55, 0.75);
+	--text-primary: #f4ecd6;
+	--text-secondary: #cfc19a;
+	--text-muted: #a09372;
+	--grid: rgba(255, 255, 255, 0.07);
+	--axis: rgba(255, 255, 255, 0.28);
+	--accent: #d4af37;
+	--accent-ink: #16130a;
+	--accent-hover: #e2c15a;
+	--link: #d4af37;
+	--select: #d4af37;
+	--danger: #e0735f;
+	--danger-bg: rgba(224, 115, 95, 0.16);
+	--warn: #e2c15a;
+	--series-1: #b68b16;
+	--series-2: #a67ad6;
+	--series-3: #61720a;
+	--series-4: #d46080;
+	--series-5: #2769b7;
+	--series-6: #35aa76;
+	--series-7: #ba4e25;
+	--series-8: #0e938e;
+	--radius: 0;
+	--app-font: "Futura", "Avenir Next", "Gill Sans", sans-serif;
+}
+
+/* SaaS: white cards lifted off a cool grey, rounded, quiet. */
+[data-app-theme="saas"] {
+	--app-line-c: rgba(15, 23, 42, 0.07);
+	--app-part-radius: 12px;
+	--app-part-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 6px 20px -8px rgba(15, 23, 42, 0.14);
+	--app-px: 12px;
+}
+[data-app-theme="saas"] .app-run-bar { box-shadow: 0 1px 0 rgba(15, 23, 42, 0.05); }
+
+/* Swiss: the grid shows, as black rules over each part; no boxes, no
+   corners, type doing the work. */
+[data-app-theme="swiss"] {
+	--app-line-w: 0px;
+	--app-top-w: 3px;
+	--app-top-c: #000000;
+	--app-part-radius: 0;
+	--app-px: 0px;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.06em;
+	--app-label-weight: 700;
+	--app-label-size: 11px;
+	--app-title-weight: 800;
+	--app-title-spacing: -0.03em;
+	--app-number-weight: 800;
+}
+[data-app-theme="swiss"] .app-run-bar { border-bottom: 4px solid #000000; }
+[data-app-theme="swiss"] .app-run-title { font-size: 22px; }
+[data-app-theme="swiss"] .app-textbody.is-title { font-size: 26px; }
+[data-app-theme="swiss"] .app-value-number { letter-spacing: -0.03em; }
+[data-app-theme="swiss"] .app-part:is(.app-panel, .app-tabs) { padding-left: 0; padding-right: 0; }
+
+/* Neo-brutalism: thick black lines, hard shadows, a loud bar. */
+[data-app-theme="neo-brutalism"] {
+	--app-line-w: 2.5px;
+	--app-line-c: #000000;
+	--app-part-shadow: 4px 4px 0 #000000;
+	--app-label-weight: 800;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.03em;
+	--app-title-weight: 800;
+}
+[data-app-theme="neo-brutalism"] :is(button:not(.app-tab, .app-run-page), input:not([type="range"]), select, textarea) { border: 2px solid #000000; }
+[data-app-theme="neo-brutalism"] button:not(.app-tab, .app-run-page) {
+	font-weight: 700;
+	box-shadow: 3px 3px 0 #000000;
+	transition: transform 0.06s, box-shadow 0.06s;
+}
+[data-app-theme="neo-brutalism"] button:not(.app-tab, .app-run-page):active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #000000; }
+[data-app-theme="neo-brutalism"] .app-go { width: calc(100% - 4px); height: calc(100% - 4px); }
+[data-app-theme="neo-brutalism"] .app-run-bar { background: #ffd23f; border-bottom: 2.5px solid #000000; }
+[data-app-theme="neo-brutalism"] .app-run-pages { border-bottom: 2.5px solid #000000; }
+[data-app-theme="neo-brutalism"] .app-switch-track { box-shadow: inset 0 0 0 2px #000000; }
+
+/* Bauhaus: black frames, square corners, and the three primaries -- a band
+   down each part, yellow for what is set, blue for what comes out, red for
+   what holds other parts -- and across the foot of the bar. */
+[data-app-theme="bauhaus"] {
+	--app-line-w: 2px;
+	--app-line-c: #111111;
+	--app-part-radius: 0;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.1em;
+	--app-label-weight: 700;
+	--app-label-size: 11px;
+	--app-title-case: uppercase;
+	--app-title-spacing: 0.04em;
+	--app-title-weight: 800;
+}
+[data-app-theme="bauhaus"] .app-part:is(.app-slider, .app-number, .app-dropdown, .app-radio, .app-chart, .app-value, .app-gauge, .app-bars, .app-table, .app-image) { border-left-width: 8px; }
+[data-app-theme="bauhaus"] .app-part:is(.app-slider, .app-number, .app-dropdown, .app-radio) { border-left-color: #f0c020; }
+[data-app-theme="bauhaus"] .app-part:is(.app-chart, .app-value, .app-gauge, .app-bars, .app-table, .app-image) { border-left-color: #1957d2; }
+[data-app-theme="bauhaus"] .app-part:is(.app-panel, .app-tabs) {
+	box-shadow: inset 0 0 0 2px #111111, inset 8px 0 0 0 #d4241b;
+	padding-left: 16px;
+}
+[data-app-theme="bauhaus"] .app-run-bar {
+	border-bottom: 8px solid;
+	border-image: linear-gradient(90deg, #d4241b 0 33.33%, #f0c020 33.33% 66.66%, #1957d2 66.66%) 1;
+}
+
+/* Flat: no lines and no shadows, blocks of colour, a dark bar. */
+[data-app-theme="flat"] {
+	--app-line-w: 0px;
+	--app-part-radius: 4px;
+	--app-label-weight: 700;
+}
+[data-app-theme="flat"] :is(button:not(.app-tab, .app-run-page), input:not([type="range"]), select, textarea) { border-color: transparent; background: var(--surface-sunken); }
+[data-app-theme="flat"] button.primary { background: var(--accent); }
+[data-app-theme="flat"] .app-run-bar {
+	--text-primary: #ffffff;
+	--text-secondary: #d5dde3;
+	--text-muted: #b4c1cc;
+	--surface-sunken: #3d566e;
+	background: #2c3e50;
+	color: var(--text-primary);
+	border-bottom: 0;
+}
+
+/* Neumorphism: everything the colour of the ground, raised out of it or
+   pressed into it by a light and a dark shadow. */
+[data-app-theme="neumorphism"] {
+	--app-line-w: 0px;
+	--app-part-radius: 18px;
+	--app-part-shadow: 7px 7px 14px #c1c8d3, -7px -7px 14px #ffffff;
+	--app-px: 14px;
+	--neu-in: inset 3px 3px 6px #c1c8d3, inset -3px -3px 6px #ffffff;
+}
+[data-app-theme="neumorphism"] :is(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), select, textarea) { border-color: transparent; box-shadow: var(--neu-in); }
+[data-app-theme="neumorphism"] button:not(.app-tab, .app-run-page) { border-color: transparent; box-shadow: 4px 4px 9px #c1c8d3, -4px -4px 9px #ffffff; }
+[data-app-theme="neumorphism"] button:not(.app-tab, .app-run-page):active:not(:disabled) { box-shadow: var(--neu-in); }
+[data-app-theme="neumorphism"] .app-go { width: calc(100% - 6px); height: calc(100% - 6px); margin: auto; }
+[data-app-theme="neumorphism"] :is(.app-run-bar, .app-run-pages) { border-bottom-color: transparent; background: var(--surface-0); }
+[data-app-theme="neumorphism"] .app-switch-track { background: var(--surface-0); box-shadow: var(--neu-in); }
+[data-app-theme="neumorphism"] :is(.app-bar-track, .app-gauge-track) { box-shadow: var(--neu-in); }
+
+/* Claymorphism: soft, puffed-up shapes on a pastel ground, lit from above. */
+[data-app-theme="claymorphism"] {
+	--app-line-w: 0px;
+	--app-part-radius: 26px;
+	--app-part-shadow: 0 16px 28px -14px rgba(76, 52, 170, 0.35), inset 0 -6px 12px rgba(117, 80, 227, 0.08), inset 0 6px 12px rgba(255, 255, 255, 0.9);
+	--app-px: 16px;
+	--app-label-weight: 700;
+	--app-title-weight: 800;
+}
+[data-app-theme="claymorphism"] button:not(.app-tab, .app-run-page) {
+	border: 0;
+	border-radius: 16px;
+	box-shadow: 0 8px 16px -8px rgba(76, 52, 170, 0.45), inset 0 -3px 0 rgba(0, 0, 0, 0.12), inset 0 2px 0 rgba(255, 255, 255, 0.6);
+}
+[data-app-theme="claymorphism"] :is(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), select, textarea) {
+	border: 0;
+	border-radius: 12px;
+	background: var(--surface-sunken);
+	box-shadow: inset 0 2px 4px rgba(76, 52, 170, 0.14);
+}
+[data-app-theme="claymorphism"] :is(.app-run-bar, .app-run-pages) { background: transparent; border-bottom-color: transparent; }
+
+/* Newsprint: paper, ink and rules; a serif face, a masthead over a double
+   rule, and no boxes. */
+[data-app-theme="newsprint"] {
+	--surface-0: #f9f7f1;
+	--app-line-w: 0px;
+	--app-top-w: 1px;
+	--app-top-c: #141414;
+	--app-part-bg: transparent;
+	--app-part-radius: 0;
+	--app-px: 2px;
+	--app-label-weight: 700;
+	--app-label-size: 13px;
+	--app-title-font: "Didot", "Bodoni 72", "Playfair Display", Georgia, "Times New Roman", serif;
+	--app-title-weight: 800;
+}
+[data-app-theme="newsprint"] .app-run-bar { background: var(--surface-0); border-bottom: 4px double #141414; }
+[data-app-theme="newsprint"] .app-run-pages { background: var(--surface-0); }
+[data-app-theme="newsprint"] .app-run-title { font-size: 26px; }
+[data-app-theme="newsprint"] .app-part:is(.app-chart, .app-panel, .app-tabs) { --app-top-w: 3px; }
+[data-app-theme="newsprint"] .app-part:is(.app-panel, .app-tabs) { padding-left: 0; padding-right: 0; }
+
+/* Academia: parchment, a book face, small capitals, and a ruled double
+   frame. */
+[data-app-theme="academia"] {
+	--app-line-c: rgba(60, 38, 20, 0.35);
+	--app-part-shadow: inset 0 0 0 3px var(--surface-1), inset 0 0 0 4px rgba(60, 38, 20, 0.2);
+	--app-px: 12px;
+	--app-label-size: 13px;
+	--app-label-spacing: 0.04em;
+	--app-title-weight: 600;
+	--app-title-spacing: 0.01em;
+}
+[data-app-theme="academia"] .app-part-label,
+[data-app-theme="academia"] :is(.app-run-title, .app-textbody.is-title, .app-textbody.is-heading) { font-variant-caps: small-caps; }
+[data-app-theme="academia"] .app-run-bar { border-bottom: 3px double rgba(60, 38, 20, 0.55); }
+
+/* Luxury: ivory and a thin gold line, a Didone for the titles and the
+   numbers, the labels spaced out in capitals. */
+[data-app-theme="luxury"] {
+	--app-line-c: rgba(127, 97, 40, 0.3);
+	--app-part-radius: 0;
+	--app-part-shadow: 0 18px 40px -28px rgba(60, 40, 10, 0.45);
+	--app-px: 14px;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.18em;
+	--app-label-weight: 500;
+	--app-label-size: 10px;
+	--app-label-ink: var(--accent);
+	--app-title-font: "Didot", "Bodoni 72", "Bodoni MT", "Playfair Display", Georgia, serif;
+	--app-title-weight: 400;
+	--app-title-spacing: 0.02em;
+	--app-number-font: "Didot", "Bodoni 72", "Bodoni MT", Georgia, serif;
+	--app-number-weight: 400;
+}
+[data-app-theme="luxury"] .app-run-title { font-size: 24px; }
+[data-app-theme="luxury"] .app-value-number { font-size: 24px; }
+[data-app-theme="luxury"] button:not(.app-tab, .app-run-page) { text-transform: uppercase; letter-spacing: 0.14em; font-size: 11px; font-weight: 500; }
+[data-app-theme="luxury"] .app-run-bar { border-bottom-color: rgba(127, 97, 40, 0.4); }
+
+/* Organic: sand, moss and soft light; no two corners alike. */
+[data-app-theme="organic"] {
+	--app-line-c: rgba(80, 70, 40, 0.1);
+	--app-part-radius: 28px 18px 30px 16px / 20px 28px 16px 26px;
+	--app-part-shadow: 0 1px 0 rgba(80, 70, 40, 0.05), 0 12px 26px -16px rgba(80, 70, 40, 0.35);
+	--app-px: 16px;
+}
+.app-run[data-app-theme="organic"], .appd-canvas[data-app-theme="organic"] {
+	background:
+		radial-gradient(1100px 520px at 8% -12%, rgba(69, 127, 56, 0.12), transparent 62%),
+		radial-gradient(900px 480px at 108% 6%, rgba(208, 164, 58, 0.13), transparent 60%),
+		var(--surface-0);
+}
+[data-app-theme="organic"] :is(.app-run-bar, .app-run-pages) { background: transparent; border-bottom-color: rgba(80, 70, 40, 0.12); }
+[data-app-theme="organic"] button:not(.app-tab, .app-run-page) { border-radius: 999px; }
+
+/* Retro: cream, a warm outline, a mustard shadow, and the stripes. */
+[data-app-theme="retro"] {
+	--app-line-w: 2px;
+	--app-line-c: #3b2a1a;
+	--app-part-radius: 14px;
+	--app-part-shadow: 4px 4px 0 #e2a03f;
+	--app-label-weight: 700;
+	--app-title-font: "Cooper Black", "Cooper", "Rockwell", "American Typewriter", Georgia, serif;
+	--app-title-weight: 700;
+	--app-number-font: "Cooper Black", "Cooper", "Rockwell", Georgia, serif;
+}
+[data-app-theme="retro"] button:not(.app-tab, .app-run-page) { border: 2px solid #3b2a1a; border-radius: 999px; box-shadow: 2px 2px 0 #3b2a1a; font-weight: 700; }
+[data-app-theme="retro"] .app-go { width: calc(100% - 3px); height: calc(100% - 3px); }
+/* The stripes as the foot of the bar's own ground: a border image takes one
+   row of a gradient for a bottom edge, which would be one stripe. */
+[data-app-theme="retro"] .app-run-bar {
+	padding-bottom: 22px;
+	border-bottom: 0;
+	background: linear-gradient(180deg, var(--surface-1) calc(100% - 12px), #c65100 0 calc(100% - 8px), #e2a03f 0 calc(100% - 4px), #7a4b2a 0);
+}
+
+/* Modern dark: slate cards with a faint sheen on a near-black ground and a
+   violet glow behind. */
+[data-app-theme="modern-dark"] {
+	--app-line-c: rgba(255, 255, 255, 0.07);
+	--app-part-radius: 14px;
+	--app-part-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 38%), var(--surface-1);
+	--app-part-shadow: 0 14px 36px -20px rgba(0, 0, 0, 0.8);
+	--app-px: 14px;
+}
+.app-run[data-app-theme="modern-dark"], .appd-canvas[data-app-theme="modern-dark"] {
+	background: radial-gradient(1000px 520px at 18% -12%, rgba(142, 102, 241, 0.16), transparent 62%), var(--surface-0);
+}
+[data-app-theme="modern-dark"] :is(.app-run-bar, .app-run-pages) { background: rgba(20, 24, 33, 0.72); }
+
+/* Terminal: phosphor on black, one face, a prompt before every label, and
+   the scan lines. */
+[data-app-theme="terminal"] {
+	--app-line-c: rgba(57, 211, 83, 0.35);
+	--app-part-radius: 0;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.08em;
+	--app-label-weight: 700;
+	--app-chart-font: var(--mono);
+}
+.app-run[data-app-theme="terminal"], .appd-canvas[data-app-theme="terminal"] {
+	background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 3px), var(--surface-0);
+}
+[data-app-theme="terminal"] .app-part-label::before { content: "> " / ""; color: var(--accent); }
+[data-app-theme="terminal"] :is(.app-run-title, .app-value-number, .app-textbody.is-title) { text-shadow: 0 0 8px rgba(57, 211, 83, 0.45); }
+[data-app-theme="terminal"] button:not(.app-tab, .app-run-page) { text-transform: uppercase; letter-spacing: 0.06em; border-color: var(--border-strong); }
+[data-app-theme="terminal"] button.primary { box-shadow: 0 0 12px -2px rgba(57, 211, 83, 0.6); }
+
+/* Cyberpunk: a neon grid on violet-black, cyan lines with a glow, a hot
+   pink notch on every part. */
+[data-app-theme="cyberpunk"] {
+	--app-line-c: rgba(21, 219, 232, 0.4);
+	--app-part-radius: 0;
+	--app-part-bg: linear-gradient(135deg, #f6306c 0 9px, transparent 9px), var(--surface-1);
+	--app-part-shadow: 0 0 18px -8px rgba(21, 219, 232, 0.55);
+	--app-label-font: var(--mono);
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.14em;
+	--app-title-case: uppercase;
+	--app-title-spacing: 0.08em;
+	--app-title-weight: 700;
+}
+.app-run[data-app-theme="cyberpunk"], .appd-canvas[data-app-theme="cyberpunk"] {
+	background:
+		linear-gradient(rgba(21, 219, 232, 0.05) 1px, transparent 1px) 0 0 / 100% 32px,
+		linear-gradient(90deg, rgba(21, 219, 232, 0.05) 1px, transparent 1px) 0 0 / 32px 100%,
+		var(--surface-0);
+}
+[data-app-theme="cyberpunk"] :is(.app-run-title, .app-textbody.is-title) { text-shadow: 0 0 12px rgba(246, 48, 108, 0.7); }
+[data-app-theme="cyberpunk"] .app-run-bar { border-bottom: 2px solid #f6306c; box-shadow: 0 2px 16px -4px rgba(246, 48, 108, 0.7); }
+[data-app-theme="cyberpunk"] button:not(.app-tab, .app-run-page) { text-transform: uppercase; letter-spacing: 0.1em; border-color: var(--border-strong); }
+[data-app-theme="cyberpunk"] button.primary { box-shadow: 0 0 14px -2px rgba(246, 48, 108, 0.75); }
+
+/* Art deco: gold on night, a double gold frame, capitals spaced wide and a
+   sunburst behind. */
+[data-app-theme="art-deco"] {
+	--app-line-c: rgba(212, 175, 55, 0.55);
+	--app-part-radius: 0;
+	--app-part-shadow: inset 0 0 0 3px var(--surface-1), inset 0 0 0 4px rgba(212, 175, 55, 0.28);
+	--app-px: 14px;
+	--app-label-case: uppercase;
+	--app-label-spacing: 0.22em;
+	--app-label-weight: 500;
+	--app-label-size: 10.5px;
+	--app-label-ink: var(--accent);
+	--app-title-font: "Didot", "Bodoni 72", "Bodoni MT", Georgia, serif;
+	--app-title-case: uppercase;
+	--app-title-spacing: 0.14em;
+	--app-title-weight: 400;
+}
+.app-run[data-app-theme="art-deco"], .appd-canvas[data-app-theme="art-deco"] {
+	background: repeating-conic-gradient(from 0deg at 50% -10%, rgba(212, 175, 55, 0.035) 0 3deg, transparent 3deg 6deg), var(--surface-0);
+}
+[data-app-theme="art-deco"] .app-run-title { color: var(--accent); }
+[data-app-theme="art-deco"] .app-run-bar { border-bottom: 1px solid rgba(212, 175, 55, 0.6); box-shadow: 0 3px 0 -1px var(--surface-0), 0 4px 0 -1px rgba(212, 175, 55, 0.45); }
+[data-app-theme="art-deco"] button:not(.app-tab, .app-run-page) { text-transform: uppercase; letter-spacing: 0.16em; font-size: 11px; border-color: var(--border-strong); }
+
+/* A phone: one column, the parts in reading order at the heights they have
+   -- inside a panel or a tab too, which is as tall as what it holds stacked
+   (`--stack`, from `stackedRows` in ./src/ui/appwidgets.js). */
 @media (max-width: 640px) {
 	.app-run-bar, .app-run-pages { padding-left: 16px; padding-right: 16px; }
 	.app-run-body { padding: 12px 16px 24px; }
-	.app-run-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
-	.app-run-grid > .app-item { grid-column: 1 / -1 !important; grid-row: auto / span var(--h, 2) !important; }
+	.app-run-grid, .app-run-grid .app-inner-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+	.app-run-grid .app-item { grid-column: 1 / -1 !important; grid-row: auto / span var(--stack, var(--h, 2)) !important; }
 }

@@ -22,7 +22,8 @@ import { el } from './parts.js';
 import { TimeChart, MAX_SERIES, styleOf } from './chart.js';
 import { renderMarkdown } from './markdown.js';
 import {
-	COMPONENTS, STATISTICS, SINGLE_SERIES, statistic, valueAt, tableTimes,
+	COMPONENTS, STATISTICS, SINGLE_SERIES, CURVES, CONTAINER_TYPES, statistic, valueAt, tableTimes, stackOrder,
+	slotsOf,
 } from '../domain/apps.js';
 import {
 	describeTarget, targetUnit, matchSeries, seriesLabel,
@@ -43,7 +44,40 @@ import {
  * @property {string[]} scenarios  the model's, for a scenario control
  * @property {(c: object) => string|null} problemOf  what keeps a component
  *   from working, or null
+ * @property {object|null} sample  what a sampled run of the app made of each
+ *   series, or null: `ready` (it is a sample at the controls as they stand),
+ *   `iterations`, `t`, `curve(label, which)` on `t` -- `which` a key of
+ *   `CURVES` other than `run` -- `onto(values)` from `t` onto the run's times,
+ *   and `bands(label)`, the percentile bands on the run's times
  */
+
+/** Puts an element on a grid at a box of cells. */
+export function placeOnGrid(node, box) {
+	node.style.gridColumn = `${box.x + 1} / span ${box.w}`;
+	node.style.gridRow = `${box.y + 1} / span ${box.h}`;
+}
+
+/**
+ * How many rows a part takes stacked in one column, as a phone shows the
+ * page: its own height, or -- for a panel or a set of tabs -- the row of its
+ * heading and what it holds, one part under another, for the tab that holds
+ * the most. Every row of it is a row of the page's grid, so the gaps come out
+ * as they do on the page.
+ */
+export function stackedRows(c) {
+	if (!CONTAINER_TYPES.has(c.type)) return c.h;
+	const inside = Math.max(0, ...slotsOf(c).map((list) => list.reduce((n, k) => n + stackedRows(k), 0)));
+	return Math.max(COMPONENTS[c.type].minH, 1 + inside);
+}
+
+/** A grid's cell for a part: where it is, how tall it is, and how tall stacked. */
+export function gridItem(c, node) {
+	const item = el('div', { className: 'app-item' }, node);
+	item.style.setProperty('--h', String(c.h));
+	item.style.setProperty('--stack', String(stackedRows(c)));
+	placeOnGrid(item, c);
+	return item;
+}
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}) => {
@@ -369,14 +403,19 @@ function toggle(c, ctx) {
 	return { node, update: show };
 }
 
+const BUTTON_LABEL = { run: 'Run', sample: 'Run the spread', reset: 'Reset' };
+const BUTTON_TITLE = {
+	run: 'Run the model at the values the controls hold',
+	sample: 'Run the model many times at the controls, drawing the inputs that are uncertain, to see the spread of the results',
+	reset: 'Put every control back to the value the model holds',
+};
+
 function button(c, ctx) {
-	const label = c.label || (c.action === 'reset' ? 'Reset' : 'Run');
+	const label = c.label || BUTTON_LABEL[c.action];
 	const b = el('button', { type: 'button', className: c.action === 'run' ? 'primary app-go' : 'app-go' }, label);
 	b.disabled = !ctx.live;
 	b.addEventListener('click', () => ctx.act(c.action));
-	b.title = c.action === 'reset'
-		? 'Put every control back to the value the model holds'
-		: 'Run the model at the values the controls hold';
+	b.title = BUTTON_TITLE[c.action];
 	return { node: frame(c, ctx, null, b), update: () => {} };
 }
 
@@ -392,7 +431,8 @@ function chartPart(c, ctx) {
 	const legend = el('div', { className: 'app-legend legend' });
 	const empty = el('p', { className: 'app-part-empty', hidden: true });
 	const heading = outputHeading(c, ctx, c.series?.length ? c.series.map(seriesLabel).join(', ') : '');
-	const node = frame(c, ctx, heading, el('div', { className: 'app-chart-body' }, host, empty), legend);
+	const note = el('span', { className: 'app-chart-note', hidden: true });
+	const node = frame(c, ctx, heading, el('div', { className: 'app-chart-body' }, host, empty), note, legend);
 	const chart = new TimeChart(host);
 	chart.setDragPans(false);
 	const draw = (next) => {
@@ -403,11 +443,38 @@ function chartPart(c, ctx) {
 		empty.textContent = r ? 'Nothing to show.' : 'Results appear here once the model has run.';
 		host.hidden = !idx.length;
 		legend.replaceChildren();
+		note.hidden = true;
 		if (!idx.length) return;
 		const labels = shortLabels(r.outputs, idx);
-		const series = idx.map((i, k) => ({ label: labels[k], values: r.column(i), unit: r.outputs[i].unit ?? '' }));
+		// The spread, where the chart asks for it and there is a sample of the
+		// app at the controls as they stand: the percentile bands behind each
+		// line, and the realisations' mean as a line of its own beside it, in
+		// the same colour and another pattern. Otherwise the chart says why
+		// there is none rather than drawing lines that look like the whole of it.
+		const wantSpread = c.spread === 'bands' || c.mean;
+		const sample = wantSpread && ctx.sample?.ready ? ctx.sample : null;
+		const series = [];
+		idx.forEach((i, k) => {
+			const label = r.outputs[i].label;
+			series.push({
+				label: labels[k], values: r.column(i), unit: r.outputs[i].unit ?? '', slot: k,
+				bands: sample && c.spread === 'bands' ? sample.bands(label) : undefined,
+			});
+			const mean = sample && c.mean ? sample.curve(label, 'mean') : null;
+			if (mean) series.push({ label: `${labels[k]} (mean)`, values: sample.onto(mean), unit: r.outputs[i].unit ?? '', slot: k, set: 1 });
+		});
+		if (wantSpread && !sample) {
+			note.hidden = false;
+			note.textContent = ctx.sample
+				? 'The spread is of the controls as they were: run it again for these.'
+				: 'The spread appears once it has been run: Run the spread.';
+		} else if (sample) {
+			note.hidden = false;
+			note.textContent = `Spread of ${sample.iterations.toLocaleString()} realisations`
+				+ (c.spread === 'bands' ? ': 5–95 and 25–75 percentiles behind each line' : '');
+		}
 		chart.setScales({ xLog: c.x_scale === 'log', yLog: c.y_scale === 'log' });
-		chart.setData(r.t, series, { xLabel: `Time (${ctx.timeUnit})`, yLabel: commonUnit(r.outputs, idx) });
+		chart.setData(r.t, series.slice(0, MAX_SERIES), { xLabel: `Time (${ctx.timeUnit})`, yLabel: commonUnit(r.outputs, idx) });
 		legend.hidden = !c.legend || series.length < 2;
 		if (!legend.hidden) {
 			series.forEach((s, k) => {
@@ -426,10 +493,34 @@ function chartPart(c, ctx) {
 	return { node, update: draw, destroy: () => chart.destroy(), redraw: () => chart.draw() };
 }
 
-/** The one number a value, a gauge or a bar reads, with the series it came from. */
-function oneNumber(c, r, i) {
-	const col = r.column(i);
-	return statistic(r.t, col, c.statistic, c.at);
+/**
+ * The curve a result reads of series `i`, and the times it is on: the run at
+ * the controls, or -- where the part asks for one -- what the app's sample
+ * made of it. Null where the part asks for a sample and there is none at the
+ * controls as they stand: a percentile that showed the run's own number
+ * instead would be a different number under the same name.
+ */
+function curveOf(c, ctx, i) {
+	const r = ctx.results;
+	const which = c.curve ?? 'run';
+	if (which === 'run') return { t: r.t, values: r.column(i) };
+	const s = ctx.sample;
+	if (!s?.ready) return null;
+	const values = s.curve(r.outputs[i].label, which);
+	return values ? { t: s.t, values } : null;
+}
+
+/** The one number a value, a gauge or a bar reads off series `i`, or NaN. */
+function oneNumber(c, ctx, i) {
+	const cur = curveOf(c, ctx, i);
+	return cur ? statistic(cur.t, cur.values, c.statistic, c.at) : NaN;
+}
+
+/** Which curve a part reads, as a caption says it: nothing for the run itself. */
+function curveCaption(c, ctx) {
+	if ((c.curve ?? 'run') === 'run') return null;
+	if (!ctx.sample?.ready) return ctx.sample ? 'the spread is of the controls as they were — run it again' : 'run the spread to see it';
+	return `${CURVES[c.curve].toLowerCase()} of ${ctx.sample.iterations.toLocaleString()}`;
 }
 
 /** Whether a value is over a limit, which is what a limit is for. */
@@ -459,16 +550,19 @@ function valuePart(c, ctx) {
 			caption.textContent = r ? 'Nothing to show.' : 'Appears once the model has run.';
 			return;
 		}
-		const v = oneNumber(c, r, i);
+		const v = oneNumber(c, ctx, i);
 		number.textContent = fmtNumber(v, c.digits);
 		unit.textContent = c.statistic === 'max_time' ? ctx.timeUnit : (o.unit ?? '');
 		const parts = [];
-		if (c.statistic === 'max') {
-			const when = statistic(r.t, r.column(i), 'max_time');
+		const cur = curveOf(c, ctx, i);
+		if (c.statistic === 'max' && cur) {
+			const when = statistic(cur.t, cur.values, 'max_time');
 			if (Number.isFinite(when)) parts.push(`at ${fmtNumber(when)} ${ctx.timeUnit}`);
 		} else if (c.statistic !== 'max_time') {
 			parts.push(statCaption(c, ctx.timeUnit));
 		}
+		const which = curveCaption(c, ctx);
+		if (which) parts.push(which);
 		if (c.limit != null && c.statistic !== 'max_time' && Number.isFinite(v)) {
 			const over = overLimit(c, v);
 			node.classList.add(over ? 'is-over' : 'is-under');
@@ -544,7 +638,7 @@ function gauge(c, ctx) {
 		const [i] = seriesOf(c, r);
 		const o = i != null ? r.outputs[i] : null;
 		if (!c.title) head.textContent = o ? `${STATISTICS[c.statistic]} · ${o.label}` : (c.series?.[0] ? seriesLabel(c.series[0]) : COMPONENTS.gauge.name);
-		const v = o ? oneNumber(c, r, i) : NaN;
+		const v = o ? oneNumber(c, ctx, i) : NaN;
 		const span = gaugeSpan(c, v);
 		const f = gaugeFraction(v, span.lo, span.hi, c.scale);
 		fill.setAttribute('d', arc(0, Math.max(0.001, f)));
@@ -564,7 +658,7 @@ function gauge(c, ctx) {
 		pic.setAttribute('aria-label', o ? `${o.label}: ${fmtNumber(v)} ${c.statistic === 'max_time' ? ctx.timeUnit : o.unit ?? ''}` : 'No value yet');
 		const unit = c.statistic === 'max_time' ? ctx.timeUnit : o?.unit;
 		caption.textContent = o
-			? [unit, statCaption(c, ctx.timeUnit), c.limit != null ? `limit ${fmtNumber(c.limit)}` : null].filter(Boolean).join(' · ')
+			? [unit, statCaption(c, ctx.timeUnit), curveCaption(c, ctx), c.limit != null ? `limit ${fmtNumber(c.limit)}` : null].filter(Boolean).join(' · ')
 			: (r ? 'Nothing to show.' : 'Appears once the model has run.');
 	};
 	draw();
@@ -584,7 +678,7 @@ function bars(c, ctx) {
 		list.replaceChildren();
 		if (!idx.length) { list.append(waiting(ctx)); foot.textContent = ''; return; }
 		const labels = shortLabels(r.outputs, idx);
-		let rows = idx.map((i, k) => ({ i, k, label: labels[k], v: oneNumber(c, r, i) }));
+		let rows = idx.map((i, k) => ({ i, k, label: labels[k], v: oneNumber(c, ctx, i) }));
 		if (c.sort) rows = [...rows].sort((a, b) => (Number.isFinite(b.v) ? b.v : -Infinity) - (Number.isFinite(a.v) ? a.v : -Infinity));
 		const finite = rows.map((x) => x.v).filter((v) => Number.isFinite(v));
 		const top = finite.length ? Math.max(...finite.map(Math.abs)) : 0;
@@ -616,7 +710,7 @@ function bars(c, ctx) {
 		}
 		const unit = c.statistic === 'max_time' ? ctx.timeUnit : commonUnit(r.outputs, idx);
 		foot.textContent = [unit, c.statistic === 'at' ? statCaption(c, ctx.timeUnit) : null,
-			c.scale === 'log' ? 'logarithmic' : null].filter(Boolean).join(' · ');
+			curveCaption(c, ctx), c.scale === 'log' ? 'logarithmic' : null].filter(Boolean).join(' · ');
 	};
 	draw();
 	return { node, update: draw };
@@ -632,7 +726,10 @@ function table(c, ctx) {
 		wrap.replaceChildren();
 		if (!idx.length) { wrap.append(waiting(ctx)); return; }
 		const times = c.times?.length ? c.times : tableTimes(r.t, c.rows);
-		const cols = idx.map((i) => r.column(i));
+		// Each column the curve the table reads, on its own times; none where
+		// it asks for a sample there is not.
+		const cols = idx.map((i) => curveOf(c, ctx, i));
+		const which = curveCaption(c, ctx);
 		const labels = shortLabels(r.outputs, idx);
 		const t = el('table', { className: 'app-table-grid' });
 		t.append(el('thead', {}, el('tr', {},
@@ -643,10 +740,11 @@ function table(c, ctx) {
 		for (const time of times) {
 			body.append(el('tr', {},
 				el('th', { scope: 'row' }, fmtNumber(time)),
-				...cols.map((col) => el('td', {}, fmtNumber(valueAt(r.t, col, time), 4)))));
+				...cols.map((col) => el('td', {}, col ? fmtNumber(valueAt(col.t, col.values, time), 4) : '—'))));
 		}
 		t.append(body);
 		wrap.append(t);
+		if (which) wrap.append(el('p', { className: 'app-value-caption app-table-note' }, which));
 	};
 	draw();
 	return { node, update: draw };
@@ -664,9 +762,95 @@ function text(c, ctx) {
 	return { node: frame(c, ctx, null, body), update: () => {} };
 }
 
+// --- parts that hold parts, and pictures --------------------------------------------------
+
+/**
+ * The parts of one grid of a container, drawn into `grid` in the order the
+ * page is read in (see `stackOrder`), each a widget of its own.
+ */
+function childWidgets(list, ctx, grid) {
+	const out = [];
+	for (const child of stackOrder(list)) {
+		const w = buildComponent(child, ctx);
+		grid.append(gridItem(child, w.node));
+		out.push(w);
+	}
+	return out;
+}
+
+/** A container's grid: one row under its title or its tabs, the rest its own. */
+function innerGrid(c) {
+	const grid = el('div', { className: 'app-grid app-inner-grid' });
+	grid.style.setProperty('--rows', String(Math.max(1, c.h - 1)));
+	return grid;
+}
+
+/** What a container gives the page: its parts brought up to date, redrawn and let go together. */
+function containerWidget(node, kids) {
+	return {
+		node,
+		update: (next) => { for (const k of kids()) k.update?.(next); },
+		destroy: () => { for (const k of kids()) k.destroy?.(); },
+		redraw: () => { for (const k of kids()) k.redraw?.(); },
+	};
+}
+
+function panelPart(c, ctx) {
+	const grid = innerGrid(c);
+	const kids = childWidgets(c.components, ctx, grid);
+	const head = el('div', { className: 'app-part-head app-container-head' },
+		c.title ? el('span', { className: 'app-part-label' }, c.title) : null);
+	const node = frame(c, ctx, null, head, grid);
+	return containerWidget(node, () => kids);
+}
+
+/** Which tab of each set is showing, for as long as the page is open. */
+const shownTab = new Map();
+
+function tabsPart(c, ctx) {
+	const strip = el('div', { className: 'app-tab-strip', role: 'tablist' });
+	const grid = innerGrid(c);
+	let kids = [];
+	let cur = ctx;
+	const show = () => {
+		const at = Math.min(shownTab.get(c.id) ?? 0, c.tabs.length - 1);
+		for (const k of kids) k.destroy?.();
+		grid.replaceChildren();
+		strip.replaceChildren(...c.tabs.map((t, i) => {
+			const b = el('button', {
+				type: 'button', role: 'tab', className: `app-tab${i === at ? ' is-on' : ''}`, 'aria-selected': String(i === at),
+			}, t.name);
+			b.addEventListener('click', () => {
+				if (i === at) return;
+				shownTab.set(c.id, i);
+				show();
+			});
+			return b;
+		}));
+		kids = childWidgets(c.tabs[at].components, cur, grid);
+	};
+	show();
+	const node = frame(c, ctx, null, strip, grid);
+	const w = containerWidget(node, () => kids);
+	const update = w.update;
+	w.update = (next) => { cur = next ?? cur; update(next); };
+	return w;
+}
+
+function image(c, ctx) {
+	const pic = c.src
+		? el('img', { className: `app-image is-${c.fit}`, src: c.src, alt: c.alt || '', decoding: 'async', draggable: false })
+		: el('div', { className: 'app-image-empty' }, ctx.live ? '' : 'No picture yet: choose one in its settings, or drop one here.');
+	return {
+		node: frame(c, ctx, null, pic, c.caption ? el('span', { className: 'app-image-caption' }, c.caption) : null),
+		update: () => {},
+	};
+}
+
 const BUILDERS = {
 	slider, number: numberField, dropdown, radio, switch: toggle, button,
-	chart: chartPart, value: valuePart, gauge, bars, table, text,
+	chart: chartPart, value: valuePart, gauge, bars, table,
+	panel: panelPart, tabs: tabsPart, text, image,
 };
 
 /**

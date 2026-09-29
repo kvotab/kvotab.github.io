@@ -58,6 +58,7 @@ import zlib
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Union
 
+from ..apps import count_app_parts
 from ..decay import default_chains, half_life
 from ..equations import EquationSyntaxError, tokenize
 from ..errors import KompartmentError
@@ -2973,10 +2974,7 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
         report.warn(f"The diagram is this tool’s own and is not written ({', '.join(diagram)}): Ecolego lays a "
                     'model out itself.')
     # So is an app laid out on the model: a line, as the diagram is.
-    app = raw.get('app')
-    pages = app.get('pages') if isinstance(app, dict) else None
-    parts = sum(len(p['components']) for p in (pages if isinstance(pages, list) else [])
-                if isinstance(p, dict) and isinstance(p.get('components'), list))
+    parts = count_app_parts(raw)
     if parts:
         report.warn(f"The app built on the model is this tool’s own and is not written ({parts} part"
                     f"{'' if parts == 1 else 's'}): an Ecolego project has nothing to hold it.")

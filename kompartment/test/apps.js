@@ -497,6 +497,350 @@ test('the bundled example’s app is stored as it is read, and every part of it 
 	for (const { component: c } of all) assert(ai.componentProblem(raw, c, outputs) === null, `${c.id}: ${ai.componentProblem(raw, c, outputs)}`);
 });
 
+// --- parts that hold parts ------------------------------------------------------------------
+
+test('a panel holds parts of its own: put in, taken out, grown to fit, never inside itself', () => {
+	const raw = small();
+	const panel = apps.addComponent(raw, 0, 'panel', { props: { title: 'Inputs' } });
+	const where = { page: 0, parent: panel, slot: 0 };
+	const s1 = apps.addComponent(raw, where, 'slider', { props: { target: { kind: 'value', block: 'k' } } });
+	const s2 = apps.addComponent(raw, where, 'number', { props: { target: { kind: 'value', block: 'k' } } });
+	let app = apps.readApp(raw);
+	const f = apps.findComponent(app, s2);
+	assert(f.parent?.id === panel && f.depth === 1 && f.slot === 0 && f.page === 0, json({ parent: f.parent?.id, depth: f.depth }));
+	// Stacked in the panel's grid, not the page's, and the panel as tall as a
+	// row for its title and the rows of what it holds.
+	const box = apps.findComponent(app, panel).component;
+	assert(!apps.overlaps(box.components[0], box.components[1]), json(box.components));
+	assert(box.h >= 1 + apps.rowsOf(box.components), `${box.h} rows for ${apps.rowsOf(box.components)}`);
+	// A part made taller inside grows it, and what is under it on the page
+	// moves down out of the way.
+	const under = apps.addComponent(raw, 0, 'chart', { at: { x: 0, y: box.y + box.h }, props: { series: [{ block: 'D' }] } });
+	apps.updateComponent(raw, s1, { h: 12 });
+	app = apps.readApp(raw);
+	const grown = apps.findComponent(app, panel).component;
+	const moved = apps.findComponent(app, under).component;
+	assert(grown.h >= 1 + 12, `the panel did not grow: ${grown.h}`);
+	assert(moved.y >= grown.y + grown.h, `what was under the panel stayed under it: ${moved.y} < ${grown.y + grown.h}`);
+	// A panel's contents are no setting of it: an update cannot empty it.
+	apps.updateComponent(raw, panel, { title: 'Set', components: [] });
+	app = apps.readApp(raw);
+	assert(apps.findComponent(app, panel).component.components.length === 2 && apps.findComponent(app, panel).component.title === 'Set');
+	// Taken out, a part is on the page, and inputs inside count as inputs.
+	apps.moveComponent(raw, s2, 0);
+	app = apps.readApp(raw);
+	assert(apps.findComponent(app, s2).parent === null && apps.findComponent(app, s2).depth === 0);
+	const values = new Map([[ai.targetKey({ kind: 'value', block: 'k' }), 0.1]]);
+	assert(ai.inputChanges(raw, values).length === 1, 'an input inside a panel sets nothing');
+	// Never into itself, nor into what is inside it.
+	const inner = apps.addComponent(raw, where, 'panel');
+	for (const into of [panel, inner]) {
+		let refused = null;
+		try { apps.moveComponent(raw, panel, { page: 0, parent: into, slot: 0 }); } catch (e) { refused = e.message; }
+		assert(/inside itself/.test(refused ?? ''), `${into}: ${refused}`);
+	}
+	// Removed, it takes what it holds; duplicated, a copy of every part in it,
+	// every one with an id of its own.
+	const copy = apps.duplicateComponent(raw, panel);
+	app = apps.readApp(raw);
+	const ids = apps.allComponents(app).map((x) => x.component.id);
+	assert(new Set(ids).size === ids.length && apps.findComponent(app, copy).component.components.length === 2, json(ids));
+	apps.removeComponent(raw, panel);
+	app = apps.readApp(raw);
+	assert(!apps.findComponent(app, s1) && apps.findComponent(app, copy), 'a removed panel left its parts behind');
+});
+
+test('tabs: each a grid of its own, added, renamed, moved and deleted with what is on them, and one at least', () => {
+	const raw = small();
+	const t = apps.addComponent(raw, 0, 'tabs');
+	assert(apps.readApp(raw).pages[0].components[0].tabs.length === 1, 'a set of tabs starts with one');
+	assert(apps.addTab(raw, t, 'Detail') === 1 && apps.addTab(raw, t) === 2);
+	const a = apps.addComponent(raw, { page: 0, parent: t, slot: 1 }, 'value', { props: { series: [{ block: 'D' }] } });
+	const b = apps.addComponent(raw, { page: 0, parent: t, slot: 2 }, 'text', { props: { text: 'x' } });
+	let set = apps.readApp(raw).pages[0].components[0];
+	assert(json(set.tabs.map((x) => [x.name, x.components.map((c) => c.id)])) === json([['Tab 1', []], ['Detail', [a]], ['Tab 3', [b]]]), json(set.tabs));
+	assert(apps.renameTab(raw, t, 2, '  Notes ') && !apps.renameTab(raw, t, 2, '   ') && !apps.renameTab(raw, t, 9, 'x'));
+	assert(apps.moveTab(raw, t, 2, 0) && !apps.moveTab(raw, t, 0, 0) && !apps.moveTab(raw, t, 0, 5));
+	set = apps.readApp(raw).pages[0].components[0];
+	assert(json(set.tabs.map((x) => x.name)) === json(['Notes', 'Tab 1', 'Detail']), json(set.tabs.map((x) => x.name)));
+	// A tab goes with what is on it; the last one stays.
+	assert(apps.removeTab(raw, t, 2));
+	assert(!apps.findComponent(apps.readApp(raw), a), 'a deleted tab left its part');
+	assert(apps.removeTab(raw, t, 0) && !apps.removeTab(raw, t, 0), 'the last tab went');
+	// As many as a set holds, and no more.
+	for (let i = apps.readApp(raw).pages[0].components[0].tabs.length; i < apps.MAX_TABS; i++) apps.addTab(raw, t);
+	let refused = null;
+	try { apps.addTab(raw, t); } catch (e) { refused = e.message; }
+	assert(/at most/.test(refused ?? ''), String(refused));
+	// A tab is only of a set of tabs.
+	const panel = apps.addComponent(raw, 0, 'panel');
+	assert(apps.addTab(raw, panel) === -1 && !apps.renameTab(raw, panel, 0, 'x'));
+});
+
+test('containers go three deep, whether added, moved or read from a file', () => {
+	const raw = small();
+	const p1 = apps.addComponent(raw, 0, 'panel');
+	const t2 = apps.addComponent(raw, { page: 0, parent: p1, slot: 0 }, 'tabs');
+	const p3 = apps.addComponent(raw, { page: 0, parent: t2, slot: 0 }, 'panel');
+	// A leaf in the third is fine; a container is not.
+	apps.addComponent(raw, { page: 0, parent: p3, slot: 0 }, 'text', { props: { text: 'deep' } });
+	let refused = null;
+	try { apps.addComponent(raw, { page: 0, parent: p3, slot: 0 }, 'panel'); } catch (e) { refused = e.message; }
+	assert(/3 deep/.test(refused ?? ''), String(refused));
+	// Moved, a container counts what it holds: the tabs and the panel in them
+	// are two levels, and into a panel on the page make three; the panel
+	// holding both is three, and into another makes four.
+	const other = apps.addComponent(raw, 0, 'panel');
+	apps.moveComponent(raw, t2, { page: 0, parent: other, slot: 0 });
+	assert(apps.findComponent(apps.readApp(raw), t2).parent.id === other);
+	apps.moveComponent(raw, t2, { page: 0, parent: p1, slot: 0 });
+	refused = null;
+	try { apps.moveComponent(raw, p1, { page: 0, parent: other, slot: 0 }); } catch (e) { refused = e.message; }
+	assert(/deeper/.test(refused ?? ''), String(refused));
+	assert(apps.findComponent(apps.readApp(raw), p1).parent === null, 'a refused move moved it anyway');
+	// A file nested ten deep is read three deep, and every walk over a file
+	// stops at a depth, however deep it goes.
+	let deep = { type: 'text', text: 'bottom' };
+	for (let i = 0; i < 10; i++) deep = { type: i % 2 ? 'panel' : 'tabs', components: [deep], tabs: [{ name: 't', components: [deep] }] };
+	const file = { ...small(), app: { pages: [{ components: [deep] }] } };
+	const read = apps.readApp(file);
+	assert(Math.max(...apps.allComponents(read).map((x) => x.depth)) <= apps.MAX_NEST, 'read deeper than containers go');
+	assert(apps.countAppParts(file) > 0 && apps.countAppParts(file) < 2 ** 11, String(apps.countAppParts(file)));
+	apps.retargetAppNames(file, () => null);
+});
+
+test('a file’s containers are read tidy: ids unique across the whole app, grids settled, each container tall enough', () => {
+	const raw = small();
+	raw.app = { pages: [{ components: [
+		{ id: 'c1', type: 'panel', x: 0, y: 0, w: 6, h: 2, components: [
+			{ id: 'c1', type: 'text', x: 0, y: 0, w: 6, h: 3, text: 'a' },
+			{ id: 'c2', type: 'text', x: 0, y: 0, w: 6, h: 3, text: 'b' },
+		] },
+		{ id: 'c2', type: 'tabs', x: 0, y: 1, w: 6, h: 2, tabs: [{ name: 'One', components: [{ type: 'text', h: 8, text: 'c' }] }, 'not a tab'] },
+	] }] };
+	const app = apps.readApp(raw);
+	const all = apps.allComponents(app);
+	const ids = all.map((x) => x.component.id);
+	assert(new Set(ids).size === ids.length && ids.every((id) => /^c\d+$/.test(id)), json(ids));
+	const [panel, tabs] = app.pages[0].components;
+	assert(!apps.overlaps(panel.components[0], panel.components[1]), 'a panel’s parts overlap');
+	assert(panel.h >= 1 + 6 && tabs.h >= 1 + 8, `${panel.h} and ${tabs.h} rows`);
+	assert(!apps.overlaps(panel, tabs), 'the page’s containers overlap once grown');
+	assert(tabs.tabs.length === 1 && tabs.tabs[0].name === 'One', json(tabs.tabs));
+	// And a reading reads as itself.
+	assert(json(apps.readApp({ app })) === json(app), 'reading the tidy app changes it');
+});
+
+test('a rename follows into a part inside a tab inside a panel', () => {
+	const raw = small();
+	const p = apps.addComponent(raw, 0, 'panel');
+	const t = apps.addComponent(raw, { page: 0, parent: p, slot: 0 }, 'tabs');
+	const s = apps.addComponent(raw, { page: 0, parent: t, slot: 0 }, 'slider', { props: { target: { kind: 'value', block: 'f', index: { N: 'a' } } } });
+	const c = apps.addComponent(raw, { page: 0, parent: p, slot: 0 }, 'chart', { props: { series: [{ block: 'D' }] } });
+	ed.renameBlock(raw, 'f', 'g');
+	ed.renameBlock(raw, 'D', 'Dose');
+	ed.renameIndex(raw, 'N', 'a', 'alpha');
+	const app = apps.readApp(raw);
+	assert(json(apps.findComponent(app, s).component.target) === json({ kind: 'value', block: 'g', index: { N: 'alpha' } }),
+		json(apps.findComponent(app, s).component.target));
+	assert(apps.findComponent(app, c).component.series[0].block === 'Dose', json(apps.findComponent(app, c).component.series));
+	assert(apps.countAppParts(raw) === 4, String(apps.countAppParts(raw)));
+});
+
+// --- pictures ---------------------------------------------------------------------------------
+
+test('a picture is a data address of a picture type and nothing else', () => {
+	const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+	assert(apps.readImageSrc(png) === png);
+	for (const type of ['jpeg', 'gif', 'webp', 'svg+xml']) assert(apps.readImageSrc(`data:image/${type};base64,AAAA`), type);
+	for (const bad of [
+		'javascript:alert(1)', 'data:text/html;base64,PHNjcmlwdD4=', 'https://example.org/a.png', '/a.png',
+		'data:image/png,rawtext', 'data:image/png;base64,AAAA BBBB', 'data:image/png;charset=utf-8;base64,AAAA',
+		'data:image/svg+xml;utf8,<svg onload=alert(1)>', 'DATA:image/png;base64,AAAA', `data:image/png;base64,${'A'.repeat(apps.IMAGE_MAX)}`,
+		42, null, { src: png },
+	]) assert(apps.readImageSrc(bad) === '', `took ${String(bad).slice(0, 60)}`);
+	// Read through a file, a picture it will not take is no picture, and says so.
+	const raw = small();
+	raw.app = { pages: [{ components: [{ type: 'image', src: 'https://example.org/a.png', alt: 'A map', fit: 'fill' }] }] };
+	const c = apps.readApp(raw).pages[0].components[0];
+	assert(c.src === '' && c.alt === 'A map' && c.fit === 'contain', json(c));
+	assert(ai.componentProblem(raw, c, []) === 'Choose a picture for it.', ai.componentProblem(raw, c, []));
+	assert(ai.componentProblem(raw, { ...c, src: png }, []) === null);
+	// The page lets a data address be drawn, and nothing it would fetch.
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	assert(/img-src 'self' data: blob:;/.test(html), 'the page’s policy does not draw a data address');
+});
+
+// --- the spread ---------------------------------------------------------------------------------
+
+test('a distribution scaled by a factor: every quantile is the factor times the quantile', async () => {
+	const pdf = await import('../src/domain/pdf.js');
+	const specs = [
+		{ kind: 'unif', params: { min: 2, max: 5 } },
+		{ kind: 'triang', params: { min: 1, max: 9, mode: 3 } },
+		{ kind: 'dtriang', params: { min: 1, max: 9, mode: 7 } },
+		{ kind: 'norm', params: { mean: 10, sd: 2 } },
+		{ kind: 'logu', params: { min: 1e-4, max: 1e-2 } },
+		{ kind: 'logt', params: { min: 1e-4, max: 1e-2, mode: 1e-3 } },
+		{ kind: 'logdt', params: { min: 1e-4, max: 1e-2, mode: 3e-3 } },
+		{ kind: 'Logn4', params: { gm: 0.3, gsd: 2.5 } },
+		{ kind: 'logn', params: { mean: 5, sd: 3 } },
+		{ kind: 'logn5', params: { p1: 0.05, x1: 0.2, p2: 0.95, x2: 7 } },
+	];
+	for (const spec of specs) {
+		for (const c of [2.5, 0.1]) {
+			const scaled = ai.scalePdf(spec, c);
+			assert(scaled && scaled.kind === spec.kind, `${spec.kind} was not scaled`);
+			for (const u of [0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99]) {
+				const want = c * pdf.quantile(spec, u);
+				const got = pdf.quantile(scaled, u);
+				assert(Math.abs(got - want) <= 1e-12 * Math.abs(want), `${spec.kind} × ${c} at ${u}: ${got} against ${want}`);
+			}
+		}
+	}
+	// A truncation at a value is scaled with it; at a probability, not.
+	const cut = ai.scalePdf({ kind: 'norm', params: { mean: 1, sd: 1 }, trmin: 0.5, trmax: 3, pmin: 0.1 }, 2);
+	assert(cut.trmin === 1 && cut.trmax === 6 && cut.pmin === 0.1, json(cut));
+	// A sample of values is scaled value by value; a factor not above zero, or a kind it does not know, is no distribution.
+	assert(json(ai.scalePdf({ kind: 'pg', values: [1, 2, 4] }, 3).values) === json([3, 6, 12]));
+	assert(ai.scalePdf(specs[0], 0) === null && ai.scalePdf(specs[0], -1) === null && ai.scalePdf(specs[0], NaN) === null);
+	assert(ai.scalePdf({ kind: 'nonsense', params: {} }, 2) === null);
+});
+
+test('the model a spread is sampled on: a moved control held, a factor scaling the distribution, the rest sampled', async () => {
+	const { samplingPlan, slotName } = await import('../src/sim/probabilistic.js');
+	const raw = example('biosphere.json');
+	const app = apps.readApp(raw);
+	const slider = (block) => apps.allComponents(app).find((x) => x.component.target?.block === block).component.target;
+	const values = new Map([
+		[ai.targetKey(slider('geoTransit')), 5e-4],
+		[ai.targetKey(slider('Kd')), 2],
+		[ai.targetKey(slider('soilLeach')), ai.modelValue(raw, slider('soilLeach'))],
+	]);
+	const changes = ai.inputChanges(raw, values);
+	assert(changes.length === 2, `a control at the model’s value is a change: ${json(changes)}`);
+	const before = new Set(samplingPlan(new Project(structuredClone(raw))).map(slotName));
+	const copy = ai.sampleModel(raw, changes);
+	const plan = samplingPlan(new Project(structuredClone(copy)));
+	const after = new Set(plan.map(slotName));
+	// Held where it was moved to, and not drawn.
+	assert(before.has('geoTransit') && !after.has('geoTransit'), 'a moved slider’s parameter is still sampled');
+	assert(copy.parameters.find((p) => p.name === 'geoTransit').value === 5e-4, 'not held at the slider’s value');
+	// Still at the model's value, still drawn -- and every index of a factor too.
+	assert(after.has('soilLeach'), 'a control at the model’s value holds its parameter');
+	for (const nuclide of ['I-129', 'Cl-36', 'Tc-99', 'Se-79']) assert(after.has(`Kd[${nuclide}]`), `Kd[${nuclide}] is not sampled`);
+	// Scaled by the factor, each index from its own.
+	const kd = (m, nuclide) => ed.effectiveValue(m.parameters.find((p) => p.name === 'Kd'), 'pdf', { Radionuclides: nuclide });
+	for (const nuclide of ['I-129', 'Se-79']) {
+		const was = kd(raw, nuclide).params;
+		const now = kd(copy, nuclide).params;
+		assert(now.min === 2 * was.min && now.max === 2 * was.max && now.mode === 2 * was.mode, `${nuclide}: ${json(now)} from ${json(was)}`);
+	}
+	// At the percentiles the parts read, whatever the model's own; and the
+	// model the app is on is not touched.
+	assert(json(copy.simulation.percentiles) === json(apps.APP_PERCENTILES));
+	assert(json(raw) === json(example('biosphere.json')), 'sampling changed the model');
+	// What it keeps is what the app shows.
+	assert(json(ai.appOutputBlocks(raw).sort()) === json(['Dose', 'Geosphere', 'Repository', 'Soil', 'Well']), json(ai.appOutputBlocks(raw)));
+	// And the example's app reads the spread.
+	assert(ai.usesSpread(app) && !ai.usesSpread(apps.readApp({ app: { pages: [{ components: [{ type: 'chart' }] }] } })));
+});
+
+// --- a model as a link -----------------------------------------------------------------------
+
+test('a model as a link: the whole of it after #m=, read back as it went, and a link that is not one said so', async () => {
+	const L = await import('../src/io/applink.js');
+	const raw = example('biosphere.json');
+	const payload = await L.encodeModel(raw);
+	assert(/^[A-Za-z0-9_-]+$/.test(payload), 'the text is not what an address carries');
+	assert(json(L.decodeModel(payload)) === json(raw), 'the model did not come back as it went');
+	const link = L.linkFor('https://example.org/kompartment.html?theme=dark&model=decay-chain.json#old', payload);
+	assert(link === `https://example.org/kompartment.html?app#m=${payload}`, link.slice(0, 120));
+	assert(L.linkFor('https://example.org/k/', payload, { app: false }) === `https://example.org/k/#m=${payload}`);
+	assert(L.modelInHash(new URL(link).hash) === payload && L.modelInHash('#x=1&m=abc') === 'abc' && L.modelInHash('#nothing') === null);
+	// The example's app goes in about three thousand characters, which any
+	// program a link is sent through will take.
+	assert(link.length < 4000 && L.linkAdvice(link.length).tone === 'info', String(link.length));
+	assert(L.linkAdvice(L.LINK_LONG + 1).tone === 'warn' && L.linkAdvice(L.LINK_MAX + 1).ok === false);
+	// Every byte back, however it was written.
+	for (let n = 0; n < 9; n++) {
+		const bytes = Uint8Array.from({ length: n * 37 }, (_, i) => (i * 131 + n) & 255);
+		assert(json([...L.fromBase64Url(L.toBase64Url(bytes))]) === json([...bytes]), `${n * 37} bytes`);
+	}
+	// A link cut short, changed, or not one at all: an error that says so,
+	// never a model half read.
+	for (const bad of ['', '!!!', 'abc$', payload.slice(0, payload.length >> 1), `A${payload}`]) {
+		let said = null;
+		try { L.decodeModel(bad); } catch (e) { said = e.message; }
+		assert(said && /link/.test(said), `${bad.slice(0, 20)}: ${said}`);
+	}
+	const squeeze = async (text) => L.encodeModel(JSON.parse(text));
+	for (const text of ['[1,2]', '"model"', 'null']) {
+		let said = null;
+		try { L.decodeModel(await squeeze(text)); } catch (e) { said = e.message; }
+		assert(/not a model file/.test(said ?? ''), `${text}: ${said}`);
+	}
+	// What a link may expand to is bounded, as every file this tool reads is.
+	const { inflateRaw } = await import('../src/io/inflate.js');
+	const zeros = new Uint8Array(1 << 20);
+	const packed = new Uint8Array(await new Response(new Blob([zeros]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer()).subarray(2, -4);
+	let bounded = null;
+	try { inflateRaw(packed, 0, 1000); } catch (e) { bounded = e.message; }
+	assert(bounded, 'a link expanding past its bound was read');
+	const src = readFileSync(new URL('../src/io/applink.js', import.meta.url), 'utf8');
+	assert(/inflateRaw\(bytes, 0, INFLATE_LIMIT\)/.test(src), 'the link is read without a bound');
+});
+
+test('a link opens its model before anything else, keeps the draft it would replace, and the site page hands it through', () => {
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const boot = app.slice(app.indexOf('export function boot()'));
+	const linked = boot.indexOf('const linked = modelInHash(location.hash);');
+	assert(linked > 0 && linked < boot.indexOf("if (wanted === 'draft') {") && linked < boot.indexOf('loadExample(start)'),
+		'a link in the address is not what opens');
+	assert(/setModel\(model, \{ label: [^}]*, link: true \}\);\n\t\t\topenApp\(\);\n\t\t\tofferDraft\(held\);/.test(boot), 'a link’s model does not open as its app, or hides the draft');
+	// Not written over the draft until it is edited; an edit takes it out of the address.
+	assert(/if \(!source\?\.link\) draftKeeper\.note\(state\.raw, draftMeta\(\)\);/.test(app), 'a link’s model is kept as the draft');
+	assert(/draftKeeper\.note\(state\.raw, draftMeta\(\)\);\n\tleaveLinkAddress\(\);/.test(app), 'an edit leaves the model in the address');
+	// The dialog has its (i), and a Guide heading behind it.
+	assert(/info: dialogInfo\('app-link'\),/.test(app), 'the share dialog has no (i)');
+	const html = readFileSync(new URL('../../kompartment.html', import.meta.url), 'utf8');
+	assert(/url\.hash = location\.hash;\n\s+return url;/.test(html), 'the site page drops the model in its address');
+	assert(/var linked = !!\(inner && \/\^#\(\?:\.\*&\)\?m=\/\.test\(inner\.hash\)\);/.test(html), 'full window forgets an unedited link');
+});
+
+// --- how an app looks -------------------------------------------------------------------------
+
+test('every style an app can wear is in the stylesheet, light or dark as it says, with the tokens the parts read', () => {
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	const looks = css.slice(css.indexOf('/* --- how an app looks'));
+	const blocks = new Map([...looks.matchAll(/\n\[data-app-theme="([a-z-]+)"\] \{\n\tcolor-scheme: (light|dark);([^}]*)\}/g)].map((m) => [m[1], { mode: m[2], body: m[3] }]));
+	const ids = apps.THEMES.map((t) => t.id);
+	assert(apps.THEMES[0].id === 'standard' && !blocks.has('standard'), 'the standard look is not the page’s own');
+	for (const t of apps.THEMES.slice(1)) {
+		const b = blocks.get(t.id);
+		assert(b, `${t.id} has no style`);
+		assert(b.mode === t.mode, `${t.id} is ${b.mode} in the stylesheet and ${t.mode} in the list`);
+		for (const token of ['--surface-0', '--surface-1', '--surface-2', '--surface-sunken', '--border', '--border-strong',
+			'--text-primary', '--text-secondary', '--text-muted', '--grid', '--axis', '--accent', '--accent-ink',
+			'--accent-hover', '--danger', '--warn', '--radius', '--app-font']) {
+			assert(new RegExp(`\\n\\t${token}: `).test(b.body), `${t.id} does not set ${token}`);
+		}
+		const series = [...b.body.matchAll(/--series-(\d): (#[0-9a-f]{6});/g)];
+		assert(series.length === 8 && new Set(series.map((m) => m[2])).size === 8, `${t.id}: ${series.length} series colours`);
+	}
+	for (const id of blocks.keys()) assert(ids.includes(id), `${id} is styled and not in the list`);
+	// A style is read and written like any other setting, and one it does not know is the standard one.
+	const raw = small();
+	apps.addComponent(raw, 0, 'text', { props: { text: 'x' } });
+	apps.setAppSettings(raw, { theme: 'terminal' });
+	assert(apps.readApp(raw).theme === 'terminal');
+	assert(apps.readApp({ app: { theme: 'comic-sans' } }).theme === 'standard');
+	// Worn by the running app and the designer's page, and by nothing else.
+	const d = readFileSync(new URL('../src/ui/appdesigner.js', import.meta.url), 'utf8');
+	const r = readFileSync(new URL('../src/ui/apprun.js', import.meta.url), 'utf8');
+	assert(/wearTheme\(box, app\);/.test(d) && /wearTheme\(host, app\);/.test(r), 'a style is not worn where the app is drawn');
+});
+
 // --- the rest of the tool --------------------------------------------------------------------
 
 test('an app is no number of the model: not in what a run depends on, and a line in the export report', async () => {
@@ -533,11 +877,19 @@ test('the running app\u2019s runs: owed rather than dropped, its own Stop, and a
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const body = (name) => new RegExp(`function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(app)?.[1] ?? '';
 	// Opened while another run is going, the app's own run is queued behind it.
-	assert(/if \(!appResultsFit\(\) && apps\.readApp\(state\.raw\)\?\.run !== 'button'\) runApp\(\);\n\treturn true;/.test(body('enterAppRun')),
+	assert(/if \(!appResultsFit\(\) && apps\.readApp\(state\.raw\)\?\.run !== 'button'\) runApp\(\);\n\telse followAppRun\(\);\n\treturn true;/.test(body('enterAppRun')),
 		'the app\u2019s run is dropped when another is going');
 	// Left, it owes nothing: a run it still owed would start ahead of an edit's.
 	const leave = body('leaveAppRun');
-	assert(/appRunWanted = false;/.test(leave) && /clearTimeout\(appRunTimer\);/.test(leave), 'leaving the app keeps its owed run');
+	assert(/appRunWanted = false;/.test(leave) && /appSampleWanted = false;/.test(leave)
+		&& /clearTimeout\(appRunTimer\);/.test(leave), 'leaving the app keeps its owed run');
+	// Its spread, asked for during a run, is sampled once that run is over --
+	// after the app's own run, which it is drawn under.
+	const running = body('setRunning');
+	assert(running.indexOf('if (appSampleWanted) {') > running.indexOf('if (appRunWanted) {'),
+		'a spread asked for during a run is dropped, or sampled ahead of the run it is drawn under');
+	assert(/if \(state\.running\) \{ appSampleWanted = true; paintAppStatus\(\); return; \}/.test(body('runAppSample')),
+		'a spread asked for during a run is not owed');
 	// Its Stop stops the run and leaves the editor's auto-run as it was.
 	assert(/stop: \(\) => cancelSimulation\(\{ keepAutoRun: true \}\),/.test(app)
 		&& /const wasAuto = state\.autoRun && !keepAutoRun;/.test(body('cancelSimulation')), 'the app\u2019s Stop turns auto-run off');

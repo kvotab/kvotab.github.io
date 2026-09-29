@@ -4,8 +4,9 @@
  *
  * What an app is and how it is stored is ../domain/apps.js; what its inputs
  * set and its results read is ../domain/appinputs.js; how each part is drawn is
- * ./appwidgets.js. This file is the gestures: dragging a part onto the page,
- * moving and resizing it on the grid, and the settings form.
+ * ./appwidgets.js. This file is the gestures: dragging a part onto the page or
+ * into a panel, moving and resizing it on its grid or into another, and the
+ * settings form.
  *
  * **Every change is an edit of the model** -- the app is in the model file --
  * and goes through the page's `commit`, which is `modelChanged` marked as one
@@ -14,19 +15,23 @@
  * to show what it shows, whether the change was made here, undone, or arrived
  * with a file.
  *
- * **What is selected, and which page is up, are the tab's**, not the model's:
- * they are kept here, and a model saved mid-design does not carry them.
+ * **What is selected, which page is up and which tab of each set of tabs is
+ * showing are the tab's**, not the model's: they are kept here, and a model
+ * saved mid-design does not carry them.
  *
  * **The grid is CSS's.** A part is placed by `grid-column` and `grid-row` in
  * cells, so the page lays itself out and this only has to turn a pointer into
- * a cell. While a part is dragged, the parts it would land on are moved as
- * they would be (`settle`), live, and the model is written once, on release.
+ * a cell. Every grid on the canvas -- the page's, and each container's -- knows
+ * where a part dropped on it goes (`gridWhere`). While a part is dragged over
+ * its own grid, the parts it would land on are moved as they would be
+ * (`settle`), live; over another grid, a ghost says where it would land; and
+ * the model is written once, on release.
  */
 
 import { el } from './parts.js';
 import { openMenu } from './menu.js';
 import { infoButton } from './infopanel.js';
-import { buildComponent } from './appwidgets.js';
+import { buildComponent, placeOnGrid } from './appwidgets.js';
 import { appTopic } from './appinfo.js';
 import * as apps from '../domain/apps.js';
 import * as ai from '../domain/appinputs.js';
@@ -36,7 +41,7 @@ import { findBlock, effectiveDims } from '../domain/edit.js';
 export const ROW = 28;
 export const GAP = 8;
 
-/** Empty rows kept under the last part, to drop the next one into. */
+/** Empty rows kept under the last part of a page, to drop the next one into. */
 const ROOM_BELOW = 6;
 
 /** How far the pointer moves before a press on a part is a drag. */
@@ -45,17 +50,28 @@ const SLOP = 4;
 /** What a part dragged from the list carries, so nothing else is mistaken for one. */
 const PART_TYPE = 'application/x-kompartment-app-part';
 
-/** The page on screen and the part selected: the tab's, never the model's. */
-const view = { page: 0, selected: null };
+/** The image types a picture may be. */
+const PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+
+/** A picture this small is kept as it is; a larger one is drawn smaller first. */
+const PICTURE_AS_IS = 600000;
+
+/** The longest side a picture is made smaller to. */
+const PICTURE_SIDE = 1600;
+
+/** The page on screen, the part selected and the tab of each set showing: the tab's, never the model's. */
+const view = { page: 0, selected: null, tabs: new Map() };
 
 let host = null;
 let hooks = null;
-/** The parts drawn on the page: `{id, c, widget, item}`. */
+/** The parts drawn on the canvas, every grid's: `{id, c, widget, item, grid, list}`. */
 let drawn = [];
 /** The type being dragged out of the list, which a drop target cannot read until the drop. */
 let fromList = null;
 /** A move or a resize in progress. */
 let gesture = null;
+/** Where a part dropped on each grid of the canvas goes. */
+let gridWhere = new WeakMap();
 
 /**
  * A redraw owed to a field of the settings form that was left.
@@ -82,6 +98,7 @@ export function designerPage() {
 export function resetDesigner() {
 	view.page = 0;
 	view.selected = null;
+	view.tabs.clear();
 	gesture = null;
 }
 
@@ -92,7 +109,7 @@ export function resetDesigner() {
  * @param {object} h  what the page provides:
  *   `raw()` the model; `commit(label, opts)` records an edit made to it;
  *   `context()` what a part is drawn against (see ./appwidgets.js);
- *   `outputs()` the series the model reports, or null; `runApp()`;
+ *   `outputs()` the series the model reports, or null; `runApp()`; `share()`;
  *   `treeNames()` the blocks being dragged out of the tree; `flash(msg, tone)`
  */
 export function renderAppDesigner(panel, h) {
@@ -113,8 +130,9 @@ export function renderAppDesigner(panel, h) {
 	if (view.selected && !apps.findComponent(app, view.selected)) view.selected = null;
 	const focus = rememberFocus() ?? (refocus ? { prop: refocus } : null);
 	refocus = null;
-	for (const d of drawn) d.widget.destroy?.();
+	for (const d of drawn) d.widget?.destroy?.();
 	drawn = [];
+	gridWhere = new WeakMap();
 	host.replaceChildren(
 		toolbar(app),
 		el('div', { className: 'appd-body' }, palette(), canvas(app), properties(app)),
@@ -160,7 +178,7 @@ export function refreshAppDesigner() {
 	if (!host || !hooks || !host.isConnected) return;
 	const ctx = hooks.context();
 	for (const d of drawn) {
-		d.widget.update?.(ctx);
+		d.widget?.update?.(ctx);
 		d.item.classList.toggle('has-problem', !!ctx.problemOf(d.c));
 	}
 }
@@ -209,10 +227,33 @@ function select(id) {
 	host.querySelector('.appd-props')?.replaceWith(properties(app));
 }
 
-function addPart(type, at = null, props = {}) {
+/** The page on screen, as a place to put a part. */
+function pageWhere() {
+	return { page: view.page, parent: null, slot: 0 };
+}
+
+/** The grid a set of tabs shows while it is being designed. */
+function tabShown(c) {
+	return Math.min(view.tabs.get(c.id) ?? 0, (c.tabs?.length ?? 1) - 1);
+}
+
+/**
+ * Where a part added from the list goes: into the selected panel, or the tab
+ * of the selected set of tabs that is showing, when a container is selected
+ * and has room for another level; on the page otherwise.
+ */
+function addWhere() {
+	const app = apps.readApp(hooks.raw());
+	const f = view.selected ? apps.findComponent(app, view.selected) : null;
+	if (f && apps.CONTAINER_TYPES.has(f.component.type)) {
+		return { page: view.page, parent: f.component.id, slot: f.component.type === 'tabs' ? tabShown(f.component) : 0 };
+	}
+	return pageWhere();
+}
+
+function addPart(type, where, at = null, props = {}) {
 	edit(`add a ${apps.COMPONENTS[type].name.toLowerCase()}`, (raw) => {
-		const page = apps.readApp(raw) ? view.page : 0;
-		view.selected = apps.addComponent(raw, page, type, { at, props });
+		view.selected = apps.addComponent(raw, apps.readApp(raw) ? where : pageWhere(), type, { at, props });
 	});
 }
 
@@ -275,6 +316,12 @@ function toolbar(app) {
 			+ (app.pages.length > 1 ? ` on ${app.pages.length} pages` : '')
 			+ (wrong ? ` · ${wrong} need${wrong === 1 ? 's' : ''} setting up` : ''));
 	if (wrong) status.classList.add('is-warn');
+	const share = el('button', {
+		type: 'button', className: 'ghost appd-share',
+		title: 'A link that opens this model as its app, for somebody to use in their own browser',
+	}, 'Share…');
+	share.disabled = !all.length;
+	share.addEventListener('click', () => hooks.share());
 	const run = el('button', {
 		type: 'button', className: 'primary appd-run',
 		title: 'Show the app on its own, as somebody using it sees it — Esc comes back here',
@@ -282,7 +329,7 @@ function toolbar(app) {
 	run.disabled = !all.length;
 	run.addEventListener('click', () => hooks.runApp());
 	return el('div', { className: 'toolbar appd-toolbar' },
-		pages, add, el('span', { className: 'spacer' }), status, run,
+		pages, add, el('span', { className: 'spacer' }), status, share, run,
 		infoButton('app:designer', () => appTopic('designer')));
 }
 
@@ -334,7 +381,10 @@ const ICON_PATHS = {
 	gauge: 'M2 12a6 6 0 0 1 12 0M8 12l3-4',
 	bars: 'M3 13V9M7 13V4M11 13V7M2 13h12',
 	table: 'M2 3h12v10H2zM2 6h12M2 9.5h12M6 3v10',
+	panel: 'M2 3h12v10H2zM2 6h12',
+	tabs: 'M2 5h12v8H2zM2 5V3h4v2M6 3h4v2',
 	text: 'M3 4h10M8 4v9M6 13h4',
+	image: 'M2 3h12v10H2zM2 11l4-4 3 3 2-2 3 3M10.5 6a1 1 0 1 1 0 .01',
 };
 
 function partIcon(type) {
@@ -358,10 +408,10 @@ function palette() {
 			if (spec.group !== g.id) continue;
 			const b = el('button', {
 				type: 'button', className: 'appd-pal-item', draggable: true,
-				title: `Drag onto the page, or click to add a ${spec.name.toLowerCase()} where there is room`,
+				title: `Drag onto the page or into a panel, or click to add a ${spec.name.toLowerCase()} where there is room`,
 			}, partIcon(type), el('span', {}, spec.name));
 			b.dataset.type = type;
-			b.addEventListener('click', () => addPart(type));
+			b.addEventListener('click', () => addPart(type, addWhere()));
 			b.addEventListener('dragstart', (ev) => {
 				fromList = type;
 				ev.dataTransfer.effectAllowed = 'copy';
@@ -371,25 +421,19 @@ function palette() {
 			});
 			b.addEventListener('dragend', () => {
 				fromList = null;
-				hideGhost();
+				hideGhosts();
 			});
 			box.append(b);
 		}
 	}
 	box.append(el('p', { className: 'hint appd-pal-hint' },
-		'Or drag a parameter out of the tree for a slider over it, and anything else for a chart of it.'));
+		'Or drag a parameter out of the tree for a slider over it, anything else for a chart of it, and a picture file for a picture.'));
 	return box;
 }
 
 // --- the page ---------------------------------------------------------------------------
 
-/** Puts an element on the grid at a box of cells. */
-export function placeOnGrid(node, box) {
-	node.style.gridColumn = `${box.x + 1} / span ${box.w}`;
-	node.style.gridRow = `${box.y + 1} / span ${box.h}`;
-}
-
-/** The cell under a point of the window, and the pitch the grid is drawn at. */
+/** The cell under a point of the window, on one grid. */
 function cellAt(grid, x, y) {
 	const r = grid.getBoundingClientRect();
 	const pitchX = (r.width + GAP) / apps.APP_COLUMNS;
@@ -404,14 +448,17 @@ function currentPage(app) {
 	return app?.pages?.[view.page] ?? { name: 'Main', components: [] };
 }
 
+/** The look the app wears, on whatever it is drawn into. */
+export function wearTheme(node, app) {
+	const theme = app?.theme ?? 'standard';
+	if (theme === 'standard') delete node.dataset.appTheme;
+	else node.dataset.appTheme = theme;
+}
+
 function canvas(app) {
 	const page = currentPage(app);
-	const grid = el('div', { className: 'app-grid appd-grid' });
-	grid.style.setProperty('--rows', String(apps.rowsOf(page.components) + ROOM_BELOW));
 	const ctx = hooks.context();
-	// In the order the running app is read in, so Tab walks the page the same way.
-	for (const c of apps.stackOrder(page.components)) grid.append(partOnPage(c, ctx, grid, page));
-	grid.append(el('div', { className: 'appd-ghost', hidden: true, 'aria-hidden': 'true' }));
+	const grid = gridFor(page.components, pageWhere(), apps.rowsOf(page.components) + ROOM_BELOW, ctx, true);
 	grid.addEventListener('pointerdown', (ev) => {
 		// The page itself, not a part on it: nothing is selected.
 		if (ev.target === grid) {
@@ -420,10 +467,25 @@ function canvas(app) {
 		}
 	});
 	grid.tabIndex = -1;
-	wireDrop(grid);
 	// Inside the grid, so that a drag over what it says is a drag over the page.
 	if (!page.components.length) grid.append(emptyPage(app));
-	return el('div', { className: 'appd-canvas' }, grid);
+	const box = el('div', { className: 'appd-canvas app-themed' }, grid);
+	wearTheme(box, app);
+	return box;
+}
+
+/**
+ * One grid of the canvas: its parts, in the order they are read in, a ghost
+ * for what would land on it, and what a drop on it does.
+ */
+function gridFor(list, where, rows, ctx, top = false) {
+	const grid = el('div', { className: `app-grid appd-grid${top ? '' : ' appd-inner-grid app-inner-grid'}` });
+	grid.style.setProperty('--rows', String(Math.max(1, rows)));
+	gridWhere.set(grid, where);
+	for (const c of apps.stackOrder(list)) grid.append(partOnPage(c, grid, list, where, ctx));
+	grid.append(el('div', { className: 'appd-ghost', hidden: true, 'aria-hidden': 'true' }));
+	wireDrop(grid);
+	return grid;
 }
 
 /** What an empty page says, and the way to fill it. */
@@ -445,20 +507,105 @@ function emptyPage(app) {
 
 function startFromModel() {
 	edit('start an app from the model', (raw) => {
-		raw.app = ai.starterApp(raw, hooks.outputs());
+		// The look the app had, where it had one: starting its parts again is
+		// not choosing another style.
+		const theme = apps.readApp(raw)?.theme ?? 'standard';
+		raw.app = { ...ai.starterApp(raw, hooks.outputs()), theme };
 		view.page = 0;
 		view.selected = null;
 	});
 }
 
-function partOnPage(c, ctx, grid, page) {
-	const widget = buildComponent(c, ctx);
-	const body = el('div', { className: 'appd-part-body' }, widget.node);
-	// Drawn, not used: see ./appwidgets.js.
-	body.inert = true;
+/**
+ * A container's inside, as the designer draws it: its title or its tabs, live
+ * -- a tab is chosen here to put parts on it -- over a grid of its own that
+ * takes drops and holds parts that move and resize as the page's do.
+ */
+function containerBody(c, where, ctx) {
+	const slot = c.type === 'tabs' ? tabShown(c) : 0;
+	const inner = gridFor(apps.slotsOf(c)[slot], { page: where.page, parent: c.id, slot }, c.h - 1, ctx);
+	let head;
+	if (c.type === 'panel') {
+		head = el('div', { className: 'app-part-head app-container-head' },
+			el('span', { className: 'app-part-label' }, c.title || 'Panel'));
+	} else {
+		head = el('div', { className: 'app-tab-strip appd-tab-strip', role: 'tablist' });
+		c.tabs.forEach((t, i) => {
+			const b = el('button', {
+				type: 'button', role: 'tab', className: `app-tab${i === slot ? ' is-on' : ''}`, 'aria-selected': String(i === slot),
+				title: 'Show this tab to put parts on it; right-click to rename, move or delete it',
+			}, t.name);
+			// A press on a tab is a choice of tab, not the start of a drag of the set.
+			b.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+			b.addEventListener('click', () => {
+				view.tabs.set(c.id, i);
+				view.selected = c.id;
+				renderAppDesigner(host, hooks);
+			});
+			b.addEventListener('contextmenu', (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				tabMenu(c, i, ev);
+			});
+			head.append(b);
+		});
+		const add = el('button', { type: 'button', className: 'app-tab appd-tab-add', title: 'Add a tab', 'aria-label': 'Add a tab' }, '+');
+		add.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+		add.addEventListener('click', () => edit('add a tab', (raw) => {
+			const at = apps.addTab(raw, c.id);
+			if (at >= 0) view.tabs.set(c.id, at);
+			view.selected = c.id;
+		}));
+		head.append(add);
+	}
+	return el('div', { className: `app-part app-${c.type} appd-container-body` }, head, inner);
+}
+
+function tabMenu(c, i, ev) {
+	const n = c.tabs.length;
+	openMenu({
+		x: ev.clientX, y: ev.clientY, title: c.tabs[i].name,
+		items: [
+			{
+				label: 'Rename…', onPick: () => {
+					view.selected = c.id;
+					view.tabs.set(c.id, i);
+					renderAppDesigner(host, hooks);
+					const box = host.querySelector(`[data-prop="tab-name-${i}"]`);
+					box?.focus();
+					box?.select();
+				},
+			},
+			{ label: 'Move left', disabled: i === 0, onPick: () => edit('move a tab', (raw) => { if (apps.moveTab(raw, c.id, i, i - 1)) view.tabs.set(c.id, i - 1); }) },
+			{ label: 'Move right', disabled: i === n - 1, onPick: () => edit('move a tab', (raw) => { if (apps.moveTab(raw, c.id, i, i + 1)) view.tabs.set(c.id, i + 1); }) },
+			{ separator: true },
+			{
+				label: 'Delete the tab', danger: true, disabled: n <= 1,
+				hint: n <= 1 ? 'a set of tabs has one at least' : `${c.tabs[i].components.length} part(s) go with it`,
+				onPick: () => edit('delete a tab', (raw) => {
+					apps.removeTab(raw, c.id, i);
+					view.tabs.set(c.id, Math.max(0, i - 1));
+				}),
+			},
+		],
+	});
+}
+
+function partOnPage(c, grid, list, where, ctx) {
+	const container = apps.CONTAINER_TYPES.has(c.type);
+	let widget = null;
+	let body;
+	if (container) {
+		body = containerBody(c, where, ctx);
+	} else {
+		widget = buildComponent(c, ctx);
+		body = el('div', { className: 'appd-part-body' }, widget.node);
+		// Drawn, not used: see ./appwidgets.js.
+		body.inert = true;
+	}
 	const name = apps.COMPONENTS[c.type].name;
 	const item = el('div', {
-		className: `app-item appd-item${view.selected === c.id ? ' is-selected' : ''}`,
+		className: `app-item appd-item${container ? ' appd-container' : ''}${view.selected === c.id ? ' is-selected' : ''}`,
 		tabIndex: 0, role: 'button',
 		'aria-label': `${name}${c.label || c.title ? `: ${c.label || c.title}` : ''} — arrow keys move it, shift and an arrow resizes it`,
 	}, body,
@@ -467,22 +614,26 @@ function partOnPage(c, ctx, grid, page) {
 	item.dataset.id = c.id;
 	if (ctx.problemOf(c)) item.classList.add('has-problem');
 	placeOnGrid(item, c);
-	drawn.push({ id: c.id, c, widget, item });
+	drawn.push({ id: c.id, c, widget, item, grid, list });
+	// A part inside a container is inside that container's item too: every
+	// handler here answers only for what is its own.
+	const mine = (ev) => ev.target?.closest?.('.appd-item') === item;
 
 	item.addEventListener('pointerdown', (ev) => {
-		if (ev.button !== 0) return;
+		if (ev.button !== 0 || !mine(ev)) return;
 		ev.preventDefault();
 		// The focus first, which saves a field being typed into; then the
 		// settings of this part in place of that field's.
 		item.focus({ preventScroll: true });
 		select(c.id);
 		gesture = {
-			id: c.id, type: c.type, page, grid, item,
+			id: c.id, type: c.type, list, grid, item,
 			resize: !!ev.target.closest?.('.appd-handle'),
 			x0: ev.clientX, y0: ev.clientY,
 			cell: cellAt(grid, ev.clientX, ev.clientY),
 			from: { x: c.x, y: c.y, w: c.w, h: c.h },
 			box: { x: c.x, y: c.y, w: c.w, h: c.h },
+			into: null,
 			moved: false, pointer: ev.pointerId,
 		};
 		// A pointer the browser is not tracking -- an event made by a script --
@@ -497,10 +648,33 @@ function partOnPage(c, ctx, grid, page) {
 			g.moved = true;
 			item.classList.add(g.resize ? 'is-resizing' : 'is-moving');
 		}
-		const at = cellAt(grid, ev.clientX, ev.clientY);
-		const dc = at.col - g.cell.col;
-		const dr = at.row - g.cell.row;
 		const f = g.from;
+		// Over another grid -- into a panel, out of one, into another -- a
+		// ghost says where it would go, and its own grid is as it was.
+		//
+		// Asked of the grid as it was, not as the preview has it: the
+		// preview moves what the part is dragged over out of its way, and a
+		// panel it is dragged towards was pushed down ahead of the pointer
+		// and never under it to be dropped into.
+		let under = null;
+		if (!g.resize) {
+			for (const d of drawn) if (d.grid === grid) placeOnGrid(d.item, d.c);
+			under = gridUnder(ev.clientX, ev.clientY, item);
+		}
+		if (under && under !== grid) {
+			const at = cellAt(under, ev.clientX, ev.clientY);
+			const box = apps.clampBox(g.type, { x: Math.min(at.col, apps.APP_COLUMNS - f.w), y: Math.max(0, at.row), w: f.w, h: f.h });
+			g.into = { grid: under, where: gridWhere.get(under), box };
+			hideGhosts();
+			showGhost(under, box);
+			keepInView(ev.clientY);
+			return;
+		}
+		g.into = null;
+		hideGhosts();
+		const now2 = cellAt(grid, ev.clientX, ev.clientY);
+		const dc = now2.col - g.cell.col;
+		const dr = now2.row - g.cell.row;
 		g.box = g.resize
 			? apps.clampBox(g.type, { x: f.x, y: f.y, w: f.w + dc, h: f.h + dr }, { keepLeft: true })
 			: apps.clampBox(g.type, { x: f.x + dc, y: f.y + dr, w: f.w, h: f.h });
@@ -512,10 +686,15 @@ function partOnPage(c, ctx, grid, page) {
 		if (!g || g.pointer !== ev.pointerId || g.id !== c.id) return;
 		gesture = null;
 		item.classList.remove('is-moving', 'is-resizing');
+		hideGhosts();
+		if (g.moved && keep && g.into?.where) {
+			edit('move a part', (raw) => apps.moveComponent(raw, c.id, g.into.where, { x: g.into.box.x, y: g.into.box.y }));
+			return;
+		}
 		const same = ['x', 'y', 'w', 'h'].every((k) => g.box[k] === g.from[k]);
 		if (!g.moved || !keep || same) {
 			// Put back what the preview moved.
-			for (const d of drawn) placeOnGrid(d.item, d.c);
+			for (const d of drawn) if (d.grid === grid) placeOnGrid(d.item, d.c);
 			return;
 		}
 		edit(g.resize ? 'resize a part' : 'move a part', (raw) => apps.placeComponent(raw, c.id, g.box));
@@ -549,17 +728,24 @@ function partOnPage(c, ctx, grid, page) {
 	});
 
 	item.addEventListener('contextmenu', (ev) => {
+		if (!mine(ev)) return;
 		ev.preventDefault();
+		ev.stopPropagation();
 		select(c.id);
 		const app = apps.readApp(hooks.raw());
+		const nested = !!where.parent;
 		openMenu({
 			x: ev.clientX, y: ev.clientY, title: name,
 			items: [
 				{ label: 'Duplicate', hint: '⌘D', onPick: () => duplicatePart(c.id) },
+				...(nested ? [{
+					label: 'Take it out onto the page',
+					onPick: () => edit('move a part onto the page', (raw) => apps.moveComponent(raw, c.id, pageWhere())),
+				}] : []),
 				...(app && app.pages.length > 1 ? [{
 					label: 'Move to page',
 					items: app.pages.map((p, i) => ({
-						label: p.name, disabled: i === view.page,
+						label: p.name, disabled: i === view.page && !nested,
 						onPick: () => edit('move a part to another page', (raw) => apps.moveComponentToPage(raw, c.id, i)),
 					})),
 				}] : []),
@@ -571,15 +757,26 @@ function partOnPage(c, ctx, grid, page) {
 	return item;
 }
 
-/** Every part where it would be with the one in hand where the pointer is. */
+/** The innermost grid of the canvas under a point, other than any inside `item`. */
+function gridUnder(x, y, item) {
+	for (const n of document.elementsFromPoint(x, y)) {
+		if (n.classList?.contains('appd-grid') && !item.contains(n) && host.contains(n)) return n;
+	}
+	return null;
+}
+
+/** Every part of the grid in hand where it would be with the one in hand where the pointer is. */
 function preview(g) {
-	const items = g.page.components.map((c) => (c.id === g.id ? { ...c, ...g.box } : c));
+	const items = g.list.map((c) => (c.id === g.id ? { ...c, ...g.box } : c));
 	const where = apps.settle(items, g.id);
 	for (const d of drawn) {
+		if (d.grid !== g.grid) continue;
 		const at = where.get(d.id);
 		if (at) placeOnGrid(d.item, at);
 	}
-	g.grid.style.setProperty('--rows', String(apps.rowsOf([...where.values()]) + ROOM_BELOW));
+	if (!g.grid.classList.contains('appd-inner-grid')) {
+		g.grid.style.setProperty('--rows', String(apps.rowsOf([...where.values()]) + ROOM_BELOW));
+	}
 }
 
 /** Scrolls the page when a part is dragged against its top or bottom edge. */
@@ -594,33 +791,39 @@ function keepInView(y) {
 
 // --- dropping onto the page --------------------------------------------------------------------
 
-function ghostEl() {
-	return host?.querySelector('.appd-ghost') ?? null;
+/** The ghost of one grid: its own child, not one of an inner grid's. */
+function ghostOf(grid) {
+	return [...grid.children].find((n) => n.classList.contains('appd-ghost')) ?? null;
 }
 
-function showGhost(box) {
-	const g = ghostEl();
+function showGhost(grid, box) {
+	const g = ghostOf(grid);
 	if (!g) return;
 	g.hidden = false;
 	placeOnGrid(g, box);
 }
 
-function hideGhost() {
-	const g = ghostEl();
-	if (g) g.hidden = true;
+function hideGhosts() {
+	for (const g of host?.querySelectorAll('.appd-ghost') ?? []) g.hidden = true;
+}
+
+/** Whether a drag carries picture files, which a drop on the page makes pictures of. */
+export function carriesPictures(ev) {
+	const items = [...(ev.dataTransfer?.items ?? [])];
+	return items.length > 0 && items.some((i) => i.kind === 'file' && PICTURE_TYPES.includes(i.type));
 }
 
 /** What is being dragged over the page, if it is anything the page takes. */
-function dragging() {
+function dragging(ev) {
 	if (fromList) return { kind: 'part', type: fromList };
+	if (carriesPictures(ev)) return { kind: 'picture', type: 'image' };
 	const names = hooks.treeNames?.() ?? [];
-	if (names.length) return { kind: 'tree', names };
+	if (names.length) return { kind: 'tree', type: treeType(names), names };
 	return null;
 }
 
 /** The box a drop would fill, with its top-left in the cell under the pointer. */
-function dropBox(grid, what, ev) {
-	const type = what.kind === 'part' ? what.type : treeType(what.names);
+function dropBox(grid, type, ev) {
 	const spec = apps.COMPONENTS[type];
 	const at = cellAt(grid, ev.clientX, ev.clientY);
 	return apps.clampBox(type, {
@@ -635,26 +838,47 @@ function treeType(names) {
 }
 
 function wireDrop(grid) {
+	// A container's grid is inside the page's: only the innermost under the
+	// pointer takes the drag, and the page's own drop -- a model file -- does
+	// not take a picture meant for this one.
+	const innermost = (ev) => ev.target?.closest?.('.appd-grid') === grid;
+	grid.addEventListener('dragenter', (ev) => {
+		if (!innermost(ev) || !dragging(ev)) return;
+		ev.preventDefault();
+		if (carriesPictures(ev)) ev.stopPropagation();
+	});
 	grid.addEventListener('dragover', (ev) => {
-		const what = dragging();
+		if (!innermost(ev)) return;
+		const what = dragging(ev);
 		if (!what) return;
 		ev.preventDefault();
-		// What the source allows: the list offers a copy, the tree a move.
-		ev.dataTransfer.dropEffect = what.kind === 'part' ? 'copy' : 'move';
-		showGhost(dropBox(grid, what, ev));
+		if (what.kind === 'picture') ev.stopPropagation();
+		// What the source allows: the list and a file offer a copy, the tree a move.
+		ev.dataTransfer.dropEffect = what.kind === 'tree' ? 'move' : 'copy';
+		hideGhosts();
+		showGhost(grid, dropBox(grid, what.type, ev));
 	});
 	grid.addEventListener('dragleave', (ev) => {
-		if (!grid.contains(ev.relatedTarget)) hideGhost();
+		const ghost = ghostOf(grid);
+		if (ghost && !grid.contains(ev.relatedTarget)) ghost.hidden = true;
 	});
 	grid.addEventListener('drop', (ev) => {
-		const what = dragging();
-		hideGhost();
+		if (!innermost(ev)) return;
+		const what = dragging(ev);
+		hideGhosts();
 		if (!what) return;
 		ev.preventDefault();
-		const box = dropBox(grid, what, ev);
+		ev.stopPropagation();
+		const box = dropBox(grid, what.type, ev);
+		const where = gridWhere.get(grid);
 		fromList = null;
-		if (what.kind === 'part') { addPart(what.type, { x: box.x, y: box.y }); return; }
-		dropFromTree(what.names, box);
+		if (what.kind === 'part') { addPart(what.type, where, { x: box.x, y: box.y }); return; }
+		if (what.kind === 'picture') {
+			const file = [...(ev.dataTransfer?.files ?? [])].find((f) => PICTURE_TYPES.includes(f.type));
+			if (file) addPicture(file, where, { x: box.x, y: box.y });
+			return;
+		}
+		dropFromTree(what.names, box, where);
 	});
 }
 
@@ -664,7 +888,7 @@ function wireDrop(grid) {
  * lists -- stacked down from where they were dropped, and one chart of
  * everything else beside them.
  */
-function dropFromTree(names, box) {
+function dropFromTree(names, box, where) {
 	const raw = hooks.raw();
 	const params = [];
 	const shown = [];
@@ -681,7 +905,7 @@ function dropFromTree(names, box) {
 		for (const p of params.slice(0, 12)) {
 			const target = p.dims.length ? { kind: 'value', block: p.name, factor: true } : { kind: 'value', block: p.name };
 			const range = ai.defaultRange(r, target);
-			last = apps.addComponent(r, view.page, 'slider', {
+			last = apps.addComponent(r, where, 'slider', {
 				at: { x: box.x, y },
 				props: { target, min: range.min, max: range.max, scale: range.scale },
 			});
@@ -689,7 +913,7 @@ function dropFromTree(names, box) {
 		}
 		if (shown.length) {
 			const beside = params.length ? Math.min(box.x + apps.COMPONENTS.slider.w, apps.APP_COLUMNS - apps.COMPONENTS.chart.minW) : box.x;
-			last = apps.addComponent(r, view.page, 'chart', {
+			last = apps.addComponent(r, where, 'chart', {
 				at: { x: beside, y: box.y },
 				props: {
 					w: Math.min(apps.COMPONENTS.chart.w, apps.APP_COLUMNS - beside),
@@ -699,6 +923,66 @@ function dropFromTree(names, box) {
 		}
 		view.selected = last;
 	});
+}
+
+// --- pictures ------------------------------------------------------------------------------
+
+/** A file's contents as a data address. */
+function readAsData(blob) {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result));
+		reader.onerror = () => reject(reader.error ?? new Error('The file could not be read.'));
+		reader.readAsDataURL(blob);
+	});
+}
+
+/**
+ * A picture file as what an app keeps: the file itself where it is small, and
+ * otherwise drawn again at most `PICTURE_SIDE` on its longer side, as WebP
+ * where the browser writes it and JPEG where not -- a model file carries its
+ * pictures, and a photograph straight off a camera would be most of it.
+ *
+ * @returns {Promise<string>} the data address
+ */
+export async function pictureFromFile(file) {
+	if (!PICTURE_TYPES.includes(file.type)) {
+		throw new Error('A picture has to be a PNG, JPEG, GIF, WebP or SVG file.');
+	}
+	if (file.size <= PICTURE_AS_IS) {
+		const data = await readAsData(file);
+		if (apps.readImageSrc(data)) return data;
+	}
+	if (file.type === 'image/svg+xml') {
+		throw new Error(`That drawing is too large for a picture on an app: ${Math.round(PICTURE_AS_IS / 1000)} kB at most.`);
+	}
+	const bitmap = await createImageBitmap(file);
+	for (const [side, quality] of [[PICTURE_SIDE, 0.85], [1200, 0.75], [800, 0.7]]) {
+		const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+		const canvasEl = el('canvas', { width: Math.max(1, Math.round(bitmap.width * scale)), height: Math.max(1, Math.round(bitmap.height * scale)) });
+		canvasEl.getContext('2d').drawImage(bitmap, 0, 0, canvasEl.width, canvasEl.height);
+		let data = canvasEl.toDataURL('image/webp', quality);
+		if (!data.startsWith('data:image/webp')) data = canvasEl.toDataURL('image/jpeg', quality);
+		if (apps.readImageSrc(data)) return data;
+	}
+	throw new Error('That picture is too large for an app, even made smaller.');
+}
+
+/** A picture dropped or chosen: a new Picture part, or the picture of one already there. */
+async function addPicture(file, where, at, onto = null) {
+	let src;
+	try {
+		src = await pictureFromFile(file);
+	} catch (e) {
+		hooks.flash(e?.message ?? String(e), 'warn');
+		return;
+	}
+	const alt = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
+	if (onto) {
+		patch(onto, (cur) => ({ src, alt: cur.alt || alt }), 'choose a picture');
+		return;
+	}
+	addPart('image', where, at, { src, alt });
 }
 
 // --- keeping the caret across a redraw ---------------------------------------------------------
@@ -797,10 +1081,18 @@ function tick(prop, checked, commit, label) {
 	return el('label', { className: 'appd-tick' }, box, label);
 }
 
+/** A small button of the form, found again by its `prop` after a redraw. */
+function formButton(text, prop, onClick, { danger = false, title = '' } = {}) {
+	const b = el('button', { type: 'button', className: `ghost appd-small${danger ? ' appd-danger' : ''}`, title }, text);
+	b.dataset.prop = prop;
+	b.addEventListener('click', onClick);
+	return b;
+}
+
 function properties(app) {
 	const box = el('aside', { className: 'appd-props', 'aria-label': 'Settings' });
 	const found = view.selected ? apps.findComponent(app, view.selected) : null;
-	if (found) box.append(...partSettings(app, found.component));
+	if (found) box.append(...partSettings(app, found.component, found));
 	else box.append(...appSettings(app));
 	return box;
 }
@@ -809,7 +1101,10 @@ function heading(text, key) {
 	return el('div', { className: 'appd-props-head' }, el('b', {}, text), el('span', { className: 'spacer' }), key ? info(key) : null);
 }
 
-function partSettings(app, c) {
+const BUTTON_ACTIONS = [['run', 'Run the model'], ['sample', 'Run the spread'], ['reset', 'Put the controls back']];
+const BUTTON_PLACEHOLDER = { run: 'Run', sample: 'Run the spread', reset: 'Reset' };
+
+function partSettings(app, c, found) {
 	const spec = apps.COMPONENTS[c.type];
 	const out = [heading(spec.name, `part:${c.type}`)];
 	const problem = hooks.context().problemOf(c);
@@ -819,13 +1114,20 @@ function partSettings(app, c) {
 		out.push(...targetRows(c));
 		out.push(...inputRows(c));
 	} else if (c.type === 'button') {
-		out.push(row('Does', choice('action', [['run', 'Run the model'], ['reset', 'Put the controls back']], c.action,
-			(v) => patch(c, { action: v }))));
-		out.push(row('Label', textBox('label', c.label, (v) => patch(c, { label: v }), { placeholder: c.action === 'reset' ? 'Reset' : 'Run' })));
+		out.push(row('Does', choice('action', BUTTON_ACTIONS, c.action, (v) => patch(c, { action: v }))));
+		out.push(row('Label', textBox('label', c.label, (v) => patch(c, { label: v }), { placeholder: BUTTON_PLACEHOLDER[c.action] })));
+		if (c.action === 'sample') out.push(el('p', { className: 'hint appd-note' }, spreadNote(app)));
 	} else if (spec.group === 'output') {
 		out.push(row('Title', textBox('title', c.title, (v) => patch(c, { title: v }), { placeholder: 'from what it shows' })));
 		out.push(...seriesRows(c));
-		out.push(...outputRows(c));
+		out.push(...outputRows(c, app));
+	} else if (c.type === 'panel') {
+		out.push(row('Title', textBox('title', c.title, (v) => patch(c, { title: v }), { placeholder: 'none' })));
+		out.push(el('p', { className: 'hint appd-note' }, 'Drag parts into it, or select it and click one in the list on the left.'));
+	} else if (c.type === 'tabs') {
+		out.push(...tabRows(c));
+	} else if (c.type === 'image') {
+		out.push(...pictureRows(c));
 	} else {
 		const words = textBox('text', c.text, (v) => patch(c, { text: v }), { area: true, placeholder: '**Bold**, *italic*, lists starting - ' });
 		words.maxLength = apps.TEXT_MAX;
@@ -835,7 +1137,52 @@ function partSettings(app, c) {
 		out.push(row('Align', choice('align', [['left', 'Left'], ['center', 'Centre'], ['right', 'Right']],
 			c.align, (v) => patch(c, { align: v }))));
 	}
-	out.push(placeRows(app, c));
+	out.push(placeRows(app, c, found));
+	return out;
+}
+
+/** A set of tabs' own tabs: a name each, their order, and one more. */
+function tabRows(c) {
+	const out = [el('div', { className: 'appd-sub' }, 'Tabs')];
+	c.tabs.forEach((t, i) => {
+		const name = textBox(`tab-name-${i}`, t.name, (v) => edit('rename a tab', (raw) => apps.renameTab(raw, c.id, i, v)));
+		const up = el('button', { type: 'button', className: 'ghost appd-x', title: 'Move the tab left', 'aria-label': 'Move the tab left' }, '↑');
+		up.disabled = i === 0;
+		up.addEventListener('click', () => edit('move a tab', (raw) => { if (apps.moveTab(raw, c.id, i, i - 1)) view.tabs.set(c.id, i - 1); }));
+		const drop = el('button', { type: 'button', className: 'ghost appd-x', title: 'Delete the tab and what is on it', 'aria-label': 'Delete the tab' }, '×');
+		drop.disabled = c.tabs.length <= 1;
+		drop.addEventListener('click', () => edit('delete a tab', (raw) => {
+			apps.removeTab(raw, c.id, i);
+			view.tabs.set(c.id, Math.max(0, i - 1));
+		}));
+		out.push(el('div', { className: 'appd-option appd-tab-row' }, name, up, drop));
+	});
+	const add = formButton('Add a tab', 'tab-add', () => edit('add a tab', (raw) => {
+		const at = apps.addTab(raw, c.id);
+		if (at >= 0) view.tabs.set(c.id, at);
+	}));
+	add.disabled = c.tabs.length >= apps.MAX_TABS;
+	out.push(el('div', { className: 'appd-actions' }, add));
+	out.push(el('p', { className: 'hint appd-note' }, 'Choose a tab on the page to put parts on it.'));
+	return out;
+}
+
+/** A picture's settings: the picture, what it shows, how it fills its box. */
+function pictureRows(c) {
+	const pick = el('input', { type: 'file', accept: PICTURE_TYPES.join(','), hidden: true });
+	pick.addEventListener('change', () => {
+		const file = pick.files?.[0];
+		if (file) addPicture(file, null, null, c);
+	});
+	const choose = formButton(c.src ? 'Another picture…' : 'Choose a picture…', 'picture-choose', () => pick.click(),
+		{ title: 'A PNG, JPEG, GIF, WebP or SVG file. A large one is made smaller: the model file carries it.' });
+	const clear = formButton('Remove it', 'picture-clear', () => patch(c, { src: '' }, 'remove a picture'), { danger: true });
+	clear.disabled = !c.src;
+	const out = [el('div', { className: 'appd-actions' }, choose, clear, pick)];
+	if (c.src) out.push(el('p', { className: 'hint appd-note' }, `${Math.round((c.src.length * 3) / 4 / 1000).toLocaleString()} kB in the model file.`));
+	out.push(row('Describes', textBox('alt', c.alt, (v) => patch(c, { alt: v }), { placeholder: 'what it shows, for a screen reader' })));
+	out.push(row('Fits', choice('fit', [['contain', 'shown whole'], ['cover', 'filling the box']], c.fit, (v) => patch(c, { fit: v }))));
+	out.push(row('Caption', textBox('caption', c.caption, (v) => patch(c, { caption: v }), { placeholder: 'none' })));
 	return out;
 }
 
@@ -922,14 +1269,10 @@ function inputRows(c) {
 		out.push(row('Scale', choice('scale', [['linear', 'Linear'], ['log', 'Logarithmic']], c.scale, (v) => patch(c, { scale: v }))));
 		if (c.scale !== 'log') out.push(row('Step', numberBox('step', c.step, (v) => patch(c, { step: v }), { placeholder: 'smooth' })));
 		if (c.target) {
-			const again = el('button', { type: 'button', className: 'ghost appd-small' }, 'Range from the model');
-			again.dataset.prop = 'range-again';
-			again.title = 'The parameter’s distribution where it has one, and a decade either side of its value where not';
-			again.addEventListener('click', () => patch(c, (cur) => {
+			out.push(el('div', { className: 'appd-actions' }, formButton('Range from the model', 'range-again', () => patch(c, (cur) => {
 				const r = ai.defaultRange(hooks.raw(), cur.target);
 				return { min: r.min, max: r.max, scale: r.scale };
-			}, 'set a range'));
-			out.push(el('div', { className: 'appd-actions' }, again));
+			}, 'set a range'), { title: 'The parameter’s distribution where it has one, and a decade either side of its value where not' })));
 		}
 	}
 	if (c.type === 'number') {
@@ -956,15 +1299,13 @@ function inputRows(c) {
 			drop.addEventListener('click', () => patch(c, each((list) => list.filter((_, j) => j !== k))));
 			out.push(el('div', { className: 'appd-option' }, label, value, drop));
 		});
-		const add = el('button', { type: 'button', className: 'ghost appd-small' }, 'Add a choice');
-		add.dataset.prop = 'opt-add';
-		add.disabled = opts.length >= apps.MAX_OPTIONS;
-		add.addEventListener('click', () => patch(c, each((list) => {
+		const add = formButton('Add a choice', 'opt-add', () => patch(c, each((list) => {
 			const v = ai.modelValue(hooks.raw(), c.target);
 			const base = list.length ? list[list.length - 1].value : (Number.isFinite(v) ? v : 0);
 			const next = list.length ? (base === 0 ? 1 : base * 10) : base;
 			return [...list, { label: '', value: next }];
 		}), 'add a choice'));
+		add.disabled = opts.length >= apps.MAX_OPTIONS;
 		out.push(el('div', { className: 'appd-actions' }, add));
 	}
 	if ((c.type === 'dropdown' || c.type === 'radio') && c.target?.kind === 'scenario') {
@@ -993,15 +1334,13 @@ function seriesRows(c) {
 	const refs = c.series ?? [];
 	refs.forEach((ref, k) => out.push(seriesRow(c, refs, k, choices, single)));
 	if (!single || !refs.length) {
-		const add = el('button', { type: 'button', className: 'ghost appd-small' }, single ? 'Choose a series' : 'Add a series');
-		add.dataset.prop = 'series-add';
-		add.disabled = !choices.length || refs.length >= apps.MAX_SERIES;
-		add.addEventListener('click', () => patch(c, (cur) => {
+		const add = formButton(single ? 'Choose a series' : 'Add a series', 'series-add', () => patch(c, (cur) => {
 			const have = cur.series ?? [];
 			const used = new Set(have.map((r) => r.block));
 			const pick = choices.find((x) => !used.has(x.block) && x.kind !== 'parameter') ?? choices[0];
 			return { series: [...have, refFor(pick, single)] };
 		}, 'add a series'));
+		add.disabled = !choices.length || refs.length >= apps.MAX_SERIES;
 		out.push(el('div', { className: 'appd-actions' }, add));
 	}
 	return out;
@@ -1052,25 +1391,43 @@ function seriesRow(c, refs, k, choices, single) {
 	return out;
 }
 
-function outputRows(c) {
+/** Where a result reading a sample stands: which sample, and when it runs. */
+function spreadNote(app) {
+	const n = (app?.realisations ?? 200).toLocaleString();
+	return app?.spread_when === 'change'
+		? `The spread is sampled, ${n} realisations, after every change of a control: see the app’s settings.`
+		: `The spread is sampled, ${n} realisations, when Run the spread is pressed: see the app’s settings.`;
+}
+
+function outputRows(c, app) {
 	const out = [];
 	const stat = () => {
 		const s = row('Reads', choice('statistic', Object.entries(apps.STATISTICS), c.statistic, (v) => patch(c, { statistic: v })), info('statistic'));
 		out.push(s);
 		if (c.statistic === 'at') out.push(row('At time', numberBox('at', c.at, (v) => patch(c, { at: v }), { placeholder: hooks.raw()?.simulation?.time_unit ?? 'year' })));
 	};
+	const curve = () => {
+		out.push(row('Of', choice('curve', Object.entries(apps.CURVES), c.curve, (v) => patch(c, { curve: v })), info('spread')));
+		if (c.curve !== 'run') out.push(el('p', { className: 'hint appd-note' }, spreadNote(app)));
+	};
 	if (c.type === 'chart') {
 		out.push(row('X axis', choice('x_scale', [['log', 'Logarithmic'], ['linear', 'Linear']], c.x_scale, (v) => patch(c, { x_scale: v }))));
 		out.push(row('Y axis', choice('y_scale', [['log', 'Logarithmic'], ['linear', 'Linear']], c.y_scale, (v) => patch(c, { y_scale: v }))));
-		out.push(el('div', { className: 'appd-actions' }, tick('legend', c.legend, (v) => patch(c, { legend: v }), 'A legend under two or more lines')));
+		out.push(row('Spread', choice('spread', [['none', 'none'], ['bands', 'percentile bands']], c.spread, (v) => patch(c, { spread: v })), info('spread')));
+		out.push(el('div', { className: 'appd-actions' },
+			tick('mean', c.mean, (v) => patch(c, { mean: v }), 'The mean of the realisations, as a line'),
+			tick('legend', c.legend, (v) => patch(c, { legend: v }), 'A legend under two or more lines')));
+		if (c.spread !== 'none' || c.mean) out.push(el('p', { className: 'hint appd-note' }, spreadNote(app)));
 	}
 	if (c.type === 'value') {
 		stat();
+		curve();
 		out.push(row('Digits', numberBox('digits', c.digits, (v) => patch(c, { digits: v ?? 3 }))));
 		out.push(row('Limit', numberBox('limit', c.limit, (v) => patch(c, { limit: v }), { placeholder: 'none' })));
 	}
 	if (c.type === 'gauge') {
 		stat();
+		curve();
 		out.push(row('Min', numberBox('min', c.min, (v) => patch(c, { min: v }), { placeholder: 'auto' })));
 		out.push(row('Max', numberBox('max', c.max, (v) => patch(c, { max: v }), { placeholder: 'auto' })));
 		out.push(row('Limit', numberBox('limit', c.limit, (v) => patch(c, { limit: v }), { placeholder: 'none' })));
@@ -1078,10 +1435,12 @@ function outputRows(c) {
 	}
 	if (c.type === 'bars') {
 		stat();
+		curve();
 		out.push(row('Scale', choice('scale', [['log', 'Logarithmic'], ['linear', 'Linear']], c.scale, (v) => patch(c, { scale: v }))));
 		out.push(el('div', { className: 'appd-actions' }, tick('sort', c.sort, (v) => patch(c, { sort: v }), 'Largest first')));
 	}
 	if (c.type === 'table') {
+		curve();
 		out.push(row('Times', textBox('times', (c.times ?? []).join(', '), (text) => {
 			const times = text.split(/[,;\s]+/).filter(Boolean).map(Number).filter(Number.isFinite);
 			patch(c, { times });
@@ -1092,7 +1451,7 @@ function outputRows(c) {
 }
 
 /** Where the part is, in cells, and what can be done with it. */
-function placeRows(app, c) {
+function placeRows(app, c, found) {
 	const cell = (key, label) => {
 		const box = numberBox(`place-${key}`, key === 'x' || key === 'y' ? c[key] + 1 : c[key], (v) => {
 			if (v == null) return;
@@ -1106,21 +1465,28 @@ function placeRows(app, c) {
 		box.setAttribute('aria-label', label);
 		return el('label', { className: 'appd-cell' }, el('span', {}, label), box);
 	};
-	const dup = el('button', { type: 'button', className: 'ghost appd-small' }, 'Duplicate');
-	dup.dataset.prop = 'part-duplicate';
-	dup.addEventListener('click', () => duplicatePart(c.id));
-	const del = el('button', { type: 'button', className: 'ghost appd-small appd-danger' }, 'Delete');
-	del.addEventListener('click', () => removePart(c.id));
+	// In cells of the grid it is on, which for a part in a container is the
+	// container's: said, since the numbers mean nothing without it.
+	const holder = found?.parent ?? null;
+	let inWhat = '';
+	if (holder?.type === 'tabs') inWhat = ` — in the tab ${holder.tabs?.[found.slot]?.name ?? ''}`;
+	else if (holder) inWhat = ` — in the panel${holder.title ? ` ${holder.title}` : ''}`;
 	const box = el('div', { className: 'appd-place' },
-		el('div', { className: 'appd-sub' }, 'Place'),
+		el('div', { className: 'appd-sub' }, `Place${inWhat}`),
 		el('div', { className: 'appd-cells' }, cell('x', 'Column'), cell('y', 'Row'), cell('w', 'Width'), cell('h', 'Height')));
-	if (app && app.pages.length > 1) {
+	if (app && app.pages.length > 1 && !found?.parent) {
 		box.append(row('Page', choice('page', app.pages.map((p, i) => [String(i), p.name]), String(view.page), (v) => {
 			const to = Number(v);
 			edit('move a part to another page', (raw) => apps.moveComponentToPage(raw, c.id, to));
 		})));
 	}
-	box.append(el('div', { className: 'appd-actions' }, dup, del));
+	const actions = [formButton('Duplicate', 'part-duplicate', () => duplicatePart(c.id))];
+	if (found?.parent) {
+		actions.push(formButton('Take it out', 'part-out', () => edit('move a part onto the page', (raw) => apps.moveComponent(raw, c.id, pageWhere())),
+			{ title: 'Onto the page, out of the panel or the tabs it is in' }));
+	}
+	actions.push(formButton('Delete', 'part-delete', () => removePart(c.id), { danger: true }));
+	box.append(el('div', { className: 'appd-actions' }, ...actions));
 	return box;
 }
 
@@ -1137,13 +1503,12 @@ function appSettings(app) {
 	const page = currentPage(app);
 	const out = [heading('Page', 'page'),
 		row('Name', textBox('page-name', page.name, (v) => edit('rename a page', (raw) => apps.renamePage(raw, view.page, v))))];
-	const del = el('button', { type: 'button', className: 'ghost appd-small appd-danger' }, 'Delete the page');
-	del.disabled = app.pages.length <= 1;
-	del.title = del.disabled ? 'An app has one page at least' : 'The parts on it go with it; Undo brings them back';
-	del.addEventListener('click', () => edit('delete a page', (raw) => {
+	const del = formButton('Delete the page', 'page-delete', () => edit('delete a page', (raw) => {
 		apps.removePage(raw, view.page);
 		view.page = Math.max(0, view.page - 1);
-	}));
+	}), { danger: true });
+	del.disabled = app.pages.length <= 1;
+	del.title = del.disabled ? 'An app has one page at least' : 'The parts on it go with it; Undo brings them back';
 	out.push(el('div', { className: 'appd-actions' }, del));
 
 	out.push(heading('App', 'app'));
@@ -1151,19 +1516,25 @@ function appSettings(app) {
 	out.push(row('Title', textBox('app-title', app.title, set('title'), { placeholder: hooks.raw()?.name ?? '' })));
 	out.push(el('div', { className: 'appd-stack' }, el('label', {}, 'Description'),
 		textBox('app-description', app.description, set('description'), { area: true, placeholder: 'What the app is for, under its title' })));
+	out.push(row('Looks', choice('app-theme', apps.THEMES.map((t) => [t.id, `${t.name}${t.mode === 'dark' ? ' (dark)' : ''}`]), app.theme, set('theme')), info('theme')));
 	out.push(row('Runs', choice('app-run', [['change', 'whenever a control changes'], ['button', 'when Run is pressed']], app.run, set('run'))));
 	out.push(row('Opens as', choice('app-open', [['editor', 'the editor'], ['app', 'the app']], app.open, set('open'))));
 	out.push(el('div', { className: 'appd-actions' }, tick('app-edit', app.edit_button, set('edit_button'), 'Offer Edit while it runs')));
-	const again = el('button', { type: 'button', className: 'ghost appd-small' }, 'Start again from the model');
-	again.title = 'Replace the app with the one the model suggests; Undo brings this one back';
-	again.addEventListener('click', startFromModel);
-	const drop = el('button', { type: 'button', className: 'ghost appd-small appd-danger' }, 'Remove the app');
-	drop.title = 'Take the app out of the model; Undo brings it back';
-	drop.addEventListener('click', () => edit('remove the app', (raw) => {
+
+	out.push(heading('The spread', 'spread'));
+	out.push(row('Realisations', numberBox('app-realisations', app.realisations, (v) => set('realisations')(v ?? 200))));
+	out.push(row('Sampled', choice('app-spread', [['button', 'when Run the spread is pressed'], ['change', 'after every change']], app.spread_when, set('spread_when'))));
+	out.push(el('p', { className: 'hint appd-note' }, 'The model run many times at the controls: a control moved from the '
+		+ 'model’s value holds its input there, a factor scales a distribution, and every other distribution is drawn '
+		+ 'from. Results read it where they ask to.'));
+
+	const again = formButton('Start again from the model', 'app-again', startFromModel,
+		{ title: 'Replace the parts with the ones the model suggests; Undo brings these back' });
+	const drop = formButton('Remove the app', 'app-remove', () => edit('remove the app', (raw) => {
 		apps.removeApp(raw);
 		view.page = 0;
 		view.selected = null;
-	}));
+	}), { danger: true, title: 'Take the app out of the model; Undo brings it back' });
 	out.push(el('div', { className: 'appd-actions' }, again, drop));
 	return out;
 }

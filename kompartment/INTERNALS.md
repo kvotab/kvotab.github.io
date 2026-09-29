@@ -5839,7 +5839,7 @@ default places.
 
 The App designer tab lays out a page of controls and results over the model,
 and *Run app* shows that page and nothing else (GUIDE.md, *Apps on a model*).
-Six files, and one section of app.js:
+Seven files, and one section of app.js:
 
 | File | What it is |
 |---|---|
@@ -5849,6 +5849,7 @@ Six files, and one section of app.js:
 | `src/ui/appdesigner.js` | The tab: the list of parts, the page and its gestures, the settings form |
 | `src/ui/apprun.js` | The app running on its own |
 | `src/ui/appinfo.js` | The (i) topics |
+| `src/io/applink.js` | A model as a link: `#m=` and the compressed file after it |
 
 **Stored as read.** `readApp` is the only reader: it keeps the keys the file
 format defines and nothing else, clamps every number to its range, reads an
@@ -5931,10 +5932,99 @@ designer -- and swallows the editor's ⌘S and ⌘Z, which are about a model its
 user is not editing. `?app` in the address, and `app.open: 'app'` in a file or
 example that is opened, start there.
 
-**Not done.** A run of the app is one deterministic run; a probabilistic run's
-bands are not drawn on it. A part holds no other parts, and a page has no
-images. An app goes wherever its model file goes, and no further: there is no
-way yet to hand one over as a link.
+**Parts that hold parts.** A panel holds one grid (`components`), a set of
+tabs one per tab (`tabs[].components`); `slotsOf` is the one place that knows
+which, and every walk goes through it. A place to put a part is `where` =
+`{ page, parent, slot }` (a bare number is a page), and `allComponents` gives
+each part with its page, its container, its slot and its depth, so an edit
+finds a part wherever it is. Containers go `MAX_NEST` (3) deep: `readComponent`
+drops one past that out of a file, and `addComponent` and `moveComponent`
+refuse -- the latter counting the levels the part in hand holds itself, and
+refusing a part into itself or into what is inside it. `readApp` makes ids
+unique across the whole tree, then tidies from the inside out: each
+container's grids settled, the container grown to the tallest (`fitBox` -- a
+row for its heading, then its rows), and then its own grid settled. An edit
+inside a container grows the containers around it (`fitUp`); nothing shrinks
+one, since a container taller than its contents is somebody's choice.
+
+The inner grid is the page's grid -- the same rows and gaps -- in a box whose
+height is h rows and h-1 gaps: the heading's row, then h-1 rows and h-2 gaps,
+then one gap's room at the foot. So a container has no border or padding top
+or bottom, and its frame is an inset shadow, or the numbers would not add up
+and the last row would be cut. On a phone every grid becomes one column, and
+a part spans `--stack` rows (`stackedRows`: a container's heading and what it
+holds, stacked, for its fullest tab). In the designer a part dragged by its
+body is hit-tested against its grid *as it was* before the preview moved
+things out of its way -- the preview pushed a panel down ahead of the pointer,
+so it could never be dropped into.
+
+The walks over a *file* -- the renames, `countAppParts` -- do not use the
+reader: they run on the model as it is held, which may be nested however a
+file wrote it, so they stop at `WALK_DEPTH` (8), deeper than any reading keeps
+and shallow enough for no stack to mind. `python/kompartment/apps.py` walks to
+the same depth, and a parity test nests a file twelve deep to hold them to it.
+
+**Pictures** are kept in the file as a data address, and only as one of five
+image types in base64 (`readImageSrc`, at most `IMAGE_MAX` characters): no
+address that fetches, no other media type, no parameters. Drawn with `<img>`,
+which runs nothing -- an SVG's scripts included -- and the page's policy allows
+`img-src data:`. A file over 600 kB is drawn to a canvas and written again as
+WebP (JPEG where a browser cannot), at 1600, 1200 or 800 pixels on its longer
+side, the first that fits `IMAGE_MAX` (`pictureFromFile`); an SVG that large
+is refused rather than turned into pixels. A picture dropped
+on the designer's page stops there: the page-wide drop that opens a model
+file passes over a drag carrying pictures on this tab, and keeps the browser
+from navigating to one dropped beside the canvas.
+
+**The spread.** *Run the spread* is a probabilistic run of the page's own,
+made on `sampleModel(raw, changes)`: the controls' values applied as for a
+run, then every **change** -- a control away from the model's value -- holding
+its parameter (the entry's `pdf` set to null, which `effectiveValue` reads as
+no distribution) or, for a factor, scaling its distribution (`scalePdf`, every
+quantile times the factor: the location and scale parameters of each kind, a
+sample's values, a truncation at a value but not at a probability). A control
+still at the model's value is no change and leaves its parameter sampled. The
+copy asks for `APP_PERCENTILES`, and the worker keeps only `appOutputBlocks`.
+`state.probPreview` stamps the sample with the controls it was taken at, as
+`runPreview` does a run, and `state.probApp` marks it the app's; `currentProb`
+draws a sample only under a run at the same values -- an app's sample of
+other controls is two models on one chart otherwise -- and `appSampleView`
+tells the parts `ready` only for the app's own sample at the controls as they
+stand, and says a held sample of other controls is there (`appSampleHeld`).
+It replaces the editor's sample, which is the page's one expensive thing, and
+asks first when that one is the larger. A sample asked for during a run is
+owed (`appSampleWanted`), after any owed run of the app.
+
+**A link** is `#m=` and the model's JSON, raw DEFLATE, base64url
+(`src/io/applink.js`). Compressed by `CompressionStream` -- `deflate` with its
+two-byte header and checksum stripped where a platform has no `deflate-raw` --
+and read back by `io/inflate.js`, which bounds what it expands to (64 MB). The
+part after `#` never goes to a server, so a link works from the static pages
+and needs nothing stored. Boot opens a link before anything else, as `?app`
+says. A link's model is not written as the tab's draft until it is edited
+(`source.link` in `setModel`): somebody opening a link as an app cannot see the
+offer of the draft it would replace. The first edit writes the draft and takes
+`#m=` out of the address (`leaveLinkAddress`), so the address and the draft
+never disagree about which model is the tab's; the site page's *full window*
+link asks the frame's address which it is. kompartment.html hands its `#` to
+the frame, and *Share* inside the frame names the site page.
+
+**Styles** are `data-app-theme` on `#app-run` and on the designer's
+`.appd-canvas` (`wearTheme`), and nowhere else, so the editor keeps its look
+around a page wearing another. Each redefines the page's colour tokens inside
+it and sets the `--app-…` variables `.app-part` is drawn through, plus a few
+rules of its own; `color-scheme` and `accent-color` are set on the themed
+root because neither reaches a subtree from `:root` once its tokens differ.
+The eight series colours of each were searched for against that style's own
+chart surface and pass `validate_palette.js` there (lightness band, chroma
+floor, adjacent CVD and normal-vision separation); in each light style the
+yellow is under 3:1, the relief the page's own palette also takes, which the
+app's legend and table part carry. A test holds every style in `THEMES` to a
+block in the stylesheet with the tokens the parts read.
+
+**Not done.** A sample is drawn only under the run at its controls; the
+designer shows whatever sample is on screen, to see the parts with one. A
+link is a copy of the model when it was made; nothing keeps two in step.
 
 ## Faults found by building
 

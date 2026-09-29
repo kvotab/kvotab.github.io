@@ -140,6 +140,9 @@
         url.searchParams.set('brand', 'kvotab');
         url.searchParams.set('chrome', 'kvotab');
         url.searchParams.set('theme', theme());
+        // And what follows the `#`: a model in the address itself, which is
+        // what the tool's Share… makes — see kompartment/src/io/applink.js.
+        url.hash = location.hash;
         return url;
       }
 
@@ -187,10 +190,29 @@
       function pointOpenLink() {
         var url = frameURL();
         url.searchParams.delete('chrome');
-        // After the pass-through in frameURL, so it beats a ?model= this page
-        // was itself opened on: the link means *this* model in the whole
-        // window, and this model is whatever has been done to that one since.
-        url.searchParams.set('model', 'draft');
+        // Asked of the frame as it is now, which is why this runs again as the
+        // link is reached for. A model opened from a link (#m=) is not kept
+        // as a draft until it is edited, and the frame's address loses the
+        // model at that edit: so a frame still holding one in its address has
+        // it unedited, and the link carries it on. Otherwise the draft is the
+        // model — and whether the app is up is the frame's to say too.
+        var inner = null;
+        try { inner = frame.contentWindow && frame.contentWindow.location; } catch (e) { inner = null; }
+        var linked = !!(inner && /^#(?:.*&)?m=/.test(inner.hash));
+        var running = false;
+        try { running = !!frame.contentDocument.querySelector('#app.is-app-run'); } catch (e) { running = false; }
+        if (running) url.searchParams.set('app', ''); else url.searchParams.delete('app');
+        if (linked) {
+          url.hash = inner.hash;
+          url.searchParams.delete('model');
+        } else {
+          url.hash = '';
+          // After the pass-through in frameURL, so it beats a ?model= this
+          // page was itself opened on: the link means *this* model in the
+          // whole window, and this model is whatever has been done to that
+          // one since.
+          url.searchParams.set('model', 'draft');
+        }
         // The address a reader may keep: the directory, which a server resolves
         // to the same page. On disk there is nothing to resolve it, so the file
         // is named — and it is worth linking even there, because that page says
@@ -199,6 +221,9 @@
         openLink.href = url.href;
       }
       pointOpenLink();
+      ['pointerenter', 'focus', 'pointerdown', 'contextmenu'].forEach(function (type) {
+        openLink.addEventListener(type, pointOpenLink);
+      });
 
       KVOT.renderHeader('Kompartment');
       KVOT.renderNav('kompartment.html');

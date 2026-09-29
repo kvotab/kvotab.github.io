@@ -387,6 +387,22 @@ const TOPICS = {
 		sections: [{ text: 'Kept with a saved result, so an archive says what it is without this page.' }],
 		more: 'The run log',
 	},
+	'app-link': {
+		title: 'Share as a link',
+		lead: 'The model and its app in one address. Opening the link opens the model, and it can open '
+			+ 'straight into the app.',
+		sections: [{
+			text: 'The whole model is in the link, compressed, after the #. A browser never sends that part '
+				+ 'to a server, so the link needs nothing stored anywhere. It also means anybody who has '
+				+ 'the link has the model.',
+		}, {
+			text: 'The link is the model as it is now. Anything changed later is not in it, so make a new '
+				+ 'link then. A long link works when pasted whole, but some mail and chat programs break '
+				+ 'one of more than a few thousand characters. For a model too large for a link, send the '
+				+ 'file.',
+		}],
+		more: 'Handing an app to someone',
+	},
 };
 
 /**

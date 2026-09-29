@@ -88,6 +88,26 @@ class TheSameBytes(unittest.TestCase):
                 self.assertEqual(json_text(out.report.to_dict()), json_text(answer['report']))
                 self.assertEqual(out.bytes, base64.b64decode(answer['base64']))
 
+    def test_an_app_is_counted_as_the_application_counts_it_however_it_nests(self):
+        # The line saying the app is left out counts every part, inside panels
+        # and tabs too, and stops where the application's walk stops.
+        deep: Any = {'type': 'text', 'text': 'bottom'}
+        for i in range(12):
+            deep = {'type': 'panel' if i % 2 else 'tabs', 'components': [deep, 3],
+                    'tabs': [{'name': 't', 'components': [deep]}, None]}
+        model = dict(models()['EVERY_KIND'])
+        model['app'] = {'pages': [{'components': [
+            {'type': 'panel', 'components': [{'type': 'slider'}, {'type': 'tabs', 'tabs': [
+                {'components': [{'type': 'chart'}, {'type': 'value'}]}, {'components': [{'type': 'image'}]}]}]},
+            deep,
+        ]}, {'components': 'not a list'}]}
+        answer = js([{'task': 'export', 'model': model}])[0]
+        self.assertNotIn('error', answer)
+        out = export_eco(model)
+        line = [w for w in out.report.warnings if w.startswith('The app built on the model')]
+        self.assertEqual(len(line), 1)
+        self.assertEqual(line, [w for w in answer['report']['warnings'] if w.startswith('The app built on the model')])
+
     def test_a_dated_export_is_the_application_s_too(self):
         model = models()['EVERY_KIND']
         answer = js([{'task': 'export', 'model': model, 'modified': [2024, 5, 17, 10, 30, 12]}])[0]

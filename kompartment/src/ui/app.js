@@ -97,11 +97,14 @@ import { renderBlockTree, treeTools, draggedNames } from './tree.js';
 import * as apps from '../domain/apps.js';
 import * as appIn from '../domain/appinputs.js';
 import {
-	renderAppDesigner, refreshAppDesigner, resetDesigner, designerPage,
+	renderAppDesigner, refreshAppDesigner, resetDesigner, designerPage, carriesPictures,
 } from './appdesigner.js';
 import {
 	renderAppRun, refreshAppRun, paintAppRunStatus, redrawAppRun, resetAppRun, closeAppRun,
 } from './apprun.js';
+import {
+	encodeModel, decodeModel, linkFor, linkAdvice, modelInHash,
+} from '../io/applink.js';
 import { infoButton, refreshInfo, setInfoLinks, closeInfo } from './infopanel.js';
 import { simTopic, fmtSetting } from './siminfo.js';
 import { panelTopic } from './panelinfo.js';
@@ -641,6 +644,19 @@ const state = {
 	 * the results on screen and not of whatever was asked for since.
 	 */
 	runPreview: null,
+	/**
+	 * The same for a sample: what the sampled run in flight was asked to be
+	 * at -- an app's controls, or nothing for the model's own values -- stamped
+	 * onto `prob` as `preview` when it lands. See `runAppSample`.
+	 */
+	probPreview: null,
+	/**
+	 * Whether the sample in flight is an app's: stamped onto `prob` as `app`.
+	 * Not the same as being at its controls -- an app's sample at the model's
+	 * own values is still sampled the app's way, over the series its parts
+	 * read and at the percentiles they take.
+	 */
+	probApp: false,
 };
 
 /** What either pane of the rail may be squeezed to, in pixels. */
@@ -700,6 +716,8 @@ let runWantedManual = false;
 let appRunWanted = false;
 /** A run of the app waiting for a slider being dragged to pause. */
 let appRunTimer = null;
+/** A sample of the app's spread asked for while something else was running. */
+let appSampleWanted = false;
 /** Set during boot; reflects the project's view flags onto the checkboxes. */
 
 const $ = (sel) => document.querySelector(sel);
@@ -801,9 +819,18 @@ function linesOn() {
 }
 
 function currentProb() {
-	return probIsCurrent(state.prob, state.results, state.rev, state.probRunning)
-		? state.prob
-		: null;
+	if (!probIsCurrent(state.prob, state.results, state.rev, state.probRunning)) return null;
+	// And under a run at the same values: a sample of the model drawn under a
+	// run at an app's controls -- or the other way round -- is two models on
+	// one chart, with nothing about it looking wrong.
+	if (state.results && previewKey(state.prob.preview) !== previewKey(state.results.preview)) return null;
+	return state.prob;
+}
+
+/** What a run or a sample was at, as one string: '' for the model's own values. */
+function previewKey(p) {
+	if (p == null) return '';
+	return p.from === 'app' ? `app:${p.signature}` : JSON.stringify(p);
 }
 
 /**
@@ -1690,6 +1717,7 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	reconcileSelection();
 	renderResults();
 	renderAppResults();
+	followAppRun();
 	setStatus(payload);
 	clearError();
 	// In, but the run is not over while a scenario beside it is still going:
@@ -1855,6 +1883,9 @@ function startProbabilistic(choice) {
 	// able to pass itself off as the model they were drawn from. The same
 	// reason `runSimulation` takes `runRev` at the start.
 	state.probRev = state.rev;
+	// Of the model at its own values, not at any app's controls.
+	state.probPreview = null;
+	state.probApp = false;
 	// Remembered with the model, so a comparison can be repeated tomorrow:
 	// which inputs were varied is as much a part of what was run as the seed.
 	// Not an edit that invalidates anything -- it changes no number in the
@@ -1937,7 +1968,9 @@ function acceptProbabilistic(payload, runId) {
 	// the worker and is fetched later, by which time another run may well have
 	// taken the current id. And under the revision it was a run of, which is
 	// what `currentProb` asks before letting any of this on screen.
-	state.prob = { ...payload, runId, rev: state.probRev ?? state.rev };
+	state.prob = {
+		...payload, runId, rev: state.probRev ?? state.rev, preview: state.probPreview ?? null, app: !!state.probApp,
+	};
 	// The answer is about other realisations now, so the last one's histograms
 	// are not an answer to anything.
 	state.hist = null;
@@ -1985,11 +2018,19 @@ function acceptProbabilistic(payload, runId) {
 	// a stale run is not drawn at all. That is right, but it leaves a reader
 	// who has just imported a file with a finished sample and nothing to show
 	// for it.
+	// A sample of an app's controls is drawn over the app's own run, and that
+	// is the run owed where there is none: at the controls, not the model.
+	if (state.prob.app) {
+		if (!appResultsFit()) runApp();
+		renderAppResults();
+		return;
+	}
 	if (!state.running && (!state.results || state.results.rev !== state.rev)) {
 		flash('Integrating the model once so the realisations have something to '
 			+ 'be drawn over…', 'info');
 		runSimulation({ manual: true });
 	}
+	renderAppResults();
 }
 
 /**
@@ -2632,8 +2673,9 @@ function cancelSimulation({ keepAutoRun = false } = {}) {
 	runWanted = false;
 	clearTimeout(autoRunTimer);
 	autoRunTimer = null;
-	// Nor does a control of the app that moved during it.
+	// Nor does a control of the app that moved during it, nor its spread.
 	appRunWanted = false;
+	appSampleWanted = false;
 	clearTimeout(appRunTimer);
 	appRunTimer = null;
 
@@ -2747,6 +2789,13 @@ function setRunning(on, { keepStatus = false } = {}) {
 	if (appRunWanted) {
 		appRunWanted = false;
 		runApp();
+		return;
+	}
+	// And a spread asked for during it, which is owed after the run it is
+	// to be drawn under.
+	if (appSampleWanted) {
+		appSampleWanted = false;
+		runAppSample();
 		return;
 	}
 	// Here rather than in `acceptResults`, so that a run which failed or was
@@ -3043,6 +3092,7 @@ function republish(opts = {}) {
 	// `modelChanged` so that undo and redo are kept too: what the draft is
 	// for is the model on screen, however it got there.
 	draftKeeper.note(state.raw, draftMeta());
+	leaveLinkAddress();
 	renderEditorViews(opts);
 	// The JSON tab is rewritten when it is looked at (`selectTab`), not on
 	// every edit: serialising the whole model into a textarea nobody can see
@@ -7428,6 +7478,8 @@ function renderRunKind() {
 				: describeLines();
 		words.push(`${prob.iterations.toLocaleString()} realisations`, drawn);
 		if (prob.screen) words.push('over the categories kept');
+		// An app's own: of the series its parts show, at the percentiles they read.
+		if (prob.app) words.push('sampled by the app, over the series it shows');
 		// The one case where a sample is not reported where a single run is.
 		if (!sameTimes(prob.t, r.t)) {
 			words.push(`on the model’s grid of ${prob.t.length.toLocaleString()} times, `
@@ -11227,7 +11279,18 @@ function setUpFileDrop() {
 
 	// A drag carrying no files is someone selecting text, or the browser's own
 	// image drag. It is not an offer to open a model.
-	const hasFiles = (ev) => [...(ev.dataTransfer?.types ?? [])].includes('Files');
+	//
+	// Nor, on the App designer tab, is one carrying pictures: those go on the
+	// app, where they are dropped (see `wireDrop` in ./appdesigner.js). A drop
+	// that misses the canvas is still kept from the browser, which would
+	// otherwise navigate to the picture and take the page with it.
+	const hasFiles = (ev) => [...(ev.dataTransfer?.types ?? [])].includes('Files')
+		&& !(state.tab === 'app' && state.appSession.mode !== 'run' && carriesPictures(ev));
+	const keepFromBrowser = (ev) => {
+		if (state.tab === 'app' && [...(ev.dataTransfer?.types ?? [])].includes('Files')) ev.preventDefault();
+	};
+	window.addEventListener('dragover', keepFromBrowser);
+	window.addEventListener('drop', keepFromBrowser);
 
 	const show = (on) => {
 		depth = on ? depth : 0;
@@ -11670,6 +11733,8 @@ function setModel(raw, source) {
 	state.appSession.values.clear();
 	state.preview = null;
 	state.runPreview = null;
+	state.probPreview = null;
+	state.probApp = false;
 	resetDesigner();
 	state.selected = [];
 	state.prevLabels = null;
@@ -11789,7 +11854,12 @@ function setModel(raw, source) {
 	// The model just opened is what this tab is working on now. Written
 	// without waiting for an edit: a file opened and then refreshed away
 	// would otherwise be offered back as the model before it.
-	draftKeeper.note(state.raw, draftMeta());
+	//
+	// Not a model from a link, which the address still holds -- a refresh
+	// opens it again. Somebody sent a link opens it as an app, where the offer
+	// of the draft it would overwrite is not on screen, and that draft is
+	// their own work; the first edit is soon enough to replace it.
+	if (!source?.link) draftKeeper.note(state.raw, draftMeta());
 }
 
 
@@ -11845,12 +11915,155 @@ function appContext(live) {
 		live,
 		valueOf: appValueOf,
 		set: setAppValue,
-		act: (action) => (action === 'reset' ? resetAppValues() : runApp()),
+		act: (action) => {
+			if (action === 'reset') resetAppValues();
+			else if (action === 'sample') runAppSample();
+			else runApp();
+		},
+		sample: appSampleView(live),
 		results: appResults(),
 		timeUnit: String(state.raw?.simulation?.time_unit ?? 'year'),
 		scenarios: ed.scenarioNames(state.raw),
 		problemOf: (c) => appIn.componentProblem(state.raw, c, outputs),
 	};
+}
+
+/**
+ * What a sample made of each series, for the parts that read the spread (see
+ * `sample` in ./appwidgets.js): the sample on screen -- `currentProb`, which
+ * holds it to the run it is drawn under -- with its curves read by label and
+ * brought onto the run's times.
+ *
+ * Running, `ready` only for a sample at the controls as they stand: moved
+ * since, its bands and percentiles are of other values, and a part says so
+ * rather than drawing them. In the designer any sample on screen will do, to
+ * see what the parts look like with one.
+ */
+function appSampleView(live) {
+	const r = state.results;
+	if (!r?.t) return null;
+	const p = currentProb();
+	if (!p) {
+		// The app's own sample of this model, at controls that have moved
+		// since: not drawn under a run at others -- see `currentProb` -- but
+		// there, and said to be, so its bands going is not a mystery.
+		const held = appSampleHeld();
+		return live && held ? { ready: false, iterations: held.iterations } : null;
+	}
+	// Running, only the app's own: the editor's samples every input with a
+	// distribution, a moved slider's included, and keeps other series. To
+	// the app it is no sample at all, rather than one of other controls.
+	if (live && !p.app) return null;
+	const ready = !live || previewKey(p.preview) === previewKey(appPreviewNow());
+	// Worked out once per sample and run, not once per part.
+	const memo = appSampleView.memo;
+	if (memo?.p !== p || memo?.r !== r) {
+		appSampleView.memo = {
+			p, r, byLabel: new Map((p.outputs ?? []).map((o, k) => [o.label, k])), onto: ontoAxis(p.t, r.t),
+		};
+	}
+	const { byLabel, onto } = appSampleView.memo;
+	const q = p.quantiles ?? [];
+	const curve = (label, which) => {
+		const k = byLabel.get(label);
+		if (k === undefined) return null;
+		const band = bandOf(p, k);
+		if (!band) return null;
+		if (which === 'mean') return band.mean ?? null;
+		const j = q.findIndex((x) => Math.abs(x - apps.CURVE_QUANTILE[which]) < 1e-9);
+		return j >= 0 ? band.q[j] : null;
+	};
+	return {
+		ready,
+		iterations: p.iterations,
+		t: p.t,
+		curve,
+		onto,
+		bands: (label) => {
+			const k = byLabel.get(label);
+			const band = k === undefined ? null : bandOf(p, k);
+			if (!band) return undefined;
+			const pairs = bandPairs(q);
+			return pairs.map(([lo, hi], j) => ({
+				lo: onto(band.q[q.indexOf(lo)]), hi: onto(band.q[q.indexOf(hi)]),
+				alpha: 0.11 + (0.1 * (j + 1)) / Math.max(1, pairs.length),
+			}));
+		},
+	};
+}
+
+/** What a run of the app at the controls as they stand is at: null for the model's own values. */
+function appPreviewNow() {
+	const changes = appChanges();
+	return changes.length ? { from: 'app', signature: appIn.signature(changes), changes } : null;
+}
+
+/**
+ * Samples the spread at the app's controls: the model run `realisations`
+ * times on a copy with the controls' values in, what they set held and their
+ * factors scaling the distributions they reach (`sampleModel`), keeping only
+ * the series the app's results name.
+ *
+ * It is the page's sample, as an app's run is the page's run: the Chart
+ * draws it too, saying what it is at. So one the editor made is replaced by
+ * it -- asked about first where that one is the larger, since a sample is
+ * the one expensive thing the page holds.
+ */
+function runAppSample() {
+	const app = apps.readApp(state.raw);
+	if (!app) return;
+	if (state.running) { appSampleWanted = true; paintAppStatus(); return; }
+	appSampleWanted = false;
+	if (state.problems.length) { paintAppStatus(); return; }
+	const held = state.prob;
+	if (held && !held.app && held.iterations > app.realisations && held.rev === state.rev) {
+		const go = window.confirm(`Sampling the spread replaces the ${held.iterations.toLocaleString()} realisations `
+			+ `the editor holds with ${app.realisations.toLocaleString()} at the app’s controls. Go on?`);
+		if (!go) return;
+	}
+	const changes = appChanges();
+	let project;
+	try {
+		project = appIn.sampleModel(state.raw, changes);
+	} catch (e) {
+		showError({ name: e.name ?? 'Error', message: e.message ?? String(e) });
+		return;
+	}
+	const w = ensureWorker();
+	state.runId += 1;
+	state.probRev = state.rev;
+	state.probPreview = changes.length ? { from: 'app', signature: appIn.signature(changes), changes } : null;
+	state.probApp = true;
+	state.probRunning = true;
+	setRunning(true);
+	setLoadingStage('building');
+	clearError();
+	w.postMessage({
+		type: 'probabilistic',
+		id: state.runId,
+		project,
+		iterations: app.realisations,
+		seed: Math.round(state.raw.simulation?.seed ?? 1),
+		latin: state.raw.simulation?.sampling !== 'random',
+		blocks: appIn.appOutputBlocks(state.raw),
+		varied: null,
+		workers: workerLimit(),
+		cores: chosenCores(),
+		large: false,
+	});
+	paintAppStatus();
+}
+
+/** The app's own sample of the model as it is, at whatever controls it was taken at; or null. */
+function appSampleHeld() {
+	const held = state.prob;
+	return held?.app && !state.probRunning && held.rev === state.rev ? held : null;
+}
+
+/** Whether the sample on screen is the app's, of the controls as they stand. */
+function appSampleFits() {
+	const p = currentProb();
+	return !!p && p.app && previewKey(p.preview) === previewKey(appPreviewNow());
 }
 
 /** The app's inputs that stand away from the model's values: what its run changes. */
@@ -11939,10 +12152,15 @@ function appStatus() {
 		? `The model has ${state.problems.length === 1 ? 'a problem' : `${state.problems.length} problems`} `
 			+ `that ${state.problems.length === 1 ? 'has' : 'have'} to be fixed before it can run: ${state.problems[0].message}`
 		: state.runProblem ? `The run stopped: ${state.runProblem.message}` : null;
+	const app = apps.readApp(state.raw);
 	return {
 		running: state.running,
+		sampling: state.running && state.probRunning,
 		fraction: state.primaryFraction,
-		owed: !state.running && apps.readApp(state.raw)?.run === 'button' && !appResultsFit(),
+		owed: !state.running && app?.run === 'button' && !appResultsFit(),
+		// A spread that is there but of other controls: said, where the app
+		// reads one, until it is sampled again.
+		spreadOwed: !state.running && !!app && appIn.usesSpread(app) && !!appSampleHeld() && !appSampleFits(),
 		problem,
 	};
 }
@@ -11955,6 +12173,120 @@ function paintAppStatus() {
 function renderAppResults() {
 	if (state.appSession.mode === 'run') refreshAppRun({ inputs: false });
 	else if (state.tab === 'app') refreshAppDesigner();
+}
+
+/**
+ * *Share…*: the model and its app as a link, which opens as the app.
+ *
+ * The link is the model: the whole file, compressed, after the `#` (see
+ * ../io/applink.js), so it needs nothing kept anywhere and goes wherever a link
+ * goes -- a message, a document, a bookmark. Its length is the one thing to
+ * know about it, and the dialog says it. Made as the dialog opens, and again
+ * when the choice of how it opens changes, from the model as it is then.
+ */
+async function openShareDialog() {
+	let asApp = apps.hasApp(state.raw);
+	let link = '';
+	let failed = null;
+	let busy = true;
+	let payload = null;
+	const make = async () => {
+		busy = true;
+		refreshModal(modal);
+		try {
+			payload ??= await encodeModel(state.raw);
+			link = linkFor(shareBase(), payload, { app: asApp });
+			failed = null;
+		} catch (e) {
+			failed = e?.message ?? String(e);
+		}
+		busy = false;
+		refreshModal(modal);
+	};
+	const modal = openModal({
+		info: dialogInfo('app-link'),
+		title: 'Share as a link',
+		subtitle: 'The model and its app in one address, nothing kept anywhere else',
+		build: (body) => {
+			if (busy) { body.append(el('p', { className: 'hint' }, 'Making the link…')); return; }
+			if (failed) { body.append(el('p', { className: 'share-problem' }, failed)); return; }
+			const advice = linkAdvice(link.length);
+			const field = el('textarea', {
+				className: 'mono share-link', readOnly: true, rows: 4, spellcheck: false, value: link,
+				'aria-label': 'The link',
+			});
+			field.addEventListener('focus', () => field.select());
+			const copy = el('button', { type: 'button', className: 'primary', disabled: !advice.ok }, 'Copy the link');
+			copy.addEventListener('click', () => copyText(link, 'The link'));
+			const open = el('input', { type: 'checkbox', checked: asApp, disabled: !apps.hasApp(state.raw) });
+			open.addEventListener('change', () => { asApp = open.checked; make(); });
+			// One column across the dialog's two: the link is the whole of it.
+			body.append(el('div', { className: 'share-body' },
+				el('label', { className: 'share-as-app' }, open,
+					apps.hasApp(state.raw) ? ' Opens as the app, on its own' : ' Opens as the app — this model has no app, so it opens in the editor'),
+				field,
+				el('p', { className: `share-length is-${advice.tone}` },
+					`${link.length.toLocaleString()} characters. ${advice.text}`),
+				el('p', { className: 'hint' },
+					'Anybody with the link has the whole model, so send it where the model could go. '
+					+ 'What changes after this is not in it: make a new one then.'),
+				el('div', { className: 'share-actions' }, copy),
+			));
+		},
+	});
+	make();
+}
+
+/**
+ * A model from a link, once edited, is no longer the model in the address:
+ * the address loses it, and the draft the edit wrote holds the model from
+ * then on. Until then the address is what a refresh -- or the site page's
+ * *full window* -- opens it from, since the draft is not written for it (see
+ * the end of `setModel`).
+ */
+function leaveLinkAddress() {
+	if (!modelSource?.link || modelInHash(location.hash) == null) return;
+	modelSource = { ...modelSource, link: false };
+	try {
+		history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+	} catch {
+		// An address that will not change says what it did: the draft is the
+		// model all the same.
+	}
+}
+
+/**
+ * The page a link opens: this one, or -- framed in the site's page -- the
+ * site's page, which is the address a reader has in front of them.
+ */
+function shareBase() {
+	try {
+		if (window.parent !== window && window.parent.location.origin === location.origin) {
+			const outer = new URL(window.parent.location.href);
+			outer.hash = '';
+			return outer.href;
+		}
+	} catch {
+		// Another origin's frame: its address is not ours to read.
+	}
+	const here = new URL(location.href);
+	// The frame's own settings are not the model's: `chrome` and `theme` are
+	// the site page's to set.
+	here.hash = '';
+	return here.href;
+}
+
+/**
+ * After the app's own run has landed: its spread, where the app samples it
+ * after every change and the sample on screen is of other controls.
+ */
+function followAppRun() {
+	if (state.appSession.mode !== 'run') return;
+	const app = apps.readApp(state.raw);
+	if (!app || app.spread_when !== 'change' || !appIn.usesSpread(app)) return;
+	if (!appResultsFit() || appSampleFits()) return;
+	if (state.running) appSampleWanted = true;
+	else runAppSample();
 }
 
 /** The App designer tab, drawn from the model as it stands. */
@@ -11971,6 +12303,7 @@ function renderAppDesignerView() {
 		context: () => appContext(false),
 		outputs: () => outputsNow(),
 		runApp: () => enterAppRun({ fromDesigner: true }),
+		share: () => openShareDialog(),
 		treeNames: () => draggedNames(),
 		flash,
 	});
@@ -12004,6 +12337,7 @@ function enterAppRun({ fromDesigner = false } = {}) {
 	// controls' values, rather than the app showing that run's numbers under
 	// controls that stand somewhere else.
 	if (!appResultsFit() && apps.readApp(state.raw)?.run !== 'button') runApp();
+	else followAppRun();
 	return true;
 }
 
@@ -12016,6 +12350,7 @@ function drawAppRun() {
 		stop: () => cancelSimulation({ keepAutoRun: true }),
 		canEdit: () => state.appSession.fromDesigner || apps.readApp(state.raw)?.edit_button !== false,
 		leave: leaveAppRun,
+		sample: runAppSample,
 	});
 }
 
@@ -12026,6 +12361,7 @@ function leaveAppRun() {
 	// A run the app still owed is the app's, not the editor's: left owed, it
 	// would start the moment the run in flight ended, ahead of any edit's.
 	appRunWanted = false;
+	appSampleWanted = false;
 	clearTimeout(appRunTimer);
 	appRunTimer = null;
 	closeAppRun();
@@ -12567,6 +12903,28 @@ export function boot() {
 	  usual start and says so, because the model silently not arriving is the
 	  one failure here the reader would otherwise read as their work being gone.
 	*/
+	/*
+	  `#m=…`: a model in the address itself, which is what *Share…* makes --
+	  see ../io/applink.js. Opened as the app where the link asks, like any
+	  other address with `?app`; a link that will not read says why and leaves
+	  a new model, as a missing example does.
+	*/
+	const linked = modelInHash(location.hash);
+	if (linked != null) {
+		try {
+			const model = decodeModel(linked);
+			setModel(model, { label: model.name ? String(model.name) : 'Model from a link', link: true });
+			openApp();
+			offerDraft(held);
+			return;
+		} catch (e) {
+			setModel(blankModel(), { label: 'New model' });
+			flash(`${e.message} This is a new model instead.`, 'warn');
+			offerDraft(held);
+			return;
+		}
+	}
+
 	if (wanted === 'draft') {
 		if (held?.raw) {
 			setModel(held.raw, { label: held.meta?.label || held.raw.name || UNTITLED });

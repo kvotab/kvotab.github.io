@@ -12,19 +12,26 @@ a model with one round-trips through this package unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 _UNSAFE_KEYS = {'__proto__', 'constructor', 'prototype'}
 
+# How deep the walks go into panels and tabs written in a file: as deep as
+# the application's (WALK_DEPTH in src/domain/apps.js), and no deeper.
+_WALK_DEPTH = 8
 
-def _each_reference(raw: Mapping[str, Any], fn: Callable[[Dict[str, Any]], None]) -> None:
+
+def _pages(raw: Mapping[str, Any]) -> List[Any]:
     app = raw.get('app')
     pages = app.get('pages') if isinstance(app, dict) else None
-    if not isinstance(pages, list):
-        return
-    for page in pages:
-        components = page.get('components') if isinstance(page, dict) else None
-        for c in components if isinstance(components, list) else []:
+    return pages if isinstance(pages, list) else []
+
+
+def _each_reference(raw: Mapping[str, Any], fn: Callable[[Dict[str, Any]], None]) -> None:
+    def walk(components: Any, depth: int) -> None:
+        if not isinstance(components, list) or depth > _WALK_DEPTH:
+            return
+        for c in components:
             if not isinstance(c, dict):
                 continue
             if isinstance(c.get('target'), dict):
@@ -33,6 +40,40 @@ def _each_reference(raw: Mapping[str, Any], fn: Callable[[Dict[str, Any]], None]
                 for s in c['series']:
                     if isinstance(s, dict):
                         fn(s)
+            # A panel holds parts, and a set of tabs holds a grid of them per tab.
+            walk(c.get('components'), depth + 1)
+            if isinstance(c.get('tabs'), list):
+                for t in c['tabs']:
+                    if isinstance(t, dict):
+                        walk(t.get('components'), depth + 1)
+
+    for page in _pages(raw):
+        if isinstance(page, dict):
+            walk(page.get('components'), 0)
+
+
+def count_app_parts(raw: Mapping[str, Any]) -> int:
+    """How many parts a model's app has, on every page and inside every container."""
+    n = 0
+
+    def walk(components: Any, depth: int) -> None:
+        nonlocal n
+        if not isinstance(components, list) or depth > _WALK_DEPTH:
+            return
+        for c in components:
+            n += 1
+            if not isinstance(c, dict):
+                continue
+            walk(c.get('components'), depth + 1)
+            if isinstance(c.get('tabs'), list):
+                for t in c['tabs']:
+                    if isinstance(t, dict):
+                        walk(t.get('components'), depth + 1)
+
+    for page in _pages(raw):
+        if isinstance(page, dict):
+            walk(page.get('components'), 0)
+    return n
 
 
 def _follow_name(name: str, new_name_of: Callable[[str], Optional[str]]) -> str:
