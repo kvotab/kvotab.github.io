@@ -998,6 +998,12 @@
         P.dy = [clamp(y0, 0, 1), clamp(y1, 0, 1)];
         const kx = P.xa === 'x' ? 'xaxis' : `xaxis${P.xa.slice(1)}`, ky = P.ya === 'y' ? 'yaxis' : `yaxis${P.ya.slice(1)}`;
         const ax = this.axis('x', P), ay = this.axis('y', P);
+        // An axis without a range of its own takes it from its data, said
+        // outright: once matched axes have a range (a categorical X down a
+        // column of panels), Plotly 2.27 turns autorange off on the others
+        // too, and the panels of two Y columns side by side with Group X were
+        // drawn at [-1, 4], empty.
+        for (const a of [ax, ay]) if (a.range == null && a.autorange == null) a.autorange = true;
         ax.domain = P.dx; ax.anchor = P.ya;
         ay.domain = P.dy; ay.anchor = P.xa;
         // shared axes: a column of panels shares X, a row shares Y (with Wrap, all share both)
@@ -2056,7 +2062,7 @@
       this.doneBtn = btn('Done', () => this.update((S) => { S.done = !S.done; }), { dataset: { gbkey: 'done' }, 'aria-pressed': 'false' });
       const start = btn('Start Over', () => this.startOver(), { dataset: { gbkey: 'start' } });
       this.bar = el('div', { class: 'sm-gb-bar', dataset: { noexport: '' } }, this.undoBtn, start, this.doneBtn,
-        el('span', { class: 'sm-gb-hint', text: 'Drag columns onto the zones, or select a column and click a zone. Click an element to show it; shift-click to add it.' }), infoSlot('p:graphbuilder'));
+        el('span', { class: 'sm-gb-hint', text: 'Drag columns onto the zones, or select a column and click a zone; drag a column off the zones to take it out. Click an element to show it; shift-click to add it.' }), infoSlot('p:graphbuilder'));
       // columns
       this.filter = el('input', { type: 'search', class: 'sm-gb-filter', placeholder: 'Filter', 'aria-label': 'Filter columns' });
       this.filter.value = this.ui.filter || '';
@@ -2085,6 +2091,9 @@
       this.showCP = btn('Show Control Panel', () => this.update((S) => { S.done = false; }), { class: 'sm-linkbtn sm-gb-showcp', dataset: { gbkey: 'showcp' } });
       const center = el('div', { class: 'sm-gb-center' }, this.palette, this.frame, this.status);
       root.append(this.showCP, this.bar, el('div', { class: 'sm-gb-work' }, left, center));
+      // a column dragged out of a zone and let go anywhere else in the builder
+      // (the column list, the graph, the palette) is taken out of its zone
+      SM.launch.dropArea(root);
       this.renderColumns();
       this.renderChrome();
     }
@@ -2194,7 +2203,8 @@
         for (const ref of list) {
           const c = this.t.col(ref.id);
           if (!c) continue;
-          box.append(el('button', { type: 'button', class: 'sm-gb-chip', 'aria-haspopup': 'menu', 'aria-label': `${c.name} in ${z.label}: options (Delete removes it)`, dataset: { col: c.id, gbkey: `chip:${z.key}:${c.id}` } },
+          // draggable: to another zone, onto a column there, along this zone, or off the zones (out)
+          box.append(el('button', { type: 'button', class: 'sm-gb-chip', draggable: 'true', 'aria-haspopup': 'menu', 'aria-label': `${c.name} in ${z.label}: options (Delete removes it)`, dataset: { col: c.id, gbkey: `chip:${z.key}:${c.id}` } },
             typeIcon(c.modelingType), el('span', { class: 'sm-colname', text: c.name })));
         }
         if ((z.key === 'x' || z.key === 'y') && list.length > 1) box.append(el('span', { class: 'sm-gb-zmode', text: (z.key === 'x' ? this.S.xMode : this.S.yMode) === 'merge' ? 'merged' : 'side by side' }));
@@ -2204,7 +2214,8 @@
     }
 
     wireZone(box, z) {
-      const hasCols = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes(MIME);
+      // columns from a list (the builder's, the Columns panel); a column dragged out of a zone is the place's below
+      const hasCols = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes(MIME) && !SM.launch.fromPlace(ev);
       box.addEventListener('dragover', (ev) => {
         if (!hasCols(ev)) return;
         ev.preventDefault();
@@ -2216,6 +2227,7 @@
       });
       box.addEventListener('dragleave', (ev) => { if (!box.contains(ev.relatedTarget)) { box.classList.remove('is-drop'); box.querySelectorAll('.is-drop').forEach((c) => c.classList.remove('is-drop')); } });
       box.addEventListener('drop', (ev) => {
+        if (SM.launch.fromPlace(ev)) return;
         box.classList.remove('is-drop');
         this.root.classList.remove('is-dragging');
         const raw = ev.dataTransfer.getData(MIME);
@@ -2225,6 +2237,28 @@
         try { ids = JSON.parse(raw); } catch (e) { return; }
         const chip = ev.target.closest('.sm-gb-chip');
         this.addColumns(z.key, ids, { replaceId: chip ? chip.dataset.col : null });
+      });
+      // A column in a zone dragged again: onto another zone it moves there (a
+      // zone that does not take it, Size a categorical column, shows no
+      // drop), onto a column of another zone it takes that one's place, along
+      // its own zone it goes to the position of the column it is dropped on;
+      // anywhere else in the builder it is taken out (SM.launch.dropArea).
+      SM.launch.place(box, {
+        label: z.label,
+        dropClass: 'is-drop',
+        item: (n) => n.closest('.sm-gb-chip'),
+        key: (chip) => chip.dataset.col,
+        take: (chip) => {
+          const c = this.t.col(chip.dataset.col);
+          if (!c) return null;
+          return { cols: [c], text: c.name, zone: z.key, builder: this, remove: () => this.removeColumn(z.key, c.id),
+            started: () => this.root.classList.add('is-dragging'), done: () => this.root.classList.remove('is-dragging') };
+        },
+        refuses: (m) => (m.cols.length !== 1 ? `${z.label} takes a column` : zoneRefuses(z, m.cols[0])),
+        drop: ({ m, at }) => {
+          if (m.builder === this) this.moveColumn(m.zone, m.cols[0].id, z.key, at);
+          else { m.remove(); this.addColumns(z.key, [m.cols[0].id], { replaceId: at }); }
+        },
       });
       const activate = (ev) => {
         const chip = ev.target.closest('.sm-gb-chip');
@@ -2313,6 +2347,42 @@
     }
 
     removeColumn(key, id) { this.update((S) => { S.zones[key] = S.zones[key].filter((r) => r.id !== id); }); }
+
+    /* A column dragged from zone fromKey and dropped on zone toKey, onto the
+       column atId there or beside the columns (atId null). Along its own
+       zone it goes to atId's position (the end, beside them); into another
+       zone it takes atId's place, or comes last (in a zone of one column,
+       instead of the one there), and leaves the zone it came from. One step
+       of Undo; nothing happens (and nothing is kept for Undo) when nothing
+       moves. */
+    moveColumn(fromKey, id, toKey, atId = null) {
+      const z = ZONE[toKey];
+      const c = this.t.col(id);
+      if (!z || !c || !this.S.zones[fromKey] || !this.S.zones[toKey]) return;
+      const from = this.S.zones[fromKey];
+      const ref = from.find((r) => r.id === id) || { id, name: c.name };
+      let src = null, dst;
+      if (fromKey === toKey) {
+        dst = from.slice();
+        const i = dst.findIndex((r) => r.id === id), j = atId == null ? dst.length - 1 : dst.findIndex((r) => r.id === atId);
+        if (i < 0 || j < 0 || i === j) return;
+        dst.splice(i, 1);
+        dst.splice(j, 0, ref);
+      } else {
+        src = from.filter((r) => r.id !== id);
+        const had = this.S.zones[toKey];
+        if (atId === id && had.some((r) => r.id === id)) dst = had.slice();         // dropped on itself there: it stays where it is
+        else {
+          dst = had.filter((r) => r.id !== id);                                      // once only
+          const at = atId == null ? -1 : dst.findIndex((r) => r.id === atId);
+          if (at >= 0) dst.splice(at, 1, ref);
+          else if (z.max === 1) dst = [ref];
+          else dst.push(ref);
+          if (dst.length > z.max) { dst = dst.slice(dst.length - z.max); SM.ui.toast(`${z.label} holds at most ${z.max} columns`); }
+        }
+      }
+      this.update((S) => { if (src) S.zones[fromKey] = src; S.zones[toKey] = dst; });
+    }
 
     renderPalette() {
       const cols = zoneCols(this.S, this.t);
@@ -2742,7 +2812,7 @@
   ];
   const GB_BUILDER = [
     ['Select Columns', 'The table\'s columns; Filter narrows the list by name. Drag a column onto a zone (from here or from the page\'s Columns panel), or click it and then click a zone. Double-click puts it where it fits: a continuous column on Y (then X), a categorical one on X (then Overlay, Group X, Group Y). Right click it, or press Enter, for the list of zones.'],
-    ['A zone and its columns', 'Click an empty zone to pick a column for it from a list. Click a column in a zone for Remove, Move to and Replace with; drop another column on it to replace it. Right click a zone (or use the context menu key) for Merge Columns or Side by Side, Log Scale, Add Column, Swap with and Remove All.'],
+    ['A zone and its columns', 'Click an empty zone to pick a column for it from a list. Click a column in a zone for Remove, Move to and Replace with; drop another column on it to replace it. A column in a zone can be dragged too: onto another zone to move it there (a zone that does not take it, as Size a categorical column, refuses it; a zone of one column puts it in place of the one there), onto a column of another zone to take that one\'s place, along its own zone to change the order (the order of the panels, or of the merged columns), and anywhere else in the builder, such as the column list or the graph, to take it out; a label by the pointer says so. A drag cancelled with Escape changes nothing. Right click a zone (or use the context menu key) for Merge Columns or Side by Side, Log Scale, Add Column, Swap with and Remove All.'],
     ['Elements', 'The palette above the graph. Click an element to draw it alone; shift-click (or ctrl/⌘-click) to add it to the others or take it away; right click for the same as a menu. A dimmed element cannot draw the columns in the zones and says why. Until you pick one, the builder chooses as JMP does: Points and Smoother for two continuous columns, Bar for a categorical column alone, Points otherwise.'],
     ['Properties', 'Under the columns, a box for each element in the graph with its settings (explained below); × takes the element away. A change redraws the graph at once.'],
     ['Undo', 'Steps back through the changes to the zones, the elements and their properties, up to 60 of them.'],
@@ -2773,7 +2843,7 @@
         { heading: 'Elements', text: b ? 'The elements in the graph are marked; their properties follow.' : 'What each element draws; the properties of every element follow.', choices: ELEMENTS.map((d) => [d.label, d.about, inGraph.has(d.type)]) },
         ...(props.length ? props : [{ heading: 'Properties', text: 'No element in the graph yet: click one in the palette above the graph, and its settings are explained here.' }]),
         { heading: 'The red triangle', choices: GB_TRIANGLE },
-        { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
+        { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'By touch, a column (in the list or in a zone) is dragged by holding it a moment and then moving it; it goes where a mouse would drop it.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
         { heading: 'Differences from JMP', list: [
           'Smoother: the same penalised least squares as JMP\'s cubic spline (λ on standardized X), from scipy; JMP\'s option to scale λ by the count is not applied, and its other methods (P-Spline, Savitzky-Golay, moving averages) are not here. Local Kernel is statsmodels\' lowess.',
           'The smoother\'s Confidence of Fit is a bootstrap band (100 resamples of the rows, fewer for many rows): the fit plus or minus z(1 − α/2) times their spread.',

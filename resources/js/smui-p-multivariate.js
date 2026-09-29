@@ -36,7 +36,7 @@
 
   /* A plot width that fits the work area (phone width), at least 280. */
   function fitW(w) {
-    const v = typeof document !== 'undefined' ? document.querySelector('.sm-views') : null;
+    const v = typeof document !== 'undefined' ? document.querySelector('.sm-group.is-focused > .sm-views') || document.querySelector('.sm-views') : null;
     const avail = v && v.clientWidth ? v.clientWidth - 64 : w;
     return Math.round(Math.max(Math.min(w, 280), Math.min(w, avail)));
   }

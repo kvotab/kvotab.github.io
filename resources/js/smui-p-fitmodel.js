@@ -157,7 +157,8 @@
       list.replaceChildren();
       list.classList.toggle('is-empty', !effects.length);
       effects.forEach((e, i) => {
-        const li = el('li', { role: 'option', dataset: { i: String(i) }, 'aria-selected': String(sel.has(i)) },
+        // draggable: along the list to reorder it, out of the dialog's places to take it out, a main effect onto a role
+        const li = el('li', { role: 'option', draggable: 'true', dataset: { i: String(i) }, 'aria-selected': String(sel.has(i)) },
           el('span', { class: 'sm-colname', text: effectLabel(e) + (e.random ? '&Random' : '') }));
         if (sel.has(i)) li.classList.add('is-selected');
         list.append(li);
@@ -182,6 +183,47 @@
     };
     // columns dragged here from the list on the left go in as main effects, as Add puts them
     SM.launch.acceptColumns(list, t, (cols) => { msg(''); add(cols.map((c) => ({ cols: [c], nest: [], random: false }))); });
+    // An effect dragged along the list goes to the position of the effect it
+    // is dropped on (the end, dropped beside them); dragged anywhere else in
+    // the dialog it is taken out, and a main effect dropped on a role moves
+    // there as its column. A column dragged here from a role leaves the role
+    // and comes in as a main effect, in place of the effect it is dropped on.
+    SM.launch.place(list, {
+      label: 'Model Effects',
+      item: (n) => n.closest('li[data-i]'),
+      key: (li) => li.dataset.i,
+      take: (li) => {
+        const e = effects[+li.dataset.i];
+        if (!e) return null;
+        const main = e.cols.length === 1 && !(e.nest && e.nest.length);
+        return { cols: main ? [e.cols[0]] : [], text: effectLabel(e) + (e.random ? '&Random' : ''), effect: e,
+          remove: () => { effects = effects.filter((x) => x !== e); sel.clear(); renderList(); } };
+      },
+      refuses: (m) => (m.cols.length === 1 ? null : 'not a column'),
+      drop: ({ m, at, same }) => {
+        msg('');
+        if (same) {
+          const from = effects.indexOf(m.effect), to = at == null ? effects.length - 1 : +at;
+          if (from < 0 || to < 0 || to >= effects.length || from === to) return;
+          effects.splice(from, 1);
+          effects.splice(to, 0, m.effect);
+          sel.clear();
+          renderList();
+          return;
+        }
+        const e = { cols: [m.cols[0]], nest: [], random: false };
+        const target = at == null ? null : effects[+at] || null;
+        m.remove();
+        const k = effectKey(e);
+        const dup = effects.find((x) => effectKey(x) === k);
+        if (dup && (!target || target === dup)) { if (!target) msg('Those effects are in the model already.'); sel.clear(); renderList(); return; }
+        if (dup) effects = effects.filter((x) => x !== dup);
+        if (target && effects.includes(target)) effects.splice(effects.indexOf(target), 1, e);
+        else effects.push(e);
+        sel.clear();
+        renderList();
+      },
+    });
     const picked = () => { const c = api.selectedColumns(); if (!c.length) msg('Select columns in the list on the left first.'); return c; };
     const btn = (label, fn, extra = {}) => { const b = el('button', { type: 'button', class: 'sm-btn', text: label, ...extra }); b.addEventListener('click', fn); return b; };
     const removeSel = () => { effects = effects.filter((_, i) => !sel.has(i)); sel.clear(); renderList(); };
@@ -320,7 +362,7 @@
       if (on(lScale)) out.push(['Scale', 'The scale φ of the variance: Estimated, Pearson χ²/(N − p), or Fixed at the value beside it (1 by default). A change of distribution picks Fixed for the binomial, Poisson and negative binomial, Estimated for the others.']);
       if (on(lTau)) out.push(['Quantile τ', 'The quantile of Y to fit, strictly between 0 and 1: 0.5 is the median, 0.9 the upper tenth. Model Launch in the report changes it.']);
       out.push(
-        ['Model effects', 'The list of the model\'s effects: columns dragged onto it from the list on the left go in as main effects, as Add puts them; click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
+        ['Model effects', 'The list of the model\'s effects: columns dragged onto it from the list on the left go in as main effects, as Add puts them, and so do columns dragged from a role (they leave it; dropped on an effect, one takes its place); click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. Drag an effect up or down the list to change the order, a main effect onto a role to move its column there, or an effect anywhere else in the dialog to take it out. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
         ['Add', 'Each selected column (in the list on the left) as a main effect.'],
         ['Cross', 'The selected columns crossed into one interaction, A*B; each selected effect of the list crossed with the selected columns; or two or more selected effects crossed together. A continuous column crossed with itself is its square. Continuous columns in crossings are centred at their means, as JMP\'s Center Polynomials.'],
         ['Nest', 'Nests the selected effects within the selected columns: B[A], the levels of B within each level of A.'],
@@ -2292,7 +2334,8 @@
     'p:fitmodel:effects': {
       kicker: 'Fit Model', title: 'Construct Model Effects',
       lead: 'The effects of the model. Select columns in the list of columns, then:',
-      sections: [{ choices: [['Add', 'each selected column as a main effect'], ['Cross', 'the selected columns crossed together, or with the selected effects (a column with itself: its square)'], ['Nest', 'the selected effects nested in the selected columns: B[A]'], ['Macros', 'Full Factorial (every crossing), Factorial to Degree, Factorial Sorted (by degree), Response Surface (main effects, crossings, squares), Polynomial to Degree'], ['Degree', 'the degree of Factorial to Degree and Polynomial to Degree'], ['Attributes', 'Random Effect: the effect\'s levels are a random sample (a variance component)'], ['Remove', 'the selected effects (or double click one)'], ['No Intercept', 'fit without the constant term']] }],
+      sections: [{ choices: [['Add', 'each selected column as a main effect'], ['Cross', 'the selected columns crossed together, or with the selected effects (a column with itself: its square)'], ['Nest', 'the selected effects nested in the selected columns: B[A]'], ['Macros', 'Full Factorial (every crossing), Factorial to Degree, Factorial Sorted (by degree), Response Surface (main effects, crossings, squares), Polynomial to Degree'], ['Degree', 'the degree of Factorial to Degree and Polynomial to Degree'], ['Attributes', 'Random Effect: the effect\'s levels are a random sample (a variance component)'], ['Remove', 'the selected effects (or double click one)'], ['No Intercept', 'fit without the constant term']] },
+        { heading: 'Dragging', text: 'Columns dragged onto the list of effects, from the list of columns or from a role, go in as main effects (from a role they leave it; dropped on an effect, one takes that effect\'s place). An effect in the list can be dragged too: up or down the list to change the order, a main effect onto a role to move its column there, and anywhere else in the dialog, such as the list of columns, to take it out of the model. A drag cancelled with Escape changes nothing.' }],
       more: MORE,
     },
     'p:fitmodel:personality': {

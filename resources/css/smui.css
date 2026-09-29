@@ -527,6 +527,11 @@
 .sm-role-list { min-height: 24px; max-height: 128px; overflow-y: auto; margin: 0; padding: 2px 0; list-style: none; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); }
 .sm-role-list.is-empty::before { content: attr(data-hint); display: block; padding: 3px 7px; color: var(--text-muted); font-size: 11.5px; font-style: italic; }
 .sm-role-list.drop { outline: 2px dashed var(--color-kvot-accent); outline-offset: -2px; }
+/* a column dragged along a role (or the model effects) lands above or below
+   the one under the pointer; one from another role takes that one's place */
+.sm-role-list li.sm-drop-before { box-shadow: inset 0 2px 0 var(--color-kvot-accent); }
+.sm-role-list li.sm-drop-after { box-shadow: inset 0 -2px 0 var(--color-kvot-accent); }
+.sm-role-list li.sm-drop-replace { background: var(--sm-sel-strong); outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; text-decoration: line-through; }
 .sm-role.is-missing .sm-role-list { border-color: #c0392b; }
 .sm-actions { display: flex; flex-direction: column; gap: 6px; }
 .sm-actions .sm-btn { justify-content: center; }
@@ -701,6 +706,24 @@
 @media (prefers-reduced-motion: reduce) { .sm-touchghost { animation: none; } }
 /* while a drag is under way (mouse or touch), where it can go */
 :root.sm-dragging .sm-role-list:not(.drop), :root.sm-dragging .smt-zone:not(.drop), :root.sm-dragging textarea.smf-expr { outline: 1px dashed color-mix(in oklab, var(--color-kvot-accent) 60%, transparent); outline-offset: -1px; }
+/* a column dragged out of the place it was dropped on (smui-launch.js): the
+   item dimmed while it is dragged, and struck through where a drop takes it
+   out; the places that refuse it dimmed, without the mark of a place that
+   takes a drop; by the pointer (by a finger: above the item it carries) a
+   label that says it would be taken out */
+:root { --sm-remove: #c0392b; }
+:root[data-theme="dark"] { --sm-remove: #ff7a6b; }
+.sm-dragged { opacity: 0.4; }
+.sm-removing { text-decoration: line-through; }
+.sm-refusing { opacity: 0.45; }
+:root.sm-dragging .sm-role-list.sm-refusing, :root.sm-dragging .smt-zone.sm-refusing { outline: none; }
+.sm-dropcue { position: fixed; z-index: 10060; pointer-events: none; display: flex; align-items: center; gap: 6px; box-sizing: border-box; max-width: min(360px, 86vw); padding: 4px 11px 4px 8px; border: 1.5px solid var(--sm-remove); border-radius: 13px; background: var(--bg-surface); box-shadow: 0 5px 16px var(--shadow-color); font: 600 12px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; }
+.sm-dropcue[hidden] { display: none; }
+.sm-dropcue > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.sm-dropcue-x { flex: none; color: var(--sm-remove); font-size: 15px; line-height: 1; }
+.sm-dropcue.is-touch { padding: 6px 13px 6px 10px; border-radius: 17px; font-size: 13.5px; }
+:root.sm-drop-remove .sm-touchghost { border-color: var(--sm-remove); text-decoration: line-through; }
+:root.sm-drop-remove .sm-touchghost.is-yes { background: color-mix(in oklab, var(--sm-remove) 16%, var(--bg-surface)); }
 
 /* ---- dialogs move by their title bar (smui-ui.js) ---- */
 .sm-dialog-grip { cursor: move; touch-action: none; user-select: none; }

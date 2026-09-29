@@ -82,6 +82,18 @@
 .sm-gb-chip .sm-colname { overflow: hidden; text-overflow: ellipsis; }
 .sm-gb-chip:hover, .sm-gb-chip.is-drop { border-color: var(--color-kvot-accent); }
 .sm-gb-chip:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+/* a column dropped on this one takes its place (from the list, or from another zone) */
+.sm-gb-chip.is-drop, .sm-gb-chip.sm-drop-replace { border-color: var(--color-kvot-accent); background: var(--sm-sel-strong); text-decoration: line-through; }
+/* a column dragged along its zone lands on this side of this one: a mark on
+   the side of the chip (a vertical zone's columns run top to bottom in its
+   own frame; Y's is turned upside down, and so is the mark) */
+.sm-gb-chip.sm-drop-before, .sm-gb-chip.sm-drop-after { border-color: var(--color-kvot-accent); }
+.sm-gb-chip.sm-drop-before { box-shadow: -5px 0 0 -1px var(--color-kvot-accent); }
+.sm-gb-chip.sm-drop-after { box-shadow: 5px 0 0 -1px var(--color-kvot-accent); }
+.sm-gb-zone.is-vertical .sm-gb-chip.sm-drop-before { box-shadow: 0 -5px 0 -1px var(--color-kvot-accent); }
+.sm-gb-zone.is-vertical .sm-gb-chip.sm-drop-after { box-shadow: 0 5px 0 -1px var(--color-kvot-accent); }
+/* a zone that does not take the column being dragged out of another */
+.sm-gb.is-dragging .sm-gb-zone.sm-refusing { border-color: var(--border-color); }
 .sm-gb-zmode { font-size: 10px; font-style: italic; }
 .sm-gb-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; padding: 16px;
@@ -128,6 +140,8 @@
   .sm-gb-frame { grid-template-columns: minmax(0, 1fr); grid-template-areas: "gx" "plot" "x" "y" "gy" "side"; }
   .sm-gb-zone.is-vertical { writing-mode: horizontal-tb; }
   .sm-gb-z-y.is-vertical { transform: none; }
+  .sm-gb-zone.is-vertical .sm-gb-chip.sm-drop-before { box-shadow: -5px 0 0 -1px var(--color-kvot-accent); }
+  .sm-gb-zone.is-vertical .sm-gb-chip.sm-drop-after { box-shadow: 5px 0 0 -1px var(--color-kvot-accent); }
   .sm-gb-side { flex-flow: row wrap; }
   .sm-gb-side .sm-gb-zone { flex: 1 1 128px; }
   .sm-gb-plotwrap { min-width: 0; overflow-x: auto; }

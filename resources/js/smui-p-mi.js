@@ -387,7 +387,8 @@
       list.replaceChildren();
       list.classList.toggle('is-empty', !effects.length);
       effects.forEach((e, i) => {
-        const li = el('li', { role: 'option', dataset: { i: String(i) }, 'aria-selected': String(sel.has(i)) }, el('span', { class: 'sm-colname', text: effectLabel(e) }));
+        // draggable: along the list to reorder it, out of the dialog's places to take it out, a main effect onto a role
+        const li = el('li', { role: 'option', draggable: 'true', dataset: { i: String(i) }, 'aria-selected': String(sel.has(i)) }, el('span', { class: 'sm-colname', text: effectLabel(e) }));
         if (sel.has(i)) li.classList.add('is-selected');
         list.append(li);
       });
@@ -410,6 +411,46 @@
     };
     // columns dragged here from the list on the left go in as main effects, as Add puts them
     SM.launch.acceptColumns(list, t, (cols) => { msg(''); add(cols.map((x) => [x])); });
+    // An effect dragged along the list goes to the position of the effect it
+    // is dropped on (the end, dropped beside them); dragged anywhere else in
+    // the dialog it is taken out, and a main effect dropped on a role moves
+    // there as its column. A column dragged here from a role leaves the role
+    // and comes in as a main effect, in place of the effect it is dropped on.
+    SM.launch.place(list, {
+      label: 'Analysis Model',
+      item: (n) => n.closest('li[data-i]'),
+      key: (li) => li.dataset.i,
+      take: (li) => {
+        const e = effects[+li.dataset.i];
+        if (!e) return null;
+        return { cols: e.length === 1 ? [e[0]] : [], text: effectLabel(e), effect: e,
+          remove: () => { effects = effects.filter((x) => x !== e); sel.clear(); renderList(); } };
+      },
+      refuses: (m) => (m.cols.length === 1 ? null : 'not a column'),
+      drop: ({ m, at, same }) => {
+        msg('');
+        if (same) {
+          const from = effects.indexOf(m.effect), to = at == null ? effects.length - 1 : +at;
+          if (from < 0 || to < 0 || to >= effects.length || from === to) return;
+          effects.splice(from, 1);
+          effects.splice(to, 0, m.effect);
+          sel.clear();
+          renderList();
+          return;
+        }
+        const e = [m.cols[0]];
+        const target = at == null ? null : effects[+at] || null;
+        m.remove();
+        const k = effectKey(e);
+        const dup = effects.find((x) => effectKey(x) === k);
+        if (dup && (!target || target === dup)) { if (!target) msg('Those effects are in the model already.'); sel.clear(); renderList(); return; }
+        if (dup) effects = effects.filter((x) => x !== dup);
+        if (target && effects.includes(target)) effects.splice(effects.indexOf(target), 1, e);
+        else effects.push(e);
+        sel.clear();
+        renderList();
+      },
+    });
     const btn = (label, fn) => { const b = el('button', { type: 'button', class: 'sm-btn', text: label }); b.addEventListener('click', () => { msg(''); fn(); }); return b; };
     const bAdd = btn('Add', () => { const c = api.selectedColumns(); if (!c.length) { msg('Select columns in the list on the left first.'); return; } add(c.map((x) => [x])); });
     const bCross = btn('Cross', () => {
@@ -452,7 +493,7 @@
         ['Add', 'Adds the columns selected in the list on the left to the analysis model, each as a main effect.'],
         ['Cross', 'Adds an interaction: the crossing of two or more columns selected on the left; with effects selected in the model list as well, each of them crossed with each selected column; with only effects selected, their crossing.'],
         ['Remove', 'Takes the effects selected in the model list out (a double click removes one too).'],
-        ['Effects', 'The analysis model\'s effects: columns dragged onto it go in as main effects, as Add puts them; click to select one, ctrl/⌘ for one more, shift for a range. Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
+        ['Effects', 'The analysis model\'s effects: columns dragged onto it go in as main effects, as Add puts them, and so do columns dragged from a role (they leave it; dropped on an effect, one takes its place); click to select one, ctrl/⌘ for one more, shift for a range. Drag an effect up or down the list to change the order, a main effect onto a role to move its column there, or an effect anywhere else in the dialog to take it out (Escape during the drag leaves it). Their columns join the imputation. With none the model is the response\'s mean, pooled.'],
         ['Model', 'The analysis model: Least Squares (the default for a continuous response), Logistic or Probit for a two-level one (Logistic by default for a categorical response), Poisson for counts.'],
         ['Method', 'MICE (chained equations, the default): each column in turn regressed on the others and its missing values drawn by predictive mean matching, so every imputed value is one that occurs; for continuous, two-level and ordinal columns. Bayesian Gaussian: a Gibbs sampler of a multivariate normal; numbers only, no categorical column with missing values.'],
         ['Imputations m', 'How many completed tables are made, analysed and pooled: 2 to 200, 20 by default. More make the between-imputation variance, and so the pooled standard errors, steadier; the time grows with m.'],
@@ -655,7 +696,8 @@
         ['A column\'s red triangle', 'shows or hides its Observed and Imputed graph and its Trace; Select Rows Imputed selects the rows whose value was missing.']] }],
       more: MORE,
     },
-    'p:mi:model': { kicker: 'Multiple Imputation', title: 'Analysis Model', lead: 'The model fitted to every imputed table: the Model Response on these effects (Add a column, Cross columns for an interaction, Remove). Least Squares for a continuous response, Logistic or Probit for a two-level one, Poisson for counts. No effects: the pooled mean of the response.', more: MORE },
+    'p:mi:model': { kicker: 'Multiple Imputation', title: 'Analysis Model', lead: 'The model fitted to every imputed table: the Model Response on these effects (Add a column, Cross columns for an interaction, Remove). Least Squares for a continuous response, Logistic or Probit for a two-level one, Poisson for counts. No effects: the pooled mean of the response.',
+      sections: [{ heading: 'Dragging', text: 'Columns dragged onto the effects, from the list of columns or from a role, go in as main effects (from a role they leave it; dropped on an effect, one takes that effect\'s place). An effect can be dragged too: up or down the list to change the order, a main effect onto a role to move its column there, and anywhere else in the dialog, such as the list of columns, to take it out. A drag cancelled with Escape changes nothing.' }], more: MORE },
     'p:mi:method': {
       kicker: 'Multiple Imputation', title: 'Imputation',
       lead: 'How the missing values are drawn.',

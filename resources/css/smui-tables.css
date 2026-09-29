@@ -72,6 +72,13 @@
 .smt-chain { display: inline-flex; align-items: center; gap: 3px; padding: 1px; border-radius: 12px; }
 .smt-nest { color: var(--text-muted); font-size: 11px; }
 .smt-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 3px 1px 8px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--bg-surface); font-size: 12px; white-space: nowrap; }
+.smt-chip[draggable="true"] { cursor: grab; }
+/* a column dragged out of a zone (smui-launch.js places): one from another
+   zone takes this one's place; one dragged along the zone lands on this side */
+.smt-chip.sm-drop-replace { border-color: var(--color-kvot-accent); background: var(--sm-sel-strong); text-decoration: line-through; }
+.smt-chip.sm-drop-before, .smt-chip.sm-drop-after { border-color: var(--color-kvot-accent); }
+.smt-chip.sm-drop-before { box-shadow: -5px 0 0 -1px var(--color-kvot-accent); }
+.smt-chip.sm-drop-after { box-shadow: 5px 0 0 -1px var(--color-kvot-accent); }
 .smt-x { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer; }
 .smt-x:hover, .smt-x:focus-visible { background: var(--sm-sel-bg); color: var(--text-primary); outline: none; }
 .smt-statbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }

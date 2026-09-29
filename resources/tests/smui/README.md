@@ -73,8 +73,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 187, counts 304, distribution 168, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
-(13,442 in 33 suites in all).
+Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 187, counts 304, distribution 168, dnd 123, dock 75, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
+(13,640 in 35 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -112,9 +112,10 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-ui.js` | menus, dialogs, `SM.ui.form()`, toasts |
 | `resources/js/smui-grid.js` | the data grid |
 | `resources/js/smui-report.js` | reports: outline boxes, report tables, linked Plotly graphs, the `ctx` a platform gets |
-| `resources/js/smui-launch.js` | launch dialogs |
+| `resources/js/smui-launch.js` | launch dialogs; `SM.launch.place()` and `dropArea()`: columns dragged out of the places they were dropped on |
 | `resources/js/smui-panels.js` | the Table, Columns and Rows panels |
 | `resources/js/smui-app.js` | the menu bar, tabs, the platform and command registries |
+| `resources/js/smui-dock.js`, `resources/css/smui-dock.css` | `SM.dock`: the work area's tab groups (split, moved and ordered by drag; the bars between them; a project's layout) |
 | `resources/js/smui-help.js` | the Help tab and the (i) topics of the frame |
 | `resources/js/smui-profiler.js` | `SM.profiler`: the Prediction Profiler of any model a backend exposes |
 | `resources/js/smui-bootstrap.js` | `SM.bootstrap`: Bootstrap from any report table's right-click menu, and the Bootstrap report |
@@ -333,6 +334,24 @@ it builds outlines into the report:
   table, onDrop)`, so that columns dragged from the dialog's column list land
   there as they do on a role. Dialogs close only by their buttons, the × and
   Escape: a click beside one makes it flash.
+- A list or zone whose items can be dragged out again (the role lists,
+  those effects lists, Graph Builder's and Tabulate's zones) is also a
+  `SM.launch.place(el, cfg)`, inside a `SM.launch.dropArea(scope)` (the
+  dialog or the builder): an item dragged onto another place of the scope
+  moves there by that place's rules (`refuses` says why not), onto an item
+  of one takes its place, along its own place changes the order, and let go
+  anywhere else in the scope is taken out; only a drop does anything (a
+  cancelled drag leaves all as it was). Such a drag also carries
+  `SM.launch.PLACE`: a handler of drops from a column list tests
+  `SM.launch.fromPlace(ev)` and leaves those alone, whatever order the
+  handlers run in.
+- Reports can be seen side by side (smui-dock.js): a report's view moves
+  in the page when its tab goes to another group, and its room changes with
+  the bars between groups. Draw for the room there is (the reports already
+  fit their graphs on a resize), find the report's own elements from
+  `rep.body`, not with `document.querySelector` (with two groups there are
+  two views on show; the one in use is `.sm-group.is-focused`), and keep no
+  element's scroll position yourself: the groups keep them.
 - Lists whose items can be selected together (role lists, effects lists,
   a filter's levels) take clicks through `SM.util.listClick(ev, id, ids,
   sel, mark)`: a click selects one (again on the only one: none), ctrl/⌘
@@ -425,6 +444,10 @@ its place, its rows by their text columns.
 `test-ui-jsl.py` (24): Python > JSL to Python; the page's own sample converts (the table read as the reports' code reads it, a formula column as pandas, each analysis as its report's code on the script's table, the imports once at the top); what did not convert as a comment and a note with its line, a click on which shows the line; Open in Notebook runs clean, graphs too, and gives the report's mean; Open the Reports Here opens the four analyses with their options (Fit Line, Means/Anova, t Test); a table that is not open, a column the script makes, a syntax error (the lines after it still convert), a Where() and its mean; a dropped .jsl file; Ctrl+Enter; phone width.
 
 JSL to Python: `jsl.convert` returns the script with a marker line where each analysis goes and a step for it (the page's platform, roles and options by column name, the script's table variable, a Where as a Python mask). The page maps the names to ids (`SM.specs.remap`), runs the report out of sight, and puts its code at the marker: imports to the top, `df = pd.read_csv(...)` as `df = <table variable>` (or `.loc[<where>]`), and without the lines that drop the rows the page's report left out (the script picks its own rows). The order of JSL's operators is the Scripting Guide's Table 5.3; the Syntax Reference has none.
+
+`test-ui-dock.py` (75): the work area's tab groups (smui-dock.js). One group at the start and the Help text on a hidden shelf; the box and the bar that show where a dragged tab would go (each edge of a group, its own middle refused, a place on a strip), and a tab's drag does not mark the places that take columns; tabs dragged with the mouse (Chrome's drag interception): to an edge (a new group there, the room shared, the moved report still scrolled where it was), to the bottom of another group (a split the other way), onto another strip (the group left empty goes, and the split left with one part), along a strip (the order), onto its own group's middle (nothing); a click in a group makes it the one in use; the arrow keys stay in a strip and ctrl+shift+arrow moves a tab; the context menu's Split (off, and why, for a lone tab), Move to Group and Join All Groups; the bar between two parts (dragged, held at 150 px, a double click, ArrowDown, its role); new tabs and Help open in the group in use, new tabs before Help; the Help text back on its shelf when closed; closing tabs and the groups they leave; a hidden view whose group moved keeps its scroll position; a text field under a dropped tab takes nothing; the page's print shows the group in use; a project saves its layout and opens in it again (an older file without one as before); at phone width the groups stack, no new ones are made, and a tab held by touch moves between them.
+
+`test-ui-dnd.py` (123): a column dragged out of the place it was dropped on, with the mouse (Chrome's drag interception) and by touch; what the page shows during the drag (the item dimmed, the place that takes it, the item it would replace or the side it lands on, the places that refuse it dimmed, the Remove label by the pointer) and after it. A launch dialog (Distribution): moved between roles, reordered both ways, put in place of another role's column, refused by a role that does not take its modeling type (and the dialog says why), taken out on the column list and on the lead, left alone by a cancelled drag and by one let go beside the dialog, a list drag still as before, a role's button taking a column from another role or from the list; the report has the roles the drags made. Fit Model's effects (reordered, one taken out, a crossing refused by every role, a column from a role and back) and the Effect Tests in the new order; Multiple Imputation's effects and its pooled model; Graph Builder (between zones in one Undo step, a refusing zone, reordered, replaced, taken out on the list and on the graph, cancelled, let go outside; every point of two Y columns with Group X inside its panel); Tabulate (columns to rows, reordered and nested, the analysis columns reordered, replaced, taken out; the table computed again); the (i) texts; a phone (touch emulation): the carried item, the label, a touch cancel.
 
 `test-ui-core.py`: the frame loads without errors, the engine starts, every
 (i) has a topic and every Help link a target, the examples, the launch

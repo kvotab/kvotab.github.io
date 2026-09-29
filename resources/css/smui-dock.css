@@ -1,0 +1,71 @@
+/* ==========================================================================
+   SMUI.HTML: THE WORK AREA'S TAB GROUPS (smui-dock.js)
+
+   The work area holds one group (a tab strip over its views) or splits of
+   groups, side by side or one above the other, with a bar between two parts
+   that resizes them. With one group the page looks as it did before there
+   were groups.
+   ========================================================================== */
+.sm-main { grid-template-rows: minmax(0, 1fr); }
+.sm-group { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+.sm-split { display: flex; min-width: 0; min-height: 0; }
+.sm-split.is-row { flex-direction: row; }
+.sm-split.is-col { flex-direction: column; }
+.sm-split > .sm-group, .sm-split > .sm-split { min-width: 0; min-height: 0; }
+/* each view its own stacking context, so that the drop box lies over all of it */
+.sm-views > .sm-view { z-index: 0; }
+
+/* The bar between two parts: a line, with room either side to take hold of. */
+.sm-sash { flex: none; position: relative; z-index: 7; background: var(--border-color); touch-action: none; }
+.sm-sash.is-row { width: 1px; cursor: col-resize; }
+.sm-sash.is-col { height: 1px; cursor: row-resize; }
+.sm-sash::before { content: ''; position: absolute; inset: 0 -4px; }
+.sm-sash.is-col::before { inset: -4px 0; }
+.sm-sash:hover, .sm-sash.is-moving, .sm-sash:focus-visible { outline: none; background: var(--color-kvot-accent); box-shadow: 0 0 0 1px var(--color-kvot-accent); }
+.sm-main.is-resizing { user-select: none; -webkit-user-select: none; }
+.sm-main.is-resizing.is-row { cursor: col-resize; }
+.sm-main.is-resizing.is-col { cursor: row-resize; }
+.sm-main.is-resizing .sm-views { pointer-events: none; }
+
+/* With more than one group, the one in use has an accent over its tab. */
+.sm-split .sm-group.is-focused .sm-tab.is-active { box-shadow: inset 0 2px 0 var(--color-kvot-accent); }
+.sm-split .sm-group:not(.is-focused) .sm-tab.is-active { color: var(--text-secondary); }
+.sm-split .sm-group:not(.is-focused) .sm-tab.is-active .sm-tabicon { color: var(--text-muted); }
+
+/* ---- dragging a tab ---- */
+.sm-tab { position: relative; }
+.sm-tab.is-dragged { opacity: 0.45; }
+/* where on a strip it goes: a bar at the left edge of the tab it goes
+   before (or the right edge of the last), inside the tab: a button clips
+   what reaches out of it */
+.sm-tab.drop-before::before, .sm-tab.drop-after::after { content: ''; position: absolute; top: 2px; bottom: 0; width: 3px; border-radius: 1.5px; background: var(--color-kvot-accent); pointer-events: none; }
+.sm-tab.drop-before::before { left: 0; }
+.sm-tab.drop-after::after { right: 0; }
+.sm-tabs.is-dropping { background-color: color-mix(in oklab, var(--color-kvot-accent) 14%, var(--bg-secondary)); }
+/* where on a group it goes: all of it (into the group), or a half (a new group there) */
+.sm-dropzone { position: absolute; z-index: 1; pointer-events: none; box-sizing: border-box; border: 2px solid color-mix(in oklab, var(--color-kvot-accent) 55%, transparent); border-radius: 4px; background: color-mix(in oklab, var(--color-kvot-accent) 16%, transparent); transition: inset 0.09s ease-out; }
+.sm-dropzone[hidden] { display: none; }
+.sm-dropzone.is-center { inset: 4px; }
+.sm-dropzone.is-left { inset: 4px 50% 4px 4px; }
+.sm-dropzone.is-right { inset: 4px 4px 4px 50%; }
+.sm-dropzone.is-top { inset: 4px 4px 50% 4px; }
+.sm-dropzone.is-bottom { inset: 50% 4px 4px 4px; }
+@media (prefers-reduced-motion: reduce) { .sm-dropzone { transition: none; } }
+/* a tab's drag is not a column's: the places that take columns stay unmarked */
+.sm-main.is-dragging-tab .sm-role-list:not(.drop), .sm-main.is-dragging-tab .smt-zone:not(.drop), .sm-main.is-dragging-tab textarea.smf-expr { outline: none; }
+
+/* At phone width the groups stack, the bars between them a finger wide. */
+@media (max-width: 760px) {
+  .sm-split.is-row { flex-direction: column; }
+  .sm-sash.is-row, .sm-sash.is-col { width: auto; height: 9px; cursor: row-resize; background: linear-gradient(var(--border-color), var(--border-color)) center / 100% 1px no-repeat, var(--bg-secondary); }
+  .sm-sash.is-row::before, .sm-sash.is-col::before { inset: 0; }
+  .sm-sash:hover, .sm-sash.is-moving, .sm-sash:focus-visible { background: linear-gradient(var(--color-kvot-accent), var(--color-kvot-accent)) center / 100% 3px no-repeat, var(--bg-secondary); box-shadow: none; }
+}
+
+/* On paper: the group in use only, as the one view there was. */
+@media print {
+  .sm-split, .sm-group { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  .sm-sash, .sm-dropzone, .sm-split .sm-group:not(.is-focused) { display: none !important; }
+}
+/* the dark page: the box a little stronger, to be seen on the dark ground */
+:root[data-theme="dark"] .sm-dropzone { border-color: color-mix(in oklab, var(--color-kvot-accent) 85%, transparent); background: color-mix(in oklab, var(--color-kvot-accent) 28%, transparent); }

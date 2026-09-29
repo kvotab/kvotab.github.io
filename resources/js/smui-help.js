@@ -189,6 +189,17 @@
         'Graphs: click a point or bar to select its rows (shift adds), drag a rectangle to select several; double click to clear. The toolbar above a graph zooms, pans and saves it as PNG.',
       ]),
 
+      h('h2', 'Tabs side by side', 'groups'),
+      p('Tables, reports and notebooks open in tabs, and the tabs can be put in groups side by side or one above the other, so that a table and its report, or two reports, are seen together.'),
+      ul([
+        'Drag a tab by its title to the edge of a group (left, right, top or bottom): it goes into a new group on that side, which splits the group in two. A box shows where it will go.',
+        'Drag a tab onto another group\'s tabs, or onto the middle of it, to move it there; along its own row of tabs, to put the tabs in another order. A group whose last tab leaves goes.',
+        'The group last clicked in is the one in use: an accent line marks its tab in front, its table is the current one (the panels and the menus work on it), and new tabs open in it.',
+        'Drag the bar between two groups to share out the room; a double click makes the two equal.',
+        'Right click a tab for **Split** (right, down, left or up), **Move to Group** and **Join All Groups**.',
+        'A saved project keeps the groups. On a phone the groups stack one above the other, and a tab touched and held moves between them.',
+      ]),
+
       h('h2', 'The Python notebook', 'notebook'),
       p('**Python > New Notebook** opens a tab of cells, as in Jupyter. Code cells run in the page\'s own Python, the engine the reports use; text cells are Markdown. Each notebook keeps its own variables.'),
       ul([
@@ -212,7 +223,7 @@
       h('h2', 'Saving your work', 'saving'),
       ul([
         '**File > Save Table** writes one table as JSON, with its modeling types, formats, value orders, formulas, spec limits and row states; File > Open reads it back.',
-        '**File > Save Project** writes every open table, every report (roles, options, filters) and every notebook into one JSON file; opening it rebuilds the reports and reopens the notebooks.',
+        '**File > Save Project** writes every open table, every report (roles, options, filters) and every notebook into one JSON file; opening it rebuilds the reports and reopens the notebooks, in the groups they were in.',
         'A notebook\'s **Save ▾** writes it as a Jupyter notebook (.ipynb) or a Python script (.py).',
         '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script, a standalone HTML copy or a Word document (.docx), or prints it.',
         'Nothing is kept by the page itself between visits: save a project before closing the tab.',
@@ -223,7 +234,7 @@
       el('table', null, el('tbody', null, ...[
         ['Grid', 'arrows move; Enter or F2 edits; typing replaces the cell; Tab moves right; Delete clears; ctrl/⌘+C and V copy and paste; ctrl/⌘+Z undo, shift for redo; ctrl/⌘+A selects all rows'],
         ['Menus', 'arrows move and open submenus; Enter chooses; Escape closes'],
-        ['Tabs', 'left and right arrows, Home and End'],
+        ['Tabs', 'left and right arrows, Home and End, along a group\'s tabs; ctrl/⌘+shift+left or right moves the tab; on the bar between two groups the arrows move it'],
         ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog. A click beside a dialog leaves it open.'],
         ['Code', 'Shift+Enter runs a cell (or a report\'s edited code) and moves on; Ctrl/⌘+Enter runs it; Alt+Enter runs it and adds a cell; Tab and Shift+Tab indent and outdent; Ctrl/⌘+/ comments lines out and in; Escape, then Tab, leaves the editor'],
       ].map((r) => el('tr', null, el('td', null, el('strong', { text: r[0] })), el('td', { text: r[1] }))))),

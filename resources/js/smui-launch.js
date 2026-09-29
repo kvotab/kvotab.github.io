@@ -4,7 +4,10 @@
    JMP's launch dialog: the table's columns on the left, the roles in the
    middle, the actions on the right. Select columns and press a role's
    button, drag them onto a role, or double-click one to put it in the
-   first role that takes it. A platform describes its dialog:
+   first role that takes it. A column in a role can be dragged again: to
+   another role, onto a column of one (to take its place), along its own
+   role (to change the order) or anywhere else in the dialog (to take it
+   out); see "Places" below. A platform describes its dialog:
 
      launch: {
        lead: 'one line on what the platform does',
@@ -34,6 +37,247 @@
   const last = new Map();   // platform id -> { roles: { key: [names] }, options }
   const MIME = 'application/x-smui-columns';
 
+  /* ---- Places: a column dragged out of where it was dropped -----------------
+     A place takes columns dropped on it: a launch dialog's role list, Fit
+     Model's and Multiple Imputation's model effects, Graph Builder's and
+     Tabulate's zones. Its items can be dragged again, within the dialog or
+     builder the place belongs to (its scope, marked by dropArea()):
+
+       onto another place          it moves there, by that place's own rules
+                                   (a role that does not take its modeling
+                                   type refuses it and shows no drop; one that
+                                   takes one column puts it in place of the
+                                   one it holds)
+       onto an item of another     it takes that item's place
+       place
+       onto an item of its own     it moves to that item's position (the order
+       place, or beside them       of a role's or a zone's columns matters);
+                                   beside the items, to the end
+       anywhere else in the scope  it is taken out of its place
+
+     Only a drop does anything: a drag cancelled with Escape, or let go
+     outside the window, ends with no drop and leaves everything as it was.
+     The drag carries the column as a drag from a column list does (MIME:
+     only an item that is one column; a crossed effect has none) and PLACE,
+     which a drag from a column list has not. While it is under way the
+     item is dimmed, the places of the scope that refuse it are too, and the
+     page shows where it goes: the place's own drop highlight, the item it
+     would replace or the side of the item it would land on, and over the
+     rest of the scope a label by the pointer that says it would be taken
+     out (the item is struck through). One cue is on show at a time: each
+     dragover says which it asks for (pending), and a listener on the
+     document puts that one up once the event has been through every
+     handler. */
+  const PLACE = 'application/x-smui-place';
+  const PLACES = new WeakMap();     // place element -> its description (see place())
+  let moving = null;                // the drag out of a place under way
+  let pending = null;               // the cue the dragover under way asks for
+  let shown = null;                 // the cue on show
+  let badge = null;                 // the "Remove ..." label by the pointer
+
+  const scopeOf = (e) => (e && e.closest ? e.closest('[data-sm-scope]') : null);
+  const inPlace = (ev) => !!(ev.target && ev.target.closest && ev.target.closest('[data-sm-place]'));
+
+  /* Whether a drag comes out of a place (it carries PLACE), wherever it is
+     and whether or not a handler has already dealt with its drop: the
+     handlers of drops from a column list leave these alone. */
+  function fromPlace(ev) {
+    const dt = ev && ev.dataTransfer;
+    return !!(dt && [...dt.types].includes(PLACE));
+  }
+
+  /* The drag out of a place that an event belongs to while it is under way,
+     or null: a drag from a column list, or from outside the page (and a
+     drag whose drop has been dealt with). */
+  function movingOf(ev) {
+    return moving && fromPlace(ev) ? moving : null;
+  }
+
+  /* A dialog or a builder whose places' items are taken out when they are
+     dropped anywhere else in it. */
+  function dropArea(scope) {
+    if (!scope || scope.dataset.smScope != null) return scope;
+    scope.dataset.smScope = '';
+    scope.addEventListener('dragover', (ev) => {
+      const m = movingOf(ev);
+      // a place answers for itself: one that refuses the item shows no drop
+      if (!m || m.scope !== scope || ev.defaultPrevented || inPlace(ev)) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      pending = { m, remove: true, x: ev.clientX, y: ev.clientY };
+    });
+    scope.addEventListener('drop', (ev) => {
+      const m = movingOf(ev);
+      if (!m || m.scope !== scope || ev.defaultPrevented || inPlace(ev)) return;
+      ev.preventDefault();
+      finish();
+      m.remove();
+    });
+    return scope;
+  }
+
+  /* Make el a place whose items can be dragged out of it (and that takes
+     the items of the other places of its scope). cfg:
+       label           the place's name, for the remove label ('Y, Response')
+       item(node)      the item element a node is in, or null
+       key(item)       the item's key within the place
+       take(item)      at dragstart, what the item is: { cols, text, remove() }
+                       and anything the place's own drop wants to know (cols:
+                       the one column it is, or [] for an effect that is not
+                       one column; remove() takes it out of this place)
+       refuses(m, at)  for an item of another place of the scope: why this
+                       place does not take it (a sentence), or null; at is the
+                       key of the item under the pointer, or null
+       drop({ m, at, same, side, ev })
+                       what a drop does. same: m is this place's own item,
+                       moved to the position of the item at (side 'before' or
+                       'after' it: where it lands) or, at null, to the end.
+                       Otherwise m comes from another place: take it (in place
+                       of the item at, when there is one) and call m.remove(),
+                       unless the place moves it in one step itself
+       said(reason)    optional: show why a drag is refused here, or with null
+                       take that away again
+       dropClass       the place's class while it takes a drop (default 'drop')
+       area            optional: a larger element around el that takes the drop
+                       as el does (a role's row: its button is the role too) */
+  function place(el, cfg) {
+    const area = cfg.area || el;
+    area.dataset.smPlace = '';
+    PLACES.set(area, { cfg, el });
+    const itemIn = (node) => { const it = node && node.closest ? cfg.item(node) : null; return it && el.contains(it) ? it : null; };
+    el.addEventListener('dragstart', (ev) => {
+      const item = itemIn(ev.target);
+      const scope = scopeOf(el);
+      if (!item || !scope || !ev.dataTransfer) return;
+      const what = cfg.take(item);
+      if (what) begin(ev, item, el, cfg, scope, what);
+    });
+    area.addEventListener('dragover', (ev) => {
+      const m = movingOf(ev);
+      if (!m) return;
+      const j = judge(m, el, cfg, itemIn(ev.target));
+      if (!j) return;
+      if (j.reason) { pending = { place: el, cfg, reason: j.reason }; return; }
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      pending = { place: el, cfg, item: j.atEl, cls: j.cls };
+    });
+    area.addEventListener('drop', (ev) => {
+      const m = movingOf(ev);
+      if (!m) return;
+      const j = judge(m, el, cfg, itemIn(ev.target));
+      if (!j || j.reason) return;
+      ev.preventDefault();
+      finish();
+      if (!j.noop) cfg.drop({ m, at: j.at, same: j.same, side: j.side, ev });
+    });
+  }
+
+  /* What a drop of m on the place el (over its item atEl) would do. */
+  function judge(m, el, cfg, atEl) {
+    if (m.scope !== scopeOf(el)) return null;        // another dialog or builder: not here
+    const at = atEl ? cfg.key(atEl) : null;
+    if (m.from === el) {
+      if (atEl === m.item) return { same: true, noop: true };
+      if (!atEl) return { same: true, at: null, atEl: null, cls: null };
+      // it lands after the item when it comes from before it, else before it
+      const side = m.item.compareDocumentPosition(atEl) & Node.DOCUMENT_POSITION_FOLLOWING ? 'after' : 'before';
+      return { same: true, at, atEl, side, cls: `sm-drop-${side}` };
+    }
+    const reason = cfg.refuses(m, at);
+    if (reason) return { reason };
+    return { same: false, at, atEl, cls: atEl ? 'sm-drop-replace' : null };
+  }
+
+  function begin(ev, item, el, cfg, scope, what) {
+    finish();                // a drag left over (its dragend never came) goes
+    const dt = ev.dataTransfer;
+    const label = typeof cfg.label === 'function' ? cfg.label() : cfg.label;
+    const m = { ...what, key: cfg.key(item), item, from: el, cfg, scope, label };
+    moving = m;
+    if (m.cols.length) dt.setData(MIME, JSON.stringify(m.cols.map((c) => c.id)));
+    dt.setData(PLACE, String(m.key));
+    dt.setData('text/plain', m.text);
+    dt.effectAllowed = 'copyMove';
+    // dimmed once the browser has taken its picture of the item
+    setTimeout(() => { if (moving === m) item.classList.add('sm-dragged'); }, 0);
+    // the places that would not take it
+    for (const p of scope.querySelectorAll('[data-sm-place]')) {
+      const P = PLACES.get(p);
+      if (P && P.el !== el && P.cfg.refuses(m, null)) P.el.classList.add('sm-refusing');
+    }
+    if (m.started) m.started();
+    // on the item itself: a place may draw its items again before the drag ends
+    item.addEventListener('dragend', () => { if (moving === m) finish(); }, { once: true });
+  }
+
+  function finish() {
+    const m = moving;
+    moving = null;
+    pending = null;
+    cue(null);
+    if (!m) return;
+    m.item.classList.remove('sm-dragged', 'sm-removing');
+    for (const p of m.scope.querySelectorAll('.sm-refusing')) p.classList.remove('sm-refusing');
+    if (m.done) m.done();
+  }
+
+  /* Put up the cue a dragover asked for (null: none), taking down the one
+     on show when it is another. */
+  function cue(next) {
+    const same = shown && next && shown.place === next.place && shown.item === next.item && shown.cls === next.cls && shown.reason === next.reason && !!shown.remove === !!next.remove;
+    if (shown && !same) {
+      if (shown.place) shown.place.classList.remove(shown.cfg.dropClass || 'drop');
+      if (shown.item && shown.cls) shown.item.classList.remove(shown.cls);
+      if (shown.reason && shown.cfg.said) shown.cfg.said(null, shown.reason);
+      if (shown.remove) {
+        if (badge) badge.hidden = true;
+        document.documentElement.classList.remove('sm-drop-remove');
+        shown.m.item.classList.remove('sm-removing');
+      }
+    }
+    const was = shown;
+    shown = next;
+    if (!next) return;
+    if (next.reason) { if (!same && next.cfg.said) next.cfg.said(next.reason); return; }
+    // (again each time: a place's own dragleave may have taken its highlight away)
+    if (next.place) next.place.classList.add(next.cfg.dropClass || 'drop');
+    if (next.item && next.cls) next.item.classList.add(next.cls);
+    if (next.remove) showBadge(next, !(was && same));
+  }
+
+  function showBadge(c, fresh) {
+    if (!badge) {
+      badge = el('div', { class: 'sm-dropcue', 'aria-hidden': 'true' });
+      document.body.append(badge);
+    }
+    if (fresh) {
+      badge.replaceChildren(el('span', { class: 'sm-dropcue-x', text: '×' }), el('span', { text: `Remove ${c.m.text}${c.m.label ? ` from ${c.m.label}` : ''}` }));
+      badge.hidden = false;
+      document.documentElement.classList.add('sm-drop-remove');
+      c.m.item.classList.add('sm-removing');
+    }
+    // by the pointer; by a finger, above the item the finger carries
+    const touch = !!(SM.touchdrag && SM.touchdrag.active());
+    badge.classList.toggle('is-touch', touch);
+    const w = badge.offsetWidth, h = badge.offsetHeight;
+    let x = touch ? c.x - w / 2 : c.x + 14, y = touch ? c.y - 80 - h : c.y + 18;
+    x = Math.max(4, Math.min(x, innerWidth - w - 4));
+    y = Math.max(4, Math.min(y, innerHeight - h - 4));
+    badge.style.left = `${Math.round(x)}px`;
+    badge.style.top = `${Math.round(y)}px`;
+  }
+
+  if (typeof document !== 'undefined') {
+    // each dragover asks afresh; once it has been through every handler, its cue goes up
+    document.addEventListener('dragover', () => { pending = null; }, true);
+    document.addEventListener('dragover', () => { if (moving) cue(pending); });
+    // out of the window: nothing is where it would go
+    document.addEventListener('dragleave', (ev) => { if (moving && !ev.relatedTarget) cue(null); });
+    // a new drag: what an old one left (its dragend never came) goes
+    document.addEventListener('dragstart', () => { if (moving) finish(); }, true);
+  }
+
   function roleAccepts(role, c) {
     if (role.numeric && !c.isNumeric) return `${role.label} needs a numeric column; ${c.name} is character`;
     if (role.types && !role.types.includes(c.modelingType)) {
@@ -41,6 +285,12 @@
     }
     return null;
   }
+
+  /* How columns get into the roles and out of them again, for the (i). */
+  const ROLES_HELP = [
+    'Select columns in the list on the left and press a role\'s button, drag them onto the role (its list or its button), or double-click one to put it in the first role that takes it.',
+    'A column in a role can be dragged again: onto another role to move it there (a role that does not take its modeling type refuses it and says why; one that takes a single column puts it in place of the one it holds), onto a column of another role to take that column\'s place, along its own role to change the order, and anywhere else in the dialog, such as the list on the left, to take it out. A drag cancelled with Escape leaves it where it was. A double click, or Remove with it selected, takes it out too.',
+  ];
 
   /* What a role takes, in words: 'required: one column, continuous'. */
   function takes(r) {
@@ -73,7 +323,7 @@
       const ownRoles = own('Roles'), ownOpts = own('Options');
       const sections = ((base && base.sections) || []).filter((s) => !(s.choices && (s.heading === 'Roles' || s.heading === 'Options')));
       const now = roles.filter((r) => shown(r));
-      if (now.length) sections.push({ heading: 'Roles', choices: now.map((r) => [r.label, [say(r) || ownRoles.get(r.label), `(${takes(r)})`].filter(Boolean).join(' ')]) });
+      if (now.length) sections.push({ heading: 'Roles', text: ROLES_HELP, choices: now.map((r) => [r.label, [say(r) || ownRoles.get(r.label), `(${takes(r)})`].filter(Boolean).join(' ')]) });
       const opts = (L.options || []).map((o) => [o.label, say(o) || ownOpts.get(o.label) || (o.type === 'check' ? 'on or off' : '')]);
       if (opts.length) sections.push({ heading: 'Options', choices: opts });
       let xh = null;
@@ -228,6 +478,41 @@
       state[role.key] = cur;
       renderRoles();
     };
+    // A column dragged out of a role (dropped elsewhere in the dialog, or moved).
+    const takeOut = (role, id) => {
+      state[role.key] = state[role.key].filter((x) => x !== id);
+      roleSel[role.key].delete(id);
+      renderRoles();
+    };
+    // A column of a place of this dialog dropped on a role: along the role
+    // (same), it goes to the position of the column at (the end without
+    // one); from another role or the model effects, it leaves that place and
+    // takes the place of the column at, or comes in as a drop from the list
+    // does (after the others; in a role of one column, instead of it).
+    const dropOn = (role, m, at, same) => {
+      msg.textContent = '';
+      msg.classList.remove('is-info');
+      const c = m.cols[0];
+      const ids = state[role.key].slice();
+      if (same) {
+        const from = ids.indexOf(c.id), to = at == null ? ids.length - 1 : ids.indexOf(at);
+        if (from < 0 || to < 0 || from === to) return;
+        ids.splice(from, 1);
+        ids.splice(to, 0, c.id);
+        state[role.key] = ids;
+        renderRoles();
+        return;
+      }
+      m.remove();
+      if (at === c.id && state[role.key].includes(c.id)) { renderRoles(); return; }     // it is in this role already, there
+      if (at != null && state[role.key].includes(at)) {
+        const rest = state[role.key].filter((id) => id !== c.id);
+        rest.splice(rest.indexOf(at), 1, c.id);
+        state[role.key] = rest;
+        roleSel[role.key].delete(at);
+        renderRoles();
+      } else addTo(role, [c.id]);
+    };
     const roleSel = {};
     const roleWatchers = [];
     const renderRoles = () => {
@@ -244,7 +529,8 @@
         for (const id of ids) {
           const c = table.col(id);
           if (!c) continue;
-          const li = el('li', { dataset: { id }, role: 'option', 'aria-selected': String(roleSel[r.key]?.has(id) || false) }, typeIcon(c.modelingType), el('span', { class: 'sm-colname', text: c.name }));
+          // draggable: to another role, onto a column of one, along this one, or out
+          const li = el('li', { dataset: { id }, role: 'option', draggable: 'true', 'aria-selected': String(roleSel[r.key]?.has(id) || false) }, typeIcon(c.modelingType), el('span', { class: 'sm-colname', text: c.name }));
           if (roleSel[r.key]?.has(id)) li.classList.add('is-selected');
           ul.append(li);
         }
@@ -270,16 +556,32 @@
         roleSel[r.key].delete(li.dataset.id);
         renderRoles();
       });
-      ul.addEventListener('dragover', (ev) => { if ([...ev.dataTransfer.types].includes(MIME)) { ev.preventDefault(); ul.classList.add('drop'); } });
-      ul.addEventListener('dragleave', () => ul.classList.remove('drop'));
-      ul.addEventListener('drop', (ev) => {
+      const row = el('div', { class: 'sm-role' }, btn, ul, r.info ? KvotInfo.slot(r.info) : el('span'));
+      // columns from the column list, dropped on the role's list or its button
+      // (a column dragged out of a place is place()'s, whose area is the row too)
+      row.addEventListener('dragover', (ev) => { if (!fromPlace(ev) && [...ev.dataTransfer.types].includes(MIME)) { ev.preventDefault(); ul.classList.add('drop'); } });
+      row.addEventListener('dragleave', () => ul.classList.remove('drop'));
+      row.addEventListener('drop', (ev) => {
         ul.classList.remove('drop');
+        if (fromPlace(ev)) return;
         const data = ev.dataTransfer.getData(MIME);
         if (!data) return;
         ev.preventDefault();
         addTo(r, JSON.parse(data));
       });
-      const row = el('div', { class: 'sm-role' }, btn, ul, r.info ? KvotInfo.slot(r.info) : el('span'));
+      place(ul, {
+        area: row,
+        label: r.label,
+        item: (n) => n.closest('li[data-id]'),
+        key: (li) => li.dataset.id,
+        take: (li) => { const c = table.col(li.dataset.id); return c ? { cols: [c], text: c.name, remove: () => takeOut(r, c.id) } : null; },
+        refuses: (m) => (m.cols.length !== 1 ? `${r.label} takes columns; ${m.text} is an effect` : roleAccepts(r, m.cols[0])),
+        // why a role refuses the column, while it is over it (as a drop from the list would say after it)
+        said: (why, was) => {
+          if (why) { msg.textContent = why; msg.classList.remove('is-info'); } else if (msg.textContent === was) msg.textContent = '';
+        },
+        drop: ({ m, at, same }) => dropOn(r, m, at, same),
+      });
       roleEls[r.key] = { row, list: ul, btn };
       roleBox.append(row);
     }
@@ -356,6 +658,8 @@
 
     const topicKey = dialogTopic(platform, L, roles, extra, (r) => !(roleEls[r.key] && roleEls[r.key].row.hidden));
     const dlg = SM.ui.dialog({ title: platform.label, body, info: topicKey, className: 'sm-launch-dialog' });
+    // a column dragged out of a role (or the model effects) and let go anywhere else in the dialog is taken out
+    dropArea(dlg.el);
 
     const validate = (s) => {
       for (const r of roles) {
@@ -430,10 +734,11 @@
   /* Let an element take columns dragged from a launch dialog's column
      list, as the role lists do (a platform's own list, such as Fit Model's
      Construct Model Effects): onDrop(columns) gets them in the table's
-     order. */
+     order. A column dragged out of a place is not one of these: a list
+     that takes those too is a place() as well. */
   function acceptColumns(target, table, onDrop) {
     target.addEventListener('dragover', (ev) => {
-      if (![...ev.dataTransfer.types].includes(MIME)) return;
+      if (fromPlace(ev) || ![...ev.dataTransfer.types].includes(MIME)) return;
       ev.preventDefault();
       ev.dataTransfer.dropEffect = 'copy';
       target.classList.add('drop');
@@ -441,6 +746,7 @@
     target.addEventListener('dragleave', (ev) => { if (!target.contains(ev.relatedTarget)) target.classList.remove('drop'); });
     target.addEventListener('drop', (ev) => {
       target.classList.remove('drop');
+      if (fromPlace(ev)) return;
       const data = ev.dataTransfer.getData(MIME);
       if (!data) return;
       ev.preventDefault();
@@ -451,5 +757,5 @@
     });
   }
 
-  SM.launch = Object.freeze({ open, roleAccepts, MIME, last, acceptColumns });
+  SM.launch = Object.freeze({ open, roleAccepts, MIME, last, acceptColumns, PLACE, place, dropArea, fromPlace, moving: movingOf });
 }(typeof self !== 'undefined' ? self : this));

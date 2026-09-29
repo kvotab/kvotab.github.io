@@ -102,7 +102,6 @@
       this.host = host;
       this.tables = [];
       this.reports = [];
-      this.tabs = [];
       this.grids = new Map();
       this.current = null;       // the current table
       this.activeTab = null;
@@ -111,6 +110,9 @@
       this.redoStack = [];
       this._build();
     }
+
+    // every tab, group by group in the order they sit
+    get tabs() { return this.dock ? this.dock.groups.flatMap((g) => g.tabs) : []; }
 
     /* ---- undo ---------------------------------------------------------------
        Before a change, record(table, label) keeps a copy of the table (or
@@ -190,10 +192,10 @@
 
       this.side = el('aside', { class: 'sm-side', 'aria-label': 'Table, columns and rows' });
       this.handle = el('div', { class: 'sm-handle', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the panels', tabindex: '0' });
-      this.tabbar = el('div', { class: 'sm-tabs', role: 'tablist', 'aria-label': 'Tables and reports' });
-      this.views = el('div', { class: 'sm-views' });
-      this.main = el('main', { class: 'sm-main' }, this.tabbar, this.views);
+      this.main = el('main', { class: 'sm-main' });
       h.append(this.menubar, el('div', { class: 'sm-body' }, this.side, this.handle, this.main));
+      // the tab groups: one to start with, more when a tab is dragged aside
+      this.dock = new SM.dock.Dock(this, this.main);
       this.panels = new SM.panels.Panels(this.side, this);
       this._wireHandle();
 
@@ -234,30 +236,42 @@
       });
     }
 
-    /* ---- tabs ------------------------------------------------------------- */
+    /* ---- tabs -------------------------------------------------------------
+       Each tab is in one of the work area's groups (smui-dock.js). A new one
+       opens in the group in use, before its Help tab. */
     _addTab({ kind, title, closable = true, view, table = null, report = null, at = null }) {
       const id = SM.util.uid('tab');
       const titleEl = el('span', { class: 'sm-tabtitle', text: title });
       const btn = el('button', { type: 'button', class: 'sm-tab', role: 'tab', 'aria-selected': 'false', id, dataset: { kind } },
         kind === 'table' ? tableGlyph() : kind === 'report' ? reportGlyph() : kind === 'notebook' || kind === 'jsl' ? notebookGlyph() : null, titleEl);
-      const tab = { id, kind, title, btn, titleEl, view, table, report, closable };
+      const tab = { id, kind, title, btn, titleEl, view, table, report, closable, group: null };
       if (closable) {
         const x = el('span', { class: 'sm-tabclose', role: 'button', 'aria-label': `Close ${title}`, text: '×' });
         x.addEventListener('click', (ev) => { ev.stopPropagation(); this.closeTab(tab); });
         btn.append(x);
       }
       btn.addEventListener('click', () => this.showTab(tab));
+      // the arrow keys, Home and End go along the tab's own strip;
+      // ctrl/⌘+shift+left/right moves the tab along it
       btn.addEventListener('keydown', (ev) => {
-        const i = this.tabs.indexOf(tab);
+        const list = tab.group ? tab.group.tabs : [tab];
+        const i = list.indexOf(tab);
+        if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
+          ev.preventDefault();
+          const to = ev.key === 'ArrowRight' ? i + 2 : i - 1;
+          if (to >= 0 && to <= list.length) { this.dock.move(tab, tab.group, to); btn.focus(); }
+          return;
+        }
         let j = null;
-        if (ev.key === 'ArrowRight') j = (i + 1) % this.tabs.length;
-        else if (ev.key === 'ArrowLeft') j = (i - 1 + this.tabs.length) % this.tabs.length;
+        if (ev.key === 'ArrowRight') j = (i + 1) % list.length;
+        else if (ev.key === 'ArrowLeft') j = (i - 1 + list.length) % list.length;
         else if (ev.key === 'Home') j = 0;
-        else if (ev.key === 'End') j = this.tabs.length - 1;
+        else if (ev.key === 'End') j = list.length - 1;
         if (j == null) return;
         ev.preventDefault();
-        this.showTab(this.tabs[j]);
-        this.tabs[j].btn.focus();
+        const to = list[j];
+        this.showTab(to);
+        to.btn.focus();
       });
       btn.addEventListener('auxclick', (ev) => { if (ev.button === 1 && closable) this.closeTab(tab); });
       btn.addEventListener('contextmenu', (ev) => {
@@ -265,38 +279,45 @@
         const items = [];
         if (tab.report) items.push(...tab.report.redoMenu());
         else if (tab.table) items.push(...this.tableMenu());
+        const place = this.dock.menuFor(tab);
+        if (items.length && place.length) items.push({ separator: true });
+        items.push(...place);
         if (items.length) SM.ui.menu(items, { x: ev.clientX, y: ev.clientY });
       });
       view.classList.add('sm-view');
       view.setAttribute('role', 'tabpanel');
       view.setAttribute('aria-labelledby', id);
       view.hidden = true;
-      this.views.append(view);
-      if (at != null && this.tabs[at]) { this.tabbar.insertBefore(btn, this.tabs[at].btn); this.tabs.splice(at, 0, tab); }
-      else if (this.helpTab && kind !== 'help') { this.tabbar.insertBefore(btn, this.helpTab.btn); this.tabs.splice(this.tabs.indexOf(this.helpTab), 0, tab); }
-      else { this.tabbar.append(btn); this.tabs.push(tab); }
+      const g = this.dock.active;
+      const help = this.helpTab && kind !== 'help' && this.helpTab.group === g ? g.tabs.indexOf(this.helpTab) : null;
+      this.dock.add(tab, { group: g, at: at != null ? at : help });
       return tab;
     }
 
+    /* The tab in front of its group, and that group the one in use. */
     showTab(tab) {
-      if (!tab) return;
-      for (const t of this.tabs) {
-        const on = t === tab;
-        t.btn.classList.toggle('is-active', on);
-        t.btn.setAttribute('aria-selected', String(on));
-        t.view.hidden = !on;
-      }
+      if (!tab || !tab.group) return;
+      this.dock.show(tab);
+      this._activate(tab);
+      this._shown(tab);
+      tab.btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      this.host.classList.remove('side-open');
+    }
+
+    // The tab in front of the group in use: the page's title and the current table.
+    _activate(tab) {
       this.activeTab = tab;
       if (!this.baseTitle) this.baseTitle = document.title;
       document.title = tab.kind === 'home' ? this.baseTitle : `${tab.title} — ${this.baseTitle}`;
-      for (const t of this.tabs) t.btn.tabIndex = t === tab ? 0 : -1;
       const table = tab.table || (tab.report && tab.report.table) || null;
       if (table && table !== this.current) this._setCurrent(table);
+    }
+
+    // A tab's view has come into view: what it shows is drawn for its room.
+    _shown(tab) {
       if (tab.kind === 'home') this._renderHome();
       if (tab.kind === 'table') { const g = this.grids.get(tab.table.id); if (g) requestAnimationFrame(() => g.refresh()); }
       if (tab.report) requestAnimationFrame(() => SM.report.kickPlots(tab.report.body));
-      tab.btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      this.host.classList.remove('side-open');
     }
 
     closeTab(tab) {
@@ -307,15 +328,21 @@
       this._removeTab(tab);
     }
 
+    // A tab out of its group (which goes if it is left empty); the group
+    // shows the tab beside it, and if the tab was in front, that one is.
     _removeTab(tab) {
-      const i = this.tabs.indexOf(tab);
-      if (i < 0) return;
-      this.tabs.splice(i, 1);
+      const g = tab.group;
+      if (!g) return;
+      const k = g.tabs.indexOf(tab), shown = g.active === tab, front = this.activeTab === tab;
       tab.btn.remove();
+      this.dock.remove(tab);
       // The Help text stays in the page, hidden, for the (i)s' Read more links.
-      if (tab === this.helpTab) { this.helpTab = null; tab.view.hidden = true; tab.view.removeAttribute('aria-labelledby'); }
+      if (tab === this.helpTab) { this.helpTab = null; tab.view.removeAttribute('aria-labelledby'); this.dock.park(tab.view); }
       else tab.view.remove();
-      if (this.activeTab === tab) this.showTab(this.tabs[Math.min(i, this.tabs.length - 1)] || this.homeTab);
+      const next = shown && this.dock.groups.includes(g) ? g.tabs[Math.min(k, g.tabs.length - 1)] : null;
+      const inUse = this.dock.active;
+      if (front) this.showTab(next || inUse.active || inUse.tabs[0] || this.homeTab);
+      else if (next) this.dock.show(next, { focus: false });
     }
 
     _setCurrent(t) {
@@ -466,26 +493,43 @@
     }
 
     saveProject() {
+      const nbs = SM.notebook ? SM.notebook.notebooks : [];
+      // the tab groups, a tab by what it shows: "table:2" is the third table
+      const refOf = (tab) => (tab === this.homeTab ? 'home' : tab === this.helpTab ? 'help'
+        : tab.kind === 'table' ? `table:${this.tables.indexOf(tab.table)}`
+          : tab.kind === 'report' ? `report:${this.reports.indexOf(tab.report)}`
+            : tab.notebook ? `notebook:${nbs.indexOf(tab.notebook)}` : null);
       const j = { format: 'smui-project', version: 1, saved: new Date().toISOString(), tables: this.tables.map((t) => ({ id: t.id, ...t.toJSON() })), reports: this.reports.map((r) => r.toJSON()),
-        notebooks: SM.notebook ? SM.notebook.notebooks.map((n) => n.toJSON()) : [] };
+        notebooks: nbs.map((n) => n.toJSON()), layout: this.dock.layout(refOf) };
       if (SM.notebook) for (const n of SM.notebook.notebooks) n.dirty = false;
       SM.util.download('smui-project.json', JSON.stringify(j), 'application/json');
     }
 
     loadProject(j) {
       const ids = new Map();
-      for (const tj of j.tables || []) { const t = SM.Table.fromJSON(tj); ids.set(tj.id, t); this.addTable(t, { show: false }); }
+      const made = { table: [], report: [], notebook: [] };      // by their place in the file
+      for (const tj of j.tables || []) { const t = SM.Table.fromJSON(tj); ids.set(tj.id, t); this.addTable(t, { show: false }); made.table.push(t); }
       for (const rj of j.reports || []) {
         const p = platforms.get(rj.platform);
         const t = rj.table ? ids.get(rj.table) : null;
-        if (!p || (!t && p.needsTable !== false)) continue;
-        if (!t) { this.openReport(p, rj.spec, null, { show: false }); continue; }
+        if (!p || (!t && p.needsTable !== false)) { made.report.push(null); continue; }
+        if (!t) { made.report.push(this.openReport(p, rj.spec, null, { show: false })); continue; }
         // Column ids change on loading: map them through the column names saved with the report.
         const spec = remapSpec(rj.spec, t, rj.idNames);
-        this.openReport(p, spec, t, { show: false });
+        made.report.push(this.openReport(p, spec, t, { show: false }));
       }
-      if (SM.notebook) for (const nj of j.notebooks || []) SM.notebook.open(this, nj, { show: false }).dirty = false;
-      const first = this.tabs.find((x) => x.kind === 'table');
+      if (SM.notebook) for (const nj of j.notebooks || []) { const nb = SM.notebook.open(this, nj, { show: false }); nb.dirty = false; made.notebook.push(nb); }
+      // the tab groups as they were saved (a file from before there were groups has none)
+      const find = (ref) => {
+        if (ref === 'home') return this.homeTab;
+        if (ref === 'help') return this._helpTab();
+        const m = /^(table|report|notebook):(\d+)$/.exec(String(ref || ''));
+        const obj = m ? made[m[1]][Number(m[2])] : null;
+        if (!obj) return null;
+        return m[1] === 'notebook' ? this.tabs.find((x) => x.notebook === obj) || null : this.tabOf(obj);
+      };
+      const front = j.layout ? this.dock.arrange(j.layout, find) : null;
+      const first = front || this.tabs.find((x) => x.kind === 'table');
       if (first) this.showTab(first);
       const nbs = (j.notebooks || []).length;
       SM.ui.toast(`Opened the project: ${(j.tables || []).length} tables, ${(j.reports || []).length} reports${nbs ? `, ${nbs} notebook${nbs > 1 ? 's' : ''}` : ''}`);
@@ -1085,14 +1129,19 @@
     _makeHelp() {
       const view = el('div', { class: 'sm-help sm-view', role: 'tabpanel', hidden: true });
       this.helpView = view;
-      this.views.append(view);
+      this.dock.park(view);
       if (SM.help) SM.help.render(view, this); else view.append(el('div', { class: 'sm-help-inner', text: 'Help did not load.' }));
     }
 
-    showHelp(anchor) {
+    // the Help tab, opened (in the group in use) if it is not open
+    _helpTab() {
       if (!this.helpView) this._makeHelp();
       if (!this.helpTab) this.helpTab = this._addTab({ kind: 'help', title: 'Help', view: this.helpView, closable: true });
-      this.showTab(this.helpTab);
+      return this.helpTab;
+    }
+
+    showHelp(anchor) {
+      this.showTab(this._helpTab());
       if (anchor) {
         const target = this.helpView.querySelector(`#help-${CSS.escape(anchor)}`);
         if (target) target.scrollIntoView({ block: 'start' });

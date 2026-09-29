@@ -987,6 +987,56 @@
 
   function resolveRef(t, r) { return r ? t.col(r.id) || t.col(r.name) : null; }
 
+  /* A column in the builder's zones is at a path: 'analysis.<k>', or
+     '<rows|cols>.<block>.<k>' (the k-th of a block of nested columns). */
+  const dimOf = (s, kind) => (kind === 'cols' ? s.cols : kind === 'rows' ? s.rows : null);
+  function refAt(s, path) {
+    const [kind, a, b] = String(path).split('.');
+    if (kind === 'analysis') return s.analysis[+a] || null;
+    const dim = dimOf(s, kind);
+    return (dim && dim[+a] && dim[+a][+b]) || null;
+  }
+
+  /* A column dragged out of its zone (m: its path m.key, its column
+     m.cols[0]) and dropped on zone kind: onto the column at path at, or on
+     a block's ▸ (chainEl), or beside them. Along its own zone (same) it goes
+     before or after the column at (side: where it lands; in that column's
+     block, so a block can take it in), at the end of the block it is
+     dropped on, or last as a block of its own; from another zone it takes
+     the place of the column at, is nested at the end of the block, or comes
+     last as a zone drop from the list puts it. A block it leaves empty
+     goes. False when the state no longer has the column where the builder
+     showed it (the builder is being drawn again). */
+  function tabMove(s, t, m, kind, at, same, side, chainEl) {
+    const c = m.cols[0];
+    const src = refAt(s, m.key);
+    if (!src || resolveRef(t, src) !== c) return false;
+    const dst = at ? refAt(s, at) : null;
+    const block = !dst && chainEl && kind !== 'analysis' ? dimOf(s, kind)[+chainEl.dataset.chain] || null : null;
+    const from = String(m.key).split('.')[0];
+    if (from === 'analysis') s.analysis.splice(s.analysis.indexOf(src), 1);
+    else { const ch = dimOf(s, from).find((x) => x.includes(src)); if (ch) ch.splice(ch.indexOf(src), 1); }
+    const ref = { id: c.id, name: c.name };
+    const put = (list) => {
+      if (dst && list.includes(dst) && resolveRef(t, dst) === c) return;       // dropped on itself there: it is there already
+      // the column once only in a block, or among the analysis columns
+      for (let i = list.length - 1; i >= 0; i--) if (resolveRef(t, list[i]) === c) list.splice(i, 1);
+      const i = dst ? list.indexOf(dst) : -1;
+      if (i < 0) list.push(ref);
+      else if (same) list.splice(side === 'after' ? i + 1 : i, 0, ref);
+      else list.splice(i, 1, ref);
+    };
+    if (kind === 'analysis') put(s.analysis);
+    else {
+      const dim = dimOf(s, kind);
+      const ch = dst ? dim.find((x) => x.includes(dst)) : block && dim.includes(block) ? block : null;
+      if (ch) put(ch); else dim.push([ref]);
+    }
+    s.rows = s.rows.filter((ch) => ch.length);
+    s.cols = s.cols.filter((ch) => ch.length);
+    return true;
+  }
+
   function tabBuilder(ctx, state) {
     const t = ctx.table;
     const set = (next) => ctx.set('tab', next);
@@ -1025,14 +1075,15 @@
     const adders = el('div', { class: 'smt-adders', role: 'group', 'aria-label': 'Add the selected column' },
       btn('Add to Rows', needPick((id) => addTo('rows', [id]))), btn('Nest in Rows', needPick((id) => addTo('nest', [id]))),
       btn('Add to Columns', needPick((id) => addTo('cols', [id]))), btn('Analysis Column', needPick((id) => addTo('analysis', [id]))));
+    const removers = new Map();      // a chip's path -> what its × does (also a drag out of the zones)
     const zone = (kind, label, chains) => {
       const z = el('div', { class: `smt-zone smt-zone-${kind}`, dataset: { zone: kind }, role: 'group', 'aria-label': label });
       const items = [];
       if (kind === 'analysis') {
-        for (const r of chains) {
+        chains.forEach((r, k) => {
           const c = resolveRef(t, r);
-          items.push(chip(c ? c.name : `${r.name} (gone)`, c, () => { const s = tabState(ctx); s.analysis = s.analysis.filter((x) => !(x.id === r.id && x.name === r.name)); set(s); }, null));
-        }
+          items.push(chip(c ? c.name : `${r.name} (gone)`, c, () => { const s = tabState(ctx); s.analysis = s.analysis.filter((x) => !(x.id === r.id && x.name === r.name)); set(s); }, null, `analysis.${k}`));
+        });
       } else {
         chains.forEach((chain, ci) => {
           const g = el('span', { class: 'smt-chain', dataset: { chain: String(ci) } });
@@ -1045,17 +1096,45 @@
               dim[ci].splice(k, 1);
               if (!dim[ci].length) dim.splice(ci, 1);
               set(s);
-            }, ci));
+            }, ci, `${kind}.${ci}.${k}`));
           });
           items.push(g);
         });
       }
       z.append(el('span', { class: 'smt-zonelabel', text: label }), ...items);
       if (!items.length) z.append(el('span', { class: 'smt-zonehint', text: kind === 'analysis' ? 'drop continuous columns here' : `drop ${kind === 'rows' ? 'a column' : 'a column'} here; on a column to nest it` }));
-      z.addEventListener('dragover', (ev) => { if ([...ev.dataTransfer.types].includes(SM.launch.MIME)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; z.classList.add('drop'); } });
+      // columns from the list (a column dragged out of a zone is the place's below)
+      z.addEventListener('dragover', (ev) => { if (!SM.launch.fromPlace(ev) && [...ev.dataTransfer.types].includes(SM.launch.MIME)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; z.classList.add('drop'); } });
       z.addEventListener('dragleave', (ev) => { if (!z.contains(ev.relatedTarget)) z.classList.remove('drop'); });
+      // A column in a zone dragged again: onto another zone it moves there
+      // (the rows and the columns take nominal and ordinal columns only),
+      // onto a column of another zone it takes that one's place, along its own
+      // zone it goes to the position of the column it is dropped on; anywhere
+      // else in the report's Tabulate (the list, the table) it is taken out.
+      SM.launch.place(z, {
+        label: kind === 'analysis' ? 'the analysis columns' : `the ${kind === 'cols' ? 'columns' : 'rows'}`,
+        item: (n) => n.closest('.smt-chip'),
+        key: (ch) => ch.dataset.path,
+        take: (ch) => {
+          const c = resolveRef(t, refAt(state, ch.dataset.path));
+          return c && removers.has(ch.dataset.path) ? { cols: [c], text: c.name, remove: removers.get(ch.dataset.path) } : null;
+        },
+        refuses: (m) => {
+          if (m.cols.length !== 1) return 'not a column';
+          const c = m.cols[0];
+          return kind !== 'analysis' && !c.isCategorical ? `The ${kind === 'cols' ? 'columns' : 'rows'} take nominal and ordinal columns; ${c.name} is continuous` : null;
+        },
+        drop: ({ m, at, same, side, ev }) => {
+          const s = tabState(ctx);
+          const onChain = !at && ev.target.closest ? ev.target.closest('.smt-chain') : null;
+          if (!tabMove(s, t, m, kind, at, same, side, onChain && z.contains(onChain) ? onChain : null)) return;
+          if (kind === 'analysis' && s.analysis.length && s.stats.every((x) => COUNT_STATS.has(x)) && !s.stats.includes('Mean')) s.stats = s.stats.includes('N') ? ['N', 'Mean'] : ['Mean'];
+          set(s);
+        },
+      });
       z.addEventListener('drop', (ev) => {
         z.classList.remove('drop');
+        if (SM.launch.fromPlace(ev)) return;
         const d = ev.dataTransfer.getData(SM.launch.MIME);
         if (!d) return;
         ev.preventDefault();
@@ -1067,10 +1146,12 @@
       });
       return z;
     };
-    const chip = (text, c, remove, chain) => {
+    // (a column that is still in the table can be dragged: to another zone, onto a column, along its zone, or out)
+    const chip = (text, c, remove, chain, path) => {
       const x = el('button', { type: 'button', class: 'smt-x', 'aria-label': `Remove ${text}`, text: '×' });
       x.addEventListener('click', (ev) => { ev.stopPropagation(); remove(); });
-      return el('span', { class: 'smt-chip', dataset: chain != null ? { chain: String(chain) } : null }, c ? typeIcon(c.modelingType, 10) : null, el('span', { text }), x);
+      removers.set(path, remove);
+      return el('span', { class: 'smt-chip', draggable: c ? 'true' : null, dataset: { path, ...(chain != null ? { chain: String(chain) } : {}) } }, c ? typeIcon(c.modelingType, 10) : null, el('span', { text }), x);
     };
     const statBar = el('div', { class: 'smt-statbar', role: 'group', 'aria-label': 'Statistics' }, el('span', { class: 'smt-zonelabel', text: 'Statistics' }));
     for (const s of TAB_STATS) {
@@ -1168,14 +1249,14 @@
         kicker: 'Analyze', title: 'Tabulate',
         lead: 'An interactive table: drag columns into the drop zones and statistics onto them, and the table is computed as you build it.',
         sections: [
-          { heading: 'Building the table', list: ['Drag a nominal or ordinal column into the drop zone for rows or for columns. Another dropped beside it adds a second block after the first (its levels listed after the first\'s); dropped onto its name, it is nested in it, a row for each combination of their levels. A column in the rows and one in the columns cross: a cell holds the rows of both its levels.', 'Drag continuous columns to Analysis columns (or into either zone): their statistics fill the cells.', 'Click statistics in the palette to add or remove them: N, Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles, % of Total, Column %, Row %, N Missing, Mode, Variance, Std Err, CV, Interquartile Range.', 'Without the mouse: select a column in the list, then Add to Rows, Nest in Rows, Add to Columns or Analysis Column; Enter adds it to the rows (categorical) or as an analysis column.'] },
+          { heading: 'Building the table', list: ['Drag a nominal or ordinal column into the drop zone for rows or for columns. Another dropped beside it adds a second block after the first (its levels listed after the first\'s); dropped onto its name, it is nested in it, a row for each combination of their levels. A column in the rows and one in the columns cross: a cell holds the rows of both its levels.', 'Drag continuous columns to Analysis columns (or into either zone): their statistics fill the cells.', 'A column in a drop zone can be dragged again: onto another zone to move it there (the zones for rows and columns take nominal and ordinal columns only), onto a column of another zone to take that column\'s place, along its own zone to change the order or the nesting (it lands before or after the column it is dropped on, in that column\'s block; beside the columns, it becomes a block of its own at the end), and anywhere else in the Tabulate report, such as the column list or the table, to take it out. A drag cancelled with Escape changes nothing.', 'Click statistics in the palette to add or remove them: N, Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles, % of Total, Column %, Row %, N Missing, Mode, Variance, Std Err, CV, Interquartile Range.', 'Without the mouse: select a column in the list, then Add to Rows, Nest in Rows, Add to Columns or Analysis Column; Enter adds it to the rows (categorical) or as an analysis column; × on a column in a zone takes it out.'] },
           { heading: 'The control panel', choices: [
             ['Columns', 'The table\'s columns. Drag one to a drop zone, or click it and press a button under the list; double-click (or Enter) adds a categorical column to the rows and a continuous one as an analysis column.'],
             ['Add to Rows', 'The selected column becomes a new block of rows, after those there.'],
             ['Nest in Rows', 'The selected column is nested in the last block of rows: a row for each combination of their levels.'],
             ['Add to Columns', 'The selected column becomes a new block of columns: a column of cells for each of its levels.'],
             ['Analysis Column', 'The selected column\'s statistics fill the cells; a continuous column goes here wherever it is dropped, and several stand side by side.'],
-            ['Drop zones', 'The drop zones for columns and for rows take nominal and ordinal columns (dropped on a column already there, nested in it); Analysis columns takes continuous ones. × on a column takes it out.'],
+            ['Drop zones', 'The drop zones for columns and for rows take nominal and ordinal columns (dropped on a column already there, nested in it); Analysis columns takes continuous ones. × on a column takes it out. A column in a zone can be dragged to another zone (moved), onto a column of another zone (in its place), along its own zone (reordered, or nested in another block), or anywhere else in the report (taken out).'],
             ['Statistics', 'Click a statistic to add it or take it away; each gives a column of cells. N counts the rows (with an analysis column, its values that are not missing); % of Total, Column % and Row % are a cell\'s share of the whole table, of its column or of its row (of the rows, or of the analysis column\'s sum). The others need an analysis column: Mean, Std Dev, Min, Max, Range, Sum, Median, Quantiles (JMP\'s definition), N Missing, Mode, Variance, Std Err, CV and Interquartile Range.'],
             ['All row (totals)', 'Adds a row for all the rows together, after the others.'],
             ['All column (totals)', 'Adds a column of cells for all the rows together, after the others.'],
@@ -1219,7 +1300,12 @@
         ctx.set('tab', s, null, { rerun: false });
       }
       const state = tabState(ctx);
-      if (ctx.opt('panel', true)) ctx.container.append(tabBuilder(ctx, state));
+      if (ctx.opt('panel', true)) {
+        ctx.container.append(tabBuilder(ctx, state));
+        // a column dragged out of a zone and let go anywhere else in the
+        // report's Tabulate (the column list, the table) is taken out
+        SM.launch.dropArea(ctx.container);
+      }
       const chains = (list) => list.map((ch) => ch.map((r) => resolveRef(t, r)).filter(Boolean).map((c) => c.name)).filter((ch) => ch.length);
       const rows = chains(state.rows), cols = chains(state.cols);
       const analysis = state.analysis.map((r) => resolveRef(t, r)).filter(Boolean).map((c) => c.name);

@@ -1598,7 +1598,8 @@
   }
   function fitForPrint() {
     unfitForPrint();
-    const body = document.querySelector('.sm-views > .sm-view:not([hidden]) .sm-reportbody');
+    // the report in front of the group in use (smui-dock.js), the one printed
+    const body = document.querySelector('.sm-group.is-focused > .sm-views > .sm-view:not([hidden]) .sm-reportbody');
     if (!body) return;
     const all = [...body.querySelectorAll('div, table, pre, section, aside')].filter((e) => !e.closest('.js-plotly-plot') || e.classList.contains('js-plotly-plot'));
     for (const e of all) {
