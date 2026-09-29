@@ -547,7 +547,7 @@
       const lv = levelsAmong(t, c, rows);
       const m = new Map(lv.map((v, i) => [v, i]));
       for (const r of rows) { const k = m.get(c.values[r]); if (k != null) code[r] = k; }
-      return { col: c, labels: lv.map((v) => cellText(c, v)), code };
+      return { col: c, labels: lv.map((v) => cellText(c, v)), values: lv, code };
     }
     const vals = rows.map((r) => c.values[r]).filter(Number.isFinite).sort((a, b) => a - b);
     const edges = [vals[0]];
@@ -562,7 +562,15 @@
     }
     const labels = [];
     for (let k = 0; k < edges.length - 1; k++) labels.push(`${fmt(edges[k])}–${fmt(edges[k + 1])}`);
-    return { col: c, labels, code, binned: true };
+    return { col: c, labels, values: labels.map((_, k) => k), edges, code, binned: true };
+  }
+
+  /* A group or panel column as graph.code's plan names it: its levels (or
+     bins: their edges), their labels, at most `most` of them. */
+  function groupSpec(G, most = Infinity) {
+    if (!G) return null;
+    const k = Math.min(most, G.labels.length);
+    return { col: G.col.name, values: G.values.slice(0, k), labels: G.labels.slice(0, k), edges: G.binned ? G.edges : null };
   }
 
   /* ---- Graph Builder: the figure ------------------------------------------------------------ */
@@ -572,7 +580,8 @@
     const { ctx, S } = B;
     const t = ctx.table;
     const cols = zoneCols(S, t);
-    const fig = { traces: [], links: [], annotations: [], shapes: [], notes: [], codes: [], axisKeys: {}, mask: false, empty: false };
+    // traceEl, noteEl: the element that drew each trace and annotation (for the tests of graph.code)
+    const fig = { traces: [], links: [], annotations: [], shapes: [], notes: [], axisKeys: {}, mask: false, empty: false, plan: null, traceEl: [], noteEl: [] };
     if (!cols.x.length && !cols.y.length) { fig.empty = true; return fig; }
     const E = new Env(B, cols, fig);
     await E.build();
@@ -596,6 +605,7 @@
       this.levelCache = new Map();
       this.legendSeen = new Set();
       this.anyLegend = false;
+      this.done = [];          // the elements drawn, with their settings as drawn: for graph.code's plan
     }
 
     note(s) { if (!this.notes.includes(s)) this.notes.push(s); }
@@ -624,9 +634,7 @@
 
     async call(fn, payload) {
       if (this.B.noPython) { const e = new Error('waiting for Python'); e.waiting = true; throw e; }
-      const res = await this.ctx.call(fn, payload);
-      if (res && res.code && !this.fig.codes.includes(res.code)) this.fig.codes.push(res.code);
-      return res;
+      return this.ctx.call(fn, payload);
     }
 
     async build() {
@@ -664,13 +672,18 @@
       this.gl = webgl() && ok.some((e) => e.type === 'points' && (!e.summary || e.summary === 'none')) && this.rows0.length * Math.max(1, ...this.panels.map((P) => P.series.length)) > GL_POINTS;
       this.decideAxes(ok);
       for (const e of ok) {
+        const had = this.done.length, t0 = fig.traces.length, a0 = fig.annotations.length;
         try { await RENDER[e.type](this, e); } catch (err) {
+          this.done.length = had;
           if (err.waiting) { this.note(`${ELEMENT[e.type].label} follows when the Python engine has loaded.`); continue; }
           console.error(err);
           this.note(`${ELEMENT[e.type].label}: ${err.message || err}`);
         }
+        for (let i = t0; i < fig.traces.length; i++) fig.traceEl[i] = e.type;
+        for (let i = a0; i < fig.annotations.length; i++) fig.noteEl[i] = e.type;
       }
       this.layout();
+      this.fig.plan = this.plan();
     }
 
     /* ---- the panels: Group X by Group Y (or Wrap), times the X and Y
@@ -696,6 +709,7 @@
         return out;
       };
       this.xSide = xSide; this.ySide = ySide;
+      this.xSets = xSets; this.ySets = ySets;
       this.wrap = wrapC ? groupsOf(t, wrapC, this.rows0) : null;
       this.gx = gxC ? groupsOf(t, gxC, this.rows0) : null;
       this.gy = gyC ? groupsOf(t, gyC, this.rows0) : null;
@@ -970,6 +984,8 @@
       const pw = Math.max(60, w - M.l - M.r - (legendOn && legendPos === 'right' ? 130 : 0)), ph = Math.max(60, h - M.t - M.b);
       const gapX = this.nC > 1 ? (this.xKind === 'cat' ? 16 : 34) : 0, gapY = this.nR > 1 ? (this.wrap ? 34 : 16) : 0;
       const cw = (pw - gapX * (this.nC - 1)) / this.nC, rh = (ph - gapY * (this.nR - 1)) / this.nR;
+      this.cellPx = [cw, rh];
+      this.legendOn = legendOn; this.legendAt = legendPos; this.titleText = title;
       const L = { margin: M, barmode: 'overlay', hovermode: 'closest', showlegend: legendOn, annotations: fig.annotations, shapes: fig.shapes };
       if (title) L.title = { text: esc(title), x: 0.5, xanchor: 'center', y: 1, yanchor: 'top', yref: 'container', pad: { t: 8 }, font: { size: 13 } };
       const colFirst = new Map(), rowFirst = new Map();
@@ -1041,6 +1057,46 @@
       fig.width = w;
       fig.height = h;
       fig.title = title || 'Graph Builder';
+    }
+
+    /* What the page drew, as graph.code takes it to write the Python that
+       draws the same graph: the columns of the zones and the levels found
+       among the rows, the panels and their series, the elements with their
+       settings as drawn, and what the page chose itself (bins, sizes). */
+    plan() {
+      const { S, cols } = this;
+      const name = (c) => (c ? c.name : null);
+      const wrap = !!this.wrap;
+      const xsets = wrap ? [cols.x] : this.xSets, ysets = wrap ? [cols.y] : this.ySets;
+      const panelOf = (xset, yset) => this.panels.find((P) => P.xset === xset && P.yset === yset) || this.panels[0];
+      const series = ysets.map((ys) => xsets.map((xs) => (wrap ? this.panels[0] : panelOf(xs, ys)).series.map((s) => [name(s.xc), name(s.yc)])));
+      const levels = {};
+      for (const P of this.panels) for (const s of P.series) for (const c of [s.xc, s.yc]) {
+        if (c && isCat(c) && !levels[c.name]) { const L = this.axisLevels(c); levels[c.name] = { values: L.lv, labels: L.labels }; }
+      }
+      const title = (which, set) => {
+        const P = (which === 'x' ? this.panels.find((q) => q.xset === set) : this.panels.find((q) => q.yset === set)) || this.panels[0];
+        const on = which === 'x' ? S.show.xTitle : S.show.yTitle;
+        const tt = this.axisTitle(which, P);
+        return on && tt ? tt.text : null;
+      };
+      const G = this.G ? { ...groupSpec(this.G, 60), zone: cols.overlay[0] ? 'Overlay' : 'Color' } : null;
+      const C = this.colorCol ? (isCat(this.colorCol) ? { col: this.colorCol.name, cat: true, values: this.colorLv.lv } : { col: this.colorCol.name, cat: false, range: this.colorRange }) : null;
+      const P0 = this.panels[0];
+      const names = !this.G && this.nSeries > 1 ? P0.series.map((s) => this.seriesName(s)) : [];
+      return {
+        size: [this.fig.width, this.fig.height], title: this.titleText || null, freq: this.freqName, where: this.ctx.where || [],
+        wrap: groupSpec(this.wrap), gx: groupSpec(this.gx), gy: groupSpec(this.gy),
+        xsets: xsets.map((set) => set.map(name)), ysets: ysets.map((set) => set.map(name)), series,
+        kinds: { x: this.xKind, y: this.yKind }, levels, log: S.log || {}, group: G, color: C,
+        sizecol: this.sizeCol && this.sizeRange ? { col: this.sizeCol.name, range: this.sizeRange } : null,
+        many: this.rows0.length > 2000, nrows: this.rows0.length, elements: this.done,
+        legend: { on: !!this.legendOn, pos: this.legendAt, title: this.legendTitle != null ? this.legendTitle : this.G ? this.G.col.name : null },
+        series_names: names,
+        titles: { x: xsets.map((set) => title('x', set)), y: ysets.map((set) => title('y', set)), shared_x: this.nC > 1 && !this.xSide && !this.exclusive },
+        alpha: S.alpha || 0.05, panel: this.cellPx, exclusive: this.exclusive,
+        colorbar: !!(this.colorCol && !isCat(this.colorCol) && this.colorRange && this.els.some((e) => e.type === 'points')),
+      };
     }
 
     axis(which, P) {
@@ -1153,6 +1209,20 @@
   RENDER.points = async (E, e) => {
     if (e.summary && e.summary !== 'none') return summaryPoints(E, e);
     const t = E.t;
+    {
+      // the plan: the jitter, and for Packed the page's geometry (pixels per unit of the value axis, per level)
+      const s0 = E.panels[0].series[0];
+      const jx = jitterOn(e, s0.xc) && E.xKind !== 'count', jy = jitterOn(e, s0.yc) && E.yKind !== 'count';
+      const rec = { type: 'points', summary: 'none', jitter: e.jitter || 'auto', jitterLimit: e.jitterLimit ?? 1 };
+      if (e.jitter === 'packed' && jx !== jy) {
+        const W = Math.max(200, (E.B.width ? E.B.width() : 600) - 90) / Math.max(1, E.nC);
+        const H = Math.max(150, (E.B.height ? E.B.height() : 400) - 70) / Math.max(1, E.nR);
+        const col = jx ? s0.xc : s0.yc;
+        const k = col ? Math.max(1, E.axisLevels(col).lv.length) : 1;
+        rec.packed = { value_px: jx ? H : W, level_px: (jx ? W : H) / k, diam: (E.rows0.length > 2000 ? 4 : 6) + 1 };
+      }
+      E.done.push(rec);
+    }
     // Packed jitter packs a panel's points over every group at once, so
     // that the groups' points do not fall on each other.
     const packs = new Map();
@@ -1219,18 +1289,19 @@
   async function summaryPoints(E, e) {
     const blocks = [];
     E.forCells((P, s, si, gi, rows) => { const R = axesRoles(s.xc, s.yc); blocks.push({ P, s, si, gi, R, items: E.items(R, rows) }); });
-    await summaryTraces(E, e, blocks, { stat: e.summary, mode: 'markers' });
+    await summaryTraces(E, e, blocks, { stat: e.summary, mode: 'markers', record: { type: 'points' } });
   }
 
   /* Summary statistics as points or a line: Points' summaries, Line, and
      the vertices of Area. */
-  async function summaryTraces(E, e, blocks, { stat, mode, shape = 'linear', fill = null, stack = false }) {
+  async function summaryTraces(E, e, blocks, { stat, mode, shape = 'linear', fill = null, stack = false, record = null }) {
     const R0 = blocks[0] && blocks[0].R;
     if (!R0) return;
     if (!R0.resp && !['n', 'pct'].includes(stat)) { E.note(`${ELEMENT[e.type].label}: without a continuous variable the statistic is N.`); stat = 'n'; }
     let interval = e.interval && e.interval !== 'none' ? e.interval : null;
     if (interval && !R0.resp) interval = null;
     if (interval && ['ci', 'se', 'sd'].includes(interval) && stat !== 'mean') { E.note(`${ELEMENT[e.type].label}: the ${interval === 'ci' ? 'confidence interval' : interval === 'se' ? 'standard error' : 'standard deviation'} interval goes with the Mean.`); interval = null; }
+    if (record) E.done.push({ ...record, summary: stat, stat, interval: interval || 'none', style: e.style || 'bars', shape });
     await E.fillStats(blocks, [stat, ...(interval ? E.intervalNeeds(interval) : [])]);
     const totals = new Map();
     for (const b of blocks) { const k = `${b.P.idx}|${b.si}`; totals.set(k, (totals.get(k) || 0) + b.items.reduce((a, it) => a + ((it.sum != null ? it.sum : it.n) || 0), 0)); }
@@ -1274,6 +1345,7 @@
   RENDER.line = async (E, e) => {
     const shape = e.connection === 'curve' ? 'spline' : e.connection === 'step' ? 'hv' : 'linear';
     if (e.ordering === 'row') {
+      E.done.push({ type: 'line', ordering: 'row', shape });
       E.forCells((P, s, si, gi, rows) => {
         const R = axesRoles(s.xc, s.yc);
         const X = [], Y = [], RR = [];
@@ -1287,7 +1359,7 @@
     }
     const blocks = [];
     E.forCells((P, s, si, gi, rows) => { const R = axesRoles(s.xc, s.yc); blocks.push({ P, s, si, gi, R, items: E.items(R, rows) }); });
-    await summaryTraces(E, e, blocks, { stat: e.summary === 'auto' ? 'mean' : (e.summary || 'mean'), mode: 'lines', shape });
+    await summaryTraces(E, e, blocks, { stat: e.summary === 'auto' ? 'mean' : (e.summary || 'mean'), mode: 'lines', shape, record: { type: 'line', ordering: 'summarized' } });
   };
 
   RENDER.area = async (E, e) => {
@@ -1296,7 +1368,7 @@
     const R0 = blocks[0] && blocks[0].R;
     const stat = e.summary === 'auto' || !e.summary ? (R0 && R0.resp ? 'mean' : 'n') : e.summary;
     const shape = e.connection === 'curve' ? 'spline' : e.connection === 'step' ? 'hv' : 'linear';
-    await summaryTraces(E, { ...e, interval: 'none' }, blocks, { stat, mode: 'lines', shape, fill: e.areaStyle !== 'stacked', stack: e.areaStyle === 'stacked' });
+    await summaryTraces(E, { ...e, interval: 'none' }, blocks, { stat, mode: 'lines', shape, fill: e.areaStyle !== 'stacked', stack: e.areaStyle === 'stacked', record: { type: 'area', areaStyle: e.areaStyle === 'stacked' ? 'stacked' : 'overlaid' } });
   };
 
   RENDER.bar = async (E, e) => {
@@ -1308,6 +1380,7 @@
     if (!R0.resp && !['n', 'pct'].includes(stat)) { E.note('Bar: without a continuous variable the statistic is N.'); stat = 'n'; }
     let interval = e.interval && e.interval !== 'none' && R0.resp ? e.interval : null;
     if (interval && ['ci', 'se', 'sd'].includes(interval) && stat !== 'mean') { E.note('Bar: that error interval goes with the Mean.'); interval = null; }
+    E.done.push({ type: 'bar', barStyle: e.barStyle || 'side', stat, interval: interval || 'none', label: e.label || 'none' });
     await E.fillStats(blocks, [stat, ...(interval ? E.intervalNeeds(interval) : [])]);
     const totals = new Map();
     for (const b of blocks) { const k = `${b.P.idx}|${b.si}`; totals.set(k, (totals.get(k) || 0) + b.items.reduce((a, it) => a + ((it.sum != null ? it.sum : it.n) || 0), 0)); }
@@ -1362,6 +1435,7 @@
     const blocks = [];
     E.forCells((P, s, si, gi, rows) => { const R = axesRoles(s.xc, s.yc); blocks.push({ P, s, si, gi, R, items: E.items(R, rows) }); });
     if (!blocks.length) return;
+    E.done.push({ type: 'box', outliers: e.outliers !== false, boxType: e.boxType || 'outlier', boxStyle: e.boxStyle || 'normal', width: e.width ?? 0.5, diamond: !!e.diamond });
     await E.fillStats(blocks, ['median'], { boxes: true });
     const slots = E.slots();
     const tc = SM.util.themeColors();
@@ -1427,6 +1501,7 @@
     const nb = Math.max(1, Math.round((bins.end - bins.start) / bins.size));
     const centers = Array.from({ length: nb }, (_, j) => bins.start + (j + 0.5) * bins.size);
     const band = !!R0.fac;
+    E.done.push({ type: 'histogram', kernel: e.histStyle === 'kernel', scale: e.scale === 'percent' ? 'percent' : 'count', bins: { start: bins.start, end: bins.end, size: bins.size, nb }, binWidth: e.binWidth > 0 ? e.binWidth : null, bw: e.bw || 1, counts: !!e.counts, band });
     const blocks = [];
     E.forCells((P, s, si, gi, rows) => {
       const R = axesRoles(s.xc, s.yc);
@@ -1499,19 +1574,20 @@
 
   /* Bins or levels of one heatmap axis. */
   function heatAxis(E, c, want) {
-    if (!c) return { n: 1, centers: [0], of: () => 0 };
-    if (isCat(c)) { const L = E.axisLevels(c); return { n: L.lv.length, centers: L.lv.map((_, i) => i), of: (r) => E.levelPos(c, c.values[r]), labels: L.labels }; }
+    if (!c) return { n: 1, centers: [0], of: () => 0, spec: null };
+    if (isCat(c)) { const L = E.axisLevels(c); return { n: L.lv.length, centers: L.lv.map((_, i) => i), of: (r) => E.levelPos(c, c.values[r]), labels: L.labels, spec: { cat: c.name } }; }
     const ex = extent(E.rows0.map((r) => c.values[r]));
-    if (!ex) return { n: 0, centers: [], of: () => null };
+    if (!ex) return { n: 0, centers: [], of: () => null, spec: null };
     const b = SM.report.niceBins([ex[0], ex[1]], want);
     const n = Math.max(1, Math.round((b.end - b.start) / b.size));
-    return { n, centers: Array.from({ length: n }, (_, j) => b.start + (j + 0.5) * b.size), of: (r) => { const v = c.values[r]; return Number.isFinite(v) ? clamp(Math.floor((v - b.start) / b.size + 1e-9), 0, n - 1) : null; }, size: b.size };
+    return { n, centers: Array.from({ length: n }, (_, j) => b.start + (j + 0.5) * b.size), of: (r) => { const v = c.values[r]; return Number.isFinite(v) ? clamp(Math.floor((v - b.start) / b.size + 1e-9), 0, n - 1) : null; }, size: b.size, spec: { start: b.start, size: b.size, n } };
   }
 
   RENDER.heatmap = async (E, e) => {
     const s0 = E.panels[0].series[0];
     const hx = heatAxis(E, s0.xc, e.bins || 16), hy = heatAxis(E, s0.yc, e.bins || 16);
     const cc = E.colorCol && !isCat(E.colorCol) ? E.colorCol : null;
+    E.done.push({ type: 'heatmap', label: e.label || 'none', hx: hx.spec, hy: hy.spec, cc: cc ? cc.name : null });
     const cells = [];
     let zmin = Infinity, zmax = -Infinity, grand = 0;
     for (const P of E.panels) {
@@ -1549,6 +1625,7 @@
   };
 
   RENDER.mosaic = async (E, e) => {
+    E.done.push({ type: 'mosaic', cellLabel: e.cellLabel || 'none', chisq: !!e.chisq });
     const tables = [];
     for (const P of E.panels) {
       const s = P.series[0];
@@ -1612,6 +1689,7 @@
       blocks.push({ P, s, si, gi, R, items });
     });
     const stats = (e.stats && e.stats.length ? e.stats : ['mean']).slice(0, 5);
+    E.done.push({ type: 'caption', stats, location: perFactor ? 'factor' : 'graph' });
     await E.fillStats(blocks, stats);
     const tc = SM.util.themeColors();
     for (const b of blocks) {
@@ -1637,6 +1715,7 @@
     const R0 = axesRoles(s0.xc, s0.yc);
     let stat = e.summary === 'auto' || !e.summary ? (R0.resp ? 'sum' : 'n') : e.summary;
     if (!R0.resp) stat = 'n';
+    E.done.push({ type: 'pie', pieStyle: e.pieStyle || 'pie', stat, label: e.label || 'percent' });
     const blocks = [];
     for (const P of E.panels) { const R = axesRoles(P.series[0].xc, P.series[0].yc); blocks.push({ P, si: 0, gi: -1, R, items: E.items(R, P.rows) }); }
     await E.fillStats(blocks, [stat]);
@@ -1686,6 +1765,7 @@
     E.note(method === 'lowess'
       ? `Smoother: Local Kernel is statsmodels' lowess (span ${fmt(e.width ?? 0.667)}, ${e.robust ?? 3} robustifying iterations), not JMP's own kernel smoother.`
       : `Smoother: a cubic smoothing spline with λ = ${fmt(e.lambda ?? 0.05)} on standardized X, JMP's criterion (scipy's make_smoothing_spline).`);
+    E.done.push({ type: 'smoother', method, lam: e.lambda ?? 0.05, frac: e.width ?? 0.667, it: e.robust ?? 3, conf: method !== 'lowess' && !!e.conf });
     const blocks = await perPair(E, 'graph.smoother', method === 'lowess' ? { method, frac: e.width ?? 0.667, it: e.robust ?? 3 } : { method, lam: e.lambda ?? 0.05, conf: !!e.conf, alpha: E.S.alpha || 0.05 });
     for (const b of blocks) {
       const c = b.res.curves[b.i];
@@ -1698,6 +1778,7 @@
 
   RENDER.fit = async (E, e) => {
     const robust = e.fitType === 'robust';
+    E.done.push({ type: 'fit', degree: Number(e.degree) || 1, robust, confFit: e.confFit !== false, confPred: !!e.confPred && !robust, equation: !!e.equation, r2: !!e.r2, rmse: !!e.rmse, ftest: !!e.ftest });
     const blocks = await perPair(E, 'graph.fit', { degree: Number(e.degree) || 1, robust, alpha: E.S.alpha || 0.05 });
     const byPanel = new Map();
     for (const b of blocks) {
@@ -1735,6 +1816,7 @@
   }
 
   RENDER.ellipse = async (E, e) => {
+    E.done.push({ type: 'ellipse', coverage: Number(e.coverage) || 0.95, shaded: !!e.shaded, correlation: !!e.correlation, meanPoint: !!e.meanPoint });
     const blocks = await perPair(E, 'graph.ellipse', { coverage: Number(e.coverage) || 0.95 });
     const perPanel = new Map();
     for (const b of blocks) {
@@ -1757,6 +1839,7 @@
     const s0 = E.panels[0].series[0];
     const R0 = axesRoles(s0.xc, s0.yc);
     const L = clamp(Math.round(e.levels || 4), 1, 20);
+    E.done.push({ type: 'contour', levels: L, fill: e.fill !== false, line: e.line !== false, bw: e.bw || 1, violin: !!(R0.facCat && R0.resp) });
     if (R0.facCat && R0.resp) return violins(E, e);
     const blocks = await perPair(E, 'graph.density', { bw: e.bw || 1 });
     for (const b of blocks) {
@@ -1845,6 +1928,7 @@
     const nPos = fac && isCat(fac) ? Math.max(1, E.axisLevels(fac).lv.length) : 1;
     const room = horiz ? (E.B.height(E.nR) - 90) / Math.max(1, E.nR) : (E.B.width() - 110 - (E.G ? 130 : 0)) / Math.max(1, E.nC);
     const pxUnit = Math.max(8, room / nPos);
+    E.done.push({ type: 'bean', beans: e.beans || 'lines', mean: e.mean !== false, median: e.median !== false, overall: e.overall !== false, split, cutoff: !!e.cutoff, bw: e.bw || 1, px_unit: pxUnit });
     const tc = SM.util.themeColors();
     const medColor = dark() ? '#f08a80' : '#b0302a';
     const perPanel = new Map();     // panel -> the mean lines and the medians
@@ -2431,17 +2515,25 @@
           try { quick = await buildFigure(this); } finally { this.noPython = false; }
           if (seq !== this.seq || this.dead) return;
           this.lastFig = quick;
-          this.show(quick);
-          if (!quick.notes.some((n) => /Python engine has loaded/.test(n))) return;
+          this.show(quick, null);
+          if (!quick.notes.some((n) => /Python engine has loaded/.test(n))) {
+            // drawn without Python; its code follows when the engine has loaded
+            SM.engine.ready().then(async () => {
+              const code = await this.codeOf(quick);
+              if (seq === this.seq && !this.dead && this.lastFig === quick) this.attachCode(code);
+            }).catch(() => null);
+            return;
+          }
           await SM.engine.ready().catch(() => null);
           if (seq !== this.seq || this.dead) return;
           ctx.warnings = [];
         }
         const fig = await buildFigure(this);
         if (seq !== this.seq || this.dead) return;
+        const code = await this.codeOf(fig);
+        if (seq !== this.seq || this.dead) return;
         this.lastFig = fig;
-        this.show(fig);
-        this.report.pyCode = fig.codes.slice();
+        this.show(fig, code);
       } catch (e) {
         if (seq === this.seq && !this.dead) { console.error(e); this.status.replaceChildren(ctx.error(e)); }
       } finally {
@@ -2450,7 +2542,29 @@
       }
     }
 
-    show(fig) {
+    /* The Python that draws the figure (graph.code writes it from the figure's plan), or null. */
+    async codeOf(fig) {
+      if (!fig || fig.empty || !fig.plan || SM.engine.state !== 'ready') return null;
+      try {
+        const r = await this.ctx.call('graph.code', { kind: 'builder', plan: fig.plan });
+        return (r && r.plot_code) || null;
+      } catch (e) { console.warn('SM graph: no code for the graph', e); return null; }
+    }
+
+    /* The code block right under the graph on show (and Save Python Script's). */
+    attachCode(code) {
+      const box = this.pendingBox || this.plotBox;
+      if (!box) return;
+      if (box._code) box._code.remove();
+      box._code = code ? this.ctx.code(code) : null;
+      if (box._code) {
+        box._code.hidden = box === this.pendingBox;   // shown when its graph takes the old one's place
+        box.after(box._code);
+      }
+      this.report.pyCode = code ? [SM.report.datedCode(code, this.t)] : [];
+    }
+
+    show(fig, code) {
       const ctx = this.ctx;
       if (this._shown) { this._shown(); this._shown = null; }
       if (fig.empty) {
@@ -2483,12 +2597,13 @@
         this.pendingBox = box;
         setTimeout(() => this.promote(box), 1500);
       }
-      // what the graph leaves out, statsmodels' messages, and the Python
+      // the Python that draws the graph, right under it
+      this.attachCode(code);
+      // what the graph leaves out, and statsmodels' messages
       const parts = [];
       for (const n of fig.notes) parts.push(ctx.note(n));
       for (const w of ctx.warnings) parts.push(ctx.warn(w));
       ctx.warnings = [];
-      if (fig.codes.length) parts.push(ctx.code(fig.codes.join('\n\n# ----\n')));
       this.status.replaceChildren(...parts);
     }
 
@@ -2498,11 +2613,13 @@
       this.plotBox = box;
       this.pendingBox = null;
       box.classList.remove('is-pending');
+      if (box._code) box._code.hidden = false;
       if (old && old !== box) this.discard(old);
     }
 
     discard(box) {
       if (!box) return;
+      if (box._code) { box._code.remove(); box._code = null; }
       const p = box._plot;
       if (p) {
         p.purge();
@@ -2723,10 +2840,23 @@
     if (isCat(c)) {
       const lv = levelsAmong(t, c, rows);
       const m = new Map(lv.map((v, i) => [v, i]));
-      return { cat: true, col: c, labels: lv.map((v) => cellText(c, v)), index: (r) => (m.has(c.values[r]) ? m.get(c.values[r]) : -1), color: (r) => { const k = m.get(c.values[r]); return k == null ? grey : PALETTE[k % PALETTE.length]; } };
+      return { cat: true, col: c, values: lv, labels: lv.map((v) => cellText(c, v)), index: (r) => (m.has(c.values[r]) ? m.get(c.values[r]) : -1), color: (r) => { const k = m.get(c.values[r]); return k == null ? grey : PALETTE[k % PALETTE.length]; } };
     }
     const ex = extent(rows.map((r) => c.values[r]));
     return { cat: false, col: c, range: ex, index: () => 0, color: (r) => { const v = c.values[r]; if (!Number.isFinite(v) || !ex) return grey; return SM.util.ramp(ex[1] > ex[0] ? (v - ex[0]) / (ex[1] - ex[0]) : 0.5); } };
+  }
+
+  /* A colouring column in graph.code's plan: its levels, or its range. */
+  const colorSpec = (C) => (!C ? null : C.cat ? { col: C.col.name, cat: true, values: C.values, labels: C.labels } : { col: C.col.name, cat: false, range: C.range });
+
+  /* The Python (matplotlib) that draws a graph, from what the page drew: the
+     code block to put right under the graph, or null (graph.code writes it). */
+  async function graphCode(ctx, kind, plan) {
+    if (ctx.headless) return null;
+    try {
+      const r = await ctx.call('graph.code', { kind, plan: { where: ctx.where || [], ...plan } });
+      return r && r.plot_code ? ctx.code(r.plot_code) : null;
+    } catch (e) { console.warn(`SM graph: no code for the ${kind} graph`, e); return null; }
   }
 
   /* A legend for a colouring column, as traces: one per level, or a colour bar. */
@@ -2835,6 +2965,7 @@
       if (!rect && fmtM !== 'lower') { layout.margin.t = 56; layout.margin.r = (G ? 120 : 12) + 50; if (layout.legend) layout.legend.x = 1.14; }
       const gl = webgl() && ctx.rows.length * cells.length > GL_POINTS;
       const pairs = [];
+      const histBins = {};   // the diagonal's bins, for graph.code
       cells.forEach((c, idx) => {
         const xa = idx === 0 ? 'x' : `x${idx + 1}`, ya = idx === 0 ? 'y' : `y${idx + 1}`;
         c.xa = xa; c.ya = ya;
@@ -2859,6 +2990,7 @@
             if (vals.length) {
               const b = SM.report.niceBins(vals);
               const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
+              histBins[xc.name] = { start: b.start, size: b.size, nb };
               const cnt = new Array(nb).fill(0), mem = Array.from({ length: nb }, () => []);
               vals.forEach((v, q) => { const jj = clamp(Math.floor((v - b.start) / b.size + 1e-9), 0, nb - 1); cnt[jj]++; mem[jj].push(rws[q]); });
               const tr = { type: 'bar', x: cnt.map((_, jj) => b.start + (jj + 0.5) * b.size), y: cnt, width: cnt.map(() => b.size), xaxis: xa, yaxis: ya, marker: { color: barColor(), line: { width: 0.4, color: SM.util.themeColors().surface } }, hovertemplate: `${esc(xc.name)}: %{x}<br>Count: %{y}<extra></extra>`, showlegend: false };
@@ -2882,18 +3014,15 @@
       const codeOf = (r) => (G ? G.index(r) : 0);
       const kG = G ? G.labels.length : 1;
       const lineCol = (g) => (G ? PALETTE[g % PALETTE.length] : inkColor());
-      const codes = [];
       for (const p of pairs) {
         const rows = p.rows.filter((r) => codeOf(r) >= 0);
         const payload = { x: p.xc.name, y: p.yc.name, rows, codes: rows.map(codeOf), k: kG, by: G ? [G.col.name] : [] };
         if (ellOn) {
           const res = await ctx.call('graph.ellipse', { ...payload, coverage: ctx.opt('coverage', 0.95) });
-          if (!codes.includes(res.code)) codes.push(res.code);
           res.ellipses.forEach((e, g) => { if (!e.error) traces.push({ type: gl ? 'scattergl' : 'scatter', mode: 'lines', x: e.x, y: e.y, xaxis: p.c.xa, yaxis: p.c.ya, line: { color: lineCol(g), width: 1.3 }, fill: ctx.opt('shaded', false) ? 'toself' : 'none', fillcolor: rgba(lineCol(g), 0.12), hovertemplate: `r = ${fmt(e.r, { sig: 4 })}<extra></extra>`, showlegend: false }); });
         }
         if (fitOn) {
           const res = await ctx.call('graph.fit', { ...payload, degree: 1, n_grid: 40 });
-          if (!codes.includes(res.code)) codes.push(res.code);
           res.fits.forEach((f, g) => {
             if (f.error) return;
             traces.push({ type: gl ? 'scattergl' : 'scatter', mode: 'lines', x: [...f.x, ...f.x.slice().reverse()], y: [...f.fit_upper, ...f.fit_lower.slice().reverse()], fill: 'toself', fillcolor: rgba(lineCol(g), 0.14), line: { width: 0 }, xaxis: p.c.xa, yaxis: p.c.ya, hoverinfo: 'skip', showlegend: false });
@@ -2902,7 +3031,6 @@
         }
         if (npOn) {
           const res = await ctx.call('graph.density', { ...payload, grid: 48 });
-          if (!codes.includes(res.code)) codes.push(res.code);
           res.densities.forEach((d, g) => {
             if (d.error) return;
             traces.push({ type: 'contour', x: d.x, y: d.y, z: d.z.map((row) => row.map((v) => (v == null ? null : 1 - v))), xaxis: p.c.xa, yaxis: p.c.ya, autocontour: false, contours: { start: 0, end: 0.75 + 1e-9, size: 0.25, coloring: 'lines' }, colorscale: [[0, lineCol(g)], [1, lineCol(g)]], showscale: false, line: { width: 1 }, hoverinfo: 'skip', showlegend: false });
@@ -2912,9 +3040,10 @@
       traces.push(...legendTraces(G, { type: gl ? 'scattergl' : 'scatter' }));
       const box = ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix' });
       link(box, links);
-      ctx.container.append(el('div', { class: 'sm-graph-wide' }, box));
+      const code = await graphCode(ctx, 'matrix', { size: [W, H], rows: R.map((c) => c.name), cols: Cc.map((c) => c.name), rect, format: fmtM, group: colorSpec(G),
+        points: showPts, fit: fitOn, ellipses: ellOn, shaded: ctx.opt('shaded', false), coverage: ctx.opt('coverage', 0.95), nonpar: npOn, hist: histOn, bins: histBins, nrows: ctx.rows.length });
+      ctx.container.append(el('div', { class: 'sm-graph-wide' }, ...[box, code].filter(Boolean)));
       if (ctx.rows.length && cells.every((c) => c.diag)) ctx.container.append(ctx.note('Choose two or more columns for pairs.'));
-      if (codes.length) ctx.container.append(ctx.code(codes.join('\n\n# ----\n')));
     },
   });
 
@@ -2979,7 +3108,8 @@
       const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(620, w * 0.82));
       const box = ctx.plot(traces, { scene: scene3d(cols.map((c) => c.name)), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: 'Scatterplot 3D' });
       pointStates(box, [{ trace: 0, rows, coords: { x: X, y: Y, z: Z }, color: base, size: 3.5, symbols: SYM3D, fade: 0.2, mask: !!C }]);
-      ctx.container.append(pick, box, htmlLegend(C), ctx.note(`${rows.length} rows with all three values. Drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag. A click selects a row.`));
+      const code = await graphCode(ctx, 'scatter3d', { size: [w, h], cols: cols.map((c) => c.name), color: colorSpec(C), drop: !!(ctx.opt('drop', false) && rows.length <= 3000) });
+      ctx.container.append(...[pick, box, code, htmlLegend(C)].filter(Boolean), ctx.note(`${rows.length} rows with all three values. Drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag. A click selects a row.`));
     },
   });
 
@@ -3047,8 +3177,9 @@
           traces.push({ type: rows.length > GL_POINTS && webgl() ? 'scattergl' : 'scatter', mode: 'markers', x: rows.map((r) => xa.values[r]), y: rows.map((r) => xb.values[r]), rows, marker: { size: 5, color: dark() ? '#e8e0d8' : '#3d3229', opacity: 0.75 }, hovertext: rows.map((r) => rowHover(ctx.table, r, [xa, xb, yc])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
         }
         const w = Math.min(640, availWidth(ctx)), h = Math.round(w * 0.78);
-        ob.add(ctx.plot(traces, { xaxis: { title: { text: esc(xa.name) }, zeroline: false }, yaxis: { title: { text: esc(xb.name) }, zeroline: false }, margin: { l: 60, r: 10, t: 10, b: 46 } }, { width: w, height: h, title: `Contour plot of ${yc.name}` }),
-          ctx.note(`${res.n} points (${res.points} distinct positions), ${res.method} interpolation on a 70 × 70 grid; ${fill ? 'filled bands' : 'lines'} every ${fmt(lv.size)}.`), ctx.code(res.code));
+        const box = ctx.plot(traces, { xaxis: { title: { text: esc(xa.name) }, zeroline: false }, yaxis: { title: { text: esc(xb.name) }, zeroline: false }, margin: { l: 60, r: 10, t: 10, b: 46 } }, { width: w, height: h, title: `Contour plot of ${yc.name}` });
+        const code = await graphCode(ctx, 'contour', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: 70, levels: { start: lv.start, end: lv.end, size: lv.size }, fill, labels: !!o('labels', false), theme: o('theme', 'ramp'), points: !!o('points', true) });
+        ob.add(...[box, code].filter(Boolean), ctx.note(`${res.n} points (${res.points} distinct positions), ${res.method} interpolation on a 70 × 70 grid; ${fill ? 'filled bands' : 'lines'} every ${fmt(lv.size)}.`));
       }
     },
   });
@@ -3098,7 +3229,8 @@
         const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(640, w * 0.82));
         const box = ctx.plot(traces, { scene: scene3d([xa.name, xb.name, yc.name]), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: `Surface of ${yc.name}` });
         if (specs.length) pointStates(box, specs);
-        ob.add(box, ctx.note(`${res.n} points, ${res.method} interpolation on a ${o('grid', 40)} × ${o('grid', 40)} grid; outside the points' hull the surface is missing.`), ctx.code(res.code));
+        const code = await graphCode(ctx, 'surface', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: o('grid', 40), contours: !!o('contours', false), theme: o('theme', 'ramp'), points: !!o('points', true) });
+        ob.add(...[box, code].filter(Boolean), ctx.note(`${res.n} points, ${res.method} interpolation on a ${o('grid', 40)} × ${o('grid', 40)} grid; outside the points' hull the surface is missing.`));
       }
     },
   });
@@ -3255,7 +3387,11 @@
         });
       };
       box._bubble = { frames, labels, itemRows };
-      ctx.container.append(box, ctx.note(`${nItems} bubble${nItems === 1 ? '' : 's'}${IDs.length ? ` (one per ${IDs.map((c) => c.name).join(' × ')})` : ' (one per row)'} at the mean ${X.name} and ${Y.name}${F ? ` weighted by ${F.name}` : ''}; area proportional to ${Z ? `the sum of ${Z.name}` : 'the count of rows'}${frames.length > 1 ? `; ${frames.length} times of ${T.name}` : ''}.`));
+      const lab0 = t.labelColumn();
+      const code = await graphCode(ctx, 'bubble', { size: [w, h], x: X.name, y: Y.name, ids: IDs.map((c) => c.name), time: T ? T.name : null, allTimes: !!(T && ctx.opt('allTimes', false)),
+        time0: times[0], time0_label: T && times[0] != null ? cellText(T, times[0]) : null, times: T && times[0] != null ? times : [], sizes: Z ? Z.name : null, freq: F ? F.name : null,
+        color: colorSpec(C), label: !!lab, label_col: lab0 ? lab0.name : null, scale: ctx.opt('scale', 1) || 1, xrange: pad(exX) || null, yrange: pad(exY) || null });
+      ctx.container.append(...[box, code, ctx.note(`${nItems} bubble${nItems === 1 ? '' : 's'}${IDs.length ? ` (one per ${IDs.map((c) => c.name).join(' × ')})` : ' (one per row)'} at the mean ${X.name} and ${Y.name}${F ? ` weighted by ${F.name}` : ''}; area proportional to ${Z ? `the sum of ${Z.name}` : 'the count of rows'}${frames.length > 1 ? `; ${frames.length} times of ${T.name}` : ''}.`)].filter(Boolean));
     },
   });
 
@@ -3359,7 +3495,8 @@
       const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Parallel Plot' });
       // The lines are the core's (a row per vertex); the overlay redraws the selected rows' lines.
       link(box, [{ trace: -1, overlay: oi, kind: 'path', rows: [], paths, list: rows }]);
-      ctx.container.append(box, ctx.note(`${rows.length} rows with every value${rows.length < ctx.rows.length ? ` (${ctx.rows.length - rows.length} with a missing value left out)` : ''}. ${scale === 'range' ? 'Each axis runs from its column\'s minimum (bottom) to its maximum (top).' : scale === 'std' ? 'Values standardized: (value − mean)/std dev.' : 'All columns on one scale.'} Drag a rectangle over an axis to select the rows through it.`));
+      const code = await graphCode(ctx, 'parallel', { size: [w, h], ys: cols.map((c) => c.name), group: colorSpec(G), scale, center, reverse: cols.filter((c) => rev.has(c.id)).map((c) => c.name), nrows: rows.length });
+      ctx.container.append(...[box, code].filter(Boolean), ctx.note(`${rows.length} rows with every value${rows.length < ctx.rows.length ? ` (${ctx.rows.length - rows.length} with a missing value left out)` : ''}. ${scale === 'range' ? 'Each axis runs from its column\'s minimum (bottom) to its maximum (top).' : scale === 'std' ? 'Values standardized: (value − mean)/std dev.' : 'All columns on one scale.'} Drag a rectangle over an axis to select the rows through it.`));
     },
   });
 
@@ -3452,7 +3589,11 @@
       const w = Math.min(availWidth(ctx), 120 + 70 * cols.length + 90), h = clamp((n <= 80 ? 15 : 3) * n + 90, 240, 900);
       const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Cell Plot' });
       link(box, links);
-      ctx.container.append(box, ctx.note(`${n} rows in table order. ${uni ? 'Continuous columns on one scale.' : `Continuous columns standardized${center ? ' about zero' : ''}, colours from −3 to 3 standard deviations.`} Categorical columns take a colour per level; missing values are left blank.`));
+      const cats = {};
+      for (const c of cols) if (isCat(c)) cats[c.name] = levelsAmong(t, c, rows);
+      const code = await graphCode(ctx, 'cell', { size: [w, h], ys: cols.map((c) => c.name), cats, uniform: uni, center, legend: ctx.opt('legend', true), nrows: n,
+        labels: showLabels ? rows.map((r) => (lab && !isMissing(lab.values[r]) ? cellText(lab, lab.values[r]) : String(r + 1))) : null });
+      ctx.container.append(...[box, code].filter(Boolean), ctx.note(`${n} rows in table order. ${uni ? 'Continuous columns on one scale.' : `Continuous columns standardized${center ? ' about zero' : ''}, colours from −3 to 3 standard deviations.`} Categorical columns take a colour per level; missing values are left blank.`));
     },
   });
 
@@ -3492,7 +3633,8 @@
       const w = Math.min(620, availWidth(ctx));
       const box = ctx.plot(traces, { ternary: { sum: 1, aaxis: axis(A), baxis: axis(Bc), caxis: axis(Cc), bgcolor: 'rgba(0,0,0,0)' }, dragmode: 'lasso', xaxis: { visible: false }, yaxis: { visible: false }, margin: { l: 50, r: 50, t: 36, b: 36 } }, { width: w, height: Math.round(w * 0.9), title: 'Ternary Plot' });
       pointStates(box, [{ trace: 0, rows, coords: { a, b, c }, color: base, size: 6, symbols: SM.report.SYMBOLS, fade: 0.25, mask: !!C }]);
-      ctx.container.append(box, htmlLegend(C), ctx.note(`${rows.length} rows${rows.length < ctx.rows.length ? `; ${ctx.rows.length - rows.length} with a missing or negative value, or a zero sum, left out` : ''}. Each point is (${A.name}, ${Bc.name}, ${Cc.name}) divided by their sum.`));
+      const code = await graphCode(ctx, 'ternary', { size: [w, Math.round(w * 0.9)], cols: [A.name, Bc.name, Cc.name], color: colorSpec(C) });
+      ctx.container.append(...[box, code, htmlLegend(C)].filter(Boolean), ctx.note(`${rows.length} rows${rows.length < ctx.rows.length ? `; ${ctx.rows.length - rows.length} with a missing or negative value, or a zero sum, left out` : ''}. Each point is (${A.name}, ${Bc.name}, ${Cc.name}) divided by their sum.`));
     },
   });
 
@@ -3579,7 +3721,9 @@
         });
       };
       box._tiles = { list };
-      ctx.container.append(box, ctx.note(`${list.filter((x) => x.depth === 0).length} tiles of ${cats[0].name}${cats[1] ? `, split by ${cats[1].name}` : ''}; areas are ${Z ? `sums of ${Z.name}` : 'counts of rows'}. A click selects a tile's rows (Alt-click zooms in).`));
+      const code = await graphCode(ctx, 'treemap', { size: [W, Math.round(W * 0.6)], area: [W - 8, Math.round(W * 0.6) - 30], cats: cats.map((c) => c.name),
+        levels: Object.fromEntries(cats.map((c) => [c.name, t.levels(c)])), sizes: Z ? Z.name : null, color: colorSpec(C) });
+      ctx.container.append(...[box, code].filter(Boolean), ctx.note(`${list.filter((x) => x.depth === 0).length} tiles of ${cats[0].name}${cats[1] ? `, split by ${cats[1].name}` : ''}; areas are ${Z ? `sums of ${Z.name}` : 'counts of rows'}. A click selects a tile's rows (Alt-click zooms in).`));
     },
   });
 
@@ -3725,7 +3869,19 @@
     const L = fdLayout(F, w, { legend, entries });
     const under = L._under;
     delete L._under;
-    return ctx.plot(traces, L, { width: w, height: h + under, title });
+    const box = ctx.plot(traces, L, { width: w, height: h + under, title });
+    box._size = [w, h + under];
+    return box;
+  }
+
+  /* graph.code's plan of one of the functional graphs: the curves as the
+     report reads them, and how the page draws them. */
+  function fdPlan(ctx, F, view, extra) {
+    const base = { ...fdPayload(ctx) };
+    delete base.by;   // a By group's rows come with the report (its where)
+    const wideTicks = !F.long && F.source === 'order' && F.p <= 30 ? F.names : null;
+    return { view, ...base, label_col: !F.long && F.idCol ? F.idCol.name : null, xtitle: F.xTitle, ytitle: F.yTitle, ticks: wideTicks,
+      date_x: !!(F.xc && isDate(F.xc)), ...extra };
   }
 
   /* Where a curve passes the fences: runs of X above and below. */
@@ -3757,7 +3913,7 @@
     return ctx.note(`${parts.join('; ')}.${fb.notes && fb.notes.length ? ` ${fb.notes.join(' ')}` : ''}`);
   }
 
-  function fdBoxView(ctx, F, fb) {
+  async function fdBoxView(ctx, F, fb) {
     const t = ctx.table;
     const out = [], rest = [];
     fb.outlier.forEach((o, c) => (o ? out : rest).push(c));
@@ -3783,6 +3939,8 @@
     const oi = traces.push(fdOverlay()) - 1;
     const box = fdPlot(ctx, traces, F, size, { title: 'Functional boxplot' });
     linkCurves(box, F, specs, oi);
+    const code = await graphCode(ctx, 'functional', fdPlan(ctx, F, 'box', { method: fb.method, rule: fb.rule, wfactor: fb.wfactor, curves: !!ctx.opt('fdCurves', false),
+      fences: !!ctx.opt('fdFences', false), named, n_outliers: out.length, size: box._size }));
     const how = fb.method === 'BD2x' ? 'the band depth counted from its definition' : `statsmodels' banddepth, ${FD_DEPTH.find(([v]) => v === fb.method)[1]}`;
     const rule = fb.rule === 'sungenton'
       ? `a curve is an outlier where, at any point, it passes the fences: the central region's envelope widened by ${fmt(fb.wfactor)} times its range on each side (Sun and Genton's rule, as R's fda::fbplot)`
@@ -3790,17 +3948,16 @@
     const notes = [ctx.note(`The curves ordered by ${how}; the median is the deepest curve, ${F.labels[fb.median]}. The 50% central region is the envelope of the ${fb.central} deepest; ${rule}: ${out.length ? `${out.length} outlying curve${out.length > 1 ? 's' : ''}` : 'none'}. The outer band is the envelope of the curves that are not outliers.`)];
     if (fb.rule !== 'sungenton' && out.length > 0.2 * F.n) notes.push(ctx.note(`fboxplot's fences are narrow: its factor stretches the central region to ${fmt(fb.wfactor)} times its width, where Sun and Genton's add ${fmt(fb.wfactor)} times the width on each side (fboxplot's factor f is their (f − 1)/2), so ${out.length} of the ${F.n} curves are outliers here. Outlier Rule ▸ Sun and Genton, or a larger Outlier Factor (statsmodels' own example takes 2.58), flags fewer.`));
     if (fb.method === 'BD2') notes.push(ctx.note('statsmodels\' BD2 is a formula in the ranks at each point: (curves below at its lowest rank) × (curves above at its highest), which counts pairs that do not make a band around the curve; it is at least the band depth, and can order the curves differently. Band Depth (BD2), Counted counts the bands.'));
-    ob.add(box, ...notes);
+    ob.add(...[box, code].filter(Boolean), ...notes);
     if (out.length) {
       const rows = out.map((c) => ({ id: F.labels[c], depth: fb.depth[c], rank: fb.rank[c], where: fdWhere(F, fb, c), _c: c }));
       ob.add(ctx.rt({ columns: [{ key: 'id', label: F.idHead, fmt: 'text' }, { key: 'depth', label: `Depth (${FD_SHORT[fb.method]})` }, { key: 'rank', label: 'Rank', fmt: 'int' }, { key: 'where', label: 'Outside the Fences at', fmt: 'text' }], rows },
         { caption: 'Outlying Curves', key: 'fd:outliers', name: 'Outlying Curves', onRow: (row, ev) => t.select(F.rows[row._c], selectMode(ev)) }));
     }
-    ob.add(ctx.code(fb.code));
     return { box, out, outRows };
   }
 
-  function fdHdrView(ctx, F, hd) {
+  async function fdHdrView(ctx, F, hd) {
     const t = ctx.table;
     const out = hd && !hd.error ? hd.outlier.map((o, c) => (o ? c : -1)).filter((c) => c >= 0) : [];
     const outRows = out.flatMap((c) => F.rows[c]);
@@ -3831,7 +3988,8 @@
     const oi = traces.push(fdOverlay()) - 1;
     const box = fdPlot(ctx, traces, F, size, { title: 'HDR boxplot' });
     linkCurves(box, F, specs, oi);
-    ob.add(box);
+    const hdrPlan = { threshold: hd.threshold, bw: hd.bw_method, grid: hd.grid_n };
+    ob.add(...[box, await graphCode(ctx, 'functional', fdPlan(ctx, F, 'hdr', { ...hdrPlan, named, size: box._size }))].filter(Boolean));
     let scores = null;
     if (ctx.opt('fdScores', true)) {
       const S = hd.scores, g = hd.grid;
@@ -3852,7 +4010,7 @@
       const L = { xaxis: { title: { text: `PC1 score${ex ? ` (${pct(ex[0])} of the variance)` : ''}` }, zeroline: false, range: [g.x[0], g.x[g.x.length - 1]] }, yaxis: { title: { text: `PC2 score${ex ? ` (${pct(ex[1])})` : ''}` }, zeroline: false, range: [g.y[0], g.y[g.y.length - 1]] },
         margin: { l: 60, r: 12, t: 10, b: 108 }, showlegend: true, annotations: ann, legend: { orientation: 'h', x: 0, xanchor: 'left', y: 0, yanchor: 'bottom', yref: 'container' } };
       scores = ctx.plot(st, L, { width: w2, height: Math.round(w2 * 0.72) + 80, title: 'HDR score plot' });
-      ob.add(el('h4', { class: 'sm-fd-sub', text: 'Score Plot' }), scores);
+      ob.add(el('h4', { class: 'sm-fd-sub', text: 'Score Plot' }), scores, ...[await graphCode(ctx, 'functional', fdPlan(ctx, F, 'scores', { ...hdrPlan, size: [w2, Math.round(w2 * 0.72) + 80] }))].filter(Boolean));
     }
     const bw = hd.bw || [];
     const G = hd.grid_n;
@@ -3863,11 +4021,10 @@
       ob.add(ctx.rt({ columns: [{ key: 'id', label: F.idHead, fmt: 'text' }, { key: 'dens', label: 'HDR Density' }, { key: 'pc1', label: 'PC1' }, { key: 'pc2', label: 'PC2' }], rows },
         { caption: 'Outlying Curves', key: 'fd:hdroutliers', name: 'HDR Outlying Curves', onRow: (row, ev) => t.select(F.rows[row._c], selectMode(ev)) }));
     }
-    ob.add(ctx.code(hd.code));
     return { box, scores, out, outRows };
   }
 
-  function fdRainbowView(ctx, F, fb) {
+  async function fdRainbowView(ctx, F, fb) {
     const ob = ctx.outline('Rainbow Plot', { key: 'fd:rainbow', info: 'p:functional:rainbow' });
     const n = F.n;
     const q = (c) => (fb.rank[c] - 1) / Math.max(1, n - 1);
@@ -3889,7 +4046,8 @@
     const oi = traces.push(fdOverlay()) - 1;
     const box = fdPlot(ctx, traces, F, fdSize(ctx), { legend: false, title: 'Rainbow plot' });
     linkCurves(box, F, specs, oi);
-    ob.add(box, ctx.note(`Every curve coloured by its depth rank (${FD_DEPTH.find(([v]) => v === fb.method)[1]}): the deepest ${dark() ? 'brightest' : 'darkest'}, the median (${F.labels[fb.median]}) drawn thickest and on top. statsmodels' rainbowplot colours the same order with a rainbow colour map, the median in black.`), ctx.code(fb.code));
+    const code = await graphCode(ctx, 'functional', fdPlan(ctx, F, 'rainbow', { method: fb.method, rule: fb.rule, wfactor: fb.wfactor, size: box._size }));
+    ob.add(...[box, code].filter(Boolean), ctx.note(`Every curve coloured by its depth rank (${FD_DEPTH.find(([v]) => v === fb.method)[1]}): the deepest ${dark() ? 'brightest' : 'darkest'}, the median (${F.labels[fb.median]}) drawn thickest and on top. statsmodels' rainbowplot colours the same order with a rainbow colour map, the median in black.`));
     return { box };
   }
 
@@ -4064,9 +4222,9 @@
       rep._fdGroups.push(ctx._fd);
       ctx.container.append(fdDataNote(ctx, F, fb));
       const views = {};
-      if (ctx.opt('fdBox', true)) views.box = fdBoxView(ctx, F, fb);
-      if (hd) views.hdr = fdHdrView(ctx, F, hd);
-      if (ctx.opt('fdRainbow', false)) views.rainbow = fdRainbowView(ctx, F, fb);
+      if (ctx.opt('fdBox', true)) views.box = await fdBoxView(ctx, F, fb);
+      if (hd) views.hdr = await fdHdrView(ctx, F, hd);
+      if (ctx.opt('fdRainbow', false)) views.rainbow = await fdRainbowView(ctx, F, fb);
       if (ctx.opt('fdTable', true)) fdDepthTable(ctx, F, fb, hd);
       ctx._fd.views = views;
       ctx.container.append(ctx.note('JMP (standard) has no functional boxplots; JMP Pro\'s Functional Data Explorer is a different analysis, fitting basis functions and functional principal components. These are statsmodels\' functional graphics, drawn in the page.'));
@@ -4176,7 +4334,6 @@
         : kind === 'line' ? { type: 'line', ordering: 'summarized', summary: stat, interval: ctx.opt('interval', 'none') }
           : kind === 'point' ? { type: 'points', summary: stat, interval: ctx.opt('interval', 'none') }
             : { type: 'bar', barStyle: kind === 'needle' ? 'needle' : 'side', summary: stat, interval: ctx.opt('interval', 'none'), label: ctx.opt('label', false) ? 'value' : 'none' };
-      const codes = [];
       for (const set of sets) {
         const fac = [ref(xs[0])], val = set.map(ref);
         const zones = horiz ? { y: fac, x: val } : { x: fac, y: val };
@@ -4184,17 +4341,17 @@
         const S = { zones, elements: [element], auto: false, xMode: 'merge', yMode: 'merge', show: { title: false, legend: true, xTitle: true, yTitle: true } };
         const w = Math.min(760, availWidth(ctx));
         const fig = await staticFigure(ctx, S, { width: w, height: Math.round(Math.min(460, w * 0.62)) });
-        codes.push(...fig.codes.filter((c) => !codes.includes(c)));
         const parent = sets.length > 1 ? ctx.outline(set[0].name, { key: `chart:${set[0].id}` }) : null;
         const host = parent ? parent.body : ctx.container;
         if (fig.empty) { host.append(ctx.note('Nothing to chart.')); continue; }
         const box = ctx.plot(fig.traces, fig.layout, { width: fig.width, height: fig.height, title: `${ELEMENT[element.type].label} chart` });
         link(box, fig.links);
-        host.append(box, ...fig.notes.map((n) => ctx.note(n)));
+        // the Python that draws the chart, right under it (Graph Builder's code, from the chart's plan)
+        const code = fig.plan ? await graphCode(ctx, 'builder', fig.plan) : null;
+        host.append(...[box, code, ...fig.notes.map((n) => ctx.note(n))].filter(Boolean));
       }
       const lab = CHART_STATS.find(([v]) => v === stat)[1];
       ctx.container.append(ctx.note(`${lab}${ys.length ? ` of ${ys.map((c) => c.name).join(', ')}` : ' of rows'} for each level of ${xs.map((c) => c.name).join(' and ')}. Click a ${kind === 'pie' ? 'slice' : kind === 'bar' || kind === 'needle' ? 'bar' : 'point'} to select its rows.`));
-      if (codes.length) ctx.container.append(ctx.code(codes.join('\n\n# ----\n')));
     },
   });
 
@@ -4286,8 +4443,10 @@
         if (anyRight) layout.yaxis2 = { overlaying: 'y', side: 'right', title: { text: esc(right.map((c) => c.name).join(', ')) }, showgrid: false, zeroline: false };
       }
       const w = Math.min(760, availWidth(ctx)), h = overlayY ? Math.round(w * 0.6) : clamp(160 * n + 60, 260, 900);
-      ctx.container.append(ctx.plot(traces, layout, { width: w, height: h, title: 'Overlay Plot' }),
-        ctx.note(`${ys.map((c) => c.name).join(', ')} against ${X ? X.name : 'the row order'}${sortX ? ', connected in the order of X' : ', connected in row order'}.`));
+      const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Overlay Plot' });
+      const code = await graphCode(ctx, 'overlay', { size: [w, h], x: X ? X.name : null, group: colorSpec(G), overlayY, sortX, thru,
+        ys: ys.map((c) => ({ col: c.name, right: overlayY && ctx.opt('right', false, c.id) === true, points: ctx.opt('points', true, c.id), connect: ctx.opt('connect', true, c.id), needle: ctx.opt('needle', false, c.id), step: ctx.opt('step', false, c.id) })) });
+      ctx.container.append(...[box, code, ctx.note(`${ys.map((c) => c.name).join(', ')} against ${X ? X.name : 'the row order'}${sortX ? ', connected in the order of X' : ', connected in row order'}.`)].filter(Boolean));
     },
   });
 

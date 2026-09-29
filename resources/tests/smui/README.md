@@ -32,7 +32,7 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | `test_nonlinear.py` | 242 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
 | `test_quality.py` | 161 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
 | `test_doe.py` | 160 | design properties, statsmodels power, textbook values |
-| `test_graph.py` | 273 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
+| `test_graph.py` | 328 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
 | `test_tables.py` | 129 | pandas group-by, merge, melt/pivot, JMP quantiles |
 | `test_multits.py` | 167 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
 | `test_counts.py` | 432 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
@@ -74,8 +74,8 @@ code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
 Browser suites, and their checks on 2026-09-28: core 187, distribution 168,
-fitybyx 600, fitmodel 796, notebook 49, jsl 24 and the other platforms'
-(4,837 in 32 suites in all).
+fitybyx 600, fitmodel 796, graph 1099, notebook 49, jsl 24 and the other platforms'
+(5,742 in 32 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and

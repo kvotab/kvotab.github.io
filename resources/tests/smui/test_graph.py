@@ -9,9 +9,10 @@ gridded surfaces of Contour Plot and Surface Plot, Bean's violins
 (statsmodels' banddepth, and the definitions counted by brute force),
 fboxplot's order, regions and outliers, hdrboxplot's outliers, modal curve
 and bands, compared with statsmodels' own figures where matplotlib is
-installed (hdrboxplot's multiprocessing Pool made a plain map). The Python
-code each result carries is run on a CSV export of the table, and for the
-new results it must give the report's numbers.
+installed (hdrboxplot's multiprocessing Pool made a plain map). The
+Python under each graph (graph.code: Graph Builder's elements and zones,
+and the other Graph platforms) is run on a CSV export of the table with
+matplotlib, and its figure must show the report's numbers.
 
     python3 resources/tests/smui/test_graph.py
 """
@@ -81,7 +82,6 @@ for i, level in enumerate(lv):
     inside = v[(v >= q1 - 1.5 * (q3 - q1)) & (v <= q3 + 1.5 * (q3 - q1))]
     check.near(f'summary {level}: lower whisker', s['lo_whisker'][i], float(inside.min()))
     check.near(f'summary {level}: upper whisker', s['hi_whisker'][i], float(inside.max()))
-check('summary: code groups by g', "groupby([\"g\"]" in s['code'], True)
 
 # Freq: a row counts f times
 sf = call('graph.summary', table=tid, y='y', rows=rows, codes=codes, k=3, freq='f')
@@ -150,7 +150,7 @@ for _ in range(100):
 half = stats.norm.ppf(0.975) * np.std(np.array(boot), axis=0, ddof=1)
 check.near('bootstrap band: the fit plus or minus 1.96 resample sd', max(abs(u - (yy + h)) for u, yy, h in zip(cc['upper'], cc['y'], half)), 0.0, abs_=1e-9)
 sw = call('graph.summary', table=tid, y='y', rows=rows, codes=codes, k=3, want=['mean'])
-check('summary: want keeps the answer small', sorted(sw), ['alpha', 'code', 'k', 'mean'])
+check('summary: want keeps the answer small', sorted(sw), ['alpha', 'k', 'mean'])
 few = call('graph.smoother', table=tid, x='x', y='y', rows=[0, 1, 2, 3], codes=[0, 0, 0, 0], k=1)['curves'][0]
 check('spline: too few distinct X is an error, not a failure', 'error' in few, True)
 
@@ -412,7 +412,8 @@ if HAVE_MPL:
     except ZeroDivisionError:
         fails = 'ZeroDivisionError'
     plt.close('all')
-    check('statsmodels\' fboxplot fails with exactly one outlier; the page draws it, and its code says so', (fails, [i for i, o in enumerate(one_['outlier']) if o], 'ZeroDivisionError' in one_['code']), ('ZeroDivisionError', [4], True))
+    one_code = call('graph.code', kind='functional', plan={'view': 'box', 'layout': 'wide', 'y': n1_, 'wfactor': 4, 'n_outliers': 1, 'size': [800, 450]}, table=t1_)['plot_code']
+    check('statsmodels\' fboxplot fails with exactly one outlier; the page draws it, and its code says so', (fails, [i for i, o in enumerate(one_['outlier']) if o], 'ZeroDivisionError' in one_code), ('ZeroDivisionError', [4], True))
 out_sm15 = [i for i, o in enumerate(fb['outlier']) if o]
 check('fboxplot\'s fences at 1.5 flag many curves (a third or more here)', len(out_sm15) >= 15, True)
 sg = call('graph.fbox', table=tw, y=hours, rule='sungenton')
@@ -597,133 +598,680 @@ check.near('bean with a fractional Freq: the weighted mean', bw_['mean'], mw)
 one = call('graph.bean', table=tid, y='y', rows=[0, 1, 2], codes=[0, 1, 1], k=2)['beans']
 check('bean: one value, the marks without a violin', ('error' in one[0], one[0]['n'], one[0]['mean'] == y[0]), (True, 1.0, True))
 
-# ---- the code under each result runs on a CSV export ------------------------------------
-calls = [
-    ('graph.summary', {'y': 'y', 'by': ['g']}), ('graph.summary', {'y': 'y', 'freq': 'f'}),
-    ('graph.smoother', {'x': 'x', 'y': 'y', 'by': ['g']}), ('graph.smoother', {'x': 'x', 'y': 'y', 'method': 'lowess'}),
-    ('graph.fit', {'x': 'x', 'y': 'y', 'degree': 2, 'by': ['g']}), ('graph.fit', {'x': 'x', 'y': 'y', 'robust': True}),
-    ('graph.ellipse', {'x': 'x', 'y': 'y', 'by': ['g']}), ('graph.density', {'x': 'x', 'y': 'y', 'bw': 1.5}),
-    ('graph.kde1', {'y': 'y', 'by': ['g']}), ('graph.chisq', {'tables': [ct.tolist()], 'x': 'g', 'y': 'z'}),
-    ('graph.interp', {'x': 'x', 'y': 'y', 'z': 'z'}),
-]
-with tempfile.TemporaryDirectory() as tmp:
-    pd.DataFrame(cols).to_csv(os.path.join(tmp, 'Graph test.csv'), index=False)
-    here = os.getcwd()
-    os.chdir(tmp)
-    try:
-        for fn, kw in calls:
-            code = call(fn, table=tid, table_name='Graph test', **kw)['code']
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    exec(compile(code, fn, 'exec'), {})
-                ran = True
-            except Exception as e:
-                ran = f'{type(e).__name__}: {e}'
-            check(f'the code of {fn} {sorted(kw)} runs', ran, True)
-    finally:
-        os.chdir(here)
-
-# ---- the code of the Functional Data Plot and of Bean gives the report's numbers --------------------
-def run_code(code, files):
-    """Run a result's code where the CSV exports are; its variables back."""
-    with tempfile.TemporaryDirectory() as tmp:
-        for name, frame in files.items():
-            frame.to_csv(os.path.join(tmp, f'{name}.csv'), index=False)
-        here = os.getcwd()
-        os.chdir(tmp)
-        ns = {}
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                exec(compile(code, 'code', 'exec'), ns)
-        except Exception as e:
-            ns = {'_error': f'{type(e).__name__}: {e}'}
-        finally:
-            os.chdir(here)
-    return ns
-
-
-wide_csv = pd.DataFrame({**{h: X[:, j] for j, h in enumerate(hours)}, 'day': [f'Day {i + 1:02d}' for i in range(len(X))], 'site': ['Coast' if i % 2 == 0 else 'Inland' for i in range(len(X))]})
-cases = [
-    ('fbox, rows as functions', 'graph.fbox', dict(table=tw, y=hours), {'Curves': wide_csv}),
-    ('fbox, BD2 counted, Sun and Genton', 'graph.fbox', dict(table=tw, y=hours, method='BD2x', rule='sungenton', wfactor=1.2), {'Curves': wide_csv}),
-    ('fbox, stacked', 'graph.fbox', dict(table=tl, layout='long', id='id', x='x', y='y'), {'Curves': pd.DataFrame({'id': ids_l, 'x': [L[k][1] for k in perm], 'y': [L[k][2] for k in perm]})}),
-    ('fbox, stacked at different X', 'graph.fbox', dict(table=tl2, layout='long', id='id', x='x', y='y'), {'Curves': pd.DataFrame({'id': [f'k{i}' for i, xx in enumerate(xs_i) for _ in xx], 'x': np.concatenate(xs_i), 'y': np.concatenate(ys_i)})}),
-    ('fbox, stacked without X', 'graph.fbox', dict(table=tl3, layout='long', id='id', y='y'), {'Curves': pd.DataFrame({'id': ['a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c'], 'y': [1, 2, 3, 2, 3, 4, 0, 5, 1.0]})}),
-    ('hdr, rows as functions', 'graph.hdr', dict(table=tw, y=hours), {'Curves': wide_csv}),
-    ('hdr, a constant point', 'graph.hdr', dict(table=tcst, y=hours), {'Curves': pd.DataFrame({h: Xc[:, j] for j, h in enumerate(hours)})}),
-]
-for label, fn, kw, files in cases:
-    res = call(fn, table_name='Curves', **kw)
-    ns = run_code(res['code'], files)
-    if '_error' in ns:
-        check(f'the code of {label} runs', ns['_error'], True)
-        continue
-    out = ns['res']
-    if fn == 'graph.fbox':
-        check.near(f'the code of {label}: the depths', float(np.max(np.abs(np.asarray(out['depth']) - np.array(res['depth'])))), 0.0, abs_=1e-12)
-        check(f'the code of {label}: the outliers', np.asarray(out['outlier']).tolist(), res['outlier'])
-        check(f'the code of {label}: the median', int(out['median']), res['median'])
-    else:
-        check(f'the code of {label}: the outliers', np.asarray(out['outlier']).tolist(), res['outlier'])
-        check.near(f'the code of {label}: the modal curve', float(np.max(np.abs(np.asarray(out['modal']) - np.array(res['modal'])))), 0.0, abs_=1e-7)
-        worst = max(float(np.max(np.abs(np.asarray(out[k][j]) - np.array(res[k][j])))) for k in ('hdr50', 'hdr90') for j in (0, 1))
-        check.near(f'the code of {label}: the bands', worst, 0.0, abs_=1e-9)
-# By: the code loops over the groups; its last is the report of the last group
-inland = [i for i in range(60) if i % 2 == 1]
-for fn in ('graph.fbox', 'graph.hdr'):
-    res = call(fn, table=tw, y=hours, rows=inland, by=['site'], table_name='Curves')
-    ns = run_code(res['code'], {'Curves': wide_csv})
-    if '_error' in ns:
-        check(f'the code of {fn} with By runs', ns['_error'], True)
-        continue
-    check(f'the code of {fn} with By: the last group (Inland) as its report', np.asarray(ns['res']['outlier']).tolist(), res['outlier'])
-    if fn == 'graph.fbox':
-        check.near('the code of graph.fbox with By: its depths', float(np.max(np.abs(np.asarray(ns['res']['depth']) - np.array(res['depth'])))), 0.0, abs_=1e-12)
-bean_csv = pd.DataFrame(cols)
-res = call('graph.bean', table=tid, y='y', rows=[r for r in rows if g[r] == 'b'], table_name='Beans')
-ns = run_code(res['code'], {'Beans': bean_csv[bean_csv['g'] == 'b'].reset_index(drop=True)})
-check.near('the code of graph.bean: its violin', float(np.max(np.abs(ns.get('violin', np.zeros(1)) - np.array(res['beans'][0]['d'])))) if 'violin' in ns else 1.0, 0.0, abs_=1e-12)
-res = call('graph.bean', table=tid, y='y', rows=rows, codes=codes, k=3, by=['g'], bw=1.3, cutoff=True, table_name='Beans')
-ns = run_code(res['code'], {'Beans': bean_csv})
-check('the code of graph.bean with By runs', ns.get('_error', True), True)
-check.near('the code of graph.bean with By: the last group\'s violin (c)', float(np.max(np.abs(ns['violin'] - np.array(res['beans'][2]['d'])))) if 'violin' in ns else 1.0, 0.0, abs_=1e-12)
-res = call('graph.bean', table=tid, y='y', rows=rows, codes=codes, k=3, by=['g'], freq='f', table_name='Beans')
-ns = run_code(res['code'], {'Beans': bean_csv})
-check.near('the code of graph.bean with Freq: the rows repeated', float(np.max(np.abs(ns['violin'] - np.array(res['beans'][2]['d'])))) if 'violin' in ns else 1.0, 0.0, abs_=1e-12)
-
-# ---- a date column: text in the CSV, a number (ms since 1970) in the page ---------------------------------
-# The code turns it back into the number before it computes (util.dated_code),
-# so the smoother's code on the CSV as the page exports it gives the page's curve.
-import contextlib, io, os, tempfile  # noqa: E401,E402
+# ---- the Python under each graph: graph.code ------------------------------------------------------
+# The page sends graph.code a plan of the graph it drew (Graph Builder's elements and zones
+# as it resolved them, or another platform's settings), and the code that comes back draws
+# that graph with matplotlib from the table's CSV export. Here the code runs on a CSV
+# written as the page exports it (dates as text), with matplotlib's Agg backend, and its
+# figure is checked against the numbers graph.summary, graph.smoother, graph.fit and the
+# others give the page for the same graph. That the plans are the page's, and the figures
+# its Plotly graphs, is test-ui-graph.py's part.
+import matplotlib  # noqa: E402
+matplotlib.use('Agg')
 from smui import data as _data  # noqa: E402
+from test_charts import run_snippet_more, strip_show  # noqa: E402
+
+PALETTE = graph.PALETTE
+GC_TMP = tempfile.mkdtemp(prefix='smui-graph-code-')
+
+
+def gc_frame(tid_, dates=()):
+    """A table as File > Export CSV writes it: every column by name, a date as its day."""
+    t = _data.TABLES[tid_]
+    out = {}
+    for name, v in t['cols'].items():
+        if name in dates:
+            out[name] = [str(np.datetime64(int(q), 'ms').astype('datetime64[D]')) if np.isfinite(q) else '' for q in np.asarray(v, dtype=float)]
+        elif _data.meta(tid_, name).get('dataType') == 'numeric':
+            out[name] = np.asarray(v, dtype=float)
+        else:
+            out[name] = pd.Series(list(v), dtype=object)
+    return pd.DataFrame(out)
+
+
+def gc_run(kind, plan, tid_, name='Graph test', rows=None, names=(), dates=()):
+    """graph.code's code for a plan, run on the table's CSV: (code, figures and variables, error)."""
+    code = call('graph.code', kind=kind, plan=plan, table=tid_, rows=rows, table_name=name).get('plot_code')
+    if not code:
+        return None, None, 'no code'
+    out, err = run_snippet_more(code, gc_frame(tid_, dates), name, GC_TMP, names=names)
+    return code, out, err
+
+
+def gc_is_cat(tid_, c):
+    m = _data.meta(tid_, c)
+    return m.get('modelingType') in ('nominal', 'ordinal') or m.get('dataType') != 'numeric'
+
+
+def gc_levels(tid_, c, rows_):
+    v = _data.raw(tid_, c, rows_)
+    m = _data.meta(tid_, c)
+    if m.get('dataType') == 'numeric':
+        present = {float(q) for q in v if np.isfinite(q)}
+        return [int(q) if float(q).is_integer() else float(q) for q in (m.get('levels') or sorted(present)) if float(q) in present]
+    present = {q for q in v if q is not None}
+    return [q for q in (m.get('levels') or sorted(present)) if q in present]
+
+
+def gc_label(v):
+    return str(int(v)) if isinstance(v, (int, float)) and float(v).is_integer() else str(v)
+
+
+def gc_fmt(v, sig=7):
+    """The page's fmt() of a number."""
+    if float(v).is_integer() and abs(v) < 1e15:
+        s = str(int(v))
+    elif abs(v) >= 1e9 or abs(v) < 1e-4:
+        m_, e_ = f'{v:.{min(sig, 5) - 1}e}'.split('e')
+        s = f'{m_}e{int(e_)}'
+    else:
+        s = np.format_float_positional(float(f'{v:.{sig}g}'), trim='-')
+    return '−' + s[1:] if s.startswith('-') else s
+
+
+def gc_groups(tid_, c, rows_):
+    """A zone's groups as the page makes them: a categorical column's levels, or a continuous one's five bins of about equal counts."""
+    if not gc_is_cat(tid_, c):
+        v = np.asarray(_data.raw(tid_, c, rows_), dtype=float)
+        v = np.sort(v[np.isfinite(v)])
+        if len(np.unique(v)) > 10:
+            edges = [v[0]]
+            for p in (0.2, 0.4, 0.6, 0.8):
+                q = v[int(math.floor(p * (len(v) - 1)))]
+                if q > edges[-1]:
+                    edges.append(q)
+            if v[-1] > edges[-1]:
+                edges.append(v[-1])
+            return {'col': c, 'values': list(range(len(edges) - 1)), 'labels': [f'{gc_fmt(edges[k])}–{gc_fmt(edges[k + 1])}' for k in range(len(edges) - 1)], 'edges': [float(q) for q in edges]}
+    lv = gc_levels(tid_, c, rows_)
+    return {'col': c, 'values': lv, 'labels': [gc_label(q) for q in lv], 'edges': None}
+
+
+def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=None, color=None, size=None, freq=None,
+            y_mode='side', w=640, h=420, log=None, where=None):
+    """Graph Builder's plan of a graph, as the page's Env.plan makes it for these zones and elements."""
+    n = _data.TABLES[tid_]['n']
+    r0 = np.arange(n)
+    if freq:
+        fv = np.asarray(_data.raw(tid_, freq, r0), dtype=float)
+        r0 = r0[np.isfinite(fv) & (fv > 0)]
+    kind = lambda c: None if c is None else ('cat' if gc_is_cat(tid_, c) else 'cont')  # noqa: E731
+    x, y = list(x), list(y)
+    xsets = [[c] for c in x] if len(x) > 1 else [x] if x else [[]]
+    ysets = ([[c] for c in y] if y_mode != 'merge' and len(y) > 1 else [y]) if y else [[]]
+    series = [[[[a, b] for a in (xs or [None]) for b in (ys or [None])] for xs in xsets] for ys in ysets]
+    xk, yk = kind(series[0][0][0][0]), kind(series[0][0][0][1])
+    kinds = {'x': xk or 'none', 'y': yk or 'none'}
+    types = [e['type'] for e in elements]
+    resp = 'y' if yk == 'cont' else 'x' if xk == 'cont' else None
+    fac = ('x' if resp == 'y' else 'y') if resp else ('x' if xk == 'cat' and not yk else 'y' if yk == 'cat' and not xk else None)
+    horiz = resp == 'x' or (resp is None and fac == 'y')
+    count_axis = None
+    if any(t in ('bar', 'area', 'line') for t in types) and not resp and fac:
+        count_axis = 'x' if horiz else 'y'
+    if 'histogram' in types and resp and (xk is None or yk is None):
+        count_axis = 'y' if horiz else 'x'
+    if count_axis and kinds[count_axis] == 'none':
+        kinds[count_axis] = 'count'
+    levels = {}
+    for c in x + y:
+        if kind(c) == 'cat':
+            lv = gc_levels(tid_, c, r0)
+            levels[c] = {'values': lv, 'labels': [gc_label(q) for q in lv]}
+    G = None
+    gcol = overlay or (color if color and gc_is_cat(tid_, color) else None)
+    if gcol:
+        G = dict(gc_groups(tid_, gcol, r0), zone='Overlay' if overlay else 'Color')
+    C = None
+    if color:
+        if gc_is_cat(tid_, color):
+            C = {'col': color, 'cat': True, 'values': gc_levels(tid_, color, r0)}
+        else:
+            v = np.asarray(_data.raw(tid_, color, r0), dtype=float)
+            C = {'col': color, 'cat': False, 'range': [float(np.nanmin(v)), float(np.nanmax(v))]}
+    S = None
+    if size:
+        v = np.asarray(_data.raw(tid_, size, r0), dtype=float)
+        S = {'col': size, 'range': [float(np.nanmin(v)), float(np.nanmax(v))]}
+    W_ = gc_groups(tid_, wrap, r0) if wrap else None
+    GX_ = gc_groups(tid_, gx, r0) if gx and not wrap else None
+    GY_ = gc_groups(tid_, gy, r0) if gy and not wrap else None
+    if W_:
+        nC = math.ceil(math.sqrt(len(W_['values'])))
+        nR = math.ceil(len(W_['values']) / nC)
+    else:
+        nR = (len(GY_['values']) if GY_ else 1) * len(ysets)
+        nC = (len(GX_['values']) if GX_ else 1) * len(xsets)
+    count_title = 'N'
+    for e in elements:
+        if e['type'] == 'histogram':
+            count_title = 'Percent' if e.get('scale') == 'percent' else 'Count'
+            break
+        if e['type'] in ('bar', 'area', 'line'):
+            count_title = '% of Total' if e.get('stat') == 'pct' else 'N'
+            break
+    title_of = lambda a, s: count_title if kinds[a] == 'count' else (' & '.join(s) if s else None)  # noqa: E731
+    n_series = max(len(p) for row in series for p in row)
+    exclusive = next((t for t in types if t in ('mosaic', 'pie')), None)
+    any_legend = bool(G) or n_series > 1 or bool(exclusive)
+    names_ = []
+    if not G and n_series > 1:
+        P0 = series[0][0]
+        mx_, my_ = len({a for a, _ in P0}) > 1, len({b for _, b in P0}) > 1
+        names_ = [f'{b} vs. {a}' if mx_ and my_ else (a if mx_ else (b or a)) for a, b in P0]
+    s0 = series[0][0][0]
+    ltitle = G['col'] if G else (s0[1] if exclusive == 'mosaic' else (s0[1] if fac == 'y' else s0[0]) if exclusive == 'pie' and fac else None)
+    return {'size': [w, h], 'title': f'{" & ".join(y)} vs. {" & ".join(x)}' if x and y else ' & '.join(x or y), 'freq': freq, 'where': where or [],
+            'wrap': W_, 'gx': GX_, 'gy': GY_, 'xsets': xsets, 'ysets': ysets, 'series': series, 'kinds': kinds, 'levels': levels, 'log': log or {},
+            'group': G, 'color': C, 'sizecol': S, 'many': len(r0) > 2000, 'nrows': int(len(r0)), 'elements': elements,
+            'legend': {'on': any_legend, 'pos': 'right', 'title': ltitle}, 'series_names': names_,
+            'titles': {'x': [title_of('x', s) for s in xsets], 'y': [title_of('y', s) for s in ysets], 'shared_x': nC > 1 and len(xsets) == 1 and not exclusive},
+            'alpha': 0.05, 'panel': [(w - 74 - (130 if any_legend else 0)) / nC, (h - 80) / nR], 'exclusive': exclusive,
+            'colorbar': bool(C and not C['cat'] and 'points' in types)}
+
+
+# the elements as the page records them in the plan (their properties resolved)
+EL = {
+    'points': {'type': 'points', 'summary': 'none', 'jitter': 'auto', 'jitterLimit': 1},
+    'smoother': {'type': 'smoother', 'method': 'spline', 'lam': 0.05, 'frac': 0.667, 'it': 3, 'conf': False},
+    'fit': {'type': 'fit', 'degree': 1, 'robust': False, 'confFit': True, 'confPred': False, 'equation': False, 'r2': False, 'rmse': False, 'ftest': False},
+    'ellipse': {'type': 'ellipse', 'coverage': 0.95, 'shaded': False, 'correlation': False, 'meanPoint': False},
+    'contour': {'type': 'contour', 'levels': 4, 'fill': True, 'line': True, 'bw': 1, 'violin': False},
+    'line': {'type': 'line', 'ordering': 'summarized', 'summary': 'mean', 'stat': 'mean', 'interval': 'none', 'style': 'bars', 'shape': 'linear'},
+    'bar': {'type': 'bar', 'barStyle': 'side', 'stat': 'mean', 'interval': 'none', 'label': 'none'},
+    'area': {'type': 'area', 'areaStyle': 'overlaid', 'summary': 'mean', 'stat': 'mean', 'interval': 'none', 'style': 'bars', 'shape': 'linear'},
+    'box': {'type': 'box', 'outliers': True, 'boxType': 'outlier', 'boxStyle': 'normal', 'width': 0.5, 'diamond': False},
+    'bean': {'type': 'bean', 'beans': 'lines', 'mean': True, 'median': True, 'overall': True, 'split': False, 'cutoff': False, 'bw': 1, 'px_unit': 150},
+    'histogram': {'type': 'histogram', 'kernel': False, 'scale': 'count', 'bins': {'start': 0, 'end': 10, 'size': 1, 'nb': 10}, 'binWidth': None, 'bw': 1, 'counts': False, 'band': False},
+    'heatmap': {'type': 'heatmap', 'label': 'none', 'hx': {'start': 0, 'size': 2, 'n': 5}, 'hy': {'cat': 'g'}, 'cc': None},
+    'mosaic': {'type': 'mosaic', 'cellLabel': 'none', 'chisq': True},
+    'caption': {'type': 'caption', 'stats': ['mean', 'n'], 'location': 'graph'},
+    'pie': {'type': 'pie', 'pieStyle': 'pie', 'stat': 'n', 'label': 'percent'},
+}
+
+
+def el(name, **kw):
+    return dict(EL[name], **kw)
+
+
+def gc_axes(out):
+    """The figure's panels (not its colour bars)."""
+    return [A for A in out['figures'][0]['axes'] if not A['colorbar']] if out and out.get('figures') else []
+
+
+def gc_gap(line, xs, ys):
+    """How far a drawn line is from the points (xs, ys): inf when the counts differ."""
+    if len(line) != len(xs):
+        return float('inf')
+    return max([max(abs(p[0] - a), abs(p[1] - b)) for p, a, b in zip(line, xs, ys)] + [0.0])
+
+
+def gc_near(A, xs, ys):
+    return min((gc_gap(ln, xs, ys) for ln in A['xy_lines']), default=float('inf'))
+
+
+def gc_spans(A):
+    return [(min(q[1] for q in pp), max(q[1] for q in pp)) for P in A['polys'] if 'contour' not in P for pp in P.get('paths', []) if pp]
+
+
+def gc_span_gap(A, lo, hi):
+    return min((max(abs(a - lo), abs(b - hi)) for a, b in gc_spans(A)), default=float('inf'))
+
+
+def gc_hex(c):
+    return c[:7].lower() if c else c
+
+
+gdf = pd.DataFrame(cols)
+okxy = np.isfinite(x) & np.isfinite(y)
+by_g = {lv_: [r for r in rows if g[r] == lv_] for lv_ in lv}
+
+# Points and a Smoother, an Overlay: the points are the rows', a colour and a smoothing spline for each group
+code, out, err = gc_run('builder', gb_plan(tid, [el('points'), el('smoother')], x=['x'], y=['y'], overlay='g'), tid, rows=rows)
+check('Points and Smoother: the code runs, ends in plt.show()', (err, code.rstrip().split('\n')[-1] if code else None), (None, 'plt.show()'))
+A = gc_axes(out)[0]
+got = sorted((round(p[0], 12), round(p[1], 12), gc_hex(c)) for S in A['scatter'] for p, c in zip(S['xy'], S['colors'] * len(S['xy']) if len(S['colors']) == 1 else S['colors']))
+want = sorted((round(float(x[r]), 12), round(float(y[r]), 12), PALETTE[lv.index(g[r])]) for r in rows if okxy[r])
+check('Points: a marker for each row with X and Y, in its group\'s colour', got == want, True)
+sm_ = call('graph.smoother', table=tid, x='x', y='y', rows=rows, codes=codes, k=3, lam=0.05)['curves']
+check.near('Smoother: each group\'s curve is graph.smoother\'s (the smoothing spline, lambda 0.05)', max(gc_near(A, c_['x'], c_['y']) for c_ in sm_), 0.0, abs_=1e-9)
+F0 = out['figures'][0]
+check('Overlay: the legend has the levels, the axes the column names', (F0['legend'], A['xlabel'], A['ylabel']), (lv, 'x', 'y'))
+
+# the Smoother's other kinds: statsmodels' lowess; the spline's bootstrap Confidence of Fit
+code, out, err = gc_run('builder', gb_plan(tid, [el('points'), el('smoother', method='lowess', frac=0.5, it=2)], x=['x'], y=['y']), tid, rows=rows)
+A = gc_axes(out)[0]
+cl_ = call('graph.smoother', table=tid, x='x', y='y', rows=rows, method='lowess', frac=0.5, it=2)['curves'][0]
+at_ = {round(p[0], 12): p[1] for ln in A['xy_lines'] for p in ln}
+check.near('Smoother (Local Kernel): graph.smoother\'s lowess at every X it gives', max(abs(at_.get(round(a, 12), np.inf) - b) for a, b in zip(cl_['x'], cl_['y'])), 0.0, abs_=1e-9)
+code, out, err = gc_run('builder', gb_plan(tid, [el('smoother', conf=True)], x=['x'], y=['y']), tid, rows=rows)
+cb_ = call('graph.smoother', table=tid, x='x', y='y', rows=rows, conf=True)['curves'][0]
+check.near('Smoother, Confidence of Fit: the bootstrap band spans graph.smoother\'s (the same resamples)', gc_span_gap(gc_axes(out)[0], min(cb_['lower']), max(cb_['upper'])), 0.0, abs_=1e-9)
+
+# Line of Fit, a quadratic with both bands, in a panel for each level (Group X)
+fit_ = el('fit', degree=2, confPred=True, equation=True, r2=True)
+code, out, err = gc_run('builder', gb_plan(tid, [el('points'), fit_], x=['x'], y=['y'], gx='g'), tid, rows=rows)
+AX = gc_axes(out)
+check('Group X: a panel for each level, titled with it, under the column\'s name', ([A_['title'] for A_ in AX], out['figures'][0]['subfigs'][0]['suptitle']), (lv, 'g'))
+worst, bands, texts = 0.0, 0.0, True
+for A_, lvl in zip(AX, lv):
+    f_ = call('graph.fit', table=tid, x='x', y='y', rows=by_g[lvl], degree=2)['fits'][0]
+    worst = max(worst, gc_near(A_, f_['x'], f_['y']), gc_near(A_, f_['x'], f_['pred_lower']), gc_near(A_, f_['x'], f_['pred_upper']))
+    bands = max(bands, gc_span_gap(A_, min(f_['fit_lower']), max(f_['fit_upper'])))
+    texts = texts and any(f'R² {gc_fmt(f_["r2"], 4)}' in a_['s'] for a_ in A_['annotations'])
+check.near('Line of Fit: each panel\'s line and prediction limits are graph.fit\'s', worst, 0.0, abs_=1e-7)
+check.near('Line of Fit: the Confidence of Fit spans graph.fit\'s', bands, 0.0, abs_=1e-7)
+check('Line of Fit: the R² written as the page writes it', texts, True)
+check('Group X: one X title under the panels', out['figures'][0]['supx'], 'x')
+
+# Ellipse: graph.ellipse's for each group of the Overlay, their correlations written
+code, out, err = gc_run('builder', gb_plan(tid, [el('ellipse', coverage=0.9, correlation=True)], x=['x'], y=['y'], overlay='g'), tid, rows=rows)
+A = gc_axes(out)[0]
+ee = call('graph.ellipse', table=tid, x='x', y='y', rows=rows, codes=codes, k=3, coverage=0.9)['ellipses']
+check.near('Ellipse: each group\'s 90% density ellipse is graph.ellipse\'s', max(gc_near(A, e_['x'], e_['y']) for e_ in ee), 0.0, abs_=1e-9)
+check('Ellipse: the correlations written', all(any(gc_fmt(e_['r'], 3) in a_['s'] for a_ in A['annotations']) for e_ in ee), True)
+
+# Contour: the kernel density of graph.density, its contours holding 100, 75, 50 and 25% of the points
+code, out, err = gc_run('builder', gb_plan(tid, [el('contour')], x=['x'], y=['y']), tid, rows=rows, names=['inner'])
+de_ = call('graph.density', table=tid, x='x', y='y', rows=rows)['densities'][0]
+want = [1 - v for row in de_['z'] for v in row]
+check.near('Contour: its grid is graph.density\'s (the share of the points inside each contour)', max(abs(a - b) for a, b in zip(out['vars']['inner'], want)) if len(out['vars'].get('inner') or []) == len(want) else 1.0, 0.0, abs_=1e-9)
+check('Contour: levels at 0, 1/4, 1/2, 3/4 (and 1 filled)', sorted({tuple(P['contour']) for P in gc_axes(out)[0]['polys'] if 'contour' in P}), [(0.0, 0.25, 0.5, 0.75), (0.0, 0.25, 0.5, 0.75, 1.0)])
+
+# Bar with the confidence interval, Box Plot, Line, Caption Box: graph.summary's numbers at each level
+sg = call('graph.summary', table=tid, y='y', rows=rows, codes=codes, k=3, boxes=True)
+code, out, err = gc_run('builder', gb_plan(tid, [el('bar', interval='ci'), el('caption')], x=['g'], y=['y']), tid, rows=rows)
+A = gc_axes(out)[0]
+check.near('Bar: the mean of each level is graph.summary\'s', max(abs(b_['h'] - m_) for b_, m_ in zip(sorted(A['bars'], key=lambda b_: b_['x']), sg['mean'])), 0.0, abs_=1e-9)
+segs = sorted((round(min(s_[0][1], s_[1][1]), 9), round(max(s_[0][1], s_[1][1]), 9)) for c_ in A['segments'] for s_ in c_['segs'] if abs(s_[0][0] - s_[1][0]) < 1e-12)
+check('Bar: the error bars are graph.summary\'s 95% confidence intervals of the means', segs, sorted((round(a, 9), round(b, 9)) for a, b in zip(sg['lower'], sg['upper'])))
+check('the categorical axis: the levels in the table\'s order', A['xticklabels'], lv)
+tot_y = np.asarray(y)[np.isfinite(y)]
+check('Caption Box: the mean and N of the graph, as the page writes them', any(f'Mean: {gc_fmt(float(tot_y.mean()), 5)}' in a_['s'] and f'N: {len(tot_y)}' in a_['s'] for a_ in A['annotations']), True)
+code, out, err = gc_run('builder', gb_plan(tid, [el('box', diamond=True)], x=['g'], y=['y']), tid, rows=rows)
+A = gc_axes(out)[0]
+hz = [ln for ln in A['xy_lines'] if len(ln) == 2 and abs(ln[0][1] - ln[1][1]) < 1e-12]
+vt = [ln for ln in A['xy_lines'] if len(ln) == 2 and abs(ln[0][0] - ln[1][0]) < 1e-12]
+ok_ = True
+for k_ in range(3):
+    ok_ = ok_ and any(abs(ln[0][1] - sg['median'][k_]) < 1e-9 and abs((ln[0][0] + ln[1][0]) / 2 - k_) < 1e-9 for ln in hz)
+    ok_ = ok_ and any(abs((ln[0][0]) - k_) < 1e-9 and sorted(round(p[1], 9) for p in ln) == sorted([round(sg['q1'][k_], 9), round(sg['lo_whisker'][k_], 9)]) for ln in vt)
+    ok_ = ok_ and any(abs((ln[0][0]) - k_) < 1e-9 and sorted(round(p[1], 9) for p in ln) == sorted([round(sg['q3'][k_], 9), round(sg['hi_whisker'][k_], 9)]) for ln in vt)
+check('Box Plot: each box\'s median, and whiskers from its quartiles, are graph.summary\'s (JMP\'s quantiles)', ok_, True)
+dia = [ln for ln in A['xy_lines'] if len(ln) == 5]
+check('Box Plot: the confidence diamonds span the t intervals of the means', sorted((round(min(p[1] for p in ln), 9), round(max(p[1] for p in ln), 9)) for ln in dia), sorted((round(a, 9), round(b, 9)) for a, b in zip(sg['lower'], sg['upper'])))
+code, out, err = gc_run('builder', gb_plan(tid, [el('line', interval='se')], x=['g'], y=['y']), tid, rows=rows)
+A = gc_axes(out)[0]
+check.near('Line: through the means of the levels, in their order', gc_near(A, [0, 1, 2], sg['mean']), 0.0, abs_=1e-9)
+segs = sorted((round(min(s_[0][1], s_[1][1]), 9), round(max(s_[0][1], s_[1][1]), 9)) for c_ in A['segments'] for s_ in c_['segs'] if abs(s_[0][0] - s_[1][0]) < 1e-12)
+check('Line: the error bars, the mean plus and minus its standard error', segs, sorted((round(m_ - s_, 9), round(m_ + s_, 9)) for m_, s_ in zip(sg['mean'], sg['se'])))
+
+# Freq: a whole number counts a row that many times; a fraction weighs it
+sf_ = call('graph.summary', table=tid, y='y', rows=rows, codes=codes, k=3, freq='f')
+code, out, err = gc_run('builder', gb_plan(tid, [el('bar')], x=['g'], y=['y'], freq='f'), tid, rows=rows)
+check.near('Freq: the bars are graph.summary\'s means with the rows counted Freq times', max(abs(b_['h'] - m_) for b_, m_ in zip(sorted(gc_axes(out)[0]['bars'], key=lambda b_: b_['x']), sf_['mean'])), 0.0, abs_=1e-9)
+sw_ = call('graph.summary', table=tfw, y='y', rows=rows, codes=codes, k=3, freq='w')
+code, out, err = gc_run('builder', gb_plan(tfw, [el('bar', stat='median'), el('box')], x=['g'], y=['y'], freq='w'), tfw, rows=rows)
+A = gc_axes(out)[0]
+check.near('Freq, a fraction: the medians are graph.summary\'s weighted ones', max(abs(b_['h'] - m_) for b_, m_ in zip(sorted(A['bars'], key=lambda b_: b_['x']), sw_['median'])), 0.0, abs_=1e-9)
+
+# Bean: statsmodels' beanplot violins of graph.bean, all drawn to one width; with a bandwidth and cut at the data; with Freq
+for label, bkw, ekw in (('', {}, {}), (', bandwidth 1.3 cut at the data', {'bw': 1.3, 'cutoff': True}, {'bw': 1.3, 'cutoff': True}), (', Freq', {'freq': 'f'}, {})):
+    bn_ = call('graph.bean', table=tid, y='y', rows=rows, codes=codes, k=3, **bkw)['beans']
+    code, out, err = gc_run('builder', gb_plan(tid, [el('bean', **ekw)], x=['g'], y=['y'], freq=bkw.get('freq')), tid, rows=rows)
+    A = gc_axes(out)[0]
+    worst = 0.0
+    for k_, b_ in enumerate(bn_):
+        P_ = min(A['polygons'], key=lambda q: abs(np.mean([p[0] for p in q['xy']]) - k_))
+        right = {round(p[1], 12): p[0] - k_ for p in P_['xy'] if p[0] >= k_}
+        worst = max(worst, max(abs(right.get(round(yy, 12), np.inf) - 0.4 * dd) for yy, dd in zip(b_['y'], b_['d'])))
+    check.near(f'Bean{label}: each violin is graph.bean\'s density (statsmodels\' violin), 0.4 wide at its peak', worst, 0.0, abs_=1e-9)
+    if not label:
+        check('Bean: a line for each row', sorted(round(s_[0][1], 9) for c_ in A['segments'] for s_ in c_['segs']), sorted(round(float(v), 9) for v in y[np.isfinite(y)]))
+
+# Histogram: the page's bins; its kernel density curve is graph.kde1's scaled to the counts
+code, out, err = gc_run('builder', gb_plan(tid, [el('histogram')], x=['x']), tid, rows=rows)
+A = gc_axes(out)[0]
+cnt = np.bincount(np.clip(np.floor(x[np.isfinite(x)] / 1 + 1e-9), 0, 9).astype(int), minlength=10)
+check('Histogram: the rows counted in the page\'s bins', [round(b_['h']) for b_ in sorted(A['bars'], key=lambda b_: b_['x'])], cnt.tolist())
+check('Histogram: the count axis titled Count', A['ylabel'], 'Count')
+code, out, err = gc_run('builder', gb_plan(tid, [el('histogram', kernel=True, bins={'start': -5, 'end': 25, 'size': 2, 'nb': 15})], x=['y'], overlay='g'), tid, rows=rows)
+grid_ = np.linspace(-5, 25, 128)
+check.near('Histogram, kernel density: each group\'s curve is gaussian_kde\'s scaled to its counts', float(max(gc_near(gc_axes(out)[0], grid_, stats.gaussian_kde(sub(y, lvl))(grid_) * len(sub(y, lvl)) * 2) for lvl in lv)), 0.0, abs_=1e-9)
+
+# Mosaic with its chi-square, Heatmap, Pie: the counts of the rows
+hl = np.where(np.isfinite(y) & (y > np.nanmedian(y)), 'hi', 'lo')
+tcat = table({'g': g.tolist(), 'hl': hl.tolist(), 'x': x})
+ct_ = pd.crosstab(pd.Series(g), pd.Series(hl)).reindex(index=lv, columns=['hi', 'lo']).to_numpy()
+code, out, err = gc_run('builder', gb_plan(tcat, [el('mosaic')], x=['g'], y=['hl']), tcat)
+A = gc_axes(out)[0]
+share = ct_ / ct_.sum(axis=1, keepdims=True)
+got = sorted((round(b_['x'] + b_['w'] / 2, 9), round(b_['h'], 12)) for b_ in A['bars'])
+wid = ct_.sum(axis=1) / ct_.sum()
+mids_ = np.cumsum(wid) - wid / 2
+check('Mosaic: a column for each level as wide as its share, split by the shares of the other', got, sorted((round(float(mids_[i]), 9), round(float(share[i, j]), 12)) for i in range(3) for j in range(2)))
+cs_ = call('graph.chisq', tables=[ct_.tolist()], x='g', y='hl')['tests'][0]
+check('Mosaic: graph.chisq\'s Pearson test above the panel', f'Pearson χ² {gc_fmt(cs_["chi2"], 5)}, df 2' in A['title'], True)
+code, out, err = gc_run('builder', gb_plan(tcat, [el('heatmap')], x=['x'], y=['g']), tcat)
+M_ = gc_axes(out)[0]['meshes'][0]
+hx_ = np.clip(np.floor(x / 2 + 1e-9), 0, 4).astype(int)
+want = np.zeros((3, 5))
+for r in range(N):
+    want[lv.index(g[r]), hx_[r]] += 1
+check('Heatmap: the rows counted in each cell (the page\'s bins of X, the levels of g)', [None if v is None else round(v) for v in M_['z']], [None if v == 0 else int(v) for v in want.ravel()])
+code, out, err = gc_run('builder', gb_plan(tcat, [el('pie')], x=['g']), tcat)
+W_ = gc_axes(out)[0]['wedges']
+cnt_ = np.array([np.sum(g == lvl) for lvl in lv], dtype=float)
+check.near('Pie: each slice\'s share is its level\'s share of the rows', float(max(abs((w_['theta2'] - w_['theta1']) / 360 - c_) for w_, c_ in zip(W_, cnt_ / cnt_.sum()))), 0.0, abs_=1e-6)
+check('Pie: clockwise from the top, in the levels\' order and colours', (round(W_[0]['theta2'], 4), [gc_hex(w_['fc']) for w_ in W_]), (90.0, PALETTE[:3]))
+
+# Points jittered at the levels of a categorical X: each within its level, its Y the row's
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['g'], y=['y']), tid, rows=rows)
+S_ = gc_axes(out)[0]['scatter'][0]
+check('Jitter: each point within its level (to 0.4 either side), at its row\'s Y', (all(abs(p[0] - round(p[0])) <= 0.4 + 1e-12 for p in S_['xy']),
+      sorted(round(p[1], 12) for p in S_['xy']) == sorted(round(float(v), 12) for v in y[np.isfinite(y)]), len({round(p[0], 12) for p in S_['xy']}) > 100), (True, True, True))
+
+# Wrap, Group Y, several Y side by side or merged, Color and Size, a log axis, a binned Overlay
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], wrap='g'), tid, rows=rows)
+AX = [A_ for A_ in gc_axes(out) if A_['shown']]
+check('Wrap: a panel for each level, titled with it, in the table\'s order', [A_['title'] for A_ in AX], lv)
+check('Wrap: each panel\'s points are its level\'s rows', [len(A_['scatter'][0]['xy']) for A_ in AX], [int(np.sum(okxy & (g == lvl))) for lvl in lv])
+code, out, err = gc_run('builder', gb_plan(tid, [el('box')], x=['g'], y=['y'], gy='g'), tid, rows=rows)
+F_ = out['figures'][0]
+check('Group Y: a row of panels for each level, named at the side', (len(gc_axes(out)), [t_ for sf in F_['subfigs'] for t_ in sf['texts']]), (3, ['g']))
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y', 'z']), tid, rows=rows)
+check('several Y side by side: a row of panels each, titled with its column', [A_['ylabel'] for A_ in gc_axes(out)], ['y', 'z'])
+code, out, err = gc_run('builder', gb_plan(tid, [el('points'), el('smoother')], x=['x'], y=['y', 'z'], y_mode='merge'), tid, rows=rows)
+check('several Y merged: one panel, a colour and a legend entry each', (len(gc_axes(out)), out['figures'][0]['legend'], sorted({gc_hex(c_) for S in gc_axes(out)[0]['scatter'] for c_ in S['colors']})), (1, ['y', 'z'], sorted(PALETTE[:2])))
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], color='z', size='f'), tid, rows=rows)
+S_ = gc_axes(out)[0]['scatter'][0]
+fz = {(round(float(x[r]), 12), round(float(y[r]), 12)): (f[r], z[r]) for r in rows if okxy[r]}
+by_f = {}
+for p, s_ in zip(S_['xy'], S_['sizes']):
+    by_f.setdefault(fz[(round(p[0], 12), round(p[1], 12))][0], set()).add(round(s_, 6))
+check('Size: the points grow with the column (one size for each value of f)', [len(by_f[k_]) for k_ in sorted(by_f)] == [1, 1, 1] and sorted(by_f, key=lambda k_: min(by_f[k_])) == sorted(by_f), True)
+check('Color, continuous: a colour bar titled with the column', out['figures'][0]['colorbars'], ['z'])
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], log={'x': True}), tid, rows=rows)
+check('a log X axis', gc_axes(out)[0]['xscale'], 'log')
+code, out, err = gc_run('builder', gb_plan(tid, [el('points'), el('smoother')], x=['x'], y=['y'], overlay='z'), tid, rows=rows)
+G_ = gc_groups(tid, 'z', np.arange(N))
+check('Overlay, continuous: five bins of about equal counts, the page\'s labels in the legend', out['figures'][0]['legend'], G_['labels'])
+
+# Area, stacked: each group's top is the running sum of the groups' sums at each level
+ta = table({'a': (np.arange(N) % 4 + 1).astype(float), 'y': y, 'g': g.tolist()}, types={'a': 'ordinal'})
+code, out, err = gc_run('builder', gb_plan(ta, [el('area', areaStyle='stacked', summary='sum', stat='sum')], x=['a'], y=['y'], overlay='g'), ta, rows=rows)
+A = gc_axes(out)[0]
+acc_ = np.zeros(4)
+worst = 0.0
+for lvl in lv:
+    acc_ = acc_ + np.array([np.nansum(y[(g == lvl) & (np.arange(N) % 4 == k_)]) for k_ in range(4)])
+    worst = max(worst, min(max(abs(p[1] - q) for p, q in zip(ln, acc_)) if len(ln) == 4 else np.inf for ln in A['xy_lines']))
+check.near('Area, stacked: the top of each group\'s area is the running sum of the sums', float(worst), 0.0, abs_=1e-9)
+
+# a date column: text in the CSV, a number (ms since 1970) in the page. The code turns it
+# back into the number before it computes (util.dated_code), so the smoother's code on the
+# CSV as the page exports it gives the page's curve, and it draws the axis as dates.
 from smui.util import dated_code  # noqa: E402
 days = np.array([np.datetime64('1980-01-01') + np.timedelta64(91 * i, 'D') for i in range(40)])
 ms_ = (days - np.datetime64('1970-01-01')).astype('timedelta64[ms]').astype(float)
 out_ = 100 + np.cumsum(np.random.default_rng(5).normal(1, 0.5, 40))
 tq = table({'quarter': ms_, 'output': out_})
 _data.TABLES[tq]['meta']['quarter']['format'] = {'kind': 'date'}
+
+
+def gc_ns(code, frame, name):
+    """Run the code on the CSV (Agg, no plt.show()); its variables."""
+    import matplotlib.pyplot as plt_
+    frame.to_csv(os.path.join(GC_TMP, f'{name}.csv'), index=False)
+    here, ns = os.getcwd(), {}
+    os.chdir(GC_TMP)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(strip_show(code), name, 'exec'), ns)
+    except Exception as e:  # reported by the check
+        ns = {'_error': f'{type(e).__name__}: {e}'}
+    finally:
+        os.chdir(here)
+        plt_.close('all')
+    return ns
+
+
 for xn, yn in (('output', 'quarter'), ('quarter', 'output')):
-    r_ = call('graph.smoother', table=tq, x=xn, y=yn, lam=0.05, table_name='Cycle')
-    code_ = r_['code']
-    with tempfile.TemporaryDirectory() as tmp:
-        pd.DataFrame({'quarter': [str(d) for d in days], 'output': out_}).to_csv(os.path.join(tmp, 'Cycle.csv'), index=False)
-        here = os.getcwd()
-        os.chdir(tmp)
-        ns_ = {}
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                exec(code_, ns_)
-            err_ = None
-        except Exception as e_:   # the check says it
-            err_ = f'{type(e_).__name__}: {e_}'
-        finally:
-            os.chdir(here)
-    check(f'a date on {"Y" if yn == "quarter" else "X"}: the code turns the date back into its number', ('pd.to_datetime(df["quarter"])' in code_, err_), (True, None))
-    if err_ is None:
-        cv = r_['curves'][0]
-        check.near(f'... and gives the page\'s curve (its first point, date on {"Y" if yn == "quarter" else "X"})', float(ns_['spline']((ns_['grid'][0] - ns_['m']) / ns_['s'])), cv['y'][0], rel=1e-9)
+    where = 'Y' if yn == 'quarter' else 'X'
+    cv = call('graph.smoother', table=tq, x=xn, y=yn, lam=0.05)['curves'][0]
+    code, out, err = gc_run('builder', gb_plan(tq, [el('points'), el('smoother')], x=[xn], y=[yn]), tq, name='Cycle', dates=['quarter'])
+    check(f'a date on {where}: the code turns the date back into its number, and runs', ('pd.to_datetime(df["quarter"])' in (code or ''), err), (True, None))
+    check(f'... and draws the {where} axis as dates', gc_axes(out)[0][f'{where.lower()}axis_date'] if out else None, True)
+    ns_ = gc_ns(code, gc_frame(tq, ['quarter']), 'Cycle')
+    check.near(f'... and gives the page\'s curve (its first point, date on {where})', float(ns_['spline']((ns_['grid'][0] - ns_['m']) / ns_['s'])) if 'spline' in ns_ else None, cv['y'][0], rel=1e-9)
 check('code that parses the date itself (a Time ID) is left to do so', dated_code('df = pd.read_csv("a.csv")\ndf["t"] = pd.to_datetime(df["t"])', ['t']), 'df = pd.read_csv("a.csv")\ndf["t"] = pd.to_datetime(df["t"])')
 check('... and code that does not use the date column gets no line', dated_code('df = pd.read_csv("a.csv")\nx = df["y"]', ['t']), 'df = pd.read_csv("a.csv")\nx = df["y"]')
 check('... a second pass adds nothing', dated_code(dated_code('df = pd.read_csv("a.csv")\nx = df["t"]', ['t']), ['t']).count('to_datetime'), 1)
+
+# every element and zone: the code runs and draws a figure of the page's size
+EVERY = [
+    ('Points, Smoother, Line of Fit, Ellipse, Contour with Freq', [el('points'), el('smoother'), el('fit'), el('ellipse'), el('contour')], dict(x=['x'], y=['y'], freq='f')),
+    ('robust Line of Fit, Wrap', [el('points'), el('fit', robust=True, equation=True)], dict(x=['x'], y=['y'], wrap='g')),
+    ('violins (Contour at a categorical X)', [el('contour', violin=True)], dict(x=['g'], y=['y'])),
+    ('Points summarized with an interval', [el('points', summary='mean', stat='mean', interval='ci')], dict(x=['g'], y=['y'])),
+    ('Line in the table\'s row order, stepped', [dict(type='line', ordering='row', shape='hv')], dict(x=['x'], y=['y'])),
+    ('Line, a curve with a band', [el('line', shape='spline', summary='median', stat='median', interval='iqr', style='band')], dict(x=['g'], y=['y'])),
+    ('Bar stacked with percent labels, Overlay', [el('bar', barStyle='stacked', stat='sum', label='percent')], dict(x=['g'], y=['z'], overlay='g')),
+    ('Bar, horizontal needles', [el('bar', barStyle='needle', stat='median', interval='iqr')], dict(x=['y'], y=['g'])),
+    ('Bar, % of Total', [el('bar', stat='pct')], dict(x=['g'])),
+    ('Area overlaid', [el('area')], dict(x=['g'], y=['y'])),
+    ('Box Plot, quantile boxes, horizontal', [el('box', boxType='quantile', boxStyle='solid', width=0.8)], dict(x=['y'], y=['g'])),
+    ('Bean with jitter, split', [el('bean', beans='jitter', split=True, cutoff=True, bw=1.3)], dict(x=['g'], y=['y'], overlay='g')),
+    ('Histogram in percent, a band at each level', [el('histogram', scale='percent', band=True)], dict(x=['x'], y=['g'])),
+    ('Caption Box for each level', [el('points'), el('caption', stats=['median', 'sd', 'range'], location='factor')], dict(x=['g'], y=['y'])),
+    ('Pie ring of sums, Group X', [el('pie', pieStyle='ring', stat='sum', label='value')], dict(x=['g'], y=['z'], gx='g')),
+    ('Group X by Group Y', [el('box')], dict(x=['g'], y=['y'], gx='g', gy='g')),
+    ('several X side by side', [el('points')], dict(x=['x', 'z'], y=['y'])),
+    ('Color categorical', [el('points'), el('smoother')], dict(x=['x'], y=['y'], color='g')),
+]
+bad = []
+for label, els_, kw in EVERY:
+    code, out, err = gc_run('builder', gb_plan(tid, els_, **kw), tid, rows=rows)
+    if err or not out or len(out['figures']) != 1 or out['figures'][0]['size'] != [6.4, 4.2] or not code.rstrip().endswith('plt.show()'):
+        bad.append((label, (err or '')[:300]))
+check(f'every element and zone: the code runs, one figure of the graph\'s size ({len(EVERY)} graphs)', bad, [])
+
+
+def gc_quiet(code, frame, name):
+    """Run the code on the CSV (Agg, no plt.show()): its error and the warnings it gave (the notebook would show them)."""
+    import warnings
+    import matplotlib.pyplot as plt_
+    frame.to_csv(os.path.join(GC_TMP, f'{name}.csv'), index=False)
+    here, err_ = os.getcwd(), None
+    os.chdir(GC_TMP)
+    with warnings.catch_warnings(record=True) as caught, contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter('always')
+        try:
+            exec(compile(strip_show(code), name, 'exec'), {'__name__': '__main__'})
+        except Exception as e:  # reported by the check
+            err_ = f'{type(e).__name__}: {e}'
+    os.chdir(here)
+    plt_.close('all')
+    return err_, sorted({f'{q.category.__name__}: {str(q.message)[:120]}' for q in caught})
+
+
+# panels and groups with no rows or one: every element's code runs without an error or a warning
+rs_ = np.random.default_rng(9)
+sp = {'a': [], 'b': [], 'x': [], 'y': [], 'c': [], 'f': []}
+for ai in range(4):
+    for bi in range(3):
+        for _ in range([0, 1, 12, 12][(ai + bi) % 4]):   # (a0, b0), (a1, b2), ... empty; (a0, b1), ... a row
+            sp['a'].append(f'a{ai}'); sp['b'].append(f'b{bi}'); sp['c'].append(['u', 'v'][rs_.integers(0, 2)])
+            sp['x'].append(rs_.uniform(0, 10)); sp['y'].append(rs_.normal(5, 2)); sp['f'].append(float(rs_.integers(1, 3)))
+tsp = table(sp)
+sp_frame = gc_frame(tsp)
+SPARSE = [
+    ('Points, Smoother, Line of Fit, Ellipse, Contour', [el('points'), el('smoother'), el('fit'), el('ellipse'), el('contour')], dict(x=['x'], y=['y'], overlay='c')),
+    ('the same with Freq, the bands', [el('points'), el('smoother', conf=True), el('fit', confPred=True), el('ellipse'), el('contour')], dict(x=['x'], y=['y'], overlay='c', freq='f')),
+    ('lowess', [el('smoother', method='lowess')], dict(x=['x'], y=['y'], overlay='c')),
+    ('violins', [el('contour', violin=True)], dict(x=['c'], y=['y'])),
+    ('summarized Points', [el('points', summary='mean', stat='mean', interval='ci')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Line', [el('line', interval='se')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Line, a curve with a band', [el('line', shape='spline', summary='median', stat='median', interval='iqr', style='band')], dict(x=['c'], y=['y'])),
+    ('Line in row order', [dict(type='line', ordering='row', shape='hv')], dict(x=['x'], y=['y'])),
+    ('Bar', [el('bar', interval='ci', label='value')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Bar stacked', [el('bar', barStyle='stacked', stat='sum', label='percent')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Bar, % of Total', [el('bar', stat='pct')], dict(x=['c'], overlay='c')),
+    ('Area', [el('area')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Area stacked', [el('area', areaStyle='stacked', summary='sum', stat='sum')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Box Plot', [el('box', diamond=True)], dict(x=['c'], y=['y'], overlay='c')),
+    ('Box Plot with Freq', [el('box')], dict(x=['c'], y=['y'], freq='f')),
+    ('Bean', [el('bean')], dict(x=['c'], y=['y'])),
+    ('Bean split', [el('bean', beans='jitter', split=True)], dict(x=['c'], y=['y'], overlay='c')),
+    ('Histogram', [el('histogram')], dict(x=['x'], overlay='c')),
+    ('Histogram, kernel density', [el('histogram', kernel=True)], dict(x=['x'], overlay='c')),
+    ('Histogram at each level', [el('histogram', band=True)], dict(x=['x'], y=['c'])),
+    ('Histogram, kernel density at each level', [el('histogram', kernel=True, band=True)], dict(x=['x'], y=['c'])),
+    ('Heatmap', [dict(EL['heatmap'], hy={'cat': 'c'})], dict(x=['x'], y=['c'])),
+    ('Mosaic', [el('mosaic', cellLabel='count')], dict(x=['c'], y=['c'])),
+    ('Caption Box', [el('points'), el('caption', stats=['mean', 'n', 'range', 'sd'])], dict(x=['c'], y=['y'], overlay='c')),
+    ('Caption Box for each level', [el('points'), el('caption', stats=['median', 'sd'], location='factor')], dict(x=['c'], y=['y'])),
+    ('Pie', [el('pie')], dict(x=['c'])),
+    ('Pie of sums', [el('pie', stat='sum', pieStyle='ring')], dict(x=['c'], y=['y'])),
+    ('Packed jitter', [el('points', jitter='packed', packed={'value_px': 80, 'level_px': 40, 'diam': 7})], dict(x=['c'], y=['y'], overlay='c')),
+    ('Centered Grid jitter', [el('points', jitter='grid')], dict(x=['c'], y=['y'], overlay='c')),
+    ('Random Normal jitter', [el('points', jitter='normal')], dict(x=['c'], y=['y'])),
+]
+bad = []
+for label, els_, kw in SPARSE:
+    err_, warned = gc_quiet(call('graph.code', kind='builder', plan=gb_plan(tsp, els_, gx='a', gy='b', **kw), table=tsp, table_name='Sparse')['plot_code'], sp_frame, 'Sparse')
+    if err_ or warned:
+        bad.append((label, err_, warned))
+err_, warned = gc_quiet(call('graph.code', kind='builder', plan=gb_plan(tsp, [el('points'), el('fit')], x=['x'], y=['y'], wrap='b', overlay='a'), table=tsp, table_name='Sparse')['plot_code'], sp_frame, 'Sparse')
+check(f'panels and groups with no rows or one row (Group X by Group Y): every element\'s code runs without an error or a warning ({len(SPARSE) + 1} graphs)', bad + ([('Wrap', err_, warned)] if err_ or warned else []), [])
+bad = []
+for label, els_, kw in EVERY:
+    err_, warned = gc_quiet(call('graph.code', kind='builder', plan=gb_plan(tid, els_, **kw), table=tid, rows=rows, table_name='Graph test')['plot_code'], gdf, 'Graph test')
+    if warned:
+        bad.append((label, warned))
+check('... and on the test table, no warnings either', bad, [])
+
+# ---- the other Graph platforms' code -------------------------------------------------------------------
+# the Functional Data Plot: the code's functional boxplot and HDR boxplot give graph.fbox's and graph.hdr's numbers
+fd_csv = pd.DataFrame({**{h_: X[:, j] for j, h_ in enumerate(hours)}, 'day': [f'Day {i + 1:02d}' for i in range(len(X))], 'site': ['Coast' if i % 2 == 0 else 'Inland' for i in range(len(X))]})
+long_csv = pd.DataFrame({'id': ids_l, 'x': [L[k][1] for k in perm], 'y': [L[k][2] for k in perm]})
+irr_csv = pd.DataFrame({'id': [f'k{i}' for i, xx in enumerate(xs_i) for _ in xx], 'x': np.concatenate(xs_i), 'y': np.concatenate(ys_i)})
+fd_cases = [
+    ('fbox, rows as functions', 'graph.fbox', dict(table=tw, y=hours), {'view': 'box', 'layout': 'wide', 'y': hours}, fd_csv),
+    ('fbox, BD2 counted, Sun and Genton', 'graph.fbox', dict(table=tw, y=hours, method='BD2x', rule='sungenton', wfactor=1.2), {'view': 'box', 'layout': 'wide', 'y': hours, 'method': 'BD2x', 'rule': 'sungenton', 'wfactor': 1.2}, fd_csv),
+    ('fbox, stacked', 'graph.fbox', dict(table=tl, layout='long', id='id', x='x', y='y'), {'view': 'box', 'layout': 'long', 'id': 'id', 'x': 'x', 'y': ['y']}, long_csv),
+    ('fbox, stacked at different X', 'graph.fbox', dict(table=tl2, layout='long', id='id', x='x', y='y'), {'view': 'box', 'layout': 'long', 'id': 'id', 'x': 'x', 'y': ['y']}, irr_csv),
+    ('fbox, stacked without X', 'graph.fbox', dict(table=tl3, layout='long', id='id', y='y'), {'view': 'box', 'layout': 'long', 'id': 'id', 'y': ['y']}, pd.DataFrame({'id': ['a', 'a', 'a', 'b', 'b', 'b', 'c', 'c', 'c'], 'y': [1, 2, 3, 2, 3, 4, 0, 5, 1.0]})),
+    ('hdr, rows as functions', 'graph.hdr', dict(table=tw, y=hours), {'view': 'hdr', 'layout': 'wide', 'y': hours}, fd_csv),
+    ('hdr, a constant point', 'graph.hdr', dict(table=tcst, y=hours), {'view': 'hdr', 'layout': 'wide', 'y': hours}, pd.DataFrame({h_: Xc[:, j] for j, h_ in enumerate(hours)})),
+]
+for label, fn, kw, plan, frame in fd_cases:
+    res = call(fn, **kw)
+    code = call('graph.code', kind='functional', plan=dict(plan, size=[800, 450]), table=kw['table'], table_name='Curves')['plot_code']
+    ns = gc_ns(code, frame, 'Curves')
+    if '_error' in ns:
+        check(f'the code of the functional graph ({label}) runs', ns['_error'], True)
+        continue
+    got_ = ns['res']
+    if fn == 'graph.fbox':
+        check.near(f'the code of the functional graph ({label}): the depths', float(np.max(np.abs(np.asarray(got_['depth']) - np.array(res['depth'])))), 0.0, abs_=1e-12)
+        check(f'the code of the functional graph ({label}): the outliers', np.asarray(got_['outlier']).tolist(), res['outlier'])
+        check(f'the code of the functional graph ({label}): the median', int(got_['median']), res['median'])
+    else:
+        check(f'the code of the functional graph ({label}): the outliers', np.asarray(got_['outlier']).tolist(), res['outlier'])
+        check.near(f'the code of the functional graph ({label}): the modal curve', float(np.max(np.abs(np.asarray(got_['modal']) - np.array(res['modal'])))), 0.0, abs_=1e-7)
+        worst = max(float(np.max(np.abs(np.asarray(got_[k][j]) - np.array(res[k][j])))) for k in ('hdr50', 'hdr90') for j in (0, 1))
+        check.near(f'the code of the functional graph ({label}): the bands', worst, 0.0, abs_=1e-9)
+# By: each group's graph has the code of its own rows
+inland = [i for i in range(60) if i % 2 == 1]
+for fn, view in (('graph.fbox', 'box'), ('graph.hdr', 'hdr')):
+    res = call(fn, table=tw, y=hours, rows=inland)
+    code = call('graph.code', kind='functional', plan={'view': view, 'layout': 'wide', 'y': hours, 'size': [800, 450], 'where': [{'column': 'site', 'value': 'Inland'}]}, table=tw, rows=inland, table_name='Curves')['plot_code']
+    ns = gc_ns(code, fd_csv, 'Curves')
+    check(f'By: the {view} graph of a group takes its rows (site Inland)', ('df = df[df["site"] == "Inland"]' in code, np.asarray(ns['res']['outlier']).tolist() if 'res' in ns else ns.get('_error')), (True, res['outlier']))
+# ... and draws what the page draws: the median, the outliers named, the regions; the rainbow; the score plot
+code, out, err = gc_run('functional', {'view': 'box', 'layout': 'wide', 'y': hours, 'label_col': 'day', 'named': 12, 'size': [800, 450]}, tw, name='Curves')
+A = gc_axes(out)[0]
+outl = [i for i, o in enumerate(fb['outlier']) if o]
+lines_ = {L_['label']: L_ for L_ in A['lines']}
+check.near('the functional boxplot: its median curve', float(max(abs(a - b) for a, b in zip(lines_[f'Median: Day {fb["median"] + 1:02d}']['y'], X[fb['median']]))), 0.0, abs_=1e-12)
+check('the functional boxplot: the first 12 outliers named, the others dotted', ([n_ for n_ in lines_ if n_.startswith('Day')], len([L_ for L_ in A['lines'] if L_['ls'] == ':'])), ([f'Day {i + 1:02d}' for i in outl[:12]], max(0, len(outl) - 12)))
+check.near('the functional boxplot: the 50% central region is fbox\'s', gc_span_gap(A, min(fb['lower']), max(fb['upper'])), 0.0, abs_=1e-12)
+code, out, err = gc_run('functional', {'view': 'rainbow', 'layout': 'wide', 'y': hours, 'size': [800, 450]}, tw, name='Curves')
+A = gc_axes(out)[0]
+check('the rainbow plot: a curve each, the deepest last, thickest, in viridis\'s darkest', (len(A['lines']), gc_hex(A['lines'][-1]['color']), A['lines'][-1]['y'] == [float(v) for v in X[fb['median']]]), (60, '#440154', True))
+code, out, err = gc_run('functional', {'view': 'scores', 'layout': 'wide', 'y': hours, 'size': [600, 512]}, tw, name='Curves')
+A = gc_axes(out)[0]
+check.near('the HDR score plot: each curve at its scores (graph.hdr\'s)', max(abs(p[0] - q[0]) + abs(p[1] - q[1]) for p, q in zip(A['scatter'][0]['xy'], hd['scores'])), 0.0, abs_=1e-12)
+
+# the platforms on one table
+rp = np.random.default_rng(3)
+npl = 120
+pcols = {'x': rp.uniform(0, 10, npl).round(2), 'y': rp.uniform(0, 10, npl).round(2), 'A': rp.uniform(0.2, 1.2, npl).round(3), 'B': rp.uniform(0, 2, npl).round(3), 'C': rp.uniform(0, 1, npl).round(3),
+         'country': [['Alpha', 'Beta', 'Gamma', 'Delta'][i % 4] for i in range(npl)], 'year': [2000.0 + (i // 4) % 6 for i in range(npl)], 'g': ['p' if i % 3 else 'q' for i in range(npl)], 'pop': rp.uniform(5, 55, npl).round(1)}
+pcols['z'] = (np.sin(pcols['x'] / 1.5) * np.cos(pcols['y'] / 2) * 10).round(3)
+tp = table(pcols, types={'year': 'ordinal'})
+pdf = gc_frame(tp)
+Gp = {'col': 'g', 'values': ['p', 'q'], 'labels': ['p', 'q']}
+# Contour Plot and Surface Plot: the grid is graph.interp's
+for kind_, plan in (('contour', {'size': [640, 499], 'x': 'x', 'y': 'y', 'z': 'z', 'method': 'cubic', 'grid': 50, 'levels': {'start': -8, 'end': 8, 'size': 2}, 'fill': True, 'labels': True, 'theme': 'spectral', 'points': True}),
+                    ('surface', {'size': [760, 623], 'x': 'x', 'y': 'y', 'z': 'z', 'method': 'linear', 'grid': 40, 'contours': True, 'theme': 'blues', 'points': True})):
+    code, out, err = gc_run(kind_, plan, tp, name='Plat', names=['gz'])
+    gi_ = call('graph.interp', table=tp, x='x', y='y', z='z', grid=plan['grid'], method=plan['method'])
+    check.near(f'{kind_.title()} Plot: the grid is graph.interp\'s ({plan["method"]} griddata)', max(abs(a - b) if a is not None and b is not None else (0 if a is b else np.inf) for a, b in zip(out['vars']['gz'], [v for row in gi_['z'] for v in row])) if out else None, 0.0, abs_=1e-9)
+code, out, err = gc_run('contour', {'size': [640, 499], 'x': 'x', 'y': 'y', 'z': 'z', 'method': 'linear', 'grid': 50, 'levels': {'start': -8, 'end': 8, 'size': 2}, 'fill': False, 'theme': 'viridis', 'points': False}, tp, name='Plat')
+check('Contour Plot: the contours at the page\'s levels, the colour bar titled with Z', ([P['contour'] for P in gc_axes(out)[0]['polys'] if 'contour' in P], out['figures'][0]['colorbars']), ([[-8.0, -6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0, 8.0]], ['z']))
+# Scatterplot Matrix: its histograms, ellipses and fit lines
+mplan = {'size': [600, 540], 'rows': ['x', 'y', 'z'], 'cols': ['x', 'y', 'z'], 'rect': False, 'format': 'lower', 'group': Gp, 'points': True, 'fit': True, 'ellipses': True, 'shaded': False, 'coverage': 0.95,
+         'nonpar': False, 'hist': True, 'bins': {'x': {'start': 0, 'size': 1, 'nb': 10}, 'y': {'start': 0, 'size': 1, 'nb': 10}, 'z': {'start': -10, 'size': 2, 'nb': 10}}, 'nrows': npl}
+code, out, err = gc_run('matrix', mplan, tp, name='Plat')
+AX = out['figures'][0]['axes']
+hist_ok = all(sorted(round(b_['h']) for b_ in AX[4 * i]['bars']) == sorted(np.bincount(np.clip(np.floor((pcols[c] - st_) / sz_ + 1e-9), 0, 9).astype(int), minlength=10).tolist())
+              for i, (c, (st_, sz_)) in enumerate(zip('xyz', [(0, 1), (0, 1), (-10, 2)])))
+check('Scatterplot Matrix: the histograms on the diagonal count the rows in the page\'s bins', hist_ok, True)
+pc_ = [0 if v == 'p' else 1 for v in pcols['g']]
+el_ = call('graph.ellipse', table=tp, x='x', y='z', codes=pc_, k=2, coverage=0.95)['ellipses']
+ft_ = call('graph.fit', table=tp, x='x', y='z', codes=pc_, k=2, degree=1, n_grid=40)['fits']
+A = AX[6]   # z by x
+check.near('Scatterplot Matrix: a cell\'s ellipses and fit lines are graph.ellipse\'s and graph.fit\'s', max([gc_near(A, e_['x'], e_['y']) for e_ in el_] + [gc_near(A, f_['x'], f_['y']) for f_ in ft_]), 0.0, abs_=1e-9)
+check('Scatterplot Matrix: the cells above the diagonal left out', [AX[k_]['shown'] for k_ in (1, 2, 5)], [False] * 3)
+# Bubble Plot: the first time's bubbles at their rows' means, sized as Plotly sizes an area
+code, out, err = gc_run('bubble', {'size': [760, 581], 'x': 'x', 'y': 'y', 'ids': ['country'], 'time': 'year', 'allTimes': False, 'time0': 2000, 'times': [2000.0 + k_ for k_ in range(6)], 'sizes': 'pop', 'freq': None,
+                                   'color': {'col': 'g', 'cat': True, 'values': ['p', 'q'], 'labels': ['p', 'q']}, 'label': True, 'scale': 1, 'xrange': [-0.8, 10.8], 'yrange': [-0.8, 10.8]}, tp, name='Plat')
+S_ = gc_axes(out)[0]['scatter'][0]
+fr = pdf[pdf['year'] == 2000].groupby('country', sort=False)[['x', 'y', 'pop']].agg({'x': 'mean', 'y': 'mean', 'pop': 'sum'})
+smax = pdf.groupby(['year', 'country'])['pop'].sum().max()
+want = sorted((round(r_.x, 9), round(r_.y, 9), round(2 * max(math.sqrt(r_.pop / 2 / (2 * smax / 46 ** 2)), 2), 9)) for r_ in fr.itertuples())
+check('Bubble Plot: the first year\'s bubbles at their rows\' means, as wide as Plotly draws their areas', sorted((round(p[0], 9), round(p[1], 9), round(math.sqrt(s_) / 0.72, 9)) for p, s_ in zip(S_['xy'], S_['sizes'])), want)
+# Parallel Plot: a line for each row through its values, each axis from its minimum to its maximum
+code, out, err = gc_run('parallel', {'size': [600, 380], 'ys': ['x', 'y', 'z', 'pop'], 'group': Gp, 'scale': 'range', 'center': False, 'reverse': ['y'], 'nrows': npl}, tp, name='Plat')
+U_ = pdf[['x', 'y', 'z', 'pop']]
+U_ = (U_ - U_.min()) / (U_.max() - U_.min())
+U_['y'] = 1 - U_['y']
+check('Parallel Plot: a line for each row through its scaled values (y reversed)', sorted(tuple(round(v, 9) for v in L_['y']) for L_ in gc_axes(out)[0]['lines'] if L_['marker'] == 'o'), sorted(tuple(round(v, 9) for v in r_) for r_ in U_.to_numpy()))
+# Cell Plot: each continuous column in standard deviations, each level its number
+code, out, err = gc_run('cell', {'size': [400, 900], 'ys': ['x', 'z', 'g'], 'cats': {'g': ['p', 'q']}, 'uniform': False, 'center': False, 'legend': True, 'labels': None, 'nrows': npl}, tp, name='Plat', names=['Z'])
+Zw = np.c_[(pdf['x'] - pdf['x'].mean()) / pdf['x'].std(), (pdf['z'] - pdf['z'].mean()) / pdf['z'].std(), (pdf['g'] == 'q').astype(float)]
+check.near('Cell Plot: each cell\'s value, standardized (a level: its number)', float(max(abs(a - b) for a, b in zip(out['vars']['Z'], Zw.ravel()))), 0.0, abs_=1e-12)
+# Treemap: each tile's area (with its padding) in proportion to its size, within its parent's
+code, out, err = gc_run('treemap', {'size': [820, 492], 'area': [812, 462], 'cats': ['country', 'g'], 'levels': {'country': ['Alpha', 'Beta', 'Delta', 'Gamma'], 'g': ['p', 'q']}, 'sizes': 'pop', 'color': None}, tp, name='Plat')
+R_ = gc_axes(out)[0]['bars']
+tops = [b_ for b_ in R_[::3]]
+sums = pdf.groupby('country')['pop'].sum().reindex(['Alpha', 'Beta', 'Delta', 'Gamma'])
+a_top = np.array([(b_['w'] + 3) * (b_['h'] + 3) for b_ in tops])
+check.near('Treemap: the tiles of country in proportion to their sums of pop (squarified, 3 pixels between)', float(np.max(np.abs(a_top / a_top.sum() - (sums / sums.sum()).to_numpy()))), 0.0, abs_=1e-9)
+inside = all(t_['x'] - 1e-9 <= b_['x'] and b_['x'] + b_['w'] <= t_['x'] + t_['w'] + 1e-9 and t_['y'] - 1e-9 <= b_['y'] and b_['y'] + b_['h'] <= t_['y'] + t_['h'] + 1e-9 for k_, t_ in enumerate(tops) for b_ in R_[3 * k_ + 1:3 * k_ + 3])
+check('Treemap: the tiles of g inside their country\'s', inside, True)
+# Ternary Plot, Scatterplot 3D, Overlay Plot: the rows' own values
+code, out, err = gc_run('ternary', {'size': [620, 558], 'cols': ['A', 'B', 'C'], 'color': None}, tp, name='Plat')
+sh_ = pdf[['A', 'B', 'C']].div(pdf[['A', 'B', 'C']].sum(axis=1), axis=0)
+check('Ternary Plot: each row at its shares (A at the top, B bottom left, C bottom right)', sorted((round(p[0], 9), round(p[1], 9)) for p in gc_axes(out)[0]['scatter'][0]['xy']), sorted((round(0.5 * a_ + c_, 9), round(math.sqrt(3) / 2 * a_, 9)) for a_, c_ in zip(sh_['A'], sh_['C'])))
+code, out, err = gc_run('scatter3d', {'size': [760, 620], 'cols': ['x', 'y', 'z'], 'color': {'col': 'g', 'cat': True, 'values': ['p', 'q'], 'labels': ['p', 'q']}}, tp, name='Plat')
+S3 = gc_axes(out)[0]['scatter3d'][0]
+check('Scatterplot 3D: each row at its X, Y and Z, in its level\'s colour', sorted(zip(*S3['xyz'], [gc_hex(c_) for c_ in S3['colors']])), sorted(zip(pcols['x'], pcols['y'], pcols['z'], [PALETTE[0] if v == 'p' else PALETTE[1] for v in pcols['g']])))
+code, out, err = gc_run('overlay', {'size': [760, 456], 'ys': [{'col': 'z', 'points': True, 'connect': True}, {'col': 'pop', 'right': True, 'points': True, 'connect': True}], 'x': 'x', 'group': None, 'overlayY': True, 'sortX': True, 'thru': False}, tp, name='Plat')
+AX = gc_axes(out)
+srt = pdf.sort_values('x', kind='stable')
+check('Overlay Plot: each Y joined in the order of X, pop on the right axis', [(L_['label'], L_['y'] == srt[L_['label']].tolist()) for A_ in AX for L_ in A_['lines']], [('z', True), ('pop', True)])
 
 sys.exit(check.done())

@@ -56,6 +56,9 @@
 .sm-gb-z-x { grid-area: x; }
 .sm-gb-plotwrap { grid-area: plot; position: relative; min-width: 260px; }
 .sm-gb-plotwrap .sm-plot.is-pending { position: absolute; left: 0; top: 0; visibility: hidden; }
+/* the Python under the graph: as wide as the graph, whatever the length of its lines
+   (its column is sized by the graph alone, so the zones around it stay where they are) */
+.sm-gb-plotwrap > .sm-code { width: 0; min-width: 100%; }
 .sm-gb-side { grid-area: side; display: flex; flex-direction: column; gap: 4px; }
 .sm-gb-zone {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; min-height: 26px; padding: 3px 5px; box-sizing: border-box;

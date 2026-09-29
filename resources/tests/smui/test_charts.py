@@ -105,6 +105,120 @@ def _smui_figures():
 '''
 
 
+# PROBE and more, for the Graph menu's code (test_graph.py, test-ui-graph.py):
+# each axes' heatmaps (QuadMesh), pie wedges, polygons and lines in the axes'
+# own units (a date axis in days), 3D scatters and the Z label, whether it is
+# shown; the figure's subfigures' titles and texts, its sup-labels, its colour
+# bars' labels; and those of the code's own variables it is asked for (names),
+# as lists of numbers. A contour set keeps its levels, not its paths.
+PROBE_MORE = PROBE + r'''
+def _smui_figures_more(names=()):
+    import numpy as _np
+    import matplotlib.pyplot as _plt
+    from matplotlib.collections import QuadMesh as _QM, Collection as _Coll
+    from matplotlib.patches import Wedge as _W, Polygon as _Pg
+    from matplotlib.colors import to_hex as _hex
+
+    def num(a):
+        a = _np.ma.filled(_np.ma.asarray(a, dtype=float), _np.nan).ravel()
+        return [float(v) if _np.isfinite(v) else None for v in a]
+
+    def subs(f):
+        out = []
+        for sf in getattr(f, 'subfigs', []):
+            out.append({'suptitle': sf._suptitle.get_text() if getattr(sf, '_suptitle', None) is not None else '',
+                        'texts': [t.get_text() for t in sf.texts]})
+            out += subs(sf)
+        return out
+    for n in _plt.get_fignums():
+        _plt.figure(n).canvas.draw()   # colours mapped from values, the layout: as the figure is drawn
+    figs = _smui_figures()
+    for F, n in zip(figs, _plt.get_fignums()):
+        fig = _plt.figure(n)
+        F['subfigs'] = subs(fig)
+        F['supx'] = fig._supxlabel.get_text() if getattr(fig, '_supxlabel', None) is not None else ''
+        F['supy'] = fig._supylabel.get_text() if getattr(fig, '_supylabel', None) is not None else ''
+        F['colorbars'] = [ax.get_ylabel() for ax in fig.axes if getattr(ax, '_colorbar', None) is not None]
+        for ax, A in zip(fig.axes, F['axes']):
+            for c in A['polys']:   # a contour set's levels, and how many paths (their points, and a 3D surface's
+                if 'contour' in c or hasattr(ax, 'get_zlabel'):   # facets, would outgrow a cell's output)
+                    c['npaths'] = len(c.pop('paths'))
+            A['shown'] = bool(ax.get_visible())
+            A['colorbar'] = getattr(ax, '_colorbar', None) is not None
+            A['meshes'] = [{'shape': list(m.get_array().shape), 'z': num(m.get_array()), 'clim': num(m.get_clim()),
+                            'x': num(m.get_coordinates()[0, :, 0]), 'y': num(m.get_coordinates()[:, 0, 1])} for m in ax.collections if isinstance(m, _QM)]
+            A['wedges'] = [{'theta1': float(p.theta1), 'theta2': float(p.theta2), 'r': float(p.r), 'width': None if p.width is None else float(p.width),
+                            'fc': _hex(p.get_facecolor(), keep_alpha=True)} for p in ax.patches if isinstance(p, _W)]
+            A['polygons'] = [{'xy': [num(q) for q in p.get_xy()], 'fc': _hex(p.get_facecolor(), keep_alpha=True), 'ec': _hex(p.get_edgecolor(), keep_alpha=True)}
+                             for p in ax.patches if isinstance(p, _Pg)]
+            A['xy_lines'] = [[num(q) for q in ln.get_xydata()] for ln in ax.lines]
+            A['annotations'] = [{'s': t.get_text(), 'xy': num(getattr(t, 'xy', t.get_position())), 'color': _hex(t.get_color())} for t in ax.texts]
+            A['xaxis_date'] = 'Date' in type(ax.xaxis.get_major_formatter()).__name__ or 'Date' in type(ax.xaxis.get_major_locator()).__name__
+            A['yaxis_date'] = 'Date' in type(ax.yaxis.get_major_formatter()).__name__ or 'Date' in type(ax.yaxis.get_major_locator()).__name__
+            # mplot3d: the Z label, and each 3D scatter's points and colours in the data's order (not the drawing's)
+            A['zlabel'] = ax.get_zlabel() if hasattr(ax, 'get_zlabel') else None
+            A['scatter3d'] = []
+            for c in ax.collections:
+                if hasattr(c, '_offsets3d'):   # Collection's own colours: the 3D ones come sorted by depth
+                    A['scatter3d'].append({'xyz': [num(q) for q in c._offsets3d], 'sizes': num(c.get_sizes()),
+                                           'colors': [_hex(q, keep_alpha=True) for q in _Coll.get_facecolor(c)]})
+    g = globals()
+    V = {}
+    for k in names:
+        if k in g:
+            try:
+                V[k] = num(g[k])
+            except Exception:
+                V[k] = None
+    return {'figures': figs, 'vars': V}
+'''
+
+
+def page_probe_more(code, names=()):
+    """The snippet, then PROBE_MORE's figures and variables printed as one JSON line."""
+    return strip_show(code) + '\n' + PROBE_MORE + f'\nimport json as _json\nprint("SMUI-FIGURES " + _json.dumps(_smui_figures_more({list(names)!r})))\n'
+
+
+def more_from_outputs(outputs):
+    """PROBE_MORE's figures and variables from the outputs of the page's runner
+    (an error when they do not fit in one output, which the notebook cuts at
+    400,000 characters)."""
+    try:
+        got, err = figures_from_outputs(outputs)
+    except ValueError:
+        return None, 'the figures do not fit in one output of the page\'s runner'
+    return (got, None) if got is not None else (None, err)
+
+
+def run_snippet_more(code, frame, name, tmp, names=(), files=None):
+    """As run_snippet, with PROBE_MORE: ({figures, vars}, error). files: more
+    CSV exports ({name: frame}) the code reads."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import warnings
+    plt.close('all')
+    frame.to_csv(os.path.join(tmp, f'{name}.csv'), index=False)
+    for other, f in (files or {}).items():
+        f.to_csv(os.path.join(tmp, f'{other}.csv'), index=False)
+    ns = {'__name__': '__main__'}
+    here = os.getcwd()
+    os.chdir(tmp)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(strip_show(code), ns)
+            exec(PROBE_MORE, ns)
+            out = ns['_smui_figures_more'](names)
+        return out, None
+    except Exception as e:  # reported as a failed check
+        import traceback
+        return None, f'{type(e).__name__}: {e}\n{traceback.format_exc(limit=-3)}'
+    finally:
+        os.chdir(here)
+        plt.close('all')
+
+
 def strip_show(code):
     """The snippet without its last line, plt.show() (the page's plt.show()
     shows the figures and closes them, before a probe could read them)."""

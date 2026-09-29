@@ -15,7 +15,10 @@ Plot, Treemap, the legacy Chart and Overlay Plot, and the Functional Data
 Plot (its launch dialog's two data formats, band depths against their
 definition, fboxplot's regions and outliers, curves linked by curve, Select
 Outliers, Save Columns, the HDR boxplot and its score plot, the rainbow
-plot, stacked and interpolated curves, By, the example). The dark theme and
+plot, stacked and interpolated curves, By, the example). Then the Python
+under every graph (graph.code): each block, run in the page's own Python,
+draws the graph above it (Graph Builder's elements and zones, and every
+other Graph platform), checked against the Plotly graph. The dark theme and
 phone width at the end.
 
 Start a server on the repository root and headless Chrome (the recipe is in
@@ -28,6 +31,7 @@ check passes.
 """
 import asyncio
 import json
+import math
 import os
 import sys
 import time
@@ -37,6 +41,7 @@ import websockets
 
 import cdp
 from cdp import BASE, Checks, open_report_js, wait_engine
+from test_charts import GRAPHS_JS, more_from_outputs, page_probe_more, strip_show
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -233,6 +238,1080 @@ FD_IRREGULAR = '''(() => {
 })()'''
 
 
+# ---- the Python under each graph ----------------------------------------------------------------------------
+# Every graph of the Graph menu has a code block right under it (graph.code) that draws the
+# same graph with matplotlib from the table's CSV export. The checks below run each block in
+# the page's own Python (the notebook's runner) and compare the figure it draws with the
+# Plotly graph above it: its points, curves, bands, bars, boxes, violins, cells, slices and
+# tiles, their colours, the axis titles, the levels' order, the legend.
+
+# The Graph Builder report's graph as the page drew it: its traces (the overlays that show
+# the selected share marked), annotations and shapes, axis titles and ticks, size, the plan,
+# and the code block right under it.
+GB_JS = r'''
+window.__gbq = async (rep) => {
+  rep = rep || window._rep;
+  const gb = rep.body.querySelector('.sm-gb')._gb;
+  await gb.idle(); await new Promise((r) => setTimeout(r, 150));
+  const p = gb.plot(); if (!p) return null;
+  if (!p.drawn) { p.box.scrollIntoView({ block: 'center' }); await p.draw(); }
+  const fig = gb.figure();
+  const next = p.box.nextElementSibling;
+  const code = next && next.matches('details.sm-code') ? next.querySelector('code').textContent : null;
+  const skip = new Set((fig.links || []).filter((l) => l.overlay != null).map((l) => l.overlay));
+  const arr = (v) => (v == null ? null : Array.isArray(v) ? v : [v]);
+  const traces = p.traces.map((t, i) => ({ i, type: t.type || 'scatter', mode: t.mode || null, x: t.x ?? null, y: t.y ?? null, z: t.z ?? null, base: t.base ?? null, width: t.width ?? null,
+    orientation: t.orientation || null, q1: t.q1 || null, median: t.median || null, q3: t.q3 || null, lowerfence: t.lowerfence || null, upperfence: t.upperfence || null,
+    fill: t.fill || null, stackgroup: t.stackgroup || null, xaxis: t.xaxis || 'x', yaxis: t.yaxis || 'y', rows: p.rows[i] || null, values: t.values || null, labels: t.labels || null,
+    contours: t.contours || null, ex: t.error_x ? { a: t.error_x.array, m: t.error_x.arrayminus } : null, ey: t.error_y ? { a: t.error_y.array, m: t.error_y.arrayminus } : null,
+    color: t.line ? t.line.color || null : null, lw: t.line ? t.line.width ?? null : null, dash: t.line ? t.line.dash || null : null, shape: t.line ? t.line.shape || null : null,
+    mcolor: t.marker ? arr(t.marker.color) : null, msize: t.marker ? arr(t.marker.size) : null, symbol: t.marker ? t.marker.symbol || null : null, fillcolor: t.fillcolor || null,
+    name: t.name ?? null, showlegend: t.showlegend ?? null, legendgroup: t.legendgroup || null, text: t.text ?? null, hole: t.hole ?? null, overlay: skip.has(i),
+    textinfo: t.textinfo || null, el: fig.traceEl[i] || null }));
+  const L = p.userLayout || {};
+  const axes = {};
+  for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) axes[k] = { title: L[k].title ? L[k].title.text : null, ticktext: L[k].ticktext || null, tickvals: L[k].tickvals || null, range: L[k].range || null, type: L[k].type || null };
+  return { traces, annotations: (L.annotations || []).map((a, j) => ({ text: a.text, x: a.x, y: a.y, xref: a.xref, yref: a.yref, el: fig.noteEl[j] || null })), shapes: (L.shapes || []).map((s) => ({ x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, xref: s.xref, yref: s.yref, dash: s.line && s.line.dash })),
+    axes, title: L.title ? L.title.text : null, legend: !!L.showlegend, plan: fig.plan, code, w: p.ownWidth, h: p.height, notes: fig.notes.slice(), script: rep.pythonScript() };
+};
+'''
+
+# A seeded table for the code of Graph Builder's graphs: continuous X and Y with a missing
+# value each, a grouping column in its own level order, a two-level one with a missing value,
+# an ordinal, whole and fractional counts, a date, a third continuous column.
+CODE_TABLE = r'''(() => {
+  const R = SM.util.rng('graph code'); const n = 150;
+  const c = { x: [], y: [], g: [], h: [], a: [], f: [], wf: [], d: [], z: [] };
+  for (let i = 0; i < n; i++) {
+    const a = 1 + (i % 4), h = R.u() < 0.5 ? 'p' : 'q';
+    const x = +(40 + R.u() * 60).toFixed(1);
+    const y = +(10 + 0.5 * x + (h === 'q' ? 6 : 0) + 2 * a + R.normal(0, 6)).toFixed(2);
+    c.x.push(i === 7 ? NaN : x); c.y.push(i === 11 ? NaN : y); c.g.push(['lo', 'mid', 'hi'][(i * 7) % 3]); c.h.push(i === 13 ? null : h); c.a.push(a);
+    c.f.push(1 + (i % 3)); c.wf.push(+(0.5 + 1.5 * R.u()).toFixed(2)); c.d.push(Date.UTC(2020, 0, 6) + i * 7 * 86400000); c.z.push(+(100 * R.u()).toFixed(2));
+  }
+  const t = new SM.Table({ name: 'Graph code', source: 'simulated', columns: [{ name: 'x', values: c.x }, { name: 'y', values: c.y },
+    { name: 'g', dataType: 'character', values: c.g, valueOrder: ['lo', 'mid', 'hi'] }, { name: 'h', dataType: 'character', values: c.h },
+    { name: 'a', values: c.a, modelingType: 'ordinal' }, { name: 'f', values: c.f }, { name: 'wf', values: c.wf }, { name: 'd', values: c.d, format: { kind: 'date' } }, { name: 'z', values: c.z }] });
+  SM.app.addTable(t);
+  const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+  window._crep = rep;
+  return new Promise((res) => rep.on('done', () => res(t.nrows)));
+})()'''
+
+GB_CODE_CASES = [   # [what, zones, elements, properties, (the builder's state)]: every element and zone, dates, a log axis, the legend at the bottom
+    ["points and smoother", {"x": ["x"], "y": ["y"]}, ["points", "smoother"], {}],
+    ["overlay, lowess, the band", {"x": ["x"], "y": ["y"], "overlay": ["h"]}, ["points", "smoother"], {"smoother": {"method": "lowess", "width": 0.5, "robust": 2}}],
+    ["spline confidence", {"x": ["x"], "y": ["y"]}, ["points", "smoother"], {"smoother": {"conf": True, "lambda": 0.3}}],
+    ["fit quadratic with texts, Group X", {"x": ["x"], "y": ["y"], "groupX": ["h"]}, ["points", "fit"], {"fit": {"degree": 2, "confPred": True, "equation": True, "r2": True, "rmse": True, "ftest": True}}],
+    ["robust fit, wrap", {"x": ["x"], "y": ["y"], "wrap": ["g"]}, ["points", "fit"], {"fit": {"fitType": "robust", "equation": True, "rmse": True}}],
+    ["ellipse, Group Y, overlay", {"x": ["x"], "y": ["y"], "groupY": ["h"], "overlay": ["g"]}, ["ellipse"], {"ellipse": {"coverage": 0.9, "shaded": True, "correlation": True, "meanPoint": True}}],
+    ["contour", {"x": ["x"], "y": ["y"]}, ["contour"], {"contour": {"levels": 5}}],
+    ["contour overlay lines", {"x": ["x"], "y": ["y"], "overlay": ["h"]}, ["contour"], {"contour": {"fill": False, "bw": 1.5}}],
+    ["violins", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["contour"], {}],
+    ["jitter uniform", {"x": ["g"], "y": ["y"]}, ["points"], {}],
+    ["jitter normal", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["points"], {"points": {"jitter": "normal", "jitterLimit": 1.5}}],
+    ["jitter grid", {"x": ["g"], "y": ["y"]}, ["points"], {"points": {"jitter": "grid"}}],
+    ["jitter packed", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["points"], {"points": {"jitter": "packed"}}],
+    ["points summary", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["points"], {"points": {"summary": "mean", "interval": "ci"}}],
+    ["line se", {"x": ["a"], "y": ["y"], "overlay": ["h"]}, ["line"], {"line": {"interval": "se"}}],
+    ["line band curve", {"x": ["a"], "y": ["y"]}, ["line"], {"line": {"connection": "curve", "summary": "median", "interval": "iqr", "style": "band"}}],
+    ["line step", {"x": ["a"], "y": ["y"]}, ["line"], {"line": {"connection": "step", "summary": "max", "interval": "range"}}],
+    ["line row order", {"x": ["x"], "y": ["y"]}, ["line"], {"line": {"ordering": "row"}}],
+    ["bar ci labels", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["bar"], {"bar": {"interval": "ci", "label": "value"}}],
+    ["bar stacked percent", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["bar"], {"bar": {"barStyle": "stacked", "summary": "sum", "label": "percent"}}],
+    ["bar counts", {"x": ["g"]}, ["bar"], {}],
+    ["bar horizontal needle", {"x": ["y"], "y": ["g"]}, ["bar"], {"bar": {"barStyle": "needle", "summary": "median", "interval": "iqr"}}],
+    ["bar pct", {"x": ["a"], "y": ["y"], "overlay": ["g"]}, ["bar"], {"bar": {"summary": "pct"}}],
+    ["area", {"x": ["a"], "y": ["y"], "overlay": ["h"]}, ["area"], {}],
+    ["area stacked", {"x": ["a"], "y": ["y"], "overlay": ["g"]}, ["area"], {"area": {"areaStyle": "stacked", "summary": "sum"}}],
+    ["box", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["box"], {"box": {"diamond": True}}],
+    ["box quantile solid", {"x": ["y"], "y": ["g"]}, ["box"], {"box": {"boxType": "quantile", "boxStyle": "solid", "width": 0.8}}],
+    ["bean", {"x": ["g"], "y": ["y"]}, ["bean"], {}],
+    ["bean jitter overlay", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["bean"], {"bean": {"beans": "jitter", "cutoff": True, "bw": 1.3}}],
+    ["bean split", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["bean"], {"bean": {"split": True}}],
+    ["histogram", {"x": ["x"]}, ["histogram"], {"histogram": {"counts": True}}],
+    ["histogram kernel percent", {"y": ["x"], "overlay": ["h"]}, ["histogram"], {"histogram": {"histStyle": "kernel", "scale": "percent"}}],
+    ["histogram band", {"x": ["x"], "y": ["g"]}, ["histogram"], {"histogram": {"binWidth": 10}}],
+    ["heatmap", {"x": ["x"], "y": ["g"]}, ["heatmap"], {"heatmap": {"label": "value"}}],
+    ["heatmap mean of color", {"x": ["x"], "y": ["y"], "color": ["z"], "groupX": ["h"]}, ["heatmap"], {"heatmap": {"bins": 8, "label": "value"}}],
+    ["mosaic", {"x": ["g"], "y": ["h"]}, ["mosaic"], {"mosaic": {"cellLabel": "count", "chisq": True}}],
+    ["caption", {"x": ["g"], "y": ["y"], "overlay": ["h"]}, ["points", "caption"], {"caption": {"stats": ["mean", "n", "range"]}}],
+    ["caption per factor", {"x": ["g"], "y": ["y"]}, ["points", "caption"], {"caption": {"stats": ["median", "sd"], "location": "factor"}}],
+    ["pie ring", {"x": ["g"], "y": ["z"]}, ["pie"], {"pie": {"pieStyle": "ring"}}],
+    ["pie counts Group X", {"x": ["g"], "groupX": ["h"]}, ["pie"], {"pie": {"label": "value"}}],
+    ["freq whole", {"x": ["g"], "y": ["y"], "freq": ["f"]}, ["bar", "points"], {"bar": {"interval": "sd"}}],
+    ["freq fractional", {"x": ["g"], "y": ["y"], "freq": ["wf"]}, ["bar", "box"], {"bar": {"summary": "median", "interval": "iqr"}}],
+    ["freq models", {"x": ["x"], "y": ["y"], "freq": ["f"]}, ["points", "smoother", "fit", "ellipse", "contour"], {"smoother": {"conf": True}}],
+    ["color continuous, size", {"x": ["x"], "y": ["y"], "color": ["z"], "size": ["z"]}, ["points"], {}],
+    ["color categorical with overlay", {"x": ["x"], "y": ["y"], "color": ["g"], "overlay": ["h"]}, ["points"], {}],
+    ["Y merged", {"x": ["x"], "y": ["y", "z"]}, ["points", "smoother"], {}, {"yMode": "merge"}],
+    ["Y side by side", {"x": ["g"], "y": ["y", "z"]}, ["points", "box"], {}],
+    ["X side by side, Group X", {"x": ["x", "z"], "y": ["y"], "groupX": ["h"]}, ["points"], {}],
+    ["Group X by Group Y", {"x": ["g"], "y": ["y"], "groupX": ["h"], "groupY": ["a"]}, ["box"], {}],
+    ["binned overlay", {"x": ["x"], "y": ["y"], "overlay": ["z"]}, ["points", "smoother"], {}],
+    ["bar over a continuous factor", {"x": ["a"], "y": ["y"]}, ["bar"], {}],
+    ["date on X, smoother", {"x": ["d"], "y": ["y"]}, ["points", "smoother", "fit"], {}],
+    ["date on Y", {"x": ["x"], "y": ["d"]}, ["points", "smoother"], {}],
+    ["log X", {"x": ["z"], "y": ["y"]}, ["points"], {}, {"log": {"x": True}}],
+    ["legend at the bottom", {"x": ["x"], "y": ["y"], "overlay": ["g"]}, ["points"], {}, {"legendPos": "bottom"}],
+    ["wrap binned", {"x": ["x"], "y": ["y"], "wrap": ["z"]}, ["points", "fit"], {}],
+    ["color categorical alone", {"x": ["x"], "y": ["y"], "color": ["h"]}, ["points", "smoother"], {}],
+    ["histogram of dates", {"x": ["d"]}, ["histogram"], {}],
+    ["histogram with Freq", {"x": ["x"], "freq": ["f"]}, ["histogram"], {}],
+    ["size alone", {"x": ["x"], "y": ["y"], "size": ["wf"]}, ["points"], {}],
+    ["rows excluded", {"x": ["x"], "y": ["y"], "overlay": ["h"]}, ["points", "smoother", "fit"], {}, {"excluded": [0, 3, 5, 8, 21]}],
+]
+
+DAY = 86400000.0
+
+
+def unesc(s):
+    return None if s is None else str(s).replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('<b>', '').replace('</b>', '')
+
+
+def panel_of(t, axis='x'):
+    s = (t.get(f'{axis}axis') or axis)[1:]
+    return int(s) - 1 if s else 0
+
+
+
+def md(a, b):
+    """The largest difference of two lists of numbers (None as a gap), inf when they differ in length or gaps."""
+    a, b = list(a or []), list(b or [])
+    if len(a) != len(b):
+        return float('inf')
+    d = 0.0
+    for x, y in zip(a, b):
+        if x is None or y is None:
+            if (x is None) != (y is None):
+                return float('inf')
+            continue
+        d = max(d, abs(float(x) - float(y)))
+    return d
+
+
+def rel(a, b):
+    """md relative to the size of the numbers."""
+    scale = max([abs(float(v)) for v in list(a or []) + list(b or []) if v is not None] + [1.0])
+    return md(a, b) / scale
+
+
+def hexrgb(c):
+    """A colour as #rrggbb from #rrggbb[aa] or rgb(r, g, b) or rgba(...)."""
+    if c is None:
+        return None
+    c = str(c).strip()
+    if c.startswith('#'):
+        return c[:7].lower()
+    if c.startswith('rgb'):
+        v = [float(q) for q in c[c.index('(') + 1:c.index(')')].split(',')[:3]]
+        return '#%02x%02x%02x' % tuple(int(round(q)) for q in v)
+    return c
+
+
+def close_rgb(a, b, tol=2):
+    a, b = hexrgb(a), hexrgb(b)
+    if not a or not b or not a.startswith('#') or not b.startswith('#'):
+        return a == b
+    return all(abs(int(a[i:i + 2], 16) - int(b[i:i + 2], 16)) <= tol for i in (1, 3, 5))
+
+
+def to_days(v, date):
+    if not date:
+        return v
+    return [None if q is None else q / DAY for q in v]
+
+
+class GB:
+    """One Graph Builder graph and the figure its code drew."""
+
+    def __init__(self, G, R):
+        self.G, self.R = G, R
+        self.plan = G['plan']
+        self.F = R['figures'][0] if R and R.get('figures') else None
+        self.V = (R or {}).get('vars', {}) or {}
+        self.axes = [A for A in (self.F or {}).get('axes', []) if not A.get('colorbar')]
+        ax = G['axes']
+        self.date = {'x': any(v['type'] == 'date' for k, v in ax.items() if k.startswith('x')),
+                     'y': any(v['type'] == 'date' for k, v in ax.items() if k.startswith('y'))}
+
+    def traces(self, el, **kw):
+        out = []
+        for t in self.G['traces']:
+            if t['overlay'] or t['el'] != el:
+                continue
+            if all((v(t.get(k)) if callable(v) else t.get(k) == v) for k, v in kw.items()):
+                out.append(t)
+        return out
+
+    def ax(self, t):
+        i = panel_of(t)
+        return self.axes[i] if i < len(self.axes) else {'lines': [], 'xy_lines': [], 'scatter': [], 'bars': [], 'polys': [], 'polygons': [], 'segments': [],
+                                                        'meshes': [], 'wedges': [], 'annotations': []}
+
+    def days(self, v, axis):
+        return to_days(v, self.date[axis])
+
+
+def open_xy(P):
+    """A polygon's vertices without the first one repeated at the end (matplotlib's fill closes its path)."""
+    v = P['xy']
+    return v[:-1] if len(v) > 1 and v[0] == v[-1] else v
+
+
+def pts(t):
+    return [(a, b) for a, b in zip(t['x'] or [], t['y'] or []) if a is not None and b is not None]
+
+
+def line_match(g, t, lines, rel_tol=False):
+    """How far the nearest of the axes' lines is from a trace's points."""
+    wx, wy = g.days(t['x'], 'x'), g.days(t['y'], 'y')
+    f = rel if rel_tol else md
+    return min((max(f([p[0] for p in ln], wx), f([p[1] for p in ln], wy)) for ln in lines), default=float('inf'))
+
+
+def check_gb(check, tag, G, R, err):
+    """Everything the code's figure must share with the page's graph."""
+    check(f'{tag}: the code runs in the page', err, None)
+    if not R or not R.get('figures'):
+        return None
+    g = GB(G, R)
+    F, plan = g.F, g.plan
+    check(f'{tag}: one figure, the graph\'s size', (len(R['figures']), F['size']), (1, [G['w'] / 100, G['h'] / 100]))
+    pies = [t for t in G['traces'] if t.get('type') == 'pie']
+    nP = len(pies) if pies else 1 + max([panel_of(t) for t in G['traces']] + [0])
+    shown = [A for A in g.axes if A['shown']]
+    check(f'{tag}: a panel for each of the page\'s', len(shown), nP)
+    if plan.get('title'):
+        check(f'{tag}: the title', F['suptitle'] or (g.axes[0]['title'] if g.axes else ''), unesc(G['title']))
+    check_axes(check, tag, g)
+    for e in plan['elements']:
+        fn = globals().get(f'el_{e["type"]}')
+        if fn:
+            fn(check, tag, g, e)
+    return g
+
+
+def el_points(check, tag, g, e):
+    if e.get('summary', 'none') != 'none':
+        return el_summary(check, tag, g, e, 'points')
+    tr = [t for t in g.traces('points') if t['mode'] == 'markers']
+    by = {}
+    for t in tr:
+        by.setdefault(panel_of(t), []).append(t)
+    worst, n, cols, sizes = 0.0, 0, True, True
+    for i, ts in by.items():
+        sc = g.axes[i]['scatter'] if i < len(g.axes) else []
+        if len(sc) < len(ts):
+            worst = float('inf')
+            continue
+        for t, S in zip(ts, sc):
+            want = [q for a, b in pts(t) for q in (g.days([a], 'x')[0], g.days([b], 'y')[0])]
+            got = [q for p in S['xy'] for q in p]
+            worst = max(worst, md(got, want))
+            n += len(S['xy'])
+            mc, fc = t['mcolor'] or [], S['colors']
+            if len(mc) == 1:
+                cols = cols and all(close_rgb(c, mc[0]) for c in fc)
+            elif len(mc) == len(fc):
+                cols = cols and all(close_rgb(a, b) for a, b in zip(fc, mc))
+            else:
+                cols = False
+            want_s = [(0.72 * float(v)) ** 2 for v in (t['msize'] or [])]
+            got_s = S['sizes']
+            if len(want_s) == 1:
+                sizes = sizes and all(abs(q - want_s[0]) <= 0.01 * want_s[0] for q in got_s)
+            else:
+                sizes = sizes and len(want_s) == len(got_s) and md(got_s, want_s) <= 0.01 * max(want_s)
+    check.near(f'{tag}: Points: each point where the page draws it (jitter included)', worst, 0, 1e-9)
+    check(f'{tag}: Points: every point, in the page\'s colours and sizes', (n, cols, sizes), (sum(len(pts(t)) for t in tr), True, True))
+
+
+def errorbars_ok(g, t, key, bases=None):
+    """Whether each of a trace's error bars (Plotly's array and arrayminus) is a segment of the axes."""
+    A = g.ax(t)
+    segs = [s for c in A['segments'] for s in c['segs']]
+    horiz = key == 'ex'
+    vals = t['x'] if horiz else t['y']
+    j = 0 if horiz else 1
+    ok = True
+    for k, v in enumerate(vals):
+        if v is None or t[key]['a'][k] is None:
+            continue
+        top = v + ((bases or [0] * len(vals))[k] or 0)
+        lo, hi = top - t[key]['m'][k], top + t[key]['a'][k]
+        lo, hi = (lo / DAY, hi / DAY) if g.date['x' if horiz else 'y'] else (lo, hi)
+        tol = 1e-9 * max(1, abs(lo), abs(hi))
+        ok = ok and any(abs(min(s[0][j], s[1][j]) - lo) < tol and abs(max(s[0][j], s[1][j]) - hi) < tol for s in segs)
+    return ok
+
+
+def el_summary(check, tag, g, e, el):
+    """Points with a Summary Statistic, a summarized Line, an overlaid Area: the statistic at each place."""
+    tr = [t for t in g.traces(el) if t['type'] in ('scatter', 'scattergl') and t['fill'] != 'toself']
+    worst, ok = 0.0, True
+    for t in tr:
+        A = g.ax(t)
+        if el == 'points':
+            wx, wy = g.days(t['x'], 'x'), g.days(t['y'], 'y')
+            best = min((max(md([p[0] for p in S['xy']], wx), md([p[1] for p in S['xy']], wy)) for S in A['scatter']), default=float('inf'))
+        else:
+            best = line_match(g, t, A['xy_lines'])
+        worst = max(worst, best)
+        for key in ('ey', 'ex'):
+            if t[key]:
+                ok = ok and errorbars_ok(g, t, key)
+    check.near(f'{tag}: {el}: the statistic at each place', worst, 0, 1e-9)
+    check(f'{tag}: {el}: the error bars span the page\'s intervals', ok, True)
+    bands = [t for t in g.traces(el) if t['fill'] == 'toself']
+    for t in bands:
+        A = g.ax(t)
+        ys = [v for v in g.days(t['y'], 'y') if v is not None]
+        spans = [(min(q[1] for q in pp), max(q[1] for q in pp)) for P in A['polys'] if 'contour' not in P for pp in P['paths'] if pp]
+        check(f'{tag}: {el}: the Error Band spans the page\'s', any(abs(lo - min(ys)) < 1e-9 * max(1, abs(lo)) and abs(hi - max(ys)) < 1e-9 * max(1, abs(hi)) for lo, hi in spans), True)
+
+
+def el_line(check, tag, g, e):
+    if e.get('ordering') == 'row':
+        worst = max([line_match(g, t, g.ax(t)['xy_lines']) for t in g.traces('line')] + [0.0])
+        check.near(f'{tag}: Line: through every row in the table\'s order', worst, 0, 1e-9)
+        return
+    if e.get('shape') == 'spline':   # the vertices as markers, and a curve through them
+        worst, through = 0.0, True
+        for t in g.traces('line', fill=lambda f: f != 'toself'):
+            A = g.ax(t)
+            marks = [ln for ln, L in zip(A['xy_lines'], A['lines']) if L['marker'] == 'o']
+            worst = max(worst, line_match(g, t, marks))
+            curves = [ln for ln, L in zip(A['xy_lines'], A['lines']) if L['marker'] in ('None', 'none', '')]
+            wx, wy = g.days(t['x'], 'x'), g.days(t['y'], 'y')
+            through = through and all(any(min(abs(p[0] - a) + abs(p[1] - b) for p in ln) < 1e-9 * max(1, abs(a), abs(b)) for ln in curves) for a, b in zip(wx, wy) if a is not None and b is not None)
+        check.near(f'{tag}: Line (Curve): the vertices', worst, 0, 1e-9)
+        check(f'{tag}: Line (Curve): the curve passes through every vertex', through, True)
+        return
+    el_summary(check, tag, g, e, 'line')
+
+
+def el_area(check, tag, g, e):
+    if e.get('areaStyle') != 'stacked':
+        return el_summary(check, tag, g, e, 'area')
+    tr = g.traces('area', fill=lambda f: f != 'toself')
+    by = {}
+    for t in tr:
+        by.setdefault(panel_of(t), []).append(t)
+    worst = 0.0
+    for i, ts in by.items():
+        A = g.axes[i]
+        horiz = ts[0]['orientation'] == 'h'
+        pos = (lambda t: t['y']) if horiz else (lambda t: t['x'])
+        val = (lambda t: t['x']) if horiz else (lambda t: t['y'])
+        places = sorted({q for t in ts for q in pos(t)})
+        acc = {q: 0.0 for q in places}
+        for t in ts:
+            vals = dict(zip(pos(t), val(t)))
+            for q in places:
+                acc[q] += vals.get(q, 0.0) or 0.0
+            top = [acc[q] for q in places]
+            lines = [[p[0 if horiz else 1] for p in ln] for ln in A['xy_lines']]
+            worst = max(worst, min((md(ln, top) for ln in lines), default=float('inf')))
+    check.near(f'{tag}: Area, stacked: the top of each group\'s area', worst, 0, 1e-9)
+
+
+def bars_of(g, el):
+    tr = g.traces(el, type='bar')
+    worst, n = 0.0, 0
+    for t in tr:
+        A = g.ax(t)
+        horiz = t['orientation'] == 'h'
+        pos = t['y'] if horiz else t['x']
+        val = t['x'] if horiz else t['y']
+        wid = t['width'] if isinstance(t['width'], list) else [t['width']] * len(pos)
+        base = t['base'] if isinstance(t['base'], list) else [t['base'] or 0] * len(pos)
+        for q, v, w_, b0 in zip(pos, val, wid, base):
+            n += 1
+            if horiz and g.date['y'] or (not horiz and g.date['x']):
+                q, w_ = q / DAY, w_ / DAY
+            best = float('inf')
+            for b in A['bars']:
+                if horiz:
+                    d = max(abs(b['y'] + b['h'] / 2 - q), abs(b['h'] - w_), abs(b['x'] - (b0 or 0)), abs(b['w'] - (v or 0)))
+                else:
+                    d = max(abs(b['x'] + b['w'] / 2 - q), abs(b['w'] - w_), abs(b['y'] - (b0 or 0)), abs(b['h'] - (v or 0)))
+                best = min(best, d)
+            worst = max(worst, best)
+    return tr, worst, n
+
+
+def el_bar(check, tag, g, e, el='bar'):
+    tr, worst, n = bars_of(g, el)
+    check.near(f'{tag}: {el}: every bar where the page draws it: its place, width, base and length ({n})', worst, 0, 1e-9)
+    ok = True
+    for t in tr:
+        for key in ('ey', 'ex'):
+            if t[key]:
+                ok = ok and errorbars_ok(g, t, key, t['base'] if isinstance(t['base'], list) else None)
+    check(f'{tag}: {el}: the error bars span the page\'s intervals', ok, True)
+    texts = [t for t in tr if t['text']]
+    if texts:
+        want = sorted(str(x) for t in texts for x in t['text'] if x not in (None, ''))
+        got = sorted(a['s'] for A in g.axes for a in A['annotations'] if a['s'])
+        check(f'{tag}: {el}: the labels on the bars as the page writes them', [x for x in got if x in want], want)
+
+
+def el_box(check, tag, g, e):
+    tr = g.traces('box', type='box')
+    ok, n = True, 0
+    for t in tr:
+        A = g.ax(t)
+        horiz = t['orientation'] == 'h'
+        pos = t['y'] if horiz else t['x']
+        j = 0 if horiz else 1
+        close = lambda a, b: abs(a - b) < 1e-9 * max(1, abs(b))
+        for k, q in enumerate(pos):
+            n += 1
+            med, q1, q3, lf, uf = t['median'][k], t['q1'][k], t['q3'][k], t['lowerfence'][k], t['upperfence'][k]
+            segs = [ln for ln in A['xy_lines'] if len(ln) == 2 and None not in (ln[0][0], ln[0][1], ln[1][0], ln[1][1])]
+            has_med = any(close(ln[0][j], med) and close(ln[1][j], med) and abs((ln[0][1 - j] + ln[1][1 - j]) / 2 - q) < 1e-9 for ln in segs)
+            has_lo = any(abs(ln[0][1 - j] - q) < 1e-9 and abs(ln[1][1 - j] - q) < 1e-9 and sorted([ln[0][j], ln[1][j]]) == sorted([q1, lf]) for ln in segs) or close(q1, lf)
+            has_hi = any(abs(ln[0][1 - j] - q) < 1e-9 and abs(ln[1][1 - j] - q) < 1e-9 and sorted([ln[0][j], ln[1][j]]) == sorted([q3, uf]) for ln in segs) or close(q3, uf)
+            ok = ok and has_med and has_lo and has_hi
+    check(f'{tag}: Box Plot: every box\'s median, quartiles and whiskers ({n})', ok, True)
+    outl = [t for t in g.traces('box', type='scatter', mode='markers') if t['rows']]
+    if outl:
+        horiz = any(t['orientation'] == 'h' for t in tr)
+        want = sorted(round(v, 9) for t in outl for v in (t['x'] if horiz else t['y']))
+        got = sorted(round(p[0 if horiz else 1], 9) for A in g.axes for ln, L in zip(A['xy_lines'], A['lines']) if L['marker'] == 'o' and L['ls'] in ('None', 'none', '') for p in ln)
+        check(f'{tag}: Box Plot: the outliers', got, want)
+    dia = g.traces('box', mode='lines')
+    if dia:
+        want = sorted(round(v, 9) for t in dia for v in (t['y'] if not any(tt['orientation'] == 'h' for tt in tr) else t['x']) if v is not None)
+        horiz = any(tt['orientation'] == 'h' for tt in tr)
+        got = sorted(round(p[0 if horiz else 1], 9) for A in g.axes for ln in A['xy_lines'] if len(ln) == 5 for p in ln)
+        check(f'{tag}: Box Plot: the confidence diamonds', got, want)
+
+
+def el_histogram(check, tag, g, e):
+    if e.get('kernel'):
+        worst = 0.0
+        for t in g.traces('histogram'):
+            A = g.ax(t)
+            cands = [open_xy(P) for P in A['polygons']] if e.get('band') else A['xy_lines']
+            worst = max(worst, line_match(g, t, cands))
+        check.near(f'{tag}: Histogram (kernel density): every curve', worst, 0, 1e-9)
+        return
+    el_bar(check, tag, g, e, 'histogram')
+
+
+def el_mosaic(check, tag, g, e):
+    el_bar(check, tag, g, e, 'mosaic')
+    texts = [unesc(a['text']) for a in g.G['annotations'] if a['el'] == 'mosaic']
+    if texts:
+        got = [A['title'].split('\n')[-1] for A in g.axes if A['title']]
+        check(f'{tag}: Mosaic: the chi-square test above each panel', [x for x in got if x in texts], texts)
+
+
+def el_heatmap(check, tag, g, e):
+    tr = g.traces('heatmap', type='heatmap')
+    worst = 0.0
+    for t in tr:
+        A = g.ax(t)
+        M = A['meshes'][0] if A['meshes'] else None
+        worst = max(worst, rel(M['z'] if M else [], [v for row in t['z'] for v in row]))
+    check.near(f'{tag}: Heatmap: every cell\'s value', worst, 0, 1e-12)
+    zs = [v for t in tr for row in t['z'] for v in row if v is not None]
+    clims = {tuple(round(v, 9) for v in A['meshes'][0]['clim']) for A in g.axes if A['meshes']}
+    check(f'{tag}: Heatmap: one colour scale, from the smallest cell to the largest', clims, {(round(min(zs), 9), round(max(zs), 9))} if zs else set())
+
+
+def el_pie(check, tag, g, e):
+    ok, clockwise = True, True
+    for i, t in enumerate(g.traces('pie', type='pie')):
+        A = g.axes[i] if i < len(g.axes) else {'wedges': []}
+        vals = [max(0.0, v or 0.0) for v in t['values']]
+        tot = sum(vals)
+        want = [360 * v / tot for v in vals if v > 0] if tot else []
+        W = [w for w in A['wedges'] if (w['theta2'] - w['theta1']) % 360 > 1e-9]
+        got = [(w['theta2'] - w['theta1']) % 360 or 360.0 for w in W]
+        ok = ok and md(got, want) < 1e-4          # matplotlib keeps the angles in single precision
+        clockwise = clockwise and bool(W) and abs(W[0]['theta2'] - 90) < 1e-4 and all(abs(a['theta1'] - b['theta2']) < 1e-4 for a, b in zip(W, W[1:]))
+    check(f'{tag}: Pie: each slice\'s angle is its share', ok, True)
+    check(f'{tag}: Pie: the slices in the page\'s order, clockwise from the top', clockwise, True)
+
+
+def el_smoother(check, tag, g, e):
+    worst, bands = 0.0, True
+    for t in g.traces('smoother'):
+        A = g.ax(t)
+        wy = g.days(t['y'], 'y')
+        if t['fill'] == 'toself':
+            ys = [v for v in wy if v is not None]
+            spans = [(min(q[1] for q in pp), max(q[1] for q in pp)) for P in A['polys'] if 'contour' not in P for pp in P['paths'] if pp]
+            bands = bands and any(abs(lo - min(ys)) < 1e-9 * max(1, abs(lo)) and abs(hi - max(ys)) < 1e-9 * max(1, abs(hi)) for lo, hi in spans)
+            continue
+        if e.get('method') == 'lowess':   # the page thins its curve to at most 480 points: each is on the code's
+            wx = g.days(t['x'], 'x')
+            best = float('inf')
+            for ln in A['xy_lines']:
+                at = {round(p[0], 12): p[1] for p in ln}
+                try:
+                    best = min(best, md([at[round(a, 12)] for a in wx], wy))
+                except KeyError:
+                    continue
+            worst = max(worst, best)
+        else:
+            worst = max(worst, line_match(g, t, A['xy_lines']))
+    check.near(f'{tag}: Smoother: the curve', worst, 0, 1e-9)
+    check(f'{tag}: Smoother: the Confidence of Fit spans the page\'s band', bands, True)
+
+
+def el_fit(check, tag, g, e):
+    worst, bands = 0.0, True
+    for t in g.traces('fit'):
+        A = g.ax(t)
+        if t['fill'] == 'toself':
+            ys = [v for v in g.days(t['y'], 'y') if v is not None]
+            spans = [(min(q[1] for q in pp), max(q[1] for q in pp)) for P in A['polys'] if 'contour' not in P for pp in P['paths'] if pp]
+            bands = bands and any(abs(lo - min(ys)) < 1e-7 * max(1, abs(lo)) and abs(hi - max(ys)) < 1e-7 * max(1, abs(hi)) for lo, hi in spans)
+            continue
+        worst = max(worst, line_match(g, t, A['xy_lines'], rel_tol=True))
+    check.near(f'{tag}: Line of Fit: the line and the prediction limits', worst, 0, 1e-7)
+    check(f'{tag}: Line of Fit: the Confidence of Fit spans the page\'s band', bands, True)
+    texts = [unesc(a['text']).replace('<br>', '\n') for a in g.G['annotations'] if a['el'] == 'fit']
+    if texts:
+        got = [a['s'] for A in g.axes for a in A['annotations']]
+        check(f'{tag}: Line of Fit: the equation, R², RMSE and F test as the page writes them', sorted(x for x in got if x in texts), sorted(texts))
+
+
+def el_ellipse(check, tag, g, e):
+    worst = max([line_match(g, t, g.ax(t)['xy_lines'], rel_tol=True) for t in g.traces('ellipse', mode='lines')] + [0.0])
+    check.near(f'{tag}: Ellipse: every ellipse', worst, 0, 1e-9)
+    texts = [unesc(a['text']) for a in g.G['annotations'] if a['el'] == 'ellipse']
+    if texts:
+        got = [a['s'] for A in g.axes for a in A['annotations']]
+        check(f'{tag}: Ellipse: the correlations', sorted(x for x in got if x in texts), sorted(texts))
+
+
+def el_contour(check, tag, g, e):
+    if e.get('violin'):
+        worst = max([min((max(md([p[0] for p in open_xy(P)], g.days(t['x'], 'x')), md([p[1] for p in open_xy(P)], g.days(t['y'], 'y'))) for P in g.ax(t)['polygons']), default=float('inf'))
+                     for t in g.traces('contour')] + [0.0])
+        check.near(f'{tag}: Contour (violins): every violin', worst, 0, 1e-9)
+        return
+    tr = g.traces('contour', type='contour')
+    L = int(e['levels'])
+    ok = True
+    for t in tr:
+        levels = [P['contour'] for P in g.ax(t)['polys'] if 'contour' in P]
+        if e.get('line'):
+            ok = ok and any(md(lv, [k / L for k in range(L)]) < 1e-12 for lv in levels)
+        if e.get('fill'):
+            ok = ok and any(md(lv, [k / L for k in range(L + 1)]) < 1e-12 for lv in levels)
+    check(f'{tag}: Contour: the page\'s {L} levels', ok, True)
+    z = g.V.get('inner')
+    if z is not None and len(tr) == 1:
+        check.near(f'{tag}: Contour: the share of the points inside each density contour, on the page\'s grid', rel(z, [v for row in tr[0]['z'] for v in row]), 0, 1e-9)
+
+
+def el_bean(check, tag, g, e):
+    worst = 0.0
+    for t in g.traces('bean', fill='toself'):
+        A = g.ax(t)
+        worst = max(worst, min((max(md([p[0] for p in open_xy(P)], g.days(t['x'], 'x')), md([p[1] for p in open_xy(P)], g.days(t['y'], 'y'))) for P in A['polygons']), default=float('inf')))
+    check.near(f'{tag}: Bean: every violin', worst, 0, 1e-9)
+    beans = [t for t in g.traces('bean', mode='markers') if t['rows'] and t['symbol'] in ('line-ew-open', 'line-ns-open')]
+    if beans:
+        horiz = beans[0]['symbol'] == 'line-ns-open'
+        want = sorted(round(v, 9) for t in beans for v in (t['x'] if horiz else t['y']))
+        got = sorted(round(s[0][0 if horiz else 1], 9) for A in g.axes for c in A['segments'] for s in c['segs'])
+        check(f'{tag}: Bean: a line for each row', got, want)
+    dots = [t for t in g.traces('bean', mode='markers') if t['rows'] and t['symbol'] not in ('line-ew-open', 'line-ns-open', 'cross-thin-open')]
+    if dots:
+        worst = 0.0
+        for t in dots:
+            A = g.ax(t)
+            worst = max(worst, min((max(md([p[0] for p in S['xy']], g.days(t['x'], 'x')), md([p[1] for p in S['xy']], g.days(t['y'], 'y'))) for S in A['scatter']), default=float('inf')))
+        check.near(f'{tag}: Bean: a dot for each row, jittered as the page', worst, 0, 1e-9)
+    means = [t for t in g.traces('bean', mode='lines') if not t['fill']]
+    if means:
+        horiz = any(t['symbol'] == 'line-ns-open' for t in beans)
+        want = sorted(round(v, 9) for t in means for v in (t['x'] if horiz else t['y']) if v is not None)
+        got = sorted(round(p[0 if horiz else 1], 9) for A in g.axes for ln, L in zip(A['xy_lines'], A['lines']) if L['marker'] in ('None', 'none', '') and len(ln) == 2 for p in ln)
+        check(f'{tag}: Bean: the mean lines', [v for v in want if v in got], want)
+    meds = g.traces('bean', symbol='cross-thin-open')
+    if meds:
+        horiz = any(t['symbol'] == 'line-ns-open' for t in beans)
+        want = sorted(round(v, 9) for t in meds for v in (t['x'] if horiz else t['y']))
+        got = sorted(round(p[0 if horiz else 1], 9) for A in g.axes for ln, L in zip(A['xy_lines'], A['lines']) if L['marker'] == '+' for p in ln)
+        check(f'{tag}: Bean: the medians', got, want)
+
+
+def el_caption(check, tag, g, e):
+    texts = [unesc(a['text']).replace('<br>', '\n') for a in g.G['annotations'] if a['el'] == 'caption']
+    got = [a['s'] for A in g.axes for a in A['annotations']]
+    check(f'{tag}: Caption Box: the statistics as the page writes them', sorted(x for x in got if x in texts), sorted(texts))
+
+
+def check_axes(check, tag, g):
+    """The axis titles, the categorical axes' levels in the page's order, date axes as dates, the legend."""
+    G, F = g.G, g.F
+    if g.plan.get('exclusive') == 'pie':   # no axes
+        return
+    for a in ('x', 'y'):
+        shared = {t for t in (g.plan['titles'].get(a) or []) if t}   # a title the page writes once for several panels, as a note
+        want = sorted({unesc(v['title']) for k, v in G['axes'].items() if k.startswith(a) and v.get('title')}
+                      | {unesc(n['text']) for n in G['annotations'] if not n['el'] and unesc(n['text']) in shared})
+        got = sorted({A[f'{a}label'] for A in g.axes if A['shown'] and A[f'{a}label']} | ({F[f'sup{a}']} if F.get(f'sup{a}') else set()))
+        check(f'{tag}: the {a.upper()} axis titles, the page\'s', got, want)
+        want = sorted({tuple(unesc(q) for q in v['ticktext']) for k, v in G['axes'].items() if k.startswith(a) and v.get('ticktext')})
+        if want:
+            got = sorted({tuple(A[f'{a}ticklabels']) for A in g.axes if A['shown'] and A[f'{a}ticklabels'] and any(A[f'{a}ticklabels'])})
+            check(f'{tag}: the {a.upper()} axis levels in the page\'s order', [w for w in want if w in got], want)
+        if g.date[a]:
+            check(f'{tag}: the {a.upper()} axis shows dates', all(A[f'{a}axis_date'] for A in g.axes if A['shown']), True)
+    want = [unesc(t['name']) for t in G['traces'] if t.get('showlegend') and t.get('name') and not t['overlay']]
+    if G.get('legend') and want:
+        got = F['legend'] + [q for A in g.axes for q in A['legend']]
+        check(f'{tag}: the legend: the page\'s entries', [w for w in want if w in got], want)
+
+
+# The other Graph platforms' graphs as the page drew them, for the checks of their code; and
+# options set on the last report by column name, the report run again.
+OTHERS_JS = r'''
+window.__oq = async (rep) => {
+  rep = rep || SM.app.reports[SM.app.reports.length - 1];
+  await __gr.graphs(rep);
+  const keys = ['type', 'mode', 'name', 'x', 'y', 'z', 'a', 'b', 'c', 'values', 'labels', 'ids', 'parents', 'width', 'xaxis', 'yaxis', 'fill', 'showlegend',
+    'hovertemplate', 'contours', 'zmin', 'zmax', 'colorscale', 'direction', 'rotation', 'sort', 'hole', 'orientation'];
+  return rep.plots.map((p) => {
+    const gd = p.box, L = gd._fullLayout || {};
+    const n = gd.nextElementSibling;
+    const tr = (gd.data || []).map((t, i) => {
+      const o = {};
+      for (const k of keys) if (t[k] !== undefined) o[k] = t[k];
+      if (t.marker) o.marker = { color: t.marker.color, size: t.marker.size, colors: t.marker.colors, opacity: t.marker.opacity };
+      if (t.line) o.line = { color: t.line.color, width: t.line.width, dash: t.line.dash, shape: t.line.shape };
+      if (t.colorbar && t.colorbar.title) o.colorbar = t.colorbar.title.text;
+      const cd = gd.calcdata && gd.calcdata[i];
+      if (cd && t.type === 'scatter' && (t.mode || '').includes('markers')) o.mrc = cd.map((q) => (q.mrc == null ? null : q.mrc));
+      return o;
+    });
+    // the axes the page laid out (Plotly leaves those without a trace out of its own layout): their titles as the
+    // page set them, and the ranges, types and ticks Plotly drew
+    const U = gd.layout || {}, axes = {};
+    const title = (a) => (a && a.title ? (typeof a.title === 'string' ? a.title : a.title.text) || null : null);
+    for (const k of new Set([...Object.keys(U), ...Object.keys(L)])) {
+      if (!/^[xy]axis\d*$/.test(k)) continue;
+      const u = U[k] || {}, f = L[k] || {};
+      axes[k] = { title: title(u), range: f.range || u.range || null, type: f.type || u.type || null, ticktext: u.ticktext || f.ticktext || null, domain: u.domain || f.domain || null };
+    }
+    const scene = L.scene ? ['xaxis', 'yaxis', 'zaxis'].map((a) => L.scene[a].title.text) : null;
+    const ternary = L.ternary ? ['aaxis', 'baxis', 'caxis'].map((a) => L.ternary[a].title.text) : null;
+    const tiles = [...gd.querySelectorAll('g.slice')].map((g) => g.__data__).filter(Boolean)
+      .map((d) => ({ id: d.data && d.data.data ? d.data.data.id : null, x0: d.x0, x1: d.x1, y0: d.y0, y1: d.y1 }));
+    return { title: p.opts.title, code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null, tr, axes, scene, ternary, tiles, area: L._size ? [L._size.w, L._size.h] : null,
+      size: [p.width, p.height], w: p.ownWidth, h: p.height, legend: (gd.data || []).filter((t) => t.showlegend !== false && t.name).map((t) => t.name),
+      legendTitle: L.legend && L.legend.title ? L.legend.title.text : null, showlegend: !!L.showlegend, annotations: (L.annotations || []).map((a) => a.text) };
+  });
+};
+'''
+OPTS_JS = r'''
+window.__optRun = async (opts) => {   // options of the last report set by column name ('z|fill') or alone, and the report run again
+  const rep = SM.app.reports[SM.app.reports.length - 1];
+  for (const [k, v] of Object.entries(opts)) { const [a, b] = k.includes('|') ? k.split('|') : [null, k]; rep.spec.options[a ? `${rep.table.col(a).id}|${b}` : b] = v; }
+  const done = new Promise((res) => rep.on('done', res)); rep.run(); await done;
+};
+'''
+
+
+def gaps_split(xs, ys):
+    """A trace's x and y split at its gaps (None) into polylines."""
+    out, cur = [], []
+    for a, b in zip(xs or [], ys or []):
+        if a is None or b is None:
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append((float(a), float(b)))
+    if cur:
+        out.append(cur)
+    return out
+
+
+def same_points(got, want, tol=1e-9):
+    """Two lists of points the same, in any order."""
+    g = sorted(tuple(round(v / tol) * tol for v in p) for p in got)
+    w = sorted(tuple(round(v / tol) * tol for v in p) for p in want)
+    if len(g) != len(w):
+        return float('inf')
+    return max([max(abs(a - b) for a, b in zip(p, q)) for p, q in zip(g, w)] + [0.0])
+
+
+def pts_of(t):
+    return [(a, b) for a, b in zip(t.get('x') or [], t.get('y') or []) if a is not None and b is not None]
+
+
+def arr(v, n):
+    return list(v) if isinstance(v, list) else [v] * n
+
+
+def fig_of(check, tag, R, err, P):
+    check(f'{tag}: its code runs in the page', err, None)
+    if not R or not R.get('figures'):
+        return None
+    F = R['figures'][0]
+    check(f'{tag}: one figure, the graph\'s size', (len(R['figures']), F['size']), (1, [P['size'][0] / 100, P['size'][1] / 100]))
+    return F
+
+
+# ---- Scatterplot Matrix -----------------------------------------------------------------
+def matrix_cells(P):
+    """The page's cells: {(row, column): (xaxis, yaxis)}, from the axes' domains; and the rows and columns."""
+    xs = sorted({round(v['domain'][0], 9) for k_, v in P['axes'].items() if k_.startswith('x')})
+    ys = sorted({round(v['domain'][0], 9) for k_, v in P['axes'].items() if k_.startswith('y')})
+    cells = {}
+    for k_, v in P['axes'].items():
+        if k_.startswith('x'):
+            n = k_[5:]
+            yv = P['axes'].get(f'yaxis{n}')
+            cells[(len(ys) - 1 - ys.index(round(yv['domain'][0], 9)), xs.index(round(v['domain'][0], 9)))] = (f'x{n}', f'y{n}')
+    return cells, len(ys), len(xs)
+
+
+def plat_matrix(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    A = F['axes']
+    cells, k, m = matrix_cells(P)
+    check(f'{tag}: the page\'s cells shown, the others left out', sorted((i, j) for i in range(k) for j in range(m) if A[i * m + j]['shown']), sorted(cells))
+    worst = {'hist': 0.0, 'pts': 0.0, 'ell': 0.0, 'fit': 0.0, 'band': 0.0}
+    colours, contours = True, True
+    for (i, j), (xa, ya) in cells.items():
+        a = A[i * m + j]
+        mine = [t for t in P['tr'] if t.get('xaxis', 'x') == xa and t.get('yaxis', 'y') == ya and t.get('showlegend') is not True]
+        bars = [t for t in mine if t['type'] == 'bar']
+        if bars:   # the diagonal
+            got = sorted((b['x'] + b['w'] / 2, b['h']) for b in a['bars'])
+            worst['hist'] = max(worst['hist'], same_points(got, list(zip(bars[0]['x'], bars[0]['y']))))
+            continue
+        pt = next((t for t in mine if t['type'] == 'scatter' and t['mode'] == 'markers'), None)
+        if pt is None:
+            continue
+        S = a['scatter'][0]
+        worst['pts'] = max(worst['pts'], same_points(S['xy'], pts_of(pt)))
+        want_c = sorted(zip(pts_of(pt), [hexrgb(c) for c in arr(pt['marker']['color'], len(pt['x']))]))
+        cs_ = S['colors'] * len(S['xy']) if len(S['colors']) == 1 else S['colors']
+        got_c = sorted(zip([tuple(p) for p in S['xy']], [hexrgb(c) for c in cs_]))
+        colours = colours and [c for _, c in got_c] == [c for _, c in want_c]
+        for t in mine:
+            if t['type'] == 'contour':   # Nonpar Density: the contours holding 100, 75, 50 and 25% of the points
+                contours = contours and any([round(v, 9) for v in c['contour']] == [0.0, 0.25, 0.5, 0.75] for c in a['polys'] if 'contour' in c)
+                continue
+            if t['type'] != 'scatter' or t['mode'] != 'lines':
+                continue
+            col = (t.get('line') or {}).get('color')
+            xy = list(zip(t['x'], t['y']))
+            if t.get('fill') == 'toself' and not (t.get('hovertemplate') or '').startswith('r = '):   # a fit's band: the same highs and lows
+                ys = [q[1] for q in xy]
+                best = min((max(abs(max(ys) - max(v[1] for v in p)), abs(min(ys) - min(v[1] for v in p))) for c in a['polys'] if 'paths' in c for p in c['paths']), default=float('inf'))
+                worst['band'] = max(worst['band'], best / max(1.0, max(abs(v) for v in ys)))
+                continue
+            key = 'ell' if (t.get('hovertemplate') or '').startswith('r = ') else 'fit'
+            best = min((max(md([p[0] for p in ln], [q[0] for q in xy]), md([p[1] for p in ln], [q[1] for q in xy]))
+                        for ln, L in zip(a['xy_lines'], a['lines']) if close_rgb(L['color'], col)), default=float('inf'))
+            worst[key] = max(worst[key], best)
+    check.near(f'{tag}: the histograms\' bars, the page\'s', worst['hist'], 0, 1e-9)
+    check.near(f'{tag}: every cell\'s points, the page\'s', worst['pts'], 0, 1e-9)
+    check(f'{tag}: the points in their group\'s colour', colours, True)
+    for key, what in (('ell', 'the density ellipses'), ('fit', 'the fit lines')):
+        if any((t.get('hovertemplate') or '').startswith('r = ') == (key == 'ell') and t['type'] == 'scatter' and t['mode'] == 'lines' and t.get('fill') != 'toself' for t in P['tr']):
+            check.near(f'{tag}: {what}, the page\'s', worst[key], 0, 1e-9)
+    if any(t.get('fill') == 'toself' and not (t.get('hovertemplate') or '').startswith('r = ') for t in P['tr']):
+        check.near(f'{tag}: the fit lines\' bands reach as far as the page\'s', worst['band'], 0, 1e-9)
+    if any(t['type'] == 'contour' for t in P['tr']):
+        check(f'{tag}: Nonpar Density: the contours holding 100, 75, 50 and 25% of the points in each cell', contours, True)
+    for a_ in ('x', 'y'):
+        check(f'{tag}: the {a_.upper()} titles, the page\'s', sorted({x[f'{a_}label'] for x in A if x['shown'] and x[f'{a_}label']}), sorted({v['title'] for k_, v in P['axes'].items() if k_.startswith(a_) and v['title'] and not v['title'].startswith('Click to enter')}))
+    check(f'{tag}: the legend: the groups', F['legend'], P['legend'])
+
+
+# ---- Scatterplot 3D, Surface Plot ------------------------------------------------------------
+def pts3(t):
+    return [(a, b, c) for a, b, c in zip(t['x'], t['y'], t['z']) if a is not None and b is not None and c is not None]
+
+
+def plat_scatter3d(check, tag, P, R, err, levels=None):
+    """levels: a categorical Coloring's levels (the page lists them under the graph); None: a continuous one, its colour bar."""
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = next(A for A in F['axes'] if not A['colorbar'])
+    S = a['scatter3d'][0] if a['scatter3d'] else {'xyz': [[], [], []], 'colors': []}
+    t = P['tr'][0]
+    got = list(zip(*S['xyz']))
+    check.near(f'{tag}: every point where the page draws it', same_points(got, pts3(t)), 0, 1e-9)
+    want_c = sorted(zip(pts3(t), [hexrgb(c) for c in arr(t['marker']['color'], len(t['x']))]))
+    got_c = sorted(zip(got, [hexrgb(c) for c in S['colors']]))
+    check(f'{tag}: each in the page\'s colour (within 3 of 255 on a gradient: matplotlib\'s 256 colours)', len(got_c) == len(want_c) and all(close_rgb(g_[1], w_[1], 0 if levels else 3) for g_, w_ in zip(got_c, want_c)), True)
+    check(f'{tag}: the axis titles, the page\'s', [a['xlabel'], a['ylabel'], a['zlabel']], P['scene'])
+    check(f'{tag}: the legend: the levels, as the page lists them under the graph (none for a gradient)', F['legend'], list(levels or []))
+
+
+def grid_diff(got, want_rows):
+    """A grid the code computed (flattened, row by row) against the page's rows."""
+    want = [v for row in want_rows for v in row]
+    return md(got, want) if got is not None else float('inf')
+
+
+def plat_contour(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = next(A for A in F['axes'] if not A['colorbar'])
+    t = next(q for q in P['tr'] if q['type'] == 'contour')
+    check.near(f'{tag}: the grid of interpolated values, the page\'s (griddata)', grid_diff(R['vars'].get('gz'), t['z']), 0, 1e-9)
+    lv = next((c['contour'] for c in a['polys'] if 'contour' in c), None)
+    C = t['contours']
+    want = [C['start'] + q * C['size'] for q in range(int(round((C['end'] - C['start']) / C['size'])) + 1)]
+    check(f'{tag}: the contours at the page\'s levels', lv and [round(v, 9) for v in lv], [round(v, 9) for v in want])
+    dots = next(q for q in P['tr'] if q['type'] == 'scatter')
+    check.near(f'{tag}: the data points', same_points(a['scatter'][0]['xy'] if a['scatter'] else [], pts_of(dots)), 0, 1e-9)
+    check(f'{tag}: the axis titles and the colour bar\'s', (a['xlabel'], a['ylabel'], F['colorbars']), (P['axes']['xaxis']['title'], P['axes']['yaxis']['title'], [t.get('colorbar')]))
+
+
+def plat_surface(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    t = next(q for q in P['tr'] if q['type'] == 'surface')
+    check.near(f'{tag}: the surface, the page\'s grid (griddata)', grid_diff(R['vars'].get('gz'), t['z']), 0, 1e-9)
+    dots = next(q for q in P['tr'] if q['type'] == 'scatter3d')
+    got = list(zip(*a['scatter3d'][0]['xyz'])) if a['scatter3d'] else []
+    check.near(f'{tag}: the data points', same_points(got, pts3(dots)), 0, 1e-9)
+    check(f'{tag}: the axis titles, the page\'s', [a['xlabel'], a['ylabel'], a['zlabel']], P['scene'])
+
+
+# ---- Bubble Plot -------------------------------------------------------------------------------
+def plat_bubble(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    t = P['tr'][0]
+    S = a['scatter'][0]
+    check.near(f'{tag}: the first frame\'s bubbles, where the page draws them', md([q for p in S['xy'] for q in p], [q for p in zip(t['x'], t['y']) for q in p]), 0, 1e-9)
+    px = [math.sqrt(s) / 0.72 for s in S['sizes']]
+    check.near(f'{tag}: each bubble as wide as Plotly draws it (its diameter in pixels)', md(px, [2 * r for r in t['mrc']]), 0, 1e-6)
+    want = [hexrgb(c) for c in arr(t['marker']['color'], len(t['x']))]
+    check(f'{tag}: each in the page\'s colour (within 3 of 255 on a gradient)', len(S['colors']) == len(want) and all(close_rgb(a_, b_, 3) for a_, b_ in zip(S['colors'], want)), True)
+    check.near(f'{tag}: the page\'s axis ranges', md(a['xlim'] + a['ylim'], P['axes']['xaxis']['range'] + P['axes']['yaxis']['range']), 0, 1e-6)
+    check(f'{tag}: the axis titles', (a['xlabel'], a['ylabel']), (P['axes']['xaxis']['title'], P['axes']['yaxis']['title']))
+
+
+# ---- Parallel Plot ------------------------------------------------------------------------------
+def plat_parallel(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    got = sorted((hexrgb(L['color']), tuple(round(v, 9) for v in L['y'])) for L in a['lines'] if L['marker'] == 'o')
+    want = []
+    for t in P['tr']:
+        if 'markers' not in (t.get('mode') or ''):   # (the selected rows' lines are drawn again, without markers)
+            continue
+        for line in gaps_split(t['x'], t['y']):
+            want.append((hexrgb(t['marker']['color']), tuple(round(q[1], 9) for q in line)))
+    check(f'{tag}: a line for each row, where the page draws it, in its group\'s colour', (len(got), got == sorted(want)), (len(want), True))
+    k = len(a['xticklabels'])
+    check(f'{tag}: the axes named as the page\'s', a['xticklabels'], P['annotations'][-k:])
+    check(f'{tag}: each axis\'s range written at its ends, as the page\'s', [x['s'] for x in a['annotations']], P['annotations'][:-k])
+    check(f'{tag}: the legend: the groups', F['legend'], P['legend'])
+
+
+# ---- Cell Plot ------------------------------------------------------------------------------------
+def plat_cell(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = next(A for A in F['axes'] if not A['colorbar'])
+    names = [c for c in P['axes']['xaxis']['ticktext'] or [] if c]   # the selection strip's column has no name
+    k = len(names)
+    hm = [t for t in P['tr'] if t['type'] == 'heatmap'][:k]
+    Z = R['vars'].get('Z')
+    worst = max(md(Z[j::k], [row[0] for row in t['z']]) for j, t in enumerate(hm)) if Z else float('inf')
+    check.near(f'{tag}: each cell\'s value, the page\'s (standardized, or the level\'s number)', worst, 0, 1e-9)
+    check(f'{tag}: a cell for each row and column', a['images'][0]['shape'][:2] if a['images'] else None, [len(hm[0]['z']), k])
+    check(f'{tag}: the columns named, the rows counted, as the page', (a['xticklabels'], a['ylabel']), (names, P['axes']['yaxis']['title']))
+
+
+# ---- Ternary Plot ------------------------------------------------------------------------------------
+def plat_ternary(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    t = P['tr'][0]
+    want = []
+    for A_, B_, C_ in zip(t['a'], t['b'], t['c']):
+        s = A_ + B_ + C_
+        want.append((0.5 * A_ / s + C_ / s, math.sqrt(3) / 2 * A_ / s))
+    check.near(f'{tag}: each point at its shares (a at the top, b bottom left, c bottom right)', same_points(a['scatter'][0]['xy'], want), 0, 1e-9)
+    check(f'{tag}: the corners named as the page\'s', [x['s'] for x in a['annotations']][:3], P['ternary'])
+
+
+# ---- Treemap ---------------------------------------------------------------------------------------
+def plat_treemap(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    H = P['area'][1]
+    got = sorted((b['x'], H - b['y'] - b['h'], b['x'] + b['w'], H - b['y']) for b in a['bars'])
+    want = sorted((d['x0'], d['y0'], d['x1'], d['y1']) for d in P['tiles'][1:])
+    check(f'{tag}: a tile for each of the page\'s', len(got), len(want))
+    check.near(f'{tag}: every tile where Plotly lays it out (squarified, padded)', same_points(got, want, 1e-9), 0, 1e-6)
+
+
+# ---- Chart -------------------------------------------------------------------------------------------
+def plat_chart(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = F['axes'][0]
+    t = P['tr'][0]
+    titles = (unesc(P['axes']['xaxis']['title']), unesc(P['axes']['yaxis']['title']))
+    if t['type'] == 'pie':
+        W = a['wedges']
+        tot = sum(t['values'])
+        check.near(f'{tag}: each slice\'s share, the page\'s', md([(w['theta2'] - w['theta1']) / 360 for w in W], [v / tot for v in t['values']]), 0, 1e-6)
+        check(f'{tag}: each in the page\'s colour, clockwise from the top', ([hexrgb(w['fc']) for w in W], round(W[0]['theta2'], 6) if W else None), ([hexrgb(c) for c in t['marker']['colors']], 90.0))
+        check(f'{tag}: the legend: the levels', F['legend'], t['labels'])
+        return
+    horiz = t.get('orientation') == 'h'
+    cats = 'y' if horiz else 'x'
+    check(f'{tag}: the levels in the page\'s order, the axis titles', (a[f'{cats}ticklabels'], a['xlabel'], a['ylabel']), (P['axes'][f'{cats}axis']['ticktext'],) + titles)
+    if t['type'] == 'scatter':   # Line and Point charts: each line's (or points') statistics
+        want = sorted(tuple(round(v, 9) for v in q['y']) for q in P['tr'] if q['type'] == 'scatter' and q.get('y') and q.get('showlegend') is not False)
+        got = sorted(tuple(round(v, 9) for v in L['y']) for L in a['lines'] if len(L['y']) == len(t['y']))
+        check(f'{tag}: each line through the page\'s statistics', [w_ for w_ in want if w_ in got], want)
+        return
+    bars = sorted(a['bars'], key=lambda b: b['y'] if horiz else b['x'])
+    check.near(f'{tag}: the bars, the page\'s', md([b['w'] if horiz else b['h'] for b in bars], t['x'] if horiz else t['y']), 0, 1e-9)
+
+
+# ---- Overlay Plot ------------------------------------------------------------------------------------------
+def plat_overlay(check, tag, P, R, err):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    AX = F['axes']
+    lines = {L['label']: L for A in AX for L in A['lines']}
+    tr = [t for t in P['tr'] if t.get('name')]
+    worst = max([md(lines[t['name']]['x'], t['x']) + md(lines[t['name']]['y'], t['y']) if t['name'] in lines else float('inf') for t in tr] + [0.0])
+    check.near(f'{tag}: each Y\'s line, the page\'s (X in order)', worst, 0, 1e-9)
+    steps = [(t['name'], (t.get('line') or {}).get('shape') == 'hv') for t in tr]
+    check(f'{tag}: a step where the page steps', [(n, lines[n]['drawstyle'] == 'steps-post') for n, _ in steps if n in lines], steps)
+    needles = [t for t in P['tr'] if not t.get('name') and t.get('mode') == 'lines' and (t.get('line') or {}).get('width') == 1]
+    if needles:
+        want = sorted(round(seg[-1][1], 9) for t in needles for seg in gaps_split(t['x'], t['y']))
+        got = sorted(round(s_[1][1], 9) for A in AX for c in A['segments'] for s_ in c['segs'])
+        check(f'{tag}: a needle from 0 to each point', got == want and len(got) > 0, True)
+    for a_ in ('x', 'y'):
+        check(f'{tag}: the {a_.upper()} titles, the page\'s', sorted({A[f'{a_}label'] for A in AX if A[f'{a_}label']}), sorted({unesc(v['title']) for k_, v in P['axes'].items() if k_.startswith(a_) and v['title']}))
+    check(f'{tag}: the legend, the page\'s', F['legend'], [t['name'] for t in tr])
+
+
+# ---- Functional Data Plot ------------------------------------------------------------------------------------
+def at_x(t, xs):
+    """A trace's y at the curves' points (the page draws its curves with more points between)."""
+    m = {round(float(a), 9): b for a, b in zip(t['x'], t['y']) if a is not None}
+    return [m.get(round(float(v), 9)) for v in xs]
+
+
+def plat_functional(check, tag, P, R, err, xs):
+    F = fig_of(check, tag, R, err, P)
+    if not F:
+        return
+    a = next(A for A in F['axes'] if not A['colorbar'])
+    named = {t['name']: t for t in P['tr'] if t.get('name')}
+    lines = {L['label']: L for L in a['lines']}
+    view = P['title']
+    if view == 'HDR score plot':
+        S = a['scatter'][0]
+        pt = named['Curves']
+        check.near(f'{tag}: each curve\'s scores, the page\'s', same_points(S['xy'], pts_of(pt)), 0, 1e-9)
+        mode = named['Mode: the modal curve']
+        ml = next((L for L in a['lines'] if L['marker'] == 'x'), None)
+        check.near(f'{tag}: the mode, the page\'s', md([ml['x'][0], ml['y'][0]] if ml else [], [mode['x'][0], mode['y'][0]]), 0, 1e-7)
+        lv = sorted({round(v, 12) for c in a['polys'] if 'contour' in c for v in c['contour'] if v is not None and math.isfinite(v)})
+        want = sorted({round(t['contours']['value'], 12) for t in P['tr'] if t['type'] == 'contour'})
+        check.near(f'{tag}: the regions\' density levels, the page\'s', md(lv, want), 0, 1e-12)
+        check(f'{tag}: the axis titles', (a['xlabel'], a['ylabel']), (P['axes']['xaxis']['title'], P['axes']['yaxis']['title']))
+        return
+    check(f'{tag}: the axis titles', (a['xlabel'], a['ylabel']), (P['axes']['xaxis']['title'], P['axes']['yaxis']['title']))
+    if view == 'Rainbow plot':
+        want = sorted((tuple(round(v, 9) for v in at_x(t, xs)), hexrgb(t['line'].get('color'))) for t in P['tr'] if t['type'] == 'scatter' and t['mode'] == 'lines' and t.get('x') and len(t['x']) > 1 and t['line'].get('color') != '#d9822b')
+        got = sorted((tuple(round(v, 9) for v in L['y']), hexrgb(L['color'])) for L in a['lines'])
+        same = len(got) == len(want) and all(g[0] == w[0] and close_rgb(g[1], w[1], 3) for g, w in zip(got, want))
+        check(f'{tag}: each curve in its depth\'s colour (within 3 of 255: matplotlib\'s 256 colours)', (len(got), same), (len(want), True))
+        return
+    worst = 0.0
+    for name, t in named.items():
+        if t.get('fill') == 'toself' or name.endswith('more outliers') or name == 'Curves':
+            continue
+        L = lines.get(name)
+        worst = max(worst, md(L['y'], at_x(t, xs)) if L else float('inf'))
+    check.near(f'{tag}: the median (or modal) curve and each named outlier, the page\'s', worst, 0, 1e-7)
+    bands = [t for t in P['tr'] if t.get('fill') == 'toself']
+    ok = 0.0
+    for t in bands:
+        ys = [v for v in t['y'] if v is not None]
+        best = min((max(abs(max(ys) - max(v[1] for v in p)), abs(min(ys) - min(v[1] for v in p))) for c in a['polys'] for p in c['paths']), default=float('inf'))
+        ok = max(ok, best)
+    check.near(f'{tag}: its regions reach as far as the page\'s', ok, 0, 1e-7)
+    more = [n for n in named if n.endswith('more outliers')]
+    check(f'{tag}: the legend, the page\'s', F['legend'], [n for n in P['legend'] if n != 'Curves' or 'Curves' in lines])
+    if more:
+        dots = [L for L in a['lines'] if L['ls'] == ':']
+        check(f'{tag}: the other outliers dotted', len(dots), int(more[0].split()[0]))
+
+
+# [platform, roles, options, options by column set after it opens (column|option), the check, the code's variables it reads]
+PLAT_CODE_CASES = [
+    ('scattermatrix', {'y': ['x', 'y', 'z'], 'group': ['g']}, {'ellipses': True, 'fit': True, 'hist': True}, {}, plat_matrix, []),
+    ('scattermatrix', {'y': ['x', 'y', 'z']}, {'format': 'square', 'nonpar': True, 'shaded': True, 'ellipses': True}, {}, plat_matrix, []),
+    ('scattermatrix', {'y': ['x', 'y'], 'x': ['z', 'pop']}, {'fit': True}, {}, plat_matrix, []),
+    ('scatter3d', {'y': ['x', 'y', 'z'], 'color': ['g']}, {}, {}, lambda *a: plat_scatter3d(*a, levels=('p', 'q')), []),
+    ('scatter3d', {'y': ['x', 'y', 'z'], 'color': ['pop']}, {'drop': True}, {}, plat_scatter3d, []),
+    ('contour', {'y': ['z'], 'x': ['x', 'y']}, {}, {}, plat_contour, ['gz']),
+    ('contour', {'y': ['z'], 'x': ['x', 'y']}, {}, {'z|fill': True, 'z|labels': True, 'z|theme': 'spectral', 'z|method': 'cubic'}, plat_contour, ['gz']),
+    ('surface', {'y': ['z'], 'x': ['x', 'y']}, {}, {}, plat_surface, ['gz']),
+    ('surface', {'y': ['z'], 'x': ['x', 'y']}, {}, {'z|theme': 'viridis', 'z|contours': True}, plat_surface, ['gz']),
+    ('bubble', {'y': ['y'], 'x': ['x'], 'id': ['country'], 'time': ['year'], 'size': ['pop']}, {}, {}, plat_bubble, []),
+    ('bubble', {'y': ['y'], 'x': ['x'], 'id': ['country'], 'color': ['pop']}, {'label': True}, {}, plat_bubble, []),
+    ('parallel', {'y': ['x', 'y', 'z', 'pop'], 'x': ['g']}, {}, {}, plat_parallel, []),
+    ('parallel', {'y': ['x', 'y', 'z']}, {'scale': 'std'}, {}, plat_parallel, []),
+    ('cellplot', {'y': ['x', 'z', 'g']}, {}, {}, plat_cell, ['Z']),
+    ('cellplot', {'y': ['x', 'z']}, {'uniform': True, 'center': True}, {}, plat_cell, ['Z']),
+    ('ternary', {'y': ['A', 'B', 'C']}, {}, {}, plat_ternary, []),
+    ('ternary', {'y': ['A', 'B', 'C'], 'color': ['g']}, {}, {}, plat_ternary, []),
+    ('treemap', {'x': ['country', 'g'], 'size': ['pop']}, {}, {}, plat_treemap, []),
+    ('treemap', {'x': ['country'], 'color': ['z']}, {}, {}, plat_treemap, []),
+    ('chart', {'y': ['pop'], 'x': ['country']}, {'stat': 'mean', 'kind': 'bar'}, {}, plat_chart, []),
+    ('chart', {'y': ['pop'], 'x': ['country']}, {'stat': 'max', 'kind': 'pie'}, {}, plat_chart, []),
+    ('chart', {'y': ['pop', 'z'], 'x': ['country', 'g']}, {'kind': 'line', 'interval': 'se', 'stat': 'mean'}, {}, plat_chart, []),
+    ('chart', {'x': ['country']}, {'kind': 'bar', 'stat': 'n', 'horizontal': True}, {}, plat_chart, []),
+    ('overlay', {'y': ['z', 'pop'], 'x': ['x']}, {}, {}, plat_overlay, []),
+    ('overlay', {'y': ['z', 'pop'], 'x': ['x'], 'group': ['g']}, {'overlayY': False}, {'pop|step': True, 'z|needle': True}, plat_overlay, []),
+]
+# the Functional Data Plot on the table of curves: every view, and By
+FD_CODE_CASES = [
+    ({'y': [f't{j}' for j in range(16)], 'id': ['name']}, {'fdHdr': True, 'fdRainbow': True}),
+    ({'y': [f't{j}' for j in range(16)], 'by': ['grp']}, {'fdRule': 'sungenton'}),
+]
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=students')
     st = await wait_engine(page)
@@ -240,7 +1319,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "graph").map(f => f.error)')
     check('graph.py imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => n.startsWith("graph."))')
-    check('the graph functions are registered', sorted(names), ['graph.bean', 'graph.chisq', 'graph.density', 'graph.ellipse', 'graph.fbox', 'graph.fit', 'graph.hdr', 'graph.interp', 'graph.kde1', 'graph.smoother', 'graph.summary'])
+    check('the graph functions are registered', sorted(names), ['graph.bean', 'graph.chisq', 'graph.code', 'graph.density', 'graph.ellipse', 'graph.fbox', 'graph.fit', 'graph.hdr', 'graph.interp', 'graph.kde1', 'graph.smoother', 'graph.summary'])
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
@@ -966,11 +2045,12 @@ async def main():
       const A = rowsWhere(t, r => t.col('grp').values[r] === 'A');
       const ref = mbdRef(A.map(r => cols.map(c => c.values[r])));
       const got = tb[0]._rt.rows.map(q => q.depth);
-      return { tops, n: tb.length, worst: Math.max(...ref.map((v, i) => Math.abs(v - got[i]))), code: rep.pythonScript().includes('for key, g in df.dropna(subset=["grp"]).groupby(["grp"], observed=True)') };
+      const code = rep.codeBlocks().map((d) => d.querySelector('code').textContent);
+      return { tops, n: tb.length, worst: Math.max(...ref.map((v, i) => Math.abs(v - got[i]))), code: ['A', 'B'].map((v) => code.filter((c) => c.includes(`df = df[df["grp"] == "${v}"]`)).length) };
     })()''')
     check('By: a Functional Data Plot for each group', (r['tops'], r['n']), (['Functional Data Plot grp=A', 'Functional Data Plot grp=B'], 2))
     check.near('By: the depths within the group', r['worst'], 0.0, 1e-12)
-    check('By: the Python loops over the groups', r['code'], True)
+    check('By: each group\'s graph has its Python, on the group\'s rows', r['code'], [1, 1])
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('functional: every (i) of its outlines has a topic, every Help link a target', (audit.get('noTopic'), audit.get('brokenMore')), ([], []))
     r = await page.ev('''(async () => {
@@ -1004,6 +2084,97 @@ async def main():
     check('the example: Sun and Genton\'s fences find the heat, cold, front and night days', r['sg'], ['Day 07', 'Day 14', 'Day 24', 'Day 31'])
     check('the example: the HDR boxplot finds a shape outlier the others miss (Day 31) and two magnitude ones', r['hdr'], ['Day 07', 'Day 31', 'Day 42'])
     await page.ev("SM.app.showTab(SM.app.tabOf(_rep))")
+
+    # ---- the Python under each graph draws that graph: each block run in the page's Python, its figure against the Plotly graph
+    for js in (GRAPHS_JS, GB_JS, OTHERS_JS, OPTS_JS):
+        await page.ev(js)
+    check('the seeded table for the code of the graphs', await page.ev(CODE_TABLE), 150)
+    await page.ev('window._rep0 = window._rep; window._rep = window._crep;')   # gbSet and _gb work on _rep
+    for what, zones, els, props, *state in GB_CODE_CASES:
+        tag = f"Graph Builder's code ({what})"
+        state = dict(state[0]) if state else {}
+        excluded = state.pop('excluded', None)   # rows the report leaves out, for this graph
+        if excluded:   # (the report runs again on the included rows)
+            await page.ev(f'rerun(() => _crep.table.setState({json.dumps(excluded)}, "excluded", true))', timeout=300)
+        G = await page.ev(f'''(async () => {{ await gbSet({json.dumps(zones)}, {json.dumps(els)}, {json.dumps(props)}, {json.dumps(state)});
+          return await __gbq(_crep); }})()''', timeout=300)
+        code = G.get('code') if isinstance(G, dict) else None
+        check(f'{tag}: a code block right under the graph, ending in plt.show()', code.rstrip().split('\n')[-1] if code else G, 'plt.show()')
+        if excluded:
+            await page.ev(f'rerun(() => _crep.table.setState({json.dumps(excluded)}, "excluded", false))', timeout=300)
+            check(f'{tag}: the code leaves them out as the report does', f'df = df.drop(index={excluded})   # the rows the report leaves out' in (code or ''), True)
+        if not code:
+            continue
+        out = await page.ev(f'__gr.run({json.dumps(page_probe_more(code, ["inner"]))}, _crep.table)', timeout=300)
+        R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+        check_gb(check, tag, G, R, err)
+    # Packed jitter packs up to 20000 points in a panel; with more the page (and its code) jitters them at random
+    n = await page.ev('''(async () => {
+      const R = SM.util.rng('many packed'); const n = 20001, lv = [], y = [];
+      for (let i = 0; i < n; i++) { lv.push(i % 3 ? 'b' : 'a'); y.push(R.normal(0, 1)); }
+      const t = new SM.Table({ name: 'Many packed', columns: [{ name: 'lv', dataType: 'character', values: lv }, { name: 'y', values: y }] });
+      SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res));
+      window._rep = rep;
+      await gbSet({ x: ['lv'], y: ['y'] }, ['points'], { points: { jitter: 'packed' } });
+      return t.nrows; })()''', timeout=300)
+    G = await page.ev('__gbq(_rep)', timeout=300)
+    # (too many points for the probe's output: the code's figure compared with the page's points in the page's Python)
+    want = sorted([a, b] for t in G['traces'] if t['el'] == 'points' and t['mode'] == 'markers' and not t['overlay'] for a, b in zip(t['x'], t['y']))
+    probe = strip_show(G['code']) + f'''
+import json as _json
+import numpy as _np
+_got = _np.array(sorted(tuple(p) for ax in plt.gcf().axes for c in ax.collections for p in c.get_offsets()))
+_want = _np.array({json.dumps(want)})
+print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.abs(_got - _want))) if _got.shape == _want.shape else None}}))
+'''
+    out = await page.ev(f'__gr.run({json.dumps(probe)}, _rep.table)', timeout=300)
+    text = ''.join(o.get('text', '') for o in (out.get('outputs') or []) if o.get('type') == 'stream') if isinstance(out, dict) else ''
+    got = next((json.loads(q[len('SMUI-POINTS '):]) for q in text.split('\n') if q.startswith('SMUI-POINTS ')), None)
+    check(f"Graph Builder's code: Packed jitter of {n} points, one panel: at random as the page (it packs up to 20000), every point where the page draws it",
+          (got or {}).get('n') == n and (got or {}).get('gap') is not None and got['gap'] < 1e-9, True)
+    await page.ev('(() => { const big = _rep; window._rep = window._crep; SM.app.closeReport(big); SM.app.closeTable(big.table); })()')
+    r = await page.ev('''(() => { const s = _crep.pythonScript(), b = _crep.codeBlocks();
+      return { blocks: b.length, n: _crep.pyCode.length, same: _crep.pyCode[0] === b[0].querySelector('code').textContent, has: s.includes(_crep.pyCode[0]), prints: /\\bprint\\(/.test(s) }; })()''')
+    check("Graph Builder's Save Python Script: the code under the graph, and no block that prints numbers", r, {'blocks': 1, 'n': 1, 'same': True, 'has': True, 'prints': False})
+    await page.ev('window._rep = window._rep0; SM.app.showTab(SM.app.tabOf(_rep));')
+    # the other platforms, on the seeded table of coordinates, IDs and times, then on the curves
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Graph data')))")
+    for pid, roles, opts, later, fn, names in PLAT_CODE_CASES:
+        what = f'{pid} ({"; ".join(f"{k}: {chr(38).join(v)}" for k, v in roles.items())}{"; " + ", ".join(f"{k} {v}" for k, v in {**opts, **later}.items()) if opts or later else ""})'
+        res = await page.ev(open_report_js(pid, roles, opts))
+        if res['errors']:
+            check(f'{what}: opens without errors', res['errors'], [])
+            continue
+        if later:
+            await page.ev(f'__optRun({json.dumps(later)})')
+        graphs = await page.ev('__oq()', timeout=300)
+        for P in graphs:
+            tag = f'{what}: {P["title"]}'
+            check(f'{tag}: a code block right under the graph, ending in plt.show()', P['code'].rstrip().split('\n')[-1] if P['code'] else None, 'plt.show()')
+            if not P['code']:
+                continue
+            out = await page.ev(f'__gr.run({json.dumps(page_probe_more(P["code"], names))}, SM.app.reports[SM.app.reports.length - 1].table)', timeout=300)
+            R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+            fn(check, tag, P, R, err)
+        n = await page.ev('SM.app.reports[SM.app.reports.length - 1].pyCode.length')
+        check(f'{what}: Save Python Script: the graphs\' code, a block each', n, len(graphs))
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'FD test')))")
+    for roles, opts in FD_CODE_CASES:
+        res = await page.ev(open_report_js('functional', roles, opts))
+        check(f'functional {json.dumps(opts)}: opens without errors', res['errors'], [])
+        xs = await page.ev('fdState(SM.app.reports[SM.app.reports.length - 1]).F.x')
+        graphs = await page.ev('__oq()', timeout=300)
+        for k, P in enumerate(graphs):
+            tag = f'functional{f" By grp, graph {k + 1}" if "by" in roles else ""}: {P["title"]}'
+            check(f'{tag}: a code block right under the graph, ending in plt.show()', P['code'].rstrip().split('\n')[-1] if P['code'] else None, 'plt.show()')
+            if not P['code']:
+                continue
+            out = await page.ev(f'__gr.run({json.dumps(page_probe_more(P["code"], []))}, SM.app.reports[SM.app.reports.length - 1].table)', timeout=300)
+            R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+            plat_functional(check, tag, P, R, err, xs)
+    await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
 
     # ---- dark theme and phone width, with Graph Builder
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
