@@ -271,6 +271,7 @@ function createPlotlyChart(path, savedAxisState) {
           traceObj._probYFlat      = yData;
           traceObj._probMaxLen     = timeMatrix.maxLen;
           traceObj._nIter          = timeMatrix.nIter;
+          traceObj._py = pyProbTimeRecipe({ fileKey, path, stride: timeMatrix.maxLen, k: iterIdx, n: iterLen });
           markTraceSource(traceObj, fileKey, dataset);
           traces.push(traceObj);
           continue;  // Skip the regular probabilistic / column-stats path
@@ -355,6 +356,10 @@ function createPlotlyChart(path, savedAxisState) {
           traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
           traceObj._timeData = timeData.slice(0, minLength);
         }
+        traceObj._py = pySeriesRecipe({
+          fileKey, path, timeLength: timeData.length, n: minLength, colStats, probabilistic: isProbabilistic,
+          rawLength: normalizedRawData.length, shapeStride: traceObj._numRealizations || null, sdomInfo, nIter
+        });
         traces.push(traceObj);
       }
     } catch (e) {
@@ -643,7 +648,7 @@ function createMultiDatasetChart(items) {
       if (!isTimeDependent(dataset)) {
         const values = constantValuesOf(dataset, nIter);
         if (values) {
-          constants.push({ at: traces.length, values, nIter, unit: getAttr(dataset, 'unit'),
+          constants.push({ at: traces.length, values, nIter, unit: getAttr(dataset, 'unit'), fileKey, path,
             name: buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys),
             line: lineFor(fileKey, baseColor) });
         }
@@ -752,6 +757,10 @@ function createMultiDatasetChart(items) {
           traceObj._sdomUpper = sdomInfo.upper.slice(0, minLength);
           traceObj._timeData = trimmedTimeData;
         }
+        traceObj._py = pySeriesRecipe({
+          fileKey, path, timeLength: timeData.length, n: minLength, colStats, probabilistic: isProbabilistic,
+          rawLength: normalizedRawData.length, shapeStride: traceObj._numRealizations || null, sdomInfo, nIter
+        });
         traces.push(traceObj);
       }
     } catch (e) {
@@ -764,8 +773,10 @@ function createMultiDatasetChart(items) {
   // log axis, which drops t = 0. It keeps its place in the selection's order.
   if (traces.length > 0 && constants.length > 0) {
     const span = [...new Set(traces.flatMap(t => t.x))].filter(Number.isFinite).sort((a, b) => a - b);
+    const timeSeries = traces.slice();
     for (const c of constants.reverse()) {
       const trace = constantTrace(c, span);
+      trace._py = pyConstantRecipe({ fileKey: c.fileKey, path: c.path, series: timeSeries, n: span.length, nIter: c.nIter });
       if (c.unit !== undefined && c.unit !== null) yAxisUnits.add(c.unit);
       if (trace._isProbabilistic) hasProbabilistic = true;
       if (trace._sdomLower) hasSDOM = true;
@@ -1113,7 +1124,7 @@ function toProbabilisticTimeSlices(rawData, timeData, stride) {
  *
  * @returns {Object|null} null when the dataset holds no readable values
  */
-function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter }) {
+function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter, fileKey }) {
   let yData;
   if (typeof dataset.value !== 'undefined') {
     yData = dataset.value;
@@ -1130,6 +1141,7 @@ function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile,
   let sdomInfo = null;
   let sawProbabilistic = false;
   let sawSDOM = false;
+  let colStats = null;
 
   // ── Probabilistic time: extract the selected iteration's y values ──
   // Y-data layout: flat[t_i * maxLen + k] = y at time step t_i for iteration k.
@@ -1142,7 +1154,7 @@ function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile,
     }
   } else {
     // ── Regular (non prob-time) path ─────────────────────────────────
-    const colStats = getColumnStatisticsSeries(dataset, normalizedRawData, effectiveTimeData);
+    colStats = getColumnStatisticsSeries(dataset, normalizedRawData, effectiveTimeData);
     if (colStats && Array.isArray(colStats.meanSeries)) {
       yArray = colStats.meanSeries;
       if (Array.isArray(colStats.p5Series) && Array.isArray(colStats.p95Series)) {
@@ -1187,6 +1199,16 @@ function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile,
   }
 
   const minLength = Math.min(effectiveTimeData.length, yArray.length);
+  const datasetPath = `${path}/${datasetKey}`;
+  const py = probTimeForFile
+    ? pyProbTimeRecipe({ fileKey, path: datasetPath, stride: probTimeForFile.maxLen, k: probTimeForFile.iterIdx, n: minLength })
+    : pySeriesRecipe({
+      fileKey, path: datasetPath, timeLength: effectiveTimeData.length, n: minLength,
+      colStats,
+      probabilistic: isProbabilistic, rawLength: normalizedRawData.length,
+      shapeStride: isProbabilistic ? getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, datasetPath) : null,
+      sdomInfo, nIter
+    });
   return {
     normalizedRawData,
     minLength,
@@ -1196,7 +1218,8 @@ function computeRadionuclideSeries({ dataset, datasetKey, path, probTimeForFile,
     ciFromColumns,
     sdomInfo,
     sawProbabilistic,
-    sawSDOM
+    sawSDOM,
+    py
   };
 }
 
@@ -1219,6 +1242,19 @@ function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, 
     };
   }
   totalDataByFile[fileKey].dataArrays.push(trimmedYData);
+  if (!totalDataByFile[fileKey].pyParts) totalDataByFile[fileKey].pyParts = [];
+  totalDataByFile[fileKey].pyParts.push({
+    py: series.py,
+    n: trimmedYData.length,
+    gaps: pySeriesHasGaps(series.py),
+    // The realisations it adds to the total's, as toProbabilisticTimeSlices reads them
+    // (a stride of null: none, and it adds nothing to them).
+    real: isProbabilistic ? {
+      file: fileKey, path: `${path}/${datasetKey}`, n: trimmedTimeData.length,
+      stride: resolveStride(normalizedRawData.length, trimmedTimeData.length,
+        getRealizationStride(dataset, normalizedRawData.length, effectiveTimeData.length, `${path}/${datasetKey}`))
+    } : null
+  });
   if (!totalDataByFile[fileKey].unit) totalDataByFile[fileKey].unit = unitAttrOf(dataset);
   if (isProbabilistic) {
     const datasetSlices = toProbabilisticTimeSlices(normalizedRawData, trimmedTimeData,
@@ -1298,6 +1334,7 @@ function buildRadionuclideTrace({ series, dataset, datasetKey, path, fileKey, en
     lineWidth = lineWidth / 2;
   }
   const traceObj = ChartService.timeSeriesTrace({ x: trimmedTimeData, y: trimmedYData, name: traceName, line: { color: lineStyle.color, dash: lineStyle.dash, width: lineWidth }, _datasetKey: datasetKey });
+  traceObj._py = series.py;
   traceObj._isProbabilistic = isProbabilistic || !!ciFromColumns;
   markTraceSource(traceObj, fileKey, dataset);
   if (isProbabilistic) {
@@ -1392,7 +1429,8 @@ function insertTotalTraces(ctx) {
           type: 'scatter',
           _datasetKey: '__total__',
           _fileKey: fileKey,
-          _unit: fileData.unit || ''
+          _unit: fileData.unit || '',
+          _py: pyTotalRecipe({ parts: fileData.pyParts || [], n: timeData.length, nIter: fileData.nIter })
         };
 
         if (fileData.probabilisticSlices) {
@@ -1582,7 +1620,7 @@ async function collectRadionuclideGroup(path, enabledFiles, shared, { selectedIt
             continue;
           }
           const series = computeRadionuclideSeries({
-            dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter
+            dataset, datasetKey, path, probTimeForFile, effectiveTimeData, nIter, fileKey
           });
           if (series) {
             // Both flags are only ever raised, never cleared, so folding the

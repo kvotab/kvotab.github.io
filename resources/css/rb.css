@@ -450,6 +450,94 @@
     .vscode-steps li + li {
       margin-top: 6px;
     }
+    /* The chart's Python button, and its dialog: wide, the code scrolling inside it. */
+    .chart-controls .python-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      font-size: 12.5px;
+      line-height: 1;
+    }
+    .python-dialog {
+      width: 1040px;
+      max-width: 94vw;
+      max-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
+    .python-dialog p code {
+      overflow-wrap: anywhere;
+    }
+    .python-code {
+      --py-syn-k: #8a2c99;      /* keywords */
+      --py-syn-s: #2c7a34;      /* strings */
+      --py-syn-n: #a85400;      /* numbers */
+      --py-syn-c: #7b7b7b;      /* comments */
+      --py-syn-b: #1f5fa8;      /* built-ins */
+      --py-syn-f: #1f5fa8;      /* names being defined */
+      --py-syn-d: #99512b;      /* decorators */
+      flex: 1 1 auto;
+      min-height: 140px;
+      max-height: 64vh;
+      overflow: auto;
+      margin: 0;
+      padding: 10px 0;
+      background: #fcfaf7;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 6px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--color-text-primary);
+      counter-reset: pyline;
+      tab-size: 4;
+    }
+    [data-theme="dark"] .python-code {
+      --py-syn-k: #d596f0;
+      --py-syn-s: #93d493;
+      --py-syn-n: #f2ab62;
+      --py-syn-c: #9a9a9a;
+      --py-syn-b: #86b8ff;
+      --py-syn-f: #86b8ff;
+      --py-syn-d: #e3a676;
+      background: #1c1611;
+    }
+    .python-code:focus-visible {
+      outline: 2px solid var(--color-kvot-accent);
+      outline-offset: 1px;
+    }
+    /* A line a block, its number drawn beside it (not text: a copy leaves it out). */
+    .python-code .ln {
+      display: block;
+      white-space: pre;
+      padding-right: 16px;
+    }
+    .python-code .ln::before {
+      counter-increment: pyline;
+      content: counter(pyline);
+      display: inline-block;
+      width: 3.4em;
+      margin-right: 1.2em;
+      text-align: right;
+      color: var(--color-text-muted);
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .python-code .t-k { color: var(--py-syn-k); }
+    .python-code .t-s { color: var(--py-syn-s); }
+    .python-code .t-n { color: var(--py-syn-n); }
+    .python-code .t-c { color: var(--py-syn-c); font-style: italic; }
+    .python-code .t-b { color: var(--py-syn-b); }
+    .python-code .t-f { color: var(--py-syn-f); font-weight: 600; }
+    .python-code .t-d { color: var(--py-syn-d); }
+    .python-copied {
+      margin-right: auto;
+      align-self: center;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
     .vscode-steps code, .vscode-steps kbd {
       background: var(--color-hover-bg);
       padding: 1px 5px;
@@ -1794,7 +1882,12 @@
       -webkit-mask-image: var(--ico-download);
       mask-image: var(--ico-download);
     }
+    .rb-ico-code {
+      -webkit-mask-image: var(--ico-code);
+      mask-image: var(--ico-code);
+    }
     :root {
+      --ico-code: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 7l-5 5 5 5'/%3E%3Cpath d='M16 7l5 5-5 5'/%3E%3Cpath d='M13.5 5l-3 14'/%3E%3C/svg%3E");
       --ico-folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z'/%3E%3C/svg%3E");
       --ico-download: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v11'/%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3Cpath d='M5 20h14'/%3E%3C/svg%3E");
       --ico-link: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M9.5 13.5a4 4 0 0 0 6 .5l2.5-2.5a4 4 0 0 0-5.7-5.7L11 7.1'/%3E%3Cpath d='M14.5 10.5a4 4 0 0 0-6-.5L6 12.5a4 4 0 0 0 5.7 5.7l1.3-1.3'/%3E%3C/svg%3E");

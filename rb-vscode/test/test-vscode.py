@@ -159,6 +159,17 @@ async def main():
             check('  and Excel too, from the chart\'s button: a workbook with the chart in it',
                   (saved['path'].endswith('.xlsx'), 'xl/charts/chart1.xml' in z.namelist()), (True, True))
         m = vs.mark()
+        # The chart's Python button, and its dialog's Download. (Copy is not tried: in a real VS Code
+        # it would put the script on the clipboard of the machine the test runs on.)
+        want = await page.ev("(async () => { document.querySelector('[data-on-click=openPythonDialog]').click();"
+                             " await new Promise(r => setTimeout(r, 500)); document.getElementById('pythonDownload').click();"
+                             " return pyChartScript(document.getElementById('plotlyChart')).code; })()")
+        saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the script to be saved', since=m)
+        with open(saved['path'], encoding='utf-8') as fh:
+            check('  and the chart as Python, from the Python button\'s dialog: the script it shows',
+                  (saved['path'].endswith('.py'), fh.read() == want), (True, True))
+        await page.ev("closePythonDialog(); true")
+        m = vs.mark()
         await page.ev("exportPresets(); true")
         saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the presets to be saved', since=m)
         with open(saved['path']) as fh:

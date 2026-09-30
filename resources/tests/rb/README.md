@@ -288,8 +288,35 @@ axes, two files, three panels, an overlay on a linear and on a log axis
 whose time starts at 0, and a line with zeros in it on log y. How Excel
 *draws* the workbook is not checked here: it was compared by eye against the
 page when the export was written, before the phases were drawn this way.
+A trace's name is a file's: the export takes it as text in an inert
+`<template>`, and a name holding an `<img onerror>` must come out as its text
+without anything in it running.
 
     python3 test-excel.py
+
+`test-python.py` covers the chart's Python button (`rb-chart-python.js`): a
+matplotlib script that draws the chart on screen, computing each line from the
+HDF5 files as the page computed it (each trace carries its recipe, `_py`, from
+the chart builder or toggle that made it). Each case draws a chart, takes its
+script, and runs it in real Python in a folder holding the files, with
+matplotlib's drawing calls recorded. What it drew must be what the page drew:
+every line point for point (to 1e-9) with its name, colour, width, dash and
+panel; every CI and SEM band's edges and the SEM hatching; the legend, in the
+page's order; each panel's axes, lin or log over the range on screen, their
+titles, and on a log axis the labels, as Plotly writes them; the background's
+phases and the panels' labels; and no line given as its numbers. The file is
+built in the page with h5wasm: realisations with a NaN in one, a table of
+statistics, mean and sigma attributes, constants, a radionuclide group with
+a probabilistic member among deterministic ones (Show Total's bands), a
+second file, and a probabilistic /time. Last, a file named and filled to break
+out of a string literal, a comment or the page (quotes, triple quotes, CR, LF,
+U+2028, a bidirectional override, `$…$`, `<img onerror>`): its script must
+parse with no INJECTED name anywhere in its syntax tree and no file text in a
+comment, and run; the page must not have run anything. Then the dialog:
+the button, the script shown as text in colour, a line a line, Copy and
+Download. Needs h5py, numpy and matplotlib. 149 checks.
+
+    python3 test-python.py
 
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why

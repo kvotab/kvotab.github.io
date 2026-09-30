@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6
+
+* From the site: a chart's *Python* button, among its controls, gives the
+  chart as a matplotlib script that draws it from the HDF5 files, each line
+  computed as the page computes it (a mean over realisations, the CI and SEM
+  bands, Show Total, a realisation), in the page's colours, dashes, legend and
+  axes. *Download* in its dialog saves it through VS Code's Save dialog, and a
+  saved script can be opened from the message that says it was saved.
+* From the site: a dataset whose name has markup in it is only its text in
+  the Excel export (an `<img onerror>` in one ran in the page before), and a
+  group whose name has a line break in it opens in the tree.
+
 ## 0.1.5
 
 * The extension updates itself from kvotab.se. Twice a day (soon after

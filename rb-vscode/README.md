@@ -65,9 +65,10 @@ Marketplace, and does not reach this one; the setting does.
   drop on the edge of a group, which VS Code opens beside it. Several files
   dropped at once go into one browser, also where none is open yet. For a
   browser of its own every time, turn `hdf5Browser.addToOpenBrowser` off.
-* **Save**: *Download CSV*, *Download Excel*, the chart's right-click menu and
-  *Export* in the preset manager open VS Code's Save dialog, starting in the
-  folder of the file.
+* **Save**: *Download CSV*, *Download Excel*, the chart's right-click menu,
+  *Download* in the chart's *Python* dialog and *Export* in the preset manager
+  open VS Code's Save dialog, starting in the folder of the file. A saved
+  script, CSV or JSON can be opened from the message that says it was saved.
 * A file that **changes on disk** — a run that has written new results — is
   read again when it has been left alone for a moment.
 * **Light or dark**: the page follows VS Code's theme as it changes, unless you

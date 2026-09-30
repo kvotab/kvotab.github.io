@@ -899,6 +899,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Close the Python dialog on Escape or overlay click
+  const pythonDialog = document.getElementById('pythonDialog');
+  if (pythonDialog) {
+    pythonDialog.addEventListener('click', (e) => {
+      if (e.target === pythonDialog) closePythonDialog();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && pythonDialog.style.display !== 'none') {
+        e.preventDefault();
+        closePythonDialog();
+      }
+    });
+  }
+
   // Populate chart preset dropdown from localStorage / defaults
   populatePresetDropdown();
 

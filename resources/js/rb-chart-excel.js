@@ -85,11 +85,16 @@ function xlEscape(s) {
  * Plotly titles may carry <sup>, <sub>, <br> and entities; a chart title is
  * text. A no-break space stays one: the page's "Iter. 3" has one, and the
  * name in the workbook is the name in the page's legend.
+ *
+ * Parsed in a <template>, whose content is inert (see kvotSanitizeHtml): a
+ * name is a file's, and a <div> of this document, even one never attached,
+ * fetches an <img> put in it and runs its onerror. It did, with a dataset
+ * named Cs-137<img src="data:," onerror="...">, until 2026-09-30.
  */
 function xlPlainText(s) {
-  const div = document.createElement('div');
-  div.innerHTML = String(s || '').replace(/<br\s*\/?>/gi, ' ');   // parsed, never attached
-  return div.textContent.replace(/[ \t\r\n\f]+/g, ' ').trim();
+  const template = document.createElement('template');
+  template.innerHTML = String(s || '').replace(/<br\s*\/?>/gi, ' ');
+  return template.content.textContent.replace(/[ \t\r\n\f]+/g, ' ').trim();
 }
 
 let _xlColorProbe = null;

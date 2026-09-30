@@ -22,6 +22,10 @@ registerActions({
   loadSelectedSampleData: () => loadSelectedSampleData(),
   openVscodeDialog:       () => openVscodeDialog(),
   closeVscodeDialog:      () => closeVscodeDialog(),
+  openPythonDialog:       () => openPythonDialog(),
+  closePythonDialog:      () => closePythonDialog(),
+  copyPythonCode:         () => copyPythonCode(),
+  downloadPythonCode:     () => downloadPythonCode(),
   cancelTreeRefresh:      () => cancelTreeRefresh(),
 
   /* ── Chart series and overlays ────────────────────────────────────────── */

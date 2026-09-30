@@ -453,6 +453,15 @@ async def main():
                 check('zeros, log:   the line is its two runs either side of the zeros', len(runs), 2)
                 check('zeros, log:   named in the legend once', infos[0]['legend'], ['gap'])
 
+            # A name is a file's: made text in a <template>, whose content is inert. A <div>, even one
+            # never attached, fetched an <img> put in it and ran its onerror (until 2026-09-30).
+            hostile = await page.ev("""(async () => {
+              window.__xlxss = 0;
+              const text = xlPlainText('Cs-137<img src="data:," onerror="window.__xlxss = 1"> <b>(10<sup>-3</sup>)</b>');
+              await new Promise(r => setTimeout(r, 800));
+              return { text, ran: window.__xlxss };
+            })()""")
+            check('a name with markup in it is its text, and nothing in it runs', hostile, {'text': 'Cs-137 (10-3)', 'ran': 0})
             check('no console errors throughout', page.logs[:3], [])
         finally:
             await bws.send(json.dumps({'id': 98, 'method': 'Target.closeTarget',

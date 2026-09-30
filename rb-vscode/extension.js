@@ -192,7 +192,7 @@ function safeFileName(name) {
 
 function saveFilters(name) {
   const ext = path.extname(name).slice(1).toLowerCase();
-  const known = { csv: 'CSV', xlsx: 'Excel workbook', png: 'PNG image', json: 'JSON' };
+  const known = { csv: 'CSV', xlsx: 'Excel workbook', png: 'PNG image', json: 'JSON', py: 'Python script' };
   return known[ext] ? { [known[ext]]: [ext] } : undefined;
 }
 
@@ -441,7 +441,7 @@ class View {
     await vscode.workspace.fs.writeFile(target, bytes);
     this.provider.log.info(`Saved ${target.fsPath} (${formatBytes(bytes.byteLength)})`);
     this.provider.event({ type: 'saved', path: target.fsPath, bytes: bytes.byteLength });
-    const openable = /\.(csv|json)$/i.test(target.path);
+    const openable = /\.(csv|json|py)$/i.test(target.path);
     const choice = await vscode.window.showInformationMessage(`Saved ${path.posix.basename(target.path)}.`, ...(openable ? ['Open'] : []));
     if (choice === 'Open') await vscode.commands.executeCommand('vscode.open', target);
   }

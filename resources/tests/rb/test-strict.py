@@ -52,6 +52,7 @@ PROBES = {
     'rb-chart-presets':  'loadPresets',
     'rb-chart-export':   'downloadChartData',
     'rb-chart-excel':    'downloadChartDataAsExcel',
+    'rb-chart-python':   'pyChartScript',
     'rb-chart-toggles':  'toggleShowTotal',
     'rb-chart':          'backgroundRectShapes',
     'rb-legend':         'toggleDynamicLegend',

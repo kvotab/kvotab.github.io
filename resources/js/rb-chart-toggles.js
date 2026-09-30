@@ -336,6 +336,7 @@ async function toggleShowCI() {
             hoverinfo: 'skip',
             _hiddenFromLegend: true,
             _isCIBand: true,
+            _py: pyDerivedRecipe(trace, 'ci'),
             mode: 'lines',
             name: 'CI Band'
           };
@@ -454,6 +455,7 @@ async function toggleShowSDOM() {
           hoverinfo: 'skip',
           _hiddenFromLegend: true,
           _isSDOMBand: true,
+          _py: pyDerivedRecipe(trace, 'sem'),
           mode: 'lines',
           name: 'SDOM Band'
         });
@@ -483,6 +485,7 @@ async function toggleShowSDOM() {
             _hiddenFromLegend: true,
             _isSDOMBand: true,
             _isSDOMHatch: true,
+            _py: pyDerivedRecipe(trace, 'hatch'),
             name: 'SDOM Hatch'
           });
         }
@@ -548,6 +551,10 @@ function toggleShowIteration() {
         // Keep the trace object in sync so subsequent calls stay correct
         trace.x = x;
         trace.y = y;
+        if (trace._py && trace._py.y) {
+          trace._py = pyProbTimeRecipe({ fileKey: trace._py.y.file, path: trace._py.y.path,
+            stride: trace._probMaxLen, k: iterIdx, n: iterLen });
+        }
 
         xUpdates.push(x);
         yUpdates.push(y);
@@ -602,6 +609,7 @@ function toggleShowIteration() {
       line: { color, width: 1, dash: 'dot' },
       showlegend: true,
       _isIterTrace: true,
+      _py: pyDerivedRecipe(trace, 'iteration', r),
     });
   });
 

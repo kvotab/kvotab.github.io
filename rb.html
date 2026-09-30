@@ -50,7 +50,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260930">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260930b">
 </head>
 <body>
   <div id="dropOverlay">
@@ -122,6 +122,20 @@
       <div class="url-dialog-buttons">
         <button class="url-btn url-btn-cancel" data-on-click="closeVscodeDialog">Close</button>
         <a class="url-btn url-btn-load" id="vscodeDownload" href="./rb-vscode/dist/hdf5-browser.vsix" download style="display:none;"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> Download</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="pythonDialog" class="url-dialog-overlay" style="display:none;">
+    <div class="url-dialog python-dialog" role="dialog" aria-modal="true" aria-labelledby="pythonDialogTitle">
+      <h3 id="pythonDialogTitle"><span class="rb-ico rb-ico-code" aria-hidden="true"></span> Python for this chart</h3>
+      <p id="pythonNote"></p>
+      <pre class="python-code" tabindex="0" aria-label="The Python script"><code id="pythonCode"></code></pre>
+      <div class="url-dialog-buttons">
+        <span id="pythonCopied" class="python-copied" role="status"></span>
+        <button class="url-btn url-btn-cancel" data-on-click="closePythonDialog">Close</button>
+        <button class="url-btn url-btn-cancel" id="pythonCopy" data-on-click="copyPythonCode">Copy</button>
+        <button class="url-btn url-btn-load" id="pythonDownload" data-on-click="downloadPythonCode"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> Download</button>
       </div>
     </div>
   </div>
@@ -218,6 +232,7 @@
             </label>
             <span id="legendStatus" style="font-size: 12px; color: var(--color-text-muted);"></span>
             <span class="preset-bar" style="margin-left: auto; display: inline-flex; align-items: center; gap: 4px;">
+              <button class="python-btn" data-on-click="openPythonDialog" title="Python that draws this chart with matplotlib, from the HDF5 files"><span class="rb-ico rb-ico-code" aria-hidden="true"></span>Python</button>
               <button id="lockAxesBtn" data-on-click="toggleAxesLock" title="Lock current axes settings" class="preset-icon-btn lock-axes-btn"><svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path class="lock-shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></button>
               <select id="presetSelect" data-on-change="applySelectedPreset" title="Chart presets"></select>
               <button data-on-click="saveCurrentAsPreset" title="Save current view as preset" class="preset-icon-btn">＋</button>
@@ -278,6 +293,7 @@
                     <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
                     <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
                     <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
+                    <li><strong>Python</strong>, by the chart's controls, writes the chart as a matplotlib script that draws it from the HDF5 files.</li>
                   </ul>
                 </div>
                 <div class="welcome-section">
@@ -354,11 +370,12 @@
       rb-file     which files are loaded, enabled and in what order
       rb-tabs     the file tab strip
       rb-tree     tree building, lazy expansion, intersect and union
-      rb-chart-*  charting, split across six files that must load in this
+      rb-chart-*  charting, split across seven files that must load in this
                   order: -axes (line styles, scales, axes lock), -presets,
                   -export (CSV), -excel (the chart as an Excel workbook),
-                  -toggles (the checkboxes and the background overlay), then
-                  rb-chart itself (the three chart builders)
+                  -python (the chart as a matplotlib script), -toggles (the
+                  checkboxes and the background overlay), then rb-chart
+                  itself (the three chart builders)
       rb-legend   dynamic legend
       rb-info     the dataset information panel
       rb-search   tree filtering
@@ -383,14 +400,14 @@
     through bare global names - 66 of them, 58 in characterise.py alone - so the
     conversion would break the whole safety net at the moment it was most
     needed, and keeping it working would mean re-exporting most of the surface
-    onto window anyway. The split of rb-chart.js into six files below gets the
-    navigability without that trade; those six must load in the order shown,
+    onto window anyway. The split of rb-chart.js into seven files below gets the
+    navigability without that trade; those seven must load in the order shown,
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20260921"></script>
-  <script src="./resources/js/rb-state.js?v=20260926"></script>
-  <script src="./resources/js/rb-utils.js?v=20260927"></script>
-  <script src="./resources/js/rb-actions.js?v=20260930"></script>
+  <script src="./resources/js/rb-state.js?v=20260930"></script>
+  <script src="./resources/js/rb-utils.js?v=20260930"></script>
+  <script src="./resources/js/rb-actions.js?v=20260930b"></script>
   <script src="./resources/js/rb-hdf5.js?v=20260928"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
   <script src="./resources/js/rb-file.js?v=20260926"></script>
@@ -399,15 +416,16 @@
   <script src="./resources/js/rb-chart-axes.js?v=20260928"></script>
   <script src="./resources/js/rb-chart-presets.js?v=20260927"></script>
   <script src="./resources/js/rb-chart-export.js?v=20260927"></script>
-  <script src="./resources/js/rb-chart-excel.js?v=20260928"></script>
-  <script src="./resources/js/rb-chart-toggles.js?v=20260927"></script>
-  <script src="./resources/js/rb-chart.js?v=20260927"></script>
+  <script src="./resources/js/rb-chart-excel.js?v=20260930"></script>
+  <script src="./resources/js/rb-chart-python.js?v=20260930"></script>
+  <script src="./resources/js/rb-chart-toggles.js?v=20260930"></script>
+  <script src="./resources/js/rb-chart.js?v=20260930"></script>
   <script src="./resources/js/rb-legend.js?v=20260926"></script>
   <script src="./resources/js/rb-info.js?v=20260926"></script>
   <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20260930"></script>
+  <script src="./resources/js/rb-init.js?v=20260930b"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20260921"></script>
 </body>

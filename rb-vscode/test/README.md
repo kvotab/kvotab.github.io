@@ -59,7 +59,7 @@ the page's inventory before anything is loaded, and all expected:
 | Field | Why |
 |---|---|
 | `dom.inventory/controlIds` | the site's map and navigation are not built in; VS Code adds `_defaultStyles` and `_vscodeApiScript` |
-| `dom.inventory/inputs` | 47 to 42: the URL, Sample Data and VS Code buttons and the site's navigation and footer controls are not built in, and the light/dark toggle is added |
+| `dom.inventory/inputs` | 51 to 46: the URL, Sample Data and VS Code buttons and the site's navigation and footer controls are not built in, and the light/dark toggle is added |
 | `dom.inventory/treePlaceholder`, `hiddenAtStart`, `chartControlLabels` | a view exists only once a file is in it, so the inventory is taken with sample-a.h5 loaded |
 | `_extension_log` | a field only this walk has: what the pages reported to the extension (empty) |
 
@@ -70,14 +70,15 @@ README names differ (`load.two.files/lazy` and the two `memfs` counts).
 ## test-vscode.py: what only the extension does
 
 Opening whole and lazily, past 2 GiB, compressed both ways, empty, dropped
-into the page; Save through VS Code; Add Files; the preset dialog; the header
+into the page; Save through VS Code (CSV, Excel, the Python button's script,
+presets); Add Files; the preset dialog; the header
 (no logo or name, every tab standing on its line, Add Files and the toggle at
 the right, measured in px); VS Code's theme, and the light/dark toggle, kept in
 `hdf5Browser.theme` and followed by every view; Open Together, same-named
 files from two folders, a file rewritten on disk; the channel refusing
 what the page was not given; and, last, the files rebuilt under the running
 extension (as a .vsix of the same version installed over it does), after
-which a new view must say to reload the window. 41 checks.
+which a new view must say to reload the window. 42 checks.
 
     python3 rb-vscode/test/test-vscode.py
 

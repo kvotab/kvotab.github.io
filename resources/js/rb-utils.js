@@ -243,12 +243,17 @@ const _probedFiles = new WeakSet();
 */
 
 /**
- * Escape a string for use inside a double-quoted CSS attribute value.
+ * Escape a string for use inside a double-quoted CSS attribute value. A line
+ * break ends a CSS string, so \n, \r and \f go in as hex escapes (\a and so
+ * on, closed by a space): a group named with a line break in it, which HDF5
+ * allows, made every selector for its row invalid, and the tree could not
+ * open it (found 2026-09-30).
+ *
  * @param {string} value
  * @returns {string}
  */
 function cssAttrValue(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return String(value).replace(/[\\"\n\r\f]/g, c => (c === '\\' || c === '"' ? `\\${c}` : `\\${c.charCodeAt(0).toString(16)} `));
 }
 
 /**
@@ -791,6 +796,19 @@ function parseColumnsAttribute(columnsAttr) {
  * @returns {Array<number|null>|null}
  */
 function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
+  const found = extractColumnSeriesAt(rawData, timeLength, columnIndex, columnCount);
+  return found ? found.series : null;
+}
+
+/**
+ * extractColumnSeries, saying which of the layouts it found the column in:
+ * 'row' (flat[t * columnCount + c]), 'col' (flat[c * timeLength + t]), or
+ * 'nestedRow' / 'nestedCol' for data that came as arrays of arrays. The
+ * Python a chart gives (rb-chart-python.js) reads the column the same way.
+ *
+ * @returns {{series: Array<number|null>, layout: string}|null}
+ */
+function extractColumnSeriesAt(rawData, timeLength, columnIndex, columnCount) {
   if (!Array.isArray(rawData) || timeLength <= 0 || columnIndex < 0 || columnCount <= 0) return null;
 
   const toCleanSeries = (arr) => {
@@ -809,13 +827,13 @@ function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
       .slice(0, timeLength)
       .map(row => Array.isArray(row) ? row[columnIndex] : null);
     const rowMajorClean = toCleanSeries(rowMajor);
-    if (rowMajorClean) return rowMajorClean;
+    if (rowMajorClean) return { series: rowMajorClean, layout: 'nestedRow' };
 
     // Column-major nested data: [column][time]
     if (rawData.length > columnIndex && Array.isArray(rawData[columnIndex])) {
       const colMajor = rawData[columnIndex].slice(0, timeLength);
       const colMajorClean = toCleanSeries(colMajor);
-      if (colMajorClean) return colMajorClean;
+      if (colMajorClean) return { series: colMajorClean, layout: 'nestedCol' };
     }
     return null;
   }
@@ -828,14 +846,15 @@ function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
     flatRowMajor.push(rawData[t * columnCount + columnIndex]);
   }
   const rowMajorClean = toCleanSeries(flatRowMajor);
-  if (rowMajorClean) return rowMajorClean;
+  if (rowMajorClean) return { series: rowMajorClean, layout: 'row' };
 
   // Flat column-major: [c0t0, c0t1, ..., c1t0, ...]
   const flatColMajor = [];
   for (let t = 0; t < timeLength; t++) {
     flatColMajor.push(rawData[columnIndex * timeLength + t]);
   }
-  return toCleanSeries(flatColMajor);
+  const colMajorClean = toCleanSeries(flatColMajor);
+  return colMajorClean ? { series: colMajorClean, layout: 'col' } : null;
 }
 
 /**
@@ -845,7 +864,11 @@ function extractColumnSeries(rawData, timeLength, columnIndex, columnCount) {
  * @param {Object} dataset
  * @param {Array} rawData
  * @param {Array} timeData
- * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null, sigmaSeries: Array<number|null>|null}|null}
+ * `columns` says where each series was found, for the Python a chart gives
+ * (rb-chart-python.js): the column count and, per statistic, its index and
+ * layout (extractColumnSeriesAt), or null.
+ *
+ * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null, sigmaSeries: Array<number|null>|null, columns: Object}|null}
  */
 function getColumnStatisticsSeries(dataset, rawData, timeData) {
   const columns = parseColumnsAttribute(getAttr(dataset, 'columns'));
@@ -859,14 +882,23 @@ function getColumnStatisticsSeries(dataset, rawData, timeData) {
   const p95Index = normalized.findIndex(c => c === '95%' || c === 'p95' || c === 'q95');
   const sigmaIndex = normalized.findIndex(c => c === 'sigma' || c === 'stddev' || c === 'standarddeviation');
 
-  const meanSeries = extractColumnSeries(rawData, timeData.length, meanIndex, columns.length);
-  if (!meanSeries) return null;
+  const at = (index) => {
+    const found = index >= 0 ? extractColumnSeriesAt(rawData, timeData.length, index, columns.length) : null;
+    return found ? { series: found.series, where: { index, layout: found.layout } } : { series: null, where: null };
+  };
+  const mean = at(meanIndex);
+  if (!mean.series) return null;
+  const p5 = at(p5Index);
+  const p95 = at(p95Index);
+  const sigma = at(sigmaIndex);
 
-  const p5Series = p5Index >= 0 ? extractColumnSeries(rawData, timeData.length, p5Index, columns.length) : null;
-  const p95Series = p95Index >= 0 ? extractColumnSeries(rawData, timeData.length, p95Index, columns.length) : null;
-  const sigmaSeries = sigmaIndex >= 0 ? extractColumnSeries(rawData, timeData.length, sigmaIndex, columns.length) : null;
-
-  return { meanSeries, p5Series, p95Series, sigmaSeries };
+  return {
+    meanSeries: mean.series,
+    p5Series: p5.series,
+    p95Series: p95.series,
+    sigmaSeries: sigma.series,
+    columns: { count: columns.length, mean: mean.where, p5: p5.where, p95: p95.where, sigma: sigma.where }
+  };
 }
 
 /**
