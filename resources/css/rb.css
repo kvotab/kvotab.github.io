@@ -430,6 +430,34 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
+    /* The VS Code dialog's Download is a link (the browser saves the file), drawn as the button beside it. */
+    a.url-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+    .vscode-release {
+      font-weight: 600;
+    }
+    .vscode-steps {
+      margin: 0 0 4px;
+      padding-left: 20px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--color-text-secondary);
+    }
+    .vscode-steps li + li {
+      margin-top: 6px;
+    }
+    .vscode-steps code, .vscode-steps kbd {
+      background: var(--color-hover-bg);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11.5px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
 
     .sample-data-list {
       max-height: 300px;
@@ -1762,8 +1790,13 @@
       -webkit-mask-image: var(--ico-link);
       mask-image: var(--ico-link);
     }
+    .rb-ico-download {
+      -webkit-mask-image: var(--ico-download);
+      mask-image: var(--ico-download);
+    }
     :root {
       --ico-folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z'/%3E%3C/svg%3E");
+      --ico-download: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v11'/%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3Cpath d='M5 20h14'/%3E%3C/svg%3E");
       --ico-link: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M9.5 13.5a4 4 0 0 0 6 .5l2.5-2.5a4 4 0 0 0-5.7-5.7L11 7.1'/%3E%3Cpath d='M14.5 10.5a4 4 0 0 0-6-.5L6 12.5a4 4 0 0 0 5.7 5.7l1.3-1.3'/%3E%3C/svg%3E");
     }
 
@@ -1846,7 +1879,8 @@
        --color-kvot-background (#352921) as text colour are nearly invisible
        on dark surfaces. Override them with high-contrast earthy alternatives.
        ========================================================================== */
-    [data-theme="dark"] .panel h3 {
+    [data-theme="dark"] .panel h3,
+    [data-theme="dark"] .url-dialog h3 {
       color: var(--color-kvot-bright);
     }
 

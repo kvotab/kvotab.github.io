@@ -38,7 +38,7 @@ the page's inventory before anything is loaded, and all expected:
 | Field | Why |
 |---|---|
 | `dom.inventory/controlIds` | the site's map and navigation are not built in; VS Code adds `_defaultStyles` and `_vscodeApiScript` |
-| `dom.inventory/inputs` | 45 to 41: the URL and Sample Data buttons and the site's navigation and footer controls are not built in, and the light/dark toggle is added |
+| `dom.inventory/inputs` | 47 to 42: the URL, Sample Data and VS Code buttons and the site's navigation and footer controls are not built in, and the light/dark toggle is added |
 | `dom.inventory/treePlaceholder`, `hiddenAtStart`, `chartControlLabels` | a view exists only once a file is in it, so the inventory is taken with sample-a.h5 loaded |
 | `_extension_log` | a field only this walk has: what the pages reported to the extension (empty) |
 

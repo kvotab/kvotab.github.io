@@ -20,6 +20,8 @@ registerActions({
   openSampleDataDialog:   () => openSampleDataDialog(),
   closeSampleDataDialog:  () => closeSampleDataDialog(),
   loadSelectedSampleData: () => loadSelectedSampleData(),
+  openVscodeDialog:       () => openVscodeDialog(),
+  closeVscodeDialog:      () => closeVscodeDialog(),
   cancelTreeRefresh:      () => cancelTreeRefresh(),
 
   /* ── Chart series and overlays ────────────────────────────────────────── */

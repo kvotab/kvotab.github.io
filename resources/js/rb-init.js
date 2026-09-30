@@ -744,6 +744,65 @@ function closeSampleDataDialog() {
   if (dialog) dialog.style.display = 'none';
 }
 
+// ── VS Code extension dialog ────────────────────────────────────────
+
+/** Where rb-vscode/release.mjs puts the latest package of the extension, and what it says of it. */
+const VSCODE_RELEASE_DIR = './rb-vscode/dist/';
+
+/**
+ * Open the dialog that hands out the VS Code extension. What is on offer is
+ * read from rb-vscode/dist/latest.json each time, so a release needs no
+ * change to the page. A note that is not there means nothing is published,
+ * which is said as that; anything else that goes wrong is reported.
+ */
+async function openVscodeDialog() {
+  const dialog = document.getElementById('vscodeDialog');
+  if (!dialog) return;
+  const release = document.getElementById('vscodeRelease');
+  const errorEl = document.getElementById('vscodeError');
+  const link = document.getElementById('vscodeDownload');
+  const cli = document.getElementById('vscodeCli');
+  errorEl.style.display = 'none';
+  errorEl.textContent = '';
+  link.style.display = 'none';
+  release.textContent = 'Looking for the latest version…';
+  dialog.style.display = '';
+  try {
+    const resp = await fetch(VSCODE_RELEASE_DIR + 'latest.json', { cache: 'no-cache' });
+    if (resp.status === 404) {
+      release.textContent = 'No version of the extension is published at the moment.';
+      return;
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const latest = await resp.json();
+    const version = String((latest && latest.version) || '');
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('the release note names no version');
+    // Saved under a name that says the version; the query keeps a cached older copy from being handed out.
+    const saveAs = `hdf5-browser-${version}.vsix`;
+    link.href = `${VSCODE_RELEASE_DIR}hdf5-browser.vsix?v=${version}`;
+    link.setAttribute('download', saveAs);
+    link.style.display = '';
+    cli.textContent = `code --install-extension ${saveAs}`;
+    const parts = [`Version ${version}`];
+    if (Number(latest.bytes) > 0) parts.push(`${(Number(latest.bytes) / 1048576).toFixed(1)} MB`);
+    const released = latest.released ? new Date(latest.released) : null;
+    if (released && !isNaN(released)) parts.push(`released ${released.toISOString().slice(0, 10)}`);
+    const needs = /^\^?(\d+\.\d+)/.exec(String(latest.vscode || ''));
+    if (needs) parts.push(`for VS Code ${needs[1]} or later`);
+    release.textContent = parts.join(', ');
+  } catch (err) {
+    release.textContent = '';
+    errorEl.textContent = 'Could not find the latest version: ' + err.message;
+    errorEl.style.display = '';
+  }
+}
+
+/** Close the VS Code extension dialog. */
+function closeVscodeDialog() {
+  const dialog = document.getElementById('vscodeDialog');
+  if (dialog) dialog.style.display = 'none';
+}
+
 /** Load the files the user checked in the sample-data dialog. */
 async function loadSelectedSampleData() {
   const listEl  = document.getElementById('sampleDataList');
@@ -822,6 +881,20 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.key === 'Escape' && sdDialog.style.display !== 'none') {
         e.preventDefault();
         closeSampleDataDialog();
+      }
+    });
+  }
+
+  // Close the VS Code extension dialog on Escape or overlay click
+  const vscodeDialog = document.getElementById('vscodeDialog');
+  if (vscodeDialog) {
+    vscodeDialog.addEventListener('click', (e) => {
+      if (e.target === vscodeDialog) closeVscodeDialog();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && vscodeDialog.style.display !== 'none') {
+        e.preventDefault();
+        closeVscodeDialog();
       }
     });
   }

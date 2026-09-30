@@ -136,7 +136,8 @@ async def main():
           theme: document.documentElement.getAttribute('data-theme'),
           workers: Object.keys(window.KVOT_VSCODE_WORKER_SOURCES).sort()
         }))()""")
-        check('the header has Add Files and no URL or Sample Data', 'Add Files' in s['buttons'] and not any('URL' in b or 'Sample' in b for b in s['buttons']))
+        check('the header has Add Files and no URL, Sample Data or VS Code (the site\'s download of this extension)',
+              'Add Files' in s['buttons'] and not any('URL' in b or 'Sample' in b or 'VS Code' in b for b in s['buttons']))
         check('the page is drawn in VS Code\'s theme (dark)', s['theme'], 'dark')
         await page.ev("(async () => { await expandAndLoadPath('sample-a.h5', %s); findTreeItem(%s, { extra: '.group' }).click();"
                       " await new Promise(r => setTimeout(r, 3500)); return true; })()" % (json.dumps(GROUP), json.dumps(GROUP)))

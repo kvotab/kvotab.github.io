@@ -50,7 +50,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260924">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20260930">
 </head>
 <body>
   <div id="dropOverlay">
@@ -62,7 +62,7 @@
   <input id="fileInput" type="file" accept=".h5,.hdf5,.he5" multiple />
 
   <!-- ======================================================================
-       Modal dialogs. All three share the .url-dialog-overlay / .url-dialog
+       Modal dialogs. All four share the .url-dialog-overlay / .url-dialog
        structure and are hidden until their open* action runs.
        ====================================================================== -->
 
@@ -99,6 +99,29 @@
       <div class="url-dialog-buttons">
         <button class="url-btn url-btn-cancel" data-on-click="closeSampleDataDialog">Cancel</button>
         <button class="url-btn url-btn-load" id="sampleDataLoadBtn" data-on-click="loadSelectedSampleData">Load Selected</button>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    The VS Code extension (rb-vscode/): the package rb-vscode/release.mjs
+    puts in rb-vscode/dist, which latest.json there describes. openVscodeDialog
+    in rb-init.js reads it, so the page needs no change for a new version.
+  -->
+  <div id="vscodeDialog" class="url-dialog-overlay" style="display:none;">
+    <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="vscodeDialogTitle">
+      <h3 id="vscodeDialogTitle"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> HDF5 Browser for VS Code</h3>
+      <p>This browser as an extension for Visual Studio Code: <code>.h5</code>, <code>.hdf5</code> and <code>.he5</code> files open in it as an editor, with everything this page does, and a file of any size is read a piece at a time.</p>
+      <p id="vscodeRelease" class="vscode-release">Looking for the latest version…</p>
+      <div id="vscodeError" class="url-error" style="display:none;"></div>
+      <ol class="vscode-steps">
+        <li>Download the extension with the button below.</li>
+        <li>In VS Code, open the Extensions view (<kbd>⇧⌘X</kbd>, or <kbd>Ctrl+Shift+X</kbd>), choose <em>Install from VSIX…</em> in its <em>…</em> menu and pick the file. Or, in a terminal: <code id="vscodeCli">code --install-extension hdf5-browser.vsix</code></li>
+        <li>Reload the window when VS Code asks. A newer version installs the same way, over the one you have.</li>
+      </ol>
+      <div class="url-dialog-buttons">
+        <button class="url-btn url-btn-cancel" data-on-click="closeVscodeDialog">Close</button>
+        <a class="url-btn url-btn-load" id="vscodeDownload" href="./rb-vscode/dist/hdf5-browser.vsix" download style="display:none;"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> Download</a>
       </div>
     </div>
   </div>
@@ -301,6 +324,7 @@
         <button class="add-file-btn" data-on-click="openFilePicker">Add Files</button>
         <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL"><span class="rb-ico rb-ico-link" aria-hidden="true"></span> URL</button>
         <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Sample Data</button>
+        <button class="add-file-btn" data-on-click="openVscodeDialog" title="The HDF5 Browser as an extension for VS Code"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> VS Code</button>
       </div>`;
 
     KVOT.renderHeader('HDF5 Browser', fileToolbar);
@@ -366,7 +390,7 @@
   <script src="./resources/js/pdf-sampler.js?v=20260921"></script>
   <script src="./resources/js/rb-state.js?v=20260926"></script>
   <script src="./resources/js/rb-utils.js?v=20260927"></script>
-  <script src="./resources/js/rb-actions.js?v=20260926"></script>
+  <script src="./resources/js/rb-actions.js?v=20260930"></script>
   <script src="./resources/js/rb-hdf5.js?v=20260928"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
   <script src="./resources/js/rb-file.js?v=20260926"></script>
@@ -383,7 +407,7 @@
   <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20260927"></script>
+  <script src="./resources/js/rb-init.js?v=20260930"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20260921"></script>
 </body>

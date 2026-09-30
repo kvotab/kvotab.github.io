@@ -1,6 +1,8 @@
 # What the packaged extension leaves out: sources of the build, the tests,
 # and what they download.
 build.mjs
+release.mjs
+dist/**
 test/**
 .cache/**
 .vscode-test/**

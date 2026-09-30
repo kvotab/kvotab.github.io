@@ -11,6 +11,16 @@ search, and export to CSV and Excel.
 It is the same page, not a copy of it: the build takes the site's own scripts,
 so the extension shows what kvotab.se shows.
 
+## Installing
+
+Download the latest version from the **VS Code** button on
+[kvotab.se/rb.html](https://kvotab.se/rb.html): the file is
+`hdf5-browser-<version>.vsix`. In VS Code, open the Extensions view
+(<kbd>⇧⌘X</kbd>, or <kbd>Ctrl+Shift+X</kbd>), choose *Install from VSIX…* in
+its *…* menu and pick the file; or, in a terminal,
+`code --install-extension hdf5-browser-<version>.vsix`. Reload the window when
+VS Code asks. A newer version installs the same way, over the one you have.
+
 ## Using it
 
 * **Open a file**: double-click it in the Explorer. If another extension also
@@ -97,5 +107,19 @@ Install the `.vsix` with *Extensions: Install from VSIX…*. `build.mjs` checks
 every bundled library against the hash the site pins, and refuses to build
 when rb.html has changed in a way it does not expect. The tests are described
 in `test/README.md`.
+
+## Releasing
+
+    # bump "version" in package.json (and add it to CHANGELOG.md), then
+    node release.mjs         # build.mjs, vsce package, and dist/
+
+`release.mjs` puts the package in `dist/hdf5-browser.vsix`, the one file name
+the site links to, with `dist/latest.json` saying which version it is, how
+big and its SHA-256. Commit `dist/` and push: the VS Code button on rb.html
+reads `latest.json` when its dialog opens, so the page needs no change. A
+version is released once (`--force` to replace one): a second build of the
+same version installed over the first leaves VS Code running the old code over
+the new files until the window is reloaded. The package is committed, so each
+release adds its size (about 4.5 MB) to the repository's history.
 
 Licences of the bundled libraries: `THIRD-PARTY-NOTICES.md`.

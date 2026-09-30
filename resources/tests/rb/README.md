@@ -249,6 +249,18 @@ along the way, answers the question by replacing `rbAskConfirm`.
 
     python3 test-ask.py
 
+`test-extension.py` covers the VS Code button, which hands out the HDF5
+Browser extension. `rb-vscode/release.mjs` puts the package in
+`rb-vscode/dist/hdf5-browser.vsix` with `latest.json` beside it, and the
+dialog reads that note each time it opens: with none it says nothing is
+published and offers no Download; with one it gives the version, size, date
+and the VS Code needed, and Download fetches this version's copy (`?v=`) under
+a name with the version in it; a broken note is reported. The note is stubbed
+as test-sample.py stubs its manifest, and what is really in `rb-vscode/dist`,
+if anything, must be the size and hash its note says.
+
+    python3 test-extension.py
+
 `test-excel.py` covers the chart's Excel export (`rb-chart-excel.js`), which
 writes the chart as the page draws it over a Data sheet of what it is drawn
 from. It catches the workbook instead of downloading it and reads it back with
