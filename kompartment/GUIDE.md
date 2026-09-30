@@ -5967,7 +5967,9 @@ removes nearly all the probability, a geometric standard deviation of 1.05
 where 5 was meant. The curve is redrawn as you type. A log-scaled kind gets a
 logarithmic axis with a tick per decade, because a log-triangular over five
 decades drawn on a linear axis is a spike beside a flat line and tells you
-nothing.
+nothing. On that axis the height is the density of the logarithm, so a
+log-normal is a symmetric bell centred on its median, a log-triangular is a
+triangle peaking at its most likely value, and a log-uniform is flat.
 
 Eleven shapes: the nine the corpus uses, and skbrnt's two double triangulars:
 

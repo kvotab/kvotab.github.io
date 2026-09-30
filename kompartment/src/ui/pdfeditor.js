@@ -13,7 +13,8 @@
  * all instantly visible and otherwise invisible. So the curve is drawn as the
  * numbers are typed, on the same grid the distribution lives on: a
  * log-scaled kind gets a log x-axis, because a log-triangular over five
- * decades drawn arithmetically is a spike against a flat line.
+ * decades drawn arithmetically is a spike against a flat line -- and on that
+ * axis the density of ln x, so a log-normal is the bell it is in ln x.
  *
  * What it does not do is sample anything. A run here is deterministic and
  * uses the value beside the distribution; this stores, shows and edits what a
@@ -105,7 +106,14 @@ function paint(canvas, spec) {
 		return;
 	}
 
-	const { xs, ys, log, bars } = curve;
+	// On a log axis the height is x·f(x), the density per unit of ln x, so the
+	// area between two ticks is the probability between them as it is on a
+	// linear one. f(x) itself peaks at the mode of x and leans left of the
+	// body the axis shows: a log-normal through P5 = 1 and P95 = 10 would peak
+	// at 1.9 instead of at its median 3.2, and a log-triangular would not be
+	// the triangle in ln x that it is.
+	const { xs, log, bars } = curve;
+	const ys = log ? curve.ys.map((y, i) => y * xs[i]) : curve.ys;
 	const lo = xs[0];
 	const hi = xs[xs.length - 1];
 	const peak = Math.max(...ys, Number.MIN_VALUE);
