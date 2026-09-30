@@ -485,6 +485,23 @@ footer .theme-toggle {
    transform: translateY(-50%);
 }
 
+/* A phone. The footer is one line tall, and at 390px its text did not fit:
+   the end of it wrapped onto a second line below the bottom of the screen,
+   where only pulling the page up could show it, and the theme switch sat on
+   the last icon. The street address gives way (the map button beside it
+   still shows where the office is), the line never wraps, and the switch
+   keeps a strip of its own at the right. */
+@media (max-width: 560px) {
+   .footer-address { display: none; }
+   .footer-content { box-sizing: border-box; padding-right: 38px; }
+   .footer-center { white-space: nowrap; }
+}
+/* Narrower still (the first iPhone SE), the name goes too: the logo in the
+   header carries it. */
+@media (max-width: 359px) {
+   .footer-name { display: none; }
+}
+
 .content {
   position: absolute;
   top: var(--header-height);

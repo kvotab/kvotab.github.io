@@ -337,11 +337,11 @@ const KVOT = (() => {
     footer.innerHTML = `
     <div class="footer-content">
       <span class="footer-center">
-        kvot ab |
+        <span class="footer-name">kvot ab |</span>
         <button type="button" class="icon-btn" data-on-click="kvot:toggleMap" aria-label="Show or hide the office map">
           ${svgIcon('0 0 32 32', ICON_ADDRESS, { title: 'address' })}
         </button>
-        valhallagatan 16 &bull; 753 34 &bull; uppsala |
+        <span class="footer-address">valhallagatan 16 &bull; 753 34 &bull; uppsala</span> |
         <a href="tel:0733822313">${svgIcon('0 0 512 512', ICON_PHONE, { title: 'phone' })}</a>
         <a href="mailto:pa@kvotab.se">${svgIcon('0 0 512 512', ICON_MAIL, { title: 'mail' })}</a>
         <a href="https://linkedin.com/in/per-anders-ekstrom" target="_blank" rel="noopener noreferrer">${svgIcon('0 0 448 512', ICON_LINKEDIN, { title: 'linkedin' })}</a>

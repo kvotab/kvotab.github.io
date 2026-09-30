@@ -27,7 +27,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930b">
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930c">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body class="wk-body">
@@ -224,19 +224,24 @@
         <div class="wk-pile-n" id="wk-pile-ova-n">0</div>
         <div class="wk-pile-label">Öva mer</div>
       </div>
-      <div class="wk-deck" id="wk-deck">
-        <div class="wk-card" id="wk-card" data-side="front">
-          <div class="wk-face wk-front" id="wk-front"><div class="wk-paper">
-            <div class="wk-band" id="wk-band-front"></div>
-            <div class="wk-eq" id="wk-eq"></div>
-            <div class="wk-note" id="wk-note"></div>
-            <div class="wk-timer" id="wk-timer" aria-hidden="true"><span></span></div>
-          </div></div>
-          <div class="wk-face wk-back" id="wk-back" aria-hidden="true"><div class="wk-paper">
-            <div class="wk-band" id="wk-band-back"></div>
-            <div class="wk-eq" id="wk-eq-back"></div>
-            <div class="wk-verdict" id="wk-verdict"></div>
-          </div></div>
+      <div class="wk-deckbox">
+        <div class="wk-deck" id="wk-deck">
+          <!-- the cards under the one asked: what shows while it turns -->
+          <div class="wk-under" aria-hidden="true"></div>
+          <div class="wk-under" aria-hidden="true"></div>
+          <div class="wk-card" id="wk-card" data-side="front">
+            <div class="wk-face wk-front" id="wk-front"><div class="wk-paper">
+              <div class="wk-band" id="wk-band-front"></div>
+              <div class="wk-eq" id="wk-eq"></div>
+              <div class="wk-note" id="wk-note"></div>
+              <div class="wk-timer" id="wk-timer" aria-hidden="true"><span></span></div>
+            </div></div>
+            <div class="wk-face wk-back" id="wk-back" aria-hidden="true"><div class="wk-paper">
+              <div class="wk-band" id="wk-band-back"></div>
+              <div class="wk-eq" id="wk-eq-back"></div>
+              <div class="wk-verdict" id="wk-verdict"></div>
+            </div></div>
+          </div>
         </div>
       </div>
       <div class="wk-pile" data-pile="kan" id="wk-pile-kan">
@@ -276,9 +281,9 @@
 <script src="./resources/js/kvot-safe.js?v=20260911"></script>
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-<script src="./resources/js/site.js?v=20260930"></script>
+<script src="./resources/js/site.js?v=20260930b"></script>
 <script src="./resources/js/winnetkakort-sets.js?v=20260930b"></script>
-<script src="./resources/js/winnetkakort.js?v=20260930b"></script>
+<script src="./resources/js/winnetkakort.js?v=20260930c"></script>
 <script>
   KVOT.renderHeader('Winnetkakort');
   KVOT.renderNav('winnetkakort.html');

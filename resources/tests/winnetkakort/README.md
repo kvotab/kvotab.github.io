@@ -42,7 +42,7 @@ too:
 
     python3 resources/tests/winnetkakort/test-ui.py
 
-It exits 0 when all 132 checks pass and takes about a minute and a half. With
+It exits 0 when all 152 checks pass and takes about two minutes. With
 `WK_SHOTS=<folder>` it also saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -77,13 +77,26 @@ What it plays:
   the footer's. A reload keeps the full window, applied in the page's head
   before first paint. The button in the practice bar brings the chrome back
   without stopping the round.
-- **Phones never show the header and footer,** and have no button. Sizes
-  checked, all with touch emulation so the key pad appears by itself: 390 ×
-  760 upright, 844 × 390 on its side, and the iPhone SE (375 × 667) both
-  ways. At each size the card and the key pad fit with nothing to scroll,
-  the card's sum is on one line, and with the hint open the pad stays in
-  sight and the card does not move. A tablet (820 × 1180) keeps the chrome
-  and the button.
+- **Phones never show the header and footer,** and have no button. The
+  sizes are what a page really gets once the browser's own bars have taken
+  their share, all with touch emulation so the key pad appears by itself:
+  - an iPhone 13 in Safari, 390 × 664 upright and 844 × 340 on its side;
+  - an iPhone SE, 375 × 548 upright and 667 × 325 on its side;
+  - a small Android phone in Chrome, 360 × 560.
+
+  At each size:
+  - no tap can zoom the page: its fields are 16 px (an iPhone zooms into
+    anything smaller and stays zoomed), and a double tap does nothing;
+  - the page itself cannot move: the document is pinned, and the content
+    scrolls up and down only, without carrying on into the page;
+  - the card and the key pad fit with nothing to scroll either way, the
+    card at 3:2 and at least 150 px tall, its sum on one line;
+  - with the hint open all of that still holds, and the card is at most
+    30 % smaller.
+
+  A tablet (820 × 1180) keeps the chrome and the button.
+- **The cards under the one asked:** two, of opaque paper with the pile's
+  band (what shows while the card turns), their band level with the card's.
 - **Dark theme and reduced motion.**
 
 The page exposes `WK.inspect()` for this test: the current round, the

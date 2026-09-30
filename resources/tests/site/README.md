@@ -960,3 +960,22 @@ The theme is driven through `KVOT.toggleTheme`, not by setting the attribute:
 the toggle is what a visitor has, and it is what fires the event the layers
 listen for. Which theme a page opens in depends on the host's system setting,
 so the helper toggles only when it has to rather than assuming light.
+
+## test-chrome-footer-phone.py
+
+The site footer on a phone: one line, and all of it on the screen. It is one
+line tall, and at 390px its text did not fit. The end wrapped onto a second
+line below the bottom of the screen, where only pulling the page up could
+show it, and the theme switch sat on the last icon. Below 560px the street
+address gives way; the map button beside it still shows where the office is.
+Below 360px the name goes too, since the header's logo carries it. The line
+never wraps, and the switch keeps a strip of its own.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-footer-phone.py
+
+The ports default to 8765 and 9222. It covers the landing page, rdc.html
+(the longest footer, with two icons of its own) and a page in Swedish, at
+widths from 390 down to 320. At each one the footer must be a single line,
+wholly on the screen, not running off the sides, with the switch clear of
+the last icon and the map button kept. At 1400 the address is still there.
+There are 45 checks.

@@ -158,18 +158,35 @@ CHROME = """JSON.stringify((() => {
 FIT = """JSON.stringify((() => {
   const b = id => document.getElementById(id).getBoundingClientRect();
   const pad = document.getElementById('wk-numpad');
+  const s = document.getElementById('wk-scroll');
+  const d = b('wk-deck');
   const middle = e => { const r = e.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2 / 6); };
-  return { vh: innerHeight, deck: Math.round(b('wk-deck').bottom), deckTop: Math.round(b('wk-deck').top),
+  return { vh: innerHeight, deck: Math.round(d.bottom), deckTop: Math.round(d.top), deckH: Math.round(d.height),
+           ratio: Math.round(d.width / d.height * 100) / 100,
            pad: pad.hidden ? null : Math.round(b('wk-numpad').bottom),
-           scroll: document.getElementById('wk-scroll').scrollHeight,
+           scroll: s.scrollHeight, sideways: s.scrollWidth - s.clientWidth,
            scrollX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
            oneLine: new Set([...document.getElementById('wk-eq').children].map(middle)).size === 1,
            barRows: new Set([...document.querySelector('.wk-bar').children].filter(e => e.checkVisibility()).map(middle)).size };
 })())"""
 
-# Upright and on their side; the last two are an iPhone SE, the smallest in use.
-PHONES = [(390, 760, 'phone upright'), (844, 390, 'phone on its side'),
-          (375, 667, 'iPhone SE upright'), (667, 375, 'iPhone SE on its side')]
+# What a page gets on a phone once the browser's own bars have taken their
+# share: an iPhone 13 in Safari upright and on its side, an iPhone SE (the
+# smallest iPhone in use) both ways, and a small Android phone in Chrome.
+PHONES = [(390, 664, 'iPhone upright'), (844, 340, 'iPhone on its side'),
+          (375, 548, 'iPhone SE upright'), (667, 325, 'iPhone SE on its side'),
+          (360, 560, 'small Android upright')]
+
+# Whether a tap can zoom the page, and whether the page itself can move.
+STILL = """JSON.stringify((() => {
+  const css = e => getComputedStyle(e);
+  const fields = [...document.querySelectorAll('#wk-home select, #wk-home input[type=text]')];
+  return { smallest: Math.min(...fields.map(f => parseFloat(css(f).fontSize))),
+           touch: css(document.documentElement).touchAction,
+           html: css(document.documentElement).overflow, body: css(document.body).position,
+           overscroll: [css(document.documentElement).overscrollBehaviorY, css(document.getElementById('wk-scroll')).overscrollBehaviorY],
+           sideways: css(document.getElementById('wk-scroll')).overflowX };
+})())"""
 
 
 async def rnd(page):
@@ -219,6 +236,7 @@ async def choose(page, *ids):
 async def start(page):
     await page.ev("document.getElementById('wk-start').click()")
     await phase(page, 'answer')
+    await asyncio.sleep(0.3)  # past the card's fade-in, which scales it while it runs
 
 
 async def setting(page, name, value):
@@ -271,6 +289,17 @@ async def run(page):
           await page.ev("[document.getElementById('wk-back').getAttribute('aria-hidden'), document.getElementById('wk-front').getAttribute('aria-hidden')]"),
           ['true', 'false'])
     check('the practice view says where we are', await page.ev("document.getElementById('wk-round-count').textContent"), 'Kort 1 av 10')
+    under = json.loads(await page.ev("""JSON.stringify([...document.querySelectorAll('#wk-deck > .wk-under')].map(u => {
+      const paper = getComputedStyle(u, '::before');
+      return [getComputedStyle(u).opacity, paper.backgroundImage.startsWith('linear-gradient'), u.getAttribute('aria-hidden')];
+    }))"""))
+    check('under the card, two cards of the pile: opaque paper with its band, what shows while the card turns',
+          under, [['1', True, 'true'], ['1', True, 'true']])
+    bands = json.loads(await page.ev("""JSON.stringify((() => {
+      const stops = getComputedStyle(document.querySelector('#wk-deck > .wk-under'), '::before').backgroundImage.match(/[\\d.]+px/g) || [];
+      return [parseFloat(getComputedStyle(document.getElementById('wk-band-front')).height), parseFloat(stops[stops.length - 1])];
+    })())"""))
+    check('the card’s band lines up with theirs', abs(bands[0] - bands[1]) < 0.5 and 24 <= bands[0] <= 34, True)
     await page.shot('practice.png')
     after = await play_card(page, advance=False)
     check('a quick right answer goes to Kan', [after['kan'], after['ova']], [1, 0])
@@ -659,18 +688,26 @@ async def run(page):
         check(f'{name}: no site header, footer or menu, and no full-window button either',
               [chrome[k] for k in ('header', 'footer', 'menu', 'full', 'top', 'fills')], [False, False, False, False, 0, True])
         check(f'{name}: the kvot mark, the title and the theme switch instead', [chrome['brand'], chrome['theme']], [True, True])
-        check(f'{name}: no horizontal scroll on the home view', await page.ev("document.documentElement.scrollWidth - document.documentElement.clientWidth"), 0)
+        still = json.loads(await page.ev(STILL))
+        check(f'{name}: no tap can zoom the page (fields 16px, no double-tap zoom), and the page itself cannot move',
+              [still['smallest'] >= 16, still['touch'], still['html'], still['body'], still['overscroll'], still['sideways']],
+              [True, 'manipulation', 'hidden', 'fixed', ['none', 'contain'], 'hidden'])
+        check(f'{name}: no horizontal scroll on the home view',
+              await page.ev("[document.documentElement.scrollWidth - document.documentElement.clientWidth, (s => s.scrollWidth - s.clientWidth)(document.getElementById('wk-scroll'))]"),
+              [0, 0])
         await choose(page, 't8')
         await start(page)
         fit = json.loads(await page.ev(FIT))
         check(f'{name}: the key pad comes by itself on a touch screen', fit['pad'] is not None, True)
-        check(f'{name}: the card and the key pad fit, with nothing to scroll',
-              [fit['deck'] <= fit['vh'], fit['pad'] <= fit['vh'], fit['scroll'] <= fit['vh'], fit['scrollX']], [True, True, True, 0])
+        check(f'{name}: the card and the key pad fit the screen, with nothing to scroll either way',
+              [fit['deck'] <= fit['vh'], fit['pad'] <= fit['vh'], fit['scroll'] <= fit['vh'], fit['sideways'], fit['scrollX']], [True, True, True, 0, 0])
+        check(f'{name}: the card is 3:2 and of a good size', [fit['ratio'], fit['deckH'] >= 150], [1.5, True])
         check(f'{name}: the card’s sum is on one line, and the bar over it one row', [fit['oneLine'], fit['barRows']], [True, 1])
         await page.ev("document.querySelector('[data-on-click=\"wk:hint\"]').click()")
         hinted = json.loads(await page.ev(FIT))
-        check(f'{name}: with the hint open the key pad is still in sight, and the card has not moved',
-              [hinted['pad'] <= hinted['vh'], hinted['scroll'] <= hinted['vh'], hinted['deckTop'] == fit['deckTop']], [True, True, True])
+        check(f'{name}: with the hint open the card and the pad still fit, the card at most a little smaller',
+              [hinted['pad'] <= hinted['vh'], hinted['scroll'] <= hinted['vh'], hinted['sideways'], hinted['ratio'], hinted['oneLine'],
+               fit['deckH'] * 0.7 <= hinted['deckH'] <= fit['deckH']], [True, True, 0, 1.5, True, True])
         await page.shot(f"{name.replace(' ', '-').replace('’', '')}.png")
         await play_card(page, advance=False)
         check(f'{name}: and it answers', (await rnd(page))['phase'], 'feedback')

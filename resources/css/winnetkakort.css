@@ -35,6 +35,8 @@
   --wk-dot-a: #b35d4e;
   --wk-dot-b: #3d6fa5;
   --wk-cut: 16px;
+  /* resolved on the card, against the deck container: 34px on a desktop card */
+  --wk-band-h: clamp(24px, 7cqi, 34px);
 }
 
 [data-theme="dark"] .wk-body {
@@ -59,19 +61,29 @@
   --wk-dot-b: #8db7e6;
 }
 
-/* kvot.css sizes .content between the header and the footer; this page
-   scrolls inside it. */
+/* The page never scrolls as a whole: kvot.css sizes .content between the
+   header and the footer, and this page scrolls inside it. So the document is
+   pinned. On a phone it can then neither be dragged about nor bounce, and a
+   double tap does not zoom it (pinching still does). */
+html { overflow: hidden; overscroll-behavior: none; touch-action: manipulation; }
+body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; }
+
+/* Up and down only, and a scroll that reaches the end stays here rather
+   than moving the page. */
 .wk-scroll {
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   font-family: verdana, sans-serif;
 }
 
 .wk {
+  --wk-pad-top: 22px;
   box-sizing: border-box;
   max-width: 1040px;
   margin: 0 auto;
-  padding: 22px 20px 0;
+  padding: var(--wk-pad-top) 20px 0;
   line-height: 1.5;
 }
 
@@ -175,8 +187,10 @@
 
 .wk-who { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .wk-who label { font-size: .9rem; color: var(--text-secondary); }
+/* 16px, not less: tapping a smaller field makes an iPhone zoom the page in,
+   and leave it zoomed. */
 .wk-who select, .wk-newperson input {
-  font: inherit; font-size: .95rem; min-height: 42px; box-sizing: border-box;
+  font: inherit; font-size: 1rem; min-height: 42px; box-sizing: border-box;
   padding: 6px 10px; border: 1px solid var(--input-border); border-radius: 8px;
 }
 .wk-newperson { display: inline-flex; flex-wrap: wrap; gap: 8px; }
@@ -361,20 +375,35 @@
   margin-top: 6px;
 }
 
-/* A container, so the numbers on the card are sized by the card itself. */
+/* The deck is a container, so the numbers on the card are sized by the card
+   itself. Its box is only there for the phone layouts, where the card is
+   sized by the room it has (see "Phones"). */
+.wk-deckbox { width: 100%; }
 .wk-deck { position: relative; width: 100%; aspect-ratio: 3 / 2; perspective: 1400px; outline: none; container-type: inline-size; }
-/* The cards under the one being asked. */
-.wk-deck::before, .wk-deck::after {
+
+/* A Winnetka card is cut at the corners: every card here has this shape,
+   the one asked and the ones under it. --k is the size of the cut. The
+   outer shape is the edge colour and the paper sits 1.5px inside it, so the
+   cut edges are outlined too. */
+.wk-face, .wk-paper, .wk-under, .wk-under::before {
+  clip-path: polygon(var(--k) 0, calc(100% - var(--k)) 0, 100% var(--k), 100% calc(100% - var(--k)),
+    calc(100% - var(--k)) 100%, var(--k) 100%, 0 calc(100% - var(--k)), 0 var(--k));
+}
+.wk-face, .wk-under { --k: var(--wk-cut); background: var(--wk-edge); }
+.wk-paper, .wk-under::before { --k: calc(var(--wk-cut) - 0.6px); }
+
+/* The two cards under the one asked: paper with the pile's band, as the next
+   cards in a real pile. They are what shows while the card turns - edge on,
+   halfway, it shows nothing itself - and when it goes to a pile. */
+.wk-under { position: absolute; inset: 0; transform: translate(var(--o), var(--o)); }
+.wk-under:nth-child(1) { --o: 8px; --wk-under-paper: var(--wk-paper-back); }
+.wk-under:nth-child(2) { --o: 4px; --wk-under-paper: var(--wk-paper); }
+.wk-under::before {
   content: '';
   position: absolute;
-  inset: 0;
-  background: var(--wk-edge);
-  clip-path: polygon(var(--wk-cut) 0, calc(100% - var(--wk-cut)) 0, 100% var(--wk-cut), 100% calc(100% - var(--wk-cut)),
-    calc(100% - var(--wk-cut)) 100%, var(--wk-cut) 100%, 0 calc(100% - var(--wk-cut)), 0 var(--wk-cut));
-  opacity: .45;
+  inset: 1.5px;
+  background: linear-gradient(var(--wk-c) 0 var(--wk-band-h), var(--wk-under-paper) var(--wk-band-h));
 }
-.wk-deck::before { transform: translate(8px, 8px); opacity: .25; }
-.wk-deck::after { transform: translate(4px, 4px); }
 
 .wk-card {
   position: absolute;
@@ -386,31 +415,37 @@
 .wk-card[data-side="back"] { transform: rotateY(180deg); }
 .wk-card.wk-still { transition: none; }
 
-/* A Winnetka card is cut at the corners. The face is the edge colour and the
-   paper sits 1.5px inside it, so the cut edges are outlined too. */
 .wk-face {
   position: absolute;
   inset: 0;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  background: var(--wk-edge);
-  clip-path: polygon(var(--wk-cut) 0, calc(100% - var(--wk-cut)) 0, 100% var(--wk-cut), 100% calc(100% - var(--wk-cut)),
-    calc(100% - var(--wk-cut)) 100%, var(--wk-cut) 100%, 0 calc(100% - var(--wk-cut)), 0 var(--wk-cut));
 }
 .wk-back { transform: rotateY(180deg); }
 .wk-paper {
-  --c: calc(var(--wk-cut) - 0.6px);
   position: absolute;
   inset: 1.5px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   background: var(--wk-paper);
-  clip-path: polygon(var(--c) 0, calc(100% - var(--c)) 0, 100% var(--c), 100% calc(100% - var(--c)),
-    calc(100% - var(--c)) 100%, var(--c) 100%, 0 calc(100% - var(--c)), 0 var(--c));
 }
 .wk-back .wk-paper { background: var(--wk-paper-back); }
-.wk-band { padding: 7px 28px; text-align: center; font-size: .85rem; background: var(--wk-c); color: var(--text-primary); }
+/* One height for the band on the card and on the cards under it, which is
+   what makes them line up: in cqi, so a small card has a narrower band. */
+.wk-band {
+  flex: none;
+  height: var(--wk-band-h);
+  padding: 0 28px;
+  overflow: hidden;
+  font-size: .85rem;
+  line-height: var(--wk-band-h);
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--wk-c);
+  color: var(--text-primary);
+}
 
 .wk-eq {
   flex: 1 1 auto;
@@ -420,7 +455,7 @@
   justify-content: center;
   gap: .28em;
   padding: 0 18px;
-  font-size: clamp(1.4rem, 10.5cqi, 3.3rem);
+  font-size: clamp(1rem, 10.5cqi, 3.3rem);
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
@@ -562,78 +597,107 @@
 /* ── Phones ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 680px) {
-  .wk { padding: 14px 16px 0; }
+  .wk { --wk-pad-top: 14px; padding-left: 16px; padding-right: 16px; }
   .wk-top .wk-who { order: 2; flex-basis: 100%; }
   .wk-selbar { margin: 20px -16px 0; padding: 8px 16px; }
   .wk-tiles { grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 12px 12px; }
-  .wk-stage { grid-template-columns: 1fr 1fr; grid-template-areas: "deck deck" "ova kan"; gap: 10px 12px; }
-  .wk-deck { grid-area: deck; aspect-ratio: 16 / 10; }
+  .wk-cell { width: 28px; height: 27px; font-size: .68rem; }
+  .wk-grid { border-spacing: 2px; }
+  .wk-grid th { font-size: .68rem; padding: 0 2px; }
+
+  /* The practice view is the screen, exactly. The bar, the piles, the
+     buttons and the key pad take what they need and the card gets the rest,
+     so nothing is ever out of sight and there is nothing to scroll. An open
+     hint makes the card smaller, rather than pushing the pad off the
+     screen. */
+  .wk-practice {
+    box-sizing: border-box;
+    height: calc(100vh - var(--header-height) - var(--footer-height) - var(--wk-pad-top));
+    height: calc(100dvh - var(--header-height) - var(--footer-height) - var(--wk-pad-top));
+    gap: 8px;
+    padding-bottom: 12px;
+  }
+  .wk-bar { flex: none; flex-wrap: nowrap; }
+  .wk-bar-title { font-size: 1.05rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wk-bar-meta { flex-direction: column; align-items: flex-end; gap: 0; font-size: .8rem; line-height: 1.3; }
+  .wk-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "deck deck" "ova kan";
+    gap: 8px 12px;
+    margin-top: 0;
+  }
+  .wk-deckbox { grid-area: deck; }
   #wk-pile-ova { grid-area: ova; }
   #wk-pile-kan { grid-area: kan; }
   .wk-pile { flex-direction: row; justify-content: center; gap: 8px; }
   .wk-pile-stack { width: 42px; height: 30px; }
   .wk-pile-n { font-size: 1.3rem; }
-  .wk-practice { gap: 10px; padding-bottom: 12px; }
-  .wk-bar { flex-wrap: nowrap; }
-  .wk-bar-title { font-size: 1.05rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wk-bar-meta { flex-direction: column; align-items: flex-end; gap: 0; font-size: .8rem; line-height: 1.3; }
   .wk-numpad button { min-height: 48px; }
-  .wk-cell { width: 28px; height: 27px; font-size: .68rem; }
-  .wk-grid { border-spacing: 2px; }
-  .wk-grid th { font-size: .68rem; padding: 0 2px; }
 }
 
-/* A short phone, an iPhone SE upright: the card a little flatter and the
-   keys a little lower, so the pad and an open hint both fit. */
+/* A short phone, an iPhone SE upright: keys a little lower, and the hint
+   tighter, so the card keeps a good size while the hint is open too. */
 @media (max-width: 680px) and (max-height: 700px) {
-  .wk-deck { aspect-ratio: 16 / 9; }
-  .wk-numpad button { min-height: 42px; }
-  .wk-side:has(.wk-numpad:not([hidden])) .wk-hint .wk-pic { max-height: 64px; }
+  .wk-numpad button { min-height: 44px; }
+  .wk-side:has(.wk-numpad:not([hidden])) .wk-hint { padding: 6px 10px; }
+  .wk-side:has(.wk-numpad:not([hidden])) .wk-hint-text { margin-bottom: 4px; font-size: .85rem; }
+  .wk-side:has(.wk-numpad:not([hidden])) .wk-hint .wk-pic { max-height: 56px; }
+}
+
+/* The card on a phone, either way up: as large as its box allows, at 3:2.
+   The box is a size container, so 100cqw is its width and 150cqh one and a
+   half times its height. */
+@media (max-width: 680px), (max-height: 520px) and (orientation: landscape) {
+  .wk-deckbox { align-self: stretch; min-height: 0; display: grid; place-items: center; container-type: size; }
+  .wk-deck { width: min(100cqw, 150cqh); }
 }
 
 /* ── Phones on their side ─────────────────────────────────────────────── */
 
 /* Height is what is short. The card goes on the left, as large as the
    height allows, and what answers it - the feedback, the buttons, the hint
-   and the key pad - in a column on the right. After the phone rules above,
-   which a small phone on its side matches too, so these win. */
+   and the key pad - in a column on the right, the pad taking what the
+   others leave. After the phone rules above, which a small phone on its
+   side matches too, so these win. */
 @media (max-height: 520px) and (orientation: landscape) {
-  .wk { padding-top: 10px; }
+  .wk { --wk-pad-top: 10px; }
   .wk-practice {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(220px, 34%);
     grid-template-areas: "bar bar" "stage side";
-    grid-template-rows: auto 1fr;
-    align-items: start;
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: stretch;
+    box-sizing: border-box;
+    height: calc(100vh - var(--header-height) - var(--footer-height) - var(--wk-pad-top));
+    height: calc(100dvh - var(--header-height) - var(--footer-height) - var(--wk-pad-top));
     gap: 8px 20px;
-    padding-bottom: 12px;
+    padding-bottom: 10px;
   }
   .wk-bar { grid-area: bar; }
   .wk-stage {
     grid-area: stage;
     grid-template-columns: 56px minmax(0, 1fr) 56px;
+    grid-template-rows: minmax(0, 1fr);
     grid-template-areas: none;
     gap: 10px;
+    min-height: 0;
     margin-top: 0;
   }
-  .wk-deck, #wk-pile-ova, #wk-pile-kan { grid-area: auto; }
-  /* 3:2, and no taller than the room under the bar. */
-  .wk-deck {
-    aspect-ratio: 3 / 2;
-    justify-self: center;
-    max-width: calc((100dvh - var(--header-height) - var(--footer-height) - 96px) * 1.5);
-  }
+  .wk-deckbox, #wk-pile-ova, #wk-pile-kan { grid-area: auto; }
   .wk-pile { flex-direction: column; gap: 2px; }
   .wk-pile-stack { width: 52px; height: 36px; }
   .wk-pile-n { font-size: 1.2rem; }
   .wk-pile-label { font-size: .75rem; }
-  .wk-side { grid-area: side; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+  .wk-side { grid-area: side; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; min-height: 0; }
   .wk-feedback { font-size: .9rem; }
   .wk-hint { width: 100%; padding: 6px 10px; }
   .wk-hint-text { margin-bottom: 4px; font-size: .85rem; }
-  .wk-side .wk-hint .wk-pic, .wk-side:has(.wk-numpad:not([hidden])) .wk-hint .wk-pic { max-height: 64px; }
-  .wk-numpad { width: 100%; gap: 6px; }
-  .wk-numpad button { min-height: 38px; font-size: 1.2rem; }
+  .wk-side .wk-hint .wk-pic, .wk-side:has(.wk-numpad:not([hidden])) .wk-hint .wk-pic { max-height: 48px; }
+  .wk-numpad { width: 100%; flex: 1 1 auto; min-height: 0; max-height: 236px; gap: 6px; grid-auto-rows: minmax(28px, 1fr); }
+  .wk-numpad button { min-height: 0; font-size: 1.2rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -654,7 +718,8 @@
 
 @media print {
   @page { size: A4 portrait; margin: 10mm; }
-  body.wk-body { background: #fff; overflow: visible; }
+  html { overflow: visible; }
+  body.wk-body { position: static; background: #fff; overflow: visible; }
   body.wk-body > *:not(#wk-print) { display: none !important; }
   #wk-print { display: block; }
   .wk-sheet { break-after: page; }

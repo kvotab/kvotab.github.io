@@ -1082,6 +1082,13 @@ const WK = (() => {
       $('wk-deck').tabIndex = -1;
       for (const pile of ['kan', 'ova']) $(`wk-pile-${pile}`).setAttribute('data-on-click', 'wk:pile');
       document.addEventListener('keydown', onKey);
+      /* The page never scrolls as a whole (winnetkakort.css pins it), but an
+         iPhone can leave it shifted once its keyboard has closed: put it
+         back when no field is being typed in any more. */
+      document.addEventListener('focusout', () => setTimeout(() => {
+        const field = document.activeElement;
+        if (!field || !/^(INPUT|SELECT|TEXTAREA)$/.test(field.tagName)) window.scrollTo(0, 0);
+      }, 100));
       fullState();
       showView('home');
     } catch (e) {
