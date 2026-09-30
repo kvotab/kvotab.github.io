@@ -193,3 +193,4 @@
 .sm-script:hover, .sm-script:focus-visible { background: var(--sm-sel-bg); outline: none; }
 .sm-script .sm-scriptrun { flex: none; color: var(--sm-ord); }
 .sm-script .sm-scriptname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-script .sm-scriptkind { flex: none; padding: 0 4px; border: 1px solid var(--border-color); border-radius: 3px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }

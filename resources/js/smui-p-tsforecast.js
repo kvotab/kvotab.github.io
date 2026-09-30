@@ -202,7 +202,8 @@
   }
 
   /* Save Results: a table of every series' actual values, one-step-ahead
-     predictions and forecasts with their limits, stacked, with a Set column. */
+     predictions (a missing value's too, wherever the model gives one) and
+     forecasts with their limits, stacked, with a Set column. */
   function saveResults(ctx, R, only = null) {
     const list = (only || R.series).filter((s) => !s.error && s.forecast);
     if (!list.length) { SM.ui.toast('No series with forecasts to save'); return; }

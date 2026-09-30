@@ -251,7 +251,7 @@
       if (!p || !p.drawn) return;
       const idx = [], ys = [];
       for (const k of ['lower', 'upper', 'resid', 'curve']) if (tr.at[k] != null) { idx.push(tr.at[k]); ys.push(nt.traces[nt.at[k]].y); }
-      try { Plotly.restyle(box, { y: ys }, idx); } catch (e) { console.warn('SM: restyle failed', e); }
+      try { SM.report.restyle(box, { y: ys }, idx); } catch (e) { console.warn('SM: restyle failed', e); }
       if (tr.at.resid != null && p.base[tr.at.resid]) p.base[tr.at.resid].y = nt.traces[nt.at.resid].y.slice();
     };
     const preview = async () => {

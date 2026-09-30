@@ -31,10 +31,12 @@ What comes across: the columns' names and values, numbers (floats and 1,
 variable width, compressed or not, pooled), dates and date-times (as the
 page's dates), times of day and durations (as seconds), currencies and
 geographic coordinates (as numbers), fixed decimals (as the format).
-What does not: the modeling types, which the format keeps where no reader
-has found them (numbers come in continuous, text nominal, as from a CSV
-file); value orders and labels, formulas (their values come), column
-properties, table scripts; row-state columns are left out.
+And the table's scripts, as their JSL text (see _scripts: found in files
+of JMP 18, not in JMPReader.jl). What does not: the modeling types, which
+the format keeps where no reader has found them (numbers come in
+continuous, text nominal, as from a CSV file); value orders and labels,
+formulas (their values come), column properties; row-state columns are
+left out.
 """
 import re
 import struct
@@ -105,12 +107,112 @@ def _metadata(r):
     m = re.search(r'Version (.*)$', build)
     if not m:
         raise ValueError('could not tell which JMP wrote the file')
+    after_build = r.p
     n_visible, n_hidden = _seek_to_column_index(r, ncols)
     r.skip(4 * (n_visible + n_hidden))               # the visible and hidden columns
     r.skip(2 * ncols)                                # display widths
     r.skip(4 * 7)
     names, offsets = _column_info(r, ncols)
-    return {'nrows': nrows, 'ncols': ncols, 'names': names, 'offsets': offsets, 'version': m.group(1).strip(), 'charset': charset}
+    return {'nrows': nrows, 'ncols': ncols, 'names': names, 'offsets': offsets, 'version': m.group(1).strip(), 'charset': charset,
+            'header': (after_build, min(offsets) if offsets else len(r.b))}
+
+
+# ---- the table's scripts ----------------------------------------------------
+# JMP 18 keeps them in the header, after the build string, as one block:
+#   03 00, its length (8 bytes), the number of scripts (2 bytes), and each
+#   script as a kind byte (03), its length (4 bytes) and its JSL text, the
+#   script's name applied to its body: Source(Open("...", ...)).
+# That was read from the files JMP 18.2 wrote for JMPReader.jl's tests (a
+# Source script each); the format is not published, so the block is taken
+# only when every length adds up exactly and every text is a JSL call.
+_SCRIPT_BLOCK = b'\x03\x00'
+_MAX_SCRIPT = 1 << 20
+
+
+def _script_name(text):
+    """(name, body) of a script's text Name(body), or None. The name may be
+    written plain (Source, Distribution of height), as Name("...") or as
+    "..."n."""
+    t = text.strip()
+    if not t.endswith(')'):
+        return None
+    if t.startswith('"') or t.startswith('Name('):
+        q = t.index('"')
+        i, out = q + 1, []
+        while i < len(t) and t[i] != '"':
+            if t.startswith('\\!"', i) or t.startswith('\\"', i):
+                out.append('"')
+                i += 3 if t[i + 1] == '!' else 2
+                continue
+            out.append(t[i])
+            i += 1
+        if i >= len(t):
+            return None
+        rest = t[i + 1:].lstrip()
+        if t.startswith('Name('):
+            if not rest.startswith(')'):
+                return None
+            rest = rest[1:].lstrip()
+        elif rest.startswith('n'):
+            rest = rest[1:].lstrip()
+        else:
+            return None
+        name = ''.join(out)
+    else:
+        k = t.find('(')
+        if k <= 0:
+            return None
+        name, rest = t[:k].strip(), t[k:]
+        if not name or '"' in name or ')' in name:
+            return None
+    if not rest.startswith('('):
+        return None
+    body = rest[1:-1].strip()
+    name = ' '.join(name.split())
+    return (name, body) if name and body else None
+
+
+def _scripts(b, start, end):
+    """The table's scripts as [{name, jsl}] (empty when there are none, or
+    when what looks like their block does not read cleanly)."""
+    i = b.find(_SCRIPT_BLOCK, start, end)
+    while 0 <= i < end:
+        got = _script_block(b, i, end)
+        if got is not None:
+            return got
+        i = b.find(_SCRIPT_BLOCK, i + 1, end)
+    return []
+
+
+def _script_block(b, i, end):
+    if i + 12 > end:
+        return None
+    size = struct.unpack_from('<q', b, i + 2)[0]
+    at = i + 10
+    if size < 2 or at + size > end:
+        return None
+    count = struct.unpack_from('<H', b, at)[0]
+    if not 1 <= count <= 1000:
+        return None
+    p, stop, out = at + 2, at + size, []
+    for _ in range(count):
+        if p + 5 > stop:
+            return None
+        kind = b[p]
+        n = struct.unpack_from('<I', b, p + 1)[0]
+        p += 5
+        if kind != 0x03 or n < 3 or n > _MAX_SCRIPT or p + n > stop:
+            return None
+        try:
+            text = b[p:p + n].decode('utf-8')
+        except UnicodeDecodeError:
+            return None
+        p += n
+        named = _script_name(text)
+        if named is None:
+            return None
+        out.append({'name': named[0], 'jsl': named[1]})
+    return out if p == stop else None
 
 
 def _seek_to_column_index(r, ncols):
@@ -292,10 +394,13 @@ def read(name, data):
             if note.startswith('not read'):
                 unread.append(cname)
         cols.append(c)
+    scripts = _scripts(b, *info['header'])
     notes = [f'Read from a JMP {info["version"]} data table.',
              'Modeling types are not kept in a form this page can read: numbers came in continuous and text nominal; change them in the Columns panel where JMP had them otherwise.']
     if skipped:
         notes.append(f'Row-state columns left out: {", ".join(skipped)}.')
     if unread:
         notes.append(f'Columns of a kind the reader does not know (all missing): {", ".join(unread)}.')
-    return {'name': name.rsplit('.', 1)[0], 'columns': cols, 'note': ' '.join(notes), 'rows': int(info['nrows'])}
+    if scripts:
+        notes.append(f'Its table script{"s" if len(scripts) > 1 else ""} ({", ".join(s["name"] for s in scripts)}) came as JSL: the Table panel lists them, and a click runs the analyses they launch here.')
+    return {'name': name.rsplit('.', 1)[0], 'columns': cols, 'note': ' '.join(notes), 'rows': int(info['nrows']), 'scripts': scripts}

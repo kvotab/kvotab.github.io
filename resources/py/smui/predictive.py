@@ -973,8 +973,8 @@ def equal_fpr_cut(y, p, w, target):
 
 
 @api('predict.groups')
-def group_metrics(table, group, at, actual, prob, sets=None, w=None, cut=0.5, cuts=None, equal='none', reference=None, set_name=None,
-                  levels=None, target=1, adjust=None, head=None, table_name='data'):
+def group_metrics(table, group, at, actual, prob=None, sets=None, w=None, cut=0.5, cuts=None, equal='none', reference=None, set_name=None,
+                  levels=None, target=1, adjust=None, head=None, models=None, table_name='data'):
     """Group Metrics (beyond JMP; a fairness audit, as Shmueli et al. show one): a two-level classifier's measures
     within each group of a column that need not be a factor, on the rows of one set, and each measure's difference
     and ratio to a reference group.
@@ -985,18 +985,21 @@ def group_metrics(table, group, at, actual, prob, sets=None, w=None, cut=0.5, cu
       cut       the common threshold; cuts: {group: threshold} typed per group; equal 'fpr': each group's threshold
                 solved so that its false positive rate is nearest the reference group's at the common threshold;
       adjust    {'a', 'b'}: the probabilities rescaled to a true event rate, p a / (p a + (1 - p) b);
-      head      the code of the model (as predictive.threshold's), for the code of the result."""
+      head      the code of the model (as predictive.threshold's), for the code of the result;
+      models    several models audited alike in place of prob (Model Screening's selected methods): [{'label',
+                'prob', 'prob_cv', 'expr', 'expr_cv'}], each one's probabilities of the target level (prob_cv: out of
+                fold, a Crossvalidation set of every row) and the head's names of its n x 2 probabilities
+                (fitted["label"], oof["label"]). The groups, the set and the reference group are the same for all;
+                out['models'] has each one's rows, thresholds and target false positive rate."""
     at = np.asarray(at, dtype=int)
     y = np.asarray(actual, dtype=int) == int(target)
-    p = np.asarray(prob, dtype=float)
-    if adjust:
-        a, b = float(adjust['a']), float(adjust['b'])
-        p = p * a / (p * a + (1 - p) * b)
     st = np.zeros(len(at), dtype=int) if sets is None else np.asarray(sets, dtype=int)
     wt = np.ones(len(at)) if w is None else np.asarray(w, dtype=float)
-    present = [SETS[k] for k in range(3) if np.any(st == k)]
+    many = bool(models)
+    cv_ok = many and all(q.get('prob_cv') is not None for q in models)
+    present = [SETS[k] for k in range(3) if np.any(st == k)] + (['Crossvalidation'] if cv_ok else [])
     sname = set_name if set_name in present else ('Validation' if 'Validation' in present else present[0])
-    m = st == SETS.index(sname)
+    m = np.ones(len(at), dtype=bool) if sname == 'Crossvalidation' else st == SETS.index(sname)
     gv = data.raw(table, group, at)
     meta_ = data.meta(table, group)
     numeric = meta_.get('dataType') == 'numeric'
@@ -1017,60 +1020,129 @@ def group_metrics(table, group, at, actual, prob, sets=None, w=None, cut=0.5, cu
     ref = next((k for k in names if labels[k] == reference), None) if reference is not None else None
     if ref is None:
         ref = max(names, key=lambda k: size[k])       # the largest group
-    thr = {}
+    start = {}
     for k in names:
         typed = (cuts or {}).get(labels[k])
-        thr[k] = float(typed) if equal == 'typed' and typed is not None else float(cut)
-    target_fpr = None
-    if equal == 'fpr':
-        target_fpr = group_rates(y[idx[ref]], p[idx[ref]], wt[idx[ref]], cut)['fpr']
-        if target_fpr is not None:
-            for k in names:
-                if k != ref:
-                    c_ = equal_fpr_cut(y[idx[k]], p[idx[k]], wt[idx[k]], target_fpr)
-                    if c_ is not None:
-                        thr[k] = c_
-    rows = []
-    for k in names:
-        r = group_rates(y[idx[k]], p[idx[k]], wt[idx[k]], thr[k])
-        rows.append({'group': labels[k], 'reference': k == ref, **r})
-    base = next(r for r in rows if r['reference'])
-    for r in rows:
-        for q in ('base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'tpr'):
-            r[f'd_{q}'] = None if r[q] is None or base[q] is None else r[q] - base[q]
-            r[f'r_{q}'] = None if r[q] is None or not base[q] else r[q] / base[q]
-    out = {'group': group, 'set': sname, 'sets': present, 'reference': labels[ref], 'rows': rows, 'equal': equal, 'target_fpr': target_fpr,
-           'thresholds': {labels[k]: (None if thr[k] == float('inf') else thr[k]) for k in names}, 'labels': [labels[k] for k in names],
+        start[k] = float(typed) if equal == 'typed' and typed is not None else float(cut)
+
+    def adjusted(pr):
+        p = np.asarray(pr, dtype=float)
+        if adjust:
+            a, b = float(adjust['a']), float(adjust['b'])
+            p = p * a / (p * a + (1 - p) * b)
+        return p
+
+    def audit(p):
+        """One model's rows: each group's measures at its threshold, and the differences and ratios to the reference."""
+        thr = dict(start)
+        target_fpr = None
+        if equal == 'fpr':
+            target_fpr = group_rates(y[idx[ref]], p[idx[ref]], wt[idx[ref]], cut)['fpr']
+            if target_fpr is not None:
+                for k in names:
+                    if k != ref:
+                        c_ = equal_fpr_cut(y[idx[k]], p[idx[k]], wt[idx[k]], target_fpr)
+                        if c_ is not None:
+                            thr[k] = c_
+        rows = []
+        for k in names:
+            r = group_rates(y[idx[k]], p[idx[k]], wt[idx[k]], thr[k])
+            rows.append({'group': labels[k], 'reference': k == ref, **r})
+        base = next(r for r in rows if r['reference'])
+        for r in rows:
+            for q in ('base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'tpr'):
+                r[f'd_{q}'] = None if r[q] is None or base[q] is None else r[q] - base[q]
+                r[f'r_{q}'] = None if r[q] is None or not base[q] else r[q] / base[q]
+        return rows, thr, target_fpr
+
+    def shown(thr):
+        return {labels[k]: (None if thr[k] == float('inf') else thr[k]) for k in names}
+
+    out = {'group': group, 'set': sname, 'sets': present, 'reference': labels[ref], 'equal': equal, 'labels': [labels[k] for k in names],
            'values': [None if k is None else k for k in names]}
+    if many:
+        out['models'] = []
+        for q in models:
+            rows, thr, tfpr = audit(adjusted(q['prob_cv'] if sname == 'Crossvalidation' else q['prob']))
+            out['models'].append({'label': q.get('label'), 'rows': rows, 'thresholds': shown(thr), 'target_fpr': tfpr})
+        if head:
+            out['code'] = head + SEP + '\n'.join(group_lines_many(group, names, labels, start, sname, target, adjust, equal, ref, models))
+        return out
+    rows, thr, target_fpr = audit(adjusted(prob))
+    out.update({'rows': rows, 'target_fpr': target_fpr, 'thresholds': shown(thr)})
     if head:
         out['code'] = head + SEP + '\n'.join(group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cut, target_fpr))
     return out
 
 
-def group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cut, target_fpr):
-    """The code of Group Metrics, after the head of the model (d, y, fitted, sets, w)."""
+def _group_head(target, equal):
+    """The lines every Group Metrics code starts with, after the model's head: the functions and each row's weight."""
     L = ['import json', 'import numpy as np', 'import pandas as pd', 'import math', '',
          _source(_auc, cut_table, group_rates) + ('\n\n\n' + _source(equal_fpr_cut) if equal == 'fpr' else ''), '', '',
          f'target = {int(target)}   # the target level (the Decision Threshold\'s)',
-         'wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)',
-         'p = fitted[:, target]   # each row\'s probability of the target level']
+         'wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)']
+    return L
+
+
+def _group_keys(group, names, labels, sname):
+    """The rows of the set, each row's group and the groups' names and values, in the code."""
+    keys = ['None' if k is None else _pylit(k) for k in names]
+    return [('m = np.ones(len(y), dtype=bool)   # every row, each predicted by the model fitted without its fold' if sname == 'Crossvalidation'
+             else f'm = sets == {SETS.index(sname)}   # the {sname.lower()} rows'),
+            f'g = df.loc[d.index, {json.dumps(group)}]   # the group of each row (it need not be a factor of the model)',
+            'names = ' + json.dumps([labels[k] for k in names]) + '   # the groups, in the column\'s order',
+            'keys = [' + ', '.join(keys) + ']   # the values that make them']
+
+
+def group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cut, target_fpr):
+    """The code of Group Metrics, after the head of the model (d, y, fitted, sets, w)."""
+    L = _group_head(target, equal) + ['p = fitted[:, target]   # each row\'s probability of the target level']
     if adjust:
         L.append(f'a, b = {float(adjust["a"])!r}, {float(adjust["b"])!r}   # the true event rate (True Event Rate in the Decision Threshold)')
         L.append('p = p * a / (p * a + (1 - p) * b)')
-    L += [f'm = sets == {SETS.index(sname)}   # the {sname.lower()} rows',
-          f'g = df.loc[d.index, {json.dumps(group)}]   # the group of each row (it need not be a factor of the model)',
-          'names = ' + json.dumps([labels[k] for k in names]) + '   # the groups, in the column\'s order']
-    keys = ['None' if k is None else _pylit(k) for k in names]
-    L.append('keys = [' + ', '.join(keys) + ']   # the values that make them')
+    L += _group_keys(group, names, labels, sname)
     L.append('cuts = ' + json.dumps([None if thr[k] == float('inf') else thr[k] for k in names]) + '   # each group\'s threshold' + (' (the equal-FPR ones are solved below)' if equal == 'fpr' else ''))
     L += ['rows = []',
           'for name, key, c in zip(names, keys, cuts):',
           '    r = m & (g.isna().to_numpy() if key is None else (g == key).to_numpy())']
-    if equal == 'fpr':
+    if equal == 'fpr' and target_fpr is not None:
         L += [f'    if name != {json.dumps(labels[ref])}:',
-              f'        c = equal_fpr_cut(y[r] == target, p[r], wt[r], {target_fpr!r})   # the false positive rate nearest the reference group\'s']
+              f'        c2 = equal_fpr_cut(y[r] == target, p[r], wt[r], {target_fpr!r})   # the false positive rate nearest the reference group\'s',
+              '        c = c if c2 is None else c2']
     L += ['    c = float("inf") if c is None else c',
           '    rows.append({"group": name, **group_rates(y[r] == target, p[r], wt[r], c)})',
+          'print(pd.DataFrame(rows).to_string(index=False))']
+    return L
+
+
+def group_lines_many(group, names, labels, start, sname, target, adjust, equal, ref, models):
+    """The code of Group Metrics of several models (Model Screening's methods), after the head that names each one's
+    probabilities: every model audited alike, a row per model and group."""
+    cv = sname == 'Crossvalidation'
+    exprs = ', '.join(f'{json.dumps(q.get("label"))}: {q.get("expr_cv" if cv else "expr") or ("oof" if cv else "fitted")}' for q in models)
+    L = _group_head(target, equal)
+    L.append('models = {' + exprs + '}   # each method\'s probabilities of the two levels' + (', each row predicted without its fold' if cv else ''))
+    if adjust:
+        L.append(f'a, b = {float(adjust["a"])!r}, {float(adjust["b"])!r}   # the true event rate (True Event Rate in the Decision Threshold)')
+    L += _group_keys(group, names, labels, sname)
+    L.append('cuts = ' + json.dumps([start[k] for k in names]) + '   # each group\'s threshold' + (' (the others\' are solved for each method below)' if equal == 'fpr' else ''))
+    if equal == 'fpr':
+        L.append(f'ref = {names.index(ref)}   # the reference group, {labels[ref]}: the others\' thresholds give its false positive rate')
+    L += ['rows = []',
+          'for method, fitted_ in models.items():',
+          '    p = fitted_[:, target]   # each row\'s probability of the target level']
+    if adjust:
+        L.append('    p = p * a / (p * a + (1 - p) * b)')
+    L.append('    groups = [m & (g.isna().to_numpy() if key is None else (g == key).to_numpy()) for key in keys]')
+    if equal == 'fpr':
+        L.append('    target_fpr = group_rates(y[groups[ref]] == target, p[groups[ref]], wt[groups[ref]], cuts[ref])["fpr"]')
+    L.append('    for i, (name, r, c) in enumerate(zip(names, groups, cuts)):')
+    if equal == 'fpr':
+        L += ['        if i != ref and target_fpr is not None:',
+              '            c2 = equal_fpr_cut(y[r] == target, p[r], wt[r], target_fpr)   # the false positive rate nearest the reference group\'s',
+              '            c = c if c2 is None else c2']
+    L += ['        c = float("inf") if c is None else c',
+          '        rows.append({"method": method, "group": name, **group_rates(y[r] == target, p[r], wt[r], c)})',
           'print(pd.DataFrame(rows).to_string(index=False))']
     return L
 

@@ -370,6 +370,14 @@ def code_vars(code, frame, label):
     return ns
 
 
+def refused_eval(tid):
+    try:
+        call('doe.evaluate', table=tid, factors=['A', 'Whole Plots'], whole_plots='Whole Plots')
+    except Exception as e:  # the page shows the message
+        return str(e)
+    return None
+
+
 def evaluate_checks(tag, e, frame, factors):
     dg = {row[0]: row[1] for row in e['diagnostics']}
     ns = code_vars(e['code'], frame, f'{tag}: the Design Diagnostics\' code')
@@ -434,6 +442,80 @@ e = call('doe.evaluate', table=t_h, factors=['Temp', 'Time', 'Cat'], model='main
 by_line = [ln for ln in e['code'].split('\n') if 'only the rows where' in ln]
 check('Evaluate Design: a By level with a line break stays in its string and its one-line comment',
       (len(by_line), any(ln.lstrip().startswith('import os') for ln in e['code'].split('\n')), by_line[0].endswith('is u import os; os.system("x")') if by_line else None), (1, False, True))
+# ---- Evaluate Design of a split plot: the whole plots a random effect (V = I + eta Z Z'), the GLS information
+spd = call('doe.full_factorial', factors=[{**cf('A'), 'changes': 'hard'}, {**cf('B'), 'changes': 'hard'}, cf('C'), cf('D')], seed=5, whole_plots=8)
+cols_s = {c['name']: c['values'] for c in spd['columns'] if c['name'] not in ('Y', 'Pattern')}
+t_s = table(cols_s)
+frame_s = pd.DataFrame(cols_s)
+N_s, m_s, W_s = 32, 4, 8
+wp_terms = {'Intercept', 'A', 'B', 'A*B'}
+for eta in (1.0, 2.5):
+    es = call('doe.evaluate', table=t_s, factors=['A', 'B', 'C', 'D'], model='2fi', whole_plots='Whole Plots', wp_ratio=eta, table_name='data')
+    pr = {r_['term']: r_ for r_ in es['power']['rows']}
+    vr = {r_['term']: r_ for r_ in es['variance']['rows']}
+    tag = f'split plot, eta {eta:g}'
+    check.near(f'{tag}: a whole-plot term\'s relative variance = (1 + eta m) / N', max(abs(vr[t_]['variance'] - (1 + eta * m_s) / N_s) for t_ in wp_terms), 0.0, abs_=1e-12)
+    check.near(f'{tag}: a within-plot term\'s = 1 / N (the whole plots\' variance cancels)', max(abs(vr[t_]['variance'] - 1 / N_s) for t_ in vr if t_ not in wp_terms), 0.0, abs_=1e-12)
+    check.near(f'{tag}: the whole-plot terms\' DFDen: the whole-plot error\'s, 8 - 4 = 4', max(abs(pr[t_]['dfden'] - 4) for t_ in wp_terms), 0.0, abs_=1e-6)
+    check.near(f'{tag}: the within-plot terms\': 32 - 8 - 7 = 17', max(abs(pr[t_]['dfden'] - 17) for t_ in pr if t_ not in wp_terms), 0.0, abs_=1e-6)
+    want_wp = float(stats.ncf.sf(stats.f.ppf(0.95, 1, 4), 1, 4, N_s / (1 + eta * m_s)))
+    want_sp = float(stats.ncf.sf(stats.f.ppf(0.95, 1, 17), 1, 17, N_s))
+    check.near(f'{tag}: the power of A = the exact test\'s (noncentral F(1, 4), noncentrality N/(1 + eta m))', pr['A']['power'], want_wp, rel=1e-9)
+    check.near(f'{tag}: the power of C = the exact within-plot test\'s (F(1, 17), noncentrality N)', pr['C']['power'], want_sp, rel=1e-9)
+    check('the design\'s note of the split', (es['split']['whole_plots'], es['split']['sizes'], es['split']['ratio'], es['split']['estimable']), (8, [4], eta, True))
+# brute force: the split plot's exact tests on simulated responses (eta 1, coefficient 1 on A and on C, RMSE 1)
+es = call('doe.evaluate', table=t_s, factors=['A', 'B', 'C', 'D'], model='2fi', whole_plots='Whole Plots', wp_ratio=1.0, table_name='data')
+pr = {r_['term']: r_ for r_ in es['power']['rows']}
+Xs = np.column_stack([np.ones(N_s)] + [frame_s[c].to_numpy(float) for c in 'ABCD'] + [frame_s[a].to_numpy(float) * frame_s[b].to_numpy(float) for a, b in itertools.combinations('ABCD', 2)])
+Zs = (frame_s['Whole Plots'].to_numpy()[:, None] == np.array(sorted(set(frame_s['Whole Plots']), key=int))[None, :]).astype(float)
+PZ = Zs @ np.linalg.pinv(Zs)
+Xwp = Xs[:, [0, 1, 2, 5]]                       # the terms constant within the whole plots: 1, A, B, A*B
+Pwp = Xwp @ np.linalg.pinv(Xwp)
+XZ = np.column_stack([Xs, Zs])
+PXZ = XZ @ np.linalg.pinv(XZ)
+rng_s = np.random.default_rng(99)
+S_ = 20000
+Y = (Xs[:, 1] + Xs[:, 3])[:, None] + Zs @ rng_s.normal(0, 1, (W_s, S_)) + rng_s.normal(0, 1, (N_s, S_))
+b = np.linalg.solve(Xs.T @ Xs, Xs.T @ Y)
+ms_wp = np.einsum('is,ij,js->s', Y, PZ - Pwp, Y) / 4          # the whole-plot error, 4 df
+ms_w = np.einsum('is,ij,js->s', Y, np.eye(N_s) - PXZ, Y) / 17   # the error within whole plots, 17 df
+rej_A = np.mean(N_s * b[1] ** 2 / ms_wp > stats.f.ppf(0.95, 1, 4))
+rej_C = np.mean(N_s * b[3] ** 2 / ms_w > stats.f.ppf(0.95, 1, 17))
+check.near(f'simulated exact tests (20000 responses): the power of A ({rej_A:.4f}) = the evaluation\'s', rej_A, pr['A']['power'], abs_=0.012)
+check.near(f'... the power of C ({rej_C:.4f})', rej_C, pr['C']['power'], abs_=0.004)
+check.near('... and the variances of the estimates: A\'s', float(np.var(b[1])), (1 + m_s) / N_s, rel=0.03)
+check.near('... C\'s', float(np.var(b[3])), 1 / N_s, rel=0.03)
+evaluate_checks('Evaluate Design (a split plot, eta 1)', es, frame_s, ['A', 'B', 'C', 'D'])
+ns_s = code_vars(es['code'], frame_s, 'Evaluate Design (a split plot): the code')
+if 'dfden' in ns_s:
+    check.near('... its DFDen are the report\'s', md(ns_s['dfden'], [r_['dfden'] for r_ in es['power']['rows']]), 0.0, abs_=1e-9)
+# an unbalanced split plot (three runs lost): the power against REML and Kenward-Roger's tests of simulated responses
+keep_u = [i for i in range(N_s) if i not in (3, 10, 21)]
+eu = call('doe.evaluate', table=t_s, factors=['A', 'B', 'C', 'D'], model='main', whole_plots='Whole Plots', wp_ratio=1.0, rows=keep_u, table_name='data')
+pu = {r_['term']: r_ for r_ in eu['power']['rows']}
+check('unbalanced: fractional DFDen near the strata\'s (A about 5, C about 20)', (3.5 < pu['A']['dfden'] < 6.5, 17 < pu['C']['dfden'] < 23), (True, True))
+fu = frame_s.iloc[keep_u].reset_index(drop=True)
+rng_u = np.random.default_rng(7)
+wl = sorted(set(fu['Whole Plots']), key=int)
+Zu = (fu['Whole Plots'].to_numpy()[:, None] == np.array(wl)[None, :]).astype(float)
+hits = {'A': 0, 'C': 0}
+S_u = 300
+for k_ in range(S_u):
+    yk = fu['A'].to_numpy(float) + fu['C'].to_numpy(float) + Zu @ rng_u.normal(0, 1, len(wl)) + rng_u.normal(0, 1, len(fu))
+    tk = table({**{c: fu[c].tolist() for c in ('A', 'B', 'C', 'D', 'Whole Plots')}, 'y': yk.tolist()})
+    rk = call('fitmodel.mixed', table=tk, y='y', effects=[{'names': ['A']}, {'names': ['B']}, {'names': ['C']}, {'names': ['D']}, {'names': ['Whole Plots'], 'random': True}])
+    tt = {t_['source']: t_ for t_ in rk['tests']}
+    hits['A'] += tt['A']['p'] < 0.05
+    hits['C'] += tt['C']['p'] < 0.05
+check.near(f'unbalanced: REML and Kenward-Roger reject A in {hits["A"] / S_u:.3f} of 300 simulated responses: the evaluation\'s power', hits['A'] / S_u, pu['A']['power'], abs_=0.09)
+check.near(f'... C in {hits["C"] / S_u:.3f}', hits['C'] / S_u, pu['C']['power'], abs_=0.03)
+# no whole-plot error: as many whole plots as the whole-plot terms (1, A, B, A*B with W = 4)
+sp4 = call('doe.full_factorial', factors=[{**cf('A'), 'changes': 'hard'}, {**cf('B'), 'changes': 'hard'}, cf('C')], seed=5, whole_plots=4)
+e4 = call('doe.evaluate', table=table({c['name']: c['values'] for c in sp4['columns'] if c['name'] not in ('Y', 'Pattern')}), factors=['A', 'B', 'C'], model='2fi', whole_plots='Whole Plots')
+check('no whole-plot error: the variance not estimable, no power for the whole-plot terms', (e4['split']['estimable'], {r_['term']: r_['power'] for r_ in e4['power']['rows']}['A']), (False, None))
+check('a whole plots column among the factors is refused', 'cannot also be a factor' in (refused_eval(t_s) or ''), True)
+
+
 # a rotatable CCD with a numeric nominal factor (levels 1 and 2), the response surface model
 ccd2 = call('doe.rsm', factors=[cf('A'), cf('B')], design='ccd:rotatable', order='keep', replicates=1)
 cols_c = {c['name']: c['values'] for c in ccd2['columns'] if c['name'] in ('A', 'B')}

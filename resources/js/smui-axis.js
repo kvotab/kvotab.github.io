@@ -28,6 +28,14 @@
    A right-click in the plot itself shows opts.plotMenu() when a platform
    gives one (the graph's Marker Size and Transparency).
 
+   In the code, the Plotly axes 'xaxis' and 'yaxis' are the figure's first
+   axes; opts.axisCode(name) gives the Python of the axes of any axis (or
+   null: not in the code). An axis that serves more than one subplot (the
+   value axis of Distribution's histogram and its box plot) says so with
+   opts.axisAlso(name) -> { plotly: [the other subplots' axes across it],
+   code: [the Python of their axes] }: its reference lines cross those
+   too (their labels once).
+
    A settings object: { log, min, max, inc, reverse, refs: [{ value, to,
    label, color, dash }] }, every part optional; min, max and the values
    in the axis's units (a date axis: milliseconds since 1970, as the page
@@ -54,6 +62,10 @@
   const shortOf = (name) => `${name[0]}${name.slice(5)}`;                // 'xaxis2' -> 'x2'
   const isAxis = (k) => /^[xy]axis\d*$/.test(k);
   const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+  // A position on a date axis as Plotly takes it: the page's dates are UTC milliseconds, and Plotly reads a
+  // number given for a range, a tick start or a shape in the browser's local time (an hour or two off in
+  // Europe); a date as text it reads as written. UTC, to the millisecond.
+  const dateText = (ms) => new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
   // an axis title as the page gave it to Plotly (escaped, perhaps in <b>), as plain text
   const plain = (s) => String(s || '').replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#37;/g, '%').replace(/&amp;/g, '&');
 
@@ -97,19 +109,20 @@
     let lo = unit(s.min ?? null), hi = unit(s.max ?? null);
     if (lo != null && hi == null && own) hi = own[1];
     if (hi != null && lo == null && own) lo = own[0];
-    if (lo != null && hi != null) { A.range = rev ? [hi, lo] : [lo, hi]; A.autorange = false; }
-    else if (lo != null) { A.range = rev ? [null, lo] : [lo, null]; A.autorange = rev ? 'max reversed' : 'max'; }
-    else if (hi != null) { A.range = rev ? [hi, null] : [null, hi]; A.autorange = rev ? 'min reversed' : 'min'; }
+    const at = (v) => (v == null || !date ? v : dateText(v));
+    if (lo != null && hi != null) { A.range = (rev ? [hi, lo] : [lo, hi]).map(at); A.autorange = false; }
+    else if (lo != null) { A.range = (rev ? [null, lo] : [lo, null]).map(at); A.autorange = rev ? 'max reversed' : 'max'; }
+    else if (hi != null) { A.range = (rev ? [hi, null] : [null, hi]).map(at); A.autorange = rev ? 'min reversed' : 'min'; }
     else if (rev !== rev0 || (!same && A0 && Array.isArray(A0.range))) {
       // turned round, or the report's own range was in the other scale
-      if (was && same) A.range = [was[1], was[0]];
+      if (was && same) A.range = [was[1], was[0]].map(at);
       else { delete A.range; A.autorange = rev ? 'reversed' : true; }
     }
     if (s.inc > 0) {
       A.tickmode = 'linear';
       delete A.tickvals; delete A.ticktext; delete A.nticks;
       if (log) { A.dtick = Math.log10(s.inc); A.tick0 = Math.log10(s.min ?? 1); }
-      else if (date) { A.dtick = s.inc * DAY; A.tick0 = SM.io.formatDate(s.min ?? 0, 'datetime'); }
+      else if (date) { A.dtick = s.inc * DAY; A.tick0 = dateText(s.min ?? 0); }
       else { A.dtick = s.inc; A.tick0 = s.min ?? 0; }
     }
     return A;
@@ -118,19 +131,20 @@
   /* The reference lines of an axis as Plotly shapes and annotations: axis the
      axis's short name ('x2'), anchor the axis across it ('y2'), which the
      lines span. A label sits inside the plot, by the line's far end. */
-  function refShapes(s, letter, axis, anchor, { log = false, dark = isDark() } = {}) {
+  function refShapes(s, letter, axis, anchor, { log = false, dark = isDark(), labels = true, date = false } = {}) {
     const shapes = [], annotations = [];
     s = clean(s);
     const along = !anchor || anchor === 'free' ? 'paper' : `${anchor} domain`;
+    const at = (v) => (date ? dateText(v) : v);        // a date axis: the date as text (dateText)
     for (const r of (s && s.refs) || []) {
       const col = colorOf(r.color, dark);
       const a = r.to != null ? Math.min(r.value, r.to) : r.value, b = r.to != null ? Math.max(r.value, r.to) : r.value;
-      const span = (u, v) => (letter === 'x' ? { xref: axis, yref: along, x0: u, x1: v, y0: 0, y1: 1 } : { xref: along, yref: axis, x0: 0, x1: 1, y0: u, y1: v });
+      const span = (u, v) => (letter === 'x' ? { xref: axis, yref: along, x0: at(u), x1: at(v), y0: 0, y1: 1 } : { xref: along, yref: axis, x0: 0, x1: 1, y0: at(u), y1: at(v) });
       if (r.to != null) shapes.push({ type: 'rect', layer: 'below', line: { width: 0 }, fillcolor: rgba(col, 0.16), ...span(a, b) });
       else shapes.push({ type: 'line', layer: 'above', line: { color: col, width: 1.5, dash: r.dash }, ...span(a, a) });
-      if (r.label) {
-        const at = r.to != null ? (log ? Math.sqrt(a * b) : (a + b) / 2) : a;
-        const pos = log ? Math.log10(at) : at;      // an annotation on a log axis takes the log
+      if (r.label && labels) {
+        const mid = r.to != null ? (log ? Math.sqrt(a * b) : (a + b) / 2) : a;
+        const pos = log ? Math.log10(mid) : date ? dateText(mid) : mid;      // an annotation on a log axis takes the log
         const text = SM.report.plotlyText(r.label);
         annotations.push(letter === 'x'
           ? { xref: axis, yref: along, x: pos, y: 1, xanchor: 'left', yanchor: 'top', xshift: 3, text, showarrow: false, font: { size: 10, color: col } }
@@ -142,7 +156,7 @@
 
   /* A layout with every axis's settings of S ({ axisName: settings }) applied:
      each axis, the axes that match it, and their reference lines. */
-  function applyAll(L0, S, dark = isDark()) {
+  function applyAll(L0, S, dark = isDark(), also = null) {
     if (!S) return L0;
     const L = { ...L0 };
     const shapes = [...(L0.shapes || [])], annotations = [...(L0.annotations || [])];
@@ -155,9 +169,12 @@
       for (const m of members) {
         L[m] = patch(L[m], s);
         const anchor = L[m].anchor || (m[0] === 'x' ? 'y' : 'x');
-        const r = refShapes(s, m[0], shortOf(m), anchor, { log: L[m].type === 'log', dark });
+        const kind = { log: L[m].type === 'log', date: L[m].type === 'date', dark };
+        const r = refShapes(s, m[0], shortOf(m), anchor, kind);
         shapes.push(...r.shapes);
         annotations.push(...r.annotations);
+        // the other subplots the axis serves (axisAlso): the lines across them too
+        for (const other of (also && (also(m) || {}).plotly) || []) shapes.push(...refShapes(s, m[0], shortOf(m), other, { ...kind, labels: false }).shapes);
       }
     }
     if (!any) return L0;
@@ -221,7 +238,7 @@
   /* The layout a graph is drawn with (smui-report.js calls this in draw()). */
   function layout(p, L) {
     if (p.opts.axes || p.opts.axisSettings === false) return L;
-    return applyAll(L, stored(p));
+    return applyAll(L, stored(p), isDark(), p.opts.axisAlso || null);
   }
 
   /* ---- an axis of a drawn graph ----------------------------------------------------- */
@@ -267,13 +284,15 @@
     return {
       name, master, letter: name[0], type, date: type === 'date', log: type === 'log', lo, hi,
       reversed: r[0] > r[1], title: plain((masterFl.title && masterFl.title.text) || (fl.title && fl.title.text) || ''), why,
+      // a second axis on the other side of the plot (a Pareto plot's Cum Percent): named by its side
+      side: fl.overlaying && ((name[0] === 'y' && fl.side === 'right') || (name[0] === 'x' && fl.side === 'top')) ? fl.side : null,
       ownLog: !!ownLog, ownReversed: !!ownReversed,
       // a date axis over less than a few days shows times too
       dateKind: type === 'date' && hi - lo < 4 * DAY ? 'datetime' : 'date',
     };
   }
 
-  const axisWord = (I) => `${I.letter.toUpperCase()} Axis`;
+  const axisWord = (I) => `${I.side === 'right' ? 'Right ' : I.side === 'top' ? 'Top ' : ''}${I.letter.toUpperCase()} Axis`;
 
   /* ---- the Axis Settings window ------------------------------------------------------- */
   function open(p, name, { addRef = false } = {}) {
@@ -483,7 +502,8 @@
 
   /* The Python that gives one matplotlib axes (the Python ax) an axis's
      settings. o: { log (the axis's scale, the settings' or the report's),
-     date (a date axis in the page), reversed (the axis as drawn) }.
+     date (a date axis in the page), reversed (the axis as drawn), also (the
+     Python of more axes that share it: its reference lines on them too) }.
      Returns { lines, ticks } (ticks: the lines use ticks_every). */
   function pyAxis(s, letter, ax, o) {
     s = clean(s);
@@ -512,8 +532,11 @@
       const col = pyStr(colorOf(r.color, false));
       const ls = (DASHES.find((d) => d[0] === r.dash) || DASHES[0])[2];
       const lo = r.to != null ? Math.min(r.value, r.to) : r.value, hi = r.to != null ? Math.max(r.value, r.to) : r.value;
-      if (r.to != null) L.push(`${ax}.ax${a === 'x' ? 'v' : 'h'}span(${v(lo)}, ${v(hi)}, color=${col}, alpha=0.16, linewidth=0, zorder=0)   # a reference range`);
-      else L.push(`${ax}.ax${a === 'x' ? 'v' : 'h'}line(${v(lo)}, color=${col}, linewidth=${py(+(1.5 * PX).toFixed(3))}, linestyle=${pyStr(ls)})   # a reference line`);
+      const on = o.also && o.also.length ? 'a' : ax;
+      if (on === 'a') L.push(`for a in (${[ax, ...o.also].join(', ')}):   # the axes that share it`);
+      const ind = on === 'a' ? '    ' : '';
+      if (r.to != null) L.push(`${ind}${on}.ax${a === 'x' ? 'v' : 'h'}span(${v(lo)}, ${v(hi)}, color=${col}, alpha=0.16, linewidth=0, zorder=0)   # a reference range`);
+      else L.push(`${ind}${on}.ax${a === 'x' ? 'v' : 'h'}line(${v(lo)}, color=${col}, linewidth=${py(+(1.5 * PX).toFixed(3))}, linestyle=${pyStr(ls)})   # a reference line`);
       if (r.label) {
         const mid = r.to != null ? (o.log ? Math.sqrt(lo * hi) : (lo + hi) / 2) : lo;
         L.push(a === 'x'
@@ -545,9 +568,11 @@
       const A = fl[name];
       if (!ax || !A) { left.push(name); continue; }
       const r = A.range ? A.range.map((v) => A.r2l(v)) : [0, 1];
-      const part = pyAxis(s, name[0], 'target', { log: A.type === 'log', date: A.type === 'date', reversed: r[0] > r[1] });
+      const also = p.opts.axisAlso ? ((p.opts.axisAlso(name) || {}).code || []) : [];
+      const part = pyAxis(s, name[0], 'target', { log: A.type === 'log', date: A.type === 'date', reversed: r[0] > r[1], also });
       if (!part.lines.length) continue;
-      if (ax !== last) { out.push(`target = ${ax}   # the graph's ${name === 'xaxis' || name === 'yaxis' ? 'axes' : `axes of ${shortOf(name)}`}`); last = ax; }
+      const title = plain(A.title && A.title.text);
+      if (ax !== last) { out.push(`target = ${ax}   # the graph's ${name === 'xaxis' || name === 'yaxis' ? 'axes' : `${title ? `${title} ` : ''}axis (${shortOf(name)})`}`); last = ax; }
       out.push(...part.lines);
       ticks = ticks || part.ticks;
     }

@@ -82,6 +82,22 @@
     }
     return out.join('\n');
   }
+  /* Axis Settings on a graph of n stacked panels (a decomposition, a filter,
+     a structural model's components), for smui-axis.js: in the code, panel
+     i (Plotly's yaxis, yaxis2 …) is the figure's axes[i] (plt.subplots(n,
+     1, sharex=True)), and the shared x axis is the bottom panel's, where
+     Plotly anchors it, so its limits reach every panel (opts.axisCode). The
+     x axis serves the panels above too: its reference lines cross them, on
+     the graph and in the code (opts.axisAlso). */
+  const stackedAxes = (n) => (name) => {
+    if (name === 'xaxis') return `plt.gcf().axes[${n - 1}]`;
+    const m = /^yaxis(\d*)$/.exec(name);
+    const i = m ? (m[1] ? Number(m[1]) - 1 : 0) : -1;
+    return i >= 0 && i < n ? `plt.gcf().axes[${i}]` : null;
+  };
+  const stackedAlso = (n) => (name) => (name === 'xaxis' && n > 1
+    ? { plotly: Array.from({ length: n - 1 }, (_, i) => (i ? `y${i + 1}` : 'y')), code: Array.from({ length: n - 1 }, (_, i) => `plt.gcf().axes[${i}]`) } : null);
+  const stacked = (n) => ({ axisCode: stackedAxes(n), axisAlso: stackedAlso(n) });
   // A recipe as a code block (none when the result has no graph code).
   const graphCode = (ctx, parts, opts) => (parts && parts.length ? ctx.code(recipe(parts, opts)) : null);
   // A graph with its code block under it, as one item of a row.
@@ -435,7 +451,7 @@
       annotations: titles.map((t, i) => ({ text: t, xref: 'paper', yref: 'paper', x: 0, y: dom[i][1], xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } })) };
     dom.forEach((d, i) => { layout[`yaxis${i ? i + 1 : ''}`] = { domain: d, title: { text: '' } }; });
     const w = plotWidth(ctx, 620);
-    ob.add(ctx.plot(traces, layout, { width: w, height: 520, title: label }), graphCode(ctx, r.plot_code && r.plot_code.decomp, { size: [w, 520] }));
+    ob.add(ctx.plot(traces, layout, { width: w, height: 520, title: label, ...stacked(4) }), graphCode(ctx, r.plot_code && r.plot_code.decomp, { size: [w, 520] }));
     ob.add(ctx.note(spec.kind === 'stl' ? 'STL: seasonal and trend by loess (statsmodels\' STL). The seasonally adjusted series is y − seasonal.' : `Moving averages (statsmodels' seasonal_decompose): the trend is a centred moving average over the period, so it is missing at the ends. The adjusted series is ${spec.model === 'multiplicative' ? 'y / seasonal' : 'y − seasonal'}. JMP's X11 needs the Census Bureau's program, which does not run in the browser.`));
     for (const n of r.notes || []) ob.add(ctx.note(n));
     ob.add(ctx.code(r.code));
@@ -693,7 +709,7 @@
       margin: { l: 60, r: 12, t: 16, b: 40 },
       annotations: titles.map(([t, y]) => ({ text: ptext(t), xref: 'paper', yref: 'paper', x: 0, y, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: { size: 10.5 } })) };
     const w = plotWidth(ctx, 620);
-    ob.add(ctx.row(withCode(ctx.plot(traces, layout, { width: w, height: 400, title: r.label }), graphCode(ctx, r.plot_code && r.plot_code.filter, { size: [w, 400] })),
+    ob.add(ctx.row(withCode(ctx.plot(traces, layout, { width: w, height: 400, title: r.label, ...stacked(2) }), graphCode(ctx, r.plot_code && r.plot_code.filter, { size: [w, 400] })),
       ctx.kv([spec.kind === 'hp' ? ['λ', r.lamb] : ['Band (periods)', `${fmt(r.low)} to ${fmt(r.high)}`, 'text'], spec.kind === 'bk' ? ['K', r.K, 'int'] : null,
         spec.kind === 'cf' ? ['Drift removed', r.drift ? 'Yes' : 'No', 'text'] : null, ['Std Dev of the cycle', r.cycle_sd], ['N (cycle)', r.cycle_n, 'int']])));
     for (const n of r.notes || []) ob.add(ctx.note(n));
@@ -1369,7 +1385,7 @@
       traces.push({ type: 'scatter', mode: 'lines', x: S.x, y: c.mean, xaxis: 'x', yaxis: ax, line: { color, width: 1.5 }, name: c.label, hovertemplate: `${c.label}: %{y:.5g}<extra></extra>` });
     });
     const size = [plotWidth(ctx, 640), Math.max(260, 125 * n + 60)];
-    cp.add(ctx.plot(traces, layout, { width: size[0], height: size[1], title: `${r.name} components` }),
+    cp.add(ctx.plot(traces, layout, { width: size[0], height: size[1], title: `${r.name} components`, ...stacked(n) }),
       graphCode(ctx, r.plot_code && r.plot_code.components, { size, color, flags: { smpi: false } }));
     cp.add(ctx.note(`The smoothed components (Kalman smoother: each uses all the data) with ${fmt(100 * r.level)}% bands from their smoothed variances, as statsmodels' plot_components draws them; the level panel also shows the data, linked to the rows. They add up to the series: level + seasonal + cycle + autoregressive + regression effect + irregular.${r.burn ? ` The first ${r.burn} one-step predictions are diffuse and left out of the fit.` : ''}`));
   }
@@ -1493,11 +1509,12 @@
       held, nFit, nh, hf,
       t: [...S.t, ...(fut ? fut.t : [])],
       actual: [...nanOf(S.values), ...new Array(hf).fill(NaN)],
-      predicted: part(r.fitted, fc.mean, fut && fut.mean),
-      se: part(r.fit_se, fc.se, fut && fut.se),
+      // the one-step predictions wherever the model gives one, a missing value's too (pred); the residuals only where there is a value
+      predicted: part(r.pred || r.fitted, fc.mean, fut && fut.mean),
+      se: part(r.pred_se || r.fit_se, fc.se, fut && fut.se),
       resid: [...take(r.resid, nFit), ...(held ? take(hb.error, nh) : []), ...new Array(hf).fill(NaN)],
-      upper: part(r.fit_hi, fc.upper, fut && fut.upper),
-      lower: part(r.fit_lo, fc.lower, fut && fut.lower),
+      upper: part(r.pred_hi || r.fit_hi, fc.upper, fut && fut.upper),
+      lower: part(r.pred_lo || r.fit_lo, fc.lower, fut && fut.lower),
       set: [...new Array(nFit).fill('Training'), ...new Array(held ? nh : 0).fill('Holdback'), ...new Array(hf).fill('Forecast')],
     };
   }
@@ -2292,7 +2309,7 @@
       sections: [
         { heading: 'Roles', choices: [['Y, Time Series', 'The series, one report each (continuous columns).'], ['Input List', 'Numeric input series for cross correlations, transfer functions, structural and ARDL models; indicators such as a promotion flag work.'], ['X, Time ID', 'Orders the rows and labels the time axis; a date column gives the calendar frequency, the seasonal period and the forecast dates.'], ['By', 'A report for each level.']] },
         { heading: 'Options', choices: [['Forecast Periods', 'How many periods each model forecasts (default 25); with Forecast on Holdback, how many values at the end are held back.'], ['Forecast on Holdback', 'Every model fitted without the last values and compared on its forecasts of them.'], ['Autocorrelation Lags', 'How many lags the correlations go to (default 25; n/4 is a common choice).'], ['Seasonal Period', 'The default observations per period in the dialogs; empty takes it from the Time ID (12 for monthly data).']] },
-        { heading: 'Missing and excluded rows', text: 'Excluded rows count as missing values, as in JMP, so the spacing of the series is kept; dates missing from a regular calendar are inserted as missing too. ARIMA models skip missing values in the likelihood; the smoothing and decomposition methods fill them by interpolation, and say so.' },
+        { heading: 'Missing and excluded rows', text: 'Excluded rows count as missing values, as in JMP, so the spacing of the series is kept; dates missing from a regular calendar are inserted as missing too. ARIMA models skip missing values in the likelihood; the smoothing and decomposition methods fill them by interpolation, and say so. A model\'s Save Columns gives a missing value its one-step-ahead prediction too, wherever the model gives one (the Kalman filter of the ARIMA and structural models predicts through it; the smoothing models, the benchmarks and the moving average from the values before it), with its limits; its residual stays empty.' },
         { heading: 'Differences from JMP', list: ['ARIMA: statsmodels\' exact likelihood; AIC and SBC count the parameters as JMP does (statsmodels also counts σ², shown in the notes). MA coefficients have statsmodels\' sign, the opposite of JMP\'s.', 'Smoothing models: weights and starting states by least squares (holtwinters), not JMP\'s ARIMA-equivalent fit; prediction intervals from the same moving-average weights JMP uses. Constraints: Zero To One and Custom (each weight fixed or bounded, within 0 and 1: statsmodels takes no weights outside them, and keeps the trend weight at or below the level weight); JMP\'s Unconstrained and Stable Invertible are not available.', 'Box-Cox: JMP\'s is a launch option for the whole platform; here it is an option of each smoothing model, whose predictions, forecasts and limits are transformed back.', 'Forecast on Holdback also works for the Simple Moving Average (JMP leaves it out), and adds the mean error and MASE to JMP\'s RMSE, MSE, MAPE and MAE; Refit on All Rows gives the forecasts after the end.', 'ADF lags by AIC; KPSS, STL and state space model selection by AICc are additions. X-11 is not available.'] },
         { heading: 'Beyond JMP', choices: [['Benchmark Models', 'Naive, Seasonal Naive and Drift forecasts, the ones a model should beat.'], ['Averaged Forecast…', 'The mean of several models\' forecasts and limits, as a model of its own.'], ['Rolling-Origin Cross-Validation…', 'Every model refitted at several origins, and the RMSE, MAE and MAPE of its forecasts from each.'], ['Runs Test', 'Randomness about the mean, the median or zero, of the series and of each model\'s residuals.'], ['Structural Model…', 'Level, trend, seasonal, cycle and AR parts with their smoothed components (UnobservedComponents).'], ['Regime Switching…', 'Markov switching means, variances and AR parts, with regime probabilities.'], ['Filters', 'Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald trend and cycle.'], ['Seasonal Subseries Plot', 'Each season\'s values over the years with their mean.'], ['Theta Model…', 'The theta method\'s forecasts.'], ['ARDL…', 'Distributed lags of the inputs, the long run and the bounds test for cointegration.'], ['Zivot-Andrews Test', 'A unit root test that allows one break, with its date, in Stationarity Tests.']] },
       ],

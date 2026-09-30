@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """JMP data tables (.jmp) read in the engine (datasets.read_file, jmp.py),
 checked against what JMPReader.jl, which jmp.py is a port of, expects of
-its own test tables (its test/runtests.jl at the commit ported). The tables
-are not ours: fetch-jmp-fixtures.py puts them in local/jmp/ (git-ignored);
-without them the checks are skipped.
+its own test tables (its test/runtests.jl at the commit ported), and the
+tables' scripts: the Source script JMP 18.2 wrote into three of them, and
+a copy of one with its script block rewritten in place (two scripts, the
+names' JSL forms; a block whose lengths do not add up gives none). The
+tables are not ours: fetch-jmp-fixtures.py puts them in local/jmp/
+(git-ignored); without them the checks are skipped.
 
     python3 resources/tests/smui/fetch-jmp-fixtures.py
     python3 resources/tests/smui/test_jmp.py
@@ -126,6 +129,44 @@ check('minusfour', c['Column 1']['values'], ['a', 'b', 'c'])
 r, c = read('bugMWE4.jmp')
 check('bugMWE4', (c['c']['values'][:3], c['d']['values'][:3], c['e']['values'][:3], c['f']['values'][15:18]),
       (['cat', 'cat', 'dolor sit amet'], ['bat', 'bat', 'consectetur adipiscing elit'], ['bird', 'bird', 'sed do eiusmod'], ['foo', 'bar', 'hello world']))
+
+# ---- the table's scripts: the Source script JMP 18.2 wrote into three of the tables (an Open() of
+# the text file each was imported from), and none in the others
+for f in ('compact_UInt8.jmp', 'compact_UInt16.jmp', 'compact_UInt32.jmp'):
+    r, _ = read(f)
+    sc = r.get('scripts') or []
+    check(f'{f}: one script, Source, its JSL the Open() of the file it came from',
+          ([s['name'] for s in sc], sc[0]['jsl'].startswith('Open("/C:/Users/') if sc else None, sc[0]['jsl'].endswith('Year Rule("20xx")))') if sc else None), (['Source'], True, True))
+    check(f'{f}: ... and the table note says so', 'table script (Source) came as JSL' in r['note'], True)
+others = [f for f in sorted(os.listdir(LOCAL)) if f.endswith('.jmp') and not f.startswith('compact_UInt')]
+check('the other tables have no scripts', {f: read(f)[0].get('scripts') for f in others}, {f: [] for f in others})
+
+# The block as the reader takes it (jmp.py, _scripts): 03 00, its length (8 bytes), the number of
+# scripts (2), and each a kind byte (03), its length (4) and its text. A copy of compact_UInt8.jmp
+# with two scripts in the same room, so the columns' offsets stay: both come, the columns as before.
+import struct  # noqa: E402
+from smui import jmp  # noqa: E402
+
+raw = open(os.path.join(LOCAL, 'compact_UInt8.jmp'), 'rb').read()
+at = raw.find(b'\x03\x00', raw.find(b'Version'))
+size = struct.unpack_from('<q', raw, at + 2)[0]
+first = 'Distribution of A(Distribution(Nominal Distribution(Column(:A))))'
+room = size - 2 - 2 * 5 - len(first)
+second = 'Name("Source (old)")(Open("pooled.txt"' + ' ' * (room - len('Name("Source (old)")(Open("pooled.txt"))')) + '))'
+payload = struct.pack('<H', 2) + b'\x03' + struct.pack('<I', len(first)) + first.encode() + b'\x03' + struct.pack('<I', len(second)) + second.encode()
+check('the synthetic block fills the room of the original exactly', len(payload), size)
+two = raw[:at + 10] + payload + raw[at + 10 + size:]
+got = jmp.read('two.jmp', two)
+check('two scripts: their names (plain, and Name("...")) and their JSL',
+      [(s['name'], s['jsl'].replace(' ', '')) for s in got['scripts']], [('Distribution of A', 'Distribution(NominalDistribution(Column(:A)))'), ('Source (old)', 'Open("pooled.txt")')])
+orig = jmp.read('compact_UInt8.jmp', raw)
+check('... and the columns read as from the original', got['columns'] == orig['columns'], True)
+bad = two[:at + 10] + struct.pack('<H', 3) + two[at + 12:]
+got_bad = jmp.read('bad.jmp', bad)
+check('a block whose lengths do not add up gives no scripts, and the table still reads', (got_bad['scripts'], got_bad['columns'] == orig['columns']), ([], True))
+check('script names: plain, spaced, Name("..."), "..."n; not a call is none',
+      [jmp._script_name(t) for t in ('Source(Open("x"))', 'Distribution  of height( Distribution( Y( :height ) ) )', 'Name("a (b)")(Bivariate(Y(:y), X(:x)))', '"q\\!"x"n(Oneway(Y(:y)))', 'NoParens', 'x(', 'a(b')],
+      [('Source', 'Open("x")'), ('Distribution of height', 'Distribution( Y( :height ) )'), ('a (b)', 'Bivariate(Y(:y), X(:x))'), ('q"x', 'Oneway(Y(:y))'), None, None, None])
 
 # ---- not a JMP table
 try:

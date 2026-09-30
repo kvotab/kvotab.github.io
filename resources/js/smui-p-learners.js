@@ -217,54 +217,9 @@
     if (v) { ctx.set('knnK', null, null, { rerun: false }); ctx.set('k', v.k); }
   }
 
-  /* Score Rows (K Nearest Neighbors and Support Vector Machines, which have no formula): the model as this report
-     fitted it (the engine keeps it) on the rows of an open table: this one's rows added since, or every row of
-     another table with the same columns. The predictions go to that table as columns. */
-  async function scoreRows(ctx, fn, s) {
-    const app = SM.app;
-    const tables = (app && app.tables) || [ctx.table];
-    const v = await SM.ui.form({ title: 'Score Rows', info: 'p:learners:score', fields: [
-      { key: 't', label: 'The table to score', type: 'select', value: ctx.table.id, choices: tables.map((t) => [t.id, t.name]), help: 'An open table: this report\'s own (its rows added since the report fitted, or all its rows), or another with the columns the model was fitted to, found by name. The model is the report\'s as it was fitted: not fitted again to the rows scored.' },
-      { key: 'which', label: 'Rows', type: 'select', value: 'new', choices: [['new', 'Rows without a prediction yet'], ['all', 'Every row']], help: 'Rows without a prediction yet: the rows whose prediction column (Predicted, or Prob[] of the first level) is empty or missing, such as rows added after the report fitted; in another table without those columns, every row. Every row: all of them, into new columns.' },
-    ] });
-    if (!v) return;
-    const target = tables.find((t) => t.id === v.t) || ctx.table;
-    const r0 = s.r;
-    const names = r0.kind === 'categorical' ? r0.fit.levels.map((l) => `Prob[${l}]`) : [`Predicted ${ctx.name('y')}`];
-    let rows = null;
-    const first = target.columns.find((c) => c.name === names[0]);
-    if (v.which === 'new' && first) {
-      rows = [];
-      for (let i = 0; i < target.nrows; i++) { const x = first.values[i]; if (x == null || x === '' || Number.isNaN(x)) rows.push(i); }
-      if (!rows.length) { SM.ui.toast(`Every row of ${target.name} has a prediction in ${first.name}`); return; }
-    }
-    try {
-      const r = await SM.engine.call(fn, { ...s.b, keep: keepOf(ctx), source: ctx.table.id, target_rows: rows }, target);
-      if (r.note) SM.ui.toast(r.note);
-      writeScores(ctx, target, r, !!(v.which === 'new' && first));
-    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
-  }
-
-  /* The scores into a table: into its prediction columns when they are there (the rows scored only), else new ones. */
-  function writeScores(ctx, t, r, into) {
-    const from = `scored by ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''} (the model as it fitted)`;
-    const cols = r.prob ? r.names.map((nm, j) => [nm, r.prob.map((p) => p[j]), 'numeric']) : [[r.name, r.values, 'numeric']];
-    if (r.prob) cols.push([r.most_name, r.most_likely, 'character']);
-    if (SM.app && SM.app.record) SM.app.record(t, 'Score Rows');
-    for (const [name, values, type] of cols) {
-      const c = into ? t.columns.find((x) => x.name === name) : null;
-      if (c) {
-        const next = c.values.slice();
-        r.rows.forEach((row, k) => { next[row] = values[k] == null ? (c.isNumeric ? NaN : null) : values[k]; });
-        t.setValues(c.id, next);
-      } else {
-        const full = new Array(t.nrows).fill(type === 'numeric' ? NaN : null);
-        r.rows.forEach((row, k) => { full[row] = values[k] == null ? full[row] : values[k]; });
-        t.addColumn({ name, dataType: type, values: full, notes: from, ...(type === 'character' && r.levels ? { modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels } : {}) });
-      }
-    }
-    SM.ui.toast(`Scored ${r.rows.length} rows of ${t.name}`);
-  }
+  /* Score Rows (K Nearest Neighbors and Support Vector Machines, which have no formula): SM.predict.scoreRows, the
+     model as this report fitted it (the engine keeps it under keepOf) on the rows of an open table. */
+  const scoreRows = (ctx, fn, s) => SM.predict.scoreRows(ctx, { fn, payload: { ...s.b, keep: keepOf(ctx) }, fit: s.r.fit, yName: ctx.name('y'), info: 'p:learners:score' });
 
   function knnTriangle(ctx) {
     const s = ctx.lrn;

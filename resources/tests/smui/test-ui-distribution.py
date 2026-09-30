@@ -23,6 +23,7 @@ import json
 import os
 import sys
 
+from axis_checks import AXIS_JS, dbl, r9, red_lines, run_code
 from cdp import BASE, Checks, open_page, wait_engine
 from test_charts import GRAPHS_JS, close, find_line, lines_labelled, maxdiff, run_graph
 
@@ -207,6 +208,9 @@ async def main():
     # ---- help for every input: the launch dialog's (i), the red-triangle forms' (i)
     await help_inputs(page)
 
+    # ---- Axis Settings on the histogram: its value axis serves the box plot beside it too
+    await axis_settings(page)
+
     # ---- (i) topics, dark theme, phone width
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -242,6 +246,58 @@ async def main():
     check('each interval then shows its own Python', r['code'][0] - r['code'][1], 1)
     check('no script errors', page.errors, [])
     await page.close()
+
+
+# ---- Axis Settings on the histogram ------------------------------------------
+# The histogram's value axis is the box plot's too (Plotly: y with x2 beside it,
+# or x with y2 under it; the code: ax and bx, sharing it): set by a real
+# double-click on it, its range and a reference line are the histogram's and
+# the box plot's, and the code block draws them on both (ax and bx).
+async def axis_settings(page):
+    await page.ev(AXIS_JS)
+    await page.ev(GRAPHS_JS)
+    title = 'height (cm) histogram'
+    for label, opts, sub, which, letter, across in (('vertical', {}, 'xy', 'ns', 'y', 'x2 domain'), ('horizontal', {'horizontal': True}, 'xy', 'ew', 'x', 'y2 domain')):
+        tag = f'Axis Settings, a {label} histogram'
+        await page.ev(f"(async () => {{ window.__ar = await __dt.open('Students', {{ y: ['height (cm)'] }}, {json.dumps(opts)}); }})()")
+        xy = await page.ev(f'__axc.at(__ar, {json.dumps(title)}, {json.dumps(sub)}, {json.dumps(which)})')
+        await dbl(page, *xy)
+        got = await page.ev("__axc.fill(__ar, { min: 145, max: 175, refs: [{ value: 160, label: 'one sixty', color: 'red' }] })")
+        check(f'{tag}: a double-click on the value axis opens its window', got, f'{letter.upper()} Axis Settings')
+        st = await page.ev(f'(async () => __axc.state(await __axc.shown(__ar, {json.dumps(title)})))()')
+        ax = f'{letter}axis'
+        lines = sorted((q['xref'] if letter == 'y' else q['yref'], q[f'{letter}0']) for q in st['shapes'] if q['color'] == '#b0413e')
+        check(f'{tag}: the value axis from 145 to 175', r9(st['axes'][ax]['range']), [145, 175])
+        check(f'{tag}: the reference line at 160 across the histogram and the box plot, labelled once', (lines, st['labels'].count('one sixty')), (sorted([(f'{"x" if letter == "y" else "y"} domain', 160), (across, 160)]), 1))
+        code = st['code'] or ''
+        check(f'{tag}: the code sets the axis on ax and draws the line on ax and bx', ('target = ax' in code, 'for a in (target, bx):' in code, f'a.ax{"h" if letter == "y" else "v"}line(160, color="#b0413e"' in code), (True, True, True))
+        R, err = await run_code(page, code, '__ar.table')
+        A = [q for q in (R['figures'][0]['axes'] if R else [])]
+        check(f'{tag}: its code runs in the page\'s Python', (err, len(A)), (None, 2))
+        if len(A) == 2:
+            lim = f'{letter}lim'
+            check(f'{tag}: ... and draws the histogram and the box plot from 145 to 175, the line at 160 on both', ([A[0][lim], A[1][lim]], red_lines(A[0], letter), red_lines(A[1], letter)), ([[145.0, 175.0]] * 2, [160.0], [160.0]))
+        st2 = await page.ev(f'(async () => {{ const done = new Promise((res) => __ar.on("done", res)); __ar.run(); await done; return __axc.state(await __axc.shown(__ar, {json.dumps(title)})); }})()')
+        check(f'{tag}: Redo keeps them', (r9(st2['axes'][ax]['range']), len([q for q in st2['shapes'] if q['color'] == '#b0413e'])), ([145, 175], 2))
+        st3 = await page.ev(f'__axc.reopened(__ar, {json.dumps(title)})')
+        check(f'{tag}: a saved project keeps them', (r9(st3['axes'][ax]['range']) if st3 else None, len([q for q in (st3 or {}).get('shapes', []) if q['color'] == '#b0413e'])), ([145, 175], 2))
+    # the dark theme: the line in its red; the code in the light theme's
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.2)
+    st = await page.ev(f'(async () => __axc.state(await __axc.shown(__ar, {json.dumps(title)})))()')
+    check('Axis Settings, dark theme: the reference line in the dark theme\'s red, the code in the light theme\'s', (sorted({q['color'] for q in st['shapes'] if q['type'] == 'line' and q['x0'] == 160}), 'color="#b0413e"' in (st['code'] or '')), (['#f08a80'], True))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.2)
+    # Histograms Only: no box plot, the line on the histogram alone
+    await page.ev("(async () => { window.__ar = await __dt.open('Students', { y: ['height (cm)'] }, { histOnly: true }); })()")
+    xy = await page.ev(f'__axc.at(__ar, {json.dumps(title)}, "xy", "ns")')
+    await dbl(page, *xy)
+    await page.ev("__axc.fill(__ar, { refs: [{ value: 160, color: 'red' }] })")
+    st = await page.ev(f'(async () => __axc.state(await __axc.shown(__ar, {json.dumps(title)})))()')
+    code = st['code'] or ''
+    check('Axis Settings, Histograms Only: the line on the histogram alone, and so in the code', ([(q['xref'], q['y0']) for q in st['shapes'] if q['color'] == '#b0413e'], 'bx' in code, 'target.axhline(160' in code), ([('x domain', 160)], False, True))
+    for rep in ('__ar',):
+        await page.ev(f'SM.app.closeReport({rep})')
 
 
 # ---- the graphs' matplotlib code --------------------------------------------

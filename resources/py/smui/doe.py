@@ -992,14 +992,89 @@ def _corners(factors):
     return {f['name']: np.array([p[j] for p in pts], dtype=float if f['kind'] == 'continuous' else object) for j, f in enumerate(factors)}
 
 
+def _split_info(X, Z, eta):
+    """A split plot's information: V = I + eta Z Z' (the whole plots' variance
+    eta times the error's, both over the error variance), its inverse, the
+    GLS information X'V^-1 X and its inverse (the estimates' covariance over
+    sigma^2), and the REML expected information of (whole-plot variance,
+    error variance) at (eta, 1), whose inverse is the anticipated covariance
+    of their estimates (for Satterthwaite's degrees of freedom)."""
+    n = X.shape[0]
+    V = np.eye(n) + eta * (Z @ Z.T)
+    Vi = np.linalg.inv(V)
+    Vi = 0.5 * (Vi + Vi.T)
+    M = X.T @ Vi @ X
+    Vb = np.linalg.inv(M)
+    Vb = 0.5 * (Vb + Vb.T)
+    P = Vi - Vi @ X @ Vb @ X.T @ Vi
+    Dk = [Z @ Z.T, np.eye(n)]
+    PD = [P @ D for D in Dk]
+    I2 = np.array([[0.5 * float(np.sum(a * b.T)) for b in PD] for a in PD])
+    try:
+        A = np.linalg.inv(I2)
+        if not np.all(np.isfinite(A)) or np.any(np.diag(A) <= 0):
+            A = None
+    except np.linalg.LinAlgError:
+        A = None
+    # the derivatives of the estimates' covariance: d(X'V^-1X)^-1/dtheta_k = Vb X'V^-1 D_k V^-1 X Vb
+    W = Vi @ X
+    dVb = [Vb @ (W.T @ D @ W) @ Vb for D in Dk]
+    return {'V': V, 'Vi': Vi, 'M': M, 'Vb': Vb, 'A': A, 'dVb': dVb}
+
+
+def _satterthwaite_df(L, S):
+    """Satterthwaite's denominator degrees of freedom of L b (one row), Fai
+    and Cornelius's for several rows, at the anticipated variances: the
+    covariance of the estimates Vb, its derivatives dVb and the covariance
+    A of the variance estimates (from _split_info). None when the whole
+    plots' variance cannot be estimated (no whole-plot error)."""
+    if S['A'] is None:
+        return None
+    L = np.atleast_2d(L)
+    C = L @ S['Vb'] @ L.T
+    vals, vecs = np.linalg.eigh(C)
+    keep = vals > 1e-10 * max(float(vals.max()), 1e-300)
+    nus = []
+    for dval, v in zip(vals[keep], vecs[:, keep].T):
+        lm = v @ L
+        g = np.array([float(lm @ D @ lm) for D in S['dVb']])
+        den = float(g @ S['A'] @ g)
+        nus.append(2 * dval * dval / den if den > 1e-300 else float('inf'))
+    q = len(nus)
+    if q == 0:
+        return None
+    if q == 1:
+        return float(nus[0])
+    nus = np.asarray(nus)
+    if np.all(np.abs(nus - nus.mean()) < 1e-8 * max(1.0, float(np.abs(nus).max()))):
+        return float(nus.mean())
+    if np.any(nus <= 2):
+        return float(max(nus.min(), 1.0))
+    Ev = float(np.sum(nus / (nus - 2)))
+    return 2 * Ev / (Ev - q) if Ev > q else float(nus.min())
+
+
 @api('doe.evaluate')
-def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coefficient=1.0, coding=None, where=None, table_name='data'):
+def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coefficient=1.0, coding=None, where=None, table_name='data',
+             whole_plots=None, wp_ratio=1.0):
     """factors: column names; coding: {name: [low, high]} for continuous
-    factors (else the column's range). The code under the report and under
-    its graphs comes back as 'code' and 'plot_code' (profile: one for each
-    factor; fds; colormap)."""
+    factors (else the column's range). whole_plots: the column of a split
+    plot's whole plots, a random effect with variance wp_ratio (the Split
+    Plot Variance Ratio, 1 by default) times the error's: the variances,
+    powers, prediction variances, efficiencies and the fraction of design
+    space then use the GLS information X'V^-1X, V = I + wp_ratio Z Z', and
+    each test Satterthwaite's degrees of freedom at that ratio (a balanced
+    split plot's whole-plot and within-plot error df). The code under the
+    report and under its graphs comes back as 'code' and 'plot_code'
+    (profile: one for each factor; fds; colormap)."""
     coding = coding or {}
-    df = data.frame(table, factors, rows, dropna=True, as_category=True)
+    wp = str(whole_plots) if whole_plots not in (None, '') else None
+    if wp is not None and wp in factors:
+        raise ValueError(f'{wp} is the whole plots: it cannot also be a factor')
+    eta = float(wp_ratio if wp_ratio is not None else 1.0)
+    if wp is not None and not (math.isfinite(eta) and eta >= 0):
+        raise ValueError('the Split Plot Variance Ratio is a number of 0 or more')
+    df = data.frame(table, list(factors) + ([wp] if wp else []), rows, dropna=True, as_category=True)
     if len(df) < 2:
         return {'error': 'fewer than two runs with every factor'}
     fs = []
@@ -1030,33 +1105,57 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
     if rank < p:
         out['error'] = f'the model has {p} parameters but the design supports only {rank}: some terms cannot be estimated (use a smaller model)'
         return out
-    V = np.linalg.inv(XtX)
+    split = None
+    if wp is not None:
+        wv = df[wp].astype(object).map(lambda v: str(v)).to_numpy()
+        wl = list(dict.fromkeys(wv.tolist()))
+        if len(wl) < 2:
+            raise ValueError(f'{wp} has a single whole plot among these runs: a split plot needs two or more')
+        Zw = (wv[:, None] == np.array(wl, dtype=object)[None, :]).astype(float)
+        split = _split_info(X, Zw, eta)
+        split.update({'column': wp, 'W': len(wl), 'eta': eta, 'sizes': Zw.sum(axis=0)})
+        V = split['Vb']
+    else:
+        V = np.linalg.inv(XtX)
     v = np.diag(V)
     df_e = N - p
     out['df_error'] = df_e
-    # ---- power of each parameter and each effect
+    # ---- power of each parameter and each effect (a split plot: each test's own Satterthwaite df)
     delta = float(coefficient) / float(rmse)
     prm_rows = []
     for j, nm in enumerate(names):
         lam = delta * delta / v[j]
-        if df_e > 0:
-            crit = stats.f.ppf(1 - alpha, 1, df_e)
-            pw = float(stats.ncf.sf(crit, 1, df_e, lam))
+        if split is not None:
+            dfd = _satterthwaite_df(np.eye(p)[j], split)
+        else:
+            dfd = df_e if df_e > 0 else None
+        if dfd is not None and dfd > 0 and math.isfinite(dfd):
+            crit = stats.f.ppf(1 - alpha, 1, dfd)
+            pw = float(stats.ncf.sf(crit, 1, dfd, lam))
         else:
             pw = None
         prm_rows.append({'term': nm, 'coef': float(coefficient), 'power': pw, 'variance': float(v[j]), 'se': math.sqrt(v[j]),
-                         'ci_increase': math.sqrt(N * v[j]) - 1})
+                         'ci_increase': math.sqrt(N * v[j]) - 1, 'dfden': dfd})
     eff_rows = []
     for t, (a, b) in zip([None] + list(terms), slices):
         if t is None or b - a < 2:
             continue
         beta = np.array([coefficient if i % 2 == 0 else -coefficient for i in range(b - a)], dtype=float) / float(rmse)
         lam = float(beta @ np.linalg.solve(V[a:b, a:b], beta))
-        pw = float(stats.ncf.sf(stats.f.ppf(1 - alpha, b - a, df_e), b - a, df_e, lam)) if df_e > 0 else None
-        eff_rows.append({'effect': _term_label(fs, t), 'df': b - a, 'power': pw})
-    out['power'] = rtable([col('term', 'Term', 'text'), col('coef', 'Anticipated Coefficient'), col('power', 'Power')], [{k: r[k] for k in ('term', 'coef', 'power')} for r in prm_rows])
-    if eff_rows:
-        out['effect_power'] = rtable([col('effect', 'Effect', 'text'), col('df', 'DF', 'int'), col('power', 'Power')], eff_rows)
+        dfd = _satterthwaite_df(np.eye(p)[a:b], split) if split is not None else (df_e if df_e > 0 else None)
+        pw = float(stats.ncf.sf(stats.f.ppf(1 - alpha, b - a, dfd), b - a, dfd, lam)) if dfd is not None and dfd > 0 and math.isfinite(dfd) else None
+        eff_rows.append({'effect': _term_label(fs, t), 'df': b - a, 'dfden': dfd, 'power': pw})
+    if split is not None:
+        out['power'] = rtable([col('term', 'Term', 'text'), col('coef', 'Anticipated Coefficient'), col('dfden', 'DFDen'), col('power', 'Power')],
+                              [{k: r[k] for k in ('term', 'coef', 'dfden', 'power')} for r in prm_rows])
+        if eff_rows:
+            out['effect_power'] = rtable([col('effect', 'Effect', 'text'), col('df', 'DF', 'int'), col('dfden', 'DFDen'), col('power', 'Power')], eff_rows)
+        out['split'] = {'column': wp, 'whole_plots': split['W'], 'ratio': eta, 'sizes': sorted({int(x) for x in split['sizes']}),
+                        'estimable': split['A'] is not None}
+    else:
+        out['power'] = rtable([col('term', 'Term', 'text'), col('coef', 'Anticipated Coefficient'), col('power', 'Power')], [{k: r[k] for k in ('term', 'coef', 'power')} for r in prm_rows])
+        if eff_rows:
+            out['effect_power'] = rtable([col('effect', 'Effect', 'text'), col('df', 'DF', 'int'), col('power', 'Power')], [{k: r[k] for k in ('effect', 'df', 'power')} for r in eff_rows])
     out['variance'] = rtable([col('term', 'Term', 'text'), col('variance', 'Variance'), col('se', 'Relative Std Error of Estimate'), col('ci_increase', 'Fractional Increase in CI Length')],
                              [{k: r[k] for k in ('term', 'variance', 'se', 'ci_increase')} for r in prm_rows])
     # ---- VIF (statsmodels)
@@ -1076,7 +1175,7 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
         X2, names2, _sl2 = M.matrix(frame, alias_terms)
         X2 = X2[:, 1:]
         names2 = names2[1:]
-        A = V @ X.T @ X2
+        A = V @ X.T @ (split['Vi'] @ X2) if split is not None else V @ X.T @ X2
         out['alias'] = {'rows': names, 'cols': names2, 'matrix': np.where(np.abs(A) < 1e-12, 0.0, A)}
     else:
         X2, names2 = np.zeros((N, 0)), []
@@ -1096,13 +1195,17 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
         Xc, _n, _s = M.matrix(corners, terms)
         cand.append(np.einsum('ij,jk,ik->i', Xc, V, Xc))
     pmax = float(max(c.max() for c in cand))
-    sign, logdet = np.linalg.slogdet(XtX / N)
+    sign, logdet = np.linalg.slogdet((split['M'] if split is not None else XtX) / N)
     d_eff = 100 * math.exp(logdet / p) if sign > 0 else 0.0
     a_eff = 100 * p / (N * float(np.trace(V)))
     g_eff = 100 * math.sqrt(p / N) / math.sqrt(pmax)
     out['diagnostics'] = [['D Efficiency', d_eff], ['G Efficiency', g_eff], ['A Efficiency', a_eff],
                           ['Average Variance of Prediction', float(np.mean(pv))], ['Maximum Relative Prediction Variance', pmax],
-                          ['Runs', N, 'int'], ['Parameters', p, 'int'], ['Error Degrees of Freedom', df_e, 'int']]
+                          ['Runs', N, 'int'], ['Parameters', p, 'int']]
+    if split is not None:
+        out['diagnostics'] += [['Whole Plots', split['W'], 'int'], ['Split Plot Variance Ratio', eta]]
+    else:
+        out['diagnostics'].append(['Error Degrees of Freedom', df_e, 'int'])
     qs = np.linspace(0, 1, 101)
     out['fds'] = {'fraction': qs, 'variance': np.quantile(pv, qs)}
     # the profile: one factor at a time, the others at the center (first level)
@@ -1123,7 +1226,7 @@ def evaluate(table, factors, rows=None, model='main', alpha=0.05, rmse=1.0, coef
         Xp, _n, _s = M.matrix(fr, terms)
         prof.append({'factor': f['name'], 'kind': f['kind'], 'x': grid.tolist(), 'variance': np.einsum('ij,jk,ik->i', Xp, V, Xp)})
     out['profile'] = prof
-    E = _EvalCode(table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2)
+    E = _EvalCode(table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2, (wp, eta) if split is not None else None)
     out['code'] = E.diagnostics(alpha, rmse, coefficient, df_e, corners is not None)
     out['plot_code'] = _dated({'profile': [E.profile(f) for f in fs], 'fds': E.fds(), 'colormap': E.colormap(len(names) - 1)}, table)
     return out
@@ -1191,10 +1294,11 @@ def _keep_lines(table, rows, where=None):
 class _EvalCode:
     """Evaluate Design's code, a snippet at a time."""
 
-    def __init__(self, table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2):
+    def __init__(self, table, rows, where, table_name, fs, coding, model, terms, alias_terms, names, names2, split=None):
         self.table, self.rows, self.where, self.table_name = table, rows, where, table_name
         self.fs, self.coding, self.model = fs, coding, model
         self.terms, self.alias_terms, self.names, self.names2 = terms, alias_terms, names, names2
+        self.split = split          # (the whole plots' column, the variance ratio), or None
 
     def _terms_lit(self, terms):
         return '[' + ', '.join('(' + ', '.join(J(self.fs[j]['name']) for j in t) + (',)' if len(t) == 1 else ')') for t in terms) + ']'
@@ -1204,7 +1308,10 @@ class _EvalCode:
         fs = self.fs
         L = [code_head(self.table_name, ['import itertools', *imports])] + _keep_lines(self.table, self.rows, self.where)
         L.append(f'factors = {J([f["name"] for f in fs])}')
-        L.append('d = df[factors].dropna()   # the runs with every factor')
+        if self.split:
+            L.append(f'd = df[factors + [{J(self.split[0])}]].dropna()   # the runs with every factor and a whole plot')
+        else:
+            L.append('d = df[factors].dropna()   # the runs with every factor')
         cont = [f for f in fs if f['kind'] == 'continuous']
         cat = [f for f in fs if f['kind'] != 'continuous']
         if cont:
@@ -1254,8 +1361,16 @@ class _EvalCode:
               '',
               '',
               f'terms = {self._terms_lit(self.terms)}   # the model: {one_line(MODEL_LABELS.get(self.model, self.model))}',
-              'X = model_matrix({f: d[f].to_numpy() for f in factors}, terms)',
-              'V = np.linalg.inv(X.T @ X)   # the variances and covariances of the estimates, over sigma squared']
+              'X = model_matrix({f: d[f].to_numpy() for f in factors}, terms)']
+        if self.split:
+            wp, eta = self.split
+            L += [f'wp = d[{J(wp)}].astype(str).to_numpy()   # the whole plots: a random effect',
+                  'Z = (wp[:, None] == pd.unique(wp)[None, :]).astype(float)',
+                  f'eta = {eta!r}   # the Split Plot Variance Ratio: the whole plots\' variance over the error\'s',
+                  'Vi = np.linalg.inv(np.eye(len(d)) + eta * Z @ Z.T)   # V = I + eta Z Z\', over the error variance',
+                  'V = np.linalg.inv(X.T @ Vi @ X)   # the variances and covariances of the (GLS) estimates, over sigma squared']
+        else:
+            L.append('V = np.linalg.inv(X.T @ X)   # the variances and covariances of the estimates, over sigma squared')
         return L
 
     def sample(self):
@@ -1280,7 +1395,19 @@ class _EvalCode:
     def diagnostics(self, alpha, rmse, coefficient, df_e, corners):
         L = self.design(['from scipy import stats', 'from scipy.stats import qmc']) + ['', 'N, p = X.shape']
         L.append(f'names = {J(self.names)}   # the parameters, as the report names them')
-        if df_e > 0:
+        if self.split:
+            L += [f'alpha, rmse, coefficient = {alpha!r}, {rmse!r}, {coefficient!r}   # Power Settings',
+                  '# Satterthwaite\'s denominator df of each estimate at the anticipated variances (eta, 1): the REML',
+                  '# information of the two variances, and the derivatives of V (the estimates\' covariance) along them',
+                  'P = Vi - Vi @ X @ V @ X.T @ Vi',
+                  'Dk = [Z @ Z.T, np.eye(len(d))]',
+                  'PD = [P @ D for D in Dk]',
+                  'A = np.linalg.inv(np.array([[0.5 * np.sum(a * b.T) for b in PD] for a in PD]))',
+                  'dV = [V @ (X.T @ Vi @ D @ Vi @ X) @ V for D in Dk]',
+                  'g = np.array([np.diag(D) for D in dV]).T   # d var(b_j) / d (whole-plot variance, error variance)',
+                  'dfden = 2 * np.diag(V) ** 2 / np.einsum("jk,kl,jl->j", g, A, g)',
+                  'power = stats.ncf.sf(stats.f.ppf(1 - alpha, 1, dfden), 1, dfden, (coefficient / rmse) ** 2 / np.diag(V))   # each parameter\'s test']
+        elif df_e > 0:
             L += [f'alpha, rmse, coefficient = {alpha!r}, {rmse!r}, {coefficient!r}   # Power Settings',
                   'crit = stats.f.ppf(1 - alpha, 1, N - p)',
                   'power = stats.ncf.sf(crit, 1, N - p, (coefficient / rmse) ** 2 / np.diag(V))   # each parameter\'s test when it is the anticipated coefficient']
@@ -1293,10 +1420,11 @@ class _EvalCode:
                   'Xc = model_matrix({f: np.array([v[i] for v in vertices], dtype=float if f in coding else object) for i, f in enumerate(factors)}, terms)']
             runs.append('np.einsum("ij,jk,ik->i", Xc, V, Xc)')
         L += [f'pmax = max(c.max() for c in ({", ".join(runs)}))   # the largest prediction variance: the sample, the runs{", the corners" if corners else ""}',
-              'd_efficiency = 100 * np.exp(np.linalg.slogdet(X.T @ X / N)[1] / p)',
+              f'd_efficiency = 100 * np.exp(np.linalg.slogdet({"np.linalg.inv(V)" if self.split else "X.T @ X"} / N)[1] / p)',
               'a_efficiency = 100 * p / (N * np.trace(V))',
               'g_efficiency = 100 * np.sqrt(p / N) / np.sqrt(pmax)',
-              'print(pd.DataFrame({"Term": names, "Power": power, "Variance": np.diag(V), "Relative Std Error": np.sqrt(np.diag(V))}))',
+              ('print(pd.DataFrame({"Term": names, "DFDen": dfden, "Power": power, "Variance": np.diag(V), "Relative Std Error": np.sqrt(np.diag(V))}))' if self.split else
+               'print(pd.DataFrame({"Term": names, "Power": power, "Variance": np.diag(V), "Relative Std Error": np.sqrt(np.diag(V))}))'),
               'print("D, G and A efficiency:", d_efficiency, g_efficiency, a_efficiency)',
               'print("Average variance of prediction:", pv.mean(), "maximum:", pmax)']
         return '\n'.join(L)

@@ -183,7 +183,8 @@
                       project does) and opens the report
      A table from a file is hostile input: normScripts keeps what it can
      trust and drops the rest. */
-  const SCRIPT_KINDS = ['launch', 'report'];
+  // 'jsl': a script read from a JMP table (.jmp), its JSL text as JMP keeps it
+  const SCRIPT_KINDS = ['launch', 'report', 'jsl'];
   const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
   const MAX_SCRIPTS = 100, MAX_SCRIPT_JSON = 400000;
 
@@ -211,6 +212,11 @@
       if (!x || typeof x !== 'object' || Array.isArray(x)) continue;
       const name = typeof x.name === 'string' ? cleanName(x.name).slice(0, 200).trim() : '';
       if (!name || out.some((y) => y.name === name)) continue;
+      if (x.kind === 'jsl') {
+        // JSL text only: it is never run as code, only read by the JSL converter
+        if (typeof x.jsl === 'string' && x.jsl.trim() && x.jsl.length <= MAX_SCRIPT_JSON) out.push({ name, kind: 'jsl', jsl: x.jsl });
+        continue;
+      }
       if (typeof x.platform !== 'string' || !ok(x.platform)) continue;
       if (!x.spec || typeof x.spec !== 'object' || Array.isArray(x.spec)) continue;
       let text;
@@ -235,6 +241,7 @@
   /* A renamed column in the scripts: their names are structured (roles,
      Fit Model's effects), unlike JMP's JSL text. */
   function renameInScript(sc, oldName, newName) {
+    if (sc.kind === 'jsl') return;      // JSL text, as JMP keeps it: JMP does not rewrite scripts either
     const swap = (arr) => (Array.isArray(arr) ? arr.map((v) => (v === oldName ? newName : v)) : arr);
     if (sc.kind === 'report') {
       for (const k of Object.keys(sc.idNames || {})) if (sc.idNames[k] === oldName) sc.idNames[k] = newName;

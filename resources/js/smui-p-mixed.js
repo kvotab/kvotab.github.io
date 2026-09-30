@@ -136,11 +136,18 @@
     const lScale = lab('Scale', scale);
     const box = el('span', { class: 'sm-mx-launch', style: 'display: contents' }, lUnb, lDdfm, lStruct, lType, lScale);
     let lastP = null;
+    let hinted = null;          // the Validation hint's text while the dialog shows it
     const rnd = () => (E.all() || []).some((e) => e.random);
     const sync = (p) => {
       lastP = p;
       const r = rnd();
       const on = p === 'mixed' || (r && (p === 'standard' || p === 'glm'));
+      // a Validation column with random effects: said in the dialog, not only in the report
+      const vIds = (api.state && api.state.validation) || [];
+      const vCol = vIds.length ? api.table.col(vIds[0]) : null;
+      const want = vCol && on ? `${vCol.name} is in the Validation role: a model with random effects is fitted to every row, the validation and test rows too, and the column is not used.` : null;
+      if (want && want !== hinted) { api.message(want, 'info'); hinted = want; }
+      else if (!want && hinted) { api.message(''); hinted = null; }
       lUnb.hidden = lDdfm.hidden = !on;
       lStruct.hidden = p !== 'mixed';
       lType.hidden = p !== 'mixed' || !SPATIAL.has(struct.value);
@@ -241,12 +248,75 @@
     sls: { fit: 'Summary of Fit', vc: 'REML Variance Component Estimates', est: 'Parameter Estimates', tests: 'Fixed Effect Tests', blups: 'Random Effect Predictions' },
   };
 
+  /* The fit of a report, with its progress. A second into it (a quick fit shows nothing), the
+     report's bar shows the REML iteration and its -2 Residual Log Likelihood (a GLMM's pseudo-likelihood
+     iteration too), then the evaluations of the covariance parameters' information, from the fit's
+     'smui:progress reml:<tag> ...' lines (the tag is this call's: a report waiting behind another shows
+     none of the other's), and a Stop button. A call into Python cannot be interrupted: Stop restarts the
+     engine, as the notebook's Stop does, which stops whatever else it runs; the report says it was
+     stopped, and Redo runs it again. */
+  async function fitCall(ctx, payload, label) {
+    const rep = ctx.report;
+    if (ctx.headless || !rep || !rep.bar) return ctx.call('fitmodel.mixed', payload);
+    const tag = SM.util.uid('mxfit');
+    const st = { it: 0, m2: null, info: null, rspl: 0, stopped: false, shown: false };
+    const text = el('span', { role: 'status', style: { fontSize: '11.5px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' } });
+    const stop = el('button', { type: 'button', class: 'sm-btn small', text: 'Stop',
+      title: 'Stop the fit. A calculation in Python cannot be interrupted: this restarts the Python engine, as the notebook\'s Stop does, and stops whatever else it is running.' });
+    const box = el('span', { class: 'sm-mx-progress', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: '0', maxWidth: '100%' } }, text, stop);
+    const say = () => {
+      if (st.stopped) { text.textContent = 'Stopping: the Python engine restarts…'; return; }
+      const who = label ? `${label}: ` : '';
+      const pl = st.rspl ? `pseudo-likelihood iteration ${st.rspl}, ` : '';
+      if (st.info) text.textContent = `${who}${pl}the covariance parameters' information, ${st.info[0]} of ${st.info[1]} evaluations…`;
+      else if (st.it) text.textContent = `${who}${pl}REML iteration ${st.it}, −2 Residual Log Likelihood ${st.m2 == null ? '…' : fmt(st.m2, { sig: 10 })}…`;
+      else text.textContent = `${who}${pl}fitting by REML…`;
+    };
+    stop.addEventListener('click', () => {
+      if (st.stopped) return;
+      st.stopped = true;
+      rep._mxStopped = ctx.seq;       // the rest of this run (other responses, By groups) is not fitted
+      stop.disabled = true;
+      say();
+      SM.engine.restart();
+    });
+    const timer = setTimeout(() => { st.shown = true; rep.bar.insertBefore(box, rep.noteEl); say(); }, 1000);
+    const off = SM.engine.on('log', (m) => {
+      const mm = /^smui:progress\s+(reml|remlinfo|rspl):(\S+)\s+(\d+)\s+(\d+)(?:\s+(\S+))?/.exec((m && m.text) || '');
+      if (!mm || mm[2] !== tag) return;
+      if (mm[1] === 'reml') { st.it = +mm[3]; st.info = null; st.m2 = mm[5] != null ? Number(mm[5]) : st.m2; }
+      else if (mm[1] === 'remlinfo') st.info = [+mm[3], +mm[4]];
+      else { st.rspl = +mm[3]; st.it = 0; st.info = null; }
+      if (st.shown) say();
+    });
+    try {
+      return await ctx.call('fitmodel.mixed', { ...payload, progress: tag });
+    } catch (e) {
+      if (!st.stopped) throw e;
+      const err = new Error(`Stopped${st.it ? ` at REML iteration ${st.it}${st.m2 != null ? ` (−2 Residual Log Likelihood ${fmt(st.m2, { sig: 10 })})` : ''}` : ''}: Stop restarted the Python engine, and the fit was not finished. Redo runs it again; a Local Data Filter or a simpler structure makes it quicker.`);
+      err.stopped = true;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      off();
+      box.remove();
+    }
+  }
+
   async function mixedY(ctx, M, g, parent, st, kind) {
     const sc = g.id;
     const o = (k, d) => ctx.opt(k, d, sc);
     const y = g.cols[0];
     const payload = { ...M.base, y: g.cols.length === 1 ? y.name : g.cols.map((c) => c.name), mixed: mixedOf(ctx, M, kind) };
-    const res = await ctx.call('fitmodel.mixed', { ...payload, alpha: ctx.alpha });
+    if (ctx.report && ctx.report._mxStopped === ctx.seq) { parent.add(ctx.note('Not fitted: this run of the report was stopped. Redo runs it again.')); return; }
+    let res;
+    try {
+      res = await fitCall(ctx, { ...payload, alpha: ctx.alpha }, [ctx.byLabel, ctx.roles('y').length > 1 ? g.name : ''].filter(Boolean).join(', '));
+    } catch (e) {
+      if (!e.stopped) throw e;
+      parent.add(ctx.warn(e.message));
+      return;
+    }
     const S = { ctx, M, g, y, sc, o, payload, res, kind, parent, T: TITLES[kind], random: res.random_effects.length > 0,
       structure: res.structure.kind || 'residual', iso: ['ar1', 'sp', 'spn'].includes(res.structure.kind) };
     st.menu = () => menuOf(S);
@@ -260,6 +330,13 @@
     // (the REML and pseudo-likelihood fits take no validation column: the backend drops it)
     if (M.base.validation) parent.add(ctx.note(`${M.base.validation} (Validation) is not used: with random effects the fit takes every row of the report, the validation and test rows too.`));
     if (o('fitstats', true)) fitStats(S);
+    // a spatial range beyond the data (a straight-line semivariogram): say why, and what to try
+    if (res.spatial_inf) {
+      const si = res.spatial_inf;
+      const coords = (res.structure.repeated || []).join(' and ');
+      const shape = si.sptype === 'gau' ? 'a parabola' : 'a straight line';
+      parent.add(ctx.warn(`The ${si.parameter} range runs off to infinity: ${fmt(si.range, { sig: 4 })}, against a largest distance of ${fmt(si.dmax, { sig: 4 })} between rows that share a subject, where the fitted correlation is still ${fmt(si.corr, { sig: 4 })}. Over the distances in these data the semivariogram rises without levelling off (${shape}), which this structure reaches only with an infinite range and sill: the data fix their ratio, not either one, so the range, the sill and their standard errors mean little${res.fit.converged ? '' : ', and the fit could not converge'}. A trend is the usual reason: add the coordinates${coords ? ` (${coords})` : ''} as fixed effects, and fit again. Or try another type of spatial structure: Compare Structures, in the red triangle, fits them and ranks them by AICc.`));
+    }
     if (res.score) parent.add(ctx.warn(`The fit did not converge. Convergence Score Test: ChiSquare ${fmt(res.score.stat, { sig: 4 })}, DF ${res.score.df}, Prob > ChiSq ${fmt(res.score.p, { sig: 4 })}${res.score.p > 0.05 ? ': not significant, so the estimates may be close to the maximum; use them with caution.' : ': the estimates are not at the maximum.'}`));
     if (kind === 'sls') {
       if (o('pe', true)) estimates(S);
@@ -1016,6 +1093,8 @@
         { heading: 'Fit Statistics', choices: [['-2 Residual Log Likelihood', 'the REML objective; compare models with the same fixed effects with it'], ['-2 Log Likelihood', 'the full likelihood at the REML estimates'],
           ['AICc, BIC', 'JMP\'s: from −2 Log Likelihood, k the fixed and covariance parameters, n the observations; smaller is better']] },
         { heading: 'Predictions', choices: [['Marginal', 'the fixed effects alone (Actual by Predicted, Pred Formula)'], ['Conditional', 'with the random effects\' BLUPs (Actual by Conditional Predicted, Cond Pred Formula)']] },
+        { heading: 'A long fit', text: 'A fit that runs longer than a second (a spatial structure over many rows: its covariance is one dense matrix, factored at every step) shows its progress in the report\'s bar: the REML iteration and its −2 Residual Log Likelihood, then the evaluations of the covariance parameters\' information, and a Stop button. A calculation in Python cannot be interrupted, so Stop restarts the Python engine, as the notebook\'s Stop does: whatever else it runs stops too, and the notebook\'s variables are lost. The report says the fit was stopped; Redo runs it again.' },
+        { heading: 'A spatial range at infinity', text: 'When the semivariogram rises in a straight line over every distance in the data, a spatial structure\'s maximum is at an infinite range and sill (only their ratio is determined): the report says so and suggests a trend in the coordinates (as fixed effects) or another type of structure (Compare Structures).' },
         { heading: 'Differences from JMP', text: 'The degrees of freedom may be Satterthwaite\'s instead of Kenward-Roger\'s (JMP has Kenward-Roger only). Compare Structures, Profile Likelihood Intervals and the Skeleton ANOVA are beyond JMP. The generalized linear mixed model is fitted by residual pseudo-likelihood (RSPL), binomial or Poisson, as the add-in in Hummel et al.\'s book; JMP Pro 17\'s personality has more distributions. EMS (the expected mean squares method) is not offered: REML gives its estimates in balanced designs. Summary of Fit\'s RSquare Adj uses n − rank(X) error degrees of freedom.' },
       ],
       more: MORE,

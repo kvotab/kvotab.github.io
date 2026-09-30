@@ -692,6 +692,27 @@ best8b = minimize(lambda z: D8b.m2ll(np.exp(z)), np.log(th8b) + 0.05, method='Ne
 check.near('... its -2 Residual Log Likelihood = the dense formula\'s minimum (Nelder-Mead from nearby)', r8b['fit']['m2rll'], min(best8b.fun, D8b.m2ll(th8b)), rel=1e-9)
 
 
+# a range beyond the data: a smooth field of wide bumps, whose semivariogram rises in a straight line over every
+# distance there is; the exponential's range runs off to infinity (the report says so and what to try), the
+# Gaussian's stays finite; a field with a short range: nothing said
+def bump_field(seed, n=300, width=16.0):
+    rg = np.random.default_rng(seed)
+    e_, n_ = rg.uniform(0, 30, n), rg.uniform(0, 30, n)
+    x_ = rg.normal(size=n)
+    bs = [(rg.uniform(0, 30), rg.uniform(0, 30), rg.normal()) for _ in range(30)]
+    y_ = 1 + 0.5 * x_ + sum(h * np.exp(-((e_ - a) ** 2 + (n_ - b) ** 2) / width) for a, b, h in bs) + rg.normal(0, 0.5, n)
+    return table({'east': e_.round(4).tolist(), 'north': n_.round(4).tolist(), 'x': x_.round(4).tolist(), 'y': y_.round(4).tolist()})
+
+
+t8c = bump_field(3)
+r8c = call('fitmodel.mixed', table=t8c, y='y', effects=E('x'), mixed={'structure': 'spn', 'sptype': 'exp', 'repeated': ['east', 'north']})
+si = r8c.get('spatial_inf') or {}
+check('an exponential range beyond the data: said, the range many times the largest distance, the correlation there near 1',
+      (si.get('parameter'), si.get('range', 0) > 50 * si.get('dmax', 1), si.get('corr', 0) >= 0.98), ('Spatial Exponential', True, True))
+check('... the Gaussian on the same field: a finite range, nothing said', call('fitmodel.mixed', table=t8c, y='y', effects=E('x'), mixed={'structure': 'spn', 'sptype': 'gau', 'repeated': ['east', 'north']}).get('spatial_inf'), None)
+check('... a field with a short range: nothing said', call('fitmodel.mixed', table=t8, y='y', effects=E('salt'), mixed={'structure': 'spn', 'sptype': 'exp', 'repeated': ['east', 'north']}).get('spatial_inf'), None)
+
+
 # ---- 9. Save Columns for every row, the formulas, Compare Structures, the variogram ----------------------------------
 y9 = y4.copy()
 y9[[3, 10]] = np.nan                       # rows without a response: predicted all the same

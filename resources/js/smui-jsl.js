@@ -48,6 +48,26 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
   // An import line alone (a line that goes on after a ';' stays where it is: its code needs the lines above it).
   const IMPORT = /^(?:import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*|from\s+[\w.]+\s+import\s+(?:\([^)]*\)|[\w*]+(?:\s+as\s+\w+)?(?:\s*,\s*\w+(?:\s+as\s+\w+)?)*))\s*(?:#.*)?$/;
 
+  /* A converted launch's spec on table t. The converter names the columns
+     (roles, option scopes such as "height|qq", Fit Model's effects, the
+     filter): the page's ids go in, as a project's are mapped. */
+  function stepSpec(step, t) {
+    const raw = { roles: step.roles || {}, options: { ...(step.options || {}) }, ...(step.extra || {}) };
+    if (step.filter) raw.filter = step.filter;
+    delete raw.options.__colNames;               // Fit Y by X records its columns itself
+    const spec = t ? SM.specs.remap(raw, t, Object.fromEntries(t.columns.map((c) => [c.name, c.name]))) : raw;
+    // entries that carry a column's id and its name (Graph Builder's zones): the name back
+    const names = (v) => {
+      if (Array.isArray(v)) v.forEach(names);
+      else if (v && typeof v === 'object') {
+        if (typeof v.id === 'string' && 'name' in v && t) { const c = t.col(v.id); if (c) v.name = c.name; }
+        Object.values(v).forEach(names);
+      }
+    };
+    names(spec.options);
+    return spec;
+  }
+
   /* The page's own Python for one launch: a report of it, run out of sight
      on the table, closed again. { imports, lines } or a reason it has none.
      The converter's specs name their columns (roles, option scopes such as
@@ -79,19 +99,7 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
         ? `it uses ${list}, which the script makes before this line: run the lines above in a notebook and send the table to the page (smui.new_table), or add the column${missing.length > 1 ? 's' : ''} to ${t.name}, then convert again`
         : `the table ${t.name} has no column ${list}`, warn: true };
     }
-    const raw = { roles: step.roles || {}, options: { ...(step.options || {}) }, ...(step.extra || {}) };
-    if (step.filter) raw.filter = step.filter;
-    delete raw.options.__colNames;               // Fit Y by X records its columns itself
-    const spec = t ? SM.specs.remap(raw, t, Object.fromEntries(t.columns.map((c) => [c.name, c.name]))) : raw;
-    // entries that carry a column's id and its name (Graph Builder's zones): the name back
-    const names = (v) => {
-      if (Array.isArray(v)) v.forEach(names);
-      else if (v && typeof v === 'object') {
-        if (typeof v.id === 'string' && 'name' in v && t) { const c = t.col(v.id); if (c) v.name = c.name; }
-        Object.values(v).forEach(names);
-      }
-    };
-    names(spec.options);
+    const spec = stepSpec(step, t);
     const rep = new SM.report.Report(app, P, spec, t);
     let parts = [];
     let errors = [];
@@ -327,5 +335,5 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
     SM.commands.register({ menu: 'Python', order: 110, label: 'JSL to Python…', key: '.jsl', about: 'A JSL script as a Python script: the language, the data-table work, and the analyses as this page\'s code', action: (a) => open(a) });
   });
 
-  SM.jsl = Object.freeze({ open, openFile, assemble, analysisCode, Converter, SAMPLE });
+  SM.jsl = Object.freeze({ open, openFile, assemble, analysisCode, stepSpec, Converter, SAMPLE });
 }(typeof self !== 'undefined' ? self : this));

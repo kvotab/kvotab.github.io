@@ -406,7 +406,15 @@
     };
     if (shared.histOnly) { delete layout.xaxis2; delete layout.yaxis2; }
     const size = { width: horizontal ? 470 : 330, height: horizontal ? 290 : 330, title: `${col.name} histogram` };
-    const graph = ctx.plot(shared.histOnly ? traces.slice(0, 1) : traces, layout, size);
+    // Axis Settings (smui-axis.js): in the code the histogram is ax; its value axis also serves the box plot
+    // beside it (bx in the code, x2 or y2 here), whose reference lines cross both, as the spec limits do
+    const boxed = !shared.histOnly && (o('box', true) || o('qbox', false));
+    const valueAxis = horizontal ? 'xaxis' : 'yaxis';
+    const axisOpts = {
+      axisCode: (name) => (name === 'xaxis' || name === 'yaxis' ? 'ax' : null),
+      axisAlso: (name) => (boxed && name === valueAxis ? { plotly: [horizontal ? 'y2' : 'x2'], code: ['bx'] } : null),
+    };
+    const graph = ctx.plot(shared.histOnly ? traces.slice(0, 1) : traces, layout, { ...size, ...axisOpts });
     // the fits drawn on the histogram, in their colours
     const drawn = fits.map((f, i) => ({ ...f, color: FIT_COLORS[i % FIT_COLORS.length] })).filter((f) => f.curve && !f.error && f.curve_code && o(`curve:${f.dist}`, true));
     const histCode = ctx.code(histogramCode(ctx, col, { ...size, bins, nb: hb.nb, horizontal, probAxis, showHist: o('histogram', true), showBox: o('box', true), qbox: o('qbox', false),

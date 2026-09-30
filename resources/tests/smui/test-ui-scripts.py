@@ -14,8 +14,13 @@ the others. A project and Save Table keep the scripts, and the report
 script runs on the table opened again (new column ids). A hostile table
 file: its scripts checked (bad names, platforms, specs, prototype keys
 dropped). A CSV header "a\\nb", a JSON table's name with a line separator
-and a rename with a pasted line break all come out as "a b". The dark
-theme and phone width.
+and a rename with a pasted line break all come out as "a b". A JMP table
+(.jmp) with two JSL scripts (JMPReader.jl's compact_UInt8.jmp, from
+local/jmp/, with its script block rewritten in place): the Table panel
+lists them with their JSL mark; a real click on the analysis opens its
+report, one on an Open() of a file opens JSL to Python; Show JSL; Save
+Table keeps them; a hostile JSL script is dropped; a renamed column leaves
+the JSL as it is. The dark theme and phone width.
 
 Start a server on the repository root and headless Chrome (see README.md)
 on SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -25,8 +30,10 @@ on SMUI_HTTP_PORT and SMUI_CDP_PORT, then
 Exit status 0 when every check passes.
 """
 import asyncio
+import base64
 import json
 import os
+import struct
 import sys
 
 from cdp import BASE, Checks, open_page, wait_engine
@@ -411,6 +418,88 @@ async def main():
         check('a rename with a pasted line break is x y', r['viaApi'], 'x y')
         check('Undo takes the renames back', r['back'], 'light (h)')
         check('a table renamed with a line break', r['table'], 'my table')
+
+    # ---- a JMP table's scripts: jmp.py reads their JSL, smui-scripts.js runs them ------------------------------------------------------------
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'local', 'jmp', 'compact_UInt8.jmp')
+    if not os.path.exists(local):
+        print('  (the .jmp test tables are not there: run fetch-jmp-fixtures.py; the JMP script checks are skipped)')
+    else:
+        # the block rewritten in the room of the original (03 00, 8-byte length, count, kind + 4-byte length + text each),
+        # so the columns' offsets stay as they are
+        raw = open(local, 'rb').read()
+        at = raw.find(b'\x03\x00', raw.find(b'Version'))
+        size = struct.unpack_from('<q', raw, at + 2)[0]
+        first = 'Distribution of A(Distribution(Nominal Distribution(Column(:A))))'
+        room = size - 2 - 2 * 5 - len(first)
+        second = 'Source(Open("pooled_UInt8.txt"' + ' ' * (room - len('Source(Open("pooled_UInt8.txt"))')) + '))'
+        payload = struct.pack('<H', 2) + b'\x03' + struct.pack('<I', len(first)) + first.encode() + b'\x03' + struct.pack('<I', len(second)) + second.encode()
+        b64 = base64.b64encode(raw[:at + 10] + payload + raw[at + 10 + size:]).decode()
+        r = await js(page, f'''
+          const bytes = Uint8Array.from(atob({json.dumps(b64)}), (c) => c.charCodeAt(0));
+          const n0 = SM.app.tables.length;
+          await SM.app.openFiles([new File([bytes], 'scripted.jmp')]);
+          await T.until(() => SM.app.tables.length > n0, 90000);
+          const t = SM.app.tables.at(-1);
+          SM.app.showTab(SM.app.tabOf(t));
+          await T.sleep(400);
+          return {{ scripts: t.scripts.map((x) => [x.name, x.kind, x.jsl.replace(/\\s+/g, '')]), listed: T.scripts(),
+                    marks: [...document.querySelectorAll('.sm-panel-table .sm-script .sm-scriptkind')].map((x) => x.textContent), note: t.notes.includes('came as JSL') }};
+        ''', 'a JMP table with scripts opens')
+        if r:
+            check('a .jmp file\'s two scripts come as JSL, in its order', r['scripts'],
+                  [['Distribution of A', 'jsl', 'Distribution(NominalDistribution(Column(:A)))'], ['Source', 'jsl', 'Open("pooled_UInt8.txt")']])
+            check('... the Table panel lists them, each with the JSL mark, and the table\'s notes say so', (r['listed'], r['marks'], r['note']), (['Distribution of A', 'Source'], ['JSL', 'JSL'], True))
+        n0 = await page.ev('SM.app.reports.length')
+        await click_el(page, "T.script('Distribution of A')")
+        r = await js(page, f'''
+          await T.until(() => SM.app.reports.length > {n0}, 60000);
+          const rep = SM.app.reports.at(-1);
+          await T.until(() => rep.body.querySelector('.sm-ob-head'), 60000);
+          await T.sleep(300);
+          return {{ platform: rep.platform.id, y: (rep.spec.roles.y || []).map((id) => rep.table.col(id).name), heads: T.text(rep).heads.slice(0, 3), errors: rep.body.querySelectorAll('.sm-ob-error').length }};
+        ''', 'a click on a JSL script runs its analysis')
+        if r:
+            check('a real click on the JSL analysis opens its report here: Distribution of A', (r['platform'], r['y'], r['errors']), ('distribution', ['A'], 0))
+        nt = await page.ev('SM.app.tabs.filter((x) => x.converter).length')
+        await click_el(page, "T.script('Source')")
+        r = await js(page, f'''
+          await T.until(() => SM.app.tabs.filter((x) => x.converter).length > {nt}, 60000);
+          const tab = SM.app.tabs.filter((x) => x.converter).at(-1);
+          await T.sleep(300);
+          return {{ title: tab.title, text: tab.converter.jsl.value.replace(/\\s+/g, '') }};
+        ''', 'a JSL script that launches no analysis opens JSL to Python')
+        if r:
+            check('a click on the Source script (an Open() of a file) opens JSL to Python with it', (r['title'], r['text']), ('Source', 'Open("pooled_UInt8.txt")'))
+        await page.ev("(() => { const t = SM.app.tables.find((x) => x.name === 'scripted'); SM.app.showTab(SM.app.tabOf(t)); })()")
+        await asyncio.sleep(0.4)
+        await right_click_el(page, "T.script('Distribution of A')")
+        await asyncio.sleep(0.3)
+        items = await page.ev("[...document.querySelectorAll('.sm-menu button .sm-label')].map((x) => x.textContent)")
+        check('the right click of a JSL script: Run Script, Show JSL, Rename…, Delete', items[-4:] if items else items, ['Run Script', 'Show JSL', 'Rename…', 'Delete'])
+        nt = await page.ev('SM.app.tabs.filter((x) => x.converter).length')
+        await page.ev("T.menuButton('Show JSL').click()")
+        r = await js(page, f'''
+          await T.until(() => SM.app.tabs.filter((x) => x.converter).length > {nt}, 60000);
+          const tab = SM.app.tabs.filter((x) => x.converter).at(-1);
+          return tab.converter.jsl.value.replace(/\\s+/g, '');
+        ''', 'Show JSL')
+        check('Show JSL opens the script in JSL to Python', r, 'Distribution(NominalDistribution(Column(:A)))')
+        r = await js(page, '''
+          const t = SM.app.tables.find((x) => x.name === 'scripted');
+          const back = SM.Table.fromJSON(JSON.parse(JSON.stringify(t.toJSON())));
+          const h = new SM.Table({ name: 'hostile jsl', columns: [{ name: 'x', values: [1, 2] }], scripts: [{ name: 'a', kind: 'jsl', jsl: 5 }, { name: 'b', kind: 'jsl', jsl: '  ' },
+            { name: 'c', kind: 'jsl', jsl: 'Distribution(Column(:x))' }, { name: 'd', kind: 'jsl', jsl: 'x'.repeat(500000) }, { name: 'e', kind: 'jsl', jsl: 'Oneway()', platform: 'x', spec: { __proto__: { bad: 1 } } }] });
+          const before = t.scripts[0].jsl;
+          t.renameColumn(t.columns[0].id, 'B');
+          return { back: back.scripts.map((x) => [x.name, x.kind]), hostile: h.scripts.map((x) => [x.name, Object.keys(x).sort().join(',')]), same: t.scripts[0].jsl === before };
+        ''', 'JSL scripts kept, checked and left alone by a rename')
+        if r:
+            check('Save Table keeps the JSL scripts', r['back'], [['Distribution of A', 'jsl'], ['Source', 'jsl']])
+            check('a hostile table\'s JSL scripts: not text, empty or too long are dropped, and nothing but the text is kept', r['hostile'], [['c', 'jsl,kind,name'], ['e', 'jsl,kind,name']])
+            check('a renamed column leaves the JSL as JMP keeps it', r['same'], True)
+        # back to the table of the design's Model, which the checks below look at
+        await page.ev("(() => { const t = SM.app.tables.find((x) => (x.scripts || []).some((y) => y.name === 'Model')); if (t) SM.app.showTab(SM.app.tabOf(t)); })()")
+        await asyncio.sleep(0.4)
 
     # ---- the dark theme and phone width ---------------------------------------------------------------------------------------------------------
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")

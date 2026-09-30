@@ -562,7 +562,9 @@ async def main():
       const box2 = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold').parentElement;
       return { cut: rep.spec.options.cut, captions: [...box2.querySelectorAll(':scope > .sm-ob-body > .sm-pred-scroll caption')].map(c => c.textContent) };
     })()''')
-    check('a new threshold from its field: the option and the tables', (r['cut'], r['captions']), (0.3, ['Training: yes when its probability ≥ 0.3', 'Validation: yes when its probability ≥ 0.3']))
+    # one method selected (the drawn seed's Select Dominant): its table of the sets; several: a table per set
+    check('a new threshold from its field: the option and the tables', (r['cut'], r['captions']),
+          (0.3, ['yes called when Prob[yes] ≥ 0.3'] if len(shown_keys) == 1 else ['Training: yes when its probability ≥ 0.3', 'Validation: yes when its probability ≥ 0.3']))
     await page.ev(pick_js('*top*', ['Profiler', 'Boosted Tree']))
     pr = await page.ev(engine_js({'fn': 'screening.profile', 'method': 'boosted', 'kfold': 0, 'current': None}))
     prof = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim().startsWith('Prediction Profiler'));
@@ -804,7 +806,8 @@ async def main():
     check('... the options kept, the same Summary, no errors', (r['opts'], r['same'], r['heads'], r['errors']), ([True, 'linear', ['tree', 'linear', 'nb']], True, 6, 0))
 
     # ---- By: each group's Decision Threshold its own (JMP's By reports), under the keys Model Screening gives it (cut, cutLevel)
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True}), timeout=600)
+    tid3 = await page.ev("SM.app.tables.find((t) => t.name === 'Screen').col('three').id")
+    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True, 'groupMetrics': tid3}), timeout=600)
     await page.ev('''(() => { const i = SM.app.reports.at(-1).body.querySelectorAll('input[aria-label="Probability threshold"]')[1]; i.focus(); i.select(); })()''')
     for ch in '0.3':
         await page.key(ch, text=ch)
@@ -817,6 +820,85 @@ async def main():
         opts: Object.fromEntries(Object.entries(rep.spec.options).filter(([k]) => /(^|\\|)(cut|cutLevel)$/.test(k))) }; })()''')
     check('By g, the Decision Threshold: 0.3 typed in g=b\'s: every table of g=b\'s at 0.3, g=a\'s and g=c\'s still at 0.5; the option g=b\'s alone',
           ([sorted({c_.split('≥ ')[-1] for c_ in caps}) for caps in r['caps']], r['opts']), ([['0.5'], ['0.3'], ['0.5']], {'~g=b|cut': 0.3}))
+    gmb = await page.ev('''(() => { const rep = SM.app.reports.at(-1);
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head')].filter(h => h.querySelector('h2, h3, h4').textContent.trim() === 'Group Metrics: three');
+      return heads.map(h => { const rows = [...h.parentElement.querySelector('table.sm-rt').querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim()));
+        const j = rows[0].indexOf('Threshold'), k = rows[0].indexOf('Method'); return [[...new Set(rows.slice(1).map(q => q[k]))].length, [...new Set(rows.slice(1).map(q => q[j]))]]; }); })()''')
+    check('... and each By group\'s Group Metrics (by three, each method) at its own group\'s threshold: g=b\'s at 0.3', gmb, [[2, ['0.5000']], [2, ['0.3000']], [2, ['0.5000']]])
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
+    # ---- Group Metrics… (red triangle) of the methods the Decision Threshold compares, the Summary's selection: each method's
+    # rows are predict.groups' on its probabilities; typed thresholds (real keys) and equal false positive rates by the menu;
+    # its code; each method's rate charts; Save Decision Column of one method
+    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn'], 'selected': ['linear', 'knn']}), timeout=900)
+    await page.ev(pick_js('*top*', ['Group Metrics…'], False))
+    r = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const t = rep.table;
+      for (let i = 0; i < 50 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+      const d = [...document.querySelectorAll('.sm-dialog')].pop(); const sel = d.querySelector('.sm-form select');
+      sel.value = t.col('g').id; sel.dispatchEvent(new Event('change'));
+      const done = new Promise(res => rep.on('done', res)); d.querySelector('.sm-dialog-foot .primary').click(); await done;
+      return { opt: rep.spec.options.groupMetrics === t.col('g').id, errors: [...rep.body.querySelectorAll('.sm-ob-error')].map(e => e.textContent),
+        outlines: [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent) }; })()''', timeout=600)
+    check('Group Metrics… (red triangle) by g: its outline, no Decision Threshold needed', (r['opt'], r['errors'], 'Group Metrics: g' in r['outlines'], 'Decision Threshold' in r['outlines']), (True, [], True, False))
+    GM = '''(async (extra) => { const rep = SM.app.reports.at(-1); const t = rep.table;
+      await new Promise(res => { if (!rep.body.classList.contains('is-running')) res(); else rep.on('done', res); });
+      const e = [...rep.cache.entries()].filter(([k]) => k.startsWith('screening.threshold')).pop(); const D = await e[1];
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.querySelector('h2, h3, h4').textContent.trim() === 'Group Metrics: g');
+      const rows = [...h.parentElement.querySelector('table.sm-rt').querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim()));
+      const eng = [];
+      for (const m of D.models) eng.push({ label: m.label, r: await SM.engine.call('predict.groups', { group: 'g', at: D.points.rows, actual: D.points.actual, prob: m.p, sets: D.points.set, w: D.points.w, cut: 0.5, target: 1, ...extra }, t) });
+      return { rows, eng }; })'''
+    GM_COLS = [('n', 'N'), ('base_rate', 'Base Rate'), ('selection_rate', 'Selection Rate'), ('accuracy', 'Accuracy'), ('auc', 'AUC'), ('fpr', 'False Positive Rate'), ('fnr', 'False Negative Rate'), ('precision', 'Precision'), ('cut', 'Threshold')]
+
+    def near_cell(text, v):
+        if v is None:
+            return text in ('', '.', '—')
+        if isinstance(v, str) or v == math.inf:
+            return text in ('Infinity', '∞', 'inf')
+        return abs(num(text) - v) <= max(5.01e-5, 1e-6 * abs(v)) if v == v else False
+
+    def gm_ok(res):
+        head_ = res['rows'][0]
+        page_rows = [dict(zip(head_, q)) for q in res['rows'][1:]]
+        want = [(e_['label'], q) for e_ in res['eng'] for q in e_['r']['rows']]
+        return len(page_rows) == len(want) and all(pr_['Method'] == lab and pr_['g'] == q['group'] and all(near_cell(pr_[l_], q[k_]) for k_, l_ in GM_COLS) for pr_, (lab, q) in zip(page_rows, want))
+    res = await page.ev(f'({GM})({{}})', timeout=600)
+    check('Group Metrics of the selected methods (the logistic regression, K Nearest Neighbors): a line per method and group, each method\'s predict.groups on its own probabilities at 0.5',
+          ([e_['label'] for e_ in res['eng']], gm_ok(res)), (['Nominal Logistic', 'K Nearest Neighbors'], True))
+    await page.ev(pick_js('Group Metrics: g', ['Thresholds', 'Typed per Group']))
+    await page.mouse('mouseMoved', 2, 2)
+    await page.ev('''(() => { const i = SM.app.reports.at(-1).body.querySelector('input[aria-label="Threshold of b"]'); i.focus(); i.select(); })()''')
+    for ch in '0.3':
+        await page.key(ch, text=ch)
+    await page.ev('(() => { window.__done = new Promise(res => SM.app.reports.at(-1).on("done", res)); return true; })()')
+    await page.key('Enter', code='Enter')
+    await page.ev('window.__done', timeout=300)
+    res = await page.ev(f'({GM})({json.dumps({"equal": "typed", "cuts": {"b": 0.3}})})', timeout=600)
+    check('... Thresholds ▸ Typed per Group, 0.3 typed for b: every method\'s b at 0.3, the others at 0.5, predict.groups\' numbers', gm_ok(res), True)
+    await page.ev(pick_js('Group Metrics: g', ['Thresholds', 'Equal False Positive Rates']))
+    res = await page.ev(f'({GM})({json.dumps({"equal": "fpr"})})', timeout=600)
+    check('... Equal False Positive Rates: each method\'s thresholds solved for it, predict.groups\' on its probabilities', (gm_ok(res), [e_['r']['thresholds'] for e_ in res['eng']][0] != [e_['r']['thresholds'] for e_ in res['eng']][1]), (True, True))
+    codes = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.querySelector('h2, h3, h4').textContent.trim() === 'Group Metrics: g');
+      return [...h.parentElement.querySelectorAll('details.sm-code code')].map(c => c.textContent); })()''')
+    got, err = await UL.run_json(page, codes[0] if codes else '', 'rows', "SM.app.tables.find((t) => t.name === 'Screen')")
+    want_c = [(e_['label'], q) for e_ in res['eng'] for q in e_['r']['rows']]
+    ok_c = got is not None and len(got) == len(want_c) and all(g_['method'] == lab and g_['group'] == q['group'] and all((g_[k_] is None and q[k_] is None) or (g_[k_] is not None and q[k_] is not None and (float(g_[k_]) == float(q[k_]) or abs(float(g_[k_]) - float(q[k_])) < 1e-9)) for k_, _ in GM_COLS) for g_, (lab, q) in zip(got, want_c))
+    check('... its code (under the charts) runs in the page and gives every method\'s rows, each method\'s thresholds solved in it', (len(codes), err, ok_c), (2, None, True))
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    n_gm, _ = await UP.chart_blocks(page, check, 'Group Metrics of two methods, equal false positive rates', "SM.app.tables.find((t) => t.name === 'Screen')", 'SM.app.reports.at(-1)', screening_compare)
+    check('... the false positive rates and the false negative rates of each method by group, each chart drawn from its code', n_gm, 2)
+    sd = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Group Metrics: g', ['Save Decision Column', 'K Nearest Neighbors'], false, 0);
+      for (let i = 0; i < 100 && !t.columns.slice(before).some(c => c.formula); i++) await new Promise(r => setTimeout(r, 100));
+      return {{ made: t.columns.slice(before).map(c => ({{ name: c.name, formula: c.formula ? c.formula.expr : null, values: c.values }})), g: t.col('g').values }}; }})()''', timeout=300)
+    knn_thr = res['eng'][1]['r']['thresholds']
+    made = sd['made']
+    prob_k = made[1]['values'] if len(made) == 3 else []
+    want_d = [None if p_ is None else ('yes' if p_ >= (knn_thr.get(g_) if knn_thr.get(g_) is not None else 2) else 'no') for p_, g_ in zip(prob_k, sd['g'])]
+    check('... Save Decision Column ▸ K Nearest Neighbors: that method\'s Prob[] columns saved first, then each row called by its group\'s threshold for that method',
+          ([c['name'] for c in made], len(made) == 3 and made[2]['values'] == want_d),
+          (['Prob[no] K Nearest Neighbors', 'Prob[yes] K Nearest Neighbors', 'Decision cls by g K Nearest Neighbors'], True))
     await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
 
     # ---- the graphs' matplotlib code

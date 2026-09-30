@@ -70,7 +70,7 @@
     minFreq: 'Only terms seen at least this many times in all become columns; rarer ones are left out.',
     manage: {
       stopAdd: 'One word per line (lowercase): each is left out of the terms, and no phrase begins or ends with one. scikit-learn\'s English stop words are left out anyway.',
-      recodes: 'One recode per line, old -> new (=, => and → work too): the old term is counted as the new one, an existing term to combine the two; nothing after the arrow drops the term.',
+      recodes: 'One recode per line, old -> new (=, => and → work too): each word that is the old value becomes the new one before the stop words and the stemming (as in JMP), so an existing term combines the two; an old value ending in the dot (return·) recodes every word of that stem; nothing after the arrow drops the word.',
       phrasesAdd: 'One phrase of two or more words per line: where its words follow each other in a text they count as one term, and the single words lose those occurrences.',
     },
   };
@@ -380,8 +380,8 @@
     const sc = S.col.id;
     const v = await SM.ui.form({
       title: 'Recode', info: 'p:text:manage',
-      lead: terms.length === 1 ? `The term "${terms[0]}" is counted as the term you give (an existing one, to combine them). An empty value drops it.` : `The ${terms.length} terms (${terms.slice(0, 6).join(', ')}${terms.length > 6 ? ', …' : ''}) are counted as the one term you give.`,
-      fields: [{ key: 'to', label: 'New value', type: 'text', value: terms[0], help: 'The term to count the chosen term or terms as (lowercase): an existing term combines them with it, a new one renames them; empty drops them from the terms. The recode is kept with the report (Manage Recodes lists it).' }],
+      lead: terms.length === 1 ? `The term "${terms[0]}" is counted as the term you give (an existing one, to combine them)${terms[0].endsWith(DOT) ? ': every word of the stem is recoded, before the stemming' : ''}. An empty value drops it.` : `The ${terms.length} terms (${terms.slice(0, 6).join(', ')}${terms.length > 6 ? ', …' : ''}) are counted as the one term you give.`,
+      fields: [{ key: 'to', label: 'New value', type: 'text', value: terms[0], help: 'The word to count the chosen term or terms as (lowercase). As in JMP the recode comes before the stop words and the stemming: the words become the new one and are then stemmed like any other, so an existing term (or one that shares its stem) combines them with it; a new one renames them; empty drops them. A stemmed term (ending in the dot) recodes each word of its stem. The recode is kept with the report (Manage Recodes lists it).' }],
     });
     if (!v) return;
     const cur = listOpt(ctx, 'recodes', sc, {});
@@ -771,7 +771,7 @@
       columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'loading', label: varimax ? 'Loading' : r.method === 'lda' ? 'Probability' : 'Weight', digits: 4 }], rows: tp,
     }, { caption: `Topic ${t + 1}`, key: K(S, `topic-${t + 1}`), sortable: false, onRow: (row, ev) => pick(ctx, S, 'term', row.term, ev) })));
     tl.add(grid, ctx.note(varimax
-      ? 'The terms with the largest loadings on each topic, after the varimax rotation of the first singular vectors: a topic is a group of terms that go together. Click a term to select its rows.'
+      ? 'The terms with the largest loadings in absolute value on each topic, the largest first (as JMP sorts them), after the varimax rotation of the first singular vectors: a topic is a group of terms that go together, and a negative loading marks a term that its documents hold less often than the others. Click a term to select its rows.'
       : `The terms with the largest ${r.method === 'lda' ? 'probabilities in each topic' : 'weights in each topic'}. Click a term to select its rows.`));
     const vo = ctx.outline(varimax ? 'Variance Explained' : 'Topic Sizes', { parent: ob, key: K(S, 'topicvar') });
     vo.add(wide(ctx.rt({ columns: [{ key: 'topic', label: 'Topic', fmt: 'int' }, { key: 'variance', label: varimax ? 'Variance' : 'Size' }, { key: 'percent', label: 'Percent', digits: 4 }, { key: 'cum', label: 'Cum Percent', digits: 4 }], rows: r.variance }, { key: K(S, 'topicvar'), sortable: false })),
@@ -1461,7 +1461,7 @@
     const sc = col.id;
     const cfg = {
       stopAdd: { title: 'Manage Stop Words', lead: 'Your stop words, one per line: they are left out of the terms and no phrase begins or ends with one. scikit-learn\'s 318 English stop words are always left out.', value: listOpt(ctx, 'stopAdd', sc, []).join('\n') },
-      recodes: { title: 'Manage Recodes', lead: 'One recode per line: old value -> new value. The old term is counted as the new one (an existing term, to combine them); nothing after the arrow drops the term.', value: Object.entries(listOpt(ctx, 'recodes', sc, {})).map(([a, b]) => `${a} -> ${b}`).join('\n') },
+      recodes: { title: 'Manage Recodes', lead: 'One recode per line: old value -> new value. As in JMP the words are recoded first, in one pass, then the stop words are left out and the words stemmed: the old word is counted as the new one (an existing term, to combine them), an old value ending in the dot recodes every word of that stem, and nothing after the arrow drops the word.', value: Object.entries(listOpt(ctx, 'recodes', sc, {})).map(([a, b]) => `${a} -> ${b}`).join('\n') },
       phrasesAdd: { title: 'Manage Phrases', lead: 'Your phrases, one per line (two or more words): each is counted as one term where its words follow each other, and its words lose those occurrences.', value: listOpt(ctx, 'phrasesAdd', sc, []).join('\n') },
     }[key];
     const v = await SM.ui.form({ title: `${cfg.title}: ${col.name}`, info: 'p:text:manage', lead: cfg.lead, fields: [{ key: 'text', label: cfg.title.replace('Manage ', ''), type: 'textarea', value: cfg.value, help: HELP.manage[key] }] });
@@ -1600,7 +1600,7 @@
         { heading: 'Roles', choices: [['Text Columns', 'One or more character columns; each gets an analysis of its own.'], ['ID', 'Optional: the rows that share an ID are one document (a case), their texts together.'], ['By', 'A separate analysis for each level.']] },
         // the launch's options (Stemming is in the red triangle too)
         { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
-        { heading: 'Differences from JMP', text: 'JMP\'s stop word list and its built-in regular expressions are its own; here the stop words are scikit-learn\'s ENGLISH_STOP_WORDS and the patterns are the ones above. The Word Cloud starts hidden, as in JMP (Display Options). The stemmer is Snowball\'s English (Porter2) as Snowball 1 and 2 define it, JMP\'s choice; Porter\'s 1980 algorithm is offered too (Stemmer). Recodes apply after stemming here, before it in JMP. Latent Class Analysis is a Bernoulli mixture fitted here by EM from five random starts, so its clusters differ from JMP\'s own sparse algorithm\'s; Term Selection is an elastic net chosen by AICc along 150 penalties, as JMP\'s Generalized Regression defaults, its degrees of freedom the number of kept terms and its LogWorths Wald tests on the kept terms; Sentiment Analysis is VADER (its lexicon and rules), not JMP\'s own lexicon, scored from −1 to 1.' },
+        { heading: 'Differences from JMP', text: 'JMP\'s stop word list and its built-in regular expressions are its own; here the stop words are scikit-learn\'s ENGLISH_STOP_WORDS and the patterns are the ones above. The Word Cloud starts hidden, as in JMP (Display Options). The stemmer is Snowball\'s English (Porter2) as Snowball 1 and 2 define it, JMP\'s choice; Porter\'s 1980 algorithm is offered too (Stemmer). The words are recoded before stemming, as in JMP, and their lengths checked after the recode; JMP checks them after finding the phrases, this page before. Latent Class Analysis is a Bernoulli mixture fitted here by EM from five random starts, so its clusters differ from JMP\'s own sparse algorithm\'s; Term Selection is an elastic net chosen by AICc along 150 penalties, as JMP\'s Generalized Regression defaults, its degrees of freedom the number of kept terms and its LogWorths Wald tests on the kept terms; Sentiment Analysis is VADER (its lexicon and rules), not JMP\'s own lexicon, scored from −1 to 1.' },
       ],
       more: MORE,
     },
@@ -1638,7 +1638,11 @@
     },
     'p:text:manage': {
       kicker: 'Text Explorer', title: 'Stop Words, Recodes and Phrases',
-      lead: 'The lists you add to, kept with the report (and its project): stop words to leave out, recodes that count one term as another, and phrases counted as one term. scikit-learn\'s 318 English stop words are always left out; JMP\'s own list differs.',
+      lead: 'The lists you add to, kept with the report (and its project): stop words to leave out, recodes that count one word as another, and phrases counted as one term. scikit-learn\'s 318 English stop words are always left out; JMP\'s own list differs.',
+      sections: [
+        { heading: 'The order, as in JMP', text: 'Each text is made lowercase and cut into tokens; the tokens are recoded (in one pass: a recode of a recoded word does not follow on), and those of the Minimum to the Maximum Characters per Word are kept; the added phrases are joined; the stop words are left out; the rest is stemmed. So a recode reaches the stemmer: parcel -> package counts parcel as package, and parcels as packages, which then stem together. A recode of a stemmed term (return· -> refund) recodes each word of that stem (return, returned, returns…), and the new word is stemmed with the others (refund·). A recode of an added phrase applies to the joined phrase.' },
+        { heading: 'Projects saved before', text: 'Until September 2026 this page applied the recodes after the stemming, to the terms. A project saved then opens with the recodes applied first: a recode of a stemmed term now recodes its words, which may then combine with other words of the new value\'s stem, so the counts can differ from the ones it showed.' },
+      ],
       more: MORE,
     },
     'p:text:lsa': {
@@ -1661,6 +1665,7 @@
         { heading: 'Other methods (scikit-learn)', choices: [['Non-negative Matrix Factorization', 'NMF: the weighted matrix as documents × topics times topics × terms, all non-negative (init nndsvda).'], ['Latent Dirichlet Allocation', 'LDA: a probability model of the counts; each topic a distribution over the terms, each document a mix of topics.']] },
         { heading: 'Seeds', text: 'NMF and LDA start from the report\'s random seed, kept with the report, so a redraw, a project and the Python code give the same topics.' },
         { heading: 'Clicking', choices: [['A term in Top Loadings by Topic', 'Selects the rows that hold it, as a click in the Term List does (shift adds, ctrl/⌘ toggles).'], ['The Topic Scores plot', 'Click or drag over documents to select their rows.']] },
+        { heading: 'Top Loadings by Topic', text: 'Each topic\'s terms with the largest loadings in absolute value, the largest first, as JMP sorts them; a negative loading is a term the topic\'s documents hold less often. The axes of the Topic Scores plot name each topic by its first three. (NMF and LDA give no negative weights.) Until September 2026 this page sorted them by the loading itself, largest first, so a project saved then may now show a negative loading among a topic\'s terms.' },
       ],
       more: MORE,
     },

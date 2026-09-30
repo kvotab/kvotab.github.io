@@ -13,7 +13,9 @@ Word, Recode, Add Phrase and Show Text work from the menus, and Redo keeps
 them; Latent Semantic Analysis gives the engine's singular values, with
 documents linked to the rows both ways (titled as JMP's, Centered and
 Scaled TF IDF by default, with the eigenvalues); Topic Analysis finds the
-example's five themes; Latent Class Analysis (JMP's outlines, a real click
+example's five themes, each topic's terms by the absolute loading (JMP's
+order); a recode of a stemmed term by right click recodes its words before
+the stemming (JMP's order), Show Text marking them all; Latent Class Analysis (JMP's outlines, a real click
 on a cluster, the MDS map, Color by Cluster, Save Probabilities and Save
 Cluster), Cluster Terms and Cluster Documents (the SVD plots coloured by
 their clusters, + by a real click, a cluster's rows, the saved clusters),
@@ -616,6 +618,9 @@ async def main():
     hits = {th: any(len(set(tp) & ws) >= 2 for tp in tops) for th, ws in THEMES.items()}
     if not check('the five themes of the example each lead a topic (two of its words in a topic\'s top five)', hits, {th: True for th in THEMES}):
         print('   ', tops)
+    lds = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1];
+      return [...rep.body.querySelectorAll('.sm-tx-topics table')].map(t => t._rt.rows.map(r => r.loading)); })()''')
+    check('Top Loadings by Topic: each topic\'s terms by the absolute loading, the largest first (JMP\'s order)', all([abs(v) for v in ld] == sorted((abs(v) for v in ld), reverse=True) for ld in lds), True)
     tv = await page.ev(table_under_js('Variance Explained', 0))
     check('Variance Explained: largest topic first', [num(row[1]) for row in tv[1:]] == sorted((num(row[1]) for row in tv[1:]), reverse=True), True)
     await page.ev(pick_form_js('Topic Analysis, Rotated SVD', ['Specifications…'], "const s = d.querySelector('select'); s.value = 'nmf';"), timeout=600)
@@ -1254,6 +1259,22 @@ async def new_analyses(page):
                                 ('SVD Centered and Scaled TF IDF', ['SVD Scatterplot Matrix…'], ['Number of singular vectors']),
                                 ('Cluster Terms', ['Number of Clusters…'], ['Number of clusters'])):
         await form_help(page, f"await clickPath({NEW}, {json.dumps(title)}, {json.dumps(path)});", fields, path[-1])
+
+    # ---- a recode of a stemmed term by right click: its words are recoded before the stemming, as in JMP
+    await page.ev(pick_new('*top*', ['Term Options', 'Stemming', 'Stem for Combining']), timeout=900)
+    before = {row[0]: int(row[1]) for row in (await page.ev(under_new('Term and Phrase Lists', 0)))[1:]}
+    ref0 = next((t for t in ('refund' + DOT, 'refund') if t in before), None)
+    recode = CONTEXT.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};').replace(LIST_ROW, LIST_ROW.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};'))
+    await page.ev(f"({recode})('Term List', {json.dumps('return' + DOT)}, 'Recode…', \"d.querySelector('.sm-form input').value = 'refund';\")", timeout=900)
+    await settle_new(page)
+    after = {row[0]: int(row[1]) for row in (await page.ev(under_new('Term and Phrase Lists', 0)))[1:]}
+    st = await page.ev(STATE_NEW)
+    check('Recode of a stemmed term (return· -> refund): its words count as refund and stem with refund\'s, return· is gone',
+          (ref0 is not None, 'return' + DOT in after, after.get('refund' + DOT, after.get('refund')), st['options'].get(f'{cid}|recodes')), (True, False, before['return' + DOT] + before[ref0], '{"return\u00b7":"refund"}'))
+    fr = await page.ev(eng_js('text.explore', {'stemming': 'combine', 'recodes': {'return' + DOT: 'refund'}}))
+    ref1 = 'refund' + DOT if 'refund' + DOT in after else 'refund'
+    check(f'... and Show Text marks the texts\' words of both, return and returned and {ref1} itself', {'return', 'returned', 'refund'} <= {w for w, _ in fr['forms'].get(ref1, [])}, True)
+    check('... the terms counted again, none lost', sum(after.values()), sum(before.values()))
 
 
 async def new_chart_code(page):

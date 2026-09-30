@@ -449,7 +449,9 @@
           if (/\.(dta|sas7bdat|xpt|jmp)$/i.test(f.name)) {
             SM.ui.toast(`Reading ${f.name} in the Python engine…`);
             const r = await SM.engine.callBytes('datasets.read_file', { name: f.name }, await f.arrayBuffer());
-            const t = new SM.Table({ name: r.name, source: `from ${f.name}`, notes: r.note || '', columns: r.columns.map((c) => ({ ...c, values: c.values.map((v) => (v == null && c.dataType === 'numeric' ? NaN : v)) })) });
+            // a JMP table's scripts come as their JSL text (the table checks them)
+            const scripts = (r.scripts || []).map((x) => ({ name: x.name, kind: 'jsl', jsl: x.jsl }));
+            const t = new SM.Table({ name: r.name, source: `from ${f.name}`, notes: r.note || '', scripts, columns: r.columns.map((c) => ({ ...c, values: c.values.map((v) => (v == null && c.dataType === 'numeric' ? NaN : v)) })) });
             this.addTable(t);
             SM.ui.toast(`Opened ${f.name}: ${t.nrows} rows × ${t.columns.length} columns`);
             continue;

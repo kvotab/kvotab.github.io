@@ -36,6 +36,7 @@ import os
 import sys
 import time
 import urllib.request
+from datetime import datetime
 
 import websockets
 
@@ -2666,6 +2667,27 @@ print("SMUI-MAP " + _json.dumps(_out))
     check('... a click on a point selects its row; a hidden row is not drawn', (r['sel'], r['lon'][3], r['lon'][2] is not None), ([7], None, True))
     await page.ev(r"""(async () => { await _gb.update((S) => { S.map = null; }); })()""")
 
+    # ---- a date on X stays a date axis when the page restyles a graph's traces (a Line's selection rings on drawing and
+    # on a selection): Plotly guessed the axis type again from the milliseconds and made it a number axis
+    r = await page.ev(r"""(async () => {
+      const n = 40, d = [], y = [];
+      for (let i = 0; i < n; i++) { d.push(Date.UTC(2021, 0, 4) + (i % 8) * 7 * 86400000); y.push((i % 5) + (i % 8)); }
+      const t = new SM.Table({ name: 'Dated line', columns: [{ name: 'd', values: d, format: { kind: 'date' } }, { name: 'y', values: y }] });
+      SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
+      const gb = () => SM.platforms.get('graphbuilder').builder(rep);
+      await gb().update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('y').id, name: 'y' }]; S.auto = false; S.elements = [{ type: 'line' }]; });
+      const p = await drawn(gb().plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+      const drawnType = p.box._fullLayout.xaxis.type;
+      t.select([0, 8, 16]); await settle(); await settle();
+      const selType = p.box._fullLayout.xaxis.type, ticks = p.box._fullLayout.xaxis._vals.map((v) => v.text);
+      t.select([]); SM.app.closeReport(rep); SM.app.closeTable(t);
+      return { drawnType, selType, datey: ticks.every((x) => /[A-Z][a-z]{2}|20\d\d/.test(x)) }; })()""")
+    check('Graph Builder: a Line over a date X is on a date axis, after drawing and after a selection', (r['drawnType'], r['selType'], r['datey']), ('date', 'date', True))
+
+    # ---- Axis Settings on a date axis in a browser that is not on UTC, over a daylight-saving change
+    await stockholm_dates(page)
+
     # ---- the Graph menu's point plots: Marker Size and Transparency in the red triangle, and in their code
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Graph data')))")
     res = await page.ev(open_report_js('scattermatrix', {'y': ['x', 'y', 'z']}))
@@ -2710,6 +2732,62 @@ print("SMUI-MAP " + _json.dumps(_out))
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
     await asyncio.sleep(1.2)
     await page.ev('(() => { if (window._rep0b) window._rep = window._rep0b; })()')
+
+async def stockholm_dates(page):
+    """Axis Settings on a date axis in a Europe/Stockholm browser, over the daylight-saving change of 2021-03-28: the page's
+    dates are UTC milliseconds, Plotly reads a number given for a range or a shape in local time, so Axis Settings gives it
+    the dates as text. The graph's range, ticks, reference line and range are then the data's dates exactly, the line
+    where the point of its day is, and the code's figure has the same."""
+    await page.call('Emulation.setTimezoneOverride', {'timezoneId': 'Europe/Stockholm'}, session=page.sid)
+    DAY = 86400000
+    day = lambda y, m, d: (datetime(y, m, d) - datetime(1970, 1, 1)).total_seconds() * 1000  # noqa: E731
+    try:
+        r = await page.ev(r"""(async () => {
+          window.__mapRep = window._rep;
+          const DAY = 86400000, d0 = Date.UTC(2021, 2, 20), d = [], v = [];
+          for (let i = 0; i < 17; i++) { d.push(d0 + i * DAY); v.push(i % 4); }
+          const t = new SM.Table({ name: 'DST dates', columns: [{ name: 'd', values: d, format: { kind: 'date' } }, { name: 'v', values: v }] }); SM.app.addTable(t);
+          const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
+          window._rep = rep;
+          await _gb.update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('v').id, name: 'v' }]; S.auto = false; S.elements = [{ type: 'points' }]; });
+          return [new Date(Date.UTC(2021, 2, 20)).getTimezoneOffset(), new Date(Date.UTC(2021, 3, 1)).getTimezoneOffset()]; })()""")
+        check('Stockholm: the browser\'s offset from UTC changes within the dates (CET, then CEST)', r, [-60, -120])
+        xy = await page.ev('__ax.gbAt("ew")')
+        await dbl(page, *xy)
+        r = await page.ev(r"""(async () => { const d = __ax.dialog(); if (!d) return null; const title = d.querySelector('h2').textContent;
+          __ax.set(d, 'min', '2021-03-25'); __ax.set(d, 'max', '2021-04-01'); __ax.set(d, 'inc', '1');
+          const add = d.querySelector('[data-ax="addref"]'); add.click(); add.click();
+          const R = d.querySelectorAll('.sm-ax-ref');
+          __ax.set(R[0], 'ref', '2021-03-28'); __ax.set(R[0], 'reflabel', 'DST'); __ax.set(R[0], 'refcolor', 'red');
+          __ax.set(R[1], 'ref', '2021-03-26'); __ax.set(R[1], 'refto', '2021-03-27'); __ax.set(R[1], 'refcolor', 'blue');
+          __ax.button(d, 'OK'); await _gb.idle(); await settle();
+          const p = await drawn(_gb.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+          let code = null; for (let i = 0; i < 120 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
+          const fl = p.box._fullLayout, xa = fl.xaxis;
+          const line = fl.shapes.find((q) => q.type === 'line'), rect = fl.shapes.find((q) => q.type === 'rect');
+          const path = [...p.box.querySelectorAll('.shapelayer path')].map((q) => q.getAttribute('d')).find((q) => /^M[\d.]+,[\d.]+L[\d.]+,[\d.]+$/.test(q));
+          const label = fl.annotations.find((a) => a.text === 'DST');
+          return { title, range: xa.range.map((q) => xa.r2l(q)), ticks: xa._vals.map((q) => q.x), line: xa.r2l(line.x0), rect: [xa.r2l(rect.x0), xa.r2l(rect.x1)], label: label ? xa.r2l(label.x) : null,
+            linePx: path ? Number(/^M([\d.]+),/.exec(path)[1]) : null, pointPx: xa._offset + xa.c2p(Date.UTC(2021, 2, 28)), state: _gb.state().axes['x:d'], code }; })()""")
+        check('Stockholm: a double-click on the date axis opens its window, the dates typed as dates', (r or {}).get('title'), 'X Axis Settings')
+        check('Stockholm: kept as the page keeps dates, UTC milliseconds', (r['state']['min'], r['state']['max'], [q['value'] for q in r['state']['refs']]), (day(2021, 3, 25), day(2021, 4, 1), [day(2021, 3, 28), day(2021, 3, 26)]))
+        check('Stockholm: the graph\'s date axis from 2021-03-25 to 2021-04-01 exactly (not an hour on)', r['range'], [day(2021, 3, 25), day(2021, 4, 1)])
+        check('... a tick at every midnight (UTC) from the minimum, across the change', r['ticks'], [day(2021, 3, 25) + k * DAY for k in range(8)])
+        check('... the reference line at 2021-03-28, the shading from 2021-03-26 to -27, the label at its line', (r['line'], r['rect'], r['label']), (day(2021, 3, 28), [day(2021, 3, 26), day(2021, 3, 27)], day(2021, 3, 28)))
+        check('... the line drawn where the point of 2021-03-28 is (to the pixel)', abs((r['linePx'] or 0) - r['pointPx']) < 0.01, True)
+        out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
+        R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+        A = R['figures'][0]['axes'][0] if R else {}
+        dd = lambda ms: ms / DAY  # noqa: E731   (matplotlib's dates: days since 1970)
+        spans = [[b['x'], b['x'] + b['w']] for b in A.get('bars', []) if (b['fc'] or '').startswith('#1f4e79')] + [sorted({q[0] for q in P['xy']}) for P in A.get('polygons', []) if (P['fc'] or '').startswith('#1f4e79')]
+        pts = sorted({round(q[0], 9) for S_ in A.get('scatter', []) for q in S_['xy']})
+        check('Stockholm: the code\'s figure: the same dates, ticks, line and shading, the point of the day on its line',
+              (err, A.get('xlim'), A.get('xticks'), [L['x'] for L in A.get('lines', []) if (L['color'] or '').startswith('#b0413e')], spans, round(dd(day(2021, 3, 28)), 9) in pts),
+              (None, [dd(day(2021, 3, 25)), dd(day(2021, 4, 1))], [dd(day(2021, 3, 25) + k * DAY) for k in range(8)], [[dd(day(2021, 3, 28))] * 2], [[dd(day(2021, 3, 26)), dd(day(2021, 3, 27))]], True))
+    finally:
+        await page.ev('(() => { const t = _rep.table; if (t && t.name === "DST dates") { SM.app.closeReport(_rep); SM.app.closeTable(t); } window._rep = window.__mapRep; })()')
+        await page.call('Emulation.setTimezoneOverride', {'timezoneId': ''}, session=page.sid)
+
 
 def SM_fmt4(v):
     """The page's fmt(v, {sig: 4}) for a positive number of moderate size."""

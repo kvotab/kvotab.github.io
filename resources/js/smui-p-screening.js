@@ -120,7 +120,7 @@
     if (r.kind === 'categorical') {
       if (ctx.opt('roc', false)) curveOutline(ctx, S, 'roc');
       if (ctx.opt('lift', false)) curveOutline(ctx, S, 'lift');
-      if (S.binary && ctx.opt('threshold', false)) await thresholdOutline(ctx, S);
+      if (S.binary && (ctx.opt('threshold', false) || ctx.opt('groupMetrics', null))) await thresholdOutline(ctx, S);
     } else if (ctx.opt('abp', false)) abpOutline(ctx, S);
     const prof = ctx.opt('profiler', false);
     if (prof && r.methods.some((m) => m.key === prof && m.measures)) {
@@ -359,7 +359,7 @@
     ob.add(ctx.row(...plots), ctx.note(`${set} rows${set === CV ? ', each predicted by the model fitted without its fold (first repeat)' : ''}: the actual ${S.yc.name} against each method's prediction; points on the dotted line are predicted exactly. Drag over points to select their rows; Set (red triangle) shows another set.`));
   }
 
-  /* ---- Decision Threshold (two levels): SM.predict.threshold of the selected methods -------------------- */
+  /* ---- Decision Threshold and Group Metrics (two levels): SM.predict's, of the selected methods ------------- */
   async function thresholdOutline(ctx, S) {
     const { r } = S;
     const sel = selectedOf(ctx, S);
@@ -367,12 +367,21 @@
     const keys = r.order.filter((k) => r.methods.some((m) => m.key === k && m.measures) && (!sel.length || sel.includes(k)));
     let t;
     try { t = await ctx.call(fnFor('threshold', keys), { ...S.spec, methods: keys, repeats: S.pay.repeats, plot: { order: keys } }); } catch (e) { ctx.container.append(ctx.error(e)); return; }
-    const ob = SM.predict.threshold(ctx, null, t, { info: 'p:screening:threshold', keys: { cut: 'cut', level: 'cutLevel' }, yCol: S.yc,
-      colorOf: (m) => colorOf(m.key), pyColorOf: (m) => LIGHT[m.key] || '#888888',
-      probName: (label, m) => `Prob[${label}] ${m.label}`, save: { fn: (m) => fnFor('save', [m.key]), payload: (m) => ({ ...S.spec, method: m.key }) } });
-    if (!ob) return;
-    ob.add(ctx.note(`${sel.length ? `The ${keys.length === 1 ? 'method' : `${keys.length} methods`} selected in the Summary` : 'Every method (select methods in the Summary to compare fewer)'}, each fitted to the training rows${r.kfold ? '; Crossvalidation: each row predicted by the model fitted without its fold (first repeat)' : ''}.`));
-    if (t.errors && t.errors.length) ob.add(ctx.warn(`Not fitted: ${t.errors.map((e) => `${e.label} (${e.error})`).join('; ')}.`));
+    const which = `${sel.length ? `The ${keys.length === 1 ? 'method' : `${keys.length} methods`} selected in the Summary` : 'Every method (select methods in the Summary to compare fewer)'}, each fitted to the training rows${r.kfold ? '; Crossvalidation: each row predicted by the model fitted without its fold (first repeat)' : ''}.`;
+    const shared = { keys: { cut: 'cut', level: 'cutLevel' }, yCol: S.yc, colorOf: (m) => colorOf(m.key), pyColorOf: (m) => LIGHT[m.key] || '#888888',
+      probName: (label, m) => `Prob[${label}] ${m.label}`, save: { fn: (m) => fnFor('save', [m.key]), payload: (m) => ({ ...S.spec, method: m.key }) } };
+    if (ctx.opt('threshold', false)) {
+      const ob = SM.predict.threshold(ctx, null, t, { ...shared, info: 'p:screening:threshold' });
+      if (ob) {
+        ob.add(ctx.note(which));
+        if (t.errors && t.errors.length) ob.add(ctx.warn(`Not fitted: ${t.errors.map((e) => `${e.label} (${e.error})`).join('; ')}.`));
+      }
+    }
+    // Group Metrics: the same audit as the single-model platforms', each selected method alike, at the Decision Threshold's threshold
+    if (ctx.opt('groupMetrics', null)) {
+      const gm = await SM.predict.groupMetrics(ctx, null, t, shared);
+      if (gm) gm.add(ctx.note(which));
+    }
   }
 
   /* ======================================================================
@@ -435,7 +444,7 @@
     const items = [...selectionItems(ctx, S), { separator: true }];
     if (r.kind === 'categorical') {
       items.push(ctx.check('ROC Curve', 'roc', null, false), ctx.check('Lift Curve', 'lift', null, false));
-      if (S.binary) items.push(ctx.check('Decision Threshold', 'threshold', null, false));
+      if (S.binary) items.push(ctx.check('Decision Threshold', 'threshold', null, false), SM.predict.groupMetricsItem(ctx, null));
     } else items.push(ctx.check('Actual by Predicted', 'abp', null, false));
     items.push({ label: 'Profiler', submenu: () => ok.map((k) => ({ label: labelIn(S, k), checked: prof === k, action: () => ctx.set('profiler', prof === k ? false : k) })) });
     items.push(ctx.check('Method Details', 'details', null, true));
@@ -474,26 +483,7 @@
     ['Add Quadratics', 'The linear methods get the square of each continuous factor too, centred at its training mean first, as JMP\'s option.'],
   ];
 
-  /* A Validation column of more than three values holds K folds (predictive.validation_codes). */
-  /* What a Validation column gives, by predictive.py's rule (validation_codes): 'folds' for 4 to 50 distinct values
-     (whole numbers in a numeric column; in a character one, none of them a set's name), 'sets' for 0, 1 and 2 or
-     Training, Validation and Test, 'bad' for anything else (the engine refuses it). */
-  const MAX_FOLDS = 50;
-  const SET_NAMES = ['training', 'train', 'validation', 'valid', 'test'];
-  function validationKind(c) {
-    if (!c) return null;
-    const seen = new Set();
-    for (const v of c.values) { if (v != null && v !== '' && !(typeof v === 'number' && Number.isNaN(v))) { seen.add(c.isNumeric ? Number(v) : String(v)); if (seen.size > MAX_FOLDS) break; } }
-    const vals = [...seen];
-    if (c.isNumeric) {
-      if (seen.size > 3 && seen.size <= MAX_FOLDS && vals.every((v) => Number.isInteger(v))) return 'folds';
-      return vals.every((v) => v === 0 || v === 1 || v === 2) ? 'sets' : 'bad';
-    }
-    const named = vals.some((v) => SET_NAMES.includes(v.trim().toLowerCase()));
-    if (!named && seen.size > 3 && seen.size <= MAX_FOLDS) return 'folds';
-    return vals.every((v) => SET_NAMES.includes(v.trim().toLowerCase())) ? 'sets' : 'bad';
-  }
-
+  /* The launch dialog's part (a Validation column's kind is SM.predict.validationKind's, as predictive.validation_codes reads it). */
   function launchExtra(api, spec) {
     const o = (spec && spec.options) || {};
     const want = new Set(Array.isArray(o.methods) ? o.methods : DEFAULT);
@@ -531,11 +521,11 @@
       }
       const vid = ((state && state.validation) || [])[0];
       const hasV = !!vid;
-      const kind = hasV ? validationKind(api.table.col(vid)) : null;
+      const kind = hasV ? SM.predict.validationKind(api.table.col(vid)) : null;
       kf.disabled = hasV;
       folds.disabled = reps.disabled = hasV || !kf.checked;
       hint.textContent = kind === 'folds' ? 'The Validation column holds folds (more than three values): every method is crossvalidated by them.'
-        : kind === 'bad' ? `The Validation column holds neither sets (0, 1 and 2, or Training, Validation and Test) nor folds (4 to ${MAX_FOLDS} values, whole numbers in a numeric column): Model Screening refuses it.`
+        : kind === 'bad' ? `The Validation column holds neither sets (0, 1 and 2, or Training, Validation and Test) nor folds (4 to ${SM.predict.MAX_FOLDS} values, whole numbers in a numeric column): Model Screening refuses it.`
         : hasV ? 'The Validation column gives the sets; K-fold crossvalidation is not used with one.'
         : kf.checked ? 'Each method is fitted once to every row and once per fold to the others; the Validation Portion is not used.'
           : cat === false ? 'Naive Bayes and Discriminant are for a categorical Y.' : 'Without a Validation column or K-fold crossvalidation, the Validation Portion holds rows back.';
@@ -744,6 +734,7 @@
         ] },
         { heading: 'The red triangle', choices: [['Target Level', 'the level whose probability is cut (the second at first)'], ['Set Probability Threshold…', 'the threshold in a dialog'], ['Set Threshold to', 'the threshold with the best accuracy, F1, MCC or Sensitivity + Specificity of the first method on the comparison rows (beyond JMP)'], ['Curve Metric', 'the measure drawn against the threshold'], ['True Event Rate…', 'the probabilities rescaled to the population\'s share of the target level (a model fitted on oversampled rows)'], ['Profit Matrix…', 'the Y column\'s Profit Matrix; with one, each method\'s profit'], ['Save Threshold Formula', 'a formula column of one method: If(Prob[level] ≥ threshold, level, other level), its probabilities saved first when they are not in the table']] },
         { heading: 'The measures', text: 'As the Decision Threshold of the other platforms (see its (i)): Accuracy, the Misclassification Rate, Sensitivity, Specificity, the False Positive and False Negative Rates, Precision, F1, MCC; the counts True Positive, False Positive, False Negative and True Negative, by Weight × Freq. Right click a table, Columns, for the rest.' },
+        { heading: 'Group Metrics', text: 'Group Metrics… (red triangle, beyond JMP): the fairness audit of the other platforms (its (i) says more) for each method the Decision Threshold compares, at its threshold: a line per method and group of a column you choose with N, the base and selection rates, accuracy, AUC, the false positive and negative rates and precision, their differences and ratios to a reference group, and a bar chart of the false positive and one of the false negative rates, a bar per method. Thresholds: the Decision Threshold\'s, typed per group, or solved for each method so that every group\'s false positive rate is nearest the reference group\'s. With K Fold its Crossvalidation set audits each row\'s out-of-fold probability.' },
       ],
       more: MORE,
     },
@@ -765,7 +756,7 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'screening', label: 'Model Screening', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:screening', topics: TOPICS,
-    about: 'JMP Pro\'s Model Screening: Decision Tree, Bootstrap Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
+    about: 'JMP Pro\'s Model Screening: Decision Tree, Bootstrap Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold and Group Metrics (a fairness audit) of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
     uses: ['xgboost.XGBClassifier, XGBRegressor (loaded when chosen)', 'lightgbm.LGBMClassifier, LGBMRegressor (loaded when chosen)', 'scipy.optimize.minimize (SLSQP: the stacking weights)', 'sklearn.tree.DecisionTreeClassifier, DecisionTreeRegressor', 'sklearn.ensemble.RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor', 'sklearn.neighbors.NearestNeighbors', 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'sklearn.neural_network.MLPClassifier, MLPRegressor', 'sklearn.svm.SVC, SVR, l1_min_c', 'sklearn.linear_model.LinearRegression, LogisticRegression, enet_path', 'scipy.optimize.minimize (the cumulative logit, Platt\'s sigmoid)', 'scipy.linalg.pinvh (the discriminant)'],
     launch: {
       lead: 'Choose one Y and the X factors, and the methods to compare. Each method is fitted to the same training rows and measured on the same validation and test rows.',

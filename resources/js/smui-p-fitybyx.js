@@ -838,7 +838,7 @@
         if (!fl || !fl._size || !fl.yaxis || !fl.yaxis.range) return;
         const yr = fl.yaxis.range;
         const ux = 2.1 / (fl._size.w * 0.18), uy = (yr[1] - yr[0]) / fl._size.h;
-        try { Plotly.restyle(gd, { x: circles.map((c) => TH.map((t) => (c.r / uy) * ux * Math.cos(t))) }, circles.map((c) => c.at)); } catch (e) { /* the graph was redrawn */ }
+        try { SM.report.restyle(gd, { x: circles.map((c) => TH.map((t) => (c.r / uy) * ux * Math.cos(t))) }, circles.map((c) => c.at)); } catch (e) { /* the graph was redrawn */ }
       } : null,
     }), ctx.code(res.plot_code));
     // ---- the reports, in JMP's order

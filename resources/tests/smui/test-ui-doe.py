@@ -17,7 +17,11 @@ change): the Changes column, the run count, Simulate Responses' form and its
 formula column (the whole plots' draws shared by their runs; the model's
 part exact), the table's Model scripts (run from the Table panel), and Fit
 Model's Recall opening the design's model with Whole Plots random, fitted by
-REML with the split plot's degrees of freedom; the dialog at phone width. The rest of DOE's browser checks are in test-ui-quality.py.
+REML with the split plot's degrees of freedom; Evaluate Design of the split
+plot (without the whole plots, a note; with them in the Whole Plots role or
+among the factors: the whole-plot and within-plot DFDen, less power for the
+hard-to-change factor, the graphs' code run in the page, a variance ratio of
+4); the dialog at phone width. The rest of DOE's browser checks are in test-ui-quality.py.
 
 Start a server on the repository root and headless Chrome (README.md) on
 SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -293,6 +297,59 @@ async def run_power(page, sit, values):
               (g['label'], g['titles']['x'], g['titles']['y'], [0.0, 1.02], [g['w'] / 100, g['h'] / 100]))
 
 
+EVAL_SPLIT = r'''(async (name, roles, ratio) => {
+  const t = SM.app.tables.find((x) => x.name === name);
+  SM.app.showTab(SM.app.tabOf(t));
+  const ids = Object.fromEntries(Object.entries(roles).map(([k, names]) => [k, names.map((n) => t.col(n).id)]));
+  const rep = SM.app.openReport(SM.platforms.get('evaldesign'), { roles: ids, options: ratio == null ? {} : { wpRatio: ratio } }, t);
+  await new Promise((res) => rep.on('done', res));
+  const head = (title) => [...rep.body.querySelectorAll('.sm-ob-head')].find((x) => x.querySelector('h2, h3, h4').textContent === title);
+  const rowsOf = (title) => { const h = head(title); const tb = h && h.parentElement.querySelector(':scope > .sm-ob-body table.sm-rt'); return tb ? [...tb.querySelectorAll('tr')].map((tr) => [...tr.children].map((x) => x.textContent.trim())) : null; };
+  const out = { errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), notes: [...rep.body.querySelectorAll('.sm-ob-note')].map((n) => n.textContent),
+    power: rowsOf('Power Analysis'), g: await __gr.graphs(rep), undrawn: __gr.take() };
+  window.__evalSplit = rep;
+  return out;
+})'''
+
+
+async def split_evaluate(page, tag, name):
+    """Evaluate Design on the split plot: without the whole plots (a note), then with them (the Whole
+    Plots role, and the column among the factors, as JMP takes it); every graph's code run in the page."""
+    ev = await page.ev(f'({EVAL_SPLIT})({json.dumps(name)}, {{ "x": ["Oven", "Time", "Recipe"] }}, null)', timeout=300)
+    check(f'{tag}: Evaluate Design without the whole plots: a note to cast them', (ev['errors'], any('cast it in the Whole Plots role' in n for n in ev['notes'])), ([], True))
+    await page.ev('SM.app.closeReport(window.__evalSplit)')
+    for how, roles in (('the Whole Plots role', {'x': ['Oven', 'Time', 'Recipe'], 'wp': ['Whole Plots']}), ('Whole Plots among the factors', {'x': ['Oven', 'Time', 'Recipe', 'Whole Plots']})):
+        ev = await page.ev(f'({EVAL_SPLIT})({json.dumps(name)}, {json.dumps(roles)}, null)', timeout=300)
+        lab = f'{tag}: Evaluate Design with {how}'
+        check(f'{lab}: no errors, the split plot\'s note', (ev['errors'], any(n.startswith('A split plot: the whole plots (Whole Plots') for n in ev['notes'])), ([], True))
+        head = ev['power'][0] if ev['power'] else []
+        rows = {row[0]: row for row in (ev['power'] or [])[1:]}
+        j = head.index('DFDen') if 'DFDen' in head else None
+        num = lambda x: float(x.replace('−', '-'))
+        # 24 runs, 4 whole plots of the 2 settings of Oven: the whole-plot terms (1, Oven) on 4 - 2 = 2 df, the others on 24 - 4 - 3 = 17
+        check(f'{lab}: DFDen: Oven on the whole plots (2), Time and Recipe within them (17)',
+              tuple(num(rows[k][j]) if j is not None and k in rows else None for k in ('Oven', 'Time', 'Recipe[a]')), (2.0, 17.0, 17.0))
+        pw = {k: num(rows[k][-1]) for k in ('Oven', 'Time') if k in rows}
+        check(f'{lab}: the hard-to-change factor has less power', pw.get('Oven', 1) < pw.get('Time', 0), True)
+        if how == 'the Whole Plots role':
+            for g in ev['g']:
+                F, err = await run_graph(page, g, f'SM.app.tables.find((x) => x.name === {json.dumps(name)})')
+                check(f'{lab}: {g["label"]}: the code runs in the page', err, None)
+                if not F:
+                    continue
+                ax = F[0]['axes'][0]
+                t0 = g['traces'][0]
+                if g['label'].startswith('Prediction variance') or g['label'] == 'Fraction of design space':
+                    ln = ax['lines'][0] if ax['lines'] else {'x': [], 'y': []}
+                    check.near(f'{lab}: {g["label"]}: the GLS prediction variance, as the report\'s', maxdiff(ln['y'], t0['y']), 0, 1e-12)
+        await page.ev('SM.app.closeReport(window.__evalSplit)')
+    # the variance ratio: a larger one, less power for the whole-plot terms only
+    ev = await page.ev(f'({EVAL_SPLIT})({json.dumps(name)}, {{ "x": ["Oven", "Time", "Recipe"], "wp": ["Whole Plots"] }}, 4)', timeout=300)
+    rows = {row[0]: row for row in (ev['power'] or [])[1:]}
+    check(f'{tag}: Split Plot Variance Ratio 4: the note says it', any('variance is 4 times the error' in n for n in ev['notes']), True)
+    await page.ev('SM.app.closeReport(window.__evalSplit)')
+
+
 async def run_split(page):
     tag = 'Full Factorial, a split plot'
     # every coefficient 0 but the intercept and Oven's; no error: each whole plot's draw alone
@@ -334,15 +391,7 @@ async def run_split(page):
     for script, y in (('Model', 'Y'), ('Model (Simulated)', 'Y Simulated')):
         sc = await page.ev(f'({SCRIPT})({json.dumps(r["name"])}, {json.dumps(script)})', timeout=120)
         check(f'{tag}: the Table panel\'s {script} script opens Fit Model with the design\'s model', sc if isinstance(sc, str) or sc.get('error') else (sc['y'], sc['effects']), (y, want))
-    ev = await page.ev('''(async (name) => {
-      const t = SM.app.tables.find((x) => x.name === name);
-      SM.app.showTab(SM.app.tabOf(t));
-      const rep = SM.app.openReport(SM.platforms.get('evaldesign'), { roles: { x: ['Oven', 'Time', 'Recipe'].map((n) => t.col(n).id) }, options: {} }, t);
-      await new Promise((res) => rep.on('done', res));
-      const out = { errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent), notes: [...rep.body.querySelectorAll('.sm-ob-note')].map((n) => n.textContent) };
-      SM.app.closeReport(rep);
-      return out; })''' + f'({json.dumps(r["name"])})', timeout=300)
-    check(f'{tag}: Evaluate Design on it says the whole plots are not in its power', (ev['errors'], any('Whole Plots column, a split plot' in n for n in ev['notes'])), ([], True))
+    await split_evaluate(page, tag, r['name'])
     # again, with an error: Fit Model's Recall has the design's model, and REML tests it
     r = await page.ev(f'({SPLIT})({json.dumps({**sim, "Time": 1, "Error σ": 1})})', timeout=300)
     if isinstance(r, str) or r.get('error'):

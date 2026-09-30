@@ -558,6 +558,41 @@ def main():
         got_g, err_g = run_names(gc['code'], T, tmp_, ['rows'])
     check('Group Metrics\' code runs on the CSV and gives the report\'s rows', (err_g, err_g is None and all(all(close(a_[k_], b_[k_]) for k_ in ('n', 'base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'cut')) for a_, b_ in zip(got_g['rows'], gc['rows']))), (None, True))
 
+    # ---- Group Metrics of several models at once (Model Screening's selected methods): each one the single call's
+    pp2 = np.clip(0.2 + 0.55 * yy + 0.3 * rng.normal(size=n), 0.001, 0.999)
+    for eq_, kw_ in (('none', {}), ('typed', {'cuts': {'b': 0.3, 'c': 0.6}}), ('fpr', {'reference': 'a'})):
+        base_ = dict(table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), sets=sets_.tolist(), w=list(w), cut=0.45, equal=eq_, **kw_)
+        gmm = call('predict.groups', **base_, models=[{'label': 'One', 'prob': pp.tolist()}, {'label': 'Two', 'prob': pp2.tolist()}])
+        single = [call('predict.groups', **base_, prob=q_.tolist()) for q_ in (pp, pp2)]
+        check(f'Group Metrics of two models at once ({eq_}): each one\'s rows, thresholds and target FPR are the single call\'s on its probabilities; the set, reference and groups the same',
+              ([(q_['label'], q_['rows'] == s_['rows'], q_['thresholds'] == s_['thresholds'], q_['target_fpr'] == s_['target_fpr']) for q_, s_ in zip(gmm['models'], single)], (gmm['set'], gmm['reference'], gmm['labels'])),
+              ([('One', True, True, True), ('Two', True, True, True)], (single[0]['set'], single[0]['reference'], single[0]['labels'])))
+    ppc = np.clip(pp + 0.05 * rng.normal(size=n), 0.001, 0.999)
+    gcv = call('predict.groups', table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), sets=sets_.tolist(), w=list(w), cut=0.45, set_name='Crossvalidation',
+               models=[{'label': 'One', 'prob': pp.tolist(), 'prob_cv': ppc.tolist()}])
+    one_ = call('predict.groups', table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), prob=ppc.tolist(), w=list(w), cut=0.45)
+    check('... a Crossvalidation set when every model has out-of-fold probabilities: every row, by them', (gcv['sets'], gcv['set'], gcv['models'][0]['rows'] == one_['rows']),
+          (['Training', 'Validation', 'Crossvalidation'], 'Crossvalidation', True))
+    cb2 = DecisionTreeClassifier(max_depth=2, random_state=1).fit(Pb.X[Pb.train()], Pb.target[Pb.train()], sample_weight=Pb.w[Pb.train()])
+    pb2 = Pb.proba(cb2, Pb.X)
+    fit_lines = []
+    for dp_ in (4, 2):
+        fit_lines += [f'model = DecisionTreeClassifier(max_depth={dp_}, random_state=1).fit(X[train], y[train], sample_weight=None if w is None else w[train])',
+                      'f_ = np.zeros((len(X), len(levels)))', 'f_[:, model.classes_] = model.predict_proba(X)', f'fitted["Depth {dp_}"] = f_']
+    head_m = '\n'.join(Pb.code('data', extra_imports=['from sklearn.tree import DecisionTreeClassifier']) + ['fitted = {}   # each model\'s probabilities'] + fit_lines)
+    for eq_ in ('none', 'fpr'):
+        gcm = call('predict.groups', table=T, group='g', at=Dg['points']['rows'], actual=Dg['points']['actual'], sets=Dg['points']['set'], w=Dg['points']['w'], cut=0.5, equal=eq_, head=head_m,
+                   models=[{'label': 'Depth 4', 'prob': pb[:, 1].tolist(), 'expr': 'fitted["Depth 4"]'}, {'label': 'Depth 2', 'prob': pb2[:, 1].tolist(), 'expr': 'fitted["Depth 2"]'}])
+        with tempfile.TemporaryDirectory() as tmp_:
+            export_frame(T).to_csv(os.path.join(tmp_, 'data.csv'), index=False)
+            got_m, err_m = run_names(gcm['code'], T, tmp_, ['rows'])
+        want_m = [(q_['label'], r_) for q_ in gcm['models'] for r_ in q_['rows']]
+        fv = lambda v: float(v) if isinstance(v, str) else v   # noqa: E731  (a threshold above every probability comes as 'Infinity')
+        same_ = lambda a_, b_: (fv(a_) == fv(b_) == math.inf) or close(fv(a_), fv(b_))   # noqa: E731
+        ok_m = err_m is None and len(got_m['rows']) == len(want_m) and all(a_['method'] == lab_ and a_['group'] == b_['group'] and all(same_(a_[k_], b_[k_]) for k_ in ('n', 'base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'cut'))
+                                                                           for a_, (lab_, b_) in zip(got_m['rows'], want_m))
+        check(f'... the code of two models ({eq_}) runs on the CSV and gives each method\'s rows (every threshold solved per method)', (err_m, ok_m), (None, True))
+
     # ---- a model kept for Score Rows, and another table scored by it -------------------------------------------------
     pv.keep('k1', {'P': Pb})
     check('keep and kept: the model under its key; an unknown key None', (pv.kept('k1')['P'] is Pb, pv.kept('nope')), (True, None))

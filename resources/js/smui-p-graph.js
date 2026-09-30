@@ -226,7 +226,7 @@
       }
     }
     for (const g of groups.values()) {
-      try { Plotly.restyle(gd, g.upd, g.idx); } catch (e) { console.warn('SM graph: restyle failed', e); }
+      try { SM.report.restyle(gd, g.upd, g.idx); } catch (e) { console.warn('SM graph: restyle failed', e); }   // the axis types kept
     }
     // Plotly's own box selection dims unselected bars; the table's selection is what shows.
     const barIdx = specs.filter((s) => s.kind === 'bar' || s.kind === 'mark').map((s) => s.trace);
@@ -271,7 +271,7 @@
         const anyLabel = L.rows.some((r) => st[r] & 8);
         upd.text = [anyLabel ? L.rows.map((r) => ((st[r] & 8) ? esc(lab ? (lab.values[r] ?? '') : r + 1) : '')) : null];
         upd.mode = [anyLabel ? 'markers+text' : 'markers'];
-        try { Plotly.restyle(p.box, upd, [L.trace]); } catch (e) { console.warn('SM graph: restyle failed', e); }
+        try { SM.report.restyle(p.box, upd, [L.trace]); } catch (e) { console.warn('SM graph: restyle failed', e); }
       }
     };
     return box;
@@ -1353,7 +1353,7 @@
       const s = key && SM.axis ? SM.axis.clean(this.S.axes[key]) : null;
       if (!s) return A;
       const out = SM.axis.patch(A, s);
-      const r = SM.axis.refShapes(s, which, which === 'x' ? P.xa : P.ya, which === 'x' ? P.ya : P.xa, { log: out.type === 'log' });
+      const r = SM.axis.refShapes(s, which, which === 'x' ? P.xa : P.ya, which === 'x' ? P.ya : P.xa, { log: out.type === 'log', date: out.type === 'date' });
       this.fig.shapes.push(...r.shapes);
       this.fig.annotations.push(...r.annotations);
       return out;
@@ -4407,7 +4407,7 @@
         hidSig = sig;
         if (had || sig.includes('1')) {
           const nul = (s, arr) => arr.map((v, k) => (s.vtx[k] >= 0 && hidden[s.vtx[k]] ? null : v));
-          try { Plotly.restyle(pl.box, { x: specs.map((s) => nul(s, s.x)), y: specs.map((s) => nul(s, s.y)) }, specs.map((s) => s.trace)); } catch (e) { console.warn('SM graph: restyle failed', e); }
+          try { SM.report.restyle(pl.box, { x: specs.map((s) => nul(s, s.x)), y: specs.map((s) => nul(s, s.y)) }, specs.map((s) => s.trace)); } catch (e) { console.warn('SM graph: restyle failed', e); }
         }
       }
       const ox = [], oy = [];
@@ -4419,7 +4419,7 @@
           ox.push(null); oy.push(null);
         });
       }
-      try { Plotly.restyle(pl.box, { x: [ox], y: [oy] }, [overlay]); } catch (e) { console.warn('SM graph: restyle failed', e); }
+      try { SM.report.restyle(pl.box, { x: [ox], y: [oy] }, [overlay]); } catch (e) { console.warn('SM graph: restyle failed', e); }
     } });
     const prev = p.opts.onDraw;
     p.opts.onDraw = (gd) => {

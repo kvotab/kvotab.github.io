@@ -47,6 +47,15 @@
    rate: SM.predict.thresholdOption(ctx, 'dtLevel', dflt, scope) reads
    the group's (a group without its own takes the report's), and
    setThresholdOption sets it for the group only.
+   GROUP METRICS of the same data: SM.predict.groupMetrics(ctx, parent, D,
+   opts), shown with the option 'groupMetrics' (the column's id, set by
+   SM.predict.groupMetricsItem(ctx, scope) in a red triangle); of named
+   models (Model Screening's methods) a line per model and group.
+   SCORE ROWS, for a platform without a Save Prediction Formula (K Nearest
+   Neighbors, Support Vector Machines, Bootstrap Forest, Boosted Tree):
+     SM.predict.scoreRows(ctx, { fn: 'knn.score', payload: { ...base, keep }, fit, yName, info })
+   the dialog, the engine's scores of the rows of an open table by the
+   model it kept, and those written to that table.
 
    The seed: the launch's Random Seed, or one drawn at the first run and
    kept with the report (so a redraw, Redo and a project give the same
@@ -212,7 +221,8 @@
   /* Decision Threshold in a red triangle (option 'threshold'). */
   const thresholdItem = (ctx, scope = null) => ctx.check('Decision Threshold', 'threshold', scope, false);
 
-  /* Group Metrics… in a red triangle: the column the metrics are grouped by. */
+  /* Group Metrics… in a red triangle: the column the metrics are grouped by (SM.predict.groupMetricsItem(ctx, scope)
+     for a platform that draws Group Metrics itself, as Model Screening). */
   function groupItem(ctx, data, scope = null) {
     const cur = ctx.opt('groupMetrics', null, scope);
     return { label: 'Group Metrics…', checked: !!cur, action: () => (cur ? ctx.set('groupMetrics', null, scope) : pickGroup(ctx, scope)) };
@@ -898,19 +908,28 @@
     ['fnr', 'False Negative Rate'], ['precision', 'Precision'], ['tpr', 'True Positive Rate'], ['cut', 'Threshold']];
   const GM_LABEL = Object.fromEntries(GM_COLS);
 
+  /* Group Metrics of a Decision Threshold's data D: of its one model, or, when its models are named (Model
+     Screening's methods, several or one), of each alike, a row per method and group. opts: scope, prefix, keys
+     (the Decision Threshold's option keys: cut, level, rate), save and probName (Save Decision Column, as the
+     Decision Threshold's), colorOf and pyColorOf (each model's colour in the page and in the code). */
   async function groupMetrics(ctx, parent, D, opts = {}) {
-    const { scope = null, prefix = '' } = opts;
+    const { scope = null, prefix = '', keys = {} } = opts;
     if (!D || !D.models || !D.models.length) return null;
     const gid = ctx.opt('groupMetrics', null, scope);
     const gcol = gid ? ctx.col(gid) : null;
     if (!gcol) return null;
-    const m = D.models[0];
+    const K = { cut: keys.cut || 'dtCut', level: keys.level || 'dtLevel', rate: keys.rate || 'dtTrueRate' };
+    const m0 = D.models[0];
+    const named = D.models.length > 1 || !!(m0.code && m0.code[0] !== 'fitted');
+    const labelOf = (m) => m.label || '';
+    const colorOf = opts.colorOf || ((m) => SM.util.PALETTE[Math.max(0, D.models.indexOf(m)) % SM.util.PALETTE.length]);
+    const pyColorOf = opts.pyColorOf || ((m) => SM.util.PALETTE[Math.max(0, D.models.indexOf(m)) % SM.util.PALETTE.length]);
     // the Decision Threshold's threshold, target level and true event rate, and the thresholds typed per group: this By group's
-    let lv = dtOpt(ctx, 'dtLevel', D.target ?? 1, scope);
+    let lv = dtOpt(ctx, K.level, D.target ?? 1, scope);
     lv = lv === 0 || lv === 1 ? lv : 1;
-    let cut = Number(dtOpt(ctx, 'dtCut', 0.5, scope));
+    let cut = Number(dtOpt(ctx, K.cut, 0.5, scope));
     if (!(cut >= 0 && cut <= 1)) cut = 0.5;
-    const rate0 = dtOpt(ctx, 'dtTrueRate', null, scope);
+    const rate0 = dtOpt(ctx, K.rate, null, scope);
     const S = thresholdState(D, lv, rate0 == null ? null : Number(rate0));
     const mode = ['common', 'typed', 'fpr'].includes(ctx.opt('gmMode', 'common', scope)) ? ctx.opt('gmMode', 'common', scope) : 'common';
     const typed = dtOpt(ctx, 'gmCuts', null, scope) || {};
@@ -918,19 +937,25 @@
     const refWanted = ctx.opt('gmRef', null, scope);
     const levels = D.levels, values = D.values || D.levels, o = 1 - lv;
     const probName = opts.probName || ((label) => `Prob[${label}]`);
-    const prob = lv === 1 ? m.p : (m.p0 || m.p.map((q) => 1 - q));
-    let r;
+    const probOf = (m, cv) => { const p1 = cv ? m.p_cv : m.p, p0 = cv ? m.p0_cv : m.p0; return lv === 1 ? p1 : (p0 || p1.map((q) => 1 - q)); };
+    const head = D.plots && D.plots.head_code ? `${D.plots.head_code}${D.plots.select ? `\n${D.plots.select}` : ''}` : null;
+    let r = null, per = [];
     const ob = ctx.outline(`Group Metrics: ${gcol.name}`, { parent, key: `${prefix}groups`, info: 'p:predict:groups', menu: () => [
       { label: 'Group Column…', action: () => pickGroup(ctx, scope) },
       { label: 'Thresholds', submenu: () => [['common', 'The Decision Threshold\'s, for Every Group'], ['typed', 'Typed per Group'], ['fpr', 'Equal False Positive Rates']].map(([k, l]) => ({ label: l, checked: k === mode, action: () => ctx.set('gmMode', k, scope) })) },
-      { label: 'Save Decision Column', disabled: !r, action: () => saveDecision() },
+      named ? { label: 'Save Decision Column', disabled: !r, submenu: () => D.models.map((m, i) => ({ label: labelOf(m), action: () => saveDecision(m, i) })) }
+        : { label: 'Save Decision Column', disabled: !r, action: () => saveDecision(m0, 0) },
       { label: 'Remove', action: () => ctx.set('groupMetrics', null, scope) },
     ] });
-    const pay = { group: gcol.name, at: D.points.rows, actual: D.points.actual, prob, sets: D.points.set, w: D.points.w, cut, cuts: mode === 'typed' ? typed : null, equal: mode === 'fpr' ? 'fpr' : mode === 'typed' ? 'typed' : 'none',
-      reference: refWanted, set_name: setWanted, target: lv, adjust: S.rate != null ? { a: S.A, b: S.B } : null,
-      head: D.plots && D.plots.head_code && D.models.length === 1 && !(m.code && m.code[0] !== 'fitted') ? `${D.plots.head_code}${D.plots.select ? `\n${D.plots.select}` : ''}` : null };
+    const pay = { group: gcol.name, at: D.points.rows, actual: D.points.actual, sets: D.points.set, w: D.points.w, cut, cuts: mode === 'typed' ? typed : null, equal: mode === 'fpr' ? 'fpr' : mode === 'typed' ? 'typed' : 'none',
+      reference: refWanted, set_name: setWanted, target: lv, adjust: S.rate != null ? { a: S.A, b: S.B } : null };
+    if (named) {
+      const cvAll = D.models.every((m) => Array.isArray(m.p_cv));
+      Object.assign(pay, { head, models: D.models.map((m) => ({ label: labelOf(m), prob: probOf(m, false), prob_cv: cvAll ? probOf(m, true) : null, expr: (m.code && m.code[0]) || null, expr_cv: (m.code && m.code[1]) || null })) });
+    } else Object.assign(pay, { prob: probOf(m0, false), head });
     try { r = await ctx.call('predict.groups', pay); } catch (e) { ob.add(ctx.error(e)); return ob; }
-    // the controls: the set, the reference group, typed thresholds
+    per = r.models ? r.models.map((q, i) => ({ ...q, model: D.models[i] })) : [{ label: null, rows: r.rows, thresholds: r.thresholds, target_fpr: r.target_fpr, model: m0 }];
+    // the controls: the set, the reference group, typed thresholds (every method's)
     const sel = (label, choices, cur, key) => {
       const x = el('select', { 'aria-label': label }, ...choices.map((c) => el('option', { value: c, text: c })));
       x.value = cur;
@@ -941,7 +966,7 @@
     if (mode === 'typed') {
       for (const lab of r.labels) {
         const inp = el('input', { type: 'text', inputmode: 'decimal', size: 6, class: 'sm-pred-input', 'aria-label': `Threshold of ${lab}` });
-        inp.value = String(r.thresholds[lab] ?? cut);
+        inp.value = String(typed[lab] ?? cut);
         const apply = () => { const v = SM.table.toNumber(inp.value.replace(',', '.')); if (v >= 0 && v <= 1) dtSet(ctx, 'gmCuts', { ...typed, [lab]: v }, scope); else SM.ui.toast('A threshold is a probability, from 0 to 1', { error: true }); };
         inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
         inp.addEventListener('change', apply);
@@ -949,19 +974,21 @@
       }
     }
     ob.add(ctl);
+    const rows = per.flatMap((q) => q.rows.map((row) => (named ? { method: q.label, ...row } : row)));
+    const lead = named ? [{ key: 'method', label: 'Method', fmt: 'text' }] : [];
     const refCell = (row, c) => (row.reference && c.key === 'group' ? 'sm-pred-ref' : '');
-    ob.add(el('div', { class: 'sm-pred-scroll' }, ctx.rt({ columns: [{ key: 'group', label: gcol.name, fmt: 'text' }, ...GM_COLS.map(([k, l]) => ({ key: k, label: l, digits: k === 'n' ? null : 4, hidden: k === 'tpr' }))], rows: r.rows },
-      { key: `${prefix}groups`, sortable: false, caption: `${r.set}: ${levels[lv]} when its probability ≥ the group's threshold`, cellClass: refCell })));
-    const dcols = [{ key: 'group', label: gcol.name, fmt: 'text' }];
+    ob.add(el('div', { class: 'sm-pred-scroll' }, ctx.rt({ columns: [...lead, { key: 'group', label: gcol.name, fmt: 'text' }, ...GM_COLS.map(([k, l]) => ({ key: k, label: l, digits: k === 'n' ? null : 4, hidden: k === 'tpr' }))], rows },
+      { key: `${prefix}groups`, sortable: false, caption: `${r.set}: ${levels[lv]} when its probability ≥ the group's threshold${named ? ', each method' : ''}`, cellClass: refCell })));
+    const dcols = [...lead, { key: 'group', label: gcol.name, fmt: 'text' }];
     for (const k of ['selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision']) dcols.push({ key: `d_${k}`, label: `${GM_LABEL[k]} Difference`, digits: 4 }, { key: `r_${k}`, label: `${GM_LABEL[k]} Ratio`, digits: 4, hidden: !['selection_rate', 'fpr', 'fnr'].includes(k) });
-    ob.add(el('div', { class: 'sm-pred-scroll' }, ctx.rt({ columns: dcols, rows: r.rows }, { key: `${prefix}groupdiff`, sortable: false, caption: `Against the reference group, ${r.reference}: the difference (group − reference) and the ratio (group / reference)`, cellClass: refCell })));
-    if (!ctx.headless) {
-      const labs = r.rows.map((q) => T(q.group));
+    ob.add(el('div', { class: 'sm-pred-scroll' }, ctx.rt({ columns: dcols, rows }, { key: `${prefix}groupdiff`, sortable: false, caption: `Against the reference group, ${r.reference}: the difference (group − reference) and the ratio (group / reference)${named ? ', within each method' : ''}`, cellClass: refCell })));
+    const labs = r.labels.map(T);
+    if (!ctx.headless && !named) {
       const traces = [
-        { type: 'bar', x: labs, y: r.rows.map((q) => q.fpr), name: 'False Positive Rate', marker: { color: SM.util.PALETTE[0] }, hovertemplate: '%{x}: FPR %{y:.4f}<extra></extra>' },
-        { type: 'bar', x: labs, y: r.rows.map((q) => q.fnr), name: 'False Negative Rate', marker: { color: SM.util.PALETTE[1] }, hovertemplate: '%{x}: FNR %{y:.4f}<extra></extra>' },
+        { type: 'bar', x: labs, y: per[0].rows.map((q) => q.fpr), name: 'False Positive Rate', marker: { color: SM.util.PALETTE[0] }, hovertemplate: '%{x}: FPR %{y:.4f}<extra></extra>' },
+        { type: 'bar', x: labs, y: per[0].rows.map((q) => q.fnr), name: 'False Negative Rate', marker: { color: SM.util.PALETTE[1] }, hovertemplate: '%{x}: FNR %{y:.4f}<extra></extra>' },
       ];
-      const w = W(Math.max(300, 90 * r.rows.length + 160));
+      const w = W(Math.max(300, 90 * r.labels.length + 160));
       const code = r.code ? `${r.code}\n${[
         'import matplotlib.pyplot as plt',
         'res = pd.DataFrame(rows)',
@@ -973,21 +1000,45 @@
         'ax.legend(frameon=False, fontsize=8)', 'plt.show()'].join('\n')}` : null;
       ob.add(ctx.row(withCode(ctx.plot(traces, { barmode: 'group', showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 50, r: 10, t: 30, b: 44 },
         xaxis: { title: { text: T(gcol.name) }, type: 'category' }, yaxis: { title: { text: 'Rate' }, rangemode: 'tozero' } }, { width: w, height: 280, title: `False positive and negative rates by ${gcol.name}`, select: false }), code ? ctx.code(code) : null)));
-    } else if (r.code) ob.add(ctx.code(r.code));
-    const how = mode === 'fpr' ? `each group's threshold solved so that its false positive rate is nearest the reference group's (${fmt(r.target_fpr, { sig: 4 })}) at the Decision Threshold's ${fmt(cut, { sig: 6 })}`
+    } else if (!ctx.headless) {
+      // each method's false positive rates, and its false negative rates, by group: a bar per method in each group
+      const w = W(Math.max(300, (40 + 22 * per.length) * r.labels.length + 170));
+      const chart = (key, label) => {
+        const title2 = `${key === 'fpr' ? 'False positive' : 'False negative'} rates by ${gcol.name}`;
+        const traces = per.map((q) => ({ type: 'bar', x: labs, y: q.rows.map((row) => row[key]), name: T(q.label), marker: { color: colorOf(q.model) }, hovertemplate: `${T(q.label)}, %{x}: ${label} %{y:.4f}<extra></extra>` }));
+        const code = r.code ? `${r.code}\n${[
+          'import matplotlib.pyplot as plt',
+          'res = pd.DataFrame(rows)',
+          `colors = ${J(per.map((q) => pyColorOf(q.model)))}   # each method's colour, as the page draws it`,
+          `fig, ax = plt.subplots(figsize=(${pyNum(w / 100)}, 2.8), layout="constrained")`,
+          'at = np.arange(len(names))',
+          'width = 0.8 / len(models)',
+          'for i, method in enumerate(models):',
+          `    v = res[res["method"] == method].set_index("group")[${J(key)}].reindex(names).astype(float)`,
+          '    ax.bar(at - 0.4 + width * (i + 0.5), v, width, color=colors[i], label=method)',
+          'ax.set_xticks(at, names)', `ax.set_xlabel(${J(gcol.name)})`, `ax.set_ylabel(${J(label)})`, `ax.set_title(${J(title2)}, fontsize=10, wrap=True)`,
+          'ax.legend(frameon=False, fontsize=8)', 'plt.show()'].join('\n')}` : null;
+        return withCode(ctx.plot(traces, { barmode: 'group', showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, margin: { l: 50, r: 10, t: 30, b: 44 },
+          xaxis: { title: { text: T(gcol.name) }, type: 'category' }, yaxis: { title: { text: label }, rangemode: 'tozero' } }, { width: w, height: 280, title: title2, select: false }), code ? ctx.code(code) : null);
+      };
+      ob.add(ctx.row(chart('fpr', 'False Positive Rate'), chart('fnr', 'False Negative Rate')));
+    }
+    if (ctx.headless && r.code) ob.add(ctx.code(r.code));
+    const how = mode === 'fpr' ? `each group's threshold solved${named ? ' for each method' : ''} so that its false positive rate is nearest the reference group's${named ? '' : ` (${fmt(r.target_fpr, { sig: 4 })})`} at the Decision Threshold's ${fmt(cut, { sig: 6 })}`
       : mode === 'typed' ? 'the thresholds typed for each group (the Decision Threshold\'s where none is)' : `the Decision Threshold's ${fmt(cut, { sig: 6 })} for every group`;
-    ob.add(ctx.note(`The ${r.set.toLowerCase()} rows of each group of ${gcol.name} (a column that need not be a factor), called ${levels[lv]} by ${how}. Base rate: the group's share of ${levels[lv]}; selection rate: its share called ${levels[lv]}. A false positive rate much higher in one group, or a false negative rate much lower, is the unequal treatment an audit looks for. Counts by Weight × Freq. Not in JMP.`));
+    ob.add(ctx.note(`The ${r.set.toLowerCase()} rows of each group of ${gcol.name} (a column that need not be a factor), called ${levels[lv]} by ${how}${named ? ', each method by its own probabilities' : ''}. Base rate: the group's share of ${levels[lv]}; selection rate: its share called ${levels[lv]}. A false positive rate much higher in one group, or a false negative rate much lower, is the unequal treatment an audit looks for. Counts by Weight × Freq. Not in JMP.`));
 
-    async function saveDecision() {
+    async function saveDecision(m, i) {
+      const q = per[i];
       const cols = await probColumns(ctx, opts.save || null, m, [probName(levels[lv], m)]);
       if (!cols) return;
       const name = cols[0];
       const pr = S.rate != null ? `(${fRef(name)} * ${S.A}) / (${fRef(name)} * ${S.A} + (1 - ${fRef(name)}) * ${S.B})` : fRef(name);
-      const arms = r.labels.map((lab, i) => { const v = r.values[i]; const tq = r.thresholds[lab]; return v == null ? null : `${fVal(v)}, ${fNum(tq == null ? 2 : tq)}`; }).filter(Boolean);
+      const arms = r.labels.map((lab, j) => { const v = r.values[j]; const tq = q.thresholds[lab]; return v == null ? null : `${fVal(v)}, ${fNum(tq == null ? 2 : tq)}`; }).filter(Boolean);
       const expr = inGroup(ctx, `If(${pr} >= Match(${fRef(gcol.name)}, ${arms.join(', ')}, ${fNum(cut)}), ${fVal(values[lv])}, ${fVal(values[o])})`);
       try {
-        ctx.saveFormula(`Decision ${ctx.name('y') || 'Y'} by ${gcol.name}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`, expr, { modelingType: 'nominal', valueOrder: values.slice(),
-          notes: `${levels[lv]} when ${name} is at least the threshold of the row's ${gcol.name} (${r.labels.map((lab) => `${lab} ${r.thresholds[lab] == null ? 'none' : fmt(r.thresholds[lab], { sig: 6 })}`).join(', ')}; others ${fmt(cut, { sig: 6 })}), else ${levels[o]}${ctx.byLabel ? `, for the rows of ${ctx.byLabel} (the other rows missing)` : ''}: Group Metrics of ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}` });
+        ctx.saveFormula(`Decision ${ctx.name('y') || 'Y'} by ${gcol.name}${named ? ` ${labelOf(m)}` : ''}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`, expr, { modelingType: 'nominal', valueOrder: values.slice(),
+          notes: `${levels[lv]} when ${name} is at least the threshold of the row's ${gcol.name} (${r.labels.map((lab) => `${lab} ${q.thresholds[lab] == null ? 'none' : fmt(q.thresholds[lab], { sig: 6 })}`).join(', ')}; others ${fmt(cut, { sig: 6 })}), else ${levels[o]}${ctx.byLabel ? `, for the rows of ${ctx.byLabel} (the other rows missing)` : ''}: Group Metrics of ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}` });
       } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
     }
     return ob;
@@ -1070,6 +1121,82 @@
     const from = { notes: `from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}` };
     const made = r.names.map((nm, j) => ctx.saveColumn(nm, { rows: r.rows, values: r.prob.map((p) => p[j]) }, from));
     return { ...r, made };
+  }
+
+  /* ======================================================================
+     SCORE ROWS: the model as the report fitted it, on rows it did not see
+     ====================================================================== */
+  /* For the platforms without a Save Prediction Formula (K Nearest Neighbors, Support Vector Machines, Bootstrap
+     Forest, Boosted Tree): the engine keeps the report's model (under the key its fit got), and this scores the
+     rows of an open table with it: the report's own rows added since (those without a prediction yet), or every
+     row of another table with the same columns. The predictions go to that table as columns.
+       fn, payload  the platform's engine call and what it needs to find the kept model (its keep key); the call
+                    gets source (the report's table) and target_rows (the rows to score, null: every row) too,
+                    and is sent the table scored
+       fit          predictive.report()'s (kind, levels): the names of the prediction columns
+       yName        the Y column's name (Predicted <y>); info: the dialog's (i) topic */
+  async function scoreRows(ctx, { fn, payload, fit, yName = null, info = null }) {
+    const app = SM.app;
+    const tables = (app && app.tables) || [ctx.table];
+    const v = await SM.ui.form({ title: 'Score Rows', info, fields: [
+      { key: 't', label: 'The table to score', type: 'select', value: ctx.table.id, choices: tables.map((t) => [t.id, t.name]), help: 'An open table: this report\'s own (its rows added since the report fitted, or all its rows), or another with the X columns the model was fitted to, found by name. The model is the report\'s as it was fitted: it is not fitted again to the rows scored.' },
+      { key: 'which', label: 'Rows', type: 'select', value: 'new', choices: [['new', 'Rows without a prediction yet'], ['all', 'Every row']], help: 'Rows without a prediction yet: the rows whose prediction column (Predicted, or Prob[] of the first level) is empty or missing, such as rows added after the report fitted; in another table without those columns, every row. Every row: all of them, into new columns.' },
+    ] });
+    if (!v) return;
+    const target = tables.find((t) => t.id === v.t) || ctx.table;
+    const names = fit.kind === 'categorical' ? fit.levels.map((l) => `Prob[${l}]`) : [`Predicted ${yName || ctx.name('y')}`];
+    let rows = null;
+    const first = target.columns.find((c) => c.name === names[0]);
+    if (v.which === 'new' && first) {
+      rows = [];
+      for (let i = 0; i < target.nrows; i++) { const x = first.values[i]; if (x == null || x === '' || Number.isNaN(x)) rows.push(i); }
+      if (!rows.length) { SM.ui.toast(`Every row of ${target.name} has a prediction in ${first.name}`); return; }
+    }
+    try {
+      const r = await SM.engine.call(fn, { ...payload, source: ctx.table.id, target_rows: rows }, target);
+      if (r.note) SM.ui.toast(r.note);
+      writeScores(ctx, target, r, !!(v.which === 'new' && first));
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+  }
+
+  /* The scores into a table: into its prediction columns when they are there (the rows scored only), else new ones. */
+  function writeScores(ctx, t, r, into) {
+    const from = `scored by ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''} (the model as it fitted)`;
+    const cols = r.prob ? r.names.map((nm, j) => [nm, r.prob.map((p) => p[j]), 'numeric']) : [[r.name, r.values, 'numeric']];
+    if (r.prob) cols.push([r.most_name, r.most_likely, 'character']);
+    if (SM.app && SM.app.record) SM.app.record(t, 'Score Rows');
+    for (const [name, values, type] of cols) {
+      const c = into ? t.columns.find((x) => x.name === name) : null;
+      if (c) {
+        const next = c.values.slice();
+        r.rows.forEach((row, k) => { next[row] = values[k] == null ? (c.isNumeric ? NaN : null) : values[k]; });
+        t.setValues(c.id, next);
+      } else {
+        const full = new Array(t.nrows).fill(type === 'numeric' ? NaN : null);
+        r.rows.forEach((row, k) => { full[row] = values[k] == null ? full[row] : values[k]; });
+        t.addColumn({ name, dataType: type, values: full, notes: from, ...(type === 'character' && r.levels ? { modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels } : {}) });
+      }
+    }
+    SM.ui.toast(`Scored ${r.rows.length} rows of ${t.name}`);
+  }
+
+  /* What a Validation column gives, by predictive.validation_codes' rule: 'folds' for 4 to 50 distinct values
+     (whole numbers in a numeric column; in a character one, none of them a set's name), 'sets' for 0, 1 and 2
+     or Training, Validation and Test, 'bad' for anything else (the engine refuses it); null without a column. */
+  const MAX_FOLDS = 50;
+  const SET_NAMES = ['training', 'train', 'validation', 'valid', 'test'];
+  function validationKind(c) {
+    if (!c) return null;
+    const seen = new Set();
+    for (const v of c.values) { if (v != null && v !== '' && !(typeof v === 'number' && Number.isNaN(v))) { seen.add(c.isNumeric ? Number(v) : String(v)); if (seen.size > MAX_FOLDS) break; } }
+    const vals = [...seen];
+    if (c.isNumeric) {
+      if (seen.size > 3 && seen.size <= MAX_FOLDS && vals.every((v) => Number.isInteger(v))) return 'folds';
+      return vals.every((v) => v === 0 || v === 1 || v === 2) ? 'sets' : 'bad';
+    }
+    const named = vals.some((v) => SET_NAMES.includes(v.trim().toLowerCase()));
+    if (!named && seen.size > 3 && seen.size <= MAX_FOLDS) return 'folds';
+    return vals.every((v) => SET_NAMES.includes(v.trim().toLowerCase())) ? 'sets' : 'bad';
   }
 
   /* ---- the code under the Decision Threshold's parts ---------------------------------------- */
@@ -1231,7 +1358,9 @@
     threshold, groupMetrics, cutTable, countsAt, ratesAt, rocTableRows, profitOf, thresholdState, fRef, fStr, fNum, fVal, METRICS,
     SEP, graphCode, withCode, plotWithCode,
     // the Decision Threshold's settings (dtCut, dtLevel, dtTrueRate) as the By group has them, and set for it only
-    thresholdOption: dtOpt, setThresholdOption: dtSet, groupCondition });
+    thresholdOption: dtOpt, setThresholdOption: dtSet, groupCondition,
+    // Group Metrics… for a platform's own red triangle; Score Rows…; what a Validation column holds
+    groupMetricsItem: (ctx, scope = null) => groupItem(ctx, null, scope), scoreRows, validationKind, MAX_FOLDS });
 
   SM.info.add({
     'p:predict:validation': {
@@ -1277,6 +1406,6 @@
       ],
     },
     'p:predict:profit': { kicker: 'Predictive modeling', title: 'Profit', lead: 'The Y column\'s Profit Matrix (Cols > Column Properties > Profit Matrix, or Profit Matrix… in the Decision Threshold) gives the profit of each decision for each actual level. Average Profit is per row, by Weight × Freq, at the threshold; Best Threshold the probability of the set with the most; Threshold from the Matrix, (M[o,o] − M[o,t]) / ((M[t,t] − M[t,o]) + (M[o,o] − M[o,t])) for the target t and the other level o, where calling t starts to pay if the probabilities are right; Most Profitable Decisions each row decided by its largest expected profit, Σ p(level) M[level, decision] (Undecided too). The Profit Curve is the average profit against the portion of rows called the target level, highest probability first.' },
-    'p:predict:groups': { kicker: 'Predictive modeling', title: 'Group Metrics', lead: 'A fairness audit of a two-level classifier: the measures of each group of a column (that need not be a factor), and their differences and ratios to a reference group. Beyond JMP.' },
+    'p:predict:groups': { kicker: 'Predictive modeling', title: 'Group Metrics', lead: 'A fairness audit of a two-level classifier: the measures of each group of a column (that need not be a factor), and their differences and ratios to a reference group. In Model Screening, each method the Decision Threshold compares, alike: a line per method and group, and a bar per method in the charts. Beyond JMP.' },
   });
 }(typeof self !== 'undefined' ? self : this));

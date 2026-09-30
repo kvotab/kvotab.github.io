@@ -1344,6 +1344,20 @@ def _model_out(S, kind, name, fitted, resid, fit_se, level, fc, st, summary, par
     ov = out.pop('fit_lo_override', None)
     if ov:                  # limits that are not the prediction ± z se (a Box-Cox model's, transformed back)
         out['fit_lo'], out['fit_hi'] = ov
+    # Save Columns' one-step-ahead predictions: wherever the model gives one, at a
+    # missing value too (the Kalman filter predicts through it; the smoothers from
+    # the values before it), where fitted keeps to the values the fit statistics use
+    P = out.pop('pred', None)
+    if P is None:
+        out['pred'], out['pred_se'], out['pred_lo'], out['pred_hi'] = out['fitted'], out['fit_se'], out['fit_lo'], out['fit_hi']
+    else:
+        pv = np.asarray(P['fitted'], dtype=float)
+        ps = np.asarray(P['se'], dtype=float) if P.get('se') is not None else np.full(len(pv), np.nan)
+        out['pred'], out['pred_se'] = _arr(pv), _arr(ps)
+        if P.get('lo') is not None:
+            out['pred_lo'], out['pred_hi'] = _arr(P['lo']), _arr(P['hi'])
+        else:
+            out['pred_lo'], out['pred_hi'] = _arr(pv - z * ps), _arr(pv + z * ps)
     if S.hold is not None:
         out['holdback'] = _holdback_stats(S, (fc or {}).get('mean'))
         hb_code = (out.get('plot_code') or {}).pop('holdback', None)
@@ -1538,6 +1552,9 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
             fcd = _forecast(S, h, fc.predicted_mean, fc.se_mean, ci[:, 0], ci[:, 1])
         else:
             fcd = _forecast(S, 0, [], [], [], [])
+    # the one-step predictions Save Columns takes: every slot after the diffuse start, a missing value's too
+    pvalid = (np.arange(len(yfit)) >= burn) & np.isfinite(fitted)
+    pred_v, pred_se = np.where(pvalid, fitted, np.nan), np.where(pvalid, fit_se, np.nan)
     fitted[~valid] = np.nan
     resid = np.where(valid, resid, np.nan)
     fit_se[~valid] = np.nan
@@ -1609,7 +1626,7 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
                 f'f_mean, (f_lower, f_upper) = fc.predicted_mean.to_numpy(), fc.conf_int(alpha={1 - level:.6g}).to_numpy().T', _future_line(S, h)]
     plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.arima.model import ARIMA'], fit, h, nlags)
     return _model_out(S, 'arima', name, pad(fitted), pad(resid), pad(fit_se), level, fcd, st, summary,
-                      {'columns': 'arima', 'rows': rows_p}, nlags, p + q + P + Q, notes, '\n'.join(c),
+                      {'columns': 'arima', 'rows': rows_p}, nlags, p + q + P + Q, notes, '\n'.join(c), pred={'fitted': pad(pred_v), 'se': pad(pred_se)},
                       plot_code=plot_code, plot_frag=plot_frag,
                       constant=constant, iterations=history, converged=conv, n_iter=n_iter, stable=stable, invertible=invertible,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'aicc': _f(res.aicc), 'llf': _f(res.llf), 'sigma2': _f(sigma2)},
@@ -1952,6 +1969,10 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
     fit_se = np.where(valid, sig_t * slope(fitted_t), np.nan)
     fit_lo = np.where(valid, back(fitted_t - z * sig_t), np.nan)
     fit_hi = np.where(valid, back(fitted_t + z * sig_t), np.nan)
+    # Save Columns: the one-step prediction of a missing value too (from the values before it, the fit's filled ones)
+    pv = np.isfinite(fitted)
+    pred = {'fitted': np.where(pv, fitted, np.nan), 'se': np.where(pv, sig_t * slope(fitted_t), np.nan),
+            'lo': np.where(pv, back(fitted_t - z * sig_t), np.nan), 'hi': np.where(pv, back(fitted_t + z * sig_t), np.nan)}
     summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']],
                ['Standard Deviation', st['sd']], ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']],
                ['AICc', st['aicc']], ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']],
@@ -2053,7 +2074,7 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
         fit.append(_future_line(S, h))
     plot_code, plot_frag = _model_plots(S, table_name, where, name, imports, fit, h, nlags)
     return _model_out(S, 'smooth', name, fitted_v, resid, fit_se, level, fcd, st, summary,
-                      {'columns': 'smooth', 'rows': rows_p}, nlags, k, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      {'columns': 'smooth', 'rows': rows_p}, nlags, k, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag, pred=pred,
                       weights=th, fit_lo_override=[_arr(fit_lo), _arr(fit_hi)] if lam is not None else None,
                       sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'sse': _f(res.sse)},
                       spec={'method': method, 's': s, 'multiplicative': mult, 'weights': {kk: list(v) for kk, v in W.items()}, 'boxcox': lam})
@@ -2179,6 +2200,7 @@ def benchmark(table, y, time=None, rows=None, excluded=None, method='naive', s=1
     plot_code, plot_frag = _model_plots(S, table_name, where, name, [], fit, h, nlags)
     return _model_out(S, 'bench', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, sig, np.nan), level, fcd, st,
                       summary, {'columns': 'smooth', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': fitted, 'se': np.where(np.isfinite(fitted), sig, np.nan)},   # a missing value's prediction too: the value before it
                       drift=_f(b), spec={'method': method, 's': s})
 
 
@@ -2282,6 +2304,7 @@ def sma(table, y, time=None, rows=None, excluded=None, width=3, centering='none'
                              *_labels(S, S.y_name, f'{name} smoothed series'), 'plt.show()']
     return _model_out(S, 'sma', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, sig, np.nan), level, fcd, st,
                       summary, {'columns': 'smooth', 'rows': []}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': fitted, 'se': np.where(np.isfinite(fitted), sig, np.nan)},   # a missing value's prediction too: the mean of the w before it
                       smoothed=_arr(smoothed), width=w, centering=centering, spec={'width': w, 'centering': centering})
 
 
@@ -2408,8 +2431,10 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
     plot_code['states'] = {k2: [*head, *fit, '', SIZE, COLOR, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
                                 f'ax.plot(t, res.states[{J(k2)}].to_numpy(), color=color, linewidth={_pt(1.4)})   # the {k2} state',
                                 *_labels(S, k2[:1].upper() + k2[1:], f'{name} {k2}'), 'plt.show()'] for k2 in comp}
+    pv = np.isfinite(fitted)   # Save Columns: a missing value's one-step prediction too (from the values before it, the fit's filled ones)
     return _model_out(S, 'ets', name, fitted_v, resid, np.where(valid, fit_se, np.nan), level, fcd, st, summary,
                       {'columns': 'ets', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': np.where(pv, fitted, np.nan), 'se': np.where(pv, fit_se, np.nan)},
                       states=comp, sigma=sigma, nparm=nparm, sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'llf': _f(res.llf)},
                       spec={'error': error, 'trend': trend, 'seasonal': seasonal, 's': s})
 
@@ -2680,6 +2705,9 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
                 break
     fitted_v = np.where(valid, fitted, np.nan)
     resid = np.where(valid, S.y - fitted, np.nan)
+    # Save Columns: the Kalman filter's one-step prediction of a missing value too, after the diffuse start
+    pvalid = (np.arange(S.n) >= burn) & np.isfinite(fitted)
+    pred = {'fitted': np.where(pvalid, fitted, np.nan), 'se': np.where(pvalid, fit_se, np.nan)}
     fit_se = np.where(valid, fit_se, np.nan)
     # the graphs: the model fitted as above, its one-step predictions after the diffuse start, the forecasts
     fit = []
@@ -2724,7 +2752,7 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
            f'axes[-1, 0].set_xlabel({J(_xlabel(S))})', f'fig.suptitle({J(name + " components")}, fontsize=10)', 'plt.show()']
     plot_code['components'] = cp
     return _model_out(S, 'uc', name, fitted_v, resid, fit_se, level, fcd, st, summary, {'columns': 'uc', 'rows': rows_p}, nlags, 0, notes,
-                      '\n'.join(c), components=comps, iterations=history, converged=conv, n_iter=n_iter, burn=burn,
+                      '\n'.join(c), components=comps, iterations=history, converged=conv, n_iter=n_iter, burn=burn, pred=pred,
                       plot_code=plot_code, plot_frag=plot_frag,
                       cycle_bounds=[_f(2 * math.pi / hi_f), _f(2 * math.pi / lo_f) if lo_f and lo_f > 0 else None] if cycle else None,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'aicc': _f(res.aicc), 'llf': _f(res.llf), 'df_model': int(res.df_model)},
@@ -2989,8 +3017,10 @@ def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c
               f'    ax.plot(t, fprob[:, j], color=colors[j], linewidth={_pt(1)}, linestyle=":", label=f"Regime {{j}} filtered")'),
         'ax.set_ylim(-0.03, 1.03)', 'fig.legend(loc="outside lower center", ncols=4, frameon=False, fontsize=8)',
         *_labels(S, 'Smoothed probability', f'{name} smoothed probabilities'), 'plt.show()']
+    pv = np.isfinite(fitted_full) & (np.arange(n) >= order)   # Save Columns: a missing value's prediction too (from the filled values before it)
     return _model_out(S, 'markov', name, np.where(valid, fitted_full, np.nan), resid, None, level, _forecast(S, 0, [], [], [], []), st, summary,
                       {'columns': 'markov', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': np.where(pv, fitted_full, np.nan), 'se': None},
                       k=k, order=order, per_regime=list(per.values()), transition=trans, regimes=regimes, prob=prob, fprob=fprob,
                       starts=tried, most=[None] * order + [int(v) for v in most],
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf)},
@@ -3338,8 +3368,10 @@ def theta_model(table, y, time=None, rows=None, excluded=None, period=12, deseas
                       'f_lower, f_upper = pi["lower"].to_numpy(), pi["upper"].to_numpy()'),
                 _future_line(S, h)]
     plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.forecasting.theta import ThetaModel'], fit, h, nlags)
+    pv = np.isfinite(fitted)   # Save Columns: a missing value's one-step theta forecast too (from the filled values before it)
     return _model_out(S, 'theta', name, fitted_v, resid, np.where(valid, sd, np.nan), level, fcd, st, summary,
                       {'columns': 'theta', 'rows': rows_p}, nlags, 1, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': np.where(pv, fitted, np.nan), 'se': np.where(pv, sd, np.nan)},
                       b0=_f(b0), alpha=_f(alpha), sigma2=_f(sigma2), one_step=_f(one), seasonal_found=seasonal_found, method=meth,
                       spec={'theta': th, 'period': s, 'deseasonalize': des, 'use_test': bool(use_test), 'use_mle': bool(use_mle)})
 
@@ -3655,8 +3687,10 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
                 'f_mean, f_lower, f_upper = (sf[k].to_numpy() for k in ("mean", "mean_ci_lower", "mean_ci_upper"))', _future_line(S, h)]
     plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.ardl import ARDL' if order else 'from statsmodels.tsa.ardl import ardl_select_order'],
                                         fit, h, nlags)
+    pv = np.isfinite(fitted)   # Save Columns: a missing value's prediction too (least squares on the filled lags)
     return _model_out(S, 'ardl', name, np.where(valid, fitted, np.nan), resid, np.where(valid, fse_in, np.nan), level, fcd, st, summary,
                       {'columns': 'ardl', 'rows': rows_p}, nlags, len(ar_lags), notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      pred={'fitted': np.where(pv, fitted, np.nan), 'se': np.where(pv, fse_in, np.nan)},
                       order=list(ordr), inputs_used=inc, long_run=lr, bounds=bounds, ecm=ecm, speed=speed, selection=selection,
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf), 'sigma2': _f(res.sigma2)},
                       spec={'trend': trend, 'ic': ic, 'glob': bool(glob), 'maxlag': maxlag, 'maxorder': maxorder, 'case': case,
@@ -3684,6 +3718,16 @@ def _run_member(member, base):
 
 def _indent(lines, pad='    '):
     return [pad + ln if ln else ln for ln in '\n'.join(lines).split('\n')]
+
+
+def _avg_pred(res):
+    """Save Columns' one-step predictions of an average: the mean of its
+    members' (a missing value's too), where every member has one, and the
+    mean of their standard errors and limits."""
+    def M(key):
+        return np.mean(np.array([[np.nan if v is None else v for v in r[key]] for r in res], dtype=float), axis=0)
+    with np.errstate(invalid='ignore'):
+        return {'fitted': M('pred'), 'se': M('pred_se'), 'lo': M('pred_lo'), 'hi': M('pred_hi')}
 
 
 @api('timeseries.average')
@@ -3762,6 +3806,7 @@ def average(table, y, members=None, time=None, rows=None, excluded=None, level=0
     return _model_out(S, 'avg', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, fit_se, np.nan), level, fcd, st,
                       summary, {'columns': 'smooth', 'rows': []}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
                       fit_lo_override=[_arr(np.where(valid, fit_lo, np.nan)), _arr(np.where(valid, fit_hi, np.nan))],
+                      pred=_avg_pred(res),
                       members=names, spec={'members': [m.get('fn') for m in members]})
 
 

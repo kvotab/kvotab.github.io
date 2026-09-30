@@ -35,6 +35,7 @@ profilers and interaction plots use this module's fit.
 import itertools
 import math
 import re
+import time
 
 import numpy as np
 import pandas as pd
@@ -280,7 +281,9 @@ class _RStruct:
         sub = self.sub[rows]
         same = sub[:, :, None] == sub[:, None, :]
         sw = np.sqrt(self.winv[rows])
-        g = {'same': same, 'sw2': sw[:, :, None] * sw[:, None, :], 'eye': np.broadcast_to(np.eye(rows.shape[1], dtype=bool), same.shape)}
+        g = {'same': same, 'sw2': sw[:, :, None] * sw[:, None, :], 'eye': np.broadcast_to(np.eye(rows.shape[1], dtype=bool), same.shape),
+             # a block that is one subject and rows without weights: no masks, no products by 1 (a large spatial block)
+             'allsame': bool(same.all()), 'unitw': bool(np.all(sw == 1.0))}
         if self.lev is not None:
             lv = self.lev[rows]
             g['lev'] = lv
@@ -295,8 +298,9 @@ class _RStruct:
             g['dist'] = np.sqrt(np.sum((c[:, :, None, :] - c[:, None, :, :]) ** 2, axis=-1))
         return g
 
-    def block(self, theta, g):
-        """R over a group of blocks and its derivatives: (R, [(k, dR)])."""
+    def block(self, theta, g, deriv=True):
+        """R over a group of blocks and its derivatives: (R, [(k, dR)]); deriv
+        False: R alone (a trial point of the line search), the list empty."""
         th = [theta[k] for k in self.pidx]
         same, sw2, eye = g['same'], g['sw2'], g['eye']
         kind = self.kind
@@ -371,14 +375,17 @@ class _RStruct:
         elif kind in ('sp', 'spn'):
             rho = th[0]
             d = g['dist']
-            F, dF = self._spatial(d, rho)
-            C = np.where(same, F, 0.0)
-            dC, cidx = [np.where(same, dF, 0.0)], [self.pidx[0]]
+            allsame = g.get('allsame', False)
+            F, dF = self._spatial(d, rho, deriv)
+            C = F if allsame else np.where(same, F, 0.0)
+            dC, cidx = ([dF if allsame else np.where(same, dF, 0.0)], [self.pidx[0]]) if deriv else ([], [])
             if kind == 'spn':
                 nug = th[1]
-                C = C + np.where(eye, nug, 0.0)
-                dC.append(np.where(eye, 1.0, 0.0))
-                cidx.append(self.pidx[1])
+                ii = np.arange(C.shape[1])
+                C[:, ii, ii] += nug        # (C is a new array: F from _spatial, or the masked copy)
+                if deriv:
+                    dC.append(np.where(eye, 1.0, 0.0))
+                    cidx.append(self.pidx[1])
         else:
             raise ValueError(f'unknown repeated structure {kind}')
         if kind in _R_UNEQ:
@@ -396,10 +403,18 @@ class _RStruct:
                 D.append((self.pidx[t], C * num * sw2 / (2 * max(sd[t], 1e-300))))
             return R, D
         s2 = th[-1]
+        if g.get('unitw', False):
+            R = s2 * C
+            if deriv:
+                for k, dCk in zip(cidx, dC):
+                    D.append((k, s2 * dCk))
+                D.append((self.pidx[-1], C))
+            return R, D
         R = s2 * C * sw2
-        for k, dCk in zip(cidx, dC):
-            D.append((k, s2 * dCk * sw2))
-        D.append((self.pidx[-1], C * sw2))
+        if deriv:
+            for k, dCk in zip(cidx, dC):
+                D.append((k, s2 * dCk * sw2))
+            D.append((self.pidx[-1], C * sw2))
         return R, D
 
     @staticmethod
@@ -410,20 +425,23 @@ class _RStruct:
         with np.errstate(divide='ignore', invalid='ignore'):
             return np.where(lo == hi, 0.0, cum[hi] / np.where(cum[lo] == 0, 1e-300, cum[lo]))
 
-    def _spatial(self, d, rho):
+    def _spatial(self, d, rho, deriv=True):
+        """The spatial correlation at the distances d and its derivative with
+        respect to the range (None when deriv is False); new arrays."""
         t = self.sptype
         if t == 'pow':
-            return _powcorr(rho, d)
+            F, dF = _powcorr(rho, d)
+            return F, (dF if deriv else None)
         if t == 'exp':
             F = np.exp(-d / rho)
-            return F, F * d / rho ** 2
+            return F, (F * d / rho ** 2 if deriv else None)
         if t == 'gau':
             F = np.exp(-(d / rho) ** 2)
-            return F, F * 2 * d ** 2 / rho ** 3
+            return F, (F * 2 * d ** 2 / rho ** 3 if deriv else None)
         u = d / rho
         inside = u < 1
         F = np.where(inside, 1 - 1.5 * u + 0.5 * u ** 3, 0.0)
-        dF = np.where(inside, 1.5 * d / rho ** 2 - 1.5 * d ** 3 / rho ** 4, 0.0)
+        dF = np.where(inside, 1.5 * d / rho ** 2 - 1.5 * d ** 3 / rho ** 4, 0.0) if deriv else None
         return F, dF
 
 
@@ -556,14 +574,68 @@ class _Engine:
         return sla.block_diag(*[np.kron(np.eye(self.comps[i].nl), self.comps[i].sigma(theta)) for i in self.low]) if self.low else np.zeros((0, 0))
 
     # ---- blockwise products ---------------------------------------------------------------------------------
-    def _bmm(self, Ag, B):
-        """A B for the block-diagonal A (per group) and an n (x k) B."""
+    def _vblocks(self, E, B):
+        """V_blocks^-1 B for an n (x k) B: by the blocks' inverses where they are
+        made, else by their Cholesky factors (LAPACK potrs)."""
         one = B.ndim == 1
         B2 = B[:, None] if one else B
         out = np.empty((self.n, B2.shape[1]))
-        for A, rows in zip(Ag, self.grows):
-            out[rows] = np.einsum('bij,bjk->bik', A, B2[rows])
+        for g, rows in enumerate(self.grows):
+            A = E['Ag'][g]
+            if A is not None:
+                out[rows] = _bmm3(A, B2[rows])
+                continue
+            from scipy.linalg import lapack
+            for b, c in enumerate(E['Fg'][g]):
+                x, info = lapack.dpotrs(c, B2[rows[b]], lower=1)
+                if info != 0:
+                    raise np.linalg.LinAlgError('potrs')
+                out[rows[b]] = x
         return out[:, 0] if one else out
+
+    def scale_index(self):
+        """The parameter that scales all of V (V = theta_k V0): the residual
+        variance of a homogeneous repeated structure without random effects.
+        None otherwise."""
+        rs = self.rs
+        if self.comps or self.ql or rs.fixed_scale is not None:
+            return None
+        if rs.kind not in ('residual', 'ar1', 'cs', 'toep', 'antevar', 'sp', 'spn'):
+            return None
+        k = rs.pidx[-1]
+        return k if self.pars[k].kind == 'var' and self.pars[k].tr == 'log' else None
+
+    def rescale(self, E, k):
+        """The evaluation E with the scale parameter k (V = theta_k V0) moved
+        to its maximum for the other parameters, theta_k r'V^-1 r / (n - p):
+        V times c changes the log-likelihood's parts in closed form (log|V|
+        by n log c, log|X'V^-1X| by -p log c, r'V^-1 r by 1/c, beta not at
+        all), so no factorization is made. Optimizing the rest with the scale
+        at its maximum (the profile likelihood) takes out the scale's ridge
+        with a spatial range and a nugget."""
+        n, p = self.n, self.p
+        c = E['rVr'] / max(n - p, 1)
+        if not (np.isfinite(c) and c > 0) or abs(c - 1.0) < 1e-15:
+            return E
+        lc = math.log(c)
+        th = np.array(E['theta'], dtype=float)
+        th[k] *= c
+        out = {key: v for key, v in E.items() if key in ('beta', 'r', 'U', 'M', 'G', 'K')}
+        out.update(theta=th, logdet=E['logdet'] + n * lc, ldx=E['ldx'] - p * lc, rVr=E['rVr'] / c,
+                   Phi=E['Phi'] * c, e=E['e'] / c, W=E['W'] / c, Dg=None,
+                   Ag=[None if A is None else A / c for A in E['Ag']],
+                   Fg=[None if F is None else [f * math.sqrt(c) for f in F] for F in E['Fg']])
+        out['ll'] = -0.5 * ((n - p) * _LOG2PI + out['logdet'] + out['ldx'] + out['rVr'])
+        return out
+
+    def _ag(self, E):
+        """The blocks' inverses: those evaluate kept only as factors are made
+        now, from the factors (LAPACK potri)."""
+        Ag = E['Ag']
+        for g, F in enumerate(E['Fg']):
+            if Ag[g] is None:
+                Ag[g] = _factor_inv(F)
+        return Ag
 
     # ---- one evaluation ------------------------------------------------------------------------------------
     def evaluate(self, theta, level=0):
@@ -573,28 +645,37 @@ class _Engine:
         structures). None when V is not positive definite."""
         theta = np.asarray(theta, dtype=float)
         n, p = self.n, self.p
-        Vg, Dg = [], []
-        for g, rows in enumerate(self.grows):
-            R, dR = self.rs.block(theta, self.gr[g])
-            V = R.copy()
-            for k, D in self.gd[g]:
-                V += theta[k] * D
-            Vg.append(V)
-            Dg.append(list(self.gd[g]) + dR)
+        # a large block is only factored here (Cholesky, a third of an inverse's work): its inverse, and
+        # the derivatives of V, are made when the score needs them (a trial point of the line search
+        # needs neither)
+        need_d = level >= 1
+        Dg = [] if need_d else None
         logdet = 0.0
-        Ag = []
+        Ag, Fg = [], []
         try:
-            for V in Vg:
-                ld, A = _chol_inv(V)
+            for g, rows in enumerate(self.grows):
+                V, dR = self.rs.block(theta, self.gr[g], deriv=need_d)
+                for k, D in self.gd[g]:
+                    V += theta[k] * D           # (block's R is a new array)
+                if need_d:
+                    Dg.append(list(self.gd[g]) + dR)
+                if V.shape[1] >= _LAPACK_MIN:
+                    ld, F = _chol_factor(V)
+                    Ag.append(None)
+                    Fg.append(F)
+                else:
+                    ld, A = _chol_inv(V)
+                    Ag.append(A)
+                    Fg.append(None)
                 logdet += ld
-                Ag.append(A)
         except np.linalg.LinAlgError:
             return None
+        E0 = {'Ag': Ag, 'Fg': Fg}
         X, y = self.X, self.y
-        AX, Ay = self._bmm(Ag, X), self._bmm(Ag, y)
+        AX, Ay = self._vblocks(E0, X), self._vblocks(E0, y)
         if self.ql:
             Zl = self.Zl
-            U = self._bmm(Ag, Zl.toarray()) if self.ql * n <= 4_000_000 else np.column_stack([self._bmm(Ag, Zl[:, j].toarray()[:, 0]) for j in range(self.ql)])
+            U = self._vblocks(E0, Zl.toarray()) if self.ql * n <= 4_000_000 else np.column_stack([self._vblocks(E0, Zl[:, j].toarray()[:, 0]) for j in range(self.ql)])
             M = np.asarray(Zl.T @ U)
             M = 0.5 * (M + M.T)
             G = self.Gl(theta)
@@ -631,7 +712,7 @@ class _Engine:
         rVr = float(r @ e)
         ll = -0.5 * ((n - p) * _LOG2PI + logdet + ldx + rVr)
         out = {'ll': ll, 'logdet': logdet, 'ldx': ldx, 'rVr': rVr, 'beta': beta, 'Phi': Phi, 'e': e, 'r': r, 'W': W,
-               'Ag': Ag, 'Dg': Dg, 'U': U, 'M': M, 'G': G, 'K': K, 'theta': theta}
+               'Ag': Ag, 'Fg': Fg, 'Dg': Dg, 'U': U, 'M': M, 'G': G, 'K': K, 'theta': theta}
         return self.derive(out, level)
 
     def derive(self, E, level):
@@ -678,6 +759,9 @@ class _Engine:
         """For each block parameter: [(group, D)]."""
         if 'bl' in E:
             return E['bl']
+        if E.get('Dg') is None:
+            # (an evaluation at a trial point, made without them)
+            E['Dg'] = [list(self.gd[g]) + self.rs.block(E['theta'], self.gr[g])[1] for g in range(len(self.grows))]
         bl = {}
         for g, lst in enumerate(E['Dg']):
             for k, D in lst:
@@ -692,13 +776,24 @@ class _Engine:
         tr = np.zeros(r)
         eve = np.zeros(r)
         bl = self._blocklist(E)
+        Ag = self._ag(E)
         LtDL = {}
         for k, lst in bl.items():
             t, v = 0.0, 0.0
             S = np.zeros((L.shape[1], L.shape[1]))
             for g, D in lst:
                 rows = self.grows[g]
-                A = E['Ag'][g]
+                A = Ag[g]
+                if D.shape[1] >= _LAPACK_MIN:
+                    # large blocks one by one, the products by BLAS (A and D symmetric: tr(A D) = sum(A * D))
+                    for b in range(D.shape[0]):
+                        rb = rows[b]
+                        t += float(np.sum(A[b] * D[b]))
+                        eb = e[rb]
+                        v += float(eb @ _mm(D[b], eb))
+                        Lb = L[rb]
+                        S += Lb.T @ _mm(D[b], Lb)
+                    continue
                 t += float(np.einsum('bij,bji->', A, D))
                 eg = e[rows]
                 v += float(np.einsum('bi,bij,bj->', eg, D, eg))
@@ -730,13 +825,13 @@ class _Engine:
         for k, lst in bl.items():
             for g, D in lst:
                 rows = self.grows[g]
-                Amat[rows, k] += np.einsum('bij,bj->bi', D, e[rows])
+                Amat[rows, k] += _bmm3(D, e[rows][:, :, None])[:, :, 0]
         if self.ql:
             self._lowparts(E)
             Ze = E['Ze']
             for k, dG in self.dGl.items():
                 Amat[:, k] += np.asarray(self.Zl @ (dG @ Ze)).reshape(-1)
-        PA = self._bmm(E['Ag'], Amat) - L @ (Q @ (L.T @ Amat))
+        PA = self._vblocks(E, Amat) - L @ (Q @ (L.T @ Amat))
         aPa = Amat.T @ PA
         AI = 0.25 * (aPa + aPa.T)
         E['info'] = AI
@@ -754,11 +849,12 @@ class _Engine:
         L, Q = self._L(E)
         bl = self._blocklist(E)
         LtDL = E['LtDL']
+        Ag = self._ag(E)
         I = np.zeros((r, r))
         keys = sorted(bl)
         # A D per block parameter, per group
-        AD = {k: {g: np.einsum('bij,bjk->bik', E['Ag'][g], D) for g, D in lst} for k, lst in bl.items()}
-        DL = {k: {g: np.einsum('bij,bjk->bik', D, L[self.grows[g]]) for g, D in lst} for k, lst in bl.items()}
+        AD = {k: {g: _bmm3(Ag[g], D) for g, D in lst} for k, lst in bl.items()}
+        DL = {k: {g: _bmm3(D, L[self.grows[g]]) for g, D in lst} for k, lst in bl.items()}
         for ai, k in enumerate(keys):
             for l in keys[ai:]:
                 t1 = 0.0
@@ -768,7 +864,7 @@ class _Engine:
                         continue
                     t1 += float(np.einsum('bij,bji->', AD[k][g], AD[l][g]))
                     # L' D_k A D_l L
-                    cross += np.einsum('bik,bij,bjl->kl', DL[k][g], E['Ag'][g], DL[l][g])
+                    cross += np.einsum('bik,bil->kl', DL[k][g], _bmm3(Ag[g], DL[l][g]))
                 val = t1 - 2.0 * float(np.sum(Q * cross)) + float(np.sum((Q @ LtDL[k]) * (Q @ LtDL[l]).T))
                 I[k, l] = I[l, k] = 0.5 * val
         if self.ql:
@@ -795,18 +891,18 @@ class _Engine:
             for k, lst in bl.items():
                 for g, D in lst:
                     rows = self.grows[g]
-                    Amat[rows, k] += np.einsum('bij,bj->bi', D, e[rows])
+                    Amat[rows, k] += _bmm3(D, e[rows][:, :, None])[:, :, 0]
             if self.ql:
                 Ze = E['Ze']
                 for k, dG in self.dGl.items():
                     Amat[:, k] += np.asarray(self.Zl @ (dG @ Ze)).reshape(-1)
-            PA = self._bmm(E['Ag'], Amat) - L @ (Q @ (L.T @ Amat))
+            PA = self._vblocks(E, Amat) - L @ (Q @ (L.T @ Amat))
             aPa = Amat.T @ PA
             E['obs'] = -I + 0.5 * (aPa + aPa.T)
 
     def apply_vinv(self, E, B):
         """V^-1 B."""
-        AB = self._bmm(E['Ag'], B)
+        AB = self._vblocks(E, B)
         if self.ql:
             ZAB = np.asarray(self.Zl.T @ AB)
             return AB - E['U'] @ (E['K'] @ ZAB)
@@ -819,7 +915,7 @@ class _Engine:
         out = np.zeros((self.n, B2.shape[1]))
         for g, D in self._blocklist(E).get(k, []):
             rows = self.grows[g]
-            out[rows] += np.einsum('bij,bjk->bik', D, B2[rows])
+            out[rows] += _bmm3(D, B2[rows])
         if self.ql and k in self.dGl:
             out += np.asarray(self.Zl @ (self.dGl[k] @ np.asarray(self.Zl.T @ B2)))
         return out[:, 0] if one else out
@@ -911,7 +1007,71 @@ class _Trans:
 
 # ---- the fit -----------------------------------------------------------------------------------------------------
 
-_LAPACK_MIN = 96   # blocks this large or larger: scipy's LAPACK (numpy's own, in Pyodide, is several times slower)
+_LAPACK_MIN = 96   # blocks this large or larger: scipy's LAPACK and BLAS (numpy's own, in Pyodide, are several times slower)
+
+
+def _mm(A, B):
+    """A @ B for a 2-d A, by scipy's BLAS when A is large (numpy's matmul has
+    no BLAS in Pyodide). B may be a vector."""
+    if A.shape[0] * A.shape[1] < 40_000 or A.dtype != np.float64:
+        return A @ B
+    from scipy.linalg import blas
+    one = B.ndim == 1
+    B2 = np.asarray(B[:, None] if one else B, dtype=float)
+    if A.flags.f_contiguous:
+        C = blas.dgemm(1.0, A, B2)
+    elif A.flags.c_contiguous:
+        C = blas.dgemm(1.0, A.T, B2, trans_a=1)     # A.T is Fortran-ordered: no copy
+    else:
+        C = blas.dgemm(1.0, np.asfortranarray(A), B2)
+    return C[:, 0] if one else np.ascontiguousarray(C)
+
+
+def _bmm3(A, B):
+    """A @ B for stacks (b, m, m) and (b, m, k): numpy's batched product for
+    small blocks, BLAS block by block for large ones."""
+    if A.shape[1] < _LAPACK_MIN:
+        return np.einsum('bij,bjk->bik', A, B)
+    out = np.empty((A.shape[0], A.shape[1], B.shape[2]))
+    for b in range(A.shape[0]):
+        out[b] = _mm(A[b], B[b])
+    return out
+
+
+def _chol_factor(Vs):
+    """The Cholesky factors of a stack of large symmetric positive definite
+    blocks (LAPACK potrf, in the blocks' own memory): (log determinant of
+    them all, [factors]). Raises LinAlgError when one is not positive
+    definite."""
+    from scipy.linalg import lapack
+    F = []
+    logdet = 0.0
+    for i in range(Vs.shape[0]):
+        # a symmetric block is its own transpose, which is Fortran-ordered: LAPACK works on it in place
+        c, info = lapack.dpotrf(Vs[i].T, lower=1, clean=0, overwrite_a=1)
+        if info != 0:
+            raise np.linalg.LinAlgError('not positive definite')
+        d = np.diagonal(c)
+        if not np.all(d > 0):
+            raise np.linalg.LinAlgError('not positive definite')
+        logdet += 2.0 * float(np.sum(np.log(d)))
+        F.append(c)
+    return logdet, F
+
+
+def _factor_inv(F):
+    """The inverses (b, m, m) of blocks from their Cholesky factors (LAPACK
+    potri: the lower triangle), made symmetric."""
+    from scipy.linalg import lapack
+    m = F[0].shape[0]
+    out = np.empty((len(F), m, m))
+    for i, c in enumerate(F):
+        inv, info = lapack.dpotri(c, lower=1)
+        if info != 0:
+            raise np.linalg.LinAlgError('singular')
+        lo = np.tril(inv)
+        out[i] = lo + np.tril(lo, -1).T
+    return out
 
 
 def _chol_inv(Vs):
@@ -920,28 +1080,45 @@ def _chol_inv(Vs):
     numpy's batched routines; large ones by LAPACK's Cholesky (potrf) and
     the inverse from it (potri), a third of the work of an LU inverse.
     Raises LinAlgError when a block is not positive definite."""
-    b, m = Vs.shape[0], Vs.shape[1]
-    if m < _LAPACK_MIN:
+    if Vs.shape[1] < _LAPACK_MIN:
         Lc = np.linalg.cholesky(Vs)
         A = np.linalg.inv(Vs)
         return 2.0 * float(np.sum(np.log(np.diagonal(Lc, axis1=1, axis2=2)))), 0.5 * (A + np.swapaxes(A, 1, 2))
-    from scipy.linalg import lapack
-    out = np.empty_like(Vs)
-    logdet = 0.0
-    for i in range(b):
-        c, info = lapack.dpotrf(Vs[i], lower=1, clean=1)
-        if info != 0:
-            raise np.linalg.LinAlgError('not positive definite')
-        d = np.diag(c)
-        if not np.all(d > 0):
-            raise np.linalg.LinAlgError('not positive definite')
-        logdet += 2.0 * float(np.sum(np.log(d)))
-        inv, info = lapack.dpotri(c, lower=1)
-        if info != 0:
-            raise np.linalg.LinAlgError('singular')
-        lo = np.tril(inv)
-        out[i] = lo + np.tril(inv, -1).T
-    return logdet, out
+    logdet, F = _chol_factor(Vs.copy())
+    return logdet, _factor_inv(F)
+
+
+# The page's tag for the progress lines of the call that runs (fitmodel.mixed's progress argument): its
+# report shows only its own fit's iterations
+_TAG = ''
+
+
+def _ptag(what):
+    return f'{what}:{_TAG}' if _TAG else what
+
+
+_BFGS_RG = 1.0     # the quasi-Newton curvature starts where the relative gradient is below this
+_LS_LO = 0.25      # a shortened step is at least this share of the one before (the parabola's maximum, else half)
+
+
+class _Progress:
+    """The 'smui:progress <what> <done> <total> [value]' lines of one long
+    calculation, which the page turns into progress events: none in its
+    first half second (a quick fit shows nothing), then at most five a
+    second."""
+
+    def __init__(self, what, total):
+        self.what, self.total = what, int(total)
+        self.t0 = time.perf_counter()
+        self.last = 0.0
+
+    def __call__(self, done, value=None, force=False):
+        now = time.perf_counter()
+        if not force and (now - self.t0 < 0.5 or now - self.last < 0.2):
+            return
+        self.last = now
+        tail = f' {value:.10g}' if value is not None and math.isfinite(value) else ''
+        print(f'smui:progress {self.what} {int(done)} {self.total}{tail}', flush=True)
 
 
 def _relgrad(g, H):
@@ -951,12 +1128,19 @@ def _relgrad(g, H):
         return float(g @ np.linalg.pinv(H) @ g)
 
 
-def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
+def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None, progress=None):
     """Maximize the REML log-likelihood from theta0: Fisher scoring, then
     Newton steps with the observed information (for structures linear in
-    their parameters), each step halved until the likelihood rises and V
-    stays positive definite. Bounded (nonneg) parameters stay at or above
-    zero; one at zero whose score points below zero is held there.
+    their parameters). A structure without an analytic observed information
+    (the non-linear ones: AR(1), spatial, Toeplitz ...) takes quasi-Newton
+    (BFGS) curvature near the maximum, built on the information from the
+    score's changes, instead of the information alone, whose steps zigzag
+    along a ridge (a spatial range against its sill). A step that does not
+    raise the likelihood, or leaves V not positive definite, is shortened
+    to the maximum of a parabola through the likelihood there and its slope
+    at the start. Bounded (nonneg) parameters stay at or above zero; one at
+    zero whose score points below zero is held there. progress: a _Progress
+    for the iterations (the page shows them for a long fit).
     Returns (theta, E, converged, iterations, history)."""
     pars = eng.pars
     r = len(pars)
@@ -967,9 +1151,19 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
     theta = tr.theta(eta)
     for k in fixed:
         theta[k] = theta0[k]
-    E = eng.evaluate(theta, 3 if linear else 2)
+    level = 3 if linear else 2
+    # a scale of all of V (the residual variance of a homogeneous repeated structure alone) is kept at its
+    # maximum for the other parameters, in closed form: the steps are those of the profile likelihood
+    ks = eng.scale_index()
+    ks = ks if ks is not None and ks not in fixed else None
+    E = eng.evaluate(theta, 0)
     if E is None:
         return theta, None, False, 0, []
+    if ks is not None:
+        E = eng.rescale(E, ks)
+        theta = E['theta']
+        eta = tr.eta(theta)
+    eng.derive(E, level)
     hist = [(0, -2 * E['ll'], theta.copy())]
     converged = False
     newton = False
@@ -977,6 +1171,8 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
     it = 0
     rg = float('inf')
     rgs = []
+    quasi = not linear          # BFGS curvature for the non-linear structures
+    B, prev, B_active = None, None, None
     for it in range(1, maxit + 1):
         J = tr.jac(eta)
         g = J.T @ E['score']
@@ -989,7 +1185,7 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
         ai = np.array(active)
         gA = g[ai]
         H = Hf[np.ix_(ai, ai)]
-        if newton and Hn is not None:
+        if newton and Hn is not None and not quasi:
             HnA = Hn[np.ix_(ai, ai)]
             try:
                 np.linalg.cholesky(HnA)
@@ -998,13 +1194,35 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
                 pass
         rg = _relgrad(gA, Hf[np.ix_(ai, ai)])
         rgs.append(rg)
+        if quasi:
+            # BFGS on the information: from where the relative gradient is below 1 (near the maximum),
+            # updated by each step's change of the score; started again when the active set changes
+            if B is not None and active != B_active:
+                B, prev = None, None
+            if B is None and rg < _BFGS_RG:
+                B, B_active = H.copy(), list(active)
+            elif B is not None and prev is not None:
+                sv = eta[ai] - prev[0]
+                yv = prev[1] - gA              # (-Hessian) times the step
+                sy = float(sv @ yv)
+                if sy > 1e-12 * float(np.linalg.norm(sv) * np.linalg.norm(yv)):
+                    Bs = B @ sv
+                    sBs = float(sv @ Bs)
+                    if sBs > 0:
+                        B = B - np.outer(Bs, Bs) / sBs + np.outer(yv, yv) / sy
+            if B is not None:
+                H = B
+                prev = (eta[ai].copy(), gA.copy())
         if log is not None:
             log.append((it, -2 * E['ll'], rg))
+        if progress is not None:
+            progress(it, -2 * E['ll'])
         if rg < tol:
-            # converged; a few more steps polish the estimates to the precision of the arithmetic
+            # converged; a few more steps polish the estimates to the precision of the arithmetic (one
+            # for a large block, where a step costs n^3 and the likelihood is flat to its rounding)
             converged = True
             polish += 1
-            if rg < 1e-22 or polish > 4:
+            if rg < 1e-22 or polish > (4 if eng.maxblock < _LAPACK_MIN else 1):
                 break
         elif len(hist) > 6 and len(rgs) > 7 and rg < 1e-6 * (1 + abs(hist[-1][1])):
             # a likelihood flat to the rounding of its score (a spatial range, a large block's average
@@ -1026,6 +1244,7 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
         # keep the steps of log/tanh parameters moderate
         big = np.max(np.abs(full)) if len(full) else 0.0
         t = 1.0 if big <= 5 else 5.0 / big
+        slope = float(gA @ step)           # d ll / dt at t = 0 along the step
         accepted = False
         while t > 1e-10:
             eta2 = eta + t * full
@@ -1035,11 +1254,22 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
             th2 = np.where(nonneg & (th2 < 0), 0.0, th2)
             eta2 = np.where(nonneg, th2, eta2)
             E2 = eng.evaluate(th2, 0)
+            if E2 is not None and ks is not None:
+                E2 = eng.rescale(E2, ks)
+                th2 = E2['theta']
+                eta2 = eta2.copy()
+                eta2[ks] = math.log(th2[ks])
             if E2 is not None and E2['ll'] >= E['ll'] - 1e-11 * (1 + abs(E['ll'])):
                 accepted = True
-                eng.derive(E2, 3 if linear else 2)
+                eng.derive(E2, level)
                 break
-            t *= 0.5
+            if _LS_LO is not None and E2 is not None and slope > 0 and np.isfinite(E2['ll']):
+                # the maximum of the parabola through ll(0), its slope and ll(t), kept within [t/4, t/2]
+                c = (E2['ll'] - E['ll'] - slope * t) / (t * t)
+                tn = -slope / (2 * c) if c < 0 else 0.5 * t
+                t = min(max(tn, _LS_LO * t), 0.5 * t)
+            else:
+                t *= 0.5
         if not accepted:
             converged = converged or rg < 1e-6
             break
@@ -1049,17 +1279,42 @@ def _optimize(eng, theta0, tr, fixed=(), maxit=250, tol=1e-10, log=None):
         if abs(dll) < 1e-15 * (1 + abs(E['ll'])) and rg < 1e-12:
             converged = True
             break
-    E = eng.evaluate(theta, 3 if linear else 2)
+    # the last evaluation is at theta, its score and information made (a large block's evaluation costs n^3)
+    if E is None or not np.array_equal(E['theta'], theta):
+        E = eng.evaluate(theta, level)
+    else:
+        eng.derive(E, level)
     return theta, E, converged, it, hist
 
 
-def _numeric_obs(eng, theta, fixed_idx):
+def _numeric_obs(eng, theta, fixed_idx, E=None):
     """The observed information by central differences of the analytic
-    score (for structures with second derivatives)."""
+    score (for structures with second derivatives). The column of a scale
+    of all of V (theta_s, V = theta_s V0) is analytic, from the evaluation E
+    at theta: -d2l/dtheta_s2 = (2q/theta_s - (n - p)) / (2 theta_s^2) with
+    q = theta_s r'V^-1 r, and -d2l/dtheta_s dtheta_k = e'V_k e / (2 theta_s)
+    (e = V^-1 r), the envelope theorem's derivative of r'V0^-1 r: two
+    evaluations fewer, each a factorization and an inverse of V."""
     r = len(theta)
     H = np.zeros((r, r))
+    ks = eng.scale_index()
+    if ks is not None and ks not in fixed_idx and E is not None and np.array_equal(E['theta'], theta):
+        eng.derive(E, 1)
+        sc = float(theta[ks])
+        q = sc * E['rVr']
+        col = np.zeros(r)
+        col[ks] = (2 * q / sc - (eng.n - eng.p)) / (2 * sc * sc)
+        for k in range(r):
+            if k != ks:
+                col[k] = float(E['eVe'][k]) / (2 * sc)
+        H[:, ks] = col
+        H[ks, :] = col
+    else:
+        ks = None
+    prog = _Progress(_ptag('remlinfo'), 2 * (r - len(fixed_idx) - (ks is not None)))
+    done = 0
     for k in range(r):
-        if k in fixed_idx:
+        if k in fixed_idx or k == ks:
             continue
         h = 1e-5 * max(abs(theta[k]), 1e-2)
         tp, tm = theta.copy(), theta.copy()
@@ -1074,6 +1329,14 @@ def _numeric_obs(eng, theta, fixed_idx):
             H[:, k] = -(Ep['score'] - Em['score']) / (h if (Ep is E0 or Em is E0) else 2 * h)
         else:
             H[:, k] = -(Ep['score'] - Em['score']) / (2 * h)
+        done += 2
+        prog(done)
+    if ks is not None:
+        # the scale's column is analytic: keep it, not the average with the differenced rows
+        Hs = 0.5 * (H + H.T)
+        Hs[:, ks] = H[:, ks]
+        Hs[ks, :] = H[:, ks]
+        return Hs
     return 0.5 * (H + H.T)
 
 
@@ -1091,7 +1354,7 @@ class _Result:
         if all(p.linear for p in pars) and 'obs' in E and not E.get('ai'):
             H = E['obs']
         else:
-            H = _numeric_obs(eng, theta, set(self.boundary))
+            H = _numeric_obs(eng, theta, set(self.boundary), E)
         self.H = H
         f = np.array(self.free, dtype=int)
         Wc = np.zeros((r, r))
@@ -1643,8 +1906,9 @@ def _fit(eng, pars, theta0, fixed=()):
         if not any(np.array_equal(t0, u) for u, _s in uniq):
             uniq.append((t0, stop))
     starts = uniq
+    prog = _Progress(_ptag('reml'), 250)
     for t0, stop in starts:
-        th, E, conv, it, hist = _optimize(eng, t0, tr, fixed=fixed)
+        th, E, conv, it, hist = _optimize(eng, t0, tr, fixed=fixed, progress=prog)
         if E is None:
             continue
         if best is None or E['ll'] > best[1]['ll'] + 1e-9:
@@ -1799,7 +2063,9 @@ def _fit_glmm(m, ev, nt):
     theta = None
     prev = None
     res = None
+    prog = _Progress(_ptag('rspl'), 100)
     for it in range(1, 101):
+        prog(it)
         eta = link(mu)
         dd = deriv(mu)
         ystar = eta + (ybar - mu) * dd
@@ -2097,7 +2363,8 @@ def _score_test(m):
     f = res.free
     if not f:
         return {'stat': 0.0, 'df': 0, 'p': 1.0}
-    E = m.eng.evaluate(res.theta, 1)
+    E = res.E if res.E is not None and np.array_equal(res.E['theta'], res.theta) else m.eng.evaluate(res.theta, 1)
+    m.eng.derive(E, 1)
     g = E['score'][f]
     H = res.H[np.ix_(f, f)]
     try:
@@ -2108,10 +2375,49 @@ def _score_test(m):
 
 
 @api('fitmodel.mixed')
-def mixed(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, center=True, mixed=None, table_name='data'):
-    spec = _mx_spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, center=center, mixed=mixed)
-    m = _mixed_model(table, rows, spec)
-    return _report(m, alpha, table, rows, table_name)
+def mixed(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, center=True, mixed=None, table_name='data',
+          progress=None):
+    """The mixed model's report. progress: a tag (letters, digits, - and _)
+    for the fit's 'smui:progress reml:<tag> <iteration> 250 <-2LL>' lines
+    (and remlinfo, the information's evaluations; rspl, a GLMM's
+    pseudo-likelihood iterations): the page shows its own report's."""
+    global _TAG
+    old = _TAG
+    _TAG = re.sub(r'[^A-Za-z0-9_-]', '', str(progress or ''))[:40]
+    try:
+        spec = _mx_spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, center=center, mixed=mixed)
+        m = _mixed_model(table, rows, spec)
+        return _report(m, alpha, table, rows, table_name)
+    finally:
+        _TAG = old
+
+
+def _spatial_infinite(m):
+    """A spatial range beyond the data: the fitted correlation at the
+    largest distance within a block still 0.98 or more (the range some fifty
+    times the largest distance, or a power correlation's rho that near 1),
+    where the semivariogram rises in a straight line (or a parabola, the
+    Gaussian's) over every distance there is. The maximum is then at an
+    infinite range with an infinite sill: their ratio is what the data
+    determine, not either. None, or {range, dmax, corr, parameter}."""
+    rs = m.rs
+    if rs.kind not in ('sp', 'spn'):
+        return None
+    eng = m.eng
+    dmax = 0.0
+    for g in eng.gr:
+        dist = g.get('dist')
+        if dist is not None and dist.size:
+            dmax = max(dmax, float(np.max(np.where(g['same'], dist, 0.0))))
+    if dmax <= 0:
+        return None
+    k = rs.pidx[0]
+    rho = float(m.res.theta[k])
+    F, _dF = rs._spatial(np.array([dmax]), rho, False)
+    corr = float(F[0])
+    if not corr >= 0.98:
+        return None
+    return {'range': rho, 'dmax': dmax, 'corr': corr, 'parameter': m.pars[k].label, 'sptype': rs.sptype}
 
 
 def _report(m, alpha, table, rows, table_name):
@@ -2147,7 +2453,7 @@ def _report(m, alpha, table, rows, table_name):
         'history': [{'iter': i, 'm2ll': v, 'params': list(th)} for i, v, th in res.hist],
         'param_names': [p.label for p in m.pars],
         'factors': _factors(d), 'key': m.key, 'alpha': alpha, 'notes': _notes(m, method),
-        'diag': diag, 'score': _score_test(m) if not res.converged else None,
+        'diag': diag, 'score': _score_test(m) if not res.converged else None, 'spatial_inf': _spatial_infinite(m),
         'lsm_effects': [e['label'] for e in d.effects if all(d.alias[c] in d.categorical for c in e['cols'])],
         'covfixed': {'names': [_tlabel(d, m.fe_names[j]) for j in m.order], 'cov': _cov_fixed(m, method)},
         'covparms': {'names': [p.label for p in m.pars], 'cov': res.Wcov},

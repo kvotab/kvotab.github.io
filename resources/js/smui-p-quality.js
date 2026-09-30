@@ -160,7 +160,7 @@
           g.rows.forEach((rs, k) => { if (rs && num(g.ys[k]) != null && rs.some((r) => st[r] & 1)) { X.push(g.xs[k]); Y.push(g.ys[k]); } });
           xs.push(X); ys.push(Y);
         }
-        try { Plotly.restyle(gd, { x: xs, y: ys }, rings); } catch (e) { off(); }
+        try { SM.report.restyle(gd, { x: xs, y: ys }, rings); } catch (e) { off(); }
       };
       if (t) { off = t.on('rowstate', update); update(); }
       if (own) own(gd);
@@ -1082,7 +1082,9 @@
     if (title) layout.title = { text: esc(title), font: { size: 11.5 }, x: 0.02 };
     if (o.nLegend) layout.annotations = [{ xref: 'paper', yref: 'paper', x: 1, y: 1, xanchor: 'right', yanchor: 'top', text: `N = ${fmt(total)}`, showarrow: false, font: { size: 10.5, color: c.muted } }];
     const w = fitWidth(ctx, small ? Math.max(260, Math.min(420, 90 + 34 * names.length)) : Math.max(380, Math.min(760, 140 + 52 * names.length)), 240);
-    return ctx.plot(traces, layout, { width: w, height: small ? 260 : 330, title: title ? `Pareto plot ${title}` : 'Pareto plot', select: false });
+    // Axis Settings (smui-axis.js): in the code the bars are ax, the Cum Percent axis the twin that pareto() makes on it
+    const axisCode = (name) => (name === 'xaxis' || name === 'yaxis' ? 'ax' : name === 'yaxis2' && o.cumCurve && o.cumAxis ? 'plt.gcf().axes[1]' : null);
+    return ctx.plot(traces, layout, { width: w, height: small ? 260 : 330, title: title ? `Pareto plot ${title}` : 'Pareto plot', select: false, axisCode });
   }
 
   async function paretoRender(ctx) {

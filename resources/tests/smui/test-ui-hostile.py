@@ -118,7 +118,8 @@ window.__hx = {
       let prefs = this.PREFS[k] || ['g', 'y'];
       if (variant === 'b' && k === 'y') prefs = ['yb', 'g', 'y', 'x'];
       if (variant === 'b' && k === 'x') prefs = ['x', 'h', 'x2'];
-      if (k === 'by') { if (variant === 'a') { const got = this.pick(r, prefs, 1); if (got.length) ids.by = got; } continue; }
+      // By: a column no other role has (By on the X itself leaves each group one level)
+      if (k === 'by') { if (variant === 'a') { const used = new Set(Object.values(ids).flat()); const got = this.pick(r, ['g', 'h', 'o'].filter((n) => !used.has((this.t.col(n) || {}).id)), 1); if (got.length) ids.by = got; } continue; }
       if (need) { ids[k] = this.pick(r, prefs, Math.max(need, k === 'y' && variant === 'b' ? 1 : need)); continue; }
       if (variant === 'b' && !this.SKIP_OPTIONAL.has(k)) { const got = this.pick(r, prefs, 1); if (got.length) ids[k] = got; }
     }
@@ -153,6 +154,13 @@ window.__hx = {
     capability: { a: { y: ['y'], by: ['g'] }, b: { y: ['y'], subgroup: ['h'] } },
     pareto: { a: { y: ['g'], by: ['h'] }, b: { y: ['g'], x: ['h'] } },
     gam: { a: { y: ['y'], smooth: ['x'], by: ['h'] }, b: { y: ['yb'], smooth: ['x'], linear: ['g'] } },
+    mca: { a: { y: ['g', 'h'], by: ['o'] }, b: { y: ['g', 'h', 'o'] } },
+  },
+  // options a platform needs before it fits anything: Neural's model (as Go adds it), Explore Outliers' methods
+  OPTIONS: {
+    neural: { models: [{ id: 'm1', method: 'holdback', portion: 0.3333, folds: 5, t1: 3, l1: 0, g1: 0, t2: 0, l2: 0, g2: 0, boost: 0, rate: 0.1, transform: false, robust: false, penalty: 'squared', tours: 1, max_iter: 200 }],
+      modelSeq: 1, seed: '7', 'm1|estimates': true, 'm1|diagram': true },
+    outliers: { qro: true, rfo: true, mro: true, knn: true },
   },
   specOf(p, variant) {
     const sp = this.special[p.id];
@@ -183,7 +191,7 @@ window.__hx = {
     if (!roles) return { id, variant, skipped: 'no roles' };
     SM.app.showTab(SM.app.tabOf(this.t));
     let rep;
-    try { rep = SM.app.openReport(p, { roles, options: {} }, this.t); } catch (e) { return { id, variant, thrown: String(e && e.message || e).slice(0, 300) }; }
+    try { rep = SM.app.openReport(p, { roles, options: JSON.parse(JSON.stringify(this.OPTIONS[id] || {})) }, this.t); } catch (e) { return { id, variant, thrown: String(e && e.message || e).slice(0, 300) }; }
     const state = await this.finish(rep, ms);
     const out = { id, variant, state, roles: Object.fromEntries(Object.entries(roles).map(([k, v]) => [k, v.map((i) => this.t.col(i).name)])), errors: this.errors(rep), ...this.code(rep) };
     try { SM.app.closeReport(rep); } catch (e) { /* closed already */ }

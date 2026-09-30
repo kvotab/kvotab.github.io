@@ -1674,4 +1674,80 @@ ns = run_code(fS['code'], stack_csv)
 check('the stacked data\'s code (each level\'s rows) chooses the same models', ns.get('error') or list(ns['pd'].DataFrame(ns['summary'])['Model']), [s_['model'] for s_ in fS['series']])
 check('no series is an error', 'error' in quiet_call('tsforecast.fit', table=tidF, series=[]), True)
 
+# ==== Save Columns: the one-step prediction of a missing value, wherever the model gives one ====
+# (pred, pred_se, pred_lo, pred_hi; fitted and resid keep to the values the fit statistics use)
+from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression as _MR
+ex_m = [50, 51, 88]
+yx_ = y.copy()
+yx_[ex_m] = np.nan
+yi_ = pd.Series(yx_).interpolate(limit_direction='both').to_numpy()
+Z95 = 1.959963984540054
+
+
+def pred_checks(label, R, want, want_se=None, rel=1e-6, slots=ex_m):
+    check(f'{label}: the missing values have no fitted value and no residual', ([R['fitted'][k] for k in slots], [R['resid'][k] for k in slots]), ([None] * len(slots), [None] * len(slots)))
+    near_all(f'{label}: ... but their one-step predictions for Save Columns', [R['pred'][k] for k in slots], want, rel=rel)
+    if want_se is not None:
+        near_all(f'{label}: ... with their standard errors', [R['pred_se'][k] for k in slots], want_se, rel=rel)
+    near_all(f'{label}: ... and limits pred ± z se', [R['pred_hi'][k] for k in slots],
+             [R['pred'][k] + Z95 * R['pred_se'][k] for k in slots] if R.get('pred_se') and all(R['pred_se'][k] is not None for k in slots) else [R['pred_hi'][k] for k in slots], rel=1e-12)
+    rest = [k for k in range(len(R['fitted'])) if R['fitted'][k] is not None]
+    check(f'{label}: ... and elsewhere the predictions the report has', [R['pred'][k] for k in rest] == [R['fitted'][k] for k in rest], True)
+
+
+pa = call('timeseries.arima', table=tid, y='sales', time='month', p=1, q=1, h=6, excluded=ex_m)
+ref_pa = ARIMA(pd.Series(yx_), order=(1, 0, 1), trend='c').fit()
+pred_checks('ARMA(1, 1) (the Kalman filter predicts through a missing value)', pa, np.asarray(ref_pa.fittedvalues)[ex_m], np.asarray(ref_pa.get_prediction().se_mean)[ex_m], rel=1e-5)
+pa2 = call('timeseries.arima', table=tid, y='sales', time='month', p=1, d=1, h=0, excluded=ex_m)
+ref_pa2 = ARIMA(pd.Series(yx_), order=(1, 1, 0), trend='t').fit()   # the report's intercept: a drift of the differenced series
+check('ARI(1, 1): no prediction in the diffuse start, the first slot', (pa2['pred'][0], pa2['fitted'][0]), (None, None))
+near_all('... the Kalman predictions of the missing values', [pa2['pred'][k] for k in ex_m], np.asarray(ref_pa2.fittedvalues)[ex_m], rel=1e-4)
+pu = call('timeseries.structural', table=tid, y='sales', time='month', trend='local level', seasonal=12, excluded=ex_m, h=0)
+ys_x = pd.Series(yx_, index=pd.date_range('2016-01-01', periods=n, freq='MS'))
+ref_pu = UnobservedComponents(ys_x, level='local level', seasonal=12, stochastic_seasonal=True).fit(**FIT)
+pred_checks('structural model (the Kalman filter)', pu, np.asarray(ref_pu.fittedvalues)[ex_m], np.asarray(ref_pu.get_prediction().se_mean)[ex_m], rel=1e-5)
+check('... none in the diffuse start', pu['pred'][:pu['burn']], [None] * pu['burn'])
+pw = call('timeseries.smooth', table=tid, y='sales', time='month', method='winters', s=12, h=6, excluded=ex_m)
+ref_pw = ExponentialSmoothing(yi_, trend='add', seasonal='add', seasonal_periods=12, initialization_method='estimated').fit()
+pred_checks('Winters (holtwinters on the values filled for the fit, from the values before)', pw, np.asarray(ref_pw.fittedvalues)[ex_m], rel=1e-9)
+pbx = call('timeseries.smooth', table=tid, y='sales', time='month', method='simple', h=0, excluded=ex_m, boxcox=0)
+ref_bx_ = ExponentialSmoothing(sp_boxcox(yi_, 0), initialization_method='estimated').fit()
+fb_ = np.asarray(ref_bx_.fittedvalues)
+here_ = np.isfinite(yx_)
+sd_b = math.sqrt(float(np.sum((np.log(yi_) - fb_)[here_] ** 2)) / (int(here_.sum()) - 1))   # the one-step errors of the values present, α estimated
+near_all('Box-Cox: a missing value\'s prediction transformed back, and its limits', [pbx['pred'][k] for k in ex_m] + [pbx['pred_hi'][k] for k in ex_m],
+         list(np.exp(fb_[ex_m])) + [math.exp(float(fb_[k]) + Z95 * sd_b) for k in ex_m], rel=1e-6)
+pe_m = call('timeseries.ets', table=tid, y='sales', time='month', error='mul', trend='A', seasonal='A', s=12, h=0, excluded=ex_m)
+ref_pe = ETSModel(pd.Series(yi_), error='mul', trend='add', seasonal='add', seasonal_periods=12).fit(disp=False)
+pred_checks('ETS(M,A,A) (ETSModel on the values filled for the fit)', pe_m, np.asarray(ref_pe.fittedvalues)[ex_m],
+            [math.sqrt(float(ref_pe.mse)) * abs(float(np.asarray(ref_pe.fittedvalues)[k])) for k in ex_m], rel=1e-7)
+pn = call('timeseries.benchmark', table=tid, y='sales', time='month', method='naive', h=0, excluded=ex_m)
+check('Naive: a missing value\'s prediction is the value before it, when that one is there (none after another missing one)',
+      [pn['pred'][k] for k in ex_m], [float(y[49]), None, float(y[87])])
+psm = call('timeseries.sma', table=tid, y='sales', time='month', width=3, h=0, excluded=[60])
+check('moving average: the mean of the 3 values before a missing one', (round(psm['pred'][60], 9), psm['resid'][60], psm['pred'][61]), (round(float(np.mean(y[57:60])), 9), None, None))
+pm_ = call('timeseries.markov', table=tid_g, y='growth', k=2, order=0, starts=0, excluded=[30, 31])
+gx = np.array(gs, dtype=float)
+gx[[30, 31]] = np.nan
+gxi = pd.Series(gx).interpolate(limit_direction='both').to_numpy()
+mod_pm = _MR(gxi, k_regimes=2)
+pm_p = np.array([{p['sm']: p['estimate'] for p in pm_['params']['rows']}[nm] for nm in mod_pm.param_names])
+ref_pm = mod_pm.smooth(pm_p, cov_type='approx').predict(probabilities='predicted')
+check('regime switching: the missing values have no fitted value and no residual', ([pm_['fitted'][k] for k in (30, 31)], [pm_['resid'][k] for k in (30, 31)]), ([None, None], [None, None]))
+near_all('... their predictions, predict(probabilities="predicted") on the filled series at the report\'s estimates', [pm_['pred'][k] for k in (30, 31)], np.asarray(ref_pm)[[30, 31]], rel=1e-9)
+pdl = call('timeseries.ardl', table=tid_p, y='price', time='quarter', inputs=['cost'], order={'p': 1, 'q': {'cost': 1}}, trend='c', h=0, excluded=[40])
+px_ = np.array(price_, dtype=float)
+px_[40] = np.nan
+pxi = pd.Series(px_).interpolate(limit_direction='both').to_numpy()
+ref_dl = ARDL(pd.Series(pxi, name='price'), 1, pd.DataFrame({'cost': cost_[:176]}), {'cost': 1}, trend='c').fit()
+check('ARDL: a missing value has no fitted value and no residual', (pdl['fitted'][40], pdl['resid'][40]), (None, None))
+near_all('... its prediction is ARDL\'s fitted value on the filled series', [pdl['pred'][40]], [float(np.asarray(ref_dl.fittedvalues)[40 - 1])], rel=1e-9)
+pav = call('timeseries.average', table=tid, y='sales', time='month', members=mem_[:2], h=0, excluded=ex_m)
+check('averaged forecast: a missing value\'s prediction is the mean of its members\'', [round(pav['pred'][k], 9) for k in ex_m],
+      [round((pa_k + pw_k) / 2, 9) for pa_k, pw_k in zip([pa['pred'][k] for k in ex_m], [pw['pred'][k] for k in ex_m])])
+phb = call('timeseries.smooth', table=tid, y='sales', time='month', method='winters', s=12, h=HB, holdback=HB, season=12, excluded=[60])
+check('with values held back: a missing training value has its prediction too', (phb['pred'][60] is not None, phb['fitted'][60], len(phb['pred'])), (True, None, n - HB))
+fsx = quiet_call('tsforecast.fit', table=tidS, series=[dict(spS[0], excluded=[10, 11])], time='month', h=6)
+check('Time Series Forecast: Save Results takes the chosen model\'s predictions of the missing values too', (fsx['series'][0]['fitted'][10] is not None, fsx['series'][0]['values'][10]), (True, None))
+
 sys.exit(check.done())

@@ -26,6 +26,7 @@ import os
 import re
 import sys
 
+from axis_checks import AXIS_JS, dbl, r9, red_lines, run_code
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
 from test_charts import GRAPHS_JS, close, maxdiff, run_graph
 
@@ -419,6 +420,7 @@ async def main():
     await shot(page, 'q04-pareto.png')
     r = await page.ev(open_report_js('pareto', {'y': ['cause'], 'x': ['shift']}, {'testRates': True, 'percent': True, 'combine': {'below': 8}}))
     check('Pareto by shift, percent scale, combined causes, rate test', ('Test Rates Across Groups' in r['outlines'], r['plots'], r['errors']), (True, 2, []))
+    await pareto_axes(page)
 
     # ---- Variability chart, Gauge R&R
     await page.ev('''(() => { const r = SM.util.rng('gauge'); const op = [], part = [], y = []; const pe = Array.from({ length: 10 }, () => r.normal(0, 2)), oe = [0.3, -0.2, 0.1];
@@ -1110,6 +1112,65 @@ async def chart_code(page):
         if F:
             check(f'the small case: {g["label"]}: the code draws the same boxes (np.quantile, method="weibull")', close([a for b in bxp_boxes(F[0]['axes'][0], 0.5) for a in b], [a for b in want for a in b], 1e-12, 1e-15), True)
     await page.ev("for (const r of SM.app.reports.filter((x) => x.table && x.table.name.startsWith('Chart '))) SM.app.closeReport(r); for (const n of ['Chart process', 'Chart defects', 'Chart gauge', 'Chart ratings', 'Chart small']) SM.app.closeTable(__qg.table(n));")
+
+
+# ---- Pareto Plot: its axes ---------------------------------------------------------------
+# Causes that look like numbers (defect codes) stay categories in the Pareto
+# order (Plotly guessed the axis again after the page restyled the bars'
+# selection, and the bars went into numeric order); Axis Settings on the Cum
+# Percent axis (the twin that the code's pareto() makes: plt.gcf().axes[1]) by
+# a real double-click, and on the Count axis from the red triangle: the graph
+# and its code agree; Redo, a project and the dark theme keep them.
+async def pareto_axes(page):
+    await page.ev(AXIS_JS)
+    await page.ev(GRAPHS_JS)
+    codes = [15] * 9 + [12] * 6 + [17] * 4 + [13] * 2 + [16] * 1
+    order = ['15', '12', '17', '13', '16']
+    await page.ev(f'''(async () => {{ const t = new SM.Table({{ name: 'Defect codes', columns: [{{ name: 'code', values: {json.dumps(codes)}, modelingType: 'ordinal' }}] }});
+      SM.app.addTable(t); SM.app.showTab(SM.app.tabOf(t));
+      window.__pr = SM.app.openReport(SM.platforms.get('pareto'), {{ roles: {{ y: [t.col('code').id] }}, options: {{}} }}, t); await new Promise((res) => __pr.on('done', res)); }})()''')
+    title = 'Pareto plot'
+    r = await page.ev(f'''(async () => {{ const p = await __axc.shown(__pr, {json.dumps(title)}); const fl = p.box._fullLayout;
+      const read = () => [fl.xaxis.type, fl.xaxis._vals.map((v) => v.text), fl.yaxis2.range.slice()];
+      const drawn = read(); const t = __pr.table; t.select([15, 16, 17, 18]); await __axc.sleep(300); const selected = read(); t.select([]); await __axc.sleep(200);
+      return {{ drawn, selected }}; }})()''')
+    check('Pareto of codes that look like numbers: a category axis in the Pareto order, the Cum Percent axis 0 to 105%', r['drawn'], ['category', order, [0, 105]])
+    check('... and so after rows are selected (the bars\' selected parts drawn)', r['selected'], ['category', order, [0, 105]])
+    # the Cum Percent axis, by a double-click: an 80% line
+    xy = await page.ev(f'__axc.at(__pr, {json.dumps(title)}, "xy2", "ns")')
+    await dbl(page, *xy)
+    got = await page.ev("__axc.fill(__pr, { refs: [{ value: 80, label: '80%', color: 'red', dash: 'dash' }] })")
+    check('Pareto: a double-click on the Cum Percent axis opens its window, named by its side', got, 'Right Y Axis Settings')
+    st = await page.ev(f'(async () => __axc.state(await __axc.shown(__pr, {json.dumps(title)})))()')
+    check('... an 80% line across the plot on the Cum Percent axis, labelled, the axis still 0 to 105%',
+          ([(q['xref'], q['yref'], q['y0']) for q in st['shapes'] if q['color'] == '#b0413e'], '80%' in st['labels'], r9(st['axes']['yaxis2']['range'])), ([('x domain', 'y2', 80)], True, [0, 105]))
+    code = st['code'] or ''
+    check('... its code puts the line on the twin axis pareto() makes', ('target = plt.gcf().axes[1]   # the graph\'s Cum Percent axis (y2)' in code, 'target.axhline(80, color="#b0413e", linewidth=1.08, linestyle="--")' in code), (True, True))
+    R, err = await run_code(page, code, '__pr.table')
+    A = R['figures'][0]['axes'] if R else []
+    check('... which runs in the page\'s Python, and draws the 80% line on the Cum Percent axis alone', (err, len(A), red_lines(A[1], 'y') if len(A) > 1 else None, red_lines(A[0], 'y') if A else None, A[1]['ylim'] if len(A) > 1 else None),
+          (None, 2, [80.0], [], [0.0, 105.0]))
+    # the Count axis, from the red triangle's Axis Settings: its maximum
+    m = await page.ev("__axc.fromMenu(__pr, 'Y Axis: Count…')")
+    check('Pareto: the red triangle\'s Axis Settings names the axes (X, the categories, has none)', m, {'labels': ['Y Axis: Count…', 'Right Y Axis: Cum Percent (y2)…'], 'opened': True})
+    await page.ev("__axc.fill(__pr, { max: 20 })")
+    st = await page.ev(f'(async () => __axc.state(await __axc.shown(__pr, {json.dumps(title)})))()')
+    code = st['code'] or ''
+    R, err = await run_code(page, code, '__pr.table')
+    A = R['figures'][0]['axes'] if R else []
+    check('... the Count axis from 0 to 20, and so in the code (ax)', (r9(st['axes']['yaxis']['range']), 'target = ax' in code and 'target.set_ylim(top=20)' in code, err, A[0]['ylim'] if A else None), ([0, 20], True, None, [0.0, 20.0]))
+    st2 = await page.ev(f'(async () => {{ const done = new Promise((res) => __pr.on("done", res)); __pr.run(); await done; return __axc.state(await __axc.shown(__pr, {json.dumps(title)})); }})()')
+    keep = lambda q: (r9(q['axes']['yaxis']['range']), [(x['yref'], x['y0']) for x in q['shapes'] if x['color'] == '#b0413e'], q['axes']['xaxis']['type'])  # noqa: E731
+    check('Pareto: Redo keeps the Count axis\' maximum and the 80% line', keep(st2), ([0, 20], [('y2', 80)], 'category'))
+    st3 = await page.ev(f'__axc.reopened(__pr, {json.dumps(title)})')
+    check('Pareto: a saved project keeps them', keep(st3) if st3 else None, ([0, 20], [('y2', 80)], 'category'))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.4)
+    st = await page.ev(f'(async () => __axc.state(await __axc.shown(__pr, {json.dumps(title)})))()')
+    check('Pareto, dark theme: the 80% line in the dark theme\'s red, the code in the light theme\'s', ([q['color'] for q in st['shapes'] if q['type'] == 'line' and q['y0'] == 80], 'color="#b0413e"' in (st['code'] or '')), (['#f08a80'], True))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.2)
+    await page.ev("(() => { const t = __pr.table; SM.app.closeReport(__pr); SM.app.closeTable(t); })()")
 
 
 asyncio.run(main())

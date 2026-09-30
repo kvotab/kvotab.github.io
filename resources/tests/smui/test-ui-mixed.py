@@ -24,7 +24,13 @@ personalities with every sub-report on (LS means, slices, contrasts, BLUPs,
 the repeated diagnostics, Compare Structures, profile intervals, the
 profilers, the indicator parameterization, the Skeleton ANOVA, a binomial
 GLMM with such a target level): every code block and the script parse, and
-no name from the table is code.
+no name from the table is code. A long fit (a spatial field of 1500 points):
+after a second the report's bar shows the REML iteration and its −2 Residual
+Log Likelihood, counting up, and Stop, which restarts the engine; the report
+says it was stopped, and Redo fits it to the end; a quick fit shows nothing.
+A spatial range beyond the data (a field of wide bumps): the report's warning
+and its suggestions. The launch dialog's hint for a Validation column cast
+with a random effect.
 
     SMUI_HTTP_PORT=8822 SMUI_CDP_PORT=9322 python3 resources/tests/smui/test-ui-mixed.py
 """
@@ -462,6 +468,12 @@ async def main():
     # ---- a hostile table: names and values never become code in any mixed-model report
     await hostile(page)
 
+    # ---- a long fit: its progress in the report's bar, and Stop (the engine restarts)
+    await long_fit(page)
+
+    # ---- a spatial range beyond the data, and the launch dialog's hint for a Validation column
+    await wide_range_and_hint(page)
+
     # ---- the dark theme and phone width
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('__mx.idle()')
@@ -482,6 +494,60 @@ async def main():
     check('no script errors', page.errors, [])
     await page.close()
 
+
+LONG = r'''(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const P = SM.platforms.get('fitmodel');
+  const out = {};
+  // a quick fit: no progress box at all (none shows in the first second)
+  const ts = SM.app.tables.find((x) => x.name === 'Split plot');
+  SM.app.showTab(SM.app.tabOf(ts));
+  const col = (t, n) => t.col(n).id;
+  let seen = false;
+  const quick = SM.app.openReport(P, { roles: { y: [col(ts, 'y')] }, options: { personality: 'mixed' }, effects: [{ cols: [col(ts, 'A')], names: ['A'], nest: [], nestNames: [], random: false }, { cols: [col(ts, 'blk')], names: ['blk'], nest: [], nestNames: [], random: true }] }, ts);
+  const mo = new MutationObserver(() => { if (quick.bar.querySelector('.sm-mx-progress')) seen = true; });
+  mo.observe(quick.bar, { childList: true, subtree: true });
+  await new Promise((res) => quick.on('done', res));
+  mo.disconnect();
+  out.quick = { seen, errors: [...quick.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent) };
+  SM.app.closeReport(quick);
+  // a field of 1500 points: a spatial structure with a nugget takes some seconds in the browser
+  const r = SM.util.rng('mixed-ui-long');
+  const e = [], no = [], x = [], y = [];
+  for (let i = 0; i < 1500; i++) { e.push(+(r.u() * 30).toFixed(4)); no.push(+(r.u() * 30).toFixed(4)); x.push(+r.normal(0, 1).toFixed(4)); }
+  const bumps = Array.from({ length: 30 }, () => [r.u() * 30, r.u() * 30, r.normal(0, 1)]);
+  for (let i = 0; i < 1500; i++) { let f = 0; for (const [a, b, h] of bumps) f += h * Math.exp(-((e[i] - a) ** 2 + (no[i] - b) ** 2) / 16); y.push(+(1 + 0.5 * x[i] + f + r.normal(0, 0.5)).toFixed(4)); }
+  const t = new SM.Table({ name: 'Large field', source: 'simulated', columns: [{ name: 'east', values: e }, { name: 'north', values: no }, { name: 'x', values: x }, { name: 'y', values: y }] });
+  SM.app.addTable(t);
+  const spec = { roles: { y: [col(t, 'y')], repeated: [col(t, 'east'), col(t, 'north')] }, options: { personality: 'mixed', mxStructure: 'spn', mxSptype: 'exp' }, effects: [{ cols: [col(t, 'x')], names: ['x'], nest: [], nestNames: [], random: false }] };
+  const rep = SM.app.openReport(P, spec, t);
+  let done = false;
+  rep.on('done', () => { done = true; });
+  const texts = [];
+  for (let i = 0; i < 200 && !done; i++) {
+    await sleep(100);
+    const b = rep.bar.querySelector('.sm-mx-progress');
+    if (b) { const tx = b.querySelector('[role="status"]').textContent; if (!texts.length || texts[texts.length - 1] !== tx) texts.push(tx); }
+    if (texts.filter((tx) => /REML iteration/.test(tx)).length >= 2) break;
+  }
+  out.texts = texts;
+  out.button = !!rep.bar.querySelector('.sm-mx-progress button');
+  const restarts = SM.engine.restarts;
+  rep.bar.querySelector('.sm-mx-progress button').click();
+  for (let i = 0; i < 300 && !done; i++) await sleep(100);
+  out.stopped = { done, warn: [...rep.body.querySelectorAll('.sm-ob-warn')].map((w) => w.textContent), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((w) => w.textContent),
+    box: !!rep.bar.querySelector('.sm-mx-progress'), restarted: SM.engine.restarts === restarts + 1 };
+  for (let i = 0; i < 600 && SM.engine.state !== 'ready'; i++) await sleep(100);
+  out.engine = SM.engine.state;
+  // Redo: the fit runs to its end
+  done = false;
+  rep.run();
+  for (let i = 0; i < 1200 && !done; i++) await sleep(100);
+  out.redo = { done, warn: [...rep.body.querySelectorAll('.sm-ob-warn')].map((w) => w.textContent).filter((w) => /Stopped/.test(w)), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((w) => w.textContent),
+    box: !!rep.bar.querySelector('.sm-mx-progress'), outlines: [...rep.body.querySelectorAll('.sm-ob-head h3, .sm-ob-head h2')].map((h) => h.textContent) };
+  SM.app.closeReport(rep);
+  return out;
+})()'''
 
 HOSTILE = r'''(async (runs) => {
   // levels that carry a line of Python behind a line break, a closing quote, braces, a trailing backslash or triple quotes
@@ -589,6 +655,75 @@ async def hostile(page):
                 found.append(f'{"the script" if k == len(r["blocks"]) else f"block {k + 1}"}: {what}')
         check(f'{tag}: its {n} code blocks and script parse, and nothing from the table is code', found, [])
         check(f'{tag}: the parts asked for ran, with their code', (n >= 5, [o for o in r['want'] if o not in r['outlines']]), (True, []))
+
+
+WIDE = r'''(async (cols) => {
+  const t = new SM.Table({ name: 'Wide bumps', source: 'simulated', columns: Object.entries(cols).map(([name, values]) => ({ name, values })) });
+  SM.app.addTable(t);
+  SM.app.showTab(SM.app.tabOf(t));
+  const P = SM.platforms.get('fitmodel');
+  const rep = SM.app.openReport(P, { roles: { y: [t.col('y').id], repeated: [t.col('east').id, t.col('north').id] }, options: { personality: 'mixed', mxStructure: 'spn', mxSptype: 'exp' },
+    effects: [{ cols: [t.col('x').id], names: ['x'], nest: [], nestNames: [], random: false }] }, t);
+  await new Promise((res) => rep.on('done', res));
+  const out = { warn: [...rep.body.querySelectorAll('.sm-ob-warn')].map((w) => w.textContent), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((w) => w.textContent) };
+  SM.app.closeReport(rep);
+  // the launch dialog: a Validation column with a random effect
+  const ts = SM.app.tables.find((x) => x.name === 'Split plot');
+  SM.app.showTab(SM.app.tabOf(ts));
+  if (!ts.col('v')) ts.addColumn({ name: 'v', dataType: 'numeric', values: Array.from({ length: ts.nrows }, (_, i) => (i % 4 === 0 ? 1 : 0)) });
+  SM.app.launch('fitmodel'); await new Promise((r) => setTimeout(r, 300));
+  const msg = () => { const m = __mx.dlg().querySelector('.sm-launch-msg'); return { text: m.textContent, info: m.classList.contains('is-info') }; };
+  __mx.pick('y'); __mx.role('Y'); await __mx.tick();
+  __mx.pick('A'); __mx.btn('Add'); __mx.pick('blk'); __mx.btn('Add'); await __mx.tick();
+  __mx.pick('v'); __mx.role('Validation'); await __mx.tick(); await new Promise((r) => setTimeout(r, 100));
+  out.fixedOnly = msg();
+  __mx.selEff(1); __mx.btn('Attributes ▾'); await __mx.tick(); await __mx.menuItem('Random Effect'); await new Promise((r) => setTimeout(r, 150));
+  out.random = msg();
+  __mx.selEff(1); __mx.btn('Remove'); await new Promise((r) => setTimeout(r, 150));
+  out.removed = msg();
+  __mx.btn('Cancel');
+  return out;
+})'''
+
+
+async def wide_range_and_hint(page):
+    import numpy as np
+    rg = np.random.default_rng(3)
+    n = 300
+    e_, n_ = rg.uniform(0, 30, n), rg.uniform(0, 30, n)
+    x_ = rg.normal(size=n)
+    bs = [(rg.uniform(0, 30), rg.uniform(0, 30), rg.normal()) for _ in range(30)]
+    y_ = 1 + 0.5 * x_ + sum(h * np.exp(-((e_ - a) ** 2 + (n_ - b) ** 2) / 16) for a, b, h in bs) + rg.normal(0, 0.5, n)
+    cols = {'east': e_.round(4).tolist(), 'north': n_.round(4).tolist(), 'x': x_.round(4).tolist(), 'y': y_.round(4).tolist()}
+    r = await page.ev(f'({WIDE})({json.dumps(cols)})', timeout=600)
+    if isinstance(r, str):
+        check('a range beyond the data: the checks ran', r, None)
+        return
+    inf = [w for w in r['warn'] if 'runs off to infinity' in w]
+    check('a spatial range beyond the data: the report says so, and suggests the coordinates as fixed effects and Compare Structures',
+          (len(inf), bool(inf) and 'add the coordinates (east and north) as fixed effects' in inf[0] and 'Compare Structures' in inf[0], r['errors']), (1, True, []))
+    check('the launch dialog: a Validation column with fixed effects only, no hint', 'Validation role' in r['fixedOnly']['text'], False)
+    check('... with a random effect: the hint that the column is not used', (r['random']['info'], 'v is in the Validation role' in r['random']['text']), (True, True))
+    check('... the random effect taken out: the hint goes', 'Validation role' in r['removed']['text'], False)
+
+
+async def long_fit(page):
+    r = await page.ev(LONG, timeout=600)
+    if isinstance(r, str):
+        check('a long fit: the checks ran', r, None)
+        return
+    check('a quick fit shows no progress (none in its first second)', (r['quick']['seen'], r['quick']['errors']), (False, []))
+    its = [t for t in r['texts'] if 'REML iteration' in t]
+    check('a long fit: the report\'s bar shows the REML iteration and -2 Residual Log Likelihood, and a Stop button',
+          (len(its) >= 2, all(re.search(r'REML iteration \d+, −2 Residual Log Likelihood [\d.]+', t) for t in its), r['button']), (True, True, True))
+    n = [int(re.search(r'iteration (\d+)', t).group(1)) for t in its]
+    check('... the iterations count up', n == sorted(n) and n[-1] > n[0], True)
+    st = r['stopped']
+    check('Stop: the engine restarted, the report says the fit was stopped (no error), the progress gone',
+          (st['done'], st['restarted'], len(st['warn']) == 1 and st['warn'][0].startswith('Stopped at REML iteration'), st['errors'], st['box']), (True, True, True, [], False))
+    check('... and the engine is ready again', r['engine'], 'ready')
+    rd = r['redo']
+    check('Redo after Stop: the fit runs to its end', (rd['done'], rd['warn'], rd['errors'], rd['box'], 'Repeated Effects Covariance Parameter Estimates' in rd['outlines']), (True, [], [], False, True))
 
 
 def pts_of(ax, k=0):

@@ -182,7 +182,7 @@ def fit(table, series=None, time=None, h=12, holdback=0, criterion='aicc', model
                    model=best['model'], name=final['name'], spec={'error': best['error'], 'trend': best['trend'], 'seasonal': best['seasonal'], 's': m if best['seasonal'] != 'N' else 0},
                    criterion_value=best[key], aic=st['aic'], aicc=st['aicc'], bic=st['sbc'], sigma=final.get('sigma'), mape=st['mape'], mae=st['mae'],
                    hb_rmse=best.get('hb_rmse'), hb_mae=best.get('hb_mae'), hb_mape=best.get('hb_mape'),
-                   t=ts._arr(S.t), values=ts._arr(S.y), rows=S.rows, kind=S.kind, fitted=final['fitted'], fit_lo=final['fit_lo'], fit_hi=final['fit_hi'], forecast=fc)
+                   t=ts._arr(S.t), values=ts._arr(S.y), rows=S.rows, kind=S.kind, fitted=final['pred'], fit_lo=final['pred_lo'], fit_hi=final['pred_hi'], forecast=fc)
         out.append(row)
     return {'series': out, 'criterion': criterion, 'criterion_label': CRITERIA[criterion], 'models': models, 'models_label': MODEL_SETS[models][0],
             'h': h, 'holdback': H, 'level': level, 'code': _code(table, time, loaded, out, criterion, H, h, level, table_name, where)}

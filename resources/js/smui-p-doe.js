@@ -573,13 +573,34 @@
     return Number.isFinite(lo) && Number.isFinite(hi) && lo < hi ? [lo, hi] : null;
   }
 
+  /* A split plot's whole plots: the Whole Plots role, or (as JMP takes its Whole Plots factor) a column
+     called Whole Plots cast among the factors. */
+  const isWholePlots = (c) => /^whole\s*plots?$/i.test(String(c.name).trim());
+  function wholePlotsOf(ctx) {
+    const role = ctx.roles('wp')[0] || null;
+    const xs = ctx.roles('x');
+    const inX = role ? null : xs.find(isWholePlots) || null;
+    return { col: role || inX, fromX: !!inX, factors: xs.filter((c) => c !== inX && c !== role) };
+  }
+
+  async function wpRatioSettings(ctx) {
+    const v = await SM.ui.form({ title: 'Split Plot Variance Ratio', info: 'p:evaldesign', fields: [
+      { key: 'ratio', label: 'Split Plot Variance Ratio', type: 'number', value: ctx.opt('wpRatio', 1),
+        help: 'The whole plots\' variance over the error variance (the runs within a whole plot), 1 by default as JMP\'s: 0 or more. A larger ratio gives the whole-plot effects larger variances and less power; the effects within the whole plots do not change.' },
+    ], validate: (x) => (!(x.ratio >= 0) ? 'the ratio is a number of 0 or more' : null) });
+    if (v) ctx.set('wpRatio', v.ratio);
+  }
+
   async function evalRender(ctx) {
-    const factors = ctx.roles('x');
+    const WP = wholePlotsOf(ctx);
+    const factors = WP.factors;
     const model = ctx.opt('model', 'main');
     const coding = {};
     for (const c of factors) if (!c.isCategorical) { const cd = codingOf(c); if (cd) coding[c.name] = cd; }
     const pw = ctx.opt('powerSettings', { alpha: 0.05, rmse: 1, coefficient: 1 }) || {};
-    const res = await ctx.call('doe.evaluate', { factors: factors.map((c) => c.name), model, alpha: pw.alpha ?? 0.05, rmse: pw.rmse ?? 1, coefficient: pw.coefficient ?? 1, coding, where: ctx.where || [] });
+    const ratio = Number(ctx.opt('wpRatio', 1));
+    const res = await ctx.call('doe.evaluate', { factors: factors.map((c) => c.name), model, alpha: pw.alpha ?? 0.05, rmse: pw.rmse ?? 1, coefficient: pw.coefficient ?? 1, coding, where: ctx.where || [],
+      ...(WP.col ? { whole_plots: WP.col.name, wp_ratio: Number.isFinite(ratio) && ratio >= 0 ? ratio : 1 } : {}) });
     const pc = res.plot_code || {};
     const c = colors();
     const fo = ctx.outline('Factors', { key: 'factors' });
@@ -591,14 +612,21 @@
     if (res.alias) { const ao = ctx.outline('Alias Terms', { key: 'aliasterms', closed: res.alias.cols.length > 12 }); ao.add(el('p', { class: 'sm-doe-terms', text: res.alias.cols.join(', ') })); }
     const de = ctx.outline('Design Evaluation', { key: 'evaluation' });
     // power
-    const po = ctx.outline('Power Analysis', { parent: de, key: 'power', menu: () => [{ label: 'Power Settings…', action: () => powerSettings(ctx) }] });
-    po.add(ctx.kv([['Significance Level', pw.alpha ?? 0.05], ['Anticipated RMSE', pw.rmse ?? 1], ['Anticipated Coefficient', pw.coefficient ?? 1], ['Error Degrees of Freedom', res.df_error, 'int']]));
+    const sp = res.split;
+    const po = ctx.outline('Power Analysis', { parent: de, key: 'power', menu: () => [{ label: 'Power Settings…', action: () => powerSettings(ctx) }, ...(sp ? [{ label: 'Split Plot Variance Ratio…', action: () => wpRatioSettings(ctx) }] : [])] });
+    po.add(ctx.kv([['Significance Level', pw.alpha ?? 0.05], ['Anticipated RMSE', pw.rmse ?? 1], ['Anticipated Coefficient', pw.coefficient ?? 1],
+      ...(sp ? [['Whole Plots', sp.whole_plots, 'int'], ['Split Plot Variance Ratio', sp.ratio]] : [['Error Degrees of Freedom', res.df_error, 'int']])]));
     po.add(ctx.rt(res.power, { sortable: false, key: 'power' }));
     if (res.effect_power) po.add(ctx.rt(res.effect_power, { caption: 'Effect power (categorical factors)', sortable: false, key: 'effectpower' }));
-    // a split plot (DOE > Full Factorial with factors hard to change): this evaluation takes its runs as completely randomized
-    const wpCol = ctx.table && ctx.table.col('Whole Plots');
-    if (wpCol && !factors.includes(wpCol)) po.add(ctx.note('The table has a Whole Plots column, a split plot: this evaluation takes the runs as completely randomized. With the whole plots\' own variation, the hard-to-change factors are tested on the whole plots, with fewer degrees of freedom, and have less power than shown here; Fit Model with Whole Plots as a random effect (the table\'s Model script) is the analysis.'));
-    po.add(ctx.note(res.df_error > 0 ? `The power of a t test (an F test with one degree of freedom) that the coefficient is zero when it is the anticipated coefficient, in coded units (continuous factors from −1 to +1): noncentrality (coefficient/RMSE)² / [(XᵀX)⁻¹]ⱼⱼ, ${res.df_error} error degrees of freedom. Categorical effects: coefficients alternating ±the anticipated one.` : 'No error degrees of freedom: the design has as many runs as the model has parameters, so nothing can be tested.'));
+    if (sp) {
+      po.add(ctx.note(`A split plot: the whole plots (${sp.column}${WP.fromX ? ', cast among the factors' : ''}, ${sp.whole_plots} of them, ${sp.sizes.length === 1 ? `${sp.sizes[0]} runs each` : `${sp.sizes[0]} to ${sp.sizes[sp.sizes.length - 1]} runs`}) are a random effect whose variance is ${fmt(sp.ratio)} times the error's (the Split Plot Variance Ratio): V = σ²(I + η ZZ′). The variances, the power, the prediction variance and the efficiencies use the GLS information X′V⁻¹X, and each test the denominator degrees of freedom of Satterthwaite's approximation at that ratio: a term that is constant within the whole plots is tested on the variation between them, the others within them (a balanced split plot's two error degrees of freedom, exactly). Fit Model with ${sp.column} as a random effect is the analysis.`));
+      if (!sp.estimable) po.add(ctx.warn('The whole plots\' variance cannot be estimated: there are no more whole plots than the model has terms constant within them (no whole-plot error), so those terms cannot be tested. Add whole plots, or take terms out of the model.'));
+    } else {
+      // a table with a Whole Plots column not used: the evaluation takes the runs as completely randomized
+      const wpCol = ctx.table && ctx.table.columns.find(isWholePlots);
+      if (wpCol) po.add(ctx.note(`The table has a ${wpCol.name} column, a split plot: cast it in the Whole Plots role (or among the factors, as JMP takes its Whole Plots factor) for an evaluation that allows for the whole plots. Without it the runs are taken as completely randomized, and the hard-to-change factors show more power than they have.`));
+    }
+    if (!sp) po.add(ctx.note(res.df_error > 0 ? `The power of a t test (an F test with one degree of freedom) that the coefficient is zero when it is the anticipated coefficient, in coded units (continuous factors from −1 to +1): noncentrality (coefficient/RMSE)² / [(XᵀX)⁻¹]ⱼⱼ, ${res.df_error} error degrees of freedom. Categorical effects: coefficients alternating ±the anticipated one.` : 'No error degrees of freedom: the design has as many runs as the model has parameters, so nothing can be tested.'));
     // prediction variance profile
     const pv = ctx.outline('Prediction Variance Profile', { parent: de, key: 'profile' });
     const ymax = Math.max(...res.profile.flatMap((p) => p.variance)) * 1.08;
@@ -607,7 +635,7 @@
         ? { type: 'scatter', mode: 'lines', x: p.x, y: p.variance, line: { color: c.curve, width: 2 }, hovertemplate: `${esc(p.factor)} %{x}: %{y:.4f}<extra></extra>` }
         : { type: 'scatter', mode: 'markers+lines', x: p.x.map(esc), y: p.variance, line: { color: c.curve, width: 1 }, marker: { size: 7, color: c.curve }, hovertemplate: `${esc(p.factor)} %{x}: %{y:.4f}<extra></extra>` },
     ], { xaxis: { title: { text: esc(p.factor) }, type: p.kind === 'continuous' ? 'linear' : 'category' }, yaxis: { title: { text: 'Variance' }, range: [0, ymax] }, margin: { l: 50, r: 8, t: 8, b: 40 } }, { width: 200, height: 200, title: `Prediction variance ${p.factor}`, select: false }), (pc.profile || [])[i]))),
-    ctx.note('The relative prediction variance x′(XᵀX)⁻¹x (the variance of the predicted mean over σ²) along each factor, the others at their center (categorical: the first level).'));
+    ctx.note(`The relative prediction variance x′(${sp ? 'X′V⁻¹X' : 'XᵀX'})⁻¹x (the variance of the predicted mean over σ²${sp ? ', the error variance: the whole plots\' variance is in V' : ''}) along each factor, the others at their center (categorical: the first level).`));
     // fraction of design space
     const fd = ctx.outline('Fraction of Design Space Plot', { parent: de, key: 'fds' });
     fd.add(withCode(ctx, ctx.plot([{ type: 'scatter', mode: 'lines', x: res.fds.fraction, y: res.fds.variance, line: { color: c.curve, width: 2 }, hovertemplate: 'fraction %{x:.2f}: %{y:.4f}<extra></extra>' }],
@@ -617,13 +645,13 @@
     const ee = ctx.outline('Estimation Efficiency', { parent: de, key: 'efficiency' });
     const vif = new Map((res.vif.rows || []).map((r) => [r.term, r.vif]));
     ee.add(ctx.rt({ columns: [...res.variance.columns, { key: 'vif', label: 'VIF' }], rows: res.variance.rows.map((r) => ({ ...r, vif: vif.get(r.term) ?? null })) }, { sortable: false, key: 'efficiency' }),
-      ctx.note('Variance: [(XᵀX)⁻¹]ⱼⱼ in units of σ². Fractional increase in CI length: √(N·variance) − 1, against an orthogonal design of the same size. VIF from statsmodels variance_inflation_factor on the coded model matrix.'));
+      ctx.note(`Variance: [(${sp ? 'X′V⁻¹X' : 'XᵀX'})⁻¹]ⱼⱼ in units of σ²${sp ? ', the error variance' : ''}. Fractional increase in CI length: √(N·variance) − 1, against an orthogonal design of the same size${sp ? ' with the error variance alone (completely randomized)' : ''}. VIF from statsmodels variance_inflation_factor on the coded model matrix.`));
     // alias matrix
     if (res.alias) {
       const am = ctx.outline('Alias Matrix', { parent: de, key: 'aliasmatrix', closed: res.alias.cols.length > 15 });
       const cols = [{ key: 'term', label: 'Effect', fmt: 'text' }, ...res.alias.cols.map((n, j) => ({ key: `a${j}`, label: n, digits: 3 }))];
       am.add(ctx.rt({ columns: cols, rows: res.alias.rows.map((n, i) => ({ term: n, ...Object.fromEntries(res.alias.matrix[i].map((v, j) => [`a${j}`, v])) })) }, { sortable: false, key: 'aliasmatrix' }),
-        ctx.note('How the alias terms (left out of the model) bias the estimates: E[b] = β + A·β₂ with A = (X₁ᵀX₁)⁻¹X₁ᵀX₂.'));
+        ctx.note(sp ? 'How the alias terms (left out of the model) bias the GLS estimates: E[b] = β + A·β₂ with A = (X₁′V⁻¹X₁)⁻¹X₁′V⁻¹X₂.' : 'How the alias terms (left out of the model) bias the estimates: E[b] = β + A·β₂ with A = (X₁ᵀX₁)⁻¹X₁ᵀX₂.'));
     }
     // color map on correlations
     const cm = ctx.outline('Color Map On Correlations', { parent: de, key: 'colormap' });
@@ -636,7 +664,7 @@
     ctx.note('The absolute correlations of the model terms and, right of the dotted line, the alias terms, in coded units.'));
     // diagnostics
     const dd = ctx.outline('Design Diagnostics', { parent: de, key: 'diagnostics' });
-    dd.add(ctx.kv(res.diagnostics), ctx.note('D efficiency = 100·|XᵀX/N|^(1/p); A efficiency = 100·p/trace(N(XᵀX)⁻¹); G efficiency = 100·√(p/N)/σ_max, the largest prediction standard deviation searched over the runs, the vertices of the design space and 4096 Sobol points (JMP searches its own candidate set, so G can differ a little). All in coded units: 100 for an orthogonal two-level design; a categorical factor with three or more levels is effect coded, its columns correlated, so even a full factorial with one is below 100.'), ctx.code(res.code));
+    dd.add(ctx.kv(res.diagnostics), ctx.note((sp ? 'A split plot: the efficiencies use the GLS information X′V⁻¹X in place of XᵀX, so they are against an orthogonal design with the error variance alone; the whole plots\' variance lowers them. ' : '') + 'D efficiency = 100·|XᵀX/N|^(1/p); A efficiency = 100·p/trace(N(XᵀX)⁻¹); G efficiency = 100·√(p/N)/σ_max, the largest prediction standard deviation searched over the runs, the vertices of the design space and 4096 Sobol points (JMP searches its own candidate set, so G can differ a little). All in coded units: 100 for an orthogonal two-level design; a categorical factor with three or more levels is effect coded, its columns correlated, so even a full factorial with one is below 100.'), ctx.code(res.code));
   }
 
   async function powerSettings(ctx) {
@@ -652,7 +680,7 @@
 
   SM.platforms.register({
     id: 'evaldesign', label: 'Evaluate Design', menu: 'DOE/Design Diagnostics', order: 10, info: 'p:evaldesign',
-    about: 'Diagnostics of a design table for a model (main effects, interactions, a response surface): the power of each term, the variance of the coefficients and VIF, the alias matrix and a colour map of correlations, D, G and A efficiencies, the prediction variance profile and the fraction of design space.',
+    about: 'Diagnostics of a design table for a model (main effects, interactions, a response surface): the power of each term, the variance of the coefficients and VIF, the alias matrix and a colour map of correlations, D, G and A efficiencies, the prediction variance profile and the fraction of design space; a split plot\'s whole plots as a random effect (GLS information, Satterthwaite\'s degrees of freedom for each test).',
     uses: ['numpy.linalg', 'scipy.stats.ncf (power)', 'scipy.stats.qmc.Sobol (design space)', 'statsmodels.stats.outliers_influence.variance_inflation_factor'],
     topics: {
       'p:evaldesign': {
@@ -661,7 +689,10 @@
         sections: [
           { heading: 'Roles', choices: [['X, Factor', 'The factor columns of the design.'], ['Y, Response', 'Optional: the responses, which the evaluation does not use.']] },
           { heading: 'The report', text: 'Power Analysis: the power to detect each coefficient of the anticipated size. Estimation Efficiency: the variance of each estimate and its VIF. Alias Matrix and the colour map: which effects are confounded with terms left out. Design Diagnostics: D, G and A efficiencies. The Model red triangle changes the model.' },
-          { heading: 'Differences from JMP', text: 'JMP\'s Evaluate Design takes a split plot\'s whole plots into account (the whole plots\' variance against the error\'s). Here the runs are taken as completely randomized, and a table with a Whole Plots column gets a note that the hard-to-change factors have less power than shown.' },
+          { heading: 'Split plots', text: 'With a Whole Plots column (the Whole Plots role, or a column called Whole Plots among the factors, as JMP takes its Whole Plots factor) the whole plots are a random effect with a variance η times the error\'s, η the Split Plot Variance Ratio (1 by default, as JMP\'s; Advanced Options): V = σ²(I + η ZZ′). The relative variances, the power, the prediction variance profile, the fraction of design space, the alias matrix and the efficiencies use the GLS information X′V⁻¹X. Each test\'s denominator degrees of freedom (the DFDen column) are Satterthwaite\'s at the anticipated variances: a term constant within the whole plots is tested on the variation between them, with few degrees of freedom and less power, the others within them; for a balanced split plot these are the exact whole-plot and within-plot error degrees of freedom. The colour map and the VIF are properties of the model\'s columns and do not change.' },
+          { heading: 'Differences from JMP', list: [
+            'JMP\'s help does not say how its split-plot evaluation finds the power\'s degrees of freedom; here they are Satterthwaite\'s at the anticipated variances.',
+            'The efficiencies of a split plot use the GLS information here, against an orthogonal, completely randomized design with the error variance alone.'] },
         ],
         more: { label: 'Evaluate Design', id: 'help-p-evaldesign' },
       },
@@ -673,6 +704,8 @@
           help: 'The factor columns of the design. A continuous one is coded −1 to +1 from the low and high values in its notes (the "Coding [low, high]" a DOE design table writes), else from the data\'s range; an ordinal or nominal one is effect coded. Rows with a missing factor are left out.' },
         { key: 'y', label: 'Y, Response', hint: 'optional',
           help: 'The responses, for the record only: the evaluation depends on the factor settings alone.' },
+        { key: 'wp', label: 'Whole Plots', max: 1, hint: 'optional: a split plot\'s whole plots',
+          help: 'A split plot\'s whole plots (the Whole Plots column a DOE design table has): the runs that share a setting of the hard-to-change factors. They are a random effect with a variance that is the Split Plot Variance Ratio times the error\'s (1 by default), and the evaluation allows for them: the GLS information, and each test on the whole plots or within them. A column called Whole Plots among the factors is taken as the whole plots too, as JMP takes its Whole Plots factor.' },
       ],
       options: [{ key: 'model', label: 'Model', type: 'select', value: 'main', choices: MODELS,
         help: 'The terms the design is judged for: Main Effects; with the Two-Factor Interactions; Response Surface, which adds the squares of the continuous factors; Full Factorial, every interaction. Terms left out (the next order of interactions) are the alias terms. The Model red triangle changes it later.' }],
@@ -681,6 +714,7 @@
     triangle: (ctx) => [
       { label: 'Model', submenu: () => MODELS.map(([k, l]) => ({ label: l, checked: ctx.opt('model', 'main') === k, action: () => ctx.set('model', k) })) },
       { label: 'Power Settings…', action: () => powerSettings(ctx) },
+      { label: 'Advanced Options', submenu: () => [{ label: 'Split Plot Variance Ratio…', disabled: !wholePlotsOf(ctx).col, action: () => wpRatioSettings(ctx) }] },
     ],
     render: evalRender,
   });

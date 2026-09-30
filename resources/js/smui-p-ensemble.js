@@ -61,7 +61,7 @@
       { panel: 'Forest', key: 'stop', label: 'Tree Size', type: 'select', dflt: 'oob', choices: [['oob', 'Stop by Out-of-Bag Loss (JMP)'], ['none', 'Grow to Maximum Splits (scikit-learn)']],
         help: 'Stop by Out-of-Bag Loss (the default, as JMP describes its trees): past Minimum Splits per Tree each tree is cut back at the first split that does not lower the loss of the rows it did not see. Grow to Maximum Splits: scikit-learn\'s trees are kept whole.' },
       { panel: 'Forest', key: 'early', label: 'Early Stopping', type: 'check', dflt: true,
-        help: 'With validation rows: the trees are grown one at a time, growth stops when the last tenth of the trees asked for (at least 5) has not improved the validation RSquare (Entropy RSquare for a categorical response), and the best number of trees is kept (the first k trees do not depend on how many are grown, so that is the forest of that many trees). Without validation rows it does nothing.' },
+        help: 'With validation rows: the trees are grown one at a time, growth stops when the last tenth of the trees asked for (at least 5) has not improved the validation RSquare (Entropy RSquare for a categorical response), and the best number of trees is kept (the first k trees do not depend on how many are grown, so that is the forest of that many trees). Without validation rows it does nothing, and a K-fold Validation column has none (every row trains).' },
       { panel: 'Multiple Fits', key: 'multi', label: 'Multiple Fits over Number of Terms', type: 'check', dflt: false,
         help: 'Fits a forest for each number of terms from Number of Terms Sampled per Split up to Max Number of Terms, each about 1.25 times the one before (JMP\'s example: 4, 5, 6, 8, 10), and shows the one with the best validation statistic (the out-of-bag one without validation rows); Model Validation-Set Summaries lists them all.' },
       { panel: 'Multiple Fits', key: 'maxTerms', label: 'Max Number of Terms', type: 'int', dflt: (p) => p, min: 1,
@@ -87,7 +87,7 @@
       { panel: 'Stochastic Boosting', key: 'colRate', label: 'Column Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
         help: 'The share of the columns tried at each split (scikit-learn\'s max_features; a categorical X is one column); 1, the default, tries every column. JMP draws its columns once per layer.' },
       { panel: 'Stochastic Boosting', key: 'early', label: 'Early Stopping', type: 'check', dflt: true,
-        help: 'With validation rows (on by default): the fit stops at the first layer that does not improve the validation RSquare (Entropy RSquare for a categorical response) and keeps the layers before it, as JMP does. Without validation rows every layer is kept.' },
+        help: 'With validation rows (on by default): the fit stops at the first layer that does not improve the validation RSquare (Entropy RSquare for a categorical response) and keeps the layers before it, as JMP does. Without validation rows every layer is kept, and a K-fold Validation column has none (every row trains).' },
     ],
   };
 
@@ -152,8 +152,13 @@
         const s = read();
         for (const f of FIELDS[kind]) if (typeof f.dflt === 'function') inputs[f.key].placeholder = p ? String(f.dflt(p, s)) : '';
         const valid = !!(state && state.validation && state.validation.length);
-        hint.textContent = valid ? '' : kind === 'boosted' ? 'Early Stopping and Multiple Fits need validation rows: a Validation column, or a Validation Portion below.'
-          : 'Early Stopping needs validation rows: a Validation column, or a Validation Portion below. Without them Multiple Fits chooses by the out-of-bag statistics.';
+        // a K-fold Validation column (more than three values): every row trains, so there are no validation rows to stop by
+        const folds = valid && SM.predict.validationKind && SM.predict.validationKind(api.table.col(state.validation[0])) === 'folds';
+        hint.textContent = folds ? (kind === 'boosted'
+          ? 'The Validation column holds K folds: every row trains, so Early Stopping is off and Multiple Fits makes one fit. Each fold is predicted by the boosted tree of these settings grown on the other folds (the Crossvalidation line of Overall Statistics).'
+          : 'The Validation column holds K folds: every row trains, so Early Stopping is off and Multiple Fits chooses by the out-of-bag statistics. Each fold is predicted by the forest of these settings grown on the other folds (the Crossvalidation line of Overall Statistics).')
+          : valid ? '' : kind === 'boosted' ? 'Early Stopping and Multiple Fits need validation rows: a Validation column, or a Validation Portion below.'
+            : 'Early Stopping needs validation rows: a Validation column, or a Validation Portion below. Without them Multiple Fits chooses by the out-of-bag statistics.';
       };
       api.onRolesChange(update);
       for (const i of Object.values(inputs)) i.addEventListener('input', () => update(api.state));
@@ -460,52 +465,10 @@
   /* JMP's Save Prediction Formula of a forest or a boosted tree is a formula of every tree (thousands of nested
      conditions), so here the engine keeps the report's fit and scores the rows of an open table with it: this
      table's rows added since (those without a prediction yet) or every row of another table with the same
-     columns. The same dialog as K Nearest Neighbors' Score Rows (smui-p-learners.js). */
-  async function scoreRows(ctx, E) {
-    const app = SM.app;
-    const tables = (app && app.tables) || [ctx.table];
-    const v = await SM.ui.form({ title: 'Score Rows', info: 'p:ensemble:score', fields: [
-      { key: 't', label: 'The table to score', type: 'select', value: ctx.table.id, choices: tables.map((t) => [t.id, t.name]), help: 'An open table: this report\'s own (its rows added since the report fitted, or all its rows), or another with the X columns the model was fitted to, found by name. The model is the report\'s as it was fitted: it is not fitted again to the rows scored.' },
-      { key: 'which', label: 'Rows', type: 'select', value: 'new', choices: [['new', 'Rows without a prediction yet'], ['all', 'Every row']], help: 'Rows without a prediction yet: the rows whose prediction column (Predicted, or Prob[] of the first level) is empty, such as rows added after the report fitted; in another table without those columns, every row. Every row: all of them, into new columns.' },
-    ] });
-    if (!v) return;
-    const target = tables.find((t) => t.id === v.t) || ctx.table;
-    const fit = E.r.fit;
-    const names = E.r.response === 'categorical' ? fit.levels.map((l) => `Prob[${l}]`) : [`Predicted ${E.base.y}`];
-    let rows = null;
-    const first = target.columns.find((c) => c.name === names[0]);
-    if (v.which === 'new' && first) {
-      rows = [];
-      for (let i = 0; i < target.nrows; i++) { const x = first.values[i]; if (x == null || x === '' || Number.isNaN(x)) rows.push(i); }
-      if (!rows.length) { SM.ui.toast(`Every row of ${target.name} has a prediction in ${first.name}`); return; }
-    }
+     columns. The dialog is SM.predict.scoreRows, as K Nearest Neighbors' and Support Vector Machines'. */
+  function scoreRows(ctx, E) {
     const own = ctx.rows.length === ctx.table.nrows ? null : ctx.rows;
-    try {
-      const r = await SM.engine.call('ensemble.score', { ...E.base, rows: own, keep: keepOf(ctx), source: ctx.table.id, target_rows: rows }, target);
-      if (r.note) SM.ui.toast(r.note);
-      writeScores(ctx, target, r, !!(v.which === 'new' && first));
-    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
-  }
-
-  /* The scores into a table: into its prediction columns when they are there (the rows scored only), else new ones. */
-  function writeScores(ctx, t, r, into) {
-    const from = `scored by ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''} (the model as it fitted)`;
-    const cols = r.prob ? r.names.map((nm, j) => [nm, r.prob.map((p) => p[j]), 'numeric']) : [[r.name, r.values, 'numeric']];
-    if (r.prob) cols.push([r.most_name, r.most_likely, 'character']);
-    if (SM.app && SM.app.record) SM.app.record(t, 'Score Rows');
-    for (const [name, values, type] of cols) {
-      const c = into ? t.columns.find((x) => x.name === name) : null;
-      if (c) {
-        const next = c.values.slice();
-        r.rows.forEach((row, k) => { next[row] = values[k] == null ? (c.isNumeric ? NaN : null) : values[k]; });
-        t.setValues(c.id, next);
-      } else {
-        const full = new Array(t.nrows).fill(type === 'numeric' ? NaN : null);
-        r.rows.forEach((row, k) => { full[row] = values[k] == null ? full[row] : values[k]; });
-        t.addColumn({ name, dataType: type, values: full, notes: from, ...(type === 'character' && r.levels ? { modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels } : {}) });
-      }
-    }
-    SM.ui.toast(`Scored ${r.rows.length} rows of ${t.name}`);
+    return SM.predict.scoreRows(ctx, { fn: 'ensemble.score', payload: { ...E.base, rows: own, keep: keepOf(ctx) }, fit: E.r.fit, yName: E.base.y, info: 'p:ensemble:score' });
   }
 
   /* ======================================================================

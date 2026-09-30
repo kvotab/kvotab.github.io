@@ -625,6 +625,8 @@
       if (room && room < this.width) { this.width = Math.max(240, room); this.box.style.width = `${this.width}px`; }
       // the axes as set by Axis Settings (smui-axis.js), on the platform's layout
       const layout = themedLayout(SM.axis ? SM.axis.layout(this, this.userLayout) : this.userLayout, this.width, this.height);
+      // the axis types the page gave (category, date, log), before Plotly writes its guesses into the layout: a restyle keeps them
+      const types = Object.fromEntries(Object.keys(layout).filter((k) => /^[xy]axis\d*$/.test(k) && layout[k] && layout[k].type && layout[k].type !== '-').map((k) => [k, layout[k].type]));
       try {
         await Plotly.newPlot(this.box, this.traces, layout, { ...CONFIG, ...(this.opts.config || {}), toImageButtonOptions: { ...CONFIG.toImageButtonOptions, filename: (this.opts.title || 'plot').replace(/[^\w.-]+/g, '_') } });
       } catch (e) {
@@ -634,6 +636,7 @@
       }
       this.drawn = true;
       this.drawing = false;
+      this.axisTypes = types;
       const gd = this.box;
       gd.on('plotly_click', (ev) => this._click(ev));
       gd.on('plotly_selected', (ev) => { if (ev) this._selected(ev); });
@@ -763,7 +766,7 @@
         try {
           Plotly.restyle(gd, upd, pointIdx);
           if (withBase.length) {
-            Plotly.restyle(gd, { x: xs, y: ys, 'marker.color': colors, 'marker.symbol': symbols, text: texts, mode: modes, textposition: withBase.map(() => 'top right'), 'textfont.size': withBase.map(() => 10) }, withBase);
+            restyle(gd, { x: xs, y: ys, 'marker.color': colors, 'marker.symbol': symbols, text: texts, mode: modes, textposition: withBase.map(() => 'top right'), 'textfont.size': withBase.map(() => 10) }, withBase);
           }
         } catch (e) { console.warn('SM: restyle failed', e); }
       }
@@ -807,7 +810,7 @@
         const upd = horiz ? { x: [val], y: [pos] } : { x: [pos], y: [val] };
         if (width) upd.width = [width];
         if (bases) upd.base = [bases];
-        try { Plotly.restyle(gd, upd, [c.at]); } catch (e) { console.warn('SM: restyle failed', e); }
+        try { restyle(gd, upd, [c.at]); } catch (e) { console.warn('SM: restyle failed', e); }
       }
     }
 
@@ -833,6 +836,24 @@
       }
       this.drawn = false;
     }
+  }
+
+  /* Plotly.restyle of a graph's data (x, y and the like), keeping the axis
+     types it was drawn with. Plotly 2.27 guesses the types again after such
+     a restyle (of the first traces' axes, whichever traces changed), so the
+     categories of a Pareto plot of ages ("12", "13") became a linear axis,
+     its bars in numeric order, and a date axis a number axis. */
+  function restyle(gd, upd, idx) {
+    const types = gd && gd._plot && gd._plot.axisTypes;
+    if (!types || !Object.keys(types).length) return Plotly.restyle(gd, upd, idx);
+    // each type given again, with the axis's range as it is now (a type given again resets it; a zoom stays)
+    const keep = {};
+    for (const [k, type] of Object.entries(types)) {
+      keep[`${k}.type`] = type;
+      const A = gd.layout && gd.layout[k];
+      if (A && Array.isArray(A.range) && A.autorange !== true) keep[`${k}.range`] = A.range.slice();
+    }
+    return Plotly.update(gd, upd, keep, idx);
   }
 
   /* Bins at round numbers, about as many as Sturges' rule asks for. */
@@ -1736,5 +1757,5 @@
     if (tag) tag.addEventListener('load', () => { if (document.body) kickPlots(document.body); });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, datedCode, unbroken, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, datedCode, unbroken, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, restyle, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

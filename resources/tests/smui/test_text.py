@@ -6,11 +6,13 @@ definition's own cases and the snowballstemmer package on some 235,000
 words (Python's docs and the system word list; skipped without the
 package), scikit-learn's ENGLISH_STOP_WORDS and CountVectorizer called
 directly, counts made here another way (tokens, terms, phrases in JMP's
-order, the rows of each, the summary), JMP's documented weightings (TF IDF
+order, the rows of each, the summary), the recodes in JMP's place (before
+the length check, the phrases, the stop words and the stemming; a stemmed
+form's recode on each word of the stem; one pass), JMP's documented weightings (TF IDF
 and Log Freq with log10) computed by formula on a dense matrix, numpy's SVD
 of that matrix (every centering) and the eigenvalues of its correlation and
 covariance matrices, statsmodels' varimax (factor_rotation.rotate_factors)
-and the varimax criterion, scikit-learn's NMF and LatentDirichletAllocation
+and the varimax criterion, the top loadings in JMP's order (by absolute value), scikit-learn's NMF and LatentDirichletAllocation
 called directly; Latent Class Analysis on planted classes (the likelihood,
 the posteriors and the EM fixed point computed densely, EM from the truth,
 JMP's top-term score, the Kullback-Leibler distances and their map against
@@ -217,7 +219,7 @@ pu, _ = ref_phrases(RT, STOP | {top1}, 4)
 check('and no phrase begins or ends with it', [(x['phrase'], x['count']) for x in ru['phrases']][:50], [(p, pu[p]) for p in sorted((p for p in pu if pu[p] > 1), key=lambda p: (-pu[p], -len(p.split()), p))][:50])
 rc = call('text.explore', table=tid, column='comment', recodes={top2: top1})
 check('Recode: the two terms count as one', {x['term']: x['count'] for x in rc['terms']}.get(top1), cnt[top1] + cnt[top2])
-check('and the recoded term lists its words', sorted(w for w, _ in rc['forms'][top1]), sorted([top2]))
+check('and the recoded term lists its words, its own too (for Show Text)', sorted(w for w, _ in rc['forms'][top1]), sorted([top1, top2]))
 ph = want[0]
 ra = call('text.explore', table=tid, column='comment', phrases=[ph])
 a_, b_ = ph.split()[0], ph.split()[-1]
@@ -254,6 +256,31 @@ check('the Stem Report: the words of each stem, with their counts', stem_rep['re
 check('and Show Text\'s words for a stemmed term', sorted(w for w, _ in rs['forms']['crash' + DOT]), ['crashed', 'crashes', 'crashing'])
 rsu = call('text.explore', table=tst, column='t', stemming='combine', stop_add=['crash' + DOT])
 check('a stemmed term as a stop word drops all its words', any(x['term'].startswith('crash') for x in rsu['terms']), False)
+
+# ---- recoding comes before the stop words and the stemming, as in JMP (its help's text processing steps) ---------------------------------------------------
+rt_ = table({'t': ['the parcel arrived', 'a parcel arrived late', 'two packages arrived', 'the package was lost', 'I returned it, returning it again',
+                   'returns are free', 'my refund', 'refunds take a week', 'an extraordinary thing', 'ok']})
+def terms_of(**kw):
+    return {x['term']: x['count'] for x in call('text.explore', table=rt_, column='t', **kw)['terms']}
+check('a recode reaches the stemmer: parcel -> package counts the parcels as packages, which stem with them (packag· 4)',
+      (terms_of(stemming='combine', recodes={'parcel': 'package'}).get('packag' + DOT), 'parcel' in terms_of(stemming='combine', recodes={'parcel': 'package'})), (4, False))
+check('... where after the stemming it would have made a term of its own (the old order: packag· 2 and package 2)', (terms_of(stemming='combine').get('packag' + DOT), terms_of(stemming='combine').get('parcel')), (2, 2))
+rs2 = terms_of(stemming='combine', recodes={'return' + DOT: 'refund'})
+check('a recode of a stemmed form recodes each word of the stem (returned, returning, returns), then they stem with refund and refunds (refund· 5)', (rs2.get('refund' + DOT), 'return' + DOT in rs2), (5, False))
+rs3 = terms_of(stemming='combine', recodes={'return' + DOT: 'refund', 'returned': 'shipped'})
+check('... a word\'s own recode wins over its stem\'s', (rs3.get('refund' + DOT), rs3.get('shipped')), (4, 1))
+check('... and it recodes the words of the stem even with No Stemming (refunds its own term then)', (terms_of(recodes={'return' + DOT: 'refund'}).get('refund'), terms_of(recodes={'return' + DOT: 'refund'}).get('refunds')), (4, 1))
+rs4 = terms_of(recodes={'parcel': 'package', 'package': 'box'})
+check('the recodes are one pass: parcel -> package -> box stops at package', (rs4.get('package'), rs4.get('box')), (2, 1))
+check('a word recoded to nothing is dropped, and one recoded to a stop word too', (terms_of(recodes={'parcel': ''}).get('parcel'), terms_of(recodes={'parcel': 'the'}).get('parcel')), (None, None))
+check('a stop word recoded to a word becomes a term (the stop words are checked after the recodes)', terms_of(recodes={'the': 'this one'}).get('this one'), 2)
+check('the lengths are checked after the recode: a long word recoded short is kept, a short one recoded long is not',
+      (terms_of(max_chars=7, recodes={'extraordinary': 'odd'}).get('odd'), terms_of(max_chars=7, recodes={'ok': 'okayokay'}).get('okayokay')), (1, None))
+ph_ = call('text.explore', table=rt_, column='t', recodes={'parcel': 'package'})
+check('the Phrase List counts the recoded words: "package arrived" twice, no "parcel arrived"', ({x['phrase']: x['count'] for x in ph_['phrases']}.get('package arrived'), any('parcel' in x['phrase'] for x in ph_['phrases'])), (2, False))
+check('a recode of an added phrase applies to the joined phrase', terms_of(phrases=['parcel arrived'], recodes={'parcel arrived': 'delivered'}).get('delivered'), 2)
+fr_ = call('text.explore', table=rt_, column='t', stemming='combine', recodes={'parcel': 'package'})['forms']
+check('Show Text\'s words of a term: the words in the texts, the recoded ones too', sorted(w for w, _ in fr_['packag' + DOT]), ['package', 'packages', 'parcel'])
 
 # ---- documents made of the rows that share an ID ----------------------------------------------------------------------------------------------
 ri = call('text.explore', table=tid, column='comment', id_col='customer')
@@ -382,8 +409,11 @@ check.near('the loadings are V S R / sqrt(n - 1), R varimax of V S', mx(load, al
 var = [v['variance'] for v in Tp['variance']]
 check('largest topic first, each signed so that its largest loading is positive', (var == sorted(var, reverse=True), all(max(c, key=abs) > 0 for c in load.T)), (True, True))
 check.near('the rotation keeps the variance the SVD explains', sum(var), float(np.sum(s4 ** 2)), rel=1e-9)
-check('Top Loadings by Topic: the terms with the largest loadings', [[x['term'] for x in tp] for tp in Tp['top']],
-      [[chosen[j] for j in np.argsort(-load[:, t], kind='stable')[:5]] for t in range(4)])
+check('Top Loadings by Topic: the terms with the largest loadings in absolute value, the largest first (JMP\'s order)', [[x['term'] for x in tp] for tp in Tp['top']],
+      [[chosen[j] for j in np.argsort(-np.abs(load[:, t]), kind='stable')[:5]] for t in range(4)])
+Tp10 = call('text.topics', table=tid, column='comment', n_topics=4, min_freq=2, max_terms=60, top=20, seed=3, centering='centered')
+absl = [[abs(x['loading']) for x in tp] for tp in Tp10['top']]
+check('... so each topic\'s list falls in absolute value, and holds negative loadings among its largest', (all(a == sorted(a, reverse=True) for a in absl), any(x['loading'] < 0 for tp in Tp10['top'] for x in tp)), (True, True))
 Xw = TX.weigh(Xref[:, [vec.vocabulary_[w] for w in chosen]], 'tfidf')
 nm = NMF(n_components=4, init='nndsvda', max_iter=500, random_state=3)
 W_ = nm.fit_transform(Xw)
@@ -423,7 +453,7 @@ dfx.to_csv(os.path.join(work, 'Comments.csv'), index=False)
 DUMP = '''
 import json as _j
 _o = {}
-for _k in ("summary", "term_list", "phrase_list", "singular_values", "docs", "terms", "loadings", "scores", "dtm", "chosen"):
+for _k in ("summary", "term_list", "phrase_list", "singular_values", "docs", "terms", "loadings", "scores", "dtm", "chosen", "top_terms"):
     if _k in globals():
         _v = globals()[_k]
         _o[_k] = _v.to_dict("split") if hasattr(_v, "to_dict") and not isinstance(_v, dict) else (_v.tolist() if hasattr(_v, "tolist") else _v)
@@ -440,6 +470,7 @@ def run(code):
 
 
 EXPLORES = [({}, None), ({'stemming': 'combine', 'recodes': {'cheap': 'price'}, 'stop_add': ['value']}, None), ({'stemming': 'all', 'phrases': [want[0]], 'tokenizing': 'basic'}, None),
+            ({'stemming': 'combine', 'recodes': {'deliveri\u00b7': 'shipping', 'late': '', want[0]: 'combo', 'slow': 'crashed'}, 'phrases': [want[0]], 'max_chars': 7}, None),
             ({'id_col': 'customer', 'regex': r"[a-z]{3,}"}, None), ({}, list(range(0, 400, 2))), ({'max_words': 3, 'max_phrases': 25, 'min_chars': 3}, list(range(50, 400)))]
 for kw, rows in EXPLORES:
     r = call('text.explore', table=tid2, column='comment', rows=rows, table_name='Comments', **kw)
@@ -469,7 +500,8 @@ for kw in ({'method': 'varimax'}, {'method': 'nmf', 'weighting': 'frequency'}, {
     if not check(f'the Topic Analysis code runs ({kw})', o is not None, True):
         continue
     check.near(f'it gives the report\'s loadings and scores ({kw})', max(mx(np.array(o['loadings']['data']).T, r['loadings']), mx(np.array(o['scores']).T, r['scores'])), 0.0, abs_=1e-12)
-    check(f'and its top terms ({kw})', o['loadings']['index'], r['terms'])
+    check(f'and its terms ({kw})', o['loadings']['index'], r['terms'])
+    check(f'and its Top Loadings by Topic, by the absolute loading ({kw})', o['top_terms'], [[x['term'] for x in tp] for tp in r['top']])
 for kw in ({'weighting': 'binary', 'max_terms': 12}, {'weighting': 'tfidf', 'terms': [order[3], order[1]]}):
     r = call('text.dtm', table=tid2, column='comment', table_name='Comments', rows=list(range(100, 400)), **kw)
     o = run(r['code'])

@@ -94,19 +94,10 @@ REGEX_BUILTIN = (r"(?:https?://|www\.)[^\s<>\"']++"          # a URL
 REGEX_BASIC = r"[^\W_]++"                                     # Basic Words: runs of letters and digits
 
 
-def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, max_chars=50,
-               stemming='none', phrases=(), recodes=None, user_stop=(), stemmer='snowball'):
-    """The tokens and the terms of each text, as Text Explorer reads them.
-
-    tokens: the lowercase words of each text between min_chars and
-    max_chars characters long (Regex: the built-in patterns, or regex;
-    Basic Words: runs of letters and digits). terms: the tokens with the
-    added phrases joined into one term each, less the stop words, stemmed
-    by Snowball's English stemmer (Porter2; stemmer 'porter': Porter's
-    1980 algorithm) ('combine': the words that share a stem with another
-    word; 'all': every word of three or more letters a-z) and recoded
-    ({term: new term}). Returns (tokens, terms, stem_of), stem_of the
-    stemmed term of each word that has one."""
+def tokenize(texts, tokenizing='regex', regex=None):
+    """The lowercase tokens of each text. Regex: the built-in patterns (a
+    possessive 's dropped, a URL's closing punctuation too), or regex, every
+    match a token; Basic Words: runs of letters and digits."""
     pattern = re.compile(regex or (REGEX_BUILTIN if tokenizing == 'regex' else REGEX_BASIC))
     builtin = tokenizing == 'regex' and not regex
     tokens = []
@@ -123,14 +114,67 @@ def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, m
                         t = t[:-2]                            # a possessive: customer's is customer
                     elif t.startswith(('http', 'www.')):
                         t = t.rstrip('.,;:!?)]}')             # a URL at the end of a sentence
-                if t and min_chars <= len(t) <= max_chars:
+                if t:
                     toks.append(t)
         tokens.append(toks)
-    joined = join_phrases(tokens, phrases)
+    return tokens
+
+
+def word_recodes(words, recodes, stem):
+    """The recodes of single words, {old word: new value}, from recodes
+    ({old: new}): a word's own; and for a stemmed form (an old value ending
+    in the dot, return·) each of the words (of the given ones) whose stem it
+    is, unless the word has a recode of its own. A recode of a phrase
+    (words and spaces) is not one of these: it applies to the joined
+    phrases."""
+    out = {a: b for a, b in recodes.items() if ' ' not in a and not a.endswith(DOT)}
+    stems = [(a[:-1], b) for a, b in recodes.items() if ' ' not in a and a.endswith(DOT)]
+    if stems:
+        by_stem = {}
+        for w in words:
+            if len(w) > 2 and w.isascii() and w.isalpha():
+                by_stem.setdefault(stem(w), []).append(w)
+        for root, b in stems:
+            for w in by_stem.get(root, ()):
+                out.setdefault(w, b)
+    return out
+
+
+def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, max_chars=50,
+               stemming='none', phrases=(), recodes=None, user_stop=(), stemmer='snowball'):
+    """The tokens and the terms of each text, in the order of JMP's text
+    processing steps (its help): the lowercase tokens; recoded ({old: new},
+    in one pass, before stemming: a recode of a stemmed form recodes each
+    word of that stem, and a token recoded to nothing is dropped); those of
+    min_chars to max_chars characters. Then the added phrases joined into
+    one token each (a recode of a phrase applies to it here), and the
+    terms: those tokens less the stop words (scikit-learn's and the user's),
+    stemmed by Snowball's English stemmer (Porter2; stemmer 'porter':
+    Porter's 1980 algorithm; 'combine': the words that share a stem with
+    another word; 'all': every word of three or more letters a-z).
+    Returns (tokens, terms, stem_of): the recoded tokens, the terms, and
+    the stemmed term of each word that has one."""
     user_stop = set(user_stop)
+    recodes = recodes or {}
+    stem = None
+    if stemming in ('combine', 'all') or any(a.endswith(DOT) for a in recodes):   # the stemmer, when stemming or a stemmed form's recode needs it
+        stem = (SnowballStemmer if stemmer == 'snowball' else PorterStemmer)().stem
+    raw = tokenize(texts, tokenizing, regex)
+    one = word_recodes({t for toks in raw for t in toks if t not in stop_words and t not in user_stop}, recodes, stem) if recodes else {}
+    tokens = []
+    for toks in raw:
+        out = []
+        for t in toks:
+            t = one.get(t, t)                                 # recoded first: JMP recodes the tokens before stemming
+            if t and min_chars <= len(t) <= max_chars:
+                out.append(t)
+        tokens.append(out)
+    joined = join_phrases(tokens, phrases)
+    several = {a: b for a, b in recodes.items() if ' ' in a}
+    if several:                                               # a recode of an added phrase
+        joined = [[x for x in (several.get(t, t) for t in toks) if x] for toks in joined]
     stem_of = {}
     if stemming in ('combine', 'all'):
-        stem = (SnowballStemmer if stemmer == 'snowball' else PorterStemmer)().stem
         words = {t for toks in joined for t in toks if t not in stop_words and t not in user_stop}
         stems = {w: stem(w) for w in words if len(w) > 2 and w.isascii() and w.isalpha()}
         if stemming == 'all':
@@ -140,7 +184,6 @@ def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, m
             for w, s in stems.items():
                 by_stem.setdefault(s, []).append(w)
             stem_of = {w: s + DOT for s, ws in by_stem.items() if len(ws) > 1 for w in ws}
-    recodes = recodes or {}
     terms = []
     for toks in joined:
         out = []
@@ -148,7 +191,6 @@ def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, m
             if t in stop_words or t in user_stop:
                 continue
             d = stem_of.get(t, t)
-            d = recodes.get(d, d)
             if d and d not in user_stop:
                 out.append(d)
         terms.append(out)
@@ -860,8 +902,6 @@ def _config(language='english', max_words=4, max_phrases=5000, min_chars=1, max_
         raise ValueError(f'Stemming is one of {", ".join(STEMMING)}, not {stemming!r}')
     if cfg['stemmer'] is None:
         raise ValueError(f'the stemmer is snowball or porter, not {stemmer!r}')
-    if cfg['stemming'] == 'none':
-        cfg['stemmer'] = 'snowball'   # no stemming: the choice of stemmer changes nothing (nor the cache)
     if cfg['tokenizing'] is None:
         raise ValueError(f'Tokenizing is regex or basic, not {tokenizing!r}')
     if cfg['max_chars'] < cfg['min_chars']:
@@ -877,6 +917,8 @@ def _config(language='english', max_words=4, max_phrases=5000, min_chars=1, max_
     cfg['stop_add'] = sorted({_words(w) for w in (stop_add or []) if _words(w)})
     cfg['recodes'] = {_words(a): _words(b) for a, b in sorted((recodes or {}).items()) if _words(a)}
     cfg['phrases'] = sorted({_words(p) for p in (phrases or []) if len(_words(p).split()) > 1})
+    if cfg['stemming'] == 'none' and not any(a.endswith(DOT) for a in cfg['recodes']):
+        cfg['stemmer'] = 'snowball'   # nothing stemmed: the choice of stemmer changes nothing (nor the cache)
     return cfg
 
 
@@ -1070,13 +1112,14 @@ def _code_head(table, table_name, column, rows, id_col, cfg, extra_imports=(), w
     L = _code_read(table, table_name, column, rows, id_col, ['import re', 'import numpy as np', 'import pandas as pd',
                    'from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS', *extra_imports], where, keep_every)
     L += ['', _block('reading the texts'), '']
-    if cfg['stemming'] != 'none':
+    stems = cfg['stemming'] != 'none' or any(a.endswith(DOT) for a in cfg['recodes'])   # stemming, or a recode of a stemmed form
+    if stems:
         L += [_block('the Snowball stemmer' if cfg['stemmer'] == 'snowball' else 'the Porter stemmer'), '']
     args = [f'tokenizing={_py(cfg["tokenizing"])}']
     if cfg['regex']:
         args.append(f'regex={_py(cfg["regex"])}')
     args += [f'min_chars={cfg["min_chars"]}', f'max_chars={cfg["max_chars"]}', f'stemming={_py(cfg["stemming"])}']
-    if cfg['stemming'] != 'none':
+    if stems:
         args.append(f'stemmer={_py(cfg["stemmer"])}')
     if cfg['phrases']:
         args.append(f'phrases={_py(cfg["phrases"])}')
@@ -1170,20 +1213,34 @@ def explore(table, column, rows=None, id_col=None, language='english', max_words
                             seen.add(k)
                             prow[k].append(int(C.rows[i]))
     phrases_out = [{'phrase': p, 'count': c, 'n': len(p.split())} for p, c in plist]
-    # the words behind each term (stems, recodes, phrases): for Show Text and the Stem Report
+    # the words behind each term (recodes, stems, phrases), as the texts hold them: for Show Text; and the
+    # words of each stem after the recodes, for the Stem Report
     word_counts = {}
     for toks in join_phrases(C.tokens, cfg['phrases']):
         for t in toks:
             word_counts[t] = word_counts.get(t, 0) + 1
-    forms = {}
     user_stop = set(cfg['stop_add'])
-    for w, c in word_counts.items():
-        if w in C.stop or w in user_stop:
+    raw_counts = {}
+    for toks in tokenize(C.texts, cfg['tokenizing'], cfg['regex']):
+        for t in toks:
+            raw_counts[t] = raw_counts.get(t, 0) + 1
+    stem = (SnowballStemmer if cfg['stemmer'] == 'snowball' else PorterStemmer)().stem if any(a.endswith(DOT) for a in cfg['recodes']) else None
+    one = word_recodes({w for w in raw_counts if w not in C.stop and w not in user_stop}, cfg['recodes'], stem) if cfg['recodes'] else {}
+    forms = {}
+    for w, c in raw_counts.items():
+        r = one.get(w, w)
+        if not r or not cfg['min_chars'] <= len(r) <= cfg['max_chars'] or r in C.stop or r in user_stop:
             continue
-        d = C.stem_of.get(w, w)
-        d = cfg['recodes'].get(d, d)
-        if d in C.index and d != w:
+        d = C.stem_of.get(r, r)
+        if d in C.index:
             forms.setdefault(d, []).append([w, c])
+    for a, b in cfg['recodes'].items():                      # a recoded phrase
+        if ' ' in a and b:
+            d = C.stem_of.get(b, b)
+            if d in C.index and d != a:
+                forms.setdefault(d, []).append([a, sum(1 for toks in join_phrases(C.tokens, cfg['phrases']) for t in toks if t == a)])
+    # a term's words when some word other than the term stands for it (a stem's, a recode's): the term's own too
+    forms = {d: v for d, v in forms.items() if any(w != d for w, _ in v)}
     for v in forms.values():
         v.sort(key=lambda x: (-x[1], x[0]))
     stems = []
@@ -1370,7 +1427,7 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
     names = [str(C.vocab[j]) for j in cols]
     tops = []
     for t in range(k):
-        o = np.argsort(-load[:, t], kind='stable')[:top]
+        o = np.argsort(-np.abs(load[:, t]), kind='stable')[:top]   # JMP's order: the largest loadings in absolute value
         tops.append([{'term': names[j], 'loading': float(load[j, t])} for j in o])
     var = np.asarray(T['variance'], dtype=float)
     pct = 100 * var / total if total > 0 else np.full(k, np.nan)
@@ -1400,12 +1457,13 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
         code += ['load, scores = load[:, order], scores[:, order]']
     fitted = code[len(head):]   # the lines from the document term matrix to the topics
     code += ['loadings = pd.DataFrame(load, index=chosen, columns=[f"Topic {t + 1}" for t in range(load.shape[1])])',
-             f'for t in loadings: print(t, ", ".join(loadings[t].sort_values(ascending=False, kind="stable").index[:{top}]))']
+             f'top_terms = [[chosen[j] for j in np.argsort(-np.abs(load[:, t]), kind="stable")[:{top}]] for t in range(load.shape[1])]   # Top Loadings by Topic: the largest in absolute value, as JMP sorts them',
+             'for t, terms_t in enumerate(top_terms): print(f"Topic {t + 1}:", ", ".join(terms_t))']
     plot_code = {}
     if k >= 2:
         what = 'scores' if method == 'varimax' else ('share of the topic' if method == 'lda' else 'weight on the topic')
         plot_code['scores'] = '\n'.join(with_head(['import matplotlib.pyplot as plt']) + fitted + [
-            'top3 = [", ".join(chosen[j] for j in np.argsort(-load[:, t], kind="stable")[:3]) for t in (0, 1)]   # each topic\'s three largest terms',
+            'top3 = [", ".join(chosen[j] for j in np.argsort(-np.abs(load[:, t]), kind="stable")[:3]) for t in (0, 1)]   # each topic\'s three largest terms, in absolute value',
             f'size = {"6" if C.n_docs <= 2000 else "4"}',
             'fig, ax = plt.subplots(figsize=(4.4, 3.6), layout="constrained")',
             f'ax.scatter(scores[:, 0], scores[:, 1], s=(0.72 * size) ** 2, color="{BASE}", linewidths=0)   # each document\'s {what}',

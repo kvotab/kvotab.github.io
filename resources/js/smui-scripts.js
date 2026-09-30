@@ -18,6 +18,14 @@
                      by name to the table's columns now (as a project does),
                      so it comes back as it was saved, on this table or on the
                      same table opened again from a file.
+     kind 'jsl'      { name, kind, jsl }: a script of a JMP table (.jmp), its
+                     JSL text as JMP keeps it (jmp.py). Running it converts
+                     it as JSL to Python does, the table as JMP's current
+                     data table, and opens the analyses it launches as this
+                     page's reports; one that launches none here (a Source
+                     script's Open() of a file) opens JSL to Python with it,
+                     whose notes say what did not convert. The text is only
+                     read by the converter, never run.
 
    A column that is not in the table any more: a toast names it, and the
    launch dialog opens with the columns that are. Report > Save > Save
@@ -72,8 +80,41 @@
     return { roles, options: sp.options || {}, extra };
   }
 
+  /* A JMP table's JSL script: converted with t as the current data table;
+     the reports of the analyses it launches on open tables. */
+  async function runJsl(t, sc) {
+    const app = SM.app;
+    const tables = app.tables.map((x) => ({ name: x.name, columns: x.columns.map((c) => ({ name: c.name, dataType: c.dataType, modelingType: c.modelingType })) }));
+    let res;
+    try {
+      res = await SM.engine.call('jsl.convert', { text: sc.jsl, tables, current: t.name });
+    } catch (e) {
+      toast(`${sc.name}: the JSL converter: ${e.message || e}`, { error: true });
+      return [];
+    }
+    const opened = [];
+    for (const step of res.steps || []) {
+      const p = SM.platforms.get(step.platform);
+      const want = step.table ? String(step.table).toLowerCase() : null;
+      const on = want ? app.tables.find((x) => x.name.toLowerCase() === want) : t;
+      if (!p || !on) continue;
+      const used = [...new Set(Object.values(step.roles || {}).flat().filter((n) => typeof n === 'string'))];
+      if (used.some((n) => !on.col(n))) continue;
+      opened.push(app.openReport(p, SM.jsl.stepSpec(step, on), on));
+    }
+    const left = (res.notes || []).filter((n) => n.severity !== 'info').length;
+    if (!opened.length) {
+      SM.jsl.open(app, { text: sc.jsl, name: sc.name });
+      toast(`${sc.name} launches no analysis this page has: JSL to Python shows what it does`);
+    } else if (left) {
+      toast(`${sc.name}: ${opened.length} report${opened.length > 1 ? 's' : ''} opened; ${left} part${left > 1 ? 's' : ''} of the script did not convert (right click > Show JSL)`);
+    }
+    return opened;
+  }
+
   /* Run a script of table t: its dialog filled in, or its report. */
   function run(t, sc) {
+    if (sc.kind === 'jsl') return runJsl(t, sc);
     const p = SM.platforms.get(sc.platform);
     if (!p) { toast(`${sc.name}: there is no platform ${sc.platform} here`, { error: true }); return null; }
     const missing = namesOf(sc).filter((n) => !t.col(n));
@@ -146,9 +187,10 @@
     return [
       { head: sc.name },
       { label: 'Run Script', action: () => run(t, sc) },
+      sc.kind === 'jsl' ? { label: 'Show JSL', title: 'The script in JSL to Python: its Python, and notes on what did not convert', action: () => SM.jsl.open(SM.app, { text: sc.jsl, name: sc.name }) } : null,
       { label: 'Rename…', action: () => rename(t, sc) },
       { label: 'Delete', action: () => remove(t, sc) },
-    ];
+    ].filter(Boolean);
   }
 
   // the run mark: JMP's green triangle
@@ -162,8 +204,11 @@
     if (!scripts.length) return null;
     const ul = el('ul', { class: 'sm-scripts', 'aria-label': `Scripts of ${t.name}` });
     for (const sc of scripts) {
+      const jsl = sc.kind === 'jsl';
       const kind = sc.kind === 'report' ? 'its report' : 'its launch dialog, filled in';
-      const b = el('button', { type: 'button', class: 'sm-script', title: `${sc.name}: runs ${kind} (${(SM.platforms.get(sc.platform) || { label: sc.platform }).label}). Right click to rename or delete it.` }, runMark(), el('span', { class: 'sm-scriptname', text: sc.name }));
+      const title = jsl ? `${sc.name}: a JSL script from the JMP table; runs the analyses it launches as reports here. Right click to show its JSL, rename or delete it.`
+        : `${sc.name}: runs ${kind} (${(SM.platforms.get(sc.platform) || { label: sc.platform }).label}). Right click to rename or delete it.`;
+      const b = el('button', { type: 'button', class: 'sm-script', title }, runMark(), el('span', { class: 'sm-scriptname', text: sc.name }), jsl ? el('span', { class: 'sm-scriptkind', text: 'JSL' }) : null);
       b.addEventListener('click', () => run(t, sc));
       b.addEventListener('contextmenu', (ev) => { ev.preventDefault(); SM.ui.menu(menuItems(t, sc), { x: ev.clientX, y: ev.clientY }); });
       ul.append(el('li', null, b));
@@ -180,9 +225,10 @@
           ['A design\'s Model', 'Opens the platform\'s launch dialog filled in: the Y columns, the model\'s effects (a split plot\'s whole plots as a random effect) and its options, for you to press OK.'],
           ['A saved report', 'Opens the report as it was saved: its columns, its options, its filter and its closed outlines. The columns are found by their names, so it runs on the same table opened again from a file or a project.'],
           ['A column that is not there', 'A message names it, and the launch dialog opens with the columns that are, for you to finish.'],
+          ['A JSL script (JSL beside its name)', 'A script of a JMP table (.jmp), as its JSL text. It is converted as Python > JSL to Python converts a script, with this table as JMP\'s current data table, and the analyses it launches open as reports here. A script that launches none this page has (the Source script JMP writes, an Open() of a file on the computer that made the table; a window of JMP\'s own) opens in JSL to Python instead, whose notes say what did not convert.'],
         ] },
-        { heading: 'The right click', choices: [['Run Script', 'As a click.'], ['Rename…', 'A new name for the script, one line.'], ['Delete', 'Takes the script away. Edit > Undo brings it back, as it takes back a rename or a saved script.']] },
-        { heading: 'Kept', text: 'Save Table and projects keep the scripts. Renaming a column renames it in the scripts too. A script from a file is checked: its name, its platform and its settings, and what is not right is left out. The page does not read the JSL scripts of .jmp files.' },
+        { heading: 'The right click', choices: [['Run Script', 'As a click.'], ['Show JSL', 'A JSL script only: opens it in JSL to Python, with its Python and the notes.'], ['Rename…', 'A new name for the script, one line.'], ['Delete', 'Takes the script away. Edit > Undo brings it back, as it takes back a rename or a saved script.']] },
+        { heading: 'Kept', text: 'Save Table and projects keep the scripts. Renaming a column renames it in the page\'s own scripts; a JSL script is JMP\'s text and stays as it is, as in JMP. A script from a file is checked: its name, its platform and its settings (a JSL script: its text), and what is not right is left out. JMP\'s format is not published: the scripts of a .jmp file are read where JMP 18 keeps them, and a file whose scripts are not found opens without them.' },
       ],
     },
   });

@@ -114,6 +114,7 @@ window.__tsg = {
 true
 '''
 EPOCH = datetime(1970, 1, 1)
+DATE_MIN, DATE_MAX = 1483228800000, 1764547200000   # 2017-01-01 and 2025-12-01 (UTC), a date window set with Axis Settings
 
 
 def to_days(v):
@@ -170,11 +171,15 @@ def check_graph(tag, g, ex, F, rel=1e-6):
     wrong = []
     for s in ex['shapes']:
         A = axes[axis_at(s['yref'])] if s['yref'] not in ('paper',) else axes[0]
+        # a reference along y (Axis Settings) spans the panel: x in the axes' fractions ('x domain'), as matplotlib's axhline and axhspan
+        xfrac = s['xref'] == 'paper' or s['xref'].endswith('domain')
+        yfrac = s['yref'] == 'paper' or s['yref'].endswith('domain')
         if s['type'] == 'rect':
-            ok = any(close([b['x'], b['x'] + b['w']], [X(s['x0']), X(s['x1'])], 1e-9) for b in A['bars'])
-        elif s['x0'] == s['x1'] and s['yref'] in ('paper',) or (s['x0'] == s['x1'] and s['yref'].endswith('domain')):
+            ok = any(close([b['x'], b['x'] + b['w']], [s['x0'], s['x1']] if xfrac else [X(s['x0']), X(s['x1'])], 1e-9)
+                     and (yfrac or close([b['y'], b['y'] + b['h']], [s['y0'], s['y1']], 1e-9)) for b in A['bars'])
+        elif s['x0'] == s['x1'] and yfrac:
             ok = any(same_points(p, [(X(s['x0']), 0), (X(s['x0']), 1)], 1e-9) for p in mpl_sets(A))
-        elif s['xref'] == 'paper':
+        elif xfrac:
             ok = any(same_points(p, [(0, s['y0']), (1, s['y0'])], 1e-6) for p in mpl_sets(A))
         else:
             ok = any(same_points(p, [(X(s['x0']), s['y0']), (X(s['x1']), s['y1'])], 1e-6) for p in mpl_sets(A))
@@ -1339,6 +1344,91 @@ async def main():
           'sales cross-validation RMSE by origin', 'Simple Moving Average(12, centered and double smoothed) smoothed series', 'Naive forecast', 'Naive forecast, refit on all rows',
           'Average of ARMA(1, 1), Winters Method (Additive)(12) forecast', 'Winters Method (Additive)(12), Box-Cox λ = 0 forecast') if x not in labels], [])
     hb_id = await page.ev('SM.app.reports.indexOf(__ts.rep())')
+
+    # ==== Save Columns: the one-step predictions of the missing values, against statsmodels in the page ====
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await page.ev(GRAPHS_JS)
+    await page.ev(TSG_JS)
+    r = await page.ev('''(async () => { const t = SM.app.tables.find(x => x.name === 'Monthly sales'); SM.app.showTab(SM.app.tabOf(t)); t.setState([30, 31], 'excluded', true);
+      const rep = SM.app.openReport(SM.platforms.get('timeseries'), { roles: { y: [t.col('sales').id], time: [t.col('month').id] }, options: { forecast: 6,
+        'ts:sales|models': [{ id: 1, kind: 'arima', p: 1, d: 0, q: 1, P: 0, D: 0, Q: 0, s: 0, intercept: true, constrain: true, level: 0.95 }, { id: 2, kind: 'bench', method: 'naive', s: 0, level: 0.95 }],
+        'ts:sales|acf': false, 'ts:sales|pacf': false, 'ts:sales|stationarity': false } }, t);
+      await __ts.done(rep);
+      const save = async (title) => { await __ts.menu(rep, title, ['Save Columns']); await new Promise(r => setTimeout(r, 200));
+        const s = SM.app.tables[SM.app.tables.length - 1]; const col = (n) => s.col(n).values;
+        const out = { pred: [30, 31, 32].map(i => col('Predicted sales')[i]), se: col('Std Err Pred sales')[30], resid: [30, 31, 32].map(i => col('Residual sales')[i]),
+          upper: col('Upper CL (0.95) sales')[30], actual: col('Actual sales')[30] };
+        SM.app.closeTable(s); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click()); SM.app.showTab(SM.app.tabOf(rep)); return out; };
+      const a = await save('Model: ARMA(1, 1)'); const nv = await save('Model: Naive');
+      const v = t.col('sales').values; t.setState([30, 31], 'excluded', false);
+      const out = { a, nv, v29: v[29], ...__ts.problems(rep) }; SM.app.closeReport(rep); return out; })()''', timeout=900)
+    check('Save Columns at excluded rows: no errors', r['errors'], [])
+    code = '\n'.join(['import numpy as np', 'import pandas as pd', 'from statsmodels.tsa.arima.model import ARIMA',
+                      'df = pd.read_csv("Monthly sales.csv", float_precision="round_trip")', 'y = df["sales"].to_numpy(dtype=float, copy=True); y[[30, 31]] = np.nan   # the excluded rows',
+                      'res = ARIMA(y, order=(1, 0, 1), trend="c").fit()   # the Kalman filter predicts through them',
+                      'se = res.get_prediction().se_mean',
+                      'print("SMUI-FV", repr(float(res.fittedvalues[30])), repr(float(res.fittedvalues[31])), repr(float(se[30])))'])
+    out = await page.ev(f'__gr.run({json.dumps(code)}, SM.app.tables.find(x => x.name === "Monthly sales"))', timeout=600)
+    num_ = r'(-?\d+(?:\.\d+)?(?:e[-+]?\d+)?)'
+    m = re.search(rf'SMUI-FV {num_} {num_} {num_}', json.dumps(out))
+    fv = [float(m.group(i)) for i in (1, 2, 3)] if m else None
+    check('ARMA(1, 1), Save Columns: the excluded months get the Kalman filter\'s own one-step predictions (statsmodels run in the page)', fv and close(r['a']['pred'][:2], fv[:2], 1e-5), True)
+    check('... with its standard error, and limits from it', fv and (close(r['a']['se'], fv[2], 1e-5), close(r['a']['upper'], r['a']['pred'][0] + 1.959963984540054 * r['a']['se'], 1e-9)), (True, True))
+    check('... their residuals and actual values stay empty; the next month is as before', (r['a']['resid'][:2], r['a']['actual'], r['a']['resid'][2] is not None), ([None, None], None, True))
+    check('Naive: the first excluded month is predicted by the value before it; the second has none (its value before is missing too)', (r['nv']['pred'][0] == r['v29'], r['nv']['pred'][1]), (True, None))
+
+    # ==== Axis Settings on the stacked graphs: a decomposition, a filter, a structural model's components ====
+    r = await page.ev(open_js('Monthly sales', {'y': ['sales'], 'time': ['month']}, {
+        'forecast': 6, 'ts:sales|acf': False, 'ts:sales|pacf': False, 'ts:sales|stationarity': False, 'ts:sales|graph': False,
+        'ts:sales|decomps': [{'id': 1, 'kind': 'classical', 'period': 12, 'model': 'additive'}],
+        'ts:sales|filters': [{'id': 1, 'kind': 'hp'}],
+        'ts:sales|models': [{'id': 1, 'kind': 'uc', 'trend': 'local level', 'seasonal': 12, 'level': 0.95, 'graph': False, 'racf': False, 'rpacf': False}]}), timeout=900)
+    check('stacked graphs: the report opens without errors', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = window.__tsc; await __gr.graphs(rep);
+      const dec = rep.plots.find(p => p.opts.title === 'Seasonal Decomposition (additive, period 12)'), hp = rep.plots.find(p => /^Hodrick-Prescott Filter/.test(p.opts.title)),
+        uc = rep.plots.find(p => / components$/.test(p.opts.title));
+      const S = {};
+      S[SM.axis.keyOf(dec)] = { yaxis2: { log: true, refs: [{ value: 140, label: 'target', color: 'red', dash: 'dash' }] },
+        xaxis: { min: 1483228800000, max: 1764547200000, refs: [{ value: Date.UTC(2020, 0, 1), label: 'break', color: 'blue' }] },
+        yaxis4: { refs: [{ value: -5, to: 5, color: 'green' }] } };
+      S[SM.axis.keyOf(hp)] = { yaxis: { log: true }, yaxis2: { refs: [{ value: 0, label: 'zero' }] } };
+      S[SM.axis.keyOf(uc)] = { yaxis: { log: true }, xaxis: { refs: [{ value: Date.UTC(2021, 5, 1), color: 'orange', dash: 'dot' }] } };
+      rep.spec.options.axisSettings = S; const d = __ts.done(rep); rep.run(); await d; await __gr.graphs(rep);
+      const L = (p) => p.box._fullLayout; const P = (f) => rep.plots.find(f);
+      const d2 = P(p => p.opts.title === 'Seasonal Decomposition (additive, period 12)'), h2 = P(p => /^Hodrick-Prescott Filter/.test(p.opts.title)), u2 = P(p => / components$/.test(p.opts.title));
+      // the panels the date reference line crosses on the graph: the y axes whose domains its shapes span
+      // (a date axis's shapes are dates as text, UTC: the axis's own r2l turns them into the page's milliseconds)
+      const xa = L(d2).xaxis;
+      const across = (d2.box.layout.shapes || []).filter(x => x.type === 'line' && x.xref === 'x' && x.x0 === x.x1 && xa.r2l(x.x0) === Date.UTC(2020, 0, 1)).map(x => x.yref);
+      const winMs = xa.range.map((v) => xa.r2l(v));
+      return { dec: [L(d2).yaxis2.type, L(d2).yaxis.type, L(d2).xaxis.range], hp: [L(h2).yaxis.type, L(h2).yaxis2.type], uc: [L(u2).yaxis.type, L(u2).yaxis2.type], n: rep.plots.length, across, winMs }; })()''', timeout=900)
+    check('Axis Settings on a stacked panel: the decomposition\'s Trend panel on a log scale, the others not', r['dec'][:2], ['log', 'linear'])
+    check('... the filter\'s top panel, the components\' level panel', (r['hp'], r['uc']), (['log', 'linear'], ['log', 'linear']))
+    g = await check_report_graphs(page, 'window.__tsc', 'window.__tsc.table', 'axis settings on stacked graphs')
+    codes = {x['label']: x['code'] for x in g['g']}
+    dec_code = codes.get('Seasonal Decomposition (additive, period 12)') or ''
+    check('the decomposition\'s code: each panel\'s settings on its axes, the x axis on the bottom one',
+          ('target = plt.gcf().axes[1]' in dec_code, 'target = plt.gcf().axes[3]' in dec_code, 'set_yscale("log")' in dec_code, '(the settings of' not in dec_code), (True, True, True, True))
+    F, err = await run_ts(page, dec_code, 'window.__tsc.table')
+    check('... it runs in the page', err, None)
+    if F:
+        A = F[0]['axes']
+        check('... its figure: the Trend panel (the second axes) on a log scale, the others linear', [a['yscale'] for a in A], ['linear', 'log', 'linear', 'linear'])
+        want = [to_days(DATE_MIN), to_days(DATE_MAX)]
+        check('... the settings\' date window on every panel (shared x)', all(close(a['xlim'], want, 1e-12) for a in A), True)
+        # the graph's own window exactly the settings' (Axis Settings gives a date axis its dates as UTC text, not milliseconds,
+        # which Plotly read in the browser's local time), in Plotly's milliseconds and in the code's days
+        check('... the graph\'s own date window, exactly the settings\' (and the code\'s)', (r['winMs'], all(close([to_days(g_) for g_ in r['dec'][2]], want, 1e-12) for _ in [0])), ([DATE_MIN, DATE_MAX], True))
+        at = 18262.0   # 2020-01-01 in days since 1970, the x reference line
+        on = [any(len(ln['x']) == 2 and ln['x'][0] is not None and abs(ln['x'][0] - at) < 1e-9 and ln['x'][0] == ln['x'][1] for ln in a['lines']) for a in A]
+        want_on = [any(axis_at(y_) == i for y_ in r['across']) for i in range(4)]
+        check('... the date reference line crosses the same panels in the code as on the graph (every panel: the x axis serves them all)', (on, want_on), ([True] * 4, [True] * 4))
+        check('... its label once, on the bottom panel', [sum(1 for t_ in a['texts'] if t_['s'] == 'break') for a in A], [0, 0, 0, 1])
+    for label, want in (('Hodrick-Prescott Filter (λ = 129600)', ['log', 'linear']), (next((k for k in codes if k.endswith(' components')), ''), ['log', 'linear'])):
+        F, err = await run_ts(page, codes.get(label) or '', 'window.__tsc.table')
+        check(f'{label}: its code runs, the first panel on a log scale as the graph\'s', (err, F and [a['yscale'] for a in F[0]['axes']][:2]), (None, want))
+    await page.ev('SM.app.closeReport(window.__tsc)')
 
     # ==== Time Series Forecast: many series, the best ETS model of each ====
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)

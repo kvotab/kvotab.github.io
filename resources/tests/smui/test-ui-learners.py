@@ -437,6 +437,17 @@ def decision_compare(check, lab, g, F):
         check(f'{lab}: the levels in the legend', F['legend'], [tr['name'] for tr in g['traces'] if tr.get('type') == 'bar'])
         UP.check_titles(check, lab, g, F)
         return True
+    if t.startswith('False positive rates by') or t.startswith('False negative rates by'):
+        # Model Screening's Group Metrics: a bar per method in each group (the methods' bars one after another)
+        bars = [tr for tr in g['traces'] if tr.get('type') == 'bar']
+        want = [v for tr in bars for v in tr['y']]
+        got = [q['h'] for q in ax['bars']]
+        same = len(got) == len(want) and all((v is None and (h is None or h != h)) or (v is not None and h is not None and abs(h - v) < 1e-12) for h, v in zip(got, want))
+        check(f'{lab}: each method\'s rate in each group, a bar each', same, True)
+        check(f'{lab}: the groups, the methods in the legend, each method\'s colour', ([x for x in ax['xticklabels'] if x], ax['legend'], [q['fc'][:7] for q in ax['bars']][::max(1, len(bars[0]['y']))]),
+              (bars[0]['x'], [tr['name'] for tr in bars], [tr['mcolor'] for tr in bars]))
+        UP.check_titles(check, lab, g, F)
+        return True
     if t.startswith('False positive and negative rates by'):
         want = [v for tr in g['traces'] if tr.get('type') == 'bar' for v in tr['y']]
         check.near(f'{lab}: each group\'s false positive and negative rates', UP.maxdiff([q['h'] for q in ax['bars']], want), 0, 1e-12)
@@ -875,6 +886,28 @@ async def decisions(page):
       return {{ names: other.columns.map(c => c.name), mid: other.col('Prob[Mid]') ? other.col('Prob[Mid]').values : null, most: other.col('Most Likely variety') ? other.col('Most Likely variety').values : null, eng }}; }})()''', timeout=300)
     check('decisions: Score Rows into another open table: its Prob[] and Most Likely columns, the report\'s model\'s (the engine kept it)',
           (r['names'][-4:], r['mid'] == [q[1] for q in r['eng']['prob']], r['most'] == r['eng']['most_likely']), (['Prob[Early]', 'Prob[Mid]', 'Prob[Late]', 'Most Likely variety'], True, True))
+    # ... and Support Vector Machines' Score Rows, the same dialog (SM.predict.scoreRows): every row of New apples, then a row
+    # added to it, which alone gets predictions, into the columns the first scoring made
+    await page.ev(open_report_js('svm', {'y': ['grade'], 'x': XS, **val}, {'seed': '3'}), timeout=900)
+    r = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const other = SM.app.tables.find(t => t.name === 'New apples');
+      const score = async (which) => {{ await ({PICK})('*top*', ['Save Columns', 'Score Rows…'], false, 0);
+        for (let i = 0; i < 60 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+        const d = [...document.querySelectorAll('.sm-dialog')].pop(); const sels = d.querySelectorAll('.sm-form select');
+        sels[0].value = other.id; sels[1].value = which; d.querySelector('.sm-dialog-foot .primary').click(); }};
+      await score('all');
+      for (let i = 0; i < 100 && !other.columns.some(c => c.name === 'Most Likely grade'); i++) await new Promise(r => setTimeout(r, 100));
+      const n0 = other.columns.length, before = other.col('Prob[local]').values.slice();
+      other.addRows(1); const k = other.nrows - 1;
+      for (const nm of ['{W}', '{S}', '{F}', 'skin']) other.setCell(k, nm, other.col(nm).values[2]);
+      await score('new');
+      for (let i = 0; i < 100 && !Number.isFinite(other.col('Prob[local]').values[k]); i++) await new Promise(r => setTimeout(r, 100));
+      const eng = await SM.engine.call('svm.score', {{ keep: `${{rep.id}}|`, target_rows: [k] }}, other);
+      const after = other.col('Prob[local]').values;
+      return {{ names: other.columns.slice(-3).map(c => c.name), same: before.every((v, i) => v === after[i]), cols: other.columns.length === n0, added: after[k], eng: eng.prob[0][1],
+        most: other.col('Most Likely grade').values[k], engMost: eng.most_likely[0], note: eng.note || null }}; }})()''', timeout=300)
+    check('decisions: Support Vector Machines\' Score Rows (the same dialog): every row of New apples, then a row added to it scored alone, into the columns the first scoring made',
+          (r['names'], r['same'], r['cols'], r['added'] == r['eng'], r['most'] == r['engMost'], r['note']), (['Prob[export]', 'Prob[local]', 'Most Likely grade'], True, True, True, True, None))
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
 
     # (12) Naive Bayes: Save Prediction Formula, live, as Save Predicteds gives them (a missing factor left out)
     await page.ev(f'(() => {{ const t = {tbl}; t.setCell(3, "{S}", NaN); t.setCell(9, "skin", null); SM.app.showTab(SM.app.tabOf(t)); }})()')
@@ -1061,6 +1094,42 @@ async def decisions(page):
           (res['errors'], by_ok(res, {'North': 0.3, 'South': 0.3})), ([], {'North': True, 'South': True}))
     await page.ev(CLOSE)
     await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
+    # (12c) what a Validation column holds (SM.predict.validationKind, as predictive.validation_codes reads it), and the
+    # launch hints that follow it: Bootstrap Forest's and Boosted Tree's say that K folds turn Early Stopping off
+    HINT = '''(async (kind) => {
+      const n = 60; const c = { y: [], x1: [], F: [], S: [], B: [] };
+      for (let i = 0; i < n; i++) { c.y.push(i % 3 ? 'a' : 'b'); c.x1.push(i * 0.1); c.F.push(1 + (i % 5)); c.S.push(['Training', 'Validation', 'Test'][i % 3]); c.B.push(i % 7 === 0 ? 2.5 : i % 2); }
+      let t = SM.app.tables.find(q => q.name === 'Folds');
+      if (!t) { t = new SM.Table({ name: 'Folds', source: 'test', columns: Object.entries(c).map(([name, values]) => ({ name, values, dataType: typeof values[0] === 'string' ? 'character' : 'numeric' })) }); SM.app.addTable(t); }
+      SM.app.showTable(t.id);
+      const kinds = ['F', 'S', 'B', 'y'].map(nm => SM.predict.validationKind(t.col(nm)));
+      SM.app.launch(kind);
+      await new Promise(r => setTimeout(r, 300));
+      const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+      const items = [...dlg.querySelectorAll('.sm-pick-list li')];
+      const pick = (name) => { items.forEach(li => li.classList.remove('is-selected')); items.find(x => x.textContent === name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
+      const role = (label) => [...dlg.querySelectorAll('.sm-role')].find(r => r.querySelector('.sm-btn').textContent === label);
+      const unrole = (label, name) => [...role(label).querySelectorAll('li')].find(li => li.textContent === name).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      pick('y'); role('Y, Response').querySelector('.sm-btn').click();
+      pick('x1'); role('X, Factor').querySelector('.sm-btn').click();
+      const hint = () => dlg.querySelector('.sm-ens-hint').textContent;
+      pick('S'); role('Validation').querySelector('.sm-btn').click();
+      const sets = hint();
+      unrole('Validation', 'S');
+      pick('F'); role('Validation').querySelector('.sm-btn').click();
+      const folds = hint();
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'Cancel').click();
+      return { kinds, sets, folds };
+    })'''
+    hf = await page.ev(f'({HINT})("forest")')
+    hb = await page.ev(f'({HINT})("boosted")')
+    check('decisions: SM.predict.validationKind: 1 to 5 folds, Training/Validation/Test sets, a numeric column neither (2.5 among 0 and 1), a character one of two values neither',
+          hf['kinds'], ['folds', 'sets', 'bad', 'bad'])
+    check('... Bootstrap Forest\'s and Boosted Tree\'s launch hints: nothing with a column of sets; with a K-fold column, Early Stopping off (every row trains)',
+          (hf['sets'], 'K folds' in hf['folds'] and 'Early Stopping is off' in hf['folds'] and 'out-of-bag' in hf['folds'], hb['sets'], 'K folds' in hb['folds'] and 'Early Stopping is off' in hb['folds'] and 'one fit' in hb['folds']),
+          ('', True, '', True))
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
 
     # (13) the dark theme and phone width with the new parts open
     r = await page.ev(open_report_js('knn', {'y': ['grade'], 'x': XS, **val}, {'threshold': True, 'groupMetrics': oid, 'roc': True, 'rocTable': True, 'lift': True, 'gains': True, 'liftTable': True, 'seed': '5'}), timeout=900)
