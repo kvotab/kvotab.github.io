@@ -515,7 +515,9 @@ async def main():
     menu = await page.ev('''(() => { const it = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling"); const sub = typeof it.submenu === "function" ? it.submenu() : it.submenu; return sub.map(i => i.label); })()''')
     menu = menu or []
     at = menu.index('Multivariate Time Series…') if 'Multivariate Time Series…' in menu else None
-    check('Analyze > Specialized Modeling lists Multivariate Time Series after Time Series', at is not None and at > 0 and menu[at - 1] == 'Time Series…', True)
+    ts = menu.index('Time Series…') if 'Time Series…' in menu else None
+    # Time Series Forecast (order 21) sits between them
+    check('Analyze > Specialized Modeling lists Multivariate Time Series after Time Series and Time Series Forecast', (at is not None and ts is not None and ts < at and [m.rstrip('…') for m in menu[ts:at]]), ['Time Series', 'Time Series Forecast'])
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])

@@ -521,9 +521,9 @@
 
   // Python with cells marked "# %%" (and "# %% [markdown]", its lines as comments), as Jupytext and editors write it.
   function toPy(nb) {
-    const out = [`# ${nb.name}: a notebook of the User Interface for statsmodels (kvotab.se/smui.html)`, ''];
+    const out = [`# ${SM.util.oneLine(nb.name)}: a notebook of the User Interface for statsmodels (kvotab.se/smui.html)`, ''];
     for (const c of nb.cells) {
-      if (c.type === 'markdown') out.push('# %% [markdown]', ...c.source.split('\n').map((l) => (l ? `# ${l}` : '#')), '');
+      if (c.type === 'markdown') out.push('# %% [markdown]', ...c.source.split(/\r\n|\r|\n/).map((l) => (l ? `# ${SM.util.oneLine(l)}` : '#')), '');
       else out.push('# %%', c.source.replace(/\s+$/, ''), '');
     }
     return `${out.join('\n').replace(/\n+$/, '')}\n`;

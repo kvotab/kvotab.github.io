@@ -29,7 +29,8 @@ import numpy as np
 
 from . import data, predictive, profile
 from .registry import api
-from .util import code_head
+from .multivariate import _by_words, _fguard, _flin, _fmissing_guard, _fnum, _fsq, _fsum, _fz, _ph, _present_rows
+from .util import code_head, one_line
 
 SK = predictive.SK
 COVARIANCES = ('full', 'diag', 'tied', 'spherical')
@@ -427,7 +428,7 @@ def _keep_lines(table, rows, where=None):
         num = data.meta(table, w['column']).get('dataType') == 'numeric'
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
-        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {one_line(w["column"])} is {one_line(shown)}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -641,22 +642,89 @@ def fit(table, columns, rows=None, freq=None, k_min=3, k_max=None, covariance='f
     return out
 
 
-@api('mixtures.save', packages=SK)
-def save(table, columns, k, rows=None, freq=None, k_min=3, k_max=None, covariance='full', tours=10, outlier=False,
-         standardize=True, seed=None, max_iter=500, tol=1e-6):
-    """Save Mixture Probabilities and Save Clusters: each cluster's
-    probability and the most likely cluster of every row of the report."""
-    spec = _spec(columns, freq, k_min, k_max, covariance, tours, outlier, standardize, seed, max_iter, tol)
+def _fit_of(table, rows, spec, k):
     D, fits = _fits(table, rows, spec)
     M = fits.get(int(k))
     if M is None:
         raise ValueError(f'no fit with {k} clusters in this report')
     if isinstance(M, str):
         raise ValueError(M)
-    prob = M.proba(D.Z)
+    return D, M
+
+
+@api('mixtures.save', packages=SK)
+def save(table, columns, k, rows=None, freq=None, k_min=3, k_max=None, covariance='full', tours=10, outlier=False,
+         standardize=True, seed=None, max_iter=500, tol=1e-6, where=None):
+    """Save Mixture Probabilities and Save Clusters: each cluster's
+    probability and the most likely cluster of every row of the By group
+    whose columns are present (the report's rows, and the rows it leaves
+    out: excluded, filtered, a Freq below 1), from the report's fit."""
+    spec = _spec(columns, freq, k_min, k_max, covariance, tours, outlier, standardize, seed, max_iter, tol)
+    D, M = _fit_of(table, rows, spec, k)
+    idx, X = _present_rows(table, D.cols, where)
+    prob = M.proba((X - D.m) / D.s) if len(idx) else np.zeros((0, M.k + (1 if M.outlier else 0)))
     names = [f'Prob[Cluster {j + 1}]' for j in range(M.k)] + (['Prob[Outlier]'] if M.outlier else [])
-    return {'rows': D.index.tolist(), 'prob': prob.tolist(), 'names': names, 'cluster': (np.argmax(prob, axis=1) + 1).tolist(),
-            'k': M.k, 'outlier': M.outlier}
+    return {'rows': idx.tolist(), 'prob': prob.tolist(), 'names': names, 'cluster': (np.argmax(prob, axis=1) + 1).tolist(),
+            'k': M.k, 'outlier': M.outlier, 'n_fitted': D.n_rows}
+
+
+def _log_density_formula(D, M, j):
+    """The log of cluster j's share times its normal density at x, in the
+    columns' units, as formula text: c − 0.5 Σ_a (Σ_b (T_ab/s_b)(x_b − μ_jb))²,
+    T the inverse of the Cholesky factor of the cluster's covariance on the
+    fitting scale, μ_j its mean in the columns' units (the same numbers the
+    report's probabilities come from)."""
+    from scipy import linalg
+    p = D.p
+    mu_u = D.m + D.s * M.means[j]
+    try:
+        Lc = linalg.cholesky(M.covs[j], lower=True)
+    except linalg.LinAlgError:
+        raise ValueError('a cluster has no spread: its density has no formula')
+    Tm = linalg.solve_triangular(Lc, np.eye(p), lower=True)
+    z = [_fz(c, mu_u[b]) for b, c in enumerate(D.cols)]
+    sq = [_fsq(_flin(Tm[a, :a + 1] / D.s[:a + 1], z[:a + 1])) for a in range(p)]
+    const = math.log(M.weights[j]) - float(np.log(np.diag(Lc)).sum()) - float(np.log(D.s).sum()) - 0.5 * p * math.log(2 * math.pi)
+    return f'{_fnum(const)} - 0.5 * ({_fsum(sq)})'
+
+
+@api('mixtures.formulas', packages=SK)
+def formulas(table, columns, k, rows=None, freq=None, k_min=3, k_max=None, covariance='full', tours=10, outlier=False,
+             standardize=True, seed=None, max_iter=500, tol=1e-6, where=None):
+    """Save Mixture Formulas, as JMP's: Dist Formula <j>, cluster j's share
+    times its normal density (in the columns' units); Dist Total, their sum
+    (the mixture's density); Prob Formula <j>, Dist Formula <j> over Dist
+    Total; and beyond JMP a Cluster Formula, the most likely cluster (the
+    largest log of share times density, so that it has a value where every
+    density is too small for a number). The outlier cluster's density is
+    constant: its share over the volume of the box that holds the rows. A
+    row far from every cluster, whose densities all underflow, gets missing
+    probabilities from these formulas (as JMP's); Save Mixture
+    Probabilities, on the log scale, has values there."""
+    spec = _spec(columns, freq, k_min, k_max, covariance, tours, outlier, standardize, seed, max_iter, tol)
+    D, M = _fit_of(table, rows, spec, k)
+    k = M.k
+    by = _by_words(table, where)
+    logs = [_log_density_formula(D, M, j) for j in range(k)]
+    names = [f'Cluster {j + 1}' for j in range(k)]
+    if M.outlier:
+        # the uniform cluster in the columns' units: its share over the box's volume
+        logs.append(_fnum(math.log(M.weights[k]) + M.log_box - float(np.log(D.s).sum())))
+        names.append('Outlier')
+    m = len(logs)
+    cols = [{'name': f'Dist Formula {j + 1}' if j < k else 'Dist Formula Outlier',
+             'formula': _fguard(table, f'Exp({logs[j]})', where),
+             'notes': f'{"the outlier cluster" if j >= k else f"cluster {j + 1}"}\'s share times its {"uniform" if j >= k else "normal"} density at the row, a normal mixture of {k} clusters{by}'}
+            for j in range(m)]
+    cols.append({'name': 'Dist Total', 'formula': _fsum([_ph(j) for j in range(m)]),
+                 'notes': f'the density of the mixture of {k} clusters at the row: the sum of the Dist Formula columns{by}'})
+    for j in range(m):
+        cols.append({'name': f'Prob Formula {j + 1}' if j < k else 'Prob Formula Outlier', 'formula': f'{_ph(j)} / {_ph(m)}',
+                     'notes': f'the probability that the row belongs to {names[j].lower() if j >= k else names[j]}: its Dist Formula over Dist Total{by}'})
+    best = f'If({_fmissing_guard(D.cols)}, ., Match(Max({", ".join(logs)}), {", ".join(f"{lg}, {j + 1}" for j, lg in enumerate(logs))}))'
+    cols.append({'name': 'Cluster Formula', 'formula': _fguard(table, best, where), 'modelingType': 'nominal',
+                 'notes': f'the most likely cluster of a normal mixture of {k} clusters{f" ({k + 1}: the outlier cluster)" if M.outlier else ""}{by}'})
+    return {'columns': cols}
 
 
 def _profile_build(table, rows=None, columns=(), k=3, freq=None, k_min=3, k_max=None, covariance='full', tours=10, outlier=False,

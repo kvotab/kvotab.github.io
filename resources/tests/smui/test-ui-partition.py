@@ -580,7 +580,7 @@ def partition_compare(lab, g, F):
         check_tree(check, lab, g, F)
     elif t.startswith('Partition of'):
         check_partition(check, lab, g, F)
-    elif t == 'Split history':
+    elif t in ('Split history', 'AICc by number of splits'):
         check_lines(check, lab, g, F)
     elif t.startswith('Leaf '):
         check_hbars(check, lab, g, F, stacked=t == 'Leaf probabilities')
@@ -877,7 +877,9 @@ async def main():
     # the leaf report against the engine
     eng = await page.ev(f'(async () => {{ const rep = {REP}; const p = ({PAYLOAD})(rep); return await SM.engine.call("partition.fit", p, rep.table); }})()')
     lr = await page.ev(table_under_js('Leaf Report', 0))
-    check('Leaf Report: a line per leaf, its probabilities the engine\'s', [[rw[1], rw[2], rw[3]] for rw in lr[1:]], [[lf['label'], f'{lf["probs"][0]:.4f}', f'{lf["probs"][1]:.4f}'] for lf in eng['leaves']])
+    check('Leaf Report: a line per leaf, its probabilities the engine\'s', [[rw[1], rw[3], rw[4]] for rw in lr[1:]], [[lf['label'], f'{lf["probs"][0]:.4f}', f'{lf["probs"][1]:.4f}'] for lf in eng['leaves']])
+    check('... and its rule, the label with the conditions on one column merged (the engine\'s)', [rw[2] for rw in lr[1:]], [lf['rule'] for lf in eng['leaves']])
+    check('... a rule merges two conditions on one column into one', any(rw[1].count('contract(') == 2 and rw[2].count('contract(') == 1 for rw in lr[1:]), True)
     cc = await page.ev(table_under_js('Column Contributions', 0))
     check('Column Contributions: each column\'s G², adding to the splits\'', math.isclose(sum(num(rw[1]) for rw in cc[1:]), sum(nd['split']['stat'] for nd in eng['nodes'] if nd['split']), rel_tol=1e-6), True)
     kf = await page.ev(table_under_js('Crossvalidation', 0))
@@ -917,6 +919,48 @@ async def main():
     check('Save Columns: the probabilities, the most likely level, leaf numbers and labels', r['names'], ['Prob[No]', 'Prob[Yes]', 'Most Likely churn', 'Leaf Number', 'Leaf Label'])
     check('... the engine\'s values for every row', (r['prob'], r['most'], r['numbers'], r['labels'], r['n']), (True, True, True, True, 2000))
     check('... Leaf Number nominal, Leaf Label text', r['kinds'], ['nominal', 'character'])
+
+    # ---- Save Prediction Formula and the leaf formulas: live formula columns with Save Predicteds' values
+    SAVEF = '''
+    (async (items) => {
+      const rep = %s; const t = rep.table; const n0 = t.columns.length;
+      for (const item of items) {
+        const k = t.columns.length;
+        const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.querySelector('h2')); h.querySelector('.sm-ob-menu').click();
+        await new Promise(r => setTimeout(r, 60));
+        [...[...document.querySelectorAll('.sm-menu')].pop().querySelectorAll('button')].find(b => b.querySelector('.sm-label').textContent === 'Save Columns').click();
+        await new Promise(r => setTimeout(r, 60));
+        [...[...document.querySelectorAll('.sm-menu')].pop().querySelectorAll('button')].find(b => b.querySelector('.sm-label').textContent === item).click();
+        for (let i = 0; i < 80 && t.columns.length === k; i++) await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return t.columns.slice(n0).map(c => ({ name: c.name, formula: !!(c.formula && c.formula.expr), mt: c.modelingType, order: c.valueOrder || null,
+        values: Array.from(c.values, v => (typeof v === 'number' && !Number.isFinite(v) ? null : v)) }));
+    })
+    ''' % REP
+    made = await page.ev(f'({SAVEF})({json.dumps(["Save Prediction Formula", "Save Leaf Number Formula", "Save Leaf Label Formula"])})', timeout=300)
+    old_cols = await page.ev(f'''(() => {{ const t = {REP}.table; const g = (n) => Array.from(t.col(n).values, v => (typeof v === 'number' && !Number.isFinite(v) ? null : v));
+      return {{ no: g('Prob[No]'), yes: g('Prob[Yes]'), most: g('Most Likely churn'), num: g('Leaf Number'), lab: g('Leaf Label') }}; }})()''')
+    fc = {c['name']: c for c in made}
+    check('Save Prediction Formula: a formula column per level\'s probability and the most likely level; the leaf formulas',
+          ([c['name'] for c in made], all(c['formula'] for c in made)), (['Prob[No] 2', 'Prob[Yes] 2', 'Most Likely churn 2', 'Leaf Number 2', 'Leaf Label 2'], True))
+    check('... each probability\'s formula gives Save Predicteds\' probability on every row', (all(close(a, b, 1e-12) for a, b in zip(fc['Prob[No] 2']['values'], old_cols['no'])), all(close(a, b, 1e-12) for a, b in zip(fc['Prob[Yes] 2']['values'], old_cols['yes']))), (True, True))
+    check('... the Most Likely formula the level of the largest probability, nominal in the levels\' order', (fc['Most Likely churn 2']['values'] == old_cols['most'], fc['Most Likely churn 2']['mt'], fc['Most Likely churn 2']['order']), (True, 'nominal', ['No', 'Yes']))
+    check('... the leaf number and label formulas give Save Leaf Numbers\' and Labels\' values', (fc['Leaf Number 2']['values'] == old_cols['num'], fc['Leaf Label 2']['values'] == old_cols['lab']), (True, True))
+    live = await page.ev(f'''(async () => {{
+      const rep = {REP}; const t = rep.table; const ten = t.col('tenure (months)'), f = t.col('Leaf Number 2');
+      const i = [...Array(t.nrows).keys()].find(k => ten.values[k] < 6);
+      const before = f.values[i]; const old = ten.values[i];
+      t.setCell(i, ten.id, 60);
+      await new Promise(r => setTimeout(r, 400));
+      const after = f.values[i];
+      t.setCell(i, ten.id, old);
+      await new Promise(r => setTimeout(r, 400));
+      return {{ before, after, back: f.values[i], saved: t.col('Leaf Number').values[i] }};
+    }})()''')
+    check('... a cell changed: the formula columns are worked out again, the saved values stay', (live['before'] != live['after'], live['back'] == live['before'], live['saved'] == live['before']), (True, True, True))
+    summ = await page.ev(table_under_js('Partition for churn', 0))
+    check('the summary has JMP\'s AICc, on the training line', ('AICc' in summ[0], summ[1][summ[0].index('AICc')] not in ('', '.')), (True, True))
 
     # ---- the Python script, Bootstrap on the summary, the Local Data Filter
     script = await page.ev(f'{REP}.pythonScript()')
@@ -1004,6 +1048,9 @@ async def main():
       return {{ names: t.columns.slice(n0).map(c => c.name), ok: [...Array(t.nrows).keys()].every(i => Math.abs(c[i] - p[i] - res[i]) < 1e-9), levels: new Set(p).size }};
     }})()''', timeout=120)
     check('Save Predicteds and Save Residuals: the leaf means and the response minus them', (r['names'], r['ok'], r['levels']), (['Predicted monthly charge (€)', 'Residual monthly charge (€)'], True, 3))
+    made = await page.ev(f'({SAVEF})({json.dumps(["Save Prediction Formula"])})', timeout=300)
+    pv_ = await page.ev(f"Array.from({REP}.table.col('Predicted monthly charge (€)').values, v => (Number.isFinite(v) ? v : null))")
+    check('Save Prediction Formula (continuous): the leaf means as a formula, Save Predicteds\' on every row', ([c['name'] for c in made], all(close(a, b, 1e-12) for a, b in zip(made[0]['values'], pv_))), (['Predicted monthly charge (€) 2'], True))
     await shot(page, 'partition-03-continuous.png')
 
     # ---- By: each group its own splits
@@ -1034,6 +1081,53 @@ async def main():
     check('... its summary is the engine\'s CART fit', summ[1][1], f'{eng["summary"][0]["entropy_rsquare"]:.3f}')
     check('... the splits are scikit-learn\'s (≤ conditions)', any('<=' in nd['label'] or '>' in nd['label'] for nd in eng['nodes']), True)
     await page.ev(pick_js('*top*', ['Method', 'Decision Tree (LogWorth, JMP)']))
+
+    # ---- a K-fold Validation column: the Crossvalidation report by its folds, Go by the crossvalidated RSquare
+    r = await page.ev(f'''(async (xs) => {{
+      const src = SM.app.tables.find(t => t.name === 'Churn');
+      const keepCol = (c) => !/^(Prob|Most Likely|Predicted|Residual|Leaf)/.test(c.name);
+      const cols = src.columns.filter(keepCol).map(c => ({{ name: c.name, dataType: c.dataType, values: c.values.slice(), ...(c.valueOrder ? {{ valueOrder: c.valueOrder.slice() }} : {{}}), ...(c.modelingType ? {{ modelingType: c.modelingType }} : {{}}) }}));
+      cols.push({{ name: 'Fold ID', dataType: 'numeric', values: src.columns[0].values.map((_, i) => 1 + (i * 7919) %% 5) }});
+      const t = new SM.Table({{ name: 'Churn folds', source: 'test', columns: cols }});
+      SM.app.addTable(t);
+      const ids = (names) => names.map(n => t.col(n).id);
+      const rep = SM.app.openReport(SM.platforms.get('partition'), {{ roles: {{ y: ids(['churn']), x: ids(xs), validation: ids(['Fold ID']) }}, options: {{ seed: '3', history: true }} }}, t);
+      await new Promise(res => rep.on('done', res));
+      const heads = () => [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent);
+      const before = heads();
+      const kfTable = () => {{ const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Crossvalidation'); return h ? [...h.parentElement.querySelectorAll('table.sm-rt')].map(tb => tb._rt.rows.length) : null; }};
+      const k0 = kfTable();
+      const goBtn = [...rep.body.querySelectorAll('.sm-part-buttons button')].find(b => b.textContent === 'Go');
+      const title = goBtn ? goBtn.title : null;
+      const d = new Promise(res => rep.on('done', res)); goBtn.click(); await d;
+      const hp = rep.plots.find(p => p.opts.title === 'Split history');
+      const cv = hp ? hp.traces.find(tr => tr.name === 'Crossvalidation') : null;
+      const eng = await SM.engine.call('partition.fit', {{ y: 'churn', x: xs, validation: 'Fold ID', seed: 3, steps: [{{ op: 'go' }}] }}, t);
+      const note = [...rep.body.querySelectorAll('.sm-ob-note')].map(n => n.textContent).find(x => /crossvalidated by the 5 folds/.test(x)) || null;
+      const kf = kfTable();
+      const eachHead = (() => {{ const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Crossvalidation'); const tb = h && h.parentElement.querySelectorAll('table.sm-rt')[1]; return tb ? [...tb.querySelectorAll('thead th')].map(th => th.textContent) : null; }})();
+      return {{ before, k0, title, cv: cv ? {{ x: cv.x, y: cv.y }} : null, go: eng.go, splits: eng.splits, shown: rep.body.querySelectorAll('.sm-part-tree:not(.is-small) .sm-part-node').length, nodes: eng.nodes.length, note, kf, eachHead, errors: [...rep.body.querySelectorAll('.sm-ob-error')].map(e => e.textContent) }};
+    }})(%s)''' % json.dumps(XS), timeout=600)
+    check('a K-fold Validation column (5 values): the Crossvalidation report shows by itself, with the column\'s 5 folds and Overall', ('Crossvalidation' in r['before'], r['k0']), (True, [2, 5]))
+    check('... Go is there, by the crossvalidated RSquare', (r['title'] or '').startswith('Split until the RSquare crossvalidated by the 5 folds of Fold ID'), True)
+    upto = [e for e in (r['go'] or {}).get('trace', []) if e['splits'] <= r['go']['best']]
+    check('... after Go: the engine\'s tree, and Split History draws the crossvalidated RSquare up to the size kept', (r['shown'], r['cv'] and r['cv']['x'] == [e['splits'] for e in upto] and all(abs(a - e['Crossvalidation']) < 1e-12 for a, e in zip(r['cv']['y'], upto))), (r['nodes'], True))
+    check('... its note says what Go kept by, and no errors', (bool(r['note']), r['errors']), (True, []))
+    check('... the Each Fold table names each fold by its value in the column', r['eachHead'][:2] if r['eachHead'] else None, ['Fold', 'Fold ID'])
+    r2 = await page.ev('''(async () => {
+      const rep = SM.app.reports.at(-1);
+      const h = rep.body.querySelector('.sm-ob-head h2').parentElement.querySelector('.sm-ob-menu'); h.click();
+      await new Promise(r => setTimeout(r, 60));
+      const b = [...[...document.querySelectorAll('.sm-menu')].pop().querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === 'K Fold Crossvalidation');
+      const checked = b ? b.getAttribute('aria-checked') || (b.classList.contains('is-checked') ? 'true' : null) : null;
+      const d = new Promise(res => rep.on('done', res)); b.click(); await d;
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent);
+      const opt = rep.spec.options.kfold;
+      SM.app.closeReport(rep);          // the checks below read the report before this one
+      SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Churn')));
+      return { found: !!b, heads, opt };
+    })()''')
+    check('... its red triangle item (no number to ask) turns the Crossvalidation off', (r2['found'], 'Crossvalidation' in r2['heads'], r2['opt']), (True, False, False))
 
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))

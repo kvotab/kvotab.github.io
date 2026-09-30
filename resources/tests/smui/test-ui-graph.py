@@ -1345,8 +1345,8 @@ async def main():
     await page.ev(HELPERS)
     check('Graph Builder opens without a launch dialog', (r['dialog'], r['title'], r['active']), (False, 'Graph Builder', True))
     check('its column list', r['cols'], ['id', 'age', 'sex', 'height (cm)', 'weight (kg)'])
-    check('the drop zones', sorted(r['zones']), sorted(['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq']))
-    check('the element palette, with statsmodels\' Bean', r['palette'], ['Points', 'Smoother', 'Line of Fit', 'Ellipse', 'Contour', 'Line', 'Bar', 'Area', 'Box Plot', 'Bean', 'Histogram', 'Heatmap', 'Mosaic', 'Caption Box', 'Pie'])
+    check('the drop zones, Map Shape among them', sorted(r['zones']), sorted(['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape']))
+    check('the element palette, with statsmodels\' Bean, and Map Shapes', r['palette'], ['Points', 'Smoother', 'Line of Fit', 'Ellipse', 'Contour', 'Line', 'Bar', 'Area', 'Box Plot', 'Bean', 'Histogram', 'Heatmap', 'Mosaic', 'Caption Box', 'Pie', 'Map Shapes'])
     check('an empty graph asks for columns', r['empty'], True)
     check('Graph Builder follows the table (Automatic Recalc)', r['auto'], True)
     await shot(page, 'g01-empty.png')
@@ -1684,7 +1684,7 @@ async def main():
       return { main, props, shown, after, audit: KvotInfo.audit().noTopic };
     })()''')
     check('Graph Builder\'s (i): zones, builder, elements, the properties of the elements in the graph, red triangle', [h for h in r['main']['heads'] if h in ('Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle')], ['Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle'])
-    check('... every zone explained', [c[0] for c in r['main']['choices']['Zones']], ['X, Y', 'Group X, Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq'])
+    check('... every zone explained', [c[0] for c in r['main']['choices']['Zones']], ['X, Y', 'Group X, Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape'])
     check('... the elements in the graph marked', [c[0] for c in r['main']['choices']['Elements'] if c[2]], ['Points', 'Smoother'])
     check('... the builder\'s buttons', [c[0] for c in r['main']['choices']['The builder'] if c[0] in ('Undo', 'Start Over', 'Done')], ['Undo', 'Start Over', 'Done'])
     shown = dict(r['shown'])
@@ -1711,7 +1711,7 @@ async def main():
         away: away.sections.filter(s => s.heading.startsWith('Properties: ')).length, form: form && form.choices.Fields, audit, closed: !document.querySelector('.sm-dialog') };
     })()''')
     check('every element\'s properties explained (15 elements, 63 properties)', (len(r['n']), r['props'], r['bad']), (15, 63, []))
-    check('with no builder on show, the (i) explains every element\'s properties', r['away'], 15)
+    check('with no builder on show, the (i) explains every element\'s properties (16 elements, Map Shapes among them)', r['away'], 16)
     check('a form\'s (i) lists its fields: Graph Size', [f[0] for f in r['form'] or []], ['Width', 'Height'])
     check('... with the form open, every (i) has a topic', (r['audit'], r['closed']), ([], True))
 
@@ -2176,6 +2176,8 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
             plat_functional(check, tag, P, R, err, xs)
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
 
+    await wp6(page)
+
     # ---- dark theme and phone width, with Graph Builder
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
@@ -2211,6 +2213,503 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
     check('no console errors from the Graph code', [m for m in page.console if 'graph' in m.lower()], [])
     await page.close()
 
+
+# ---- WP6: Axis Settings, Levels, Order By, Marker Size and Transparency, maps, transform columns ------------------
+# The page's helpers: an axis's drag box (where its tick labels are), the Axis Settings window's fields, menus.
+WP6_JS = r"""
+window.__ax = {
+  at(p, which, sub = 'xy') { const r = p.box.querySelector(`.draglayer .${sub} rect.${which}drag`); if (!r) return null; const b = r.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; },
+  inPlot(p) { const r = p.box.querySelector('.draglayer .xy rect.nsewdrag'); const b = r.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; },
+  dialog() { return [...document.querySelectorAll('.sm-dialog')].pop() || null; },
+  set(root, key, value) { const i = root.querySelector(`[data-ax="${key}"]`); if (!i) return false; if (i.type === 'checkbox') i.checked = !!value; else i.value = value; i.dispatchEvent(new Event('change', { bubbles: true })); return true; },
+  button(d, label) { const b = [...d.querySelectorAll('.sm-dialog-foot button')].find((x) => x.textContent === label); if (b) b.click(); return !!b; },
+  menus() { return [...document.querySelectorAll('.sm-menu')].map((m) => [...m.querySelectorAll('button')].map((b) => b.textContent)); },
+  item(label, level) { const ms = [...document.querySelectorAll('.sm-menu')]; const m = level == null ? ms[ms.length - 1] : ms[level]; const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.replace(/^✓/, '') === label); if (b) b.click(); return !!b; },
+  hover(label, level = 0) { const m = [...document.querySelectorAll('.sm-menu')][level]; const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.replace(/^✓/, '') === label); if (b) b.dispatchEvent(new MouseEvent('mouseenter')); return !!b; },
+  axis(p, name = 'yaxis') { const A = p.box._fullLayout && p.box._fullLayout[name]; return A ? { type: A.type, range: A.range.slice(), ticks: (A._vals || []).map((v) => v.x), text: (A._vals || []).map((v) => v.text) } : null; },
+  code(p) { const n = p.box.nextElementSibling; return n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null; },
+  // until the report has run again after a change to its table (Graph Builder follows it, 250 ms later) and is idle
+  async calm(rep) { await new Promise((r) => setTimeout(r, 450)); for (let i = 0; i < 400 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); const b = SM.platforms.get('graphbuilder').builder(rep); if (b) await b.idle(); await new Promise((r) => setTimeout(r, 100)); },
+  // Graph Builder's graph as it is now (a change to the table makes a new one): an axis's drag box, or the plot's middle
+  async gbAt(which) { await __ax.calm(_rep); const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p; return which ? __ax.at(p, which) : __ax.inPlot(p); },
+  async redrawn(rep) { for (let i = 0; i < 200 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); await new Promise((r) => setTimeout(r, 120)); const p = rep.plots[0]; if (p && !p.drawn) { p.box.scrollIntoView({ block: 'center' }); await drawn(p); } return p; },
+};
+"""
+
+
+async def dbl(page, x, y):
+    """A real double-click: two presses and releases, as a mouse makes them."""
+    await page.mouse('mouseMoved', x, y)
+    for n in (1, 2):
+        await page.mouse('mousePressed', x, y, clicks=n)
+        await page.mouse('mouseReleased', x, y, clicks=n)
+    await asyncio.sleep(0.5)
+
+
+async def rclick(page, x, y):
+    await page.mouse('mouseMoved', x, y)
+    await page.mouse('mousePressed', x, y, button='right')
+    await page.mouse('mouseReleased', x, y, button='right')
+    await asyncio.sleep(0.25)
+
+
+def jmp_q(s, p):
+    """JMP's quantile of sorted values, the (n + 1)p-th, interpolated."""
+    n = len(s)
+    h = (n + 1) * p
+    if h <= 1:
+        return s[0]
+    if h >= n:
+        return s[-1]
+    k = int(math.floor(h))
+    return s[k - 1] + (h - k) * (s[k] - s[k - 1])
+
+
+def bin_cuts(v, n=5, method='quantile'):
+    """Make Binning Column's cuts from their definitions: JMP's quantiles, or bins of one round width (1, 2, 2.5, 5 or 10
+    times a power of ten, the nearest to the range over n) from a whole multiple of it; a bin holds its lower cut."""
+    s = sorted(v)
+    lo, hi = s[0], s[-1]
+    if method == 'quantile':
+        cuts = [jmp_q(s, i / n) for i in range(1, n)]
+    else:
+        raw = (hi - lo) / n
+        p = 10 ** math.floor(math.log10(raw))
+        size = min((m * p for m in (1, 2, 2.5, 5, 10)), key=lambda q: abs(math.log(q / raw)))
+        start = math.floor(lo / size) * size
+        cuts, x = [], start + (size if start <= lo else 0)
+        while x <= hi and len(cuts) < 1000:
+            cuts.append(float(f'{x:.12g}'))
+            x += size
+    cuts = [c for c in sorted({float(f'{c:.12g}') for c in cuts}) if lo < c <= hi]
+    if cuts and cuts[-1] == hi:
+        cuts.pop()
+    return cuts, lo, hi
+
+
+def page_fmt(v):
+    """The page's fmt() of a number (7 significant digits, integers as integers), with - for minus."""
+    if float(v).is_integer() and abs(v) < 1e15:
+        return str(int(v))
+    t = f'{v:.7g}'
+    if 'e' not in t and '.' in t:
+        t = t.rstrip('0').rstrip('.')
+    return t
+
+
+def bin_labels(cuts, lo, hi):
+    e = [lo] + cuts + [hi]
+    return [f'{page_fmt(e[k])} - {page_fmt(e[k + 1])}' for k in range(len(e) - 1)]
+
+
+async def wp6(page):
+    await page.ev(WP6_JS)
+    # ---- Axis Settings on any report's graph: Fit Y by X's bivariate plot, by real double-clicks and right-clicks
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Students')))")
+    res = await page.ev(open_report_js('fitybyx', {'y': ['weight (kg)'], 'x': ['height (cm)']}))
+    check('Axis Settings: a Fit Y by X report to try them on', res['errors'], [])
+    await page.ev('(async () => { window._fr = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(_fr)); window._fp = _fr.plots[0]; _fp.box.scrollIntoView({ block: "center" }); await drawn(_fp); await settle(); })()')
+    before = await page.ev('__ax.axis(_fp)')
+    xy = await page.ev('__ax.at(_fp, "ns")')
+    await dbl(page, *xy)
+    r = await page.ev('(() => { const d = __ax.dialog(); return d ? { title: d.querySelector("h2").textContent, range: __ax.axis(_fp).range, fields: [...d.querySelectorAll("[data-ax]")].map(i => i.dataset.ax) } : null; })()')
+    check('Axis Settings: a double-click on an axis opens its window, as in JMP', (r or {}).get('title'), 'Y Axis Settings')
+    check('... and leaves the axis where it was (Plotly would have rescaled it)', [round(v, 9) for v in (r or {}).get('range', [])], [round(v, 9) for v in before['range']])
+    check('... with the scale, minimum, maximum, increment, order and reference lines', (r or {}).get('fields'), ['scale', 'min', 'max', 'inc', 'reverse', 'addref'])
+    r = await page.ev(r"""(async () => { const d = __ax.dialog();
+      __ax.set(d, 'min', '90'); __ax.set(d, 'max', '40');
+      __ax.button(d, 'OK'); await settle();
+      const msg = d.querySelector('.sm-launch-msg').textContent, open = d.isConnected;
+      __ax.set(d, 'scale', 'log'); __ax.set(d, 'min', '0'); __ax.set(d, 'max', '90');
+      __ax.button(d, 'OK'); await settle();
+      return { msg, open, msg2: d.querySelector('.sm-launch-msg').textContent, open2: d.isConnected }; })()""")
+    check('Axis Settings: a minimum above the maximum is refused, the window stays', (r['msg'], r['open']), ('The minimum must be below the maximum', True))
+    check('... and on a log scale, a minimum of 0', (r['msg2'], r['open2']), ('On a log scale the minimum and the maximum must be above 0', True))
+    r = await page.ev(r"""(async () => { const d = __ax.dialog();
+      __ax.set(d, 'scale', 'log'); __ax.set(d, 'min', '40'); __ax.set(d, 'max', '90'); __ax.set(d, 'inc', '1.25');
+      const add = d.querySelector('[data-ax="addref"]'); add.click(); add.click();
+      const R = d.querySelectorAll('.sm-ax-ref');
+      __ax.set(R[0], 'ref', '60'); __ax.set(R[0], 'reflabel', 'sixty'); __ax.set(R[0], 'refcolor', 'red'); __ax.set(R[0], 'refdash', 'dash');
+      __ax.set(R[1], 'ref', '70'); __ax.set(R[1], 'refto', '80'); __ax.set(R[1], 'refcolor', 'blue');
+      const done = new Promise((res) => _fr.on('done', res));
+      __ax.button(d, 'OK'); await done;
+      const p = await __ax.redrawn(_fr); window._fp = p;
+      const fl = p.box._fullLayout;
+      return { spec: Object.values(_fr.spec.options.axisSettings || {}), keys: Object.keys(_fr.spec.options.axisSettings || {}).length, A: __ax.axis(p),
+        shapes: fl.shapes.map((q) => ({ type: q.type, y0: q.y0, y1: q.y1, xref: q.xref, yref: q.yref, color: q.type === 'line' ? q.line.color : q.fillcolor, dash: q.line.dash })),
+        ann: fl.annotations.map((a) => a.text), code: __ax.code(p), script: _fr.pythonScript() }; })()""")
+    want_ticks = [math.log10(40 * 1.25 ** k) for k in range(4)]
+    check('Axis Settings kept in the report\'s spec, by graph and axis', (r['keys'], r['spec'][0] if r['spec'] else None),
+          (1, {'yaxis': {'log': True, 'min': 40, 'max': 90, 'inc': 1.25, 'refs': [{'value': 60, 'to': None, 'label': 'sixty', 'color': 'red', 'dash': 'dash'}, {'value': 70, 'to': 80, 'label': '', 'color': 'blue', 'dash': 'solid'}]}}))
+    check('Axis Settings drawn: a log axis from 40 to 90, a tick every × 1.25 from the minimum', (r['A']['type'], [round(v, 9) for v in r['A']['range']], [round(v, 9) for v in r['A']['ticks']]),
+          ('log', [round(math.log10(40), 9), round(math.log10(90), 9)], [round(v, 9) for v in want_ticks]))
+    check('... the reference line at 60 across the plot, red and dashed, labelled; the range 70 to 80 shaded blue', (sorted((q['type'], round(q['y0'], 9), round(q['y1'], 9), q['xref'], q['yref'], q['color'], q.get('dash') if q['type'] == 'line' else None) for q in r['shapes']), 'sixty' in r['ann']),
+          (sorted([('line', 60, 60, 'x domain', 'y', '#b0413e', 'dash'), ('rect', 70, 80, 'x domain', 'y', 'rgba(31, 78, 121, 0.16)', None)]), True))
+    code = r['code'] or ''
+    check('... and the graph\'s code sets the same axis before its plt.show()', all(t in code for t in ('target.set_yscale("log")', 'target.set_ylim(40, 90)', 'target.set_yticks(ticks_every(', 'target.axhline(60, color="#b0413e"', 'target.axhspan(70, 80, color="#1f4e79"')) and code.rstrip().endswith('plt.show()'), True)
+    check('... as does Save Python Script', 'target.set_ylim(40, 90)' in r['script'], True)
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(code, []))}, _fr.table)', timeout=300)
+    R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+    check('... which runs in the page\'s Python', err, None)
+    if R:
+        A = R['figures'][0]['axes'][0]
+        spans = [[round(b['y'], 6), round(b['y'] + b['h'], 6)] for b in A['bars'] if (b['fc'] or '').startswith('#1f4e79')] + [sorted({round(q[1], 6) for q in P['xy']}) for P in A['polygons'] if (P['fc'] or '').startswith('#1f4e79')]
+        check('... and draws the axis the graph has: log, 40 to 90, its ticks, the line and the range', (A['yscale'], [round(v, 6) for v in A['ylim']], [round(v, 6) for v in A['yticks']],
+                                                                                                        [(L['color'][:7], L['ls']) for L in A['lines'] if L['y'] == [60.0, 60.0]], spans, any(a['s'] == 'sixty' for a in A['annotations'])),
+              ('log', [40.0, 90.0], [40.0, 50.0, 62.5, 78.125], [('#b0413e', '--')], [[70.0, 80.0]], True))
+    # the axis's right-click menu, Reverse Order, Redo, a saved project, Remove
+    xy = await page.ev('__ax.at(_fp, "ns")')
+    await rclick(page, *xy)
+    items = await page.ev('__ax.menus()')
+    check('Axis Settings: a right-click on the axis gives its menu', items[0] if items else None, ['Axis Settings…', '✓Log Scale', 'Reverse Order', 'Add Reference Line…', 'Remove Axis Settings'])
+    r = await page.ev(r"""(async () => { const done = new Promise((res) => _fr.on('done', res)); __ax.item('Reverse Order'); await done; const p = await __ax.redrawn(_fr); window._fp = p;
+      const A = __ax.axis(p);
+      const d2 = new Promise((res) => _fr.on('done', res)); _fr.run(); await d2; const q = await __ax.redrawn(_fr);
+      return { A, code: __ax.code(p), redo: __ax.axis(q) }; })()""")
+    check('... Reverse Order: the axis runs from 90 down to 40', [round(v, 9) for v in r['A']['range']], [round(math.log10(90), 9), round(math.log10(40), 9)])
+    check('... its code turns the axis round too', 'target.invert_yaxis()' in (r['code'] or '') and 'target.set_ylim(90, 40)' in (r['code'] or ''), True)
+    check('Axis Settings: Redo keeps them', [round(v, 9) for v in r['redo']['range']], [round(math.log10(90), 9), round(math.log10(40), 9)])
+    r = await page.ev(r"""(async () => {
+      const t = _fr.table;
+      const proj = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [_fr.toJSON()] };
+      SM.app.loadProject(JSON.parse(JSON.stringify(proj)));
+      const rep = SM.app.reports[SM.app.reports.length - 1];
+      SM.app.showTab(SM.app.tabOf(rep));
+      await new Promise((res) => { if (rep.plots.length && !rep.body.classList.contains('is-running')) res(); else rep.on('done', res); });
+      const p = await __ax.redrawn(rep);
+      const A = __ax.axis(p);
+      SM.app.closeReport(rep); SM.app.closeTable(rep.table); SM.app.showTab(SM.app.tabOf(_fr));
+      return A; })()""")
+    check('Axis Settings: a saved project opens with them (log, reversed, 90 to 40)', (r['type'], [round(v, 9) for v in r['range']]), ('log', [round(math.log10(90), 9), round(math.log10(40), 9)]))
+    await page.ev('(async () => { await __ax.redrawn(_fr); window._fp = _fr.plots[0]; _fp.box.scrollIntoView({ block: "center" }); await settle(); })()')
+    xy = await page.ev('__ax.at(_fp, "ns")')
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const done = new Promise((res) => _fr.on('done', res)); __ax.item('Remove Axis Settings'); await done; const p = await __ax.redrawn(_fr); window._fp = p;
+      return { A: __ax.axis(p), spec: _fr.spec.options.axisSettings || null, code: __ax.code(p) }; })()""")
+    check('Axis Settings: Remove Axis Settings, and the axis is the report\'s again', (r['A']['type'], [round(v, 9) for v in r['A']['range']], r['spec'], 'Axis Settings' in (r['code'] or '')), ('linear', [round(v, 9) for v in before['range']], None, False))
+    # a double-click in the plot itself stays Plotly's; Cancel changes nothing
+    await page.ev('(async () => { _fp.box.scrollIntoView({ block: "center" }); await settle(); })()')
+    xy = await page.ev('__ax.inPlot(_fp)')
+    await dbl(page, *xy)
+    check('Axis Settings: a double-click in the plot (not on an axis) opens no window', await page.ev('!!__ax.dialog()'), False)
+    xy = await page.ev('__ax.at(_fp, "ew")')
+    await dbl(page, *xy)
+    r = await page.ev(r"""(async () => { const d = __ax.dialog(); const t = d ? d.querySelector('h2').textContent : null; if (d) { __ax.set(d, 'min', '150'); __ax.button(d, 'Cancel'); } await settle(); return { t, spec: _fr.spec.options.axisSettings || null, x: __ax.axis(_fp, 'xaxis').range }; })()""")
+    xb = await page.ev('__ax.axis(_fp, "xaxis").range')
+    check('Axis Settings of X by a double-click; Cancel leaves the axis and the report as they were', (r['t'], r['spec'], [round(v, 6) for v in r['x']]), ('X Axis Settings', None, [round(v, 6) for v in xb]))
+    # the red triangle's Axis Settings: every numeric axis of the report's graphs
+    r = await page.ev(r"""(async () => { _fr.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle();
+      __ax.hover('Axis Settings'); await settle(); const m = __ax.menus(); const got = m[1] || null;
+      if (got) __ax.item(got[1], 1); await settle(); const d = __ax.dialog(); const t = d ? d.querySelector('h2').textContent : null; if (d) __ax.button(d, 'Cancel'); SM.ui.closeMenus(); await settle(); return { got, t }; })()""")
+    check('Axis Settings in the red triangle: the graph\'s axes by name, for the keyboard and a phone', (r['got'], r['t']), (['X Axis: height (cm)…', 'Y Axis: weight (kg)…'], 'Y Axis Settings'))
+    # By groups: the same graph of every group takes them
+    res = await page.ev(open_report_js('fitybyx', {'y': ['weight (kg)'], 'x': ['height (cm)'], 'by': ['sex']}))
+    r = await page.ev(r"""(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(rep)); await __ax.redrawn(rep);
+      const p = rep.plots[0]; p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle();
+      const done = new Promise((res) => rep.on('done', res)); SM.axis.put(p, 'yaxis', { min: 20, max: 100 }); await done;
+      for (const q of rep.plots) { q.box.scrollIntoView({ block: 'center' }); await drawn(q); }
+      const out = rep.plots.map((q) => __ax.axis(q).range); SM.app.closeReport(rep); SM.app.showTab(SM.app.tabOf(_fr)); return out; })()""")
+    check('Axis Settings with By: every group\'s graph from 20 to 100', r, [[20, 100], [20, 100]])
+
+    # ---- Graph Builder: Axis Settings go with the column on the axis, on every panel, in its code
+    r = await page.ev(r"""(async () => {
+      const t = SM.app.tables.find((x) => x.name === 'Students');
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res));
+      window._rep6 = rep; window._rep0b = window._rep; window._rep = rep; SM.app.showTab(SM.app.tabOf(rep));
+      const p = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], groupX: ['sex'] }, ['points']);
+      p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p;
+      return Object.keys(p.box._fullLayout).filter((k) => /^yaxis/.test(k)); })()""")
+    check('Graph Builder with Group X: a Y axis for each panel', r, ['yaxis', 'yaxis2'])
+    xy = await page.ev('__ax.gbAt("ns")')
+    await dbl(page, *xy)
+    r = await page.ev(r"""(async () => { const d = __ax.dialog(); if (!d) return null;
+      __ax.set(d, 'min', '30'); __ax.set(d, 'max', '90'); __ax.set(d, 'inc', '15'); d.querySelector('[data-ax="addref"]').click();
+      const R = d.querySelector('.sm-ax-ref'); __ax.set(R, 'ref', '60'); __ax.set(R, 'refto', '70'); __ax.set(R, 'reflabel', 'band');
+      __ax.button(d, 'OK'); await _gb.idle(); await settle();
+      const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); window._gp = p;
+      let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
+      const fl = p.box._fullLayout;
+      return { axes: _gb.state().axes, A: [__ax.axis(p, 'yaxis'), __ax.axis(p, 'yaxis2')].map((a) => [a.range, a.ticks]), rects: fl.shapes.filter((q) => q.type === 'rect').map((q) => [q.yref, q.y0, q.y1]), code, spec: _rep.spec.options.axisSettings || null }; })()""")
+    check('Graph Builder: the window\'s settings kept by the column on the axis, in the builder\'s state', (r or {}).get('axes'), {'y:weight (kg)': {'min': 30, 'max': 90, 'inc': 15, 'refs': [{'value': 60, 'to': 70, 'label': 'band', 'color': 'gray', 'dash': 'solid'}]}})
+    check('Graph Builder: every panel\'s Y from 30 to 90, a tick every 15, the band on each', (r['A'], sorted(r['rects'])), ([[[30, 90], [30, 45, 60, 75, 90]]] * 2, [['y', 60, 70], ['y2', 60, 70]]))
+    check('... not in the report\'s own axis settings (the builder keeps them)', r['spec'], None)
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
+    R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+    AX = [A for A in (R['figures'][0]['axes'] if R else []) if not A['colorbar']]
+    check('... and its code (graph.code) draws them on every panel', (err, [(A['ylim'], A['yticks']) for A in AX]), (None, [([30.0, 90.0], [30.0, 45.0, 60.0, 75.0, 90.0])] * 2))
+    r = await page.ev(r"""(async () => { const t = _rep.table;
+      await _gb.update((S) => { S.zones.y = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.x = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
+      const a = __ax.axis(await drawn(_gb.plot()), 'yaxis').range;
+      await _gb.update((S) => { S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
+      const b = __ax.axis(await drawn(_gb.plot()), 'yaxis').range; return { a, b }; })()""")
+    check('Graph Builder: another column on Y has its own axis; the first one back, its settings too', (r['a'] != [30, 90], r['b']), (True, [30, 90]))
+    r = await page.ev(r"""(async () => { await _gb.update((S) => { S.log = { y: true }; }); const p = await drawn(_gb.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+      SM.axis.open(p, 'yaxis'); await settle(); const d = __ax.dialog(); const was = d.querySelector('[data-ax="scale"]').value;
+      __ax.set(d, 'scale', 'linear'); __ax.button(d, 'OK'); await _gb.idle(); await settle();
+      return { was, log: _gb.state().log, axes: _gb.state().axes['y:weight (kg)'], type: __ax.axis(await drawn(_gb.plot()), 'yaxis').type }; })()""")
+    check('Graph Builder: the zone\'s Log Scale and the window\'s Scale are one switch', (r['was'], r['log'], 'log' in (r['axes'] or {}), r['type']), ('log', {'y': False}, False, 'linear'))
+
+    # ---- Levels of a continuous grouping column: bins as Make Binning Column cuts them; Save Transform Column
+    wv = await page.ev("SM.app.tables.find((x) => x.name === 'Students').col('weight (kg)').values.filter(Number.isFinite)")
+    r = await page.ev(r"""(async () => { const p = await gbSet({ x: ['age'], y: ['height (cm)'], groupX: ['weight (kg)'] }, ['points']);
+      return { labels: _gb.figure().plan.gx.labels, panels: Object.keys(_gb.plot().userLayout).filter((k) => /^xaxis/.test(k)).length }; })()""")
+    c5, lo_, hi_ = bin_cuts(wv, 5)
+    check('Levels, automatic: five bins of about equal counts at JMP\'s quantiles, labelled by their ranges', (r['labels'], r['panels']), (bin_labels(c5, lo_, hi_), len(c5) + 1))
+    xy = await page.ev(r"""(() => { const c = _rep.body.querySelector('.sm-gb-z-groupX .sm-gb-chip'); c.scrollIntoView({ block: 'center' }); const b = c.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Levels'); await settle(); const sub = __ax.menus()[1];
+      __ax.item('Number of Levels…', 1); await settle(); const d = [...document.querySelectorAll('.sm-dialog')].pop();
+      d.querySelector('input').value = '3'; [...d.querySelectorAll('.sm-dialog-foot button')].find((b) => b.textContent === 'OK').click(); await _gb.idle(); await settle();
+      return { top, sub, labels: _gb.figure().plan.gx.labels, bins: _gb.state().bins }; })()""")
+    c3, lo_, hi_ = bin_cuts(wv, 3)
+    check('Levels: a continuous column in a grouping zone has JMP\'s Levels in its menu', (r['top'][-1] if r['top'] else None, r['sub']), ('Levels', ['✓Automatic', 'Number of Levels…', 'Equal Counts (Quantiles)', 'Equal Width', 'Save Transform Column']))
+    check('Levels: Number of Levels 3, three bins of about equal counts', (r['bins'], r['labels']), ({'weight (kg)': {'n': 3, 'method': 'quantile'}}, bin_labels(c3, lo_, hi_)))
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { __ax.hover('Levels'); await settle(); __ax.item('Equal Width', 1); await _gb.idle(); await settle(); return { labels: _gb.figure().plan.gx.labels, bins: _gb.state().bins }; })()""")
+    cw, lo_, hi_ = bin_cuts(wv, 3, 'width')
+    check('Levels: Equal Width, bins of one round width', (r['bins'], r['labels']), ({'weight (kg)': {'n': 3, 'method': 'width'}}, bin_labels(cw, lo_, hi_)))
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const t = _rep.table; const n0 = t.columns.length; __ax.hover('Levels'); await settle(); __ax.item('Save Transform Column', 1); await settle(); await _gb.idle();
+      const c = t.columns[t.columns.length - 1];
+      const sel = (_rep.body.querySelector('.sm-gb-collist li.is-selected') || {}).textContent || null;
+      await __ax.calm(_rep);
+      return { n: t.columns.length - n0, name: c.name, type: c.modelingType, formula: !!c.formula, order: c.valueOrder, values: c.values, w: t.col('weight (kg)').values, sel }; })()""")
+    labs = bin_labels(cw, lo_, hi_)
+    want_v = [None if not (isinstance(v, (int, float)) and math.isfinite(v)) else labs[sum(1 for c in cw if v >= c)] for v in r['w']]
+    check('Save Transform Column: a formula column of the bins, ordinal, in their order, selected in the list', (r['n'], r['name'], r['type'], r['formula'], r['order'], r['sel']), (1, 'weight (kg) Binned', 'ordinal', True, labs, 'weight (kg) Binned'))
+    check('... each row in its bin (the lower cut in, the upper out)', r['values'] == want_v, True)
+
+    # ---- Order By: a categorical axis's levels by a statistic of another column
+    hv = await page.ev("(() => { const t = SM.app.tables.find((x) => x.name === 'Students'); return [t.col('age').values, t.col('height (cm)').values]; })()")
+    ages = sorted({a for a in hv[0] if a is not None})
+    mean_h = {a: sum(h for a_, h in zip(*hv) if a_ == a) / sum(1 for a_ in hv[0] if a_ == a) for a in ages}
+    await page.ev("(async () => { const p = await gbSet({ x: ['age'], y: ['height (cm)'] }, ['bar']); p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p; })()")
+    xy = await page.ev('__ax.gbAt("ew")')
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Order By'); await settle(); const sub = __ax.menus()[1];
+      __ax.item('height (cm), Descending', 1); await _gb.idle(); await settle(); const p = await drawn(_gb.plot()); window._gp = p;
+      let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
+      return { top, sub, ticks: p.userLayout.xaxis.ticktext, order: _gb.state().order, code }; })()""")
+    check('Order By: a right-click on a categorical axis has JMP\'s Order By and Order Statistic', r['top'], ['Order By', 'Order Statistic'])
+    check('... by the graph\'s numeric column, by the count, by another column, or back', r['sub'], ['height (cm), Ascending', 'height (cm), Descending', 'Count, Ascending', 'Count, Descending', 'Other Column', '✓Original Order'])
+    want = [str(a) for a in sorted(ages, key=lambda a: (-mean_h[a], ages.index(a)))]
+    check('Order By height, descending: the ages by their mean height', (r['order'], r['ticks']), ({'age': {'by': 'height (cm)', 'stat': 'mean', 'desc': True}}, want))
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
+    R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+    check('... and the code sorts them so from the data', (err, [t for t in (R['figures'][0]['axes'][0]['xticklabels'] if R else []) if t]), (None, want))
+    xy = await page.ev('__ax.gbAt("ew")')
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { __ax.hover('Order Statistic'); await settle(); __ax.item('Median', 1); await _gb.idle(); await settle(); return (await drawn(_gb.plot())).userLayout.xaxis.ticktext; })()""")
+    med_h = {a: jmp_q(sorted(h for a_, h in zip(*hv) if a_ == a), 0.5) for a in ages}
+    check('Order Statistic Median: the ages by their median height (JMP\'s quantile), descending', r, [str(a) for a in sorted(ages, key=lambda a: (-med_h[a], ages.index(a)))])
+    xy = await page.ev('__ax.gbAt("ew")')
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { __ax.hover('Order By'); await settle(); __ax.item('Original Order', 1); await _gb.idle(); await settle(); return [(await drawn(_gb.plot())).userLayout.xaxis.ticktext, _gb.state().order]; })()""")
+    check('Order By: Original Order puts back the table\'s', r, [[str(a) for a in ages], {}])
+
+    # ---- Marker Size and Transparency: the red triangle, a right-click in the graph, the code, a project
+    r = await page.ev(r"""(async () => { const p = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['points']); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
+      _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Marker Size'); await settle(); const sizes = __ax.menus()[1];
+      __ax.item('3, Large', 1); await _gb.idle(); await settle(); const q = await drawn(_gb.plot()); q.box.scrollIntoView({ block: 'center' }); await settle(); window._gp = q;
+      return { sizes, size: q.traces.find((t) => t.mode === 'markers').marker.size }; })()""")
+    check('Marker Size in the red triangle: JMP\'s sizes 0 to 6', r['sizes'], ['✓Automatic', '0, Dot', '1, Small', '2, Medium', '3, Large', '4, XL', '5, XXL', '6, XXXL', 'Other…'])
+    check('Marker Size 3, Large: the points 7 pixels across', r['size'], 7)
+    xy = await page.ev('__ax.gbAt(null)')
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const m = __ax.menus()[0]; __ax.hover('Transparency'); await settle(); __ax.item('0.4', 1); await _gb.idle(); await settle(); const q = await drawn(_gb.plot());
+      let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(q); if (!code) await settle(); }
+      return { m, op: q.traces.find((t) => t.mode === 'markers').marker.opacity, marker: _gb.state().marker, code }; })()""")
+    check('A right-click in the graph: Marker Size, Transparency, Background Map', r['m'], ['Marker Size', 'Transparency', 'Background Map'])
+    check('Transparency 0.4: the points at opacity 0.4', (r['op'], r['marker']), (0.4, {'size': 7, 'alpha': 0.4}))
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
+    R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+    S = R['figures'][0]['axes'][0]['scatter'][0] if R else {'sizes': [], 'colors': []}
+    check('... and the code draws them so (7 pixels, 5.04 points across; alpha 0.4)', (err, sorted({round(v, 4) for v in S['sizes']}), sorted({c[-2:] for c in S['colors']})), (None, [float(f'{(7 * 0.72) ** 2:.3g}')], ['66']))
+
+    # ---- transform columns from the builder's list (WP5's transform menu), then onto a zone
+    await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
+    xy = await page.ev(r"""(() => { const li = [..._rep.body.querySelectorAll('.sm-gb-collist li')].find((l) => l.textContent === 'weight (kg)'); li.scrollIntoView({ block: 'center' }); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; })()""")
+    await rclick(page, *xy)
+    r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Transform'); await settle(); const sub = __ax.menus()[1]; __ax.item('Log', 1); await settle(); await _gb.idle();
+      const li = _rep.body.querySelector('.sm-gb-collist li.is-selected'); return { top, sub, sel: li ? li.textContent : null }; })()""")
+    await page.ev('__ax.calm(_rep)')
+    check('The column list\'s menu: the zones, then Transform, Distributional and Date Time', r['top'], ['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape', 'Transform', 'Distributional', 'Date Time'])
+    check('... Transform ▸ Log makes a formula column, selected in the list', r['sel'], 'Log[weight (kg)]')
+    xy = await page.ev(r"""(() => { const z = _rep.body.querySelector('.sm-gb-z-color'); z.scrollIntoView({ block: 'center' }); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
+    await page.click(*xy)
+    await page.ev('_gb.idle()')
+    r = await page.ev(r"""(async () => { await _gb.idle(); const t = _rep.table; const c = t.col('Log[weight (kg)]'); const w = t.col('weight (kg)');
+      return { color: _gb.state().zones.color.map((z) => z.name), ok: c.values.every((v, i) => (Number.isFinite(w.values[i]) ? Math.abs(v - Math.log(w.values[i])) < 1e-12 : !Number.isFinite(v))), f: !!c.formula }; })()""")
+    check('... and a click on a zone puts it there (Color); its values the logs of the column', (r['color'], r['ok'], r['f']), (['Log[weight (kg)]'], True, True))
+    r = await page.ev(r"""(async () => { await __ax.calm(_rep); await _gb.update((S) => { S.order = { age: { by: 'height (cm)', stat: 'median', desc: false } }; S.map = 'usa'; });
+      const want = _gb.state(); const t = _rep.table;
+      const proj = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [_rep.toJSON()] };
+      SM.app.loadProject(JSON.parse(JSON.stringify(proj)));
+      const rep = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(rep));
+      await new Promise((res) => { if (rep.body.querySelector('.sm-gb')) res(); else rep.on('done', res); });
+      const gb = rep.body.querySelector('.sm-gb')._gb; await gb.idle(); const got = gb.state();
+      SM.app.closeReport(rep); SM.app.closeTable(rep.table); SM.app.showTab(SM.app.tabOf(_rep));
+      await _gb.update((S) => { S.order = {}; S.map = null; });
+      const pick = (S) => JSON.stringify({ axes: S.axes, bins: S.bins, order: S.order, marker: S.marker, map: S.map, shapeMode: S.shapeMode });
+      return [pick(got), pick(want)]; })()""")
+    check('a saved project keeps Graph Builder\'s axis settings, levels, orders, markers and map', r[0], r[1])
+
+    # ---- maps: Map Shapes of countries (ISO codes, names) and US states, points on a Background Map; linked; their code
+    MAP_TABLE = r"""(() => {
+      const R = SM.util.rng('graph maps'); const iso = ['SWE', 'NOR', 'FIN', 'DNK', 'DEU', 'FRA', 'ESP', 'ITA', 'POL', 'GBR'];
+      const names = ['Sweden', 'Norway', 'Finland', 'Denmark', 'Germany', 'France', 'Spain', 'Italy', 'Poland', 'Atlantis'];
+      const states = ['California', 'Texas', 'New York', 'Florida', 'Washington', 'Ohio', 'Georgia', 'Colorado'];
+      const c = { iso: [], name: [], state: [], v: [], lon: [], lat: [] };
+      for (let i = 0; i < 120; i++) { const k = i % 10; c.iso.push(iso[k]); c.name.push(names[k]); c.state.push(states[i % 8]); c.v.push(i === 4 ? NaN : +(k * 3 + R.normal(0, 1)).toFixed(3)); c.lon.push(+(5 + 20 * R.u()).toFixed(3)); c.lat.push(+(45 + 15 * R.u()).toFixed(3)); }
+      const t = new SM.Table({ name: 'Map test', source: 'simulated', columns: [{ name: 'iso', dataType: 'character', values: c.iso }, { name: 'name', dataType: 'character', values: c.name }, { name: 'state', dataType: 'character', values: c.state },
+        { name: 'v', values: c.v }, { name: 'lon', values: c.lon }, { name: 'lat', values: c.lat }] });
+      SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      window._rep = rep;
+      return new Promise((res) => rep.on('done', () => res(t.nrows)));
+    })()"""
+    check('the seeded table of regions for the maps', await page.ev(MAP_TABLE), 120)
+    for col, zone in (('iso', 'shape'), ('v', 'color')):
+        xy = await page.ev(f"""(() => {{ const li = [..._rep.body.querySelectorAll('.sm-gb-collist li')].find((l) => l.textContent === {json.dumps(col)}); li.scrollIntoView({{ block: 'center' }}); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; }})()""")
+        await page.click(*xy)
+        xy = await page.ev(f"""(() => {{ const z = _rep.body.querySelector('.sm-gb-z-{zone}'); z.scrollIntoView({{ block: 'center' }}); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; }})()""")
+        await page.click(*xy)
+        await page.ev('__ax.calm(_rep)')
+    tv = await page.ev("(() => { const t = SM.app.tables.find((x) => x.name === 'Map test'); return Object.fromEntries(t.columns.map((c) => [c.name, c.values])); })()")
+    MAP_Q = r"""(async () => { await __ax.calm(_rep); const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
+      let code = null; for (let i = 0; i < 120 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
+      const fig = _gb.figure(), fl = p.box._fullLayout;
+      const ci = p.traces.findIndex((t) => t.type === 'choropleth');
+      const ch = ci >= 0 ? p.traces[ci] : null;
+      const pts = p.traces.filter((t) => t.type === 'scattergeo' && t.lon && t.lon[0] != null);
+      return { els: _gb.state().elements.map((e) => e.type), ci, locs: ch ? ch.locations : null, z: ch ? ch.z : null, mode: ch ? ch.locationmode : null, notes: fig.notes, ids: fig.plan.map && fig.plan.map.shape ? fig.plan.map.shape.ids : null,
+        geo: fl.geo ? { proj: fl.geo.projection.type, scope: fl.geo.scope } : null, pts: pts.map((t) => [t.lon, t.lat]), code }; })()"""
+    MAP_PROBE = r"""
+import json as _json
+import matplotlib as _mpl
+from matplotlib.collections import PolyCollection as _PC, LineCollection as _LC, PathCollection as _Pt
+_f = plt.gcf()
+_f.canvas.draw()
+_out = {'value': {str(k): v for k, v in (value.items() if 'value' in globals() else [])}, 'axes': []}
+for _ax in _f.axes:
+    if getattr(_ax, '_colorbar', None) is not None:
+        continue
+    _A = {'polys': [], 'lines': [], 'points': []}
+    for _c in _ax.collections:
+        if isinstance(_c, _PC):
+            _A['polys'].append({'n': len(_c.get_paths()), 'colors': sorted({_mpl.colors.to_hex(q, keep_alpha=True) for q in _c.get_facecolors()})})
+        elif isinstance(_c, _LC):
+            _A['lines'].append(len(_c.get_segments()))
+        elif isinstance(_c, _Pt):
+            _A['points'].append([[float(a), float(b)] for a, b in _c.get_offsets()])
+    _out['axes'].append(_A)
+_out['colorbars'] = [a.get_ylabel() for a in _f.axes if getattr(a, '_colorbar', None) is not None]
+print("SMUI-MAP " + _json.dumps(_out))
+"""
+
+    async def map_code(code):
+        out = await page.ev(f'__gr.run({json.dumps(strip_show(code or "") + MAP_PROBE)}, _rep.table)', timeout=300)
+        outs = out.get('outputs') if isinstance(out, dict) else []
+        text = ''.join(o.get('text', '') for o in outs if o.get('type') == 'stream')
+        errs = [f"{o.get('ename')}: {o.get('evalue')}" for o in outs if o.get('type') == 'error']
+        got = next((json.loads(q[len('SMUI-MAP '):]) for q in text.split('\n') if q.startswith('SMUI-MAP ')), None)
+        return got, (errs[0] if errs else None)
+
+    r = await page.ev(MAP_Q, timeout=300)
+    isos = list(dict.fromkeys(tv['iso']))
+    mean_v = {k: sum(v for i_, v in zip(tv['iso'], tv['v']) if i_ == k and isinstance(v, (int, float)) and math.isfinite(v)) / sum(1 for i_, v in zip(tv['iso'], tv['v']) if i_ == k and isinstance(v, (int, float)) and math.isfinite(v)) for k in isos}
+    check('Map Shape (by clicks): Graph Builder draws Map Shapes, a region for each ISO code', (r['els'], r['mode'], r['locs']), (['map'], 'ISO-3', isos))
+    check.near('Map Shapes: each region the mean of v over its rows (a missing v left out)', max(abs(a - mean_v[k]) for a, k in zip(r['z'], isos)), 0.0, tol=1e-12)
+    check('... on Plotly\'s natural earth map, every code matched to its country', (r['geo'], r['ids'], [n for n in r['notes'] if 'Map Shapes' in n]), ({'proj': 'natural earth', 'scope': 'world'}, {k: k for k in isos}, []))
+    got, err = await map_code(r['code'])
+    check('Map Shapes: its code runs in the page\'s Python, reading the same boundaries from cdn.plot.ly', err, None)
+    if got:
+        check.near('... and fills each region with the page\'s value', max(abs(got['value'][k] - mean_v[k]) for k in isos) if set(got['value']) == set(isos) else 1.0, 0.0, tol=1e-9)
+        check('... drawn over the land and borders, with a colour bar', (len(got['axes'][0]['polys']), got['axes'][0]['polys'][-1]['n'] >= len(isos), len(got['axes'][0]['lines']), got['colorbars']), (2, True, 1, ['Mean(v)']))
+    # linking: a click on a region selects its rows; rows selected elsewhere outline their regions
+    r = await page.ev(r"""(async () => { const p = _gb.plot(); const ci = p.traces.findIndex((t) => t.type === 'choropleth'); const k = p.traces[ci].locations.indexOf('FRA');
+      clickTrace(p, ci, k); await settle();
+      const t = _rep.table; const sel = rowsWhere(t, (i) => t.state[i] & 1);
+      t.select(rowsWhere(t, (i) => t.col('iso').values[i] === 'DEU')); await settle();
+      const w = p.box.data[ci].marker.line.width; t.select([]); await settle();
+      return { sel, k, dk: p.traces[ci].locations.indexOf('DEU'), w: Array.isArray(w) ? w : [w] }; })()""")
+    check('Map Shapes linked: a click on France selects its rows', r['sel'], [i for i, v in enumerate(tv['iso']) if v == 'FRA'])
+    check('... and Germany\'s rows selected outline Germany', [round(v, 3) for v in r['w']], [2.4 if k == r['dk'] else 0.6 for k in range(len(isos))])
+    # by name (one not on the map), and US states by name, counted
+    r = await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { S.zones.shape = [{ id: t.col('name').id, name: 'name' }]; }); return null; })()""")
+    r = await page.ev(MAP_Q, timeout=300)
+    check('Map Shapes by country name: Plotly\'s matching; a name not on the map named in a note, left off it', (r['mode'], sorted(r['ids'].items()), [n for n in r['notes'] if 'Atlantis' in n] != []),
+          ('country names', sorted(zip(['Sweden', 'Norway', 'Finland', 'Denmark', 'Germany', 'France', 'Spain', 'Italy', 'Poland'], isos[:9])), True))
+    got, err = await map_code(r['code'])
+    check('... its code fills the nine countries found, as the page', (err, sorted((got or {}).get('value', {}))), (None, sorted(isos[:9])))
+    await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { S.zones.shape = [{ id: t.col('state').id, name: 'state' }]; S.zones.color = []; }); })()""")
+    r = await page.ev(MAP_Q, timeout=300)
+    states = list(dict.fromkeys(tv['state']))
+    codes = {'California': 'CA', 'Texas': 'TX', 'New York': 'NY', 'Florida': 'FL', 'Washington': 'WA', 'Ohio': 'OH', 'Georgia': 'GA', 'Colorado': 'CO'}
+    check('Map Shapes of US states by name: their postal codes on Plotly\'s Albers USA map, filled by their counts', (r['mode'], r['locs'], r['z'], r['geo'], r['ids']),
+          ('USA-states', [codes[q] for q in states], [tv['state'].count(q) for q in states], {'proj': 'albers usa', 'scope': 'usa'}, codes))
+    got, err = await map_code(r['code'])
+    check('... its code counts them the same, from the US file', (err, (got or {}).get('value')), (None, {codes[q]: float(tv['state'].count(q)) for q in states}))
+    # points on a Background Map, linked point by point
+    r = await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('lon').id, name: 'lon' }]; S.zones.y = [{ id: t.col('lat').id, name: 'lat' }]; S.auto = true; });
+      await __ax.calm(_rep); _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Background Map'); await settle(); const sub = __ax.menus()[1]; __ax.item('World', 1); await _gb.idle(); return sub; })()""")
+    check('Background Map in the red triangle: None, World, US States', r, ['✓None', 'World', 'US States'])
+    r = await page.ev(MAP_Q, timeout=300)
+    check('Points on a Background Map: Points alone, each row at its longitude and latitude, on a map', (r['els'], r['pts'], r['geo']), (['points'], [[tv['lon'], tv['lat']]], {'proj': 'natural earth', 'scope': 'world'}))
+    got, err = await map_code(r['code'])
+    check('... its code draws every point at its longitude and latitude over the land and borders', (err, sorted(tuple(q) for q in (got or {'axes': [{'points': [[]]}]})['axes'][0]['points'][0]), len((got or {'axes': [{'lines': []}]})['axes'][0]['lines'])),
+          (None, sorted(zip(tv['lon'], tv['lat'])), 1))
+    r = await page.ev(r"""(async () => { const p = _gb.plot(); const i = p.traces.findIndex((t) => t.type === 'scattergeo' && t.lon && t.lon[0] != null);
+      clickTrace(p, i, 7); await settle(); const t = _rep.table; const sel = rowsWhere(t, (k) => t.state[k] & 1);
+      t.setState([3], 'hidden', true); await settle(); const lon = p.box.data[i].lon.slice(0, 5); t.setState([3], 'hidden', false); t.select([]); await settle(); return { sel, lon }; })()""")
+    check('... a click on a point selects its row; a hidden row is not drawn', (r['sel'], r['lon'][3], r['lon'][2] is not None), ([7], None, True))
+    await page.ev(r"""(async () => { await _gb.update((S) => { S.map = null; }); })()""")
+
+    # ---- the Graph menu's point plots: Marker Size and Transparency in the red triangle, and in their code
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Graph data')))")
+    res = await page.ev(open_report_js('scattermatrix', {'y': ['x', 'y', 'z']}))
+    r = await page.ev(r"""(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; await __ax.calm(rep);
+      rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Marker Size'); await settle(); __ax.item('4, XL', 1);
+      await new Promise((res) => rep.on('done', res)); rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Transparency'); await settle(); __ax.item('0.6', 1);
+      await new Promise((res) => rep.on('done', res)); const p = await __ax.redrawn(rep); const tr = p.traces.filter((t) => t.mode === 'markers' && t.x && t.x[0] != null);
+      return { sizes: [...new Set(tr.map((t) => t.marker.size))], ops: [...new Set(tr.map((t) => t.marker.opacity))], code: __ax.code(p), spec: rep.spec.options.marker }; })()""")
+    check('Scatterplot Matrix: Marker Size 4, XL and Transparency 0.6 in every cell, kept in the report', (r['sizes'], r['ops'], r['spec']), ([9], [0.6], {'size': 9, 'alpha': 0.6}))
+    out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, SM.app.reports[SM.app.reports.length - 1].table)', timeout=300)
+    R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
+    got = sorted({(round(q, 4), c[-2:]) for A in (R['figures'][0]['axes'] if R else []) for S in A['scatter'] for q, c in zip(S['sizes'] * len(S['colors']) if len(S['sizes']) == 1 else S['sizes'], S['colors'])})
+    check('... and its code draws them so', (err, got), (None, [(float(f'{(9 * 0.72) ** 2:.3g}'), '99')]))
+    await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+
+    # ---- dark theme and phone width: the reference lines' colours, a map's land, the Axis Settings window
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.2)
+    r = await page.ev(r"""(async () => { SM.app.showTab(SM.app.tabOf(_fr)); await __ax.calm(_fr); const p = await __ax.redrawn(_fr); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
+      const done = new Promise((res) => _fr.on('done', res)); SM.axis.put(p, 'yaxis', { refs: [{ value: 60, color: 'red', dash: 'solid' }] }); await done; const q = await __ax.redrawn(_fr);
+      const line = q.box._fullLayout.shapes.find((s) => s.type === 'line'); return line ? line.line.color : null; })()""")
+    check('dark theme: a red reference line takes the dark theme\'s red, which reads on it', r, '#f08a80')
+    r = await page.ev(r"""(async () => { const p = _fr.plots[0]; const img = await _fr.plotImage(p, 'svg'); const svg = decodeURIComponent(img.data.replace(/^data:image\/svg\+xml,/, ''));
+      return { light: svg.includes('rgb(176, 65, 62)'), dark: svg.includes('rgb(240, 138, 128)') }; })()""")
+    check('... and on paper (Save Report as HTML or Word, Print), the light theme\'s red', (r['light'], r['dark']), (True, False))
+    r = await page.ev(r"""(async () => { const t = SM.app.tables.find((x) => x.name === 'Map test'); SM.app.showTab(SM.app.tabOf(_rep)); await __ax.calm(_rep);
+      await _gb.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.shape = [{ id: t.col('iso').id, name: 'iso' }]; S.auto = true; }); await __ax.calm(_rep);
+      const p = await drawn(_gb.plot()); return { land: p.box._fullLayout.geo.landcolor, grid: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() }; })()""")
+    g_ = r['grid'].lstrip('#')
+    g_ = ''.join(q * 2 for q in g_) if len(g_) == 3 else g_
+    check('dark theme: the map\'s land is the dark theme\'s border colour, faint', r['land'].replace(' ', ''), f'rgba({int(g_[0:2], 16)},{int(g_[2:4], 16)},{int(g_[4:6], 16)},0.35)')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(0.8)
+    r = await page.ev(r"""(async () => { SM.app.showTab(SM.app.tabOf(_fr)); await __ax.calm(_fr); const p = await __ax.redrawn(_fr);
+      SM.axis.open(p, 'yaxis'); await settle(); const d = __ax.dialog(); d.querySelector('[data-ax="addref"]').click(); await settle();
+      const b = d.getBoundingClientRect(), body = d.querySelector('.sm-dialog-body');
+      const out = { w: Math.round(b.width), iw: innerWidth, fits: body.scrollWidth <= body.clientWidth + 1, rows: [...d.querySelectorAll('.sm-ax-ref')].map((q) => q.getBoundingClientRect().width <= body.clientWidth + 1) };
+      __ax.button(d, 'Cancel'); await settle(); return out; })()""")
+    check('phone width: the Axis Settings window is the whole screen, its reference lines fit it', (r['w'], r['fits'], all(r['rows'])), (r['iw'], True, True))
+    await shot(page, 'g11-axis-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(1.2)
+    await page.ev('(() => { if (window._rep0b) window._rep = window._rep0b; })()')
 
 def SM_fmt4(v):
     """The page's fmt(v, {sig: 4}) for a positive number of moderate size."""

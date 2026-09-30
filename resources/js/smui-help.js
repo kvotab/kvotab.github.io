@@ -15,7 +15,10 @@
     'panel:table': {
       kicker: 'Panel', title: 'Table',
       lead: 'The open tables, and where the current one came from. Each table has its own tab; reports belong to the table they were launched from.',
-      sections: [{ heading: 'The red triangle', text: 'Rename the table, edit its notes, save it as this page\'s JSON (keeps modeling types, value orders, formulas and row states) or export CSV or Excel.' }],
+      sections: [
+        { heading: 'The red triangle', text: 'Rename the table, edit its notes, save it as this page\'s JSON (keeps modeling types, value orders, formulas and row states) or export CSV or Excel.' },
+        { heading: 'Scripts', text: 'The table\'s scripts, as JMP keeps them with a data table: a report saved with Save ▾ > Save Script to Data Table, or the model a DOE design comes with. A click runs one (a report opens, or a launch dialog filled in); right click for Run Script, Rename… and Delete. They are saved with the table and in projects.' },
+      ],
       more: { label: 'Data tables', id: 'help-tables' },
     },
     'panel:columns': {
@@ -23,7 +26,7 @@
       lead: 'Every column with its modeling type, which decides how an analysis treats it.',
       sections: [
         { heading: 'Modeling types', choices: [['Continuous (blue triangle)', 'Numbers on a scale: means, regression, histograms.'], ['Ordinal (green bars)', 'Ordered categories: levels in value order; an ordinal response gets an ordinal logistic fit.'], ['Nominal (red bars)', 'Unordered categories: frequencies, contingency tables, dummy coding in models.']] },
-        { heading: 'Using the list', list: ['Click the icon to change the modeling type.', 'Click a name to select the column (shift and ctrl/⌘ add); a launch dialog starts with the selected columns in its first role.', 'Drag names to reorder the columns.', 'Double click for Column Info; right click for the column menu.'] },
+        { heading: 'Using the list', list: ['Click the icon to change the modeling type.', 'Click a name to select the column (shift and ctrl/⌘ add); a launch dialog starts with the selected columns in its first role.', 'Drag names to reorder the columns.', 'Double click for Column Info; right click for the column menu.', 'After a name, Y, X, W (Weight) or F (Freq) is the role Cols > Preselect Role gave it, and * says it has column properties (Value Labels, Missing Value Codes, a Profit Matrix, Spec Limits, a value order): click the * for Column Info.'] },
       ],
       more: { label: 'Modeling types', id: 'help-types' },
     },
@@ -37,10 +40,10 @@
       kicker: 'File', title: 'statsmodels Datasets',
       lead: 'The datasets that ship with the statsmodels package, read from it in the Python engine: Longley, Grunfeld, Star98, the Nile, sunspots and others. They are not part of this page; each shows its own source and copyright note, which travel with the table as its notes.',
     },
-    'cols:new': { kicker: 'Cols', title: 'New Column', lead: 'A column of numbers or text, empty, constant, a sequence or random values. A formula column (when the formula editor is loaded) recalculates when the columns it uses change.', more: { label: 'Formulas', id: 'help-formulas' } },
+    'cols:new': { kicker: 'Cols', title: 'New Column', lead: 'A column of numbers or text, empty, constant, a sequence or random values; Number of columns to add makes up to 1000 alike at once (the names go on 2, 3, …). A formula column (when the formula editor is loaded) recalculates when the columns it uses change.', more: { label: 'Formulas', id: 'help-formulas' } },
     'cols:info': {
       kicker: 'Cols', title: 'Column Info',
-      lead: 'Name, data type, modeling type, display format, value order, notes and the label role of one column.',
+      lead: 'Name, data type, modeling type, display format, value order, notes and the label role of one column, and its column properties: spec limits, missing value codes, value labels and a profit matrix.',
       sections: [
         { heading: 'Data type and modeling type', text: 'Numeric columns can be continuous, ordinal or nominal; character columns are ordinal or nominal. Changing numeric to character keeps the text of the numbers; character to numeric turns what is not a number into missing.' },
         { heading: 'Value order', text: 'The order of the levels in reports and graphs, and the order of an ordinal response. By default numbers ascending and text in natural order (A2 before A10).' },
@@ -55,6 +58,9 @@
           ['Label column', 'Its values label the rows in graphs: a labeled row (Rows > Label) shows its value by its points. A table has one label column: choosing this one clears the other.'],
           ['Value order', 'The order of the levels: select one and Move Up or Move Down, Reverse the list, or Sort it back to the natural order. Reports, graphs and an ordinal response follow it.'],
           ['Spec Limits', 'LSL, Target and USL: leave a box empty for no limit.'],
+          ['Missing Value Codes', 'Stored values that every analysis treats as missing (999, -1), separated by commas; the cells keep them.'],
+          ['Value Labels', 'Text shown in place of a value (1 as Male); the value is what is stored, sorted and analysed.'],
+          ['Profit Matrix', 'For a categorical response: the profit or cost of each decision for each actual level, which the predictive platforms use.'],
           ['Notes', 'Free text about the column, kept with the table.'],
         ] },
       ],
@@ -157,7 +163,10 @@
         'Click row numbers to select rows (shift for a range, ctrl/⌘ to add); drag down the row numbers to select a block. Click a column heading to select the column.',
         'ctrl/⌘+C copies the selected rows, or the cell, as tab-separated text; ctrl/⌘+V pastes at the cursor, adding rows as needed.',
         'Right click a heading for the column menu (Column Info, modeling type, sort), a row number for the row states.',
-        'File > Save Table keeps everything (types, formats, value order, formulas, row states) in a JSON file this page opens again. File > Save Project saves all tables with their reports.',
+        'Right click a cell for **Fill**: to a row, to the end of the table, or the selected rows\' values repeated or continued as a sequence (1, 2 go on 3, 4). **Header Graphs** in the grid\'s bar puts a small histogram or bar chart under each heading.',
+        '**Cols > Column Properties** (and Column Info) give a column **Value Labels**, **Missing Value Codes**, a **Profit Matrix** or **Spec Limits**; **Cols > Preselect Role** gives columns the role (Y, X, Weight, Freq) a launch dialog puts them in.',
+        '**File > Import Multiple Files** reads many files, or a folder of them, into one table: a row per file with its name and text (for Text Explorer), or their tables stacked.',
+        'File > Save Table keeps everything (types, formats, value order, formulas, column properties, row states) in a JSON file this page opens again. File > Save Project saves all tables with their reports.',
         'A JMP data table (.jmp) brings its columns and values, dates included. JMP\'s file format is not published, and what a reader has not found in it does not come: the modeling types (numbers come in continuous and text nominal, as from a CSV file: change them in the Columns panel), value orders and labels, formulas (their values come), column properties and scripts. The reader is a port of JMPReader.jl (MIT licence, Jaakko Ruohio).',
       ]),
       h('h3', 'Modeling types', 'types'),
@@ -173,6 +182,7 @@
       ul([
         'The dialog lists the columns with their modeling types. Select some and press a role\'s button, drag them onto a role (or onto Fit Model\'s Construct Model Effects, as main effects), or double click a column for the first role that takes it.',
         '**Y** is the response, **X** the factor or regressor; **Weight** and **Freq** are numeric; **By** repeats the analysis for each level.',
+        'A **Validation** column (Analyze > Predictive Modeling > Make Validation Column) splits the rows into training, validation and test sets; one with 4 to 50 values holds K folds (Make Validation Column\'s K Fold), and the platforms that crossvalidate use them.',
         'In the column list and the role lists, click to select one, ctrl/⌘ to add or take away one more, shift to select the range from the one clicked last. Remove takes the selected columns out of their roles; Recall fills in the last launch of the platform, matched by column name.',
         'Right click a column in the dialog to change its modeling type there.',
         'The (i) in a dialog\'s title bar explains the analysis and what each role, option and field is for. Drag the title bar to move the dialog.',
@@ -186,8 +196,11 @@
         'p-values below 0.0001 show as <.0001; an asterisk and red marks those below α (0.05 unless set).',
         '**Redo ▾** runs the analysis again (after exclusions or edits), relaunches the dialog, or turns on Automatic Recalc.',
         '**Local Data Filter** (in the top red triangle) narrows one report to the rows that match chosen levels or ranges, without touching the table.',
+        'Every two-level classifier has JMP\'s **Decision Threshold** (drag the cut, or set it by the best MCC or the most profit; with By, each group has its own, as in JMP) and, beyond JMP, **Group Metrics**: its error rates and selection rates compared across the levels of any column, a fairness audit.',
         '**Save ▾** writes the Python script, or the report as a standalone HTML file or a Word document with its graphs as images; **Print…** prints that document, without the page around it. The browser\'s own Print prints the report in view, graphs wider than the paper scaled to fit.',
+        '**Save ▾ > Save Script to Data Table** keeps the report with its table, as a script in the Table panel: a click opens it again with the same columns and options, also after the table was saved and opened again, or in a project.',
         'Graphs: click a point or bar to select its rows (shift adds), drag a rectangle to select several; double click to clear. The toolbar above a graph zooms, pans and saves it as PNG.',
+        'Double-click a numeric axis of any graph (its tick labels), or right-click it, for **Axis Settings**: log scale, minimum, maximum, increment, reverse order and reference lines; the red triangle\'s Axis Settings lists the report\'s axes. They are kept with the report (Redo, By groups, projects), and the graph\'s Python code draws them too.',
       ]),
 
       h('h2', 'Tabs side by side', 'groups'),
@@ -223,7 +236,7 @@
 
       h('h2', 'Saving your work', 'saving'),
       ul([
-        '**File > Save Table** writes one table as JSON, with its modeling types, formats, value orders, formulas, spec limits and row states; File > Open reads it back.',
+        '**File > Save Table** writes one table as JSON, with its modeling types, formats, value orders, formulas, column properties, scripts and row states; File > Open reads it back.',
         '**File > Save Project** writes every open table, every report (roles, options, filters) and every notebook into one JSON file; opening it rebuilds the reports and reopens the notebooks, in the groups they were in.',
         'A notebook\'s **Save ▾** writes it as a Jupyter notebook (.ipynb) or a Python script (.py).',
         '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script, a standalone HTML copy or a Word document (.docx), or prints it.',
@@ -249,7 +262,7 @@
       commandTable(),
 
       h('h2', 'The Python engine', 'engine'),
-      p('Pyodide is CPython compiled to WebAssembly. The page starts it in a Web Worker as soon as it loads, with numpy, scipy, pandas, patsy and statsmodels, and this page\'s analysis package (resources/py/smui, plain Python that also runs outside the browser). The first visit downloads about 40 MB from the jsDelivr CDN, which the browser then keeps. The predictive platforms (Partition, Bootstrap Forest, Neural and the others under Predictive Modeling, Text Explorer) use scikit-learn, which is loaded the first time one of them runs.'),
+      p('Pyodide is CPython compiled to WebAssembly. The page starts it in a Web Worker as soon as it loads, with numpy, scipy, pandas, patsy and statsmodels, and this page\'s analysis package (resources/py/smui, plain Python that also runs outside the browser). The first visit downloads about 40 MB from the jsDelivr CDN, which the browser then keeps. Most predictive platforms (Bootstrap Forest, Boosted Tree, Partition\'s CART method, K Nearest Neighbors and the others under Predictive Modeling, Text Explorer) use scikit-learn, which is loaded the first time one of them runs; Partition\'s own decision tree, Uplift and Neural are this page\'s numpy and scipy code, written from JMP\'s documented methods. Model Screening\'s XGBoost and LightGBM methods load Pyodide\'s xgboost and lightgbm the first time one is ticked, and Text Explorer\'s Sentiment Analysis fetches the vaderSentiment package (MIT) from PyPI the first time it runs: one wheel, checked against the SHA-256 this page pins before it is installed.'),
       p('A table goes to the engine when an analysis needs it, and again when it has changed. Nothing is sent anywhere else: the files you open, the tables and the reports stay in this browser tab.'),
       el('div', { class: 'sm-engine-versions' }),
 
@@ -257,7 +270,7 @@
       ul([
         'The numbers come from statsmodels and scipy. Where JMP has its own method (for example its Lack of Fit or its exact tests) the report says what is computed instead, and the Python shows it.',
         'JMP\'s scripting language (JSL) does not run here: **Python > JSL to Python** turns a script into Python, which the notebook runs; the reports\' Python scripts take the place of JMP\'s saved scripts.',
-        'Where statsmodels has nothing like a JMP platform (partition trees, forests, boosted trees, neural networks, text exploration, Gaussian processes, partial least squares, normal mixtures), the platform uses scikit-learn, and its (i) text says where scikit-learn\'s method differs from JMP\'s.',
+        'Where statsmodels has nothing like a JMP platform, the platform uses scikit-learn (forests, boosted trees, Partition\'s CART method, text exploration, Gaussian processes, partial least squares, normal mixtures, the learners) or this page\'s own numpy and scipy code written from JMP\'s documented methods (Partition\'s decision tree, Uplift, Neural), and its (i) text says where the method differs from JMP\'s.',
         'Bootstrap (from any report table\'s right-click menu) and the profiler\'s desirability and variable importance are computed with scipy.',
       ]),
       el('p', { class: 'sm-build', text: `Page build ${document.documentElement.dataset.build || ''}` }),

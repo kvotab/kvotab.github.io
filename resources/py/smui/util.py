@@ -65,6 +65,49 @@ def q(name):
     return name if ok else f'Q({json.dumps(name)})'
 
 
+_ONE_LINE = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029]+')
+
+
+def one_line(s):
+    """Text for a comment in the code: line breaks and the other control
+    characters become one space, so a name or value from the table never
+    ends the comment and starts a line of code of its own (a table from a
+    file is hostile input)."""
+    return _ONE_LINE.sub(' ', '' if s is None else str(s))
+
+
+# ---- formula text: what a platform writes for Save Prediction Formula -----
+# The page's formula language (resources/js/smui-formula.js) reads a column
+# as :name, or :"name" when the name is not a plain identifier; a number as
+# its shortest round-trip form, a missing one as a dot; a string in double
+# quotes with backslash escapes. ctx.saveFormula(name, text) makes the column.
+_FORMULA_REF_OK = re.compile(r'^[^\W\d]\w*$')
+
+
+def formula_ref(name):
+    """A column in formula text: :name or :"name"."""
+    name = str(name)
+    if _FORMULA_REF_OK.match(name):
+        return ':' + name
+    return ':"' + name.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def formula_num(x):
+    """A number in formula text (a missing or infinite one is a dot)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return '.'
+    if not math.isfinite(v):
+        return '.'
+    return repr(v)
+
+
+def formula_str(s):
+    """A string in formula text."""
+    return '"' + str(s).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 def code_head(table_name, extra_imports=()):
     lines = ['import numpy as np', 'import pandas as pd', 'import statsmodels.api as sm', 'import statsmodels.formula.api as smf']
     lines += list(extra_imports)

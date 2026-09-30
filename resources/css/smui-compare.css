@@ -1,0 +1,26 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > MODEL COMPARISON (smui-p-compare.js)
+   The launch dialog's list of the models the columns make, the best value
+   of each measure (marked as Model Screening marks it), the AUC
+   Comparison's tables. Colours are kvot.css's tokens, so both themes read.
+   Class prefix sm-mc-.
+   ========================================================================== */
+
+/* ---- the launch dialog: the models ------------------------------------------ */
+.sm-mc-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-mc-launch h4 { margin: 0 0 6px; }
+.sm-mc-models { margin: 0 0 4px; padding: 0 0 0 18px; color: var(--text-primary); max-height: 9.5em; overflow-y: auto; }
+.sm-mc-models li { margin: 1px 0; overflow-wrap: anywhere; }
+.sm-mc-models li span { color: var(--text-secondary); }
+.sm-mc-hint { margin: 5px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; max-width: 640px; }
+
+/* ---- the Measures of Fit: the best of each measure within its group --------- */
+.sm-rt td.sm-mc-best { font-weight: 700; color: var(--accent-text); }
+
+/* ---- AUC Comparison: a group's tables together -------------------------------- */
+.sm-mc-auc { display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: flex-start; margin: 0 0 10px; }
+.sm-mc-auc > .sm-mc-scroll { flex: 0 1 auto; }
+
+/* ---- a wide table scrolls by itself on a narrow screen ------------------------ */
+.sm-mc-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-mc-scroll > table.sm-rt, .sm-mc-scroll > table.sm-kv { margin-bottom: 8px; }

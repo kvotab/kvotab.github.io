@@ -11,13 +11,24 @@ cloud selects the rows that hold it; every red triangle opens; the word
 cloud's words do not overlap and grow with the count; stemming, Add Stop
 Word, Recode, Add Phrase and Show Text work from the menus, and Redo keeps
 them; Latent Semantic Analysis gives the engine's singular values, with
-documents linked to the rows both ways; Topic Analysis finds the example's
-five themes; Save Document Term Matrix, Save Document Singular Vectors, Save
+documents linked to the rows both ways (titled as JMP's, Centered and
+Scaled TF IDF by default, with the eigenvalues); Topic Analysis finds the
+example's five themes; Latent Class Analysis (JMP's outlines, a real click
+on a cluster, the MDS map, Color by Cluster, Save Probabilities and Save
+Cluster), Cluster Terms and Cluster Documents (the SVD plots coloured by
+their clusters, + by a real click, a cluster's rows, the saved clusters),
+the SVD Scatterplot Matrix (documents below, terms above, linked), Term
+Selection of the rating (the engine's terms, a real click, the saved
+scores), Sentiment Analysis (vaderSentiment fetched from PyPI, a real click
+on the negative documents, the saved scores), the phrase list's Select
+Contains, Select Contained and Containing Phrases, and Save Stacked DTM for
+Association read by Association Analysis; Save Document Term Matrix, Save Document Singular Vectors, Save
 Topic Scores and Save Term Table make the columns and tables they should; By
 and an ID column make the cases they should; a project keeps the options
 with the column ids remapped; the Python script holds the scikit-learn
 calls; hostile text stays text; Bootstrap reruns the report headless; the
-defaults on 5,000 rows are timed; every (i) has a topic; the launch dialog's
+defaults on 5,000 rows are timed; the new graphs' code draws the page's
+MDS map, dendrogram, scatterplot matrix and bars; every (i) has a topic; the launch dialog's
 (i) gives every role, option and Customize Regex field its help, and the
 forms' (i) each of their fields; the reports draw in the dark theme and at
 phone width without a sideways page scroll, and without script errors.
@@ -398,8 +409,8 @@ async def main():
                outlines: [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent) };
     })()''', timeout=600)
     check('the launch roles are JMP\'s: Text Columns, ID, By', r['roles'], ['Text Columns', 'ID', 'By'])
-    check('the options and their defaults', r['opts'], [['Language', 'english'], ['Maximum Words per Phrase', '4'], ['Maximum Number of Phrases', '1000'], ['Minimum Characters per Word', '1'],
-                                                      ['Maximum Characters per Word', '100'], ['Stemming', 'none'], ['Tokenizing', 'regex']])
+    check('the options and their defaults (JMP\'s: 5000 phrases, words of 1 to 50 characters; the Snowball stemmer)', r['opts'], [['Language', 'english'], ['Maximum Words per Phrase', '4'], ['Maximum Number of Phrases', '5000'], ['Minimum Characters per Word', '1'],
+                                                      ['Maximum Characters per Word', '50'], ['Stemming', 'none'], ['Stemmer', 'snowball'], ['Tokenizing', 'regex']])
     check('a text column is needed', 'Text Columns: choose a column' in r['needOne'], True)
     check('a numeric column is refused', 'character columns; rating is numeric' in r['numeric'], True)
     check('Customize Regex shows its pattern box', (r['hiddenBefore'], r['hiddenAfter']), (True, False))
@@ -477,12 +488,14 @@ async def main():
     check('the largest word is the most frequent, the smallest the least', (wc['sizes'][0] == max(wc['sizes']), wc['sizes'][-1] == min(wc['sizes'])), (True, True))
     check('each word tells its count on hover', wc['tips'][0], f'{top100[0]}: {eng["terms"][0]["count"]}')
     check('a click on a word selects its rows, and marks it in the cloud and the list', (wc['sel'], wc['chosenWord'], wc['listChosen']), (eng['term_rows'][4], True, [top100[4]]))
-    await page.ev(pick_js('Word Cloud', ['Layout', 'Ordered']))
-    od = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1];
+    READING = '''(() => { const rep = SM.app.reports[SM.app.reports.length - 1];
       const ws = [...rep.body.querySelectorAll('svg.sm-tx-cloud text.sm-tx-word')].map(w => ({ t: w.lastChild.textContent, x: Number(w.getAttribute('x')), y: Number(w.getAttribute('y')) }));
-      const lines = [...new Set(ws.map(w => w.y))];
-      return { n: ws.length, reading: ws.slice().sort((a, b) => a.y - b.y || a.x - b.x).map(w => w.t) }; })()''')
-    check('Ordered: the words alphabetically, in lines', od['reading'], sorted(top100, key=lambda w: w.lower()))
+      return { n: ws.length, reading: ws.slice().sort((a, b) => a.y - b.y || a.x - b.x).map(w => w.t) }; })()'''
+    st = await page.ev(STATE)
+    check('the word cloud\'s layout is JMP\'s default, Ordered: in lines, the most frequent first', ((await page.ev(READING))['reading'], st['options'].get(f'{st["id"]}|cloudLayout')), (top100, None))
+    await page.ev(pick_js('Word Cloud', ['Layout', 'Alphabetical']))
+    od = await page.ev(READING)
+    check('Alphabetical: the words alphabetically, in lines', od['reading'], sorted(top100, key=lambda w: w.lower()))
     await page.ev(pick_js('Word Cloud', ['Layout', 'Centered']))
     await page.ev(pick_js('Word Cloud', ['Coloring', 'Arbitrary Colors']))
     fills = await page.ev('[...SM.app.reports[SM.app.reports.length - 1].body.querySelectorAll("svg.sm-tx-cloud text.sm-tx-word")].slice(0, 6).map(w => w.getAttribute("fill"))')
@@ -552,16 +565,17 @@ async def main():
     # ---- Latent Semantic Analysis
     await page.ev(pick_form_js('*top*', ['Latent Semantic Analysis, SVD…']), timeout=600)
     st = await page.ev(STATE)
-    check('Latent Semantic Analysis: its outlines, no errors', (all(o in st['outlines'] for o in ('Latent Semantic Analysis (SVD)', 'Singular Values', 'SVD Plots')), st['errors']), (True, []))
-    check('its specification is kept: JMP\'s weightings and centering', st['options'].get(f'{cid}|lsa'), {'maxTerms': 1000, 'minFreq': 4, 'weighting': 'tfidf', 'k': 100, 'centering': 'centered'})
+    check('Latent Semantic Analysis: its outlines (titled as JMP\'s: SVD Centered and Scaled TF IDF), no errors', (all(o in st['outlines'] for o in ('SVD Centered and Scaled TF IDF', 'Singular Values', 'SVD Plots')), st['errors']), (True, []))
+    check('its specification is kept: JMP\'s weighting and centering, TF IDF and Centered and Scaled', st['options'].get(f'{cid}|lsa'), {'maxTerms': 1000, 'minFreq': 4, 'weighting': 'tfidf', 'k': 100, 'centering': 'scaled'})
     lsa = await page.ev('''(async (cid) => { const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
       return await SM.engine.call('text.lsa', { table: t.id, rows: null, column: 'comment', stemming: 'combine', stop_add: ['delivery'], recodes: { parcel: 'package' }, phrases: ['customer service'],
-        weighting: 'tfidf', centering: 'centered', min_freq: 4, max_terms: 1000, k: 100, seed: rep.spec.options.seedDrawn, show: 2 }, t); })(%s)''' % json.dumps(cid))
+        weighting: 'tfidf', centering: 'scaled', min_freq: 4, max_terms: 1000, k: 100, seed: rep.spec.options.seedDrawn, show: 2 }, t); })(%s)''' % json.dumps(cid))
     svt = await page.ev(table_under_js('Singular Values', 0))
-    check('Singular Values: Number, Singular Value, Percent, Cum Percent', svt[0], ['Number', 'Singular Value', 'Percent', 'Cum Percent'])
+    check('Singular Values: Number, Singular Value, Eigenvalue, Percent, Cum Percent (as JMP\'s)', svt[0], ['Number', 'Singular Value', 'Eigenvalue', 'Percent', 'Cum Percent'])
+    check.near('the first eigenvalue is the engine\'s', num(svt[1][2]), lsa['singular'][0]['eigen'], tol=1e-6)
     check.near('the first singular value is the engine\'s', num(svt[1][1]), lsa['singular'][0]['value'], tol=1e-6)
     check('as many as the engine gives (cut to the matrix)', len(svt) - 1, lsa['k'])
-    check.near('Cum Percent adds up the Percents', num(svt[5][3]), sum(x['percent'] for x in lsa['singular'][:5]), tol=1e-3)
+    check.near('Cum Percent adds up the Percents', num(svt[5][4]), sum(x['percent'] for x in lsa['singular'][:5]), tol=1e-3)
     ok = await drawn(page, '^Document singular vectors')
     check('the document plot is drawn', ok, True)
     r = await page.ev('''(() => {
@@ -636,10 +650,10 @@ async def main():
     if dt:
         check('Binary: 1 where the row\'s text holds the term, else 0', (dt['a'] == [1.0 if i in set(here['refund']['rows']) else 0.0 for i in range(1000)],
                                                                          dt['b'] == [1.0 if i in set(here['courier']['rows']) else 0.0 for i in range(1000)]), (True, True))
-    await page.ev(pick_form_js('Latent Semantic Analysis (SVD)', ['Save Document Singular Vectors…'], "d.querySelector('.sm-form input').value = '3';", rerun=False))
+    await page.ev(pick_form_js('SVD Centered and Scaled TF IDF', ['Save Document Singular Vectors…'], "d.querySelector('.sm-form input').value = '3';", rerun=False))
     sv = await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
       const v = await SM.engine.call('text.vectors', { table: t.id, rows: null, column: 'comment', stemming: 'combine', stop_add: ['delivery'], recodes: { parcel: 'package' }, phrases: ['customer service'],
-        kind: 'svd', weighting: 'tfidf', centering: 'centered', min_freq: 4, max_terms: 1000, k: 100, seed: rep.spec.options.seedDrawn, count: 3 }, t);
+        kind: 'svd', weighting: 'tfidf', centering: 'scaled', min_freq: 4, max_terms: 1000, k: 100, seed: rep.spec.options.seedDrawn, count: 3 }, t);
       const cols = ['Doc Vec1', 'Doc Vec2', 'Doc Vec3'].map(n => t.col(n));
       return { have: cols.map(c => !!c), same: cols.every((c, k) => c && v.rows.every((r, i) => Math.abs(c.values[r] - v.values[k][i]) < 1e-12)) }; })()''')
     check('Save Document Singular Vectors: Doc Vec1 to 3, the engine\'s U S', (sv['have'], sv['same']), ([True] * 3, True))
@@ -655,7 +669,7 @@ async def main():
     t6 = await page.ev(table_under_js('Term and Phrase Lists', 0))
     check('Save Term Table: a table of the terms, counts and cases', (tt['made'], tt['name'], tt['cols'], tt['rows'], tt['first']), (True, 'comment terms', ['Term', 'Count', 'Cases'], len(t6) - 1, [t6[1][0], int(t6[1][1])]))
     script = await page.ev('SM.app.reports[SM.app.reports.length - 1].pythonScript()')
-    check('the Python script holds the scikit-learn calls and the stemmer', all(x in script for x in ('CountVectorizer(analyzer=', 'ENGLISH_STOP_WORDS', 'def read_terms(', 'class PorterStemmer', 'def lsa_svd(', 'PCA(', 'def varimax(')), True)
+    check('the Python script holds the scikit-learn calls and the stemmer (Snowball\'s, the default)', all(x in script for x in ('CountVectorizer(analyzer=', 'ENGLISH_STOP_WORDS', 'def read_terms(', 'class SnowballStemmer', 'def lsa_svd(', 'PCA(', 'def varimax(')), True)
     check('and no copy of the stop words', 'amoungst' in script, False)
 
     # ---- a project keeps the options, the column ids remapped
@@ -739,6 +753,9 @@ async def main():
     })()''', timeout=900)
     check('Bootstrap of Total Tokens: the report and 4 samples, none failed, the report untouched', (b['rows'], all(isinstance(v, (int, float)) for v in b['vals']), 'failed' in b['notes'], b['plots'], b['errors']), (5, True, False, True, 0))
 
+    # ---- the analyses added: LCA, the clusters, the scatterplot matrix, Term Selection, Sentiment, the phrase list, the stacked DTM
+    await new_analyses(page)
+
     # ---- the defaults on 5,000 rows
     await page.ev('''(() => {
       const src = SM.app.tables.find(t => t.name === 'Service comments').col('comment').values;
@@ -759,6 +776,7 @@ async def main():
 
     # ---- the graphs' matplotlib code, run in the page
     await chart_code(page)
+    await new_chart_code(page)
 
     # ---- the (i) topics and Help
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
@@ -767,7 +785,8 @@ async def main():
     helps = await page.ev('(() => { SM.app.showHelp("p-text"); const row = document.getElementById("help-p-text"); return row ? row.textContent : null; })()')
     check('the platform has its line in Help, with scikit-learn\'s classes', bool(helps) and 'CountVectorizer' in helps and 'TruncatedSVD' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("text").topics)')
-    check('its topics', sorted(topics), sorted(['p:text', 'p:text:regex', 'p:text:summary', 'p:text:lists', 'p:text:cloud', 'p:text:stems', 'p:text:manage', 'p:text:lsa', 'p:text:topics', 'p:text:dtm']))
+    check('its topics', sorted(topics), sorted(['p:text', 'p:text:regex', 'p:text:summary', 'p:text:lists', 'p:text:cloud', 'p:text:stems', 'p:text:manage', 'p:text:lsa', 'p:text:topics', 'p:text:dtm',
+                                                'p:text:lca', 'p:text:cluster', 'p:text:spm', 'p:text:termsel', 'p:text:sentiment']))
 
     # ---- the (i) explains every input: the launch dialog and Customize Regex, the forms of the red triangles
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
@@ -780,7 +799,7 @@ async def main():
                          (['Save Document Term Matrix…'], ['Terms', 'Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting']),
                          (['Term Options', 'Manage Stop Words…'], ['Stop Words']), (['Term Options', 'Manage Recodes…'], ['Recodes']), (['Term Options', 'Manage Phrases…'], ['Phrases'])):
         await form_help(page, f"await clickPath({big}, '*top*', {json.dumps(path)});", fields, path[-1])
-    await form_help(page, f"await clickPath({big}, 'Latent Semantic Analysis (SVD)', ['Save Document Singular Vectors…']);", ['Number of singular vectors to save'], 'Save Document Singular Vectors…')
+    await form_help(page, f"await clickPath({big}, 'SVD Centered and Scaled TF IDF', ['Save Document Singular Vectors…']);", ['Number of singular vectors to save'], 'Save Document Singular Vectors…')
     await form_help(page, f"await clickPath({big}, 'Word Cloud', ['Number of Terms…']);", ['The most frequent terms to show'], 'Word Cloud: Number of Terms…')
     lists = await page.ev('SM.info.get("p:text:lists")')
     check('Term and Phrase Lists\' (i) explains the Show Text dialog\'s buttons', [c[0] for sec in lists['sections'] if sec.get('heading') == 'Show Text' for c in sec['choices']], ['Select These Rows', 'Close'])
@@ -812,6 +831,13 @@ async def main():
     check('no horizontal page scroll at phone width', r['page'], True)
     check('the graphs, the word cloud and the lists fit the phone\'s width', (r['plots'], r['n'] >= 1, r['cloud'], r['lists'], r['body']), (True, True, True, True, True))
     await shot(page, 'text-07-phone.png')
+    r = await page.ev(f'''(async () => {{ const rep = {NEW}; SM.app.showTab(SM.app.tabOf(rep)); const d = new Promise(res => rep.on("done", res)); rep.run(); await d;
+      await __gr.drawAll(rep); const body = rep.body.getBoundingClientRect();
+      return {{ plots: rep.plots.filter(p => p.drawn).map(p => p.box.getBoundingClientRect().right).every(x => x <= body.right + 1), n: rep.plots.filter(p => p.drawn).length,
+               lists: [...rep.body.querySelectorAll('.sm-tx-list, .sm-tx-scroll')].every(l => l.getBoundingClientRect().right <= body.right + 1), page: document.documentElement.scrollWidth <= innerWidth + 1,
+               errors: [...rep.body.querySelectorAll('.sm-ob-error')].length }}; }})()''', timeout=900)
+    check('the new analyses at phone width in the dark theme: the graphs and tables fit, no sideways scroll, no errors', (r['plots'], r['n'] >= 6, r['lists'], r['page'], r['errors']), (True, True, True, True, 0))
+    await shot(page, 'text-09-new-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
 
@@ -885,11 +911,11 @@ async def run_more(page, g):
 async def chart_code(page):
     await page.ev(GRAPHS_JS)
     lsa = {'k': 10, 'minFreq': 4}
-    runs = [('Uniform, Centered; LSA; rotated SVD topics', {'text': ['comment']}, {'cloud': True, 'lsa': lsa, 'topics': {'k': 4}}, None),
+    runs = [('Uniform, Centered; LSA; rotated SVD topics', {'text': ['comment']}, {'cloud': True, 'cloudLayout': 'centered', 'lsa': lsa, 'topics': {'k': 4}}, None),
             ('Arbitrary Colors, Ordered; an ID; NMF topics', {'text': ['comment'], 'id': ['customer']}, {'cloud': True, 'cloudLayout': 'ordered', 'cloudColor': 'colors', 'cloudN': 60, 'lsa': {'k': 4, 'weighting': 'logfreq', 'centering': 'uncentered'}, 'topics': {'k': 3, 'method': 'nmf'}}, None),
             ('By Column (rating); By channel, rows excluded; LDA', {'text': ['comment'], 'by': ['channel']}, {'cloud': True, 'cloudColor': 'column', 'lsa': lsa, 'topics': {'k': 3, 'method': 'lda'}}, 'rating'),
             ('By Column with an ID (the rows without one count for the mean)', {'text': ['comment'], 'id': ['customer']}, {'cloud': True, 'cloudColor': 'column', 'cloudN': 40}, 'rating'),
-            ('Arbitrary Grays, 30 terms, stemmed', {'text': ['comment']}, {'cloud': True, 'cloudColor': 'grays', 'cloudN': 30, 'stemming': 'combine'}, None)]
+            ('Arbitrary Grays, 30 terms, stemmed, Alphabetical', {'text': ['comment']}, {'cloud': True, 'cloudColor': 'grays', 'cloudN': 30, 'stemming': 'combine', 'cloudLayout': 'alphabetical'}, None)]
     table_js = "SM.app.tables.find((x) => x.name === 'Service comments')"
     ex, cust6 = None, None
     for tag, roles, options, by_col in runs:
@@ -954,6 +980,316 @@ async def chart_code(page):
         if 'rows excluded' in tag:
             await page.ev(f'{table_js}.setState({json.dumps(ex)}, "excluded", false)')
     await page.ev("for (const r of SM.app.reports.filter((x) => x.platform.id === 'text').slice(-4)) SM.app.closeReport(r)")
+
+
+# ---- the analyses added in 2026-09: Latent Class Analysis, Cluster Terms and Documents, the SVD scatterplot matrix,
+# Term Selection, Sentiment Analysis, the phrase list's containment, Save Stacked DTM for Association ---------------------
+NEW = 'SM.app.reports.find((r) => r.platform.id === "text" && r.__new)'
+
+# The engine's result for the new analyses' report, with its own seed.
+ENG = r'''(async (fn, extra) => { const rep = %s; const t = rep.table;
+  return await SM.engine.call(fn, { table: t.id, rows: null, column: 'comment', seed: rep.spec.options.seedDrawn, ...extra }, t); })''' % NEW
+
+
+def eng_js(fn, extra=None):
+    return f'({ENG})({json.dumps(fn)}, {json.dumps(extra or {})})'
+
+
+# The centre of a report table's row (by its first cell) or of a button (by its text) under an outline, scrolled into view.
+AT = r'''((outline, kind, text) => {
+  const rep = %s;
+  SM.app.showTab(SM.app.tabOf(rep));
+  const head = [...rep.body.querySelectorAll('.sm-ob-head')].find((h) => h.querySelector('h2, h3, h4').textContent.trim() === outline);
+  if (!head) return null;
+  const body = head.parentElement.querySelector(':scope > .sm-ob-body');
+  let node = null;
+  if (kind === 'row') { const tbl = body.querySelector('table.sm-rt'); node = [...tbl.tBodies[0].rows].find((tr) => tr.cells[0].textContent === text); node = node && node.cells[0]; }
+  else node = [...body.querySelectorAll('button')].find((b) => b.textContent.trim() === text);
+  if (!node) return null;
+  node.scrollIntoView({ block: 'center' });
+  const b = node.getBoundingClientRect();
+  return { x: b.left + Math.min(16, b.width / 2), y: b.top + b.height / 2 };
+})''' % NEW
+
+
+def at_js(outline, kind, text):
+    return f'({AT})({json.dumps(outline)}, {json.dumps(kind)}, {json.dumps(text)})'
+
+
+# The last report's red triangle, as PICK and PICK_FORM do, for the new analyses' report.
+PICK_NEW = PICK.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW}; SM.app.showTab(SM.app.tabOf(rep));')
+
+
+def pick_new(title, path, wait=True):
+    return f'({PICK_NEW})({json.dumps(title)}, {json.dumps(path)}, {json.dumps(wait)}, 0)'
+
+
+def pick_form_new(title, path, fill='', rerun=True):
+    form = PICK_FORM.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};')
+    form = form.replace(PICK, PICK_NEW)
+    return f'({form})({json.dumps(title)}, {json.dumps(path)}, {json.dumps(fill)}, {json.dumps(rerun)})'
+
+
+def under_new(title, n=0):
+    return table_under_js(title, n).replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};')
+
+
+STATE_NEW = STATE.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};')
+SELECTED = f'{NEW}.table.selectedRows()'
+
+
+async def real_click(page, pos):
+    await page.click(pos['x'], pos['y'])
+    await asyncio.sleep(0.35)
+    return await page.ev(SELECTED)
+
+
+async def settle_new(page):
+    await page.ev(f'(async () => {{ const rep = {NEW}; for (let i = 0; i < 2400 && rep.body.classList.contains("is-running"); i++) await new Promise((r) => setTimeout(r, 25)); }})()', timeout=900)
+
+
+async def new_analyses(page):
+    await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
+    await page.ev(open_report_js('text', {'text': ['comment']}, {}), timeout=600)
+    await page.ev('(() => { SM.app.reports[SM.app.reports.length - 1].__new = true; })()')
+    cid = (await page.ev(STATE_NEW))['id']
+    ex = await page.ev(eng_js('text.explore'))
+    trows = {x['term']: ex['term_rows'][k] for k, x in enumerate(ex['terms'])}
+
+    # ---- Latent Class Analysis: from the red triangle's form, with JMP's report
+    await page.ev(pick_form_new('*top*', ['Latent Class Analysis…']), timeout=900)
+    st = await page.ev(STATE_NEW)
+    check('Latent Class Analysis: JMP\'s outlines, no errors', (all(o in st['outlines'] for o in ('Latent Class Analysis for 5 Clusters', 'Cluster Mixture Probabilities', 'Term Probabilities by Cluster', 'Top Terms by Cluster', 'MDS Plot')), st['errors'], st['warnings']), (True, [], []))
+    check('... its specification kept', st['options'].get(f'{cid}|lca'), {'k': 5, 'minFreq': 4, 'maxTerms': 1000})
+    L = await page.ev(eng_js('text.lca', {'n_clusters': 5, 'min_freq': 4, 'max_terms': 1000}))
+    mix = await page.ev(under_new('Cluster Mixture Probabilities'))
+    check('Cluster Mixture Probabilities: the engine\'s mixing probabilities and documents', [[row[0], round(num(row[1]), 4), int(row[2])] for row in mix[1:]], [[str(c + 1), round(p, 4), n] for c, (p, n) in enumerate(zip(L['pi'], L['docs_in']))])
+    tops = await page.ev(f'[...{NEW}.body.querySelectorAll(".sm-tx-topics")].pop().querySelectorAll("table").length')
+    check('Top Terms by Cluster: a table per cluster', tops, 5)
+    in1 = sorted(r_ for d, rs in enumerate(L['doc_rows']) if L['likely'][d] == 1 for r_ in rs)
+    sel = await real_click(page, await page.ev(at_js('Cluster Mixture Probabilities', 'row', '1')))
+    check('a real click on cluster 1 selects the rows of the documents most likely in it', sel, in1)
+    mds = await page.ev(f'(() => {{ const p = {NEW}.plots.find(p => p.opts.title === "MDS Plot"); return p ? {{ x: p.traces[0].x, y: p.traces[0].y, n: p.rows[0].map(r => r.length) }} : null; }})()')
+    check.near('the MDS Plot: a point per cluster at the engine\'s coordinates', maxdiff(mds['x'] + mds['y'], [c[0] for c in L['coords']] + [c[1] for c in L['coords']]), 0, 1e-12)
+    check('... each standing for its documents\' rows', mds['n'], [sum(len(rs) for d, rs in enumerate(L['doc_rows']) if L['likely'][d] == c + 1) for c in range(5)])
+    await page.ev(pick_new('Latent Class Analysis for 5 Clusters', ['Color by Cluster'], wait=False))
+    await asyncio.sleep(0.4)
+    colors = await page.ev(f'Array.from({NEW}.table.color)')
+    check('Color by Cluster: each row takes its most likely cluster\'s colour', all(colors[L['doc_rows'][d][0]] == (L['likely'][d] - 1) % 12 for d in range(len(L['doc_rows']))), True)
+    await page.ev(pick_new('Latent Class Analysis for 5 Clusters', ['Save Probabilities'], wait=False))
+    await asyncio.sleep(1.0)
+    await page.ev(pick_new('Latent Class Analysis for 5 Clusters', ['Save Cluster'], wait=False))
+    await asyncio.sleep(1.0)
+    sv = await page.ev(f'''(() => {{ const t = {NEW}.table; const cs = [1, 2, 3, 4, 5].map((c) => t.col(`Prob Cluster ${{c}}`)); const m = t.col('Most Likely Cluster');
+      return {{ have: cs.map(Boolean).concat([!!m]), probs: cs.map((c) => c ? Array.from(c.values) : null), likely: m ? Array.from(m.values) : null, type: m ? m.modelingType : null }}; }})()''')
+    ok = all(sv['have']) and all(abs(sv['probs'][c][L['doc_rows'][d][0]] - L['R'][d][c]) < 1e-12 for c in range(5) for d in range(len(L['doc_rows'])))
+    check('Save Probabilities and Save Cluster: Prob Cluster 1 to 5 and Most Likely Cluster (nominal), the engine\'s', (ok, sv['type'], all(sv['likely'][L['doc_rows'][d][0]] == L['likely'][d] for d in range(len(L['doc_rows'])))), (True, 'nominal', True))
+    await page.ev(f'{NEW}.table.select([])')
+
+    # ---- the SVD: Cluster Terms, Cluster Documents, the scatterplot matrix
+    await page.ev(pick_form_new('*top*', ['Latent Semantic Analysis, SVD…'], "d.querySelectorAll('.sm-form input')[2].value = '20';"), timeout=900)
+    await page.ev(pick_new('SVD Centered and Scaled TF IDF', ['Cluster Terms']), timeout=900)
+    st = await page.ev(STATE_NEW)
+    check('Cluster Terms: its outline under the SVD, no errors', ('Cluster Terms' in st['outlines'], st['errors']), (True, []))
+    spec = {'weighting': 'tfidf', 'centering': 'scaled', 'min_freq': 4, 'max_terms': 1000, 'k': 20}
+    CT = await page.ev(eng_js('text.cluster', {**spec, 'kind': 'terms'}))
+    col = await page.ev(f'''(() => {{ const p = {NEW}.plots.find(p => /^Term singular vectors/.test(p.opts.title)); return {{ c: p.traces[0].marker.color, pal: SM.util.PALETTE }}; }})()''')
+    check('... the clusters colour the term SVD plot (the palette by cluster)', col['c'], [col['pal'][c % 12] for c in CT['labels']])
+    check('... cut where the joining distance jumps most', await page.ev(f'{NEW}.body.querySelector(".sm-tx-controls .sm-tx-hint").textContent'), f'{CT["default_k"]} cluster{"s" if CT["default_k"] > 1 else ""}')
+    await page.click(**{k: v for k, v in (await page.ev(at_js('Cluster Terms', 'button', '+'))).items()})
+    await asyncio.sleep(0.3)
+    await settle_new(page)
+    st = await page.ev(STATE_NEW)
+    check('a real click on + gives one cluster more', st['options'].get(f'{cid}|termClusters'), CT['default_k'] + 1)
+    CT2 = await page.ev(eng_js('text.cluster', {**spec, 'kind': 'terms', 'n_clusters': CT['default_k'] + 1}))
+    first = [CT2['names'][i] for i, c in enumerate(CT2['labels']) if c == 0]
+    want = sorted({r_ for t in first for r_ in trows.get(t, [])})
+    sel = await real_click(page, await page.ev(at_js('Cluster Terms', 'button', f'1: {len(first)}')))
+    check('a real click on cluster 1 under the dendrogram selects the rows that hold its terms', sel, want)
+    n0 = await page.ev('SM.app.tables.length')
+    await page.ev(pick_new('Cluster Terms', ['Save Term Clusters'], wait=False))
+    await asyncio.sleep(0.6)
+    tt = await page.ev('(() => { const t = SM.app.tables[SM.app.tables.length - 1]; return { name: t.name, cols: t.columns.map(c => c.name), terms: t.col("Term").values, cl: Array.from(t.col("Cluster").values) }; })()')
+    check('Save Term Clusters: a table of the terms and their clusters', (await page.ev('SM.app.tables.length') == n0 + 1, tt['cols'], tt['terms'] == CT2['names'], tt['cl'] == [c + 1 for c in CT2['labels']]), (True, ['Term', 'Count', 'Cases', 'Cluster'], True, True))
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({NEW}))')
+    await page.ev(pick_new('SVD Centered and Scaled TF IDF', ['Cluster Documents']), timeout=900)
+    CD = await page.ev(eng_js('text.cluster', {**spec, 'kind': 'docs'}))
+    dcol = await page.ev(f'''(() => {{ const p = {NEW}.plots.find(p => /^Document singular vectors/.test(p.opts.title)); return p.traces[0].marker.color; }})()''')
+    pal = col['pal']
+    check('Cluster Documents: the clusters colour the document SVD plot', dcol, [pal[c % 12] for c in CD['labels']])
+    await page.ev(pick_new('Cluster Documents', ['Save Document Clusters'], wait=False))
+    await asyncio.sleep(0.6)
+    dc = await page.ev(f'Array.from({NEW}.table.col("Document Cluster").values)')
+    check('Save Document Clusters: each row its document\'s cluster', all(dc[CD['doc_rows'][d][0]] == CD['labels'][d] + 1 for d in range(CD['n'])), True)
+    await page.ev(pick_form_new('SVD Centered and Scaled TF IDF', ['SVD Scatterplot Matrix…'], "d.querySelector('.sm-form input').value = '3';"), timeout=900)
+    LS = await page.ev(eng_js('text.lsa', {**spec, 'show': 3}))
+    sp = await page.ev(f'''(() => {{ const p = {NEW}.plots.find(p => /^SVD scatterplot matrix/.test(p.opts.title)); return p ? p.traces.map((t) => ({{ x: t.x, y: t.y, name: t.name }})) : null; }})()''')
+    check('the SVD Scatterplot Matrix of 3: six panels, the documents below the diagonal and the terms above', [t['name'] for t in sp], ['Terms', 'Terms', 'Documents', 'Terms', 'Documents', 'Documents'])
+    check.near('... Doc Vec1 against Doc Vec2 below, Term Vec2 against Term Vec1 above: the engine\'s coordinates',
+               max(maxdiff(sp[2]['x'] + sp[2]['y'], LS['docs'][0] + LS['docs'][1]), maxdiff(sp[0]['x'] + sp[0]['y'], LS['term_vectors'][1] + LS['term_vectors'][0]), maxdiff(sp[5]['x'] + sp[5]['y'], LS['docs'][1] + LS['docs'][2])), 0, 1e-12)
+    lk = await page.ev(f'''(async () => {{ const rep = {NEW}; const p = rep.plots.find(p => /^SVD scatterplot matrix/.test(p.opts.title)); p.box.scrollIntoView({{ block: 'center' }});
+      for (let i = 0; i < 60 && !p.drawn; i++) await new Promise(r => setTimeout(r, 100));
+      rep.table.select([7]); await new Promise(r => setTimeout(r, 200)); const s = p.box.data.map((t) => t.selectedpoints || []); rep.table.select([]); return s; }})()''')
+    check('... rows selected in the table are marked in every document panel', [lk[k] for k in (2, 4, 5)], [[7], [7], [7]])
+    await shot(page, 'text-08-svd-new.png')
+
+    # ---- Term Selection: of the rating
+    rid = await page.ev(f'{NEW}.table.col("rating").id')
+    await page.ev(pick_form_new('*top*', ['Term Selection…'], f"const s = d.querySelector('select'); s.value = {json.dumps(rid)};"), timeout=900)
+    st = await page.ev(STATE_NEW)
+    check('Term Selection: its outlines, no errors', (all(o in st['outlines'] for o in ('Term Selection', 'Term Scores', 'Document Scores')), st['errors'], st['warnings']), (True, [], []))
+    TS = await page.ev(eng_js('text.termsel', {'response': 'rating', 'weighting': 'binary', 'min_freq': 10, 'max_terms': 1000, 'early': True}))
+    tsr = await page.ev(under_new('Term Scores'))
+    check('Term Scores: the engine\'s terms, coefficients and LogWorths, the largest coefficient first', [[row[0], round(num(row[1]), 4)] for row in tsr[1:]], [[x['term'], round(x['coef'], 4)] for x in TS['terms']][:1000])
+    check('... the planted praise positive and the complaints negative', (TS['terms'][0]['coef'] > 0, TS['terms'][-1]['coef'] < 0, TS['family']), (True, True, 'normal'))
+    sel = await real_click(page, await page.ev(at_js('Term Scores', 'row', TS['terms'][0]['term'])))
+    check('a real click on a term selects the rows that hold it', sel, trows[TS['terms'][0]['term']])
+    await page.ev(pick_new('Term Selection', ['Save Document Scores'], wait=False))
+    await asyncio.sleep(1.0)
+    ds = await page.ev(f'''(() => {{ const t = {NEW}.table; return ['Positive Contribution', 'Negative Contribution', 'Predicted rating'].map((n) => t.col(n) ? Array.from(t.col(n).values) : null); }})()''')
+    D = TS['docs']
+    check('Save Document Scores: the positive and negative contributions and the prediction of every row', all(ds) and all(abs(ds[0][rs[0]] - D['positive'][d]) < 1e-12 and abs(ds[2][rs[0]] - D['predicted'][d]) < 1e-12 for d, rs in enumerate(D['rows'])), True)
+    await page.ev(f'{NEW}.table.select([])')
+
+    # ---- Sentiment Analysis: vaderSentiment from PyPI (micropip) on its first use
+    await page.ev(pick_new('*top*', ['Sentiment Analysis']), timeout=900)
+    await settle_new(page)
+    st = await page.ev(STATE_NEW)
+    check('Sentiment Analysis: vaderSentiment fetched from PyPI, the report without errors', ('Sentiment Analysis' in st['outlines'], 'Sentiment Terms' in st['outlines'], st['errors'], st['warnings']), (True, True, [], []))
+    SE = await page.ev(eng_js('text.sentiment'))
+    smt = await page.ev(under_new('Sentiment Analysis'))
+    check('the Summary: the engine\'s positive, neutral and negative documents', [int(row[1]) for row in smt[1:]], [SE['summary']['positive'], SE['summary']['neutral'], SE['summary']['negative'], SE['n_docs']])
+    ver = await page.ev('(async () => { const r = await SM.engine.runCell("check-vader", "import importlib.metadata as md\\nprint(md.version(\\"vaderSentiment\\"))", { label: "check", fresh: true }); return (r.outputs || []).map((o) => o.text || "").join(""); })()')
+    check('... VADER 3.3.2, the version the page asks for', ver.strip(), '3.3.2')
+    pin = await page.ev('(async () => { const r = await SM.engine.runCell("check-pin", "import hashlib, importlib.metadata as md\\nprint(hashlib.sha256(open(\\"/tmp/vaderSentiment-3.3.2-py2.py3-none-any.whl\\", \\"rb\\").read()).hexdigest(), (md.distribution(\\"vaderSentiment\\").read_text(\\"INSTALLER\\") or \\"\\").strip())", { label: "check", fresh: true }); return (r.outputs || []).map((o) => o.text || o.evalue || "").join(""); })()')
+    check('... installed by micropip from the one wheel whose sha256 the page pins', pin.split(), ['3bf1d243b98b1afad575b9f22bc2cb1e212b94ff89ca74f8a23a588d024ea311', 'micropip'])
+    negs = sorted(r_ for d, rs in enumerate(SE['docs']['rows']) if SE['docs']['compound'][d] <= -0.05 for r_ in rs)
+    sel = await real_click(page, await page.ev(at_js('Sentiment Analysis', 'row', 'Negative (compound ≤ −0.05)')))
+    check('a real click on the negative documents selects their rows', sel, negs)
+    low = await page.ev(f'''(() => {{ const t = {NEW}.table; const r = t.col('rating').values; const sel = t.selectedRows(); return sel.reduce((a, i) => a + r[i], 0) / sel.length; }})()''')
+    check('... and they are rated low (the example\'s complaints)', low < 2.5, True)
+    await page.ev(pick_new('Sentiment Analysis', ['Save Document Scores'], wait=False))
+    await asyncio.sleep(1.2)
+    comp = await page.ev(f'(() => {{ const c = {NEW}.table.col("Sentiment Compound"); return c ? Array.from(c.values) : null; }})()')
+    check('Save Document Scores: Sentiment Compound (and Positive, Neutral, Negative), the engine\'s', comp is not None and all(abs(comp[rs[0]] - SE['docs']['compound'][d]) < 1e-12 for d, rs in enumerate(SE['docs']['rows'])), True)
+    await page.ev(f'{NEW}.table.select([])')
+
+    # ---- the phrase list: Select Contains, Select Contained, Containing Phrases (right click)
+    phr = [row[0] for row in (await page.ev(under_new('Term and Phrase Lists', 1)))[1:]]
+    terms_ = [row[0] for row in (await page.ev(under_new('Term and Phrase Lists', 0)))[1:]]
+    marked = f'''(() => {{ const rep = {NEW}; const t = [...rep.body.querySelectorAll('table.sm-rt')].filter((x) => x.caption && /^(Term|Phrase) List$/.test(x.caption.textContent));
+      return t.map((x) => [...x.querySelectorAll('td.sm-tx-chosen')].filter((td) => td.cellIndex === 0).map((td) => td.textContent)); }})()'''
+    CTX_NEW = CONTEXT.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};').replace(LIST_ROW, LIST_ROW.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};'))
+
+    async def ctx_pick(caption, text, label):
+        await page.ev(f'({CTX_NEW.replace("await done;", "await new Promise(r => setTimeout(r, 300));")})({json.dumps(caption)}, {json.dumps(text)}, {json.dumps(label)}, null)')
+        return await page.ev(marked)
+    inside = lambda a, b: any(b.split()[i:i + len(a.split())] == a.split() for i in range(len(b.split()) - len(a.split()) + 1))  # noqa: E731
+    big = 'value for money'
+    t_, p_ = await ctx_pick('Phrase List', big, 'Select Contained')
+    check(f'Select Contained on "{big}": the shorter phrases inside it and the terms of its words', (sorted(p_), sorted(t_)), (sorted(p for p in phr if p != big and inside(p, big)), sorted(t for t in terms_ if t in big.split())))
+    small = next(p for p in phr if len(p.split()) == 2 and any(q != p and inside(p, q) for q in phr))
+    t_, p_ = await ctx_pick('Phrase List', small, 'Select Contains')
+    check(f'Select Contains on "{small}": the longer phrases that hold it', sorted(p_), sorted(q for q in phr if q != small and inside(small, q)))
+    t_, p_ = await ctx_pick('Term List', 'refund', 'Containing Phrases')
+    check('Containing Phrases on "refund": the phrases with the word', sorted(p_), sorted(q for q in phr if 'refund' in q.split()))
+    await page.ev(f'{NEW}.table.select([])')
+
+    # ---- Save Stacked DTM for Association, and Association Analysis on it
+    n0 = await page.ev('SM.app.tables.length')
+    await page.ev(pick_new('*top*', ['Save Stacked DTM for Association'], wait=False))
+    await asyncio.sleep(0.6)
+    stk = await page.ev('(() => { const t = SM.app.tables[SM.app.tables.length - 1]; return { name: t.name, cols: t.columns.map(c => c.name), n: t.nrows, types: t.columns.map(c => c.modelingType) }; })()')
+    check('Save Stacked DTM for Association: a row for each document and term it holds', (await page.ev('SM.app.tables.length') == n0 + 1, stk['cols'], stk['n']), (True, ['Row', 'Term'], sum(len(v) for v in ex['term_rows'])))
+    await page.ev(TRIANGLES.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};'))
+    tri = await page.ev(TRIANGLES.replace('const rep = SM.app.reports[SM.app.reports.length - 1];', f'const rep = {NEW};'))
+    check(f'every red triangle of the new analyses\' report opens, with its submenus ({tri["triangles"]})', (tri['errors'], tri['triangles'] >= 8, tri['items'] > tri['triangles']), ([], True, True))
+    ar = await page.ev(open_report_js('association', {'item': ['Term'], 'id': ['Row']}, {'minSupport': 0.05}), timeout=600)
+    await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Frequent Item Sets'); if (h) h.querySelector('.sm-ob-toggle').click(); })()''')
+    check('... and Association Analysis reads it (Item: Term, ID: Row) without errors', (ar['errors'], ar['warnings'], 'Rules' in ar['outlines']), ([], [], True))
+    top_ = await page.ev(table_under_js('Frequent Item Sets'))
+    nonempty = len({r_ for v in ex['term_rows'] for r_ in v})
+    check.near('... its most frequent term\'s support: the rows that hold it over the rows with a term', num(top_[1][1]) / 100, max(len(v) for v in ex['term_rows']) / nonempty, tol=6e-4)
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({NEW}))')
+
+    # ---- a project keeps the new analyses (the response's column id remapped), and By gives each group its own
+    pj = await page.ev(f'''(async () => {{
+      const rep = {NEW}; const t = rep.table;
+      const j = JSON.parse(JSON.stringify({{ format: 'smui-project', version: 1, tables: [{{ id: t.id, ...t.toJSON() }}], reports: [rep.toJSON()] }}));
+      SM.app.loadProject(j);
+      const back = SM.app.reports[SM.app.reports.length - 1];
+      await new Promise(res => {{ if (!back.body.classList.contains('is-running') && back.body.querySelector('.sm-ob')) res(); else back.on('done', res); }});
+      const heads = (r) => [...r.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent);
+      const c = back.table.col('comment').id, ts = back.spec.options[c + '|termsel'];
+      const out = {{ same: JSON.stringify(heads(back)) === JSON.stringify(heads(rep)), errors: back.body.querySelectorAll('.sm-ob-error, .sm-ob-warn').length,
+                    response: ts && back.table.col(ts.response) ? back.table.col(ts.response).name : null, newTable: back.table !== t,
+                    lca: back.spec.options[c + '|lca'], spm: back.spec.options[c + '|spm'], sentiment: back.spec.options[c + '|sentiment'] }};
+      SM.app.closeTable(back.table);
+      await new Promise(r => setTimeout(r, 100));
+      const dl = [...document.querySelectorAll('.sm-dialog')].pop();
+      const yes = dl && [...dl.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Close');
+      if (yes) yes.click();
+      return out; }})()''', timeout=900)
+    check('a project keeps the new analyses: the same outlines, no errors, the response remapped to the new table\'s rating', (pj['newTable'], pj['same'], pj['errors'], pj['response'], pj['lca'], pj['spm'], pj['sentiment']),
+          (True, True, 0, 'rating', {'k': 5, 'minFreq': 4, 'maxTerms': 1000}, 3, True))
+    await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
+    by = await page.ev(f'''(async () => {{ const t = SM.app.tables.find(t => t.name === 'Service comments'); const c = t.col('comment').id;
+      const o = {{}}; o[c + '|lca'] = {{ k: 3 }}; o[c + '|lsa'] = {{ k: 8 }}; o[c + '|clusterTerms'] = true; o[c + '|clusterDocs'] = true; o[c + '|spm'] = 3; o[c + '|termsel'] = {{ response: t.col('rating').id }}; o[c + '|sentiment'] = true;
+      const rep = SM.app.openReport(SM.platforms.get('text'), {{ roles: {{ text: [c], by: [t.col('channel').id] }}, options: o }}, t);
+      await new Promise(res => rep.on('done', res));
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent);
+      const mix = [...rep.body.querySelectorAll('table.sm-rt')].filter((x) => x.dataset.rtKey === 'lcamix').map((x) => x._rt.rows.reduce((a, r) => a + r.n, 0));
+      const out = {{ groups: heads.filter(h => /^Text Explorer for comment channel=/.test(h)).length, lca: heads.filter(h => h === 'Latent Class Analysis for 3 Clusters').length,
+                    ts: heads.filter(h => h === 'Term Selection').length, se: heads.filter(h => h === 'Sentiment Analysis').length, spm: heads.filter(h => h === 'SVD Scatterplots of Document and Term Spaces').length,
+                    mix, want: ['app', 'phone', 'web'].map(v => t.col('channel').values.filter(x => x === v).length), errors: [...rep.body.querySelectorAll('.sm-ob-error, .sm-ob-warn')].map(e => e.textContent.slice(0, 200)) }};
+      SM.app.closeReport(rep);
+      return out; }})()''', timeout=900)
+    check('By channel: each group its own LCA, SVD matrix, Term Selection and Sentiment Analysis, without errors', (by['groups'], by['lca'], by['spm'], by['ts'], by['se'], by['errors']), (3, 3, 3, 3, 3, []))
+    check('... each group\'s latent classes hold its own documents', by['mix'], by['want'])
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({NEW}))')
+
+    # ---- the new forms' (i): every field with its help
+    for title, path, fields in (('*top*', ['Latent Class Analysis…'], ['Maximum Number of Terms', 'Minimum Term Frequency', 'Number of Clusters']),
+                                ('*top*', ['Term Selection…'], ['Response', 'Weighting', 'Maximum Number of Terms', 'Minimum Term Frequency', 'Early Stopping']),
+                                ('SVD Centered and Scaled TF IDF', ['SVD Scatterplot Matrix…'], ['Number of singular vectors']),
+                                ('Cluster Terms', ['Number of Clusters…'], ['Number of clusters'])):
+        await form_help(page, f"await clickPath({NEW}, {json.dumps(title)}, {json.dumps(path)});", fields, path[-1])
+
+
+async def new_chart_code(page):
+    """The new graphs' matplotlib code, run in the page: the MDS Plot, the dendrogram, the scatterplot matrix, the term
+    coefficients and the sentiment histogram draw the page's points, lines and bars."""
+    g = await page.ev(f'(async () => {{ const rep = {NEW}; SM.app.showTab(SM.app.tabOf(rep)); return await __gr.graphs(rep); }})()', timeout=600)
+    got = {x['label']: x for x in g}
+    table_js = "SM.app.tables.find((x) => x.name === 'Service comments')"
+    want = [lab for lab in got if any(lab.startswith(p) for p in ('MDS Plot', 'Cluster Terms of', 'SVD scatterplot matrix', 'Term coefficients', 'Sentiment of the documents'))]
+    check('the new graphs are there, each with its code right under it, ending in plt.show()', (len(want), all(got[k]['code'] and got[k]['code'].rstrip().split('\n')[-1] == 'plt.show()' for k in want)), (5, True))
+    for lab in want:
+        G = got[lab]
+        F, err = await run_graph(page, G, table_js)
+        if not check(f'the new graphs\' code: {lab}: runs in the page', err, None) or not F:
+            continue
+        axes = F[0]['axes']
+        t0 = G['traces'][0]
+        if lab.startswith('MDS Plot'):
+            check.near(f'{lab}: a point per cluster', maxdiff([q for p in axes[0]['scatter'][0]['xy'] for q in p], [q for p in points_of(t0) for q in p]), 0, 1e-9)
+        elif lab.startswith('Cluster Terms of'):
+            segs = []
+            for t in G['traces'][:-1]:
+                xs, ys = t['x'], t['y']
+                for k in range(0, len(xs), 5):
+                    segs.append(tuple(round(v, 9) for v in xs[k:k + 4] + ys[k:k + 4]))
+            lines = [tuple(round(v, 9) for v in ln['x'] + ln['y']) for ln in axes[0]['lines'] if len(ln['x']) == 4]   # the joins (the cut is a line of its own)
+            check(f'{lab}: every join drawn where the page draws it', sorted(lines), sorted(segs))
+            check.near(f'{lab}: the leaves at their places', maxdiff([q for p in sorted(map(tuple, axes[0]['scatter'][0]['xy'])) for q in p], [q for p in sorted(points_of(G['traces'][-1])) for q in p]), 0, 1e-9)
+        elif lab.startswith('SVD scatterplot matrix'):
+            check(f'{lab}: a panel per pair', len(axes), len(G['traces']))
+            check.near(f'{lab}: each panel\'s points', max(maxdiff([q for p in ax['scatter'][0]['xy'] for q in p], [q for p in points_of(t) for q in p]) for ax, t in zip(axes, G['traces'])), 0, 1e-9)
+        elif lab.startswith('Term coefficients'):
+            check.near(f'{lab}: a bar per term, its coefficient', maxdiff([b['w'] for b in axes[0]['bars']], t0['x']), 0, 1e-9)
+        else:
+            check(f'{lab}: the bars: the documents in each 0.1', [round(b['h']) for b in axes[0]['bars']], t0['y'])
+            check.near(f'{lab}: at the page\'s places', maxdiff([b['x'] + b['w'] / 2 for b in axes[0]['bars']], t0['x']), 0, 1e-9)
 
 
 asyncio.run(main())

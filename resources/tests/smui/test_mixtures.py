@@ -450,4 +450,122 @@ graph_checks(rg, 'a By group, rows left out', 'bygroup.csv', frameG)
 r1 = call('mixtures.fit', table=tB, columns=[cols[0]], k_min=2, seed=3, tours=2, outlier=True, table_name='data')
 graph_checks(r1, 'one column with the outlier cluster', frame=frameB)
 
+# ---- Save Clusters and Save Mixture Probabilities for every row; Save Mixture Formulas ---------------------------------
+# Every row of the By group whose columns are present gets its cluster and probabilities from the report's fit: the
+# rows the fit leaves out (excluded) too, scored by scikit-learn's GaussianMixture fitted here to the report's rows.
+# The formulas (JMP's Dist Formula <k>, Dist Total, Prob Formula <k>, and the Cluster Formula) are computed by the
+# page's formula language (smui-formula.js in node) on the whole table and checked against those probabilities and
+# against scipy's normal densities of the reported means and covariances.
+import shutil  # noqa: E402
+
+NODE = shutil.which('node')
+FORMULA_JS = r"""
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const sb = { console }; sb.self = sb; vm.createContext(sb);
+for (const f of ['smui-util.js', 'smui-table.js', 'smui-formula.js']) vm.runInContext(fs.readFileSync(path.join(spec.js, f), 'utf8'), sb, { filename: f });
+const SM = sb.SM;
+const t = new SM.Table({ name: 't', columns: spec.columns.map((c) => ({ name: c.name, dataType: c.char ? 'character' : 'numeric', values: c.values.map((v) => (v == null ? (c.char ? null : NaN) : v)) })) });
+const ref = (name) => `:"${String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+const out = [], made = [];
+for (const s of spec.saved) {
+  const c = t.addColumn({ name: s.name, dataType: 'numeric', values: [] });
+  made.push(c);
+  try { SM.formula.apply(t, c, s.formula.replace(/\{\{col:(\d+)\}\}/g, (_, j) => ref(made[+j].name))); } catch (e) { out.push({ name: c.name, error: e.message }); continue; }
+  out.push({ name: c.name, values: Array.from(c.values, (v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v)) });
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def formula_values(columns, saved):
+    """The saved formulas computed by the page's formula language on a table of these columns ({name: values});
+    None without node."""
+    if not NODE:
+        return None
+    d = tempfile.mkdtemp(prefix='smui-mix-formula-')
+    with open(os.path.join(d, 'f.js'), 'w') as fh:
+        fh.write(FORMULA_JS)
+    cols_ = [{'name': k, 'char': any(isinstance(x, str) for x in v), 'values': [None if x is None or (not isinstance(x, str) and not np.isfinite(x)) else (x if isinstance(x, str) else float(x)) for x in v]} for k, v in columns.items()]
+    with open(os.path.join(d, 's.json'), 'w') as fh:
+        json.dump({'js': os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js')), 'columns': cols_,
+                   'saved': [{'name': c['name'], 'formula': c['formula']} for c in saved]}, fh)
+    r = subprocess.run([NODE, os.path.join(d, 'f.js'), os.path.join(d, 's.json')], capture_output=True, text=True, timeout=300)
+    if r.returncode:
+        raise RuntimeError(r.stderr)
+    return json.loads(r.stdout)
+
+
+def col_of(res, name):
+    c = next(x for x in res if x['name'] == name)
+    if 'error' in c:
+        raise RuntimeError(f'{name}: {c["error"]}')
+    return np.array([np.nan if v is None else v for v in c['values']], dtype=float)
+
+
+if not NODE:
+    print('note: node is not installed; the formula checks are skipped')
+XS = XA[:240].copy()
+XS[9, 2] = np.nan                         # a row with a missing value: no cluster, no probability
+XS[30] = [40.0, 300.0, 30.0]              # a row far from every cluster: its densities underflow
+grpS = np.where(np.arange(240) % 3 == 0, 'g1', 'g2')
+colsS = {**{c: XS[:, j] for j, c in enumerate(cols)}, 'g': grpS.tolist()}
+tS2 = table(colsS)
+fitted = [i for i in range(240) if i not in (1, 2, 3, 30) and np.isfinite(XS[i]).all()]   # rows 1-3 excluded, the far row too
+for cov in COVS:
+    for kw in ({}, {'outlier': True}):
+        tag = f'saved columns ({cov}{", outlier cluster" if kw else ""})'
+        base = dict(table=tS2, columns=cols, rows=fitted, k_min=3, covariance=cov, seed=5, tours=2, **kw)
+        rf = call('mixtures.fit', **base)
+        f = rf['fits'][0]
+        sv = call('mixtures.save', k=3, **base)
+        rows_ = sv['rows']
+        want_rows = [i for i in range(240) if np.isfinite(XS[i]).all()]
+        check(f'{tag}: every row whose columns are present, excluded ones too', rows_, want_rows)
+        P = np.array(sv['prob'])
+        at = {r: i for i, r in enumerate(rows_)}
+        check(f'{tag}: the report\'s own rows keep their clusters', [sv['cluster'][at[r]] for r in rf['rows']], [c + 1 for c in f['labels']])
+        if not kw:
+            # scikit-learn fitted here to the report's rows (scaled as the report scales them) scores the others
+            Xf = XS[fitted]
+            m_, s_ = Xf.mean(0), Xf.std(0, ddof=1)
+            gm = sk_fit((Xf - m_) / s_, 3, cov, 2, 5)
+            o_ = np.argsort(-gm.weights_, kind='stable')
+            Psk = gm.predict_proba((XS[want_rows] - m_) / s_)[:, o_]
+            check.near(f'{tag}: the probabilities of every row = scikit-learn\'s predict_proba of the same fit', mx(P, Psk), 0.0, abs_=1e-9)
+        fm = call('mixtures.formulas', k=3, **base)
+        m = 3 + (1 if kw else 0)
+        names = [c['name'] for c in fm['columns']]
+        want_names = [f'Dist Formula {j + 1}' for j in range(3)] + (['Dist Formula Outlier'] if kw else []) + ['Dist Total'] + [f'Prob Formula {j + 1}' for j in range(3)] + (['Prob Formula Outlier'] if kw else []) + ['Cluster Formula']
+        check(f'{tag}: JMP\'s Dist Formula, Dist Total and Prob Formula columns, and the Cluster Formula', names, want_names)
+        fr = formula_values(colsS, fm['columns'])
+        if fr is None:
+            continue
+        Pf = np.column_stack([col_of(fr, n_) for n_ in names[m + 1:2 * m + 1]])
+        Df = np.column_stack([col_of(fr, n_) for n_ in names[:m]])
+        tot = col_of(fr, 'Dist Total')
+        near_rows = [r for r in want_rows if r != 30]
+        check.near(f'{tag}: the Prob formulas = the saved probabilities (every row but the far one)', mx(Pf[near_rows], P[[at[r] for r in near_rows]]), 0.0, abs_=1e-12)
+        dens = np.column_stack([w_ * stats.multivariate_normal(mean=mu_, cov=np.array(C_)).pdf(XS[near_rows]) for w_, mu_, C_ in zip(f['weights'], f['means'], f['covs'])])
+        if kw:
+            dens = np.column_stack([dens, np.full(len(near_rows), f['outlier_weight'] * f['outlier_density'])])
+        check.near(f'{tag}: each Dist formula = the share times the normal density of the reported mean and covariance (scipy)', float(np.max(np.abs(Df[near_rows] - dens) / np.maximum(dens, 1e-300))), 0.0, abs_=1e-9)
+        check.near(f'{tag}: Dist Total = their sum, the mixture\'s density', float(np.max(np.abs(tot[near_rows] - dens.sum(1)) / dens.sum(1))), 0.0, abs_=1e-9)
+        cf = col_of(fr, 'Cluster Formula')
+        check(f'{tag}: the Cluster Formula = Save Clusters on every row', [cf[r] for r in want_rows], [float(c) for c in sv['cluster']])
+        check(f'{tag}: a row with a missing value: nothing', (bool(np.isnan(cf[9])), bool(np.isnan(Pf[9]).all())), (True, True))
+        if not kw:
+            check(f'{tag}: the far row: its densities underflow, so the Prob formulas are missing, as JMP\'s (Save Mixture Probabilities has them)', (bool(np.isnan(Pf[30]).all()), bool(np.isfinite(P[at[30]]).all())), (True, True))
+        check(f'{tag}: ... but it has a Cluster Formula, from the log densities', cf[30], float(sv['cluster'][at[30]]))
+# a By group: the other group's rows get nothing
+g1 = [i for i in range(240) if grpS[i] == 'g1' and np.isfinite(XS[i]).all() and i != 30]
+fmg = call('mixtures.formulas', table=tS2, columns=cols, rows=g1, k=2, k_min=2, seed=5, tours=2, where=[{'column': 'g', 'value': 'g1'}])
+svg = call('mixtures.save', table=tS2, columns=cols, rows=g1, k=2, k_min=2, seed=5, tours=2, where=[{'column': 'g', 'value': 'g1'}])
+check('a By group: Save Mixture Probabilities gives the group\'s rows only', svg['rows'], [i for i in range(240) if grpS[i] == 'g1' and np.isfinite(XS[i]).all()])
+fr = formula_values(colsS, fmg['columns'])
+if fr is not None:
+    cf = col_of(fr, 'Cluster Formula')
+    check('a By group: the formulas are missing outside the group', bool(np.isnan(cf[grpS == 'g2']).all()), True)
+    check('... and give the group\'s rows their saved clusters', [cf[r] for r in svg['rows']], [float(c) for c in svg['cluster']])
+
 sys.exit(check.done())

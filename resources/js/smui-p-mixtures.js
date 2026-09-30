@@ -406,25 +406,41 @@
       { label: 'Save Colors to Table', action: () => groupsOf(S.res, f).forEach((rs, c) => { if (rs.length) ctx.table.setColor(rs, colorIndex(c, f.k, S.res.outlier)); }) },
       { label: 'Save Markers to Table', action: () => groupsOf(S.res, f).forEach((rs, c) => { if (rs.length) ctx.table.setMarker(rs, c % 12); }) },
       { label: 'Save Clusters', action: () => saveClusters(ctx, S, f) },
-      { label: 'Save Mixture Probabilities', action: () => saveProbabilities(ctx, S, f) });
+      { label: 'Save Mixture Probabilities', action: () => saveProbabilities(ctx, S, f) },
+      { label: 'Save Mixture Formulas', action: () => saveFormulas(ctx, S, f) });
     return items;
   }
 
-  /* ---- saved columns ----------------------------------------------------------------- */
-  function saveClusters(ctx, S, f) {
+  /* ---- saved columns -----------------------------------------------------------------
+     Every row of the By group whose columns are present gets its cluster and
+     probabilities from the report's fit: the rows the report leaves out
+     (excluded, filtered, a Freq below 1) too. Save Mixture Formulas makes
+     them live formula columns, as JMP's. */
+  async function saveClusters(ctx, S, f) {
     const out = S.res.outlier;
-    ctx.saveColumn('Cluster', { rows: S.res.rows, values: f.labels.map((c) => c + 1) }, {
-      modelingType: 'nominal',
-      notes: `the most likely cluster of a normal mixture of ${f.k} clusters (${COV_LABEL[S.res.covariance].toLowerCase()} covariances${out ? `; ${f.k + 1} is the outlier cluster` : ''}), from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`,
-    });
+    try {
+      const r = await ctx.call('mixtures.save', { ...S.base, k: f.k, where: ctx.where || [] });
+      ctx.saveColumn('Cluster', { rows: r.rows, values: r.cluster }, {
+        modelingType: 'nominal',
+        notes: `the most likely cluster of a normal mixture of ${f.k} clusters (${COV_LABEL[S.res.covariance].toLowerCase()} covariances${out ? `; ${f.k + 1} is the outlier cluster` : ''}), from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`,
+      });
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
   async function saveProbabilities(ctx, S, f) {
     try {
-      const r = await ctx.call('mixtures.save', { ...S.base, k: f.k });
+      const r = await ctx.call('mixtures.save', { ...S.base, k: f.k, where: ctx.where || [] });
       r.names.forEach((nm, j) => ctx.saveColumn(nm, { rows: r.rows, values: r.prob.map((row) => row[j]) }, {
         notes: `the probability of ${j < r.k ? `cluster ${j + 1}` : 'the outlier cluster'} in a normal mixture of ${f.k} clusters, from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`,
       }));
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+  }
+
+  async function saveFormulas(ctx, S, f) {
+    try {
+      const r = await ctx.call('mixtures.formulas', { ...S.base, k: f.k, where: ctx.where || [] });
+      if (SM.multivariate) SM.multivariate.saveBatch(ctx, r);
+      else SM.ui.toast('Save Mixture Formulas needs the Multivariate platforms', { error: true });
     } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
@@ -628,7 +644,8 @@
         { heading: 'Options', choices: OPTIONS.map((o) => [o.label, o.help]) },
         { heading: 'How the outlier cluster is fitted', text: 'scikit-learn has no uniform component, so with the Outlier Cluster the EM is the page\'s own (numpy, shown in the Python code): the normal clusters start from the same k-means labels as GaussianMixture, the uniform one with 5% of the rows. Without the uniform cluster that EM gives scikit-learn\'s fit (the tests check it).' },
         { heading: 'Starts and seeds', text: 'Each tour starts EM from the labels of one k-means run (scikit-learn\'s init_params="kmeans"); all tours draw from one random state seeded by Random Seed, and the tour with the largest likelihood is kept. The seed is kept with the report, so Redo and the Python code give the same fit. JMP chooses its starts its own way, so its clusters can differ.' },
-        { heading: 'Differences from JMP', text: 'JMP\'s defaults for Tours, iterations and the convergence criterion are not known here; this page uses 10 tours, at most 500 iterations and a change below 1e-6 in the mean log likelihood of a row. The number of parameters counts the means, the covariance parameters of the structure and the proportions, as scikit-learn does; JMP may count them otherwise. Johnson transforms, Robust Normal Mixtures, the saved formulas and Simulate Clusters are not here.' },
+        { heading: 'Saved columns', text: 'Save Clusters and Save Mixture Probabilities give every row of the group whose columns are present its most likely cluster and its probabilities, from the report\'s fit: the rows the fit left out (excluded, filtered, a Freq below 1) too. Save Mixture Formulas makes JMP\'s live formula columns: Dist Formula <k> (the share times the normal density of cluster k), Dist Total (their sum), Prob Formula <k> (the one over the other) and, beyond JMP, Cluster Formula, the most likely cluster; a row whose densities all underflow (far from every cluster) gets missing probabilities from the formulas, as in JMP, but its Cluster Formula still has a value.' },
+        { heading: 'Differences from JMP', text: 'JMP\'s defaults for Tours, iterations and the convergence criterion are not known here; this page uses 10 tours, at most 500 iterations and a change below 1e-6 in the mean log likelihood of a row. The number of parameters counts the means, the covariance parameters of the structure and the proportions, as scikit-learn does; JMP may count them otherwise. Johnson transforms, Robust Normal Mixtures, Save Density Formula and Simulate Clusters are not here.' },
       ],
       more: MORE,
     },
@@ -663,7 +680,7 @@
       lead: 'The fit for one number of clusters. Cluster Summary: the rows most likely in each cluster (Count, counted by Freq) and the mixing proportion, the model\'s share of the rows. Cluster Means and Cluster Standard Deviations: each cluster\'s fitted normal distribution, in the columns\' units. Click a line of the summary, or a cluster below it, to select its rows.',
       sections: [
         { heading: 'Clicking', choices: [['A line of Cluster Summary', 'Selects the rows most likely in that cluster; Shift adds them to the selection.'], ['A cluster under the tables', 'The same: each button is a cluster\'s colour and count.']] },
-        { heading: 'The red triangle', text: 'The graphs, the clusters\' correlations and the profiler of the cluster probabilities; Save Clusters (the most likely cluster of each row), Save Mixture Probabilities (a column for each cluster), Save Colors and Markers to Table.' },
+        { heading: 'The red triangle', text: 'The graphs, the clusters\' correlations and the profiler of the cluster probabilities; Save Clusters (the most likely cluster of each row), Save Mixture Probabilities (a column for each cluster), Save Mixture Formulas (the densities and probabilities as live formulas), Save Colors and Markers to Table.' },
       ],
       more: MORE,
     },
@@ -676,7 +693,7 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'mixtures', label: 'Normal Mixtures', menu: 'Analyze/Clustering', order: 30, info: 'p:mixtures', topics: TOPICS,
-    about: 'Clusters as a mixture of multivariate normal distributions fitted by EM, for one number of clusters or a range compared by −2 log likelihood, AICc and BIC; full, diagonal, tied or spherical covariances, tours from seeded k-means starts, JMP\'s outlier cluster (a uniform component); cluster summaries, means, standard deviations and correlations, a scatterplot matrix with each cluster\'s ellipses, a biplot, the profiler of the cluster probabilities, saved clusters and mixture probabilities, cluster colours and markers.',
+    about: 'Clusters as a mixture of multivariate normal distributions fitted by EM, for one number of clusters or a range compared by −2 log likelihood, AICc and BIC; full, diagonal, tied or spherical covariances, tours from seeded k-means starts, JMP\'s outlier cluster (a uniform component); cluster summaries, means, standard deviations and correlations, a scatterplot matrix with each cluster\'s ellipses, a biplot, the profiler of the cluster probabilities, saved clusters and mixture probabilities for every row, JMP\'s mixture formulas (densities and probabilities as live formula columns) and a cluster formula, cluster colours and markers.',
     uses: ['sklearn.mixture.GaussianMixture', 'sklearn.cluster.KMeans (the starts of the outlier cluster\'s EM)', 'numpy, scipy.linalg, scipy.special.logsumexp (the EM with the outlier cluster)'],
     launch: {
       lead: 'Choose the continuous columns to cluster the rows by. Number of Clusters and an optional range choose what is fitted; the report\'s Iterative Clustering panel changes them.',

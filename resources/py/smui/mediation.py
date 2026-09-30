@@ -60,7 +60,7 @@ from statsmodels.stats.mediation import Mediation
 
 from . import data, models
 from .registry import api
-from .util import code_head, col, q
+from .util import code_head, col, one_line, q
 from .util import table as rtable
 
 J = json.dumps
@@ -558,13 +558,13 @@ def _fit_code(S, info, table, table_name, rows, n_rep, method, seed, extra_impor
         return f'({expr} == {_lit(v)})' if not isinstance(v, str) else f'({expr}.astype(str) == {J(v)})'
     lines.append('# Mediation sets the exposure to 0 (control) and 1 (treated), by name: the treatment and the mediator get plain names')
     if info['t_kind'] == 'categorical':
-        lines.append(f'd[{J(t)}] = {eq(T, info["treated"])}.astype(float)   # 1: treated ({S["treatment"]} = {_text(info["treated"])}), 0: control ({S["treatment"]} = {_text(info["control"])})')
+        lines.append(f'd[{J(t)}] = {eq(T, info["treated"])}.astype(float)   # 1: treated ({one_line(S["treatment"])} = {one_line(_text(info["treated"]))}), 0: control ({one_line(S["treatment"])} = {one_line(_text(info["control"]))})')
     else:
         lines.append(f'd[{J(t)}] = ({T} - {info["control"]!r}) / ({info["treated"]!r} - {info["control"]!r})   # 0 at the control value, 1 at the treated value')
     for key, alias, expr in (('mediator', m, M), ('y', S['y'], f'd[{J(S["y"])}]')):
         lv = info[f'{key}_levels']
         if lv:
-            lines.append(f'd[{J(alias)}] = {eq(expr, lv[1])}.astype(float)   # 1: {S[key]} = {_text(lv[1])}, 0: {S[key]} = {_text(lv[0])}')
+            lines.append(f'd[{J(alias)}] = {eq(expr, lv[1])}.astype(float)   # 1: {one_line(S[key])} = {one_line(_text(lv[1]))}, 0: {one_line(S[key])} = {one_line(_text(lv[0]))}')
         elif alias != S[key]:
             lines.append(f'd[{J(alias)}] = {expr}   # the mediator')
     for c, lv in info['cov_levels'].items():

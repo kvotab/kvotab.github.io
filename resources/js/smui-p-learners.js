@@ -83,6 +83,8 @@
     knnX: 'The factors the distance between rows is measured on: a continuous one standardized by the training rows\' mean and standard deviation, a categorical one as a 0/1 column per level, not scaled, so that a different level adds 2 to the squared distance (as √2 standard deviations of a continuous factor would).',
     k: 'The largest K fitted, from 1 to 1000 (10): every K from 1 up to it is fitted, and the best is the one with the smallest misclassification rate (RASE for a continuous Y) on the validation rows, or on the training rows, each left out of its own neighbours, when there are none. At most the training rows less one are used.',
     kPick: 'The K whose fit the report shows under Model Selection instead of the best one; the Measures of Fit and Save Columns follow it. Select K ▸ Best K goes back to the best.',
+    standardize: 'On (the default): each continuous factor is centred and divided by its standard deviation over the training rows before the distances are measured, so that a factor in large units does not outweigh the others. Off: the factors as they are, when their units are comparable and their spread should count.',
+    distance: 'Off (the default): each of the K neighbours has one vote. On: each vote is weighted by 1/distance, so that nearer rows count more (a neighbour at distance 0 takes all the weight, as scikit-learn\'s weights="distance"); a level\'s probability is then its share of the weights as K votes, with the prior of one vote. Beyond JMP.',
     nbY: 'The nominal or ordinal column whose levels the rows are classified into; every row gets a probability of each level (the order of an ordinal response is not used).',
     nbX: 'The factors, taken as independent within each level of Y: a continuous one by a normal density per level, a categorical one by its smoothed shares of levels per level.',
     nbMissing: 'On (the default): rows missing a factor are kept, the missing value is left out of its row\'s product, and that it is missing counts as a factor of its own (Missing values, above). Off: rows missing any factor are left out.',
@@ -103,22 +105,28 @@
      K NEAREST NEIGHBORS
      ====================================================================== */
   const kOf = (ctx) => { const k = Number(ctx.opt('k', 10)); return Number.isInteger(k) && k >= 1 ? k : 10; };
-  const knnBase = (ctx) => ({ ...base(ctx), k: kOf(ctx) });
+  // Standardize and Distance Weights go only when they are not the defaults, so that a report made before them keeps its calls
+  const knnBase = (ctx) => ({ ...base(ctx), k: kOf(ctx), ...(ctx.opt('standardize', true) ? {} : { standardize: false }), ...(ctx.opt('distance', false) ? { weights: 'distance' } : {}) });
+  // the key the engine keeps the report's model under (Score Rows): the report and its By group
+  const keepOf = (ctx) => `${ctx.report.id}|${ctx.byLabel || ''}`;
 
   async function knnRender(ctx) {
     ctx.lrn = null;
     const b = knnBase(ctx);
-    const r = await ctx.call('knn.fit', { ...b, chosen: ctx.opt('knnK', null) });
+    const r = await ctx.call('knn.fit', { ...b, chosen: ctx.opt('knnK', null), keep: keepOf(ctx) });
     if (r.error) { ctx.container.append(ctx.warn(r.error)); return; }
     ctx.lrn = { r, b: { ...b, chosen: r.chosen } };
     if (r.notes && r.notes.length) ctx.container.append(ctx.note(r.notes.join(' ')));
     if (ctx.opt('knnSelection', true)) knnSelection(ctx, r);
     const cat = r.kind === 'categorical';
     const ob = ctx.outline('Chosen Model', { key: 'knnfit', info: 'p:knn:fit', menu: () => knnKItems(ctx, r) });
-    ob.add(ctx.kv([['K', r.chosen, 'int'], ['Best K', r.best, 'int'], ['Training Rows', r.n_train, 'int']]));
+    ob.add(ctx.kv([['K', r.chosen, 'int'], ['Best K', r.best, 'int'], ['Training Rows', r.n_train, 'int'],
+      ['Distances', `${r.standardize ? 'standardized' : 'as they are'}${r.weights === 'distance' ? ', neighbours weighted by 1/distance' : ''}`, 'text']]));
     const mo = SM.predict.measures(ctx, ob, r.fit);
-    mo.add(ctx.note(`${r.chosen === r.best ? 'The best K' : `K = ${r.chosen}, chosen (the best is ${r.best})`}. A training row is predicted from its ${r.chosen} nearest other training rows, so its measures are those of leaving the row out; ${cat ? `a level's probability is its share of the ${r.chosen} votes with a prior of 1/${r.fit.levels.length} (one vote spread over the levels), so that none is 0 or 1` : 'the prediction is the mean response of the neighbours'}.`));
-    SM.predict.classification(ctx, ob, r.fit);
+    if (r.cv && r.cv.measures) mo.add(ctx.rt({ columns: r.fit.measure_columns.filter((c) => c.key !== 'auc' || r.cv.measures.auc != null), rows: [r.cv.measures] }, { key: 'knncv', sortable: false, caption: `Crossvalidation: each row predicted from its ${r.chosen} nearest rows of the other folds (${r.folds} folds of the Validation column)` }));
+    mo.add(ctx.note(`${r.chosen === r.best ? 'The best K' : `K = ${r.chosen}, chosen (the best is ${r.best})`}. A training row is predicted from its ${r.chosen} nearest other training rows, so its measures are those of leaving the row out; ${cat ? `a level's probability is its share of the ${r.chosen} votes${r.weights === 'distance' ? ' (each weighted by 1/distance)' : ''} with a prior of 1/${r.fit.levels.length} (one vote spread over the levels), so that none is 0 or 1, and a tied vote goes to one of the tied levels at random, from the report's seed (as JMP breaks ties)` : `the prediction is the ${r.weights === 'distance' ? 'distance-weighted ' : ''}mean response of the neighbours`}.`));
+    await SM.predict.classification(ctx, ob, r.fit, null, '', { save: { fn: 'knn.save', payload: ctx.lrn.b } });
+    if (cat && ctx.opt('mosaic', false)) mosaicOutline(ctx, ob, r);
     SM.predict.actualByPredicted(ctx, ob, r.fit);
     if (ctx.opt('profiler', false) && !ctx.headless) {
       await SM.profiler.render(ctx, ctx.container, { sources: [{ fn: 'knn.profile', payload: ctx.lrn.b }], option: 'profiler',
@@ -136,11 +144,11 @@
       key: 'knnsel', sortable: false, onRow: (row) => ctx.set('knnK', row.k === r.best ? null : row.k),
       cellClass: (row, c) => [row.k === r.chosen ? 'sm-lrn-chosen' : '', c.key === 'k' && row.k === r.best ? 'sm-lrn-best' : ''].filter(Boolean).join(' '),
     });
-    const traces = r.fit.sets.map((s, i) => {
-      const k = SETS.indexOf(s);
+    const series = [...r.fit.sets.map((s) => [s, SETS.indexOf(s)]), ...(r.folds ? [['Crossvalidation', 'cv']] : [])];
+    const traces = series.map(([s, k], i) => {
       const key = cat ? `rate${k}` : `rase${k}`;
       return { type: 'scatter', mode: 'lines+markers', x: rows.map((q) => q.k), y: rows.map((q) => q[key]), name: s,
-        line: { color: hueOf(i), width: 2, dash: ['solid', 'dash', 'dot'][i] }, marker: { color: hueOf(i), size: 8, symbol: symbolOf(i) },
+        line: { color: hueOf(i), width: 2, dash: ['solid', 'dash', 'dot', 'dashdot'][i] }, marker: { color: hueOf(i), size: 8, symbol: symbolOf(i) },
         hovertemplate: `${s}: K = %{x}, ${crit} %{y:.4f}<extra></extra>` };
     });
     const shapes = [{ type: 'line', xref: 'x', yref: 'paper', x0: r.best, x1: r.best, y0: 0, y1: 1, line: { color: muted, width: 1.2, dash: 'dot' } }];
@@ -151,11 +159,39 @@
       xaxis: { title: { text: 'K' }, dtick: r.k <= 20 ? 1 : undefined, range: [0.5, r.k + 0.5] }, yaxis: { title: { text: crit }, rangemode: 'tozero' }, shapes, annotations: ann,
     }, { width: W(430), height: 300, title: `${crit} by K`, select: false,
       onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isInteger(pt.x)) ctx.set('knnK', pt.x === r.best ? null : pt.x); }) });
-    const scaled = r.scaled.length ? `${r.scaled.join(', ')} standardized by the training rows' mean and standard deviation` : 'no continuous factor to standardize';
+    const scaled = !r.standardize ? 'the factors as they are (Standardize off)' : r.scaled.length ? `${r.scaled.join(', ')} standardized by the training rows' mean and standard deviation` : 'no continuous factor to standardize';
     const pc = r.fit.plots || {};
     ob.add(ctx.row(tbl, SM.predict.withCode(plot, SM.predict.graphCode(ctx, pc.head_code, pc.selection))),
-      ctx.note(`Every K from 1 to ${r.k}: each row is predicted from its K nearest training rows by Euclidean distance on the factors (${scaled}; a level of a categorical factor is a 0/1 column as it is, so a different level adds 2 to the squared distance). A training row is not its own neighbour. The best K (${r.best}, marked) has the smallest ${crit.toLowerCase()} on the ${r.by.toLowerCase()} rows (of equal ones the smallest K)${r.chosen !== r.best ? `; K = ${r.chosen} is shown below` : ''}. Click a line or a point to see another K.`),
+      ctx.note(`Every K from 1 to ${r.k}: each row is predicted from its K nearest training rows by Euclidean distance on the factors (${scaled}; a level of a categorical factor is a 0/1 column as it is, so a different level adds 2 to the squared distance)${r.weights === 'distance' ? ', each neighbour weighted by 1/distance' : ''}. A training row is not its own neighbour${r.folds ? `; Crossvalidation: each row from its neighbours in the other ${r.folds - 1} folds of the Validation column` : ''}. The best K (${r.best}, marked) has the smallest ${crit.toLowerCase()} on the ${r.by.toLowerCase()} rows (of equal ones the smallest K)${r.chosen !== r.best ? `; K = ${r.chosen} is shown below` : ''}. Click a line of the table or a point of the graph to see another K.`),
       ctx.code(r.code));
+  }
+
+  /* The Mosaic Plot of actual by called: a bar per actual level, as wide as its share of the set's rows, cut by the
+     shares of the levels its rows are called; each part linked to its rows. */
+  function mosaicOutline(ctx, parent, r) {
+    const D = r.decided;
+    const levels = r.fit.levels;
+    const ob = ctx.outline('Mosaic Plot', { parent, key: 'knnmosaic', info: 'p:knn:mosaic', menu: () => [{ label: 'Remove', action: () => ctx.set('mosaic', false) }] });
+    const pc = r.fit.plots || {};
+    const plots = r.fit.sets.map((set) => {
+      const k = SETS.indexOf(set);
+      const L = levels.length;
+      const cell = Array.from({ length: L }, () => Array.from({ length: L }, () => []));
+      for (let i = 0; i < D.rows.length; i++) if (D.set[i] === k) cell[D.actual[i]][D.pred[i]].push(D.rows[i]);
+      const tot = cell.reduce((a, row) => a + row.reduce((b, c) => b + c.length, 0), 0) || 1;
+      const width = cell.map((row) => row.reduce((b, c) => b + c.length, 0) / tot);
+      const left = width.map((_, i) => width.slice(0, i).reduce((a, b) => a + b, 0));
+      const traces = levels.map((lv, j) => ({
+        type: 'bar', name: T(lv), x: levels.map((_, a) => left[a] + width[a] / 2), width: width.map((w) => w * 0.98),
+        y: levels.map((_, a) => { const n = cell[a].reduce((b, c) => b + c.length, 0); return n ? cell[a][j].length / n : 0; }),
+        base: levels.map((_, a) => { const n = cell[a].reduce((b, c) => b + c.length, 0); let s = 0; for (let q = 0; q < j; q++) s += n ? cell[a][q].length / n : 0; return s; }),
+        rows: levels.map((_, a) => cell[a][j]), marker: { color: hueOf(j) }, hovertemplate: `actual %{customdata}: called ${T(lv)} %{y:.3f}<extra></extra>`, customdata: levels.map(T),
+      }));
+      return SM.predict.withCode(ctx.plot(traces, { barmode: 'overlay', showlegend: true, legend: { x: 1.02, y: 1, xanchor: 'left' }, margin: { l: 50, r: 10, t: 28, b: 44 }, title: { text: set, font: { size: 12 } },
+        xaxis: { title: { text: 'Actual' }, range: [0, 1], tickvals: left.map((l, a) => l + width[a] / 2), ticktext: levels.map(T) }, yaxis: { title: { text: 'Called' }, range: [0, 1] } },
+      { width: W(360), height: 300, title: `Mosaic ${set}` }), SM.predict.graphCode(ctx, pc.head_code, pc.mosaic && pc.mosaic[set]));
+    });
+    ob.add(ctx.row(...plots), ctx.note('Each bar is an actual level, as wide as its share of the set\'s rows, cut by the shares of the levels its rows are called (the K chosen; a tie at random). Click or drag over a part to select its rows.'));
   }
 
   function knnKItems(ctx, r) {
@@ -181,16 +217,67 @@
     if (v) { ctx.set('knnK', null, null, { rerun: false }); ctx.set('k', v.k); }
   }
 
+  /* Score Rows (K Nearest Neighbors and Support Vector Machines, which have no formula): the model as this report
+     fitted it (the engine keeps it) on the rows of an open table: this one's rows added since, or every row of
+     another table with the same columns. The predictions go to that table as columns. */
+  async function scoreRows(ctx, fn, s) {
+    const app = SM.app;
+    const tables = (app && app.tables) || [ctx.table];
+    const v = await SM.ui.form({ title: 'Score Rows', info: 'p:learners:score', fields: [
+      { key: 't', label: 'The table to score', type: 'select', value: ctx.table.id, choices: tables.map((t) => [t.id, t.name]), help: 'An open table: this report\'s own (its rows added since the report fitted, or all its rows), or another with the columns the model was fitted to, found by name. The model is the report\'s as it was fitted: not fitted again to the rows scored.' },
+      { key: 'which', label: 'Rows', type: 'select', value: 'new', choices: [['new', 'Rows without a prediction yet'], ['all', 'Every row']], help: 'Rows without a prediction yet: the rows whose prediction column (Predicted, or Prob[] of the first level) is empty or missing, such as rows added after the report fitted; in another table without those columns, every row. Every row: all of them, into new columns.' },
+    ] });
+    if (!v) return;
+    const target = tables.find((t) => t.id === v.t) || ctx.table;
+    const r0 = s.r;
+    const names = r0.kind === 'categorical' ? r0.fit.levels.map((l) => `Prob[${l}]`) : [`Predicted ${ctx.name('y')}`];
+    let rows = null;
+    const first = target.columns.find((c) => c.name === names[0]);
+    if (v.which === 'new' && first) {
+      rows = [];
+      for (let i = 0; i < target.nrows; i++) { const x = first.values[i]; if (x == null || x === '' || Number.isNaN(x)) rows.push(i); }
+      if (!rows.length) { SM.ui.toast(`Every row of ${target.name} has a prediction in ${first.name}`); return; }
+    }
+    try {
+      const r = await SM.engine.call(fn, { ...s.b, keep: keepOf(ctx), source: ctx.table.id, target_rows: rows }, target);
+      if (r.note) SM.ui.toast(r.note);
+      writeScores(ctx, target, r, !!(v.which === 'new' && first));
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+  }
+
+  /* The scores into a table: into its prediction columns when they are there (the rows scored only), else new ones. */
+  function writeScores(ctx, t, r, into) {
+    const from = `scored by ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''} (the model as it fitted)`;
+    const cols = r.prob ? r.names.map((nm, j) => [nm, r.prob.map((p) => p[j]), 'numeric']) : [[r.name, r.values, 'numeric']];
+    if (r.prob) cols.push([r.most_name, r.most_likely, 'character']);
+    if (SM.app && SM.app.record) SM.app.record(t, 'Score Rows');
+    for (const [name, values, type] of cols) {
+      const c = into ? t.columns.find((x) => x.name === name) : null;
+      if (c) {
+        const next = c.values.slice();
+        r.rows.forEach((row, k) => { next[row] = values[k] == null ? (c.isNumeric ? NaN : null) : values[k]; });
+        t.setValues(c.id, next);
+      } else {
+        const full = new Array(t.nrows).fill(type === 'numeric' ? NaN : null);
+        r.rows.forEach((row, k) => { full[row] = values[k] == null ? full[row] : values[k]; });
+        t.addColumn({ name, dataType: type, values: full, notes: from, ...(type === 'character' && r.levels ? { modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels } : {}) });
+      }
+    }
+    SM.ui.toast(`Scored ${r.rows.length} rows of ${t.name}`);
+  }
+
   function knnTriangle(ctx) {
     const s = ctx.lrn;
     const items = [ctx.check('Model Selection', 'knnSelection', null, true)];
     if (s) items.push(...SM.predict.classificationItems(ctx, s.r.fit));
+    if (s && s.r.kind === 'categorical') items.push(ctx.check('Mosaic Plot', 'mosaic', null, false));
     items.push(ctx.check('Profiler', 'profiler', null, false));
     if (s) items.push(...knnKItems(ctx, s.r));
-    items.push({ label: 'Number of Neighbors…', action: () => kDialog(ctx) });
+    items.push({ label: 'Number of Neighbors…', action: () => kDialog(ctx) },
+      ctx.check('Standardize', 'standardize', null, true), ctx.check('Distance Weights', 'distance', null, false));
     if (s) {
       const save = SM.predict.saveItems(ctx, 'knn.save', s.b, s.r.fit)[0].submenu();
-      save.push({ label: 'Save Near Neighbor Rows', action: () => knnNeighbors(ctx, s.b) });
+      save.push({ label: 'Save Near Neighbor Rows', action: () => knnNeighbors(ctx, s.b) }, { label: 'Score Rows…', action: () => scoreRows(ctx, 'knn.score', s) });
       items.push({ separator: true }, { label: 'Save Columns', submenu: () => save });
     }
     return items;
@@ -212,9 +299,10 @@
     if (r.error) { ctx.container.append(ctx.warn(r.error)); return; }
     ctx.lrn = { r, b };
     const fd = SM.predict.measures(ctx, ctx.container, r.fit, { title: 'Fit Details', key: 'fitdetails' });
+    if (r.cv && r.cv.measures) fd.add(ctx.rt({ columns: r.fit.measure_columns.filter((c) => c.key !== 'auc' || r.cv.measures.auc != null), rows: [r.cv.measures] }, { key: 'nbcv', sortable: false, caption: `Crossvalidation: each row predicted by the model fitted without its fold (${r.cv.k} folds of the Validation column)` }));
     fd.add(ctx.note(`Each row's level probabilities: the level's share of the training rows times, for every factor, the chance of the row's value in that level: a normal density for a continuous factor, the level's smoothed share of the factor's levels for a categorical one (α = ${fmt(r.alpha)}). A value the row lacks is left out of its product${b.missing === 'informative' ? '; with Informative Missing that it is missing counts as a factor of its own' : ''}.`),
       ...(r.notes || []).map((t) => ctx.note(t)), ctx.code(r.code));
-    SM.predict.classification(ctx, ctx.container, r.fit);
+    await SM.predict.classification(ctx, ctx.container, r.fit, null, '', { save: { fn: 'naivebayes.save', payload: b } });
     if (ctx.opt('nbParams', false)) nbParams(ctx, r);
     if (ctx.opt('profiler', false) && !ctx.headless) await SM.profiler.render(ctx, ctx.container, { sources: [{ fn: 'naivebayes.profile', payload: b }], option: 'profiler' });
   }
@@ -251,8 +339,32 @@
     const items = [];
     if (s) items.push(...SM.predict.classificationItems(ctx, s.r.fit));
     items.push(ctx.check('Class Parameters', 'nbParams', null, false), ctx.check('Profiler', 'profiler', null, false), { label: 'Smoothing…', action: () => nbSmoothing(ctx) });
-    if (s) items.push({ separator: true }, ...SM.predict.saveItems(ctx, 'naivebayes.save', s.b, s.r.fit));
+    if (s) {
+      const save = SM.predict.saveItems(ctx, 'naivebayes.save', s.b, s.r.fit)[0].submenu();
+      save.push({ label: 'Save Prediction Formula', action: () => nbFormula(ctx, s.b) });
+      items.push({ separator: true }, { label: 'Save Columns', submenu: () => save });
+    }
     return items;
+  }
+
+  /* Save Prediction Formula: Log Score[level], Prob[level] and Most Likely as live formula columns (naivebayes.formula).
+     A name the table has already gets a number (Prob[export] 2, as JMP names it), and the columns saved after it
+     read it by that name. */
+  const fRef = (name) => (/^[\p{L}_][\p{L}\p{N}_]*$/u.test(String(name)) ? `:${name}` : `:"${String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+  async function nbFormula(ctx, payload) {
+    try {
+      const f = await ctx.call('naivebayes.formula', payload);
+      const from = `the Naive Bayes model of ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}`;
+      const renamed = [];
+      const put = (q, spec) => {
+        const c = ctx.saveFormula(q.name, renamed.reduce((e, [a, b]) => e.split(a).join(b), q.expr), spec);
+        if (c && c.name !== q.name) renamed.push([fRef(q.name), fRef(c.name)]);
+        return c;
+      };
+      for (const q of f.scores) put(q, { notes: `the log of the level's class share plus each factor's log density (continuous) or log smoothed share (categorical), a factor the row lacks left out: ${from}` });
+      for (const q of f.probs) put(q, { notes: `the level's probability from the Log Score columns, kept between 1e-15 and 1 − 1e-15: ${from}` });
+      put(f.most, { modelingType: f.most.ordinal ? 'ordinal' : 'nominal', valueOrder: f.most.levels, notes: `the level with the largest probability (of equal ones the first): ${from}` });
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
   /* ======================================================================
@@ -273,14 +385,14 @@
     const b = svmBase(ctx);
     const done = b.tune ? progressNote(ctx, 'svm', 'Tuning design') : null;
     let r;
-    try { r = await ctx.call('svm.fit', b); } finally { if (done) done(); }
+    try { r = await ctx.call('svm.fit', { ...b, keep: keepOf(ctx) }); } finally { if (done) done(); }
     if (r.error) { ctx.container.append(ctx.warn(r.error)); return; }
     ctx.lrn = { r, b };
     if (ctx.opt('svmSummary', true)) svmSummary(ctx, r);
     if (r.tuning) svmTuning(ctx, r);
     const fd = SM.predict.measures(ctx, ctx.container, r.fit, { title: 'Fit Details', key: 'fitdetails' });
     fd.add(ctx.code(r.code));
-    SM.predict.classification(ctx, ctx.container, r.fit);
+    await SM.predict.classification(ctx, ctx.container, r.fit, null, '', { save: { fn: 'svm.save', payload: b } });
     SM.predict.actualByPredicted(ctx, ctx.container, r.fit);
     if (ctx.headless) return;   // Bootstrap: no graphs, and the boundary has no table
     if (r.continuous.length >= 2 && ctx.opt('boundary', true)) await svmBoundary(ctx, r, b);
@@ -449,7 +561,11 @@
       { label: 'Kernel Function', submenu: () => KERNELS.map(([k, l]) => ({ label: l, checked: (ctx.opt('kernel', 'rbf') === 'linear' ? 'linear' : 'rbf') === k, action: () => ctx.set('kernel', k) })) },
       { label: 'Cost and Gamma…', action: () => costDialog(ctx) },
       { label: 'Tuning Design…', checked: !!ctx.opt('tune', false), action: () => tuneDialog(ctx) });
-    if (s) items.push({ separator: true }, ...SM.predict.saveItems(ctx, 'svm.save', s.b, s.r.fit));
+    if (s) {
+      const save = SM.predict.saveItems(ctx, 'svm.save', s.b, s.r.fit)[0].submenu();
+      save.push({ label: 'Score Rows…', action: () => scoreRows(ctx, 'svm.score', s) });
+      items.push({ separator: true }, { label: 'Save Columns', submenu: () => save });
+    }
     return items;
   }
 
@@ -463,9 +579,11 @@
       lead: 'Predicts each row from the K training rows nearest to it: the level most of them have (a categorical response) or their mean response (a continuous one). Every K from 1 to the Number of Neighbors is fitted, and the best is kept by the validation rows, or by the training rows when there are none. scikit-learn\'s KNeighborsClassifier and KNeighborsRegressor.',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'continuous, nominal or ordinal'], ['X, Factor', 'one or more; continuous factors are standardized (the training rows\' mean and standard deviation), a categorical factor is a 0/1 column per level, not scaled: a different level adds 2 to the squared distance, as √2 standard deviations of a continuous factor'], ['Validation', 'a column of 0/1/2, or the Validation Portion'], ['By', 'a separate analysis for each level']] },
-        { heading: 'Distances and ties', text: 'Euclidean distance. A training row is not its own neighbour (so K = 1 is not a perfect fit of the training rows). Rows at the same distance as the K-th are taken as scikit-learn\'s search for the largest K returns them (its documentation warns the result then depends on the order of the rows), and every smaller K takes the first of those. A tied vote goes to the level first in the value order, as scikit-learn\'s predict has it; the probabilities are the shares of the votes with a prior of one vote spread evenly over the levels, (votes + 1/L)/(K + 1), which keeps that order and is never 0 or 1.' },
+        { heading: 'Distances and ties', text: 'Euclidean distance, on the factors standardized by the training rows (Standardize, on by default), each neighbour one vote or, with Distance Weights, a vote of 1/distance. A training row is not its own neighbour (so K = 1 is not a perfect fit of the training rows). Rows at the same distance as the K-th are taken as scikit-learn\'s search for the largest K returns them (its documentation warns the result then depends on the order of the rows), and every smaller K takes the first of those. A tied vote goes to one of the tied levels at random, as JMP breaks ties: from the report\'s seed, a uniform number per row and level, the tied level with the largest wins (so Redo and the code give the same levels). The probabilities are the shares of the votes with a prior of one vote spread evenly over the levels, (votes + 1/L)/(K + 1), never 0 or 1.' },
+        { heading: 'K-fold Validation column', text: 'With a Validation column of more than three values (Make Validation Column, K Fold) every row trains, each fold is predicted from its neighbours in the other folds, and the best K is the one with the smallest crossvalidated error (Model Selection\'s Crossvalidation line).' },
+        { heading: 'Score Rows', text: 'Save Columns ▸ Score Rows… predicts rows the model did not see (rows added to the table since, or another open table with the same columns) with the model as the report fitted it: K Nearest Neighbors has no formula to save.' },
         { heading: 'Missing values', text: 'With Informative Missing a missing continuous value is the training mean plus a 0/1 Missing column, and a missing level is a level of its own; without it rows missing a factor are left out.' },
-        { heading: DIFF_JMP, text: 'Weight and Freq are not offered: scikit-learn\'s neighbours take no case weights. JMP\'s tie rules, and whether it counts a training row among its own neighbours, are not known here; this platform\'s are stated above. The Profiler is not in JMP\'s platform.' },
+        { heading: DIFF_JMP, text: 'Weight and Freq are not offered: scikit-learn\'s neighbours take no case weights. Whether JMP counts a training row among its own neighbours is not known here; this platform\'s rule is stated above. Distance Weights, the Mosaic Plot\'s links, Score Rows and the Profiler are not in JMP\'s platform.' },
       ],
       more: MORE('knn', 'K Nearest Neighbors'),
     },
@@ -473,7 +591,7 @@
       kicker: 'K Nearest Neighbors', title: 'Model Selection',
       lead: 'For every K from 1 to the Number of Neighbors: the misclassification rate (and the number of rows misclassified) or the RASE, the root average squared error, of each set. The best K has the smallest value on the validation rows, or on the training rows when there are none; of equal values the smallest K. Click a line of the table or a point of the plot to see another K.',
       sections: [{ heading: 'Choosing K', choices: [
-        ['A click on a line or a point', 'Shows that K in Chosen Model below (the solid line in the plot); a click on the best K goes back to it. Save Columns saves the K shown.'],
+        ['A click on a line of the table or a point of the graph', 'Shows that K in Chosen Model below (the solid line in the plot); a click on the best K goes back to it. Save Columns saves the K shown.'],
         ['Select K (red triangle)', 'The same from a menu: Best K, or any K up to the Number of Neighbors (Other K… when there are more than 30).'],
         ['Number of Neighbors… (red triangle)', 'Fits every K up to a new largest one.'],
       ] }],
@@ -482,8 +600,19 @@
     'p:knn:fit': {
       kicker: 'K Nearest Neighbors', title: 'The Chosen K',
       lead: 'The Measures of Fit, confusion matrices, ROC and lift curves (a categorical response) or actual by predicted (a continuous one) of the chosen K: the best, or the one picked in Model Selection. A training row\'s prediction leaves the row out; Save Predicteds saves these predictions, and for rows outside the report their nearest training rows\'.',
-      sections: [{ heading: 'Save Near Neighbor Rows', text: 'K columns RowNear 1, RowNear 2, …: the row numbers (as the table shows them) of each row\'s nearest training rows, nearest first.' }],
+      sections: [{ heading: 'Save Near Neighbor Rows', text: 'K columns RowNear 1, RowNear 2, …: the row numbers (as the table shows them) of each row\'s nearest training rows, nearest first.' },
+        { heading: 'Mosaic Plot', text: 'In the red triangle: for each set, a bar per actual level as wide as its share of the rows, cut by the shares of the levels its rows are called; click or drag over a part to select its rows.' }],
       more: MORE('knn', 'K Nearest Neighbors'),
+    },
+    'p:knn:mosaic': {
+      kicker: 'K Nearest Neighbors', title: 'Mosaic Plot',
+      lead: 'Actual by called, for each set: a bar per actual level, as wide as its share of the set\'s rows, cut by the shares of the levels its rows are called (the chosen K, a tied vote at random). A model that calls every row right has one colour per bar; the parts are linked to their rows.',
+      more: MORE('knn', 'K Nearest Neighbors'),
+    },
+    'p:learners:score': {
+      kicker: 'Predictive modeling', title: 'Score Rows',
+      lead: 'The model as this report fitted it (the engine keeps it while the page is open) on rows it did not see: this table\'s rows added since the report fitted, or every row of another open table with the same columns, found by name. The predictions go into that table: into its prediction columns for the rows that have none yet, or as new columns. The model is not fitted again. After the engine starts again the model is fitted again from this table as it is now, and the page says so.',
+      sections: [{ heading: 'Why', text: 'K Nearest Neighbors and Support Vector Machines have no formula a column could hold (their predictions need the training rows or the support vectors), so new rows are scored by the model itself.' }],
     },
   };
 
@@ -495,6 +624,8 @@
         { heading: 'Continuous factors', text: 'A normal density per level with the weighted mean and variance (divided by the weight, not n − 1) of the training rows in the level that have the factor, plus a small share of the largest variance (GaussianNB\'s var_smoothing, 1e-9) so that no variance is 0.' },
         { heading: 'Categorical factors', text: 'The level\'s smoothed shares of the factor\'s levels, (count + α)/(total + α × levels) with α = 1 (CategoricalNB\'s Laplace smoothing), so that a combination the training rows lack does not force a probability of 0. Smoothing (red triangle) changes α and the variance smoothing.' },
         { heading: 'Missing values', text: 'A value a row lacks is left out of its product (in the fit as in the prediction). With Informative Missing, that a continuous value is missing is a two-level factor of its own, and a missing level a level of its own; without it rows missing a factor are left out.' },
+        { heading: 'Save Prediction Formula', text: 'Save Columns ▸ Save Prediction Formula: the model as live formula columns, a Log Score[level] per level (the log class share plus each factor\'s log density or log share, a factor the row lacks left out), Prob[level] from them, and the Most Likely level: new and edited rows are scored as the table changes.' },
+        { heading: 'K-fold Validation column', text: 'With a Validation column of more than three values every row trains, and Fit Details adds the crossvalidated measures: each fold predicted by the model fitted to the others.' },
         { heading: DIFF_JMP, text: 'JMP\'s smoothing constants and variance rule are not known here; these are scikit-learn\'s. The probabilities are kept between 1e-15 and 1 − 1e-15.' },
       ],
       more: MORE('naivebayes', 'Naive Bayes'),
@@ -516,7 +647,8 @@
         { heading: 'Options', choices: [['Kernel Function', HELP.kernel], ['Cost', HELP.cost], ['Gamma', HELP.gamma], ['Tuning Design', HELP.tune], ['Design Points', HELP.points]] },
         { heading: 'Epsilon', text: 'SVR\'s epsilon is fixed at 0.1 of the standardized response: errors smaller than a tenth of the response\'s standard deviation cost nothing.' },
         { heading: 'Probabilities', text: 'SVC(probability=True): Platt scaling, a logistic curve on the decision function fitted by 5-fold cross-validation inside libsvm, its folds from random_state (the report\'s seed). The most likely level is the one with the largest probability; the decision function\'s level can differ near the boundary (Model Summary counts the rows).' },
-        { heading: DIFF_JMP, text: 'JMP\'s exact tuning design, its default Gamma and how it scales the response for SVR are not known here; these are this platform\'s choices. Without validation rows the tuning design is judged by 5-fold cross-validation of the training rows.' },
+        { heading: 'Score Rows', text: 'Save Columns ▸ Score Rows… predicts rows added since, or another open table, with the model as the report fitted it (see its (i)).' },
+        { heading: DIFF_JMP, text: 'JMP\'s exact tuning design, its default Gamma and how it scales the response for SVR are not known here; these are this platform\'s choices. Without validation rows the tuning design is judged by 5-fold cross-validation of the training rows, or by the folds of a K-fold Validation column.' },
       ],
       more: MORE('svm', 'Support Vector Machines'),
     },
@@ -546,12 +678,14 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'knn', label: 'K Nearest Neighbors', menu: MENU, order: 50, info: 'p:knn', topics: TOPICS_KNN,
-    about: 'Predicts a response from the K nearest training rows on the standardized factors (the most common level, or the mean): the misclassification rate or RASE of every K from 1 to K on the training, validation and test rows, the best K by validation, its Measures of Fit, confusion matrices, ROC and lift curves or actual by predicted; Save Predicteds, Save Near Neighbor Rows, and a Prediction Profiler beyond JMP.',
+    about: 'Predicts a response from the K nearest training rows on the standardized factors (the most common level, a tie at random from the seed as JMP breaks ties, or the mean): the misclassification rate or RASE of every K from 1 to K on the training, validation and test rows (and the folds of a K-fold Validation column), the best K by validation, its Measures of Fit, confusion matrices, ROC, lift and the Decision Threshold, or actual by predicted; Save Predicteds, Save Near Neighbor Rows; and beyond JMP distance weights, a linked mosaic plot of actual by called, Score Rows for new rows or another table with the report\'s model, and a Prediction Profiler.',
     uses: ['sklearn.neighbors.KNeighborsClassifier, KNeighborsRegressor (kneighbors)'],
     launch: {
       lead: 'Predicts each row from its K nearest training rows. Every K from 1 to K is fitted; the best is kept by the validation rows (a Validation column or the Validation Portion), or by the training rows.',
       roles: [{ key: 'y', label: 'Y, Response', min: 1, max: 1, hint: 'required: continuous or categorical', help: HELP.knnY }, { ...xRole, help: HELP.knnX }, ...SM.predict.roles({ weight: false, freq: false })],
-      options: [{ key: 'k', label: 'Number of Neighbors, K', type: 'number', value: 10, hint: 'every K from 1 to this one is fitted', help: HELP.k }, ...SM.predict.options()],
+      options: [{ key: 'k', label: 'Number of Neighbors, K', type: 'number', value: 10, hint: 'every K from 1 to this one is fitted', help: HELP.k },
+        { key: 'standardize', label: 'Standardize', type: 'check', value: true, help: HELP.standardize },
+        { key: 'distance', label: 'Distance Weights', type: 'check', value: false, help: HELP.distance }, ...SM.predict.options()],
       validate: (spec) => { const k = spec.options.k; return Number.isInteger(k) && k >= 1 && k <= 1000 ? null : 'Number of Neighbors, K: a whole number from 1 to 1000'; },
     },
     title: titled('K Nearest Neighbors'), triangle: knnTriangle, render: knnRender,
@@ -559,7 +693,7 @@
 
   SM.platforms.register({
     id: 'naivebayes', label: 'Naive Bayes', menu: MENU, order: 60, info: 'p:naivebayes', topics: TOPICS_NB,
-    about: 'Classifies rows by a categorical response from the class shares and, for each factor, a normal density (continuous) or smoothed level shares (categorical), taken as independent within each level: Fit Details on each set, confusion matrices, ROC and lift curves, the Prediction Profiler, the class parameters, and the probabilities and most likely level saved to the table. A missing value is left out of its row\'s product.',
+    about: 'Classifies rows by a categorical response from the class shares and, for each factor, a normal density (continuous) or smoothed level shares (categorical), taken as independent within each level: Fit Details on each set (and crossvalidated by a K-fold Validation column), confusion matrices, ROC and lift curves, the Decision Threshold, the Prediction Profiler, the class parameters, and the probabilities and most likely level saved to the table, as values or as a live Prediction Formula. A missing value is left out of its row\'s product.',
     uses: ['the model of sklearn.naive_bayes.GaussianNB and CategoricalNB, combined (numpy; checked against them)'],
     launch: {
       lead: 'Classifies the rows by a nominal or ordinal response from continuous and categorical factors, each taken as independent within a level.',
@@ -572,7 +706,7 @@
 
   SM.platforms.register({
     id: 'svm', label: 'Support Vector Machines', menu: MENU, order: 70, info: 'p:svm', topics: TOPICS_SVM,
-    about: 'Support vector classification or regression on the standardized factors with a radial basis function or linear kernel: Model Summary, a tuning design of Cost and Gamma judged by validation (or cross-validation), Fit Details on each set, confusion matrices, ROC and lift curves (Platt probabilities) or actual by predicted, the decision boundary over two continuous factors linked to the rows, the Prediction Profiler and Save Columns.',
+    about: 'Support vector classification or regression on the standardized factors with a radial basis function or linear kernel: Model Summary, a tuning design of Cost and Gamma judged by validation (or cross-validation, by the folds of a K-fold Validation column too), Fit Details on each set, confusion matrices, ROC and lift curves (Platt probabilities), the Decision Threshold, or actual by predicted, the decision boundary over two continuous factors linked to the rows, the Prediction Profiler, Save Columns and Score Rows (new rows or another table, with the report\'s model).',
     uses: ['sklearn.svm.SVC (probability=True: Platt scaling), SVR', 'sklearn.model_selection.KFold, StratifiedKFold (the tuning design without validation rows)'],
     launch: {
       lead: 'A support vector machine for a continuous or categorical response. The factors are standardized; a tuning design picks Cost and Gamma by the validation rows.',

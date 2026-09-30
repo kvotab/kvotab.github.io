@@ -40,7 +40,7 @@ from scipy.signal import fftconvolve
 
 from . import data
 from .registry import api
-from .util import code_head
+from .util import code_head, one_line
 
 # JMP's quantiles are the (n+1)p-th order statistics: numpy's 'weibull'.
 QUANTILES = [0.0, 0.005, 0.025, 0.10, 0.25, 0.50, 0.75, 0.90, 0.975, 0.995, 1.0]
@@ -1164,7 +1164,7 @@ def _keep_lines(table, rows, where=None):
             match &= np.asarray(v, dtype=float) == float(val)
         else:
             match &= np.array([x == val for x in v], dtype=bool)
-        L.append(f'df = df[df[{_j(col)}] == {_py(val)}]   # only the rows where {col} is {_value_text(table, col, val)}')
+        L.append(f'df = df[df[{_j(col)}] == {_py(val)}]   # only the rows where {one_line(col)} is {one_line(_value_text(table, col, val))}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -1362,8 +1362,135 @@ _HELPERS = {
         '    kernel = np.exp(-0.5 * (P[0, 0] * ox * ox + 2 * P[0, 1] * ox * oy + P[1, 1] * oy * oy)) / (2 * np.pi * np.sqrt(np.linalg.det(cov)))',
         '    return np.maximum(fftconvolve(counts, kernel, mode="same") / w.sum(), 0)[::refine, ::refine]'],
 }
+_HELPERS['ticks'] = [
+    'def ticks_every(lo, hi, step, start=0.0, log=False):',
+    '    """The ticks from lo to hi as the graph above has them (Axis Settings\' Increment): at start + k·step, or on a log scale at start·step^k."""',
+    '    if log:',
+    '        k = np.arange(np.ceil(np.log(lo / start) / np.log(step) - 1e-9), np.floor(np.log(hi / start) / np.log(step) + 1e-9) + 1)',
+    '        return start * step ** k',
+    '    k = np.arange(np.ceil((lo - start) / step - 1e-9), np.floor((hi - start) / step + 1e-9) + 1)',
+    '    return start + step * k']
+
+_HELPERS['boundaries'] = [
+    'def boundaries(name, layer):',
+    '    """The map\'s boundaries, the file the page\'s map fetched from Plotly\'s site (cdn.plot.ly/<name>.json: Natural Earth\'s',
+    '    1:110 million shapes as TopoJSON), read here too (a copy of it beside the table\'s CSV first, if there is one) and one of its',
+    '    layers decoded with numpy: {region id: [rings of (longitude, latitude)]}, the countries by ISO 3166 code, the US states',
+    '    ("subunits") by postal code. None when it cannot be read (offline): the map is then drawn without it."""',
+    '    try:',
+    '        if os.path.exists(f"{name}.json"):',
+    '            with open(f"{name}.json") as f:',
+    '                topo = json.load(f)',
+    '        else:',
+    '            try:',
+    '                from pyodide.http import open_url   # in the page\'s Python (Pyodide, in the browser)',
+    '                topo = json.loads(open_url(f"https://cdn.plot.ly/{name}.json").read())',
+    '            except ImportError:   # elsewhere: over https, with certifi\'s certificates when it is there',
+    '                import ssl',
+    '                import urllib.request',
+    '                try:',
+    '                    import certifi',
+    '                    ctx = ssl.create_default_context(cafile=certifi.where())',
+    '                except ImportError:',
+    '                    ctx = ssl.create_default_context()',
+    '                with urllib.request.urlopen(f"https://cdn.plot.ly/{name}.json", timeout=60, context=ctx) as f:',
+    '                    topo = json.load(f)',
+    '    except Exception as e:',
+    '        warnings.warn(f"the map\'s boundaries ({name}.json) could not be read: {e}")',
+    '        return None',
+    '    (sx, sy), (tx, ty) = topo["transform"]["scale"], topo["transform"]["translate"]',
+    '    arcs = [np.cumsum(np.asarray(a, dtype=float), axis=0) * (sx, sy) + (tx, ty) for a in topo["arcs"]]   # quantized, delta-encoded',
+    '',
+    '    def ring(ix):   # a ring of arcs, the ones with a negative index reversed (~i)',
+    '        parts = [arcs[i] if i >= 0 else arcs[~i][::-1] for i in ix]',
+    '        return np.concatenate([parts[0]] + [q[1:] for q in parts[1:]])',
+    '    out = {}',
+    '    for k, geom in enumerate(topo["objects"][layer]["geometries"]):',
+    '        polys = [geom["arcs"]] if geom["type"] == "Polygon" else geom["arcs"] if geom["type"] == "MultiPolygon" else []',
+    '        out[geom.get("id", k)] = [ring(r) for poly in polys for r in poly]',
+    '    return out']
+
+# the map's colours in the light theme, as the page's (smui-p-graph.js geoLayout): the land, the borders
+MAP_LAND, MAP_BORDER = '#e0d7ce8c', '#786b5d80'
+
+# Axis Settings' reference lines (smui-axis.js): their colours in the light theme, and matplotlib's line styles.
+_REF_COLORS = {'gray': '#786b5d', 'red': '#b0413e', 'blue': '#1f4e79', 'green': '#3a7d44', 'orange': '#b8651b'}
+_REF_DASHES = {'solid': '-', 'dash': '--', 'dot': ':'}
+DAY_MS = 86400000
+
+
+def _bins_line(spec, label):
+    """The Python that cuts a grouping column into the page's bins, as Make
+    Binning Column cuts them (a bin holds its lower cut, the last one its
+    maximum): each row's bin number, in the column's name and (bins)."""
+    b = spec['bins']
+    cuts = [float(c) for c in (b.get('cuts') or [])]
+    k = len(cuts) + 1
+    how = f'{k} bins of an equal width' if b.get('method') == 'width' else f'{k} bins of about equal counts, cut at its quantiles'
+    return (f'df[{_j(spec["col"] + " (bins)")}] = pd.cut(df[{_j(spec["col"])}], {_py([float("-inf")] + cuts + [float("inf")])}, right=False, labels=False)'
+            f'   # {label}: {spec["col"]} in {how} (a bin holds its lower cut), as Make Binning Column cuts it')
+
+
+def axis_settings_lines(s, a, ax='ax', log=False, date=False):
+    """The Python that gives the matplotlib axes ax (the Python of it) the
+    Axis Settings s of its a axis ('x' or 'y'), as the page draws them
+    (smui-axis.js): the scale, the order, the ends (an end not given stays
+    as drawn), the ticks every increment from the minimum (or 0; on a log
+    scale the increment is the ratio between ticks, from the minimum or 1;
+    on a date axis days), and the reference lines and ranges with their
+    labels. log: the axis's scale with the settings; date: the axis shows
+    dates (matplotlib counts days since 1970, the page milliseconds).
+    Returns (lines, whether they use ticks_every)."""
+    L = []
+    if not s:
+        return L, False
+    val = (lambda v: _py(v / DAY_MS)) if date else _py   # a date: days since 1970, matplotlib's unit on a date axis
+    if s.get('log') is not None:
+        L.append(f'{ax}.set_{a}scale({json.dumps("log" if s["log"] else "linear")})   # Scale: {"Log" if s["log"] else "Linear"}')
+    rev = False
+    if s.get('reverse') is not None:
+        rev = bool(s['reverse'])
+        L += [f'if {"not " if rev else ""}{ax}.{a}axis_inverted():', f'    {ax}.invert_{a}axis()   # Reverse Order: {"on" if rev else "off"}']
+    lo, hi = s.get('min'), s.get('max')
+    ends = ('left', 'right') if a == 'x' else ('bottom', 'top')
+    if lo is not None and hi is not None:
+        L.append(f'{ax}.set_{a}lim({val(hi)}, {val(lo)})   # Minimum and Maximum (reversed)' if rev else f'{ax}.set_{a}lim({val(lo)}, {val(hi)})   # Minimum and Maximum')
+    elif lo is not None:
+        L.append(f'{ax}.set_{a}lim({ends[1 if rev else 0]}={val(lo)})   # Minimum')
+    elif hi is not None:
+        L.append(f'{ax}.set_{a}lim({ends[0 if rev else 1]}={val(hi)})   # Maximum')
+    ticks = False
+    inc = s.get('inc')
+    if inc:
+        ticks = True
+        if log:
+            L.append(f'{ax}.set_{a}ticks(ticks_every(*sorted({ax}.get_{a}lim()), {_py(inc)}, start={_py(lo if lo is not None else 1)}, log=True))   # Increment: a tick every × {_py(inc)}')
+        elif date:
+            L.append(f'{ax}.set_{a}ticks(ticks_every(*sorted({ax}.get_{a}lim()), {_py(inc)}, start={_py((lo or 0) / DAY_MS)}))   # Increment: a tick every {_py(inc)} day{"" if inc == 1 else "s"}')
+        else:
+            L.append(f'{ax}.set_{a}ticks(ticks_every(*sorted({ax}.get_{a}lim()), {_py(inc)}, start={_py(lo if lo is not None else 0)}))   # Increment: a tick every {_py(inc)}')
+    for r in s.get('refs') or []:
+        col = json.dumps(_REF_COLORS.get(r.get('color'), _REF_COLORS['gray']))
+        v, to = r['value'], r.get('to')
+        a0, b0 = (min(v, to), max(v, to)) if to is not None else (v, v)
+        span = 'axvspan' if a == 'x' else 'axhspan'
+        line = 'axvline' if a == 'x' else 'axhline'
+        if to is not None:
+            L.append(f'{ax}.{span}({val(a0)}, {val(b0)}, color={col}, alpha=0.16, linewidth=0, zorder=0)   # a reference range')
+        else:
+            L.append(f'{ax}.{line}({val(a0)}, color={col}, linewidth={_lw(1.5)}, linestyle={json.dumps(_REF_DASHES.get(r.get("dash"), "-"))})   # a reference line')
+        if r.get('label'):
+            mid = a0 if to is None else (math.sqrt(a0 * b0) if log else (a0 + b0) / 2)
+            if a == 'x':
+                L.append(f'{ax}.annotate({json.dumps(r["label"])}, ({val(mid)}, 1), xycoords=("data", "axes fraction"), xytext=(3, -2), textcoords="offset points", ha="left", va="top", fontsize=8, color={col})')
+            else:
+                L.append(f'{ax}.annotate({json.dumps(r["label"])}, (1, {val(mid)}), xycoords=("axes fraction", "data"), xytext=(-2, 2), textcoords="offset points", ha="right", va="bottom", fontsize=8, color={col})')
+    return L, ticks
+
+
 # The imports each helper needs.
-_HELPER_IMPORTS = {'weighted': ['from scipy import stats', 'from statsmodels.stats.weightstats import DescrStatsW'],
+_HELPER_IMPORTS = {'boundaries': ['import json', 'import os', 'import warnings', 'from matplotlib.collections import LineCollection, PolyCollection'],
+                   'weighted': ['from scipy import stats', 'from statsmodels.stats.weightstats import DescrStatsW'],
                    'wbox': ['from statsmodels.stats.weightstats import DescrStatsW'],
                    'binned': ['from scipy.signal import fftconvolve']}
 
@@ -1405,9 +1532,9 @@ class _GB:
     """Graph Builder's graph (and the legacy Chart's, which Graph Builder's
     elements draw) as matplotlib code, from the page's plan of it."""
 
-    ELEMENTS = ('points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie')
+    ELEMENTS = ('map', 'points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie')
     # the legend's sample for each element: a marker, a line or a patch
-    SAMPLE = {'points': 'marker', 'smoother': 'line', 'fit': 'line', 'ellipse': 'line', 'contour': 'line', 'line': 'line', 'bar': 'patch', 'area': 'patch',
+    SAMPLE = {'map': 'patch', 'points': 'marker', 'smoother': 'line', 'fit': 'line', 'ellipse': 'line', 'contour': 'line', 'line': 'line', 'bar': 'patch', 'area': 'patch',
               'box': 'patch', 'bean': 'patch', 'histogram': 'patch'}
 
     def __init__(self, table, plan, rows, table_name):
@@ -1437,6 +1564,11 @@ class _GB:
                      'y': bool(ys0) and self.kind['y'] == 'cont' and _is_date(table, ys0)}
         self.log = {k: bool((P.get('log') or {}).get(k)) and not self.date[k] and self.kind[k] == 'cont' for k in ('x', 'y')}
         self.many = bool(P.get('many'))
+        self.geo = P.get('map') or None      # a map: Map Shapes, or points on a Background Map
+        M = P.get('marker') or {}
+        # Marker Size (a diameter in pixels) and Transparency (an opacity) as set on the graph, or None: the graph's own
+        self.msize = float(M['size']) if isinstance(M.get('size'), (int, float)) and M['size'] > 0 else None
+        self.malpha = float(M['alpha']) if isinstance(M.get('alpha'), (int, float)) and 0 <= M['alpha'] <= 1 else None
         self.pf = 'df'             # the rows of the panel being written
         self.corner = set()        # the counts of lines of text in the panel's corners
         self.helpers_consts = set()
@@ -1497,15 +1629,17 @@ class _GB:
     def consts(self):
         """The levels and bins the page found, as the code's constants."""
         pre, P = self.pre, self.P
+        if self.geo:
+            self.geo_consts()
         for zone, label in (('wrap', 'Wrap'), ('gx', 'Group X'), ('gy', 'Group Y')):
             spec = P.get(zone)
-            if spec and spec.get('edges'):
-                pre(f'df[{_j(spec["col"] + " (bins)")}] = pd.cut(df[{_j(spec["col"])}], {_py(spec["edges"])}, labels=False, include_lowest=True)   # {label}: {spec["col"]} in five bins of about equal counts (the page\'s)')
+            if spec and spec.get('bins'):
+                pre(_bins_line(spec, label))
         G = self.group
         if G:
-            if G.get('edges'):
-                pre(f'df[{_j(G["col"] + " (bins)")}] = pd.cut(df[{_j(G["col"])}], {_py(G["edges"])}, labels=False, include_lowest=True)   # {G["zone"]}: {G["col"]} in five bins of about equal counts (the page\'s)')
-            pre(f'groups = {_py(G["values"])}   # {G["zone"]}: {"the bins" if G.get("edges") else "the levels"} of {G["col"]}, in the table\'s order',
+            if G.get('bins'):
+                pre(_bins_line(G, G['zone']))
+            pre(f'groups = {_py(G["values"])}   # {G["zone"]}: {"the bins" if G.get("bins") else "the levels"} of {G["col"]}, in the table\'s order',
                 f'colors = {_py([PALETTE[i % len(PALETTE)] for i in range(len(G["values"]))])}   # a colour for each: the page\'s palette')
         C = P.get('color')
         if C and C.get('cat') and not (G and G['col'] == C['col']):
@@ -1515,8 +1649,36 @@ class _GB:
             pre(f'ramp = LinearSegmentedColormap.from_list("ramp", {_py(RAMP)}).with_extremes(bad="{MISSING}")   # the page\'s blue-grey-red, grey for a missing value')
         cat = {c: v for c, v in self.levels.items()}
         if cat:
-            pre(f'levels = {{{", ".join(f"{_j(c)}: {_py(v["values"])}" for c, v in cat.items())}}}   # the levels of each categorical axis column, in the table\'s order',
-                'place = {c: {v: k for k, v in enumerate(lv)} for c, lv in levels.items()}   # a level\'s place on its axis: 0, 1, 2, ...')
+            order = {c: o for c, o in (P.get('order') or {}).items() if c in cat and o}
+            pre(f'levels = {{{", ".join(f"{_j(c)}: {_py(v["values"])}" for c, v in cat.items())}}}   # the levels of each categorical axis column, in the {"order the graph shows them" if order else "table\'s order"}')
+            for c, o in order.items():
+                self.order_lines(c, o)
+            pre('place = {c: {v: k for k, v in enumerate(lv)} for c, lv in levels.items()}   # a level\'s place on its axis: 0, 1, 2, ...')
+
+    def order_lines(self, c, o):
+        """Order By of a categorical axis column: its levels sorted by a
+        statistic of another column (or by their count of rows) over the
+        graph's rows, as the page sorts them: a row counts Freq times; ties,
+        and a level without a value, keep their order, the latter last."""
+        pre, f = self.pre, self.freq
+        by = o.get('by')
+        stat = o.get('stat') if o.get('stat') in ('median', 'sum') else 'mean'
+        desc = bool(o.get('desc'))
+        C = _j(c)
+        if not by:
+            what = 'their count of rows' + (' (Freq counted)' if f else '')
+            pre(f'key = df.dropna(subset=[{C}]).groupby({C})[{_j(f)}].sum()' if f else f'key = df.dropna(subset=[{C}]).groupby({C}).size()')
+        else:
+            B = _j(by)
+            what = f'the {stat} of {by}' + (' (Freq counted)' if f else '')
+            pre(f'd = df.dropna(subset=[{C}, {B}])')
+            if stat == 'median':
+                pre(f'key = d.loc[d.index.repeat(d[{_j(f)}].round().astype(int))].groupby({C})[{B}].median()' if f else f'key = d.groupby({C})[{B}].median()')
+            elif stat == 'sum':
+                pre(f'key = (d[{B}] * d[{_j(f)}]).groupby(d[{C}]).sum()' if f else f'key = d.groupby({C})[{B}].sum()')
+            else:
+                pre(f'key = (d[{B}] * d[{_j(f)}]).groupby(d[{C}]).sum() / d[{_j(f)}].groupby(d[{C}]).sum()' if f else f'key = d.groupby({C})[{B}].mean()')
+        pre(f'levels[{C}] = sorted(levels[{C}], key=lambda v: (pd.isna(key.get(v)), {"-" if desc else ""}key.get(v, 0)))   # Order By: the levels of {c} by {what}, {"descending" if desc else "ascending"}')
 
     # ---- the figure and its panels -------------------------------------------------------
     def grid(self):
@@ -1531,8 +1693,8 @@ class _GB:
 
     def panel_values(self, spec):
         """The Python of a panel column's levels (or bins), their labels, and of its column in the rows."""
-        col = spec['col'] + ' (bins)' if spec.get('edges') else spec['col']
-        vals = list(range(len(spec['labels']))) if spec.get('edges') else spec['values']
+        col = spec['col'] + ' (bins)' if spec.get('bins') else spec['col']
+        vals = list(range(len(spec['labels']))) if spec.get('bins') else spec['values']
         return _py(vals), _py(spec['labels']), _j(col)
 
     def figure(self):
@@ -1669,9 +1831,94 @@ class _GB:
     def panel(self):
         """One panel: its elements in the page's drawing order, then its axes."""
         self.corner = set()
+        if self.geo:
+            self.geo_background()
         for e in self.els:
             getattr(self, f'el_{e["type"]}')(e)
         self.axes_of_panel()
+
+    # ---- a map ---------------------------------------------------------------------------------
+    def geo_consts(self):
+        """A map's boundaries (Plotly's own file, as the page's map has them), once."""
+        G, pre = self.geo, self.pre
+        self.need('boundaries')
+        f, usa = G.get('file') or 'world_110m', G.get('scope') == 'usa'
+        sh = G.get('shape') or None
+        pre('', '# The map: matplotlib alone has no map projections and no boundaries (cartopy and geopandas, which have them, are not',
+            '# in Pyodide). The boundaries here are the page\'s own, from the same file, drawn in longitude and latitude (an',
+            f'# equirectangular map, scaled at its middle latitude), where the page draws Plotly\'s {"Albers USA (Alaska and Hawaii moved in)" if usa else "natural earth"} projection.',
+            f'land, borders = boundaries({_j(f)}, "land"), boundaries({_j(f)}, {_j("subunits" if usa else "countries")})')
+        if sh:
+            layer = 'subunits' if sh.get('mode') == 'usa' else 'countries'
+            how = {'usa': 'a US state (its postal code)', 'iso3': 'a country (its ISO 3166 code)', 'names': 'a country (its ISO 3166 code, as the page\'s map matched the name)'}.get(sh.get('mode'), 'a region')
+            pre(f'regions = {"borders" if layer == ("subunits" if usa else "countries") else f"boundaries({_j(f)}, {_j(layer)})"}   # the regions of Map Shapes',
+                f'ids = {json.dumps(sh.get("ids") or {}, ensure_ascii=False)}   # {sh["col"]}: each value\'s region, {how}')
+
+    def geo_background(self):
+        w, usa = self.w, (self.geo or {}).get('scope') == 'usa'
+        w('drawn = []   # what the map shows, which its view fits (the page\'s map fits its points and regions)')
+        with w.block('if land:'):
+            w(f'ax.add_collection(PolyCollection([r for rs in land.values() for r in rs], facecolors="{MAP_LAND}", edgecolors="none", zorder=0), autolim=False)')
+        with w.block('if borders:'):
+            w(f'ax.add_collection(LineCollection([r for rs in borders.values() for r in rs], colors="{MAP_BORDER}", linewidths={_lw(0.5)}, zorder=0.5), autolim=False)')
+
+    def el_map(self, e):
+        """Map Shapes: each region filled by a statistic of the Color column over its
+        rows (a categorical one's most common level), or by its count of rows."""
+        w, P = self.w, self.P
+        sh = (self.geo or {}).get('shape') or {}
+        if not sh:
+            return
+        stat = e.get('stat') or 'n'
+        C = P.get('color')
+        cont = bool(C and not C.get('cat'))
+        col = _j(sh['col'])
+        lab = dict(_STAT_LABEL).get(stat, stat)
+        what = 'its count of rows' if stat == 'n' and not cont else (f'the most common level of {C["col"]}' if stat == 'level' else f'the {lab} of {C["col"]} over its rows')
+        w(f'# Map Shapes: each region of {sh["col"]} filled by {what}{" (Freq counted)" if self.freq else ""}')
+        w(f'g = {self.pf}.assign(region={self.pf}[{col}].map(ids)).dropna(subset=["region"])')
+        if stat == 'level':
+            cc = _j(C['col'])
+            f = self.freq
+            w((f'n = g.groupby(["region", {cc}])[{_j(f)}].sum()' if f else f'n = g.groupby(["region", {cc}]).size()') + '.rename("n").reset_index()',
+              f'n["k"] = n[{cc}].map({{v: k for k, v in enumerate({_py(C["values"])})}})   # each level\'s place (its colour)',
+              'n = n.dropna(subset=["k"]).sort_values(["region", "n", "k"], ascending=[True, False, True]).drop_duplicates("region")   # a region\'s most common level (a tie: the first)',
+              'value = dict(zip(n["region"], n["k"].astype(int)))')
+        else:
+            resp = _j(C['col']) if cont else None
+            if resp:
+                w(f'g = g.dropna(subset=[{resp}])')
+            self.stat_lines('"region"', resp if stat != 'n' else None, self.stat_needs(stat, None, resp) if stat != 'n' else [])
+            w(f'value = {self.stat_value(stat, resp)}.dropna().to_dict()')
+        w('polys, vals = [], []')
+        with w.block('for rid, v in value.items():'):
+            with w.block('for ring in (regions or {}).get(rid, []):'):
+                w('polys.append(ring)', 'vals.append(v)')
+        if stat == 'level':
+            w(f'pc = PolyCollection(polys, facecolors=[{_py(PALETTE)}[int(k) % 12] for k in vals], edgecolors="{SURFACE}", linewidths={_lw(0.6)}, zorder=1)')
+        else:
+            lo, hi = e.get('range') or [0, 1]
+            if not cont:
+                if 'counts_map' not in self.helpers_consts:
+                    self.imp('from matplotlib.colors import LinearSegmentedColormap')
+                    self.pre(f'counts_map = LinearSegmentedColormap.from_list("counts", {_py(HEAT)})   # the page\'s scale of counts')
+                    self.helpers_consts.add('counts_map')
+            w(f'pc = PolyCollection(polys, array=np.asarray(vals, dtype=float), cmap={"ramp" if cont else "counts_map"}, norm=plt.Normalize({_nm(lo, 12)}, {_nm(hi, 12)}), edgecolors="{SURFACE}", linewidths={_lw(0.6)}, zorder=1)')
+        w('ax.add_collection(pc)', 'drawn += polys')
+
+    def geo_axes(self):
+        """A map's view: what is drawn on it (the whole lower 48 at least, for US States), longitude and latitude in proportion."""
+        w, usa = self.w, (self.geo or {}).get('scope') == 'usa'
+        w('parts = drawn + [np.ma.filled(c.get_offsets().astype(float), np.nan) for c in ax.collections if not isinstance(c, (PolyCollection, LineCollection)) and len(c.get_offsets())]   # the regions and the points',
+          'pts = np.concatenate(parts) if parts else np.empty((0, 2))')
+        if usa:
+            w('pts = np.concatenate([pts, [[-125, 24], [-66.5, 49.5]]])   # the lower 48 states at least, as the page\'s US map shows them')
+        with w.block('if len(pts):'):
+            w('(x0, y0), (x1, y1) = np.nanmin(pts, axis=0), np.nanmax(pts, axis=0)',
+              'dx, dy = max(x1 - x0, 1) * 0.05, max(y1 - y0, 1) * 0.05',
+              'ax.set_xlim(max(-180, x0 - dx), min(180, x1 + dx))',
+              'ax.set_ylim(max(-90, y0 - dy), min(90, y1 + dy))')
+        w('ax.set_aspect(1 / np.cos(np.radians(np.clip(np.mean(ax.get_ylim()), -80, 80))))   # a degree of longitude as long as it is there')
 
     # ---- the loops of an element over a panel's series and groups ---------------------------
     def cells(self, need, dflt, before=None, groups=True, si=False, gi=None):
@@ -1721,7 +1968,7 @@ class _GB:
             b = w.block(head)
             b.__enter__()
             blocks.append(b)
-            gcol = _j(self.group['col'] + ' (bins)' if self.group.get('edges') else self.group['col'])
+            gcol = _j(self.group['col'] + ' (bins)' if self.group.get('bins') else self.group['col'])
             frame = f'{frame}[{frame}[{gcol}] == group]'
             color = 'color'
         gi_expr = 'gi' if (groups and self.group and gi) else '0'
@@ -1745,7 +1992,7 @@ class _GB:
         drop = f'.dropna(subset=[{", ".join(dict.fromkeys(cols))}])' if cols else ''
         if not self.group:
             return f'{frame}{drop}'
-        gcol = _j(self.group['col'] + ' (bins)' if self.group.get('edges') else self.group['col'])
+        gcol = _j(self.group['col'] + ' (bins)' if self.group.get('bins') else self.group['col'])
         return f'{frame}[{frame}[{gcol}].isin(groups)]{drop}'
 
     # ---- Points ---------------------------------------------------------------------------------
@@ -1813,9 +2060,11 @@ class _GB:
         if S:
             lo, hi = S['range']
             u = f'np.sqrt((g[{_j(S["col"])}] - {_nm(lo, 12)}) / {_nm(hi - lo, 12)})' if hi > lo else 'np.sqrt(0.5)'
-            args.append(f's=np.where(g[{_j(S["col"])}].notna(), ({PX} * (4 + 18 * {u})) ** 2, {_area(3)})')
+            f_ = self.msize / 6 if self.msize else 1   # Marker Size scales the Size zone's sizes too
+            k_ = f' * {_nm(f_, 12)}' if f_ != 1 else ''
+            args.append(f's=np.where(g[{_j(S["col"])}].notna(), ({PX} * (4 + 18 * {u}){k_}) ** 2, {_area(3 * f_)})')
         else:
-            args.append(f's={_area(4 if self.many else 6)}')
+            args.append(f's={_area(self.msize or (4 if self.many else 6))}')
         C = self.P.get('color')
         if C and not C.get('cat') and C.get('range'):
             lo, hi = C['range']
@@ -1826,11 +2075,13 @@ class _GB:
             args.append(f'color=g[{_j(C["col"])}].map(color_of).fillna("{MISSING}")')
         else:
             args.append(f'color={c.color or _j(POINT)}')
+        alpha = self.malpha if self.malpha is not None else (0.7 if S else 0.65 if self.many else 0.9)
         if S:
-            args.append(f'alpha=0.7, edgecolors="{TEXT}66", linewidths={_lw(0.6)}')
+            args.append(f'alpha={_nm(alpha)}, edgecolors="{TEXT}66", linewidths={_lw(0.6)}')
         else:
-            args.append(f'alpha={0.65 if self.many else 0.9}, linewidths=0')
-        w(f'ax.scatter({", ".join(args)})')
+            args.append(f'alpha={_nm(alpha)}, linewidths=0')
+        said = [t for t, on in (('Marker Size', self.msize), ('Transparency', self.malpha is not None)) if on]
+        w(f'ax.scatter({", ".join(args)}){"   # " + " and ".join(said) + " as set on the graph" if said else ""}')
         self.close(blocks)
 
     # ---- the statistics at each place of a factor -----------------------------------------------
@@ -1963,7 +2214,8 @@ class _GB:
                 err = 'xerr' if horiz else 'yerr'
                 w(f'ax.errorbar({xy[0]}, {xy[1]}, {err}={self.err_expr(interval, val)}, fmt="none", ecolor={color}, elinewidth={_lw(1.3)}, capsize={_nm(4 * PX)})')
         if markers:
-            w(f'ax.scatter({xy[0]}, {xy[1]}, s={_area(8)}, color={color})')
+            alpha = f', alpha={_nm(self.malpha)}' if self.malpha is not None else ''
+            w(f'ax.scatter({xy[0]}, {xy[1]}, s={_area((self.msize or 6) + 2)}, color={color}{alpha})')
         else:
             shape = self.connect(e)
             if shape == 'spline':
@@ -2033,7 +2285,7 @@ class _GB:
         if self.group:
             b = w.block('for group, color in zip(groups, colors):')
             b.__enter__()
-            gcol = _j(self.group['col'] + ' (bins)' if self.group.get('edges') else self.group['col'])
+            gcol = _j(self.group['col'] + ' (bins)' if self.group.get('bins') else self.group['col'])
             w(f'g = {self.pf}[{self.pf}[{gcol}] == group].dropna(subset=[{", ".join(x for x in (resp, fac) if x)}])')
             name = 'group'
         else:
@@ -2193,7 +2445,7 @@ class _GB:
         pos = 'at'
         if self.date['y' if R['horiz'] else 'x'] and not R['fac_cat']:
             pos = 'at / 86400000'   # a date axis: bxp takes its places in days
-        fl = f'{{"marker": "o", "markersize": {_nm(5 * PX)}, "markerfacecolor": {c.color}, "markeredgecolor": "none"}}'
+        fl = f'{{"marker": "o", "markersize": {_nm((self.msize or 5) * PX)}, "markerfacecolor": {c.color}, "markeredgecolor": "none"{", " + chr(34) + "alpha" + chr(34) + ": " + _nm(self.malpha) if self.malpha is not None else ""}}}'
         show = 'False' if quant or e.get('outliers') is False else 'True'
         with w.block('if boxes:   # (a panel or group without values has none)'):
             w(f'ax.bxp(list(boxes.values()), positions={pos}, widths={width}{orient}, patch_artist=True, showfliers={show},',
@@ -2859,9 +3111,9 @@ class _GB:
         for zone in ('wrap', 'gx', 'gy'):
             spec = self.P.get(zone)
             if spec:
-                keys.append(_j(spec['col'] + ' (bins)' if spec.get('edges') else spec['col']))
+                keys.append(_j(spec['col'] + ' (bins)' if spec.get('bins') else spec['col']))
         if self.group:
-            keys.append(_j(self.group['col'] + ' (bins)' if self.group.get('edges') else self.group['col']))
+            keys.append(_j(self.group['col'] + ' (bins)' if self.group.get('bins') else self.group['col']))
         return keys
 
     def pairs_all(self):
@@ -2886,10 +3138,16 @@ class _GB:
             return f'levels[{col}]'
         labels = spec.get('labels') or []
         plain = [_js_number(x) if isinstance(x, (int, float)) else str(x) for x in spec.get('values', [])]
-        return f'levels[{col}]' if labels == plain else _py(labels)
+        if labels == plain:
+            return f'levels[{col}]'
+        if json.loads(col) in (self.P.get('order') or {}):   # sorted by Order By: each level's own label
+            return f'[{_py(dict(zip([str(v) for v in spec.get("values", [])], labels)))}[str(v)] for v in levels[{col}]]'
+        return _py(labels)
 
     def axes_of_panel(self):
         w = self.w
+        if self.geo:
+            return self.geo_axes()
         excl = self.P.get('exclusive')
         if excl == 'pie':
             w('ax.axis("off")')
@@ -2910,10 +3168,51 @@ class _GB:
             elif self.log[axis]:
                 w(f'ax.set_{axis}scale("log")')
 
+    def axis_settings(self):
+        """The axes as set on the graph (Axis Settings), on every panel, once
+        they are all drawn: the settings of each panel's X and Y columns."""
+        w, P = self.w, self.P
+        A = P.get('axes') or {}
+        if P.get('exclusive') or not (any(A.get('x') or []) or any(A.get('y') or [])):
+            return
+        NX, NY = len(P.get('xsets') or [[]]), len(P.get('ysets') or [[]])
+        per = {}
+        for a, n in (('x', NX), ('y', NY)):
+            sets = list(A.get(a) or [])[:n] + [None] * max(0, n - len(A.get(a) or []))
+            kinds = []
+            for s in sets:
+                eff_log = s.get('log') if s and s.get('log') is not None else self.log[a]
+                lines, ticks = axis_settings_lines(s, a, 'ax', log=bool(eff_log) and not self.date[a], date=self.date[a])
+                if ticks:
+                    self.need('ticks')
+                kinds.append(lines)
+            per[a] = kinds
+        w('', '# Axis Settings: the axes as set on the graph (double-click an axis there, or right-click it)')
+        same = {a: all(k == per[a][0] for k in per[a]) for a in per}
+        if self.single:
+            for a in ('x', 'y'):
+                w(*per[a][0])
+            return
+        indexed = not same['x'] or not same['y']
+        with w.block('for k, ax in enumerate(axes.flat):' if indexed else 'for ax in axes.flat:   # every panel'):
+            for a, var, n in (('x', 'j', NX), ('y', 'i', NY)):
+                if same[a]:
+                    w(*per[a][0])
+                    continue
+                w(f'{var} = k % {self.nC} % {NX}   # the panel\'s X column' if a == 'x' else f'{var} = k // {self.nC} % {NY}   # the panel\'s Y column')
+                first = True
+                for q, lines in enumerate(per[a]):
+                    if not lines:
+                        continue
+                    with w.block(f'{"if" if first else "elif"} {var} == {q}:'):
+                        w(*lines)
+                    first = False
+
     def finish(self):
         w, P = self.w, self.P
         excl = P.get('exclusive')
         T = P.get('titles') or {}
+        self.axis_settings()
         tx, ty = T.get('x') or [], T.get('y') or []
         NX, NY = len(P.get('xsets') or [[]]), len(P.get('ysets') or [[]])
         wrap = P.get('wrap')
@@ -2956,6 +3255,11 @@ class _GB:
             with w.block('for m in meshes:'):
                 w('m.set_clim(lo, hi)   # one colour scale for every panel')
             w(f'fig.colorbar(meshes[0], ax={where}, label={_j(f"Mean({cc})" if cc else "Count")})')
+        for e in self.els:
+            if e['type'] == 'map' and e.get('stat') != 'level' and (self.geo or {}).get('shape'):
+                lo, hi = e.get('range') or [0, 1]
+                cont = bool(P.get('color') and not P['color'].get('cat'))
+                w(f'fig.colorbar(plt.cm.ScalarMappable(norm=plt.Normalize({_nm(lo, 12)}, {_nm(hi, 12)}), cmap={"ramp" if cont else "counts_map"}), ax={where}, label={_j(e.get("label") or "N")})')
         C = P.get('color')
         if P.get('colorbar') and C and not C.get('cat') and C.get('range'):
             lo, hi = C['range']
@@ -3027,6 +3331,16 @@ def _head_lines(table, plan, rows, table_name, imports):
     return [code_head(table_name, ['import matplotlib.pyplot as plt'] + extra)] + _keep_lines(table, rows, plan.get('where'))
 
 
+def _marker(plan, size, alpha):
+    """A point plot's Marker Size (a diameter in pixels) and Transparency (an
+    opacity) as set on the graph (the plan's marker), else the graph's own
+    size and alpha; and whether each was set."""
+    M = plan.get('marker') or {}
+    ms = M.get('size') if isinstance(M.get('size'), (int, float)) and M['size'] > 0 else None
+    ma = M.get('alpha') if isinstance(M.get('alpha'), (int, float)) and 0 <= M['alpha'] <= 1 else None
+    return (float(ms) if ms else size), (float(ma) if ma is not None else alpha), ms is not None, ma is not None
+
+
 def _group_consts(G, what='Grouping'):
     """The Python of a grouping column's levels and their colours (the page's palette)."""
     return [f'groups = {_py(G["values"])}   # {what}: the levels of {G["col"]}, in the table\'s order',
@@ -3043,6 +3357,7 @@ def _overlay_code(table, plan, rows, table_name):
     over, sort, thru = P.get('overlayY', True), P.get('sortX', True), P.get('thru', False)
     W, H = P.get('size') or [640, 380]
     w = _Py()
+    imports = []
     if G:
         w(*_group_consts(G))
     if X:
@@ -3066,7 +3381,12 @@ def _overlay_code(table, plan, rows, table_name):
         marks, line = y.get('points', True), y.get('connect', True)
         if not marks and not line:
             marks = True
-        style = [f'marker="o", markersize={_nm(5 * PX)}' if marks else 'marker=""', f'linestyle="{"-" if line else ""}"', f'linewidth={_lw(1.5)}']
+        msize, malpha, _, alpha_set = _marker(P, 5, 1)
+        style = [f'marker="o", markersize={_nm(msize * PX)}' if marks else 'marker=""', f'linestyle="{"-" if line else ""}"', f'linewidth={_lw(1.5)}']
+        # Transparency: the markers only (their face colour takes it), the line stays opaque
+        face = (lambda c_: f', markerfacecolor=to_rgba({c_}, {_nm(malpha)}), markeredgewidth=0') if marks and alpha_set else (lambda c_: '')
+        if marks and alpha_set:
+            imports.append('from matplotlib.colors import to_rgba')
         if y.get('step'):
             style.append('drawstyle="steps-post"')
         w(f'# {col}{", on the right axis" if y.get("right") and over else ""}{", connected through missing values" if thru else ""}')
@@ -3075,12 +3395,12 @@ def _overlay_code(table, plan, rows, table_name):
             with w.block('for group, color in zip(groups, colors):'):
                 w(f'g = {pick}[{pick}[{_j(G["col"])}] == group]' if not thru else f'g = {pick}',
                   *( [f'g = g[g[{_j(G["col"])}] == group]'] if thru else []),
-                  f'{on}.plot({xs}, g[{_j(col)}], {", ".join(style)}, color=color, label={_j(col + ", ")} + str(group))')
+                  f'{on}.plot({xs}, g[{_j(col)}], {", ".join(style)}, color=color{face("color")}, label={_j(col + ", ")} + str(group))')
                 if y.get('needle'):
                     w(f'{on}.vlines({xs}, 0, g[{_j(col)}], color=color, alpha=0.6, linewidth={_lw(1)})   # Needle')
         else:
             color = _j(PALETTE[i % len(PALETTE)])
-            w(f'g = {pick}', f'{on}.plot({xs}, g[{_j(col)}], {", ".join(style)}, color={color}, label={_j(col)})')
+            w(f'g = {pick}', f'{on}.plot({xs}, g[{_j(col)}], {", ".join(style)}, color={color}{face(color)}, label={_j(col)})')
             if y.get('needle'):
                 w(f'{on}.vlines({xs}, 0, g[{_j(col)}], color={color}, alpha=0.6, linewidth={_lw(1)})   # Needle')
     xt = X or 'Row'
@@ -3098,7 +3418,7 @@ def _overlay_code(table, plan, rows, table_name):
         if len(ys) > 1 or G:
             w('handles, labels = [sum(q, []) for q in zip(*[a.get_legend_handles_labels() for a in axes[:, 0]])]',
               'fig.legend(handles, labels, loc="outside right upper", frameon=False, fontsize=8)')
-    return '\n'.join(_head_lines(table, plan, rows, table_name, []) + w.lines + ['plt.show()'])
+    return '\n'.join(_head_lines(table, plan, rows, table_name, imports) + w.lines + ['plt.show()'])
 
 
 
@@ -3150,7 +3470,9 @@ def _matrix_code(table, plan, rows, table_name):
             w('g = df.dropna(subset=[x, y])')
             if P.get('points', True):
                 color = f'g[{_j(G["col"])}].map(color_of).fillna("{MISSING}")' if G else f'"{POINT}"'
-                w(f'ax.scatter(g[x], g[y], s=({PX} * (3 if len(g) > 1500 else 4.5)) ** 2, color={color}, alpha=0.85, linewidths=0)')
+                msize, malpha, size_set, alpha_set = _marker(P, None, 0.85)
+                size = _area(msize) if size_set else f'({PX} * (3 if len(g) > 1500 else 4.5)) ** 2'
+                w(f'ax.scatter(g[x], g[y], s={size}, color={color}, alpha={_nm(malpha)}, linewidths=0){"   # Marker Size, Transparency" if size_set or alpha_set else ""}')
             stats_ = [t for t in ('ellipses', 'fit', 'nonpar') if P.get(t)]
             if stats_:
                 if G:
@@ -3281,7 +3603,7 @@ def _bubble_code(table, plan, rows, table_name):
         w('first = bubbles')
     ex, ey = P.get('xrange'), P.get('yrange')
     w('', f'fig, ax = plt.subplots(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
-      f'bub = ax.scatter(first["x"], first["y"], s=({PX} * first["px"]) ** 2, c=list(first["color"]), alpha=0.72, edgecolors="{TEXT}80", linewidths={_lw(0.6)})')
+      f'bub = ax.scatter(first["x"], first["y"], s=({PX} * first["px"]) ** 2, c=list(first["color"]), alpha={_nm(_marker(P, 1, 0.72)[1])}, edgecolors="{TEXT}80", linewidths={_lw(0.6)})')
     if P.get('label'):
         lab = P.get('label_col')
         if ids:
@@ -3571,7 +3893,8 @@ def _ternary_code(table, plan, rows, table_name):
         w(f'ax.plot([0.5 * q, 1 - 0.5 * q], [np.sqrt(3) / 2 * q] * 2, color="{GRIDLINE}", linewidth={_lw(1)})   # a = q',
           f'ax.plot([1 - q, 0.5 * (1 - q)], [0, np.sqrt(3) / 2 * (1 - q)], color="{GRIDLINE}", linewidth={_lw(1)})   # b = q',
           f'ax.plot([q, 0.5 + 0.5 * q], [0, np.sqrt(3) / 2 * (1 - q)], color="{GRIDLINE}", linewidth={_lw(1)})   # c = q')
-    w(f'ax.scatter(x, y, s={_area(6)}, {cl}, linewidths=0)',
+    msize, malpha, _, alpha_set = _marker(P, 6, 1)
+    w(f'ax.scatter(x, y, s={_area(msize)}, {cl}{", alpha=" + _nm(malpha) if alpha_set else ""}, linewidths=0)',
       f'ax.text(0.5, np.sqrt(3) / 2 + 0.03, {_j(A)}, ha="center", va="bottom")',
       f'ax.text(-0.03, -0.03, {_j(B)}, ha="right", va="top")',
       f'ax.text(1.03, -0.03, {_j(Cc)}, ha="left", va="top")',
@@ -3605,7 +3928,7 @@ def _scatter3d_code(table, plan, rows, table_name):
         cl = f'color="{POINT}"'
     w('', f'fig = plt.figure(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
       'ax = fig.add_subplot(projection="3d")',
-      f'ax.scatter(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}], s={_area(3.5)}, {cl}, depthshade=False, linewidths=0)')
+      f'ax.scatter(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}], s={_area(_marker(P, 3.5, 1)[0])}, {cl}{", alpha=" + _nm(_marker(P, 3.5, 1)[1]) if _marker(P, 3.5, 1)[3] else ""}, depthshade=False, linewidths=0)')
     if P.get('drop'):
         w(f'zmin = d[{_j(Zc)}].min()')
         with w.block(f'for x, y, z in zip(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}]):   # Drop Lines: from each point down to the lowest Z'):
@@ -3668,7 +3991,8 @@ def _contour_code(table, plan, rows, table_name):
     if P.get('labels'):
         w(f'ax.clabel(lines, fontsize=7, colors="{TEXT}")   # Label Contours')
     if P.get('points', True):
-        w(f'ax.scatter(d[{_j(P["x"])}], d[{_j(P["y"])}], s={_area(5)}, color="#3d3229", alpha=0.75, linewidths=0)   # Show Data Points')
+        msize, malpha, _, _ = _marker(P, 5, 0.75)
+        w(f'ax.scatter(d[{_j(P["x"])}], d[{_j(P["y"])}], s={_area(msize)}, color="#3d3229", alpha={_nm(malpha)}, linewidths=0)   # Show Data Points')
     w(f'fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label={_j(P["z"])})',
       f'ax.set_xlabel({_j(P["x"])})', f'ax.set_ylabel({_j(P["y"])})')
     return '\n'.join(_head_lines(table, plan, rows, table_name, ['from scipy.interpolate import griddata'] + timp) + w.lines + ['plt.show()'])
@@ -3690,7 +4014,8 @@ def _surface_code(table, plan, rows, table_name):
         w('ax.contour(GX, GY, gz, cmap=cmap, linewidths=0.8)   # Show Contours: on the surface,',
           'ax.contour(GX, GY, gz, zdir="z", offset=np.nanmin(gz), cmap=cmap, linewidths=0.8)   # and projected below it')
     if P.get('points', True):
-        w(f'ax.scatter(d[{_j(P["x"])}], d[{_j(P["y"])}], d[{_j(P["z"])}], s={_area(3)}, color="#2b221b", depthshade=False, linewidths=0)   # Show Data Points')
+        msize, malpha, _, alpha_set = _marker(P, 3, 1)
+        w(f'ax.scatter(d[{_j(P["x"])}], d[{_j(P["y"])}], d[{_j(P["z"])}], s={_area(msize)}, color="#2b221b"{", alpha=" + _nm(malpha) if alpha_set else ""}, depthshade=False, linewidths=0)   # Show Data Points')
     w(f'ax.set_xlabel({_j(P["x"])})', f'ax.set_ylabel({_j(P["y"])})', f'ax.set_zlabel({_j(P["z"])})',
       'ax.set_box_aspect((1, 1, 1))', 'ax.view_init(elev=35.26, azim=45)   # Plotly\'s first view: from (1.25, 1.25, 1.25)',
       f'fig.colorbar(surface, ax=ax, label={_j(P["z"])}, shrink=0.7)')

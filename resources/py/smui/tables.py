@@ -26,7 +26,7 @@ from statsmodels.stats.weightstats import DescrStatsW
 
 from . import data
 from .registry import api
-from .util import code_head, col, table as rtable
+from .util import code_head, col, one_line, table as rtable
 
 MAX_SCRIPT_OUTPUT = 200000
 
@@ -53,7 +53,9 @@ def _keep_lines(tid, rows, where=None, who='the report'):
         num = _numeric(tid, w['column'])
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         lit = repr(float(w['value'])) if num else json.dumps(w['value'])
-        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {w["column"]} is {w["value"]}')
+        # (in the comment a line break of a name or a value would end it: they come from a file)
+        say = f'{w["column"]} is {w["value"]}'.replace('\n', ' ').replace('\r', ' ')
+        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {one_line(say)}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -153,13 +155,25 @@ def _val(x):
     return str(x)
 
 
-def _codes(tid, name, idx):
+def _codes(tid, name, idx, binned=None):
     """Integer codes of a column's values in the page's order, missing last:
-    (codes, the value of each code, missing)."""
+    (codes, the value of each code, missing). binned: {name: {cuts, labels}},
+    continuous columns that group in bins (Tabulate): a value below the
+    first cut is in the first bin, a value equal to a cut in the bin above
+    it, as Make Binning Column cuts."""
     m = data.meta(tid, name)
     v = _raw(tid, name, idx)
     numeric = m.get('dataType') == 'numeric'
     miss = _missing(v)
+    if binned and name in binned and numeric:
+        b = binned[name]
+        cuts = np.asarray([float(x) for x in b.get('cuts') or []], dtype=float)
+        labels = [str(x) for x in b.get('labels') or []]
+        if len(labels) != len(cuts) + 1:
+            raise ValueError(f'the bins of {name} need one label more than cut points')
+        codes = np.searchsorted(cuts, np.where(miss, 0.0, v), side='right').astype(np.int64)
+        codes = np.where(miss, len(labels), codes)
+        return codes, labels, miss
     if m.get('modelingType') in ('nominal', 'ordinal') and m.get('levels') is not None:
         cats = [float(x) for x in m['levels']] if numeric else [str(x) for x in m['levels']]
         cats = list(dict.fromkeys(cats))
@@ -173,13 +187,13 @@ def _codes(tid, name, idx):
     return codes, cats, miss
 
 
-def _groups(tid, names, idx):
+def _groups(tid, names, idx, binned=None):
     """The rows grouped by the columns, groups in the page's order: the group
     of each row and, per group, the value of each column (None or NaN for
-    missing)."""
+    missing; a binned column's bin label)."""
     if not names:
         return np.zeros(len(idx), dtype=np.int64), [()]
-    cs = [_codes(tid, nm, idx) for nm in names]
+    cs = [_codes(tid, nm, idx, binned) for nm in names]
     if not len(idx):
         return np.zeros(0, dtype=np.int64), []
     mat = np.column_stack([c[0] for c in cs])
@@ -828,10 +842,104 @@ def missing_report(table, columns, rows=None, where=None, table_name='data'):
             'cells_missing': int(M.sum()), 'code': code}
 
 
-def mvn_em(X, max_iter=500, tol=1e-10):
+MAX_PATTERNS = 2000
+
+
+def _dendro(Z):
+    """A dendrogram's leaf order and its links (scipy's icoord and dcoord:
+    leaf k at 5 + 10 k), for the page to draw."""
+    from scipy.cluster.hierarchy import dendrogram
+    d = dendrogram(Z, no_plot=True, color_threshold=0)
+    return {'leaves': [int(x) for x in d['leaves']], 'icoord': d['icoord'], 'dcoord': d['dcoord']}
+
+
+@api('tables.missing_clustering')
+def missing_clustering(table, columns, rows=None, where=None, table_name='data'):
+    """JMP's Missing Value Clustering: the missing data patterns (each once)
+    and the columns, each clustered by Ward's method on the 0/1 missing
+    indicators (scipy linkage): the patterns as they are, the columns over
+    every row (a pattern counted as often as rows have it). The plot's rows
+    are the patterns and its columns the columns, both in the dendrograms'
+    order."""
+    from scipy.cluster.hierarchy import linkage
+    columns = list(columns)
+    idx = _idx(table, rows)
+    M = _miss_matrix(table, columns, idx).astype(float)
+    n, p = M.shape
+    if not n or not p:
+        return {'error': 'no rows or no columns to cluster'}
+    U, inv, counts = np.unique(M, axis=0, return_inverse=True, return_counts=True)
+    inv = np.asarray(inv).reshape(-1)
+    m = len(U)
+    if m > MAX_PATTERNS:
+        return {'error': f'{m} missing data patterns: too many to cluster here (at most {MAX_PATTERNS})'}
+    rden = _dendro(linkage(U, method='ward')) if m > 1 else {'leaves': [0], 'icoord': [], 'dcoord': []}
+    cden = _dendro(linkage((U * np.sqrt(counts)[:, None]).T, method='ward')) if p > 1 else {'leaves': [0], 'icoord': [], 'dcoord': []}
+    corder = cden['leaves']
+    pats = []
+    for u in rden['leaves']:
+        rows_u = idx[inv == u]
+        pats.append({'pattern': ''.join('1' if b else '0' for b in U[u]), 'count': int(counts[u]), 'missing': [int(U[u][j]) for j in corder],
+                     'n_missing': int(U[u].sum()), 'rows': rows_u.tolist()})
+    w = max(4.0, min(12.0, 1.2 + 0.45 * p))
+    h = max(3.0, min(10.0, 1.4 + 0.22 * m))
+    code = '\n'.join([code_head(table_name, ['import matplotlib.pyplot as plt', 'from scipy.cluster.hierarchy import linkage, dendrogram']),
+                     *_keep_lines(table, rows, where),
+                     f'cols = {json.dumps(columns)}',
+                     'M = df[cols].isna().to_numpy().astype(float)   # 1 where a value is missing',
+                     'U, counts = np.unique(M, axis=0, return_counts=True)   # the missing data patterns, each once, and how many rows have each',
+                     'fig, ax = plt.subplots(2, 2, figsize=(%g, %g), gridspec_kw={"width_ratios": [5, 1], "height_ratios": [5, 1]}, layout="constrained")' % (w, h),
+                     'dark = "#352921"',
+                     '# the patterns (rows) and the columns clustered by Ward\'s method; the columns over every row (a pattern as often as rows have it)',
+                     'rd = dendrogram(linkage(U, method="ward"), orientation="right", ax=ax[0, 1], no_labels=True, color_threshold=0, above_threshold_color=dark) if len(U) > 1 else {"leaves": [0]}',
+                     'cd = dendrogram(linkage((U * np.sqrt(counts)[:, None]).T, method="ward"), orientation="bottom", ax=ax[1, 0], no_labels=True, color_threshold=0, above_threshold_color=dark) if len(cols) > 1 else {"leaves": [0]}',
+                     'Z = U[np.ix_(rd["leaves"], cd["leaves"])]   # the patterns and the columns in the dendrograms\' order',
+                     'ax[0, 0].pcolormesh(np.arange(Z.shape[1] + 1) * 10, np.arange(Z.shape[0] + 1) * 10, Z, cmap="Reds", vmin=0, vmax=1.4, edgecolors="white", linewidth=0.5)   # red: missing',
+                     'ax[0, 0].set_xticks(np.arange(len(cols)) * 10 + 5, [cols[j] for j in cd["leaves"]], rotation=40, ha="left")',
+                     'ax[0, 0].xaxis.tick_top()   # the column names above, the columns\' dendrogram below',
+                     'ax[0, 0].set_yticks(np.arange(len(U)) * 10 + 5, [f"{counts[u]} rows" for u in rd["leaves"]])',
+                     'for a in (ax[0, 0], ax[0, 1]):',
+                     '    a.set_ylim(10 * len(U), 0)   # the first pattern at the top, as the page draws it; the dendrogram beside it',
+                     'for a in (ax[0, 0], ax[1, 0]):',
+                     '    a.set_xlim(0, 10 * len(cols))',
+                     'ax[0, 0].set_title("Missing value clustering")',
+                     'for a in (ax[0, 1], ax[1, 0], ax[1, 1]):',
+                     '    a.set_xticks([]); a.set_yticks([])',
+                     'ax[1, 1].axis("off")',
+                     'plt.show()'])
+    return {'columns': [columns[j] for j in corder], 'order': corder, 'patterns': pats, 'n': int(n), 'n_patterns': int(m),
+            'row_dendrogram': rden, 'column_dendrogram': cden, 'code': code}
+
+
+def shrink_intensity(X):
+    """Schäfer and Strimmer's (2005) shrinkage intensity for the correlations
+    towards zero (their target D: the covariance towards its diagonal), from
+    complete data X (n x p): the sum over pairs of the estimated variance of
+    each correlation over the sum of the squared correlations, in [0, 1]."""
+    X = np.asarray(X, dtype=float)
+    n, p = X.shape
+    if n < 3 or p < 2:
+        return 0.0
+    sd = X.std(axis=0, ddof=1)
+    sd[sd == 0] = 1.0
+    Z = (X - X.mean(axis=0)) / sd
+    W = Z[:, :, None] * Z[:, None, :]              # w_kij = z_ki z_kj
+    wbar = W.mean(axis=0)
+    var_r = n / (n - 1) ** 3 * ((W - wbar) ** 2).sum(axis=0)
+    r = n / (n - 1) * wbar
+    off = ~np.eye(p, dtype=bool)
+    den = float((r[off] ** 2).sum())
+    return 0.0 if den <= 0 else float(min(1.0, max(0.0, var_r[off].sum() / den)))
+
+
+def mvn_em(X, max_iter=500, tol=1e-10, shrink=None):
     """Maximum likelihood mean and covariance of a multivariate normal from
     data with missing values (NaN), by the EM algorithm; the covariance
-    divides by n. Returns (mu, sigma, iterations)."""
+    divides by n. shrink: None (none), a number in [0, 1] or 'auto': each
+    M-step's covariance S becomes (1 - lambda) S + lambda diag(S), lambda
+    fixed or, with 'auto', Schäfer and Strimmer's intensity of the data
+    completed by the conditional means. Returns (mu, sigma, iterations), and
+    with shrink also the last lambda (mu, sigma, iterations, lambda)."""
     X = np.asarray(X, dtype=float)
     n, p = X.shape
     miss = np.isnan(X)
@@ -863,11 +971,58 @@ def mvn_em(X, max_iter=500, tol=1e-10):
             T2 += full.T @ full
         mu_new = T1 / n
         sig_new = T2 / n - np.outer(mu_new, mu_new)
+        if shrink is not None:
+            lam = shrink_intensity(conditional_means(X, mu, sig)) if shrink == 'auto' else min(1.0, max(0.0, float(shrink)))
+            sig_new = (1 - lam) * sig_new + lam * np.diag(np.diag(sig_new))
         done = np.max(np.abs(mu_new - mu)) <= tol * (1 + np.max(np.abs(mu))) and np.max(np.abs(sig_new - sig)) <= tol * (1 + np.max(np.abs(sig)))
         mu, sig = mu_new, sig_new
         if done:
             break
+    if shrink is not None:
+        return mu, sig, it, lam
     return mu, sig, it
+
+
+def svd_impute(X, rank=None, max_iter=500, tol=1e-8, shrink=0.0):
+    """Missing values (NaN) filled by an iterated low-rank SVD (matrix
+    completion; Mazumder, Hastie and Tibshirani's soft-impute when shrink >
+    0): the columns are standardized by their observed means and standard
+    deviations, the missing cells start at 0 (the mean), and each round
+    replaces them by those of the filled table's column means plus the
+    rank-k SVD of the table less its means, the singular values less shrink
+    (times the largest one), until they change by less than tol (relative)
+    or max_iter rounds. A table that is column means plus rank k comes back
+    exactly. Returns (X filled, rounds, rank)."""
+    X = np.asarray(X, dtype=float)
+    n, p = X.shape
+    miss = np.isnan(X)
+    if np.any(miss.all(axis=0)):
+        raise ValueError('a column has no values')
+    mu = np.nanmean(X, axis=0)
+    sd = np.nanstd(X, axis=0, ddof=1) if n > 1 else np.ones(p)
+    sd = np.where(np.isfinite(sd) & (sd > 0), sd, 1.0)
+    Z = (X - mu) / sd
+    Z[miss] = 0.0
+    k = max(1, min(int(rank) if rank else default_rank(n, p), n, p))
+    it = 0
+    if miss.any():
+        for it in range(1, int(max_iter) + 1):
+            m = Z.mean(axis=0)
+            U, sv, Vt = np.linalg.svd(Z - m, full_matrices=False)
+            s2 = np.maximum(sv[:k] - float(shrink) * sv[0], 0.0) if shrink else sv[:k]
+            L = m + (U[:, :k] * s2) @ Vt[:k]
+            old = Z[miss]
+            Z[miss] = L[miss]
+            ch = np.sqrt(np.sum((Z[miss] - old) ** 2)) / max(np.sqrt(np.sum(Z ** 2)), 1e-300)
+            if ch <= tol:
+                break
+    return Z * sd + mu, it, k
+
+
+def default_rank(n, p):
+    """SVD imputation's number of singular vectors when none is given: a
+    quarter of the columns, 1 to 20 and below the rows and columns."""
+    return max(1, min(20, n - 1, p - 1, int(math.ceil(p / 4))))
 
 
 def conditional_means(X, mu, sig):
@@ -886,7 +1041,7 @@ def conditional_means(X, mu, sig):
 
 
 @api('tables.impute')
-def impute(table, columns, method='mean', rows=None, seed=1, n_iter=10, table_name='data'):
+def impute(table, columns, method='mean', rows=None, seed=1, n_iter=10, shrink=None, rank=None, max_iter=500, table_name='data'):
     columns = [c for c in columns if _numeric(table, c)]
     if not columns:
         raise ValueError('imputation takes numeric columns')
@@ -902,13 +1057,38 @@ def impute(table, columns, method='mean', rows=None, seed=1, n_iter=10, table_na
     elif method == 'mvn':
         if len(columns) < 2:
             raise ValueError('multivariate normal imputation needs two or more columns')
-        mu, sig, it = mvn_em(X)
+        if shrink is not None and shrink != 'auto':
+            shrink = float(shrink)
+            if not 0 <= shrink <= 1:
+                raise ValueError('the shrinkage is between 0 and 1, or auto')
+        if shrink is None:
+            mu, sig, it = mvn_em(X)
+        else:
+            mu, sig, it, lam = mvn_em(X, shrink=shrink)
+            info['shrinkage'] = lam
         Y = conditional_means(X, mu, sig)
         info.update({'mean': mu, 'cov': sig, 'iterations': it})
         code = [code_head(table_name), f'X = df[{json.dumps(columns)}].to_numpy(float)',
                 '# EM for the mean and covariance of a multivariate normal, then each missing value by its',
                 '# conditional expectation given the observed ones (the functions are in smui/tables.py):',
-                'mu, sigma, iterations = mvn_em(X)', 'X_imputed = conditional_means(X, mu, sigma)']
+                (f'mu, sigma, iterations, shrinkage = mvn_em(X, shrink={shrink!r})   # the covariance shrunk towards its diagonal, (1 - lambda) S + lambda diag(S)' if shrink is not None else 'mu, sigma, iterations = mvn_em(X)'),
+                'X_imputed = conditional_means(X, mu, sigma)']
+    elif method == 'svd':
+        if len(columns) < 2:
+            raise ValueError('SVD imputation needs two or more columns')
+        Y, it, k = svd_impute(X, rank=rank, max_iter=max_iter, shrink=float(shrink or 0))
+        info.update({'iterations': it, 'rank': k})
+        code = [code_head(table_name), f'X = df[{json.dumps(columns)}].to_numpy(float)', 'miss = np.isnan(X)',
+                'mu, sd = np.nanmean(X, axis=0), np.nanstd(X, axis=0, ddof=1)', 'sd[~(sd > 0)] = 1',
+                'Z = np.where(miss, 0.0, (X - mu) / sd)   # standardized, the missing cells at the mean',
+                f'for _ in range({int(max_iter)}):   # the column means and the rank-{k} SVD of the filled table, again and again',
+                '    m = Z.mean(axis=0)',
+                '    U, s, Vt = np.linalg.svd(Z - m, full_matrices=False)',
+                (f"    s = np.maximum(s[:{k}] - {float(shrink)!r} * s[0], 0)   # soft-impute's shrinkage" if shrink else f'    s = s[:{k}]'),
+                f'    L = m + (U[:, :{k}] * s) @ Vt[:{k}]',
+                '    old = Z[miss]', '    Z[miss] = L[miss]',
+                '    if np.sqrt(np.sum((Z[miss] - old) ** 2)) <= 1e-8 * np.sqrt(np.sum(Z ** 2)):', '        break',
+                'X_imputed = Z * sd + mu', 'print(X_imputed)']
     elif method == 'mice':
         from statsmodels.imputation.mice import MICEData
         safe = [f'v{j}' for j in range(len(columns))]
@@ -966,7 +1146,7 @@ TAB_STATS = ['N', 'Mean', 'Std Dev', 'Min', 'Max', 'Range', 'Sum', 'Median', 'Qu
 COUNT_STATS = ['N', '% of Total', 'Column %', 'Row %']
 
 
-def _entries(tid, chains, idx, add_all):
+def _entries(tid, chains, idx, add_all, binned=None):
     """The row (or column) headings: for each chain of nested columns its
     level combinations present in the rows, in the page's order; then All.
     Each heading has the mask of its rows (None: every row)."""
@@ -975,7 +1155,7 @@ def _entries(tid, chains, idx, add_all):
         if not chain:
             out.append({'block': b, 'levels': [], 'all': True, 'mask': None})
             continue
-        gid, labels = _groups(tid, chain, idx)
+        gid, labels = _groups(tid, chain, idx, binned)
         for g in range(len(labels)):
             out.append({'block': b, 'levels': list(zip(chain, labels[g])), 'all': False, 'mask': gid == g})
     if add_all and any(chains):
@@ -985,7 +1165,12 @@ def _entries(tid, chains, idx, add_all):
 
 @api('tables.tabulate')
 def tabulate(table, row_chains=(), col_chains=(), analysis=(), stats=('N',), all_rows=False, all_cols=False,
-             include_missing=False, quantiles=(25, 75), freq=None, rows=None, where=None, table_name='data'):
+             include_missing=False, quantiles=(25, 75), freq=None, binned=None, chart=False, rows=None, where=None, table_name='data'):
+    """The Tabulate table. A continuous column in row_chains or col_chains
+    groups by its distinct values, or by its bins when binned names it
+    ({name: {cuts, labels}}, the page's equal-width bins). chart: the code
+    also draws the cells as bars (Show Chart)."""
+    binned = dict(binned or {})
     rchains = [list(c) for c in (row_chains or []) if c] or [[]]
     cchains = [list(c) for c in (col_chains or []) if c] or [[]]
     analysis = list(analysis or [])
@@ -1004,8 +1189,8 @@ def tabulate(table, row_chains=(), col_chains=(), analysis=(), stats=('N',), all
         f = f[ok] if f is not None else None
     n = len(idx)
     ff = f if f is not None else np.ones(n)
-    rentries = _entries(table, rchains, idx, all_rows)
-    centries = _entries(table, cchains, idx, all_cols)
+    rentries = _entries(table, rchains, idx, all_rows, binned)
+    centries = _entries(table, cchains, idx, all_cols, binned)
     xs = {a: _raw(table, a, idx) for a in analysis}
     expanded = []
     for s in stats:
@@ -1056,16 +1241,36 @@ def tabulate(table, row_chains=(), col_chains=(), analysis=(), stats=('N',), all
     cols_out = [{'levels': [[k, _val(v)] for k, v in h['entry']['levels']], 'all': h['entry']['all'] and bool(any(cchains)), 'analysis': h['analysis'],
                  'stat': h['stat'], 'label': h['label']} for h in heads]
     code = [code_head(table_name), *_keep_lines(table, rows, where)]
-    idx_vars = row_vars
-    col_vars = list(dict.fromkeys(nm for c in cchains for nm in c))
+    # a binned column: its bins as a column of their labels (pd.cut, a value on a cut in the bin above)
+    bnames = {}
+    for nm, b in binned.items():
+        if nm not in grouping:
+            continue
+        bn = f'{nm} (bins)'
+        bnames[nm] = bn
+        cuts = ', '.join(repr(float(x)) for x in b.get('cuts') or [])
+        code.append(f'df[{json.dumps(bn)}] = pd.cut(df[{json.dumps(nm)}], [-np.inf{", " + cuts if cuts else ""}, np.inf], right=False, labels={json.dumps([str(x) for x in b.get("labels") or []])})   # the bins of {str(nm).replace(chr(10), " ").replace(chr(13), " ")}')
+    idx_vars = [bnames.get(v, v) for v in row_vars]
+    col_vars = [bnames.get(v, v) for v in dict.fromkeys(nm for c in cchains for nm in c)]
     agg = {'N': 'count', 'Mean': 'mean', 'Std Dev': 'std', 'Min': 'min', 'Max': 'max', 'Sum': 'sum', 'Median': 'median', 'Variance': 'var', 'Std Err': 'sem'}
     fns = [agg[s] for s in stats if s in agg] or ['count']
     if analysis:
-        code.append(f'print(pd.pivot_table(df, index={json.dumps(idx_vars) if idx_vars else "None"}, columns={json.dumps(col_vars) if col_vars else "None"}, values={json.dumps(analysis)}, aggfunc={json.dumps(fns)}, margins={bool(all_rows or all_cols)}, observed=True))')
+        tab = f'pd.pivot_table(df, index={json.dumps(idx_vars) if idx_vars else "None"}, columns={json.dumps(col_vars) if col_vars else "None"}, values={json.dumps(analysis)}, aggfunc={json.dumps(fns)}, margins={bool(all_rows or all_cols)}, observed=True)'
     else:
-        code.append(f'print(pd.crosstab({"[" + ", ".join(f"df[{json.dumps(v)}]" for v in idx_vars) + "]" if idx_vars else "pd.Series(0, index=df.index)"}, {"[" + ", ".join(f"df[{json.dumps(v)}]" for v in col_vars) + "]" if col_vars else "pd.Series(\'N\', index=df.index)"}, margins={bool(all_rows or all_cols)}))')
+        tab = f'pd.crosstab({"[" + ", ".join(f"df[{json.dumps(v)}]" for v in idx_vars) + "]" if idx_vars else "pd.Series(0, index=df.index)"}, {"[" + ", ".join(f"df[{json.dumps(v)}]" for v in col_vars) + "]" if col_vars else "pd.Series(\'N\', index=df.index)"}, margins={bool(all_rows or all_cols)})'
+    chart_code = None
+    if chart:
+        # Show Chart: each column of cells as bars, one panel per column, the rows down the side
+        chart_code = '\n'.join([code_head(table_name, ['import matplotlib.pyplot as plt']), *code[1:], f't = {tab}',
+                                 't = t.to_frame() if isinstance(t, pd.Series) else t',
+                                 't.columns = [", ".join(map(str, c)) if isinstance(c, tuple) else str(c) for c in t.columns]',
+                                 't.index = [", ".join(map(str, i)) if isinstance(i, tuple) else str(i) for i in t.index]',
+                                 'axes = t.plot.barh(subplots=True, layout=(1, t.shape[1]), sharey=True, legend=False, figsize=(min(12, 2.2 * t.shape[1] + 1.5), 0.3 * len(t) + 1.2), color="#2f6ec7")',
+                                 'axes[0, 0].invert_yaxis()   # the first row at the top, as in the table',
+                                 'plt.show()'])
+    code.append(f'print({tab})')
     code.append('# quantiles as JMP computes them: np.quantile(x, p, method="weibull")')
-    return {'row_vars': row_vars, 'rows': rows_out, 'cols': cols_out, 'values': values, 'n': n, 'code': '\n'.join(code)}
+    return {'row_vars': row_vars, 'rows': rows_out, 'cols': cols_out, 'values': values, 'n': n, 'code': '\n'.join(code), 'chart_code': chart_code}
 
 
 # ---- File > Python Script ------------------------------------------------------------------------

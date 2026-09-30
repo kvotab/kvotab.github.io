@@ -28,6 +28,7 @@ Analyze > Screening
 Results for rows carry `rows`, the page's row numbers, so the page can link
 and save them. Every result has its `code`.
 """
+import inspect
 import json
 import math
 import warnings
@@ -39,7 +40,7 @@ from scipy import stats
 
 from . import data
 from .registry import api
-from .util import code_head
+from .util import code_head, formula_num, formula_ref, formula_str, one_line
 
 J = json.dumps
 
@@ -190,7 +191,7 @@ def _keep_lines(table, rows, where=None):
             match &= np.asarray(raw, dtype=float) == float(v)
         else:
             match &= np.array([x == v for x in raw], dtype=bool)
-        L.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {c} is {_value_text(table, c, v)}')
+        L.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {one_line(c)} is {one_line(_value_text(table, c, v))}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -204,6 +205,145 @@ def _head(table, rows, where, table_name, imports=()):
     """The top of a snippet: the standard head (the table read from its CSV
     export as df), then the lines that keep the report's rows."""
     return '\n'.join([code_head(table_name, list(imports))] + _keep_lines(table, rows, where))
+
+
+# ---- saved columns: every row of the group, and formula text --------------------------------
+# A saved score, cluster or probability goes to every row whose columns are
+# present, excluded rows and rows the report filters out included (as JMP's
+# saved formulas compute them). Where the model has a closed form the column
+# is a live formula in the page's language (resources/js/smui-formula.js):
+# :name or :"name" for a column, numbers in their shortest round-trip form.
+# Two traps of that language shape the text: Exp of a large number is
+# missing (not infinite), so a softmax is written with the largest term
+# taken out (Min of the squared distances); and Match(x, ...) takes a
+# missing x for a missing value, so an argmin by Match is guarded by
+# Is Missing. In a By group the formula is If(<the group>, ..., .): the
+# other groups have their own fits.
+
+def _group_rows(table, where=None):
+    """The table's rows in the By group (every row without one), whatever
+    their row states."""
+    n = data.TABLES[table]['n']
+    match = np.ones(n, dtype=bool)
+    for w in where or []:
+        c, v = w.get('column'), w.get('value')
+        if c not in data.TABLES[table]['cols']:
+            continue
+        raw = data.raw(table, c)
+        if data.meta(table, c).get('dataType') == 'numeric':
+            match &= np.asarray(raw, dtype=float) == float(v)
+        else:
+            match &= np.array([x == v for x in raw], dtype=bool)
+    return np.flatnonzero(match)
+
+
+def _present_rows(table, cols, where=None):
+    """The rows of the By group with every one of the numeric columns
+    present, and their values (rows x columns)."""
+    idx = _group_rows(table, where)
+    X = np.column_stack([pd.to_numeric(data.series(table, c, idx, as_category=False), errors='coerce').to_numpy(float) for c in cols]) if cols else np.zeros((len(idx), 0))
+    ok = np.isfinite(X).all(axis=1)
+    return idx[ok], X[ok]
+
+
+def _fnum(x):
+    """A number in formula text; a missing or infinite one cannot be saved."""
+    x = float(x)
+    if not math.isfinite(x):
+        raise ValueError('the fit has a missing or infinite number: no formula can be saved')
+    return formula_num(x)
+
+
+def _fz(name, center=0.0, scale=1.0):
+    """A column centred and scaled: :x, (:x - c), ((:x - c) / s)."""
+    ref = formula_ref(name)
+    c, s = float(center), float(scale)
+    e = ref if c == 0 else f'({ref} {"+" if c < 0 else "-"} {_fnum(abs(c))})'
+    return e if s == 1 else f'({e} / {_fnum(s)})'
+
+
+def _flin(coefs, exprs, const=0.0):
+    """Σ coef·expr + const as formula text, the signs as operators (a zero
+    coefficient left out)."""
+    parts = []
+    for c, e in zip(coefs, exprs):
+        c = float(c)
+        if c == 0.0:
+            continue
+        parts.append((c < 0, f'{_fnum(abs(c))} * {e}'))
+    const = float(const)
+    if const != 0.0 or not parts:
+        parts.append((const < 0, _fnum(abs(const))))
+    out = []
+    for i, (neg, t) in enumerate(parts):
+        out.append((f'-{t}' if neg else t) if i == 0 else f'{"-" if neg else "+"} {t}')
+    return ' '.join(out)
+
+
+def _fsum(exprs):
+    """expr + expr + ...: a sum that is missing when any of them is."""
+    return ' + '.join(exprs) if exprs else '0'
+
+
+def _grouped(expr):
+    """True when the whole expression is one parenthesized group (quoted
+    names, which may hold parentheses, skipped)."""
+    if not (expr.startswith('(') and expr.endswith(')')):
+        return False
+    depth, i, n = 0, 0, len(expr)
+    while i < n:
+        ch = expr[i]
+        if ch == '"':
+            i += 1
+            while i < n and expr[i] != '"':
+                i += 2 if expr[i] == '\\' else 1
+        elif ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0 and i < n - 1:
+                return False
+        i += 1
+    return depth == 0
+
+
+def _fsq(expr):
+    """expr squared: (expr) ^ 2 (^ binds tighter than every other operator)."""
+    return f'{expr} ^ 2' if _grouped(expr) or formula_ref(expr[1:]) == expr else f'({expr}) ^ 2'
+
+
+def _fmissing_guard(names):
+    """A test that is 1 when any of the numeric columns is missing: their sum is."""
+    return f'Is Missing({_fsum([formula_ref(c) for c in names])})'
+
+
+def _fargmin(dists, results, names):
+    """The result of the smallest of the expressions (the first of equal
+    ones), missing when a column is: If(Is Missing(...), ., Match(Min(...), d1, r1, ...))."""
+    pairs = ', '.join(f'{d}, {r}' for d, r in zip(dists, results))
+    return f'If({_fmissing_guard(names)}, ., Match(Min({", ".join(dists)}), {pairs}))'
+
+
+def _fvalue(table, name, v):
+    """A value of a column in formula text: a quoted text or a number."""
+    if data.meta(table, name).get('dataType') == 'numeric':
+        return _fnum(v)
+    return formula_str(v)
+
+
+def _fguard(table, expr, where=None):
+    """expr for the By group's rows only: If(:g == "a" & ..., expr, .)."""
+    conds = [f'{formula_ref(w["column"])} == {_fvalue(table, w["column"], w["value"])}' for w in (where or [])
+             if w.get('column') in data.TABLES[table]['cols']]
+    if not conds:
+        return expr
+    return f'If({" & ".join(conds)}, {expr}, .)'
+
+
+def _by_words(table, where=None):
+    """The By group, for a saved column's notes: ' (where g is a)'."""
+    ws = [f'{w["column"]} is {_value_text(table, w["column"], w["value"])}' for w in (where or []) if w.get('column') in data.TABLES[table]['cols']]
+    return f' (the rows where {" and ".join(ws)})' if ws else ''
 
 
 # ---- the graphs as matplotlib code ------------------------------------------------------------
@@ -1256,6 +1396,49 @@ def pca_fit(table, columns, rows=None, weight=None, freq=None, on='correlations'
     return out
 
 
+PCA_ON = {'correlations': 'Correlations', 'covariances': 'Covariances', 'unscaled': 'Unscaled'}
+
+
+@api('pca.save')
+def pca_save(table, columns, rows=None, weight=None, freq=None, on='correlations', n=None, what='components', rotation=None,
+             n_rotate=None, gamma=None, kaiser=True, where=None):
+    """Save Principal Components (the first n) and Save Rotated Components as
+    formula columns. A score is linear in the columns: Prin j = Σ v_ij z_i,
+    z_i the column centred by the fitted mean (and on correlations divided
+    by the fitted standard deviation; unscaled: the column itself), so the
+    formula gives the report's scores on its rows and scores every other
+    row whose columns are present. A rotated component is the standardized
+    component scores times the rotation: Σ_i (V D^-1/2 T)_ij z_i."""
+    cols = list(columns)
+    r = pca_fit(table, cols, rows, weight, freq, on, rotation if what == 'rotated' else None, n_rotate, gamma, kaiser)
+    if 'error' in r:
+        return r
+    center, scale = np.asarray(r['center'], float), np.asarray(r['scale'], float)
+    z = [_fz(c, center[i], scale[i]) for i, c in enumerate(cols)]
+    V = np.asarray(r['eigenvectors'], float)
+    vals = np.asarray(r['eigenvalues'], float)
+    how = {'correlations': 'the columns standardized by the fitted means and standard deviations',
+           'covariances': 'the columns centred by the fitted means', 'unscaled': 'the columns as they are'}[on]
+    out = []
+    if what == 'rotated':
+        R = r.get('rotation')
+        if not R:
+            return {'error': 'choose a rotation first: Factor Rotation…'}
+        kr = R['k']
+        if np.any(vals[:kr] <= 0):
+            return {'error': 'a rotated component has a zero eigenvalue: its standardized scores are not defined'}
+        W = V[:, :kr] / np.sqrt(vals[:kr])[None, :] @ np.asarray(R['T'], float)
+        for j in range(kr):
+            out.append({'name': f'Rotated Prin{j + 1}', 'formula': _fguard(table, _flin(W[:, j], z), where),
+                        'notes': f'{R["label"]} rotation of {kr} principal components on {PCA_ON[on]} (standardized component scores times the rotation), a formula of {how}{_by_words(table, where)}'})
+    else:
+        k = len(vals) if n is None else max(1, min(int(n), len(vals)))
+        for j in range(k):
+            out.append({'name': f'Prin{j + 1}', 'formula': _fguard(table, _flin(V[:, j], z), where),
+                        'notes': f'principal component {j + 1} on {PCA_ON[on]}: the eigenvector times {how}{_by_words(table, where)}'})
+    return {'columns': out, 'n_rows': r['n_rows']}
+
+
 def _weights_lines(cols, weight, freq, what='the rows with every column'):
     """Lines that give X (numpy), the report's rows of the columns, and w,
     their weights (Weight times Freq; ones without them)."""
@@ -1550,13 +1733,15 @@ def factor_fit(table, columns, rows=None, weight=None, freq=None, n_factors=None
     res.loadings = L
     res.rotation_matrix = T
     coef = np.asarray(res.factor_score_params(method='regression'), float)   # Thurstone's regression scores
-    Zs = (X - X.mean(0)) / X.std(0, ddof=1)
+    s_center, s_scale = X.mean(0), X.std(0, ddof=1)
+    Zs = (X - s_center) / s_scale
     scores = Zs @ coef
     out.update({'unrotated': _mat(A), 'rotated': _mat(L), 'rotation_matrix': _mat(T), 'phi': _mat(Phi), 'oblique': bool(oblique),
                 'structure': _mat(L @ Phi) if oblique else None, 'communality': comm, 'uniqueness': uniq,
                 'rotation': rotation or 'none', 'rotation_label': ROTATIONS.get(rotation, ('None', ''))[0] if rotation else 'None',
                 'order': _sort_order(L), 'order_unrotated': _sort_order(A), 'score_coef': _mat(coef),
-                'scores': _mat(scores), 'rows': df.index.to_numpy(), 'kaiser': bool(kaiser)})
+                'scores': _mat(scores), 'rows': df.index.to_numpy(), 'kaiser': bool(kaiser),
+                'score_center': s_center, 'score_scale': s_scale})
     varL = (L * L).sum(0) if not oblique else (L * (L @ Phi)).sum(0)
     if oblique:   # ignoring the other factors: the squared structure coefficients
         St = L @ Phi
@@ -1588,6 +1773,30 @@ def factor_fit(table, columns, rows=None, weight=None, freq=None, n_factors=None
         out.update(_fa_codes(lambda imports: _plot_head(table, rows, where, table_name, imports), cols, weight, freq, k, n_factors, method, prior,
                              rotation, gamma, kaiser, plot))
     return out
+
+
+@api('factor.save')
+def factor_save(table, columns, rows=None, weight=None, freq=None, n_factors=None, method='ml', prior='smc',
+                rotation='varimax', gamma=None, kaiser=True, where=None):
+    """Save Rotated Components: each factor's score as a formula column,
+    Thurstone's regression score Σ_i b_ij (x_i − mean_i)/sd_i with the score
+    coefficients b and the means and standard deviations of the report's
+    rows, as the report computes the scores; every row whose columns are
+    present gets one."""
+    cols = list(columns)
+    r = factor_fit(table, cols, rows, weight, freq, n_factors, method, prior, rotation, gamma, kaiser)
+    if 'error' in r:
+        return r
+    B = np.asarray(r['score_coef'], float)
+    z = [_fz(c, r['score_center'][i], r['score_scale'][i]) for i, c in enumerate(cols)]
+    label = r['rotation_label']
+    out = [{'name': f'Factor{j + 1}', 'formula': _fguard(table, _flin(B[:, j], z), where),
+            'notes': f'factor score (Thurstone\'s regression method), {r["k"]} factors, {FA_METHOD_LABEL.get(r["method"], r["method"])}, {label} rotation: a formula of the columns standardized by the report\'s means and standard deviations{_by_words(table, where)}'}
+           for j in range(r['k'])]
+    return {'columns': out, 'n_rows': r['n_rows']}
+
+
+FA_METHOD_LABEL = {'ml': 'Maximum Likelihood', 'pa': 'Principal Axis'}
 
 
 def _fa_fit_lines(cols, weight, freq, k, n_factors, method, prior, rotation, gamma, kaiser):
@@ -1692,45 +1901,93 @@ def _pkey(v):
     return str(v)
 
 
-@api('discriminant.fit')
-def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', lam=0.5, gam=0.0,
-             priors='equal', prior_values=None, alpha=0.05, plot=None, where=None, table_name='data'):
-    """Discriminant analysis as JMP reports it: squared distances, posterior
-    probabilities and classification (linear: pooled covariance; quadratic:
-    each group's; regularized: Friedman's compromise), the canonical
-    analysis of the between and pooled within matrices, and the multivariate
-    tests (statsmodels MANOVA)."""
-    ycols = list(y)
+# The sets of a Validation column, as the predictive platforms read one
+# (predictive.prepare): 0 or Training, 1 or Validation, 2 or Test.
+SETS = ('Training', 'Validation', 'Test')
+SET_NAMES = {'training': 0, 'train': 0, 'validation': 1, 'valid': 1, 'test': 2}
+
+
+def _sets_of(table, validation, index):
+    """Each row's set from a Validation column: 0 Training, 1 Validation,
+    2 Test (the numbers or the words); -1 where it has no value. A column
+    with other values (k folds) is refused: Discriminant holds rows back,
+    it does not cross-validate."""
+    m = data.meta(table, validation)
+    raw = data.raw(table, validation, index)
+    if m.get('dataType') == 'numeric':
+        v = np.asarray(raw, dtype=float)
+        ok = np.isfinite(v)
+        vals = sorted(set(np.unique(v[ok]).tolist()))
+        bad = [x for x in vals if x not in (0.0, 1.0, 2.0)]
+        if bad:
+            folds = ' (a column of more than three values holds k folds, which Discriminant does not take)' if len(vals) > 3 else ''
+            raise ValueError(f'{validation}: a Validation column holds 0 (training), 1 (validation) and 2 (test); it has {", ".join(_lvtext(b) for b in bad[:5])}{folds}')
+        return np.where(ok, v, -1).astype(int)
+    out = []
+    for vv in raw:
+        if vv is None or (isinstance(vv, float) and math.isnan(vv)):
+            out.append(-1)
+            continue
+        k = SET_NAMES.get(str(vv).strip().lower())
+        if k is None:
+            raise ValueError(f'{validation}: a Validation column holds Training, Validation and Test (or 0, 1, 2); it has {vv}')
+        out.append(k)
+    return np.array(out, dtype=int)
+
+
+def _disc_core(table, ycols, x, rows, weight, freq, method, lam, gam, priors, prior_values, validation):
+    """The discriminant fit on the training rows (every row without a
+    Validation column) and the classification of every row: the groups'
+    means and covariances, the pooled within covariance, each group's
+    inverse covariance and log determinant for the method, the priors,
+    SqDist and the posterior probabilities."""
     df, w, f = _cat_frame(table, ycols, x, rows, weight, freq)
+    notes = []
+    if validation:
+        sets = _sets_of(table, validation, df.index.to_numpy())
+        if (sets < 0).any():
+            notes.append(f'{int((sets < 0).sum())} rows with no {validation} value are left out.')
+        keep = sets >= 0
+        df, w, f, sets = df[keep], w[keep], f[keep], sets[keep]
+        if not (sets == 0).any():
+            raise ValueError(f'{validation} leaves no training rows (0 or Training)')
+    else:
+        sets = np.zeros(len(df), dtype=int)
     g = df[x]
     levels_all = list(g.cat.categories) if hasattr(g, 'cat') else sorted(g.unique())
-    present = [lv for lv in levels_all if (g == lv).any()]
+    tr = sets == 0
+    present = [lv for lv in levels_all if (g[tr] == lv).any()]
     if len(present) < 2:
-        return {'error': 'the categories column needs at least two levels with data'}
+        raise ValueError('the categories column needs at least two levels with data' + (' in the training rows' if validation else ''))
+    known = g.isin(present).to_numpy()
+    if not known.all():
+        notes.append(f'{int((~known).sum())} rows of a category the training rows do not have are left out (the model has no mean for it).')
+        df, w, f, sets = df[known], w[known], f[known], sets[known]
+        g = df[x]
+        tr = sets == 0
     Y = df[ycols].to_numpy(float)
     n, p = Y.shape
     T = len(present)
     code_idx = np.array([present.index(v) for v in g], int)
-    nobs = _nobs(f, freq)
-    sw = float(w.sum())
-    means, covs, sws, logdets = [], [], [], []
+    Yt, ct, wt = Y[tr], code_idx[tr], w[tr]
+    sw = float(wt.sum())
+    means, covs, sws = [], [], []
     E = np.zeros((p, p))
     for t in range(T):
-        m_ = code_idx == t
-        wt = w[m_]
-        swt = float(wt.sum())
-        mt = (wt[:, None] * Y[m_]).sum(0) / swt
-        Ct = Y[m_] - mt
-        Et = (wt[:, None] * Ct).T @ Ct
+        m_ = ct == t
+        wg = wt[m_]
+        swt = float(wg.sum())
+        mt = (wg[:, None] * Yt[m_]).sum(0) / swt
+        Ct = Yt[m_] - mt
+        Et = (wg[:, None] * Ct).T @ Ct
         E += Et
         covs.append(Et / (swt - 1) if swt > 1 else np.full((p, p), np.nan))
         means.append(mt)
         sws.append(swt)
     means = np.array(means)
-    gm = (w[:, None] * Y).sum(0) / sw
+    gm = (wt[:, None] * Yt).sum(0) / sw
     Sp = E / (sw - T)
     B = sum(sws[t] * np.outer(means[t] - gm, means[t] - gm) for t in range(T))
-    notes = []
     # priors
     if priors == 'proportional':
         q = np.array(sws) / sw
@@ -1740,11 +1997,12 @@ def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', la
     else:
         q = np.full(T, 1.0 / T)
     # the covariance of each group for the chosen method
-    Sinv = []
+    Sinv, logdets, Sigs = [], [], []
     if method == 'linear':
         Spi = np.linalg.pinv(Sp)
         Sinv = [Spi] * T
         logdets = [0.0] * T
+        Sigs = [Sp] * T
     else:
         lam_ = 0.0 if method == 'quadratic' else float(lam)
         gam_ = 0.0 if method == 'quadratic' else float(gam)
@@ -1765,6 +2023,7 @@ def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', la
             sgn, ld = np.linalg.slogdet(Sig)
             Sinv.append(np.linalg.pinv(Sig))
             logdets.append(ld if sgn > 0 else float('nan'))
+            Sigs.append(Sig)
     D2 = np.empty((n, T))
     for t in range(T):
         e = Y - means[t]
@@ -1774,20 +2033,85 @@ def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', la
     a = a - a.max(1, keepdims=True)
     P = np.exp(a)
     P = P / P.sum(1, keepdims=True)
+    return {'weight': weight, 'df': df, 'w': w, 'f': f, 'sets': sets, 'tr': tr, 'present': present, 'levels_all': levels_all, 'Y': Y, 'n': n, 'p': p, 'T': T,
+            'code_idx': code_idx, 'sw': sw, 'means': means, 'covs': covs, 'sws': sws, 'E': E, 'gm': gm, 'Sp': Sp, 'B': B, 'q': q,
+            'Sinv': Sinv, 'Sigs': Sigs, 'logdets': logdets, 'SqDist': SqDist, 'P': P, 'notes': notes}
+
+
+def _disc_set_summaries(C):
+    """Score Summaries and confusion counts of each set present: the rows
+    misclassified (by their weights), the entropy RSquare against the
+    training shares of the groups, −2 log likelihood."""
+    P, code_idx, w, sets, T = C['P'], C['code_idx'], C['w'], C['sets'], C['T']
+    shares = np.array(C['sws']) / C['sw']
+    pred = P.argmax(1)
+    prob_act = P[np.arange(C['n']), code_idx]
+    mis = pred != code_idx
+    out, confs = [], []
+    for k in range(3):
+        m = sets == k
+        if not m.any():
+            continue
+        wk = w[m]
+        swk = float(wk.sum())
+        ll = float(np.sum(wk * np.log(np.maximum(prob_act[m], 1e-300))))
+        ll0 = float(np.sum(wk * np.log(shares[code_idx[m]])))
+        out.append({'set': SETS[k], 'n_mis': float(np.sum(wk * mis[m])), 'pct_mis': 100 * float(np.sum(wk * mis[m])) / swk,
+                    'entropy_r2': 1 - ll / ll0 if ll0 != 0 else None, 'm2ll': -2 * ll, 'n': swk})
+        conf = np.zeros((T, T))
+        np.add.at(conf, (code_idx[m], pred[m]), wk)
+        confs.append({'set': SETS[k], 'matrix': _mat(conf)})
+    return out, confs
+
+
+def _disc_prepared(C, freq, ycols, labels):
+    """The pieces predictive.report() reads (its ROC and lift curves): the
+    groups as the response, each row's set, the frequencies."""
+    from . import predictive
+    P_ = predictive.Prepared()
+    P_.kind = 'categorical'
+    P_.index = C['df'].index.to_numpy()
+    P_.target = C['code_idx']
+    P_.levels = [_level_value(v) for v in C['present']]
+    P_.labels = list(labels)
+    P_.sets = C['sets']
+    P_.w = C['w']
+    P_.freq = C['f'] if freq else None
+    P_.spec = {'weight': C.get('weight'), 'freq': freq}
+    P_.features = list(ycols)
+    return P_
+
+
+@api('discriminant.fit')
+def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', lam=0.5, gam=0.0,
+             priors='equal', prior_values=None, alpha=0.05, plot=None, validation=None, curves=False, decision=False, where=None, table_name='data'):
+    """Discriminant analysis as JMP reports it: squared distances, posterior
+    probabilities and classification (linear: pooled covariance; quadratic:
+    each group's; regularized: Friedman's compromise), the canonical
+    analysis of the between and pooled within matrices, and the multivariate
+    tests (statsmodels MANOVA). With a Validation column (JMP Pro) the model
+    is fitted to the training rows and every row is scored: the Score
+    Summaries and confusion counts of each set. curves: the ROC and lift
+    curves of each set (predictive.report)."""
+    ycols = list(y)
+    try:
+        C = _disc_core(table, ycols, x, rows, weight, freq, method, lam, gam, priors, prior_values, validation)
+    except ValueError as e:
+        return {'error': str(e)}
+    df, w, sets, tr, present, levels_all = C['df'], C['w'], C['sets'], C['tr'], C['present'], C['levels_all']
+    Y, n, p, T, code_idx, sw = C['Y'], C['n'], C['p'], C['T'], C['code_idx'], C['sw']
+    means, covs, sws, E, gm, Sp, B, q = C['means'], C['covs'], C['sws'], C['E'], C['gm'], C['Sp'], C['B'], C['q']
+    logdets, SqDist, P, notes = C['logdets'], C['SqDist'], C['P'], C['notes']
+    nobs = _nobs(C['f'][tr], freq)
     pred = P.argmax(1)
     prob_act = P[np.arange(n), code_idx]
     mis = pred != code_idx
     with np.errstate(divide='ignore'):
         nll = -np.log(np.maximum(prob_act, 1e-300))
-    # entropy RSquare against the model with no covariates (the class shares)
-    shares = np.array(sws) / sw
-    ll_full = float(np.sum(w * np.log(np.maximum(prob_act, 1e-300))))
-    ll_red = float(np.sum(w * np.log(shares[code_idx])))
-    conf = np.zeros((T, T))
-    for a_, b_, ww in zip(code_idx, pred, w):
-        conf[a_, b_] += ww
-    # canonical analysis: eigenvalues of E^-1 H (H = the between SSCP)
+    summaries, confs = _disc_set_summaries(C)
+    # canonical analysis on the training rows: eigenvalues of E^-1 H (H = the between SSCP)
     canon = None
+    wt, Yt = w[tr], Y[tr]
     try:
         vals, vecs = sla.eigh(B, E)
         order = np.argsort(vals)[::-1]
@@ -1813,7 +2137,7 @@ def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', la
             df2 = (ve - (pk - qk + 1) / 2) * tt - (pk * qk - 2) / 2
             Fv = (1 - lam_j ** (1 / tt)) / (lam_j ** (1 / tt)) * df2 / df1
             lr_tests.append({'F': Fv, 'numdf': df1, 'dendf': df2, 'p': float(stats.f.sf(Fv, df1, df2))})
-        Tcov = ((w[:, None] * (Y - gm)).T @ (Y - gm)) / (sw - 1)
+        Tcov = ((wt[:, None] * (Yt - gm)).T @ (Yt - gm)) / (sw - 1)
         tsd = np.sqrt(np.diag(Tcov))
         total_struct = (Tcov @ raw) / tsd[:, None] / np.sqrt(np.einsum('ij,jk,ki->i', raw.T, Tcov, raw))[None, :]
         within_struct = (Sp @ raw) / np.sqrt(np.diag(Sp))[:, None]
@@ -1828,52 +2152,117 @@ def disc_fit(table, y, x, rows=None, weight=None, freq=None, method='linear', la
                  'between_struct': _mat(between_struct), 'within_struct': _mat(within_struct), 'm': m}
     except (np.linalg.LinAlgError, ValueError) as e:
         notes.append(f'canonical analysis not available: {e}')
-    tests = _manova_tests(df, ycols, x, w if (weight or freq) else None)
-    out = {'names': ycols, 'x': x, 'levels': [_level_value(v) for v in present], 'n': nobs, 'n_rows': n, 'T': T, 'p': p,
+    tests = _manova_tests(Yt, code_idx[tr], T, wt if (weight or freq) else None)
+    train = summaries[0]
+    out = {'names': ycols, 'x': x, 'levels': [_level_value(v) for v in present], 'n': nobs, 'n_rows': int(tr.sum()), 'T': T, 'p': p,
            'method': method, 'lam': lam, 'gam': gam, 'priors': q, 'rows': df.index.to_numpy(), 'actual': code_idx,
            'pred': pred, 'prob': _mat(P), 'sqdist': _mat(SqDist), 'prob_actual': prob_act, 'neg_log_prob': nll,
            'misclassified': mis, 'counts': sws, 'means': _mat(means), 'grand_mean': gm, 'pooled_cov': _mat(Sp),
            'pooled_corr': _mat(_cov_to_corr(Sp)), 'group_cov': [_mat(c) for c in covs], 'logdet': logdets,
-           'summary': {'n_mis': float(np.sum(w * mis)), 'pct_mis': 100 * float(np.sum(w * mis)) / sw,
-                       'entropy_r2': 1 - ll_full / ll_red if ll_red != 0 else None, 'm2ll': -2 * ll_full, 'n': sw},
-           'confusion': _mat(conf), 'canonical': canon, 'tests': tests, 'notes': notes}
+           'model_cov': [_mat(S) for S in C['Sigs']],
+           'summary': {k: train[k] for k in ('n_mis', 'pct_mis', 'entropy_r2', 'm2ll', 'n')},
+           'confusion': confs[0]['matrix'], 'canonical': canon, 'tests': tests, 'notes': notes}
+    if validation:
+        out.update({'validation': validation, 'sets': sets, 'summaries': summaries, 'confusions': confs})
     char = data.meta(table, x).get('dataType') != 'numeric'
+    vnum = bool(validation) and data.meta(table, validation).get('dataType') == 'numeric'
     labels = [_lvtext(v) for v in present]
-    out['code'] = _disc_stats_code(lambda imports: _head(table, rows, where, table_name, imports), ycols, x, weight, freq, char, levels_all, labels,
-                                   method, lam, gam, priors, q)
+    spec = {'ycols': ycols, 'x': x, 'weight': weight, 'freq': freq, 'char': char, 'levels': levels_all, 'labels': labels, 'method': method,
+            'lam': lam, 'gam': gam, 'priors': priors, 'q': q, 'validation': validation, 'vnum': vnum}
+    out['code'] = _disc_stats_code(lambda imports: _head(table, rows, where, table_name, imports), spec)
     if plot is not None:
         head = lambda imports: _plot_head(table, rows, where, table_name, imports)  # noqa: E731
-        out.update(_disc_codes(head, ycols, x, weight, freq, char, levels_all, labels, method, lam, gam, priors, q, plot, canon is not None))
+        out.update(_disc_codes(head, spec, plot, canon is not None))
+    if curves or (decision and T == 2):
+        from . import predictive
+        head_code = '\n'.join([_head(table, rows, where, table_name, ['from scipy import linalg', PLT]), *_disc_fit_lines(spec), *_disc_post_lines(spec),
+                               *([] if validation else ['sets = np.zeros(n, dtype=int)   # every row trains the model']),
+                               'y, fitted = t, P   # each row\'s group and its probability of every group: the curves\' input'])
+        if curves:
+            fit = predictive.report(_disc_prepared(C, freq, ycols, labels), P, head=head_code)
+            out['fit'] = {k: fit[k] for k in ('kind', 'sets', 'roc', 'lift', 'plots', 'levels')}
+        if decision and T == 2:
+            out['threshold'] = predictive.threshold(code_idx, P, labels, sets, w if (weight or freq) else None, df.index.to_numpy(),
+                                                    head=head_code, values=[_level_value(v) for v in present])
     return out
 
 
-def _disc_fit_lines(ycols, x, weight, freq, char, levels):
+def _disc_classify(C, Y):
+    """SqDist and the posterior probabilities of rows Y by the fit C."""
+    T = C['T']
+    D2 = np.column_stack([np.einsum('ij,jk,ik->i', Y - C['means'][t], C['Sinv'][t], Y - C['means'][t]) for t in range(T)])
+    SqDist = D2 + np.array(C['logdets'])[None, :] - 2 * np.log(C['q'])[None, :]
+    a = -0.5 * SqDist
+    a = a - a.max(1, keepdims=True)
+    P = np.exp(a)
+    return SqDist, P / P.sum(1, keepdims=True)
+
+
+@api('discriminant.probs')
+def disc_probs(table, y, x, rows=None, weight=None, freq=None, method='linear', lam=0.5, gam=0.0, priors='equal', prior_values=None,
+               validation=None, where=None):
+    """Prob[group] of every row of the By group whose covariates are
+    present, from the report's fit, as values (the Decision Threshold's Save
+    Threshold Formula reads them when the formula columns are not there)."""
+    ycols = list(y)
+    C = _disc_core(table, ycols, x, rows, weight, freq, method, lam, gam, priors, prior_values, validation)
+    idx, Y = _present_rows(table, ycols, where)
+    _, P = _disc_classify(C, Y) if len(idx) else (None, np.zeros((0, C['T'])))
+    labels = [_lvtext(v) for v in C['present']]
+    return {'rows': idx.tolist(), 'prob': P.tolist(), 'names': [f'Prob[{lb}]' for lb in labels]}
+
+
+def _disc_masks(spec):
+    """The training rows' masks in the code: every row without a Validation
+    column (the code is then as it was), else the rows with sets == 0."""
+    if spec.get('validation'):
+        return {'g': lambda k: f'tr & (t == {k})', 'w': 'w[tr]', 'Y': 'Y[tr]', 'n': 'tr.sum()', 't': 't[tr]'}
+    return {'g': lambda k: f't == {k}', 'w': 'w', 'Y': 'Y', 'n': 'n', 't': 't'}
+
+
+def _disc_fit_lines(spec):
     """Lines that take the rows and groups as discriminant.fit does: d, w, Y,
     the categories in the table's order (levels), each row's t, and the
-    groups' weighted counts and means, E and the pooled covariance Sp."""
-    need = [*ycols, x, *[c for c in (weight, freq) if c]]
+    groups' weighted counts and means, E and the pooled covariance Sp (of
+    the training rows, with a Validation column: sets, tr)."""
+    ycols, x, weight, freq, char, levels, v = spec['ycols'], spec['x'], spec['weight'], spec['freq'], spec['char'], spec['levels'], spec.get('validation')
+    need = [*ycols, x, *[c for c in (weight, freq, v) if c]]
     wexpr = ' * '.join(f'd[{J(c)}]' for c in (weight, freq) if c)
-    fit = [f'd = df.dropna(subset={J(list(dict.fromkeys(need)))})   # the rows with every covariate and a category']
+    fit = [f'd = df.dropna(subset={J(list(dict.fromkeys(need)))})   # the rows with every covariate and a category{" and a set" if v else ""}']
     if wexpr:
         fit += [f'd = d[{wexpr} > 0]   # and a positive weight', f'w = ({wexpr}).to_numpy()   # {"Weight times Freq" if weight and freq else "Weight" if weight else "Freq"}']
     else:
         fit.append('w = np.ones(len(d))')
     fit += [f'Y = d[{J(ycols)}].to_numpy()',
-            f'g = d[{J(x)}]{".astype(str)" if char else ""}',
-            f'levels = [v for v in {_py_list(levels)} if (g == v).any()]   # the categories in the table\'s order',
-            'T, (n, p) = len(levels), Y.shape',
+            f'g = d[{J(x)}]{".astype(str)" if char else ""}']
+    if v:
+        if spec.get('vnum'):
+            fit.append(f'sets = d[{J(v)}].to_numpy(int)   # {v}: 0 training, 1 validation, 2 test')
+        else:
+            fit.append(f'sets = d[{J(v)}].str.strip().str.lower().map({J(SET_NAMES)}).to_numpy(int)   # {v}: 0 training, 1 validation, 2 test')
+        fit += [f'levels = [v for v in {_py_list(levels)} if (g[sets == 0] == v).any()]   # the categories of the training rows, in the table\'s order',
+                'known = g.isin(levels).to_numpy()   # a row of a category the training rows lack cannot be scored',
+                'd, w, Y, g, sets = d[known], w[known], Y[known], g[known], sets[known]',
+                'tr = sets == 0   # the training rows fit the model; every row is scored']
+    else:
+        fit.append(f'levels = [v for v in {_py_list(levels)} if (g == v).any()]   # the categories in the table\'s order')
+    M = _disc_masks(spec)
+    k = 'k'
+    fit += ['T, (n, p) = len(levels), Y.shape',
             't = np.array([levels.index(v) for v in g])   # each row\'s category',
-            'counts = np.array([w[t == k].sum() for k in range(T)])',
-            'means = np.array([(w[t == k, None] * Y[t == k]).sum(0) / counts[k] for k in range(T)])',
-            'E = sum((w[t == k, None] * (Y[t == k] - means[k])).T @ (Y[t == k] - means[k]) for k in range(T))   # the within-groups cross products',
-            'gm = (w[:, None] * Y).sum(0) / w.sum()   # the grand mean',
-            'Sp = E / (w.sum() - T)   # the pooled within-groups covariance']
+            f'counts = np.array([w[{M["g"](k)}].sum() for k in range(T)])',
+            f'means = np.array([(w[{M["g"](k)}, None] * Y[{M["g"](k)}]).sum(0) / counts[k] for k in range(T)])',
+            f'E = sum((w[{M["g"](k)}, None] * (Y[{M["g"](k)}] - means[k])).T @ (Y[{M["g"](k)}] - means[k]) for k in range(T))   # the within-groups cross products{" of the training rows" if v else ""}',
+            f'gm = ({M["w"]}[:, None] * {M["Y"]}).sum(0) / {M["w"]}.sum()   # the grand mean',
+            f'Sp = E / ({M["w"]}.sum() - T)   # the pooled within-groups covariance']
     return fit
 
 
-def _disc_post_lines(method, lam, gam, priors, q):
+def _disc_post_lines(spec):
     """Lines that classify the rows as the report does: the priors q, each
     group's covariance for the method, SqDist, the posterior probabilities P."""
+    method, lam, gam, priors, q = spec['method'], spec['lam'], spec['gam'], spec['priors'], spec['q']
+    M = _disc_masks(spec)
     if priors == 'proportional':
         L = ['q = counts / counts.sum()   # the priors: proportional to occurrence']
     elif priors == 'other':
@@ -1887,7 +2276,7 @@ def _disc_post_lines(method, lam, gam, priors, q):
         L += [f'lam, gam = {lam_!r}, {gam_!r}   # {"quadratic: each group its own covariance" if method == "quadratic" else "regularized: λ toward the pooled covariance, γ toward the diagonal"}',
               'Si, logdet = [], []',
               'for k in range(T):',
-              '    wk, Ck = w[t == k], Y[t == k] - means[k]',
+              f'    wk, Ck = w[{M["g"]("k")}], Y[{M["g"]("k")}] - means[k]',
               '    Sk = (wk[:, None] * Ck).T @ Ck / (wk.sum() - 1) if wk.sum() > 1 else Sp.copy()   # one row: the pooled covariance',
               '    dz = np.diag(Sk) <= 1e-12 * np.maximum(np.diag(Sp), 1e-300)   # a covariate constant within the group: its covariances from the pooled matrix',
               '    Sk[dz, :] = Sp[dz, :]; Sk[:, dz] = Sp[:, dz]',
@@ -1905,53 +2294,70 @@ def _disc_post_lines(method, lam, gam, priors, q):
     return L
 
 
-DISC_CANON = [
-    'B = sum(counts[k] * np.outer(means[k] - gm, means[k] - gm) for k in range(T))   # the between-groups cross products',
-    'vals, vecs = linalg.eigh(B, E)   # the canonical variables: the eigenvectors of E⁻¹B',
-    'o = np.argsort(vals)[::-1]; vals, vecs = vals[o], vecs[:, o]',
-    'm = min(T - 1, p)',
-    'raw = vecs[:, :m] * np.sqrt(w.sum() - T)   # scaled to unit pooled within-group variance',
-    'sd = np.sqrt(np.diag(Sp))',
-    'raw = raw * np.where((raw * sd[:, None]).sum(0) < 0, -1.0, 1.0)   # each one\'s standardized coefficients summing to a positive number',
-    'std = raw * sd[:, None]   # the standardized scoring coefficients',
-    'cs = (Y - gm) @ raw   # the canonical scores',
-    'cm = (means - gm) @ raw   # the groups\' means on them']
+def _disc_canon_lines(spec):
+    M = _disc_masks(spec)
+    return [
+        'B = sum(counts[k] * np.outer(means[k] - gm, means[k] - gm) for k in range(T))   # the between-groups cross products',
+        'vals, vecs = linalg.eigh(B, E)   # the canonical variables: the eigenvectors of E⁻¹B',
+        'o = np.argsort(vals)[::-1]; vals, vecs = vals[o], vecs[:, o]',
+        'm = min(T - 1, p)',
+        f'raw = vecs[:, :m] * np.sqrt({M["w"]}.sum() - T)   # scaled to unit pooled within-group variance',
+        'sd = np.sqrt(np.diag(Sp))',
+        'raw = raw * np.where((raw * sd[:, None]).sum(0) < 0, -1.0, 1.0)   # each one\'s standardized coefficients summing to a positive number',
+        'std = raw * sd[:, None]   # the standardized scoring coefficients',
+        'cs = (Y - gm) @ raw   # the canonical scores',
+        'cm = (means - gm) @ raw   # the groups\' means on them']
 
 
-def _disc_stats_code(head, ycols, x, weight, freq, char, levels, labels, method, lam, gam, priors, q):
+def _disc_stats_code(head, spec):
     """The code of Discriminant's report: the classification of each row with
     the report's method, priors, weights and order of the categories, the
-    Score Summaries, the canonical correlations and the multivariate tests."""
+    Score Summaries (of each set, with a Validation column), the canonical
+    correlations and the multivariate tests."""
+    M = _disc_masks(spec)
     L = [head(['from scipy import linalg', 'from statsmodels.multivariate.manova import MANOVA']),
-         *_disc_fit_lines(ycols, x, weight, freq, char, levels), *_disc_post_lines(method, lam, gam, priors, q),
-         f'labels = {J(labels)}',
-         'print(pd.DataFrame(P, index=d.index + 1, columns=[f"Prob[{v}]" for v in labels]))   # Probabilities to Each Group (by row number)',
-         'conf = np.zeros((T, T))',
-         'np.add.at(conf, (t, P.argmax(1)), w)   # each row counted by its weight (Weight times Freq; 1 without them)',
-         'print(pd.DataFrame(conf, index=labels, columns=labels))   # the Confusion Matrix: Actual (the rows) by Predicted',
-         'll = (w * np.log(np.maximum(P[np.arange(n), t], 1e-300))).sum()   # the log likelihood of the classification',
-         'll0 = (w * np.log(counts[t] / w.sum())).sum()   # ... and of the groups\' shares alone',
-         'print("Number Misclassified", w[mis].sum(), "Percent", 100 * w[mis].sum() / w.sum(), "Entropy RSquare", 1 - ll / ll0, "−2LogLikelihood", -2 * ll)',
-         *DISC_CANON,
-         'cancorr = np.sqrt(np.maximum(vals[:m], 0) / (1 + np.maximum(vals[:m], 0)))',
-         'print("Canonical correlations", cancorr)',
-         'Xd = np.column_stack([np.ones(n)] + [(t == k).astype(float) for k in range(1, T)])   # an intercept and the categories after the first',
-         f'sq = np.sqrt(w / w.mean())   # {"the rows scaled by the square roots of their weights" if weight or freq else "(no weights: ones)"}',
-         'Lc = np.zeros((T - 1, T)); Lc[:, 1:] = np.eye(T - 1)   # the hypothesis: the categories do not differ',
-         'tests = MANOVA(Y * sq[:, None], Xd * sq[:, None]).mv_test([("categories", Lc)]).results["categories"]["stat"]',
-         'print(tests)   # Wilks, Pillai, Hotelling-Lawley, Roy']
+         *_disc_fit_lines(spec), *_disc_post_lines(spec),
+         f'labels = {J(spec["labels"])}',
+         'print(pd.DataFrame(P, index=d.index + 1, columns=[f"Prob[{v}]" for v in labels]))   # Probabilities to Each Group (by row number)']
+    if spec.get('validation'):
+        L += ['for k, name in enumerate(["Training", "Validation", "Test"]):   # the Score Summaries and the confusion counts of each set',
+              '    s = sets == k',
+              '    if not s.any():',
+              '        continue',
+              '    conf = np.zeros((T, T))',
+              '    np.add.at(conf, (t[s], P[s].argmax(1)), w[s])   # each row counted by its weight (Weight times Freq; 1 without them)',
+              '    print(name, pd.DataFrame(conf, index=labels, columns=labels))   # the Confusion Matrix: Actual (the rows) by Predicted',
+              '    ll = (w[s] * np.log(np.maximum(P[s, t[s]], 1e-300))).sum()   # the log likelihood of the classification',
+              '    ll0 = (w[s] * np.log(counts[t[s]] / counts.sum())).sum()   # ... and of the training shares of the groups alone',
+              '    print(name, "Number Misclassified", w[s][mis[s]].sum(), "Percent", 100 * w[s][mis[s]].sum() / w[s].sum(), "Entropy RSquare", 1 - ll / ll0, "−2LogLikelihood", -2 * ll)']
+    else:
+        L += ['conf = np.zeros((T, T))',
+              'np.add.at(conf, (t, P.argmax(1)), w)   # each row counted by its weight (Weight times Freq; 1 without them)',
+              'print(pd.DataFrame(conf, index=labels, columns=labels))   # the Confusion Matrix: Actual (the rows) by Predicted',
+              'll = (w * np.log(np.maximum(P[np.arange(n), t], 1e-300))).sum()   # the log likelihood of the classification',
+              'll0 = (w * np.log(counts[t] / w.sum())).sum()   # ... and of the groups\' shares alone',
+              'print("Number Misclassified", w[mis].sum(), "Percent", 100 * w[mis].sum() / w.sum(), "Entropy RSquare", 1 - ll / ll0, "−2LogLikelihood", -2 * ll)']
+    L += [*_disc_canon_lines(spec),
+          'cancorr = np.sqrt(np.maximum(vals[:m], 0) / (1 + np.maximum(vals[:m], 0)))',
+          'print("Canonical correlations", cancorr)',
+          f'Xd = np.column_stack([np.ones({M["n"]})] + [({M["t"]} == k).astype(float) for k in range(1, T)])   # an intercept and the categories after the first',
+          f'sq = np.sqrt({M["w"]} / {M["w"]}.mean())   # {"the rows scaled by the square roots of their weights" if spec["weight"] or spec["freq"] else "(no weights: ones)"}',
+          'Lc = np.zeros((T - 1, T)); Lc[:, 1:] = np.eye(T - 1)   # the hypothesis: the categories do not differ',
+          f'tests = MANOVA({M["Y"]} * sq[:, None], Xd * sq[:, None]).mv_test([("categories", Lc)]).results["categories"]["stat"]',
+          'print(tests)   # Wilks, Pillai, Hotelling-Lawley, Roy']
     return '\n'.join(L)
 
 
-def _disc_codes(head, ycols, x, weight, freq, char, levels, labels, method, lam, gam, priors, q, plot, canonical):
-    """The code of Discriminant's graphs: the canonical plot and the rows'
-    −log(probability) of their own group, the fit made as discriminant.fit
-    makes it."""
-    fit = _disc_fit_lines(ycols, x, weight, freq, char, levels)
+def _disc_codes(head, spec, plot, canonical):
+    """The code of Discriminant's graphs: the canonical plot, the rows'
+    −log(probability) of their own group and the scatterplot matrix with the
+    groups' ellipses, the fit made as discriminant.fit makes it."""
+    ycols, labels, v = spec['ycols'], spec['labels'], spec.get('validation')
+    fit = _disc_fit_lines(spec)
     out = {}
     if canonical and plot.get('canonical', True):
         pts, cl, c50, rays = (bool(plot.get(k, dflt)) for k, dflt in (('points', True), ('cl', True), ('c50', False), ('rays', True)))
-        L = [head(['from scipy import linalg']), *fit, *DISC_CANON,
+        L = [head(['from scipy import linalg']), *fit, *_disc_canon_lines(spec),
              f'labels = {J(labels)}',
              f'colors = {J(PALETTE)}   # the page\'s palette, a colour for each category',
              'two = m >= 2']
@@ -1964,7 +2370,11 @@ def _disc_codes(head, ycols, x, weight, freq, char, levels, labels, method, lam,
               '    x, y = cs[:, 0], t + (h - np.floor(h) - 0.5) * 0.5',
               'fig, ax = plt.subplots(figsize=(5.4, 4.6 if two else 3.2), layout="constrained")']
         if pts:
-            L.append(f'ax.scatter(x, y, s={_area(6)}, c=[colors[k % len(colors)] for k in t])')
+            if v:
+                L += [f'ax.scatter(x[tr], y[tr], s={_area(6)}, c=[colors[k % len(colors)] for k in t[tr]])   # the training rows',
+                      f'ax.scatter(x[~tr], y[~tr], s={_area(6)}, facecolors="none", edgecolors=[colors[k % len(colors)] for k in t[~tr]])   # the validation and test rows, open']
+            else:
+                L.append(f'ax.scatter(x, y, s={_area(6)}, c=[colors[k % len(colors)] for k in t])')
         L += ['for k, name in enumerate(labels):',
               '    mx, my = cm[k, 0], (cm[k, 1] if two else k)',
               '    color = colors[k % len(colors)]',
@@ -2002,14 +2412,54 @@ def _disc_codes(head, ycols, x, weight, freq, char, levels, labels, method, lam,
               'ax.set_title("Canonical Plot")', 'plt.show()']
         out['canonical_code'] = '\n'.join(L)
     # the rows' posterior probabilities, as the report computes them
-    L = [head([]), *fit, *_disc_post_lines(method, lam, gam, priors, q),
-          'row = d.index.to_numpy() + 1',
-          _fig(520, 230),
-          f'ax.scatter(row[~mis], nll[~mis], s={_area(6)}, color="{BASE}")',
-          f'ax.scatter(row[mis], nll[mis], s={_area(6)}, marker="x", color="{RED}")   # the misclassified rows',
-          'ax.set_ylim(bottom=0)', 'ax.set_xlabel("Row Number")', 'ax.set_ylabel("−Log(Prob(Actual))")', 'ax.set_title("Discriminant scores by row")', 'plt.show()']
+    L = [head([]), *fit, *_disc_post_lines(spec),
+         'row = d.index.to_numpy() + 1',
+         _fig(520, 230),
+         f'ax.scatter(row[~mis], nll[~mis], s={_area(6)}, color="{BASE}")',
+         f'ax.scatter(row[mis], nll[mis], s={_area(6)}, marker="x", color="{RED}")   # the misclassified rows',
+         'ax.set_ylim(bottom=0)', 'ax.set_xlabel("Row Number")', 'ax.set_ylabel("−Log(Prob(Actual))")', 'ax.set_title("Discriminant scores by row")', 'plt.show()']
     out['scores_code'] = '\n'.join(L)
+    sp = plot.get('splom')
+    if sp:
+        out['splom_code'] = _disc_splom_code(head, spec, sp)
     return out
+
+
+def _disc_splom_code(head, spec, sp):
+    """The Scatterplot Matrix of the covariates (lower triangular, as JMP's):
+    the rows in the colours of their groups and each group's normal ellipse
+    with its mean and the covariance the method uses (the pooled within
+    covariance for the linear method), covering `level` of the group."""
+    ycols, labels = spec['ycols'], spec['labels']
+    W, H, level = sp.get('width', 600), sp.get('height', 600), float(sp.get('level', 0.9))
+    L = [head(['from scipy import linalg']), *_disc_fit_lines(spec), *_disc_post_lines(spec),
+         f'labels, names = {J(labels)}, {J(ycols)}',
+         f'colors = {J(PALETTE)}   # the page\'s palette, a colour for each category',
+         f'level = {level!r}   # the ellipses\' coverage',
+         'Sig = [np.linalg.pinv(S) for S in Si]   # each group\'s covariance for the method (the inverse of the inverse used to classify)',
+         '', *ELLIPSE_DEF, '',
+         'g_ = len(names) - 1',
+         f'fig, axes = plt.subplots(g_, g_, figsize=({round(W) / 100:g}, {round(H) / 100:g}), squeeze=False, layout="constrained")',
+         'for ax in axes.flat:',
+         '    ax.set_visible(False)',
+         'for i in range(1, len(names)):   # below the diagonal: each covariate against each one before it',
+         '    for j in range(i):',
+         '        ax = axes[i - 1, j]',
+         '        ax.set_visible(True)',
+         f'        ax.scatter(Y[:, j], Y[:, i], s={_area(4)}, c=[colors[k % len(colors)] for k in t], linewidths=0)',
+         '        for k in range(T):   # each group\'s ellipse for the pair',
+         '            S = Sig[k]',
+         '            sx, sy = np.sqrt(S[j, j]), np.sqrt(S[i, i])',
+         '            ex, ey = ellipse(means[k, j], means[k, i], sx, sy, S[i, j] / (sx * sy), level)',
+         *([f'            ax.fill(ex, ey, color=colors[k % len(colors)], alpha={0x22 / 255:.4g}, linewidth=0)   # Shaded Ellipses'] if sp.get('shaded') else []),
+         f'            ax.plot(ex, ey, color=colors[k % len(colors)], linewidth={_lw(1.2)})',
+         '        ax.tick_params(labelsize=6.5)',
+         '        if i == len(names) - 1:',
+         '            ax.set_xlabel(names[j], fontsize=7.6)',
+         '        if j == 0:',
+         '            ax.set_ylabel(names[i], fontsize=7.6)',
+         'fig.suptitle("Scatterplot Matrix", fontsize=10)', 'plt.show()']
+    return '\n'.join(L)
 
 
 def _py_list(vals):
@@ -2017,22 +2467,21 @@ def _py_list(vals):
     return '[' + ', '.join(_lit(v) for v in vals) + ']'
 
 
-def _manova_tests(df, ycols, x, w=None):
+def _manova_tests(Y, codes, T, w=None):
     """Wilks' lambda, Pillai's trace, Hotelling-Lawley and Roy from
-    statsmodels' MANOVA of the covariates on the categories."""
+    statsmodels' MANOVA of the covariates on the categories (the groups the
+    rows have: codes 0 .. T − 1)."""
     from statsmodels.multivariate.manova import MANOVA
     try:
-        Y = df[ycols].to_numpy(float)
-        g = df[x]
-        codes = pd.Categorical(g).codes
-        k = int(codes.max()) + 1
-        Xd = np.column_stack([np.ones(len(Y))] + [(codes == j).astype(float) for j in range(1, k)])
+        Y = np.asarray(Y, float)
+        codes = np.asarray(codes, int)
+        Xd = np.column_stack([np.ones(len(Y))] + [(codes == j).astype(float) for j in range(1, T)])
         if w is not None:
             sq = np.sqrt(w / np.mean(w))
             Y = Y * sq[:, None]
             Xd = Xd * sq[:, None]
-        L = np.zeros((k - 1, k))
-        L[:, 1:] = np.eye(k - 1)
+        L = np.zeros((T - 1, T))
+        L[:, 1:] = np.eye(T - 1)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             res = MANOVA(Y, Xd).mv_test([('categories', L)])
@@ -2048,17 +2497,104 @@ def _manova_tests(df, ycols, x, w=None):
         return [{'test': f'not available: {e}', 'value': None, 'F': None, 'numdf': None, 'dendf': None, 'p': None}]
 
 
+def _quad_formula(A, mean, cols):
+    """(y − mean)ᵀ A (y − mean) as formula text, A symmetric and positive
+    semidefinite (an inverse covariance): the sum of the squares of the
+    linear forms √λ_k v_kᵀ(y − mean) of A's eigenvectors (a zero eigenvalue
+    of a pseudo-inverse left out)."""
+    lam, V = np.linalg.eigh((np.asarray(A, float) + np.asarray(A, float).T) / 2)
+    top = max(float(lam.max()), 0.0)
+    z = [_fz(c, mean[i]) for i, c in enumerate(cols)]
+    terms = [_fsq(_flin(math.sqrt(lam[k]) * V[:, k], z)) for k in range(len(lam)) if lam[k] > 1e-13 * top]
+    return _fsum(terms)
+
+
+def _ph(j):
+    """A placeholder for the j-th column saved in the same batch: the page
+    writes that column's reference in its place (its name may have been
+    made unique)."""
+    return '{{col:%d}}' % j
+
+
+@api('discriminant.save')
+def disc_save(table, y, x, rows=None, weight=None, freq=None, method='linear', lam=0.5, gam=0.0, priors='equal', prior_values=None,
+              validation=None, what='formulas', where=None):
+    """Save Formulas (JMP's): SqDist[group], the squared Mahalanobis distance
+    to the group's mean with the method's covariance, plus log|S| of the
+    group for quadratic and regularized, less 2 log(prior); Prob[group],
+    exp(−SqDist/2) over its sum (written with the smallest SqDist taken out,
+    as a probability is never missing where the distances are not); and
+    Pred <X>, the group of the smallest SqDist. canonical: Save Canonical
+    Scores, Canon[j] = Σ_i c_ij (y_i − the grand mean), formulas too. The
+    fit is the report's (the training rows with a Validation column)."""
+    ycols = list(y)
+    try:
+        C = _disc_core(table, ycols, x, rows, weight, freq, method, lam, gam, priors, prior_values, validation)
+    except ValueError as e:
+        return {'error': str(e)}
+    labels = [_lvtext(v) for v in C['present']]
+    T = C['T']
+    by = _by_words(table, where)
+    meth = {'linear': 'linear, the pooled covariance', 'quadratic': 'quadratic, each group\'s covariance', 'regularized': 'regularized'}.get(method, method)
+    if what == 'canonical':
+        B, E, Sp, gm, sw = C['B'], C['E'], C['Sp'], C['gm'], C['sw']
+        try:
+            vals, vecs = sla.eigh(B, E)
+        except (np.linalg.LinAlgError, ValueError) as e:
+            return {'error': f'no canonical scores: {e}'}
+        order = np.argsort(vals)[::-1]
+        m = min(T - 1, C['p'])
+        raw = vecs[:, order][:, :m] * math.sqrt(sw - T)
+        raw = raw * np.where((raw * np.sqrt(np.diag(Sp))[:, None]).sum(0) < 0, -1.0, 1.0)
+        z = [_fz(c, gm[i]) for i, c in enumerate(ycols)]
+        return {'columns': [{'name': f'Canon[{j + 1}]', 'formula': _fguard(table, _flin(raw[:, j], z), where),
+                             'notes': f'canonical score {j + 1} from Discriminant: the scoring coefficients times the covariates less their grand mean{by}'}
+                            for j in range(m)]}
+    cols = []
+    for t in range(T):
+        const = (C['logdets'][t] if method != 'linear' else 0.0) - 2 * math.log(C['q'][t])
+        quad = _quad_formula(C['Sinv'][t], C['means'][t], ycols)
+        expr = f'{quad} + {_fnum(const)}' if const > 0 else f'{quad} - {_fnum(-const)}' if const < 0 else quad
+        cols.append({'name': f'SqDist[{labels[t]}]', 'formula': _fguard(table, expr, where),
+                     'notes': f'the squared distance to the mean of {x} = {labels[t]} ({meth}){" plus log|S| of the group" if method != "linear" else ""}, less 2 log(prior), from Discriminant{by}'})
+    S = [_ph(t) for t in range(T)]
+    mn = f'Min({", ".join(S)})'
+    ex = [f'Exp(-0.5 * ({s} - {mn}))' for s in S]
+    for t in range(T):
+        cols.append({'name': f'Prob[{labels[t]}]', 'formula': f'{ex[t]} / ({" + ".join(ex)})',
+                     'notes': f'the posterior probability of {x} = {labels[t]}: exp(−SqDist/2) over its sum, from Discriminant{by}'})
+    char = data.meta(table, x).get('dataType') != 'numeric'
+    res = [formula_str(lb) if char else _fnum(v) for lb, v in zip(labels, C['present'])]
+    chain = []
+    for t in range(T - 1):
+        chain.append(' & '.join(f'{S[t]} <= {S[u]}' for u in range(t + 1, T)))
+        chain.append(res[t])
+    pred = f'If({", ".join(chain)}, {res[-1]})'
+    meta = data.meta(table, x)
+    cols.append({'name': f'Pred {x}', 'formula': pred, 'modelingType': meta.get('modelingType') or 'nominal',
+                 'notes': f'the most probable group, the smallest SqDist, from Discriminant{by}'})
+    return {'columns': cols}
+
+
 @api('discriminant.stepwise')
-def disc_stepwise(table, y, x, rows=None, entered=None, weight=None, freq=None):
+def disc_stepwise(table, y, x, rows=None, entered=None, weight=None, freq=None, validation=None):
     """JMP's stepwise panel: for each covariate, the analysis-of-covariance F
     test of the categories with the covariate as the response and the
-    covariates already entered as predictors (statsmodels OLS)."""
+    covariates already entered as predictors (statsmodels OLS); with a
+    Validation column, on the training rows."""
     import statsmodels.api as sm
     ycols = list(y)
     entered = [c for c in (entered or []) if c in ycols]
     df, w, _ = _cat_frame(table, ycols, x, rows, weight, freq)
+    if validation:
+        try:
+            s = _sets_of(table, validation, df.index.to_numpy())
+        except ValueError as e:
+            return {'error': str(e)}
+        df, w = df[s == 0], w[s == 0]
     g = pd.Categorical(df[x])
     D = pd.get_dummies(g, drop_first=True).to_numpy(float)
+    D = D[:, D.any(axis=0)] if D.size else D
     out = []
     for c in ycols:
         others = [e for e in entered if e != c]
@@ -2081,6 +2617,13 @@ def disc_stepwise(table, y, x, rows=None, entered=None, weight=None, freq=None):
 # ---- Hierarchical Cluster ------------------------------------------------------------------------
 
 METHODS_H = ('average', 'centroid', 'ward', 'single', 'complete')
+# The Distance option, beyond JMP (whose distances are the squared Euclidean
+# ones): for Single, Complete and Average linkage. Ward and Centroid join on
+# squared Euclidean distances, which their definitions need.
+HC_DISTANCES = {'sqeuclidean': 'Squared Euclidean', 'euclidean': 'Euclidean', 'cityblock': 'City Block',
+                'chebyshev': 'Chebyshev', 'correlation': 'Correlation (1 − r)', 'mahalanobis': 'Mahalanobis',
+                'jaccard': 'Jaccard', 'gower': 'Gower'}
+HC_MAX_SILHOUETTE = 2000   # rows for the silhouettes (their n x n dissimilarities)
 
 
 def _standardize(X, how):
@@ -2093,6 +2636,127 @@ def _standardize(X, how):
         sd = np.where(sd > 0, sd, 1.0)
         return (X - X.mean(1, keepdims=True)) / sd[:, None]
     return X
+
+
+def huber_center_scale(X):
+    """Huber's M-estimates of the location and scale of each column
+    (statsmodels.robust.scale.Huber, his proposal 2): JMP's Standardize
+    Robustly. A column where they fail (most values equal) takes its mean
+    and standard deviation."""
+    from statsmodels.robust.scale import Huber
+    m, s = [], []
+    for j in range(X.shape[1]):
+        v = X[:, j]
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                loc, sc = Huber(maxiter=100)(v)
+            loc, sc = float(np.asarray(loc).item()), float(np.asarray(sc).item())
+            if not (math.isfinite(loc) and math.isfinite(sc) and sc > 0):
+                raise ValueError
+        except Exception:
+            loc, sc = float(np.mean(v)), float(np.std(v, ddof=1)) if len(v) > 1 else 1.0
+        m.append(loc)
+        s.append(sc if sc > 0 else 1.0)
+    return np.array(m), np.array(s)
+
+
+def gower_condensed(X, cat):
+    """Gower's (1971) dissimilarity of every pair of rows, condensed as
+    scipy's pdist gives them: the mean over the columns of |x_i − x_j|/range
+    for a numeric column and of 0 or 1 (the same level or not) for a
+    categorical one (a constant column adds 0). X: rows x columns (objects
+    for the categorical ones); cat: which columns are categorical."""
+    from scipy.spatial.distance import pdist
+    n, p = X.shape
+    D = np.zeros(n * (n - 1) // 2)
+    for j in range(p):
+        if cat[j]:
+            codes = pd.factorize(pd.Series(X[:, j], dtype=object))[0].astype(float)
+            D += pdist(codes[:, None], 'hamming')
+        else:
+            v = np.asarray(X[:, j], dtype=float)
+            rg = float(v.max() - v.min())
+            if rg > 0:
+                D += pdist(v[:, None], 'cityblock') / rg
+    return D / p
+
+
+def cut_tree(merges, n, k, order):
+    """The page's k clusters (smui-p-multivariate.js clustersAt): the first
+    n − k joins, each cluster numbered 0, 1, ... in the order of its first
+    leaf in the dendrogram."""
+    parent = np.full(2 * n - 1, -1)
+    for s, (a, b) in enumerate(np.asarray(merges, int)):
+        parent[a] = parent[b] = n + s
+    root = np.arange(2 * n - 1)
+    for v in range(2 * n - k - 1, -1, -1):
+        if 0 <= parent[v] < 2 * n - k:
+            root[v] = root[parent[v]]
+    number = {}
+    for leaf in order:
+        number.setdefault(int(root[leaf]), len(number))
+    return np.array([number[int(root[i])] for i in range(n)])
+
+
+def _silhouette_from_sums(S, cnt, lab):
+    """Each row's silhouette from S (rows x clusters: the sum of its
+    dissimilarities to each cluster's rows), the clusters' sizes and each
+    row's cluster; a cluster of size 0 is not there."""
+    n = len(lab)
+    own = cnt[lab]
+    a = np.where(own > 1, S[np.arange(n), lab] / np.maximum(own - 1, 1), 0.0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        M = S / np.where(cnt > 0, cnt, 1)[None, :]
+    M[:, cnt == 0] = np.inf
+    M[np.arange(n), lab] = np.inf
+    b = M.min(1)
+    den = np.maximum(a, b)
+    return np.where((own > 1) & (den > 0) & np.isfinite(b), (b - a) / np.where(den > 0, den, 1), 0.0)
+
+
+def silhouettes(D, lab):
+    """Rousseeuw's (1987) silhouette of each row, (b − a)/max(a, b): a the
+    mean dissimilarity to the other rows of its cluster, b the smallest mean
+    dissimilarity to the rows of another cluster; 0 for a row alone in its
+    cluster (as scikit-learn's silhouette_samples has it). D: n x n."""
+    lab = np.asarray(lab, int)
+    k = int(lab.max()) + 1
+    S = np.column_stack([D[:, lab == c].sum(1) for c in range(k)])
+    return _silhouette_from_sums(S, np.bincount(lab, minlength=k), lab)
+
+
+def silhouette_path(D, merges, n, kmax):
+    """The mean silhouette of the tree cut into k clusters, k = 2 .. kmax, in
+    one pass up the tree: the sums of each row's dissimilarities to the kmax
+    clusters, then each join adds two clusters' sums together."""
+    merges = np.asarray(merges, int)
+    kmax = int(min(kmax, n - 1))
+    if kmax < 2:
+        return {}
+    parent = np.full(2 * n - 1, -1)
+    for s, (a, b) in enumerate(merges):
+        parent[a] = parent[b] = n + s
+    root = np.arange(2 * n - 1)
+    for v in range(2 * n - kmax - 1, -1, -1):
+        if 0 <= parent[v] < 2 * n - kmax:
+            root[v] = root[parent[v]]
+    col_of = {}
+    lab = np.array([col_of.setdefault(int(root[i]), len(col_of)) for i in range(n)])
+    S = np.column_stack([D[:, lab == c].sum(1) for c in range(kmax)])
+    cnt = np.bincount(lab, minlength=kmax).astype(float)
+    out = {}
+    for k in range(kmax, 1, -1):
+        out[k] = float(np.mean(_silhouette_from_sums(S, cnt, lab)))
+        a, b = merges[n - k]           # the join that leaves k − 1 clusters
+        ca, cb = col_of[int(a)], col_of[int(b)]
+        S[:, ca] += S[:, cb]
+        S[:, cb] = 0.0
+        cnt[ca] += cnt[cb]
+        cnt[cb] = 0
+        lab[lab == cb] = ca
+        col_of[n + n - k] = ca
+    return out
 
 
 def jmp_linkage(X, method):
@@ -2164,48 +2828,269 @@ def ccc(eigenvalues, n, q, r2):
     return float(er2), float(val)
 
 
+def _hc_nominal(table, cols):
+    """The Y columns Gower takes as categorical: nominal ones, and any of text."""
+    return [c for c in cols if data.meta(table, c).get('modelingType') == 'nominal' or data.meta(table, c).get('dataType') != 'numeric']
+
+
+def _hc_data(table, cols, rows, standardize='columns', robust=False, impute=False, matrix=False, distance='sqeuclidean', where=None):
+    """The rows Hierarchical Cluster joins and what it joins them by: a dict
+    of the rows (the table's row numbers), X (their numeric columns, missing
+    values imputed with impute; None for a distance matrix), Xs (the data the
+    clustering sees: X standardized as asked, robustly by Huber's estimates
+    with robust; Jaccard: 0/1, present or not; Gower: the numeric columns
+    over their ranges; None with a nominal column or a distance matrix),
+    center and scale (the column standardization, for the closest-cluster
+    formula), Dc (the condensed dissimilarities, when the joins are not
+    JMP's coordinate ones), cat (Gower's categorical columns) and notes."""
+    from scipy.spatial.distance import pdist, squareform
+    notes = []
+    out = {'X': None, 'Xs': None, 'center': None, 'scale': None, 'Dc': None, 'cat': [], 'notes': notes, 'matrix': bool(matrix)}
+    if matrix:
+        grp = _group_rows(table, where)
+        keep = np.asarray(sorted(set(grp.tolist()) & set(range(data.TABLES[table]['n'])) if rows is None else rows), dtype=int)
+        keep = keep[np.isin(keep, grp)]
+        if len(cols) == len(grp):
+            pos = {int(r): j for j, r in enumerate(grp)}
+            mcols = [cols[pos[int(r)]] for r in keep]   # the column of each object kept: its row's place among the group's rows
+        elif len(cols) == len(keep):
+            mcols = list(cols)
+        else:
+            raise ValueError(f'a distance matrix needs a column for each row: {len(grp)} rows{f" ({len(keep)} in the report)" if len(keep) != len(grp) else ""}, {len(cols)} columns')
+        D = np.column_stack([pd.to_numeric(data.series(table, c, keep, as_category=False), errors='coerce').to_numpy(float) for c in mcols])
+        D = np.where(np.isnan(D), D.T, D)
+        if np.isnan(D).any():
+            raise ValueError('the distance matrix has missing values on both sides of the diagonal')
+        D = (D + D.T) / 2
+        np.fill_diagonal(D, 0)
+        if (D < 0).any():
+            raise ValueError('the distance matrix has negative distances')
+        out.update({'rows': keep, 'n': len(keep), 'Dc': squareform(D, checks=False), 'mcols': mcols})
+        return out
+    cat = _hc_nominal(table, cols) if distance == 'gower' else []
+    bad = [c for c in cols if c not in cat and (data.meta(table, c).get('modelingType') == 'nominal' or data.meta(table, c).get('dataType') != 'numeric')]
+    if bad:
+        raise ValueError(f'{", ".join(bad)}: {"a nominal column" if len(bad) == 1 else "nominal columns"}; the Gower distance (Distance, in the launch or the red triangle) compares levels')
+    num = [c for c in cols if c not in cat]
+    df = data.frame(table, cols, rows, dropna=False, as_category=False)
+    Xn = np.column_stack([pd.to_numeric(df[c], errors='coerce').to_numpy(float) for c in num]) if num else np.zeros((len(df), 0))
+    ok_cat = np.ones(len(df), dtype=bool)
+    for c in cat:
+        ok_cat &= df[c].notna().to_numpy() & (df[c].astype(object) != '').to_numpy()
+    miss = ~np.isfinite(Xn)
+    if impute and num:
+        if len(num) < 2:
+            raise ValueError('Missing value imputation needs two or more numeric columns (the others predict a missing value)')
+        some = miss.any(axis=1) & ~miss.all(axis=1)
+        keep = ok_cat & ~miss.all(axis=1)
+        if (~keep).sum():
+            notes.append(f'{plural_rows(int((~keep).sum()))} with no value in any numeric column{" or a missing level" if cat else ""} left out.')
+        Xk = Xn[keep]
+        if miss[keep].any():
+            from .tables import conditional_means, mvn_em
+            mu, sig, _it = mvn_em(Xk)
+            Xk = conditional_means(Xk, mu, sig)
+            notes.append(f'{int(miss[keep].sum())} missing values in {plural_rows(int(some[keep].sum()))} imputed from a multivariate normal fitted by EM (the conditional means, as Explore Missing Values\' Multivariate Normal Imputation).')
+        Xn, idx = Xk, df.index.to_numpy()[keep]
+        catv = df.loc[idx, cat].to_numpy(object) if cat else None
+    else:
+        keep = ok_cat & ~miss.any(axis=1)
+        if (~keep).sum():
+            notes.append(f'{plural_rows(int((~keep).sum()))} with a missing value left out.')
+        Xn, idx = Xn[keep], df.index.to_numpy()[keep]
+        catv = df.loc[idx, cat].to_numpy(object) if cat else None
+    n = len(idx)
+    out.update({'rows': idx, 'n': n, 'num': num, 'cat': cat})
+    if n < 2:
+        return out
+    out['X'] = Xn
+    if distance == 'gower':
+        allX = np.empty((n, len(cols)), dtype=object)
+        for j, c in enumerate(cols):
+            allX[:, j] = catv[:, cat.index(c)] if c in cat else Xn[:, num.index(c)]
+        out['Dc'] = gower_condensed(allX, [c in cat for c in cols])
+        if not cat:
+            lo, rg = Xn.min(0), np.ptp(Xn, axis=0)
+            out['Xs'] = (Xn - lo) / np.where(rg > 0, rg, 1.0)
+            out['center'], out['scale'] = lo, np.where(rg > 0, rg, 1.0)
+        if standardize != 'none' or robust:
+            notes.append('Gower\'s distance scales each numeric column by its range: Standardize By is not used.')
+        return out
+    if distance == 'jaccard':
+        out['Xs'] = (Xn != 0).astype(float)
+        out['Dc'] = pdist(out['Xs'].astype(bool), 'jaccard')
+        if standardize != 'none' or robust:
+            notes.append('The Jaccard distance takes each value as present (not 0) or absent (0): Standardize By is not used.')
+        return out
+    if standardize == 'columns':
+        if robust:
+            center, scale = huber_center_scale(Xn)
+        else:
+            center, sd = Xn.mean(0), Xn.std(0, ddof=1)
+            scale = np.where(sd > 0, sd, 1.0)
+        out['center'], out['scale'] = center, scale
+        Xs = (Xn - center) / scale
+    else:
+        Xs = _standardize(Xn, standardize)
+        if robust:
+            notes.append('Standardize Robustly applies to Standardize By Columns (Huber\'s estimates of each column\'s mean and standard deviation).')
+        if standardize == 'none':
+            out['center'], out['scale'] = np.zeros(Xn.shape[1]), np.ones(Xn.shape[1])
+    out['Xs'] = Xs
+    if distance == 'mahalanobis':
+        out['Dc'] = pdist(Xs, 'mahalanobis', VI=np.linalg.pinv(np.cov(Xs, rowvar=False).reshape(Xs.shape[1], Xs.shape[1])))
+    elif distance == 'correlation':
+        if Xs.shape[1] < 2 or np.any(np.ptp(Xs, axis=1) == 0):
+            raise ValueError('the correlation distance needs rows that vary across the columns: a row has the same value in every column')
+        out['Dc'] = pdist(Xs, 'correlation')
+    elif distance in ('euclidean', 'cityblock', 'chebyshev'):
+        out['Dc'] = pdist(Xs, distance)
+    return out
+
+
+def plural_rows(k):
+    return f'{k} row{"" if k == 1 else "s"}'
+
+
+def _hc_linkage(H, method, distance):
+    """The joins, with JMP's heights for coordinate data and squared
+    Euclidean distances (jmp_linkage); with another distance or a distance
+    matrix, scipy's linkage of the condensed dissimilarities (a distance
+    matrix's Ward and Centroid take them as Euclidean, their heights then as
+    JMP's: the increase in the within-cluster sum of squares, the squared
+    distance of the means)."""
+    from scipy.cluster.hierarchy import linkage
+    if H['Dc'] is None:
+        return jmp_linkage(H['Xs'], method)
+    if method in ('ward', 'centroid') and not H['matrix']:
+        raise ValueError(f'{method.title()} joins on squared Euclidean distances: the {HC_DISTANCES.get(distance, distance)} distance is for Single, Complete and Average linkage')
+    Z = linkage(H['Dc'], method)
+    if method == 'ward':
+        Z[:, 2] = Z[:, 2] ** 2 / 2
+    elif method == 'centroid':
+        Z[:, 2] = Z[:, 2] ** 2
+    return Z
+
+
+def _hc_default_k(heights, n):
+    """The page's default number of clusters: where the joining distance
+    jumps most (the largest ratio of one join to the one before), 2 to 10."""
+    best, ratio = min(3, n), -math.inf
+    for q in range(2, min(10, n - 1) + 1):
+        up, down = heights[n - q], heights[n - q - 1]
+        r = up / down if down > 0 else (math.inf if up > 0 else 0)
+        if r > ratio:
+            best, ratio = q, r
+    return best
+
+
+def _hc_k(n_clusters, heights, n):
+    k = _hc_default_k(heights, n) if n_clusters is None else int(math.floor(float(n_clusters) + 0.5))
+    return max(1, min(n, k))
+
+
+def _hc_silhouette_matrix(H, method, distance):
+    """The dissimilarities the silhouettes use (n x n): the clustering's own,
+    or the Euclidean distances where it joins on squared Euclidean ones."""
+    from scipy.spatial.distance import pdist, squareform
+    if H['Dc'] is not None:
+        return squareform(H['Dc'])
+    return squareform(pdist(H['Xs'], 'euclidean'))
+
+
 @api('hcluster.fit')
 def hcluster_fit(table, columns, rows=None, method='ward', standardize='columns', label=None, two_way=False, n_clusters=None, where=None,
-                 table_name='data'):
+                 robust=False, impute=False, matrix=False, distance='sqeuclidean', silhouette=False, table_name='data'):
     """Agglomerative clustering with JMP's distances. Returns the merges (for
     the dendrogram, the history and the clusters at any number, which the
     page computes), the rows, the cluster criterion and, for two-way
     clustering, the order of the columns. n_clusters: the report's Number of
-    Clusters, for its code (None: the page's default, which the code computes)."""
+    Clusters, for its code (None: the page's default, which the code computes).
+    robust: Standardize Robustly (Huber's estimates); impute: Missing value
+    imputation (EM); matrix: the columns are a distance matrix; distance
+    (beyond JMP): the dissimilarity of Single, Complete and Average linkage;
+    silhouette: the silhouettes of the chosen clusters and of each number of
+    clusters (beyond JMP)."""
     from scipy.cluster.hierarchy import leaves_list
     cols = list(columns)
-    df, _, _ = _frame(table, cols, rows)
-    X = df.to_numpy(float)
-    n, p = X.shape
+    distance = distance or 'sqeuclidean'
+    if distance not in HC_DISTANCES:
+        return {'error': f'no distance {distance!r}'}
+    if matrix:
+        distance = 'sqeuclidean'
+    try:
+        H = _hc_data(table, cols, rows, standardize, robust, impute, matrix, distance, where)
+    except ValueError as e:
+        return {'error': str(e)}
+    n = H['n']
     if n < 2:
-        return {'error': 'fewer than two rows without missing values'}
+        return {'error': 'fewer than two rows without missing values' + (' (Missing value imputation keeps rows with some values)' if not impute and not matrix else '')}
     if n > 4000:
         return {'error': f'{n} rows: hierarchical clustering here takes at most 4000 rows (it keeps all n(n-1)/2 distances in memory); use K Means Cluster'}
-    Xs = _standardize(X, standardize)
-    Z = jmp_linkage(Xs, method)
+    try:
+        Z = _hc_linkage(H, method, distance)
+    except ValueError as e:
+        return {'error': str(e)}
     order = leaves_list(Z)
-    r2 = partition_r2(Xs, Z)
-    ev = np.linalg.eigvalsh(np.cov(Xs, rowvar=False).reshape(p, p)) if n > 1 else np.zeros(p)
-    kmax = int(min(n - 1, max(10, round(n / 10))))
+    Xs = H['Xs']
+    coords = Xs is not None
     crit = []
-    for k in range(1, kmax + 1):
-        e, cv = ccc(ev, n, k, r2[k]) if k >= 2 else (float('nan'), float('nan'))
-        crit.append({'k': k, 'r2': r2[k], 'er2': e, 'ccc': cv})
-    out = {'names': cols, 'n': n, 'method': method, 'standardize': standardize, 'rows': df.index.to_numpy(),
+    if coords:
+        p = Xs.shape[1]
+        r2 = partition_r2(Xs, Z)
+        ev = np.linalg.eigvalsh(np.cov(Xs, rowvar=False).reshape(p, p)) if n > 1 else np.zeros(p)
+        kmax = int(min(n - 1, max(10, round(n / 10))))
+        for k in range(1, kmax + 1):
+            e, cv = ccc(ev, n, k, r2[k]) if k >= 2 else (float('nan'), float('nan'))
+            crit.append({'k': k, 'r2': r2[k], 'er2': e, 'ccc': cv})
+    else:
+        p = len(cols)
+    idx = np.asarray(H['rows'], dtype=int)
+    out = {'names': cols, 'n': n, 'method': method, 'standardize': standardize, 'rows': idx,
            'merges': Z[:, :2].astype(int), 'heights': Z[:, 2], 'sizes': Z[:, 3].astype(int), 'order': order,
-           'criterion': crit, 'data': _mat(Xs) if two_way or n * p <= 20000 else None}
-    if two_way and p >= 2:
+           'criterion': crit, 'coords': coords, 'distance': distance, 'distance_label': HC_DISTANCES[distance], 'matrix': bool(matrix),
+           'nominal': H['cat'], 'notes': H['notes'],
+           'data': _mat(Xs) if coords and (two_way or n * p <= 20000) else None}
+    if coords and H.get('center') is not None:
+        out['center'], out['scale'] = H['center'], H['scale']
+    if H['X'] is not None:
+        X = H['X']
+        out['mean'] = X.mean(0)
+        sd = X.std(0, ddof=1) if n > 1 else np.ones(X.shape[1])
+        out['sd'] = np.where(sd > 0, sd, 1.0)
+        out['numeric'] = H['num']
+        if impute:
+            out['values'] = _mat(X)   # the imputed values of the numeric columns (the cluster summaries and the parallel plot use them)
+    if two_way and coords and p >= 2:
         Zc = jmp_linkage(Xs.T, 'ward' if method in ('ward', 'centroid') else method)
         out['col_order'] = leaves_list(Zc).tolist()
         out['col_merges'] = Zc[:, :2].astype(int)
         out['col_heights'] = Zc[:, 2]
+    k = _hc_k(n_clusters, Z[:, 2], n)
+    if silhouette:
+        if n > HC_MAX_SILHOUETTE:
+            out['silhouette'] = {'error': f'{n} rows: the silhouettes are computed for up to {HC_MAX_SILHOUETTE} rows'}
+        else:
+            D = _hc_silhouette_matrix(H, method, distance)
+            lab = cut_tree(Z[:, :2].astype(int), n, k, order)
+            s = silhouettes(D, lab) if k >= 2 else np.zeros(n)
+            path = silhouette_path(D, Z[:, :2].astype(int), n, min(30, n - 1))
+            best = max(path, key=lambda q: path[q]) if path else None
+            out['silhouette'] = {'k': k, 'values': s, 'mean': float(np.mean(s)) if k >= 2 else None,
+                                 'clusters': [{'cluster': c + 1, 'count': int(np.sum(lab == c)), 'mean': float(np.mean(s[lab == c]))} for c in range(k)],
+                                 'path': [{'k': q, 'mean': path[q]} for q in sorted(path)], 'best': best,
+                                 'on': 'the Euclidean distances' if H['Dc'] is None else ('the distance matrix' if matrix else f'the {HC_DISTANCES[distance]} distances')}
+    S = {'cols': cols, 'method': method, 'standardize': standardize, 'robust': bool(robust), 'impute': bool(impute), 'matrix': bool(matrix),
+         'distance': distance, 'label': label, 'table': table, 'num': H.get('num', []), 'cat': H['cat'], 'mcols': H.get('mcols')}
     k_lines = _hc_k_lines(n_clusters, n)
-    out['code'] = '\n'.join([_head(table, rows, where, table_name, HC_IMPORTS), *_hc_fit_lines(cols, method, standardize, label, table), *k_lines,
+    fit = _hc_fit_lines(S)
+    summary = ['print(X.groupby(cluster).mean())   # Cluster Means',
+               'print(X.groupby(cluster).std(ddof=0))   # Cluster Standard Deviations (the n divisor, as JMP\'s)'] if not matrix else []
+    out['code'] = '\n'.join([_head(table, rows, where, table_name, _hc_imports(S)), *fit, *k_lines,
                              *HC_CLUSTERS,
                              'cluster = np.array([number[root[i]] + 1 for i in range(n)])   # each row\'s cluster, numbered in the order of the leaves (Save Clusters)',
                              'print(pd.Series(cluster, index=X.index + 1).value_counts().sort_index())   # the clusters\' sizes (the buttons under the dendrogram)',
-                             'print(X.groupby(cluster).mean())   # Cluster Means',
-                             'print(X.groupby(cluster).std(ddof=0))   # Cluster Standard Deviations (the n divisor, as JMP\'s)',
+                             *summary,
                              'first = list(range(n)) + [0] * (n - 1)   # the Clustering History: each join\'s leader and joiner, the first rows of the clusters joined',
                              'history = []',
                              'for s, (a, b) in enumerate(Z[:, :2].astype(int)):',
@@ -2214,8 +3099,65 @@ def hcluster_fit(table, columns, rows=None, method='ward', standardize='columns'
                              '    history.append((n - 1 - s, heights[s], names[lead], names[join]))',
                              'print(pd.DataFrame(history[::-1], columns=["Number of Clusters", "Distance", "Leader", "Joiner"]))'])
     head = lambda imports: _plot_head(table, rows, where, table_name, imports)  # noqa: E731
-    out.update(_hc_codes(head, table, cols, method, standardize, label, n, p, k_lines))
+    out.update(_hc_codes(head, S, n, p, k_lines, coords, bool(silhouette) and n <= HC_MAX_SILHOUETTE))
     return out
+
+
+@api('hcluster.save')
+def hcluster_save(table, columns, rows=None, method='ward', standardize='columns', n_clusters=None, robust=False, impute=False,
+                  matrix=False, distance='sqeuclidean', where=None):
+    """Save Formula for Closest Cluster (JMP's): a formula column of the
+    cluster whose centroid is nearest by the squared Euclidean distance, in
+    the space the clustering sees (the columns standardized as the report
+    standardizes them; Jaccard: present or not; Gower: over their ranges),
+    the clusters those of the report's Number of Clusters. Every row of the
+    By group whose columns are present gets one, excluded rows too."""
+    if matrix:
+        return {'error': 'a distance matrix has no columns to measure a row by: Save Formula for Closest Cluster needs the rows\' values'}
+    cols = list(columns)
+    distance = distance or 'sqeuclidean'
+    try:
+        H = _hc_data(table, cols, rows, standardize, robust, impute, False, distance, where)
+        if H['n'] < 2:
+            return {'error': 'fewer than two rows without missing values'}
+        Z = _hc_linkage(H, method, distance)
+    except ValueError as e:
+        return {'error': str(e)}
+    if H['Xs'] is None:
+        return {'error': 'nominal columns have no centroid: Save Formula for Closest Cluster needs numeric columns'}
+    from scipy.cluster.hierarchy import leaves_list
+    n = H['n']
+    order = leaves_list(Z)
+    k = _hc_k(n_clusters, Z[:, 2], n)
+    lab = cut_tree(Z[:, :2].astype(int), n, k, order)
+    M = np.array([H['Xs'][lab == c].mean(0) for c in range(k)])
+    refs = [formula_ref(c) for c in cols]
+    if distance == 'jaccard':
+        z = [f'({r} != 0)' for r in refs]
+        space = 'each value present (not 0) or not'
+    elif standardize == 'rows' and distance != 'gower':
+        mean_ = f'Mean({", ".join(refs)})'
+        sd_ = f'Std Dev({", ".join(refs)})'
+        z = [f'(({r} - {mean_}) / {sd_})' for r in refs]
+        space = 'each row standardized across its columns'
+    else:
+        z = [_fz(c, H['center'][j], H['scale'][j]) for j, c in enumerate(cols)]
+        space = {'gower': 'each column over its range', 'columns': 'the columns standardized' + (' robustly (Huber)' if robust else ''), 'none': 'the columns as they are'}.get(
+            'gower' if distance == 'gower' else standardize, 'the columns standardized')
+    dist = [_fsum([_fsq(f'{z[j]} - {_fnum(M[c, j])}' if M[c, j] >= 0 else f'{z[j]} + {_fnum(-M[c, j])}') for j in range(len(cols))]) for c in range(k)]
+    expr = _fargmin(dist, [str(c + 1) for c in range(k)], cols)
+    return {'columns': [{'name': 'Closest Cluster', 'formula': _fguard(table, expr, where), 'modelingType': 'nominal',
+                         'notes': f'hierarchical clustering ({method}), {k} clusters: the cluster whose centroid is nearest by the squared Euclidean distance ({space}){_by_words(table, where)}'}],
+            'k': k}
+
+
+def _hc_imports(S):
+    imp = list(HC_IMPORTS)
+    if S['matrix'] or S['distance'] not in ('sqeuclidean',) or S['cat']:
+        imp = ['from scipy.cluster.hierarchy import leaves_list, linkage', 'from scipy.spatial.distance import pdist, squareform']
+    if S['robust'] and S['standardize'] == 'columns' and S['distance'] not in ('gower', 'jaccard'):
+        imp.append('from statsmodels.robust.scale import Huber')
+    return imp
 
 
 HC_IMPORTS = ['from scipy.cluster.hierarchy import leaves_list, linkage', 'from scipy.spatial.distance import pdist']
@@ -2229,17 +3171,99 @@ def _hc_k_lines(n_clusters, n):
     return [HC_K, *HC_K_DEF]
 
 
-def _hc_fit_lines(cols, method, standardize, label=None, table=None):
-    """Lines that cluster the rows as hcluster.fit does: Xs (the rows,
-    standardized as asked), Z (the joins, with JMP's distances), n, and the
-    rows' names."""
-    L = [f'X = df[{_cols_expr(cols)}].dropna()   # the rows with every column', 'Xs = X.to_numpy()']
-    if standardize == 'columns':
-        L += ['sd = Xs.std(0, ddof=1); sd = np.where(sd > 0, sd, 1.0)', 'Xs = (Xs - Xs.mean(0)) / sd   # Standardize By: Columns']
-    elif standardize == 'rows':
-        L += ['sd = Xs.std(1, ddof=1); sd = np.where(sd > 0, sd, 1.0)', 'Xs = (Xs - Xs.mean(1, keepdims=True)) / sd[:, None]   # Standardize By: Rows']
-    L += _linkage_lines('Z', 'Xs', method)
-    L += ['n = len(Xs)', 'heights, order = Z[:, 2], leaves_list(Z)   # the distance of each join; the leaves in the order of the dendrogram']
+GOWER_DEF = [
+    'def gower(X, cat):',
+    '    """Gower\'s dissimilarity of every pair of rows (condensed, as pdist): the mean over the columns of |x_i − x_j|/range',
+    '    for a numeric column and 0 or 1 (the same level or not) for a categorical one."""',
+    '    D = np.zeros(len(X) * (len(X) - 1) // 2)',
+    '    for j in range(X.shape[1]):',
+    '        if cat[j]:',
+    '            D += pdist(pd.factorize(pd.Series(X[:, j], dtype=object))[0].astype(float)[:, None], "hamming")',
+    '        else:',
+    '            v = X[:, j].astype(float)',
+    '            if np.ptp(v) > 0:',
+    '                D += pdist(v[:, None], "cityblock") / np.ptp(v)',
+    '    return D / X.shape[1]']
+HUBER_LINES = [
+    'center, scale = [], []   # Standardize Robustly: Huber\'s estimates of each column\'s location and scale',
+    'for v in Xs.T:',
+    '    try:',
+    '        loc, sc = (float(np.asarray(e).item()) for e in Huber(maxiter=100)(v))',
+    '        assert np.isfinite(loc) and np.isfinite(sc) and sc > 0',
+    '    except Exception:   # most values equal: the mean and the standard deviation',
+    '        loc, sc = v.mean(), v.std(ddof=1)',
+    '    center.append(loc)',
+    '    scale.append(sc if sc > 0 else 1.0)',
+    'Xs = (Xs - np.array(center)) / np.array(scale)   # Standardize By: Columns, robustly']
+
+
+def _hc_fit_lines(S):
+    """Lines that cluster the rows as hcluster.fit does: X (the rows, a
+    DataFrame of the numeric columns), Xs (the data the clustering sees), Z
+    (the joins, with JMP's distances, or with the Distance option's), n,
+    heights, order, and the rows' names."""
+    cols, method, standardize, distance = S['cols'], S['method'], S['standardize'], S['distance']
+    label, table = S['label'], S['table']
+    L = []
+    if S['matrix']:
+        L += [f'X = df[{_cols_expr(S["mcols"])}]   # the distance matrix of the report\'s objects: a row and a column for each',
+              'D = X.to_numpy(float)',
+              'D = np.where(np.isnan(D), D.T, D)   # a missing entry from the other side of the diagonal',
+              'D = (D + D.T) / 2',
+              'np.fill_diagonal(D, 0)',
+              f'Z = linkage(squareform(D, checks=False), "{method}")   # the joins of the distances as they are{" (taken as Euclidean)" if method in ("ward", "centroid") else ""}']
+        if method == 'ward':
+            L.append('Z[:, 2] = Z[:, 2] ** 2 / 2   # JMP\'s Ward heights: the increase in the within-cluster sum of squares')
+        elif method == 'centroid':
+            L.append('Z[:, 2] = Z[:, 2] ** 2   # JMP\'s centroid heights: the squared distance of the means')
+    else:
+        num, cat = S['num'], S['cat']
+        if S['impute']:
+            L += [f'X = df[{_cols_expr(num)}]',
+                  *([f'X = X[df[{_cols_expr(cat)}].notna().all(axis=1) & (df[{_cols_expr(cat)}] != "").all(axis=1)]   # the rows with every level'] if cat else []),
+                  'X = X[X.notna().any(axis=1)]   # the rows with a value in some column (Missing value imputation)',
+                  '',
+                  *inspect.getsource(_import_tables().mvn_em).rstrip().split('\n'), '', '',
+                  *inspect.getsource(_import_tables().conditional_means).rstrip().split('\n'), '', '',
+                  'mu, sigma, _ = mvn_em(X.to_numpy(float))   # a multivariate normal fitted by EM',
+                  'X = pd.DataFrame(conditional_means(X.to_numpy(float), mu, sigma), index=X.index, columns=X.columns)   # each missing value: its conditional mean']
+        else:
+            L.append(f'X = df[{_cols_expr(cols)}].dropna()   # the rows with every column' if not cat else f'd = df[{_cols_expr(cols)}].dropna()   # the rows with every column')
+            if cat:
+                L.append(f'd = d[(d[{_cols_expr(cat)}] != "").all(axis=1)]')
+                L.append(f'X = d[{_cols_expr(num)}]   # the numeric columns')
+        if distance == 'gower':
+            if S['impute'] and cat:
+                L.append(f'd = df.loc[X.index, {_cols_expr(cols)}]')
+                L.append(f'd[{_cols_expr(num)}] = X')
+            elif not cat:
+                L.append('d = X')
+            L += ['', *GOWER_DEF, '',
+                  f'cat = {[c in cat for c in cols]!r}   # the categorical columns (nominal, or text)',
+                  f'Din = gower(d[{_cols_expr(cols)}].to_numpy(object), cat)   # Gower\'s dissimilarities: Standardize By is not used']
+            if not cat:
+                L.append('Xs = (X.to_numpy() - X.to_numpy().min(0)) / np.where(np.ptp(X.to_numpy(), axis=0) > 0, np.ptp(X.to_numpy(), axis=0), 1.0)   # each column over its range')
+        elif distance == 'jaccard':
+            L += ['Xs = (X.to_numpy() != 0).astype(float)   # present (not 0) or absent: Standardize By is not used',
+                  'Din = pdist(Xs.astype(bool), "jaccard")   # the Jaccard distances']
+        else:
+            L.append('Xs = X.to_numpy()')
+            if standardize == 'columns':
+                if S['robust']:
+                    L += HUBER_LINES
+                else:
+                    L += ['sd = Xs.std(0, ddof=1); sd = np.where(sd > 0, sd, 1.0)', 'Xs = (Xs - Xs.mean(0)) / sd   # Standardize By: Columns']
+            elif standardize == 'rows':
+                L += ['sd = Xs.std(1, ddof=1); sd = np.where(sd > 0, sd, 1.0)', 'Xs = (Xs - Xs.mean(1, keepdims=True)) / sd[:, None]   # Standardize By: Rows']
+            if distance == 'mahalanobis':
+                L.append('Din = pdist(Xs, "mahalanobis", VI=np.linalg.pinv(np.cov(Xs, rowvar=False).reshape(Xs.shape[1], -1)))   # the Mahalanobis distances')
+            elif distance in ('euclidean', 'cityblock', 'chebyshev', 'correlation'):
+                L.append(f'Din = pdist(Xs, "{distance}")   # the {HC_DISTANCES[distance]} distances')
+        if distance == 'sqeuclidean':
+            L += _linkage_lines('Z', 'Xs', method)
+        else:
+            L.append(f'Z = linkage(Din, "{method}")   # {method} linkage of the {HC_DISTANCES[distance]} distances')
+    L += ['n = len(X)', 'heights, order = Z[:, 2], leaves_list(Z)   # the distance of each join; the leaves in the order of the dendrogram']
     if label:
         numeric = table is not None and label in data.TABLES.get(table, {}).get('meta', {}) and data.meta(table, label).get('dataType') == 'numeric'
         text = 'f"{v:.10g}"' if numeric else 'str(v)'
@@ -2247,6 +3271,11 @@ def _hc_fit_lines(cols, method, standardize, label=None, table=None):
     else:
         L.append('names = [str(r + 1) for r in X.index]   # each row\'s number')
     return L
+
+
+def _import_tables():
+    from . import tables
+    return tables
 
 
 def _linkage_lines(Z, X, method, what=''):
@@ -2301,13 +3330,39 @@ CCC_DEF = [
     '    b = np.sum(1 / (n + u[:pstar])) + np.sum(u[pstar:] ** 2 / (n + u[pstar:]))',
     '    er2 = 1 - (b / np.sum(u * u)) * ((n - q) ** 2 / n) * (1 + 4 / n)   # the R² expected of uniform data',
     '    return np.log((1 - er2) / (1 - r2)) * np.sqrt(n * pstar / 2) / (0.001 + er2) ** 1.2']
+SILHOUETTE_DEF = [
+    'def silhouettes(D, lab):',
+    '    """Rousseeuw\'s silhouette of each row: (b − a)/max(a, b), a the mean dissimilarity to the other rows of its cluster,',
+    '    b the smallest mean dissimilarity to another cluster\'s rows; 0 for a row alone in its cluster (as scikit-learn)."""',
+    '    k = lab.max() + 1',
+    '    S = np.column_stack([D[:, lab == c].sum(1) for c in range(k)])   # each row\'s dissimilarities to each cluster, summed',
+    '    cnt = np.bincount(lab, minlength=k)',
+    '    own = cnt[lab]',
+    '    a = np.where(own > 1, S[np.arange(len(lab)), lab] / np.maximum(own - 1, 1), 0.0)',
+    '    M = S / cnt',
+    '    M[np.arange(len(lab)), lab] = np.inf',
+    '    b = M.min(1)',
+    '    den = np.maximum(a, b)',
+    '    return np.where((own > 1) & (den > 0), (b - a) / np.where(den > 0, den, 1), 0.0)']
 
 
-def _hc_codes(head, table, cols, method, standardize, label, n, p, k_lines):
+def _hc_silhouette_lines(S):
+    """The dissimilarities of the silhouettes, from the fit's lines: the
+    clustering's own, or the Euclidean distances of Xs."""
+    if S['matrix']:
+        return ['Dsil = D   # the distance matrix']
+    if S['distance'] == 'sqeuclidean':
+        return ['Dsil = squareform(pdist(Xs, "euclidean"))   # the Euclidean distances of the rows as clustered']
+    return [f'Dsil = squareform(Din)   # the {HC_DISTANCES[S["distance"]]} distances']
+
+
+def _hc_codes(head, S, n, p, k_lines, coords, silhouette=False):
     """The code of Hierarchical Cluster's graphs: the dendrogram, the
-    distance graph, the cubic clustering criterion, two-way clustering."""
-    imp = HC_IMPORTS
-    fit = _hc_fit_lines(cols, method, standardize, label, table)
+    distance graph, the cubic clustering criterion, two-way clustering, the
+    parallel coordinate plot and the silhouettes."""
+    cols, method, standardize = S['cols'], S['method'], S['standardize']
+    imp = _hc_imports(S)
+    fit = _hc_fit_lines(S)
     labels = n <= 150
     H = max(240, 13 * n + 60) if labels else 620
     out = {}
@@ -2340,32 +3395,33 @@ def _hc_codes(head, table, cols, method, standardize, label, n, p, k_lines):
         f'ax.plot(ks, heights[n - 1 - ks], color="{BASE}", linewidth={_lw(1.3)}, marker="o", markersize={_msize(5)})',
         f'ax.axvline(k, color="{RED}", linewidth={_lw(1)}, linestyle="--")',
         'ax.invert_xaxis()', 'ax.set_ylim(bottom=0)', 'ax.set_xlabel("Number of Clusters")', 'ax.set_ylabel("Distance")', 'ax.set_title("Distance Graph")', 'plt.show()'])
-    out['ccc_code'] = '\n'.join([
-        head(imp), *fit,
-        'Tss = ((Xs - Xs.mean(0)) ** 2).sum()',
-        'sums, cnt = {i: Xs[i] for i in range(n)}, {i: 1 for i in range(n)}',
-        'W, r2 = 0.0, np.full(n + 1, np.nan)',
-        'for s, (a, b) in enumerate(Z[:, :2].astype(int)):   # each join of K and L adds N_K N_L/(N_K + N_L)·|mean_K − mean_L|² to the within SS',
-        '    W += cnt[a] * cnt[b] / (cnt[a] + cnt[b]) * ((sums[a] / cnt[a] - sums[b] / cnt[b]) ** 2).sum()',
-        '    sums[n + s], cnt[n + s] = sums.pop(a) + sums.pop(b), cnt.pop(a) + cnt.pop(b)',
-        '    r2[n - s - 1] = 1 - W / Tss   # the R² of the n − s − 1 clusters',
-        '', *CCC_DEF, '',
-        'ev = np.linalg.eigvalsh(np.cov(Xs, rowvar=False).reshape(Xs.shape[1], -1))   # of the covariance matrix',
-        'ks = np.arange(1, int(min(n - 1, max(10, round(n / 10)))) + 1)',
-        'crit = [ccc(ev, n, q, r2[q]) for q in ks]',
-        _fig(420, 240),
-        f'ax.plot(ks, crit, color="{BASE}", linewidth={_lw(2)}, marker="o", markersize={_msize(6)})',
-        'ax.set_xlabel("Number of Clusters")', 'ax.set_ylabel("CCC")', 'ax.set_title("Cubic clustering criterion")', 'plt.show()'])
-    if p >= 2:
+    if coords:
+        out['ccc_code'] = '\n'.join([
+            head(imp), *fit,
+            'Tss = ((Xs - Xs.mean(0)) ** 2).sum()',
+            'sums, cnt = {i: Xs[i] for i in range(n)}, {i: 1 for i in range(n)}',
+            'W, r2 = 0.0, np.full(n + 1, np.nan)',
+            'for s, (a, b) in enumerate(Z[:, :2].astype(int)):   # each join of K and L adds N_K N_L/(N_K + N_L)·|mean_K − mean_L|² to the within SS',
+            '    W += cnt[a] * cnt[b] / (cnt[a] + cnt[b]) * ((sums[a] / cnt[a] - sums[b] / cnt[b]) ** 2).sum()',
+            '    sums[n + s], cnt[n + s] = sums.pop(a) + sums.pop(b), cnt.pop(a) + cnt.pop(b)',
+            '    r2[n - s - 1] = 1 - W / Tss   # the R² of the n − s − 1 clusters',
+            '', *CCC_DEF, '',
+            'ev = np.linalg.eigvalsh(np.cov(Xs, rowvar=False).reshape(Xs.shape[1], -1))   # of the covariance matrix',
+            'ks = np.arange(1, int(min(n - 1, max(10, round(n / 10)))) + 1)',
+            'crit = [ccc(ev, n, q, r2[q]) for q in ks]',
+            _fig(420, 240),
+            f'ax.plot(ks, crit, color="{BASE}", linewidth={_lw(2)}, marker="o", markersize={_msize(6)})',
+            'ax.set_xlabel("Number of Clusters")', 'ax.set_ylabel("CCC")', 'ax.set_title("Cubic clustering criterion")', 'plt.show()'])
+    if coords and p >= 2:
         tall = n <= 150
         col_method = 'ward' if method in ('ward', 'centroid') else method
-        if standardize == 'none':
+        if standardize == 'none' or S['distance'] in ('gower', 'jaccard'):
             scale = ['im = ax.imshow(M, aspect="auto", cmap="viridis")   # the values']
         else:
             scale = [f'cmap = LinearSegmentedColormap.from_list("page", {J(DIVERGING)})   # the page\'s blue to red, centred at 0',
                      'm = np.abs(M).max()', 'im = ax.imshow(M, aspect="auto", cmap=cmap, vmin=-m, vmax=m)   # the standardized values']
         out['twoway_code'] = '\n'.join([
-            head(imp + ([] if standardize == 'none' else ['from matplotlib.colors import LinearSegmentedColormap'])), *fit,
+            head(imp + ([] if standardize == 'none' or S['distance'] in ('gower', 'jaccard') else ['from matplotlib.colors import LinearSegmentedColormap'])), *fit,
             *_linkage_lines('Zc', 'Xs.T', col_method, 'the columns, clustered too: '),
             'col_order = leaves_list(Zc)',
             f'cols = {J(cols)}',
@@ -2374,6 +3430,63 @@ def _hc_codes(head, table, cols, method, standardize, label, n, p, k_lines):
             'ax.set_xticks(range(len(col_order)), [cols[j] for j in col_order], rotation=35, ha="right")',
             ('ax.set_yticks(range(n), [names[i] for i in order], fontsize=6.8)' if tall else 'ax.set_yticks([])'),
             'fig.colorbar(im, ax=ax, shrink=0.8)', 'ax.set_title("Two way clustering")', 'plt.show()'])
+    if not S['matrix'] and S['num']:
+        num = S['num']
+        out['parallel_code'] = '\n'.join([
+            head(imp + ['from matplotlib.collections import LineCollection']), *fit, *k_lines, *HC_CLUSTERS,
+            'lab = np.array([number[root[i]] for i in range(n)])   # each row\'s cluster (0, 1, ...)',
+            f'colors = {J(PALETTE)}   # the page\'s palette, a colour for each cluster',
+            f'names = {J(num)}',
+            f'V = X[names].to_numpy(float)',
+            'mu, sd = V.mean(0), V.std(0, ddof=1)',
+            'sd = np.where(sd > 0, sd, 1.0)',
+            'Zp = (V - mu) / sd   # each value standardized by its column\'s mean and standard deviation over the rows clustered',
+            'means = np.array([V[lab == c].mean(0) for c in range(k)])',
+            _fig(min(760, 180 + 90 * len(num)), 320),
+            f'ax.axhline(0, color="{MUTED}", linewidth={_lw(1)}, zorder=0)',
+            f'show_rows = {len(num)} * len(Zp) <= 30000   # every row\'s line, with up to 30000 values',
+            'for c in range(k):',
+            '    color = colors[c % len(colors)]',
+            '    if show_rows:',
+            f'        ax.add_collection(LineCollection([list(zip(range(len(names)), z)) for z in Zp[lab == c]], colors=color, linewidths={_lw(0.6)}, alpha=0.25))',
+            f'    ax.plot(range(len(names)), (means[c] - mu) / sd, color=color, linewidth={_lw(3)}, marker="o", markersize={_msize(7)}, label=f"Cluster {{c + 1}}")   # the cluster\'s mean',
+            'ax.set_xticks(range(len(names)), names)',
+            'ax.set_ylabel("Standardized value")',
+            'ax.legend(frameon=False, fontsize=7.5)',
+            'ax.set_title(f"Parallel coordinates, {k} clusters")', 'plt.show()'])
+    if silhouette:
+        imp_s = imp if 'squareform' in ' '.join(imp) else [x.replace('import pdist', 'import pdist, squareform') for x in imp]
+        sil = [head(imp_s), *fit, *k_lines, *HC_CLUSTERS, 'lab = np.array([number[root[i]] for i in range(n)])   # each row\'s cluster (0, 1, ...)',
+               *_hc_silhouette_lines(S), '', *SILHOUETTE_DEF, '']
+        out['silhouette_code'] = '\n'.join([
+            *sil,
+            's = silhouettes(Dsil, lab) if k >= 2 else np.zeros(n)',
+            'print(pd.DataFrame({"Cluster": lab + 1, "Silhouette": s}, index=X.index + 1).groupby("Cluster")["Silhouette"].agg(["count", "mean"]), s.mean())',
+            f'colors = {J(PALETTE)}   # the page\'s palette, a colour for each cluster',
+            'o = np.lexsort((-s, lab))   # the rows by cluster, each cluster\'s largest first',
+            _fig(560, max(240, min(620, 3 * n + 80))),
+            'ax.barh(np.arange(n), s[o], height=1.0, color=[colors[c % len(colors)] for c in lab[o]])',
+            f'ax.axvline(s.mean(), color="{RED}", linewidth={_lw(1.2)}, linestyle="--")   # the mean silhouette',
+            'ax.set_xlim(min(-0.1, s.min()) - 0.02, 1)   # the page\'s range: to 1, and a little below 0 or the smallest',
+            'ax.set_ylim(n - 0.5, -0.5)', 'ax.set_yticks([])',
+            'ax.set_xlabel("Silhouette")', 'ax.set_title(f"Silhouettes, {k} clusters")', 'plt.show()'])
+        out['silhouette_k_code'] = '\n'.join([
+            *sil,
+            'ks, means = [], []',
+            'for q in range(2, min(30, n - 1) + 1):   # the tree cut into q clusters, as the page cuts it',
+            '    root_q = np.arange(2 * n - 1)',
+            '    for v in range(2 * n - q - 1, -1, -1):',
+            '        if 0 <= parent[v] < 2 * n - q:',
+            '            root_q[v] = root_q[parent[v]]',
+            '    num_q = {}',
+            '    for leaf in order:',
+            '        num_q.setdefault(root_q[leaf], len(num_q))',
+            '    ks.append(q)',
+            '    means.append(silhouettes(Dsil, np.array([num_q[root_q[i]] for i in range(n)])).mean())',
+            _fig(420, 240),
+            f'ax.plot(ks, means, color="{BASE}", linewidth={_lw(1.6)}, marker="o", markersize={_msize(6)})',
+            f'ax.axvline(k, color="{RED}", linewidth={_lw(1)}, linestyle="--")   # the clusters shown',
+            'ax.set_xlabel("Number of Clusters")', 'ax.set_ylabel("Mean Silhouette")', 'ax.set_title("Mean silhouette by number of clusters")', 'plt.show()'])
     return out
 
 
@@ -2423,14 +3536,46 @@ def lloyd(X, C, w=None, max_iter=300, tol=1e-10):
     return lab, C, it, change, wss
 
 
+def lloyd_steps(X, C, w, steps=None, max_iter=300, tol=1e-10):
+    """Lloyd's k-means a step at a time (K Means' Single Step): each step
+    assigns every row to its nearest centre and moves each centre to the
+    weighted mean of its rows; `steps` of them (None: until the centres stop
+    moving, at most max_iter). Returns the labels of the last assignment,
+    the centres (their means), the steps done, the last relative change of
+    the centres, the within sum of squares and whether they stopped moving."""
+    k, xx = len(C), (X * X).sum(1)
+    scale = float(np.sqrt(((X - X.mean(0)) ** 2).sum(1).mean())) or 1.0
+    it, change, lab = 0, float('nan'), None
+    limit = max_iter if steps is None else int(steps)
+    while it < limit:
+        it += 1
+        lab = np.maximum(xx[:, None] - 2 * X @ C.T + (C * C).sum(1)[None, :], 0).argmin(1)   # the nearest centre
+        new = C.copy()
+        for j in range(k):
+            m = lab == j
+            if m.any():
+                new[j] = (w[m, None] * X[m]).sum(0) / w[m].sum()   # the weighted mean of its rows
+        change = float(np.sqrt(((new - C) ** 2).sum(1)).max()) / scale
+        C = new
+        if change <= tol:
+            break
+    wss = float((w * ((X - C[lab]) ** 2).sum(1)).sum()) if lab is not None else float('nan')
+    return lab, C, it, change, wss, bool(change <= tol)
+
+
 @api('kmeans.fit')
 def kmeans_fit(table, columns, rows=None, k_min=3, k_max=None, standardize=True, seed=20260926, restarts=10, max_iter=300,
-               weight=None, freq=None, where=None, table_name='data'):
+               weight=None, freq=None, single=False, steps=None, where=None, table_name='data'):
     """k-means for each k in a range: k-means++ starts (seeded) and Lloyd's
     iterations, the best of several restarts by the within sum of squares.
     Each fit gets the cubic clustering criterion (Sarle 1983), the pseudo F
-    (Calinski-Harabasz) and R-square; the clusters are numbered by size."""
+    (Calinski-Harabasz) and R-square; the clusters are numbered by size.
+    single (JMP's Single Step): one k-means++ start for each k, from the same
+    stream, and steps[k] of Lloyd's steps from it (0: the starting centres
+    only; None: until they stop moving); the clusters keep the numbers of
+    their starting centres."""
     cols = list(columns)
+    steps = {int(a): (None if b is None else max(0, int(b))) for a, b in (steps or {}).items()}
     df, w, f = _frame(table, cols, rows, weight, freq)
     X0 = df.to_numpy(float)
     n, p = X0.shape
@@ -2450,20 +3595,32 @@ def kmeans_fit(table, columns, rows=None, k_min=3, k_max=None, standardize=True,
     nobs = float(w.sum())
     fits = []
     for k in range(kmin, kmax + 1):
-        best = None
-        for _ in range(max(1, int(restarts))):
+        if single:
             C0 = _kmeanspp(X, k, rng)
-            res = lloyd(X, C0, w, max_iter)
-            if best is None or res[4] < best[4] - 1e-12:
-                best = res
-        lab, C, it, change, wss = best
-        # number the clusters by decreasing size
-        sizes = np.array([w[lab == j].sum() for j in range(k)])
-        order = np.argsort(-sizes, kind='stable')
-        remap = np.empty(k, int)
-        remap[order] = np.arange(k)
-        lab = remap[lab]
-        C = C[order]
+            s_k = steps.get(k, 0)
+            if s_k == 0:   # the starting centres, no rows assigned yet (JMP: no cluster assignments)
+                seeds = mu + sd * C0 if standardize else C0
+                fits.append({'k': k, 'step': 0, 'labels': None, 'seeds': _mat(seeds), 'converged': False, 'counts': None, 'means': None, 'sds': None,
+                             'iterations': 0, 'criterion': None, 'wss': None, 'r2': None, 'er2': None, 'ccc': None, 'pseudo_f': None, 'distance': None,
+                             'centers_scaled': _mat(C0)})
+                continue
+            lab, C, it, change, wss, conv = lloyd_steps(X, C0, w, s_k, max_iter)
+        else:
+            best = None
+            for _ in range(max(1, int(restarts))):
+                C0 = _kmeanspp(X, k, rng)
+                res = lloyd(X, C0, w, max_iter)
+                if best is None or res[4] < best[4] - 1e-12:
+                    best = res
+            lab, C, it, change, wss = best
+            conv = None
+            # number the clusters by decreasing size
+            sizes = np.array([w[lab == j].sum() for j in range(k)])
+            order = np.argsort(-sizes, kind='stable')
+            remap = np.empty(k, int)
+            remap[order] = np.arange(k)
+            lab = remap[lab]
+            C = C[order]
         r2 = 1 - wss / Tss if Tss > 0 else float('nan')
         er2, cc = ccc(ev, nobs, k, r2) if k >= 2 else (float('nan'), float('nan'))
         psf = (r2 / (k - 1)) / ((1 - r2) / (nobs - k)) if k >= 2 and r2 < 1 else float('nan')
@@ -2479,12 +3636,12 @@ def kmeans_fit(table, columns, rows=None, k_min=3, k_max=None, standardize=True,
                 mj, sj = np.full(p, np.nan), np.full(p, np.nan)
             means.append(mj)
             sds.append(sj)
-        dist = ((X - C[lab]) ** 2).sum(1) if standardize else (((X0 - np.array(means)[lab]) / sd) ** 2).sum(1)
+        dist = ((X - C[lab]) ** 2).sum(1)   # the squared Euclidean distance to its cluster's centre, where the clustering is (JMP's Distance)
         fits.append({'k': k, 'labels': lab, 'counts': counts, 'means': _mat(means), 'sds': _mat(sds), 'iterations': it,
                      'criterion': change, 'wss': wss, 'r2': r2, 'er2': er2, 'ccc': cc, 'pseudo_f': psf, 'distance': dist,
-                     'centers_scaled': _mat(C)})
+                     'centers_scaled': _mat(C), 'step': it if single else None, 'converged': conv})
     best = None
-    vals = [(fi['ccc'], fi['k']) for fi in fits if np.isfinite(fi['ccc'])]
+    vals = [(fi['ccc'], fi['k']) for fi in fits if fi['ccc'] is not None and np.isfinite(fi['ccc'])]
     if vals:
         best = max(vals)[1]
     # principal components of the clustering data for the biplots
@@ -2496,14 +3653,75 @@ def kmeans_fit(table, columns, rows=None, k_min=3, k_max=None, standardize=True,
     Zb = ((X0 - mu) / sd) if standardize else (X0 - mu)
     pcs = Zb @ evecs
     out = {'names': cols, 'n': nobs, 'n_rows': n, 'rows': df.index.to_numpy(), 'fits': fits, 'best': best,
-           'standardize': bool(standardize), 'mean': mu, 'sd': sd, 'seed': int(seed), 'restarts': int(restarts),
+           'standardize': bool(standardize), 'mean': mu, 'sd': sd, 'seed': int(seed), 'restarts': int(restarts), 'single': bool(single),
            'pca': {'eigenvalues': evals, 'vectors': _mat(evecs), 'scores': _mat(pcs[:, :min(p, 4)])}}
+    one = {k: steps.get(k, 0) for k in range(kmin, kmax + 1)} if single else None
     out['code'] = _km_stats_code(lambda imports: _head(table, rows, where, table_name, imports), cols, weight, freq, bool(standardize), int(seed),
-                                 max(1, int(restarts)), int(max_iter), kmin, kmax)
+                                 max(1, int(restarts)), int(max_iter), kmin, kmax, one)
     head = lambda imports: _plot_head(table, rows, where, table_name, imports)  # noqa: E731
+    if sum(1 for f in fits if f['labels'] is not None) >= 2:
+        out['comparison_code'] = _km_stats_code(head, cols, weight, freq, bool(standardize), int(seed), max(1, int(restarts)), int(max_iter), kmin, kmax, one, chart=True)
     for f in fits:
-        f.update(_km_codes(head, cols, weight, freq, bool(standardize), int(seed), max(1, int(restarts)), int(max_iter), kmin, f['k'], p))
+        if f['labels'] is not None:
+            f.update(_km_codes(head, cols, weight, freq, bool(standardize), int(seed), max(1, int(restarts)), int(max_iter), kmin, f['k'], p, one))
     return out
+
+
+@api('kmeans.save')
+def kmeans_save(table, columns, k, rows=None, k_min=3, k_max=None, standardize=True, seed=20260926, restarts=10, max_iter=300,
+                weight=None, freq=None, single=False, steps=None, what='clusters', where=None):
+    """K Means' saved columns, for the fit with k clusters of this report.
+    clusters: Cluster and Distance (the squared Euclidean distance to the
+    cluster's centre, where the clustering is: the columns scaled by their
+    standard deviations, or as they are) for every row of the By group
+    whose columns are present, each in the cluster of the nearest centre
+    (the report's own rows as the report has them); formula: Cluster
+    Formula, that nearest centre as a live formula; distances: the k
+    squared distances as formulas (JMP's Save Distance Formulas). The
+    report's own rows keep its clusters: with Single Step before the end they
+    were assigned to the centres before the last move, so there the nearest
+    centre (the formula's rule) can differ."""
+    cols = list(columns)
+    r = kmeans_fit(table, cols, rows, k_min, k_max, standardize, seed, restarts, max_iter, weight, freq, single, steps)
+    if 'error' in r:
+        return r
+    f = next((x for x in r['fits'] if x['k'] == int(k)), None)
+    if f is None:
+        return {'error': f'no fit with {k} clusters in this report'}
+    if f['labels'] is None:
+        return {'error': 'no clusters yet: Step or Go assigns the rows to the starting centres'}
+    k = f['k']
+    mu, sd = np.asarray(r['mean'], float), np.asarray(r['sd'], float)
+    C = np.asarray(f['centers_scaled'], float)
+    scaled = bool(r['standardize'])
+    space = 'the columns scaled by their standard deviations' if scaled else 'the columns in their own units'
+    by = _by_words(table, where)
+    if what == 'clusters':
+        idx, X0 = _present_rows(table, cols, where)
+        Z = (X0 - mu) / sd if scaled else X0
+        D = ((Z[:, None, :] - C[None, :, :]) ** 2).sum(2)
+        lab = D.argmin(1)
+        # the report's rows keep the report's clusters (the same once the fit has converged; Single Step's
+        # earlier steps assigned them to the centres before the last move)
+        own = dict(zip(np.asarray(r['rows'], int).tolist(), np.asarray(f['labels'], int).tolist()))
+        lab = np.array([own.get(int(i), int(c)) for i, c in zip(idx, lab)], dtype=int)
+        return {'columns': [
+            {'name': 'Cluster', 'rows': idx, 'values': lab + 1, 'modelingType': 'nominal',
+             'notes': f'k-means, {k} clusters: the nearest cluster centre ({space}){by}'},
+            {'name': 'Distance', 'rows': idx, 'values': D[np.arange(len(idx)), lab],
+             'notes': f'k-means, {k} clusters: the squared Euclidean distance to the nearest cluster centre ({space}){by}'}],
+            'n_rows': r['n_rows']}
+    # the squared distance to each centre: ((x − centre)/sd)² summed over the columns (centre = mu + sd · the scaled centre)
+    M = mu + sd * C if scaled else C
+    dist = [_fsum([_fsq(_fz(c, M[q, j], sd[j] if scaled else 1.0)) for j, c in enumerate(cols)]) for q in range(k)]
+    if what == 'distances':
+        return {'columns': [{'name': f'Distance to Cluster {q + 1}', 'formula': _fguard(table, dist[q], where),
+                             'notes': f'k-means, {k} clusters: the squared Euclidean distance to the centre of cluster {q + 1} ({space}){by}'}
+                            for q in range(k)], 'n_rows': r['n_rows']}
+    return {'columns': [{'name': 'Cluster Formula', 'formula': _fguard(table, _fargmin(dist, [str(q + 1) for q in range(k)], cols), where),
+                         'modelingType': 'nominal',
+                         'notes': f'k-means, {k} clusters: the cluster of the nearest centre, by the squared Euclidean distance ({space}){by}'}],
+            'n_rows': r['n_rows']}
 
 
 # The report's choice in a k-means biplot, which the page writes into this line.
@@ -2545,56 +3763,89 @@ KMEANS_DEF = [
     '    return lab, C, float((w * ((X - C[lab]) ** 2).sum(1)).sum()), it, change   # the clusters, the centres, the within SS, the steps, the last change']
 
 
-def _km_stats_code(head, cols, weight, freq, standardize, seed, restarts, max_iter, kmin, kmax):
+def _km_stats_code(head, cols, weight, freq, standardize, seed, restarts, max_iter, kmin, kmax, single=None, chart=False):
     """The code of K Means' report: the report's own k-means (seeded
     k-means++ starts, Lloyd's iterations, the best of the restarts) for each
     number of clusters in turn, from one stream of random numbers, with the
-    Cluster Comparison (CCC, pseudo F, RSquare) and each fit's clusters."""
-    L = [head([]), *_weights_lines(cols, weight, freq),
+    Cluster Comparison (CCC, pseudo F, RSquare) and each fit's clusters.
+    single: {k: the steps of Single Step} (one start for each k); chart: the
+    code of the Cluster Comparison's graph of the criteria by k instead."""
+    if single is None:
+        fit = [f'    for _ in range({restarts}):   # the best of {restarts} starts by the within sum of squares',
+               f'        fit = lloyd(X, kmeans_pp(X, k, rng), w, {max_iter})',
+               '        if best is None or fit[2] < best[2] - 1e-12:',
+               '            best = fit',
+               '    lab, C, wss, steps, change = best',
+               '    order = np.argsort(-np.array([w[lab == j].sum() for j in range(k)]), kind="stable")   # the clusters numbered by size',
+               '    remap = np.empty(k, int); remap[order] = np.arange(k); lab = remap[lab]']
+        defs = KMEANS_DEF
+    else:
+        fit = ['    C0 = kmeans_pp(X, k, rng)   # Single Step: one start for each number of clusters, from the one stream',
+               f'    if single_steps[k] == 0:',
+               '        continue   # the starting centres only: no rows assigned yet',
+               f'    lab, C, steps, change, wss, stopped = lloyd_steps(X, C0, w, single_steps[k], {max_iter})   # the clusters keep their starting centres\' numbers']
+        defs = KMEANS_DEF + ['', '', *inspect.getsource(lloyd_steps).rstrip().split('\n')]
+    L = [head(['import matplotlib.pyplot as plt'] if chart and 'plt' not in head([]) else []), *_weights_lines(cols, weight, freq),
          'X0 = X.to_numpy()',
          'mu = (w[:, None] * X0).sum(0) / w.sum()',
          'sd = np.sqrt((w[:, None] * (X0 - mu) ** 2).sum(0) / (w.sum() - 1)); sd = np.where(sd > 0, sd, 1.0)',
          'X = (X0 - mu) / sd   # Columns Scaled Individually' if standardize else 'X = X0.copy()   # the columns in their own units',
-         '', *KMEANS_DEF, '', *CCC_DEF, '',
+         '', *defs, '', *CCC_DEF, '',
          'Tss = (w[:, None] * (X - (w[:, None] * X).sum(0) / w.sum()) ** 2).sum()   # the total sum of squares',
          'm = (w[:, None] * X).sum(0) / w.sum()',
          'ev = np.linalg.eigvalsh((w[:, None] * (X - m)).T @ (X - m) / (w.sum() - 1))   # the eigenvalues of the covariances, for the CCC',
          f'rng = np.random.default_rng({seed})   # the report\'s seed',
          f'names = {J(cols)}',
+         *([f'single_steps = {{{", ".join(f"{k}: {v!r}" for k, v in single.items())}}}   # Single Step: the steps of each number of clusters (None: until nothing moves)'] if single is not None else []),
          'comparison, fits = [], {}',
          f'for k in range({kmin}, {kmax + 1}):   # each number of clusters in turn',
          '    best = None',
-         f'    for _ in range({restarts}):   # the best of {restarts} starts by the within sum of squares',
-         f'        fit = lloyd(X, kmeans_pp(X, k, rng), w, {max_iter})',
-         '        if best is None or fit[2] < best[2] - 1e-12:',
-         '            best = fit',
-         '    lab, C, wss, steps, change = best',
-         '    order = np.argsort(-np.array([w[lab == j].sum() for j in range(k)]), kind="stable")   # the clusters numbered by size',
-         '    remap = np.empty(k, int); remap[order] = np.arange(k); lab = remap[lab]',
+         *fit,
          '    r2 = 1 - wss / Tss',
          '    comparison.append({"NCluster": k, "CCC": ccc(ev, w.sum(), k, r2) if k >= 2 else np.nan,',
          '                       "Pseudo F": (r2 / (k - 1)) / ((1 - r2) / (w.sum() - k)) if k >= 2 and r2 < 1 else np.nan,',
          '                       "RSquare": r2, "Within SS": wss, "Step": steps, "Criterion": change})',
-         '    fits[k] = lab',
-         '    counts = [w[lab == c].sum() for c in range(k)]',
-         '    means = [(w[lab == c, None] * X0[lab == c]).sum(0) / counts[c] for c in range(k)]',
-         '    sds = [np.sqrt((w[lab == c, None] * (X0[lab == c] - means[c]) ** 2).sum(0) / counts[c]) for c in range(k)]',
-         '    print(f"K Means NCluster={k}: the counts", counts)',
-         '    print(pd.DataFrame(means, columns=names, index=range(1, k + 1)))   # Cluster Means',
-         '    print(pd.DataFrame(sds, columns=names, index=range(1, k + 1)))   # Cluster Standard Deviations (the n divisor)',
-         'print(pd.DataFrame(comparison))   # Cluster Comparison: the largest CCC is the Optimal CCC']
+         '    fits[k] = lab']
+    if chart:
+        L += ['cmp = pd.DataFrame(comparison)',
+              'best = cmp.loc[cmp["CCC"].idxmax(), "NCluster"] if cmp["CCC"].notna().any() else None   # the Optimal CCC',
+              f'fig, axes = plt.subplots(2, 2, figsize=(5.6, 4.2), sharex=True, layout="constrained")',
+              'for ax, key in zip(axes.flat, ["CCC", "Pseudo F", "RSquare", "Within SS"]):',
+              f'    ax.plot(cmp["NCluster"], cmp[key], color="{BASE}", linewidth={_lw(1.6)}, marker="o", markersize={_msize(6)})',
+              '    if best is not None:',
+              f'        ax.axvline(best, color="{RED}", linewidth={_lw(1)}, linestyle="--")   # the Optimal CCC',
+              '    ax.set_title(key, fontsize=9)',
+              'for ax in axes[1]:',
+              '    ax.set_xlabel("NCluster")',
+              'fig.suptitle("Cluster criteria by number of clusters", fontsize=10)', 'plt.show()']
+        return '\n'.join(L)
+    L += ['    counts = [w[lab == c].sum() for c in range(k)]',
+          '    means = [(w[lab == c, None] * X0[lab == c]).sum(0) / counts[c] if counts[c] > 0 else np.full(len(names), np.nan) for c in range(k)]',
+          '    sds = [np.sqrt((w[lab == c, None] * (X0[lab == c] - means[c]) ** 2).sum(0) / counts[c]) if counts[c] > 0 else np.full(len(names), np.nan) for c in range(k)]',
+          '    print(f"K Means NCluster={k}: the counts", counts)',
+          '    print(pd.DataFrame(means, columns=names, index=range(1, k + 1)))   # Cluster Means',
+          '    print(pd.DataFrame(sds, columns=names, index=range(1, k + 1)))   # Cluster Standard Deviations (the n divisor)',
+          'print(pd.DataFrame(comparison))   # Cluster Comparison: the largest CCC is the Optimal CCC']
     return '\n'.join(L)
 
 
-def _km_fit_lines(cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k):
+def _km_fit_lines(cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k, single=None):
     """Lines that fit k-means as kmeans.fit does: X0 (the rows), w, mu and sd,
-    X (the data clustered), and lab, each row's cluster numbered by size."""
+    X (the data clustered), and lab, each row's cluster numbered by size
+    (with Single Step, single: {k: steps}, by its starting centre)."""
     L = _weights_lines(cols, weight, freq) + ['X0 = X.to_numpy()',
                                               'mu = (w[:, None] * X0).sum(0) / w.sum()',
                                               'sd = np.sqrt((w[:, None] * (X0 - mu) ** 2).sum(0) / (w.sum() - 1)); sd = np.where(sd > 0, sd, 1.0)',
                                               'X = (X0 - mu) / sd   # Columns Scaled Individually' if standardize else 'X = X0.copy()   # the columns in their own units',
-                                              '', *KMEANS_DEF, '',
+                                              '', *KMEANS_DEF, *(['', '', *inspect.getsource(lloyd_steps).rstrip().split('\n')] if single is not None else []), '',
                                               f'rng = np.random.default_rng({seed})   # the report\'s seed']
+    if single is not None:
+        L += [f'for q in range({kmin}, {k + 1}):   # Single Step: one start for each number of clusters, {kmin} to {k}, from one stream of random numbers',
+              '    C0 = kmeans_pp(X, q, rng)',
+              f'k = {k}',
+              f'lab = lloyd_steps(X, C0, w, {single.get(k)!r}, {max_iter})[0]   # {"until nothing moves" if single.get(k) is None else f"{single.get(k)} steps"}; the clusters keep their starting centres\' numbers',
+              'counts = np.array([w[lab == c].sum() for c in range(k)])']
+        return L
     fit = [f'    for _ in range({restarts}):   # the best of {restarts} starts by the within sum of squares',
            f'        fit = lloyd(X, kmeans_pp(X, q, rng), w, {max_iter})',
            '        if best is None or fit[2] < best[2] - 1e-12:',
@@ -2612,9 +3863,9 @@ def _km_fit_lines(cols, weight, freq, standardize, seed, restarts, max_iter, kmi
     return L
 
 
-def _km_codes(head, cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k, p):
+def _km_codes(head, cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k, p, single=None):
     """The code of a k-means fit's biplot and parallel coordinate plot."""
-    fit = _km_fit_lines(cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k) + [
+    fit = _km_fit_lines(cols, weight, freq, standardize, seed, restarts, max_iter, kmin, k, single) + [
         f'names = {J(cols)}', f'colors = {J(PALETTE)}   # the page\'s palette, a colour for each cluster']
     out = {}
     if p >= 2:

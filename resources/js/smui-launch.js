@@ -35,6 +35,19 @@
   const { el, typeIcon, TYPE_LABEL } = SM.util;
 
   const last = new Map();   // platform id -> { roles: { key: [names] }, options }
+  const keepOpen = new Map();   // platform id -> Keep dialog open, for this visit
+
+  /* Whether a role is the one a preselected role names (Cols > Preselect
+     Role): Y a role keyed y or labelled Y…, X likewise, Weight and Freq by
+     their keys or labels. */
+  function roleIs(r, name) {
+    const key = String(r.key || '').toLowerCase(), label = String(r.label || '');
+    if (name === 'Y') return key === 'y' || /^Y\b/.test(label);
+    if (name === 'X') return key === 'x' || /^X\b/.test(label);
+    if (name === 'Weight') return key === 'weight' || /^Weight\b/.test(label);
+    if (name === 'Freq') return key === 'freq' || /^Freq\b/.test(label);
+    return false;
+  }
   const MIME = 'application/x-smui-columns';
 
   /* ---- Places: a column dragged out of where it was dropped -----------------
@@ -329,6 +342,11 @@
       let xh = null;
       try { xh = extra && (typeof extra.help === 'function' ? extra.help() : extra.help); } catch (e) { xh = null; }
       if (xh && xh.length) sections.push({ heading: extra.helpHeading || 'Settings', choices: xh });
+      sections.push({ heading: 'The dialog', choices: [
+        ['A column\'s right click', 'Its modeling type (Continuous, Ordinal, Nominal), and Transform, Distributional and Date Time: a transform of the column (Log, Square Root, Standardize, Rank, Year, Month Abbr. …) made as a formula column of the table, next to it, and put in the list selected, so that a role\'s button or a drag casts it. Edit > Undo takes it away.'],
+        ['Keep dialog open', 'On: OK runs the analysis and leaves the dialog as it is, for another run with other roles or options (JMP\'s Keep dialog open); Cancel closes it. The box is remembered for the platform until the page is left.'],
+        ['Preselected roles', 'A column given a role with Cols > Preselect Role (Y, X, Weight, Freq) starts in that role when the dialog opens, when the role takes it.'],
+      ] });
       return { kicker: (base && base.kicker) || 'Launch', title: (base && base.title) || platform.label, lead: (base && base.lead) || L.lead || platform.about || '', sections, more: base ? base.more : undefined };
     };
     const key = `launch:${platform.id}`;
@@ -336,7 +354,10 @@
     return key;
   }
 
-  function open({ platform, table, spec = null, onOK }) {
+  /* spec: a report's spec (column ids), to relaunch it; recall: a launch by
+     column names, the shape Recall keeps (SM.launch.last: { roles: { key:
+     [names] }, options, extra }): a table script (smui-scripts.js). */
+  function open({ platform, table, spec = null, recall: recalled = null, onOK }) {
     const L = platform.launch || { roles: [] };
     const roles = L.roles || [];
     const state = {};
@@ -442,17 +463,35 @@
       ev.dataTransfer.setData('text/plain', [...selected].map((id) => table.col(id).name).join('\n'));
       ev.dataTransfer.effectAllowed = 'copy';
     });
+    // A transform column made from the list (smui-p-tables.js): in the table
+    // and in the list, selected, so a role's button (or a drag) casts it.
+    const madeColumn = (nc) => {
+      if (!table.col(nc.id)) return;
+      if (filter.value.trim() && !nc.name.toLowerCase().includes(filter.value.trim().toLowerCase())) filter.value = '';
+      selected.clear();
+      selected.add(nc.id);
+      anchor = nc.id;
+      fillList();
+      renderRoles();
+      const li = [...list.querySelectorAll('li')].find((x) => x.dataset.id === nc.id);
+      if (li) li.scrollIntoView({ block: 'nearest' });
+      msg.textContent = `${nc.name} is a new formula column: press a role's button, or drag it onto one`;
+      msg.classList.add('is-info');
+      list.focus({ preventScroll: true });
+    };
     list.addEventListener('contextmenu', (ev) => {
       const li = ev.target.closest('li');
       if (!li) return;
       ev.preventDefault();
       const c = table.col(li.dataset.id);
+      const transforms = SM.tables && SM.tables.transformMenu ? SM.tables.transformMenu(table, c, madeColumn) : [];
       SM.ui.menu([
         { head: c.name },
         ...['continuous', 'ordinal', 'nominal'].map((t) => ({
           label: TYPE_LABEL[t], checked: c.modelingType === t, disabled: t === 'continuous' && !c.isNumeric,
           action: () => { table.setType(c.id, { modelingType: t }); fillList(); renderRoles(); },
         })),
+        ...(transforms.length ? [{ separator: true }, ...transforms] : []),
       ], { x: ev.clientX, y: ev.clientY });
     });
     filter.addEventListener('input', fillList);
@@ -645,7 +684,12 @@
     const remove = el('button', { type: 'button', class: 'sm-btn', text: 'Remove' });
     const recall = el('button', { type: 'button', class: 'sm-btn', text: 'Recall' });
     const help = el('button', { type: 'button', class: 'sm-btn', text: 'Help' });
-    const actions = el('div', { class: 'sm-actions' }, el('h4', { text: 'Action' }), ok, cancel, el('div', { style: { height: '8px' } }), remove, recall, help);
+    // JMP's Keep dialog open: OK runs the analysis and leaves the dialog as it is, for another
+    const keepBox = el('input', { type: 'checkbox', class: 'sm-keepopen' });
+    keepBox.checked = !!keepOpen.get(platform.id);
+    keepBox.addEventListener('change', () => keepOpen.set(platform.id, keepBox.checked));
+    const keep = el('label', { class: 'sm-keep', title: 'OK runs the analysis and leaves this dialog open, with its roles and options, for another run' }, keepBox, 'Keep dialog open');
+    const actions = el('div', { class: 'sm-actions' }, el('h4', { text: 'Action' }), ok, cancel, el('div', { style: { height: '8px' } }), remove, recall, help, keep);
 
     const body = el('div', null,
       L.lead ? el('p', { class: 'sm-dialog-lead', text: L.lead }) : null,
@@ -676,6 +720,13 @@
       if (err) { msg.textContent = err; return; }
       last.set(platform.id, { roles: Object.fromEntries(Object.entries(s.roles).map(([k, ids]) => [k, ids.map((id) => table.col(id).name)])), options: s.options, extra: Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'roles' && k !== 'options')) });
       try { localStorage.setItem(`smui.recall.${platform.id}`, JSON.stringify(last.get(platform.id))); } catch (e) { /* private window */ }
+      if (keepBox.checked) {
+        // the analysis runs; the dialog stays, as it was, for the next one
+        msg.textContent = `${platform.label} launched; the dialog stays open (Keep dialog open): change the roles or options and press OK again, or Cancel.`;
+        msg.classList.add('is-info');
+        onOK(JSON.parse(JSON.stringify(s)));
+        return;
+      }
       dlg.close(true);
       onOK(s);
     });
@@ -716,11 +767,23 @@
       if (ev.key === 'Enter' && !ev.defaultPrevented && ev.target.tagName !== 'TEXTAREA' && ev.target.tagName !== 'BUTTON' && ev.target !== list) { ev.preventDefault(); ok.click(); }
     });
 
-    // Start from the report being relaunched, or from the columns selected in
-    // the table (JMP puts them into the first role).
+    // Start from the report being relaunched, or from the columns with a
+    // preselected role (Cols > Preselect Role) in that role and the columns
+    // selected in the table in the first role (as JMP does).
     if (spec) fillFrom(spec, false);
-    else {
-      const pre = SM.app && SM.app.grid ? SM.app.selectedColumns() : [];
+    else if (recalled) {
+      // as Recall does: the platform's own part first (which roles it shows may depend on it)
+      if (extra && extra.recall) extra.recall(recalled);
+      fillFrom(recalled, true);
+      msg.textContent = '';
+    } else {
+      const placed = new Set();
+      for (const c of table.columns) {
+        if (!c.preselectRole) continue;
+        const role = roles.find((r) => roleIs(r, c.preselectRole) && !roleEls[r.key].row.hidden && !roleAccepts(r, c) && state[r.key].length < (r.max ?? Infinity));
+        if (role) { state[role.key].push(c.id); placed.add(c.id); }
+      }
+      const pre = (SM.app && SM.app.grid && SM.app.current === table ? SM.app.selectedColumns() : []).filter((c) => !placed.has(c.id));
       const r0 = roles[0];
       if (r0 && pre.length) addTo(r0, pre.map((c) => c.id));
       msg.textContent = '';

@@ -11,6 +11,13 @@ dtype:
 
 The DataFrame's index is the row number in the page's table, so results
 per row (residuals, predictions, scores) can go back to the right rows.
+
+Column properties come in the meta (smui-table.js has what they mean):
+missingCodes, the stored values the analyses treat as missing (they arrive
+missing already, and are masked here again); valueLabels, [value, label]
+pairs for a backend that writes a level itself (value_labels(),
+level_label()); the values themselves are never replaced by their labels,
+so a level the page sends (a target level, a By value) still matches.
 """
 import numpy as np
 import pandas as pd
@@ -30,9 +37,71 @@ def set_table(tid, version, meta, arrays):
             # Only strings are values; None (and anything else, such as a
             # stray JS null) is missing.
             v = np.array([x if isinstance(x, str) else (None if x is None or not isinstance(x, (int, float)) else str(x)) for x in a], dtype=object)
+        codes = _codes(m)
+        if codes:
+            if m.get('dataType') == 'numeric':
+                v = np.where(np.isin(v, np.asarray(codes, dtype=float)), np.nan, v)
+            else:
+                v = np.array([None if x in codes else x for x in v], dtype=object)
         cols[m['name']] = v
         n = max(n, len(v))
     TABLES[tid] = {'version': int(version), 'meta': {m['name']: m for m in meta}, 'cols': cols, 'n': n}
+
+
+def _codes(m):
+    """A column's Missing Value Codes from its meta (numbers or texts)."""
+    codes = m.get('missingCodes') or []
+    try:
+        codes = list(codes)
+    except TypeError:
+        return []
+    if m.get('dataType') == 'numeric':
+        return [float(x) for x in codes if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    return [x for x in codes if isinstance(x, str)]
+
+
+def missing_codes(tid, name):
+    """The Missing Value Codes of a column (Column Info), [] when it has none."""
+    return _codes(meta(tid, name))
+
+
+def value_labels(tid, name):
+    """The Value Labels of a column (Column Info) as {value: label}: float
+    values for a numeric column, texts for a character one; {} without."""
+    m = meta(tid, name)
+    out = {}
+    for p in m.get('valueLabels') or []:
+        try:
+            v, lab = p[0], p[1]
+        except (TypeError, IndexError, KeyError):
+            continue
+        if not isinstance(lab, str):
+            continue
+        if m.get('dataType') == 'numeric':
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[float(v)] = lab
+        elif isinstance(v, str):
+            out[v] = lab
+    return out
+
+
+def level_label(tid, name, value, default=None):
+    """A level as the page shows it: its value label, or default (the value
+    as text when default is None)."""
+    labels = value_labels(tid, name)
+    key = value
+    if meta(tid, name).get('dataType') == 'numeric':
+        try:
+            key = float(value)
+        except (TypeError, ValueError):
+            key = value
+    if key in labels:
+        return labels[key]
+    if default is not None:
+        return default
+    if isinstance(key, float) and key.is_integer():
+        return str(int(key))
+    return str(value)
 
 
 def version(tid):

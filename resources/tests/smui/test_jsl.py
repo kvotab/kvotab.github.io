@@ -872,6 +872,18 @@ for k in range(400):
 check('400 damaged scripts: every translation is Python', bad_python, 0)
 check('... and none is a fault of the translator', faults[:3], [])
 
+# A script from a file is hostile input: its comments and names never become code. JSL ends
+# a // comment at a line feed, Python at a carriage return too; a string's \!N is a line break.
+import ast  # noqa: E402
+hostile = ('x = 1;\n/* a block comment\nINJECTED_block = 1\n*/\n// a line comment\rINJECTED_cr = 1\n'
+           '// and INJECTED_ls = 1\ndt = New Table("t");\ndt << Set Name("new\\!NINJECTED_name = 1\\!N#");\nz = "a\\!Nb\\!r";\n')
+out = jsl_python.convert_text(hostile, TABLES, 'Students')['python']
+tree = ast.parse(out)
+check('a hostile script: its comments and table names stay comments, its strings strings',
+      sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id.startswith('INJECTED')}), [])
+check('... and the comment lines are still there, one line each', [ln.strip() for ln in out.splitlines() if 'INJECTED_cr' in ln or 'INJECTED_block' in ln],
+      ['# INJECTED_block = 1', '# INJECTED_cr = 1'])
+
 helpers = '\n\n'.join(['import numpy as np', 'import pandas as pd'] + list(jsl_python.HELPERS.values()))
 compile(helpers, '<helpers>', 'exec')
 check(f'every one of the {len(jsl_python.HELPERS)} helpers compiles, and reads in Python 3.10', newer_fstrings(helpers), 0)

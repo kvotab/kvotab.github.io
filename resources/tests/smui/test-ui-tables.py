@@ -16,6 +16,20 @@ Edit > Undo takes back what changed a table in place; the Python script
 runs only on Run and its result becomes a table; everything draws in the
 dark theme and at phone width without a script error.
 
+And (wp5): the column properties typed in Column Info (Missing Value
+Codes missing to the grid, a formula, the engine, Distribution and its
+code run on the CSV; Value Labels in the grid and the report; a Profit
+Matrix with Undecided; Undo, Save Table, a project; Cols > Column
+Properties), Cols > Preselect Role filling a launch dialog, New Column
+adding several, a launch dialog's right click making a transform column
+and casting it, Keep dialog open, New Formula Column's Date Time items,
+Lag Multiple, Moving Average and Scale Offset, Subset's equal counts per
+level with probabilities and weights, Recode's Group and Group Similar
+Values by edit distance, the grid's Fill (a real right click) and Header
+Graphs (a real click), Tabulate's bins, levels and Show Chart, Missing
+Value Clustering (its code run in the page) with the SVD and shrunk
+imputations, and File > Import Multiple Files.
+
 Start a server on the repository root and headless Chrome on SMUI_HTTP_PORT
 and SMUI_CDP_PORT (see README.md), then
 
@@ -729,12 +743,14 @@ async def main():
         check('Concatenate: the dialog\'s (i) explains its fields', (r['concat']['fields'], r['concat']['audit']), (['Data tables to be concatenated', 'Create source column', 'Append to first table', 'Output table name'], []))
         check('Join: the dialog\'s (i) explains its fields', (r['join']['fields'], r['join']['thin'], r['join']['audit']), (['Join with', 'Matching', 'Matching columns', 'Include non-matches', 'Drop multiples', 'Match flag', 'Merge same name columns', 'Output table name'], [], []))
         check('Update: the dialog\'s (i) explains its fields', (r['upd']['fields'], r['upd']['thin'], r['upd']['audit']), (['Update with data from', 'Matching', 'Matching columns', 'Ignore missing', 'Replace columns in main table', 'Add columns from update table'], [], []))
-        check('Recode: the dialog\'s (i) explains its buttons and fields', (len(r['rec']['dialog']), r['rec']['done'], r['rec']['audit']), (8, ['New Column', 'In Place', 'Formula Column'], []))
+        check('Recode: the dialog\'s (i) explains its buttons and fields', (len(r['rec']['dialog']), r['rec']['done'], r['rec']['audit']), (12, ['New Column', 'In Place', 'Formula Column'], []))
         check('Explore Missing Values: an (i) by its buttons', r['bar'], ['Select Rows with Missing', 'Exclude Rows with Missing', 'Impute ▾'])
         check('Tabulate: the control panel\'s (i) explains its buttons', [n for n in r['tab'] if n in ('Add to Rows', 'Nest in Rows', 'Add to Columns', 'Analysis Column', 'Clear', 'Done')], ['Add to Rows', 'Nest in Rows', 'Add to Columns', 'Analysis Column', 'Clear', 'Done'])
         check('Columns Viewer: its outline\'s (i) explains the buttons', r['cv'], ['A line of the table', 'Distribution', 'Clear Select', 'Select All'])
         check('Python Script: its outline\'s (i) explains the editor and Run', [n for n in r['py'] if n in ('The editor', 'Run', 'Examples ▾')], ['The editor', 'Run', 'Examples ▾'])
         check('the forms and dialogs are closed again', r['open'], False)
+
+    await wp5(page)
 
     # ---- the (i) topics and Help links, then the dark theme and phone width ----------------------------------------------------------
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
@@ -794,6 +810,668 @@ async def main():
     check('no script errors', page.errors, [])
     await page.close()
 
+
+# ---- the column properties, transforms from a list, Keep dialog open, Preselect Role, the grid's
+# Fill and Header Graphs, Subset's balanced samples and weights, Recode's Group, Tabulate's Show Chart
+# and binned columns, Missing Value Clustering and the SVD and shrunk imputations, Import Multiple Files
+async def wp5(page):
+    await page.ev(GRAPHS_JS)
+    await js(page, r"""
+      const r = SM.util.rng('wp5');
+      const n = 24, score = [], grp = [], resp = [], seq = [], txt = [];
+      for (let i = 0; i < n; i++) {
+        score.push([3, 7, 10].includes(i) ? 999 : i === 15 ? -1 : +(50 + 10 * r.normal()).toFixed(1));
+        grp.push(1 + (i % 3)); resp.push(i % 4 === 0 ? 'yes' : 'no'); seq.push(i < 2 ? i + 1 : NaN); txt.push(i < 3 ? ['a', 'b', 'c'][i] : null);
+      }
+      const t = new SM.Table({ name: 'Props', columns: [
+        { name: 'score', dataType: 'numeric', values: score }, { name: 'grp', dataType: 'numeric', modelingType: 'nominal', values: grp },
+        { name: 'resp', dataType: 'character', values: resp }, { name: 'seq', dataType: 'numeric', values: seq }, { name: 'txt', dataType: 'character', values: txt }] });
+      SM.app.addTable(t);
+      return true;
+    """, 'the table of the column-property checks')
+
+    # ---- Column Info: Missing Value Codes, typed; the grid, a formula, the engine, the report and its code
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      SM.app.showTab(SM.app.tabOf(t));
+      const c = t.col('score');
+      SM.app.columnInfo(c);
+      await T.sleep(60);
+      let d = T.dlg();
+      const input = d.querySelector('input.smc-codes');
+      T.set(input, '999, -1');
+      const note = d.querySelector('.smc-note').textContent;
+      const labels = [...d.querySelectorAll('.smc-label')].map((l) => l.textContent.trim());
+      T.button(d, 'OK').click();
+      await T.sleep(60);
+      const out = { note, labels, codes: c.missingCodes, miss: c.values.map((v, i) => (Number.isNaN(v) ? i : -1)).filter((i) => i >= 0), stored: t.storedValues(c).filter((v) => v === 999 || v === -1).length };
+      await T.sleep(80);
+      out.gridCoded = [...document.querySelectorAll('.sm-view:not([hidden]) .sm-grid .sm-cell.coded')].map((x) => x.textContent);
+      out.flag = [...document.querySelectorAll('.sm-collist li')].filter((li) => li.querySelector('.sm-colname').textContent === 'score').map((li) => !!li.querySelector('.smc-star'))[0];
+      const f = t.addColumn({ name: 'twice', dataType: 'numeric', values: [] });
+      SM.formula.apply(t, f, ':score * 2');
+      out.formula = f.values.map((v, i) => (Number.isNaN(v) ? i : -1)).filter((i) => i >= 0);
+      // what the engine has: the colviewer's N and mean
+      const cv = await SM.engine.call('tables.colviewer', { columns: ['score'] }, t);
+      const vals = t.storedValues(c).filter((v) => v !== 999 && v !== -1);
+      out.engine = [cv.rows[0].n, cv.rows[0].n_missing, T.near(cv.rows[0].mean, T.mean(vals))];
+      // Distribution's report and its Python code, run in the page's Python on the CSV (which keeps 999)
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [c.id] }, options: {} }, t);
+      await T.done(rep);
+      const sum = [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector('.sm-ob-head').textContent.trim() === 'Summary Statistics');
+      const cells = sum ? [...sum.querySelectorAll('tr')].map((tr) => [...tr.children].map((x) => x.textContent.trim())) : [];
+      const nrow = cells.find((x) => x[0] === 'N');
+      out.reportN = nrow ? nrow[1] : null;
+      const code = [...rep.body.querySelectorAll('details.sm-code code')].map((x) => x.textContent).find((x) => x.includes('pd.read_csv('));
+      out.maskLine = code ? code.split('\n').find((l) => l.includes('.mask(')) : null;
+      const run = await __gr.run(`${code}\nprint("SMUI-CHECK", df["score"].count(), repr(float(df["score"].mean())))`, t);
+      const line = (run.outputs || []).filter((o) => o.type === 'stream').map((o) => o.text).join('').split('\n').find((l) => l.startsWith('SMUI-CHECK'));
+      out.codeRun = line ? [Number(line.split(' ')[1]), T.near(Number(line.split(' ')[2]), T.mean(vals))] : (run.outputs || []).map((o) => o.evalue || '').join(' ');
+      out.csv999 = SM.io.toCsv(t).split('\r\n').filter((l) => l.startsWith('999,')).length;
+      out.errors = [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent);
+      SM.app.closeReport(rep);
+      t.removeColumn(f.id);
+      return out;
+    """, 'Missing Value Codes')
+    if r:
+        check('Column Info has the three property editors, each with an (i)', r['labels'], ['Missing Value Codes', 'Value Labels', 'Profit Matrix'])
+        check('the editor counts the cells that hold the codes', r['note'], '4 cells hold these codes: missing to every analysis')
+        check('Missing Value Codes 999, -1 typed in Column Info', r['codes'], [999, -1])
+        check('those cells are missing to the analyses, and keep their codes', (r['miss'], r['stored']), ([3, 7, 10, 15], 4))
+        check('the grid shows them as stored, greyed', r['gridCoded'], ['999', '999', '999', '−1'])
+        check('the Columns panel marks the column with properties', r['flag'], True)
+        check('a formula sees them as missing', r['formula'], [3, 7, 10, 15])
+        check('the engine sees them as missing: N 20, N Missing 4, the mean of the others', r['engine'], [20, 4, True])
+        check('Distribution: N leaves them out', r['reportN'], '20')
+        check('the report\'s code has the line that makes them missing', r['maskLine'], 'df["score"] = df["score"].mask(df["score"].isin([999, -1]))   # 999, -1 are missing value codes of score (Column Info): missing here, as in the page')
+        check('... run on the CSV, which keeps 999, it gives the report\'s N and mean', r['codeRun'], [20, True])
+        check('Export CSV keeps the stored 999', r['csv999'], 3)
+        check('no errors in the report', r['errors'], [])
+
+    # ---- Value Labels and a Profit Matrix in Column Info; Undo; Save Table and a project ------------
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      const g = t.col('grp');
+      SM.app.columnInfo(g);
+      await T.sleep(60);
+      let d = T.dlg();
+      T.button(d, 'Add Levels').click();
+      const lv = [...d.querySelectorAll('input.smc-lv')].map((i) => i.value);
+      const ll = [...d.querySelectorAll('input.smc-ll')];
+      T.set(ll[0], 'Low'); T.set(ll[1], 'High');
+      T.button(d, 'OK').click();
+      await T.sleep(80);
+      const out = { lv, pairs: SM.table.labelPairs(g), cell: SM.grid.cellText(g, 1), raw: SM.grid.valueText(g, 1) };
+      out.gridText = [...document.querySelectorAll('.sm-view:not([hidden]) .sm-grid .sm-grow')].slice(0, 3).map((row) => row.children[1 + t.colIndex(g)].textContent);
+      // a report writes the labels for the levels
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [g.id] }, options: {} }, t);
+      await T.done(rep);
+      const fr = [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector('.sm-ob-head').textContent.trim() === 'Frequencies');
+      out.freq = fr ? [...fr.querySelectorAll('tbody tr')].map((tr) => tr.children[0].textContent.trim()) : null;
+      SM.app.closeReport(rep);
+      // the profit matrix of resp, with Undecided
+      const c = t.col('resp');
+      SM.app.columnInfo(c);
+      await T.sleep(60);
+      d = T.dlg();
+      const box = [...d.querySelectorAll('.smc-profit')].length;
+      const use = [...d.querySelectorAll('label')].find((l) => l.textContent.trim() === 'Use a profit matrix').querySelector('input');
+      T.set(use, true);
+      const und = [...d.querySelectorAll('label')].find((l) => l.textContent.trim() === 'Undecided decision').querySelector('input');
+      T.set(und, true);
+      const cells = [...d.querySelectorAll('input.smc-pv')];
+      out.start = cells.map((i) => i.value);
+      T.set(cells[1], '-5'); T.set(cells[5], '2.5');
+      T.button(d, 'OK').click();
+      await T.sleep(60);
+      out.pm = c.profitMatrix;
+      out.aligned = SM.table.profitAligned(t, c);
+      SM.app.undo();
+      out.undone = c.profitMatrix;
+      SM.app.redo();
+      out.redone = !!(c.profitMatrix && c.profitMatrix.matrix[0][1] === -5);
+      // Save Table and a project: the stored values and every property
+      const back = SM.Table.fromJSON(JSON.parse(JSON.stringify(t.toJSON())));
+      out.json = [back.col('score').missingCodes, back.storedValues('score').filter((v) => v === 999).length, back.col('score').values.filter(Number.isNaN).length, SM.table.labelOf(back.col('grp'), 2), back.col('resp').profitMatrix.matrix];
+      const n0 = SM.app.tables.length;
+      SM.app.loadProject({ format: 'smui-project', version: 1, tables: [{ id: 'x', ...t.toJSON(), name: 'Props again' }], reports: [] });
+      const p2 = SM.app.tables.slice(n0).find((x) => x.name === 'Props again');
+      out.project = p2 ? [p2.col('score').missingCodes, SM.table.labelOf(p2.col('grp'), 1), p2.col('resp').profitMatrix.decisions] : null;
+      if (p2) SM.app.closeTable(p2);
+      SM.app.showTab(SM.app.tabOf(t));
+      // Cols > Column Properties > Missing Value Codes…, the dialog of its own
+      const cmd = SM.commands.all().find((x) => x.label === 'Column Properties');
+      const items = cmd.submenu(SM.app, t.col('txt'));
+      items[0].action();
+      await T.sleep(60);
+      d = T.dlg();
+      out.title = d.querySelector('.sm-dialog-head h2').textContent;
+      T.set(d.querySelector('input.smc-codes'), '"c", b');
+      T.button(d, 'OK').click();
+      await T.sleep(40);
+      out.txt = [t.col('txt').missingCodes, t.col('txt').values.slice(0, 3)];
+      return out;
+    """, 'Value Labels and Profit Matrix')
+    if r:
+        check('Add Levels: a row for each level', r['lv'], ['1', '2', '3'])
+        check('Value Labels typed: 1 Low, 2 High (3 left without)', r['pairs'], [[1, 'Low'], [2, 'High']])
+        check('SM.grid.cellText gives the label, valueText the value', (r['cell'], r['raw']), ('Low', '1'))
+        check('the grid shows the labels', r['gridText'], ['Low', 'High', '3'])
+        check('Distribution\'s Frequencies write the levels with their labels', r['freq'][:3] if r['freq'] else None, ['Low', 'High', '3'])
+        check('a new profit matrix: 1 right, -1 wrong, 0 Undecided', r['start'], ['1', '-1', '0', '-1', '1', '0'])
+        check('the profit matrix as typed, with Undecided', r['pm'], {'levels': ['no', 'yes'], 'decisions': ['no', 'yes', 'Undecided'], 'matrix': [[1, -5, 0], [-1, 1, 2.5]]})
+        check('profitAligned gives it for the levels now', r['aligned'], r['pm'])
+        check('Edit > Undo takes Column Info back, Redo brings it again', (r['undone'], r['redone']), (None, True))
+        check('Save Table keeps the codes, the stored values, the labels and the profit matrix', r['json'], [[999, -1], 3, 4, 'High', [[1, -5, 0], [-1, 1, 2.5]]])
+        check('... and a project too', r['project'], [[999, -1], 'Low', ['no', 'yes', 'Undecided']])
+        check('Cols > Column Properties > Missing Value Codes…: its own dialog', r['title'], 'Missing Value Codes: txt')
+        check('codes of a character column, one in quotes', r['txt'], [['c', 'b'], ['a', None, None]])
+
+    # ---- Cols > Preselect Role, and a launch dialog that fills it in -------------------------------------------------------------------------
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      SM.app.showTab(SM.app.tabOf(t));
+      const g = SM.app.grid;
+      g.colSel.clear(); g.colSel.add(t.col('score').id); g.refresh();
+      const pre = SM.commands.all().find((x) => x.label === 'Preselect Role');
+      pre.submenu(SM.app).find((i) => i.label === 'Y').action();
+      g.colSel.clear(); g.colSel.add(t.col('grp').id); g.refresh();
+      pre.submenu(SM.app).find((i) => i.label === 'X').action();
+      g.colSel.clear(); g.refresh(); SM.app.panels.renderColumns();
+      const flags = [...document.querySelectorAll('.sm-collist .smc-role')].map((x) => x.textContent);
+      SM.app.launch('fitybyx');
+      await T.sleep(80);
+      const d = T.dlg();
+      const roles = Object.fromEntries([...d.querySelectorAll('.sm-role')].map((row) => [row.querySelector('.sm-btn').textContent, [...row.querySelectorAll('.sm-role-list li')].map((li) => li.textContent)]));
+      T.button(d.querySelector('.sm-actions'), 'Cancel').click();
+      const keep = [t.col('score').preselectRole, t.col('grp').preselectRole];
+      const J = t.toJSON().columns.filter((c) => c.preselectRole).map((c) => [c.name, c.preselectRole]);
+      for (const nm of ['score', 'grp']) t.setPreselectRole(nm, null);
+      return { flags, roles, keep, J };
+    """, 'Preselect Role')
+    if r:
+        check('Preselect Role Y and X: the Columns panel marks them', r['flags'], ['Y', 'X'])
+        check('Fit Y by X opens with them in their roles', (r['roles'].get('Y, Response'), r['roles'].get('X, Factor')), (['score'], ['grp']))
+        check('the roles are kept with the table', (r['keep'], r['J']), (['Y', 'X'], [['score', 'Y'], ['grp', 'X']]))
+
+    # ---- Cols > New Column: several columns at once, in one Undo step; a launch dialog's (i) on its right click and Keep dialog open ------
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      SM.app.showTab(SM.app.tabOf(t));
+      const n0 = t.columns.length, u0 = SM.app.undoStack.length;
+      const p = SM.app.newColumn();
+      await T.sleep(80);
+      let d = T.dlg();
+      T.set(T.opt(d, 'Column name'), 'extra'); T.set(T.opt(d, 'Initial values'), 'sequence'); T.set(T.opt(d, 'Number of columns to add'), '3');
+      T.ok(d); await p;
+      const made = t.columns.slice(n0).map((c) => [c.name, c.values.slice(0, 3)]);
+      const steps = SM.app.undoStack.length - u0;
+      SM.app.undo();
+      const back = t.columns.length === n0;
+      SM.app.launch('distribution');
+      await T.sleep(100);
+      d = T.dlg();
+      const info = await T.infoOf(d.querySelector('.sm-dialog-head'));
+      T.button(d.querySelector('.sm-actions'), 'Cancel').click();
+      return { made, steps, back, dialog: T.names(info, 'The dialog') };
+    """, 'New Column: several at once')
+    if r:
+        check('New Column with Number of columns 3: extra, extra 2, extra 3', r['made'], [['extra', [1, 2, 3]], ['extra 2', [1, 2, 3]], ['extra 3', [1, 2, 3]]])
+        check('... in one Undo step', (r['steps'], r['back']), (1, True))
+        check('a launch dialog\'s (i) explains the right click, Keep dialog open and preselected roles', r['dialog'], ['A column\'s right click', 'Keep dialog open', 'Preselected roles'])
+
+    # ---- a launch dialog's column list: right click, Transform > Log (the real right click), cast; Keep dialog open -----
+    await js(page, "const t = SM.app.tables.find((x) => x.name === 'Props'); for (const c of t.columns) t.setPreselectRole(c.id, null); SM.app.showTab(SM.app.tabOf(t)); SM.app.grid.colSel.clear(); SM.app.launch('distribution'); await T.sleep(100); return true;")
+    xy = await page.ev("(() => { const d = T.dlg(); const li = [...d.querySelectorAll('.sm-pick-list li')].find((x) => x.textContent === 'score'); li.scrollIntoView({ block: 'nearest' }); const b = li.getBoundingClientRect(); return [b.x + 20, b.y + b.height / 2]; })()")
+    await page.mouse('mouseMoved', xy[0], xy[1])
+    await page.mouse('mousePressed', xy[0], xy[1], button='right')
+    await page.mouse('mouseReleased', xy[0], xy[1], button='right')
+    await asyncio.sleep(0.2)
+    r = await js(page, r"""
+      const menu = [...document.querySelectorAll('.sm-menu')].pop();
+      const items = menu ? [...menu.querySelectorAll('.sm-label')].map((x) => x.textContent) : [];
+      T.menuButton('Transform').click();
+      await T.sleep(60);
+      const sub = [...document.querySelectorAll('.sm-menu')].pop();
+      const subItems = [...sub.querySelectorAll('.sm-label')].map((x) => x.textContent);
+      const dt = T.menuButton('Date Time');
+      T.menuButton('Log').click();
+      await T.until(() => SM.app.current.col('Log[score]'));
+      await T.sleep(60);
+      const d = T.dlg();
+      const t = SM.app.current;
+      const nc = t.col('Log[score]');
+      const sel = [...d.querySelectorAll('.sm-pick-list li.is-selected')].map((li) => li.textContent);
+      T.role(d, 'Y, Columns');
+      const cast = [...d.querySelectorAll('.sm-role-list li')].map((li) => li.textContent);
+      const okLog = nc.values.every((v, i) => { const s = t.col('score').values[i]; return Number.isNaN(s) ? Number.isNaN(v) : T.near(v, Math.log(s)); });
+      // Keep dialog open: OK twice, two reports, the dialog still there
+      const n0 = SM.app.reports.length;
+      const keep = d.querySelector('input.sm-keepopen');
+      T.set(keep, true);
+      T.ok(d);
+      await T.until(() => SM.app.reports.length === n0 + 1);
+      const still = !!T.dlg() && T.dlg() === d;
+      T.ok(d);
+      await T.until(() => SM.app.reports.length === n0 + 2);
+      const msg = d.querySelector('.sm-launch-msg').textContent;
+      T.button(d.querySelector('.sm-actions'), 'Cancel').click();
+      const reps = SM.app.reports.slice(n0);
+      for (const rp of reps) await T.done(rp).catch(() => null);
+      const titles = reps.map((rp) => rp.spec.roles.y.map((id) => t.col(id).name));
+      for (const rp of reps) SM.app.closeReport(rp);
+      // the next launch remembers the box, for this visit
+      SM.app.launch('distribution'); await T.sleep(80);
+      const again = T.dlg().querySelector('input.sm-keepopen').checked;
+      T.set(T.dlg().querySelector('input.sm-keepopen'), false);
+      T.button(T.dlg().querySelector('.sm-actions'), 'Cancel').click();
+      t.removeColumn(nc.id);
+      return { items, subItems, dateOff: dt ? dt.disabled : null, formula: nc.formula.expr, sel, cast, okLog, still, msg, titles, again, open: !!T.dlg() };
+    """, 'transform from a launch dialog')
+    if r:
+        check('the list\'s right click: the modeling types, then Transform, Distributional, Date Time', r['items'], ['Continuous', 'Ordinal', 'Nominal', 'Transform', 'Distributional', 'Date Time'])
+        check('Transform has Scale Offset', 'Scale Offset…' in r['subItems'], True)
+        check('Date Time is off for a column that is not a date', r['dateOff'], True)
+        check('Transform > Log makes a formula column, selected in the list', (r['formula'], r['sel']), ('Log(:score)', ['Log[score]']))
+        check('its values are the logs of score (a missing value code missing)', r['okLog'], True)
+        check('a role\'s button casts it', r['cast'], ['Log[score]'])
+        check('Keep dialog open: OK runs the analysis and the dialog stays', (r['still'], r['titles']), (True, [['Log[score]'], ['Log[score]']]))
+        check('... and says so', 'Keep dialog open' in r['msg'], True)
+        check('the box is kept for the next dialog of the platform', r['again'], True)
+        check('the dialogs are closed', r['open'], False)
+
+    # ---- New Formula Column: Date Time, Lag Multiple, Moving Average, Scale Offset ---------------------------------------------------------
+    r = await js(page, r"""
+      const s = SM.app.openExample('sales');
+      const m = s.col('month');
+      const menu = SM.tables.nfcItems(SM.app, [m]);
+      const dt = menu.find((x) => x.label === 'Date Time').submenu();
+      const labels = dt.map((x) => x.label);
+      for (const lab of ['Month Abbr.', 'Year Quarter', 'Year Month', 'Day of Week', 'Quarter']) await dt.find((x) => x.label === lab).action();
+      await T.until(() => s.col('Quarter[month]'));
+      const ab = s.col('Month Abbr.[month]'), yq = s.col('Year Quarter[month]'), ym = s.col('Year Month[month]'), dw = s.col('Day of Week[month]'), q = s.col('Quarter[month]');
+      const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const okAb = m.values.every((v, i) => ab.values[i] === MON[new Date(v).getUTCMonth()]);
+      const okYq = m.values.every((v, i) => yq.values[i] === `${new Date(v).getUTCFullYear()} Q${Math.floor(new Date(v).getUTCMonth() / 3) + 1}`);
+      const okYm = m.values.every((v, i) => ym.values[i] === new Date(v).toISOString().slice(0, 7));
+      const okDw = m.values.every((v, i) => dw.values[i] === new Date(v).getUTCDay() + 1);
+      const out = { labels, ab: [ab.modelingType, ab.valueOrder, okAb, s.levels(ab)], yq: [yq.modelingType, okYq, yq.values[0]], ym: [ym.modelingType, okYm], okDw, q: q.values.slice(0, 7) };
+      // Lag Multiple, through its dialog
+      const row = SM.tables.nfcItems(SM.app, [s.col('sales')]).find((x) => x.label === 'Row').submenu();
+      out.row = row.map((x) => x.label);
+      const p = row.find((x) => x.label === 'Lag Multiple…').action();
+      await T.sleep(80);
+      let d = T.dlg(); T.set(T.opt(d, 'First Lag'), '1'); T.set(T.opt(d, 'Last Lag'), '3'); T.ok(d); await p;
+      const sv = s.col('sales').values;
+      out.lags = [1, 2, 3].map((k) => { const c = s.col(`Lag ${k}[sales]`); return !!c && c.values.every((v, i) => (i < k ? Number.isNaN(v) : v === sv[i - k])) && c.formula.expr === `Lag(:sales, ${k})`; });
+      const u0 = SM.app.undoStack.length;
+      // Moving Average: equal weights over the two rows before and this one
+      const p2 = row.find((x) => x.label === 'Moving Average…').action();
+      await T.sleep(80);
+      d = T.dlg(); T.set(T.opt(d, 'Items Before'), '2'); T.ok(d); await p2;
+      const ma = s.col('Moving Average[sales]');
+      out.ma = [ma.formula.expr, ma.values.every((v, i) => { const w = sv.slice(Math.max(0, i - 2), i + 1); return T.near(v, w.reduce((a, b) => a + b, 0) / w.length); })];
+      // Scale Offset: Fahrenheit from Celsius
+      const tr = SM.tables.nfcItems(SM.app, [s.col('temperature')]).find((x) => x.label === 'Transform').submenu();
+      const p3 = tr.find((x) => x.label === 'Scale Offset…').action();
+      await T.sleep(80);
+      d = T.dlg(); T.set(T.opt(d, 'Scale'), '1.8'); T.set(T.opt(d, 'Offset'), '32'); T.ok(d); await p3;
+      const so = s.col('Scale Offset[temperature]'), tv = s.col('temperature').values;
+      out.so = [so.formula.expr, so.values.every((v, i) => T.near(v, tv[i] * 1.8 + 32))];
+      // one Undo step for all three lags
+      out.undo = SM.app.undoStack.length - u0;
+      SM.app.closeTable(s);
+      return out;
+    """, 'New Formula Column: Date Time, Lag Multiple, Moving Average, Scale Offset')
+    if r:
+        check('Date Time: Year, Quarter, Month, Month Abbr., Day, Day of Week, Hour, Year Quarter, Year Month', r['labels'], ['Year', 'Quarter', 'Month', 'Month Abbr.', 'Day', 'Day of Week', 'Hour', 'Year Quarter', 'Year Month'])
+        check('Month Abbr.: nominal, Jan to Dec in the calendar\'s order', r['ab'], ['nominal', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], True, ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']])
+        check('Year Quarter: ordinal text, 2016 Q1', r['yq'], ['ordinal', True, '2016 Q1'])
+        check('Year Month: ordinal text, as 2016-01', r['ym'], ['ordinal', True])
+        check('Day of Week: 1 for Sunday', r['okDw'], True)
+        check('Quarter', r['q'], [1, 1, 1, 2, 2, 2, 3])
+        check('Row has Lag Multiple and Moving Average', [x for x in r['row'] if x in ('Lag', 'Lag Multiple…', 'Moving Average…')], ['Lag', 'Lag Multiple…', 'Moving Average…'])
+        check('Lag Multiple 1 to 3: three lag columns', r['lags'], [True, True, True])
+        check('Moving Average, two rows before: Col Moving Average and its values', r['ma'], ['Col Moving Average(:sales, 1, 2, 0, 0)', True])
+        check('Scale Offset 1.8, 32', r['so'], [':temperature * 1.8 + 32', True])
+        check('each made in one Undo step', r['undo'], 2)
+
+    # ---- Subset: equal counts per level (with replacement when short), selection probabilities and sampling weights ------------------
+    r = await js(page, r"""
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const sx = t.col('sex').values;
+      const N = { F: sx.filter((v) => v === 'F').length, M: sx.filter((v) => v === 'M').length };
+      T.cmd('Tables', 'Subset…');
+      await T.sleep(80);
+      let d = T.dlg();
+      T.set(T.opt(d, 'Rows'), 'balanced');
+      T.set(T.opt(d, 'Sample size'), '40');
+      T.ok(d);
+      const refused = d.querySelector('.sm-launch-msg').textContent;
+      T.cast(d, ['sex'], 'Stratify');
+      T.set(T.opt(d, 'Save selection probabilities'), true);
+      T.set(T.opt(d, 'Save sampling weights'), true);
+      T.set(T.opt(d, 'Seed'), 'balanced');
+      const n0 = SM.app.tables.length;
+      T.ok(d);
+      const nt = await T.newTable(n0);
+      const s2 = nt.col('sex').values, w = nt.col('Sampling Weight').values, p = nt.col('Selection Probability').values, id = nt.col('id').values;
+      const cnt = { F: s2.filter((v) => v === 'F').length, M: s2.filter((v) => v === 'M').length };
+      const byLevel = (lv) => s2.map((v, i) => (v === lv ? i : -1)).filter((i) => i >= 0);
+      const okW = ['F', 'M'].every((lv) => byLevel(lv).every((i) => T.near(w[i], N[lv] / 40) && T.near(p[i], 40 / N[lv])));
+      const everyRow = ['F', 'M'].every((lv) => new Set(byLevel(lv).map((i) => id[i])).size === N[lv]);
+      const sumW = ['F', 'M'].map((lv) => byLevel(lv).reduce((a, i) => a + w[i], 0));
+      // stratified by rate: weights are N_h / n_h (of Students again: the new table is the current one now)
+      SM.app.showTab(SM.app.tabOf(t));
+      T.cmd('Tables', 'Subset…');
+      await T.sleep(80);
+      d = T.dlg();
+      T.set(T.opt(d, 'Rows'), 'rate'); T.set(T.opt(d, 'Sampling rate'), '0.3');
+      T.cast(d, ['sex'], 'Stratify');
+      T.set(T.opt(d, 'Save sampling weights'), true);
+      const n1 = SM.app.tables.length;
+      T.ok(d);
+      const nt2 = await T.newTable(n1);
+      const s3 = nt2.col('sex').values, w3 = nt2.col('Sampling Weight').values;
+      const okRate = ['F', 'M'].every((lv) => { const k = Math.round(0.3 * N[lv]); return s3.filter((v) => v === lv).length === k && s3.every((v, i) => v !== lv || T.near(w3[i], N[lv] / k)); });
+      const noProb = !nt2.col('Selection Probability');
+      const dbg = [nt2.name, nt2.nrows, nt2.columns.map((c) => c.name).join('|'), s3.join(''), w3.slice(0, 4)];
+      SM.app.closeTable(nt); SM.app.closeTable(nt2);
+      return { refused, N, cnt, okW, everyRow, sumW, okRate, noProb, dbg };
+    """, 'Subset: balanced sampling and weights')
+    if r:
+        check('equal counts per level needs Stratify', r['refused'].startswith('Random: equal counts per level takes its levels from the Stratify columns'), True)
+        check('equal counts per level: 40 rows of each sex', r['cnt'], {'F': 40, 'M': 40})
+        check('a short level gives every one of its rows, the rest again with replacement', r['everyRow'], True)
+        check('Sampling Weight N/40 and Selection Probability 40/N for each level', r['okW'], True)
+        check('the weights of a level add up to its rows in the table', r['sumW'], [r['N']['F'], r['N']['M']])
+        check('stratified by rate 0.3: weight N/n of each level', (r['okRate'], r['noProb']), (True, True)) or print('   ', r['dbg'])
+
+    # ---- Recode: tick values and Group them; Group Similar Values a character apart ------------------------------------------------------
+    r = await js(page, r"""
+      const vals = ['New York', 'new york', 'Nwe York', 'Boston', 'Bostn', 'Boston', 'Chicago', 'Chicgo', 'Paris', 'Pairs', 'Rome'];
+      const t = new SM.Table({ name: 'Cities', columns: [{ name: 'city', dataType: 'character', values: vals }] });
+      SM.app.addTable(t);
+      T.cmd('Cols', 'Recode…', t.col('city'));
+      await T.sleep(60);
+      let d = T.dlg();
+      const row = (text) => [...d.querySelectorAll('.smr-table tbody tr')].find((tr) => tr.children[1].textContent === text);
+      row('Paris').querySelector('.smr-pick').click();
+      row('Rome').querySelector('.smr-pick').click();
+      const groupOn = !T.button(d, 'Group').disabled;
+      T.button(d, 'Group').click();
+      const afterGroup = [...d.querySelectorAll('.smr-table tbody tr')].map((tr) => [tr.children[1].textContent, tr.querySelector('.smr-new').value]);
+      // Group Similar Values, at most one character apart, for values of 4 characters or more
+      T.set(d.querySelector('input[aria-label="Max character difference"]'), '1');
+      T.button(d, 'Group Similar Values').click();
+      const sim1 = [...d.querySelectorAll('.smr-table tbody tr')].map((tr) => tr.querySelector('.smr-new').value);
+      T.set(d.querySelector('input[aria-label="Max character difference"]'), '2');
+      T.button(d, 'Group Similar Values').click();
+      const sim2 = [...d.querySelectorAll('.smr-table tbody tr')].map((tr) => tr.querySelector('.smr-new').value);
+      T.ok(d, 'Recode');
+      await T.sleep(40);
+      const c2 = t.col('city 2');
+      const ed = [SM.tables.editDistance('kitten', 'sitting'), SM.tables.editDistance('Nwe York', 'New York'), SM.tables.editDistance('abc', 'abc'), SM.tables.editDistance('abcdef', 'x', 2)];
+      SM.app.closeTable(t);
+      return { groupOn, afterGroup, sim1, sim2, levels: c2 ? [...new Set(c2.values)] : null, ed };
+    """, 'Recode: Group and Group Similar Values')
+    if r:
+        check('ticking two values turns Group on', r['groupOn'], True)
+        check('Group: the ticked values take one value, the commonest\'s (Paris and Rome: Paris, the first of the most common)', [x for x in r['afterGroup'] if x[0] in ('Paris', 'Rome')], [['Paris', 'Paris'], ['Rome', 'Paris']])
+        check('Group Similar Values, at most 1 character apart: new york (case), Bostn, Chicgo join theirs; Nwe York and Pairs (2 apart) do not', r['sim1'], ['Boston', 'Boston', 'Chicago', 'Chicago', 'New York', 'New York', 'Nwe York', 'Pairs', 'Paris', 'Paris'])
+        check('... at most 2 apart: they join too, the spelling with the most rows winning (Paris, with Rome grouped to it)', r['sim2'], ['Boston', 'Boston', 'Chicago', 'Chicago', 'New York', 'New York', 'New York', 'Paris', 'Paris', 'Paris'])
+        check('the edit distance (Levenshtein): kitten–sitting 3, a swap 2', r['ed'], [3, 2, 0, 3])
+        check('Recode with the groups: the new column\'s values', r['levels'], ['New York', 'Boston', 'Chicago', 'Paris'])
+
+
+    # ---- the grid: Fill from a cell's right click (the real one), Header Graphs by the real button ----------------------------------
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      SM.app.showTab(SM.app.tabOf(t));
+      await T.sleep(120);
+      t.select([0, 1]);
+      await T.sleep(60);
+      const row = [...document.querySelectorAll('.sm-view:not([hidden]) .sm-grid .sm-grow')].find((x) => x.dataset.row === '1');
+      const cell = row.children[1 + t.colIndex('seq')];
+      cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const b = cell.getBoundingClientRect();
+      return [b.x + b.width / 2, b.y + b.height / 2];
+    """, 'a cell to fill')
+    if r:
+        await page.mouse('mouseMoved', r[0], r[1])
+        await page.mouse('mousePressed', r[0], r[1], button='right')
+        await page.mouse('mouseReleased', r[0], r[1], button='right')
+        await asyncio.sleep(0.2)
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      const first = [...document.querySelectorAll('.sm-menu')].pop();
+      const top = first ? [...first.querySelectorAll('.sm-label')].map((x) => x.textContent).slice(0, 2) : [];
+      T.menuButton('Fill').click();
+      await T.sleep(60);
+      const sub = [...document.querySelectorAll('.sm-menu')].pop();
+      const items = [...sub.querySelectorAll('button')].map((x) => [x.querySelector('.sm-label').textContent, x.disabled]);
+      T.menuButton('Continue Sequence to End of Table').click();
+      await T.sleep(60);
+      const seq = t.col('seq').values.slice();
+      SM.app.undo();
+      const undone = t.col('seq').values.slice(0, 4);
+      // repeat a sequence of text, and fill to a row
+      t.select([0, 1, 2]);
+      SM.app.grid.fill(t.col('txt'), 'repeat', t.nrows - 1);
+      const rep = t.storedValues('txt');      // (b and c are its missing value codes now: stored, and missing)
+      t.select([0]);
+      const p = SM.app.grid.fillToRow(t.col('grp'));
+      await T.sleep(60);
+      const d = T.dlg(); T.set(T.opt(d, 'Fill down to row'), '5'); T.ok(d); await p;
+      const grp = t.col('grp').values.slice(0, 7);
+      // a formula column fills itself
+      const f = t.addColumn({ name: 'f', dataType: 'numeric', values: [] }); SM.formula.apply(t, f, 'Row()');
+      const fz = SM.app.grid.fillItems(t.colIndex(f)).every((x) => x.disabled);
+      t.removeColumn(f.id);
+      t.select([]);
+      return { top, items, seq, undone, rep, grp, fz };
+    """, 'Fill')
+    if r:
+        check('a cell\'s right click starts with Fill', r['top'][0], 'Fill')
+        check('Fill\'s items', [x[0] for x in r['items']], ['Fill to Row…', 'Fill to End of Table', 'Repeat Sequence to End of Table', 'Continue Sequence to End of Table'])
+        check('Continue Sequence: 1, 2 go on 3, 4, … to the last row', r['seq'], list(range(1, 25)))
+        check('Edit > Undo takes the fill back', r['undone'][:2] + [None if x != x else x for x in r['undone'][2:]], [1, 2, None, None])
+        check('Repeat Sequence of text: a, b, c, a, b, c, …', r['rep'], ['a', 'b', 'c'] * 8)
+        check('Fill to Row 5: the value down to row 5', r['grp'], [1, 1, 1, 1, 1, 3, 1])
+        check('a formula column is not filled', r['fz'], True)
+    xy = await page.ev("(() => { const b = [...document.querySelectorAll('.sm-view:not([hidden]) .sm-graphbtn')][0]; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    await page.click(xy[0], xy[1])
+    await asyncio.sleep(0.3)
+    r = await js(page, r"""
+      const t = SM.app.tables.find((x) => x.name === 'Props');
+      const v = document.querySelector('.sm-view:not([hidden])');
+      const head = v.querySelector('.sm-grid-head');
+      const graphs = [...head.querySelectorAll('.sm-hcell')].map((h) => ({ name: h.querySelector('.sm-hname').textContent, bars: h.querySelectorAll('.sm-hgraph-bar').length, title: (h.querySelector('.sm-hgraph title') || {}).textContent || '' }));
+      const pressed = v.querySelector('.sm-graphbtn').getAttribute('aria-pressed');
+      const top = v.querySelector('.sm-grid-rows').style.top;
+      const d = SM.app.grid.graphData(t.col('score'));
+      const vals = t.col('score').values.filter(Number.isFinite);
+      t.select([0, 1, 2, 4]);
+      await T.sleep(100);
+      const sel = [...head.querySelectorAll('.sm-hcell')].map((h) => h.querySelectorAll('.sm-hgraph-sel').length);
+      const d2 = SM.app.grid.graphData(t.col('grp'));
+      const selScore = SM.app.grid.graphData(t.col('score')).sel.reduce((a, b) => a + b, 0);
+      t.select([]);
+      await T.sleep(60);
+      const grpCount = [1, 2, 3].map((k) => t.col('grp').values.filter((v) => v === k).length);
+      return { graphs, pressed, top, sel, all: d.all.reduce((a, b) => a + b, 0), n: vals.length, k: d.k, grpAll: d2.all, grpCount, grpSel: d2.sel, selScore, withHead: head.classList.contains('with-graphs') };
+    """, 'Header Graphs')
+    if r:
+        check('Header Graphs: the button pressed, the headings taller', (r['pressed'], r['withHead'], r['top']), ('true', True, '72px'))
+        check('a graph under every heading', [g['name'] for g in r['graphs']], ['score', 'grp', 'resp', 'seq', 'txt'])
+        check('a histogram of score: its bars count every value that is not missing (the codes left out)', (r['all'], r['n']), (20, 20))
+        check('its title says what it shows', r['graphs'][0]['title'].startswith('score: a histogram of 20 values'), True)
+        check('grp: a bar per level, its rows counted', (r['graphs'][1]['bars'], r['grpAll']), (3, r['grpCount']))
+        check('selected rows drawn darker: the four selected rows in score\'s bars, a bar over each of their levels of grp and resp', (r['selScore'], r['sel'][1:3]), (4, [len([x for x in r['grpSel'] if x]), 2]))
+    await page.click(xy[0], xy[1])
+    await asyncio.sleep(0.2)
+    off = await page.ev("(() => { const v = document.querySelector('.sm-view:not([hidden])'); return [v.querySelector('.sm-graphbtn').getAttribute('aria-pressed'), v.querySelectorAll('.sm-hgraph').length, v.querySelector('.sm-grid-rows').style.top]; })()")
+    check('Header Graphs off again', off, ['false', 0, '26px'])
+
+    # ---- Tabulate: a continuous column in bins and by its levels; Show Chart ------------------------------------------------------------
+    r = await js(page, r"""
+      const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const h = t.col('height (cm)'), w = t.col('weight (kg)'), a = t.col('age');
+      const rep = SM.app.openReport(SM.platforms.get('tabulate'), { roles: {}, options: { tab: { rows: [[{ id: h.id, name: h.name, as: 'bins', bins: 5 }]], cols: [], analysis: [{ id: w.id, name: w.name }], stats: ['N', 'Mean'], quantiles: [25, 75] } } }, t);
+      await T.done(rep);
+      const read = () => { const tbl = rep.body.querySelector('table.smt-table'); return [...tbl.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((c) => c.textContent)); };
+      const rows1 = read();
+      // the bins by hand: Make Binning Column's equal widths
+      const b = SM.tables.binCuts(h.values, { method: 'width', k: 5 });
+      const hv = h.values, wv = w.values;
+      const bin = (x) => { let i = 0; while (i < b.cuts.length && x >= b.cuts[i]) i++; return i; };
+      const want = []; for (let i = 0; i <= b.cuts.length; i++) { const ws = wv.filter((_, k) => Number.isFinite(hv[k]) && bin(hv[k]) === i && Number.isFinite(wv[k])); if (ws.length) want.push([String(ws.length), ws.reduce((x, y) => x + y, 0) / ws.length]); }
+      const okBins = rows1.length === want.length && rows1.every((r, i) => r[1] === want[i][0] && T.near(Number(r[2].replace('−', '-')), want[i][1], 1e-6));
+      const chip = rep.body.querySelector('.smt-chip-cont');
+      const chipText = chip ? chip.textContent : null;
+      // its right click: by its levels
+      chip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+      await T.sleep(40);
+      const p = T.done(rep);
+      T.menuButton('Group by Its Levels').click();
+      await p;
+      const rows2 = read();
+      const distinct = [...new Set(hv.filter(Number.isFinite))].length;
+      // Show Chart, from the red triangle's item
+      const p2 = T.done(rep);
+      rep.spec.options.chart = true; rep.run();
+      await p2;
+      const cells = [...rep.body.querySelectorAll('table.smt-table td.smt-barcell')];
+      const bars = cells.map((c) => Number(c.dataset.bar));
+      const codes = [...rep.body.querySelectorAll('details.sm-code')].length;
+      const tri = rep.platform.triangle(rep.ctxFor ? rep.ctxFor() : { check: (l) => ({ label: l }), opt: () => null, table: t, set: () => null, report: rep }).map((x) => x && x.label);
+      SM.app.closeReport(rep);
+      return { rows1n: rows1.length, labels: rows1.map((r) => r[0]), cutLabels: b.cuts.length + 1, okBins, chipText, rows2: rows2.length, distinct, cells: cells.length, max: Math.max(...bars), codes, tri };
+    """, 'Tabulate: bins, levels, Show Chart')
+    if r:
+        check('a continuous column in bins: a row per bin with rows, N and Mean by hand', r['okBins'], True)
+        check('the bins are labelled by their ranges', all(' - ' in x for x in r['labels']), True)
+        check('its chip says how it groups', r['chipText'], 'height (cm) (5 bins)×')
+        check('Group by Its Levels: a row per distinct value', r['rows2'], r['distinct'])
+        check('Show Chart: a bar in every cell, the largest of each column at 100%', (r['cells'], r['max']), (2 * r['distinct'], 100))
+        check('... with the code that draws the bars under the table\'s', r['codes'], 2)
+        check('Show Chart is in the red triangle', 'Show Chart' in r['tri'], True)
+
+    # ---- Explore Missing Values: Missing Value Clustering (and its code, run), SVD imputation, shrinkage -------------------------------
+    r = await js(page, r"""
+      const m = SM.app.tables.find((x) => x.name === 'Students with gaps');
+      SM.app.showTab(SM.app.tabOf(m));
+      const P = SM.platforms.get('missing');
+      const ids = ['sex', 'height (cm)', 'weight (kg)'].map((n) => m.col(n).id);
+      const rep = SM.app.openReport(P, { roles: { y: ids }, options: { clustering: true } }, m);
+      await T.done(rep);
+      const g = await __gr.graphs(rep);
+      const cl = g.find((x) => x.label === 'Missing value clustering');
+      const heat = cl ? cl.traces.find((x) => x.type === 'heatmap') : null;
+      const pats = [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector('.sm-ob-head').textContent.trim() === 'Missing Value Report');
+      const npat = pats ? pats.querySelectorAll('tbody tr').length : null;
+      const plot = rep.plots.find((p) => p.opts.title === 'Missing value clustering');
+      // a click on a pattern selects its rows
+      const gd = plot.box;
+      gd.emit('plotly_click', { points: [{ data: { type: 'heatmap' }, pointIndex: [0, 0], y: 0 }], event: {} });
+      const sel = m.selectedRows();
+      const mc = await SM.engine.call('tables.missing_clustering', { columns: ['sex', 'height (cm)', 'weight (kg)'], rows: rep.ctxRows || null }, m);
+      const run = await __gr.run(cl.code, m);
+      const errs = (run.outputs || []).filter((o) => o.type === 'error').map((o) => `${o.ename}: ${o.evalue}`);
+      const figs = (run.outputs || []).filter((o) => o.type === 'display' || o.type === 'image' || (o.data && (o.data['image/svg+xml'] || o.data['image/png']))).length;
+      m.select([]);
+      // SVD imputation from the Impute menu, as new columns
+      T.button(rep.body, 'Impute ▾').click();
+      T.menuButton('Multivariate SVD Imputation').click();
+      await T.sleep(100);
+      let f = T.dlg();
+      const svdFields = [...f.querySelectorAll('.sm-form > label')].map((l) => l.textContent);
+      // (the columns an imputation adds: the table may have Imputed[x] columns from before)
+      let had = new Set(m.columns.map((c) => c.id));
+      const added = () => m.columns.filter((c) => !had.has(c.id));
+      T.set(T.opt(f, 'Save'), 'new'); T.ok(f);
+      await T.until(() => added().length === 2);
+      const svdOk = added().every((c) => c.values.every(Number.isFinite));
+      const svdNote = added()[1].notes;
+      for (const c of added()) m.removeColumn(c.id);
+      // multivariate normal, the covariances shrunk automatically
+      T.button(rep.body, 'Impute ▾').click();
+      T.menuButton('Multivariate Normal Imputation').click();
+      await T.sleep(100);
+      f = T.dlg();
+      had = new Set(m.columns.map((c) => c.id));
+      T.set(T.opt(f, 'Save'), 'new'); T.set(T.opt(f, 'Shrink the covariances'), 'auto'); T.ok(f);
+      await T.until(() => added().length === 2);
+      const shrinkNote = added()[1].notes;
+      const mvnOk = added().every((c) => c.values.every(Number.isFinite));
+      for (const c of added()) m.removeColumn(c.id);
+      const tri = [...rep.body.querySelectorAll('.sm-ob-head')].map((h) => h.textContent.trim());
+      SM.app.closeReport(rep);
+      return { found: !!cl, rowsZ: heat ? heat.z.length : null, npat, colsZ: heat ? heat.z[0].length : null, codeLast: cl && cl.code ? cl.code.trim().split('\n').pop() : null, sel, rows0: mc.patterns[0].rows, errs, figs, svdFields, svdOk, svdNote, shrinkNote, mvnOk, tri };
+    """, 'Missing Value Clustering, SVD and shrinkage')
+    if r:
+        check('Missing Value Clustering: a heat map, a row per pattern (as the Missing Value Report counts them), a column per column', (r['found'], r['rowsZ'], r['colsZ']), (True, r['npat'], 3))
+        check('its code is under it, ending in plt.show()', r['codeLast'], 'plt.show()')
+        check('... and runs in the page\'s Python, drawing a figure', (r['errs'], r['figs'] >= 1), ([], True))
+        check('a click on a pattern selects its rows', r['sel'], sorted(r['rows0']))
+        check('Multivariate SVD Imputation\'s dialog: rank, iterations, shrinkage', [x for x in r['svdFields'] if x in ('Number of singular vectors', 'Maximum iterations', 'Shrinkage (soft-impute)')], ['Number of singular vectors', 'Maximum iterations', 'Shrinkage (soft-impute)'])
+        check('SVD imputation fills the columns and says its rank', (r['svdOk'], 'Multivariate SVD, rank 1' in r['svdNote']), (True, True))
+        check('multivariate normal with the covariances shrunk: filled, λ in the note', (r['mvnOk'], 'covariances shrunk by λ = ' in r['shrinkNote']), (True, True))
+
+    # ---- File > Import Multiple Files: files dropped on its dialog; a folder's paths; binary files left out ---------------------------------
+    r = await js(page, r"""
+      const mk = (name, text, path) => { const f = new File([text], name, { type: 'text/plain', lastModified: Date.UTC(2026, 0, 2) }); if (path) Object.defineProperty(f, 'webkitRelativePath', { value: path }); return f; };
+      const files = [mk('b.txt', 'second file\nwith two lines'), mk('a.txt', 'the first'), mk('bin.txt', 'x\u0000y'), mk('skip.dat', 'no')];
+      const r1 = await SM.io.filesTable(files, { filter: '*.txt', sizes: true, dates: true });
+      const t1 = r1.table;
+      const folder = await SM.io.filesTable([mk('x.txt', 'one', 'docs/x.txt'), mk('y.txt', 'two', 'docs/sub/y.txt')]);
+      // the dialog: files dropped on it, Import
+      const n0 = SM.app.tables.length;
+      T.cmd('File', 'Import Multiple Files…');
+      await T.sleep(80);
+      const d = T.dlg();
+      const dt = new DataTransfer(); for (const f of files) dt.items.add(f);
+      d.querySelector('.smt-form').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      const note = d.querySelector('.smi-files').textContent;
+      T.set(T.opt(d, 'Output table name'), 'Letters');
+      T.button(d, 'Import').click();
+      const nt = await T.newTable(n0);
+      const out = { names: t1.col('File Name').values, text: t1.col('Text').values, cols: t1.columns.map((c) => c.name), size: t1.col('Size (bytes)').values, date: t1.col('Date Modified').values[0] === Date.UTC(2026, 0, 2), fmt: t1.col('Date Modified').format.kind, notes: t1.notes,
+        folder: [folder.table.columns.map((c) => c.name), folder.table.col('Path').values], note, dialog: [nt.name, nt.nrows, nt.col('File Name').values] };
+      SM.app.closeTable(nt);
+      return out;
+    """, 'Import Multiple Files')
+    if r:
+        check('a row per text file, in name order, the filter applied', r['names'], ['a.txt', 'b.txt'])
+        check('each file\'s whole text', r['text'], ['the first', 'second file\nwith two lines'])
+        check('File Name, Text, and the size and date when asked', (r['cols'], r['size'], r['date'], r['fmt']), (['File Name', 'Text', 'Size (bytes)', 'Date Modified'], [9, 26], True, 'datetime'))
+        check('a file that is not text is left out, and the table\'s notes say so', 'bin.txt (not text)' in r['notes'], True)
+        check('from a folder: a Path column with where each file is', r['folder'], [['File Name', 'Path', 'Text'], ['docs/sub/y.txt', 'docs/x.txt']])
+        check('the dialog counts the files dropped on it and the ones the filter takes', r['note'], '4 files chosen, 3 matching the filter (< 0.1 MB)')
+        check('Import makes the table', r['dialog'], ['Letters', 2, ['a.txt', 'b.txt']])
+
+    # ---- the new parts in the dark theme and at phone width ----------------------------------------------------------------------------
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await js(page, "const t = SM.app.tables.find((x) => x.name === 'Props'); SM.app.showTab(SM.app.tabOf(t)); SM.app.grid.setGraphs(true); SM.app.columnInfo(t.col('resp')); await T.sleep(150); const d = T.dlg(); T.set([...d.querySelectorAll('label')].find((l) => l.textContent.trim() === 'Use a profit matrix').querySelector('input'), true); return true;")
+    await asyncio.sleep(0.4)
+    await shot(page, 't10-colprops-dark.png')
+    dark = await page.ev("""(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop(); const inp = d.querySelector('input.smc-pv'); const cs = getComputedStyle(inp); const h = document.querySelector('.sm-view:not([hidden]) .sm-hgraph-bar'); return [cs.backgroundColor !== 'rgb(255, 255, 255)', cs.color !== 'rgb(0, 0, 0)', !!h && getComputedStyle(h).fill !== 'rgb(0, 0, 0)']; })()""")
+    check('dark theme: the profit matrix\'s cells and the header graphs take the dark colours', dark, [True, True, True])
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(0.6)
+    ph = await page.ev("""(() => { const d = [...document.querySelectorAll('.sm-dialog')].pop(); const b = d.querySelector('.sm-dialog-body'); return [document.documentElement.scrollWidth <= innerWidth + 1, d.getBoundingClientRect().width <= innerWidth + 1, b.scrollWidth <= b.clientWidth + 2]; })()""")
+    check('phone width: Column Info with its property editors fits the screen, without a sideways scroll', ph, [True, True, True])
+    await shot(page, 't11-colprops-phone.png')
+    await page.ev("T.button(T.dlg(), 'Cancel').click()")
+    await asyncio.sleep(0.3)
+    wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
+    check('phone width: the grid with Header Graphs, no sideways page scroll', wide, True)
+    await shot(page, 't12-headergraphs-phone.png')
+    await page.ev("SM.app.grid.setGraphs(false); try { localStorage.removeItem('smui.headerGraphs'); } catch (e) {}")
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(0.4)
+    check('no script errors in the new parts', page.errors, [])
 
 # ---- Explore Missing Values: the snapshot's matplotlib code --------------------------------------------------------
 # The block under the snapshot runs in the page's own Python (the notebook's runner): a mark for each

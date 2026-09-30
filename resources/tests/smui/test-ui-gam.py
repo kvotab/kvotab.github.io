@@ -252,7 +252,7 @@ async def main():
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
     check('gam imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "gam").map(f => f.error)'), [])
-    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.importance', 'gam.maximize', 'gam.plot_code', 'gam.profile', 'gam.surface', 'gam.term'])
+    check('the engine has the gam functions', await page.ev('SM.engine.names.filter(n => n.startsWith("gam.")).sort()'), ['gam.compare', 'gam.fit', 'gam.importance', 'gam.marginal', 'gam.maximize', 'gam.plot_code', 'gam.profile', 'gam.shapley', 'gam.surface', 'gam.term'])
     await page.ev(HELPERS)
     t = await page.ev('({ name: SM.app.current.name, rows: SM.app.current.nrows, cols: SM.app.current.columns.map(c => c.name), listed: !!SM.io.EXAMPLES.ozone, date: SM.app.current.col("date").format.kind })')
     check('?example=ozone opens the simulated table', (t['name'], t['rows'], t['listed'], t['date']), ('Ozone', 365, True, 'date'))

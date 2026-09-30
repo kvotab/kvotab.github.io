@@ -85,7 +85,8 @@
   /* Columns from rows of strings: the first row is the header. */
   function columnsFromRows(rows, { decimalComma = null } = {}) {
     if (!rows.length) throw new Error('the file is empty');
-    const header = rows[0].map((h, i) => (String(h || '').trim() || `Column ${i + 1}`));
+    // (a header on one line: a quoted "a\nb" is a b, SM.table.cleanName)
+    const header = rows[0].map((h, i) => (SM.table.cleanName(h) || `Column ${i + 1}`));
     const body = rows.slice(1);
     const ncol = Math.max(header.length, ...body.map((r) => r.length));
     while (header.length < ncol) header.push(`Column ${header.length + 1}`);
@@ -233,24 +234,77 @@
     return [tableFromText(text, name.replace(/\.(csv|tsv|txt|dat|tab)$/i, ''))];
   }
 
+  /* ---- File > Import Multiple Files: a row per file ------------------------
+     The files' names (their paths inside a folder that was picked) and
+     their text, for Text Explorer; with sizes and dates when asked. A file
+     whose text has NUL characters is not text and is left out, and one
+     larger than MAX_TEXT_FILE is cut there (the notes say which). */
+  const MAX_TEXT_FILE = 8 * 1024 * 1024;
+  const MAX_TEXT_TOTAL = 200 * 1024 * 1024;
+
+  function globMatcher(pattern) {
+    const parts = String(pattern || '').split(/[;,]/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length || parts.includes('*') || parts.includes('*.*')) return () => true;
+    const res = parts.map((p) => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i'));
+    return (name) => res.some((re) => re.test(name));
+  }
+
+  async function filesTable(files, { name = 'Imported files', filter = '*', sizes = false, dates = false } = {}) {
+    const match = globMatcher(filter);
+    const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const pathOf = (f) => f.webkitRelativePath || f.name;
+    const list = [...files].filter((f) => match(f.name)).sort((a, b) => coll.compare(pathOf(a), pathOf(b)));
+    const skipped = [], cut = [];
+    const names = [], paths = [], texts = [], size = [], date = [];
+    let total = 0;
+    for (const f of list) {
+      if (total >= MAX_TEXT_TOTAL) { skipped.push(`${pathOf(f)} (past ${MAX_TEXT_TOTAL / 1048576} MB in all)`); continue; }
+      const blob = f.size > MAX_TEXT_FILE ? f.slice(0, MAX_TEXT_FILE) : f;
+      let text = await blob.text();
+      if (text.includes('\u0000')) { skipped.push(`${pathOf(f)} (not text)`); continue; }
+      if (f.size > MAX_TEXT_FILE) cut.push(pathOf(f));
+      text = text.replace(/^﻿/, '');
+      total += text.length;
+      names.push(f.name); paths.push(pathOf(f)); texts.push(text); size.push(f.size);
+      date.push(Number.isFinite(f.lastModified) ? f.lastModified : NaN);
+    }
+    const anyFolder = paths.some((p, i) => p !== names[i]);
+    const columns = [{ name: 'File Name', dataType: 'character', values: names }];
+    if (anyFolder) columns.push({ name: 'Path', dataType: 'character', values: paths });
+    columns.push({ name: 'Text', dataType: 'character', values: texts, notes: 'the text of each file, for Analyze > Text Explorer' });
+    if (sizes) columns.push({ name: 'Size (bytes)', dataType: 'numeric', values: size });
+    if (dates) columns.push({ name: 'Date Modified', dataType: 'numeric', format: { kind: 'datetime' }, values: date });
+    const t = new SM.Table({ name, columns, source: `File > Import Multiple Files: ${names.length} file${names.length === 1 ? '' : 's'}` });
+    const notes = [];
+    if (skipped.length) notes.push(`Left out: ${skipped.slice(0, 20).join(', ')}${skipped.length > 20 ? ` and ${skipped.length - 20} more` : ''}.`);
+    if (cut.length) notes.push(`Cut at ${MAX_TEXT_FILE / 1048576} MB: ${cut.join(', ')}.`);
+    t.notes = notes.join(' ');
+    return { table: t, skipped, cut, matched: list.length };
+  }
+
   /* ---- writing -------------------------------------------------------------- */
+  /* The files keep the stored values: a missing value code as the code
+     (999, as JMP writes it; the reports' code turns it into a missing value
+     after reading, SM.table.codedCode), a labelled value as the value. */
   function cellText(c, v) {
     if (isMissing(v)) return '';
     if (c.isNumeric && c.format && (c.format.kind === 'date' || c.format.kind === 'datetime')) return formatDate(v, c.format.kind);
     return String(v);
   }
 
+  const stored = (c, i) => (c.coded && c.coded[i] !== undefined ? c.coded[i] : c.values[i]);
+
   function toCsv(table, sep = ',') {
     const esc = (s) => (/[",\n\r;\t]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
     const lines = [table.columns.map((c) => esc(c.name)).join(sep)];
-    for (let i = 0; i < table.nrows; i++) lines.push(table.columns.map((c) => esc(cellText(c, c.values[i]))).join(sep));
+    for (let i = 0; i < table.nrows; i++) lines.push(table.columns.map((c) => esc(cellText(c, stored(c, i)))).join(sep));
     return lines.join('\r\n') + '\r\n';
   }
 
   async function toXlsxBlob(table) {
     if (typeof XlsxWriter === 'undefined') throw new Error('the Excel writer did not load');
     const rows = [table.columns.map((c) => c.name)];
-    for (let i = 0; i < table.nrows; i++) rows.push(table.columns.map((c) => { const v = c.values[i]; if (isMissing(v)) return ''; return c.isNumeric && !(c.format && /date/.test(c.format.kind)) ? v : cellText(c, v); }));
+    for (let i = 0; i < table.nrows; i++) rows.push(table.columns.map((c) => { const v = stored(c, i); if (isMissing(v)) return ''; return c.isNumeric && !(c.format && /date/.test(c.format.kind)) ? v : cellText(c, v); }));
     const w = new XlsxWriter(`${table.name}.xlsx`);
     w.writeData(rows, (table.name || 'Data').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || 'Data');
     const content = await w.save();
@@ -406,6 +460,6 @@
 
   SM.io = Object.freeze({
     detectDelimiter, parseRows, columnsFromRows, tableFromText, readXlsx, readFile, toCsv, toXlsxBlob, formatDate, parseDate,
-    cellText, EXAMPLES, example, addExample,
+    cellText, EXAMPLES, example, addExample, filesTable, globMatcher,
   });
 }(typeof self !== 'undefined' ? self : this));

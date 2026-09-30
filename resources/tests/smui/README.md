@@ -13,7 +13,12 @@ page uses. They need a Python with numpy, scipy, pandas, patsy and
 statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 1.8 for the predictive platforms' suites and test_fit_model.py (Pyodide has
 1.8.0). pingouin 0.7, if installed, is one more reference in some suites
-(called, never copied: it is GPL-3.0); its checks are skipped without it:
+(called, never copied: it is GPL-3.0); its checks are skipped without it.
+test_screening.py needs xgboost 2.1.4 and lightgbm 4.6.0 (Pyodide's);
+test_text.py needs vaderSentiment 3.3.2 for its sentiment checks (skipped
+without it) and fetches snowballstemmer 2.2.0 into `local/snowball2/`
+(git-ignored) on its first run; the checks that evaluate a saved formula
+with the page's own formula engine need `node` (skipped without it):
 
     python3 resources/tests/smui/test_distribution.py   # and test_<module>.py for each module
     node resources/tests/smui/test-formula.js           # the formula language, no browser
@@ -21,45 +26,50 @@ statsmodels 0.14 (Pyodide 314.0.7 has statsmodels 0.14.6), and scikit-learn
 | Suite | Checks | Against |
 |---|---|---|
 | `test_distribution.py` | 165 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out |
-| `test_models.py` | 36 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand |
-| `test_io.py` | 9 | a Stata file written by pandas, statsmodels.datasets |
+| `test_models.py` | 71 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand; the formula text of a model (Match codes, centred crossings, By) evaluated by the page's formula engine (needs node) |
+| `test_io.py` | 11 | a Stata file written by pandas (its value labels as the coded column's Value Labels), statsmodels.datasets |
 | `test_jmp.py` | 41 | JMPReader.jl's own test tables and the values its runtests.jl expects (the tables are not ours: `fetch-jmp-fixtures.py` puts them in `local/jmp/`, git-ignored; skipped without them) |
-| `test_fit_y_by_x.py` | 604 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin |
-| `test_fit_model.py` | 1030 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω² |
-| `test_multivariate.py` | 1438 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman |
-| `test_timeseries.py` | 1433 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example |
+| `test_fit_y_by_x.py` | 746 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin; Save Formula and Save Probability Formula through the formula engine, the logistic Lack of Fit against the saturated model, Hsu's MCB (the one-sided Dunnett quantile against published values and scipy's dunnett), the Unstable test |
+| `test_fit_model.py` | 1288 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω²; the saved formulas of every personality through the formula engine; the Validation column's sets and Crossvalidation; Stepwise by BIC and for a categorical Y; the logistic Lack of Fit against the saturated model; Std Beta against standardized fits; the indicator parameterization; singular designs; GenReg's Maximum Likelihood against GLM; Inverse Prediction by Fieller; Test Slices against f_test; FDR over several responses |
+| `test_mixed.py` | 293 | Fit Model's mixed models: REML with unbounded variance components against the expected mean squares of balanced designs (negative estimates too), the exact split-plot F tests (Kenward–Roger gives them), a dense reference from the published formulas (the REML likelihood, the observed information, Kenward and Roger's covariance and df, Satterthwaite's df, the BLUPs and their prediction errors) for unbalanced, crossed, nested, random-coefficient and every repeated structure, statsmodels' MixedLM where the model is the same, the code on a CSV |
+| `test_multivariate.py` | 1876 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman; the saved formulas (scores, clusters, distances, discriminant probabilities) evaluated by the page's formula engine (needs node); scikit-learn's silhouettes, scipy's distances, Gower by brute force, Huber's robust scale, Discriminant's validation sets |
+| `test_timeseries.py` | 2060 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example; Forecast on Holdback (each model by statsmodels on the training values), the Naive, Seasonal Naive and Drift benchmarks (the forecast package's rwf errors), the moving average three ways, Custom constraints, Box-Cox, multiplicative trends, the runs test (and runstest_1samp's correction slip), rolling-origin cross-validation, Time Series Forecast's candidates by ETSModel |
 | `test_survival.py` | 469 | Kaplan-Meier and Greenwood by hand, survdiff, PHReg, scipy CensoredData |
 | `test_nonlinear.py` | 472 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
-| `test_quality.py` | 830 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas |
-| `test_doe.py` | 844 | design properties, statsmodels power, textbook values |
-| `test_graph.py` | 328 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot |
-| `test_tables.py` | 145 | pandas group-by, merge, melt/pivot, JMP quantiles |
+| `test_quality.py` | 913 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas; the Alarm Report's counts and rates by hand |
+| `test_doe.py` | 894 | design properties, statsmodels power, textbook values; split plots and blocked full factorials by their structure, the design's model fitted by REML against the exact split-plot F tests (Kenward–Roger df), Simulate Responses' formula |
+| `test_graph.py` | 370 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot; the automatic bins as Make Binning Column's (JMP quantiles), Axis Settings in the code, the maps' boundaries (cdn.plot.ly, read at run time; skipped offline) |
+| `test_tables.py` | 178 | pandas group-by, merge, melt/pivot, JMP quantiles; Missing Value Codes and Value Labels in the engine; Tabulate's bins; the SVD and shrunk EM imputations by their fixed points; Missing Value Clustering against scipy's Ward |
 | `test_multits.py` | 321 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
 | `test_counts.py` | 817 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
 | `test_meta.py` | 474 | statsmodels directly, the textbook formulas, a small example worked by hand |
 | `test_treatment.py` | 364 | statsmodels directly, the estimators' formulas, analytic sandwiches, simulated truth |
 | `test_gam.py` | 308 | statsmodels GLMGam directly, the penalty search by hand, known true functions |
 | `test_mediation.py` | 328 | statsmodels' Mediation called directly with the same seeds, known truth |
-| `test_partition.py` | 358 | brute-force cut and grouping searches, scikit-learn trees on the same column, scipy's f_oneway and chi2_contingency, the LogWorth adjustment, a Monte Carlo under no effect, smoothing by hand, Freq as repeated rows, the code on a CSV |
-| `test_ensemble.py` | 266 | scikit-learn's forests and boosting called directly (trees, staged curves, probabilities), brute-force out-of-bag losses and permutation importance, JMP's documented probabilities, the code on a CSV |
-| `test_neural.py` | 260 | scikit-learn's MLP replayed exactly, a forward pass from the Estimates, an identity network against OLS, WLS and Logit, the code on a CSV |
-| `test_learners.py` | 318 | scikit-learn's KNeighbors, GaussianNB, CategoricalNB, SVC, SVR and folds called directly, missing-value products by hand, the code on a CSV |
+| `test_partition.py` | 416 | brute-force cut and grouping searches, scikit-learn trees on the same column, scipy's f_oneway and chi2_contingency, the LogWorth adjustment, a Monte Carlo under no effect, smoothing by hand, Freq as repeated rows, AICc, the prediction and leaf formulas, K-fold crossvalidation, the code on a CSV |
+| `test_uplift.py` | 148 | Uplift: the interaction F against OLS and WLS with the split × treatment term, the likelihood-ratio χ² against two binomial GLMs (and the Poisson log-linear model with an empty cell), the best root split by brute force, the LogWorth by Monte Carlo under no interaction, the nodes against pandas and ttest_ind, Freq as repeated rows, the summary against OLS, Go, the Qini curve by brute force, the saved formulas in the page's formula engine (needs node), the code on a CSV |
+| `test_ensemble.py` | 318 | scikit-learn's forests and boosting where no X is nominal (the same trees and draws), the forest and boosting written anew with pandas where one is (two groups of levels), every grouping by brute force, out-of-bag losses and permutation importance, JMP's documented probabilities, Score Rows, K-fold crossvalidation, the code on a CSV |
+| `test_neural.py` | 171 | the gradients by finite differences, the likelihoods against scipy, Linear networks against OLS, WLS, Logit, MNLogit and QuantReg, the Johnson transforms against scipy, the penalty path, tours and folds, the saved formulas through the page's formula engine (needs node), the code on a CSV |
+| `test_learners.py` | 367 | scikit-learn's KNeighbors, GaussianNB, CategoricalNB, SVC, SVR and folds called directly, missing-value products by hand, seeded ties, distance weights, Score Rows (`knn.score`, `svm.score`), the Naive Bayes formula, the code on a CSV |
 | `test_gaussproc.py` | 200 | scikit-learn's GaussianProcessRegressor, the closed-form jackknife, known sensitivity indices, the code on a CSV |
 | `test_pls.py` | 335 | scikit-learn's PLSRegression and NIPALS written out, van der Voet's test, VIP by formula, the code on a CSV |
-| `test_mixtures.py` | 258 | GaussianMixture for the four structures, the one-cluster MLE, the likelihood by scipy, AICc/BIC, the EM fixed point, planted outliers, the code on a CSV |
+| `test_mixtures.py` | 341 | GaussianMixture for the four structures, the one-cluster MLE, the likelihood by scipy, AICc/BIC, the EM fixed point, planted outliers, Save Mixture Formulas evaluated by the page's formula engine (needs node), the code on a CSV |
 | `test_embedding.py` | 47 | scikit-learn's TSNE (identical maps), the learning-rate formula, the exact KL divergence of the map, the code on a CSV |
-| `test_text.py` | 241 | Porter's 1980 examples, scikit-learn's stop words and CountVectorizer, independent term and phrase counts, the weightings, numpy's SVD, statsmodels' varimax, NMF and LDA, the code on a CSV |
-| `test_screening.py` | 226 | scikit-learn's estimators called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, the validation column's rounding, the code on a CSV |
+| `test_text.py` | 371 | Porter's 1980 examples, the Snowball English (Porter2) stemmer against snowballstemmer 2.2.0 on 235,779 words (fetched into `local/snowball2/`, git-ignored: the 3.x releases follow Snowball 3's revised English), scikit-learn's stop words and CountVectorizer, independent term and phrase counts, JMP's weightings (log10), numpy's SVD, statsmodels' varimax, NMF and LDA; Latent Class Analysis on planted classes, Ward's clusters against scipy, Term Selection against scikit-learn's ElasticNet, VADER against vaderSentiment (skipped without it), the code on a CSV |
+| `test_screening.py` | 273 | scikit-learn's estimators called directly, xgboost, lightgbm and Ridge called directly, statsmodels WLS, MNLogit and OrderedModel, enet_path with AICc by hand, brute-force tuning, K-fold refits, a fold column's crossvalidation, the interaction and square terms, the stacking weights against a grid, the validation column's rounding (K Fold, Stratify by Group, balanced), the code on a CSV |
 | `test_circular.py` | 216 | scipy's circmean, circvar, circstd and vonmises.fit, pingouin's circ_* (and its bundled Berens data, read at run time), the formulas, interval coverage, test sizes, simulated truth |
-| `test_profile.py` | 38 | scipy's PchipInterpolator and sobol_indices, the Ishigami function's Sobol indices, known optima, a tree's best leaf on a grid |
+| `test_profile.py` | 50 | scipy's PchipInterpolator and sobol_indices, the Ishigami function's Sobol indices, known optima, a tree's best leaf on a grid; partial dependence and ICE by hand; Shapley values against the linear closed form, exact enumeration and additivity |
 | `test_bootstrap.py` | 56 | scipy.stats.bootstrap on the same resamples (percentile, BCa), the formulas, the code on a CSV |
-| `test_predictive.py` | 204 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas, the code on a CSV |
+| `test_predictive.py` | 319 | scikit-learn's metrics (r2, log loss, accuracy, ROC AUC and curve, confusion), the formulas; the Decision Threshold's cut tables against confusion_matrix at every threshold with Weight × Freq, the ROC table and Youden's point, gains and deciles by hand, median absolute error, the Naive Model, Group Metrics and equal FPR, the fold helpers; the code on a CSV |
+| `test_compare.py` | 147 | Model Comparison: scikit-learn's metrics with the frequencies as weights, Entropy and Generalized RSquare by formula, Model Averaging, ROC against roc_curve, lift and gains by hand, the AUC Comparison against DeLong's structural components, the code on a CSV |
+| `test_association.py` | 105 | Association Analysis: every item set counted by brute force, the rules' measures by definition, scipy's fisher_exact and statsmodels' multipletests (FDR), Apriori against FP-growth, JMP's three data formats and Freq, the code on a CSV |
+| `test_calculators.py` | 198 | Test Calculators: scipy's t tests on samples with the calculator's summaries, the effect sizes and proportion intervals by their closed forms (Wald, Agresti–Caffo, Newcombe, Katz, Woolf), Holm and Benjamini–Hochberg against multipletests, the graph's tails, the code |
 | `test_mi.py` | 327 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
 | `test_copula.py` | 864 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
 | `test_charts.py` | 1405 | every graph's matplotlib code (Distribution, Fit Y by X, Fit Model) run with Agg on the exported CSV, its figure against the report's numbers: points, lines, bands, bars, boxes, texts and titles |
 | `test_notebook.py` | 41 | the notebook's Python: outputs in the order made (streams joined, the last value, a trailing `;`), rich displays (pandas HTML, a statsmodels summary, Plotly dicts, `display()`), figures at `plt.show()` and at the end (SVG; PNG at twice the size for many points), tracebacks from the cell, namespaces, `reset()`, top-level await, `table()`, `table_names()` and `new_table()` |
-| `test_jsl.py` | 437 | JSL to Python: the JSL Syntax Reference's rules (precedence, names, escapes, dates, matrices, scopes, error recovery); every translation compiled, read as Python 3.10, and run on a CSV of a small table of our own against numpy and plain Python; the page's platform specs; 400 damaged scripts |
-| `test-formula.js` | 326 | the parser, missing values, every function, no escape to JS |
+| `test_jsl.py` | 439 | JSL to Python: the JSL Syntax Reference's rules (precedence, names, escapes, dates, matrices, scopes, error recovery); every translation compiled, read as Python 3.10, and run on a CSV of a small table of our own against numpy and plain Python; the page's platform specs; 400 damaged scripts; a hostile script (a carriage return in a comment, line breaks in a table's name) whose text stays comments |
+| `test-formula.js` | 390 | the parser, missing values, every function, no escape to JS |
 
 Every suite that shows Python code also runs that code on a CSV export of
 its table and checks that it gives the report's numbers. The export is the
@@ -73,8 +83,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-29: bootstrap 58, circular 276, copula 249, core 199, counts 304, distribution 168, dnd 123, dock 75, doe 263, embedding 124, ensemble 401, fitmodel 796, fitybyx 638, gam 387, gaussproc 217, graph 1099, jsl 24, learners 370, mediation 397, meta 431, mixtures 292, multits 464, multivariate 1342, neural 351, notebook 49, partition 655, pls 684, profiler 24, quality 515, screening 226, survival 414, tables 147, text 292, timeseries 1252, treatment 346
-(13,652 in 35 suites in all).
+Browser suites, and their checks on 2026-09-30: association 56, bootstrap 58, calculators 58, circular 276, compare 194, copula 249, core 199, counts 304, distribution 168, dnd 123, dock 75, doe 282, embedding 124, ensemble 407, fitmodel 846, fitybyx 655, gam 387, gaussproc 217, graph 1173, hostile 16, jsl 24, learners 595, mediation 397, meta 431, mixed 186, mixtures 297, multits 464, multivariate 1526, neural 346, notebook 49, partition 695, pls 684, profiler 32, quality 528, screening 274, scripts 50, survival 414, tables 251, text 359, timeseries 1574, treatment 346, uplift 232
+(15,621 in 42 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -116,6 +126,9 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-panels.js` | the Table, Columns and Rows panels |
 | `resources/js/smui-app.js` | the menu bar, tabs, the platform and command registries |
 | `resources/js/smui-dock.js`, `resources/css/smui-dock.css` | `SM.dock`: the work area's tab groups (split, moved and ordered by drag; the bars between them; a project's layout) |
+| `resources/js/smui-colprops.js` | `SM.colprops`: the column properties' editors in Column Info and Cols > Column Properties (Missing Value Codes, Value Labels, Profit Matrix), and Cols > Preselect Role |
+| `resources/js/smui-scripts.js` | `SM.scripts`: table scripts, as JMP keeps them (the Table panel's list, Save Script to Data Table, a script run by its columns' names) |
+| `resources/js/smui-axis.js` | `SM.axis`: Axis Settings on every report graph (log scale, range, increment, reverse order, reference lines), kept in `spec.options.axisSettings` and written into the graph's code |
 | `resources/js/smui-help.js` | the Help tab and the (i) topics of the frame |
 | `resources/js/smui-profiler.js` | `SM.profiler`: the Prediction Profiler of any model a backend exposes |
 | `resources/js/smui-bootstrap.js` | `SM.bootstrap`: Bootstrap from any report table's right-click menu, and the Bootstrap report |
@@ -124,7 +137,8 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-jsl.js` | `SM.jsl`: JSL to Python, the page's side (each analysis's code from a report run out of sight) |
 | `resources/py/smui/notebook.py`, `nb_backend.py` | the notebook's Python: `run_cell`, outputs, `table()`, `new_table()`; matplotlib's backend for it |
 | `resources/py/smui/jsl.py`, `jsl_python.py` | JSL to Python: the lexer and parser (a Pratt parser, with recovery), and the translator with the platforms' specs (`jsl.convert`) |
-| `resources/js/smui-predict.js` | `SM.predict`: the predictive platforms' roles, options, Measures of Fit, confusion, ROC, lift, Column Contributions, Save Columns |
+| `resources/py/smui/mixed.py`, `resources/js/smui-p-mixed.js` | Fit Model's mixed models: this page's own REML (unbounded variance components, Kenward–Roger and Satterthwaite df, repeated and spatial structures, GLMM by RSPL) and every mixed endpoint; the report's parts, the launch part, Simulate and Compare Models |
+| `resources/js/smui-predict.js`, `resources/css/smui-predict.css` | `SM.predict`: the predictive platforms' roles, options, Measures of Fit, confusion, ROC, lift and gains, Column Contributions, Save Columns; the Decision Threshold and Group Metrics of any two-level probabilities (`SM.predict.threshold`) |
 | `resources/js/smui-p-*.js`, `resources/css/smui-*.css` | the platforms, one file and one stylesheet per menu area |
 | `resources/py/smui/` | the backend: `registry` (dispatch), `util` (JSON, report tables), `data` (tables as DataFrames), `models` (linear models as JMP reports them), `predictive` (the predictive platforms' data, sets and measures), `profile` (the profiler of any model, desirability, Sobol importance), `bootstrap` (bootstrap confidence limits), one module per platform area; `manifest.json` lists what the worker loads |
 
@@ -268,6 +282,46 @@ it builds outlines into the report:
   (subgroup means) an array per point (a point is selected when any of its
   rows is).
 - `ctx.saveColumn(name, { rows, values })` adds a column to the table.
+  `ctx.saveFormula(name, expr, spec)` adds a live formula column in the
+  page's formula language (smui-formula.js; a formula that does not compile
+  throws and adds nothing): Save Prediction Formula and the saved scores and
+  clusters use it, for every row whose inputs are present. Python writes
+  the text with `util.formula_ref`, `formula_num` and `formula_str`.
+- Column properties (smui-colprops.js, kept in table JSON, projects and
+  Undo): `col.values` is what analyses see, a Missing Value Code as a
+  missing value; the stored codes are in `col.coded` (`SM.table.storedOf`,
+  `t.stored`, `t.storedValues`), the codes in `col.missingCodes`, and code
+  that reads the CSV gets the line that masks them (`SM.engine.call` and
+  `SM.report.datedCode`). `col.valueLabels` (`SM.table.labelOf`,
+  `labelPairs`): `SM.grid.cellText` gives the label, `valueText` the value;
+  the engine gets values, never labels (Python: `data.value_labels`,
+  `level_label`, `missing_codes`). `col.profitMatrix` (`SM.table.profitAligned`;
+  not sent to Python, so a platform puts it in its payload) and
+  `col.preselectRole`. Set them with `t.setMissingCodes`, `setValueLabels`,
+  `setProfitMatrix`, `setPreselectRole`.
+- Names: every column and table name is on one line (`SM.table.cleanName`:
+  line breaks and control characters become one space, runs of them
+  collapse, the ends are trimmed), whichever way it comes in.
+- Table scripts (smui-scripts.js): `t.scripts = [{ name, platform, kind,
+  spec, idNames }]`, checked when a table is read (what does not fit is
+  dropped); `kind: 'launch'` has the spec by column names and opens the
+  launch dialog filled in (`SM.launch.open({ platform, table, recall,
+  onOK })`), `kind: 'report'` a report's own spec with `idNames`, remapped
+  by name when run. Change them with `t.setScripts(list)`;
+  `SM.scripts.run(t, s)`, `SM.scripts.saveFromReport(report)`.
+- Axis Settings (smui-axis.js) come with every `ctx.plot`: `{ key }` names
+  a graph when its title and place do not, `axisCode(name)` gives a
+  graph's code the lines for an axis, `axes` lets a platform keep the
+  settings itself (Graph Builder), `plotMenu()` adds to the plot's
+  right-click menu, and `axisSettings: false` turns them off. Only a code
+  block that ends in `plt.show()` gets the settings written in.
+- Table text in code: a comment that writes a level, a value label or any
+  value from the table wraps it in `SM.util.oneLine` (Python:
+  `util.one_line`), and a string literal always escapes it (`JSON.stringify`,
+  `repr`), since a line break would end the comment and the rest would be
+  code. `SM.report.unbroken`, which every code block and the report's
+  script go through, is the net under that; `test-ui-hostile.py` runs every
+  platform on a table of such values.
 - A platform may add an example table of its own with
   `SM.io.addExample(key, { label, about, make })`, `make()` returning an
   `SM.Table`: simulated with `SM.util.rng(seed)`, never a real dataset
@@ -410,6 +464,19 @@ inside its body; the worker loads the package before the first such call
   `contributions`, `saveItems`.
 - Everything random takes the report's seed (`random_state`), so a redraw
   and the shown code give the same model; `n_jobs` stays 1 (one thread).
+- Decision Threshold for any platform's two-level probabilities (Fit Model
+  and Fit Y by X logistic, Discriminant, Model Comparison, Uplift): Python
+  `r['threshold'] = predictive.threshold(y, prob, levels, sets, w, rows,
+  head=...)`, and the page `SM.predict.threshold(ctx, parent, r.threshold,
+  { scope, prefix, probName, save, yCol, title })` with
+  `SM.predict.thresholdItem(ctx, scope)` for the red triangle; each By group
+  keeps its own threshold (`SM.predict.thresholdOption`). The platforms
+  under `SM.predict` get it with `classification` or `decisionParts`,
+  with Group Metrics (`predict.groups`).
+- A Validation column with 4 to 50 values holds K folds: `prepare()` gives
+  `P.folds`, `P.k` and `P.fold_values`, and `predictive.fold_masks(P)` and
+  `predictive.crossvalidate(P, fit_predict)` use them; a platform that
+  crossvalidates takes the folds when there are some.
 - The profiler's red triangle has Desirability Functions, Maximize
   Desirability, Set Desirabilities, Remember Settings and Assess Variable
   Importance for any source exposed with `profile.expose` (one model):
@@ -448,6 +515,10 @@ JSL to Python: `jsl.convert` returns the script with a marker line where each an
 `test-ui-dock.py` (75): the work area's tab groups (smui-dock.js). One group at the start and the Help text on a hidden shelf; the box and the bar that show where a dragged tab would go (each edge of a group, its own middle refused, a place on a strip), and a tab's drag does not mark the places that take columns; tabs dragged with the mouse (Chrome's drag interception): to an edge (a new group there, the room shared, the moved report still scrolled where it was), to the bottom of another group (a split the other way), onto another strip (the group left empty goes, and the split left with one part), along a strip (the order), onto its own group's middle (nothing); a click in a group makes it the one in use; the arrow keys stay in a strip and ctrl+shift+arrow moves a tab; the context menu's Split (off, and why, for a lone tab), Move to Group and Join All Groups; the bar between two parts (dragged, held at 150 px, a double click, ArrowDown, its role); new tabs and Help open in the group in use, new tabs before Help; the Help text back on its shelf when closed; closing tabs and the groups they leave; a hidden view whose group moved keeps its scroll position; a text field under a dropped tab takes nothing; the page's print shows the group in use; a project saves its layout and opens in it again (an older file without one as before); at phone width the groups stack, no new ones are made, and a tab held by touch moves between them.
 
 `test-ui-dnd.py` (123): a column dragged out of the place it was dropped on, with the mouse (Chrome's drag interception) and by touch; what the page shows during the drag (the item dimmed, the place that takes it, the item it would replace or the side it lands on, the places that refuse it dimmed, the Remove label by the pointer) and after it. A launch dialog (Distribution): moved between roles, reordered both ways, put in place of another role's column, refused by a role that does not take its modeling type (and the dialog says why), taken out on the column list and on the lead, left alone by a cancelled drag and by one let go beside the dialog, a list drag still as before, a role's button taking a column from another role or from the list; the report has the roles the drags made. Fit Model's effects (reordered, one taken out, a crossing refused by every role, a column from a role and back) and the Effect Tests in the new order; Multiple Imputation's effects and its pooled model; Graph Builder (between zones in one Undo step, a refusing zone, reordered, replaced, taken out on the list and on the graph, cancelled, let go outside; every point of two Y columns with Group X inside its panel); Tabulate (columns to rows, reordered and nested, the analysis columns reordered, replaced, taken out; the table computed again); the (i) texts; a phone (touch emulation): the carried item, the label, a touch cancel.
+
+`test-ui-hostile.py`: a table whose levels, value labels, texts, table name and a column name carry a line of Python behind a line break (`\n`, `\r`), a closing quote, braces, triple quotes or a trailing backslash; every platform run on it twice (the roles filled from its columns: once with By, once with a nominal response and the optional roles), a few Graph Builder and Tabulate layouts; every code block and every report's script parsed with Python's `ast`: each parses, and no `INJECTED_*` name is code. Then `SM.report.unbroken` by itself: a value with a line break written as it is into a comment goes on one line, an escaped literal and plain code are left alone, and 20,000 long texts cost milliseconds. `python3 test-ui-hostile.py fitmodel text` runs only those platforms.
+
+`test-ui-scripts.py`: table scripts; a DOE split plot's Model script opens Fit Model with its random effect, by a real click; Save Script to Data Table and the script run back (the same outlines, a closed one, the numbers), replaced by name; Rename and Delete by a real right click, Undo and Redo; a column renamed inside the scripts; missing columns; projects and Save Table; a hostile table JSON; names kept on one line (a CSV header, a JSON table name, a pasted line break); dark theme and phone width.
 
 `test-ui-core.py`: the frame loads without errors, the engine starts, every
 (i) has a topic and every Help link a target, the examples, the launch

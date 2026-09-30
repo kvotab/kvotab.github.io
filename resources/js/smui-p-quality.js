@@ -417,7 +417,7 @@
         mr_span: ctx.opt('mrSpan', 2), known_mean: known ? known.mean ?? null : null, known_sigma: known ? known.sigma ?? null : null,
         lam: ew.lam ?? 0.2, ewma_l: ew.L ?? 3, target: chart === 'cusum' ? (cu.target ?? null) : (ew.target ?? null),
         cusum_h: cu.h ?? 4, cusum_k: cu.k ?? 0.5, head_start: !!cu.headStart,
-        tests, test_n: ctx.opt('testN', {}), dispersion_tests: ctx.opt('dispTests', false),
+        tests, test_n: ctx.opt('testN', {}), dispersion_tests: ctx.opt('dispTests', false), alarm: !!ctx.opt('alarmReport', false),
         spec: ctx.opt('capability', true) && spec ? spec : null, alpha: ctx.alpha, where: where(ctx),
         plot: { zones: o.zones, shade: o.shade, limits: o.limits, center: o.center, x_title: xTitle, room: roomOf(ctx) },
       };
@@ -472,6 +472,50 @@
       }
     }
     ctx.results = results;
+    if (ctx.opt('alarmReport', false)) alarmReport(ctx, results, tests);
+  }
+
+  /* Show Alarm Report (JMP's): for each chart from the top of the report (a
+     process's XBar and R are two), its samples out of control (failing at
+     least one chosen test) and the alarm rate, the proportion of its samples
+     with a value that are; the tests each chart runs; and the samples out of
+     control with the tests they fail. Excluded rows are not in the charts, so
+     they are never counted (JMP counts excluded samples only with Test
+     Excluded Subgroups and Show Excluded Region). */
+  const ALARM_FIRST = "first = 1   # the place of this process's first chart in the report, from the top";
+  function alarmReport(ctx, results, tests) {
+    const ob = ctx.outline('Alarm Report', { key: 'alarm', info: 'cc:alarm', menu: () => [{ label: 'Hide', action: () => ctx.set('alarmReport', false) }] });
+    if (!tests.length) { ob.add(ctx.note('No test is chosen: choose them in the red triangle\'s Tests, and the report lists the samples that fail them.')); return; }
+    if (!results.length) { ob.add(ctx.note('No chart to report on.')); return; }
+    const chosen = [...new Set(tests)].sort((a, b) => a - b);
+    const summary = [], enabled = [], alarms = [], codes = [];
+    let pos = 0;
+    for (const { col, res } of results) {
+      const first = pos + 1;
+      res.panels.forEach((pn) => {
+        pos++;
+        const chart = `${pn.title} of ${col.name}`;
+        const vals = pn.values.map(num);
+        const has = vals.map((v, i) => v != null || (pn.lower && num(pn.lower[i]) != null));
+        const out = (pn.tests || []).map((t, i) => !!(t && t.length) && has[i]);
+        const nS = has.filter(Boolean).length, nOut = out.filter(Boolean).length;
+        const row = { pos, chart, n: nS, out: nOut, rate: nS ? nOut / nS : null };
+        for (const t of chosen) row[`t${t}`] = (pn.tests_used || []).includes(t) ? (pn.tests || []).filter((x, i) => out[i] && x.includes(t)).length : null;
+        summary.push(row);
+        for (const t of pn.tests_used || []) enabled.push({ pos, chart, test: t, what: res.test_text[String(t)] });
+        (pn.tests || []).forEach((t, i) => { if (out[i]) alarms.push({ pos, chart, sample: res.units[i].label, value: vals[i] != null ? vals[i] : num(pn.lower && pn.lower[i]), tests: t.join(', '), rows: res.units[i].rows, n: res.units[i].rows.length }); });
+      });
+      if (res.alarm_code) codes.push(res.alarm_code.replace(ALARM_FIRST, `first = ${first}   # the place of ${col.name}'s first chart in the report, from the top`));
+    }
+    const testCols = chosen.map((t) => ({ key: `t${t}`, label: `Test ${t}`, fmt: 'int' }));
+    ob.add(ctx.rt({ columns: [{ key: 'pos', label: 'Position', fmt: 'int' }, { key: 'chart', label: 'Chart', fmt: 'text' }, { key: 'n', label: 'Samples', fmt: 'int' }, { key: 'out', label: 'Total Samples Out of Control', fmt: 'int' }, { key: 'rate', label: 'Alarm Rate', digits: 4 }, ...testCols], rows: summary, caption: 'Alarms' }, { sortable: false, key: 'alarm:summary' }),
+      ctx.rt({ columns: [{ key: 'pos', label: 'Position', fmt: 'int' }, { key: 'chart', label: 'Chart', fmt: 'text' }, { key: 'test', label: 'Test', fmt: 'int' }, { key: 'what', label: 'Description', fmt: 'text' }], rows: enabled, caption: 'Enabled Tests' }, { sortable: false, key: 'alarm:tests' }));
+    if (alarms.length) {
+      ob.add(ctx.rt({ columns: [{ key: 'pos', label: 'Position', fmt: 'int' }, { key: 'chart', label: 'Chart', fmt: 'text' }, { key: 'sample', label: ctx.name('subgroup') || 'Sample', fmt: 'text' }, { key: 'value', label: 'Value' }, { key: 'tests', label: 'Tests Failed', fmt: 'text' }, { key: 'n', label: 'Rows', fmt: 'int', hidden: true }], rows: alarms, caption: 'Samples Out of Control' },
+        { key: 'alarm:samples', maxRows: 500, onRow: (r, ev) => ctx.table.select(r.rows, ev && ev.shiftKey ? 'add' : 'replace') }));
+    }
+    ob.add(ctx.note(`The charts are numbered from the top of the report. A sample is out of control when it fails at least one of the tests its chart runs (the Enabled Tests: every chosen test on the charts of the process; test 1 only on the range, standard deviation and moving range charts unless Test the Range, Std Dev and Moving Range Charts too is on; EWMA and CUSUM take test 1, a run chart 2 to 4); the alarm rate is those samples over the chart's samples with a value.${alarms.length ? ' Click a line of Samples Out of Control to select its rows.' : ' No sample is out of control.'}`),
+      ...(codes.length ? [ctx.code(codes.join('\n\n# ----\n'))] : []));
   }
 
   function columnMenu(ctx, col, res) {
@@ -586,6 +630,7 @@
       ctx.check('Show Control Limits', 'showLimits', null, true),
       ctx.check('Show Center Line', 'showCenter', null, true),
       ctx.check('Show Limit Summaries', 'limitSummaries', null, true),
+      ctx.check('Show Alarm Report', 'alarmReport', null, false),
       { separator: true },
       cur === 'ewma' ? { label: 'EWMA Parameters…', action: () => ask('EWMA Parameters', [
         { key: 'lam', label: 'λ (weight of the newest mean)', type: 'number', value: ew.lam ?? 0.2,
@@ -634,7 +679,7 @@
 
   SM.platforms.register({
     id: 'controlchart', label: 'Control Chart Builder', menu: 'Analyze/Quality and Process', order: 10, info: 'p:controlchart',
-    about: 'Shewhart control charts for variables (XBar & R, XBar & S, Individual & Moving Range, Levey Jennings, Run) and attributes (P, NP, C, U), EWMA and tabular CUSUM charts, with phases, the Western Electric / Nelson tests, limit summaries, a capability analysis from the spec limits, and saved limits.',
+    about: 'Shewhart control charts for variables (XBar & R, XBar & S, Individual & Moving Range, Levey Jennings, Run) and attributes (P, NP, C, U), EWMA and tabular CUSUM charts, with phases, the Western Electric / Nelson tests and JMP\'s Alarm Report (the samples out of control and the alarm rate of each chart), limit summaries, a capability analysis from the spec limits, and saved limits.',
     uses: ['numpy, scipy (the constants d2, d3, c4 by quadrature)', 'statsmodels.sandbox.stats.runs.runstest_1samp', 'scipy.stats.norm'],
     topics: {
       'p:controlchart': {
@@ -644,6 +689,16 @@
           { heading: 'Roles', choices: [['Y, Process', 'The measurements (or counts, for attribute charts). One chart per column.'], ['Subgroup', 'The subgroup (sample) each row belongs to; without it every row is a point, or consecutive rows form subgroups of a given size.'], ['Phase', 'Separate limits for each phase (before and after a change).'], ['n Trials', 'P, NP and U charts: the number inspected; without it every row is one unit.'], ['By', 'A report for each level.']] },
           { heading: 'Charts', choices: [['XBar & R, XBar & S', 'Means of subgroups; sigma from the ranges (R̄/d₂) or standard deviations (S̄/c₄).'], ['Individual & Moving Range', 'Single values; sigma = average moving range/1.128. Levey Jennings uses the overall standard deviation.'], ['P, NP, C, U', 'Proportion or number defective (binomial), defects or defects per unit (Poisson).'], ['EWMA, CUSUM', 'Small sustained shifts: an exponentially weighted mean, or cumulative sums with a decision interval h and reference k.']] },
           { heading: 'Tests', text: 'Tests 1–8 of Western Electric and Nelson: beyond the limits, runs on one side, trends, oscillation, and points in the zones A, B and C (thirds of the distance to the limits). A failing point is red with its test number; the Tests outline lists them.' },
+          { heading: 'Show Alarm Report', text: 'JMP\'s Alarm Report, from the red triangle: for each chart, numbered from the top, the samples out of control (failing a chosen test) and the alarm rate, their share of the chart\'s samples; the tests each chart runs; and the samples out of control with the tests they fail.' },
+        ],
+        more: { label: 'Control Chart Builder', id: 'help-p-controlchart' },
+      },
+      'cc:alarm': {
+        kicker: 'Control Chart Builder', title: 'Alarm Report',
+        lead: 'Which samples are out of control, chart by chart. A sample is out of control when it fails at least one of the tests its chart runs; the Alarm Rate (JMP\'s Proportion Out of Control) is the number of such samples over the chart\'s samples with a value. The charts are numbered by their Position from the top of the report: a process\'s XBar chart and its R chart are two.',
+        sections: [
+          { heading: 'The tables', choices: [['Alarms', 'Each chart: its samples, those out of control, the alarm rate and how many fail each chosen test (beyond JMP\'s table).'], ['Enabled Tests', 'The tests each chart runs, with what they look for.'], ['Samples Out of Control', 'Each sample out of control, its value and the tests it fails; click a line to select its rows.']] },
+          { heading: 'Differences from JMP', text: 'Excluded rows are not in the charts, so they are never counted; JMP counts excluded samples only with Test Excluded Subgroups and Show Excluded Region, which are not here. The Samples column, the counts by test and the list of samples are beyond JMP\'s report.' },
         ],
         more: { label: 'Control Chart Builder', id: 'help-p-controlchart' },
       },

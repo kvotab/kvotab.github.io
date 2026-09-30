@@ -5,7 +5,7 @@ The simulated Reactor example opens from the URL and File > Examples, and
 Neural sits in Analyze > Predictive Modeling; its launch dialog has JMP's
 roles (Y, X, Freq, Validation, By: no Weight) and options; the report opens
 with JMP's Model Launch and its defaults, and a bad setting is refused; the
-first Go loads scikit-learn and adds Model NTanH(3), whose measures are the
+first Go adds Model NTanH(3) (no scikit-learn: the network is our own), whose measures are the
 engine's (called here) and whose RSquare is the one computed here from the
 plotted points; points select their rows and table selections highlight
 them; the model's red triangle shows the Diagram (its inputs, nodes, outputs
@@ -17,7 +17,7 @@ its confusion matrix and ROC curve, two responses one network; Save Columns
 (predicteds, probabilities, hidden layer values, validation) match the
 engine's; Excluded Rows Holdback and a Validation column make their sets; By
 gives one analysis per group; Redo and a project keep the models; the Python
-script holds scikit-learn's calls; Bootstrap reruns the report headless;
+script holds the network's engine; Bootstrap reruns the report headless;
 every (i) has a topic; the launch dialog's (i) gives every role and option
 its help, and the Model Launch's (i) names each of its fields; the reports
 draw in the dark theme and at phone width without a sideways page scroll,
@@ -165,7 +165,7 @@ ENGINE_FIT = '''
   const m = o.models.find(x => x.id === id);
   const name = (k) => (rep.spec.roles[k] || []).map(c => t.col(c).name);
   const seed = o.seed !== undefined && o.seed !== '' ? Number(o.seed) : o.seedDrawn;
-  const model = { method: m.method, portion: m.portion, folds: m.folds, activation: m.activation, n1: m.n1, n2: m.n2, boost: m.boost, rate: m.rate, transform: m.transform, penalty: m.penalty, tours: m.tours, max_iter: m.max_iter };
+  const model = Object.fromEntries(['method', 'portion', 'folds', 't1', 'l1', 'g1', 't2', 'l2', 'g2', 'boost', 'rate', 'transform', 'robust', 'penalty', 'tours', 'max_iter'].map(k => [k, m[k]]));
   if ((rep.spec.roles.validation || []).length) model.method = 'column';
   const p = { table: t.id, rows: null, y: name('y'), x: name('x'), freq: name('freq')[0] || null, validation: name('validation')[0] || null, seed, missing: o.missing === false ? 'drop' : 'informative', model, ...(extra || {}) };
   return await SM.engine.call('neural.fit', p, t);
@@ -299,8 +299,8 @@ def neural_compare(lab, g, F):
 
 def model(mid, **kw):
     """A model of the Model Launch, as Go adds it (JMP's defaults, and kw)."""
-    m = {'id': mid, 'method': 'holdback', 'portion': 0.3333, 'folds': 5, 'activation': 'tanh', 'n1': 3, 'n2': 0, 'boost': 0, 'rate': 0.1,
-         'transform': False, 'penalty': 'squared', 'tours': 1, 'max_iter': 200}
+    m = {'id': mid, 'method': 'holdback', 'portion': 0.3333, 'folds': 5, 't1': 3, 'l1': 0, 'g1': 0, 't2': 0, 'l2': 0, 'g2': 0, 'boost': 0, 'rate': 0.1,
+         'transform': False, 'robust': False, 'penalty': 'squared', 'tours': 1, 'max_iter': 200}
     m.update(kw)
     return m
 
@@ -317,11 +317,11 @@ async def charts(page):
     last = 'SM.app.reports.at(-1)'
     every = lambda mid: {f'{mid}|{k}': True for k in ('diagram', 'abp', 'rbp', 'roc', 'lift')}
     specs = [
-        ('two continuous responses and grade, two layers', {'y': [Y, 'purity (%)', 'grade'], 'x': XS}, {'models': [model('m1', n2=2)], 'modelSeq': 1, 'seed': '7', **every('m1')}),
-        ('grade, boosted, KFold', {'y': ['grade'], 'x': XS}, {'models': [model('m1', n1=2, boost=3, method='kfold', folds=3)], 'modelSeq': 1, 'seed': '3', **every('m1')}),
-        ('yield, ReLU, Transform Covariates, two models', {'y': [Y], 'x': XS}, {'models': [model('m1', activation='relu', transform=True), model('m2', activation='logistic', n1=2)], 'modelSeq': 2, 'seed': '11',
+        ('two continuous responses and grade, two layers', {'y': [Y, 'purity (%)', 'grade'], 'x': XS}, {'models': [model('m1', t2=2)], 'modelSeq': 1, 'seed': '7', **every('m1')}),
+        ('grade, boosted, KFold', {'y': ['grade'], 'x': XS}, {'models': [model('m1', t1=2, boost=3, method='kfold', folds=3)], 'modelSeq': 1, 'seed': '3', **every('m1')}),
+        ('yield, every activation, Transform Covariates, Robust Fit, two models', {'y': [Y], 'x': XS}, {'models': [model('m1', t1=2, l1=1, g1=1, transform=True, robust=True), model('m2', t1=0, g1=2, penalty='absolute')], 'modelSeq': 2, 'seed': '11',
                                                                               **every('m1'), 'm2|diagram': True, 'm2|rbp': True}),
-        ('yield By supplier', {'y': [Y], 'x': XS[:5], 'by': ['supplier']}, {'models': [model('m1', n1=2)], 'modelSeq': 1, 'seed': '5', 'm1|diagram': True, 'm1|abp': True}),
+        ('yield By supplier', {'y': [Y], 'x': XS[:5], 'by': ['supplier']}, {'models': [model('m1', t1=2)], 'modelSeq': 1, 'seed': '5', 'm1|diagram': True, 'm1|abp': True}),
     ]
     total = 0
     for label, roles, opts in specs:
@@ -340,7 +340,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "neural").map(f => f.module + ": " + f.error)')
     check('neural.py imports in Pyodide', failed, [])
     check('no script errors at load', page.errors, [])
-    check('scikit-learn waits for its first use', await page.ev("(SM.engine.versions['scikit-learn'] || null)"), None)
+    check('no scikit-learn: the network is our own (numpy and scipy)', await page.ev("(SM.engine.versions['scikit-learn'] || null)"), None)
 
     # ---- the example and the menu
     ex = await page.ev('''(() => {
@@ -383,31 +383,32 @@ async def main():
       const pen = body.querySelector('[aria-label="Penalty Method"]');
       return { roles, opts, needX, title: rep.title, outlines: [...body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent),
                notes: [...body.querySelectorAll('.sm-ob-note')].map(e => e.textContent),
-               defaults: ['Validation Method', 'Holdback Proportion', 'Activation', 'First layer nodes', 'Second layer nodes', 'Number of Models', 'Learning Rate', 'Transform Covariates', 'Penalty Method', 'Number of Tours', 'Maximum Iterations'].map(val),
-               robust: body.querySelector('[aria-label="Robust Fit (not in scikit-learn)"]').disabled,
+               defaults: ['Validation Method', 'Holdback Proportion', 'First layer TanH nodes', 'First layer Linear nodes', 'First layer Gaussian nodes', 'Second layer TanH nodes', 'Second layer Linear nodes', 'Second layer Gaussian nodes',
+                          'Number of Models', 'Learning Rate', 'Transform Covariates', 'Robust Fit', 'Penalty Method', 'Number of Tours', 'Maximum Iterations'].map(val),
+               robust: body.querySelector('[aria-label="Robust Fit"]').disabled,
                penalties: [...pen.options].map(o => [o.textContent, o.disabled]), folds: body.querySelector('.sm-nn-folds').hidden,
-               activations: [...body.querySelector('[aria-label="Activation"]').options].map(o => o.textContent) };
+               activations: [...body.querySelectorAll('.sm-nn-layers thead th')].map(o => o.textContent) };
     })()''' % (Y, json.dumps(XS)))
     check('JMP\'s roles: Y, X, Freq, Validation, By (no Weight)', r['roles'], ['Y, Response', 'X, Factor', 'Freq', 'Validation', 'By'])
     check('the launch options: Informative Missing and the Random Seed', r['opts'], ['Informative Missing', 'Random Seed'])
     check('no X: an error', 'X, Factor' in r['needX'], True)
     check('the report opens with the Model Launch and no model (JMP: Go fits one)', (r['title'], r['outlines']), ('Neural', ['Neural', 'Model Launch']))
     check('... and says to press Go', any('press Go' in t for t in r['notes']), True)
-    check('JMP\'s Model Launch defaults', r['defaults'], ['holdback', '0.3333', 'tanh', '3', '0', '0', '0.1', False, 'squared', '1', '200'])
-    check('Robust Fit, Absolute and Weight Decay are shown and off (not in scikit-learn)', (r['robust'], r['penalties']),
-          (True, [['Squared', False], ['Absolute (not in scikit-learn)', True], ['Weight Decay (not in scikit-learn)', True], ['No Penalty', False]]))
-    check('scikit-learn\'s four activations', r['activations'], ['TanH', 'Logistic', 'ReLU', 'Identity (Linear)'])
+    check('JMP\'s Model Launch defaults', r['defaults'], ['holdback', '0.3333', '3', '0', '0', '0', '0', '0', '0', '0.1', False, False, 'squared', '1', '200'])
+    check('Robust Fit and JMP\'s four penalty methods, every one to be chosen', (r['robust'], r['penalties']),
+          (False, [['Squared', False], ['Absolute', False], ['Weight Decay', False], ['No Penalty', False]]))
+    check('the Hidden Layer Structure: the nodes of each of JMP\'s activations in each layer', r['activations'], ['Layer', 'TanH', 'Linear', 'Gaussian'])
     check('Number of Folds shows with KFold only', r['folds'], True)
-    g = await page.ev(go_js({'First layer nodes': 0}, wait=False))
+    g = await page.ev(go_js({'First layer TanH nodes': 0}, wait=False))
     check('a bad setting is refused at Go', ('first layer' in g['msg'], g['models']), (True, []))
 
-    # ---- Go: the first model, which loads scikit-learn
-    g = await page.ev(go_js({'First layer nodes': 3}), timeout=900)
+    # ---- Go: the first model
+    g = await page.ev(go_js({'First layer TanH nodes': 3}), timeout=900)
     check('Go adds Model NTanH(3), without errors', ('Model NTanH(3)' in g['outlines'], g['errors'], g['models']), (True, [], ['m1']))
-    check('the first call loads scikit-learn 1.8', await page.ev("SM.engine.versions['scikit-learn']"), '1.8.0')
+    check('... without loading scikit-learn', await page.ev("(SM.engine.versions['scikit-learn'] || null)"), None)
     st = await page.ev(STATE)
     check('the Model Launch closes after Go, as JMP\'s does', await page.ev('(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; return [...rep.body.querySelectorAll(".sm-ob")].find(o => { const h = o.querySelector(":scope > .sm-ob-head h3"); return h && h.textContent === "Model Launch"; }).classList.contains("is-closed"); })()'), True)
-    check('the model\'s summary: Random Holdback, the penalty chosen', any(t.startswith('Validation: Random Holdback, 0.3333 of the rows') and 'Squared penalty alpha' in t for t in st['notes']), True)
+    check('the model\'s summary: Random Holdback, the penalty chosen', any(t.startswith('Validation: Random Holdback, 0.3333 of the rows') and 'Squared penalty λ' in t for t in st['notes']), True)
     await shot(page, 'neural-01-model.png')
     eng = await page.ev(engine_fit_js('m1'), timeout=600)
     meas = await page.ev(table_under_js(f'Measures of Fit for {Y}', 0))
@@ -453,9 +454,9 @@ async def main():
     check('... a line for every weight', dg['lines'], 6 * 3 + 3)
     est = {r_['parameter']: r_['estimate'] for r_ in eng['nets'][0]['estimates']}
     check.near('... the first line\'s title is the Estimate of H1_1:temperature', num(dg['first'].split(': ')[1].split(' ')[-1]), est['H1_1:temperature (°C)'], tol=5e-4)
-    check('... a categorical input\'s line lists its level columns', all(f'supplier[{lv}]' in dg['cat'] for lv in 'ABC'), True)
+    check('... a categorical input\'s line lists its effect-coded columns, each level but the last', (all(f'supplier[{lv}]' in dg['cat'] for lv in 'AB'), 'supplier[C]' in dg['cat']), (True, False))
     et = await page.ev(table_under_js('Estimates', 0))
-    check('the Estimates: JMP\'s names, from H1_1:temperature to the output\'s intercept', (et[0], et[1][0], et[-1][0], len(et) - 1), (['Parameter', 'Estimate'], 'H1_1:temperature (°C)', f'{Y}:Intercept', 3 * 9 + 4))
+    check('the Estimates: JMP\'s names, from H1_1:temperature to the output\'s intercept (supplier effect coded: two columns)', (et[0], et[1][0], et[-1][0], len(et) - 1), (['Parameter', 'Estimate'], 'H1_1:temperature (°C)', f'{Y}:Intercept', 3 * 8 + 4))
     check.near('... H1_1:temperature', num(et[1][1]), est['H1_1:temperature (°C)'], tol=5e-7)
     pf = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; const g = rep.body.querySelector('.sm-prof');
       return { plots: g.querySelectorAll('.sm-plot').length, names: [...g.querySelectorAll('.sm-prof-fname')].map(e => e.textContent), val: g.querySelector('.sm-prof-val').textContent }; })()''')
@@ -463,12 +464,12 @@ async def main():
     prof = await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table; const o = rep.spec.options;
       const m = o.models[0];
       const r = await SM.engine.call('neural.profile', { table: t.id, rows: null, y: ['%s'], x: %s, freq: null, validation: null, seed: o.seedDrawn, missing: 'informative',
-        model: { method: m.method, portion: m.portion, folds: m.folds, activation: m.activation, n1: m.n1, n2: m.n2, boost: m.boost, rate: m.rate, transform: m.transform, penalty: m.penalty, tours: m.tours, max_iter: m.max_iter }, current: {} }, t);
+        model: Object.fromEntries(['method', 'portion', 'folds', 't1', 'l1', 'g1', 't2', 'l2', 'g2', 'boost', 'rate', 'transform', 'robust', 'penalty', 'tours', 'max_iter'].map(k => [k, m[k]])), current: {} }, t);
       return r.responses[0].current.pred; })()''' % (Y, json.dumps(XS)))
     check.near('... its current prediction is the engine\'s profile of the model', num(pf['val']), prof, tol=2e-6)
     dt = await page.ev(table_under_js('Fitting Details', 0))
-    check('Fitting Details: the penalty path, its chosen alpha marked', (dt[0][:4], sum(1 for row in dt[1:] if row[-1] == 'chosen')), (['alpha', 'Iterations', 'Training -LogLikelihood', 'Validation -LogLikelihood'], 1))
-    check.near('... the chosen alpha is the model\'s', num(next(row for row in dt[1:] if row[-1] == 'chosen')[0]), eng['nets'][0]['alpha'], tol=1e-12)
+    check('Fitting Details: the penalty path, its chosen λ marked', (dt[0][:4], sum(1 for row in dt[1:] if row[-1] == 'chosen')), (['Penalty λ', 'Iterations', 'Training -LogLikelihood', 'Validation -LogLikelihood'], 1))
+    check.near('... the chosen λ is the model\'s', num(next(row for row in dt[1:] if row[-1] == 'chosen')[0]), eng['nets'][0]['lambda'], tol=1e-12)
     await shot(page, 'neural-02-parts.png')
 
     # ---- linking
@@ -490,24 +491,24 @@ async def main():
     await triangles(page, 'the report', 6)
 
     # ---- more models from the Model Launch: JMP's names, a comparison
-    g = await page.ev(go_js({'Activation': 'relu', 'First layer nodes': 4, 'Second layer nodes': 2}), timeout=900)
-    check('ReLU with two layers: Model NReLU(4)NReLU2(2)', ('Model NReLU(4)NReLU2(2)' in g['outlines'], g['errors']), (True, []))
-    g = await page.ev(go_js({'Validation Method': 'kfold', 'Number of Folds': 4, 'Activation': 'tanh', 'First layer nodes': 3, 'Second layer nodes': 0}), timeout=900)
+    g = await page.ev(go_js({'First layer TanH nodes': 2, 'First layer Gaussian nodes': 2, 'Second layer TanH nodes': 1, 'Second layer Linear nodes': 1}), timeout=900)
+    check('TanH and Gaussian nodes, two layers: JMP\'s name Model NTanH(2)NGaussian(2)NTanH2(1)NLinear2(1)', ('Model NTanH(2)NGaussian(2)NTanH2(1)NLinear2(1)' in g['outlines'], g['errors']), (True, []))
+    g = await page.ev(go_js({'Validation Method': 'kfold', 'Number of Folds': 4, 'First layer TanH nodes': 3, 'First layer Gaussian nodes': 0, 'Second layer TanH nodes': 0, 'Second layer Linear nodes': 0}), timeout=900)
     st = await page.ev(STATE)
     check('KFold: a third model, the fold it was chosen by said', (g['errors'], any(t.startswith('Validation: KFold, 4 folds') for t in st['notes'])), ([], True))
-    g = await page.ev(go_js({'Validation Method': 'holdback', 'First layer nodes': 2, 'Number of Models': 5, 'Learning Rate': 0.2}), timeout=900)
+    g = await page.ev(go_js({'Validation Method': 'holdback', 'First layer TanH nodes': 2, 'Number of Models': 5, 'Learning Rate': 0.2}), timeout=900)
     check('boosting: Model NTanH(2)NBoost(5)', ('Model NTanH(2)NBoost(5)' in g['outlines'], g['errors']), (True, []))
     check('the Model Comparison comes with several models', 'Model Comparison' in g['outlines'], True)
     cmp_ = await page.ev(table_under_js('Model Comparison', 0))
     check('... a line per model and set, in the order of the models, with their validation', [row[:3] for row in cmp_[1:]],
-          [[m_, v_, s_] for m_, v_ in (('Model NTanH(3)', 'Holdback 0.3333'), ('Model NReLU(4)NReLU2(2)', 'Holdback 0.3333'), ('Model NTanH(3)', 'KFold 4'), ('Model NTanH(2)NBoost(5)', 'Holdback 0.3333')) for s_ in ('Training', 'Validation')])
+          [[m_, v_, s_] for m_, v_ in (('Model NTanH(3)', 'Holdback 0.3333'), ('Model NTanH(2)NGaussian(2)NTanH2(1)NLinear2(1)', 'Holdback 0.3333'), ('Model NTanH(3)', 'KFold 4'), ('Model NTanH(2)NBoost(5)', 'Holdback 0.3333')) for s_ in ('Training', 'Validation')])
     k3 = await page.ev(engine_fit_js('m3'), timeout=600)
     kv = next(m for m in k3['responses'][0]['fit']['measures'] if m['set'] == 'Validation')
     kline = [row for row in cmp_[1:] if row[0] == 'Model NTanH(3)' and row[1] == 'KFold 4' and row[2] == 'Validation']
     check.near('... the KFold model\'s validation RSquare is the engine\'s', num(kline[0][3]), kv['rsquare'], tol=5e-7)
-    await page.ev(pick_js('Model NReLU(4)NReLU2(2)', ['Diagram']), timeout=300)
+    await page.ev(pick_js('Model NTanH(2)NGaussian(2)NTanH2(1)NLinear2(1)', ['Diagram']), timeout=300)
     dg2 = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1];
-      const box = [...rep.body.querySelectorAll('.sm-ob')].find(o => { const h = o.querySelector(':scope > .sm-ob-head h3'); return h && h.textContent === 'Model NReLU(4)NReLU2(2)'; });
+      const box = [...rep.body.querySelectorAll('.sm-ob')].find(o => { const h = o.querySelector(':scope > .sm-ob-head h3'); return h && h.textContent === 'Model NTanH(2)NGaussian(2)NTanH2(1)NLinear2(1)'; });
       const s = box.querySelector('.sm-nn-diagram svg');
       return { hidden: s.querySelectorAll('.sm-nn-hid circle').length, lines: s.querySelectorAll('line').length, caps: [...s.querySelectorAll('.sm-nn-layer')].map(t => t.textContent) }; })()''')
     check('the two-layer Diagram: H2 next to the inputs, then H1', (dg2['caps'], dg2['hidden'], dg2['lines']), (['Inputs', 'H2', 'H1', 'Outputs'], 6, 6 * 2 + 2 * 4 + 4))
@@ -529,7 +530,7 @@ async def main():
       }
       const added = t.columns.slice(n0).map(c => c.name);
       const o = rep.spec.options; const m = o.models[0];
-      const model = { method: m.method, portion: m.portion, folds: m.folds, activation: m.activation, n1: m.n1, n2: m.n2, boost: m.boost, rate: m.rate, transform: m.transform, penalty: m.penalty, tours: m.tours, max_iter: m.max_iter };
+      const model = Object.fromEntries(['method', 'portion', 'folds', 't1', 'l1', 'g1', 't2', 'l2', 'g2', 'boost', 'rate', 'transform', 'robust', 'penalty', 'tours', 'max_iter'].map(k => [k, m[k]]));
       const base = { table: t.id, rows: null, y: ['%s'], x: %s, freq: null, validation: null, seed: o.seedDrawn, missing: 'informative', model };
       const sv = await SM.engine.call('neural.save', { ...base, what: 'predicteds' }, t);
       const hv = await SM.engine.call('neural.save', { ...base, what: 'hidden' }, t);
@@ -543,9 +544,32 @@ async def main():
     check('Save Columns: Predicted, Residual, H1_1 to H1_3 and Validation', r['added'], [f'Predicted {Y}', f'Residual {Y}', 'H1_1', 'H1_2', 'H1_3', 'Validation'])
     check('... the engine\'s predictions, residuals and hidden nodes\' values', (r['pred'], r['resid'], r['h']), (True, True, True))
     check('... Validation: 0 training, 1 validation (nominal), 200 held back', (r['v'], r['vtype'], r['nval']), (True, 'nominal', 200))
+    # ---- JMP's formula saves: live formula columns with Save Predicteds' values
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const n0 = t.columns.length;
+      for (const item of ['Save Formulas', 'Save Profile Formulas']) {
+        const k = t.columns.length;
+        await (%s)('Model NTanH(3)', ['Save Columns', item], false, 0);
+        for (let i = 0; i < 60 && t.columns.length === k; i++) await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 300));
+      }
+      const added = t.columns.slice(n0);
+      const pred = t.col('Predicted %s').values;
+      const same = (c) => c.values.every((v, i) => Math.abs(v - pred[i]) < 1e-9 * Math.max(1, Math.abs(pred[i])));
+      const hid = t.col('H1_2').values;
+      return { names: added.map(c => c.name), formulas: added.every(c => !!(c.formula && c.formula.expr)),
+               f: same(added.find(c => c.name === 'Predicted %s 2')), p: same(added.find(c => c.name === 'Predicted %s 3')),
+               h: added.find(c => c.name === 'H1_2 2').values.every((v, i) => Math.abs(v - hid[i]) < 1e-12),
+               refs: added.find(c => c.name === 'Predicted %s 2').formula.refs.map(id => t.columns.find(c => c.id === id).name) };
+    })()''' % (PICK, Y, Y, Y, Y))
+    check('Save Formulas: the hidden nodes as formula columns (named after H1_1.. already there), then the prediction from them; Save Profile Formulas: the prediction alone',
+          (r['names'], r['formulas']), (['H1_1 2', 'H1_2 2', 'H1_3 2', f'Predicted {Y} 2', f'Predicted {Y} 3'], True))
+    check('... both predictions are Save Predicteds\' on every row, the hidden nodes Save Hidden Layer Values\'', (r['f'], r['p'], r['h']), (True, True, True))
+    check('... Save Formulas\' prediction reads the hidden columns saved with it', sorted(r['refs']), ['H1_1 2', 'H1_2 2', 'H1_3 2'])
 
     # ---- a categorical response; two continuous responses in one network
-    m1 = {'id': 'm1', 'method': 'holdback', 'portion': 0.3333, 'folds': 5, 'activation': 'tanh', 'n1': 3, 'n2': 0, 'boost': 0, 'rate': 0.1, 'transform': False, 'penalty': 'squared', 'tours': 1, 'max_iter': 200}
+    m1 = model('m1')
     rep = await page.ev(open_report_js('neural', {'y': ['grade'], 'x': XS}, {'models': [m1], 'seed': '77', 'm1|roc': True}), timeout=600)
     check('a categorical response: its measures, confusion matrix and ROC curve', (rep['errors'], all(t in rep['outlines'] for t in ('Measures of Fit for grade', 'Confusion Matrix', 'ROC Curve'))), ([], True))
     cm = await page.ev(table_under_js('Confusion Matrix', 0))
@@ -625,11 +649,11 @@ async def main():
       return out;
     })()''', timeout=900)
     check('an opened project has its own table and keeps the three models', (r['newTable'], r['models']), (True, ['m1', 'm2', 'm3']))
-    check('... the Model Launch\'s last settings and the parts shown', (r['launch']['n1'], r['launch']['boost'], r['diagram']), (2, 5, True))
+    check('... the Model Launch\'s last settings and the parts shown', (r['launch']['t1'], r['launch']['boost'], r['diagram']), (2, 5, True))
     check('... and draws the same outlines and numbers, without errors', (r['same'], r['cell'] == r['cell2'], r['errors']), (True, True, 0))
 
     script = await page.ev('SM.app.reports.find(r => r.platform.id === "neural" && (r.spec.options.models || []).length === 3).pythonScript()')
-    check('the script holds scikit-learn\'s calls, read exactly from the CSV', all(s in script for s in ('MLPRegressor(hidden_layer_sizes=(3,)', 'warm_start=True', 'float_precision="round_trip"', 'np.random.default_rng', 'MLPRegressor(hidden_layer_sizes=(2, 4), activation="relu"')), True)
+    check('the script holds the network\'s engine once and each model\'s fit, read exactly from the CSV', (script.count('class Net:'), all(s in script for s in ("fit_neural(Z, T, splits, [['tanh', 'tanh', 'tanh']]", "fit_neural(Z, T, splits, [['tanh', 'linear'], ['tanh', 'tanh', 'gauss', 'gauss']]", 'float_precision="round_trip"', 'Design(['))), (1, True))
 
     # ---- Bootstrap reruns the report headless
     r = await page.ev('''(async () => {
@@ -650,7 +674,7 @@ async def main():
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
     helps = await page.ev('(() => { SM.app.showHelp("p-neural"); const row = document.getElementById("help-p-neural"); return row ? row.textContent : null; })()')
-    check('the platform has its line in Help, with scikit-learn\'s MLPs', bool(helps) and 'MLPRegressor' in helps and 'MLPClassifier' in helps, True)
+    check('the platform has its line in Help, with the tools it uses (L-BFGS, the Johnson fits)', bool(helps) and 'L-BFGS' in helps and 'johnsonsu' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("neural").topics)')
     check('its topics', sorted(topics), sorted(['p:neural', 'p:neural:launch', 'p:neural:model', 'p:neural:estimates', 'p:neural:diagram', 'p:neural:details', 'p:neural:residual', 'p:neural:compare']))
 
@@ -661,7 +685,7 @@ async def main():
     head = f"[...{three}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Model Launch')"
     s = await page.ev(info_js('slot', head, f"{head}.parentElement.querySelector('.sm-nn-launch')"))
     check('the Model Launch\'s (i) names every one of its fields, in JMP\'s boxes, and Go', (len(s.get('inputs', [])), unexplained(s), s.get('headings')),
-          (13, [], ['Validation Method', 'Hidden Layer Structure', 'Boosting', 'Fitting Options', 'Go']))
+          (16, [], ['Validation Method', 'Hidden Layer Structure', 'Boosting', 'Fitting Options', 'Go']))
     check('... each with what it does', all(len(t) > 40 for cs in s['sections'].values() for _, t in cs), True)
 
     # ---- the graphs' matplotlib code

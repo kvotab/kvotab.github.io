@@ -30,22 +30,32 @@
   const MORE = { label: 'Model Screening', id: 'help-p-screening' };
   const CV = 'Crossvalidation';
 
-  const METHODS = [['tree', 'Decision Tree'], ['forest', 'Bootstrap Forest'], ['boosted', 'Boosted Tree'], ['knn', 'K Nearest Neighbors'],
-    ['nb', 'Naive Bayes'], ['neural', 'Neural'], ['svm', 'Support Vector Machines'], ['lda', 'Discriminant'], ['linear', 'Fit Least Squares'],
-    ['lasso', 'Generalized Regression Lasso'], ['enet', 'Generalized Regression Elastic Net'], ['stepwise', 'Fit Stepwise']];
+  const METHODS = [['tree', 'Decision Tree'], ['forest', 'Bootstrap Forest'], ['boosted', 'Boosted Tree'], ['xgboost', 'XGBoost'], ['lightgbm', 'LightGBM'],
+    ['knn', 'K Nearest Neighbors'], ['nb', 'Naive Bayes'], ['neural', 'Neural'], ['svm', 'Support Vector Machines'], ['lda', 'Discriminant'], ['linear', 'Fit Least Squares'],
+    ['lasso', 'Generalized Regression Lasso'], ['enet', 'Generalized Regression Elastic Net'], ['ridge', 'Generalized Regression Ridge'], ['stepwise', 'Fit Stepwise']];
   const KEYS = METHODS.map((m) => m[0]);
   const CAT_ONLY = new Set(['nb', 'lda']);
-  const DEFAULT = KEYS.filter((k) => k !== 'stepwise');
+  // off at first: Fit Stepwise (as JMP) and the methods beyond JMP's default list (XGBoost and LightGBM load a package when chosen)
+  const DEFAULT = KEYS.filter((k) => !['stepwise', 'xgboost', 'lightgbm', 'ridge'].includes(k));
+  // the linear methods, which the Two Way Interactions and Quadratic options change
+  const TERMED = new Set(['linear', 'lasso', 'enet', 'ridge', 'lda']);
+  /* The engine's function for the methods in the report: a variant that loads XGBoost's or LightGBM's package too
+     when one of them is chosen (screening.py, TAGS). */
+  const tagOf = (methods) => { const need = ['xgboost', 'lightgbm'].filter((k) => (methods || []).includes(k)); return need.length === 2 ? 'xgb.lgbm' : need[0] === 'xgboost' ? 'xgb' : need[0] === 'lightgbm' ? 'lgbm' : ''; };
+  const fnFor = (name, methods) => { const t = tagOf(methods); return t ? `screening.${name}.${t}` : `screening.${name}`; };
+  const profileFn = (methods) => { const t = tagOf(methods); return t ? `screening.${t}.profile` : 'screening.profile'; };
   // the method's own platform, for Run Selected (present only when it is registered)
   const PLATFORM = { tree: 'partition', forest: 'forest', boosted: 'boosted', knn: 'knn', nb: 'naivebayes', neural: 'neural', svm: 'svm',
     lda: 'discriminant', linear: 'fitmodel', lasso: 'fitmodel', enet: 'fitmodel', stepwise: 'fitmodel' };
-  const MEASURE_LABEL = { rsquare: 'RSquare', rase: 'RASE', mad: 'Mean Abs Dev', neg_loglik: '-LogLikelihood', sse: 'SSE', n: 'N',
+  const MEASURE_LABEL = { rsquare: 'RSquare', rase: 'RASE', mad: 'Mean Abs Dev', neg_loglik: '-LogLikelihood', sse: 'SSE', n: 'N', me: 'Mean Error', mape: 'MAPE', mpe: 'MPE', medae: 'Median Abs Error',
     entropy_rsquare: 'Entropy RSquare', generalized_rsquare: 'Generalized RSquare', mean_neg_log_p: 'Mean -Log p', misclassification: 'Misclassification Rate', auc: 'AUC' };
 
-  /* A colour per method, the same in every graph; lighter tints in the dark theme. */
-  const LIGHT = ['#2f6690', '#c46a12', '#3a7d44', '#b0413e', '#6c5b7b', '#1a8a78', '#8f7600', '#8c564b', '#b8428f', '#666666', '#107f8f', '#7b5bb5'];
-  const DARK = ['#6fa3d6', '#f0a050', '#6fbf73', '#e87c73', '#b39ddb', '#4fd1b8', '#e0c040', '#c9a084', '#f08fc8', '#b8b8b8', '#5fd4e8', '#a58ae6'];
-  const colorOf = (key) => (SM.util.themeColors().dark ? DARK : LIGHT)[Math.max(0, KEYS.indexOf(key)) % LIGHT.length];
+  /* A colour per method, the same in every graph; lighter tints in the dark theme (screening.py's COLORS are the light ones). */
+  const LIGHT = { tree: '#2f6690', forest: '#c46a12', boosted: '#3a7d44', knn: '#b0413e', nb: '#6c5b7b', neural: '#1a8a78', svm: '#8f7600', lda: '#8c564b', linear: '#b8428f',
+    lasso: '#666666', enet: '#107f8f', stepwise: '#7b5bb5', xgboost: '#4f6d2a', lightgbm: '#9c3d5e', ridge: '#3d5a80' };
+  const DARK = { tree: '#6fa3d6', forest: '#f0a050', boosted: '#6fbf73', knn: '#e87c73', nb: '#b39ddb', neural: '#4fd1b8', svm: '#e0c040', lda: '#c9a084', linear: '#f08fc8',
+    lasso: '#b8b8b8', enet: '#5fd4e8', stepwise: '#a58ae6', xgboost: '#a8d46f', lightgbm: '#ef8fb0', ridge: '#94b8e8' };
+  const colorOf = (key) => (SM.util.themeColors().dark ? DARK : LIGHT)[key] || '#888888';
   const W = (w) => Math.max(240, Math.min(w, (root.innerWidth || 1200) - 110));
   const wide = (node) => el('div', { class: 'sm-scr-scroll' }, node);
   /* A legend of every method: beside the graph, or under it on a narrow screen (where one beside it would leave
@@ -80,7 +90,9 @@
     const yc = ctx.role('y');
     const xs = ctx.roles('x');
     const kf = kfoldOf(ctx);
-    const spec = { y: yc.name, x: xs.map((c) => c.name), ...SM.predict.payload(ctx), kfold: kf.kfold };
+    // the Two Way Interactions and Quadratic options go only when on, so that a report made before them keeps its calls
+    const terms = { ...(ctx.opt('interactions', false) ? { interactions: true } : {}), ...(ctx.opt('quadratic', false) ? { quadratic: true } : {}) };
+    const spec = { y: yc.name, x: xs.map((c) => c.name), ...SM.predict.payload(ctx), kfold: kf.kfold, ...terms };
     const pay = { ...spec, methods: methodsOf(ctx, yc), repeats: kf.repeats };
     let note = null, off = null;
     if (!ctx.headless) {
@@ -96,11 +108,12 @@
     let r;
     // plot: what the graphs' code draws (the curves' level, the set of Actual by Predicted)
     const plot = { roc: ctx.opt('rocLevel', null), lift: ctx.opt('liftLevel', null), abp: ctx.opt('abpSet', null) };
-    try { r = await ctx.call('screening.fit', { ...pay, plot }); } finally { if (off) off(); if (note) note.remove(); }
+    try { r = await ctx.call(fnFor('fit', pay.methods), { ...pay, plot }); } finally { if (off) off(); if (note) note.remove(); }
     const S = { r, spec, pay, yc, xs, binary: r.kind === 'categorical' && r.levels.length === 2 };
     ctx.scr = S;
     ctx.container.append(ctx.note(setsNote(ctx, S)));
     summaryOutline(ctx, S);
+    if (ctx.opt('ensemble', false)) await ensembleOutline(ctx, S);
     setTables(ctx, S);
     if (r.kfold) cvOutline(ctx, S);
     if (ctx.opt('details', true)) detailsOutline(ctx, S);
@@ -111,7 +124,7 @@
     } else if (ctx.opt('abp', false)) abpOutline(ctx, S);
     const prof = ctx.opt('profiler', false);
     if (prof && r.methods.some((m) => m.key === prof && m.measures)) {
-      await SM.profiler.render(ctx, null, { sources: [{ fn: 'screening.profile', payload: { ...spec, method: prof } }], option: 'profiler', title: `Prediction Profiler: ${labelIn(S, prof)}`,
+      await SM.profiler.render(ctx, null, { sources: [{ fn: profileFn([prof]), payload: { ...spec, method: prof } }], option: 'profiler', title: `Prediction Profiler: ${labelIn(S, prof)}`,
         note: `The ${labelIn(S, prof)} model of the Summary, fitted to the training rows. Drag the red dashed line of a factor, click in its plot, or type its value.` });
     }
   }
@@ -120,7 +133,9 @@
     const { r, spec } = S;
     const n = r.n;
     const parts = [];
-    if (r.kfold) {
+    if (r.kfold && r.fold_column) {
+      parts.push(`${fmt(n.Training)} rows in the ${r.kfold} folds of the Validation column ${r.fold_column}: each method is fitted ${r.kfold} times more, each time on all folds but one, tuned without it, and measured on it; the Training columns are the methods fitted to every row.`);
+    } else if (r.kfold) {
       parts.push(`${fmt(n.Training + n.Validation)} rows in ${r.kfold}-fold crossvalidation${r.repeats > 1 ? `, repeated ${r.repeats} times` : ''} (seed ${r.seed}): each method is fitted ${r.kfold * r.repeats} times more, each time on all folds but one, tuned without it, and measured on it; the Training columns are the methods fitted to every row.`);
     } else if (spec.validation) {
       parts.push(`Sets from the Validation column ${spec.validation}: ${r.sets.map((s) => `${s} ${fmt(n[s])}`).join(', ')} rows.`);
@@ -188,9 +203,33 @@
     return [
       { label: 'Select Dominant', action: () => ctx.set('selected', S.r.dominant.slice()) },
       { label: 'Run Selected', disabled: !sel.some((k) => runnable(ctx, S, k)), action: () => runSelected(ctx, S) },
+      ctx.check('Ensemble of Selected', 'ensemble', null, false),
       { label: 'Clear Selection', disabled: !sel.length, action: () => ctx.set('selected', []) },
       { label: 'Select', submenu: () => S.r.order.filter((k) => S.r.methods.find((m) => m.key === k).measures).map((k) => ({ label: labelIn(S, k), checked: sel.includes(k), action: () => ctx.set('selected', sel.includes(k) ? sel.filter((x) => x !== k) : [...sel, k]) })) },
     ];
+  }
+
+  /* ---- Ensemble of Selected (beyond JMP): their average, and their stacking ------------------------ */
+  async function ensembleOutline(ctx, S) {
+    const { r } = S;
+    const sel = selectedOf(ctx, S);
+    const ob = ctx.outline('Ensemble of Selected', { key: 'ensemble', info: 'p:screening:ensemble', menu: () => [{ label: 'Remove', action: () => ctx.set('ensemble', false) }] });
+    if (sel.length < 2) { ob.add(ctx.note('Select two or more methods in the Summary (click their lines, or Select Dominant): their average and their stacking are shown here.')); return; }
+    const keys = r.order.filter((k) => sel.includes(k));
+    let e;
+    try { e = await ctx.call(fnFor('ensemble', keys), { ...S.spec, methods: keys, repeats: S.pay.repeats }); } catch (err) { ob.add(ctx.error(err)); return; }
+    const all = r.measure_columns.map((c) => c.key).filter((k) => k !== 'set' && (k !== 'auc' || S.binary));
+    const optional = new Set(r.measure_columns.filter((c) => c.hidden).map((c) => c.key));
+    const sets = r.shown_sets.filter((st) => e.rows.some((q) => q.measures[st]));
+    const cols = [{ key: 'method', label: 'Method', fmt: 'text' }];
+    for (const st of sets) cols.push(...measureCols(r, st, all, (k) => !r.summary.includes(k) || optional.has(k)));
+    const best = new Map(r.methods.filter((m) => keys.includes(m.key) && m.measures).map((m) => [m.key, m]));
+    const rows = [...e.rows.map((q) => ({ key: q.method, method: q.method, ...Object.fromEntries(sets.flatMap((st) => all.map((k) => [`${st}|${k}`, q.measures[st] ? q.measures[st][k] : null]))) })),
+      ...keys.map((k) => rowOf(best.get(k), sets, all))];
+    ob.add(wide(ctx.rt({ columns: cols, rows }, { key: 'ensemble', sortable: false })),
+      ctx.rt({ columns: [{ key: 'method', label: 'Method', fmt: 'text' }, { key: 'weight', label: 'Stacking Weight', digits: 4 }], rows: e.weights }, { key: 'ensweights', sortable: false }),
+      ctx.note(`Average of Selected: every row's ${r.kind === 'categorical' ? 'probabilities' : 'prediction'} the mean of the ${keys.length} selected methods' (each fitted as in the Summary). Stacked: their weighted mean, the weights (0 or more, adding to 1) those that best predict ${e.how}: each method's out-of-fold predictions, so that the weights are judged on rows the methods did not see. The selected methods follow, for comparison. Not in JMP.`),
+      ctx.code(e.code));
   }
 
   /* ---- the per-set tables --------------------------------------------------------------- */
@@ -198,9 +237,10 @@
     const { r } = S;
     const sel = selectedOf(ctx, S);
     const keys = r.measure_columns.map((c) => c.key).filter((k) => k !== 'set' && (k !== 'auc' || S.binary));
+    const optional = new Set(r.measure_columns.filter((c) => c.hidden).map((c) => c.key));   // Mean Error, MAPE, MPE, Median Abs Error: right click, Columns
     for (const set of r.sets) {
       const ob = ctx.outline(set, { key: `set:${set}`, info: 'p:screening:sets', closed: set === 'Training' && r.sets.length > 1 });
-      const cols = [{ key: 'method', label: 'Method', fmt: 'text' }, ...keys.map((k) => ({ key: `${set}|${k}`, label: MEASURE_LABEL[k] || k, digits: k === 'n' ? null : 4 }))];
+      const cols = [{ key: 'method', label: 'Method', fmt: 'text' }, ...keys.map((k) => ({ key: `${set}|${k}`, label: MEASURE_LABEL[k] || k, digits: k === 'n' ? null : 4, hidden: optional.has(k) }))];
       const rows = r.order.map((key) => rowOf(r.methods.find((m) => m.key === key), [set], keys)).filter((x) => r.methods.find((m) => m.key === x.key).measures);
       ob.add(wide(ctx.rt({ columns: cols, rows }, { key: `set:${set}`, cellClass: bestClass(S, sel) })));
     }
@@ -213,7 +253,8 @@
     const ok = r.order.map((k) => r.methods.find((m) => m.key === k)).filter((m) => m.cv);
     const ob = ctx.outline(CV, { key: 'cv', info: 'p:screening:cv' });
     const cols = [{ key: 'method', label: 'Method', fmt: 'text' }];
-    for (const k of keys) cols.push({ key: `m|${k}`, label: MEASURE_LABEL[k], digits: 4 }, { key: `s|${k}`, label: `Std Dev ${MEASURE_LABEL[k]}`, digits: 4, hidden: true });
+    const optional = new Set(r.measure_columns.filter((c) => c.hidden).map((c) => c.key));
+    for (const k of keys) cols.push({ key: `m|${k}`, label: MEASURE_LABEL[k], digits: 4, hidden: optional.has(k) }, { key: `s|${k}`, label: `Std Dev ${MEASURE_LABEL[k]}`, digits: 4, hidden: true });
     const rows = ok.map((m) => ({ key: m.key, method: m.label, ...Object.fromEntries(keys.flatMap((k) => [[`m|${k}`, m.measures[CV][k]], [`s|${k}`, m.cv.sd[k]]])) }));
     const sel = selectedOf(ctx, S);
     ob.add(wide(ctx.rt({ columns: cols, rows }, { key: 'cv', cellClass: (row, c) => {
@@ -318,43 +359,20 @@
     ob.add(ctx.row(...plots), ctx.note(`${set} rows${set === CV ? ', each predicted by the model fitted without its fold (first repeat)' : ''}: the actual ${S.yc.name} against each method's prediction; points on the dotted line are predicted exactly. Drag over points to select their rows; Set (red triangle) shows another set.`));
   }
 
-  /* ---- Decision Threshold (two levels) ------------------------------------------------------ */
+  /* ---- Decision Threshold (two levels): SM.predict.threshold of the selected methods -------------------- */
   async function thresholdOutline(ctx, S) {
     const { r } = S;
-    const lv = levelIndex(ctx, S, 'cutLevel');
-    let cut = Number(ctx.opt('cut', 0.5));
-    if (!(cut >= 0 && cut <= 1)) cut = 0.5;
-    const ob = ctx.outline('Decision Threshold', { key: 'threshold', info: 'p:screening:threshold', menu: () => [
-      { label: 'Target Level', submenu: () => r.levels.map((l, i) => ({ label: l, checked: i === lv, action: () => ctx.set('cutLevel', i) })) },
-      { label: 'Set Threshold…', action: async () => { const v = await SM.ui.form({ title: 'Decision Threshold', fields: [{ key: 't', label: `Probability of ${r.levels[lv]} at or above which a row is called ${r.levels[lv]}`, type: 'number', value: cut, help: 'A probability from 0 to 1 (0.5): a row whose predicted probability of the target level is at least this is called that level. Lower it to catch more of the level\'s rows (a higher sensitivity) at the cost of more false positives; raise it for the opposite.' }], validate: (x) => (x.t >= 0 && x.t <= 1 ? null : 'The threshold is a probability, from 0 to 1') }); if (v) ctx.set('cut', v.t); } },
-      { label: 'Remove', action: () => ctx.set('threshold', false) },
-    ] });
-    const t = await ctx.call('screening.threshold', { ...S.spec, methods: S.pay.methods, repeats: S.pay.repeats, cut, level: lv, plot: { order: r.order } });
-    const input = el('input', { type: 'text', inputmode: 'decimal', size: 6, class: 'sm-scr-input', 'aria-label': 'Probability threshold' });
-    input.value = String(cut);
-    const apply = () => { const v = SM.table.toNumber(input.value.replace(',', '.')); if (v >= 0 && v <= 1) ctx.set('cut', v); else SM.ui.toast('The threshold is a probability, from 0 to 1', { error: true }); };
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); apply(); } });
-    const go = el('button', { type: 'button', class: 'sm-btn small', text: 'Apply' });
-    go.addEventListener('click', apply);
-    ob.add(el('div', { class: 'sm-scr-cut', 'data-noexport': '' }, el('label', null, el('span', { text: `Probability threshold for ${t.level}` }), input), go));
-    const ok = r.order.map((k) => t.methods.find((m) => m.key === k)).filter((m) => m && !m.error);
-    const sets = Object.keys(ok[0] ? ok[0].sets : {});
-    const rate = [['sensitivity', 'Sensitivity'], ['specificity', 'Specificity'], ['precision', 'Precision'], ['misclassification', 'Misclassification Rate'], ['f1', 'F1 Score']];
-    const counts = [['tp', 'True Positive'], ['fp', 'False Positive'], ['fn', 'False Negative'], ['tn', 'True Negative']];
-    for (const set of sets) {
-      const cols = [{ key: 'method', label: 'Method', fmt: 'text' }, ...rate.map(([k, l]) => ({ key: k, label: l, digits: 4 })), ...counts.map(([k, l]) => ({ key: k, label: l, hidden: true }))];
-      ob.add(wide(ctx.rt({ columns: cols, rows: ok.map((m) => ({ method: m.label, ...m.sets[set] })) }, { key: `cut:${set}`, caption: `${set}: ${t.level} when its probability ≥ ${fmt(cut)}` })));
-    }
-    const muted = SM.util.themeColors().muted;
-    const cmp = sets.includes(r.compare) ? r.compare : sets[0];
-    const traces = ok.map((m) => ({ type: 'scatter', mode: 'lines', x: t.grid, y: m.curves[cmp], name: T(m.label), line: { color: colorOf(m.key), width: 1.5 }, hovertemplate: `${T(m.label)}<br>threshold %{x:.2f}: %{y:.4f}<extra></extra>` }));
-    const vline = { type: 'line', x0: cut, x1: cut, yref: 'paper', y0: 0, y1: 1, line: { color: muted, width: 1.2, dash: 'dash' } };
-    const pick = (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('cut', Math.round(pt.x * 100) / 100); });
-    const lg = legendFor(ok.length);
-    ob.add(ctx.row(SM.predict.plotWithCode(ctx, traces, { showlegend: true, legend: lg.legend, shapes: [vline], hovermode: 'closest', margin: { l: 54, r: 8, t: 26, b: lg.bottom + 2 },
-      title: { text: `${cmp}: misclassification by threshold`, font: { size: 12 } }, xaxis: { title: { text: `Threshold on the probability of ${T(t.level)}` }, range: [0, 1] }, yaxis: { title: { text: 'Misclassification Rate' }, rangemode: 'tozero' } },
-    { width: lg.width, height: lg.height, title: 'Misclassification by threshold', select: false, onDraw: pick }, (r.plots || {}).head_code, t.plot_code)),
-    ctx.note(`A row is called ${t.level} when its predicted probability of ${t.level} is at least the threshold. Sensitivity is the share of ${t.level} rows called ${t.level}, specificity the share of the others called the other level, precision the share of the rows called ${t.level} that are. Click the graph, or type a threshold, to move it; the counts are by the rows' frequencies (right click, Columns).`));
+    const sel = selectedOf(ctx, S);
+    // the selected methods (JMP's Decision Threshold compares the selected models), or every fitted one
+    const keys = r.order.filter((k) => r.methods.some((m) => m.key === k && m.measures) && (!sel.length || sel.includes(k)));
+    let t;
+    try { t = await ctx.call(fnFor('threshold', keys), { ...S.spec, methods: keys, repeats: S.pay.repeats, plot: { order: keys } }); } catch (e) { ctx.container.append(ctx.error(e)); return; }
+    const ob = SM.predict.threshold(ctx, null, t, { info: 'p:screening:threshold', keys: { cut: 'cut', level: 'cutLevel' }, yCol: S.yc,
+      colorOf: (m) => colorOf(m.key), pyColorOf: (m) => LIGHT[m.key] || '#888888',
+      probName: (label, m) => `Prob[${label}] ${m.label}`, save: { fn: (m) => fnFor('save', [m.key]), payload: (m) => ({ ...S.spec, method: m.key }) } });
+    if (!ob) return;
+    ob.add(ctx.note(`${sel.length ? `The ${keys.length === 1 ? 'method' : `${keys.length} methods`} selected in the Summary` : 'Every method (select methods in the Summary to compare fewer)'}, each fitted to the training rows${r.kfold ? '; Crossvalidation: each row predicted by the model fitted without its fold (first repeat)' : ''}.`));
+    if (t.errors && t.errors.length) ob.add(ctx.warn(`Not fitted: ${t.errors.map((e) => `${e.label} (${e.error})`).join('; ')}.`));
   }
 
   /* ======================================================================
@@ -422,7 +440,7 @@
     items.push({ label: 'Profiler', submenu: () => ok.map((k) => ({ label: labelIn(S, k), checked: prof === k, action: () => ctx.set('profiler', prof === k ? false : k) })) });
     items.push(ctx.check('Method Details', 'details', null, true));
     items.push({ separator: true });
-    items.push({ label: 'Save Columns', submenu: () => ok.map((k) => ({ label: labelIn(S, k), submenu: () => SM.predict.saveItems(ctx, 'screening.save', { ...S.spec, method: k }, { kind: r.kind })[0].submenu() })) });
+    items.push({ label: 'Save Columns', submenu: () => ok.map((k) => ({ label: labelIn(S, k), submenu: () => SM.predict.saveItems(ctx, fnFor('save', [k]), { ...S.spec, method: k }, { kind: r.kind, levels: r.levels, threshold: S.binary ? { levels: r.levels } : null }, { probName: (label) => `Prob[${label}] ${labelIn(S, k)}` })[0].submenu() })) });
     return items;
   }
 
@@ -434,6 +452,8 @@
     tree: 'A decision tree grown best first, its number of splits chosen by the validation rows or 5-fold crossvalidation of the training rows.',
     forest: '100 trees on bootstrap samples; with validation rows the best of 10, 20, …, 100 trees.',
     boosted: '50 layers of trees with 3 splits at a learning rate of 0.1; with validation rows the number of layers with the best validation measure.',
+    xgboost: 'Gradient-boosted trees by the xgboost package (loaded the first time it is chosen): up to 100 rounds of trees of depth 6 at a learning rate of 0.3, xgboost\'s defaults; with validation rows the number of rounds with the best validation measure.',
+    lightgbm: 'Gradient-boosted trees by the lightgbm package (loaded the first time it is chosen): up to 100 rounds of trees of up to 31 leaves (20 rows or more each) at a learning rate of 0.1, LightGBM\'s defaults; with validation rows the number of rounds with the best validation measure.',
     knn: 'K from 1 to 10 on standardized columns, the best K by the validation rows or leave-one-out.',
     nb: 'A categorical Y only: a normal density for each continuous factor and level shares for each categorical one.',
     neural: 'One layer of 3 tanh nodes on standardized columns, its penalty chosen by the validation rows or a holdback of a third.',
@@ -442,14 +462,37 @@
     linear: 'The main effects by least squares; for a categorical Y it is Logistic Regression (nominal) or Ordinal Logistic (the cumulative logit), and the box says so.',
     lasso: 'The lasso on centred and scaled columns, its penalty chosen by the validation rows or the smallest AICc.',
     enet: 'The elastic net (alpha 0.9), its penalty chosen as the lasso\'s.',
+    ridge: 'Ridge regression on centred and scaled columns: a squared penalty that shrinks every estimate and zeroes none, chosen by the validation rows or the smallest AICc (5-fold crossvalidation for a categorical Y).',
     stepwise: 'Forward selection of whole factors, each step by the smallest BIC or the best validation measure. Off by default.',
   };
   const methodHelp = (key) => `${METHOD_HELP[key]}${DEFAULT.includes(key) ? ' On by default.' : ''}`;
   const KFOLD_HELP = [
-    ['K Fold Crossvalidation', 'Measures every method on rows it did not see without a Validation column: the rows split at random, from the seed, into folds; each method is fitted once per fold to the others (tuning itself within them) and measured on the fold left out, and Crossvalidation gives the means. The Validation Portion is then not used; with a Validation column it cannot be ticked, as the column\'s sets win.'],
+    ['K Fold Crossvalidation', 'Measures every method on rows it did not see without a Validation column: the rows split at random, from the seed, into folds; each method is fitted once per fold to the others (tuning itself within them) and measured on the fold left out, and Crossvalidation gives the means. The Validation Portion is then not used; with a Validation column it cannot be ticked, as the column\'s sets win. A Validation column of more than three values (Make Validation Column, K Fold) holds the folds itself: the methods are crossvalidated by them.'],
     ['Folds', 'With K Fold Crossvalidation: the number of folds, from 2 to 20 (5).'],
     ['Repeated K Fold', 'With K Fold Crossvalidation: how many times it is done with new random folds, from 1 to 10 (1); the measures are the means over every held-out fold.'],
+    ['Add Two Way Interactions', 'The linear methods (Fit Least Squares or Logistic, Discriminant, and Generalized Regression\'s Lasso, Elastic Net and Ridge) get every product of two factors too, a continuous factor centred at its training mean first, as JMP\'s Model Screening option. Fit Stepwise keeps the main effects.'],
+    ['Add Quadratics', 'The linear methods get the square of each continuous factor too, centred at its training mean first, as JMP\'s option.'],
   ];
+
+  /* A Validation column of more than three values holds K folds (predictive.validation_codes). */
+  /* What a Validation column gives, by predictive.py's rule (validation_codes): 'folds' for 4 to 50 distinct values
+     (whole numbers in a numeric column; in a character one, none of them a set's name), 'sets' for 0, 1 and 2 or
+     Training, Validation and Test, 'bad' for anything else (the engine refuses it). */
+  const MAX_FOLDS = 50;
+  const SET_NAMES = ['training', 'train', 'validation', 'valid', 'test'];
+  function validationKind(c) {
+    if (!c) return null;
+    const seen = new Set();
+    for (const v of c.values) { if (v != null && v !== '' && !(typeof v === 'number' && Number.isNaN(v))) { seen.add(c.isNumeric ? Number(v) : String(v)); if (seen.size > MAX_FOLDS) break; } }
+    const vals = [...seen];
+    if (c.isNumeric) {
+      if (seen.size > 3 && seen.size <= MAX_FOLDS && vals.every((v) => Number.isInteger(v))) return 'folds';
+      return vals.every((v) => v === 0 || v === 1 || v === 2) ? 'sets' : 'bad';
+    }
+    const named = vals.some((v) => SET_NAMES.includes(v.trim().toLowerCase()));
+    if (!named && seen.size > 3 && seen.size <= MAX_FOLDS) return 'folds';
+    return vals.every((v) => SET_NAMES.includes(v.trim().toLowerCase())) ? 'sets' : 'bad';
+  }
 
   function launchExtra(api, spec) {
     const o = (spec && spec.options) || {};
@@ -465,12 +508,18 @@
     const num = (v, aria) => { const i = el('input', { type: 'text', inputmode: 'numeric', size: 3, class: 'sm-scr-input', 'aria-label': aria }); i.value = String(v); return i; };
     const folds = num(o.folds ?? 5, 'Folds'), reps = num(o.repeats ?? 1, 'Repeated K Fold');
     const hint = el('p', { class: 'sm-scr-hint' });
+    const inter = el('input', { type: 'checkbox' }), quad = el('input', { type: 'checkbox' });
+    inter.checked = !!o.interactions;
+    quad.checked = !!o.quadratic;
     const box = el('div', { class: 'sm-scr-launch' },
       el('h4', { text: 'Method' }), el('div', { class: 'sm-scr-checks' }, ...checks.map((c) => c.lab)),
       el('div', { class: 'sm-scr-opts' },
         el('label', { class: 'sm-scr-check' }, kf, el('span', { text: 'K Fold Crossvalidation' })),
         el('label', { class: 'sm-scr-opt' }, el('span', { text: 'Folds' }), folds),
         el('label', { class: 'sm-scr-opt' }, el('span', { text: 'Repeated K Fold' }), reps)),
+      el('div', { class: 'sm-scr-opts' },
+        el('label', { class: 'sm-scr-check' }, inter, el('span', { text: 'Add Two Way Interactions' })),
+        el('label', { class: 'sm-scr-check' }, quad, el('span', { text: 'Add Quadratics' }))),
       hint);
     const update = (state) => {
       const id = ((state && state.y) || [])[0];
@@ -480,10 +529,14 @@
         ch.lab.classList.toggle('is-off', cat === false && CAT_ONLY.has(ch.key));
         if (ch.key === 'linear') ch.span.textContent = cat ? (c.modelingType === 'ordinal' ? 'Ordinal Logistic' : 'Logistic Regression') : 'Fit Least Squares';
       }
-      const hasV = ((state && state.validation) || []).length > 0;
+      const vid = ((state && state.validation) || [])[0];
+      const hasV = !!vid;
+      const kind = hasV ? validationKind(api.table.col(vid)) : null;
       kf.disabled = hasV;
       folds.disabled = reps.disabled = hasV || !kf.checked;
-      hint.textContent = hasV ? 'The Validation column gives the sets; K-fold crossvalidation is not used with one.'
+      hint.textContent = kind === 'folds' ? 'The Validation column holds folds (more than three values): every method is crossvalidated by them.'
+        : kind === 'bad' ? `The Validation column holds neither sets (0, 1 and 2, or Training, Validation and Test) nor folds (4 to ${MAX_FOLDS} values, whole numbers in a numeric column): Model Screening refuses it.`
+        : hasV ? 'The Validation column gives the sets; K-fold crossvalidation is not used with one.'
         : kf.checked ? 'Each method is fitted once to every row and once per fold to the others; the Validation Portion is not used.'
           : cat === false ? 'Naive Bayes and Discriminant are for a categorical Y.' : 'Without a Validation column or K-fold crossvalidation, the Validation Portion holds rows back.';
     };
@@ -492,14 +545,16 @@
     update(api.state);
     return {
       el: box,
-      helpHeading: 'Method and K Fold Crossvalidation',
+      helpHeading: 'Method, K Fold Crossvalidation and the terms',
       // each box by the label it shows (Fit Least Squares turns into a logistic regression for a categorical Y)
       help: () => [...checks.map((c) => [c.span.textContent, methodHelp(c.key)]), ...KFOLD_HELP],
-      read: () => ({ options: { methods: checks.filter((c) => c.i.checked).map((c) => c.key), kfold: kf.checked, folds: Number(folds.value.trim()), repeats: Number(reps.value.trim()) } }),
+      read: () => ({ options: { methods: checks.filter((c) => c.i.checked).map((c) => c.key), kfold: kf.checked, folds: Number(folds.value.trim()), repeats: Number(reps.value.trim()), interactions: inter.checked, quadratic: quad.checked } }),
       recall: (saved) => {
         const so = (saved && saved.options) || {};
         if (Array.isArray(so.methods)) for (const c of checks) c.i.checked = so.methods.includes(c.key);
         if (so.kfold != null) kf.checked = !!so.kfold;
+        if (so.interactions != null) inter.checked = !!so.interactions;
+        if (so.quadratic != null) quad.checked = !!so.quadratic;
         if (so.folds != null) folds.value = String(so.folds);
         if (so.repeats != null) reps.value = String(so.repeats);
         update(api.state);
@@ -530,37 +585,44 @@
     const platform = {
       id: 'screening-validation', label: 'Make Validation Column', info: 'cmd:makevalidation',
       launch: {
-        lead: 'A new column that puts every row of the table in the training, validation or test set, for the Validation role of the predictive platforms. With no columns cast, the rows are assigned at random.',
+        lead: 'A new column that puts every row of the table in the training, validation or test set, or in one of K folds, for the Validation role of the predictive platforms. With no columns cast, the rows are assigned at random.',
         roles: [
           { key: 'strata', label: 'Stratification Columns', hint: 'optional: the proportions within each level',
-            help: 'Optional: columns whose levels should be split alike, so that every set has its share of each combination of them, a rare response level for one (Stratified, above).' },
+            help: 'Optional: columns whose levels should be split alike, so that every set (or fold) has its share of each combination of them, a rare response level for one (Stratified, above). With Grouping Columns too: Stratify by Group.' },
           { key: 'groups', label: 'Grouping Columns', hint: 'optional: all rows of a group in one set',
-            help: 'Optional: columns that make groups of related rows, a patient or a batch, each kept whole in one set so that no group is split between training and validation (Grouped, above).' },
+            help: 'Optional: columns that make groups of related rows, a patient or a batch, each kept whole in one set (or fold) so that no group is split between training and validation (Grouped, above). With Stratification Columns too: Stratify by Group.' },
           { key: 'time', label: 'Cutpoint Column', max: 1, numeric: true, hint: 'optional: a time column; the earliest rows train',
-            help: 'Optional: a numeric time column, for a split in time order, the earliest rows training and the latest testing, as a forecast is judged (Cutpoint, above). Use one kind of column only: stratification, grouping or a cutpoint.' },
+            help: 'Optional: a numeric time column, for a split in time order, the earliest rows training and the latest testing, as a forecast is judged (Cutpoint, above). It goes alone: no stratification or grouping columns, no K Fold.' },
         ],
         options: [
+          { key: 'type', label: 'Validation Column Type', type: 'select', value: 'sets', choices: [['sets', 'Training, Validation, Test'], ['kfold', 'K Fold']],
+            help: 'Training, Validation, Test (the default): the three sets in the proportions below. K Fold: the rows in Number of Folds folds of equal size, numbered 1 to K, for K-fold crossvalidation: a Validation column of more than three values is read as folds by the predictive platforms (every row trains; each fold is held out once).' },
+          { key: 'folds', label: 'Number of Folds', type: 'number', value: 5,
+            help: 'K Fold: the number of folds, from 4 to 50 (5). A Validation column of three values or fewer is read as training, validation and test, so K starts at 4, as in JMP.' },
           { key: 'training', label: 'Training Set', type: 'number', value: 0.6,
-            help: 'The share of the rows that train the models (0.6), above 0. The three shares are taken relative to their sum, so 6, 2 and 2 work too.' },
+            help: 'The share of the rows that train the models (0.6), above 0. The three shares are taken relative to their sum, so 6, 2 and 2 work too. Not used by K Fold.' },
           { key: 'validation', label: 'Validation Set', type: 'number', value: 0.2,
-            help: 'The share of the rows that choose among models, such as a tree\'s size or the number of trees (0.2); 0 for none.' },
+            help: 'The share of the rows that choose among models, such as a tree\'s size or the number of trees (0.2); 0 for none. Not used by K Fold.' },
           { key: 'test', label: 'Test Set', type: 'number', value: 0.2,
-            help: 'The share of the rows kept out of both fitting and choosing, for an honest measure of the chosen model (0.2); 0 for none.' },
+            help: 'The share of the rows kept out of both fitting and choosing, for an honest measure of the chosen model (0.2); 0 for none. Not used by K Fold.' },
+          { key: 'balance', label: 'Balance the Training Set', type: 'check', value: false,
+            help: 'With Stratification Columns (and no grouping or K Fold): after the stratified split, each stratum\'s training rows are cut down at random to those of the smallest stratum, so that the models learn from every level equally (a rare response level, say), while the validation and test sets keep the table\'s shares, which the measures need. The rows cut get no set (missing), so the analyses leave them out. Beyond JMP.' },
           { key: 'seed', label: 'Random Seed', type: 'text', value: '', size: 10, hint: 'empty: a seed drawn now (the column\'s notes keep it)',
             help: 'The seed of the random order: a whole number gives the same column again; empty draws one now, which the column\'s notes keep.' },
           { key: 'values', label: 'Values', type: 'select', value: 'text', choices: [['text', 'Training, Validation, Test'], ['numeric', '0, 1, 2']],
-            help: 'Training, Validation, Test (text, the default) or 0, 1, 2 (numeric): both are what the Validation role takes (The column, above).' },
+            help: 'Training, Validation, Test (text, the default) or 0, 1, 2 (numeric): both are what the Validation role takes (The column, above). K Fold makes the numbers 1 to K either way.' },
           { key: 'name', label: 'New Column Name', type: 'text', value: 'Validation', size: 12, help: 'The name of the new column (Validation by default).' },
         ],
         extra: (api) => {
           const hint = el('p', { class: 'sm-scr-hint' });
           const upd = (st) => {
             const k = ['strata', 'groups', 'time'].filter((x) => ((st && st[x]) || []).length);
-            hint.textContent = k.length > 1 ? 'Use one kind: stratification columns, grouping columns or a cutpoint column.'
-              : k[0] === 'strata' ? 'Stratified random: the proportions hold within each combination of the stratification columns\' levels, and in total.'
-                : k[0] === 'groups' ? 'Grouped random: the groups in random order, each wholly in one set, so the proportions of rows are near but not exact.'
-                  : k[0] === 'time' ? 'Cutpoint: the rows in time order, the earliest to training, then validation, then test; rows at the same time stay together.'
-                    : 'Random: exactly the proportions of the rows (rounded to whole rows), in random order.';
+            hint.textContent = k.includes('time') && k.length > 1 ? 'A cutpoint column goes alone: no stratification or grouping columns with it.'
+              : k.length === 2 ? 'Stratify by Group: every group wholly in one set (or fold), the groups placed so that each set has its share of every stratum, as near as whole groups allow.'
+                : k[0] === 'strata' ? 'Stratified random: the proportions hold within each combination of the stratification columns\' levels, and in total.'
+                  : k[0] === 'groups' ? 'Grouped random: the groups in random order, each wholly in one set, so the proportions of rows are near but not exact.'
+                    : k[0] === 'time' ? 'Cutpoint: the rows in time order, the earliest to training, then validation, then test; rows at the same time stay together.'
+                      : 'Random: exactly the proportions of the rows (rounded to whole rows), in random order.';
           };
           api.onRolesChange(upd);
           upd(api.state);
@@ -569,10 +631,16 @@
         validate: (s) => {
           const o = s.options;
           const k = ['strata', 'groups', 'time'].filter((x) => (s.roles[x] || []).length);
-          if (k.length > 1) return 'Use one kind: stratification columns, grouping columns or a cutpoint column';
-          const p = [o.training, o.validation, o.test];
-          if (p.some((v) => v != null && !(v >= 0))) return 'The proportions are 0 or more';
-          if (!(o.training > 0)) return 'Training Set: a proportion above 0';
+          if (k.includes('time') && k.length > 1) return 'A cutpoint column goes alone: no stratification or grouping columns with it';
+          const kf = o.type === 'kfold';
+          if (kf && !(Number.isInteger(o.folds) && o.folds >= 4 && o.folds <= 50)) return 'Number of Folds: a whole number from 4 to 50';
+          if (kf && k.includes('time')) return 'K Fold needs no cutpoint column: its folds are random (stratified or grouped)';
+          if (!kf) {
+            const p = [o.training, o.validation, o.test];
+            if (p.some((v) => v != null && !(v >= 0))) return 'The proportions are 0 or more';
+            if (!(o.training > 0)) return 'Training Set: a proportion above 0';
+          }
+          if (o.balance && (!k.includes('strata') || k.includes('groups') || kf)) return 'Balance the Training Set: give Stratification Columns, and no grouping columns or K Fold';
           if (!String(o.name || '').trim()) return 'New Column Name: give a name';
           if (String(o.seed || '').trim() && !Number.isFinite(Number(o.seed))) return 'Random Seed: a whole number, or empty';
           return null;
@@ -585,19 +653,21 @@
   async function runMakeValidation(app, t, s) {
     const names = (k) => (s.roles[k] || []).map((id) => t.col(id)).filter(Boolean).map((c) => c.name);
     const o = s.options;
+    const kf = o.type === 'kfold';
     if (SM.engine.state !== 'ready') SM.ui.toast('Waiting for the Python engine to load…');
     const r = await SM.engine.call('screening.validation_column', {
       training: o.training ?? 0, validation: o.validation ?? 0, test: o.test ?? 0, strata: names('strata'), groups: names('groups'), time: names('time')[0] || null,
-      seed: String(o.seed || '').trim() || null, values: o.values, name: String(o.name).trim(),
+      seed: String(o.seed || '').trim() || null, values: o.values, name: String(o.name).trim(), kfold: kf ? o.folds : 0, balance: !!o.balance,
     }, t);
-    const text = o.values === 'text';
+    const text = !kf && o.values === 'text';
     if (app.record) app.record(t, 'Make Validation Column');
     const c = t.addColumn({
       name: String(o.name).trim(), dataType: text ? 'character' : 'numeric', modelingType: 'nominal',
-      values: r.values.map((v) => (v == null ? (text ? null : NaN) : v)), valueOrder: text ? ['Training', 'Validation', 'Test'] : [0, 1, 2],
+      values: r.values.map((v) => (v == null ? (text ? null : NaN) : v)), valueOrder: kf ? Array.from({ length: r.kfold }, (_, i) => i + 1) : text ? ['Training', 'Validation', 'Test'] : [0, 1, 2],
       notes: `${r.notes}\n\nThe same column from a CSV export of the table (Python):\n${r.code}`,
     });
-    SM.ui.toast(`Made ${c.name}: ${r.counts[0]} training, ${r.counts[1]} validation, ${r.counts[2]} test rows (seed ${r.seed})`);
+    SM.ui.toast(kf ? `Made ${c.name}: ${r.kfold} folds of ${r.counts.join(', ')} rows (seed ${r.seed})`
+      : `Made ${c.name}: ${r.counts[0]} training, ${r.counts[1]} validation, ${r.counts[2]} test rows${r.unset ? `, ${r.unset} with no set` : ''} (seed ${r.seed})`);
     return c;
   }
 
@@ -617,11 +687,17 @@
     },
     'p:screening:summary': {
       kicker: 'Model Screening', title: 'Summary Across the Models',
-      lead: 'A line per method: RSquare and RASE (continuous Y), or Entropy RSquare, the Misclassification Rate and for two levels the AUC, for each set. The methods are ranked by the validation measure (the crossvalidated one with K-fold, the training one with neither); bold marks the best of each column.',
+      lead: 'A line per method: RSquare and RASE (continuous Y), or Generalized RSquare, Entropy RSquare, the Misclassification Rate and for two levels the AUC, for each set. The methods are ranked by the first of them, RSquare or Generalized RSquare as JMP ranks them, on the validation rows (the crossvalidated ones with K-fold, the training ones with neither); bold marks the best of each column.',
       sections: [
         { heading: 'Selecting', choices: [['Click a line', 'Selects the method (or takes it out again).'], ['Select Dominant', 'Selects the methods that no other method matches or beats on every measure shown while beating on one.'], ['Run Selected', 'Opens each selected method\'s own platform (Partition, Bootstrap Forest, Neural, …, Fit Model for the linear ones) with the same Y, X, Weight, Freq, Validation and By, the same Validation Portion and seed; a method whose platform is not here is left out.'], ['Clear Selection', 'Takes every method out of the selection.']] },
-        { heading: 'More measures', text: 'Right click the table, Columns: Generalized RSquare, Mean -Log p, Mean Abs Dev, -LogLikelihood, SSE and N of each set.' },
+        { heading: 'More measures', text: 'Right click the table, Columns: Mean -Log p, Mean Abs Dev, -LogLikelihood, SSE and N of each set, and for a continuous Y the Mean Error, MAPE, MPE and Median Abs Error.' },
+        { heading: 'Ensemble of Selected', text: 'In the red triangle: the average of the selected methods and their stacking, beside them (see its (i)). Not in JMP.' },
       ],
+      more: MORE,
+    },
+    'p:screening:ensemble': {
+      kicker: 'Model Screening', title: 'Ensemble of Selected',
+      lead: 'Beyond JMP: two combinations of the methods selected in the Summary. Average of Selected is the mean of their predictions (or probabilities); Stacked is their weighted mean, the weights (0 or more, adding to 1: a convex combination, a super learner) fitted to the methods\' out-of-fold predictions of the training rows: the report\'s K folds when it crossvalidates (the first repeat), else 5 folds from the seed. The weights are found by SLSQP: the smallest squared error, or the largest log-likelihood of a categorical response. Each set\'s measures are those of the methods fitted to all the training rows, combined.',
       more: MORE,
     },
     'p:screening:sets': { kicker: 'Model Screening', title: 'Training, Validation and Test', lead: 'Every Measure of Fit of every method for the rows of one set (see Measures of Fit). Training measures flatter flexible methods: compare them on validation or test rows.', more: MORE },
@@ -638,6 +714,8 @@
         ['Decision Tree', 'Splits made best first (squared error; entropy for a categorical Y), no leaf under 5 rows, up to 64 leaves; the number of splits by the validation rows or 5-fold crossvalidation. JMP splits by LogWorth; its leaf rates carry a prior, as here (one row spread as the training shares).'],
         ['Bootstrap Forest', '100 trees on bootstrap samples, a third of the columns tried at each split (the square root of their number for a categorical Y), leaves of 5 rows or more; with validation rows the best of 10, 20, …, 100 trees. JMP\'s default number of terms sampled may differ.'],
         ['Boosted Tree', '50 layers of trees with 3 splits, learning rate 0.1, leaves of 5 or more; with validation rows the number of layers with the best validation measure. JMP\'s overfit penalty is not here.'],
+        ['XGBoost', 'The xgboost package\'s XGBClassifier or XGBRegressor with its defaults (100 rounds, depth 6, learning rate 0.3), the Weight x Freq as sample weights, the report\'s seed; with validation rows the number of rounds with the best validation measure. The package is loaded the first time the method is chosen. JMP Pro runs XGBoost from an add-in, with its own defaults.'],
+        ['LightGBM', 'The lightgbm package\'s LGBMClassifier or LGBMRegressor with its defaults (100 rounds, 31 leaves, 20 rows in a leaf, learning rate 0.1), deterministic, the report\'s seed; with validation rows the number of rounds with the best validation measure. Loaded the first time it is chosen. Not in JMP.'],
         ['K Nearest Neighbors', 'Standardized columns; K from 1 to 10 by the validation error (the misclassification rate for a categorical Y), else leave-one-out. The level rates carry a prior of one row, so no probability is 0 or 1.'],
         ['Naive Bayes', 'Normal continuous factors (scikit-learn GaussianNB), categorical ones by their level shares with one row added (CategoricalNB).'],
         ['Neural', 'One layer of 3 tanh nodes on standardized columns, L-BFGS, a squared penalty of 0.001, 0.01 or 0.1 chosen by the validation rows or a holdback of a third. JMP\'s tours and transforms are not here.'],
@@ -645,6 +723,8 @@
         ['Discriminant', 'Linear: one covariance matrix pooled within the levels (n - levels degrees of freedom), priors the training shares.'],
         ['Fit Least Squares, Logistic', 'The main effects by least squares; a nominal Y by multinomial logistic regression, an ordinal one by the cumulative logit, both by maximum likelihood.'],
         ['Generalized Regression', 'The lasso and the elastic net (alpha 0.9, as Fit Model here) on centred and scaled columns, the penalty by the validation rows or the smallest AICc; JMP\'s adaptive versions are not here.'],
+        ['Generalized Regression Ridge', 'A squared penalty on the centred and scaled columns, along the ridge path from the singular value decomposition; the penalty by the validation rows or the smallest AICc (the degrees of freedom the trace of the hat matrix); a categorical Y by logistic regression (lbfgs), the penalty by the validation rows or 5-fold crossvalidation. Off by default.'],
+        ['Two Way Interactions, Quadratics', 'The launch options: the linear methods (Fit Least Squares or Logistic, Discriminant, Lasso, Elastic Net, Ridge) get every product of two factors\' columns and each continuous factor\'s square, a continuous column centred at its training mean first. Fit Stepwise keeps the main effects.'],
         ['Fit Stepwise', 'Forward selection of whole factors, the step with the smallest BIC or the best validation measure.'],
       ] }],
       more: MORE,
@@ -653,21 +733,29 @@
     'p:screening:abp': { kicker: 'Model Screening', title: 'Actual by Predicted', lead: 'A small graph per method of the actual response against the prediction, for one set; the points are the rows (drag to select them). A good model keeps them near the dotted line on the validation rows, not only on the training rows.', more: MORE },
     'p:screening:threshold': {
       kicker: 'Model Screening', title: 'Decision Threshold',
-      lead: 'For a response with two levels: a row is called the target level when its predicted probability of it is at least the threshold. At the threshold, each method\'s sensitivity, specificity, precision, misclassification rate and F1 score per set, and the counts (right click, Columns); the graph shows the misclassification rate of every threshold. JMP Pro 17\'s Decision Threshold report shows more (the counts as bars, a profit matrix); this is its core.',
-      sections: [{ heading: 'The controls', choices: [
-        ['Probability threshold', 'Type a probability from 0 to 1 (0.5) and press Enter or Apply: a row is called the target level when its probability of it is at least this. A lower threshold catches more of the level\'s rows (a higher sensitivity) and calls more of the others wrongly.'],
-        ['Apply', 'Uses the threshold typed in the box.'],
-        ['A click on the graph', 'Moves the threshold to where you click, to two decimals.'],
-        ['Target Level, Set Threshold… (red triangle)', 'The level whose probability is cut (the second level at first), and the threshold in a dialog.'],
-      ] }],
+      lead: 'For a response with two levels, the methods selected in the Summary (every method when none is): a row is called the target level when its predicted probability of it is at least the threshold. The fitted probabilities of each method by the actual level on the rows that compare the methods (validation, crossvalidated or training), a table per set with each method\'s measures and counts at the threshold, and one measure of every method against the threshold (Curve Metric in the red triangle), as JMP Pro\'s Decision Threshold of Model Screening.',
+      sections: [
+        { heading: 'The controls', choices: [
+          ['Probability threshold', 'Type a probability from 0 to 1 (0.5) and press Enter or Apply: a row is called the target level when its probability of it is at least this. A lower threshold catches more of the level\'s rows (a higher sensitivity) and calls more of the others wrongly.'],
+          ['Apply', 'Uses the threshold typed in the box.'],
+          ['The dashed line', 'Drag it in a fitted-probability plot to move the threshold.'],
+          ['The slider', 'Moves the threshold by 0.01.'],
+          ['A click on a curve', 'Moves the threshold there.'],
+        ] },
+        { heading: 'The red triangle', choices: [['Target Level', 'the level whose probability is cut (the second at first)'], ['Set Probability Threshold…', 'the threshold in a dialog'], ['Set Threshold to', 'the threshold with the best accuracy, F1, MCC or Sensitivity + Specificity of the first method on the comparison rows (beyond JMP)'], ['Curve Metric', 'the measure drawn against the threshold'], ['True Event Rate…', 'the probabilities rescaled to the population\'s share of the target level (a model fitted on oversampled rows)'], ['Profit Matrix…', 'the Y column\'s Profit Matrix; with one, each method\'s profit'], ['Save Threshold Formula', 'a formula column of one method: If(Prob[level] ≥ threshold, level, other level), its probabilities saved first when they are not in the table']] },
+        { heading: 'The measures', text: 'As the Decision Threshold of the other platforms (see its (i)): Accuracy, the Misclassification Rate, Sensitivity, Specificity, the False Positive and False Negative Rates, Precision, F1, MCC; the counts True Positive, False Positive, False Negative and True Negative, by Weight × Freq. Right click a table, Columns, for the rest.' },
+      ],
       more: MORE,
     },
     'cmd:makevalidation': {
       kicker: 'Analyze > Predictive Modeling', title: 'Make Validation Column',
-      lead: 'Adds a column that puts every row in the training, validation or test set, which the predictive platforms take in their Validation role. The proportions are rounded to whole rows by largest remainders (each set gets the floor of its share, the rows left over go to the largest fractions), so the counts are exact, not random; which rows go where is random, from the seed.',
+      lead: 'Adds a column that puts every row in the training, validation or test set, or in one of K folds, which the predictive platforms take in their Validation role. The proportions are rounded to whole rows by largest remainders (each set gets the floor of its share, the rows left over go to the largest fractions), so the counts are exact, not random; which rows go where is random, from the seed.',
       sections: [
-        { heading: 'Methods', choices: [['Random', 'No columns cast: the rows in random order, the first ones training, then validation, then test.'], ['Stratified', 'Stratification Columns: the proportions within every combination of their levels (a missing value is a level), each stratum\'s counts rounded down or up so that the totals are still the random method\'s.'], ['Grouped', 'Grouping Columns: every row of a group in the same set; the groups in random order, each to the set its middle row falls in, so the shares of rows are close to the proportions.'], ['Cutpoint', 'A time column: no randomness, the earliest rows train, the next validate, the latest test; rows with the same time stay together, rows without one get no set.']] },
-        { heading: 'The column', text: 'Training, Validation, Test (text, in that order) or 0, 1, 2 (numeric), nominal. JMP makes a numeric column with value labels, which this page\'s tables do not have. The column\'s notes keep the method, the seed, the counts and the Python (numpy) that makes the same column from a CSV export.' },
+        { heading: 'Methods', choices: [['Random', 'No columns cast: the rows in random order, the first ones training, then validation, then test.'], ['Stratified', 'Stratification Columns: the proportions within every combination of their levels (a missing value is a level), each stratum\'s counts rounded down or up so that the totals are still the random method\'s.'], ['Grouped', 'Grouping Columns: every row of a group in the same set; the groups in random order, each to the set its middle row falls in, so the shares of rows are close to the proportions.'], ['Stratify by Group', 'Both kinds of column: every group whole in one set, the groups (largest first, ties in random order) each to the set where it brings the counts of every stratum nearest their shares, so that each set has its share of every level as near as whole groups allow.'], ['Cutpoint', 'A time column: no randomness, the earliest rows train, the next validate, the latest test; rows with the same time stay together, rows without one get no set.']] },
+        { heading: 'K Fold', text: 'Validation Column Type K Fold: the rows in Number of Folds folds (4 to 50) of equal size, numbered 1 to K, by any method but the cutpoint (stratified: every stratum split evenly across the folds; grouped: every group in one fold). A Validation column of more than three values is read as folds: every row trains, and Model Screening, K Nearest Neighbors, Support Vector Machines and Naive Bayes crossvalidate by them.' },
+        { heading: 'Balance the Training Set', text: 'With Stratification Columns: after the stratified split, each stratum\'s training rows are cut down at random to those of the smallest stratum, so the training set has every level equally, while validation and test keep the table\'s shares; the rows cut get no set. Beyond JMP (an undersampling of the frequent levels, as the oversampling of a rare one).' },
+        { heading: 'The column', text: 'Training, Validation, Test (text, in that order) or 0, 1, 2 (numeric), or the fold numbers 1 to K, nominal. JMP makes a numeric column with value labels. The column\'s notes keep the method, the seed, the counts and the Python (numpy) that makes the same column from a CSV export.' },
+        { heading: 'Differences from JMP', text: 'JMP gives a row with a missing stratification, grouping or cutpoint value no set; here a missing value is a level (a group) of its own for stratification and grouping, and only the cutpoint leaves such a row out. Balance the Training Set is this page\'s.' },
       ],
     },
   };
@@ -677,8 +765,8 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'screening', label: 'Model Screening', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:screening', topics: TOPICS,
-    about: 'JMP Pro\'s Model Screening: Decision Tree, Bootstrap Forest, Boosted Tree, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression (lasso and elastic net) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column or repeated K-fold crossvalidation; the Summary Across the Models with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold of two levels, the Prediction Profiler and Save Columns of any method, and the Python that fits them all.',
-    uses: ['sklearn.tree.DecisionTreeClassifier, DecisionTreeRegressor', 'sklearn.ensemble.RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor', 'sklearn.neighbors.NearestNeighbors', 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'sklearn.neural_network.MLPClassifier, MLPRegressor', 'sklearn.svm.SVC, SVR, l1_min_c', 'sklearn.linear_model.LinearRegression, LogisticRegression, enet_path', 'scipy.optimize.minimize (the cumulative logit, Platt\'s sigmoid)', 'scipy.linalg.pinvh (the discriminant)'],
+    about: 'JMP Pro\'s Model Screening: Decision Tree, Bootstrap Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
+    uses: ['xgboost.XGBClassifier, XGBRegressor (loaded when chosen)', 'lightgbm.LGBMClassifier, LGBMRegressor (loaded when chosen)', 'scipy.optimize.minimize (SLSQP: the stacking weights)', 'sklearn.tree.DecisionTreeClassifier, DecisionTreeRegressor', 'sklearn.ensemble.RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor', 'sklearn.neighbors.NearestNeighbors', 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'sklearn.neural_network.MLPClassifier, MLPRegressor', 'sklearn.svm.SVC, SVR, l1_min_c', 'sklearn.linear_model.LinearRegression, LogisticRegression, enet_path', 'scipy.optimize.minimize (the cumulative logit, Platt\'s sigmoid)', 'scipy.linalg.pinvh (the discriminant)'],
     launch: {
       lead: 'Choose one Y and the X factors, and the methods to compare. Each method is fitted to the same training rows and measured on the same validation and test rows.',
       roles: [

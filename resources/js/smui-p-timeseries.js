@@ -48,8 +48,8 @@
   const ptext = (s) => SM.report.plotlyText(String(s));
   /* The models JMP does not have. Their specs keep their own fields, so they
      are told apart by all of them. */
-  const NEW_KINDS = new Set(['uc', 'markov', 'theta', 'ardl']);
-  const UI_FLAGS = new Set(['id', 'group', 'report', 'graph', 'points', 'pi', 'racf', 'rpacf', 'rvario', 'rar', 'comps', 'fprob', 'smpi']);
+  const NEW_KINDS = new Set(['uc', 'markov', 'theta', 'ardl', 'bench', 'sma', 'avg']);
+  const UI_FLAGS = new Set(['id', 'group', 'report', 'graph', 'points', 'pi', 'racf', 'rpacf', 'rvario', 'rar', 'rruns', 'comps', 'fprob', 'smpi', 'smoothed']);
 
   function rgba(hex, a) {
     const h = hex.replace('#', '');
@@ -68,6 +68,8 @@
      models whose Graph box is checked, and the lag plot, whose pairs are made
      here, are put together here from the backend's fragments (plot_frag). */
   const J = JSON.stringify;
+  // a string as Python's json.dumps writes it (the backend's code): non-ASCII as \uXXXX
+  const pyJ = (v) => JSON.stringify(v).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
   const inches = (px) => String(Math.round(px) / 100);
   function recipe(parts, { flags = {}, size = null, color = null } = {}) {
     const on = (f) => (f.startsWith('!') ? !flags[f.slice(1)] : !!flags[f]);
@@ -89,6 +91,22 @@
   const nlags = (ctx) => Math.max(2, int(ctx.opt('nlags', 25), 25));
   const horizon = (ctx) => Math.max(0, Math.min(1000, int(ctx.opt('forecast', 25), 25)));
   const maxiter = (ctx) => Math.max(5, int(ctx.opt('maxiter', 200), 200));
+  /* Forecast on Holdback (JMP's launch option, also in the red triangle): the
+     last Forecast Periods values are held back, every model is fitted on the
+     rest and forecasts them. Refit on All Rows fits every model again on all
+     the values, for the forecasts after the end. */
+  const holdbackOn = (ctx) => !!ctx.opt('holdback', false) && horizon(ctx) >= 1;
+  const refitOn = (ctx) => holdbackOn(ctx) && !!ctx.opt('refit', false);
+  // The shading of the held-back values, in both themes.
+  const shadeFill = () => (SM.util.themeColors().dark ? 'rgba(200, 190, 178, 0.14)' : 'rgba(120, 107, 93, 0.12)');
+  /* A model's plots' end-of-fit line, and with values held back the shading
+     from the last value the model is fitted to to the last value. */
+  function fitShapes(S, nFit) {
+    const end = S.x[nFit - 1];
+    const out = [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }];
+    if (nFit < S.n) out.push({ type: 'rect', xref: 'x', yref: 'paper', x0: end, x1: S.x[S.n - 1], y0: 0, y1: 1, fillcolor: shadeFill(), line: { width: 0 }, layer: 'below' });
+    return out;
+  }
   function periodOf(ctx, S) {
     return knownPeriod(ctx, S) || 12;
   }
@@ -315,6 +333,7 @@
       if (zivotOn(ctx, col)) await part(() => zivotReport(ctx, col, S, base, ob), ob);
       else if (ctx.opt('zivot', null, sc) == null) ob.add(ctx.note(`The Zivot-Andrews test is left out for a series of more than ${ZA_AUTO} values (it takes a while): Zivot-Andrews Test in the red triangle adds it.`));
     }
+    if (o('runs', null)) await part(() => runsReport(ctx, col, S, box));
     if (o('spectral', false)) await part(() => spectralReport(ctx, col, S, base, box));
     if (o('lagPlot', null) != null) await part(() => lagPlot(ctx, col, S, box));
     if (o('subseries', false)) await part(() => subseriesReport(ctx, col, S, base, box, period));
@@ -420,6 +439,18 @@
     ob.add(ctx.note(spec.kind === 'stl' ? 'STL: seasonal and trend by loess (statsmodels\' STL). The seasonally adjusted series is y − seasonal.' : `Moving averages (statsmodels' seasonal_decompose): the trend is a centred moving average over the period, so it is missing at the ends. The adjusted series is ${spec.model === 'multiplicative' ? 'y / seasonal' : 'y − seasonal'}. JMP's X11 needs the Census Bureau's program, which does not run in the browser.`));
     for (const n of r.notes || []) ob.add(ctx.note(n));
     ob.add(ctx.code(r.code));
+  }
+
+  /* ---- Runs Test ------------------------------------------------------------------------------ */
+  const RUNS_ABOUT = { mean: 'About the Mean', median: 'About the Median', zero: 'About Zero' };
+
+  function runsReport(ctx, col, S, box) {
+    const sc = scopeOf(col);
+    const cut = ctx.opt('runs', 'mean', sc);
+    const ob = ctx.outline('Runs Test', { parent: box, key: `${sc}:runs`, info: 'p:timeseries:runs', menu: () => [
+      ...Object.entries(RUNS_ABOUT).map(([k, label]) => ({ label, checked: cut === k, action: () => ctx.set('runs', k, sc) })),
+      { separator: true }, { label: 'Remove', action: () => ctx.set('runs', null, sc) }] });
+    ob.add(runsBlock(ctx, (S.runs || {})[cut], `Runs about ${{ mean: 'the mean', median: 'the median', zero: 'zero' }[cut]}`, 'the values of the series', S.runs_code ? S.runs_code[cut].join('\n') : null));
   }
 
   /* ---- Spectral Density ------------------------------------------------------------------- */
@@ -704,37 +735,66 @@
   }
 
   /* ---- models: the fits ---------------------------------------------------------------------------------- */
-  function fitCall(ctx, base, spec, h) {
+  /* The backend function of a model and its own arguments (the series' come
+     with the call): { fn, args }, or { error }. An averaged model names its
+     members by their ids in the list. */
+  function callOf(ctx, spec, h, list = []) {
+    const level = spec.level || 0.95;
     if (spec.kind === 'arima') {
-      return ctx.call('timeseries.arima', { ...base, p: spec.p, d: spec.d, q: spec.q, P: spec.P || 0, D: spec.D || 0, Q: spec.Q || 0, s: spec.s || 0,
-        intercept: spec.intercept !== false, constrain: spec.constrain !== false, level: spec.level || 0.95, h, maxiter: maxiter(ctx), inputs: spec.inputs || null });
+      return { fn: 'timeseries.arima', args: { p: spec.p, d: spec.d, q: spec.q, P: spec.P || 0, D: spec.D || 0, Q: spec.Q || 0, s: spec.s || 0,
+        intercept: spec.intercept !== false, constrain: spec.constrain !== false, level, h, maxiter: maxiter(ctx), inputs: spec.inputs || null } };
     }
-    if (spec.kind === 'smooth') return ctx.call('timeseries.smooth', { ...base, method: spec.method, s: spec.s || 0, level: spec.level || 0.95, h, multiplicative: !!spec.multiplicative });
-    if (spec.kind === 'ets') return ctx.call('timeseries.ets', { ...base, error: spec.error, trend: spec.trend, seasonal: spec.seasonal, s: spec.s || 0, level: spec.level || 0.95, h, maxiter: Math.max(200, maxiter(ctx)) });
+    if (spec.kind === 'smooth') {
+      return { fn: 'timeseries.smooth', args: { method: spec.method, s: spec.s || 0, level, h, multiplicative: !!spec.multiplicative,
+        ...(spec.weights ? { weights: spec.weights } : {}), ...(spec.boxcox != null ? { boxcox: spec.boxcox } : {}) } };
+    }
+    if (spec.kind === 'ets') return { fn: 'timeseries.ets', args: { error: spec.error, trend: spec.trend, seasonal: spec.seasonal, s: spec.s || 0, level, h, maxiter: Math.max(200, maxiter(ctx)) } };
     if (spec.kind === 'uc') {
-      return ctx.call('timeseries.structural', { ...base, trend: spec.trend, seasonal: spec.seasonal || 0, stoch_seasonal: spec.stochSeasonal !== false,
+      return { fn: 'timeseries.structural', args: { trend: spec.trend, seasonal: spec.seasonal || 0, stoch_seasonal: spec.stochSeasonal !== false,
         freq_period: spec.freqPeriod || 0, freq_harmonics: spec.freqHarmonics || 0, stoch_freq: spec.stochFreq !== false, cycle: !!spec.cycle,
         stoch_cycle: spec.stochCycle !== false, damped_cycle: spec.damped !== false, cycle_lo: spec.cycleLo ?? null, cycle_hi: spec.cycleHi ?? null,
-        ar: spec.ar || 0, inputs: spec.inputs || null, exact: !!spec.exact, level: spec.level || 0.95, h, maxiter: maxiter(ctx) });
+        ar: spec.ar || 0, inputs: spec.inputs || null, exact: !!spec.exact, level, h, maxiter: maxiter(ctx) } };
     }
     if (spec.kind === 'markov') {
-      return ctx.call('timeseries.markov', { ...base, k: spec.k || 2, order: spec.order || 0, trend: spec.trend || 'c', switching_trend: spec.swTrend !== false,
-        switching_variance: !!spec.swVar, switching_ar: !!spec.swAr, starts: spec.starts ?? 5, maxiter: Math.min(500, maxiter(ctx)), level: spec.level || 0.95 });
+      return { fn: 'timeseries.markov', args: { k: spec.k || 2, order: spec.order || 0, trend: spec.trend || 'c', switching_trend: spec.swTrend !== false,
+        switching_variance: !!spec.swVar, switching_ar: !!spec.swAr, starts: spec.starts ?? 5, maxiter: Math.min(500, maxiter(ctx)), level } };
     }
     if (spec.kind === 'theta') {
-      return ctx.call('timeseries.theta', { ...base, period: spec.period || 0, deseasonalize: spec.deseasonalize !== false, use_test: spec.useTest !== false,
-        method: spec.method || 'auto', theta: spec.theta || 2, use_mle: !!spec.mle, level: spec.level || 0.95, h });
+      return { fn: 'timeseries.theta', args: { period: spec.period || 0, deseasonalize: spec.deseasonalize !== false, use_test: spec.useTest !== false,
+        method: spec.method || 'auto', theta: spec.theta || 2, use_mle: !!spec.mle, level, h } };
     }
     if (spec.kind === 'ardl') {
-      return ctx.call('timeseries.ardl', { ...base, inputs: spec.inputs || [], maxlag: spec.maxlag || 4, maxorder: spec.maxorder ?? 4, order: spec.order || null,
+      return { fn: 'timeseries.ardl', args: { inputs: spec.inputs || [], maxlag: spec.maxlag || 4, maxorder: spec.maxorder ?? 4, order: spec.order || null,
         trend: spec.trend || 'c', ic: spec.ic || 'aic', glob: !!spec.glob, causal: !!spec.causal, seasonal: !!spec.seasonal, period: spec.period || 0,
-        case: spec.case || null, level: spec.level || 0.95, h });
+        case: spec.case || null, level, h } };
     }
-    return Promise.resolve({ error: `unknown model ${spec.kind}` });
+    if (spec.kind === 'bench') return { fn: 'timeseries.benchmark', args: { method: spec.method, s: spec.s || 0, level, h } };
+    if (spec.kind === 'sma') return { fn: 'timeseries.sma', args: { width: spec.width || 3, centering: spec.centering || 'none', level, h } };
+    if (spec.kind === 'avg') {
+      const members = [];
+      for (const id of spec.members || []) {
+        const m = list.find((x) => x.id === id);
+        if (!m) return { error: 'a model it averages has been removed: Fit New… or Remove Fit' };
+        const c = callOf(ctx, m, h, list);
+        if (c.error) return c;
+        members.push({ ...c, args: { ...c.args, level }, name: specName(m) });   // the members' limits at the average's level
+      }
+      return { fn: 'timeseries.average', args: { members, level, h } };
+    }
+    return { error: `unknown model ${spec.kind}` };
+  }
+
+  /* A model fitted on the series: with values held back (holdback), on the
+     rest; season, the lag of MASE's naive forecast. */
+  function fitCall(ctx, base, spec, h, { holdback = 0, season = 1, list = [] } = {}) {
+    const c = callOf(ctx, spec, h, list);
+    if (c.error) return Promise.resolve({ error: c.error });
+    return ctx.call(c.fn, { ...base, ...c.args, ...(holdback ? { holdback, season } : {}) });
   }
 
   const fitKey = (s) => (NEW_KINDS.has(s.kind) ? JSON.stringify(Object.keys(s).filter((k) => !UI_FLAGS.has(k)).sort().map((k) => [k, s[k]]))
-    : JSON.stringify([s.kind, s.p, s.d, s.q, s.P, s.D, s.Q, s.s, s.intercept, s.constrain, s.level, s.inputs, s.method, s.multiplicative, s.error, s.trend, s.seasonal]));
+    : JSON.stringify([s.kind, s.p, s.d, s.q, s.P, s.D, s.Q, s.s, s.intercept, s.constrain, s.level, s.inputs, s.method, s.multiplicative, s.error, s.trend, s.seasonal,
+      ...(s.weights ? [s.weights] : []), ...(s.boxcox != null ? [s.boxcox] : [])]));
 
   function addModels(ctx, col, specs, { quiet = false } = {}) {
     const list = ctx.opt('models', [], scopeOf(col)).slice();
@@ -761,12 +821,13 @@
   /* A group's own model (ARIMA Model Group, State Space Smoothing): only the
      best by AIC (AICc for state space models) shows its report and graph
      until the boxes say otherwise. */
-  function effective(list, results) {
+  function effective(list, results, held = false) {
     const best = new Map();
     list.forEach((s, i) => {
       if (!s.group) return;
       const r = results[i];
-      const v = r && !r.error ? (s.kind === 'ets' ? r.stats.aicc : r.stats.aic) : null;
+      // with values held back, the best forecasts of them (JMP sorts by the holdback RMSE)
+      const v = r && !r.error ? (held ? (r.holdback || {}).rmse : s.kind === 'ets' ? r.stats.aicc : r.stats.aic) : null;
       if (v == null) return;
       const cur = best.get(s.group);
       if (!cur || v < cur.v) best.set(s.group, { v, id: s.id });
@@ -777,24 +838,46 @@
     });
   }
 
+  /* Every model of the series, fitted; with Forecast on Holdback on the
+     values before the last h (and with Refit on All Rows again on all). */
+  async function fitAll(ctx, base, list, h, holdback, season) {
+    const out = await Promise.all(list.map((spec) => fitCall(ctx, base, spec, h, { holdback, season, list }).catch((e) => ({ error: e.message || String(e) }))));
+    return out.map((r, i) => withOwnBand(list[i], r));
+  }
+
   async function modelsReport(ctx, col, S, base, box, { period, h }) {
     const sc = scopeOf(col);
     const list = ctx.opt('models', [], sc);
     if (!list.length) return;
-    const results = (await Promise.all(list.map((spec) => fitCall(ctx, base, spec, h).catch((e) => ({ error: e.message || String(e) }))))).map((r, i) => withOwnBand(list[i], r));
-    const eff = effective(list, results);
-    comparison(ctx, col, S, list, results, eff, box);
+    const held = holdbackOn(ctx) && S.n - h >= 8 ? h : 0;
+    const season = knownPeriod(ctx, S) || 1;
+    if (holdbackOn(ctx) && !held) box.add(ctx.warn(`Forecast on Holdback: the series has ${S.n} values, too few to hold back ${h} (Number of Forecast Periods… in the red triangle); the models are fitted on every value.`));
+    const results = await fitAll(ctx, base, list, h, held, season);
+    const refits = held && refitOn(ctx) ? await fitAll(ctx, base, list, h, 0, season) : null;
+    const M = { held, h, season, refits };
+    const eff = effective(list, results, !!held);
+    comparison(ctx, col, S, list, results, eff, box, M);
+    // the cross-validation's outline under Model Comparison, filled last (it refits every model at every origin)
+    const cv = ctx.opt('cv', null, sc);
+    const cvBox = cv ? cvOutline(ctx, col, S, box) : null;
     const groups = [...new Set(list.filter((s) => s.kind === 'ets' && s.group).map((s) => s.group))];
-    for (const g of groups) etsSelection(ctx, col, list, results, eff, g, box);
-    list.forEach((spec, i) => { if (eff[i].report) modelReport(ctx, col, S, spec, results[i], box); });
+    for (const g of groups) etsSelection(ctx, col, list, results, eff, g, box, M);
+    list.forEach((spec, i) => { if (eff[i].report) modelReport(ctx, col, S, spec, results[i], box, { ...M, refit: refits ? refits[i] : null }); });
+    if (cvBox) await cvReport(ctx, col, S, base, list, cvBox, { ...cv, season });
   }
 
   /* ---- Model Comparison -------------------------------------------------------------------------------------- */
   const CMP_COLS = [['df', 'DF', 'int'], ['variance', 'Variance'], ['aic', 'AIC'], ['sbc', 'SBC'], ['aicc', 'AICc'], ['rsquare', 'RSquare'], ['m2ll', '−2LogLH'], ['weight', 'Weights'], ['mape', 'MAPE'], ['mae', 'MAE']];
+  // With Forecast on Holdback, JMP's table has the statistics of the forecasts of the held-back values (and not the training fit's)
+  const HB_COLS = [['hb_rmse', 'RMSE'], ['hb_mse', 'MSE'], ['hb_mape', 'MAPE'], ['hb_mae', 'MAE'], ['hb_me', 'Mean Error'], ['hb_mase', 'MASE'], ['hb_n', 'N', 'int']];
+  const HB_KEYS = { hb_rmse: 'rmse', hb_mse: 'mse', hb_mape: 'mape', hb_mae: 'mae', hb_me: 'me', hb_mase: 'mase', hb_n: 'n' };
 
-  function comparison(ctx, col, S, list, results, eff, box) {
+  function comparison(ctx, col, S, list, results, eff, box, M = {}) {
     const sc = scopeOf(col);
+    const held = M.held || 0;
+    const cols = held ? HB_COLS : CMP_COLS;
     const setAll = (patch) => updateModels(ctx, col, (m) => ({ ...m, ...patch }));
+    const fitted = list.filter((spec, i) => results[i] && !results[i].error);
     const ob = ctx.outline('Model Comparison', { parent: box, key: `${sc}:cmp`, info: 'p:timeseries:comparison', menu: () => [
       { label: 'Remove All Models', action: () => ctx.set('models', [], sc) },
       { label: 'Remove Unselected', action: () => ctx.set('models', list.filter((m, i) => eff[i].report), sc) },
@@ -805,7 +888,13 @@
       { label: 'Show All Graphs', action: () => setAll({ graph: true }) },
       { label: 'Hide All Graphs', action: () => setAll({ graph: false }) },
       { separator: true },
-      { label: 'Combine and Save Forecasts from Models', action: () => combineForecasts(ctx, col, S, list, results) },
+      { label: 'Forecast on Holdback', checked: holdbackOn(ctx), action: () => ctx.set('holdback', !holdbackOn(ctx)) },
+      { label: 'Refit on All Rows', checked: refitOn(ctx), disabled: !holdbackOn(ctx), title: 'With Forecast on Holdback: every model fitted again on all the values, for the forecasts after the end',
+        action: () => ctx.set('refit', !ctx.opt('refit', false)) },
+      { label: 'Averaged Forecast…', disabled: averageable(list).length < 2, action: () => averageDialog(ctx, col, S, list) },
+      { label: 'Rolling-Origin Cross-Validation…', disabled: !fitted.length, action: () => cvDialog(ctx, col, S) },
+      { separator: true },
+      { label: 'Combine and Save Forecasts from Models', action: () => combineForecasts(ctx, col, S, list, results, M) },
     ] });
     const aics = results.map((r) => (r && !r.error ? r.stats.aic : null)).filter(Number.isFinite);
     const best = aics.length ? Math.min(...aics) : null;
@@ -813,9 +902,11 @@
     const rows = list.map((spec, i) => {
       const r = results[i];
       const st = r && !r.error ? r.stats : {};
-      return { spec, i, name: r && r.name ? r.name : specName(spec), error: r && r.error, ...st, weight: Number.isFinite(st.aic) && tot > 0 ? Math.exp(-0.5 * (st.aic - best)) / tot : null };
+      const hb = r && !r.error && r.holdback ? r.holdback : {};
+      return { spec, i, name: r && r.name ? r.name : specName(spec), error: r && r.error, ...st, weight: Number.isFinite(st.aic) && tot > 0 ? Math.exp(-0.5 * (st.aic - best)) / tot : null,
+        ...Object.fromEntries(Object.entries(HB_KEYS).map(([k, v]) => [k, hb[v] ?? null])) };
     });
-    let sortKey = 'aic', dir = 1;
+    let sortKey = held ? 'hb_rmse' : 'aic', dir = 1;
     const tbody = el('tbody');
     const head = el('tr', null, el('th', { class: 'sm-l', text: 'Report' }), el('th', { class: 'sm-l', text: 'Graph' }), el('th', { class: 'sm-l', text: 'Model' }));
     const fill = () => {
@@ -835,19 +926,20 @@
         const tr = el('tr', { dataset: { model: String(row.spec.id) } },
           el('td', { class: 'sm-l' }, box1), el('td', { class: 'sm-l' }, box2),
           el('td', { class: 'sm-l sm-ts-name' }, el('span', { class: 'sm-ts-swatch', style: { background: colorOf(row.spec.id) } }), row.name));
-        for (const [key, , f] of CMP_COLS) tr.append(el('td', { text: row.error && key === 'df' ? '' : SM.report.cellText(row[key], f || 'num') }));
+        for (const [key, , f] of cols) tr.append(el('td', { text: row.error && (key === 'df' || key === 'hb_n') ? '' : SM.report.cellText(row[key], f || 'num') }));
         if (row.error) tr.append(el('td', { class: 'sm-l sm-ts-err', text: row.error }));
         return tr;
       }));
     };
-    for (const [key, label] of CMP_COLS) {
+    for (const [key, label] of cols) {
       const th = el('th', { text: label, scope: 'col', class: 'sm-ts-sort' });
+      if (key === sortKey) th.setAttribute('aria-sort', 'ascending');
       th.addEventListener('click', () => { if (sortKey === key) dir = -dir; else { sortKey = key; dir = 1; } head.querySelectorAll('th').forEach((x) => x.removeAttribute('aria-sort')); th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending'); fill(); });
       head.append(th);
     }
     fill();
     const tbl = el('table', { class: 'sm-rt sm-ts-cmp' }, el('thead', null, head), tbody);
-    tbl._rt = { columns: [{ key: 'name', label: 'Model', fmt: 'text' }, ...CMP_COLS.map(([key, label, f]) => ({ key, label, fmt: f || 'num' }))], rows };
+    tbl._rt = { columns: [{ key: 'name', label: 'Model', fmt: 'text' }, ...cols.map(([key, label, f]) => ({ key, label, fmt: f || 'num' }))], rows };
     tbl.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       SM.ui.menu([
@@ -857,22 +949,36 @@
     });
     ob.add(el('div', { class: 'sm-ts-scroll' }, tbl));
     const kinds = new Set(list.map((s) => s.kind));
-    if (kinds.has('ets') && kinds.size > 1) ob.add(ctx.warn('Caution: the state space smoothing models\' likelihood is not that of the ARIMA and smoothing models, so their AIC and SBC do not compare; compare on MAPE and MAE, or within each class (as JMP cautions).'));
-    else if (kinds.has('smooth') && kinds.has('arima')) ob.add(ctx.note('The smoothing models\' likelihood is that of their one-step errors given the estimated starting states; the ARIMA models\' is the exact likelihood. Their AICs are close relatives, not the same quantity.'));
-    const own = [kinds.has('uc') && 'the structural models\' leaves out the diffuse start', kinds.has('markov') && 'the regime-switching models\' is a mixture over the regimes (with an AR part, conditional on its first observations)',
-      kinds.has('ardl') && 'the ARDL models\' is conditional on the lags\' starting values', kinds.has('theta') && 'the Theta model\'s is that of its one-step errors'].filter(Boolean);
-    if (own.length && kinds.size > 1) ob.add(ctx.note(`Across classes the likelihoods differ in detail: ${own.join('; ')}. Their AICs are close relatives, not the same quantity; MAPE and MAE compare directly.`));
-    ob.add(ctx.note('Sorted by AIC; click a heading to sort. Weights are AIC weights, exp(−ΔAIC/2) normalised. Report shows a model\'s report, Graph puts it on the plots below. AIC, SBC and AICc count the fitted parameters as JMP does (not the variance).'));
+    if (held) {
+      const nFit = S.n - held;
+      ob.add(ctx.note(`Forecast on Holdback: every model is fitted on the first ${nFit} values and forecasts the last ${held}, from ${tLabel(S, S.t[nFit])} to ${tLabel(S, S.t[S.n - 1])}. `
+        + 'The statistics are those of these forecast errors (actual − forecast): RMSE, MSE, MAPE, MAE, the mean error, and MASE, the MAE over the training values\' in-sample MAE of the '
+        + `${M.season > 1 ? `seasonal naive forecast (lag ${M.season})` : 'naive forecast'} (Hyndman and Koehler 2006). They compare across model classes, which the AICs do not; `
+        + 'sorted by RMSE, as JMP sorts them; click a heading to sort. Each model\'s report keeps its training fit statistics.'));
+      ob.add(holdbackCode(ctx, col, list, results));
+    } else {
+      if (kinds.has('ets') && kinds.size > 1) ob.add(ctx.warn('Caution: the state space smoothing models\' likelihood is not that of the ARIMA and smoothing models, so their AIC and SBC do not compare; compare on MAPE and MAE, or within each class (as JMP cautions), or with Forecast on Holdback.'));
+      else if (kinds.has('smooth') && kinds.has('arima')) ob.add(ctx.note('The smoothing models\' likelihood is that of their one-step errors given the estimated starting states; the ARIMA models\' is the exact likelihood. Their AICs are close relatives, not the same quantity.'));
+      const own = [kinds.has('uc') && 'the structural models\' leaves out the diffuse start', kinds.has('markov') && 'the regime-switching models\' is a mixture over the regimes (with an AR part, conditional on its first observations)',
+        kinds.has('ardl') && 'the ARDL models\' is conditional on the lags\' starting values', kinds.has('theta') && 'the Theta model\'s is that of its one-step errors',
+        (kinds.has('bench') || kinds.has('sma')) && 'the benchmarks\' and moving averages\' are those of their one-step errors, with nothing (Drift: the drift) estimated'].filter(Boolean);
+      if (own.length && kinds.size > 1) ob.add(ctx.note(`Across classes the likelihoods differ in detail: ${own.join('; ')}. Their AICs are close relatives, not the same quantity; MAPE and MAE compare directly.`));
+      if (kinds.has('avg')) ob.add(ctx.note('An averaged forecast has no likelihood, so no AIC: compare it on MAPE and MAE, or with Forecast on Holdback.'));
+      ob.add(ctx.note('Sorted by AIC; click a heading to sort. Weights are AIC weights, exp(−ΔAIC/2) normalised. Report shows a model\'s report, Graph puts it on the plots below. AIC, SBC and AICc count the fitted parameters as JMP does (not the variance).'));
+    }
     // the model plots: forecasts, and the residual autocorrelations
     const shown = list.map((s, i) => ({ s, r: results[i], on: eff[i].graph })).filter((x) => x.on && x.r && !x.r.error);
     if (!shown.length) return;
-    const traces = [{ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false }];
-    for (const { s, r } of shown) traces.push(...forecastTraces(S, r, colorOf(s.id), { pi: true, name: r.name, legend: true, oneStepPI: false }));
-    const end = S.x[S.x.length - 1];
-    const size = [plotWidth(ctx, 640), 320 + 18 * Math.ceil(shown.length / 2)];
-    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, showlegend: true, legend: { orientation: 'h', y: -0.22 },
-      shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
-    { width: size[0], height: size[1], title: `${col.name} model comparison forecasts` });
+    const title = `${col.name} model comparison forecasts${held ? ' on the holdback' : ''}`;
+    ob.add(...comparisonPlot(ctx, col, S, shown, title, held));
+    if (M.refits) {
+      const again = list.map((s, i) => ({ s, r: M.refits[i], on: eff[i].graph })).filter((x) => x.on && x.r && !x.r.error);
+      if (again.length) {
+        const rf = ctx.outline('Refit on All Rows', { parent: ob, key: `${sc}:cmp:refit`, info: 'p:timeseries:holdback' });
+        rf.add(...comparisonPlot(ctx, col, S, again, `${col.name} model comparison forecasts, refit on all rows`, 0),
+          ctx.note(`Every model fitted again on all ${S.n} values, and its forecasts of the ${M.h} periods after the end, with ${fmt(100 * (again[0].s.level || 0.95))}% prediction intervals.`));
+      }
+    }
     const acfOver = (key, label) => {
       const tr = [], used = [];
       let n = 0;
@@ -886,29 +992,41 @@
       }
       if (!tr.length) return null;
       const b = 2 / Math.sqrt(n);
-      const title = `${col.name} residual ${label.toLowerCase()}`;
+      const t = `${col.name} residual ${label.toLowerCase()}`;
       const w = plotWidth(ctx, 320);
       return withCode(ctx.plot(tr, { xaxis: { title: { text: 'Lag' } }, yaxis: { title: { text: label }, range: [-1, 1] },
         shapes: [b, -b].map((v) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: v, y1: v, line: { color: '#2f6ec7', width: 1, dash: 'dash' } })) },
-      { width: w, height: 220, title }), comparisonCode(ctx, col, used, [w, 220], key === 'acf' ? 'racf' : 'rpacf', { label, title }));
+      { width: w, height: 220, title: t }), comparisonCode(ctx, col, used, [w, 220], key === 'acf' ? 'racf' : 'rpacf', { label, title: t }));
     };
-    ob.add(plot, comparisonCode(ctx, col, shown, size, 'forecast', { title: `${col.name} model comparison forecasts` }),
-      ctx.row(acfOver('acf', 'Autocorrelation'), acfOver('pacf', 'Partial Autocorrelation')));
+    ob.add(ctx.row(acfOver('acf', 'Autocorrelation'), acfOver('pacf', 'Partial Autocorrelation')));
+  }
+
+  /* Model Comparison's forecast plot of the models shown (their Graph box),
+     with its code: with values held back, the held-back span shaded. */
+  function comparisonPlot(ctx, col, S, shown, title, held) {
+    const traces = [{ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false }];
+    for (const { s, r } of shown) traces.push(...forecastTraces(S, r, colorOf(s.id), { pi: true, name: r.name, legend: true, oneStepPI: false }));
+    const size = [plotWidth(ctx, 640), 320 + 18 * Math.ceil(shown.length / 2)];
+    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, showlegend: true, legend: { orientation: 'h', y: -0.22 },
+      shapes: fitShapes(S, S.n - held) }, { width: size[0], height: size[1], title });
+    return [plot, comparisonCode(ctx, col, shown, size, 'forecast', { title, held })];
   }
 
   /* Model Comparison's plots as code: the series once, then each model whose
      Graph box is checked, fitted as in its report and drawn in its colour
      (its fragment, plot_frag: the fit, the draw and the residual
      correlations), then the lines and labels of the plot. */
-  function comparisonCode(ctx, col, shown, size, kind, { label = null, title }) {
+  function comparisonCode(ctx, col, shown, size, kind, { label = null, title, held = 0 }) {
     if (!shown.length || shown.some((x) => !x.r.plot_frag)) return null;
     const imports = new Set(['import matplotlib.pyplot as plt']);
     for (const { r } of shown) for (const i of r.plot_frag.imports || []) imports.add(i);
     if (kind !== 'forecast') imports.add('from statsmodels.tsa.stattools import acf, levinson_durbin');
     const forecast = kind === 'forecast';
+    const data = held ? 'ax.plot(t_all, y_all, color="#2f6690", linestyle="", marker="o", markersize=3.6)   # the data, the held-back values too'
+      : 'ax.plot(t, y, color="#2f6690", linestyle="", marker="o", markersize=3.6)   # the data';
     const L = [SM.report.codeHead(ctx.table.name, [...imports]), ...shown[0].r.plot_frag.series, '', recipe([{ set: 'size' }], { size }),
       'fig, ax = plt.subplots(figsize=size, layout="constrained")',
-      forecast ? 'ax.plot(t, y, color="#2f6690", linestyle="", marker="o", markersize=3.6)   # the data' : 'nmax = 0   # the most residuals of any model, for the ±2/√n lines'];
+      forecast ? data : 'nmax = 0   # the most residuals of any model, for the ±2/√n lines'];
     for (const { s, r } of shown) {
       const flags = { pi: true, onestep: false, legend: true, smpi: s.kind === 'theta' && !!s.smpi };
       L.push('', `# ${r.name}, fitted as in its report`, recipe(r.plot_frag.fit, { flags }), recipe([{ set: 'color' }], { color: colorOf(s.id) }),
@@ -916,14 +1034,29 @@
     }
     L.push('');
     if (forecast) {
-      L.push('ax.axvline(t[-1], color="#786b5d", linewidth=0.72, linestyle=":")   # the end of the data',
-        `ax.set_xlabel(${J(ctx.name('time') || 'Row')})`, `ax.set_ylabel(${J(col.name)})`, `ax.set_title(${J(title)})`,
+      L.push(`ax.axvline(t[-1], color="#786b5d", linewidth=0.72, linestyle=":")   # the end of the ${held ? 'values the models are fitted to' : 'data'}`);
+      if (held) L.push('ax.axvspan(t[-1], t_hold[-1], color="#786b5d", alpha=0.12, linewidth=0)   # the held-back values');
+      L.push(`ax.set_xlabel(${J(ctx.name('time') || 'Row')})`, `ax.set_ylabel(${J(col.name)})`, `ax.set_title(${J(title)})`,
         'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)   # the models');
     } else {
       L.push('b = 2 / np.sqrt(nmax)', 'for v in (b, -b):   # ±2/√n', '    ax.axhline(v, color="#2f6ec7", linewidth=0.72, linestyle="--")',
         'ax.set_ylim(-1, 1)', 'ax.set_xlabel("Lag")', `ax.set_ylabel(${J(label)})`, `ax.set_title(${J(title)})`);
     }
     L.push('plt.show()');
+    return ctx.code(L.join('\n'));
+  }
+
+  /* The holdback statistics of Model Comparison as code: each model fitted
+     on the training values as in its report, its forecasts of the held-back
+     ones, and their errors' statistics (the fragments' hb_def and hb). */
+  function holdbackCode(ctx, col, list, results) {
+    const ok = list.map((s, i) => results[i]).filter((r) => r && !r.error && r.plot_frag && r.plot_frag.hb);
+    if (!ok.length) return null;
+    const imports = new Set();
+    for (const r of ok) for (const i of r.plot_frag.imports || []) imports.add(i);
+    const L = [SM.report.codeHead(ctx.table.name, [...imports]), ...ok[0].plot_frag.series, ...ok[0].plot_frag.hb_def, 'holdback = {}   # each model\'s forecasts of the held-back values'];
+    for (const r of ok) L.push('', `# ${r.name}, fitted as in its report`, recipe(r.plot_frag.fit, { flags: {} }), `holdback[${J(r.name)}] = ${r.plot_frag.hb}`);
+    L.push('', 'print(pd.DataFrame(holdback).T.sort_values("RMSE").to_string())   # Model Comparison, sorted by RMSE');
     return ctx.code(L.join('\n'));
   }
 
@@ -940,8 +1073,14 @@
     }
     if (s.kind === 'smooth') {
       const label = s.method === 'winters' && s.multiplicative ? 'Winters Method (Multiplicative)' : s.method === 'winters' ? 'Winters Method (Additive)' : SMOOTH_LABEL[s.method] || s.method;
-      return s.method === 'seasonal' || s.method === 'winters' ? `${label}(${s.s})` : label;
+      const base = s.method === 'seasonal' || s.method === 'winters' ? `${label}(${s.s})` : label;
+      const extra = Object.entries(s.weights || {}).map(([k, w]) => (w.fix != null ? `${WEIGHT_SYM[k]} = ${fmt(w.fix)}` : `${WEIGHT_SYM[k]} in [${fmt(w.lo ?? 0)}, ${fmt(w.hi ?? 1)}]`));
+      if (s.boxcox != null) extra.push(`Box-Cox λ = ${fmt(s.boxcox)}`);
+      return extra.length ? `${base}, ${extra.join(', ')}` : base;
     }
+    if (s.kind === 'bench') return s.method === 'snaive' ? `Seasonal Naive(${s.s})` : s.method === 'drift' ? 'Drift' : 'Naive';
+    if (s.kind === 'sma') return `Simple Moving Average(${s.width}${s.centering === 'centered' ? ', centered' : s.centering === 'double' ? ', centered and double smoothed' : ''})`;
+    if (s.kind === 'avg') return `Averaged Forecast of ${(s.members || []).length} models`;
     if (s.kind === 'ets') return `ETS(${s.error === 'mul' ? 'M' : 'A'},${s.trend || 'N'},${s.seasonal || 'N'})`;
     if (s.kind === 'uc') return `Structural: ${s.trend === 'irregular' ? 'no trend' : s.trend}${s.seasonal ? ` + seasonal(${s.seasonal})` : ''}${s.freqPeriod ? ` + trigonometric seasonal(${s.freqPeriod})` : ''}${s.cycle ? ' + cycle' : ''}${s.ar ? ` + AR(${s.ar})` : ''}${(s.inputs || []).map((x) => ` + ${x}`).join('')}`;
     if (s.kind === 'markov') return `Regime Switching: ${s.k || 2} regimes${s.order ? `, AR(${s.order})` : ''}`;
@@ -955,11 +1094,13 @@
      a band over the forecast periods. */
   function forecastTraces(S, r, color, { pi = true, name: raw, legend = false, oneStepPI = true } = {}) {
     const name = ptext(raw);
-    const n = S.t.length;
+    // the slots the model is fitted to: all of them, or those before the held-back values
+    const n = Math.min(r.n || S.t.length, S.t.length);
+    const xs = S.x.slice(0, n);
     const fc = r.forecast || { t: [] };
     const last = n - 1;
     const ft = fx(S, fc.t);
-    const tr = [{ type: 'scatter', mode: 'lines', x: S.x, y: r.fitted, name: legend ? name : 'Predicted', legendgroup: name, showlegend: legend, line: { color, width: 1.3 }, hovertemplate: `${name}: %{y:.5g}<extra></extra>` }];
+    const tr = [{ type: 'scatter', mode: 'lines', x: xs, y: r.fitted, name: legend ? name : 'Predicted', legendgroup: name, showlegend: legend, line: { color, width: 1.3 }, hovertemplate: `${name}: %{y:.5g}<extra></extra>` }];
     if (fc.t.length) {
       const x0 = S.x[last], y0 = r.fitted[last] != null ? r.fitted[last] : S.values[last];
       if (pi) {
@@ -971,34 +1112,41 @@
         hovertemplate: `${name} forecast: %{y:.5g}<extra></extra>` });
     }
     if (pi && oneStepPI) {
-      tr.push({ type: 'scatter', mode: 'lines', x: S.x, y: r.fit_hi, line: { color: rgba(color, 0.45), width: 0.8, dash: 'dot' }, legendgroup: name, showlegend: false, hoverinfo: 'skip', name: `${name} upper (one step)` },
-        { type: 'scatter', mode: 'lines', x: S.x, y: r.fit_lo, line: { color: rgba(color, 0.45), width: 0.8, dash: 'dot' }, legendgroup: name, showlegend: false, hoverinfo: 'skip', name: `${name} lower (one step)` });
+      tr.push({ type: 'scatter', mode: 'lines', x: xs, y: r.fit_hi, line: { color: rgba(color, 0.45), width: 0.8, dash: 'dot' }, legendgroup: name, showlegend: false, hoverinfo: 'skip', name: `${name} upper (one step)` },
+        { type: 'scatter', mode: 'lines', x: xs, y: r.fit_lo, line: { color: rgba(color, 0.45), width: 0.8, dash: 'dot' }, legendgroup: name, showlegend: false, hoverinfo: 'skip', name: `${name} lower (one step)` });
     }
     return tr;
   }
 
   /* ---- State Space Smoothing model selection ------------------------------------------------------------------------ */
-  function etsSelection(ctx, col, list, results, eff, group, box) {
+  function etsSelection(ctx, col, list, results, eff, group, box, M = {}) {
     const sc = scopeOf(col);
+    const held = M.held || 0;
     const rows = [];
     list.forEach((s, i) => {
       if (s.group !== group || s.kind !== 'ets') return;
       const r = results[i];
+      const hb = r && !r.error && r.holdback ? r.holdback : {};
       rows.push({ id: s.id, i, name: r && r.name ? r.name.replace('State Space Smoothing ', '') : specName(s), error: r && r.error, nparm: r && r.nparm, m2ll: r && r.stats ? r.stats.m2ll : null,
-        aic: r && r.stats ? r.stats.aic : null, aicc: r && r.stats ? r.stats.aicc : null, bic: r && r.stats ? r.stats.sbc : null, mape: r && r.stats ? r.stats.mape : null });
+        aic: r && r.stats ? r.stats.aic : null, aicc: r && r.stats ? r.stats.aicc : null, bic: r && r.stats ? r.stats.sbc : null, mape: r && r.stats ? r.stats.mape : null,
+        hb_rmse: hb.rmse ?? null, hb_mape: hb.mape ?? null });
     });
+    // the best: by AICc, or with values held back by the RMSE of their forecasts (as the Report boxes pick it)
+    const key = held ? 'hb_rmse' : 'aicc';
     const ok = rows.filter((r) => Number.isFinite(r.aicc));
     const best = ok.length ? Math.min(...ok.map((r) => r.aicc)) : null;
     const tot = ok.reduce((s, r) => s + Math.exp(-0.5 * (r.aicc - best)), 0);
-    for (const r of rows) { r.delta = Number.isFinite(r.aicc) ? r.aicc - best : null; r.weight = Number.isFinite(r.aicc) && tot ? Math.exp(-0.5 * r.delta) / tot : null; r.mark = r.delta === 0 ? '★ best' : r.error ? r.error : ''; }
-    rows.sort((a, b) => (a.aicc ?? Infinity) - (b.aicc ?? Infinity));
+    const bestKey = Math.min(...rows.map((r) => (Number.isFinite(r[key]) ? r[key] : Infinity)));
+    for (const r of rows) { r.delta = Number.isFinite(r.aicc) ? r.aicc - best : null; r.weight = Number.isFinite(r.aicc) && tot ? Math.exp(-0.5 * r.delta) / tot : null; r.mark = r[key] === bestKey && Number.isFinite(bestKey) ? '★ best' : r.error ? r.error : ''; }
+    rows.sort((a, b) => (a[key] ?? Infinity) - (b[key] ?? Infinity));
     const ob = ctx.outline(`State Space Smoothing Model Selection ${group}`, { parent: box, key: `${sc}:etsgroup:${group}`, info: 'p:timeseries:ets', menu: () => [
       { label: 'Remove These Models', action: () => ctx.set('models', ctx.opt('models', [], sc).filter((m) => m.group !== group), sc) },
     ] });
+    const hbCols = held ? [{ key: 'hb_rmse', label: 'Holdback RMSE' }, { key: 'hb_mape', label: 'Holdback MAPE' }] : [];
     ob.add(ctx.rt({ columns: [{ key: 'name', label: 'Model', fmt: 'text' }, { key: 'nparm', label: 'Nparm', fmt: 'int' }, { key: 'm2ll', label: '−2LogLikelihood' }, { key: 'aic', label: 'AIC' },
-      { key: 'aicc', label: 'AICc' }, { key: 'delta', label: 'ΔAICc' }, { key: 'weight', label: 'AICc Weight' }, { key: 'bic', label: 'BIC' }, { key: 'mape', label: 'MAPE' }, { key: 'mark', label: '', fmt: 'text' }], rows },
+      { key: 'aicc', label: 'AICc' }, { key: 'delta', label: 'ΔAICc' }, { key: 'weight', label: 'AICc Weight' }, { key: 'bic', label: 'BIC' }, { key: 'mape', label: 'MAPE' }, ...hbCols, { key: 'mark', label: '', fmt: 'text' }], rows },
     { sortable: false, name: 'State space smoothing models', onRow: (row) => updateModels(ctx, col, (m) => (m.id === row.id ? { ...m, report: true, graph: true } : null)) }),
-    ctx.note('ETS(error, trend, seasonal) models of Hyndman et al. (2008) fitted by maximum likelihood (statsmodels\' ETSModel), best first by AICc. The best one shows its report; click a line to show another.'));
+    ctx.note(`ETS(error, trend, seasonal) models of Hyndman et al. (2008) fitted by maximum likelihood (statsmodels' ETSModel), best first by ${held ? 'the RMSE of their forecasts of the held-back values (Forecast on Holdback); AIC, AICc and BIC are those of the training values' : 'AICc'}. The best one shows its report; click a line to show another.`));
   }
 
   /* ---- a model's report ---------------------------------------------------------------------------------------------- */
@@ -1012,9 +1160,13 @@
     theta: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }],
     ardl: () => [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }],
   };
-  const MODEL_INFO = { ets: 'p:timeseries:ets', smooth: 'p:timeseries:smoothing', uc: 'p:timeseries:structural', markov: 'p:timeseries:regime', theta: 'p:timeseries:theta', ardl: 'p:timeseries:ardl' };
+  const MODEL_INFO = { ets: 'p:timeseries:ets', smooth: 'p:timeseries:smoothing', uc: 'p:timeseries:structural', markov: 'p:timeseries:regime', theta: 'p:timeseries:theta',
+    ardl: 'p:timeseries:ardl', bench: 'p:timeseries:benchmarks', sma: 'p:timeseries:sma', avg: 'p:timeseries:average' };
+  // what a model without parameters says under Parameter Estimates
+  const NO_PARAMS = { sma: 'No parameters: the width of the moving average is chosen, not estimated.', avg: 'No parameters of its own: the mean of the models it averages.',
+    bench: 'No parameters besides the variance: the benchmark is the data itself.' };
 
-  function modelMenu(ctx, col, S, spec, r) {
+  function modelMenu(ctx, col, S, spec, r, M = {}) {
     const flag = (k, d = true) => (spec[k] == null ? d : !!spec[k]);
     const up = (patch) => updateModels(ctx, col, (m) => (m.id === spec.id ? { ...m, ...patch } : null));
     const own = [];
@@ -1026,17 +1178,25 @@
         { label: 'Save Regime Probabilities', disabled: !r || !!r.error, action: () => saveRegimes(ctx, col, S, r) });
     } else if (spec.kind === 'theta') {
       own.push({ label: 'statsmodels\' Prediction Intervals', checked: flag('smpi', false), action: () => up({ smpi: !flag('smpi', false) }) });
+    } else if (spec.kind === 'sma') {
+      own.push({ label: 'Smoothed Series', checked: flag('smoothed'), action: () => up({ smoothed: !flag('smoothed') }) },
+        { label: 'Save Moving Average', disabled: !r || !!r.error, action: () => saveSlots(ctx, S, `${col.name} ${r.name}`, r.smoothed) });
     }
+    const pf = predictionFormula(ctx, col, S, spec, r);
     return [
       { label: 'Show Points', checked: flag('points'), action: () => up({ points: !flag('points') }) },
       { label: 'Show Prediction Interval', checked: flag('pi'), action: () => up({ pi: !flag('pi') }) },
-      { label: 'Save Columns', disabled: !r || !!r.error, action: () => saveModelTable(ctx, col, S, r) },
+      { label: 'Save Columns', disabled: !r || !!r.error, action: () => saveModelTable(ctx, col, S, r, M.refit) },
+      ...(pf ? [{ label: 'Save Prediction Formula', disabled: !!pf.why, title: pf.why || undefined, action: () => {
+        try { ctx.saveFormula(`Pred Formula ${col.name} ${r.name}`, pf.expr, { notes: `${r.name}: the one-step-ahead prediction of ${col.name}, from the rows before (${pf.what})` }); } catch (e) { SM.ui.toast(e.message, { error: true }); }
+      } }] : []),
       ...own,
       { label: 'Residual Statistics', submenu: () => [
         { label: 'Autocorrelation', checked: flag('racf'), action: () => up({ racf: !flag('racf') }) },
         { label: 'Partial Autocorrelation', checked: flag('rpacf'), action: () => up({ rpacf: !flag('rpacf') }) },
         { label: 'Variogram', checked: flag('rvario', false), action: () => up({ rvario: !flag('rvario', false) }) },
         { label: 'AR Coefficients', checked: flag('rar', false), action: () => up({ rar: !flag('rar', false) }) },
+        { label: 'Runs Test', checked: flag('rruns', false), action: () => up({ rruns: !flag('rruns', false) }) },
       ] },
       { separator: true },
       { label: 'Fit New…', action: () => fitNew(ctx, col, S, spec) },
@@ -1044,46 +1204,108 @@
     ];
   }
 
-  function modelReport(ctx, col, S, spec, r, box) {
+  /* The one-step-ahead prediction of a benchmark or a moving average as a
+     formula (Save Prediction Formula): Lag() of the rows before, so the
+     table's rows must be the series' slots one after another (sorted by the
+     Time ID, no time point without its row, no By group across the table). */
+  function predictionFormula(ctx, col, S, spec, r) {
+    if (!r || r.error || !(spec.kind === 'bench' || spec.kind === 'sma')) return null;
+    const ref = SM.formula.refText(col.name);
+    const lag = (k) => `Lag(${ref}, ${k})`;
+    let expr, what;
+    if (spec.kind === 'bench' && spec.method === 'naive') { expr = lag(1); what = 'the value before'; }
+    else if (spec.kind === 'bench' && spec.method === 'snaive') { expr = lag(spec.s); what = `the value ${spec.s} rows before`; }
+    else if (spec.kind === 'bench') { const b = r.drift; expr = `${lag(1)} ${b < 0 ? '-' : '+'} ${String(Math.abs(b))}`; what = 'the value before plus the drift'; }
+    else { const w = spec.width || 1; expr = w === 1 ? lag(1) : `(${Array.from({ length: w }, (_, j) => lag(j + 1)).join(' + ')}) / ${w}`; what = `the mean of the ${w} values before`; }
+    const rows = S.rows || [];
+    let why = null;
+    if ((ctx.where || []).length) why = 'Lag() takes the rows before in the whole table, across the By groups';
+    else if (rows.some((x, i) => x == null || (i && x !== rows[i - 1] + 1))) why = 'the table\'s rows are not the series\' time points one after another (sort the table by its Time ID, and give every time point a row)';
+    return { expr, what, why };
+  }
+
+  /* A model's forecast graph: the data, its one-step-ahead predictions and
+     forecasts; with values held back, their span shaded. */
+  function forecastPlot(ctx, col, S, spec, r, name, title, code) {
+    const flag = (k, d = true) => (spec[k] == null ? d : !!spec[k]);
+    const color = colorOf(spec.id);
+    const traces = [];
+    if (flag('points')) traces.push({ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false });
+    traces.push(...forecastTraces(S, r, color, { pi: flag('pi'), name }));
+    const wide = plotWidth(ctx, 620);
+    const plot = ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes: fitShapes(S, Math.min(r.n || S.n, S.n)) }, { width: wide, height: 300, title });
+    if (!code || !code.length) return [plot, null];
+    // the recipe titles the graph "<name> forecast"; the refit's graph has a title of its own
+    const text = recipe(code, { flags: { points: flag('points'), pi: flag('pi'), onestep: true, smpi: flag('smpi', false) }, size: [wide, 300], color })
+      .replace(`ax.set_title(${pyJ(`${name} forecast`)})`, `ax.set_title(${J(title)})`);
+    return [plot, ctx.code(text)];
+  }
+
+  function modelReport(ctx, col, S, spec, r, box, M = {}) {
     const sc = scopeOf(col);
     const color = colorOf(spec.id);
     const name = r && r.name ? r.name : specName(spec);
     const info = MODEL_INFO[spec.kind] || (spec.inputs ? 'p:timeseries:transfer' : 'p:timeseries:arima');
-    const ob = ctx.outline(`Model: ${name}`, { parent: box, key: `${sc}:model:${spec.id}`, info, menu: () => modelMenu(ctx, col, S, spec, r) });
+    const ob = ctx.outline(`Model: ${name}`, { parent: box, key: `${sc}:model:${spec.id}`, info, menu: () => modelMenu(ctx, col, S, spec, r, M) });
     ob.el.classList.add('sm-ts-model');
     ob.el.style.setProperty('--ts-model-color', color);
     if (!r || r.error) { ob.add(ctx.warn(`${name}: ${r ? r.error : 'no result'}`)); return; }
     const flag = (k, d = true) => (spec[k] == null ? d : !!spec[k]);
-    const sum = ctx.outline(spec.kind === 'ets' ? 'Model Summary' : 'Model Summary', { parent: ob, key: `${sc}:model:${spec.id}:sum` });
+    const nFit = Math.min(r.n || S.n, S.n);
+    const xs = S.x.slice(0, nFit);
+    const sum = ctx.outline('Model Summary', { parent: ob, key: `${sc}:model:${spec.id}:sum` });
     sum.add(ctx.kv(r.summary.map(([label, v, f]) => [label, v, f || 'num'])));
     const pe = ctx.outline('Parameter Estimates', { parent: ob, key: `${sc}:model:${spec.id}:pe` });
     const seasonal = spec.kind === 'arima' && (spec.P || spec.D || spec.Q);
-    if (r.params.rows.length) pe.add(ctx.rt({ columns: PARAM_COLS[r.params.columns](seasonal), rows: r.params.rows }, { sortable: false, name: `${name} parameter estimates` }));
-    else pe.add(ctx.note('No parameters besides the variance.'));
+    let pcols = PARAM_COLS[r.params.columns](seasonal);
+    if (spec.kind === 'smooth' && spec.weights) pcols = [...pcols, { key: 'constraint', label: 'Constraint', fmt: 'text' }];
+    if (r.params.rows.length) pe.add(ctx.rt({ columns: pcols, rows: r.params.rows }, { sortable: false, name: `${name} parameter estimates` }));
+    else pe.add(ctx.note(NO_PARAMS[spec.kind] || 'No parameters besides the variance.'));
     if (r.constant) pe.add(ctx.kv([['Constant Estimate', r.constant.estimate], ['Mu', r.constant.mu]]));
     ob.add(ctx.row(sum.el, pe.el));
     for (const n of r.notes || []) ob.add(ctx.note(n));
     // the forecast (a Markov switching model has none: its one-step-ahead predictions)
-    const fcOb = ctx.outline(spec.kind === 'markov' ? 'One-Step-Ahead Predictions' : 'Forecast', { parent: ob, key: `${sc}:model:${spec.id}:fc` });
-    const traces = [];
-    if (flag('points')) traces.push({ ...seriesTrace(S, S.values, col.name, { points: true, lines: false }), showlegend: false });
-    traces.push(...forecastTraces(S, r, color, { pi: flag('pi'), name }));
-    const end = S.x[S.x.length - 1];
-    // the model's graphs' code: its fit, and what the red triangle shows
     const pc = r.plot_code || {};
     const opts = (size) => ({ flags: { points: flag('points'), pi: flag('pi'), onestep: true, smpi: flag('smpi', false) }, size, color });
     const wide = plotWidth(ctx, 620);
-    fcOb.add(ctx.plot(traces, { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } }, shapes: [{ type: 'line', x0: end, x1: end, yref: 'paper', y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dot' } }] },
-      { width: wide, height: 300, title: `${name} forecast` }), graphCode(ctx, pc.forecast, opts([wide, 300])));
+    const fcOb = ctx.outline(spec.kind === 'markov' ? 'One-Step-Ahead Predictions' : 'Forecast', { parent: ob, key: `${sc}:model:${spec.id}:fc` });
+    fcOb.add(...forecastPlot(ctx, col, S, spec, r, name, `${name} forecast`, pc.forecast));
     const fc = r.forecast;
-    if (fc && fc.t.length) fcOb.add(ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * r.level)}% prediction intervals; to the left of the dotted line the one-step-ahead forecasts.`));
+    const hb = r.holdback;
+    if (hb && fc && fc.t.length) {
+      fcOb.add(ctx.note(`Forecast on Holdback: the model is fitted on the first ${nFit} values and forecasts the last ${fc.t.length}, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])} (shaded), with ${fmt(100 * r.level)}% prediction intervals; to the left of the dotted line the one-step-ahead forecasts of the values it is fitted to.`));
+      const hs = ctx.outline('Holdback Statistics', { parent: fcOb, key: `${sc}:model:${spec.id}:hb`, info: 'p:timeseries:holdback' });
+      hs.add(ctx.kv([['RMSE', hb.rmse], ['MSE', hb.mse], ['MAPE', hb.mape], ['MAE', hb.mae], ['Mean Error', hb.me], ['MASE', hb.mase], ['N', hb.n, 'int']]),
+        ctx.note(`The errors actual − forecast of the ${hb.n} held-back values present; MASE divides the MAE by ${fmt(hb.scale)}, the training values' in-sample MAE of the ${hb.lag > 1 ? `seasonal naive forecast (lag ${hb.lag})` : 'naive forecast'}.`));
+    } else if (fc && fc.t.length) fcOb.add(ctx.note(`${fc.t.length} periods ahead, from ${tLabel(S, fc.t[0])} to ${tLabel(S, fc.t[fc.t.length - 1])}, with ${fmt(100 * r.level)}% prediction intervals; to the left of the dotted line the one-step-ahead forecasts.`));
+    else if (hb) fcOb.add(ctx.note('This model makes no forecasts: no holdback statistics.'));
+    // Refit on All Rows: the model fitted again on every value, and its forecasts after the end
+    const rf = M.refit;
+    if (rf) {
+      const ro = ctx.outline('Forecast, Refit on All Rows', { parent: ob, key: `${sc}:model:${spec.id}:refit`, info: 'p:timeseries:holdback' });
+      if (rf.error) ro.add(ctx.warn(rf.error));
+      else {
+        ro.add(...forecastPlot(ctx, col, S, spec, rf, name, `${name} forecast, refit on all rows`, (rf.plot_code || {}).forecast));
+        const f2 = rf.forecast;
+        if (f2 && f2.t.length) ro.add(ctx.note(`The model fitted again on all ${S.n} values: its forecasts of the ${f2.t.length} periods after the end, from ${tLabel(S, f2.t[0])} to ${tLabel(S, f2.t[f2.t.length - 1])}, with ${fmt(100 * rf.level)}% prediction intervals. Save Columns adds them after the held-back rows.`));
+        ro.add(ctx.code(rf.code));
+      }
+    }
+    // the moving average's smoothed series
+    if (spec.kind === 'sma' && flag('smoothed') && r.smoothed) {
+      const so = ctx.outline('Smoothed Series', { parent: ob, key: `${sc}:model:${spec.id}:smoothed`, info: 'p:timeseries:sma' });
+      so.add(ctx.plot([{ ...seriesTrace(S, S.values.slice(0, nFit), col.name, { points: true, lines: false }), x: xs, rows: S.rowsLinked.slice(0, nFit), showlegend: false },
+        { type: 'scatter', mode: 'lines', x: xs, y: r.smoothed, name: ptext(name), line: { color, width: 1.6 }, hovertemplate: `moving average %{y:.5g}<extra></extra>` }],
+      { xaxis: xAxis(S), yaxis: { title: { text: ptext(col.name) } } }, { width: wide, height: 280, title: `${name} smoothed series` }), graphCode(ctx, pc.smoothed, opts([wide, 280])));
+    }
     // the residuals
     const resOb = ctx.outline(spec.kind === 'ets' ? 'One-Step-Ahead Forecasting Errors' : 'Residuals', { parent: ob, key: `${sc}:model:${spec.id}:res` });
-    resOb.add(ctx.plot([{ type: 'scatter', mode: 'markers', x: S.x, y: r.resid, rows: S.rowsLinked, name: 'Residual', marker: { size: 5, color } }],
+    resOb.add(ctx.plot([{ type: 'scatter', mode: 'markers', x: xs, y: r.resid, rows: S.rowsLinked.slice(0, nFit), name: 'Residual', marker: { size: 5, color } }],
       { xaxis: xAxis(S), yaxis: { title: { text: 'Residual' }, zeroline: true }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: SM.util.themeColors().muted, width: 1 } }] },
     { width: wide, height: 220, title: `${name} residuals` }), graphCode(ctx, pc.resid, opts([wide, 220])));
     resOb.add(diagnosticsBlock(ctx, r.resid_diag, { acf: flag('racf'), pacf: flag('rpacf'), variogram: flag('rvario', false), ar: flag('rar', false), residual: true, codes: pc }));
     if (r.resid_diag && r.resid_diag.model_df) resOb.add(ctx.note(`Ljung-Box on the residuals: degrees of freedom are the lag less the ${r.resid_diag.model_df} ${spec.kind === 'smooth' || spec.kind === 'theta' ? `smoothing weight${r.resid_diag.model_df > 1 ? 's' : ''}` : spec.kind === 'ardl' ? `lag${r.resid_diag.model_df > 1 ? 's' : ''} of the series` : 'ARMA parameters'}.`));
+    if (flag('rruns', false)) resOb.add(runsBlock(ctx, r.resid_runs, 'Residual Runs Test', 'the residuals', pc.runs ? recipe(pc.runs) : null));
     if (spec.kind === 'uc' && flag('comps')) componentsReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'markov') regimeReport(ctx, col, S, spec, r, ob);
     if (spec.kind === 'ardl') ardlReport(ctx, col, S, spec, r, ob);
@@ -1091,7 +1313,7 @@
       const cs = ctx.outline('Component States', { parent: ob, key: `${sc}:model:${spec.id}:states`, closed: true });
       const ws = plotWidth(ctx, 520);
       for (const [k, v] of Object.entries(r.states)) {
-        cs.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: S.x, y: v, name: k, line: { color, width: 1.4 } }], { xaxis: xAxis(S), yaxis: { title: { text: k[0].toUpperCase() + k.slice(1) } } }, { width: ws, height: 180, title: `${name} ${k}` }),
+        cs.add(ctx.plot([{ type: 'scatter', mode: 'lines', x: xs, y: v, name: k, line: { color, width: 1.4 } }], { xaxis: xAxis(S), yaxis: { title: { text: k[0].toUpperCase() + k.slice(1) } } }, { width: ws, height: 180, title: `${name} ${k}` }),
           graphCode(ctx, pc.states && pc.states[k], opts([ws, 180])));
       }
     }
@@ -1101,6 +1323,19 @@
         ctx.note(r.converged ? `Converged after ${r.n_iter} iterations (L-BFGS on the exact likelihood).` : `Did not converge within ${maxiter(ctx)} iterations: raise them with Maximum Iterations in the red triangle.`));
     } else if (spec.kind === 'arima' && r.converged === false) ob.add(ctx.warn('The fit did not converge: raise Maximum Iterations in the red triangle.'));
     ob.add(ctx.code(r.code));
+  }
+
+  /* The runs test (about the mean, the median or zero) as a table, a note and its code. */
+  function runsBlock(ctx, R, caption, what, code) {
+    if (!R) return null;
+    if (R.error) return ctx.note(`${caption}: ${R.error}.`);
+    const about = { mean: 'the mean', median: 'the median', zero: 'zero' }[R.cutoff] || R.cutoff;
+    const box = el('div', { class: 'sm-ts-col' },
+      ctx.kv([['Runs', R.runs, 'int'], ['Expected Runs', R.expected], ['Std Dev of Runs', R.sd], [`N At or Above ${R.cutoff === 'zero' ? 'Zero' : R.cutoff === 'median' ? 'the Median' : 'the Mean'}`, R.n_above, 'int'],
+        ['N Below', R.n_below, 'int'], ['z', R.z], ['Prob > |z|', R.p, 'p']], { caption }),
+      ctx.note(`The Wald-Wolfowitz runs test of randomness about ${about} (${fmt(R.value)}): ${what} in time order, each at or above it or below it; too few runs mean runs of highs and lows (positive autocorrelation), too many an alternation. z = (R − E)/SD with E = 2n₁n₂/N + 1${R.corrected ? '; below N = 50, |R − E| less 1/2 (the continuity correction of the SAS manual that statsmodels\' runstest_1samp follows)' : ''}.`));
+    if (code) box.append(ctx.code(code));
+    return box;
   }
 
   /* The Theta model's forecasts carry two bands: the IMA(1, 1) one (the
@@ -1239,40 +1474,72 @@
     return { name: ctx.name('time') || 'Row', dataType: 'numeric', values: t, format: isDate(S) ? { kind: S.kind } : null };
   }
 
-  function saveModelTable(ctx, col, S, r) {
+  /* A model's rows for a saved table: the time, the predictions, their
+     standard errors and limits, the residuals, and the set. The fitted slots
+     get the one-step-ahead predictions; values held back their forecasts
+     (the residuals are then the forecast errors); after the end the
+     forecasts (with values held back, those of the refit on all rows). */
+  function modelRows(S, r, refit) {
+    const nFit = Math.min(r.n || S.n, S.n);
     const fc = r.forecast || { t: [], mean: [], se: [], lower: [], upper: [] };
-    const h = fc.t.length;
-    const lv = fmt(r.level);
-    const pad = new Array(h).fill(NaN);
-    const t = new SM.Table({
-      name: `${col.name} ${r.name}`, source: `saved from ${ctx.report.title}`, notes: `${r.name}: one-step-ahead predictions, then ${h} forecasts with ${fmt(100 * r.level)}% prediction limits.`,
-      columns: [
-        timeColumn(ctx, S, [...S.t, ...fc.t]),
-        { name: `Actual ${col.name}`, dataType: 'numeric', values: [...nanOf(S.values), ...pad] },
-        { name: `Predicted ${col.name}`, dataType: 'numeric', values: [...nanOf(r.fitted), ...nanOf(fc.mean)] },
-        { name: `Std Err Pred ${col.name}`, dataType: 'numeric', values: [...nanOf(r.fit_se), ...nanOf(fc.se)] },
-        { name: `Residual ${col.name}`, dataType: 'numeric', values: [...nanOf(r.resid), ...pad] },
-        { name: `Upper CL (${lv}) ${col.name}`, dataType: 'numeric', values: [...nanOf(r.fit_hi), ...nanOf(fc.upper)] },
-        { name: `Lower CL (${lv}) ${col.name}`, dataType: 'numeric', values: [...nanOf(r.fit_lo), ...nanOf(fc.lower)] },
-      ],
-    });
-    SM.app.addTable(t);
+    const held = nFit < S.n;
+    const nh = S.n - nFit;
+    const hb = r.holdback || { error: [] };
+    const fut = held ? (refit && !refit.error && refit.forecast ? refit.forecast : null) : fc;
+    const hf = fut ? fut.t.length : 0;
+    const take = (a, k) => { const v = nanOf(a).slice(0, k); while (v.length < k) v.push(NaN); return v; };
+    const part = (fit, hold, future) => [...take(fit, nFit), ...(held ? take(hold, nh) : []), ...take(future, hf)];
+    return {
+      held, nFit, nh, hf,
+      t: [...S.t, ...(fut ? fut.t : [])],
+      actual: [...nanOf(S.values), ...new Array(hf).fill(NaN)],
+      predicted: part(r.fitted, fc.mean, fut && fut.mean),
+      se: part(r.fit_se, fc.se, fut && fut.se),
+      resid: [...take(r.resid, nFit), ...(held ? take(hb.error, nh) : []), ...new Array(hf).fill(NaN)],
+      upper: part(r.fit_hi, fc.upper, fut && fut.upper),
+      lower: part(r.fit_lo, fc.lower, fut && fut.lower),
+      set: [...new Array(nFit).fill('Training'), ...new Array(held ? nh : 0).fill('Holdback'), ...new Array(hf).fill('Forecast')],
+    };
   }
 
-  function combineForecasts(ctx, col, S, list, results) {
-    const ok = list.map((s, i) => ({ s, r: results[i] })).filter((x) => x.r && !x.r.error);
+  function saveModelTable(ctx, col, S, r, refit = null) {
+    const R = modelRows(S, r, refit);
+    const lv = fmt(r.level);
+    const notes = R.held
+      ? `${r.name}: fitted on the first ${R.nFit} values (Set Training, one-step-ahead predictions), its forecasts of the ${R.nh} held back (Set Holdback: the residuals are the forecast errors)${R.hf ? `, and ${R.hf} forecasts after the end from the model refit on all rows (Set Forecast)` : ''}, with ${fmt(100 * r.level)}% prediction limits.`
+      : `${r.name}: one-step-ahead predictions, then ${R.hf} forecasts with ${fmt(100 * r.level)}% prediction limits.`;
+    const columns = [
+      timeColumn(ctx, S, R.t),
+      { name: `Actual ${col.name}`, dataType: 'numeric', values: R.actual },
+      { name: `Predicted ${col.name}`, dataType: 'numeric', values: R.predicted },
+      { name: `Std Err Pred ${col.name}`, dataType: 'numeric', values: R.se },
+      { name: `Residual ${col.name}`, dataType: 'numeric', values: R.resid },
+      { name: `Upper CL (${lv}) ${col.name}`, dataType: 'numeric', values: R.upper },
+      { name: `Lower CL (${lv}) ${col.name}`, dataType: 'numeric', values: R.lower },
+    ];
+    if (R.held) columns.push({ name: 'Set', dataType: 'character', values: R.set });
+    SM.app.addTable(new SM.Table({ name: `${col.name} ${r.name}`, source: `saved from ${ctx.report.title}`, notes, columns }));
+  }
+
+  function combineForecasts(ctx, col, S, list, results, M = {}) {
+    const ok = list.map((s, i) => ({ s, r: results[i], rf: M.refits ? M.refits[i] : null })).filter((x) => x.r && !x.r.error);
     if (!ok.length) { SM.ui.toast('No fitted models to save'); return; }
-    const h = Math.max(...ok.map((x) => x.r.forecast.t.length));
-    const future = ok.find((x) => x.r.forecast.t.length === h).r.forecast.t;
-    const columns = [timeColumn(ctx, S, [...S.t, ...future]), { name: `Actual ${col.name}`, dataType: 'numeric', values: [...nanOf(S.values), ...new Array(h).fill(NaN)] }];
-    for (const { r } of ok) {
-      const fc = r.forecast;
-      const padTo = (a) => [...nanOf(a), ...new Array(h - fc.t.length).fill(NaN)];
-      columns.push({ name: `Predicted ${r.name}`, dataType: 'numeric', values: [...nanOf(r.fitted), ...padTo(fc.mean)] },
-        { name: `Lower CL ${r.name}`, dataType: 'numeric', values: [...nanOf(r.fit_lo), ...padTo(fc.lower)] },
-        { name: `Upper CL ${r.name}`, dataType: 'numeric', values: [...nanOf(r.fit_hi), ...padTo(fc.upper)] });
+    const rows = ok.map((x) => ({ ...x, R: modelRows(S, x.r, x.rf) }));
+    const hf = Math.max(...rows.map((x) => x.R.hf));
+    const longest = rows.find((x) => x.R.hf === hf).R;
+    const held = rows.some((x) => x.R.held);
+    const pad = (a, k) => [...a, ...new Array(Math.max(0, k - a.length)).fill(NaN)];
+    const nAll = S.n + hf;
+    const columns = [timeColumn(ctx, S, longest.t), { name: `Actual ${col.name}`, dataType: 'numeric', values: pad(nanOf(S.values), nAll) }];
+    for (const { r, R } of rows) {
+      columns.push({ name: `Predicted ${r.name}`, dataType: 'numeric', values: pad(R.predicted, nAll) },
+        { name: `Lower CL ${r.name}`, dataType: 'numeric', values: pad(R.lower, nAll) },
+        { name: `Upper CL ${r.name}`, dataType: 'numeric', values: pad(R.upper, nAll) });
+      if (held) columns.push({ name: `Residual ${r.name}`, dataType: 'numeric', values: pad(R.resid, nAll) });
     }
-    SM.app.addTable(new SM.Table({ name: `${col.name} forecasts`, source: `saved from ${ctx.report.title}`, columns }));
+    if (held) columns.push({ name: 'Set', dataType: 'character', values: [...longest.set, ...new Array(Math.max(0, nAll - longest.set.length)).fill('Forecast')] });
+    SM.app.addTable(new SM.Table({ name: `${col.name} forecasts`, source: `saved from ${ctx.report.title}`, columns,
+      notes: held ? 'Each model\'s one-step-ahead predictions of the training values, its forecasts of the held-back ones (the residuals there are the forecast errors) and, refit on all rows, of the periods after the end; Set says which.' : undefined }));
   }
 
   /* ---- the dialogs ---------------------------------------------------------------------------------------------------------------- */
@@ -1409,21 +1676,77 @@
   const SMOOTH = [['simple', 'Simple Exponential Smoothing'], ['double', 'Double (Brown) Exponential Smoothing'], ['linear', 'Linear (Holt) Exponential Smoothing'],
     ['damped', 'Damped-Trend Linear Exponential Smoothing'], ['seasonal', 'Seasonal Exponential Smoothing'], ['winters', 'Winters Method']];
   const SMOOTH_LABEL = Object.fromEntries(SMOOTH);
+  // JMP's smoothing weights: their symbols and names, per method
+  const WEIGHT_SYM = { alpha: 'α', gamma: 'γ', phi: 'φ', delta: 'δ' };
+  const WEIGHT_LABEL = { alpha: 'Level Smoothing Weight', gamma: 'Trend Smoothing Weight', phi: 'Damping Smoothing Weight', delta: 'Seasonal Smoothing Weight' };
+  const WEIGHTS_OF = { simple: ['alpha'], double: ['alpha'], linear: ['alpha', 'gamma'], damped: ['alpha', 'gamma', 'phi'], seasonal: ['alpha', 'delta'], winters: ['alpha', 'gamma', 'delta'] };
 
   async function smoothDialog(ctx, col, S, method, preset = null) {
     const P0 = preset || {};
     const seasonal = method === 'seasonal' || method === 'winters';
+    const pos = S.values.every((v) => v == null || v > 0);
     const fields = [LEVEL(P0.level)];
     if (seasonal) fields.push({ key: 's', label: 'Observations per Period', type: 'number', value: P0.s || periodOf(ctx, S), help: `${H.s} The series needs two periods and two values more.` });
     if (method === 'winters') fields.push({ key: 'mult', label: 'Seasonality', type: 'select', value: P0.multiplicative ? 'mul' : 'add', choices: [['add', 'Additive (JMP\'s Winters Method)'], ['mul', 'Multiplicative']],
       help: 'Additive (JMP\'s Winters Method): the seasonal effects are added to the level, a swing of the same size every period. Multiplicative: they scale the level, a swing that grows with the series; every value must be above zero.' });
+    fields.push({ key: 'constraints', label: 'Constraints', type: 'select', value: P0.weights ? 'custom' : 'zero', choices: [['zero', 'Zero To One'], ['custom', 'Custom']],
+      help: 'Zero To One (the default, as in JMP): every smoothing weight is estimated within 0 and 1. Custom: each weight fixed at a value or bounded within limits of your own, in a second dialog after OK.' },
+    { key: 'bc', label: 'Box-Cox transformation', type: 'check', value: P0.boxcox != null,
+      help: 'Fits the model to the Box-Cox transform of the series, (y^λ − 1)/λ, or log y at λ = 0, and transforms the predictions, the forecasts and their limits back: a series whose swings grow with its level gets forecasts and limits that grow with it. Every value must be above zero. Off by default.' },
+    { key: 'lambda', label: 'λ, Box-Cox', type: 'number', value: P0.boxcox ?? 0,
+      help: 'The λ of the Box-Cox transformation, with Box-Cox transformation checked: 0 (the default) is the log, 0.5 about a square root, 1 no change beyond a shift. Values from −2 to 2.' });
     const v = await SM.ui.form({
       title: `${SMOOTH_LABEL[method]}: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:smoothing',
       lead: 'The smoothing weights and the starting states that minimise the one-step-ahead squared errors (statsmodels\' holtwinters), with prediction intervals from the model\'s moving-average weights.',
-      fields, validate: (x) => levelOk(x) || (seasonal && !(x.s >= 2) ? 'Observations per Period: at least 2' : null),
+      fields, validate: (x) => levelOk(x) || (seasonal && !(x.s >= 2) ? 'Observations per Period: at least 2' : null)
+        || (x.bc && !(x.lambda >= -2 && x.lambda <= 2) ? 'λ, Box-Cox: a value from −2 to 2' : null) || (x.bc && !pos ? 'The Box-Cox transformation needs every value above zero' : null),
     });
     if (!v) return;
-    addModels(ctx, col, [{ kind: 'smooth', method, s: seasonal ? Math.round(v.s) : 0, level: v.level, multiplicative: method === 'winters' && v.mult === 'mul' }]);
+    let weights = null;
+    if (v.constraints === 'custom') {
+      weights = await customWeights(ctx, col, method, P0.weights || {});
+      if (!weights) return;
+    }
+    addModels(ctx, col, [{ kind: 'smooth', method, s: seasonal ? Math.round(v.s) : 0, level: v.level, multiplicative: method === 'winters' && v.mult === 'mul',
+      ...(weights && Object.keys(weights).length ? { weights } : {}), ...(v.bc ? { boxcox: v.lambda } : {}) }]);
+  }
+
+  /* JMP's Custom constraints: each smoothing weight estimated within 0 and 1,
+     fixed at a value, or bounded within limits of your own. */
+  async function customWeights(ctx, col, method, pre) {
+    const keys = WEIGHTS_OF[method];
+    const fields = [];
+    for (const k of keys) {
+      const w = pre[k] || {};
+      const lab = method === 'double' ? 'Level and Trend Smoothing Weight' : WEIGHT_LABEL[k];
+      fields.push({ key: `${k}_mode`, label: `${WEIGHT_SYM[k]}, ${lab}`, type: 'select', value: w.fix != null ? 'fix' : (w.lo != null || w.hi != null) ? 'bound' : 'free',
+        choices: [['free', 'Estimated within 0 and 1'], ['fix', 'Fixed'], ['bound', 'Bounded']], helpLabel: 'Each weight',
+        help: 'Estimated within 0 and 1 (Zero To One), Fixed at the value (not estimated, so no standard error), or Bounded: estimated within the lower and upper bounds. statsmodels takes weights within 0 and 1 only, and keeps the trend weight at or below the level weight.' },
+      { key: `${k}_value`, label: `${WEIGHT_SYM[k]}: fixed value`, type: 'number', value: w.fix ?? '', helpLabel: 'Fixed value', help: 'The value of a Fixed weight, within 0 and 1 (the level weight above 0).' },
+      { key: `${k}_lo`, label: `${WEIGHT_SYM[k]}: lower bound`, type: 'number', value: w.lo ?? 0, helpLabel: 'Lower and upper bound', help: 'The bounds of a Bounded weight, from 0 to 1, the lower below the upper.' },
+      { key: `${k}_hi`, label: `${WEIGHT_SYM[k]}: upper bound`, type: 'number', value: w.hi ?? 1, helpLabel: 'Lower and upper bound', help: 'The bounds of a Bounded weight, from 0 to 1, the lower below the upper.' });
+    }
+    const v = await SM.ui.form({
+      title: `Custom Constraints: ${SMOOTH_LABEL[method]}`, okLabel: 'Estimate', info: 'p:timeseries:smoothing',
+      lead: 'Each smoothing weight: estimated within 0 and 1, fixed at a value, or bounded. The seasonal weight δ is statsmodels\' smoothing_seasonal / (1 − α): with δ fixed or bounded and α estimated, α is searched for and the rest estimated at each α.',
+      fields,
+      validate: (x) => {
+        for (const k of keys) {
+          const m = x[`${k}_mode`];
+          if (m === 'fix' && !(x[`${k}_value`] >= 0 && x[`${k}_value`] <= 1 && (k !== 'alpha' || x[`${k}_value`] > 0))) return `${WEIGHT_SYM[k]}: a fixed value within 0 and 1${k === 'alpha' ? ', above 0' : ''}`;
+          if (m === 'bound' && !(x[`${k}_lo`] >= 0 && x[`${k}_hi`] <= 1 && x[`${k}_lo`] < x[`${k}_hi`])) return `${WEIGHT_SYM[k]}: bounds within 0 and 1, the lower below the upper`;
+        }
+        return null;
+      },
+    });
+    if (!v) return null;
+    const out = {};
+    for (const k of keys) {
+      const m = v[`${k}_mode`];
+      if (m === 'fix') out[k] = { fix: v[`${k}_value`] };
+      else if (m === 'bound' && !(v[`${k}_lo`] === 0 && v[`${k}_hi`] === 1)) out[k] = { lo: v[`${k}_lo`], hi: v[`${k}_hi`] };
+    }
+    return out;
   }
 
   async function etsDialog(ctx, col, S) {
@@ -1431,13 +1754,16 @@
     const period = periodOf(ctx, S);
     const v = await SM.ui.form({
       title: `Specify State Space Smoothing Models: ${col.name}`, okLabel: 'OK', info: 'p:timeseries:ets',
-      lead: 'ETS(error, trend, seasonal) models of Hyndman et al. (2008): every combination of the boxes checked is fitted by maximum likelihood and compared by AICc. statsmodels has no multiplicative trend. Multiplicative parts need values above zero.',
+      lead: 'ETS(error, trend, seasonal) models of Hyndman et al. (2008): every combination of the boxes checked is fitted by maximum likelihood (statsmodels\' ETSModel) and compared by AICc; up to 30, as JMP fits them. Multiplicative parts, the multiplicative trends too, need every value above zero.',
       fields: [
         { key: 'eA', label: 'Error: Additive (A)', type: 'check', value: true, help: 'Fit models whose errors add to the prediction, of the same size at every level.' },
         { key: 'eM', label: 'Error: Multiplicative (M)', type: 'check', value: pos, help: 'Fit models whose errors are relative, growing with the level; for values above zero (checked at first when every value is). Their prediction intervals are simulated.' },
         { key: 'tN', label: 'Trend: None (N)', type: 'check', value: true, help: 'Fit models without a trend: the level wanders, and the forecasts are flat.' },
         { key: 'tA', label: 'Trend: Additive (A)', type: 'check', value: true, help: 'Fit models with a trend that may change over time; the forecasts go on in a straight line.' },
         { key: 'tAd', label: 'Trend: Additive damped (Ad)', type: 'check', value: true, help: 'Fit models whose trend flattens out over the forecasts (a damping φ below 1 is estimated); they often forecast best.' },
+        { key: 'tM', label: 'Trend: Multiplicative (M)', type: 'check', value: false,
+          help: 'Fit models whose level grows by a factor each period, a growth rate that may change over time; the forecasts go on exponentially. For values above zero; off at first, because such trends can forecast too far (Hyndman et al. 2008 leave them out of their automatic choice). Their prediction intervals are simulated.' },
+        { key: 'tMd', label: 'Trend: Multiplicative damped (Md)', type: 'check', value: false, help: 'Fit models whose growth factor shrinks towards 1 over the forecasts (a damping φ below 1). For values above zero; off at first. Their prediction intervals are simulated.' },
         { key: 'sN', label: 'Seasonal: None (N)', type: 'check', value: true, help: 'Fit models without a seasonal part.' },
         { key: 'sA', label: 'Seasonal: Additive (A)', type: 'check', value: knownPeriod(ctx, S) != null, help: 'Fit models whose seasonal effects add to the level: a swing of the same size every period. Checked at first when the period is known (the launch\'s Seasonal Period, or the Time ID\'s calendar), not when it is only guessed.' },
         { key: 'sM', label: 'Seasonal: Multiplicative (M)', type: 'check', value: pos && knownPeriod(ctx, S) != null, help: 'Fit models whose seasonal effects scale the level, a swing that grows with the series; for values above zero (checked at first when every value is and the period is known). Their prediction intervals are simulated.' },
@@ -1448,9 +1774,9 @@
       ],
       validate: (x) => {
         if (!x.eA && !x.eM) return 'Check an error type';
-        if (!x.tN && !x.tA && !x.tAd) return 'Check a trend';
+        if (!x.tN && !x.tA && !x.tAd && !x.tM && !x.tMd) return 'Check a trend';
         if (!x.sN && !x.sA && !x.sM) return 'Check a seasonal component';
-        if ((x.eM || x.sM) && !pos) return 'Multiplicative errors and seasonality need every value above zero';
+        if ((x.eM || x.sM || x.tM || x.tMd) && !pos) return 'Multiplicative errors, trends and seasonality need every value above zero';
         if ((x.sA || x.sM) && !(x.period >= 2)) return 'Period: at least 2 for seasonal models';
         return levelOk(x);
       },
@@ -1458,13 +1784,165 @@
     if (!v) return;
     const g = nextGroup(ctx, col);
     const specs = [];
-    for (const [ek, e] of [['eA', 'add'], ['eM', 'mul']]) for (const [tk, t] of [['tN', 'N'], ['tA', 'A'], ['tAd', 'Ad']]) for (const [sk, s] of [['sN', 'N'], ['sA', 'A'], ['sM', 'M']]) {
+    for (const [ek, e] of [['eA', 'add'], ['eM', 'mul']]) for (const [tk, t] of [['tN', 'N'], ['tA', 'A'], ['tAd', 'Ad'], ['tM', 'M'], ['tMd', 'Md']]) for (const [sk, s] of [['sN', 'N'], ['sA', 'A'], ['sM', 'M']]) {
       if (!v[ek] || !v[tk] || !v[sk]) continue;
       if (v.stable && e === 'add' && s === 'M') continue;
       specs.push({ kind: 'ets', error: e, trend: t, seasonal: s, s: s !== 'N' ? Math.round(v.period) : 0, level: v.level, group: g });
     }
     if (!specs.length) { SM.ui.toast('No models left to fit'); return; }
     addModels(ctx, col, specs);
+  }
+
+  /* ---- Benchmark Models: Naive, Seasonal Naive, Drift ------------------------------------------------------------------------ */
+  const BENCH = [['naive', 'Naive'], ['snaive', 'Seasonal Naive'], ['drift', 'Drift']];
+
+  async function benchDialog(ctx, col, S, methods, preset = null) {
+    const P0 = preset || {};
+    const seasonal = methods.includes('snaive');
+    const fields = [LEVEL(P0.level)];
+    if (seasonal) fields.push({ key: 's', label: 'Observations per Period', type: 'number', value: P0.s || periodOf(ctx, S), help: `${H.s} Seasonal Naive forecasts each period by the value of the same season one period before.` });
+    const v = await SM.ui.form({
+      title: `${methods.length > 1 ? 'Benchmark Models' : BENCH.find(([k]) => k === methods[0])[1]}: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:benchmarks',
+      lead: 'The forecasts a model should beat: Naive, every forecast the last value; Seasonal Naive, the value of the same season one period before; Drift, the last value plus the average change per period. Compare them with Forecast on Holdback.',
+      fields, validate: (x) => levelOk(x) || (seasonal && !(x.s >= 2) ? 'Observations per Period: at least 2' : null),
+    });
+    if (!v) return;
+    addModels(ctx, col, methods.map((m) => ({ kind: 'bench', method: m, s: m === 'snaive' ? Math.round(v.s) : 0, level: v.level })));
+  }
+
+  /* ---- Simple Moving Average ---------------------------------------------------------------------------------------------------- */
+  async function smaDialog(ctx, col, S, preset = null) {
+    const P0 = preset || {};
+    const v = await SM.ui.form({
+      title: `Simple Moving Average: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:sma',
+      lead: 'The mean of w consecutive values, as JMP\'s Simple Moving Average smooths the series. As a forecast the average trails: every forecast is the mean of the last w values, and the one-step-ahead prediction of each value the mean of the w before it.',
+      fields: [
+        { key: 'width', label: 'Smoothing window width', type: 'number', value: P0.width || knownPeriod(ctx, S) || 3,
+          help: 'w, the number of consecutive values averaged, a whole number from 1: a wider window smooths more and follows changes later. It starts at the seasonal period when one is known (a period\'s mean has no seasonal swing), else at 3.' },
+        { key: 'centering', label: 'Centering', type: 'select', value: P0.centering || 'none',
+          choices: [['none', 'No Centering'], ['centered', 'Centered'], ['double', 'Centered and Double Smoothed (even width)']],
+          help: 'Where the window of the smoothed series sits. No Centering (the default): the value and the w − 1 before it, the average a forecast uses. Centered: around the value, a smoothed series that does not lag (an even width takes one value more before it than after). Centered and Double Smoothed, for an even width: the mean of the two nearly centered windows. The forecasts trail whichever you choose.' },
+        LEVEL(P0.level),
+      ],
+      validate: (x) => (!(Number.isInteger(x.width) && x.width >= 1) ? 'Smoothing window width: a whole number from 1'
+        : x.centering === 'double' && x.width % 2 ? 'Centered and Double Smoothed is for an even width' : x.width + 3 > S.n ? `Smoothing window width: the series has ${S.n} values` : levelOk(x)),
+    });
+    if (!v) return;
+    addModels(ctx, col, [{ kind: 'sma', width: v.width, centering: v.centering, level: v.level }]);
+  }
+
+  /* ---- Averaged Forecast… ------------------------------------------------------------------------------------------------------ */
+  // the models that can be averaged: those with forecasts, not an average itself
+  const averageable = (list) => list.filter((m) => m.kind !== 'markov' && m.kind !== 'avg');
+
+  async function averageDialog(ctx, col, S, list = null, preset = null) {
+    const models = averageable(list || ctx.opt('models', [], scopeOf(col)));
+    if (models.length < 2) { SM.ui.toast('An averaged forecast needs two models with forecasts: fit them first'); return; }
+    const P0 = preset || {};
+    const pre = new Set(P0.members || models.map((m) => m.id));
+    const fields = models.map((m) => ({ key: `m${m.id}`, label: specName(m), type: 'check', value: pre.has(m.id), helpLabel: 'Each model',
+      help: 'Whether this model is one of the averaged ones, at least two; all at first.' }));
+    fields.push(LEVEL(P0.level));
+    const v = await SM.ui.form({
+      title: `Averaged Forecast: ${col.name}`, okLabel: 'Estimate', info: 'p:timeseries:average',
+      lead: 'A model whose forecasts are the mean of the chosen models\' forecasts, and its limits the mean of their limits (at this level): forecasts combined this way are often better than any one of them. It goes into Model Comparison with the others.',
+      fields, validate: (x) => (models.filter((m) => x[`m${m.id}`]).length < 2 ? 'Choose at least two models' : levelOk(x)),
+    });
+    if (!v) return;
+    addModels(ctx, col, [{ kind: 'avg', members: models.filter((m) => v[`m${m.id}`]).map((m) => m.id), level: v.level }]);
+  }
+
+  /* ---- Rolling-Origin Cross-Validation… ------------------------------------------------------------------------------------------ */
+  async function cvDialog(ctx, col, S) {
+    const sc = scopeOf(col);
+    const pre = ctx.opt('cv', null, sc) || {};
+    const h0 = Math.max(1, Math.min(horizon(ctx) || 12, 12));
+    const v = await SM.ui.form({
+      title: `Rolling-Origin Cross-Validation: ${col.name}`, okLabel: 'OK', info: 'p:timeseries:cv',
+      lead: 'Every model of Model Comparison is fitted again on the series up to each origin (a window that grows by the step) and forecasts the next values; the forecast errors of every origin give its RMSE, MAE and MAPE, and their means say how well each model forecasts. The last origin ends one horizon before the end of the series.',
+      fields: [
+        { key: 'origins', label: 'Number of origins', type: 'number', value: pre.origins || 5, help: 'How many forecast origins, a whole number from 2 to 50 (5 by default): more origins, a steadier comparison, and a longer wait (every model is fitted once per origin).' },
+        { key: 'horizon', label: 'Horizon (values forecast from each origin)', type: 'number', value: pre.horizon || h0, helpLabel: 'Horizon',
+          help: 'How many values each origin forecasts, a whole number from 1: the Forecast Periods, at most 12, at first. The errors of all of them count.' },
+        { key: 'step', label: 'Step between origins (empty: the horizon)', type: 'number', value: pre.step ?? '', helpLabel: 'Step between origins',
+          help: 'How many values apart the origins are. Empty (the default): the horizon, so that the forecast windows follow one another without overlapping; 1 uses every origin.' },
+      ],
+      validate: (x) => {
+        if (!(Number.isInteger(x.origins) && x.origins >= 2 && x.origins <= 50)) return 'Number of origins: a whole number from 2 to 50';
+        if (!(Number.isInteger(x.horizon) && x.horizon >= 1)) return 'Horizon: a whole number from 1';
+        if (x.step != null && !(Number.isInteger(x.step) && x.step >= 1)) return 'Step between origins: a whole number from 1, or empty';
+        const need = (x.origins - 1) * (x.step || x.horizon) + x.horizon + 8;
+        return need > S.n ? `The series has ${S.n} values: that needs at least ${need}` : null;
+      },
+    });
+    if (!v) return;
+    ctx.set('cv', { origins: v.origins, horizon: v.horizon, step: v.step || null }, sc);
+  }
+
+  function cvOutline(ctx, col, S, box) {
+    const sc = scopeOf(col);
+    return ctx.outline('Rolling-Origin Cross-Validation', { parent: box, key: `${sc}:cv`, info: 'p:timeseries:cv', menu: () => [
+      { label: 'Cross-Validation Options…', action: () => cvDialog(ctx, col, S) },
+      { label: 'Remove', action: () => ctx.set('cv', null, sc) },
+    ] });
+  }
+
+  async function cvReport(ctx, col, S, base, list, ob, { origins, horizon: H, step, season }) {
+    const models = list.filter((m) => m.kind !== 'markov');
+    if (!models.length) { ob.add(ctx.note('No models with forecasts to cross-validate.')); return; }
+    const calls = [];
+    for (const m of models) {
+      const c = callOf(ctx, m, H, list);
+      if (!c.error) calls.push({ id: m.id, name: specName(m), ...c });
+    }
+    const payload = { ...base, models: calls, origins, horizon: H, step, season };
+    let r;
+    if (ctx.headless) r = await ctx.call('timeseries.cv', payload);
+    else {
+      const who = `Cross-validation${ctx.byLabel ? ` (${ctx.byLabel})` : ''}`;
+      const note = el('p', { class: 'sm-ob-note', role: 'status', text: `${who}: fitting…` });
+      ob.add(note);
+      const off = SM.engine.on('progress', (p) => {
+        if (!p || p.what !== 'tscv') return;
+        const text = `${who}: ${p.done} of ${p.total} fits…`;
+        note.textContent = text;
+        if (ctx.report && ctx.report.noteEl) ctx.report.noteEl.textContent = text;
+      });
+      try { r = await ctx.call('timeseries.cv', payload); } finally { off(); note.remove(); }
+    }
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const idOf = new Map(calls.map((c) => [c.id, c]));
+    const rows = r.models.map((m) => ({ id: m.id, name: m.name, rmse: m.rmse, mae: m.mae, mape: m.mape, ok: m.n_ok, of: r.origins })).sort((a, b) => (a.rmse ?? Infinity) - (b.rmse ?? Infinity));
+    const t0 = r.t_origins[0], t1 = r.t_origins[r.t_origins.length - 1];
+    ob.add(ctx.row(ctx.rt({ columns: [{ key: 'name', label: 'Model', fmt: 'text' }, { key: 'rmse', label: 'RMSE' }, { key: 'mae', label: 'MAE' }, { key: 'mape', label: 'MAPE' },
+      { key: 'ok', label: 'Origins', fmt: 'int' }], rows }, { sortable: true, caption: 'Means over the Origins', name: 'Cross-validation means' }),
+    ctx.kv([['Origins', r.origins, 'int'], ['Horizon', r.horizon, 'int'], ['Step', r.step, 'int'], ['First Origin', tLabel(S, t0), 'text'], ['Last Origin', tLabel(S, t1), 'text']])));
+    ob.add(ctx.note(`Each model fitted on the values up to each of ${r.origins} origins, ${r.step} apart (the first ${tLabel(S, t0)}, the last ${tLabel(S, t1)}, ${r.horizon} before the end), and its forecasts of the next ${r.horizon} values; RMSE, MAE and MAPE of their errors at each origin, then their means. The models' settings are those of their reports; each is fitted again at every origin (ARDL's orders chosen again too).`));
+    const bad = r.models.filter((m) => m.n_ok < r.origins);
+    if (bad.length) ob.add(ctx.warn(`Not every origin could be fitted: ${bad.map((m) => `${m.name} (${m.origins.filter((p) => p.error).map((p) => p.error)[0]})`).join('; ')}. Their means are over the origins that could.`));
+    ob.add(ctx.code(r.code));
+    // RMSE by origin, a line per model in its colour
+    const xs = r.t_origins.map((t) => (isDate(S) ? tLabel(S, t) : t));
+    const traces = r.models.map((m) => ({ type: 'scatter', mode: 'lines+markers', x: xs, y: m.origins.map((p) => p.rmse ?? null), name: ptext(m.name),
+      line: { color: colorOf(m.id), width: 1.4 }, marker: { size: 5, color: colorOf(m.id) }, hovertemplate: `${ptext(m.name)}: %{y:.5g}<extra></extra>` }));
+    const w = plotWidth(ctx, 560);
+    const title = `${col.name} cross-validation RMSE by origin`;
+    const colors = Object.fromEntries(r.models.map((m) => [m.name, colorOf(m.id)]));
+    const code = [r.code, '', 'import matplotlib.pyplot as plt', recipe([{ set: 'size' }], { size: [w, 280] }),
+      `colors = ${J(colors)}   # the models' colours in the report`, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+      'for name, g in cv.groupby("Model", sort=False):   # RMSE at each origin, a line per model',
+      '    ax.plot(g["Origin"], g["RMSE"], color=colors[name], linewidth=1.01, marker="o", markersize=3.6, label=name)',
+      `ax.set_xlabel(${J(`Origin (${timeTitle(S)})`)})`, 'ax.set_ylabel("RMSE")', `ax.set_title(${J(title)})`,
+      'fig.legend(loc="outside lower center", ncols=2, frameon=False, fontsize=8)', 'plt.show()'].join('\n');
+    ob.add(ctx.plot(traces, { xaxis: xAxis(S, { title: { text: ptext(`Origin (${timeTitle(S)})`) } }), yaxis: { title: { text: 'RMSE' } }, showlegend: true, legend: { orientation: 'h', y: -0.3 } },
+      { width: w, height: 280, title, rowColors: false }), ctx.code(code));
+    const per = ctx.outline('Per Origin', { parent: ob, key: `${scopeOf(col)}:cv:per`, closed: true });
+    const prow = [];
+    for (const m of r.models) for (const p of m.origins) prow.push({ name: m.name, origin: tLabel(S, p.t), n_train: p.n_train, n: p.n ?? null, rmse: p.rmse ?? null, mae: p.mae ?? null, mape: p.mape ?? null, error: p.error || '' });
+    per.add(ctx.rt({ columns: [{ key: 'name', label: 'Model', fmt: 'text' }, { key: 'origin', label: 'Origin', fmt: 'text' }, { key: 'n_train', label: 'N Fitted', fmt: 'int' },
+      { key: 'n', label: 'N Forecast', fmt: 'int' }, { key: 'rmse', label: 'RMSE' }, { key: 'mae', label: 'MAE' }, { key: 'mape', label: 'MAPE' }, { key: 'error', label: '', fmt: 'text' }], rows: prow },
+    { sortable: true, name: 'Cross-validation per origin' }));
+    if (idOf.size < models.length) ob.add(ctx.note('A model whose averaged members are gone is left out.'));
   }
 
   /* ---- Structural Model… ---------------------------------------------------------------------------------------------------- */
@@ -1661,6 +2139,9 @@
     if (spec.kind === 'markov') return regimeDialog(ctx, col, S, spec);
     if (spec.kind === 'theta') return thetaDialog(ctx, col, S, spec);
     if (spec.kind === 'ardl') return ardlDialog(ctx, col, S, spec);
+    if (spec.kind === 'bench') return benchDialog(ctx, col, S, [spec.method], spec);
+    if (spec.kind === 'sma') return smaDialog(ctx, col, S, spec);
+    if (spec.kind === 'avg') return averageDialog(ctx, col, S, null, spec);
     return etsDialog(ctx, col, S);
   }
 
@@ -1739,6 +2220,8 @@
       ctx.check('Spectral Density', 'spectral', sc, false),
       ctx.check('Stationarity Tests (ADF, KPSS)', 'stationarity', sc, true),
       { label: 'Zivot-Andrews Test', checked: !!o('stationarity', true) && zivotOn(ctx, col), action: () => { if (!o('stationarity', true)) { ctx.set('zivot', true, sc, { rerun: false }); ctx.set('stationarity', true, sc); } else ctx.set('zivot', !zivotOn(ctx, col), sc); } },
+      { label: 'Runs Test', submenu: () => [...Object.entries(RUNS_ABOUT).map(([k, label]) => ({ label, checked: o('runs', null) === k, action: () => ctx.set('runs', o('runs', null) === k ? null : k, sc) })),
+        { separator: true }, { label: 'Remove', disabled: o('runs', null) == null, action: () => ctx.set('runs', null, sc) }] },
       { separator: true },
       { label: 'Difference…', action: withS((S) => differenceDialog(ctx, col, S)) },
       { label: 'Decomposition', submenu: () => [
@@ -1758,18 +2241,32 @@
       { label: 'Seasonal ARIMA…', action: withS((S) => arimaDialog(ctx, col, S, { seasonal: true })) },
       { label: 'ARIMA Model Group…', action: withS((S) => groupDialog(ctx, col, S)) },
       { label: 'Transfer Function…', disabled: !hasInputs, action: withS((S) => transferDialog(ctx, col, S)) },
-      { label: 'Smoothing Models', submenu: () => SMOOTH.map(([k, label]) => ({ label: `${label}…`, action: withS((S) => smoothDialog(ctx, col, S, k)) })) },
+      { label: 'Smoothing Models', submenu: () => [{ label: 'Simple Moving Average…', action: withS((S) => smaDialog(ctx, col, S)) },
+        ...SMOOTH.map(([k, label]) => ({ label: `${label}…`, action: withS((S) => smoothDialog(ctx, col, S, k)) }))] },
       { label: 'State Space Smoothing Models…', action: withS((S) => etsDialog(ctx, col, S)) },
+      { label: 'Benchmark Models', submenu: () => [
+        { label: 'Naive…', action: withS((S) => benchDialog(ctx, col, S, ['naive'])) },
+        { label: 'Seasonal Naive…', action: withS((S) => benchDialog(ctx, col, S, ['snaive'])) },
+        { label: 'Drift…', action: withS((S) => benchDialog(ctx, col, S, ['drift'])) },
+        { separator: true },
+        { label: 'All Three…', action: withS((S) => benchDialog(ctx, col, S, ['naive', 'snaive', 'drift'])) },
+      ] },
       { label: 'Structural Model…', action: withS((S) => structuralDialog(ctx, col, S)) },
       { label: 'Regime Switching…', action: withS((S) => regimeDialog(ctx, col, S)) },
       { label: 'Theta Model…', action: withS((S) => thetaDialog(ctx, col, S)) },
       { label: 'ARDL…', disabled: !hasInputs, action: withS((S) => ardlDialog(ctx, col, S)) },
+      { label: 'Averaged Forecast…', disabled: averageable(o('models', [])).length < 2, action: withS((S) => averageDialog(ctx, col, S)) },
+      { label: 'Rolling-Origin Cross-Validation…', disabled: !o('models', []).length, action: withS((S) => cvDialog(ctx, col, S)) },
       { separator: true },
       { label: 'Combine and Save Forecasts from Models', disabled: !o('models', []).length, action: withS(async (S) => {
         const list = o('models', []);
         const base = basePayload(ctx, col);
-        const results = (await Promise.all(list.map((spec) => fitCall(ctx, base, spec, horizon(ctx)).catch((e) => ({ error: e.message }))))).map((r, i) => withOwnBand(list[i], r));
-        combineForecasts(ctx, col, S, list, results);
+        const h = horizon(ctx);
+        const held = holdbackOn(ctx) && S.n - h >= 8 ? h : 0;
+        const season = knownPeriod(ctx, S) || 1;
+        const results = await fitAll(ctx, base, list, h, held, season);
+        const refits = held && refitOn(ctx) ? await fitAll(ctx, base, list, h, 0, season) : null;
+        combineForecasts(ctx, col, { ...S, x: fx(S, S.t) }, list, results, { held, refits });
       }) },
       { label: 'Save Spectral Density', action: async () => { const r = await ctx.call('timeseries.spectral', basePayload(ctx, col)); if (r.error) SM.ui.toast(r.error, { error: true }); else saveSpectral(col, r); } },
     ].filter(Boolean);
@@ -1777,8 +2274,11 @@
 
   function globalItems(ctx) {
     return [
+      { label: 'Forecast on Holdback', checked: holdbackOn(ctx), action: () => ctx.set('holdback', !holdbackOn(ctx)) },
+      { label: 'Refit on All Rows', checked: refitOn(ctx), disabled: !holdbackOn(ctx), title: 'With Forecast on Holdback: every model fitted again on all the values, for the forecasts after the end',
+        action: () => ctx.set('refit', !ctx.opt('refit', false)) },
       { label: 'Number of Forecast Periods…', action: async () => { const v = await SM.ui.form({ title: 'Number of Forecast Periods', fields: [{ key: 'n', label: 'Forecast periods for every model', type: 'number', value: horizon(ctx),
-        help: 'How many periods after the end of the series every model forecasts, with its prediction interval: 0 to 1000 (0: none). It starts at the launch\'s Forecast Periods, 25 by default.' }], validate: (x) => (x.n >= 0 && x.n <= 1000 ? null : 'from 0 to 1000') }); if (v) ctx.set('forecast', Math.round(v.n)); } },
+        help: 'How many periods after the end of the series every model forecasts, with its prediction interval: 0 to 1000 (0: none). With Forecast on Holdback, how many values at the end are held back and forecast instead. It starts at the launch\'s Forecast Periods, 25 by default.' }], validate: (x) => (x.n >= 0 && x.n <= 1000 ? null : 'from 0 to 1000') }); if (v) ctx.set('forecast', Math.round(v.n)); } },
       { label: 'Maximum Iterations…', action: async () => { const v = await SM.ui.form({ title: 'Maximum Iterations', lead: 'For the ARIMA and state space fits from now on.', fields: [{ key: 'n', label: 'Maximum iterations', type: 'number', value: maxiter(ctx),
         help: 'The most iterations of the optimizer, 5 to 10 000 (200 by default), for the ARIMA, transfer function and structural model fits; the state space smoothing fits take at least 200 and the regime-switching fits at most 500. Raise it when a model reports that its fit did not converge.' }], validate: (x) => (x.n >= 5 && x.n <= 10000 ? null : 'from 5 to 10000') }); if (v) ctx.set('maxiter', Math.round(v.n)); } },
     ];
@@ -1788,13 +2288,13 @@
   const topics = {
     'p:timeseries': {
       kicker: 'Analyze > Specialized Modeling', title: 'Time Series',
-      lead: 'One series in time order: its graph, autocorrelations and stationarity tests; differencing, decomposition and filters; the spectral density and the seasonal subseries plot; and ARIMA, seasonal ARIMA, transfer function, smoothing and state space smoothing models with forecasts, compared in one table. Beyond JMP: structural models, regime switching, the Theta model, ARDL models with the bounds test, and the Zivot-Andrews test.',
+      lead: 'One series in time order: its graph, autocorrelations and stationarity tests; differencing, decomposition and filters; the spectral density and the seasonal subseries plot; and ARIMA, seasonal ARIMA, transfer function, smoothing, moving average and state space smoothing models with forecasts, compared in one table, also on forecasts of held-back values (Forecast on Holdback). Beyond JMP: benchmarks, averaged forecasts, rolling-origin cross-validation, runs tests, structural models, regime switching, the Theta model, ARDL models with the bounds test, and the Zivot-Andrews test.',
       sections: [
         { heading: 'Roles', choices: [['Y, Time Series', 'The series, one report each (continuous columns).'], ['Input List', 'Numeric input series for cross correlations, transfer functions, structural and ARDL models; indicators such as a promotion flag work.'], ['X, Time ID', 'Orders the rows and labels the time axis; a date column gives the calendar frequency, the seasonal period and the forecast dates.'], ['By', 'A report for each level.']] },
-        { heading: 'Options', choices: [['Forecast Periods', 'How many periods each model forecasts (default 25).'], ['Autocorrelation Lags', 'How many lags the correlations go to (default 25; n/4 is a common choice).'], ['Seasonal Period', 'The default observations per period in the dialogs; empty takes it from the Time ID (12 for monthly data).']] },
+        { heading: 'Options', choices: [['Forecast Periods', 'How many periods each model forecasts (default 25); with Forecast on Holdback, how many values at the end are held back.'], ['Forecast on Holdback', 'Every model fitted without the last values and compared on its forecasts of them.'], ['Autocorrelation Lags', 'How many lags the correlations go to (default 25; n/4 is a common choice).'], ['Seasonal Period', 'The default observations per period in the dialogs; empty takes it from the Time ID (12 for monthly data).']] },
         { heading: 'Missing and excluded rows', text: 'Excluded rows count as missing values, as in JMP, so the spacing of the series is kept; dates missing from a regular calendar are inserted as missing too. ARIMA models skip missing values in the likelihood; the smoothing and decomposition methods fill them by interpolation, and say so.' },
-        { heading: 'Differences from JMP', list: ['ARIMA: statsmodels\' exact likelihood; AIC and SBC count the parameters as JMP does (statsmodels also counts σ², shown in the notes). MA coefficients have statsmodels\' sign, the opposite of JMP\'s.', 'Smoothing models: weights and starting states by least squares (holtwinters), not JMP\'s ARIMA-equivalent fit; prediction intervals from the same moving-average weights JMP uses.', 'ADF lags by AIC; KPSS, STL and state space model selection by AICc are additions. X-11 is not available.'] },
-        { heading: 'Beyond JMP', choices: [['Structural Model…', 'Level, trend, seasonal, cycle and AR parts with their smoothed components (UnobservedComponents).'], ['Regime Switching…', 'Markov switching means, variances and AR parts, with regime probabilities.'], ['Filters', 'Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald trend and cycle.'], ['Seasonal Subseries Plot', 'Each season\'s values over the years with their mean.'], ['Theta Model…', 'The theta method\'s forecasts.'], ['ARDL…', 'Distributed lags of the inputs, the long run and the bounds test for cointegration.'], ['Zivot-Andrews Test', 'A unit root test that allows one break, with its date, in Stationarity Tests.']] },
+        { heading: 'Differences from JMP', list: ['ARIMA: statsmodels\' exact likelihood; AIC and SBC count the parameters as JMP does (statsmodels also counts σ², shown in the notes). MA coefficients have statsmodels\' sign, the opposite of JMP\'s.', 'Smoothing models: weights and starting states by least squares (holtwinters), not JMP\'s ARIMA-equivalent fit; prediction intervals from the same moving-average weights JMP uses. Constraints: Zero To One and Custom (each weight fixed or bounded, within 0 and 1: statsmodels takes no weights outside them, and keeps the trend weight at or below the level weight); JMP\'s Unconstrained and Stable Invertible are not available.', 'Box-Cox: JMP\'s is a launch option for the whole platform; here it is an option of each smoothing model, whose predictions, forecasts and limits are transformed back.', 'Forecast on Holdback also works for the Simple Moving Average (JMP leaves it out), and adds the mean error and MASE to JMP\'s RMSE, MSE, MAPE and MAE; Refit on All Rows gives the forecasts after the end.', 'ADF lags by AIC; KPSS, STL and state space model selection by AICc are additions. X-11 is not available.'] },
+        { heading: 'Beyond JMP', choices: [['Benchmark Models', 'Naive, Seasonal Naive and Drift forecasts, the ones a model should beat.'], ['Averaged Forecast…', 'The mean of several models\' forecasts and limits, as a model of its own.'], ['Rolling-Origin Cross-Validation…', 'Every model refitted at several origins, and the RMSE, MAE and MAPE of its forecasts from each.'], ['Runs Test', 'Randomness about the mean, the median or zero, of the series and of each model\'s residuals.'], ['Structural Model…', 'Level, trend, seasonal, cycle and AR parts with their smoothed components (UnobservedComponents).'], ['Regime Switching…', 'Markov switching means, variances and AR parts, with regime probabilities.'], ['Filters', 'Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald trend and cycle.'], ['Seasonal Subseries Plot', 'Each season\'s values over the years with their mean.'], ['Theta Model…', 'The theta method\'s forecasts.'], ['ARDL…', 'Distributed lags of the inputs, the long run and the bounds test for cointegration.'], ['Zivot-Andrews Test', 'A unit root test that allows one break, with its date, in Stationarity Tests.']] },
       ],
       more: MORE,
     },
@@ -1845,25 +2345,28 @@
     'p:timeseries:transfer': { kicker: 'Time Series', title: 'Transfer Function', lead: 'Regression on the input series with ARIMA noise: y_t = μ + Σ ω x_{t−b} + N_t (statsmodels\' ARIMA with exog). Each input enters at its lag b (dead time) and, with numerator order r, at the lags b to b + r. Forecasts need the inputs\' future values: they come from the rows at the end of the table where Y is missing, as in JMP, and the last value is held beyond them. JMP\'s rational (denominator) transfer functions are not available.', more: MORE },
     'p:timeseries:smoothing': {
       kicker: 'Time Series', title: 'Smoothing Models',
-      lead: 'Simple, Double (Brown), Linear (Holt), Damped-Trend Linear, Seasonal and Winters exponential smoothing with statsmodels\' holtwinters: the weights and starting states minimise the one-step-ahead squared errors. Prediction intervals use the moving-average weights ψ_j of each model\'s ARIMA form, as JMP documents them.',
+      lead: 'Simple, Double (Brown), Linear (Holt), Damped-Trend Linear, Seasonal and Winters exponential smoothing with statsmodels\' holtwinters: the weights and starting states minimise the one-step-ahead squared errors, within JMP\'s constraints (Zero To One, or Custom: each weight fixed or bounded), optionally on the Box-Cox transform of the series. Prediction intervals use the moving-average weights ψ_j of each model\'s ARIMA form, as JMP documents them. Simple Moving Average is in the same menu.',
       sections: [
         { heading: 'Weights', text: 'Level α, trend γ, damping φ and seasonal δ in JMP\'s form; statsmodels\' smoothing_seasonal is δ(1 − α), and Brown\'s α is Holt\'s method with level α(2 − α) and trend α/(2 − α). statsmodels keeps the trend weight at or below the level weight.' },
+        { heading: 'Constraints', text: 'Zero To One (the default, as in JMP) estimates every weight within 0 and 1. Custom fixes a weight at a value (it is then not estimated: k counts one weight less, and it has no standard error) or bounds it within limits of your own (holtwinters\' fix_params and bounds). A fixed or bounded δ with α estimated is fitted by a search over α (minimize_scalar), the other weights estimated at each α, as statsmodels\' seasonal weight depends on α.' },
+        { heading: 'Box-Cox transformation', text: 'The model is fitted to (y^λ − 1)/λ, or log y at λ = 0, which steadies a swing that grows with the level; the predictions, the forecasts and their limits are transformed back, so the forecasts are medians. The fit statistics are those of the values themselves, and −2LogLikelihood includes the Jacobian −2(λ − 1)Σ log y, so that AIC compares with an untransformed fit. Every value must be above zero.' },
         { heading: 'Differences from JMP', text: 'JMP fits the equivalent ARIMA model, so its estimates and above all its starting values differ; the standard errors here come from the likelihood\'s Hessian with the starting states held. Missing values are filled by interpolation for the fit.' },
       ],
       more: MORE,
     },
     'p:timeseries:ets': {
       kicker: 'Time Series', title: 'State Space Smoothing',
-      lead: 'ETS(error, trend, seasonal) models (Hyndman et al. 2008) with additive or multiplicative errors, no, additive or damped trend, and no, additive or multiplicative seasonality, fitted by maximum likelihood with statsmodels\' ETSModel and ranked by AICc. Their likelihood is not comparable with the ARIMA models\', as JMP also warns. Multiplicative models get simulated prediction intervals (a fixed seed).',
+      lead: 'ETS(error, trend, seasonal) models (Hyndman et al. 2008) with additive or multiplicative errors; no, additive (A), additive damped (Ad), multiplicative (M) or multiplicative damped (Md) trend; and no, additive or multiplicative seasonality: up to 30 models, as JMP fits them, by maximum likelihood with statsmodels\' ETSModel, ranked by AICc (with Forecast on Holdback by the RMSE of their forecasts of the held-back values). Their likelihood is not comparable with the ARIMA models\', as JMP also warns. Multiplicative parts need every value above zero and get simulated prediction intervals (a fixed seed). The multiplicative trends are off at first: they can forecast too far.',
       sections: [{ heading: 'In the report', choices: [['A line of the selection table', 'click it to show that model\'s report, and its forecasts in the Model Comparison plots; the best by AICc (★) shows at first. The Report and Graph boxes of Model Comparison hide them again']] }],
       more: MORE,
     },
     'p:timeseries:comparison': {
       kicker: 'Time Series', title: 'Model Comparison',
-      lead: 'Every fitted model with DF, variance, AIC, SBC, AICc, RSquare, −2LogLikelihood, AIC weights, MAPE and MAE, sorted by AIC. Report shows the model\'s report; Graph overlays its forecasts, prediction interval and residual autocorrelations in the plots below. The red triangle removes or hides models, and saves all forecasts in one new table.',
+      lead: 'Every fitted model with DF, variance, AIC, SBC, AICc, RSquare, −2LogLikelihood, AIC weights, MAPE and MAE, sorted by AIC; with Forecast on Holdback instead the RMSE, MSE, MAPE, MAE, mean error and MASE of each model\'s forecasts of the held-back values, sorted by RMSE, as JMP shows them. Report shows the model\'s report; Graph overlays its forecasts, prediction interval and residual autocorrelations in the plots below. The red triangle removes or hides models, holds values back, averages models, cross-validates them, and saves all forecasts in one new table.',
       sections: [{ heading: 'In the report', choices: [['Report', 'the box of a model: checked, its report (Model Summary, Parameter Estimates, Forecast, Residuals) shows below the table. Every model\'s is checked at first, but only the best of a model group (by AIC, or AICc for state space smoothing)'],
         ['Graph', 'the box of a model: checked, its one-step-ahead predictions, forecasts and prediction interval join the forecast plot, and its residual autocorrelations the two small plots, in the model\'s colour'],
-        ['A column heading', 'click it to sort the models by that statistic, again to reverse the order'], ['Right click the table', 'Copy Table, or Make into Data Table']] }],
+        ['A column heading', 'click it to sort the models by that statistic, again to reverse the order'], ['Right click the table', 'Copy Table, or Make into Data Table']] },
+        { heading: 'Forecast on Holdback', text: 'With values held back (the launch option, or the red triangle), the columns are the statistics of each model\'s forecasts of them: RMSE, MSE, MAPE, MAE, the mean error, MASE and N, sorted by RMSE; the code under the table computes them. Refit on All Rows adds a plot of every model\'s forecasts after the end, fitted again on all the values.' }],
       more: MORE,
     },
     'p:timeseries:structural': {
@@ -1900,6 +2403,61 @@
         { heading: 'Prediction intervals', text: 'The method is an IMA(1, 1) with drift, whose h-step variance is σ²(1 + (h − 1)α²): the report uses it, with statsmodels\' σ². statsmodels 0.14.6\'s prediction_intervals use σ²(1 + (h − 1)(1 + (α − 1)²)), which is wider; the model\'s red triangle shows those instead.' },
         { heading: 'Fit statistics', text: 'The method has no likelihood of its own: Model Comparison gets the statistics of its one-step-ahead forecasts from each origin, with the parameters of the whole fit.' },
       ],
+      more: MORE,
+    },
+    'p:timeseries:holdback': {
+      kicker: 'Time Series', title: 'Forecast on Holdback',
+      lead: 'The last Forecast Periods values are held back: every model is fitted on the values before them and forecasts them, and the forecasts are compared with what happened. JMP\'s launch option, also in the red triangle. The statistics of these forecast errors compare models of every class, which their AICs do not.',
+      sections: [
+        { heading: 'Model Comparison', choices: [['RMSE', 'the root mean squared forecast error, √(Σe²/N): the table is sorted by it, as JMP sorts it'], ['MSE', 'the mean squared error, RMSE²'],
+          ['MAPE', 'the mean absolute percentage error, 100 Σ|e/y|/N (missing when a held-back value is 0)'], ['MAE', 'the mean absolute error'], ['Mean Error', 'the mean of the errors actual − forecast: above 0, forecasts too low on the whole'],
+          ['MASE', 'the MAE over the in-sample MAE of the naive forecast of the training values (the seasonal naive, at the seasonal period, when one is known): below 1, better than that benchmark did one step ahead (Hyndman and Koehler 2006)'],
+          ['N', 'the held-back values present (an excluded or missing one is left out)']] },
+        { heading: 'In the report', choices: [['The graphs', 'the held-back values are shaded; the forecasts start from the last training value'],
+          ['Holdback Statistics', 'under each model\'s Forecast: the same statistics, with MASE\'s scale'], ['Save Columns', 'the training rows\' one-step-ahead predictions and residuals, the held-back rows\' forecasts and forecast errors, and a Set column (Training, Holdback, Forecast)'],
+          ['Refit on All Rows', 'in the red triangle: every model fitted again on all the values; its forecasts after the end in its report, in Model Comparison and in Save Columns']] },
+        { heading: 'Why', text: 'A model chosen for its fit to the data it was fitted to can forecast worse than a simpler one: the held-back values are new to every model, as the future is. Once a model is chosen, Refit on All Rows fits it to the latest values for the forecasts that matter.' },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:benchmarks': {
+      kicker: 'Time Series', title: 'Benchmark Models',
+      lead: 'The simplest forecasts, which a model should beat to be worth its trouble (Hyndman and Athanasopoulos, Forecasting: Principles and Practice): Naive, every forecast the last value; Seasonal Naive, the value of the same season one period before; Drift, the last value plus h times the average change (y_T − y_1)/(T − 1). Compare them with the models under Forecast on Holdback.',
+      sections: [{ heading: 'Their prediction intervals', text: 'σ√h (Naive, a random walk), σ√(k + 1) with k the whole periods before the horizon (Seasonal Naive), and σ√(h(1 + h/(T − 1))) (Drift, the uncertainty of the drift included), σ² the mean squared one-step error (over n − 1 for Drift). Their one-step-ahead predictions are the value before, the value a period before, and the value before plus the drift.' },
+        { heading: 'Save Prediction Formula', text: 'In the model\'s red triangle: a live column of the one-step-ahead prediction, `Lag(:y, 1)`, `Lag(:y, s)` or `Lag(:y, 1) + b`, worked out again when values change or rows are added. Lag takes the rows before in the table, so the rows must be the series\' time points one after another (sorted by the Time ID, every time point with its row), and not By groups of one table.' }],
+      more: MORE,
+    },
+    'p:timeseries:sma': {
+      kicker: 'Time Series', title: 'Simple Moving Average',
+      lead: 'JMP\'s Simple Moving Average: the mean of w consecutive values. No Centering puts the window at the value and the w − 1 before it; Centered around the value (an even width one value more before than after); Centered and Double Smoothed, for an even width, the mean of the two nearly centered windows, the 2 × w average of classical decomposition. As a forecast the average trails, whatever the centering: every forecast is the mean of the last w values.',
+      sections: [
+        { heading: 'The report', text: 'The smoothed series over the data (Smoothed Series in its red triangle), the forecasts, the one-step-ahead predictions (the mean of the w values before each) and their residuals, which give MAPE and MAE in Model Comparison. The interval is ±z times the one-step errors\' standard deviation at every horizon, right when the level stays where it is. Save Moving Average writes the smoothed series to the table.' },
+        { heading: 'Save Prediction Formula', text: 'The one-step-ahead prediction as a live column: the mean of `Lag(:y, 1)` to `Lag(:y, w)`, missing where one of them is. The rows must be the series\' time points one after another, as for the benchmarks.' },
+        { heading: 'Differences from JMP', text: 'JMP leaves the moving average out of Forecast on Holdback; here it takes part, with the mean of the last w training values as its forecast.' },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:average': {
+      kicker: 'Time Series', title: 'Averaged Forecast',
+      lead: 'A model of models: its forecasts are the mean of the chosen models\' forecasts, its one-step-ahead predictions the mean of theirs (where every one has one), and its limits the mean of their limits at its level. Combined forecasts are often better than any single model\'s, as the errors of different methods partly cancel.',
+      sections: [{ heading: 'The limits', text: 'The members\' forecast errors are correlated, so the standard error of the mean forecast is at most the mean of their standard errors, exactly that when the errors move together: the interval errs on the wide side. An average has no likelihood: AIC and SBC are left out; compare it on MAPE and MAE, or with Forecast on Holdback. A member removed from the report leaves the average without it: Fit New… chooses again.' }],
+      more: MORE,
+    },
+    'p:timeseries:cv': {
+      kicker: 'Time Series', title: 'Rolling-Origin Cross-Validation',
+      lead: 'Evaluation on a rolling forecasting origin (Tashman 2000; Hyndman and Athanasopoulos): every model is fitted on the series up to each origin, a window that grows by the step, and forecasts the next values; the errors at every origin give its RMSE, MAE and MAPE, and their means over the origins rank the models on many forecasts, not the one a single holdback gives.',
+      sections: [
+        { heading: 'Options', choices: [['Number of origins', '5 by default; the last origin ends one horizon before the end of the series'], ['Horizon', 'the values forecast from each origin: the Forecast Periods, at most 12, at first'],
+          ['Step between origins', 'empty: the horizon, forecast windows that follow one another; 1: every origin']] },
+        { heading: 'In the report', choices: [['Means over the Origins', 'each model\'s RMSE, MAE and MAPE averaged over its origins, best RMSE first'], ['RMSE by origin', 'a line per model, in its colour: whether one model is better at every origin or only on the whole'],
+          ['Per Origin', 'every model at every origin: the values it was fitted to and forecast, and its RMSE, MAE and MAPE']] },
+      ],
+      more: MORE,
+    },
+    'p:timeseries:runs': {
+      kicker: 'Time Series', title: 'Runs Test',
+      lead: 'The Wald-Wolfowitz runs test of randomness: the values in time order, each at or above a cutoff (the mean, the median or zero) or below it; a run is a stretch on one side. Too few runs mean highs and lows come in stretches (a trend or positive autocorrelation), too many an alternation. The number of runs R is compared with E = 2n₁n₂/N + 1, its standard deviation √(2n₁n₂(2n₁n₂ − N)/(N²(N − 1))), by a normal z.',
+      sections: [{ heading: 'Where it is', text: 'Runs Test in the series\' red triangle, about the mean, the median or zero; and in every model\'s red triangle under Residual Statistics, the residuals about zero, a check of the one-step errors besides Ljung-Box. Below N = 50 |R − E| is less 1/2, the continuity correction of the SAS manual that statsmodels\' runstest_1samp follows (statsmodels 0.14.6 moves a distance below 1/2 away from 0 instead; the report does not).' }],
       more: MORE,
     },
     'p:timeseries:zivot': { kicker: 'Time Series', title: 'Zivot-Andrews Test', lead: 'A unit root test that allows one structural break at an unknown date (Zivot and Andrews 1992, statsmodels\' zivot_andrews): H0 a unit root, H1 a stationary series with a break in the intercept, the trend or both. Where the ADF test mistakes a break for a unit root, this one can reject. The break date is where the test statistic is smallest: the last observation before the shift. P-values and critical values are interpolated in statsmodels\' simulated tables; the options set the trimming at the ends and the lag selection.', more: MORE },
@@ -1953,13 +2511,14 @@
   /* ---- the platform ------------------------------------------------------------------------------------------------------------------------------------ */
   SM.platforms.register({
     id: 'timeseries', label: 'Time Series', menu: 'Analyze/Specialized Modeling', order: 20, info: 'p:timeseries', topics,
-    about: 'One series in time order: its graph with the ADF tests, autocorrelations with Ljung-Box, partial autocorrelations, variogram, KPSS and the Zivot-Andrews test with its break date; differencing, linear trend and cycle removal, seasonal decomposition and STL, the Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald filters; the spectral density with the white noise tests; lag plots, seasonal subseries plots and cross correlations; ARIMA, seasonal ARIMA and ARIMA model groups, transfer functions (ARIMAX), the smoothing models and state space smoothing (ETS), and, beyond JMP, structural (unobserved components) models with their smoothed components, Markov regime-switching models with regime probabilities, the Theta model, and ARDL models with the long-run coefficients and the Pesaran-Shin-Smith bounds test; each with forecasts that continue the dates, compared in one table.',
+    about: 'One series in time order: its graph with the ADF tests, autocorrelations with Ljung-Box, partial autocorrelations, variogram, KPSS and the Zivot-Andrews test with its break date; differencing, linear trend and cycle removal, seasonal decomposition and STL, the Hodrick-Prescott, Baxter-King and Christiano-Fitzgerald filters; the spectral density with the white noise tests; lag plots, seasonal subseries plots, runs tests and cross correlations; ARIMA, seasonal ARIMA and ARIMA model groups, transfer functions (ARIMAX), the smoothing models with JMP\'s Zero To One and Custom constraints and a Box-Cox option, the Simple Moving Average, and state space smoothing (all 30 ETS models, the multiplicative trends too); Forecast on Holdback, with the holdback RMSE, MAPE, MAE, mean error and MASE in Model Comparison and Refit on All Rows; and, beyond JMP, Naive, Seasonal Naive and Drift benchmarks, averaged forecasts, rolling-origin cross-validation, structural (unobserved components) models with their smoothed components, Markov regime-switching models with regime probabilities, the Theta model, and ARDL models with the long-run coefficients and the Pesaran-Shin-Smith bounds test; each with forecasts that continue the dates, compared in one table.',
     uses: ['statsmodels.tsa.stattools.acf, pacf, adfuller, kpss, ccf, levinson_durbin, zivot_andrews', 'statsmodels.stats.diagnostic.acorr_ljungbox', 'statsmodels.tsa.arima.model.ARIMA',
       'statsmodels.tsa.holtwinters.ExponentialSmoothing', 'statsmodels.tsa.exponential_smoothing.ets.ETSModel', 'statsmodels.tsa.seasonal.seasonal_decompose, STL',
       'statsmodels.tsa.statespace.structural.UnobservedComponents', 'statsmodels.tsa.regime_switching.markov_regression.MarkovRegression, markov_autoregression.MarkovAutoregression',
       'statsmodels.tsa.filters.hp_filter.hpfilter, bk_filter.bkfilter, cf_filter.cffilter', 'statsmodels.graphics.tsaplots.month_plot, quarter_plot, seasonal_plot (their data)',
       'statsmodels.tsa.forecasting.theta.ThetaModel', 'statsmodels.tsa.ardl.ARDL, UECM, ardl_select_order, pss_critical_values',
-      'statsmodels.tsa.statespace.tools.diff', 'statsmodels.regression.linear_model.OLS', 'pandas.infer_freq', 'numpy.fft'],
+      'statsmodels.tsa.statespace.tools.diff', 'statsmodels.regression.linear_model.OLS', 'pandas.infer_freq', 'pandas.Series.rolling (the moving average)', 'scipy.special.boxcox, inv_boxcox',
+      'scipy.optimize.minimize_scalar', 'numpy.fft'],
     launch: {
       lead: 'Choose the series. A date column as X, Time ID gives a date axis, the seasonal period and the dates of the forecasts; Input List columns are the inputs of transfer functions, structural and ARDL models.',
       roles: [
@@ -1974,7 +2533,9 @@
       ],
       options: [
         { key: 'forecast', label: 'Forecast Periods', type: 'number', value: 25,
-          help: 'How many periods after the end of the series each model forecasts, with its prediction interval: 0 to 1000, 25 by default (0: none). Number of Forecast Periods…, in the red triangle, changes it for every model.' },
+          help: 'How many periods after the end of the series each model forecasts, with its prediction interval: 0 to 1000, 25 by default (0: none); with Forecast on Holdback, how many values at the end are held back and forecast instead. Number of Forecast Periods…, in the red triangle, changes it for every model.' },
+        { key: 'holdback', label: 'Forecast on Holdback', type: 'check', value: false,
+          help: 'Holds back the last Forecast Periods values: every model is fitted on the values before them and forecasts them, and Model Comparison compares the forecasts with what happened (RMSE, MAPE, MAE, MASE), which compares models of every kind. Off by default, as in JMP; the red triangle turns it on and off, and Refit on All Rows adds the forecasts after the end.' },
         { key: 'nlags', label: 'Autocorrelation Lags', type: 'number', value: 25,
           help: 'How many lags the autocorrelations, partial autocorrelations, variogram, AR coefficients and Ljung-Box tests go to, for the series, its differences and the models\' residuals (at most n − 1), and the lags either way of Cross Correlation. 25 by default, at least 2; about n/4 is a common choice.' },
         { key: 'period', label: 'Seasonal Period (empty: from the Time ID)', type: 'number', value: '',
@@ -2009,5 +2570,7 @@
   });
 
   // For the tests.
-  SM.timeseries = Object.freeze({ groupRows, barSvg, parseRange, effective, specName, perYear, filterDefaults, parseOrders, fitKey, regimeColor });
+  SM.timeseries = Object.freeze({ groupRows, barSvg, parseRange, effective, specName, perYear, filterDefaults, parseOrders, fitKey, regimeColor, callOf, modelRows, averageable,
+    // for Time Series Forecast (smui-p-tsforecast.js): a series' graphs drawn as here
+    draw: Object.freeze({ withX, seriesTrace, forecastTraces, forecastPlot, fitShapes, xAxis, plotWidth, graphCode, withCode, recipe, tLabel, isDate, ptext, colorOf, fx, PARAM_COLS }) });
 }(typeof self !== 'undefined' ? self : this));

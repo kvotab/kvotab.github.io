@@ -829,6 +829,78 @@
     };
   }
 
+  /* Col Moving Average(x, weighting, before, after, partial, <By…>): JMP's
+     positional options are the number constants after x (at most four);
+     the arguments after them are the By columns. */
+  function movingAverage(node, env) {
+    const a = comp(node.args[0], env);
+    needNum(a, node.args[0], node.name);
+    const opts = [];
+    const by = [];
+    // (each argument compiled once: a column's place in the text is noted as it is)
+    for (let k = 1; k < node.args.length; k++) {
+      const c = comp(node.args[k], env);
+      if (!by.length && opts.length < 4 && c.konst) {
+        if (c.t === 'str') throw new FormulaError(`${node.name}'s options are numbers: weighting, before, after, partial is missing`, node.args[k].pos, node.args[k].end);
+        opts.push(c.v);
+      } else by.push(c);
+    }
+    const at = (i, dflt) => (opts[i] == null || opts[i] !== opts[i] ? dflt : opts[i]);
+    const w = at(0, 1);
+    const before = Math.trunc(at(1, -1)), after = Math.trunc(at(2, 0)), partial = at(3, 0) !== 0;
+    if (!(w === 1 || w === 0 || (w > 0 && w < 1))) throw new FormulaError(`${node.name}'s weighting is 1 (alike), 0 (a ramp or triangle) or a number between 0 and 1 (exponential), not ${w}`, node.args[1].pos, node.args[1].end);
+    if (before < -1 || after < -1) throw new FormulaError(`${node.name}'s before and after are a number of rows, 0 or more, or -1 for all`, node.pos, node.end);
+    env.agg = true;
+    env.rowDep = true;
+    const fa = numF(a);
+    let cache = null;
+    const prepare = () => {
+      const n = env.table.nrows;
+      const { g, ng } = grouping(by, env);
+      const members = Array.from({ length: ng }, () => []);
+      for (let r = 0; r < n; r++) members[g[r]].push(r);
+      const out = new Array(n).fill(NaN);
+      for (const rows of members) {
+        const m = rows.length;
+        const x = rows.map((r) => fa(r));
+        for (let p = 0; p < m; p++) {
+          const lo = before < 0 ? 0 : p - before, hi = after < 0 ? m - 1 : p + after;
+          if (partial && (lo < 0 || hi > m - 1)) continue;
+          let s = 0, sw = 0;
+          for (let q = Math.max(0, lo); q <= Math.min(m - 1, hi); q++) {
+            const v = x[q];
+            if (v !== v) continue;
+            // a ramp: 1 at the window's first row up to this one; a triangle down to 1 at its last row
+            const wt = w === 1 ? 1 : w === 0 ? (q <= p ? q - lo + 1 : hi - q + 1) : Math.pow(1 - w, Math.abs(q - p));
+            s += wt * v;
+            sw += wt;
+          }
+          if (sw > 0) out[rows[p]] = s / sw;
+        }
+      }
+      cache = out;
+    };
+    return { f: (r) => { if (!cache) prepare(); return cache[r]; }, t: 'num', date: !!a.date };
+  }
+
+  /* Col Stored Value(:x, row): the stored value, a missing value code too. */
+  function storedValue(node, env) {
+    const arg = node.args[0];
+    if (arg.k !== 'col') throw new FormulaError('Col Stored Value takes a column, like Col Stored Value(:x)', arg.pos, arg.end);
+    const c = comp(arg, env);
+    const col = c.col;
+    let fr = null;
+    if (node.args[1]) {
+      const rc = comp(node.args[1], env);
+      needNum(rc, node.args[1], 'Col Stored Value\'s row');
+      fr = numF(rc);
+      env.rowDep = true;
+    }
+    const miss = col.isNumeric ? NaN : null;
+    const get = (r) => (col.coded && col.coded[r] !== undefined ? col.coded[r] : col.values[r]);
+    return { f: fr ? (r) => { const j = Math.round(fr(r)); return j >= 1 && j <= env.table.nrows ? get(j - 1) : miss; } : get, t: c.t, date: c.date };
+  }
+
   function dateF(fn) {
     return (node, env) => {
       const [a] = compArgs(node, env);
@@ -1076,6 +1148,10 @@
   def(['Sine', 'Sin'], 'Trigonometric', 'x', 'The sine of x in radians.', 1, 1, math1(Math.sin));
   def(['Cosine', 'Cos'], 'Trigonometric', 'x', 'The cosine of x in radians.', 1, 1, math1(Math.cos));
   def(['Tangent', 'Tan'], 'Trigonometric', 'x', 'The tangent of x in radians.', 1, 1, math1(Math.tan));
+  // (TanH is the neural nets' activation, in their saved prediction formulas)
+  def('TanH', 'Trigonometric', 'x', 'The hyperbolic tangent, (e^x − e^−x)/(e^x + e^−x).', 1, 1, math1(Math.tanh));
+  def('SinH', 'Trigonometric', 'x', 'The hyperbolic sine.', 1, 1, math1(Math.sinh));
+  def('CosH', 'Trigonometric', 'x', 'The hyperbolic cosine.', 1, 1, math1(Math.cosh));
   def(['ArcSine', 'ArcSin', 'ASin'], 'Trigonometric', 'x', 'The inverse sine, in radians.', 1, 1, math1(Math.asin));
   def(['ArcCosine', 'ArcCos', 'ACos'], 'Trigonometric', 'x', 'The inverse cosine, in radians.', 1, 1, math1(Math.acos));
   def(['ArcTangent', 'ArcTan', 'ATan'], 'Trigonometric', 'y, x', 'The inverse tangent of y, or of y/x in the right quadrant, in radians.', 1, 2, (node, env) => {
@@ -1212,6 +1288,10 @@
   def(['Col Rank', 'Rank'], 'Statistical', `x${BY}, <<Tie("average")`, 'The rank of x among the values that are not missing, 1 for the smallest. Ties in row order unless <<Tie("average"), <<Tie("minimum") or <<Tie("maximum").', 1, null, colStat('rank'), { named: ['tie'] });
   def(['Col Cumulative Sum', 'Cumulative Sum'], 'Statistical', `x${BY}`, 'The sum of x from the first row to this one (missing values are skipped and stay missing).', 1, null, colStat('cumsum'));
   def('Col Standardize', 'Statistical', `x${BY}`, '(x − mean)/standard deviation over the rows.', 1, null, colStat('standardize'));
+  def(['Col Moving Average', 'Moving Average'], 'Statistical', `x, weighting = 1, before = -1, after = 0, partial is missing = 0${BY}`,
+    'The average of x over a window of rows around this one (JMP\'s argument order): before rows before it (-1: every row before), after rows after it (-1: every row after). weighting 1 weighs them alike, 0 as a ramp or triangle (the nearer, the heavier), a number between 0 and 1 exponentially, (1 − w) to the power of the distance. Missing values are skipped; with partial is missing 1, a window that runs past the first or last row is missing. By columns: within each group, in row order.',
+    1, null, movingAverage);
+  def('Col Stored Value', 'Row', 'column, row = this row', 'The value stored in the column, even where it is a missing value code (Column Info): Col Stored Value(:x) is 999 where :x is missing because 999 is its code.', 1, 2, storedValue);
 
   // Probability
   const normalArgs = (node, env) => { const cs = compArgs(node, env); cs.forEach((c, i) => needNum(c, node.args[i], node.name)); return [numF(cs[0]), optNum(cs[1], 0), optNum(cs[2], 1)]; };
@@ -1383,7 +1463,10 @@
       c.valueOrder = null;
       schema = true;
     }
+    c.coded = null;
     c.values = res.values;
+    // a missing value code the formula gives is kept as the code and is missing (smui-table.js)
+    if (c.missingCodes && typeof table._splitCodes === 'function') table._splitCodes(c);
     if (res.date && c.isNumeric && !(c.format && /date/.test(c.format.kind || ''))) { c.format = { kind: res.hasTime ? 'datetime' : 'date' }; schema = true; }
     return schema;
   }

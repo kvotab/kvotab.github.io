@@ -1072,4 +1072,48 @@ for kw in ({}, {'standard': 'std', 'rows': [i for i in range(len(ad2)) if i % 11
     else:
         check(f'{tag}: the parts rated unequally often: no Fleiss kappa in the report, and the code runs without it', (r.get('fleiss_note') is not None, int(ns['counts'].sum(axis=1).nunique()) > 1), (True, True))
 
+# ---- Show Alarm Report: the tests each chart runs, and the code of the alarms -----------------------------------------
+# The page counts each chart's samples out of control (failing a test the chart runs) and the alarm rate from the
+# charts' tests; the code under the report recomputes the charts and their tests from the CSV (its own test
+# functions) and must give the same counts. The tests a chart runs: the chosen ones on the charts of the process, test
+# 1 alone on the range, standard deviation and moving range charts unless the dispersion tests are on, test 1 on EWMA
+# and CUSUM (no zones), tests 2 to 4 on a run chart (no limits).
+for chart, kw, o in charts:
+    kw = dict(kw)
+    tests_ = kw.pop('tests', [1, 2, 3, 5, 6])
+    args = dict(table=tq, y=kw.pop('y', 'd'), subgroup=kw.pop('subgroup', 'subgroup'), chart=chart, plot=o, tests=tests_, alarm=True, table_name='data', **kw)
+    r = call('quality.control_chart', **args)
+    tag = f'Alarm Report ({chart}{", phases" if args.get("phase") else ""}{", a By group" if args.get("where") else ""}{", rows left out" if args.get("rows") else ""})'
+    if 'error' in r:
+        check(f'{tag}: no error', r['error'], None)
+        continue
+    want_used = []
+    for pn in r['panels']:
+        if pn['key'] in ('ewma', 'cusum'):
+            want_used.append([1] if 1 in tests_ else [])
+        elif pn['key'] == 'run':
+            want_used.append([t for t in sorted(tests_) if t in (2, 3, 4)])
+        elif pn['key'] in ('r', 's', 'mr') and not args.get('dispersion_tests'):
+            want_used.append([1] if 1 in tests_ else [])
+        else:
+            want_used.append(sorted(tests_))
+    check(f'{tag}: the tests each chart runs', [pn['tests_used'] for pn in r['panels']], want_used)
+    check(f'{tag}: a chart fails only the tests it runs', all(set(t) <= set(pn['tests_used']) for pn in r['panels'] for t in pn['tests']), True)
+    ns = run_ns(r['alarm_code'], tq)
+    want = []
+    for q, pn in enumerate(r['panels']):
+        v = np.array([np.nan if x is None else x for x in pn['values']], dtype=float)
+        ok = np.isfinite(v)
+        out = np.array([bool(t) for t in pn['tests']]) & ok
+        want.append((q + 1, pn['title'], int(ok.sum()), int(out.sum())))
+    check(f'{tag}: the code\'s samples and samples out of control are the report\'s', [tuple(x[:4]) for x in ns.get('report', [])], want)
+    check.near(f'{tag}: ... and its alarm rates', max((abs(x[4] - x[3] / x[2]) if x[2] else 0.0) for x in ns.get('report', [(0, '', 1, 0, 0.0)])), 0.0, abs_=1e-15)
+    check(f'{tag}: the code has no graph', ('plt.' in r['alarm_code'], 'matplotlib' in r['alarm_code']), (False, False))
+    if args.get('where'):
+        check(f'{tag}: the code keeps the By group', 'df = df[df["operator"] == "Ann"]' in r['alarm_code'], True)
+r = call('quality.control_chart', table=tq, y='d', subgroup='subgroup', chart='xbar_r', tests=[], alarm=True, plot={})
+check('Alarm Report without tests: no code (nothing to report)', 'alarm_code' in r, False)
+r = call('quality.control_chart', table=tq, y='d', subgroup='subgroup', chart='xbar_r', tests=[1], plot={})
+check('without Show Alarm Report: no alarm code', 'alarm_code' in r, False)
+
 sys.exit(check.done())

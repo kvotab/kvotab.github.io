@@ -1,8 +1,9 @@
 /* ==========================================================================
    SMUI.HTML: ANALYZE > PREDICTIVE MODELING > BOOTSTRAP FOREST, BOOSTED TREE
 
-   JMP Pro's two tree ensembles, fitted by scikit-learn (the backend is
-   resources/py/smui/ensemble.py). The launch dialog has JMP's roles, and
+   JMP Pro's two tree ensembles on scikit-learn's decision trees (the backend
+   is resources/py/smui/ensemble.py): a split on a nominal X takes two groups
+   of its levels, as JMP's do. The launch dialog has JMP's roles, and
    under them the Specification panel JMP shows in a window of its own
    after OK. The report, in JMP's order:
 
@@ -21,7 +22,8 @@
 
    and from the red triangle Permutation Importance, Plot Actual by
    Predicted, ROC and Lift Curves, Show Trees, the Prediction Profiler,
-   Save Columns and the specification again.
+   Save Columns (with Score Rows: the model as fitted on rows added since,
+   or another open table) and the specification again.
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -47,7 +49,7 @@
       { panel: 'Forest', key: 'trees', label: 'Number of Trees in the Forest', type: 'int', dflt: 100, min: 1, max: 5000,
         help: 'How many trees are grown, from 1 to 5000 (fewer when Early Stopping stops them). More trees average away more of the noise of single trees and take longer; JMP\'s default is 100.' },
       { panel: 'Forest', key: 'terms', label: 'Number of Terms Sampled per Split', type: 'int', dflt: (p) => defaultTerms(p), min: 1,
-        help: 'How many X columns each split may choose from, drawn at random for every split (scikit-learn\'s max_features); a categorical X counts as its share of the 0/1 level columns. Empty: JMP\'s default since JMP 16, p − floor(p/4) of the p X columns (13 terms: 10; the grey number in the box); earlier versions took floor(p/4). Fewer terms make the trees differ more from each other.' },
+        help: 'How many X columns each split may choose from, drawn at random for every split (scikit-learn\'s max_features); a categorical X is one column, as a continuous one is (a Missing column beside a continuous one with missing values counts too). Empty: JMP\'s default since JMP 16, p − floor(p/4) of the p X columns (13 terms: 10; the grey number in the box); earlier versions took floor(p/4). Fewer terms make the trees differ more from each other.' },
       { panel: 'Forest', key: 'rate', label: 'Bootstrap Sample Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
         help: 'The share of the training rows drawn, with replacement, for each tree: 1 (the default) draws as many rows as there are, which leaves about 37% of them out of each tree (its out-of-bag rows). A smaller share gives each tree fewer rows and more out-of-bag ones. Above 0 and at most 1.' },
       { panel: 'Forest', key: 'minSplits', label: 'Minimum Splits per Tree', type: 'int', dflt: 10, min: 0,
@@ -83,7 +85,7 @@
       { panel: 'Stochastic Boosting', key: 'rowRate', label: 'Row Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
         help: 'The share of the training rows drawn, without replacement, for each layer (scikit-learn\'s subsample); 1, the default, uses every row. Below 1 is stochastic boosting, which often predicts better. JMP stratifies the draw by a categorical response; scikit-learn does not.' },
       { panel: 'Stochastic Boosting', key: 'colRate', label: 'Column Sampling Rate', type: 'num', dflt: 1, min: 0, max: 1, open: true,
-        help: 'The share of the columns tried at each split (scikit-learn\'s max_features, a categorical X\'s 0/1 columns counted one by one); 1, the default, tries every column. JMP draws its columns once per layer.' },
+        help: 'The share of the columns tried at each split (scikit-learn\'s max_features; a categorical X is one column); 1, the default, tries every column. JMP draws its columns once per layer.' },
       { panel: 'Stochastic Boosting', key: 'early', label: 'Early Stopping', type: 'check', dflt: true,
         help: 'With validation rows (on by default): the fit stops at the first layer that does not improve the validation RSquare (Entropy RSquare for a categorical response) and keeps the layers before it, as JMP does. Without validation rows every layer is kept.' },
     ],
@@ -198,6 +200,9 @@
     try { return await ctx.call(fn, payload); } finally { off(); note.remove(); }
   }
 
+  // the key the engine keeps the report's fit under (Score Rows): the report and its By group
+  const keepOf = (ctx) => `${ctx.report.id}|${ctx.byLabel || ''}`;
+
   /* Tables that may be wide scroll inside their own box (a phone). */
   const wide = (tbl) => el('div', { class: 'sm-ens-scroll' }, tbl);
 
@@ -225,7 +230,7 @@
     const base = payloadOf(ctx, kind);
     if (!base.y || !base.x.length) { ctx.container.append(ctx.warn('Choose a Y, Response and at least one X, Factor (Model Dialog in the red triangle).')); return; }
     // the fit, with the page's choice the graphs' code draws with (the statistic Cumulative Validation shows)
-    const r = await withProgress(ctx, 'ensemble.fit', { ...base, plot: { stat: ctx.opt('cumStat', null) } }, kind, K.label, K.what);
+    const r = await withProgress(ctx, 'ensemble.fit', { ...base, plot: { stat: ctx.opt('cumStat', null) }, keep: keepOf(ctx) }, kind, K.label, K.what);
     ctx.ens = { r, base, kind };
     const box = ctx.container;
     for (const t of r.notes || []) box.append(ctx.note(t));
@@ -239,6 +244,7 @@
     if (r.response === 'continuous' && ctx.opt('abp', false)) SM.predict.actualByPredicted(ctx, box, r.fit);
     if (r.response === 'categorical' && ctx.opt('roc', false)) SM.predict.rocCurves(ctx, box, r.fit);
     if (r.response === 'categorical' && ctx.opt('lift', false)) SM.predict.liftCurves(ctx, box, r.fit);
+    if (r.response === 'categorical') SM.predict.decisionParts(ctx, box, r.fit, null, '', { save: { fn: 'ensemble.save', payload: base } });
     const tv = ctx.opt('trees', null);
     if (tv && !ctx.headless) await treeViews(ctx, base, r, K, tv);
     if (ctx.opt('profiler', false) && !ctx.headless) {
@@ -371,7 +377,7 @@
       { width: W(340), height: Math.max(120, 24 * rows.length + 50), title: 'Column Contributions', select: false }, (r.fit.plots || {}).head_code, c.plot_code);
     const what = K.id === 'forest' ? `the kept trees (as they were cut back)${r.response === 'categorical' ? '; G² is 2 × the change in entropy (natural log) of the in-bag counts' : '; SS is the fall in the in-bag sum of squares'}`
       : `every layer; SS is the fall in the sum of squares of the residuals the layer fits${r.response === 'categorical' ? ' (JMP reports G² for a categorical response)' : ''}`;
-    ob.add(ctx.row(wide(tbl), bars), ctx.note(`The splits on each column over ${what}. A categorical column's levels are its 0/1 columns added together.`));
+    ob.add(ctx.row(wide(tbl), bars), ctx.note(`The splits on each column over ${what}. A split on a categorical column takes two groups of its levels.`));
   }
 
   /* ---- Permutation Importance (not in JMP) ----------------------------------------------------------- */
@@ -379,7 +385,7 @@
     const res = await withProgress(ctx, 'ensemble.permutation', { ...base, repeats: ctx.opt('permRepeats', 5) }, 'permutation', 'Permutation Importance', 'shuffles');
     const ob = SM.predict.contributions(ctx, ctx.container, res.contributions, {
       title: 'Permutation Importance', key: 'permutation', head: (r.fit.plots || {}).head_code,
-      note: `The fall in the ${res.set.toLowerCase()} rows' ${res.contributions.label.replace(/^Decrease in /, '')} (${fmt(res.base, { sig: 5 })} as fitted) when one column's values are shuffled over those rows, the model left as it is: the mean over ${res.repeats} shuffles, seeded by the report's seed. A categorical column's 0/1 columns move together. Not in JMP (its profiler has Assess Variable Importance); scikit-learn's permutation_importance does the same one column of X at a time.`,
+      note: `The fall in the ${res.set.toLowerCase()} rows' ${res.contributions.label.replace(/^Decrease in /, '')} (${fmt(res.base, { sig: 5 })} as fitted) when one column's values are shuffled over those rows, the model left as it is: the mean over ${res.repeats} shuffles, seeded by the report's seed. A categorical column is shuffled as one. Not in JMP (its profiler has Assess Variable Importance); scikit-learn's permutation_importance does the same.`,
     });
     scrollTables(ob);
     ob.add(ctx.code(res.code));
@@ -424,7 +430,8 @@
     const notes = [];
     if (res.truncated) notes.push(`The first ${res.lines.length} nodes of ${res.nodes}.`);
     if (res.note) notes.push(res.note);
-    if (K.id === 'forest') notes.push('The tree as it was cut back; scikit-learn splits a categorical column one level against the others (JMP splits its levels into two groups).');
+    notes.push(K.id === 'forest' ? 'The tree as it was cut back. A split on a nominal column takes two groups of its levels (the tree orders them by the mean response of its bootstrap rows); an ordinal one keeps its order; Missing is on the side the tree sends missing values.'
+      : 'A split on a nominal column takes two groups of its levels (the layer\'s tree orders them by their mean residual); an ordinal one keeps its order; Missing is on the side the tree sends missing values.');
     ob.add(bar, el('div', { class: 'sm-ens-treewrap' }, list), notes.length ? ctx.note(notes.join(' ')) : null);
   }
 
@@ -447,6 +454,58 @@
     for (const f of FIELDS[kind]) if (v[f.key] != null) out[f.key] = v[f.key];
     ctx.set('shownFit', null, null, { rerun: false });
     ctx.set('settings', out);
+  }
+
+  /* ---- Score Rows: the model as the report fitted it on rows it did not see ------------------------- */
+  /* JMP's Save Prediction Formula of a forest or a boosted tree is a formula of every tree (thousands of nested
+     conditions), so here the engine keeps the report's fit and scores the rows of an open table with it: this
+     table's rows added since (those without a prediction yet) or every row of another table with the same
+     columns. The same dialog as K Nearest Neighbors' Score Rows (smui-p-learners.js). */
+  async function scoreRows(ctx, E) {
+    const app = SM.app;
+    const tables = (app && app.tables) || [ctx.table];
+    const v = await SM.ui.form({ title: 'Score Rows', info: 'p:ensemble:score', fields: [
+      { key: 't', label: 'The table to score', type: 'select', value: ctx.table.id, choices: tables.map((t) => [t.id, t.name]), help: 'An open table: this report\'s own (its rows added since the report fitted, or all its rows), or another with the X columns the model was fitted to, found by name. The model is the report\'s as it was fitted: it is not fitted again to the rows scored.' },
+      { key: 'which', label: 'Rows', type: 'select', value: 'new', choices: [['new', 'Rows without a prediction yet'], ['all', 'Every row']], help: 'Rows without a prediction yet: the rows whose prediction column (Predicted, or Prob[] of the first level) is empty, such as rows added after the report fitted; in another table without those columns, every row. Every row: all of them, into new columns.' },
+    ] });
+    if (!v) return;
+    const target = tables.find((t) => t.id === v.t) || ctx.table;
+    const fit = E.r.fit;
+    const names = E.r.response === 'categorical' ? fit.levels.map((l) => `Prob[${l}]`) : [`Predicted ${E.base.y}`];
+    let rows = null;
+    const first = target.columns.find((c) => c.name === names[0]);
+    if (v.which === 'new' && first) {
+      rows = [];
+      for (let i = 0; i < target.nrows; i++) { const x = first.values[i]; if (x == null || x === '' || Number.isNaN(x)) rows.push(i); }
+      if (!rows.length) { SM.ui.toast(`Every row of ${target.name} has a prediction in ${first.name}`); return; }
+    }
+    const own = ctx.rows.length === ctx.table.nrows ? null : ctx.rows;
+    try {
+      const r = await SM.engine.call('ensemble.score', { ...E.base, rows: own, keep: keepOf(ctx), source: ctx.table.id, target_rows: rows }, target);
+      if (r.note) SM.ui.toast(r.note);
+      writeScores(ctx, target, r, !!(v.which === 'new' && first));
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+  }
+
+  /* The scores into a table: into its prediction columns when they are there (the rows scored only), else new ones. */
+  function writeScores(ctx, t, r, into) {
+    const from = `scored by ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''} (the model as it fitted)`;
+    const cols = r.prob ? r.names.map((nm, j) => [nm, r.prob.map((p) => p[j]), 'numeric']) : [[r.name, r.values, 'numeric']];
+    if (r.prob) cols.push([r.most_name, r.most_likely, 'character']);
+    if (SM.app && SM.app.record) SM.app.record(t, 'Score Rows');
+    for (const [name, values, type] of cols) {
+      const c = into ? t.columns.find((x) => x.name === name) : null;
+      if (c) {
+        const next = c.values.slice();
+        r.rows.forEach((row, k) => { next[row] = values[k] == null ? (c.isNumeric ? NaN : null) : values[k]; });
+        t.setValues(c.id, next);
+      } else {
+        const full = new Array(t.nrows).fill(type === 'numeric' ? NaN : null);
+        r.rows.forEach((row, k) => { full[row] = values[k] == null ? full[row] : values[k]; });
+        t.addColumn({ name, dataType: type, values: full, notes: from, ...(type === 'character' && r.levels ? { modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels } : {}) });
+      }
+    }
+    SM.ui.toast(`Scored ${r.rows.length} rows of ${t.name}`);
   }
 
   /* ======================================================================
@@ -472,7 +531,7 @@
     items.push(ctx.check('Permutation Importance', 'permutation', null, false));
     items.push({ separator: true });
     const save = SM.predict.saveItems(ctx, 'ensemble.save', base, r.fit)[0];
-    items.push({ label: 'Save Columns', submenu: () => [...save.submenu(), { label: 'Save Cumulative Details', action: () => saveCumulative(ctx, r, K) }] });
+    items.push({ label: 'Save Columns', submenu: () => [...save.submenu(), { label: 'Score Rows…', action: () => scoreRows(ctx, E) }, { label: 'Save Cumulative Details', action: () => saveCumulative(ctx, r, K) }] });
     items.push(...tail);
     return items;
   }
@@ -480,22 +539,27 @@
   /* ======================================================================
      TOPICS: the (i) panels
      ====================================================================== */
-  const ROLES = { heading: 'Roles', choices: [['Y, Response', 'A continuous response (a regression forest or boosted tree), or a nominal or ordinal one (a classifier; an ordinal one\'s order is not used).'], ['X, Factor', 'The predictors: continuous ones as they are, a categorical one as a 0/1 column per level. With Informative Missing a missing value is the training mean plus a Missing column, or a level of its own.'], ['Weight, Freq', 'Case weights in the fit and the measures.'], ['Validation', 'Training, validation and test rows; or a Validation Portion. The validation rows choose the number of trees or layers and the best of Multiple Fits.']] };
+  const ROLES = { heading: 'Roles', choices: [['Y, Response', 'A continuous response (a regression forest or boosted tree), or a nominal or ordinal one (a classifier; an ordinal one\'s order is not used).'], ['X, Factor', 'The predictors: continuous ones as they are; a split on a nominal one takes two groups of its levels, as JMP\'s splits do, and one on an ordinal one keeps the level order. With Informative Missing a missing continuous value is the training mean plus a Missing column, and a missing level goes to the better side of each split.'], ['Weight, Freq', 'Case weights in the fit and the measures.'], ['Validation', 'Training, validation and test rows; or a Validation Portion. The validation rows choose the number of trees or layers and the best of Multiple Fits. A Validation column of more than three values holds K folds (not in JMP\'s platforms): every row trains, and Overall Statistics gets a Crossvalidation line, each fold predicted by the model of the same settings grown on the other folds.']] };
+  const LEVELS = { heading: 'Categorical factors', text: 'A split on a nominal X takes two groups of its levels, as JMP\'s Partition splits them. Each tree puts the levels in the order of the mean response of its rows (a boosted layer\'s tree: of their mean residual); a cut in that order is a grouping of the levels, and for a continuous or two-level response the best cut is the best of all the groupings at the tree\'s root (Fisher\'s result; for more levels the order is that of the first principal component of the levels\' shares). A split on an ordinal X keeps its levels in order, as JMP\'s Ordinal Restricts Order does. A missing level, a level the tree\'s rows lack, and a level another table has that the model never saw go where the tree sends missing values: to the better side of each split (where a node had none, with the larger side). Show Trees words a split as JMP does, g(a, c) against g(b).' };
+  const SCORE = { heading: 'Score Rows', text: 'Save Columns ▸ Score Rows… predicts rows the model did not see, with the model as the report fitted it (the engine keeps it): this table\'s rows added since, or another open table with the same X columns. JMP\'s Save Prediction Formula writes every tree into a formula; here that would run to thousands of nested conditions.' };
   const TOPICS = {
     'p:forest': {
       kicker: 'Analyze > Predictive Modeling', title: 'Bootstrap Forest',
-      lead: 'The average of many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split (scikit-learn\'s RandomForestRegressor and RandomForestClassifier). Each tree is then cut back as JMP describes its trees stopping, and a categorical response\'s probabilities are JMP\'s.',
-      sections: [ROLES,
+      lead: 'The average of many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split (scikit-learn\'s decision trees, the samples and seeds drawn as its RandomForestRegressor and RandomForestClassifier draw them). A split on a nominal X takes two groups of its levels, each tree is then cut back as JMP describes its trees stopping, and a categorical response\'s probabilities are JMP\'s.',
+      sections: [ROLES, LEVELS,
         { heading: 'Each tree', text: 'scikit-learn grows the tree best first up to Maximum Splits per Tree, with at least Minimum Size Split rows on each side of a split. JMP says its trees split until a stopping criterion stops improving and are then pruned back one split; here the criterion is the tree\'s out-of-bag loss: past Minimum Splits per Tree a split stays while it lowers the loss of the rows the tree did not see, and the first that does not is taken back. Tree Size ▸ Grow to Maximum Splits keeps scikit-learn\'s trees whole.' },
         { heading: 'Probabilities', text: 'As JMP\'s Partition: at each node Prob = (n + prior)/(N + 1), the node\'s counts n (N in all) plus a prior worth one row, the prior 0.9 of the parent\'s prior and 0.1 of the parent\'s Prob, at the root the root\'s shares. So no probability is 0 (scikit-learn\'s own leaves give 0 for a level missing from a leaf); the forest averages its trees\' probabilities.' },
-        { heading: 'Beyond and short of JMP', text: 'The Out of Bag line of Overall Statistics and Permutation Importance are not in JMP. A categorical X is split one level against the others (JMP splits its levels into two groups); Ordinal Restricts Order, Profit Matrix, Decision Threshold and the prediction formula are not here.' }],
+        SCORE,
+        { heading: 'Differences from JMP', text: 'The Out of Bag line of Overall Statistics, Permutation Importance and Score Rows are not in JMP; its Save Prediction Formula is not here. A tree orders a nominal X\'s levels once, by its bootstrap rows, where JMP\'s Partition orders them again at each node; below the root a split may miss a grouping JMP would find. A split is chosen by the fall in the sum of squares or the entropy (scikit-learn\'s), not by JMP\'s LogWorth. A missing continuous value is the training mean with a Missing column, where JMP sends it to the better side.' }],
       more: KIND.forest.more,
     },
     'p:boosted': {
       kicker: 'Analyze > Predictive Modeling', title: 'Boosted Tree',
-      lead: 'A sum of small trees (layers), each fitted to the residuals of the layers before it and scaled by the learning rate (scikit-learn\'s GradientBoostingRegressor and GradientBoostingClassifier, their trees grown best first to Splits per Tree splits).',
-      sections: [ROLES,
-        { heading: 'A categorical response', text: 'Each layer fits the gradient of the log likelihood (the log odds for two levels, a tree per level for more; JMP takes two levels only). JMP\'s Overfit Penalty has no scikit-learn counterpart and is not used: the leaf values are scikit-learn\'s Newton steps.' }],
+      lead: 'A sum of small trees (layers), each fitted to the residuals of the layers before it and scaled by the learning rate: scikit-learn\'s gradient boosting written out layer by layer (without a nominal X it is GradientBoostingRegressor or GradientBoostingClassifier, the same draws), its trees grown best first to Splits per Tree splits, each reading a nominal X in the order of its levels\' mean residual so that a split takes two groups of levels.',
+      sections: [ROLES, LEVELS,
+        { heading: 'A categorical response', text: 'Each layer fits the gradient of the log likelihood (the log odds for two levels, a tree per level for more; JMP takes two levels only). JMP\'s Overfit Penalty has no scikit-learn counterpart and is not used: the leaf values are scikit-learn\'s Newton steps.' },
+        SCORE,
+        { heading: 'Differences from JMP', text: 'A layer\'s tree orders a nominal X\'s levels once, by their mean residual, where JMP\'s Partition orders them again at each node (a layer has few splits, so the difference is small). Row Sampling does not stratify by a categorical response, and Column Sampling draws at each split where JMP draws once per layer. Score Rows stands in for JMP\'s Save Prediction Formula.' }],
       more: KIND.boosted.more,
     },
     'p:ensemble:spec': {
@@ -523,6 +587,12 @@
       sections: [{ choices: [['Splits', 'the splits of the tree kept'], ['Rank', 'of OOB Loss/N, smallest first'], ['OOB Loss', 'the out-of-bag loss (squared error, or -log p) before the last split was taken back'], ['RSquare', 'the tree\'s in-bag RSquare'], ['IB SSE, IB SSE/N', 'the in-bag sum of squared errors, and over the bootstrap sample\'s size'], ['OOB N, OOB SSE, OOB SSE/N', 'the out-of-bag rows and the kept tree\'s squared errors on them']] }],
     },
     'p:ensemble:contrib': { kicker: 'Bootstrap Forest, Boosted Tree', title: 'Column Contributions', lead: 'For each X column: how many splits use it over all the trees or layers, and the SS (continuous) or G² (categorical) those splits take away: the parent\'s minus its two children\'s, the SS a node\'s sum of squares about its mean and G² twice its entropy (natural log) from the counts. Portion is the column\'s share of the total.' },
+    'p:ensemble:score': {
+      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Score Rows',
+      lead: 'The forest or boosted tree as this report fitted it (the engine keeps it while the page is open) on rows it did not see: this table\'s rows added since the report fitted, or every row of another open table with the same X columns, found by name. The predictions go into that table: into its prediction columns for the rows that have none yet, or as new columns (Predicted, or Prob[] of each level and Most Likely). The model is not fitted again. After the engine starts again the model is fitted again from this table as it is now, and the page says so.',
+      sections: [{ heading: 'Why', text: 'JMP\'s Save Prediction Formula writes all the trees into one formula column; a forest of 100 trees would be a formula of thousands of nested conditions, so here the model itself scores the rows.' },
+        { heading: 'Levels the model never saw', text: 'A level of a categorical X that the training rows did not have is read as a missing value, and goes where each tree sends missing values.' }],
+    },
     'p:ensemble:trees': {
       kicker: 'Bootstrap Forest, Boosted Tree', title: 'Tree Views',
       lead: 'One tree of the forest (as it was cut back) or one layer of the boosted tree, a line per node: the split that leads to it and, with estimates, its training rows (weighted, in bag) and its mean or JMP probabilities; a layer\'s estimate is what it adds to the prediction.',
@@ -532,8 +602,8 @@
           ['Tree, Layer', 'Type the number of a tree (from 1 to the number kept) and press Enter, or leave the box, to show it.'],
         ] },
         { heading: 'Show Trees (red triangle)', choices: [
-          ['Show names', 'Each node by the column of X its split uses (a categorical factor\'s 0/1 level column).'],
-          ['Show names categories', 'Each node by its condition: a value cut, or a level against the others.'],
+          ['Show names', 'Each node by the column its split uses.'],
+          ['Show names categories', 'Each node by its condition: a value cut, or the levels on its side as JMP words them, g(a, c) (Missing where the tree sends missing values).'],
           ['Show names categories estimates', 'The conditions, and each node\'s training rows and its estimate.'],
           ['Hide Trees', 'Takes the Tree Views away.'],
         ] },
@@ -545,12 +615,12 @@
      THE PLATFORMS
      ====================================================================== */
   const ABOUT = {
-    forest: 'JMP Pro\'s Bootstrap Forest: many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split, averaged; each tree cut back by its out-of-bag loss past Minimum Splits per Tree, as JMP describes its trees stopping, and a categorical response\'s probabilities JMP\'s (never 0). Early stopping on the validation rows, Multiple Fits over the number of terms; Model Validation-Set Summaries, Specifications, Overall Statistics with Individual Trees and an out-of-bag estimate, Cumulative Validation with its details, Per-Tree Summaries, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, tree views, the Prediction Profiler and Save Columns.',
-    boosted: 'JMP Pro\'s Boosted Tree: a sum of small trees, each fitted to the residuals of the ones before and scaled by the learning rate, for a continuous or categorical response. Early stopping at the first layer that does not improve the validation statistic, Multiple Fits over splits per tree and learning rate, row and column sampling; Model Validation-Set Summaries, Specifications, Overall Statistics, Cumulative Validation with its details, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the layers\' trees, the Prediction Profiler and Save Columns.',
+    forest: 'JMP Pro\'s Bootstrap Forest: many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split, averaged; a split on a nominal X takes two groups of its levels, as JMP\'s do; each tree cut back by its out-of-bag loss past Minimum Splits per Tree, as JMP describes its trees stopping, and a categorical response\'s probabilities JMP\'s (never 0). Early stopping on the validation rows, Multiple Fits over the number of terms; Model Validation-Set Summaries, Specifications, Overall Statistics with Individual Trees and an out-of-bag estimate, Cumulative Validation with its details, Per-Tree Summaries, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, tree views, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
+    boosted: 'JMP Pro\'s Boosted Tree: a sum of small trees, each fitted to the residuals of the ones before and scaled by the learning rate, for a continuous or categorical response; a split on a nominal X takes two groups of its levels, as JMP\'s do. Early stopping at the first layer that does not improve the validation statistic, Multiple Fits over splits per tree and learning rate, row and column sampling; Model Validation-Set Summaries, Specifications, Overall Statistics, Cumulative Validation with its details, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, the layers\' trees, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
   };
   const USES = {
-    forest: ['sklearn.ensemble.RandomForestRegressor, RandomForestClassifier (warm_start, estimators_samples_)', 'sklearn.tree trees: apply, decision_path, compute_node_depths', 'numpy'],
-    boosted: ['sklearn.ensemble.GradientBoostingRegressor, GradientBoostingClassifier (monitor, staged_predict, staged_predict_proba)', 'numpy'],
+    forest: ['sklearn.tree.DecisionTreeRegressor, DecisionTreeClassifier (their missing-value splits; apply, decision_path, compute_node_depths), drawn as sklearn.ensemble.RandomForestRegressor draws its trees', 'numpy'],
+    boosted: ['sklearn.tree.DecisionTreeRegressor, layer by layer as sklearn.ensemble.GradientBoostingRegressor and GradientBoostingClassifier fit their stages', 'scipy.special expit, logit', 'numpy'],
   };
 
   for (const kind of ['forest', 'boosted']) {
@@ -566,7 +636,7 @@
             help: kind === 'forest' ? 'The column the forest predicts. Continuous: each tree predicts a mean and the forest averages them. Nominal or ordinal: each tree gives a probability of every level (JMP\'s, never 0) and the forest averages them; the order of an ordinal response is not used.'
               : 'The column the boosted tree predicts. Continuous: the layers add up to the prediction, each fitted to the residuals of those before. Nominal or ordinal: the layers add up on the log-odds scale (a tree per level each layer, for more than two levels); the order of an ordinal response is not used.' },
           { key: 'x', label: 'X, Factor', min: 1, hint: 'required: one or more',
-            help: 'The predictors, of any modeling type: a continuous one as it is, a categorical one as a 0/1 column per level, so that a split takes one level against the others (JMP splits the levels into two groups). Column Contributions shows how much each one is used.' },
+            help: 'The predictors, of any modeling type: a continuous one as it is; a split on a nominal one takes two groups of its levels, as JMP\'s splits do, and one on an ordinal one keeps the level order. Column Contributions shows how much each one is used.' },
           ...SM.predict.roles(),
         ],
         options: SM.predict.options(),

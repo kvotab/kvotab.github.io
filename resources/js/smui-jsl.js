@@ -147,7 +147,7 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
         if (got.stand) notes.push({ line: step.line, severity: 'info', text: `${short(step.jsl, 60)}: ${got.stand}.` });
         for (const e of got.errors || []) notes.push({ line: step.line, severity: 'warn', text: `${got.label}: ${e}` });
       } else {
-        block = [`# NOT CONVERTED (line ${step.line}): ${short(step.jsl, 90)}`, `# ${got.why}`];
+        block = [`# NOT CONVERTED (line ${step.line}): ${short(step.jsl, 90)}`, `# ${SM.util.oneLine(got.why)}`];
         notes.push({ line: step.line, severity: got.info ? 'info' : 'warn', text: `${short(step.jsl, 60)}: ${got.why}.` });
       }
       const text = block.map((l) => (l ? ind + l : l)).join('\n');

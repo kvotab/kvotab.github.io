@@ -372,9 +372,12 @@ async def main():
         r = await page.ev(open_js(y, eff, opts))
         check(f'{label}: no errors', r['errors'], [])
         check(f'{label}: its outlines', [o for o in want if o in r['outlines']], want)
-    # stepwise: Go, then Run Model
+    # stepwise: Go, then Run Model (by P-value Threshold: the default, Minimum BIC, may keep no effect of these)
     r = await page.ev('''(async () => {
-      const rep = __fm.rep(); const ctl = __fm.outline('Stepwise Regression Control');
+      const rep = __fm.rep();
+      const rule = __fm.outline('Stepwise Regression Control').querySelector('select[aria-label="Stopping Rule"]');
+      const d0 = __fm.done(rep); rule.value = 'pvalue'; rule.dispatchEvent(new Event('change')); await d0; await __fm.settled(rep);
+      const ctl = __fm.outline('Stepwise Regression Control');
       __fm.btn('Go', ctl); await __fm.done(rep);
       const hist = __fm.table('Step History');
       const entered = [...__fm.outline('Current Estimates').querySelectorAll('tbody tr')].filter(tr => tr.querySelector('input[aria-label^="Entered"]') && tr.querySelector('input[aria-label^="Entered"]').checked).map(tr => tr.children[2].textContent);
@@ -697,6 +700,8 @@ async def main():
     await help_inputs(page)
     # ==== the graphs' Python code: a block under each graph, run in the page ====
     await chart_code(page)
+    # ==== round 4 (WP1): saved formulas, a Validation column, Stepwise, the logistic reports, the Estimates menu, GenReg ====
+    await wp1_round(page)
     # columns dragged onto Construct Model Effects, with the mouse: main effects, as Add makes them
     r = await page.ev('''(async () => {
       SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Plants') || SM.app.tables[0]));
@@ -759,7 +764,8 @@ async def main():
       const spec = (personality, extra) => ({ roles: { y: [y.id] }, options: { personality, dist: 'normal', ...extra }, effects: [{ cols: [x.id], random: true }] });
       return ['glm', 'standard', 'mixed'].map(p => v(spec(p), t)).concat([v({ roles: { y: [x.id] }, options: { personality: 'nominal' }, effects: [{ cols: [y.id], random: true }] }, t)]);
     })()''')
-    check('GLM refuses a random effect', (r[0] or '').startswith('Generalized Linear Model takes fixed effects only'), True)
+    # (a binomial or Poisson GLM takes random effects: a generalized linear mixed model, test-ui-mixed.py; a normal one points to Mixed Model)
+    check('GLM with a normal response refuses a random effect (Mixed Model fits it)', (r[0] or '').startswith('A normal response with random effects is a linear mixed model'), True)
     check('Standard Least Squares and Mixed Model take it', (r[1], r[2]), (None, None))
     check('Nominal Logistic refuses it', (r[3] or '').startswith('Nominal Logistic takes fixed effects only'), True)
 
@@ -1078,11 +1084,15 @@ async def genreg(page):
     await asyncio.sleep(1)
     await shot(page, 'fm-17-genreg-validation.png')
 
-    # ---- another personality with the Validation role says it ignores it
+    # ---- Standard Least Squares with the Validation role fits its training rows (JMP Pro's Crossvalidation); Quantile
+    # Regression ignores it and says so
     r = await page.ev(open_js('y', E(['x0'], ['x1']), {'personality': 'standard'}, {'validation': ['v']}))
+    ntrain = await page.ev('SM.app.current.col("v").values.filter((v, i) => (v === 0 || v === "Training") && Number.isFinite(SM.app.current.col("y").values[i])).length')
+    check('Standard Least Squares with a Validation column: a Crossvalidation report', 'Crossvalidation' in r['outlines'], True)
+    check('... and it fits the training rows', (await page.ev('__fm.kv("Summary of Fit")'))['Observations (or Sum Wgts)'], str(ntrain))
+    r = await page.ev(open_js('y', E(['x0'], ['x1']), {'personality': 'quantreg'}, {'validation': ['v']}))
     notes = await page.ev('[...__fm.rep().body.querySelectorAll(".sm-ob-note")].map(n => n.textContent)')
-    check('Standard Least Squares with a Validation column says only Generalized Regression uses it', any('only Generalized Regression uses' in n for n in notes), True)
-    check('... and fits every row', (await page.ev('__fm.kv("Summary of Fit")'))['Observations (or Sum Wgts)'], '400')
+    check('Quantile Regression with a Validation column says it does not use it', any('Validation' in n and ('does not use' in n or 'ignores' in n or 'uses it' in n) for n in notes), True)
 
     # ---- no Validation column: AICc, BIC, KFold, Holdback, Leave-One-Out
     E6 = E(*[[f'x{j}'] for j in range(6)])
@@ -1091,7 +1101,7 @@ async def genreg(page):
       return { vm: [...q('Validation Method').options].map(o => o.textContent), em: [...q('Estimation Method').options].map(o => o.textContent),
         adaptive: !!ml.querySelector('input[aria-label="Adaptive"]') }; })()''')
     check('without a Validation column: AICc, BIC, KFold, Holdback, Leave-One-Out', r['vm'], ['AICc', 'BIC', 'KFold', 'Holdback', 'Leave-One-Out'])
-    check('the Estimation Methods', r['em'], ['Lasso', 'Elastic Net', 'Ridge', 'Forward Selection', 'Pruned Forward Selection'])
+    check('the Estimation Methods', r['em'], ['Maximum Likelihood', 'Lasso', 'Elastic Net', 'Ridge', 'Forward Selection', 'Pruned Forward Selection'])
     check('the lasso has an Adaptive box', r['adaptive'], True)
     r = await page.ev('''(async () => { const rep = __fm.rep();
       const s = __fm.outline('Model Launch').querySelector('select[aria-label="Validation Method"]'); const d = __fm.done(rep); s.value = 'kfold'; s.dispatchEvent(new Event('change')); await d;
@@ -1533,7 +1543,7 @@ async def help_inputs(page):
     await page.ev(HELP_JS)
     # the roles the dialog shows: a personality shows its own (GEE's Subject, Time, Subgroup)
     roles = ['Y', 'Weight', 'Freq', 'Validation', 'By']
-    effects = ['Model effects', 'Add', 'Cross', 'Nest', 'Macros', 'Degree', 'Attributes', 'Remove', 'No Intercept']
+    effects = ['Model effects', 'Add', 'Cross', 'Nest', 'Macros', 'Degree', 'Attributes', 'Remove', 'No Intercept', 'Center Polynomials']
     r = await page.ev('''(async () => {
       const heading = 'Personality and model effects';
       const pers = (d, v) => { const ps = d.querySelector('select[aria-label="Personality"]'); ps.value = v; ps.dispatchEvent(new Event('change')); };
@@ -1629,7 +1639,7 @@ async def help_inputs(page):
     r = await page.ev(open_js('weight (kg)', E(['height (cm)'], ['sex'], ['age']), {'personality': 'genreg'}))
     check('a Generalized Regression report', r['errors'] if isinstance(r, dict) else r, [])
     r = await page.ev('''(async () => ({ launch: __help.names(await __help.outline('Model Launch'), 'Model Launch'), path: __help.names(await __help.outline('Solution Path'), 'Choosing a model') }))()''')
-    check('Generalized Regression\'s Model Launch (i): every control', r['launch'], ['Distribution', 'Estimation Method', 'Adaptive', 'Validation Method', 'Elastic Net Alpha', 'Number of Folds', 'Holdback Proportion', 'Random Seed'])
+    check('Generalized Regression\'s Model Launch (i): every control', r['launch'], ['Distribution', 'Estimation Method', 'Adaptive', 'Validation Method', 'Elastic Net Alpha', 'Number of Folds', 'Holdback Proportion', 'Random Seed', 'Go'])
     check('the Solution Path\'s (i): how to choose a model', r['path'], ['The red line', 'A point', 'The dotted line', 'Reset to the Best Model'])
     r = await page.ev(open_js('weight (kg)', E(['height (cm)']), {'personality': 'quantreg', 'qrTau': 0.5}))
     check('a Quantile Regression report', r['errors'] if isinstance(r, dict) else r, [])
@@ -1694,6 +1704,202 @@ def check_rowlike(label, g, F, any_order=False, rel=1e-6):
         elif s.get('yref') == 'paper' and s['x0'] == s['x1']:
             check(f'{label}: a vertical reference at {s["x0"]:.4g}', any(close(ln['x'], [s['x0'], s['x0']], rel, 1e-9) for ln in ax['lines']), True)
     check(f'{label}: the titles', (ax['xlabel'], ax['ylabel'], ax['title'] or F['suptitle']), (g['titles']['x'] or '', g['titles']['y'] or '', g['label']))
+
+
+WP1 = r"""
+window.__w1 = {
+  async setopt(rep, opts) { for (const [k, v] of Object.entries(opts)) { if (v === null) delete rep.spec.options[k]; else rep.spec.options[k] = v; } const d = __fm.done(rep); rep.run(); await d; await __fm.settled(rep); },
+  async until(fn, ms = 8000) { for (let i = 0; i < ms / 40; i++) { const v = fn(); if (v) return v; await __fm.tick(); } return null; },
+  async menu(rep, title, ...path) {
+    const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.querySelector('h2, h3, h4').textContent === title);
+    if (!h) throw new Error('no outline ' + title);
+    h.querySelector('.sm-ob-menu').click(); await __fm.tick(); await __fm.menuItem(...path);
+  },
+  heads(rep) { return __fm.state(rep).outlines; },
+  cols(title, n = 0, rep) { const t = __fm.table(title, n, rep); return t ? t[0] : null; },
+};
+"""
+
+
+async def wp1_round(page):
+    """Round 4, WP1: Save Prediction Formula against Save Predicteds, a Validation column's Crossvalidation and the
+    held-out rows in the plot, Stepwise's Minimum BIC default and a nominal Y, the logistic Lack of Fit, Lift Curve,
+    Decision Threshold and ROC Table, Center Polynomials, Std Beta and Design Std Error, Expanded and Indicator
+    Parameterization Estimates, Inverse Prediction, a singular design's marks and Singularity Details, LSMeans Test
+    Slices, Unstable logistic estimates, Generalized Regression's Maximum Likelihood, Go and the Model Comparison, the
+    Effect Summary of several responses; a project keeps the options; the dark theme at phone width."""
+    await page.ev("SM.app.openExample('plants')")
+    await page.ev(WP1)
+    # ---- Save Prediction Formula: a live formula column, its values the saved predictions of every row
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)'], ['fertilizer', 'water'], ['light (h)', 'light (h)'])))
+    check('WP1: least squares opens', r['errors'], [])
+    r = await page.ev('''(async () => {
+      const rep = __fm.rep(); const t = rep.table; const n0 = t.columns.length;
+      await __fm.topMenu('Save Columns', 'Prediction Formula');
+      await __w1.until(() => t.columns.length > n0);
+      await __fm.topMenu('Save Columns', 'Predicted Values');
+      await __w1.until(() => t.columns.length > n0 + 1);
+      const f = t.columns[n0], p = t.columns[n0 + 1];
+      let worst = 0; for (let i = 0; i < t.nRows; i++) worst = Math.max(worst, Math.abs(f.values[i] - p.values[i]));
+      return { names: [f.name, p.name], formula: !!(f.formula && f.formula.expr), match: /Match\\(:fertilizer/.test(f.formula.expr), centred: /\\(:light \\(h\\) - /.test(f.formula.expr) || /light/.test(f.formula.expr), worst, n: t.nRows }; })()''')
+    check('Save Prediction Formula: a live formula column (JMP\'s Pred Formula)', (r['names'][0], r['formula']), ('Pred Formula yield (g)', True))
+    check('  effect coding written out with Match', r['match'], True)
+    check.near('  its values are Save Columns > Predicted Values for every row', r['worst'], 0.0, 1e-9)
+    # ---- a Validation column: Crossvalidation, the held-out rows marked in Actual by Predicted
+    r = await page.ev('''(async () => {
+      const t = SM.app.current;
+      if (!t.col('set')) t.addColumn({ name: 'set', dataType: 'numeric', modelingType: 'nominal', values: t.col('plot').values.map(p => (p % 5 === 0 ? 1 : p % 7 === 0 ? 2 : 0)) });
+      return true; })()''')
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)']), {}, {'validation': ['set']}))
+    check('WP1: least squares with a Validation column opens', r['errors'], [])
+    check('  a Crossvalidation outline', 'Crossvalidation' in r['outlines'], True)
+    r = await page.ev('''(async () => {
+      const rep = __fm.rep();
+      const cv = __fm.table('Crossvalidation', 0, rep); const sof = __fm.kv('Summary of Fit');
+      const ap = rep.plots.find(p => (p.traces || []).some(tr => tr.name === 'Validation'));
+      return { head: cv[0], sets: cv.slice(1).map(r => r[0]), rsqTrain: __fm.num(cv[1][cv[0].indexOf('RSquare')]), rsq: __fm.num(sof['RSquare']), marked: !!ap }; })()''')
+    check('  its sets: Training, Validation, Test', r['sets'], ['Training', 'Validation', 'Test'])
+    check.near('  the training RSquare is the Summary of Fit\'s (the model learns from the training rows)', r['rsqTrain'], r['rsq'], 1e-4)
+    check('  the validation rows are marked in a plot', r['marked'], True)
+    # ---- Stepwise: Minimum BIC by default; a nominal Y by likelihood ratios
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)']), {'personality': 'stepwise'}))
+    check('WP1: Stepwise opens', r['errors'], [])
+    r = await page.ev('''(() => { const rep = __fm.rep(); const s = rep.body.querySelector('select[aria-label="Stopping Rule"]'); return s ? s.options[s.selectedIndex].textContent : null; })()''')
+    check('  the Stopping Rule is Minimum BIC by default (JMP\'s)', r, 'Minimum BIC')
+    r = await page.ev(open_js('water', E(['fertilizer'], ['light (h)'], ['yield (g)']), {'personality': 'stepwise'}))
+    check('  an ordinal Y opens in Stepwise', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const heads = [...rep.body.querySelectorAll('.sm-fm-swtable th')].map(h => h.textContent);
+      const d = __fm.done(rep); [...rep.body.querySelectorAll('button')].find(b => b.textContent === 'Go').click(); await d; await __fm.settled(rep);
+      const hist = __fm.table('Step History', 0, rep); return { heads, hist: hist ? hist[0] : null, errors: __fm.state(rep).errors }; })()''')
+    check('  its tests are likelihood ratio chi-squares', '"L-R ChiSquare"' in r['heads'], True)
+    check('  Go: a Step History with the L-R ChiSquare', (r['errors'], bool(r['hist']) and 'L-R ChiSquare' in r['hist']), ([], True))
+    # ---- the logistic reports: Lack of Fit, Lift Curve, Decision Threshold, ROC Table, Save Probability Formula
+    await page.ev("SM.app.openExample('clinical')")
+    r = await page.ev(open_js('response', E(['dose (mg)'], ['sex']), {'personality': 'nominal'}))
+    check('WP1: nominal logistic opens', r['errors'], [])
+    check('  Lack Of Fit (the dose and sex patterns repeat)', 'Lack Of Fit' in r['outlines'], True)
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const yid = rep.table.col('response').id;
+      await __w1.setopt(rep, { [`${yid}|lift`]: true, [`${yid}|threshold`]: true, [`${yid}|roc`]: true, [`${yid}|rocTable`]: true });
+      const lof = __fm.table('Lack Of Fit', 0, rep);
+      return { heads: __fm.state(rep).outlines, errors: __fm.state(rep).errors, lof: lof ? lof.slice(1).map(r => r[0]) : null }; })()''')
+    check('  Lack Of Fit rows', r['lof'], ['Lack Of Fit', 'Saturated', 'Fitted'])
+    for o in ('Lift Curve', 'Decision Threshold', 'Receiver Operating Characteristic', 'ROC Table'):
+        check(f'  {o}', o in r['heads'], True)
+    check('  no errors with them', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table; const n0 = t.columns.length;
+      await __fm.topMenu('Save Probability Formula'); await __w1.until(() => t.columns.length >= n0 + 4);
+      const made = t.columns.slice(n0).map(c => [c.name, !!c.formula]);
+      const p0 = t.col('Prob[no]'), p1 = t.col('Prob[yes]');
+      let s = 0; for (let i = 0; i < t.nRows; i++) s = Math.max(s, Math.abs(p0.values[i] + p1.values[i] - 1));
+      return { made, s }; })()''')
+    check('  Save Probability Formula: Lin, Prob of each level, Most Likely, all live formulas', r['made'], [['Lin[no]', True], ['Prob[no]', True], ['Prob[yes]', True], ['Most Likely response', True]])
+    check.near('  the probabilities sum to one', r['s'], 0.0, 1e-12)
+    # ---- Unstable estimates: every row of a level with one response
+    r = await page.ev('''(async () => { const t = SM.app.current;
+      if (!t.col('sep')) t.addColumn({ name: 'sep', dataType: 'character', values: t.col('dose (mg)').values.map((d, i) => (d >= 80 ? 'top' : i % 2 ? 'a' : 'b')) });
+      if (!t.col('resp2')) t.addColumn({ name: 'resp2', dataType: 'character', values: t.col('response').values.map((v, i) => (t.col('dose (mg)').values[i] >= 80 ? 'yes' : v)) });
+      return true; })()''')
+    r = await page.ev(open_js('resp2', E(['sep']), {'personality': 'nominal'}))
+    r = await page.ev('''(() => { const pe = __fm.table('Parameter Estimates'); return { head: pe[0], marks: pe.slice(1).map(r => r[1]), notes: [...__fm.rep().body.querySelectorAll('.sm-ob-note')].some(n => /^Unstable estimates/.test(n.textContent)) }; })()''')
+    check('WP1: separation marks the estimates Unstable', r['marks'].count('Unstable') >= 2, True)
+    check('  with a note', r['notes'], True)
+    # ---- the Estimates menu, Center Polynomials, a singular design, Test Slices, Inverse Prediction (plants)
+    await page.ev("SM.app.openExample('plants')")
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)'], ['fertilizer', 'water'], ['light (h)', 'light (h)'])))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const yid = rep.table.col('yield (g)').id;
+      await __fm.topMenu('Estimates', 'Std Beta (in Parameter Estimates)'); await __fm.settled(rep); await __fm.idle();
+      await __w1.setopt(rep, { [`${yid}|designSE`]: true, [`${yid}|expandedEst`]: true, [`${yid}|indicatorEst`]: true,
+        [`${yid}|invpred`]: { factor: 'light (h)', values: [30], settings: { fertilizer: 'B', water: 'high' }, individual: false },
+        [`${yid}|slices:fertilizer*water`]: true });
+      const pe = __fm.table('Parameter Estimates', 0, rep); const ex = __fm.table('Expanded Estimates', 0, rep); const ind = __fm.table('Indicator Parameterization Estimates', 0, rep);
+      const ipw = __fm.outline('Inverse Prediction', rep); const sl = __fm.table('Test Slices', 0, rep);
+      return { pe: pe[0], ex: ex ? ex.slice(1).map(r => r[0]) : null, ind: ind ? ind.length - 1 : null, ipw: ipw ? ipw.textContent.includes('not a straight line') : null, sl: sl ? sl.slice(1).map(r => r[0]) : null,
+        heads: __fm.state(rep).outlines, errors: __fm.state(rep).errors }; })()''')
+    check('WP1: Std Beta and Design Std Error columns', ('Std Beta' in r['pe'], 'Design Std Error' in r['pe']), (True, True))
+    check('  Expanded Estimates: every level, the last one too', ('fertilizer[C]' in (r['ex'] or []), 'water[high]' in (r['ex'] or [])), (True, True))
+    check('  Indicator Parameterization Estimates: a line per parameter', r['ind'], 8)
+    check('  Inverse Prediction with light × light in the model: not a straight line, said so', r['ipw'], True)
+    check('  Test Slices: a slice per level of each factor', r['sl'], ['fertilizer=A', 'fertilizer=B', 'fertilizer=C', 'water=low', 'water=high'])
+    check('  Test Detail outlines', sum(h.startswith('Test Detail: ') for h in r['heads']), 5)
+    check('  no errors', r['errors'], [])
+    # Inverse Prediction of a straight line: the light at which the prediction is 30, its Fieller limits around it
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)'])))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const yid = rep.table.col('yield (g)').id;
+      await __w1.setopt(rep, { [`${yid}|invpred`]: { factor: 'light (h)', values: [30], settings: { fertilizer: 'B', water: 'high' }, individual: false } });
+      const ip = __fm.table('Inverse Prediction', 0, rep); const pe = __fm.table('Parameter Estimates', 0, rep);
+      return { ip: ip ? ip[1].map(__fm.num) : null, pe: pe.slice(1).map(r => [r[0], __fm.num(r[1])]) }; })()''')
+    b_ = dict((k, v) for k, v in r['pe'])
+    x_ = (30 - (b_['Intercept'] + b_['fertilizer[B]'] - b_['water[low]'])) / b_['light (h)']
+    check.near('WP1: Inverse Prediction: the light at which yield is 30, from the estimates shown', r['ip'][1], x_, 1e-4)
+    check('  Fieller\'s limits bracket it', r['ip'][2] < r['ip'][1] < r['ip'][3], True)
+    # Center Polynomials off: the raw products
+    r = await page.ev(open_js('yield (g)', E(['light (h)'], ['light (h)', 'light (h)']), {'centerPolys': False}))
+    r2 = await page.ev('''(() => __fm.table('Parameter Estimates').slice(1).map(r => r[0]))()''')
+    check('WP1: Center Polynomials off: the square is not centred', r2[-1], 'light (h)*light (h)')
+    # a singular design: a column that is twice another
+    r = await page.ev('''(() => { const t = SM.app.current; if (!t.col('light2')) t.addColumn({ name: 'light2', dataType: 'numeric', values: t.col('light (h)').values.map(v => 2 * v) }); return true; })()''')
+    r = await page.ev(open_js('yield (g)', E(['light (h)'], ['light2'], ['fertilizer'])))
+    r2 = await page.ev('''(() => { const pe = __fm.table('Parameter Estimates'); const sd = __fm.table('Singularity Details'); const et = __fm.table('Effect Tests');
+      return { marks: pe.slice(1).map(r => [r[0], r[1]]), sd: sd ? sd[1] : null, et: et[0] }; })()''')
+    check('WP1: a singular design: light2 Zeroed, light Biased', ([m for m in r2['marks'] if m[0] in ('light (h)', 'light2')]), [['light (h)', 'Biased'], ['light2', 'Zeroed']])
+    check('  Singularity Details: light2 = 2·light (h)', r2['sd'], ['light2', 'light2 = 2·light (h)'])
+    check('  the Effect Tests show LostDFs', 'LostDFs' in r2['et'], True)
+    check('  no errors', r['errors'], [])
+    # ---- several responses: the Effect Summary of every response at the top
+    r = await page.ev(open_js(['yield (g)', 'light (h)'], E(['fertilizer'], ['water'])))
+    r2 = await page.ev('''(() => { const rep = __fm.rep(); const h = __fm.state(rep).outlines; const t = rep.body.querySelector('.sm-fm-esum');
+      return { first: h.indexOf('Effect Summary') < h.indexOf('Response yield (g)') && h.indexOf('Effect Summary') >= 0, head: t ? [...t.querySelectorAll('th')].map(h => h.textContent) : null, rows: t ? t.querySelectorAll('tbody tr').length : 0 }; })()''')
+    check('WP1: several responses: one Effect Summary at the top, a Response column', (r2['first'], 'Response' in (r2['head'] or [])), (True, True))
+    check('  every response\'s effects (2 responses × 2 effects)', r2['rows'], 4)
+    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Effect Summary', rep); const d = ob.querySelector(':scope > .sm-ob-body > details.sm-code');
+      const t = rep.table; const res = await SM.engine.runCell('wp1', d._code.get(), { tables: [t], current: t, label: 'wp1', fresh: true });
+      const out = res.outputs || []; const text = out.filter(o => o.type === 'stream').map(o => o.text).join('');
+      const cells = [...ob.querySelectorAll('.sm-fm-esum tbody tr')].map(tr => [...tr.children].map(c => c.textContent));
+      return { errors: out.filter(o => o.type === 'error').map(o => o.ename + ': ' + o.evalue), lines: text.trim().split('\\n').length, fdr0: cells.length }; })()''', timeout=300)
+    check('  its code runs in the page\'s Python and prints a line per test', (r2['errors'], r2['lines'] >= 4), ([], True))
+    # ---- Generalized Regression: Maximum Likelihood, Go and the Model Comparison
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)']), {'personality': 'genreg'}))
+    check('WP1: Generalized Regression opens', r['errors'], [])
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const yid = rep.table.col('yield (g)').id;
+      await __w1.setopt(rep, { [`${yid}|gr:method`]: 'mle' });
+      const heads = __fm.state(rep).outlines; const pe = __fm.table('Parameter Estimates for Original Predictors', 0, rep);
+      const d = __fm.done(rep); [...rep.body.querySelectorAll('button')].find(b => b.textContent === 'Go').click(); await d; await __fm.settled(rep);
+      await __w1.setopt(rep, { [`${yid}|gr:method`]: 'lasso' });
+      const cmp = __fm.table('Model Comparison', 0, rep);
+      return { path: heads.includes('Solution Path'), pe: pe[0], cmp: cmp ? cmp.slice(1).map(r => r[1]) : null, errors: __fm.state(rep).errors, heads2: __fm.state(rep).outlines }; })()''')
+    check('  Maximum Likelihood: no Solution Path, standard errors and Wald tests', (r['path'], 'Std Error' in r['pe'], 'Wald ChiSquare' in r['pe']), (False, True, True))
+    check('  Go keeps the fit: the Model Comparison has the launch\'s fit and the kept one', r['cmp'], ['Lasso with AICc Validation', 'Maximum Likelihood with AICc Validation'])
+    check('  both fits have reports', sum(1 for h in r['heads2'] if h.startswith('Maximum Likelihood with AICc Validation')), 1)
+    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Model Comparison', rep); const d = ob.querySelector(':scope > .sm-ob-body > details.sm-code');
+      const t = rep.table; const res = await SM.engine.runCell('wp1', d._code.get(), { tables: [t], current: t, label: 'wp1', fresh: true });
+      const out = res.outputs || []; const text = out.filter(o => o.type === 'stream').map(o => o.text).join('');
+      return { errors: out.filter(o => o.type === 'error').map(o => o.ename + ': ' + o.evalue), both: /Model Launch: .*\\{'Training'/.test(text) && /Fit 2: .*\\{'Training'/.test(text) }; })()''', timeout=300)
+    check('  the Model Comparison\'s code runs in the page\'s Python', r2['errors'], [])
+    check('  and prints each fit\'s Model Summary', r2['both'], True)
+    check('  no errors', r['errors'], [])
+    # ---- a project keeps the new options (Expanded Estimates, Test Slices)
+    r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['fertilizer', 'water'])))
+    r = await page.ev('''(async () => { const rep = __fm.rep(); const t = rep.table; const yid = t.col('yield (g)').id;
+      await __w1.setopt(rep, { [`${yid}|expandedEst`]: true, [`${yid}|slices:fertilizer*water`]: true });
+      const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      const n = SM.app.reports.length;
+      SM.app.loadProject(JSON.parse(JSON.stringify(j)));
+      const r2 = SM.app.reports[n]; await __fm.done(r2); await __fm.settled(r2);
+      SM.app.showTab(SM.app.tabOf(t));
+      const h = __fm.state(r2).outlines; return { ex: h.includes('Expanded Estimates'), sl: h.includes('Test Slices'), errors: __fm.state(r2).errors }; })()''')
+    check('WP1: a project reopens Expanded Estimates and Test Slices', (r['ex'], r['sl'], r['errors']), (True, True, []))
+    # ---- the dark theme at phone width, the new outlines open
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await page.ev('__fm.idle()')
+    await asyncio.sleep(1)
+    wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
+    check('WP1: no horizontal page scroll at phone width, dark theme', wide, True)
+    await shot(page, 'fm-wp1-dark-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
+    check('WP1: every (i) has a topic', audit.get('noTopic'), [])
 
 
 async def chart_code(page):

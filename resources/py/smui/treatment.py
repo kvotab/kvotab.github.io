@@ -60,7 +60,7 @@ from scipy.linalg import block_diag
 
 from . import data, models
 from .registry import api
-from .util import code_head, col
+from .util import code_head, col, one_line
 from .util import table as rtable
 
 J = json.dumps
@@ -535,7 +535,7 @@ def _code_prep(S, table, table_name, rows, imports=()):
     lines.append(f'd = df[{J(cols)}].dropna()')
     tcol = f'd[{J(S.t_name)}]' if S.t_numeric else f'd[{J(S.t_name)}].astype(str)'
     lines.append(f't = ({tcol} == {_lit(S.treated) if S.t_numeric else J(str(_num(S.treated)))}).to_numpy(int)   '
-                 f'# 1: treated ({S.t_name} = {_lvtext(S.treated)}), 0: control ({_lvtext(S.control)})')
+                 f'# 1: treated ({one_line(S.t_name)} = {one_line(_lvtext(S.treated))}), 0: control ({one_line(_lvtext(S.control))})')
     lines.append(f'y = d[{J(S.y_name)}].to_numpy(float)')
     fit = 'sm.Probit' if S.link == 'probit' else 'sm.Logit'
     if S.trim and S.trim['n_dropped']:

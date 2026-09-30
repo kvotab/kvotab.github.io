@@ -162,9 +162,9 @@
     if (o('leafReport', false)) leafOutline(ctx, S);
     if (o('contrib', false)) contributionsOutline(ctx, S);
     if (o('fitDetails', false)) wrapTables(SM.predict.measures(ctx, null, res.fit, { title: 'Fit Details' }));
-    SM.predict.classification(ctx, null, res.fit);
+    SM.predict.classification(ctx, null, res.fit, null, '', { save: { fn: F.save, payload: base } });
     if (!S.cat && o('abp', false)) SM.predict.actualByPredicted(ctx, null, res.fit);
-    if (o('kfold', null)) await kfoldOutline(ctx, S);
+    if (o('kfold', res.folds ? res.folds.k : null)) await kfoldOutline(ctx, S);
     if (o('profiler', false)) await SM.profiler.render(ctx, null, { sources: [{ fn: F.profile, payload: base }], option: 'profiler', note: 'The tree\'s prediction is a step function: it changes only where a split cuts the factor. Drag the red dashed line of a factor, click in its plot, or type its value.' });
   }
 
@@ -191,7 +191,8 @@
       } else addStep(ctx, { op: 'split' });
     });
     const prune = b('Prune', 'Take back the split with two leaves and the smallest LogWorth', () => addStep(ctx, { op: 'prune' }), !S.res.splits);
-    const go = S.res.has_validation ? b('Go', 'Split until the validation RSquare has not improved for 10 splits, then keep the best tree', () => addStep(ctx, { op: 'go' })) : null;
+    const go = S.res.has_validation ? b('Go', 'Split until the validation RSquare has not improved for 10 splits, then keep the best tree', () => addStep(ctx, { op: 'go' }))
+      : S.res.folds ? b('Go', `Split until the RSquare crossvalidated by the ${S.res.folds.k} folds of ${S.res.folds.column} has not improved for 10 splits, then keep the best tree`, () => addStep(ctx, { op: 'go' })) : null;
     const color = S.cat ? b('Color Points', 'Colour the rows by the response level', () => colorPoints(ctx, S)) : null;
     const info = typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:partition:tree') : null;
     return el('div', { class: 'sm-part-buttons', 'data-noexport': '' }, split, prune, go, color, info);
@@ -212,7 +213,7 @@
     const cols = [sets ? { key: 'set', label: '', fmt: 'text' } : null,
       ...(S.cat ? [{ key: 'entropy_rsquare', label: 'Entropy RSquare', digits: 3 }, { key: 'misclassification', label: 'Misclassification Rate', digits: 4 }]
         : [{ key: 'rsquare', label: 'RSquare', digits: 3 }, { key: 'rase', label: 'RASE' }]),
-      { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Number of Splits', fmt: 'int' }].filter(Boolean);
+      { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Number of Splits', fmt: 'int' }, { key: 'aicc', label: 'AICc' }].filter(Boolean);
     return el('div', { class: 'sm-part-summary' }, ctx.rt({ columns: cols, rows: res.summary }, { key: 'summary', sortable: false, name: 'Partition Summary' }));
   }
 
@@ -284,7 +285,10 @@
   /* ======================================================================
      THE TREE: JMP's node boxes, drawn in SVG
      ====================================================================== */
+  /* The tree's geometry: a box's width and each node's height. S.look (the
+     Uplift platform's) may give its own geometry and node boxes. */
   function geometry(ctx, S, small) {
+    if (S.look && S.look.geometry) return S.look.geometry(ctx, S, small);
     const o = (k, d) => ctx.opt(k, d);
     const G = { small, stats: o('splitStats', true), bar: o('splitBar', true), prob: o('splitProb', true), count: o('splitCount', true) };
     G.TITLE = small ? 17 : 20; G.ROW = small ? 12 : 14; G.GAP = small ? 8 : 14; G.VGAP = small ? 18 : 28; G.PAD = 6;
@@ -324,7 +328,7 @@
     const nl = res.leaves.length;
     const Wd = Math.ceil(G.GAP + nl * (G.BW + G.GAP));
     const cx = (nd) => G.GAP + ((nd.lo + nd.hi) / 2) * (G.BW + G.GAP) + G.BW / 2;
-    const s = svg('svg', { class: `sm-part-tree${small ? ' is-small' : ''}`, width: Wd, height: H, viewBox: `0 0 ${Wd} ${H}`, role: 'group', 'aria-label': small ? 'Small tree view' : 'Decision tree' });
+    const s = svg('svg', { class: `sm-part-tree${small ? ' is-small' : ''}`, width: Wd, height: H, viewBox: `0 0 ${Wd} ${H}`, role: 'group', 'aria-label': small ? 'Small tree view' : (S.look && S.look.label) || 'Decision tree' });
     // the lines between parents and children
     const lines = svg('g', { class: 'sm-part-links' });
     for (const nd of res.nodes) {
@@ -339,7 +343,7 @@
     s.append(lines);
     const groups = new Map();
     for (const nd of res.nodes) {
-      const g = small ? smallNode(S, G, nd) : nodeBox(S, G, nd);
+      const g = small ? smallNode(S, G, nd) : S.look && S.look.node ? S.look.node(S, G, nd) : nodeBox(S, G, nd);
       g.setAttribute('transform', `translate(${Math.round(cx(nd) - G.BW / 2)},${ys[depth(nd)]})`);
       wireNode(ctx, S, g, nd);
       groups.set(nd.path, g);
@@ -368,17 +372,26 @@
     return svg('text', { class: cls, x, y, 'text-anchor': anchor }, String(s));
   }
 
-  function nodeBox(S, G, nd) {
-    const { res } = S;
+  /* A node's group with its box, heading, red triangle and condition. */
+  function nodeFrame(S, G, nd, cls, aria) {
     const h = G.height(nd);
-    const g = svg('g', { class: `sm-part-node${nd.leaf ? ' is-leaf' : ''}${S.cand === nd.path ? ' is-picked' : ''}`, tabindex: '0', role: 'button', 'data-path': nd.path,
-      'aria-label': `${nd.label}: count ${fmt(nd.count)}${S.cat ? '' : `, mean ${sig(nd.mean)}`}${nd.split ? `, split by ${nd.split.column}` : ''}` });
+    const g = svg('g', { class: `sm-part-node${cls ? ` ${cls}` : ''}${nd.leaf ? ' is-leaf' : ''}${S.cand === nd.path ? ' is-picked' : ''}`, tabindex: '0', role: 'button', 'data-path': nd.path, 'aria-label': aria });
     g.append(svg('title', null, `${nd.label}${nd.leaf ? ` (leaf ${nd.number})` : ''}`));
     g.append(svg('rect', { class: 'sm-part-box', x: 0.5, y: 0.5, width: G.BW - 1, height: h - 1, rx: 3 }));
     g.append(svg('path', { class: 'sm-part-head', d: `M0.5 ${G.TITLE} V3.5 Q0.5 0.5 3.5 0.5 H${G.BW - 3.5} Q${G.BW - 0.5} 0.5 ${G.BW - 0.5} 3.5 V${G.TITLE} Z` }));
     const tri = svg('g', { class: 'sm-part-menu', role: 'button', 'aria-label': `Options for ${nd.label}` }, svg('rect', { x: 2, y: 2, width: 15, height: G.TITLE - 4, fill: 'transparent' }), svg('path', { class: 'sm-part-tri', d: `M5 ${G.TITLE / 2 - 3} L13 ${G.TITLE / 2 - 3} L9 ${G.TITLE / 2 + 3} Z` }));
     g.append(tri);
     g.append(txt('sm-part-title', 18, G.TITLE - 6, clip(nd.label, G.BW - 24, 7.1)));
+    return g;
+  }
+
+  /* The foot of a node's box: the share of its training rows selected. */
+  const selBar = (G, nd) => svg('rect', { class: 'sm-part-sel', x: 1, y: G.height(nd) - 4, width: 0, height: 3 });
+
+  function nodeBox(S, G, nd) {
+    const { res } = S;
+    const h = G.height(nd);
+    const g = nodeFrame(S, G, nd, '', `${nd.label}: count ${fmt(nd.count)}${S.cat ? '' : `, mean ${sig(nd.mean)}`}${nd.split ? `, split by ${nd.split.column}` : ''}`);
     let y = G.TITLE + G.PAD + G.ROW - 3;
     const kv = (k, v) => { g.append(txt('sm-part-k', 7, y, k), txt('sm-part-v', G.BW - 7, y, v, 'end')); y += G.ROW; };
     if (!S.cat) {
@@ -559,19 +572,46 @@
   /* ======================================================================
      SPLIT HISTORY
      ====================================================================== */
-  function historyOutline(ctx, S) {
+  /* yTitle: what the RSquare is called (the Uplift's is the regression's RSquare, whatever its response). */
+  function historyOutline(ctx, S, yTitle = null, info = 'p:partition:history') {
     const { res } = S;
-    const ob = ctx.outline('Split History', { key: 'history', info: 'p:partition:history', menu: () => [{ label: 'Remove', action: () => ctx.set('history', false) }] });
+    const ob = ctx.outline('Split History', { key: 'history', info, menu: () => [{ label: 'Remove', action: () => ctx.set('history', false) }] });
     const sets = SETS.filter((s) => res.history.some((h) => h[s] != null));
     const traces = sets.map((s) => ({ type: 'scatter', mode: 'lines+markers', x: res.history.map((h) => h.splits), y: res.history.map((h) => h[s]), name: s, line: { color: setColor(s), width: 1.8 }, marker: { size: 5, color: setColor(s) }, hovertemplate: `${s}: %{x} splits, RSquare %{y:.4f}<extra></extra>` }));
     const shapes = [];
+    const cv = res.go && res.go.trace.some((e) => e.Crossvalidation != null);
+    if (cv) {
+      // Go by the folds of a K-fold Validation column: the crossvalidated RSquare of each size it looked at
+      const upto = res.go.trace.filter((e) => e.splits <= res.go.best), after = res.go.trace.filter((e) => e.splits >= res.go.best);
+      traces.push({ type: 'scatter', mode: 'lines+markers', x: upto.map((e) => e.splits), y: upto.map((e) => e.Crossvalidation), name: 'Crossvalidation', line: { color: setColor('Validation'), width: 1.8 }, marker: { size: 5, color: setColor('Validation') }, hovertemplate: 'Crossvalidation: %{x} splits, RSquare %{y:.4f}<extra></extra>' });
+      if (after.length > 1) traces.push({ type: 'scatter', mode: 'lines+markers', x: after.map((e) => e.splits), y: after.map((e) => e.Crossvalidation), line: { color: setColor('Validation'), width: 1.2, dash: 'dot' }, marker: { size: 4, color: setColor('Validation'), symbol: 'circle-open' }, showlegend: false, hovertemplate: 'Crossvalidation, looked at by Go: %{x} splits, RSquare %{y:.4f}<extra></extra>' });
+    }
     if (res.go) {
       const after = res.go.trace.filter((e) => e.splits > res.go.best);
       for (const s of sets) if (after.length) traces.push({ type: 'scatter', mode: 'lines+markers', x: [res.go.best, ...after.map((e) => e.splits)], y: [res.go.trace.find((e) => e.splits === res.go.best)?.[s] ?? null, ...after.map((e) => e[s])], line: { color: setColor(s), width: 1.2, dash: 'dot' }, marker: { size: 4, color: setColor(s), symbol: 'circle-open' }, showlegend: false, hovertemplate: `${s}, looked at by Go: %{x} splits, RSquare %{y:.4f}<extra></extra>` });
       shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: res.go.best, x1: res.go.best, y0: 0, y1: 1, line: { color: SM.util.themeColors().muted, width: 1, dash: 'dash' } });
     }
-    ob.add(ctx.row(SM.predict.withCode(ctx.plot(traces, { showlegend: sets.length > 1, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, margin: { l: 56, r: 12, t: sets.length > 1 ? 26 : 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: S.cat ? 'Entropy RSquare' : 'RSquare' } } }, { width: W(460), height: 280, title: 'Split history', select: false }), blockOf(ctx, S, 'history'))),
-      ctx.note(`${S.cat ? 'The entropy RSquare' : 'RSquare'} of each set after each split of the tree, in the order the splits were made.${res.go ? ` Go looked ${res.go.trace.length - 1} splits past ${res.go.start} (dotted) and kept ${res.go.best}, the best validation RSquare: the next 10 splits did not beat it.` : ''}${sets.length > 1 ? ' A validation curve that turns down while the training curve still rises is the tree learning noise.' : ''}`));
+    const legend = sets.length > 1 || cv;
+    const rsq = SM.predict.withCode(ctx.plot(traces, { showlegend: legend, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' }, shapes, margin: { l: 56, r: 12, t: legend ? 26 : 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: yTitle || (S.cat ? 'Entropy RSquare' : 'RSquare') } } }, { width: W(460), height: 280, title: 'Split history', select: false }), blockOf(ctx, S, 'history'));
+    ob.add(ctx.row(rsq, aiccGraph(ctx, S)),
+      ctx.note(`${yTitle || (S.cat ? 'The entropy RSquare' : 'RSquare')} of each set after each split of the tree, in the order the splits were made, and the training rows' AICc (the smallest marked).${res.go ? ` Go looked ${res.go.trace.length - 1} splits past ${res.go.start} (dotted) and kept ${res.go.best}, the best ${cv ? `RSquare crossvalidated by the ${res.go.folds} folds (each fold predicted by a tree grown on the others, split for split)` : 'validation RSquare'}: the next 10 splits did not beat it.` : ''}${sets.length > 1 ? ' A validation curve that turns down while the training curve still rises is the tree learning noise.' : ' Without validation rows, the smallest AICc is one guide to how many splits the data support.'}`));
+    // the numbers of the graphs: a line per number of splits
+    const hcols = [{ key: 'splits', label: 'Number of Splits', fmt: 'int' }, ...sets.map((s) => ({ key: s, label: `${s} ${yTitle || (S.cat ? 'Entropy RSquare' : 'RSquare')}`, digits: 4 })), { key: 'aicc', label: 'AICc' }];
+    const det = ctx.outline('Split History Details', { parent: ob, key: 'historyDetails', closed: true });
+    det.add(wide(ctx.rt({ columns: hcols, rows: res.history }, { key: 'history', sortable: false, maxRows: 400, cellClass: (r, c) => (c.key === 'aicc' && r.aicc != null && r.aicc === minAicc(res.history) ? 'sm-part-best' : '') })));
+  }
+
+  const minAicc = (hist) => hist.reduce((m, h) => (h.aicc != null && Number.isFinite(h.aicc) && (m == null || h.aicc < m) ? h.aicc : m), null);
+
+  /* AICc by the number of splits: the training rows', the smallest marked. */
+  function aiccGraph(ctx, S) {
+    const hist = S.res.history.filter((h) => h.aicc != null && Number.isFinite(h.aicc));
+    if (!hist.length) return null;
+    const best = minAicc(hist);
+    const at = hist.find((h) => h.aicc === best);
+    const traces = [{ type: 'scatter', mode: 'lines+markers', x: hist.map((h) => h.splits), y: hist.map((h) => h.aicc), name: 'AICc', line: { color: SM.report.BASE, width: 1.8 }, marker: { size: 5, color: SM.report.BASE }, hovertemplate: '%{x} splits: AICc %{y:.6g}<extra></extra>', showlegend: false },
+      { type: 'scatter', mode: 'markers', x: [at.splits], y: [at.aicc], marker: { size: 10, symbol: 'diamond', color: fitColor() }, hovertemplate: `the smallest AICc: ${at.splits} splits<extra></extra>`, showlegend: false }];
+    return SM.predict.withCode(ctx.plot(traces, { margin: { l: 64, r: 12, t: 8, b: 42 }, xaxis: { title: { text: 'Number of Splits' }, rangemode: 'tozero' }, yaxis: { title: { text: 'AICc' } } }, { width: W(460), height: 260, title: 'AICc by number of splits', select: false }), blockOf(ctx, S, 'aicc'));
   }
 
   /* ======================================================================
@@ -584,15 +624,15 @@
     const labels = res.leaves.map((lf) => `${lf.number}`);
     const h = Math.max(160, Math.min(560, 48 + 22 * nl));
     if (!S.cat) {
-      const rows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, mean: lf.mean, sd: lf.sd, count: lf.count }));
-      const t = ctx.rt({ columns: [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev', hidden: true }, { key: 'count', label: 'Count', fmt: 'int' }], rows }, { key: 'leafreport', caption: 'Response Means' });
+      const rows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, rule: lf.rule || lf.label, mean: lf.mean, sd: lf.sd, count: lf.count }));
+      const t = ctx.rt({ columns: [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, RULE, { key: 'mean', label: 'Mean' }, { key: 'sd', label: 'Std Dev', hidden: true }, { key: 'count', label: 'Count', fmt: 'int' }], rows }, { key: 'leafreport', caption: 'Response Means' });
       const bars = ctx.plot([{ type: 'bar', orientation: 'h', y: labels, x: res.leaves.map((lf) => lf.mean), rows: S.leafTrain, rowsScale: res.leaves.map((lf, l) => (S.leafTrain[l].length ? lf.mean / S.leafTrain[l].length : 0)), marker: { color: SM.report.BAR }, hovertext: res.leaves.map((lf) => `leaf ${lf.number}: ${T(lf.label)}<br>mean ${sig(lf.mean)}, ${fmt(lf.count)} rows`), hovertemplate: '%{hovertext}<extra></extra>' }],
         { margin: { l: 44, r: 12, t: 6, b: 38 }, xaxis: { title: { text: `Mean ${res.y}` }, zeroline: true }, yaxis: { type: 'category', autorange: 'reversed', title: { text: 'Leaf' } }, bargap: 0.25 }, { width: W(320), height: h, title: 'Leaf means', select: false });
       ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, t), SM.predict.withCode(bars, blockOf(ctx, S, 'leaves'))));
     } else {
       const L = res.levels.length;
-      const pcols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, ...res.levels.map((lv, j) => ({ key: `p${j}`, label: `Prob(${lv})`, digits: 4 }))];
-      const prows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, ...Object.fromEntries(lf.probs.map((p, j) => [`p${j}`, p])) }));
+      const pcols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, RULE, ...res.levels.map((lv, j) => ({ key: `p${j}`, label: `Prob(${lv})`, digits: 4 }))];
+      const prows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, rule: lf.rule || lf.label, ...Object.fromEntries(lf.probs.map((p, j) => [`p${j}`, p])) }));
       const ccols = [{ key: 'leaf', label: 'Leaf', fmt: 'int' }, { key: 'label', label: 'Leaf Label', fmt: 'text' }, ...res.levels.map((lv, j) => ({ key: `c${j}`, label: String(lv) })), { key: 'count', label: 'Count' }];
       const crows = res.leaves.map((lf) => ({ leaf: lf.number, label: lf.label, count: lf.count, ...Object.fromEntries(lf.counts.map((c, j) => [`c${j}`, c])) }));
       const a = res.assign;
@@ -606,9 +646,11 @@
       ob.add(ctx.row(el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: pcols, rows: prows }, { key: 'leafprob', caption: 'Response Prob' })), SM.predict.withCode(bars, blockOf(ctx, S, 'leaves'))),
         el('div', { class: 'sm-part-scroll' }, ctx.rt({ columns: ccols, rows: crows }, { key: 'leafcount', caption: 'Response Counts' })));
     }
-    ob.add(ctx.note(`The leaves from left to right, numbered as Save Leaf Numbers numbers them; the label is the path of conditions from the root (Save Leaf Labels). ${S.cat ? 'Prob is the smoothed probability the tree predicts; the counts are the training rows (by weight).' : 'The mean is the tree\'s prediction for the leaf\'s rows.'} A bar selects the leaf's training rows.`));
+    ob.add(ctx.note(`The leaves from left to right, numbered as Save Leaf Numbers numbers them; the label is the path of conditions from the root (Save Leaf Labels), the rule the same conditions with those on one column merged (a range of a continuous column, the levels a categorical one's groups share). ${S.cat ? 'Prob is the smoothed probability the tree predicts; the counts are the training rows (by weight).' : 'The mean is the tree\'s prediction for the leaf\'s rows.'} A bar selects the leaf's training rows.`));
   }
   const lv = (res, j) => String(res.levels[j]);
+  /* The Leaf Report's rule: the Leaf Label with the conditions on one column merged (not in JMP). */
+  const RULE = { key: 'rule', label: 'Rule', fmt: 'text' };
 
   /* ======================================================================
      COLUMN CONTRIBUTIONS
@@ -622,14 +664,17 @@
   /* ======================================================================
      K FOLD CROSSVALIDATION
      ====================================================================== */
-  async function kfoldDialog(ctx) {
+  async function kfoldDialog(ctx, S = ctx._part) {
+    // a K-fold Validation column gives the folds: nothing to ask, the outline goes on or off
+    if (S && S.res && S.res.folds) { ctx.set('kfold', ctx.opt('kfold', S.res.folds.k) ? false : S.res.folds.k); return; }
     const v = await SM.ui.form({ title: 'K Fold Crossvalidation', info: 'p:partition:kfold', lead: 'The training rows are split into k folds drawn from the report\'s seed; each fold is predicted by a tree with as many best splits as this one, grown on the other folds.', fields: [{ key: 'k', label: 'Number of folds (k)', type: 'number', value: ctx.opt('kfold', null) || 5, help: HELP.folds }], validate: (x) => (Number.isInteger(x.k) && x.k >= 2 && x.k <= 100 ? null : 'k is a whole number from 2 to 100') });
     if (v) ctx.set('kfold', v.k);
   }
 
   async function kfoldOutline(ctx, S) {
-    const k = ctx.opt('kfold', null);
-    const ob = ctx.outline('Crossvalidation', { key: 'kfold', info: 'p:partition:kfold', menu: () => [{ label: 'Number of Folds…', action: () => kfoldDialog(ctx) }, { label: 'Remove', action: () => ctx.set('kfold', null) }] });
+    const byColumn = S.res.folds;
+    const k = byColumn ? byColumn.k : ctx.opt('kfold', null);
+    const ob = ctx.outline('Crossvalidation', { key: 'kfold', info: 'p:partition:kfold', menu: () => [byColumn ? null : { label: 'Number of Folds…', action: () => kfoldDialog(ctx, S) }, { label: 'Remove', action: () => ctx.set('kfold', false) }].filter(Boolean) });
     let r;
     try { r = await ctx.call(S.F.kfold, { ...S.base, k }); } catch (e) { ob.add(ctx.error(e)); return; }
     const src = (m, what) => (S.cat ? { source: what, k: what.startsWith('K') ? r.k : null, entropy_rsquare: m.entropy_rsquare, misclassification: m.misclassification, neg_loglik: m.neg_loglik, n: m.n }
@@ -638,8 +683,9 @@
       ...(S.cat ? [{ key: 'entropy_rsquare', label: 'Entropy RSquare', digits: 4 }, { key: 'misclassification', label: 'Misclassification Rate', digits: 4 }, { key: 'neg_loglik', label: '-LogLikelihood' }]
         : [{ key: 'rsquare', label: 'RSquare', digits: 4 }, { key: 'rase', label: 'RASE' }, { key: 'sse', label: 'SSE' }]), { key: 'n', label: 'N' }];
     ob.add(wide(ctx.rt({ columns: cols, rows: [src(r.folded, 'K Fold'), src(r.overall, 'Overall')] }, { key: 'kfold', sortable: false })),
-      wide(ctx.rt({ columns: [{ key: 'fold', label: 'Fold', fmt: 'int' }, { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Splits', fmt: 'int' }, { key: 'rsquare', label: S.cat ? 'Entropy RSquare' : 'RSquare', digits: 4 }], rows: r.folds }, { key: 'folds', caption: 'Each Fold', sortable: false })),
-      ctx.note(`K Fold: each training row predicted by the tree grown without its fold (${r.k} trees of the best ${r.splits} splits each${S.cart ? ', CART' : ''}); Overall: this tree on its own training rows. A K Fold RSquare well below the overall one means the tree is larger than the data support.`),
+      wide(ctx.rt({ columns: [{ key: 'fold', label: 'Fold', fmt: 'int' }, ...(r.by_column ? [{ key: 'value', label: r.by_column, fmt: 'text' }] : []), { key: 'n', label: 'N', fmt: 'int' }, { key: 'splits', label: 'Splits', fmt: 'int' }, { key: 'rsquare', label: S.cat ? 'Entropy RSquare' : 'RSquare', digits: 4 }], rows: r.folds }, { key: 'folds', caption: 'Each Fold', sortable: false })),
+      ctx.note(r.by_column ? `K Fold: each row predicted by the tree grown without its fold, the ${r.k} folds of the Validation column ${r.by_column} (${r.k} trees of the best ${r.splits} splits each${S.cart ? ', CART' : ''}); Overall: this tree, grown on every row. A K Fold RSquare well below the overall one means the tree is larger than the data support; Go chooses the size by it.`
+        : `K Fold: each training row predicted by the tree grown without its fold (${r.k} trees of the best ${r.splits} splits each${S.cart ? ', CART' : ''}); Overall: this tree on its own training rows. A K Fold RSquare well below the overall one means the tree is larger than the data support.`),
       ctx.code(r.script));
   }
 
@@ -657,7 +703,40 @@
         else ctx.saveColumn('Leaf Label', { rows: r.rows, values: r.labels }, { notes, dataType: 'character' });
       } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
     };
-    return [{ label: 'Save Columns', submenu: () => [...(typeof base.submenu === 'function' ? base.submenu() : base.submenu), { label: 'Save Leaf Numbers', action: () => leaves('numbers') }, { label: 'Save Leaf Labels', action: () => leaves('labels') }] }];
+    const noFormula = S.cart ? 'the Decision Tree method (CART\'s tree is scikit-learn\'s)' : null;
+    const formula = (what) => ({ label: { prediction: 'Save Prediction Formula', leaf_number: 'Save Leaf Number Formula', leaf_label: 'Save Leaf Label Formula' }[what], disabled: !!noFormula,
+      title: noFormula ? `Needs ${noFormula}` : null, action: () => saveFormulas(ctx, 'partition.formula', { ...S.base, what }) });
+    return [{ label: 'Save Columns', submenu: () => [...(typeof base.submenu === 'function' ? base.submenu() : base.submenu), { label: 'Save Leaf Numbers', action: () => leaves('numbers') }, { label: 'Save Leaf Labels', action: () => leaves('labels') },
+      { separator: true }, formula('prediction'), formula('leaf_number'), formula('leaf_label')] }];
+  }
+
+  /* A Most Likely column's formula from the probability columns' names (in
+     the levels' order): the first level whose probability is at least every
+     later one's, as the largest probability, the first of equal ones. */
+  function mostLikelyExpr(names, levels) {
+    const refs = names.map((n) => SM.formula.refText(n));
+    const lit = (v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    const arms = [];
+    for (let i = 0; i < refs.length - 1; i++) arms.push(refs.slice(i + 1).map((r) => `${refs[i]} >= ${r}`).join(' & '), lit(levels[i]));
+    return `If(${[...arms, lit(levels[levels.length - 1])].join(', ')})`;
+  }
+
+  /* Save a platform's formula columns: fn returns { columns: [{ name, expr }], and for a categorical response
+     levels, most_name, ordinal } (the Prob[] columns, then the Most Likely column made from them here). */
+  async function saveFormulas(ctx, fn, payload) {
+    const from = { notes: `a formula from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}` };
+    try {
+      const r = await ctx.call(fn, payload);
+      if (r.error) throw new Error(r.error);
+      const made = [];
+      for (const c of r.columns) {
+        const col = ctx.saveFormula(c.name, c.expr, { ...from, ...(c.kind === 'leaf_number' || r.kind === 'leaf_number' ? { modelingType: 'nominal' } : {}) });
+        if (col) made.push(col.name);
+      }
+      if (r.kind === 'categorical' && made.length === r.columns.length && r.levels && r.levels.length > 1) {
+        ctx.saveFormula(r.most_name, mostLikelyExpr(made, r.levels), { ...from, modelingType: r.ordinal ? 'ordinal' : 'nominal', valueOrder: r.levels.slice() });
+      }
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
   async function minSizeDialog(ctx) {
@@ -686,7 +765,8 @@
       ctx.check('Leaf Report', 'leafReport', null, false),
       ctx.check('Column Contributions', 'contrib', null, false),
       ctx.check('Split History', 'history', null, false),
-      { label: 'K Fold Crossvalidation…', checked: !!ctx.opt('kfold', null), action: () => kfoldDialog(ctx) },
+      S && S.res.folds ? { label: 'K Fold Crossvalidation', checked: !!ctx.opt('kfold', S.res.folds.k), action: () => kfoldDialog(ctx, S) }
+        : { label: 'K Fold Crossvalidation…', checked: !!ctx.opt('kfold', null), action: () => kfoldDialog(ctx, S) },
       ...(cat && S ? SM.predict.classificationItems(ctx, S.res.fit) : []),
       ctx.check('Show Fit Details', 'fitDetails', null, false),
       ctx.check('Profiler', 'profiler', null, false),
@@ -711,7 +791,9 @@
         { heading: 'How a split is chosen', text: 'For every leaf and column the best cut: the one that explains the most, SS (the sum of squares between the two sides) for a continuous response, G² (the likelihood-ratio chi-square) for a categorical one. A nominal X\'s levels are ordered by the response mean or rate and cut between neighbours (the best grouping for a continuous or two-level response); for a response of three or more levels every grouping is tried, up to 12 levels. The split made is the one with the largest LogWorth: −log10 of the split\'s p-value (the two-group F test, or G² as a chi-square) adjusted for the number of ways the column can be cut, so a column with many values does not win just by having more cuts to choose from.' },
         { heading: 'The adjustment', text: 'JMP calibrates its adjustment by Monte Carlo and has not published it, so the LogWorths here are not JMP\'s numbers, and where two columns are close the split chosen can differ. Here: for ordered cuts (a continuous or ordinal X), 1 plus the expected number of times the statistic crosses its observed value between neighbouring cuts (Lausen, Sauerbrei and Schumacher 1994; Rice\'s formula for a chi process); for a nominal X the smaller of Bonferroni over its groupings and Scheffé\'s bound; never more than Bonferroni over the candidates. With no effect an adjusted p-value falls below 0.05 in at most about 5% of samples (2 to 4% for a column with many values, where the bound is a little conservative), where the best of 200 unadjusted cuts does in more than half (the tests check both).' },
         { heading: 'Probabilities', text: 'A leaf\'s probability of a level is (n + prior)/(N + 1): its count of the level plus a prior, over its count plus one. The root\'s prior is the training rates; a child\'s is 0.9 of its parent\'s prior plus 0.1 of its parent\'s probability (JMP\'s documented rule, λ = 0.9). So no probability is 0, and a small leaf leans toward its parent. Rate is the plain share.' },
-        { heading: 'Beyond and unlike JMP', text: 'A cut is written as the shortest decimal between the two neighbouring values (JMP writes a data value); the rows split the same way. CART, scikit-learn\'s trees, is a second method for comparison. Not here: Lock Columns, Tree 3D, the prediction formulas, Specify Profit Matrix, and JMP Pro\'s Bootstrap Forest and Boosted Tree (their own platforms).' },
+        { heading: 'The summary', text: 'For each set: RSquare and RASE (a categorical response: the Entropy RSquare and the Misclassification Rate) and N; on the training line the Number of Splits and the AICc, −2 log L + 2k + 2k(k + 1)/(N − k − 1) of the training rows: for a continuous response the normal likelihood of the leaf means, k the leaves and the error variance (JMP\'s, the regression model the tree is); for a categorical one the likelihood of each row\'s Prob of its level, k the leaves\' probabilities (the levels less one each). The Split History shows it after every split, so the number of splits with the smallest AICc can be read off.' },
+        { heading: 'Save Columns', choices: [['Save Predicteds, Save Residuals', 'The leaf\'s mean (or each level\'s Prob and the most likely level) of every row whose factors the tree can take, excluded ones too.'], ['Save Leaf Numbers, Save Leaf Labels', 'Each row\'s leaf, numbered as the Leaf Report numbers them, or its path of conditions.'], ['Save Prediction Formula', 'The tree as JMP writes it, nested If clauses of its conditions, as a live formula column: the leaf\'s mean, or a Prob[] column per level and a Most Likely column that takes the level with the largest one. A new or changed row is predicted at once. With Informative Missing a missing value goes where the tree sends it; without it, a row missing a factor gets no prediction, as Save Predicteds gives it none.'], ['Save Leaf Number Formula, Save Leaf Label Formula', 'The same nested If with the leaf\'s number or label.']] },
+        { heading: 'Beyond and unlike JMP', text: 'A cut is written as the shortest decimal between the two neighbouring values (JMP writes a data value); the rows split the same way. The Leaf Report\'s Rule (the conditions on one column merged), the Split History\'s AICc and the AICc of a categorical response are not in JMP. CART, scikit-learn\'s trees, is a second method for comparison; its tree has no formulas here. Not here: Lock Columns, Tree 3D, Save Tolerant Prediction Formula, Specify Profit Matrix, and JMP Pro\'s Bootstrap Forest and Boosted Tree (their own platforms).' },
       ],
       more: MORE,
     },
@@ -722,7 +804,7 @@
         { heading: 'The buttons', choices: [
           ['Split', 'Makes the best split there is: of every leaf and every column, the cut with the largest LogWorth (CART: the next split of scikit-learn\'s best-first tree). Shift-click it to make several in one step.'],
           ['Prune', 'Takes back the weakest of the splits whose two children are both leaves, the one with the smallest LogWorth (CART: the last split made). Dimmed while the tree has no split.'],
-          ['Go', 'Only with validation rows (a Validation column or a Validation Portion). Splits one leaf at a time until 10 splits in a row have not improved the validation RSquare (Entropy RSquare for a categorical response), then keeps the tree that had the best one; Split History shows the splits it looked at beyond it, dotted.'],
+          ['Go', 'Only with validation rows (a Validation column or a Validation Portion), or the folds of a K-fold Validation column. Splits one leaf at a time until 10 splits in a row have not improved the validation RSquare (Entropy RSquare for a categorical response), then keeps the tree that had the best one; Split History shows the splits it looked at beyond it, dotted. With K folds the RSquare is crossvalidated: beside the tree, a tree per fold grows on the other folds split for split, and every row is predicted by the one that did not see its fold.'],
           ['Color Points', 'A categorical response: gives the rows in the table the colour of their response level, so that every graph shows the levels.'],
         ] },
         { heading: 'The graph', text: 'The training rows side by side in their leaves (numbered as in the Leaf Report), each leaf as wide as its rows: the response with the leaf\'s mean, or the leaf\'s rates of the levels stacked with the rows scattered in them. Drag over points to select rows.' },
@@ -746,27 +828,34 @@
     },
     'p:partition:history': {
       kicker: 'Partition', title: 'Split History',
-      lead: 'RSquare (the entropy RSquare for a categorical response) of each set after each split, in the order the splits were made. With validation rows the validation curve shows where more splits stop helping; after Go the splits it looked at past the tree it kept are dotted.',
+      lead: 'RSquare (the entropy RSquare for a categorical response) of each set after each split, in the order the splits were made, and beside it the training rows\' AICc, the smallest marked. With validation rows the validation curve shows where more splits stop helping; without them the smallest AICc is a guide. After Go the splits it looked at past the tree it kept are dotted. Split History Details has the numbers of both graphs.',
       more: MORE,
     },
     'p:partition:leaves': {
       kicker: 'Partition', title: 'Leaf Report',
-      lead: 'Each leaf, left to right: its label (the conditions from the root, joined by &), its mean or level probabilities, and its count; a bar per leaf, which selects the leaf\'s training rows. For a categorical response also the counts of each level.',
+      lead: 'Each leaf, left to right: its label (the conditions from the root, joined by &), its rule (the same conditions with those on one column merged: a continuous column\'s cuts as one range, 2<=x<5, and a categorical column\'s groups as the levels they share), its mean or level probabilities, and its count; a bar per leaf, which selects the leaf\'s training rows. For a categorical response also the counts of each level.',
       more: MORE,
     },
     'p:partition:kfold': {
       kicker: 'Partition', title: 'K Fold Crossvalidation',
       lead: 'The training rows split into k folds at random (from the report\'s seed). Each fold is predicted by a tree grown on the other folds with as many splits as this tree has, each the best there (manual splits are not copied). K Fold gives the measures of those out-of-fold predictions, Overall the tree\'s own on its training rows.',
+      sections: [{ heading: 'A K-fold Validation column', text: 'A Validation column of more than three values (Make Validation Column\'s K Fold) holds the folds: every row trains the tree, the Crossvalidation report shows by itself with the column\'s folds (no number to choose; its red triangle item turns it off and on), and Go chooses the tree\'s size by the crossvalidated RSquare. JMP\'s Partition takes a Validation column of training, validation and test rows; the folds are this page\'s.' }],
       more: MORE,
     },
   };
+
+  /* What the Uplift platform (smui-p-uplift.js) draws and grows with: the
+     tree of node boxes (S.look gives its geometry and boxes), the steps, the
+     selection bars, the Split History, the formula columns. */
+  SM.partition = Object.freeze({ treeBox, addStep, stepsOf, scopeOf, pickNode, watchSelection, nodeFrame, selBar, txt, clip, wide, wrapTables, setColor, fitColor,
+    historyOutline, mostLikelyExpr, saveFormulas, minSizeDialog, HELP });
 
   /* ======================================================================
      THE PLATFORM
      ====================================================================== */
   SM.platforms.register({
     id: 'partition', label: 'Partition', menu: 'Analyze/Predictive Modeling', order: 10, info: 'p:partition', topics: TOPICS,
-    about: 'JMP\'s Partition platform: a decision tree for a continuous or categorical response, grown one split at a time (Split, Prune, and Go with validation rows), each split the column and cut with the largest LogWorth, the adjusted p-value of each column\'s best split (the F test of the two sides, or the likelihood-ratio G²); continuous and ordinal columns cut at a value, nominal ones into two groups of levels; Informative Missing; leaf probabilities smoothed by JMP\'s rule. The report: the partition graph (linked), JMP\'s node boxes (a click selects a node\'s rows; each node has its own red triangle), candidates, the split history, the leaf report, column contributions, fit details, confusion matrix, ROC and lift curves, actual by predicted, K-fold crossvalidation, the Prediction Profiler, and Save Columns (predicteds, residuals, leaf numbers and labels). The splitter is written here in numpy after JMP\'s documented method; CART (scikit-learn) is a second method.',
+    about: 'JMP\'s Partition platform: a decision tree for a continuous or categorical response, grown one split at a time (Split, Prune, and Go with validation rows), each split the column and cut with the largest LogWorth, the adjusted p-value of each column\'s best split (the F test of the two sides, or the likelihood-ratio G²); continuous and ordinal columns cut at a value, nominal ones into two groups of levels; Informative Missing; leaf probabilities smoothed by JMP\'s rule. The report: the partition graph (linked), JMP\'s node boxes (a click selects a node\'s rows; each node has its own red triangle), the summary with the AICc, candidates, the split history with the AICc of every split, the leaf report with each leaf\'s merged rule, column contributions, fit details, confusion matrix, ROC and lift curves, the Decision Threshold, actual by predicted, K-fold crossvalidation, the Prediction Profiler, and Save Columns (predicteds, residuals, leaf numbers and labels, and the prediction, leaf number and leaf label formulas: the tree as nested If, live formula columns). The splitter is written here in numpy after JMP\'s documented method; CART (scikit-learn) is a second method.',
     uses: ['numpy (the splitter, after JMP\'s documented method)', 'scipy.stats (f, chi2, chi), scipy.special (xlogy, gammaln, betaln)', 'sklearn.tree.DecisionTreeRegressor, DecisionTreeClassifier (the CART method)'],
     launch: {
       lead: 'Choose a response and the factors. The tree starts with every row in one node: press Split to grow it, or Go with validation rows.',

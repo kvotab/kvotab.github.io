@@ -64,11 +64,37 @@ def load(name):
             'source': ' '.join(str(getattr(m, 'SOURCE', '')).split())}
 
 
+def _stata_value_labels(data, codes):
+    """Stata's value labels, {column: [[code, label], ...]}: the file read
+    again with its labels applied, each row's code paired with its label
+    (public pandas only; a code without a label keeps its number)."""
+    import io
+    try:
+        with pd.io.stata.StataReader(io.BytesIO(data)) as rd:
+            cat = rd.read(convert_categoricals=True, order_categoricals=False)
+    except Exception:  # labels that pandas cannot apply (not unique): the codes alone
+        return {}
+    out = {}
+    for c in cat.columns:
+        s = cat[c]
+        if c not in codes.columns or not isinstance(s.dtype, pd.CategoricalDtype):
+            continue
+        pairs = {}
+        for code, lab in zip(codes[c].to_numpy(), s.to_numpy()):
+            if isinstance(lab, str) and not pd.isna(code):
+                pairs.setdefault(float(code), lab)
+        if pairs:
+            out[str(c)] = [[k, v] for k, v in sorted(pairs.items())]
+    return out
+
+
 @api('datasets.read_file')
 def read_file(name, data):
     """A Stata (.dta) or SAS (.sas7bdat, .xpt) file, read by pandas, or a
-    JMP data table (.jmp, jmp.py). Stata's value labels become nominal
-    levels in their coded order; dates stay dates."""
+    JMP data table (.jmp, jmp.py). Stata's value labels become the Value
+    Labels property of their numeric column, which keeps the codes (nominal,
+    its levels in coded order), as JMP opens a labelled file; dates stay
+    dates."""
     import io
     lower = name.lower()
     if lower.endswith('.jmp'):
@@ -76,17 +102,19 @@ def read_file(name, data):
         return jmp.read(name, data)
     buf = io.BytesIO(data)
     notes = ''
+    vlabels = {}
     if lower.endswith('.dta'):
         with pd.io.stata.StataReader(buf) as rd:
-            # Value labels give the levels and their order; whether the
-            # order means anything is the user's call (Column Info), so nominal.
-            df = rd.read(convert_categoricals=True, order_categoricals=False)
+            df = rd.read(convert_categoricals=False)
             try:
                 notes = rd.data_label or ''
                 labels = rd.variable_labels()
             except Exception:
                 labels = {}
         buf.seek(0)
+        # Whether the codes' order means anything is the user's call
+        # (Column Info), so nominal.
+        vlabels = _stata_value_labels(data, df)
     elif lower.endswith('.sas7bdat'):
         df = pd.read_sas(buf, format='sas7bdat', encoding='latin-1')
         labels = {}
@@ -100,4 +128,7 @@ def read_file(name, data):
     for c in cols:
         if labels.get(c['name']):
             c['notes'] = labels[c['name']]
+        if vlabels.get(c['name']) and c['dataType'] == 'numeric':
+            c['valueLabels'] = vlabels[c['name']]
+            c['modelingType'] = 'nominal'
     return {'name': name.rsplit('.', 1)[0], 'columns': cols, 'note': notes, 'rows': int(len(df))}

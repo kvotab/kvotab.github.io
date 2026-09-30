@@ -71,7 +71,7 @@
   // The By group's rows (as the backend's code has them), and those of it the report leaves out.
   function whereLines(ctx) {
     const t = ctx.table, where = ctx.where || [];
-    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${levelLabel(t.col(w.column), w.value)}`);
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${SM.util.oneLine(`${w.column} is ${levelLabel(t.col(w.column), w.value)}`)}`);
     const cols = where.map((w) => t.col(w.column));
     const keep = new Set(ctx.rows), drop = [];
     for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);

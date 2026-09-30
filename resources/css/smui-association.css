@@ -1,0 +1,18 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > SCREENING > ASSOCIATION ANALYSIS (smui-p-association.js)
+   The Frequent Item Sets, Rules and Transaction Listing tables (scrolling
+   boxes, their headings kept in view) and the bubble plot with its code.
+   Colours are kvot.css's tokens, so both themes read. Class prefix sm-as-.
+   ========================================================================== */
+
+.sm-as-scroll { width: fit-content; max-width: 100%; max-height: 30em; overflow: auto; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); margin-bottom: 6px; }
+.sm-as-scroll > table.sm-rt { margin: 0; }
+.sm-as-scroll > table.sm-rt thead th { position: sticky; top: 0; z-index: 1; }
+.sm-as-scroll > table.sm-rt td.sm-l { max-width: 22em; overflow-wrap: anywhere; }
+
+/* ---- a graph with its matplotlib code under it ---- */
+.sm-as-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+
+@media (max-width: 560px) {
+  .sm-as-scroll { max-height: 22em; width: 100%; }
+}

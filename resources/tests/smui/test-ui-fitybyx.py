@@ -444,7 +444,7 @@ async def main():
       const c = t.col('Prob[no]'); const d = t.col('dose (mg)').values[9];
       return { added: t.columns.length - n0, v: c ? c.values[9] : null, want: 1 / (1 + Math.exp(-(a + b * d))), ml: t.columns[t.columns.length - 1].name };
     })()''')
-    check('Save Probability Formula adds Prob[no], Prob[yes], Most Likely', (r['added'], r['ml']), (3, 'Most Likely response'))
+    check('Save Probability Formula adds Lin[no], Prob[no], Prob[yes], Most Likely (live formulas, as JMP)', (r['added'], r['ml']), (4, 'Most Likely response'))
     check.near('the saved probability = the estimates shown', r['v'], r['want'], 1e-5)
     r = await page.ev('''(async () => { const rep = __fyx.rep(); const p = rep.plots[0]; const t = rep.table; p._click({ points: [{ curveNumber: 0, pointNumber: 2 }], event: {} }); const s = t.selectedRows(); t.select([]); return { s, row: p.rows[0][2] }; })()''')
     check('a logistic point selects its row', r['s'], [r['row']])
@@ -933,6 +933,7 @@ async def main():
     # ---- the graphs' Python code: a block under each graph, run in the page
     await chart_code(page)
     await matched_pairs_charts(page)
+    await wp1_round(page)
 
     # ---- a large table stays quick
     t0 = time.time()
@@ -1037,6 +1038,97 @@ def check_bivariate(label, g, F):
         by = [t for t in bars if t.get('xaxis') == 'x2'][0]
         check.near(f'{label}: the histogram border of X', maxdiff([b['h'] for b in top['bars']], bx['y']), 0, 1e-12)
         check.near(f'{label}: the histogram border of Y', maxdiff([b['w'] for b in side['bars']], by['x']), 0, 1e-12)
+
+
+async def wp1_round(page):
+    """Round 4, WP1: Save Formula of a Bivariate fit against its saved predictions (every row with an X), the logistic
+    Lack Of Fit, Decision Threshold and ROC Table, Unstable estimates of a separated fit, Compare Means > With Best,
+    Hsu MCB against the page's own arithmetic; the dark theme at phone width."""
+    await page.ev("SM.app.openExample('plants'); SM.app.openExample('clinical')")
+    # ---- Bivariate: Fit Line > Save Formula = Save Predicteds
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Plant trial', 'fitybyx', { y: ['yield (g)'], x: ['light (h)'] }, {});
+      await __fyx.pick(rep.title, ['Fit Line'], rep);
+      const t = rep.table; const n0 = t.columns.length;
+      const fh = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => /^Linear Fit/.test(h.querySelector('h2, h3, h4').textContent));
+      const pickFit = async (label) => { fh.querySelector('.sm-ob-menu').click(); await __fyx.sleep(80); const ms = document.querySelectorAll('.sm-menu'); const b = [...ms[ms.length - 1].querySelectorAll('button')].find(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === label); b.click(); };
+      await pickFit('Save Formula'); for (let i = 0; i < 100 && t.columns.length <= n0; i++) await __fyx.sleep(50);
+      await pickFit('Save Predicteds'); for (let i = 0; i < 100 && t.columns.length <= n0 + 1; i++) await __fyx.sleep(50);
+      const f = t.columns[n0], p = t.columns[n0 + 1];
+      let worst = 0; for (let i = 0; i < t.nRows; i++) worst = Math.max(worst, Math.abs(f.values[i] - p.values[i]));
+      return { f: f ? [f.name, !!f.formula] : null, worst, errors: __fyx.errors(rep) }; })()''')
+    check('WP1: Fit Line > Save Formula: a live formula column', r['f'] and r['f'][1], True)
+    check.near('  its values are the saved predictions for every row', r['worst'], 0.0, 1e-9)
+    check('  no errors', r['errors'], [])
+    # ---- Logistic: Lack Of Fit (dose repeats), Decision Threshold, ROC Table
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['dose (mg)'] }, {});
+      const lof = __fyx.tableUnder('Lack Of Fit', 0, rep);
+      await __fyx.pick(rep.title, ['ROC Curve'], rep);
+      await __fyx.pick(rep.title, ['Decision Threshold'], rep);
+      await __fyx.pick('ROC Curve', ['ROC Table'], rep);
+      await __fyx.sleep(300);
+      return { lof: lof ? lof.slice(1).map(r => r[0]) : null, heads: __fyx.heads(rep), errors: __fyx.errors(rep) }; })()''')
+    check('WP1: Logistic Lack Of Fit rows', r['lof'], ['Lack Of Fit', 'Saturated', 'Fitted'])
+    check('  Decision Threshold and ROC Table', ('Decision Threshold' in r['heads'], 'ROC Table' in r['heads']), (True, True))
+    check('  no errors', r['errors'], [])
+    # ---- By: each group's Decision Threshold has its own Target Level (WP3's per-group options), and its ROC Table follows it
+    r = await page.ev('''(async () => {
+      const t = __fyx.table('Clinical study');
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['response'], x: ['dose (mg)'], by: ['sex'] }, {});
+      const sc = `${t.col('response').id}~${t.col('dose (mg)').id}`;
+      for (const k of ['roc', 'rocTable', 'threshold']) rep.spec.options[`${sc}|${k}`] = true;
+      let d = new Promise((res) => rep.on('done', res)); rep.run(); await d; await __fyx.sleep(300);
+      const captions = () => [...rep.body.querySelectorAll('.sm-ob-head')].filter((h) => h.querySelector('h2, h3, h4').textContent === 'ROC Table')
+        .map((h) => { const c = h.parentElement.querySelector('table.sm-rt caption'); return c ? c.textContent : null; });
+      const before = captions();
+      const dt = [...rep.body.querySelectorAll('.sm-ob-head')].filter((h) => h.querySelector('h2, h3, h4').textContent === 'Decision Threshold')[0];
+      d = new Promise((res) => rep.on('done', res));
+      dt.querySelector('.sm-ob-menu').click(); await __fyx.sleep(80);
+      let ms = document.querySelectorAll('.sm-menu'); let b = [...ms[ms.length - 1].querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === 'Target Level');
+      b.dispatchEvent(new MouseEvent('mouseenter')); await __fyx.sleep(80);
+      ms = document.querySelectorAll('.sm-menu'); b = [...ms[ms.length - 1].querySelectorAll('button')].find((x) => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === 'yes');
+      b.click(); await d; await __fyx.sleep(300);
+      return { before, after: captions(), errors: __fyx.errors(rep) }; })()''')
+    check('WP1: By: a ROC Table in each group, the target level first (no)', r['before'], ['no', 'no'])
+    check('  one group\'s Target Level changed: its ROC Table follows, the other keeps its own', r['after'], ['yes', 'no'])
+    check('  no errors', r['errors'], [])
+    # ---- Unstable: X separates the levels
+    r = await page.ev('''(async () => { const t = __fyx.table('Clinical study');
+      if (!t.col('sep resp')) t.addColumn({ name: 'sep resp', dataType: 'character', values: t.col('dose (mg)').values.map((d) => (d >= 40 ? 'yes' : 'no')) });
+      const rep = await __fyx.open('Clinical study', 'fitybyx', { y: ['sep resp'], x: ['dose (mg)'] }, {});
+      const pe = __fyx.tableUnder('Parameter Estimates', 0, rep);
+      return { marks: pe ? pe.slice(1).map(r => r[1]) : null, errors: __fyx.errors(rep) }; })()''')
+    check('WP1: separation by X: the estimates are Unstable', r['marks'], ['Unstable', 'Unstable'])
+    check('  no errors (the odds ratios overflow to infinity, not an error)', r['errors'], [])
+    # ---- Oneway: Compare Means > With Best, Hsu MCB; the intervals by the page's own arithmetic, the circles
+    r = await page.ev('''(async () => {
+      const rep = await __fyx.open('Plant trial', 'fitybyx', { y: ['yield (g)'], x: ['fertilizer'] }, {});
+      await __fyx.pick(rep.title, ['Compare Means', 'With Best, Hsu MCB'], rep);
+      await __fyx.sleep(300);
+      const q = __fyx.num(__fyx.tableUnder('Comparisons with the best - Hsu\\'s MCB', 0, rep)[1][0]);
+      const tab = __fyx.tableUnder('Comparison with Max', 1, rep);
+      const g = __fyx.groups(rep.table, 'yield (g)', 'fertilizer');
+      const m = g.map(v => v.reduce((a, b) => a + b, 0) / v.length); const N = g.flat().length;
+      const mse = g.reduce((s, v, i) => s + v.reduce((a, b) => a + (b - m[i]) ** 2, 0), 0) / (N - g.length);
+      const up = m.map((mi, i) => Math.max(0, Math.min(...m.map((mj, j) => (j === i ? Infinity : mi - mj + q * Math.sqrt(mse * (1 / g[i].length + 1 / g[j].length)))))));
+      const got = Object.fromEntries(tab.slice(1).map(r => [r[0], __fyx.num(r[4])]));
+      const levels = ['A', 'B', 'C'];
+      return { q, worst: Math.max(...levels.map((l, i) => Math.abs(got[l] - up[i]))), heads: __fyx.heads(rep), errors: __fyx.errors(rep), circles: rep.plots[0].traces.filter(tr => tr.xaxis === 'x2').length }; })()''')
+    check('WP1: Hsu MCB: the one-sided Dunnett quantile of 2 comparisons, above the one-sided t', 1.68 < r['q'] < 2.3, True)
+    check.near('  its upper limits by Hsu\'s formula, computed in the page', r['worst'], 0.0, 1e-4)
+    check('  Comparison with Max and with Min', ('Comparison with Max' in r['heads'], 'Comparison with Min' in r['heads']), (True, True))
+    check('  the comparison circles use d', r['circles'], 3)
+    check('  no errors', r['errors'], [])
+    # ---- dark theme, phone width
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(1.5)
+    wide = await page.ev('document.documentElement.scrollWidth <= innerWidth + 1')
+    check('WP1: no horizontal page scroll at phone width, dark theme', wide, True)
+    await shot(page, 'fyx-wp1-dark-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 
 
 async def chart_code(page):

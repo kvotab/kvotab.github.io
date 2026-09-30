@@ -63,5 +63,17 @@
   .sm-tx-topics { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* ---- Cluster Terms and Cluster Documents: the number of clusters, the clusters under the dendrogram ---- */
+.sm-tx-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 4px; font-size: 12px; }
+.sm-tx-controls .sm-btn { min-width: 28px; padding: 1px 8px; }
+.sm-tx-controls .sm-tx-hint { margin: 0 4px 0 0; }
+.sm-tx-clusters { gap: 5px 6px; }
+.sm-tx-clusters button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.sm-tx-clusters button:hover, .sm-tx-clusters button:focus-visible { border-color: var(--color-kvot-accent); }
+.sm-tx-swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; }
+
 /* ---- a graph with its matplotlib code under it ---- */
 .sm-tx-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

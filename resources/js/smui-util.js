@@ -168,6 +168,12 @@
   /* A Python string literal for generated code. */
   const pyStr = (s) => JSON.stringify(String(s));
 
+  /* Text in a comment of generated code: line breaks and the other control
+     characters become one space, so a name or value from the table never
+     ends the comment and starts a line of code of its own (a table from a
+     file is hostile input). */
+  const oneLine = (s) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ');
+
   /* Column names in a patsy formula: Q("...") unless a plain identifier
      that is neither a Python keyword nor patsy's C, I or Q. */
   const PY_KEYWORDS = new Set(['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except',
@@ -273,7 +279,7 @@
   }
 
   SM.util = Object.freeze({
-    Emitter, fmt, fmtP, fmtPct, el, svg, typeIcon, TYPE_LABEL, rng, uid, debounce, download, pyStr, q, quantileSorted,
+    Emitter, fmt, fmtP, fmtPct, el, svg, typeIcon, TYPE_LABEL, rng, uid, debounce, download, pyStr, oneLine, q, quantileSorted,
     themeColors, PALETTE, colorOf, ramp, qnorm, pnorm, ranks, listClick,
   });
 }(typeof self !== 'undefined' ? self : this));

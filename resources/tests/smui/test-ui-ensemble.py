@@ -10,15 +10,18 @@ number of terms follows the X columns cast); the report's outlines are
 JMP's, and its Overall Statistics, Specifications, Cumulative Validation and
 Column Contributions are the engine's for the same call; the actual by
 predicted points select their rows (one by a real mouse click) and table
-selections highlight them; every red triangle opens; Show Trees, the
+selections highlight them; every red triangle opens; Show Trees (a split
+on a categorical column words its two groups of levels as JMP does), the
 statistic of Cumulative Validation, Permutation Importance, the profiler,
 ROC and lift curves appear from the red triangles; Save Columns saves the
-engine's predictions and probabilities, and Save Cumulative Details makes a
-table; Specifications… fits again with new settings; Multiple Fits gives
+engine's predictions and probabilities, Score Rows… scores another open
+table and rows added since with the model as it fitted, and Save
+Cumulative Details makes a table; Specifications… fits again with new
+settings; Multiple Fits gives
 Model Validation-Set Summaries whose lines show their fits; progress lines
 reach the report while a long fit runs; By gives one analysis per group with
 combined tables; Redo and a project keep the options; Bootstrap reruns the
-report headless; the Python script holds the scikit-learn calls; every (i)
+report headless; the Python script holds the trees' code; every (i)
 has a topic; the launch dialogs' (i) explain every role, option and
 Specification field, as the Specifications form's and Tree Views' (i) do
 theirs; the reports draw in the dark theme and at phone width.
@@ -35,6 +38,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import sys
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
@@ -489,6 +493,16 @@ async def main():
     check('Show Trees: the Tree Views outline with tree 1, a line per node', (tv['n'], len(tv['lines']), tv['lines'][0].startswith('All Rows')), ('1', len(tree1['lines']), True))
     check('... as many leaves as the tree keeps splits + 1', tv['leaves'], eng['trees'][0]['splits'] + 1)
     check('... each with its count and mean', 'Count' in tv['lines'][0] and 'Mean' in tv['lines'][0], True)
+    conds = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Tree Views');
+      return [...h.parentElement.querySelectorAll('.sm-ens-cond')].map(n => n.textContent); })()''')
+    check('... each node\'s condition in the engine\'s words: a value cut, a Missing column, or the levels on its side as JMP words them',
+          (conds == [ln['text'] for ln in tree1['lines']], [c for c in conds if not re.fullmatch(r'All Rows|.+ (<=|>) -?[\d.e+-]+|.+ (not )?missing|[^()]+\(.+\)', c)]), (True, []))
+    cat_splits = []
+    for i in range(1, 6):
+        tvi = await page.ev(engine_js({'fn': 'ensemble.tree', 'index': i, 'detail': 'categories'}))
+        cat_splits += [ln['text'] for ln in tvi['lines'] if re.match(r'(contract|region)\(', ln['text'])]
+    check('... a split on contract or region takes two groups of its levels (the first five trees have such splits, each level on one side)',
+          (bool(cat_splits), all(len(t_[t_.index('(') + 1:-1].split(', ')) >= 1 for t_ in cat_splits)), (True, True))
     await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const d = new Promise(res => rep.on('done', res));
       [...rep.body.querySelectorAll('.sm-ens-treebar button')].find(b => b.getAttribute('aria-label').startsWith('Next')).click(); await d; })()''')
     st = await page.ev(STATE)
@@ -590,7 +604,76 @@ async def main():
     check('the forest\'s probabilities are never exactly 0 or 1 (JMP\'s prior) and add to 1', (r['mn'] > 0, r['mx'] < 1, r['sum1']), (True, True, True))
     check('Most Likely churned is a nominal column of the levels', (r['type'], set(r['most']) <= {'No', 'Yes'}), ('nominal', True))
     script = await page.ev('SM.app.reports[SM.app.reports.length - 1].pythonScript()')
-    check('the Python script holds the scikit-learn forest and JMP\'s probabilities', all(s in script for s in ('RandomForestClassifier(', 'def jmp_probs(', 'def oob_losses(', 'kept_splits(loss, 10)', 'estimators_samples_')), True)
+    check('the Python script holds the forest\'s trees, their order of the levels and JMP\'s probabilities',
+          (all(s in script for s in ('DecisionTreeClassifier(', 'def jmp_probs(', 'def oob_losses(', 'kept_splits(loss, 10)', 'def level_ranks(', 'maps_for(Xt, target, wt * inbag')), 'sklearn.ensemble' in script), (True, False))
+
+    # ---- Score Rows…: another open table, by the report's model as it fitted
+    r = await page.ev(f'''(async () => {{
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const rows = [0, 1, 2, 3, 4, 5];
+      const cols = {json.dumps(XS)}.map(nm => {{ const c = t.col(nm); return {{ name: nm, dataType: c.dataType, values: rows.map(i => c.isNumeric ? c.values[i] + 1 : c.values[i]), ...(c.valueOrder ? {{ valueOrder: c.valueOrder.slice() }} : {{}}) }}; }});
+      const other = new SM.Table({{ name: 'New subscribers', source: 'test', columns: cols }});
+      SM.app.addTable(other); SM.app.showTab(SM.app.tabOf(rep));
+      await ({PICK})('*top*', ['Save Columns', 'Score Rows…'], false, 0);
+      for (let i = 0; i < 60 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+      const d = [...document.querySelectorAll('.sm-dialog')].pop(); const sels = d.querySelectorAll('.sm-form select');
+      const title = d.querySelector('.sm-dialog-head').textContent;
+      sels[0].value = other.id; sels[1].value = 'all'; d.querySelector('.sm-dialog-foot .primary').click();
+      for (let i = 0; i < 100 && !other.columns.some(c => c.name === 'Prob[Yes]'); i++) await new Promise(r => setTimeout(r, 100));
+      const eng = await SM.engine.call('ensemble.score', {{ keep: `${{rep.id}}|`, kind: 'forest', target_rows: null }}, other);
+      return {{ title, names: other.columns.map(c => c.name), yes: other.col('Prob[Yes]') ? other.col('Prob[Yes]').values : null, most: other.col('Most Likely churned') ? other.col('Most Likely churned').values : null, eng }};
+    }})()''', timeout=300)
+    check('Save Columns ▸ Score Rows… into another open table: Prob[] and Most Likely columns, the report\'s forest as it fitted (the engine kept it)',
+          (r['title'].startswith('Score Rows'), r['names'][-3:], r['yes'] == [q[1] for q in r['eng']['prob']], r['most'] == r['eng']['most_likely'], r['eng']['note']), (True, ['Prob[No]', 'Prob[Yes]', 'Most Likely churned'], True, True, None))
+    # ... and rows added to the report's own table since it fitted: only they get predictions, from the model as it fitted
+    r = await page.ev(f'''(async () => {{
+      const src = SM.app.tables.find(t => t.name === 'Subscribers');
+      const keep = Array.from({{ length: 400 }}, (_, i) => i);
+      const cols = src.columns.map(c => ({{ name: c.name, dataType: c.dataType, values: keep.map(i => c.values[i]), ...(c.valueOrder ? {{ valueOrder: c.valueOrder.slice() }} : {{}}) }})).filter(c => !/^(Prob|Most Likely|Predicted|Residual)/.test(c.name));
+      const t = new SM.Table({{ name: 'Mini subscribers', source: 'test', columns: cols }});
+      SM.app.addTable(t);
+      const ids = (names) => names.map(n => t.col(n).id);
+      const rep = SM.app.openReport(SM.platforms.get('forest'), {{ roles: {{ y: ids(['churned']), x: ids({json.dumps(XS)}), validation: ids(['Validation']) }}, options: {{ settings: {{ trees: 20 }}, seed: '4' }} }}, t);
+      await new Promise(res => rep.on('done', res));
+      await ({PICK})('*top*', ['Save Columns', 'Save Predicteds'], false, 0);
+      for (let i = 0; i < 60 && !t.col('Prob[Yes]'); i++) await new Promise(r => setTimeout(r, 100));
+      const before = t.col('Prob[Yes]').values.slice();
+      t.addRows(3);
+      for (const [k, i] of [[400, 3], [401, 50], [402, 77]]) for (const nm of {json.dumps(XS)}) t.setCell(k, nm, src.col(nm).values[i]);
+      await new Promise(r => setTimeout(r, 200));
+      const stale = rep.stale;
+      await ({PICK})('*top*', ['Save Columns', 'Score Rows…'], false, 0);
+      for (let i = 0; i < 60 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+      const d = [...document.querySelectorAll('.sm-dialog')].pop();
+      d.querySelector('.sm-dialog-foot .primary').click();
+      for (let i = 0; i < 100 && !Number.isFinite(t.col('Prob[Yes]').values[402]); i++) await new Promise(r => setTimeout(r, 100));
+      const eng = await SM.engine.call('ensemble.score', {{ keep: `${{rep.id}}|`, kind: 'forest', target_rows: [400, 401, 402] }}, t);
+      const after = t.col('Prob[Yes]').values;
+      SM.app.showTab(SM.app.tabOf(src));      // the reports below open on the Subscribers again
+      return {{ stale, same: before.every((v, i) => v === after[i]), added: after.slice(400), eng: eng.prob.map(q => q[1]), note: eng.note, cols: t.columns.filter(c => c.name.startsWith('Prob[')).length, current: SM.app.current === src }};
+    }})()''', timeout=600)
+    check('Score Rows… on rows added since (the report marked stale, not fitted again): only the new rows get predictions, into the columns Save Predicteds made',
+          (r['stale'], r['same'], r['cols'], r['added'] == r['eng'], r['note'], r['current']), (True, True, 2, True, None, True))
+
+    # ---- a K-fold Validation column: every row trains, and Overall Statistics has a Crossvalidation line by its folds
+    r = await page.ev(f'''(async () => {{
+      const src = SM.app.tables.find(t => t.name === 'Subscribers');
+      const cols = src.columns.filter(c => !/^(Prob|Most Likely|Predicted|Residual)/.test(c.name)).map(c => ({{ name: c.name, dataType: c.dataType, values: c.values.slice(0, 500), ...(c.valueOrder ? {{ valueOrder: c.valueOrder.slice() }} : {{}}) }}));
+      cols.push({{ name: 'Fold ID', dataType: 'numeric', values: Array.from({{ length: 500 }}, (_, i) => 1 + (i * 7919) % 4) }});
+      const t = new SM.Table({{ name: 'Subscriber folds', source: 'test', columns: cols }});
+      SM.app.addTable(t);
+      const ids = (names) => names.map(n => t.col(n).id);
+      const rep = SM.app.openReport(SM.platforms.get('forest'), {{ roles: {{ y: ids(['satisfaction']), x: ids({json.dumps(XS)}), validation: ids(['Fold ID']) }}, options: {{ settings: {{ trees: 15 }}, seed: '6' }} }}, t);
+      await new Promise(res => rep.on('done', res));
+      const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Overall Statistics');
+      const tb = h.parentElement.querySelectorAll('table.sm-rt')[1];
+      const eng = await SM.engine.call('ensemble.fit', {{ y: 'satisfaction', x: {json.dumps(XS)}, kind: 'forest', validation: 'Fold ID', seed: 6, settings: {{ trees: 15 }} }}, t);
+      SM.app.showTab(SM.app.tabOf(src));
+      return {{ sets: tb._rt.rows.map(r => r.set), cv: tb._rt.rows.find(r => r.set === 'Crossvalidation'), eng: eng.fit.measures.find(m => m.set === 'Crossvalidation'),
+               notes: [...rep.body.querySelectorAll('.sm-ob-note')].filter(n => /Crossvalidation: each row predicted by the forest/.test(n.textContent)).length, errors: [...rep.body.querySelectorAll('.sm-ob-error')].length }};
+    }})()''', timeout=600)
+    check('a K-fold Validation column: Overall Statistics has Training, Out of Bag and a Crossvalidation line (the engine\'s), and a note says what it is',
+          (r['sets'], bool(r['cv']) and abs(r['cv']['rsquare'] - r['eng']['rsquare']) < 1e-12, r['notes'], r['errors']), (['Training', 'Out of Bag', 'Crossvalidation'], True, 1, 0))
 
     # ---- Boosted Tree
     rep = await page.ev(open_report_js('boosted', {'y': ['churned'], 'x': XS, 'validation': ['Validation']}, {'seed': '5'}), timeout=600)
@@ -684,7 +767,9 @@ async def main():
     helps = await page.ev('(() => { SM.app.showHelp("p-forest"); const a = document.getElementById("help-p-forest"), b = document.getElementById("help-p-boosted"); return [a ? a.textContent : null, b ? b.textContent : null]; })()')
     check('Help lines for both platforms, with the scikit-learn classes', (bool(helps[0]) and 'RandomForestRegressor' in helps[0], bool(helps[1]) and 'GradientBoostingClassifier' in helps[1]), (True, True))
     topics = await page.ev('Object.keys(SM.platforms.get("forest").topics)')
-    check('the topics', sorted(topics), sorted(['p:forest', 'p:boosted', 'p:ensemble:spec', 'p:ensemble:summaries', 'p:ensemble:cumulative', 'p:ensemble:pertree', 'p:ensemble:contrib', 'p:ensemble:trees']))
+    check('the topics', sorted(topics), sorted(['p:forest', 'p:boosted', 'p:ensemble:spec', 'p:ensemble:summaries', 'p:ensemble:cumulative', 'p:ensemble:pertree', 'p:ensemble:contrib', 'p:ensemble:trees', 'p:ensemble:score']))
+    tp = await page.ev('(() => { const T = SM.platforms.get("forest").topics; return [T["p:forest"].sections.map(s => s.heading), T["p:boosted"].sections.map(s => s.heading)]; })()')
+    check('... both platforms\' (i) explain the categorical factors, Score Rows and the differences from JMP', [all(h in hs for h in ('Categorical factors', 'Score Rows', 'Differences from JMP')) for hs in tp], [True, True])
 
     # ---- the (i) explains every input: the launch dialogs and their Specification, the form, Tree Views
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Subscribers")))')

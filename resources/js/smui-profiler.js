@@ -21,9 +21,11 @@
    response, set with Set Desirabilities; the Desirability row is their
    weighted geometric mean over each factor), Maximize Desirability (the
    factors moved to the best setting: '<area>.maximize'), Remember Settings
-   (a table of settings and predictions), and Assess Variable Importance
-   (Sobol main and total effects: '<area>.importance'). These work with
-   one source (one model).
+   (a table of settings and predictions), Assess Variable Importance
+   (Sobol main and total effects: '<area>.importance'), Marginal Model
+   Plots (partial dependence with ICE lines: '<area>.marginal') and Save
+   Shapley Values (permutation SHAP of every row: '<area>.shapley'). These
+   work with one source (one model).
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -59,6 +61,8 @@
     const desKey = `profilerDes:${option}`;
     const memKey = `profilerMem:${option}:${ctx.byLabel || ''}`;
     const impKey = `profilerImp:${option}`;
+    const margKey = `profilerMarg:${option}`;
+    const iceKey = `profilerICE:${option}`;
     const single = sources.length === 1;
     const fnOf = (what) => sources[0].fn.replace(/\.profile$/, `.${what}`);
     const can = (what) => single && SM.engine.has(fnOf(what));
@@ -66,6 +70,7 @@
     const des = single ? ctx.opt(desKey, null, scope) : null;
     const remembered = ctx.opt(memKey, null, scope) || [];
     const impMethod = can('importance') ? ctx.opt(impKey, null, scope) : null;
+    const margOn = can('marginal') && !!ctx.opt(margKey, false, scope);
     let res = null;
     const ob = ctx.outline(title, { parent, key, info, menu: () => [
       { label: 'Desirability Functions', checked: !!des, disabled: !can('maximize'), action: () => ctx.set(desKey, des ? null : defaults(), scope) },
@@ -76,6 +81,9 @@
         { label: 'Independent Uniform Inputs', checked: impMethod === 'uniform', action: () => ctx.set(impKey, impMethod === 'uniform' ? null : 'uniform', scope) },
         { label: 'Independent Resampled Inputs', checked: impMethod === 'resampled', action: () => ctx.set(impKey, impMethod === 'resampled' ? null : 'resampled', scope) },
       ] },
+      { label: 'Marginal Model Plots', checked: margOn, disabled: !can('marginal'), action: () => ctx.set(margKey, !margOn, scope) },
+      { label: 'ICE Lines', checked: !!ctx.opt(iceKey, false, scope), disabled: !margOn, action: () => ctx.set(iceKey, !ctx.opt(iceKey, false, scope), scope) },
+      { label: 'Save Shapley Values…', disabled: !can('shapley') || !ctx.table, action: () => saveShapley(ctx, { fn: fnOf('shapley'), payload: sources[0].payload, key, scope }) },
       { separator: true },
       { label: 'Reset Factor Settings', action: () => ctx.set(stateKey, null, scope) },
       { label: 'Remove', action: () => ctx.set(option, false, scope) },
@@ -326,7 +334,68 @@
         ctx.note('Click a row to set the factors to it again.'));
     }
     if (impMethod) await importanceReport(ctx, ob, { fn: fnOf('importance'), payload: sources[0].payload, method: impMethod, key, scope, impKey });
+    if (margOn) await marginalReport(ctx, ob, { fn: fnOf('marginal'), payload: sources[0].payload, key, scope, margKey, ice: !!ctx.opt(iceKey, false, scope) });
     return ob;
+  }
+
+  /* Marginal Model Plots: each response's mean prediction over the background rows as one factor runs over its
+     range, the others at the rows' own values (partial dependence), with ICE lines on request. Drawn from the
+     prediction, as the profiler is (no code block of their own: they sit in the profiler's grid). */
+  async function marginalReport(ctx, parent, { fn, payload, key, scope, margKey, ice }) {
+    const ob = ctx.outline('Marginal Model Plots', { parent, key: `${key}:marginal`, info: 'p:profiler:marginal', menu: () => [{ label: 'Remove', action: () => ctx.set(margKey, false, scope) }] });
+    let r;
+    try { r = await ctx.call(fn, { ...payload, mm_n: 200, mm_ice: ice ? 30 : 0, mm_seed: 1, grid: 41 }); } catch (e) { ob.add(ctx.error(e)); return; }
+    const P = pal();
+    const nf = r.factors.length;
+    const avail = Math.max(320, Math.min(1180, (root.innerWidth || 1200) - 150));
+    const pw = Math.max(118, Math.min(215, Math.floor((avail - 130) / nf)));
+    const ph = r.responses.length > 2 ? 140 : 170;
+    const grid = el('div', { class: 'sm-prof sm-prof-marg', style: { gridTemplateColumns: `minmax(92px, max-content) repeat(${nf}, max-content)` } });
+    const rows = [];
+    r.responses.forEach((resp) => {
+      grid.append(el('div', { class: 'sm-prof-y' }, el('span', { class: 'sm-prof-name', text: resp.name })));
+      let lo = Infinity, hi = -Infinity;
+      for (const t of resp.traces) for (const v of [...t.pd, ...t.ice.flat()]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      const yr = resp.bounded ? [0, 1] : (lo <= hi ? [lo - 0.06 * (hi - lo || 1), hi + 0.06 * (hi - lo || 1)] : [0, 1]);
+      resp.traces.forEach((t, fi) => {
+        const f = r.factors[fi];
+        const cat = f.type === 'categorical';
+        const traces = t.ice.map((line) => ({ type: 'scatter', mode: cat ? 'lines+markers' : 'lines', x: t.x, y: line, line: { color: P.muted, width: 0.7 }, marker: { size: 3, color: P.muted }, opacity: 0.45, hoverinfo: 'skip', showlegend: false }));
+        traces.push({ type: 'scatter', mode: cat ? 'lines+markers' : 'lines', x: t.x, y: t.pd, line: { color: P.point, width: 2 }, marker: { size: 6, color: P.point }, hovertemplate: `${SM.report.plotlyText(f.name)} %{x}<br>mean ${SM.report.plotlyText(resp.name)} %{y:.5g}<extra></extra>`, showlegend: false });
+        grid.append(ctx.plot(traces, { margin: { l: fi === 0 ? 48 : 6, r: 6, t: 6, b: 24 }, hovermode: 'closest', dragmode: false,
+          xaxis: cat ? { type: 'category', tickfont: { size: 9 }, fixedrange: true, showgrid: false } : { range: [f.min, f.max], tickfont: { size: 9 }, fixedrange: true, showgrid: false, nticks: 4 },
+          yaxis: { range: yr, showticklabels: fi === 0, tickfont: { size: 9 }, fixedrange: true, nticks: 5 } }, { width: pw + (fi === 0 ? 42 : 0), height: ph, select: false, fit: false, title: `${resp.name} marginal over ${f.name}`, config: { displayModeBar: false } }));
+        t.x.forEach((x, i) => rows.push({ response: resp.name, factor: f.name, value: typeof x === 'number' ? x : String(x), mean: t.pd[i] }));
+      });
+    });
+    grid.append(el('div', { class: 'sm-prof-y sm-prof-corner', text: 'Factors' }));
+    r.factors.forEach((f, fi) => grid.append(el('div', { class: 'sm-prof-x', style: { width: `${pw + (fi === 0 ? 42 : 0)}px` } }, el('span', { class: 'sm-prof-fname', text: f.name }))));
+    const tbl = ctx.rt({ columns: [{ key: 'response', label: 'Response', fmt: 'text' }, { key: 'factor', label: 'Factor', fmt: 'text' }, { key: 'value', label: 'Value', fmt: 'text' }, { key: 'mean', label: 'Mean Prediction' }], rows: rows.map((q) => ({ ...q, value: typeof q.value === 'number' ? fmt(q.value, { sig: 6 }) : q.value })) }, { key: `${key}:marginal`, sortable: false, maxRows: 60 });
+    const tbox = ctx.outline('Marginal Model Values', { parent: ob, key: `${key}:marginalvals`, closed: true });
+    tbox.add(tbl);
+    ob.body.prepend(el('div', { class: 'sm-profwrap' }, grid));
+    ob.body.insertBefore(ctx.note(`Each factor's marginal model: the mean prediction of ${r.n} rows the model learned from (drawn from the seed), the factor set to each value of its range or each level and the other factors at the rows' own values (partial dependence)${r.ice ? `; the thin lines are ${r.ice} of those rows each on its own (individual conditional expectation, ICE)` : ''}. Unlike the profiler, the other factors are not held at one setting: where the curves bend differently, the factors interact. JMP averages over its importance draws; here over the rows.`), tbox.el);
+  }
+
+  /* Save Shapley Values: permutation SHAP of the rows asked for, a column per factor and response. */
+  async function saveShapley(ctx, { fn, payload, key, scope }) {
+    const t = ctx.table;
+    const sel = t.rowsWith ? t.rowsWith('selected') : [];
+    const v = await SM.ui.form({ title: 'Save Shapley Values', info: 'p:profiler:shapley', fields: [
+      { key: 'rows', label: 'Rows', type: 'select', value: sel.length ? 'selected' : 'report', choices: [['report', 'The report\'s rows'], ['all', 'Every row of the table'], ...(sel.length ? [['selected', `The ${sel.length} selected rows`]] : [])], help: 'The rows whose predictions are explained: the report\'s (those it used, the excluded ones left out), every row of the table (excluded rows too), or the selected ones.' },
+      { key: 'n', label: 'Background rows', type: 'number', value: 50, help: 'How many of the rows the model learned from (drawn from the seed) stand for the factors\' usual values: a factor that is not yet set takes each of these rows\' values in turn, and the prediction is averaged over them. More rows, steadier values and a slower computation.' },
+      { key: 'perm', label: 'Permutations', type: 'number', value: 10, help: 'How many random orders of the factors are averaged (each with its reverse), as JMP\'s Permutation SHAP (10 by default). With at least as many as there are orderings of the factors (6 for 3), every ordering is taken once, which gives the exact Shapley values of this background.' },
+      { key: 'seed', label: 'Random Seed', type: 'number', value: 1, help: 'The seed of the background rows and the orders drawn: the same seed gives the same values again.' },
+    ], validate: (x) => (!(Number.isInteger(x.n) && x.n >= 1) ? 'Background rows: a whole number, 1 or more' : !(Number.isInteger(x.perm) && x.perm >= 1) ? 'Permutations: a whole number, 1 or more' : null) });
+    if (!v) return;
+    const rows = v.rows === 'all' ? Array.from({ length: t.nrows }, (_, i) => i) : v.rows === 'selected' ? sel : ctx.rows.slice();
+    try {
+      const r = await ctx.call(fn, { ...payload, sh_rows: rows, sh_n: v.n, sh_perm: v.perm, sh_seed: v.seed == null ? 1 : v.seed });
+      for (const resp of r.responses) {
+        r.factors.forEach((f, j) => ctx.saveColumn(`Shapley[${f}] ${resp.name}`, { rows: r.rows, values: resp.values[j] }, { notes: `the Shapley value of ${f} in each row's ${resp.name}: its contribution against the mean prediction of ${r.n} background rows (${fmt(resp.base, { sig: 6 })}), by ${r.how} (seed ${v.seed}), from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}` }));
+      }
+      SM.ui.toast(`Saved the Shapley values of ${r.rows.length} rows: ${r.factors.length * r.responses.length} columns`);
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
   /* Assess Variable Importance: Sobol's main and total effects per response. */
@@ -351,12 +420,20 @@
     'p:profiler': {
       kicker: 'Profilers', title: 'Prediction Profiler',
       lead: 'How the prediction changes with each factor, the other factors held at their current values. Drag a red dashed line, click in a plot, or type a value under it; the prediction at the current values is on the left. A categorical response has a row per level: the probability of that level.',
-      sections: [{ choices: [['Desirability Functions', 'a desirability between 0 and 1 for each response and their combination, the Desirability row'], ['Maximize Desirability', 'moves the factors to the setting with the highest desirability'], ['Remember Settings', 'adds the current setting and its predictions to a table; click a row to go back to it'], ['Assess Variable Importance', 'how much of the prediction\'s variation each factor accounts for'], ['Reset Factor Settings', 'puts every factor back at its mean (a continuous one) or its first level']] }],
+      sections: [{ choices: [['Desirability Functions', 'a desirability between 0 and 1 for each response and their combination, the Desirability row'], ['Maximize Desirability', 'moves the factors to the setting with the highest desirability'], ['Remember Settings', 'adds the current setting and its predictions to a table; click a row to go back to it'], ['Assess Variable Importance', 'how much of the prediction\'s variation each factor accounts for'], ['Marginal Model Plots', 'each factor\'s mean prediction over the rows the model learned from, the other factors at the rows\' own values (partial dependence); ICE Lines adds rows\' own curves'], ['Save Shapley Values…', 'each row\'s prediction taken apart into a contribution per factor (Permutation SHAP), saved as columns'], ['Reset Factor Settings', 'puts every factor back at its mean (a continuous one) or its first level']] }],
     },
     'p:profiler:desirability': {
       kicker: 'Profilers', title: 'Desirability',
       lead: 'Each response has a goal: Maximize, Minimize or Match Target, set by three points, a value and how desirable it is (0 to 1). The function runs smoothly through them (a monotone cubic) and is flat beyond. The overall desirability is the geometric mean of the responses\' desirabilities, each to the power of its importance: 0 if any is 0. JMP\'s defaults put 0.0183, 0.5 and 0.9817 at the low, middle and high values for Maximize.',
       sections: [{ heading: 'Maximize Desirability', text: 'A quasi-random search over the factors (every level combination of the categorical ones when there are few), the best settings refined by scipy.optimize (Powell\'s method, within the ranges), and the categorical factors\' levels tried again one at a time. A tree or a forest has flat steps: the best step is found, not a single best point.' }],
+    },
+    'p:profiler:marginal': {
+      kicker: 'Profilers', title: 'Marginal Model Plots',
+      lead: 'For each factor, each response\'s mean prediction over the rows the model learned from (200 of them at most, drawn from the seed), the factor set to each value of its range or each level and the other factors at each row\'s own values: partial dependence. ICE Lines (red triangle) adds 30 of those rows\' own curves (individual conditional expectation): curves that bend differently show the factor interacting with the others. JMP draws them from its variable importance draws; here from the rows. Like the profiler they are drawn from the model\'s prediction and have no code block; Marginal Model Values holds their numbers.',
+    },
+    'p:profiler:shapley': {
+      kicker: 'Profilers', title: 'Shapley Values',
+      lead: 'Each row\'s prediction taken apart into a contribution per factor (Permutation SHAP, as JMP Pro\'s Save Shapley Values): along random orders of the factors, each factor is set to the row\'s value in turn, the factors not yet set at the values of background rows the model learned from, and the factor gets the change of the mean prediction. A row\'s values add up to its prediction less the background\'s mean prediction. With as many permutations as there are orderings of the factors, the values are exact for the background. The columns are Shapley[factor] response, one per factor and response (each level\'s probability of a categorical one).',
     },
     'p:profiler:importance': {
       kicker: 'Profilers', title: 'Assess Variable Importance',

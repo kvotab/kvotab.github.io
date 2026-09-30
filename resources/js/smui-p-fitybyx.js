@@ -73,7 +73,7 @@
   // The By group's rows (as the backend's code has them), and those of it the report leaves out.
   function whereLines(ctx) {
     const t = ctx.table, where = ctx.where || [];
-    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${lvText(t.col(w.column), w.value)}`);
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${SM.util.oneLine(lvText(t.col(w.column), w.value))}`);
     const cols = where.map((w) => t.col(w.column));
     const keep = new Set(ctx.rows), drop = [];
     for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
@@ -184,6 +184,15 @@
   };
 
   /* A report table whose positive numbers are marked (threshold matrices). */
+  function markNegative(tbl) {
+    tbl.querySelectorAll('tbody tr').forEach((tr) => tr.querySelectorAll('td').forEach((td, j) => {
+      if (j === 0) return;
+      const v = SM.table.toNumber(td.textContent.replace('−', '-'));
+      if (v < 0) td.classList.add('p-sig');
+    }));
+    return tbl;
+  }
+
   function markPositive(tbl) {
     tbl.querySelectorAll('tbody tr').forEach((tr) => tr.querySelectorAll('td').forEach((td, j) => {
       if (j === 0) return;
@@ -252,6 +261,8 @@
   };
   const HAS_CI = new Set(['line', 'poly', 'special']);
   const HAS_ROWS = new Set(['mean', 'line', 'poly', 'special', 'spline', 'lowess', 'each', 'robust', 'quantile']);
+  // the fits whose prediction has a closed form: Save Formula writes it as a live formula column
+  const HAS_FORMULA = new Set(['mean', 'line', 'poly', 'special', 'robust', 'quantile']);
   const TR_LABEL = { none: 'No Transformation', log: 'Natural Logarithm: log(y)', sqrt: 'Square Root: sqrt(y)', square: 'Square: y²', reciprocal: 'Reciprocal: 1/y', exp: 'Exponential: exp(y)' };
   const TR_TITLE = { log: 'Log', sqrt: 'Sqrt', square: 'Square', reciprocal: 'Recip', exp: 'Exp' };
 
@@ -336,7 +347,7 @@
       for (const [key, vals, on, fn] of [[x.name, P.xv, 'top', 'bar'], [y.name, P.yv, 'side', 'barh']]) {
         const b = SM.report.niceBins(vals);
         const nb = Math.max(1, Math.round((b.end - b.start) / b.size));
-        L.push(`start, size, nb = ${pyNum(b.start)}, ${pyNum(b.size)}, ${nb}   # the page's bins of ${key}`,
+        L.push(`start, size, nb = ${pyNum(b.start)}, ${pyNum(b.size)}, ${nb}   # the page's bins of ${SM.util.oneLine(key)}`,
           `k = np.clip(np.floor((d[${J(key)}] - start) / size + 1e-9), 0, nb - 1).astype(int)`,
           `${on}.${fn}(start + (np.arange(nb) + 0.5) * size, np.bincount(k, weights=w, minlength=nb), ${fn === 'bar' ? 'width' : 'height'}=size, color="${SM.report.BAR}", edgecolor="white", linewidth=0.5)`,
           `${on}.axis("off")   # Histogram Borders`);
@@ -350,7 +361,7 @@
       const dash = MPL_DASH[gcol ? DASHES[fi % DASHES.length] : 'solid'];
       const name = `${fitTitle(f, res)}${g.label ? ` ${g.label}` : ''}`;
       const lv = g.label ? g.where[g.where.length - 1].value : null;
-      L.push(`# ${name}`, g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${lvText(gcol, lv)} (Group By)` : 's = d', ...res.plot.fit);
+      L.push(`# ${SM.util.oneLine(name)}`, g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${SM.util.oneLine(lvText(gcol, lv))} (Group By)` : 's = d', ...res.plot.fit);
       if (f.kind === 'ellipse') L.push(`ax.plot(ex, ey, color="${color}", linewidth=1.2, linestyle=${dash}, label=${J(name)})`);
       else if (f.kind === 'kde') {
         L.push(`for q, lv in zip(${J(res.plot.quantiles)}, levels):   # a contour for each share of the points, the median's thicker`,
@@ -376,7 +387,7 @@
     const p = res.plot;
     const lv = item.g.label ? item.g.where[item.g.where.length - 1].value : null;
     const L = [SM.report.codeHead(ctx.table.name, ['import matplotlib.pyplot as plt', ...(which === 'nq' ? ['from scipy import stats'] : []), ...(p.imports || [])]), ...whereLines(ctx), ...frameLines(ctx, [x.name, y.name])];
-    L.push(item.g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${lvText(gcol, lv)} (Group By)` : 's = d', ...p.fit, ...p.pred,
+    L.push(item.g.label ? `s = d[d[${J(gcol.name)}] == ${pyLit(lv)}]   # the rows where ${gcol.name} is ${SM.util.oneLine(lvText(gcol, lv))} (Group By)` : 's = d', ...p.fit, ...p.pred,
       `resid = s[${J(y.name)}].to_numpy() - pred`, 'fig, ax = plt.subplots(figsize=(2.8, 2.3), layout="constrained")');
     const zero = `ax.axhline(0, color="${GREY}", linewidth=0.7, linestyle=":")`;
     const plots = {
@@ -576,6 +587,9 @@
       sm('Residual Normal Quantile Plot', nq, rv.residual, 'Normal Quantile', 'Residual')));
   }
 
+  /* Save Predicteds and the like: every row of the group whose X has a value (all_rows:
+     the rows the fit left out, excluded or missing Y, too, as JMP's), residuals where Y is
+     present; the studentized residuals for the rows of the fit. */
   async function saveFit(ctx, sc, f, groups, what, y, x) {
     const rows = [], vals = [];
     for (const g of groups) {
@@ -583,7 +597,7 @@
       if (g.rows) payload.rows = g.rows;
       const r = await ctx.call(FIT_FN[f.kind], payload);
       if (r.error || !r.row_values) { SM.ui.toast(r.error || 'nothing to save', { error: true }); return; }
-      const rv = r.row_values;
+      const rv = what === 'studentized' || !r.all_rows ? r.row_values : r.all_rows;
       const v = rv[what];
       if (!v) { SM.ui.toast('this fit has no such values', { error: true }); return; }
       rv.rows.forEach((row, k) => { rows.push(row); vals.push(v[k]); });
@@ -591,6 +605,21 @@
     const a = `${fmt(100 * (1 - (f.alpha || ctx.alpha)))}%`;
     const name = { predicted: `Predicted ${y.name}`, residual: `Residuals ${y.name}`, studentized: `Studentized Resid ${y.name}`, lo_mean: `Lower ${a} Mean ${y.name}`, hi_mean: `Upper ${a} Mean ${y.name}`, lo_indiv: `Lower ${a} Indiv ${y.name}`, hi_indiv: `Upper ${a} Indiv ${y.name}` }[what];
     ctx.saveColumn(name, { rows, values: vals }, { notes: `${fitTitle(f)} of ${y.name}, saved from ${ctx.report.title}` });
+  }
+
+  /* Save Formula: the fit's prediction as a live formula column, for the rows of its group
+     (a Group By's levels together: If(level 1, its formula, level 2, ...)). */
+  async function saveFitFormula(ctx, sc, f, groups, y, x) {
+    const parts = [];
+    for (const g of groups) {
+      const payload = { ...basePayload(ctx, y, x), ...fitArgs(f), where: g.where, alpha: f.alpha || ctx.alpha, want_rows: true };
+      if (g.rows) payload.rows = g.rows;
+      const r = await ctx.call(FIT_FN[f.kind], payload);
+      if (r.error || !r.formula) { SM.ui.toast(r.error || 'this fit has no formula', { error: true }); return; }
+      parts.push(r.formula);
+    }
+    const expr = parts.length === 1 && !parts[0].cond ? parts[0].expr : `If(${parts.map((q) => `${q.cond}, ${q.expr}`).join(', ')}, .)`;
+    SM.fitmodel.saveFormulas(ctx, [{ name: `Pred Formula ${y.name}`, expr }], `${fitTitle(f)} of ${y.name} in ${ctx.report.title}`);
   }
 
   function fitMenu(ctx, sc, f, groups, res, y, x, g) {
@@ -606,6 +635,7 @@
       items.push({ separator: true },
         { label: 'Save Predicteds', action: () => saveFit(ctx, sc, f, groups, 'predicted', y, x) },
         { label: 'Save Residuals', action: () => saveFit(ctx, sc, f, groups, 'residual', y, x) });
+      if (HAS_FORMULA.has(f.kind)) items.push({ label: 'Save Formula', action: () => saveFitFormula(ctx, sc, f, groups, y, x) });
       if (f.kind === 'line' || f.kind === 'poly') {
         items.push({ label: 'Save Studentized Residuals', action: () => saveFit(ctx, sc, f, groups, 'studentized', y, x) },
           { label: 'Save Mean Confidence Limits', action: async () => { await saveFit(ctx, sc, f, groups, 'lo_mean', y, x); await saveFit(ctx, sc, f, groups, 'hi_mean', y, x); } },
@@ -730,7 +760,12 @@
     const P = pointsOf(ctx, y, x, block ? [block] : []);
     // the comparisons first: the graph's code draws the last one's circles
     const cmp = [];
-    for (const c of o('compare', [])) cmp.push({ c, ...(await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: c.method, control: c.control ?? null })) });
+    for (const c of o('compare', [])) {
+      const one = await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: c.method, control: c.control ?? null });
+      // With Best, Hsu MCB: the comparisons with the largest and with the smallest of the others, as JMP reports both
+      if (c.method === 'hsu' && one.res) one.min = (await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: 'hsu_min' })).res || null;
+      cmp.push({ c, ...one });
+    }
     // comparison circles for the last comparison chosen
     const circ = o('circles', true) ? cmp.filter((c) => c.res && !c.error && c.res.quantile && c.res.quantile.value != null).slice(-1)[0] : null;
     const width = availWidth(ctx, Math.max(420, Math.min(760, 180 + 70 * new Set(P.xv.map(keyOf)).size + (circ ? 120 : 0))));
@@ -789,7 +824,7 @@
       const q = circ.res.quantile.value;
       const se = (i) => Math.sqrt(circ.res.mse / (circ.res.n[i] || 1));
       layout.xaxis.domain = [0, 0.78];
-      layout.xaxis2 = { domain: [0.82, 1], range: [-1.05, 1.05], showticklabels: false, showgrid: false, zeroline: false, showline: false, ticks: '', title: { text: circ.c.method === 'tukey' ? 'Tukey' : circ.c.method === 'dunnett' ? 'Dunnett' : 'Student\'s t', font: { size: 10 } } };
+      layout.xaxis2 = { domain: [0.82, 1], range: [-1.05, 1.05], showticklabels: false, showgrid: false, zeroline: false, showline: false, ticks: '', title: { text: circ.c.method === 'tukey' ? 'Tukey' : circ.c.method === 'dunnett' ? 'Dunnett' : circ.c.method === 'hsu' ? 'Hsu MCB' : 'Student\'s t', font: { size: 10 } } };
       levels.forEach((l, i) => {
         const r = q * se(i);
         circles.push({ at: traces.length, r });
@@ -901,10 +936,37 @@
 
   const METHOD_TITLE = {
     student: 'Comparisons for each pair using Student\'s t', tukey: 'Comparisons for all pairs using Tukey-Kramer HSD', dunnett: 'Comparisons with a control using Dunnett\'s Method',
-    gameshowell: 'Comparisons for all pairs using Games-Howell',
+    gameshowell: 'Comparisons for all pairs using Games-Howell', hsu: 'Comparisons with the best - Hsu\'s MCB',
   };
 
+  /* With Best, Hsu MCB: each mean against the largest of the others and against the smallest (Hsu's multiple
+     comparisons with the best), the threshold matrices and the constrained intervals with their p-values. */
+  function mcbReport(ctx, parent, sc, c, names) {
+    const ob = ctx.outline(METHOD_TITLE.hsu, { parent, key: `cmp:${sc}:hsu`, info: 'p:fitybyx:compare', menu: () => [{ label: 'Remove', action: () => ctx.set('compare', ctx.opt('compare', [], sc).filter((z) => z.method !== 'hsu'), sc) }] });
+    if (c.error) { ob.add(problem(ctx, c.error)); return; }
+    const r = c.res;
+    ob.add(ctx.rt({ columns: [{ key: 'q', label: 'd' }, { key: 'a', label: 'Alpha' }], rows: [{ q: r.quantile.value, a: r.alpha }] }, { sortable: false, caption: 'Confidence Quantile' }));
+    for (const part of [r, c.min].filter(Boolean)) {
+      const mx = part.vs === 'max';
+      const what = mx ? 'Max' : 'Min';
+      const cols = [{ key: 'lv', label: '', fmt: 'text' }, ...part.order.map((i) => ({ key: `c${i}`, label: names[i] }))];
+      const rows = part.order.map((i, a) => { const row = { lv: names[i] }; part.order.forEach((j, b) => { row[`c${j}`] = part.mcb_matrix[a][b]; }); return row; });
+      const t = ctx.rt({ columns: cols, rows }, { sortable: false });
+      if (mx) markNegative(t);
+      else markPositive(t);
+      ctx.outline(`Comparison with ${what}`, { parent: ob, key: `mcb:${sc}:${part.vs}` }).add(
+        el('p', { class: 'sm-ob-note', text: mx ? 'Mean[i]-Mean[j]+LSD' : 'Mean[i]-Mean[j]-LSD' }), t,
+        ctx.note(mx ? 'A negative value in a row: that level\'s mean is significantly less than the column\'s, so it cannot be the largest.' : 'A positive value in a row: that level\'s mean is significantly greater than the column\'s, so it cannot be the smallest.'),
+        ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'mean', label: 'Mean' }, { key: 'diff', label: `Mean - ${what}(others)` }, { key: 'lower', label: 'Lower CL' }, { key: 'upper', label: 'Upper CL' }, { key: 'p', label: 'p-Value', fmt: 'p' }],
+          rows: part.mcb.map((m) => ({ ...m, lv: names[m.index] })) }, { sortable: false, caption: `Each mean less the ${mx ? 'largest' : 'smallest'} of the others, Hsu's constrained intervals` }),
+        ctx.note(mx ? 'A level whose upper limit is 0 is significantly below the best (its p-value below α); the levels whose intervals reach above 0 may be the best.' : 'A level whose lower limit is 0 is significantly above the smallest; the levels whose intervals reach below 0 may be the smallest.'),
+        ctx.code(part.code));
+    }
+    ob.add(notesOf(ctx, r.notes));
+  }
+
   function compareReport(ctx, parent, sc, c, names) {
+    if (c.c.method === 'hsu') { mcbReport(ctx, parent, sc, c, names); return; }
     const gh = c.c.method === 'gameshowell';
     const ob = ctx.outline(METHOD_TITLE[c.c.method], { parent, key: `cmp:${sc}:${c.c.method}`, menu: () => [{ label: 'Remove', action: () => ctx.set('compare', ctx.opt('compare', [], sc).filter((z) => z.method !== c.c.method), sc) }] });
     if (c.error) { ob.add(problem(ctx, c.error)); return; }
@@ -1316,7 +1378,7 @@
       { label: 'Effect Size', checked: ctx.opt('effect', false, sc), action: withEffect },
       { label: 'Bayes Factor…', checked: !!ctx.opt('bf', null, sc), disabled: k !== 2 || !!(ctx.role('block') && ctx.role('block').isCategorical), action: () => priorDialog(ctx, sc, 'bf', 'Bayes Factor: two-sample t test') },
       { label: 'Analysis of Means Methods', submenu: [ctx.check('ANOM', 'anom', sc, false)] },
-      { label: 'Compare Means', submenu: () => [cmpItem('Each Pair, Student\'s t', 'student'), cmpItem('All Pairs, Tukey HSD', 'tukey'), cmpItem('All Pairs, Games-Howell', 'gameshowell'), cmpItem('With Control, Dunnett\'s…', 'dunnett', true)] },
+      { label: 'Compare Means', submenu: () => [cmpItem('Each Pair, Student\'s t', 'student'), cmpItem('All Pairs, Tukey HSD', 'tukey'), cmpItem('All Pairs, Games-Howell', 'gameshowell'), cmpItem('With Best, Hsu MCB', 'hsu'), cmpItem('With Control, Dunnett\'s…', 'dunnett', true)] },
       { label: 'Nonparametric', submenu: () => [
         np('Wilcoxon / Kruskal-Wallis Tests', 'wilcoxon'), np('Median Test', 'median'), np('van der Waerden Test', 'vdw'), np('Kolmogorov-Smirnov Test', 'ks', k !== 2),
         ctx.check('Brunner-Munzel Test', 'bm', sc, false),
@@ -1345,31 +1407,53 @@
     ];
   }
 
-  /* Oneway's Save: from the values in the page (the level means and
-     standard deviations of the rows used, Freq counted). */
+  /* Every row of the table in the report's By group, excluded and filtered-out rows too: the
+     rows a saved prediction covers, as JMP's. */
+  function groupRows(ctx) {
+    const t = ctx.table, where = ctx.where || [];
+    const cols = where.map((w) => t.col(w.column));
+    const out = [];
+    for (let r = 0; r < t.nrows; r++) if (where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) out.push(r);
+    return out;
+  }
+
+  /* Oneway's Save: from the level means and standard deviations of the rows of the analysis
+     (Freq counted). Save Predicted gives every row of the By group whose X is one of those
+     levels its level's mean (rows left out, excluded or missing Y, too); Save Centered and
+     Save Standardized every such row with a Y; Save Normal Quantiles the rows of the
+     analysis (their ranks within the level). */
   function oneSave(ctx, sc, y, x, kind) {
     const blockCol = ctx.role('block');
     const P = pointsOf(ctx, y, x, blockCol && blockCol.isCategorical ? [blockCol] : []);
     const f = ctx.role('freq');
     const groups = new Map();
     P.rows.forEach((r, i) => { const key = keyOf(P.xv[i]); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(i); });
-    const vals = new Array(P.rows.length);
-    for (const idx of groups.values()) {
+    const stat = new Map();
+    const qv = new Array(P.rows.length);
+    for (const [key, idx] of groups) {
       const fw = idx.map((i) => (f ? f.values[P.rows[i]] : 1));
       const nn = fw.reduce((a, b) => a + b, 0);
       const m = idx.reduce((a, i, j) => a + fw[j] * P.yv[i], 0) / nn;
-      const s = Math.sqrt(idx.reduce((a, i, j) => a + fw[j] * (P.yv[i] - m) ** 2, 0) / (nn - 1));
+      const sd = Math.sqrt(idx.reduce((a, i, j) => a + fw[j] * (P.yv[i] - m) ** 2, 0) / (nn - 1));
+      stat.set(key, { m, sd });
       const order = idx.slice().sort((a, b) => P.yv[a] - P.yv[b]);
-      const rk = new Map(order.map((i, j) => [i, j + 1]));
-      for (const i of idx) {
-        if (kind === 'centered') vals[i] = P.yv[i] - m;
-        else if (kind === 'standardized') vals[i] = (P.yv[i] - m) / s;
-        else if (kind === 'predicted') vals[i] = m;
-        else vals[i] = qnorm(rk.get(i) / (idx.length + 1));
-      }
+      order.forEach((i, j) => { qv[i] = qnorm((j + 1) / (idx.length + 1)); });
     }
     const name = { centered: `${y.name} centered by ${x.name}`, standardized: `${y.name} std by ${x.name}`, predicted: `${y.name} mean by ${x.name}`, nquantile: `N-Quantile ${y.name} by ${x.name}` }[kind];
-    ctx.saveColumn(name, { rows: P.rows, values: vals });
+    if (kind === 'nquantile') { ctx.saveColumn(name, { rows: P.rows, values: qv }); return; }
+    const rows = [], vals = [];
+    for (const r of groupRows(ctx)) {
+      const v = x.values[r];
+      if (isMissing(v)) continue;
+      const st = stat.get(keyOf(v));
+      if (!st) continue;
+      const yv = y.values[r];
+      if (kind === 'predicted') { rows.push(r); vals.push(st.m); continue; }
+      if (isMissing(yv) || !Number.isFinite(yv)) continue;
+      rows.push(r);
+      vals.push(kind === 'centered' ? yv - st.m : (yv - st.m) / st.sd);
+    }
+    ctx.saveColumn(name, { rows, values: vals });
   }
 
   /* ======================================================================
@@ -1428,11 +1512,17 @@
     const wm = ctx.outline('Whole Model Test', { parent: host, key: `wm:${sc}`, info: 'p:fitybyx:logistic' });
     wm.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'nll', label: '-LogLikelihood' }, { key: 'df', label: 'DF' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.whole }, { sortable: false }),
       ctx.kv([['RSquare (U)', res.rsquare_u], ['AICc', res.aicc], ['BIC', res.bic], ['Observations (or Sum Wgts)', res.n]]));
+    // Lack of Fit (JMP's, when X values repeat): the fitted curve against each distinct X's own shares of the levels
+    if (res.lack_of_fit && o('lof', true)) {
+      ctx.outline('Lack Of Fit', { parent: host, key: `lof:${sc}`, closed: true, info: 'p:fitybyx:logistic' }).add(ctx.rt(res.lack_of_fit, { sortable: false }),
+        ctx.note(`The saturated model gives each of the ${res.lack_of_fit.patterns} distinct values of ${x.name} its own shares of the levels. ChiSquare is twice the difference of the −LogLikelihoods; a small p-value says the logistic curve misses how the probabilities change with ${x.name}.`),
+        ctx.code(res.lack_of_fit.code));
+    }
     ctx.outline('Fit Details', { parent: host, key: `fd:${sc}`, closed: true }).add(ctx.rt({ columns: [{ key: 'measure', label: 'Measure', fmt: 'text' }, { key: 'value', label: 'Training' }], rows: res.details }, { sortable: false }));
     const pe = ctx.outline('Parameter Estimates', { parent: host, key: `pe:${sc}` });
     const odds = (j) => (res.kind === 'binary' ? `For log odds of ${names[0]}/${names[1]}` : res.kind === 'nominal' ? `For log odds of ${names[j]}/${names[k - 1]}` : `For the cumulative logits, logit P(${y.name} ≤ level) = Intercept[level] + b·${x.name}`);
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
-    const cols = [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${lvl}`, hidden: true }, { key: 'upper', label: `Upper ${lvl}`, hidden: true }];
+    const cols = [{ key: 'term', label: 'Term', fmt: 'text' }, ...(res.unstable ? [{ key: 'unstable', label: '', fmt: 'text' }] : []), { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${lvl}`, hidden: true }, { key: 'upper', label: `Upper ${lvl}`, hidden: true }];
     if (res.kind === 'nominal') {
       for (let j = 0; j < k - 1; j++) pe.add(ctx.rt({ columns: cols, rows: res.estimates.filter((e) => e.group === j) }, { sortable: false, caption: odds(j) }));
     } else {
@@ -1457,12 +1547,14 @@
         ctx.note(`The ${x.name} at which P(${names[r.target]}) is the given probability; Fieller's confidence limits (missing where the slope is not significantly different from zero).`), ctx.code(r.code));
     }
     if (o('roc', false)) {
-      const ob = ctx.outline('ROC Curve', { parent: host, key: `roc:${sc}` });
+      // the ROC Table of two levels (SM.fitmodel.rocTable: JMP's, a line per cut, from the Decision Threshold's data)
+      const ob = ctx.outline('ROC Curve', { parent: host, key: `roc:${sc}`, info: 'p:fitybyx:logistic', menu: res.threshold ? () => [ctx.check('ROC Table', 'rocTable', sc, false)] : null });
       const traces = res.roc.map((r) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, line: { color: PALETTE[r.level % PALETTE.length], width: 1.8, shape: 'linear' }, name: `${names[r.level]} (AUC ${r.auc.toFixed(4)})` }));
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: [0, 1], line: { color: GREY, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
       ob.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: '1-Specificity (False Positive Rate)' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity (True Positive Rate)' }, range: [0, 1] }, showlegend: true, legend: { orientation: 'h', y: -0.28 } }, { width: availWidth(ctx, 360), height: 360, title: 'ROC Curve', select: false }), ctx.code(res.roc_code)),
         ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'auc', label: 'Area Under Curve' }], rows: res.roc.map((r) => ({ lv: names[r.level], auc: r.auc })) }, { sortable: false })),
       ctx.note(k === 2 ? `Sensitivity and 1 − specificity of classifying ${names[res.target]} by its fitted probability, over every cutoff.` : 'Each level against the rest, by its fitted probability.'));
+      if (res.threshold && o('rocTable', false)) SM.fitmodel.rocTable(ctx, ob, res.threshold, { scope: sc, key: `roctable:${sc}` });
     }
     if (o('lift', false)) {
       const ob = ctx.outline('Lift Curve', { parent: host, key: `lift:${sc}` });
@@ -1477,6 +1569,11 @@
       ob.add(ctx.rt({ columns: cols2, rows: res.confusion.map((row, i) => { const r = { actual: names[i] }; row.forEach((v, j) => { r[`p${j}`] = v; }); return r; }) }, { sortable: false }),
         ctx.note('Each row\'s most likely level against its actual level.'));
     }
+    // Decision Threshold (two levels; SM.predict's report): each row's fitted probability of the target level against a
+    // threshold; Save Threshold Formula saves the Prob[] columns first when they are not in the table
+    if (res.threshold && o('threshold', false)) {
+      SM.predict.threshold(ctx, host, res.threshold, { scope: sc, prefix: `${sc}:`, yCol: y, save: { fn: 'fitybyx.logistic_rows', payload: { ...base, target: o('target', null) } } });
+    }
   }
 
   function logMenu(ctx, sc, y, x) {
@@ -1484,22 +1581,24 @@
     const binary = levels.length === 2;
     return [
       ctx.check('Logistic Plot', 'lplot', sc, true),
+      ctx.check('Lack of Fit', 'lof', sc, true),
       ctx.check('Odds Ratios', 'odds', sc, false),
       { label: 'Inverse Prediction…', disabled: !binary, checked: !!ctx.opt('inverse', null, sc), action: async () => { const v = await ask('Inverse Prediction', [{ key: 'p', label: 'Probabilities, separated by commas', value: (ctx.opt('inverse', null, sc) || [0.5]).join(', '),
         help: 'Probabilities of the target level, each between 0 and 1: for each, the X at which the fitted probability equals it, with Fieller\'s confidence limits. 0.5 gives the X where both levels are equally likely (an ED50).' }]); if (v) { const ps = String(v.p).split(/[,;\s]+/).map(Number).filter((p) => p > 0 && p < 1); ctx.set('inverse', ps.length ? ps : null, sc); } } },
       ctx.check('ROC Curve', 'roc', sc, false),
       ctx.check('Lift Curve', 'lift', sc, false),
       ctx.check('Confusion Matrix', 'confusion', sc, false),
+      binary ? SM.predict.thresholdItem(ctx, sc) : null,
       { label: 'Target Level', disabled: !binary, submenu: () => levels.map((l, i) => ({ label: lvText(y, l), checked: (ctx.opt('target', null, sc) == null ? i === 0 : keyOf(ctx.opt('target', null, sc)) === keyOf(l)), action: () => ctx.set('target', i === 0 ? null : l, sc) })) },
       { label: 'Set α Level', submenu: () => alphaMenu(ctx) },
       { separator: true },
+      // live formula columns, JMP's: Lin[level] (ordinal: Linear and Cum[level]), Prob[level], Most Likely
       { label: 'Save Probability Formula', action: async () => {
         const r = await ctx.call('fitybyx.logistic_rows', { ...basePayload(ctx, y, x), target: ctx.opt('target', null, sc) });
         if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
-        r.levels.forEach((l, j) => ctx.saveColumn(`Prob[${lvText(y, l)}]`, { rows: r.rows, values: r.probs[j] }));
-        ctx.saveColumn(`Most Likely ${y.name}`, { rows: r.rows, values: r.most_likely.map((j) => lvText(y, r.levels[j])) }, { dataType: 'character', modelingType: 'nominal' });
+        SM.fitmodel.saveFormulas(ctx, r.formulas);
       } },
-    ];
+    ].filter(Boolean);
   }
 
   /* ======================================================================
@@ -1893,7 +1992,8 @@
           ['Fit Spline', 'The cubic smoothing spline with penalty λ (scipy make_smoothing_spline).'], ['Kernel Smoother', 'statsmodels LOWESS.'], ['Fit Each Value', 'The mean at each X: the pure error.'],
           ['Fit Orthogonal', 'Deming regression for a ratio of error variances; jackknife standard errors.'], ['Robust', 'M-estimation (statsmodels RLM), Huber or bisquare.'], ['Fit Quantile', 'statsmodels QuantReg.'],
           ['Density Ellipse', 'The bivariate normal contour and the correlation with its Fisher-z interval.'], ['Nonpar Density', 'Contours of a Gaussian kernel density.']] },
-        { heading: 'The fit\'s red triangle', text: 'Confidence curves for the fitted mean and for individuals, shaded or as lines; Save Predicteds, Residuals and Studentized Residuals; Plot Residuals; Remove Fit.' },
+        { heading: 'The fit\'s red triangle', text: 'Confidence curves for the fitted mean and for individuals, shaded or as lines; Save Predicteds, Residuals and Studentized Residuals; Save Formula; Plot Residuals; Remove Fit.' },
+        { heading: 'Saved columns', text: 'Save Predicteds gives every row whose X has a value its prediction, also the rows the fit left out (excluded, a missing Y); residuals only where Y has one. Save Formula (Fit Mean, Line, Polynomial, Special, Robust, Quantile) saves the fit as a live formula column in the table\'s formula language, the polynomial\'s centred powers and Fit Special\'s transformations written out, so that it recomputes when X changes.' },
       ],
       more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
     },
@@ -1905,10 +2005,11 @@
     },
     'p:fitybyx:compare': {
       kicker: 'Oneway', title: 'Compare Means',
-      lead: 'Which pairs of means differ. Student\'s t does each pair at level α; Tukey-Kramer HSD holds α over all pairs; Dunnett\'s compares each level with a control.',
+      lead: 'Which pairs of means differ. Student\'s t does each pair at level α; Tukey-Kramer HSD holds α over all pairs; Hsu\'s MCB compares each level with the best of the others; Dunnett\'s compares each level with a control.',
       sections: [
         { heading: 'Reading the reports', list: ['The threshold matrix shows |difference| minus the least significant difference: positive for pairs that differ.', 'Levels that do not share a letter in the connecting letters report differ.', 'The comparison circles have radius quantile × standard error; circles of means that differ barely overlap or not at all.'] },
         { heading: 'The numbers', text: 'Student\'s t: statsmodels contrasts of the cell-means model. Tukey: the differences from statsmodels\' pairwise_tukeyhsd; q* and the p-values from scipy\'s studentized range distribution, which is exact where pairwise_tukeyhsd\'s approximation stops at p = 0.001. Dunnett: scipy.stats.dunnett.' },
+        { heading: 'With Best, Hsu MCB', text: 'Each mean against the best of the others (Hsu\'s multiple comparisons with the best): against the largest of the others, and against the smallest. d is the one-sided Dunnett quantile of k − 1 comparisons (correlations ½, exact for equal group sizes). A level whose interval for its mean less the largest of the others has upper limit 0 is significantly below the best and cannot be the largest; the threshold matrix shows it as a negative value in its row. The comparison circles use d.' },
         { heading: 'Games-Howell', text: 'All pairs without assuming equal variances (Games and Howell 1976): each difference over its own standard error √(s²ᵢ/nᵢ + s²ⱼ/nⱼ), with the Welch-Satterthwaite degrees of freedom of the pair, and p-values and intervals from the studentized range of k levels on those degrees of freedom. Use it where Unequal Variances rejects equal variances and Tukey\'s pooled error would mislead. Each pair has its own q*, so there are no comparison circles. Not in JMP; Weight is not used.' },
       ],
       more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
@@ -1994,7 +2095,11 @@
       kicker: 'Logistic', title: 'Logistic fits',
       lead: 'The probability of each level of Y as a function of X. Two levels: the log odds of the first level (the target) are a line in X (statsmodels Logit, or GLM with frequency weights). More levels: nominal, the log odds of each level against the last (MNLogit); ordinal, cumulative logits with one slope (OrderedModel).',
       sections: [{ heading: 'The plot', text: 'The curves are the cumulative probabilities; each point sits at a random height within the band of its level at its X, so the density of points follows the probabilities.' },
-        { heading: 'The tests', text: 'The Whole Model Test is the likelihood ratio chi-square against the model without X; RSquare (U) is the fraction of the -LogLikelihood it removes. The parameter tests are Wald chi-squares.' }],
+        { heading: 'The tests', text: 'The Whole Model Test is the likelihood ratio chi-square against the model without X; RSquare (U) is the fraction of the -LogLikelihood it removes. The parameter tests are Wald chi-squares.' },
+        { heading: 'Lack Of Fit', text: 'When X values repeat: the fitted curve against the saturated model, which gives each distinct X its own shares of the levels; ChiSquare is twice the difference of their −LogLikelihoods on (values − 1)(levels − 1) minus the slopes. A small p-value says the curve misses how the probabilities change with X.' },
+        { heading: 'Two levels', text: 'ROC Curve ▸ ROC Table: a line per cut on the target level\'s probability, the best starred. Decision Threshold: each row\'s probability of the target level against a threshold you drag or type, the counts and measures there, a Profit Matrix and Save Threshold Formula (see its own (i)).' },
+        { heading: 'Save Probability Formula', text: 'Live formula columns for every row whose X has a value: Lin[level] (the log odds; ordinal: Linear and Cum[level]), Prob[level] and Most Likely.' },
+        { heading: 'Unstable estimates', text: 'When X separates the levels (beyond some value every row has the same level), the likelihood keeps rising as the estimates grow and the fit stops somewhere on the way; the report marks them Unstable, as JMP does, and their standard errors and tests mean little.' }],
       more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:contingency': {
@@ -2046,7 +2151,7 @@
 
   SM.platforms.register({
     id: 'fitybyx', label: 'Fit Y by X', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
-    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, ROC and lift curves, inverse prediction) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), the Breslow-Day test of equal odds ratios across strata, effect sizes with intervals (Cohen\'s d and Hedges\' g, exact from the noncentral t; d* for unequal variances; η², ε² and ω², exact from the noncentral F), JZS Bayes factors of the two-sample t test and Bayes factors of the correlation (two- and one-sided), and Games-Howell comparisons for unequal variances.',
+    about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s, Hsu\'s MCB and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, Lack of Fit, ROC and lift curves, the Decision Threshold, inverse prediction, saved probability formulas) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), the Breslow-Day test of equal odds ratios across strata, effect sizes with intervals (Cohen\'s d and Hedges\' g, exact from the noncentral t; d* for unequal variances; η², ε² and ω², exact from the noncentral F), JZS Bayes factors of the two-sample t test and Bayes factors of the correlation (two- and one-sided), and Games-Howell comparisons for unequal variances.',
     uses: ['statsmodels OLS, WLS, RLM, QuantReg (fits); lowess', 'statsmodels.stats.multicomp.pairwise_tukeyhsd; weightstats (CompareMeans, ttost_ind)', 'statsmodels.stats.oneway.anova_oneway; power.FTestAnovaPower; multitest.multipletests',
       'statsmodels.stats.nonparametric.rank_compare_2indep (Brunner-Munzel, tost_prob_superior)', 'statsmodels.stats.rates (test_poisson_2indep, confint_poisson_2indep, confint_poisson); GLM Poisson',
       'statsmodels Logit, GLM Binomial, MNLogit, OrderedModel', 'statsmodels.stats.contingency_tables (Table, Table2x2, SquareTable, StratifiedTable, mcnemar); inter_rater.cohens_kappa',

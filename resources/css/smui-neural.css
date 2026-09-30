@@ -77,3 +77,6 @@
   .sm-nn-launch { flex-direction: column; }
   .sm-nn-box { width: 100%; box-sizing: border-box; }
 }
+
+/* A model's name (NTanH(2)NGaussian(2)NTanH2(1)...) is one long word: it wraps at any point on a phone */
+.sm-ob[data-model] > .sm-ob-head h3 { overflow-wrap: anywhere; min-width: 0; }

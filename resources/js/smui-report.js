@@ -16,6 +16,8 @@
                                        the red-triangle menus toggle; set()
                                        redraws the report
      ctx.saveColumn(name, { rows, values }, spec)   a new column in the table
+     ctx.saveFormula(name, expr, spec)   a live formula column (Save Prediction
+                                       Formula): expr in smui-formula.js's language
 
    Linking. A trace may carry rows, the table row of each point (a number)
    or of each bar (an array of row numbers). Clicking a point or a bar, or
@@ -275,6 +277,8 @@
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   function datedCode(text, table) {
     if (!text || !table || !table.columns || !/pd\.read_csv\(/.test(text)) return text;
+    // missing value codes back to missing values after the read (smui-table.js)
+    text = SM.table && SM.table.codedCode ? SM.table.codedCode(text, table) : text;
     const need = [];
     for (const c of table.columns) {
       if (!c.isNumeric || !c.format || !/^date/.test(c.format.kind || '')) continue;
@@ -286,6 +290,67 @@
     if (!need.length) return text;
     const line = (n) => { const q = JSON.stringify(n); return `df[${q}] = (pd.to_datetime(df[${q}]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)   # a date: text in the CSV, milliseconds since 1970 here as in the page`; };
     return text.split('\n').flatMap((l) => (/^df = pd\.read_csv\(/.test(l) ? [l, ...need.map(line)] : [l])).join('\n');
+  }
+
+  /* Table text never becomes code. A level, value label or text of the table
+     that holds a line break (a table from a file is hostile input), found as
+     it is in a report's code, is put on one line there. The code escapes
+     every value it puts in a string literal (JSON or repr: no raw line break),
+     so a raw one from the table can only be where a platform wrote the text
+     as it is, in a comment, whose end it would be, the rest becoming code.
+     Column and table names are on one line already (SM.table.cleanName);
+     util.one_line and SM.util.oneLine keep the comments that write values on
+     one line where they are written; this is the net under them. The values
+     are indexed by the text before their first line break, so a table of
+     long texts (Text Explorer's) costs a lookup per line of the code. */
+  const BREAK = /[\r\n\0]/g;
+  const KEY = 12;
+  const breakIndexes = new WeakMap();
+  function breakIndex(table) {
+    const got = breakIndexes.get(table);
+    if (got && got.version === table.version) return got.index;
+    const index = new Map();
+    const seen = new Set();
+    const add = (s) => {
+      if (typeof s !== 'string' || seen.has(s)) return;
+      seen.add(s);
+      BREAK.lastIndex = 0;
+      const m = BREAK.exec(s);
+      if (!m) return;
+      const key = s.slice(Math.max(0, m.index - KEY), m.index);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push([m.index, s]);
+    };
+    for (const c of table.columns || []) {
+      if (!c.isNumeric) for (const v of c.values) add(v);
+      if (c.valueLabels) for (const v of Object.values(c.valueLabels)) add(v);
+    }
+    breakIndexes.set(table, { version: table.version, index });
+    return index;
+  }
+  function unbroken(text, table) {
+    if (!text || !table || !table.columns || typeof text !== 'string') return text;
+    const index = breakIndex(table);
+    if (!index.size) return text;
+    const hits = [];
+    BREAK.lastIndex = 0;
+    for (let m = BREAK.exec(text); m; m = BREAK.exec(text)) {
+      const i = m.index;
+      for (let L = 0; L <= KEY && L <= i; L++) {
+        const list = index.get(text.slice(i - L, i));
+        if (list) for (const [b, s] of list) if (Math.min(b, KEY) === L && text.startsWith(s, i - b)) hits.push([i - b, s]);
+      }
+    }
+    if (!hits.length) return text;
+    // the longest first where two start alike; an overlapped one is left (it is inside the other)
+    hits.sort((a, b) => a[0] - b[0] || b[1].length - a[1].length);
+    let out = '', at = 0;
+    for (const [start, s] of hits) {
+      if (start < at) continue;
+      out += text.slice(at, start) + SM.util.oneLine(s);
+      at = start + s.length;
+    }
+    return out + text.slice(at);
   }
 
   /* The head of a code snippet written in the page (a graph's code, when the
@@ -305,6 +370,7 @@
      lasts until the report is drawn again. */
   function code(text, { open = false, title = null, table = null } = {}) {
     if (!text) return null;
+    text = unbroken(text, table);
     const d = el('details', { class: 'sm-code' });
     if (open) d.open = true;
     let current = text;
@@ -319,6 +385,9 @@
     const pre = el('pre', null, el('code', { text }));
     const out = el('div', { class: 'sm-nb-out sm-code-out', 'aria-live': 'polite', hidden: true });
     d.append(el('summary', null, 'Python code', el('span', { class: 'sm-code-btns' }, copy, edit, toNb)), pre, out);
+    // The report's code as given (base), and as shown: set() puts in another (the graph's
+    // Axis Settings, smui-axis.js), which Reset then puts back; an edit under way stays.
+    d._code = { base: text, get: () => text, set(t) { const edited = current !== text; text = t; if (!edited) current = t; if (!editor) pre.firstChild.textContent = current; } };
     let editor = null, box = null;
     function startEdit() {
       d.open = true;
@@ -554,7 +623,8 @@
       // must keep their width scrolls instead).
       const room = this.opts.fit !== false ? roomFor(this.box) : 0;
       if (room && room < this.width) { this.width = Math.max(240, room); this.box.style.width = `${this.width}px`; }
-      const layout = themedLayout(this.userLayout, this.width, this.height);
+      // the axes as set by Axis Settings (smui-axis.js), on the platform's layout
+      const layout = themedLayout(SM.axis ? SM.axis.layout(this, this.userLayout) : this.userLayout, this.width, this.height);
       try {
         await Plotly.newPlot(this.box, this.traces, layout, { ...CONFIG, ...(this.opts.config || {}), toImageButtonOptions: { ...CONFIG.toImageButtonOptions, filename: (this.opts.title || 'plot').replace(/[^\w.-]+/g, '_') } });
       } catch (e) {
@@ -570,6 +640,7 @@
       gd.on('plotly_deselect', () => { if (this.table && !this.quiet) this.own(() => this.table.select([])); });
       this.refreshStates();
       if (this.opts.onDraw) this.opts.onDraw(gd);
+      if (SM.axis) { SM.axis.wire(this); SM.axis.amend(this); }
     }
 
     rowsOf(pt) {
@@ -965,6 +1036,8 @@
         { label: 'Save Python Script (.py)', action: () => SM.util.download(`${slug(this.title)}.py`, this.pythonScript(), 'text/x-python') },
         { label: 'Copy Python Script', action: () => copyText(this.pythonScript()) },
         { label: 'Open Script in Notebook', action: () => SM.notebook.fromReport(this), disabled: !SM.notebook, title: 'The report\'s Python as the cells of a new notebook, to run and change' },
+        // JMP's Save Script > To Data Table: the report as a script of its table (smui-scripts.js)
+        { label: 'Save Script to Data Table…', action: () => SM.scripts.saveFromReport(this), disabled: !SM.scripts || !this.table, title: 'The report kept with its data table, in the Table panel\'s scripts: a click there runs it again' },
         { label: 'Save Report as HTML', action: () => this.exportHtml() },
         { label: 'Save Report as Word', action: () => this.exportDocx(), disabled: !SM.docx },
         { label: 'Print…', action: () => this.printReport() },
@@ -1215,12 +1288,13 @@
         this.noteEl.textContent = `${this.table.name}: ${used} of ${c.all} rows${c.excluded ? `, ${c.excluded} excluded` : ''}${filtered}${groups.length > 1 ? `, ${groups.length} groups` : ''}`;
       } else this.noteEl.textContent = '';
       if (typeof KvotInfo !== 'undefined') KvotInfo.mount(this.body);
+      if (SM.axis) SM.axis.settle(this);
       requestAnimationFrame(() => kickPlots(this.body));
       this.emit('done', this);
     }
 
     pythonScript() {
-      const parts = [`# ${this.title}`, this.table ? `# Made by the User Interface for statsmodels (kvotab.se/smui.html) from the table "${this.table.name}" (export it with File > Export > CSV).` : '# Made by the User Interface for statsmodels (kvotab.se/smui.html).', ''];
+      const parts = [`# ${SM.util.oneLine(this.title)}`, this.table ? `# Made by the User Interface for statsmodels (kvotab.se/smui.html) from the table "${SM.util.oneLine(this.table.name)}" (export it with File > Export > CSV).` : '# Made by the User Interface for statsmodels (kvotab.se/smui.html).', ''];
       const seen = new Set();
       for (const c of this.pyCode) if (!seen.has(c)) { seen.add(c); parts.push(c, ''); }
       if (!this.pyCode.length) parts.push('# (this report ran no Python)');
@@ -1247,6 +1321,8 @@
           return v;      // numbers, typed arrays
         };
         fig = { data: gd.data.map((t) => { const o = { ...t }; for (const k of ['marker', 'line', 'fillcolor']) if (t[k] != null) o[k] = paper(t[k]); return o; }), layout };
+        // Axis Settings' reference lines and their labels in the light theme's colours (smui-axis.js)
+        if (SM.axis && SM.axis.paperLayout) SM.axis.paperLayout(layout);
       }
       try {
         const data = await Plotly.toImage(fig, { format, width: p.width, height: p.height, scale });
@@ -1427,7 +1503,7 @@
       }
       const out = await r;
       if (out && Array.isArray(out.warnings)) for (const w of out.warnings) if (!this.warnings.includes(w)) this.warnings.push(w);
-      if (out && out.code && !this.headless && this.current) this.report.pyCode.push(out.code);
+      if (out && out.code && !this.headless && this.current) this.report.pyCode.push(unbroken(out.code, this.table));
       return out;
     }
 
@@ -1473,7 +1549,7 @@
     // Code a platform shows that no call returned (worked out in the page)
     // goes into Save Python Script too; the calls' own code is there already.
     code(text) {
-      text = datedCode(text, this.report.table);
+      text = unbroken(datedCode(text, this.report.table), this.report.table);
       if (text && !this.headless && this.current) for (const part of String(text).split('\n\n# ----\n')) if (!this.report.pyCode.includes(part)) this.report.pyCode.push(part);
       return code(text, { open: !!this.spec.options.showCode, title: this.report.title, table: this.report.table });
     }
@@ -1497,6 +1573,30 @@
       return c;
     }
 
+    /* A live formula column in the table (Save Prediction Formula and the
+       like): expr is in the page's formula language (smui-formula.js), so
+       the column is worked out again for rows added or edited later and goes
+       with the table to a file. spec as saveColumn's (modelingType,
+       valueOrder, notes, format). A formula that does not compile throws,
+       and nothing is added. */
+    saveFormula(name, expr, spec = {}) {
+      if (this.headless) return null;
+      const t = this.table;
+      const { modelingType, valueOrder, ...rest } = spec;
+      const c = t.addColumn({ name, dataType: 'numeric', values: [], notes: spec.notes || `saved from ${this.report.title}`, ...rest });
+      try {
+        SM.formula.apply(t, c, expr);
+      } catch (e) {
+        t.removeColumn(c.id);
+        throw e;
+      }
+      if (valueOrder) c.valueOrder = valueOrder;
+      if (modelingType && !(modelingType === 'continuous' && !c.isNumeric)) c.modelingType = modelingType;
+      if (valueOrder || modelingType) t._changed('schema', { info: c.id });
+      SM.ui.toast(`Saved the formula column ${c.name} to ${t.name}`);
+      return c;
+    }
+
     /* The red triangle of the top outline: the platform's items, then the
        ones every report has. */
     topMenu() {
@@ -1510,6 +1610,7 @@
         { label: 'Redo', submenu: () => this.report.redoMenu() },
         { label: 'Save Script', submenu: () => this.report.saveMenu() },
         { label: 'Show Python Code', checked: this.report.codeShown(), action: () => this.report.toggleCode() },
+        SM.axis ? SM.axis.reportItem(this.report) : null,
       ];
     }
   }
@@ -1635,5 +1736,5 @@
     if (tag) tag.addEventListener('load', () => { if (document.body) kickPlots(document.body); });
   }
 
-  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, datedCode, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
+  SM.report = Object.freeze({ Report, Outline, Plot, Ctx, rt, combineRT, hasWebGL, plotlyText, paintedSvg, kv, code, codeHead, datedCode, unbroken, note, warn, error, cellText, rtText, tableFromRT, copyText, niceBins, kickPlots, filterRows, filterActive, renderFilter, SYMBOLS, SELECTED, get BASE() { return baseColor(); }, BAR, merge });
 }(typeof self !== 'undefined' ? self : this));

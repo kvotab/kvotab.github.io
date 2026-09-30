@@ -23,6 +23,19 @@ directly and against published values:
   selected order, the UECM, the cointegrating vector, the bounds tests) and
   the bounds of Pesaran, Shin and Smith (2001, Table CI(iii)).
 
+  Forecast on Holdback (every model fitted on the training values by
+  statsmodels directly, the holdback statistics by hand, the shown code on a
+  CSV), the Naive, Seasonal Naive and Drift benchmarks (SARIMAX and OLS on
+  the differences, the forecast package's rwf standard errors), the Simple
+  Moving Average (np.convolve, pandas' rolling and seasonal_decompose's
+  2 x w trend), JMP's Custom constraints (holtwinters' fix_params and
+  bounds, a search over alpha by hand), Box-Cox (holtwinters' use_boxcox,
+  the Jacobian), the multiplicative trends (ETSModel(trend='mul')), the
+  averaged forecast, the runs test (the closed form and runstest_1samp, and
+  its correction slip), rolling-origin cross-validation (every origin by
+  hand), and Time Series Forecast (every candidate's AICc, BIC and holdback
+  RMSE by ETSModel directly, stacked data, the shown code on a CSV).
+
 The other series are simulated here from a fixed seed.
 
     python3 resources/tests/smui/test_timeseries.py
@@ -1229,4 +1242,436 @@ check('... its forecasts continue the row numbers', Ab['forecast']['t'], [Sb['t'
 check("JMP's ARIMA names", [ts.arima_name(1, 0, 0), ts.arima_name(0, 0, 2), ts.arima_name(1, 0, 1), ts.arima_name(0, 1, 0), ts.arima_name(0, 1, 1), ts.arima_name(2, 1, 0), ts.arima_name(1, 1, 1)],
       ['AR(1)', 'MA(2)', 'ARMA(1, 1)', 'I(1)', 'IMA(1, 1)', 'ARI(2, 1)', 'ARIMA(1, 1, 1)'])
 check('every result has its code', all(bool(x.get('code')) for x in (r, rd, rt_, rcy, rdc, rs, rx, m, rb, re_)), True)
+
+# ==== Forecast on Holdback, benchmarks, the moving average, constraints, Box-Cox, averages, runs tests, cross-validation ====
+# Each against statsmodels (or pandas) called directly on the training part,
+# or against the closed forms written out here.
+from scipy.special import boxcox as sp_boxcox, inv_boxcox as sp_inv_boxcox
+from statsmodels.sandbox.stats.runs import runstest_1samp
+HB = 12
+y_tr, y_ho = y[:n - HB], y[n - HB:]
+
+
+def hb_by_hand(actual, fc, train, lag):
+    e = np.asarray(actual, dtype=float) - np.asarray(fc, dtype=float)
+    ok = np.isfinite(e)
+    e, a = e[ok], np.asarray(actual, dtype=float)[ok]
+    scale = np.mean(np.abs(train[lag:] - train[:-lag]))
+    return {'n': int(ok.sum()), 'rmse': math.sqrt(np.mean(e ** 2)), 'mse': np.mean(e ** 2), 'mae': np.mean(np.abs(e)), 'mape': 100 * np.mean(np.abs(e / a)),
+            'me': np.mean(e), 'mase': np.mean(np.abs(e)) / scale}
+
+
+def check_hb(label, R, fc, train=y_tr, actual=y_ho, lag=12, rel=1e-7):
+    want = hb_by_hand(actual, fc, train, lag)
+    check(f'{label}: holdback N', R['holdback']['n'], want['n'])
+    near_all(f'{label}: holdback RMSE, MSE, MAE, MAPE, mean error and MASE (the MAE over the training values\' in-sample seasonal naive MAE)',
+             [R['holdback'][k] for k in ('rmse', 'mse', 'mae', 'mape', 'me', 'mase')], [want[k] for k in ('rmse', 'mse', 'mae', 'mape', 'me', 'mase')], rel=rel)
+
+
+def hb_from_code(label, R, frame, lag=12, rel=1e-6):
+    """The model's code (with its holdback part) run on the CSV: the same statistics."""
+    ns = run_code(R['code'], frame)
+    if ns.get('error'):
+        check(f'{label}: the code with its holdback part runs', ns['error'], None)
+        return
+    got = ns['holdback_stats'](ns['y_hold'], ns['f_mean'], ns['y'], lag)
+    near_all(f'{label}: the code gives the report\'s holdback statistics', [got[k] for k in ('RMSE', 'MAE', 'MAPE', 'Mean Error', 'MASE')],
+             [R['holdback'][k] for k in ('rmse', 'mae', 'mape', 'me', 'mase')], rel=rel)
+
+
+# ---- Forecast on Holdback: every model fitted on the first n − h values, forecasting the last h
+ha = call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=HB, holdback=HB, season=12)
+ref_ha = ARIMA(y_tr, order=(1, 0, 0), trend='c').fit()
+check('holdback: no error; the model is fitted on the first n − h values', (ha.get('error'), ha['n'], len(ha['fitted'])), (None, n - HB, n - HB))
+near_all('holdback AR(1): the estimates are ARIMA\'s on the training values', [p['estimate'] for p in ha['params']['rows']], ref_ha.params[:2], rel=1e-5)
+near_all('... the forecasts of the held-back values are its get_forecast(12)', ha['forecast']['mean'], ref_ha.get_forecast(HB).predicted_mean, rel=1e-6)
+check('... at the held-back months', ha['forecast']['t'], [float(v) for v in months[n - HB:]])
+check_hb('holdback AR(1)', ha, ref_ha.get_forecast(HB).predicted_mean, rel=1e-6)
+check('... the held-back values and the forecast errors come with the result', (ha['holdback']['actual'][:2], ha['holdback']['rows'][:2]), ([float(y_ho[0]), float(y_ho[1])], [n - HB, n - HB + 1]))
+hb_from_code('holdback AR(1)', ha, csv)
+hx = call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=HB, holdback=HB, season=12, excluded=[113])
+ref_hx = ARIMA(y_tr, order=(1, 0, 0), trend='c').fit()
+y_hox = y_ho.copy()
+y_hox[113 - (n - HB)] = np.nan
+check_hb('an excluded row among the held-back ones: left out of the statistics', hx, ref_hx.get_forecast(HB).predicted_mean, actual=y_hox, rel=1e-6)
+check('too long a holdback is an error', 'error' in call('timeseries.arima', table=tid, y='sales', p=1, h=118, holdback=118), True)
+hw = call('timeseries.smooth', table=tid, y='sales', time='month', method='winters', s=12, h=HB, holdback=HB, season=12)
+ref_hw = ExponentialSmoothing(y_tr, trend='add', seasonal='add', seasonal_periods=12, initialization_method='estimated').fit()
+near_all('holdback Winters: the forecasts are holtwinters\' on the training values', hw['forecast']['mean'], ref_hw.forecast(HB), rel=1e-9)
+check_hb('holdback Winters', hw, ref_hw.forecast(HB), rel=1e-9)
+hb_from_code('holdback Winters', hw, csv)
+he = call('timeseries.ets', table=tid, y='sales', time='month', error='mul', trend='A', seasonal='M', s=12, h=HB, holdback=HB, season=12)
+ref_he = ETSModel(pd.Series(y_tr), error='mul', trend='add', seasonal='mul', seasonal_periods=12).fit(disp=False)
+near_all('holdback ETS(M,A,M): the forecasts are ETSModel\'s on the training values', he['forecast']['mean'], ref_he.forecast(HB), rel=1e-7)
+check_hb('holdback ETS(M,A,M)', he, ref_he.forecast(HB), rel=1e-7)
+hb_from_code('holdback ETS(M,A,M)', he, csv, rel=1e-5)
+ht = call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=HB, holdback=HB, season=12, inputs=[{'name': 'promotion'}])
+ref_ht = ARIMA(pd.Series(y_tr), exog=np.array(promo[:n - HB])[:, None], order=(1, 0, 0), trend='c').fit()
+fc_ht = ref_ht.get_forecast(HB, exog=np.array(promo[n - HB:])[:, None]).predicted_mean
+near_all('holdback transfer function: the forecasts take the held-back rows\' promotion', ht['forecast']['mean'], fc_ht, rel=1e-5)
+check('... and say so', any('held-back row' in s_ for s_ in ht['notes']), True)
+hb_from_code('holdback transfer function', ht, csv, rel=1e-5)
+hu = call('timeseries.structural', table=tid, y='sales', time='month', trend='local linear trend', seasonal=12, inputs=['promotion'], h=HB, holdback=HB, season=12)
+hb_from_code('holdback structural model with an input', hu, csv, rel=1e-5)
+ys_tr = pd.Series(y_tr, index=pd.date_range('2016-01-01', periods=n - HB, freq='MS'))
+ref_hu = UnobservedComponents(ys_tr, level='local linear trend', seasonal=12, stochastic_seasonal=True, exog=pd.DataFrame({'promotion': promo[:n - HB]}, index=ys_tr.index)).fit(**FIT)
+near_all('... its forecasts are UnobservedComponents\' with the held-back inputs', hu['forecast']['mean'],
+         ref_hu.get_forecast(HB, exog=np.array(promo[n - HB:])[:, None]).predicted_mean, rel=1e-5)
+hth = call('timeseries.theta', table=tid, y='sales', time='month', period=12, h=HB, holdback=HB, season=12)
+near_all('holdback Theta: ThetaModel on the training values', hth['forecast']['mean'], ThetaModel(y_tr, period=12).fit().forecast(HB), rel=1e-10)
+hb_from_code('holdback Theta', hth, csv)
+hp = call('timeseries.ardl', table=tid_p, y='price', time='quarter', inputs=['cost'], maxlag=2, maxorder=2, h=8, holdback=8, season=4)
+sel_hp = ardl_select_order(pd.Series(price_[:168], name='price'), 2, pd.DataFrame({'cost': cost_[:168]}), 2, ic='aic', trend='c').model.fit()
+fc_hp = sel_hp.get_prediction(start=168, end=175, exog_oos=pd.DataFrame({'cost': cost_[168:176]})).predicted_mean
+near_all('holdback ARDL: the forecasts take the held-back quarters\' costs', hp['forecast']['mean'], fc_hp, rel=1e-8)
+check_hb('holdback ARDL', hp, fc_hp, train=price_[:168], actual=price_[168:176], lag=4, rel=1e-8)
+hb_from_code('holdback ARDL', hp, price_csv, lag=4)
+hm = call('timeseries.markov', table=tid_g, y='growth', k=2, order=0, starts=0, holdback=10, h=10)
+check('holdback regime switching: no forecasts, no holdback statistics', (hm.get('error'), hm['holdback']['rmse'], hm['holdback']['n']), (None, None, 0))
+
+# the holdback graph: every value as points, the held-back span shaded, the forecasts at the held-back months
+F, _ = draw('holdback: the forecast graph', ha['plot_code']['forecast'], csv, {'points': True, 'pi': True, 'onestep': True})
+if F:
+    A = F['axes'][0]
+    tday_all = [v / DAY for v in months]
+    check('holdback graph: every value as points, the held-back ones too', line(A, tday_all, list(y), marker='o', ls='None') is not None, True)
+    check('... the one-step-ahead predictions over the training values', line(A, tday_all[:n - HB], ha['fitted'], 1e-6, marker='None', ls='-') is not None, True)
+    xf = [tday_all[n - HB - 1]] + [v / DAY for v in ha['forecast']['t']]
+    check('... the forecasts from the last training prediction over the held-back months', line(A, xf, [ha['fitted'][-1]] + ha['forecast']['mean'], 1e-6, marker='o') is not None, True)
+    check('... the held-back span shaded, from the last training value to the last held-back one',
+          any(close([b['x'], b['x'] + b['w']], [tday_all[n - HB - 1], tday_all[-1]], 1e-9) for b in A['bars']), True)
+    check('... the end of the training values', vline(A, tday_all[n - HB - 1]), True)
+
+# ---- benchmarks: Naive, Seasonal Naive, Drift, against SARIMAX and OLS on the differences
+bn = call('timeseries.benchmark', table=tid, y='sales', time='month', method='naive', h=12)
+sx_n = SARIMAX(y, order=(0, 1, 0)).fit(disp=False)
+check('Naive: its name, k = 0 (DF = n − 1 one-step errors)', (bn['name'], bn['stats']['df']), ('Naive', n - 1))
+near_all('Naive: every forecast the last value (SARIMAX(0, 1, 0))', bn['forecast']['mean'], sx_n.get_forecast(12).predicted_mean, rel=1e-9)
+near_all('... standard errors σ√h, σ² the mean squared difference (SARIMAX\'s MLE)', bn['forecast']['se'], sx_n.get_forecast(12).se_mean, rel=2e-4)
+near_all('... σ² exactly the mean squared difference', [bn['stats']['variance']], [np.mean(np.diff(y) ** 2)], rel=1e-12)
+near_all('... the one-step predictions are the values before', bn['fitted'][1:], y[:-1], rel=1e-12)
+bs = call('timeseries.benchmark', table=tid, y='sales', time='month', method='snaive', s=12, h=15)
+sx_s = SARIMAX(y, order=(0, 0, 0), seasonal_order=(0, 1, 0, 12)).fit(disp=False)
+check('Seasonal Naive: its name', bs['name'], 'Seasonal Naive(12)')
+near_all('Seasonal Naive: the same season a period before (SARIMAX(0, 0, 0)(0, 1, 0)12)', bs['forecast']['mean'], sx_s.get_forecast(15).predicted_mean, rel=1e-9)
+near_all('... standard errors σ√(k + 1) (SARIMAX\'s)', bs['forecast']['se'], sx_s.get_forecast(15).se_mean, rel=2e-4)
+d12 = y[12:] - y[:-12]
+near_all('... σ² the mean squared seasonal difference', [bs['stats']['variance']], [np.mean(d12 ** 2)], rel=1e-12)
+bd = call('timeseries.benchmark', table=tid, y='sales', time='month', method='drift', h=10)
+ols_d = sm.OLS(np.diff(y), np.ones(n - 1)).fit()
+b_ = float(ols_d.params[0])
+hh_ = np.arange(1, 11)
+near_all('Drift: the last value plus h times the mean change (y_T − y_1)/(T − 1)', bd['forecast']['mean'], y[-1] + hh_ * b_, rel=1e-12)
+near_all('... standard errors √(h σ² + h² se(b)²), the forecast package\'s rwf (OLS of the differences on a constant)', bd['forecast']['se'],
+         np.sqrt(hh_ * ols_d.scale + hh_ ** 2 * float(ols_d.bse[0]) ** 2), rel=1e-10)
+check.near('... the drift and its standard error in Parameter Estimates', bd['params']['rows'][0]['se'], float(ols_d.bse[0]), rel=1e-10)
+for label_, R in (('Naive', bn), ('Seasonal Naive', bs), ('Drift', bd)):
+    ns = run_code(R['code'], csv)
+    check(f'the {label_} code gives the same forecasts and standard errors', ns.get('error') or (bool(np.allclose(ns['f_mean'], R['forecast']['mean'], rtol=1e-12)),
+          bool(np.allclose(ns['f_se'], R['forecast']['se'], rtol=1e-10))), (True, True))
+bh = call('timeseries.benchmark', table=tid, y='sales', time='month', method='snaive', s=12, h=HB, holdback=HB, season=12)
+check_hb('holdback Seasonal Naive', bh, y[n - 2 * HB:n - HB], rel=1e-12)
+check_model('Seasonal Naive', bs, csv, [v / DAY for v in months], list(y))
+check('Seasonal Naive needs a period', 'error' in call('timeseries.benchmark', table=tid, y='sales', method='snaive', s=1), True)
+
+# ---- Simple Moving Average: pandas' rolling means, statsmodels' seasonal_decompose trend for the centered ones
+sa = call('timeseries.sma', table=tid, y='sales', time='month', width=12, centering='none', h=6)
+trail = np.convolve(y, np.ones(12) / 12, mode='valid')          # the mean of y[t−11 .. t]
+check('Simple Moving Average: its name', sa['name'], 'Simple Moving Average(12)')
+near_all('No Centering: the mean of the value and the 11 before it (np.convolve)', sa['smoothed'][11:], trail, rel=1e-12)
+near_all('... the one-step predictions: the mean of the 12 values before', sa['fitted'][12:], trail[:-1], rel=1e-12)
+near_all('... every forecast the mean of the last 12', sa['forecast']['mean'], [y[-12:].mean()] * 6, rel=1e-12)
+e_sa = y[12:] - trail[:-1]
+near_all('... the interval ±z times the one-step errors\' RMS, at every horizon', sa['forecast']['upper'], [y[-12:].mean() + 1.959963984540054 * np.sqrt(np.mean(e_sa ** 2))] * 6, rel=1e-10)
+sc = call('timeseries.sma', table=tid, y='sales', time='month', width=5, centering='centered', h=6)
+near_all('Centered (odd width 5): statsmodels\' seasonal_decompose trend', sc['smoothed'], seasonal_decompose(y, period=5).trend, rel=1e-12)
+sdd = call('timeseries.sma', table=tid, y='sales', time='month', width=12, centering='double', h=6)
+near_all('Centered and Double Smoothed (width 12): the 2 × 12 moving average of seasonal_decompose', sdd['smoothed'], seasonal_decompose(y, period=12).trend, rel=1e-12)
+s4 = call('timeseries.sma', table=tid, y='sales', time='month', width=4, centering='centered', h=0)
+near_all('Centered with an even width: one more value before than after (pandas\' rolling(center=True))', s4['smoothed'][2:-1], [np.mean(y[t_ - 2:t_ + 2]) for t_ in range(2, n - 1)], rel=1e-12)
+check('Centered and Double Smoothed needs an even width', 'error' in call('timeseries.sma', table=tid, y='sales', width=5, centering='double'), True)
+for label_, R in (('No Centering', sa), ('Centered and Double Smoothed', sdd)):
+    ns = run_code(R['code'], csv)
+    check(f'the moving average code ({label_}) gives the same smoothed series and forecasts', ns.get('error') or (worst(list(ns['ma'].to_numpy()), R['smoothed']) < 1e-12,
+          bool(np.allclose(ns['f_mean'], R['forecast']['mean'], rtol=1e-12))), (True, True))
+F, _ = draw('the moving average\'s smoothed series', sdd['plot_code']['smoothed'], csv, size=(620, 300))
+if F:
+    check('... the smoothed series over the data, in the model\'s colour', (line(F['axes'][0], [v / DAY for v in months], sdd['smoothed'], 1e-9, color='#3a7d44ff') is not None,
+          line(F['axes'][0], [v / DAY for v in months], list(y), marker='o') is not None), (True, True))
+check_model('Simple Moving Average', sa, csv, [v / DAY for v in months], list(y))
+sh = call('timeseries.sma', table=tid, y='sales', time='month', width=6, h=HB, holdback=HB, season=12)
+check_hb('holdback moving average', sh, [y_tr[-6:].mean()] * HB, rel=1e-12)
+
+# ---- smoothing models: JMP's Custom constraints, holtwinters' fix_params and bounds called directly
+cf = call('timeseries.smooth', table=tid, y='sales', time='month', method='simple', h=6, weights={'alpha': {'fix': 0.2}})
+m_cf = ExponentialSmoothing(y, initialization_method='estimated')
+with m_cf.fix_params({'smoothing_level': 0.2}):
+    ref_cf = m_cf.fit()
+check('Custom, α fixed at 0.2: the name says so, k = 0', (cf['name'], cf['stats']['df'], cf['params']['rows'][0]['constraint']), ('Simple Exponential Smoothing, α = 0.2', n, 'Fixed'))
+near_all('... the fit is holtwinters\' with fix_params (the starting level estimated)', cf['fitted'] + cf['forecast']['mean'], list(ref_cf.fittedvalues) + list(ref_cf.forecast(6)), rel=1e-9)
+check('... a fixed weight has no standard error', (cf['params']['rows'][0]['se'], cf['params']['rows'][0]['t']), (None, None))
+cb = call('timeseries.smooth', table=tid, y='sales', time='month', method='linear', h=6, weights={'alpha': {'lo': 0.1, 'hi': 0.4}})
+ref_cb = ExponentialSmoothing(y, trend='add', initialization_method='estimated', bounds={'smoothing_level': (0.1, 0.4)}).fit()
+check('Custom, α bounded by 0.1 and 0.4', (cb['name'], 0.1 <= cb['weights']['alpha'] <= 0.4), ('Linear (Holt) Exponential Smoothing, α in [0.1, 0.4]', True))
+near_all('... holtwinters with bounds', cb['fitted'], ref_cb.fittedvalues, rel=1e-9)
+cp_ = call('timeseries.smooth', table=tid, y='sales', time='month', method='damped', h=6, weights={'phi': {'fix': 0.9}})
+m_cp = ExponentialSmoothing(y, trend='add', damped_trend=True, initialization_method='estimated', bounds={'damping_trend': (0.0, 1.0)})
+with m_cp.fix_params({'damping_trend': 0.9}):
+    ref_cp = m_cp.fit()
+near_all('Custom, φ fixed at 0.9: holtwinters with fix_params', cp_['forecast']['mean'], ref_cp.forecast(6), rel=1e-9)
+check('... k = 2 (α and γ estimated)', cp_['stats']['df'], n - 2)
+cd = call('timeseries.smooth', table=tid, y='sales', time='month', method='seasonal', s=12, h=6, weights={'delta': {'fix': 0.3}})
+
+
+def sse_seasonal(a):
+    m_ = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12, initialization_method='estimated')
+    with m_.fix_params({'smoothing_level': a, 'smoothing_seasonal': 0.3 * (1 - a)}):
+        return m_.fit().sse
+
+
+a_cd = cd['weights']['alpha']
+check.near('Custom, δ fixed at 0.3 with α free: statsmodels\' seasonal weight is δ(1 − α)', cd['weights']['delta'], 0.3, rel=1e-9)
+check('... α minimises the one-step errors\' sum of squares (a search over α)', cd['stats']['sse'] <= min(sse_seasonal(max(1e-4, a_cd - 0.01)), sse_seasonal(min(0.999, a_cd + 0.01))) + 1e-6, True)
+check.near('... the fit is holtwinters\' at that α', cd['stats']['sse'], sse_seasonal(a_cd), rel=1e-9)
+cw = call('timeseries.smooth', table=tid, y='sales', time='month', method='double', h=6, weights={'alpha': {'lo': 0.05, 'hi': 0.2}})
+
+
+def sse_brown2(a_):
+    m_ = ExponentialSmoothing(y, trend='add', initialization_method='estimated')
+    with m_.fix_params({'smoothing_level': a_ * (2 - a_), 'smoothing_trend': a_ / (2 - a_)}):
+        return m_.fit().sse
+
+
+grid_b = min(sse_brown2(a_) for a_ in np.linspace(0.05, 0.2, 31))
+check('Brown, α bounded by 0.05 and 0.2: within them, and no worse than a grid over them', (0.05 <= cw['weights']['alpha'] <= 0.2, cw['stats']['sse'] <= grid_b + 1e-6), (True, True))
+check('a trend weight fixed above the level weight: statsmodels\' own message', 'smoothing_trend' in call('timeseries.smooth', table=tid, y='sales', method='linear',
+      weights={'alpha': {'fix': 0.2}, 'gamma': {'fix': 0.5}}).get('error', ''), True)
+check('a weight outside 0 and 1 is refused', 'error' in call('timeseries.smooth', table=tid, y='sales', method='simple', weights={'alpha': {'fix': 1.5}}), True)
+for label_, R in (('α fixed', cf), ('α bounded', cb), ('δ fixed, α searched', cd), ('Brown bounded', cw)):
+    ns = run_code(R['code'], csv)
+    check(f'the Custom constraints code ({label_}) gives the same fit', ns.get('error') or bool(np.allclose(np.asarray(ns['res'].fittedvalues), R['fitted'], rtol=1e-6)), True)
+    check_model(f'smoothing, Custom ({label_})', R, csv, [v / DAY for v in months], list(y))
+
+# ---- the Box-Cox transformation: statsmodels' own use_boxcox, the Jacobian, the limits transformed back
+for lam_ in (0.0, 0.5):
+    bx = call('timeseries.smooth', table=tid, y='sales', time='month', method='winters', s=12, h=12, boxcox=lam_)
+    ref_bx = ExponentialSmoothing(y, trend='add', seasonal='add', seasonal_periods=12, initialization_method='estimated', use_boxcox=lam_).fit()
+    check(f'Box-Cox λ = {lam_:g}: the name says so', bx['name'], f'Winters Method (Additive)(12), Box-Cox λ = {lam_:g}')
+    near_all(f'... the predictions and forecasts are holtwinters\' use_boxcox={lam_:g} (transformed back)', bx['fitted'] + bx['forecast']['mean'],
+             list(ref_bx.fittedvalues) + list(ref_bx.forecast(12)), rel=1e-7)
+    yt_ = sp_boxcox(y, lam_)
+    ref_t_ = ExponentialSmoothing(yt_, trend='add', seasonal='add', seasonal_periods=12, initialization_method='estimated').fit()
+    sse_t_ = float(ref_t_.sse)
+    check.near(f'... −2LogLikelihood of the values themselves: the transformed fit\'s and the Jacobian −2(λ − 1)Σ log y', bx['stats']['m2ll'],
+               n * (math.log(2 * math.pi * sse_t_ / n) + 1) - 2 * (lam_ - 1) * float(np.sum(np.log(y))), rel=1e-8)
+    sd_t_ = math.sqrt(sse_t_ / (n - 3))
+    th_ = bx['weights']
+    fse_t_ = sd_t_ * np.sqrt(ts.psi_variance('winters', th_, 12, 12))
+    near_all('... the limits: the transformed scale\'s, transformed back', bx['forecast']['lower'] + bx['forecast']['upper'],
+             list(sp_inv_boxcox(ref_t_.forecast(12) - 1.959963984540054 * fse_t_, lam_)) + list(sp_inv_boxcox(ref_t_.forecast(12) + 1.959963984540054 * fse_t_, lam_)), rel=1e-6)
+    near_all('... the residuals on the values\' own scale', bx['resid'], y - np.asarray(ref_bx.fittedvalues), rel=1e-7, abs_=1e-7)
+    ns = run_code(bx['code'], csv)
+    check(f'... the Box-Cox code gives the same forecasts', ns.get('error') or bool(np.allclose(sp_inv_boxcox(np.asarray(ns['res'].forecast(12)), lam_), bx['forecast']['mean'], rtol=1e-7)), True)
+    check_model(f'smoothing, Box-Cox λ = {lam_:g}', bx, csv, [v / DAY for v in months], list(y))
+check('Box-Cox needs every value above zero', 'error' in call('timeseries.smooth', table=table({'y': (y - 200).tolist()}), y='y', method='simple', boxcox=0), True)
+
+# ---- state space smoothing: the multiplicative and the multiplicative damped trend (ETSModel(trend='mul'))
+for err_, tr_, se_ in (('mul', 'M', 'N'), ('mul', 'Md', 'A'), ('add', 'M', 'N'), ('mul', 'M', 'M')):
+    em = call('timeseries.ets', table=tid, y='sales', time='month', error=err_, trend=tr_, seasonal=se_, s=12, h=8)
+    ref_em = ETSModel(pd.Series(y), error=err_, trend='mul', damped_trend=tr_ == 'Md', seasonal={'N': None, 'A': 'add', 'M': 'mul'}[se_],
+                      seasonal_periods=12 if se_ != 'N' else None).fit(disp=False)
+    code_ = f'{"A" if err_ == "add" else "M"},{tr_},{se_}'
+    check(f'ETS({code_}): no error, its name', (em.get('error'), em['name']), (None, f'State Space Smoothing ETS({code_}){"12" if se_ != "N" else ""}'))
+    check.near(f'ETS({code_}): AICc is ETSModel(trend="mul"{", damped_trend=True" if tr_ == "Md" else ""})\'s', em['stats']['aicc'], float(ref_em.aicc), rel=1e-9)
+    near_all(f'ETS({code_}): the fitted values and the point forecasts', em['fitted'] + em['forecast']['mean'], list(ref_em.fittedvalues) + list(ref_em.forecast(8)), rel=1e-8)
+    check(f'ETS({code_}): simulated prediction intervals', any('simulated' in s_ for s_ in em['notes']), True)
+check('a multiplicative trend needs every value above zero', 'error' in call('timeseries.ets', table=table({'y': (y - 200).tolist()}), y='y', error='add', trend='M'), True)
+ns = run_code(em['code'], csv)
+check('the ETS(M,M,M) code gives the same AICc', ns.get('error') or bool(np.isclose(ns['res'].aicc, em['stats']['aicc'], rtol=1e-8)), True)
+check_model('ETS(M,Md,A)', call('timeseries.ets', table=tid, y='sales', time='month', error='mul', trend='Md', seasonal='A', s=12, h=8), csv, [v / DAY for v in months], list(y))
+
+# ---- the averaged forecast: the mean of the members' predictions, forecasts and limits
+mem_ = [{'fn': 'timeseries.arima', 'args': {'p': 1, 'q': 1}}, {'fn': 'timeseries.smooth', 'args': {'method': 'winters', 's': 12}},
+        {'fn': 'timeseries.benchmark', 'args': {'method': 'snaive', 's': 12}}]
+av = call('timeseries.average', table=tid, y='sales', time='month', members=mem_, h=12)
+parts_ = [call('timeseries.arima', table=tid, y='sales', time='month', p=1, q=1, h=12), call('timeseries.smooth', table=tid, y='sales', time='month', method='winters', s=12, h=12),
+          call('timeseries.benchmark', table=tid, y='sales', time='month', method='snaive', s=12, h=12)]
+check('Averaged forecast: its name lists the members', av['name'], 'Average of ARMA(1, 1), Winters Method (Additive)(12), Seasonal Naive(12)')
+
+
+def mean_of(key, sub=None):
+    rows_ = [np.array([np.nan if v is None else v for v in (p[sub][key] if sub else p[key])], dtype=float) for p in parts_]
+    return np.mean(rows_, axis=0)
+
+
+near_all('... the forecasts are the members\' mean', av['forecast']['mean'], mean_of('mean', 'forecast'), rel=1e-12)
+near_all('... the limits the mean of the members\' limits', av['forecast']['lower'] + av['forecast']['upper'], list(mean_of('lower', 'forecast')) + list(mean_of('upper', 'forecast')), rel=1e-12)
+near_all('... the one-step predictions the mean where every member has one (from the 13th month: the seasonal naive\'s first)', av['fitted'], mean_of('fitted'), rel=1e-12)
+check('... no AIC: an average has no likelihood', (av['stats']['aic'], av['stats']['sbc']), (None, None))
+ns = run_code(av['code'], csv)
+check('the averaged forecast\'s code gives the same forecasts', ns.get('error') or bool(np.allclose(ns['f_mean'], av['forecast']['mean'], rtol=1e-6)), True)
+check_model('the averaged forecast', av, csv, [v / DAY for v in months], list(y))
+avh = call('timeseries.average', table=tid, y='sales', time='month', members=mem_, h=HB, holdback=HB, season=12)
+parts_h = [call(m_['fn'], table=tid, y='sales', time='month', h=HB, holdback=HB, season=12, **m_['args']) for m_ in mem_]
+check_hb('holdback averaged forecast', avh, np.mean([p['forecast']['mean'] for p in parts_h], axis=0), rel=1e-10)
+check('an average of one model is refused', 'error' in call('timeseries.average', table=tid, y='sales', members=mem_[:1]), True)
+
+# ---- the runs test: the closed form, statsmodels' runstest_1samp, and its correction slip below N = 50
+rt_s = call('timeseries.series', table=tid, y='sales', time='month')['runs']
+above_ = y >= y.mean()
+R_ = 1 + int(np.sum(above_[1:] != above_[:-1]))
+n1_, n2_ = int(above_.sum()), int((~above_).sum())
+E_ = 2 * n1_ * n2_ / n + 1
+V_ = 2 * n1_ * n2_ * (2 * n1_ * n2_ - n) / (n ** 2 * (n - 1))
+check('Runs Test about the mean: the runs, the counts at or above and below', (rt_s['mean']['runs'], rt_s['mean']['n_above'], rt_s['mean']['n_below']), (R_, n1_, n2_))
+check.near('... z = (R − E)/√V with E = 2 n1 n2/N + 1 (N = 120: no correction)', rt_s['mean']['z'], (R_ - E_) / math.sqrt(V_), rel=1e-12)
+zs, ps = runstest_1samp(y, cutoff='mean', correction=True)
+check.near('... statsmodels\' runstest_1samp (N ≥ 50: no correction there either)', rt_s['mean']['z'], float(zs), rel=1e-12)
+check.near('... and its p-value', rt_s['mean']['p'], float(ps), rel=1e-10)
+zm, _ = runstest_1samp(y, cutoff='median', correction=True)
+check.near('... about the median', rt_s['median']['z'], float(zm), rel=1e-12)
+small = [10, 10, 10, 0, 10, 0, 0, 10, 0, 0]   # 6 runs, 5 above the mean and 5 below: R = E exactly
+rs_small = ts.runs_test(small, 'mean')
+check('a short series with R = E: the corrected z is 0, p 1', (rs_small['runs'], rs_small['expected'], rs_small['z'], rs_small['p']), (6, 6.0, 0.0, 1.0))
+z_sm, _ = runstest_1samp(np.array(small, dtype=float), cutoff='mean', correction=True)
+check('... statsmodels 0.14.6 moves a distance below 1/2 away from 0 (z ≠ 0), the slip the report avoids', abs(float(z_sm)) > 0.2, True)
+z_nc, _ = runstest_1samp(np.array(small[:9] + [10], dtype=float), cutoff='mean', correction=False)
+rs9 = ts.runs_test(small[:9] + [10], 'mean', correction=False)
+check.near('... without the correction the two agree', rs9['z'], float(z_nc), rel=1e-12)
+rr = call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=0)['resid_runs']
+e_ar = np.array([v for v in call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=0)['resid'] if v is not None])
+check.near('the residuals\' runs test about zero (every model has it)', rr['z'], float(runstest_1samp(e_ar, cutoff=0.0, correction=True)[0]), rel=1e-12)
+S_rt = call('timeseries.series', table=tid, y='sales', time='month')
+for cut_ in ('mean', 'median', 'zero'):
+    ns = run_code('\n'.join(S_rt['runs_code'][cut_]), csv)
+    check(f'the runs test code (about {cut_}) gives the same z', ns.get('error') or bool(np.isclose(ns['z'], S_rt['runs'][cut_]['z'], rtol=1e-12)) if S_rt['runs'][cut_].get('z') is not None else ns.get('error'), True if S_rt['runs'][cut_].get('z') is not None else None)
+Ar = call('timeseries.arima', table=tid, y='sales', time='month', p=1, h=0)
+ns = run_code(ts.assemble(Ar['plot_code']['runs']), csv)
+check('the residual runs test code gives the same z', ns.get('error') or bool(np.isclose(ns['z'], Ar['resid_runs']['z'], rtol=1e-9)), True)
+
+# ---- rolling-origin cross-validation: expanding windows, the models refitted at every origin
+cv_models = [{'id': 1, 'name': 'ARMA(1, 1)', 'fn': 'timeseries.arima', 'args': {'p': 1, 'q': 1}},
+             {'id': 2, 'name': 'Seasonal Naive(12)', 'fn': 'timeseries.benchmark', 'args': {'method': 'snaive', 's': 12}},
+             {'id': 3, 'name': 'Winters', 'fn': 'timeseries.smooth', 'args': {'method': 'winters', 's': 12}}]
+with contextlib.redirect_stdout(io.StringIO()) as prog:
+    cvr = call('timeseries.cv', table=tid, y='sales', time='month', models=cv_models, origins=4, horizon=6, step=6, season=12)
+check('cross-validation: no error, 4 origins 6 apart, the last 6 before the end', (cvr.get('error'), cvr['cuts'], cvr['horizon']), (None, [18, 12, 6, 0], 6))
+check('... progress lines for the page, one per fit', prog.getvalue().strip().split('\n')[-1], 'smui:progress tscv 12 12')
+cv_sn = next(m_ for m_ in cvr['models'] if m_['id'] == 2)
+by_hand = []
+for cut_ in (18, 12, 6, 0):
+    o_ = n - cut_ - 6
+    fc_ = y[o_ - 12:o_ - 6]
+    e_ = y[o_:o_ + 6] - fc_
+    by_hand.append((math.sqrt(np.mean(e_ ** 2)), np.mean(np.abs(e_)), 100 * np.mean(np.abs(e_ / y[o_:o_ + 6]))))
+near_all('... Seasonal Naive at each origin: RMSE, MAE and MAPE of the next 6 values by hand', [v for p in cv_sn['origins'] for v in (p['rmse'], p['mae'], p['mape'])],
+         [v for t3 in by_hand for v in t3], rel=1e-12)
+near_all('... and their means over the origins', [cv_sn['rmse'], cv_sn['mae'], cv_sn['mape']], np.mean(by_hand, axis=0), rel=1e-12)
+cv_ar = next(m_ for m_ in cvr['models'] if m_['id'] == 1)
+o2 = n - 12 - 6
+ref_o2 = ARIMA(y[:o2], order=(1, 0, 1), trend='c').fit()
+check.near('... ARMA(1, 1) at the second origin: ARIMA fitted on the values up to it', cv_ar['origins'][1]['rmse'], math.sqrt(np.mean((y[o2:o2 + 6] - ref_o2.get_forecast(6).predicted_mean) ** 2)), rel=1e-5)
+check('... the origins\' last training months', cvr['t_origins'], [float(months[n - c_ - 6 - 1]) for c_ in (18, 12, 6, 0)])
+ns = run_code(cvr['code'], csv)
+if ns.get('error'):
+    check('the cross-validation code runs', ns['error'], None)
+else:
+    cvd = ns['cv']
+    near_all('the cross-validation code gives every origin\'s RMSE', list(cvd['RMSE']), [m_['origins'][j_]['rmse'] for j_ in range(4) for m_ in cvr['models']], rel=1e-5)
+check('too many origins for the series is an error', 'error' in call('timeseries.cv', table=tid, y='sales', models=cv_models, origins=30, horizon=6), True)
+
+# ==== Time Series Forecast (tsforecast): the best ETS model of each of many series ====
+# against ETSModel fitted directly for every candidate, timeseries.ets for the chosen model, and the shown code on a CSV
+from smui import tsforecast as tsf
+
+
+def quiet_call(fn, **kw):
+    with contextlib.redirect_stdout(io.StringIO()):   # the 'smui:progress' lines are the page's
+        return call(fn, **kw)
+
+
+f_rng = np.random.default_rng(99)
+nF = 72
+mF = [ms(f'{2019 + i // 12}-{i % 12 + 1:02d}-01') for i in range(nF)]
+tt_ = np.arange(nF)
+sA = 200 * 1.005 ** tt_ * (1 + 0.15 * np.sin(2 * np.pi * tt_ / 12)) * np.exp(f_rng.normal(0, 0.02, nF))       # multiplicative season and growth
+sB = 50 + np.cumsum(f_rng.normal(0.3, 1.0, nF))                                                              # a random walk with drift
+sC = 20 + 5 * np.sin(2 * np.pi * tt_ / 12) + f_rng.normal(0, 1.0, nF) - 30                                     # additive season, some values below zero
+tidF = date_table({'month': mF, 'A': list(sA), 'B': list(sB), 'C': list(sC)})
+specsF = [{'key': k, 'label': k, 'y': k, 'rows': None, 'excluded': []} for k in ('A', 'B', 'C')]
+with contextlib.redirect_stdout(io.StringIO()) as progF:
+    fF = call('tsforecast.fit', table=tidF, series=specsF, time='month', h=6, criterion='aicc', models='recommended')
+check('Time Series Forecast: no error, three series', (fF.get('error'), [s_['key'] for s_ in fF['series']]), (None, ['A', 'B', 'C']))
+check('... progress lines, the last one all done', prog_last := progF.getvalue().strip().split('\n')[-1].split()[-1] == progF.getvalue().strip().split('\n')[-1].split()[-2], True)
+TR = {'N': (None, False), 'A': ('add', False), 'Ad': ('add', True), 'M': ('mul', False), 'Md': ('mul', True)}
+for sF, yv_ in zip(fF['series'], (sA, sB, sC)):
+    pos_ = bool((yv_ > 0).all())
+    want_c = tsf.candidates('recommended', nF, 12, pos_)
+    check(f'{sF["key"]}: the recommended candidates the series allows ({len(want_c)}; multiplicative ones only above zero)',
+          sorted((c['error'], c['trend'], c['seasonal']) for c in sF['candidates']), sorted(want_c))
+    direct = {}
+    for e_, t_, s_ in want_c:
+        rr = ETSModel(pd.Series(yv_), error=e_, trend=TR[t_][0], damped_trend=TR[t_][1], seasonal={'N': None, 'A': 'add', 'M': 'mul'}[s_],
+                      seasonal_periods=12 if s_ != 'N' else None, initialization_method='estimated').fit(disp=False, maxiter=1000)
+        direct[(e_, t_, s_)] = float(rr.aicc)
+    got_ = {(c['error'], c['trend'], c['seasonal']): c['aicc'] for c in sF['candidates']}
+    near_all(f'{sF["key"]}: every candidate\'s AICc is ETSModel\'s', [got_[k_] for k_ in want_c], [direct[k_] for k_ in want_c], rel=1e-9)
+    best_ = min(direct, key=direct.get)
+    check(f'{sF["key"]}: the chosen model has the least AICc', sF['model'], tsf.model_name(*best_, 12))
+    ref_f = call('timeseries.ets', table=tidF, y=sF['key'], time='month', error=best_[0], trend=best_[1], seasonal=best_[2], s=12 if best_[2] != 'N' else 0, h=6)
+    near_all(f'{sF["key"]}: its forecasts and limits are timeseries.ets\' (the series\' own report)', sF['forecast']['mean'] + sF['forecast']['lower'] + sF['forecast']['upper'],
+             ref_f['forecast']['mean'] + ref_f['forecast']['lower'] + ref_f['forecast']['upper'], rel=1e-10)
+    check(f'{sF["key"]}: the forecast months continue the dates', sF['forecast']['t'][0], float(ms('2025-01-01')))
+check('C has values below zero: no multiplicative candidate', any(c['error'] == 'mul' or c['seasonal'] == 'M' for c in fF['series'][2]['candidates']), False)
+check('the model sets: all 30 for a positive seasonal series, 6 additive ones, 15 recommended', (len(tsf.candidates('all', 72, 12, True)), len(tsf.candidates('additive', 72, 12, True)),
+      len(tsf.candidates('recommended', 72, 12, True))), (30, 6, 15))
+check('... a short series gets no seasonal candidates (two periods and four values needed)', any(c[2] != 'N' for c in tsf.candidates('all', 27, 12, True)), False)
+# BIC
+fB = quiet_call('tsforecast.fit', table=tidF, series=specsF[:1], time='month', h=6, criterion='bic', models='additive')
+bic_ = {(c['error'], c['trend'], c['seasonal']): c['bic'] for c in fB['series'][0]['candidates']}
+check('BIC: the chosen model has the least BIC', fB['series'][0]['model'], tsf.model_name(*min(bic_, key=bic_.get), 12))
+# the holdback criterion: every candidate fitted on the first n − 12, compared on its forecasts of the last 12; the chosen refitted on all
+fH = quiet_call('tsforecast.fit', table=tidF, series=specsF[:2], time='month', h=6, criterion='rmse', holdback=12, models='recommended')
+for sF, yv_ in zip(fH['series'], (sA, sB)):
+    hbd = {}
+    for c in sF['candidates']:
+        rr = ETSModel(pd.Series(yv_[:nF - 12]), error=c['error'], trend=TR[c['trend']][0], damped_trend=TR[c['trend']][1], seasonal={'N': None, 'A': 'add', 'M': 'mul'}[c['seasonal']],
+                      seasonal_periods=12 if c['seasonal'] != 'N' else None, initialization_method='estimated').fit(disp=False, maxiter=1000)
+        hbd[(c['error'], c['trend'], c['seasonal'])] = math.sqrt(np.mean((yv_[nF - 12:] - np.asarray(rr.forecast(12))) ** 2))
+    got_ = {(c['error'], c['trend'], c['seasonal']): c['hb_rmse'] for c in sF['candidates']}
+    near_all(f'holdback RMSE, {sF["key"]}: every candidate\'s, fitted on the first 60 values', [got_[k_] for k_ in hbd], list(hbd.values()), rel=1e-7)
+    b_ = min(hbd, key=hbd.get)
+    check(f'... {sF["key"]}: the chosen model has the least holdback RMSE, and its criterion is that RMSE', (sF['model'], abs(sF['criterion_value'] - hbd[b_]) < 1e-7 * hbd[b_]),
+          (tsf.model_name(*b_, 12), True))
+    ref_f = call('timeseries.ets', table=tidF, y=sF['key'], time='month', error=b_[0], trend=b_[1], seasonal=b_[2], s=12 if b_[2] != 'N' else 0, h=6)
+    near_all(f'... {sF["key"]}: the forecasts after the end from the chosen model refitted on all 72 values', sF['forecast']['mean'], ref_f['forecast']['mean'], rel=1e-10)
+# stacked data: a grouping column; each level is a series, the same as its own column
+stack = pd.DataFrame({'store': ['north'] * nF + ['south'] * nF, 'month': mF * 2, 'units': list(sA) + list(sB)})
+tidS = date_table({c: list(stack[c]) for c in stack.columns})
+rowsN, rowsS = list(range(nF)), list(range(nF, 2 * nF))
+spS = [{'key': 'north', 'label': 'North store', 'y': 'units', 'rows': rowsN, 'excluded': [], 'where': [{'column': 'store', 'value': 'north'}]},
+       {'key': 'south', 'label': 'South store', 'y': 'units', 'rows': rowsS, 'excluded': [], 'where': [{'column': 'store', 'value': 'south'}]}]
+fS = quiet_call('tsforecast.fit', table=tidS, series=spS, time='month', h=6, criterion='aicc', models='recommended')
+check('stacked data: a series per level, with the page\'s labels', [(s_['key'], s_['label']) for s_ in fS['series']], [('north', 'North store'), ('south', 'South store')])
+near_all('... each level\'s forecasts are those of the same values in a column of their own', fS['series'][0]['forecast']['mean'] + fS['series'][1]['forecast']['mean'],
+         fF['series'][0]['forecast']['mean'] + fF['series'][1]['forecast']['mean'], rel=1e-10)
+check('... the same models chosen', [s_['model'] for s_ in fS['series']], [fF['series'][0]['model'], fF['series'][1]['model']])
+fSx = quiet_call('tsforecast.fit', table=tidS, series=[dict(spS[0], excluded=[10, 11])], time='month', h=6)
+check('... an excluded row counts as missing in its place', (fSx['series'][0]['n'], fSx['series'][0]['n_slots'], fSx['series'][0]['values'][10]), (nF - 2, nF, None))
+# the code: every series' candidates, the choice, the forecasts, from a CSV export
+csvF = pd.DataFrame({'month': [pd.Timestamp(v, unit='ms').strftime('%Y-%m-%d') for v in mF], 'A': sA, 'B': sB, 'C': sC})
+ns = run_code(fF['code'], csvF)
+if ns.get('error'):
+    check('the Time Series Forecast code runs', ns['error'], None)
+else:
+    check('the Time Series Forecast code chooses the same models', list(ns['pd'].DataFrame(ns['summary'])['Model']), [s_['model'] for s_ in fF['series']])
+    near_all('... with the same AICc', list(ns['pd'].DataFrame(ns['summary'])['AICc']), [s_['criterion_value'] for s_ in fF['series']], rel=1e-8)
+    near_all('... and the same forecasts', list(ns['pd'].concat(ns['forecasts'])['mean']), [v for s_ in fF['series'] for v in s_['forecast']['mean']], rel=1e-8)
+ns = run_code(fH['code'], csvF)
+check('the holdback criterion\'s code chooses the same models', ns.get('error') or list(ns['pd'].DataFrame(ns['summary'])['Model']), [s_['model'] for s_ in fH['series']])
+stack_csv = pd.DataFrame({'store': stack['store'], 'month': [pd.Timestamp(v, unit='ms').strftime('%Y-%m-%d') for v in stack['month']], 'units': stack['units']})
+ns = run_code(fS['code'], stack_csv)
+check('the stacked data\'s code (each level\'s rows) chooses the same models', ns.get('error') or list(ns['pd'].DataFrame(ns['summary'])['Model']), [s_['model'] for s_ in fS['series']])
+check('no series is an error', 'error' in quiet_call('tsforecast.fit', table=tidF, series=[]), True)
+
 sys.exit(check.done())

@@ -13,7 +13,12 @@ stratum of a Latin hypercube. Evaluate Design against the efficiencies of an
 orthogonal design and the noncentral F. Power against statsmodels called
 directly and textbook numbers (one-sample t: n = 33.4 for d = 0.5; two-sample:
 63.8 per group; Cohen's f = 0.25 for four groups; the pooled two-proportion
-z test; six sigma is 3.4 defects per million).
+z test; six sigma is 3.4 defects per million). Split plots and blocked full
+factorials by their structure (each whole plot one setting of the
+hard-to-change factors with every combination of the others, its runs
+together; each block a complete replicate), their code, the design's model
+fitted by Fit Model's REML against the exact split-plot F tests (Kenward-Roger
+df 4 on the whole plots, 20 within them), and Simulate Responses' formula.
 
     python3 resources/tests/smui/test_doe.py
 """
@@ -422,6 +427,13 @@ grp_d = [i for i in range(nd) if cols_d['blk'][i] == 'u' and i != 9]
 e = call('doe.evaluate', table=t_d, factors=['Temp', 'Time', 'Cat'], model='main', rows=grp_d, where=[{'column': 'blk', 'value': 'u'}], alpha=0.1, rmse=2, coefficient=1.5, table_name='data')
 check('Evaluate Design in a By group: the code keeps the group, drops the row left out', ('df = df[df["blk"] == "u"]' in e['code'], 'df = df.drop(index=[9])' in e['code']), (True, True))
 evaluate_checks('Evaluate Design (main effects, a By group, power settings)', e, frame_d, ['Temp', 'Time', 'Cat'])
+# a By level with a line break (a table from a file is hostile input): the comment stays one line
+cols_h = {**cols_d, 'blk': ['u\nimport os; os.system("x")' if b == 'u' else b for b in cols_d['blk']]}
+t_h = table(cols_h, levels={'Cat': ['a', 'b', 'c']})
+e = call('doe.evaluate', table=t_h, factors=['Temp', 'Time', 'Cat'], model='main', rows=grp_d, where=[{'column': 'blk', 'value': cols_h['blk'][0] if cols_h['blk'][0] != 'v' else cols_h['blk'][1]}], table_name='data')
+by_line = [ln for ln in e['code'].split('\n') if 'only the rows where' in ln]
+check('Evaluate Design: a By level with a line break stays in its string and its one-line comment',
+      (len(by_line), any(ln.lstrip().startswith('import os') for ln in e['code'].split('\n')), by_line[0].endswith('is u import os; os.system("x")') if by_line else None), (1, False, True))
 # a rotatable CCD with a numeric nominal factor (levels 1 and 2), the response surface model
 ccd2 = call('doe.rsm', factors=[cf('A'), cf('B')], design='ccd:rotatable', order='keep', replicates=1)
 cols_c = {c['name']: c['values'] for c in ccd2['columns'] if c['name'] in ('A', 'B')}
@@ -528,4 +540,130 @@ check.near('δ0 = 0: the sample size, unchanged (387.3 per group)', r['values'][
 r = P(situation='two_props', p1=0.65, p2=0.5, power=0.8, null_diff=0.05)
 check('with a margin: the graphs\' code is the formula\'s, the sample size solved from it', (all('unpooled' in c and 'power_proportions_2indep' not in c for c in r['plot_code'].values()),
       all('max(2.0, zsum ** 2' in c for c in r['plot_code'].values())), (True, True))
+
+# ---------------------------------------------------------------------------
+# Split plots (factors that are hard to change) and replicates as blocks: the designs by their
+# defining properties, the design's model, its exact tests by Fit Model's REML (Kenward-Roger), and
+# Simulate Responses' formula
+import pandas as pd  # noqa: E402
+import statsmodels.api as sm  # noqa: E402
+import statsmodels.formula.api as smf  # noqa: E402
+
+hard = lambda f: {**f, 'changes': 'hard'}
+spf = [hard(cf('A', 10, 20)), hard(cf('B')), cf('C'), {'name': 'D', 'kind': 'categorical', 'levels': ['p', 'q', 'r']}]
+sp = call('doe.full_factorial', factors=spf, responses=[{'name': 'Y'}], seed=5)
+spc = {c['name']: c['values'] for c in sp['columns']}
+check('split plot: the columns (a Whole Plots column after the factors)', [c['name'] for c in sp['columns']], ['Pattern', 'A', 'B', 'C', 'D', 'Whole Plots', 'Y'])
+check('split plot: Whole Plots is nominal', [c['modelingType'] for c in sp['columns'] if c['name'] == 'Whole Plots'], ['nominal'])
+check('split plot: the default whole plots, each of the 4 hard-to-change settings twice; 6 runs in each', (sp['whole_plots'], sp['n_runs']), (8, 48))
+wpl = spc['Whole Plots']
+runs_of = {w: [i for i, x in enumerate(wpl) if x == w] for w in dict.fromkeys(wpl)}
+check('split plot: the whole plots are numbered 1 to 8 in run order', list(runs_of), [str(i) for i in range(1, 9)])
+check('split plot: each whole plot\'s runs are together (a restricted randomization)', all(v == list(range(v[0], v[0] + len(v))) for v in runs_of.values()), True)
+check('split plot: A and B are constant in each whole plot', all(len({(spc['A'][i], spc['B'][i]) for i in v}) == 1 for v in runs_of.values()), True)
+check('split plot: every combination of C and D once in each whole plot', all(sorted((spc['C'][i], spc['D'][i]) for i in v) == sorted(itertools.product([-1.0, 1.0], 'pqr')) for v in runs_of.values()), True)
+check('split plot: each setting of A and B in two whole plots', sorted(Counter((spc['A'][v[0]], spc['B'][v[0]]) for v in runs_of.values()).values()), [2, 2, 2, 2])
+std = call('doe.full_factorial', factors=spf, seed=5, order='keep')
+stdc = {c['name']: c['values'] for c in std['columns']}
+check('split plot, standard order: the whole plots cycle through the settings, the runs in order', ([(stdc['A'][6 * k], stdc['B'][6 * k]) for k in range(8)], [(stdc['C'][i], stdc['D'][i]) for i in range(6)]),
+      ([(10.0, -1.0), (10.0, 1.0), (20.0, -1.0), (20.0, 1.0)] * 2, list(itertools.product([-1.0, 1.0], 'pqr'))))
+check('split plot, randomized: not the standard order', [(spc['A'][6 * k], spc['B'][6 * k]) for k in range(8)] != [(stdc['A'][6 * k], stdc['B'][6 * k]) for k in range(8)]
+      or [(spc['C'][i], spc['D'][i]) for i in range(6)] != [(stdc['C'][i], stdc['D'][i]) for i in range(6)], True)
+sp2 = call('doe.full_factorial', factors=spf, seed=5)
+check('split plot: the same seed, the same design', [c['values'] for c in sp2['columns']], [c['values'] for c in sp['columns']])
+sp12 = call('doe.full_factorial', factors=spf, seed=5, whole_plots=12)
+check('split plot: 12 whole plots, each setting in 3', (sp12['n_runs'], sorted(Counter(zip(*[[v for i, v in enumerate(c['values']) if i % 6 == 0] for c in sp12['columns'] if c['name'] in ('A', 'B')])).values())), (72, [3, 3, 3, 3]))
+check('split plot: the default follows the replicates (one whole plot per setting and copy)', call('doe.full_factorial', factors=spf, seed=5, replicates=2)['whole_plots'], 12)
+
+
+def refused(fn, **kw):
+    """The message a refused call raises (as the page shows it), or None."""
+    try:
+        call(fn, **kw)
+    except Exception as e:  # the page shows the message
+        return str(e)
+    return None
+
+
+for bad, want in ((dict(whole_plots=6), 'multiple of 4'), (dict(factors=[hard(cf('A')), hard(cf('B'))]), 'easy to change')):
+    check(f'split plot: refused ({want})', want in (refused('doe.full_factorial', **{'factors': spf, 'seed': 5, **bad}) or ''), True)
+one = call('doe.full_factorial', factors=spf, seed=5, whole_plots=4)
+check('split plot with one whole plot per setting: a note, and no Whole Plots term in the model',
+      ('cannot be told from' in one['notes'], [e['names'] for e in one['model']['effects'] if e['random']]), (True, []))
+check('split plot: center points are not added', ('not added to a split-plot' in call('doe.full_factorial', factors=spf, seed=5, center_points=2)['notes'], call('doe.full_factorial', factors=spf, seed=5, center_points=2)['n_runs']), (True, 48))
+code_ns = {}
+with contextlib.redirect_stdout(io.StringIO()):
+    exec(compile(sp['code'], 'code', 'exec'), code_ns)
+dcode = code_ns['d']
+check('split plot: the code makes the same design, run for run', [dcode['Whole Plots'].tolist()] + [dcode[c].tolist() for c in 'ABCD'], [wpl] + [spc[c] for c in 'ABCD'])
+
+# the design's model: the full factorial (it leaves 20 error df within whole plots), Whole Plots random
+eff = sp['model']['effects']
+check('the model: Y, the full factorial of A, B, C, D (15 terms), Whole Plots random',
+      (sp['model']['roles'], len([e for e in eff if not e['random']]), [e['names'] for e in eff if e['random']], sp['model']['options']['personality']),
+      ({'y': ['Y']}, 15, [['Whole Plots']], 'standard'))
+check('the model: its terms by degree, as Fit Model\'s Full Factorial macro lists them', [e['names'] for e in eff[:6]], [['A'], ['B'], ['C'], ['D'], ['A', 'B'], ['A', 'C']])
+# a response from the model: whole-plot and run errors; REML with the design's model
+rng = np.random.default_rng(2024)
+d = pd.DataFrame({k: spc[k] for k in ('A', 'B', 'C', 'D', 'Whole Plots')})
+xa, xb = (d['A'] - 15) / 5, d['B']
+wpe = dict(zip([str(i) for i in range(1, 9)], rng.normal(0, 1.5, 8)))
+d['Y'] = 50 + 2 * xa - 1.5 * xb + 0.8 * d['C'] + d['D'].map({'p': 1.0, 'q': -0.5, 'r': -0.5}) + d['Whole Plots'].map(wpe) + rng.normal(0, 1, len(d))
+tsp = table({k: d[k].tolist() for k in d.columns})
+fit = call('fitmodel.mixed', table=tsp, y='Y', effects=[{'names': e['names'], 'random': e['random']} for e in eff])
+check('the design\'s model fits (REML)', fit.get('error'), None)
+tests = {t['source']: t for t in fit.get('tests', [])}
+# the exact tests: the whole-plot terms on the whole plots' mean square (W - H = 4 df), the others on the error within
+full = 'A * B * Cx * C(D, Sum)'   # (a column C would hide patsy's C())
+do = d.rename(columns={'C': 'Cx', 'Whole Plots': 'WP'})
+ols = smf.ols(f'Y ~ {full}', do).fit()
+an = sm.stats.anova_lm(ols, typ=1)
+olsw = smf.ols(f'Y ~ {full} + C(WP)', do).fit()
+mse_sub, df_sub = float(olsw.ssr / olsw.df_resid), float(olsw.df_resid)
+ms_wp, df_wp = float((ols.ssr - olsw.ssr) / (ols.df_resid - olsw.df_resid)), float(ols.df_resid - olsw.df_resid)
+check('the within-whole-plot error has 20 df and the whole plots 4', (df_sub, df_wp), (20.0, 4.0))
+for term, src, ms, dfd in (('A', 'A', ms_wp, df_wp), ('B', 'B', ms_wp, df_wp), ('A:B', 'A*B', ms_wp, df_wp), ('Cx', 'C', mse_sub, df_sub),
+                           ('C(D, Sum)', 'D', mse_sub, df_sub), ('A:Cx', 'A*C', mse_sub, df_sub), ('B:C(D, Sum)', 'B*D', mse_sub, df_sub)):
+    ms_t = float(an['mean_sq'][term])
+    got = tests.get(src, {})
+    check.near(f'the design\'s model: F of {src} = its exact test\'s (on the {"whole plots" if dfd == df_wp else "error within them"})', got.get('f'), ms_t / ms, rel=1e-6)
+    check.near(f'the design\'s model: DFDen of {src} (Kenward-Roger) = {dfd:g}', got.get('dfden'), dfd, rel=1e-6)
+vc = {v['effect']: v for v in fit.get('varcomp', [])}
+check.near('the design\'s model: the Whole Plots variance = (MS whole plots - MSE) / 6', vc.get('Whole Plots', {}).get('var'), (ms_wp - mse_sub) / 6, rel=1e-6)
+
+# replicates as blocks
+bl = call('doe.full_factorial', factors=[cf('A'), cf('B'), {'name': 'C', 'kind': 'categorical', 'levels': ['x', 'y']}], replicates=2, center_points=2, blocks=True, seed=3)
+blc = {c['name']: c['values'] for c in bl['columns']}
+check('blocks: 3 blocks of 8 combinations and 2 center points', (bl['n_runs'], [c['name'] for c in bl['columns']], Counter(blc['Block'])), (30, ['Pattern', 'A', 'B', 'C', 'Block', 'Y'], {'1': 10, '2': 10, '3': 10}))
+check('blocks: each block a complete replicate with its center points, its runs together',
+      all(sorted(zip(blc['A'][10 * b:10 * b + 10], blc['B'][10 * b:10 * b + 10], blc['C'][10 * b:10 * b + 10])) == sorted(list(itertools.product([-1.0, 1.0], [-1.0, 1.0], 'xy')) + [(0.0, 0.0, 'x'), (0.0, 0.0, 'y')])
+          and set(blc['Block'][10 * b:10 * b + 10]) == {str(b + 1)} for b in range(3)), True)
+check('blocks: the model has Block as a random effect', [e['names'] for e in bl['model']['effects'] if e['random']], [['Block']])
+bns = {}
+with contextlib.redirect_stdout(io.StringIO()):
+    exec(compile(bl['code'], 'code', 'exec'), bns)
+check('blocks: the code makes the same design', [bns['d'][c].tolist() for c in ('A', 'B', 'C', 'Block')], [blc[c] for c in ('A', 'B', 'C', 'Block')])
+check('no replicates: Replicates as Blocks makes no Block column', 'Block' in [c['name'] for c in call('doe.full_factorial', factors=[cf('A'), cf('B')], blocks=True, seed=3)['columns']], False)
+ff0 = call('doe.full_factorial', factors=[cf('A'), cf('B'), cf('C')], seed=3)
+check('the plain full factorial\'s model: no error df for the full factorial, so the main effects and two-factor interactions',
+      ([e['names'] for e in ff0['model']['effects']], ff0['random']), ([['A'], ['B'], ['C'], ['A', 'B'], ['A', 'C'], ['B', 'C']], []))
+
+# Simulate Responses: the coefficients asked for, and the formula
+sim = sp['simulate']
+check('Simulate Responses: a coefficient per term and level, labelled as the estimates',
+      [lab for t in sim['terms'][:8] for lab in t['labels']], ['A', 'B', 'C', 'D[p]', 'D[q]', 'A*B', 'A*C', 'A*D[p]', 'A*D[q]', 'B*C'])
+check('Simulate Responses: 1 for a main effect, 0 for an interaction; the σ\'s 1', ([x for t in sim['terms'][:5] for x in t['defaults']], sim['sigmas']), ([1.0, 1.0, 1.0, 1.0, 1.0, 0.0], {'Whole Plots': 1.0, 'Error': 1.0}))
+coefs = [[0.0] * len(t['labels']) for t in sim['terms']]
+coefs[0] = [2.0]
+coefs[1] = [-1.5]
+coefs[3] = [1.0, -0.5]
+coefs[5] = [0.25]
+f = call('doe.simulate_formula', factors=spf, terms=[t['names'] for t in sim['terms']], coefficients=coefs, intercept=50, sigmas={'Whole Plots': 1.5, 'Error': 1})
+check('Simulate Responses: the formula',
+      f.get('expr'), '50 + 2 * ((:A - 15) / 5) - 1.5 * :B + Match(:D, "p", 1, "r", -1, 0) - 0.5 * Match(:D, "q", 1, "r", -1, 0) + 0.25 * ((:A - 15) / 5) * :C'
+      ' + 1.5 * Col Mean(Random Normal(), :"Whole Plots") * Sqrt(Col Number(:"Whole Plots", :"Whole Plots")) + Random Normal(0, 1)')
+check('Simulate Responses: no draws with σ 0, and a level with a quote in its name', call('doe.simulate_formula', factors=[{'name': 'x y', 'kind': 'categorical', 'levels': ['a"b', 'c']}], terms=[['x y']], coefficients=[[3]], sigmas={'Error': 0})['expr'],
+      '3 * Match(:"x y", "a\\"b", 1, "c", -1, 0)')
+check('Simulate Responses: the wrong number of coefficients is refused', 'coefficient' in (refused('doe.simulate_formula', factors=spf, terms=[['D']], coefficients=[[1]]) or ''), True)
+check('Simulate Responses: a negative σ is refused', 'σ' in (refused('doe.simulate_formula', factors=spf, terms=[['A']], coefficients=[[1]], sigmas={'Error': -1}) or ''), True)
 sys.exit(check.done())

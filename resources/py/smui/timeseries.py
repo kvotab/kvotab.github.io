@@ -103,6 +103,12 @@ class Series:
     kind   'date', 'datetime', 'numeric' or 'index'
     offset a pandas DateOffset when the dates follow a calendar frequency
     X, Xf  the input columns over the span, and in the rows after it
+    hold   Forecast on Holdback: the last values held back from the fit
+           ({'y', 't', 'rows', 'n'}), or None; y, t, rows and X are then the
+           training part, and Xf starts with the inputs of the held-back slots
+    cut    slots left out after the holdback (an origin of the rolling-origin
+           cross-validation: the series as it was at that time)
+    season the lag of the (seasonal) naive forecast that scales MASE
     """
 
     def __init__(self):
@@ -117,16 +123,22 @@ class Series:
         self.X = {}
         self.Xf = {}
         self.excluded_pos = []
+        self.hold = None
+        self.cut = 0
+        self.season = 1
 
     @property
     def n(self):
         return len(self.y)
 
     def future(self, h):
-        """The time points of h periods after the series."""
+        """The time points of h periods after the series (the held-back
+        slots' own times, when values are held back)."""
         h = int(h or 0)
         if h <= 0 or not len(self.t):
             return []
+        if self.hold is not None and h <= self.hold['n']:
+            return [float(v) for v in self.hold['t'][:h]]
         if self.kind in DATE_KINDS and self.offset is not None:
             last = pd.Timestamp(int(self.t[-1]), unit='ms')
             fut = pd.date_range(last, periods=h + 1, freq=self.offset)[1:]
@@ -216,8 +228,46 @@ def _date_offset(dates):
     return None
 
 
-def load(table, y, time=None, rows=None, excluded=None, inputs=None):
-    """The series of column y (and the input columns) for the given rows."""
+def load(table, y, time=None, rows=None, excluded=None, inputs=None, holdback=0, cut=0, season=0):
+    """The series of column y (and the input columns) for the given rows.
+    holdback: the last values held back from the fit (Forecast on Holdback);
+    cut: the slots after them left out (an origin of the cross-validation);
+    season: the seasonal period that scales MASE (1 when not known)."""
+    S = _load(table, y, time, rows, excluded, inputs)
+    _split(S, int(cut or 0), int(holdback or 0))
+    s = int(season or 0)
+    S.season = s if s >= 2 and S.n > s else 1
+    return S
+
+
+def _split(S, cut, h):
+    """Forecast on Holdback and the cross-validation's origins: the last cut
+    slots left out, then the last h of the rest held back. Their inputs come
+    first in Xf, the inputs' future values."""
+    if cut <= 0 and h <= 0:
+        return
+    if cut + h + 3 > S.n:
+        raise NoSeries(f'the series has {S.n} values: too few to hold back {h}' + (f' after leaving out {cut}' if cut else ''))
+
+    def cut_off(k):
+        m = S.n - k
+        S.Xf = {c: np.concatenate([np.asarray(S.X[c][m:], dtype=float), np.asarray(S.Xf.get(c, []), dtype=float)]) for c in S.inputs}
+        part = {'y': S.y[m:].copy(), 't': S.t[m:].copy(), 'rows': S.rows[m:], 'n': k}
+        S.y, S.t, S.rows = S.y[:m], S.t[:m], S.rows[:m]
+        S.X = {c: np.asarray(v[:m], dtype=float) for c, v in S.X.items()}
+        return part
+
+    if cut > 0:
+        cut_off(cut)
+        S.cut = cut
+    if h > 0:
+        S.hold = cut_off(h)
+        if not np.isfinite(S.hold['y']).any():
+            raise NoSeries(f'the last {h} values held back are all missing')
+
+
+def _load(table, y, time=None, rows=None, excluded=None, inputs=None):
+    """load() before the holdback: the whole span."""
     if time == y:
         time = None
     inputs = [c for c in dict.fromkeys(inputs or []) if c and c not in (y, time)]
@@ -386,12 +436,36 @@ def _series_lines(S, where=None, graph=False):
     lines.append('y = y.loc[y.first_valid_index():y.last_valid_index()]')
     if S.excluded_pos:
         lines.append(f'y.iloc[{S.excluded_pos}] = np.nan   # rows excluded in the table count as missing')
+    lines += _hold_lines(S)
     if graph:
-        if S.time_name:
-            lines.append(f't = y.index   # the time axis: {"the dates" if S.kind in DATE_KINDS else S.time_name}')
-        else:
-            lines.append('t = df.index.to_numpy()[y.index] + 1   # the time axis: the row numbers, as the page has them')
+        lines += _time_lines(S)
     return lines
+
+
+def _hold_lines(S):
+    """The series as the fit takes it: the slots after a cross-validation
+    origin left out, and the last values held back (y_hold) from y."""
+    out = []
+    if S.cut:
+        out.append(f'y = y.iloc[:-{S.cut}]   # the series as it was at this origin: the last {_plural(S.cut, "value")} left out')
+    if S.hold is not None:
+        k = S.hold['n']
+        out.append(f'y_all = y; y, y_hold = y_all.iloc[:-{k}], y_all.iloc[-{k}:]   # Forecast on Holdback: the last {_plural(k, "value")} held back, the model fitted on the rest')
+    return out
+
+
+def _time_lines(S, name='t', of='y'):
+    """t, the time axis as the page draws it (the dates, the Time ID's values,
+    or the row numbers of the table); t_hold and t_all too with a holdback."""
+    def one(nm, series):
+        if S.time_name:
+            return f'{nm} = {series}.index'
+        return f'{nm} = df.index.to_numpy()[{series}.index] + 1'
+    what = ("the dates" if S.kind in DATE_KINDS else S.time_name) if S.time_name else 'the row numbers, as the page has them'
+    out = [f'{one(name, of)}   # the time axis: {what}']
+    if S.hold is not None and of == 'y':
+        out.append(f'{one("t_hold", "y_hold")}; {one("t_all", "y_all")}   # the times of the held-back values, and of every value')
+    return out
 
 
 # ---- the graphs as matplotlib code ---------------------------------------------
@@ -495,6 +569,8 @@ def _fixed_series_recipe(head, x, v, name, title, S, before=(), extra=()):
 
 def _future_line(S, h):
     """t_f: the times of the h forecast periods, as S.future has them."""
+    if S.hold is not None and h <= S.hold['n']:
+        return f't_f = t_hold{"" if h == S.hold["n"] else f"[:{h}]"}   # the forecasts are of the held-back values'
     if S.kind in DATE_KINDS and S.offset is not None:
         return f't_f = pd.date_range(t[-1], periods={h + 1}, freq={S.freq!r})[1:]   # the next {h} dates of the calendar'
     if S.kind in DATE_KINDS:
@@ -580,22 +656,79 @@ def _model_plots(S, table_name, where, name, imports, fit, h, nlags, onestep=Tru
     """A model's graphs as recipes (the forecast, the residuals, the residual
     diagnostics), and its fragment for the page's Model Comparison: the
     imports, the series lines, the fit, the draw and the residual
-    correlations."""
+    correlations. With values held back, the forecast graph shows every
+    value and shades the held-back ones, and 'holdback' is the code of the
+    holdback statistics (the fragment's hb_def and hb, for the page's)."""
     imports = ['from scipy import stats', *imports]
     body = [*_head(S, table_name, where, imports), *fit]
     draw = _model_draw(S, name, h, onestep)
     fig = ['', SIZE, COLOR, 'fig, ax = plt.subplots(figsize=size, layout="constrained")']
+    held = S.hold is not None
+    data = (_trace('t_all', 'y_all', lines=False) + '   # Show Points: the data, the held-back values too') if held else (_trace('t', 'y', lines=False) + '   # Show Points: the data')
     codes = {
-        'forecast': [*body, *fig, _when(['points'], _trace('t', 'y', lines=False) + '   # Show Points: the data'), *draw,
-                     f'ax.axvline(t[-1], color="{MUTED}", linewidth={_pt(1)}, linestyle=":")   # the end of the data',
+        'forecast': [*body, *fig, _when(['points'], data), *draw,
+                     f'ax.axvline(t[-1], color="{MUTED}", linewidth={_pt(1)}, linestyle=":")   # the end of the {"values the model is fitted to" if held else "data"}',
+                     *([_hold_span()] if held else []),
                      *_labels(S, S.y_name, f'{name} forecast'), 'plt.show()'],
         'resid': [*body, *fig, _trace('t', 'resid', lines=False, color='color') + '   # the residuals',
                   f'ax.axhline(0, color="{MUTED}", linewidth={_pt(1)})', *_labels(S, 'Residual', f'{name} residuals'), 'plt.show()'],
         **_diag_recipes([*_head(S, table_name, where, [*imports, DIAG_IMPORT]), *fit], ['x = pd.Series(resid)   # the residuals'], nlags, residual=True),
     }
+    codes['runs'] = [code_head(table_name, imports), *_series_lines(S, where, graph=True), *fit, *_runs_lines('resid', 'zero', 'the residuals')]
     frag = {'name': name, 'imports': imports, 'series': _series_lines(S, where, graph=True), 'fit': fit, 'draw': draw,
             'racf': _resid_corr(name, nlags), 'rpacf': _resid_corr(name, nlags, partial=True)}
+    if held and h:
+        codes['holdback'] = [code_head(table_name, imports), *_series_lines(S, where, graph=True), *fit, *HB_DEF,
+                             f'print(pd.Series({_hb_call(S)}))   # {name}: the forecasts of the held-back values']
+        frag.update(hb_def=HB_DEF, hb=_hb_call(S))
     return codes, frag
+
+
+def _hold_span():
+    """The holdback shaded, as the page shades it."""
+    return f'ax.axvspan(t[-1], t_hold[-1], color="{MUTED}", alpha=0.12, linewidth=0)   # the held-back values'
+
+
+# Forecast on Holdback: the statistics of the forecast errors on the held-back
+# values (MASE scaled by the training values' in-sample (seasonal) naive MAE,
+# Hyndman and Koehler 2006), as _holdback_stats computes them.
+HB_DEF = [
+    'def holdback_stats(actual, forecast, train, lag):   # the errors of the forecasts of the held-back values',
+    '    a = np.asarray(actual, dtype=float); e = a - np.asarray(forecast, dtype=float)[:len(a)]; ok = np.isfinite(e)',
+    '    v = np.asarray(train, dtype=float); scale = np.nanmean(np.abs(v[lag:] - v[:-lag]))   # MASE\'s scale: the (seasonal) naive one-step MAE on the training values',
+    '    mse = np.mean(e[ok] ** 2)',
+    '    return {"N": int(ok.sum()), "RMSE": np.sqrt(mse), "MSE": mse, "MAPE": 100 * np.mean(np.abs(e[ok] / a[ok])) if (a[ok] != 0).all() else np.nan,',
+    '            "MAE": np.mean(np.abs(e[ok])), "Mean Error": np.mean(e[ok]), "MASE": np.mean(np.abs(e[ok])) / scale}']
+
+
+def _hb_call(S):
+    return f'holdback_stats(y_hold, f_mean, y, {S.season})'
+
+
+def _holdback_stats(S, mean):
+    """The forecast errors on the held-back values and their statistics: N,
+    RMSE, MSE, MAPE, MAE, the mean error and MASE (the MAE over the training
+    values' in-sample MAE of the naive forecast at lag S.season)."""
+    a = np.asarray(S.hold['y'], dtype=float)
+    f = np.full(len(a), np.nan)
+    m = np.asarray(mean if mean is not None else [], dtype=float)[:len(a)]
+    f[:len(m)] = m
+    e = a - f
+    ok = np.isfinite(e)
+    v = np.asarray(S.y, dtype=float)
+    lag = int(S.season or 1)
+    dv = np.abs(v[lag:] - v[:-lag]) if len(v) > lag else np.array([])
+    dv = dv[np.isfinite(dv)]
+    scale = float(dv.mean()) if len(dv) else float('nan')
+    out = {'n': int(ok.sum()), 'lag': lag, 'scale': _f(scale), 't': _arr(S.hold['t']), 'rows': S.hold['rows'],
+           'actual': _arr(a), 'forecast': _arr(f), 'error': _arr(e)}
+    if not ok.any():
+        return {**out, 'rmse': None, 'mse': None, 'mape': None, 'mae': None, 'me': None, 'mase': None}
+    ee, aa = e[ok], a[ok]
+    mse = float(np.mean(ee ** 2))
+    mae = float(np.mean(np.abs(ee)))
+    return {**out, 'rmse': _f(math.sqrt(mse)), 'mse': _f(mse), 'mape': _f(100 * np.mean(np.abs(ee / aa))) if (aa != 0).all() else None,
+            'mae': _f(mae), 'me': _f(np.mean(ee)), 'mase': _f(mae / scale) if scale > 0 else None}
 
 
 def _z_line(level):
@@ -659,6 +792,55 @@ def diagnostics(x, nlags=25, model_df=0):
         'model_df': int(model_df),
     })
     return out
+
+
+RUNS_CUTOFFS = {'mean': 'the mean', 'median': 'the median', 'zero': 'zero'}
+
+
+def runs_test(x, cutoff='mean', correction=True):
+    """The Wald-Wolfowitz runs test of randomness about the mean, the median
+    or zero: the values present, in time order, as at or above the cutoff
+    (statsmodels' runstest_1samp's rule) or below it; R, the number of runs,
+    against E = 2 n1 n2 / N + 1 and V = 2 n1 n2 (2 n1 n2 - N) / (N^2 (N - 1)).
+    Below N = 50 the distance R - E is shrunk by 1/2, the continuity
+    correction of the SAS manual that statsmodels follows; statsmodels 0.14.6
+    moves a distance of less than 1/2 away from 0 by 1/2 instead of to 0."""
+    v = np.asarray(x, dtype=float)
+    v = v[np.isfinite(v)]
+    N = len(v)
+    cutoff = cutoff if cutoff in RUNS_CUTOFFS else 'mean'
+    if N < 3:
+        return {'error': 'the runs test needs at least 3 values', 'cutoff': cutoff}
+    c = float(np.mean(v)) if cutoff == 'mean' else float(np.median(v)) if cutoff == 'median' else 0.0
+    above = v >= c
+    n1, n2 = int(above.sum()), int(N - above.sum())
+    if not n1 or not n2:
+        return {'error': f'every value is {"at or above" if n1 else "below"} {RUNS_CUTOFFS[cutoff]}', 'cutoff': cutoff, 'value': c}
+    runs = 1 + int(np.sum(above[1:] != above[:-1]))
+    E = 2.0 * n1 * n2 / N + 1
+    V = 2.0 * n1 * n2 * (2.0 * n1 * n2 - N) / (N ** 2 * (N - 1.0))
+    d = runs - E
+    corrected = bool(correction) and N < 50
+    if corrected:
+        d = math.copysign(max(0.0, abs(d) - 0.5), d)
+    z = d / math.sqrt(V) if V > 0 else float('nan')
+    return {'cutoff': cutoff, 'value': _f(c), 'n': N, 'n_above': n1, 'n_below': n2, 'runs': runs, 'expected': _f(E), 'sd': _f(math.sqrt(V)) if V > 0 else None,
+            'z': _f(z), 'p': _f(2 * stats.norm.sf(abs(z))) if math.isfinite(z) else None, 'corrected': corrected}
+
+
+def _runs_lines(x_expr, cutoff, what):
+    """The runs test's code on the values of x_expr (in time order)."""
+    c = {'mean': 'np.mean(v)', 'median': 'np.median(v)', 'zero': '0.0'}[cutoff]
+    return [f'v = pd.Series({x_expr}).dropna().to_numpy()   # {what}: the values present, in time order',
+            f'c = {c}   # about {RUNS_CUTOFFS[cutoff]}',
+            'above = v >= c; N, n1 = len(v), int(np.sum(v >= c)); n2 = N - n1   # at or above the cutoff (statsmodels\' rule), and below it',
+            'runs = 1 + int(np.sum(above[1:] != above[:-1]))   # the runs',
+            'E = 2 * n1 * n2 / N + 1; V = 2 * n1 * n2 * (2 * n1 * n2 - N) / (N ** 2 * (N - 1))   # their expectation and variance',
+            'd = runs - E',
+            'if N < 50:   # the continuity correction of the SAS manual: |R − E| less 1/2 (statsmodels 0.14.6 moves |d| < 1/2 the wrong way)',
+            '    d = np.sign(d) * max(0.0, abs(d) - 0.5)',
+            'z = d / np.sqrt(V); p = 2 * stats.norm.sf(abs(z))',
+            'print(pd.Series({"Runs": runs, "Expected Runs": E, "N At or Above": n1, "N Below": n2, "z": z, "Prob > |z|": p}))']
 
 
 def stationarity(x):
@@ -738,6 +920,9 @@ def series(table, y, time=None, rows=None, excluded=None, nlags=25, where=None, 
                         **_diag_recipes(_head(S, table_name, where, [DIAG_IMPORT]), ['x = y   # the series'], nlags)}
     # the lines that build y and t, for the graphs the page works out (the lag plot)
     out['plot_frag'] = {'series': _series_lines(S, where, graph=True)}
+    # the runs test about the mean, the median or zero (Runs Test in the red triangle), with its code
+    out['runs'] = {c: runs_test(S.y, c) for c in RUNS_CUTOFFS}
+    out['runs_code'] = {c: [*_code_series(S, table_name, where, ['from scipy import stats']), *_runs_lines('y', c, 'the series')] for c in RUNS_CUTOFFS}
     return out
 
 
@@ -1154,8 +1339,16 @@ def _model_out(S, kind, name, fitted, resid, fit_se, level, fc, st, summary, par
     out = {'kind': kind, 'name': name, 'level': level, 'n': S.n,
            'fitted': _arr(fitted), 'fit_se': _arr(fit_se), 'fit_lo': _arr(fitted - z * fit_se), 'fit_hi': _arr(fitted + z * fit_se),
            'resid': _arr(resid), 'forecast': fc, 'stats': st, 'summary': summary, 'params': params,
-           'resid_diag': diagnostics(resid, nlags, model_df), 'notes': notes, 'code': code}
+           'resid_diag': diagnostics(resid, nlags, model_df), 'resid_runs': runs_test(resid, cutoff='zero'), 'notes': notes, 'code': code}
     out.update(extra)
+    ov = out.pop('fit_lo_override', None)
+    if ov:                  # limits that are not the prediction ± z se (a Box-Cox model's, transformed back)
+        out['fit_lo'], out['fit_hi'] = ov
+    if S.hold is not None:
+        out['holdback'] = _holdback_stats(S, (fc or {}).get('mean'))
+        hb_code = (out.get('plot_code') or {}).pop('holdback', None)
+        if hb_code:
+            out['code'] = f'{code}\n\n# Forecast on Holdback: the model fitted without the last {_plural(S.hold["n"], "value")}, its forecasts of them and their errors\n{assemble(hb_code)}'
     return out
 
 
@@ -1205,6 +1398,8 @@ def _exog(S, specs, h):
         x = np.asarray(S.X[c], dtype=float)
         xf = np.asarray(S.Xf.get(c, []), dtype=float)
         xf = xf[:h]
+        if S.hold is not None and h and not np.isfinite(xf[:S.hold['n']]).all():
+            raise NoSeries(f'{c} has missing values in the held-back rows: the forecasts of them need every value of the inputs')
         k_known = int(np.isfinite(xf).sum()) if len(xf) else 0
         if np.isfinite(xf).all():
             k_known = len(xf)
@@ -1217,6 +1412,8 @@ def _exog(S, specs, h):
             if h > len(xf):
                 notes.append(f'{c}: {k_known} future value{"s" if k_known != 1 else ""} from the table, the last value ({last:.6g}) held for the remaining {h - len(xf)} period{"s" if h - len(xf) != 1 else ""}.')
             xf = np.concatenate([xf, np.full(h - len(xf), last)])
+        elif h and S.hold is not None:
+            notes.append(f'{c}: the forecasts of the held-back values take its values in the {_plural(h, "held-back row")}.')
         elif h:
             notes.append(f'{c}: the {h} future values come from the rows after the series in the table.')
         full = np.concatenate([x, xf])
@@ -1240,7 +1437,7 @@ def _exog(S, specs, h):
 @api('timeseries.arima')
 @_quietly
 def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0, Q=0, s=12, intercept=True, constrain=True,
-          level=0.95, h=25, maxiter=200, inputs=None, nlags=25, where=None, table_name='data'):
+          level=0.95, h=25, maxiter=200, inputs=None, nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """ARIMA(p, d, q)(P, D, Q)s by exact maximum likelihood (the Kalman filter;
     missing values are skipped), with the intercept as the mean mu of the
     differenced series, JMP's parameterisation: statsmodels' ARIMA fits it as
@@ -1256,7 +1453,7 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
     h = max(0, int(h or 0))
     specs = [sp for sp in (inputs or []) if sp and sp.get('name')]
     try:
-        S = load(table, y, time, rows, excluded, [sp['name'] for sp in specs])
+        S = load(table, y, time, rows, excluded, [sp['name'] for sp in specs], holdback=holdback, cut=cut, season=season)
         E, Ef, xnames, start, xnotes = _exog(S, specs, h)
     except NoSeries as e:
         return {'error': str(e)}
@@ -1360,6 +1557,7 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
         notes.append(f'The fitted model is {"not stable" if not stable else ""}{" and " if not stable and not invertible else ""}{"not invertible" if not invertible else ""}; try Constrain fit.')
     name = arima_name(p, d, q, P, D, Q, s, intercept, specs)
     c = _code_series(S, table_name, where, ['from statsmodels.tsa.arima.model import ARIMA'])
+    held = S.hold is not None
     if specs:
         c.append('# the inputs, lagged as in the model; X_future: their values for the forecast periods')
         cols_code = []
@@ -1367,12 +1565,17 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
             b0, r0 = int(sp.get('lag') or 0), int(sp.get('num') or 0)
             for j in range(b0, b0 + r0 + 1):
                 label = sp['name'] if j == 0 else f'{sp["name"]}(t−{j})'
-                cols_code.append(f'{json.dumps(label)}: d[{json.dumps(sp["name"])}].reindex(y.index).shift({j})')
-        c.append('X = pd.DataFrame({' + ', '.join(cols_code) + '})')
+                cols_code.append(f'{json.dumps(label)}: d[{json.dumps(sp["name"])}].reindex({"y_all" if held else "y"}.index).shift({j})')
+        x_future = 'X_future = X_all.loc[y_hold.index].to_numpy()   # the inputs of the held-back rows' if held else \
+            'X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})'
+        if held:
+            c.append('X_all = pd.DataFrame({' + ', '.join(cols_code) + '}); X = X_all.loc[y.index]')
+        else:
+            c.append('X = pd.DataFrame({' + ', '.join(cols_code) + '})')
         if start:
             c.append(f'y, X = y.iloc[{start}:], X.iloc[{start}:]')
         if h:
-            c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
+            c.append(x_future)
     trend_code = repr(trend)
     c.append(f'res = ARIMA(y{", exog=X" if specs else ""}, order=({p}, {d}, {q}), seasonal_order=({P}, {D}, {Q}, {s}), trend={trend_code}, '
              f'enforce_stationarity={bool(constrain)}, enforce_invertibility={bool(constrain)}).fit(method_kwargs={{"maxiter": {int(maxiter or 200)}}})')
@@ -1384,10 +1587,13 @@ def arima(table, y, time=None, rows=None, excluded=None, p=0, d=0, q=0, P=0, D=0
     # the graphs: the model fitted as above, then its predictions over the slots of the series
     fit = []
     if specs:
-        fit.append('X = pd.DataFrame({' + ', '.join(cols_code) + '})   # the inputs, lagged as in the model')
+        if held:
+            fit.append('X_all = pd.DataFrame({' + ', '.join(cols_code) + '}); X = X_all.loc[y.index]   # the inputs, lagged as in the model')
+        else:
+            fit.append('X = pd.DataFrame({' + ', '.join(cols_code) + '})   # the inputs, lagged as in the model')
         fit.append(f'yf, Xf = y.iloc[{start}:], X.iloc[{start}:]   # the first {start} have no lagged inputs' if start else 'yf, Xf = y, X')
         if h:
-            fit.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods')
+            fit.append(x_future if held else 'X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods')
     else:
         fit.append('yf = y   # the series the model is fitted to')
     fit += [f'res = ARIMA(yf{", exog=Xf" if specs else ""}, order=({p}, {d}, {q}), seasonal_order=({P}, {D}, {Q}, {s}), trend={trend_code}, '
@@ -1424,11 +1630,61 @@ WEIGHT_NAMES = {'alpha': 'Level Smoothing Weight', 'gamma': 'Trend Smoothing Wei
                 'delta': 'Seasonal Smoothing Weight'}
 
 
-def smoothing_name(method, s=12, multiplicative=False):
+def smoothing_name(method, s=12, multiplicative=False, weights=None, boxcox=None):
+    """JMP's names; a model with Custom constraints or a Box-Cox
+    transformation says so, so that two fits of one method differ."""
     label = SMOOTHERS[method][0]
     if method == 'winters' and multiplicative:
         label = 'Winters Method (Multiplicative)'
-    return f'{label}({s})' if method in ('seasonal', 'winters') else label
+    name = f'{label}({s})' if method in ('seasonal', 'winters') else label
+    extra = []
+    for kk, (mode, a, b) in (weights or {}).items():
+        sym = WEIGHT_SYMBOLS[kk]
+        if mode == 'fix':
+            extra.append(f'{sym} = {a:g}')
+        elif mode == 'bound':
+            extra.append(f'{sym} in [{a:g}, {b:g}]')
+    if boxcox is not None:
+        extra.append(f'Box-Cox λ = {boxcox:g}')
+    return f'{name}, {", ".join(extra)}' if extra else name
+
+
+WEIGHT_SYMBOLS = {'alpha': 'α', 'gamma': 'γ', 'phi': 'φ', 'delta': 'δ'}
+
+
+def _search_alpha(fit_at, lo, hi):
+    """The alpha in [lo, hi] with the least sum of squared one-step errors:
+    minimize_scalar's bounded search, or a bound itself (the search only
+    comes near a bound, where a constrained optimum often is)."""
+    from scipy.optimize import minimize_scalar
+    opt = minimize_scalar(lambda a: fit_at(a).sse, bounds=(lo, hi), method='bounded', options={'xatol': 1e-7})
+    return float(min([float(opt.x), lo, hi], key=lambda a: fit_at(a).sse))
+
+
+def smoothing_weights(method, weights):
+    """JMP's Custom constraints as {weight: (mode, a, b)}: ('fix', value,
+    None) or ('bound', lower, upper), within 0 and 1 (statsmodels'
+    holtwinters takes no weight outside them); the weights left out are free
+    within 0 and 1 (Zero To One). An error message for what is not
+    possible."""
+    out = {}
+    keys = SMOOTHERS[method][1]
+    for kk, spec in (weights or {}).items():
+        if kk not in keys or not isinstance(spec, dict):
+            continue
+        if spec.get('fix') is not None:
+            v = float(spec['fix'])
+            if not 0 <= v <= 1 or (kk == 'alpha' and v <= 0):
+                return None, f'{WEIGHT_SYMBOLS[kk]} fixed at {v:g}: a value within 0 and 1' + (' and above 0' if kk == 'alpha' else '')
+            out[kk] = ('fix', v, None)
+        elif spec.get('lo') is not None or spec.get('hi') is not None:
+            lo = float(spec['lo']) if spec.get('lo') is not None else 0.0
+            hi = float(spec['hi']) if spec.get('hi') is not None else 1.0
+            if not 0 <= lo < hi <= 1:
+                return None, f'{WEIGHT_SYMBOLS[kk]} bounded by {lo:g} and {hi:g}: bounds within 0 and 1, the lower below the upper'
+            if (lo, hi) != (0.0, 1.0):
+                out[kk] = ('bound', lo, hi)
+    return out, None
 
 
 def _sm_values(method, th):
@@ -1448,15 +1704,17 @@ def _sm_values(method, th):
     return v
 
 
-def _hw_model(x, method, s, multiplicative, **init):
+def _hw_model(x, method, s, multiplicative, bounds=None, **init):
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
     trend = 'add' if method in ('double', 'linear', 'damped', 'winters') else None
     seas = ('mul' if multiplicative else 'add') if method in ('seasonal', 'winters') else None
     kw = {'trend': trend, 'damped_trend': method == 'damped', 'seasonal': seas, 'seasonal_periods': s if seas else None}
-    if method == 'damped' and not init:
-        kw['bounds'] = {'damping_trend': (0.0, 1.0)}
     if init:
         return ExponentialSmoothing(x, initialization_method='known', **kw, **init)
+    b = {'damping_trend': (0.0, 1.0)} if method == 'damped' else {}
+    b.update(bounds or {})
+    if b:
+        kw['bounds'] = b
     return ExponentialSmoothing(x, initialization_method='estimated', **kw)
 
 
@@ -1486,17 +1744,26 @@ def psi_variance(method, th, s, h):
 @api('timeseries.smooth')
 @_quietly
 def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12, level=0.95, h=25, multiplicative=False,
-           nlags=25, where=None, table_name='data'):
+           nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0, weights=None, boxcox=None):
     """JMP's smoothing models with statsmodels' holtwinters: the weights and the
     starting states chosen to minimise the sum of squared one-step errors
     (initialization_method='estimated'); JMP's prediction intervals from the
-    moving-average weights of the equivalent ARIMA model."""
-    from scipy.optimize import minimize_scalar
+    moving-average weights of the equivalent ARIMA model.
+
+    weights: JMP's Custom constraints, {weight: {'fix': v} or {'lo': a, 'hi':
+    b}} for alpha, gamma, phi and delta (Zero To One, the default, leaves them
+    free within 0 and 1). statsmodels takes a fixed or bounded alpha, gamma
+    and phi as they are; its seasonal weight is delta (1 - alpha), so a fixed
+    or bounded delta with alpha free is fitted by a search over alpha, the
+    rest estimated for each alpha. boxcox: a lambda; the model is fitted to
+    the Box-Cox transform (x^lambda - 1)/lambda (log x at 0), and the
+    predictions, forecasts and limits are transformed back."""
+    from scipy.special import boxcox as bc, inv_boxcox
     from statsmodels.tools.numdiff import approx_hess3
     if method not in SMOOTHERS:
         return {'error': f'no smoothing model {method!r}'}
     try:
-        S = load(table, y, time, rows, excluded)
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
     except NoSeries as e:
         return {'error': str(e)}
     s = int(s or 0)
@@ -1504,44 +1771,96 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
     mult = bool(multiplicative) and method == 'winters'
     if seasonal and s < 2:
         return {'error': 'a seasonal smoothing model needs at least 2 observations per period'}
+    W, werr = smoothing_weights(method, weights)
+    if werr:
+        return {'error': werr}
+    lam = None if boxcox in (None, '') else float(boxcox)
     x, miss = _filled(S)
     n = len(x)
     need = 2 * s + 2 if seasonal else 6
     if n < need:
         return {'error': f'too few observations ({n}) for this model; it needs {need}'}
-    if mult and not (x > 0).all():
-        return {'error': 'the multiplicative Winters method needs every value above zero'}
+    if lam is not None and not (x > 0).all():
+        return {'error': 'the Box-Cox transformation needs every value above zero'}
+    xt = bc(x, lam) if lam is not None else x          # the series the model is fitted to
+    if mult and not (xt > 0).all():
+        return {'error': 'the multiplicative Winters method needs every value above zero' + (' after the Box-Cox transformation' if lam is not None else '')}
     level = float(level or 0.95)
     h = max(0, int(h or 0))
     notes = []
-    with _quiet():
-        if method == 'double':
-            def fit_at(a):
-                m = _hw_model(x, 'linear', s, False)
-                with m.fix_params({'smoothing_level': a * (2 - a), 'smoothing_trend': a / (2 - a)}):
-                    return m.fit()
-            opt = minimize_scalar(lambda a: fit_at(a).sse, bounds=(1e-4, 1 - 1e-6), method='bounded', options={'xatol': 1e-7})
-            res = fit_at(float(opt.x))
-            th = {'alpha': float(opt.x)}
-        else:
-            res = _hw_model(x, method, s, mult).fit()
-            pv = res.params
-            th = {'alpha': float(pv['smoothing_level'])}
-            if method in ('linear', 'damped', 'winters'):
-                th['gamma'] = float(pv['smoothing_trend'])
-            if method == 'damped':
-                th['phi'] = float(pv['damping_trend'])
-            if seasonal:
-                th['delta'] = float(pv['smoothing_seasonal']) / (1 - th['alpha']) if th['alpha'] < 1 else 0.0
-    pv = res.params
-    fitted = np.array(res.fittedvalues, dtype=float)
-    valid = ~miss & np.isfinite(fitted)
     keys = SMOOTHERS[method][1]
-    k = len(keys)
-    sse = float(np.sum((x - fitted)[valid] ** 2))
+    mode = {kk: W.get(kk, ('free', 0.0, 1.0)) for kk in keys}
+    fixed_sm, bounds_sm = {}, {}
+    SMK = {'alpha': 'smoothing_level', 'gamma': 'smoothing_trend', 'phi': 'damping_trend'}
+    for kk in ('alpha', 'gamma', 'phi'):
+        if kk in keys and method != 'double':
+            m_, lo_, hi_ = mode[kk]
+            if m_ == 'fix':
+                fixed_sm[SMK[kk]] = lo_
+            elif m_ == 'bound':
+                bounds_sm[SMK[kk]] = (lo_, hi_)
+    dm = mode.get('delta', ('free', 0.0, 1.0))
+    a_fixed = mode['alpha'][1] if mode['alpha'][0] == 'fix' else None
+    if seasonal and dm[0] != 'free' and a_fixed is not None:
+        if dm[0] == 'fix':
+            fixed_sm['smoothing_seasonal'] = dm[1] * (1 - a_fixed)
+        else:
+            bounds_sm['smoothing_seasonal'] = (dm[1] * (1 - a_fixed), dm[2] * (1 - a_fixed))
+    nested = seasonal and dm[0] != 'free' and a_fixed is None      # delta constrained, alpha free: a search over alpha
+    a_lo, a_hi = (max(1e-4, mode['alpha'][1]), min(1 - 1e-6, mode['alpha'][2])) if mode['alpha'][0] == 'bound' else (1e-4, 1 - 1e-6)
+    try:
+        with _quiet():
+            if method == 'double':
+                def fit_at(a):
+                    m = _hw_model(xt, 'linear', s, False)
+                    with m.fix_params({'smoothing_level': a * (2 - a), 'smoothing_trend': a / (2 - a)}):
+                        return m.fit()
+                if a_fixed is not None:
+                    th = {'alpha': a_fixed}
+                else:
+                    th = {'alpha': _search_alpha(fit_at, a_lo, a_hi)}
+                res = fit_at(th['alpha'])
+            else:
+                if nested:
+                    def fit_at(a):
+                        fx, bd = dict(fixed_sm, smoothing_level=a), {k2: v2 for k2, v2 in bounds_sm.items() if k2 != 'smoothing_level'}
+                        if dm[0] == 'fix':
+                            fx['smoothing_seasonal'] = dm[1] * (1 - a)
+                        else:
+                            bd['smoothing_seasonal'] = (dm[1] * (1 - a), dm[2] * (1 - a))
+                        m = _hw_model(xt, method, s, mult, bounds=bd)
+                        with m.fix_params(fx):
+                            return m.fit()
+                    res = fit_at(_search_alpha(fit_at, a_lo, a_hi))
+                else:
+                    m = _hw_model(xt, method, s, mult, bounds=bounds_sm)
+                    if fixed_sm:
+                        with m.fix_params(fixed_sm):
+                            res = m.fit()
+                    else:
+                        res = m.fit()
+                pv = res.params
+                th = {'alpha': float(pv['smoothing_level'])}
+                if method in ('linear', 'damped', 'winters'):
+                    th['gamma'] = float(pv['smoothing_trend'])
+                if method == 'damped':
+                    th['phi'] = float(pv['damping_trend'])
+                if seasonal:
+                    th['delta'] = float(pv['smoothing_seasonal']) / (1 - th['alpha']) if th['alpha'] < 1 else 0.0
+    except ValueError as e:        # statsmodels refuses constraints it cannot meet (a trend weight fixed above the level weight ...)
+        return {'error': f'statsmodels cannot fit these constraints: {e}'}
+    pv = res.params
+    fitted_t = np.array(res.fittedvalues, dtype=float)       # on the scale of the fit
+    fitted = inv_boxcox(fitted_t, lam) if lam is not None else fitted_t
+    valid = ~miss & np.isfinite(fitted)
+    k = sum(1 for kk in keys if mode[kk][0] != 'fix')        # the weights estimated
+    sse_t = float(np.sum((xt - fitted_t)[valid] ** 2))
     nv = int(valid.sum())
-    m2ll = nv * (math.log(2 * math.pi * sse / nv) + 1)
+    m2ll = nv * (math.log(2 * math.pi * sse_t / nv) + 1)
+    if lam is not None:
+        m2ll -= 2 * (lam - 1) * float(np.sum(np.log(x[valid])))   # the Jacobian: the likelihood of the values themselves
     st = _fit_stats(x, fitted, valid, k, m2ll)
+    sig_t = math.sqrt(sse_t / (nv - k)) if nv > k else float('nan')     # the one-step errors' standard deviation, on the fit's scale
     # standard errors: the Hessian of the Gaussian log-likelihood of the
     # one-step errors in the weights, the starting states held
     init = {'initial_level': float(pv['initial_level'])}
@@ -1549,14 +1868,14 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
         init['initial_trend'] = float(pv['initial_trend'])
     if seasonal:
         init['initial_seasonal'] = np.asarray(pv['initial_seasons'], dtype=float)
-    free = [kk for kk in keys if 1e-5 < th[kk] < 1 - 1e-5]
+    free = [kk for kk in keys if mode[kk][0] != 'fix' and max(1e-5, mode[kk][1] + 1e-5) < th[kk] < min(1 - 1e-5, mode[kk][2] - 1e-5)]
 
     def llf(v):
         t2 = dict(th)
         t2.update(zip(free, v))
         with _quiet():
-            r2 = _hw_model(x, 'linear' if method == 'double' else method, s, mult, **init).fit(**_sm_values(method, t2), optimized=False)
-        e = (x - np.asarray(r2.fittedvalues, dtype=float))[valid]
+            r2 = _hw_model(xt, 'linear' if method == 'double' else method, s, mult, **init).fit(**_sm_values(method, t2), optimized=False)
+        e = (xt - np.asarray(r2.fittedvalues, dtype=float))[valid]
         ss = float(np.sum(e ** 2))
         return -0.5 * nv * (math.log(2 * math.pi * ss / nv) + 1)
 
@@ -1575,104 +1894,395 @@ def smooth(table, y, time=None, rows=None, excluded=None, method='simple', s=12,
         e = th[kk]
         tt, pp = _pvals_t([e], [se[kk] if se[kk] is not None else np.nan], dfree)
         label = 'Level and Trend Smoothing Weight' if method == 'double' else WEIGHT_NAMES[kk]
-        rows_p.append({'term': label, 'estimate': _f(e), 'se': se[kk], 't': _f(tt[0]), 'p': _f(pp[0]), 'bound': kk not in free})
+        m_ = mode[kk][0]
+        rows_p.append({'term': label, 'estimate': _f(e), 'se': se[kk], 't': _f(tt[0]) if m_ != 'fix' else None, 'p': _f(pp[0]) if m_ != 'fix' else None,
+                       'bound': kk not in free, 'constraint': 'Fixed' if m_ == 'fix' else f'Bounded [{mode[kk][1]:g}, {mode[kk][2]:g}]' if m_ == 'bound' else 'Zero To One'})
     smv = _sm_values(method, th)
     notes.append('statsmodels\' parameters: ' + ', '.join(f'{kk} = {v:.6g}' for kk, v in smv.items()) +
                  (f'; starting level {init["initial_level"]:.6g}' + (f', trend {init["initial_trend"]:.6g}' if 'initial_trend' in init else '') +
                   (f' and {s} seasonal states' if seasonal else '') + ', estimated with the weights.'))
     notes.append('The weights and the starting states minimise the sum of squared one-step errors (holtwinters, initialization_method '
                  '"estimated"); JMP fits the equivalent ARIMA model, so its estimates, and above all its starting values, differ. '
-                 'k counts the smoothing weights only, as JMP does; the Std Errors come from the Hessian of the likelihood with the '
+                 'k counts the smoothing weights estimated, as JMP does; the Std Errors come from the Hessian of the likelihood with the '
                  'starting states held.')
-    if any(r['bound'] for r in rows_p):
-        notes.append('A weight at the edge of its range (0 or 1) has no standard error.')
+    if W:
+        parts = [f'{WEIGHT_NAMES[kk].lower()} fixed at {mode[kk][1]:g}' if mode[kk][0] == 'fix' else f'{WEIGHT_NAMES[kk].lower()} within {mode[kk][1]:g} and {mode[kk][2]:g}'
+                 for kk in keys if mode[kk][0] != 'free']
+        notes.append('Custom constraints: ' + '; '.join(parts) + ('; the others within 0 and 1 (Zero To One).' if len(parts) < len(keys) else '.')
+                     + (' statsmodels\' seasonal weight is δ(1 − α), so α is searched for (minimize_scalar), the other weights estimated at each α.' if nested else ''))
+    if any(r['bound'] and mode[kk][0] != 'fix' for r, kk in zip(rows_p, keys)):
+        notes.append('A weight at the edge of its range has no standard error.')
     if method == 'linear' or method == 'damped' or method == 'winters':
         notes.append('statsmodels keeps the trend weight at or below the level weight, and the seasonal weight at or below 1 − α.')
+    if lam is not None:
+        notes.append(f'Box-Cox transformation, λ = {lam:g}: the model is fitted to {"log y" if lam == 0 else f"(y^{lam:g} − 1)/{lam:g}"}; the predictions, the forecasts and their '
+                     'limits are transformed back (so the forecasts are medians, not means), the Std Err Pred by the delta method. The fit statistics are those of '
+                     'the values themselves: the residuals on their scale, and −2LogLikelihood with the Jacobian of the transformation, so that AIC compares with '
+                     'the other models\'.')
     if miss.any():
         notes.append(f'{int(miss.sum())} missing value{"s" if miss.sum() > 1 else ""} filled by linear interpolation for the fit; they are left out of the fit statistics.')
     z = stats.norm.ppf(0.5 + level / 2)
-    sig = st['sd'] if st['sd'] is not None else float('nan')
+
+    def back(v):
+        return inv_boxcox(np.asarray(v, dtype=float), lam) if lam is not None else np.asarray(v, dtype=float)
+
+    def slope(v):            # d back / d v, for the delta method
+        v = np.asarray(v, dtype=float)
+        if lam is None:
+            return np.ones_like(v)
+        return np.exp(v) if lam == 0 else np.power(np.maximum(1 + lam * v, 0), 1 / lam - 1)
+
     with _quiet():
         if h:
-            mean = np.asarray(res.forecast(h), dtype=float)
+            mean_t = np.asarray(res.forecast(h), dtype=float)
             if mult:
                 sims = np.asarray(res.simulate(h, repetitions=2000, error='add', random_state=SEED), dtype=float).reshape(h, -1)
-                lo = np.quantile(sims, 0.5 - level / 2, axis=1)
-                hi = np.quantile(sims, 0.5 + level / 2, axis=1)
-                fse = sims.std(axis=1, ddof=1)
+                lo_t = np.quantile(sims, 0.5 - level / 2, axis=1)
+                hi_t = np.quantile(sims, 0.5 + level / 2, axis=1)
+                fse_t = sims.std(axis=1, ddof=1)
                 notes.append('Prediction intervals of the multiplicative model: quantiles of 2000 simulated paths (statsmodels\' simulate, a fixed seed).')
             else:
-                fse = sig * np.sqrt(psi_variance(method, th, s, h))
-                lo, hi = mean - z * fse, mean + z * fse
-            fcd = _forecast(S, h, mean, fse, lo, hi)
+                fse_t = sig_t * np.sqrt(psi_variance(method, th, s, h))
+                lo_t, hi_t = mean_t - z * fse_t, mean_t + z * fse_t
+            fcd = _forecast(S, h, back(mean_t), fse_t * slope(mean_t), back(lo_t), back(hi_t))
         else:
             fcd = _forecast(S, 0, [], [], [], [])
     fitted_v = np.where(valid, fitted, np.nan)
     resid = np.where(valid, x - fitted, np.nan)
+    fit_se = np.where(valid, sig_t * slope(fitted_t), np.nan)
+    fit_lo = np.where(valid, back(fitted_t - z * sig_t), np.nan)
+    fit_hi = np.where(valid, back(fitted_t + z * sig_t), np.nan)
     summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']],
                ['Standard Deviation', st['sd']], ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']],
                ['AICc', st['aicc']], ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']],
                ['−2LogLikelihood', st['m2ll']]]
-    name = smoothing_name(method, s, mult)
-    c = _code_series(S, table_name, where, ['from statsmodels.tsa.holtwinters import ExponentialSmoothing'])
-    if miss.any():
-        c.append('y = y.interpolate(limit_direction="both")')
+    if lam is not None:
+        summary.append(['Box-Cox λ', lam])
+    name = smoothing_name(method, s, mult, W, lam)
+    # the code: the model fitted as the report fits it
+    imports = ['from statsmodels.tsa.holtwinters import ExponentialSmoothing']
+    if method == 'double' or nested:
+        imports.append('from scipy.optimize import minimize_scalar')
+    if lam is not None:
+        imports.append('from scipy.special import boxcox, inv_boxcox')
     trend = 'add' if method in ('double', 'linear', 'damped', 'winters') else None
     seas = ('mul' if mult else 'add') if seasonal else None
-    extra = (f', seasonal_periods={s}' if seasonal else '') + ', initialization_method="estimated"'
-    if method == 'damped':
-        extra += ', bounds={"damping_trend": (0.0, 1.0)}'
-    mk = f'ExponentialSmoothing(y, trend={trend!r}, damped_trend={method == "damped"}, seasonal={seas!r}{extra})'
-    if method == 'double':
-        c += ['from scipy.optimize import minimize_scalar',
-              'def fit_at(a):   # Brown\'s method is Holt\'s with level a(2 - a) and trend a/(2 - a)',
-              f'    m = {mk}',
-              '    with m.fix_params({"smoothing_level": a*(2 - a), "smoothing_trend": a/(2 - a)}):',
-              '        return m.fit()',
-              'a = minimize_scalar(lambda a: fit_at(a).sse, bounds=(1e-4, 1 - 1e-6), method="bounded").x',
-              'res = fit_at(a)']
-    else:
-        c.append(f'res = {mk}.fit()')
-    c += ['print(res.params_formatted)', f'print(res.forecast({h}))' if h else 'print(res.fittedvalues)']
+
+    def maker(series, bounds_expr):
+        extra = (f', seasonal_periods={s}' if seasonal else '') + ', initialization_method="estimated"'
+        if bounds_expr:
+            extra += f', bounds={bounds_expr}'
+        return f'ExponentialSmoothing({series}, trend={trend!r}, damped_trend={method == "damped"}, seasonal={seas!r}{extra})'
+
+    def bounds_text(bd, dyn=None):
+        items = ([('damping_trend', (0.0, 1.0))] if method == 'damped' and 'damping_trend' not in bd else []) + list(bd.items())
+        parts = [f'"{k2}": ({v2[0]!r}, {v2[1]!r})' for k2, v2 in items]
+        if dyn:
+            parts.append(dyn)
+        return '{' + ', '.join(parts) + '}' if parts else ''
+
+    def fit_lines(series):
+        """The fit, as the report does it, on the series named so."""
+        if method == 'double':
+            head = ['def fit_at(a):   # Brown\'s method is Holt\'s with level a(2 − a) and trend a/(2 − a)',
+                    f'    m = {maker(series, bounds_text({}))}',
+                    '    with m.fix_params({"smoothing_level": a * (2 - a), "smoothing_trend": a / (2 - a)}):',
+                    '        return m.fit()']
+            if a_fixed is not None:
+                return head + [f'a = {a_fixed!r}   # α fixed (Custom)', 'res = fit_at(a)']
+            return head + [f'a = minimize_scalar(lambda a: fit_at(a).sse, bounds=({a_lo!r}, {a_hi!r}), method="bounded", options={{"xatol": 1e-7}}).x   # the least squared one-step errors',
+                           f'a = min([a, {a_lo!r}, {a_hi!r}], key=lambda a: fit_at(a).sse)   # or a bound, where the search only comes near it',
+                           'res = fit_at(a)']
+        if nested:
+            other = {k2: v2 for k2, v2 in bounds_sm.items() if k2 != 'smoothing_level'}
+            fx = ', '.join([f'"{k2}": {v2!r}' for k2, v2 in fixed_sm.items()] + ['"smoothing_level": a'] + ([f'"smoothing_seasonal": {dm[1]!r} * (1 - a)'] if dm[0] == 'fix' else []))
+            dyn = None if dm[0] == 'fix' else f'"smoothing_seasonal": ({dm[1]!r} * (1 - a), {dm[2]!r} * (1 - a))'
+            return ['def fit_at(a):   # α held at a; statsmodels\' seasonal weight is δ(1 − α)',
+                    f'    m = {maker(series, bounds_text(other, dyn))}',
+                    f'    with m.fix_params({{{fx}}}):',
+                    '        return m.fit()',
+                    f'a = minimize_scalar(lambda a: fit_at(a).sse, bounds=({a_lo!r}, {a_hi!r}), method="bounded", options={{"xatol": 1e-7}}).x   # α, the others estimated at each α',
+                    f'a = min([a, {a_lo!r}, {a_hi!r}], key=lambda a: fit_at(a).sse)   # or a bound, where the search only comes near it',
+                    'res = fit_at(a)']
+        mk = maker(series, bounds_text(bounds_sm))
+        if fixed_sm:
+            fx = ', '.join(f'"{k2}": {v2!r}' for k2, v2 in fixed_sm.items())
+            return [f'm = {mk}', f'with m.fix_params({{{fx}}}):   # the weights fixed (Custom)', '    res = m.fit()']
+        return [f'res = {mk}.fit()']
+
+    c = _code_series(S, table_name, where, imports)
+    if miss.any():
+        c.append('y = y.interpolate(limit_direction="both")')
+    if lam is not None:
+        c.append(f'lam = {lam!r}; yb = pd.Series(boxcox(y.to_numpy(), lam), index=y.index)   # the Box-Cox transformation')
+    c += fit_lines('yb' if lam is not None else 'y')
+    c += ['print(res.params_formatted)', (f'print(inv_boxcox(np.asarray(res.forecast({h})), lam))   # transformed back' if lam is not None else f'print(res.forecast({h}))') if h else 'print(res.fittedvalues)']
     # the graphs: the model fitted as above; the intervals from its moving-average weights, as the report's
     fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y']
-    mk_i = mk.replace('ExponentialSmoothing(y,', 'ExponentialSmoothing(yi,', 1)
-    if method == 'double':
-        fit += ['def fit_at(a):   # Brown\'s method is Holt\'s with level a(2 − a) and trend a/(2 − a)',
-                f'    m = {mk_i}',
-                '    with m.fix_params({"smoothing_level": a * (2 - a), "smoothing_trend": a / (2 - a)}):',
-                '        return m.fit()',
-                'a = minimize_scalar(lambda a: fit_at(a).sse, bounds=(1e-4, 1 - 1e-6), method="bounded", options={"xatol": 1e-7}).x   # the least squared one-step errors',
-                'res = fit_at(a)']
-    else:
-        fit.append(f'res = {mk_i}.fit()')
-    fit += [_z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
+    if lam is not None:
+        fit.append(f'lam = {lam!r}; yb = pd.Series(boxcox(yi.to_numpy(), lam), index=yi.index)   # the Box-Cox transformation, the scale of the fit')
+    fit += fit_lines('yb' if lam is not None else 'yi')
+    yfit = 'yb' if lam is not None else 'yi'
+    fit += [_z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)' + ('   # on the scale of the fit' if lam is not None else ''),
             'ok = y.notna().to_numpy() & np.isfinite(fv)   # the one-step errors the fit statistics take',
-            f'sd = np.sqrt(np.sum((yi.to_numpy() - fv)[ok] ** 2) / (ok.sum() - {k}))   # the standard deviation of the one-step errors ({k} weight{"s" if k > 1 else ""} fitted)',
-            *_band_lines(se='sd', resid='yi.to_numpy() - fv')]
+            f'sd = np.sqrt(np.sum(({yfit}.to_numpy() - fv)[ok] ** 2) / (ok.sum() - {k}))   # the standard deviation of the one-step errors ({_plural(k, "weight")} estimated)']
+    if lam is not None:
+        fit += ['fb = np.where(ok, fv, np.nan)   # the one-step predictions on the scale of the fit',
+                'fitted, fit_lo, fit_hi = inv_boxcox(fb, lam), inv_boxcox(fb - z * sd, lam), inv_boxcox(fb + z * sd, lam)   # and their limits, transformed back',
+                'resid = np.where(ok, yi.to_numpy() - fitted, np.nan)']
+    else:
+        fit += _band_lines(se='sd', resid='yi.to_numpy() - fv')
     if h:
         fit.append(f'f_mean = np.asarray(res.forecast({h}), dtype=float)')
         if mult:
             fit += [f'sims = np.asarray(res.simulate({h}, repetitions=2000, error="add", random_state={SEED}), dtype=float).reshape({h}, -1)',
                     f'f_lower, f_upper = np.quantile(sims, [{0.5 - level / 2:.6g}, {0.5 + level / 2:.6g}], axis=1)   # the quantiles of 2000 simulated paths (a fixed seed)']
         else:
-            a = 'a' if method == 'double' else 'res.params["smoothing_level"]'
-            psi = {'simple': f'np.full({h - 1}, {a})', 'double': 'a * (2 + (j - 1) * a)',
-                   'linear': f'{a} * (1 + j * res.params["smoothing_trend"])',
-                   'damped': f'{a} * (1 + res.params["smoothing_trend"] * np.cumsum(res.params["damping_trend"] ** j))',
-                   'seasonal': f'{a} + (j % {s} == 0) * res.params["smoothing_seasonal"]',
-                   'winters': f'{a} * (1 + j * res.params["smoothing_trend"]) + (j % {s} == 0) * res.params["smoothing_seasonal"]'}[method]
+            a_ = 'a' if method == 'double' else 'res.params["smoothing_level"]'
+            psi = {'simple': f'np.full({h - 1}, {a_})', 'double': 'a * (2 + (j - 1) * a)',
+                   'linear': f'{a_} * (1 + j * res.params["smoothing_trend"])',
+                   'damped': f'{a_} * (1 + res.params["smoothing_trend"] * np.cumsum(res.params["damping_trend"] ** j))',
+                   'seasonal': f'{a_} + (j % {s} == 0) * res.params["smoothing_seasonal"]',
+                   'winters': f'{a_} * (1 + j * res.params["smoothing_trend"]) + (j % {s} == 0) * res.params["smoothing_seasonal"]'}[method]
             fit += [f'j = np.arange(1, {h})   # the moving-average weights ψ_j of the model\'s ARIMA form (JMP\'s statistical details)',
                     f'psi = {psi}',
                     'f_se = sd * np.sqrt(np.r_[1.0, 1.0 + np.cumsum(psi ** 2)])   # the h-step forecast error: σ²(1 + Σ ψ_j²)',
                     'f_lower, f_upper = f_mean - z * f_se, f_mean + z * f_se']
+        if lam is not None:
+            fit.append('f_mean, f_lower, f_upper = (inv_boxcox(v, lam) for v in (f_mean, f_lower, f_upper))   # transformed back')
         fit.append(_future_line(S, h))
-    plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.holtwinters import ExponentialSmoothing',
-                                                                     *(['from scipy.optimize import minimize_scalar'] if method == 'double' else [])], fit, h, nlags)
-    return _model_out(S, 'smooth', name, fitted_v, resid, np.where(valid, sig, np.nan), level, fcd, st, summary,
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, imports, fit, h, nlags)
+    return _model_out(S, 'smooth', name, fitted_v, resid, fit_se, level, fcd, st, summary,
                       {'columns': 'smooth', 'rows': rows_p}, nlags, k, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
-                      weights=th, sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'sse': _f(res.sse)},
-                      spec={'method': method, 's': s, 'multiplicative': mult})
+                      weights=th, fit_lo_override=[_arr(fit_lo), _arr(fit_hi)] if lam is not None else None,
+                      sm={'aic': _f(res.aic), 'aicc': _f(res.aicc), 'bic': _f(res.bic), 'sse': _f(res.sse)},
+                      spec={'method': method, 's': s, 'multiplicative': mult, 'weights': {kk: list(v) for kk, v in W.items()}, 'boxcox': lam})
+
+
+# ---- benchmarks: Naive, Seasonal Naive, Drift ------------------------------------------------------
+
+BENCH_NAMES = {'naive': 'Naive', 'snaive': 'Seasonal Naive', 'drift': 'Drift'}
+
+
+def bench_name(method, s=12):
+    return f'Seasonal Naive({s})' if method == 'snaive' else BENCH_NAMES.get(method, method)
+
+
+def _last_valid(v):
+    ok = np.flatnonzero(np.isfinite(v))
+    return (int(ok[0]), int(ok[-1])) if len(ok) else (None, None)
+
+
+@api('timeseries.benchmark')
+@_quietly
+def benchmark(table, y, time=None, rows=None, excluded=None, method='naive', s=12, level=0.95, h=25, nlags=25, where=None,
+              table_name='data', holdback=0, cut=0, season=0):
+    """The benchmarks a forecasting model should beat (Hyndman and
+    Athanasopoulos, Forecasting: Principles and Practice, 5.2 and 5.5):
+    Naive, every forecast the last value (a random walk); Seasonal Naive, the
+    value of the same season one period earlier; Drift, the last value plus
+    h times the average change b = (y_T - y_1)/(T - 1). The one-step-ahead
+    predictions are y_{t-1}, y_{t-s} and y_{t-1} + b. Standard errors:
+    sigma sqrt(h), sigma sqrt(k + 1) with k = floor((h - 1)/s), and
+    sigma sqrt(h (1 + h/(T - 1))), the drift's own uncertainty included;
+    sigma^2 is the mean squared one-step error (over n - 1 for Drift, which
+    estimates b)."""
+    if method not in BENCH_NAMES:
+        return {'error': f'no benchmark {method!r}'}
+    try:
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
+    except NoSeries as e:
+        return {'error': str(e)}
+    s = int(s or 0)
+    lag = s if method == 'snaive' else 1
+    if method == 'snaive' and s < 2:
+        return {'error': 'Seasonal Naive needs a seasonal period of at least 2'}
+    v = np.asarray(S.y, dtype=float)
+    n = len(v)
+    i0, i1 = _last_valid(v)
+    if i1 is None or n < lag + 3:
+        return {'error': f'too few observations ({n}) for this benchmark'}
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    fitted = np.full(n, np.nan)
+    fitted[lag:] = v[:-lag]
+    k = 0
+    b = b_se = None
+    if method == 'drift':
+        if i1 <= i0:
+            return {'error': 'Drift needs two values'}
+        b = (v[i1] - v[i0]) / (i1 - i0)
+        fitted = fitted + b
+        k = 1
+    valid = np.isfinite(v) & np.isfinite(fitted)
+    nv = int(valid.sum())
+    if nv - k < 2:
+        return {'error': f'too few one-step errors ({nv}) for this benchmark'}
+    sse = float(np.sum((v - fitted)[valid] ** 2))
+    m2ll = nv * (math.log(2 * math.pi * sse / nv) + 1) if sse > 0 else float('nan')
+    st = _fit_stats(v, fitted, valid, k, m2ll)
+    sig = st['sd'] if st['sd'] is not None else float('nan')
+    notes = []
+    rows_p = []
+    span = i1 - i0
+    if method == 'drift':
+        b_se = sig / math.sqrt(span)
+        tt, pp = _pvals_t([b], [b_se], st['df'] or 1)
+        rows_p.append({'term': 'Drift (b)', 'estimate': _f(b), 'se': _f(b_se), 't': _f(tt[0]), 'p': _f(pp[0])})
+    z = stats.norm.ppf(0.5 + level / 2)
+    if h:
+        steps = n - 1 - i1 + np.arange(1, h + 1)          # the periods from the last value
+        if method == 'naive':
+            mean, fse = np.full(h, v[i1]), sig * np.sqrt(steps)
+        elif method == 'drift':
+            mean, fse = v[i1] + steps * b, sig * np.sqrt(steps * (1 + steps / span))
+        else:
+            mean = np.array([v[n - lag + ((j - 1) % lag)] for j in range(1, h + 1)], dtype=float)
+            fse = sig * np.sqrt(np.floor((np.arange(1, h + 1) - 1) / lag) + 1)
+        fcd = _forecast(S, h, mean, fse, mean - z * fse, mean + z * fse)
+    else:
+        fcd = _forecast(S, 0, [], [], [], [])
+    what = {'naive': 'the last value', 'snaive': f'the value of the same season one period ({s}) before', 'drift': 'the last value plus the average change per period'}[method]
+    notes.append(f'{bench_name(method, s)}: every forecast is {what}; the one-step-ahead predictions in the sample are '
+                 + {'naive': 'the value before', 'snaive': f'the value {s} periods before', 'drift': 'the value before plus the drift b = (y_T − y_1)/(T − 1), from all the data'}[method] + '. '
+                 + {'naive': 'Standard errors σ√h, those of a random walk.', 'snaive': 'Standard errors σ√(k + 1), k the whole periods before the horizon (floor((h − 1)/s)).',
+                    'drift': 'Standard errors σ√(h(1 + h/(T − 1))): the random walk\'s, and the uncertainty of b.'}[method]
+                 + ' A benchmark every model should beat (Hyndman and Athanasopoulos, Forecasting: Principles and Practice).')
+    notes.append(f'σ² is the mean squared one-step error{" over n − 1 (b is estimated)" if k else ""}; k = {k}, n = {nv}.')
+    if i1 < n - 1:
+        notes.append(f'The forecasts go on from the last value present, {_plural(n - 1 - i1, "slot")} before the end.')
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']]]
+    name = bench_name(method, s)
+    # the code: the one-step predictions, the forecasts and their standard errors, by the formulas
+    lines = ['yv = y.to_numpy()', f'fv = np.r_[np.full({lag}, np.nan), yv[:-{lag}]]   # the value {lag} period{"s" if lag > 1 else ""} before',
+             'ok_ = np.flatnonzero(np.isfinite(yv)); i0, i1 = ok_[0], ok_[-1]   # the first and the last value present']
+    if method == 'drift':
+        lines += ['b = (yv[i1] - yv[i0]) / (i1 - i0)   # the drift: the average change per period', 'fv = fv + b']
+    lines += ['ok = np.isfinite(yv) & np.isfinite(fv)   # the one-step errors',
+              f'sd = np.sqrt(np.sum((yv - fv)[ok] ** 2) / (ok.sum() - {k}))   # σ: the root mean squared one-step error{" (b estimated)" if k else ""}']
+    fc_lines = []
+    if h:
+        fc_lines.append(f'steps = len(yv) - 1 - i1 + np.arange(1, {h + 1})   # the periods from the last value')
+        if method == 'naive':
+            fc_lines += ['f_mean = np.full(len(steps), yv[i1]); f_se = sd * np.sqrt(steps)   # a random walk']
+        elif method == 'drift':
+            fc_lines += ['f_mean = yv[i1] + steps * b; f_se = sd * np.sqrt(steps * (1 + steps / (i1 - i0)))   # a random walk with drift, b estimated']
+        else:
+            fc_lines += [f'f_mean = np.array([yv[len(yv) - {lag} + (j - 1) % {lag}] for j in range(1, {h + 1})])   # the same season one period before',
+                         f'f_se = sd * np.sqrt(np.floor((np.arange(1, {h + 1}) - 1) / {lag}) + 1)']
+        fc_lines.append('f_lower, f_upper = f_mean - z * f_se, f_mean + z * f_se')
+    c = _code_series(S, table_name, where, ['from scipy import stats']) + lines + [_z_line(level), *fc_lines,
+                                                                                 'print(pd.DataFrame({"forecast": f_mean, "lower": f_lower, "upper": f_upper}))' if h else 'print(sd)']
+    fit = [*lines, _z_line(level), *_band_lines(se='sd', resid='yv - fv'), *fc_lines, *([_future_line(S, h)] if h else [])]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, [], fit, h, nlags)
+    return _model_out(S, 'bench', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, sig, np.nan), level, fcd, st,
+                      summary, {'columns': 'smooth', 'rows': rows_p}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      drift=_f(b), spec={'method': method, 's': s})
+
+
+# ---- Simple Moving Average ---------------------------------------------------------------------------
+
+SMA_CENTERING = {'none': 'No Centering', 'centered': 'Centered', 'double': 'Centered and Double Smoothed'}
+
+
+def sma_name(width, centering='none'):
+    return f'Simple Moving Average({width}{", centered" if centering == "centered" else ", centered and double smoothed" if centering == "double" else ""})'
+
+
+def moving_average(v, w, centering='none'):
+    """The moving average of width w over v (NaN where a window is not
+    whole): trailing, the value and the w - 1 before it; centered, the
+    window around the value (for an even width one more value before it
+    than after, as pandas' rolling(center=True)); double, for an even width
+    the mean of the two nearly centered windows, weights 1/2w at the ends
+    and 1/w inside (the 2 x w moving average of classical decomposition)."""
+    x = pd.Series(np.asarray(v, dtype=float))
+    if centering == 'double':
+        m = x.rolling(w, min_periods=w).mean()
+        return ((m.shift(-(w // 2)) + m.shift(-(w // 2 - 1))) / 2).to_numpy()
+    return x.rolling(w, min_periods=w, center=centering == 'centered').mean().to_numpy()
+
+
+@api('timeseries.sma')
+@_quietly
+def sma(table, y, time=None, rows=None, excluded=None, width=3, centering='none', level=0.95, h=25, nlags=25, where=None,
+        table_name='data', holdback=0, cut=0, season=0):
+    """JMP's Simple Moving Average: the mean of w consecutive values, the
+    smoothed series with No Centering (trailing), Centered, or Centered and
+    Double Smoothed (an even width). As a forecast the average trails: the
+    one-step-ahead prediction of y_t is the mean of the w values before it,
+    and every forecast is the mean of the last w values, with the
+    one-step errors' standard deviation (a level that stays where it is)."""
+    try:
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
+    except NoSeries as e:
+        return {'error': str(e)}
+    w = int(width or 0)
+    centering = centering if centering in SMA_CENTERING else 'none'
+    if w < 1:
+        return {'error': 'the width of the moving average must be at least 1'}
+    if centering == 'double' and w % 2:
+        return {'error': 'Centered and Double Smoothed is for an even width; an odd width centers on its own'}
+    v = np.asarray(S.y, dtype=float)
+    n = len(v)
+    if n < w + 3:
+        return {'error': f'too few observations ({n}) for a moving average of width {w}'}
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    smoothed = moving_average(v, w, centering)
+    trail = moving_average(v, w, 'none')
+    fitted = np.r_[np.nan, trail[:-1]]                  # the mean of the w values before each one
+    valid = np.isfinite(v) & np.isfinite(fitted)
+    nv = int(valid.sum())
+    if nv < 2:
+        return {'error': 'too few whole windows for one-step predictions (missing values break the windows)'}
+    sse = float(np.sum((v - fitted)[valid] ** 2))
+    st = _fit_stats(v, fitted, valid, 0, nv * (math.log(2 * math.pi * sse / nv) + 1) if sse > 0 else float('nan'))
+    sig = st['sd'] if st['sd'] is not None else float('nan')
+    z = stats.norm.ppf(0.5 + level / 2)
+    last = trail[-1]
+    notes = []
+    if h:
+        if not np.isfinite(last):
+            return {'error': f'the last {w} values have a missing value: no forecast'}
+        mean, fse = np.full(h, last), np.full(h, sig)
+        fcd = _forecast(S, h, mean, fse, mean - z * fse, mean + z * fse)
+    else:
+        fcd = _forecast(S, 0, [], [], [], [])
+    how = {'none': 'the value and the ones before it (No Centering)', 'centered': 'centered on the value' + (' (an even width: one value more before it than after)' if w % 2 == 0 else ''),
+           'double': f'the mean of the two nearly centered windows (weights 1/{2 * w} at the ends and 1/{w} inside)'}[centering]
+    tail = f', {float(last):.6g}' if np.isfinite(last) else ' (none: the last window has a missing value)'
+    notes.append(f'The smoothed series: the mean of {_plural(w, "consecutive value")}, {how}. As a forecast the average trails: the one-step-ahead '
+                 f'prediction of each value is the mean of the {w} before it, and every forecast is the mean of the last {w}{tail}.')
+    notes.append('The prediction interval is ±z times the one-step errors\' standard deviation at every horizon: right when the level stays where it is, '
+                 'as the moving average assumes; a series that wanders gets wider errors further ahead. k = 0 (the width is chosen, not estimated). '
+                 'A window with a missing value gives no average.')
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ["Akaike's 'A' Information Criterion", st['aic']], ["Schwarz's Bayesian Criterion", st['sbc']], ['AICc', st['aicc']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['−2LogLikelihood', st['m2ll']],
+               ['Width', w, 'int'], ['Centering', SMA_CENTERING[centering], 'text']]
+    name = sma_name(w, centering)
+    smooth_line = {'none': f'ma = y.rolling({w}).mean()   # No Centering: the value and the {w - 1} before it',
+                   'centered': f'ma = y.rolling({w}, center=True).mean()   # Centered' + (' (an even width: one value more before than after)' if w % 2 == 0 else ''),
+                   'double': f'm = y.rolling({w}).mean(); ma = (m.shift(-{w // 2}) + m.shift(-{w // 2 - 1})) / 2   # Centered and Double Smoothed: the two nearly centered windows'}[centering]
+    base = [smooth_line, f'fv = y.rolling({w}).mean().shift(1).to_numpy()   # the one-step-ahead prediction: the mean of the {w} values before']
+    fc_lines = [f'f_mean = np.full({h}, y.iloc[-{w}:].mean()); f_se = np.full({h}, sd)   # every forecast: the mean of the last {w}',
+                'f_lower, f_upper = f_mean - z * f_se, f_mean + z * f_se'] if h else []
+    common = ['ok = y.notna().to_numpy() & np.isfinite(fv)', 'sd = np.sqrt(np.mean((y.to_numpy() - fv)[ok] ** 2))   # the one-step errors\' standard deviation (k = 0)']
+    c = _code_series(S, table_name, where, ['from scipy import stats']) + base + common + [_z_line(level), *fc_lines,
+                                                                                         'print(ma); ' + ('print(pd.DataFrame({"forecast": f_mean, "lower": f_lower, "upper": f_upper}))' if h else 'print(sd)')]
+    fit = [*base, *common, _z_line(level), *_band_lines(se='sd'), *fc_lines, *([_future_line(S, h)] if h else [])]
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, [], fit, h, nlags)
+    head = _head(S, table_name, where, ['from scipy import stats'])
+    plot_code['smoothed'] = [*head, *fit, '', SIZE, COLOR, 'fig, ax = plt.subplots(figsize=size, layout="constrained")',
+                             _trace('t', 'y', lines=False) + '   # the data',
+                             f'ax.plot(t, ma, color=color, linewidth={_pt(1.6)})   # the moving average',
+                             *_labels(S, S.y_name, f'{name} smoothed series'), 'plt.show()']
+    return _model_out(S, 'sma', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, sig, np.nan), level, fcd, st,
+                      summary, {'columns': 'smooth', 'rows': []}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      smoothed=_arr(smoothed), width=w, centering=centering, spec={'width': w, 'centering': centering})
 
 
 # ---- state space smoothing (ETSModel) ----------------------------------------------------------
@@ -1689,29 +2299,31 @@ def ets_name(error, trend, seasonal, s=12):
 @api('timeseries.ets')
 @_quietly
 def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', seasonal='N', s=12, level=0.95, h=25, maxiter=1000,
-        nlags=25, where=None, table_name='data'):
+        nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """A state space smoothing model ETS(error, trend, seasonal) of Hyndman et
     al. (2008) by maximum likelihood (statsmodels' ETSModel)."""
     from statsmodels.tsa.exponential_smoothing.ets import ETSModel
     try:
-        S = load(table, y, time, rows, excluded)
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
     except NoSeries as e:
         return {'error': str(e)}
     error = 'mul' if error in ('mul', 'M') else 'add'
-    trend = {'A': 'A', 'Ad': 'Ad', 'add': 'A'}.get(trend, 'N')
+    trend = {'A': 'A', 'Ad': 'Ad', 'add': 'A', 'M': 'M', 'Md': 'Md', 'mul': 'M'}.get(trend, 'N')
     seasonal = {'A': 'A', 'M': 'M', 'add': 'A', 'mul': 'M'}.get(seasonal, 'N')
     s = int(s or 0)
     if seasonal != 'N' and s < 2:
         return {'error': 'a seasonal model needs at least 2 observations per period'}
     x, miss = _filled(S)
     n = len(x)
-    if (error == 'mul' or seasonal == 'M') and not (x > 0).all():
-        return {'error': 'multiplicative errors or seasonality need every value above zero'}
+    mul_trend = trend in ('M', 'Md')
+    if (error == 'mul' or seasonal == 'M' or mul_trend) and not (x > 0).all():
+        return {'error': 'multiplicative errors, trend or seasonality need every value above zero'}
     if n < (2 * s + 4 if seasonal != 'N' else 8):
         return {'error': f'too few observations ({n}) for this model'}
     level = float(level or 0.95)
     h = max(0, int(h or 0))
-    model = ETSModel(pd.Series(x), error=error, trend='add' if trend != 'N' else None, damped_trend=trend == 'Ad',
+    sm_trend = 'mul' if mul_trend else 'add' if trend != 'N' else None
+    model = ETSModel(pd.Series(x), error=error, trend=sm_trend, damped_trend=trend in ('Ad', 'Md'),
                      seasonal={'A': 'add', 'M': 'mul'}.get(seasonal), seasonal_periods=s if seasonal != 'N' else None,
                      initialization_method='estimated')
     with _quiet():
@@ -1754,19 +2366,23 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
     summary = [['−2LogLikelihood', st['m2ll']], ['AIC', st['aic']], ['AICc', st['aicc']], ['BIC', st['sbc']], ['Nparm', nparm, 'int'],
                ['Sigma', sigma], ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']]]
     notes = [f'Model type: {"multiplicative" if error == "mul" else "additive"} errors, '
-             f'{ {"N": "no", "A": "additive", "Ad": "additive damped"}[trend]} trend, '
+             f'{ {"N": "no", "A": "additive", "Ad": "additive damped", "M": "multiplicative", "Md": "multiplicative damped"}[trend]} trend, '
              f'{ {"N": "no", "A": "additive", "M": "multiplicative"}[seasonal]} seasonality'
              f'{f" (period {s})" if seasonal != "N" else ""}.',
              'AIC, AICc and BIC are statsmodels\': Nparm counts the smoothing parameters, the starting states and σ. '
              'Their likelihood is not comparable with the ARIMA models\' (JMP gives the same caution).']
-    if error == 'mul' or seasonal == 'M':
+    simulated = error == 'mul' or seasonal == 'M' or mul_trend
+    if simulated:
         notes.append('Prediction intervals: quantiles of 2000 simulated paths (a fixed seed).')
+    if mul_trend:
+        notes.append('A multiplicative trend grows by a factor each period (damped: one that shrinks towards 1 over the forecasts); '
+                     'Hyndman et al. (2008) warn that it can forecast too far.')
     if miss.any():
         notes.append(f'{int(miss.sum())} missing value{"s" if miss.sum() > 1 else ""} filled by linear interpolation for the fit; they are left out of the fit statistics.')
     c = _code_series(S, table_name, where, ['from statsmodels.tsa.exponential_smoothing.ets import ETSModel'])
     if miss.any():
         c.append('y = y.interpolate(limit_direction="both")')
-    c.append(f'res = ETSModel(y.reset_index(drop=True), error={error!r}, trend={("add" if trend != "N" else None)!r}, damped_trend={trend == "Ad"}, '
+    c.append(f'res = ETSModel(y.reset_index(drop=True), error={error!r}, trend={sm_trend!r}, damped_trend={trend in ("Ad", "Md")}, '
              f'seasonal={({"A": "add", "M": "mul"}.get(seasonal))!r}{", seasonal_periods=" + str(s) if seasonal != "N" else ""}).fit(disp=False)')
     c.append('print(res.summary())')
     if h:
@@ -1775,7 +2391,7 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
     resid = np.where(valid, x - fitted, np.nan)
     # the graphs: the model fitted as above (the page's iterations), its predictions and the simulated or exact intervals
     fit = ['yi = y.interpolate(limit_direction="both")   # the missing values filled for the fit' if miss.any() else 'yi = y',
-           f'res = ETSModel(yi.reset_index(drop=True), error={error!r}, trend={("add" if trend != "N" else None)!r}, damped_trend={trend == "Ad"}, '
+           f'res = ETSModel(yi.reset_index(drop=True), error={error!r}, trend={sm_trend!r}, damped_trend={trend in ("Ad", "Md")}, '
            f'seasonal={({"A": "add", "M": "mul"}.get(seasonal))!r}{", seasonal_periods=" + str(s) if seasonal != "N" else ""}, '
            f'initialization_method="estimated").fit(disp=False, maxiter={int(maxiter or 1000)})',
            _z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
@@ -1785,7 +2401,7 @@ def ets(table, y, time=None, rows=None, excluded=None, error='add', trend='N', s
     if h:
         fit += [f'fr = res.get_prediction(start=len(yi), end=len(yi) + {h - 1}, simulate_repetitions=2000, random_state={SEED}).summary_frame(alpha={1 - level:.6g})',
                 'f_mean, f_lower, f_upper = (fr[k].to_numpy() for k in ("mean", "pi_lower", "pi_upper"))'
-                + ('   # simulated (a fixed seed)' if error == 'mul' or seasonal == 'M' else ''), _future_line(S, h)]
+                + ('   # simulated (a fixed seed)' if simulated else ''), _future_line(S, h)]
     name = ets_name(error, trend, seasonal, s)
     plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.exponential_smoothing.ets import ETSModel'], fit, h, nlags)
     head = _head(S, table_name, where, plot_frag['imports'])
@@ -1888,7 +2504,7 @@ def _period_text(p):
 def structural(table, y, time=None, rows=None, excluded=None, trend='local linear trend', seasonal=0, stoch_seasonal=True,
                freq_period=0, freq_harmonics=0, stoch_freq=True, cycle=False, stoch_cycle=True, damped_cycle=True,
                cycle_lo=None, cycle_hi=None, ar=0, inputs=None, exact=False, level=0.95, h=25, maxiter=200,
-               nlags=25, where=None, table_name='data'):
+               nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """A structural time series model, y = level + seasonal + cycle +
     autoregressive + regression + irregular, by maximum likelihood with the
     Kalman filter (statsmodels' UnobservedComponents), its smoothed components
@@ -1906,7 +2522,7 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
     h = max(0, int(h or 0))
     names_in = [c for c in dict.fromkeys(inputs or []) if c and c != y]
     try:
-        S = load(table, y, time, rows, excluded, names_in)
+        S = load(table, y, time, rows, excluded, names_in, holdback=holdback, cut=cut, season=season)
         E, Ef, xnames, _start, xnotes = _exog(S, [{'name': c} for c in names_in], h)
     except NoSeries as e:
         return {'error': str(e)}
@@ -2027,10 +2643,13 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
     # the code
     c = _code_series(S, table_name, where, ['from statsmodels.tsa.statespace.structural import UnobservedComponents'])
     dated = isinstance(endog, pd.Series)
+    held = S.hold is not None
+    x_future = f'X_future = d.loc[y_hold.index, {json.dumps(names_in)}].to_numpy()   # the inputs of the held-back rows' if held else \
+        'X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})'
     if names_in:
         c.append(f'X = d.loc[y.index, {json.dumps(names_in)}]' + ('' if dated else '.reset_index(drop=True)'))
         if h:
-            c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
+            c.append(x_future)
     args = [f'level={trend!r}']
     if seasonal:
         args.append(f'seasonal={seasonal}, stochastic_seasonal={bool(stoch_seasonal)}')
@@ -2067,7 +2686,7 @@ def structural(table, y, time=None, rows=None, excluded=None, trend='local linea
     if names_in:
         fit.append(f'X = d.loc[y.index, {json.dumps(names_in)}]' + ('' if dated else '.reset_index(drop=True)') + '   # the inputs')
         if h:
-            fit.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods')
+            fit.append(x_future if held else x_future + '   # the inputs of the forecast periods')
     fit += [c[next(i for i, ln in enumerate(c) if ln.startswith('mod = UnobservedComponents('))],
             f'res = mod.fit(method="lbfgs", maxiter={int(maxiter or 200)}, pgtol=1e-7, factr=1e4, disp=False)',
             _z_line(level), 'fv = np.asarray(res.fittedvalues, dtype=float)',
@@ -2180,7 +2799,7 @@ def _ms_term(name):
 @api('timeseries.markov')
 @_quietly
 def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c', switching_trend=True, switching_variance=False,
-           switching_ar=True, starts=5, maxiter=100, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+           switching_ar=True, starts=5, maxiter=100, level=0.95, h=25, nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """A Markov switching model: k regimes with their own mean (and trend),
     variance or AR coefficients, and the Markov chain that moves between them
     (Hamilton 1989; statsmodels' MarkovRegression and MarkovAutoregression),
@@ -2199,7 +2818,7 @@ def markov(table, y, time=None, rows=None, excluded=None, k=2, order=0, trend='c
     if not (switching_trend or switching_variance or switching_ar):
         return {'error': 'nothing switches: choose a switching mean, variance or AR part'}
     try:
-        S = load(table, y, time, rows, excluded)
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
     except NoSeries as e:
         return {'error': str(e)}
     x, miss = _filled(S)
@@ -2589,7 +3208,7 @@ def subseries(table, y, time=None, rows=None, excluded=None, period=12, nlags=No
 @api('timeseries.theta')
 @_quietly
 def theta_model(table, y, time=None, rows=None, excluded=None, period=12, deseasonalize=True, use_test=True, method='auto', theta=2.0,
-                use_mle=False, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+                use_mle=False, level=0.95, h=25, nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """The theta method of Assimakopoulos and Nikolopoulos (2000) with
     statsmodels' ThetaModel: the series is tested for seasonality and
     deseasonalized, alpha comes from simple exponential smoothing and b0
@@ -2597,7 +3216,7 @@ def theta_model(table, y, time=None, rows=None, excluded=None, period=12, deseas
     forecasts combine the two theta lines (Hyndman and Billah 2003)."""
     from statsmodels.tsa.forecasting.theta import ThetaModel
     try:
-        S = load(table, y, time, rows, excluded)
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
     except NoSeries as e:
         return {'error': str(e)}
     x, miss = _filled(S)
@@ -2825,7 +3444,7 @@ def pss_bounds(stat, k, case):
 @api('timeseries.ardl')
 @_quietly
 def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, maxorder=4, order=None, trend='c', ic='aic', glob=False,
-         causal=False, seasonal=False, period=12, case=None, level=0.95, h=25, nlags=25, where=None, table_name='data'):
+         causal=False, seasonal=False, period=12, case=None, level=0.95, h=25, nlags=25, where=None, table_name='data', holdback=0, cut=0, season=0):
     """An autoregressive distributed lag model of the series on the inputs,
     ARDL(p, q1, ..., qk) by least squares (statsmodels' ARDL), its orders
     chosen by AIC or BIC (ardl_select_order) unless given; the long-run
@@ -2846,7 +3465,7 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
     s = int(period or 0)
     seasonal = bool(seasonal) and s >= 2
     try:
-        S = load(table, y, time, rows, excluded, names_in)
+        S = load(table, y, time, rows, excluded, names_in, holdback=holdback, cut=cut, season=season)
         E, Ef, xnames, _start, xnotes = _exog(S, [{'name': c} for c in names_in], h)
     except NoSeries as e:
         return {'error': str(e)}
@@ -3012,8 +3631,11 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
         c.append(f'print(pd.DataFrame({{"lower": pss_critical_values.crit_vals[(k, {case}, False)], "upper": pss_critical_values.crit_vals[(k, {case}, True)]}}, '
                  'index=pss_critical_values.crit_percentiles))')
         c.append(f'print(_pss_pvalue(bt.stat, k, {case}, False), _pss_pvalue(bt.stat, k, {case}, True))   # p-values, all I(0) and all I(1)')
+    held = S.hold is not None
+    x_future = f'X_future = d.loc[y_hold.index, {json.dumps(names_in)}].reset_index(drop=True)   # the inputs of the held-back rows' if held else \
+        'X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})'
     if h:
-        c.append('X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})')
+        c.append(x_future)
         c.append(f'print(res.get_prediction(start=len(Y), end=len(Y) + {h - 1}, exog_oos=X_future).summary_frame(alpha={1 - level:.6g}))')
     resid = np.where(valid, x - fitted, np.nan)
     # the graphs: the model fitted as above (the same order search), its predictions after the lags' starting values, the forecasts
@@ -3028,7 +3650,7 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
             'se = np.r_[pad, np.asarray(res.get_prediction().se_mean, dtype=float)[-len(res.fittedvalues):]]',
             'ok = y.notna().to_numpy() & np.isfinite(fv)', *_band_lines(resid='yi.to_numpy() - fv')]
     if h:
-        fit += ['X_future = pd.DataFrame({' + ', '.join(f'{json.dumps(nm)}: {[_f(v) for v in Ef[:, j]]}' for j, nm in enumerate(xnames)) + '})   # the inputs of the forecast periods',
+        fit += [x_future if held else x_future + '   # the inputs of the forecast periods',
                 f'sf = res.get_prediction(start=len(Y), end=len(Y) + {h - 1}, exog_oos=X_future).summary_frame(alpha={1 - level:.6g})',
                 'f_mean, f_lower, f_upper = (sf[k].to_numpy() for k in ("mean", "mean_ci_lower", "mean_ci_upper"))', _future_line(S, h)]
     plot_code, plot_frag = _model_plots(S, table_name, where, name, ['from statsmodels.tsa.ardl import ARDL' if order else 'from statsmodels.tsa.ardl import ardl_select_order'],
@@ -3039,3 +3661,175 @@ def ardl(table, y, time=None, rows=None, excluded=None, inputs=None, maxlag=4, m
                       sm={'aic': _f(res.aic), 'bic': _f(res.bic), 'llf': _f(res.llf), 'sigma2': _f(res.sigma2)},
                       spec={'trend': trend, 'ic': ic, 'glob': bool(glob), 'maxlag': maxlag, 'maxorder': maxorder, 'case': case,
                             'order': {'p': len(ar_lags) and max(ar_lags), 'q': {c_: (max(dl[c_]) if c_ in inc else None) for c_ in names_in}}})
+
+
+# ---- models of models: the averaged forecast, the rolling-origin cross-validation ------------------------
+
+MODEL_FNS = ('timeseries.arima', 'timeseries.smooth', 'timeseries.ets', 'timeseries.structural', 'timeseries.theta', 'timeseries.ardl',
+             'timeseries.benchmark', 'timeseries.sma', 'timeseries.markov', 'timeseries.average')
+
+
+def _run_member(member, base):
+    """A model of the report, fitted by its own function (by name, as the page
+    calls it) on the series and rows of the call."""
+    from .registry import API
+    fn = member.get('fn')
+    if fn not in MODEL_FNS:
+        return {'error': f'no model function {fn!r}'}
+    args = {**(member.get('args') or {}), **base}
+    import inspect
+    sig = inspect.signature(API[fn])
+    return API[fn](**{k: v for k, v in args.items() if k in sig.parameters})
+
+
+def _indent(lines, pad='    '):
+    return [pad + ln if ln else ln for ln in '\n'.join(lines).split('\n')]
+
+
+@api('timeseries.average')
+@_quietly
+def average(table, y, members=None, time=None, rows=None, excluded=None, level=0.95, h=25, nlags=25, where=None, table_name='data',
+            holdback=0, cut=0, season=0):
+    """The averaged forecast of some of the report's models: the mean of
+    their one-step-ahead predictions (where every member has one), of their
+    forecasts, and of their prediction limits. The limits are the mean of the
+    members': the members' forecast errors are correlated, and the standard
+    error of the mean forecast is at most the mean of their standard errors
+    (exactly that when the errors move together), so the interval errs on
+    the wide side."""
+    members = [m for m in (members or []) if isinstance(m, dict)]
+    if len(members) < 2:
+        return {'error': 'an averaged forecast needs at least two models'}
+    try:
+        S = load(table, y, time, rows, excluded, holdback=holdback, cut=cut, season=season)
+    except NoSeries as e:
+        return {'error': str(e)}
+    level = float(level or 0.95)
+    h = max(0, int(h or 0))
+    base = dict(table=table, y=y, time=time, rows=rows, excluded=excluded, level=level, h=h, nlags=nlags, where=where, table_name=table_name,
+                holdback=holdback, cut=cut, season=season)
+    res = [_run_member(m, base) for m in members]
+    names = [r.get('name') or m.get('name') or m.get('fn') for r, m in zip(res, members)]
+    bad = [f'{nm}: {r["error"]}' for nm, r in zip(names, res) if r.get('error')]
+    if bad:
+        return {'error': 'a member could not be fitted: ' + '; '.join(bad)}
+    if any(r.get('kind') == 'markov' for r in res):
+        return {'error': 'a regime-switching model has no forecasts to average'}
+    if h and any(len((r.get('forecast') or {}).get('mean') or []) < h for r in res):
+        return {'error': 'every member needs its forecasts'}
+    A = lambda key: np.array([[np.nan if v is None else v for v in r[key]] for r in res], dtype=float)   # noqa: E731
+    F = lambda key: np.array([[np.nan if v is None else v for v in r['forecast'][key][:h]] for r in res], dtype=float)   # noqa: E731
+    with np.errstate(invalid='ignore'):
+        fitted = A('fitted').mean(axis=0)            # NaN where a member has no prediction
+        fit_lo, fit_hi, fit_se = A('fit_lo').mean(axis=0), A('fit_hi').mean(axis=0), A('fit_se').mean(axis=0)
+    v = np.asarray(S.y, dtype=float)
+    valid = np.isfinite(v) & np.isfinite(fitted)
+    if valid.sum() < 3:
+        return {'error': 'the members\' one-step-ahead predictions have too few slots in common'}
+    st = _fit_stats(v, fitted, valid, 0, float('nan'))
+    if h:
+        fcd = _forecast(S, h, F('mean').mean(axis=0), F('se').mean(axis=0), F('lower').mean(axis=0), F('upper').mean(axis=0))
+    else:
+        fcd = _forecast(S, 0, [], [], [], [])
+    name = 'Average of ' + ', '.join(names)
+    notes = [f'The mean of {_plural(len(res), "model")}\' one-step-ahead predictions (where every one has a prediction), forecasts and prediction limits: '
+             + '; '.join(names) + '.',
+             'The limits are the mean of the members\' limits: the members\' forecast errors are correlated, and the standard error of the mean forecast is at most '
+             'the mean of their standard errors (exactly that when the errors move together), so the interval errs on the wide side. '
+             'An average has no likelihood of its own: AIC and SBC are left out; MAPE, MAE and (with Forecast on Holdback) the holdback statistics compare.']
+    summary = [['DF', st['df'], 'int'], ['Sum of Squared Errors', st['sse']], ['Variance Estimate', st['variance']], ['Standard Deviation', st['sd']],
+               ['RSquare', st['rsquare']], ['RSquare Adj', st['rsquare_adj']], ['MAPE', st['mape']], ['MAE', st['mae']], ['Members', len(res), 'int']]
+    for key in ('aic', 'sbc', 'aicc', 'm2ll'):
+        st[key] = None
+    # the code: each member fitted as in its report, then the mean
+    imports = []
+    for r in res:
+        for i in (r.get('plot_frag') or {}).get('imports', []):
+            if i not in imports and i != 'from scipy import stats':
+                imports.append(i)
+    fit = ['members_ = []   # (fitted, fit_lo, fit_hi, f_mean, f_lower, f_upper) of each member']
+    for nm, r in zip(names, res):
+        fit += ['', f'# {nm}, fitted as in its report', *r['plot_frag']['fit'],
+                'members_.append((fitted, fit_lo, fit_hi' + (', f_mean, f_lower, f_upper))' if h else '))')]
+    k6 = 6 if h else 3
+    fit += ['', f'{"fitted, fit_lo, fit_hi, f_mean, f_lower, f_upper" if h else "fitted, fit_lo, fit_hi"} = (np.mean([m_[i] for m_ in members_], axis=0) for i in range({k6}))   # the mean: missing where a member has no prediction',
+            'resid = y.to_numpy() - fitted']
+    if h:
+        fit.append(_future_line(S, h))
+    plot_code, plot_frag = _model_plots(S, table_name, where, name, imports, fit, h, nlags)
+    c = [code_head(table_name, ['from scipy import stats', *imports]), *_series_lines(S, where, graph=True), *fit,
+         'print(pd.DataFrame({"forecast": f_mean, "lower": f_lower, "upper": f_upper}))' if h else 'print(fitted)']
+    return _model_out(S, 'avg', name, np.where(valid, fitted, np.nan), np.where(valid, v - fitted, np.nan), np.where(valid, fit_se, np.nan), level, fcd, st,
+                      summary, {'columns': 'smooth', 'rows': []}, nlags, 0, notes, '\n'.join(c), plot_code=plot_code, plot_frag=plot_frag,
+                      fit_lo_override=[_arr(np.where(valid, fit_lo, np.nan)), _arr(np.where(valid, fit_hi, np.nan))],
+                      members=names, spec={'members': [m.get('fn') for m in members]})
+
+
+@api('timeseries.cv')
+@_quietly
+def cross_validate(table, y, models=None, time=None, rows=None, excluded=None, origins=5, horizon=12, step=None, nlags=25, where=None,
+                   table_name='data', season=0):
+    """Rolling-origin cross-validation (evaluation on a rolling forecasting
+    origin): each model is fitted on the series up to an origin (an expanding
+    window, the earliest origin first) and forecasts the next `horizon`
+    values; origins are `step` apart, the last one `horizon` before the end.
+    RMSE, MAE and MAPE for each origin and model, and their means over the
+    origins. 'smui:progress tscv <done> <total>' lines for the page."""
+    models = [m for m in (models or []) if isinstance(m, dict)]
+    if not models:
+        return {'error': 'no models to cross-validate'}
+    K, H = max(1, int(origins or 5)), max(1, int(horizon or 12))
+    step = max(1, int(step or H))
+    try:
+        S0 = load(table, y, time, rows, excluded)
+    except NoSeries as e:
+        return {'error': str(e)}
+    cuts = [(K - 1 - j) * step for j in range(K)]           # the values left out after each origin's horizon
+    if cuts[0] + H + 8 > S0.n:
+        return {'error': f'the series has {S0.n} values: too few for {_plural(K, "origin")} {step} apart and a horizon of {H} (the first origin would keep {S0.n - cuts[0] - H})'}
+    total, done = len(models) * K, 0
+    print(f'smui:progress tscv 0 {total}', flush=True)
+    out, fit_lines, imports = [], {}, []
+    for m in models:
+        mname = m.get('name') or m.get('fn')
+        per = []
+        for j, cut in enumerate(cuts):
+            base = dict(table=table, y=y, time=time, rows=rows, excluded=excluded, h=H, nlags=nlags, where=where, table_name=table_name,
+                        holdback=H, cut=cut, season=season)
+            try:
+                r = _run_member(m, base)
+            except Exception as e:  # noqa: BLE001 - a fit that fails at one origin is reported there
+                r = {'error': f'{type(e).__name__}: {e}'}
+            done += 1
+            print(f'smui:progress tscv {done} {total}', flush=True)
+            n_train = S0.n - cut - H
+            row = {'origin': j + 1, 't': _f(S0.t[n_train - 1]), 'n_train': n_train}
+            hb = r.get('holdback') if not r.get('error') else None
+            if r.get('error') or not hb or hb.get('rmse') is None:
+                row['error'] = r.get('error') or 'no forecasts'
+            else:
+                row.update(n=hb['n'], rmse=hb['rmse'], mae=hb['mae'], mape=hb['mape'])
+                if m.get('id') not in fit_lines and r.get('plot_frag'):
+                    mname = r.get('name') or mname
+                    fit_lines[m.get('id')] = (mname, r['plot_frag']['fit'])
+                    for i in r['plot_frag'].get('imports', []):
+                        if i not in imports:
+                            imports.append(i)
+            per.append(row)
+        ok = [p for p in per if not p.get('error')]
+        mean = {k: _f(np.mean([p[k] for p in ok])) if ok and all(p.get(k) is not None for p in ok) else None for k in ('rmse', 'mae', 'mape')}
+        out.append({'id': m.get('id'), 'name': mname, 'origins': per, 'n_ok': len(ok), **mean})
+    # the code: every origin, every model fitted on the series up to it, as in its report
+    S1 = load(table, y, time, rows, excluded, holdback=H, season=season)
+    lines = [code_head(table_name, [i for i in imports]), *_series_lines(S0, where, graph=False),
+             f'y_cv, h = y, {H}   # the whole series, and the horizon', f'cuts = {cuts}   # the values after each origin\'s horizon, the earliest origin first',
+             *HB_DEF, 'rows_cv = []', 'for cut in cuts:   # the series as it was at each origin: every value up to it, then the next h held back',
+             '    y_all = y_cv.iloc[:len(y_cv) - cut]; y, y_hold = y_all.iloc[:-h], y_all.iloc[-h:]',
+             *_indent(_time_lines(S1))]
+    for mid, (mname, fl) in fit_lines.items():
+        lines += _indent(['', f'# {mname}, fitted as in its report', *fl,
+                          f'rows_cv.append({{"Model": {J(mname)}, "Origin": t[-1], **holdback_stats(y_hold, f_mean, y, {S1.season})}})'])
+    lines += ['cv = pd.DataFrame(rows_cv); print(cv[["Model", "Origin", "N", "RMSE", "MAE", "MAPE"]].to_string())',
+              'print(cv.groupby("Model", sort=False)[["RMSE", "MAE", "MAPE"]].mean().to_string())   # the means over the origins']
+    return {'models': out, 'origins': K, 'horizon': H, 'step': step, 'cuts': cuts, 'n': S0.n,
+            't_origins': [_f(S0.t[S0.n - c_ - H - 1]) for c_ in cuts], 'code': '\n'.join(lines)}

@@ -23,7 +23,7 @@ The personalities and the names the page calls:
   fitmodel.all_models   All Possible Models
   fitmodel.glm          Generalized Linear Model
   fitmodel.logistic     Nominal and Ordinal Logistic
-  fitmodel.mixed        Mixed Model (REML) with variance components
+  fitmodel.mixed        Mixed Model (REML) with variance components (mixed.py)
   fitmodel.manova       MANOVA; Repeated Measures (response='repeated'): the
                         between- and within-subject tests, Mauchly's sphericity
                         test, the Greenhouse-Geisser and Huynh-Feldt adjusted
@@ -81,10 +81,9 @@ from scipy import stats
 from . import data, models, predictive
 from .registry import api
 from . import profile as profile_mod
-from .util import code_head, col, table as rtable
+from .util import code_head, col, one_line, table as rtable
 
 AVG = 'avg'          # a categorical factor averaged over its levels (LS means)
-_REML_MAX = 4_000_000   # rows x random levels up to which the REML information is computed
 
 
 # ---------------------------------------------------------------------------
@@ -120,13 +119,13 @@ def _ys(y):
     return [y] if isinstance(y, str) else [str(v) for v in y]
 
 
-def _design(tid, y, effs, rows, weight=None, freq=None, intercept=True, extra=(), y_as_category=False):
+def _design(tid, y, effs, rows, weight=None, freq=None, intercept=True, extra=(), y_as_category=False, center=True):
     """models.build over the fixed effects; the random effects' columns (and
     any extra columns) are kept in the frame, so every fit of the model
     uses the same rows."""
     fixed = [e for e in effs if not e['random']]
     rand = [n for e in effs if e['random'] for n in e['cols']]
-    d = models.build(tid, y, [e['cols'] for e in fixed], rows, weight, freq, intercept=intercept,
+    d = models.build(tid, y, [e['cols'] for e in fixed], rows, weight, freq, center=center, intercept=intercept,
                      extra=[c for c in list(extra) + rand if c], y_as_category=y_as_category)
     for e, spec in zip(d.effects, fixed):
         e['label'] = spec['label']
@@ -188,6 +187,65 @@ def _uncenter(d, names):
         if t in names:
             T[i0, names.index(t)] = -m
     return T
+
+
+def _intercept_at_zero_code(d, fit):
+    """The line that moves a code's intercept to x = 0 when main effects were centred (as the report shows it)."""
+    cm = getattr(d, 'centered_main', None)
+    if not cm:
+        return []
+    terms = {f'I({_q(d.name[_ALIAS_ANY.match(t).group(1)])} - {m!r})': m for t, m in cm.items()}
+    return [f'b0 = {fit}.params["Intercept"] - sum(m * {fit}.params[t] for t, m in {terms!r}.items())   # the Intercept at x = 0, as the report']
+
+
+def _indicator_report(d, R, alpha, dfi, fit_lines, rob, weight, freq):
+    """Indicator Parameterization Estimates (models.indicator_estimates) and their code: the model refitted with the
+    factors 0/1 coded, the last level the reference."""
+    try:
+        ind = models.indicator_estimates(d, R, alpha, df=dfi)
+    except Exception as e:   # shown in the outline
+        return {'error': f'no indicator parameterization: {e}'}
+    for r in ind['rows']:
+        r['term'] = _tlabel(d, r['name']) if r['name'] in getattr(d, 'centered_main', {}) else r['term']
+    wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
+    fml = json.dumps(_code_formula(d, indicator=True))
+    fi = f'smf.wls({fml}, data=d, weights={wexpr})' if wexpr else f'smf.ols({fml}, data=d)'
+    L = list(fit_lines)
+    if freq:
+        L += [f'mod_i = {fi}   # each factor 0/1 coded: Treatment, the last level the reference',
+              f'mod_i.df_resid = d[{json.dumps(freq)}].sum() - np.linalg.matrix_rank(mod_i.exog)', 'fit_i = mod_i.fit()']
+    else:
+        L.append(f'fit_i = {fi}.fit()   # each factor 0/1 coded: Treatment, the last level the reference')
+    if rob:
+        L += _robust_code(rob, fit='fit_i', name='rob_i')[:1] + ['print(rob_i.summary())   # Indicator Parameterization Estimates, robust standard errors']
+    else:
+        L.append('print(fit_i.summary())   # Indicator Parameterization Estimates' + ('' if not ind.get('refit') else ' (a fit of its own: see the note)'))
+    if not ind.get('refit'):
+        L.append('print(np.max(np.abs(fit_i.fittedvalues - fit.fittedvalues)))   # the same fit, reparametrized: 0 up to rounding')
+    L += _intercept_at_zero_code(d, 'rob_i' if rob else 'fit_i')
+    ind['code'] = '\n'.join(L)
+    return ind
+
+
+def _expanded_report(d, R, alpha, dfi, fit_lines, rob):
+    """Expanded Estimates (models.expanded_estimates) and their code: each line a weighted sum of the fit's parameters."""
+    ex = models.expanded_estimates(d, R, alpha, df=dfi)
+    Ls = ex.pop('L')
+    for r in ex['rows']:
+        if r['name'] in getattr(d, 'centered_main', {}) or r['term'] == 'Intercept':
+            r['term'] = _tlabel(d, r['name'])
+    src = 'rob' if rob else 'fit'
+    L = list(fit_lines) + (_robust_code(rob)[:1] if rob else []) + [
+        'from scipy import stats',
+        f'b, V = np.asarray({src}.params), np.asarray({src}.cov_params())',
+        f'dfe = {dfi!r}   # the error degrees of freedom{" (the clusters less one)" if rob and rob.get("type") == "cluster" else ""}',
+        f'expanded = {json.dumps({r["term"]: {str(k): v for k, v in Lw.items()} for r, Lw in zip(ex["rows"], Ls)}, ensure_ascii=False)}   # each line\'s weights of the parameters (by position): the last level of effect coding minus the sum of the others',
+        'for term, weights in expanded.items():',
+        '    L = np.zeros(len(b)); L[[int(k) for k in weights]] = list(weights.values())',
+        '    est, se = L @ b, np.sqrt(L @ V @ L); t = est / se',
+        f'    print(term, est, se, t, 2 * stats.t.sf(abs(t), dfe), est - stats.t.ppf(1 - {alpha!r} / 2, dfe) * se, est + stats.t.ppf(1 - {alpha!r} / 2, dfe) * se)']
+    ex['code'] = '\n'.join(L)
+    return ex
 
 
 def _centred_code(d):
@@ -376,8 +434,12 @@ def _spec(y=None, effects=(), weight=None, freq=None, offset=None, no_intercept=
           overdispersion=False, ordinal=None, distr='logit', method='lasso', enet_alpha=0.9, criterion='aicc', n_grid=40,
           choose=None, robust=None, subject=None, time=None, subgroup=None, corr=None, cov=None, scale=None, scale_value=None,
           nb_alpha=None, var_power=None, endog=None, instruments=None, tau=None, qr_cov=None, kernel=None, bandwidth=None,
-          adaptive=False, validation=None, portion=None, folds=None, seed=None, **_ignored):
-    """Everything that defines a fit, as a plain dict (the cache key)."""
+          adaptive=False, validation=None, portion=None, folds=None, seed=None, center=True, mixed=None, **_ignored):
+    """Everything that defines a fit, as a plain dict (the cache key). center:
+    JMP's Center Polynomials (the continuous columns of crossings and powers
+    centred at their means; on by default, as in JMP). mixed: the mixed
+    models' own options (mixed.py), kept so that the profilers refit the
+    report's model."""
     return {'y': _ys(y), 'effects': [[e['names'], e['nest'], e['random']] for e in _effects(effects)], 'weight': weight, 'freq': freq,
             'offset': offset, 'no_intercept': bool(no_intercept), 'dist': dist, 'link': link, 'target': target,
             'overdispersion': bool(overdispersion), 'ordinal': ordinal, 'distr': distr, 'method': method, 'enet_alpha': enet_alpha,
@@ -385,7 +447,8 @@ def _spec(y=None, effects=(), weight=None, freq=None, offset=None, no_intercept=
             'subgroup': subgroup, 'corr': corr, 'cov': cov, 'scale': scale, 'scale_value': scale_value, 'nb_alpha': nb_alpha,
             'var_power': var_power, 'endog': _ys(endog), 'instruments': _ys(instruments),
             'tau': None if tau in (None, '') else float(tau), 'qr_cov': qr_cov, 'kernel': kernel, 'bandwidth': bandwidth,
-            'adaptive': bool(adaptive), 'validation': validation, 'portion': portion, 'folds': folds, 'seed': seed}
+            'adaptive': bool(adaptive), 'validation': validation, 'portion': portion, 'folds': folds, 'seed': seed,
+            'center': center is not False, 'mixed': mixed}
 
 
 # Robust Standard Errors: the types of statsmodels' get_robustcov_results
@@ -450,9 +513,11 @@ def _q(name):
     return name if ok else f'Q({json.dumps(name)})'
 
 
-def _code_formula(d, lhs=True):
+def _code_formula(d, lhs=True, indicator=False):
     """models.code_formula with keyword-safe names, and the '- 1' of a model
-    without intercept. lhs=False gives the right-hand side only."""
+    without intercept. lhs=False gives the right-hand side only; indicator:
+    the effect-coded factors 0/1 coded, the last level the reference (the
+    Indicator Parameterization Estimates)."""
     parts = []
     for e in d.effects:
         counts = {}
@@ -464,7 +529,8 @@ def _code_formula(d, lhs=True):
             a = d.alias[n]
             if a in d.categorical:
                 lv = [x.item() if hasattr(x, 'item') else x for x in d.levels[a]]
-                ps.append(f'C({_q(n)}, {"Sum" if d.coding == "effect" else "Treatment"}, levels={lv!r})')
+                coding = (f'Treatment(reference={lv[-1]!r})' if indicator else 'Sum') if d.coding == 'effect' else 'Treatment'
+                ps.append(f'C({_q(n)}, {coding}, levels={lv!r})')
             elif (crossed and d.center) or (k == 1 and f'I({a} - {d.means.get(a)!r})' in getattr(d, 'centered_main', {})):
                 m = d.means[a]   # the mean in full, so the code gives the report's estimates exactly
                 ps.append(f'I(({_q(n)} - {m!r}) ** {k})' if k > 1 else f'I({_q(n)} - {m!r})')
@@ -495,6 +561,9 @@ def _code_frame(d, tid, table_name, rows, extra_cols=(), extra_imports=()):
             lines.append(f'df = df.loc[{keep}]   # the rows of the report')
     cols = list(dict.fromkeys([n for n in d.alias if n in d.df.columns or d.alias[n] in d.df] + [c for c in extra_cols if c]))
     lines.append(f'd = df[{json.dumps(cols)}].dropna()')
+    vd = getattr(d, 'valid', None)
+    if vd:   # a Validation column: the model learns from its training rows (0, or Training)
+        lines.append(_train_line(vd))
     for n in cols:
         a = d.alias.get(n)
         if a is None or a not in d.levels:
@@ -505,6 +574,158 @@ def _code_frame(d, tid, table_name, rows, extra_cols=(), extra_imports=()):
         src = f'd[{json.dumps(n)}].astype(float)' if numeric else f'd[{json.dumps(n)}]'
         lines.append(f'd[{json.dumps(n)}] = pd.Categorical({src}, categories={cats})   # the level order of the table')
     return lines
+
+
+# ---- the Validation column (Standard Least Squares, Stepwise, GLM, the logistic fits) ------------------
+# As JMP Pro's Fit Model: the model learns from the training rows (0, or Training) and predicts the
+# validation (1) and test (2) rows from the same design (its levels and its centring are the training
+# rows'); the Crossvalidation report measures each set. The sets follow predictive.prepare's rules, as
+# every predictive platform of the page: rows without a validation value are left out.
+
+def _valid_sets(tid, ys, effs, rows, spec):
+    """The sets of the report's rows with the response and every model column:
+    {'column', 'P' (predictive.prepare's), 'train' (the training rows)}."""
+    vcol = spec['validation']
+    if len(ys) > 1:
+        raise ValueError('a Validation column takes one Y column (not events and trials)')
+    if vcol in ys or any(vcol in e['cols'] for e in effs):
+        raise ValueError(f'{vcol} is the Validation column: it cannot also be the Y or in a model effect')
+    xcols = list(dict.fromkeys(c for e in effs if not e['random'] for c in e['cols']))
+    if not xcols:
+        raise ValueError('a Validation column needs model effects: with none there is nothing to validate')
+    P = predictive.prepare(tid, ys[0], xcols, rows, spec['weight'], spec['freq'], validation=vcol, missing='drop')
+    kfold = int(getattr(P, 'k', 0) or 0)   # more than three values: K folds (Generalized Regression's KFold), no hold-out here
+    return {'column': vcol, 'P': P, 'train': [int(r) for r in P.index[P.sets == 0]], 'kfold': kfold,
+            'numeric': data.meta(tid, vcol).get('dataType') == 'numeric'}
+
+
+def _train_line(vd):
+    """The code's line that keeps the training rows of the Validation column."""
+    q = json.dumps(vd['column'])
+    if vd['numeric']:
+        return f'd = d[df.loc[d.index, {q}] == 0]   # the training rows of {vd["column"]} (0): the model learns from them'
+    return f'd = d[df.loc[d.index, {q}].astype(str).str.strip().str.lower().isin(["training", "train"])]   # the training rows of {vd["column"]}'
+
+
+def _sets_line(vd, frame='d'):
+    """The code's line that gives each row's set, 0 Training, 1 Validation, 2 Test, as predictive.prepare reads them."""
+    q = json.dumps(vd['column'])
+    if vd['numeric']:
+        return f'sets = {frame}[{q}].to_numpy(int)   # 0 training, 1 validation, 2 test'
+    return (f'sets = {frame}[{q}].astype(str).str.strip().str.lower().map({json.dumps(predictive._SET_NAMES)}).to_numpy(int)   '
+            '# 0 training, 1 validation, 2 test')
+
+
+def _sub_prepared(P, keep):
+    """predictive.prepare's rows, the ones keep marks (the rows the model can predict)."""
+    Q = predictive.Prepared()
+    for k in ('table', 'y', 'x', 'kind', 'levels', 'labels', 'coding', 'missing', 'spec'):
+        setattr(Q, k, getattr(P, k))
+    Q.index, Q.sets = P.index[keep], P.sets[keep]
+    Q.target = P.target[keep]
+    Q.w = None if P.w is None else P.w[keep]
+    Q.freq = None if P.freq is None else P.freq[keep]
+    Q.notes = list(P.notes)
+    return Q
+
+
+_CV_SHOW = {'continuous': ('set', 'rsquare', 'rase', 'n'),
+            'categorical': ('set', 'entropy_rsquare', 'generalized_rsquare', 'misclassification', 'auc', 'n')}
+
+
+def _cv_report(m, idx, fitted, code=None, head=None, curves=False):
+    """The Crossvalidation report of a model with a Validation column:
+    predictive.report's measures of each set (their columns JMP's first,
+    the rest optional), the confusion matrices of a categorical response
+    (curves: its ROC and lift curves by set; head: the lines that make d,
+    y, sets and fitted, for their code), each row's actual and predicted
+    (the plots mark the hold-out rows). idx: the rows the model predicts
+    (models.new_rows), fitted: their predictions (n, or n x levels in P's
+    levels)."""
+    V = m['valid']
+    P = V['P']
+    pos = {int(r): i for i, r in enumerate(idx)}
+    keep = np.array([int(r) in pos for r in P.index], dtype=bool)
+    Q = _sub_prepared(P, keep)
+    f = np.asarray(fitted, dtype=float)
+    f = f[[pos[int(r)] for r in Q.index]]
+    rep = predictive.report(Q, f, roc_curves=curves, head=head)
+    show = _CV_SHOW[Q.kind]
+    rep['measure_columns'] = [dict(c, hidden=c['key'] not in show) for c in rep['measure_columns']]
+    if (~keep).sum():
+        rep['notes'].append(f'{int((~keep).sum())} rows the model cannot predict (a level the training rows do not have, or a missing offset) '
+                            'are left out.')
+    rep['column'] = V['column']
+    rep['rows_set'] = {'rows': [int(r) for r in Q.index], 'set': [int(s) for s in Q.sets]}
+    if code:
+        rep['code'] = code
+    return rep
+
+
+def _kfold_note(d):
+    """The note of a Validation column that holds K folds (more than three
+    values): the fit takes every row."""
+    kf = getattr(d, 'kfold', None)
+    if not kf:
+        return []
+    return [f'{kf[0]} has {kf[1]} values: K folds, which Generalized Regression\'s KFold validation uses (as JMP\'s). This fit takes every '
+            'row; a Validation column of 0, 1 and 2 (or Training, Validation and Test) holds rows out.']
+
+
+def _cv_frame_code(d, tid, V, extra_cols=()):
+    """The Crossvalidation code's rows: a, every row with values in every set,
+    coded with the training rows' levels (a row with another level is not
+    predicted), and sets, each row's set."""
+    cols = list(dict.fromkeys([n for n in d.alias if n in d.df.columns or d.alias[n] in d.df] + [c for c in extra_cols if c] + [V['column']]))
+    L = [f'a = df[{json.dumps(cols)}].dropna()   # every row with values, in every set']
+    for n in cols:
+        a_ = d.alias.get(n)
+        if a_ is None or a_ not in d.levels:
+            continue
+        lv = d.levels[a_]
+        numeric = all(isinstance(v, (float, int, np.floating, np.integer)) for v in lv)
+        cats = json.dumps([float(v) for v in lv] if numeric else [str(v) for v in lv])
+        src = f'a[{json.dumps(n)}].astype(float)' if numeric else f'a[{json.dumps(n)}]'
+        L.append(f'a[{json.dumps(n)}] = pd.Categorical({src}, categories={cats})   # the training rows\' levels')
+    L.append('a = a.dropna()   # a level the training rows do not have is not predicted')
+    wparts = [f'a[{json.dumps(c)}]' for c in extra_cols if c and c in (V['P'].spec.get('weight'), V['P'].spec.get('freq'))]
+    if wparts:
+        L.append(f'a = a[{" * ".join(wparts)} > 0]   # a missing or non-positive weight leaves the row out')
+        L.append(f'wa = ({" * ".join(wparts)}).to_numpy(float)')
+    else:
+        L.append('wa = np.ones(len(a))')
+    L.append(_sets_line(V, 'a'))
+    return L
+
+
+def _cv_measure_code(kind, levels=None):
+    """The Crossvalidation code's measures of each set from pred (continuous:
+    RSquare, RASE, N) or P (the levels' probabilities: Entropy RSquare, against
+    the training shares, Generalized RSquare, Misclassification Rate, AUC of two
+    levels, N), with ya the actual value or level index, as predictive.measures
+    computes them."""
+    if kind == 'continuous':
+        return ['for k, name in enumerate(["Training", "Validation", "Test"]):',
+                '    s = sets == k',
+                '    if s.any():',
+                '        w_ = wa[s]; e = ya[s] - pred[s]; sse = np.sum(w_ * e ** 2)',
+                '        sst = np.sum(w_ * (ya[s] - np.average(ya[s], weights=w_)) ** 2)',
+                '        print(name, "RSquare", 1 - sse / sst, "RASE", np.sqrt(sse / w_.sum()), "N", w_.sum())']
+    L = ['tr = sets == 0; share = np.array([wa[tr][ya[tr] == j].sum() for j in range(P.shape[1])]) / wa[tr].sum()   # the training shares of the levels',
+         'for k, name in enumerate(["Training", "Validation", "Test"]):',
+         '    s = sets == k',
+         '    if s.any():',
+         '        w_, y_, p_ = wa[s], ya[s], P[s]; N = w_.sum()',
+         '        ll = np.sum(w_ * np.log(np.clip(p_[np.arange(len(y_)), y_], 1e-15, 1))); ll0 = np.sum(w_ * np.log(np.clip(share[y_], 1e-15, 1)))',
+         '        miss = np.sum(w_ * (np.argmax(p_, axis=1) != y_)) / N',
+         '        gen = (1 - np.exp(2 * (ll0 - ll) / N)) / (1 - np.exp(2 * ll0 / N))   # Nagelkerke\'s']
+    if levels is not None and len(levels) == 2:
+        L += ['        pos = y_ == 1; sc = p_[:, 1]   # the AUC: a row of the second level scored above one of the first (ties half)',
+              '        auc = sum(w1 * (np.sum(w_[~pos] * (sc[~pos] < s1)) + 0.5 * np.sum(w_[~pos] * (sc[~pos] == s1))) for s1, w1 in zip(sc[pos], w_[pos])) / (w_[pos].sum() * w_[~pos].sum())',
+              '        print(name, "Entropy RSquare", 1 - ll / ll0, "Generalized RSquare", gen, "Misclassification Rate", miss, "AUC", auc, "N", N)']
+    else:
+        L += ['        print(name, "Entropy RSquare", 1 - ll / ll0, "Generalized RSquare", gen, "Misclassification Rate", miss, "N", N)']
+    return L
 
 
 def _tcrit(alpha, df):
@@ -537,7 +758,87 @@ def _fit_ols(d, ftot=None):
         mod.df_resid = ftot - np.linalg.matrix_rank(mod.exog)
     res = mod.fit()
     models.attach_terms(d, res)
+    if res.model.rank < res.model.exog.shape[1]:
+        _zero_dependent(d, res)
     return res
+
+
+def _zero_dependent(d, res):
+    """JMP's answer to a singular design (linear dependencies among the
+    columns): going through the columns in the order of the effects (the
+    intercept first), a column that is a linear combination of the ones kept
+    before it is Zeroed (its estimate 0, no standard error) and the others
+    are fitted by least squares; the kept columns in a dependency are Biased
+    (their estimates hold the zeroed ones' parts). The fit, its residuals
+    and every estimable function are those of any solution; the estimates
+    and their covariance are this one's (the results object is changed in
+    place: params, normalized_cov_params). d gets zeroed, biased, keep (the
+    kept columns' positions) and singularity (each zeroed column as a
+    combination of kept ones)."""
+    X = np.asarray(res.model.exog, dtype=float)
+    names = list(res.model.exog_names)
+    order = [names.index('Intercept')] if 'Intercept' in names else []
+    for e in d.effects:
+        for c in e.get('terms', []):
+            if c in names and names.index(c) not in order:
+                order.append(names.index(c))
+    order += [j for j in range(len(names)) if j not in order]
+    keep, deps = [], {}
+    for j in order:
+        col_ = X[:, j]
+        nrm = float(np.linalg.norm(col_))
+        if keep and nrm > 0:
+            c, *_ = np.linalg.lstsq(X[:, keep], col_, rcond=None)
+            dependent = float(np.linalg.norm(col_ - X[:, keep] @ c)) <= 1e-8 * nrm
+        else:
+            c, dependent = np.zeros(len(keep)), nrm == 0
+        if dependent:
+            big = max(1.0, float(np.max(np.abs(c)))) if len(c) else 1.0
+            deps[j] = [(keep[k], float(c[k])) for k in range(len(keep)) if abs(c[k]) > 1e-9 * big]
+        else:
+            keep.append(j)
+    Xw = np.asarray(res.model.wexog, dtype=float)[:, keep]
+    bk = np.linalg.lstsq(Xw, np.asarray(res.model.wendog, dtype=float), rcond=None)[0]
+    p = len(names)
+    b = np.zeros(p)
+    b[keep] = bk
+    nc = np.zeros((p, p))
+    nc[np.ix_(keep, keep)] = np.linalg.inv(Xw.T @ Xw)
+    res._results.params = b
+    res._results.normalized_cov_params = nc
+    res._results._cache = {}
+    d.keep = sorted(keep)
+    d.zeroed = [names[j] for j in order if j in deps]
+    d.biased = [names[k] for k in order if any(k == kk for j in deps for kk, _c in deps[j])]
+    d.singularity = [{'zeroed': names[j], 'terms': [(names[k], c) for k, c in deps[j]]} for j in order if j in deps]
+
+
+def _singularity_details(d):
+    """JMP's Singularity Details: each zeroed column as the combination of the
+    kept columns it equals."""
+    rows = []
+    for dep in getattr(d, 'singularity', []) or []:
+        rhs = ''
+        for k, (nm, c) in enumerate(dep['terms']):
+            coef = '' if abs(abs(c) - 1) < 1e-9 else f'{_fmt_num(abs(c))}·'
+            sign = ('−' if c < 0 else '') if k == 0 else (' − ' if c < 0 else ' + ')
+            rhs += f'{sign}{coef}{_tlabel(d, nm)}'
+        rows.append({'term': _tlabel(d, dep['zeroed']), 'equation': f'{_tlabel(d, dep["zeroed"])} = {rhs or "0"}'})
+    return rtable([col('term', 'Zeroed', 'text'), col('equation', 'Linear dependency', 'text')], rows)
+
+
+def _zeroed_code(d, fit='fit'):
+    """The lines that make the zeroed solution of a singular design from the code's fit (the same columns in the same
+    order), as the report shows it."""
+    if not getattr(d, 'zeroed', None):
+        return []
+    return ['# the design is singular: as JMP, a column that is a linear combination of the ones before it (in the order of the',
+            '# effects, the intercept first) is Zeroed, and the rest are fitted by least squares (statsmodels\' own answer is pinv\'s)',
+            f'keep = {d.keep!r}   # the columns kept, by position',
+            f'Xk = {fit}.model.wexog[:, keep]',
+            f'b = np.zeros(len({fit}.params)); b[keep] = np.linalg.lstsq(Xk, {fit}.model.wendog, rcond=None)[0]',
+            f'V = np.zeros((len(b), len(b))); V[np.ix_(keep, keep)] = np.linalg.inv(Xk.T @ Xk) * {fit}.scale',
+            f'print(pd.DataFrame({{"Estimate": b, "Std Error": np.sqrt(np.diag(V))}}, index={fit}.params.index))   # a Zeroed column: 0, no standard error']
 
 
 def _ls_model(tid, rows, spec):
@@ -553,14 +854,21 @@ def _ls_model(tid, rows, spec):
     ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
     if ccol and ccol in ys:
         raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
-    d = _design(tid, ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'], extra=[ccol] if ccol else ())
-    if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
+    if data.is_categorical(tid, ys[0]):
         raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Standard Least Squares needs a continuous Y '
                          '(Nominal or Ordinal Logistic fits a categorical one)')
+    V = _valid_sets(tid, ys, effs, rows, spec) if spec.get('validation') else None
+    d = _design(tid, ys[0], effs, V['train'] if V else rows, spec['weight'], spec['freq'], not spec['no_intercept'], extra=[ccol] if ccol else (),
+                center=spec.get('center', True))
+    if V and V['kfold']:
+        d.kfold = (V['column'], V['kfold'])   # K folds: every row fits the model (the report says so)
+        V = None
+    if V:
+        d.valid = V
     res = _fit_ols(d, _freq_total(tid, spec['freq'], d))
     wind = _col_values(tid, spec['weight'], d.df.index)
     m = {'kind': 'ls', 'd': d, 'res': res, 'coder': Coder(d, res.model.data.design_info), 'tid': tid, 'key': key, 'spec': spec,
-         'w_indiv': wind if wind is not None else np.ones(len(d.df))}
+         'w_indiv': wind if wind is not None else np.ones(len(d.df)), 'valid': V}
     m['rob'] = dict(rob, maxlags=rob['maxlags'] if rob['maxlags'] is not None else _nw_lags(len(d.df))) if rob and rob['type'] == 'HAC' else rob
     m['rres'], m['rob_note'] = _ls_robust(m, m['rob']) if rob else (None, None)
     models.remember(key, m)
@@ -585,13 +893,30 @@ def _ls_robust(m, rob):
     from statsmodels.regression.linear_model import RegressionResultsWrapper as Wrap   # the names on the estimates, as the fit's
     t = rob['type']
     if t in ('HC0', 'HC1', 'HC2', 'HC3'):
-        return Wrap(res.get_robustcov_results(cov_type=t, use_t=True)), None
-    if t == 'HAC':
-        return Wrap(res.get_robustcov_results(cov_type='HAC', maxlags=int(rob['maxlags']), use_t=True)), None
-    g = _cluster_codes(m['tid'], rob['cluster'], d.df.index)
-    if len(np.unique(g)) < 2:
-        return None, f'{rob["cluster"]} has a single value in these rows: no cluster-robust standard errors.'
-    return Wrap(res.get_robustcov_results(cov_type='cluster', groups=g, use_t=True)), None
+        kw = {'cov_type': t}
+    elif t == 'HAC':
+        kw = {'cov_type': 'HAC', 'maxlags': int(rob['maxlags'])}
+    else:
+        g = _cluster_codes(m['tid'], rob['cluster'], d.df.index)
+        if len(np.unique(g)) < 2:
+            return None, f'{rob["cluster"]} has a single value in these rows: no cluster-robust standard errors.'
+        kw = {'cov_type': 'cluster', 'groups': g}
+    R = Wrap(res.get_robustcov_results(use_t=True, **kw))
+    if getattr(d, 'zeroed', None):
+        # a singular design: the sandwich of the kept columns (the zeroed ones have none), as the estimates are theirs
+        import statsmodels.api as sm_
+        keep = d.keep
+        red = sm_.WLS(np.asarray(res.model.endog, dtype=float), np.asarray(res.model.exog, dtype=float)[:, keep],
+                      weights=np.broadcast_to(np.asarray(res.model.weights, dtype=float), (len(d.df),)))
+        red.df_resid = res.model.df_resid
+        Rr = red.fit().get_robustcov_results(use_t=True, **kw)
+        p = len(res.params)
+        C = np.zeros((p, p))
+        C[np.ix_(keep, keep)] = np.asarray(Rr.cov_params(), dtype=float)
+        R._results.params = np.asarray(res.params, dtype=float).copy()
+        R._results.cov_params_default = C
+        R._results._cache = {}
+    return R, None
 
 
 def _inference_df(r):
@@ -736,7 +1061,9 @@ def _leverage(m, alpha, tests):
             r0 = y - X[:, keep] @ b0
         else:
             r0 = y.copy()
-        F, p, q = test['stat'], test['p'], test['nparm']
+        F, p, q = test['stat'], test['p'], test.get('df', test['nparm'])
+        if not q or F is None:
+            continue
         fcrit = float(stats.f.ppf(1 - alpha, q, dfe)) if dfe > 0 else float('nan')
         xs, ys = r0 - r + c, r0 + c
         slope = xbar = None
@@ -803,7 +1130,7 @@ def _lsmeans(m, e):
         raw.append(float(np.average(y[mask], weights=w[mask])) if mask.any() else None)
     labels = [','.join(_lvl(levels[k][i]) for k, i in enumerate(c)) for c in combos]
     return {'effect': e['label'], 'factors': names, 'levels': [[levels[k][i] for k, i in enumerate(c)] for c in combos], 'labels': labels,
-            'lsmean': est, 'se': se, 'mean': raw, 'n': cnt, 'L': L, 'C': C, 'estimable': ok}
+            'lsmean': est, 'se': se, 'mean': raw, 'n': cnt, 'L': L, 'C': C, 'estimable': ok, 'combos': [tuple(int(i) for i in c) for c in combos]}
 
 
 def _effect_of(d, label):
@@ -815,14 +1142,20 @@ def _effect_of(d, label):
 
 @api('fitmodel.ls')
 def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, vif=False, leverage=True,
-       dw=False, sequential=False, corr=False, robust=None, ccpr=False, table_name='data'):
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust)
+       dw=False, sequential=False, corr=False, robust=None, ccpr=False, validation=None, center=True, indicator=False, expanded=False,
+       table_name='data'):
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust, validation=validation, center=center)
     m = _ls_model(table, rows, spec)
     d, res = m['d'], m['res']
     yname = spec['y'][0]
     notes = []
     singular = res.model.rank < res.model.exog.shape[1]
-    if singular:
+    if singular and getattr(d, 'zeroed', None):
+        notes.append(f'The design is singular: {len(d.zeroed)} column(s) are linear combinations of the ones before them (in the order '
+                     'of the effects, the intercept first). As JMP, they are Zeroed (their estimates 0) and the estimates they alias are '
+                     'Biased: see Singularity Details. The Effect Tests test the other columns of each effect (DF, with LostDFs the '
+                     'zeroed ones); the fit and its predictions are those of any solution.')
+    elif singular:
         notes.append(f'The design is singular: {res.model.exog.shape[1] - res.model.rank} parameter(s) are not estimable. statsmodels '
                      'gives the minimum-norm solution (pinv); JMP would mark the aliased terms Biased or Zeroed. Tests of '
                      'non-estimable hypotheses are not meaningful.')
@@ -840,7 +1173,7 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
                          col('stat', 'F Ratio'), col('p', 'Prob > F', 'p')]
     else:
         _effect_sizes(et, res)
-    est = models.estimates(d, R, alpha, vif=vif)
+    est = models.estimates(d, R, alpha, vif=vif, std_beta=vif, design_se=vif)   # the optional columns come together (the page asks for them)
     names = list(res.params.index)
     bJ, VJ = res.params.to_numpy(float), np.asarray(R.cov_params(), dtype=float)
     T = _uncenter(d, names)
@@ -891,10 +1224,13 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
     out['effects'] = [{'label': e['label'], 'nparm': len(e.get('terms', [])), 'names': e['cols'],
                        'categorical': all(d.alias[n] in d.categorical for n in e['cols'])} for e in d.effects]
     out['lsmeans'] = {}
+    tci = _tcrit(alpha, dfi)
     for e in d.effects:
         lsm = _lsmeans(m, e)
         if lsm is not None:
             out['lsmeans'][e['label']] = {k2: lsm[k2] for k2 in ('factors', 'levels', 'labels', 'lsmean', 'se', 'mean', 'n')}
+            out['lsmeans'][e['label']].update({'lower': lsm['lsmean'] - tci * lsm['se'], 'upper': lsm['lsmean'] + tci * lsm['se'],
+                                              'slices': len(lsm['factors']) >= 2})
     if leverage:
         out['leverage'] = _leverage(m, alpha, tests)
     e2 = np.asarray(diag['residual'], dtype=float)
@@ -944,7 +1280,15 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
                   'fit = mod.fit()']
     else:
         lines.append(f'fit = {fit}.fit()   # C(x, Sum): effect coding, as JMP; crossings and powers centred at the means')
+    fit_lines = list(lines)
     lines += ['print(fit.summary())   # Summary of Fit, Parameter Estimates', 'print(sm.stats.anova_lm(fit, typ=3))   # Effect Tests (Type III)']
+    lines += _zeroed_code(d)
+    if getattr(d, 'zeroed', None):
+        out['singularity'] = _singularity_details(d)
+        out['singularity']['code'] = '\n'.join(fit_lines + _zeroed_code(d) + [
+            f'for j in {[list(res.params.index).index(z) for z in d.zeroed]!r}:   # each zeroed column as a combination of the kept ones',
+            '    c = np.linalg.lstsq(fit.model.exog[:, keep], fit.model.exog[:, j], rcond=None)[0]',
+            '    print(fit.params.index[j], "=", {fit.params.index[k]: round(v, 10) for k, v in zip(keep, c) if abs(v) > 1e-9})'])
     if wexpr:
         lines.append('infl = sm.OLS(fit.model.wendog, fit.model.wexog).fit().get_influence()   # hats, studentized residuals, Cook\'s D (of the weighted fit)')
     else:
@@ -959,7 +1303,38 @@ def ls(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=Fal
                   'print(et)']
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
+    # the Estimates menu: Indicator Parameterization Estimates, Expanded Estimates (the report's covariance: robust when asked)
+    if indicator:
+        out['indicator'] = _indicator_report(d, R, alpha, dfi, fit_lines, rob if R is not res else None, weight, freq)
+    if expanded:
+        out['expanded'] = _expanded_report(d, R, alpha, dfi, fit_lines, rob if R is not res else None)
+    notes.extend(_kfold_note(d))
+    V = m.get('valid')
+    if V:   # the Validation column: every set predicted from the training fit, and measured
+        di = res.model.data.design_info
+        idx, Xv, _ = models.new_rows(d, di, table, rows=V['P'].index)
+        fv = Xv @ _ls_coef(m)[0]
+        cv_code = fit_lines + _cv_frame_code(d, table, V, [weight, freq]) + [
+            'pred, ya = fit.predict(a).to_numpy(), a[' + json.dumps(yname) + '].to_numpy(float)   # every set predicted by the training fit'] + _cv_measure_code('continuous')
+        out['crossvalidation'] = _cv_report(m, idx, fv, code='\n'.join(cv_code))
+        out['holdout'] = _holdout(V, idx, fv, _col_values(table, yname, idx))
+        notes.insert(0, f'{V["column"]}: the model is fitted to the training rows (0, or Training); the validation (1) and test (2) rows are '
+                        'predicted by it and measured in Crossvalidation, and marked in the plots. Every other table is the training fit\'s.')
     out['plot_code'] = _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out)
+    return out
+
+
+def _holdout(V, idx, fitted, actual):
+    """The validation and test rows of a model with a Validation column, for
+    the plots that mark them: their rows, sets, predictions (a continuous
+    response) and actual values."""
+    st = dict(zip((int(r) for r in V['P'].index), (int(s_) for s_ in V['P'].sets)))
+    keep = [i for i, r in enumerate(idx) if st.get(int(r), 0) > 0]
+    f = np.asarray(fitted, dtype=float)
+    out = {'rows': [int(idx[i]) for i in keep], 'set': [st[int(idx[i])] for i in keep]}
+    if f.ndim == 1:
+        a = np.asarray(actual, dtype=float)
+        out.update({'predicted': f[keep], 'actual': a[keep], 'residual': a[keep] - f[keep]})
     return out
 
 
@@ -985,14 +1360,34 @@ def _p_text(p):
     return f'("<.0001" if {p} < 0.0001 else f"={{{p}:.4f}}")'
 
 
-def _row_plot(head, x, y, n, xlabel, ylabel, title, w=380, h=300, lines=(), zero=False, xlabel_code=False):
+def _row_plot(head, x, y, n, xlabel, ylabel, title, w=380, h=300, lines=(), zero=False, xlabel_code=False, label=None):
     """The rows as points (x and y code expressions) with reference lines, as
-    the page's rowPlot draws them; xlabel_code: xlabel is an expression."""
-    c = list(head) + [_fig(w, h), f'ax.scatter({x}, {y}, s={8 if n > 500 else 18}, color="{BASE}")', *lines]
+    the page's rowPlot draws them; xlabel_code: xlabel is an expression;
+    label: the points' name in a legend (the Training set, when the hold-out
+    rows are marked too)."""
+    lab = f', label={J(label)}' if label else ''
+    c = list(head) + [_fig(w, h + (22 if label else 0)), f'ax.scatter({x}, {y}, s={8 if n > 500 else 18}, color="{BASE}"{lab})', *lines]
     if zero:
         c.append(f'ax.axhline(0, color="{MEAN}", linewidth=0.7)')
     c += [f'ax.set_xlabel({xlabel if xlabel_code else J(xlabel)})', f'ax.set_ylabel({J(ylabel)})', f'ax.set_title({J(title)})', 'plt.show()']
     return '\n'.join(c)
+
+
+def _hold_code(m, table, y, extra_cols, xexpr, yexpr):
+    """A plot's code lines for the validation and test rows of a model with a
+    Validation column (after the fit's code, which makes fit): the head's
+    (every set, predicted: pa, and ya the actual values) and the plot's (the
+    hold-out rows marked, a legend). Nothing without one."""
+    V = m.get('valid')
+    if not V:
+        return [], []
+    head = _cv_frame_code(m['d'], table, V, extra_cols) + [f'pa, ya = fit.predict(a).to_numpy(), a[{J(y)}].to_numpy(float)   # every set, predicted by the training fit']
+    lines = ['for k, (name, marker, color) in {1: ("Validation", "^", "#d9822b"), 2: ("Test", "s", "#3a7d44")}.items():   # the hold-out rows, marked',
+             '    s_ = sets == k',
+             '    if s_.any():',
+             f'        ax.scatter({xexpr}[s_], {yexpr}[s_], marker=marker, s=26, color=color, label=name)',
+             'fig.legend(loc="outside lower center", ncols=3, fontsize=8, frameon=False)']
+    return head, lines
 
 
 def _positive_weights(weight, freq):
@@ -1034,9 +1429,11 @@ def _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out):
     codes = {}
     # ---- Actual by Predicted, with the mean and Sall's confidence curves
     wh = out['whole']
-    c = fitc(['from scipy import stats']) + [f'pred, actual = fit.fittedvalues.to_numpy(), d[{J(y)}].to_numpy()',
-                                             'lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())',
-                                             'm = np.average(actual, weights=w)   # the mean of Y']
+    hh, hl = _hold_code(m, table, y, [weight, freq], 'pa', 'ya')
+    c = fitc(['from scipy import stats']) + [f'pred, actual = fit.fittedvalues.to_numpy(), d[{J(y)}].to_numpy()'] + hh + [
+        ('lo, hi = min(pred.min(), actual.min(), pa.min(), ya.min()), max(pred.max(), actual.max(), pa.max(), ya.max())   # the hold-out rows too' if hh
+         else 'lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())'),
+        'm = np.average(actual, weights=w)   # the mean of Y']
     lines = [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)   # the line of fit',
              f'ax.plot([lo, hi], [m, m], color="{MEAN}", linewidth=0.9, linestyle=":")   # the mean']
     if wh.get('curve'):
@@ -1049,11 +1446,13 @@ def _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out):
         lines.append(f'ax.plot(gx, c0 + z - half, gx, c0 + z + half, color="{FIT}", linewidth=0.7, linestyle="--")')
     if wh.get('p') is not None:   # the whole model's test, RSquare and RMSE in the title, as the page has them
         xl = J(f'{y} Predicted P') + ' + ' + _p_text('fit.f_pvalue') + ' + f" RSq={fit.rsquared:.2f} RMSE={np.sqrt(fit.scale):.5g}"'
-        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, xl, f'{y} Actual', f'{y} actual by predicted', 400, 320, lines, xlabel_code=True)
+        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, xl, f'{y} Actual', f'{y} actual by predicted', 400, 320, lines + hl, xlabel_code=True, label='Training' if hh else None)
     else:
-        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, f'{y} Predicted', f'{y} Actual', f'{y} actual by predicted', 400, 320, lines)
+        codes['actpred'] = _row_plot(c, 'pred', 'actual', n, f'{y} Predicted', f'{y} Actual', f'{y} actual by predicted', 400, 320, lines + hl, label='Training' if hh else None)
     # ---- the residual plots
-    codes['residpred'] = _row_plot(fitc(), 'fit.fittedvalues', 'fit.resid', n, f'{y} Predicted', f'{y} Residual', f'{y} residual by predicted', zero=True)
+    hh, hl = _hold_code(m, table, y, [weight, freq], 'pa', '(ya - pa)')
+    codes['residpred'] = _row_plot(fitc() + hh, 'fit.fittedvalues', 'fit.resid', n, f'{y} Predicted', f'{y} Residual', f'{y} residual by predicted', zero=True, lines=hl,
+                                   label='Training' if hh else None)
     codes['residrow'] = _row_plot(fitc(), 'd.index + 1', 'fit.resid', n, 'Row Number', f'{y} Residual', f'{y} residual by row', 460, zero=True)
     lim = out['diag'].get('limits') or {}
     lines = [f'ax.axhline(0, color="{MEAN}", linewidth=0.7)']
@@ -1166,7 +1565,7 @@ def _ls_plots(m, spec, table, rows, table_name, alpha, weight, freq, out):
             j = names.index(tn)
             shift = float(cm_.get(tn, 0.0))
             term = _tlabel(d, tn)
-            c = fitc() + [f'b = fit.params.iloc[{j}]; x = fit.model.exog[:, {j}]{" + " + repr(shift) if shift else ""}   # the column of {term} in the design',
+            c = fitc() + [f'b = fit.params.iloc[{j}]; x = fit.model.exog[:, {j}]{" + " + repr(shift) if shift else ""}   # the column of {one_line(term)} in the design',
                           'partial = fit.resid.to_numpy() + b * fit.model.exog[:, ' + str(j) + ']   # the residual plus the term\'s part of the fit']
             ccpr.append(_row_plot(c, 'x', 'partial', n, term, 'Component + Residual', f'{term} component plus residual', 330, 270,
                                   [f'ax.plot([x.min(), x.max()], [b * (x.min() - {shift!r}), b * (x.max() - {shift!r})], color="{FIT}", linewidth=1.1)']))
@@ -1219,15 +1618,18 @@ def _lsmeans_plot_code(m, e, lsm, fitc, alpha, y):
     label = e['label']
     if len(lsm['factors']) == 2:
         f0, f1 = lsm['factors']
-        c += [f'names0, names1 = {J([_lvl(v) for v in d.levels[d.alias[f0]]])}, {J([_lvl(v) for v in d.levels[d.alias[f1]]])}', f'colors = {J(PALETTE)}',
+        c += ['transpose = False   # Transpose Factors (the red triangle): the second factor on the x axis, the first overlaid',
+              'show_ci = True   # Show Confidence Limits',
+              f'names = [{J([_lvl(v) for v in d.levels[d.alias[f0]]])}, {J([_lvl(v) for v in d.levels[d.alias[f1]]])}]', f'colors = {J(PALETTE)}',
+              'ix, ig = (1, 0) if transpose else (0, 1)',
               _fig(420, 290),
-              'for j, v1 in enumerate(levels[effect[1]]):   # a line for each level of the second factor',
-              '    k = [i for i, lab in enumerate(labels) if lab[1] == v1]',
-              '    ax.errorbar([names0[levels[effect[0]].index(labels[i][0])] for i in k], ls[k], yerr=tc * se[k], color=colors[j % len(colors)], marker="o", markersize=5, linewidth=1.2, capsize=3, label=names1[j])',
-              f'ax.legend(title={J(f1)}, fontsize=8, frameon=False)', f'ax.set_xlabel({J(f0)})']
+              'for j, vg in enumerate(levels[effect[ig]]):   # a line for each level of the overlaid factor',
+              '    k = [i for i, lab in enumerate(labels) if lab[ig] == vg]',
+              '    ax.errorbar([names[ix][levels[effect[ix]].index(labels[i][ix])] for i in k], ls[k], yerr=tc * se[k] if show_ci else None, color=colors[j % len(colors)], marker="o", markersize=5, linewidth=1.2, capsize=3, label=names[ig][j])',
+              'ax.legend(title=effect[ig], fontsize=8, frameon=False)', 'ax.set_xlabel(effect[ix])']
     else:
-        c += [f'names = {J(lsm["labels"])}', _fig(360, 280),
-              f'ax.errorbar(names, ls, yerr=tc * se, color="{BASE}", marker="o", markersize=6, linewidth=1, capsize=3)', f'ax.set_xlabel({J(label)})']
+        c += ['show_ci = True   # Show Confidence Limits', f'names = {J(lsm["labels"])}', _fig(360, 280),
+              f'ax.errorbar(names, ls, yerr=tc * se if show_ci else None, color="{BASE}", marker="o", markersize=6, linewidth=1, capsize=3)', f'ax.set_xlabel({J(label)})']
     c += [f'ax.set_ylabel({J(y + " LS Means")})', f'ax.set_title({J(label + " LS means plot")})', 'plt.show()']
     return '\n'.join(c)
 
@@ -1281,7 +1683,7 @@ def _effect_sizes(et, res):
     nobs = dfe + float(res.model.rank)
     for r in et['rows']:
         ss, q = r.get('ss'), float(r.get('df') or 0)
-        if ss is None or not np.isfinite(ss):
+        if ss is None or not np.isfinite(ss) or q <= 0:   # an effect whose columns are all zeroed (a singular design) has no test
             continue
         r['pes'] = ss / (ss + sse) if ss + sse > 0 else None
         den = ss + (nobs - q) * mse
@@ -1435,8 +1837,8 @@ def _compare(lsm, method, dfe, alpha):
 
 @api('fitmodel.compare')
 def compare(table, y, effects=(), effect=None, method='tukey', rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05,
-            table_name='data'):
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+            validation=None, center=True, table_name='data'):
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     m = _ls_model(table, rows, spec)
     e = _effect_of(m['d'], effect)
     lsm = _lsmeans(m, e)
@@ -1491,12 +1893,95 @@ def _lsmeans_code(m, e, method, alpha, table, table_name, rows, weight, freq):
     return '\n'.join(lines)
 
 
+@api('fitmodel.slices')
+def slices(table, y, effects=(), effect=None, rows=None, weight=None, freq=None, no_intercept=False, robust=None, alpha=0.05,
+           validation=None, center=True, table_name='data'):
+    """LSMeans Test Slices of an interaction of categorical factors: for each
+    level of each of its factors, the F test that the least squares means of
+    the cells at that level are equal (on the error degrees of freedom), and
+    its Test Detail, each cell against the first. The slices are WP2's
+    mixed._slices (the contrasts among an effect's cells, fit-independent)."""
+    from .mixed import _slices   # here, not at the top: mixed imports this module
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust, validation=validation, center=center)
+    m = _ls_model(table, rows, spec)
+    d, res = m['d'], m['res']
+    R = m['rres'] if m.get('rres') is not None else res
+    e = _effect_of(d, effect)
+    lsm = _lsmeans(m, e)
+    if lsm is None or len(lsm['factors']) < 2:
+        return {'error': f'{effect} is not a crossing of categorical factors: Test Slices are for interactions'}
+    b = res.params.to_numpy(float)
+    V = np.asarray(R.cov_params(), dtype=float)
+    dfe = _inference_df(R)
+    mse = float(res.scale)
+    out = []
+    for sl in _slices(lsm):
+        cells = sl['cells']
+        if not all(lsm['estimable'][c] for c in cells):
+            continue
+        Lc = sl['K'] @ lsm['L']
+        est = Lc @ b
+        C = Lc @ V @ Lc.T
+        q = int(np.linalg.matrix_rank(C))
+        if q == 0:
+            continue
+        F = float(est @ np.linalg.pinv(C) @ est) / q
+        det = []
+        for r_ in range(len(Lc)):
+            se = math.sqrt(max(float(C[r_, r_]), 0.0))
+            t = float(est[r_]) / se if se > 0 else float('nan')
+            det.append({'contrast': f'{lsm["labels"][cells[r_ + 1]]} − {lsm["labels"][cells[0]]}', 'estimate': float(est[r_]), 'se': se, 't': t,
+                        'p': float(2 * stats.t.sf(abs(t), dfe)) if np.isfinite(t) else None})
+        out.append({'slice': f'{sl["factor"]}={_lvl(sl["level"])}', 'factor': sl['factor'], 'dfnum': q, 'dfden': dfe, 'ss': F * q * mse, 'f': F,
+                    'p': float(stats.f.sf(F, q, dfe)), 'detail': det})
+    lines = _code_frame(d, table, table_name, rows, [weight, freq], ['import itertools', 'import patsy', 'from scipy import stats'])
+    wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
+    fit = f'smf.wls({json.dumps(_code_formula(d))}, data=d, weights={wexpr})' if wexpr else f'smf.ols({json.dumps(_code_formula(d))}, data=d)'
+    if freq:
+        lines += [f'mod = {fit}', f'mod.df_resid = d[{json.dumps(freq)}].sum() - np.linalg.matrix_rank(mod.exog)   # Freq: JMP\'s error degrees of freedom', 'fit = mod.fit()']
+    else:
+        lines.append(f'fit = {fit}.fit()')
+    if R is not res:
+        lines += _robust_code(m['rob'])[:1]
+    src = 'rob' if R is not res else 'fit'
+    names = list(dict.fromkeys(e['cols']))
+    others = [n for n in _factor_names(d) if n not in names and d.alias[n] in d.categorical]
+    conts = [n for n in _factor_names(d) if d.alias[n] not in d.categorical]
+    lev = '[' + ', '.join('[' + ', '.join(_pylit(v) for v in d.levels[d.alias[n]]) + ']' for n in names) + ']'
+    oth = '[' + ', '.join('[' + ', '.join(_pylit(v) for v in d.levels[d.alias[n]]) + ']' for n in others) + ']'
+    lines += [
+        f'effect, others = {json.dumps(names)}, {json.dumps(others)}   # the interaction\'s factors; the categorical factors averaged over',
+        f'levels, other_levels = {lev}, {oth}',
+        f'means = {{{", ".join(f"{json.dumps(n)}: d[{json.dumps(n)}].mean()" for n in conts)}}}   # continuous factors at their means',
+        'cells = list(itertools.product(*levels))',
+        *(['cells = [c for c in cells if (d[effect].apply(tuple, axis=1) == c).any()]   # a nested effect: the cells that occur'] if e['spec']['nest'] else []),
+        'L = []',
+        'for cell in cells:   # each cell\'s least squares mean: its design rows averaged over the other factors\' levels',
+        '    grid = pd.DataFrame(list(itertools.product(*other_levels)) or [()], columns=others)',
+        '    for name, v in zip(effect, cell): grid[name] = v',
+        '    for name, v in means.items(): grid[name] = v',
+        '    L.append(np.asarray(patsy.build_design_matrices([fit.model.data.design_info], grid)[0]).mean(axis=0))',
+        f'L = np.array(L); b, V = {src}.params.to_numpy(), np.asarray({src}.cov_params())',
+        f'dfe = {dfe!r}   # the error degrees of freedom',
+        'for fi, name in enumerate(effect):   # Test Slices: at each level of one factor, the cells of the others are equal',
+        '    for v in levels[fi]:',
+        '        at = [i for i, c in enumerate(cells) if c[fi] == v]',
+        '        if len(at) < 2: continue',
+        '        Lc = np.array([L[j] - L[at[0]] for j in at[1:]])   # Test Detail: each cell against the first',
+        '        est, C = Lc @ b, Lc @ V @ Lc.T',
+        '        q = np.linalg.matrix_rank(C); F = est @ np.linalg.pinv(C) @ est / q',
+        '        print(f"{name}={v}", q, dfe, F, stats.f.sf(F, q, dfe))',
+        '        for r, j in enumerate(at[1:]):',
+        '            se = np.sqrt(C[r, r]); print("   ", cells[j], "-", cells[at[0]], est[r], se, est[r] / se, 2 * stats.t.sf(abs(est[r] / se), dfe))']
+    return {'effect': effect, 'rows': out, 'alpha': alpha, 'code': '\n'.join(lines)}
+
+
 @api('fitmodel.contrast')
 def contrast(table, y, effects=(), effect=None, coefs=None, rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05,
-             table_name='data'):
+             validation=None, center=True, table_name='data'):
     """LSMeans Contrast: each row of coefs weights the least squares means of
     the effect's levels; t tests of each contrast and the joint F test."""
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     m = _ls_model(table, rows, spec)
     res = m['res']
     e = _effect_of(m['d'], effect)
@@ -1530,13 +2015,13 @@ def contrast(table, y, effects=(), effect=None, coefs=None, rows=None, weight=No
 
 @api('fitmodel.boxcox')
 def boxcox(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, lo=-2.0, hi=2.0, n=81,
-           table_name='data'):
+           validation=None, center=True, table_name='data'):
     """JMP's Box-Cox Y Transformation: the error sum of squares of the model
     fitted to (y^lambda - 1) / (lambda * g^(lambda - 1)), g the geometric mean
     (g log y at lambda 0), over a grid of lambda; the best lambda minimises it.
     The interval holds the lambdas the likelihood ratio test does not reject."""
     from scipy import optimize
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     m = _ls_model(table, rows, spec)
     d, res = m['d'], m['res']
     yv = d.df[d.y_alias].to_numpy(float)
@@ -1686,6 +2171,273 @@ def _profile_build(table, rows=None, alpha=0.05, kind='ls', ys=None, **model):
 profile_mod.expose('fitmodel', _profile_build, alpha=True)
 
 
+# ---------------------------------------------------------------------------
+# Save Columns and Save Prediction Formula, for every row
+# ---------------------------------------------------------------------------
+# JMP saves a model's predictions for every row whose predictors are present,
+# in the fit or not: excluded rows, rows missing the response, a Validation
+# column's hold-out rows. Here these are the rows of the report's By group
+# (every row without By); residuals are for the rows with a response too.
+# The prediction formula is the fitted model in the page's formula language,
+# a live column (models.formula_linear): JMP's effect coding as Match, the
+# centred crossings as the model has them, the inverse link for the mean.
+
+def _event_values(tid, name, idx, level):
+    """1 where a categorical response is the event level, 0 where it is
+    another level, NaN where it is missing."""
+    v = data.raw(tid, name, idx)
+    if data.meta(tid, name).get('dataType') == 'numeric':
+        f = np.asarray(v, dtype=float)
+        return np.where(np.isfinite(f), (f == float(level)).astype(float), np.nan)
+    return np.array([np.nan if x is None else float(x == level) for x in v], dtype=float)
+
+
+def _ls_coef(m):
+    """The least squares estimates and their covariance on the design as
+    fitted (a singular design's with its dependent columns zeroed)."""
+    if m.get('b_zeroed') is not None:
+        return m['b_zeroed'], m['V_zeroed']
+    return m['res'].params.to_numpy(float), np.asarray(m['res'].cov_params(), dtype=float)
+
+
+def _save_ls(m, where, alpha):
+    d, res, tid, spec = m['d'], m['res'], m['tid'], m['spec']
+    di = res.model.data.design_info
+    idx, X, _ = models.new_rows(d, di, tid, where)
+    b, V = _ls_coef(m)
+    pred = X @ b
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', X, V, X), 0))
+    t = _tcrit(alpha, res.df_resid)
+    s2 = float(res.scale)
+    w = np.ones(len(idx))
+    if spec['weight']:
+        wv = _col_values(tid, spec['weight'], idx)
+        w = np.where(np.isfinite(wv) & (wv > 0), wv, 1.0)   # a row outside the fit: an individual of weight 1
+    si = np.sqrt(se ** 2 + s2 / w)
+    yv = _col_values(tid, spec['y'][0], idx)
+    cols = {'predicted': pred, 'se_pred': se, 'lower_mean': pred - t * se, 'upper_mean': pred + t * se, 'se_indiv': si,
+            'lower_indiv': pred - t * si, 'upper_indiv': pred + t * si, 'residual': yv - pred}
+    expr = models.formula_where(tid, where, models.formula_linear(d, di, b, tid))
+    return idx, cols, [{'name': f'Pred Formula {spec["y"][0]}', 'expr': expr}]
+
+
+def _glm_response(m, idx):
+    """A generalized linear model's response for the rows idx, on the scale
+    of its mean: the value, the event's 0/1 or events over trials."""
+    ys, tid = m['spec']['y'], m['tid']
+    if len(ys) == 2:
+        return _col_values(tid, ys[0], idx) / _col_values(tid, ys[1], idx)
+    if m['info'].get('levels'):
+        return _event_values(tid, ys[0], idx, m['info']['levels'][0])
+    return _col_values(tid, ys[0], idx)
+
+
+def _save_glm(m, where, alpha):
+    d, tid, spec = m['d'], m['tid'], m['spec']
+    di = m['X'].design_info
+    off = spec['offset']
+    idx, X, ex = models.new_rows(d, di, tid, where, extra=[off] if off else ())
+    b, V, _ = _glm_params(m)
+    eta = X @ b + (ex[off] if off else 0.0)
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', X, V, X), 0))
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    inv = m['res'].family.link.inverse
+    mu = inv(eta)
+    lo, hi = inv(eta - z * se), inv(eta + z * se)
+    cols = {'predicted': mu, 'lower_mean': np.minimum(lo, hi), 'upper_mean': np.maximum(lo, hi), 'linpred': eta, 'residual': _glm_response(m, idx) - mu}
+    from .util import formula_ref
+    lin = models.formula_linear(d, di, b, tid) + (f' + {formula_ref(off)}' if off else '')
+    expr = models.formula_where(tid, where, models.INVERSE_LINK[m['link']].format(lin))
+    return idx, cols, [{'name': f'Pred Formula {spec["y"][0]}', 'expr': expr}]
+
+
+def _save_gee(m, where, alpha):
+    d, tid, spec, res = m['d'], m['tid'], m['spec'], m['res']
+    di = m['X'].design_info
+    off = spec['offset']
+    idx, X, ex = models.new_rows(d, di, tid, where, extra=[off] if off else ())
+    b = res.params.to_numpy(float)
+    eta = X @ b + (ex[off] if off else 0.0)
+    mu = res.model.family.link.inverse(eta)
+    yv = _event_values(tid, spec['y'][0], idx, m['info']['levels'][0]) if m['info'].get('levels') else _col_values(tid, spec['y'][0], idx)
+    cols = {'predicted': mu, 'linpred': eta, 'residual': yv - mu}
+    from .util import formula_ref
+    lin = models.formula_linear(d, di, b, tid) + (f' + {formula_ref(off)}' if off else '')
+    expr = models.formula_where(tid, where, models.INVERSE_LINK[m['link']].format(lin))
+    return idx, cols, [{'name': f'Pred Formula {spec["y"][0]}', 'expr': expr}]
+
+
+def _save_linear(m, where, b, name):
+    """The rows' predictions and the formula of a linear model with the
+    design m['X'] (Instrumental Variables, Quantile Regression)."""
+    d, tid, spec = m['d'], m['tid'], m['spec']
+    di = m['X'].design_info
+    idx, X, _ = models.new_rows(d, di, tid, where)
+    pred = X @ b
+    cols = {'predicted': pred, 'residual': _col_values(tid, spec['y'][0], idx) - pred}
+    return idx, cols, [{'name': name, 'expr': models.formula_where(tid, where, models.formula_linear(d, di, b, tid))}]
+
+
+def _save_genreg(m, where, alpha):
+    d, tid, spec = m['d'], m['tid'], m['spec']
+    di = m['X'].design_info
+    idx, X, _ = models.new_rows(d, di, tid, where)
+    eta = X @ m['b']
+    mu = _gr_mu(m['dist'], eta)
+    yv = _event_values(tid, spec['y'][0], idx, m['info']['levels'][0]) if m['info'].get('levels') else _col_values(tid, spec['y'][0], idx)
+    lin = models.formula_linear(d, di, m['b'], tid)
+    inv = {'binomial': 'Squash({})', 'poisson': 'Exp({})'}.get(m['dist'], '{}')
+    return idx, {'predicted': mu, 'residual': yv - mu}, [{'name': f'Pred Formula {spec["y"][0]}', 'expr': models.formula_where(tid, where, inv.format(lin))}]
+
+
+def _logit_formulas(m, where):
+    """Save Probability Formula (models.probability_formulas): the linear
+    predictors on the design as fitted, Prob[level] and Most Likely y."""
+    d, tid, spec = m['d'], m['tid'], m['spec']
+    di = m['X'].design_info
+    labels = [_lvl(v) for v in m['levels']]
+    mode, res = m['mode'], m['res']
+
+    def lin(b):
+        return models.formula_where(tid, where, models.formula_linear(d, di, b, tid))
+    if mode == 'binary':
+        return models.probability_formulas('binary', labels, [lin(np.asarray(res.params, dtype=float))], spec['y'][0], target=m['target'])
+    if mode == 'multinomial':
+        B = np.asarray(res.params, dtype=float).reshape(len(m['names']), -1)
+        return models.probability_formulas('multinomial', labels, [lin(B[:, q]) for q in range(m['k'] - 1)], spec['y'][0])
+    beta, cuts = _ordinal_params(m)
+    bfull = np.zeros(len(m['names']))
+    bfull[m['beta_cols']] = beta
+    return models.probability_formulas('ordinal', labels, [lin(bfull)], spec['y'][0], cuts=cuts, distr=m['distr'])
+
+
+def _save_logit(m, where, alpha):
+    d, tid = m['d'], m['tid']
+    di = m['X'].design_info
+    idx, X, _ = models.new_rows(d, di, tid, where)
+    P, eta = _logit_probs(m, X)
+    labels = [_lvl(v) for v in m['levels']]
+    cols = {'prob': P, 'lin': eta, 'most_likely': [labels[i] for i in np.argmax(P, axis=1)] if len(idx) else []}
+    return idx, cols, _logit_formulas(m, where)
+
+
+@api('fitmodel.save')
+def save(table, kind='ls', rows=None, where=None, alpha=0.05, table_name='data', **model):
+    """Save Columns for every row whose predictors are present (see above),
+    and the formulas of Save Prediction Formula: {rows, columns: {name:
+    values}, formulas: [{name, expr}]}, expr formula text or a list of text
+    and {'ref': k} (the k-th formula's column)."""
+    spec = _spec(**model)
+    m = _model(kind, table, rows, spec)
+    k = m['kind']
+    if k == 'ls':
+        idx, cols, F = _save_ls(m, where, alpha)
+    elif k == 'glm':
+        idx, cols, F = _save_glm(m, where, alpha)
+    elif k == 'logit':
+        idx, cols, F = _save_logit(m, where, alpha)
+        labels = [_lvl(v) for v in m['levels']]
+        return {'rows': [int(i) for i in idx], 'columns': cols, 'formulas': F, 'n_fit': int(len(m['d'].df)),
+                'prob': cols['prob'], 'names': [f'Prob[{lab}]' for lab in labels], 'levels': labels, 'most_likely': cols['most_likely'],
+                'most_name': f'Most Likely {spec["y"][0]}', 'ordinal': m['mode'] == 'ordinal'}
+    elif k == 'gee':
+        idx, cols, F = _save_gee(m, where, alpha)
+    elif k == 'iv':
+        idx, cols, F = _save_linear(m, where, m['res'].params.to_numpy(float), f'Pred Formula {spec["y"][0]}')
+    elif k == 'qr':
+        idx, cols, F = _save_linear(m, where, m['res'].params.to_numpy(float), f'Pred Formula {spec["y"][0]} Quantile {_fmt_num(m["tau"])}')
+    elif k == 'genreg':
+        idx, cols, F = _save_genreg(m, where, alpha)
+        if m['info'].get('levels'):   # binomial of a two-level Y: the Prob[] columns the Decision Threshold's formula reads
+            p_ = np.asarray(cols['predicted'], dtype=float)
+            return {'rows': [int(i) for i in idx], 'columns': cols, 'formulas': F, 'n_fit': int(len(m['d'].df)),
+                    'prob': np.column_stack([p_, 1 - p_]), 'names': [f'Prob[{_lvl(v)}]' for v in m['info']['levels']]}
+    else:
+        return {'error': f'no saved predictions for {k}'}
+    return {'rows': [int(i) for i in idx], 'columns': cols, 'formulas': F, 'n_fit': int(len(m['d'].df))}
+
+
+@api('fitmodel.inverse')
+def inverse(table, y, effects=(), factor=None, values=(), settings=None, individual=False, rows=None, weight=None, freq=None,
+            no_intercept=False, robust=None, alpha=0.05, center=True, table_name='data', **_ignored):
+    """Inverse Prediction (JMP's Estimates menu): the value of a continuous
+    factor at which the predicted response is each given value, the other
+    factors held at settings (continuous: their means unless given;
+    categorical: a level, the first unless given), with Fieller's confidence
+    limits: the x where (a + b x - y0)^2 = t^2 (Var a + 2 x Cov(a, b) +
+    x^2 Var b), a and b the prediction at x = 0 and its slope in x;
+    individual: limits for a single new response (plus sigma^2)."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust, center=center)
+    m = _ls_model(table, rows, spec)
+    d, res = m['d'], m['res']
+    R = m['rres'] if m.get('rres') is not None else res
+    if factor not in d.alias or d.alias[factor] in d.categorical:
+        return {'error': 'Inverse Prediction needs a continuous factor of the model'}
+    a_ = d.alias[factor]
+    base = _setting(d, settings or {})
+    pts = [dict(base, **{a_: v}) for v in (0.0, 1.0, 2.0)]
+    L = m['coder'].rows(pts)
+    if np.max(np.abs(L[2] - 2 * L[1] + L[0])) > 1e-9 * max(1.0, float(np.max(np.abs(L)))):
+        return {'error': f'the prediction is not a straight line in {factor} (a power of it is in the model): Inverse Prediction needs one'}
+    L0, L1 = L[0], L[1] - L[0]
+    b = res.params.to_numpy(float)
+    V = np.asarray(R.cov_params(), dtype=float)
+    a, s_ = float(L0 @ b), float(L1 @ b)
+    va, cab, vb = float(L0 @ V @ L0), float(L0 @ V @ L1), float(L1 @ V @ L1)
+    dfi = _inference_df(R)
+    t = _tcrit(alpha, dfi)
+    s2 = float(res.scale) if individual else 0.0
+    out = []
+    for y0 in values or ():
+        try:
+            y0 = float(y0)
+        except (TypeError, ValueError):
+            continue
+        x0 = (y0 - a) / s_ if s_ != 0 else None
+        A = s_ * s_ - t * t * vb
+        B = 2 * ((a - y0) * s_ - t * t * cab)
+        C = (a - y0) ** 2 - t * t * (va + s2)
+        disc = B * B - 4 * A * C
+        lo = hi = None
+        if A > 0 and disc >= 0:
+            r1, r2 = (-B - math.sqrt(disc)) / (2 * A), (-B + math.sqrt(disc)) / (2 * A)
+            lo, hi = min(r1, r2), max(r1, r2)
+        out.append({'y': y0, 'x': x0, 'lower': lo, 'upper': hi})
+    held = []
+    for n in _factor_names(d):
+        if n == factor:
+            continue
+        al = d.alias[n]
+        v = base.get(al)
+        held.append({'factor': n, 'value': _lvl(d.levels[al][v]) if al in d.categorical else (float(d.df[al].mean()) if v is None else float(v))})
+    lines = _code_frame(d, table, table_name, rows, [weight, freq], ['import patsy', 'from scipy import stats'])
+    wexpr = ' * '.join(f'd[{json.dumps(v)}]' for v in (weight, freq) if v)
+    fit = f'smf.wls({json.dumps(_code_formula(d))}, data=d, weights={wexpr})' if wexpr else f'smf.ols({json.dumps(_code_formula(d))}, data=d)'
+    if freq:
+        lines += [f'mod = {fit}', f'mod.df_resid = d[{json.dumps(freq)}].sum() - np.linalg.matrix_rank(mod.exog)', 'fit = mod.fit()']
+    else:
+        lines.append(f'fit = {fit}.fit()')
+    if R is not res:
+        lines += _robust_code(m['rob'])[:1]
+    src = 'rob' if R is not res else 'fit'
+    grid = {h['factor']: h['value'] for h in held}
+    lines += [f'held = {json.dumps(grid)}   # the other factors, as the report holds them',
+              f'pts = pd.DataFrame([{{**held, {json.dumps(factor)}: v}} for v in (0.0, 1.0)])',
+              f'L = np.asarray(patsy.build_design_matrices([{src}.model.data.design_info], pts)[0])   # the design rows at {factor} = 0 and 1',
+              'L0, L1 = L[0], L[1] - L[0]',
+              f'b, V = np.asarray({src}.params), np.asarray({src}.cov_params())',
+              'a, s = L0 @ b, L1 @ b   # the prediction at 0 and its slope',
+              'va, cab, vb = L0 @ V @ L0, L0 @ V @ L1, L1 @ V @ L1',
+              f't = stats.t.ppf(1 - {alpha!r} / 2, {dfi!r})',
+              f's2 = {"fit.scale   # a single new response: its own variance too" if individual else "0.0   # the expected response"}',
+              f'for y0 in {json.dumps([r["y"] for r in out])}:',
+              '    A, B, C = s * s - t * t * vb, 2 * ((a - y0) * s - t * t * cab), (a - y0) ** 2 - t * t * (va + s2)',
+              '    disc = B * B - 4 * A * C   # Fieller: (a + s x - y0)^2 = t^2 (va + 2 x cab + x^2 vb (+ s2))',
+              '    lims = sorted([(-B - np.sqrt(disc)) / (2 * A), (-B + np.sqrt(disc)) / (2 * A)]) if A > 0 and disc >= 0 else None',
+              '    print(y0, (y0 - a) / s, lims)']
+    return {'factor': factor, 'rows': out, 'held': held, 'individual': bool(individual), 'alpha': alpha, 'code': '\n'.join(lines)}
+
+
 @api('fitmodel.contour')
 def contour(table, kind='ls', xfactor=None, yfactor=None, current=None, response=0, rows=None, n=36, alpha=0.05, **model):
     spec = _spec(**model)
@@ -1764,10 +2516,9 @@ def _interaction_code(m, table, rows, table_name, facs, response):
         pred = [f'    return fit.family.link.inverse(L @ np.asarray(b))   # the mean at the linear predictor{" (the offset left out, as the profilers do)" if spec["offset"] else ""}']
     elif kind == 'logit':
         base = _logit_fit_code(m, table, table_name, rows)
-        di, pred = 'Xd.design_info', [f'    return probs(L)[:, 0]   # {response}']
+        di, pred = 'Xd.design_info', [f'    return probs(L)[:, 0]   # {one_line(response)}']
     elif kind == 'mixed':
-        base = _mixed_fit_code(m, table, table_name, rows, ['import patsy'])
-        di, pred = 'md.data.design_info', ['    return L @ fit.fe_params.to_numpy()   # the fixed effects\' prediction (the marginal mean)']
+        base, di, pred = _mixed_interaction_parts(m, table, table_name, rows)
     elif kind == 'gee':
         base = _gee_fit_code(m, table, table_name, rows)
         di, pred = 'X.design_info', ['    return fam.link.inverse(L @ np.asarray(fit.params))   # the marginal mean']
@@ -1778,7 +2529,7 @@ def _interaction_code(m, table, rows, table_name, facs, response):
         base = _after_frame(_with_plt(base), _positive_weights(R['O']['weight'], R['O']['freq']))
         di = f'patsy.dmatrix({J(_code_formula(d, lhs=False))}, d).design_info'
         if R['forward']:
-            cc = 'cols' if R['O']['criterion'] in ('kfold', 'loo') else 'steps[chosen]'
+            cc = 'cols' if R.get('crit', R['O']['criterion']) in ('kfold', 'loo') else 'steps[chosen]'
             base.append(f'bz = np.zeros(Z.shape[1]); bz[[0] + {cc}] = fit.params   # the estimates on the scaled predictors')
         else:
             base.append('bz = np.asarray(fit.params)   # the estimates on the scaled predictors')
@@ -1862,7 +2613,11 @@ def _contains(small, big):
 
 class _Step:
     """Least squares fits of subsets of the candidate effects, on the design
-    of all of them (JMP's stepwise includes and excludes whole effects)."""
+    of all of them (JMP's stepwise includes and excludes whole effects). With
+    a Validation column the fits are the training rows' and each has its
+    validation RSquare, 1 - SSE/SST of the validation rows about their own
+    mean (predictive.measures'), for Max Validation RSquare."""
+    kind = 'ls'
 
     def __init__(self, tid, rows, spec):
         self.full = _ls_model(tid, rows, spec)
@@ -1884,6 +2639,16 @@ class _Step:
         self.sumw = float(np.sum(w))
         ybar = float(np.average(y, weights=w))
         self.sst = float(np.sum(w * (y - ybar) ** 2)) if self.base else float(np.sum(w * y * y))
+        self.valid = None
+        V = self.full.get('valid')
+        if V:
+            P = V['P']
+            vrows = P.index[P.sets == 1]
+            if len(vrows):
+                idx, Xv, _ = models.new_rows(d, res.model.data.design_info, tid, rows=vrows)
+                wv = P.weights()[np.isin(P.index, idx)]
+                yv = _col_values(tid, spec['y'][0], idx)
+                self.valid = {'X': Xv, 'y': yv, 'w': wv, 'sst': float(np.sum(wv * (yv - np.average(yv, weights=wv)) ** 2)), 'column': V['column']}
         self.cache = {}
         self.mse_full = float('nan')
         full = self.fit(tuple(range(len(self.effs))))
@@ -1917,6 +2682,10 @@ class _Step:
                'cp': sse / self.mse_full - (self.n - 2 * p) if np.isfinite(self.mse_full) and self.mse_full > 0 else None,
                'aicc': -2 * ll + 2 * k + (2 * k * (k + 1) / (self.n - k - 1) if self.n - k - 1 > 0 else float('nan')),
                'bic': -2 * ll + k * math.log(self.n)}
+        if self.valid is not None:
+            V = self.valid
+            pv = V['X'][:, cols] @ b if cols else np.zeros(len(V['y']))
+            out['rsq_v'] = 1 - float(np.sum(V['w'] * (V['y'] - pv) ** 2)) / V['sst'] if V['sst'] > 0 else None
         self.cache[key] = out
         return out
 
@@ -1929,6 +2698,92 @@ class _Step:
         ss = max(a['sse'] - b['sse'], 0.0)
         f = (ss / q) / (b['sse'] / b['dfe']) if b['sse'] > 0 else float('inf')
         return {'ss': ss, 'df': q, 'f': f, 'p': float(stats.f.sf(f, q, b['dfe']))}
+
+    def cov(self, entered):
+        """The covariance of the least squares estimates of a subset (Model Averaging)."""
+        f = self.fit(entered)
+        if not f['cols']:
+            return np.zeros((0, 0))
+        A = self.Xs[:, f['cols']]
+        s2 = f['sse'] / f['dfe'] if f['dfe'] > 0 else float('nan')
+        return s2 * np.linalg.pinv(A.T @ A)
+
+
+class _StepLogit:
+    """Stepwise for a nominal or ordinal Y, as JMP's: the logistic fit of each
+    subset of the candidate effects on the design of all of them (statsmodels'
+    binomial GLM, MNLogit or OrderedModel, as the logistic personalities fit
+    them), likelihood ratio tests of the effects entered or removed, AICc and
+    BIC from the log-likelihood, RSquare the entropy RSquare."""
+    kind = 'logit'
+
+    def __init__(self, tid, rows, spec):
+        self.full = _logit_model(tid, rows, spec)
+        m = self.full
+        self.d = m['d']
+        names = m['names']
+        self.names = names
+        self.base = [names.index('Intercept')] if 'Intercept' in names else []
+        self.effs = self.d.effects
+        self.cols = [[names.index(t) for t in e.get('terms', []) if t in names] for e in self.effs]
+        self.w = m['w'] if m['w'] is not None else np.ones(len(m['codes']))
+        self.n = float(np.sum(self.w))
+        self.mode, self.k = m['mode'], m['k']
+        self.valid = None
+        self.cache = {}
+        self.llnull = self._llf(self.base)['ll']   # the model with only the intercept (the thresholds): the entropy RSquare's reference
+
+    def _llf(self, cols):
+        """The fit on the design columns cols: its log-likelihood and, binary, its estimates."""
+        import statsmodels.api as sm
+        m = self.full
+        if self.mode == 'binary':
+            e = (m['codes'] == m['target']).astype(float)
+            if not cols:
+                return {'ll': _binary_llf(np.full(len(e), 0.5), e, m['w']), 'b': np.zeros(0)}
+            r = sm.GLM(e, m['X'].to_numpy(float)[:, cols], family=sm.families.Binomial(), freq_weights=m['w']).fit(**_IRLS)
+            return {'ll': _binary_llf(np.asarray(r.fittedvalues, dtype=float), e, m['w']), 'b': np.asarray(r.params, dtype=float)}
+        return {'ll': _logit_llf_reduced(m, list(cols)), 'b': None}
+
+    def fit(self, entered):
+        key = tuple(sorted(entered))
+        if key in self.cache:
+            return self.cache[key]
+        cols = self.base + [c for i in key for c in self.cols[i]]
+        f = self._llf(cols)
+        ll = f['ll']
+        nb = len([c for c in cols if c not in self.base])
+        if self.mode == 'ordinal':
+            p = nb + self.k - 1                           # the thresholds and the slopes
+        elif self.mode == 'multinomial':
+            p = len(cols) * (self.k - 1)
+        else:
+            p = len(cols)
+        n = self.n
+        llnull = getattr(self, 'llnull', ll)
+        out = {'ll': ll, 'nll': -ll, 'p': p, 'b': f['b'], 'cols': cols, 'rsq': 1 - ll / llnull if llnull else None,
+               'aicc': -2 * ll + 2 * p + (2 * p * (p + 1) / (n - p - 1) if n - p - 1 > 0 else float('nan')),
+               'bic': -2 * ll + p * math.log(n)}
+        self.cache[key] = out
+        return out
+
+    def ftest(self, small, big):
+        """The likelihood ratio test of the effects in big but not in small."""
+        a, b = self.fit(small), self.fit(big)
+        q = b['p'] - a['p']
+        chi = max(2 * (b['ll'] - a['ll']), 0.0)
+        if q <= 0:
+            return {'ss': chi, 'df': q, 'f': None, 'p': None}
+        return {'ss': chi, 'df': q, 'f': chi, 'p': float(stats.chi2.sf(chi, q))}
+
+
+def _stepper(tid, rows, spec):
+    """The stepwise fits of the spec's model: least squares for a continuous Y,
+    logistic for a nominal or ordinal one."""
+    ys = spec['y']
+    if ys and data.is_categorical(tid, ys[0]):
+        return _StepLogit(tid, rows, spec)
+    return _Step(tid, rows, spec)
 
 
 def _step_moves(st, entered, locked, heredity, forward):
@@ -1959,10 +2814,19 @@ def _step_moves(st, entered, locked, heredity, forward):
 
 
 def _step_row(st, step, group, action, test, state):
+    """A line of the Step History: the move, its test (least squares: the
+    sequential sum of squares and the F test's p-value; logistic: the L-R
+    ChiSquare and its p-value) and the model after it."""
     f = st.fit(tuple(state))
     return {'step': step, 'parameter': ' & '.join(st.effs[i]['label'] for i in sorted(group)), 'action': action,
-            'p': test['p'] if test else None, 'seq_ss': test['ss'] if test else None, 'rsq': f['rsq'], 'cp': f['cp'],
-            'p_params': f['p'], 'aicc': f['aicc'], 'bic': f['bic']}
+            'p': test['p'] if test else None, 'seq_ss': test['ss'] if test else None, 'rsq': f['rsq'], 'cp': f.get('cp'),
+            'p_params': f['p'], 'aicc': f['aicc'], 'bic': f['bic'], 'rsq_v': f.get('rsq_v')}
+
+
+def _valid_key(f):
+    """Max Validation RSquare as a key to minimise."""
+    v = f.get('rsq_v')
+    return -v if v is not None and np.isfinite(v) else float('inf')
 
 
 def _stepwise_run(st, E, locked, rule, heredity, direction, p_enter, p_leave, single, max_steps):
@@ -1973,17 +2837,23 @@ def _stepwise_run(st, E, locked, rule, heredity, direction, p_enter, p_leave, si
     (removes) the effect that gives the smallest criterion until none is
     left, then goes back to the model of the path with the smallest one;
     mixed makes the move in or out that lowers the criterion most while one
-    does. Returns the new set, the steps and, for a criterion, the best
+    does. Max Validation RSquare (a Validation column, JMP Pro's): the most
+    significant effect enters (the least significant leaves) at each step,
+    to the end, and the model of the path with the largest validation
+    RSquare is kept; Mixed goes forward, as JMP offers Mixed with the p-value
+    rule only. Returns the new set, the steps and, for a criterion, the best
     model when it is not the last."""
     E = set(E)
     steps = []
+    if rule == 'max_valid' and direction == 'mixed':
+        direction = 'forward'
 
     def moves(forward):
         best = None
         for g in _step_moves(st, E, locked, heredity, forward):
             new = (E | g) if forward else (E - g)
             test = st.ftest(tuple(E), tuple(new)) if forward else st.ftest(tuple(new), tuple(E))
-            if rule == 'pvalue':
+            if rule in ('pvalue', 'max_valid'):
                 if test['p'] is None:
                     continue
                 key = test['p'] if forward else -test['p']
@@ -2024,7 +2894,7 @@ def _stepwise_run(st, E, locked, rule, heredity, direction, p_enter, p_leave, si
                 break
             seen.add(frozenset(E))
         return E, steps, None
-    crit = lambda S: st.fit(tuple(S))[rule]  # noqa: E731
+    crit = (lambda S: _valid_key(st.fit(tuple(S)))) if rule == 'max_valid' else (lambda S: st.fit(tuple(S))[rule])  # noqa: E731
     if direction in ('forward', 'backward'):
         fwd = direction == 'forward'
         path = [(crit(E), set(E))]
@@ -2055,20 +2925,26 @@ def _stepwise_run(st, E, locked, rule, heredity, direction, p_enter, p_leave, si
 
 @api('fitmodel.stepwise')
 def stepwise(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, entered=None, locked=None, action='show',
-             index=None, rule='pvalue', direction='forward', p_enter=0.25, p_leave=0.1, heredity='combine', step0=0, max_steps=200,
-             table_name='data'):
-    """JMP's Stepwise platform for a continuous Y. The state (the entered and
-    locked effects, by their index in the list of candidates) lives in the
-    page: action 'show' reports it, 'step' makes one step, 'go' steps until
-    the rule stops, 'toggle' enters or removes the effect at index,
-    'enter_all' and 'remove_all' do what they say. The steps made come back
-    as rows of the step history, numbered on from step0."""
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
-    st = _Step(table, rows, spec)
+             index=None, rule='bic', direction='forward', p_enter=0.25, p_leave=0.1, heredity='combine', step0=0, max_steps=200,
+             validation=None, center=True, distr='logit', target=None, ordinal=None, table_name='data'):
+    """JMP's Stepwise platform: least squares for a continuous Y, logistic
+    (likelihood ratio tests) for a nominal or ordinal one. The state (the
+    entered and locked effects, by their index in the list of candidates)
+    lives in the page: action 'show' reports it, 'step' makes one step, 'go'
+    steps until the rule stops, 'toggle' enters or removes the effect at
+    index, 'enter_all' and 'remove_all' do what they say. The steps made come
+    back as rows of the step history, numbered on from step0. rule: 'bic'
+    (Minimum BIC, JMP's default), 'aicc', 'pvalue' (P-value Threshold) or,
+    with a Validation column, 'max_valid' (Max Validation RSquare)."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center,
+                 distr=distr, target=target, ordinal=ordinal)
+    st = _stepper(table, rows, spec)
     k = len(st.effs)
     E = set(int(i) for i in (entered or []) if 0 <= int(i) < k)
     locked = set(int(i) for i in (locked or []) if 0 <= int(i) < k)
-    rule = rule if rule in ('pvalue', 'aicc', 'bic') else 'pvalue'
+    rule = rule if rule in ('pvalue', 'aicc', 'bic', 'max_valid') else 'bic'
+    if rule == 'max_valid' and st.valid is None:
+        rule = 'bic'
     direction = direction if direction in ('forward', 'backward', 'mixed') else 'forward'
     heredity = heredity if heredity in ('combine', 'restrict', 'none') else 'none'
     hist = []
@@ -2094,47 +2970,64 @@ def stepwise(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
             hist.append(_step_row(st, stepn, g, act, test, state))
         if best is not None:
             f = st.fit(tuple(E))
-            hist.append({'step': stepn, 'parameter': 'Best', 'action': 'Best', 'p': None, 'seq_ss': None, 'rsq': f['rsq'], 'cp': f['cp'],
-                         'p_params': f['p'], 'aicc': f['aicc'], 'bic': f['bic']})
+            hist.append({'step': stepn, 'parameter': 'Best', 'action': 'Best', 'p': None, 'seq_ss': None, 'rsq': f['rsq'], 'cp': f.get('cp'),
+                         'p_params': f['p'], 'aicc': f['aicc'], 'bic': f['bic'], 'rsq_v': f.get('rsq_v')})
     cur = st.fit(tuple(E))
     current = []
     for i, e in enumerate(st.effs):
         est = None
         if i in E:
             test = st.ftest(tuple(E - {i}), tuple(E))
-            if len(st.cols[i]) == 1 and st.cols[i][0] in cur['cols']:
+            if cur['b'] is not None and len(st.cols[i]) == 1 and st.cols[i][0] in cur['cols']:
                 est = float(cur['b'][cur['cols'].index(st.cols[i][0])])
         else:
             test = st.ftest(tuple(E), tuple(E | {i}))
         current.append({'index': i, 'effect': e['label'], 'entered': i in E, 'locked': i in locked, 'estimate': est,
                         'ndf': len(st.cols[i]), 'ss': test['ss'], 'f': test['f'], 'p': test['p']})
-    intercept = float(cur['b'][0]) if st.base and len(cur['b']) else None
+    intercept = float(cur['b'][0]) if cur['b'] is not None and st.base and len(cur['b']) else None
     if intercept is not None:
         for t, mean in getattr(st.d, 'centered_main', {}).items():
             j = st.names.index(t) if t in st.names else None
             if j is not None and j in cur['cols']:
                 intercept -= mean * float(cur['b'][cur['cols'].index(j)])
-    stats_out = {k2: cur[k2] for k2 in ('sse', 'dfe', 'rmse', 'rsq', 'rsq_adj', 'cp', 'p', 'aicc', 'bic')}
     d = st.d
-    lines = _code_frame(d, table, table_name, rows, [weight, freq])
-    lines.append(f'full = smf.ols({json.dumps(_code_formula(d))}, data=d).fit()   # every candidate effect')
-    lines.append('# a step: fit the model with and without an effect (the columns of its terms) and compare them: F test, AICc or BIC')
-    lines.append('# AICc = -2 log L + 2k + 2k(k + 1)/(n - k - 1), k counting the error variance; Cp = SSE/MSE(full) - (n - 2p)')
-    return {'entered': sorted(E), 'locked': sorted(locked), 'history': hist, 'step': stepn, 'stats': stats_out, 'current': current,
-            'intercept': intercept, 'effects': [e['label'] for e in st.effs], 'n': st.n, 'code': '\n'.join(lines)}
+    if st.kind == 'ls':
+        stats_out = {k2: cur.get(k2) for k2 in ('sse', 'dfe', 'rmse', 'rsq', 'rsq_adj', 'cp', 'p', 'aicc', 'bic', 'rsq_v')}
+        lines = _code_frame(d, table, table_name, rows, [weight, freq])
+        lines.append(f'full = smf.ols({json.dumps(_code_formula(d))}, data=d).fit()   # every candidate effect')
+        lines.append('# a step: fit the model with and without an effect (the columns of its terms) and compare them: F test, AICc or BIC')
+        lines.append('# AICc = -2 log L + 2k + 2k(k + 1)/(n - k - 1), k counting the error variance; Cp = SSE/MSE(full) - (n - 2p)')
+        if st.valid is not None:
+            lines.append(f'# Max Validation RSquare: each fit on the training rows of {st.valid["column"]}, its RSquare on the validation rows '
+                         '(1 - SSE/SST about their own mean)')
+    else:
+        stats_out = {'nll': cur['nll'], 'rsq': cur['rsq'], 'p': cur['p'], 'aicc': cur['aicc'], 'bic': cur['bic'], 'n': st.n}
+        lines = _logit_fit_code(st.full, table, table_name, rows)
+        lines = [ln for ln in lines if ln != PLT]
+        lines[0] = lines[0].replace('\n' + PLT, '')
+        lines.append('print(fit.llf)   # every candidate effect; a step refits without (or with) an effect\'s columns: L-R ChiSquare = 2 (llf - llf of the smaller)')
+        lines.append('# AICc = -2 log L + 2k + 2k(k + 1)/(n - k - 1), k the parameters (the intercepts or thresholds too); RSquare = 1 - llf/llf(intercept only)')
+    out = {'entered': sorted(E), 'locked': sorted(locked), 'history': hist, 'step': stepn, 'stats': stats_out, 'current': current,
+           'intercept': intercept, 'effects': [e['label'] for e in st.effs], 'n': st.n, 'code': '\n'.join(lines), 'kind': st.kind, 'rule': rule,
+           'validation': st.valid['column'] if st.valid is not None else None}
+    if st.kind == 'logit':
+        out['mode'] = st.mode
+        out['levels'] = [_lvl(v) for v in st.full['levels']]
+    return out
 
 
 @api('fitmodel.all_models')
 def all_models(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, max_terms=None, per_size=5,
-               heredity=False, table_name='data'):
-    """All Possible Models: every subset of the effects (at most 12), the
-    best per_size of each size by R square."""
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+               heredity=False, validation=None, center=True, table_name='data'):
+    """All Possible Models: every subset of the effects (at most 12; up to
+    max_terms effects), the best per_size of each size by R square."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     st = _Step(table, rows, spec)
     k = len(st.effs)
     if k > 12:
         return {'error': f'{k} effects: All Possible Models takes at most 12'}
-    top = k if not max_terms else min(k, int(max_terms))
+    top = k if not max_terms else min(k, max(1, int(max_terms)))
+    per = max(1, int(per_size or 1))
     out = []
     for size in range(1, top + 1):
         fits = []
@@ -2144,13 +3037,110 @@ def all_models(table, y, effects=(), rows=None, weight=None, freq=None, no_inter
             f = st.fit(combo)
             fits.append((combo, f))
         fits.sort(key=lambda t: -(t[1]['rsq'] or 0))
-        for rank, (combo, f) in enumerate(fits[:int(per_size)]):
+        for rank, (combo, f) in enumerate(fits[:per]):
             out.append({'model': ','.join(st.effs[i]['label'] for i in combo), 'number': size, 'rsq': f['rsq'], 'rmse': f['rmse'],
                         'aicc': f['aicc'], 'bic': f['bic'], 'cp': f['cp'], 'best': rank == 0, 'effects': list(combo)})
     best_aicc = min((r['aicc'] for r in out if r['aicc'] is not None and np.isfinite(r['aicc'])), default=None)
     for r in out:
         r['min_aicc'] = best_aicc is not None and r['aicc'] == best_aicc
-    return {'models': out, 'k': k}
+    return {'models': out, 'k': k, 'max_terms': top, 'per_size': per}
+
+
+@api('fitmodel.model_average')
+def model_average(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, max_terms=None, cutoff=0.95,
+                  validation=None, center=True, alpha=0.05, table_name='data'):
+    """Model Averaging (JMP's, in Stepwise): the least squares fits of every
+    subset of the effects up to max_terms of them (at most 12 effects), each
+    weighed by its AICc weight exp(-ΔAICc/2) (Burnham and Anderson 2002);
+    the models of the largest weights, until their weights reach cutoff,
+    are kept and their weights made to sum to one. Each term's average
+    estimate is Σ w_i b_i (b_i = 0 in a model without the term), its
+    standard error the unconditional Σ w_i √(var_i + (b_i − b̄)²) (their
+    eq. 4.9). The intercept is at x = 0, as the reports give it."""
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
+    st = _Step(table, rows, spec)
+    k = len(st.effs)
+    if k > 12:
+        return {'error': f'{k} effects: Model Averaging takes at most 12 (it fits every subset)'}
+    top = k if not max_terms else min(k, max(1, int(max_terms)))
+    cut = min(max(float(cutoff), 0.01), 1.0)
+    fits = [()] + [c for size in range(1, top + 1) for c in itertools.combinations(range(k), size)]
+    rows_m = []
+    for combo in fits:
+        f = st.fit(combo)
+        if f['aicc'] is not None and np.isfinite(f['aicc']):
+            rows_m.append((combo, f))
+    amin = min(f['aicc'] for _, f in rows_m)
+    wts = np.array([math.exp(-0.5 * (f['aicc'] - amin)) for _, f in rows_m])
+    wts = wts / wts.sum()
+    order = np.argsort(-wts, kind='stable')
+    keep, tot = [], 0.0
+    for i in order:
+        keep.append(int(i))
+        tot += float(wts[i])
+        if tot >= cut - 1e-12:
+            break
+    wk = wts[keep] / wts[keep].sum()
+    p = len(st.names)
+    T = _uncenter(st.d, st.names)
+    B = np.zeros((len(keep), p))
+    Vd = np.zeros((len(keep), p))
+    for r_, i in enumerate(keep):
+        combo, f = rows_m[i]
+        b = np.zeros(p)
+        C = np.zeros((p, p))
+        if f['cols']:
+            b[f['cols']] = f['b']
+            C[np.ix_(f['cols'], f['cols'])] = st.cov(combo)
+        if T is not None:
+            b, C = T @ b, T @ C @ T.T
+        B[r_], Vd[r_] = b, np.maximum(np.diag(C), 0)
+    bbar = wk @ B
+    se = np.sum(wk[:, None] * np.sqrt(Vd + (B - bbar) ** 2), axis=0)
+    z = float(stats.norm.ppf(1 - alpha / 2))
+    est = []
+    rank = {'Intercept': -1}
+    for i, e in enumerate(st.effs):
+        for c in e.get('terms', []):
+            rank.setdefault(c, i)
+    for j in sorted(range(p), key=lambda j: rank.get(st.names[j], len(st.effs))):
+        inm = [bool(B[r_, j] != 0 or (st.names[j] == 'Intercept')) for r_ in range(len(keep))]
+        est.append({'term': _tlabel(st.d, st.names[j]), 'estimate': float(bbar[j]), 'se': float(se[j]),
+                    'lower': float(bbar[j] - z * se[j]), 'upper': float(bbar[j] + z * se[j]),
+                    'weight': float(np.sum(wk[inm]))})
+    models_out = [{'model': ','.join(st.effs[q]['label'] for q in rows_m[i][0]) or '(intercept only)', 'number': len(rows_m[i][0]),
+                   'aicc': rows_m[i][1]['aicc'], 'weight': float(w_), 'rsq': rows_m[i][1]['rsq']} for i, w_ in zip(keep, wk)]
+    d = st.d
+    lines = _code_frame(d, table, table_name, rows, [weight, freq], ['import itertools'])
+    lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d)); yv = d[{json.dumps(spec["y"][0])}].to_numpy(float)   # every candidate effect: its design')
+    lines[0] = lines[0].replace('import itertools', 'import itertools\nimport patsy')
+    wparts = [f'd[{json.dumps(c)}].to_numpy(float)' for c in (weight, freq) if c]
+    lines.append(f'w = {" * ".join(wparts)}' if wparts else 'w = np.ones(len(yv))')
+    lines.append(f'N = d[{json.dumps(freq)}].sum()   # Freq: the observations' if freq else 'N = len(yv)')
+    lines.append('sw = np.sqrt(w); Xs, ys = X * sw[:, None], yv * sw   # (weighted) least squares on these')
+    lines.append(f'cols, base = {json.dumps(st.cols)}, {st.base}   # the design columns of each effect; the intercept')
+    lines.append('fits = []')
+    lines.append(f'for size in range({top + 1}):')
+    lines.append(f'    for combo in itertools.combinations(range({k}), size):')
+    lines.append('        c = base + [j for i in combo for j in cols[i]]')
+    lines.append('        b = np.linalg.lstsq(Xs[:, c], ys, rcond=None)[0] if c else np.zeros(0); sse = np.sum((ys - Xs[:, c] @ b) ** 2) if c else ys @ ys')
+    lines.append('        V = sse / (N - len(c)) * np.linalg.pinv(Xs[:, c].T @ Xs[:, c]) if c else np.zeros((0, 0))')
+    lines.append('        q = len(c) + 1; ll = -0.5 * N * (np.log(2 * np.pi * sse / N) + 1)   # the error variance counted')
+    lines.append('        fits.append((c, b, V, -2 * ll + 2 * q + 2 * q * (q + 1) / (N - q - 1)))   # AICc')
+    lines.append('a = np.array([f_[3] for f_ in fits]); wt = np.exp(-0.5 * (a - a.min())); wt /= wt.sum()   # the AICc weights')
+    lines.append(f'o = np.argsort(-wt, kind="stable"); keep = o[:np.searchsorted(np.cumsum(wt[o]), {cut!r} - 1e-12) + 1]; wk = wt[keep] / wt[keep].sum()   # the models until their weight reaches {cut:g}')
+    lines.append('T = np.eye(X.shape[1])   # the intercept at x = 0 (JMP\'s), where a main effect is centred as its crossings')
+    for t_, mean_ in getattr(d, 'centered_main', {}).items():
+        if t_ in st.names and 'Intercept' in st.names:
+            lines.append(f'T[{st.names.index("Intercept")}, {st.names.index(t_)}] = {-mean_!r}')
+    lines.append('B = np.zeros((len(keep), X.shape[1])); Vd = np.zeros_like(B)')
+    lines.append('for r, i in enumerate(keep):')
+    lines.append('    c, b, V, _ = fits[i]; bf = np.zeros(X.shape[1]); Cf = np.zeros((X.shape[1], X.shape[1])); bf[c] = b; Cf[np.ix_(c, c)] = V')
+    lines.append('    B[r], Vd[r] = T @ bf, np.diag(T @ Cf @ T.T)')
+    lines.append('bbar = wk @ B; se = np.sum(wk[:, None] * np.sqrt(Vd + (B - bbar) ** 2), axis=0)   # the averages and their unconditional standard errors')
+    lines.append('print(bbar, se)')
+    return {'estimates': est, 'models': models_out, 'n_models': len(rows_m), 'kept': len(keep), 'cutoff': cut, 'max_terms': top,
+            'alpha': alpha, 'code': '\n'.join(lines)}
 
 
 # ---------------------------------------------------------------------------
@@ -2243,8 +3233,14 @@ def _glm_model(tid, rows, spec):
     ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
     if ccol and ccol in ys:
         raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
-    d = _design(tid, ys if len(ys) > 1 else ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'],
-                extra=[c for c in (spec['offset'], ccol) if c])
+    V = _valid_sets(tid, ys, effs, rows, spec) if spec.get('validation') else None
+    d = _design(tid, ys if len(ys) > 1 else ys[0], effs, V['train'] if V else rows, spec['weight'], spec['freq'], not spec['no_intercept'],
+                extra=[c for c in (spec['offset'], ccol) if c], center=spec.get('center', True))
+    if V and V['kfold']:
+        d.kfold = (V['column'], V['kfold'])   # K folds: every row fits the model (the report says so)
+        V = None
+    if V:
+        d.valid = V
     endog, yresp, info = _glm_endog(d, tid, ys, dist, spec['target'])
     X = _matrix(d)
     off = _col_values(tid, spec['offset'], d.df.index)
@@ -2266,7 +3262,7 @@ def _glm_model(tid, rows, spec):
         res = _glm_fit(endog, X, dist, link, off, vw, fw, scale)
     m = {'kind': 'glm', 'd': d, 'res': res, 'nb': nb, 'X': X, 'endog': endog, 'y': yresp, 'info': info, 'dist': dist, 'link': link,
          'offset': off, 'vw': vw, 'fw': fw, 'scale_opt': scale, 'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid,
-         'rob': None, 'rob_V': None, 'rob_note': None}
+         'rob': None, 'rob_V': None, 'rob_note': None, 'valid': V}
     if rob:
         _glm_robust(m, rob, nbm)
     models.remember(key, m)
@@ -2386,9 +3382,9 @@ def _glm_predict(m, settings, alpha):
 
 @api('fitmodel.glm')
 def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no_intercept=False, dist='normal', link=None,
-        overdispersion=False, target=None, alpha=0.05, lr_params=True, robust=None, table_name='data'):
+        overdispersion=False, target=None, alpha=0.05, lr_params=True, robust=None, validation=None, center=True, table_name='data'):
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, offset=offset, no_intercept=no_intercept, dist=dist, link=link,
-                 target=target, overdispersion=overdispersion, robust=robust)
+                 target=target, overdispersion=overdispersion, robust=robust, validation=validation, center=center)
     m = _glm_model(table, rows, spec)
     d, res = m['d'], m['res']
     dist, link = m['dist'], m['link']
@@ -2550,8 +3546,51 @@ def glm(table, y, effects=(), rows=None, weight=None, freq=None, offset=None, no
            'whole': whole, 'aicc': aicc, 'bic': bic, 'gof': gof, 'overdispersion': overd, 'scaled': m['scale_opt'] == 'X2', 'phi': phi,
            'effect_tests': et, 'estimates': est, 'diag': diag, 'factors': _factors(d), 'key': m['key'], 'notes': notes, 'alpha': alpha,
            'robust': robust_out, 'code': '\n'.join(lines)}
+    notes.extend(_kfold_note(d))
+    if m.get('valid'):
+        out['crossvalidation'], out['holdout'] = _glm_cv(m, table, table_name, rows)
+        notes.insert(0, f'{m["valid"]["column"]}: the model is fitted to the training rows (0, or Training); the validation (1) and test (2) rows '
+                        'are predicted by it and measured in Crossvalidation, and marked in the plots. Every other table is the training fit\'s.')
     out['plot_code'] = _glm_plots(m, table, rows, table_name, alpha, out)
     return out
+
+
+def _level_col(levels, v):
+    """The position of the level v among levels (numbers compared as numbers), or None."""
+    for j, lv in enumerate(levels):
+        if lv == v or (isinstance(lv, (float, np.floating)) and isinstance(v, (int, float, np.integer, np.floating)) and float(lv) == float(v)):
+            return j
+    return None
+
+
+def _glm_cv(m, table, table_name, rows):
+    """A generalized linear model's Crossvalidation (a Validation column):
+    every set's rows predicted from the training fit (the mean at the linear
+    predictor, the offset in), measured by predictive.report; and the
+    hold-out rows for the plots."""
+    V, d, spec = m['valid'], m['d'], m['spec']
+    P = V['P']
+    off = spec['offset']
+    idx, X, ex = models.new_rows(d, m['X'].design_info, table, rows=P.index, extra=[off] if off else ())
+    b, _Vb, _ = _glm_params(m)
+    eta = X @ b + (ex[off] if off else 0.0)
+    mu = m['res'].family.link.inverse(eta)
+    y = spec['y'][0]
+    head = _glm_fit_code(m, table, table_name, rows) + _cv_frame_code(d, table, V, [spec['weight'], spec['freq'], off]) + [
+        'Xa = np.asarray(patsy.build_design_matrices([Xd.design_info], a)[0])',
+        f'pred = fit.family.link.inverse(Xa @ np.asarray(b){" + a[" + J(off) + "].to_numpy(float)" if off else ""})   # every set\'s mean, from the training fit']
+    if P.kind == 'categorical':
+        lv0 = m['info']['levels'][0]
+        fitted = np.column_stack([mu if _level_col([lv0], lv) == 0 else 1 - mu for lv in P.levels])
+        head += [f'levels = [{", ".join(_pylit(v) for v in P.levels)}]; ya = pd.Categorical(a[{J(y)}], categories=levels).codes   # the actual level',
+                 f'P = np.column_stack([pred if v == {_pylit(lv0)} else 1 - pred for v in levels])   # each level\'s probability (the event {_lvl(lv0)})']
+        tail = _cv_measure_code('categorical', P.levels)
+    else:
+        fitted = mu
+        head += [f'ya = a[{J(y)}].to_numpy(float)']
+        tail = _cv_measure_code('continuous')
+    hold = _holdout(V, idx, mu, _glm_response(m, idx))   # the mean against the response (a two-level Y: its event, 0 or 1)
+    return _cv_report(m, idx, fitted, code='\n'.join(head + tail)), hold
 
 
 def _glm_fit_code(m, table, table_name, rows, imports=()):
@@ -2570,7 +3609,7 @@ def _glm_fit_code(m, table, table_name, rows, imports=()):
         lines.append('endog, actual = np.column_stack([ev, tr - ev]), ev / tr   # events and trials; the proportion')
     elif m['info'].get('levels'):
         lv0 = m['info']['levels'][0]
-        lines.append(f'endog = actual = (d[{J(ys[0])}] == {_pylit(lv0)}).to_numpy(float)   # the event level, {_lvl(lv0)}')
+        lines.append(f'endog = actual = (d[{J(ys[0])}] == {_pylit(lv0)}).to_numpy(float)   # the event level, {one_line(_lvl(lv0))}')
     else:
         lines.append(f'endog = actual = d[{J(ys[0])}].to_numpy(float)')
     lines.append(f'off = d[{J(offset)}].to_numpy(float)' if offset else 'off = None')
@@ -2598,6 +3637,29 @@ def _glm_fit_code(m, table, table_name, rows, imports=()):
     return lines
 
 
+def _glm_hold_code(m, table):
+    """The GLM's hold-out rows in a plot's code (after _glm_fit_code): every
+    set's mean pa and response ya, and the marked points (as _hold_code)."""
+    V = m.get('valid')
+    if not V:
+        return [], []
+    spec = m['spec']
+    off, y = spec['offset'], spec['y'][0]
+    head = _cv_frame_code(m['d'], table, V, [spec['weight'], spec['freq'], off]) + [
+        'Xa = np.asarray(patsy.build_design_matrices([Xd.design_info], a)[0])',
+        f'pa = fit.family.link.inverse(Xa @ np.asarray(b){" + a[" + J(off) + "].to_numpy(float)" if off else ""})   # every set\'s mean, from the training fit']
+    if m['info'].get('levels'):
+        head.append(f'ya = (a[{J(y)}] == {_pylit(m["info"]["levels"][0])}).to_numpy(float)   # the event level, 0 or 1')
+    else:
+        head.append(f'ya = a[{J(y)}].to_numpy(float)')
+    lines = ['for k, (name, marker, color) in {1: ("Validation", "^", "#d9822b"), 2: ("Test", "s", "#3a7d44")}.items():   # the hold-out rows, marked',
+             '    s_ = sets == k',
+             '    if s_.any():',
+             '        ax.scatter(pa[s_], ya[s_], marker=marker, s=26, color=color, label=name)',
+             'fig.legend(loc="outside lower center", ncols=3, fontsize=8, frameon=False)']
+    return head, lines
+
+
 def _glm_plots(m, table, rows, table_name, alpha, out):
     """The graphs of a Generalized Linear Model report as code: the residuals
     by predicted, actual by predicted, the linear predictor plot, the
@@ -2613,8 +3675,12 @@ def _glm_plots(m, table, rows, table_name, alpha, out):
                                          ('devPlot', 'Deviance Residual', 'rdev', 'Deviance Residual', 'Deviance Residual by Predicted'),
                                          ('pearPlot', 'Pearson Residual', 'rpear', 'Pearson Residual', 'Pearson Residual by Predicted')):
         codes[key] = _row_plot(_glm_fit_code(m, table, table_name, rows) + resid + [f'r = {expr}   # the {what.lower()}s'], 'pred', 'r', n, f'{yl} Predicted', ylab, title, zero=True)
-    codes['actualPred'] = _row_plot(_glm_fit_code(m, table, table_name, rows) + ['lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())'], 'pred', 'actual', n,
-                                    f'{yl} Predicted', f'{yl} Actual', f'{yl} actual by predicted', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)'])
+    hh, hl = _glm_hold_code(m, table)
+    ext = ('lo, hi = min(pred.min(), actual.min(), pa.min(), ya.min()), max(pred.max(), actual.max(), pa.max(), ya.max())   # the hold-out rows too' if hh
+           else 'lo, hi = min(pred.min(), actual.min()), max(pred.max(), actual.max())')
+    codes['actualPred'] = _row_plot(_glm_fit_code(m, table, table_name, rows) + hh + [ext], 'pred', 'actual', n,
+                                    f'{yl} Predicted', f'{yl} Actual', f'{yl} actual by predicted', 400, 320, [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)'] + hl,
+                                    label='Training' if hh else None)
     codes['linPlot'] = _row_plot(_glm_fit_code(m, table, table_name, rows) + ['o = np.argsort(eta, kind="stable")'], 'eta', 'actual', n, 'Linear Predictor', yl, 'linear predictor plot',
                                  lines=[f'ax.plot(eta[o], pred[o], color="{FIT}", linewidth=1)   # the fitted mean, the inverse link of the linear predictor'])
     # the Regression Plot: the profiler's curve over one continuous factor, at each level of a categorical one
@@ -2690,10 +3756,16 @@ def _logit_model(tid, rows, spec):
     if not ys:
         raise ValueError('choose a Y')
     effs = _eff_of(spec)
-    d = _design(tid, ys[0], effs, rows, spec['weight'], spec['freq'], not spec['no_intercept'])
-    yv = d.df[d.y_alias]
-    if not isinstance(yv.dtype, pd.CategoricalDtype):
+    if not data.is_categorical(tid, ys[0]):
         raise ValueError(f'{ys[0]} is continuous: the logistic fits need a nominal or ordinal Y (change its modeling type, or use Standard Least Squares)')
+    V = _valid_sets(tid, ys, effs, rows, spec) if spec.get('validation') else None
+    d = _design(tid, ys[0], effs, V['train'] if V else rows, spec['weight'], spec['freq'], not spec['no_intercept'], center=spec.get('center', True))
+    if V and V['kfold']:
+        d.kfold = (V['column'], V['kfold'])   # K folds: every row fits the model (the report says so)
+        V = None
+    if V:
+        d.valid = V
+    yv = d.df[d.y_alias]
     levels = [c for c in yv.cat.categories if (yv == c).any()]
     k = len(levels)
     if k < 2:
@@ -2705,7 +3777,7 @@ def _logit_model(tid, rows, spec):
     w = d.weights
     names = list(X.columns)
     m = {'kind': 'logit', 'd': d, 'X': X, 'levels': levels, 'k': k, 'codes': codes, 'w': w, 'ordinal': ordinal, 'names': names,
-         'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid, 'distr': spec['distr'] or 'logit'}
+         'coder': Coder(d, X.design_info), 'key': key, 'spec': spec, 'tid': tid, 'distr': spec['distr'] or 'logit', 'valid': V}
     if ordinal:
         if 'Intercept' in names:
             ic = names.index('Intercept')
@@ -2761,6 +3833,35 @@ def _logit_probs(m, L):
     cum = np.column_stack([F(c + xb) for c in cuts] + [np.ones(len(L))])
     P = np.diff(np.column_stack([np.zeros(len(L)), cum]), axis=1)
     return P, xb[:, None]
+
+
+def _logit_unstable(m):
+    """models.unstable_params of a logistic fit, in the fit's own parameter
+    vector: the binomial GLM's, MNLogit's (column by column, as its
+    covariance) or OrderedModel's (the coefficients, then the thresholds)."""
+    res, mode = m['res'], m['mode']
+    try:
+        C = np.asarray(res.cov_params(), dtype=float)
+        rms = np.sqrt(np.mean(m['X'].to_numpy(float) ** 2, axis=0))   # each parameter's scale on the linear predictor
+        if mode == 'multinomial':
+            B = np.asarray(res.params, dtype=float)
+            return models.unstable_params(lambda v: res.model.loglike(np.asarray(v).reshape(B.shape, order='F')), B.ravel(order='F'), C,
+                                          scales=np.tile(rms, B.shape[1]))
+        if mode == 'binary':
+            # the binomial log-likelihood by log-sigmoids, finite where separation makes the probabilities 0 and 1
+            X = m['X'].to_numpy(float)
+            e = (m['codes'] == m['target']).astype(float)
+            w = np.ones(len(e)) if m['w'] is None else np.asarray(m['w'], dtype=float)
+
+            def ll(v):
+                eta = X @ np.asarray(v, dtype=float)
+                return float(-np.sum(w * (e * np.logaddexp(0.0, -eta) + (1 - e) * np.logaddexp(0.0, eta))))
+            return models.unstable_params(ll, np.asarray(res.params, dtype=float), C, scales=rms)
+        nb_ = len(m['beta_cols'])
+        return models.unstable_params(lambda v: res.model.loglike(np.asarray(v)), np.asarray(res.params, dtype=float), C,
+                                      scales=np.r_[rms[m['beta_cols']], np.ones(len(res.params) - nb_)])
+    except Exception:   # no covariance: nothing to judge by
+        return None
 
 
 def _ordinal_params(m):
@@ -2879,8 +3980,9 @@ def _roc(score, event, w):
 
 @api('fitmodel.logistic')
 def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, ordinal=None, distr='logit', target=None,
-             alpha=0.05, table_name='data'):
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, ordinal=ordinal, distr=distr, target=target)
+             alpha=0.05, validation=None, center=True, table_name='data'):
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, ordinal=ordinal, distr=distr, target=target,
+                 validation=validation, center=center)
     m = _logit_model(table, rows, spec)
     d, res, k, levels = m['d'], m['res'], m['k'], m['levels']
     Xa = m['X'].to_numpy(float)
@@ -2916,12 +4018,16 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
             for c in e.get('terms', []):
                 rank.setdefault(c, i)
         order = list(range(kk)) + sorted(range(kk, len(vals)), key=lambda i: rank.get(names[m['beta_cols'][i - kk]], len(d.effects)))
+        # Unstable (JMP's mark): OrderedModel's vector is the coefficients, then the first threshold and the log increments
+        un = _logit_unstable(m)
+        nb_ = len(m['beta_cols'])
+        un_row = ([bool(un[nb_:nb_ + j + 1].any()) for j in range(kk)] + [bool(un[i]) for i in range(nb_)]) if un is not None else [False] * len(vals)
         for i in order:
             v, lab = vals[i], labs[i]
             se = math.sqrt(max(C[i, i], 0))
             chi = (v / se) ** 2 if se > 0 else None
             est.append({'logit': '', 'term': lab, 'estimate': float(v), 'se': se, 'chisq': chi, 'p': float(stats.chi2.sf(chi, 1)) if chi is not None else None,
-                        'lower': float(v - z * se), 'upper': float(v + z * se)})
+                        'lower': float(v - z * se), 'upper': float(v + z * se), 'unstable': 'Unstable' if un_row[i] else ''})
         footer = 'For the cumulative log odds P(Y ≤ level)/P(Y > level); positive coefficients make lower levels more likely.' if m['distr'] == 'logit' else 'Cumulative probit: P(Y ≤ level) = Φ(intercept + x′b).'
     else:
         B = np.asarray(res.params, dtype=float).reshape(p, -1).copy()
@@ -2940,12 +4046,19 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
             for c in e.get('terms', []):
                 rank.setdefault(c, i)
         order.sort(key=lambda j: rank.get(names[j], len(d.effects)))
+        # Unstable (JMP's mark): the fit's vector is B column by column; the intercept at x = 0 takes the centred slopes' marks too
+        un = _logit_unstable(m)
+        U = un.reshape(B.shape, order='F') if un is not None else np.zeros(B.shape, dtype=bool)
+        if T is not None and 'Intercept' in names:
+            i0 = names.index('Intercept')
+            U[i0, :] |= np.any(U[np.abs(T[i0]) > 0, :], axis=0)
         for q, lg in enumerate(logits):
             for j in order:
                 v, se = B[j, q], S[j, q]
                 chi = (v / se) ** 2 if se > 0 else None
                 est.append({'logit': lg, 'term': _tlabel(d, names[j]), 'estimate': float(v), 'se': float(se), 'chisq': chi,
-                            'p': float(stats.chi2.sf(chi, 1)) if chi is not None else None, 'lower': float(v - z * se), 'upper': float(v + z * se)})
+                            'p': float(stats.chi2.sf(chi, 1)) if chi is not None else None, 'lower': float(v - z * se), 'upper': float(v + z * se),
+                            'unstable': 'Unstable' if U[j, q] else ''})
         footer = 'For log odds of ' + ', '.join(logits)
     # whole model
     dfm = len(m['beta_cols']) if mode == 'ordinal' else (p - (1 if 'Intercept' in names else 0)) * (1 if mode == 'binary' else k - 1)
@@ -2963,6 +4076,12 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
            'generalized_rsq': (1 - _exp(2 * (llnull - llf) / N)) / (1 - _exp(2 * llnull / N)) if llnull else None,
            'mean_neg_log_p': -llf / N, 'rmse': float(math.sqrt(np.sum(w * (1 - pa) ** 2) / N)), 'mad': float(np.sum(w * np.abs(1 - pa)) / N),
            'misclass': float(np.sum(w * (most != m['codes'])) / N), 'n': N}
+    # Lack of Fit: the fitted model against the saturated one over the distinct patterns of the X values (JMP's)
+    xs_ = [a for a in d.alias.values() if a != d.y_alias and a in d.df]
+    lof = None
+    if xs_:
+        pat = d.df[xs_].groupby(xs_, observed=True, sort=False).ngroup().to_numpy()
+        lof = models.logistic_lack_of_fit(pat, m['codes'], w, k, llf, kpar - (k - 1))
     # effect likelihood ratio tests
     et = []
     for e in d.effects:
@@ -2984,7 +4103,15 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
         if r:
             r['level'] = ylab[j]
             rocs.append(r)
+    if lof is not None:
+        xn = [d.name[a] for a in xs_]
+        lc_ = _logit_fit_code(m, table, table_name, rows)
+        lc_[0] = lc_[0].replace('\n' + PLT, '\nfrom scipy import stats')
+        lof['code'] = '\n'.join(lc_ + models.LOGISTIC_LOF_CODE + [
+            f'pattern = d.groupby({J(xn)}, observed=True, sort=False).ngroup().to_numpy()   # the distinct patterns of the X values',
+            f'print(lack_of_fit(pattern, codes, w if w is not None else np.ones(len(d)), k, fit.llf, {kpar - (k - 1)}))'])
     out = {'mode': mode, 'levels': ylab, 'level_values': levels, 'target': ylab[m['target']] if mode == 'binary' else None, 'whole': whole,
+           'lack_of_fit': lof,
            'rsquare_u': fit['entropy_rsq'], 'aicc': aicc, 'bic': bic, 'n': N, 'fit': fit, 'estimates': est, 'footer': footer, 'effect_tests': et,
            'odds': odds, 'confusion': {'levels': ylab, 'matrix': conf}, 'roc': rocs, 'factors': _factors(d), 'key': m['key'], 'alpha': alpha,
            'probs': {'rows': [int(i) for i in d.df.index], 'prob': P, 'most_likely': [ylab[i] for i in most], 'actual': [ylab[i] for i in m['codes']],
@@ -2992,6 +4119,12 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
            'distr': m['distr']}
     out['plot'] = _logistic_plot(m)
     notes.append('Confidence limits are Wald limits; JMP gives profile-likelihood limits for the parameters and odds ratios.')
+    if any(r.get('unstable') for r in est):
+        out['unstable'] = True
+        notes.insert(0, 'Unstable estimates: the data separate the levels of the response along the marked terms (a level of a factor, or a '
+                        'range of an X, where every row has the same response level, often a sparse level), so the likelihood keeps rising as '
+                        'those estimates move away from zero and the fit stops somewhere on the way. Their values, standard errors and tests '
+                        'mean little; the probabilities of the other rows are still fine. Combine sparse levels or leave the term out.')
     if mode == 'ordinal':
         notes.append('statsmodels\' OrderedModel writes P(Y ≤ j) = F(t_j − x′b); the report shows JMP\'s form F(a_j + x′b): the same thresholds, the '
                      'coefficients with the opposite sign. The standard errors of the thresholds are by the delta method.')
@@ -3017,8 +4150,79 @@ def logistic(table, y, effects=(), rows=None, weight=None, freq=None, no_interce
     lines += _centred_code(d)
     out['code'] = '\n'.join(lines)
     out['notes'] = notes
+    notes.extend(_kfold_note(d))
+    out['fit_report'] = _logit_fit_report(m, table, table_name, rows)
+    if m.get('valid'):
+        out['crossvalidation'], out['holdout'] = _logit_cv(m, table, table_name, rows)
+        notes.insert(0, f'{m["valid"]["column"]}: the model is fitted to the training rows (0, or Training); the validation (1) and test (2) rows '
+                        'are predicted by it and measured in Crossvalidation (with a confusion matrix, ROC and lift curves by set), and marked '
+                        'in the logistic plot. Every other table is the training fit\'s.')
     out['plot_code'] = _logit_plots(m, table, rows, table_name, out)
     return out
+
+
+def _train_prepared(m):
+    """A logistic fit's rows as predictive.prepare would give them (one
+    Training set), so that the page's predictive parts (the lift curves, the
+    Decision Threshold) take its probabilities as any platform's."""
+    P = predictive.Prepared()
+    spec = m['spec']
+    P.table, P.y, P.kind = m['tid'], spec['y'][0], 'categorical'
+    P.index = np.asarray(m['d'].df.index, dtype=int)
+    P.levels = [v.item() if hasattr(v, 'item') else v for v in m['levels']]
+    P.labels = [_lvl(v) for v in m['levels']]
+    P.target = np.asarray(m['codes'], dtype=int)
+    P.sets = np.zeros(len(P.index), dtype=int)
+    P.w = None if m['w'] is None else np.asarray(m['w'], dtype=float)
+    P.freq = None if not spec['freq'] else _col_values(m['tid'], spec['freq'], P.index)
+    P.spec = {'weight': spec['weight'], 'freq': spec['freq'], 'validation': None, 'portion': 0.0, 'seed': None}
+    return P
+
+
+def _logit_fit_report(m, table, table_name, rows):
+    """predictive.report of the training rows' probabilities: the lift and
+    gains curves and, for two levels, the Decision Threshold (WP3's), with
+    their code (the model fitted as the report's code fits it)."""
+    Q = _train_prepared(m)
+    P, _eta = _logit_probs(m, m['X'].to_numpy(float))
+    head = _logit_fit_code(m, table, table_name, rows) + ['y, sets, fitted = codes, np.zeros(len(d), dtype=int), probs(X)   # the rows, their level, one Training set, the probabilities']
+    return _jmp_target(m, predictive.report(Q, P, roc_curves=True, head='\n'.join(head)))
+
+
+def _jmp_target(m, rep):
+    """The Decision Threshold's target level at first: the fit's (the first
+    level unless Target Level says otherwise), as JMP's logistic reports have
+    it; predictive.threshold starts at the second."""
+    if rep and rep.get('threshold') and m['mode'] == 'binary':
+        labs = list(rep['threshold'].get('levels') or [])
+        tl = _lvl(m['levels'][m['target']])
+        if tl in labs:
+            rep['threshold']['target'] = labs.index(tl)
+    return rep
+
+
+def _logit_cv(m, table, table_name, rows):
+    """A logistic fit's Crossvalidation (a Validation column): every set's
+    rows given the training fit's probabilities, measured by
+    predictive.report (the measures, a confusion matrix, ROC and lift
+    curves by set, their code); and the hold-out rows."""
+    V, d = m['valid'], m['d']
+    P = V['P']
+    y = m['spec']['y'][0]
+    idx, X, _ = models.new_rows(d, m['X'].design_info, table, rows=P.index)
+    Pm, _eta = _logit_probs(m, X)
+    cols = [_level_col(m['levels'], lv) for lv in P.levels]
+    fitted = np.column_stack([Pm[:, c] if c is not None else np.zeros(len(idx)) for c in cols])
+    fc = _logit_fit_code(m, table, table_name, rows)
+    head = fc + _cv_frame_code(d, table, V, [m['spec']['weight'], m['spec']['freq']]) + [
+        'La = np.asarray(patsy.build_design_matrices([Xd.design_info], a)[0])',
+        f'plevels = [{", ".join(_pylit(v) for v in P.levels)}]   # the levels of every set',
+        'Pt = probs(La); P = np.column_stack([Pt[:, levels.index(v)] if v in levels else np.zeros(len(a)) for v in plevels])   # each row\'s probabilities, from the training fit',
+        f'ya = pd.Categorical(a[{J(y)}], categories=plevels).codes   # the actual level']
+    graph_head = head + ['d, y, fitted = a, ya, P   # for the graphs: the rows, the level, the probabilities']
+    code = '\n'.join(head + _cv_measure_code('categorical', P.levels))
+    rep = _jmp_target(m, _cv_report(m, idx, fitted, code=code, head='\n'.join(graph_head), curves=True))
+    return rep, _holdout(V, idx, fitted, None)
 
 
 def _with_plt(lines, imports=()):
@@ -3059,8 +4263,8 @@ def _logit_fit_code(m, table, table_name, rows):
     rep = lambda a: f'np.repeat({a}, r_, axis=0)' if wexpr else a   # noqa: E731
     if mode == 'binary':
         t = m['target']
-        lines.append(f'fit = sm.GLM((codes == {t}).astype(float), X, family=sm.families.Binomial(), freq_weights=w).fit(tol_criterion="params", atol=1e-12, rtol=1e-10, maxiter=200)   # log odds of {_lvl(m["levels"][t])}')
-        lines += ['def probs(L):', f'    p = 1 / (1 + np.exp(-(L @ fit.params)))   # P({_lvl(m["levels"][t])})',
+        lines.append(f'fit = sm.GLM((codes == {t}).astype(float), X, family=sm.families.Binomial(), freq_weights=w).fit(tol_criterion="params", atol=1e-12, rtol=1e-10, maxiter=200)   # log odds of {one_line(_lvl(m["levels"][t]))}')
+        lines += ['def probs(L):', f'    p = 1 / (1 + np.exp(-(L @ fit.params)))   # P({one_line(_lvl(m["levels"][t]))})',
                   f'    return np.column_stack({"[p, 1 - p]" if t == 0 else "[1 - p, p]"})']
     elif mode == 'multinomial':
         lines.append('ysm = np.where(codes == k - 1, 0, codes + 1)   # the last level is the reference, as in JMP')
@@ -3086,6 +4290,25 @@ def _logit_fit_code(m, table, table_name, rows):
     return lines
 
 
+def _logit_hold_code(m, table, p):
+    """The logistic plot's validation and test rows in its code: their
+    probabilities from the training fit, each placed at random between the
+    curves of its level (a seed of their own, as the report), marked."""
+    V = m['valid']
+    y = m['spec']['y'][0]
+    return [*_cv_frame_code(m['d'], table, V, [m['spec']['weight'], m['spec']['freq']]),
+            f'keep_ = (sets > 0) & a[{J(y)}].isin(levels).to_numpy(); a, sets = a[keep_], sets[keep_]   # the hold-out rows of the training rows\' levels',
+            f'ha = np.asarray(patsy.build_design_matrices([Xd.design_info], a)[0]); ch = pd.Categorical(a[{J(y)}], categories=levels).codes',
+            'crh = np.column_stack([np.zeros(len(a)), np.cumsum(probs(ha), axis=1)]); ih = np.arange(len(a))',
+            'uh = np.random.default_rng(20260927).uniform(0.1, 0.9, len(a)); pyh = crh[ih, ch] + uh * (crh[ih, ch + 1] - crh[ih, ch])',
+            f'xh = a[{J(p["factor"])}].to_numpy(float)',
+            'for kk, (name, marker, color) in {1: ("Validation", "^", "#d9822b"), 2: ("Test", "s", "#3a7d44")}.items():   # the hold-out rows, marked',
+            '    s_ = sets == kk',
+            '    if s_.any():',
+            '        ax.scatter(xh[s_], pyh[s_], marker=marker, s=22, color=color, label=name)',
+            'fig.legend(loc="outside lower center", ncols=3, fontsize=8, frameon=False)']
+
+
 def _logit_plots(m, table, rows, table_name, out):
     """The Nominal and Ordinal Logistic report's graphs as code: the logistic
     plot (one continuous X) and the ROC curves."""
@@ -3100,9 +4323,10 @@ def _logit_plots(m, table, rows, table_name, out):
             'cr = np.column_stack([np.zeros(len(x)), np.cumsum(probs(X), axis=1)])',
             'u = np.random.default_rng(20260926).uniform(0.1, 0.9, len(x))   # each row at random between the curves of its level, as the report',
             'i = np.arange(len(x)); py = cr[i, codes] + u * (cr[i, codes + 1] - cr[i, codes])',
-            f'colors = {J(PALETTE)}', _fig(430, 320),
+            f'colors = {J(PALETTE)}', _fig(430, 320 + (22 if p.get('holdout') else 0)),
             'for j in range(k - 1):', '    ax.plot(g, cum[:, j], color=colors[j % len(colors)], linewidth=1.3)',
-            f'ax.scatter(x, py, s={8 if len(m["d"].df) > 500 else 13}, color="{BASE}")',
+            f'ax.scatter(x, py, s={8 if len(m["d"].df) > 500 else 13}, color="{BASE}"{", label=" + J("Training") if p.get("holdout") else ""})',
+            *(_logit_hold_code(m, table, p) if p.get('holdout') else []),
             'ends = [0.0] + [cum[-1, j] for j in range(k - 1)] + [1.0]   # the level names at the right, between their curves',
             'for j, nm in enumerate(names):',
             '    ax.text(1.01, (ends[j] + ends[j + 1]) / 2, nm, transform=ax.get_yaxis_transform(), color=colors[j % len(colors)], fontsize=8, va="center")',
@@ -3124,39 +4348,6 @@ def _logit_plots(m, table, rows, table_name, out):
             'ax.legend(loc="lower right", fontsize=8, frameon=False)', 'ax.set_xlabel("1 - Specificity")', 'ax.set_ylabel("Sensitivity")', 'ax.set_title("ROC curve")', 'plt.show()']
         codes['roc'] = '\n'.join(c)
     return codes
-
-
-def _mixed_fit_code(m, table, table_name, rows, imports=()):
-    """The lines that fit the mixed model as the report does (REML, another
-    optimizer when the first does not converge): md, the model, and fit."""
-    d = m['d']
-    head = _code_frame(d, table, table_name, rows, [], [PLT, *imports])
-    if m['group']:
-        grp = f'd[{J(m["group"])}]'
-    else:
-        head.append('d["_one"] = 1   # crossed random effects: one group, a variance component each')
-        grp = 'd["_one"]'
-    vcs = ', '.join(f'{J(k2)}: {J(v)}' for k2, v in m['vc_code'].items())
-    head.append(f'md = smf.mixedlm({J(_code_formula(d))}, data=d, groups={grp}, re_formula={J(m["re_formula"])}' + (f', vc_formula={{{vcs}}})' if vcs else ')'))
-    head += ['fit = md.fit(reml=True)', 'if not fit.converged:   # as the report: another optimizer, kept when it does no worse',
-             '    fit2 = md.fit(reml=True, method=["lbfgs", "powell"]); fit = fit2 if fit2.llf >= fit.llf else fit']
-    return head
-
-
-def _mixed_plots(m, table, rows, table_name, out):
-    """The Mixed Model report's graphs as code: actual by conditional and by
-    marginal predicted, the conditional residuals."""
-    d = m['d']
-    y = m['spec']['y'][0]
-    n = len(d.df)
-    head = _mixed_fit_code(m, table, table_name, rows)
-    head += [f'actual, cond = d[{J(y)}].to_numpy(float), fit.fittedvalues.to_numpy()   # the conditional prediction: fixed and random effects',
-             'marg = md.exog @ fit.fe_params.to_numpy()   # the marginal prediction: the fixed effects alone']
-    line = lambda a: [f'lo, hi = min({a}.min(), actual.min()), max({a}.max(), actual.max())']   # noqa: E731
-    fitline = [f'ax.plot([lo, hi], [lo, hi], color="{FIT}", linewidth=1)']
-    return {'actCond': _row_plot(head + line('cond'), 'cond', 'actual', n, f'{y} Predicted', f'{y} Actual', f'{y} actual by predicted', 400, 320, fitline),
-            'actMarg': _row_plot(head + line('marg'), 'marg', 'actual', n, f'{y} Marginal Predicted', f'{y} Actual', 'actual by marginal predicted', lines=fitline),
-            'resCond': _row_plot(head, 'cond', 'actual - cond', n, f'{y} Conditional Predicted', 'Conditional Residual', 'conditional residuals', zero=True)}
 
 
 def _iv_plots(m, table, rows, table_name):
@@ -3216,7 +4407,7 @@ def _qr_plots(m, table, rows, table_name, out):
                    f'to = stats.t.ppf({1 - out["alpha"] / 2!r}, ols.df_resid)']
         proc = []
         for i, (j, term) in enumerate(zip(order, pr['terms'])):
-            c = common + [f'j = {j}   # {term}', _fig(300, 230),
+            c = common + [f'j = {j}   # {one_line(term)}', _fig(300, 230),
                           f'ax.axhspan(bo[j] - to * so[j], bo[j] + to * so[j], color="{FIT}", alpha=0.1, linewidth=0)   # the least squares interval',
                           f'ax.axhline(bo[j], color="{FIT}", linewidth=0.9, linestyle="--")   # and its estimate',
                           f'ax.fill_between(taus, low[:, j], upp[:, j], color="{BASE}", alpha=0.18, linewidth=0)',
@@ -3407,308 +4598,70 @@ def _logistic_plot(m):
     u = rng.uniform(0.1, 0.9, len(x))
     c = m['codes']
     lo, hi = cumr[np.arange(len(x)), c], cumr[np.arange(len(x)), c + 1]
-    return {'x': g, 'cum': cumg.T, 'factor': n0, 'points': {'x': x, 'y': lo + u * (hi - lo), 'rows': [int(i) for i in d.df.index]},
-            'levels': [_lvl(v) for v in m['levels']]}
+    out = {'x': g, 'cum': cumg.T, 'factor': n0, 'points': {'x': x, 'y': lo + u * (hi - lo), 'rows': [int(i) for i in d.df.index]},
+           'levels': [_lvl(v) for v in m['levels']]}
+    V = m.get('valid')
+    if V:   # the validation and test rows, placed the same way between their level's curves
+        P = V['P']
+        hrows = P.index[P.sets > 0]
+        idx, Xh, _ = models.new_rows(d, m['X'].design_info, m['tid'], rows=hrows)
+        yv = data.raw(m['tid'], m['spec']['y'][0], idx)
+        ch = np.array([_level_col(m['levels'], v) if v is not None and not (isinstance(v, float) and math.isnan(v)) else None for v in yv], dtype=object)
+        ok = np.array([q is not None for q in ch], dtype=bool)
+        idx, Xh, ch = idx[ok], Xh[ok], ch[ok].astype(int)
+        Ph, _ = _logit_probs(m, Xh)
+        cumh = np.column_stack([np.zeros(len(idx)), np.cumsum(Ph, axis=1)])
+        uh = np.random.default_rng(20260927).uniform(0.1, 0.9, len(idx))
+        loh, hih = cumh[np.arange(len(idx)), ch], cumh[np.arange(len(idx)), ch + 1]
+        st_ = dict(zip((int(r) for r in P.index), (int(v) for v in P.sets)))
+        out['holdout'] = {'x': _col_values(m['tid'], n0, idx), 'y': loh + uh * (hih - loh), 'rows': [int(r) for r in idx], 'set': [st_[int(r)] for r in idx]}
+    return out
 
 
 # ---------------------------------------------------------------------------
-# Mixed Model (REML)
+# Mixed Model (REML): mixed.py; these names delegate to it
 # ---------------------------------------------------------------------------
+
+def _mx():
+    from . import mixed as mx
+    return mx
+
 
 def _zmatrix(d, cols):
-    """The random effect's design: an indicator of each combination of its
-    categorical columns, times its continuous columns."""
-    cats = [d.alias[c] for c in dict.fromkeys(cols) if d.alias[c] in d.categorical]
-    nums = [d.alias[c] for c in cols if d.alias[c] not in d.categorical]
-    n = len(d.df)
-    if cats:
-        codes = [tuple(r) for r in np.column_stack([d.df[a].cat.codes.to_numpy() for a in cats]).tolist()]
-        uniq = sorted(set(codes))
-        pos = {u: i for i, u in enumerate(uniq)}
-        Z = np.zeros((n, len(uniq)))
-        Z[np.arange(n), [pos[v] for v in codes]] = 1.0
-        labels = [','.join(_lvl(d.levels[a][c]) for a, c in zip(cats, u)) for u in uniq]
-    else:
-        Z = np.ones((n, 1))
-        labels = ['']
-    for a in nums:
-        Z = Z * d.df[a].to_numpy(float)[:, None]
-    return Z, labels
+    return _mx()._zmatrix(d, cols)
 
 
 def _mixed_model(tid, rows, spec):
-    key = _key('mixed', tid, rows, spec)
-    m = models.recall(key)
-    if m is not None:
-        return m
-    import statsmodels.formula.api as smf
-    ys = spec['y']
-    if not ys:
-        raise ValueError('choose a Y')
-    effs = _eff_of(spec)
-    rand = [e for e in effs if e['random']]
-    if not rand:
-        raise ValueError('no random effects: mark effects with Attributes > Random Effect in the launch dialog')
-    if spec['weight'] or spec['freq']:
-        raise ValueError('statsmodels\' MixedLM takes no weights: remove Weight and Freq for the mixed model')
-    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'])
-    if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
-        raise ValueError(f'{ys[0]} is categorical: the mixed model needs a continuous Y')
-    for e in rand:
-        if not any(d.alias[c] in d.categorical for c in e['cols']):
-            raise ValueError(f'the random effect {e["label"]} has no categorical column (a random effect is a factor, or a slope within one)')
-    cat_sets = [[d.alias[c] for c in e['cols'] if d.alias[c] in d.categorical] for e in rand]
-    common = [a for a in cat_sets[0] if all(a in s for s in cat_sets)]
-    G = None
-    for a in common:
-        if any(len(e['cols']) == 1 and d.alias[e['cols'][0]] == a for e in rand):
-            G = a
-            break
-    if G is None and common:
-        G = common[0]
-    vc, labels, re_formula, vc_code = {}, {}, '0', {}
-    df = d.df.copy()
-    real = {a: n for n, a in d.alias.items()}
-    for i, e in enumerate(rand):
-        al = [d.alias[c] for c in e['cols']]
-        rest = [a for a in dict.fromkeys(al) if a != G] if G else list(dict.fromkeys(al))
-        if G and not rest:
-            re_formula = '1'
-            labels['__re__'] = e['label']
-            continue
-        vc[f'vc{i}'] = '0 + ' + ':'.join(f'C({a})' if a in d.categorical else a for a in rest)
-        vc_code[e['label']] = '0 + ' + ':'.join(f'C({_q(real[a])})' if a in d.categorical else _q(real[a]) for a in rest)
-        labels[f'vc{i}'] = e['label']
-    if G is None:
-        df['_one'] = 1.0
-        groups = '_one'
-    else:
-        groups = G
-    md = smf.mixedlm(d.formula, df, groups=groups, re_formula=re_formula, vc_formula=vc or None)
-    res = md.fit(reml=True)
-    if not res.converged:
-        res2 = md.fit(reml=True, method=['lbfgs', 'powell'])
-        if res2.llf >= res.llf:
-            res = res2
-    X = np.asarray(md.exog, dtype=float)
-    fe_names = list(md.exog_names)
-    comps = []
-    if re_formula == '1':
-        comps.append({'label': labels['__re__'], 'var': float(res.cov_re.iloc[0, 0]), 'spec': next(e for e in rand if e['label'] == labels['__re__'])})
-    vnames = list(md.exog_vc.names) if vc else []
-    for nm, v in zip(vnames, np.atleast_1d(res.vcomp)):
-        comps.append({'label': labels[nm], 'var': float(v), 'spec': next(e for e in rand if e['label'] == labels[nm])})
-    for c in comps:
-        c['Z'], c['levels'] = _zmatrix(d, c['spec']['cols'])
-    y = d.df[d.y_alias].to_numpy(float)
-    ms = {'kind': 'mixed', 'd': d, 'res': res, 'md': md, 'X': X, 'fe_names': fe_names, 'comps': comps, 'y': y, 'scale': float(res.scale),
-          'key': key, 'spec': spec, 'tid': tid, 'group': real.get(G) if G else None, 're_formula': re_formula, 'vc_code': vc_code}
-    # the fixed-effects design as patsy made it, for the profilers
-    import patsy
-    di = patsy.dmatrix(d.rhs, d.df, return_type='dataframe').design_info
-    _attach(d, di)
-    ms['coder'] = Coder(d, di)
-    ms['dense'] = _reml(ms) if len(y) * sum(c['Z'].shape[1] for c in comps) <= _REML_MAX else None
-    models.remember(key, ms)
-    return ms
+    return _mx()._mixed_model(tid, rows, spec)
 
 
 def _reml(m):
-    """The REML quantities at statsmodels' estimates: the covariance of the
-    fixed effects (X'V^-1 X)^-1, the variance components' covariance from
-    the expected information I_ij = tr(P V_i P V_j) / 2, the derivatives of
-    the fixed effects' covariance for Satterthwaite's degrees of freedom, the
-    BLUPs and the REML log-likelihood. V = s2 I + sum_k var_k Z_k Z_k' is
-    never formed: with Zs = [Z_k sqrt(var_k)] and K = s2 I + Zs'Zs (q x q),
-    V^-1 B = (B - Zs K^-1 Zs'B) / s2 (Woodbury), so the cost grows with the
-    rows times the random levels, not with the rows squared."""
-    X, y, comps, s2 = m['X'], m['y'], m['comps'], m['scale']
-    n, p = X.shape
-    Zk = [c['Z'] for c in comps]
-    Z = np.hstack(Zk) if Zk else np.zeros((n, 0))
-    Zs = np.hstack([c['Z'] * math.sqrt(max(c['var'], 0.0)) for c in comps]) if comps else np.zeros((n, 0))
-    q = Z.shape[1]
-    S = Zs.T @ Zs
-    K = s2 * np.eye(q) + S
-    Kinv = np.linalg.inv(K) if q else np.zeros((0, 0))
-
-    def vinv(B):
-        return (B - Zs @ (Kinv @ (Zs.T @ B))) / s2
-    W = vinv(X)                       # V^-1 X
-    XtViX = X.T @ W
-    C = np.linalg.pinv(XtViX)
-    b = C @ (W.T @ y)
-    r = y - X @ b
-    Vir = vinv(r)
-    WC = W @ C
-    PZ = vinv(Z) - WC @ (W.T @ Z)     # P Z
-    ZPZ = Z.T @ PZ
-    edges = np.cumsum([0] + [z.shape[1] for z in Zk])
-    blocks = [slice(edges[i], edges[i + 1]) for i in range(len(Zk))]
-    kq = len(Zk) + 1
-    info = np.zeros((kq, kq))
-    for i, bi in enumerate(blocks):
-        for j, bj in enumerate(blocks[i:], start=i):
-            info[i, j] = info[j, i] = 0.5 * float(np.sum(ZPZ[bi, bj] ** 2))
-        info[i, -1] = info[-1, i] = 0.5 * float(np.sum(PZ[:, bi] ** 2))
-    KS = Kinv @ S
-    tr_v2 = (n - 2 * np.trace(KS) + np.sum(KS * KS.T)) / (s2 * s2)
-    CWW = C @ (W.T @ W)
-    info[-1, -1] = 0.5 * float(tr_v2 - 2 * np.trace(C @ (W.T @ vinv(W))) + np.sum(CWW * CWW.T))
-    A = np.linalg.pinv(info)
-    dC = [(z.T @ WC).T @ (z.T @ WC) for z in Zk] + [WC.T @ WC]
-    ldk = np.linalg.slogdet(K)[1] if q else 0.0
-    logdet_v = n * math.log(s2) + ldk - q * math.log(s2)
-    rank = int(np.linalg.matrix_rank(X))
-    llr = -0.5 * ((n - rank) * math.log(2 * math.pi) + logdet_v + np.linalg.slogdet(XtViX)[1] + float(r @ Vir))
-    blups = [c['var'] * (c['Z'].T @ Vir) for c in comps]
-    return {'C': C, 'b': b, 'A': A, 'dC': dC, 'llr': llr, 'blups': blups, 'info': info}
+    return _mx()._reml(m)
 
 
 def _satterthwaite(dense, L):
-    """Denominator degrees of freedom for L b (one row: Satterthwaite; several:
-    Fai and Cornelius's approximation, as lmerTest computes them)."""
-    L = np.atleast_2d(L)
-    C, A, dC = dense['C'], dense['A'], dense['dC']
-    M = L @ C @ L.T
-    vals, vecs = np.linalg.eigh(M)
-    keep = vals > 1e-10 * max(vals.max(), 1e-300)
-    nus = []
-    for dval, vec in zip(vals[keep], vecs[:, keep].T):
-        lm = vec @ L
-        g = np.array([lm @ D @ lm for D in dC])
-        den = float(g @ A @ g)
-        nus.append(2 * dval * dval / den if den > 0 else float('inf'))
-    q = len(nus)
-    if q == 0:
-        return float('nan')
-    if q == 1:
-        return float(nus[0])
-    nus = np.asarray(nus)
-    if np.all(np.abs(np.diff(nus)) < 1e-8):
-        return float(nus.mean())
-    if np.any(nus <= 2):
-        return 2.0
-    E = float(np.sum(nus / (nus - 2)))
-    return 2 * E / (E - q) if E > q else float('nan')
+    return _mx()._satterthwaite(dense, L)
 
 
 def _mixed_predict(m, settings, alpha):
-    L = m['coder'].rows(settings)
-    names = list(m['coder'].names)
-    fe = m['res'].fe_params
-    b = np.array([fe[nm] for nm in names])
-    C = m['dense']['C'] if m['dense'] else np.asarray(m['res'].cov_params(), dtype=float)[:len(names), :len(names)]
-    idx = [m['fe_names'].index(nm) for nm in names]
-    C = C[np.ix_(idx, idx)]
-    est = L @ b
-    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', L, C, L), 0))
-    z = float(stats.norm.ppf(1 - alpha / 2))
-    return [{'name': m['spec']['y'][0], 'pred': est, 'lower': est - z * se, 'upper': est + z * se}]
+    return _mx()._mixed_predict(m, settings, alpha)
 
 
-@api('fitmodel.mixed')
-def mixed(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, table_name='data'):
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
-    m = _mixed_model(table, rows, spec)
-    d, res, X, dense = m['d'], m['res'], m['X'], m['dense']
-    n, p = X.shape
-    notes = []
-    z = float(stats.norm.ppf(1 - alpha / 2))
-    s2 = m['scale']
-    comps = m['comps']
-    total = s2 + sum(c['var'] for c in comps if c['spec']['cols'] and all(d.alias[x] in d.categorical for x in c['spec']['cols']))
-    vc_rows = []
-    if dense:
-        se_all = np.sqrt(np.maximum(np.diag(dense['A']), 0))
-    else:
-        se_all = np.asarray(res.bse_re, dtype=float)
-        se_all = np.r_[se_all, np.nan]
-        notes.append('A model this large (rows times random levels): the variance components\' standard errors are statsmodels\' (bse_re), '
-                     'and the fixed effects are tested with the normal distribution.')
-    for i, c in enumerate(comps + [{'label': 'Residual', 'var': s2}]):
-        v = c['var']
-        se = float(se_all[i]) if i < len(se_all) else float('nan')
-        slope = c['label'] != 'Residual' and not all(d.alias[x] in d.categorical for x in c['spec']['cols'])
-        vc_rows.append({'effect': c['label'], 'ratio': v / s2 if s2 > 0 and c['label'] != 'Residual' else None, 'var': v, 'se': se,
-                        'lower': v - z * se if np.isfinite(se) else None, 'upper': v + z * se if np.isfinite(se) else None,
-                        'p': float(2 * stats.norm.sf(v / se)) if np.isfinite(se) and se > 0 and c['label'] != 'Residual' else None,
-                        'pct': 100 * v / total if total > 0 and not slope else None})
-    vc_rows.append({'effect': 'Total', 'ratio': None, 'var': total, 'se': None, 'lower': None, 'upper': None, 'p': None, 'pct': 100.0})
-    # fixed effects
-    fe_names = m['fe_names']
-    b = np.asarray(res.fe_params, dtype=float)
-    C = dense['C'] if dense else np.asarray(res.cov_params(), dtype=float)[:p, :p]
-    T = _uncenter(d, fe_names)
-    bJ, CJ = (T @ b, T @ C @ T.T) if T is not None else (b, C)
-    se_b = np.sqrt(np.maximum(np.diag(CJ), 0))
-    est = []
-    for j, nm in enumerate(fe_names):
-        L = T[j].copy() if T is not None else np.zeros(p)
-        if T is None:
-            L[j] = 1
-        df_ = _satterthwaite(dense, L) if dense else float('inf')
-        t = bJ[j] / se_b[j] if se_b[j] > 0 else float('nan')
-        tc = float(stats.t.ppf(1 - alpha / 2, df_)) if np.isfinite(df_) else z
-        pv = float(2 * stats.t.sf(abs(t), df_)) if np.isfinite(df_) else float(2 * stats.norm.sf(abs(t)))
-        est.append({'term': _tlabel(d, nm), 'estimate': float(bJ[j]), 'se': float(se_b[j]), 'dfden': df_, 't': float(t), 'p': pv,
-                    'lower': float(bJ[j] - tc * se_b[j]), 'upper': float(bJ[j] + tc * se_b[j]), 'name': nm})
-    rank = {'Intercept': -1}
-    for i, e in enumerate(d.effects):
-        for c in e.get('terms', []):
-            rank.setdefault(c, i)
-    est.sort(key=lambda r: rank.get(r['name'], len(d.effects)))
-    tests = []
-    for e in d.effects:
-        cols = [fe_names.index(t) for t in e.get('terms', []) if t in fe_names]
-        if not cols:
-            continue
-        L = np.zeros((len(cols), p))
-        for i, c in enumerate(cols):
-            L[i, c] = 1
-        Lb = L @ b
-        M = L @ C @ L.T
-        q = int(np.linalg.matrix_rank(M))
-        F = float(Lb @ np.linalg.pinv(M) @ Lb / q) if q else float('nan')
-        dfd = _satterthwaite(dense, L) if dense else float('inf')
-        pv = float(stats.f.sf(F, q, dfd)) if np.isfinite(dfd) else float(stats.chi2.sf(F * q, q))
-        tests.append({'source': e['label'], 'nparm': len(cols), 'dfnum': q, 'dfden': dfd, 'f': F, 'p': pv})
-    # fit statistics
-    llr = dense['llr'] if dense else float(res.llf)
-    kcov = len(comps) + 1
-    nstar = n - int(np.linalg.matrix_rank(X))
-    aicc = -2 * llr + 2 * kcov * nstar / (nstar - kcov - 1) if nstar - kcov - 1 > 0 else float('nan')
-    bic = -2 * llr + kcov * math.log(nstar) if nstar > 0 else float('nan')
-    cond = np.asarray(res.fittedvalues, dtype=float)
-    marg = X @ b
-    y = m['y']
-    blups = []
-    if dense:
-        for c, bl in zip(comps, dense['blups']):
-            blups.append({'effect': c['label'], 'rows': [{'level': lv, 'blup': float(v)} for lv, v in zip(c['levels'], bl)]})
-    notes.append('Denominator degrees of freedom are Satterthwaite\'s (Fai and Cornelius\'s for several), computed from statsmodels\' REML fit; '
-                 'JMP uses Kenward and Roger\'s, which agree for balanced designs. Variance component standard errors come from the REML '
-                 'expected information; their intervals are Wald intervals.')
-    notes.append('AICc and BIC count the covariance parameters and use n − rank(X) observations, as for REML in SAS.')
-    lines = _code_frame(d, table, table_name, rows, [])
-    if m['group']:
-        grp = f'd[{json.dumps(m["group"])}]'
-    else:
-        lines.append('d["_one"] = 1   # crossed random effects: one group, a variance component each')
-        grp = 'd["_one"]'
-    vcs = ', '.join(f'{json.dumps(k2)}: {json.dumps(v)}' for k2, v in m['vc_code'].items())
-    lines.append(f'md = smf.mixedlm({json.dumps(_code_formula(d))}, data=d, groups={grp}, re_formula={json.dumps(m["re_formula"])}'
-                 + (f', vc_formula={{{vcs}}})' if vcs else ')'))
-    lines.append('fit = md.fit(reml=True)')
-    lines.append('print(fit.summary())   # fixed effects (z tests), the variances of the random effects, the residual variance (Scale)')
-    lines += _centred_code(d)
-    return {'fit': {'m2rll': -2 * llr, 'aicc': aicc, 'bic': bic, 'n': n, 'converged': bool(res.converged), 'method': 'REML',
-                    'statsmodels_llf': float(res.llf)},
-            'varcomp': vc_rows, 'estimates': est, 'tests': tests, 'blups': blups, 'factors': _factors(d), 'key': m['key'], 'notes': notes,
-            'alpha': alpha,
-            'diag': {'rows': [int(i) for i in d.df.index], 'actual': y, 'predicted': cond, 'marginal': marg, 'residual': y - cond,
-                     'marg_resid': y - marg},
-            'code': '\n'.join(lines), 'plot_code': _mixed_plots(m, table, rows, table_name, None)}
+def _mixed_fit_code(m, table, table_name, rows, imports=()):
+    return _mx()._mixed_fit_code(m, table, table_name, rows, imports)
+
+
+def _mixed_plots(m, table, rows, table_name, out):
+    return _mx()._mixed_plots(m, table, rows, table_name, out)
+
+
+def _mixed_interaction_parts(m, table, table_name, rows):
+    return _mx()._mixed_interaction_parts(m, table, table_name, rows)
+
+
+def mixed(*args, **kwargs):
+    """fitmodel.mixed (registered in mixed.py)."""
+    return _mx().mixed(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -3910,7 +4863,7 @@ def _repeated(d, ys, Y, X, within, table, table_name, rows):
     # the code under the report
     lines = _code_frame(d, table, table_name, rows, [], ['import patsy', 'from scipy import stats', 'from statsmodels.multivariate.manova import MANOVA'])
     lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d))   # the design, effect coded')
-    lines.append(f'Y = d[{json.dumps(ys)}].to_numpy(); n, k = Y.shape; p = k - 1   # the levels of {within}, in this order')
+    lines.append(f'Y = d[{json.dumps(ys)}].to_numpy(); n, k = Y.shape; p = k - 1   # the levels of {one_line(within)}, in this order')
     lines.append('nu = n - np.linalg.matrix_rank(X)   # the error degrees of freedom')
     lines.append('C = np.linalg.qr(np.vstack([-np.ones((1, p)), np.eye(p)]))[0]   # the contrasts: each response minus the first, orthonormalized')
     lines.append('I = np.eye(X.shape[1])')
@@ -4057,7 +5010,7 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
 # the report refits the chosen model with statsmodels' fit_regularized.
 
 _GR_METHOD = {'lasso': 'Lasso', 'enet': 'Elastic Net', 'ridge': 'Ridge', 'forward': 'Forward Selection',
-              'pruned': 'Pruned Forward Selection'}
+              'pruned': 'Pruned Forward Selection', 'mle': 'Maximum Likelihood'}
 _GR_VALID = {'aicc': 'AICc', 'bic': 'BIC', 'kfold': 'KFold', 'holdback': 'Holdback', 'loo': 'Leave-One-Out',
              'validation': 'Validation Column'}
 _GR_RIDGE0 = 0.01      # the ridge penalty of an adaptive method's initial fit when the MLE does not exist
@@ -4090,7 +5043,7 @@ def _gr_opts(spec):
     return {'y': list(spec['y']), 'effects': spec['effects'], 'weight': spec.get('weight'), 'freq': spec.get('freq'), 'dist': dist,
             'target': spec.get('target'), 'method': method, 'l1': l1, 'adaptive': bool(spec.get('adaptive')) and method in ('lasso', 'enet'),
             'criterion': crit, 'validation': spec.get('validation') or None, 'portion': portion, 'folds': folds, 'seed': seed,
-            'n_grid': int(spec.get('n_grid') or 40)}
+            'n_grid': int(spec.get('n_grid') or 40), 'center': spec.get('center', True)}
 
 
 def _gr_label(O):
@@ -4397,7 +5350,7 @@ def _gr_setup(tid, rows, O):
     effs = _eff_of(O)
     if vcol and (vcol in ys or any(vcol in e['cols'] for e in effs)):
         raise ValueError(f'{vcol} is the Validation column: it cannot also be the Y or in a model effect')
-    d = _design(tid, ys[0], effs, rows, O['weight'], O['freq'], True, extra=[vcol] if vcol else ())
+    d = _design(tid, ys[0], effs, rows, O['weight'], O['freq'], True, extra=[vcol] if vcol else (), center=O.get('center', True))
     info = {}
     yv = d.df[d.y_alias]
     if isinstance(yv.dtype, pd.CategoricalDtype):
@@ -4424,7 +5377,7 @@ def _gr_setup(tid, rows, O):
     # the sets
     if vcol and crit in ('kfold', 'holdback', 'loo'):
         raise ValueError(f'with a Validation column ({vcol}) the fit is validated by it: choose Validation Column, AICc or BIC '
-                         '(or take the column out of the Validation role)')
+                         '(or take the column out of the Validation role); a column of more than three values gives KFold\'s folds')
     if crit == 'validation' and not vcol:
         raise ValueError('Validation Column needs a column in the Validation role of the launch dialog (Model Dialog)')
     sets = np.zeros(n, dtype=int)
@@ -4437,10 +5390,16 @@ def _gr_setup(tid, rows, O):
             raise ValueError('the rows of the validation sets are not the rows of the model (an infinite value in a column?)')
         sets = P.sets.astype(int)
         pnotes = list(P.notes)
-        if crit in ('validation', 'holdback') and not (sets == 1).any():
+        if P.folds is not None:   # a K-fold Validation column (WP3's predictive.prepare): every row trains, its folds crossvalidate
+            info['fold_column'] = {'column': vcol, 'values': list(P.fold_values), 'folds': P.folds.astype(int)}
+        elif crit in ('validation', 'holdback') and not (sets == 1).any():
             raise ValueError(f'{vcol} has no validation rows (1 or Validation)' if vcol else 'the Holdback Proportion leaves no validation rows')
     folds = None
-    if crit == 'kfold':
+    eff = crit   # the validation the path uses: KFold by the column's folds for a K-fold Validation column
+    if info.get('fold_column') and crit == 'validation':
+        folds = info['fold_column']['folds']
+        eff = 'kfold'
+    elif crit == 'kfold':
         K = O['folds']
         if not 2 <= K <= n:
             raise ValueError(f'KFold needs between 2 and {n} folds (the number of rows)')
@@ -4459,7 +5418,7 @@ def _gr_setup(tid, rows, O):
     sd_[~live] = 1.0
     Z = (Xc - mu_) / sd_
     return {'d': d, 'X': X, 'names': names, 'Xa': Xa, 'y': y, 'w': w, 'n': n, 'ic': ic, 'cols': cols, 'dist': dist, 'info': info,
-            'sets': sets, 'folds': folds, 'mu': mu_, 'sd': sd_, 'live': live, 'Zl': Z[:, live], 'notes': pnotes}
+            'sets': sets, 'folds': folds, 'mu': mu_, 'sd': sd_, 'live': live, 'Zl': Z[:, live], 'notes': pnotes, 'crit': eff}
 
 
 def _gr_adaptive(S, rows):
@@ -4542,7 +5501,7 @@ def _genreg_path(tid, rows, spec):
     if R is not None:
         return R
     S = _gr_setup(tid, rows, O)
-    dist, crit, method = S['dist'], O['criterion'], O['method']
+    dist, crit, method = S['dist'], S['crit'], O['method']
     Z, y, w = S['Zl'], S['y'], S['w']
     n, p = Z.shape
     tr = S['sets'] == 0
@@ -4553,9 +5512,22 @@ def _genreg_path(tid, rows, spec):
         K = 1
         M = tr[None, :].astype(float)
     V = (1.0 - M) if crit in ('kfold', 'loo') else (S['sets'] == 1)[None, :].astype(float)
-    forward = method in ('forward', 'pruned')
+    mle = method == 'mle'
+    forward = method in ('forward', 'pruned') or mle   # Maximum Likelihood: one step that holds every term
     lams, a1, pf, pf_from = None, None, None, None
-    if forward:
+    if mle:
+        A = np.column_stack([np.ones(n), Z])
+        C = np.zeros((K, 1, p + 1))
+        for k in range(K):
+            r = M[k] > 0
+            C[k, 0], ok_ = _gr_mle(A[r], y[r], w[r], dist)
+            if not ok_:
+                S['notes'].append('The maximum likelihood fit did not converge on some rows (separation, or more terms than rows?): its estimates '
+                                  'are where it stopped.')
+            _gr_progress(k + 1, K, K)
+        b0, B = C[:, :, 0], C[:, :, 1:]
+        L = 1
+    elif forward:
         paths = []
         for k in range(K):
             r = M[k] > 0
@@ -4598,7 +5570,7 @@ def _genreg_path(tid, rows, spec):
         shown = [_gr_train(S, rows_k, np.r_[b0[fstar, l], B[fstar, l]], dist, None if forward else lams[l], a1 if a1 is not None else 1.0, pf) for l in range(L)]
     coefs = np.column_stack([b0[fstar], B[fstar]])
     R = {'S': S, 'O': O, 'lams': lams, 'l1': a1, 'pf': pf, 'pf_from': pf_from, 'coefs': coefs, 'curve': curve, 'best': best, 'fstar': fstar,
-         'K': K, 'train': rows_k, 'valid': V[fstar] > 0, 'shown': shown, 'forward': forward}
+         'K': K, 'train': rows_k, 'valid': V[fstar] > 0, 'shown': shown, 'forward': forward, 'mle': mle, 'crit': crit}
     models.remember(key, R)
     return R
 
@@ -4686,7 +5658,8 @@ def _gr_code(m, table, table_name, rows):
     criterion or validation curve, and the Model Summary's -LogLikelihood."""
     R, S = m['path'], m['path']['S']
     O, d, dist = R['O'], m['d'], S['dist']
-    vcol, crit, forward = O['validation'], O['criterion'], R['forward']
+    vcol, crit, forward = O['validation'], R.get('crit', O['criterion']), R['forward']
+    fcol = S['info'].get('fold_column')
     live = S['live']
     lines = _code_frame(d, table, table_name, rows, [O['weight'], O['freq'], vcol], ['import patsy', 'from scipy.special import gammaln'])
     lines.append(f'X = np.asarray(patsy.dmatrix({json.dumps(_code_formula(d, lhs=False))}, d))   # the design, effect coded')
@@ -4698,7 +5671,13 @@ def _gr_code(m, table, table_name, rows):
     wp = [f'd[{json.dumps(c)}].to_numpy(float)' for c in (O['weight'], O['freq']) if c]
     lines.append(f'w = {" * ".join(wp)}' if wp else 'w = np.ones(len(d))   # every row counts once')
     n = S['n']
-    if vcol:
+    if vcol and fcol:   # a K-fold Validation column: its values are the folds, every row trains
+        numeric = data.meta(table, vcol).get('dataType') == 'numeric'
+        lines.append(f'fold_values = {json.dumps(fcol["values"])}   # the folds of {vcol}, in order')
+        src = f'pd.to_numeric(d[{json.dumps(vcol)}], errors="coerce")' if numeric else f'd[{json.dumps(vcol)}].astype(str)'
+        lines.append(f'fold = pd.Categorical({src}, categories=fold_values).codes   # each row\'s fold, 0 to {len(fcol["values"]) - 1}')
+        lines.append('sets = np.zeros(len(d), dtype=int)   # every row trains; the folds crossvalidate')
+    elif vcol:
         if data.meta(table, vcol).get('dataType') == 'numeric':
             lines.append(f'sets = d[{json.dumps(vcol)}].astype(float).to_numpy().astype(int)   # 0 training, 1 validation, 2 test')
         else:
@@ -4879,7 +5858,7 @@ def _genreg_plots(m, table, rows, table_name, out):
     per row) and both plots of forward selection by KFold or Leave-One-Out
     (the steps of every fold)."""
     R = m['path']
-    crit, forward = R['O']['criterion'], R['forward']
+    crit, forward = R.get('crit', R['O']['criterion']), R['forward']
     if forward and crit in ('kfold', 'loo'):
         return {}
     base = _gr_code(m, table, table_name, rows).split('\n')
@@ -4919,9 +5898,10 @@ def _genreg_plots(m, table, rows, table_name, out):
 @api('fitmodel.genreg')
 def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, dist='normal', method='lasso', enet_alpha=0.9,
            criterion='aicc', n_grid=40, choose=None, target=None, adaptive=False, validation=None, portion=None, folds=None, seed=None,
-           table_name='data'):
+           center=True, table_name='data'):
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, dist=dist, method=method, enet_alpha=enet_alpha, criterion=criterion,
-                 n_grid=n_grid, choose=choose, target=target, adaptive=adaptive, validation=validation, portion=portion, folds=folds, seed=seed)
+                 n_grid=n_grid, choose=choose, target=target, adaptive=adaptive, validation=validation, portion=portion, folds=folds, seed=seed,
+                 center=center)
     m = _genreg_model(table, rows, spec)
     R = m['path']
     S, O = R['S'], R['O']
@@ -4943,7 +5923,8 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
     eta = m['X'].to_numpy(float) @ m['b']
     pred = _gr_mu(m['dist'], eta)
     meth, title = _gr_label(O)
-    crit = O['criterion']
+    crit = R.get('crit', O['criterion'])   # KFold for a K-fold Validation column
+    fcol = S['info'].get('fold_column')
     live = S['live']
     L = len(R['coefs'])
     full = np.zeros((L, len(m['cols'])))
@@ -4969,7 +5950,11 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
         srows.append(r_)
     summary = rtable([col('measure', 'Measure', 'text')] + [col(s_['set'], s_['set']) for s_ in stats_], srows)
     notes = []
-    if R['forward']:
+    if R.get('mle'):
+        notes.append('Maximum Likelihood: every term, no penalty (statsmodels\' GLM, least squares for the normal), fitted on the centred and '
+                     'scaled predictors and shown on the original ones. The standard errors are the inverse information of the training rows '
+                     '(for the normal times SSE/(rows − parameters), as statsmodels\' GLM), the Wald ChiSquare (estimate/SE)².')
+    elif R['forward']:
         notes.append(('Each step enters the term with the largest score statistic (for the normal: the largest drop in the error sum of squares) '
                       'and refits by maximum likelihood on the centred and scaled predictors'
                       + ('; after an entry, a term leaves while the model without it (the term with the smallest Wald statistic, never the one '
@@ -4984,7 +5969,13 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
                         f'ridge estimate at λ = {_GR_RIDGE0} (the maximum likelihood estimates do not exist here)')
                      + ', from the rows that train the model (every row for KFold and Leave-One-Out). Terms with small initial estimates are penalized more.')
     rowsets = {'rows': [int(i) for i in d.df.index]}
-    if crit == 'kfold':
+    if crit == 'kfold' and fcol:
+        f = R['fstar']
+        notes.append(f'KFold by {fcol["column"]}: its {len(fcol["values"])} values are the folds (every row trains; each fold is held out '
+                     'once). The curve is the mean over the folds of each fold\'s validation −LogLikelihood per unit of weight (Scaled '
+                     f'−LogLikelihood); as JMP, the model reported is the fold model with the smallest validation −LogLikelihood at the chosen '
+                     f'penalty, the one without {fcol["column"]} = {_lvl(fcol["values"][f])}: its {int(R["valid"].sum())} rows are the Validation set.')
+    elif crit == 'kfold':
         f = R['fstar']
         notes.append(f'KFold: {O["folds"]} folds drawn with the seed {O["seed"]}. The curve is the mean over the folds of each fold\'s validation '
                      '−LogLikelihood per unit of weight (Scaled −LogLikelihood). As JMP does, the model reported is the fold model with the smallest '
@@ -5006,24 +5997,115 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
     notes += S['notes']
     if crit not in ('aicc', 'bic') and S['dist'] == 'normal':
         notes.append('The normal\'s −LogLikelihood of validation and test rows takes the variance of the training residuals (SSE/N).')
-    model = {'response': O['y'][0], 'distribution': _DIST_LABEL[S['dist']], 'method': meth, 'validation': _GR_VALID[crit], 'title': title,
+    model = {'response': O['y'][0], 'distribution': _DIST_LABEL[S['dist']], 'method': meth,
+             'validation': f'KFold ({fcol["column"]})' if fcol and crit == 'kfold' else _GR_VALID[crit], 'title': title,
              'criterion': _GR_VALID[crit] if crit in ('aicc', 'bic') else 'Scaled -LogLikelihood',
              'n': tr_['n'], 'rows': tr_['rows'], 'nll': tr_['nll'], 'nparm': sh['df'], 'aicc': sh['aicc'], 'bic': sh['bic'], 'grsq': tr_['grsq'],
              'lambda': None if R['forward'] else float(R['lams'][ch]), 'enet_alpha': R['l1'],
              'target': _lvl(S['info']['levels'][0]) if S['info'].get('levels') else None, 'adaptive': bool(O['adaptive']),
-             'folds': O['folds'], 'portion': O['portion'], 'seed': O['seed'], 'fold': R['fstar'] + 1 if crit in ('kfold', 'loo') else None,
-             'validation_column': O['validation']}
+             'folds': len(fcol['values']) if fcol and crit == 'kfold' else O['folds'], 'portion': O['portion'], 'seed': O['seed'],
+             'fold': R['fstar'] + 1 if crit in ('kfold', 'loo') else None, 'validation_column': O['validation'], 'mle': bool(R.get('mle')),
+             'nonzero': int(sum(1 for e_ in est if not e_['zero'] and e_['term'] != 'Intercept'))}
     path = {'x': list(range(L)) if R['forward'] else l1n.tolist(), 'xlabel': 'Step' if R['forward'] else 'Magnitude of Scaled Parameter Estimates',
             'l1': l1n.tolist(), 'alpha': None if R['forward'] else [float(a) for a in R['lams']],
             'aicc': [s_['aicc'] for s_ in R['shown']], 'bic': [s_['bic'] for s_ in R['shown']], 'df': [s_['df'] for s_ in R['shown']],
             'nonzero': [s_['nonzero'] for s_ in R['shown']], 'curve': [float(v) for v in R['curve']], 'label': model['criterion'],
             'coefs': [{'term': labels[j], 'values': full[:, i].tolist()} for i, j in enumerate(m['cols'])]}
+    if R.get('mle'):   # JMP's Maximum Likelihood estimates carry standard errors and Wald tests
+        Cm = _gr_mle_cov(m)
+        zc = float(stats.norm.ppf(0.975))
+        by_term = {labels[j]: j for j in range(len(names))}
+        for e_ in est:
+            j = by_term[e_['term']]
+            se = math.sqrt(Cm[j, j]) if np.isfinite(Cm[j, j]) and Cm[j, j] > 0 else None
+            chi = (e_['estimate'] / se) ** 2 if se else None
+            e_.update({'se': se, 'chisq': chi, 'p': float(stats.chi2.sf(chi, 1)) if chi is not None else None,
+                       'lower': e_['estimate'] - zc * se if se else None, 'upper': e_['estimate'] + zc * se if se else None})
+    # the effects with a nonzero term (Make Model and Run Model take them), by their place among the model's effects
+    out_active = [i for i, e_ in enumerate(d.effects) if any(abs(m['b_jmp'][names.index(t)]) > 1e-12 for t in e_.get('terms', []) if t in names)]
+    code = _gr_code(m, table, table_name, rows)
     out = {'model': model, 'summary': summary, 'path': path, 'best': m['best'], 'chosen': ch, 'estimates': est, 'scaled': scaled,
-           'factors': _factors(d), 'key': m['key'],
+           'factors': _factors(d), 'key': m['key'], 'active': out_active,
            'diag': {**rowsets, 'actual': m['y'], 'predicted': pred, 'residual': m['y'] - pred, 'set': m['sets']},
-           'notes': notes, 'code': _gr_code(m, table, table_name, rows)}
+           'notes': notes, 'code': code}
+    if R.get('mle'):
+        fam = {'binomial': 'sm.families.Binomial()', 'poisson': 'sm.families.Poisson()'}.get(S['dist'])
+        out['code'] = code + '\n' + ('fo = sm.GLM(y[train], X[train], family=' + fam + ', var_weights=w[train]).fit()' if fam else
+                                     'fo = sm.WLS(y[train], X[train], weights=w[train]).fit()') + \
+            '   # the same fit on the original predictors: its standard errors\nprint(fo.params, fo.bse)'
+    if S['dist'] == 'binomial' and S['info'].get('levels'):
+        out['fit_report'] = _gr_fit_report(m, code, crit, bool(O['validation']) and not fcol)
     out['plot_code'] = _genreg_plots(m, table, rows, table_name, out)
     return out
+
+
+def _gr_mle_cov(m):
+    """The covariance of a Maximum Likelihood fit's estimates on the original
+    predictors (JMP's intercept at x = 0), from its training rows: the inverse
+    information, for the normal times SSE/(rows - parameters) (statsmodels'
+    GLM and WLS); the columns the fit leaves out (constant in the training
+    rows) have none."""
+    R, S = m['path'], m['path']['S']
+    rows = R['train']
+    names, ic, cols = m['names'], S['ic'], S['cols']
+    use = [ic] + [c for k, c in enumerate(cols) if S['live'][k]]
+    X = m['X'].to_numpy(float)[rows]
+    y, w = S['y'][rows], S['w'][rows]
+    eta = X @ m['b']
+    if S['dist'] == 'normal':
+        W = w
+        scale = float(np.sum(w * (y - eta) ** 2)) / max(int(rows.sum()) - len(use), 1)
+    else:
+        W = w * _gr_var(S['dist'], _gr_mu(S['dist'], eta))
+        scale = 1.0
+    A = X[:, use]
+    C = np.full((len(names), len(names)), np.nan)
+    try:
+        C[np.ix_(use, use)] = np.linalg.inv(A.T @ (A * W[:, None])) * scale
+    except np.linalg.LinAlgError:
+        return C
+    T = np.eye(len(names))
+    for t, mean in getattr(m['d'], 'centered_main', {}).items():
+        if t in names:
+            T[ic, names.index(t)] = -mean
+    Cz = np.where(np.isfinite(C), C, 0.0)
+    out = T @ Cz @ T.T
+    out[~np.isfinite(np.diag(C)), :] = np.nan
+    return out
+
+
+def _gr_fit_report(m, code, crit, column_sets):
+    """predictive.report of a binomial fit's probabilities by set (the Model
+    Summary's sets): the confusion matrices, ROC and lift curves and the
+    Decision Threshold (WP3's), the target level first, as the fit models it.
+    The code: the report's own, then each row's level and probabilities."""
+    S = m['path']['S']
+    Q = predictive.Prepared()
+    spec = m['spec']
+    Q.table, Q.y, Q.kind = m['tid'], spec['y'][0], 'categorical'
+    Q.index = np.asarray(m['d'].df.index, dtype=int)
+    lv = S['info']['levels']
+    Q.levels = [v.item() if hasattr(v, 'item') else v for v in lv]
+    Q.labels = [_lvl(v) for v in lv]
+    Q.target = np.where(S['y'] == 1, 0, 1).astype(int)
+    Q.sets = np.asarray(m['sets'], dtype=int)
+    Q.w = np.asarray(S['w'], dtype=float) if (spec.get('weight') or spec.get('freq')) else None
+    Q.freq = None if not spec.get('freq') else _col_values(m['tid'], spec['freq'], Q.index)
+    Q.spec = {'weight': spec.get('weight'), 'freq': spec.get('freq'), 'validation': spec.get('validation'), 'portion': 0.0, 'seed': None}
+    p = _gr_mu('binomial', m['X'].to_numpy(float) @ m['b'])
+    fitted = np.column_stack([p, 1 - p])
+    head = [code,
+            f'p_ = 1 / (1 + np.exp(-np.clip(e, -{_GR_ETA}, {_GR_ETA})))',
+            'fitted = np.column_stack([p_, 1 - p_])   # each row\'s probabilities: the target level, the other',
+            'y = np.where(y == 1, 0, 1)   # each row\'s level: 0 the target']
+    if crit in ('kfold', 'loo'):
+        head.append('sets = np.where(train, 0, np.where(valid, 1, -1))   # the final model\'s fold: Training and Validation')
+    elif not column_sets and crit in ('aicc', 'bic'):
+        head.append('sets = np.zeros(len(d), dtype=int)')
+    rep_ = predictive.report(Q, fitted, roc_curves=True, head='\n'.join(head))
+    if rep_.get('threshold'):
+        rep_['threshold']['target'] = 0
+    return rep_
 
 
 # ---------------------------------------------------------------------------
@@ -5108,7 +6190,7 @@ def _gee_model(tid, rows, spec):
         raise ValueError(f'{ys[0]} is the Y: it cannot also be the Subject, Time, Subgroup or Offset')
     if tcol and data.meta(tid, tcol).get('dataType') != 'numeric':
         raise ValueError(f'Time must be numeric: {tcol} is character')
-    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=extra)
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=extra, center=spec.get('center', True))
     if tcol:
         # statsmodels' AR(1) working correlation counts positions within a
         # subject: its rows go in time order (a stable sort keeps ties as they are)
@@ -5378,13 +6460,13 @@ def _gee_code(m, table, table_name, rows, compare=False, qic_scale=None, extra_i
 @api('fitmodel.gee')
 def gee(table, y, effects=(), rows=None, subject=None, time=None, subgroup=None, weight=None, freq=None, offset=None, no_intercept=False,
         dist='normal', link=None, target=None, corr='exchangeable', cov='robust', scale=None, scale_value=None, nb_alpha=None, var_power=None,
-        alpha=0.05, table_name='data'):
+        alpha=0.05, center=True, table_name='data'):
     """Generalized Estimating Equations (statsmodels' GEE): the marginal model
     of rows grouped by a Subject, with a working correlation within the
     subjects and robust (sandwich), naive or bias-reduced standard errors."""
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, offset=offset, no_intercept=no_intercept, dist=dist, link=link, target=target,
                  subject=subject, time=time, subgroup=subgroup, corr=corr, cov=cov, scale=scale, scale_value=scale_value, nb_alpha=nb_alpha,
-                 var_power=var_power)
+                 var_power=var_power, center=center)
     m = _gee_model(table, rows, spec)
     d, res = m['d'], m['res']
     mod = res.model
@@ -5552,7 +6634,7 @@ def _diag_rows(*rows):
 @api('fitmodel.regdiag')
 def regdiag(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, tests=(), reset_power=3, bg_lags=None,
             gq_sort='predicted', gq_drop=0.0, gq_alt='increasing', rainbow_frac=0.5, rainbow_order='leverage', hc_order='row',
-            table_name='data'):
+            validation=None, center=True, table_name='data'):
     """Specification and residual tests of a least squares fit, from
     statsmodels.stats.diagnostic and stattools: heteroscedasticity
     (Breusch–Pagan, White, Goldfeld–Quandt), the functional form (RESET,
@@ -5562,7 +6644,7 @@ def regdiag(table, y, effects=(), rows=None, weight=None, freq=None, no_intercep
     import statsmodels.api as sm
     from statsmodels.stats import diagnostic as dg
     from statsmodels.stats.stattools import jarque_bera, omni_normtest
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     m = _ls_model(table, rows, spec)
     d, res = m['d'], m['res']
     weighted = d.weights is not None
@@ -5943,7 +7025,7 @@ def _iv_model(tid, rows, spec):
     ccol = rob['cluster'] if rob and rob['type'] == 'cluster' else None
     if ccol and ccol in ys:
         raise ValueError(f'{ccol} is the Y: cluster the standard errors by another column')
-    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=inst + ([ccol] if ccol else []))
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], extra=inst + ([ccol] if ccol else []), center=spec.get('center', True))
     if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
         raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Instrumental Variables need a continuous Y')
     X = _matrix(d)
@@ -6158,13 +7240,13 @@ def _iv_tests(m, first):
 
 @api('fitmodel.iv')
 def iv(table, y, effects=(), endog=(), instruments=(), rows=None, weight=None, freq=None, no_intercept=False, alpha=0.05, robust=None,
-       ols=False, table_name='data'):
+       ols=False, center=True, table_name='data'):
     """Instrumental Variables: two-stage least squares (statsmodels' IV2SLS)
     with the first stages, the weak-instrument statistics, the
     Durbin-Wu-Hausman endogeneity test and Sargan's (Hansen's J)
     overidentification test; OLS beside it when asked."""
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, robust=robust, endog=endog,
-                 instruments=instruments)
+                 instruments=instruments, center=center)
     m = _iv_model(table, rows, spec)
     d, res, R = m['d'], m['res'], m['R']
     names = m['names']
@@ -6367,7 +7449,7 @@ def _qr_base(tid, rows, spec):
     if any(e['random'] for e in effs):
         raise ValueError('Quantile Regression takes fixed effects only: take the Random Effect attribute off the effects')
     tau, cov, kernel, bw = _qr_opts(spec)
-    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'])
+    d = _design(tid, ys[0], effs, rows, None, None, not spec['no_intercept'], center=spec.get('center', True))
     if isinstance(d.df[d.y_alias].dtype, pd.CategoricalDtype):
         raise ValueError(f'{ys[0]} is {data.meta(tid, ys[0]).get("modelingType")}: Quantile Regression needs a continuous Y')
     X = _matrix(d)
@@ -6447,14 +7529,14 @@ def _qr_taus(taus):
 
 @api('fitmodel.quantreg')
 def quantreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, tau=0.5, qr_cov='robust', kernel='epa',
-             bandwidth='hsheather', taus=None, process=True, alpha=0.05, table_name='data'):
+             bandwidth='hsheather', taus=None, process=True, alpha=0.05, center=True, table_name='data'):
     """Quantile Regression (statsmodels' QuantReg): the estimates at tau, the
     Koenker-Machado pseudo RSquare, the quantile process (each coefficient
     over a list of quantiles, with the OLS estimate beside it) and, for
     one continuous factor, the fitted lines of several quantiles."""
     import statsmodels.api as sm
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, tau=tau, qr_cov=qr_cov, kernel=kernel,
-                 bandwidth=bandwidth)
+                 bandwidth=bandwidth, center=center)
     m = _qr_model(table, rows, spec)
     d, res, V = m['d'], m['res'], m['V']
     tau = m['tau']
@@ -6608,7 +7690,7 @@ def _rr_order(tid, d, order_by):
 
 @api('fitmodel.recursive')
 def recursive(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, order_by=None, alpha=0.05, conf=0.05,
-              window=None, rolling=False, table_name='data'):
+              window=None, rolling=False, validation=None, center=True, table_name='data'):
     """Recursive least squares (statsmodels' RecursiveLS) of the least squares
     model with the rows taken one at a time, in the table's order or sorted
     by a column: the recursive estimates with their bands, the CUSUM and
@@ -6616,7 +7698,7 @@ def recursive(table, y, effects=(), rows=None, weight=None, freq=None, no_interc
     bounds (alpha: 0.01, 0.05 or 0.10); rolling least squares (statsmodels'
     RollingOLS) over windows of a number of rows when asked."""
     from statsmodels.regression.recursive_ls import RecursiveLS
-    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept)
+    spec = _spec(y=y, effects=effects, weight=weight, freq=freq, no_intercept=no_intercept, validation=validation, center=center)
     if freq:
         raise ValueError('Recursive and rolling fits take the rows one at a time: remove Freq (a Weight is fine)')
     m = _ls_model(table, rows, spec)
@@ -6780,7 +7862,7 @@ def _rr_plots(m, out, table, table_name, rows, order_by, conf, window, weight, a
     yfrom = min(npts - 1, max(2 * out['k'], round(0.05 * npts)))
     codes = {'recursive': []}
     for j, term in zip(order, terms):
-        c = rec + [f'j = {j}   # {term}', 'est = B[j, d0:]; se = np.sqrt(np.maximum(C[j, j, d0:], 0))']
+        c = rec + [f'j = {j}   # {one_line(term)}', 'est = B[j, d0:]; se = np.sqrt(np.maximum(C[j, j, d0:], 0))']
         c += band('est', 'est - z * se', 'est + z * se', 't', f'{term} recursive estimate', term, xt, 'full[j]', yfrom)
         codes['recursive'].append('\n'.join(c))
     bounds = (['a = 0.850; up = a * np.sqrt(len(y) - d0) + 2 * a * (t - d0) / np.sqrt(len(y) - d0); lo = -up   # Brown, Durbin and Evans\'s 10% bound'] if conf == 0.1
@@ -6804,7 +7886,7 @@ def _rr_plots(m, out, table, table_name, rows, order_by, conf, window, weight, a
                        f'ends = np.arange({int(w)}, len(y) + 1)   # each window at its last observation']
         codes['rolling'] = []
         for j, term in zip(order, [r['term'] for r in ro['terms']]):
-            c = roll + [f'j = {j}   # {term}', f'est = P[{int(w) - 1}:, j]; se = np.sqrt(np.maximum(Cv[{int(w) - 1}:, j, j], 0)); tj = tc[{int(w) - 1}:]']
+            c = roll + [f'j = {j}   # {one_line(term)}', f'est = P[{int(w) - 1}:, j]; se = np.sqrt(np.maximum(Cv[{int(w) - 1}:, j, j], 0)); tj = tc[{int(w) - 1}:]']
             c += band('est', 'est - tj * se', 'est + tj * se', 'ends', f'{term} rolling estimate', term,
                       f'Last observation of the window ({"sorted by " + order_by if order_by else "row order"})', 'full[j]')
             codes['rolling'].append('\n'.join(c))

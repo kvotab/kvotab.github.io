@@ -42,7 +42,7 @@ import warnings
 
 from . import jsl
 from .registry import api
-from .util import clean
+from .util import clean, one_line
 
 # Python's operator precedence, loose to tight
 P_IF, P_OR, P_AND, P_NOT, P_CMP, P_BOR, P_BXOR, P_BAND, P_SHIFT, P_ADD, P_MUL, P_UNARY, P_POW, P_ATOM = range(1, 15)
@@ -315,7 +315,11 @@ class _Core:
             ln, text, alone = self.comments[self.ci]
             self.ci += 1
             if text and alone and not text.startswith('!'):
-                self.emit(f'# {text}')
+                # a line of its own for each line of the comment: Python ends a
+                # line at \r too, where JSL does not, and no text may end the
+                # comment and become code
+                for piece in re.split(r'\r\n|\r|\n', text):
+                    self.emit(f'# {one_line(piece)}' if piece.strip() else '#')
 
     def not_converted(self, node, why, severity='warn'):
         src = self.p.source(node)
@@ -5063,7 +5067,7 @@ class _Tables(_Stmt):
         a = m.args[0] if m.args else None
         if a is None or a.kind != 'str':
             raise Unconvertible('Set Name() with a name made while the script runs', node)
-        self.emit(f'# the table {fr.var} is now called "{a.value}"')
+        self.emit(f'# the table {fr.var} is now called "{one_line(a.value)}"')
         fr.name = a.value
         return E(lit(a.value), P_ATOM, 'str')
 
@@ -6380,6 +6384,9 @@ class _Platforms(_Tables):
                 o['emphasis'] = {'effectleverage': 'leverage', 'effectscreening': 'screening', 'minimalreport': 'minimal'}.get(v, 'leverage')
             elif k == 'nointercept':
                 o['noIntercept'] = truth(a)
+            elif k == 'nobounds':
+                # JMP's Unbounded Variance Components (mixed.py): NoBounds(1) lets a variance component go below zero
+                o['mxUnbounded'] = truth(a)
             elif k == 'targetlevel':
                 v = next((s.value for s in a.args if s.kind in ('str', 'num')), None)
                 if v is not None:
@@ -6408,7 +6415,8 @@ class _Platforms(_Tables):
             mt = self.mt_of(fr, ys[0])
             o['personality'] = 'nominal' if mt == 'nominal' else ('ordinal' if mt == 'ordinal' else 'standard')
         step['extra'] = {'effects': effects}
-        if any(e['random'] for e in effects) and o['personality'] not in ('standard', 'mixed'):
+        # random effects: Standard Least Squares (REML), Mixed Model, and a binomial or Poisson GLM (a generalized linear mixed model)
+        if any(e['random'] for e in effects) and o['personality'] not in ('standard', 'mixed') and not (o['personality'] == 'glm' and o.get('dist') in ('binomial', 'poisson')):
             self.note(whole.line, 'warn', f'Fit Model: the page\'s {o["personality"]} personality takes fixed effects only; the random effects (&Random) are kept in the effects, and the page will ask for them to be taken off.', once=('fmrandom', whole.line))
         for r in run:
             for s in r.args:

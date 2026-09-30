@@ -9,7 +9,7 @@ launch dialogs have their roles (no Weight or Freq for K Nearest Neighbors,
 a nominal or ordinal Y for Naive Bayes) and options, and refuse bad values.
 K Nearest Neighbors: the misclassification rates of K = 1 and K = 5 are the
 ones computed here by brute force on the standardized factors (a training
-row not its own neighbour, a tied vote to the first level), the best K is
+row not its own neighbour, a tied vote at random from the report's seed), the best K is
 marked, a click on a line of the table or a point of the plot shows another
 K, Save Predicteds agrees with the Measures of Fit and Save Near Neighbor
 Rows with the neighbours found here; a continuous response gives RASE. Naive
@@ -20,7 +20,19 @@ the columns of X, the saved most likely levels agree with Fit Details, the
 decision boundary's points select their rows (one by a real mouse click) and
 table selections highlight them, the tuning design and the linear kernel
 come from the red triangle, a continuous response saves predictions and
-residuals. Every red triangle opens; the profiler draws and answers a new
+residuals. The shared parts (decisions()): the Decision Threshold's numbers
+against its code and predictive.py, its stacked bars of the classifications,
+the threshold typed, slid, dragged with the mouse and clicked, Set Threshold
+to, the target level, a true event rate, Save Threshold Formula; By groups,
+each group's own threshold and target level (typed in one, the other left
+alone; its confusion matrices; Save Threshold Formula and Save Profit
+Columns within the group on its own probabilities; a project, and an older
+one with a single threshold); the ROC Table; the decile table; the Naive
+Model; a Profit Matrix with its table, code, Most Profit and Save Profit
+Columns; Group Metrics with equal false positive rates and Save Decision
+Column; a project; the mosaic's links; Distance Weights and Standardize;
+Score Rows into another table; Naive Bayes' Save Prediction Formula, live;
+the dark theme and phone width. Every red triangle opens; the profiler draws and answers a new
 value; Bootstrap reruns the platforms headless; By gives one analysis per
 group with combined tables; Redo and a project keep the options; every (i)
 has a topic and every Help link a target; the launch dialogs' (i) give every
@@ -40,7 +52,10 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import sys
+
+import numpy as np
 
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
 from test_charts import GRAPHS_JS
@@ -80,8 +95,10 @@ PICK = '''
   await new Promise(r => setTimeout(r, 60));
   let done = null;
   for (let i = 0; i < path.length; i++) {
+    // the last menu open that has the item (a submenu the pointer happens to open is passed over)
     const menus = [...document.querySelectorAll('.sm-menu')];
-    const m = menus[menus.length - 1];
+    const has = (mm) => [...mm.querySelectorAll('button')].some(x => x.querySelector('.sm-label') && x.querySelector('.sm-label').textContent === path[i]);
+    const m = [...menus].reverse().find(has) || menus[menus.length - 1];
     const b = [...m.querySelectorAll('button')].find(x => x.querySelector('.sm-label').textContent === path[i]);
     if (!b) throw new Error('no item ' + path[i] + ' in ' + [...m.querySelectorAll('.sm-label')].map(x => x.textContent).join(' | '));
     if (i === path.length - 1 && wait) done = new Promise(res => rep.on('done', res));
@@ -162,7 +179,7 @@ STATE = '''
 
 # K nearest neighbours by brute force on the Orchard table: the continuous
 # factors standardized by the training rows (n - 1), skin a 0/1 column per
-# level, a training row not its own neighbour, a tied vote to the first level.
+# level, a training row not its own neighbour; a tied vote is broken in Python here, by the seed.
 BRUTE = '''
 (() => {
   const t = SM.app.tables.find(t => t.name === 'Orchard');
@@ -185,7 +202,9 @@ BRUTE = '''
     return wrong / rows.length;
   };
   const val = [...Array(n).keys()].filter(i => v[i] === 1).slice(0, 25);
-  return { t1: rate(0, 1), v1: rate(1, 1), t5: rate(0, 5), v5: rate(1, 5), first: val.map(i => [i, near(i, 1)[0] + 1]) };
+  // the votes of the 5 nearest (a tie is broken in Python, by the report's seeded numbers)
+  const votes5 = (set) => [...Array(n).keys()].filter(i => v[i] === set).map(i => { const nb = near(i, 5); return [i, L.map(l => nb.filter(j => y[j] === l).length), L.indexOf(y[i])]; });
+  return { t1: rate(0, 1), v1: rate(1, 1), t5: rate(0, 5), v5: rate(1, 5), first: val.map(i => [i, near(i, 1)[0] + 1]), votes5t: votes5(0), votes5v: votes5(1) };
 })()
 ''' % (W, S, F)
 
@@ -359,9 +378,79 @@ async def form_help(page, opener, fields, name):
     return f
 
 
+def decision_compare(check, lab, g, F):
+    """The graphs of the shared Decision Threshold, lift and group parts (smui-predict.js), against their code's
+    figure: False when the graph is not one of them. Used by test-ui-screening.py too."""
+    t = g['label'] or ''
+    ax = F['axes'][0]
+    if t.startswith('Fitted probabilities'):
+        pts = [p for tr in g['traces'] if 'markers' in (tr.get('mode') or '') for p in UP.curve_pts(tr)]
+        check.near(f'{lab}: every row at its probability, jittered in its actual level\'s band', UP.maxdiff(UP.flat(UP.scatter_pts(ax)), UP.flat(pts)), 0, 1e-12)
+        cut = g['shapes'][0]['x0']
+        check(f'{lab}: the threshold dashed', any(ln['x'][:2] == [cut, cut] and ln['ls'] == '--' for ln in ax['lines']), True)
+        UP.check_titles(check, lab, g, F)
+        return True
+    if t.startswith('Classification at the threshold'):
+        # a bar per actual level (the first at the bottom), cut into the shares called each level, stacked in the levels' order
+        bars = [tr for tr in g['traces'] if tr.get('type') == 'bar']
+        want, left = [], [0.0] * len(bars[0]['x'])
+        for tr in bars:
+            want += [(round(left[k], 9), round(v, 9)) for k, v in enumerate(tr['x'])]
+            left = [a_ + b_ for a_, b_ in zip(left, tr['x'])]
+        check(f'{lab}: each actual level\'s bar cut into the shares called each level', [(round(q['x'], 9), round(q['w'], 9)) for q in ax['bars']], want)
+        check(f'{lab}: the actual levels up the axis, the levels called in the legend, their colours', ([x for x in ax['yticklabels'] if x], F['legend'] or ax['legend'], sorted({q['fc'][:7] for q in ax['bars']})),
+              (bars[0]['y'], [tr['name'] for tr in bars], sorted({tr['mcolor'] for tr in bars})))
+        UP.check_titles(check, lab, g, F)
+        return True
+    if ' by threshold' in t:
+        # every curve at every threshold, its gaps (a measure with nothing to divide) where the page has them
+        ok = [UP.find_line(ax, tr['x'], tr['y'], rel=1e-12, abs_=1e-12) is not None for tr in g['traces'] if 'lines' in (tr.get('mode') or '') and len(tr.get('x') or []) > 2]
+        check(f'{lab}: every curve at every threshold (gaps where a measure has nothing to divide)', (len(ok) > 0, ok), (True, [True] * len(ok)))
+        cut = g['shapes'][0]['x0']
+        check(f'{lab}: the threshold in use dashed', any(ln['x'][:2] == [cut, cut] and ln['ls'] == '--' for ln in ax['lines']), True)
+        names = [tr['name'] for tr in g['traces'] if tr.get('showlegend') is not False and tr.get('name')]
+        if len(names) > 1:
+            check(f'{lab}: the legend', F['legend'] or ax['legend'], names)
+        UP.check_titles(check, lab, g, F)
+        return True
+    if t.startswith('Profit ') or t.startswith('Gains '):
+        tr0 = [tr for tr in g['traces'] if tr.get('mode') == 'lines' and len(tr.get('x') or []) > 2]
+        ok = []
+        for i, tr in enumerate(tr0):
+            ln = next((q for q in ax['lines'] if q['label'] == tr['name']), None) if tr.get('name') else None
+            ln = ln or (ax['lines'][i] if i < len(ax['lines']) else None)
+            ok.append(bool(ln) and UP.subset_in_order(UP.curve_pts(tr), list(zip(ln['x'], ln['y'])), tol=1e-9))
+        check(f'{lab}: every curve through the page\'s points', (len(ok) > 0, ok), (True, [True] * len(ok)))
+        ref = [tr for tr in g['traces'] if tr.get('mode') == 'lines' and len(tr.get('x') or []) == 2]
+        check(f'{lab}: the dotted reference', all(UP.find_line(ax, tr['x'], tr['y'], rel=1e-9) is not None for tr in ref), True)
+        UP.check_titles(check, lab, g, F)
+        return True
+    if t.startswith('Mosaic '):
+        want = []
+        for tr in g['traces']:
+            if tr.get('type') != 'bar':
+                continue
+            for c, w_, h, b0 in zip(tr['x'], tr['width'], tr['y'], tr['base']):
+                want.append((round(c - w_ / 2, 9), round(b0, 9), round(w_, 9), round(h, 9)))
+        got = [(round(q['x'], 9), round(q['y'], 9), round(q['w'], 9), round(q['h'], 9)) for q in ax['bars']]
+        check(f'{lab}: each actual level\'s bar cut by the shares called', sorted(got), sorted(want))
+        check(f'{lab}: the levels in the legend', F['legend'], [tr['name'] for tr in g['traces'] if tr.get('type') == 'bar'])
+        UP.check_titles(check, lab, g, F)
+        return True
+    if t.startswith('False positive and negative rates by'):
+        want = [v for tr in g['traces'] if tr.get('type') == 'bar' for v in tr['y']]
+        check.near(f'{lab}: each group\'s false positive and negative rates', UP.maxdiff([q['h'] for q in ax['bars']], want), 0, 1e-12)
+        check(f'{lab}: the groups, the legend', ([x for x in ax['xticklabels'] if x], ax['legend']), (g['traces'][0]['x'], [tr['name'] for tr in g['traces']]))
+        UP.check_titles(check, lab, g, F)
+        return True
+    return False
+
+
 def learners_compare(lab, g, F):
     t = g['label']
     ax = F['axes'][0]
+    if decision_compare(check, lab, g, F):
+        return
     if t.endswith(' by K'):
         UP.check_lines(check, lab, g, F)
         check(f'{lab}: the best K named', [x['s'].strip() for x in ax['texts']], g['annotations'])
@@ -427,6 +516,580 @@ async def charts(page):
     check('charts: the blocks ran and drew the page\'s graphs', total >= 25, True)
 
 
+# ---- the shared Decision Threshold, ROC Table, gains, deciles, profit and Group Metrics (smui-predict.js) ----------
+PYDIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'py'))
+if PYDIR not in sys.path:
+    sys.path.insert(0, PYDIR)
+
+
+async def run_json(page, code, expr, table_js="SM.app.tables.find((t) => t.name === 'Orchard')"):
+    """A code block run in the page's own Python (the notebook's runner), and the value of expr after it, as JSON."""
+    full = f'{code}\nimport json as _json\nprint("SMUI-JSON " + _json.dumps({expr}, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o)))\n'
+    out = await page.ev(f'__gr.run({json.dumps(full)}, {table_js})', timeout=600)
+    if isinstance(out, str):
+        return None, out
+    text = ''.join(o.get('text', '') for o in out.get('outputs') or [] if o.get('type') == 'stream' and o.get('name') == 'stdout')
+    for line in text.split('\n'):
+        if line.startswith('SMUI-JSON '):
+            return json.loads(line[len('SMUI-JSON '):]), None
+    errs = [f"{o.get('ename')}: {o.get('evalue')}" for o in out.get('outputs') or [] if o.get('type') == 'error']
+    return None, (errs[0] if errs else text[-400:])
+
+
+# The last report's fit (the engine's result, from the report's cache) and the page's own numbers at a threshold:
+# SM.predict.thresholdState over the rows' probabilities, as the Decision Threshold computes them.
+FIT = '''
+(async (fn) => {
+  const rep = SM.app.reports[SM.app.reports.length - 1];
+  const e = [...rep.cache.entries()].filter(([k]) => k.startsWith(fn + '\\u0001')).pop();
+  return e ? await e[1] : null;
+})
+'''
+
+STATE_AT = '''
+(async (fn, lv, cut, rate) => {
+  const r = await (%s)(fn);
+  const D = r.fit ? r.fit.threshold : r;
+  const S = SM.predict.thresholdState(D, lv, rate);
+  return D.sets.map((set) => ({ set, ...S.at(D.models[0], set, cut) }));
+})
+''' % FIT
+
+# The text of the report tables under an outline (the first with that title), each as rows of cells, header first.
+TABLES = '''
+((title) => {
+  const rep = SM.app.reports[SM.app.reports.length - 1];
+  const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.querySelector('h2, h3, h4').textContent.trim() === title);
+  if (!head) return null;
+  const body = head.parentElement.querySelector(':scope > .sm-ob-body');
+  return [...body.querySelectorAll(':scope > table.sm-rt, :scope > * table.sm-rt')].filter(t => t.closest('.sm-ob') === head.parentElement).map(t => ({ caption: t.querySelector('caption') ? t.querySelector('caption').textContent : '', rows: [...t.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim())) }));
+})
+'''
+
+CODES = '''
+((title) => {
+  const rep = SM.app.reports[SM.app.reports.length - 1];
+  const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.querySelector('h2, h3, h4').textContent.trim() === title);
+  if (!head) return [];
+  // the outline's own code blocks first (its tables'), then those beside its graphs (not a sub-outline's)
+  const body = head.parentElement.querySelector(':scope > .sm-ob-body');
+  const own = [...body.querySelectorAll(':scope > details.sm-code code')];
+  const nested = [...body.querySelectorAll('details.sm-code code')].filter(c => c.closest('.sm-ob') === head.parentElement && !own.includes(c));
+  return [...own, ...nested].map(c => c.textContent);
+})
+'''
+
+
+def as_rows(tbl):
+    """A report table's text rows as dicts by the header's labels."""
+    head = tbl['rows'][0]
+    return [dict(zip(head, r)) for r in tbl['rows'][1:]]
+
+
+def near4(text, v, tol=5.01e-5):
+    """A table cell shown to 4 decimals (or to 7 figures) against the value."""
+    if v is None:
+        return text == '.'
+    try:
+        return abs(num(text) - v) <= max(tol, 1e-6 * abs(v))
+    except ValueError:
+        return False
+
+
+METRIC_COLS = [('accuracy', 'Accuracy'), ('misclassification', 'Misclassification Rate'), ('sensitivity', 'Sensitivity'), ('specificity', 'Specificity'), ('fpr', 'False Positive Rate'),
+               ('fnr', 'False Negative Rate'), ('precision', 'Precision'), ('f1', 'F1 Score'), ('mcc', 'MCC')]
+
+
+async def decisions(page):
+    """The shared parts of every classifier (smui-predict.js) on K Nearest Neighbors and Naive Bayes: the Decision
+    Threshold (the page's counts and measures against its code's, run in the page's own Python, and against
+    predictive.py here; the threshold typed, slid, dragged with the mouse, clicked on a curve, set to the best
+    MCC; the target level; a true event rate; Save Threshold Formula), the ROC Table and the best point, the
+    gains and decile table, the Naive Model and the optional measures, a Profit Matrix (the profit table, its
+    code, Set Threshold to Most Profit, Save Profit Columns), Group Metrics (the engine's, its code, equal false
+    positive rates by the menu, Save Decision Column), the mosaic's links, Score Rows into another table, Naive
+    Bayes' Save Prediction Formula, KNN's Standardize and Distance Weights, a project, By groups (each group's own
+    threshold and target level, its saved formulas within the group, a project and an older one), the stacked
+    classification bars, the dark theme and phone width."""
+    from smui import predictive as pv
+    await page.ev(GRAPHS_JS)
+    await page.ev(UP.PM_JS)
+    tbl = "SM.app.tables.find((t) => t.name === 'Orchard')"
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')
+    val = {'validation': ['Validation']}
+    opts = {'k': 10, 'threshold': True, 'roc': True, 'rocTable': True, 'lift': True, 'gains': True, 'liftTable': True, 'naive': True, 'seed': '5'}
+    r = await page.ev(open_report_js('knn', {'y': ['grade'], 'x': XS, **val}, opts), timeout=900)
+    check('decisions: K Nearest Neighbors on grade with the Decision Threshold, the ROC Table, gains and deciles: no errors, the outlines',
+          (r['errors'], all(t in r['outlines'] for t in ('Decision Threshold', 'Metrics by Threshold', 'ROC Table', 'Cumulative Gains', 'Decile Lift Table'))), ([], True))
+    fit = (await page.ev(f'({FIT})("knn.fit")'))['fit']
+    D = fit['threshold']
+    check('decisions: the engine sends the Decision Threshold\'s data: two levels, the second the target, every row\'s probability', (D['levels'], D['target'], len(D['models'][0]['p']) == len(D['points']['rows'])), (['export', 'local'], 1, True))
+
+    async def page_state(lv, cut, rate=None):
+        return await page.ev(f'({STATE_AT})("knn.fit", {lv}, {cut}, {json.dumps(rate)})')
+
+    # (1) the page's numbers at 0.5: the tables' text, predictive.py's cut tables here, and the code in the page
+    st = await page_state(1, 0.5)
+    y = np.asarray(D['points']['actual'])
+    p1 = np.asarray(D['models'][0]['p'])
+    sets = np.asarray(D['points']['set'])
+    native = []
+    for s_ in D['sets']:
+        m = sets == pv.SETS.index(s_)
+        native.append({'set': s_, **pv.rates_at(*pv.counts_at(pv.cut_table(p1[m], y[m] == 1), 0.5))})
+    check('decisions: the page\'s counts and measures at 0.5 are predictive.py\'s (cut_table, counts_at, rates_at), every set, exactly', st == json.loads(json.dumps(native)), True)
+    tabs = await page.ev(f'({TABLES})("Decision Threshold")')
+    mt = next(t for t in tabs if t['caption'].startswith('local called when'))
+    shown = as_rows(mt)
+    okt = [all(near4(row[lab], s_[key]) for key, lab in METRIC_COLS) for row, s_ in zip(shown, st)]
+    check('decisions: the metrics table shows them (Accuracy … MCC, each set)', ([row['Set'] for row in shown], okt), (D['sets'], [True] * len(D['sets'])))
+    cm = next(t for t in tabs if t['caption'] == 'Validation: count at the threshold')
+    vs = next(s_ for s_ in st if s_['set'] == 'Validation')
+    check('decisions: the validation confusion matrix at the threshold (rows actual, columns called)', [[num(c) for c in row[1:]] for row in cm['rows'][1:]], [[vs['tn'], vs['fp']], [vs['fn'], vs['tp']]])
+    bars = await page.ev('''(() => { const p = SM.app.reports.at(-1).plots.find(q => q.opts.title === 'Classification at the threshold Validation');
+      return p ? p.traces.map(t => ({ name: t.name, x: t.x, y: t.y, n: t.customdata })) : null; })()''')
+    t0_, t1_ = vs['tn'] + vs['fp'], vs['fn'] + vs['tp']
+    want_b = [[vs['tn'] / t0_, vs['fn'] / t1_], [vs['fp'] / t0_, vs['tp'] / t1_]]
+    check('decisions: Classification at the threshold (JMP\'s stacked bars) beside it: each actual level\'s bar cut into the shares called export and local, hovering the counts',
+          (bars and [b_['name'] for b_ in bars], bars and [b_['y'] for b_ in bars], bool(bars) and all(abs(a_ - w_) < 1e-15 for b_, ww in zip(bars, want_b) for a_, w_ in zip(b_['x'], ww)), bars and [b_['n'] for b_ in bars]),
+          (['called export', 'called local'], [['export', 'local']] * 2, True, [[vs['tn'], vs['fn']], [vs['fp'], vs['tp']]]))
+    codes = await page.ev(f'({CODES})("Decision Threshold")')
+    got, err = await run_json(page, codes[0], 'results')
+    check('decisions: the tables\' code block runs in the page and gives the page\'s numbers', (err, got is not None and all(all(pv_close(a_.get(k), b_[k]) for k in ('tp', 'fp', 'fn', 'tn', 'accuracy', 'sensitivity', 'specificity', 'precision', 'f1', 'mcc', 'fpr', 'fnr')) for a_, b_ in zip(got, st))), (None, True))
+
+    # (2) a threshold typed (real keys), the slider, a click on a curve, a drag of the dashed line with the mouse
+    await page.ev('''(() => { const rep = SM.app.reports.at(-1); const i = rep.body.querySelector('input[aria-label="Probability threshold"]'); i.focus(); i.select(); })()''')
+    for ch in '0.37':
+        await page.key(ch, text=ch)
+    await page.ev('(() => { window.__done = new Promise(res => SM.app.reports.at(-1).on("done", res)); return true; })()')
+    await page.key('Enter', code='Enter')
+    await page.ev('window.__done', timeout=120)
+    opt = await page.ev('SM.app.reports.at(-1).spec.options.dtCut')
+    tabs = await page.ev(f'({TABLES})("Decision Threshold")')
+    check('decisions: a threshold typed and Enter: the option and the tables\' caption', (opt, any(t['caption'] == 'local called when Prob[local] ≥ 0.37' for t in tabs)), (0.37, True))
+    r = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const s = rep.body.querySelector('input[aria-label="Probability threshold slider"]');
+      const d = new Promise(res => rep.on('done', res)); s.value = '0.62'; s.dispatchEvent(new Event('input')); s.dispatchEvent(new Event('change')); await d; return rep.spec.options.dtCut; })()''')
+    check('decisions: the slider moves it by 0.01', r, 0.62)
+    xy = await page.ev('''(async () => { const rep = SM.app.reports.at(-1);
+      await __gr.drawAll(rep);
+      const p = rep.plots.find(q => q.opts.title === 'Fitted probabilities Validation'); p.box.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 400));
+      const gd = p.box, L = gd._fullLayout, b = gd.getBoundingClientRect();
+      const x0 = b.left + L._size.l + L.xaxis.l2p(0.62), x1 = b.left + L._size.l + L.xaxis.l2p(0.3), y = b.top + L._size.t + L._size.h / 2;
+      return [x0, y, x1]; })()''')
+    await page.ev('(() => { window.__done = new Promise(res => SM.app.reports.at(-1).on("done", res)); window.__moved = false; return true; })()')
+    await page.mouse('mouseMoved', xy[0], xy[1])
+    await page.mouse('mousePressed', xy[0], xy[1])
+    for k in range(1, 11):
+        await page.mouse('mouseMoved', xy[0] + (xy[2] - xy[0]) * k / 10, xy[1])
+        await asyncio.sleep(0.03)
+    await page.mouse('mouseReleased', xy[2], xy[1])
+    await page.ev('Promise.race([window.__done, new Promise(r => setTimeout(r, 20000))])', timeout=60)
+    opt = await page.ev('SM.app.reports.at(-1).spec.options.dtCut')
+    check('decisions: the dashed line dragged with the mouse to 0.3 in the fitted-probability plot moves the threshold there', isinstance(opt, (int, float)) and abs(opt - 0.3) < 0.02, True)
+    r = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); await __gr.drawAll(rep);
+      const p = rep.plots.find(q => /^Measures by threshold Validation/.test(q.opts.title)); const d = new Promise(res => rep.on('done', res));
+      p.box.emit('plotly_click', { points: [{ x: 0.45, y: 0.5 }] }); await d; return rep.spec.options.dtCut; })()''')
+    check('decisions: a click on a curve moves the threshold to it', r, 0.45)
+
+    # (3) Set Threshold to ▸ Best MCC: the validation rows' distinct probability with the largest MCC, by brute force here
+    await page.ev(pick_js('Decision Threshold', ['Set Threshold to', 'Best MCC']))
+    opt = await page.ev('SM.app.reports.at(-1).spec.options.dtCut')
+    mv = sets == 1
+    cands = sorted(set(p1[mv].tolist()), reverse=True)
+    best = max(cands, key=lambda t_: (pv.rates_at(*pv.counts_at(pv.cut_table(p1[mv], y[mv] == 1), t_))['mcc'] or -9, t_))
+    mccs = [pv.rates_at(*pv.counts_at(pv.cut_table(p1[mv], y[mv] == 1), t_))['mcc'] or -9 for t_ in cands]
+    check('decisions: Set Threshold to ▸ Best MCC: the validation probability with the largest MCC (of equal ones the highest)', opt, cands[int(np.argmax(mccs))])
+
+    # (4) the target level, a true event rate: the page's numbers against the code's
+    await page.ev(pick_js('Decision Threshold', ['Target Level', 'export']))
+    await page.ev('(async () => { const rep = SM.app.reports.at(-1); const d = new Promise(res => rep.on("done", res)); rep.spec.options.dtCut = 0.4; rep.spec.options.dtTrueRate = 0.2; rep.run(); await d; })()')
+    st0 = await page_state(0, 0.4, 0.2)
+    codes = await page.ev(f'({CODES})("Decision Threshold")')
+    got, err = await run_json(page, codes[0], 'results')
+    tr_m = sets == 0
+    rho = float(np.sum(y[tr_m] == 0) / tr_m.sum())
+    a_, b_ = 0.2 / rho, 0.8 / (1 - rho)
+    p0 = 1 - p1
+    q0 = p0 * a_ / (p0 * a_ + (1 - p0) * b_)
+    native0 = [{'set': s_, **pv.rates_at(*pv.counts_at(pv.cut_table(q0[sets == pv.SETS.index(s_)], y[sets == pv.SETS.index(s_)] == 0), 0.4))} for s_ in D['sets']]
+    check('decisions: the target level export and a true event rate of 0.2: the probabilities rescaled, p a / (p a + (1 - p) b), before the threshold (the page, predictive.py here, and the code)',
+          (err, all(all(pv_close(x_[k], z_[k], 1e-9) for k in ('tp', 'fp', 'accuracy', 'mcc')) for x_, z_ in zip(st0, native0)), got is not None and all(all(pv_close(g_[k], x_[k]) for k in ('tp', 'fp', 'accuracy', 'mcc')) for g_, x_ in zip(got, st0))), (None, True, True))
+    # Save Threshold Formula: the probabilities saved first (the column was not there), then If(rescaled Prob >= cut, ...)
+    cols_ = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Decision Threshold', ['Save Threshold Formula'], false, 0);
+      for (let i = 0; i < 80 && t.columns.length < before + 3; i++) await new Promise(r => setTimeout(r, 100));
+      return t.columns.slice(before).map(c => ({{ name: c.name, formula: c.formula ? c.formula.expr : null, values: c.values }})); }})()''', timeout=300)
+    names = [c['name'] for c in cols_]
+    check('decisions: Save Threshold Formula saves the probabilities first, then the formula column', (names[:2], len(names), names[-1].startswith('Called grade')), (['Prob[export]', 'Prob[local]'], 3, True))
+    pe = np.array(cols_[0]['values'], dtype=float)
+    want = ['export' if (v * a_) / (v * a_ + (1 - v) * b_) >= 0.4 else 'local' for v in pe]
+    check('... a live If on Prob[export], rescaled to the true event rate, called at 0.4: every row', (cols_[-1]['formula'].startswith('If('), cols_[-1]['values'] == want), (True, True))
+    await page.ev('(async () => { const rep = SM.app.reports.at(-1); const d = new Promise(res => rep.on("done", res)); rep.spec.options.dtTrueRate = null; rep.spec.options.dtLevel = 1; rep.spec.options.dtCut = 0.5; rep.run(); await d; })()')
+
+    # (5) the ROC Table: a line per cut, the best starred, and the dot on the curve
+    tabs = await page.ev(f'({TABLES})("ROC Table")')
+    rt_v = next(t for t in tabs if t['caption'] == 'Validation: local')
+    nat = pv.roc_table(pv.cut_table(p1[mv], y[mv] == 1))
+    rows_ = as_rows(rt_v)
+    ok_rt = len(rows_) == len(nat) and all(near4(r_['1-Specificity'], q['fpr']) and near4(r_['Sensitivity'], q['sens']) and num(r_['True Pos']) == q['tp'] and num(r_['False Neg']) == q['fn'] and (r_[''] == '*') == q['best'] for r_, q in zip(rows_, nat))
+    check('decisions: the ROC Table of the validation rows: predictive.roc_table\'s lines, the largest Sens-(1-Spec) starred', (ok_rt, sum(1 for r_ in rows_ if r_[''] == '*')), (True, 1))
+    b_roc = next(c for c in fit['roc'] if c['set'] == 'Validation' and c['level'] == 'local')['best']
+    star = next(q for q in nat if q['best'])
+    check('... the dot on the ROC curve at that line', (abs(b_roc['fpr'] - star['fpr']) < 1e-12, abs(b_roc['tpr'] - star['sens']) < 1e-12), (True, True))
+    codes = await page.ev(f'({CODES})("ROC Table")')
+    got, err = await run_json(page, codes[0], '{k: v.to_dict("records") for k, v in roc_tables.items()}')
+    check('... its code block gives the same lines', (err, got is not None and len(got['Validation']) == len(nat) and all(abs(g_['sens'] - q['sens']) < 1e-12 and g_['best'] == q['best'] for g_, q in zip(got['Validation'], nat))), (None, True))
+
+    # (6) the decile table, the Naive Model and the optional measures
+    tabs = await page.ev(f'({TABLES})("Decile Lift Table")')
+    dv = as_rows(next(t for t in tabs if t['caption'] == 'Validation: local'))
+    want_d = next(c for c in fit['lift'] if c['set'] == 'Validation' and c['level'] == 'local')['deciles']
+    check('decisions: the decile lift table: ten parts, each part\'s N, N local, rate, lift, cumulative lift and gains as the engine\'s',
+          (len(dv), all(num(a_['N']) == b_['n'] and near4(a_['Lift'], b_['lift']) and near4(a_['Cumulative Gains'], b_['gains']) for a_, b_ in zip(dv, want_d))), (10, True))
+    codes = await page.ev(f'({CODES})("Decile Lift Table")')
+    got, err = await run_json(page, codes[0], '{k: v.to_dict("records") for k, v in deciles.items()}')
+    check('... its code block gives the same table', (err, got is not None and all(abs(g_['lift'] - b_['lift']) < 1e-12 and abs(g_['gains'] - b_['gains']) < 1e-12 for g_, b_ in zip(got['Validation'], want_d))), (None, True))
+    tabs = await page.ev(f'({TABLES})("Measures of Fit")')
+    mrows = as_rows(tabs[0])
+    naive = {q['set']: q for q in fit['naive']}
+    check('decisions: Naive Model (red triangle) adds a line per set, the training shares\' measures (Entropy RSquare 0 on the training rows)',
+          ([r_['Set'] for r_ in mrows][-3:], near4(next(r_ for r_ in mrows if r_['Set'] == 'Training (Naive)')['Entropy RSquare'], 0.0), near4(next(r_ for r_ in mrows if r_['Set'] == 'Validation (Naive)')['Misclassification Rate'], naive['Validation']['misclassification'])),
+          (['Training (Naive)', 'Validation (Naive)', 'Test (Naive)'], True, True))
+
+    # (7) a Profit Matrix (the column property): the profit table, its code, Most Profit, Save Profit Columns
+    PM = [[1.0, -2.0, -0.2], [-4.0, 3.0, 0.0]]
+    await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const c = t.col('grade');
+      t.setProfitMatrix(c.id, {{ levels: ['export', 'local'], decisions: ['export', 'local', 'Undecided'], matrix: {json.dumps(PM)} }});
+      const d = new Promise(res => rep.on('done', res)); rep.run(); await d; }})()''', timeout=300)
+    tabs = await page.ev(f'({TABLES})("Profit")')
+    prow = as_rows(tabs[1])
+    M_ = np.array(PM)
+
+    def prof_native(s_, t_):
+        m = sets == pv.SETS.index(s_)
+        tp, fp, fn, tn = pv.counts_at(pv.cut_table(p1[m], y[m] == 1), t_)
+        return (tp * M_[1, 1] + fn * M_[1, 0] + fp * M_[0, 1] + tn * M_[0, 0]) / (tp + fp + fn + tn)
+
+    def bayes_native(s_):
+        m = sets == pv.SETS.index(s_)
+        pr = np.column_stack([1 - p1[m], p1[m]])
+        dec = np.argmax(pr @ M_, 1)
+        return float(np.mean(M_[y[m], dec]))
+    okp = [near4(r_['Average Profit'], prof_native(r_['Set'], 0.5), 5.01e-7) and near4(r_['Most Profitable Decisions'], bayes_native(r_['Set']), 5.01e-7) for r_ in prow]
+    d1, d0 = M_[1, 1] - M_[1, 0], M_[0, 0] - M_[0, 1]
+    check('decisions: the Profit table: each set\'s average profit at the threshold and of the most profitable decisions (Undecided among them), by hand here',
+          ([r_['Set'] for r_ in prow], okp, near4(prow[0]['Threshold from the Matrix'], d0 / (d1 + d0), 5.01e-7)), (D['sets'], [True] * len(prow), True))
+    codes = await page.ev(f'({CODES})("Profit")')
+    got, err = await run_json(page, codes[0], 'results')
+    check('... its code block gives the same profits', (err, got is not None and all(abs(g_['average profit'] - prof_native(g_['set'], 0.5)) < 1e-12 and abs(g_['most profitable decisions'] - bayes_native(g_['set'])) < 1e-12 for g_ in got)), (None, True))
+    await page.ev(pick_js('Decision Threshold', ['Set Threshold to', 'Most Profit']))
+    opt = await page.ev('SM.app.reports.at(-1).spec.options.dtCut')
+    cands = sorted(set(p1[mv].tolist()), reverse=True)
+    profs = [prof_native('Validation', t_) for t_ in cands]
+    check('decisions: Set Threshold to ▸ Most Profit: the validation probability with the largest average profit', opt, cands[int(np.argmax(profs))])
+    await page.ev('(async () => { const rep = SM.app.reports.at(-1); const d = new Promise(res => rep.on("done", res)); rep.spec.options.dtCut = 0.5; rep.run(); await d; })()')
+    cols_ = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Decision Threshold', ['Save Profit Columns'], false, 0);
+      for (let i = 0; i < 80 && t.columns.length < before + 5; i++) await new Promise(r => setTimeout(r, 100));
+      const pe = t.columns.find(c => c.name === 'Prob[export]'), pl = t.columns.find(c => c.name === 'Prob[local]');
+      return {{ cols: t.columns.slice(before).map(c => ({{ name: c.name, values: c.values, formula: !!c.formula }})), pe: pe.values, pl: pl.values }}; }})()''', timeout=300)
+    pnames = [c['name'] for c in cols_['cols']]
+    check('decisions: Save Profit Columns: a formula per decision, Expected Profit and Most Profitable', (pnames, all(c['formula'] for c in cols_['cols'])),
+          (['Profit[export]', 'Profit[local]', 'Profit[Undecided]', 'Expected Profit', 'Most Profitable grade'], True))
+    PR = np.column_stack([cols_['pe'], cols_['pl']]).astype(float)
+    EP = PR @ M_
+    got_pf = np.column_stack([cols_['cols'][j]['values'] for j in range(3)]).astype(float)
+    check.near('... Profit[d] = Σ Prob[level] × profit(level, d), every row', UP.maxdiff(got_pf.ravel().tolist(), EP.ravel().tolist()), 0, 1e-12)
+    check('... Expected Profit the largest, Most Profitable its decision', (UP.maxdiff(cols_['cols'][3]['values'], EP.max(1).tolist()) < 1e-12, cols_['cols'][4]['values'] == [['export', 'local', 'Undecided'][int(j)] for j in EP.argmax(1)]), (True, True))
+    graphs_ok = await page.ev('(() => { const rep = SM.app.reports.at(-1); return ["Profit Curve", "Profit"].map(t => [...rep.body.querySelectorAll(".sm-ob-head")].some(h => h.textContent.trim() === t)); })()')
+    check('decisions: the Profit Curve beside the lift curves, the Profit outline in the Decision Threshold', graphs_ok, [True, True])
+    n_ok, _ = await UP.chart_blocks(page, check, 'decisions: knn grade with a profit matrix', tbl, 'SM.app.reports.at(-1)', learners_compare)
+    check('decisions: every graph of the report (fitted probabilities, measures, profit, gains, ROC with the best point, lift) drew its figure from its code', n_ok >= 16, True)
+
+    # (8) Group Metrics by skin (not a factor... it is one here; orchard is not): the engine's numbers, equal FPR by the menu, Save Decision Column
+    oid = await page.ev(f'{tbl}.col("orchard").id')
+    await page.ev(f'(async () => {{ const rep = SM.app.reports.at(-1); const d = new Promise(res => rep.on("done", res)); rep.spec.options.groupMetrics = {json.dumps(oid)}; rep.run(); await d; }})()', timeout=300)
+    await asyncio.sleep(1.0)
+    tabs = await page.ev(f'({TABLES})("Group Metrics: orchard")')
+    grows = as_rows(tabs[0])
+    eng = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const r = await ({FIT})('knn.fit'); const D = r.fit.threshold;
+      return await SM.engine.call('predict.groups', {{ group: 'orchard', at: D.points.rows, actual: D.points.actual, prob: D.models[0].p, sets: D.points.set, w: D.points.w, cut: 0.5, target: 1 }}, rep.table); }})()''')
+    okg = [all(near4(r_[lab], e_[k]) for k, lab in (('base_rate', 'Base Rate'), ('selection_rate', 'Selection Rate'), ('accuracy', 'Accuracy'), ('auc', 'AUC'), ('fpr', 'False Positive Rate'), ('fnr', 'False Negative Rate'), ('precision', 'Precision'))) for r_, e_ in zip(grows, eng['rows'])]
+    check('decisions: Group Metrics by orchard (not a factor of the model): each group\'s measures, the engine\'s', ([r_['orchard'] for r_ in grows], okg), (['North', 'South'], [True, True]))
+    codes = await page.ev(f'({CODES})("Group Metrics: orchard")')
+    got, err = await run_json(page, codes[0], 'rows')
+    check('... its code block (with the bar chart) gives the same rows', (err, got is not None and all(abs(g_['fpr'] - e_['fpr']) < 1e-12 and abs(g_['auc'] - e_['auc']) < 1e-12 for g_, e_ in zip(got, eng['rows']))), (None, True))
+    await page.ev(pick_js('Group Metrics: orchard', ['Thresholds', 'Equal False Positive Rates']))
+    tabs = await page.ev(f'({TABLES})("Group Metrics: orchard")')
+    grows2 = as_rows(tabs[0])
+    eng2 = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const r = await ({FIT})('knn.fit'); const D = r.fit.threshold;
+      return await SM.engine.call('predict.groups', {{ group: 'orchard', at: D.points.rows, actual: D.points.actual, prob: D.models[0].p, sets: D.points.set, w: D.points.w, cut: 0.5, target: 1, equal: 'fpr' }}, rep.table); }})()''')
+    check('decisions: Thresholds ▸ Equal False Positive Rates (the menu): each group\'s threshold solved, the engine\'s', [num(r_['Threshold']) for r_ in grows2], [round(e_['cut'], 4) if e_['cut'] is not None else None for e_ in eng2['rows']])
+    cols_ = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Group Metrics: orchard', ['Save Decision Column'], false, 0);
+      for (let i = 0; i < 60 && t.columns.length === before; i++) await new Promise(r => setTimeout(r, 100));
+      const c = t.columns[t.columns.length - 1]; return {{ name: c.name, values: c.values, formula: c.formula ? c.formula.expr : null, pl: t.col('Prob[local]').values, orch: t.col('orchard').values }}; }})()''', timeout=300)
+    th = {e_['group']: e_['cut'] for e_ in eng2['rows']}
+    want = ['local' if pl_ >= th.get(o_, 0.5) else 'export' for pl_, o_ in zip(cols_['pl'], cols_['orch'])]
+    check('decisions: Save Decision Column: a live formula, each row called by its group\'s threshold', (cols_['name'], cols_['formula'] is not None and 'Match(' in cols_['formula'], cols_['values'] == want), ('Decision grade by orchard', True, True))
+
+    # (9) a project keeps the options, and the report comes back the same
+    r = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const t = rep.table;
+      const j = JSON.parse(JSON.stringify({ format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] }));
+      SM.app.loadProject(j); const back = SM.app.reports.at(-1);
+      await new Promise(res => { if (!back.body.classList.contains('is-running') && back.body.querySelector('.sm-ob')) res(); else back.on('done', res); });
+      const o = back.spec.options; const out = { cut: o.dtCut, level: o.dtLevel, mode: o.gmMode, group: !!o.groupMetrics, pm: !!back.table.col('grade').profitMatrix,
+        heads: [...back.body.querySelectorAll('.sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent).filter(x => /Decision Threshold|Group Metrics|Profit/.test(x)) };
+      SM.app.closeTable(back.table); await new Promise(r => setTimeout(r, 100));
+      const dl = [...document.querySelectorAll('.sm-dialog')].pop(); const yes = dl && [...dl.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Close'); if (yes) yes.click();
+      return out; })()''', timeout=600)
+    check('decisions: a project keeps the threshold, the target, Group Metrics\' mode, and the table its Profit Matrix', (r['cut'], r['level'], r['mode'], r['group'], r['pm'], 'Decision Threshold' in r['heads'], 'Group Metrics: orchard' in r['heads'], 'Profit' in r['heads']),
+          (0.5, 1, 'fpr', True, True, True, True, True))
+    await page.ev(f'(() => {{ const t = {tbl}; t.setProfitMatrix(t.col("grade").id, null); }})()')
+
+    # (10) the mosaic of K Nearest Neighbors' variety: its parts select their rows
+    r = await page.ev(open_report_js('knn', {'y': ['variety'], 'x': XS, **val}, {'k': 6, 'mosaic': True, 'distance': True, 'seed': '3'}), timeout=900)
+    check('decisions: K Nearest Neighbors with Distance Weights and the Mosaic Plot: no errors', (r['errors'], 'Mosaic Plot' in r['outlines']), ([], True))
+    sel = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); await __gr.drawAll(rep);
+      const p = rep.plots.find(q => q.opts.title === 'Mosaic Validation'); const tr = p.traces[1]; const rows = p.rows[1][0];
+      p.box.emit('plotly_click', { points: [{ curveNumber: 1, pointNumber: 0 }], event: {} }); await new Promise(r => setTimeout(r, 200));
+      return { want: rows.slice().sort((a, b) => a - b), got: rep.table.rowsWith('selected') }; })()''')
+    check('decisions: a click on a part of the mosaic selects its rows (actual Early called Mid, the validation rows)', (len(sel['want']) >= 0, sel['got'] == sel['want']), (True, True))
+    r = await page.ev(f'({FIT})("knn.fit")')
+    check('decisions: Distance Weights and Standardize reach the engine', (r['weights'], r['standardize']), ('distance', True))
+    await page.ev(pick_js('*top*', ['Standardize']))
+    r = await page.ev(f'({FIT})("knn.fit")')
+    check('decisions: Standardize off from the red triangle', (r['standardize'], r['scaled'], await page.ev('SM.app.reports.at(-1).spec.options.standardize')), (False, [], False))
+
+    # (11) Score Rows: another open table with the same columns, by the report's model
+    await page.ev(f'''(() => {{ const t = {tbl}; const rows = [0, 1, 2, 3, 4, 5, 6, 7];
+      const cols = ['{W}', '{S}', '{F}', 'skin'].map(nm => {{ const c = t.col(nm); return {{ name: nm, dataType: c.dataType, values: rows.map(i => c.isNumeric ? c.values[i] + 1 : c.values[i]) }}; }});
+      SM.app.addTable(new SM.Table({{ name: 'New apples', source: 'test', columns: cols }})); SM.app.showTab(SM.app.tabOf({tbl})); SM.app.showTab(SM.app.tabOf(SM.app.reports.at(-1))); }})()''')
+    r = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const other = SM.app.tables.find(t => t.name === 'New apples');
+      const menu = ({PICK})('*top*', ['Save Columns', 'Score Rows…'], false, 0);
+      for (let i = 0; i < 60 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+      const d = [...document.querySelectorAll('.sm-dialog')].pop(); const sels = d.querySelectorAll('.sm-form select');
+      sels[0].value = other.id; sels[1].value = 'all'; d.querySelector('.sm-dialog-foot .primary').click();
+      for (let i = 0; i < 100 && !other.columns.some(c => c.name === 'Prob[Mid]'); i++) await new Promise(r => setTimeout(r, 100));
+      const eng = await SM.engine.call('knn.score', {{ keep: `${{rep.id}}|`, target_rows: null }}, other);
+      return {{ names: other.columns.map(c => c.name), mid: other.col('Prob[Mid]') ? other.col('Prob[Mid]').values : null, most: other.col('Most Likely variety') ? other.col('Most Likely variety').values : null, eng }}; }})()''', timeout=300)
+    check('decisions: Score Rows into another open table: its Prob[] and Most Likely columns, the report\'s model\'s (the engine kept it)',
+          (r['names'][-4:], r['mid'] == [q[1] for q in r['eng']['prob']], r['most'] == r['eng']['most_likely']), (['Prob[Early]', 'Prob[Mid]', 'Prob[Late]', 'Most Likely variety'], True, True))
+
+    # (12) Naive Bayes: Save Prediction Formula, live, as Save Predicteds gives them (a missing factor left out)
+    await page.ev(f'(() => {{ const t = {tbl}; t.setCell(3, "{S}", NaN); t.setCell(9, "skin", null); SM.app.showTab(SM.app.tabOf(t)); }})()')
+    r = await page.ev(open_report_js('naivebayes', {'y': ['grade'], 'x': XS, **val}, {'seed': '2'}), timeout=900)
+    r = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('*top*', ['Save Columns', 'Save Prediction Formula'], false, 0);
+      for (let i = 0; i < 80 && t.columns.length < before + 5; i++) await new Promise(r => setTimeout(r, 100));
+      const made = t.columns.slice(before).map(c => ({{ name: c.name, formula: !!c.formula, values: c.values }}));
+      const sv = await SM.engine.call('naivebayes.save', {{ y: 'grade', x: ['{W}', '{S}', '{F}', 'skin'], validation: 'Validation', seed: 2, missing: 'informative' }}, t);
+      return {{ made, sv }}; }})()''', timeout=300)
+    made = r['made']
+    # the table has Prob[export] and the like from the parts above: the new ones get a number, as JMP names them
+    import re as _re
+    want_names = ['Log Score[export]', 'Log Score[local]', 'Prob[export]', 'Prob[local]', 'Most Likely grade']
+    check('decisions: Naive Bayes\' Save Prediction Formula: Log Score and Prob per level, Most Likely, all formulas (a name the table has numbered)',
+          ([bool(_re.fullmatch(_re.escape(w_) + r'( \d+)?', c['name'])) for w_, c in zip(want_names, made)], len(made), all(c['formula'] for c in made), any(c['name'] != w_ for w_, c in zip(want_names, made))),
+          ([True] * 5, 5, True, True))
+    sv = r['sv']
+    pe_f = np.array(made[2]['values'], dtype=float)[sv['rows']]
+    check.near('... the formulas\' probabilities are Save Predicteds\' (a row missing sugar and one missing skin among them)', UP.maxdiff(pe_f.tolist(), [q[0] for q in sv['prob']]), 0, 1e-12)
+    check('... and the most likely levels', np.array(made[4]['values'], dtype=object)[sv['rows']].tolist(), sv['most_likely'])
+    r = await page.ev(f'''(async () => {{ const t = {tbl}; const pc = t.col({json.dumps(made[2]['name'])}); const was = pc.values[0]; const most = t.col({json.dumps(made[4]['name'])});
+      t.setCell(0, "{W}", 250); await new Promise(r => setTimeout(r, 300));
+      const now = pc.values[0], other = t.col({json.dumps(made[3]['name'])}).values[0];
+      return {{ was, now, sum: now + other, most: most.values[0], want: now >= other ? 'export' : 'local' }}; }})()''')
+    check('... live: a cell edited, the formula columns follow (Prob[export] changes, the two still sum to 1, Most Likely reads the new ones)',
+          (r['was'] != r['now'], abs(r['sum'] - 1) < 1e-12, r['most'] == r['want']), (True, True, True))
+
+    # (12b) By groups: each group's report has its own Decision Threshold (JMP's): a threshold typed in one group leaves
+    # the other alone; each group's confusion matrices at its own threshold; the target level the group's too; Save
+    # Threshold Formula of a group reads the group's own probabilities (saved once) and gives the other group's rows no
+    # value; a project keeps each group's; an older project with one threshold for the report gives it to every group
+    r = await page.ev(open_report_js('knn', {'y': ['grade'], 'x': XS, 'by': ['orchard'], **val}, {'threshold': True, 'seed': '5'}), timeout=900)
+    BY = """(async (cuts, lvs) => { const rep = SM.app.reports.at(-1); const orch = rep.table.col('orchard').values;
+      await new Promise(res => { if (!rep.body.classList.contains('is-running')) res(); else rep.on('done', res); });
+      const fits = await Promise.all([...rep.cache.entries()].filter(([k]) => k.startsWith('knn.fit\\u0001')).map(([, v]) => v));
+      const title = (ob) => { const h = ob.querySelector(':scope > .sm-ob-head h2, :scope > .sm-ob-head h3, :scope > .sm-ob-head h4'); return h ? h.textContent.trim() : ''; };
+      const groupOf = (h) => { let ob = h.parentElement; while (ob && !/^K Nearest Neighbors for/.test(title(ob))) ob = ob.parentElement ? ob.parentElement.closest('.sm-ob') : null; return ob ? title(ob).split('orchard=')[1] : null; };
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head')].filter(h => h.querySelector('h2, h3, h4').textContent.trim() === 'Decision Threshold');
+      const tablesOf = (h) => [...h.parentElement.querySelectorAll('table.sm-rt')].filter(t => t.closest('.sm-ob') === h.parentElement)
+        .map(t => ({ caption: t.querySelector('caption') ? t.querySelector('caption').textContent : '', rows: [...t.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim())) }));
+      const shown = heads.map(h => ({ group: groupOf(h), tables: tablesOf(h) }));
+      const states = {};
+      for (const r of fits) { const D = r.fit.threshold; const g = orch[D.points.rows[0]]; if (!(g in cuts)) continue; const S = SM.predict.thresholdState(D, lvs[g], null);
+        states[g] = { one: D.points.rows.every(i => orch[i] === g), level: D.levels[lvs[g]], at: D.sets.map(set => ({ set, ...S.at(D.models[0], set, cuts[g]) })), p: D.models[0].p, rows: D.points.rows }; }
+      const opts = Object.fromEntries(Object.entries(rep.spec.options).filter(([k]) => /(^|\\|)(dtCut|dtLevel)$/.test(k)));
+      return { shown, states, opts, errors: [...rep.body.querySelectorAll('.sm-ob-error')].map(e => e.textContent) }; })"""
+
+    def by_ok(res, cuts):
+        """Each group's tables at its own threshold: the caption, the measures of every set and the count matrices, its own fit's."""
+        out = {}
+        for sh in res['shown']:
+            q = res['states'].get(sh['group'])
+            if not q:
+                out[sh['group']] = False
+                continue
+            lvn = q['level']
+            mt = next((t_ for t_ in sh['tables'] if t_['caption'].startswith(f'{lvn} called when')), None)
+            cap = bool(mt) and mt['caption'] == f'{lvn} called when Prob[{lvn}] ≥ {cuts[sh["group"]]:g}'
+            meas = bool(mt) and len(as_rows(mt)) == len(q['at']) and all(all(near4(row[lab], a_[key]) for key, lab in METRIC_COLS) for row, a_ in zip(as_rows(mt), q['at']))
+            cms = []
+            for a_ in q['at']:
+                cm = next((t_ for t_ in sh['tables'] if t_['caption'] == f"{a_['set']}: count at the threshold"), None)
+                want_cm = [[a_['tn'], a_['fp']], [a_['fn'], a_['tp']]] if lvn == 'local' else [[a_['tp'], a_['fn']], [a_['fp'], a_['tn']]]
+                cms.append(bool(cm) and [[num(c) for c in row[1:]] for row in cm['rows'][1:]] == want_cm)
+            out[sh['group']] = bool(q['one'] and cap and meas and all(cms) and len(cms) == 3)
+        return out
+
+    async def type_cut(which, text):
+        await page.ev(f"""(() => {{ const i = SM.app.reports.at(-1).body.querySelectorAll('input[aria-label="Probability threshold"]')[{which}]; i.focus(); i.select(); }})()""")
+        for ch in text:
+            await page.key(ch, text=ch)
+        await page.ev('(() => { window.__done = new Promise(res => SM.app.reports.at(-1).on("done", res)); return true; })()')
+        await page.key('Enter', code='Enter')
+        await page.ev('window.__done', timeout=120)
+        await asyncio.sleep(0.3)
+
+    both = {'North': 1, 'South': 1}
+    res = await page.ev(f'({BY})({json.dumps({"North": 0.5, "South": 0.5})}, {json.dumps(both)})', timeout=300)
+    check('decisions: By orchard: a Decision Threshold under each group, each with its own group\'s rows, measures and count matrices at 0.5',
+          (res['errors'], [sh['group'] for sh in res['shown']], by_ok(res, {'North': 0.5, 'South': 0.5})), ([], ['North', 'South'], {'North': True, 'South': True}))
+    await type_cut(0, '0.4')
+    cuts = {'North': 0.4, 'South': 0.5}
+    res = await page.ev(f'({BY})({json.dumps(cuts)}, {json.dumps(both)})', timeout=300)
+    check('... 0.4 typed in North\'s: North\'s tables at 0.4, South\'s still at 0.5 (each its own group\'s numbers); the option is North\'s alone',
+          (by_ok(res, cuts), res['opts']), ({'North': True, 'South': True}, {'~orchard=North|dtCut': 0.4}))
+    await type_cut(1, '0.6')
+    cuts = {'North': 0.4, 'South': 0.6}
+    res = await page.ev(f'({BY})({json.dumps(cuts)}, {json.dumps(both)})', timeout=300)
+    check('... 0.6 typed in South\'s: South at 0.6, North still at 0.4, the confusion matrices of every set each at its group\'s threshold',
+          (by_ok(res, cuts), res['opts']), ({'North': True, 'South': True}, {'~orchard=North|dtCut': 0.4, '~orchard=South|dtCut': 0.6}))
+    fit_p = {g_: (q['rows'], q['p']) for g_, q in res['states'].items()}
+
+    SAVE_TF = f"""(async (which) => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Decision Threshold', ['Save Threshold Formula'], false, which);
+      for (let i = 0; i < 100 && !t.columns.slice(before).some(c => c.formula); i++) await new Promise(r => setTimeout(r, 100));
+      return {{ made: t.columns.slice(before).map(c => ({{ name: c.name, formula: c.formula ? c.formula.expr : null, values: c.values }})), orch: t.col('orchard').values }}; }})"""
+
+    async def save_tf(which):
+        await page.mouse('mouseMoved', 2, 2)   # the pointer out of the way of the menus
+        out = await page.ev(f'({SAVE_TF})({which})', timeout=300)
+        if not isinstance(out, dict):
+            check(f'decisions: Save Threshold Formula in the By report\'s group {which + 1}', out, None)
+            return {'made': [], 'orch': []}
+        return out
+
+    def called_ok(made, prob_vals, orch, group, cut):
+        """The formula's value in every row: the group's rows called local at the cut on the group's Prob[local], the others missing."""
+        want = [(None if pl is None else ('local' if pl >= cut else 'export')) if o_ == group else None for pl, o_ in zip(prob_vals, orch)]
+        return made['values'] == want
+
+    sv_s = await save_tf(1)
+    ms = sv_s['made']
+    prob_s = ms[1]['values'] if len(ms) == 3 else []
+    rows_s, p_s = fit_p['South']
+    check('decisions: By orchard, Save Threshold Formula in South\'s: South\'s Prob[] columns saved first (numbered: the table has those names), then the formula column named for South',
+          ([bool(re.fullmatch(r'Prob\[(export|local)\]( \d+)?', c['name'])) for c in ms[:2]], len(ms), ms[-1]['name'] if ms else None),
+          ([True, True], 3, f"Called grade orchard=South ({ms[1]['name'] if len(ms) == 3 else '?'} ≥ 0.6)"))
+    check.near('... the Prob[local] saved is South\'s own model\'s (its fit\'s probabilities at its rows)', max(abs(prob_s[r_] - p_) for r_, p_ in zip(rows_s, p_s)) if prob_s else 1.0, 0, 1e-12)
+    check('... the formula: If(:orchard == "South", If(Prob[local] ≥ 0.6, …), .): South\'s rows called at 0.6, North\'s missing, every row',
+          (ms[-1]['formula'] is not None and ms[-1]['formula'].startswith('If(') and '"South"' in ms[-1]['formula'], called_ok(ms[-1], prob_s, sv_s['orch'], 'South', 0.6)), (True, True))
+    sv_n = await save_tf(0)
+    mn = sv_n['made']
+    prob_n = mn[1]['values'] if len(mn) == 3 else []
+    rows_n, p_n = fit_p['North']
+    check('... Save Threshold Formula in North\'s: North\'s own Prob[] columns (another model than South\'s), its formula at 0.4, South\'s rows missing',
+          (len(mn), mn[-1]['name'] if mn else None, bool(prob_n) and max(abs(prob_n[r_] - p_) for r_, p_ in zip(rows_n, p_n)) < 1e-12, bool(prob_n) and prob_n != prob_s, called_ok(mn[-1], prob_n, sv_n['orch'], 'North', 0.4)),
+          (3, f"Called grade orchard=North ({mn[1]['name'] if len(mn) == 3 else '?'} ≥ 0.4)", True, True, True))
+    sv_s2 = await save_tf(1)
+    ps_name = ms[1]['name'] if len(ms) == 3 else '?'
+    m2 = sv_s2['made']
+    check('... again in South\'s: only the formula (its name numbered: the table has it), reading the Prob[local] saved for South before (saved once)',
+          (len(m2), bool(m2) and bool(re.fullmatch(re.escape(f'Called grade orchard=South ({ps_name} ≥ 0.6)') + r'( \d+)?', m2[0]['name'])), bool(m2) and f':"{ps_name}"' in (m2[0]['formula'] or ''),
+           bool(m2) and m2[0]['values'] == ms[-1]['values']), (1, True, True, True))
+    # Save Profit Columns in South's (a Profit Matrix on grade): the Prob[] columns saved for South above read again (no new
+    # ones), every formula within South, Expected Profit and Most Profitable reading the Profit[] columns just made
+    await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table;
+      t.setProfitMatrix(t.col('grade').id, {{ levels: ['export', 'local'], decisions: ['export', 'local', 'Undecided'], matrix: {json.dumps(PM)} }});
+      const d = new Promise(res => rep.on('done', res)); rep.run(); await d; }})()''', timeout=300)
+    await page.mouse('mouseMoved', 2, 2)
+    pc = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
+      await ({PICK})('Decision Threshold', ['Save Profit Columns'], false, 1);
+      for (let i = 0; i < 80 && t.columns.length < before + 5; i++) await new Promise(r => setTimeout(r, 100));
+      return {{ cols: t.columns.slice(before).map(c => ({{ name: c.name, values: c.values, formula: c.formula ? c.formula.expr : null }})), orch: t.col('orchard').values }}; }})()''', timeout=300)
+    cs = pc['cols']
+    M_ = np.array(PM)
+    pe_s = ms[0]['values'] if len(ms) == 3 else []
+    exp_d = [[None if o_ != 'South' or a_ is None else a_ * M_[0, j] + b_ * M_[1, j] for a_, b_, o_ in zip(pe_s, prob_s, pc['orch'])] for j in range(3)]
+
+    def same_vals(got, want):
+        return len(got) == len(want) and all((g_ is None and w_ is None) or (g_ is not None and w_ is not None and abs(g_ - w_) < 1e-12) for g_, w_ in zip(got, want))
+    exp_e = [None if d_[0] is None else max(d_) for d_ in zip(*exp_d)] if exp_d and exp_d[0] else []
+    exp_m = [None if d_[0] is None else ['export', 'local', 'Undecided'][int(np.argmax(d_))] for d_ in zip(*exp_d)] if exp_d and exp_d[0] else []
+    check('decisions: By orchard, Save Profit Columns in South\'s: Profit[d], Expected Profit and Most Profitable for South, reading South\'s Prob[] columns saved before (none new)',
+          ([c['name'] for c in cs], all(f':"{ms[1]["name"] if len(ms) == 3 else "?"}"' in (c['formula'] or '') and '"South"' in (c['formula'] or '') for c in cs[:3])),
+          (['Profit[export] orchard=South', 'Profit[local] orchard=South', 'Profit[Undecided] orchard=South', 'Expected Profit orchard=South', 'Most Profitable grade orchard=South'], True))
+    check('... every row: South\'s Σ Prob × profit per decision, the largest, its decision; North\'s rows missing',
+          (len(cs) == 5 and all(same_vals(cs[j]['values'], exp_d[j]) for j in range(3)), len(cs) == 5 and same_vals(cs[3]['values'], exp_e), len(cs) == 5 and cs[4]['values'] == exp_m), (True, True, True))
+    await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const t = rep.table; t.setProfitMatrix(t.col('grade').id, null);
+      const d = new Promise(res => rep.on('done', res)); rep.run(); await d; })()''', timeout=300)
+    await page.mouse('mouseMoved', 2, 2)
+    await page.ev(pick_js('Decision Threshold', ['Target Level', 'export'], True, 1))
+    lvs = {'North': 1, 'South': 0}
+    res = await page.ev(f'({BY})({json.dumps(cuts)}, {json.dumps(lvs)})', timeout=300)
+    check('... Target Level ▸ export in South\'s: South\'s tables of export at 0.6, North\'s of local at 0.4',
+          (by_ok(res, cuts), res['opts']), ({'North': True, 'South': True}, {'~orchard=North|dtCut': 0.4, '~orchard=South|dtCut': 0.6, '~orchard=South|dtLevel': 0}))
+
+    PROJ = """(async (edit) => { const rep = SM.app.reports.at(-1); const t = rep.table;
+      const j = JSON.parse(JSON.stringify({ format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] }));
+      if (edit) { const o = j.reports[0].spec.options; for (const k of Object.keys(o)) if (/\\|(dtCut|dtLevel)$/.test(k)) delete o[k]; o.dtCut = 0.3; }
+      SM.app.loadProject(j); const back = SM.app.reports.at(-1);
+      await new Promise(res => { if (!back.body.classList.contains('is-running') && back.body.querySelector('.sm-ob')) res(); else back.on('done', res); });
+      return back.table !== t; })"""
+    CLOSE = """(async () => { const back = SM.app.reports.at(-1); SM.app.closeTable(back.table); await new Promise(r => setTimeout(r, 100));
+      const dl = [...document.querySelectorAll('.sm-dialog')].pop(); const yes = dl && [...dl.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Close'); if (yes) yes.click(); return true; })()"""
+    own = await page.ev(f'({PROJ})(false)', timeout=600)
+    res = await page.ev(f'({BY})({json.dumps(cuts)}, {json.dumps(lvs)})', timeout=300)
+    check('decisions: By orchard, a project: its own table, each group\'s threshold and target level again (North local at 0.4, South export at 0.6), the same numbers',
+          (own, res['errors'], by_ok(res, cuts)), (True, [], {'North': True, 'South': True}))
+    await page.ev(CLOSE)
+    await page.ev(f'({PROJ})(true)', timeout=600)
+    res = await page.ev(f'({BY})({json.dumps({"North": 0.3, "South": 0.3})}, {json.dumps(both)})', timeout=300)
+    check('... an older project, with one threshold (0.3) for the whole report: every group at 0.3',
+          (res['errors'], by_ok(res, {'North': 0.3, 'South': 0.3})), ([], {'North': True, 'South': True}))
+    await page.ev(CLOSE)
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
+    # (13) the dark theme and phone width with the new parts open
+    r = await page.ev(open_report_js('knn', {'y': ['grade'], 'x': XS, **val}, {'threshold': True, 'groupMetrics': oid, 'roc': True, 'rocTable': True, 'lift': True, 'gains': True, 'liftTable': True, 'seed': '5'}), timeout=900)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(3.0)
+    st = await page.ev('(() => { const rep = SM.app.reports.at(-1); return { errors: [...rep.body.querySelectorAll(".sm-ob-error")].map(e => e.textContent), line: (rep.plots.find(p => /^Fitted probabilities/.test(p.opts.title)) || {}).userLayout.shapes[0].line.color }; })()')
+    check('decisions: the dark theme redraws the Decision Threshold and Group Metrics without errors, the threshold in the dark theme\'s red', (st['errors'], st['line']), ([], '#ff7a6b'))
+    await shot(page, 'learners-07-threshold-dark.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await page.ev('(async () => { const rep = SM.app.reports.at(-1); const d = new Promise(res => rep.on("done", res)); rep.run(); await d; })()', timeout=300)
+    await asyncio.sleep(1.0)
+    r = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const body = rep.body.getBoundingClientRect();
+      const boxes = rep.plots.filter(p => p.drawn && p.opts.fit !== false).map(p => p.box.getBoundingClientRect().right);
+      const cut = rep.body.querySelector('.sm-pred-cut').getBoundingClientRect();
+      return { page: document.documentElement.scrollWidth <= innerWidth + 1, plots: boxes.every(x => x <= body.right + 1), cut: cut.right <= body.right + 1 }; })()''')
+    check('decisions at phone width: no sideways page scroll, the graphs and the threshold\'s controls fit', (r['page'], r['plots'], r['cut']), (True, True, True))
+    await shot(page, 'learners-08-threshold-phone.png')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 1200, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(2.0)
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
+
+def pv_close(a, b, rel=1e-12):
+    if a is None or b is None:
+        return a is None and b is None
+    return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(b)))
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=orchard', height=1200)
     st = await wait_engine(page)
@@ -472,8 +1135,19 @@ async def main():
     bf = await page.ev(BRUTE, timeout=120)
     check.near('K = 1: the training rate is the one computed here (each training row left out of its own neighbours)', num(sel[1][1]), bf['t1'], tol=1e-6)
     check.near('K = 1: the validation rate is the one computed here', num(sel[1][2]), bf['v1'], tol=1e-6)
-    check.near('K = 5: training (a tied vote to the first level)', num(sel[5][1]), bf['t5'], tol=1e-6)
-    check.near('K = 5: validation', num(sel[5][2]), bf['v5'], tol=1e-6)
+    seed_ = await page.ev('SM.app.reports.at(-1).spec.options.seedDrawn')
+    u_ = np.random.default_rng([int(seed_), 7]).random((600, 3))
+
+    def tie_rate(rows_):
+        wrong = 0
+        for i_, votes, actual in rows_:
+            vv = np.array(votes)
+            top = vv == vv.max()
+            wrong += int(int(np.argmax(np.where(top, u_[i_], -1.0))) != actual)
+        return wrong / len(rows_)
+    check.near('K = 5: training (a tied vote broken at random: the tied level with the largest of the report\'s seeded numbers)', num(sel[5][1]), tie_rate(bf['votes5t']), tol=1e-6)
+    check.near('K = 5: validation', num(sel[5][2]), tie_rate(bf['votes5v']), tol=1e-6)
+    check('K = 5: there are tied votes among them (so the rule is at work)', any(sorted(q[1])[-1] == sorted(q[1])[-2] for q in bf['votes5t'] + bf['votes5v']), True)
     vrates = [num(row[2]) for row in sel[1:]]
     best = vrates.index(min(vrates)) + 1
     marks = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1];
@@ -721,6 +1395,9 @@ async def main():
     # ---- the graphs' matplotlib code
     await charts(page)
 
+    # ---- the shared Decision Threshold and the rest of smui-predict.js, K Nearest Neighbors' new options, Score Rows, Naive Bayes' formula
+    await decisions(page)
+
     # ======================================================================= (i), Help, themes, phone
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
@@ -728,7 +1405,7 @@ async def main():
     helps = await page.ev('(() => { SM.app.showHelp("p-knn"); return ["knn", "naivebayes", "svm"].map(id => { const row = document.getElementById("help-p-" + id); return row ? row.textContent : null; }); })()')
     check('Help names the scikit-learn classes', ('KNeighborsClassifier' in (helps[0] or ''), 'GaussianNB' in (helps[1] or ''), 'SVC' in (helps[2] or '')), (True, True, True))
     topics = await page.ev('[...Object.keys(SM.platforms.get("knn").topics), ...Object.keys(SM.platforms.get("naivebayes").topics), ...Object.keys(SM.platforms.get("svm").topics)]')
-    check('their topics', sorted(topics), sorted(['p:knn', 'p:knn:selection', 'p:knn:fit', 'p:naivebayes', 'p:naivebayes:params', 'p:svm', 'p:svm:summary', 'p:svm:tuning', 'p:svm:boundary']))
+    check('their topics', sorted(topics), sorted(['p:knn', 'p:knn:selection', 'p:knn:fit', 'p:knn:mosaic', 'p:learners:score', 'p:naivebayes', 'p:naivebayes:params', 'p:svm', 'p:svm:summary', 'p:svm:tuning', 'p:svm:boundary']))
 
     # ---- the (i) explains every input: the launch dialogs, the forms, Model Selection's clicks
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Orchard")))')
@@ -744,7 +1421,7 @@ async def main():
     await form_help(page, f"await clickPath({svm}, '*top*', ['Cost and Gamma…']);", ['Cost', 'Gamma (empty: one over the columns of X)'], 'Support Vector Machines\' Cost and Gamma…')
     await form_help(page, f"await clickPath({svm}, '*top*', ['Tuning Design…']);", ['Fit a tuning design of Cost and Gamma', 'Number of design points'], '... and its Tuning Design…')
     s = await page.ev(info_js('slot', f"[...{knn}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Model Selection')"))
-    check('Model Selection\'s (i): a click on a line or a point, Select K, Number of Neighbors', [c[0] for c in s['sections'].get('Choosing K', [])], ['A click on a line or a point', 'Select K (red triangle)', 'Number of Neighbors… (red triangle)'])
+    check('Model Selection\'s (i): a click on a line of the table or a point of the graph, Select K, Number of Neighbors', [c[0] for c in s['sections'].get('Choosing K', [])], ['A click on a line of the table or a point of the graph', 'Select K (red triangle)', 'Number of Neighbors… (red triangle)'])
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "svm" && r.title === "Support Vector Machines for grade")))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(3.0)

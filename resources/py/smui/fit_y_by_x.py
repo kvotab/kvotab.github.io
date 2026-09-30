@@ -43,7 +43,7 @@ from scipy import stats
 
 from . import data, models
 from .registry import api
-from .util import code_head, col
+from .util import code_head, col, one_line
 from .util import table as rtable
 
 J = json.dumps
@@ -71,7 +71,7 @@ def _head(table_name, where=None, imports=(), table=None, rows=None):
     report does not use: excluded, or filtered out)."""
     lines = [code_head(table_name, list(imports))]
     for w in where or []:
-        lines.append(f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {_lvtext(w["value"])}')
+        lines.append(f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {one_line(_lvtext(w["value"]))}')
     if table is not None:
         lines += _rows_drop(table, rows, where)
     return lines
@@ -214,6 +214,69 @@ def _fit_design(d, f):
 
 def _freq_of(table, freq, index):
     return data.series(table, freq, index, as_category=False).to_numpy(float) if freq else None
+
+
+def _all_x(table, y, x, where, domain=None, need_x=True):
+    """The rows a saved prediction covers, as JMP's: every row of the
+    report's group (the By's and a Group By level's rows) whose X has a
+    value (in the domain of X's transformation, when given), the rows the
+    fit left out (excluded, missing Y) too. Returns (rows, x, y), y NaN
+    where it is missing."""
+    xv = np.asarray(data.raw(table, x), dtype=float)
+    ok = models.group_mask(table, where)
+    if need_x:
+        ok &= np.isfinite(xv)
+    if domain is not None:
+        with np.errstate(all='ignore'):
+            ok &= np.asarray(domain(np.where(np.isfinite(xv), xv, 0.0)), dtype=bool)
+    idx = np.flatnonzero(ok)
+    yv = data.raw(table, y, idx)
+    return idx, xv[idx], (np.asarray(yv, dtype=float) if data.meta(table, y).get('dataType') == 'numeric' else yv)
+
+
+def _fit_formula(table, where, expr):
+    """A fit's prediction as formula text, for the rows of its group only."""
+    return models.formula_where(table, where, expr)
+
+
+def _fit_formula_parts(table, where, expr):
+    """A Bivariate fit's formula as its expression and its group's condition
+    (None without By or Group By): the page joins a Group By's levels into
+    one column, If(cond1, expr1, cond2, expr2, .)."""
+    return {'expr': expr, 'cond': models.where_condition(table, where)}
+
+
+def _row_weights(table, weight, freq, idx):
+    """Weight times Freq of rows, 1 where a row has none (a row outside the
+    fit is an individual of weight 1)."""
+    w = np.ones(len(idx))
+    for c in (weight, freq):
+        if c:
+            v = np.asarray(data.raw(table, c, idx), dtype=float)
+            w = w * np.where(np.isfinite(v) & (v > 0), v, 1.0)
+    return w
+
+
+def _all_linear(res, d, table, where, weight, freq, alpha):
+    """Every row's prediction of a least squares fit on models.build's design
+    (the rows of _all_x), with the confidence limits of the mean and of an
+    individual (as _row_values gives them for the rows of the fit)."""
+    di = res.model.data.design_info
+    idx, X, _ = models.new_rows(d, di, table, where)
+    b, V = np.asarray(res.params, float), np.asarray(res.cov_params(), float)
+    pred = X @ b
+    se = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', X, V, X), 0))
+    t = float(stats.t.ppf(1 - alpha / 2, res.df_resid))
+    si = np.sqrt(se ** 2 + float(res.scale) / _row_weights(table, weight, freq, idx))
+    yv = np.asarray(data.raw(table, d.y, idx), dtype=float)
+    return {'rows': idx, 'predicted': pred, 'residual': yv - pred, 'lo_mean': pred - t * se, 'hi_mean': pred + t * se,
+            'lo_indiv': pred - t * si, 'hi_indiv': pred + t * si}
+
+
+def _line_formula(a, b, x):
+    """a + b x as formula text."""
+    from .util import formula_num, formula_ref
+    return f'{formula_num(a)} + {formula_num(b)} * {formula_ref(x)}'
 
 
 def _summary_of_fit(res, yv, wf, count):
@@ -725,6 +788,8 @@ def fit_poly(table, y, x, degree=1, rows=None, weight=None, freq=None, alpha=0.0
                      'lo_ind': sf['obs_ci_lower'].to_numpy(), 'hi_ind': sf['obs_ci_upper'].to_numpy()}}
     if want_rows:
         out['row_values'] = _row_values(res, d.df.index.to_numpy(), yv, np.asarray(res.model.exog), wf, alpha)
+        out['all_rows'] = _all_linear(res, d, table, where, weight, freq, alpha)
+        out['formula'] = _fit_formula_parts(table, where, models.formula_linear(d, res.model.data.design_info, np.asarray(res.params, float), table))
     formula = models.code_formula(d)
     c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
@@ -783,6 +848,10 @@ def fit_mean(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, want_ro
            'curve': {'x': [float(xy.x.min()), float(xy.x.max())], 'fit': [mean, mean]}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': np.full(xy.n, mean), 'residual': xy.y - mean}
+        ia, _xa, ya = _all_x(table, y, x, where, need_x=False)   # the mean for every row of the group, as JMP's
+        out['all_rows'] = {'rows': ia, 'predicted': np.full(len(ia), mean), 'residual': ya - mean}
+        from .util import formula_num
+        out['formula'] = _fit_formula_parts(table, where, formula_num(mean))
     c = _head(table_name, where, ['from statsmodels.stats.weightstats import DescrStatsW'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     we = _wexpr(weight, freq)
@@ -815,6 +884,22 @@ _TR_DOMAIN = {'none': 'np.isfinite({0})', 'log': '({0} > 0)', 'sqrt': '({0} >= 0
               'exp': 'np.isfinite(np.exp(np.clip({0}, -700, 700)))'}
 _TR_INVERSE = {'none': '{0}', 'log': 'np.exp({0})', 'sqrt': 'np.where({0} >= 0, {0} * {0}, np.nan)', 'square': 'np.sqrt(np.where({0} >= 0, {0}, np.nan))',
                'reciprocal': '1 / {0}', 'exp': 'np.log(np.where({0} > 0, {0}, np.nan))'}
+
+
+# the transformations in formula text: X forward, Y back to its scale (the page's formula language)
+_TR_FX = {'none': '{}', 'log': 'Log({})', 'sqrt': 'Sqrt({})', 'square': '{}^2', 'reciprocal': '(1 / {})', 'exp': 'Exp({})'}
+_TR_FY = {'none': '{}', 'log': 'Exp({})', 'sqrt': 'If({0} >= 0, ({0})^2, .)', 'square': 'Sqrt({})', 'reciprocal': '1 / ({})', 'exp': 'Log({})'}
+
+
+def _special_formula(x, ytr, xtr, coef, mx):
+    """Fit Special's prediction as formula text: the polynomial (its powers
+    centred at mx) in the transformed X, taken back to Y's scale."""
+    from .util import formula_num, formula_ref
+    xt = _TR_FX[xtr].format(formula_ref(x))
+    lin = f'{formula_num(coef[0])} + {formula_num(coef[1])} * {xt}'
+    for k in range(2, len(coef)):
+        lin += f' + {formula_num(coef[k])} * {models._shifted(xt, mx)}^{k}'
+    return _TR_FY[ytr].format(lin)
 
 
 def _special_plot(y, x, ytr, xtr, degree, intercept, slope, weight, freq, alpha):
@@ -974,6 +1059,18 @@ def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, s
     out['curve'] = curve
     if want_rows:
         out['row_values'] = {'rows': rws, 'predicted': pred, 'residual': yv - pred}
+        ia, xa, ya = _all_x(table, y, x, where, _X_DOMAIN.get(xtr, _TRANSFORMS[xtr][3]))
+        with np.errstate(all='ignore'):
+            xta = _TRANSFORMS[xtr][1](xa)
+            if res is not None and not fixed:
+                coef = np.asarray(res.params, float)
+                pa_t = coef[0] + coef[1] * xta + sum(coef[k] * (xta - mx) ** k for k in range(2, degree + 1))
+            else:
+                coef = np.array([terms[0]['estimate'], terms[1]['estimate']])
+                pa_t = coef[0] + coef[1] * xta
+            pa = inv(pa_t) if ytr != 'none' else pa_t
+        out['all_rows'] = {'rows': ia, 'predicted': pa, 'residual': ya - pa}
+        out['formula'] = _fit_formula_parts(table, where, _special_formula(x, ytr, xtr, coef, mx))
     c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     c.append(f'yt = {_TR_CODE[ytr].format("d[" + J(y) + "]")}; xt = {_TR_CODE[xtr].format("d[" + J(x) + "]")}')
@@ -1025,6 +1122,9 @@ def fit_spline(table, y, x, lam=None, standardize=False, rows=None, weight=None,
            'curve': {'x': g, 'fit': spl((g - mx) / sx)}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': pred, 'residual': xy.y - pred}
+        ia, xa, ya = _all_x(table, y, x, where)
+        pa = spl((xa - mx) / sx)
+        out['all_rows'] = {'rows': ia, 'predicted': pa, 'residual': ya - pa}
     c = _head(table_name, where, ['from scipy.interpolate import make_smoothing_spline'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(weight) if weight else ""}{", " + J(freq) if freq else ""}]].dropna()')
     we = _wexpr(weight, freq)
@@ -1079,6 +1179,12 @@ def fit_lowess(table, y, x, frac=2 / 3, it=0, rows=None, weight=None, freq=None,
     if want_rows:
         pr = _unexpand(fitted, reps)
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr}
+        ia, xa, ya = _all_x(table, y, x, where)
+        # a row of the fit keeps its own value; another row takes the smoother between the X values of the fit (none outside them)
+        own = pd.Series(pr, index=xy.rows)
+        pa = np.where((xa >= ux[0]) & (xa <= ux[-1]), np.interp(xa, ux, fu), np.nan)
+        pa = np.where(np.isin(ia, xy.rows), own.reindex(ia).to_numpy(), pa)
+        out['all_rows'] = {'rows': ia, 'predicted': pa, 'residual': ya - pa}
     c = _head(table_name, where, ['from statsmodels.nonparametric.smoothers_lowess import lowess'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}{", " + J(freq) if freq else ""}]].dropna()')
     if freq:
@@ -1113,6 +1219,11 @@ def fit_each(table, y, x, rows=None, weight=None, freq=None, want_rows=False, al
            'rsquare': 1 - sse / sst if sst > 0 else None, 'curve': {'x': ux, 'fit': m}}
     if want_rows:
         out['row_values'] = {'rows': xy.rows, 'predicted': m[inv], 'residual': xy.y - m[inv]}
+        ia, xa, ya = _all_x(table, y, x, where)
+        at = np.searchsorted(ux, xa)
+        hit = (at < len(ux)) & (ux[np.minimum(at, len(ux) - 1)] == xa)
+        pa = np.where(hit, m[np.minimum(at, len(ux) - 1)], np.nan)   # the mean at that X; an X the fit does not have: none
+        out['all_rows'] = {'rows': ia, 'predicted': pa, 'residual': ya - pa}
     c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'means = d.groupby({J(x)})[{J(y)}].transform("mean"); sse = ((d[{J(y)}] - means)**2).sum()')
@@ -1152,6 +1263,9 @@ def fit_robust(table, y, x, method='huber', rows=None, weight=None, freq=None, a
     if want_rows:
         pr = b[0] + b[1] * xy.x
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr, 'weights': _unexpand(np.asarray(res.weights, float), reps)}
+        ia, xa, ya = _all_x(table, y, x, where)
+        out['all_rows'] = {'rows': ia, 'predicted': b[0] + b[1] * xa, 'residual': ya - (b[0] + b[1] * xa)}
+        out['formula'] = _fit_formula_parts(table, where, _line_formula(b[0], b[1], x))
     c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'res = sm.RLM(d[{J(y)}], sm.add_constant(d[{J(x)}]), M=sm.robust.norms.{"TukeyBiweight" if method == "bisquare" else "HuberT"}()).fit()')
@@ -1289,7 +1403,7 @@ def density_ellipse(table, y, x, levels=(0.95,), rows=None, weight=None, freq=No
     c = _head(table_name, where, ['from scipy import stats'], table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'r = stats.pearsonr(d[{J(x)}], d[{J(y)}]); print(r.statistic, r.pvalue, r.confidence_interval({1 - alpha!r}))   # Fisher z interval')
-    c.append(f'm, S = d.mean().to_numpy(), d.cov().to_numpy(); L = np.linalg.cholesky(S); t = np.linspace(0, 2*np.pi, 100)')
+    c.append('m, S = d.mean().to_numpy(), d.cov().to_numpy(); L = np.linalg.cholesky(S); t = np.linspace(0, 2*np.pi, 100)')
     c.append(f'ellipse = m[:, None] + np.sqrt(stats.chi2.ppf({levels[0] if levels else 0.95!r}, 2)) * (L @ np.vstack([np.cos(t), np.sin(t)]))')
     out['code'] = '\n'.join(c)
     ws = _wexpr(weight, freq, 's')
@@ -1376,6 +1490,9 @@ def fit_quantile(table, y, x, tau=0.5, rows=None, weight=None, freq=None, alpha=
     if want_rows:
         pr = b[0] + b[1] * xy.x
         out['row_values'] = {'rows': xy.rows, 'predicted': pr, 'residual': xy.y - pr}
+        ia, xa, ya = _all_x(table, y, x, where)
+        out['all_rows'] = {'rows': ia, 'predicted': b[0] + b[1] * xa, 'residual': ya - (b[0] + b[1] * xa)}
+        out['formula'] = _fit_formula_parts(table, where, _line_formula(b[0], b[1], x))
     c = _head(table_name, where, table=table, rows=rows)
     c.append(f'd = df[[{J(x)}, {J(y)}]].dropna()')
     c.append(f'res = smf.quantreg({J(_q(y) + " ~ " + _q(x))}, d).fit(q={tau!r}); print(res.summary())')
@@ -1502,7 +1619,7 @@ def _oneway_plot(G, out, plot, table, rows, where, table_name, alpha):
     o = lambda k: bool(plot.get(k))
     k = G.k
     circ = plot.get('circles') if k >= 2 and not block else None
-    circ = circ if circ and circ.get('method') in ('student', 'tukey', 'dunnett') else None
+    circ = circ if circ and circ.get('method') in ('student', 'tukey', 'dunnett', 'hsu', 'hsu_min') else None
     diamonds = o('diamonds') and k >= 2
     need_q = o('box')
     need_raw = o('meanLines') or o('errorBars') or o('sdLines')
@@ -1606,6 +1723,10 @@ def _oneway_plot(G, out, plot, table, rows, where, table_name, alpha):
             c.append(f'q, mse = stats.t.ppf({1 - alpha / 2!r}, cm.df_resid), cm.mse_resid   # Student\'s t: each pair')
         elif method == 'tukey':
             c.append(f'q, mse = stats.studentized_range.ppf({1 - alpha!r}, len(levels), cm.df_resid) / np.sqrt(2), cm.mse_resid   # Tukey-Kramer HSD: all pairs')
+        elif method in ('hsu', 'hsu_min'):
+            c.append('from scipy.integrate import quad')
+            c += _MCB_CODE
+            c.append(f'q, mse = mcb_quantile(len(levels) - 1, cm.df_resid, {alpha!r}), cm.mse_resid   # Hsu\'s MCB: the one-sided Dunnett quantile')
         else:
             ctl = circ.get('control')
             ci_ = next((i for i, v in enumerate(G.levels) if ctl is not None and _lvtext(v) == _lvtext(ctl)), 0)
@@ -1615,7 +1736,7 @@ def _oneway_plot(G, out, plot, table, rows, where, table_name, alpha):
             c.append('mse = sum(((v - v.mean()) ** 2).sum() for v in smp) / (sum(len(v) for v in smp) - len(levels))')
             c.append('se_ = np.array([np.sqrt(mse * (1 / len(smp[i]) + 1 / len(smp[c0]))) for i in others])')
             c.append(f'q = np.median((dn.confidence_interval({1 - alpha!r}).high - np.array([smp[i].mean() - smp[c0].mean() for i in others])) / se_)   # the |d| of the intervals')
-        title = {'student': "Student's t", 'tukey': 'Tukey', 'dunnett': 'Dunnett'}[method]
+        title = {'student': "Student's t", 'tukey': 'Tukey', 'dunnett': 'Dunnett', 'hsu': 'Hsu MCB', 'hsu_min': 'Hsu MCB'}[method]
         c += ['r = q * np.sqrt(mse / n)   # the comparison circles: two means differ when their circles cross at less than a right angle',
               f'colors = {J(PALETTE)}',
               'circles = [Ellipse((0, m), 2 * ri, 2 * ri, fill=False, edgecolor=colors[i % len(colors)], linewidth=1) for i, (m, ri) in enumerate(zip(means, r))]',
@@ -2141,10 +2262,95 @@ def oneway_compare(table, y, x, method='student', control=None, rows=None, weigh
         notes.append('scipy.stats.dunnett computes the p-values and intervals from the multivariate t distribution by quasi-Monte Carlo integration (fixed seed).')
         c.append(f'from scipy import stats; s = {{k: g[{J(y)}].to_numpy() for k, g in d.groupby({J(x)}, observed=True)}}; ctrl = s.pop({J(control) if control is not None else "list(s)[0]"})')
         c.append(f'r = stats.dunnett(*s.values(), control=ctrl); print(r.pvalue, r.confidence_interval({1 - alpha!r}))')
+    elif method in ('hsu', 'hsu_min'):
+        # Hsu's MCB (Hsu 1984, 1996): each mean against the best of the others, the largest (With Best) or the smallest,
+        # constrained intervals from the one-sided Dunnett quantile of k - 1 comparisons (equal correlations 1/2)
+        vs_max = method == 'hsu'
+        k = G.k
+        d_ = _mcb_quantile(k - 1, dfe, alpha)
+        se = lambda i, j: math.sqrt(mse * (1 / sw[i] + 1 / sw[j]))
+        rows_ = []
+        M = []
+        for i in range(k):
+            oth = [j for j in range(k) if j != i]
+            D = [means[i] - means[j] for j in oth]
+            S = [se(i, j) for j in oth]
+            if vs_max:
+                lo = min(0.0, min(Dj - d_ * Sj for Dj, Sj in zip(D, S)))
+                hi = max(0.0, min(Dj + d_ * Sj for Dj, Sj in zip(D, S)))
+                tstat = max(-Dj / Sj for Dj, Sj in zip(D, S))     # how far below the best of the others
+                best = means[i] - max(means[j] for j in oth)
+            else:
+                lo = min(0.0, max(Dj - d_ * Sj for Dj, Sj in zip(D, S)))
+                hi = max(0.0, max(Dj + d_ * Sj for Dj, Sj in zip(D, S)))
+                tstat = max(Dj / Sj for Dj, Sj in zip(D, S))      # how far above the smallest of the others
+                best = means[i] - min(means[j] for j in oth)
+            rows_.append({'index': i, 'mean': float(means[i]), 'diff': float(best), 'lower': float(lo), 'upper': float(hi),
+                          'p': float(1 - _max_t_cdf(tstat, k - 1, dfe))})
+        for i in order:
+            M.append([float(means[i] - means[j] + (d_ if vs_max else -d_) * (se(i, j) if i != j else math.sqrt(2 * mse / sw[i]))) for j in order])
+        out.update({'quantile': {'label': 'd', 'value': d_}, 'mcb': rows_, 'mcb_matrix': M, 'vs': 'max' if vs_max else 'min'})
+        notes.append('Hsu\'s MCB: the quantile d is the one-sided Dunnett quantile of k − 1 comparisons with the correlations ½ that equal '
+                     'group sizes give (computed by integrating the multivariate t, not simulated); with unequal sizes it approximates '
+                     'the exact correlations. Each interval is the constrained one, [min(0, ·), max(0, ·)], of the mean less the best of the others.')
+        we_ = _wexpr(weight, freq)
+        c = _ow_code(G, table_name, where, ['from scipy import stats', 'from scipy.integrate import quad'])
+        c.append(f'res = smf.{"wls" if we_ else "ols"}({J(_q(y) + " ~ C(" + _q(x) + ") - 1")}, d{", weights=" + we_ if we_ else ""}).fit()   # the cell means, pooled error')
+        c.append('m, mse, dfe = res.params.to_numpy(), res.mse_resid, res.df_resid')
+        wg_ = _wexpr(weight, freq, 'g')
+        c.append(f'n = d.groupby({J(x)}, observed=True).apply(lambda g: {"(" + wg_ + ").sum()" if wg_ else "len(g)"}).to_numpy()   # each level\'s weight')
+        c += _MCB_CODE
+        c.append(f'k = len(m); dq = mcb_quantile(k - 1, dfe, {alpha!r}); print("d", dq)')
+        c.append('for i in range(k):   # ' + ('each mean less the largest of the others' if vs_max else 'each mean less the smallest of the others'))
+        c.append('    oth = [j for j in range(k) if j != i]; D = m[i] - m[oth]; S = np.sqrt(mse * (1 / n[i] + 1 / n[oth]))')
+        if vs_max:
+            c.append('    lo, hi = min(0, np.min(D - dq * S)), max(0, np.min(D + dq * S)); p = 1 - max_t_cdf(np.max(-D / S), k - 1, dfe)')
+        else:
+            c.append('    lo, hi = min(0, np.max(D - dq * S)), max(0, np.max(D + dq * S)); p = 1 - max_t_cdf(np.max(D / S), k - 1, dfe)')
+        c.append('    print(res.params.index[i], m[i], lo, hi, p)')
     else:
         return {'error': f'unknown comparison {method!r}'}
     out['code'] = '\n'.join(c)
     return out
+
+
+def _max_t_cdf(c, m, df, rho=0.5):
+    """P(the largest of m t variables on df degrees of freedom, equally
+    correlated rho, is at most c): Gauss-Hermite quadrature over their common
+    normal part, the chi of the variance by adaptive quadrature. Deterministic
+    (scipy's dunnett simulates)."""
+    from scipy.integrate import quad
+    z, wz = np.polynomial.hermite_e.hermegauss(96)
+    wz = wz / math.sqrt(2 * math.pi)
+    a, b = math.sqrt(rho), math.sqrt(1 - rho)
+
+    def G(cs):
+        return float(np.sum(wz * stats.norm.cdf((cs - a * z) / b) ** m))
+    if not np.isfinite(df) or df > 1e6:
+        return G(c)
+    r = math.sqrt(df)
+    val = quad(lambda s: G(c * s) * stats.chi.pdf(s * r, df) * r, 0, np.inf, limit=200, epsabs=1e-12, epsrel=1e-10)[0]
+    return min(max(val, 0.0), 1.0)
+
+
+def _mcb_quantile(m, df, alpha):
+    """The one-sided Dunnett quantile d of m comparisons: P(max <= d) = 1 - alpha."""
+    from scipy.optimize import brentq
+    return float(brentq(lambda c: _max_t_cdf(c, m, df) - (1 - alpha), 0.0, 20.0, xtol=1e-10))
+
+
+_MCB_CODE = [
+    'def max_t_cdf(c, m, df, rho=0.5):',
+    '    """P(the largest of m equicorrelated t variables on df is at most c): Gauss-Hermite over the common part, quad over the chi."""',
+    '    z, wz = np.polynomial.hermite_e.hermegauss(96); wz = wz / np.sqrt(2 * np.pi)',
+    '    G = lambda cs: np.sum(wz * stats.norm.cdf((cs - np.sqrt(rho) * z) / np.sqrt(1 - rho)) ** m)',
+    '    r = np.sqrt(df)',
+    '    return quad(lambda s: G(c * s) * stats.chi.pdf(s * r, df) * r, 0, np.inf, limit=200, epsabs=1e-12, epsrel=1e-10)[0]',
+    'def mcb_quantile(m, df, alpha):',
+    '    """The one-sided Dunnett quantile of m comparisons (Hsu\'s MCB)."""',
+    '    from scipy.optimize import brentq',
+    '    return brentq(lambda c: max_t_cdf(c, m, df) - (1 - alpha), 0.0, 20.0, xtol=1e-10)',
+]
 
 
 def _scores(y, kind):
@@ -2727,7 +2933,7 @@ def oneway_brunner(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, t
     c.append(f'g = {{lv: s.to_numpy() for lv, s in d.groupby({J(x)}, observed=True)[{J(y)}]}}')
     if pairs:
         a_, b_ = G.levels[pairs[0]['i']], G.levels[pairs[0]['j']]
-        c.append(f'r = rank_compare_2indep(g[{_lvcode(a_)}], g[{_lvcode(b_)}])   # P({_lvtext(a_)} > {_lvtext(b_)}) + P(=)/2; the same for each pair')
+        c.append(f'r = rank_compare_2indep(g[{_lvcode(a_)}], g[{_lvcode(b_)}])   # P({one_line(_lvtext(a_))} > {one_line(_lvtext(b_))}) + P(=)/2; the same for each pair')
         c.append(f'print(r.prob1, r.conf_int(alpha={alpha!r}), r.statistic, r.df, r.pvalue)   # estimate, interval, Brunner-Munzel t, DF, Prob>|t|')
         if tost:
             c.append(f'print(r.tost_prob_superior({low!r}, {upp!r}))   # the equivalence test: p, then the two one-sided tests')
@@ -2932,7 +3138,7 @@ def oneway_rates(table, y, x, exposure=None, compare='ratio', method='score', ci
     c.append(f't = d.groupby({J(x)}, observed=True)[["_count", "_exposure"]].sum(); print(t.assign(rate=t._count / t._exposure))   # each level\'s total count, exposure and rate')
     if pairs:
         a_, b_ = levels[pairs[0]['i']], levels[pairs[0]['j']]
-        c.append(f'c1, e1 = t.loc[{_lvcode(a_)}]; c2, e2 = t.loc[{_lvcode(b_)}]   # {_lvtext(a_)} against {_lvtext(b_)}; the same for each pair')
+        c.append(f'c1, e1 = t.loc[{_lvcode(a_)}]; c2, e2 = t.loc[{_lvcode(b_)}]   # {one_line(_lvtext(a_))} against {one_line(_lvtext(b_))}; the same for each pair')
         c.append(f'print(test_poisson_2indep(c1, e1, c2, e2, method={J(method)}, compare={J(compare)}))')
         if ci_method == 'exact-cond':
             c.append('from statsmodels.stats.proportion import proportion_confint')
@@ -3020,6 +3226,11 @@ def _logistic_fit(table, y, x, rows, weight, freq, target):
                     'cov': cov, 'coef_target': b})
         s = 1.0 if t == 0 else -1.0
         fit['model'] = {'kind': 'binary', 'coef': [s * b[0], s * b[1]]}
+
+        def ll(v):   # by log-sigmoids: finite where separation makes the probabilities 0 and 1
+            eta = X @ np.asarray(v, dtype=float)
+            return float(-np.sum(wf * (yb * np.logaddexp(0.0, -eta) + (1 - yb) * np.logaddexp(0.0, eta))))
+        fit['unstable'] = _unstable_list(ll, b, cov, [1.0, float(np.sqrt(np.mean(xv ** 2)))])
         return fit
     if weight:
         notes.append(f'statsmodels\' {"OrderedModel" if ys.cat.ordered else "MNLogit"} takes no weights: Weight is not used here.')
@@ -3052,6 +3263,9 @@ def _logistic_fit(table, y, x, rows, weight, freq, target):
         params.append({'term': x, 'estimate': float(-p[0]), 'se': math.sqrt(cv[k - 1, k - 1]), 'group': None})
         fit.update({'kind': 'ordinal', 'llf': float(res.llf), 'llnull': float(res.llnull), 'nparm': k, 'df': 1, 'params': params, 'cov': cv,
                     'model': {'kind': 'ordinal', 'alpha': [float(v) for v in th], 'beta': float(-p[0])}})
+        un = _unstable_list(lambda v: res.model.loglike(np.asarray(v, dtype=float)), p, cov, [float(np.sqrt(np.mean(xe ** 2)))] + [1.0] * (len(p) - 1))
+        # OrderedModel's vector: the slope, the first threshold, the log increments; Intercept[j] rests on the first j + 1 of them
+        fit['unstable'] = [any(un[1:j + 2]) for j in range(k - 1)] + [un[0]] if un else None
         return fit
     # nominal: statsmodels' reference is its first category, so the last level goes first
     ce2 = (ce + 1) % k
@@ -3066,7 +3280,18 @@ def _logistic_fit(table, y, x, rows, weight, freq, target):
         params.append({'term': x, 'estimate': float(P[1, m]), 'se': math.sqrt(cov[2 * m + 1, 2 * m + 1]), 'group': m})
     fit.update({'kind': 'nominal', 'llf': float(res.llf), 'llnull': float(res.llnull), 'nparm': 2 * (k - 1), 'df': k - 1, 'params': params, 'cov': cov,
                 'model': {'kind': 'nominal', 'coef': coef}})
+    # MNLogit's covariance is column by column: (Intercept, x) of each level, the order of params above
+    fit['unstable'] = _unstable_list(lambda v: res.model.loglike(np.asarray(v, dtype=float).reshape(P.shape, order='F')), P.ravel(order='F'), cov,
+                                     [1.0, float(np.sqrt(np.mean(xe ** 2)))] * P.shape[1])
     return fit
+
+
+def _unstable_list(ll, b, cov, scales=None):
+    """models.unstable_params as a list of booleans, or None when it cannot be judged."""
+    try:
+        return [bool(v) for v in models.unstable_params(ll, b, cov, scales=scales)]
+    except Exception:
+        return None
 
 
 def _roc(score, pos, w):
@@ -3119,18 +3344,20 @@ def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=
     pred = np.argmax(P, axis=1)
     z = stats.norm.ppf(1 - alpha / 2)
     est = []
-    for q in fit['params']:
+    un = fit.get('unstable') or [False] * len(fit['params'])
+    for q, u in zip(fit['params'], un):
         e, se = q['estimate'], q['se']
         est.append({'term': q['term'], 'estimate': e, 'se': se, 'chisq': (e / se) ** 2 if se > 0 else None, 'p': float(stats.chi2.sf((e / se) ** 2, 1)) if se > 0 else None,
-                    'lower': e - z * se, 'upper': e + z * se, 'group': q['group']})
+                    'lower': e - z * se, 'upper': e + z * se, 'group': q['group'], 'unstable': 'Unstable' if u else ''})
     rng_x = float(xv.max() - xv.min())
     odds = []
     for q in est:
         if q['term'] != x:
             continue
         b, se = q['estimate'], q['se']
-        odds.append({'group': q['group'], 'unit': math.exp(b), 'unit_lower': math.exp(b - z * se), 'unit_upper': math.exp(b + z * se),
-                     'range': math.exp(b * rng_x), 'range_lower': math.exp((b - z * se) * rng_x), 'range_upper': math.exp((b + z * se) * rng_x), 'range_width': rng_x})
+        xp = lambda v: math.exp(v) if v < 709.0 else float('inf')   # an unstable (separated) slope's odds ratio overflows
+        odds.append({'group': q['group'], 'unit': xp(b), 'unit_lower': xp(b - z * se), 'unit_upper': xp(b + z * se),
+                     'range': xp(b * rng_x), 'range_lower': xp((b - z * se) * rng_x), 'range_upper': xp((b + z * se) * rng_x), 'range_width': rng_x})
     conf = np.zeros((k, k))
     np.add.at(conf, (code, pred), wf)
     whole = [
@@ -3161,7 +3388,12 @@ def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=
         if lf:
             lf['level'] = j
             lift.append(lf)
+    if any(e['unstable'] for e in est):
+        fit['notes'].insert(0, f'Unstable estimates: the levels of {y} are separated along {x} (every row beyond some value of {x} has the '
+                               'same level, or a level is sparse), so the likelihood keeps rising as the marked estimates move away from zero '
+                               'and the fit stops somewhere on the way. Their values, standard errors and tests mean little.')
     out = {'kind': fit['kind'], 'levels': levels, 'k': k, 'target': fit.get('target'), 'n': N, 'whole': whole, 'rsquare_u': 1 - llf / lln if lln else None,
+           'unstable': any(e['unstable'] for e in est),
            'aicc': aicc, 'bic': bic, 'details': details, 'estimates': est, 'odds': odds, 'confusion': conf, 'roc': roc, 'lift': lift,
            'model': fit['model'], 'x_range': [float(xv.min()), float(xv.max())], 'notes': fit['notes'], 'alpha': alpha}
     g = _grid(float(xv.min()), float(xv.max()), 200)
@@ -3174,23 +3406,55 @@ def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=
     if fit['kind'] == 'binary':
         tl = lv[fit['target']]
         if we:
-            c.append(f'res = smf.glm({J(f"I({_q(y)} == {J(tl)}) ~ {_q(x)}")}, d, family=sm.families.Binomial(), freq_weights={we}).fit()   # log odds of {tl}')
+            c.append(f'res = smf.glm({J(f"I({_q(y)} == {J(tl)}) ~ {_q(x)}")}, d, family=sm.families.Binomial(), freq_weights={we}).fit()   # log odds of {one_line(tl)}')
         else:
-            c.append(f'd["_y"] = (d[{J(y)}].astype(str) == {J(tl)}).astype(int)   # log odds of {tl} against {lv[1 - fit["target"]]}')
+            c.append(f'd["_y"] = (d[{J(y)}].astype(str) == {J(tl)}).astype(int)   # log odds of {one_line(tl)} against {one_line(lv[1 - fit["target"]])}')
             c.append(f'res = smf.logit({J("_y ~ " + _q(x))}, d).fit()')
         c.append('print(res.summary(), res.llf, res.llnull)')
     elif fit['kind'] == 'nominal':
         c.append(f'order = {J(lv[-1:] + lv[:-1])}   # the last level first: statsmodels\' reference')
         c.append(f'yc = pd.Categorical(d[{J(y)}].astype(str), categories=order).codes')
-        c.append(f'res = sm.MNLogit(yc, sm.add_constant(d[{J(x)}])).fit(); print(res.summary())   # log odds of each level against {lv[-1]}')
+        c.append(f'res = sm.MNLogit(yc, sm.add_constant(d[{J(x)}])).fit(); print(res.summary())   # log odds of each level against {one_line(lv[-1])}')
     else:
         c.append('from statsmodels.miscmodels.ordinal_model import OrderedModel')
         c.append(f'yc = pd.Categorical(d[{J(y)}].astype(str), categories={J(lv)}, ordered=True)')
         c.append(f'res = OrderedModel(pd.Series(yc), d[[{J(x)}]], distr="logit").fit(method="bfgs")')
         c.append('print(res.summary())   # statsmodels: P(Y <= j) = F(threshold_j - b x); JMP reports the thresholds and -b')
     out['code'] = '\n'.join(c)
+    # Lack of Fit (JMP's): the fitted curve against the saturated model, the levels' shares at each distinct X
+    # the counts the fit's likelihood uses (MNLogit and OrderedModel: Freq, not Weight)
+    lw = wf if fit['kind'] == 'binary' else (_freq_of(table, freq, fit['rows']) if freq else np.ones(len(code)))
+    lof = models.logistic_lack_of_fit(xv, code, lw, k, llf, fit['df'])
+    if lof is not None:
+        lc = _head(table_name, where, ['from scipy import stats'], table=table, rows=rows) + _frame_code([x, y, weight, freq], weight, freq) + \
+            _logistic_probs_code(fit, y, x, weight, freq)
+        wexpr = _wexpr(weight, freq) if fit['kind'] == 'binary' else (f'd[{J(freq)}]' if freq else None)
+        note = '' if fit['kind'] == 'binary' else '; res.llf is of the rows repeated by Freq, as the fit'
+        lof['code'] = '\n'.join(lc + models.LOGISTIC_LOF_CODE + [
+            f'print(lack_of_fit(d[{J(x)}].to_numpy(), j, {"(" + wexpr + ").to_numpy(float)" if wexpr else "np.ones(len(d))"}, len(levels), res.llf, {fit["df"]}))   # the patterns: the distinct values of {x}{note}'])
+    out['lack_of_fit'] = lof
     out.update(_logistic_plots(fit, table, y, x, rows, weight, freq, where, table_name))
+    if fit['kind'] == 'binary':
+        out['threshold'] = _logistic_threshold(fit, P, table, y, x, rows, weight, freq, where, table_name)
     return out
+
+
+def _logistic_threshold(fit, P, table, y, x, rows, weight, freq, where, table_name):
+    """The Decision Threshold of a two-level fit (predictive.threshold, WP3's
+    report): each row's level and fitted probabilities, its Weight x Freq,
+    one Training set; the code under it fits the model as the report's code
+    does. The target level is the fit's (the first level unless Target Level
+    says otherwise), as JMP has it."""
+    from . import predictive
+    we = _wexpr(weight, freq)
+    head = _plot_head(table, rows, where, table_name) + _frame_code([x, y, weight, freq], weight, freq) + \
+        _logistic_probs_code(fit, y, x, weight, freq) + [
+            f'y, fitted, sets = j, probs(d[{J(x)}]), np.zeros(len(d), dtype=int)   # each row\'s level, its probabilities of both levels, one Training set',
+            f'w = ({we}).to_numpy(float)' if we else 'w = None   # every row counts once']
+    th = predictive.threshold(fit['code'], P, [_lvtext(v) for v in fit['levels']], None, fit['wf'] if (weight or freq) else None, fit['rows'],
+                              head='\n'.join(head), values=fit['levels'])
+    th['target'] = int(fit['target'])
+    return th
 
 
 def _logistic_probs_code(fit, y, x, weight, freq):
@@ -3204,12 +3468,12 @@ def _logistic_probs_code(fit, y, x, weight, freq):
     we = _wexpr(weight, freq)
     if fit['kind'] == 'binary':
         t = fit['target']
-        c.append(f'd["_event"] = (j == {t}).astype(float)   # the target level, {_lvtext(levels[t])}')
+        c.append(f'd["_event"] = (j == {t}).astype(float)   # the target level, {one_line(_lvtext(levels[t]))}')
         if we:
             c.append(f'res = smf.glm("_event ~ {_q(x)}", d, family=sm.families.Binomial(), freq_weights={we}).fit()')
         else:
             c.append(f'res = smf.logit("_event ~ {_q(x)}", d).fit(disp=0)')
-        c.append(f'pt = lambda v: res.predict(pd.DataFrame({{{J(x)}: np.asarray(v, float)}})).to_numpy()   # P({_lvtext(levels[t])})')
+        c.append(f'pt = lambda v: res.predict(pd.DataFrame({{{J(x)}: np.asarray(v, float)}})).to_numpy()   # P({one_line(_lvtext(levels[t]))})')
         c.append('probs = lambda v: np.column_stack([pt(v), 1 - pt(v)])' if t == 0 else 'probs = lambda v: np.column_stack([1 - pt(v), pt(v)])')
         return c
     c.append(f'e = d.loc[d.index.repeat(d[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times' if freq else 'e = d')
@@ -3282,11 +3546,28 @@ def _logistic_plots(fit, table, y, x, rows, weight, freq, where, table_name):
 
 @api('fitybyx.logistic_rows')
 def logistic_rows(table, y, x, rows=None, weight=None, freq=None, target=None, alpha=0.05, where=None, table_name='data'):
-    """Save Probability Formula, as values: each row's probability of each
-    level and its most likely level."""
+    """Save Probability Formula: each level's probability and the most likely
+    level of every row of the group whose X has a value (the rows the fit
+    left out, excluded or missing Y, too), and the formulas of the saved
+    columns (models.probability_formulas): Lin[level] (binary: the target's
+    log odds; nominal: each level's against the last) or, ordinal, Linear
+    (b x) and Cum[level]; Prob[level]; Most Likely y."""
+    from .util import formula_num, formula_ref
     fit = _logistic_fit(table, y, x, rows, weight, freq, target)
-    P = _probs(fit['model'], fit['x'])
-    return {'rows': fit['rows'], 'levels': fit['levels'], 'probs': P.T, 'most_likely': np.argmax(P, axis=1)}
+    ia, xa, _ya = _all_x(table, y, x, where)
+    P = _probs(fit['model'], xa)
+    labels = [_lvtext(v) for v in fit['levels']]
+    if fit['kind'] == 'binary':
+        a, b = fit['coef_target']
+        F = models.probability_formulas('binary', labels, [_fit_formula(table, where, _line_formula(a, b, x))], y, target=fit['target'])
+    elif fit['kind'] == 'nominal':
+        F = models.probability_formulas('multinomial', labels, [_fit_formula(table, where, _line_formula(a, b, x)) for a, b in fit['model']['coef']], y)
+    else:
+        lin = _fit_formula(table, where, f'{formula_num(fit["model"]["beta"])} * {formula_ref(x)}')
+        F = models.probability_formulas('ordinal', labels, [lin], y, cuts=fit['model']['alpha'])
+    # names and prob (rows x levels): the Decision Threshold's Save Threshold Formula saves them first (SM.predict's runSave)
+    return {'rows': ia, 'levels': fit['levels'], 'probs': P.T, 'most_likely': np.argmax(P, axis=1) if len(ia) else [], 'formulas': F,
+            'names': [f'Prob[{lab}]' for lab in labels], 'prob': P}
 
 
 @api('fitybyx.logistic_inverse')
@@ -3738,8 +4019,8 @@ def contingency_twoprop(table, y, x, compare='diff', response=None, rows=None, w
     out = {'compare': compare, 'response': j, 'y_levels': yl, 'x_levels': xl, 'counts': n, 'count1': c1, 'nobs1': n1, 'count2': c2, 'nobs2': n2,
            'p1': p1, 'p2': p2, 'estimate': _fin(est), 'null': null, 'description': what, 'methods': rows_out, 'alpha': alpha, 'notes': notes}
     c = _ct_code(table_name, where, y, x, weight, freq, ['from statsmodels.stats.proportion import test_proportions_2indep, confint_proportions_2indep'], table=table, rows=rows)
-    c.append(f'count1, nobs1 = n.loc[{_lvcode(xl[0])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[0])}].sum()   # {ylab} in {x1}')
-    c.append(f'count2, nobs2 = n.loc[{_lvcode(xl[1])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[1])}].sum()   # {ylab} in {x2}')
+    c.append(f'count1, nobs1 = n.loc[{_lvcode(xl[0])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[0])}].sum()   # {one_line(ylab)} in {one_line(x1)}')
+    c.append(f'count2, nobs2 = n.loc[{_lvcode(xl[1])}, {_lvcode(yl[j])}], n.loc[{_lvcode(xl[1])}].sum()   # {one_line(ylab)} in {one_line(x2)}')
     for m, corr, label, needs, has_test in TWOPROP_METHODS[compare]:
         args = f'count1, nobs1, count2, nobs2, method={J(m)}, compare={J(compare)}{"" if corr else ", correction=False"}'
         line = f'print({J(label)}, confint_proportions_2indep({args}, alpha={alpha!r})'
@@ -3886,7 +4167,7 @@ def contingency_anomp(table, y, x, event=None, rows=None, weight=None, freq=None
     c.append(f'h = {h!r}   # the ANOM critical value for infinite df (multivariate normal)')
     c.append('print(p, pbar - h*np.sqrt(pbar*(1-pbar)*(N-ni)/(N*ni)), pbar + h*np.sqrt(pbar*(1-pbar)*(N-ni)/(N*ni)))')
     stats_lines = _counts_code(y, x, xl, yl, weight, freq) + [
-        f'n = cnt.sum(axis=1); p = cnt[:, {j}] / n; pbar = cnt[:, {j}].sum() / n.sum()   # the proportion of {_lvtext(yl[j])} in each level, and overall',
+        f'n = cnt.sum(axis=1); p = cnt[:, {j}] / n; pbar = cnt[:, {j}].sum() / n.sum()   # the proportion of {one_line(_lvtext(yl[j]))} in each level, and overall',
         'N, k = n.sum(), len(n)']
     frame = _frame_code([y, x, weight, freq], weight, freq)
     plot = _anom_plot(x, xl, [_lvtext(v) for v in xl], table, rows, where, table_name, alpha, frame, stats_lines, None,
@@ -4037,7 +4318,7 @@ def _mp_plot_codes(table, rows, where, table_name, y1, y2, group, levels, alpha)
             'dif, mean = b - a, (a + b) / 2   # each pair\'s difference and mean']
     lv = f'{100 * (1 - alpha):g}%'
     p = head(['from statsmodels.stats.weightstats import DescrStatsW']) + ['ds = DescrStatsW(dif, ddof=1)',
-                f'lower, upper = ds.tconfint_mean({alpha!r})   # the {lv} confidence interval of the mean difference',
+                f'lower, upper = ds.tconfint_mean({alpha!r})   # the {one_line(lv)} confidence interval of the mean difference',
                 _figure(480, 360)]
     if group:
         p += [f'levels = [{", ".join(_lvcode(v) for v in levels or [])}]   # the levels of {group} in these pairs, in the table\'s order',
@@ -4048,7 +4329,7 @@ def _mp_plot_codes(table, rows, where, table_name, y1, y2, group, levels, alpha)
         p.append(f'ax.scatter(mean, dif, s=18, color="{BASE}")')
     p += [f'ax.axhline(0, color="{GREY}", linewidth=0.72)',
           f'ax.axhline(ds.mean, color="{RED}", linewidth=1.15)   # the mean difference',
-          f'ax.axhline(lower, color="{RED}", linewidth=0.72, linestyle="--")   # and its {lv} confidence interval',
+          f'ax.axhline(lower, color="{RED}", linewidth=0.72, linestyle="--")   # and its {one_line(lv)} confidence interval',
           f'ax.axhline(upper, color="{RED}", linewidth=0.72, linestyle="--")',
           f'ax.set_xlabel({J(f"Mean: ({y1}+{y2})/2")})', f'ax.set_ylabel({J(f"Difference: {y2}-{y1}")})',
           f'ax.set_title({J(f"{y2}-{y1} by mean")})', 'plt.show()']
@@ -4233,7 +4514,7 @@ def matched_binary(table, columns, success=None, exact=True, correction=False, r
         return f'({frame}[{J(c)}] == {lit})'
     c = _head(table_name, where, ['from statsmodels.stats.contingency_tables import cochrans_q, mcnemar'], table=table, rows=rows)
     c.append(f'd = df[[{", ".join(J(v) for v in cols)}]].dropna()')
-    c.append(f'X = pd.DataFrame({{{", ".join(f"{J(v)}: {is_succ(v)}" for v in cols)}}}).astype(int)   # 1: {succ}')
+    c.append(f'X = pd.DataFrame({{{", ".join(f"{J(v)}: {is_succ(v)}" for v in cols)}}}).astype(int)   # 1: {one_line(succ)}')
     c.append('print(cochrans_q(X.to_numpy()))   # Q, DF and p on the rows with every response')
     c.append(f'dd = df[[{J(cols[0])}, {J(cols[1])}]].dropna()   # one pair on its own complete rows; the same for each pair')
     c.append(f't = pd.crosstab({is_succ(cols[0], "dd")}, {is_succ(cols[1], "dd")}).reindex(index=[True, False], columns=[True, False], fill_value=0).to_numpy()')

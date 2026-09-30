@@ -7,6 +7,13 @@ order with missing groups last; Freq and Weight; stack, split and transpose
 against melt, pivot and .T; joins against DataFrame.merge; update; missing
 value patterns; the EM estimate of a multivariate normal against its closed
 form for a monotone pattern; Tabulate against groupby; the script runner.
+Also: Missing Value Codes and Value Labels in the engine (data.py);
+Tabulate's continuous columns in bins (pd.cut) and by their levels, and
+Show Chart's code; the SVD imputation (a table of column means plus rank 2
+given back, soft-impute's fixed point, its code); EM with the covariances
+shrunk (Schäfer and Strimmer's intensity written out again, the closed form
+with complete data, the fixed point with missing values); Missing Value
+Clustering against scipy's Ward dendrograms, and its code.
 
     python3 resources/tests/smui/test_tables.py
 """
@@ -441,5 +448,134 @@ if 'df' in ns:
     ct_ = pd.crosstab(ns['df']['g1'], ns['df']['s'])
     got_ = [float(ct_.loc[a, b]) if a in ct_.index and b in ct_.columns else 0.0 for a in ('c', 'a', 'b') for b in ('p', 'q', 'r', 's')]
     check('... its counts are the report\'s', got_, [v for line in tb2['values'] for v in line])
+
+# ---- column properties in the engine (data.py): Missing Value Codes, Value Labels --------------------
+from smui import data as sdata  # noqa: E402
+sdata.set_table('tp', 1, [{'name': 'x', 'dataType': 'numeric', 'modelingType': 'continuous', 'levels': None, 'format': None, 'missingCodes': [999, -1]},
+                          {'name': 's', 'dataType': 'character', 'modelingType': 'nominal', 'levels': ['a', 'b'], 'format': None, 'missingCodes': ['n/a']},
+                          {'name': 'g', 'dataType': 'numeric', 'modelingType': 'nominal', 'levels': [1, 2], 'format': None, 'valueLabels': [[1, 'Male'], [2, 'Female']]}],
+                [[1.0, 999.0, 3.0, -1.0], ['a', 'n/a', 'b', None], [1.0, 2.0, 1.0, 2.0]])
+check('a missing value code that reached the engine is masked there', [None if np.isnan(v) else v for v in sdata.raw('tp', 'x')], [1.0, None, 3.0, None])
+check('a character code too', list(sdata.raw('tp', 's')), ['a', None, 'b', None])
+check('the codes and labels of a column', (sdata.missing_codes('tp', 'x'), sdata.missing_codes('tp', 's'), sdata.value_labels('tp', 'g')), ([999.0, -1.0], ['n/a'], {1.0: 'Male', 2.0: 'Female'}))
+check('a level as the page writes it', [sdata.level_label('tp', 'g', v) for v in (1, 2.0, 3)], ['Male', 'Female', '3'])
+check('the values stay the values (a level the page sends matches)', list(sdata.series('tp', 'g').cat.categories), [1.0, 2.0])
+cvp = call('tables.colviewer', table='tp', columns=['x'])
+check('an analysis leaves the codes out: N 2, N Missing 2, mean 2', (cvp['rows'][0]['n'], cvp['rows'][0]['n_missing'], cvp['rows'][0]['mean']), (2, 2, 2.0))
+
+# ---- Tabulate: a continuous column grouping by its levels, or in bins (as pd.cut cuts) ----------------
+hb = rng.normal(165, 9, N).round(1)
+tb_ = table({'h': hb, 'x': x, 'g1': list(g1)})
+cuts = [150.0, 160.0, 170.0, 180.0]
+labels = ['a', 'b', 'c', 'd', 'e']
+bt = call('tables.tabulate', table=tb_, row_chains=[['h']], analysis=['x'], stats=['N', 'Mean'], binned={'h': {'cuts': cuts, 'labels': labels}}, chart=True, table_name='data')
+bins_ = pd.cut(pd.Series(hb), [-np.inf, *cuts, np.inf], right=False, labels=labels)
+gb = pd.DataFrame({'bin': bins_, 'x': x}).groupby('bin', observed=True)['x']
+present = [lab for lab in labels if (bins_ == lab).any()]
+check('binned: a row per bin that has rows, in order', [r_['levels'][0][1] for r_ in bt['rows']], present)
+close('binned: N and Mean of each bin against pd.cut and groupby', [v for line in bt['values'] for v in line], [v for lab in present for v in (float(gb.count()[lab]), float(gb.mean()[lab]))])
+check('binned: a value on a cut point is in the bin above', [r_['levels'][0][1] for r_ in call('tables.tabulate', table=table({'h': [150.0, 149.9, 160.0], 'x': [1.0, 2.0, 3.0]}), row_chains=[['h']], stats=['N'], binned={'h': {'cuts': [150.0, 160.0], 'labels': ['lo', 'mid', 'hi']}})['rows']], ['lo', 'mid', 'hi'])
+lv_ = call('tables.tabulate', table=table({'k': [3.0, 1.0, 3.0, 2.0, np.nan], 'x': [1.0, 2.0, 3.0, 4.0, 5.0]}), row_chains=[['k']], analysis=['x'], stats=['Sum'])
+check('as levels: a continuous column\'s distinct values in ascending order, missing left out', ([r_['levels'][0][1] for r_ in lv_['rows']], [line[0] for line in lv_['values']]), ([1.0, 2.0, 3.0], [2.0, 4.0, 4.0]))
+dfb = pd.DataFrame({'h': hb, 'x': x, 'g1': g1})
+dfb.to_csv(os.path.join(work_t, 'data.csv'), index=False)
+ns = code_vars(bt['code'], 'Tabulate with a binned column')
+os.environ.setdefault('MPLBACKEND', 'Agg')
+import matplotlib  # noqa: E402
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt  # noqa: E402
+plt.show = lambda *a, **k: None
+ns = code_vars(bt['chart_code'], 'Tabulate Show Chart: the bars\' code')
+if 't' in ns:
+    figs = [plt.figure(n) for n in plt.get_fignums()]
+    bars = [b.get_width() for ax in figs[-1].axes for b in ax.patches]
+    close('... draws the cells as bars: every cell of the table', sorted(bars), sorted(v for line in bt['values'] for v in line))
+    plt.close('all')
+df.to_csv(os.path.join(work_t, 'data.csv'), index=False)
+
+# ---- Explore Missing Values: SVD imputation -------------------------------------------------------------
+rs = np.random.default_rng(99)
+A = rs.normal(size=(40, 2)) @ rs.normal(size=(2, 8)) + rs.normal(size=8) * 3      # column means plus rank 2
+Xr = A.copy()
+holes = rs.random(Xr.shape) < 0.1
+Xr[holes] = np.nan
+tr_ = table({f'v{j}': Xr[:, j] for j in range(8)})
+sv = call('tables.impute', table=tr_, columns=[f'v{j}' for j in range(8)], method='svd', rank=2, max_iter=5000)
+Ys = np.column_stack([c['values'] for c in sv['columns']])
+check('SVD imputation keeps the observed values', bool(np.allclose(Ys[~holes], A[~holes])), True)
+err = np.max(np.abs(Ys[holes] - A[holes])) / np.max(np.abs(A))
+check(f'SVD imputation of rank 2 gives back the missing cells of a table of column means plus rank 2 (worst {err:.1e} of the largest value)', bool(err < 1e-5), True)
+check('it says the rank and the rounds', (sv['info']['rank'], sv['info']['iterations'] > 1), (2, True))
+from smui import tables as stab  # noqa: E402
+check('the default rank: a quarter of the columns, 1 to 20', [stab.default_rank(100, p_) for p_ in (2, 8, 40, 200)], [1, 2, 10, 20])
+# soft-impute: the result is a fixed point of the shrunk SVD of the filled table
+Xz, it_, k_ = stab.svd_impute(Xr, rank=4, shrink=0.05, max_iter=5000, tol=1e-12)
+mu_, sd_ = np.nanmean(Xr, axis=0), np.nanstd(Xr, axis=0, ddof=1)
+Zs = (Xz - mu_) / sd_
+U_, s_, Vt_ = np.linalg.svd(Zs - Zs.mean(0), full_matrices=False)
+L_ = Zs.mean(0) + (U_[:, :4] * np.maximum(s_[:4] - 0.05 * s_[0], 0)) @ Vt_[:4]
+check('soft-impute: its missing cells are those of the means plus the shrunk rank-4 SVD of the filled table', bool(np.allclose(Zs[holes], L_[holes], atol=1e-8)), True)
+pd.DataFrame(Xr, columns=[f'v{j}' for j in range(8)]).to_csv(os.path.join(work_t, 'svd.csv'), index=False)
+ns = code_vars(call('tables.impute', table=tr_, columns=[f'v{j}' for j in range(8)], method='svd', rank=2, max_iter=5000, table_name='svd')['code'], 'SVD imputation\'s code')
+if 'X_imputed' in ns:
+    check('... the code gives the same values', bool(np.allclose(ns['X_imputed'], Ys, atol=1e-9)), True)
+
+# ---- Explore Missing Values: EM with the covariances shrunk ---------------------------------------------
+Xc = rs.normal(size=(30, 5)) @ np.array([[1, .5, 0, 0, 0], [0, 1, .5, 0, 0], [0, 0, 1, .5, 0], [0, 0, 0, 1, .5], [0, 0, 0, 0, 1]])
+# Schäfer and Strimmer's intensity written out again, from their definitions
+Zc = (Xc - Xc.mean(0)) / Xc.std(0, ddof=1)
+nn = len(Zc)
+Wk = np.einsum('ki,kj->kij', Zc, Zc)
+varr = nn / (nn - 1) ** 3 * ((Wk - Wk.mean(0)) ** 2).sum(0)
+rr = np.corrcoef(Xc, rowvar=False)
+off_ = ~np.eye(5, dtype=bool)
+lam_ss = min(1.0, (varr[off_]).sum() / (rr[off_] ** 2).sum())
+check.near('the shrinkage intensity is Schäfer and Strimmer\'s', stab.shrink_intensity(Xc), lam_ss, rel=1e-10)
+S = np.cov(Xc, rowvar=False, bias=True)
+mu1, sig1, it1, l1 = stab.mvn_em(Xc, shrink=0.3)
+check('complete data, shrinkage 0.3: (1 − 0.3) S + 0.3 diag(S) with S the ML covariance', bool(np.allclose(sig1, 0.7 * S + 0.3 * np.diag(np.diag(S)), atol=1e-12)), True)
+mu2, sig2, it2, l2 = stab.mvn_em(Xc, shrink='auto')
+check('complete data, automatic: that with the intensity of the data', (bool(np.allclose(sig2, (1 - lam_ss) * S + lam_ss * np.diag(np.diag(S)), atol=1e-12)), abs(l2 - lam_ss) < 1e-12), (True, True))
+Xm2 = Xc.copy()
+Xm2[rs.random(Xm2.shape) < 0.15] = np.nan
+mu3, sig3, it3, l3 = stab.mvn_em(Xm2, shrink=0.2, tol=1e-13, max_iter=5000)
+# the fixed point: one more E and M step (written out here) gives the same estimate
+T1 = np.zeros(5); T2 = np.zeros((5, 5))
+for r_ in range(len(Xm2)):
+    m_ = np.isnan(Xm2[r_]); o_ = ~m_
+    xr = Xm2[r_].copy(); C = np.zeros((5, 5))
+    if m_.any():
+        B = sig3[np.ix_(m_, o_)] @ np.linalg.inv(sig3[np.ix_(o_, o_)])
+        xr[m_] = mu3[m_] + B @ (xr[o_] - mu3[o_])
+        C[np.ix_(m_, m_)] = sig3[np.ix_(m_, m_)] - B @ sig3[np.ix_(o_, m_)]
+    T1 += xr; T2 += np.outer(xr, xr) + C
+mu_f = T1 / len(Xm2)
+S_f = T2 / len(Xm2) - np.outer(mu_f, mu_f)
+check('with missing values: EM with shrinkage 0.2 stops at its fixed point', bool(np.allclose(sig3, 0.8 * S_f + 0.2 * np.diag(np.diag(S_f)), atol=1e-9) and np.allclose(mu3, mu_f, atol=1e-9)), True)
+tm_ = table({f'c{j}': Xm2[:, j] for j in range(5)})
+ems = call('tables.impute', table=tm_, columns=[f'c{j}' for j in range(5)], method='mvn', shrink='auto')
+check('the imputation says its shrinkage', 0 <= ems['info']['shrinkage'] <= 1, True)
+em0 = call('tables.impute', table=tm_, columns=[f'c{j}' for j in range(5)], method='mvn')
+check('without shrinkage as before (no shrinkage in its info)', 'shrinkage' in em0['info'], False)
+
+# ---- Explore Missing Values: Missing Value Clustering -----------------------------------------------------
+from scipy.cluster.hierarchy import dendrogram as _dg, linkage as _lk  # noqa: E402
+mc = call('tables.missing_clustering', table=tid, columns=['x', 's', 'g1'], table_name='data')
+Mm = df[['x', 's', 'g1']].isna().to_numpy().astype(float)
+pats_ = pd.Series([''.join('1' if b else '0' for b in r_) for r_ in Mm]).value_counts()
+check('the patterns and their counts (pandas)', sorted((p_['pattern'], p_['count']) for p_ in mc['patterns']), sorted(pats_.items()))
+check('each pattern\'s rows', all(sorted(p_['rows']) == [i for i in range(N) if ''.join('1' if b else '0' for b in Mm[i]) == p_['pattern']] for p_ in mc['patterns']), True)
+Uu, cnt = np.unique(Mm, axis=0, return_counts=True)
+lr = _dg(_lk(Uu, 'ward'), no_plot=True)['leaves']
+lc = _dg(_lk((Uu * np.sqrt(cnt)[:, None]).T, 'ward'), no_plot=True)['leaves']
+check('the patterns in the order of Ward\'s dendrogram (scipy)', [p_['pattern'] for p_ in mc['patterns']], [''.join('1' if b else '0' for b in Uu[u]) for u in lr])
+check('the columns in the order of theirs, over every row', mc['columns'], [['x', 's', 'g1'][j] for j in lc])
+# the columns' dendrogram over every row is the one of the patterns weighted by their counts
+Mfull = Mm.T
+check('... the same as Ward on the columns over every row', _dg(_lk(Mfull, 'ward'), no_plot=True)['leaves'], lc)
+ns = code_vars(mc['code'], 'Missing Value Clustering\'s code')
+if 'Z' in ns:
+    check('... its picture has the report\'s patterns and columns', ns['Z'].astype(int).tolist(), [p_['missing'] for p_ in mc['patterns']])
+    plt.close('all')
 
 sys.exit(check.done())

@@ -10,7 +10,13 @@
    columns that recalculate in dependency order when their inputs change,
    refuse cycles, follow renames and survive a JSON round trip, random
    numbers that repeat with the column's seed, that no expression reaches a
-   JavaScript name, and the speed over 100 000 rows.
+   JavaScript name, and the speed over 100 000 rows. Also Col Moving Average
+   (JMP's weightings against windows worked out row by row) and Col Stored
+   Value, and the table's column properties (smui-table.js): Missing Value
+   Codes (missing to formulas and levels, kept as stored through edits,
+   sorts, added and deleted rows, type changes, Undo, Save Table and
+   subsets, and the line the reports' code gets), Value Labels and the
+   Profit Matrix.
 
        node resources/tests/smui/test-formula.js
 
@@ -412,6 +418,172 @@ check('a date plus days is a date, a date minus a date is not', [F.evaluate(t, '
     T.setType('k', { dataType: 'numeric' });
     check('a formula whose input is numeric again works again', [k2.values[0], F.info(T, k2).error], [2, null]);
   }
+}
+
+/* ---- Col Moving Average: JMP's weightings, against a window worked out row by row ---------------- */
+{
+  const xs = [3, 1, NaN, 4, 1, 5, 9, 2, 6, NaN, 5, 3];
+  const gs = ['a', 'a', 'a', 'b', 'b', 'a', 'b', 'a', 'b', 'b', 'a', 'a'];
+  const T = new SM.Table({ columns: [{ name: 'x', dataType: 'numeric', values: xs }, { name: 'g', dataType: 'character', values: gs }] });
+  // the window of position p among n: its rows and their weights, by the definitions
+  const brute = (vals, w, before, after, partial) => vals.map((_, p) => {
+    const n = vals.length;
+    const lo = before < 0 ? 0 : p - before, hi = after < 0 ? n - 1 : p + after;
+    if (partial && (lo < 0 || hi > n - 1)) return NaN;
+    let s = 0, sw = 0;
+    for (let q = Math.max(0, lo); q <= Math.min(n - 1, hi); q++) {
+      if (Number.isNaN(vals[q])) continue;
+      let wt;
+      if (w === 1) wt = 1;
+      else if (w === 0) wt = q <= p ? q - lo + 1 : hi - q + 1;       // a ramp up to p, down after it
+      else wt = (1 - w) ** Math.abs(q - p);
+      s += wt * vals[q]; sw += wt;
+    }
+    return sw ? s / sw : NaN;
+  });
+  const cmpArr = (a, b) => a.length === b.length && a.every((x, i) => (Number.isNaN(x) && Number.isNaN(b[i])) || Math.abs(x - b[i]) < 1e-12);
+  const got = (e) => Array.from(F.evaluate(T, e));
+  check('Col Moving Average(x, 1, 4): equal weights, a five-row lagging window (JMP\'s example)', cmpArr(got('Col Moving Average(:x, 1, 4)'), brute(xs, 1, 4, 0, false)), true);
+  // by hand at row 5 (index 4): rows 1..5 = 3, 1, ., 4, 1 -> (3+1+4+1)/4
+  near('its fifth row by hand: (3 + 1 + 4 + 1)/4', got('Col Moving Average(:x, 1, 4)')[4], 9 / 4);
+  check('Col Moving Average(x, 0): a ramp over every row before', cmpArr(got('Col Moving Average(:x, 0)'), brute(xs, 0, -1, 0, false)), true);
+  // row 4 (index 3): weights 1,2,3,4 on 3, 1, ., 4 -> (3 + 2 + 16)/(1 + 2 + 4)
+  near('its fourth row by hand: (1·3 + 2·1 + 4·4)/(1 + 2 + 4)', got('Col Moving Average(:x, 0)')[3], 21 / 7);
+  check('Col Moving Average(x, 0, 2, 2): a triangle, centred', cmpArr(got('Col Moving Average(:x, 0, 2, 2)'), brute(xs, 0, 2, 2, false)), true);
+  near('the triangle at row 6 by hand: (1·4 + 2·1 + 3·5 + 2·9 + 1·2)/9', got('Col Moving Average(:x, 0, 2, 2)')[5], (4 + 2 + 15 + 18 + 2) / 9);
+  check('Col Moving Average(x, 0.25): exponential, every row before', cmpArr(got('Col Moving Average(:x, 0.25)'), brute(xs, 0.25, -1, 0, false)), true);
+  near('the exponential at row 2 by hand: (0.75·3 + 1)/(0.75 + 1)', got('Col Moving Average(:x, 0.25)')[1], (0.75 * 3 + 1) / 1.75);
+  check('partial is missing: the first four rows of a five-row window are missing', got('Col Moving Average(:x, 1, 4, 0, 1)').slice(0, 5).map((v) => Number.isNaN(v)), [true, true, true, true, false]);
+  check('and every row of a window with rows after runs to the end', cmpArr(got('Col Moving Average(:x, 1, 1, 1, 1)'), brute(xs, 1, 1, 1, true)), true);
+  check('after -1: every row after', cmpArr(got('Col Moving Average(:x, 1, 0, -1)'), brute(xs, 1, 0, -1, false)), true);
+  // By: each group on its own, in row order
+  const byGroup = new Array(xs.length).fill(NaN);
+  for (const lev of ['a', 'b']) {
+    const rows = gs.map((g, i) => (g === lev ? i : -1)).filter((i) => i >= 0);
+    const m = brute(rows.map((i) => xs[i]), 1, 2, 0, false);
+    rows.forEach((i, k) => { byGroup[i] = m[k]; });
+  }
+  check('with a By column: within each group', cmpArr(got('Col Moving Average(:x, 1, 2, 0, 0, :g)'), byGroup), true);
+  check('Moving Average is the same function', cmpArr(got('Moving Average(:x, 1, 4)'), got('Col Moving Average(:x, 1, 4)')), true);
+  throwsAt('a weighting above 1 is refused', () => F.evaluate(T, 'Col Moving Average(:x, 2)'), null, /weighting/);
+  throwsAt('a window of -2 rows is refused', () => F.evaluate(T, 'Col Moving Average(:x, 1, -2)'), null, /before and after/);
+  throwsAt('text is refused', () => F.evaluate(T, 'Col Moving Average(:g, 1)'), null, /needs a number/);
+  // a formula column of it follows its column
+  const ma = T.addColumn({ name: 'ma', dataType: 'numeric', values: [] });
+  F.apply(T, ma, 'Col Moving Average(:x, 1, 1)');
+  T.setCell(0, 'x', 7);
+  near('a moving-average column follows an edit of its column', ma.values[1], (7 + 1) / 2);
+}
+
+/* ---- column properties: Missing Value Codes, Value Labels, Profit Matrix (smui-table.js) ------ */
+{
+  const T = new SM.Table({ name: 'P', columns: [
+    { name: 'x', dataType: 'numeric', values: [1, 999, 3, -1, 999, 6], missingCodes: [999, -1] },
+    { name: 's', dataType: 'character', values: ['a', 'n/a', 'b', 'a', null, 'n/a'], missingCodes: ['n/a'] },
+    { name: 'g', dataType: 'numeric', modelingType: 'nominal', values: [1, 2, 1, 2, 3, 1], valueLabels: { 1: 'Male', 2: 'Female' } },
+  ] });
+  const x = T.col('x'), s = T.col('s'), g = T.col('g');
+  check('a missing value code is missing to the analyses', x.values, [1, NaN, 3, NaN, NaN, 6]);
+  check('and kept as it is stored', T.storedValues('x'), [1, 999, 3, -1, 999, 6]);
+  check('a character code too', [s.values, T.storedValues('s')], [['a', null, 'b', 'a', null, null], ['a', 'n/a', 'b', 'a', null, 'n/a']]);
+  check('the levels leave the codes out', [T.levels('x'), T.levels('s')], [[1, 3, 6], ['a', 'b']]);
+  check('a formula sees a code as missing', Array.from(F.evaluate(T, ':x * 2')), [2, NaN, 6, NaN, NaN, 12]);
+  check('Is Missing is 1 at a code', Array.from(F.evaluate(T, 'Is Missing(:x)')), [0, 1, 0, 1, 1, 0]);
+  check('Col Mean leaves the codes out', F.evaluate(T, 'Col Mean(:x)')[0], 10 / 3);
+  check('Col Stored Value gives the code', Array.from(F.evaluate(T, 'Col Stored Value(:x)')), [1, 999, 3, -1, 999, 6]);
+  check('Col Stored Value of a row', F.evaluate(T, 'Col Stored Value(:x, 2)')[0], 999);
+  check('Mean(Col Stored Value(:x), 0) uses 999 (JMP\'s example)', F.evaluate(T, 'Mean(Col Stored Value(:x), 0)')[1], 999 / 2);
+  throwsAt('Col Stored Value takes a column', () => F.evaluate(T, 'Col Stored Value(3)'), null, /takes a column/);
+  // cells given a code, and one given a value
+  T.setCell(0, 'x', 999);
+  T.setCell(1, 'x', 5);
+  check('a cell given a code keeps it and is missing; a code replaced by a value is the value', [x.values.slice(0, 2), T.storedValues('x').slice(0, 2)], [[NaN, 5], [999, 5]]);
+  // rows moved, added and deleted: the codes go with their rows
+  T.sortBy([{ col: 'g' }]);
+  check('sorting moves the codes with their rows', T.storedValues('x'), [999, 3, 6, 5, -1, 999]);
+  T.addRows(2, 1);
+  check('added rows are empty, the codes stay with theirs', T.storedValues('x'), [999, NaN, NaN, 3, 6, 5, -1, 999]);
+  T.deleteRows([1, 2]);
+  check('deleted rows take their codes', T.storedValues('x'), [999, 3, 6, 5, -1, 999]);
+  // the codes changed
+  T.setMissingCodes('x', [5]);
+  check('new codes: the old ones are values again', [x.values, T.storedValues('x')], [[999, 3, 6, NaN, -1, 999], [999, 3, 6, 5, -1, 999]]);
+  T.setMissingCodes('x', null);
+  check('no codes: every stored value is a value', [x.values, x.coded, x.missingCodes], [[999, 3, 6, 5, -1, 999], null, null]);
+  T.setMissingCodes('x', ['999', ' -1 ']);
+  check('codes typed as text become numbers for a numeric column', [x.missingCodes, x.values], [[999, -1], [NaN, 3, 6, 5, NaN, NaN]]);
+  // a data type change carries the codes and the labels
+  T.setType('x', { dataType: 'character' });
+  check('to character: the codes are texts and still missing', [x.missingCodes, x.values, T.storedValues('x')], [['999', '-1'], [null, '3', '6', '5', null, null], ['999', '3', '6', '5', '-1', '999']]);
+  T.setType('x', { dataType: 'numeric' });
+  check('and back to numeric', [x.missingCodes, T.storedValues('x')], [[999, -1], [999, 3, 6, 5, -1, 999]]);
+  // undo
+  const snap = T.snapshot();
+  T.setMissingCodes('x', null);
+  T.setValueLabels('g', null);
+  T.restore(snap);
+  check('Undo puts the codes and the labels back', [x.missingCodes, x.values, SM.table.labelOf(g, 1)], [[999, -1], [NaN, 3, 6, 5, NaN, NaN], 'Male']);
+  // Save Table: the stored values and the properties, and back
+  const J = JSON.parse(JSON.stringify(T.toJSON()));
+  const jx = J.columns.find((c) => c.name === 'x');
+  check('Save Table keeps the stored values and the codes', [jx.values, jx.missingCodes], [[999, 3, 6, 5, -1, 999], [999, -1]]);
+  const R = SM.Table.fromJSON(J);
+  check('and opens them again', [R.col('x').values, R.storedValues('x'), R.col('x').missingCodes, SM.table.labelOf(R.col('g'), 2)], [x.values, T.storedValues('x'), [999, -1], 'Female']);
+  // a subset takes the codes along
+  const S = T.subset([0, 1], ['x']);
+  check('a subset keeps the codes', [S.col('x').values, S.storedValues('x'), S.col('x').missingCodes], [[NaN, 3], [999, 3], [999, -1]]);
+  // Value Labels
+  check('a label for a value', [SM.table.labelOf(g, 1), SM.table.labelOf(g, 2), SM.table.labelOf(g, 3), SM.table.labelOf(g, NaN)], ['Male', 'Female', null, null]);
+  check('labels as pairs, values typed', SM.table.labelPairs(g), [[1, 'Male'], [2, 'Female']]);
+  T.setValueLabels('g', [[1, 'M'], ['2.0', 'F'], ['x', 'bad'], [3, '']]);
+  check('labels normalized: numbers as numbers, an empty label and a text for a number dropped', SM.table.labelPairs(g), [[1, 'M'], [2, 'F']]);
+  check('a level that comes back as text ("2.0") finds the label of 2', SM.table.labelOf(g, '2.0'), 'F');
+  const H = new SM.Table({ columns: [{ name: 'h', dataType: 'character', values: ['__proto__', 'constructor', 'a'], valueLabels: JSON.parse('{"__proto__": "p", "constructor": "c"}') }] });
+  check('a value named __proto__ or constructor is an ordinary key', [SM.table.labelOf(H.col('h'), '__proto__'), SM.table.labelOf(H.col('h'), 'constructor'), SM.table.labelOf(H.col('h'), 'a'), SM.table.labelOf(H.col('h'), 'toString')], ['p', 'c', null, null]);
+  // Profit Matrix
+  const d = SM.table.profitFor([0, 1], null, true);
+  check('a new profit matrix: 1 right, −1 wrong, 0 Undecided', JSON.stringify(d), JSON.stringify({ levels: [0, 1], decisions: [0, 1, 'Undecided'], matrix: [[1, -1, 0], [-1, 1, 0]] }));
+  T.setProfitMatrix('g', { levels: [1, 2], decisions: [1, 2], matrix: [[10, -2], ['x', 3]] });
+  check('a profit matrix stored, anything not a number made 0', JSON.stringify(g.profitMatrix), JSON.stringify({ levels: [1, 2], decisions: [1, 2], matrix: [[10, -2], [0, 3]] }));
+  check('aligned to the levels now: the new level gets the defaults', JSON.stringify(SM.table.profitAligned(T, 'g')), JSON.stringify({ levels: [1, 2, 3], decisions: [1, 2, 3], matrix: [[10, -2, -1], [0, 3, -1], [-1, -1, 1]] }));
+  const J2 = JSON.parse(JSON.stringify(T.toJSON()));
+  check('the profit matrix and the labels in Save Table', JSON.stringify([J2.columns.find((c) => c.name === 'g').profitMatrix.matrix, J2.columns.find((c) => c.name === 'g').valueLabels]), JSON.stringify([[[10, -2], [0, 3]], { 1: 'M', 2: 'F' }]));
+  // a formula column with a code of its own
+  const f = T.addColumn({ name: 'f', dataType: 'numeric', values: [], missingCodes: [6] });
+  F.apply(T, f, 'Col Stored Value(:x)');
+  check('a formula column\'s own code is missing too', [f.values, T.storedValues('f')], [[999, 3, NaN, 5, -1, 999], [999, 3, 6, 5, -1, 999]]);
+  // the code a report shows
+  const code = 'import pandas as pd\n# the table\ndf = pd.read_csv("P.csv", float_precision="round_trip", keep_default_na=False, na_values=[""])\nprint(df["x"].mean(), df["s"].count())';
+  const cc = SM.table.codedCode(code, T);
+  check('the report\'s code: a line per coded column it uses, after read_csv', cc.split('\n').slice(3, 5), ['df["x"] = df["x"].mask(df["x"].isin([999, -1]))   # 999, -1 are missing value codes of x (Column Info): missing here, as in the page', 'df["s"] = df["s"].mask(df["s"].isin(["n/a"]))   # "n/a" is a missing value code of s (Column Info): missing here, as in the page']);
+  check('once only', SM.table.codedCode(cc, T), cc);
+  check('code that does not use the column is left alone', SM.table.codedCode('df = pd.read_csv("P.csv")\nprint(df["g"])', T), 'df = pd.read_csv("P.csv")\nprint(df["g"])');
+  const dated = 'df = pd.read_csv("P.csv")\ndf["x"] = (pd.to_datetime(df["x"]) - pd.Timestamp(0)) / pd.Timedelta(milliseconds=1)   # a date\nprint(df["x"])';
+  check('after the date lines', SM.table.codedCode(dated, T).split('\n')[2].startsWith('df["x"] = df["x"].mask('), true);
+  const bad = new SM.Table({ columns: [{ name: 'a\nimport os', dataType: 'numeric', values: [1, 9], missingCodes: [9] }] });
+  check('a name from a file cannot hold a line break (the table cleans it)', bad.columns[0].name, 'a import os');
+  bad.columns[0].name = 'a\nimport os';      // (and were one to get in, the comment still keeps it)
+  const bc = SM.table.codedCode('df = pd.read_csv("b.csv")\nprint(df["a\\nimport os"])', bad).split('\n');
+  check('a name with a line break stays inside its comment', [bc.length, bc[1].startsWith('df["a\\nimport os"] = df["a\\nimport os"].mask('), bc[1].endsWith('of a import os (Column Info): missing here, as in the page')], [3, true, true]);
+  const res = SM.table.codedResult({ code: code, parts: [{ code: code }], n: 3 }, T);
+  check('every snippet of a result', [res.code === cc, res.parts[0].code === cc, res.n], [true, true, 3]);
+}
+
+/* ---- names on one line (SM.table.cleanName): a name can never end a comment of the code ---------- */
+{
+  const { cleanName } = SM.table;
+  check('line breaks, tabs and other control characters are one space', ['a\nb', 'a\r\nb', 'a\rb', 'a\tb', 'a\u000bb', 'a\u000cb', 'a\u0085b', 'a b', 'a b', 'a\u0000b', 'a\u009fb', 'a\u007fb'].map(cleanName), new Array(12).fill('a b'));
+  check('the spaces around a break go into its one space; other runs of spaces stay', [cleanName('a \n\n b'), cleanName('a  b'), cleanName('  a b  '), cleanName('\n\t')], ['a b', 'a  b', 'a b', '']);
+  const T = new SM.Table({ name: 'one\ntwo', columns: [{ name: 'a\nb', values: [1] }, { name: 'a b', values: [2] }, { name: '\n', values: [3] }] });
+  check('a table\'s name, and its columns\' (a name emptied is Column 3; a second a b is a b 2)', [T.name, T.columns.map((c) => c.name)], ['one two', ['a b', 'a b 2', 'Column 3']]);
+  T.renameColumn(T.columns[1], 'x\r\ny');
+  const c = T.addColumn({ name: 'p q', values: [] });
+  T.name = '\u0085';
+  check('rename, addColumn and a table name set later', [T.columns[1].name, c.name, T.name], ['x y', 'p q', 'Untitled']);
+  T.renameColumn(T.columns[1], '\n');
+  check('a rename to nothing is no rename', T.columns[1].name, 'x y');
+  const J = SM.Table.fromJSON(JSON.parse('{"format":"smui-table","version":1,"name":"j\\u2028k","columns":[{"name":"m\\u2029n","dataType":"numeric","values":[1]}]}'));
+  check('fromJSON: the table\'s and the columns\' names', [J.name, J.columns[0].name], ['j k', 'm n']);
 }
 
 /* ---- speed ---------------------------------------------------------------------------------- */

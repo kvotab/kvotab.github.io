@@ -420,6 +420,49 @@ r = call('fitybyx.oneway_densities', table=tid, y='y', x='g')
 kd = stats.gaussian_kde(groups[1])
 check.near('densities = gaussian_kde', r['levels'][1]['density'][40], float(kd(r['x'][40])[0]))
 
+# ---- Oneway ▸ Compare Means ▸ With Best, Hsu MCB ------------------------------------------------------------
+from smui import fit_y_by_x as fyx_mod
+check.near('Hsu MCB quantile of one comparison = the one-sided t quantile', fyx_mod._mcb_quantile(1, 10, 0.05), float(stats.t.ppf(0.95, 10)), rel=1e-9)
+check.near('  two comparisons, infinite DF: Dunnett\'s one-sided 1.916 (equicorrelated ½, the bivariate normal)', fyx_mod._mcb_quantile(2, np.inf, 0.05),
+           float(__import__('scipy').optimize.brentq(lambda c: stats.multivariate_normal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).cdf([c, c]) - 0.95, 1, 3)), abs_=2e-5)
+rng_m = np.random.default_rng(1)
+km, nm = 5, 8
+smp_m = [rng_m.normal(i * 0.3, 1, nm) for i in range(km)]
+rd_ = stats.dunnett(*smp_m[1:], control=smp_m[0], alternative='greater', rng=np.random.default_rng(3))
+mse_m = float(np.mean([s_.var(ddof=1) for s_ in smp_m]))
+se_m = math.sqrt(mse_m * 2 / nm)
+d_dun = float(np.median((np.array([s_.mean() - smp_m[0].mean() for s_ in smp_m[1:]]) - rd_.confidence_interval(0.95).low) / se_m))
+tm_ = table({'x': np.repeat([f'g{i}' for i in range(km)], nm).tolist(), 'y': np.concatenate(smp_m).tolist()})
+rm_ = call('fitybyx.oneway_compare', table=tm_, y='y', x='x', method='hsu', table_name='mcb')
+check.near('  four comparisons, equal groups: scipy.stats.dunnett\'s one-sided quantile (simulated)', rm_['quantile']['value'], d_dun, abs_=2e-3)
+mm_ = np.array([s_.mean() for s_ in smp_m])
+ok_mcb = []
+for r_ in rm_['mcb']:
+    i_ = r_['index']
+    D_ = mm_[i_] - np.delete(mm_, i_)
+    ok_mcb.append(abs(r_['lower'] - min(0, np.min(D_ - rm_['quantile']['value'] * se_m))) + abs(r_['upper'] - max(0, np.min(D_ + rm_['quantile']['value'] * se_m))))
+check.near('  the constrained intervals by Hsu\'s formula, [min(0, min(D - d se)), max(0, min(D + d se))]', max(ok_mcb), 0.0, abs_=1e-9)
+check('  upper limit 0 exactly when p < α (significantly below the best)', [(r_['upper'] == 0) == (r_['p'] < 0.05) for r_ in rm_['mcb']], [True] * km)
+rmn = call('fitybyx.oneway_compare', table=tm_, y='y', x='x', method='hsu_min')
+check('  against the smallest: the largest mean is the one found above it', [r_['index'] for r_ in rmn['mcb'] if r_['lower'] == 0], [int(np.argmax(mm_))])
+import contextlib as _cl, io as _io, os as _os, tempfile as _tf
+with _tf.TemporaryDirectory() as tmp_:
+    pd.DataFrame({'x': np.repeat([f'g{i}' for i in range(km)], nm), 'y': np.concatenate(smp_m)}).to_csv(_os.path.join(tmp_, 'mcb.csv'), index=False)
+    here_ = _os.getcwd(); _os.chdir(tmp_)
+    ns_m, err_m = {}, None
+    try:
+        with _cl.redirect_stdout(_io.StringIO()):
+            exec(rm_['code'], ns_m)
+    except Exception as e:
+        err_m = f'{type(e).__name__}: {e}'
+    finally:
+        _os.chdir(here_)
+check('  its code runs', err_m, None)
+if err_m is None:
+    check.near('  and has the report\'s quantile', float(ns_m['dq']), rm_['quantile']['value'], rel=1e-9)
+po_ = call('fitybyx.oneway', table=tm_, y='y', x='x', plot={'points': True, 'circles': {'method': 'hsu', 'control': None}, 'labels': [f'g{i}' for i in range(km)], 'width': 500, 'height': 380})
+check('  the comparison circles of Hsu MCB have code', 'mcb_quantile' in (po_.get('plot_code') or ''), True)
+
 # ---- Logistic ------------------------------------------------------------------------------
 n = 240
 dose = rng.choice([0, 10, 20, 40, 80], n).astype(float)
@@ -497,6 +540,49 @@ for j in range(len(p_)):
     gr[j] = (om.transform_threshold_params(p_ + e_)[3] - om.transform_threshold_params(p_ - e_)[3]) / 2e-6
 check.near('ordinal: a later intercept\'s SE (delta method)', est['Intercept[moderate]']['se'], float(math.sqrt(gr @ cv @ gr)), rel=1e-4)
 check.near('ordinal: LR chi-square', r['whole'][0]['chisq'], float(2 * (ro.llf - ro.llnull)), rel=1e-6)
+# Lack of Fit (JMP's, when X values repeat): the fitted curve against the saturated model, each distinct dose its own shares of
+# the levels; the saturated model fitted by statsmodels (a dummy per dose) and the shares by hand; Freq counts rows
+dummies = pd.get_dummies(dose).to_numpy(float)
+cnt_d = lambda yv_, w_=None: pd.crosstab(dose, yv_, values=w_, aggfunc='sum').fillna(0).to_numpy() if w_ is not None else pd.crosstab(dose, yv_).to_numpy().astype(float)
+for label_, tid_, yname_, yv_, sat_, dfit_ in [
+        ('binary', tid, 'response', resp, lambda: sm.Logit(yb_, dummies).fit(disp=0).llf, 1),
+        ('nominal', tid5, 'k', cat3, lambda: sm.MNLogit(codes, np.column_stack([np.ones(n), dummies[:, 1:]])).fit(disp=0, maxiter=200).llf, 2),
+        ('ordinal', tid6, 'sev', names, None, 1)]:
+    rr_ = call('fitybyx.logistic', table=tid_, y=yname_, x='dose')
+    lf_ = rr_['lack_of_fit']
+    check(f'Lack of Fit ({label_}): a table over the five doses', lf_ is not None and lf_['patterns'] == 5, True)
+    if lf_ is None:
+        continue
+    lr_ = {x_['source']: x_ for x_ in lf_['rows']}
+    c_ = cnt_d(yv_)
+    kk = c_.shape[1]
+    ll_sat = float(np.sum(np.where(c_ > 0, c_ * np.log(np.where(c_ > 0, c_, 1) / c_.sum(axis=1, keepdims=True)), 0)))
+    check.near(f'  Saturated -LogLikelihood = the doses\' shares by hand ({label_})', lr_['Saturated']['nll'], -ll_sat, rel=1e-12)
+    if sat_ is not None:
+        check.near(f'  = the saturated model fitted by statsmodels ({label_})', lr_['Saturated']['nll'], -float(sat_()), rel=1e-7)
+    check.near(f'  Fitted = the Whole Model\'s Full ({label_})', lr_['Fitted']['nll'], rr_['whole'][1]['nll'], rel=1e-12)
+    check(f'  DF ({label_})', (lr_['Saturated']['df'], lr_['Fitted']['df'], lr_['Lack Of Fit']['df']), (4.0 * (kk - 1), float(dfit_), 4.0 * (kk - 1) - dfit_))
+    chi_ = 2 * (ll_sat + rr_['whole'][1]['nll'])
+    check.near(f'  ChiSquare and Prob>ChiSq ({label_})', abs(lr_['Lack Of Fit']['chisq'] - chi_) + abs(lr_['Lack Of Fit']['p'] - stats.chi2.sf(chi_, 4 * (kk - 1) - dfit_)),
+               0.0, abs_=1e-9)
+lq_ = call('fitybyx.logistic', table=tid, y='response', x='dose', freq='f')['lack_of_fit']['rows']
+rep_ = np.repeat(np.arange(n), wl.astype(int))
+lr2_ = call('fitybyx.logistic', table=table({'dose': dose[rep_], 'response': resp[rep_].tolist()}, levels={'response': ['no', 'yes']}),
+            y='response', x='dose')['lack_of_fit']['rows']
+check.near('Lack of Fit with Freq = that of the rows repeated', max(abs(a_['nll'] - b_['nll']) for a_, b_ in zip(lq_, lr2_)), 0.0, abs_=1e-8)
+# Unstable estimates (JMP's mark): none in the fits above; separation by X marks them
+check('no Unstable estimate in the binary, nominal and ordinal fits of the dose data',
+      [call('fitybyx.logistic', table=t_, y=y_, x='dose')['unstable'] for t_, y_ in ((tid, 'response'), (tid5, 'k'), (tid6, 'sev'))], [False, False, False])
+rng_s = np.random.default_rng(7)
+xs_ = rng_s.normal(size=120)
+for lab_, yv_, ty_, lv_ in [('binary', np.where(xs_ > 0.2, 'yes', 'no'), {}, {}),
+                            ('nominal', np.where(xs_ > 0.5, 'r', rng_s.choice(['p', 'q'], 120)), {}, {}),
+                            ('ordinal', np.array(['lo', 'mid', 'hi'])[np.digitize(xs_, [-0.3, 0.6])], {'y': 'ordinal'}, {'y': ['lo', 'mid', 'hi']})]:
+    ru_ = call('fitybyx.logistic', table=table({'x': xs_.tolist(), 'y': yv_.tolist()}, types=ty_, levels=lv_), y='y', x='x')
+    check(f'separated by X ({lab_}): every estimate Unstable, with a note', (all(e_['unstable'] == 'Unstable' for e_ in ru_['estimates']), ru_['notes'][0].startswith('Unstable')), (True, True))
+rng_u = np.random.default_rng(41)   # its own generator: the data of the sections below stay as they were
+tidu = table({'x': rng_u.normal(size=40), 'y': rng_u.choice(['a', 'b'], 40).tolist()})
+check('no X value repeated: no Lack of Fit table', call('fitybyx.logistic', table=tidu, y='y', x='x')['lack_of_fit'], None)
 
 # ---- Contingency ---------------------------------------------------------------------------
 n = 300
@@ -959,6 +1045,28 @@ code_runs('Oneway, two levels', cols2, [(fn, call(fn, table=tidc, y='y', x='g'))
 cols = {'dose': dose, 'response': resp.tolist(), 'f': wl, 'k': cat3.tolist(), 'sev': names.tolist()}
 tidc = table(cols, types={'sev': 'ordinal'}, levels={'response': ['no', 'yes'], 'sev': ['none', 'mild', 'moderate', 'severe']})
 code_runs('Logistic', cols, [(f'{y_} {kw}', call('fitybyx.logistic', table=tidc, y=y_, x='dose', **kw)) for y_, kw in [('response', {}), ('response', {'freq': 'f'}), ('k', {}), ('sev', {})]])
+# the code under Lack of Fit prints the report's numbers
+with tempfile.TemporaryDirectory() as tmp_:
+    pd.DataFrame(cols).to_csv(os.path.join(tmp_, 'data.csv'), index=False)
+    here_ = os.getcwd()
+    os.chdir(tmp_)
+    try:
+        for y_, kw in [('response', {}), ('response', {'freq': 'f'}), ('k', {}), ('k', {'freq': 'f'}), ('sev', {})]:
+            lf_ = call('fitybyx.logistic', table=tidc, y=y_, x='dose', **kw)['lack_of_fit']
+            ns_, err_ = {}, None
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    exec(compile(lf_['code'].replace('print(lack_of_fit(', 'LOF_ = (lack_of_fit('), 'lof', 'exec'), ns_)
+            except Exception as e:   # the check below reports it
+                err_ = f'{type(e).__name__}: {e}'
+            check(f'Lack of Fit code runs ({y_} {kw})', err_, None)
+            if err_ is None:
+                want_ = [lf_['rows'][0][k_] for k_ in ('df', 'nll', 'chisq', 'p')]
+                check.near(f'  and prints the report\'s DF, -LogLikelihood, ChiSquare and p ({y_} {kw})',
+                           max(abs(float(v_) - w_) / max(1.0, abs(w_)) for v_, w_ in zip(ns_['LOF_'], want_)), 0.0, abs_=1e-7)
+    finally:
+        os.chdir(here_)
 cols = {'trt': tx.tolist(), 'out': ty.tolist()}
 tidc = table(cols, types={'trt': 'ordinal', 'out': 'ordinal'}, levels={'trt': ['placebo', 'low', 'high'], 'out': ['none', 'some', 'good']})
 code_runs('Contingency', cols, [(fn, call(fn, table=tidc, y='out', x='trt')) for fn in ('fitybyx.contingency', 'fitybyx.contingency_measures', 'fitybyx.contingency_ca')])
@@ -1505,4 +1613,140 @@ for tag, kw in (('Matched Pairs graphs, a group', {'y1': 'before', 'y2': 'after'
 check('Y and X the same column', 'error' in call('fitybyx.fit_poly', table=tid, y='before', x='before'), True)
 check('one level: no t test', 'error' in call('fitybyx.oneway_ttest', table=tid, y='before', x='grp', rows=[i for i in range(n) if grp[i] == 'x']), True)
 check('rows=None is every row', call('fitybyx.fit_mean', table=tid, y='before', x='after', rows=None)['n'], float(okm.sum()))
+
+# ---- Save Predicteds for every row, and Save Formula ----------------------------------------------------------
+# As JMP, a saved prediction covers every row of the group whose X has a value, rows the fit leaves out too (rows
+# left out of the report, rows missing Y); checked against each fit's own prediction at those X (numpy, scipy,
+# statsmodels by another route), and the formulas run by the page's formula language (smui-formula.js in node).
+import json as _json  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+_FJS = r'''
+const fs = require('fs'); const path = require('path'); const vm = require('vm');
+const sb = { console }; sb.self = sb; vm.createContext(sb);
+for (const f of ['smui-util.js', 'smui-table.js', 'smui-formula.js']) vm.runInContext(fs.readFileSync(path.join(process.argv[2], f), 'utf8'), sb, { filename: f });
+const inp = JSON.parse(fs.readFileSync(0, 'utf8'));
+const t = new sb.SM.Table({ name: 'T', columns: inp.columns.map((c) => ({ name: c.name, dataType: c.dataType, values: c.values.map((v) => (v === null && c.dataType === 'numeric' ? NaN : v)) })) });
+const out = [];
+for (const f of inp.formulas) {
+  try {
+    const v = Array.from(sb.SM.formula.evaluate(t, f.expr));
+    t.addColumn({ name: f.name, dataType: typeof v.find((x) => x != null && !(typeof x === 'number' && Number.isNaN(x))) === 'string' ? 'character' : 'numeric', values: v });
+    out.push({ values: v.map((x) => (typeof x === 'number' && !Number.isFinite(x) ? null : x)) });
+  } catch (e) { out.push({ error: String(e.message || e) }); }
+}
+process.stdout.write(JSON.stringify(out));
+'''
+NODE = shutil.which('node')
+_fdrv = os.path.join(tempfile.mkdtemp(prefix='smui-fyx-'), 'eval.js')
+with open(_fdrv, 'w') as _f:
+    _f.write(_FJS)
+_JS = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js'))
+
+
+def formula_cols(columns, formulas):
+    """Formula columns made in order as the page makes them ({name, expr}, expr text or text and {'ref': k}), evaluated on the table: {name: values}."""
+    cols = [{'name': k, 'dataType': 'character' if any(isinstance(v, str) for v in vals) else 'numeric',
+             'values': [None if (v is None or (isinstance(v, float) and np.isnan(v))) else v for v in vals]} for k, vals in columns.items()]
+    fx = [{'name': f['name'], 'expr': f['expr'] if isinstance(f['expr'], str) else ''.join(s if isinstance(s, str) else ':"' + formulas[s['ref']]['name'] + '"' for s in f['expr'])} for f in formulas]
+    out = _json.loads(subprocess.run([NODE, _fdrv, _JS], input=_json.dumps({'columns': cols, 'formulas': fx}), capture_output=True, text=True, check=True).stdout)
+    return {f['name']: (o['values'] if f.get('character') else np.array([np.nan if v is None else v for v in o['values']], dtype=float)) if 'values' in o else o['error'] for f, o in zip(formulas, out)}
+
+
+def fnum(v):
+    return np.array([np.nan if x is None else x for x in v], dtype=float)
+
+
+rng_f = np.random.default_rng(83)
+n_f = 70
+xf_ = rng_f.uniform(1, 9, n_f)
+gf_ = rng_f.choice(['u', 'v'], n_f)
+yf_ = 2 + 0.7 * xf_ - 0.05 * xf_ ** 2 + (gf_ == 'v') * 0.6 + rng_f.normal(0, 0.5, n_f)
+yf_[[3, 12]] = np.nan                          # rows without Y: predicted
+xf_[8] = np.nan                                # a row without X: nothing
+ybf = np.where(rng_f.uniform(size=n_f) < 1 / (1 + np.exp(-(np.nan_to_num(xf_, nan=5) - 5))), 'hi', 'lo')
+yof = np.array(['a', 'b', 'c'])[np.digitize(np.nan_to_num(xf_, nan=5) + rng_f.logistic(size=n_f), [4, 6])]
+ynf = np.array(['p', 'q', 'r'])[rng_f.integers(0, 3, n_f)]
+cols_f = {'x': xf_.tolist(), 'y': yf_.tolist(), 'g': gf_.tolist(), 'yb': ybf.tolist(), 'yo': yof.tolist(), 'yn': ynf.tolist()}
+tid_f = table(cols_f, types={'yo': 'ordinal'}, levels={'yo': ['a', 'b', 'c']})
+out_f = [5, 6]                                  # left out of the report (excluded)
+rows_f = [r for r in range(n_f) if r not in out_f]
+with_x = [r for r in range(n_f) if np.isfinite(xf_[r])]
+fit_f = [r for r in rows_f if np.isfinite(xf_[r]) and np.isfinite(yf_[r])]
+for fn_, kw_, label_ in (('fit_poly', dict(degree=1), 'Fit Line'), ('fit_poly', dict(degree=3), 'Fit Polynomial 3'), ('fit_mean', {}, 'Fit Mean'),
+                         ('fit_special', dict(ytr='log', xtr='sqrt', degree=2), 'Fit Special log by sqrt, quadratic'),
+                         ('fit_special', dict(ytr='reciprocal', xtr='log', intercept=0.1), 'Fit Special constrained'), ('fit_robust', {}, 'Fit Robust'),
+                         ('fit_quantile', dict(tau=0.25), 'Fit Quantile'), ('fit_spline', dict(lam=1.0), 'Fit Spline'), ('fit_lowess', {}, 'Kernel Smoother'),
+                         ('fit_each', {}, 'Fit Each Value')):
+    for where_ in ([], [{'column': 'g', 'value': 'v'}]):
+        rr = rows_f if not where_ else [r for r in rows_f if gf_[r] == 'v']
+        r_ = call(f'fitybyx.{fn_}', table=tid_f, y='y', x='x', rows=rr, where=where_, want_rows=True, **kw_)
+        a_ = r_['all_rows']
+        tag = f'{label_}{" (a group)" if where_ else ""}'
+        grp = [r for r in range(n_f) if (not where_ or gf_[r] == 'v')]
+        expect = grp if fn_ == 'fit_mean' else [r for r in grp if np.isfinite(xf_[r])]
+        if fn_ == 'fit_special':
+            expect = [r for r in expect if xf_[r] > 0]
+        check(f'{tag}: every row of the group with an X is saved (rows left out and rows missing Y too)', a_['rows'] == expect and (3 in a_['rows'] or not (not where_ or gf_[3] == 'v')), True)
+        own = dict(zip(r_['row_values']['rows'], r_['row_values']['predicted']))
+        check.near(f'{tag}: the rows of the fit keep their fitted values', max(abs(p - own[q]) for q, p in zip(a_['rows'], a_['predicted']) if q in own), 0.0, abs_=1e-9)
+        pa = fnum(a_['predicted'])
+        xa = xf_[a_['rows']]
+        # each fit's own prediction at those X, by another route
+        if fn_ == 'fit_poly' or fn_ == 'fit_mean':
+            fr_ = pd.DataFrame({'x': xf_, 'y': yf_}).loc[[r for r in rr if np.isfinite(xf_[r]) and np.isfinite(yf_[r])]]
+            deg = kw_.get('degree', 0)
+            ref = np.polyval(np.polyfit(fr_['x'], fr_['y'], deg), xa) if deg else np.full(len(xa), fr_['y'].mean())
+            check.near(f'{tag}: the prediction = numpy\'s polyfit at every saved row', float(np.max(np.abs(pa - ref))), 0.0, abs_=1e-8)
+        elif fn_ == 'fit_quantile':
+            fr_ = pd.DataFrame({'x': xf_, 'y': yf_}).loc[[r for r in rr if np.isfinite(xf_[r]) and np.isfinite(yf_[r])]]
+            q_ = smf.quantreg('y ~ x', fr_).fit(q=0.25)
+            check.near(f'{tag}: the prediction = statsmodels\' QuantReg at every saved row', float(np.max(np.abs(pa - q_.predict(pd.DataFrame({'x': xa}))))), 0.0, abs_=1e-6)
+        elif fn_ == 'fit_spline':
+            fr_ = pd.DataFrame({'x': xf_, 'y': yf_}).loc[[r for r in rr if np.isfinite(xf_[r]) and np.isfinite(yf_[r])]].sort_values('x')
+            spl_ = make_smoothing_spline(fr_['x'].to_numpy(), fr_['y'].to_numpy(), lam=1.0)
+            check.near(f'{tag}: the prediction = scipy\'s smoothing spline at every saved row', float(np.max(np.abs(pa - spl_(xa)))), 0.0, abs_=1e-8)
+        elif fn_ == 'fit_each':
+            ux_ = {float(xf_[r]) for r in rr if np.isfinite(xf_[r]) and np.isfinite(yf_[r])}
+            check(f'{tag}: a row whose X the fit does not have gets no value', all((p is None) == (float(xf_[q]) not in ux_) for q, p in zip(a_['rows'], a_['predicted'])), True)
+        if 'formula' in r_:
+            fv_ = formula_cols(cols_f, [{'name': 'F', 'expr': r_['formula']['expr'] if not r_['formula']['cond'] else f"If({r_['formula']['cond']}, {r_['formula']['expr']}, .)"}])['F']
+            ok_ = np.isfinite(pa)
+            check.near(f'{tag}: Save Formula gives the saved predictions', float(np.max(np.abs(fv_[np.asarray(a_['rows'])[ok_]] - pa[ok_]))), 0.0, abs_=1e-9)
+            outside = [q for q in range(n_f) if q not in set(a_['rows'])]
+            check(f'{tag}: and nothing outside the group\'s rows with an X', bool(np.all(np.isnan(fv_[outside]))), True)
+        elif fn_ in ('fit_poly', 'fit_mean', 'fit_special', 'fit_robust', 'fit_quantile'):
+            check(f'{tag}: a formula', False, True)
+# a Group By's levels joined into one formula column, as the page joins them
+parts_ = [call('fitybyx.fit_poly', table=tid_f, y='y', x='x', rows=[r for r in rows_f if gf_[r] == lv_], where=[{'column': 'g', 'value': lv_}], want_rows=True, degree=1)
+          for lv_ in ('u', 'v')]
+joined = 'If(' + ', '.join(f"{p_['formula']['cond']}, {p_['formula']['expr']}" for p_ in parts_) + ', .)'
+fj_ = formula_cols(cols_f, [{'name': 'F', 'expr': joined}])['F']
+for p_ in parts_:
+    a_ = p_['all_rows']
+    check.near(f'Group By: the joined formula gives each level its own line ({p_["formula"]["cond"]})', float(np.max(np.abs(fj_[a_['rows']] - fnum(a_['predicted'])))), 0.0, abs_=1e-9)
+# the logistic fits: Save Probability Formula, JMP's columns, every row with an X
+for kw_, names_ in ((dict(y='yb'), ['Lin[hi]', 'Prob[hi]', 'Prob[lo]', 'Most Likely yb']), (dict(y='yb', target='lo'), ['Lin[lo]', 'Prob[hi]', 'Prob[lo]', 'Most Likely yb']),
+                    (dict(y='yn'), ['Lin[p]', 'Lin[q]', 'Prob[p]', 'Prob[q]', 'Prob[r]', 'Most Likely yn']), (dict(y='yo'), ['Linear', 'Cum[a]', 'Cum[b]', 'Prob[a]', 'Prob[b]', 'Prob[c]', 'Most Likely yo'])):
+    r_ = call('fitybyx.logistic_rows', table=tid_f, x='x', rows=rows_f, **kw_)
+    tag = f'logistic {kw_}'
+    check(f'{tag}: every row with an X, rows left out too', r_['rows'], with_x)
+    P_ = np.array(r_['probs'], dtype=float).T
+    lg_ = call('fitybyx.logistic', table=tid_f, x='x', rows=rows_f, **kw_)
+    check(f'{tag}: JMP\'s formula columns', [f['name'] for f in r_['formulas']], names_)
+    if NODE:
+        got_ = formula_cols(cols_f, r_['formulas'])
+        pv_ = np.column_stack([got_[f'Prob[{F._lvtext(v)}]'] for v in r_['levels']])
+        check.near(f'{tag}: the Prob formulas give the probabilities of every row', float(np.max(np.abs(pv_[with_x] - P_))), 0.0, abs_=1e-12)
+        ml_ = got_[r_['formulas'][-1]['name']]
+        check(f'{tag}: Most Likely formula = the most likely level', [ml_[q] for q in with_x], [F._lvtext(r_['levels'][j]) for j in r_['most_likely']])
+    # the fitted rows' probabilities are the report's model
+    xr_ = xf_[[q for q in rows_f if np.isfinite(xf_[q])]]
+    idx_fit = [with_x.index(q) for q in rows_f if np.isfinite(xf_[q])]
+    if lg_['kind'] == 'binary':
+        a0, b0 = lg_['model']['coef']
+        check.near(f'{tag}: they are the report\'s model\'s', float(np.max(np.abs(P_[idx_fit, 0] - 1 / (1 + np.exp(-(a0 + b0 * xr_)))))), 0.0, abs_=1e-12)
 sys.exit(check.done())

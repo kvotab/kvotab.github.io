@@ -466,8 +466,12 @@ def check_plot(lab, g, M, F, ax_index=0, tol=1e-8, xcats=None, size=True):
     for t in M['traces']:
         if t['type'] == 'bar' and t.get('x') and t.get('y'):
             base = t.get('base')
-            want = [(float(a), float(b), float(base[i] if isinstance(base, list) else (base or 0))) for i, (a, b) in enumerate(zip(t['x'], t['y']))]
-            got = [(b_['x'] + b_['w'] / 2, b_['h'], b_['y']) for b_ in ax['bars']]
+            if t.get('orientation') == 'h':   # horizontal bars (the silhouettes): their places down the axis, lengths and starts
+                want = [(float(b), float(a), float(base[i] if isinstance(base, list) else (base or 0))) for i, (a, b) in enumerate(zip(t['x'], t['y']))]
+                got = [(b_['y'] + b_['h'] / 2, b_['w'], b_['x']) for b_ in ax['bars']]
+            else:
+                want = [(float(a), float(b), float(base[i] if isinstance(base, list) else (base or 0))) for i, (a, b) in enumerate(zip(t['x'], t['y']))]
+                got = [(b_['x'] + b_['w'] / 2, b_['h'], b_['y']) for b_ in ax['bars']]
             check(f'{lab}: the bars (their places, heights and bottoms)', len(got) == len(want) and all(near(p[0], q[0], tol) and near(p[1], q[1], tol) and near(p[2], q[2], tol) for p, q in zip(got, want)), True)
     ann = [str(a['text']).strip() for a in M['annotations'] if a.get('text') and str(a['text']).strip()]
     have = fig_texts(ax)
@@ -484,6 +488,22 @@ def check_plot(lab, g, M, F, ax_index=0, tol=1e-8, xcats=None, size=True):
             check(f'{lab}: the circle', ok, True)
     shown = [t['name'] for t in M['traces'] if M['showlegend'] and t.get('showlegend') is not False and t['type'] in ('scatter', 'scattergl', 'bar') and (t.get('x') or []) and t.get('name')]
     check(f'{lab}: the legend', ax['legend'] or F['legend'], shown)
+
+
+def check_panels(lab, g, M, F):
+    """A graph of panels on axes of their own (K Means' criteria by number of clusters): each trace's line in its
+    panel's axes, in order; each panel's title; the dashed lines; the figure's title and size."""
+    check(f'{lab}: the title and the size', (F['suptitle'], F['size']), (g['label'], [g['w'] / 100, g['h'] / 100]))
+    lines = [t for t in M['traces'] if 'lines' in (t.get('mode') or '')]
+    check(f'{lab}: a panel for each criterion', len(F['axes']), len(lines))
+    for q, t in enumerate(lines):
+        ax = F['axes'][q] if q < len(F['axes']) else {'lines': [], 'title': ''}
+        xs, ys = trace_points(t)
+        check(f'{lab}: panel {q + 1} ({t.get("name")}): its line', any(close(ln['x'], xs, 1e-9, 1e-12) and close(ln['y'], ys, 1e-9, 1e-12) for ln in ax['lines']), True)
+        check(f'{lab}: panel {q + 1}: its title', ax['title'], t.get('name'))
+        for s in M['shapes']:
+            if s['type'] == 'line' and s['x0'] == s['x1'] and s.get('xref') == (t.get('xaxis') or 'x'):
+                check(f'{lab}: panel {q + 1}: the dashed line at {s["x0"]:.6g}', any(close(ln['x'], [s['x0'], s['x0']], 1e-9, 1e-12) and ln['ls'] == '--' for ln in ax['lines']), True)
 
 
 def check_heat(lab, g, M, F):
@@ -616,6 +636,8 @@ async def chart_code(page):
         ('Discriminant (two groups, priors given)', "(t) => __mvg.open('MV charts', 'discriminant', { y: ['a', 'c', 'd'], x: ['yb'] }, { priors: 'other', priorValues: { no: 1, yes: 2 } })", {}),
         ('Hierarchical Cluster (4 clusters chosen, coloured, two-way, criterion)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['u', 'v', 'a'] }, { method: 'ward', standardize: 'none', criterion: true, twoWay: true, colorClusters: true, ncluster: 4 })", {}),
         ('Hierarchical Cluster (average, the default number)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['u', 'v'] }, { method: 'average', twoWay: true })", {}),
+        ('Hierarchical Cluster (average, city block, robust, 4 clusters: parallel coordinates, silhouettes)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['u', 'v', 'a'] }, { method: 'average', distance: 'cityblock', robust: true, ncluster: 4, pcp: true, silhouette: true })", {}),
+        ('Hierarchical Cluster (Ward, imputed, the default number: parallel coordinates, silhouettes)', "(t) => __mvg.open('MV charts', 'hcluster', { y: ['a', 'b', 'c', 'e'] }, { method: 'ward', impute: true, pcp: true, silhouette: true })", {}),
         ('K Means (2 to 4 clusters, every graph)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v', 'a'] }, { k: 2, kRange: 4, scaled: false, 'k2|pcp': true, 'k3|pcp': true, 'k3|splom': true, 'k3|rays': false, 'k4|splom': true })",
          {'splom': ('lower', ['u', 'v', 'a'], {'points_only': True})}),
         ('K Means (3 clusters, scaled, Weight)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v'], weight: ['w'] }, { k: 3, 'k3|pcp': true, 'k3|splom': true })",
@@ -655,6 +677,8 @@ async def chart_code(page):
                 check_splom(lab, g, M, F, fmt_, cols_, opts_)
             elif label in ('Color Map On Correlations', 'Color Map On p-values', 'Cluster the Correlations', 'Two way clustering'):
                 check_heat(lab, g, M, F)
+            elif label == 'Cluster criteria by number of clusters':
+                check_panels(lab, g, M, F)
             elif label.startswith('Parallel coordinates'):
                 cats = [v for v in dict.fromkeys(v for t in M['traces'] for v in (t.get('x') or []) if isinstance(v, str))]
                 check_plot(lab, g, M, F, xcats=cats)
@@ -853,6 +877,332 @@ async def stats_code(page):
     await page.ev(f"__mvg.table('MV charts').setState({json.dumps(ex)}, 'excluded', false)")
 
 
+# ---- saved formulas, Single Step, Hierarchical Cluster's options, Discriminant's validation, the screened model,
+#      Explore Outliers' missing-value actions (2026-09-29) --------------------------------------------------------------
+WP8_JS = r'''
+window.__wp8 = {
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  table() { const t = SM.app.tables.find((x) => x.name === 'Multivariate test'); SM.app.showTab(SM.app.tabOf(t)); return t; },
+  // run a menu action that opens a form, and press the form's OK with its defaults
+  async formOK(run) {
+    const n0 = SM.ui.dialogs.length;
+    const p = Promise.resolve(run());
+    let d = null;
+    for (let i = 0; i < 100 && !d; i++) { await this.sleep(40); if (SM.ui.dialogs.length > n0) d = SM.ui.dialogs[SM.ui.dialogs.length - 1].el; }
+    if (!d) return 'no dialog';
+    [...d.querySelectorAll('.sm-btn')].find((b) => b.classList.contains('primary')).click();
+    await p;
+    return 'ok';
+  },
+  // the triangle item at a path (top red triangle of the report open last)
+  item(rep, ctx, path) {
+    let items = rep.platform.triangle(ctx).filter(Boolean);
+    let it = null;
+    for (const label of path) { it = items.find((x) => x && x.label === label); if (!it) return null; items = (typeof it.submenu === 'function' ? it.submenu() : it.submenu || []).filter(Boolean); }
+    return it;
+  },
+  // an element's centre on the screen, scrolled into view (for a real mouse click)
+  at(e) { if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; },
+  ob(rep, title) { return [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head h2, :scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent === title) || null; },
+  btn(root, text) { return root ? [...root.querySelectorAll('button')].find((b) => b.textContent === text) : null; },
+};
+'''
+
+
+async def real_click(page, js_el):
+    """A mouse click (Input.dispatchMouseEvent) at the centre of the element js_el finds; its place, or None."""
+    pos = await page.ev(f'__wp8.at({js_el})')
+    if pos:
+        await page.click(pos[0], pos[1])
+        await asyncio.sleep(0.25)
+    return pos
+
+
+async def wait_done(page, rep_js=LAST, ms=90000):
+    await page.ev(f'Promise.race([new Promise(res => {rep_js}.on("done", res)), new Promise(r => setTimeout(r, {ms}))])', timeout=ms / 1000 + 10)
+
+
+async def wp8_features(page):
+    await page.ev(WP8_JS)
+    await page.ev('__wp8.table()')
+    # ---- Save Principal Components: live formula columns, excluded rows scored, recomputed on an edit
+    r = await page.ev(f'''(async () => {{
+      const t = __wp8.table(); t.setState([0, 1, 2], 'excluded', true);
+      const rep = SM.app.openReport(SM.platforms.get('pca'), {{ roles: {{ y: ['a', 'b', 'c', 'd', 'e'].map((n) => t.col(n).id) }}, options: {{}} }}, t);
+      await new Promise((res) => rep.on('done', res));
+      const ctx = {CTX}; const n0 = t.columns.length;
+      await __wp8.formOK(() => __wp8.item(rep, ctx, ['Save Columns', 'Save Principal Components…']).action());
+      const made = t.columns.slice(n0);
+      const res = await SM.engine.call('pca.fit', {{ columns: ['a', 'b', 'c', 'd', 'e'], on: 'correlations', rows: t.includedRows() }}, t);
+      const prin1 = made[0];
+      const onRows = res.rows.map((r, k) => Math.abs(prin1.values[r] - res.scores[k][0])).reduce((a, b) => Math.max(a, b), 0);
+      const excluded = [0, 1, 2].map((r) => Number.isFinite(prin1.values[r]));
+      const before = prin1.values[5];
+      t.setCell(5, 'a', t.col('a').values[5] + 1);
+      await __wp8.sleep(100);
+      const after = prin1.values[5];
+      const again = SM.formula.evaluate(t, prin1.formula.expr)[5];
+      t.setCell(5, 'a', t.col('a').values[5] - 1);
+      t.setState([0, 1, 2], 'excluded', false);
+      const out = {{ names: made.map((c) => c.name), formulas: made.map((c) => !!(c.formula && c.formula.expr)), onRows, excluded, missing: Number.isNaN(prin1.values[7]), moved: before !== after, again: Math.abs(after - again) }};
+      for (const c of made) t.removeColumn(c.id);
+      SM.app.closeReport(rep);
+      return out;
+    }})()''', timeout=240)
+    check('Save Principal Components: formula columns Prin1, Prin2 …', (r['names'][:2], all(r['formulas'])), (['Prin1', 'Prin2'], True))
+    check.near('... they give the report\'s scores on its rows', r['onRows'], 0.0, 1e-9)
+    check('... the excluded rows get scores too, the row with a missing value none', (r['excluded'], r['missing']), ([True, True, True], True))
+    check('... an edited value is scored again by the formula', (r['moved'], r['again'] < 1e-12), (True, True))
+
+    # ---- K Means: Save Clusters for every row, Save Cluster Formula; Single Step by real clicks; the criteria graph
+    r = await page.ev(f'''(async () => {{
+      const t = __wp8.table(); t.setState([10, 11], 'excluded', true);
+      const rep = SM.app.openReport(SM.platforms.get('kmeans'), {{ roles: {{ y: ['u', 'v'].map((n) => t.col(n).id) }}, options: {{ k: 2, kRange: 4 }} }}, t);
+      await new Promise((res) => rep.on('done', res));
+      const ctx = {CTX}; const n0 = t.columns.length;
+      const fit = rep.body.querySelector('.sm-ob-head h3') && [...rep.body.querySelectorAll('.sm-ob-head')].find((h) => h.textContent.trim() === 'K Means NCluster=3');
+      const menu = () => {{ fit.querySelector('.sm-ob-menu').click(); }};
+      // the fit's red triangle: Save Clusters, then Save Cluster Formula
+      const items = (label) => {{ SM.ui.closeMenus && SM.ui.closeMenus(0); menu(); const b = [...document.querySelectorAll('.sm-menu button')].find((x) => x.querySelector('.sm-label')?.textContent === label); b.click(); }};
+      const until = async (n) => {{ for (let i = 0; i < 200 && t.columns.length < n; i++) await __wp8.sleep(50); }};
+      items('Save Clusters'); await until(n0 + 2);
+      items('Save Cluster Formula'); await until(n0 + 3);
+      const made = t.columns.slice(n0);
+      const cl = made.find((c) => c.name === 'Cluster'), cf = made.find((c) => c.name === 'Cluster Formula');
+      const crit = rep.plots.find((p) => p.opts.title === 'Cluster criteria by number of clusters');
+      const out = {{ names: made.map((c) => c.name), excluded: [10, 11].map((r) => cl && Number.isFinite(cl.values[r])),
+        same: cl && cf ? t.includedRows().concat([10, 11]).every((r) => cl.values[r] === cf.values[r]) : false, formula: !!(cf && cf.formula),
+        crit: crit ? crit.traces.filter((x) => x.mode && x.mode.includes('lines')).map((x) => x.name) : null }};
+      for (const c of made) t.removeColumn(c.id);
+      t.setState([10, 11], 'excluded', false);
+      SM.app.closeReport(rep);
+      return out;
+    }})()''', timeout=300)
+    check('K Means: Save Clusters and Save Cluster Formula from the fit\'s red triangle', r['names'], ['Cluster', 'Distance', 'Cluster Formula'])
+    check('... the excluded rows get a cluster too', r['excluded'], [True, True])
+    check('... the Cluster Formula is a formula, and the same clusters on every row', (r['formula'], r['same']), (True, True))
+    check('K Means with a range: the graph of CCC, Pseudo F, RSquare and Within SS by the number of clusters', r['crit'], ['CCC', 'Pseudo F', 'RSquare', 'Within SS'])
+    # Single Step, by real clicks: the checkbox, Go, then Step and Go in the fit's report
+    await page.ev(open_report_js('kmeans', {'y': ['u', 'v']}, {'k': 3}), timeout=240)
+    await real_click(page, f'{LAST}.body.querySelector(\'input[aria-label="Single Step"]\')')
+    await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "Iterative Clustering"), "Go")')
+    await wait_done(page)
+    s0 = await page.ev(f'''(() => {{ const ob = __wp8.ob({LAST}, 'K Means NCluster=3'); return {{ seeds: !!ob && [...ob.querySelectorAll('caption')].some((c) => c.textContent === 'Starting Centres'), note: ob ? ob.querySelector('.mv-controls .sm-ob-note').textContent : null, summary: !!ob && [...ob.querySelectorAll('caption')].some((c) => c.textContent === 'Cluster Summary') }}; }})()''')
+    check('Single Step: Go shows the starting centres and no clusters yet', (s0['seeds'], s0['summary'], s0['note']), (True, False, 'Step 0: the starting centres; no rows assigned yet'))
+    notes = []
+    for _ in range(2):
+        await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "K Means NCluster=3"), "Step")')
+        await wait_done(page)
+        notes.append(await page.ev(f'__wp8.ob({LAST}, "K Means NCluster=3").querySelector(".mv-controls .sm-ob-note").textContent'))
+    check('Single Step: each Step moves the fit on one iteration', [x_.split(':')[0] for x_ in notes[:2]], ['Step 1', 'Step 2'])
+    await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "K Means NCluster=3"), "Go")')
+    await wait_done(page)
+    r = await page.ev(f'''(async () => {{
+      const rep = {LAST}; const t = rep.table;
+      const note = __wp8.ob(rep, 'K Means NCluster=3').querySelector('.mv-controls .sm-ob-note').textContent;
+      const stepDisabled = __wp8.btn(__wp8.ob(rep, 'K Means NCluster=3'), 'Step').disabled;
+      const shown = await SM.engine.call('kmeans.fit', {{ columns: ['u', 'v'], k_min: 3, k_max: 3, standardize: true, seed: 20260926, restarts: 1 }}, t);
+      const cells = [...__wp8.ob(rep, 'K Means NCluster=3').querySelectorAll('table')].find((x) => x.querySelector('caption')?.textContent === 'Cluster Summary');
+      const counts = [...cells.querySelectorAll('tbody tr')].map((tr) => Number(tr.cells[1].textContent)).sort((a, b) => a - b);
+      const want = shown.fits[0].counts.slice().sort((a, b) => a - b);
+      SM.app.closeReport(rep);
+      return {{ note, stepDisabled, counts, want }};
+    }})()''', timeout=240)
+    check('Single Step: Go runs until the centres stop moving', (r['note'].endswith('the centres no longer move'), r['stepDisabled']), (True, True))
+    check('... to the clusters of the fit with one restart (their sizes)', r['counts'], r['want'])
+
+    # ---- Hierarchical Cluster: Parallel Coord Plots, Silhouettes, Save Formula for Closest Cluster, Gower, a distance matrix
+    r = await page.ev(open_report_js('hcluster', {'y': ['u', 'v']}, {'pcp': True, 'silhouette': True, 'robust': True}), timeout=240)
+    check('Hierarchical Cluster: Parallel Coordinate Plots and Silhouettes', (r['errors'], [o for o in ('Parallel Coordinate Plots', 'Silhouettes') if o not in r['outlines']]), ([], []))
+    r = await page.ev(f'''(async () => {{
+      const rep = {LAST}; const t = rep.table; const ctx = {CTX};
+      const sil = await SM.engine.call('hcluster.fit', {{ columns: ['u', 'v'], method: 'ward', standardize: 'columns', robust: true, silhouette: true }}, t);
+      const tbl = [...__wp8.ob(rep, 'Silhouettes').querySelectorAll('table')].pop();
+      const last = [...tbl.querySelectorAll('tbody tr')].pop();
+      const plots = rep.plots.filter((p) => ['Silhouettes, 3 clusters', 'Mean silhouette by number of clusters', 'Parallel coordinates, 3 clusters'].includes(p.opts.title)).map((p) => p.opts.title);
+      const n0 = t.columns.length;
+      await __wp8.item(rep, ctx, ['Save Formula for Closest Cluster']).action();
+      await __wp8.item(rep, ctx, ['Save Clusters']).action();
+      const [cf, cl] = t.columns.slice(n0);
+      const agree = t.includedRows().filter((r) => cf.values[r] === cl.values[r]).length / t.nrows;
+      const out = {{ mean: Number(last.cells[2].textContent), want: sil.silhouette.mean, plots, formula: !!(cf && cf.formula), name: cf && cf.name, agree }};
+      for (const c of t.columns.slice(n0)) t.removeColumn(c.id);
+      SM.app.closeReport(rep);
+      return out;
+    }})()''', timeout=240)
+    check.near('Silhouettes: the table\'s mean silhouette is the engine\'s', r['mean'], r['want'], 5e-5)
+    check('... the rows\' silhouettes, the mean by number of clusters and the parallel coordinates drawn', sorted(r['plots']), sorted(['Silhouettes, 3 clusters', 'Mean silhouette by number of clusters', 'Parallel coordinates, 3 clusters']))
+    check('Save Formula for Closest Cluster: a formula column, the tree\'s clusters on (nearly) every row', (r['formula'], r['name'], r['agree'] > 0.95), (True, 'Closest Cluster', True))
+    r = await page.ev(open_report_js('hcluster', {'y': ['a', 'c', 'grp']}, {'method': 'average', 'distance': 'gower', 'criterion': True, 'twoWay': True}), timeout=240)
+    check('Hierarchical Cluster, Gower with a nominal column: no errors, a dendrogram', (r['errors'], 'Dendrogram' in r['outlines']), ([], True))
+    r = await page.ev(f'''(() => {{ const rep = {LAST}; const ctx = {CTX}; const it = __wp8.item(rep, ctx, ['Save Formula for Closest Cluster']); const t = rep.body.textContent;
+      const out = {{ disabled: !!(it && it.disabled), nocrit: t.includes('the rows\\' values in numeric columns') }}; SM.app.closeReport(rep); return out; }})()''')
+    check('... no closest-cluster formula or cubic clustering criterion with a nominal column (they need the values)', (r['disabled'], r['nocrit']), (True, True))
+    r = await page.ev(f'''(async () => {{
+      const src = __wp8.table(); const n = 12; const P = Array.from({{ length: n }}, (_, i) => [src.col('u').values[i], src.col('v').values[i]]);
+      const cols = [{{ name: 'object', dataType: 'character', values: P.map((_, i) => `o${{i + 1}}`), role: 'label' }}];
+      for (let j = 0; j < n; j++) cols.push({{ name: `o${{j + 1}}`, dataType: 'numeric', values: P.map((p, i) => (i < j ? NaN : Math.hypot(p[0] - P[j][0], p[1] - P[j][1]))) }});
+      const t = new SM.Table({{ name: 'Distances', columns: cols }}); SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('hcluster'), {{ roles: {{ y: cols.slice(1).map((c) => t.col(c.name).id), label: [t.col('object').id] }}, options: {{ format: 'matrix', method: 'average', pcp: true }} }}, t);
+      await new Promise((res) => rep.on('done', res));
+      const res = await SM.engine.call('hcluster.fit', {{ columns: cols.slice(1).map((c) => c.name), method: 'average', matrix: true }}, t);
+      const out = {{ errors: [...rep.body.querySelectorAll('.sm-ob-error')].length, n: res.n, heights: res.heights.length, dendro: !!rep.plots.find((p) => p.opts.title === 'Dendrogram'), note: rep.body.textContent.includes('a distance matrix has none') }};
+      SM.app.closeReport(rep); SM.app.closeTable(t); __wp8.table();
+      return out;
+    }})()''', timeout=240)
+    check('Hierarchical Cluster of a distance matrix (the lower triangle given): no errors, a dendrogram of the 12 objects', (r['errors'], r['n'], r['dendro']), (0, 12, True))
+    check('... its Parallel Coordinate Plots say a distance matrix has no columns to plot', r['note'], True)
+
+    # ---- Discriminant: the Validation role, per-set Score Summaries, ROC and Lift, the Scatterplot Matrix; two groups:
+    #      the Decision Threshold; Save Formulas as formulas scoring every row
+    await page.ev('''(() => { const t = __wp8.table(); if (!t.col('val')) { t.addColumn({ name: 'val', dataType: 'numeric', values: Array.from({ length: t.nrows }, (_, i) => (i % 4 === 0 ? 1 : 0)) }); t.addColumn({ name: 'two', dataType: 'character', values: t.col('grp').values.map((g) => (g === 'hi' ? 'yes' : 'no')) }); } })()''')
+    r = await page.ev(open_report_js('discriminant', {'y': ['a', 'c', 'd'], 'x': ['grp'], 'validation': ['val']}, {'roc': True, 'lift': True, 'splom': True}), timeout=300)
+    check('Discriminant with a Validation column, ROC, Lift and the Scatterplot Matrix: no errors', (r['errors'], [o for o in ('ROC Curve', 'Lift Curve', 'Scatterplot Matrix', 'Score Summaries') if o not in r['outlines']]), ([], []))
+    summ = await page.ev(table_under_js('Score Summaries'))
+    check('... Score Summaries of the training and validation rows', [x[0] for x in summ[1:]], ['Training', 'Validation'])
+    sc_ = await page.ev(table_under_js('Discriminant Scores'))
+    check('... the Discriminant Scores name each row\'s set', (sc_[0][1], sorted({x[1] for x in sc_[1:]})), ('Set', ['Training', 'Validation']))
+    r = await page.ev(f'''(async () => {{
+      const rep = {LAST}; const t = rep.table; const res = await SM.engine.call('discriminant.fit', {{ y: ['a', 'c', 'd'], x: 'grp', validation: 'val' }}, t);
+      const v = res.summaries.find((s) => s.set === 'Validation');
+      const splom = rep.plots.find((p) => p.opts.title === 'Scatterplot Matrix');
+      const ell = splom ? splom.traces.filter((x) => /ellipse$/.test(x.name || '')).length : 0;
+      SM.app.closeReport(rep);
+      return {{ nmis: v.n_mis, ell }};
+    }})()''', timeout=240)
+    check('... the validation row\'s count misclassified is the engine\'s', str(round(r['nmis'])), summ[2][1])
+    check('... the scatterplot matrix has a 90% ellipse per group in each of its 3 cells', r['ell'], 9)
+    r = await page.ev(open_report_js('discriminant', {'y': ['a', 'c', 'd'], 'x': ['two'], 'validation': ['val']}, {'threshold': True}), timeout=300)
+    check('Discriminant of two groups: the Decision Threshold', (r['errors'], 'Decision Threshold' in r['outlines']), ([], True))
+    r = await page.ev(f'''(async () => {{
+      const rep = {LAST}; const ctx = {CTX}; const t = rep.table; t.setState([4, 5], 'excluded', true);
+      rep.run(); await new Promise((res) => rep.on('done', res));
+      const has = !!__wp8.item(rep, {CTX}, ['Score Options', 'Decision Threshold']);
+      const n0 = t.columns.length;
+      await __wp8.item(rep, {CTX}, ['Score Options', 'Save Formulas']).action();
+      const made = t.columns.slice(n0);
+      const pred = made.find((c) => c.name === 'Pred two');
+      const out = {{ has, names: made.map((c) => c.name), formulas: made.every((c) => !!c.formula), excl: [4, 5].map((r) => pred && pred.values[r] != null), sum: made.filter((c) => c.name.startsWith('Prob[')).reduce((a, c) => a + c.values[4], 0) }};
+      for (const c of made) t.removeColumn(c.id);
+      t.setState([4, 5], 'excluded', false);
+      SM.app.closeReport(rep);
+      return out;
+    }})()''', timeout=240)
+    check('... its Score Options offer the Decision Threshold', r['has'], True)
+    check('Discriminant Save Formulas: SqDist, Prob and Pred as formula columns (JMP\'s)', (r['names'], r['formulas']), (['SqDist[no]', 'SqDist[yes]', 'Prob[no]', 'Prob[yes]', 'Pred two'], True))
+    check('... the excluded rows are scored, their probabilities summing to 1', (r['excl'], round(r['sum'], 12)), ([True, True], 1.0))
+
+    # ---- Response Screening: Fit Model with each Y's X's below the cut, by a real click
+    r = await page.ev(open_report_js('respscreen', {'y': ['a', 'b'], 'x': ['c', 'd', 'e', 'grp']}, {'fmOpen': True, 'fmCut': 0.25}), timeout=240)
+    check('Response Screening: the Fit Model with the Screened X\'s outline', (r['errors'], "Fit Model with the Screened X's" in r['outlines']), ([], True))
+    pv = await page.ev(table_under_js('PValues'))
+    scr = await page.ev(table_under_js("Fit Model with the Screened X's"))
+    hdr = pv[0]
+    want = {}
+    for row in pv[1:]:
+        p_ = row[hdr.index('PValue')].rstrip('*')
+        if not p_ or p_ == '.':
+            continue
+        pval = 0.0 if p_.startswith('<') else float(p_)
+        if pval < 0.25:
+            want.setdefault(row[hdr.index('Y')], []).append(row[hdr.index('X')])
+    got = {row[0]: sorted(row[2].split(', ')) if row[2] != '(none)' else [] for row in scr[1:]}
+    check('... each Y\'s X\'s with p < 0.25, as the PValues table has them', got, {y_: sorted(xs) for y_, xs in want.items()} | {y_: [] for y_ in ('a', 'b') if y_ not in want})
+    n0 = await page.ev('SM.app.reports.length')
+    await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "Fit Model with the Screened X\'s"), "Fit Model")')
+    await asyncio.sleep(5.0)
+    r = await page.ev(f'''(async () => {{
+      const reps = SM.app.reports.slice({n0});
+      const out = reps.map((rp) => ({{ platform: rp.platform.id, y: rp.table.col(rp.spec.roles.y[0]).name, effects: (rp.spec.effects || []).map((e) => e.names[0]).sort() }}));
+      for (const rp of reps) SM.app.closeReport(rp);
+      return out;
+    }})()''', timeout=240)
+    check('... Fit Model opens for each Y with an X below the cut, those X\'s its effects', sorted((x['platform'], x['y'], tuple(x['effects'])) for x in r), sorted(('fitmodel', y_, tuple(sorted(xs))) for y_, xs in want.items() if xs))
+    # the outline's code, run in the page's Python: the same X's
+    await page.ev(GRAPHS_JS)
+    code = await page.ev(f'''(() => {{ const ob = __wp8.ob({LAST}, "Fit Model with the Screened X's"); const pre = ob && [...ob.querySelectorAll('pre')].pop(); return pre ? pre.textContent : null; }})()''')
+    out = await page.ev(f'__gr.run({json.dumps((code or "") + chr(10) + "import json as _j" + chr(10) + "print(chr(83) + chr(67) + chr(82) + chr(10) + _j.dumps({k: sorted(v) for k, v in screened.items()}))")}, __wp8.table())', timeout=300)
+    text = ''.join(o.get('text', '') for o in (out or {}).get('outputs', []) if o.get('type') == 'stream' and o.get('name') == 'stdout') if isinstance(out, dict) else ''
+    got_code = json.loads(text.split('SCR\n')[-1].strip().split('\n')[0]) if 'SCR\n' in text else None
+    check('... the outline\'s code gives the same X\'s', got_code, {y_: sorted(xs) for y_, xs in want.items() if xs})
+    await page.ev(f'SM.app.closeReport({LAST})')
+
+    # ---- Explore Outliers: Add to Missing Value Codes and Change to Missing, on the line chosen, one Undo each
+    await page.ev('(() => { const t = __wp8.table(); t.setCell(20, "a", 9999); t.setCell(30, "c", -40); })()')
+    r = await page.ev(open_report_js('outliers', {'y': ['a', 'c', 'd']}, {'qro': True}), timeout=240)
+    check('Explore Outliers: no errors', r['errors'], [])
+    has_codes = await page.ev('typeof SM.app.current.setMissingCodes === "function"')
+    row_a = f'[...__wp8.ob({LAST}, "Quantile Range Outliers").querySelector("table.sm-rt").querySelectorAll("tbody tr")].find((tr) => tr.cells[0].textContent === "a")'
+    await real_click(page, row_a)
+    r = await page.ev(f'({{ chosen: {row_a}.classList.contains("is-chosen"), selected: SM.app.current.selectedRows() }})')
+    check('Explore Outliers: a click on a line of Outliers by Column chooses it and selects its rows', (r['chosen'], r['selected']), (True, [20]))
+    if has_codes:
+        await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "Quantile Range Outliers"), "Add to Missing Value Codes")')
+        r = await page.ev('(() => { const t = SM.app.current; const a = t.col("a"), c = t.col("c"); return { codes: a.missingCodes, value: Number.isNaN(a.values[20]), stored: t.stored(20, "a"), others: c.missingCodes }; })()')
+        check('Add to Missing Value Codes: the chosen column\'s outlier value becomes its missing value code', (r['codes'], r['value'], r['stored'], r['others']), ([9999], True, 9999, None))
+        await page.ev('SM.app.undo()')
+        r = await page.ev('(() => { const a = SM.app.current.col("a"); return { codes: a.missingCodes, value: a.values[20] }; })()')
+        check('... Edit > Undo takes it back', (r['codes'], r['value']), (None, 9999))
+    else:
+        check('Add to Missing Value Codes needs the Missing Value Codes column property', has_codes, True)
+    await page.ev(f'{LAST}.run()')
+    await wait_done(page)
+    row_c = row_a.replace('=== "a"', '=== "c"')
+    await real_click(page, row_c)
+    await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "Quantile Range Outliers"), "Change to Missing")')
+    r = await page.ev('(() => { const t = SM.app.current; return { c30: Number.isNaN(t.col("c").values[30]), a20: t.col("a").values[20] }; })()')
+    check('Change to Missing: the chosen column\'s outlier cells become missing, the others stay', (r['c30'], r['a20']), (True, 9999))
+    await page.ev('SM.app.undo()')
+    check('... Edit > Undo takes it back', await page.ev('SM.app.current.col("c").values[30]'), -40)
+    await page.ev('(() => { const t = SM.app.current; t.setCell(20, "a", 0.1, { silent: true }); t.setCell(30, "c", 0.1); t.select([]); })()')
+    await page.ev(f'SM.app.closeReport({LAST})')
+    r = await page.ev(open_report_js('outliers', {'y': ['a', 'c'], 'by': ['grp']}, {'qro': True}), timeout=240)
+    dis = await page.ev(f'[...{LAST}.body.querySelectorAll("button")].filter((b) => b.textContent === "Add to Missing Value Codes").map((b) => b.disabled)')
+    check('Explore Outliers with By: Add to Missing Value Codes is not available (as in JMP)', dis and all(dis), True)
+    await page.ev(f'SM.app.closeReport({LAST})')
+    # a project keeps the new options: Hierarchical Cluster's, K Means' Single Step with its steps, Discriminant's Validation role
+    r = await page.ev(f'''(async () => {{
+      const t = __wp8.table();
+      const open = async (id, roles, options) => {{ const ids = {{}}; for (const [k, ns] of Object.entries(roles)) ids[k] = ns.map((n) => t.col(n).id);
+        const rep = SM.app.openReport(SM.platforms.get(id), {{ roles: ids, options }}, t); await new Promise((res) => rep.on('done', res)); return rep; }};
+      const reps = [await open('hcluster', {{ y: ['u', 'v', 'a'] }}, {{ method: 'average', distance: 'cityblock', robust: true, silhouette: true, pcp: true, ncluster: 3 }}),
+        await open('kmeans', {{ y: ['u', 'v'] }}, {{ k: 3, single: true, steps: {{ 3: 2 }} }}),
+        await open('discriminant', {{ y: ['a', 'c', 'd'], x: ['grp'], validation: ['val'] }}, {{ roc: true, splom: true, spLevel: 0.95 }})];
+      const heads = (rep) => [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map((h) => h.textContent);
+      const before = reps.map(heads);
+      const j = JSON.parse(JSON.stringify({{ format: 'smui-project', version: 1, tables: [{{ id: t.id, ...t.toJSON() }}], reports: reps.map((rp) => rp.toJSON()) }}));
+      const n0 = SM.app.reports.length;
+      SM.app.loadProject(j);
+      const back = SM.app.reports.slice(n0);
+      await Promise.all(back.map((rp) => new Promise((res) => {{ if (!rp.body.classList.contains('is-running') && rp.body.querySelector('.sm-ob')) res(); else rp.on('done', res); }})));
+      await __wp8.sleep(300);
+      const out = {{ n: back.length, same: back.map((rp, i) => JSON.stringify(heads(rp)) === JSON.stringify(before[i])), errors: back.map((rp) => rp.body.querySelectorAll('.sm-ob-error').length),
+        hc: back[0] && back[0].spec.options, km: back[1] && back[1].spec.options.steps, val: back[2] && back[2].spec.roles.validation && back[2].table.col(back[2].spec.roles.validation[0]).name,
+        step: back[1] ? (__wp8.ob(back[1], 'K Means NCluster=3')?.querySelector('.mv-controls .sm-ob-note')?.textContent || '') : '' }};
+      for (const rp of reps) SM.app.closeReport(rp);
+      const tb = back[0] && back[0].table;
+      if (tb && tb !== t) {{ SM.app.closeTable(tb); await __wp8.sleep(100); const dl = [...document.querySelectorAll('.sm-dialog')].pop(); const yes = dl && [...dl.querySelectorAll('.sm-dialog-foot .sm-btn')].find((b) => b.textContent === 'Close'); if (yes) yes.click(); }}
+      __wp8.table();
+      return out;
+    }})()''', timeout=600)
+    check('a project brings back the three reports, the same outlines, no errors', (r['n'], r['same'], r['errors']), (3, [True, True, True], [0, 0, 0]))
+    check('... Hierarchical Cluster\'s distance, Standardize Robustly and the silhouettes', (r['hc'].get('distance'), r['hc'].get('robust'), r['hc'].get('silhouette')), ('cityblock', True, True))
+    check('... K Means\' Single Step at its step', (r['km'], r['step'].split(':')[0]), ({'3': 2}, 'Step 2'))
+    check('... Discriminant\'s Validation column', r['val'], 'val')
+    # the new outlines in the dark theme and at phone width
+    await page.ev(open_report_js('hcluster', {'y': ['u', 'v', 'a']}, {'pcp': True, 'silhouette': True}), timeout=240)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(1.5)
+    check('dark theme: the silhouettes and parallel coordinates draw without errors', (await page.ev(f'[...{LAST}.body.querySelectorAll(".sm-ob-error")].length'), page.errors), (0, []))
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await asyncio.sleep(0.8)
+    check('phone width: Hierarchical Cluster\'s new outlines fit, no horizontal page scroll', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await page.call('Emulation.clearDeviceMetricsOverride', {}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await page.ev(f'SM.app.closeReport({LAST})')
+    await page.ev('__wp8.table()')
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html')
     st = await wait_engine(page)
@@ -860,7 +1210,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "multivariate").map(f => f.error)')
     check('the multivariate module imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => /^(multivariate|pca|factor|discriminant|hcluster|kmeans|respscreen|outliers|mca|mds)\\./.test(n)).length')
-    check('the 22 backend names are there', names, 22)
+    check('the 28 backend names are there', names, 28)   # (22, and the saves of 2026-09-29: pca.save, factor.save, kmeans.save, hcluster.save, discriminant.save, discriminant.probs)
     check('no script errors at load', page.errors, [])
     menus = await page.ev('''(() => {
       const sub = (path) => { const top = SM.app.menuItems('Analyze'); const m = top.find(i => i.label === path); if (!m) return null; return (typeof m.submenu === 'function' ? m.submenu() : m.submenu).filter(i => i.label).map(i => i.label); };
@@ -1092,7 +1442,8 @@ async def main():
     has = await page.ev('!!SM.platforms.get("fitybyx")')
     r = await page.ev(f'''(async () => {{
       const n = SM.app.reports.length; const rep = {LAST};
-      const tr = [...rep.content.querySelectorAll('table.sm-rt')].pop().querySelector('tbody tr'); tr.click();
+      const ob = [...rep.content.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent === 'PValues');
+      const tr = ob.querySelector('table.sm-rt tbody tr'); tr.click();
       await new Promise(r => setTimeout(r, 500));
       const top = SM.app.reports[SM.app.reports.length - 1];
       return {{ opened: SM.app.reports.length - n, platform: top.platform.id, y: top.spec.roles && top.spec.roles.y && SM.app.current.col(top.spec.roles.y[0]).name }};
@@ -1246,8 +1597,8 @@ async def main():
     # (the outline, the heading of its section on the controls, how many controls it has: inputs and buttons)
     panels = [('pca', 'Summary Plots', 'In the report', 2), ('pca', 'Formatted Loading Matrix', 'In the report', 2), ('factor', 'Model Launch', 'The controls', 7),
               ('factor', 'Factor Analysis on Correlations with 2 Factors…', 'In the report', 2), ('discriminant', 'Column Selection', 'In the report', 5),
-              ('hcluster', 'Dendrogram', 'In the report', 3), ('kmeans', 'Iterative Clustering', 'The controls', 6), ('kmeans', 'K Means NCluster=3', 'In the report', 0),
-              ('outliers', 'Quantile Range Outliers', 'In the report', 8), ('outliers', 'Robust Fit Outliers', 'In the report', 6), ('outliers', 'Multivariate Robust Outliers', 'In the report', 4),
+              ('hcluster', 'Dendrogram', 'In the report', 3), ('kmeans', 'Iterative Clustering', 'The controls', 7), ('kmeans', 'K Means NCluster=3', 'In the report', 0),
+              ('outliers', 'Quantile Range Outliers', 'In the report', 10), ('outliers', 'Robust Fit Outliers', 'In the report', 8), ('outliers', 'Multivariate Robust Outliers', 'In the report', 4),
               ('outliers', 'Multivariate k-Nearest Neighbor Outliers', 'In the report', 1), ('mca', 'Correspondence Analysis', 'In the report', 2)]
     for pid, title_, heading, n in panels:
         r = await page.ev(f'__hlp.outline(window.__rep_{pid}, {json.dumps(title_)})')
@@ -1283,6 +1634,10 @@ async def main():
       const txt = rep.content.textContent; t.setState([0, 1, 2, 3, 4, 5], 'excluded', false); return txt.includes('144 observations');
     }})()''')
     check('exclude rows and Redo: 144 observations', r, True)
+
+    # ---- saved formulas, Single Step, Hierarchical Cluster's options, Discriminant's validation, the screened model,
+    #      Explore Outliers' missing-value actions ---------------------------------------------------------------------
+    await wp8_features(page)
 
     # ---- the graphs' matplotlib code, and five reports' statistics code, run in the page -------------------------------
     await chart_code(page)

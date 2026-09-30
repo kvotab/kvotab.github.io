@@ -1,19 +1,19 @@
 /* ==========================================================================
    SMUI.HTML: ANALYZE > PREDICTIVE MODELING > NEURAL
 
-   JMP's Neural platform on scikit-learn's multilayer perceptrons
-   (MLPRegressor, MLPClassifier; resources/py/smui/neural.py). The report
+   JMP's Neural platform, fitted as JMP documents it by a network of our own
+   (numpy, and scipy's L-BFGS; resources/py/smui/neural.py). The report
    opens with JMP's Model Launch; each Go adds a model, kept in the report's
    options (so Redo and projects keep them), each in its own outline named
    as JMP names it (Model NTanH(3)):
 
      Model Launch         Validation Method (Holdback, KFold, Excluded Rows
-                          Holdback; or the Validation column), Hidden Layer
-                          Structure (one activation, the nodes of the first
-                          and second layer), Boosting (Number of Models,
-                          Learning Rate), Fitting Options (Transform
-                          Covariates, Penalty Method, Number of Tours; Robust
-                          Fit and two penalties are not in scikit-learn)
+                          Holdback; or the Validation column, whose K folds
+                          make KFold), Hidden Layer Structure (the TanH,
+                          Linear and Gaussian nodes of the first and second
+                          layer), Boosting (Number of Models, Learning Rate),
+                          Fitting Options (Transform Covariates, Robust Fit,
+                          Penalty Method, Number of Tours)
      Model NTanH(3)       the Measures of Fit per set and response, and the
                           confusion matrices; from its red triangle the
                           Diagram, Estimates, Profiler, ROC and Lift Curves,
@@ -28,24 +28,36 @@
   const MORE = { label: 'Neural', id: 'help-p-neural' };
   const W = (w) => Math.max(260, Math.min(w, (root.innerWidth || 1200) - 110));
 
-  const ACTIVATIONS = [['tanh', 'TanH'], ['logistic', 'Logistic'], ['relu', 'ReLU'], ['identity', 'Identity (Linear)']];
-  const ACT_NAME = { tanh: 'TanH', logistic: 'Logistic', relu: 'ReLU', identity: 'Linear' };
+  const ACTS = [['tanh', 'TanH'], ['linear', 'Linear'], ['gauss', 'Gaussian']];
+  const ACT_NAME = { tanh: 'TanH', linear: 'Linear', gauss: 'Gaussian' };
+  const LAYER_KEYS = [['t1', 'l1', 'g1'], ['t2', 'l2', 'g2']];   // each activation's nodes, the first layer (next to the responses) and the second
   const METHODS = [['holdback', 'Holdback'], ['kfold', 'KFold'], ['excluded', 'Excluded Rows Holdback']];
-  const PENALTIES = [['squared', 'Squared', false], ['absolute', 'Absolute (not in scikit-learn)', true], ['weight_decay', 'Weight Decay (not in scikit-learn)', true], ['none', 'No Penalty', false]];
-  // JMP's Model Launch defaults (Maximum Iterations is scikit-learn's max_iter)
-  const DEFAULTS = { method: 'holdback', portion: 0.3333, folds: 5, activation: 'tanh', n1: 3, n2: 0, boost: 0, rate: 0.1, transform: false, penalty: 'squared', tours: 1, max_iter: 200 };
+  const PENALTIES = [['squared', 'Squared'], ['absolute', 'Absolute'], ['weight_decay', 'Weight Decay'], ['none', 'No Penalty']];
+  // JMP's Model Launch defaults (Maximum Iterations is ours: JMP stops each fit early, by the validation likelihood)
+  const DEFAULTS = { method: 'holdback', portion: 0.3333, folds: 5, t1: 3, l1: 0, g1: 0, t2: 0, l2: 0, g2: 0, boost: 0, rate: 0.1, transform: false, robust: false, penalty: 'squared', tours: 1, max_iter: 200 };
   const KEYS = Object.keys(DEFAULTS);
 
-  /* JMP's name of a model: NTanH(3), NTanH(3)NTanH2(2), NTanH(2)NBoost(10). */
+  /* A model saved before a layer could mix activations (activation, n1, n2) as its nodes of that activation
+     (scikit-learn's Logistic and ReLU as TanH, which the backend says in a note). */
+  function normalize(m) {
+    if (!m || LAYER_KEYS[0].some((k) => Number.isInteger(m[k])) || !Number.isInteger(m.n1)) return m;
+    const k = { identity: 'l', linear: 'l', gauss: 'g' }[m.activation] || 't';
+    const out = { ...m, t1: 0, l1: 0, g1: 0, t2: 0, l2: 0, g2: 0 };
+    out[`${k}1`] = m.n1;
+    out[`${k}2`] = m.n2 || 0;
+    return out;
+  }
+
+  /* JMP's name of a model: NTanH(3), NTanH(2)NLinear(1), NTanH(3)NTanH2(2), NGaussian(2)NBoost(10). */
   function modelName(m) {
-    const a = ACT_NAME[m.activation] || 'TanH';
-    let s = `N${a}(${m.n1})`;
-    if (m.n2 && !m.boost) s += `N${a}2(${m.n2})`;
+    m = normalize(m);
+    let s = '';
+    LAYER_KEYS.forEach((keys, li) => keys.forEach((k, j) => { if (m[k] && !(li && m.boost)) s += `N${ACTS[j][1]}${li ? '2' : ''}(${m[k]})`; }));
     if (m.boost) s += `NBoost(${m.boost})`;
     return s;
   }
 
-  const modelsOf = (ctx) => (ctx.opt('models', []) || []).filter((m) => m && m.id && Number.isInteger(m.n1));
+  const modelsOf = (ctx) => (ctx.opt('models', []) || []).map(normalize).filter((m) => m && m.id && LAYER_KEYS[0].every((k) => Number.isInteger(m[k])));
 
   /* The excluded rows of this By group (and of the Local Data Filter): the
      validation rows of Excluded Rows Holdback. */
@@ -126,27 +138,27 @@
 
     // Validation Method
     let vbox;
-    if (vcol) vbox = box('Validation Method', el('p', { class: 'sm-nn-line', text: `Validation Column: ${vcol.name}` }), el('p', { class: 'sm-nn-hint', text: 'The column\'s 0 (Training), 1 (Validation) and 2 (Test) rows.' }));
+    const kf = vcol ? foldsOf(vcol) : 0;
+    if (vcol) vbox = box('Validation Method', el('p', { class: 'sm-nn-line', text: `Validation Column: ${vcol.name}` }), el('p', { class: 'sm-nn-hint', text: kf ? `Its ${kf} values are ${kf} folds: KFold by them, each fold validating the model of the others.` : 'The column\'s 0 (Training), 1 (Validation) and 2 (Test) rows.' }));
     else {
       const method = pick('method', METHODS, 'Validation Method');
       vbox = box('Validation Method', el('div', { class: 'sm-nn-fields' }, field('Method', method),
         field('Holdback Proportion', num('portion', 'Holdback Proportion'), 'sm-nn-portion'), field('Number of Folds', num('folds', 'Number of Folds', 4), 'sm-nn-folds')));
     }
-    // Hidden Layer Structure: one activation (scikit-learn's), two layers
+    // Hidden Layer Structure: the nodes of each activation in each layer, as JMP's table has them
     const hbox = box('Hidden Layer Structure',
-      el('div', { class: 'sm-nn-fields' }, field('Activation', pick('activation', ACTIVATIONS, 'Activation'))),
+      el('p', { class: 'sm-nn-hint', text: 'Number of nodes of each activation type in each layer.' }),
       el('table', { class: 'sm-nn-layers' },
-        el('thead', null, el('tr', null, el('th', { text: 'Layer' }), el('th', { text: 'Nodes' }))),
-        el('tbody', null,
-          el('tr', null, el('td', { text: 'First' }), el('td', null, num('n1', 'First layer nodes', 4))),
-          el('tr', null, el('td', { text: 'Second' }), el('td', null, num('n2', 'Second layer nodes', 4))))),
-      el('p', { class: 'sm-nn-hint', text: 'Second layer is closer to X\'s in two layer models. Every hidden node has the one activation: scikit-learn has no mix of TanH, Linear and Gaussian nodes as JMP has, and no Gaussian; Logistic and ReLU are its own.' }));
+        el('thead', null, el('tr', null, el('th', { text: 'Layer' }), ...ACTS.map(([, lab]) => el('th', { text: lab })))),
+        el('tbody', null, ...['First', 'Second'].map((lab, li) => el('tr', null, el('td', { text: lab }),
+          ...LAYER_KEYS[li].map((k, j) => el('td', null, num(k, `${lab} layer ${ACTS[j][1]} nodes`, 3))))))),
+      el('p', { class: 'sm-nn-hint', text: 'Second layer is closer to X\'s in two layer models.' }));
     // Boosting
     const bbox = box('Boosting', el('p', { class: 'sm-nn-hint', text: 'Fit an additive sequence of models scaled by the learning rate.' }),
       el('div', { class: 'sm-nn-fields' }, field('Number of Models', num('boost', 'Number of Models', 4)), field('Learning Rate', num('rate', 'Learning Rate'))));
     // Fitting Options
     const fbox = box('Fitting Options',
-      el('div', { class: 'sm-nn-checks' }, check('transform', 'Transform Covariates'), check('robust', 'Robust Fit (not in scikit-learn)', true)),
+      el('div', { class: 'sm-nn-checks' }, check('transform', 'Transform Covariates'), check('robust', 'Robust Fit')),
       el('div', { class: 'sm-nn-fields' }, field('Penalty Method', pick('penalty', PENALTIES, 'Penalty Method')), field('Number of Tours', num('tours', 'Number of Tours', 4)),
         field('Maximum Iterations', num('max_iter', 'Maximum Iterations', 6))));
     const msg = el('p', { class: 'sm-nn-msg', role: 'status' });
@@ -180,10 +192,21 @@
     return ob;
   }
 
+  /* The folds of a Validation column (its distinct values when more than three: whole numbers, or texts none
+     of which is Training, Validation or Test), or 0: predictive.prepare reads such a column as K folds. */
+  function foldsOf(col) {
+    const seen = new Set();
+    for (const v of col.values) if (v != null && v !== '' && !(typeof v === 'number' && Number.isNaN(v))) seen.add(v);
+    if (seen.size <= 3 || seen.size > 50) return 0;
+    const vals = [...seen];
+    if (col.isNumeric) return vals.every((v) => Number.isInteger(v)) ? vals.length : 0;
+    return vals.some((v) => ['training', 'train', 'validation', 'valid', 'test'].includes(String(v).trim().toLowerCase())) ? 0 : vals.length;
+  }
+
   function checkSpec(s, ctx) {
     const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
-    if (!int(s.n1, 1, 500)) return 'The first layer needs from 1 to 500 nodes.';
-    if (!int(s.n2, 0, 500)) return 'The second layer takes from 0 to 500 nodes.';
+    for (const [li, keys] of LAYER_KEYS.entries()) for (const [j, k] of keys.entries()) if (!int(s[k], 0, 500)) return `The ${li ? 'second' : 'first'} layer's ${ACTS[j][1]} nodes are a whole number from 0 to 500.`;
+    if (s.t1 + s.l1 + s.g1 < 1) return 'The first layer needs at least one node.';
     if (!int(s.boost, 0, 1000)) return 'The Number of Models is a whole number from 0 to 1000.';
     if (!(s.rate > 0 && s.rate <= 1)) return 'The Learning Rate is above 0 and at most 1.';
     if (!int(s.tours, 1, 100)) return 'The Number of Tours is a whole number from 1 to 100.';
@@ -198,7 +221,7 @@
   function addModel(ctx, spec) {
     const seq = (Number(ctx.opt('modelSeq', 0)) || 0) + 1;
     const m = { id: `m${seq}`, ...Object.fromEntries(KEYS.map((k) => [k, spec[k]])) };
-    if (m.boost && m.n2) { m.n2 = 0; SM.ui.toast('Boosting takes one hidden layer: the second layer is ignored, as in JMP'); }
+    if (m.boost && (m.t2 || m.l2 || m.g2)) { m.t2 = m.l2 = m.g2 = 0; SM.ui.toast('Boosting takes one hidden layer: the second layer is ignored, as in JMP'); }
     ctx.set('launch', spec, null, { rerun: false });
     ctx.set('modelSeq', seq, null, { rerun: false });
     ctx.set('models', [...modelsOf(ctx), m]);
@@ -232,7 +255,8 @@
       const yk = yc ? yc.id : r.y;
       const parent = multi ? ctx.outline(r.y, { parent: ob, key: `resp:${m.id}:${yk}` }) : ob;
       scrollTables(SM.predict.measures(ctx, parent, r.fit, { title: multi ? 'Measures of Fit' : `Measures of Fit for ${r.y}`, key: `measures:${m.id}:${yk}` }));
-      if (r.kind === 'categorical') SM.predict.classification(ctx, parent, r.fit, sc);
+      // the Decision Threshold's save: this response's probabilities (named with it among several)
+      if (r.kind === 'categorical') SM.predict.classification(ctx, parent, r.fit, sc, `${m.id}:${yk}:`, { save: { fn: 'neural.save', payload: { ...payload, response: r.y } }, probName: (label) => (multi ? `${r.y} Prob[${label}]` : `Prob[${label}]`), yCol: yc });
       else {
         if (ctx.opt('abp', false, sc)) SM.predict.actualByPredicted(ctx, parent, r.fit, { key: `abp:${m.id}:${yk}` });
         if (ctx.opt('rbp', false, sc)) residualByPredicted(ctx, parent, r.fit, `rbp:${m.id}:${yk}`);
@@ -245,7 +269,7 @@
         note: 'Drag the red dashed line of a factor, click in its plot, or type its value. The network has no confidence limits (JMP\'s Neural profiler has none either).' });
     }
     if (ctx.opt('details', false, sc)) detailsOutline(ctx, ob, m, res);
-    ob.add(ctx.code(res.code));
+    ob.add(ctx.code(res.script));
     return res;
   }
 
@@ -264,15 +288,18 @@
     const v = res.validation;
     const parts = [];
     if (v.method === 'holdback') parts.push(`Validation: Random Holdback, ${fmt(v.portion)} of the rows (seed ${res.seed}).`);
-    else if (v.method === 'kfold') parts.push(`Validation: KFold, ${v.folds} folds (seed ${res.seed}): the model shown is the one fitted without fold ${v.fold}, whose networks fit every row best, and fold ${v.fold} is its validation set.`);
+    else if (v.method === 'kfold') parts.push(`Validation: KFold, ${v.folds} folds (seed ${res.seed}): the model shown is the one fitted without fold ${v.fold}, whose network fits every row best, and fold ${v.fold} is its validation set.`);
+    else if (v.method === 'folds') parts.push(`Validation: KFold by the ${v.folds} folds of ${v.column}: the model shown is the one fitted without fold ${v.fold}, whose network fits every row best, and that fold is its validation set.`);
     else if (v.method === 'excluded') parts.push('Validation: Excluded Rows Holdback: the excluded rows validate.');
     else parts.push(`Validation Column: ${v.column}.`);
     const validates = (res.n.Validation || 0) > 0;
     for (const net of res.nets) {
       const who = res.nets.length > 1 ? `${net.responses.join(', ')}: ` : '';
-      const pen = net.penalty === 'none' ? 'No Penalty' : `Squared penalty alpha ${fmt(net.alpha)}${validates ? ', chosen by the validation likelihood' : ''}`;
-      const it = net.boosted ? `${net.components} of ${res.spec.boost} base model${res.spec.boost > 1 ? 's' : ''} kept` : `${net.iterations} L-BFGS iterations${net.iterations >= net.max_iter ? ' (the maximum)' : ''}`;
-      parts.push(`${who}${pen}; ${it}.`);
+      const penName = { squared: 'Squared', absolute: 'Absolute', weight_decay: 'Weight Decay' }[net.penalty];
+      const pen = net.penalty === 'none' ? 'No Penalty' : `${penName} penalty λ ${fmt(net.lambda)}${validates ? ', chosen by the validation likelihood' : ''}`;
+      const its = Array.isArray(net.iterations) ? net.iterations : [net.iterations];
+      const it = net.boosted ? `${net.components} of ${res.spec.boost} base model${res.spec.boost > 1 ? 's' : ''} kept` : `${its[0]} L-BFGS iterations${its[0] >= net.max_iter ? ' (the maximum)' : ''}`;
+      parts.push(`${who}${pen}; ${it}${net.robust ? '; Robust Fit: least absolute deviations' : ''}.`);
     }
     if (res.tours.length > 1) parts.push(`Tour ${res.tour} of ${res.tours.length} had the best validation likelihood.`);
     return parts.join(' ');
@@ -323,51 +350,50 @@
     });
     const tf = res.nets.some((n) => n.transformed.length);
     const cat = res.nets.some((n) => n.kind === 'categorical');
-    ob.add(ctx.note(`Hn_k is node k of hidden layer n (H1 next to the responses; H2, of a two-layer network, next to the X's); A:B is the weight on B in node A's sum, A:Intercept its constant. The weights are on the columns' own scale: the standardization the network is fitted on is folded into them${tf ? ', and T(x) is a covariate after Transform Covariates' : ''}. A continuous response's output is on its own scale${cat ? '; a categorical response has the log odds of each level against the last (y[level]:H1_1), as JMP writes them, which are differences of scikit-learn\'s softmax outputs (a binary one: the first level\'s, the negative of scikit-learn\'s)' : ''}. ${res.nets.some((n) => n.boosted) ? 'A boosted network is written as the one network it is: every base model\'s nodes side by side, their outputs weighted by the learning rate (the last by 1).' : ''}`));
+    ob.add(ctx.note(`Hn_k is node k of hidden layer n (H1 next to the responses; H2, of a two-layer network, next to the X's); A:B is the weight on B in node A's sum, A:Intercept its constant. The weights are on the design's own scale (JMP's design: a categorical factor's effect coding, x[level] for each level but the last, the last −1; a missing value's column x Missing): the centring and scaling the network is fitted on is folded into them${tf ? ', and T(x) is a covariate after Transform Covariates, its Johnson transform' : ''}. A continuous response's output is on its own scale${cat ? '; a categorical response has the log odds of each level against the last (y[level]:H1_1), as JMP writes them' : ''}. ${res.nets.some((n) => n.boosted) ? 'A boosted network is written as the one network it is: every base model\'s nodes side by side, their outputs weighted by the learning rate (the last by 1).' : ''}`));
   }
 
   /* ---- Fitting Details: the penalty path, tours, folds, boosting ---------------------------- */
   function detailsOutline(ctx, parent, m, res) {
     const ob = ctx.outline('Fitting Details', { parent, key: `details:${m.id}`, info: 'p:neural:details', menu: () => [{ label: 'Remove', action: () => ctx.set('details', false, m.id) }] });
-    const kfold = res.validation.method === 'kfold';
+    const kfold = res.validation.method === 'kfold' || res.validation.method === 'folds';
     const chosen = (r) => (r.chosen ? 'sm-nn-chosen' : '');
     res.nets.forEach((net, k) => {
       const who = res.nets.length > 1 ? ` (${net.responses.join(', ')})` : '';
       ob.add(el('div', { class: 'sm-nn-scroll' }, ctx.rt({
-        columns: [{ key: 'alpha', label: 'alpha' }, { key: 'iterations', label: kfold ? 'Mean Iterations' : 'Iterations' }, { key: 'train', label: 'Training -LogLikelihood' }, { key: 'valid', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
+        columns: [{ key: 'lambda', label: 'Penalty λ' }, { key: 'iterations', label: kfold ? 'Mean Iterations' : 'Iterations' }, { key: 'train', label: 'Training -LogLikelihood' }, { key: 'valid', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
         rows: net.path.map((r) => ({ ...r, mark: r.chosen ? 'chosen' : '' })),
       }, { key: `path:${m.id}:${k}`, caption: `Penalty Path${who}${kfold ? ', summed over the folds' : ''}`, sortable: false, cellClass: chosen })));
       if (net.boosted && net.boost) {
         ob.add(el('div', { class: 'sm-nn-scroll' }, ctx.rt({
-          columns: [{ key: 'model', label: 'Base Model', fmt: 'int' }, { key: 'step', label: 'Step', hidden: net.kind === 'continuous' }, { key: 'train', label: 'Training -LogLikelihood' }, { key: 'valid', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
+          columns: [{ key: 'model', label: 'Base Model', fmt: 'int' }, { key: 'iterations', label: 'Iterations', fmt: 'int' }, { key: 'train', label: 'Training -LogLikelihood' }, { key: 'valid', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
           rows: net.boost.map((r) => ({ ...r, mark: r.kept ? 'kept' : 'not kept: the validation likelihood got worse' })),
         }, { key: `boost:${m.id}:${k}`, caption: `Boosting${who}`, sortable: false })));
       }
     });
     if (res.tours.length > 1) {
-      ob.add(ctx.rt({ columns: [{ key: 'tour', label: 'Tour', fmt: 'int' }, { key: 'random_state', label: 'random_state', fmt: 'int' }, { key: 'criterion', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
+      ob.add(ctx.rt({ columns: [{ key: 'tour', label: 'Tour', fmt: 'int' }, { key: 'criterion', label: 'Validation -LogLikelihood' }, { key: 'mark', label: '', fmt: 'text' }],
         rows: res.tours.map((r) => ({ ...r, mark: r.chosen ? 'chosen' : '' })) }, { key: `tours:${m.id}`, caption: 'Tours', sortable: false, cellClass: chosen }));
     }
     if (kfold && res.folds.length) {
       ob.add(ctx.rt({ columns: [{ key: 'fold', label: 'Fold', fmt: 'int' }, { key: 'rows', label: 'Rows', fmt: 'int' }, { key: 'valid', label: 'Validation -LogLikelihood' }, { key: 'all', label: '-LogLikelihood, Every Row' }, { key: 'mark', label: '', fmt: 'text' }],
-        rows: res.folds.map((r) => ({ ...r, mark: r.chosen ? 'chosen' : '' })) }, { key: `folds:${m.id}`, caption: 'Folds, at the Chosen alpha', sortable: false, cellClass: chosen }));
+        rows: res.folds.map((r) => ({ ...r, mark: r.chosen ? 'chosen' : '' })) }, { key: `folds:${m.id}`, caption: 'Folds, at the Chosen Penalty', sortable: false, cellClass: chosen }));
     }
     const lines = [];
-    if (res.spec.penalty === 'squared') lines.push(`scikit-learn's alpha (the Squared penalty: alpha/2 times the sum of the squared weights, over the rows' total weight) runs up from almost none, each fit starting where the one before ended, until two steps in a row do not improve the validation likelihood${kfold ? ' summed over the folds' : ''}; the alpha with the best one is kept. JMP searches its penalty the same way, from none; it also stops each BFGS run early when the validation likelihood no longer improves, and scikit-learn's L-BFGS runs to its tolerance or the Maximum Iterations.`);
-    if (res.nets.some((n) => n.boosted)) lines.push('Boosting: the first base model runs up the penalty path; the others are fitted at its alpha, each to what the learning-rate-scaled sum of those before leaves (a categorical response: the gradient of the log-likelihood, on the log-odds scale, with a line search for the step), while the validation likelihood improves. The last one kept enters unscaled, as JMP describes.');
-    if (res.tours.length > 1) lines.push('Each tour starts from new random weights (its random_state, from the report\'s seed); the tour with the best validation likelihood is kept.');
-    if (kfold) lines.push('KFold, as JMP does it: for each alpha the model of every fold; the alpha with the best validation likelihood summed over the folds; then the fold whose model fits every row best is the model shown, with that fold as its validation set.');
+    if (res.spec.penalty !== 'none') lines.push(`The penalty λ (times the ${{ squared: 'sum of the squared weights', absolute: 'sum of the absolute weights', weight_decay: 'sum of b²/(1 + b²) over the weights' }[res.spec.penalty]} of the hidden layers, added to the -log likelihood per row) runs up from none, each fit starting where the one before ended, until two penalties in a row do not improve the validation likelihood${kfold ? ' summed over the folds' : ''}; the λ with the best one is kept, as JMP searches its penalty. Each L-BFGS fit keeps its iterate with the best validation likelihood and stops 10 iterations after it (JMP's early stopping), or at the Maximum Iterations.`);
+    if (res.nets.some((n) => n.boosted)) lines.push('Boosting: the first base model runs up the penalty path; the others are fitted at its penalty, each to the likelihood with the learning-rate-scaled sum of those before as an offset (on the log-odds scale for a categorical response), while the validation likelihood improves. The last one kept enters unscaled, as JMP describes.');
+    if (res.tours.length > 1) lines.push('Each tour starts from new normal random weights (from the report\'s seed); the tour with the best validation likelihood is kept.');
+    if (kfold) lines.push('KFold, as JMP does it: for each penalty the model of every fold; the penalty with the best validation likelihood summed over the folds; then the fold whose model fits every row best is the model shown, with that fold as its validation set.');
     ob.add(ctx.note(lines.join(' ')));
   }
 
   /* ======================================================================
      THE DIAGRAM
      ====================================================================== */
-  const GLYPHS = {
+  const GLYPHS = {   // each activation's curve in its node (neural.draw_network draws the same)
     tanh: 'M -6 4 C -1.5 4 1.5 -4 6 -4',
-    logistic: 'M -6 4.5 C -1 4.5 1 -4.5 6 -4.5 M -6 6.5 H 6',
-    relu: 'M -6 3 L 0 3 L 6 -5',
-    identity: 'M -6 5 L 6 -5',
+    linear: 'M -6 5 L 6 -5',
+    gauss: 'M -6 4 C -2.5 4 -1.5 -4.5 0 -4.5 C 1.5 -4.5 2.5 4 6 4',
   };
 
   function shortName(s, n = 22) { s = String(s); return s.length > n ? `${s.slice(0, n - 1)}…` : s; }
@@ -418,7 +444,8 @@
     // the last hidden layer to the outputs
     const L = layers.length;
     const Wl = W[L];
-    const outCols = d.outputs.map((o, i) => (o.kind === 'continuous' ? [d.out_names.indexOf(o.name)] : d.out_names.map((_, q) => q)));
+    // each response's outputs: a continuous one's one, a categorical one's log odds of each level but the last
+    const outCols = d.outputs.map((o, i) => { const [a, bb] = d.blocks ? d.blocks[i] : [i, i + 1]; return Array.from({ length: bb - a }, (_, q) => a + q); });
     for (let a = 0; a < layers[L - 1]; a++) {
       d.outputs.forEach((o, i) => {
         const ws = outCols[i].map((q) => `${d.out_names[q]} ${wtext(Wl[a][q])}`).join(', ');
@@ -431,14 +458,14 @@
       nodes.append(svg('g', { class: 'sm-nn-in' }, svg('rect', { x: cols[0] - inW / 2, y: y - 10, width: inW, height: 20, rx: 3 }),
         svg('text', { x: cols[0], y: y + 4, class: 'sm-nn-label', 'text-anchor': 'middle' }, shortName(c.name)), svg('title', null, `${c.name}${c.features.length > 1 ? ` (${c.features.length} columns: ${c.features.join(', ')})` : ''}`)));
     });
-    const glyph = GLYPHS[d.activation] || GLYPHS.tanh;
     const b = d.biases;
     layers.forEach((n, li) => {
       for (let k = 0; k < n; k++) {
         const y = yOf(k, n);
+        const act = (d.hidden[li].acts || [])[k] || 'tanh';
         nodes.append(svg('g', { class: 'sm-nn-hid' }, svg('circle', { cx: cols[li + 1], cy: y, r }),
-          r >= 9 ? svg('path', { class: 'sm-nn-glyph', d: glyph, transform: `translate(${cols[li + 1]} ${y}) scale(${(r / 11).toFixed(3)})` }) : null,
-          svg('title', null, `${hName(li, k)} (${ACT_NAME[d.activation] || d.activation}): intercept ${wtext(b[li][k])}`)));
+          r >= 9 ? svg('path', { class: 'sm-nn-glyph', d: GLYPHS[act] || GLYPHS.tanh, transform: `translate(${cols[li + 1]} ${y}) scale(${(r / 11).toFixed(3)})` }) : null,
+          svg('title', null, `${hName(li, k)} (${ACT_NAME[act] || act}): intercept ${wtext(b[li][k])}`)));
       }
     });
     d.outputs.forEach((o, i) => {
@@ -457,8 +484,7 @@
       // the diagram with its code block right under it: the networks fitted (the model's head), then drawn
       ob.add(el('div', { class: 'sm-nn-scroll sm-nn-diagram' }, diagramSVG(net.diagram)), SM.predict.graphCode(ctx, res.plots && res.plots.head_code, net.diagram_code) || '');
     }
-    const act = ACT_NAME[m.activation] || m.activation;
-    ob.add(ctx.note(`The X columns on the left (a categorical one is one box for its level columns), the hidden nodes (${act}) in the middle, the response${res.responses.length > 1 ? 's' : ''} on the right; every line is a weight: hover it for its value, or a node for its intercept.${res.nets.length > 1 ? ' scikit-learn fits a categorical response in a network of its own, so there is one diagram per network.' : ''}`));
+    ob.add(ctx.note(`The X columns on the left (a categorical one is one box for its effect-coded columns), the hidden nodes in the middle, each with its activation's curve (TanH an S, Linear a line, Gaussian a bell), the response${res.responses.length > 1 ? 's, every one in the one network,' : ''} on the right; every line is a weight: hover it for its value, or a node for its intercept.`));
   }
 
   /* ======================================================================
@@ -504,9 +530,40 @@
       { label: 'Save Predicteds', action: () => saveCols(ctx, m, 'predicteds') },
       kinds.has('continuous') ? { label: 'Save Residuals', action: () => saveCols(ctx, m, 'residuals') } : null,
       { label: 'Save Hidden Layer Values', action: () => saveCols(ctx, m, 'hidden') },
-      res.validation.method !== 'column' ? { label: 'Save Validation', action: () => saveCols(ctx, m, 'validation') } : null,
-      res.nets.some((n) => n.transformed.length) ? { label: 'Save Transformed Covariates', action: () => saveCols(ctx, m, 'transformed') } : null,
+      { separator: true },
+      { label: 'Save Formulas', action: () => saveFormulas(ctx, m, res, 'formulas') },
+      { label: 'Save Profile Formulas', action: () => saveFormulas(ctx, m, res, 'profile') },
+      res.nets.some((n) => n.transformed.length) ? { label: 'Save Transformed Covariates', action: () => saveFormulas(ctx, m, res, 'transformed') } : null,
+      res.validation.method !== 'column' && res.validation.method !== 'folds' ? { label: 'Save Validation', action: () => saveCols(ctx, m, 'validation') } : null,
     ].filter(Boolean);
+  }
+
+  /* JMP's formula columns of a model: Save Formulas (each hidden node a formula column of its own, H1_1, ..., and
+     the predictions from them), Save Profile Formulas (the predictions alone, the hidden nodes written into
+     them) and Save Transformed Covariates (the Johnson transforms). The hidden columns' names are taken before
+     any is made, so the predictions' formulas refer to them; a categorical response's Most Likely column comes
+     from its Prob[] columns. */
+  async function saveFormulas(ctx, m, res, what) {
+    const from = { notes: `a formula from ${ctx.report.title}${ctx.byLabel ? ` ${ctx.byLabel}` : ''}, Model ${modelName(m)}` };
+    try {
+      const t = ctx.table;
+      let names = null;
+      if (what === 'formulas') {
+        names = {};
+        for (const h of res.nets[0].diagram.hidden) for (let i = 0; i < h.n; i++) names[`${h.name}_${i + 1}`] = t.uniqueName(`${h.name}_${i + 1}`);
+      }
+      const r = await ctx.call('neural.formula', { ...payloadOf(ctx, m), what, names });
+      if (r.error) throw new Error(r.error);
+      const made = {};
+      for (const c of r.columns) {
+        const col = ctx.saveFormula(c.hidden && names ? names[c.name] : c.name, c.expr, from);
+        if (col) made[c.name] = col.name;
+      }
+      for (const mo of r.most || []) {
+        const cols = mo.names.map((nm) => made[nm]);
+        if (cols.every(Boolean)) ctx.saveFormula(mo.most_name, SM.partition.mostLikelyExpr(cols, mo.levels), { ...from, modelingType: mo.ordinal ? 'ordinal' : 'nominal', valueOrder: mo.levels.slice() });
+      }
+    } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
   }
 
   async function saveCols(ctx, m, what) {
@@ -538,11 +595,13 @@
   const TOPICS = {
     'p:neural': {
       kicker: 'Analyze > Predictive Modeling', title: 'Neural',
-      lead: 'A neural network with one or two hidden layers predicts one or more responses from the factors, as JMP\'s Neural platform does, with scikit-learn\'s MLPRegressor (continuous responses) and MLPClassifier (a categorical one), fitted by L-BFGS, a quasi-Newton optimizer like JMP\'s BFGS and the one scikit-learn advises for small data. The report opens with the Model Launch; each Go fits a model with its settings, so several can be fitted and compared in one report.',
+      lead: 'A neural network with one or two hidden layers predicts one or more responses from the factors, as JMP\'s Neural platform does and as JMP documents its numerics: every response in one network, fitted by maximizing the likelihood with a penalty, by L-BFGS (a quasi-Newton method like JMP\'s BFGS), stopping each fit early by the validation likelihood. The network is our own (numpy and scipy). The report opens with the Model Launch; each Go fits a model with its settings, so several can be fitted and compared in one report.',
       sections: [
-        { heading: 'Roles', choices: [['Y, Response', 'One or more, continuous or categorical; JMP fits them together.'], ['X, Factor', 'Continuous and categorical factors; a categorical one enters as a 0/1 column per level (JMP: effect coding).'], ['Freq', 'Row counts, passed to scikit-learn as sample weights (scikit-learn 1.8\'s MLP takes them, and so does its StandardScaler): the loss is the weighted mean and the penalty is divided by the total, so a row with Freq 2 is two rows. JMP\'s Neural has no Weight role, and neither has this one.'], ['Validation', 'A column of 0 (Training), 1 (Validation) and 2 (Test); without one, the Model Launch holds rows back.'], ['By', 'A separate analysis for each level. Go adds the model to every group.']] },
-        { heading: 'Several responses', text: 'JMP fits every response in one network, summing their log-likelihoods. Here the continuous responses are fitted together in one MLPRegressor, each standardized by its training mean and standard deviation (so each response\'s squared errors weigh by its reciprocal variance), and each categorical response in a network of its own (MLPClassifier fits one), with the same structure and the same rows and sets. Rows missing a response are left out.' },
-        { heading: 'Random numbers', text: 'The holdback, the folds and every network\'s starting weights come from the report\'s Random Seed, so a redraw, Redo, a project and the Python code give the same model.' },
+        { heading: 'Roles', choices: [['Y, Response', 'One or more, continuous or categorical, all in one network: their log-likelihoods are summed, as JMP sums them.'], ['X, Factor', 'Continuous and categorical factors; a categorical one enters by JMP\'s effect coding, a column per level but the last.'], ['Freq', 'Row counts: a row with Freq 2 counts as two rows in the likelihood and in the design\'s centring. JMP\'s Neural has no Weight role, and neither has this one.'], ['Validation', 'A column of 0 (Training), 1 (Validation) and 2 (Test); one of more than three values is K folds, and the model is chosen by KFold on them. Without one, the Model Launch holds rows back.'], ['By', 'A separate analysis for each level. Go adds the model to every group.']] },
+        { heading: 'The design and the network', text: 'A continuous factor enters as its value; with Informative Missing a missing value is the training mean with a 0/1 missing column. A categorical factor is effect coded (1 for the level, −1 for the last level, 0 otherwise), a missing level being the last. Every design column is centred and scaled by the training rows\' mean and standard deviation (JMP does this behind the scenes; the Estimates are on the design\'s own scale). Each hidden node is TanH, Linear or Gaussian, exp(−x²); a continuous response is a linear output of the last hidden layer, a categorical one the log odds of each level against the last.' },
+        { heading: 'The fit', text: 'The negative log likelihood of the training rows: Gaussian, with the variance profiled out, (N/2)(log(SSE/N) + 1 + log 2π); Laplacian with Robust Fit, least absolute deviations; multinomial for a categorical response. Plus λ times the penalty of the hidden layers\' weights (not the intercepts, not the weights into the outputs). λ is searched from none upward, each fit starting where the one before ended, and chosen by the validation likelihood; each fit keeps its iterate with the best validation likelihood (JMP\'s early stopping).' },
+        { heading: 'Random numbers', text: 'The holdback, the folds and every tour\'s normal random starting values come from the report\'s Random Seed, so a redraw, Redo, a project and the Python code give the same model.' },
+        { heading: 'Differences from JMP', text: 'The penalty is searched over a fixed ladder of λ (Fitting Details), where JMP runs a line search; the Absolute penalty and Robust Fit smooth |x| as √(x² + 10⁻⁸) − 10⁻⁴ so that L-BFGS can take them; Transform Covariates fits each Johnson distribution by scipy\'s maximum likelihood, where JMP takes 10 Newton steps; rows missing a response are left out, where JMP keeps the other responses\' likelihood. Maximum Iterations and Fitting Details are ours. Save Fast Formulas, Make SAS Data Step and the Formula Depot are not here.' },
       ],
       more: MORE,
     },
@@ -554,26 +613,25 @@
           ['Method', 'How the rows are split to choose the penalty, the tour and the boosting steps. Holdback: a random share of the rows validates the model. KFold: for each penalty a model on every fold (fitted on the other folds, validated on it), the penalty with the best validation likelihood summed over the folds, and then the fold whose model fits every row best is the model shown, with that fold as its validation set (JMP\'s way). Excluded Rows Holdback: the rows excluded in the table validate and the included ones train (the model sees excluded rows only here).'],
           ['Holdback Proportion', 'With Holdback: the share of the rows held back for validation, above 0 and below 1 (JMP\'s 0.3333), drawn at random from the report\'s seed.'],
           ['Number of Folds', 'With KFold: the number of folds, from 2 to 50 (5), each row put in one of them at random from the report\'s seed.'],
-          ['Validation Column', 'With a Validation column in the launch, its rows decide instead: 0 training, 1 validation, 2 test.'],
+          ['Validation Column', 'With a Validation column in the launch, its rows decide instead: 0 training, 1 validation, 2 test; a column of more than three values (Make Validation Column\'s K Fold) is K folds, and the model is chosen by KFold on them.'],
         ] },
         { heading: 'Hidden Layer Structure', choices: [
-          ['Activation', 'The function of every hidden node: TanH (JMP\'s default, an S-curve from −1 to 1), Logistic (an S-curve from 0 to 1), ReLU (0 below 0, then a straight line) or Identity (JMP\'s Linear, which makes the whole network a linear model). scikit-learn gives every hidden node the one activation: JMP mixes TanH, Linear and Gaussian nodes in a layer, and scikit-learn has no Gaussian (radial) node.'],
-          ['First layer nodes', 'The nodes of the first hidden layer, the one next to the responses: from 1 to 500 (3). More nodes can follow more complicated shapes, and noise too: compare the models on their validation rows (Model Comparison).'],
-          ['Second layer nodes', 'The nodes of a second hidden layer, the one next to the X\'s: 0 (the default) for one layer, up to 500. A boosted model has one layer, and a second is ignored, as in JMP.'],
+          ['First layer', 'Its TanH, Linear and Gaussian nodes: the nodes of each activation in the first hidden layer, the one next to the responses (JMP\'s default: 3 TanH). TanH is an S-curve from −1 to 1, Linear the sum itself (a network of Linear nodes alone is a linear model), Gaussian exp(−x²), a bump. At least one node; more can follow more complicated shapes, and noise too: compare the models on their validation rows (Model Comparison).'],
+          ['Second layer', 'Its TanH, Linear and Gaussian nodes: the nodes of a second hidden layer, the one next to the X\'s: none (the default) for one layer, up to 500 of each. A boosted model has one layer, and a second is ignored, as in JMP.'],
         ] },
         { heading: 'Boosting', choices: [
-          ['Number of Models', 'Above 0: base networks of the first layer\'s size are fitted in turn, each to what the sum of those before (scaled by the Learning Rate) leaves, while the validation likelihood improves; the last one kept enters unscaled, as JMP describes. 0 (the default) fits one network. A categorical response is boosted on the log-odds scale: each base model (an MLPRegressor) is fitted to the gradient of the log-likelihood, with a line search for its step, which JMP does not describe.'],
+          ['Number of Models', 'Above 0: base networks of the first layer\'s nodes are fitted in turn, each to the likelihood with the sum of those before (scaled by the Learning Rate) as an offset, on the log-odds scale for a categorical response, while the validation likelihood improves; the last one kept enters unscaled, as JMP describes. 0 (the default) fits one network.'],
           ['Learning Rate', 'With boosting: the scale of each base model in the sum, above 0 and at most 1 (0.1). A smaller rate needs more models, and often predicts new rows better.'],
         ] },
         { heading: 'Fitting Options', choices: [
-          ['Transform Covariates', 'Makes the continuous factors near normal before the fit: scikit-learn\'s PowerTransformer (Yeo-Johnson, standardized) fitted on the training rows, which tames skewed factors and long tails. JMP fits a Johnson Su or Sb distribution to each instead.'],
-          ['Robust Fit', 'Least absolute deviations: not in scikit-learn, whose MLPRegressor has only squared error, so it cannot be ticked.'],
-          ['Penalty Method', 'Squared (the default) is scikit-learn\'s alpha, an L2 penalty on the weights (not the intercepts), its size chosen by the validation likelihood as JMP chooses its penalty (Fitting Details shows the path); with no validation rows alpha is scikit-learn\'s default 0.0001. scikit-learn also penalizes the weights of the output layer, which JMP leaves free. No Penalty is alpha 0. Absolute and Weight Decay are not in scikit-learn.'],
-          ['Number of Tours', 'How many times the fit starts again from new random weights, from 1 to 100 (1); the tour with the best validation likelihood is kept. More tours guard against a poor start, and take longer.'],
-          ['Maximum Iterations', 'scikit-learn\'s max_iter for each L-BFGS fit, from 1 to 100000 (200; not in JMP, which stops early by the validation likelihood). A fit that reaches it warns under the report: raise it to see whether the validation measures change.'],
+          ['Transform Covariates', 'Makes each continuous factor near normal before the fit, as JMP does: the Johnson Su or Sb distribution (the one of the larger likelihood) fitted to the training rows, and the factor replaced by its Johnson transform. It tames skewed factors and outliers; Save Transformed Covariates saves the transforms as formula columns.'],
+          ['Robust Fit', 'A continuous response is fitted by least absolute deviations (its likelihood Laplacian, |x| smoothed for the optimizer), so that outliers of the response pull the fit less. A categorical response\'s likelihood is multinomial either way.'],
+          ['Penalty Method', 'Squared (the default): λ times the sum of the squared weights, for when most factors help; Absolute: the sum of their absolute values, for when a few factors matter more; Weight Decay: b²/(1 + b²) summed, another sparse choice; No Penalty. The hidden layers\' weights are penalized, not the intercepts and not the weights into the outputs. λ is chosen by the validation likelihood (Fitting Details shows the path); without validation rows it is 0.0001.'],
+          ['Number of Tours', 'How many times the fit starts again from new normal random weights, from 1 to 100 (1); the tour with the best validation likelihood is kept. More tours guard against a poor start (a local optimum), and take longer.'],
+          ['Maximum Iterations', 'The most L-BFGS iterations of each fit, from 1 to 100000 (200; not in JMP, whose fits stop early by the validation likelihood, as they do here). A fit that reaches it says so in the model\'s summary: raise it to see whether the validation measures change.'],
         ] },
         { heading: 'Go', choices: [
-          ['Go', 'Fits a model with these settings and adds it to the report, named as JMP names it (NTanH(3)). The report keeps every model: Remove Fit (a model\'s red triangle) takes one away.'],
+          ['Go', 'Fits a model with these settings and adds it to the report, named as JMP names it (NTanH(3), NTanH(2)NLinear(1), NTanH(3)NTanH2(2)). The report keeps every model: Remove Fit (a model\'s red triangle) takes one away.'],
           ['Random Seed', 'The report\'s seed, shown beside Go (the launch\'s Random Seed, or one drawn for the report): the holdback, the folds and every network\'s starting weights come from it, so the same settings give the same model.'],
         ] },
       ],
@@ -581,28 +639,28 @@
     },
     'p:neural:model': {
       kicker: 'Neural', title: 'A Model',
-      lead: 'One fitted network, named as JMP names it: NTanH(3) is three TanH nodes, NTanH(3)NTanH2(2) adds two in a second layer, NBoost(10) ten boosted models; NLogistic, NReLU and NLinear the other activations. Its Measures of Fit per set of rows, and for a categorical response the confusion matrices.',
+      lead: 'One fitted network, named as JMP names it: NTanH(3) is three TanH nodes, NTanH(2)NLinear(1) two TanH and one Linear node, NTanH(3)NTanH2(2) two more in a second layer, NBoost(10) ten boosted models. Its Measures of Fit per set of rows and response, and for a categorical response the confusion matrices.',
       sections: [
-        { heading: 'The red triangle', choices: [['Diagram', 'The network drawn: inputs, hidden nodes, outputs.'], ['Show Estimates', 'Every weight and bias.'], ['Profiler', 'The prediction as each factor moves.'], ['ROC Curve, Lift Curve', 'For a categorical response.'], ['Plot Actual by Predicted, Plot Residual by Predicted', 'For a continuous response, linked to the rows.'], ['Fitting Details', 'The penalty path, tours, folds and boosting steps (not in JMP).'], ['Save Columns', 'Predicteds (or probabilities and the most likely level), residuals, the hidden nodes\' values (JMP\'s Save Formulas saves them as formulas), the validation sets, the transformed covariates.'], ['Remove Fit', 'Removes the model from the report.']] },
-        { heading: 'Messages', text: 'When the chosen fit reached the Maximum Iterations, scikit-learn\'s ConvergenceWarning shows under the report with the model\'s name. JMP stops early by design, so a fit that is not converged in scikit-learn\'s sense is common and often fine: raise the Maximum Iterations to see whether the validation measures change.' },
+        { heading: 'The red triangle', choices: [['Diagram', 'The network drawn: inputs, hidden nodes with their activations, outputs.'], ['Show Estimates', 'Every weight and intercept.'], ['Profiler', 'The prediction as each factor moves.'], ['ROC Curve, Lift Curve, Decision Threshold', 'For a categorical response.'], ['Plot Actual by Predicted, Plot Residual by Predicted', 'For a continuous response, linked to the rows.'], ['Fitting Details', 'The penalty path, tours, folds and boosting steps (not in JMP).'], ['Save Columns', 'Predicteds (or probabilities and the most likely level), residuals, the hidden nodes\' values; Save Formulas (the hidden nodes and the predictions as formula columns, JMP\'s), Save Profile Formulas (the predictions alone, the hidden nodes written into them), Save Transformed Covariates (their formulas); the validation sets.'], ['Remove Fit', 'Removes the model from the report.']] },
+        { heading: 'Messages', text: 'The model\'s summary says how it was validated, the penalty chosen and the iterations of its fit; when that fit reached the Maximum Iterations it says so, and a larger maximum may change the validation measures.' },
       ],
       more: MORE,
     },
     'p:neural:estimates': {
       kicker: 'Neural', title: 'Estimates',
-      lead: 'Every weight and bias of the network, with JMP\'s names: H1_2:x1 is the weight on x1 in node 2 of the first hidden layer, H1_2:Intercept its constant, y:H1_2 the weight of that node in the prediction of y. H2 is a two-layer network\'s layer next to the X\'s. A categorical response has the log odds of each level against the last, y[level]:H1_1.',
-      sections: [{ heading: 'Scale', text: 'The network is fitted on standardized columns (as JMP fits it); the weights shown have that folded back in, so a node\'s sum works on the columns as they are (T(x) after Transform Covariates). A continuous response\'s outputs are on its own scale. In the Python code, net[-1].coefs_ and net[-1].intercepts_ are scikit-learn\'s own, on the standardized columns and responses.' }],
+      lead: 'Every weight and intercept of the network, with JMP\'s names: H1_2:x1 is the weight on x1 in node 2 of the first hidden layer, H1_2:Intercept its constant, y:H1_2 the weight of that node in the prediction of y. H2 is a two-layer network\'s layer next to the X\'s. A categorical response has the log odds of each level against the last, y[level]:H1_1; a categorical factor its effect-coded columns, x[level].',
+      sections: [{ heading: 'Scale', text: 'The network is fitted on the design centred and scaled (as JMP fits it); the weights shown have that folded back in, so a node\'s sum works on the design as it is (T(x) after Transform Covariates). A continuous response\'s outputs are on its own scale. In the Python code, fitted_model.layers are the weights on the centred and scaled design.' }],
       more: MORE,
     },
     'p:neural:diagram': {
       kicker: 'Neural', title: 'Diagram',
-      lead: 'The network as JMP draws it: the X columns on the left, the hidden layers in the middle (the second layer, when there is one, next to the X\'s), the responses on the right, a line for every connection. Hover a line for its weight, a node for its intercept. On a narrow screen the diagram scrolls inside its box.',
+      lead: 'The network as JMP draws it: the X columns on the left, the hidden layers in the middle (the second layer, when there is one, next to the X\'s), each node with its activation\'s curve, the responses on the right, a line for every connection. Hover a line for its weight, a node for its intercept. On a narrow screen the diagram scrolls inside its box.',
       more: MORE,
     },
     'p:neural:details': {
       kicker: 'Neural', title: 'Fitting Details',
-      lead: 'How the model was chosen (not in JMP\'s report): each alpha of the penalty path with the training and validation -LogLikelihood of its fit, the tours, the folds of KFold and the base models of boosting, the chosen ones marked.',
-      sections: [{ heading: 'The penalty path', text: 'JMP starts with no penalty and searches its size by the validation likelihood, each fit starting from the last. Here alpha runs up 0.001, 0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, warm-started, and stops after two steps that do not improve the validation likelihood. Without validation rows the penalty cannot be chosen, and alpha is scikit-learn\'s default 0.0001.' }],
+      lead: 'How the model was chosen (not in JMP\'s report): each penalty λ of the path with the training and validation -LogLikelihood of its fit, the tours, the folds of KFold and the base models of boosting, the chosen ones marked.',
+      sections: [{ heading: 'The penalty path', text: 'JMP starts with no penalty and searches its size by the validation likelihood, each fit starting from the last. Here λ runs up 0, 0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, each fit warm-started, and stops after two that do not improve the validation likelihood. Without validation rows the penalty cannot be chosen, and λ is 0.0001.' }],
       more: MORE,
     },
     'p:neural:residual': {
@@ -623,17 +681,17 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'neural', label: 'Neural', menu: 'Analyze/Predictive Modeling', order: 40, info: 'p:neural', topics: TOPICS,
-    about: 'JMP\'s Neural platform: neural networks with one or two hidden layers (TanH, Logistic, ReLU or Identity nodes) for one or more continuous or categorical responses. The Model Launch sets the validation (Holdback, KFold, Excluded Rows Holdback or a Validation column), the layers, boosting, Transform Covariates, the penalty (chosen by the validation likelihood, as JMP chooses it) and tours; each Go adds a model to the report, with its Measures of Fit per set, confusion matrices, ROC and lift curves, actual and residual by predicted, Estimates, a Diagram of the network, the Prediction Profiler, Save Columns and a comparison of the models.',
-    uses: ['sklearn.neural_network.MLPRegressor, MLPClassifier (solver="lbfgs")', 'sklearn.pipeline.Pipeline, sklearn.preprocessing.StandardScaler, PowerTransformer', 'scipy.optimize.minimize_scalar (the boosting step of a categorical response)'],
+    about: 'JMP\'s Neural platform, fitted by a network of our own as JMP documents its numerics: one or two hidden layers of TanH, Linear and Gaussian nodes, every response (continuous or categorical) in one network, JMP\'s design (effect coding, centred and scaled), the likelihood (Gaussian, Laplacian with Robust Fit, multinomial) plus a Squared, Absolute or Weight Decay penalty chosen by the validation likelihood, L-BFGS with early stopping, tours, boosting and Transform Covariates (Johnson Su or Sb). The Model Launch sets the validation (Holdback, KFold, Excluded Rows Holdback, or a Validation column, its K folds too); each Go adds a model to the report, with its Measures of Fit per set, confusion matrices, ROC and lift curves, the Decision Threshold, actual and residual by predicted, Estimates, a Diagram of the network, the Prediction Profiler, Save Columns (predicteds, hidden values, and JMP\'s Save Formulas, Save Profile Formulas and Save Transformed Covariates as live formula columns) and a comparison of the models.',
+    uses: ['numpy (the network, its gradient, the design)', 'scipy.optimize.minimize (L-BFGS-B, with early stopping in its callback)', 'scipy.stats.johnsonsu, johnsonsb (Transform Covariates)'],
     launch: {
       lead: 'Choose one or more responses and the factors. The report opens with the Model Launch: set the network there and press Go.',
       roles: [
         { key: 'y', label: 'Y, Response', min: 1, hint: 'required: continuous or categorical',
-          help: 'One or more responses, continuous, nominal or ordinal: the continuous ones share one network, each categorical one has its own (Several responses, above). Rows missing a response are left out.' },
+          help: 'One or more responses, continuous, nominal or ordinal, all in one network whose log-likelihoods are summed, as JMP fits them. Rows missing a response are left out.' },
         { key: 'x', label: 'X, Factor', min: 1, hint: 'required',
-          help: 'The factors, continuous or categorical: a categorical one enters as a 0/1 column per level (JMP uses effect coding), and every column is standardized by the training rows before the fit. A column that is also a Y is left out of the factors.' },
+          help: 'The factors, continuous or categorical: a categorical one enters by JMP\'s effect coding (a column per level but the last), and every design column is centred and scaled by the training rows before the fit, as JMP does behind the scenes. A column that is also a Y is left out of the factors.' },
         // the shared Validation role, told as this platform splits the rows without one (it has no Validation Portion)
-        ...SM.predict.roles({ weight: false }).map((r) => (r.key === 'validation' ? { ...r, help: 'Which rows do what: 0 or Training fit the networks, 1 or Validation choose the penalty, the tour and the boosting steps and measure the model, 2 or Test are only measured. With one, the Model Launch shows it in place of its Validation Method; without one, the Model Launch holds rows back (Holdback, KFold or Excluded Rows Holdback).' } : r)),
+        ...SM.predict.roles({ weight: false }).map((r) => (r.key === 'validation' ? { ...r, help: 'Which rows do what: 0 or Training fit the network, 1 or Validation choose the penalty, the tour and the boosting steps and measure the model, 2 or Test are only measured; a column of more than three values holds K folds, and KFold on them chooses the model. With one, the Model Launch shows it in place of its Validation Method; without one, the Model Launch holds rows back (Holdback, KFold or Excluded Rows Holdback).' } : r)),
       ],
       options: SM.predict.options().filter((o) => o.key !== 'portion'),
       validate: (spec) => {

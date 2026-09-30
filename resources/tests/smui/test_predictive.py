@@ -112,6 +112,11 @@ def check_shared_native(check, label, fit, tid, tmp, head=None):
                 check(f'{label}: {kind} {s}: the legend', ax['legend'], [f'{c["level"]} ({c["auc"]:.4f})' if kind == 'roc' else c['level'] for c in want])
                 check(f'{label}: {kind} {s}: the reference line, the titles', (find_line(ax, [0, 1], [0, 1] if kind == 'roc' else [1, 1]) is not None, ax['xlabel'], ax['ylabel'], ax['title']),
                       (True, '1 - Specificity' if kind == 'roc' else 'Portion', 'Sensitivity' if kind == 'roc' else 'Lift', f'{"ROC" if kind == "roc" else "Lift"} {s}'))
+                if kind == 'roc':
+                    got = scatter_pts(ax)
+                    best = [(c['best']['fpr'], c['best']['tpr']) for c in want if c.get('best')]
+                    check(f'{label}: roc {s}: each level\'s best cut (the largest Sensitivity - (1 - Specificity)) marked where the report has it',
+                          len(got) == len(best) and all(abs(a - c) <= 1e-12 and abs(b - d) <= 1e-12 for (a, b), (c, d) in zip(got, best)), True)
     else:
         r = fit['residuals']
         for k, s in enumerate(('Training', 'Validation', 'Test')):
@@ -130,6 +135,72 @@ def check_shared_native(check, label, fit, tid, tmp, head=None):
             check(f'{label}: actual by predicted {s}: the line of equality, the titles', (find_line(ax, [min(v), max(v)], [min(v), max(v)]) is not None, ax['xlabel'], ax['ylabel'], ax['title']),
                   (True, 'Predicted', 'Actual', f'Actual by predicted {s}'))
     return n
+
+
+def run_names(code, tid, tmp, names, name='data'):
+    """Code run on the table's CSV as the notebook runs it (no figure wanted): the values of some of its names."""
+    import contextlib
+    import io
+    import warnings
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    export_frame(tid).to_csv(os.path.join(tmp, f'{name}.csv'), index=False)
+    ns = {'__name__': '__main__'}
+    here = os.getcwd()
+    os.chdir(tmp)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            exec(code, ns)
+        return {k: ns.get(k) for k in names}, None
+    except Exception as e:
+        import traceback
+        return None, f'{type(e).__name__}: {e}\n{traceback.format_exc(limit=-3)}'
+    finally:
+        os.chdir(here)
+        plt.close('all')
+
+
+def check_gains_native(check, label, fit, tid, tmp):
+    """The cumulative gains curves of every set and the decile lift tables, run on the table's CSV: each level's
+    curve through the report's points, in the palette's colours, the diagonal; the tables the report's."""
+    from test_charts import find_line
+    P = fit['plots']
+    n = 0
+    for s in fit['sets']:
+        F, err = run_graph(joined(P, 'gains', s), tid, tmp)
+        check(f'{label}: gains {s}: the code runs, ending in plt.show()', (err, P['gains'][s].rstrip().split('\n')[-1]), (None, 'plt.show()'))
+        if not F:
+            continue
+        n += 1
+        ax = F['axes'][0]
+        want = [c for c in fit['lift'] if c['set'] == s]
+        ok = []
+        for i, c in enumerate(want):
+            ln = next((q for q in ax['lines'] if q['label'] == c['level']), None)
+            ok.append(bool(ln) and subset_in_order(list(zip(c['portion'], c['gains'])), list(zip(ln['x'], ln['y']))) and ln['color'][:7] == PALETTE[i % len(PALETTE)])
+        check(f'{label}: gains {s}: every level\'s curve is the report\'s, in the palette\'s colours', (len(want) > 0, ok), (True, [True] * len(want)))
+        check(f'{label}: gains {s}: the diagonal, the legend, the titles', (find_line(ax, [0, 1], [0, 1]) is not None, ax['legend'], ax['xlabel'], ax['ylabel'], ax['title']),
+              (True, [c['level'] for c in want], 'Portion', 'Gains', f'Gains {s}'))
+    got, err = run_names(P['head_code'] + SEP + P['deciles'], tid, tmp, ['deciles'])
+    check(f'{label}: the decile tables\' code runs', err, None)
+    if got:
+        lv = 1 if len(fit['levels']) == 2 else 0
+        same = []
+        for s in fit['sets']:
+            want = next(c['deciles'] for c in fit['lift'] if c['set'] == s and c['level'] == fit['levels'][lv])
+            df = got['deciles'][s]
+            cols = ['bin', 'n', 'hits', 'rate', 'lift', 'cum_rate', 'cum_lift', 'gains']
+            same.append(len(df) == len(want) and all(close(r[k_], w_[k_]) for r, w_ in zip(df.to_dict('records'), want) for k_ in cols))
+        check(f'{label}: the decile tables of every set are the report\'s', same, [True] * len(fit['sets']))
+    return n
+
+
+def close(a, b, rel=1e-12):
+    if a is None or b is None or (isinstance(a, float) and math.isnan(a)) or (isinstance(b, float) and math.isnan(b)):
+        return (a is None or (isinstance(a, float) and math.isnan(a))) and (b is None or (isinstance(b, float) and math.isnan(b)))
+    return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(b)))
 
 
 def check_contrib_native(check, label, contrib, head, tid, tmp, title='Column Contributions'):
@@ -315,8 +386,192 @@ def main():
     big = pv.roc(Pb, np.column_stack([1 - np.linspace(0, 1, len(Pb.index)), np.linspace(0, 1, len(Pb.index))]), most=50)
     check('a ROC curve keeps at most the points asked for', max(len(r['fpr']) for r in big) <= 50, True)
     rep = pv.report(Pb, pb)
-    check('report(): measures, confusion, ROC and lift for a categorical response', sorted(k for k in rep if rep[k] is not None), sorted(['kind', 'measures', 'measure_columns', 'sets', 'n', 'notes', 'features', 'levels', 'confusion', 'roc', 'lift']))
+    check('report(): measures, confusion, ROC and lift for a categorical response, the Naive Model and the Decision Threshold\'s data (two levels)', sorted(k for k in rep if rep[k] is not None),
+          sorted(['kind', 'measures', 'measure_columns', 'sets', 'n', 'notes', 'features', 'levels', 'values', 'confusion', 'roc', 'lift', 'naive', 'threshold']))
     check('report(): actual by predicted for a continuous one', 'residuals' in pv.report(Pm, fit), True)
+    check('report(): no Decision Threshold for three levels', 'threshold' in pv.report(Pk, pr), False)
+
+    # ---- Weight x Freq counts the rows in the confusion matrices, ROC and lift (as JMP counts them) ----------
+    Pwf = pv.prepare(T, 'cls', ['x1', 'x2', 'g'], validation='v', weight='w', freq='f')
+    cwf = DecisionTreeClassifier(max_depth=4, random_state=2).fit(Pwf.X[Pwf.train()], Pwf.target[Pwf.train()], sample_weight=Pwf.w[Pwf.train()])
+    pwf = Pwf.proba(cwf, Pwf.X)
+    Cw = {c['set']: c for c in pv.confusion(Pwf, pwf)}
+    Rw = pv.roc(Pwf, pwf)
+    for k, name in enumerate(pv.SETS):
+        m = Pwf.mask(k)
+        ww = (w * fq)[Pwf.index][m]
+        check(f'Weight x Freq: {name}: the confusion matrix is sklearn\'s with sample_weight = weight x freq', bool(np.allclose(Cw[name]['matrix'], metrics.confusion_matrix(Pwf.target[m], pwf[m].argmax(1), sample_weight=ww, labels=[0, 1]))), True)
+        r = next(x for x in Rw if x['set'] == name and x['level'] == Pwf.labels[1])
+        fpr, tpr, _ = metrics.roc_curve(Pwf.target[m] == 1, pwf[m, 1], sample_weight=ww, drop_intermediate=False)
+        check(f'Weight x Freq: {name}: the ROC points are sklearn\'s with the same weights', bool(np.allclose(r['fpr'], fpr) and np.allclose(r['tpr'], tpr)), True)
+        check.near(f'Weight x Freq: {name}: the AUC too', r['auc'], metrics.roc_auc_score(Pwf.target[m] == 1, pwf[m, 1], sample_weight=ww), 1e-12)
+
+    # ---- the cut tables of the Decision Threshold: counts and rates at a threshold, against sklearn ---------
+    for label_, (yy, pp, ww) in {
+            'unit weights, ties': (Pb.target[Pb.mask(1)], pb[Pb.mask(1), 1], None),
+            'Weight x Freq': (Pwf.target[Pwf.mask(0)], pwf[Pwf.mask(0), 1], (w * fq)[Pwf.index][Pwf.mask(0)]),
+            'a smooth score': ((rng.uniform(0, 1, 300) < 0.4).astype(int), rng.uniform(0, 1, 300), rng.integers(1, 4, 300).astype(float))}.items():
+        c = pv.cut_table(pp, yy == 1, ww)
+        sw = np.ones(len(yy)) if ww is None else ww
+        check(f'cut table ({label_}): the distinct probabilities, highest first', c['p'], sorted(set(pp.tolist()), reverse=True))
+        cuts = sorted(set(np.round(np.linspace(0, 1, 21), 2).tolist()) | set(np.unique(pp)[::max(1, len(np.unique(pp)) // 7)].tolist()))
+        ok_counts, ok_rates = [], []
+        for t_ in cuts:
+            tp, fp, fn, tn = pv.counts_at(c, t_)
+            called = (pp >= t_).astype(int)
+            cm = metrics.confusion_matrix(yy, called, sample_weight=sw, labels=[0, 1])
+            ok_counts.append(bool(np.allclose([tp, fp, fn, tn], [cm[1, 1], cm[0, 1], cm[1, 0], cm[0, 0]], rtol=1e-12, atol=1e-9)))
+            r = pv.rates_at(tp, fp, fn, tn)
+            want = {'accuracy': metrics.accuracy_score(yy, called, sample_weight=sw), 'sensitivity': metrics.recall_score(yy, called, sample_weight=sw, zero_division=np.nan),
+                    'specificity': metrics.recall_score(1 - yy, 1 - called, sample_weight=sw, zero_division=np.nan), 'precision': metrics.precision_score(yy, called, sample_weight=sw, zero_division=np.nan),
+                    'f1': metrics.f1_score(yy, called, sample_weight=sw, zero_division=np.nan)}
+            if (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn) > 0:
+                want['mcc'] = metrics.matthews_corrcoef(yy, called, sample_weight=sw)
+            ok_rates.append(all((r[k_] is None and not np.isfinite(v_)) or (r[k_] is not None and abs(r[k_] - v_) <= 1e-12) for k_, v_ in want.items())
+                            and r['fpr'] == (fp / (fp + tn) if fp + tn > 0 else None) and r['fnr'] == (fn / (fn + tp) if fn + tp > 0 else None)
+                            and abs(r['misclassification'] + r['accuracy'] - 1) <= 1e-12 and r['portion'] == (tp + fp) / (tp + fp + fn + tn))
+        check(f'cut table ({label_}): the weighted counts at {len(cuts)} thresholds (every 0.05 and at probabilities themselves) are sklearn\'s confusion matrix', ok_counts, [True] * len(cuts))
+        check(f'cut table ({label_}): accuracy, sensitivity, specificity, precision, F1 and MCC are sklearn\'s; FPR, FNR, the portion by their formulas', ok_rates, [True] * len(cuts))
+        fpr, tpr, thr = metrics.roc_curve(yy, pp, sample_weight=sw, drop_intermediate=False)
+        tab = pv.roc_table(c)
+        check(f'ROC Table ({label_}): a line per cut, as sklearn\'s roc_curve (its thresholds, 1-Specificity, Sensitivity)', (len(tab), bool(np.allclose([q['prob'] for q in tab], thr[1:]) and np.allclose([q['fpr'] for q in tab], fpr[1:]) and np.allclose([q['sens'] for q in tab], tpr[1:]))), (len(thr) - 1, True))
+        jj = tpr[1:] - fpr[1:]
+        b = pv.youden(c)
+        check(f'ROC Table ({label_}): one line starred, the largest Sens-(1-Spec) (of equal ones the highest cut)', ([q['best'] for q in tab].count(True), b['cut'], b['j']), (1, float(thr[1:][int(np.argmax(jj))]), float(jj.max())))
+        check(f'ROC Table ({label_}): True Neg and False Neg complete the counts', all(abs(q['tp'] + q['fn'] - c['pos']) < 1e-9 and abs(q['fp'] + q['tn'] - c['neg']) < 1e-9 for q in tab), True)
+    check('counts_at: a threshold above every probability calls none', pv.counts_at(pv.cut_table([0.2, 0.7], [True, False]), 0.9), (0.0, 0.0, 1.0, 1.0))
+    check('rates_at: a share with nothing to divide is None (sklearn gives 0 for MCC there)', (pv.rates_at(0.0, 0.0, 3.0, 5.0)['precision'], pv.rates_at(0.0, 0.0, 3.0, 5.0)['mcc'], pv.rates_at(0.0, 0.0, 3.0, 5.0)['specificity']), (None, None, 1.0))
+    # the lib the code under the report defines: the same functions, the same digits
+    ns = {'np': np}
+    exec(pv.threshold_lib(), ns)
+    cc = pv.cut_table(pwf[:, 1], Pwf.target == 1, Pwf.w)
+    check('the code\'s cut_table, counts_at and rates_at give the report\'s numbers', (ns['cut_table'](pwf[:, 1], Pwf.target == 1, Pwf.w) == cc, ns['rates_at'](*ns['counts_at'](cc, 0.37)) == pv.rates_at(*pv.counts_at(cc, 0.37))), (True, True))
+
+    # ---- predictive.threshold: what the page draws the Decision Threshold from --------------------------------
+    D = pv.threshold_of(Pwf, pwf, head='# head')
+    check('threshold(): the levels, the second the target, the sets, weighted', (D['levels'], D['values'], D['target'], D['sets'], D['weighted']), (Pwf.labels, Pwf.levels, 1, ['Training', 'Validation', 'Test'], True))
+    check('threshold(): each row\'s number, set, level and Weight x Freq', (D['points']['rows'], D['points']['set'], D['points']['actual'], bool(np.allclose(D['points']['w'], Pwf.w))), (Pwf.index.tolist(), Pwf.sets.tolist(), Pwf.target.tolist(), True))
+    m0 = D['models'][0]
+    check('threshold(): the probability of the second level; of the first only where it is not 1 - the second', (bool(np.array_equal(m0['p'], pwf[:, 1])), ('p0' in m0) == (not np.array_equal(pwf[:, 0], 1 - pwf[:, 1]))), (True, True))
+    check('threshold(): the code: the head, and the functions of the report', (D['plots']['head_code'], 'def cut_table(' in D['plots']['lib'] and 'def roc_table(' in D['plots']['lib']), ('# head', True))
+    Ds = pv.threshold(np.array([0, 1, 1, 0]), {'a': ('A', np.array([0.2, 0.9, 0.6, 0.4])), 'b': ('B', np.array([[0.7, 0.3], [0.1, 0.9], [0.5, 0.5], [0.8, 0.2]]))}, ['no', 'yes'],
+                      cv={'a': np.array([0.3, 0.8, 0.4, 0.5])}, code={'a': ('fitted["A"]', 'oof["A"]')})
+    check('threshold() of several models: in order, a Crossvalidation set of every row, the code names', ([m_['label'] for m_ in Ds['models']], Ds['sets'], Ds['models'][0]['p_cv'], Ds['models'][0]['code'], 'p_cv' in Ds['models'][1]),
+          (['A', 'B'], ['Training', 'Crossvalidation'], [0.3, 0.8, 0.4, 0.5], ['fitted["A"]', 'oof["A"]'], False))
+
+    # ---- the decile lift table and the cumulative gains ---------------------------------------------------------
+    y10 = (rng.uniform(0, 1, 200) < 0.3)
+    s10 = rng.uniform(0, 1, 200) + 0.4 * y10
+    tab = pv.lift_table(s10, y10)
+    o = np.argsort(-s10, kind='mergesort')
+    base = y10.mean()
+    want = [(k + 1, 20.0, float(y10[o][20 * k:20 * (k + 1)].sum())) for k in range(10)]
+    check('decile table, 200 rows: ten parts of 20 rows, highest probability first, and the level\'s count in each', [(r['bin'], r['n'], r['hits']) for r in tab], want)
+    check('... each part\'s lift and the cumulative lift and gains, by hand', all(abs(r['lift'] - (r['hits'] / 20) / base) < 1e-12 and abs(r['cum_lift'] - (y10[o][:20 * r['bin']].mean() / base)) < 1e-12 and abs(r['gains'] - y10[o][:20 * r['bin']].sum() / y10.sum()) < 1e-12 for r in tab), True)
+    fr = rng.integers(1, 5, 60).astype(float)
+    y6, s6 = rng.uniform(0, 1, 60) < 0.4, np.round(rng.uniform(0, 1, 60), 1)
+    rep_rows = np.repeat(np.arange(60), fr.astype(int))
+    tw, tr_ = pv.lift_table(s6, y6, fr), pv.lift_table(s6[rep_rows], y6[rep_rows])
+    check('decile table with Freq: as the rows repeated Freq times would give, where no row is cut in two', abs(sum(r['n'] for r in tw) - fr.sum()) < 1e-9 and abs(tw[-1]['gains'] - 1) < 1e-12 and abs(sum(r['hits'] for r in tw) - sum(r['hits'] for r in tr_)) < 1e-9, True)
+    Lb = pv.lift(Pb, pb)
+    for li in Lb:
+        mm = Pb.mask(pv.SETS.index(li['set']))
+        j = Pb.labels.index(li['level'])
+        oo = np.argsort(-pb[mm][:, j], kind='mergesort')
+        hits = np.cumsum(np.where(Pb.target[mm][oo] == j, Pb.counts(mm)[oo], 0.0))
+        g_ = hits / hits[-1]
+        check(f'gains {li["set"]} {li["level"]}: the share of the level\'s rows found, ending at 1', (abs(li['gains'][-1] - 1) < 1e-12, subset_in_order(list(zip(li['portion'], li['gains'])), list(zip(np.cumsum(Pb.counts(mm)[oo]) / Pb.counts(mm).sum(), g_)))), (True, True))
+
+    # ---- the more measures of fit, and the Naive Model --------------------------------------------------------
+    for k, name in enumerate(pv.SETS):
+        mm = Pm.mask(k)
+        yy, ff, ww = Pm.target[mm], fit[mm], Pm.w[mm]
+        E = pv.error_measures(yy, ff, ww)
+        check.near(f'{name}: Mean Error, the weighted mean of actual less predicted', E['me'], float(np.average(yy - ff, weights=ww)), 1e-12)
+        check.near(f'{name}: MAPE as sklearn mean_absolute_percentage_error x 100 (no zero actual)', E['mape'], 100 * metrics.mean_absolute_percentage_error(yy, ff, sample_weight=ww), 1e-10)
+        check.near(f'{name}: MPE by its formula', E['mpe'], float(100 * np.average((yy - ff) / yy, weights=ww)), 1e-10)
+        check.near(f'{name}: Median Abs Error (unit weights) as sklearn median_absolute_error', pv.error_measures(yy, ff)['medae'], metrics.median_absolute_error(yy, ff), 1e-12)
+    ii = rng.integers(1, 5, 41)
+    vv = rng.normal(0, 1, 41)
+    check.near('the weighted median with frequencies is the median of the rows repeated', pv.weighted_median(vv, ii.astype(float)), float(np.median(np.repeat(vv, ii))), 1e-12)
+    check.near('... and with an even count it is the mean of the middle two', pv.weighted_median([1.0, 2.0, 3.0, 10.0]), 2.5, 1e-12)
+    check('MAPE and MPE leave out the rows whose actual value is 0', (pv.error_measures([0.0, 2.0], [1.0, 1.0])['mape'], pv.error_measures([0.0, 2.0], [1.0, 1.0])['mpe']), (50.0, 50.0))
+    nm = {r['set']: r for r in pv.report(Pm, fit)['naive']}
+    check('Naive Model (continuous): the training mean, so the training RSquare is 0', (nm['Training']['rsquare'], bool(np.allclose(pv.naive_fitted(Pm), np.average(Pm.target[Pm.train()], weights=Pm.w[Pm.train()])))), (0.0, True))
+    nk = {r['set']: r for r in pv.measures(Pk, pv.naive_fitted(Pk))}
+    tr_k = Pk.train()
+    maj = np.bincount(Pk.target[tr_k], weights=Pk.w[tr_k]).argmax()
+    check('Naive Model (categorical): the training shares, so the training Entropy RSquare is 0 and the most likely level the majority\'s',
+          (nk['Training']['entropy_rsquare'], abs(nk['Validation']['misclassification'] - float(np.average(Pk.target[Pk.mask(1)] != maj, weights=Pk.w[Pk.mask(1)]))) < 1e-12), (0.0, True))
+    check('the optional columns are hidden: Mean Error, MAPE, MPE, Median Abs Error', [(c['key'], c.get('hidden', False)) for c in pv.measure_columns('continuous')][-4:], [('me', True), ('mape', True), ('mpe', True), ('medae', True)])
+
+    # ---- a decided level per row (K Nearest Neighbors' random ties): the misclassification rate and the confusion follow it
+    dec = pb.argmax(1).copy()
+    dec[:7] = 1 - dec[:7]
+    Md = {r['set']: r for r in pv.measures(Pb, pb, dec)}
+    Cd = {c['set']: c for c in pv.confusion(Pb, pb, dec)}
+    m0 = Pb.mask(0)
+    check.near('decided: the misclassification rate of the levels called', Md['Training']['misclassification'], float(np.average(dec[m0] != Pb.target[m0], weights=Pb.w[m0])), 1e-12)
+    check('decided: the confusion matrix of the levels called', Cd['Training']['matrix'], metrics.confusion_matrix(Pb.target[m0], dec[m0], sample_weight=Pb.w[m0], labels=[0, 1]).tolist())
+    check('... the probability measures unchanged', Md['Training']['entropy_rsquare'], {r['set']: r for r in pv.measures(Pb, pb)}['Training']['entropy_rsquare'])
+
+    # ---- Group Metrics, by hand with scikit-learn's metrics within each group ------------------------------------------
+    gtab = {'g': list(g), 'cls': list(cls), 'w': list(w)}
+    Tg = table(gtab, types={'g': 'nominal', 'cls': 'nominal'}, levels={'cls': ['high', 'low'], 'g': ['a', 'b', 'c']})
+    at_ = np.arange(n)
+    yy = (np.asarray(cls) == 'low').astype(int)
+    pp = np.clip(0.3 + 0.4 * yy + 0.25 * rng.normal(size=n), 0.001, 0.999)
+    sets_ = np.where(rng.uniform(size=n) < 0.6, 0, 1)
+    gm = call('predict.groups', table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), prob=pp.tolist(), sets=sets_.tolist(), w=list(w), cut=0.45)
+    check('Group Metrics: the validation rows, every group in the column\'s order, the largest the reference', (gm['set'], [r_['group'] for r_ in gm['rows']], gm['reference']),
+          ('Validation', ['a', 'b', 'c'], max(['a', 'b', 'c'], key=lambda k: float(np.sum(np.asarray(w)[(np.asarray(g) == k) & (sets_ == 1)])))))
+    okg = []
+    for r_ in gm['rows']:
+        mm = (np.asarray(g) == r_['group']) & (sets_ == 1)
+        yt, called, ww_ = yy[mm], (pp[mm] >= 0.45).astype(int), np.asarray(w)[mm]
+        cm = metrics.confusion_matrix(yt, called, sample_weight=ww_, labels=[0, 1])
+        want_ = {'n': ww_.sum(), 'base_rate': np.average(yt, weights=ww_), 'selection_rate': np.average(called, weights=ww_), 'accuracy': metrics.accuracy_score(yt, called, sample_weight=ww_),
+                 'auc': metrics.roc_auc_score(yt, pp[mm], sample_weight=ww_), 'fpr': cm[0, 1] / cm[0].sum(), 'fnr': cm[1, 0] / cm[1].sum(), 'precision': metrics.precision_score(yt, called, sample_weight=ww_),
+                 'tpr': metrics.recall_score(yt, called, sample_weight=ww_)}
+        okg.append(all(abs(r_[k_] - v_) <= 1e-12 for k_, v_ in want_.items()))
+    check('Group Metrics: each group\'s n, base and selection rates, accuracy, AUC, FPR, FNR, precision and TPR are scikit-learn\'s (weighted)', okg, [True] * 3)
+    ref_ = next(r_ for r_ in gm['rows'] if r_['reference'])
+    check('... each difference and ratio to the reference group', all(abs(r_['d_fpr'] - (r_['fpr'] - ref_['fpr'])) < 1e-15 and abs(r_['r_fnr'] - r_['fnr'] / ref_['fnr']) < 1e-12 for r_ in gm['rows']), True)
+    gt = call('predict.groups', table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), prob=pp.tolist(), sets=sets_.tolist(), cut=0.5, equal='typed', cuts={'b': 0.3}, reference='c')
+    check('typed thresholds: b\'s own, the others the common one; the reference asked for', ([r_['cut'] for r_ in gt['rows']], gt['reference']), ([0.5, 0.3, 0.5], 'c'))
+    ge = call('predict.groups', table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), prob=pp.tolist(), sets=sets_.tolist(), cut=0.5, equal='fpr', reference='a')
+    tf = ge['target_fpr']
+    okf = []
+    for r_ in ge['rows']:
+        mm = (np.asarray(g) == r_['group']) & (sets_ == 1)
+        neg = yy[mm] == 0
+        cands = [np.inf] + sorted(set(pp[mm].tolist()), reverse=True)
+        fprs = [float(np.mean(pp[mm][neg] >= c_)) for c_ in cands]
+        best_ = min(range(len(cands)), key=lambda i_: (round(abs(fprs[i_] - tf), 12), -cands[i_]))
+        okf.append(r_['reference'] or (abs(r_['fpr'] - fprs[best_]) < 1e-12 and r_['cut'] == cands[best_]))
+    check('Equal False Positive Rates: each group\'s threshold the one of its probabilities whose FPR is nearest the reference\'s (by brute force)', okf, [True] * 3)
+    head_g = '\n'.join(Pb.code('data', extra_imports=['from sklearn.tree import DecisionTreeClassifier']) + ['model = DecisionTreeClassifier(max_depth=4, random_state=1).fit(X[train], y[train], sample_weight=None if w is None else w[train])'] + pv.fitted_line(Pb))
+    Dg = pv.threshold_of(Pb, pb)
+    gc = call('predict.groups', table=T, group='g', at=Dg['points']['rows'], actual=Dg['points']['actual'], prob=Dg['models'][0]['p'], sets=Dg['points']['set'], w=Dg['points']['w'], cut=0.5, equal='fpr', head=head_g)
+    with tempfile.TemporaryDirectory() as tmp_:
+        export_frame(T).to_csv(os.path.join(tmp_, 'data.csv'), index=False)
+        got_g, err_g = run_names(gc['code'], T, tmp_, ['rows'])
+    check('Group Metrics\' code runs on the CSV and gives the report\'s rows', (err_g, err_g is None and all(all(close(a_[k_], b_[k_]) for k_ in ('n', 'base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'cut')) for a_, b_ in zip(got_g['rows'], gc['rows']))), (None, True))
+
+    # ---- a model kept for Score Rows, and another table scored by it -------------------------------------------------
+    pv.keep('k1', {'P': Pb})
+    check('keep and kept: the model under its key; an unknown key None', (pv.kept('k1')['P'] is Pb, pv.kept('nope')), (True, None))
+    for i_ in range(30):
+        pv.keep(f'x{i_}', i_)
+    check('... the oldest go past 24', (pv.kept('k1'), pv.kept('x29')), (None, 29))
+    Tnew = table({'x1': [10.0, 11.0, None], 'x2': [0.5, 0.2, 0.9], 'g': ['a', 'c', 'b'], 'other': [1.0, 2.0, 3.0]}, types={'g': 'nominal'})
+    Xn_, rn_ = pv.score_frame(Pb, Tnew)
+    check('score_frame: another table\'s rows, encoded as the model\'s by the columns\' names (a missing value as Informative Missing takes it: the training mean)', (rn_.tolist(), bool(np.allclose(Xn_[:, 2:5], [[1, 0, 0], [0, 0, 1], [0, 1, 0]])), float(Xn_[2, 0]) == Pb.enc[0]['fill']), ([0, 1, 2], True, True))
+    try:
+        pv.score_frame(Pb, table({'x1': [1.0]}))
+        check('score_frame: a table without a factor is refused', 'no error', 'error')
+    except ValueError as e:
+        check('score_frame: a table without a factor is refused, naming it', 'x2' in str(e), True)
 
     # ---- contributions, saved predictions, the cache ------------------------------------------------
     con = pv.contributions(Pi, np.arange(7, dtype=float) + 1)
@@ -429,7 +684,9 @@ def main():
         mdl = (DecisionTreeClassifier if cat else DecisionTreeRegressor)(max_depth=4, random_state=1).fit(Q.X[Q.train()], Q.target[Q.train()], sample_weight=None if Q.w is None else Q.w[Q.train()])
         rep = pv.report(Q, Q.proba(mdl, Q.X) if cat else mdl.predict(Q.X), head=head)
         check(f'graphs: {label}: the code of every set\'s graphs', sorted((k, sorted(v)) if isinstance(v, dict) else (k, None) for k, v in rep['plots'].items()),
-              sorted([('head_code', None)] + ([('roc', sorted(rep['sets'])), ('lift', sorted(rep['sets']))] if cat else [('abp', sorted(rep['sets']))])))
+              sorted([('head_code', None)] + ([('roc', sorted(rep['sets'])), ('lift', sorted(rep['sets'])), ('gains', sorted(rep['sets'])), ('deciles', None)] if cat else [('abp', sorted(rep['sets']))])))
+        if cat:
+            runs += check_gains_native(check, f'graphs: {label}', rep, T, tmp)
         if rows is not None:
             drop = sorted(set(range(n)) - set(rows))
             check(f'graphs: {label}: the head leaves out the rows the report leaves out', f'df = df.drop(index={drop})   # the rows the report leaves out' in head, True)
@@ -463,7 +720,7 @@ def main():
                                                                            'contrib = {c: float(model.feature_importances_[j].sum()) for c, j in groups.items()}'])
     headc = '\n'.join(Qc.code('data', extra_imports=[pv.PLT, 'from sklearn.tree import DecisionTreeRegressor']) + ['model = DecisionTreeRegressor(max_depth=3, random_state=0).fit(X, y)'])
     runs += check_contrib_native(check, 'graphs: a tree\'s importances', con, headc, T, tmp)
-    check('graphs: every graph\'s code ran and drew the report\'s graph', runs, 24)
+    check('graphs: every graph\'s code ran and drew the report\'s graph', runs, 32)
 
     return check.done()
 

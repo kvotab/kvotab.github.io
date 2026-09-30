@@ -11,11 +11,16 @@ by its level as the table holds it). expose() registers '<area>.profile',
 which gives the traces the page's SM.profiler draws: for each factor, every
 response as that factor runs over its range and the others stay at their
 current values; with the responses' desirability specs (des), also the
-Desirability row. It registers '<area>.maximize' (Maximize Desirability)
-and '<area>.importance' (Assess Variable Importance) too. Their own
-arguments are named des, max_seed, imp_method, imp_n and imp_seed, so they
+Desirability row. It registers '<area>.maximize' (Maximize Desirability),
+'<area>.importance' (Assess Variable Importance), '<area>.marginal'
+(Marginal Model Plots: partial dependence, with ICE lines) and
+'<area>.shapley' (Save Shapley Values: permutation SHAP over the prediction)
+too. Their own arguments are named des, max_seed, imp_method, imp_n,
+imp_seed, mm_n, mm_ice, mm_seed, sh_rows, sh_n, sh_perm and sh_seed, so they
 never meet a platform's (a model's seed, say).
 """
+import math
+
 import numpy as np
 
 from .registry import api
@@ -51,7 +56,17 @@ def expose(area, build, packages=(), alpha=False):
     def _importance(table, rows=None, alpha=0.05, table_name=None, current=None, des=None, imp_method='uniform', imp_n=1024, imp_seed=0, **spec):
         pr = build(table, rows=rows, **({'alpha': alpha} if pass_alpha else {}), **spec)
         return importance(pr, imp_method, imp_n, imp_seed, pr.data)
-    for fn, name in ((_profile, 'profile'), (_maximize, 'maximize'), (_importance, 'importance')):
+
+    @api(f'{area}.marginal', packages=packages)
+    def _marginal(table, rows=None, alpha=0.05, table_name=None, current=None, des=None, grid=41, mm_n=200, mm_ice=0, mm_seed=0, **spec):
+        pr = build(table, rows=rows, **({'alpha': alpha} if pass_alpha else {}), **spec)
+        return marginal(pr, background(pr, table, rows), grid, mm_n, mm_ice, mm_seed)
+
+    @api(f'{area}.shapley', packages=packages)
+    def _shapley(table, rows=None, alpha=0.05, table_name=None, current=None, des=None, sh_rows=None, sh_n=50, sh_perm=10, sh_seed=0, **spec):
+        pr = build(table, rows=rows, **({'alpha': alpha} if pass_alpha else {}), **spec)
+        return shapley(pr, explained(pr, table, sh_rows), background(pr, table, rows), sh_n, sh_perm, sh_seed)
+    for fn, name in ((_profile, 'profile'), (_maximize, 'maximize'), (_importance, 'importance'), (_marginal, 'marginal'), (_shapley, 'shapley')):
         fn.__name__ = f'{area}_{name}'
     return _profile
 
@@ -353,3 +368,131 @@ class _Empirical:
         u = np.asarray(u, dtype=float)
         i = np.clip(np.floor(u * len(self.v)).astype(int), 0, len(self.v) - 1)
         return self.v[i]
+
+
+# ---------------------------------------------------------------------------
+# Marginal Model Plots and Shapley values (JMP Pro's, from the prediction alone)
+# ---------------------------------------------------------------------------
+
+def _clean(v):
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return None
+    return v.item() if hasattr(v, 'item') else v
+
+
+def background(pr, table=None, rows=None):
+    """The background rows, as settings: the rows the model learned from (pr.data, which the predictive platforms
+    give), else the report's rows of the table's columns named as the factors."""
+    names = [f['name'] for f in pr.factors]
+    if pr.data and all(n in pr.data for n in names):
+        m = min(len(pr.data[n]) for n in names)
+        return [{n: _clean(pr.data[n][i]) for n in names} for i in range(m)]
+    return explained(pr, table, rows)
+
+
+def explained(pr, table, rows):
+    """Rows of the table as settings of the factors (a factor is a column by its name); rows None: every row."""
+    from . import data
+    names = [f['name'] for f in pr.factors]
+    have = set(data.TABLES[table]['meta']) if table in data.TABLES else set()
+    lack = [n for n in names if n not in have]
+    if lack:
+        raise ValueError(f'the factors {", ".join(lack)} are not columns of the table: their rows cannot be read')
+    frame = data.frame(table, names, rows, dropna=False)
+    out = [{n: _clean(v) for n, v in zip(names, row)} for row in frame.astype(object).itertuples(index=False, name=None)]
+    for s, r in zip(out, frame.index):
+        s['__row'] = int(r)
+    return out
+
+
+def _sample(items, n, seed):
+    n = int(n)
+    if n <= 0 or n >= len(items):
+        return list(items)
+    idx = np.sort(np.random.default_rng(int(seed)).choice(len(items), n, replace=False))
+    return [items[i] for i in idx]
+
+
+def marginal(pr, back, grid=41, n=200, ice=0, seed=0):
+    """Marginal Model Plots (partial dependence, Friedman's): for each factor, the mean prediction of each response
+    over up to n background rows (drawn from the seed) with the factor set to each value of its grid (its range,
+    or its levels), the other factors at the rows' own values; ice: that many of those rows' own curves too
+    (individual conditional expectation), the first of them."""
+    facs = [dict(f) for f in pr.factors]
+    B = _sample(back, n, seed)
+    if not B:
+        raise ValueError('no rows to average over')
+    out = {'factors': facs, 'n': len(B), 'responses': [], 'ice': min(int(ice or 0), len(B))}
+    by_resp = {}
+    for f in facs:
+        g = _grid(f, int(grid))
+        settings = []
+        for v in g:
+            for b in B:
+                s = {k: val for k, val in b.items() if k != '__row'}
+                s[f['name']] = v
+                settings.append(s)
+        preds = pr.predict(settings)
+        for p in preds:
+            v = np.asarray(p['pred'], dtype=float).reshape(len(g), len(B))
+            r = by_resp.setdefault(p['name'], {'name': p['name'], 'bounded': bool(p.get('bounded')), 'traces': []})
+            r['traces'].append({'factor': f['name'], 'x': f['labels'] if f['type'] == 'categorical' else g, 'pd': v.mean(axis=1),
+                                'ice': v[:, :out['ice']].T if out['ice'] else []})
+    out['responses'] = list(by_resp.values())
+    return out
+
+
+def shapley(pr, rows, back, n=50, perms=10, seed=0):
+    """Shapley values of each explained row (Permutation SHAP, as JMP Pro computes them): the contribution of each
+    factor to the row's prediction against the mean prediction of the background rows (up to n of them, drawn from
+    the seed). Along each of perms random orders of the factors (each order and its reverse, antithetically), the
+    factors are set to the row's values one at a time, the others at the background rows' own values, and each
+    factor gets the change of the mean prediction when it is set; with as many orders as there are orderings, every
+    ordering once, which gives the exact values. The values of a row add up to its prediction less the background's
+    mean prediction."""
+    import itertools
+    facs = pr.factors
+    names = [f['name'] for f in facs]
+    p = len(names)
+    B = _sample(back, n, seed)
+    if not B or not rows:
+        raise ValueError('no rows to explain, or no background rows')
+    rng = np.random.default_rng([int(seed), 1])
+    total = math.factorial(p)
+    if int(perms) >= total:
+        orders = [list(o) for o in itertools.permutations(range(p))]
+        how = f'every ordering of the {p} factors (exact)'
+    else:
+        half = max(1, int(perms) // 2)
+        orders = []
+        for _ in range(half):
+            o = list(rng.permutation(p))
+            orders += [o, o[::-1]]
+        how = f'{len(orders)} random orderings of the factors (each with its reverse)'
+    base_settings = [{k: v for k, v in b.items() if k != '__row'} for b in B]
+    base = pr.predict(base_settings)
+    resp = [q['name'] for q in base]
+    mean0 = {q['name']: float(np.mean(np.asarray(q['pred'], dtype=float))) for q in base}
+    phi = {r: np.zeros((len(rows), p)) for r in resp}
+    pred = {r: np.zeros(len(rows)) for r in resp}
+    for i, x in enumerate(rows):
+        settings = []
+        for o in orders:
+            for step in range(p + 1):
+                on = set(o[:step])
+                for b in base_settings:
+                    settings.append({nm: (x.get(nm) if j in on else b[nm]) for j, nm in enumerate(names)})
+        preds = pr.predict(settings)
+        for q in preds:
+            v = np.asarray(q['pred'], dtype=float).reshape(len(orders), p + 1, len(B)).mean(axis=2)   # the mean over the background at each step
+            for oi, o in enumerate(orders):
+                phi[q['name']][i, o] += np.diff(v[oi])
+            pred[q['name']][i] = v[0, -1]
+        if len(rows) > 20 and (i + 1) % max(1, len(rows) // 20) == 0:
+            print(f'smui:progress shapley {i + 1} {len(rows)}', flush=True)
+    out = {'factors': names, 'rows': [x.get('__row') for x in rows], 'how': how, 'n': len(B), 'orders': len(orders), 'responses': []}
+    for r in resp:
+        ph = phi[r] / len(orders)
+        out['responses'].append({'name': r, 'values': ph.T, 'base': mean0[r], 'pred': pred[r],
+                                 'mean_abs': np.mean(np.abs(ph), axis=0), 'gap': float(np.max(np.abs(ph.sum(axis=1) - (pred[r] - mean0[r])))) if len(ph) else 0.0})
+    return out

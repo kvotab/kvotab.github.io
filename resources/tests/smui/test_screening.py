@@ -56,6 +56,7 @@ try:
     from sklearn.neural_network import MLPClassifier, MLPRegressor
     from sklearn.svm import SVC, SVR
     from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+    from sklearn import metrics
     import statsmodels.api as sm
     from statsmodels.miscmodels.ordinal_model import OrderedModel
 except ImportError as e:
@@ -518,21 +519,111 @@ check('progress lines count the fits up to the total', (prog[-1][2] == prog[-1][
 check('actual by predicted: every method\'s predictions of every row', (len(r['residuals']['rows']), sorted(r['residuals']['predicted'])), (len(Pr_.index), sorted(m['key'] for m in r['methods'])))
 
 r, _ = fit(y='nom3', x=['x1', 'x2', 'g'], portion=0.25, seed=SEED, methods=ALL)
-check('nominal Y: all twelve methods, the linear one Nominal Logistic', ([m['key'] for m in r['methods']], r['methods'][8]['label']), (ALL, 'Nominal Logistic'))
+check('nominal Y: every method, the linear one Nominal Logistic', ([m['key'] for m in r['methods']], r['methods'][ALL.index('linear')]['label']), (ALL, 'Nominal Logistic'))
 check('a holdback of 25%', (r['sets'], r['n']['Validation']), (['Training', 'Validation'], int(round(0.25 * n))))
 Pq = pv.prepare(T, 'nom3', ['x1', 'x2', 'g'], portion=0.25, seed=SEED)
 f_ = S.FITTERS['boosted'](Pq.X, Pq.target, None, Pq.train(), Pq.mask(1), 3, S.factors_of(Pq), SEED)[0](Pq.X)
 check('ROC and lift curves: predictive.roc and lift of each method', (r['roc']['boosted'] == json.loads(json.dumps(pv.roc(Pq, f_, most=160))), len(r['lift']['boosted'])), (True, 6))
 check.near('... their AUC is the method\'s', next(c_['auc'] for c_ in r['roc']['boosted'] if c_['set'] == 'Validation' and c_['level'] == 'red'), pv.roc(Pq, f_)[3]['auc'], rel=1e-12)
-keys3 = ['entropy_rsquare', 'misclassification']
+keys3 = ['generalized_rsquare', 'entropy_rsquare', 'misclassification']
+up = {'generalized_rsquare', 'entropy_rsquare'}
 good = [(m['key'], m['measures']['Validation']) for m in r['methods']]
-brute = [k for k, v in good if not any(all(u[q] >= v[q] if q == 'entropy_rsquare' else u[q] <= v[q] for q in keys3) and any(u[q] > v[q] if q == 'entropy_rsquare' else u[q] < v[q] for q in keys3) for k2, u in good if k2 != k)]
-check('dominant: no other method as good on Entropy RSquare and misclassification and better on one (by brute force)', r['dominant'], brute)
-check('three levels: no AUC in the summary', r['summary'], keys3)
+brute = [k for k, v in good if not any(all(u[q] >= v[q] if q in up else u[q] <= v[q] for q in keys3) and any(u[q] > v[q] if q in up else u[q] < v[q] for q in keys3) for k2, u in good if k2 != k)]
+check('dominant: no other method as good on Generalized and Entropy RSquare and misclassification and better on one (by brute force)', r['dominant'], brute)
+check('three levels: no AUC in the summary, Generalized RSquare first (JMP ranks by it)', r['summary'], keys3)
+vg = {m['key']: m['measures']['Validation']['generalized_rsquare'] for m in r['methods']}
+check('... the methods ranked by the validation Generalized RSquare', r['order'], sorted(vg, key=lambda k: -vg[k]))
 
 r, _ = fit(y='cls', x=X4, validation='v', freq='f', seed=SEED, methods=['tree', 'forest', 'knn', 'linear'])
-check('two levels: AUC in the summary', r['summary'], ['entropy_rsquare', 'misclassification', 'auc'])
+check('two levels: AUC in the summary', r['summary'], ['generalized_rsquare', 'entropy_rsquare', 'misclassification', 'auc'])
 check('the curves are there for every set', sorted({c_['set'] for c_ in r['roc']['tree']}), ['Test', 'Training', 'Validation'])
+
+# ---- XGBoost, LightGBM and Ridge against the packages called directly ------------------------------------------------
+import xgboost as xgb  # noqa: E402
+import lightgbm as lgbm  # noqa: E402
+import warnings as _w  # noqa: E402
+_w.filterwarnings('ignore', message='X does not have valid feature names')   # lightgbm's own column names, called here directly
+from sklearn.linear_model import LinearRegression, Ridge  # noqa: E402
+Pv = pv.prepare(T, 'cls', X4, validation='v', freq='f')
+tr_, va_ = Pv.train(), Pv.mask(1)
+fx, ix = S.fit_xgboost(Pv.X, Pv.target, Pv.w, tr_, va_, 2, S.factors_of(Pv), SEED)
+bx = xgb.XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.3, n_jobs=1, random_state=SEED).fit(Pv.X[tr_], Pv.target[tr_], sample_weight=Pv.w[tr_])
+lx = [float(-np.sum(Pv.w[va_] * np.log(np.clip(bx.predict_proba(Pv.X[va_], iteration_range=(0, k))[np.arange(va_.sum()), Pv.target[va_]], 1e-15, 1)))) for k in range(1, 101)]
+ux = int(np.argmin(lx)) + 1
+check('XGBoost: the rounds with the smallest validation -log-likelihood, by hand', ix['rounds'], ux)
+check.near('... its probabilities are xgboost\'s XGBClassifier at that many rounds (defaults: depth 6, learning rate 0.3)', mx(fx(Pv.X), bx.predict_proba(Pv.X, iteration_range=(0, ux))), 0.0, abs_=1e-7)
+Pc_ = pv.prepare(T, 'y', X4, validation='v', weight='w')
+trc, vac = Pc_.train(), Pc_.mask(1)
+fl, il = S.fit_lightgbm(Pc_.X, Pc_.target, Pc_.w, trc, vac, 0, S.factors_of(Pc_), SEED)
+bl = lgbm.LGBMRegressor(n_estimators=100, num_leaves=31, learning_rate=0.1, min_child_samples=20, n_jobs=1, random_state=SEED, verbose=-1, deterministic=True, force_row_wise=True).fit(Pc_.X[trc], Pc_.target[trc], sample_weight=Pc_.w[trc])
+ll_ = [float(np.sum(Pc_.w[vac] * (Pc_.target[vac] - bl.predict(Pc_.X[vac], num_iteration=k)) ** 2)) for k in range(1, bl.booster_.current_iteration() + 1)]
+ul = int(np.argmin(ll_)) + 1
+check('LightGBM: the rounds with the smallest validation squared error, by hand', il['rounds'], ul)
+check.near('... its predictions are lightgbm\'s LGBMRegressor at that many rounds (its defaults)', mx(fl(Pc_.X), bl.predict(Pc_.X, num_iteration=ul)), 0.0, abs_=1e-9)
+fr_, ir_ = S.fit_ridge(Pc_.X, Pc_.target, Pc_.w, trc, None, 0, S.factors_of(Pc_), SEED)
+cols_r = S.linear_columns(S.factors_of(Pc_))
+A_ = Pc_.X[:, cols_r]
+cen, sc_ = S.weighted_scaler(A_[trc], Pc_.w[trc])
+Z_ = (A_ - cen) / sc_
+sw_ = Pc_.w[trc] / Pc_.w[trc].mean()
+lam_ = float(ir_['text'].split('penalty ')[1].split(' ')[0])
+U_, sv_, Vt_ = np.linalg.svd(Z_[trc] * np.sqrt(sw_)[:, None], full_matrices=False)
+grid_ = float(sv_[0] ** 2) * np.logspace(-6, 2, 60)[::-1]
+ym_ = np.average(Pc_.target[trc], weights=sw_)
+aicc_ = []
+for lam in grid_:
+    b_ = Ridge(alpha=lam, fit_intercept=False).fit(Z_[trc] * np.sqrt(sw_)[:, None], (Pc_.target[trc] - ym_) * np.sqrt(sw_)).coef_
+    e_ = float(Pc_.w[trc] @ (Pc_.target[trc] - ym_ - Z_[trc] @ b_) ** 2)
+    k_ = float(np.sum(sv_ ** 2 / (sv_ ** 2 + lam))) + 2
+    N_ = Pc_.w[trc].sum()
+    aicc_.append(N_ * (math.log(2 * math.pi * e_ / N_) + 1) + 2 * k_ + 2 * k_ * (k_ + 1) / (N_ - k_ - 1))
+jb = int(np.argmin(aicc_))
+rb_ = Ridge(alpha=grid_[jb], fit_intercept=True).fit(Z_[trc], Pc_.target[trc], sample_weight=sw_)
+check.near('Ridge: the penalty of the smallest AICc (the degrees of freedom the hat matrix\'s trace), by sklearn\'s Ridge along the same path', lam_, float(grid_[jb]), rel=5e-4)
+check.near('... its predictions are sklearn Ridge\'s at that penalty (weighted, on the centred and scaled columns)', mx(fr_(Pc_.X), rb_.predict(Z_)), 0.0, abs_=1e-8)
+frc, irc = S.fit_ridge(Pv.X, Pv.target, Pv.w, tr_, va_, 2, S.factors_of(Pv), SEED)
+Av = Pv.X[:, S.linear_columns(S.factors_of(Pv))]
+cv_, scv = S.weighted_scaler(Av[tr_], Pv.w[tr_])
+Zv = (Av - cv_) / scv
+best_ = min(np.logspace(-4, 3, 30), key=lambda C: -np.sum(Pv.w[va_] * np.log(np.clip(LogisticRegression(C=C, max_iter=2000, tol=1e-8).fit(Zv[tr_], Pv.target[tr_], sample_weight=Pv.w[tr_]).predict_proba(Zv[va_])[np.arange(va_.sum()), Pv.target[va_]], 1e-15, 1))))
+check.near('Ridge, two levels: the probabilities of sklearn\'s LogisticRegression at the C of the best validation log-likelihood', mx(frc(Pv.X), LogisticRegression(C=best_, max_iter=2000, tol=1e-8).fit(Zv[tr_], Pv.target[tr_], sample_weight=Pv.w[tr_]).predict_proba(Zv)), 0.0, abs_=1e-6)
+# the Two Way Interactions and Quadratic options: least squares on the design written out by hand
+f2, i2 = S.fit_linear(Pc_.X, Pc_.target, Pc_.w, trc, vac, 0, S.factors_of(Pc_), SEED, terms={'interactions': True, 'quadratic': True})
+fac = S.factors_of(Pc_)
+parts_ = [(f_['cols'][:-1] if f_['kind'] == 'categorical' else f_['cols'], f_['kind']) for f_ in fac]
+ctr = {c: Pc_.X[trc, c].mean() for f_ in fac if f_['kind'] == 'continuous' for c in f_['cols']}
+cols2 = [Pc_.X[:, S.linear_columns(fac)]]
+for a_ in range(len(parts_)):
+    for b2 in range(a_ + 1, len(parts_)):
+        for i_ in parts_[a_][0]:
+            for j_ in parts_[b2][0]:
+                cols2.append(((Pc_.X[:, i_] - ctr.get(i_, 0)) * (Pc_.X[:, j_] - ctr.get(j_, 0)))[:, None])
+cols2 += [((Pc_.X[:, c] - ctr[c]) ** 2)[:, None] for c in ctr]
+D2 = np.hstack(cols2)
+check('Two Way Interactions and Quadratics: every pair of factors\' columns and every continuous square (x1, x2, x3 and g: 3 + 2 main-effect columns, 3 + 6 products, 3 squares)', D2.shape[1], 17)
+check.near('... Fit Least Squares on that design is sklearn\'s LinearRegression (weighted), the continuous columns centred at their training means', mx(f2(Pc_.X), LinearRegression().fit(D2[trc], Pc_.target[trc], sample_weight=Pc_.w[trc]).predict(D2)), 0.0, abs_=1e-9)
+rt_, _ = fit(y='y', x=X4, validation='v', weight='w', seed=SEED, methods=['linear', 'lasso', 'tree'], interactions=True, quadratic=True)
+check('... the report\'s Fit Least Squares is that model, the tree is untouched by the options', (next(m for m in rt_['methods'] if m['key'] == 'linear')['info'], abs(next(m for m in rt_['methods'] if m['key'] == 'tree')['measures']['Validation']['rsquare'] - next(m for m in fit(y='y', x=X4, validation='v', weight='w', seed=SEED, methods=['tree'])[0]['methods'])['measures']['Validation']['rsquare']) < 1e-12),
+      ('the main effects and two-way interactions and squares, 17 terms and an intercept', True))
+
+# ---- Ensemble of Selected: the average and the stacking weights ---------------------------------------------------------
+en, _ = quiet(call, 'screening.ensemble', table=T, y='y', x=X4, validation='v', weight='w', seed=SEED, methods=['linear', 'tree', 'knn'])
+ms_ = {k: S._model(T, None, S._spec({'y': 'y', 'x': X4, 'validation': 'v', 'weight': 'w', 'seed': SEED, 'kfold': 0}), k)['predict'](Pc_.X) for k in ['linear', 'tree', 'knn']}
+avg_ = np.mean([ms_[k] for k in ['tree', 'knn', 'linear'] if k in ms_], axis=0)
+check.near('Average of Selected: the measures of the mean of the methods\' predictions', en['rows'][0]['measures']['Validation']['rsquare'], next(q for q in pv.measures(Pc_, avg_) if q['set'] == 'Validation')['rsquare'], rel=1e-12)
+wts_ = [q['weight'] for q in en['weights']]
+check('Stacked: the weights 0 or more, adding to 1', (min(wts_) >= 0, abs(sum(wts_) - 1) < 1e-12), (True, True))
+F2 = np.stack([rng.normal(size=80) + np.linspace(0, 3, 80), np.linspace(0, 3, 80) + 0.3 * rng.normal(size=80)])
+t2 = np.linspace(0, 3, 80) + 0.2 * rng.normal(size=80)
+sw2 = S.stack_weights(F2, t2, None, 0)
+grid2 = np.linspace(0, 1, 20001)
+obj = [np.mean((t2 - (a * F2[0] + (1 - a) * F2[1])) ** 2) for a in grid2]
+check('stack_weights, two methods: the convex combination of the smallest squared error (a grid of 20001 weights)', abs(float(sw2[0]) - float(grid2[int(np.argmin(obj))])) <= 1e-4, True)
+P3_ = np.stack([np.column_stack([1 - q, q]) for q in (np.clip(0.5 + 0.3 * rng.normal(size=60), 0.01, 0.99), np.clip(0.5 + 0.1 * rng.normal(size=60), 0.01, 0.99))])
+y3_ = (rng.uniform(size=60) < 0.5).astype(int)
+sw3 = S.stack_weights(P3_, y3_, None, 2)
+obj3 = [-np.mean(np.log((a * P3_[0] + (1 - a) * P3_[1])[np.arange(60), y3_])) for a in grid2]
+check('stack_weights, probabilities: the convex combination of the largest log-likelihood (the grid)', abs(float(sw3[0]) - float(grid2[int(np.argmin(obj3))])) <= 1e-4, True)
 
 # a method that cannot fit these rows says so; the others still fit
 bad = {'y2': ['no'] * 30 + ['yes'] * 10 + ['no'] * 10, 'x': list(rng.normal(size=50)), 'v': ['Training'] * 30 + ['Validation'] * 20}
@@ -591,20 +682,26 @@ check('Save Columns: every row of the table, with the method in the names', (len
 check.near('... the probabilities are the method\'s for every row', mx(sv['prob'], Mk['predict'](Xall)), 0.0, abs_=1e-12)
 svc_, _ = quiet(call, 'screening.save', table=T, method='linear', y='y', x=X4, validation='v', seed=SEED)
 check('... continuous: the prediction and its name', svc_['name'], 'Predicted y Fit Least Squares')
-th, _ = quiet(call, 'screening.threshold', table=T, y='cls', x=X4, validation='v', seed=SEED, methods=['tree', 'linear'], cut=0.4, level=1)
+th, _ = quiet(call, 'screening.threshold', table=T, y='cls', x=X4, validation='v', seed=SEED, methods=['tree', 'linear'], plot={'order': ['linear', 'tree']})
 Pc2 = pv.prepare(T, 'cls', X4, validation='v')
 Ml, _ = quiet(S._model, T, None, S._spec({'y': 'cls', 'x': X4, 'validation': 'v', 'seed': SEED, 'kfold': 0}), 'linear')
 pl = Ml['predict'](Pc2.X)[:, 1]
+check('Decision Threshold: the methods in the order asked for, each row\'s probability of the second level the method\'s', ([m['label'] for m in th['models']], mx(th['models'][0]['p'], pl) <= 1e-12),
+      (['Nominal Logistic', 'Decision Tree'], True))
+check('... the levels, the sets, each row\'s number, set and level', (th['levels'], th['sets'], th['points']['rows'] == Pc2.index.tolist(), th['points']['set'] == Pc2.sets.tolist(), th['points']['actual'] == Pc2.target.tolist()),
+      (Pc2.labels, ['Training', 'Validation', 'Test'], True, True, True))
 vm = Pc2.mask(1)
 tp = int(np.sum((pl >= 0.4) & (Pc2.target == 1) & vm))
 fp = int(np.sum((pl >= 0.4) & (Pc2.target == 0) & vm))
 fn_ = int(np.sum((pl < 0.4) & (Pc2.target == 1) & vm))
 tn = int(np.sum((pl < 0.4) & (Pc2.target == 0) & vm))
-lv = next(m for m in th['methods'] if m['key'] == 'linear')['sets']['Validation']
-check('Decision Threshold: the counts at the cut, by hand', (lv['tp'], lv['fp'], lv['fn'], lv['tn']), (tp, fp, fn_, tn))
+cvl = pv.cut_table(np.asarray(th['models'][0]['p'])[vm], Pc2.target[vm] == 1)
+lv = pv.rates_at(*pv.counts_at(cvl, 0.4))
+check('Decision Threshold: the counts at 0.4 from the rows\' probabilities (as the page computes them), by hand', (lv['tp'], lv['fp'], lv['fn'], lv['tn']), (tp, fp, fn_, tn))
 check.near('... sensitivity, specificity, precision and F1', mx([lv['sensitivity'], lv['specificity'], lv['precision'], lv['f1']], [tp / (tp + fn_), tn / (tn + fp), tp / (tp + fp), 2 * tp / (2 * tp + fp + fn_)]), 0.0, abs_=1e-12)
-cv_ = next(m for m in th['methods'] if m['key'] == 'linear')['curves']['Validation']
-check.near('... the misclassification rate of every cut', cv_[70], (np.sum((pl >= 0.7) & (Pc2.target == 0) & vm) + np.sum((pl < 0.7) & (Pc2.target == 1) & vm)) / vm.sum(), rel=1e-12)
+th3, _ = quiet(call, 'screening.threshold', table=Ts, y='cls', x=X4, kfold=3, repeats=2, seed=SEED, methods=['knn', 'linear'])
+cvk, _ = quiet(S._crossvalidated, Ts, None, S._spec({'y': 'cls', 'x': X4, 'seed': SEED, 'kfold': 3}), 'knn', 2)
+check('Decision Threshold with K Fold: a Crossvalidation set of every row, each predicted by the model fitted without its fold (the first repeat)', (th3['sets'], mx(th3['models'][0]['p_cv'], cvk['oof'][:, 1]) <= 1e-12), (['Training', 'Crossvalidation'], True))
 try:
     call('screening.threshold', table=T, y='three', x=X4, seed=SEED)
     check('Decision Threshold is for two levels', 'no error', 'error')
@@ -675,7 +772,9 @@ Tv = table({**cols, 'Validation': vc['values'], 'Vnum': [float(v) for v in vn['v
 Pa = pv.prepare(Tv, 'y', ['x1'], validation='Validation')
 Pb2 = pv.prepare(Tv, 'y', ['x1'], validation='Vnum')
 check('predictive.prepare takes the made column, text or numeric: its sets are the column\'s', (Pa.sets.tolist() == [['Training', 'Validation', 'Test'].index(v) for v in vc['values']], Pb2.sets.tolist() == vn['values']), (True, True))
-for kw, label in (({'strata': ['g', 'cls']}, 'stratified by two columns'), ({'groups': ['nom3']}, 'grouped'), ({'time': 'x1'}, 'cutpoint'), ({}, 'random')):
+for kw, label in (({'strata': ['g', 'cls']}, 'stratified by two columns'), ({'groups': ['nom3']}, 'grouped'), ({'time': 'x1'}, 'cutpoint'), ({}, 'random'),
+                  ({'kfold': 6, 'strata': ['cls']}, 'K Fold, stratified'), ({'strata': ['cls'], 'groups': ['nom3']}, 'Stratify by Group'), ({'strata': ['cls'], 'balance': True}, 'the training set balanced'),
+                  ({'kfold': 4, 'strata': ['g'], 'groups': ['nom3']}, 'K Fold, stratified by group')):
     vv = call('screening.validation_column', table=T, training=0.6, validation=0.2, test=0.2, seed=7, **kw)
     with tempfile.TemporaryDirectory() as tmp:
         pd.DataFrame(cols).to_csv(os.path.join(tmp, 'data.csv'), index=False)
@@ -683,7 +782,58 @@ for kw, label in (({'strata': ['g', 'cls']}, 'stratified by two columns'), ({'gr
         o_ = subprocess.run([sys.executable, '-c', 'import json\n' + code], cwd=tmp, capture_output=True, text=True, timeout=300)
     got = json.loads(o_.stdout.strip().splitlines()[-1]) if o_.returncode == 0 else o_.stderr[-800:]
     check(f'the code of the column\'s notes makes the same column from a CSV export: {label}', got == vv['values'], True)
-for kw, what in (({'strata': ['g'], 'groups': ['nom3']}, 'two kinds of column'), ({'training': 0}, 'no training share'), ({'time': 'g'}, 'a character cutpoint column')):
+# ---- K Fold, Stratify by Group, Balance the Training Set ----------------------------------------------------------------
+kf = S.make_sets(1003, [1.0] * 5, 11)
+check('make_sets, K Fold: five folds, 0 to 4, of equal size (the rows left over one each to the first folds)', np.bincount(kf).tolist(), [201, 201, 201, 200, 200])
+kfs = S.make_sets(500, [1.0] * 6, 3, strata=strata)
+per = np.array([[np.sum((strata == j) & (kfs == k)) for k in range(6)] for j in range(7)])
+E6 = np.bincount(strata)[:, None] / 6.0
+check('... stratified K Fold: every stratum\'s count in each fold its share rounded down or up, the fold totals the random split\'s', (bool(np.all((per >= np.floor(E6 - 1e-9)) & (per <= np.ceil(E6 + 1e-9)))), np.bincount(kfs).tolist()),
+      (True, S.split_counts(500, [1.0] * 6).tolist()))
+kfg = S.make_sets(500, [1.0] * 5, 3, groups=grp)
+check('... grouped K Fold: every group in one fold', all(len(set(kfg[grp == q].tolist())) == 1 for q in np.unique(grp)), True)
+lab2 = rs.choice(3, 500, p=[0.6, 0.3, 0.1])
+grp2 = rs.integers(0, 80, 500)
+sg = S.make_sets(500, [0.6, 0.2, 0.2], 9, strata=lab2, groups=grp2)
+check('Stratify by Group: every group in one set', all(len(set(sg[grp2 == q].tolist())) == 1 for q in np.unique(grp2)), True)
+dev = lambda z: float(np.abs(np.array([[np.sum((lab2 == j) & (z == k)) for k in range(3)] for j in range(3)]) - np.bincount(lab2)[:, None] * np.array([0.6, 0.2, 0.2])).sum())
+gr_only = S.make_sets(500, [0.6, 0.2, 0.2], 9, groups=grp2)
+check('... each stratum\'s count in each set nearer its share than a grouped split\'s, and within the largest group of it', (dev(sg) < dev(gr_only), bool(np.all(np.abs(np.array([[np.sum((lab2 == j) & (sg == k)) for k in range(3)] for j in range(3)]) - np.bincount(lab2)[:, None] * np.array([0.6, 0.2, 0.2])) <= np.bincount(grp2).max()))), (True, True))
+sgk = S.make_sets(500, [1.0] * 4, 2, strata=lab2, groups=grp2)
+check('... and as K folds: groups whole, four folds, each near a quarter of every stratum', (all(len(set(sgk[grp2 == q].tolist())) == 1 for q in np.unique(grp2)), sorted(set(sgk.tolist())),
+      bool(np.all(np.abs(np.array([[np.sum((lab2 == j) & (sgk == k)) for k in range(4)] for j in range(3)]) - np.bincount(lab2)[:, None] / 4) <= np.bincount(grp2).max()))), (True, [0, 1, 2, 3], True))
+bal = S.make_sets(500, [0.6, 0.2, 0.2], 4, strata=lab2, balance=True)
+unb = S.make_sets(500, [0.6, 0.2, 0.2], 4, strata=lab2)
+trc = [int(np.sum((lab2 == j) & (bal == 0))) for j in range(3)]
+check('Balance the Training Set: every stratum the same count of training rows, that of the smallest', (len(set(trc)), trc[0]), (1, min(int(np.sum((lab2 == j) & (unb == 0))) for j in range(3))))
+check('... validation and test as the stratified split\'s, the rows cut from training with no set', (bool(np.array_equal(bal[unb != 0], unb[unb != 0])), bool(np.all(bal[(unb == 0) & (bal != 0)] == -1)), int(np.sum(bal == -1))),
+      (True, True, int(np.sum(unb == 0)) - 3 * trc[0]))
+vk = call('screening.validation_column', table=T, kfold=5, strata=['g'], seed=21)
+check('validation_column, K Fold: the folds 1 to 5, stratified, the counts equal', (sorted(set(vk['values'])), vk['counts'], vk['kfold']), ([1, 2, 3, 4, 5], S.split_counts(n, [1.0] * 5).tolist(), 5))
+Tk = table({**cols, 'Fold': [float(v) for v in vk['values']]}, types={**TYPES, 'Fold': 'nominal'}, levels=LEVELS)
+Pk5 = pv.prepare(Tk, 'y', ['x1', 'x2'], validation='Fold')
+check('predictive.prepare reads the K Fold column as folds: every row trains, P.folds the fold of each row', (Pk5.k, Pk5.fold_values, set(Pk5.sets.tolist()), (Pk5.folds + 1).tolist() == [int(v) for v in np.asarray(vk['values'])[Pk5.index]]), (5, [1.0, 2.0, 3.0, 4.0, 5.0], {0}, True))
+fm = pv.fold_masks(Pk5)
+check('... fold_masks: each fold held out once, fitted on the others', (len(fm), all(bool(np.array_equal(f_, ~h_)) for f_, h_ in fm), bool(np.array_equal(np.sum([h_ for _, h_ in fm], axis=0), np.ones(len(Pk5.index))))), (5, True, True))
+from sklearn.linear_model import LinearRegression as _LR  # noqa: E402
+cvr = pv.crossvalidate(Pk5, lambda fit_rows: _LR().fit(Pk5.X[fit_rows], Pk5.target[fit_rows]).predict(Pk5.X))
+oof_ = np.zeros(len(Pk5.index))
+for j in range(5):
+    lr_ = _LR().fit(Pk5.X[Pk5.folds != j], Pk5.target[Pk5.folds != j])
+    oof_[Pk5.folds == j] = lr_.predict(Pk5.X[Pk5.folds == j])
+check.near('... crossvalidate: each row predicted by the least squares fit without its fold', mx(cvr['oof'], oof_), 0.0, abs_=1e-12)
+check.near('... its pooled RSquare is sklearn\'s r2_score of those predictions', cvr['measures']['rsquare'], metrics.r2_score(Pk5.target, oof_), rel=1e-12)
+check.near('... and each fold\'s RASE is the held-out fold\'s', cvr['folds'][2]['rase'], float(np.sqrt(np.mean((Pk5.target[Pk5.folds == 2] - oof_[Pk5.folds == 2]) ** 2))), rel=1e-12)
+Tt = table({**cols, 'FoldT': [f'fold {v}' for v in vk['values']]}, types={**TYPES, 'FoldT': 'nominal'}, levels=LEVELS)
+check('... a character column of more than three values is read as folds too', pv.prepare(Tt, 'y', ['x1'], validation='FoldT').k, 5)
+rk, _ = quiet(call, 'screening.fit', table=Tk, y='y', x=X4, validation='Fold', seed=SEED, methods=['linear', 'knn'])
+lin_cv = next(m for m in rk['methods'] if m['key'] == 'linear')
+want_r2 = np.mean([metrics.r2_score(Pk5.target[Pk5.folds == j], _LR().fit(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds != j], Pk5.target[Pk5.folds != j]).predict(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds == j])) for j in range(5)])
+check('Model Screening crossvalidates by the column\'s folds: 5 folds, the fold column named, Crossvalidation the set compared', (rk['kfold'], rk['fold_column'], rk['compare'], len(lin_cv['cv']['folds'])), (5, 'Fold', 'Crossvalidation', 5))
+check.near('... Fit Least Squares\' crossvalidated RSquare is the mean of its folds\' by sklearn', lin_cv['measures']['Crossvalidation']['rsquare'], float(want_r2), rel=1e-9)
+for kw, what in (({'strata': ['g'], 'time': 'x1'}, 'a cutpoint column with stratification'), ({'training': 0}, 'no training share'), ({'time': 'g'}, 'a character cutpoint column'),
+                 ({'kfold': 3}, 'K Fold of three folds (read as sets)'), ({'kfold': 5, 'time': 'x1'}, 'K Fold by a cutpoint'), ({'balance': True}, 'Balance without stratification columns'),
+                 ({'balance': True, 'strata': ['g'], 'groups': ['nom3']}, 'Balance with grouping columns')):
     try:
         call('screening.validation_column', table=T, seed=1, **{'training': 0.6, 'validation': 0.2, 'test': 0.2, **kw})
         check(f'validation_column refuses {what}', 'no error', 'error')
@@ -709,7 +859,8 @@ def run_code(code, data=cols):
 for label, kw, data in (
         ('continuous, Informative Missing, a weight, a Validation column with test rows', dict(table=T, y='y', x=['x1m', 'x2', 'x3', 'gm'], validation='v', weight='w'), cols),
         ('ordinal, a holdback, a frequency', dict(table=T, y='three', x=X4, portion=0.3, freq='f'), cols),
-        ('two levels, 3-fold crossvalidation repeated twice', dict(table=Ts, y='cls', x=X4, kfold=3, repeats=2), small)):
+        ('two levels, 3-fold crossvalidation repeated twice', dict(table=Ts, y='cls', x=X4, kfold=3, repeats=2), small),
+        ('continuous, a K Fold Validation column', dict(table=Tk, y='y', x=X4, validation='Fold'), {**cols, 'Fold': [float(v) for v in vk['values']]})):
     rr, _ = quiet(call, 'screening.fit', seed=SEED, methods=ALL, table_name='data', **kw)
     got = run_code(rr['code'], data)
     if got is None:
@@ -726,7 +877,19 @@ for label, kw, data in (
     for mth, fl in folds.items():
         wv = want[(mth, 'Crossvalidation')]
         worst = max([worst] + [abs(np.mean([f_[k] for f_ in fl]) - wv[k]) for k in wv if wv[k] is not None and k != 'n'])
-    check(f'the code gives the report\'s numbers exactly, every method: {label}', (worst, len({d['method'] for d in got}) == len(rr['methods']), bool(folds) == bool(kw.get('kfold'))), (0.0, True, True))
+    check(f'the code gives the report\'s numbers exactly, every method: {label}', (worst, len({d['method'] for d in got}) == len(rr['methods']), bool(folds) == bool(kw.get('kfold') or kw.get('validation') == 'Fold')), (0.0, True, True))
+
+# the Ensemble of Selected's code: the report's stacking weights, and the measures of its average and stacking
+for label, kw, data in (('continuous, a Validation column, a weight', dict(table=T, y='y', x=X4, validation='v', weight='w', methods=['linear', 'tree', 'knn']), cols),
+                        ('two levels, 3-fold crossvalidation', dict(table=Ts, y='cls', x=X4, kfold=3, methods=['linear', 'knn', 'nb']), small)):
+    en2, _ = quiet(call, 'screening.ensemble', seed=SEED, table_name='data', **kw)
+    got_e = run_code(en2['code'], data)
+    if got_e is None:
+        check(f'Ensemble of Selected, {label}: its code runs', False, True)
+        continue
+    wline = next((d_ for d_ in got_e if 'set' not in d_), {})
+    worst_e = max([abs(d_[k_] - next(q for q in en2['rows'] if q['method'] == d_['method'])['measures'][d_['set']][k_]) for d_ in got_e if 'set' in d_ for k_ in d_ if k_ not in ('method', 'set') and d_[k_] is not None] + [0.0])
+    check(f'Ensemble of Selected, {label}: its code gives the report\'s stacking weights and the measures of the average and the stacking', (worst_e < 1e-9, all(abs(wline.get(q['method'], -1) - q['weight']) < 1e-9 for q in en2['weights'])), (True, True))
 
 
 # ============================================================================
@@ -790,16 +953,17 @@ for label, tid, kw, th_kw in (
                       (F['legend'], find_line(ax, [0, 1], [0, 1] if kind == 'roc' else [1, 1]) is not None, ax['xlabel'], ax['title'], F['size']),
                       (names if last else [], True, '1 - Specificity' if kind == 'roc' else 'Portion', f'{"ROC" if kind == "roc" else "Lift"} {st} {level}', [5.6 if last else 3.6, 3.3]))
         if th_kw:
-            th, _ = quiet(call, 'screening.threshold', table=tid, seed=SEED, table_name='data', **{k_: v_ for k_, v_ in kw.items() if k_ != 'plot'}, **th_kw, plot={'order': rr['order']})
-            F, ax = gcheck(f'{lab}: Decision Threshold', head + SEP + th['plot_code'], tid)
-            if F:
-                cmp = rr['compare']
-                ms = [next(m for m in th['methods'] if m['key'] == k_) for k_ in rr['order']]
-                check(f'{lab}: Decision Threshold: each method\'s misclassification rate at every cut ({cmp}), in the page\'s order and colours',
-                      [(q['label'], q['color'][:7], bool(np.allclose(q['y'], m['curves'][cmp], rtol=0, atol=1e-12)), q['x'] == th['grid']) for q, m in zip([q for q in ax['lines'] if not q['label'].startswith('_')], ms)],
-                      [(m['label'], S.COLORS[m['key']], True, True) for m in ms])
-                check(f'{lab}: Decision Threshold: the threshold dashed, the legend, the titles', (any(q['x'] == [th_kw['cut']] * 2 and q['ls'] == '--' for q in ax['lines']), F['legend'], ax['xlabel'], ax['title'], F['size']),
-                      (True, [m['label'] for m in ms], f'Threshold on the probability of {th["level"]}', 'Misclassification by threshold', [5.6, 3.3]))
+            # the Decision Threshold's code is written in the page (smui-predict.js; test-ui-screening.py runs it): its head here fits every
+            # method as the report does, fitted[label] (and oof[label] with K Fold) the probabilities the page draws
+            th, _ = quiet(call, 'screening.threshold', table=tid, seed=SEED, table_name='data', **{k_: v_ for k_, v_ in kw.items() if k_ != 'plot'}, plot={'order': rr['order']})
+            from test_predictive import run_names  # noqa: E402
+            got, err = run_names(th['plots']['head_code'], tid, GTMP, ['fitted', 'oof', 'y', 'sets', 'w'])
+            check(f'{lab}: Decision Threshold: its head runs', err, None)
+            if got:
+                okp = [mx(got['fitted'][m['label']][:, 1], m['p']) <= 1e-12 and (('p_cv' not in m) or mx(got['oof'][m['label']][:, 1], m['p_cv']) <= 1e-12) for m in th['models']]
+                check(f'{lab}: Decision Threshold: every method\'s probabilities (and out-of-fold ones) from the head are the report\'s', okp, [True] * len(th['models']))
+                check(f'{lab}: Decision Threshold: the head\'s y and sets are the report\'s rows\'', (np.asarray(got['y']).tolist() == th['points']['actual'], np.asarray(got['sets']).tolist() == th['points']['set']), (True, True))
+                check(f'{lab}: Decision Threshold: the code\'s names of the probabilities', [m['code'] for m in th['models']], [[f'fitted[{json.dumps(m["label"])}]', f'oof[{json.dumps(m["label"])}]'] for m in th['models']])
     else:
         st = (kw.get('plot') or {}).get('abp') or rr['compare']
         res = rr['residuals']
@@ -816,6 +980,6 @@ for label, tid, kw, th_kw in (
             check.near(f'{lab}: actual by predicted {lab_of[key]} {st}: every row at its prediction and value', mx(scatter_pts(ax), want), 0.0, abs_=1e-9)
             check(f'{lab}: actual by predicted {lab_of[key]} {st}: the line of equality, the titles, the size', (find_line(ax, [min(vv), max(vv)], [min(vv), max(vv)], rel=1e-9) is not None, ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
                   (True, 'Predicted', 'Actual', f'Actual by predicted {lab_of[key]} {st}', [2.5, 2.35]))
-check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 22)
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 20)
 
 sys.exit(check.done())

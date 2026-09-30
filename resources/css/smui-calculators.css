@@ -1,0 +1,39 @@
+/* ==========================================================================
+   SMUI.HTML: DOE > SAMPLE SIZE EXPLORERS > TEST CALCULATORS (smui-p-calculators.js)
+   The bar above the tests, each test's fields (the two groups side by side)
+   beside its results, the graph and the links. Colours are kvot.css's
+   tokens, so both themes read. Class prefix sm-calc-.
+   ========================================================================== */
+
+/* ---- the bar: Add Two Means, Add Two Proportions, Alpha ----------------------- */
+.sm-calc-bar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 0 0 10px; }
+.sm-calc-alpha { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; font-size: 12.5px; color: var(--text-secondary); }
+
+/* ---- a test: its fields beside its results ------------------------------------- */
+.sm-calc-top { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-start; }
+.sm-calc-fields { display: flex; flex-direction: column; gap: 10px; max-width: 420px; min-width: 0; }
+.sm-calc-input, .sm-calc-select {
+  padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; min-width: 0;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.sm-calc-input { width: 7.5em; }
+.sm-calc-input:focus-visible, .sm-calc-select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.sm-calc-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.sm-calc-grid .sm-calc-input { width: 100%; box-sizing: border-box; }
+.sm-calc-head { color: var(--text-secondary); font-weight: 600; font-size: 12px; }
+.sm-calc-label { color: var(--text-primary); }
+.sm-calc-form { max-width: 420px; }
+.sm-calc-form .sm-calc-select { max-width: 100%; }
+
+/* ---- the results ------------------------------------------------------------------ */
+.sm-calc-results { min-width: 0; max-width: 640px; display: flex; flex-direction: column; gap: 6px; }
+.sm-calc-results > table.sm-rt { margin: 0 0 4px; }
+.sm-calc-test h4 { margin: 4px 0 4px; font-size: 12.5px; color: var(--text-secondary); font-weight: 600; }
+.sm-calc-plot { max-width: 100%; }
+.sm-calc-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.sm-calc-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+
+@media (max-width: 760px) {
+  .sm-calc-top { flex-direction: column; }
+  .sm-calc-fields, .sm-calc-form, .sm-calc-results { max-width: 100%; width: 100%; }
+}

@@ -113,6 +113,7 @@
        { trace, kind: 'cell', rows: [[[r, ...]]] (row iy, column ix), overlay }
             heatmap cells; the overlay heatmap tints the selected share
        { trace, kind: 'slice', rows }     pie slices, pulled out when selected
+       { trace, kind: 'region', rows, line }   map regions (a choropleth), outlined when selected
        { trace, kind: 'path', rows: [r, ...] (per vertex), paths: { r: [xs, ys] }, overlay }
             one line per row (parallel coordinates); the overlay redraws the
             selected rows' lines
@@ -192,7 +193,7 @@
       for (const [k, v] of Object.entries(upd)) (g.upd[k] || (g.upd[k] = [])).push(v);
     };
     for (const s of specs) {
-      if (s.overlay == null && s.kind !== 'slice') continue;
+      if (s.overlay == null && s.kind !== 'slice' && s.kind !== 'region') continue;
       if (s.kind === 'bar') {
         const v = s.rows.map((rs, k) => (sel ? s.len[k] * selShare(st, rs) : 0));
         put(s.horiz ? 'x' : 'y', s.overlay, s.horiz ? { x: v } : { y: v });
@@ -209,6 +210,14 @@
         put('z', s.overlay, { z });
       } else if (s.kind === 'slice') {
         put('pull', s.trace, { pull: s.rows.map((rs) => (sel && rs.some((r) => st[r] & 1) ? 0.08 : 0)) });
+      } else if (s.kind === 'region') {
+        // a region with a selected row: outlined in the selection's colour (restyled only when that changes:
+        // a restyle makes Plotly match the regions to its map again)
+        const on = s.rows.map((rs) => sel && rs.some((r) => st[r] & 1));
+        const sig = on.map((v) => (v ? 1 : 0)).join('');
+        if (sig === (s._sig ?? on.map(() => 0).join(''))) continue;
+        s._sig = sig;
+        put('region', s.trace, { 'marker.line.width': on.map((v) => (v ? 2.4 : 0.6)), 'marker.line.color': on.map((v) => (v ? SM.report.SELECTED : s.line)) });
       } else if (s.kind === 'path') {
         const xs = [], ys = [], ov = [];
         if (sel) for (const r of s.list) if (st[r] & 1) { const q = s.paths.get(r); if (!q) continue; for (let j = 0; j < q[0].length; j++) { xs.push(q[0][j]); ys.push(q[1][j]); ov.push([r]); } xs.push(null); ys.push(null); ov.push([]); }
@@ -275,6 +284,45 @@
     return [head, ...parts.filter(Boolean).map((c) => `${esc(c.name)}: ${isMissing(c.values[r]) ? '.' : esc(cellText(c, c.values[r]))}`)].join('<br>');
   }
 
+  /* ---- Marker Size and Transparency (Graph Builder and the Graph menu's point plots) ---- */
+  /* JMP's Marker Size, 0 (Dot) to 6 (XXXL), as the markers' diameters in
+     pixels, and its Transparency: the markers' opacity, 1 opaque to 0
+     invisible. null: the graph's own (automatic). */
+  const MARKER_SIZES = [[0, 'Dot', 2], [1, 'Small', 3.5], [2, 'Medium', 5], [3, 'Large', 7], [4, 'XL', 9], [5, 'XXL', 12], [6, 'XXXL', 16]];
+  const MARKER_PX = [1, 40];
+  const markerSizeOf = (m, dflt) => (m && m.size > 0 ? clamp(m.size, MARKER_PX[0], MARKER_PX[1]) : dflt);
+  const markerAlphaOf = (m, dflt) => (m && m.alpha != null && m.alpha >= 0 && m.alpha <= 1 ? m.alpha : dflt);
+  function markerItems(m, set) {
+    const size = m && m.size > 0 ? m.size : null, alpha = m && m.alpha != null ? m.alpha : null;
+    const other = async (title, key, value, label, lo, hi, help) => {
+      const v = await SM.ui.form({ title, fields: [{ key, label, type: 'number', value, help }], validate: (x) => (x[key] >= lo && x[key] <= hi ? null : `A number from ${lo} to ${hi}`) });
+      if (v) set({ [key === 'px' ? 'size' : 'alpha']: v[key] });
+    };
+    return [
+      { label: 'Marker Size', submenu: () => [
+        { label: 'Automatic', checked: size == null, action: () => set({ size: null }) },
+        ...MARKER_SIZES.map(([k, name, px]) => ({ label: `${k}, ${name}`, checked: size === px, action: () => set({ size: px }) })),
+        { label: 'Other…', checked: size != null && !MARKER_SIZES.some((q) => q[2] === size), action: () => other('Marker Size', 'px', size ?? 6, `Diameter in pixels (${MARKER_PX[0]} to ${MARKER_PX[1]})`, MARKER_PX[0], MARKER_PX[1], 'The markers\' diameter in pixels; Automatic is the graph\'s own (6, or 4 for many rows).') },
+      ] },
+      { label: 'Transparency', submenu: () => [
+        { label: 'Automatic', checked: alpha == null, action: () => set({ alpha: null }) },
+        ...[1, 0.8, 0.6, 0.4, 0.2].map((a) => ({ label: a === 1 ? '1 (opaque)' : String(a), checked: alpha === a, action: () => set({ alpha: a }) })),
+        { label: 'Other…', checked: alpha != null && ![1, 0.8, 0.6, 0.4, 0.2].includes(alpha), action: () => other('Transparency', 'a', alpha ?? 0.9, 'Transparency (0 to 1)', 0, 1, 'As JMP\'s: 1 draws the markers opaque, 0 not at all, and a value between lets the markers behind show through.') },
+      ] },
+    ];
+  }
+
+  // What the help says of them, in a point plot's red triangle.
+  const MARKER_HELP = [
+    ['Marker Size', 'The points\' size: **Automatic** (the graph\'s own), JMP\'s sizes 0 (Dot, 2 pixels across) to 6 (XXXL, 16 pixels), or **Other…** in pixels; also a right click in the graph.'],
+    ['Transparency', 'As JMP\'s: 1 draws the points opaque, 0 not at all; between them the points behind show through. **Automatic**: the graph\'s own.'],
+  ];
+
+  // A point plot of the Graph menu: its Marker Size and Transparency, kept in the
+  // report's options (the red triangle's items, and the graph's right-click).
+  const markerOpt = (ctx) => ctx.opt('marker', null) || {};
+  const markerMenu = (ctx, only = null) => markerItems(markerOpt(ctx), (patch) => ctx.set('marker', { ...markerOpt(ctx), ...patch })).filter((it) => !only || it.label === only);
+
   /* ---- Graph Builder: zones and elements ------------------------------------------------- */
   const ZONES = [
     { key: 'x', label: 'X', max: 4, place: 'x' },
@@ -286,12 +334,16 @@
     { key: 'color', label: 'Color', max: 1, place: 'side' },
     { key: 'size', label: 'Size', max: 1, place: 'side', numeric: true },
     { key: 'freq', label: 'Freq', max: 1, place: 'side', numeric: true },
+    { key: 'shape', label: 'Map Shape', max: 1, place: 'side' },
   ];
   const ZONE = Object.fromEntries(ZONES.map((z) => [z.key, z]));
+  // the zones whose columns group the rows (a continuous one in bins: its Levels)
+  const GROUPING = new Set(['groupX', 'groupY', 'wrap', 'overlay']);
 
   function zoneRefuses(z, c) {
     if (z.numeric && !c.isNumeric) return `${z.label} takes a numeric column; ${c.name} is character`;
     if (z.key === 'size' && isCat(c)) return `Size takes a continuous column; ${c.name} is ${TYPE_LABEL[c.modelingType].toLowerCase()}`;
+    if (z.key === 'shape' && c.isNumeric) return `Map Shape takes the names or codes of regions (countries, US states), a character column; ${c.name} is numeric`;
     return null;
   }
 
@@ -408,6 +460,9 @@
       { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['n', 'N'], ['sum', 'Sum'], ['mean', 'Mean']], dflt: 'auto', help: 'The size of each slice. **Auto** (the default): the Sum of the continuous variable, or N without one; or **N**, **Sum** or **Mean**. Without a continuous variable the slices are always N; a negative value makes an empty slice.' },
       { key: 'label', label: 'Label', type: 'select', choices: [['percent', 'Label by Percent of Total Values'], ['value', 'Label by Value'], ['level', 'Label by Level'], ['none', 'None']], dflt: 'percent', help: 'What each slice says: its **Percent** of the pie (the default), its **Value**, its **Level**, or nothing.' },
     ] },
+    { type: 'map', label: 'Map Shapes', z: 3, needs: 'shape', about: 'A map of the regions in the Map Shape column (countries by name or ISO 3166 code, US states by name or postal code), each filled by a statistic of the Color column over its rows, or by its count of rows without one; with continuous X and Y, Points on it at their longitude (X) and latitude (Y). The boundaries are Plotly\'s own (Natural Earth, 1:110 million), fetched from cdn.plot.ly when the map is drawn. A click on a region selects its rows.', props: [
+      { key: 'summary', label: 'Summary Statistic', type: 'select', choices: [['mean', 'Mean'], ['median', 'Median'], ['sum', 'Sum'], ['min', 'Min'], ['max', 'Max'], ['n', 'N']], dflt: 'mean', help: 'What fills each region with a continuous Color column: its **Mean** (the default), **Median** (JMP\'s quantile), **Sum**, **Min** or **Max** over the region\'s rows (Freq counted), or **N**, the count of rows. A categorical Color column fills each region with the colour of its most common level; without a Color column the regions are filled by N.' },
+    ] },
   ];
   const ELEMENT = Object.fromEntries(ELEMENTS.map((e) => [e.type, e]));
 
@@ -424,10 +479,11 @@
   }
 
   /* Why an element cannot draw these columns, or null. */
-  function elementRefuses(type, xc, yc) {
+  function elementRefuses(type, xc, yc, shape = null) {
     const R = axesRoles(xc, yc);
     const L = ELEMENT[type].label;
     switch (ELEMENT[type].needs) {
+      case 'shape': return shape ? null : `${L} needs a column in the Map Shape zone (the names or codes of the regions)`;
       case 'any': return xc || yc ? null : `${L} needs X or Y`;
       case 'xy-cont': return R.xk === 'cont' && R.yk === 'cont' ? null : `${L} needs continuous X and Y`;
       case 'contour': return (R.xk === 'cont' && R.yk === 'cont') || (R.resp && R.facCat) ? null : `${L} needs continuous X and Y (a density), or one continuous and one categorical (a violin)`;
@@ -442,10 +498,11 @@
   }
 
   /* JMP's choice of elements for the columns in the zones. */
-  function autoElements(xc, yc) {
+  function autoElements(xc, yc, shape = null, map = null) {
     const R = axesRoles(xc, yc);
+    if (shape) return R.xk === 'cont' && R.yk === 'cont' ? ['map', 'points'] : ['map'];
     if (!xc && !yc) return [];
-    if (R.xk === 'cont' && R.yk === 'cont') return ['points', 'smoother'];
+    if (R.xk === 'cont' && R.yk === 'cont') return map ? ['points'] : ['points', 'smoother'];
     if (!R.resp && R.fac && !R.both) return ['bar'];
     return ['points'];
   }
@@ -478,6 +535,7 @@
       case 'mosaic': return s({}, rect(2, 2, 8, 6, { opacity: 0.85 }), rect(2, 9, 8, 7, { opacity: 0.4 }), rect(11, 2, 11, 10, { opacity: 0.6 }), rect(11, 13, 11, 3, { opacity: 0.3 }));
       case 'caption': return s({}, svg('rect', { x: 3, y: 2, width: 18, height: 14, rx: 2, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3 }), P('M6 7 L18 7 M6 11 L14 11'));
       case 'pie': return s({}, svg('circle', { cx: 12, cy: 9, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5 }), svg('path', { d: 'M12 9 L12 2 A7 7 0 0 1 18.6 11.3 Z', fill: 'currentColor' }));
+      case 'map': return s({}, svg('path', { d: 'M2 5 L7 2 L12 4 L11 9 L5 10 Z', fill: 'currentColor', opacity: 0.8 }), svg('path', { d: 'M12 4 L18 3 L22 7 L19 12 L11 9 Z', fill: 'currentColor', opacity: 0.45 }), svg('path', { d: 'M5 10 L11 9 L19 12 L16 16 L7 15 Z', fill: 'currentColor', opacity: 0.25 }), P('M2 5 L7 2 L12 4 L18 3 L22 7 L19 12 L16 16 L7 15 L5 10 Z M12 4 L11 9 L5 10 M11 9 L19 12', { 'stroke-width': 0.9 }));
       default: return s({});
     }
   }
@@ -486,11 +544,17 @@
      spec.options.gb holds everything a redo or a saved project needs. A
      zone entry is { id, name }: the id within the session, the name when a
      project is opened again (the ids are new then). */
+  /* axes: Axis Settings by the column on the axis ('x:<name>', or 'y:count'
+     for a count axis); bins: the Levels of a continuous column in a
+     grouping zone, by its name ({ n, method }); order: Order By of a
+     categorical axis column, by its name ({ by, stat, desc }); marker: the
+     graph's Marker Size and Transparency (null: automatic). */
   function defaultState() {
     return {
       v: 1, zones: Object.fromEntries(ZONES.map((z) => [z.key, []])), xMode: 'side', yMode: 'side',
       elements: [], auto: true, title: null, labels: {}, show: { title: true, legend: true, xTitle: true, yTitle: true },
       legendPos: 'right', done: false, size: null, alpha: 0.05,
+      axes: {}, bins: {}, order: {}, marker: { size: null, alpha: null }, map: null, shapeMode: 'auto',
     };
   }
 
@@ -507,6 +571,10 @@
     S.zones = { ...d.zones, ...(S.zones || {}) };
     S.show = { ...d.show, ...(S.show || {}) };
     S.labels = S.labels || {};
+    S.axes = S.axes || {};
+    S.bins = S.bins || {};
+    S.order = S.order || {};
+    S.marker = { ...d.marker, ...(S.marker || {}) };
     for (const z of ZONES) {
       const list = [];
       for (const ref of S.zones[z.key] || []) {
@@ -519,8 +587,9 @@
     if (S.auto) {
       const xc = S.zones.x[0] ? t.col(S.zones.x[0].id) : null;
       const yc = S.zones.y[0] ? t.col(S.zones.y[0].id) : null;
+      const sc = S.zones.shape && S.zones.shape[0] ? t.col(S.zones.shape[0].id) : null;
       const old = new Map((S.elements || []).map((e) => [e.type, e]));
-      S.elements = autoElements(xc, yc).map((type) => old.get(type) || elementDefaults(type));
+      S.elements = autoElements(xc, yc, sc, S.map).map((type) => old.get(type) || elementDefaults(type));
     }
     S.elements = (S.elements || []).filter((e) => e && ELEMENT[e.type]).map((e) => ({ ...elementDefaults(e.type), ...e }));
     return S;
@@ -537,40 +606,79 @@
   }
 
   /* The groups a column makes (Group X, Group Y, Wrap, Overlay): its levels,
-     or for a continuous column with many values five bins of about equal
-     counts. code[r] is the group of row r, -1 when missing. */
-  function groupsOf(t, c, rows) {
+     or bins of a continuous column (one with more than 10 distinct values, or
+     one whose Levels are set in the zone's menu: spec { n, method }) cut as
+     Make Binning Column cuts them (SM.tables.binCuts): n bins (5 by
+     default) of about equal counts at JMP's quantiles, or of an equal round
+     width; a bin holds its lower cut, the last one its maximum, and each is
+     labelled by its range, as Make Binning Column labels it. code[r] is the
+     group of row r, -1 when missing. */
+  const LEVELS_AT_MOST = 10;
+  const BIN_LEVELS = [2, 40];
+  function groupsOf(t, c, rows, spec = null) {
     const code = new Int32Array(t.nrows).fill(-1);
     let distinct = new Set();
-    if (!isCat(c)) for (const r of rows) { const v = c.values[r]; if (Number.isFinite(v)) { distinct.add(v); if (distinct.size > 10) break; } }
-    if (isCat(c) || distinct.size <= 10) {
+    if (!isCat(c)) for (const r of rows) { const v = c.values[r]; if (Number.isFinite(v)) { distinct.add(v); if (distinct.size > LEVELS_AT_MOST) break; } }
+    if (isCat(c) || (!spec && distinct.size <= LEVELS_AT_MOST)) {
       const lv = levelsAmong(t, c, rows);
       const m = new Map(lv.map((v, i) => [v, i]));
       for (const r of rows) { const k = m.get(c.values[r]); if (k != null) code[r] = k; }
       return { col: c, labels: lv.map((v) => cellText(c, v)), values: lv, code };
     }
-    const vals = rows.map((r) => c.values[r]).filter(Number.isFinite).sort((a, b) => a - b);
-    const edges = [vals[0]];
-    for (const p of [0.2, 0.4, 0.6, 0.8]) { const v = vals[Math.floor(p * (vals.length - 1))]; if (v > edges[edges.length - 1]) edges.push(v); }
-    if (vals[vals.length - 1] > edges[edges.length - 1]) edges.push(vals[vals.length - 1]);
+    const method = spec && spec.method === 'width' ? 'width' : 'quantile';
+    const n = clamp(Math.round((spec && spec.n) || 5), BIN_LEVELS[0], BIN_LEVELS[1]);
+    const vals = rows.map((r) => c.values[r]).filter(Number.isFinite);
+    if (!vals.length) return { col: c, labels: [], values: [], cuts: [], code, binned: true, method, n };
+    const { cuts, lo, hi } = SM.tables.binCuts(vals, { method, k: n });
     for (const r of rows) {
       const v = c.values[r];
       if (!Number.isFinite(v)) continue;
       let k = 0;
-      while (k < edges.length - 2 && v > edges[k + 1]) k++;
+      while (k < cuts.length && v >= cuts[k]) k++;
       code[r] = k;
     }
-    const labels = [];
-    for (let k = 0; k < edges.length - 1; k++) labels.push(`${fmt(edges[k])}–${fmt(edges[k + 1])}`);
-    return { col: c, labels, values: labels.map((_, k) => k), edges, code, binned: true };
+    const f = (x) => fmt(x).replace(/−/g, '-');
+    const edges = [lo, ...cuts, hi];
+    const labels = cuts.length || lo !== hi ? edges.slice(0, -1).map((a, k) => `${f(a)} - ${f(edges[k + 1])}`) : [f(lo)];
+    return { col: c, labels, values: labels.map((_, k) => k), cuts, code, binned: true, method, n };
+  }
+
+  /* ---- maps: the regions a Map Shape column names -------------------------------------
+     Plotly's boundaries (Natural Earth's countries, and the US states)
+     take a country by its ISO 3166 alpha-3 code or its name (Plotly's own
+     matching, which knows many forms of a name), and a US state by its
+     postal code: a state's name is turned into its code here. */
+  const US_STATES = {
+    AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia',
+    FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine',
+    MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada',
+    NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon',
+    PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia',
+    WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  };
+  const STATE_OF = new Map([...Object.entries(US_STATES).map(([k, v]) => [v.toLowerCase(), k]), ['washington dc', 'DC'], ['washington d.c.', 'DC']]);
+  const MAP_MODES = [['auto', 'Automatic'], ['names', 'Country Names'], ['iso3', 'Country Codes (ISO 3166, 3 letters)'], ['usa', 'US States (names or postal codes)']];
+
+  /* How a Map Shape column names its regions (want: the chip menu's choice,
+     or 'auto': US states when most of its values are states' names or codes,
+     ISO codes when most are three capital letters, else country names), and
+     each value's location as Plotly takes it. */
+  function mapShapes(t, c, rows, want = 'auto') {
+    const vals = levelsAmong(t, c, rows);
+    const keys = vals.map((v) => String(v).trim());
+    const state = (k) => (US_STATES[k.toUpperCase()] && k.length === 2 ? k.toUpperCase() : STATE_OF.get(k.toLowerCase()) || null);
+    const share = (fn) => (keys.length ? keys.filter(fn).length / keys.length : 0);
+    const mode = want && want !== 'auto' ? want : share((k) => state(k)) >= 0.8 ? 'usa' : share((k) => /^[A-Z]{3}$/.test(k)) >= 0.8 ? 'iso3' : 'names';
+    const loc = (k) => (mode === 'usa' ? state(k) || k : mode === 'iso3' ? k.toUpperCase() : k);
+    return { col: c, mode, plotly: { usa: 'USA-states', iso3: 'ISO-3', names: 'country names' }[mode], locOf: new Map(vals.map((v, i) => [v, loc(keys[i])])) };
   }
 
   /* A group or panel column as graph.code's plan names it: its levels (or
-     bins: their edges), their labels, at most `most` of them. */
+     bins: their cuts), their labels, at most `most` of them. */
   function groupSpec(G, most = Infinity) {
     if (!G) return null;
     const k = Math.min(most, G.labels.length);
-    return { col: G.col.name, values: G.values.slice(0, k), labels: G.labels.slice(0, k), edges: G.binned ? G.edges : null };
+    return { col: G.col.name, values: G.values.slice(0, k), labels: G.labels.slice(0, k), bins: G.binned ? { cuts: G.cuts, method: G.method, n: G.n } : null };
   }
 
   /* ---- Graph Builder: the figure ------------------------------------------------------------ */
@@ -581,8 +689,8 @@
     const t = ctx.table;
     const cols = zoneCols(S, t);
     // traceEl, noteEl: the element that drew each trace and annotation (for the tests of graph.code)
-    const fig = { traces: [], links: [], annotations: [], shapes: [], notes: [], axisKeys: {}, mask: false, empty: false, plan: null, traceEl: [], noteEl: [] };
-    if (!cols.x.length && !cols.y.length) { fig.empty = true; return fig; }
+    const fig = { traces: [], links: [], annotations: [], shapes: [], notes: [], axisKeys: {}, axisOf: {}, mask: false, empty: false, plan: null, traceEl: [], noteEl: [] };
+    if (!cols.x.length && !cols.y.length && !cols.shape.length) { fig.empty = true; return fig; }
     const E = new Env(B, cols, fig);
     await E.build();
     return fig;
@@ -610,15 +718,49 @@
 
     note(s) { if (!this.notes.includes(s)) this.notes.push(s); }
 
-    /* The levels of a categorical axis column, over all the rows. */
+    /* The levels of a categorical axis column, over all the rows: in the
+       table's order, or in the column's Order By. */
     axisLevels(c) {
       let L = this.levelCache.get(c.id);
       if (!L) {
-        const lv = levelsAmong(this.t, c, this.rows0);
+        let lv = levelsAmong(this.t, c, this.rows0);
+        const o = this.S.order && this.S.order[c.name];
+        if (o) lv = this.orderLevels(c, lv, o);
         L = { lv, pos: new Map(lv.map((v, i) => [v, i])), labels: lv.map((v) => cellText(c, v)) };
         this.levelCache.set(c.id, L);
       }
       return L;
+    }
+
+    /* Order By (JMP's, on a categorical axis): the levels by a statistic of
+       another column over the graph's rows (its Mean, Median or Sum, a row
+       counting Freq times), or by their count of rows, ascending or
+       descending; ties, and levels without a value, keep the table's order,
+       the latter last. */
+    orderLevels(c, lv, o) {
+      const by = o.by ? this.t.col(o.by) : null;
+      if (o.by && (!by || !by.isNumeric)) return lv;
+      const stat = !by ? 'n' : ['median', 'sum'].includes(o.stat) ? o.stat : 'mean';
+      const acc = new Map(lv.map((v) => [v, { w: 0, s: 0, vals: [] }]));
+      for (const r of this.rows0) {
+        const a = acc.get(c.values[r]);
+        if (!a) continue;
+        const w = this.W(r);
+        if (!by) { a.w += w; continue; }
+        const y = by.values[r];
+        if (!Number.isFinite(y)) continue;
+        a.w += w; a.s += w * y;
+        if (stat === 'median') for (let k = Math.round(w); k > 0; k--) a.vals.push(y);
+      }
+      const score = (a) => (!by ? a.w : !a.w ? NaN : stat === 'sum' ? a.s : stat === 'mean' ? a.s / a.w
+        : a.vals.length ? SM.util.quantileSorted(a.vals.sort((p, q) => p - q), 0.5) : NaN);
+      const q = lv.map((v, i) => ({ v, i, x: score(acc.get(v)) }));
+      q.sort((a, b) => {
+        const an = !Number.isFinite(a.x), bn = !Number.isFinite(b.x);
+        if (an || bn) return an === bn ? a.i - b.i : an ? 1 : -1;
+        return (o.desc ? b.x - a.x : a.x - b.x) || a.i - b.i;
+      });
+      return q.map((e) => e.v);
     }
 
     levelPos(c, v) { const p = this.axisLevels(c).pos.get(v); return p == null ? null : p; }
@@ -648,7 +790,7 @@
       const colorCol = cols.color[0] || null;
       this.colorCol = colorCol;
       const gcol = cols.overlay[0] || (colorCol && isCat(colorCol) ? colorCol : null);
-      this.G = gcol ? groupsOf(t, gcol, this.rows0) : null;
+      this.G = gcol ? groupsOf(t, gcol, this.rows0, S.bins[gcol.name]) : null;
       if (this.G && this.G.labels.length > 60) { this.note(`${gcol.name} has ${this.G.labels.length} levels; the groups use the first 60.`); }
       if (this.G) { let miss = 0; for (const r of this.rows0) if (this.G.code[r] < 0) miss++; if (miss) this.note(`${miss} row${miss > 1 ? 's' : ''} with no ${gcol.name} ${miss > 1 ? 'are' : 'is'} left out of the groups.`); }
       this.fig.mask = !!colorCol;
@@ -663,13 +805,14 @@
       const first = this.panels[0];
       const s0 = first.series[0];
       // ---- which elements can draw these columns
-      const ok = [];
+      let ok = [];
       for (const e of els) {
-        const why = elementRefuses(e.type, s0.xc, s0.yc);
+        const why = elementRefuses(e.type, s0.xc, s0.yc, cols.shape[0] || null);
         if (why) this.note(`${why}.`); else ok.push(e);
       }
+      ok = this.decideGeo(ok);
       this.els = ok;
-      this.gl = webgl() && ok.some((e) => e.type === 'points' && (!e.summary || e.summary === 'none')) && this.rows0.length * Math.max(1, ...this.panels.map((P) => P.series.length)) > GL_POINTS;
+      this.gl = !this.geo && webgl() && ok.some((e) => e.type === 'points' && (!e.summary || e.summary === 'none')) && this.rows0.length * Math.max(1, ...this.panels.map((P) => P.series.length)) > GL_POINTS;
       this.decideAxes(ok);
       for (const e of ok) {
         const had = this.done.length, t0 = fig.traces.length, a0 = fig.annotations.length;
@@ -684,6 +827,48 @@
       }
       this.layout();
       this.fig.plan = this.plan();
+      // the groups of the grouping zones as drawn (their bins, for Save Transform Column)
+      this.fig.groups = Object.fromEntries([this.wrap, this.gx, this.gy, this.G].filter(Boolean).map((G) => [G.col.name, G]));
+    }
+
+    /* A map (JMP's Map Shapes and Background Map): Map Shapes with a column
+       in the Map Shape zone, or the Background Map of the red triangle under
+       Points of longitude (X) and latitude (Y). Each panel is then a map (a
+       Plotly geo subplot); what cannot be drawn on one is left out. */
+    decideGeo(ok) {
+      const { S, cols, t } = this;
+      const s0 = this.panels[0].series[0];
+      const hasMap = ok.some((e) => e.type === 'map');
+      this.shape = hasMap ? mapShapes(t, cols.shape[0], this.rows0, S.shapeMode) : null;
+      const lonlat = !!(s0.xc && s0.yc && !isCat(s0.xc) && !isCat(s0.yc) && !isDate(s0.xc) && !isDate(s0.yc));
+      this.geo = null;
+      if (!hasMap && !S.map) return ok;
+      if (!hasMap && !lonlat) { this.note('Background Map: put the longitude on X and the latitude on Y (continuous columns); the graph is drawn without a map.'); return ok; }
+      this.geo = { scope: S.map || (this.shape && this.shape.mode === 'usa' ? 'usa' : 'world'), lonlat };
+      const keep = ok.filter((e) => e.type === 'map' || (e.type === 'points' && lonlat));
+      const out = ok.filter((e) => !keep.includes(e));
+      if (out.length) this.note(`On a map X and Y are the longitude and the latitude: ${out.map((e) => ELEMENT[e.type].label).join(', ')} ${out.length > 1 ? 'are' : 'is'} not drawn on it.`);
+      if (lonlat && keep.some((e) => e.type === 'points')) {
+        const bad = this.rows0.filter((r) => { const x = s0.xc.values[r], y = s0.yc.values[r]; return Number.isFinite(x) && Number.isFinite(y) && (x < -180 || x > 360 || y < -90 || y > 90); }).length;
+        if (bad) this.note(`${bad} row${bad > 1 ? 's have' : ' has'} an X or a Y that is not a longitude (−180 to 360) or a latitude (−90 to 90): ${s0.xc.name} and ${s0.yc.name} are taken as those.`);
+      }
+      this.panels.forEach((P, i) => { P.geo = i === 0 ? 'geo' : `geo${i + 1}`; });
+      return keep;
+    }
+
+    /* A panel's map: Plotly's natural earth (Albers USA for US States), zoomed
+       to what is drawn on it, in the theme's colours. */
+    geoLayout(P) {
+      const tc = SM.util.themeColors();
+      const usa = this.geo.scope === 'usa';
+      return {
+        domain: { x: P.dx, y: P.dy }, scope: usa ? 'usa' : 'world', projection: { type: usa ? 'albers usa' : 'natural earth' },
+        fitbounds: usa ? false : 'locations', bgcolor: 'rgba(0,0,0,0)', showframe: false,
+        showland: true, landcolor: rgba(tc.grid, dark() ? 0.35 : 0.55), showocean: false, showlakes: false,
+        showcoastlines: true, coastlinecolor: rgba(tc.muted, 0.65), coastlinewidth: 0.6,
+        showcountries: true, countrycolor: rgba(tc.muted, 0.5), countrywidth: 0.5,
+        showsubunits: usa, subunitcolor: rgba(tc.muted, 0.45), subunitwidth: 0.5,
+      };
     }
 
     /* ---- the panels: Group X by Group Y (or Wrap), times the X and Y
@@ -710,9 +895,9 @@
       };
       this.xSide = xSide; this.ySide = ySide;
       this.xSets = xSets; this.ySets = ySets;
-      this.wrap = wrapC ? groupsOf(t, wrapC, this.rows0) : null;
-      this.gx = gxC ? groupsOf(t, gxC, this.rows0) : null;
-      this.gy = gyC ? groupsOf(t, gyC, this.rows0) : null;
+      this.wrap = wrapC ? groupsOf(t, wrapC, this.rows0, S.bins[wrapC.name]) : null;
+      this.gx = gxC ? groupsOf(t, gxC, this.rows0, S.bins[gxC.name]) : null;
+      this.gy = gyC ? groupsOf(t, gyC, this.rows0, S.bins[gyC.name]) : null;
       const panels = [];
       if (this.wrap) {
         const k = Math.max(1, this.wrap.labels.length);
@@ -820,12 +1005,17 @@
 
     rowSize(r) {
       const c = this.sizeCol;
-      if (!c || !this.sizeRange) return 6;
+      if (!c || !this.sizeRange) return this.markerSize(6);
       const v = c.values[r];
-      if (!Number.isFinite(v)) return 3;
+      const f = this.markerSize(6) / 6;          // Marker Size scales the sizes of the Size zone too
+      if (!Number.isFinite(v)) return 3 * f;
       const [lo, hi] = this.sizeRange;
-      return 4 + 18 * Math.sqrt(hi > lo ? (v - lo) / (hi - lo) : 0.5);
+      return (4 + 18 * Math.sqrt(hi > lo ? (v - lo) / (hi - lo) : 0.5)) * f;
     }
+
+    // The graph's Marker Size (a diameter in pixels) and Transparency, or the graph's own.
+    markerSize(dflt) { return markerSizeOf(this.S.marker, dflt); }
+    markerAlpha(dflt) { return markerAlphaOf(this.S.marker, dflt); }
 
     lineType() { return this.gl ? 'scattergl' : 'scatter'; }
 
@@ -987,10 +1177,11 @@
       this.cellPx = [cw, rh];
       this.legendOn = legendOn; this.legendAt = legendPos; this.titleText = title;
       const L = { margin: M, barmode: 'overlay', hovermode: 'closest', showlegend: legendOn, annotations: fig.annotations, shapes: fig.shapes };
+      if (this.geo) L.dragmode = 'select';     // on a map as on a graph: a drag selects (the toolbar pans)
       if (title) L.title = { text: esc(title), x: 0.5, xanchor: 'center', y: 1, yanchor: 'top', yref: 'container', pad: { t: 8 }, font: { size: 13 } };
       const colFirst = new Map(), rowFirst = new Map();
       // Panels side by side on one X column: one X title under them all.
-      const sharedX = this.nC > 1 && !this.xSide && !this.exclusive;
+      const sharedX = this.nC > 1 && !this.xSide && !this.exclusive && !this.geo;
       for (const P of this.panels) {
         const x0 = (P.c * (cw + gapX)) / pw, x1 = (P.c * (cw + gapX) + cw) / pw;
         const y1 = 1 - (P.r * (rh + gapY)) / ph, y0 = y1 - rh / ph;
@@ -998,6 +1189,8 @@
         P.dy = [clamp(y0, 0, 1), clamp(y1, 0, 1)];
         const kx = P.xa === 'x' ? 'xaxis' : `xaxis${P.xa.slice(1)}`, ky = P.ya === 'y' ? 'yaxis' : `yaxis${P.ya.slice(1)}`;
         const ax = this.axis('x', P), ay = this.axis('y', P);
+        fig.axisOf[kx] = this.axisOf('x', P);
+        fig.axisOf[ky] = this.axisOf('y', P);
         // An axis without a range of its own takes it from its data, said
         // outright: once matched axes have a range (a categorical X down a
         // column of panels), Plotly 2.27 turns autorange off on the others
@@ -1018,7 +1211,8 @@
           const ty = this.axisTitle('y', P);
           if (ty && S.show.yTitle) { ay.title = { text: esc(ty.text), standoff: 6 }; fig.axisKeys[ky] = ty.key; }
         }
-        if (this.exclusive === 'pie') { ax.visible = false; ay.visible = false; }
+        if (this.exclusive === 'pie' || this.geo) { ax.visible = false; ay.visible = false; }
+        if (this.geo) { L[P.geo] = this.geoLayout(P); delete fig.axisKeys[kx]; delete fig.axisKeys[ky]; }
         L[kx] = ax;
         L[ky] = ay;
         // panel labels
@@ -1054,7 +1248,7 @@
         L.legend.tracegroupgap = 2;
       }
       // a colour bar for a continuous Color column
-      if (this.colorCol && !isCat(this.colorCol) && this.colorRange && this.els.some((e) => e.type === 'points')) {
+      if (this.colorCol && !isCat(this.colorCol) && this.colorRange && this.els.some((e) => e.type === 'points') && !this.mapScale) {
         const [lo, hi] = this.colorRange;
         fig.traces.push({ type: 'scatter', x: [null], y: [null], mode: 'markers', xaxis: 'x', yaxis: 'y', hoverinfo: 'skip', showlegend: false,
           marker: { color: [lo, hi], cmin: lo, cmax: hi, colorscale: RAMP, showscale: true, colorbar: { title: { text: esc(this.colorCol.name), side: 'right' }, thickness: 12, len: legendOn ? 0.45 : 0.8, y: legendOn ? 0 : 0.5, yanchor: legendOn ? 'bottom' : 'middle', x: 1.02 + (this.gy ? 0.06 : 0), outlinewidth: 0 } } });
@@ -1078,7 +1272,10 @@
       const series = ysets.map((ys) => xsets.map((xs) => (wrap ? this.panels[0] : panelOf(xs, ys)).series.map((s) => [name(s.xc), name(s.yc)])));
       const levels = {};
       for (const P of this.panels) for (const s of P.series) for (const c of [s.xc, s.yc]) {
-        if (c && isCat(c) && !levels[c.name]) { const L = this.axisLevels(c); levels[c.name] = { values: L.lv, labels: L.labels }; }
+        if (!c || !isCat(c) || levels[c.name]) continue;
+        // with Order By, in the table's order: the code sorts them from the data as the page does
+        const lv = S.order && S.order[c.name] ? levelsAmong(this.t, c, this.rows0) : this.axisLevels(c).lv;
+        levels[c.name] = { values: lv, labels: lv.map((v) => cellText(c, v)) };
       }
       const title = (which, set) => {
         const P = (which === 'x' ? this.panels.find((q) => q.xset === set) : this.panels.find((q) => q.yset === set)) || this.panels[0];
@@ -1101,8 +1298,21 @@
         series_names: names,
         titles: { x: xsets.map((set) => title('x', set)), y: ysets.map((set) => title('y', set)), shared_x: this.nC > 1 && !this.xSide && !this.exclusive },
         alpha: S.alpha || 0.05, panel: this.cellPx, exclusive: this.exclusive,
-        colorbar: !!(this.colorCol && !isCat(this.colorCol) && this.colorRange && this.els.some((e) => e.type === 'points')),
+        colorbar: !!(this.colorCol && !isCat(this.colorCol) && this.colorRange && this.els.some((e) => e.type === 'points') && !this.mapScale),
+        axes: { x: xsets.map((set) => this.setSettings('x', set)), y: ysets.map((set) => this.setSettings('y', set)) },
+        order: Object.fromEntries(Object.entries(S.order || {}).filter(([name, o]) => levels[name] && o && (!o.by || this.t.col(o.by)))),
+        marker: { size: markerSizeOf(S.marker, null), alpha: markerAlphaOf(S.marker, null) },
+        map: this.geo ? { scope: this.geo.scope, file: this.geo.scope === 'usa' ? 'usa_110m' : 'world_110m', lonlat: this.geo.lonlat,
+          shape: this.shape ? { col: this.shape.col.name, mode: this.shape.mode, ids: null } : null } : null,
       };
+    }
+
+    // The Axis Settings of the axis of an X or Y set (the column first in it; a count axis's), for graph.code.
+    setSettings(which, set) {
+      const kind = which === 'x' ? this.xKind : this.yKind;
+      if (!SM.axis || this.exclusive || (kind !== 'cont' && kind !== 'count')) return null;
+      const key = kind === 'count' ? `${which}:count` : set && set[0] ? `${which}:${set[0].name}` : null;
+      return key ? SM.axis.clean(this.S.axes[key]) : null;
     }
 
     axis(which, P) {
@@ -1116,9 +1326,37 @@
         return { type: 'linear', tickmode: 'array', tickvals: L.lv.map((_, i) => i), ticktext: L.labels.map(esc), range: which === 'y' ? [k - 0.5, -0.5] : [-0.5, k - 0.5], showgrid: false, zeroline: false, automargin: true };
       }
       if (kind === 'none') return { range: [-0.5, 0.5], showticklabels: false, ticks: '', showgrid: false, zeroline: false, showline: false, fixedrange: true };
-      if (kind === 'count') return { rangemode: 'tozero', zeroline: false, automargin: true };
-      const log = !isDate(col) && !!(this.S.log && this.S.log[which]);
-      return { type: isDate(col) ? 'date' : log ? 'log' : 'linear', zeroline: false, automargin: true };
+      const A = kind === 'count' ? { rangemode: 'tozero', zeroline: false, automargin: true }
+        : { type: isDate(col) ? 'date' : !isDate(col) && this.S.log && this.S.log[which] ? 'log' : 'linear', zeroline: false, automargin: true };
+      return this.settled(A, which, P);
+    }
+
+    /* The key of the settings of a panel's axis: its first column's name (a
+       count axis: 'count'), as Axis Settings keeps them. */
+    axisKey(which, P) {
+      const kind = which === 'x' ? this.xKind : this.yKind;
+      if (kind === 'count') return `${which}:count`;
+      const set = which === 'x' ? P.xset : P.yset;
+      return (kind === 'cont' || kind === 'cat') && set && set[0] ? `${which}:${set[0].name}` : null;
+    }
+
+    axisOf(which, P) {
+      const kind = which === 'x' ? this.xKind : this.yKind;
+      const col = (which === 'x' ? P.xset : P.yset)[0] || null;
+      return { which, kind, key: this.axisKey(which, P), col: col ? col.name : null, date: isDate(col) };
+    }
+
+    /* An axis with its Axis Settings (smui-axis.js): type, range, ticks,
+       order, and the reference lines drawn across the panel. */
+    settled(A, which, P) {
+      const key = this.axisKey(which, P);
+      const s = key && SM.axis ? SM.axis.clean(this.S.axes[key]) : null;
+      if (!s) return A;
+      const out = SM.axis.patch(A, s);
+      const r = SM.axis.refShapes(s, which, which === 'x' ? P.xa : P.ya, which === 'x' ? P.ya : P.xa, { log: out.type === 'log' });
+      this.fig.shapes.push(...r.shapes);
+      this.fig.annotations.push(...r.annotations);
+      return out;
     }
   }
 
@@ -1213,7 +1451,8 @@
   }
 
   RENDER.points = async (E, e) => {
-    if (e.summary && e.summary !== 'none') return summaryPoints(E, e);
+    if (e.summary && e.summary !== 'none' && E.geo) E.note('On a map, Points are drawn a row each: their Summary Statistic is not drawn there.');
+    else if (e.summary && e.summary !== 'none') return summaryPoints(E, e);
     const t = E.t;
     {
       // the plan: the jitter, and for Packed the page's geometry (pixels per unit of the value axis, per level)
@@ -1283,12 +1522,93 @@
       const uni = C.every((c) => c === C[0]);
       const tr = {
         type: E.gl ? 'scattergl' : 'scatter', mode: 'markers', x: X, y: Y, rows: R, xaxis: P.xa, yaxis: P.ya,
-        marker: { color: uni ? C[0] : C, size: E.sizeCol ? Z : (E.rows0.length > 2000 ? 4 : 6), opacity: E.sizeCol ? 0.7 : (E.rows0.length > 2000 ? 0.65 : 0.9), line: E.sizeCol ? { width: 0.6, color: rgba(SM.util.themeColors().text, 0.4) } : { width: 0 } },
+        marker: { color: uni ? C[0] : C, size: E.sizeCol ? Z : E.markerSize(E.rows0.length > 2000 ? 4 : 6), opacity: E.markerAlpha(E.sizeCol ? 0.7 : (E.rows0.length > 2000 ? 0.65 : 0.9)), line: E.sizeCol ? { width: 0.6, color: rgba(SM.util.themeColors().text, 0.4) } : { width: 0 } },
         hovertext: H, hovertemplate: '%{hovertext}<extra></extra>', ...E.legend(si, gi),
       };
       if (E.fig.mask) tr.selected = { marker: { opacity: 1 } };
+      if (E.geo) {
+        // on a map: longitude X, latitude Y; the row states through pointStates (show())
+        Object.assign(tr, { type: 'scattergeo', lon: X, lat: Y, geo: P.geo });
+        delete tr.x; delete tr.y; delete tr.xaxis; delete tr.yaxis; delete tr.selected;
+        (E.fig.geoPoints || (E.fig.geoPoints = [])).push({ trace: E.fig.traces.length, rows: R, coords: { lon: X, lat: Y }, color: tr.marker.color, size: tr.marker.size, symbols: SM.report.SYMBOLS, fade: 0.25, mask: E.fig.mask });
+      }
       E.fig.traces.push(tr);
     });
+  };
+
+  /* Map Shapes: each region of the Map Shape column filled by a statistic of
+     the Color column over its rows (a continuous one's Mean, Median, Sum,
+     Min or Max; a categorical one's most common level), or by its count of
+     rows; a choropleth on the panel's map, linked to the region's rows. */
+  RENDER.map = async (E, e) => {
+    const Sh = E.shape;
+    if (!Sh) return;
+    const cc = E.colorCol, cont = !!cc && !isCat(cc);
+    const stat = cont ? (['mean', 'median', 'sum', 'min', 'max', 'n'].includes(e.summary) ? e.summary : 'mean') : cc ? 'level' : 'n';
+    const blocks = E.panels.map((P) => {
+      const by = new Map();
+      for (const r of P.rows) {
+        const loc = Sh.locOf.get(Sh.col.values[r]);
+        if (loc == null) continue;
+        let it = by.get(loc);
+        if (!it) { it = { pos: by.size, loc, label: cellText(Sh.col, Sh.col.values[r]), all: [], rows: [] }; by.set(loc, it); }
+        it.all.push(r);
+        if (!cont || Number.isFinite(cc.values[r])) it.rows.push(r);
+      }
+      return { P, si: 0, gi: -1, R: { resp: cont ? cc : null, fac: Sh.col }, items: [...by.values()] };
+    });
+    await E.fillStats(blocks, ['median', 'min', 'max', 'mean'].includes(stat) ? [stat] : []);
+    const lv = stat === 'level' ? E.colorLv : null;
+    if (lv) {
+      for (const b of blocks) for (const it of b.items) {
+        const n = new Map();
+        for (const r of it.all) { const k = lv.pos.get(cc.values[r]); if (k != null) n.set(k, (n.get(k) || 0) + E.W(r)); }
+        let best = null, most = -Infinity;
+        for (const [k, m] of n) if (m > most || (m === most && k < best)) { best = k; most = m; }
+        it.level = best;
+      }
+    }
+    const value = (it) => (lv ? it.level : E.statValue(it, stat, null));
+    let lo = Infinity, hi = -Infinity;
+    for (const b of blocks) for (const it of b.items) { const v = value(it); if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+    // a continuous Color's Mean, Median, Min and Max lie in its range: the scale of the points' colours
+    const same = cont && ['mean', 'median', 'min', 'max'].includes(stat) && E.colorRange;
+    if (same) [lo, hi] = E.colorRange;
+    if (!(hi > lo)) { lo = Number.isFinite(lo) ? lo - 0.5 : 0; hi = lo + 1; }
+    const withPoints = E.els.some((q) => q.type === 'points');
+    if (same && withPoints) E.mapScale = true;       // one colour bar: the map's
+    const label = stat === 'n' ? 'N' : lv ? cc.name : `${STAT_LABEL[stat]}(${cc.name})`;
+    E.done.push({ type: 'map', stat, label, range: lv ? null : [lo, hi] });
+    const tc = SM.util.themeColors();
+    let cs = cont ? RAMP : seqScale();
+    if (lv) {
+      const nl = Math.max(1, lv.lv.length);
+      cs = [];
+      lv.lv.forEach((_, i) => { const col = PALETTE[i % PALETTE.length]; cs.push([i / nl, col], [(i + 1) / nl, col]); });
+    }
+    let first = true;
+    for (const b of blocks) {
+      if (!b.items.length) continue;
+      const z = b.items.map((it) => { const v = value(it); return Number.isFinite(v) ? v : null; });
+      const hov = b.items.map((it, k) => `${esc(it.label)}<br>${esc(label)}: ${lv ? esc(it.level != null ? lv.labels[it.level] : '.') : fmt(z[k])}<br>N: ${fmt(it.n)}`);
+      const tr = {
+        type: 'choropleth', geo: b.P.geo, locationmode: Sh.plotly, locations: b.items.map((it) => it.loc), z,
+        zmin: lv ? -0.5 : lo, zmax: lv ? lv.lv.length - 0.5 : hi, colorscale: cs, showscale: !lv && first,
+        colorbar: { title: { text: esc(label), side: 'right' }, thickness: 12, len: 0.8, outlinewidth: 0, x: 1.02 + (E.gy ? 0.06 : 0) },
+        marker: { line: { color: tc.surface, width: 0.6 } }, hovertext: hov, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false,
+      };
+      first = false;
+      const ti = E.fig.traces.push(tr) - 1;
+      E.fig.links.push({ trace: ti, kind: 'region', rows: b.items.map((it) => it.all), line: tc.surface });
+    }
+    // a categorical Color: a legend entry for each level (unless the points' legend has them)
+    if (lv && !(withPoints && E.G && E.G.col === cc)) {
+      E.anyLegend = true;
+      lv.labels.forEach((lab, k) => E.fig.traces.push({ type: 'scattergeo', geo: 'geo', lon: [null], lat: [null], mode: 'markers', marker: { color: PALETTE[k % PALETTE.length], size: 10, symbol: 'square' },
+        hoverinfo: 'skip', name: esc(lab), legendgroup: `g${k}`, showlegend: true }));
+    }
+    E.fig.regions = true;          // the locations Plotly matched: read once the map is drawn (matchRegions)
+    E.fig.shapeLocs = [...Sh.locOf];
   };
 
   /* Points with a Summary Statistic: one point per factor position. */
@@ -1323,7 +1643,7 @@
       const lab = STAT_LABEL[stat] || stat;
       const name = R.resp ? `${lab}(${R.resp.name})` : lab;
       const hov = b.items.map((it, k) => `${esc(it.label)}${gi >= 0 ? `, ${esc(E.G.labels[gi])}` : ''}<br>${esc(name)}: ${fmt(val[k])}<br>N: ${fmt(it.n)}`);
-      const tr = { type: E.lineType(), mode: mode === 'markers' ? 'markers' : 'lines+markers', xaxis: P.xa, yaxis: P.ya, marker: { color, size: mode === 'markers' ? 8 : 5 }, line: { color, width: 2, shape }, hovertext: hov, hovertemplate: '%{hovertext}<extra></extra>', ...E.legend(si, gi) };
+      const tr = { type: E.lineType(), mode: mode === 'markers' ? 'markers' : 'lines+markers', xaxis: P.xa, yaxis: P.ya, marker: { color, size: mode === 'markers' ? E.markerSize(6) + 2 : 5, opacity: mode === 'markers' ? E.markerAlpha(1) : 1 }, line: { color, width: 2, shape }, hovertext: hov, hovertemplate: '%{hovertext}<extra></extra>', ...E.legend(si, gi) };
       if (R.horiz) { tr.y = pos; tr.x = val; } else { tr.x = pos; tr.y = val; }
       if (fill) { tr.fill = R.horiz ? 'tozerox' : 'tozeroy'; tr.fillcolor = rgba(color, 0.32); tr.mode = 'lines'; }
       if (stack) { tr.stackgroup = `p${P.idx}s${si}`; tr.orientation = R.horiz ? 'h' : 'v'; tr.fillcolor = rgba(color, 0.55); tr.mode = 'lines'; delete tr.fill; }
@@ -1474,7 +1794,7 @@
       if (e.outliers !== false && !quant) {
         const X = [], Y = [], RR = [], H = [];
         b.items.forEach((it, k) => { for (const r of it.rows) { const v = resp.values[r]; if (v < lf[k] || v > uf[k]) { if (R.horiz) { X.push(v); Y.push(pos[k]); } else { X.push(pos[k]); Y.push(v); } RR.push(r); H.push(rowHover(E.t, r, [R.fac, resp])); } } });
-        if (RR.length) E.fig.traces.push({ type: 'scatter', mode: 'markers', x: X, y: Y, rows: RR, xaxis: P.xa, yaxis: P.ya, marker: { color, size: 5 }, hovertext: H, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false, legendgroup: gi >= 0 ? `g${gi}` : undefined });
+        if (RR.length) E.fig.traces.push({ type: 'scatter', mode: 'markers', x: X, y: Y, rows: RR, xaxis: P.xa, yaxis: P.ya, marker: { color, size: E.markerSize(5), opacity: E.markerAlpha(1) }, hovertext: H, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false, legendgroup: gi >= 0 ? `g${gi}` : undefined });
       }
       if (e.diamond) {
         const dx = [], dy = [];
@@ -2085,7 +2405,7 @@
       }
       this.plotWrap = el('div', { class: 'sm-gb-plotwrap' });
       const Z = this.zoneEls;
-      const side = el('div', { class: 'sm-gb-side' }, Z.wrap, Z.overlay, Z.color, Z.size, Z.freq);
+      const side = el('div', { class: 'sm-gb-side' }, Z.wrap, Z.overlay, Z.color, Z.size, Z.freq, Z.shape);
       this.frame = el('div', { class: 'sm-gb-frame' }, Z.groupX, Z.y, this.plotWrap, Z.groupY, side, Z.x);
       this.status = el('div', { class: 'sm-gb-status' });
       this.showCP = btn('Show Control Panel', () => this.update((S) => { S.done = false; }), { class: 'sm-linkbtn sm-gb-showcp', dataset: { gbkey: 'showcp' } });
@@ -2155,7 +2475,7 @@
         const id = idOf(ev);
         if (!id) return;
         ev.preventDefault();
-        SM.ui.menu(this.zoneMenuFor(this.t.col(id)), { x: ev.clientX, y: ev.clientY });
+        SM.ui.menu(this.columnMenu(this.t.col(id)), { x: ev.clientX, y: ev.clientY });
       });
       list.addEventListener('keydown', (ev) => {
         const items = [...list.querySelectorAll('li[data-id]')];
@@ -2173,7 +2493,7 @@
           ev.preventDefault();
           if (cur < 0) return;
           const r = items[cur].getBoundingClientRect();
-          SM.ui.menu(this.zoneMenuFor(this.t.col(items[cur].dataset.id)), { x: r.left + 20, y: r.bottom }, { returnFocus: items[cur] });
+          SM.ui.menu(this.columnMenu(this.t.col(items[cur].dataset.id)), { x: r.left + 20, y: r.bottom }, { returnFocus: items[cur] });
         } else if (ev.key === 'Escape' && this.ui.sel) { select(this.ui.sel); }
       });
     }
@@ -2184,6 +2504,30 @@
         const why = zoneRefuses(z, c);
         return { label: z.label, disabled: !!why, title: why, action: () => this.addColumns(z.key, [c.id]) };
       })];
+    }
+
+    /* A column's menu in the list: the zones, then JMP's transform columns
+       made from the list (smui-p-tables.js: a formula column right after
+       the column, with Undo), which come into the list selected, so that a
+       click on a zone (or a drag) puts one there. */
+    columnMenu(c) {
+      const made = (nc) => {
+        if (this.dead) { const b = this.current(); if (b) b.madeColumn(nc); return; }
+        this.madeColumn(nc);
+      };
+      const transforms = SM.tables && SM.tables.transformMenu ? SM.tables.transformMenu(this.t, c, made) : [];
+      return [...this.zoneMenuFor(c), ...(transforms.length ? [{ separator: true }, ...transforms] : [])];
+    }
+
+    madeColumn(nc) {
+      if (!this.t.col(nc.id)) return;
+      if (this.ui.filter && !nc.name.toLowerCase().includes(this.ui.filter.trim().toLowerCase())) { this.ui.filter = ''; this.filter.value = ''; }
+      this.ui.sel = nc.id;
+      this.root.classList.add('has-pick');
+      this.renderColumns();
+      const li = this.colList.querySelector(`li[data-id="${CSS.escape(nc.id)}"]`);
+      if (li) { li.scrollIntoView({ block: 'nearest' }); li.focus({ preventScroll: true }); }
+      SM.ui.toast(`${nc.name} is a new formula column: click a zone to put it there, or drag it onto one`);
     }
 
     autoAdd(c) {
@@ -2308,6 +2652,8 @@
           { label: 'Side by Side', checked: S[mk] !== 'merge', disabled: list.length < 2, action: () => this.update((s) => { s[mk] = 'side'; }) },
           { label: 'Log Scale', checked: on, disabled: !first || isCat(first) || isDate(first), action: () => this.update((s) => { s.log = { ...(s.log || {}), [z.key]: !on }; }) }, { separator: true });
       }
+      const lone = GROUPING.has(z.key) && list[0] ? this.t.col(list[0].id) : null;
+      if (lone && !isCat(lone)) items.push({ label: 'Levels', submenu: () => this.levelsItems(lone) }, { separator: true });
       items.push({ label: 'Add Column', submenu: () => this.addMenu(z).slice(1) });
       items.push({ label: 'Swap with', disabled: !list.length, submenu: () => ZONES.filter((o) => o.key !== z.key).map((o) => ({ label: o.label, action: () => this.update((s) => { const a = s.zones[z.key]; s.zones[z.key] = s.zones[o.key]; s.zones[o.key] = a; }) })) });
       items.push({ label: 'Remove All', disabled: !list.length, action: () => this.update((s) => { s.zones[z.key] = []; }) });
@@ -2324,7 +2670,55 @@
         const mk = z.key === 'x' ? 'xMode' : 'yMode';
         items.push({ separator: true }, { label: 'Merge Columns', checked: S[mk] === 'merge', action: () => this.update((s) => { s[mk] = s[mk] === 'merge' ? 'side' : 'merge'; }) });
       }
+      if (GROUPING.has(z.key) && !isCat(c)) items.push({ separator: true }, { label: 'Levels', submenu: () => this.levelsItems(c) });
+      if (z.key === 'shape') items.push({ separator: true }, { label: 'Names of Regions', submenu: () => MAP_MODES.map(([v, l]) => ({ label: l, checked: (S.shapeMode || 'auto') === v, action: () => this.update((s) => { s.shapeMode = v; }) })) });
+      if (z.key === 'x' || z.key === 'y') items.push({ separator: true }, ...(isCat(c) ? this.orderItems(c.name) : [this.axisSettingsItem(z.key, c)]));
       return items;
+    }
+
+    /* Axis Settings… for the axis of a column on X or Y (the first panel it is
+       on), from the zones' menus: the keyboard's way to the window. */
+    axisSettingsItem(which, c) {
+      const p = this.plotBox && this.plotBox._plot;
+      const fig = this.lastFig;
+      const name = p && p.drawn && fig ? Object.keys(fig.axisOf || {}).find((k) => fig.axisOf[k].which === which && fig.axisOf[k].col === c.name && fig.axisOf[k].kind !== 'cat') : null;
+      return { label: 'Axis Settings…', disabled: !name || !SM.axis, title: name ? null : 'the graph draws no scale for this column now', action: () => SM.axis.open(p, name) };
+    }
+
+    /* JMP's Levels of a continuous column in a grouping zone: how many bins
+       (about as many, for an equal width), of equal counts or of an equal
+       width, or Automatic (five of equal counts for more than 10 distinct
+       values, a level for each value otherwise); Save Transform Column makes
+       the bins a formula column of the table, with Make Binning Column's
+       formula at the same cuts. */
+    levelsItems(c) {
+      const spec = this.S.bins[c.name] || null;
+      const G = this.lastFig && this.lastFig.groups ? this.lastFig.groups[c.name] : null;
+      const put = (next) => this.update((S) => { if (next) S.bins[c.name] = next; else delete S.bins[c.name]; });
+      const n = (spec && spec.n) || 5;
+      return [
+        { head: `Levels of ${c.name}` },
+        { label: 'Automatic', checked: !spec, action: () => put(null) },
+        { label: 'Number of Levels…', action: async () => {
+          const v = await SM.ui.form({ title: `Number of Levels: ${c.name}`, info: 'p:graphbuilder',
+            fields: [{ key: 'n', label: `Levels (${BIN_LEVELS[0]} to ${BIN_LEVELS[1]})`, type: 'number', value: n, help: 'How many bins the column is cut into: that many of about equal counts (fewer when values tie at a cut), or about that many of an equal round width.' }],
+            validate: (x) => (x.n >= BIN_LEVELS[0] && x.n <= BIN_LEVELS[1] && Number.isInteger(x.n) ? null : `A whole number from ${BIN_LEVELS[0]} to ${BIN_LEVELS[1]}`) });
+          if (v) put({ n: v.n, method: (spec && spec.method) || 'quantile' });
+        } },
+        { label: 'Equal Counts (Quantiles)', checked: !!spec && spec.method !== 'width', action: () => put({ n, method: 'quantile' }) },
+        { label: 'Equal Width', checked: !!spec && spec.method === 'width', action: () => put({ n, method: 'width' }) },
+        { separator: true },
+        { label: 'Save Transform Column', disabled: !(G && G.binned), title: G && !G.binned ? `${c.name} has a level for each of its values here: choose a Number of Levels to bin it` : null, action: () => this.saveTransform(c) },
+      ];
+    }
+
+    async saveTransform(c) {
+      const G = this.lastFig && this.lastFig.groups ? this.lastFig.groups[c.name] : null;
+      if (!G || !G.binned || !SM.tables || !SM.tables.makeBinning) return;
+      try {
+        const nc = await SM.tables.makeBinning(this.t, c, { method: 'custom', cuts: G.cuts.join(', '), style: 'range', formula: true, name: this.t.uniqueName(`${c.name} Binned`) });
+        if (nc) this.madeColumn(nc);
+      } catch (e) { SM.ui.toast(`Save Transform Column: ${e.message}`, { error: true }); }
     }
 
     addColumns(key, ids, { replaceId = null } = {}) {
@@ -2386,11 +2780,11 @@
 
     renderPalette() {
       const cols = zoneCols(this.S, this.t);
-      const xc = cols.x[0] || null, yc = cols.y[0] || null;
+      const xc = cols.x[0] || null, yc = cols.y[0] || null, sc = cols.shape[0] || null;
       this.palette.replaceChildren();
       for (const E of ELEMENTS) {
         const on = this.S.elements.some((e) => e.type === E.type);
-        const why = xc || yc ? elementRefuses(E.type, xc, yc) : null;
+        const why = xc || yc || sc ? elementRefuses(E.type, xc, yc, sc) : null;
         const b = el('button', { type: 'button', class: 'sm-gb-el', 'aria-pressed': String(on), 'aria-disabled': why ? 'true' : null, 'aria-label': `${E.label}${why ? ` (${why})` : ''}`, title: why || `${E.label}: click to show it alone, shift-click to add or remove it`, dataset: { el: E.type, gbkey: `el:${E.type}` } },
           icon(E.type), el('span', { class: 'sm-gb-elname', text: E.label }));
         this.palette.append(b);
@@ -2587,7 +2981,8 @@
           this.lastFig = quick;
           this.show(quick, null);
           if (!quick.notes.some((n) => /Python engine has loaded/.test(n))) {
-            // drawn without Python; its code follows when the engine has loaded
+            // drawn without Python; its code follows when the engine has loaded (a map's once it is drawn)
+            if (quick.regions) return;
             SM.engine.ready().then(async () => {
               const code = await this.codeOf(quick);
               if (seq === this.seq && !this.dead && this.lastFig === quick) this.attachCode(code);
@@ -2600,7 +2995,8 @@
         }
         const fig = await buildFigure(this);
         if (seq !== this.seq || this.dead) return;
-        const code = await this.codeOf(fig);
+        // a map of regions: its code once Plotly has matched them to its boundaries (matchRegions)
+        const code = fig.regions ? null : await this.codeOf(fig);
         if (seq !== this.seq || this.dead) return;
         this.lastFig = fig;
         this.show(fig, code);
@@ -2653,8 +3049,12 @@
         width: fig.width, height: fig.height, title: fig.title,
         config: { edits: { titleText: !!S.show.title, axisTitleText: !!fig.editAxes } },
         onDraw: (gd) => this.onDraw(gd),
+        axes: this.axisProvider(fig),
+        plotMenu: () => this.graphItems(),
       });
       link(box, fig.links, { maskColors: fig.mask });
+      if (fig.geoPoints) pointStates(box, fig.geoPoints);
+      box._fig = fig;
       if (this.pendingBox) this.discard(this.pendingBox);
       if (!this.plotBox || !this.plotBox.isConnected || !this.plotBox._plot || !this.plotBox._plot.drawn) {
         this.discard(this.plotBox);
@@ -2701,6 +3101,7 @@
 
     onDraw(gd) {
       if (gd === this.pendingBox) this.promote(gd);
+      if (gd._fig && gd._fig.regions) this.matchRegions(gd, gd._fig);
       gd.on('plotly_relayout', (ev) => {
         if (!ev || this.dead) return;
         let changed = false;
@@ -2714,6 +3115,101 @@
       });
     }
 
+    /* Axis Settings of the graph's axes (smui-axis.js): kept by the column on
+       the axis (S.axes), drawn by the builder on every panel, and written
+       into the graph's code by graph.code; a categorical axis has Order By. */
+    axisProvider(fig) {
+      const of = (name) => (fig.axisOf || {})[name] || null;
+      return {
+        get: (name) => { const a = of(name); return a && a.key && a.kind !== 'cat' ? this.S.axes[a.key] || null : null; },
+        set: (name, st) => {
+          const a = of(name);
+          if (!a || !a.key || a.kind === 'cat') return;
+          this.update((S) => {
+            // a column's log scale is the zone's (its menu's Log Scale): one switch for both
+            if (st && st.log != null && a.kind === 'cont' && !a.date) { S.log = { ...(S.log || {}), [a.which]: !!st.log }; st = { ...st }; delete st.log; if (!Object.keys(st).length) st = null; }
+            if (st) S.axes[a.key] = st; else delete S.axes[a.key];
+          });
+        },
+        own: (name) => { const a = of(name); return { log: !!(a && a.kind === 'cont' && !a.date && this.S.log && this.S.log[a.which]), reversed: false }; },
+        menu: (name) => this.axisMenu(of(name)),
+      };
+    }
+
+    // More items for an axis's right-click menu (Order By, on a categorical axis).
+    axisMenu(a) {
+      return a && a.kind === 'cat' && a.col ? this.orderItems(a.col) : [];
+    }
+
+    /* JMP's Order By of a categorical axis column: by a statistic of a numeric
+       column of the graph (the other axis's first, then Color's and Size's)
+       or of any other, or by the count of rows, ascending or descending; the
+       Order Statistic (Mean, the default, Median or Sum) for the column. */
+    orderItems(name) {
+      const c = this.t.col(name);
+      if (!c) return [];
+      const cur = this.S.order[name] || null;
+      const cols = zoneCols(this.S, this.t);
+      const num = (q) => q && q.isNumeric && !isCat(q) && q !== c;
+      const inGraph = [...cols.y, ...cols.x, ...cols.color, ...cols.size].filter((q, i, a) => num(q) && a.indexOf(q) === i);
+      const stat = (cur && cur.stat) || 'mean';
+      const put = (next) => this.update((S) => { if (next) S.order[name] = next; else delete S.order[name]; });
+      const by = (q) => [false, true].map((desc) => ({
+        label: `${q ? q.name : 'Count'}, ${desc ? 'Descending' : 'Ascending'}`, checked: !!cur && (cur.by || null) === (q ? q.name : null) && !!cur.desc === desc,
+        action: () => put({ by: q ? q.name : null, stat, desc }),
+      }));
+      const others = this.t.columns.filter((q) => num(q) && !inGraph.includes(q));
+      return [
+        { label: 'Order By', submenu: () => [
+          ...inGraph.flatMap(by), ...by(null),
+          { label: 'Other Column', disabled: !others.length, submenu: () => others.map((q) => ({ label: q.name, submenu: () => by(q) })) },
+          { separator: true },
+          { label: 'Original Order', checked: !cur, action: () => put(null) },
+        ] },
+        { label: 'Order Statistic', disabled: !(cur && cur.by), title: cur && cur.by ? null : 'order by a column first', submenu: () => [['mean', 'Mean'], ['median', 'Median'], ['sum', 'Sum']].map(([k, l]) => ({ label: l, checked: stat === k, action: () => put({ ...cur, stat: k }) })) },
+      ];
+    }
+
+    // The graph's own settings: in the red triangle, and on the graph's right-click menu.
+    graphItems() {
+      return [...markerItems(this.S.marker, (patch) => this.update((s) => { s.marker = { ...s.marker, ...patch }; })),
+        { label: 'Background Map', submenu: () => [[null, 'None'], ['world', 'World'], ['usa', 'US States']].map(([v, l]) => ({ label: l, checked: (this.S.map || null) === v, action: () => this.update((s) => { s.map = v; }) })) }];
+    }
+
+    /* The regions Plotly found on its map, once it has drawn it (with the
+       boundaries it fetched from its site): each value's region, for the
+       graph's code, which draws them from the same file; the values it could
+       not match are named in a note (they are left off the map, as JMP
+       leaves shapes it does not know). */
+    async matchRegions(gd, fig, tries = 0) {
+      const file = fig.plan && fig.plan.map ? fig.plan.map.file : null;
+      const cds = (gd.calcdata || []).filter((cd) => cd && cd[0] && cd[0].trace && cd[0].trace.type === 'choropleth');
+      // matched once Plotly has its boundaries and has drawn the regions (each entry then has its feature, or false)
+      const loaded = typeof PlotlyGeoAssets !== 'undefined' && PlotlyGeoAssets.topojson && PlotlyGeoAssets.topojson[file] && cds.every((cd) => cd.every((c) => 'geojson' in c));
+      if (!loaded) {
+        if (tries < 60 && gd.isConnected) { await sleep(250); return this.matchRegions(gd, fig, tries + 1); }
+        this.addNote(fig, `Map Shapes: the map's boundaries (${file}.json from cdn.plot.ly, Plotly's site) did not load, so no region can be drawn: is the network or that site blocked?`);
+        return;
+      }
+      const found = {}, missing = [];
+      for (const cd of cds) for (const c of cd) { if (c.geojson && c.geojson.id != null) found[c.loc] = c.geojson.id; else if (!missing.includes(c.loc)) missing.push(c.loc); }
+      const ids = {};
+      for (const [v, loc] of fig.shapeLocs || []) if (found[loc] != null) ids[String(v)] = found[loc];
+      if (fig.plan && fig.plan.map && fig.plan.map.shape) fig.plan.map.shape.ids = ids;
+      if (missing.length) this.addNote(fig, `Map Shapes: ${missing.length} ${missing.length > 1 ? 'values are' : 'value is'} not a region on Plotly's map and ${missing.length > 1 ? 'are' : 'is'} left off it: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ', …' : ''}. Names of Regions in the Map Shape column's menu says how its values name them.`);
+      if (fig !== this.lastFig || this.dead || fig.coded) return;
+      fig.coded = true;
+      await SM.engine.ready().catch(() => null);
+      const code = await this.codeOf(fig);
+      if (fig === this.lastFig && !this.dead) this.attachCode(code);
+    }
+
+    addNote(fig, text) {
+      if (fig.notes.includes(text)) return;
+      fig.notes.push(text);
+      if (fig === this.lastFig && !this.dead) this.status.append(this.ctx.note(text));
+    }
+
     /* ---- the red triangle ---- */
     menu() {
       const S = this.S;
@@ -2725,6 +3221,7 @@
         tog('X Axis Title', (s) => s.show.xTitle, (s) => { s.show.xTitle = !s.show.xTitle; }),
         tog('Y Axis Title', (s) => s.show.yTitle, (s) => { s.show.yTitle = !s.show.yTitle; }),
         { label: 'Legend Position', submenu: () => [['right', 'Right'], ['bottom', 'Bottom'], ['inside', 'Inside']].map(([v, l]) => ({ label: l, checked: S.legendPos === v, action: () => this.update((s) => { s.legendPos = v; }) })) },
+        ...this.graphItems(),
         { label: 'Set Alpha Level', submenu: () => [0.1, 0.05, 0.01].map((a) => ({ label: String(a), checked: S.alpha === a, action: () => this.update((s) => { s.alpha = a; }) })).concat([{ label: 'Other…', action: async () => { const v = await SM.ui.form({ title: 'Set Alpha Level', fields: [{ key: 'a', label: 'α (0 to 0.5)', type: 'number', value: S.alpha, help: 'The α of every interval in the graph: the bands of Line of Fit (of the fit and of prediction), the smoother\'s Confidence of Fit, the Confidence Interval error bars and the Box Plot\'s Confidence Diamond are drawn at 1 − α, so 0.05 (the default) gives 95% and 0.01 gives 99%. A value outside 0 to 0.5 is ignored.' }] }); if (v && v.a > 0 && v.a < 0.5) this.update((s) => { s.alpha = v.a; }); } }]) },
         { separator: true },
         { label: 'Edit Title and Axis Titles…', action: () => this.editTitles() },
@@ -2803,12 +3300,13 @@
 
   const GB_ZONES = [
     ['X, Y', 'The axes, up to 4 columns on X and 6 on Y. With a continuous column on one axis and a categorical one on the other, the continuous one is the variable the elements summarize at each level. Several columns in a zone stand side by side, a panel each, or merge on one axis (right click the zone: Merge Columns); only continuous columns merge. The zone\'s menu also has Log Scale, for a continuous column that is not a date.'],
-    ['Group X, Group Y', 'Small multiples: a column of panels (Group X) or a row of them (Group Y) for each level, sharing their axes. A continuous column with more than 10 distinct values is cut into five bins of about equal counts.'],
+    ['Group X, Group Y', 'Small multiples: a column of panels (Group X) or a row of them (Group Y) for each level, sharing their axes. A continuous column with more than 10 distinct values is cut into five bins of about equal counts (at JMP\'s quantiles), labelled by their ranges; the column\'s Levels menu changes them.'],
     ['Wrap', 'A panel for each level, wrapped into a grid of about as many columns as rows. While Wrap has a column, Group X and Group Y wait.'],
-    ['Overlay', 'Groups within each panel, each with its colour and legend entry and its own smoother, fit, bars, boxes or beans (up to 60 groups; a continuous column with many values is cut into five bins). Rows with no value are left out of the groups.'],
+    ['Overlay', 'Groups within each panel, each with its colour and legend entry and its own smoother, fit, bars, boxes or beans (up to 60 groups; a continuous column with many values is cut into five bins, as in Group X). Rows with no value are left out of the groups.'],
     ['Color', 'Colours the points: a blue-to-red gradient over a continuous column, with a colour bar (a Heatmap then shows its mean in each cell); a colour for each level of a categorical one, which also groups the elements as Overlay does. It wins over the rows\' own colours.'],
     ['Size', 'A continuous column: the larger its value, the larger the point, from 4 pixels across at the column\'s smallest value to 22 at its largest (a missing value gives a small point).'],
     ['Freq', 'A numeric column of counts: a row counts that many times in every statistic, bin and fit; rows with a missing, zero or negative count are left out.'],
+    ['Map Shape', 'A character column of region names or codes: countries by name (Plotly\'s matching knows many forms of a name) or by their ISO 3166 three-letter code, US states by name or postal code. The graph becomes a map with Map Shapes (and Points, with continuous X and Y as longitude and latitude). Right click the column for **Names of Regions**: Automatic (US states when most values are states, codes when most are three capital letters, else country names), or say which. A value that is not on the map is named in a note under the graph.'],
   ];
   const GB_BUILDER = [
     ['Select Columns', 'The table\'s columns; Filter narrows the list by name. Drag a column onto a zone (from here or from the page\'s Columns panel), or click it and then click a zone. Double-click puts it where it fits: a continuous column on Y (then X), a categorical one on X (then Overlay, Group X, Group Y). Right click it, or press Enter, for the list of zones.'],
@@ -2819,6 +3317,10 @@
     ['Start Over', 'Empties the zones and takes the elements away; the graph size, α and the legend position stay.'],
     ['Done', 'Hides the columns, the palette, the zones and the properties and leaves the graph; Show Control Panel above the graph (or in the red triangle) brings them back.'],
     ['Titles', 'With one panel, click the title or an axis title on the graph and type your own; Edit Title and Axis Titles… in the red triangle does it for any graph.'],
+    ['Levels of a continuous grouping column', 'Right click the column in its zone: **Automatic** (five bins of about equal counts for more than 10 distinct values, else a level for each value), **Number of Levels…** (2 to 40), **Equal Counts (Quantiles)**, cut at JMP\'s quantiles so each bin holds about as many rows (fewer bins when values tie at a cut), or **Equal Width**, bins of one round width (about that many). A bin holds its lower cut and not its upper one, the last its maximum, as Make Binning Column cuts. **Save Transform Column** adds those bins to the table as a formula column (ordinal, labelled by the ranges), with Make Binning Column\'s formula at the same cuts.'],
+    ['Axes', 'Double-click a continuous axis (its tick labels) for Axis Settings: its scale, minimum, maximum, increment, order and reference lines; right click it for the same and Log Scale, Reverse Order and Add Reference Line…; the X and Y zones\' columns have Axis Settings… in their menus too. The settings go with the column on the axis, and apply to every panel it is on. Right click a categorical axis for **Order By**: its levels by the Mean (or with Order Statistic the Median or Sum) of a numeric column, or by their count of rows, ascending or descending; Original Order puts back the table\'s.'],
+    ['New columns from the list', 'Right click a column in the list for Transform (Log, Square Root, Standardize, …), Distributional (Rank, Normal Quantile, …) and, for a date, Date Time (Year, Month, Day of Week, …): each makes a formula column in the table, right after the column (Undo takes it away); it is selected in the list, so a click on a zone (or a drag) puts it there.'],
+    ['Right click the graph', 'Marker Size, Transparency and Background Map, as in the red triangle.'],
   ];
   const GB_TRIANGLE = [
     ['Show Control Panel', 'Shows or hides the columns, the palette, the zones and the properties, as Done does.'],
@@ -2827,6 +3329,10 @@
     ['Set Alpha Level', 'α for every interval in the graph: the bands of Line of Fit and of the smoother, the Confidence Interval error bars and the Confidence Diamond are at 1 − α (0.05, the default, gives 95%). Other… takes any value between 0 and 0.5.'],
     ['Edit Title and Axis Titles…', 'Your own title, and titles for the first X and Y columns; an empty one is automatic again.'],
     ['Graph Size…', 'A fixed width and height in pixels; empty fits the graph to the window.'],
+    ['Marker Size', 'The points\' size: **Automatic** (6 pixels across, 4 above 2000 rows), JMP\'s sizes 0 (Dot, 2 pixels) to 6 (XXXL, 16), or **Other…** in pixels. With a Size column it scales the sizes Size gives.'],
+    ['Transparency', 'As JMP\'s: 1 draws the points opaque, 0 not at all; between them the points behind show through. **Automatic**: the graph\'s own (0.9, 0.65 above 2000 rows, 0.7 with a Size column).'],
+    ['Background Map', '**World** or **US States** under Points whose X is a longitude and Y a latitude (continuous columns): each panel becomes a map, zoomed to its points, with Plotly\'s boundaries (from cdn.plot.ly); only Points and Map Shapes are drawn on it. **None** (the default): no map. With a Map Shape column the map is there anyway.'],
+    ['Axis Settings', 'The graph\'s axes, as a double-click on one gives them (below the report\'s items).'],
     ['Undo, Start Over', 'As the buttons above the builder.'],
   ];
   const GB_LEAD = 'Drag columns onto the zones around the graph and choose elements from the palette; the graph redraws at once. Points, bars, boxes, bins, cells and slices are linked to their rows: click or drag to select, and the selection shows in every graph of the table.';
@@ -2851,7 +3357,10 @@
           'Ellipse: the contour of the fitted bivariate normal (radius² the χ²(2) quantile of the coverage).',
           'Contour: highest-density regions of a Gaussian kernel density with Scott\'s bandwidth; Bagplot and HDR types are not here.',
           'Bean is not in JMP. It follows statsmodels\' beanplot (Kampstra 2008): every violin is scaled to the same width, so their areas do not compare the groups\' sizes; the overall mean line is Kampstra\'s, not drawn by statsmodels.',
-          'Excluded rows are left out of the graph; hidden rows are not drawn but count in the statistics. Map shapes, Page, Interval, Shape and the Local Data Filter\'s own column switcher are not in this builder.',
+          'Excluded rows are left out of the graph; hidden rows are not drawn but count in the statistics. Page, Interval, Shape and the Local Data Filter\'s own column switcher are not in this builder.',
+          'Maps: the boundaries are Plotly\'s (Natural Earth at 1:110 million: countries and US states only; JMP has counties, provinces and custom shape files too), drawn in Plotly\'s natural earth projection (Albers USA for US States); the background is its land and borders, not JMP\'s map images. Without a Color column the regions are filled by their count of rows, where JMP draws them in one colour.',
+          'Levels of a binned column: the number of bins and equal counts or an equal width; JMP\'s Custom Levels (bins at cuts you type) are Make Binning Column\'s custom cut points.',
+          'Marker Size is the points\' diameter in pixels (JMP\'s 0 to 6 give 2 to 16 pixels); Transparency applies to the points of every panel, not to one legend item.',
         ] },
       ],
       more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
@@ -2872,8 +3381,8 @@
   SM.platforms.register({
     id: 'graphbuilder', label: 'Graph Builder', menu: 'Graph', order: 10, launch: null, info: 'p:graphbuilder',
     topics: { 'p:graphbuilder': gbTopic, 'p:graphbuilder:props': gbPropsTopic },
-    about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size and Freq zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie), each with its properties. Every mark is linked to its rows; Done leaves the graph alone.',
-    uses: ['scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
+    about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size, Freq and Map Shape zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie, Map Shapes), each with its properties. Continuous grouping columns in bins of your choosing (Levels, Save Transform Column), categorical axes ordered by a statistic (Order By), Axis Settings on every axis, Marker Size and Transparency, maps of countries and US states and points on a Background Map, and transform columns made from the column list. Every mark is linked to its rows; Done leaves the graph alone.',
+    uses: ['plotly choropleth and scattergeo (Natural Earth boundaries from cdn.plot.ly)', 'scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
     title: () => 'Graph Builder',
     triangle(ctx) { const b = BUILDERS.get(ctx.report); return b && !b.dead ? b.menu() : []; },
     /* The builder of a report (its handle, as the tests use it). */
@@ -2971,12 +3480,13 @@
             ['Nonpar Density', 'Kernel density contours that hold 25, 50, 75 and 100% of the points (scipy\'s gaussian_kde, Scott\'s bandwidth), whatever their shape.'],
             ['Histograms', 'A histogram of each column on the diagonal, its bars linked to their rows.'],
             ['Matrix Format', 'Lower or upper triangle, or the square of every pair twice; not with X columns.'],
+            ...MARKER_HELP,
           ] },
         ],
         more: { label: 'Scatterplot Matrix', id: 'help-p-scattermatrix' },
       },
     },
-    about: 'A scatterplot of every pair of columns in one linked grid, with density ellipses, fit lines, nonparametric density contours and histograms on the diagonal; lower, upper or square, or Y by X.',
+    about: 'A scatterplot of every pair of columns in one linked grid, with density ellipses, fit lines, nonparametric density contours and histograms on the diagonal; lower, upper or square, or Y by X; Marker Size and Transparency.',
     uses: ['statsmodels.regression.linear_model.OLS', 'scipy.stats.chi2 (density ellipses)', 'scipy.stats.gaussian_kde'],
     launch: {
       lead: 'Choose two or more continuous columns. Each pair gets a scatterplot; with X columns as well the matrix is Y by X.',
@@ -3002,6 +3512,8 @@
         ctx.check('Nonpar Density', 'nonpar', null, false),
         ctx.check('Histograms', 'hist', null, false),
         { label: 'Matrix Format', disabled: ctx.roles('x').length > 0, submenu: () => [['lower', 'Lower Triangular'], ['upper', 'Upper Triangular'], ['square', 'Square']].map(([v, l]) => ({ label: l, checked: fmtM === v, action: () => ctx.set('format', v) })) },
+        { separator: true },
+        ...markerMenu(ctx),
       ];
     },
     async render(ctx) {
@@ -3076,7 +3588,7 @@
         pairs.push({ c, xc, yc, rows });
         if (showPts && rows.length) {
           traces.push({ type: gl ? 'scattergl' : 'scatter', mode: 'markers', x: rows.map((r) => xc.values[r]), y: rows.map((r) => yc.values[r]), rows, xaxis: xa, yaxis: ya,
-            marker: { size: rows.length > 1500 ? 3 : 4.5, color: G ? rows.map((r) => G.color(r)) : pointColor(), opacity: 0.85 },
+            marker: { size: markerSizeOf(markerOpt(ctx), rows.length > 1500 ? 3 : 4.5), color: G ? rows.map((r) => G.color(r)) : pointColor(), opacity: markerAlphaOf(markerOpt(ctx), 0.85) },
             hovertext: rows.map((r) => rowHover(t, r, [xc, yc, G ? G.col : null])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
         }
       });
@@ -3108,9 +3620,11 @@
         }
       }
       traces.push(...legendTraces(G, { type: gl ? 'scattergl' : 'scatter' }));
-      const box = ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix' });
+      // Axis Settings in the code: a cell's axes are axes[i, j] there (shared as here, X down a column, Y along a row)
+      const axisCode = (name) => { const n = name.length > 5 ? Number(name.slice(5)) : 1; const c = cells[n - 1]; return c ? `axes[${c.i}, ${c.j}]` : null; };
+      const box = ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix', plotMenu: () => markerMenu(ctx), axisCode });
       link(box, links);
-      const code = await graphCode(ctx, 'matrix', { size: [W, H], rows: R.map((c) => c.name), cols: Cc.map((c) => c.name), rect, format: fmtM, group: colorSpec(G),
+      const code = await graphCode(ctx, 'matrix', { size: [W, H], rows: R.map((c) => c.name), cols: Cc.map((c) => c.name), rect, format: fmtM, group: colorSpec(G), marker: markerOpt(ctx),
         points: showPts, fit: fitOn, ellipses: ellOn, shaded: ctx.opt('shaded', false), coverage: ctx.opt('coverage', 0.95), nonpar: npOn, hist: histOn, bins: histBins, nrows: ctx.rows.length });
       ctx.container.append(el('div', { class: 'sm-graph-wide' }, ...[box, code].filter(Boolean)));
       if (ctx.rows.length && cells.every((c) => c.diag)) ctx.container.append(ctx.note('Choose two or more columns for pairs.'));
@@ -3129,6 +3643,7 @@
             ['X Axis, Y Axis, Z Axis', 'The Y column on each axis. Choosing a column that is on another axis swaps the two, so the three axes always show three different columns.'],
             ['The graph', 'Drag to turn it and click a point to select its row. The toolbar above it zooms (pick Zoom, then drag up or down), pans, resets the view and saves a picture; the mouse wheel scrolls the page, not the graph.'],
             ['Drop Lines (red triangle)', 'A line from each point down to the lowest Z, which shows where the point lies over the X–Y plane (for up to 3000 rows).'],
+            ...MARKER_HELP.map(([k, v]) => [`${k} (red triangle)`, v]),
           ] },
           { heading: 'Linking', text: 'A click on a point selects its row; selected rows are drawn larger in orange, and the rows\' colours, markers, labels and hidden states apply. Coloring colours the points by a column instead.' },
           { heading: 'WebGL', text: 'The graph is drawn with WebGL; a browser with WebGL turned off shows a notice instead.' },
@@ -3136,7 +3651,7 @@
         more: { label: 'Scatterplot 3D', id: 'help-p-scatter3d' },
       },
     },
-    about: 'Three continuous columns as a rotating point cloud; menus choose the axes among the Y columns; linked point by point.',
+    about: 'Three continuous columns as a rotating point cloud; menus choose the axes among the Y columns; linked point by point; Marker Size and Transparency.',
     uses: ['plotly scatter3d (drawing only)'],
     launch: {
       lead: 'Choose three or more continuous columns; the first three go on the axes, and the menus in the report change them.',
@@ -3147,7 +3662,7 @@
       ],
     },
     title: () => 'Scatterplot 3D',
-    triangle(ctx) { return [ctx.check('Drop Lines', 'drop', null, false)]; },
+    triangle(ctx) { return [ctx.check('Drop Lines', 'drop', null, false), { separator: true }, ...markerMenu(ctx)]; },
     async render(ctx) {
       const t = ctx.table;
       const ys = ctx.roles('y');
@@ -3167,7 +3682,8 @@
       const C = colorer(t, ctx.role('color'), rows);
       const base = rows.map((r) => (C ? C.color(r) : pointColor()));
       const X = rows.map((r) => cols[0].values[r]), Y = rows.map((r) => cols[1].values[r]), Z = rows.map((r) => cols[2].values[r]);
-      const traces = [{ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: 3.5, color: base, line: { width: 0 } },
+      const m3 = markerSizeOf(markerOpt(ctx), 3.5);
+      const traces = [{ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: m3, color: base, opacity: markerAlphaOf(markerOpt(ctx), 1), line: { width: 0 } },
         hovertext: rows.map((r) => rowHover(t, r, [...cols, C ? C.col : null])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }];
       if (ctx.opt('drop', false) && rows.length <= 3000) {
         const zmin = Math.min(...Z);
@@ -3177,8 +3693,8 @@
       }
       const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(620, w * 0.82));
       const box = ctx.plot(traces, { scene: scene3d(cols.map((c) => c.name)), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: 'Scatterplot 3D' });
-      pointStates(box, [{ trace: 0, rows, coords: { x: X, y: Y, z: Z }, color: base, size: 3.5, symbols: SYM3D, fade: 0.2, mask: !!C }]);
-      const code = await graphCode(ctx, 'scatter3d', { size: [w, h], cols: cols.map((c) => c.name), color: colorSpec(C), drop: !!(ctx.opt('drop', false) && rows.length <= 3000) });
+      pointStates(box, [{ trace: 0, rows, coords: { x: X, y: Y, z: Z }, color: base, size: m3, symbols: SYM3D, fade: 0.2, mask: !!C }]);
+      const code = await graphCode(ctx, 'scatter3d', { size: [w, h], cols: cols.map((c) => c.name), color: colorSpec(C), drop: !!(ctx.opt('drop', false) && rows.length <= 3000), marker: markerOpt(ctx) });
       ctx.container.append(...[pick, box, code, htmlLegend(C)].filter(Boolean), ctx.note(`${rows.length} rows with all three values. Drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag. A click selects a row.`));
     },
   });
@@ -3218,11 +3734,12 @@
           ['Specify Contours…', 'How many contours, or the step between them with a first and last level; empty is automatic: about 10 at round levels.'],
           ['Interpolation', '**Linear** (the default): a plane over each triangle of the Delaunay triangulation of the rows; **Cubic**: a smooth surface through them (scipy\'s Clough–Tocher); **Nearest**: each grid point takes the value of the nearest row, and there are values beyond the hull too.'],
           ['Color Theme', 'The colour scale of the levels: Blue to Gray to Red (the default), Viridis, Blues or Spectral.'],
+          ...MARKER_HELP.map(([k, v]) => [k, `Of the data points. ${v}`]),
         ] }],
         more: { label: 'Contour Plot', id: 'help-p-contour' },
       },
     },
-    about: 'Contours of a response over two coordinates, interpolated on the Delaunay triangulation of the points (linear, cubic or nearest), with the data points linked.',
+    about: 'Contours of a response over two coordinates, interpolated on the Delaunay triangulation of the points (linear, cubic or nearest), with the data points linked (their Marker Size and Transparency set in the red triangle).',
     uses: ['scipy.interpolate.griddata'],
     launch: XY_LAUNCH('Choose the response Y and the two X coordinates. Each Y gets its contour plot.'),
     title: () => 'Contour Plot',
@@ -3232,7 +3749,7 @@
         const sc = yc.id;
         const o = (k, d) => ctx.opt(k, d, sc);
         const ob = ctx.outline(`Contour Plot for ${yc.name}`, { key: `c:${yc.id}`, menu: () => [
-          ctx.check('Show Data Points', 'points', sc, true), ctx.check('Fill Areas', 'fill', sc, false), ctx.check('Label Contours', 'labels', sc, false),
+          ctx.check('Show Data Points', 'points', sc, true), ctx.check('Fill Areas', 'fill', sc, false), ctx.check('Label Contours', 'labels', sc, false), ...markerMenu(ctx),
           { label: 'Specify Contours…', action: async () => { const cur = o('levels', {}); const v = await SM.ui.form({ title: `Specify Contours: ${yc.name}`, lead: 'Either the number of contours, or the step (with an optional first and last level). Empty: automatic.', fields: [{ key: 'n', label: 'Number of contours', type: 'number', value: cur.n ?? null, help: 'About how many contours: the step between them is the round number at or just above the range of Y divided by this (10 when empty). Not used when a Step is given.' }, { key: 'size', label: 'Step', type: 'number', value: cur.size ?? null, help: 'The distance between two contour levels, in the units of Y; it takes the place of the number of contours.' }, { key: 'min', label: 'First level', type: 'number', value: cur.min ?? null, help: 'With a Step: the lowest contour level (empty: the lowest interpolated value).' }, { key: 'max', label: 'Last level', type: 'number', value: cur.max ?? null, help: 'With a Step: the highest contour level (empty: the highest interpolated value).' }] }); if (v) ctx.set('levels', v, sc); } },
           interpMenu(ctx, sc), themeMenu(ctx, sc),
         ] });
@@ -3244,11 +3761,11 @@
           colorbar: { title: { text: esc(yc.name), side: 'right' }, thickness: 12, outlinewidth: 0 }, hovertemplate: `${esc(xa.name)} %{x}<br>${esc(xb.name)} %{y}<br>${esc(yc.name)} %{z:.4g}<extra></extra>` }];
         if (o('points', true)) {
           const rows = ctx.rows.filter((r) => [xa, xb, yc].every((c) => Number.isFinite(c.values[r])));
-          traces.push({ type: rows.length > GL_POINTS && webgl() ? 'scattergl' : 'scatter', mode: 'markers', x: rows.map((r) => xa.values[r]), y: rows.map((r) => xb.values[r]), rows, marker: { size: 5, color: dark() ? '#e8e0d8' : '#3d3229', opacity: 0.75 }, hovertext: rows.map((r) => rowHover(ctx.table, r, [xa, xb, yc])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
+          traces.push({ type: rows.length > GL_POINTS && webgl() ? 'scattergl' : 'scatter', mode: 'markers', x: rows.map((r) => xa.values[r]), y: rows.map((r) => xb.values[r]), rows, marker: { size: markerSizeOf(markerOpt(ctx), 5), color: dark() ? '#e8e0d8' : '#3d3229', opacity: markerAlphaOf(markerOpt(ctx), 0.75) }, hovertext: rows.map((r) => rowHover(ctx.table, r, [xa, xb, yc])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
         }
         const w = Math.min(640, availWidth(ctx)), h = Math.round(w * 0.78);
-        const box = ctx.plot(traces, { xaxis: { title: { text: esc(xa.name) }, zeroline: false }, yaxis: { title: { text: esc(xb.name) }, zeroline: false }, margin: { l: 60, r: 10, t: 10, b: 46 } }, { width: w, height: h, title: `Contour plot of ${yc.name}` });
-        const code = await graphCode(ctx, 'contour', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: 70, levels: { start: lv.start, end: lv.end, size: lv.size }, fill, labels: !!o('labels', false), theme: o('theme', 'ramp'), points: !!o('points', true) });
+        const box = ctx.plot(traces, { xaxis: { title: { text: esc(xa.name) }, zeroline: false }, yaxis: { title: { text: esc(xb.name) }, zeroline: false }, margin: { l: 60, r: 10, t: 10, b: 46 } }, { width: w, height: h, title: `Contour plot of ${yc.name}`, plotMenu: () => markerMenu(ctx) });
+        const code = await graphCode(ctx, 'contour', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: 70, levels: { start: lv.start, end: lv.end, size: lv.size }, fill, labels: !!o('labels', false), theme: o('theme', 'ramp'), points: !!o('points', true), marker: markerOpt(ctx) });
         ob.add(...[box, code].filter(Boolean), ctx.note(`${res.n} points (${res.points} distinct positions), ${res.method} interpolation on a 70 × 70 grid; ${fill ? 'filled bands' : 'lines'} every ${fmt(lv.size)}.`));
       }
     },
@@ -3266,11 +3783,12 @@
           ['Interpolation', '**Linear** (the default): a plane over each triangle of the Delaunay triangulation of the rows; **Cubic**: a smooth surface through them (Clough–Tocher); **Nearest**: the value of the nearest row, beyond the hull too.'],
           ['Color Theme', 'The colour scale of the surface: Blue to Gray to Red (the default), Viridis, Blues or Spectral.'],
           ['Grid Size…', 'How many grid points the surface has along each X (default 40).'],
+          ...MARKER_HELP.map(([k, v]) => [k, `Of the data points. ${v}`]),
         ] }, { heading: 'The graph', text: 'Drag to turn it; to zoom, pick Zoom in the toolbar above the graph and drag. A click on a data point selects its row. The graph needs WebGL.' }],
         more: { label: 'Surface Plot', id: 'help-p-surface' },
       },
     },
-    about: 'A response over two coordinates as a 3-D surface interpolated on the Delaunay triangulation of the points, with the linked data points.',
+    about: 'A response over two coordinates as a 3-D surface interpolated on the Delaunay triangulation of the points, with the linked data points (their Marker Size and Transparency set in the red triangle).',
     uses: ['scipy.interpolate.griddata'],
     launch: XY_LAUNCH('Choose the response Y and the two X coordinates. Each Y gets its surface.'),
     title: () => 'Surface Plot',
@@ -3280,7 +3798,7 @@
         const sc = yc.id;
         const o = (k, d) => ctx.opt(k, d, sc);
         const ob = ctx.outline(`Surface Plot for ${yc.name}`, { key: `s:${yc.id}`, menu: () => [
-          ctx.check('Show Data Points', 'points', sc, true), ctx.check('Show Contours', 'contours', sc, false),
+          ctx.check('Show Data Points', 'points', sc, true), ctx.check('Show Contours', 'contours', sc, false), ...markerMenu(ctx),
           interpMenu(ctx, sc), themeMenu(ctx, sc),
           { label: 'Grid Size…', action: async () => { const v = await SM.ui.form({ title: 'Grid Size', fields: [{ key: 'g', label: 'Points on each axis (10 to 120)', type: 'number', value: o('grid', 40), help: 'The surface is interpolated at this many points along each X, so on a grid of this many squared (default 40). A finer grid shows more detail and draws more slowly; values outside 10 to 120 are brought inside.' }] }); if (v && v.g) ctx.set('grid', clamp(Math.round(v.g), 10, 120), sc); } },
         ] });
@@ -3293,13 +3811,14 @@
           const rows = ctx.rows.filter((r) => [xa, xb, yc].every((c) => Number.isFinite(c.values[r])));
           const X = rows.map((r) => xa.values[r]), Y = rows.map((r) => xb.values[r]), Z = rows.map((r) => yc.values[r]);
           const base = dark() ? '#f0e6dc' : '#2b221b';
-          traces.push({ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: 3, color: base }, hovertext: rows.map((r) => rowHover(ctx.table, r, [xa, xb, yc])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
-          specs.push({ trace: 1, rows, coords: { x: X, y: Y, z: Z }, color: base, size: 3, symbols: SYM3D, fade: 0.3 });
+          const ms = markerSizeOf(markerOpt(ctx), 3);
+          traces.push({ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: ms, color: base, opacity: markerAlphaOf(markerOpt(ctx), 1) }, hovertext: rows.map((r) => rowHover(ctx.table, r, [xa, xb, yc])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false });
+          specs.push({ trace: 1, rows, coords: { x: X, y: Y, z: Z }, color: base, size: ms, symbols: SYM3D, fade: 0.3 });
         }
         const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(640, w * 0.82));
         const box = ctx.plot(traces, { scene: scene3d([xa.name, xb.name, yc.name]), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: `Surface of ${yc.name}` });
         if (specs.length) pointStates(box, specs);
-        const code = await graphCode(ctx, 'surface', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: o('grid', 40), contours: !!o('contours', false), theme: o('theme', 'ramp'), points: !!o('points', true) });
+        const code = await graphCode(ctx, 'surface', { size: [w, h], x: xa.name, y: xb.name, z: yc.name, method: o('method', 'linear'), grid: o('grid', 40), contours: !!o('contours', false), theme: o('theme', 'ramp'), points: !!o('points', true), marker: markerOpt(ctx) });
         ob.add(...[box, code].filter(Boolean), ctx.note(`${res.n} points, ${res.method} interpolation on a ${o('grid', 40)} × ${o('grid', 40)} grid; outside the points' hull the surface is missing.`));
       }
     },
@@ -3321,12 +3840,13 @@
             ['Label', 'Writes each bubble\'s ID (or the row\'s label) on it.'],
             ['All Times', 'With a Time column: every row at once, a bubble for each ID over all the times, without the animation.'],
             ['Bubble Size', 'Scales every bubble, × 0.5 to × 2; at × 1 the largest bubble is 46 pixels across.'],
+            ['Transparency', 'As JMP\'s: 1 draws the bubbles opaque, 0 not at all. **Automatic**: 0.72, so the bubbles behind show through.'],
           ] },
         ],
         more: { label: 'Bubble Plot', id: 'help-p-bubble' },
       },
     },
-    about: 'Bubbles at the mean X and Y of each ID, sized by the sum of a column and coloured by another, animated over Time with a slider; linked to the rows of each bubble.',
+    about: 'Bubbles at the mean X and Y of each ID, sized by the sum of a column and coloured by another, animated over Time with a slider; linked to the rows of each bubble; their Transparency set in the red triangle.',
     uses: ['plotly frames (animation)'],
     launch: {
       lead: 'Y and X place the bubbles. ID makes one bubble of the rows of each level; Time animates them.',
@@ -3347,6 +3867,7 @@
         ctx.check('Label', 'label', null, false),
         ctx.check('All Times', 'allTimes', null, false, { disabled: !ctx.role('time') }),
         { label: 'Bubble Size', submenu: () => [0.5, 0.75, 1, 1.5, 2].map((f) => ({ label: `× ${f}`, checked: ctx.opt('scale', 1) === f, action: () => ctx.set('scale', f) })) },
+        ...markerMenu(ctx, 'Transparency'),
       ];
     },
     async render(ctx) {
@@ -3414,7 +3935,7 @@
       const f0 = frames[0];
       const lab = ctx.opt('label', false);
       const tr = { type: 'scatter', mode: lab ? 'markers+text' : 'markers', x: f0.x, y: f0.y, text: lab ? labels.map(esc) : undefined, textposition: 'middle center', textfont: { size: 9 },
-        marker: { size: f0.s, sizemode: 'area', sizeref, sizemin: 2, color: f0.col, opacity: 0.72, line: { width: labels.map(() => 0.6), color: labels.map(() => rgba(SM.util.themeColors().text, 0.5)) } },
+        marker: { size: f0.s, sizemode: 'area', sizeref, sizemin: 2, color: f0.col, opacity: markerAlphaOf(markerOpt(ctx), 0.72), line: { width: labels.map(() => 0.6), color: labels.map(() => rgba(SM.util.themeColors().text, 0.5)) } },
         hovertext: f0.hov, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false };
       const exX = extent(rows.map((r) => X.values[r])), exY = extent(rows.map((r) => Y.values[r]));
       const pad = (ex) => (ex ? [ex[0] - 0.08 * (ex[1] - ex[0] || 1), ex[1] + 0.08 * (ex[1] - ex[0] || 1)] : undefined);
@@ -3427,7 +3948,7 @@
       }
       const traces = [tr, ...(C && C.cat ? legendTraces(C) : [])];
       const w = Math.min(760, availWidth(ctx)), h = Math.round(w * 0.66) + (frames.length > 1 ? 80 : 0);
-      const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Bubble Plot', onDraw: (gd) => {
+      const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Bubble Plot', plotMenu: () => markerMenu(ctx, 'Transparency'), onDraw: (gd) => {
         if (frames.length > 1) Plotly.addFrames(gd, frames.map((fr) => ({ name: fr.name, data: [{ x: fr.x, y: fr.y, 'marker.size': fr.s, 'marker.color': fr.col, hovertext: fr.hov }], traces: [0] })));
       } });
       // Linked by ID: a click selects the bubble's rows, and bubbles with a selected row are ringed.
@@ -3460,7 +3981,7 @@
       const lab0 = t.labelColumn();
       const code = await graphCode(ctx, 'bubble', { size: [w, h], x: X.name, y: Y.name, ids: IDs.map((c) => c.name), time: T ? T.name : null, allTimes: !!(T && ctx.opt('allTimes', false)),
         time0: times[0], time0_label: T && times[0] != null ? cellText(T, times[0]) : null, times: T && times[0] != null ? times : [], sizes: Z ? Z.name : null, freq: F ? F.name : null,
-        color: colorSpec(C), label: !!lab, label_col: lab0 ? lab0.name : null, scale: ctx.opt('scale', 1) || 1, xrange: pad(exX) || null, yrange: pad(exY) || null });
+        color: colorSpec(C), label: !!lab, label_col: lab0 ? lab0.name : null, scale: ctx.opt('scale', 1) || 1, xrange: pad(exX) || null, yrange: pad(exY) || null, marker: markerOpt(ctx) });
       ctx.container.append(...[box, code, ctx.note(`${nItems} bubble${nItems === 1 ? '' : 's'}${IDs.length ? ` (one per ${IDs.map((c) => c.name).join(' × ')})` : ' (one per row)'} at the mean ${X.name} and ${Y.name}${F ? ` weighted by ${F.name}` : ''}; area proportional to ${Z ? `the sum of ${Z.name}` : 'the count of rows'}${frames.length > 1 ? `; ${frames.length} times of ${T.name}` : ''}.`)].filter(Boolean));
     },
   });
@@ -3674,11 +4195,11 @@
       'p:ternary': {
         kicker: 'Graph', title: 'Ternary Plot',
         lead: 'Three components of a mixture, each row a point in the triangle: its three values divided by their sum. Rows with a negative value or a zero sum are left out.',
-        sections: [{ heading: 'Linking', text: 'Click a point or drag a lasso to select rows; selected rows show in orange, and the rows\' colours, markers, labels and hidden states apply.' }],
+        sections: [{ heading: 'Linking', text: 'Click a point or drag a lasso to select rows; selected rows show in orange, and the rows\' colours, markers, labels and hidden states apply.' }, { heading: 'The red triangle', choices: MARKER_HELP }],
         more: { label: 'Ternary Plot', id: 'help-p-ternary' },
       },
     },
-    about: 'Three components as shares of their sum in a triangle, one point per row, linked to the table.',
+    about: 'Three components as shares of their sum in a triangle, one point per row, linked to the table; Marker Size and Transparency.',
     uses: ['plotly scatterternary (drawing only)'],
     launch: {
       lead: 'Choose the three components.',
@@ -3689,6 +4210,7 @@
       ],
     },
     title: () => 'Ternary Plot',
+    triangle(ctx) { return markerMenu(ctx); },
     async render(ctx) {
       const t = ctx.table;
       const [A, Bc, Cc] = ctx.roles('y');
@@ -3699,11 +4221,12 @@
       const base = rows.map((r) => (C ? C.color(r) : pointColor()));
       const tc = SM.util.themeColors();
       const axis = (col) => ({ title: { text: esc(col.name) }, gridcolor: tc.grid, linecolor: tc.muted, tickcolor: tc.muted, color: tc.text, min: 0 });
-      const traces = [{ type: 'scatterternary', mode: 'markers', a, b, c, rows, marker: { size: 6, color: base, line: { width: 0 } }, hovertext: rows.map((r, k) => `${rowHover(t, r, [A, Bc, Cc])}<br>shares ${fmt(a[k], { digits: 3 })}, ${fmt(b[k], { digits: 3 })}, ${fmt(c[k], { digits: 3 })}`), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }];
+      const mt = markerSizeOf(markerOpt(ctx), 6);
+      const traces = [{ type: 'scatterternary', mode: 'markers', a, b, c, rows, marker: { size: mt, color: base, opacity: markerAlphaOf(markerOpt(ctx), 1), line: { width: 0 } }, hovertext: rows.map((r, k) => `${rowHover(t, r, [A, Bc, Cc])}<br>shares ${fmt(a[k], { digits: 3 })}, ${fmt(b[k], { digits: 3 })}, ${fmt(c[k], { digits: 3 })}`), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }];
       const w = Math.min(620, availWidth(ctx));
       const box = ctx.plot(traces, { ternary: { sum: 1, aaxis: axis(A), baxis: axis(Bc), caxis: axis(Cc), bgcolor: 'rgba(0,0,0,0)' }, dragmode: 'lasso', xaxis: { visible: false }, yaxis: { visible: false }, margin: { l: 50, r: 50, t: 36, b: 36 } }, { width: w, height: Math.round(w * 0.9), title: 'Ternary Plot' });
-      pointStates(box, [{ trace: 0, rows, coords: { a, b, c }, color: base, size: 6, symbols: SM.report.SYMBOLS, fade: 0.25, mask: !!C }]);
-      const code = await graphCode(ctx, 'ternary', { size: [w, Math.round(w * 0.9)], cols: [A.name, Bc.name, Cc.name], color: colorSpec(C) });
+      pointStates(box, [{ trace: 0, rows, coords: { a, b, c }, color: base, size: mt, symbols: SM.report.SYMBOLS, fade: 0.25, mask: !!C }]);
+      const code = await graphCode(ctx, 'ternary', { size: [w, Math.round(w * 0.9)], cols: [A.name, Bc.name, Cc.name], color: colorSpec(C), marker: markerOpt(ctx) });
       ctx.container.append(...[box, code, htmlLegend(C)].filter(Boolean), ctx.note(`${rows.length} rows${rows.length < ctx.rows.length ? `; ${ctx.rows.length - rows.length} with a missing or negative value, or a zero sum, left out` : ''}. Each point is (${A.name}, ${Bc.name}, ${Cc.name}) divided by their sum.`));
     },
   });
@@ -4436,11 +4959,12 @@
           ['Sort X', 'On (the default): the points are joined in the order of X; off: in the table\'s row order.'],
           ['Connect Thru Missing', 'A line goes on across a row whose Y is missing; off, it breaks there.'],
           ['Y Options', 'For each Y column: **Left Scale** or **Right Scale** (the axis on the right, with Overlay Y\'s), **Show Points**, **Connect Points** (the line), **Needle** (a line from 0 to each point) and **Step** (a step from each point to the next).'],
+          ...MARKER_HELP.map(([k, v]) => [k, `Of the points (not the lines). ${v}`]),
         ] }],
         more: { label: 'Overlay Plot', id: 'help-p-overlay' },
       },
     },
-    about: 'Several Y columns against one X (or the row order), points and lines, on a left and a right axis or on separate axes; linked point by point.',
+    about: 'Several Y columns against one X (or the row order), points and lines, on a left and a right axis or on separate axes; linked point by point; Marker Size and Transparency of the points.',
     uses: ['plotly (drawing only)'],
     launch: {
       lead: 'Choose the Y columns and, optionally, the X to plot them against.',
@@ -4464,6 +4988,8 @@
           ctx.check('Show Points', 'points', c.id, true), ctx.check('Connect Points', 'connect', c.id, true),
           ctx.check('Needle', 'needle', c.id, false), ctx.check('Step', 'step', c.id, false),
         ] })) },
+        { separator: true },
+        ...markerMenu(ctx),
       ];
     },
     async render(ctx) {
@@ -4491,7 +5017,7 @@
           const pts = ctx.opt('points', true, sc), con = ctx.opt('connect', true, sc);
           const yv = rs.map((r) => (Number.isFinite(c.values[r]) ? c.values[r] : null));
           traces.push({ type: 'scatter', mode: [pts ? 'markers' : '', con ? 'lines' : ''].filter(Boolean).join('+') || 'markers', x: rs.map(xOf), y: yv, rows: rs, xaxis: xa, yaxis: ya,
-            line: { color, width: 1.5, shape: ctx.opt('step', false, sc) ? 'hv' : 'linear' }, marker: { color, size: 5 }, connectgaps: thru,
+            line: { color, width: 1.5, shape: ctx.opt('step', false, sc) ? 'hv' : 'linear' }, marker: { color, size: markerSizeOf(markerOpt(ctx), 5), opacity: markerAlphaOf(markerOpt(ctx), 1) }, connectgaps: thru,
             name: esc(G ? `${c.name}, ${G.labels[g]}` : c.name), hovertext: rs.map((r) => rowHover(t, r, [X, c, G ? G.col : null])), hovertemplate: '%{hovertext}<extra></extra>' });
           if (ctx.opt('needle', false, sc)) {
             const nx = [], ny = [];
@@ -4513,8 +5039,10 @@
         if (anyRight) layout.yaxis2 = { overlaying: 'y', side: 'right', title: { text: esc(right.map((c) => c.name).join(', ')) }, showgrid: false, zeroline: false };
       }
       const w = Math.min(760, availWidth(ctx)), h = overlayY ? Math.round(w * 0.6) : clamp(160 * n + 60, 260, 900);
-      const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Overlay Plot' });
-      const code = await graphCode(ctx, 'overlay', { size: [w, h], x: X ? X.name : null, group: colorSpec(G), overlayY, sortX, thru,
+      // Axis Settings in the code: ax (and ax2, the right axis), or axes[i, 0] for each Y on its own axis
+      const axisCode = (name) => (overlayY ? ({ xaxis: 'ax', yaxis: 'ax', yaxis2: anyRight ? 'ax2' : null }[name] || null) : `axes[${(name.length > 5 ? Number(name.slice(5)) : 1) - 1}, 0]`);
+      const box = ctx.plot(traces, layout, { width: w, height: h, title: 'Overlay Plot', plotMenu: () => markerMenu(ctx), axisCode });
+      const code = await graphCode(ctx, 'overlay', { size: [w, h], x: X ? X.name : null, group: colorSpec(G), overlayY, sortX, thru, marker: markerOpt(ctx),
         ys: ys.map((c) => ({ col: c.name, right: overlayY && ctx.opt('right', false, c.id) === true, points: ctx.opt('points', true, c.id), connect: ctx.opt('connect', true, c.id), needle: ctx.opt('needle', false, c.id), step: ctx.opt('step', false, c.id) })) });
       ctx.container.append(...[box, code, ctx.note(`${ys.map((c) => c.name).join(', ')} against ${X ? X.name : 'the row order'}${sortX ? ', connected in the order of X' : ', connected in row order'}.`)].filter(Boolean));
     },

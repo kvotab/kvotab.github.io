@@ -13,17 +13,31 @@ them, with scikit-learn's text features:
              neither begin nor end with a stop word, seen at least twice
   terms      the tokens with the added phrases joined, less the stop words
              (scikit-learn's ENGLISH_STOP_WORDS, read at run time, and the
-             user's), stemmed by Porter's algorithm (written here from the
-             1980 paper) and recoded; a stemmed term ends in a dot (·)
+             user's), stemmed by Snowball's English (Porter2) stemmer, JMP's
+             (or Porter's 1980 algorithm; both written here from their
+             published definitions) and recoded; a stemmed term ends in a dot (·)
   DTM        scikit-learn's CountVectorizer over the terms of each document
              (a row, or the rows that share an ID), weighted as JMP weights
-             it: Binary, Ternary, Frequency, Log Freq, TF IDF
+             it: Binary, Ternary, Frequency, Log Freq, TF IDF (both logs
+             base 10, as JMP's help writes them)
   LSA        the truncated SVD of the weighted matrix: TruncatedSVD when it
              is not centered, PCA (the same SVD of the centered matrix,
              without making the sparse matrix dense) when it is
   topics     the SVD's term coordinates rotated by varimax (Kaiser 1958),
              as JMP's Topic Analysis; or scikit-learn's NMF or
              LatentDirichletAllocation
+  LCA        Latent Class Analysis: a Bernoulli mixture of the binary
+             matrix fitted by EM (written here, sparse), JMP's top-term
+             scores, and the clusters mapped by classical scaling of their
+             Kullback-Leibler distances
+  clusters   Cluster Terms and Cluster Documents: Ward's hierarchical
+             clustering (scipy) of the SVD's term or document coordinates
+  selection  Term Selection: an elastic net of a response on the matrix
+             (scikit-learn's ElasticNet; glmnet's Newton steps for a binary
+             response), chosen by AICc with JMP's early stopping
+  sentiment  VADER (the vaderSentiment package, MIT), which the page fetches
+             from PyPI the first time (its one wheel, pinned by sha256) and
+             installs with micropip: its lexicon is never part of this site
 
 The functions between the '>>>' and '<<<' markers need only the standard
 library, numpy, scipy and scikit-learn: the code under each result copies
@@ -39,11 +53,13 @@ import re
 import numpy as np
 
 from . import data, predictive
+from .util import one_line
 from .registry import api
 
 SK = predictive.SK
 BASE, BAR = '#2f6690', '#8fa9c2'   # the points' and the bars' colours, light theme
 STEMMING = ('none', 'combine', 'all')
+STEMMERS = {'snowball': 'Snowball (Porter2)', 'porter': 'Porter (1980)'}
 TOKENIZING = ('regex', 'basic')
 WEIGHTINGS = {'binary': 'Binary', 'ternary': 'Ternary', 'frequency': 'Frequency', 'logfreq': 'Log Freq', 'tfidf': 'TF IDF'}
 CENTERING = {'uncentered': 'Uncentered', 'centered': 'Centered', 'scaled': 'Centered and Scaled'}
@@ -78,18 +94,19 @@ REGEX_BUILTIN = (r"(?:https?://|www\.)[^\s<>\"']++"          # a URL
 REGEX_BASIC = r"[^\W_]++"                                     # Basic Words: runs of letters and digits
 
 
-def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, max_chars=100,
-               stemming='none', phrases=(), recodes=None, user_stop=()):
+def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, max_chars=50,
+               stemming='none', phrases=(), recodes=None, user_stop=(), stemmer='snowball'):
     """The tokens and the terms of each text, as Text Explorer reads them.
 
     tokens: the lowercase words of each text between min_chars and
     max_chars characters long (Regex: the built-in patterns, or regex;
     Basic Words: runs of letters and digits). terms: the tokens with the
     added phrases joined into one term each, less the stop words, stemmed
-    by Porter's algorithm ('combine': the words that share a stem with
-    another word; 'all': every word of three or more letters a-z) and
-    recoded ({term: new term}). Returns (tokens, terms, stem_of), stem_of
-    the stemmed term of each word that has one."""
+    by Snowball's English stemmer (Porter2; stemmer 'porter': Porter's
+    1980 algorithm) ('combine': the words that share a stem with another
+    word; 'all': every word of three or more letters a-z) and recoded
+    ({term: new term}). Returns (tokens, terms, stem_of), stem_of the
+    stemmed term of each word that has one."""
     pattern = re.compile(regex or (REGEX_BUILTIN if tokenizing == 'regex' else REGEX_BASIC))
     builtin = tokenizing == 'regex' and not regex
     tokens = []
@@ -113,9 +130,9 @@ def read_terms(texts, stop_words, tokenizing='regex', regex=None, min_chars=1, m
     user_stop = set(user_stop)
     stem_of = {}
     if stemming in ('combine', 'all'):
-        stemmer = PorterStemmer()
+        stem = (SnowballStemmer if stemmer == 'snowball' else PorterStemmer)().stem
         words = {t for toks in joined for t in toks if t not in stop_words and t not in user_stop}
-        stems = {w: stemmer.stem(w) for w in words if len(w) > 2 and w.isascii() and w.isalpha()}
+        stems = {w: stem(w) for w in words if len(w) > 2 and w.isascii() and w.isalpha()}
         if stemming == 'all':
             stem_of = {w: s + DOT for w, s in stems.items()}
         else:
@@ -169,7 +186,8 @@ def join_phrases(tokens, phrases):
 def count_phrases(tokens, stop_words, max_words=4, most=1000):
     """The Phrase List: runs of 2 to max_words tokens of one text that
     neither begin nor end with a stop word, seen at least twice; the most
-    frequent first (then alphabetically), at most `most` of them."""
+    frequent first, then the longer, then alphabetically (JMP's order), at
+    most `most` of them."""
     counts = {}
     for toks in tokens:
         n = len(toks)
@@ -180,7 +198,7 @@ def count_phrases(tokens, stop_words, max_words=4, most=1000):
                 if toks[j - 1] not in stop_words:
                     key = ' '.join(toks[i:j])
                     counts[key] = counts.get(key, 0) + 1
-    kept = sorted((p for p, c in counts.items() if c > 1), key=lambda p: (-counts[p], p))
+    kept = sorted((p for p, c in counts.items() if c > 1), key=lambda p: (-counts[p], -p.count(' '), p))   # JMP's order: count, longer, alphabetical
     return [(p, counts[p]) for p in kept[:most]]
 # <<< reading the texts
 
@@ -310,12 +328,163 @@ class PorterStemmer:
 # <<< the Porter stemmer
 
 
+# >>> the Snowball stemmer
+class SnowballStemmer:
+    """The English stemmer of Snowball (Porter2), written here from its
+    published definition (snowballstem.org, 'The English (Porter2)
+    stemming algorithm') as Snowball 1 and 2 define it, with its exceptional
+    forms. A word of one or two letters is left as it is."""
+
+    VOWELS = frozenset('aeiouy')
+    DOUBLES = ('bb', 'dd', 'ff', 'gg', 'mm', 'nn', 'pp', 'rr', 'tt')
+    LI_ENDINGS = frozenset('cdeghkmnrt')
+    PREFIXES = ('gener', 'commun', 'arsen')         # R1 starts after these
+    EXCEPTIONS = {'skis': 'ski', 'skies': 'sky', 'dying': 'die', 'lying': 'lie', 'tying': 'tie', 'idly': 'idl', 'gently': 'gentl',
+                  'ugly': 'ugli', 'early': 'earli', 'only': 'onli', 'singly': 'singl',
+                  'sky': 'sky', 'news': 'news', 'howe': 'howe', 'atlas': 'atlas', 'cosmos': 'cosmos', 'bias': 'bias', 'andes': 'andes'}
+    AFTER_1A = frozenset(('inning', 'outing', 'canning', 'herring', 'earring', 'proceed', 'exceed', 'succeed'))   # left as step 1a leaves them
+    STEP1B = ('eedly', 'ingly', 'edly', 'eed', 'ing', 'ed')
+    STEP2 = (('ational', 'ate'), ('tional', 'tion'), ('enci', 'ence'), ('anci', 'ance'), ('abli', 'able'), ('entli', 'ent'),
+             ('ization', 'ize'), ('izer', 'ize'), ('ation', 'ate'), ('ator', 'ate'), ('alism', 'al'), ('aliti', 'al'), ('alli', 'al'),
+             ('fulness', 'ful'), ('ousness', 'ous'), ('ousli', 'ous'), ('iveness', 'ive'), ('iviti', 'ive'), ('biliti', 'ble'),
+             ('bli', 'ble'), ('ogi', 'og'), ('fulli', 'ful'), ('lessli', 'less'), ('li', ''))
+    STEP3 = (('ational', 'ate'), ('tional', 'tion'), ('alize', 'al'), ('icate', 'ic'), ('iciti', 'ic'), ('ical', 'ic'), ('ful', ''),
+             ('ness', ''), ('ative', ''))
+    STEP4 = ('al', 'ance', 'ence', 'er', 'ic', 'able', 'ible', 'ant', 'ement', 'ment', 'ent', 'ism', 'ate', 'iti', 'ous', 'ive', 'ize', 'ion')
+
+    def __init__(self):
+        # the longest suffix of each step is the one that counts
+        self.step2_rules = sorted(self.STEP2, key=lambda r: -len(r[0]))
+        self.step3_rules = sorted(self.STEP3, key=lambda r: -len(r[0]))
+        self.step4_rules = sorted(self.STEP4, key=len, reverse=True)
+        self.memo = {}
+
+    def _after_vc(self, w, start):
+        """The position after the first non-vowel that follows a vowel, from start on (the end of w when there is none)."""
+        n, i = len(w), start
+        while i < n and w[i] not in self.VOWELS:
+            i += 1
+        while i < n and w[i] in self.VOWELS:
+            i += 1
+        return i + 1 if i < n else n
+
+    def regions(self, w):
+        """R1 and R2: where they start (len(w) when they are empty)."""
+        p1 = next((len(p) for p in self.PREFIXES if w.startswith(p)), None)
+        if p1 is None:
+            p1 = self._after_vc(w, 0)
+        return p1, (self._after_vc(w, p1) if p1 < len(w) else len(w))
+
+    def short_syllable(self, s):
+        """s ends in a short syllable: a vowel between non-vowels (the last not w, x or Y), or a vowel and a non-vowel at the start."""
+        v = self.VOWELS
+        if len(s) >= 3 and s[-1] not in v and s[-1] not in 'wxY' and s[-2] in v and s[-3] not in v:
+            return True
+        return len(s) == 2 and s[0] in v and s[1] not in v
+
+    def stem(self, word):
+        """The stem of a lowercase word (a word with letters other than
+        a-z is stemmed too; Text Explorer gives it only words of a-z)."""
+        s = self.memo.get(word)
+        if s is None:
+            s = self.memo[word] = self._stem(word)
+        return s
+
+    def _stem(self, w):
+        if w in self.EXCEPTIONS:
+            return self.EXCEPTIONS[w]
+        if len(w) < 3:
+            return w
+        V = self.VOWELS
+        if w.startswith("'"):
+            w = w[1:]
+        # a y at the start or after a vowel is a consonant: Y
+        c = list(w)
+        for i, ch in enumerate(c):
+            if ch == 'y' and (i == 0 or c[i - 1] in V):
+                c[i] = 'Y'
+        w = ''.join(c)
+        p1, p2 = self.regions(w)
+        # step 0: an apostrophe ending
+        for suf in ("'s'", "'s", "'"):
+            if w.endswith(suf):
+                w = w[:-len(suf)]
+                break
+        # step 1a: plurals
+        if w.endswith('sses'):
+            w = w[:-2]
+        elif w.endswith(('ied', 'ies')):
+            w = w[:-3] + ('i' if len(w) > 4 else 'ie')
+        elif w.endswith(('us', 'ss')):
+            pass
+        elif w.endswith('s') and any(ch in V for ch in w[:-2]):
+            w = w[:-1]
+        if w in self.AFTER_1A:
+            return w.replace('Y', 'y')
+        # step 1b: -eed, -ed, -ing and their -ly forms
+        for suf in self.STEP1B:
+            if w.endswith(suf):
+                if suf in ('eed', 'eedly'):
+                    if len(w) - len(suf) >= p1:
+                        w = w[:-len(suf)] + 'ee'
+                elif any(ch in V for ch in w[:-len(suf)]):
+                    w = w[:-len(suf)]
+                    if w.endswith(('at', 'bl', 'iz')):
+                        w += 'e'
+                    elif w.endswith(self.DOUBLES):
+                        w = w[:-1]
+                    elif p1 >= len(w) and self.short_syllable(w):
+                        w += 'e'
+                break
+        # step 1c: a final y after a non-vowel (not the first letter)
+        if len(w) > 2 and w[-1] in 'yY' and w[-2] not in V:
+            w = w[:-1] + 'i'
+        # step 2, in R1
+        for suf, new in self.step2_rules:
+            if w.endswith(suf):
+                if len(w) - len(suf) >= p1:
+                    head = w[:-len(suf)]
+                    if suf == 'ogi':
+                        if head.endswith('l'):
+                            w = head + new
+                    elif suf == 'li':
+                        if head and head[-1] in self.LI_ENDINGS:
+                            w = head
+                    else:
+                        w = head + new
+                break
+        # step 3, in R1 (-ative in R2)
+        for suf, new in self.step3_rules:
+            if w.endswith(suf):
+                k = len(w) - len(suf)
+                if k >= p1 and (suf != 'ative' or k >= p2):
+                    w = w[:k] + new
+                break
+        # step 4, in R2
+        for suf in self.step4_rules:
+            if w.endswith(suf):
+                k = len(w) - len(suf)
+                if k >= p2 and (suf != 'ion' or w[:k].endswith(('s', 't'))):
+                    w = w[:k]
+                break
+        # step 5: a final e, a final double l
+        if w.endswith('e'):
+            k = len(w) - 1
+            if k >= p2 or (k >= p1 and not self.short_syllable(w[:-1])):
+                w = w[:-1]
+        elif w.endswith('ll') and len(w) - 1 >= p2:
+            w = w[:-1]
+        return w.replace('Y', 'y')
+# <<< the Snowball stemmer
+
+
 # >>> the document term matrix
 def weigh(X, weighting):
     """JMP's weightings of a document term matrix of counts X (scipy
-    sparse, documents by terms): Binary 1 when the term is in the document;
+    sparse, documents by terms), as JMP's help (Text Explorer, Save
+    Options) gives them: Binary 1 when the term is in the document;
     Ternary 2 when it is there more than once, 1 once; Frequency its count;
-    Log Freq log10(1 + count); TF IDF count * log(documents / documents
+    Log Freq log10(1 + count); TF IDF count * log10(documents / documents
     with the term)."""
     import scipy.sparse as sp
     X = sp.csr_matrix(X, dtype=float, copy=True)
@@ -327,7 +496,7 @@ def weigh(X, weighting):
         X.data = np.log10(1.0 + X.data)
     elif weighting == 'tfidf':
         with_term = np.bincount(X.indices, minlength=X.shape[1])
-        X = sp.csr_matrix(X @ sp.diags(np.log(X.shape[0] / np.maximum(with_term, 1))))
+        X = sp.csr_matrix(X @ sp.diags(np.log10(X.shape[0] / np.maximum(with_term, 1))))
     return X
 
 
@@ -411,6 +580,242 @@ def varimax_topics(docs, terms, s):
 # <<< the topics
 
 
+# >>> latent class analysis
+def lca_em(X, k, seed=0, n_init=5, max_iter=1000, tol=1e-10, prior=0.01, progress=None):
+    """Latent class analysis of a binary document term matrix X (scipy
+    sparse, documents by terms, 0 or 1): a mixture of k classes in which a
+    document of class c holds term t with probability P[t, c], each term
+    independently (a Bernoulli mixture), fitted by EM (Dempster, Laird and
+    Rubin 1977) from n_init random starts drawn from seed; the start with
+    the best objective is kept. Each class's term probabilities have a
+    Beta(1 + prior, 1 + prior) prior (so none is 0 or 1): the M step is
+    P = (X' R + prior) / (N_c + 2 prior). A document's log-likelihood in
+    class c is sum_t log(1 - P[t, c]) + x . logit(P[:, c]), one sparse
+    product, so the matrix stays sparse. Returns (pi, P, R, loglik,
+    iterations): the mixing probabilities, the term probabilities (terms by
+    classes), each document's class probabilities, the log-likelihood and
+    the iterations of the kept start; the classes largest first."""
+    import scipy.sparse as sp
+    from scipy.special import logsumexp
+    X = sp.csr_matrix(X, dtype=float)
+    X.data[:] = 1.0
+    n, m = X.shape
+    rng = np.random.default_rng(seed)
+    best = None
+    for start in range(n_init):
+        R = rng.dirichlet(np.ones(k), size=n)
+        old = -np.inf
+        for it in range(1, max_iter + 1):
+            Nc = R.sum(axis=0)
+            pi = np.maximum(Nc, 1e-300) / n
+            P = (np.asarray(X.T @ R) + prior) / (Nc + 2 * prior)
+            lq = np.log1p(-P)
+            L = np.log(pi) + lq.sum(axis=0) + np.asarray(X @ (np.log(P) - lq))
+            ll = logsumexp(L, axis=1)
+            R = np.exp(L - ll[:, None])
+            obj = float(ll.sum() + prior * np.sum(np.log(P) + lq))   # the log-likelihood and the log prior
+            if obj - old <= tol * abs(obj):
+                break
+            old = obj
+        if best is None or obj > best[0]:
+            best = (obj, pi, P, R, float(ll.sum()), it)
+        if progress:
+            progress(start + 1, n_init)
+    _, pi, P, R, ll, it = best
+    order = np.argsort(-pi, kind='stable')
+    return pi[order], P[:, order], R[:, order], ll, it
+
+
+def lca_summary(pi, P, n_docs, top=10):
+    """What JMP's Latent Class Analysis reports of a fit: the BIC; for each
+    term the cluster where it occurs at the highest rate (Most
+    Characteristic) and the cluster a document holding it most likely comes
+    from (Most Probable: the largest pi_c P[t, c]); each term's score in
+    each cluster, 100 mean(p_t) log10(P[t, c] / mean(p_t)) with mean(p_t)
+    the mean of the term's probabilities over the clusters (the top terms
+    of a cluster score highest); and a map of the clusters: classical
+    (Torgerson) multidimensional scaling of the symmetric Kullback-Leibler
+    distances between the clusters' term distributions (each cluster's
+    term probabilities scaled to sum to 1), D = sum_t (q_a - q_b) log(q_a
+    / q_b) (Bigi 2003)."""
+    m, k = P.shape
+    params = (k - 1) + k * m
+    mean = P.mean(axis=1, keepdims=True)
+    score = 100 * mean * np.log10(P / mean)
+    top_terms = [np.argsort(-score[:, c], kind='stable')[:top] for c in range(k)]
+    q = P / P.sum(axis=0, keepdims=True)
+    lq = np.log(q)
+    D = np.zeros((k, k))
+    for a in range(k):
+        for b in range(a + 1, k):
+            D[a, b] = D[b, a] = float(np.sum((q[:, a] - q[:, b]) * (lq[:, a] - lq[:, b])))
+    J = np.eye(k) - 1.0 / k
+    B = -0.5 * J @ (D ** 2) @ J
+    ev, V = np.linalg.eigh(B)
+    o = np.argsort(ev)[::-1]
+    ev, V = ev[o], V[:, o]
+    coords = np.zeros((k, 2))
+    for j in range(min(2, k)):
+        if ev[j] > 1e-12 * max(1.0, abs(ev[0])):
+            v = V[:, j] * (1.0 if V[np.abs(V[:, j]).argmax(), j] >= 0 else -1.0)   # the largest coordinate positive
+            coords[:, j] = v * np.sqrt(ev[j])
+    return {'params': params, 'score': score, 'top': top_terms, 'characteristic': P.argmax(axis=1),
+            'probable': (P * pi).argmax(axis=1), 'kl': D, 'coords': coords, 'eigenvalues': ev}
+# <<< latent class analysis
+
+
+# >>> term selection
+def enet_select(X, y, family, alpha=0.99, n_grid=150, ratio=1e-4, early=True, seed=0):
+    """Term selection as JMP's Term Selection runs Generalized Regression:
+    an elastic net (alpha the lasso's share of the penalty, JMP's 0.99) of
+    y on the columns of X (scipy sparse), each scaled by its standard
+    deviation, with an unpenalized intercept, along n_grid penalties from
+    the smallest that leaves every term out down to ratio times it. It
+    minimizes -loglik/N + lambda (alpha |b|_1 + (1 - alpha) |b|^2 / 2):
+    for 'normal' scikit-learn's ElasticNet (coordinate descent) as it is;
+    for 'binomial' (y 0/1) as glmnet does (Friedman, Hastie and Tibshirani
+    2010), Newton steps of weighted least squares, each an ElasticNet with
+    the weights p(1 - p), warm started along the path. The fit with the
+    smallest AICc (-2 log L + 2k + 2k(k + 1)/(N - k - 1), k the nonzero
+    terms and the intercept, and the variance for the normal) is kept; with
+    early stopping the path ends once 10 penalties in a row fail to improve
+    it, not before four terms are in. Returns the path (each penalty's AICc
+    and terms), the chosen step, the coefficients on the columns' own scale
+    and the intercept."""
+    import scipy.sparse as sp
+    import warnings
+    from sklearn.exceptions import ConvergenceWarning
+    from sklearn.linear_model import ElasticNet
+    X = sp.csr_matrix(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    N, m = X.shape
+    mean = np.asarray(X.mean(axis=0)).ravel()
+    sd = np.sqrt(np.maximum(np.asarray(X.multiply(X).mean(axis=0)).ravel() - mean ** 2, 0) * N / max(N - 1, 1))
+    sd = np.where(sd > 0, sd, 1.0)
+    Xs = sp.csr_matrix(X @ sp.diags(1.0 / sd))
+    lam_max = float(np.max(np.abs(Xs.T @ (y - y.mean())))) / (N * alpha)
+    lams = lam_max * np.logspace(0, np.log10(ratio), n_grid)
+    dense = m <= 400   # up to 400 terms: a dense matrix and its Gram matrix, far quicker than the sparse sweeps
+    if dense:
+        Xs = Xs.toarray()
+    model = ElasticNet(l1_ratio=alpha, tol=1e-7, max_iter=20000, warm_start=True, selection='cyclic', precompute=dense)
+    b, b0 = np.zeros(m), (float(np.log(y.mean() / (1 - y.mean()))) if family == 'binomial' else float(y.mean()))
+    path, best, since = [], None, 0
+    for l, lam in enumerate(lams):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', ConvergenceWarning)
+            if family == 'normal':
+                model.set_params(alpha=lam)
+                model.fit(Xs, y)
+                b, b0 = model.coef_.copy(), float(model.intercept_)
+            else:
+                for _ in range(50):   # Newton steps: a weighted elastic net of the working response
+                    eta = np.asarray(Xs @ b).ravel() + b0
+                    pr = np.clip(1 / (1 + np.exp(-eta)), 1e-5, 1 - 1e-5)
+                    w = pr * (1 - pr)
+                    z = eta + (y - pr) / w
+                    model.set_params(alpha=lam * N / w.sum())   # ElasticNet divides the weighted squares by the sum of the weights
+                    model.fit(Xs, z, sample_weight=w)
+                    nb, nb0 = model.coef_.copy(), float(model.intercept_)
+                    done = max(np.max(np.abs(nb - b)) if m else 0.0, abs(nb0 - b0)) < 1e-7
+                    b, b0 = nb, nb0
+                    if done:
+                        break
+        eta = np.asarray(Xs @ b).ravel() + b0
+        if family == 'binomial':
+            ll = float(np.sum(y * eta - np.logaddexp(0, eta)))
+            kpar = int(np.sum(b != 0)) + 1
+        else:
+            rss = float(np.sum((y - eta) ** 2))
+            ll = -0.5 * N * (np.log(2 * np.pi * rss / N) + 1) if rss > 0 else np.inf
+            kpar = int(np.sum(b != 0)) + 2
+        aicc = -2 * ll + 2 * kpar + (2 * kpar * (kpar + 1) / (N - kpar - 1) if N - kpar - 1 > 0 else np.inf)
+        path.append({'lambda': float(lam), 'aicc': aicc, 'nonzero': int(np.sum(b != 0)), 'b': b / sd, 'b0': b0})
+        if best is None or aicc < path[best]['aicc']:
+            best, since = l, 0
+        else:
+            since += 1
+        if early and since >= 10 and path[-1]['nonzero'] >= 4:
+            break
+    return {'path': path, 'best': best, 'coef': path[best]['b'], 'intercept': path[best]['b0'], 'lambda': path[best]['lambda'],
+            'aicc': path[best]['aicc'], 'sd': sd, 'lam_max': lam_max}
+
+
+def enet_wald(X, y, family, fit, alpha=0.99):
+    """Wald tests of the kept terms of enet_select's fit: each estimate
+    over its standard error from the Hessian of the penalized likelihood on
+    the kept terms and the intercept, X'WX + N lambda (1 - alpha) (the
+    ridge part; W the binomial weights p(1 - p), or 1 and the variance
+    RSS / (N - k) for the normal), inverted by a pseudo-inverse. They do
+    not allow for the selection. Returns (the kept columns, their
+    p-values)."""
+    import scipy.sparse as sp
+    from scipy.stats import norm
+    X = sp.csr_matrix(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    N = X.shape[0]
+    b, b0, lam = fit['coef'], fit['intercept'], fit['lambda']
+    kept = np.flatnonzero(b)
+    if not len(kept):
+        return kept, np.array([])
+    A = np.column_stack([np.ones(N), X[:, kept].toarray()])
+    eta = A @ np.r_[b0, b[kept]]
+    ridge = N * lam * (1 - alpha) * np.diag(np.r_[0.0, 1.0 / fit['sd'][kept] ** 2])   # the ridge on the scaled terms, in their own units
+    if family == 'binomial':
+        pr = 1 / (1 + np.exp(-eta))
+        cov = np.linalg.pinv(A.T @ (A * (pr * (1 - pr))[:, None]) + ridge)
+    else:
+        s2 = float(np.sum((y - eta) ** 2)) / max(N - len(kept) - 1, 1)
+        cov = s2 * np.linalg.pinv(A.T @ A + ridge)
+    se = np.sqrt(np.maximum(np.diag(cov)[1:], 0))
+    z = np.where(se > 0, b[kept] / np.where(se > 0, se, 1.0), np.inf)
+    return kept, 2 * norm.sf(np.abs(z))
+# <<< term selection
+
+
+# >>> the clusters of the singular vectors
+def ward(V):
+    """Ward's hierarchical clustering of the rows of V (scipy's linkage),
+    each join's distance as JMP's Hierarchical Cluster gives it: the
+    increase in the within-cluster sum of squares. Returns the joins
+    (scipy's linkage matrix) and the leaves in the order of the dendrogram."""
+    from scipy.cluster.hierarchy import leaves_list, linkage
+    Z = linkage(np.asarray(V, dtype=float), 'ward')
+    Z[:, 2] = Z[:, 2] ** 2 / 2
+    return Z, leaves_list(Z)
+
+
+def clusters_at(Z, k):
+    """The k clusters of a tree: each leaf's cluster (0 to k - 1), numbered
+    in the order of the dendrogram's leaves, after the first n - k joins."""
+    from scipy.cluster.hierarchy import leaves_list
+    n = Z.shape[0] + 1
+    parent = np.full(2 * n - 1, -1)
+    for s, (a, b) in enumerate(Z[:, :2].astype(int)):
+        parent[a] = parent[b] = n + s
+    root = np.arange(2 * n - 1)
+    for v in range(2 * n - k - 1, -1, -1):
+        if 0 <= parent[v] < 2 * n - k:
+            root[v] = root[parent[v]]
+    number = {}
+    for leaf in leaves_list(Z):
+        number.setdefault(root[leaf], len(number))
+    return np.array([number[root[i]] for i in range(n)])
+
+
+def default_clusters(heights, n):
+    """Where the joining distance jumps most: the largest ratio of a join to
+    the one before, from 2 to 10 clusters (as Hierarchical Cluster's default)."""
+    k, ratio = min(3, n), -np.inf
+    for q in range(2, min(10, n - 1) + 1):
+        up, down = heights[n - q], heights[n - q - 1]
+        r = up / down if down > 0 else (np.inf if up > 0 else 0)
+        if r > ratio:
+            k, ratio = q, r
+    return k
+# <<< the clusters of the singular vectors
+
+
 # ---------------------------------------------------------------------------
 # the report's settings, and the documents of a column
 # ---------------------------------------------------------------------------
@@ -430,8 +835,15 @@ def _words(v):
     return ' '.join(str(v).lower().split())
 
 
-def _config(language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100, stemming='none',
-            tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=()):
+# The reading options every entry point takes, with JMP's launch defaults
+# (its help's launch window, JMP 14 to 19): 4 words per phrase, 5000 phrases,
+# words of 1 to 50 characters, no stemming, the Regex tokenizer.
+READ_DEFAULTS = {'language': 'english', 'max_words': 4, 'max_phrases': 5000, 'min_chars': 1, 'max_chars': 50, 'stemming': 'none',
+                 'tokenizing': 'regex', 'regex': None, 'stop_add': (), 'recodes': None, 'phrases': (), 'stemmer': 'snowball'}
+
+
+def _config(language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50, stemming='none',
+            tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), stemmer='snowball'):
     if str(language or 'english').lower() != 'english':
         raise ValueError('Text Explorer reads English here (its stop words and its stemmer are English)')
     cfg = {
@@ -440,11 +852,16 @@ def _config(language='english', max_words=4, max_phrases=1000, min_chars=1, max_
         'min_chars': _int(min_chars, 'Minimum Characters per Word', 1, 1000),
         'max_chars': _int(max_chars, 'Maximum Characters per Word', 1, 100000),
         'stemming': stemming if stemming in STEMMING else None,
+        'stemmer': (stemmer or 'snowball') if (stemmer or 'snowball') in STEMMERS else None,
         'tokenizing': tokenizing if tokenizing in TOKENIZING else None,
         'regex': (regex or '').strip() or None,
     }
     if cfg['stemming'] is None:
         raise ValueError(f'Stemming is one of {", ".join(STEMMING)}, not {stemming!r}')
+    if cfg['stemmer'] is None:
+        raise ValueError(f'the stemmer is snowball or porter, not {stemmer!r}')
+    if cfg['stemming'] == 'none':
+        cfg['stemmer'] = 'snowball'   # no stemming: the choice of stemmer changes nothing (nor the cache)
     if cfg['tokenizing'] is None:
         raise ValueError(f'Tokenizing is regex or basic, not {tokenizing!r}')
     if cfg['max_chars'] < cfg['min_chars']:
@@ -465,7 +882,8 @@ def _config(language='english', max_words=4, max_phrases=1000, min_chars=1, max_
 
 def _read_kwargs(cfg):
     return {'tokenizing': cfg['tokenizing'], 'regex': cfg['regex'], 'min_chars': cfg['min_chars'], 'max_chars': cfg['max_chars'],
-            'stemming': cfg['stemming'], 'phrases': cfg['phrases'], 'recodes': cfg['recodes'], 'user_stop': cfg['stop_add']}
+            'stemming': cfg['stemming'], 'phrases': cfg['phrases'], 'recodes': cfg['recodes'], 'user_stop': cfg['stop_add'],
+            'stemmer': cfg['stemmer']}
 
 
 class Corpus:
@@ -502,11 +920,12 @@ def _documents(table, column, rows, id_col):
     texts = [texts[i] for i in keep]
     keys = [keys[i] for i in keep]
     pos, docs, labels = {}, [], []
+    shown = (lambda k: data.level_label(table, id_col, k, default=predictive.level_label(k))) if hasattr(data, 'level_label') else predictive.level_label
     for i, k in enumerate(keys):
         if k not in pos:
             pos[k] = len(docs)
             docs.append([])
-            labels.append(predictive.level_label(k))
+            labels.append(shown(k))   # the ID's Value Label, when it has one
         docs[pos[k]].append(i)
     return idx, texts, docs, labels, notes
 
@@ -612,7 +1031,7 @@ def _keep_lines(table, rows, where=None):
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
         test = f'pd.to_numeric(df[{_py(w["column"])}], errors="coerce") == {_lit(w["value"])}' if num else f'df[{_py(w["column"])}] == {_lit(w["value"])}'
-        L.append(f'df = df[{test}]   # only the rows where {w["column"]} is {shown}')
+        L.append(f'df = df[{test}]   # only the rows where {one_line(w["column"])} is {one_line(shown)}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -624,32 +1043,41 @@ def _keep_lines(table, rows, where=None):
     return L
 
 
-def _code_head(table, table_name, column, rows, id_col, cfg, extra_imports=(), where=None, keep_every=False):
-    """Read the exported table, keep the report's rows, and read the texts
-    as the report does: the lines up to the terms of every document.
-    keep_every: with an ID, keep the report's rows before the rows without
-    one are left out (as every), for the word cloud's By Column colouring."""
+def _code_read(table, table_name, column, rows, id_col, imports, where=None, keep_every=False):
+    """Read the exported table (the text, the ID and a character By column
+    as text), keep the report's rows and, with an ID, the rows that have one."""
     dtypes = {column: 'str'}
     if id_col:
         dtypes[id_col] = 'str'
     for w in where or []:
         if data.meta(table, w['column']).get('dataType') != 'numeric':
             dtypes[w['column']] = 'str'
-    L = ['import re', 'import numpy as np', 'import pandas as pd',
-         'from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS', *extra_imports, '',
+    L = [*imports, '',
          f'df = pd.read_csv({_py(table_name + ".csv")}, dtype={_py(dtypes)}, keep_default_na=False)   # the table as File > Export CSV writes it; the text as it is']
     L += _keep_lines(table, rows, where)
     if id_col:
         if keep_every:
             L.append('every = df   # the report\'s rows, with an ID or without')
         L.append(f'df = df[df[{_py(id_col)}] != ""]   # the rows with an ID')
+    return L
+
+
+def _code_head(table, table_name, column, rows, id_col, cfg, extra_imports=(), where=None, keep_every=False):
+    """Read the exported table, keep the report's rows, and read the texts
+    as the report does: the lines up to the terms of every document.
+    keep_every: with an ID, keep the report's rows before the rows without
+    one are left out (as every), for the word cloud's By Column colouring."""
+    L = _code_read(table, table_name, column, rows, id_col, ['import re', 'import numpy as np', 'import pandas as pd',
+                   'from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS', *extra_imports], where, keep_every)
     L += ['', _block('reading the texts'), '']
     if cfg['stemming'] != 'none':
-        L += [_block('the Porter stemmer'), '']
+        L += [_block('the Snowball stemmer' if cfg['stemmer'] == 'snowball' else 'the Porter stemmer'), '']
     args = [f'tokenizing={_py(cfg["tokenizing"])}']
     if cfg['regex']:
         args.append(f'regex={_py(cfg["regex"])}')
     args += [f'min_chars={cfg["min_chars"]}', f'max_chars={cfg["max_chars"]}', f'stemming={_py(cfg["stemming"])}']
+    if cfg['stemming'] != 'none':
+        args.append(f'stemmer={_py(cfg["stemmer"])}')
     if cfg['phrases']:
         args.append(f'phrases={_py(cfg["phrases"])}')
     if cfg['recodes']:
@@ -685,20 +1113,27 @@ def _code_dtm_columns(min_freq, max_terms, terms=None):
 # the entry points
 # ---------------------------------------------------------------------------
 
-def _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases):
+def _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases, stemmer='snowball'):
     return _config(language=language, max_words=max_words, max_phrases=max_phrases, min_chars=min_chars, max_chars=max_chars,
-                   stemming=stemming, tokenizing=tokenizing, regex=regex, stop_add=stop_add, recodes=recodes, phrases=phrases)
+                   stemming=stemming, tokenizing=tokenizing, regex=regex, stop_add=stop_add, recodes=recodes, phrases=phrases, stemmer=stemmer)
+
+
+def _read(opts):
+    """The reading options among an entry point's keyword arguments (the
+    page sends them to every call), checked: _config's dict."""
+    return _config(**{k: opts[k] for k in READ_DEFAULTS if k in opts})
 
 
 @api('text.explore', packages=SK)
-def explore(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
-            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), where=None, table_name='data'):
+def explore(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50,
+            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), where=None, table_name='data',
+            stemmer='snowball'):
     """Summary Counts, the Term List and the Phrase List of a column, with
     the rows that hold each term and phrase (for linking), the stems, and
     the stop words; the code, and the lines the word cloud's code starts
     with (cloud_head: the page adds its layout)."""
     try:
-        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
+        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases, stemmer)
         C = _corpus(table, column, rows, id_col, cfg)
     except ValueError as e:
         return {'error': str(e)}
@@ -817,15 +1252,15 @@ def _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering
 
 
 @api('text.lsa', packages=SK)
-def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
+def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50,
         stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), weighting='tfidf',
-        centering='centered', min_freq=4, max_terms=1000, k=100, seed=0, show=2, where=None, table_name='data'):
+        centering='scaled', min_freq=4, max_terms=1000, k=100, seed=0, show=2, where=None, table_name='data', stemmer='snowball'):
     """Latent Semantic Analysis: the singular values, and the first `show`
     coordinates of every document and of every term of the matrix; the code,
     the singular values' bar chart's (plot_code) and the lines the SVD
     plots' code starts with (svd_head: the page adds the drawing)."""
     try:
-        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
+        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases, stemmer)
         min_freq, max_terms = _dtm_spec(weighting, min_freq, max_terms)
         if centering not in CENTERING:
             raise ValueError(f'the centering is one of {", ".join(CENTERING)}, not {centering!r}')
@@ -838,11 +1273,15 @@ def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, 
     show = max(1, min(int(show), k))
     s, total = S['s'], S['total']
     pct = 100 * s ** 2 / total if total > 0 else np.full(len(s), np.nan)
-    singular = [{'number': i + 1, 'value': float(s[i]), 'percent': float(pct[i]), 'cum': float(np.sum(pct[:i + 1]))} for i in range(k)]
+    # the eigenvalues of the equivalent principal components: of the covariance (Centered) or the correlation
+    # (Centered and Scaled) matrix, s^2 / (n - 1); of X'X / n uncentered (JMP divides by nDoc then)
+    eig = s ** 2 / (C.n_docs if centering == 'uncentered' else C.n_docs - 1)
+    singular = [{'number': i + 1, 'value': float(s[i]), 'eigen': float(eig[i]), 'percent': float(pct[i]), 'cum': float(np.sum(pct[:i + 1]))} for i in range(k)]
     doc_rows = [[int(C.rows[i]) for i in d] for d in C.docs]
     code = _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed, where) + [
         'pct = 100 * s ** 2 / total   # the share of the matrix\'s sum of squares',
-        'singular_values = pd.DataFrame({"Number": np.arange(1, len(s) + 1), "Singular Value": s, "Percent": pct, "Cum Percent": np.cumsum(pct)})',
+        f'eigen = s ** 2 / {"Xw.shape[0]" if centering == "uncentered" else "(Xw.shape[0] - 1)"}   # the equivalent principal components\' eigenvalues',
+        'singular_values = pd.DataFrame({"Number": np.arange(1, len(s) + 1), "Singular Value": s, "Eigenvalue": eigen, "Percent": pct, "Cum Percent": np.cumsum(pct)})',
         'print(singular_values.head(10).to_string(index=False))',
         'print(pd.DataFrame(terms[:, :2], index=chosen, columns=["Term Vec1", "Term Vec2"]).head(10))',
     ]
@@ -866,15 +1305,15 @@ def lsa(table, column, rows=None, id_col=None, language='english', max_words=4, 
 
 
 @api('text.topics', packages=SK)
-def topics(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
+def topics(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50,
            stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), method='varimax',
-           n_topics=10, weighting='tfidf', centering='centered', min_freq=4, max_terms=1000, seed=0, top=10, scores=2,
-           where=None, table_name='data'):
+           n_topics=10, weighting='tfidf', centering='scaled', min_freq=4, max_terms=1000, seed=0, top=10, scores=2,
+           where=None, table_name='data', stemmer='snowball'):
     """Topic Analysis: varimax-rotated SVD (JMP's), or NMF or LDA. The top
     terms of each topic, every term's loadings, the variance of each topic
     and the first `scores` topic scores of every document."""
     try:
-        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
+        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases, stemmer)
         if method not in TOPIC_METHODS:
             raise ValueError(f'the method is one of {", ".join(TOPIC_METHODS)}, not {method!r}')
         if method == 'lda':
@@ -980,13 +1419,13 @@ def topics(table, column, rows=None, id_col=None, language='english', max_words=
 
 
 @api('text.dtm', packages=SK)
-def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
+def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50,
         stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), weighting='binary',
-        min_freq=1, max_terms=100, terms=None, where=None, table_name='data'):
+        min_freq=1, max_terms=100, terms=None, where=None, table_name='data', stemmer='snowball'):
     """Save Document Term Matrix: one column per term (the given terms, or
     the most frequent), each row the value of its document."""
     try:
-        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases)
+        cfg = _parse_args(language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add, recodes, phrases, stemmer)
         min_freq, max_terms = _dtm_spec(weighting, min_freq, max_terms)
         C = _corpus(table, column, rows, id_col, cfg)
     except ValueError as e:
@@ -1006,19 +1445,22 @@ def dtm(table, column, rows=None, id_col=None, language='english', max_words=4, 
 
 
 @api('text.vectors', packages=SK)
-def vectors(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=1000, min_chars=1, max_chars=100,
+def vectors(table, column, rows=None, id_col=None, language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50,
             stemming='none', tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), kind='svd', method='varimax',
-            weighting='tfidf', centering='centered', min_freq=4, max_terms=1000, k=100, n_topics=10, seed=0, count=10, where=None, table_name='data'):
+            weighting='tfidf', centering='scaled', min_freq=4, max_terms=1000, k=100, n_topics=10, seed=0, count=10, where=None, table_name='data',
+            stemmer='snowball'):
     """Save Document Singular Vectors (kind 'svd') or Save Topic Scores
     (kind 'topics'): the first `count` of them for every row, each row the
     value of its document."""
+    read = dict(language=language, max_words=max_words, max_phrases=max_phrases, min_chars=min_chars, max_chars=max_chars, stemming=stemming,
+                tokenizing=tokenizing, regex=regex, stop_add=stop_add, recodes=recodes, phrases=phrases, stemmer=stemmer)
     if kind == 'svd':
-        r = lsa(table, column, rows, id_col, language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add,
-                recodes, phrases, weighting, centering, min_freq, max_terms, k, seed, show=count, where=where, table_name=table_name)
+        r = lsa(table, column, rows, id_col, weighting=weighting, centering=centering, min_freq=min_freq, max_terms=max_terms, k=k, seed=seed,
+                show=count, where=where, table_name=table_name, **read)
         vals = r.get('docs')
     else:
-        r = topics(table, column, rows, id_col, language, max_words, max_phrases, min_chars, max_chars, stemming, tokenizing, regex, stop_add,
-                   recodes, phrases, method, n_topics, weighting, centering, min_freq, max_terms, seed, scores=count, where=where, table_name=table_name)
+        r = topics(table, column, rows, id_col, method=method, n_topics=n_topics, weighting=weighting, centering=centering, min_freq=min_freq,
+                   max_terms=max_terms, seed=seed, scores=count, where=where, table_name=table_name, **read)
         vals = r.get('scores')
     if 'error' in r:
         return r
@@ -1029,3 +1471,376 @@ def vectors(table, column, rows=None, id_col=None, language='english', max_words
             for c, v in enumerate(vals):
                 values[c].append(v[d])
     return {'kind': kind, 'rows': out_rows, 'values': values, 'k': r['k'], 'code': r['code']}
+
+
+# ---------------------------------------------------------------------------
+# Latent Class Analysis, the clusters of the singular vectors
+# ---------------------------------------------------------------------------
+
+def _row_values(C, per_doc):
+    """Each row's value of its document: (the rows, the values)."""
+    rows, vals = [], []
+    for d, members in enumerate(C.docs):
+        for i in members:
+            rows.append(int(C.rows[i]))
+            vals.append(per_doc[d])
+    return rows, vals
+
+
+LCA_STARTS = 5
+
+
+@api('text.lca', packages=SK)
+def lca(table, column, rows=None, id_col=None, n_clusters=5, min_freq=4, max_terms=1000, seed=0, where=None, table_name='data', **read):
+    """Latent Class Analysis of the binary document term matrix: the
+    mixture probabilities, the term probabilities by cluster, the top terms,
+    each document's cluster probabilities, the BIC and the MDS map of the
+    clusters; the code and the map's code."""
+    try:
+        cfg = _read(read)
+        min_freq, max_terms = _dtm_spec('binary', min_freq, max_terms)
+        k = _int(n_clusters, 'Number of Clusters', 2, 100)
+        seed = int(predictive.seed_of(seed) or 0)
+        C = _corpus(table, column, rows, id_col, cfg)
+        cols = _chosen(C, min_freq, max_terms)
+        if len(cols) < 2:
+            raise ValueError(f'{len(cols)} term{"" if len(cols) == 1 else "s"} occur{"s" if len(cols) == 1 else ""} at least {min_freq} times: '
+                             'Latent Class Analysis needs two or more')
+        if C.n_docs <= k:
+            raise ValueError(f'{C.n_docs} documents: {k} clusters need more')
+    except ValueError as e:
+        return {'error': str(e)}
+
+    def build():
+        Xb = weigh(C.X[:, cols], 'binary')
+        pi, P, R, ll, it = lca_em(Xb, k, seed=seed, n_init=LCA_STARTS, progress=lambda d, t: print(f'smui:progress lca {d} {t}', flush=True))
+        return {'pi': pi, 'P': P, 'R': R, 'll': ll, 'it': it, 'S': lca_summary(pi, P, C.n_docs)}
+    spec = {'column': column, 'id': id_col, **cfg, 'min_freq': min_freq, 'max_terms': max_terms, 'k': k, 'seed': seed}
+    F = predictive.cached('text.lca', table, rows, spec, build)
+    pi, P, R, S = F['pi'], F['P'], F['R'], F['S']
+    n = C.n_docs
+    names = [str(C.vocab[j]) for j in cols]
+    likely = R.argmax(axis=1)
+    bic = -2 * F['ll'] + S['params'] * math.log(n)
+    head = lambda extra=(): _code_head(table, table_name, column, rows, id_col, cfg, extra, where) + [   # noqa: E731
+        '', _block('the document term matrix'), '', _block('latent class analysis'), ''] + _code_dtm_columns(min_freq, max_terms) + [
+        'Xb = weigh(X[:, cols], "binary")   # Binary: 1 when the document holds the term',
+        f'pi, P, R, loglik, iterations = lca_em(Xb, k={k}, seed={seed}, n_init={LCA_STARTS})   # {k} clusters, the best of {LCA_STARTS} random starts',
+        'summary = lca_summary(pi, P, Xb.shape[0])']
+    code = head() + [
+        'bic = -2 * loglik + summary["params"] * np.log(Xb.shape[0])   # the parameters: k - 1 mixing probabilities and k per term',
+        'print(f"BIC {bic:.6g}, log-likelihood {loglik:.6g}, {iterations} iterations")',
+        'print(pd.DataFrame({"Cluster": np.arange(1, len(pi) + 1), "Probability": pi}).to_string(index=False))   # Cluster Mixture Probabilities',
+        'term_probs = pd.DataFrame(P, index=chosen, columns=[f"Cluster {c + 1}" for c in range(len(pi))])   # Term Probabilities by Cluster',
+        'term_probs["Cluster Most Characteristic"] = summary["characteristic"] + 1',
+        'term_probs["Cluster Most Probable"] = summary["probable"] + 1',
+        'print(term_probs.head(20))',
+        'for c, top in enumerate(summary["top"]):',
+        '    print(f"Cluster {c + 1}:", ", ".join(chosen[j] for j in top))   # Top Terms by Cluster',
+        'most_likely = R.argmax(axis=1) + 1   # each document\'s Most Likely Cluster']
+    mds = head(['import matplotlib.pyplot as plt']) + [
+        'xy = summary["coords"]   # the clusters mapped: classical scaling of their Kullback-Leibler distances',
+        'size = 10 + 30 * np.sqrt(pi / pi.max())   # each cluster\'s marker across, in pixels: its area follows its mixing probability',
+        'fig, ax = plt.subplots(figsize=(4, 3.6), layout="constrained")',
+        f'ax.axhline(0, color="#e0d7ce", linewidth=0.72, zorder=0)', f'ax.axvline(0, color="#e0d7ce", linewidth=0.72, zorder=0)',
+        f'ax.scatter(xy[:, 0], xy[:, 1], s=(0.72 * size) ** 2, color="{BASE}", alpha=0.6, linewidths=0)',
+        'for c in range(len(pi)):',
+        '    ax.text(xy[c, 0], xy[c, 1], f"Cluster {c + 1}", ha="center", va="center", fontsize=7.56, color="#352921")',
+        'ax.set_xlabel("MDS1")', 'ax.set_ylabel("MDS2")', 'ax.set_title("MDS Plot")', 'plt.show()']
+    counts = np.bincount(likely, minlength=k)
+    return {'column': column, 'k': k, 'n_docs': n, 'n_terms': len(cols), 'min_freq': min_freq, 'max_terms': max_terms, 'seed': seed, 'starts': LCA_STARTS,
+            'loglik': F['ll'], 'bic': bic, 'params': S['params'], 'iterations': F['it'], 'pi': pi, 'docs_in': counts,
+            'terms': names, 'term_counts': [int(C.counts[j]) for j in cols], 'P': P.T.tolist(),
+            'characteristic': S['characteristic'] + 1, 'probable': S['probable'] + 1,
+            'top': [[{'term': names[j], 'score': float(S['score'][j, c])} for j in S['top'][c]] for c in range(k)],
+            'kl': S['kl'], 'coords': S['coords'], 'R': R.tolist(), 'likely': likely + 1,
+            'doc_rows': [[int(C.rows[i]) for i in d] for d in C.docs], 'doc_labels': C.labels if id_col else None,
+            'code': '\n'.join(code), 'plot_code': _dated({'mds': '\n'.join(mds)}, table)}
+
+
+@api('text.lca_save', packages=SK)
+def lca_save(table, column, rows=None, id_col=None, n_clusters=5, min_freq=4, max_terms=1000, seed=0, where=None, table_name='data', **read):
+    """Save Probabilities and Save Cluster: each row its document's cluster
+    probabilities and most likely cluster."""
+    r = lca(table, column, rows, id_col, n_clusters, min_freq, max_terms, seed, where, table_name, **read)
+    if 'error' in r:
+        return r
+    cfg = _read(read)
+    C = _corpus(table, column, rows, id_col, cfg)
+    R = np.asarray(r['R'])
+    out_rows, likely = _row_values(C, [int(v) for v in r['likely']])
+    probs = [_row_values(C, R[:, c].tolist())[1] for c in range(r['k'])]
+    return {'rows': out_rows, 'likely': likely, 'probs': probs, 'k': r['k'], 'code': r['code']}
+
+
+def _cluster_lines(kind, kk):
+    what = 'terms' if kind == 'terms' else 'docs'
+    return ['', _block('the clusters of the singular vectors'), '',
+            f'V = {what}   # the {"terms" if kind == "terms" else "documents"}\' coordinates on the singular vectors ({"V S" if kind == "terms" else "U S"})',
+            'Z, order = ward(V)   # Ward\'s method; each join at the increase in the within-cluster sum of squares',
+            'heights, n = Z[:, 2], len(V)',
+            f'k = {kk}   # Number of Clusters',
+            'cluster = clusters_at(Z, k)   # each one\'s cluster, numbered in the order of the dendrogram (from 0)']
+
+
+@api('text.cluster', packages=SK)
+def cluster(table, column, rows=None, id_col=None, kind='terms', weighting='tfidf', centering='scaled', min_freq=4, max_terms=1000, k=100,
+            seed=0, n_clusters=None, where=None, table_name='data', **read):
+    """Cluster Terms (kind 'terms') or Cluster Documents ('docs'): Ward's
+    hierarchical clustering of the terms' (V S) or the documents' (U S)
+    coordinates on the singular vectors; the joins, the default and the
+    chosen number of clusters and each one's cluster; the code and the
+    dendrogram's code."""
+    try:
+        cfg = _read(read)
+        if kind not in ('terms', 'docs'):
+            raise ValueError(f'kind is terms or docs, not {kind!r}')
+        min_freq, max_terms = _dtm_spec(weighting, min_freq, max_terms)
+        if centering not in CENTERING:
+            raise ValueError(f'the centering is one of {", ".join(CENTERING)}, not {centering!r}')
+        k = _int(k, 'Number of Singular Vectors', 1, 100000)
+        seed = int(predictive.seed_of(seed) or 0)
+        C, S = _svd(table, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, k, seed)
+        V = S['terms'] if kind == 'terms' else S['docs']
+        n = V.shape[0]
+        if kind == 'docs' and n > 4000:
+            raise ValueError(f'{n} documents: Cluster Documents takes at most 4000 here (hierarchical clustering keeps all n(n - 1)/2 distances)')
+        if n < 3:
+            raise ValueError('fewer than three to cluster')
+    except ValueError as e:
+        return {'error': str(e)}
+    spec = {'column': column, 'id': id_col, **cfg, 'weighting': weighting, 'centering': centering, 'min_freq': min_freq, 'max_terms': max_terms,
+            'k': S['k'], 'seed': seed, 'kind': kind}
+    Z, order = predictive.cached('text.ward', table, rows, spec, lambda: ward(V))
+    heights = Z[:, 2]
+    kdef = default_clusters(heights, n)
+    kk = kdef if n_clusters in (None, '') else max(1, min(n, int(math.floor(float(n_clusters) + 0.5))))
+    lab = clusters_at(Z, kk)
+    if kind == 'terms':
+        names = [str(C.vocab[j]) for j in S['cols']]
+        row_sets = None
+    else:
+        names = list(C.labels) if id_col else [str(int(C.rows[d[0]]) + 1) for d in C.docs]   # an ID's label, or the row's number
+        row_sets = [[int(C.rows[i]) for i in d] for d in C.docs]
+    base = _lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, S['k'], seed, where)
+    code = base + _cluster_lines(kind, kk) + (
+        ['print(pd.DataFrame({"Term": chosen, "Cluster": cluster + 1}).sort_values(["Cluster", "Term"]).to_string(index=False))'] if kind == 'terms' else
+        ['print(pd.Series(cluster + 1).value_counts().sort_index())   # the documents in each cluster'])
+    return {'kind': kind, 'n': n, 'k_vectors': S['k'], 'merges': Z[:, :2].astype(int), 'heights': heights, 'order': order, 'default_k': kdef, 'n_clusters': kk,
+            'labels': lab, 'names': names, 'doc_rows': row_sets, 'weighting': weighting, 'centering': centering, 'code': '\n'.join(code),
+            'dendro_head': _dated('\n'.join(_lsa_code(table, table_name, column, rows, id_col, cfg, weighting, centering, min_freq, max_terms, S['k'], seed, where,
+                                                      ['import matplotlib.pyplot as plt']) + _cluster_lines(kind, kk)), table)}
+
+
+# ---------------------------------------------------------------------------
+# Term Selection (JMP Pro): an elastic net of a response on the document term matrix
+# ---------------------------------------------------------------------------
+
+def _doc_response(table, response, C):
+    """Each document's response: the value of its first row that has one (None without)."""
+    raw = data.raw(table, response)
+    out = []
+    for d in C.docs:
+        v = None
+        for i in d:
+            x = raw[int(C.rows[i])]
+            if x is None or (isinstance(x, float) and math.isnan(x)):
+                continue
+            v = x
+            break
+        out.append(v)
+    return out
+
+
+@api('text.termsel', packages=SK)
+def termsel(table, column, response, rows=None, id_col=None, target=None, weighting='binary', min_freq=10, max_terms=1000, early=True,
+            alpha=0.99, seed=0, where=None, table_name='data', **read):
+    """Term Selection: the terms an elastic net of the response on the
+    document term matrix keeps (JMP's defaults: Elastic Net, alpha 0.99,
+    AICc, early stopping, terms seen 10 times or more), with their
+    coefficients and LogWorths, and each document's positive and negative
+    contributions and prediction; the code and the coefficients' bars'
+    code."""
+    try:
+        cfg = _read(read)
+        min_freq, max_terms = _dtm_spec(weighting, min_freq, max_terms)
+        if not response:
+            raise ValueError('choose a response column')
+        if response in (column, id_col):
+            raise ValueError('the response is the text column or the ID')
+        a = float(alpha)
+        if not 0 < a <= 1:
+            raise ValueError('the Elastic Net Alpha is the lasso share of the penalty: above 0, at most 1')
+        seed = int(predictive.seed_of(seed) or 0)
+        m = data.meta(table, response)
+        mt, numeric = m.get('modelingType'), m.get('dataType') == 'numeric'
+        C = _corpus(table, column, rows, id_col, cfg)
+        cols = _chosen(C, min_freq, max_terms)
+        if len(cols) < 2:
+            raise ValueError(f'{len(cols)} term{"" if len(cols) == 1 else "s"} occur{"s" if len(cols) == 1 else ""} at least {min_freq} times: '
+                             'Term Selection needs two or more')
+        yv = _doc_response(table, response, C)
+        keep = [d for d, v in enumerate(yv) if v is not None]
+        levels = None
+        if mt == 'nominal' or (mt == 'ordinal' and not numeric):
+            if mt == 'ordinal':
+                raise ValueError(f'{response} is ordinal and character: JMP models an ordinal response by its numbers, so it must be numeric')
+            levels = [predictive.level_label(v) for v in (m.get('levels') or sorted({v for v in yv if v is not None}))]
+            tgt = predictive.level_label(target) if target not in (None, '') else levels[0]
+            if tgt not in levels:
+                raise ValueError(f'{tgt} is not a level of {response}')
+            y = np.array([1.0 if predictive.level_label(yv[d]) == tgt else 0.0 for d in keep])
+            family = 'binomial'
+            if y.min() == y.max():
+                raise ValueError(f'every document with a {response} is {"" if y[0] else "not "}{tgt}: nothing to explain')
+        else:
+            tgt = None
+            y = np.array([float(yv[d]) for d in keep])
+            family = 'normal'
+        if len(keep) < 10:
+            raise ValueError(f'{len(keep)} documents with a {response}: Term Selection needs ten or more')
+    except ValueError as e:
+        return {'error': str(e)}
+    Xw = weigh(C.X[:, cols], weighting)[keep]
+    spec = {'column': column, 'id': id_col, **cfg, 'response': response, 'target': tgt, 'weighting': weighting, 'min_freq': min_freq,
+            'max_terms': max_terms, 'early': bool(early), 'alpha': a, 'seed': seed}
+    F = predictive.cached('text.termsel', table, rows, spec, lambda: enet_select(Xw, y, family, alpha=a, early=bool(early), seed=seed))
+    b, b0 = F['coef'], F['intercept']
+    sel = np.flatnonzero(b != 0)
+    names = [str(C.vocab[j]) for j in cols]
+    # LogWorth: the Wald test of each kept term, the penalized likelihood's Hessian on the kept terms
+    note = None
+    _, pv = enet_wald(Xw, y, family, F, a)
+    lw = [float(-math.log10(max(p, 1e-300))) for p in pv]
+    eta = np.asarray(Xw @ b).ravel() + b0
+    pos = np.asarray(Xw @ np.where(b > 0, b, 0.0)).ravel()
+    neg = np.asarray(Xw @ np.where(b < 0, b, 0.0)).ravel()
+    pred = 1 / (1 + np.exp(-eta)) if family == 'binomial' else eta
+    terms_out = sorted(({'term': names[j], 'coef': float(b[j]), 'logworth': lw[k], 'count': int(C.counts[cols[j]]), 'cases': int(C.with_term[cols[j]])}
+                        for k, j in enumerate(sel)), key=lambda r: -r['coef'])
+    path = F['path']
+    head = _code_head(table, table_name, column, rows, id_col, cfg, (), where) + [
+        '', _block('the document term matrix'), '', _block('term selection'), ''] + _code_dtm_columns(min_freq, max_terms) + [
+        f'Xw = weigh(X[:, cols], {_py(weighting)})   # {WEIGHTINGS[weighting]}; a document per line',
+        f'resp = df[{_py(response)}]' + ('' if family == 'normal' and numeric else '.astype(str)'),
+        ('first = resp.groupby(df[' + _py(id_col) + '], sort=False).apply(lambda s: s.dropna().iloc[0] if s.notna().any() else None)   # each document\'s response: its first row\'s'
+         if id_col else 'first = resp.reset_index(drop=True)   # each document\'s response'),
+        'keep = np.flatnonzero(first.notna().to_numpy())   # the documents with a response']
+    if family == 'binomial':
+        lvl_expr = 'first.iloc[keep].map(lambda v: v[:-2] if v.endswith(".0") else v)' if numeric else 'first.iloc[keep]'
+        head += [f'y = ({lvl_expr} == {_py(tgt)}).to_numpy(float)   # the target level {tgt} against the rest']
+    else:
+        head += ['y = first.iloc[keep].to_numpy(float)']
+    head += [f'fit = enet_select(Xw[keep], y, {_py(family)}, alpha={a!r}, early={bool(early)}, seed={seed})   # Elastic Net, AICc{", early stopping" if early else ""}',
+             'b = fit["coef"]', 'kept = np.flatnonzero(b)']
+    code = head + [
+        f'kept, p = enet_wald(Xw[keep], y, {_py(family)}, fit, alpha={a!r})   # Wald p-values: the penalized likelihood\'s Hessian on the kept terms',
+        'term_scores = pd.DataFrame({"Term": [chosen[j] for j in kept], "Coefficient": b[kept], "LogWorth": -np.log10(np.maximum(p, 1e-300))})',
+        'term_scores = term_scores.sort_values("Coefficient", ascending=False, kind="stable")',
+        'print(f"AICc {fit[\'aicc\']:.6g} at lambda {fit[\'lambda\']:.6g}; {len(kept)} terms")',
+        'print(term_scores.to_string(index=False))']
+    top = sorted(terms_out, key=lambda r: -abs(r['coef']))[:30]
+    bars = None
+    if top:
+        bars = '\n'.join(_code_head(table, table_name, column, rows, id_col, cfg, ['import matplotlib.pyplot as plt'], where) + head[len(_code_head(table, table_name, column, rows, id_col, cfg, (), where)):] + [
+            'top = kept[np.argsort(-np.abs(b[kept]), kind="stable")][:30][::-1]   # the 30 largest in size, the largest at the top',
+            f'fig, ax = plt.subplots(figsize=(4.4, {max(160, 16 * len(top) + 60) / 100:g}), layout="constrained")',
+            f'ax.barh(np.arange(len(top)), b[top], color=["{BASE}" if v > 0 else "#b0413e" for v in b[top]], height=0.75)',
+            'ax.set_yticks(np.arange(len(top)), [chosen[j] for j in top])', 'ax.axvline(0, color="#352921", linewidth=0.72)',
+            'ax.set_xlabel("Coefficient")', f'ax.set_title({_py("Term coefficients" + (f" ({response} = {tgt})" if tgt is not None else f" ({response})"))})', 'plt.show()'])
+    doc_rows = [[int(C.rows[i]) for i in C.docs[d]] for d in keep]
+    return {'column': column, 'response': response, 'family': family, 'target': tgt, 'levels': levels, 'weighting': weighting, 'min_freq': min_freq,
+            'max_terms': max_terms, 'alpha': a, 'early': bool(early), 'n_docs': len(keep), 'n_terms': len(cols), 'lambda': F['lambda'],
+            'lam_max': F['lam_max'], 'aicc': F['aicc'], 'steps': len(path), 'best_step': F['best'], 'intercept': b0, 'terms': terms_out,
+            'path': [{'lambda': p['lambda'], 'aicc': p['aicc'], 'nonzero': p['nonzero']} for p in path], 'note': note,
+            'docs': {'rows': doc_rows, 'positive': pos, 'negative': neg, 'predicted': pred, 'actual': y},
+            'doc_labels': [C.labels[d] for d in keep] if id_col else None,
+            'code': '\n'.join(code), 'plot_code': _dated({'bars': bars} if bars else {}, table)}
+
+
+# ---------------------------------------------------------------------------
+# Sentiment Analysis: VADER's lexicon and rules (vaderSentiment, MIT, fetched at run time)
+# ---------------------------------------------------------------------------
+
+VADER = 'vaderSentiment'
+
+
+@api('text.sentiment', packages=SK)
+def sentiment(table, column, rows=None, id_col=None, where=None, table_name='data', **read):
+    """Sentiment Analysis by VADER (Hutto and Gilbert 2014): each
+    document's positive, neutral and negative shares and compound score
+    (its lexicon's valences, with negators, intensifiers, capitals, '!'
+    and 'but' taken into account); the summary, the sentiment, negation
+    and intensifier terms met, the histogram's code. English only. The
+    package comes from PyPI at run time (the page fetches the wheel,
+    checks its pinned sha256 and installs it with micropip): its lexicon
+    is never part of this site."""
+    try:
+        from vaderSentiment import vaderSentiment as vs
+    except ImportError:
+        return {'error': 'Sentiment Analysis needs the vaderSentiment package (MIT) from PyPI, which is not installed here', 'missing': VADER}
+    try:
+        cfg = _read(read)
+        C = _corpus(table, column, rows, id_col, cfg)
+    except ValueError as e:
+        return {'error': str(e)}
+
+    def build():
+        import string
+        an = vs.SentimentIntensityAnalyzer()
+        texts = ['\n'.join(C.texts[i] for i in d if C.texts[i]) for d in C.docs]
+        sc = [an.polarity_scores(t) for t in texts]
+        # the terms met, as VADER reads its words (split at spaces, punctuation stripped, lowercase):
+        # sentiment terms (its lexicon), negations (its list, or n't) and intensifiers (its boosters)
+        lex, neg, boost = {}, {}, {}
+        negate = set(vs.NEGATE)
+        for d, t in enumerate(texts):
+            for w in (x.strip(string.punctuation) for x in t.lower().split()):
+                if not w:
+                    continue
+                for store, hit in ((lex, w in an.lexicon), (boost, w in vs.BOOSTER_DICT), (neg, w in negate or "n't" in w)):
+                    if hit:
+                        e = store.setdefault(w, [0, set()])
+                        e[0] += 1
+                        e[1].add(d)
+        return {'scores': sc, 'lex': lex, 'neg': neg, 'boost': boost, 'valence': {w: float(an.lexicon[w]) for w in lex},
+                'lexicon_size': len(an.lexicon)}
+    spec = {'column': column, 'id': id_col, **cfg}
+    F = predictive.cached('text.sentiment', table, rows, spec, build)
+    sc = F['scores']
+    comp = np.array([s['compound'] for s in sc], dtype=float)
+    pos_n, neg_n = int(np.sum(comp >= 0.05)), int(np.sum(comp <= -0.05))
+    empty = [d for d, doc in enumerate(C.docs) if not any(C.texts[i].strip() for i in doc)]
+    lexicon = sorted(({'term': w, 'score': F['valence'][w], 'count': c, 'docs': len(ds), 'd': sorted(ds)} for w, (c, ds) in F['lex'].items()),
+                     key=lambda r: (-r['count'], r['term']))
+    vader = 'from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer   # MIT; pip install vaderSentiment==3.3.2 (in the notebook: %pip install vaderSentiment==3.3.2)'
+    head = _code_read(table, table_name, column, rows, id_col, ['import numpy as np', 'import pandas as pd', vader], where)
+    docs_lines = ([f'texts = df.groupby({_py(id_col)}, sort=False)[{_py(column)}].apply(lambda s: "\\n".join(t for t in s if t))   # a document: the texts of its rows'] if id_col
+                  else [f'texts = df[{_py(column)}]   # each row a document'])
+    core = docs_lines + [
+        'analyzer = SentimentIntensityAnalyzer()',
+        'scores = pd.DataFrame([analyzer.polarity_scores(t) for t in texts])   # neg, neu, pos (shares of the text) and compound (-1 to 1)']
+    code = head + core + [
+        'label = np.where(scores["compound"] >= 0.05, "positive", np.where(scores["compound"] <= -0.05, "negative", "neutral"))   # VADER\'s thresholds',
+        'print(pd.Series(label).value_counts())', 'print(scores["compound"].describe())']
+    hist = '\n'.join(_code_read(table, table_name, column, rows, id_col, ['import numpy as np', 'import pandas as pd', 'import matplotlib.pyplot as plt', vader], where) + core + [
+        'edges = np.linspace(-1, 1, 21)   # bins of 0.1',
+        'fig, ax = plt.subplots(figsize=(4.4, 2.8), layout="constrained")',
+        f'ax.hist(scores["compound"], bins=edges, color="#8fa9c2", edgecolor="white", linewidth=0.5)',
+        'ax.set_xlabel("Compound score")', 'ax.set_ylabel("Documents")', 'ax.set_title("Sentiment of the documents")', 'plt.show()'])
+    table_of = lambda store: sorted(({'term': w, 'count': c, 'docs': len(ds), 'd': sorted(ds), **({'multiplier': float(vs.BOOSTER_DICT[w])} if store is F['boost'] else {})}   # noqa: E731
+                                     for w, (c, ds) in store.items()), key=lambda r: (-r['count'], r['term']))
+    import importlib.metadata as md
+    try:
+        version = md.version(VADER)
+    except Exception:  # noqa: BLE001
+        version = None
+    return {'column': column, 'n_docs': C.n_docs, 'empty': len(empty), 'version': version, 'lexicon_size': F['lexicon_size'],
+            'summary': {'positive': pos_n, 'negative': neg_n, 'neutral': C.n_docs - pos_n - neg_n, 'mean': float(np.mean(comp)) if len(comp) else None,
+                        'mean_pos': float(np.mean(comp[comp >= 0.05])) if pos_n else None, 'mean_neg': float(np.mean(comp[comp <= -0.05])) if neg_n else None},
+            'docs': {'rows': [[int(C.rows[i]) for i in d] for d in C.docs], 'pos': [s['pos'] for s in sc], 'neu': [s['neu'] for s in sc],
+                     'neg': [s['neg'] for s in sc], 'compound': comp,
+                     # each document's bar of the histogram, as np.histogram bins it (the last bin closed)
+                     'bin': np.clip(np.searchsorted(np.linspace(-1, 1, 21), comp, side='right') - 1, 0, 19)},
+            'doc_labels': C.labels if id_col else None, 'lexicon': lexicon, 'negations': table_of(F['neg']), 'intensifiers': table_of(F['boost']),
+            'code': '\n'.join(code), 'plot_code': _dated({'hist': hist}, table)}

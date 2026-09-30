@@ -22,7 +22,7 @@ from scipy import stats
 
 from . import data
 from .registry import api
-from .util import code_head
+from .util import code_head, one_line
 
 COVERAGE = (0.90, 0.95, 0.99)
 
@@ -85,7 +85,7 @@ def _keep_lines(table, rows, where=None):
         num = data.meta(table, w['column']).get('dataType') == 'numeric'
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         lit = repr(float(w['value'])) if num else json.dumps(w['value'])
-        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {w["column"]} is {w["value"]}')
+        L.append(f'df = df[df[{json.dumps(w["column"])}] == {lit}]   # only the rows where {one_line(w["column"])} is {one_line(w["value"])}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True

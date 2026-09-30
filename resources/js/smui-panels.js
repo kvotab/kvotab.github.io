@@ -123,6 +123,9 @@
       this.meta.append(el('div', { text: `${t.nrows} rows, ${t.columns.length} columns` }));
       if (t.source) this.meta.append(el('div', { text: t.source }));
       if (t.notes) this.meta.append(el('div', { text: t.notes.length > 180 ? `${t.notes.slice(0, 180)}…` : t.notes, title: t.notes }));
+      // the table's scripts, as JMP lists them: a click runs one (smui-scripts.js)
+      const scripts = SM.scripts ? SM.scripts.list(t) : null;
+      if (scripts) this.meta.append(scripts);
     }
 
     renderColumns() {
@@ -136,10 +139,14 @@
         if (f && !c.name.toLowerCase().includes(f)) continue;
         const tb = el('button', { type: 'button', class: 'sm-typebtn', 'aria-label': `${c.name}: ${TYPE_LABEL[c.modelingType]}. Change the modeling type`, dataset: { type: c.id } }, typeIcon(c.modelingType));
         const flags = [c.formula ? 'ƒ' : '', c.role === 'label' ? 'label' : '', c.isNumeric ? '' : 'abc'].filter(Boolean).join(' ');
+        // JMP's asterisk: the column has properties (a click opens Column Info); and its preselected role
+        const props = c.properties || [];
+        const star = props.length ? el('button', { type: 'button', class: 'smc-star', dataset: { props: c.id }, text: '*', title: `Column properties: ${props.join(', ')}`, 'aria-label': `${c.name}: column properties ${props.join(', ')}. Open Column Info` }) : null;
+        const role = c.preselectRole ? el('span', { class: 'smc-role', text: c.preselectRole === 'Weight' ? 'W' : c.preselectRole === 'Freq' ? 'F' : c.preselectRole, title: `Preselected role: ${c.preselectRole}` }) : null;
         const li = el('li', { role: 'option', draggable: 'true', dataset: { id: c.id }, 'aria-selected': String(sel.has(c.id)) },
-          tb, el('span', { class: 'sm-colname', text: c.name }), flags ? el('span', { class: 'sm-colflag', text: flags }) : null);
+          tb, el('span', { class: 'sm-colname', text: c.name }), role, star, flags ? el('span', { class: 'sm-colflag', text: flags }) : null);
         if (sel.has(c.id)) li.classList.add('is-selected');
-        li.title = `${c.name}: ${TYPE_LABEL[c.modelingType]}, ${c.dataType}${c.notes ? `. ${c.notes}` : ''}`;
+        li.title = `${c.name}: ${TYPE_LABEL[c.modelingType]}, ${c.dataType}${props.length ? `; ${props.join(', ')}` : ''}${c.notes ? `. ${c.notes}` : ''}`;
         this.colList.append(li);
       }
     }
@@ -150,6 +157,8 @@
       list.addEventListener('click', (ev) => {
         const t = this.table;
         if (!t) return;
+        const star = ev.target.closest('.smc-star');
+        if (star) { ev.stopPropagation(); this.app.columnInfo(t.col(star.dataset.props)); return; }
         const tb = ev.target.closest('.sm-typebtn');
         if (tb) {
           const c = t.col(tb.dataset.type);

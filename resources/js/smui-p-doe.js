@@ -4,7 +4,13 @@
    DOE > Classical        Screening Design, Full Factorial Design, Response
                           Surface Design: a dialog of responses and factors,
                           then a new design table (Pattern, the factors with
-                          their modeling types, empty responses)
+                          their modeling types, empty responses); a full
+                          factorial also as a split plot (factors that are
+                          hard to change set once per whole plot) or with its
+                          replicates as blocks, its model kept for Fit Model
+                          (the table's Model script and Fit Model's Recall),
+                          and Simulate Responses: a formula column of random
+                          draws from that model
    DOE > Special Purpose  Space Filling Design (scipy.stats.qmc)
    DOE > Design Diagnostics  Evaluate Design: power, variance, aliases,
                           correlations, efficiencies, prediction variance
@@ -67,7 +73,7 @@
     return { el: el('div', null, list, more), read: () => rows.map((r) => r.read()).filter((r) => r.name) };
   }
 
-  function factorEditor({ kinds = ['continuous', 'categorical'], twoLevel = false, initial = null, count = 3 } = {}) {
+  function factorEditor({ kinds = ['continuous', 'categorical'], twoLevel = false, initial = null, count = 3, changes = false } = {}) {
     const tbody = el('tbody');
     const rows = [];
     const listeners = [];
@@ -84,8 +90,11 @@
       const renderVals = () => vals.replaceChildren(...(role.value === 'continuous' ? [lo, el('span', { text: 'to' }), hi] : [lv]));
       renderVals();
       const rm = el('button', { type: 'button', class: 'sm-btn small', text: '×', 'aria-label': 'Remove the factor' });
-      const tr = el('tr', null, el('td', null, name), el('td', null, role), el('td', null, vals), el('td', null, rm));
-      const row = { tr, read: () => ({ name: name.value.trim(), kind: role.value, low: toNum(lo.value), high: toNum(hi.value), levels: lv.value.split(',').map((s) => s.trim()).filter(Boolean) }) };
+      // Changes (a split plot): Easy, its level may change from run to run; Hard, set once for a whole plot of runs
+      const ch = changes ? el('select', { 'aria-label': 'Changes' }, el('option', { value: 'easy', text: 'Easy' }), el('option', { value: 'hard', text: 'Hard' })) : null;
+      if (ch) { ch.value = f.changes === 'hard' ? 'hard' : 'easy'; ch.addEventListener('change', changed); }
+      const tr = el('tr', null, el('td', null, name), el('td', null, role), ch ? el('td', null, ch) : null, el('td', null, vals), el('td', null, rm));
+      const row = { tr, read: () => ({ name: name.value.trim(), kind: role.value, low: toNum(lo.value), high: toNum(hi.value), levels: lv.value.split(',').map((s) => s.trim()).filter(Boolean), ...(ch ? { changes: ch.value } : {}) }) };
       role.addEventListener('change', () => { renderVals(); changed(); });
       for (const i of [name, lo, hi, lv]) i.addEventListener('change', changed);
       rm.addEventListener('click', () => { rows.splice(rows.indexOf(row), 1); tr.remove(); changed(); });
@@ -103,7 +112,7 @@
     const nBtn = el('button', { type: 'button', class: 'sm-btn small', text: 'Add N' });
     nBtn.addEventListener('click', () => { const n = Math.max(1, Math.min(30, Math.round(toNum(nIn.value) || 1))); for (let i = 0; i < n; i++) add({ name: nextName(), kind: kinds[0], low: -1, high: 1 }); changed(); });
     buttons.append(nIn, nBtn);
-    const table = el('table', { class: 'sm-doe-factors' }, el('thead', null, el('tr', null, el('th', { text: 'Name' }), el('th', { text: 'Role' }), el('th', { text: 'Values' }), el('th'))), tbody);
+    const table = el('table', { class: 'sm-doe-factors' }, el('thead', null, el('tr', null, el('th', { text: 'Name' }), el('th', { text: 'Role' }), changes ? el('th', { text: 'Changes' }) : null, el('th', { text: 'Values' }), el('th'))), tbody);
     const validate = () => {
       const fs = rows.map((r) => r.read());
       if (!fs.length) return 'Add at least one factor.';
@@ -145,9 +154,11 @@
     };
   }
 
-  function makeTable(res, source) {
+  /* scripts: the table's scripts, as JMP's design tables have them ({ name, platform, kind, spec },
+     smui-scripts.js: the Table panel runs them) */
+  function makeTable(res, source, scripts = null) {
     const t = new SM.Table({
-      name: SM.app.uniqueTableName(res.name), source, notes: res.notes,
+      name: SM.app.uniqueTableName(res.name), source, notes: res.notes, scripts: scripts || [],
       columns: res.columns.map((c) => ({ name: c.name, dataType: c.dataType, modelingType: c.modelingType, notes: c.notes || '', valueOrder: c.valueOrder || null,
         values: c.values.map((v) => (v == null ? (c.dataType === 'numeric' ? NaN : null) : v)) })),
     });
@@ -171,34 +182,123 @@
   }
 
   /* ---- Full Factorial ------------------------------------------------------------------ */
+  /* The design's model, { roles: { y: [names] }, options, effects } by column names, as Fit Model's
+     Recall: Fit Model > Recall then opens with it (the table's Model script does the same from the
+     Table panel). */
+  function recallModel(spec) {
+    if (spec && SM.launch && SM.launch.last) SM.launch.last.set('fitmodel', { roles: spec.roles, options: spec.options, extra: { effects: spec.effects } });
+  }
+
+  const levelCount = (f) => (f.kind === 'continuous' ? 2 : Math.max(1, (f.levels || []).length));
+  const wholePlotsDefault = (H, reps) => H * Math.max(2, reps + 1);   // doe.py's whole_plots_default
+
+  /* Simulate Responses: the coefficients of the design's model, the random columns' and the
+     error's standard deviations, then a formula column of random draws from it. */
+  async function simulateResponses(t, res, factors) {
+    const sim = res.simulate;
+    if (!sim) return null;
+    const y = ((res.model && res.model.roles.y) || [])[0] || 'Y';
+    const fields = [{ key: 'b0', label: 'Intercept', type: 'number', value: 0, help: 'The response where every continuous factor is at the middle of its range, averaged over the levels of the categorical ones.' }];
+    sim.terms.forEach((term, i) => term.labels.forEach((lab, j) => fields.push({ key: `c${i}_${j}`, label: lab, type: 'number', value: term.defaults[j], helpLabel: 'A term (X1, X1*X2, X3[L1])',
+      help: 'Its coefficient: a continuous factor coded −1 at its low value and +1 at its high, a categorical one effect coded (the level in brackets +1, the last level −1, the others 0), an interaction the product. 1 for a main effect and 0 for an interaction to begin with.' })));
+    for (const r of sim.random) fields.push({ key: `s:${r}`, label: `${r} σ`, type: 'number', value: sim.sigmas[r], helpLabel: 'Whole Plots σ, Block σ', help: 'The standard deviation of the random effect of each whole plot or block: one normal draw shared by its runs.' });
+    fields.push({ key: 's:Error', label: 'Error σ', type: 'number', value: sim.sigmas.Error, help: 'The standard deviation of the error: a normal draw of its own for each run.' });
+    const v = await SM.ui.form({
+      title: 'Simulate Responses', info: 'cmd:simulateresponses', okLabel: 'Make Column',
+      lead: `A column ${y} Simulated: a formula of the design's model with these coefficients and random draws for the ${sim.random.length ? `${sim.random.join(' and ')} and the ` : ''}error. Fit Model's Recall has the model with it as Y.`,
+      fields,
+      validate: (x) => {
+        for (const k of ['s:Error', ...sim.random.map((r) => `s:${r}`)]) if (x[k] != null && x[k] < 0) return 'A standard deviation is 0 or more.';
+        return null;
+      },
+    });
+    if (!v) return null;
+    const payload = {
+      factors, terms: sim.terms.map((term) => term.names), intercept: v.b0 ?? 0,
+      coefficients: sim.terms.map((term, i) => term.labels.map((_, j) => v[`c${i}_${j}`] ?? 0)),
+      sigmas: Object.fromEntries([...sim.random, 'Error'].map((r) => [r, v[`s:${r}`] ?? 0])),
+    };
+    const { expr } = await engineCall('doe.simulate_formula', payload);
+    const c = t.addColumn({ name: t.uniqueName(`${y} Simulated`), dataType: 'numeric', values: [],
+      notes: `Simulate Responses: the design's model with random draws (the formula). Cols > Formula edits the coefficients; the formula's seed keeps the draws.` });
+    try { SM.formula.apply(t, c, expr); } catch (e) { t.removeColumn(c.id); throw e; }
+    const spec = { ...res.model, roles: { ...res.model.roles, y: [c.name] } };
+    t.setScripts([...(t.scripts || []).filter((x) => x.name !== 'Model (Simulated)'), { name: 'Model (Simulated)', platform: 'fitmodel', kind: 'launch', spec }]);
+    recallModel(spec);
+    SM.ui.toast(`Added ${c.name}: the design's model with random draws`);
+    return c;
+  }
+
   function fullFactorial() {
     const L = last.full || {};
+    const S = L.split || {};
     const resp = responseEditor(L.responses);
-    const fac = factorEditor({ initial: L.factors, count: 3 });
+    const fac = factorEditor({ initial: L.factors, count: 3, changes: true });
     const out = outputOptions({ defaults: L.output });
+    const uid = (p) => SM.util.uid(p);
+    const wp = el('input', { type: 'text', inputmode: 'numeric', size: 4, value: S.whole_plots ?? '', id: uid('wp'), 'aria-label': 'Number of whole plots' });
+    const blocks = el('input', { type: 'checkbox', id: uid('bl') });
+    blocks.checked = !!S.blocks;
+    const simulate = el('input', { type: 'checkbox', id: uid('si') });
+    simulate.checked = !!S.simulate;
+    // in the Output Options' own grid, after its fields
+    out.el.append(
+      el('label', { for: wp.id, text: 'Number of Whole Plots' }), wp,
+      el('label', { for: blocks.id, text: 'Replicates as Blocks' }), el('div', null, blocks),
+      el('label', { for: simulate.id, text: 'Simulate Responses' }), el('div', null, simulate));
     const runs = el('p', { class: 'sm-ob-note' });
     const count = () => {
       const fs = fac.read();
       const o = out.read();
-      const combos = fs.reduce((p, f) => p * (f.kind === 'continuous' ? 2 : Math.max(1, f.levels.length)), fs.length ? 1 : 0);
-      const n = combos * (o.replicates + 1) + (fs.some((f) => f.kind === 'continuous') ? o.center_points : 0);
-      runs.textContent = `Number of runs: ${n} (${combos} combinations${o.replicates ? ` × ${o.replicates + 1}` : ''}${o.center_points && fs.some((f) => f.kind === 'continuous') ? ` + ${o.center_points} center points` : ''}).`;
+      const hard = fs.filter((f) => f.changes === 'hard'), easy = fs.filter((f) => f.changes !== 'hard');
+      const split = hard.length > 0;
+      const cont = fs.some((f) => f.kind === 'continuous');
+      const combos = fs.reduce((p, f) => p * levelCount(f), fs.length ? 1 : 0);
+      wp.disabled = !split;
+      blocks.disabled = split || o.replicates < 1;
+      if (split) {
+        const H = hard.reduce((p, f) => p * levelCount(f), 1), E = easy.reduce((p, f) => p * levelCount(f), 1);
+        const w = toNum(wp.value);
+        const W = w == null || Number.isNaN(w) ? wholePlotsDefault(H, o.replicates) : Math.round(w);
+        wp.placeholder = String(wholePlotsDefault(H, o.replicates));
+        if (!easy.length) runs.textContent = 'Every factor is hard to change: make at least one easy to change.';
+        else if (W < H || W % H) runs.textContent = `The number of whole plots must be a multiple of ${H}, the settings of the hard-to-change factors.`;
+        else runs.textContent = `Number of runs: ${W * E} (a split plot: ${W} whole plots of ${E} runs, each of the ${H} settings of the hard-to-change factors in ${W / H}).`;
+        return;
+      }
+      wp.placeholder = '';
+      const cp = cont ? o.center_points : 0;
+      if (blocks.checked && o.replicates >= 1) {
+        const B = o.replicates + 1;
+        runs.textContent = `Number of runs: ${B * (combos + cp)} (${B} blocks of the ${combos} combinations${cp ? ` and ${cp} center point${cp > 1 ? 's' : ''}` : ''}).`;
+        return;
+      }
+      runs.textContent = `Number of runs: ${combos * (o.replicates + 1) + cp} (${combos} combinations${o.replicates ? ` × ${o.replicates + 1}` : ''}${cp ? ` + ${cp} center points` : ''}).`;
     };
     fac.onChange(count);
     out.inputs.forEach((i) => i.addEventListener('change', count));
+    for (const i of [wp, blocks]) i.addEventListener('change', count);
     count();
     designDialog({
       title: 'Full Factorial Design', info: 'cmd:fullfactorial',
       body: el('div', null,
-        el('p', { class: 'sm-dialog-lead', text: 'Every combination of the factors\' levels: continuous factors at their low and high values, categorical ones at each of their levels.' }),
+        el('p', { class: 'sm-dialog-lead', text: 'Every combination of the factors\' levels: continuous factors at their low and high values, categorical ones at each of their levels. A factor that is hard to change makes it a split plot.' }),
         section('Responses', resp.el), section('Factors', fac.el), section('Output Options', out.el, runs)),
       onMake: async (msg) => {
         const err = fac.validate();
         if (err) { msg.textContent = err; return false; }
-        const payload = { factors: fac.read(), responses: resp.read(), ...out.read() };
-        last.full = { factors: payload.factors, responses: payload.responses, output: out.read() };
+        const fs = fac.read();
+        const o = out.read();
+        const split = fs.some((f) => f.changes === 'hard');
+        const w = toNum(wp.value);
+        if (split && w != null && (Number.isNaN(w) || w < 1 || w !== Math.round(w))) { msg.textContent = 'Number of Whole Plots: a whole number, or empty for the default.'; return false; }
+        const payload = { factors: fs, responses: resp.read(), ...o, whole_plots: split && w != null ? w : null, blocks: !split && blocks.checked };
+        last.full = { factors: fs, responses: payload.responses, output: o, split: { whole_plots: wp.value.trim(), blocks: blocks.checked, simulate: simulate.checked } };
         const res = await engineCall('doe.full_factorial', payload);
-        makeTable(res, 'DOE > Full Factorial Design');
+        const t = makeTable(res, 'DOE > Full Factorial Design', res.model ? [{ name: 'Model', platform: 'fitmodel', kind: 'launch', spec: res.model }] : null);
+        recallModel(res.model);
+        // after this dialog has closed
+        if (simulate.checked) setTimeout(() => simulateResponses(t, res, fs).catch((e) => SM.ui.toast((e && e.message) || String(e))), 0);
         return true;
       },
     });
@@ -399,17 +499,34 @@
     ]) },
   });
   SM.commands.register({
-    menu: 'DOE/Classical', label: 'Full Factorial Design…', order: 20, action: fullFactorial, uses: ['itertools.product', 'numpy.random.default_rng (run order)'],
-    about: 'Every combination of the levels of continuous (two-level) and categorical factors, with replicates, center points and a randomized or sorted run order.',
-    topics: { 'cmd:fullfactorial': CMD_TOPIC('Full Factorial Design', 'Every combination of the factors\' levels: 2 for each continuous factor (low and high), and each level of a categorical factor. All main effects and interactions can be estimated.', [
-      { heading: 'Responses', choices: RESPONSE_CHOICES },
-      { heading: 'Factors', choices: factorChoices() },
-      { heading: 'Output Options', choices: outputChoices({
-        centers: 'Runs with every continuous factor at the middle of its range (the categorical factors cycle through their levels): a check of curvature and an estimate of pure error. They need a continuous factor; 0 by default.',
-        replicates: 'Copies of the whole design beyond the first (the center points are not copied): 1 doubles the runs. 0 by default.' }) },
-      { heading: 'Buttons', choices: [MAKE_TABLE] },
-      { heading: 'The table', text: 'A Pattern column (− low, + high, 0 center, a number the level of a categorical factor), the factors with their modeling types, and an empty column for each response. A continuous factor\'s notes give its coding, which Evaluate Design uses.' },
-    ]) },
+    menu: 'DOE/Classical', label: 'Full Factorial Design…', order: 20, action: fullFactorial, uses: ['itertools.product', 'numpy.random.default_rng (run order, the restricted randomization of a split plot)'],
+    about: 'Every combination of the levels of continuous (two-level) and categorical factors, with replicates, center points and a randomized or sorted run order; a split plot when factors are hard to change, or the replicates as blocks; the design\'s model (with its random whole plots or blocks) kept for Fit Model, and simulated responses.',
+    topics: {
+      'cmd:fullfactorial': CMD_TOPIC('Full Factorial Design', 'Every combination of the factors\' levels: 2 for each continuous factor (low and high), and each level of a categorical factor. All main effects and interactions can be estimated.', [
+        { heading: 'Responses', choices: RESPONSE_CHOICES },
+        { heading: 'Factors', choices: [...factorChoices().slice(0, 2),
+          ['Changes', 'Easy, the default: the factor\'s setting may change from one run to the next. Hard: it is set once for a group of runs, a whole plot, as an oven\'s temperature is for the batches baked in it; the design is then a split plot.'],
+          ...factorChoices().slice(2)] },
+        { heading: 'Output Options', choices: [...outputChoices({
+          centers: 'Runs with every continuous factor at the middle of its range (the categorical factors cycle through their levels): a check of curvature and an estimate of pure error. They need a continuous factor; 0 by default. With blocks, each block has them; a split plot has none.',
+          replicates: 'Copies of the whole design beyond the first (the center points are not copied): 1 doubles the runs. 0 by default. In a split plot, the default number of whole plots follows it.' }),
+          ['Number of Whole Plots', 'A split plot\'s whole plots: a multiple of the number of settings of the hard-to-change factors, each setting then in as many whole plots. Empty: each setting twice (or once for each copy of the design, with more replicates), so that the whole plots\' variation can be told from the hard-to-change factors\' effects. Each whole plot holds every combination of the easy-to-change factors once.'],
+          ['Replicates as Blocks', 'With one or more replicates and no hard-to-change factor: each copy of the design is a block (a day, a batch of material), randomized within itself; a Block column says which, and the model has Block as a random effect.'],
+          ['Simulate Responses', 'After Make Table: the coefficients of the design\'s model and the standard deviations of its random effects and error, then a formula column of simulated responses (Y Simulated), to try the analysis before the runs are made.']] },
+        { heading: 'Buttons', choices: [MAKE_TABLE] },
+        { heading: 'Split plots', text: 'The whole plots are in a random order, and the runs in a random order within each: the randomization is restricted, and the runs of a whole plot share its random effect. The hard-to-change factors are then tested against the variation between whole plots (with few degrees of freedom: the number of whole plots less the settings), the others against the variation within them. Fit Model does this with Whole Plots as a random effect (REML), as the design\'s model has it.' },
+        { heading: 'The table', text: 'A Pattern column (− low, + high, 0 center, a number the level of a categorical factor), the factors with their modeling types, a Whole Plots or Block column when there are any, and an empty column for each response. A continuous factor\'s notes give its coding, which Evaluate Design uses. The table\'s Model script is the design\'s model: the full factorial, or its main effects and two-factor interactions when the full factorial would leave the error no degree of freedom, with Whole Plots or Block as a random effect; Fit Model\'s Recall opens with it too.' },
+        { heading: 'Differences from JMP', list: [
+          'JMP makes split plots in Custom Design, where a factor\'s Changes may also be Very Hard (a split-split plot) and the design is chosen for its efficiency; here a split plot is the full factorial, with every combination of the easy-to-change factors in each whole plot.',
+          'Replicates as Blocks is this page\'s; JMP blocks a design with a blocking factor of Custom Design, or in the screening designs.',
+          'JMP\'s full factorial Model script is the full factorial even when it leaves no error degrees of freedom; here the highest interactions are left out then.',
+          'JMP\'s Simulate Responses window stays open, with Apply for new coefficients; here the column\'s formula keeps them, and Cols > Formula changes them.'] },
+      ]),
+      'cmd:simulateresponses': CMD_TOPIC('Simulate Responses', 'A response column of random draws from the design\'s model, to try the analysis (and see what the design can find) before the runs are made.', [
+        { heading: 'The formula', text: 'The intercept, plus each coefficient times its coded columns (a continuous factor (x − middle)/(half its range), −1 to +1; a categorical factor effect coded: its level in brackets 1, its last level −1, the others 0), plus for each whole plot or block one normal draw with its σ, shared by its runs (Col Mean(Random Normal(), :"Whole Plots") times the square root of the whole plot\'s number of runs is a standard normal draw of the whole plot), plus a normal error with the Error σ for each run.' },
+        { heading: 'Afterwards', text: 'The column is a formula column: its seed keeps the same draws when the table is computed again, and Cols > Formula shows and changes the coefficients. The table gets a Model (Simulated) script, and Fit Model\'s Recall has the design\'s model with the simulated column as Y.' },
+      ]),
+    },
   });
   SM.commands.register({
     menu: 'DOE/Classical', label: 'Response Surface Design…', order: 30, action: responseSurface, uses: ['numpy (central composite, Box-Behnken)'],
@@ -478,6 +595,9 @@
     po.add(ctx.kv([['Significance Level', pw.alpha ?? 0.05], ['Anticipated RMSE', pw.rmse ?? 1], ['Anticipated Coefficient', pw.coefficient ?? 1], ['Error Degrees of Freedom', res.df_error, 'int']]));
     po.add(ctx.rt(res.power, { sortable: false, key: 'power' }));
     if (res.effect_power) po.add(ctx.rt(res.effect_power, { caption: 'Effect power (categorical factors)', sortable: false, key: 'effectpower' }));
+    // a split plot (DOE > Full Factorial with factors hard to change): this evaluation takes its runs as completely randomized
+    const wpCol = ctx.table && ctx.table.col('Whole Plots');
+    if (wpCol && !factors.includes(wpCol)) po.add(ctx.note('The table has a Whole Plots column, a split plot: this evaluation takes the runs as completely randomized. With the whole plots\' own variation, the hard-to-change factors are tested on the whole plots, with fewer degrees of freedom, and have less power than shown here; Fit Model with Whole Plots as a random effect (the table\'s Model script) is the analysis.'));
     po.add(ctx.note(res.df_error > 0 ? `The power of a t test (an F test with one degree of freedom) that the coefficient is zero when it is the anticipated coefficient, in coded units (continuous factors from −1 to +1): noncentrality (coefficient/RMSE)² / [(XᵀX)⁻¹]ⱼⱼ, ${res.df_error} error degrees of freedom. Categorical effects: coefficients alternating ±the anticipated one.` : 'No error degrees of freedom: the design has as many runs as the model has parameters, so nothing can be tested.'));
     // prediction variance profile
     const pv = ctx.outline('Prediction Variance Profile', { parent: de, key: 'profile' });
@@ -541,6 +661,7 @@
         sections: [
           { heading: 'Roles', choices: [['X, Factor', 'The factor columns of the design.'], ['Y, Response', 'Optional: the responses, which the evaluation does not use.']] },
           { heading: 'The report', text: 'Power Analysis: the power to detect each coefficient of the anticipated size. Estimation Efficiency: the variance of each estimate and its VIF. Alias Matrix and the colour map: which effects are confounded with terms left out. Design Diagnostics: D, G and A efficiencies. The Model red triangle changes the model.' },
+          { heading: 'Differences from JMP', text: 'JMP\'s Evaluate Design takes a split plot\'s whole plots into account (the whole plots\' variance against the error\'s). Here the runs are taken as completely randomized, and a table with a Whole Plots column gets a note that the hard-to-change factors have less power than shown.' },
         ],
         more: { label: 'Evaluate Design', id: 'help-p-evaldesign' },
       },

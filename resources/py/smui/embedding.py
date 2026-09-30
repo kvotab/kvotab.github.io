@@ -24,7 +24,7 @@ import numpy as np
 
 from . import data, predictive
 from .registry import api
-from .util import code_head
+from .util import code_head, one_line
 
 SK = predictive.SK
 J = json.dumps
@@ -88,7 +88,7 @@ def _keep_lines(table, rows, where=None):
         num = data.meta(table, w['column']).get('dataType') == 'numeric'
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
-        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {one_line(w["column"])} is {one_line(shown)}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True

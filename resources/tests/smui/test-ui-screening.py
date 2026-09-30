@@ -17,7 +17,8 @@ engine's counts, a new threshold), Actual by Predicted (linked both ways),
 the Prediction Profiler and Save Columns of one method work; K-fold gives
 the Crossvalidation tables; Make Validation Column makes a stratified
 column exact to the proportions, which Model Screening then takes (a Test
-outline); By, Redo, a project round trip, the dark theme, phone width, the
+outline); By (each group's Decision Threshold its own), Redo, a project
+round trip, the dark theme, phone width, the
 (i) topics and Help (the launch dialog's (i) gives every role, option and
 method box its help, as Make Validation Column's, the Decision Threshold's
 and the forms' (i) do theirs), and no script errors.
@@ -37,6 +38,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 from cdp import BASE, Checks, open_page, open_report_js, table_under_js, wait_engine
 from test_charts import GRAPHS_JS, close, find_line, maxdiff
 
@@ -44,6 +47,10 @@ from test_charts import GRAPHS_JS, close, find_line, maxdiff
 _spec = importlib.util.spec_from_file_location('ui_partition_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-partition.py'))
 UP = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(UP)
+# the shared Decision Threshold's graphs (test-ui-learners.py has decision_compare)
+_spec2 = importlib.util.spec_from_file_location('ui_learners_charts', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-ui-learners.py'))
+UL = importlib.util.module_from_spec(_spec2)
+_spec2.loader.exec_module(UL)
 
 SHOTS = os.environ.get('SMUI_SHOTS')
 check = Checks()
@@ -326,13 +333,13 @@ def screening_compare(lab, g, F):
     """The comparisons' graphs (ROC and lift curves and Actual by predicted are check_shared's)."""
     t = g['label']
     ax = F['axes'][0]
-    if t == 'Misclassification by threshold':
+    if t.endswith(' by threshold Validation') or t.endswith(' by threshold Training') or t.endswith(' by threshold Crossvalidation'):
         curves = [tr for tr in g['traces'] if tr.get('mode') == 'lines']
         got = [q for q in ax['lines'] if not q['label'].startswith('_')]
-        check(f'{lab}: a curve per method, named and coloured as the page\'s', [(q['label'], q['color'][:7]) for q in got], [(tr['name'], tr['color']) for tr in curves])
-        check.near(f'{lab}: each method\'s misclassification rate at every threshold', max((maxdiff(q['y'], tr['y']) + maxdiff(q['x'], tr['x']) for q, tr in zip(got, curves)), default=1.0), 0, 1e-12)
-        check(f'{lab}: the threshold dashed, the legend', (any(q['x'] == [g['shapes'][0]['x0']] * 2 and q['ls'] == '--' for q in ax['lines']), F['legend']), (True, [tr['name'] for tr in curves]))
-        UP.check_titles(check, lab, g, F)
+        check(f'{lab}: a curve per method, named and coloured as the page\'s (light theme)', [(q['label'], q['color'][:7]) for q in got], [(tr['name'], tr['color']) for tr in curves])
+        UL.decision_compare(check, lab, g, F)
+    elif UL.decision_compare(check, lab, g, F):
+        pass
     else:
         check(f'{lab}: a graph this test knows', t, None)
 
@@ -351,7 +358,7 @@ async def charts(page):
     last = 'SM.app.reports.at(-1)'
     xs = ['x1', 'x2', 'x3', 'g']
     specs = [
-        ('cls, a validation portion, ROC, lift and Decision Threshold', {'y': ['cls'], 'x': xs}, {'portion': 0.3, 'seed': '5', 'methods': ['tree', 'knn', 'linear', 'nb'], 'roc': True, 'lift': True, 'threshold': True, 'cut': 0.35}),
+        ('cls, a validation portion, ROC, lift and Decision Threshold', {'y': ['cls'], 'x': xs}, {'portion': 0.3, 'seed': '5', 'methods': ['tree', 'knn', 'linear', 'nb'], 'roc': True, 'lift': True, 'threshold': True, 'cut': 0.35, 'dtMetric': 'mcc'}),
         ('three, 3-fold crossvalidation, other levels', {'y': ['three'], 'x': xs}, {'kfold': True, 'folds': 3, 'repeats': 1, 'seed': '9', 'methods': ['tree', 'knn', 'linear'], 'roc': True, 'lift': True, 'rocLevel': 2, 'liftLevel': 0}),
         ('y, a validation portion, Actual by Predicted', {'y': ['y'], 'x': xs}, {'portion': 0.25, 'seed': '3', 'methods': ['tree', 'knn', 'linear', 'lasso'], 'abp': True}),
         ('y, 3-fold crossvalidation, Actual by Predicted of the out-of-fold predictions', {'y': ['y'], 'x': xs}, {'kfold': True, 'folds': 3, 'seed': '3', 'methods': ['tree', 'linear'], 'abp': True, 'abpSet': 'Crossvalidation'}),
@@ -363,7 +370,7 @@ async def charts(page):
         n, _ = await UP.chart_blocks(page, check, label, tbl, last, screening_compare)
         total += n
         await page.ev(f'SM.app.closeReport({last})')
-    check('charts: the blocks ran and drew the page\'s graphs', total, 5 + 4 + 4 + 2)
+    check('charts: the blocks ran and drew the page\'s graphs', total, 10 + 4 + 4 + 2)
     # Fit Model's Generalized Regression: the Actual by Predicted Plot (smui-predict.js), its block from the call's code
     for label, yname, options, sets in (
             ('Generalized Regression, the lasso, a holdback', 'y', {'personality': 'genreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
@@ -444,12 +451,14 @@ async def main():
                outlines: [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent) };
     })()''', timeout=900)
     labels = [c[0] for c in r['start']]
-    check('the launch dialog lists JMP\'s methods', labels, ['Decision Tree', 'Bootstrap Forest', 'Boosted Tree', 'K Nearest Neighbors', 'Naive Bayes', 'Neural', 'Support Vector Machines', 'Discriminant', 'Fit Least Squares',
-                                                        'Generalized Regression Lasso', 'Generalized Regression Elastic Net', 'Fit Stepwise'])
-    check('... every one ticked but Fit Stepwise', [c[0] for c in r['start'] if not c[1]], ['Fit Stepwise'])
+    check('the launch dialog lists JMP\'s methods, XGBoost, LightGBM and Ridge among them', labels, ['Decision Tree', 'Bootstrap Forest', 'Boosted Tree', 'XGBoost', 'LightGBM', 'K Nearest Neighbors', 'Naive Bayes', 'Neural', 'Support Vector Machines', 'Discriminant', 'Fit Least Squares',
+                                                        'Generalized Regression Lasso', 'Generalized Regression Elastic Net', 'Generalized Regression Ridge', 'Fit Stepwise'])
+    check('... every one ticked but Fit Stepwise and the ones beyond JMP\'s defaults (XGBoost and LightGBM load a package)', [c[0] for c in r['start'] if not c[1]], ['XGBoost', 'LightGBM', 'Generalized Regression Ridge', 'Fit Stepwise'])
     check('a continuous Y strikes out Naive Bayes and Discriminant', [c[0] for c in r['cont'] if c[2]], ['Naive Bayes', 'Discriminant'])
-    check('the linear method is named by the Y: Ordinal Logistic, Logistic Regression', (r['ord'][8][0], r['nomi'][8][0], [c[0] for c in r['nomi'] if c[2]]), ('Ordinal Logistic', 'Logistic Regression', []))
-    check('K Fold Crossvalidation turns Folds on; a Validation column turns it off', (r['foldsOff'], r['foldsOn'], r['kfOff'], 'Validation column gives the sets' in r['hint']), (True, True, True, True))
+    check('the linear method is named by the Y: Ordinal Logistic, Logistic Regression', (r['ord'][10][0], r['nomi'][10][0], [c[0] for c in r['nomi'] if c[2]]), ('Ordinal Logistic', 'Logistic Regression', []))
+    # day has 250 values: neither sets nor folds (4 to 50), and the hint says so before the engine refuses it
+    check('K Fold Crossvalidation turns Folds on; a Validation column turns it off (day, 250 values, is neither sets nor folds: the hint says so)',
+          (r['foldsOff'], r['foldsOn'], r['kfOff'], 'holds neither sets' in r['hint']), (True, True, True, True))
     check('no method ticked: an error', 'choose at least one' in r['none'], True)
     check('the options: Validation Portion 0.2, Informative Missing, Random Seed empty', r['opts'], [['Validation Portion', '0.2'], ['Informative Missing', True], ['Random Seed', '']])
     check('the options reach the report', (r['options']['methods'], r['options']['kfold'], r['options']['portion']), ([k for k in ('tree', 'forest', 'boosted', 'knn', 'nb', 'neural', 'svm', 'lda', 'linear', 'lasso', 'enet')], False, 0.2))
@@ -472,7 +481,9 @@ async def main():
             for key, lab in (('entropy_rsquare', 'Entropy RSquare'), ('misclassification', 'Misclassification Rate'), ('auc', 'AUC')):
                 worst = max(worst, abs(num(row[f'{s} {lab}']) - m['measures'][s][key]))
     check('the Summary holds the engine\'s numbers (4 decimals)', worst < 5.1e-5, True)
-    check('... best first by the validation Entropy RSquare', list(summ), [next(m['label'] for m in eng['methods'] if m['key'] == k) for k in eng['order']])
+    check('... best first by the validation Generalized RSquare (as JMP ranks them)', (list(summ), eng['summary'][0]), ([next(m['label'] for m in eng['methods'] if m['key'] == k) for k in eng['order']], 'generalized_rsquare'))
+    gr = {m['key']: m['measures']['Validation']['generalized_rsquare'] for m in eng['methods']}
+    check('... the engine\'s order is by that measure', eng['order'], sorted(gr, key=lambda k: -gr[k]))
     vt = rows_of(await page.ev(table_under_js('Validation', 0)))
     check('the Validation table: every measure of every method', (sorted(vt), list(next(iter(vt.values())))), (sorted(m['label'] for m in eng['methods']), ['Method', 'Entropy RSquare', 'Generalized RSquare', 'Mean -Log p', 'RASE', 'Mean Abs Dev', 'Misclassification Rate', 'AUC', 'N']))
     best = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Validation');
@@ -510,22 +521,46 @@ async def main():
     check('... its AUC table is the engine\'s, for the level yes', max(abs(num(auc[k]['Validation AUC']) - v) for k, v in want.items()) < 5.1e-5, True)
     await page.ev(pick_js('*top*', ['Lift Curve']))
     await page.ev(pick_js('*top*', ['Decision Threshold']))
-    th = await page.ev(engine_js({'fn': 'screening.threshold', 'methods': eng_methods, 'kfold': 0, 'repeats': 1, 'cut': 0.5, 'level': 1}))
-    tv = await page.ev(table_under_js('Decision Threshold', 1))
-    thr = rows_of(tv)
-    lin = next(m for m in th['methods'] if m['key'] == 'linear')
-    # the page shows 4 decimals, an exact tie rounded up (25/32 is 0.7813) where Python's round() goes to
-    # the even digit: within half a unit of the last decimal of the engine's value, either way
-    check.near('Decision Threshold: the engine\'s sensitivity at 0.5, Validation', num(thr['Nominal Logistic']['Sensitivity']), lin['sets']['Validation']['sensitivity'], tol=5.0001e-5)
+    selected = await page.ev('SM.app.reports.at(-1).spec.options.selected')
+    shown_keys = [k for k in eng['order'] if k in selected]
+    th = await page.ev(engine_js({'fn': 'screening.threshold', 'methods': shown_keys, 'kfold': 0, 'repeats': 1, 'plot': {'order': shown_keys}}))
+    # The validation set's measures of each method. The report's seed is drawn at its first run
+    # (Random Seed is empty), so Select Dominant keeps one method or several, and the layout
+    # follows: one method has one table with a row per set, several a table per set with a row
+    # per method (its caption the set's). Found by their columns and captions, not their places.
+    tvs = await page.ev('''(() => {
+      const rep = SM.app.reports.at(-1);
+      const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold');
+      if (!head) return [];
+      return [...head.parentElement.querySelectorAll(':scope > .sm-ob-body table.sm-rt')]
+        .filter(x => [...x.querySelectorAll('tr:first-child > *')].some(c => c.textContent.trim() === 'Sensitivity'))
+        .map(x => ({ caption: (x.querySelector('caption') || {}).textContent || '', rows: [...x.querySelectorAll('tr')].filter(tr => !tr.closest('caption')).map(tr => [...tr.children].map(c => c.textContent.trim())) }));
+    })()''')
+    if len(shown_keys) == 1 and tvs and tvs[0]['rows'] and tvs[0]['rows'][0][0] == 'Set':
+        per_set = rows_of(tvs[0]['rows'])
+        thr = {next(m['label'] for m in eng['methods'] if m['key'] == shown_keys[0]): per_set.get('Validation', {})}
+    else:
+        thr = rows_of(next((t['rows'] for t in tvs if t['caption'].startswith('Validation')), [[]]))
+    check('Decision Threshold: the methods selected in the Summary (Select Dominant\'s), in its order', (list(thr), [m['label'] for m in th['models']]), ([next(m['label'] for m in eng['methods'] if m['key'] == k) for k in shown_keys],) * 2)
+    from smui import predictive as pv_  # noqa: E402
+    yv, sv_ = np.asarray(th['points']['actual']), np.asarray(th['points']['set'])
+    mv = sv_ == 1
+    worst = 0.0
+    for mdl in th['models']:
+        want = pv_.rates_at(*pv_.counts_at(pv_.cut_table(np.asarray(mdl['p'])[mv], yv[mv] == 1), 0.5))
+        for key, lab in (('sensitivity', 'Sensitivity'), ('specificity', 'Specificity'), ('precision', 'Precision'), ('mcc', 'MCC'), ('f1', 'F1 Score')):
+            # the page shows 4 decimals, an exact tie rounded up where Python's round() goes to the even digit
+            worst = max(worst, abs(num(thr[mdl['label']][lab]) - want[key]) if want[key] is not None else 0.0)
+    check('Decision Threshold: each method\'s sensitivity, specificity, precision, MCC and F1 at 0.5 on the validation rows, from the engine\'s probabilities by predictive.py here', worst < 5.0001e-5, True)
     r = await page.ev('''(async () => {
       const rep = SM.app.reports.at(-1);
       const box = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold').parentElement;
-      const inp = box.querySelector('.sm-scr-cut input'); inp.value = '0.3';
+      const inp = box.querySelector('.sm-pred-cut input'); inp.value = '0.3';
       const d = new Promise(res => rep.on('done', res));
       [...box.querySelectorAll('button')].find(b => b.textContent === 'Apply').click();
       await d;
       const box2 = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold').parentElement;
-      return { cut: rep.spec.options.cut, captions: [...box2.querySelectorAll('caption')].map(c => c.textContent) };
+      return { cut: rep.spec.options.cut, captions: [...box2.querySelectorAll(':scope > .sm-ob-body > .sm-pred-scroll caption')].map(c => c.textContent) };
     })()''')
     check('a new threshold from its field: the option and the tables', (r['cut'], r['captions']), (0.3, ['Training: yes when its probability ≥ 0.3', 'Validation: yes when its probability ≥ 0.3']))
     await page.ev(pick_js('*top*', ['Profiler', 'Boosted Tree']))
@@ -682,6 +717,61 @@ async def main():
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.at(-1)))')
     await shot(page, 'screening-04-validation.png')
 
+    # ---- Make Validation Column's K Fold (the dialog) and Stratify by Group; Model Screening crossvalidates by the folds
+    r = await page.ev('''(async () => {
+      SM.app.showTable(SM.app.tables.find(t => t.name === 'Screen').id);
+      SM.screening.makeValidationColumn(SM.app);
+      await new Promise(r => setTimeout(r, 300));
+      const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+      const items = [...dlg.querySelectorAll('.sm-pick-list li')];
+      const pick = (name) => { items.forEach(li => li.classList.remove('is-selected')); items.find(x => x.textContent === name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
+      const role = (label) => [...dlg.querySelectorAll('.sm-role')].find(r => r.querySelector('.sm-btn').textContent === label);
+      pick('cls'); role('Stratification Columns').querySelector('.sm-btn').click();
+      const opts = Object.fromEntries([...dlg.querySelectorAll('.sm-launch-opts label')].map(l => [[...l.childNodes].find(x => x.nodeType === 3).textContent.trim(), l.querySelector('input, select')]));
+      opts['Validation Column Type'].value = 'kfold'; opts['Number of Folds'].value = '5'; opts['Random Seed'].value = '8'; opts['New Column Name'].value = 'Fold';
+      const t = SM.app.current;
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'OK').click();
+      for (let i = 0; i < 100 && !t.col('Fold'); i++) await new Promise(r => setTimeout(r, 100));
+      const c = t.col('Fold'); const cls = t.col('cls').values;
+      const per = [1, 2, 3, 4, 5].map(k => [c.values.filter((v, i) => v === k && cls[i] === 'yes').length, c.values.filter((v, i) => v === k && cls[i] === 'no').length]);
+      return { type: [c.dataType, c.modelingType], order: c.valueOrder, counts: [1, 2, 3, 4, 5].map(k => c.values.filter(v => v === k).length), per, notes: c.notes };
+    })()''', timeout=300)
+    check('Make Validation Column ▸ K Fold, stratified by cls: a numeric nominal column of the folds 1 to 5', (r['type'], r['order']), (['numeric', 'nominal'], [1, 2, 3, 4, 5]))
+    check('... 200 rows in each fold, each fold\'s share of cls within a row of the others', (r['counts'], max(q[0] for q in r['per']) - min(q[0] for q in r['per']) <= 1), ([200] * 5, True))
+    check('... its notes say the platforms crossvalidate by the folds', 'crossvalidate by them' in r['notes'], True)
+    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Fold']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn']}), timeout=900)
+    eng_f = await page.ev(engine_js({'methods': ['tree', 'linear', 'knn'], 'kfold': 0, 'repeats': 1}), timeout=600)
+    note = await page.ev('[...SM.app.reports.at(-1).body.querySelectorAll(".sm-ob-note")].map(e => e.textContent).find(t => /folds of the Validation column/.test(t)) || ""')
+    check('Model Screening with the K Fold column: crossvalidated by its 5 folds, the Crossvalidation outline, compared on it', (rep['errors'], 'Crossvalidation' in rep['outlines'], eng_f['kfold'], eng_f['fold_column'], eng_f['compare'], bool(note)),
+          ([], True, 5, 'Fold', 'Crossvalidation', True))
+    cvt = rows_of(await page.ev(table_under_js('Crossvalidation', 0)))
+    check('... the Crossvalidation table holds the engine\'s means over the folds', max(abs(num(cvt[m['label']]['Generalized RSquare']) - m['measures']['Crossvalidation']['generalized_rsquare']) for m in eng_f['methods']) < 5.1e-5, True)
+    r = await page.ev('''(async () => { const t = SM.app.tables.find(t => t.name === 'Screen');
+      const v = await SM.engine.call('screening.validation_column', { training: 0.6, validation: 0.2, test: 0.2, strata: ['cls'], groups: ['day'], seed: '3' }, t);
+      const day = t.col('day').values; const groups = {}; v.values.forEach((s, i) => { (groups[day[i]] = groups[day[i]] || new Set()).add(s); });
+      return { method: v.method, whole: Object.values(groups).every(g => g.size === 1), counts: v.counts }; })()''')
+    check('Make Validation Column, Stratify by Group (both kinds of column): every day whole in one set, the counts near 600, 200, 200', (r['method'].startswith('stratified by cls with the groups of day'), r['whole'], all(abs(a_ - b_) <= 8 for a_, b_ in zip(r['counts'], [600, 200, 200]))), (True, True, True))
+
+    # ---- XGBoost, LightGBM and Ridge (their packages loaded on the way), the Two Way Interactions, the Ensemble of Selected
+    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'interactions': True, 'selected': ['xgboost', 'linear', 'ridge'], 'ensemble': True}), timeout=900)
+    vers = await page.ev("({ xgb: SM.engine.versions.xgboost || null, lgb: SM.engine.versions.lightgbm || null })")
+    check('XGBoost and LightGBM: their packages loaded the first time they are chosen (Pyodide\'s xgboost 2.1.4, lightgbm 4.6.0)', (rep['errors'], vers), ([], {'xgb': '2.1.4', 'lgb': '4.6.0'}))
+    eng_x = await page.ev(engine_js({'fn': 'screening.fit.xgb.lgbm', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
+    summ = rows_of(await page.ev(table_under_js('Summary Across the Models', 0)))
+    check('... the Summary holds the engine\'s measures of the five methods', max(abs(num(summ[m['label']]['Validation Generalized RSquare']) - m['measures']['Validation']['generalized_rsquare']) for m in eng_x['methods']) < 5.1e-5, True)
+    lin_info = next(m['info'] for m in eng_x['methods'] if m['key'] == 'linear')
+    check('... Add Two Way Interactions reaches the linear methods (the products in Nominal Logistic\'s terms)', 'two-way interactions' in lin_info, True)
+    ens = rows_of(await page.ev(table_under_js('Ensemble of Selected', 0)))
+    eng_e = await page.ev(engine_js({'fn': 'screening.ensemble.xgb', 'methods': ['xgboost', 'linear', 'ridge'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
+    check('Ensemble of Selected: the average and the stacking of the selected methods, the engine\'s measures, and the methods beside them',
+          (list(ens)[:2], max(abs(num(ens[q['method']]['Validation Generalized RSquare']) - q['measures']['Validation']['generalized_rsquare']) for q in eng_e['rows']) < 5.1e-5, len(ens)), (['Average of Selected', 'Stacked'], True, 5))
+    wts = rows_of(await page.ev(table_under_js('Ensemble of Selected', 1)))
+    check('... the stacking weights, 0 or more and adding to 1', (sorted(wts), abs(sum(num(v['Stacking Weight']) for v in wts.values()) - 1) < 2e-4), (sorted(q['method'] for q in eng_e['weights']), True))
+    await page.ev(GRAPHS_JS)
+    got_e, err_e = await UL.run_json(page, (await page.ev('(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll(".sm-ob-head")].find(x => x.textContent.trim() === "Ensemble of Selected"); return h.parentElement.querySelector("details.sm-code code").textContent; })()')), 'wts.tolist()', "SM.app.tables.find((t) => t.name === 'Screen')")
+    check('... its code runs in the page and gives the same weights', (err_e, got_e is not None and max(abs(a_ - q['weight']) for a_, q in zip(got_e, eng_e['weights'])) < 1e-9), (None, True))
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
     # ---- By, Redo, a project
     rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear', 'nb'], 'roc': True}), timeout=600)
     check('By g: one screening per level', [o for o in rep['outlines'] if o.startswith('Model Screening for')], ['Model Screening for cls g=a', 'Model Screening for cls g=b', 'Model Screening for cls g=c'])
@@ -713,6 +803,22 @@ async def main():
     check('a project: its own table, the By column found again', (r['newTable'], r['by']), (True, ['g']))
     check('... the options kept, the same Summary, no errors', (r['opts'], r['same'], r['heads'], r['errors']), ([True, 'linear', ['tree', 'linear', 'nb']], True, 6, 0))
 
+    # ---- By: each group's Decision Threshold its own (JMP's By reports), under the keys Model Screening gives it (cut, cutLevel)
+    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True}), timeout=600)
+    await page.ev('''(() => { const i = SM.app.reports.at(-1).body.querySelectorAll('input[aria-label="Probability threshold"]')[1]; i.focus(); i.select(); })()''')
+    for ch in '0.3':
+        await page.key(ch, text=ch)
+    await page.ev('(() => { window.__done = new Promise(res => SM.app.reports.at(-1).on("done", res)); return true; })()')
+    await page.key('Enter', code='Enter')
+    await page.ev('window.__done', timeout=300)
+    r = await page.ev('''(() => { const rep = SM.app.reports.at(-1);
+      const heads = [...rep.body.querySelectorAll('.sm-ob-head')].filter(h => h.querySelector('h2, h3, h4').textContent.trim() === 'Decision Threshold');
+      return { caps: heads.map(h => [...h.parentElement.querySelectorAll('table.sm-rt caption')].map(c => c.textContent).filter(t => / when its probability ≥ /.test(t))),
+        opts: Object.fromEntries(Object.entries(rep.spec.options).filter(([k]) => /(^|\\|)(cut|cutLevel)$/.test(k))) }; })()''')
+    check('By g, the Decision Threshold: 0.3 typed in g=b\'s: every table of g=b\'s at 0.3, g=a\'s and g=c\'s still at 0.5; the option g=b\'s alone',
+          ([sorted({c_.split('≥ ')[-1] for c_ in caps}) for caps in r['caps']], r['opts']), ([['0.5'], ['0.3'], ['0.5']], {'~g=b|cut': 0.3}))
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+
     # ---- the graphs' matplotlib code
     await charts(page)
 
@@ -723,21 +829,22 @@ async def main():
     helps = await page.ev('(() => { SM.app.showHelp("p-screening"); const row = document.getElementById("help-p-screening"); return row ? row.textContent : null; })()')
     check('Help lists the platform with the scikit-learn it uses', bool(helps) and 'sklearn.ensemble' in helps and 'Model Screening' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("screening").topics)')
-    check('its topics', sorted(topics), sorted(['p:screening', 'p:screening:summary', 'p:screening:sets', 'p:screening:cv', 'p:screening:methods', 'p:screening:curves', 'p:screening:abp', 'p:screening:threshold', 'cmd:makevalidation']))
+    check('its topics', sorted(topics), sorted(['p:screening', 'p:screening:summary', 'p:screening:sets', 'p:screening:cv', 'p:screening:methods', 'p:screening:curves', 'p:screening:abp', 'p:screening:threshold', 'p:screening:ensemble', 'cmd:makevalidation']))
 
     # ---- the (i) explains every input: the launch dialog and its methods, Make Validation Column, the Decision Threshold
     d = await page.ev(info_js('dialog', "SM.app.launch('screening')", "dlg.querySelector('.sm-scr-launch')"))
-    part = d.get('sections', {}).get('Method and K Fold Crossvalidation', [])
-    check('Model Screening: the launch dialog\'s (i) explains every method box and the K-fold fields', (len(d.get('inputs', [])), len(part), unexplained(d, 'Method and K Fold Crossvalidation'), all(len(t) > 30 for _, t in part)), (15, 15, [], True))
+    part = d.get('sections', {}).get('Method, K Fold Crossvalidation and the terms', [])
+    check('Model Screening: the launch dialog\'s (i) explains every method box, the K-fold fields and the terms', (len(d.get('inputs', [])), len(part), unexplained(d, 'Method, K Fold Crossvalidation and the terms'), all(len(t) > 30 for _, t in part)), (20, 20, [], True))
     await dialog_help(page, "SM.app.launch('screening')", 'screening', 'Model Screening')
     mv = await page.ev(info_js('dialog', 'SM.screening.makeValidationColumn(SM.app);'))
     roles_mv, opts_mv = dict(mv.get('sections', {}).get('Roles', [])), dict(mv.get('sections', {}).get('Options', []))
-    check('Make Validation Column: the (i) explains its three roles and six options', (sorted(roles_mv), sorted(opts_mv), all(len(t) > 30 for t in [*roles_mv.values(), *opts_mv.values()]), mv.get('noTopic')),
-          (sorted(['Stratification Columns', 'Grouping Columns', 'Cutpoint Column']), sorted(['Training Set', 'Validation Set', 'Test Set', 'Random Seed', 'Values', 'New Column Name']), True, []))
+    check('Make Validation Column: the (i) explains its three roles and nine options', (sorted(roles_mv), sorted(opts_mv), all(len(t) > 30 for t in [*roles_mv.values(), *opts_mv.values()]), mv.get('noTopic')),
+          (sorted(['Stratification Columns', 'Grouping Columns', 'Cutpoint Column']), sorted(['Validation Column Type', 'Number of Folds', 'Training Set', 'Validation Set', 'Test Set', 'Balance the Training Set', 'Random Seed', 'Values', 'New Column Name']), True, []))
     thr = 'SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold)'
-    s = await page.ev(info_js('slot', f"[...{thr}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold')", f"{thr}.body.querySelector('.sm-scr-cut')"))
-    check('the Decision Threshold\'s (i) explains its box, Apply and a click on the graph', ([c[0] for c in s['sections'].get('The controls', [])][:3], len(s.get('inputs', [])), unexplained(s, 'The controls')), (['Probability threshold', 'Apply', 'A click on the graph'], 1, []))
-    f = await form_help(page, f"await clickPath({thr}, 'Decision Threshold', ['Set Threshold…']);", [], 'Set Threshold…')
+    s = await page.ev(info_js('slot', f"[...{thr}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold')", f"{thr}.body.querySelector('.sm-pred-cut')"))
+    check('the Decision Threshold\'s (i) explains its box, Apply, the dashed line, the slider and a click on a curve', ([c[0] for c in s['sections'].get('The controls', [])], len(s.get('inputs', [])), unexplained(s, 'The controls')),
+          (['Probability threshold', 'Apply', 'The dashed line', 'The slider', 'A click on a curve'], 2, []))
+    f = await form_help(page, f"await clickPath({thr}, 'Decision Threshold', ['Set Probability Threshold…']);", [], 'Set Probability Threshold…')
     check('... its one field, with what it is for', [len(t) > 40 for _, t in (f.get('sections') or {}).get('Fields', [])], [True])
     s = await page.ev(info_js('slot', f"[...{thr}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Summary Across the Models')"))
     check('the Summary\'s (i) explains its buttons', [c[0] for c in s['sections'].get('Selecting', [])], ['Click a line', 'Select Dominant', 'Run Selected', 'Clear Selection'])

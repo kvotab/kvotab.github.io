@@ -204,6 +204,39 @@
 
   const idsOf = (ctx, key) => ((ctx.spec.roles && ctx.spec.roles[key]) || []).slice();
 
+  /* ---- saved columns ----------------------------------------------------------
+     A backend save call (pca.save, kmeans.save, discriminant.save, ...) returns
+     { columns: [{ name, formula | rows + values, modelingType, valueOrder, notes }] }:
+     a formula is a live formula column (ctx.saveFormula), computed for every
+     row whose columns are present, excluded rows too; values go to the rows
+     named. A formula may refer to a column saved before it in the same batch
+     as {{col:j}}: the page writes that column's name as the table has it (a
+     name already taken gets a number). Returns the columns made. */
+  const colRef = (c) => `:"${String(c.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  function saveBatch(ctx, res) {
+    if (!res || res.error) { SM.ui.toast((res && res.error) || 'Nothing to save', { error: true }); return []; }
+    const made = [];
+    for (const c of res.columns || []) {
+      const spec = { notes: c.notes };
+      if (c.modelingType) spec.modelingType = c.modelingType;
+      if (c.valueOrder) spec.valueOrder = c.valueOrder.slice();
+      let col = null;
+      try {
+        if (c.formula != null) col = ctx.saveFormula(c.name, c.formula.replace(/\{\{col:(\d+)\}\}/g, (_, j) => (made[+j] ? colRef(made[+j]) : '.')), spec);
+        else col = ctx.saveColumn(c.name, { rows: c.rows, values: c.values }, spec);
+      } catch (e) { SM.ui.toast(`${c.name}: ${e.message || e}`, { error: true }); break; }
+      if (!col) break;   // a headless report saves nothing
+      made.push(col);
+    }
+    return made;
+  }
+  SM.multivariate = Object.freeze({ saveBatch });   // Normal Mixtures' Save Mixture Formulas uses it
+
+  // a save call's failure (a thrown error, or an error in its result) as a toast
+  async function saveFrom(ctx, fn, payload) {
+    try { return saveBatch(ctx, await mcall(ctx, fn, payload)); } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); return []; }
+  }
+
   /* ---- the graphs as matplotlib code ------------------------------------------
      Under each graph, Python that draws it with matplotlib from a CSV export of
      the table (the notebook runs it): the report's rows, the numbers computed as
@@ -231,7 +264,7 @@
   // The By group's rows (as the backend's code has them), and those of it the report leaves out.
   function keepLines(ctx) {
     const t = ctx.table, where = ctx.where || [];
-    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${w.column} is ${t.col(w.column) ? SM.grid.cellText(t.col(w.column), w.value) : w.value}`);
+    const L = where.map((w) => `df = df[df[${J(w.column)}] == ${pyLit(w.value)}]   # only the rows where ${SM.util.oneLine(`${w.column} is ${t.col(w.column) ? SM.grid.cellText(t.col(w.column), w.value) : w.value}`)}`);
     const cols = where.map((w) => t.col(w.column));
     const keep = new Set(ctx.rows), drop = [];
     for (let r = 0; r < t.nrows; r++) if (!keep.has(r) && where.every((w, k) => cols[k] && cols[k].values[r] === w.value)) drop.push(r);
@@ -373,8 +406,21 @@
     ob.add(ctx.note(`Drag over points to select rows; the ellipses cover ${fmt(100 * o('spLevel', 0.95))}% of a bivariate normal with each pair's means, standard deviations and correlation.`));
   }
 
+  /* The size of a scatterplot matrix of p columns in the room there is: the
+     grid's g x g cells, the graph's width and height (the backend's code of
+     a matrix it draws takes them: Discriminant's). */
+  function splomSize(p, format) {
+    const g = format === 'square' ? p : p - 1;
+    const size = Math.max(44, Math.min(150, Math.floor((fitW(770) - 70) / Math.max(1, g))));
+    return { g, size, width: size * g + 70, height: size * g + 56 };
+  }
+
   /* The scatterplot matrix with its code under it: frame, the lines that
-     give X, the graph's rows (all the report's, or those a fit took). */
+     give X, the graph's rows (all the report's, or those a fit took).
+     opt.groups ({ of: row → group, open: rows drawn open, names, means,
+     covs }) colours the points by group and draws each group's ellipse from
+     its mean and covariance instead of the pair's; opt.code replaces the
+     code the page writes (a fit's own). */
   function scatterMatrix(ctx, cols, rows, opt, frame) {
     const p = cols.length;
     const bins = [];
@@ -382,9 +428,8 @@
     if (opt.format === 'lower') { for (let i = 1; i < p; i++) for (let j = 0; j < i; j++) cells.push([i, j, i - 1, j]); }
     else if (opt.format === 'upper') { for (let i = 0; i < p - 1; i++) for (let j = i + 1; j < p; j++) cells.push([i, j, i, j - 1]); }
     else { for (let i = 0; i < p; i++) for (let j = 0; j < p; j++) cells.push([i, j, i, j]); }
-    const g = opt.format === 'square' ? p : p - 1;
-    const size = Math.max(44, Math.min(150, Math.floor((fitW(770) - 70) / g)));
-    const W = size * g + 70, H = size * g + 56;
+    const { g, width: W, height: H } = splomSize(p, opt.format);
+    const G = opt.groups || null;
     const gap = 0.012;
     const vals = cols.map((c) => rows.map((r) => { const v = c.values[r]; return typeof v === 'number' && Number.isFinite(v) ? v : null; }));
     const ranges = vals.map((v) => range(v));
@@ -418,8 +463,17 @@
       }
       const xs = [], ys = [], rs = [];
       rows.forEach((r, q) => { const x = vals[j][q], y = vals[i][q]; if (x != null && y != null) { xs.push(x); ys.push(y); rs.push(r); } });
-      if (opt.points) traces.push({ type, mode: 'markers', x: xs, y: ys, rows: rs, marker: { size: rows.length > 500 ? 3 : 4 }, xaxis: xa, yaxis: ya, name: `${cols[i].name} by ${cols[j].name}`, hovertext: rowLabels(ctx, rs), hovertemplate: `%{hovertext}<br>${tpl(cols[j].name)}: %{x}<br>${tpl(cols[i].name)}: %{y}<extra></extra>` });
-      if (xs.length > 2) {
+      const gmark = G ? { color: rs.map((r) => pal(G.of.get(r))), ...(G.open ? { symbol: rs.map((r) => (G.open.has(r) ? 'circle-open' : 'circle')) } : {}) } : {};
+      if (opt.points) traces.push({ type, mode: 'markers', x: xs, y: ys, rows: rs, marker: { size: rows.length > 500 ? 3 : 4, ...gmark }, xaxis: xa, yaxis: ya, name: `${cols[i].name} by ${cols[j].name}`, hovertext: G ? rowLabels(ctx, rs).map((t, q) => `${t}: ${G.names[G.of.get(rs[q])]}`) : rowLabels(ctx, rs), hovertemplate: `%{hovertext}<br>${tpl(cols[j].name)}: %{x}<br>${tpl(cols[i].name)}: %{y}<extra></extra>` });
+      if (G && opt.ellipses) {
+        G.means.forEach((m, t) => {
+          const C = G.covs[t];
+          if (!C) return;
+          const e = ellipseCov(m[j], m[i], [[C[j][j], C[j][i]], [C[i][j], C[i][i]]], opt.level);
+          traces.push({ type: 'scatter', mode: 'lines', x: e.x, y: e.y, xaxis: xa, yaxis: ya, line: { color: pal(t), width: 1.2 }, fill: opt.shaded ? 'toself' : 'none', fillcolor: `${pal(t)}22`, hoverinfo: 'skip', name: `${G.names[t]} ellipse`, showlegend: false });
+        });
+      }
+      if (xs.length > 2 && !G) {
         const s = pairStats(xs, ys);
         if (opt.ellipses && Number.isFinite(s.r)) {
           const e = ellipse(s.mx, s.my, s.sx, s.sy, s.r, opt.level);
@@ -433,7 +487,12 @@
         if (opt.corr && Number.isFinite(s.r)) layout.annotations.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.03, y: 0.97, xanchor: 'left', yanchor: 'top', text: s.r.toFixed(4).replace('-', '−'), showarrow: false, font: { size: 9.5, color: tc.text } });
       }
     });
-    return [ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix' }), ctx.code(splomCode(ctx, cols, opt, bins, W, H, frame, rows.length))];
+    if (G) {   // a legend of the groups (points drawn nowhere)
+      G.names.forEach((nm, t) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], xaxis: 'x', yaxis: 'y', marker: { size: 8, color: pal(t) }, name: SM.report.plotlyText(nm), showlegend: true, hoverinfo: 'skip' }));
+      Object.assign(layout, { showlegend: true, legend: { orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom' } });
+      layout.margin = { ...layout.margin, t: 30 };
+    }
+    return [ctx.plot(traces, layout, { width: W, height: H, title: 'Scatterplot Matrix', ...(G ? { rowColors: false } : {}) }), ctx.code(opt.code !== undefined ? opt.code : splomCode(ctx, cols, opt, bins, W, H, frame, rows.length))];
   }
 
   // The page's density ellipse, as Python (the backend's code has the same function).
@@ -844,7 +903,7 @@
     const R = res.rotation;
     const fac = Array.from({ length: R.k }, (_, j) => `Factor ${j + 1}`);
     const ob = ctx.outline(`Rotated Components: ${R.label}`, { key: 'rotated', menu: () => [
-      { label: 'Save Rotated Components', action: () => saveRotated(ctx, res) },
+      { label: 'Save Rotated Components', action: () => saveRotated(ctx) },
       { label: 'Remove', action: () => ctx.set('rotation', null) },
     ] });
     const order = names.map((_, i) => i);
@@ -858,21 +917,27 @@
     ob.add(ctx.note(`The first ${R.k} components' loadings rotated by statsmodels' factor_rotation${R.kaiser ? ', with Kaiser\'s normalization (as SAS)' : ''}. ${R.kind === 'oblique' ? 'Oblique: the rotated components are correlated.' : 'Orthogonal: the rotated components stay uncorrelated.'}`));
   }
 
-  function saveRotated(ctx, res) {
-    const R = res.rotation;
-    if (!R) { SM.ui.toast('Choose a rotation first: Factor Rotation…'); return; }
-    for (let j = 0; j < R.k; j++) ctx.saveColumn(`Rotated Prin${j + 1}`, { rows: res.rows, values: R.scores.map((s) => s[j]) }, { notes: `${R.label} rotation of ${R.k} principal components (standardized)` });
+  /* Save Rotated Components: formula columns, as Save Principal Components. */
+  function saveRotated(ctx) {
+    const rot = ctx.opt('rotation', null);
+    if (!rot) { SM.ui.toast('Choose a rotation first: Factor Rotation…'); return null; }
+    return saveFrom(ctx, 'pca.save', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on: ctx.opt('on', 'correlations'), what: 'rotated',
+      rotation: rot.method, n_rotate: rot.k, gamma: rot.gamma, kaiser: rot.kaiser !== false });
   }
 
+  /* Save Principal Components: the first n scores as formula columns (Prin1 =
+     Σ eigenvector × the column centred, and on correlations scaled, by the
+     fitted mean and standard deviation), so every row whose columns are
+     present gets its score, excluded rows too, and the scores follow edits. */
   async function pcaSave(ctx) {
     const res = await mcall(ctx, 'pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on: ctx.opt('on', 'correlations') });
     if (res.error) { SM.ui.toast(res.error, { error: true }); return; }
     const k = res.eigenvalues.length;
     const dflt = Math.max(1, res.eigenvalues.filter((e) => e >= 1).length);
     const v = await SM.ui.form({ title: 'Save Principal Components', fields: [{ key: 'n', label: `Number of components (1 to ${k})`, type: 'number', value: Math.min(k, dflt),
-      help: 'How many component columns (Prin1, Prin2, …) to add to the table; the default is the number of eigenvalues of at least 1. A score is the centred row (on correlations also standardized) times the eigenvector, so each column\'s variance is its eigenvalue.' }] });
+      help: 'How many component columns (Prin1, Prin2, …) to add to the table; the default is the number of eigenvalues of at least 1. Each is a formula column: the eigenvector times the row centred by the fitted means (on correlations also divided by the fitted standard deviations), so its variance over the report\'s rows is the eigenvalue, and every row whose columns are present gets a score, excluded rows too.' }] });
     if (!v || !(v.n >= 1)) return;
-    for (let j = 0; j < Math.min(k, Math.round(v.n)); j++) ctx.saveColumn(`Prin${j + 1}`, { rows: res.rows, values: res.scores.map((s) => s[j]) }, { notes: `principal component ${j + 1} on ${ON[res.on]}` });
+    await saveFrom(ctx, 'pca.save', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on: ctx.opt('on', 'correlations'), n: Math.min(k, Math.round(v.n)) });
   }
 
   async function rotationDialog(ctx) {
@@ -892,7 +957,7 @@
 
   SM.platforms.register({
     id: 'pca', label: 'Principal Components', menu: 'Analyze/Multivariate Methods', order: 20, info: 'p:pca',
-    about: 'Principal components on correlations, covariances or the unscaled data: eigenvalues with Bartlett\'s test of equal eigenvalues, eigenvectors, loadings, score, loading and scree plots, a biplot, rotated components, saved component scores.',
+    about: 'Principal components on correlations, covariances or the unscaled data: eigenvalues with Bartlett\'s test of equal eigenvalues, eigenvectors, loadings, score, loading and scree plots, a biplot, rotated components, and the component scores saved as formula columns (every row, excluded ones too).',
     uses: ['statsmodels.multivariate.pca.PCA', 'statsmodels.multivariate.factor_rotation.rotate_factors', 'scipy.stats.chi2'],
     topics: {
       'p:pca': {
@@ -900,7 +965,7 @@
         lead: 'Linear combinations of the columns that are uncorrelated and take up as much of the variation as possible, the first the most.',
         sections: [
           { heading: 'On what', choices: [['Correlations', 'Each column standardized: the eigenvalues sum to the number of columns; loadings are correlations.'], ['Covariances', 'Centred columns: columns with larger variances weigh more.'], ['Unscaled', 'The raw cross products X′X/n, neither centred nor scaled.']] },
-          { heading: 'Scores', text: 'Prin1, Prin2, … are the centred (and on correlations standardized, with the n − 1 standard deviation) rows times the eigenvectors, so their variances are the eigenvalues. The sign of an eigenvector is arbitrary; here its largest entry is positive.' },
+          { heading: 'Scores', text: 'Prin1, Prin2, … are the centred (and on correlations standardized, with the n − 1 standard deviation) rows times the eigenvectors, so their variances are the eigenvalues. The sign of an eigenvector is arbitrary; here its largest entry is positive. Save Principal Components and Save Rotated Components make them formula columns of the fitted means, standard deviations and eigenvectors (as JMP\'s): every row whose columns are present gets its score, excluded rows too, and an edited value is scored again.' },
           { heading: 'Differences from JMP', text: 'The advanced (sparse, robust) methods, supplementary variables and the outlier analysis of JMP\'s platform are not here. The rotation is statsmodels\' factor_rotation with Kaiser\'s normalization; promax is Hendrickson and White\'s with power 3, as SAS computes it.' },
         ],
         more: { label: 'Principal Components', id: 'help-p-pca' },
@@ -949,7 +1014,7 @@
         ctx.check('Score Plot', 'score', null, false), ctx.check('Loading Plot', 'loadplot', null, false), ctx.check('Score Ellipses', 'ellipse', null, false),
         { separator: true },
         { label: 'Factor Rotation…', action: () => rotationDialog(ctx) },
-        { label: 'Save Columns', submenu: () => [{ label: 'Save Principal Components…', action: () => pcaSave(ctx) }, { label: 'Save Rotated Components', disabled: !ctx.opt('rotation', null), action: async () => { const r = await mcall(ctx, 'pca.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), on, rotation: ctx.opt('rotation').method, n_rotate: ctx.opt('rotation').k, gamma: ctx.opt('rotation').gamma, kaiser: ctx.opt('rotation').kaiser !== false }); saveRotated(ctx, r); } }] },
+        { label: 'Save Columns', submenu: () => [{ label: 'Save Principal Components…', action: () => pcaSave(ctx) }, { label: 'Save Rotated Components', disabled: !ctx.opt('rotation', null), action: () => saveRotated(ctx) }] },
       ];
     },
     render: pcaRender,
@@ -1028,14 +1093,19 @@
     return controls(control('Suppress absolute loading values less than', numberEl(thr || '', (v) => ctx.set('suppress', v || 0, scope), { aria: 'Suppress absolute loading values less than' })), control('Blank them (else dimmed)', b));
   }
 
+  // the fit's settings for the backend (factor.fit, factor.save)
+  function faPayload(ctx, fit) {
+    return { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), n_factors: fit.k, method: fit.method, prior: fit.prior,
+      rotation: fit.rotation === 'none' ? null : fit.rotation, gamma: fit.gamma, kaiser: fit.kaiser !== false };
+  }
+
   async function faFit(ctx, base, fit, i) {
     const sc = `fa${fit.id ?? i}`;   // a fit keeps its options when an earlier one is removed
-    const r = await mcall(ctx, 'factor.fit', { ...base, n_factors: fit.k, method: fit.method, prior: fit.prior, rotation: fit.rotation === 'none' ? null : fit.rotation, gamma: fit.gamma, kaiser: fit.kaiser !== false,
-      plot: { x: ctx.opt('fx', 0, sc), y: ctx.opt('fy', 1, sc) } });
+    const r = await mcall(ctx, 'factor.fit', { ...faPayload(ctx, fit), plot: { x: ctx.opt('fx', 0, sc), y: ctx.opt('fy', 1, sc) } });
     const o = (k, d) => ctx.opt(k, d, sc);
     const names = base.columns;
     const title = r.error && !r.k ? 'Factor Analysis' : `Factor Analysis on Correlations with ${r.k} Factor${r.k > 1 ? 's' : ''}: ${FA_METHOD[r.method]}, ${r.rotation_label || 'no'} Rotation`;
-    const ob = ctx.outline(title, { key: `fa:${fit.id ?? i}`, info: 'fa:fit', menu: () => faMenu(ctx, r, i, sc) });
+    const ob = ctx.outline(title, { key: `fa:${fit.id ?? i}`, info: 'fa:fit', menu: () => faMenu(ctx, r, i, sc, fit) });
     if (r.error) { ob.add(ctx.warn(r.error)); return; }
     if (r.identify) ob.add(ctx.warn(r.identify));
     const fac = Array.from({ length: r.k }, (_, j) => `Factor ${j + 1}`);
@@ -1080,7 +1150,7 @@
     ob.add(ctx.code(r.code));
   }
 
-  function faMenu(ctx, r, i, sc) {
+  function faMenu(ctx, r, i, sc, fit) {
     const c = (label, key, d) => ctx.check(label, key, sc, d);
     return [
       c('Prior Communality', 'prior', false), c('Eigenvalues (reduced matrix)', 'reduced', false), c('Unrotated Factor Loading', 'unrot', false), c('Rotation Matrix', 'rotmat', false),
@@ -1089,14 +1159,14 @@
       r.method === 'ml' ? c('Significance Test', 'sig', true) : null, r.method === 'ml' ? c('Measures of Fit', 'fitm', false) : null,
       c('Rotated Factor Loading', 'rotload', true), c('Factor Loading Plot', 'loadplot', true), c('Score Plot', 'scoreplot', false),
       { separator: true },
-      { label: 'Save Rotated Components', disabled: !!r.error, action: () => { for (let j = 0; j < r.k; j++) ctx.saveColumn(`Factor${j + 1}`, { rows: r.rows, values: r.scores.map((s) => s[j]) }, { notes: `factor score (Thurstone's regression method), ${r.k} factors, ${FA_METHOD[r.method]}, ${r.rotation_label} rotation` }); } },
+      { label: 'Save Rotated Components', disabled: !!r.error, action: () => saveFrom(ctx, 'factor.save', faPayload(ctx, fit)) },
       { label: 'Remove Fit', action: () => ctx.set('fits', ctx.opt('fits', []).filter((_, k) => k !== i)) },
     ].filter(Boolean);
   }
 
   SM.platforms.register({
     id: 'factor', label: 'Factor Analysis', menu: 'Analyze/Multivariate Methods', order: 40, info: 'p:factor',
-    about: 'Common factor analysis on the correlation matrix: maximum likelihood or principal axis extraction (statsmodels Factor), SMC or unit prior communalities, the number of factors from the eigenvalues, orthogonal and oblique rotations, the significance tests of the maximum likelihood fit, loading and score plots, saved factor scores.',
+    about: 'Common factor analysis on the correlation matrix: maximum likelihood or principal axis extraction (statsmodels Factor), SMC or unit prior communalities, the number of factors from the eigenvalues, orthogonal and oblique rotations, the significance tests of the maximum likelihood fit, loading and score plots, and the factor scores saved as formula columns.',
     uses: ['statsmodels.multivariate.factor.Factor', 'statsmodels.multivariate.factor_rotation.rotate_factors', 'scipy.stats.chi2'],
     topics: {
       'p:factor': {
@@ -1104,7 +1174,7 @@
         lead: 'Models the correlations of the columns by a few unobserved factors. The report starts with the eigenvalues and a scree plot; choose the model in Model Launch and press Go. Each Go adds a fit.',
         sections: [
           { heading: 'Model Launch', choices: [['Maximum Likelihood', 'Tests the number of factors; needs a positive definite correlation matrix.'], ['Principal Axis', 'Eigenvectors of the reduced correlation matrix, communalities iterated (statsmodels\' default of 50 iterations).'], ['Prior communality', 'SMC (common factor analysis) or 1 (principal components).'], ['Rotation', 'Orthogonal (varimax …) or oblique (promax, quartimin …); Kaiser\'s normalization as SAS.']] },
-          { heading: 'Scores', text: 'Save Rotated Components writes Thurstone\'s regression scores (statsmodels factor_score_params, method regression) of the standardized columns.' },
+          { heading: 'Scores', text: 'Save Rotated Components makes Thurstone\'s regression scores (statsmodels factor_score_params, method regression) of the standardized columns formula columns: the score coefficients times each column less its mean over its standard deviation (of the report\'s rows), so every row whose columns are present is scored, excluded rows too.' },
           { heading: 'Differences from JMP', text: 'Only the correlation matrix and row-wise deletion are offered. Equamax is orthomax with γ = k/2 and factor parsimax γ = p, as SAS defines them (statsmodels\' own equamax uses γ = 1/p). Promax is Hendrickson and White\'s with power 3 (statsmodels\' promax differs). Signs and order of factors are arbitrary: each factor is made to have a positive loading sum.' },
         ],
         more: { label: 'Factor Analysis', id: 'help-p-factor' },
@@ -1153,12 +1223,19 @@
      DISCRIMINANT
      ====================================================================== */
   const DISC = { linear: 'Linear, Common Covariance', quadratic: 'Quadratic, Different Covariances', regularized: 'Regularized, Compromise Method' };
+  const SETS = ['Training', 'Validation', 'Test'];   // a Validation column's sets, 0, 1 and 2
   const PRIORS = { equal: 'Equal Probabilities', proportional: 'Proportional to Occurrence', other: 'Other' };
+
+  // the fit's settings for the backend (discriminant.fit, discriminant.save)
+  function discPayload(ctx, ycols) {
+    const o = (k, d) => ctx.opt(k, d);
+    return { y: ycols, x: ctx.name('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('method', 'linear'), lam: o('lam', 0.5), gam: o('gam', 0), priors: o('priors', 'equal'), prior_values: o('priorValues', null), validation: ctx.name('validation') };
+  }
 
   function discCall(ctx, ycols) {
     const o = (k, d) => ctx.opt(k, d);
-    return mcall(ctx, 'discriminant.fit', { y: ycols, x: ctx.name('x'), weight: ctx.name('weight'), freq: ctx.name('freq'), method: o('method', 'linear'), lam: o('lam', 0.5), gam: o('gam', 0), priors: o('priors', 'equal'), prior_values: o('priorValues', null), alpha: ctx.alpha,
-      plot: { points: !!o('cpPoints', true), cl: !!o('cpCL', true), c50: !!o('cp50', false), rays: !!o('cpRays', true) } });
+    return mcall(ctx, 'discriminant.fit', { ...discPayload(ctx, ycols), alpha: ctx.alpha, curves: !!(o('roc', false) || o('lift', false)), decision: !!o('threshold', false),
+      plot: { points: !!o('cpPoints', true), cl: !!o('cpCL', true), c50: !!o('cp50', false), rays: !!o('cpRays', true), splom: o('splom', false) ? discSplomSize(ctx, ycols) : null } });
   }
 
   function discColumns(ctx) {
@@ -1177,13 +1254,20 @@
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
     const labels = res.levels.map((v) => SM.grid.cellText(xcol, v));
+    if (!ctx.headless) ctx.report._discLevels = labels.length;   // the red triangle's Decision Threshold (two groups)
     const method = o('method', 'linear');
-    box.append(ctx.kv([['Discriminant Method', DISC[method] + (method === 'regularized' ? ` (λ = ${fmt(res.lam)}, γ = ${fmt(res.gam)})` : ''), 'text'], ['Classification', xcol.name, 'text'], ['Priors', PRIORS[o('priors', 'equal')], 'text'], ycols.length < all.length ? ['Columns', ycols.join(', '), 'text'] : null]));
+    const vname = ctx.name('validation');
+    box.append(ctx.kv([['Discriminant Method', DISC[method] + (method === 'regularized' ? ` (λ = ${fmt(res.lam)}, γ = ${fmt(res.gam)})` : ''), 'text'], ['Classification', xcol.name, 'text'], ['Priors', PRIORS[o('priors', 'equal')], 'text'], ycols.length < all.length ? ['Columns', ycols.join(', '), 'text'] : null,
+      vname ? ['Validation', `${vname}: the model is fitted to the ${fmt(res.n_rows)} training rows and scores every row`, 'text'] : null]));
     for (const n of res.notes || []) box.append(ctx.note(n));
     if (ctx.name('weight') || ctx.name('freq')) box.append(ctx.note('With Weight or Freq the means, covariances and probabilities are weighted; the multivariate tests of Canonical Details count rows, not the sum of the weights, in their degrees of freedom.'));
     if (o('canplot', true)) canonicalPlot(ctx, res, labels, ycols);
     if (o('scores', true)) discScores(ctx, res, labels);
     scoreSummaries(ctx, res, labels);
+    if (res.fit && o('roc', false)) SM.predict.rocCurves(ctx, null, res.fit, 'disc:');
+    if (res.fit && o('lift', false)) SM.predict.liftCurves(ctx, null, res.fit, 'disc:');
+    if (res.threshold && o('threshold', false)) discThreshold(ctx, res);
+    if (o('splom', false)) discSplom(ctx, res, labels, ycols);
     if (o('dist', false)) ctx.outline('Squared Distances to Each Group', { key: 'dist' }).add(ctx.rt({ columns: [{ key: 'row', label: 'Row', fmt: 'int' }, ...labels.map((l, t) => ({ key: `d${t}`, label: `SqDist[${l}]`, digits: 4 }))], rows: res.rows.map((r, k) => Object.assign({ row: r + 1 }, ...labels.map((_, t) => ({ [`d${t}`]: res.sqdist[k][t] })))) }, { maxRows: 500 }), ctx.note('d² − 2 log(prior), plus log|S| of the group for the quadratic and regularized methods; the smallest wins.'));
     if (o('probs', false)) ctx.outline('Probabilities to Each Group', { key: 'probs' }).add(ctx.rt({ columns: [{ key: 'row', label: 'Row', fmt: 'int' }, ...labels.map((l, t) => ({ key: `p${t}`, label: `Prob[${l}]`, digits: 4 }))], rows: res.rows.map((r, k) => Object.assign({ row: r + 1 }, ...labels.map((_, t) => ({ [`p${t}`]: res.prob[k][t] })))) }, { maxRows: 500 }));
     if (o('candetails', false)) canonicalDetails(ctx, res, labels, ycols);
@@ -1215,7 +1299,8 @@
     const xs = C.scores.map((s) => s[0]);
     const ys = two ? C.scores.map((s) => s[1]) : res.actual.map((a, k) => a + jitter(k));
     const traces = [];
-    if (o('cpPoints', true)) traces.push({ type: 'scatter', mode: 'markers', x: xs, y: ys, rows: res.rows, showlegend: false, marker: { size: 6, color: res.actual.map((a) => pal(a)) }, hovertext: res.rows.map((r, k) => `${rowLabels(ctx, [r])[0]}<br>${labels[res.actual[k]]} → ${labels[res.pred[k]]}`), hovertemplate: '%{hovertext}<extra></extra>', name: 'rows' });
+    const setName = (k) => (res.sets ? ` (${SETS[res.sets[k]]})` : '');
+    if (o('cpPoints', true)) traces.push({ type: 'scatter', mode: 'markers', x: xs, y: ys, rows: res.rows, showlegend: false, marker: { size: 6, color: res.actual.map((a) => pal(a)), ...(res.sets ? { symbol: res.sets.map((q) => (q ? 'circle-open' : 'circle')), line: { width: 1.4, color: res.actual.map((a) => pal(a)) } } : {}) }, hovertext: res.rows.map((r, k) => `${rowLabels(ctx, [r])[0]}${setName(k)}<br>${labels[res.actual[k]]} → ${labels[res.pred[k]]}`), hovertemplate: '%{hovertext}<extra></extra>', name: 'rows' });
     labels.forEach((l, t) => {
       const mx = C.means[t][0], my = two ? C.means[t][1] : t;
       traces.push({ type: 'scatter', mode: 'markers', x: [mx], y: [my], marker: { symbol: 'cross-thin-open', size: 16, line: { width: 2.2, color: pal(t) }, color: pal(t) }, name: l, showlegend: true, hovertemplate: `${tpl(l)} mean<extra></extra>` });
@@ -1245,7 +1330,7 @@
       xaxis: { title: { text: 'Canonical1' }, zeroline: true },
       yaxis: two ? { title: { text: 'Canonical2' }, zeroline: true, scaleanchor: 'x' } : { title: { text: '' }, tickvals: labels.map((_, t) => t), ticktext: labels, range: [-0.8, T + 0.2] },
     }, { width: fitW(540), height: two ? 460 : 320, title: 'Canonical Plot' }), ctx.code(res.canonical_code),
-    ctx.note(`${two ? 'The first two canonical variables' : 'The canonical variable (two groups)'}: the directions that separate the groups best, scaled to unit pooled within-group variance. + marks each group mean${o('cpCL', true) ? ', with its 95% confidence region' : ''}${o('cp50', false) ? '; dotted: where half of a group\'s rows fall' : ''}${o('cpRays', true) ? '; the rays are the standardized scoring coefficients × 1.5' : ''}.`));
+    ctx.note(`${two ? 'The first two canonical variables' : 'The canonical variable (two groups)'}: the directions that separate the groups best, scaled to unit pooled within-group variance. + marks each group mean${o('cpCL', true) ? ', with its 95% confidence region' : ''}${o('cp50', false) ? '; dotted: where half of a group\'s rows fall' : ''}${o('cpRays', true) ? '; the rays are the standardized scoring coefficients × 1.5' : ''}.${res.sets ? ' Open circles: the validation (and test) rows, scored by the training rows\' fit.' : ''}`));
   }
 
   function discScores(ctx, res, labels) {
@@ -1254,38 +1339,73 @@
     const rowsAll = res.rows.map((r, k) => {
       const pp = res.prob[k][res.pred[k]];
       const others = res.prob[k].map((p, t) => [p, t]).filter(([p, t]) => t !== res.pred[k] && p > 0.1).map(([p, t]) => `${labels[t]} ${p.toFixed(2)}`).join(', ');
-      return { k, row: r + 1, actual: labels[res.actual[k]], sq: res.sqdist[k][res.actual[k]], pa: res.prob_actual[k], nl: res.neg_log_prob[k], bar: '', mis: res.misclassified[k] ? '*' : '', pred: labels[res.pred[k]], pp, others };
+      return { k, row: r + 1, set: res.sets ? SETS[res.sets[k]] : null, actual: labels[res.actual[k]], sq: res.sqdist[k][res.actual[k]], pa: res.prob_actual[k], nl: res.neg_log_prob[k], bar: '', mis: res.misclassified[k] ? '*' : '', pred: labels[res.pred[k]], pp, others };
     });
     const rows = interesting ? rowsAll.filter((x) => x.mis || (x.pp > 0.05 && x.pp < 0.95)) : rowsAll;
     const ob = ctx.outline('Discriminant Scores', { key: 'scores', menu: () => [ctx.check('Show Interesting Rows Only', 'interesting', null, false), { label: 'Select Misclassified Rows', action: () => ctx.table.select(res.rows.filter((_, k) => res.misclassified[k])) }] });
     const mx = Math.max(1, ...res.neg_log_prob.filter(Number.isFinite));
+    const sc = res.sets ? 1 : 0;   // the Set column shifts the bar's cell
     const tbl = ctx.rt({
-      columns: [{ key: 'row', label: 'Row', fmt: 'int' }, { key: 'actual', label: 'Actual', fmt: 'text' }, { key: 'sq', label: 'SqDist(Actual)', digits: 4 }, { key: 'pa', label: 'Prob(Actual)', digits: 4 },
+      columns: [{ key: 'row', label: 'Row', fmt: 'int' }, ...(res.sets ? [{ key: 'set', label: 'Set', fmt: 'text' }] : []), { key: 'actual', label: 'Actual', fmt: 'text' }, { key: 'sq', label: 'SqDist(Actual)', digits: 4 }, { key: 'pa', label: 'Prob(Actual)', digits: 4 },
         { key: 'nl', label: '−Log(Prob)', digits: 4 }, { key: 'bar', label: '', fmt: 'text' }, { key: 'mis', label: '', fmt: 'text' }, { key: 'pred', label: 'Predicted', fmt: 'text' }, { key: 'pp', label: 'Prob(Pred)', digits: 4 }, { key: 'others', label: 'Others', fmt: 'text' }],
       rows,
     }, { maxRows: 400, onRow: (r, ev) => ctx.table.select([res.rows[r.k]], ev.shiftKey ? 'add' : 'replace') });
-    decorate(tbl, (tr, row) => { const td = tr.cells[5]; td.classList.add('mv-barcell'); cellBar(td, row.nl, 0, mx, row.mis ? RED : SM.report.BAR); tr.cells[6].classList.toggle('mv-hit', !!row.mis); });
-    const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x: res.rows.map((r) => r + 1), y: res.neg_log_prob, rows: res.rows, marker: { size: 6, color: res.misclassified.map((m) => (m ? RED : SM.report.BASE)), symbol: res.misclassified.map((m) => (m ? 'x' : 'circle')) }, hovertext: res.rows.map((r, k) => `${rowLabels(ctx, [r])[0]}: ${labels[res.actual[k]]} → ${labels[res.pred[k]]}`), hovertemplate: '%{hovertext}<br>−log(prob) %{y:.3f}<extra></extra>' }],
+    decorate(tbl, (tr, row) => { const td = tr.cells[5 + sc]; td.classList.add('mv-barcell'); cellBar(td, row.nl, 0, mx, row.mis ? RED : SM.report.BAR); tr.cells[6 + sc].classList.toggle('mv-hit', !!row.mis); tr.classList.toggle('mv-validation', !!row.set && row.set !== 'Training'); });
+    const open = res.sets ? res.sets.map((q) => q > 0) : null;
+    const plot = ctx.plot([{ type: 'scatter', mode: 'markers', x: res.rows.map((r) => r + 1), y: res.neg_log_prob, rows: res.rows, marker: { size: 6, color: res.misclassified.map((m) => (m ? RED : SM.report.BASE)), symbol: res.misclassified.map((m, k) => (m ? (open && open[k] ? 'x-open' : 'x') : (open && open[k] ? 'circle-open' : 'circle'))) }, hovertext: res.rows.map((r, k) => `${rowLabels(ctx, [r])[0]}${res.sets ? ` (${SETS[res.sets[k]]})` : ''}: ${labels[res.actual[k]]} → ${labels[res.pred[k]]}`), hovertemplate: '%{hovertext}<br>−log(prob) %{y:.3f}<extra></extra>' }],
       { xaxis: { title: { text: 'Row Number' } }, yaxis: { title: { text: '−Log(Prob(Actual))' }, rangemode: 'tozero' } }, { width: fitW(520), height: 230, title: 'Discriminant scores by row' });
-    ob.add(tbl, plot, ctx.code(res.scores_code), ctx.note(`${interesting ? 'Misclassified rows and rows whose predicted probability is between 0.05 and 0.95. ' : ''}* marks a misclassified row; a click on a line selects the row. The bar is −log of the probability of the actual group: long bars are rows the model predicts badly.`));
+    ob.add(tbl, plot, ctx.code(res.scores_code), ctx.note(`${interesting ? 'Misclassified rows and rows whose predicted probability is between 0.05 and 0.95. ' : ''}* marks a misclassified row; a click on a line selects the row. The bar is −log of the probability of the actual group: long bars are rows the model predicts badly.${res.sets ? ' Set: the row\'s set in the Validation column; the validation and test rows (in italics, open marks in the graph) are scored by the fit to the training rows.' : ''}`));
   }
 
   function scoreSummaries(ctx, res, labels) {
-    const S = res.summary;
     const ob = ctx.outline('Score Summaries', { key: 'summary', menu: () => [ctx.check('Show Classification Counts', 'counts', null, true)] });
-    ob.add(ctx.rt({ columns: [{ key: 'src', label: 'Source', fmt: 'text' }, { key: 'nm', label: 'Number Misclassified' }, { key: 'pm', label: 'Percent Misclassified', digits: 4 }, { key: 'er2', label: 'Entropy RSquare', digits: 4 }, { key: 'm2', label: '−2LogLikelihood', digits: 5 }], rows: [{ src: 'Training', nm: S.n_mis, pm: S.pct_mis, er2: S.entropy_r2, m2: S.m2ll }] }, { sortable: false }));
+    const sums = res.summaries || [{ set: 'Training', ...res.summary }];
+    ob.add(ctx.rt({ columns: [{ key: 'src', label: 'Source', fmt: 'text' }, { key: 'nm', label: 'Number Misclassified' }, { key: 'pm', label: 'Percent Misclassified', digits: 4 }, { key: 'er2', label: 'Entropy RSquare', digits: 4 }, { key: 'm2', label: '−2LogLikelihood', digits: 5 }, { key: 'n', label: 'N', hidden: true }],
+      rows: sums.map((S) => ({ src: S.set, nm: S.n_mis, pm: S.pct_mis, er2: S.entropy_r2, m2: S.m2ll, n: S.n })) }, { sortable: false }));
     if (ctx.opt('counts', true)) {
-      const conf = res.confusion;
-      const rates = conf.map((row) => { const s = row.reduce((a, b) => a + b, 0); return row.map((v) => (s ? v / s : null)); });
       const cm = (M, fmtKey, caption, digits) => {
         const tbl = matrixTable(ctx, labels, M, { fmtKey, caption, digits, rowNames: labels });
         tbl.querySelector('thead th').textContent = 'Actual \\ Predicted';
         decorate(tbl, (tr, row, i) => { [...tr.cells].forEach((td, j) => { if (j > 0) td.classList.toggle('mv-hit', j - 1 !== i && M[i][j - 1] > 0); }); });
         return tbl;
       };
-      ob.add(ctx.row(cm(conf, 'num', 'Confusion Matrix (counts)', 0), cm(rates, 'num', 'Confusion Rates', 4)));
+      const confs = res.confusions || [{ set: 'Training', matrix: res.confusion }];
+      for (const c of confs) {
+        const rates = c.matrix.map((row) => { const s = row.reduce((a, b) => a + b, 0); return row.map((v) => (s ? v / s : null)); });
+        const pre = res.confusions ? `${c.set}: ` : '';
+        ob.add(ctx.row(cm(c.matrix, 'num', `${pre}Confusion Matrix (counts)`, 0), cm(rates, 'num', `${pre}Confusion Rates`, 4)));
+      }
     }
-    ob.add(ctx.note('Entropy RSquare: 1 − log likelihood of the model / log likelihood of the group shares alone (in the training rows); 1 is perfect classification.'));
+    ob.add(ctx.note(`Entropy RSquare: 1 − log likelihood of the model / log likelihood of the group shares alone (the training rows' shares); 1 is perfect classification.${res.summaries ? ' The validation and test rows are scored by the model the training rows fit: their misclassification is the honest measure.' : ''}`));
+  }
+
+  /* The Decision Threshold (two groups): SM.predict's report of the second
+     group's probability; Save Threshold Formula reads the Prob[] columns
+     (saved as values of every row first when they are not in the table). */
+  function discThreshold(ctx, res) {
+    SM.predict.threshold(ctx, null, res.threshold, { scope: null, prefix: 'disc:', yCol: ctx.role('x'), probName: (label) => `Prob[${label}]`,
+      save: { fn: 'discriminant.probs', payload: { ...discPayload(ctx, discColumns(ctx)), where: ctx.where || [] } } });
+  }
+
+  /* The Scatterplot Matrix (JMP's option): the covariates two by two below the
+     diagonal, the rows in their groups' colours, each group's normal ellipse
+     (its mean and the covariance the method uses: the pooled within
+     covariance for the linear method) covering 90% of the group. */
+  const discSplomSize = (ctx, ycols) => ({ ...splomSize(ycols.length, 'lower'), level: ctx.opt('spLevel', 0.9), shaded: !!ctx.opt('spShaded', false) });
+  function discSplom(ctx, res, labels, ycols) {
+    const ob = ctx.outline('Scatterplot Matrix', { key: 'dsplom', info: 'disc:splom', menu: () => [
+      { label: 'Ellipse Coverage', submenu: () => [0.5, 0.9, 0.95, 0.99].map((a) => ({ label: String(a), checked: ctx.opt('spLevel', 0.9) === a, action: () => ctx.set('spLevel', a) })) },
+      ctx.check('Shaded Ellipses', 'spShaded', null, false),
+      { label: 'Remove', action: () => ctx.set('splom', false) }] });
+    if (ycols.length < 2) { ob.add(ctx.note('The scatterplot matrix needs two or more covariates.')); return; }
+    if (ycols.length > 16) { ob.add(ctx.note(`${ycols.length} covariates: the scatterplot matrix is drawn for up to 16.`)); return; }
+    const cols = ycols.map((n) => ctx.table.col(n));
+    const of = new Map(res.rows.map((r, k) => [r, res.actual[k]]));
+    const open = res.sets ? new Set(res.rows.filter((_, k) => res.sets[k] > 0)) : null;
+    const level = ctx.opt('spLevel', 0.9);
+    ob.add(scatterMatrix(ctx, cols, res.rows, { format: 'lower', points: true, ellipses: true, shaded: ctx.opt('spShaded', false), corr: false, hist: false, fit: false, level,
+      groups: { of, open, names: labels, means: res.means, covs: res.model_cov }, code: res.splom_code }, []));
+    ob.add(ctx.note(`Each group's normal ellipse holds ${fmt(100 * level)}% of it: the group's mean and the covariance the ${ctx.opt('method', 'linear') === 'linear' ? 'linear method pools over the groups' : 'method gives the group'}${res.sets ? ', from the training rows; open circles are the validation and test rows' : ''}. Drag over points to select rows.`));
   }
 
   function canonicalDetails(ctx, res, labels, ycols) {
@@ -1306,7 +1426,8 @@
 
   async function stepwisePanel(ctx, all, x) {
     const entered = ctx.opt('entered', []);
-    const r = await ctx.call('discriminant.stepwise', { y: all, x, entered, weight: ctx.name('weight'), freq: ctx.name('freq') });
+    const r = await ctx.call('discriminant.stepwise', { y: all, x, entered, weight: ctx.name('weight'), freq: ctx.name('freq'), validation: ctx.name('validation') });
+    if (r.error) { ctx.outline('Column Selection', { key: 'stepwise', info: 'disc:stepwise' }).add(ctx.warn(r.error)); return; }
     const ob = ctx.outline('Column Selection', { key: 'stepwise', info: 'disc:stepwise' });
     const setE = (list) => ctx.set('entered', list);
     const outs = r.columns.filter((c) => !c.entered && c.p != null).sort((a, b) => a.p - b.p);
@@ -1319,16 +1440,21 @@
       ctx.note('F and Prob > F: the analysis-of-covariance test of the categories with the column as the response and the entered columns as covariates (statsmodels OLS). Click a line to enter or remove a column; Apply This Model refits with the entered columns.'));
   }
 
-  function discSave(ctx, res, labels) {
+  /* Save Formulas (JMP's): SqDist[group], Prob[group] and Pred <X> as formula
+     columns, from the report's fit (its training rows, with a Validation
+     column), so every row whose covariates are present is scored. */
+  function discSave(ctx, what = 'formulas') {
     const xcol = ctx.role('x');
-    labels.forEach((l, t) => ctx.saveColumn(`SqDist[${l}]`, { rows: res.rows, values: res.sqdist.map((s) => s[t]) }, { notes: 'squared distance − 2 log(prior) (+ log|S| for quadratic and regularized) from Discriminant' }));
-    labels.forEach((l, t) => ctx.saveColumn(`Prob[${l}]`, { rows: res.rows, values: res.prob.map((s) => s[t]) }, { notes: `posterior probability of ${xcol.name} = ${l} from Discriminant` }));
-    ctx.saveColumn(`Pred ${xcol.name}`, { rows: res.rows, values: res.pred.map((t) => res.levels[t]) }, { dataType: xcol.isNumeric ? 'numeric' : 'character', modelingType: xcol.modelingType, valueOrder: xcol.valueOrder ? xcol.valueOrder.slice() : null, notes: 'the most probable group from Discriminant' });
+    return saveFrom(ctx, 'discriminant.save', { ...discPayload(ctx, discColumns(ctx)), what }).then((made) => {
+      const pred = made.find((c) => c.name.startsWith(`Pred ${xcol.name}`));
+      if (pred && xcol.valueOrder && !pred.valueOrder) { pred.valueOrder = xcol.valueOrder.slice(); ctx.table._changed('schema', { info: pred.id }); }
+      return made;
+    });
   }
 
   SM.platforms.register({
     id: 'discriminant', label: 'Discriminant', menu: 'Analyze/Multivariate Methods', order: 30, info: 'p:discriminant',
-    about: 'Classifies rows into the groups of a categorical column from continuous covariates: linear (pooled covariance), quadratic and regularized discriminant analysis, posterior probabilities and squared distances, the canonical plot with biplot rays and confidence regions of the means, the classification summary, the multivariate tests, stepwise selection, saved probabilities and predictions.',
+    about: 'Classifies rows into the groups of a categorical column from continuous covariates: linear (pooled covariance), quadratic and regularized discriminant analysis, posterior probabilities and squared distances, the canonical plot with biplot rays and confidence regions of the means, the classification summary with a Validation column\'s sets (JMP Pro), ROC and lift curves, the Decision Threshold of two groups, a scatterplot matrix with the groups\' ellipses, the multivariate tests, stepwise selection, and Save Formulas: squared distances, probabilities and the predicted group as live formula columns.',
     uses: ['numpy, scipy.linalg.eigh (canonical analysis)', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.api.OLS (stepwise F tests)'],
     topics: {
       'p:discriminant': {
@@ -1337,8 +1463,18 @@
         sections: [
           { heading: 'Methods', choices: [['Linear', 'One covariance matrix for all groups (pooled): the boundaries are linear.'], ['Quadratic', 'Each group its own covariance matrix; needs enough rows per group.'], ['Regularized', 'Σ = (1 − γ)(λS_p + (1 − λ)S_t) + γ diag(…): λ = 1 is linear, λ = 0 quadratic; γ shrinks toward the diagonal.']] },
           { heading: 'Canonical plot', text: 'The canonical variables are the linear combinations that separate the groups best, scaled to unit variance within groups. Circles are 95% confidence regions of the group means; rays are the standardized scoring coefficients.' },
-          { heading: 'Differences from JMP', text: 'The Wide Linear method, shrinkage of covariances, validation columns and the ROC curves are not here. The four multivariate tests are statsmodels MANOVA\'s.' },
+          { heading: 'Priors', text: 'Equal Probabilities is the default, as JMP\'s help has it; Proportional to Occurrence takes the training rows\' shares, Other the priors given.' },
+          { heading: 'Validation', text: 'With a Validation column (JMP Pro) the discriminant is fitted to the training rows and every row is scored: the Score Summaries and the confusion counts of each set, the Set of each row in Discriminant Scores, open marks for the validation and test rows in the graphs. The validation rows\' misclassification is the honest measure of the rule.' },
+          { heading: 'Score Options', choices: [['ROC Curve, Lift Curve', 'Each group against the others by its probability, per set (the Predictive Modeling platforms\' curves; rows counted by Weight × Freq).'], ['Decision Threshold', 'With two groups: the rule "the second group when its probability is at least the threshold", its counts and measures at any threshold, and Save Threshold Formula.'], ['Save Formulas', 'SqDist[group], Prob[group] and Pred <X> as formula columns (JMP\'s): every row whose covariates are present is scored, excluded rows too, and a changed value is scored again.']] },
+          { heading: 'Scatterplot Matrix', text: 'The covariates two by two with each group\'s 90% normal ellipse from the covariance the method uses (pooled for the linear method, the group\'s own for the quadratic one).' },
+          { heading: 'Differences from JMP', text: 'The Wide Linear method, shrinkage of covariances, the Precision Recall Curve, Consider New Levels and the profiler are not here. The four multivariate tests are statsmodels MANOVA\'s. JMP\'s Scatterplot Matrix opens its own platform; here it is part of the report. A validation row of a group the training rows lack is left out (the rule has no mean for it).' },
         ],
+        more: { label: 'Discriminant', id: 'help-p-discriminant' },
+      },
+      'disc:splom': {
+        kicker: 'Discriminant', title: 'Scatterplot Matrix',
+        lead: 'The covariates two by two, below the diagonal as JMP draws it: every row in its group\'s colour, and for each group the normal ellipse that holds 90% of it (Ellipse Coverage, red triangle), from the group\'s mean and the covariance the method uses: the pooled within covariance for Linear, each group\'s own for Quadratic, the compromise for Regularized. Ellipses of one size and shape are what the linear method assumes; very different ones favour the quadratic method.',
+        sections: [{ heading: 'In the report', choices: [['The points', 'Drag over them to select rows; open circles are the validation and test rows.']] }],
         more: { label: 'Discriminant', id: 'help-p-discriminant' },
       },
       'disc:stepwise': {
@@ -1364,6 +1500,8 @@
           help: 'Weights the means, the covariances and the posterior probabilities; the multivariate tests count rows, not the sum of the weights, in their degrees of freedom.' },
         { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
           help: 'A count per row: the row stands for that many observations in the means and covariances.' },
+        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional: 0/1/2 or Training/Validation/Test',
+          help: 'JMP Pro\'s Validation role: the rows with 0 or Training fit the discriminant (the means, covariances, canonical analysis and tests); the rows with 1 or Validation, and 2 or Test, are only scored by it, and the Score Summaries, confusion counts and curves are given for each set. Rows with no value are left out; a column of more values (k folds) is refused.' },
         { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
       options: [
@@ -1389,17 +1527,19 @@
         { label: 'Score Options', submenu: () => [
           ctx.check('Show Interesting Rows Only', 'interesting', null, false), ctx.check('Show Classification Counts', 'counts', null, true),
           ctx.check('Show Distances to Each Group', 'dist', null, false), ctx.check('Show Probabilities to Each Group', 'probs', null, false),
+          ctx.check('ROC Curve', 'roc', null, false), ctx.check('Lift Curve', 'lift', null, false),
+          ctx.report._discLevels === 2 ? SM.predict.thresholdItem(ctx, null) : null,
           { label: 'Select Misclassified Rows', action: withRes((res) => ctx.table.select(res.rows.filter((_, k) => res.misclassified[k]))) },
           { label: 'Select Uncertain Rows…', action: async () => { const v = await SM.ui.form({ title: 'Select Uncertain Rows', lead: 'Rows whose probability for some group is inside the range.', fields: [{ key: 'lo', label: 'From', type: 'number', value: 0.1, help: 'The lower end of the range: a row is selected when its posterior probability of some group lies strictly between From and To, a row the model is unsure of. 0.1 by default.' },
             { key: 'hi', label: 'To', type: 'number', value: 0.9, help: 'The upper end of the range; 0.9 by default.' }] }); if (!v) return; await withRes((res) => ctx.table.select(res.rows.filter((_, k) => res.prob[k].some((p) => p > v.lo && p < v.hi))))(); } },
-          { label: 'Save Formulas', action: withRes((res, labels) => discSave(ctx, res, labels)) },
-        ] },
+          { label: 'Save Formulas', action: () => discSave(ctx) },
+        ].filter(Boolean) },
         ctx.check('Canonical Plot', 'canplot', null, true),
         { label: 'Canonical Options', submenu: () => [
           ctx.check('Show Points', 'cpPoints', null, true), ctx.check('Show Means CL Ellipses', 'cpCL', null, true), ctx.check('Show Normal 50% Contours', 'cp50', null, false), ctx.check('Show Biplot Rays', 'cpRays', null, true),
           { label: 'Color Points', action: withRes((res) => { res.levels.forEach((_, t) => ctx.table.setColor(res.rows.filter((__, k) => res.actual[k] === t), t % 12)); }) },
           ctx.check('Show Canonical Details', 'candetails', null, false), ctx.check('Show Canonical Structure', 'canstruct', null, false),
-          { label: 'Save Canonical Scores', action: withRes((res) => { const C = res.canonical; if (!C) return; for (let j = 0; j < C.m; j++) ctx.saveColumn(`Canon[${j + 1}]`, { rows: res.rows, values: C.scores.map((s) => s[j]) }, { notes: 'canonical score from Discriminant' }); }) },
+          { label: 'Save Canonical Scores', action: () => discSave(ctx, 'canonical') },
         ] },
         { label: 'Specify Priors', submenu: () => [
           { label: 'Equal Probabilities', checked: o('priors', 'equal') === 'equal', action: () => ctx.set('priors', 'equal') },
@@ -1428,6 +1568,11 @@
      ====================================================================== */
   const HMETHODS = [['average', 'Average'], ['centroid', 'Centroid'], ['ward', 'Ward'], ['single', 'Single'], ['complete', 'Complete']];
   const STDBY = [['columns', 'Columns'], ['none', 'Unstandardized'], ['rows', 'Rows']];
+  // the Distance option (beyond JMP) of Single, Complete and Average linkage
+  const HDISTANCES = [['sqeuclidean', 'Squared Euclidean (JMP)'], ['euclidean', 'Euclidean'], ['cityblock', 'City Block'], ['chebyshev', 'Chebyshev'], ['correlation', 'Correlation (1 − r)'],
+    ['mahalanobis', 'Mahalanobis'], ['jaccard', 'Jaccard'], ['gower', 'Gower']];
+  const DIST_WORDS = { sqeuclidean: 'squared Euclidean', euclidean: 'Euclidean', cityblock: 'city block', chebyshev: 'Chebyshev', correlation: 'correlation (1 − r)', mahalanobis: 'Mahalanobis', jaccard: 'Jaccard', gower: 'Gower' };
+  const DIST_HELP = 'Beyond JMP, whose distances are the squared Euclidean ones: the dissimilarity Single, Complete and Average linkage join by. Euclidean, City Block (the sum of the absolute differences), Chebyshev (the largest one), Correlation (1 − the correlation of two rows across the columns, for shapes of profiles) and Mahalanobis (with the rows\' covariance, so correlated columns count once) take the columns as Standardize By leaves them; Jaccard takes each value as present (not 0) or absent, for 0/1 data; Gower averages |difference|/range over the numeric columns and 0 or 1 (the same level or not) over nominal ones, so it also takes nominal columns. Ward and Centroid need the squared Euclidean distances.';
 
   /* The union of the first joins: for each node (0..n-1 observations,
      n+s the s-th join) its root after n - k joins. */
@@ -1465,14 +1610,23 @@
     return rows.map((r) => (lc && lc.values[r] != null && lc.values[r] !== '' && !(typeof lc.values[r] === 'number' && Number.isNaN(lc.values[r])) ? SM.grid.cellText(lc, lc.values[r]) : String(r + 1)));
   }
 
+  // the clustering's settings for the backend (hcluster.fit, hcluster.save)
+  function hcPayload(ctx) {
+    const o = (k, d) => ctx.opt(k, d);
+    return { columns: ctx.names('y'), method: o('method', 'ward'), standardize: o('standardize', 'columns'), robust: !!o('robust', false), impute: !!o('impute', false),
+      matrix: o('format', 'attributes') === 'matrix', distance: o('distance', 'sqeuclidean'), n_clusters: o('ncluster', null) };
+  }
+
   async function hcRender(ctx) {
     const cols = ctx.roles('y');
     const names = cols.map((c) => c.name);
     const o = (k, d) => ctx.opt(k, d);
     const method = o('method', 'ward'), standardize = o('standardize', 'columns');
-    const res = await mcall(ctx, 'hcluster.fit', { columns: names, method, standardize, two_way: o('twoWay', false), label: labelName(ctx), n_clusters: o('ncluster', null) });
+    const base = hcPayload(ctx);
+    const res = await mcall(ctx, 'hcluster.fit', { ...base, two_way: o('twoWay', false), label: labelName(ctx), silhouette: !!o('silhouette', false) });
     const box = ctx.container;
     if (res.error) { box.append(ctx.warn(res.error)); return; }
+    if (!ctx.headless) ctx.report.hcCoords = !!res.coords;   // Save Formula for Closest Cluster needs the rows' values
     const n = res.n;
     const { merges, heights, order } = res;
     const k = Math.max(1, Math.min(n, Math.round(o('ncluster', null) ?? defaultClusters(heights, n))));
@@ -1482,7 +1636,7 @@
     for (let i = 0; i < n; i++) members[lab[i]].push(res.rows[i]);
     // Color Clusters and Mark Clusters follow the clusters when they change,
     // as in JMP; a redraw with the same clusters leaves the row states alone.
-    const stamp = `${k}|${method}|${standardize}|${names.join('\u0001')}`;
+    const stamp = `${k}|${method}|${standardize}|${names.join('\u0001')}|${JSON.stringify(base)}`;
     const done = ctx.report._mvStamps || (ctx.report._mvStamps = {});
     for (const [opt, fn] of [['colorClusters', (rs, c) => ctx.table.setColor(rs, c % 12)], ['markClusters', (rs, c) => ctx.table.setMarker(rs, c % 12)]]) {
       const key = `${opt}\u0001${ctx.path}`;
@@ -1490,7 +1644,12 @@
       if (done[key] !== stamp) { members.forEach(fn); done[key] = stamp; }
     }
     const names0 = leafNames(ctx, res.rows);
-    box.append(ctx.note(`Method = ${HMETHODS.find((m) => m[0] === method)[1]}; ${{ columns: 'columns standardized', none: 'unstandardized', rows: 'rows standardized' }[standardize]}; ${plural(n, 'row')}${n < ctx.rows.length ? ` (${dropped(ctx.rows.length - n)})` : ''}. ${k} cluster${k > 1 ? 's' : ''}.`));
+    const how = res.matrix ? 'the distances of the matrix in the columns'
+      : res.distance === 'gower' ? 'Gower\'s distance (numeric columns over their ranges, levels the same or not)'
+        : res.distance === 'jaccard' ? 'the Jaccard distance (each value present, not 0, or absent)'
+          : `${{ columns: `columns standardized${o('robust', false) ? ' robustly (Huber)' : ''}`, none: 'unstandardized', rows: 'rows standardized' }[standardize]}${res.distance === 'sqeuclidean' ? '' : `, ${DIST_WORDS[res.distance]} distances`}`;
+    box.append(ctx.note(`Method = ${HMETHODS.find((m) => m[0] === method)[1]}; ${how}; ${plural(n, 'row')}${!o('impute', false) && !res.matrix && n < ctx.rows.length ? ` (${dropped(ctx.rows.length - n)})` : ''}. ${k} cluster${k > 1 ? 's' : ''}.`));
+    for (const t of res.notes || []) box.append(ctx.note(t));
     if (o('dendro', true)) dendrogramOutline(ctx, res, k, lab, nodeCluster, names0, members);
     if (o('history', true)) {
       const rep = new Int32Array(2 * n - 1);
@@ -1506,23 +1665,43 @@
       ctx.outline('Clustering History', { key: 'history', closed: n > 60 }).add(ctx.rt({ columns: [{ key: 'k', label: 'Number of Clusters', fmt: 'int' }, { key: 'd', label: 'Distance', digits: 6 }, { key: 'leader', label: 'Leader', fmt: 'text' }, { key: 'joiner', label: 'Joiner', fmt: 'text' }], rows: hist }, { maxRows: 400 }),
         ctx.note('The joins from the last (one cluster) back to the first. The leader and the joiner are the first row of each of the two clusters joined.'));
     }
-    if (o('criterion', false)) {
+    if (o('criterion', false) && !res.coords) ctx.outline('Cluster Criterion', { key: 'criterion', info: 'mv:ccc' }).add(ctx.note(`The cubic clustering criterion needs the rows' values in numeric columns: ${res.matrix ? 'a distance matrix has none' : 'a nominal column has no mean'}.`));
+    else if (o('criterion', false)) {
       const crit = res.criterion.filter((c) => c.k >= 1);
       const ob = ctx.outline('Cluster Criterion', { key: 'criterion', info: 'mv:ccc' });
       ob.add(ctx.rt({ columns: [{ key: 'k', label: 'Number of Clusters', fmt: 'int' }, { key: 'ccc', label: 'CCC', digits: 4 }, { key: 'r2', label: 'RSquare', digits: 4 }, { key: 'er2', label: 'Approx Expected RSquare', digits: 4 }], rows: crit }, { maxRows: 200 }),
         ctx.plot([{ type: 'scatter', mode: 'lines+markers', x: crit.map((c) => c.k), y: crit.map((c) => c.ccc), line: { color: SM.report.BASE }, hovertemplate: '%{x} clusters: CCC %{y:.3f}<extra></extra>' }], { xaxis: { title: { text: 'Number of Clusters' } }, yaxis: { title: { text: 'CCC' } } }, { width: fitW(420), height: 240, title: 'Cubic clustering criterion', select: false }),
         ctx.code(res.ccc_code));
     }
-    if (o('summary', false)) clusterSummary(ctx, cols, members, 'Cluster Summary');
+    // the numeric columns' values of the rows clustered (imputed ones with Missing value imputation)
+    const numCols = res.matrix ? [] : cols.filter((c) => (res.numeric || []).includes(c.name));
+    const vals = hcValues(ctx, res, numCols);
+    if (o('summary', false)) {
+      if (numCols.length) clusterSummary(ctx, numCols, members, 'Cluster Summary', vals);
+      else ctx.outline('Cluster Summary', { key: 'summary:Cluster Summary' }).add(ctx.note('No numeric columns to summarize: a distance matrix has none.'));
+    }
+    if (o('pcp', false)) {
+      const ob = ctx.outline('Parallel Coordinate Plots', { key: 'pcp', info: 'hc:pcp' });
+      if (!numCols.length) ob.add(ctx.note('A parallel coordinate plot needs numeric columns: a distance matrix has none.'));
+      else {
+        const labels = res.rows.map((_, i) => lab[i]);
+        const means = members.map((rs) => numCols.map((c) => { const v = rs.map((r) => vals(c, r)).filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }));
+        ob.add(parallelPlot(ctx, { rows: res.rows, labels, k, cols: numCols, means, mu: res.mean, sd: res.sd, value: vals }), ctx.code(res.parallel_code),
+          ctx.note(`Each row a thin line and each cluster's mean a thick one, over the ${numCols.length} numeric column${numCols.length > 1 ? 's' : ''}, each standardized by its mean and standard deviation over the rows clustered (0 is the mean).`));
+      }
+    }
+    if (o('silhouette', false)) silhouetteOutline(ctx, res, k, lab, members);
+    if (o('twoWay', false) && !res.coords) ctx.outline('Two Way Clustering', { key: 'twoway' }).add(ctx.note(`Two way clustering needs the rows' values in numeric columns: ${res.matrix ? 'a distance matrix has none' : 'a nominal column has none'}.`));
     if (o('twoWay', false) && res.col_order && res.data) {
       const ob = ctx.outline('Two Way Clustering', { key: 'twoway' });
       const colo = res.col_order;
       const z = order.map((i) => colo.map((j) => res.data[i][j]));
       const tall = n <= 150;
-      ob.add(ctx.plot([{ type: 'heatmap', z, x: colo.map((j) => names[j]), y: order.map((i) => i), colorscale: standardize === 'none' ? 'Viridis' : divergingScale(), zmid: standardize === 'none' ? undefined : 0, hovertemplate: '%{x}: %{z:.3f}<extra></extra>', colorbar: { thickness: 10 } }],
+      const plain = standardize === 'none' || res.distance === 'gower' || res.distance === 'jaccard';
+      ob.add(ctx.plot([{ type: 'heatmap', z, x: colo.map((j) => names[j]), y: order.map((i) => i), colorscale: plain ? 'Viridis' : divergingScale(), zmid: plain ? undefined : 0, hovertemplate: '%{x}: %{z:.3f}<extra></extra>', colorbar: { thickness: 10 } }],
         { yaxis: { autorange: 'reversed', tickvals: tall ? order.map((i) => i) : [], ticktext: tall ? order.map((i) => names0[i]) : [], type: 'category', showgrid: false }, xaxis: { type: 'category', showgrid: false, tickangle: -35 }, margin: { l: 70, r: 10, t: 8, b: 70 } },
         { width: fitW(Math.min(760, 120 + 40 * names.length)), height: tall ? Math.max(260, 13 * n + 90) : 600, title: 'Two way clustering', select: false }), ctx.code(res.twoway_code),
-      ctx.note(`Rows in the order of the dendrogram, columns in the order of their own clustering (${method === 'centroid' ? 'Ward' : HMETHODS.find((m) => m[0] === method)[1]} on the columns); the colours are the ${standardize === 'none' ? 'values' : 'standardized values'}.`));
+      ctx.note(`Rows in the order of the dendrogram, columns in the order of their own clustering (${method === 'centroid' ? 'Ward' : HMETHODS.find((m) => m[0] === method)[1]} on the columns); the colours are the ${res.distance === 'gower' ? 'values over their columns\' ranges' : res.distance === 'jaccard' ? 'values present (1) or not (0)' : standardize === 'none' ? 'values' : 'standardized values'}.`));
     }
     box.append(ctx.code(res.code));
   }
@@ -1596,13 +1775,14 @@
     ob.add(ctx.note('Drag the slider, click a point of the distance graph or use Number of Clusters… to choose the clusters; click a join to select its rows, or a cluster in the legend.'));
   }
 
-  /* Means and standard deviations of each cluster, in the columns' units. */
-  function clusterSummary(ctx, cols, members, title) {
+  /* Means and standard deviations of each cluster, in the columns' units.
+     value(c, r): a row's value (the imputed one with Missing value imputation). */
+  function clusterSummary(ctx, cols, members, title, value = null) {
     const ob = ctx.outline(title, { key: `summary:${title}` });
     const means = [], sds = [];
     members.forEach((rs) => {
       const m = [], s = [];
-      cols.forEach((c) => { const v = colValues(c, rs).v; const mu = v.reduce((a, b) => a + b, 0) / v.length; m.push(v.length ? mu : null); s.push(v.length > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mu) ** 2, 0) / v.length) : null); });
+      cols.forEach((c) => { const v = value ? rs.map((r) => value(c, r)).filter(Number.isFinite) : colValues(c, rs).v; const mu = v.reduce((a, b) => a + b, 0) / v.length; m.push(v.length ? mu : null); s.push(v.length > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mu) ** 2, 0) / v.length) : null); });
       means.push(m); sds.push(s);
     });
     const colsT = (cap) => [{ key: 'c', label: 'Cluster', fmt: 'int' }, { key: 'n', label: 'Count', fmt: 'int' }, ...cols.map((c, j) => ({ key: `v${j}`, label: c.name }))];
@@ -1611,10 +1791,51 @@
     return { means, sds };
   }
 
+  /* A row's value of a numeric column as the clustering has it: the imputed
+     one with Missing value imputation (res.values), else the table's. */
+  function hcValues(ctx, res, numCols) {
+    if (!res.values) return (c, r) => { const v = c.values[r]; return typeof v === 'number' ? v : NaN; };
+    const at = new Map(res.rows.map((r, i) => [r, i]));
+    const j = new Map((res.numeric || []).map((nm, q) => [nm, q]));
+    return (c, r) => { const i = at.get(r); const q = j.get(c.name); return i == null || q == null ? NaN : res.values[i][q]; };
+  }
+
+  /* Silhouettes (beyond JMP): how well each row sits in its cluster, (b − a)/max(a, b)
+     with a its mean dissimilarity to its own cluster and b to the nearest other one;
+     the rows' bars by cluster, each cluster's mean, and the mean by the number of clusters. */
+  function silhouetteOutline(ctx, res, k, lab, members) {
+    const S = res.silhouette;
+    const ob = ctx.outline('Silhouettes', { key: 'silhouette', info: 'hc:silhouette', menu: () => [{ label: 'Remove', action: () => ctx.set('silhouette', false) }] });
+    if (!S) return;
+    if (S.error) { ob.add(ctx.note(S.error)); return; }
+    const n = res.n;
+    const tc = SM.util.themeColors();
+    const colored = ctx.opt('colorClusters', false);
+    if (k >= 2) {
+      const idx = res.rows.map((_, i) => i).sort((a, b) => lab[a] - lab[b] || S.values[b] - S.values[a]);
+      const ys = idx.map((_, q) => q);
+      const bars = ctx.plot([{ type: 'bar', orientation: 'h', x: idx.map((i) => S.values[i]), y: ys, rows: idx.map((i) => [res.rows[i]]), width: 1, marker: { color: idx.map((i) => pal(lab[i])) }, hovertext: rowLabels(ctx, idx.map((i) => res.rows[i])).map((t, q) => `${t}: cluster ${lab[idx[q]] + 1}`), hovertemplate: '%{hovertext}<br>silhouette %{x:.4f}<extra></extra>' }],
+        { xaxis: { title: { text: 'Silhouette' }, range: [Math.min(-0.1, ...S.values) - 0.02, 1] }, yaxis: { autorange: 'reversed', showticklabels: false, showgrid: false, zeroline: false },
+          shapes: [{ type: 'line', x0: S.mean, x1: S.mean, yref: 'paper', y0: 0, y1: 1, line: { color: RED, width: 1.2, dash: 'dash' } }], bargap: 0, margin: { l: 20, r: 12, t: 8, b: 40 } },
+        { width: fitW(560), height: Math.max(240, Math.min(620, 3 * n + 80)), title: `Silhouettes, ${k} clusters`, rowColors: false });
+      ob.add(ctx.row(withCode(bars, ctx.code(res.silhouette_code)),
+        ctx.rt({ columns: [{ key: 'c', label: 'Cluster', fmt: 'int' }, { key: 'n', label: 'Count', fmt: 'int' }, { key: 'm', label: 'Mean Silhouette', digits: 4 }], rows: [...S.clusters.map((c) => ({ c: c.cluster, n: c.count, m: c.mean })), { c: null, n, m: S.mean }], caption: `${k} clusters` },
+          { sortable: false, onRow: (r, ev) => { if (r.c) ctx.table.select(members[r.c - 1], ev.shiftKey ? 'add' : 'replace'); } })));
+    } else ob.add(ctx.note('One cluster has no silhouettes: choose two or more.'));
+    if (S.path.length) {
+      const ks = S.path.map((q) => q.k), ms = S.path.map((q) => q.mean);
+      ob.add(withCode(ctx.plot([{ type: 'scatter', mode: 'lines+markers', x: ks, y: ms, line: { color: SM.report.BASE, width: 1.6 }, marker: { size: 6 }, hovertemplate: '%{x} clusters: mean silhouette %{y:.4f}<extra>click: choose</extra>' }],
+        { xaxis: { title: { text: 'Number of Clusters' }, dtick: ks.length > 15 ? 2 : 1 }, yaxis: { title: { text: 'Mean Silhouette' } }, shapes: [{ type: 'line', x0: k, x1: k, yref: 'paper', y0: 0, y1: 1, line: { color: RED, width: 1, dash: 'dash' } }] },
+        { width: fitW(420), height: 240, title: 'Mean silhouette by number of clusters', select: false, onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('ncluster', pt.x); }) }),
+      ctx.code(res.silhouette_k_code)));
+    }
+    ob.add(ctx.note(`Silhouettes on ${S.on}: 1 when a row is much nearer its own cluster than any other, 0 on the border, negative when it is nearer another cluster; a row alone in its cluster has 0 (as scikit-learn). The mean silhouette by number of clusters peaks at ${S.best ?? '—'} (among 2 to ${S.path.length ? S.path[S.path.length - 1].k : 2}): a candidate for the number of clusters. Click a point to choose it, a line of the table to select a cluster's rows.${colored ? '' : ' The colours are the clusters\', as Color Clusters gives them.'}`));
+  }
+
   async function hcSave(ctx, what) {
-    const names = ctx.names('y');
-    const res = await mcall(ctx, 'hcluster.fit', { columns: names, method: ctx.opt('method', 'ward'), standardize: ctx.opt('standardize', 'columns'), two_way: ctx.opt('twoWay', false), label: labelName(ctx), n_clusters: ctx.opt('ncluster', null) });
+    const res = await mcall(ctx, 'hcluster.fit', { ...hcPayload(ctx), two_way: ctx.opt('twoWay', false), label: labelName(ctx), silhouette: !!ctx.opt('silhouette', false) });
     if (res.error) { SM.ui.toast(res.error, { error: true }); return; }
+    if (what === 'formula') { await saveFrom(ctx, 'hcluster.save', { ...hcPayload(ctx), n_clusters: ctx.opt('ncluster', null) ?? ctx.report.hcShownClusters ?? null }); return; }
     const k = Math.max(1, Math.min(res.n, Math.round(ctx.opt('ncluster', null) ?? defaultClusters(res.heights, res.n))));
     if (what === 'order') { const q = new Array(res.n); res.order.forEach((leaf, i) => { q[leaf] = i + 1; }); ctx.saveColumn('Display Order', { rows: res.rows, values: q }); return; }
     const { lab } = clustersAt(res.merges, res.n, k, res.order);
@@ -1623,16 +1844,22 @@
 
   SM.platforms.register({
     id: 'hcluster', label: 'Hierarchical Cluster', menu: 'Analyze/Clustering', order: 10, info: 'p:hcluster',
-    about: 'Agglomerative clustering of the rows (Average, Centroid, Ward, Single, Complete linkage) with JMP\'s squared-Euclidean distances: the dendrogram with a chosen number of clusters, the distance graph, the clustering history, the cubic clustering criterion, cluster summaries, two-way clustering, cluster colours, markers and a saved cluster column.',
-    uses: ['scipy.cluster.hierarchy.linkage, leaves_list', 'scipy.spatial.distance.pdist', "the cubic clustering criterion (Sarle 1983), numpy"],
+    about: 'Agglomerative clustering of the rows (Average, Centroid, Ward, Single, Complete linkage) with JMP\'s squared-Euclidean distances, or of a distance matrix: robust standardization (Huber) and missing-value imputation (EM), the dendrogram with a chosen number of clusters, the distance graph, the clustering history, the cubic clustering criterion, cluster summaries, parallel coordinate plots, two-way clustering, cluster colours, markers, saved clusters and a formula for the closest cluster. Beyond JMP: other distances for Single, Complete and Average (Euclidean, city block, Chebyshev, correlation, Mahalanobis, Jaccard, and Gower, which takes nominal columns too) and silhouettes.',
+    uses: ['scipy.cluster.hierarchy.linkage, leaves_list', 'scipy.spatial.distance.pdist, squareform', "the cubic clustering criterion (Sarle 1983), numpy", 'statsmodels.robust.scale.Huber (Standardize Robustly)',
+      "Explore Missing Values' EM for a multivariate normal (Missing value imputation)", "Gower's (1971) distance and Rousseeuw's (1987) silhouettes, numpy"],
     topics: {
       'p:hcluster': {
         kicker: 'Analyze > Clustering', title: 'Hierarchical Cluster',
         lead: 'Starts with each row as a cluster and joins the two closest clusters until one is left. The dendrogram shows the joins; choose the number of clusters where the joining distance jumps.',
         sections: [
           { heading: 'Methods (distances as JMP defines them)', choices: [['Average', 'The mean squared Euclidean distance between the rows of the two clusters.'], ['Centroid', 'The squared distance between the cluster means.'], ['Ward', 'The increase in the within-cluster sum of squares: |x̄_K − x̄_L|²/(1/N_K + 1/N_L).'], ['Single', 'The smallest squared distance between rows of the two.'], ['Complete', 'The largest.']] },
-          { heading: 'Standardize By', text: 'Columns (the default) scales every column to mean 0 and standard deviation 1 first, so that no column dominates by its units.' },
-          { heading: 'Differences from JMP', text: 'The Fast and Hybrid Ward methods, distance-matrix, stacked and summarized data, the constellation plot and missing-value imputation are not here; rows with a missing value are left out. The default number of clusters is where the joining distance jumps most (2 to 10).' },
+          { heading: 'Standardize By', text: 'Columns (the default) scales every column to mean 0 and standard deviation 1 first, so that no column dominates by its units; Standardize Robustly takes Huber\'s M-estimates of each column\'s mean and standard deviation instead (as JMP), so that outliers pull them less.' },
+          { heading: 'Missing values', text: 'Rows with a missing value are left out, unless Missing value imputation is on: then each missing value is its conditional mean under a multivariate normal of the numeric columns fitted by EM (Explore Missing Values\' Multivariate Normal Imputation), and only rows with no value are left out.' },
+          { heading: 'Data Format', choices: [['Attribute List', 'A row per object, its values in the columns (the usual).'], ['Distance Matrix', 'The columns hold the distances between the rows\' objects, a column for each row (JMP\'s Data is distance matrix); one side of the diagonal is enough. Single, Complete and Average join by the distances as they are; Ward and Centroid take them as Euclidean distances.']] },
+          { heading: 'Distance (beyond JMP)', text: DIST_HELP },
+          { heading: 'Silhouettes (beyond JMP)', text: 'How well each row sits in its cluster (Rousseeuw 1987), on the clustering\'s own dissimilarities (the Euclidean ones where it joins on squared Euclidean distances): the rows\' silhouettes, each cluster\'s mean, and the mean silhouette by the number of clusters, whose peak suggests a number of clusters.' },
+          { heading: 'Saved columns', choices: [['Save Clusters', 'The cluster of each row clustered.'], ['Save Formula for Closest Cluster', 'A formula column (JMP\'s): the cluster whose centroid is nearest by the squared Euclidean distance, in the space the clustering sees (the columns standardized as it standardized them). Every row whose columns are present gets one, excluded rows and new rows too; a row of the tree need not get its own cluster, for the tree is not cut by the nearest centroid.'], ['Save Display Order', 'Each row\'s place in the dendrogram.']] },
+          { heading: 'Differences from JMP', text: 'The Fast and Hybrid Ward methods, stacked and summarized data and the constellation plot are not here. JMP\'s multivariate normal imputation estimates the covariances pairwise; here they are the EM estimate, as Explore Missing Values has them. The default number of clusters is where the joining distance jumps most (2 to 10). With a distance matrix or a nominal column (Gower) the cubic clustering criterion, two-way clustering and the closest-cluster formula are not available: they need the rows\' values.' },
         ],
         more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
       },
@@ -1646,13 +1873,27 @@
           ['Distance Graph', 'Click a point to choose that number of clusters.']] }],
         more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
       },
+      'hc:pcp': {
+        kicker: 'Hierarchical Cluster', title: 'Parallel Coordinate Plots',
+        lead: 'The clusters\' profiles: a line for each row across the numeric columns, in its cluster\'s colour, and a thick line for each cluster\'s mean; every column standardized by its mean and standard deviation over the rows clustered, so 0 is the mean and ±1 a standard deviation. Clusters that differ in a column are apart there. As K Means\' Parallel Coord Plots (JMP draws a plot per cluster; here they share one).',
+        more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
+      },
+      'hc:silhouette': {
+        kicker: 'Hierarchical Cluster', title: 'Silhouettes',
+        lead: 'Beyond JMP. A row\'s silhouette is (b − a)/max(a, b), a its mean dissimilarity to the other rows of its cluster and b the smallest mean dissimilarity to the rows of another cluster (Rousseeuw 1987): near 1 it sits well inside its cluster, near 0 between two, negative nearer another cluster. A row alone in its cluster has 0 (as scikit-learn\'s silhouette_samples). Up to 2000 rows.',
+        sections: [{ heading: 'In the report', choices: [
+          ['The bars', 'Each row\'s silhouette, by cluster, each cluster\'s largest first; the dashed line is the mean. Click or drag over bars to select their rows.'],
+          ['The table', 'Each cluster\'s count and mean silhouette, and all the rows\'; click a line to select that cluster\'s rows.'],
+          ['Mean silhouette by number of clusters', 'The tree cut into 2 to 30 clusters; the peak is a candidate number of clusters. Click a point to choose it.']] }],
+        more: { label: 'Hierarchical Cluster', id: 'help-p-hcluster' },
+      },
       'mv:ccc': { kicker: 'Clustering', title: 'Cubic clustering criterion', lead: 'Sarle\'s (1983) CCC compares the R² of the clusters with the R² expected if the data were uniform in a box (hyper-rectangle) of the same shape (the eigenvalues of the covariance matrix). Large positive values suggest clusters; peaks mark candidate numbers of clusters. It assumes roughly spherical clusters. Computed as SAS PROC CLUSTER does (checked against its Fisher iris example).', more: { label: 'K Means Cluster', id: 'help-p-kmeans' } },
     },
     launch: {
-      lead: 'Choose the columns to cluster the rows by. Label names the rows in the dendrogram.',
+      lead: 'Choose the columns to cluster the rows by (or those of a distance matrix). Label names the rows in the dendrogram.',
       roles: [
-        { key: 'y', label: 'Y, Columns', min: 1, numeric: true, types: ['continuous', 'ordinal'], hint: 'required: numeric',
-          help: 'The columns the distances between the rows are computed from. Rows with a missing value in any of them are left out; at most 4000 rows (for more, K Means Cluster).' },
+        { key: 'y', label: 'Y, Columns', min: 1, types: ['continuous', 'ordinal', 'nominal'], hint: 'required: numeric (nominal with the Gower distance)',
+          help: 'The columns the distances between the rows are computed from, or with Data Format Distance Matrix the columns of the matrix, one per row. Numeric columns; nominal ones with the Gower distance. Rows with a missing value in any of them are left out, unless Missing value imputation is on; at most 4000 rows (for more, K Means Cluster).' },
         { key: 'label', label: 'Label', max: 1, hint: 'optional',
           help: 'A column whose values name the rows in the dendrogram, the clustering history and the hover text; without it the table\'s label column, else the row number.' },
         { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
@@ -1662,9 +1903,21 @@
           help: 'How far apart two clusters are, with JMP\'s squared Euclidean distances. Ward, the default, joins the pair that raises the within-cluster sum of squares least: compact clusters of similar size. Average: the mean distance between their rows. Centroid: between their means. Single: their closest rows (it makes long chains). Complete: their farthest rows.' },
         { key: 'standardize', label: 'Standardize By', type: 'select', value: 'columns', choices: STDBY,
           help: 'Columns, the default: each column scaled to mean 0 and standard deviation 1 first, so that no column dominates by its units. Unstandardized: the values as they are. Rows: each row centred and scaled across its own columns, to cluster by the shape of the profile rather than its level.' },
+        { key: 'robust', label: 'Standardize Robustly', type: 'check', value: false,
+          help: 'With Standardize By Columns: each column centred and scaled by Huber\'s M-estimates of its mean and standard deviation (statsmodels\' Huber) instead of the plain ones, so that outliers pull the standardization less, as JMP\'s option does.' },
+        { key: 'impute', label: 'Missing value imputation', type: 'check', value: false,
+          help: 'Keep the rows with missing values: each missing value becomes its conditional mean given the row\'s other values, under a multivariate normal of the numeric columns fitted by EM (Explore Missing Values\' Multivariate Normal Imputation). Off: rows with a missing value are left out. Needs two or more numeric columns.' },
+        { key: 'format', label: 'Data Format', type: 'select', value: 'attributes', choices: [['attributes', 'Attribute List'], ['matrix', 'Distance Matrix']],
+          help: 'Attribute List, the default: a row per object, its values in the columns. Distance Matrix (JMP\'s Data is distance matrix): the columns hold the distances between the rows\' objects, a column for each row in the table\'s order, one side of the diagonal enough; Standardize By and Distance are then not used.' },
+        { key: 'distance', label: 'Distance (Single, Complete, Average)', type: 'select', value: 'sqeuclidean', choices: HDISTANCES, help: DIST_HELP },
         { key: 'twoWay', label: 'Two Way Clustering', type: 'check', value: false,
           help: 'Also cluster the columns, and show the values as a heat map with the rows in the order of the dendrogram and the columns in the order of their own clustering.' },
       ],
+      validate: (spec) => {
+        const o = spec.options || {};
+        if (o.distance && o.distance !== 'sqeuclidean' && (o.method === 'ward' || o.method === 'centroid' || !o.method) && o.format !== 'matrix') return `${(o.method || 'ward') === 'ward' ? 'Ward' : 'Centroid'} joins on squared Euclidean distances: choose Single, Complete or Average for another distance`;
+        return null;
+      },
     },
     title: () => 'Hierarchical Clustering',
     triangle(ctx) {
@@ -1674,11 +1927,18 @@
           help: 'Where the tree is cut: the number of clusters the rows fall into, marked by the dashed line and used by the colours, the cluster summary and Save Clusters. Until set, it is where the joining distance jumps most (2 to 10).' }] }); if (v && v.k >= 1) ctx.set('ncluster', Math.round(v.k)); } },
         ctx.check('Cluster Criterion', 'criterion', null, false),
         ctx.check('Show Dendrogram', 'dendro', null, true), ctx.check('Distance Graph', 'distGraph', null, true), ctx.check('Clustering History', 'history', null, true), ctx.check('Cluster Summary', 'summary', null, false),
+        ctx.check('Parallel Coord Plots', 'pcp', null, false), ctx.check('Silhouettes', 'silhouette', null, false),
         ctx.check('Two Way Clustering', 'twoWay', null, false),
-        { label: 'Method', submenu: () => HMETHODS.map(([v, l]) => ({ label: l, checked: ctx.opt('method', 'ward') === v, action: () => ctx.set('method', v) })) },
-        { label: 'Standardize By', submenu: () => STDBY.map(([v, l]) => ({ label: l, checked: ctx.opt('standardize', 'columns') === v, action: () => ctx.set('standardize', v) })) },
+        { label: 'Method', submenu: () => HMETHODS.map(([v, l]) => ({ label: l, checked: ctx.opt('method', 'ward') === v, action: () => {
+          if ((v === 'ward' || v === 'centroid') && ctx.opt('distance', 'sqeuclidean') !== 'sqeuclidean') ctx.set('distance', 'sqeuclidean', null, { rerun: false });
+          ctx.set('method', v);
+        } })) },
+        { label: 'Standardize By', submenu: () => [...STDBY.map(([v, l]) => ({ label: l, checked: ctx.opt('standardize', 'columns') === v, action: () => ctx.set('standardize', v) })), { separator: true }, ctx.check('Standardize Robustly', 'robust', null, false)] },
+        { label: 'Distance', submenu: () => HDISTANCES.map(([v, l]) => ({ label: l, checked: ctx.opt('distance', 'sqeuclidean') === v, disabled: v !== 'sqeuclidean' && ['ward', 'centroid'].includes(ctx.opt('method', 'ward')) && ctx.opt('format', 'attributes') !== 'matrix', action: () => ctx.set('distance', v) })) },
+        ctx.check('Missing value imputation', 'impute', null, false),
         { separator: true },
         { label: 'Save Clusters', action: () => hcSave(ctx, 'clusters') },
+        { label: 'Save Formula for Closest Cluster', disabled: ctx.report.hcCoords === false, action: () => hcSave(ctx, 'formula') },
         { label: 'Save Display Order', action: () => hcSave(ctx, 'order') },
       ];
     },
@@ -1688,12 +1948,16 @@
   /* ======================================================================
      K MEANS CLUSTER
      ====================================================================== */
-  async function kmCall(ctx) {
+  // the fits' settings for the backend (kmeans.fit, kmeans.save)
+  function kmPayload(ctx) {
     const o = (k, d) => ctx.opt(k, d);
     const kmin = Math.max(1, Math.round(o('k', 3)));
     const kmax = o('kRange', null);
-    return mcall(ctx, 'kmeans.fit', { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), k_min: kmin, k_max: kmax && kmax > kmin ? Math.round(kmax) : kmin, standardize: o('scaled', true), seed: o('seed', 20260926), restarts: o('restarts', 10) });
+    const single = !!o('single', false);
+    return { columns: ctx.names('y'), weight: ctx.name('weight'), freq: ctx.name('freq'), k_min: kmin, k_max: kmax && kmax > kmin ? Math.round(kmax) : kmin, standardize: o('scaled', true), seed: o('seed', 20260926), restarts: o('restarts', 10),
+      ...(single ? { single: true, steps: o('steps', {}) || {} } : {}) };
   }
+  const kmCall = (ctx) => mcall(ctx, 'kmeans.fit', kmPayload(ctx));
 
   async function kmRender(ctx) {
     const cols = ctx.roles('y');
@@ -1702,17 +1966,40 @@
     const box = ctx.container;
     kmControls(ctx);
     if (res.error) { box.append(ctx.warn(res.error)); return; }
-    box.append(ctx.note(`${fmt(res.n)} observations${res.n_rows < ctx.rows.length ? `; ${dropped(ctx.rows.length - res.n_rows)}` : ''}; ${res.standardize ? 'each column scaled to standard deviation 1' : 'the columns in their own units'}. k-means++ starts from the seed ${res.seed}, the best of ${res.restarts} by the within sum of squares.`));
+    box.append(ctx.note(`${fmt(res.n)} observations${res.n_rows < ctx.rows.length ? `; ${dropped(ctx.rows.length - res.n_rows)}` : ''}; ${res.standardize ? 'each column scaled to standard deviation 1' : 'the columns in their own units'}. ${res.single ? `Single Step: one k-means++ start for each number of clusters, from the seed ${res.seed}; Step moves it on one iteration, Go to the end.` : `k-means++ starts from the seed ${res.seed}, the best of ${res.restarts} by the within sum of squares.`}`));
     if (res.fits.length > 1 || o('comparison', true)) {
-      const ob = ctx.outline('Cluster Comparison', { key: 'comparison', info: 'mv:ccc' });
+      const ob = ctx.outline('Cluster Comparison', { key: 'comparison', info: 'mv:ccc', menu: () => [ctx.check('Criteria by Number of Clusters', 'critPlot', null, true)] });
       ob.add(ctx.rt({
         columns: [{ key: 'method', label: 'Method', fmt: 'text' }, { key: 'k', label: 'NCluster', fmt: 'int' }, { key: 'ccc', label: 'CCC', digits: 4 }, { key: 'best', label: 'Best', fmt: 'text' }, { key: 'pseudo_f', label: 'Pseudo F', digits: 5 }, { key: 'r2', label: 'RSquare', digits: 4 }, { key: 'er2', label: 'Approx Expected RSquare', digits: 4, hidden: true }, { key: 'wss', label: 'Within SS', digits: 6 }],
         rows: res.fits.map((f) => ({ method: 'K Means Clustering', k: f.k, ccc: f.ccc, best: f.k === res.best ? 'Optimal CCC' : '', pseudo_f: f.pseudo_f, r2: f.r2, er2: f.er2, wss: f.wss })),
       }, { onRow: (r) => ctx.set('open', r.k) }), ctx.note('CCC: Sarle\'s cubic clustering criterion, largest best; Pseudo F: Calinski and Harabasz\'s ratio of between to within mean squares; RSquare: the share of the variance between clusters. Click a line to open its report.'));
+      const done = res.fits.filter((f) => f.labels);
+      if (done.length >= 2 && o('critPlot', true)) ob.add(withCode(kmCriteriaPlot(ctx, res, done), ctx.code(res.comparison_code)),
+        ctx.note('The four criteria against the number of clusters: the within sum of squares always falls as k grows, so look for the elbow where it stops falling fast (the book\'s hand-drawn plot); CCC and pseudo F peak at good numbers of clusters. The dashed line is the Optimal CCC; click a point to open its fit.'));
     }
     const openK = o('open', res.best ?? res.fits[0].k);
     for (const f of res.fits) kmFit(ctx, res, f, cols, f.k === openK || res.fits.length === 1);
     box.append(ctx.code(res.code));
+  }
+
+  /* Cluster Comparison's graph: CCC, pseudo F, RSquare and the within sum of
+     squares by the number of clusters, four panels on one axis of k. */
+  function kmCriteriaPlot(ctx, res, fits) {
+    const ks = fits.map((f) => f.k);
+    const keys = [['ccc', 'CCC'], ['pseudo_f', 'Pseudo F'], ['r2', 'RSquare'], ['wss', 'Within SS']];
+    const traces = [], layout = { showlegend: false, margin: { l: 56, r: 12, t: 26, b: 42 }, annotations: [], shapes: [] };
+    const tc = SM.util.themeColors();
+    keys.forEach(([key, label], q) => {
+      const a = q + 1, row = Math.floor(q / 2), col = q % 2;
+      const xa = a === 1 ? 'x' : `x${a}`, ya = a === 1 ? 'y' : `y${a}`;
+      layout[`xaxis${a === 1 ? '' : a}`] = { domain: [col * 0.54, col * 0.54 + 0.46], anchor: ya, dtick: ks.length > 12 ? 2 : 1, title: row === 1 ? { text: 'NCluster', standoff: 4 } : undefined, showticklabels: row === 1, zeroline: false };
+      layout[`yaxis${a === 1 ? '' : a}`] = { domain: [row === 0 ? 0.56 : 0, row === 0 ? 1 : 0.44], anchor: xa, zeroline: false, tickfont: { size: 9 } };
+      traces.push({ type: 'scatter', mode: 'lines+markers', x: ks, y: fits.map((f) => f[key]), xaxis: xa, yaxis: ya, customdata: ks, line: { color: SM.report.BASE, width: 1.6 }, marker: { size: 6 }, name: label, hovertemplate: `%{x} clusters: ${label} %{y:.5g}<extra>click: open</extra>` });
+      layout.annotations.push({ xref: `${xa} domain`, yref: `${ya} domain`, x: 0.5, y: 1.02, yanchor: 'bottom', text: label, showarrow: false, font: { size: 11, color: tc.text } });
+      if (res.best != null) layout.shapes.push({ type: 'line', xref: xa, yref: `${ya} domain`, x0: res.best, x1: res.best, y0: 0, y1: 1, line: { color: RED, width: 1, dash: 'dash' } });
+    });
+    return ctx.plot(traces, layout, { width: fitW(560), height: 420, title: 'Cluster criteria by number of clusters', select: false,
+      onDraw: (gd) => gd.on('plotly_click', (ev) => { const pt = ev && ev.points && ev.points[0]; if (pt && Number.isFinite(pt.x)) ctx.set('open', pt.x); }) });
   }
 
   function kmControls(ctx) {
@@ -1720,6 +2007,8 @@
     const d = { k: o('k', 3), kRange: o('kRange', null), scaled: o('scaled', true), restarts: o('restarts', 10), seed: o('seed', 20260926) };
     const sc = el('input', { type: 'checkbox', 'aria-label': 'Columns scaled individually' });
     sc.checked = !!d.scaled;
+    const ss = el('input', { type: 'checkbox', 'aria-label': 'Single Step' });
+    ss.checked = !!o('single', false);
     const ob = ctx.outline('Iterative Clustering', { key: 'control', info: 'km:control' });
     ob.add(controls(
       control('Number of Clusters', numberEl(d.k, (v) => { d.k = v; }, { size: 3, aria: 'Number of clusters' })),
@@ -1727,8 +2016,11 @@
       control('Columns Scaled Individually', sc),
       control('Restarts', numberEl(d.restarts, (v) => { d.restarts = v; }, { size: 3, aria: 'Restarts' })),
       control('Seed', numberEl(d.seed, (v) => { d.seed = v; }, { size: 9, aria: 'Seed' })),
+      control('Single Step', ss),
       button('Go', () => {
         const k = Math.max(1, Math.round(d.k || 3));
+        ctx.set('single', ss.checked, null, { rerun: false });
+        ctx.set('steps', {}, null, { rerun: false });   // Single Step starts again from the starting centres
         ctx.set('scaled', sc.checked, null, { rerun: false });
         ctx.set('kRange', d.kRange && d.kRange > k ? Math.min(Math.round(d.kRange), k + 30) : null, null, { rerun: false });
         ctx.set('restarts', Math.max(1, Math.min(100, Math.round(d.restarts || 10))), null, { rerun: false });
@@ -1739,9 +2031,27 @@
     ));
   }
 
+  /* Single Step's buttons in a fit's report: Step moves it on one iteration, Go to the end. */
+  function kmStepControls(ctx, f) {
+    const steps = { ...(ctx.opt('steps', {}) || {}) };
+    const set = (v) => { ctx.set('steps', { ...steps, [f.k]: v }); };
+    const step = button('Step', () => set((steps[f.k] ?? 0) + 1));
+    step.disabled = f.converged === true || steps[f.k] === null;
+    const go = button('Go', () => set(null), 'primary');
+    go.disabled = f.converged === true;
+    return controls(step, go, el('span', { class: 'sm-ob-note', text: f.labels ? `Step ${f.step}${f.converged ? ': the centres no longer move' : ''}` : 'Step 0: the starting centres; no rows assigned yet' }));
+  }
+
   function kmFit(ctx, res, f, cols, open) {
     const sc = `k${f.k}`;
     const o = (k, d) => ctx.opt(k, d, sc);
+    if (!f.labels) {   // Single Step, before the first step: the starting centres only (JMP: no cluster assignments)
+      const ob = ctx.outline(`K Means NCluster=${f.k}`, { key: `km:${f.k}`, closed: !open, info: 'km:fit' });
+      const colsT = [{ key: 'c', label: 'Cluster', fmt: 'int' }, ...cols.map((c, j) => ({ key: `v${j}`, label: c.name }))];
+      ob.add(kmStepControls(ctx, f), ctx.rt({ columns: colsT, rows: f.seeds.map((m, c) => Object.assign({ c: c + 1 }, ...cols.map((_, j) => ({ [`v${j}`]: m[j] })))), caption: 'Starting Centres' }, { sortable: false }),
+        ctx.note('k-means++ from the report\'s seed: the first centre a random row, each next one a row drawn with a probability in proportion to its squared distance from the centres chosen. Step assigns every row to its nearest centre and moves each centre to the mean of its rows; Go repeats that until the centres stop moving.'));
+      return;
+    }
     const members = Array.from({ length: f.k }, () => []);
     f.labels.forEach((c, i) => members[c].push(res.rows[i]));
     const ob = ctx.outline(`K Means NCluster=${f.k}`, { key: `km:${f.k}`, closed: !open, info: 'km:fit', menu: () => [
@@ -1749,9 +2059,12 @@
       { separator: true },
       { label: 'Save Colors to Table', action: () => members.forEach((rs, c) => ctx.table.setColor(rs, c % 12)) },
       { label: 'Mark Clusters', action: () => members.forEach((rs, c) => ctx.table.setMarker(rs, c % 12)) },
-      { label: 'Save Clusters', action: () => { ctx.saveColumn('Cluster', { rows: res.rows, values: f.labels.map((c) => c + 1) }, { modelingType: 'nominal', notes: `k-means, ${f.k} clusters` }); ctx.saveColumn('Distance', { rows: res.rows, values: f.distance }, { notes: `squared distance to the cluster mean, columns scaled by their standard deviations; k-means, ${f.k} clusters` }); } },
-      { label: 'Save Cluster Distance', action: () => ctx.saveColumn('Distance', { rows: res.rows, values: f.distance }, { notes: `k-means, ${f.k} clusters` }) },
+      { label: 'Save Clusters', action: () => saveFrom(ctx, 'kmeans.save', { ...kmPayload(ctx), k: f.k, what: 'clusters' }) },
+      { label: 'Save Cluster Distance', action: async () => { try { const r = await mcall(ctx, 'kmeans.save', { ...kmPayload(ctx), k: f.k, what: 'clusters' }); saveBatch(ctx, r.error ? r : { columns: r.columns.filter((c) => c.name === 'Distance') }); } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); } } },
+      { label: 'Save Cluster Formula', action: () => saveFrom(ctx, 'kmeans.save', { ...kmPayload(ctx), k: f.k, what: 'formula' }) },
+      { label: 'Save Distance Formulas', action: () => saveFrom(ctx, 'kmeans.save', { ...kmPayload(ctx), k: f.k, what: 'distances' }) },
     ] });
+    if (res.single) ob.add(kmStepControls(ctx, f));
     ob.add(ctx.rt({ columns: [{ key: 'c', label: 'Cluster', fmt: 'int' }, { key: 'n', label: 'Count' }], rows: f.counts.map((n, c) => ({ c: c + 1, n })), caption: 'Cluster Summary' }, { sortable: false, onRow: (r, ev) => ctx.table.select(members[r.c - 1], ev.shiftKey ? 'add' : 'replace') }),
       ctx.kv([['Step', f.iterations, 'int'], ['Criterion', f.criterion]]));
     const colsT = [{ key: 'c', label: 'Cluster', fmt: 'int' }, ...cols.map((c, j) => ({ key: `v${j}`, label: c.name }))];
@@ -1802,21 +2115,28 @@
       { width: fitW(560), height: 420, title: `Biplot, ${f.k} clusters` });
   }
 
-  function kmParallel(ctx, res, f, cols) {
+  /* Parallel coordinates of clusters (K Means' and Hierarchical Cluster's
+     Parallel Coord Plots): each row a thin line in its cluster's colour and
+     each cluster's mean a thick one, every column standardized by mu and sd.
+     rows, labels (each row's cluster, 0-based), k, cols, means (k x columns,
+     the columns' units), value(c, r) a row's value (the table's by default). */
+  function parallelPlot(ctx, { rows, labels, k, cols, means, mu, sd, value = null }) {
     const tc = SM.util.themeColors();
     const names = cols.map((c) => c.name);
     const traces = [];
-    const zrow = (vals) => vals.map((v, j) => (v == null ? null : (v - res.mean[j]) / res.sd[j]));
-    if (res.n_rows * cols.length <= 30000) {
-      for (let c = 0; c < f.k; c++) {
+    const val = value || ((c, r) => c.values[r]);
+    const zrow = (vals) => vals.map((v, j) => (v == null ? null : (v - mu[j]) / sd[j]));
+    if (rows.length * cols.length <= 30000) {
+      for (let c = 0; c < k; c++) {
         const xs = [], ys = [];
-        res.rows.forEach((r, i) => { if (f.labels[i] !== c) return; cols.forEach((col, j) => { xs.push(names[j]); ys.push((col.values[r] - res.mean[j]) / res.sd[j]); }); xs.push(null); ys.push(null); });
+        rows.forEach((r, i) => { if (labels[i] !== c) return; cols.forEach((col, j) => { xs.push(names[j]); ys.push((val(col, r) - mu[j]) / sd[j]); }); xs.push(null); ys.push(null); });
         traces.push({ type: 'scatter', mode: 'lines', x: xs, y: ys, line: { color: pal(c), width: 0.6 }, opacity: 0.25, hoverinfo: 'skip', showlegend: false });
       }
     }
-    f.means.forEach((m, c) => traces.push({ type: 'scatter', mode: 'lines+markers', x: names, y: zrow(m), line: { color: pal(c), width: 3 }, marker: { size: 7 }, name: `Cluster ${c + 1}`, hovertemplate: `cluster ${c + 1}, %{x}: %{y:.3f} sd<extra></extra>` }));
-    return ctx.plot(traces, { showlegend: true, xaxis: { type: 'category', showgrid: true }, yaxis: { title: { text: 'Standardized value' }, zeroline: true, zerolinecolor: tc.muted } }, { width: fitW(Math.min(760, 180 + 90 * names.length)), height: 320, title: `Parallel coordinates, ${f.k} clusters`, select: false });
+    means.forEach((m, c) => traces.push({ type: 'scatter', mode: 'lines+markers', x: names, y: zrow(m), line: { color: pal(c), width: 3 }, marker: { size: 7 }, name: `Cluster ${c + 1}`, hovertemplate: `cluster ${c + 1}, %{x}: %{y:.3f} sd<extra></extra>` }));
+    return ctx.plot(traces, { showlegend: true, xaxis: { type: 'category', showgrid: true }, yaxis: { title: { text: 'Standardized value' }, zeroline: true, zerolinecolor: tc.muted } }, { width: fitW(Math.min(760, 180 + 90 * names.length)), height: 320, title: `Parallel coordinates, ${k} clusters`, select: false });
   }
+  const kmParallel = (ctx, res, f, cols) => parallelPlot(ctx, { rows: res.rows, labels: f.labels, k: f.k, cols, means: f.means, mu: res.mean, sd: res.sd });
 
   function kmSplom(ctx, res, f, cols) {
     const box = el('div');
@@ -1831,7 +2151,7 @@
 
   SM.platforms.register({
     id: 'kmeans', label: 'K Means Cluster', menu: 'Analyze/Clustering', order: 20, info: 'p:kmeans',
-    about: 'k-means clustering of the rows for one number of clusters or a range, from seeded k-means++ starts with several restarts, compared by the cubic clustering criterion, pseudo F and R²; cluster means and standard deviations, a biplot in principal components, parallel coordinates, saved clusters and distances, cluster colours.',
+    about: 'k-means clustering of the rows for one number of clusters or a range, from seeded k-means++ starts with several restarts, compared by the cubic clustering criterion, pseudo F, R² and the within sum of squares (with their graph by k), JMP\'s Single Step; cluster means and standard deviations, a biplot in principal components, parallel coordinates, saved clusters and distances for every row, the cluster and distance formulas, cluster colours.',
     uses: ["numpy (Lloyd's algorithm, k-means++ seeding)", 'scipy.cluster.vq.kmeans2 (in the code shown, and the tests)', "the cubic clustering criterion (Sarle 1983)"],
     topics: {
       'p:kmeans': {
@@ -1839,7 +2159,7 @@
         lead: 'Splits the rows into k clusters around k centres: each row goes to the nearest centre, each centre moves to the mean of its rows, until nothing changes.',
         sections: [
           { heading: 'Starts', text: 'k-means++ chooses the first centres far apart, from a fixed seed so that a report is reproducible; the best of several restarts (by the within-cluster sum of squares) is kept. The clusters are numbered by size.' },
-          { heading: 'Choosing k', text: 'With a Range of Clusters, every k from Number of Clusters to the range is fitted and compared: the largest cubic clustering criterion is marked Optimal CCC. Pseudo F and R² are shown beside it.' },
+          { heading: 'Choosing k', text: 'With a Range of Clusters, every k from Number of Clusters to the range is fitted and compared: the largest cubic clustering criterion is marked Optimal CCC. Pseudo F and R² are shown beside it, and a graph of the four criteria (CCC, pseudo F, R², within sum of squares) by k shows the elbow of the within sum of squares.' },
           { heading: 'Differences from JMP', text: 'JMP seeds its clusters from the order of the rows; here k-means++ with restarts is used, so the clusters can differ. The CCC is computed as SAS PROC CLUSTER does (from the eigenvalues of the covariance matrix); JMP may use FASTCLUS\'s variant. Self organizing maps and within-cluster scaling are not here.' },
         ],
         more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
@@ -1852,6 +2172,7 @@
           ['Columns Scaled Individually', 'Scale each column to standard deviation 1 first (on by default), so that columns in large units do not dominate the distances.'],
           ['Restarts', 'How many k-means++ starts; the fit with the smallest within-cluster sum of squares is kept. 10 by default, 1 to 100.'],
           ['Seed', 'The seed of the random starts: the same seed gives the same clusters.'],
+          ['Single Step', 'JMP\'s Single Step: Go then shows each number of clusters at its starting centres (one k-means++ start, the Restarts not used), with Step and Go buttons in its report: Step assigns every row to its nearest centre and moves each centre to the mean of its rows, once; Go goes on until the centres stop moving (the fit with one restart). The clusters keep the numbers of their starting centres.'],
           ['Go', 'Fit with these settings; what is typed in the fields is used only when Go is pressed.']] }],
         more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
       },
@@ -1860,7 +2181,10 @@
         lead: 'The clusters of one k: their sizes, means and standard deviations in the columns\' units, and a biplot on the first two principal components with a 90% ellipse around each cluster.',
         sections: [{ heading: 'In the report', choices: [
           ['The cluster buttons', 'One per cluster with its number of rows: a click selects its rows (with shift, adds them to the selection).'],
-          ['A line of Cluster Summary', 'Click it to select the rows of that cluster.']] }],
+          ['A line of Cluster Summary', 'Click it to select the rows of that cluster.'],
+          ['Step', 'With Single Step: one more iteration, every row to its nearest centre and each centre to the mean of its rows.'],
+          ['Go', 'With Single Step: the iterations until the centres stop moving.']] },
+          { heading: 'Saved columns', choices: [['Save Clusters', 'Cluster and Distance (the squared Euclidean distance to the cluster\'s centre, where the clustering is: the columns scaled, as JMP\'s Distance) for every row whose columns are present, excluded rows too: each in the cluster of its nearest centre.'], ['Save Cluster Formula', 'The same cluster as a live formula column (JMP\'s Cluster Formula): the nearest centre by the squared Euclidean distance.'], ['Save Distance Formulas', 'The k squared distances to the centres, as formula columns.']] }],
         more: { label: 'K Means Cluster', id: 'help-p-kmeans' },
       },
     },
@@ -1950,11 +2274,62 @@
       rows,
     }, { name: 'Response Screening PValues', maxRows: 1000, onRow: (r) => openFitYbyX(ctx, r) }), ctx.note('Sorted by FDR LogWorth. Continuous Y: the F test of Fit Y by X (Oneway ANOVA or the regression); categorical Y: the likelihood-ratio χ² of the contingency table or of the logistic fit. FDR p-values by Benjamini and Hochberg (statsmodels multipletests). Click a line to open its Fit Y by X; right click to make a data table.'),
     ctx.code(res.code));
+    screenedModel(ctx, all, res.code);
+  }
+
+  /* The bivariate screening of a model's candidates (Hosmer and Lemeshow's
+     purposeful selection starts so): for each Y, the X's whose p-value (or
+     FDR p-value) is below the cut, 0.25 by default, and Fit Model with them. */
+  function screenedOf(all, ys, cut, by) {
+    const key = by === 'fdr' ? 'fdr_p' : 'p';
+    return ys.map((y) => ({ y, xs: all.filter((r) => r.y === y && r[key] != null && r[key] < cut).sort((a, b) => a[key] - b[key]).map((r) => r.x) }));
+  }
+
+  function openScreenedModel(ctx, picks) {
+    const P = SM.platforms.get('fitmodel');
+    if (!P) { SM.ui.toast('Fit Model is not loaded on this page', { error: true }); return 0; }
+    const ids = (k) => ((ctx.spec.roles && ctx.spec.roles[k]) || []).slice();
+    let opened = 0;
+    for (const { y, xs } of picks) {
+      const yc = ctx.table.col(y);
+      const xc = xs.map((x) => ctx.table.col(x)).filter(Boolean);
+      if (!yc || !xc.length) continue;
+      const personality = !yc.isCategorical ? 'standard' : yc.modelingType === 'ordinal' ? 'ordinal' : 'nominal';
+      SM.app.openReport(P, { roles: { y: [yc.id], weight: ids('weight'), freq: ids('freq'), by: ids('by') }, effects: xc.map((c) => ({ cols: [c.id], names: [c.name], nest: [], nestNames: [], random: false })), options: { personality } }, ctx.table);
+      opened++;
+    }
+    return opened;
+  }
+
+  // the screened X's in the code: the screening's own code (res.code makes the table res), then the cut
+  // (joined as SM.predict joins a graph's code to its head: Save Python Script keeps the screening's code once)
+  const screenedCode = (code, cut, by) => (code ? [`${code}\n\n# ----`,
+    `cut = ${pyNum(cut)}   # the p-value cut`,
+    `screened = res[res[${J(by === 'fdr' ? 'FDR_PValue' : 'PValue')}] < cut].sort_values(${J(by === 'fdr' ? 'FDR_PValue' : 'PValue')}).groupby("Y", sort=False)["X"].apply(list)   # each Y's X's below it`,
+    'print(screened)   # Fit Model takes them as main effects'].join('\n') : null);
+
+  function screenedModel(ctx, all, code) {
+    const cut = ctx.opt('fmCut', 0.25), by = ctx.opt('fmBy', 'p');
+    const ys = [...new Set(all.map((r) => r.y))];
+    const picks = screenedOf(all, ys, cut, by);
+    const ob = ctx.outline('Fit Model with the Screened X\'s', { key: 'screened', info: 'rs:model', closed: !ctx.opt('fmOpen', false) });
+    const go = button('Fit Model', () => {
+      const cur = screenedOf(all, ys, ctx.opt('fmCut', 0.25), ctx.opt('fmBy', 'p'));
+      const none = cur.filter((q) => !q.xs.length).map((q) => q.y);
+      const n = openScreenedModel(ctx, cur);
+      if (!n) SM.ui.toast(`No X has a ${ctx.opt('fmBy', 'p') === 'fdr' ? 'FDR p-value' : 'p-value'} below ${ctx.opt('fmCut', 0.25)}: nothing to fit`, { error: true });
+      else if (none.length) SM.ui.toast(`Opened Fit Model for ${n} response${n > 1 ? 's' : ''}; ${none.join(', ')} ${none.length > 1 ? 'have' : 'has'} no X below the cut`);
+    }, 'primary');
+    ob.add(controls(control('p-value below', numberEl(cut, (v) => { if (v > 0 && v <= 1) ctx.set('fmCut', v); else SM.ui.toast('The cut is a p-value, above 0 and at most 1', { error: true }); }, { size: 5, aria: 'p-value cut' })),
+      control('by', selectEl(by, [['p', 'PValue'], ['fdr', 'FDR PValue']], (v) => ctx.set('fmBy', v), 'which p-value')), go),
+      ctx.rt({ columns: [{ key: 'y', label: 'Y', fmt: 'text' }, { key: 'n', label: 'X\'s', fmt: 'int' }, { key: 'xs', label: `X's with ${by === 'fdr' ? 'FDR p' : 'p'} < ${cut}`, fmt: 'text' }],
+        rows: picks.map((q) => ({ y: q.y, n: q.xs.length, xs: q.xs.join(', ') || '(none)' })) }, { sortable: false, key: 'screened' }), ctx.code(screenedCode(code, cut, by)),
+      ctx.note(`Fit Model opens a model for each Y with its X's below the cut as main effects (least squares for a continuous Y, logistic for a categorical one), with the report's Weight, Freq and By: the purposeful selection of Hosmer and Lemeshow starts with the X's whose p-value alone is below 0.25, a loose cut that keeps variables whose effect only shows beside the others. Not in JMP.`));
   }
 
   SM.platforms.register({
     id: 'respscreen', label: 'Response Screening', menu: 'Analyze/Screening', order: 10, info: 'p:respscreen',
-    about: 'Tests every Y against every X as Fit Y by X would (ANOVA or regression F for a continuous Y, the likelihood-ratio χ² of a contingency table or a logistic fit for a categorical one), with false discovery rate p-values, LogWorths, effect sizes and R²; the FDR PValue plot, FDR LogWorth by effect size, and a table whose lines open Fit Y by X.',
+    about: 'Tests every Y against every X as Fit Y by X would (ANOVA or regression F for a continuous Y, the likelihood-ratio χ² of a contingency table or a logistic fit for a categorical one), with false discovery rate p-values, LogWorths, effect sizes and R²; the FDR PValue plot, FDR LogWorth by effect size, and a table whose lines open Fit Y by X; beyond JMP, Fit Model with each Y\'s X\'s below a p-value cut (bivariate screening).',
     uses: ['scipy.stats: f_oneway, linregress, chi2_contingency', 'statsmodels: Logit, MNLogit, GLM (frequency weights), WLS', 'statsmodels.stats.multitest.multipletests (fdr_bh)'],
     topics: {
       'p:respscreen': {
@@ -1965,6 +2340,15 @@
           { heading: 'LogWorth', text: '−log10(p): 2 is p = 0.01, 3 is p = 0.001. FDR LogWorth is the same for the FDR p-value (Benjamini-Hochberg).' },
           { heading: 'Differences from JMP', text: 'The robust, Cauchy, Poisson and negative binomial fits, the Grouping and Subgroup roles, the practical-significance and equivalence tests and the means-differences reports are not here. Weight and Freq act as frequency weights.' },
         ],
+        more: { label: 'Response Screening', id: 'help-p-respscreen' },
+      },
+      'rs:model': {
+        kicker: 'Response Screening', title: 'Fit Model with the Screened X\'s',
+        lead: 'The bivariate screening of a model\'s candidates: for each Y, the X\'s whose p-value against it is below the cut, and a Fit Model report with them as main effects (Standard Least Squares for a continuous Y, Nominal or Ordinal Logistic for a categorical one), the report\'s Weight, Freq and By kept. A loose cut such as 0.25 (Hosmer and Lemeshow) keeps variables that matter only together with others; the model then shows which to keep. Not in JMP.',
+        sections: [{ heading: 'In the report', choices: [
+          ['p-value below', 'The cut, above 0 and at most 1: an X whose p-value is below it goes into the model. 0.25 by default.'],
+          ['by', 'PValue, the default: each test\'s own p-value; FDR PValue: the false-discovery-rate p-value, a stricter cut when there are many tests.'],
+          ['Fit Model', 'Opens a Fit Model report for each Y with an X below the cut.']] }],
         more: { label: 'Response Screening', id: 'help-p-respscreen' },
       },
       'rs:fdr': { kicker: 'Response Screening', title: 'FDR PValue Plot', lead: 'The tests sorted by significance (rank fraction 1/m … 1). Red: the p-values; blue: the FDR p-values. Blue points under the solid line are significant at the false discovery rate α; equivalently red points under the dotted line α × rank fraction.', more: { label: 'Response Screening', id: 'help-p-respscreen' } },
@@ -1988,6 +2372,7 @@
       return [
         ctx.check('FDR PValue Plot', 'fdrPlot', null, true), ctx.check('FDR LogWorth by Effect Size', 'lwEffect', null, true), ctx.check('FDR LogWorth by RSquare', 'lwR2', null, false),
         { label: 'Set α Level', submenu: () => levelOptions(ctx) },
+        { label: 'Fit Model with the Screened X\'s', action: () => { ctx.set('fmOpen', true); } },
         { label: 'Max Logworth…', action: async () => { const v = await SM.ui.form({ title: 'Max Logworth', fields: [{ key: 'm', label: 'Largest LogWorth reported (larger ones are shown as this)', type: 'number', value: ctx.opt('maxLogworth', 1000),
           help: 'A cap on the LogWorths, −log₁₀ p, and the FDR LogWorths: larger ones are shown as this value, so that a few p-values near zero do not squeeze the rest of the plots. 1000 by default.' }] }); if (v && v.m > 0) ctx.set('maxLogworth', v.m); } },
       ];
@@ -2006,20 +2391,99 @@
   ];
   // the buttons under a method's report, as its (i) explains them
   const EO_ACTIONS = [
-    ['Select Rows', 'Select the rows the method finds: those with an outlier in any column listed, or above the limit.'],
+    ['Select Rows', 'Select the rows the method finds: those with an outlier in a column chosen in the table (every column listed when no line is chosen), or above the limit.'],
     ['Exclude Rows', 'Exclude those rows from every analysis; Rescan then screens the rows that are left.'],
     ['Color Rows', 'Colour those rows red, in the table and every graph.'],
     ['Rescan', 'Run the report again, after rows were excluded or values changed.'],
   ];
+  // the two that change values, for the univariate methods (JMP's)
+  const EO_VALUE_ACTIONS = [
+    ['Add to Missing Value Codes', 'Add the outlier values of the chosen columns (every column listed when no line is chosen) to their Missing Value Codes column property: those values, 9999 say, are missing in every analysis from now on, and stay in the table as they were. One Edit > Undo takes it back. Not with By groups (the codes are the whole column\'s), as in JMP.'],
+    ['Change to Missing', 'Overwrite the outlier cells of the chosen columns (every column listed when no line is chosen) with missing values: for values known to be wrong. A formula column\'s cells are left alone. One Edit > Undo takes it back.'],
+  ];
+  const EO_LINES = ['A line of Outliers by Column', 'Click it to choose that column (ctrl or ⌘ adds or takes away one, shift a sweep): its outlier rows are selected, and the buttons act on the chosen columns only. With no line chosen they act on every column listed.'];
 
-  function eoActions(ctx, rowsOf, what) {
+  /* The lines chosen in a method's Outliers by Column table (JMP's buttons act
+     on the table's selected rows): kept with the report for the session. */
+  function eoChosen(ctx, key) {
+    const all = ctx.report._eoChosen || (ctx.report._eoChosen = {});
+    const k = `${key}\u0001${ctx.path || ''}`;
+    return all[k] || (all[k] = { sel: new Set(), mark: {} });
+  }
+
+  /* The columns the value buttons act on: the chosen lines, else every column listed. */
+  function eoColumnsOf(ch, cols) {
+    const chosen = cols.filter((c) => ch.sel.has(c.column));
+    return chosen.length ? chosen : cols;
+  }
+
+  function addToMissingCodes(ctx, cols) {
+    const t = ctx.table;
+    if (ctx.where && ctx.where.length) { SM.ui.toast('Add to Missing Value Codes is not available with By groups: the codes are the whole column\'s (as in JMP)', { error: true }); return; }
+    if (typeof t.setMissingCodes !== 'function') { SM.ui.toast('This page has no Missing Value Codes yet', { error: true }); return; }
+    const todo = cols.map((c) => ({ col: t.col(c.column), vals: (c.values || []).map((x) => x.value) })).filter((x) => x.col && x.vals.length);
+    if (!todo.length) { SM.ui.toast('No outlier values to add'); return; }
+    if (SM.app && SM.app.record) SM.app.record(t, 'Add to Missing Value Codes');
+    let n = 0;
+    for (const { col, vals } of todo) {
+      const had = col.missingCodes || [];
+      const add = vals.filter((v) => !had.includes(v));
+      n += add.length;
+      t.setMissingCodes(col.id, had.concat(add));
+    }
+    SM.ui.toast(`Added ${plural(n, 'value')} to the missing value codes of ${todo.map((x) => x.col.name).join(', ')}; Rescan to screen again`);
+  }
+
+  function changeToMissing(ctx, cells) {
+    const t = ctx.table;
+    const done = [], skipped = new Set();
+    for (const { column, row } of cells) {
+      const c = t.col(column);
+      if (!c) continue;
+      if (c.formula) { skipped.add(c.name); continue; }
+      done.push([row, c]);
+    }
+    if (!done.length) { SM.ui.toast(skipped.size ? `${[...skipped].join(', ')}: a formula column's cells are left alone` : 'No outlier cells to change'); return; }
+    if (SM.app && SM.app.record) SM.app.record(t, 'Change to Missing');
+    for (const [row, c] of done) t.setCell(row, c.id, c.isNumeric ? NaN : null, { silent: true });
+    t._changed('data', { cells: done.map(([row, c]) => [row, c.id]) });
+    SM.ui.toast(`Changed ${plural(done.length, 'cell')} to missing${skipped.size ? ` (${[...skipped].join(', ')}: formula columns, left alone)` : ''}; Rescan to screen again`);
+  }
+
+  /* The buttons under a univariate method's report. of() gives the columns
+     acted on (the chosen lines, else all listed), each with its outlier rows,
+     values and cells. */
+  function eoActions(ctx, rowsOf, what, values = null) {
+    const extra = values ? [
+      (() => { const b = button('Add to Missing Value Codes', () => addToMissingCodes(ctx, values.columns())); if (ctx.where && ctx.where.length) { b.disabled = true; b.title = 'Not with By groups: the codes are the whole column\'s (as in JMP)'; } return b; })(),
+      button('Change to Missing', () => changeToMissing(ctx, values.cells())),
+    ] : [];
     return controls(
       button('Select Rows', () => ctx.table.select(rowsOf())),
       button('Exclude Rows', () => { const rs = rowsOf(); if (rs.length) ctx.table.setState(rs, 'excluded', true); SM.ui.toast(`${rs.length} row${rs.length === 1 ? '' : 's'} excluded; Redo to rescan`); }),
       button('Color Rows', () => ctx.table.setColor(rowsOf(), 3)),
+      ...extra,
       button('Rescan', () => ctx.report.run()),
       el('span', { class: 'sm-ob-note', text: what }),
     );
+  }
+
+  /* Outliers by Column with chosen lines: a click chooses (listClick), the
+     chosen lines are marked and their outlier rows selected in the table. */
+  function eoColumnTable(ctx, key, spec, cols) {
+    const ch = eoChosen(ctx, key);
+    const ids = cols.map((c) => c.column);
+    for (const id of [...ch.sel]) if (!ids.includes(id)) ch.sel.delete(id);
+    let tbl = null;
+    const mark = () => { if (!tbl) return; [...tbl.tBodies[0].rows].forEach((tr, k) => { const r = tbl._rt.rows[k]; tr.classList.toggle('is-chosen', !!r && ch.sel.has(r.column)); }); };
+    tbl = ctx.rt(spec, { onRow: (row, ev) => {
+      SM.util.listClick(ev, row.column, ids, ch.sel, ch.mark);
+      mark();
+      ctx.table.select([...new Set(cols.filter((c) => ch.sel.has(c.column)).flatMap((c) => c.rows || []))].sort((a, b) => a - b));
+    } });
+    if (typeof MutationObserver !== 'undefined') new MutationObserver(mark).observe(tbl.tBodies[0], { childList: true });
+    mark();
+    return tbl;
   }
 
   async function eoRender(ctx) {
@@ -2060,10 +2524,12 @@
       control('Restrict search to integers', ib), control('Show only columns with outliers', onlyBox)));
     const cols = r.columns.filter((c) => c.low_q != null && (!only || c.count > 0));
     const lq = `${fmt(100 * tail)}%`, hq = `${fmt(100 * (1 - tail))}%`;
-    const allRows = () => [...new Set(cols.flatMap((c) => c.rows || []))].sort((a, b) => a - b);
-    ob.add(eoActions(ctx, allRows, 'act on the outliers of every column listed; click a line for one column'),
-      ctx.rt({ columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'low_q', label: `${lq} Quantile` }, { key: 'high_q', label: `${hq} Quantile` }, { key: 'low_t', label: 'Low Threshold' }, { key: 'high_t', label: 'High Threshold' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'vals', label: 'Outliers', fmt: 'text' }], rows: cols.map((c) => ({ ...c, vals: valuesText(c.values) })), caption: 'Outliers by Column' },
-        { onRow: (row, ev) => ctx.table.select(row.rows || [], ev.shiftKey ? 'add' : 'replace') }),
+    const ch = eoChosen(ctx, 'qro');
+    const acted = () => eoColumnsOf(ch, cols);
+    const allRows = () => [...new Set(acted().flatMap((c) => c.rows || []))].sort((a, b) => a - b);
+    const values = { columns: () => acted().filter((c) => c.count > 0), cells: () => { const names = new Set(acted().map((c) => c.column)); return r.cells.filter((c) => names.has(c.column)); } };
+    ob.add(eoActions(ctx, allRows, 'act on the outliers of the columns chosen in the table, or of every column listed', values),
+      eoColumnTable(ctx, 'qro', { columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'low_q', label: `${lq} Quantile` }, { key: 'high_q', label: `${hq} Quantile` }, { key: 'low_t', label: 'Low Threshold' }, { key: 'high_t', label: 'High Threshold' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'vals', label: 'Outliers', fmt: 'text' }], rows: cols.map((c) => ({ ...c, vals: valuesText(c.values) })), caption: 'Outliers by Column' }, cols),
       ctx.note(`A value is an outlier when it is more than Q × (the ${hq} − the ${lq} quantile) below the ${lq} or above the ${hq} quantile (quantiles as Distribution computes them).`));
     const byCell = ctx.outline('Outliers by Cell', { key: 'qro:cell', parent: ob, closed: true });
     byCell.add(ctx.rt({ columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'row', label: 'Row', fmt: 'int' }, { key: 'distance', label: 'Outlier Distance', digits: 4 }, { key: 'value', label: 'Value' }], rows: r.cells.map((c) => ({ ...c, row: c.row + 1, _r: c.row })) }, { maxRows: 500, onRow: (row, ev) => ctx.table.select([row._r], ev.shiftKey ? 'add' : 'replace') }), ctx.note('Outlier distance: (value − median)/interquantile range.'));
@@ -2084,10 +2550,12 @@
     const ob = ctx.outline('Robust Fit Outliers', { key: 'rfo', info: 'eo:rfo', menu: () => [{ label: 'Close', action: () => ctx.set('rfo', false) }] });
     ob.add(controls(control('Method', selectEl(method, [['huber', 'Huber'], ['cauchy', 'Cauchy'], ['quartile', 'Quartile']], (v) => ctx.set('rfMethod', v), 'Robust method')), control('K Sigma', numberEl(K, (v) => { if (v > 0) ctx.set('kSigma', v); }, { size: 4, aria: 'K sigma' }))));
     const cols = r.columns.filter((c) => c.center != null);
-    const allRows = () => [...new Set(cols.flatMap((c) => c.rows || []))].sort((a, b) => a - b);
-    ob.add(eoActions(ctx, allRows, 'act on the outliers of every column; click a line for one column'),
-      ctx.rt({ columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'center', label: `${{ huber: 'Huber', cauchy: 'Cauchy', quartile: 'Quartile' }[method]} Center` }, { key: 'spread', label: 'Spread' }, { key: 'low_t', label: 'Low Threshold' }, { key: 'high_t', label: 'High Threshold' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'vals', label: 'Outliers', fmt: 'text' }], rows: cols.map((c) => ({ ...c, vals: valuesText(c.values) })), caption: 'Outliers by Column' },
-        { onRow: (row, ev) => ctx.table.select(row.rows || [], ev.shiftKey ? 'add' : 'replace') }),
+    const ch = eoChosen(ctx, 'rfo');
+    const acted = () => eoColumnsOf(ch, cols);
+    const allRows = () => [...new Set(acted().flatMap((c) => c.rows || []))].sort((a, b) => a - b);
+    const values = { columns: () => acted().filter((c) => c.count > 0), cells: () => { const names = new Set(acted().map((c) => c.column)); return r.cells.filter((c) => names.has(c.column)); } };
+    ob.add(eoActions(ctx, allRows, 'act on the outliers of the columns chosen in the table, or of every column listed', values),
+      eoColumnTable(ctx, 'rfo', { columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'center', label: `${{ huber: 'Huber', cauchy: 'Cauchy', quartile: 'Quartile' }[method]} Center` }, { key: 'spread', label: 'Spread' }, { key: 'low_t', label: 'Low Threshold' }, { key: 'high_t', label: 'High Threshold' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'vals', label: 'Outliers', fmt: 'text' }], rows: cols.map((c) => ({ ...c, vals: valuesText(c.values) })), caption: 'Outliers by Column' }, cols),
       ctx.note({ huber: "Huber's M-estimates of location and scale (statsmodels.robust.scale.Huber).", cauchy: 'The location and scale of a Cauchy distribution fitted by maximum likelihood (scipy.stats.cauchy.fit).', quartile: 'The median and the interquartile range over 1.34898.' }[method] + ` Outliers lie more than ${fmt(K)} spreads from the centre.`));
     ctx.outline('Outliers by Cell', { key: 'rfo:cell', parent: ob, closed: true }).add(ctx.rt({ columns: [{ key: 'column', label: 'Column', fmt: 'text' }, { key: 'row', label: 'Row', fmt: 'int' }, { key: 'distance', label: 'Outlier Distance', digits: 4 }, { key: 'value', label: 'Value' }], rows: r.cells.map((c) => ({ ...c, row: c.row + 1, _r: c.row })) }, { maxRows: 500, onRow: (row, ev) => ctx.table.select([row._r], ev.shiftKey ? 'add' : 'replace') }), ctx.note('Outlier distance: (value − centre)/spread.'));
     ob.add(ctx.code(r.code));
@@ -2121,7 +2589,7 @@
 
   SM.platforms.register({
     id: 'outliers', label: 'Explore Outliers', menu: 'Analyze/Screening', order: 30, info: 'p:outliers',
-    about: 'Finds outliers four ways: quantile range (values far past the tail quantiles, and codes such as 9999), robust fit (Huber, Cauchy or quartile centre and spread), multivariate robust distances (the minimum covariance determinant) and distances to the k nearest neighbours; select, exclude or colour the rows.',
+    about: 'Finds outliers four ways: quantile range (values far past the tail quantiles, and codes such as 9999), robust fit (Huber, Cauchy or quartile centre and spread), multivariate robust distances (the minimum covariance determinant) and distances to the k nearest neighbours; select, exclude or colour the rows, add the values found to the columns\' Missing Value Codes or change them to missing.',
     uses: ['numpy.quantile', 'statsmodels.robust.scale.Huber', 'scipy.stats.cauchy.fit', 'FAST-MCD (numpy)', 'scipy.spatial.cKDTree'],
     topics: {
       'p:outliers': {
@@ -2130,7 +2598,8 @@
         sections: [
           { heading: 'Methods', choices: EO.map(([, label, , about]) => [label, about]) },
           { heading: 'The method buttons', text: 'Press a method at the top of the report to add its report below, and press it again to take it away; the red triangle has the same four.' },
-          { heading: 'Differences from JMP', text: 'JMP\'s Robust PCA Outliers is not here; Multivariate Robust Outliers uses the reweighted MCD (FAST-MCD), JMP\'s older platform its robust covariance estimate. Changing values to missing and missing value codes are left to the table.' },
+          { heading: 'Changing the table', text: 'The univariate methods have JMP\'s Add to Missing Value Codes (the outlier values become missing value codes of their columns: missing in every analysis, still stored) and Change to Missing (the cells overwritten). Both act on the columns chosen in Outliers by Column, or on every column listed, and Edit > Undo takes either back; Rescan screens again.' },
+          { heading: 'Differences from JMP', text: 'JMP\'s Robust PCA Outliers and Color Cells are not here; Multivariate Robust Outliers uses the reweighted MCD (FAST-MCD), JMP\'s older platform its robust covariance estimate. Add to Missing Value Codes and Change to Missing act on whole columns (their lines chosen in Outliers by Column), not on single cells chosen in Outliers by Cell.' },
         ],
         more: { label: 'Explore Outliers', id: 'help-p-outliers' },
       },
@@ -2141,8 +2610,8 @@
           ['Q', 'How many interquantile ranges, q(1 − t) − q(t), beyond those quantiles a value must lie to be an outlier; 3 by default. A smaller Q flags more values.'],
           ['Restrict search to integers', 'Flag only the whole numbers among the outliers, as error and missing-value codes such as 999 usually are.'],
           ['Show only columns with outliers', 'Leave the columns without an outlier out of the table.'],
-          ...EO_ACTIONS,
-          ['A line of a table', 'Click it to select the rows of that column, cell or row (with shift, add them).']] }],
+          ...EO_ACTIONS, ...EO_VALUE_ACTIONS, EO_LINES,
+          ['A line of Outliers by Cell or by Row', 'Click it to select the rows of that cell or row (with shift, add them).']] }],
         more: { label: 'Explore Outliers', id: 'help-p-outliers' },
       },
       'eo:rfo': {
@@ -2150,8 +2619,8 @@
         sections: [{ heading: 'In the report', choices: [
           ['Method', 'The robust centre and spread of each column: Huber, the default, M-estimates of location and scale (statsmodels); Cauchy, the location and scale of a Cauchy distribution fitted by maximum likelihood (scipy); Quartile, the median and the interquartile range over 1.34898.'],
           ['K Sigma', 'Values more than K spreads from the centre are outliers; 4 by default.'],
-          ...EO_ACTIONS,
-          ['A line of a table', 'Click it to select the rows of that column or cell (with shift, add them).']] }],
+          ...EO_ACTIONS, ...EO_VALUE_ACTIONS, EO_LINES,
+          ['A line of Outliers by Cell', 'Click it to select the row of that cell (with shift, add it).']] }],
         more: { label: 'Explore Outliers', id: 'help-p-outliers' },
       },
       'eo:mro': {

@@ -3,7 +3,13 @@ Factorial, Screening, Response Surface) and DOE > Special Purpose (Space
 Filling), and the diagnostics of DOE > Design Diagnostics > Evaluate Design.
 
   Full Factorial   every combination of the levels; continuous factors at
-                   their low and high values, with optional center points
+                   their low and high values, with optional center points;
+                   a split plot when some factors are hard to change (the
+                   whole plots: each a setting of the hard-to-change factors
+                   with every combination of the others, the randomization
+                   restricted to them), or the replicates as blocks; the
+                   design's model (with the whole-plot or block random
+                   effect) for Fit Model, and a Simulate Responses formula
   Screening        two-level fractional factorials 2^(k-p) by generators
                    (the minimum-aberration designs of Box, Hunter and Hunter
                    and Montgomery's table), their resolution and aliases
@@ -36,7 +42,7 @@ from scipy.stats import qmc
 
 from . import data
 from .registry import api
-from .util import code_head, col, table as rtable
+from .util import code_head, col, one_line, table as rtable
 
 # ---------------------------------------------------------------------------
 # Common pieces
@@ -87,14 +93,14 @@ def _clean_factors(factors):
             hi = float(f.get('high', 1) if f.get('high') is not None else 1)
             if not lo < hi:
                 raise ValueError(f'{name}: the low value must be below the high')
-            out.append({'name': name, 'kind': 'continuous', 'low': lo, 'high': hi})
+            out.append({'name': name, 'kind': 'continuous', 'low': lo, 'high': hi, 'hard': f.get('changes') == 'hard'})
         else:
             levels = [str(v) for v in (f.get('levels') or []) if str(v).strip() != '']
             if len(levels) < 2:
                 raise ValueError(f'{name}: a categorical factor needs two or more levels')
             if len(set(levels)) != len(levels):
                 raise ValueError(f'{name}: the levels must differ')
-            out.append({'name': name, 'kind': 'categorical', 'levels': levels})
+            out.append({'name': name, 'kind': 'categorical', 'levels': levels, 'hard': f.get('changes') == 'hard'})
     if not out:
         raise ValueError('add at least one factor')
     return out
@@ -154,8 +160,12 @@ def _pattern_char(f, c):
 
 
 @api('doe.full_factorial')
-def full_factorial(factors, responses=None, replicates=0, center_points=0, order='randomize', seed=None):
+def full_factorial(factors, responses=None, replicates=0, center_points=0, order='randomize', seed=None, whole_plots=None, blocks=False):
     fs = _clean_factors(factors)
+    if any(f.get('hard') for f in fs):
+        return _split_plot(fs, responses, replicates, center_points, order, seed, whole_plots)
+    if blocks and int(replicates or 0) >= 1:
+        return _blocked(fs, responses, replicates, center_points, order, seed)
     resp = _responses(responses)
     seed = _seed(seed)
     order = order if order in ORDERS else 'randomize'
@@ -177,7 +187,254 @@ def full_factorial(factors, responses=None, replicates=0, center_points=0, order
                       f'levels = {json.dumps({f["name"]: ([f["low"], f["high"]] if f["kind"] == "continuous" else f["levels"]) for f in fs})}',
                       f'd = pd.DataFrame(list(itertools.product(*levels.values())) * {reps + 1}, columns=list(levels))',
                       f'd = d.sample(frac=1, random_state={seed}).reset_index(drop=True)   # randomized' if order == 'randomize' else 'print(d)'])
-    return _table_out('Full Factorial', fs, coded, pattern, resp, order, seed, notes, code=code)
+    out = _table_out('Full Factorial', fs, coded, pattern, resp, order, seed, notes, code=code)
+    terms = _model_terms(fs, len(coded), 0)
+    out['model'] = _model_spec(fs, resp, terms, [])
+    out['random'] = []
+    out['simulate'] = _sim_parts(fs, terms, [])
+    return out
+
+
+def _levels_of(f):
+    return [-1, 1] if f['kind'] == 'continuous' else list(range(len(f['levels'])))
+
+
+def _model_terms(fs, n_runs, used_df):
+    """The design's model: the full factorial when it leaves the residual a
+    degree of freedom (after used_df for the random terms), else the main
+    effects and two-factor interactions, else the main effects."""
+    names = [f['name'] for f in fs]
+
+    def width(t):
+        w = 1
+        for nm in t:
+            f = fs[names.index(nm)]
+            w *= 1 if f['kind'] == 'continuous' else len(f['levels']) - 1
+        return w
+    for top in (len(names), 2, 1):
+        terms = [list(c) for r in range(1, min(top, len(names)) + 1) for c in itertools.combinations(names, r)]
+        p = 1 + sum(width(t) for t in terms)
+        if n_runs - p - used_df >= 1:
+            return terms
+    return [[nm] for nm in names]
+
+
+def _model_spec(fs, responses, terms, random_terms):
+    """The design's model as a Fit Model launch takes it, by column names:
+    every response as Y, the terms, the random terms."""
+    effects = [{'names': t, 'nest': [], 'nestNames': [], 'random': False} for t in terms]
+    effects += [{'names': t, 'nest': [], 'nestNames': [], 'random': True} for t in random_terms]
+    return {'roles': {'y': [r['name'] for r in responses]}, 'options': {'personality': 'standard'}, 'effects': effects}
+
+
+def whole_plots_default(n_hard_combos, replicates=0):
+    """The number of whole plots when none is given: each setting of the
+    hard-to-change factors twice (so that the whole plots' variance can be
+    told from those factors' effects), or once per copy of the design when
+    there are more replicates."""
+    return n_hard_combos * max(2, int(replicates or 0) + 1)
+
+
+def _split_plot(fs, responses, replicates, center_points, order, seed, whole_plots):
+    """A split-plot full factorial: the hard-to-change factors' settings are
+    the whole plots, each repeated whole_plots / (their combinations) times;
+    every combination of the easy-to-change factors within each whole plot.
+    Randomized: the whole plots in a random order, the runs in a random
+    order within each."""
+    resp = _responses(responses)
+    seed = _seed(seed)
+    order = order if order in ORDERS else 'randomize'
+    hard = [j for j, f in enumerate(fs) if f.get('hard')]
+    easy = [j for j, f in enumerate(fs) if not f.get('hard')]
+    if not easy:
+        raise ValueError('every factor is hard to change: make at least one easy to change (its levels change within a whole plot)')
+    hc = [list(c) for c in itertools.product(*[_levels_of(fs[j]) for j in hard])]
+    ec = [list(c) for c in itertools.product(*[_levels_of(fs[j]) for j in easy])]
+    H = len(hc)
+    W = int(whole_plots) if whole_plots not in (None, '') else whole_plots_default(H, replicates)
+    if W < H or W % H:
+        raise ValueError(f'the number of whole plots must be a multiple of {H}, the combinations of the hard-to-change factors')
+    if W * len(ec) > 100000:
+        raise ValueError(f'{W * len(ec)} runs: more than 100000')
+    rng = np.random.default_rng(seed)
+    wp_settings = [hc[i % H] for i in range(W)]
+    wp_order = rng.permutation(W) if order == 'randomize' else np.arange(W)
+    coded, wp_col = [], []
+    for k, w in enumerate(wp_order):
+        inner = rng.permutation(len(ec)) if order == 'randomize' else np.arange(len(ec))
+        for i in inner:
+            run = [0] * len(fs)
+            for j, v in zip(hard, wp_settings[w]):
+                run[j] = v
+            for j, v in zip(easy, ec[i]):
+                run[j] = v
+            coded.append(run)
+            wp_col.append(str(k + 1))
+    n = len(coded)
+    pattern = [''.join(_pattern_char(f, c) for f, c in zip(fs, run)) for run in coded]
+    notes = [f'Split-plot full factorial: {W} whole plots (the {H} settings of the hard-to-change factor{"s" if len(hard) > 1 else ""} '
+             f'{", ".join(fs[j]["name"] for j in hard)}, each in {W // H}), with the {len(ec)} combinations of the others in each: {n} runs.',
+             f'The whole plots are in a random order and the runs in a random order within each, a restricted randomization (seed {seed}): '
+             'analyse it with Whole Plots as a random effect.' if order == 'randomize' else 'The whole plots and their runs in standard order.']
+    if W == H:
+        notes.append('With one whole plot for each setting of the hard-to-change factors, their effects cannot be told from the '
+                     'whole plots\' variation: the model has no Whole Plots term, and the tests of those factors are not valid. '
+                     'Give more whole plots.')
+    if center_points:
+        notes.append('Center points are not added to a split-plot design.')
+    extra = [{'name': 'Whole Plots', 'dataType': 'character', 'modelingType': 'nominal', 'values': wp_col, 'valueOrder': [str(i + 1) for i in range(W)],
+              'notes': 'The whole plot of each run: the runs that share the setting of the hard-to-change factors, set once.'}]
+    terms = _model_terms(fs, n, W - H)
+    model = _model_spec(fs, resp, terms, [['Whole Plots']] if W > H else [])
+    code = '\n'.join(['import itertools, numpy as np, pandas as pd',
+                      f'rng = np.random.default_rng({seed})',
+                      f'hard = {json.dumps({fs[j]["name"]: ([fs[j]["low"], fs[j]["high"]] if fs[j]["kind"] == "continuous" else fs[j]["levels"]) for j in hard})}',
+                      f'easy = {json.dumps({fs[j]["name"]: ([fs[j]["low"], fs[j]["high"]] if fs[j]["kind"] == "continuous" else fs[j]["levels"]) for j in easy})}',
+                      'hc, ec = list(itertools.product(*hard.values())), list(itertools.product(*easy.values()))',
+                      f'W = {W}   # whole plots: each setting of the hard-to-change factors W / len(hc) times',
+                      'wp = [hc[i % len(hc)] for i in range(W)]',
+                      'rows = []',
+                      ('for k, w in enumerate(rng.permutation(W)):   # the whole plots in a random order' if order == 'randomize' else 'for k, w in enumerate(range(W)):'),
+                      ('    for i in rng.permutation(len(ec)):   # the runs in a random order within each' if order == 'randomize' else '    for i in range(len(ec)):'),
+                      '        rows.append({"Whole Plots": str(k + 1), **dict(zip(hard, wp[w])), **dict(zip(easy, ec[i]))})',
+                      'd = pd.DataFrame(rows)', 'print(d)'])
+    out = _table_out('Split Plot', fs, coded, pattern, resp, 'keep', seed, notes, extra_cols=extra, code=code)
+    out['order'] = order
+    out['notes'] = ' '.join(notes)
+    out['model'] = model
+    out['random'] = ['Whole Plots'] if W > H else []
+    out['whole_plots'] = W
+    out['simulate'] = _sim_parts(fs, terms, out['random'])
+    return out
+
+
+def _blocked(fs, responses, replicates, center_points, order, seed):
+    """The replicates of a full factorial as blocks (a randomized complete
+    block design): each block a complete replicate, the runs randomized
+    within each block."""
+    resp = _responses(responses)
+    seed = _seed(seed)
+    order = order if order in ORDERS else 'randomize'
+    base = [list(c) for c in itertools.product(*[_levels_of(f) for f in fs])]
+    B = int(replicates) + 1
+    rng = np.random.default_rng(seed)
+    coded, blk = [], []
+    ncp = max(0, int(center_points or 0))
+    cont = [j for j, f in enumerate(fs) if f['kind'] == 'continuous']
+    for b in range(B):
+        runs = [list(r) for r in base]
+        if ncp and cont:
+            for i in range(ncp):
+                runs.append([0 if f['kind'] == 'continuous' else i % len(f['levels']) for f in fs])
+        idx = rng.permutation(len(runs)) if order == 'randomize' else np.arange(len(runs))
+        for i in idx:
+            coded.append(runs[i])
+            blk.append(str(b + 1))
+    n = len(coded)
+    pattern = [''.join(_pattern_char(f, c) for f, c in zip(fs, run)) for run in coded]
+    notes = [f'Full factorial in {B} blocks: each block a complete replicate of the {len(base)} combinations'
+             + (f' with {ncp} center point{"s" if ncp > 1 else ""}' if ncp and cont else '') + f'; {n} runs, '
+             + (f'randomized within each block (seed {seed}).' if order == 'randomize' else 'in standard order within each block.')]
+    extra = [{'name': 'Block', 'dataType': 'character', 'modelingType': 'nominal', 'values': blk, 'valueOrder': [str(i + 1) for i in range(B)],
+              'notes': 'The block of each run: a complete replicate of the design, run together.'}]
+    terms = _model_terms(fs, n, B - 1)
+    model = _model_spec(fs, resp, terms, [['Block']])
+    centers = [[_decode(f, [c])[0] if f['kind'] == 'continuous' else f['levels'][int(c)] for f, c in zip(fs, run)] for run in (
+        [[0 if f['kind'] == 'continuous' else i % len(f['levels']) for f in fs] for i in range(ncp)] if ncp and cont else [])]
+    code = '\n'.join(['import itertools, numpy as np, pandas as pd', f'rng = np.random.default_rng({seed})',
+                      f'levels = {json.dumps({f["name"]: ([f["low"], f["high"]] if f["kind"] == "continuous" else f["levels"]) for f in fs})}',
+                      'base = list(itertools.product(*levels.values()))' + (f' + [tuple(c) for c in {json.dumps(centers)}]   # the center points' if centers else ''),
+                      'rows = []',
+                      f'for b in range({B}):   # each block a complete replicate' + (', randomized within it' if order == 'randomize' else ''),
+                      ('    rows += [(*base[i], str(b + 1)) for i in rng.permutation(len(base))]' if order == 'randomize' else '    rows += [(*r, str(b + 1)) for r in base]'),
+                      'd = pd.DataFrame(rows, columns=[*levels, "Block"])',
+                      'print(d)'])
+    out = _table_out('Blocked Full Factorial', fs, coded, pattern, resp, 'keep', seed, notes, extra_cols=extra, code=code)
+    out['order'] = order
+    out['notes'] = ' '.join(notes)
+    out['model'] = model
+    out['random'] = ['Block']
+    out['simulate'] = _sim_parts(fs, terms, out['random'])
+    return out
+
+
+def _sim_parts(fs, terms, random_terms):
+    """The coefficients Simulate Responses asks for: each term's, one per
+    combination of its categorical factors' levels but the last (effect
+    coding), labelled as Fit Model's estimates are (X3[L1]*X1); 1 for a main
+    effect and 0 for an interaction to begin with; a standard deviation for
+    each random column and the error."""
+    by_name = {f['name']: f for f in fs}
+    out = []
+    for t in terms:
+        fl = [by_name[nm] for nm in t]
+        opts = [[f['name']] if f['kind'] == 'continuous' else [f'{f["name"]}[{lv}]' for lv in f['levels'][:-1]] for f in fl]
+        labels = ['*'.join(c) for c in itertools.product(*opts)]
+        out.append({'names': list(t), 'labels': labels, 'defaults': [1.0 if len(t) == 1 else 0.0] * len(labels)})
+    return {'terms': out, 'random': list(random_terms), 'sigmas': {**{r: 1.0 for r in random_terms}, 'Error': 1.0}}
+
+
+def _fnum(x):
+    """A number for formula text, integers without their .0."""
+    from .util import formula_num
+    x = float(x)
+    return str(int(x)) if x == int(x) and abs(x) < 1e15 else formula_num(x)
+
+
+@api('doe.simulate_formula')
+def simulate_formula(factors, terms, coefficients, intercept=0.0, sigmas=None):
+    """Simulate Responses: the design's model as a formula of random draws in
+    the page's formula language: the intercept, each term's coefficient
+    times its coded columns (a continuous factor coded -1 to +1 from its low
+    and high, a categorical one effect coded: its level j 1, the last -1),
+    one normal draw per level of each random column (the mean of Random
+    Normal() over the level's rows times the square root of their count: a
+    standard normal shared by the level) times its standard deviation, and a
+    normal error per row."""
+    from .util import formula_ref, formula_str
+    fs = _clean_factors(factors)
+    by_name = {f['name']: f for f in fs}
+    if len(terms) != len(coefficients):
+        raise ValueError('one list of coefficients for each term')
+
+    def coded(f, j=None):
+        if f['kind'] == 'continuous':
+            mid, half = (f['low'] + f['high']) / 2, (f['high'] - f['low']) / 2
+            x = formula_ref(f['name'])
+            x = f'({x} - {_fnum(mid)})' if mid else x
+            return f'({x} / {_fnum(half)})' if half != 1 else x
+        lv = f['levels']
+        return f'Match({formula_ref(f["name"])}, {formula_str(lv[j])}, 1, {formula_str(lv[-1])}, -1, 0)'
+    parts = [_fnum(intercept)] if float(intercept) else []
+    for t, cs in zip(terms, coefficients):
+        # a term's coefficients: one per combination of its categorical factors' first levels (effect coding)
+        fl = [by_name[nm] for nm in t]
+        widths = [1 if f['kind'] == 'continuous' else len(f['levels']) - 1 for f in fl]
+        combos = list(itertools.product(*[range(w) for w in widths]))
+        cs = list(np.atleast_1d(np.asarray(cs, dtype=float)))
+        if len(cs) != len(combos):
+            raise ValueError(f'{"*".join(t)}: {len(combos)} coefficient{"s" if len(combos) > 1 else ""}, not {len(cs)}')
+        for c, combo in zip(cs, combos):
+            if not math.isfinite(c):
+                raise ValueError(f'{"*".join(t)}: a coefficient is not a number')
+            if c == 0:
+                continue
+            parts.append(' * '.join(([_fnum(c)] if c != 1 else []) + [coded(f, j) for f, j in zip(fl, combo)]))
+    for name, sd in (sigmas or {}).items():
+        sd = float(sd)
+        if not math.isfinite(sd) or sd < 0:
+            raise ValueError(f'{name} σ: a standard deviation of 0 or more')
+        if sd == 0:
+            continue
+        if name == 'Error':
+            parts.append(f'Random Normal(0, {_fnum(sd)})')
+        else:
+            ref = formula_ref(name)
+            parts.append(f'{_fnum(sd)} * Col Mean(Random Normal(), {ref}) * Sqrt(Col Number({ref}, {ref}))')
+    if not parts:
+        return {'expr': '0'}
+    # a negative coefficient after the first term as a minus (only a coefficient's text starts with one)
+    return {'expr': parts[0] + ''.join(f' - {q[1:]}' if q.startswith('-') else f' + {q}' for q in parts[1:])}
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +647,7 @@ def screening(factors, design='auto', responses=None, center_points=0, replicate
     if d['key'].startswith('ff:'):
         m = int(round(math.log2(d['runs'])))
         code += [f'base = np.array(list(itertools.product([-1, 1], repeat={m})))[:, ::-1]   # {2 ** m} runs, standard order',
-                 f'gens = {json.dumps([list(g) for g in d["generators"]])}   # {"; ".join(gen_text)}',
+                 f'gens = {json.dumps([list(g) for g in d["generators"]])}   # {one_line("; ".join(gen_text))}',
                  'X = np.column_stack([base] + [base[:, g].prod(axis=1) for g in gens])',
                  'print(X.T @ X)   # orthogonal columns: len(X) on the diagonal, 0 elsewhere']
     elif d['key'].startswith('pb:'):
@@ -918,7 +1175,8 @@ def _keep_lines(table, rows, where=None):
         num = data.meta(table, w['column']).get('dataType') == 'numeric'
         match &= (np.asarray(v, dtype=float) == float(w['value'])) if num else np.array([x == w['value'] for x in v], dtype=bool)
         shown = w['value'] if isinstance(w['value'], str) else _lit(w['value'])
-        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {w["column"]} is {shown}')
+        # (a comment of one line: a name or level with a line break would end it and start code)
+        L.append(f'df = df[df[{J(w["column"])}] == {_lit(w["value"])}]   # only the rows where {one_line(w["column"])} is {one_line(shown)}')
     if rows is not None and n:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -995,7 +1253,7 @@ class _EvalCode:
               '    return np.column_stack(cols)',
               '',
               '',
-              f'terms = {self._terms_lit(self.terms)}   # the model: {MODEL_LABELS.get(self.model, self.model)}',
+              f'terms = {self._terms_lit(self.terms)}   # the model: {one_line(MODEL_LABELS.get(self.model, self.model))}',
               'X = model_matrix({f: d[f].to_numpy() for f in factors}, terms)',
               'V = np.linalg.inv(X.T @ X)   # the variances and covariances of the estimates, over sigma squared']
         return L

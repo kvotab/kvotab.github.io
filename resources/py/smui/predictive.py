@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 from . import data, models
+from .registry import api
 from .util import code_head
 
 SETS = ('Training', 'Validation', 'Test')
@@ -65,6 +66,39 @@ def cached(kind, table, rows, spec, build, keep=24):
     return m
 
 
+_KEPT = {}
+
+
+def keep(key, obj, most=24):
+    """A report's fitted model kept under the page's key (the report and its By group), so that rows added to the
+    table later, or another open table, can be scored with the model as the report fitted it (the model cache
+    above is keyed by the table's version, which new rows change). The oldest go past most."""
+    if not key:
+        return
+    _KEPT.pop(key, None)
+    _KEPT[key] = obj
+    while len(_KEPT) > most:
+        _KEPT.pop(next(iter(_KEPT)))
+
+
+def kept(key):
+    """The model keep() kept under key, or None."""
+    return _KEPT.get(key) if key else None
+
+
+def score_frame(P, table, rows=None):
+    """The x columns of some rows of a table (another open table, or rows added later), as P encodes them, and the
+    row numbers the model can take: every row whose factors the coding takes (with Informative Missing off, the
+    rows with every factor). A missing column is an error that names it."""
+    have = set(data.TABLES[table]['meta'])
+    lack = [c for c in P.x if c not in have]
+    if lack:
+        raise ValueError(f'the table has no column {", ".join(lack)}: a model scores the columns it was fitted to, by name')
+    frame = data.frame(table, P.x, rows, dropna=False)
+    X, ok = P.encode(frame)
+    return X[ok], np.asarray(frame.index, dtype=int)[ok]
+
+
 def _pylit(v):
     return json.dumps(float(v)) if isinstance(v, (float, int, np.floating, np.integer)) and not isinstance(v, bool) else json.dumps(str(v))
 
@@ -87,6 +121,9 @@ class Prepared:
         self.w = None             # weight x frequency, or None when every row counts once
         self.freq = None          # the frequencies alone (counts in confusion matrices), or None
         self.sets = None          # 0 Training, 1 Validation, 2 Test
+        self.folds = None         # a K-fold Validation column: each row's fold, 0 to k - 1 (every row trains)
+        self.k = 0                # ... and the number of folds (0: no folds)
+        self.fold_values = []     # ... the column's value of each fold, in order
         self.coding = 'onehot'
         self.missing = 'informative'
         self.enc = []             # how each x column became columns of X
@@ -216,7 +253,13 @@ class Prepared:
             L.append(f'd = d[d[{json.dumps(v)}].notna()]   # rows with a validation value')
         if self.missing != 'informative':
             L.append(f'd = d.dropna(subset={json.dumps(list(self.x))})   # rows with every predictor')
-        if v:
+        if v and self.folds is not None:
+            numeric = data.meta(self.table, v).get('dataType') == 'numeric'
+            L.append(f'fold_values = {json.dumps(self.fold_values)}   # the folds of the Validation column, in order')
+            src = f'pd.to_numeric(d[{json.dumps(v)}], errors="coerce")' if numeric else f'd[{json.dumps(v)}].astype(str)'
+            L.append(f'folds = pd.Categorical({src}, categories=fold_values).codes   # each row\'s fold, 0 to {self.k - 1}')
+            L.append('sets = np.zeros(len(d), dtype=int)   # every row trains; the folds crossvalidate')
+        elif v:
             if data.meta(self.table, v).get('dataType') == 'numeric':
                 L.append(f'sets = d[{json.dumps(v)}].to_numpy(int)   # 0 training, 1 validation, 2 test')
             else:
@@ -296,15 +339,94 @@ def _level_at(levels, v):
     return -2
 
 
+MAX_FOLDS = 50
+
+
+def validation_codes(table, validation, raw):
+    """A Validation column's rows as ('sets', each row's set: 0 training, 1 validation, 2 test, -1 none, []) or,
+    when it holds more than three distinct values (Make Validation Column's K Fold), as ('folds', each row's fold
+    from 0, -1 none, the fold values in order): whole numbers for a numeric column, the levels in the column's
+    order for a character one."""
+    m = data.meta(table, validation)
+    if m.get('dataType') == 'numeric':
+        v = pd.to_numeric(raw.astype(object), errors='coerce').to_numpy(float)
+        ok = np.isfinite(v)
+        distinct = np.unique(v[ok])
+        if 3 < len(distinct) <= MAX_FOLDS and np.all(distinct == np.round(distinct)):
+            fold = np.full(len(v), -1)
+            fold[ok] = np.searchsorted(distinct, v[ok])
+            return 'folds', fold, [float(x) for x in distinct]
+        bad = sorted(set(distinct.tolist()) - {0.0, 1.0, 2.0})
+        if bad:
+            raise ValueError(f'{validation}: a Validation column holds 0 (training), 1 (validation) and 2 (test), or 4 to {MAX_FOLDS} whole numbers, one per fold; '
+                             f'it has {", ".join(level_label(b) for b in bad[:5])}')
+        return 'sets', np.where(ok, v, -1).astype(int), []
+    vals = raw.astype(object).tolist()
+    miss = [vv is None or (isinstance(vv, float) and math.isnan(vv)) for vv in vals]
+    names = [None if mm else str(vv) for vv, mm in zip(vals, miss)]
+    distinct = list(dict.fromkeys(nm for nm in names if nm is not None))
+    named = any(nm.strip().lower() in _SET_NAMES for nm in distinct)     # Training, Validation or Test among them: sets
+    if not named and 3 < len(distinct) <= MAX_FOLDS:
+        order = [str(c) for c in raw.cat.categories if str(c) in distinct] if isinstance(raw.dtype, pd.CategoricalDtype) else sorted(distinct)
+        at = {v_: i for i, v_ in enumerate(order)}
+        return 'folds', np.array([-1 if nm is None else at[nm] for nm in names], dtype=int), order
+    s = np.array([-1 if nm is None else _SET_NAMES.get(nm.strip().lower(), -9) for nm in names], dtype=int)
+    if (s == -9).any():
+        odd = sorted({nm for nm, k in zip(names, s) if k == -9})[:5]
+        raise ValueError(f'{validation}: a Validation column holds Training, Validation and Test (or 0, 1, 2), or 4 to {MAX_FOLDS} values, one per fold; it has {", ".join(odd)}')
+    return 'sets', s, []
+
+
+def fold_masks(P):
+    """K-fold crossvalidation by a K-fold Validation column (P.folds): [(fit rows, held-out rows), ...], one
+    pair of boolean masks over P's rows per fold, in the folds' order. [] without folds. The helper the
+    platforms that crossvalidate (Partition, Neural, Generalized Regression, Model Screening, K Nearest
+    Neighbors, Support Vector Machines, Naive Bayes) use when a Validation column gives the folds."""
+    if P.folds is None:
+        return []
+    return [(P.folds != j, P.folds == j) for j in range(P.k)]
+
+
+def crossvalidate(P, fit_predict, folds=None):
+    """Out-of-fold predictions and measures: fit_predict(fit_rows) fits the model to the rows of the boolean mask
+    fit_rows and returns its prediction of every row of P (a vector, or an n x levels probability matrix); each fold
+    is held out once (folds: [(fit rows, held rows)], P's own folds by default). Returns {'oof': each row predicted
+    by the model fitted without its fold, 'folds': the Measures of Fit of each held-out fold, 'measures': their
+    weighted mean (the rows of every fold together: measures() of the oof predictions)}."""
+    folds = fold_masks(P) if folds is None else folds
+    if not folds:
+        raise ValueError('no folds: a Validation column with more than three values gives them')
+    oof = None
+    per = []
+    import copy as _copy
+    for j, (fit_rows, held) in enumerate(folds):
+        f = np.asarray(fit_predict(fit_rows), dtype=float)
+        if oof is None:
+            oof = np.zeros_like(f)
+        oof[held] = f[held]
+        Q = _copy.copy(P)
+        Q.sets = np.where(held, 1, np.where(fit_rows, 0, -1))
+        per.append({'fold': j, **{k: v for k, v in (next((r for r in measures(Q, f) if r['set'] == 'Validation'), None) or {}).items() if k != 'set'}})
+    Q = _copy.copy(P)
+    Q.sets = np.zeros(len(P.index), dtype=int)
+    Q.sets[~np.any([h for _, h in folds], axis=0)] = -1
+    whole = next((r for r in measures(Q, oof)), None)
+    if whole:
+        whole = {**whole, 'set': 'Crossvalidation'}
+    return {'oof': oof, 'folds': per, 'measures': whole}
+
+
 def prepare(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None,
             missing='informative', coding='onehot', categorical_y=None):
     """The response, predictors, weights and sets of a predictive model.
 
     y: the response column (continuous, or nominal/ordinal for a
     classification); x: the predictor columns; weight, freq: optional case
-    weight and frequency columns; validation: an optional Validation column,
-    or portion (0 to 1): a random share of rows for validation, drawn with
-    seed; missing: 'informative' (a missing continuous value is the
+    weight and frequency columns; validation: an optional Validation column
+    (0/1/2 or Training/Validation/Test; with more than three distinct values
+    it holds K folds: P.folds, P.k, fold_masks(P), crossvalidate(P, ...), and
+    every row trains), or portion (0 to 1): a random share of rows for
+    validation, drawn with seed; missing: 'informative' (a missing continuous value is the
     training mean plus a 0/1 Missing column; a missing level is a level of
     its own) or 'drop' (rows missing a predictor are left out); coding:
     'onehot' or 'ordinal' for categorical predictors. categorical_y: force
@@ -355,33 +477,25 @@ def prepare(table, y, x, rows=None, weight=None, freq=None, validation=None, por
         w = v if w is None else w * v
         if kind == 'freq':
             f = v
-    # (3) the validation column
+    # (3) the validation column: sets, or K folds (more than three distinct values)
     sets = None
+    folds = None
     if validation:
-        m = data.meta(table, validation)
-        raw = df[validation]
-        if m.get('dataType') == 'numeric':
-            v = pd.to_numeric(raw.astype(object), errors='coerce').to_numpy(float)
-            ok = np.isfinite(v)
-            bad = sorted(set(np.unique(v[ok]).tolist()) - {0.0, 1.0, 2.0})
-            if bad:
-                raise ValueError(f'{validation}: a Validation column holds 0 (training), 1 (validation) and 2 (test); it has {", ".join(level_label(b) for b in bad[:5])}')
-            s = np.where(ok, v, -1).astype(int)
-        else:
-            vals = raw.astype(object).tolist()
-            s = np.array([-1 if (vv is None or (isinstance(vv, float) and math.isnan(vv))) else _SET_NAMES.get(str(vv).strip().lower(), -9) for vv in vals], dtype=int)
-            if (s == -9).any():
-                odd = sorted({str(vv) for vv, k in zip(vals, s) if k == -9})[:5]
-                raise ValueError(f'{validation}: a Validation column holds Training, Validation and Test (or 0, 1, 2); it has {", ".join(odd)}')
+        kind, s, fvals = validation_codes(table, validation, df[validation])
         if (s < 0).sum():
             P.notes.append(f'{int((s < 0).sum())} rows with no {validation} value are left out.')
         ok = s >= 0
         df, s = df[ok], s[ok]
         w = None if w is None else w[ok]
         f = None if f is None else f[ok]
-        sets = s
-        if not np.any(sets == 0):
-            raise ValueError(f'{validation} leaves no training rows (value 0 or Training)')
+        if kind == 'folds':
+            folds, sets = s, np.zeros(len(s), dtype=int)
+            P.fold_values = fvals
+            P.notes.append(f'{validation} holds {len(fvals)} folds: every row trains, and crossvalidation holds out one fold at a time.')
+        else:
+            sets = s
+            if not np.any(sets == 0):
+                raise ValueError(f'{validation} leaves no training rows (value 0 or Training)')
     # (4) rows missing a predictor, when they are left out
     if missing != 'informative':
         ok = np.array(df[P.x].notna().all(axis=1), dtype=bool)
@@ -394,10 +508,11 @@ def prepare(table, y, x, rows=None, weight=None, freq=None, validation=None, por
         w = None if w is None else w[ok]
         f = None if f is None else f[ok]
         sets = None if sets is None else sets[ok]
+        folds = None if folds is None else folds[ok]
     n = len(df)
     if n == 0:
         raise ValueError('no rows to fit: every row misses the response, a weight or a factor')
-    # (5) the validation portion
+    # (5) the validation portion (not with a Validation column's sets or folds)
     if sets is None:
         por = float(portion or 0)
         sets = np.zeros(n, dtype=int)
@@ -411,6 +526,9 @@ def prepare(table, y, x, rows=None, weight=None, freq=None, validation=None, por
                 raise ValueError('the Validation Portion leaves no training rows')
             sets[np.random.default_rng(int(seed)).permutation(n)[:k]] = 1
     P.sets = sets.astype(int)
+    if folds is not None:
+        P.folds = folds.astype(int)
+        P.k = len(P.fold_values)
     P.index = np.asarray(df.index, dtype=int)
     P.w = w
     P.freq = f
@@ -479,8 +597,9 @@ def _clip(p):
     return np.clip(np.asarray(p, dtype=float), 1e-15, 1.0)
 
 
-def measures(P, fitted):
-    """The Measures of Fit of each set present.
+def measures(P, fitted, decided=None):
+    """The Measures of Fit of each set present. decided: each row's called level when it is not simply the most
+    probable one (K Nearest Neighbors breaks a tied vote at random), for the misclassification rate.
 
     fitted: the prediction of every row of P (a vector for a continuous
     response, an n x levels probability matrix for a categorical one).
@@ -512,6 +631,7 @@ def measures(P, fitted):
             sst = float(np.sum(w * (y - yb) ** 2))
             row.update({'rsquare': 1 - sse / sst if sst > 0 else None, 'rase': math.sqrt(sse / N), 'mad': float(np.sum(w * np.abs(r)) / N),
                         'neg_loglik': 0.5 * N * (math.log(2 * math.pi * sse / N) + 1) if sse > 0 else None, 'sse': sse})
+            row.update(error_measures(y, f, w))
         else:
             y = P.target[m]
             p = fitted[m]
@@ -521,7 +641,7 @@ def measures(P, fitted):
             er2 = 1 - ll / ll0 if ll0 < 0 else None
             den = 1 - math.exp(2 * ll0 / N)
             gr2 = (1 - math.exp(2 * (ll0 - ll) / N)) / den if den > 0 else None
-            miss = np.argmax(p, axis=1) != y
+            miss = (np.argmax(p, axis=1) if decided is None else np.asarray(decided, dtype=int)[m]) != y
             row.update({'entropy_rsquare': er2, 'generalized_rsquare': gr2, 'mean_neg_log_p': -ll / N,
                         'rase': math.sqrt(float(np.sum(w * (1 - pt) ** 2)) / N), 'mad': float(np.sum(w * (1 - pt)) / N),
                         'misclassification': float(np.sum(w * miss) / N), 'neg_loglik': -ll})
@@ -531,12 +651,59 @@ def measures(P, fitted):
     return out
 
 
+def weighted_median(v, w=None):
+    """The median of v with case weights w: the value where the cumulative weight of the sorted values reaches half
+    the total, the mean of the two values beside it when it reaches half exactly (as the median of the rows
+    repeated Freq times)."""
+    v = np.asarray(v, dtype=float)
+    w = np.ones(len(v)) if w is None else np.asarray(w, dtype=float)
+    if not len(v):
+        return None
+    o = np.argsort(v, kind='mergesort')
+    v, c = v[o], np.cumsum(w[o])
+    half = c[-1] / 2
+    i = int(np.searchsorted(c, half))
+    if c[i] == half and i + 1 < len(v):
+        return float((v[i] + v[i + 1]) / 2)
+    return float(v[i])
+
+
+def error_measures(y, f, w=None):
+    """The more measures of a continuous prediction, beyond JMP's (optional columns of Measures of Fit): the Mean
+    Error (actual less predicted: a bias), MAPE and MPE (the mean absolute and the mean percentage error, 100
+    (actual - predicted) / actual, over the rows whose actual value is not 0) and the Median Absolute Error; each
+    row weighted by its Weight x Freq."""
+    y, f = np.asarray(y, dtype=float), np.asarray(f, dtype=float)
+    w = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
+    r = y - f
+    N = float(w.sum())
+    nz = y != 0
+    wz = float(w[nz].sum())
+    return {'me': float(np.sum(w * r) / N) if N > 0 else None,
+            'mape': float(100 * np.sum(w[nz] * np.abs(r[nz] / y[nz])) / wz) if wz > 0 else None,
+            'mpe': float(100 * np.sum(w[nz] * (r[nz] / y[nz])) / wz) if wz > 0 else None,
+            'medae': weighted_median(np.abs(r), w)}
+
+
+def naive_fitted(P):
+    """The Naive model's prediction of every row: the training rows' (weighted) mean, or their shares of the levels
+    (the most likely level is then the majority's)."""
+    tr = P.train()
+    wt = P.weights(tr)
+    if P.kind == 'continuous':
+        return np.full(len(P.index), float(np.sum(wt * P.target[tr]) / wt.sum()))
+    share = np.array([wt[P.target[tr] == j].sum() for j in range(len(P.levels))]) / wt.sum()
+    return np.tile(share, (len(P.index), 1))
+
+
 def measure_columns(kind):
     """The report table's columns for measures()."""
     if kind == 'continuous':
         return [{'key': 'set', 'label': 'Set', 'fmt': 'text'}, {'key': 'rsquare', 'label': 'RSquare'}, {'key': 'rase', 'label': 'RASE'},
                 {'key': 'mad', 'label': 'Mean Abs Dev'}, {'key': 'neg_loglik', 'label': '-LogLikelihood'}, {'key': 'sse', 'label': 'SSE'},
-                {'key': 'n', 'label': 'N'}]
+                {'key': 'n', 'label': 'N'},
+                {'key': 'me', 'label': 'Mean Error', 'hidden': True}, {'key': 'mape', 'label': 'MAPE', 'hidden': True},
+                {'key': 'mpe', 'label': 'MPE', 'hidden': True}, {'key': 'medae', 'label': 'Median Abs Error', 'hidden': True}]
     return [{'key': 'set', 'label': 'Set', 'fmt': 'text'}, {'key': 'entropy_rsquare', 'label': 'Entropy RSquare'},
             {'key': 'generalized_rsquare', 'label': 'Generalized RSquare'}, {'key': 'mean_neg_log_p', 'label': 'Mean -Log p'},
             {'key': 'rase', 'label': 'RASE'}, {'key': 'mad', 'label': 'Mean Abs Dev'}, {'key': 'misclassification', 'label': 'Misclassification Rate'},
@@ -560,9 +727,10 @@ def _auc(score, pos, w):
     return float(np.sum(pw * (below + 0.5 * nw)) / (P_ * N_))
 
 
-def confusion(P, fitted):
-    """Per set: counts of actual (rows) by most likely level (columns),
-    each row counted by its frequency."""
+def confusion(P, fitted, decided=None):
+    """Per set: counts of actual (rows) by most likely level (columns; decided when given),
+    each row counted by its Weight x Freq (as JMP counts them: a weight
+    that undoes oversampling undoes it here too)."""
     out = []
     fitted = np.asarray(fitted, dtype=float)
     L = len(P.levels)
@@ -570,7 +738,8 @@ def confusion(P, fitted):
         m = P.mask(k)
         if not m.any():
             continue
-        y, pred, f = P.target[m], np.argmax(fitted[m], axis=1), P.counts(m)
+        y, f = P.target[m], P.weights(m)
+        pred = np.argmax(fitted[m], axis=1) if decided is None else np.asarray(decided, dtype=int)[m]
         mat = np.zeros((L, L))
         np.add.at(mat, (y, pred), f)
         out.append({'set': SETS[k], 'levels': list(P.labels), 'matrix': mat.tolist()})
@@ -585,14 +754,17 @@ def _thin(n, most):
 
 def roc(P, fitted, most=400):
     """Per set and level: the ROC curve of the level against the others by
-    its probability (1 - specificity, sensitivity), and its AUC."""
+    its probability (1 - specificity, sensitivity), its AUC, and the point
+    where Sensitivity - (1 - Specificity), Youden's J, is largest (JMP's
+    ROC Table stars it; its cut, 'best_cut', is the probability there).
+    Each row counts by its Weight x Freq."""
     out = []
     fitted = np.asarray(fitted, dtype=float)
     for k in range(3):
         m = P.mask(k)
         if not m.any():
             continue
-        y, p, w = P.target[m], fitted[m], P.counts(m)
+        y, p, w = P.target[m], fitted[m], P.weights(m)
         for j, lab in enumerate(P.labels):
             pos = y == j
             Pw, Nw = w[pos].sum(), w[~pos].sum()
@@ -606,22 +778,24 @@ def roc(P, fitted, most=400):
             fpr = np.r_[0.0, fp[last] / Nw]
             tpr = np.r_[0.0, tp[last] / Pw]
             keep = _thin(len(fpr), most)
+            b = youden(cut_table(p[:, j], pos, w))
             out.append({'set': SETS[k], 'level': lab, 'fpr': fpr[keep].tolist(), 'tpr': tpr[keep].tolist(),
-                        'auc': _auc(p[:, j], pos, w)})
+                        'auc': _auc(p[:, j], pos, w), 'best': b})
     return out
 
 
 def lift(P, fitted, most=300):
     """Per set and level: the lift curve (the share of rows taken, highest
     probability first, and the rate of the level among them over its rate
-    in the set)."""
+    in the set) and the cumulative gains (the share of the level's rows
+    among those taken), each row counted by its Weight x Freq."""
     out = []
     fitted = np.asarray(fitted, dtype=float)
     for k in range(3):
         m = P.mask(k)
         if not m.any():
             continue
-        y, p, w = P.target[m], fitted[m], P.counts(m)
+        y, p, w = P.target[m], fitted[m], P.weights(m)
         tot = w.sum()
         for j, lab in enumerate(P.labels):
             pos = y == j
@@ -634,8 +808,335 @@ def lift(P, fitted, most=300):
             portion = cw / tot
             lift_ = (hits / cw) / base
             keep = _thin(len(portion), most)
-            out.append({'set': SETS[k], 'level': lab, 'portion': portion[keep].tolist(), 'lift': lift_[keep].tolist(), 'base': float(base)})
+            out.append({'set': SETS[k], 'level': lab, 'portion': portion[keep].tolist(), 'lift': lift_[keep].tolist(),
+                        'gains': (hits / hits[-1])[keep].tolist(), 'base': float(base),
+                        'deciles': lift_table(p[:, j], pos, w)})
     return out
+
+
+def lift_table(p, pos, w=None, bins=10):
+    """The decile lift table of one level: the rows taken highest probability
+    first (equal ones in the table's order, as the lift curve takes them)
+    and cut into bins of equal weight, each row in the bin its middle falls
+    in; per bin its weight, the level's weight in it, the level's rate, the
+    lift (that rate over the level's rate in the set), and cumulatively the
+    rate, the lift and the gains (the share of the level's rows taken)."""
+    p = np.asarray(p, dtype=float)
+    pos = np.asarray(pos, dtype=bool)
+    w = np.ones(len(p)) if w is None else np.asarray(w, dtype=float)
+    o = np.argsort(-p, kind='mergesort')
+    wo, ho = w[o], np.where(pos[o], w[o], 0.0)
+    cw = np.cumsum(wo)
+    tot = float(cw[-1]) if len(cw) else 0.0
+    hit_tot = float(ho.sum())
+    if not (tot > 0 and hit_tot > 0):
+        return []
+    base = hit_tot / tot
+    b = np.minimum(bins - 1, np.floor(bins * (cw - wo / 2) / tot).astype(int))   # the bin each row's middle falls in
+    rows, c_n, c_hit = [], 0.0, 0.0
+    for k in range(bins):
+        mk = b == k
+        n_k, hit_k = float(wo[mk].sum()), float(ho[mk].sum())
+        c_n += n_k
+        c_hit += hit_k
+        rate = hit_k / n_k if n_k > 0 else None
+        crate = c_hit / c_n if c_n > 0 else None
+        rows.append({'bin': k + 1, 'n': n_k, 'hits': hit_k, 'rate': rate, 'lift': rate / base if rate is not None else None,
+                     'cum_rate': crate, 'cum_lift': crate / base if crate is not None else None, 'gains': c_hit / hit_tot,
+                     'p_max': float(p[o][mk].max()) if mk.any() else None, 'p_min': float(p[o][mk].min()) if mk.any() else None})
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# every cut on a level's probability: the Decision Threshold, the ROC Table,
+# the best point of the ROC curve and the profit of a threshold
+# ---------------------------------------------------------------------------
+# A cut table holds, for one level and one set, every distinct probability of
+# the level (highest first) and the weight of the level's rows (tp) and of the
+# other rows (fp) whose probability is at least it: the counts at any
+# threshold t come from it (counts_at), and every rate from the counts
+# (rates_at). smui-predict.js computes the same from the same table, so a
+# threshold typed or dragged in the page needs no call to the engine; the code
+# under the Decision Threshold report defines these three functions (their
+# source travels in the report's data) and gives the same digits.
+
+def cut_table(p, pos, w=None):
+    """The weighted counts at every cut on p, one level's probability: a row is called the level when its p is at
+    least the cut. p: the distinct values of p, highest first; tp, fp: the weight of the level's rows and of the
+    other rows at or above each; pos, neg: the weight of each in all. w: each row's Weight x Freq (None: 1).
+    Rows with no probability (not finite) are left out."""
+    p = np.asarray(p, dtype=float)
+    pos = np.asarray(pos, dtype=bool)
+    w = np.ones(len(p)) if w is None else np.asarray(w, dtype=float)
+    ok = np.isfinite(p)
+    p, pos, w = p[ok], pos[ok], w[ok]
+    o = np.argsort(-p, kind='mergesort')
+    s = p[o]
+    tp = np.cumsum(np.where(pos[o], w[o], 0.0))
+    fp = np.cumsum(np.where(pos[o], 0.0, w[o]))
+    last = np.r_[s[1:] != s[:-1], True] if len(s) else np.zeros(0, dtype=bool)
+    return {'p': s[last].tolist(), 'tp': tp[last].tolist(), 'fp': fp[last].tolist(),
+            'pos': float(tp[-1]) if len(s) else 0.0, 'neg': float(fp[-1]) if len(s) else 0.0}
+
+
+def counts_at(cut, t):
+    """(tp, fp, fn, tn) of a cut table at the threshold t: the rows whose probability is at least t are called the
+    level; tp and fp of them are the level's rows and the others', fn and tn of the rest."""
+    k = int(np.searchsorted(-np.asarray(cut['p'], dtype=float), -float(t), side='right'))   # how many values are >= t
+    tp = cut['tp'][k - 1] if k else 0.0
+    fp = cut['fp'][k - 1] if k else 0.0
+    return tp, fp, cut['pos'] - tp, cut['neg'] - fp
+
+
+def rates_at(tp, fp, fn, tn):
+    """The Decision Threshold's measures of the counts at a threshold (None where a share has nothing to divide):
+    Accuracy, the Misclassification Rate, Sensitivity (the true positive rate, recall), Specificity (the true
+    negative rate), the False Positive Rate (1 - Specificity) and False Negative Rate (1 - Sensitivity), Precision
+    (the positive predictive value), the Negative Predictive Value, F1 (2 Precision Sensitivity / (Precision +
+    Sensitivity)), MCC (Matthews' correlation of actual and called) and the Portion called the level."""
+    n = tp + fp + fn + tn
+
+    def div(a, b):
+        return a / b if b > 0 else None
+    den = (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)
+    return {'tp': tp, 'fp': fp, 'fn': fn, 'tn': tn, 'n': n, 'accuracy': div(tp + tn, n), 'misclassification': div(fp + fn, n),
+            'sensitivity': div(tp, tp + fn), 'specificity': div(tn, tn + fp), 'fpr': div(fp, fp + tn), 'fnr': div(fn, fn + tp),
+            'precision': div(tp, tp + fp), 'npv': div(tn, tn + fn), 'f1': div(2 * tp, 2 * tp + fp + fn),
+            'mcc': (tp * tn - fp * fn) / math.sqrt(den) if den > 0 else None, 'portion': div(tp + fp, n)}
+
+
+def youden(cut):
+    """The cut with the largest Sensitivity - (1 - Specificity) (Youden's J; of equal ones the highest cut), as a
+    point of the ROC curve: {'cut', 'fpr', 'tpr', 'j'}, or None when the set lacks the level or the others."""
+    if not (cut['pos'] > 0 and cut['neg'] > 0) or not cut['p']:
+        return None
+    tpr = np.asarray(cut['tp']) / cut['pos']
+    fpr = np.asarray(cut['fp']) / cut['neg']
+    j = tpr - fpr
+    i = int(np.argmax(j))
+    return {'cut': float(cut['p'][i]), 'fpr': float(fpr[i]), 'tpr': float(tpr[i]), 'j': float(j[i])}
+
+
+def roc_table(cut):
+    """JMP's ROC Table of one level: a line per cut (Prob, the level's probability at or above which a row is called
+    it), 1-Specificity, Sensitivity, Sens-(1-Spec) and the counts True Pos, True Neg, False Pos, False Neg; 'best'
+    marks the line with the largest Sens-(1-Spec) (JMP stars it)."""
+    b = youden(cut)
+    out = []
+    for p, tp, fp in zip(cut['p'], cut['tp'], cut['fp']):
+        sens = tp / cut['pos'] if cut['pos'] > 0 else None
+        fpr = fp / cut['neg'] if cut['neg'] > 0 else None
+        out.append({'prob': p, 'fpr': fpr, 'sens': sens, 'j': None if sens is None or fpr is None else sens - fpr,
+                    'tp': tp, 'tn': cut['neg'] - fp, 'fp': fp, 'fn': cut['pos'] - tp, 'best': bool(b and p == b['cut'])})
+    return out
+
+
+def _source(*fns):
+    import inspect
+    return '\n\n\n'.join(inspect.getsource(f).rstrip() for f in fns)
+
+
+def threshold_lib():
+    """The source of cut_table, counts_at, rates_at, youden and roc_table: the code under a Decision Threshold report
+    (and the ROC Table) defines them, so that its numbers are the report's, digit for digit."""
+    return 'import math\n\nimport numpy as np\n\n\n' + _source(cut_table, counts_at, rates_at, youden, roc_table)
+
+
+GROUP_METRICS = ('n', 'base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'tpr')
+
+
+def group_rates(y, p, w, cut):
+    """One group's measures at the threshold cut (a row is called the target level when p >= cut): its weight n, the
+    base rate (the target level's share), the selection rate (the share called it), accuracy, AUC, the false
+    positive and false negative rates, precision and the true positive rate; each row by its Weight x Freq."""
+    y, p = np.asarray(y, dtype=bool), np.asarray(p, dtype=float)
+    w = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
+    called = p >= cut
+    n, pos, neg = float(w.sum()), float(w[y].sum()), float(w[~y].sum())
+    tp, fp = float(w[called & y].sum()), float(w[called & ~y].sum())
+
+    def div(a, b):
+        return a / b if b > 0 else None
+    return {'n': n, 'base_rate': div(pos, n), 'selection_rate': div(tp + fp, n), 'accuracy': div(tp + (neg - fp), n), 'auc': _auc(p, y, w) if len(y) else None,
+            'fpr': div(fp, neg), 'fnr': div(pos - tp, pos), 'precision': div(tp, tp + fp), 'tpr': div(tp, pos), 'cut': float(cut)}
+
+
+def equal_fpr_cut(y, p, w, target):
+    """The threshold of a group whose false positive rate is nearest target: one of its probabilities, or above them
+    all (calling none); of equally near ones the highest."""
+    c = cut_table(p, np.asarray(y, dtype=bool), w)
+    if not c['neg'] > 0:
+        return None
+    cands = [(abs(0.0 - target), float('inf'))] + [(abs(fp / c['neg'] - target), q) for q, fp in zip(c['p'], c['fp'])]
+    best = min(cands, key=lambda z: (round(z[0], 12), -z[1]))
+    return best[1]
+
+
+@api('predict.groups')
+def group_metrics(table, group, at, actual, prob, sets=None, w=None, cut=0.5, cuts=None, equal='none', reference=None, set_name=None,
+                  levels=None, target=1, adjust=None, head=None, table_name='data'):
+    """Group Metrics (beyond JMP; a fairness audit, as Shmueli et al. show one): a two-level classifier's measures
+    within each group of a column that need not be a factor, on the rows of one set, and each measure's difference
+    and ratio to a reference group.
+
+      group     the column; at: each row's table row number (the group is read from the table);
+      actual    each row's level (1 the target), prob its probability of the target level, sets its set, w its
+                Weight x Freq;
+      cut       the common threshold; cuts: {group: threshold} typed per group; equal 'fpr': each group's threshold
+                solved so that its false positive rate is nearest the reference group's at the common threshold;
+      adjust    {'a', 'b'}: the probabilities rescaled to a true event rate, p a / (p a + (1 - p) b);
+      head      the code of the model (as predictive.threshold's), for the code of the result."""
+    at = np.asarray(at, dtype=int)
+    y = np.asarray(actual, dtype=int) == int(target)
+    p = np.asarray(prob, dtype=float)
+    if adjust:
+        a, b = float(adjust['a']), float(adjust['b'])
+        p = p * a / (p * a + (1 - p) * b)
+    st = np.zeros(len(at), dtype=int) if sets is None else np.asarray(sets, dtype=int)
+    wt = np.ones(len(at)) if w is None else np.asarray(w, dtype=float)
+    present = [SETS[k] for k in range(3) if np.any(st == k)]
+    sname = set_name if set_name in present else ('Validation' if 'Validation' in present else present[0])
+    m = st == SETS.index(sname)
+    gv = data.raw(table, group, at)
+    meta_ = data.meta(table, group)
+    numeric = meta_.get('dataType') == 'numeric'
+
+    def key_of(v):
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        return float(v) if numeric else str(v)
+    keys = [key_of(v) for v in gv]
+    order = [float(v) if numeric else str(v) for v in (meta_.get('levels') or [])]
+    seen = [k for k in dict.fromkeys(k for k, mm in zip(keys, m) if mm)]
+    names = [k for k in order if k in seen] + [k for k in seen if k not in order and k is not None] + ([None] if None in seen else [])
+    labels = {k: ('(missing)' if k is None else data.level_label(table, group, k)) for k in names}
+    idx = {k: np.array([kk == k for kk in keys]) & m for k in names}
+    if not names:
+        raise ValueError(f'no rows of the {sname.lower()} set have a value of {group}')
+    size = {k: float(wt[idx[k]].sum()) for k in names}
+    ref = next((k for k in names if labels[k] == reference), None) if reference is not None else None
+    if ref is None:
+        ref = max(names, key=lambda k: size[k])       # the largest group
+    thr = {}
+    for k in names:
+        typed = (cuts or {}).get(labels[k])
+        thr[k] = float(typed) if equal == 'typed' and typed is not None else float(cut)
+    target_fpr = None
+    if equal == 'fpr':
+        target_fpr = group_rates(y[idx[ref]], p[idx[ref]], wt[idx[ref]], cut)['fpr']
+        if target_fpr is not None:
+            for k in names:
+                if k != ref:
+                    c_ = equal_fpr_cut(y[idx[k]], p[idx[k]], wt[idx[k]], target_fpr)
+                    if c_ is not None:
+                        thr[k] = c_
+    rows = []
+    for k in names:
+        r = group_rates(y[idx[k]], p[idx[k]], wt[idx[k]], thr[k])
+        rows.append({'group': labels[k], 'reference': k == ref, **r})
+    base = next(r for r in rows if r['reference'])
+    for r in rows:
+        for q in ('base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'tpr'):
+            r[f'd_{q}'] = None if r[q] is None or base[q] is None else r[q] - base[q]
+            r[f'r_{q}'] = None if r[q] is None or not base[q] else r[q] / base[q]
+    out = {'group': group, 'set': sname, 'sets': present, 'reference': labels[ref], 'rows': rows, 'equal': equal, 'target_fpr': target_fpr,
+           'thresholds': {labels[k]: (None if thr[k] == float('inf') else thr[k]) for k in names}, 'labels': [labels[k] for k in names],
+           'values': [None if k is None else k for k in names]}
+    if head:
+        out['code'] = head + SEP + '\n'.join(group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cut, target_fpr))
+    return out
+
+
+def group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cut, target_fpr):
+    """The code of Group Metrics, after the head of the model (d, y, fitted, sets, w)."""
+    L = ['import json', 'import numpy as np', 'import pandas as pd', 'import math', '',
+         _source(_auc, cut_table, group_rates) + ('\n\n\n' + _source(equal_fpr_cut) if equal == 'fpr' else ''), '', '',
+         f'target = {int(target)}   # the target level (the Decision Threshold\'s)',
+         'wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)',
+         'p = fitted[:, target]   # each row\'s probability of the target level']
+    if adjust:
+        L.append(f'a, b = {float(adjust["a"])!r}, {float(adjust["b"])!r}   # the true event rate (True Event Rate in the Decision Threshold)')
+        L.append('p = p * a / (p * a + (1 - p) * b)')
+    L += [f'm = sets == {SETS.index(sname)}   # the {sname.lower()} rows',
+          f'g = df.loc[d.index, {json.dumps(group)}]   # the group of each row (it need not be a factor of the model)',
+          'names = ' + json.dumps([labels[k] for k in names]) + '   # the groups, in the column\'s order']
+    keys = ['None' if k is None else _pylit(k) for k in names]
+    L.append('keys = [' + ', '.join(keys) + ']   # the values that make them')
+    L.append('cuts = ' + json.dumps([None if thr[k] == float('inf') else thr[k] for k in names]) + '   # each group\'s threshold' + (' (the equal-FPR ones are solved below)' if equal == 'fpr' else ''))
+    L += ['rows = []',
+          'for name, key, c in zip(names, keys, cuts):',
+          '    r = m & (g.isna().to_numpy() if key is None else (g == key).to_numpy())']
+    if equal == 'fpr':
+        L += [f'    if name != {json.dumps(labels[ref])}:',
+              f'        c = equal_fpr_cut(y[r] == target, p[r], wt[r], {target_fpr!r})   # the false positive rate nearest the reference group\'s']
+    L += ['    c = float("inf") if c is None else c',
+          '    rows.append({"group": name, **group_rates(y[r] == target, p[r], wt[r], c)})',
+          'print(pd.DataFrame(rows).to_string(index=False))']
+    return L
+
+
+def threshold(y, prob, levels, sets=None, w=None, rows=None, head=None, select=(), code=None, cv=None, values=None):
+    """What the Decision Threshold report (SM.predict.threshold in smui-predict.js) needs of a response of two
+    levels: each row's level, set, weight and probabilities. The page makes the cut tables from them (cutTable, as
+    cut_table here) and the counts and rates at any threshold typed or dragged (countsAt, ratesAt), so a new
+    threshold needs no call; the code under the report does the same with the functions of threshold_lib().
+
+      y       each row's level: its index in levels, 0 or 1
+      prob    each row's probability of both levels (n x 2, in the order of levels), or of the second (a vector);
+              or several models, {key: (label, probabilities)}, in the order the report shows them
+      levels  the two levels as the report names them (the second is the target level at first, as JMP has it)
+      sets    each row's set, 0 Training, 1 Validation, 2 Test (None: every row trains)
+      w       each row's Weight x Freq (None: every row counts once)
+      rows    the table's row number of each row: the plot's points are linked to the rows
+      head    the code of the model for the code blocks: lines that end having made d (the rows, indexed by the
+              table's row numbers), y, fitted (the n x 2 probabilities; of several models, fitted[label]), sets and w
+              (None: every row counts once), as P.code() and the platforms' graph heads do; None: no code
+      select  lines after the head that pick this response's y and fitted (Neural's several responses)
+      code    {key: Python expression of the model's n x 2 probabilities} when the head names them otherwise
+      cv      {key: n x 2 out-of-fold probabilities}: a 'Crossvalidation' set of every row (Model Screening's K Fold);
+              code then names them too, as {key: (fitted expression, crossvalidated expression)}
+      values  the two levels as the table holds them (numbers for a numeric column), for Save Threshold Formula;
+              None: levels
+    """
+    y = np.asarray(y, dtype=int)
+    n = len(y)
+    st = np.zeros(n, dtype=int) if sets is None else np.asarray(sets, dtype=int)
+    models = prob if isinstance(prob, dict) else {'model': (None, prob)}
+    present = [k for k in range(3) if np.any(st == k)]
+    names = [SETS[k] for k in present] + (['Crossvalidation'] if cv else [])
+
+    def both(pr):
+        pr = np.asarray(pr, dtype=float)
+        return np.column_stack([1 - pr, pr]) if pr.ndim == 1 else pr
+
+    def put(entry, pr, suffix=''):
+        entry['p' + suffix] = pr[:, 1].tolist()
+        # the first level's own probabilities when they are not exactly 1 - the second's (the page's default)
+        if not np.array_equal(pr[:, 0], 1 - pr[:, 1]):
+            entry['p0' + suffix] = pr[:, 0].tolist()
+    out_models = []
+    for key, (label, pr) in models.items():
+        entry = {'key': key, 'label': label}
+        put(entry, both(pr))
+        if cv and key in cv:
+            put(entry, both(cv[key]), '_cv')
+        c = (code or {}).get(key)
+        if c is not None:
+            entry['code'] = list(c) if isinstance(c, (list, tuple)) else [c]
+        out_models.append(entry)
+    vals = list(levels if values is None else values)
+    out = {'levels': [str(v) for v in levels], 'values': [v.item() if hasattr(v, 'item') else v for v in vals], 'target': 1, 'sets': names,
+           'weighted': w is not None, 'models': out_models,
+           'points': {'rows': (np.arange(n) if rows is None else np.asarray(rows, dtype=int)).tolist(), 'set': st.tolist(), 'actual': y.tolist(),
+                      'w': None if w is None else np.asarray(w, dtype=float).tolist()}}
+    if head is not None:
+        out['plots'] = {'head_code': head, 'select': '\n'.join(select or []), 'lib': threshold_lib()}
+    return out
+
+
+def threshold_of(P, fitted, head=None, select=()):
+    """threshold() of a predictive platform's two-level response (P from prepare())."""
+    return threshold(P.target, fitted, P.labels, P.sets, P.w, P.index, head=head, select=select, values=P.levels)
 
 
 def residuals(P, fitted):
@@ -684,21 +1185,29 @@ def saved(P, predict, proba=None):
             'ordinal': data.meta(P.table, P.y).get('modelingType') == 'ordinal'}
 
 
-def report(P, fitted, roc_curves=True, head=None, select=()):
-    """The pieces every platform shows: the Measures of Fit, and for a
+def report(P, fitted, roc_curves=True, head=None, select=(), decided=None):
+    """The pieces every platform shows: the Measures of Fit (and 'naive',
+    those of the Naive model: the training mean or shares), and for a
     categorical response the confusion matrices and the ROC and lift
-    curves; for a continuous one actual by predicted. head: the code of
-    the platform's model (graph_codes), which adds 'plots', the code of
-    those graphs; select: lines that pick this response's y and fitted
-    from what the head makes (a network of several responses)."""
-    out = {'kind': P.kind, 'measures': measures(P, fitted), 'measure_columns': measure_columns(P.kind), 'sets': [SETS[k] for k in range(3) if P.has(k)],
-           'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)}, 'notes': list(P.notes), 'features': list(P.features)}
+    curves, and for two levels 'threshold' (threshold_of: the Decision
+    Threshold's cut tables and each row's probability); for a continuous
+    one actual by predicted. head: the code of the platform's model
+    (graph_codes), which adds 'plots', the code of those graphs; select:
+    lines that pick this response's y and fitted from what the head makes
+    (a network of several responses); decided: each row's called level
+    when it is not the most probable one (a tie broken at random)."""
+    out = {'kind': P.kind, 'measures': measures(P, fitted, decided), 'measure_columns': measure_columns(P.kind), 'sets': [SETS[k] for k in range(3) if P.has(k)],
+           'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)}, 'notes': list(P.notes), 'features': list(P.features),
+           'naive': measures(P, naive_fitted(P))}
     if P.kind == 'categorical':
         out['levels'] = list(P.labels)
-        out['confusion'] = confusion(P, fitted)
+        out['values'] = [v.item() if hasattr(v, 'item') else v for v in P.levels]   # the levels as the table holds them
+        out['confusion'] = confusion(P, fitted, decided)
         if roc_curves:
             out['roc'] = roc(P, fitted)
             out['lift'] = lift(P, fitted)
+        if len(P.levels) == 2:
+            out['threshold'] = threshold_of(P, fitted, head=head, select=select)
     else:
         out['residuals'] = residuals(P, fitted)
     if head is not None:
@@ -752,7 +1261,7 @@ def predictor(P, model, predict=None, proba=None):
 
 PLT = 'import matplotlib.pyplot as plt'
 SEP = '\n\n# ----\n'
-BASE, BAR, TEXT, MUTED, FIT = '#2f6690', '#8fa9c2', '#352921', '#786b5d', '#c0392b'
+BASE, BAR, TEXT, MUTED, FIT, SURFACE = '#2f6690', '#8fa9c2', '#352921', '#786b5d', '#c0392b', '#fcf7f2'
 PALETTE = ['#2f6690', '#d9822b', '#3a7d44', '#b0413e', '#6c5b7b', '#1f9e89', '#c0a000', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#9467bd']
 
 
@@ -762,9 +1271,10 @@ def figure(w, h, names='fig, ax', extra=''):
 
 
 def freq_line(P):
-    """f: each row's Freq, which the ROC and lift curves count the rows by (a weight does not)."""
-    c = P.spec.get('freq')
-    return (f'f = d[{json.dumps(c)}].to_numpy(float)   # each row\'s frequency: the curves count the rows by it' if c
+    """f: each row's Weight x Freq, which the confusion matrices and the ROC and lift curves count the rows by (as
+    JMP counts them)."""
+    parts = [f'd[{json.dumps(c)}].to_numpy(float)' for c in (P.spec.get('weight'), P.spec.get('freq')) if c]
+    return (f'f = {" * ".join(parts)}   # each row\'s Weight x Freq: the curves count the rows by it' if parts
             else 'f = np.ones(len(d))   # every row counts once')
 
 
@@ -795,6 +1305,8 @@ def roc_lines(P, k):
             '    fpr, tpr = roc(fitted[m][:, j], pos, f[m])',
             '    auc = np.sum(np.diff(fpr) * (tpr[1:] + tpr[:-1]) / 2)   # the area under the curve',
             '    ax.plot(fpr, tpr, color=colors[i % len(colors)], linewidth=1.8, label=f"{name} ({auc:.4f})")',
+            '    b = int(np.argmax(tpr[1:] - fpr[1:])) + 1   # the best cut: the largest Sensitivity - (1 - Specificity)',
+            f'    ax.scatter([fpr[b]], [tpr[b]], s=36, color=colors[i % len(colors)], edgecolors="{SURFACE}", zorder=3)',
             '    i += 1',
             f'ax.plot([0, 1], [0, 1], color="{MUTED}", linewidth=1, linestyle=":")',
             'ax.set_xlim(0, 1)', 'ax.set_ylim(0, 1.01)',
@@ -827,6 +1339,45 @@ def lift_lines(P, k):
             f'ax.set_title({json.dumps(f"Lift {s}")})',
             'ax.legend(frameon=False, fontsize=8)',
             'plt.show()']
+
+
+def gains_lines(P, k):
+    """The cumulative gains curves of one set (predictive.lift's gains)."""
+    s = SETS[k]
+    return [f'# cumulative gains of the {s.lower()} rows: the share of each level\'s rows among the rows taken, highest probability first',
+            freq_line(P), names_line(P), f'colors = {json.dumps(PALETTE)}',
+            f'm = sets == {k}   # the {s.lower()} rows',
+            'tot = f[m].sum()',
+            figure(330, 300),
+            'i = 0',
+            'for j, name in enumerate(names):',
+            '    pos = y[m] == j',
+            '    if not f[m][pos].sum() > 0:',
+            '        continue',
+            '    o = np.argsort(-fitted[m][:, j], kind="mergesort")',
+            '    cw, hits = np.cumsum(f[m][o]), np.cumsum(np.where(pos[o], f[m][o], 0.0))',
+            '    ax.plot(cw / tot, hits / hits[-1], color=colors[i % len(colors)], linewidth=1.8, label=name)   # the share of the level\'s rows found',
+            '    i += 1',
+            f'ax.plot([0, 1], [0, 1], color="{MUTED}", linewidth=1, linestyle=":")   # a random order',
+            'ax.set_xlim(0, 1)', 'ax.set_ylim(0, 1.01)', 'ax.set_xlabel("Portion")', 'ax.set_ylabel("Gains")',
+            f'ax.set_title({json.dumps(f"Gains {s}")})',
+            'ax.legend(loc="lower right", frameon=False, fontsize=8)',
+            'plt.show()']
+
+
+def decile_lines(P):
+    """The decile lift tables of every set (predictive.lift_table), for the level lv (the page sets it)."""
+    lv = 1 if len(P.levels) == 2 else 0
+    sets = [[k, SETS[k]] for k in range(3) if P.has(k)]
+    return [f'lv = {lv}   # the level of the table (Table Level in the red triangle)',
+            _source(lift_table), '', '',
+            freq_line(P), names_line(P),
+            'deciles = {}',
+            f'for k, set_name in {json.dumps(sets)}:',
+            '    m = sets == k',
+            '    deciles[set_name] = pd.DataFrame(lift_table(fitted[m][:, lv], y[m] == lv, f[m]))   # the rows in ten parts of equal weight, highest probability first',
+            '    print(set_name, names[lv])',
+            '    print(deciles[set_name].to_string(index=False))']
 
 
 def abp_lines(k, title=None, residual=False):
@@ -868,6 +1419,8 @@ def graph_codes(P, head, select=(), curves=True):
         if curves:
             out['roc'] = {SETS[k]: '\n'.join(pre + roc_lines(P, k)) for k in sets}
             out['lift'] = {SETS[k]: '\n'.join(pre + lift_lines(P, k)) for k in sets}
+            out['gains'] = {SETS[k]: '\n'.join(pre + gains_lines(P, k)) for k in sets}
+            out['deciles'] = '\n'.join(pre + decile_lines(P))
     else:
         out['abp'] = {SETS[k]: '\n'.join(pre + abp_lines(k)) for k in sets}
     return out

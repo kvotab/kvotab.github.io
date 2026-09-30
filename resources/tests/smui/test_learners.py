@@ -46,6 +46,7 @@ try:
     from sklearn.naive_bayes import CategoricalNB, GaussianNB
     from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
     from sklearn.svm import SVC, SVR
+    from sklearn import metrics
 except ImportError:
     print('scikit-learn 1.8 is needed for these tests (Pyodide 314.0.7 has 1.8.0)')
     sys.exit(1)
@@ -123,15 +124,29 @@ check('the continuous factors are standardized by the training rows (mean 0, SD 
 check('the report names the standardized factors', r['scaled'], ['x1', 'x2'])
 
 
-def knn_pred(k, Z, P, reg=False):
-    """scikit-learn's own predictions: training rows by predict(None) (a row is not its own neighbour)."""
+def ties(P, seed, rows=None):
+    """The uniform numbers that break a tied vote, by the table's row number: default_rng([seed, 7]), a row and level each."""
+    rows = P.index if rows is None else np.asarray(rows)
+    return np.random.default_rng([seed, 7]).random((int(max(rows.max() + 1, len(cols[next(iter(cols))]))), len(P.levels)))[rows]
+
+
+def knn_pred(k, Z, P, reg=False, seed=1):
+    """scikit-learn's own predictions: training rows by predict(None) (a row is not its own neighbour); a tied vote
+    (scikit-learn gives it to the first level) broken instead by the seeded numbers, the tied level with the largest."""
     tr = P.train()
     m = (KNeighborsRegressor if reg else KNeighborsClassifier)(n_neighbors=k).fit(Z[tr], P.target[tr])
-    pred = np.empty(len(Z), dtype=float if reg else int)
-    pred[tr] = m.predict(None)
+    if reg:
+        pred = np.empty(len(Z), dtype=float)
+        pred[tr] = m.predict(None)
+        if (~tr).any():
+            pred[~tr] = m.predict(Z[~tr])
+        return pred, m
+    votes = np.empty((len(Z), len(P.levels)))
+    votes[tr] = np.round(m.predict_proba(None) * k)
     if (~tr).any():
-        pred[~tr] = m.predict(Z[~tr])
-    return pred, m
+        votes[~tr] = np.round(m.predict_proba(Z[~tr]) * k)
+    top = votes == votes.max(1, keepdims=True)
+    return np.argmax(np.where(top, ties(P, seed), -1.0), 1), m
 
 
 worst = {0: 0.0, 1: 0.0, 2: 0.0}
@@ -141,7 +156,9 @@ for row in r['path']['rows']:
         ms = P.sets == s
         worst[s] = max(worst[s], abs(row[f'rate{s}'] - float(np.mean(pred[ms] != P.target[ms]))), 0.0 if row[f'miss{s}'] == int(np.sum(pred[ms] != P.target[ms])) else 1.0)
 for s in (0, 1, 2):
-    check(f'every K: the {pv.SETS[s]} misclassification rate and count = KNeighborsClassifier(n_neighbors=K).predict{"(None), each row left out" if s == 0 else ""}', worst[s], 0.0)
+    check(f'every K: the {pv.SETS[s]} misclassification rate and count = KNeighborsClassifier(n_neighbors=K).predict{"(None), each row left out" if s == 0 else ""}, a tied vote broken at random from the seed', worst[s], 0.0)
+tie_rows = sum(int(np.sum(np.sum(np.round(knn_pred(k_, Z, P)[1].predict_proba(None) * k_) == np.round(knn_pred(k_, Z, P)[1].predict_proba(None) * k_).max(1, keepdims=True), 1) > 1)) for k_ in (2, 4, 6))
+check('... and there were tied votes to break (even K)', tie_rows > 0, True)
 rates = [row['rate1'] for row in r['path']['rows']]
 check('the best K: the smallest validation rate (the smallest K of equal ones)', r['best'], int(np.argmin(rates)) + 1)
 check('with no chosen K the best is shown', r['chosen'], r['best'])
@@ -160,7 +177,7 @@ prob = np.array(sv['prob'])
 at = at_rows(sv, P.index)
 check.near('Save Predicteds: each level\'s share of the K votes with a prior of 1/L, (votes + 1/L)/(K + 1)', mx(prob[at], (votes + 0.5) / 6), 0.0, abs_=1e-15)
 check('... never 0 or 1', (float(prob.min()) > 0, float(prob.max()) < 1), (True, True))
-check('... the most likely level is scikit-learn\'s predict, a training row left out of its own vote', [P.labels.index(v) for v in np.array(sv['most_likely'])[at]], pred5.tolist())
+check('... the most likely level is scikit-learn\'s predict, a training row left out of its own vote (a tie at random, as in the report)', [P.labels.index(v) for v in np.array(sv['most_likely'])[at]], pred5.tolist())
 check('... for every row of the table, named as JMP names them', (len(sv['rows']), sv['names'], sv['most_name'], sv['k']), (n, ['Prob[high]', 'Prob[low]'], 'Most Likely cls', 5))
 # a row outside the report (a By group, an exclusion) is predicted from the report's training rows
 sub = [i for i in range(n) if i % 4]
@@ -186,8 +203,13 @@ check('... a training row is not among its own neighbours', bool(np.all(near[at_
 tt = table({'x': [0.0, 1.0, 5.0, 6.0, 0.5, 5.5], 'c': ['B', 'A', 'B', 'A', 'A', 'B'], 'v': [0, 0, 0, 0, 1, 1]}, types={'c': 'nominal'}, levels={'c': ['B', 'A']})
 rt_ = call('knn.fit', table=tt, y='c', x=['x'], k=2, validation='v', seed=1, chosen=2)
 svt = call('knn.save', table=tt, y='c', x=['x'], k=2, validation='v', seed=1, chosen=2)
-check('a tied vote goes to the level first in the value order (B here), as scikit-learn\'s predict: the validation rows', [svt['most_likely'][4], svt['most_likely'][5]], ['B', 'B'])
-check('... scikit-learn agrees', KNeighborsClassifier(n_neighbors=2).fit(np.array([[0.0], [1], [5], [6]]), [0, 1, 0, 1]).predict(np.array([[0.5], [5.5]])).tolist(), [0, 0])
+Ptt = pv.prepare(tt, 'c', ['x'], validation='v')
+u_ = np.random.default_rng([1, 7]).random((6, 2))
+check('a tied vote goes to one of the tied levels at random, from the seed (JMP breaks ties at random): the level with the larger of the row\'s two seeded numbers', [svt['most_likely'][4], svt['most_likely'][5]], [Ptt.labels[int(np.argmax(u_[4]))], Ptt.labels[int(np.argmax(u_[5]))]])
+svt2 = call('knn.save', table=tt, y='c', x=['x'], k=2, validation='v', seed=5, chosen=2)
+u5 = np.random.default_rng([5, 7]).random((6, 2))
+check('... another seed, its own draws (scikit-learn would give both to B, the first level)', ([svt2['most_likely'][4], svt2['most_likely'][5]], KNeighborsClassifier(n_neighbors=2).fit(np.array([[0.0], [1], [5], [6]]), [0, 1, 0, 1]).predict(np.array([[0.5], [5.5]])).tolist()),
+      ([Ptt.labels[int(np.argmax(u5[4]))], Ptt.labels[int(np.argmax(u5[5]))]], [0, 0]))
 check('... and the tie leaves both probabilities at 1/2', svt['prob'][4], [0.5, 0.5])
 check('K larger than the training rows allow: one less than them, with a note', (rt_['k'], bool(rt_['notes'])), (2, False))
 rk = call('knn.fit', table=tt, y='c', x=['x'], k=9, validation='v', seed=1)
@@ -225,9 +247,10 @@ Zi, _, _ = zof(Pi)
 # every missing x1m is at the same point, so rows tie: each K is the first K of scikit-learn's search for the 5 nearest
 near5 = KNeighborsClassifier(n_neighbors=5).fit(Zi, Pi.target).kneighbors(return_distance=False)
 prefix = []
+ui = ties(Pi, 1)
 for k in range(1, 6):
     votes = np.stack([np.sum(Pi.target[near5[:, :k]] == c, 1) for c in range(2)], 1)
-    prefix.append(float(np.mean(((votes + 0.5) / (k + 1)).argmax(1) != Pi.target)))
+    prefix.append(float(np.mean(np.argmax(np.where(votes == votes.max(1, keepdims=True), ui, -1.0), 1) != Pi.target)))
 check('... every K is the first K of the neighbours scikit-learn finds for the largest K (its kneighbors)', [row['rate0'] for row in ri['path']['rows']], prefix)
 sep = [int(np.sum(np.any(np.sort(KNeighborsClassifier(n_neighbors=k).fit(Zi, Pi.target).kneighbors(return_distance=False), 1) != np.sort(near5[:, :k], 1), 1))) for k in range(1, 5)]
 check('scikit-learn 1.8: with rows at the same distance, its search for k neighbours picks other tied rows than the first k of its search for 5 (so the report takes one search, and the code shows it)', min(sep) > 0, True)
@@ -242,6 +265,69 @@ m4 = KNeighborsClassifier(n_neighbors=4).fit(Z[tr], P.target[tr])
 check.near('... the trace over x1 = (votes + 1/L)/(K + 1) of the settings\' 4 nearest training rows', mx(pk['responses'][0]['traces'][0]['pred'], (m4.predict_proba((Xg - c0) / s0)[:, 0] * 4 + 0.5) / 5), 0.0, abs_=1e-15)
 imp = call('knn.importance', table=T, y='cls', x=['x1', 'x2', 'g'], k=10, validation='v', seed=1, chosen=4, imp_method='resampled', imp_n=64, imp_seed=2)
 check('Assess Variable Importance runs on it (resampled inputs from the training rows)', isinstance(imp, dict) and not imp.get('error'), True)
+
+# ---- Distance Weights, Standardize off, a K-fold Validation column, Score Rows --------------------------------------
+kf_col = (np.arange(n) % 5 + 1).astype(float)
+Tk = table({**cols, 'fold': list(kf_col)}, types={**TYPES, 'fold': 'nominal'}, levels=LEVELS)
+rd = call('knn.fit', table=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, weights='distance', chosen=6)
+Pd_ = pv.prepare(T, 'cls', ['x1', 'x2', 'g'], validation='v')
+Zd, _, _ = zof(Pd_)
+trd = Pd_.train()
+md = KNeighborsClassifier(n_neighbors=6, weights='distance').fit(Zd[trd], Pd_.target[trd])
+sk_share = np.empty((len(Zd), 2))
+sk_share[trd] = md.predict_proba(None)
+sk_share[~trd] = md.predict_proba(Zd[~trd])
+svd = call('knn.save', table=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, weights='distance', chosen=6)
+check.near('Distance Weights: each level\'s share of the 1/distance weights is scikit-learn\'s KNeighborsClassifier(weights="distance"): the probability (6 share + 1/L)/(6 + 1)', mx(np.array(svd['prob'])[at_rows(svd, Pd_.index)], (6 * sk_share + 0.5) / 7), 0.0, abs_=1e-12)
+sk_pred = np.argmax(sk_share, 1)
+check('... the level called is scikit-learn\'s predict (a tie of weights at random)', ([Pd_.labels.index(v) for v in np.array(svd['most_likely'])[at_rows(svd, Pd_.index)]] == sk_pred.tolist()), True)
+rdc = call('knn.fit', table=T, y='yc', x=['x1', 'x2', 'g'], k=5, validation='vt', seed=1, weights='distance', chosen=4)
+Pdc = pv.prepare(T, 'yc', ['x1', 'x2', 'g'], validation='vt')
+Zdc, _, _ = zof(Pdc)
+mdc = KNeighborsRegressor(n_neighbors=4, weights='distance').fit(Zdc[Pdc.train()], Pdc.target[Pdc.train()])
+pdc = np.empty(len(Zdc))
+pdc[Pdc.train()] = mdc.predict(None)
+pdc[~Pdc.train()] = mdc.predict(Zdc[~Pdc.train()])
+check.near('Distance Weights, a continuous response: the fit\'s validation RASE is scikit-learn\'s weighted mean\'s', {m_['set']: m_ for m_ in rdc['fit']['measures']}['Validation']['rase'], float(np.sqrt(np.mean((Pdc.target[Pdc.mask(1)] - pdc[Pdc.mask(1)]) ** 2))), rel=1e-12)
+rs_ = call('knn.fit', table=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, standardize=False, chosen=3)
+m3 = KNeighborsClassifier(n_neighbors=3).fit(Pd_.X[trd], Pd_.target[trd])
+v3 = np.round(m3.predict_proba(Pd_.X[Pd_.mask(1)]) * 3)
+u3 = ties(Pd_, 1)[Pd_.mask(1)]
+call3 = np.argmax(np.where(v3 == v3.max(1, keepdims=True), u3, -1.0), 1)
+check.near('Standardize off: the distances on the factors as they are (scikit-learn on the raw columns), K = 3\'s validation rate', rs_['path']['rows'][2]['rate1'], float(np.mean(call3 != Pd_.target[Pd_.mask(1)])), abs_=1e-15)
+check('... and the report says so', (rs_['standardize'], rs_['scaled']), (False, []))
+rf_ = call('knn.fit', table=Tk, y='cls', x=['x1', 'x2', 'g'], k=6, validation='fold', seed=2)
+Pf_ = pv.prepare(Tk, 'cls', ['x1', 'x2', 'g'], validation='fold')
+Zf, _, _ = zof(Pf_)
+uf = ties(Pf_, 2)
+cv_rates = []
+for k_ in range(1, 7):
+    wrong = 0
+    for j in range(5):
+        held = Pf_.folds == j
+        mj = KNeighborsClassifier(n_neighbors=k_).fit(Zf[~held], Pf_.target[~held])
+        vj = np.round(mj.predict_proba(Zf[held]) * k_)
+        cj = np.argmax(np.where(vj == vj.max(1, keepdims=True), uf[held], -1.0), 1)
+        wrong += int(np.sum(cj != Pf_.target[held]))
+    cv_rates.append(wrong / n)
+check('a K-fold Validation column: every row trains; each fold predicted from its neighbours in the other folds (scikit-learn fitted without the fold), every K', [round(r_['ratecv'], 12) for r_ in rf_['path']['rows']], [round(v, 12) for v in cv_rates])
+check('... the best K by the folds, a Crossvalidation line in the path and the fit', (rf_['by'], rf_['best'], [c_['label'] for c_ in rf_['path']['columns'] if 'Crossvalidation' in c_['label'] and not c_.get('hidden')], rf_['cv']['measures']['set']),
+      ('Crossvalidation', int(np.argmin(cv_rates)) + 1, ['Crossvalidation Misclassification Rate'], 'Crossvalidation'))
+rk_ = call('knn.fit', table=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, chosen=5, keep='test-knn')
+Tother = table({'x1': list(x1[:40] + 0.5), 'x2': list(x2[:40]), 'g': list(g[:40])}, types={'g': 'nominal'}, levels={'g': ['a', 'b', 'c']})
+sc = call('knn.score', table=Tother, keep='test-knn')
+m5o = KNeighborsClassifier(n_neighbors=5).fit(Zd[trd], Pd_.target[trd])
+Xo_, _ = pv.score_frame(Pd_, Tother)
+_, cen_, sca_ = zof(Pd_)
+vo = np.round(m5o.predict_proba((Xo_ - cen_) / sca_) * 5)
+check.near('Score Rows: another table, each row from its 5 nearest training rows of the report\'s model (the probabilities)', mx(sc['prob'], (vo + 0.5) / 6), 0.0, abs_=1e-12)
+uo = np.random.default_rng([1, 7]).random((40, 2))
+check('... the level called, a tie at random by the scored table\'s row numbers', [Pd_.labels.index(v) for v in sc['most_likely']], np.argmax(np.where(vo == vo.max(1, keepdims=True), uo, -1.0), 1).tolist())
+same = call('knn.score', table=T, keep='test-knn', target_rows=[3, 50, 51])
+sv5 = call('knn.save', table=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, chosen=5)
+check.near('... rows of the report\'s own table: as Save Predicteds gives them (a training row without itself)', mx(same['prob'], np.array(sv5['prob'])[at_rows(sv5, [3, 50, 51])]), 0.0, abs_=1e-15)
+check('... without the kept model: fitted again, and said', call('knn.score', table=Tother, keep='gone', source=T, y='cls', x=['x1', 'x2', 'g'], k=8, validation='v', seed=1, chosen=5)['note'] is not None, True)
+
 
 # =======================================================================================================================
 # NAIVE BAYES
@@ -354,6 +440,20 @@ jl = jl + cnb.predict_joint_log_proba(np.full((7, 1), 2)) - np.log(share)
 pp = np.exp(jl - jl.max(1, keepdims=True))
 pp /= pp.sum(1, keepdims=True)
 check.near('naivebayes.profile: the trace over x2 (x1 = 9, g = c) = GaussianNB + CategoricalNB there', mx([q['traces'][1]['pred'] for q in pn['responses']], pp.T), 0.0, abs_=1e-12)
+
+# ---- a K-fold Validation column: Fit Details crossvalidated --------------------------------------------------------
+rnf = call('naivebayes.fit', table=Tk, y='cls', x=['x1', 'x2', 'g'], validation='fold', seed=1)
+Pnf = pv.prepare(Tk, 'cls', ['x1', 'x2', 'g'], validation='fold')
+fr_nf = pd.DataFrame({c: pd.Series(np.asarray(cols[c], dtype=object)[Pnf.index]) if c == 'g' else np.asarray(cols[c], dtype=float)[Pnf.index] for c in ['x1', 'x2', 'g']})
+oof_nf = np.zeros((len(Pnf.index), 2))
+for j in range(5):
+    Q = pv.prepare(Tk, 'cls', ['x1', 'x2', 'g'], validation='fold')
+    Q.sets = np.where(Pnf.folds == j, 1, 0)
+    oof_nf[Pnf.folds == j] = nb_sklearn(Q, fr_nf)[Pnf.folds == j]
+cvm_nf = rnf['cv']['measures']
+check.near('Naive Bayes with a K-fold Validation column: each fold predicted by GaussianNB and CategoricalNB fitted to the other folds (the crossvalidated Mean -Log p)', cvm_nf['mean_neg_log_p'], float(metrics.log_loss(Pnf.target, np.clip(oof_nf, 1e-15, 1 - 1e-15), labels=[0, 1])), rel=1e-9)
+check('... the crossvalidated line named, for the 5 folds', (cvm_nf['set'], rnf['cv']['k'], len(rnf['cv']['folds'])), ('Crossvalidation', 5, 5))
+
 
 # =======================================================================================================================
 # SUPPORT VECTOR MACHINES
@@ -472,6 +572,32 @@ _, cz, sz = zof(Pr)
 ymz, ysz = Pr.target[trr].mean(), Pr.target[trr].std(ddof=1)
 check.near('svm.profile: the trace over x1 = SVR\'s prediction there', mx(pz['responses'][0]['traces'][0]['pred'], ymz + ysz * svr.predict((Xz - cz) / sz)), 0.0, abs_=1e-9)
 
+# ---- the tuning design judged by the folds of a K-fold Validation column; Score Rows ----------------------------------
+rtf = call('svm.fit', table=Tk, y='cls', x=['x1', 'x2'], validation='fold', seed=3, tune=True, points=4)
+Ptf = pv.prepare(Tk, 'cls', ['x1', 'x2'], validation='fold')
+Ztf, _, _ = zof(Ptf)
+okt = []
+for q in rtf['tuning']['rows']:
+    wrong = 0
+    for j in range(5):
+        held = Ptf.folds == j
+        est = SVC(kernel='rbf', C=q['cost'], gamma=q['gamma'], random_state=3).fit(Ztf[~held], Ptf.target[~held])
+        wrong += int(np.sum(est.predict(Ztf[held]) != Ptf.target[held]))
+    okt.append(abs(q['crit'] - wrong / n) < 1e-12)
+check('Support Vector Machines: the tuning design judged by the folds of a K-fold Validation column (SVC fitted without each fold)', (rtf['tuning']['how'], okt), ('the 5 folds of the Validation column', [True] * len(okt)))
+rsv = call('svm.fit', table=T, y='cls', x=['x1', 'x2', 'g'], validation='v', seed=9, keep='test-svm')
+Tso = table({'x1': list(x1[:30] - 1), 'x2': list(x2[:30]), 'g': list(g[:30])}, types={'g': 'nominal'}, levels={'g': ['a', 'b', 'c']})
+ss_ = call('svm.score', table=Tso, keep='test-svm')
+Psv = pv.prepare(T, 'cls', ['x1', 'x2', 'g'], validation='v')
+Zsv, csv_, ssv_ = zof(Psv)
+msv = SVC(kernel='rbf', C=1.0, gamma=1 / Zsv.shape[1], probability=True, random_state=9).fit(Zsv[Psv.train()], Psv.target[Psv.train()])
+Xso, _ = pv.score_frame(Psv, Tso)
+check.near('Score Rows (SVM): another table\'s probabilities are the report\'s SVC\'s (Platt, the same seed)', mx(ss_['prob'], msv.predict_proba((Xso - csv_) / ssv_)), 0.0, abs_=1e-12)
+sv_own = call('svm.save', table=T, y='cls', x=['x1', 'x2', 'g'], validation='v', seed=9)
+ss2 = call('svm.score', table=T, keep='test-svm', target_rows=[0, 7])
+check.near('... and the report\'s own rows as Save Predicteds gives them', mx(ss2['prob'], np.array(sv_own['prob'])[at_rows(sv_own, [0, 7])]), 0.0, abs_=1e-15)
+
+
 # =======================================================================================================================
 # the code under each report, run on a CSV export of the table
 # =======================================================================================================================
@@ -493,16 +619,24 @@ def printed(text, head):
 for label, kw in [('categorical, a Validation column', dict(y='cls', x=['x1', 'x2', 'g'], k=10, validation='v')),
                   ('continuous, a character Validation column', dict(y='yc', x=['x1', 'x2', 'g'], k=8, validation='vt')),
                   ('Informative Missing, no validation', dict(y='three', x=['x1m', 'gm', 'x2'], k=6)),
-                  ('rows of the report, a validation portion', dict(y='cls', x=['x1', 'g'], k=7, portion=0.3, rows=list(range(20, 220))))]:
-    res = call('knn.fit', table=T, table_name='data', seed=4, **kw)
+                  ('rows of the report, a validation portion', dict(y='cls', x=['x1', 'g'], k=7, portion=0.3, rows=list(range(20, 220)))),
+                  ('Distance Weights, a K-fold Validation column', dict(table=Tk, y='cls', x=['x1', 'x2', 'g'], k=6, validation='fold', weights='distance')),
+                  ('Standardize off, continuous, Distance Weights', dict(y='yc', x=['x1', 'x2'], k=5, validation='v', standardize=False, weights='distance'))]:
+    kw = {'table': T, **kw}
+    if kw['table'] is Tk:
+        pd.DataFrame({**cols, 'fold': list(kf_col)}).to_csv(os.path.join(work, 'data.csv'), index=False)
+    else:
+        pd.DataFrame(cols).to_csv(os.path.join(work, 'data.csv'), index=False)
+    res = call('knn.fit', table_name='data', seed=4, **kw)
     p_ = run(res['code'])
     if not check(f'K Nearest Neighbors code runs: {label}', p_.returncode, 0):
         continue
     got = printed(p_.stdout, 'k')
     key = 'rate' if res['kind'] == 'categorical' else 'rase'
-    wantk = [[row['k']] + [row[f'{key}{s}'] for s in range(3) if f'{key}{s}' in row] for row in res['path']['rows']]
+    wantk = [[row['k']] + [row[f'{key}{s}'] for s in (0, 1, 2, 'cv') if f'{key}{s}' in row] for row in res['path']['rows']]
     check.near(f'... it prints every K\'s criterion of each set: {label}', mx(got, wantk) if len(got) == len(wantk) else 1.0, 0.0, abs_=1e-12)
 
+pd.DataFrame(cols).to_csv(os.path.join(work, 'data.csv'), index=False)
 for label, kw in [('weights, a Validation column', dict(y='three', x=['x1', 'x2', 'g'], validation='v', weight='w', freq='f')),
                   ('Informative Missing (both kinds)', dict(y='cls', x=['x1m', 'gm', 'x2'], validation='vt')),
                   ('Informative Missing off, alpha 0.3', dict(y='cls', x=['x1m', 'gm'], missing='drop', alpha=0.3)),
@@ -596,6 +730,26 @@ for label, kw in [('graphs: K Nearest Neighbors, two levels, a Validation column
     check(f'{label}: Model Selection: the best K dotted and named', (any(q['x'] == [res['best']] * 2 and q['ls'] == ':' for q in ax['lines']), [t['s'] for t in ax['texts']]), (True, [f' best K = {res["best"]}']))
     check(f'{label}: Model Selection: the K shown (when picked), solid', any(q['x'] == [res['chosen']] * 2 and q['ls'] == '-' for q in ax['lines']), res['chosen'] != res['best'])
     check(f'{label}: Model Selection: the legend, the titles, the size', (F['legend'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']), ([pv.SETS[s] for s in shown], 'K', what, f'{what} by K', [4.3, 3.0]))
+    if cat:
+        # the Mosaic Plot of every set: a bar per actual level as wide as its share, cut by the shares called
+        for st, tail in plots['mosaic'].items():
+            Fm, errm = run_graph_native(plots['head_code'] + SEP + tail, T, GTMP)
+            check(f'{label}: Mosaic {st}: the code runs, ending in plt.show()', (errm, tail.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+            if not Fm:
+                continue
+            graphs += 1
+            D_ = res['decided']
+            k_ = pv.SETS.index(st)
+            L_ = len(res['fit']['levels'])
+            cm_ = np.zeros((L_, L_))
+            for a_, p_ in zip([a for a, s_ in zip(D_['actual'], D_['set']) if s_ == k_], [q for q, s_ in zip(D_['pred'], D_['set']) if s_ == k_]):
+                cm_[a_, p_] += 1
+            wd = cm_.sum(1) / cm_.sum()
+            lf = np.r_[0, np.cumsum(wd)[:-1]]
+            want_b = sorted((round(lf[a_] + wd[a_] / 2 - wd[a_] * 0.98 / 2, 9), round(cm_[a_, :j].sum() / max(cm_[a_].sum(), 1), 9), round(wd[a_] * 0.98, 9), round(cm_[a_, j] / max(cm_[a_].sum(), 1), 9)) for j in range(L_) for a_ in range(L_))
+            got_b = sorted((round(b_['x'], 9), round(b_['y'], 9), round(b_['w'], 9), round(b_['h'], 9)) for b_ in Fm['axes'][0]['bars'])
+            check(f'{label}: Mosaic {st}: each actual level\'s bar cut by the shares of the levels called (the report\'s calls, ties at random)', got_b, want_b)
+            check(f'{label}: Mosaic {st}: the legend, the titles', (Fm['legend'], Fm['axes'][0]['xlabel'], Fm['axes'][0]['title']), ([str(v) for v in res['fit']['levels']], 'Actual', f'Mosaic {st}'))
 
 for label, kw in [('graphs: Naive Bayes, three levels, weights, Freq, a Validation column', dict(y='three', x=['x1', 'x2', 'g'], validation='v', weight='w', freq='f')),
                   ('graphs: Naive Bayes, Informative Missing, rows of the report', dict(y='cls', x=['x1m', 'gm', 'x2'], validation='vt', rows=list(range(0, 240, 2))))]:
@@ -666,6 +820,6 @@ for label, kw, bk in [('graphs: the decision boundary, two levels, the other fac
     what = ('Decision boundary' if bd['kind'] == 'categorical' else 'Prediction surface') + f' over {bd["pair"][0]} and {bd["pair"][1]}'
     check(f'{label}: the grid\'s range, the titles, the size', (ax['xlim'], ax['ylim'], ax['xlabel'], ax['ylabel'], ax['title'], F['size']),
           ([bd['x'][0], bd['x'][-1]], [bd['y'][0], bd['y'][-1]], bd['pair'][0], bd['pair'][1], what, [5.0, 4.4]))
-check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 45)
+check('graphs: every graph\'s code ran and drew the report\'s graph', graphs, 49)
 
 sys.exit(check.done())

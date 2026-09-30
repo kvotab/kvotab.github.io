@@ -218,7 +218,13 @@ class Tree:
     row counts (Freq: the minimum size and the degrees of freedom count
     them); sets: 0 training, 1 validation, 2 test (only training rows choose
     the splits); minsize: the least count on each side of a split;
-    informative: Informative Missing; levels: the response's level names."""
+    informative: Informative Missing; levels: the response's level names.
+
+    The split statistic lives in a few methods (_splittable, _aggregates,
+    _crit, _logp and those after them), so that another tree can grow the
+    same way with another statistic (the Uplift platform's UpliftTree)."""
+
+    node_class = Node
 
     def __init__(self, cols, X, y, L, w=None, cnt=None, sets=None, minsize=5, informative=True, levels=None):
         self.cols, self.L = list(cols), int(L)
@@ -239,7 +245,8 @@ class Tree:
         self.made = 0
         self.notes = []
         self.go_trace = None
-        self.root = Node(self, np.arange(n))
+        self.folds = None           # a K-fold Validation column: each row's fold (-1 none); Go then crossvalidates
+        self.root = self.node_class(self, np.arange(n))
 
     # ---- the tree -----------------------------------------------------------
     def nodes(self, top=None):
@@ -270,21 +277,71 @@ class Tree:
     def search(self, node, j, cut=None):
         """The best split of column j at node (cut: split a continuous column
         there instead), or None when no split leaves minsize rows on each side."""
-        if node.count < 2 * self.minsize or len(node.tr) < 2:
-            return None
-        if (self.L and node.g2 <= 0) or (not self.L and node.ss <= 0):
+        if not self._splittable(node):
             return None
         col, v = self.cols[j], self.vals[j][node.tr]
-        w, c = self.w[node.tr], self.cnt[node.tr]
-        if self.L:
-            A = np.zeros((len(v), self.L))
-            A[np.arange(len(v)), self.y[node.tr]] = w
-        else:
-            A = np.column_stack([w, w * (self.y[node.tr] - node.mean)])   # centred at the node's mean
+        A, c = self._aggregates(node), self.cnt[node.tr]
         miss = np.isnan(v) if col.kind == 'continuous' else v < 0
         if col.kind == 'nominal':
             return self._nominal(node, j, col, v, A, c)
         return self._ordered(node, j, col, v, A, c, miss, cut)
+
+    # ---- the split statistic: what another tree changes ---------------------------
+    def _splittable(self, node):
+        """Whether a node can be split at all: rows enough for two sides, and a response that varies."""
+        if node.count < 2 * self.minsize or len(node.tr) < 2:
+            return False
+        return node.g2 > 0 if self.L else node.ss > 0
+
+    def _aggregates(self, node):
+        """What each training row of the node adds to a side's statistic: its weight in its level's column
+        (categorical), or its weight and weighted deviation from the node's mean (continuous)."""
+        w = self.w[node.tr]
+        if self.L:
+            A = np.zeros((len(w), self.L))
+            A[np.arange(len(w)), self.y[node.tr]] = w
+            return A
+        return np.column_stack([w, w * (self.y[node.tr] - node.mean)])   # centred at the node's mean
+
+    def _tiny(self, node):
+        """A split statistic at or below this is no split."""
+        return 1e-10 * (node.g2 if self.L else node.ss)
+
+    def _dof(self, node):
+        """The degrees of freedom of the split's chi process (the ordered cuts' multiplicity)."""
+        return max(1, int(np.sum(node.n > 0)) - 1) if self.L else 1
+
+    def _weight_of(self, AL):
+        """The weight of each candidate left side."""
+        return AL.sum(axis=1) if self.L else AL[:, 0]
+
+    def _extra(self, node, AL):
+        """More about the split chosen, for the report (the uplift tree's Gamma)."""
+        return {}
+
+    def _nominal_keys(self, node, B, u, Lp):
+        """The orders of a nominal X's levels to cut between neighbours, or None to try every grouping."""
+        if self.L and Lp >= 3 and u <= BINS:
+            return None
+        if not self.L:
+            return [node.mean + B[:, 1] / B[:, 0]]
+        if Lp <= 2:
+            j0 = int(np.flatnonzero(node.n > 0)[0])
+            return [B[:, j0] / B.sum(axis=1)]
+        return [B[:, q] / B.sum(axis=1) for q in np.flatnonzero(node.n > 0)]   # many levels: in the order of each response level's rate
+
+    def _nominal_bound(self, node, B, cb, stat, u, Lp):
+        """ln p of the test of all u levels at once (Scheffe's bound on the best grouping), or nan."""
+        if self.L:
+            return chi2_logsf(stat, (u - 1) * max(1, Lp - 1))
+        ssb = float(np.sum(B[:, 1] ** 2 / B[:, 0]))
+        dfw = node.count - u
+        mse = (node.ss - ssb) / dfw if dfw > 0 else 0.0
+        return f_logsf(stat / ((u - 1) * mse), u - 1, dfw) if mse > node.ss * 1e-12 else math.nan
+
+    def _fill(self, pred, nd):
+        """The prediction of the rows of node nd, written into pred."""
+        pred[nd.rows] = nd.value
 
     def _crit(self, node, AL, cL):
         """The split statistic of each candidate left side (aggregates AL,
@@ -315,11 +372,13 @@ class Tree:
         sse = node.ss - stat
         return -math.inf if sse <= node.ss * 1e-12 else f_logsf(stat / (sse / df2), 1, df2)
 
-    def _finish(self, node, j, rule, stat, lp, lnM, labels, v0, v1, cL, cR):
+    def _finish(self, node, j, rule, stat, lp, lnM, labels, v0, v1, cL, cR, extra=None):
         lw = max(0.0, -(lp + lnM) / LN10) if math.isfinite(lp) else math.inf
         rule.big = 0 if cL >= cR else 1
-        return {'j': j, 'stat': float(stat), 'lp': float(lp), 'lnM': float(lnM), 'logworth': float(lw), 'rule': rule,
-                'labels': labels, 'first': 0 if v0 >= v1 else 1, 'counts': (float(cL), float(cR))}
+        out = {'j': j, 'stat': float(stat), 'lp': float(lp), 'lnM': float(lnM), 'logworth': float(lw), 'rule': rule,
+               'labels': labels, 'first': 0 if v0 >= v1 else 1, 'counts': (float(cL), float(cR))}
+        out.update(extra or {})
+        return out
 
     def _side_values(self, node, AL):
         """The mean (or the first level's rate) of each side, which orders the children."""
@@ -352,16 +411,14 @@ class Tree:
             if good.any():
                 i = int(np.argmax(s))
                 if best is None or s[i] > best[0]:
-                    best = (float(s[i]), f, i, AL[good, :].sum(axis=1) if self.L else AL[good, 0])
-        tiny = 1e-10 * (node.g2 if self.L else node.ss)
-        if best is None or best[0] <= tiny:
+                    best = (float(s[i]), f, i, self._weight_of(AL[good, :]))
+        if best is None or best[0] <= self._tiny(node):
             return None
         stat, f, i, mw = best
         AL, cL, ms = fams[f]
         k = int(ks[i])
         lp = self._logp(node, stat)
-        d = max(1, int(np.sum(node.n > 0)) - 1) if self.L else 1
-        lnM = 0.0 if cut is not None else ordered_mult(lp, mw, node.W, d)
+        lnM = 0.0 if cut is not None else ordered_mult(lp, mw, node.W, self._dof(node))
         if has:
             lnM = min(lnM + math.log(2), math.log(max(1, allowed)))
         if col.kind == 'continuous':
@@ -381,7 +438,7 @@ class Tree:
             labels = [f'{col.name}({", ".join(s)})' for s in sides]
         rule = Rule('cut', cut=cv, miss=ms)
         v0, v1 = self._side_values(node, AL[i])
-        return self._finish(node, j, rule, stat, lp, lnM, labels, v0, v1, cL[i], node.count - cL[i])
+        return self._finish(node, j, rule, stat, lp, lnM, labels, v0, v1, cL[i], node.count - cL[i], self._extra(node, AL[i]))
 
     def _nominal(self, node, j, col, v, A, c):
         codes, inv = np.unique(v, return_inverse=True)
@@ -393,19 +450,13 @@ class Tree:
         np.add.at(B, inv, A)
         cb = np.bincount(inv, weights=c, minlength=u)
         Lp = int(np.sum(node.n > 0)) if self.L else 0
-        if self.L and Lp >= 3 and u <= BINS:
+        keys = self._nominal_keys(node, B, u, Lp)
+        if keys is None:
             # every grouping, the first level on side 0: 2^(u-1) - 1 of them
             g = np.arange(1, 2 ** (u - 1))
             high = (g[:, None] >> np.arange(u - 1)[None, :]) & 1
             memb = np.column_stack([np.ones(len(g)), 1 - high])
         else:
-            if not self.L:
-                keys = [node.mean + B[:, 1] / B[:, 0]]
-            elif Lp <= 2:
-                j0 = int(np.flatnonzero(node.n > 0)[0])
-                keys = [B[:, j0] / B.sum(axis=1)]
-            else:   # many levels: the levels in the order of each response level's rate
-                keys = [B[:, q] / B.sum(axis=1) for q in np.flatnonzero(node.n > 0)]
             rows = []
             for key in keys:
                 order = np.argsort(key, kind='mergesort')
@@ -416,8 +467,7 @@ class Tree:
             memb = np.array(rows)
         AL, cL = memb @ B, memb @ cb
         s, good = self._crit(node, AL, cL)
-        tiny = 1e-10 * (node.g2 if self.L else node.ss)
-        if not good.any() or s.max() <= tiny:
+        if not good.any() or s.max() <= self._tiny(node):
             return None
         i = int(np.argmax(s))
         stat = float(s[i])
@@ -425,19 +475,13 @@ class Tree:
         # the multiplicity: Bonferroni over the groupings, or Scheffe's bound
         # (the best grouping is no better than the test of all u levels)
         lnG = (u - 1) * math.log(2) + math.log1p(-2.0 ** -(u - 1))
-        if self.L:
-            lpS = chi2_logsf(stat, (u - 1) * max(1, Lp - 1))
-        else:
-            ssb = float(np.sum(B[:, 1] ** 2 / B[:, 0]))
-            dfw = node.count - u
-            mse = (node.ss - ssb) / dfw if dfw > 0 else 0.0
-            lpS = f_logsf(stat / ((u - 1) * mse), u - 1, dfw) if mse > node.ss * 1e-12 else math.nan
+        lpS = self._nominal_bound(node, B, cb, stat, u, Lp)
         lnM = lnG if not (math.isfinite(lpS) and math.isfinite(lp)) else max(0.0, min(lnG, lpS - lp))
         low, high = codes[memb[i] == 1], codes[memb[i] == 0]
         labels = [f'{col.name}({", ".join(col.level(x) for x in sorted(side, key=lambda q: (q < 0, q)))})' for side in (low, high)]
         rule = Rule('set', low=low, high=high)
         v0, v1 = self._side_values(node, AL[i])
-        return self._finish(node, j, rule, stat, lp, lnM, labels, v0, v1, cL[i], node.count - cL[i])
+        return self._finish(node, j, rule, stat, lp, lnM, labels, v0, v1, cL[i], node.count - cL[i], self._extra(node, AL[i]))
 
     # ---- growing and pruning -------------------------------------------------------
     def split(self, node, cand):
@@ -445,7 +489,7 @@ class Tree:
         mean (or rate of the first level) first."""
         s = cand['rule'].side(self.vals[cand['j']][node.rows])
         first = cand['first']
-        node.children = [Node(self, node.rows[s == side], node.path + 'LR'[pos], node, cand['labels'][side])
+        node.children = [self.node_class(self, node.rows[s == side], node.path + 'LR'[pos], node, cand['labels'][side])
                          for pos, side in enumerate((first, 1 - first))]
         node.cand, node.order = cand, self.made
         self.made += 1
@@ -473,8 +517,11 @@ class Tree:
 
     def go(self, ahead=AHEAD, most=400):
         """Split until the validation RSquare has not improved for `ahead`
-        splits, then keep the tree with the best validation RSquare."""
+        splits, then keep the tree with the best validation RSquare (with the
+        folds of a K-fold Validation column, go_folds)."""
         valid = self.sets == 1
+        if not valid.any() and self.folds is not None:
+            return self.go_folds(ahead, most)
         if not valid.any():
             raise ValueError('Go needs validation rows: a Validation column or a validation portion')
         pred = self.fitted()
@@ -487,7 +534,7 @@ class Tree:
             if nd is None:
                 break
             for ch in nd.children:
-                pred[ch.rows] = ch.value
+                self._fill(pred, ch)
             made.append(nd)
             r = self.rsquare(pred, valid)
             trace.append(dict(self.rsquares(pred), splits=start + len(made)))
@@ -496,6 +543,56 @@ class Tree:
         for nd in reversed(made[k_best:]):
             self.prune_below(nd)
         self.go_trace = {'start': start, 'best': start + k_best, 'trace': trace}
+
+    def fold_tree(self, sets):
+        """A tree of the same rows with other sets: a fold's, its rows held out."""
+        return Tree(self.cols, self.X, self.y, self.L, self.w, self.cnt, sets, self.minsize, self.informative, self.levels)
+
+    def go_folds(self, ahead=AHEAD, most=400):
+        """Go by the folds of a K-fold Validation column (self.folds): beside
+        this tree a tree per fold, grown on the other folds split for split
+        (each its own best split, from the root to this tree's size); the
+        crossvalidated RSquare of a size is that of every row predicted by the
+        tree that did not see its fold. Splits until it has not improved for
+        `ahead` splits, then keeps the size with the best."""
+        fold = np.asarray(self.folds, dtype=int)
+        k = int(fold.max()) + 1
+        held = [fold == f for f in range(k)]
+        rows = fold >= 0
+        start = self.splits()
+        trees = []
+        for f in range(k):
+            ft = self.fold_tree(np.where(held[f], 1, np.where(rows, 0, 2)))
+            for _ in range(start):
+                if ft.split_best() is None:
+                    break
+            trees.append(ft)
+
+        def crossvalidated():
+            out = np.zeros((len(self.y), self.L)) if self.L else np.zeros(len(self.y))
+            for f, ft in enumerate(trees):
+                out[held[f]] = ft.fitted()[held[f]]
+            return self.rsquare(out, rows)
+        pred = self.fitted()
+        best = crossvalidated()
+        trace = [dict(self.rsquares(pred), splits=start, cv=best)]
+        made, k_best = [], 0
+        while len(made) - k_best < ahead and len(made) < most:
+            nd = self.split_best()
+            if nd is None:
+                break
+            for ch in nd.children:
+                self._fill(pred, ch)
+            for ft in trees:
+                ft.split_best()
+            made.append(nd)
+            r = crossvalidated()
+            trace.append(dict(self.rsquares(pred), splits=start + len(made), cv=r))
+            if r > best + 1e-12:
+                best, k_best = r, len(made)
+        for nd in reversed(made[k_best:]):
+            self.prune_below(nd)
+        self.go_trace = {'start': start, 'best': start + k_best, 'trace': trace, 'folds': k}
 
     def step(self, st):
         """One of the report's steps: split, here, specific, prune, below, go."""
@@ -547,7 +644,7 @@ class Tree:
         """The prediction of every row: its leaf's mean, or its leaf's Prob."""
         out = np.zeros((len(self.y), self.L)) if self.L else np.zeros(len(self.y))
         for leaf in self.leaves():
-            out[leaf.rows] = leaf.value
+            self._fill(out, leaf)
         return out
 
     def rsquare(self, pred, m):
@@ -569,16 +666,40 @@ class Tree:
     def rsquares(self, pred):
         return {k: self.rsquare(pred, self.sets == k) for k in (0, 1, 2) if np.any(self.sets == k)}
 
+    def n_params(self, leaves):
+        """The parameters of the model a tree of this many leaves is: a mean per leaf and the error variance, or
+        each leaf's probabilities of the levels (all but one)."""
+        return leaves * (self.L - 1) if self.L else leaves + 1
+
+    def aicc(self, pred, leaves):
+        """AICc of the training rows: -2 log L + 2k + 2k(k + 1)/(N - k - 1), k = n_params(leaves), N their
+        weight; L the normal likelihood with variance SSE/N (a continuous response, as the Measures of Fit's
+        -LogLikelihood), or the product of each row's probability of its level (the tree's Prob)."""
+        m = self.train
+        w = self.w[m]
+        N = float(w.sum())
+        if self.L:
+            y = self.y[m]
+            m2ll = -2 * float(np.sum(w * np.log(np.clip(pred[m][np.arange(len(y)), y], 1e-15, 1))))
+        else:
+            sse = float(np.sum(w * (self.y[m] - pred[m]) ** 2))
+            if not sse > 0:
+                return math.nan
+            m2ll = N * (math.log(2 * math.pi * sse / N) + 1)
+        k = self.n_params(leaves)
+        return m2ll + 2 * k + (2 * k * (k + 1) / (N - k - 1) if N - k - 1 > 0 else math.nan)
+
     def history(self):
-        """RSquare of each set after each split, in the order they were made."""
+        """RSquare of each set after each split, in the order they were made, and the training rows' AICc
+        (under 'aicc')."""
         made = sorted((nd for nd in self.nodes() if nd.children), key=lambda nd: nd.order)
         pred = np.zeros((len(self.y), self.L)) if self.L else np.zeros(len(self.y))
-        pred[:] = self.root.value
-        out = [self.rsquares(pred)]
-        for nd in made:
+        self._fill(pred, self.root)
+        out = [dict(self.rsquares(pred), aicc=self.aicc(pred, 1))]
+        for i, nd in enumerate(made):
             for ch in nd.children:
-                pred[ch.rows] = ch.value
-            out.append(self.rsquares(pred))
+                self._fill(pred, ch)
+            out.append(dict(self.rsquares(pred), aicc=self.aicc(pred, i + 2)))
         return out
 
     # ---- new rows --------------------------------------------------------------------------
@@ -653,15 +774,20 @@ class Tree:
         return '\n'.join(lines)
 
 
-def kfold(cols, X, y, L, w, cnt, sets, k=5, seed=0, splits=0, minsize=5, informative=True):
+def kfold(cols, X, y, L, w, cnt, sets, k=5, seed=0, splits=0, minsize=5, informative=True, folds=None):
     """K-fold crossvalidation of a tree of `splits` best splits: the training
     rows in k folds drawn from the seed, each fold predicted by the tree
-    grown on the others. Returns the out-of-fold predictions, the folds and
-    each fold's RSquare."""
+    grown on the others; folds: each row's fold from a K-fold Validation
+    column (-1 none), used instead (k is then its number of folds). Returns
+    the out-of-fold predictions, the folds and each fold's RSquare."""
     sets = np.asarray(sets, dtype=int)
-    tr = np.flatnonzero(sets == 0)
-    fold = np.full(len(sets), -1)
-    fold[tr] = np.random.default_rng([int(seed), 2]).permutation(np.arange(len(tr)) % k)
+    if folds is not None:
+        fold = np.asarray(folds, dtype=int)
+        k = int(fold.max()) + 1
+    else:
+        tr = np.flatnonzero(sets == 0)
+        fold = np.full(len(sets), -1)
+        fold[tr] = np.random.default_rng([int(seed), 2]).permutation(np.arange(len(tr)) % k)
     pred = np.zeros((len(sets), L)) if L else np.zeros(len(sets))
     out = []
     for f in range(k):
@@ -682,6 +808,7 @@ import json  # noqa: E402
 
 from . import data, predictive, profile  # noqa: E402
 from .registry import api  # noqa: E402
+from .util import one_line  # noqa: E402   (a By group's label from the table, kept on one line in the code's comments)
 
 _ENGINE = None
 
@@ -729,7 +856,8 @@ def _prepared(table, rows, sp, coding):
 
 
 def columns_of(P, ordinal_order=True):
-    """The engine's X columns from the prepared data (ordinal coding)."""
+    """The engine's X columns from the prepared data (ordinal coding); a level's name is its value label when
+    the column has one (the conditions show it)."""
     cols = []
     for e in P.enc:
         idx = P.groups[e['name']]
@@ -737,8 +865,15 @@ def columns_of(P, ordinal_order=True):
             cols.append(Col(e['name'], 'continuous', idx[0], idx[1] if len(idx) > 1 else None))
         else:
             ordinal = ordinal_order and data.meta(P.table, e['name']).get('modelingType') == 'ordinal'
-            cols.append(Col(e['name'], 'ordinal' if ordinal else 'nominal', idx[0], None, [predictive.level_label(v) for v in e['levels']]))
+            names = [_shown_level(P.table, e['name'], v) for v in e['levels']]
+            cols.append(Col(e['name'], 'ordinal' if ordinal else 'nominal', idx[0], None, names))
     return cols
+
+
+def _shown_level(table, column, v):
+    """A level as the page shows it: its value label, or the value (2.0 as 2)."""
+    lab = getattr(data, 'level_label', None)
+    return lab(table, column, v, predictive.level_label(v)) if lab else predictive.level_label(v)
 
 
 def min_count(minsize, P):
@@ -756,6 +891,7 @@ def _grown(table, rows, sp):
         L = len(P.levels) if P.kind == 'categorical' else 0
         ms = min_count(sp['minsize'], P)
         t = Tree(columns_of(P, sp['ordinal_order']), P.X, P.target, L, P.w, P.freq, P.sets, ms, P.missing == 'informative', P.labels)
+        t.folds = fold_index(P)
         t.run(sp['steps'])
         return P, t, ms
     return predictive.cached('partition', table, rows, sp, build)
@@ -771,6 +907,145 @@ def _leaf_labels(t):
             p = p.parent
         out.append('&'.join(reversed(parts)) or 'All Rows')
     return out
+
+
+def _side_of(par, ch):
+    """The side (0 or 1) of par's split that its child ch is."""
+    first = par.cand['first']
+    return first if ch is par.children[0] else 1 - first
+
+
+def leaf_rules(t):
+    """Each leaf's rule: its Leaf Label with the conditions on one column merged, each column once, in the order
+    it first comes on the path. A continuous column's cuts become one range (2<=x<5) and keep 'or Missing' when
+    every condition on it has it; a categorical column's groups of levels become the levels they share. The rule
+    says what the conditions say, nothing more: a condition without 'or Missing' leaves missing values out."""
+    out = []
+    for nd in t.leaves():
+        path, p = [], nd
+        while p.parent is not None:
+            path.append((p.parent, p))
+            p = p.parent
+        merged, order = {}, []
+        for par, ch in reversed(path):
+            c = par.cand
+            j, side, rule = c['j'], _side_of(par, ch), c['rule']
+            col = t.cols[j]
+            if j not in merged:
+                order.append(j)
+                merged[j] = {'lo': -math.inf, 'hi': math.inf, 'miss': True} if col.kind == 'continuous' else {'levels': None, 'miss': True}
+            m = merged[j]
+            if col.kind == 'continuous':
+                cut = float(rule.cut)
+                if math.isinf(cut):          # 'x not Missing' (side 0) against 'x Missing' (side 1)
+                    lo, hi = (-math.inf, math.inf) if side == 0 else (math.inf, math.inf)
+                else:
+                    lo, hi = (-math.inf, cut) if side == 0 else (cut, math.inf)
+                m['lo'], m['hi'] = max(m['lo'], lo), min(m['hi'], hi)
+                m['miss'] = m['miss'] and rule.miss == side
+            else:
+                # the levels the label lists (the node's own), Missing as -1
+                codes = np.unique(t.vals[j][par.tr])
+                if rule.kind == 'cut':
+                    listed = {int(q) for q in codes if q >= 0 and (q < rule.cut) == (side == 0)}
+                    if rule.miss == side:
+                        listed.add(-1)
+                else:
+                    listed = set(rule.low if side == 0 else rule.high)
+                m['levels'] = listed if m['levels'] is None else (m['levels'] & listed)
+        parts = []
+        for j in order:
+            col, m = t.cols[j], merged[j]
+            if col.kind == 'continuous':
+                lo, hi, miss = m['lo'], m['hi'], m['miss']
+                if lo >= hi:
+                    parts.append(f'{col.name} Missing')
+                    continue
+                if math.isinf(lo) and math.isinf(hi):
+                    parts.append(f'{col.name} not Missing')
+                    continue
+                txt = (f'{num_text(lo)}<={col.name}<{num_text(hi)}' if math.isfinite(lo) and math.isfinite(hi)
+                       else f'{col.name}>={num_text(lo)}' if math.isfinite(lo) else f'{col.name}<{num_text(hi)}')
+                parts.append(txt + (' or Missing' if miss else ''))
+            else:
+                levels = sorted(m['levels'] or (), key=lambda q: (q < 0, q))
+                parts.append(f'{col.name}({", ".join(col.level(q) for q in levels)})')
+        out.append('&'.join(parts) or 'All Rows')
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Save Prediction Formula: the tree as nested If, in the page's formula language
+# ---------------------------------------------------------------------------
+# JMP writes the tree as nested conditional clauses. Each split here is one
+# If: the condition of the side its missing (or unseen) values go to, that
+# side, the other; a numeric level column's missing value makes a comparison
+# missing, so there Is Missing comes first. Informative Missing off (rows
+# missing a factor are left out, and Save Predicteds gives them nothing): a
+# row missing any factor gets a missing prediction.
+
+FORMULA_MAX, DEPTH_MAX = 50000, 150    # smui-formula.js reads formulas of up to 50000 characters and 160 levels
+
+
+def _level_lit(v):
+    """A level as a value in formula text: a number, or text in quotes."""
+    from .util import formula_num, formula_str
+    return formula_num(v) if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool) else formula_str(v)
+
+
+def _missing_side(rule):
+    """The side a missing (or unknown) value of the split's column goes to."""
+    if rule.kind == 'set':
+        return 0 if -1 in rule.low else 1 if -1 in rule.high else rule.big
+    return rule.miss if rule.miss is not None else rule.big
+
+
+def tree_formula(t, P, leaf_value, informative=True, guard=()):
+    """The tree t as nested If: leaf_value(leaf) is each leaf's value as formula text. P: the prepared data (the
+    levels of each categorical factor, in the order the tree codes them). guard: more columns a row must have
+    (the Uplift's treatment); with informative False every factor is one of them."""
+    from .util import formula_num, formula_ref
+    levels = {e['name']: list(e['levels']) for e in P.enc if e['type'] != 'continuous'}
+    depth = [0]
+
+    def walk(nd, d):
+        depth[0] = max(depth[0], d)
+        if nd.children is None:
+            return leaf_value(nd)
+        c = nd.cand
+        col, rule = t.cols[c['j']], c['rule']
+        ref = formula_ref(col.name)
+        sub = {_side_of(nd, ch): walk(ch, d + 1) for ch in nd.children}
+        m = _missing_side(rule)
+        if col.kind == 'continuous':
+            cut = float(rule.cut)
+            if math.isinf(cut):
+                return f'If(Is Missing({ref}), {sub[1]}, {sub[0]})'
+            cond = f'{ref} < {formula_num(cut)}' if m == 0 else f'{ref} >= {formula_num(cut)}'
+            if informative:
+                cond = f'Is Missing({ref}) | {cond}'
+            return f'If({cond}, {sub[m]}, {sub[1 - m]})'
+        lv = levels[col.name]
+        other = 1 - m
+        if rule.kind == 'cut':
+            codes = [q for q in range(len(lv)) if (q < rule.cut) == (other == 0)]
+        else:
+            seen = set(rule.low) | set(rule.high)
+            codes = [q for q in range(len(lv)) if q in (rule.low if other == 0 else rule.high) or (q not in seen and rule.big == other)]
+        cond = ' | '.join(f'{ref} == {_level_lit(lv[q])}' for q in codes)
+        numeric = all(isinstance(v, (int, float, np.integer, np.floating)) for v in lv)
+        if informative and numeric:
+            cond = f'!Is Missing({ref}) & ({cond})' if len(codes) > 1 else f'!Is Missing({ref}) & {cond}'
+        return f'If({cond}, {sub[other]}, {sub[m]})'
+    body = walk(t.root, 1)
+    need = list(dict.fromkeys(list(guard) + ([] if informative else list(P.x))))
+    if need:
+        body = f'If({" | ".join(f"Is Missing({formula_ref(c)})" for c in need)}, ., {body})'
+    if len(body) > FORMULA_MAX:
+        raise ValueError(f'the tree is too large for a formula: {len(body)} characters, at most {FORMULA_MAX}; save the predicted values instead')
+    if depth[0] > DEPTH_MAX:
+        raise ValueError(f'the tree is too deep for a formula: {depth[0]} levels, at most {DEPTH_MAX}; save the predicted values instead')
+    return body
 
 
 def _node_json(P, t, nd, box):
@@ -798,7 +1073,9 @@ def _tree_json(P, t):
     return [_node_json(P, t, nd, box) for nd, box in zip(t.nodes(), t.boxes())]
 
 
-def _summary(P, splits, fit):
+def _summary(P, splits, fit, aicc=None):
+    """The summary line of each set, JMP's: RSquare, RASE (or Entropy RSquare and the Misclassification Rate),
+    N, and on the training line the Number of Splits and the AICc."""
     rows = []
     for m in fit['measures']:
         k = predictive.SETS.index(m['set'])
@@ -809,7 +1086,20 @@ def _summary(P, splits, fit):
             rows.append({'set': m['set'], 'entropy_rsquare': m['entropy_rsquare'], 'misclassification': m['misclassification'], 'n': n})
     if rows:
         rows[0]['splits'] = splits
+        rows[0]['aicc'] = aicc
     return rows
+
+
+def _history_rows(hist):
+    """Tree.history() (or cart_history) as the report's rows: the number of splits, each set's RSquare by name,
+    and the AICc."""
+    out = []
+    for i, h in enumerate(hist):
+        row = {'splits': i, **{predictive.SETS[k]: v for k, v in h.items() if isinstance(k, int)}}
+        if 'aicc' in h:
+            row['aicc'] = h['aicc']
+        out.append(row)
+    return out
 
 
 def _contributions(P, t):
@@ -836,7 +1126,7 @@ def _head_code(P, sp, table_name, rows):
 
 def _fit_code(P, t, sp, ms, group):
     L = len(P.levels) if P.kind == 'categorical' else 0
-    lines = [f'# Partition for {P.y}{f" ({group})" if group else ""}: the report\'s steps replayed from the root',
+    lines = [f'# Partition for {P.y}{f" ({one_line(group)})" if group else ""}: the report\'s steps replayed from the root',
              'columns = [']
     lines += [f'    {c!r},' for c in t.cols]
     lines.append(']')
@@ -844,6 +1134,8 @@ def _fit_code(P, t, sp, ms, group):
         lines.append(f'# Minimum Size Split {sp["minsize"]!r}: that share of the training rows, {num_text(ms)} rows')
     lines.append(f'tree = Tree(columns, X, y, {L}, w, cnt, sets, minsize={num_text(ms)}, informative={P.missing == "informative"}'
                  + (f', levels={json.dumps(list(P.labels))})' if L else ')'))
+    if P.folds is not None:
+        lines.append(f'tree.folds = folds   # the {P.k} folds of {P.spec["validation"]}: Go crossvalidates by them')
     lines.append(f'tree.run({_py(sp["steps"])})')
     lines.append('print(tree.text())')
     lines.append('for k, r2 in tree.rsquares(tree.fitted()).items():')
@@ -1028,13 +1320,15 @@ def _graph_head(P, t, sp, ms, group, table_name, rows):
     f = sp['freq']
     lines.append(f'cnt = d[{json.dumps(f)}].to_numpy(float)   # the frequencies: the minimum size and the degrees of freedom count them'
                  if f else 'cnt = None   # every row counts once')
-    fit = [f'# Partition for {P.y}{f" ({group})" if group else ""}: the report\'s steps replayed from the root', 'columns = [']
+    fit = [f'# Partition for {P.y}{f" ({one_line(group)})" if group else ""}: the report\'s steps replayed from the root', 'columns = [']
     fit += [f'    {c!r},' for c in t.cols]
     fit.append(']')
     if float(sp['minsize']) < 1:
         fit.append(f'# Minimum Size Split {sp["minsize"]!r}: that share of the training rows, {num_text(ms)} rows')
     fit.append(f'tree = Tree(columns, X, y, {L}, w, cnt, sets, minsize={num_text(ms)}, informative={P.missing == "informative"}'
                + (f', levels={json.dumps(list(P.labels))})' if L else ')'))
+    if P.folds is not None:
+        fit.append(f'tree.folds = folds   # the {P.k} folds of {P.spec["validation"]}: Go crossvalidates by them')
     fit.append(f'tree.run({_py(sp["steps"])})')
     fit += ['fitted = tree.fitted()   # each row\'s prediction: its leaf\'s mean, or its leaf\'s probability of every level',
             'leaf = np.zeros(len(y), dtype=int)   # each row\'s leaf, numbered from the left from 0',
@@ -1101,7 +1395,23 @@ def _tree_tail(P, plot, small, cart):
     return '\n'.join([src, '', '', call + ('' if small else '   # the page\'s Show Split options'), 'plt.show()'])
 
 
-def _history_tail(P, go, cart=False):
+def _aicc_tail(cart=False):
+    """The split history's AICc: the training rows' AICc after each split, in the order made, the smallest
+    marked (Tree.history's 'aicc', or cart_history's)."""
+    return '\n'.join(([inspect.getsource(cart_history).rstrip(), '', ''] if cart else []) + [
+        ('hist = cart_history(model, X, y, w, sets, nodes, root, L)' if cart else 'hist = tree.history()') + '   # after 0, 1, ... splits: each set\'s RSquare, and the AICc',
+        'aicc = [h["aicc"] for h in hist]',
+        predictive.figure(460, 260),
+        f'ax.plot(range(len(aicc)), aicc, color="{predictive.BASE}", linewidth=1.8, marker="o", markersize=3.6)',
+        'best = int(np.nanargmin(aicc)) if np.isfinite(aicc).any() else None',
+        'if best is not None:',
+        f'    ax.plot([best], [aicc[best]], linestyle="none", marker="D", markersize=7, color="{predictive.FIT}")   # the smallest AICc',
+        'ax.set_xlim(left=0)', 'ax.set_xlabel("Number of Splits")', 'ax.set_ylabel("AICc")',
+        'ax.set_title("AICc by number of splits")',
+        'plt.show()'])
+
+
+def _history_tail(P, go, cart=False, ylabel=None):
     """The split history: each set's RSquare (or entropy RSquare) after each split, in the order made
     (the engine's Tree.history, or cart_history), and after Go the splits it looked at past the best."""
     sets = [k for k in range(3) if P.has(k)]
@@ -1115,6 +1425,14 @@ def _history_tail(P, go, cart=False):
          predictive.figure(460, 280),
          'for k, name in sets:',
          '    ax.plot(range(len(hist)), [h[k] for h in hist], color=colors[str(k)], linewidth=1.8, marker="o", markersize=3.6, label=name)']
+    cvgo = bool(go) and P.folds is not None and not P.has(1)
+    if cvgo:
+        L += [('g = go' if cart else 'g = tree.go_trace') + '   # Go by the folds: the crossvalidated RSquare ("cv") of each size it looked at',
+              'upto = [e for e in g["trace"] if e["splits"] <= g["best"]]',
+              'past = [e for e in g["trace"] if e["splits"] >= g["best"]]',
+              f'ax.plot([e["splits"] for e in upto], [e["cv"] for e in upto], color="{colors[1]}", linewidth=1.8, marker="o", markersize=3.6, label="Crossvalidation")',
+              'if len(past) > 1:',
+              f'    ax.plot([e["splits"] for e in past], [e["cv"] for e in past], color="{colors[1]}", linewidth=1.2, linestyle=":", marker="o", markersize=2.9, markerfacecolor="none")']
     if go:
         L += [('g = go' if cart else 'g = tree.go_trace') + '   # Go: the splits it looked at, and the number it kept',
               'after = [e for e in g["trace"] if e["splits"] > g["best"]]',
@@ -1124,9 +1442,9 @@ def _history_tail(P, go, cart=False):
               '            marker="o", markersize=2.9, markerfacecolor="none")   # looked at past the best, then pruned',
               f'ax.axvline(g["best"], color="{predictive.MUTED}", linewidth=1, linestyle="--")']
     L += ['ax.set_xlim(left=0)', 'ax.set_xlabel("Number of Splits")',
-          f'ax.set_ylabel("{"Entropy RSquare" if P.kind == "categorical" else "RSquare"}")',
+          f'ax.set_ylabel("{ylabel or ("Entropy RSquare" if P.kind == "categorical" else "RSquare")}")',
           'ax.set_title("Split history")']
-    if len(sets) > 1:
+    if len(sets) > 1 or cvgo:
         L.append('fig.legend(loc="outside upper left", ncols=3, frameon=False, fontsize=8)')
     L.append('plt.show()')
     return '\n'.join(L)
@@ -1166,7 +1484,7 @@ def _contrib_lines(P):
 def _plots(P, head, plot, nl, go, cart):
     """The graphs' code of a tree (every tail after head)."""
     return {'partition': _partition_tail(P, plot), 'tree': _tree_tail(P, plot, False, cart), 'small': _tree_tail(P, plot, True, cart),
-            'history': _history_tail(P, go, cart), 'leaves': _leaves_tail(P, nl)}
+            'history': _history_tail(P, go, cart), 'aicc': _aicc_tail(cart), 'leaves': _leaves_tail(P, nl)}
 
 
 def _cart_head(P, c, sp, group, table_name, rows):
@@ -1181,7 +1499,7 @@ def _cart_head(P, c, sp, group, table_name, rows):
     helpers = '\n\n\n'.join(inspect.getsource(fn).rstrip() for fn in (cart_r2, cart_boxes))
     crit = 'criterion="log_loss", ' if L else ''
     steps = sp['steps']
-    F = [f'# Partition for {P.y}{f" ({group})" if group else ""} by CART: scikit-learn\'s tree grown best first, the report\'s steps replayed',
+    F = [f'# Partition for {P.y}{f" ({one_line(group)})" if group else ""} by CART: scikit-learn\'s tree grown best first, the report\'s steps replayed',
          f'L = {L}   # the levels of the response (0: a continuous response)',
          'wt = np.ones(len(y)) if w is None else w', '', '',
          'def grow(k):',
@@ -1204,7 +1522,42 @@ def _cart_head(P, c, sp, group, table_name, rows):
          'n_max = 1 if full is None else int(full.get_n_leaves())   # the leaves of the whole tree']
     if float(sp['minsize']) < 1:
         F.insert(1, f'# Minimum Size Split {sp["minsize"]!r}: that share of the training rows, {num_text(c.ms)} rows')
-    if any(st.get('op') == 'go' for st in steps):
+    if any(st.get('op') == 'go' for st in steps) and P.folds is not None and not P.has(1):
+        F += ['', '',
+              'def grow_on(k, rows):',
+              '    """The CART tree of k leaves grown on the rows (None: one leaf, no split)."""',
+              '    if k < 2:',
+              '        return None',
+              f'    return {cls}({crit}max_leaf_nodes=int(k), min_samples_leaf={max(1, int(math.ceil(c.ms)))}, random_state={int(sp["seed"] or 0)}).fit(X[rows], y[rows], sample_weight=wt[rows])',
+              '', '',
+              'def predict_on(model, rows):',
+              '    """Every row\'s prediction by a tree grown on the rows (with no split, their mean or shares)."""',
+              '    if model is None:',
+              '        r0 = np.bincount(y[rows], weights=wt[rows], minlength=L) / wt[rows].sum() if L else float(np.sum(wt[rows] * y[rows]) / wt[rows].sum())',
+              '        return np.tile(r0, (len(y), 1)) if L else np.full(len(y), r0)',
+              '    if not L:',
+              '        return model.predict(X)',
+              '    out = np.zeros((len(X), L))',
+              '    out[:, model.classes_.astype(int)] = model.predict_proba(X)',
+              '    return out', '', '',
+              'def go_from(n0):',
+              f'    """Go by the {P.k} folds of the Validation column: a leaf more at a time until the crossvalidated RSquare (each fold',
+              '    predicted by the tree of as many leaves grown on the other folds) has not improved for 10 leaves; the number of',
+              '    leaves with the best, and what it looked at."""',
+              '    trace, best, k_best, k = [], None, n0, n0',
+              f'    while k - k_best <= {AHEAD} and k <= n_max:',
+              '        f = predict(grow(k))',
+              '        cvp = np.zeros_like(f)',
+              f'        for q in range({P.k}):',
+              '            fit_rows = (folds >= 0) & (folds != q)',
+              '            cvp[folds == q] = predict_on(grow_on(k, fit_rows), fit_rows)[folds == q]',
+              '        r = cart_r2(cvp, y, w, np.where(folds >= 0, 0, -1), 0, L)',
+              '        trace.append({"splits": k - 1, 0: cart_r2(f, y, w, sets, 0, L), "cv": r})   # the training and the crossvalidated RSquare',
+              '        if best is None or r > best + 1e-12:',
+              '            best, k_best = r, k',
+              '        k += 1',
+              '    return k_best, {"start": n0 - 1, "best": k_best - 1, "trace": trace}', '', '']
+    elif any(st.get('op') == 'go' for st in steps):
         F += ['', '',
               'def go_from(n0):',
               '    """Go: a leaf more at a time until the validation RSquare has not improved for 10 leaves; the number of',
@@ -1226,7 +1579,7 @@ def _cart_head(P, c, sp, group, table_name, rows):
           '    elif st["op"] == "prune" and not st.get("node"):',
           '        n = max(1, n - 1)']
     if any(st.get('op') == 'go' for st in steps):
-        F += ['    elif st["op"] == "go" and (sets == 1).any():', '        n, go = go_from(n)']
+        F += ['    elif st["op"] == "go"' + ('' if P.folds is not None and not P.has(1) else ' and (sets == 1).any()') + ':', '        n, go = go_from(n)']
     F += ['if not steps or steps[-1]["op"] != "go":',
           '    go = None   # the split history shows what Go looked at right after it',
           'model = grow(n)',
@@ -1253,33 +1606,53 @@ def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion
     head = _graph_head(P, t, sp, ms, group, table_name, rows)
     rep = predictive.report(P, fitted, head=head)
     leaves = t.leaves()
-    labels = _leaf_labels(t)
+    labels, rules = _leaf_labels(t), leaf_rules(t)
     leaf_of = np.zeros(len(P.index), dtype=int)
     for i, nd in enumerate(leaves):
         leaf_of[nd.rows] = i
     leaf_json = []
     for i, nd in enumerate(leaves):
-        e = {'number': i + 1, 'path': nd.path, 'label': labels[i], 'count': nd.count, 'w': nd.W}
+        e = {'number': i + 1, 'path': nd.path, 'label': labels[i], 'rule': rules[i], 'count': nd.count, 'w': nd.W}
         if t.L:
             e.update(probs=nd.prob.tolist(), rates=nd.rate.tolist(), counts=nd.n.tolist())
         else:
             e.update(mean=nd.mean, sd=nd.sd)
         leaf_json.append(e)
-    hist = [{'splits': i, **{predictive.SETS[k]: v for k, v in h.items()}} for i, h in enumerate(t.history())]
+    hist = _history_rows(t.history())
     last = (sp['steps'][-1].get('op') if sp['steps'] else None)
     go = None
     if last == 'go' and t.go_trace:
         g = t.go_trace
-        go = {'start': g['start'], 'best': g['best'], 'trace': [{'splits': e['splits'], **{predictive.SETS[k]: e[k] for k in (0, 1, 2) if k in e}} for e in g['trace']]}
+        go = {'start': g['start'], 'best': g['best'], 'folds': g.get('folds'),
+              'trace': [{'splits': e['splits'], **{predictive.SETS[k]: e[k] for k in (0, 1, 2) if k in e}, **({'Crossvalidation': e['cv']} if 'cv' in e else {})} for e in g['trace']]}
     script = SEP.join([_head_code(P, sp, table_name, rows), engine_source(), _fit_code(P, t, sp, ms, group)])
     rep['plots'].update(_plots(P, head, plot or {}, len(leaves), go is not None, False))
     contrib = _contributions(P, t)
     contrib['plot_code'] = '\n'.join(_contrib_lines(P) + predictive.contribution_lines(len(P.x)))
     return {'kind': P.kind, 'y': P.y, 'levels': list(P.labels), 'nodes': _tree_json(P, t), 'leaves': leaf_json,
             'assign': {'rows': P.index.tolist(), 'leaf': leaf_of.tolist(), 'set': P.sets.tolist(), 'y': P.target.tolist()},
-            'fit': rep, 'summary': _summary(P, t.splits(), rep), 'history': hist, 'go': go, 'contributions': contrib,
-            'splits': t.splits(), 'minsize': ms, 'notes': list(t.notes), 'has_validation': bool(P.has(1)),
+            'fit': rep, 'summary': _summary(P, t.splits(), rep, t.aicc(fitted, len(leaves))), 'history': hist, 'go': go, 'contributions': contrib,
+            'splits': t.splits(), 'minsize': ms, 'notes': list(t.notes), 'has_validation': bool(P.has(1)), 'folds': _folds_json(P),
             'columns': [{'name': c.name, 'kind': c.kind} for c in t.cols], 'method': 'jmp', 'script': script}
+
+
+def fold_index(P):
+    """Each row's fold (from 0; -1 none) of a K-fold Validation column, from predictive.fold_masks, or None
+    without one (a Validation column of more than three values holds the folds; every row trains)."""
+    masks = predictive.fold_masks(P)
+    if not masks:
+        return None
+    fold = np.full(len(P.index), -1)
+    for j, (_, held) in enumerate(masks):
+        fold[held] = j
+    return fold
+
+
+def _folds_json(P):
+    """A K-fold Validation column's folds, for the page: their number, the column and each fold's value."""
+    if P.folds is None:
+        return None
+    return {'k': int(P.k), 'column': P.spec.get('validation'), 'values': [predictive.level_label(v) for v in P.fold_values]}
 
 
 @api('partition.save')
@@ -1287,6 +1660,29 @@ def save(table, y, x, rows=None, **kw):
     """Save Predicteds and Save Residuals: every row of the table whose factors the tree can take."""
     P, t, _ = _grown(table, rows, _spec(y, x, **kw))
     return predictive.saved(P, t.predict, t.predict_proba)
+
+
+@api('partition.formula')
+def formula(table, y, x, rows=None, what='prediction', **kw):
+    """Save Prediction Formula, as JMP writes it: the tree as nested If, of the leaf's mean (a continuous
+    response) or of each level's probability (a column Prob[level] per level); the page adds the Most Likely
+    column from the probabilities' columns. what 'leaf_number' or 'leaf_label': Save Leaf Number Formula and
+    Save Leaf Label Formula, each leaf's number (from 1, left to right) or its label."""
+    from .util import formula_num, formula_str
+    P, t, _ = _grown(table, rows, _spec(y, x, **kw))
+    inf = P.missing == 'informative'
+    if what in ('leaf_number', 'leaf_label'):
+        leaves = t.leaves()
+        at = {id(nd): i for i, nd in enumerate(leaves)}
+        labels = _leaf_labels(t)
+        if what == 'leaf_number':
+            return {'kind': what, 'columns': [{'name': 'Leaf Number', 'expr': tree_formula(t, P, lambda nd: str(at[id(nd)] + 1), inf)}]}
+        return {'kind': what, 'columns': [{'name': 'Leaf Label', 'expr': tree_formula(t, P, lambda nd: formula_str(labels[at[id(nd)]]), inf)}]}
+    if P.kind == 'continuous':
+        return {'kind': 'continuous', 'columns': [{'name': f'Predicted {P.y}', 'expr': tree_formula(t, P, lambda nd: formula_num(nd.mean), inf)}]}
+    cols = [{'name': f'Prob[{lab}]', 'level': lab, 'expr': tree_formula(t, P, lambda nd, j=j: formula_num(nd.prob[j]), inf)} for j, lab in enumerate(P.labels)]
+    return {'kind': 'categorical', 'columns': cols, 'levels': list(P.labels), 'most_name': f'Most Likely {P.y}',
+            'ordinal': data.meta(P.table, P.y).get('modelingType') == 'ordinal'}
 
 
 @api('partition.leaves')
@@ -1311,17 +1707,20 @@ def kfold_api(table, y, x, rows=None, k=5, group=None, table_name='data', **kw):
     """K Fold Crossvalidation of a tree with as many splits as the report's."""
     sp = _spec(y, x, **kw)
     P, t, ms = _grown(table, rows, sp)
-    k = int(k)
+    by_column = P.folds is not None
+    k = int(P.k) if by_column else int(k)
     ntr = int(P.train().sum())
-    if not 2 <= k <= ntr:
+    if not by_column and not 2 <= k <= ntr:
         raise ValueError(f'the number of folds is from 2 to the number of training rows ({ntr})')
     seed = sp['seed'] if sp['seed'] is not None else 0
     L = len(P.levels) if P.kind == 'categorical' else 0
-    pred, fold, per = kfold(t.cols, P.X, P.target, L, P.w, P.freq, P.sets, k, seed, t.splits(), ms, P.missing == 'informative')
+    pred, fold, per = kfold(t.cols, P.X, P.target, L, P.w, P.freq, P.sets, k, seed, t.splits(), ms, P.missing == 'informative', fold_index(P))
     folded, overall = _kfold_measures(P, pred, t)
-    lines = [f'# K Fold Crossvalidation{f" ({group})" if group else ""}: {k} folds of the training rows, each tree with the best {t.splits()} splits',
+    what = f'the {k} folds of {sp["validation"]}' if by_column else f'{k} folds of the training rows'
+    lines = [f'# K Fold Crossvalidation{f" ({one_line(group)})" if group else ""}: {what}, each tree with the best {t.splits()} splits',
              'columns = [', *[f'    {c!r},' for c in t.cols], ']',
-             f'pred, fold, per = kfold(columns, X, y, {L}, w, cnt, sets, k={k}, seed={seed}, splits={t.splits()}, minsize={num_text(ms)}, informative={P.missing == "informative"})',
+             f'pred, fold, per = kfold(columns, X, y, {L}, w, cnt, sets, k={k}, seed={seed}, splits={t.splits()}, minsize={num_text(ms)}, informative={P.missing == "informative"}'
+             + (', folds=folds)' if by_column else ')'),
              'for f in per:', '    print(f)']
     if L:
         lines += ['share = np.bincount(y[train], weights=(np.ones(len(y)) if w is None else w)[train], minlength=pred.shape[1]) / (np.ones(len(y)) if w is None else w)[train].sum()',
@@ -1332,7 +1731,11 @@ def kfold_api(table, y, x, rows=None, k=5, group=None, table_name='data', **kw):
         lines += ['wt = (np.ones(len(y)) if w is None else w)[train]', 'yt, pt = y[train], pred[train]',
                   "print('Folded RSquare', 1 - np.sum(wt * (yt - pt) ** 2) / np.sum(wt * (yt - np.average(yt, weights=wt)) ** 2))"]
     script = SEP.join([_head_code(P, sp, table_name, rows), engine_source(), '\n'.join(lines)])
-    return {'k': k, 'folds': per, 'folded': folded, 'overall': overall, 'kind': P.kind, 'splits': t.splits(), 'fold': fold.tolist(), 'script': script}
+    if by_column:
+        for e, v in zip(per, P.fold_values):
+            e['value'] = predictive.level_label(v)
+    return {'k': k, 'folds': per, 'folded': folded, 'overall': overall, 'kind': P.kind, 'splits': t.splits(), 'fold': fold.tolist(), 'script': script,
+            'by_column': sp['validation'] if by_column else None}
 
 
 def _profile_build(table, rows=None, **spec):
@@ -1428,19 +1831,34 @@ def _cart_r2(P, fitted, k):
     return cart_r2(np.asarray(fitted, dtype=float), P.target, P.w, P.sets, k, len(P.levels) if P.kind == 'categorical' else 0)
 
 
-def _cart_go(P, n0, n_max, ms, seed, root):
-    """Go for CART: a leaf added at a time until the validation RSquare has
-    not improved for 10 leaves; the number of leaves with the best."""
+def cart_cv_r2(P, n_leaves, ms, seed, fold):
+    """The crossvalidated RSquare of CART trees of n_leaves leaves: each fold of a K-fold Validation column
+    (fold: each row's fold, -1 none) predicted by the tree of as many leaves grown on the other folds."""
+    L = len(P.levels) if P.kind == 'categorical' else 0
+    pred = np.zeros((len(P.index), L)) if L else np.zeros(len(P.index))
+    for f in range(int(fold.max()) + 1):
+        held = fold == f
+        Q = _SetsView(P, np.where(held, 1, np.where(fold >= 0, 0, 2)))
+        pv = _cart_fitted(Q, _cart_model(Q, n_leaves, ms, seed), _cart_root(Q))
+        pred[held] = pv[held]
+    return cart_r2(pred, P.target, P.w, np.where(fold >= 0, 0, -1), 0, L)
+
+
+def _cart_go(P, n0, n_max, ms, seed, root, fold=None):
+    """Go for CART: a leaf added at a time until the validation RSquare (with a K-fold Validation column and no
+    validation rows, the crossvalidated one: cart_cv_r2) has not improved for 10 leaves; the number of leaves
+    with the best."""
+    cv = fold is not None and not P.has(1)
     trace, best, k_best = [], None, n0
     k = n0
     while k - k_best <= AHEAD and k <= n_max:
         f = _cart_fitted(P, _cart_model(P, k, ms, seed), root)
-        r = _cart_r2(P, f, 1)
-        trace.append({'splits': k - 1, **{predictive.SETS[q]: _cart_r2(P, f, q) for q in (0, 1, 2) if P.has(q)}})
+        r = cart_cv_r2(P, k, ms, seed, fold) if cv else _cart_r2(P, f, 1)
+        trace.append({'splits': k - 1, **{predictive.SETS[q]: _cart_r2(P, f, q) for q in (0, 1, 2) if P.has(q)}, **({'Crossvalidation': r} if cv else {})})
         if best is None or r > best + 1e-12:
             best, k_best = r, k
         k += 1
-    return k_best, {'start': n0 - 1, 'best': k_best - 1, 'trace': trace}
+    return k_best, {'start': n0 - 1, 'best': k_best - 1, 'trace': trace, 'folds': int(fold.max()) + 1 if cv else None}
 
 
 def _cart_grown(table, rows, sp):
@@ -1451,6 +1869,7 @@ def _cart_grown(table, rows, sp):
         full = _cart_model(P, 2 ** 20, ms, sp['seed'])
         n_max = 1 if full is None else int(full.get_n_leaves())
         n, notes, go = 1, [], None
+        fold = fold_index(P)
         for i, st in enumerate(sp['steps']):
             op = st.get('op')
             if op == 'split' and not st.get('node'):
@@ -1462,10 +1881,10 @@ def _cart_grown(table, rows, sp):
                     notes.append(f'Step {i + 1} (prune) was not done: there is no split to prune.')
                 n = max(1, n - 1)
             elif op == 'go':
-                if not P.has(1):
+                if not P.has(1) and fold is None:
                     notes.append(f'Step {i + 1} (go) was not done: Go needs validation rows (a Validation column or a validation portion).')
                     continue
-                n, go = _cart_go(P, n, n_max, ms, sp['seed'], root)
+                n, go = _cart_go(P, n, n_max, ms, sp['seed'], root, fold)
             else:
                 notes.append(f'Step {i + 1} ({op}) was not done: CART grows the whole tree best first, so it splits and prunes the tree, not one node.')
         if sp['steps'] and sp['steps'][-1].get('op') != 'go':
@@ -1581,11 +2000,29 @@ def cart_boxes(model, X, y, w, cnt, train, L, features, columns, root=None):
 
 def cart_history(model, X, y, w, sets, nodes, root, L):
     """Each set's RSquare (cart_r2) after 0, 1, ... splits of a CART tree, in the order best-first growth
-    made them: the rows that reach a new pair of children take the children's rates (or means)."""
+    made them: the rows that reach a new pair of children take the children's rates (or means). And the
+    training rows' AICc (under 'aicc'): -2 log L + 2k + 2k(k + 1)/(N - k - 1), L normal with variance SSE/N
+    and k the leaves' means and the variance, or L the product of each row's rate of its level and k the
+    leaves' rates (all but one level's); N the rows' weight."""
+    import math
     import numpy as np
+    wt = np.ones(len(y)) if w is None else w
+    tr = sets == 0
+
+    def aicc(pred, leaves):
+        N = float(wt[tr].sum())
+        if L:
+            m2ll = -2 * float(np.sum(wt[tr] * np.log(np.clip(pred[tr][np.arange(int(tr.sum())), y[tr]], 1e-15, 1))))
+            k = leaves * (L - 1)
+        else:
+            sse = float(np.sum(wt[tr] * (y[tr] - pred[tr]) ** 2))
+            if not sse > 0:
+                return math.nan
+            m2ll, k = N * (math.log(2 * math.pi * sse / N) + 1), leaves + 1
+        return m2ll + 2 * k + (2 * k * (k + 1) / (N - k - 1) if N - k - 1 > 0 else math.nan)
     pred = np.tile(root, (len(y), 1)) if L else np.full(len(y), float(root))
     present = [k for k in (0, 1, 2) if np.any(sets == k)]
-    out = [{k: cart_r2(pred, y, w, sets, k, L) for k in present}]
+    out = [{**{k: cart_r2(pred, y, w, sets, k, L) for k in present}, 'aicc': aicc(pred, 1)}]
     if model is None:
         return out
     t = model.tree_
@@ -1602,7 +2039,7 @@ def cart_history(model, X, y, w, sets, nodes, root, L):
     for d in sorted((d for d in nodes if d['split']), key=lambda d: d['split']['order']):
         for ch in (d['path'] + 'L', d['path'] + 'R'):
             pred[path[:, number[ch]].nonzero()[0]] = np.array(by[ch]['probs']) if L else by[ch]['mean']
-        out.append({k: cart_r2(pred, y, w, sets, k, L) for k in present})
+        out.append({**{k: cart_r2(pred, y, w, sets, k, L) for k in present}, 'aicc': aicc(pred, len(out) + 1)})
     return out
 
 
@@ -1618,15 +2055,14 @@ def _cart_nodes(P, c):
 
 def _cart_history(P, c, nodes, leaf_rows):
     """RSquare per set after each split, in best-first order (cart_history)."""
-    h = cart_history(c.model, P.X, P.target, P.w, P.sets, nodes, c._root_value, c.L)
-    return [{'splits': i, **{predictive.SETS[k]: v for k, v in e.items()}} for i, e in enumerate(h)]
+    return _history_rows(cart_history(c.model, P.X, P.target, P.w, P.sets, nodes, c._root_value, c.L))
 
 
 def _cart_code(P, c, sp, table_name, rows, group):
     n = 1 if c.model is None else int(c.model.get_n_leaves())
     head = '\n'.join(P.code(table_name, rows, extra_imports=('from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor, export_text',)))
     kind = 'DecisionTreeClassifier(criterion="log_loss", ' if P.kind == 'categorical' else 'DecisionTreeRegressor('
-    lines = [f'# Partition for {P.y}{f" ({group})" if group else ""} by CART: {n} leaves, grown best first']
+    lines = [f'# Partition for {P.y}{f" ({one_line(group)})" if group else ""} by CART: {n} leaves, grown best first']
     if n < 2:
         lines.append('print("no split: every row in one leaf")')
     else:
@@ -1672,10 +2108,11 @@ def cart_fit(table, y, x, rows=None, group=None, plot=None, table_name='data', *
         r['splits'] = count[r['column']]
     contrib['plot_code'] = '\n'.join(_contrib_lines(P) + predictive.contribution_lines(len(P.x)))
     rep['plots'].update(_plots(P, head, plot or {}, len(leaf_json), c.go is not None, True))
+    hist = _cart_history(P, c, nodes, leaf_rows)
     return {'kind': P.kind, 'y': P.y, 'levels': list(P.labels), 'nodes': nodes, 'leaves': leaf_json,
             'assign': {'rows': P.index.tolist(), 'leaf': leaf_of.tolist(), 'set': P.sets.tolist(), 'y': P.target.tolist()},
-            'fit': rep, 'summary': _summary(P, splits, rep), 'history': _cart_history(P, c, nodes, leaf_rows), 'go': c.go,
-            'contributions': contrib, 'splits': splits, 'minsize': c.ms, 'notes': list(c.notes), 'has_validation': bool(P.has(1)),
+            'fit': rep, 'summary': _summary(P, splits, rep, hist[-1].get('aicc')), 'history': hist, 'go': c.go,
+            'contributions': contrib, 'splits': splits, 'minsize': c.ms, 'notes': list(c.notes), 'has_validation': bool(P.has(1)), 'folds': _folds_json(P),
             'columns': [{'name': e['name'], 'kind': e['type']} for e in P.enc], 'method': 'cart',
             'script': _cart_code(P, c, sp, table_name, rows, group)}
 
@@ -1712,14 +2149,18 @@ def cart_leaves(table, y, x, rows=None, **kw):
 def cart_kfold(table, y, x, rows=None, k=5, group=None, table_name='data', **kw):
     """K Fold Crossvalidation of a CART tree with as many leaves as the report's."""
     sp, P, c = _cart_payload(table, y, x, rows, kw)
-    k = int(k)
+    by_column = P.folds is not None
+    k = int(P.k) if by_column else int(k)
     tr = np.flatnonzero(P.train())
-    if not 2 <= k <= len(tr):
+    if not by_column and not 2 <= k <= len(tr):
         raise ValueError(f'the number of folds is from 2 to the number of training rows ({len(tr)})')
     seed = sp['seed'] if sp['seed'] is not None else 0
     n = 1 if c.model is None else int(c.model.get_n_leaves())
-    fold = np.full(len(P.index), -1)
-    fold[tr] = np.random.default_rng([int(seed), 2]).permutation(np.arange(len(tr)) % k)
+    if by_column:
+        fold = fold_index(P)
+    else:
+        fold = np.full(len(P.index), -1)
+        fold[tr] = np.random.default_rng([int(seed), 2]).permutation(np.arange(len(tr)) % k)
     L = c.L
     pred = np.zeros((len(P.index), L)) if L else np.zeros(len(P.index))
     per = []
@@ -1733,10 +2174,14 @@ def cart_kfold(table, y, x, rows=None, k=5, group=None, table_name='data', **kw)
         pred[held] = pv[held]
         per.append({'fold': f + 1, 'n': float(P.counts(held).sum()), 'splits': (1 if m is None else int(m.get_n_leaves())) - 1, 'rsquare': _cart_r2(Q, pv, 1)})
     folded, overall = next(m for m in predictive.measures(P, pred) if m['set'] == 'Training'), next(m for m in predictive.measures(P, _cart_fitted(P, c.model, c._root_value)) if m['set'] == 'Training')
-    lines = [f'# K Fold Crossvalidation{f" ({group})" if group else ""}: {k} folds of the training rows, each a CART tree of {n} leaves',
-             'tr = np.flatnonzero(train)', 'fold = np.full(len(y), -1)',
-             f'fold[tr] = np.random.default_rng([{int(seed)}, 2]).permutation(np.arange(len(tr)) % {k})',
-             'pred = np.zeros(' + (f'(len(y), {L}))' if L else 'len(y))')]
+    what = f'the {k} folds of {sp["validation"]}' if by_column else f'{k} folds of the training rows'
+    lines = [f'# K Fold Crossvalidation{f" ({one_line(group)})" if group else ""}: {what}, each a CART tree of {n} leaves']
+    if by_column:
+        lines.append('fold = folds   # the folds of the Validation column')
+    else:
+        lines += ['tr = np.flatnonzero(train)', 'fold = np.full(len(y), -1)',
+                  f'fold[tr] = np.random.default_rng([{int(seed)}, 2]).permutation(np.arange(len(tr)) % {k})']
+    lines.append('pred = np.zeros(' + (f'(len(y), {L}))' if L else 'len(y))'))
     kind = 'DecisionTreeClassifier(criterion="log_loss", ' if L else 'DecisionTreeRegressor('
     lines += [f'for f in range({k}):', '    fit_rows = (fold >= 0) & (fold != f)',
               f'    model = {kind}max_leaf_nodes={max(2, n)}, min_samples_leaf={max(1, int(math.ceil(c.ms)))}, random_state={int(seed)})',
@@ -1746,7 +2191,11 @@ def cart_kfold(table, y, x, rows=None, k=5, group=None, table_name='data', **kw)
     if not L:
         lines.append("print('Folded RSquare', 1 - np.sum(wt * (y[train] - pred[train]) ** 2) / np.sum(wt * (y[train] - np.average(y[train], weights=wt)) ** 2))")
     head = '\n'.join(P.code(table_name, rows, extra_imports=('from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor',)))
-    return {'k': k, 'folds': per, 'folded': folded, 'overall': overall, 'kind': P.kind, 'splits': n - 1, 'fold': fold.tolist(), 'script': SEP.join([head, '\n'.join(lines)])}
+    if by_column:
+        for e, v in zip(per, P.fold_values):
+            e['value'] = predictive.level_label(v)
+    return {'k': k, 'folds': per, 'folded': folded, 'overall': overall, 'kind': P.kind, 'splits': n - 1, 'fold': fold.tolist(), 'script': SEP.join([head, '\n'.join(lines)]),
+            'by_column': sp['validation'] if by_column else None}
 
 
 class _SetsView:

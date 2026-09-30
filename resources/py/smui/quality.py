@@ -40,7 +40,7 @@ from scipy import optimize, special, stats
 
 from . import data
 from .registry import api
-from .util import code_head, col, table as rtable
+from .util import code_head, col, one_line, table as rtable
 
 # ---------------------------------------------------------------------------
 # The constants of control charts
@@ -267,7 +267,7 @@ def keep_lines(table, rows, where=None):
             match &= np.asarray(raw, dtype=float) == float(v)
         else:
             match &= np.array([x == v for x in raw], dtype=bool)
-        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {c} is {_value_text(table, c, v)}')
+        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {one_line(c)} is {one_line(_value_text(table, c, v))}')
     if rows is not None:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True
@@ -617,7 +617,7 @@ def _cusum_arl(k, h, shift):
 def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None, n_trials=None, subgroup_size=None,
                   sigma=None, k=3.0, mr_span=2, known_mean=None, known_sigma=None, lam=0.2, ewma_l=3.0, target=None,
                   cusum_h=4.0, cusum_k=0.5, head_start=False, tests=None, test_n=None, dispersion_tests=False,
-                  spec=None, alpha=0.05, where=None, plot=None, table_name='data'):
+                  spec=None, alpha=0.05, where=None, plot=None, alarm=False, table_name='data'):
     """One process column: the points, center lines, limits and zones of each
     chart, the tests, the limit summaries and (with spec limits) a short
     capability analysis. where: the By group's (for the code); plot: the
@@ -824,6 +824,7 @@ def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None
     chosen = sorted({int(t) for t in (tests or [])})
     for pn in panels:
         pn['tests'] = [[] for _ in range(nu)]
+        pn['tests_used'] = []
         if not chosen:
             continue
         use = chosen if (pn['zones'] and pn['tested']) else ([1] if 1 in chosen else [])
@@ -831,6 +832,7 @@ def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None
             use = [t for t in chosen if t in (2, 3, 4)]
         if pn['key'] in ('r', 's', 'mr') and not pn['tested']:
             use = [1] if 1 in chosen else []
+        pn['tests_used'] = list(use)   # the tests this chart runs (the Alarm Report's enabled tests)
         if not use:
             continue
         flags = [[] for _ in range(nu)]
@@ -909,6 +911,9 @@ def control_chart(table, y, rows=None, chart='xbar_r', subgroup=None, phase=None
     if plot is not None:
         out['plot_code'] = _chart_plot(table, rows, where, table_name, out, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span,
                                        lam, ewma_l, cusum_h, cusum_k, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot)
+    if alarm and chosen:
+        out['alarm_code'] = _chart_plot(table, rows, where, table_name, out, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span,
+                                        lam, ewma_l, cusum_h, cusum_k, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot or {}, alarm=True)
     return out
 
 
@@ -1069,13 +1074,45 @@ def _tests_code(chosen, nn, k):
     return L
 
 
+# The Alarm Report's code writes the place of the process's first chart in the
+# report (the charts are numbered from the top, over every process): the page
+# writes it into this line.
+ALARM_FIRST = 'first = 1   # the place of this process\'s first chart in the report, from the top'
+
+
+def _alarm_lines(res, names, S, table):
+    """The Alarm Report's lines after the charts' frames and tests: each
+    chart's samples with a value, those that fail a chosen test (out of
+    control), the alarm rate, and the samples out of control with their tests."""
+    titles = [pn['title'] for pn in res['panels']]
+    L = [f'm = len({names[0]})']
+    if S:
+        L.append(f'labels = d.groupby("point")[{J(S)}].first().map({_lab(table, S)}).to_list()   # the samples, as the page labels them')
+    else:
+        L.append('labels = [str(i + 1) for i in range(m)]   # the samples: their numbers')
+    pairs = ', '.join(f'({J(t)}, {nm})' for t, nm in zip(titles, names))
+    L += [ALARM_FIRST,
+          'report = []',
+          f'for position, (name, c) in enumerate(({pairs}{"," if len(names) == 1 else ""}), start=first):   # each chart',
+          '    v = c["value"].to_numpy(float)',
+          '    ok = np.isfinite(v)   # the samples with a value',
+          '    out = np.array([bool(t) for t in c["tests"]], dtype=bool) & ok   # out of control: failing a chosen test',
+          '    report.append((position, name, int(ok.sum()), int(out.sum()), out.sum() / ok.sum() if ok.sum() else np.nan))',
+          '    for i in np.flatnonzero(out):   # the samples out of control, and their tests',
+          '        print(position, name, labels[i], "tests", c["tests"][i])',
+          'print(pd.DataFrame(report, columns=["Position", "Chart", "Samples", "Total Samples Out of Control", "Alarm Rate"]))']
+    return L
+
+
 def _chart_plot(table, rows, where, table_name, res, y, chart, subgroup, phase, n_trials, subgroup_size, method, k, span,
-                lam, ewma_l, h, kk, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot):
+                lam, ewma_l, h, kk, head_start, known_mean, known_sigma, target, chosen, nn, dispersion_tests, plot, alarm=False):
     """The control chart as the page draws it (smui-p-quality.js chartFigure):
     the points in the order of the subgroups' levels, each phase with its own
     sigma, center line and limits, the chosen tests (a failing point red with
     its tests' numbers), the zones and their shading when shown, the limits'
-    values at the right, the phases named above their dashed lines."""
+    values at the right, the phases named above their dashed lines. alarm:
+    the Alarm Report's code instead, the same charts and tests without the
+    drawing (_alarm_lines)."""
     o = lambda key, dflt=True: bool(plot.get(key, dflt))  # noqa: E731
     show_zones, shade, show_limits, show_center = o('zones', False), o('shade', False), o('limits'), o('center')
     Y, S, P, N = y, subgroup, phase, n_trials
@@ -1394,11 +1431,16 @@ def _chart_plot(table, rows, where, table_name, res, y, chart, subgroup, phase, 
     b(f'axes[-1].set_xlabel({J(x_title)})')
     b(f'fig.suptitle({J(plot.get("title") or _chart_title(res))}, fontsize=10)')
     b('plt.show()')
+    if alarm:
+        body = _alarm_lines(res, names, S, table)
     if need_tests:   # the tests' function just before the chart's, which calls it
         at = L.index('def chart(s):')
         L[at:at] = _tests_code(chosen, nn, k) + ['']
     all_lines = L + [''] + body
-    head = _head(table, rows, where, table_name, _with_imports(all_lines, table_name))
+    imports = _with_imports(all_lines, table_name)
+    if alarm:
+        imports = [i for i in imports if i != PLT]
+    head = _head(table, rows, where, table_name, imports)
     return '\n'.join(head + all_lines)
 
 

@@ -190,6 +190,86 @@ check.near('Sequential Tests (light*light)', seq['light*light']['ss'], float(a1.
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 vif = {x['term']: x['vif'] for x in r['estimates']['rows']}
 check.near('VIF of light', vif['light'], float(variance_inflation_factor(ref.model.exog, list(ref.params.index).index('l'))), rel=1e-9)
+# Std Beta: the slopes of the fit to standardized Y and design columns; Design Std Error: the standard errors over RMSE
+Xs_ = ref.model.exog[:, 1:]
+Zs_ = (Xs_ - Xs_.mean(0)) / Xs_.std(0, ddof=1)
+zy_ = (ref.model.endog - ref.model.endog.mean()) / ref.model.endog.std(ddof=1)
+rz_ = sm.OLS(zy_, sm.add_constant(Zs_)).fit()
+names_ = list(ref.params.index)
+want_sb = {nm: float(v) for nm, v in zip(names_[1:], rz_.params[1:])}
+by_term = {'fertilizer[A]': 'C(f, Sum)[S.A]', 'fertilizer[B]': 'C(f, Sum)[S.B]', 'water[low]': 'C(w, Sum)[S.low]', 'light': 'l',
+           'fertilizer[A]*water[low]': 'C(f, Sum)[S.A]:C(w, Sum)[S.low]', 'fertilizer[B]*water[low]': 'C(f, Sum)[S.B]:C(w, Sum)[S.low]',
+           f'({"light"}-{lm:g})*({"light"}-{lm:g})': f'I((l - {lm!r}) ** 2)'}
+est_rows = {x['term']: x for x in r['estimates']['rows']}
+check('the optional columns Std Beta, VIF and Design Std Error are in the table', [c_['key'] for c_ in r['estimates']['columns']][-3:], ['std_beta', 'vif', 'design_se'])
+check.near('Std Beta = the slopes on standardized columns (every term)', max(abs(est_rows[t_]['std_beta'] - want_sb[k_]) for t_, k_ in by_term.items() if t_ in est_rows), 0.0, abs_=1e-10)
+check('  every term found', sum(t_ in est_rows for t_ in by_term), 7)
+check('  none for the intercept', est_rows['Intercept']['std_beta'], None)
+dse_ = ref.bse / math.sqrt(ref.scale)
+check.near('Design Std Error = Std Error / RMSE (every term)', max(abs(est_rows[t_]['design_se'] - float(dse_[k_])) for t_, k_ in by_term.items() if t_ in est_rows), 0.0, abs_=1e-10)
+rmse_ = {x['stat']: x['value'] for x in r['summary']['rows']}['Root Mean Square Error']
+check.near('  the intercept\'s (at x = 0) too', est_rows['Intercept']['design_se'], est_rows['Intercept']['se'] / rmse_, rel=1e-10)
+# weighted: the WLS of the weighted standardized columns (their weighted means and sums of squares)
+wv_ = np.random.default_rng(12).uniform(0.5, 2, n)
+tw_ = table({'fertilizer': fert.tolist(), 'light': light.tolist(), 'yield': yv.tolist(), 'w': wv_.tolist()})
+rw_ = call('fitmodel.ls', table=tw_, y='yield', effects=[{'names': ['fertilizer']}, {'names': ['light']}], weight='w', vif=True)
+dw_ = pd.DataFrame({'f': fert[ok], 'l': light[ok], 'y': yv[ok], 'w': wv_[ok]})
+refw_ = smf.wls('y ~ C(f, Sum) + l', dw_, weights=dw_['w']).fit()
+Xw_, yw_, ww_ = refw_.model.exog, refw_.model.endog, dw_['w'].to_numpy()
+zc = lambda v: (v - np.average(v, weights=ww_)) / math.sqrt(np.sum(ww_ * (v - np.average(v, weights=ww_)) ** 2))
+rzw_ = sm.WLS(zc(yw_), sm.add_constant(np.column_stack([zc(Xw_[:, j]) for j in range(1, Xw_.shape[1])])), weights=ww_).fit()
+check.near('Std Beta with a Weight: the WLS of the weighted standardized columns', {x['term']: x for x in rw_['estimates']['rows']}['light']['std_beta'], float(rzw_.params[-1]), rel=1e-10)
+# Expanded Estimates: every level, the last minus the sum of the others; a main effect's = its LS mean less the average of the LS means
+rx_ = call('fitmodel.ls', table=tid, y='yield', effects=E, expanded=True, indicator=True, table_name='plants')
+ex_ = {x['term']: x for x in rx_['expanded']['rows']}
+check('Expanded Estimates: the terms of each level (and combination)', [x['term'] for x in rx_['expanded']['rows']],
+      ['Intercept', 'fertilizer[A]', 'fertilizer[B]', 'fertilizer[C]', 'water[low]', 'water[high]', 'light', 'fertilizer[A]*water[low]', 'fertilizer[A]*water[high]',
+       'fertilizer[B]*water[low]', 'fertilizer[B]*water[high]', 'fertilizer[C]*water[low]', 'fertilizer[C]*water[high]', f'(light-{lm:g})*(light-{lm:g})'])
+lsm_f = np.array(r['lsmeans']['fertilizer']['lsmean'])
+check.near('  fertilizer[level] = its LS mean - the average LS mean (all three)', max(abs(ex_[f'fertilizer[{lv_}]']['estimate'] - (lsm_f[i_] - lsm_f.mean())) for i_, lv_ in enumerate('ABC')), 0.0, abs_=1e-10)
+bref = ref.params
+Vref = ref.cov_params()
+check.near('  fertilizer[C] = -(A + B), its SE from the covariance', ex_['fertilizer[C]']['se'],
+           math.sqrt(float(Vref.loc['C(f, Sum)[S.A]', 'C(f, Sum)[S.A]'] + Vref.loc['C(f, Sum)[S.B]', 'C(f, Sum)[S.B]'] + 2 * Vref.loc['C(f, Sum)[S.A]', 'C(f, Sum)[S.B]'])), rel=1e-10)
+check.near('  fertilizer[C]*water[high] = A*low + B*low', ex_['fertilizer[C]*water[high]']['estimate'],
+           float(bref['C(f, Sum)[S.A]:C(w, Sum)[S.low]'] + bref['C(f, Sum)[S.B]:C(w, Sum)[S.low]']), rel=1e-10)
+check.near('  fertilizer[A]*water[high] = -A*low', ex_['fertilizer[A]*water[high]']['estimate'], -float(bref['C(f, Sum)[S.A]:C(w, Sum)[S.low]']), rel=1e-10)
+check.near('  the terms of the Parameter Estimates are the same', max(abs(ex_[t_]['estimate'] - est_rows[t_]['estimate']) + abs(ex_[t_]['se'] - est_rows[t_]['se']) for t_ in est_rows), 0.0, abs_=1e-10)
+tx_ = ex_['fertilizer[C]']
+check.near('  its t Ratio and p on the error DF', abs(tx_['t'] - tx_['estimate'] / tx_['se']) + abs(tx_['p'] - 2 * stats.t.sf(abs(tx_['t']), ref.df_resid)), 0.0, abs_=1e-12)
+# Indicator Parameterization Estimates: statsmodels' fit with Treatment coding, the last level the reference
+ri_ = smf.ols(f"y ~ C(f, Treatment('C')) + C(w, Treatment('high')) + l + C(f, Treatment('C')):C(w, Treatment('high')) + I((l - {lm!r})**2)", df).fit()
+ind_ = {x['term']: x for x in rx_['indicator']['rows']}
+ikey = {'Intercept': 'Intercept', 'fertilizer[A]': "C(f, Treatment('C'))[T.A]", 'fertilizer[B]': "C(f, Treatment('C'))[T.B]", 'water[low]': "C(w, Treatment('high'))[T.low]",
+        'light': 'l', 'fertilizer[A]*water[low]': "C(f, Treatment('C'))[T.A]:C(w, Treatment('high'))[T.low]",
+        'fertilizer[B]*water[low]': "C(f, Treatment('C'))[T.B]:C(w, Treatment('high'))[T.low]", f'(light-{lm:g})*(light-{lm:g})': f'I((l - {lm!r}) ** 2)'}
+check('Indicator Parameterization: a line per parameter, the same fit (no refit)', (sorted(ind_) == sorted(ikey), rx_['indicator'].get('refit')), (True, False))
+check.near('  estimates = statsmodels with Treatment coding (the last level the reference)', max(abs(ind_[t_]['estimate'] - float(ri_.params[k_])) for t_, k_ in ikey.items()), 0.0, abs_=1e-9)
+check.near('  standard errors', max(abs(ind_[t_]['se'] - float(ri_.bse[k_])) for t_, k_ in ikey.items()), 0.0, abs_=1e-9)
+check.near('  p-values', max(abs(ind_[t_]['p'] - float(ri_.pvalues[k_])) for t_, k_ in ikey.items()), 0.0, abs_=1e-9)
+for key_ in ('indicator', 'expanded'):
+    ns_, err_ = run_code(rx_[key_]['code'].replace('print(', '(lambda *a, **k: None)('), pd.DataFrame({'fertilizer': fert, 'water': water, 'light': light, 'yield': yv}), 'plants')
+    check(f'  the code of the {key_} estimates runs', err_, None)
+    if not err_ and key_ == 'indicator':
+        check.near('  its fit has the report\'s estimates', max(abs(float(ns_['fit_i'].params.iloc[j_]) - ind_[t_]['estimate']) for j_, t_ in enumerate(
+            ['Intercept', 'fertilizer[A]', 'fertilizer[B]', 'water[low]', 'fertilizer[A]*water[low]', 'fertilizer[B]*water[low]', 'light', f'(light-{lm:g})*(light-{lm:g})'])), 0.0, abs_=1e-9)
+    if not err_ and key_ == 'expanded':
+        Lc_ = ns_['expanded']
+        bb_, VV_ = ns_['b'], ns_['V']
+        got_ = []
+        for t_, wts in Lc_.items():
+            L_ = np.zeros(len(bb_)); L_[[int(k) for k in wts]] = list(wts.values())
+            got_.append(abs(L_ @ bb_ - ex_[t_]['estimate']) + abs(math.sqrt(L_ @ VV_ @ L_) - ex_[t_]['se']))
+        check.near('  its weights give the report\'s estimates and standard errors', max(got_), 0.0, abs_=1e-9)
+# robust standard errors carry over to the indicator coding (HC3 is equivariant under a change of basis)
+rr_ = call('fitmodel.ls', table=tid, y='yield', effects=E, indicator=True, robust={'type': 'HC3'})
+ri3 = ri_.get_robustcov_results(cov_type='HC3')
+check.near('Indicator Parameterization with HC3 = statsmodels\' HC3 of the Treatment fit', max(abs({x['term']: x for x in rr_['indicator']['rows']}[t_]['se'] - float(ri3.bse[list(ri_.params.index).index(k_)])) for t_, k_ in ikey.items()), 0.0, abs_=1e-9)
+# a crossing without its effects: the indicator coding is fitted as a model of its own when it spans another
+rn_ = call('fitmodel.ls', table=tid, y='yield', effects=[{'names': ['water']}, {'names': ['fertilizer', 'water']}], indicator=True)
+rnd = smf.ols("y ~ C(w, Treatment('high')) + C(f, Treatment('C')):C(w, Treatment('high'))", df).fit()
+check.near('a crossing without one of its effects: the indicator estimates are the Treatment fit\'s (patsy\'s coding of the crossing)',
+           float(np.max(np.abs(np.sort([x['estimate'] for x in rn_['indicator']['rows']]) - np.sort(rnd.params.to_numpy())))), 0.0, abs_=1e-8)
 inf = ref.get_influence()
 dg = r['diag']
 check.near('hats', maxdiff(dg['hat'], inf.hat_matrix_diag), 0.0, abs_=1e-12)
@@ -298,6 +378,41 @@ tt2 = fit4.t_test('2*C(g, Sum)[S.a] + 2*C(g, Sum)[S.b] = 0')
 check.near('contrast t test', ct['rows'][1]['t'], float(np.squeeze(tt2.tvalue)), rel=1e-9)
 L2 = np.array([[0, 1, -1, 0], [0, 2, 2, 0]], dtype=float)
 check.near('contrasts: joint F', ct['joint']['f'], float(np.squeeze(fit4.f_test(L2).fvalue)), rel=1e-9)
+# LSMeans Test Slices (the slices are WP2's mixed._slices): the F tests of statsmodels' f_test on the cell contrasts
+E_sl = [{'names': ['fertilizer']}, {'names': ['water']}, {'names': ['light']}, {'names': ['fertilizer', 'water']}]
+rsl = call('fitmodel.slices', table=tid, y='yield', effects=E_sl, effect='fertilizer*water', table_name='plants')
+fsl = smf.ols('y ~ C(f, Sum) + C(w, Sum) + l + C(f, Sum):C(w, Sum)', df).fit()
+
+
+def cell_row(fv, wv):
+    g_ = pd.DataFrame({'f': [fv], 'w': pd.Categorical([wv], ['low', 'high']), 'l': [float(df['l'].mean())]})
+    return np.asarray(patsy.build_design_matrices([fsl.model.data.design_info], g_)[0])[0]
+
+
+sl_ = {x['slice']: x for x in rsl['rows']}
+check('Test Slices: a slice per level of each factor', sorted(sl_), sorted(['fertilizer=A', 'fertilizer=B', 'fertilizer=C', 'water=low', 'water=high']))
+for fv in 'ABC':
+    ft = fsl.f_test(np.array([cell_row(fv, 'high') - cell_row(fv, 'low')]))
+    check.near(f'  fertilizer={fv}: F = statsmodels\' f_test of high − low', sl_[f'fertilizer={fv}']['f'], float(np.squeeze(ft.fvalue)), rel=1e-9)
+for wv in ('low', 'high'):
+    ft = fsl.f_test(np.array([cell_row('B', wv) - cell_row('A', wv), cell_row('C', wv) - cell_row('A', wv)]))
+    check.near(f'  water={wv}: F on 2 DF = f_test of B − A and C − A', sl_[f'water={wv}']['f'], float(np.squeeze(ft.fvalue)), rel=1e-9)
+    check.near(f'  water={wv}: its p', sl_[f'water={wv}']['p'], float(ft.pvalue), rel=1e-7)
+    check('  its DF', (sl_[f'water={wv}']['dfnum'], sl_[f'water={wv}']['dfden']), (2, float(fsl.df_resid)))
+dt_ = sl_['water=low']['detail']
+check.near('  Test Detail: C,low − A,low = the difference of their LS means', dt_[1]['estimate'], float((cell_row('C', 'low') - cell_row('A', 'low')) @ fsl.params.to_numpy()), rel=1e-9)
+check.near('  its t Ratio² with one DF is its own slice F', dt_[1]['t'] ** 2, float(np.squeeze(fsl.f_test(np.array([cell_row('C', 'low') - cell_row('A', 'low')])).fvalue)), rel=1e-9)
+ns_sl, err_sl = run_code(rsl['code'], pd.DataFrame({'fertilizer': fert, 'water': water, 'light': light, 'yield': yv}), 'plants')
+check('  the code of Test Slices runs', err_sl, None)
+check('a main effect has no slices', 'error' in call('fitmodel.slices', table=tid, y='yield', effects=E_sl, effect='fertilizer'), True)
+rls_ = call('fitmodel.ls', table=tid, y='yield', effects=E_sl)
+lf_ = rls_['lsmeans']['fertilizer']
+check.near('LSMeans Table: Lower and Upper = LS mean ∓ t se on the error DF', maxdiff(lf_['lower'], np.asarray(lf_['lsmean']) - stats.t.ppf(0.975, rls_['dfe']) * np.asarray(lf_['se'])) + maxdiff(lf_['upper'], np.asarray(lf_['lsmean']) + stats.t.ppf(0.975, rls_['dfe']) * np.asarray(lf_['se'])), 0.0, abs_=1e-10)
+check('  the interaction offers Test Slices, a main effect not', (rls_['lsmeans']['fertilizer*water']['slices'], rls_['lsmeans']['fertilizer']['slices']), (True, False))
+# the LSMeans Plot's code follows Transpose Factors and Show Confidence Limits (the page sets the two flags)
+pc_ = rls_.get('plot_code', {}).get('lsmeans', {}).get('fertilizer*water', '')
+check('  the LSMeans Plot code carries the Transpose Factors and Show Confidence Limits flags', ('transpose = False' in pc_, 'show_ci = True' in pc_), (True, True))
+
 # Box-Cox, intercept only: the profile likelihood is scipy's boxcox_llf
 xbc = rng.normal(size=50)
 ypos = np.exp(1 + 0.3 * xbc + rng.normal(0, 0.5, 50))
@@ -348,8 +463,81 @@ check.near('profiler trace value at level C = the current prediction', trf['pred
 it = call('fitmodel.interaction', table=tid, kind='ls', y='yield', effects=E)
 cell = [c for c in it['cells'] if it['factors'][c['row']] == 'water' and it['factors'][c['col']] == 'fertilizer'][0]
 check.near('interaction plot: the LS mean of C,high', cell['lines'][1]['y'][2], lsi['lsmean'][5], rel=1e-9)
+# ---- a singular design, as JMP: the columns that are combinations of earlier ones Zeroed, the ones they equal Biased ------
+rng_s = np.random.default_rng(1)
+ns_ = 40
+s1, s2 = rng_s.normal(size=ns_), rng_s.normal(size=ns_)
+s3 = 2 * s1 + s2
+sg = np.repeat(['a', 'b', 'c', 'd'], 10)
+sh = np.where(np.isin(sg, ['a', 'b']), 'u', 'v')   # h is a function of g: aliased with it
+sy = 1 + s1 + 0.5 * s2 + (sg == 'c') * 1.0 + rng_s.normal(size=ns_)
+frame_s = pd.DataFrame({'x1': s1, 'x2': s2, 'x3': s3, 'g': sg, 'h': sh, 'y': sy})
+ts_ = table({c_: frame_s[c_].tolist() for c_ in frame_s})
+rs_ = call('fitmodel.ls', table=ts_, y='y', effects=[{'names': ['x1']}, {'names': ['x2']}, {'names': ['x3']}], vif=True, table_name='sing')
+er_ = {x['term']: x for x in rs_['estimates']['rows']}
+check('x3 = 2 x1 + x2: x3 Zeroed, x1 and x2 Biased', [er_[t_].get('bias') for t_ in ('Intercept', 'x1', 'x2', 'x3')], ['', 'Biased', 'Biased', 'Zeroed'])
+red_ = smf.ols('y ~ x1 + x2', frame_s).fit()
+check.near('  the kept estimates are the fit without the zeroed column', max(abs(er_[t_]['estimate'] - float(red_.params[k_])) for t_, k_ in [('Intercept', 'Intercept'), ('x1', 'x1'), ('x2', 'x2')]), 0.0, abs_=1e-10)
+check.near('  and their standard errors', max(abs(er_[t_]['se'] - float(red_.bse[k_])) for t_, k_ in [('Intercept', 'Intercept'), ('x1', 'x1'), ('x2', 'x2')]), 0.0, abs_=1e-10)
+check('  the zeroed estimate is 0 with no standard error, t or p', (er_['x3']['estimate'], er_['x3']['se'], er_['x3']['t'], er_['x3']['p']), (0.0, None, None, None))
+check('  Singularity Details', [x['equation'] for x in rs_['singularity']['rows']], ['x3 = 2·x1 + x2'])
+et_s = {x['source']: x for x in rs_['effect_tests']['rows']}
+check('  Effect Tests: x3 has no DF left (LostDFs 1), no test', (et_s['x3']['df'], et_s['x3']['lost'], et_s['x3']['stat']), (0, 1, None))
+check.near('  x1\'s F = t² of the reduced fit', et_s['x1']['stat'], float(red_.tvalues['x1'] ** 2), rel=1e-10)
+check('  the column LostDFs', 'lost' in [c_['key'] for c_ in rs_['effect_tests']['columns']], True)
+check.near('  the fit is any solution\'s: RSquare', {x['stat']: x['value'] for x in rs_['summary']['rows']}['RSquare'], float(red_.rsquared), rel=1e-12)
+ns1, err1 = run_code(rs_['code'], frame_s, 'sing')
+check('  the code runs', err1, None)
+if not err1:
+    check.near('  and zeroes the same column (its b)', float(np.max(np.abs(ns1['b'] - np.array([er_[t_]['estimate'] for t_ in ('Intercept', 'x1', 'x2', 'x3')])))), 0.0, abs_=1e-10)
+ns2, err2 = run_code(rs_['singularity']['code'], frame_s, 'sing')
+check('  the code of Singularity Details runs', err2, None)
+sv_ = call('fitmodel.save', table=ts_, kind='ls', y=['y'], effects=[['x1'], ['x2'], ['x3']])
+check.near('  the saved predictions are the reduced fit\'s', float(np.max(np.abs(np.array(sv_['columns']['predicted']) - red_.fittedvalues.to_numpy()))), 0.0, abs_=1e-10)
+# an aliased factor: in the order g, h the h column is zeroed; in the order h, g the last g column is, and g loses a DF
+rg_ = call('fitmodel.ls', table=ts_, y='y', effects=[{'names': ['g']}, {'names': ['h']}, {'names': ['x1']}])
+eg_ = {x['term']: x for x in rg_['estimates']['rows']}
+check('g then h: h[u] Zeroed, g\'s columns Biased', [eg_[t_]['bias'] for t_ in ('g[a]', 'g[b]', 'g[c]', 'h[u]', 'x1')], ['Biased', 'Biased', 'Biased', 'Zeroed', ''])
+check('  h[u] = g[a] + g[b] − g[c]', rg_['singularity']['rows'][0]['equation'], 'h[u] = g[a] + g[b] − g[c]')
+redg = smf.ols('y ~ C(g, Sum) + x1', frame_s).fit()
+check.near('  the estimates of the fit without h', max(abs(eg_[t_]['estimate'] - float(redg.params[k_])) for t_, k_ in [('g[a]', 'C(g, Sum)[S.a]'), ('g[b]', 'C(g, Sum)[S.b]'), ('g[c]', 'C(g, Sum)[S.c]'), ('x1', 'x1')]), 0.0, abs_=1e-10)
+rh_ = call('fitmodel.ls', table=ts_, y='y', effects=[{'names': ['h']}, {'names': ['g']}, {'names': ['x1']}])
+eh_ = {x['term']: x for x in rh_['estimates']['rows']}
+check('h then g: g[c] Zeroed', [eh_[t_]['bias'] for t_ in ('h[u]', 'g[a]', 'g[b]', 'g[c]')], ['Biased', 'Biased', 'Biased', 'Zeroed'])
+eth = {x['source']: x for x in rh_['effect_tests']['rows']}
+check('  g is tested on 2 DF (Nparm 3, LostDFs 1)', (eth['g']['nparm'], eth['g']['df'], eth['g']['lost']), (3, 2, 1))
+Xh = np.column_stack([np.ones(ns_), (sh == 'u') * 1.0 - (sh == 'v'), (sg == 'a') * 1.0 - (sg == 'd'), (sg == 'b') * 1.0 - (sg == 'd'), s1])
+fh = sm.OLS(sy, Xh).fit()
+check.near('  its F = the joint test of g[a] and g[b] in the fit without g[c]', eth['g']['stat'], float(np.squeeze(fh.f_test(np.eye(5)[[2, 3]]).fvalue)), rel=1e-10)
+check.near('  estimates of that fit', max(abs(eh_[t_]['estimate'] - float(fh.params[j_])) for j_, t_ in enumerate(['Intercept', 'h[u]', 'g[a]', 'g[b]', 'x1'])), 0.0, abs_=1e-10)
+# robust standard errors of a singular design: the sandwich of the kept columns
+rr3 = call('fitmodel.ls', table=ts_, y='y', effects=[{'names': ['h']}, {'names': ['g']}, {'names': ['x1']}], robust={'type': 'HC3'})
+fh3 = fh.get_robustcov_results(cov_type='HC3')
+check.near('HC3 with a zeroed column = HC3 of the kept columns\' fit', max(abs({x['term']: x for x in rr3['estimates']['rows']}[t_]['se'] - float(fh3.bse[j_])) for j_, t_ in enumerate(['Intercept', 'h[u]', 'g[a]', 'g[b]', 'x1'])), 0.0, abs_=1e-10)
+
+# ---- Inverse Prediction: the x where the prediction is y0; Fieller's limits are where the confidence bands reach y0 ----------
+rng_i = np.random.default_rng(3)
+xi_ = rng_i.uniform(0, 10, 60)
+gi_ = rng_i.choice(['a', 'b'], 60)
+yi_ = 2 + 0.8 * xi_ + (gi_ == 'b') * 1.5 + rng_i.normal(0, 1, 60)
+frame_i = pd.DataFrame({'x': xi_, 'g': gi_, 'y': yi_})
+ti_ = table({c_: frame_i[c_].tolist() for c_ in frame_i})
+fi_ = smf.ols('y ~ x + C(g, Sum)', frame_i).fit()
+for ind_ in (False, True):
+    ri_ = call('fitmodel.inverse', table=ti_, y='y', effects=[['x'], ['g']], factor='x', values=[5, 8], settings={'g': 'b'}, individual=ind_, table_name='inv')
+    lab_ = 'individual' if ind_ else 'expected'
+    for row_ in ri_['rows']:
+        pr_ = fi_.get_prediction(pd.DataFrame({'x': [row_['x'], row_['lower'], row_['upper']], 'g': ['b'] * 3})).summary_frame(alpha=0.05)
+        up_, lo_ = ('obs_ci_upper', 'obs_ci_lower') if ind_ else ('mean_ci_upper', 'mean_ci_lower')
+        check.near(f'Inverse Prediction ({lab_}, y0 = {row_["y"]:g}): the prediction there is y0', float(pr_['mean'].iloc[0]), row_['y'], rel=1e-12)
+        check.near(f'  the {"prediction" if ind_ else "confidence"} band reaches y0 at both limits', abs(float(pr_[up_].iloc[1]) - row_['y']) + abs(float(pr_[lo_].iloc[2]) - row_['y']), 0.0, abs_=1e-9)
+    ns_i, err_i = run_code(ri_['code'], frame_i, 'inv')
+    check(f'  its code runs ({lab_})', err_i, None)
+check('  the other factors as held', call('fitmodel.inverse', table=ti_, y='y', effects=[['x'], ['g']], factor='x', values=[5])['held'], [{'factor': 'g', 'value': 'a'}])
+check('  a power of the factor in the model: not a line, an error', 'error' in call('fitmodel.inverse', table=ti_, y='y', effects=[['x'], ['x', 'x']], factor='x', values=[5]), True)
+
 # Stepwise: forward by p-values, as F tests of nested least squares fits
-st = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='step', heredity='none')
+st = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='step', heredity='none', rule='pvalue')
 # JMP's stepwise takes an effect's columns in and out of the full design (an interaction keeps its product columns)
 Xf = ref.model.exog
 yfull = ref.model.endog
@@ -375,10 +563,10 @@ ll = -0.5 * nn * (math.log(2 * math.pi * sse / nn) + 1)
 check.near('stepwise AICc counts the error variance', st['stats']['aicc'], -2 * ll + 2 * kk + 2 * kk * (kk + 1) / (nn - kk - 1), rel=1e-12)
 full = smf.ols(ref.model.formula, df).fit()
 check.near("stepwise Cp = SSE/MSE(full) - (n - 2p)", st['stats']['cp'], sse / full.mse_resid - (nn - 2 * st['stats']['p']), rel=1e-9)
-go = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', heredity='none', p_enter=0.25)
+go = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', heredity='none', p_enter=0.25, rule='pvalue')
 check('stepwise go: every entered effect has p below 0.25 when it entered', all(h['p'] < 0.25 for h in go['history']), True)
 check('stepwise go: nothing left to enter below 0.25', all((c['p'] is None or c['p'] >= 0.25) for c in go['current'] if not c['entered']), True)
-bk = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', direction='backward', heredity='none', p_leave=0.1)
+bk = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', direction='backward', heredity='none', p_leave=0.1, rule='pvalue')
 check('stepwise backward: the entered effects have p below 0.1', all(c['p'] < 0.1 for c in bk['current'] if c['entered']), True)
 ai = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', rule='aicc', heredity='none')
 allfits = {combo: sub(combo) for size in range(0, len(E) + 1) for combo in itertools.combinations(range(len(E)), size)}
@@ -388,7 +576,21 @@ for row in am['models']:
     best = max((c for c in allfits if len(c) == row['number']), key=lambda c: allfits[c].rsquared)
     check.near(f'All Possible Models: best RSquare with {row["number"]} effects', row['rsq'], float(allfits[best].rsquared), rel=1e-10)
 tog = call('fitmodel.stepwise', table=tid, y='yield', effects=E, entered=[0], action='toggle', index=2, heredity='none')
-check('stepwise: an Entered box enters the effect', tog['entered'], [0, 2])
+# JMP's default Stopping Rule is Minimum BIC (its help, Stepwise Regression Control Panel): Go goes forward to the end and keeps the
+# model of the path with the smallest BIC
+
+
+def bic_of(fit_):
+    k_ = fit_.df_model + 2                      # the parameters and the error variance
+    return -2 * fit_.llf + k_ * math.log(fit_.nobs)
+
+
+dflt = call('fitmodel.stepwise', table=tid, y='yield', effects=E, action='go', heredity='none')
+path_ = [h['bic'] for h in dflt['history'] if h['action'] != 'Best']
+check.near('stepwise: the default rule is Minimum BIC: Go keeps the smallest BIC of its path', dflt['stats']['bic'], min([bic_of(sub(()))] + path_), rel=1e-12)
+check.near('... that BIC is the fit\'s own, by hand', dflt['stats']['bic'], bic_of(sub(tuple(dflt['entered']))), rel=1e-12)
+check('... and no model of one effect more or less has a smaller BIC', all(bic_of(sub(tuple(sorted(set(dflt['entered']) ^ {i})))) >= dflt['stats']['bic'] - 1e-9
+                                                                            for i in range(len(E))) or dflt['history'][-1]['action'] == 'Best', True)
 # heredity: restrict keeps the interaction out until both its effects are in
 rs = call('fitmodel.stepwise', table=tid, y='yield', effects=E, entered=[0], action='show', heredity='restrict')
 check('stepwise restrict rule: the state is reported', rs['entered'], [0])
@@ -458,7 +660,9 @@ mm_ = call('fitmodel.mixed', table=t24, y='y', effects=Ea + [{'names': ['s'], 'r
 rmj = sm.MixedLM(yma, XJ, groups=suba).fit(reml=True)
 mme = {r_['term']: r_ for r_ in mm_['estimates']}
 check.near('mixed x + g + x*g: the Intercept at x = 0', mme['Intercept']['estimate'], float(rmj.fe_params[0]), rel=1e-5)
-check.near('mixed x + g + x*g: its standard error', mme['Intercept']['se'], float(rmj.bse_fe[0]), rel=1e-3)
+# (the report's default, Kenward-Roger, adjusts the standard errors; Satterthwaite's are MixedLM's model-based ones: test_mixed.py)
+mms_ = {r_['term']: r_ for r_ in call('fitmodel.mixed', table=t24, y='y', effects=Ea + [{'names': ['s'], 'random': True}], mixed={'ddfm': 'sat'})['estimates']}
+check.near('mixed x + g + x*g: its standard error (Satterthwaite: the model-based one)', mms_['Intercept']['se'], float(rmj.bse_fe[0]), rel=1e-3)
 gr_ = call('fitmodel.genreg', table=t20, y='y', effects=Ea, method='lasso', n_grid=25)
 bj = np.array([e_['estimate'] for e_ in gr_['estimates']])   # Intercept, x, g[a], g[b], (x-m)*g[a], (x-m)*g[b], as XJ
 check.near('Generalized Regression x + g + x*g: JMP\'s estimates give the report\'s predictions', maxdiff(gr_['diag']['predicted'], XJ @ bj), 0.0, abs_=1e-8)
@@ -591,6 +795,99 @@ check.near('ordinal probabilities = OrderedModel.predict', float(np.max(np.abs(n
 po = call('fitmodel.profile', table=t14, kind='logistic', y='score', effects=[['light'], ['fertilizer']], current={'light': 7, 'fertilizer': 'A'})
 check('ordinal profiler: one response per level', [x['name'] for x in po['responses']], ['Prob[low]', 'Prob[mid]', 'Prob[high]', 'Prob[top]'])
 check.near('ordinal profiler probabilities sum to one', sum(x['current']['pred'] for x in po['responses']), 1.0, rel=1e-12)
+# Lack of Fit (JMP's, for logistic fits): the fitted model against the saturated one, which gives each distinct pattern of
+# the X values its own probabilities; checked against the saturated model fitted by statsmodels (one dummy per pattern)
+# and the shares by hand, for a binary, a nominal and an ordinal Y; Freq counts rows; a saturated design has no DF left
+rng_l = np.random.default_rng(29)
+nL = 300
+gL = rng_l.choice(['a', 'b', 'c'], nL)
+xL = rng_l.choice([1.0, 2.0, 3.0, 4.0], nL)
+etaL = -0.5 + 0.4 * xL + (gL == 'b') * 0.6 - 0.45 * (xL - 2.5) ** 2   # a curve the model x + g misses
+yLb = np.where(rng_l.uniform(size=nL) < 1 / (1 + np.exp(-etaL)), 'yes', 'no')
+latL = 0.5 * xL + (gL == 'c') * 0.7 - 0.4 * (xL - 2.5) ** 2 + rng_l.logistic(size=nL)
+yLo = np.array(['low', 'mid', 'high'])[np.digitize(latL, [0.2, 1.4])]
+yLn = np.where(xL > 2.5, rng_l.choice(['p', 'q', 'r'], nL, p=[0.2, 0.3, 0.5]), rng_l.choice(['p', 'q', 'r'], nL, p=[0.45, 0.35, 0.2]))
+fL = rng_l.integers(1, 4, nL).astype(float)
+frameL = pd.DataFrame({'g': gL, 'x': xL, 'yb': yLb, 'yo': yLo, 'yn': yLn, 'f': fL})
+tL = table({c_: frameL[c_].tolist() for c_ in frameL}, types={'yo': 'ordinal', 'yb': 'nominal', 'yn': 'nominal'},
+           levels={'yo': ['low', 'mid', 'high'], 'yb': ['no', 'yes']})
+cellL = pd.factorize(pd.Series(gL) + '|' + pd.Series(xL).astype(str))[0]
+DL = np.eye(cellL.max() + 1)[cellL]
+for yv_, kpar_, sat_ in [('yb', 3, lambda: sm.Logit((yLb == 'no').astype(float), DL).fit(disp=0).llf),
+                         ('yn', 6, lambda: sm.MNLogit(pd.Categorical(yLn, ['r', 'p', 'q']).codes, np.column_stack([np.ones(nL), DL[:, 1:]])).fit(disp=0, maxiter=200).llf),
+                         ('yo', 3, None)]:
+    rL = call('fitmodel.logistic', table=tL, y=yv_, effects=[['x'], ['g']], table_name='lof')
+    lofL = rL['lack_of_fit']
+    check(f'logistic Lack of Fit ({yv_}): a table over the 12 patterns', lofL is not None and lofL['patterns'] == 12, True)
+    if lofL is None:
+        continue
+    lr_ = {r_['source']: r_ for r_ in lofL['rows']}
+    kL = len(set(frameL[yv_]))
+    cnt_ = pd.crosstab(cellL, frameL[yv_]).to_numpy().astype(float)
+    ll_sat = float(np.sum(np.where(cnt_ > 0, cnt_ * np.log(np.where(cnt_ > 0, cnt_, 1) / cnt_.sum(axis=1, keepdims=True)), 0)))
+    check.near(f'  Saturated -LogLikelihood = the patterns\' shares by hand ({yv_})', lr_['Saturated']['nll'], -ll_sat, rel=1e-12)
+    if sat_ is not None:
+        check.near(f'  = the saturated model fitted by statsmodels ({yv_})', lr_['Saturated']['nll'], -float(sat_()), rel=1e-7)
+    check.near(f'  Fitted -LogLikelihood = the Whole Model\'s Full ({yv_})', lr_['Fitted']['nll'], rL['whole'][1]['nll'], rel=1e-12)
+    check(f'  DF: (patterns - 1)(levels - 1), the fit\'s parameters beyond the intercepts ({yv_})',
+          (lr_['Saturated']['df'], lr_['Fitted']['df'], lr_['Lack Of Fit']['df']), (11.0 * (kL - 1), float(kpar_), 11.0 * (kL - 1) - kpar_))
+    chiL = 2 * (ll_sat + rL['whole'][1]['nll'])
+    check.near(f'  ChiSquare = 2 (LL saturated - LL fitted) ({yv_})', lr_['Lack Of Fit']['chisq'], chiL, rel=1e-10)
+    check.near(f'  Prob>ChiSq ({yv_})', lr_['Lack Of Fit']['p'], float(stats.chi2.sf(chiL, 11 * (kL - 1) - kpar_)), rel=1e-9)
+    nsL, errL = run_code(lofL['code'].replace('print(lack_of_fit(', 'LOF_ = (lack_of_fit('), frameL, 'lof')
+    check(f'  its code runs ({yv_})', errL, None)
+    if not errL:
+        wantL = [lr_['Lack Of Fit']['df'], lr_['Lack Of Fit']['nll'], lr_['Lack Of Fit']['chisq'], lr_['Lack Of Fit']['p']]
+        check.near(f'  and gives the report\'s DF, -LogLikelihood, ChiSquare and p ({yv_})',
+                   max(abs(float(v_) - w_) / max(1.0, abs(w_)) for v_, w_ in zip(nsL['LOF_'], wantL)), 0.0, abs_=1e-7)
+check('the curve the model misses shows (binary)', {r_['source']: r_ for r_ in call('fitmodel.logistic', table=tL, y='yb', effects=[['x'], ['g']])['lack_of_fit']['rows']}['Lack Of Fit']['p'] < 0.05, True)
+repL = np.repeat(np.arange(nL), fL.astype(int))
+lfq = call('fitmodel.logistic', table=tL, y='yb', effects=[['x'], ['g']], freq='f')['lack_of_fit']['rows']
+lrp = call('fitmodel.logistic', table=table({'g': gL[repL].tolist(), 'x': xL[repL].tolist(), 'yb': yLb[repL].tolist()}, types={'yb': 'nominal'},
+                                            levels={'yb': ['no', 'yes']}), y='yb', effects=[['x'], ['g']])['lack_of_fit']['rows']
+check.near('Lack of Fit with Freq = that of the rows repeated', max(abs(a_['nll'] - b_['nll']) for a_, b_ in zip(lfq, lrp)) +
+           abs(lfq[0]['chisq'] - lrp[0]['chisq']), 0.0, abs_=1e-8)
+check('  and its DF', [r_['df'] for r_ in lfq], [r_['df'] for r_ in lrp])
+tLs = table({'g': gL.tolist(), 'xc': [str(int(v_)) for v_ in xL], 'yb': yLb.tolist()}, types={'yb': 'nominal'}, levels={'yb': ['no', 'yes']})
+check('a saturated design (g, xc, g*xc) leaves no Lack of Fit DF: no table',
+      call('fitmodel.logistic', table=tLs, y='yb', effects=[['g'], ['xc'], ['g', 'xc']])['lack_of_fit'], None)
+check('no pattern repeated (Spector\'s GPA, TUCE, PSI): no table', lg['lack_of_fit'], None)
+# Unstable estimates (JMP's mark): separation makes the likelihood rise without end along some estimates
+check('no Unstable estimate in Greene\'s logit, the anes96 MNLogit or the ordinal fit',
+      [any(e_.get('unstable') for e_ in r_['estimates']) for r_ in (lg, mn, od)], [False, False, False])
+rng_u = np.random.default_rng(7)
+nu = 120
+gu = rng_u.choice(['a', 'b', 'c'], nu)
+xu = rng_u.normal(size=nu)
+yu = np.where(rng_u.uniform(size=nu) < 1 / (1 + np.exp(-(0.3 + 0.8 * xu))), 'yes', 'no')
+yu[gu == 'c'] = 'yes'   # every row of level c is yes: quasi-separation along g
+tu = table({'g': gu.tolist(), 'x': xu.tolist(), 'y': yu.tolist()}, types={'y': 'nominal'})
+ru = call('fitmodel.logistic', table=tu, y='y', effects=[['g'], ['x']])
+mk = {e_['term']: e_['unstable'] for e_ in ru['estimates']}
+check('a level where every row has one response: the intercept and g marked Unstable, x not', (mk['Intercept'], mk['g[a]'], mk['g[b]'], mk['x']), ('Unstable', 'Unstable', 'Unstable', ''))
+check('  with a note first', ru['notes'][0].startswith('Unstable estimates'), True)
+# the mark means it: moving the g estimates further along the separating direction (level c ever less likely to be no) does not lower the likelihood
+eu = {e_['term']: e_['estimate'] for e_ in ru['estimates']}
+Xu = np.column_stack([np.ones(nu), (gu == 'a') * 1.0 - (gu == 'c'), (gu == 'b') * 1.0 - (gu == 'c'), xu])
+evu = (yu == 'no').astype(float)   # JMP's target: the first level
+llu = lambda b_: float(-np.sum(evu * np.logaddexp(0, -(Xu @ b_)) + (1 - evu) * np.logaddexp(0, Xu @ b_)))
+bu = np.array([eu['Intercept'], eu['g[a]'], eu['g[b]'], eu['x']])
+dir_ = np.array([-1.0, 1.0, 1.0, 0.0]) / math.sqrt(3)   # the linear predictor of c falls, a and b stay
+check('  along the separating direction the log-likelihood does not fall', llu(bu + 10 * dir_) >= llu(bu) - 1e-9, True)
+check('  while moving x five standard errors lowers it clearly', llu(bu + np.array([0, 0, 0, 5 * {e_['term']: e_['se'] for e_ in ru['estimates']}['x']])) < llu(bu) - 1, True)
+yc_ = np.where(xu > 0.2, 'yes', 'no')   # complete separation by x
+rc_ = call('fitmodel.logistic', table=table({'x': xu.tolist(), 'y': yc_.tolist()}, types={'y': 'nominal'}), y='y', effects=[['x']])
+check('complete separation by x: both estimates Unstable', [e_['unstable'] for e_ in rc_['estimates']], ['Unstable', 'Unstable'])
+yn_u = rng_u.choice(['p', 'q', 'r'], nu)
+yn_u[gu == 'c'] = 'r'
+rnu = call('fitmodel.logistic', table=table({'g': gu.tolist(), 'x': xu.tolist(), 'y': yn_u.tolist()}, types={'y': 'nominal'}), y='y', effects=[['g'], ['x']])
+check('nominal: level c always r: the intercepts and g of both logits Unstable, x not',
+      sorted({(e_['term'], e_['unstable']) for e_ in rnu['estimates']}), [('Intercept', 'Unstable'), ('g[a]', 'Unstable'), ('g[b]', 'Unstable'), ('x', '')])
+yo_u = np.array(['lo', 'mid', 'hi'])[np.digitize(xu + rng_u.logistic(size=nu) * 0.5, [-0.3, 0.6])]
+yo_u[gu == 'c'] = 'hi'
+rou = call('fitmodel.logistic', table=table({'g': gu.tolist(), 'x': xu.tolist(), 'y': yo_u.tolist()}, types={'y': 'ordinal'}, levels={'y': ['lo', 'mid', 'hi']}),
+           y='y', effects=[['g'], ['x']])
+check('ordinal: level c always hi: the intercepts and g Unstable, x not', [e_['unstable'] for e_ in rou['estimates']], ['Unstable', 'Unstable', 'Unstable', 'Unstable', ''])
 
 # ---- Mixed Model (REML) ----------------------------------------------------------------------------------------
 a, n0 = 12, 10
@@ -2091,6 +2388,85 @@ for label, kw in [('KFold lasso (normal)', dict(y='y', criterion='kfold', folds=
     sm_ = summary_of(rr_)['Scaled -LogLikelihood']
     check.near(f'... the Scaled -LogLikelihood of its sets: {label}', max(abs(ns['fit_nll'][k_] - sm_[k_]) for k_ in ns['fit_nll']), 0.0, abs_=1e-5)
 
+# ---- Maximum Likelihood (no penalty), a K-fold Validation column, a binomial fit's classification, the active effects ----
+Xg6 = sm.add_constant(Xg)
+rml = gr(y='y', method='mle', table_name='grcsv')
+ols6 = sm.OLS(yg_n, Xg6).fit()
+check('Maximum Likelihood: no path to choose on (one model)', (rml['path']['x'], rml['model']['mle'], rml['model']['method']), ([0], True, 'Maximum Likelihood'))
+check.near('  normal: the estimates are least squares\'', maxdiff([e_['estimate'] for e_ in rml['estimates']], ols6.params), 0.0, abs_=1e-9)
+check.near('  and the standard errors (SSE/(rows - parameters))', maxdiff([e_['se'] for e_ in rml['estimates']], ols6.bse), 0.0, abs_=1e-9)
+check.near('  Wald ChiSquare = (estimate/SE)², its p on 1 DF', max(abs(e_['chisq'] - (e_['estimate'] / e_['se']) ** 2) + abs(e_['p'] - stats.chi2.sf(e_['chisq'], 1)) for e_ in rml['estimates']), 0.0, abs_=1e-9)
+rmb = gr(y='yb', method='mle', table_name='grcsv')
+lgt6 = sm.Logit(yb01, Xg6).fit(disp=0)   # the target level: yes, the first of the column's levels
+check.near('  binomial: the estimates are the logit\'s', maxdiff([e_['estimate'] for e_ in rmb['estimates']], lgt6.params), 0.0, abs_=1e-6)
+check.near('  and its standard errors', maxdiff([e_['se'] for e_ in rmb['estimates']], lgt6.bse), 0.0, abs_=1e-6)
+rmp = gr(y='yc', dist='poisson', method='mle', table_name='grcsv')
+psn6 = sm.GLM(yg_c, Xg6, family=sm.families.Poisson()).fit()
+check.near('  Poisson: the estimates and standard errors of statsmodels\' GLM', maxdiff([e_['estimate'] for e_ in rmp['estimates']] + [e_['se'] for e_ in rmp['estimates']], list(psn6.params) + list(psn6.bse)), 0.0, abs_=1e-6)
+rmw = gr(y='y', method='mle', weight='w', table_name='grcsv')
+wls6 = sm.WLS(yg_n, Xg6, weights=wg).fit()
+check.near('  with a Weight: weighted least squares\' standard errors', maxdiff([e_['se'] for e_ in rmw['estimates']], wls6.bse), 0.0, abs_=1e-9)
+for lab_, rr_ in (('normal', rml), ('binomial', rmb), ('Weight', rmw)):
+    ns, err = run_code(rr_['code'], gdf, 'grcsv')
+    check(f'  the code of Maximum Likelihood runs ({lab_})', err, None)
+    if not err:
+        check.near(f'  its fit on the original predictors has the report\'s standard errors ({lab_})', maxdiff([e_['se'] for e_ in rr_['estimates']], ns['fo'].bse), 0.0, abs_=1e-6)
+# a Validation column of five values: the folds of KFold (WP3's predictive.prepare); every row trains, each fold is held out once
+fold_g = np.random.default_rng(31).integers(1, 6, ng).astype(float)
+gdf_k = gdf.assign(fold=fold_g)
+tgk = table({c: [None if isinstance(v_, float) and np.isnan(v_) else v_ for v_ in gdf_k[c].tolist()] for c in gdf_k.columns},
+            types={'yb': 'nominal', 'vt': 'nominal'}, levels={'yb': ['yes', 'no']})
+rk_ = call('fitmodel.genreg', table=tgk, y='y', effects=Eg6, criterion='validation', validation='fold', table_name='grk')
+check('K-fold Validation column: KFold by its 5 values', (rk_['model']['validation'], rk_['model']['folds']), ('KFold (fold)', 5))
+fk_ = rk_['model']['fold']
+held_ = np.asarray(rk_['diag']['set']) == 1
+check('  the validation rows are one fold\'s, the others train', (bool(np.all(fold_g[held_] == fk_)), int(held_.sum()) == int((fold_g == fk_).sum()), bool(np.all(np.asarray(rk_['diag']['set'])[~held_] == 0))), (True, True, True))
+ns, err = run_code(rk_['code'], gdf_k, 'grk')
+check('  its code runs', err, None)
+if not err:
+    check.near('  and its curve (the mean of the folds\' Scaled -LogLikelihood) is the report\'s', maxdiff(rk_['path']['curve'], ns['curve']) / max(1.0, float(np.max(np.abs(ns['curve'])))), 0.0, abs_=1e-5)
+    check.near('  its fit has the report\'s scaled estimates', maxdiff(scaled_est(rk_), np.asarray(ns['fit'].params)), 0.0, abs_=1e-4)
+# the folds by hand: Maximum Likelihood by KFold of the column is least squares on the other folds, and its curve (one point) the mean
+# of each held-out fold's -LogLikelihood per row, the variance each fit's SSE/N
+rkm = call('fitmodel.genreg', table=tgk, y='y', effects=Eg6, method='mle', criterion='validation', validation='fold')
+per_ = []
+for fv_ in sorted(set(fold_g)):
+    tr_, ho_ = fold_g != fv_, fold_g == fv_
+    f_ = sm.OLS(yg_n[tr_], Xg6[tr_]).fit()
+    s2_ = float(np.mean(f_.resid ** 2))
+    e_ = yg_n[ho_] - Xg6[ho_] @ f_.params
+    per_.append(float(np.mean(0.5 * (np.log(2 * np.pi * s2_) + e_ ** 2 / s2_))))
+check.near('  the KFold curve = the mean of the folds\' held-out Scaled -LogLikelihood (by hand, Maximum Likelihood)', rkm['path']['curve'][0], float(np.mean(per_)), rel=1e-9)
+# a binomial fit's classification by set (SM.predict's parts): confusion counts and AUC by hand
+rbh = gr(y='yb', criterion='holdback', portion=0.3, seed=9)
+fr_ = rbh['fit_report']
+pr_ = np.asarray(rbh['diag']['predicted'])
+sets_ = np.asarray(rbh['diag']['set'])
+act_ = np.where(yb01 == 1, 0, 1)   # the level: 0 the target (yes)
+check('binomial GenReg: a classification report by set, the target first', (fr_['sets'], fr_['levels'], fr_['threshold']['target']), (['Training', 'Validation'], ['yes', 'no'], 0))
+for k_, sname in enumerate(['Training', 'Validation']):
+    m_ = sets_ == k_
+    pred_lv = np.where(pr_[m_] >= 0.5, 0, 1)
+    want_cm = [[float(np.sum((act_[m_] == i) & (pred_lv == j))) for j in (0, 1)] for i in (0, 1)]
+    cm_ = next(c_ for c_ in fr_['confusion'] if c_['set'] == sname)
+    check(f'  {sname}: the confusion matrix of the most likely level', [[float(v_) for v_ in r_] for r_ in cm_['matrix']], want_cm)
+    from scipy.stats import mannwhitneyu as mwu_
+    auc_ = mwu_(pr_[m_][act_[m_] == 0], pr_[m_][act_[m_] == 1]).statistic / ((act_[m_] == 0).sum() * (act_[m_] == 1).sum())
+    roc_ = next(r_ for r_ in fr_['roc'] if r_['set'] == sname and r_['level'] == 'yes')
+    check.near(f'  {sname}: AUC of yes = Mann-Whitney U / (n1 n0)', roc_['auc'], float(auc_), rel=1e-10)
+check.near('  the Decision Threshold has each row\'s probability of the target', maxdiff(fr_['threshold']['models'][0]['p0'] if 'p0' in fr_['threshold']['models'][0] else 1 - np.asarray(fr_['threshold']['models'][0]['p']), pr_), 0.0, abs_=1e-12)
+ns, err = run_code(fr_['plots']['head_code'], gdf, 'data')
+check('  the code of its parts makes the rows\' levels, sets and probabilities', err, None)
+if not err:
+    check.near('  and they are the report\'s', maxdiff(ns['fitted'][:, 0], pr_) + float(np.max(np.abs(ns['y'] - act_))) + float(np.max(np.abs(ns['sets'] - sets_))), 0.0, abs_=1e-6)
+svb = call('fitmodel.save', table=tg, kind='genreg', y=['yb'], effects=Eg6, criterion='holdback', portion=0.3, seed=9)
+check('  its Save gives the Prob[] columns the threshold\'s formula reads', (svb['names'], bool(np.allclose(np.asarray(svb['prob']).sum(axis=1), 1))), (['Prob[yes]', 'Prob[no]'], True))
+# the active effects: those with a nonzero term (Make Model, Run Model, Relaunch with Active Effects)
+ract = gr(y='y', criterion='bic')
+nz_ = [i_ for i_, e_ in enumerate(ract['estimates'][1:]) if not e_['zero']]
+check('the active effects are the effects with a nonzero estimate', ract['active'], nz_)
+check('  a lasso by BIC leaves some out here', len(ract['active']) < 6, True)
+
 # ======================================================================================================================
 # MANOVA > Repeated Measures, and the effect sizes of the Effect Tests
 # ======================================================================================================================
@@ -2546,5 +2922,382 @@ for label_, kw_, frame_ in [('the plants model (crossings, a power)', dict(table
         check.near(f'... and its partial omega squared: {label_}', maxdiff(sorted(x['pos'] for x in rr_['effect_tests']['rows']), sorted(ns['et']['Partial omega2'])), 0.0, abs_=1e-10)
 noise = es_rows(call('fitmodel.ls', table=table({'y': rng_rm.normal(size=40).tolist(), 'z': rng_rm.normal(size=40).tolist(), 'h': (['s', 't'] * 20)}), y='y', effects=[['z'], ['h']]))
 check('partial ω² is negative exactly when F < 1', [(noise[s_]['pos'] < 0) == (noise[s_]['stat'] < 1) for s_ in ('z', 'h')], [True, True])
+
+# ---- Save Columns for every row, and Save Prediction Formula (fitmodel.save) ---------------------------------------
+# As JMP, a saved prediction covers every row whose predictors are present, rows the fit leaves out too (rows left
+# out of the report, rows missing the response); residuals where the response is present. Checked against
+# statsmodels predicting those rows from the shown code's model (another route: patsy on the real names), and the
+# formula texts run by the page's own formula language (smui-formula.js in node, as test-formula.js loads it).
+import json as _json
+import shutil
+import subprocess
+
+_FORMULA_JS = r'''
+const fs = require('fs'); const path = require('path'); const vm = require('vm');
+const sb = { console }; sb.self = sb; vm.createContext(sb);
+for (const f of ['smui-util.js', 'smui-table.js', 'smui-formula.js']) vm.runInContext(fs.readFileSync(path.join(process.argv[2], f), 'utf8'), sb, { filename: f });
+const inp = JSON.parse(fs.readFileSync(0, 'utf8'));
+const t = new sb.SM.Table({ name: 'T', columns: inp.columns.map((c) => ({ name: c.name, dataType: c.dataType, values: c.values.map((v) => (v === null && c.dataType === 'numeric' ? NaN : v)) })) });
+const out = [];
+for (const f of inp.formulas) {
+  try {
+    const v = Array.from(sb.SM.formula.evaluate(t, f.expr));
+    t.addColumn({ name: f.name, dataType: typeof v.find((x) => x != null && !(typeof x === 'number' && Number.isNaN(x))) === 'string' ? 'character' : 'numeric', values: v });
+    out.push({ values: v.map((x) => (typeof x === 'number' && !Number.isFinite(x) ? null : x)) });
+  } catch (e) { out.push({ error: String(e.message || e) }); }
+}
+process.stdout.write(JSON.stringify(out));
+'''
+NODE = shutil.which('node')
+_drv = os.path.join(tmp, 'formula-eval.js')
+with open(_drv, 'w') as _f:
+    _f.write(_FORMULA_JS)
+JS_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js'))
+
+
+def saved_formulas(columns, formulas):
+    """The saved formula columns, each evaluated on the table as the page makes them (a formula that refers to an
+    earlier one by {'ref': k} reads that column), in order: {name: values}."""
+    cols = [{'name': k, 'dataType': 'character' if any(isinstance(v, str) for v in vals) else 'numeric',
+             'values': [None if (v is None or (isinstance(v, float) and np.isnan(v))) else v for v in vals]} for k, vals in columns.items()]
+    fx = []
+    for f in formulas:
+        e = f['expr']
+        if not isinstance(e, str):
+            e = ''.join(s if isinstance(s, str) else ':"' + formulas[s['ref']]['name'] + '"' for s in e)
+        fx.append({'name': f['name'], 'expr': e})
+    out = _json.loads(subprocess.run([NODE, _drv, JS_DIR], input=_json.dumps({'columns': cols, 'formulas': fx}), capture_output=True, text=True, check=True).stdout)
+    res_ = {}
+    for f, o in zip(formulas, out):
+        if 'error' in o:
+            res_[f['name']] = o['error']
+        elif f.get('character'):
+            res_[f['name']] = o['values']
+        else:
+            res_[f['name']] = np.array([np.nan if v is None else v for v in o['values']], dtype=float)
+    return res_
+
+
+rng_s = np.random.default_rng(71)
+n_s = 96
+gs = rng_s.choice(['a', 'b', 'c'], n_s)
+xs = rng_s.normal(5, 2, n_s)
+ws = rng_s.uniform(0.5, 2, n_s)
+ys = 2 + (gs == 'b') * 1.5 + 0.6 * xs + 0.25 * xs * (gs == 'c') + rng_s.normal(0, 1, n_s)
+cs = rng_s.poisson(np.exp(0.2 + 0.15 * xs)).astype(float)
+ex_ = rng_s.uniform(0.5, 2, n_s)
+yb_ = np.where(rng_s.uniform(size=n_s) < 1 / (1 + np.exp(-(xs - 5 + (gs == 'a')))), 'yes', 'no')
+yn_ = np.array(['p', 'q', 'r'])[np.digitize(xs + 0.8 * (gs == 'b') + rng_s.logistic(size=n_s), [4.5, 6.2])]
+yo_ = np.array(['lo', 'mid', 'hi'])[np.digitize(xs + (gs == 'c') + rng_s.logistic(size=n_s), [4.5, 6.5])]
+subj = np.repeat(np.arange(24), 4)
+by_ = np.where(np.arange(n_s) % 2 == 0, 'even', 'odd')
+ys[[4, 17]] = np.nan                      # no response: predicted, no residual
+cs[[4, 17]] = np.nan
+xs[9] = np.nan                            # no x: nothing
+left_out = [2, 30, 61]                    # rows the report leaves out (excluded): predicted all the same
+rows_s = [r for r in range(n_s) if r not in left_out]
+cols_s = {'g': gs.tolist(), 'x': xs.tolist(), 'w': ws.tolist(), 'y': ys.tolist(), 'c': cs.tolist(), 'logexp': np.log(ex_).tolist(),
+          'yb': yb_.tolist(), 'yn': yn_.tolist(), 'yo': yo_.tolist(), 's': [f's{i:02d}' for i in subj], 'by': by_.tolist()}
+tid_s = table(cols_s, types={'yo': 'ordinal'}, levels={'yo': ['lo', 'mid', 'hi']})
+fr_s = pd.DataFrame(cols_s)
+fr_s['yo'] = pd.Categorical(fr_s['yo'], ['lo', 'mid', 'hi'], ordered=True)
+E_s = [['g'], ['x'], ['g', 'x']]
+want_s = [r for r in range(n_s) if np.isfinite(xs[r])]
+mx_ = float(np.mean(xs[[r for r in rows_s if np.isfinite(xs[r]) and np.isfinite(ys[r])]]))
+fit_s = [r for r in rows_s if np.isfinite(xs[r]) and np.isfinite(ys[r])]
+
+
+def sv_(kind, **kw):
+    return call('fitmodel.save', table=tid_s, kind=kind, rows=rows_s, effects=E_s, **kw)
+
+
+# least squares, weighted: the predictions and their limits, the residuals, the formula
+sv = sv_('ls', y='y', weight='w')
+check('Save Columns: every row with a value of each factor (rows left out and rows missing Y too)', sv['rows'], want_s)
+rsm = smf.wls(f'y ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', fr_s.loc[fit_s], weights=fr_s.loc[fit_s, 'w']).fit()
+pf_ = rsm.get_prediction(fr_s.loc[want_s]).summary_frame(alpha=0.05)
+cl = sv['columns']
+check.near('Save Columns: the predictions = statsmodels\' of every row', maxdiff(cl['predicted'], pf_['mean']), 0.0, abs_=1e-9)
+check.near('Save Columns: the mean confidence limits too', maxdiff(cl['lower_mean'], pf_['mean_ci_lower']), 0.0, abs_=1e-9)
+w_ind = np.where(np.isin(want_s, fit_s), ws[want_s], ws[want_s])   # a row's own weight (a row outside the fit is weighted as it is)
+pfi = rsm.get_prediction(fr_s.loc[want_s], weights=w_ind).summary_frame(alpha=0.05)
+check.near('Save Columns: the individual limits (the row\'s weight)', maxdiff(cl['upper_indiv'], pfi['obs_ci_upper']), 0.0, abs_=1e-9)
+res_ = np.array([np.nan if v is None else v for v in cl['residual']], dtype=float)
+check('Save Columns: residuals where Y is present, none where it is missing', bool(np.isnan(res_[want_s.index(4)]) and np.isfinite(res_[want_s.index(2)])), True)
+check.near('... the residual of a row left out is its Y less its prediction', res_[want_s.index(30)], float(ys[30] - pf_['mean'].iloc[want_s.index(30)]), rel=1e-9)
+ls_rep = call('fitmodel.ls', table=tid_s, rows=rows_s, y='y', effects=E_s, weight='w')
+check.near('... the rows of the fit have the report\'s own predictions', maxdiff([cl['predicted'][want_s.index(r)] for r in ls_rep['diag']['rows']], ls_rep['diag']['predicted']), 0.0, abs_=1e-10)
+if NODE:
+    fvs = saved_formulas(cols_s, sv['formulas'])
+    fcol = fvs['Pred Formula y']
+    check('Save Prediction Formula: a formula column named as JMP\'s', list(fvs), ['Pred Formula y'])
+    check.near('Save Prediction Formula: the formula gives the saved predictions', maxdiff(fcol[want_s], cl['predicted']), 0.0, abs_=1e-9)
+    check('... and nothing where a factor is missing', bool(np.isnan(fcol[9])), True)
+    check('... JMP\'s form: Match for the effect-coded factor, the crossing centred', ('Match(:g, "a", ' in sv['formulas'][0]['expr']) and (f'(:x - {mx_!r})' in sv['formulas'][0]['expr']), True)
+# a By group: its rows only, and the formula holds for them only
+svb = call('fitmodel.save', table=tid_s, kind='ls', rows=[r for r in rows_s if by_[r] == 'even'], effects=E_s, y='y', where=[{'column': 'by', 'value': 'even'}])
+check('By: the saved rows are the group\'s (with a value of each factor)', svb['rows'], [r for r in want_s if by_[r] == 'even'])
+if NODE:
+    fb_ = saved_formulas(cols_s, svb['formulas'])['Pred Formula y']
+    check('By: the formula is missing outside the group', bool(np.all(np.isnan(fb_[by_ == 'odd']))), True)
+    check.near('By: and the group\'s predictions inside it', maxdiff(fb_[svb['rows']], svb['columns']['predicted']), 0.0, abs_=1e-9)
+# Poisson with an offset: the mean exp(x'b + offset), the formula with the offset column
+sv = sv_('glm', y='c', dist='poisson', offset='logexp')
+rp_ = smf.glm(f'c ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', fr_s.loc[fit_s], family=sm.families.Poisson(), offset=fr_s.loc[fit_s, 'logexp']).fit()
+check.near('GLM: every row\'s mean = statsmodels\' predict with its offset', maxdiff(sv['columns']['predicted'], rp_.predict(fr_s.loc[want_s], offset=fr_s.loc[want_s, 'logexp'])), 0.0, rel=1e-7, abs_=1e-7)
+if NODE:
+    fg_ = saved_formulas(cols_s, sv['formulas'])['Pred Formula c']
+    check.near('GLM: the formula (the inverse link, the offset) gives them', maxdiff(fg_[want_s], sv['columns']['predicted']), 0.0, abs_=1e-9)
+    check('GLM: the formula reads the offset column', '+ :logexp)' in sv['formulas'][0]['expr'] and sv['formulas'][0]['expr'].startswith('Exp('), True)
+sv = sv_('glm', y='yb', dist='binomial', target='yes')
+mu_ = np.array(sv['columns']['predicted'], dtype=float)
+ev_ = (yb_[want_s] == 'yes').astype(float)
+check.near('GLM binomial: the residual is the event less its probability', maxdiff(sv['columns']['residual'], ev_ - mu_), 0.0, abs_=1e-12)
+if NODE:
+    check.near('GLM binomial: the logit formula (Squash)', maxdiff(saved_formulas(cols_s, sv['formulas'])['Pred Formula yb'][want_s], mu_), 0.0, abs_=1e-12)
+# the logistic fits: the probabilities of every row, Save Probability Formula as JMP's columns
+Xd_ = patsy.dmatrix(f'C(g, Sum, levels=["a", "b", "c"]) + I(x - {mx_!r}) + C(g, Sum, levels=["a", "b", "c"]):I(x - {mx_!r})', fr_s.loc[want_s], return_type='dataframe')
+fit_l = [r for r in rows_s if np.isfinite(xs[r])]
+mx_l = float(np.mean(xs[fit_l]))
+Xl_ = patsy.dmatrix(f'C(g, Sum, levels=["a", "b", "c"]) + I(x - {mx_l!r}) + C(g, Sum, levels=["a", "b", "c"]):I(x - {mx_l!r})', fr_s, return_type='dataframe', NA_action='drop')
+for label_, kw_, ref_ in (('binary', dict(y='yb', target='yes'), 'binary'), ('multinomial', dict(y='yn'), 'mn'), ('ordinal', dict(y='yo', ordinal=True), 'ord')):
+    sv = sv_('logistic', **kw_)
+    P_ = np.array(sv['columns']['prob'], dtype=float)
+    Xf_ = Xl_.loc[fit_l].to_numpy()
+    Xw_ = Xl_.loc[want_s].to_numpy()
+    if ref_ == 'binary':
+        rr_ = sm.GLM((yb_[fit_l] == 'yes').astype(float), Xf_, family=sm.families.Binomial()).fit()
+        want_p = np.column_stack([1 - rr_.predict(Xw_), rr_.predict(Xw_)])
+    elif ref_ == 'mn':
+        cd_ = pd.Categorical(yn_[fit_l], ['p', 'q', 'r']).codes
+        rr_ = sm.MNLogit(np.where(cd_ == 2, 0, cd_ + 1), Xf_).fit(disp=0, method='newton', maxiter=200)
+        pp_ = rr_.predict(Xw_)
+        want_p = np.column_stack([pp_[:, 1:], pp_[:, :1]])
+    else:
+        rr_ = OrderedModel(pd.Series(pd.Categorical(yo_[fit_l], ['lo', 'mid', 'hi'], ordered=True)), Xf_[:, 1:], distr='logit').fit(method='bfgs', disp=0, maxiter=2000)
+        want_p = np.asarray(rr_.model.predict(rr_.params, exog=Xw_[:, 1:]))
+    check.near(f'{label_} logistic: every row\'s probabilities = statsmodels\'', maxdiff(P_.ravel(), want_p.ravel()), 0.0, abs_=2e-5 if ref_ == 'ord' else 1e-6)
+    if NODE:
+        F_ = sv['formulas']
+        got_ = saved_formulas(cols_s, F_)
+        labels_ = F_[-1]['valueOrder']
+        pv_ = np.column_stack([got_[f'Prob[{l_}]'][want_s] for l_ in labels_])
+        check.near(f'{label_} logistic: the Prob[level] formulas give them', maxdiff(pv_.ravel(), P_.ravel()), 0.0, abs_=1e-12)
+        ml_ = got_[F_[-1]['name']]
+        check(f'{label_} logistic: Most Likely is the saved most likely level', [ml_[r] for r in want_s], sv['columns']['most_likely'])
+        check(f'{label_} logistic: JMP\'s columns', [f['name'] for f in F_], {'binary': ['Lin[yes]', 'Prob[no]', 'Prob[yes]', 'Most Likely yb'],
+              'mn': ['Lin[p]', 'Lin[q]', 'Prob[p]', 'Prob[q]', 'Prob[r]', 'Most Likely yn'], 'ord': ['Linear', 'Cum[lo]', 'Cum[mid]', 'Prob[lo]', 'Prob[mid]', 'Prob[hi]', 'Most Likely yo']}[ref_])
+# GEE, Instrumental Variables, Quantile Regression, Generalized Regression: every row's prediction and the formula
+sv = sv_('gee', y='y', subject='s', corr='exchangeable')
+rg_ = sm.GEE.from_formula(f'y ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', groups='s', data=fr_s.loc[fit_s], cov_struct=sm.cov_struct.Exchangeable()).fit()
+check.near('GEE: every row\'s marginal mean = statsmodels\' predict', maxdiff(sv['columns']['predicted'], rg_.predict(fr_s.loc[want_s])), 0.0, abs_=1e-6)
+z_iv = rng_s.normal(size=n_s)
+tid_iv = table(dict(cols_s, z=z_iv.tolist(), xe=(xs + z_iv).tolist()))
+sv = call('fitmodel.save', table=tid_iv, kind='iv', rows=rows_s, y='y', effects=[['g'], ['xe']], endog=['xe'], instruments=['z'])
+ivr = call('fitmodel.iv', table=tid_iv, rows=rows_s, y='y', effects=[['g'], ['xe']], endog=['xe'], instruments=['z'])
+check.near('IV: the rows of the fit keep the report\'s prediction', maxdiff([sv['columns']['predicted'][sv['rows'].index(r)] for r in ivr['diag']['rows']], ivr['diag']['predicted']), 0.0, abs_=1e-9)
+check('IV: rows missing Y are predicted', 4 in sv['rows'] and 17 in sv['rows'], True)
+sv = sv_('qr', y='y', tau=0.3)
+rq_ = smf.quantreg(f'y ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', fr_s.loc[fit_s]).fit(q=0.3, max_iter=5000)
+check.near('Quantile Regression: every row\'s predicted quantile = statsmodels\' predict', maxdiff(sv['columns']['predicted'], rq_.predict(fr_s.loc[want_s])), 0.0, abs_=1e-5)
+check('Quantile Regression: the formula\'s name has the quantile', sv['formulas'][0]['name'], 'Pred Formula y Quantile 0.3')
+sv = sv_('genreg', y='y', method='lasso', criterion='aicc')
+grr = call('fitmodel.genreg', table=tid_s, rows=rows_s, y='y', effects=E_s, method='lasso', criterion='aicc')
+check.near('Generalized Regression: the rows of the fit keep the report\'s prediction', maxdiff([sv['columns']['predicted'][sv['rows'].index(r)] for r in grr['diag']['rows']], grr['diag']['predicted']), 0.0, abs_=1e-9)
+if NODE:
+    for kind_, kw_, nm_ in (('gee', dict(y='y', subject='s', corr='exchangeable'), 'Pred Formula y'), ('qr', dict(y='y', tau=0.3), 'Pred Formula y Quantile 0.3'),
+                            ('genreg', dict(y='y', method='lasso', criterion='aicc'), 'Pred Formula y')):
+        sv = sv_(kind_, **kw_)
+        check.near(f'{kind_}: the prediction formula gives the saved predictions', maxdiff(saved_formulas(cols_s, sv['formulas'])[nm_][sv['rows']], sv['columns']['predicted']), 0.0, abs_=1e-9)
+else:
+    print('(node is not installed: the formula checks are skipped)')
+
+# ---- a Validation column in Standard Least Squares, the GLM and the logistic fits (JMP Pro's Crossvalidation) --------
+# The model is fitted to the training rows (0) and predicts the validation (1) and test (2) rows from the same design; each
+# set's measures by their formulas (predictive.measures'), against statsmodels fitted to the training rows alone.
+rng_v = np.random.default_rng(97)
+n_v = 180
+gv_ = rng_v.choice(['a', 'b', 'c'], n_v)
+xv_ = rng_v.normal(5, 2, n_v)
+wv_ = rng_v.uniform(0.5, 2, n_v)
+yv_ = 1 + (gv_ == 'b') * 1.5 + 0.6 * xv_ + 0.2 * xv_ * (gv_ == 'c') + rng_v.normal(size=n_v)
+cv_ = rng_v.poisson(np.exp(0.1 + 0.2 * xv_)).astype(float)
+ybv = np.where(rng_v.uniform(size=n_v) < 1 / (1 + np.exp(-(xv_ - 5) - 0.8 * (gv_ == 'a'))), 'yes', 'no')
+ynv = np.array(['p', 'q', 'r'])[np.digitize(xv_ + 0.8 * (gv_ == 'b') + rng_v.logistic(size=n_v), [4.5, 6.2])]
+setv = rng_v.choice([0, 0, 0, 1, 1, 2], n_v).astype(float)
+setv[5] = np.nan                                  # no validation value: left out
+cols_v = {'g': gv_.tolist(), 'x': xv_.tolist(), 'w': wv_.tolist(), 'y': yv_.tolist(), 'c': cv_.tolist(), 'yb': ybv.tolist(), 'yn': ynv.tolist(), 'v': setv.tolist()}
+tid_v = table(cols_v)
+fr_v = pd.DataFrame(cols_v)
+ok_v = np.isfinite(setv)
+trv = fr_v[ok_v & (setv == 0)]
+E_v = [['g'], ['x'], ['g', 'x']]
+mxv = float(trv['x'].mean())
+form_v = f'y ~ C(g, Sum) + I(x - {mxv!r}) + C(g, Sum):I(x - {mxv!r})'
+
+
+def set_rows(k):
+    return fr_v[ok_v & (setv == k)]
+
+
+def mrow(cv, name):
+    return next(m_ for m_ in cv['measures'] if m_['set'] == name)
+
+
+rvl = call('fitmodel.ls', table=tid_v, y='y', effects=E_v, validation='v', weight='w')
+cvl = rvl['crossvalidation']
+wls_v = smf.wls(form_v, trv, weights=trv['w']).fit()
+check('Validation column: the report is the fit of the training rows', rvl['n_rows'], int(np.sum(setv == 0)))
+check.near('... its estimates are statsmodels\' on the training rows alone', maxdiff([r_['estimate'] for r_ in rvl['estimates']['rows'] if r_['term'] != 'Intercept'], wls_v.params.to_numpy()[1:]), 0.0, abs_=1e-9)
+for k_, name_ in enumerate(['Training', 'Validation', 'Test']):
+    s_ = set_rows(k_)
+    e_ = s_['y'] - wls_v.predict(s_)
+    w_ = s_['w']
+    sst_ = float(np.sum(w_ * (s_['y'] - np.average(s_['y'], weights=w_)) ** 2))
+    check.near(f'Crossvalidation {name_}: RSquare = 1 - SSE/SST about the set\'s own mean (weighted)', mrow(cvl, name_)['rsquare'], 1 - float(np.sum(w_ * e_ ** 2)) / sst_, rel=1e-9)
+    check.near(f'Crossvalidation {name_}: RASE', mrow(cvl, name_)['rase'], math.sqrt(float(np.sum(w_ * e_ ** 2)) / float(w_.sum())), rel=1e-9)
+    check.near(f'Crossvalidation {name_}: N the sum of the weights', mrow(cvl, name_)['n'], float(w_.sum()), rel=1e-12)
+check('Crossvalidation: RSquare, RASE and N shown, the other measures optional', [c_['key'] for c_ in cvl['measure_columns'] if not c_.get('hidden')], ['set', 'rsquare', 'rase', 'n'])
+check('the hold-out rows for the plots: every validation and test row', sorted(rvl['holdout']['rows']), sorted(set_rows(1).index.tolist() + set_rows(2).index.tolist()))
+hp_ = dict(zip(rvl['holdout']['rows'], rvl['holdout']['predicted']))
+check.near('... with their predictions from the training fit', max(abs(hp_[r_] - float(wls_v.predict(fr_v.loc[[r_]]).iloc[0])) for r_ in hp_), 0.0, abs_=1e-9)
+ns, err = run_code(cvl['code'], fr_v, 'data')
+check('Crossvalidation: its code runs on the table exported as CSV', err, None)
+fam_r = call('fitmodel.ls', table=tid_v, y='y', effects=E_v, validation='v', weight='w', table_name='cvdata')
+ns_, err_ = run_code(fam_r['code'], fr_v, 'cvdata')
+check('... and the report\'s code fits the training rows (its estimates)', err_ is None and abs(float(ns_['fit'].params.iloc[1]) - float(wls_v.params.iloc[1])) < 1e-9, True)
+# the GLM: Poisson, the means of every set from the training fit
+rvg = call('fitmodel.glm', table=tid_v, y='c', effects=E_v, dist='poisson', validation='v')
+glm_v = smf.glm(f'c ~ C(g, Sum) + I(x - {mxv!r}) + C(g, Sum):I(x - {mxv!r})', trv, family=sm.families.Poisson()).fit()
+for k_, name_ in enumerate(['Training', 'Validation', 'Test']):
+    s_ = set_rows(k_)
+    e_ = s_['c'] - glm_v.predict(s_)
+    check.near(f'GLM Crossvalidation {name_}: RSquare of the means', mrow(rvg['crossvalidation'], name_)['rsquare'], 1 - float(np.sum(e_ ** 2)) / float(np.sum((s_['c'] - s_['c'].mean()) ** 2)), rel=1e-7)
+ns, err = run_code(rvg['crossvalidation']['code'], fr_v, 'data')
+check('GLM Crossvalidation: its code runs', err, None)
+# binary logistic: Entropy RSquare against the training shares, Generalized RSquare, the misclassification rate, AUC, a confusion matrix per set
+rvb = call('fitmodel.logistic', table=tid_v, y='yb', effects=E_v, validation='v')
+Xtr_ = patsy.dmatrix(f'C(g, Sum, levels=["a", "b", "c"]) + I(x - {mxv!r}) + C(g, Sum, levels=["a", "b", "c"]):I(x - {mxv!r})', trv)
+lb_v = sm.GLM((trv['yb'] == 'no').astype(float), Xtr_, family=sm.families.Binomial()).fit()
+share_yes = float((trv['yb'] == 'yes').mean())
+for k_, name_ in enumerate(['Training', 'Validation', 'Test']):
+    s_ = set_rows(k_)
+    pno = lb_v.predict(patsy.build_design_matrices([Xtr_.design_info], s_)[0])
+    yes_ = (s_['yb'] == 'yes').to_numpy()
+    pt_ = np.where(yes_, 1 - pno, pno)
+    ll_, ll0_ = float(np.sum(np.log(pt_))), float(np.sum(np.log(np.where(yes_, share_yes, 1 - share_yes))))
+    N_ = len(s_)
+    mr_ = mrow(rvb['crossvalidation'], name_)
+    check.near(f'logistic Crossvalidation {name_}: Entropy RSquare', mr_['entropy_rsquare'], 1 - ll_ / ll0_, rel=1e-7)
+    check.near(f'logistic Crossvalidation {name_}: Generalized RSquare (Nagelkerke)', mr_['generalized_rsquare'], (1 - math.exp(2 * (ll0_ - ll_) / N_)) / (1 - math.exp(2 * ll0_ / N_)), rel=1e-7)
+    check.near(f'logistic Crossvalidation {name_}: Misclassification Rate', mr_['misclassification'], float(np.mean((pno > 0.5) == yes_)), rel=1e-12)
+    from sklearn.metrics import roc_auc_score
+    check.near(f'logistic Crossvalidation {name_}: AUC = scikit-learn\'s roc_auc_score', mr_['auc'], float(roc_auc_score(yes_, 1 - pno)), rel=1e-9)
+    cmx = next(c_ for c_ in rvb['crossvalidation']['confusion'] if c_['set'] == name_)
+    check(f'logistic Crossvalidation {name_}: its confusion matrix counts the set', float(np.sum(cmx['matrix'])), float(N_))
+check('logistic Crossvalidation: its ROC and lift curves by set, with their code', ({r_['set'] for r_ in rvb['crossvalidation']['roc']}, sorted(rvb['crossvalidation']['plots']['roc'])),
+      ({'Training', 'Validation', 'Test'}, ['Test', 'Training', 'Validation']))
+ns, err = run_code(rvb['crossvalidation']['code'], fr_v, 'data')
+check('logistic Crossvalidation: its code runs', err, None)
+check('the logistic plot marks the hold-out rows (one continuous X)', call('fitmodel.logistic', table=tid_v, y='yb', effects=[['x']], validation='v')['plot']['holdout']['set'] is not None, True)
+rvn = call('fitmodel.logistic', table=tid_v, y='yn', effects=E_v, validation='v')
+check('multinomial Crossvalidation: Entropy RSquare of each set, no AUC', [m_['auc'] if 'auc' in m_ else None for m_ in rvn['crossvalidation']['measures']], [None, None, None])
+ns, err = run_code(rvn['crossvalidation']['code'], fr_v, 'data')
+check('multinomial Crossvalidation: its code runs', err, None)
+# a column of more than three values holds K folds (Generalized Regression's KFold): these fits take every row and say so
+tid_k = table(dict(cols_v, v=[float(i % 5) for i in range(n_v)]))
+rk_ = call('fitmodel.ls', table=tid_k, y='y', effects=E_v, validation='v')
+check('K folds in the Validation column: no hold-out, every row fits, a note says so', ('crossvalidation' in rk_, rk_['n_rows'], any('K folds' in n_ for n_ in rk_['notes'])), (False, n_v, True))
+
+# ---- Stepwise: Max Validation RSquare, nominal and ordinal Y, All Possible Models' options, Model Averaging -------------
+Ev5 = [['g'], ['x'], ['g', 'x']]
+sw_v = call('fitmodel.stepwise', table=tid_v, y='y', effects=Ev5, validation='v', rule='max_valid', action='go', heredity='none')
+check('Stepwise with a Validation column: Max Validation RSquare is a rule', sw_v['rule'], 'max_valid')
+va_ = set_rows(1)
+
+
+def vr2_(effs_):
+    f_ = smf.ols('y ~ 1' + ''.join(' + ' + {0: 'C(g, Sum)', 1: f'I(x - {mxv!r})', 2: f'C(g, Sum):I(x - {mxv!r})'}[i] for i in effs_), trv).fit()
+    e_ = va_['y'] - f_.predict(va_)
+    return 1 - float(np.sum(e_ ** 2)) / float(np.sum((va_['y'] - va_['y'].mean()) ** 2))
+
+
+path_v = [h_ for h_ in sw_v['history'] if h_['action'] != 'Best']
+check.near('Max Validation RSquare: the kept model\'s validation RSquare, by hand (training fit, validation rows)', sw_v['stats']['rsq_v'], vr2_(sw_v['entered']), rel=1e-9)
+check('... the largest of its path (the empty model included)', sw_v['stats']['rsq_v'] >= max([vr2_(())] + [h_['rsq_v'] for h_ in path_v]) - 1e-12, True)
+check('... each step enters the most significant effect (the smallest p of the moves)', all(h_['p'] is not None for h_ in path_v), True)
+check('the Step History has each model\'s validation RSquare', all('rsq_v' in h_ and h_['rsq_v'] is not None for h_ in path_v), True)
+sw_nv = call('fitmodel.stepwise', table=tid_v, y='y', effects=Ev5, rule='max_valid', action='go', heredity='none')
+check('Max Validation RSquare without a Validation column falls back to Minimum BIC', sw_nv['rule'], 'bic')
+# a nominal Y: likelihood ratio tests of refitted logistic models
+sw_b = call('fitmodel.stepwise', table=tid_v, y='yb', effects=Ev5, entered=[1], action='show', heredity='none')
+check('Stepwise of a nominal Y: logistic', (sw_b['kind'], sw_b['mode']), ('logit', 'binary'))
+fr_b = fr_v.copy()
+fr_b['e'] = (fr_b['yb'] == 'no').astype(float)
+full_b = smf.logit(f'e ~ I(x - {float(fr_v.x.mean())!r})', fr_b).fit(disp=0)
+with_g = smf.logit(f'e ~ C(g, Sum) + I(x - {float(fr_v.x.mean())!r})', fr_b).fit(disp=0)
+null_b = smf.logit('e ~ 1', fr_b).fit(disp=0)
+cur_b = {c_['effect']: c_ for c_ in sw_b['current']}
+check.near('nominal Y: the L-R ChiSquare of an entered effect = 2 (llf - llf without it)', cur_b['x']['ss'], 2 * (full_b.llf - null_b.llf), rel=1e-7)
+check.near('nominal Y: ... of an effect not entered = 2 (llf with it - llf)', cur_b['g']['ss'], 2 * (with_g.llf - full_b.llf), rel=1e-7)
+check.near('nominal Y: its p-value, χ² on the effect\'s parameters', cur_b['g']['p'], float(stats.chi2.sf(2 * (with_g.llf - full_b.llf), 2)), rel=1e-6)
+k_b = 2
+check.near('nominal Y: AICc from the log-likelihood', sw_b['stats']['aicc'], -2 * full_b.llf + 2 * k_b + 2 * k_b * (k_b + 1) / (n_v - k_b - 1), rel=1e-9)
+check.near('nominal Y: BIC', sw_b['stats']['bic'], -2 * full_b.llf + k_b * math.log(n_v), rel=1e-9)
+check.near('nominal Y: RSquare is the entropy RSquare, 1 - llf/llf(intercept only)', sw_b['stats']['rsq'], 1 - full_b.llf / null_b.llf, rel=1e-9)
+check.near('nominal Y: an entered continuous effect\'s estimate (the log odds of the first level)', cur_b['x']['estimate'], float(full_b.params.iloc[1]), rel=1e-6)
+sw_bg = call('fitmodel.stepwise', table=tid_v, y='yb', effects=Ev5, action='go', rule='pvalue', p_enter=0.05, heredity='none')
+check('nominal Y, P-value Threshold: every effect entered had p < 0.05', all(h_['p'] < 0.05 for h_ in sw_bg['history']), True)
+check('... and none left out has', all(c_['p'] is None or c_['p'] >= 0.05 for c_ in sw_bg['current'] if not c_['entered']), True)
+sw_m = call('fitmodel.stepwise', table=tid_v, y='yn', effects=Ev5, entered=[0, 1], action='show', heredity='none')
+cd_m = pd.Categorical(fr_v['yn'], ['p', 'q', 'r']).codes
+Xm2 = patsy.dmatrix(f'C(g, Sum, levels=["a", "b", "c"]) + I(x - {float(fr_v.x.mean())!r})', fr_v)
+mn2 = sm.MNLogit(np.where(cd_m == 2, 0, cd_m + 1), np.asarray(Xm2)).fit(disp=0, method='newton', maxiter=200)
+mn1 = sm.MNLogit(np.where(cd_m == 2, 0, cd_m + 1), np.asarray(Xm2)[:, [0, 3]]).fit(disp=0, method='newton', maxiter=200)
+check.near('multinomial Y: an entered effect\'s L-R ChiSquare (MNLogit with and without it)', {c_['effect']: c_ for c_ in sw_m['current']}['g']['ss'], 2 * (mn2.llf - mn1.llf), rel=1e-6)
+check('multinomial Y: its degrees of freedom are its parameters times the logits', {c_['effect']: c_ for c_ in sw_m['current']}['g']['ndf'] * 2, 4)
+yo_v = np.array(['lo', 'mid', 'hi'])[np.digitize(xv_ + (gv_ == 'c') + rng_v.logistic(size=n_v), [4.5, 6.5])]
+tid_o = table(dict(cols_v, yo=yo_v.tolist()), types={'yo': 'ordinal'}, levels={'yo': ['lo', 'mid', 'hi']})
+sw_o = call('fitmodel.stepwise', table=tid_o, y='yo', effects=Ev5, entered=[1], action='show', heredity='none')
+om1 = OrderedModel(pd.Series(pd.Categorical(yo_v, ['lo', 'mid', 'hi'], ordered=True)), (xv_ - xv_.mean())[:, None], distr='logit').fit(method='bfgs', disp=0, maxiter=2000)
+check('ordinal Y: the cumulative logit', sw_o['mode'], 'ordinal')
+check.near('ordinal Y: the -LogLikelihood of the entered model = OrderedModel\'s', sw_o['stats']['nll'], -float(om1.llf), rel=1e-6)
+check('ordinal Y: its parameters count the thresholds', sw_o['stats']['p'], 3)
+# All Possible Models: at most max_terms effects, per_size models of each size
+am2 = call('fitmodel.all_models', table=tid_v, y='y', effects=[['g'], ['x'], ['w'], ['g', 'x']], max_terms=2, per_size=2)
+check('All Possible Models: the sizes up to the maximum number of terms', sorted({m_['number'] for m_ in am2['models']}), [1, 2])
+check('All Possible Models: at most the number of best models asked for, of each size', max(sum(1 for m_ in am2['models'] if m_['number'] == q_) for q_ in (1, 2)), 2)
+# Model Averaging: AICc weights over every subset (Burnham and Anderson), the unconditional standard errors
+ma_e = [['g'], ['x'], ['w']]
+ma = call('fitmodel.model_average', table=tid_v, y='y', effects=ma_e, cutoff=1.0)
+subs_ = [c_ for q_ in range(4) for c_ in itertools.combinations(range(3), q_)]
+terms_ = {0: 'C(g, Sum)', 1: 'x', 2: 'w'}
+fits_ = [smf.ols('y ~ 1' + ''.join(' + ' + terms_[i] for i in c_), fr_v).fit() for c_ in subs_]
+
+
+def aicc_(f_):
+    k__ = f_.df_model + 2
+    return -2 * f_.llf + 2 * k__ + 2 * k__ * (k__ + 1) / (f_.nobs - k__ - 1)
+
+
+a_ = np.array([aicc_(f_) for f_ in fits_])
+w_ = np.exp(-0.5 * (a_ - a_.min()))
+w_ /= w_.sum()
+for nm_, lab_ in (('x', 'x'), ('w', 'w')):
+    bs_ = np.array([f_.params.get(nm_, 0.0) for f_ in fits_])
+    vs_ = np.array([f_.bse.get(nm_, 0.0) ** 2 for f_ in fits_])
+    bbar_ = float(w_ @ bs_)
+    se_ = float(np.sum(w_ * np.sqrt(vs_ + (bs_ - bbar_) ** 2)))
+    est_ = {e_['term']: e_ for e_ in ma['estimates']}[lab_]
+    check.near(f'Model Averaging {lab_}: the AICc-weighted average of every model\'s estimate (0 where it is out)', est_['estimate'], bbar_, rel=1e-9)
+    check.near(f'Model Averaging {lab_}: the unconditional standard error, Σ w √(var + (b - b̄)²)', est_['se'], se_, rel=1e-9)
+check('Model Averaging: every subset fitted', ma['n_models'], 8)
+ma95 = call('fitmodel.model_average', table=tid_v, y='y', effects=ma_e, cutoff=0.95)
+kept_ = int(np.searchsorted(np.cumsum(np.sort(w_)[::-1]), 0.95 - 1e-12) + 1)
+check('Model Averaging: the models of the largest weights until they reach the cutoff', ma95['kept'], kept_)
+ns, err = run_code(ma95['code'], fr_v, 'data')
+check('Model Averaging: its code runs', err, None)
+if not err:
+    check.near('... and gives the report\'s averages and standard errors', maxdiff([e_['estimate'] for e_ in ma95['estimates']], ns['bbar']) + maxdiff([e_['se'] for e_ in ma95['estimates']], ns['se']), 0.0, abs_=1e-9)
 
 sys.exit(check.done())

@@ -132,14 +132,28 @@
 
     has(name) { return this.names.includes(name); }
 
-    /* Send the table if the worker lacks this version of it. */
+    /* Send the table if the worker lacks this version of it. This is where
+       a table goes to Python: the values the analyses see, so a missing
+       value code (Column Info) arrives missing (the table keeps codes out of
+       c.values already; any that got in are masked here too), and the
+       levels leave the codes out. The meta carries the column properties
+       for a backend that wants them (data.value_labels(), data.meta()). */
     _sync(table) {
       if (!table || this.sent.get(table.id) === table.version) return;
       const meta = table.columns.map((c) => ({
         name: c.name, dataType: c.dataType, modelingType: c.modelingType,
         levels: c.isCategorical ? table.levels(c) : null, format: c.format || null,
+        missingCodes: c.missingCodes ? c.missingCodes.slice() : null,
+        valueLabels: c.valueLabels && SM.table.labelPairs ? SM.table.labelPairs(c) : null,
       }));
-      const arrays = table.columns.map((c) => (c.isNumeric ? Float64Array.from(c.values) : c.values.slice()));
+      const arrays = table.columns.map((c) => {
+        const a = c.isNumeric ? Float64Array.from(c.values) : c.values.slice();
+        if (c.missingCodes && c.missingCodes.length) {
+          const codes = new Set(c.missingCodes);
+          for (let i = 0; i < a.length; i++) if (a[i] != null && codes.has(a[i])) a[i] = c.isNumeric ? NaN : null;
+        }
+        return a;
+      });
       // The number arrays are fresh copies: move them instead of copying again.
       // Python keys its fitted models by the version it is given: the data
       // version, so that a column added to the table keeps them.
@@ -160,7 +174,10 @@
           this.pending.set(id, { resolve, reject, fn });
           this.worker.postMessage({ type: 'call', id, fn, payload: body });
         });
-        return JSON.parse(json);
+        // The code in a result reads the CSV, where a missing value code is
+        // the code: it gets the line that makes it missing (SM.table.codedCode).
+        const out = JSON.parse(json);
+        return table && SM.table.codedResult ? SM.table.codedResult(out, table) : out;
       } finally {
         this.busy = Math.max(0, this.busy - 1);
         this.emit('busy', this.busy);

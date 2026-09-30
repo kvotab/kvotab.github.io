@@ -804,23 +804,31 @@
           { key: 'init', label: 'Initial values', type: 'select', value: 'missing', choices: [['missing', 'Missing'], ['constant', 'Constant'], ['sequence', 'Sequence 1, 2, 3…'], ['random', 'Random normal (0, 1)'], ['uniform', 'Random uniform (0, 1)']], help: 'What the rows start with: missing values, the same value in every row (the Constant below), the row numbers, or random draws, normal with mean 0 and standard deviation 1, or uniform between 0 and 1 (a new draw each time).' },
           { key: 'constant', label: 'Constant', value: '', help: 'The value of every row when Initial values is Constant: a number for a numeric column, any text for a character one. Not used otherwise.' },
           SM.formula ? { key: 'formula', label: 'Formula', value: '', placeholder: 'e.g. log(:height) or :weight / (:height/100)^2', full: true, hint: 'Optional. A formula column recalculates when the columns it uses change.', help: 'Optional. A formula computes the column from other columns, row by row, in place of the initial values, and computes it again when they change. Columns are written `:name`; Cols > Formula edits it later, with the list of functions.' } : null,
+          { key: 'count', label: 'Number of columns to add', type: 'number', value: 1, help: 'How many columns to add, 1 to 1000, all alike; the names get 2, 3, … after the first.' },
         ].filter(Boolean),
         validate: (x) => (x.dataType === 'character' && x.modelingType === 'continuous' ? 'A character column is nominal or ordinal.' : null),
       });
       if (!v) return;
       const n = t.nrows;
-      let values;
-      if (v.init === 'constant') values = new Array(n).fill(v.dataType === 'numeric' ? SM.table.toNumber(v.constant) : v.constant);
-      else if (v.init === 'sequence') values = Array.from({ length: n }, (_, i) => (v.dataType === 'numeric' ? i + 1 : String(i + 1)));
-      else if (v.init === 'random' || v.init === 'uniform') { const r = SM.util.rng(`${v.name}${Date.now()}`); values = Array.from({ length: n }, () => (v.init === 'random' ? r.normal() : r.u())); }
-      else values = new Array(n).fill(v.dataType === 'numeric' ? NaN : null);
-      this.record(t, 'New Column');
-      const c = t.addColumn({ name: v.name.trim() || 'Column', dataType: v.dataType, modelingType: v.modelingType, values }, at);
-      if (v.formula && SM.formula) {
-        try { SM.formula.apply(t, c, v.formula); } catch (e) { SM.ui.toast(`Formula: ${e.message}`, { error: true }); }
+      // (random draws are new for each column)
+      const initial = (k) => {
+        if (v.init === 'constant') return new Array(n).fill(v.dataType === 'numeric' ? SM.table.toNumber(v.constant) : v.constant);
+        if (v.init === 'sequence') return Array.from({ length: n }, (_, i) => (v.dataType === 'numeric' ? i + 1 : String(i + 1)));
+        if (v.init === 'random' || v.init === 'uniform') { const r = SM.util.rng(`${v.name}${k}${Date.now()}`); return Array.from({ length: n }, () => (v.init === 'random' ? r.normal() : r.u())); }
+        return new Array(n).fill(v.dataType === 'numeric' ? NaN : null);
+      };
+      const count = Math.max(1, Math.min(1000, Math.round(Number(v.count) || 1)));
+      this.record(t, count > 1 ? 'New Columns' : 'New Column');
+      let first = null;
+      for (let k = 0; k < count; k++) {
+        const c = t.addColumn({ name: v.name.trim() || 'Column', dataType: v.dataType, modelingType: v.modelingType, values: initial(k) }, at == null ? null : at + k);
+        if (v.formula && SM.formula) {
+          try { SM.formula.apply(t, c, v.formula); } catch (e) { SM.ui.toast(`Formula: ${e.message}`, { error: true }); break; }
+        }
+        first = first || c;
       }
       this.showTab(this.tabOf(t));
-      return c;
+      return first;
     }
 
     deleteColumns(cols) {
@@ -866,6 +874,8 @@
         ob('Move Up', () => mv(-1)), ob('Move Down', () => mv(1)), ob('Reverse', () => { order.reverse(); renderOrder(); }), ob('Sort', () => { order = SM.table.sortLevels(order, c.isNumeric); renderOrder(); })));
       const formulaRow = c.formula ? el('div', { class: 'full sm-dialog-lead' }, 'Formula: ', el('code', { text: c.formula.expr || '' }), SM.formula ? ob('Edit Formula…', () => { dlg.close(); SM.formula.edit(t, c); }) : null) : null;
       const summary = columnSummary(t, c);
+      // the column properties (Missing Value Codes, Value Labels, Profit Matrix), SM.colprops
+      const props = SM.colprops ? SM.colprops.editors(t, c) : null;
       const grid = el('div', { class: 'sm-form' },
         el('label', { for: name.id, text: 'Column name' }), name,
         el('label', { text: 'Data type' }), dtype,
@@ -874,6 +884,7 @@
         el('label', { text: 'Label column' }), el('label', { class: 'sm-inline' }, isLabel, 'Use the values as row labels in graphs'),
         el('label', { text: 'Value order' }), c.isCategorical || order.length <= 60 ? orderBox : el('span', { class: 'sm-ob-note', text: `${order.length} distinct values; the order applies to ordinal and nominal columns` }),
         c.isNumeric ? el('label', { text: 'Spec Limits' }) : null, c.isNumeric ? el('div', { class: 'sm-inline' }, lsl, target, usl) : null,
+        ...(props ? props.nodes : []),
         el('label', { text: 'Notes' }), notes,
         formulaRow,
         el('div', { class: 'full sm-ob-note', text: summary }));
@@ -883,10 +894,13 @@
         buttons: [
           { label: 'Cancel' },
           { label: 'OK', primary: true, action: () => {
+            const perr = props ? props.check() : null;
+            if (perr) { msg.textContent = perr; return false; }
             if (dtype.value === 'character' && mtype.value === 'continuous') { msg.textContent = 'A character column is nominal or ordinal.'; return false; }
             this.record(t, 'Column Info');
             if (dtype.value !== c.dataType) t.setType(c.id, { dataType: dtype.value, modelingType: mtype.value });
             else if (mtype.value !== c.modelingType) t.setType(c.id, { modelingType: mtype.value });
+            if (props) props.apply();
             const d = Number(digits.value);
             c.format = fkind.value === 'best' ? null : { kind: fkind.value, digits: Number.isFinite(d) ? Math.max(0, Math.min(12, d)) : 2 };
             c.notes = notes.value;

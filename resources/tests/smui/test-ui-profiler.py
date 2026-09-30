@@ -5,8 +5,11 @@ Desirability Functions (the Desirability row and each response's function,
 the current desirability against the backend's), Maximize Desirability
 (the setting and prediction of '<area>.maximize' called directly), Set
 Desirabilities (Minimize), Remember Settings (a table; a click goes back),
-Assess Variable Importance (the Sobol indices of '<area>.importance'), a
-project round trip; then Fit Model's profiler of two responses, whose
+Assess Variable Importance (the Sobol indices of '<area>.importance'),
+Marginal Model Plots with ICE lines (against '<area>.marginal'), Save
+Shapley Values (the dialog, the columns, additivity, against
+'<area>.shapley'), a project round trip; then Fit Model's profiler of two
+responses, whose
 Maximize Desirability weighs both (against fitmodel.maximize); the dark
 theme and phone width.
 
@@ -67,7 +70,8 @@ async def main():
       const rep = SM.app.openReport(SM.platforms.get('gam'), { roles: ids, options: { family: 'normal', smoothing: 'aic', df: 10, degree: 3, folds: 5, penalty: 1 } }, t);
       await __p.done(rep); return { ob: !!__p.ob('Prediction Profiler'), items: await __p.items() }; })()''', timeout=300)
     check('GAM\'s profiler is the shared one', r['ob'], True)
-    check('its red triangle: desirability, remember, importance, reset, remove', r['items'], [['Desirability Functions', True], ['Maximize Desirability', False], ['Set Desirabilities…', False], ['Remember Settings', True], ['Assess Variable Importance', True], ['Reset Factor Settings', True], ['Remove', True]])
+    check('its red triangle: desirability, remember, importance, marginal model plots, Shapley values, reset, remove', r['items'], [['Desirability Functions', True], ['Maximize Desirability', False], ['Set Desirabilities…', False], ['Remember Settings', True], ['Assess Variable Importance', True],
+                                                                           ['Marginal Model Plots', True], ['ICE Lines', False], ['Save Shapley Values…', True], ['Reset Factor Settings', True], ['Remove', True]])
 
     # ---- Desirability Functions
     r = await page.ev('''(async () => { const rep = __p.rep(); await __p.menu('Desirability Functions'); await __p.done(rep);
@@ -134,15 +138,57 @@ async def main():
     check('temperature matters most (the example\'s truth)', max(r['rows'], key=lambda x: x['total'])['column'], 'temperature (°C)')
     await shot(page, 'profiler-importance.png')
 
+    # ---- Marginal Model Plots (partial dependence) and ICE lines = gam.marginal
+    r = await page.ev('''(async () => { const rep = __p.rep(); await __p.menu('Marginal Model Plots'); await __p.done(rep);
+      const ob = __p.ob('Marginal Model Plots');
+      const plots = rep.plots.filter(p => / marginal over /.test(p.opts.title || ''));
+      const direct = await SM.engine.call('gam.marginal', { ...__p.payload(rep), mm_n: 200, mm_ice: 0, mm_seed: 1, grid: 41, alpha: 0.05 }, rep.table);
+      const pd = plots.map(p => p.traces[p.traces.length - 1].y);
+      const inProf = plots.every(p => p.box.closest('.sm-prof'));
+      return { ob: !!ob, titles: plots.map(p => p.opts.title), pd, want: direct.responses[0].traces.map(t => t.pd), n: direct.n, inProf,
+        note: ob ? [...ob.querySelectorAll('.sm-ob-note')].map(e => e.textContent).join(' ') : '' }; })()''', timeout=300)
+    check('Marginal Model Plots: a plot per factor, in the profiler\'s grid (drawn from the prediction, as the profiler)', (r['ob'], r['titles'], r['inProf']),
+          (True, ['ozone (ppb) marginal over temperature (°C)', 'ozone (ppb) marginal over wind (m/s)', 'ozone (ppb) marginal over weekend'], True))
+    worst = max(abs(a_ - b_) for p_, w_ in zip(r['pd'], r['want']) for a_, b_ in zip(p_, w_))
+    check.near('... each the mean prediction over the rows with the factor set (gam.marginal, partial dependence)', worst, 0, 1e-12)
+    r = await page.ev('''(async () => { const rep = __p.rep(); await __p.menu('ICE Lines'); await __p.done(rep);
+      const plots = rep.plots.filter(p => / marginal over /.test(p.opts.title || ''));
+      const direct = await SM.engine.call('gam.marginal', { ...__p.payload(rep), mm_n: 200, mm_ice: 30, mm_seed: 1, grid: 41, alpha: 0.05 }, rep.table);
+      return { n: plots.map(p => p.traces.length), ice0: plots[0].traces[0].y, want: direct.responses[0].traces[0].ice[0] }; })()''', timeout=300)
+    check('ICE Lines: 30 rows\' own curves under each mean', r['n'], [31, 31, 31])
+    check.near('... each a row\'s curve (gam.marginal\'s)', max(abs(a_ - b_) for a_, b_ in zip(r['ice0'], r['want'])), 0, 1e-12)
+    # ---- Save Shapley Values: the dialog, the columns, additive, = gam.shapley
+    r = await page.ev('''(async () => { const rep = __p.rep(); const t = rep.table; const before = t.columns.length;
+      const go = __p.menu('Save Shapley Values…');
+      for (let i = 0; i < 60 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
+      const dlg = [...document.querySelectorAll('.sm-dialog')].pop();
+      const inputs = [...dlg.querySelectorAll('.sm-form input, .sm-form select')];
+      inputs[1].value = '25'; inputs[2].value = '6'; inputs[3].value = '2';
+      [...dlg.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'OK').click();
+      for (let i = 0; i < 300 && t.columns.length < before + 3; i++) await new Promise(r => setTimeout(r, 100));
+      const made = t.columns.slice(before).map(c => ({ name: c.name, values: c.values }));
+      const direct = await SM.engine.call('gam.shapley', { ...__p.payload(rep), sh_rows: rep.groups()[0].rows, sh_n: 25, sh_perm: 6, sh_seed: 2, alpha: 0.05 }, t);
+      return { made, direct }; })()''', timeout=600)
+    names = [c['name'] for c in r['made']]
+    check('Save Shapley Values: a column per factor for the response', names, ['Shapley[temperature (°C)] ozone (ppb)', 'Shapley[wind (m/s)] ozone (ppb)', 'Shapley[weekend] ozone (ppb)'])
+    d_ = r['direct']['responses'][0]
+    rows_ = r['direct']['rows']
+    worst = max(abs(r['made'][j]['values'][row] - d_['values'][j][i]) for j in range(3) for i, row in enumerate(rows_))
+    check.near('... the values of gam.shapley (every ordering of the three factors: exact)', worst, 0, 1e-12)
+    gap = max(abs(sum(r['made'][j]['values'][row] for j in range(3)) - (d_['pred'][i] - d_['base'])) for i, row in enumerate(rows_))
+    check.near('... a row\'s values add up to its prediction less the mean prediction of the background rows', gap, 0, 1e-9)
+    check('... said so', r['direct']['how'], 'every ordering of the 3 factors (exact)')
+
     # ---- a project keeps the desirability and the remembered settings
     r = await page.ev('''(async () => { const rep = __p.rep(); const t = rep.table;
       const j = JSON.parse(JSON.stringify({ format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] }));
       SM.app.loadProject(j);
       const back = SM.app.reports[SM.app.reports.length - 1];
       if (back.body.classList.contains('is-running') || !back.body.querySelector('.sm-ob')) await __p.done(back);
-      const out = { goal: (back.spec.options['profilerDes:profiler'] || {})['ozone (ppb)']?.goal, mem: !!__p.ob('Remembered Settings', back), imp: back.body.innerText.includes('Variable Importance: Independent Uniform Inputs') };
+      const out = { goal: (back.spec.options['profilerDes:profiler'] || {})['ozone (ppb)']?.goal, mem: !!__p.ob('Remembered Settings', back), imp: back.body.innerText.includes('Variable Importance: Independent Uniform Inputs'),
+        marg: !!__p.ob('Marginal Model Plots', back), ice: !!back.spec.options['profilerICE:profiler'] };
       SM.app.closeReport(back); SM.app.closeTable(back.table); return out; })()''', timeout=300)
-    check('a project keeps the desirability, the remembered settings and the importance', (r['goal'], r['mem'], r['imp']), ('min', True, True))
+    check('a project keeps the desirability, the remembered settings, the importance and the marginal model plots with ICE lines', (r['goal'], r['mem'], r['imp'], r['marg'], r['ice']), ('min', True, True, True, True))
 
     # ---- Fit Model: two responses in one profiler, desirability weighing both
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables[0]))')

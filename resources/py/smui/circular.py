@@ -21,7 +21,7 @@ from scipy import stats
 
 from . import data
 from .registry import api
-from .util import code_head, col
+from .util import code_head, col, one_line
 from .util import table as rtable
 
 J = json.dumps
@@ -119,7 +119,7 @@ def _rows_drop(table, rows, where):
 
 
 def _where_lines(where):
-    return [f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {w["column"]} is {w["value"]}' for w in where or []]
+    return [f'df = df[df[{J(w["column"])}] == {J(w["value"])}]   # only the rows where {one_line(w["column"])} is {one_line(w["value"])}' for w in where or []]
 
 
 def _head(table_name, where, cols, freq, extra=(), table=None, rows=None):

@@ -15,6 +15,12 @@ sex[F]*(age-14.5).
 The report tables (Summary of Fit, Analysis of Variance, Parameter
 Estimates, Effect Tests, Lack of Fit) are built from statsmodels results
 with util.table's shape, so the page formats them.
+
+Saved columns: new_rows() gives the design rows of every row of the table
+in a By group whose model columns have values (rows left out of the fit
+too: excluded, missing the response, held out for validation), so a saved
+prediction covers them as JMP's does; formula_linear() writes a model's
+linear predictor in the page's formula language (Save Prediction Formula).
 """
 import itertools
 import json
@@ -303,7 +309,12 @@ def anova(d, res):
                   col('f', 'F Ratio'), col('p', 'Prob > F', 'p')], rows)
 
 
-def estimates(d, res, alpha=0.05, vif=False):
+def estimates(d, res, alpha=0.05, vif=False, std_beta=False, design_se=False):
+    """Parameter Estimates in JMP's form (the intercept at x = 0, the terms in
+    the order of the effects), with the optional columns VIF, Std Beta (the
+    estimate had Y and the term's design column been standardized, b sd(x) /
+    sd(y), by the fit's weights) and Design Std Error (the standard error
+    over sigma: the square root of the diagonal of (X'WX)^-1)."""
     ci = res.conf_int(alpha)
     ci = np.asarray(ci)
     names = list(res.params.index)
@@ -339,11 +350,37 @@ def estimates(d, res, alpha=0.05, vif=False):
                 vifs.append(float(variance_inflation_factor(X, j)))
             except Exception:
                 vifs.append(None)
+    sbeta = dse = None
+    if std_beta or design_se:
+        X = np.asarray(res.model.exog, dtype=float)
+        if std_beta:
+            yv = np.asarray(res.model.endog, dtype=float)
+            wv = np.broadcast_to(np.asarray(getattr(res.model, 'weights', 1.0), dtype=float), yv.shape)
+
+            def _ss(v):
+                return float(np.sum(wv * (v - np.sum(wv * v) / np.sum(wv)) ** 2))
+            syy = _ss(yv)
+            sbeta = [None if nm == 'Intercept' or not syy > 0 else float(est[j] * math.sqrt(_ss(X[:, j]) / syy)) for j, nm in enumerate(names)]
+        if design_se:
+            NC = np.asarray(res.normalized_cov_params, dtype=float)
+            if T is not None:
+                NC = T @ NC @ T.T
+            dse = [float(math.sqrt(max(v, 0.0))) for v in np.diag(NC)]
     rows = []
+    zero, biased = set(getattr(d, 'zeroed', None) or ()), set(getattr(d, 'biased', None) or ())
     for j, nm in enumerate(names):
         r = {'term': d.label(nm), 'estimate': est[j], 'se': se[j], 't': tv[j], 'p': pv[j], 'lower': ci[j, 0], 'upper': ci[j, 1], 'name': nm}
         if vifs is not None:
             r['vif'] = vifs[j]
+        if sbeta is not None:
+            r['std_beta'] = sbeta[j]
+        if dse is not None:
+            r['design_se'] = dse[j]
+        if zero:   # a singular design, as JMP marks it
+            r['bias'] = 'Zeroed' if nm in zero else 'Biased' if nm in biased else ''
+            if nm in zero:
+                r.update({k: None for k in ('se', 't', 'p', 'lower', 'upper', 'vif', 'std_beta', 'design_se') if k in r or k in ('se', 't', 'p', 'lower', 'upper')})
+                r['estimate'] = 0.0
         rows.append(r)
     # In the order of the effects as given (patsy sorts terms its own way).
     rank = {'Intercept': -1}
@@ -356,14 +393,24 @@ def estimates(d, res, alpha=0.05, vif=False):
     lv = f'{100 * (1 - alpha):g}%'
     cols = [col('term', 'Term', 'text'), col('estimate', 'Estimate'), col('se', 'Std Error'), col('t', stat), col('p', pl, 'p'),
             col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}')]
+    if getattr(d, 'zeroed', None):
+        cols.insert(1, col('bias', '', 'text'))
+    if std_beta:
+        cols.append(col('std_beta', 'Std Beta'))
     if vif:
         cols.append(col('vif', 'VIF'))
+    if design_se:
+        cols.append(col('design_se', 'Design Std Error'))
     return table(cols, rows)
 
 
 def effect_tests(d, res):
     """F tests of each effect, all others in the model (JMP's Effect Tests;
-    Type III with effect coding)."""
+    Type III with effect coding). A singular design with zeroed columns
+    (d.zeroed): each effect is tested on its other columns, DF the number of
+    them and LostDFs the zeroed ones, as JMP."""
+    if getattr(d, 'zeroed', None):
+        return _effect_tests_zeroed(d, res)
     rows = []
     try:
         frame = res.wald_test_terms(skip_single=False, scalar=True).table
@@ -389,6 +436,44 @@ def effect_tests(d, res):
         cols = [col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'),
                 col('stat', 'Wald ChiSquare'), col('p', 'Prob > ChiSq', 'p')]
     return table(cols, rows)
+
+
+def _effect_tests_zeroed(d, res):
+    from scipy import stats as st_
+    names = list(res.params.index)
+    b = np.asarray(res.params, dtype=float)
+    V = np.asarray(res.cov_params(), dtype=float)
+    linear = hasattr(res, 'mse_resid') and getattr(res, 'df_resid', 0) > 0 and hasattr(res, 'ssr')
+    mse = float(res.mse_resid) if linear else float('nan')
+    dfe = float(getattr(res, 'df_resid_inference', None) or res.df_resid)
+    zero = set(d.zeroed)
+    rows = []
+    for e in d.effects:
+        cols = [names.index(c) for c in e.get('terms', []) if c in names]
+        if not cols:
+            continue
+        tested = [j for j in cols if names[j] not in zero]
+        q = len(tested)
+        row = {'source': e['label'], 'nparm': len(cols), 'df': q, 'lost': len(cols) - q, 'stat': None, 'p': None}
+        if q:
+            bs = b[tested]
+            stat = float(bs @ np.linalg.solve(V[np.ix_(tested, tested)], bs)) / q
+            row['stat'] = stat
+            row['p'] = float(st_.f.sf(stat, q, dfe)) if linear else float(st_.chi2.sf(stat * q, q))
+            if not linear:
+                row['stat'] = stat * q
+            if linear:
+                row['ss'] = stat * q * mse
+        elif linear:
+            row['ss'] = 0.0
+        rows.append(row)
+    if linear:
+        cols_ = [col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'), col('lost', 'LostDFs', 'int'),
+                 col('ss', 'Sum of Squares'), col('stat', 'F Ratio'), col('p', 'Prob > F', 'p')]
+    else:
+        cols_ = [col('source', 'Source', 'text'), col('nparm', 'Nparm', 'int'), col('df', 'DF', 'int'), col('lost', 'LostDFs', 'int'),
+                 col('stat', 'Wald ChiSquare'), col('p', 'Prob > ChiSq', 'p')]
+    return table(cols_, rows)
 
 
 def lack_of_fit(d, res):
@@ -526,4 +611,534 @@ def response_surface(names, categorical=()):
     out = [[n] for n in names]
     out += [list(c) for c in itertools.combinations(names, 2)]
     out += [[n, n] for n in names if n not in categorical]
+    return out
+
+
+# ---- saved columns: every row's design, and the prediction formula ----------
+
+def group_mask(tid, where):
+    """The rows of the table in a By group: those whose By columns hold the
+    group's values (every row of the table without By)."""
+    n = data.TABLES[tid]['n']
+    mask = np.ones(n, dtype=bool)
+    for w in where or []:
+        name, val = w['column'], w['value']
+        v = data.raw(tid, name)
+        if data.meta(tid, name).get('dataType') == 'numeric':
+            try:
+                fv = float(val)
+            except (TypeError, ValueError):
+                return np.zeros(n, dtype=bool)
+            mask &= np.asarray(v, dtype=float) == fv
+        else:
+            mask &= np.array([x == val for x in v], dtype=bool)
+    return mask
+
+
+def design_columns(d):
+    """The columns a design's effects read (crossed and nested ones too), in
+    the order they first appear; not the response."""
+    ys = set(d.y if isinstance(d.y, (list, tuple)) else ([d.y] if d.y else []))
+    out = []
+    for e in d.effects:
+        for n in (e.get('cols') or e['names']):
+            if n not in ys and n not in out:
+                out.append(n)
+    return out
+
+
+def new_rows(d, di, tid, where=None, rows=None, extra=()):
+    """The design rows, as the fit's design_info makes them, of every row of
+    the table in the By group (where) or of the given rows, whose model
+    columns and extra columns all have values: rows the fit left out
+    (excluded, missing the response, held out for validation) included, as a
+    formula column would compute them. A level the fit did not see (a
+    categorical value outside the design's levels) gives no row. Returns
+    (index, X, extra values): the table's row numbers, the design rows, and
+    {extra column: values} for those rows."""
+    import patsy
+    cols = design_columns(d)
+    extra = [c for c in dict.fromkeys(extra) if c and c not in cols]
+    fr = data.frame(tid, cols + extra, rows, dropna=False)
+    if rows is None:
+        fr = fr[group_mask(tid, where)]
+    ok = np.ones(len(fr), dtype=bool)
+    parts = {}
+    for nm in cols:
+        a = d.alias[nm]
+        s = fr[nm]
+        if a in d.categorical:
+            if not isinstance(s.dtype, pd.CategoricalDtype):
+                s = pd.Series(pd.Categorical(s, categories=d.levels[a]), index=s.index)
+            else:
+                s = s.cat.set_categories(d.levels[a])
+            ok &= s.notna().to_numpy()
+            parts[a] = s
+        else:
+            v = pd.to_numeric(pd.Series(np.asarray(s, dtype=object)), errors='coerce').to_numpy(float)
+            ok &= np.isfinite(v)
+            parts[a] = v
+    ex = {}
+    for nm in extra:
+        v = pd.to_numeric(pd.Series(np.asarray(fr[nm], dtype=object)), errors='coerce').to_numpy(float)
+        ok &= np.isfinite(v)
+        ex[nm] = v
+    idx = fr.index.to_numpy()[ok]
+    p = len(di.column_names)
+    if not len(idx):
+        X = np.zeros((0, p))
+    elif not cols:
+        X = np.ones((len(idx), p))           # the intercept alone
+    else:
+        frame = pd.DataFrame({a: (v.array[ok] if isinstance(v, pd.Series) else v[ok]) for a, v in parts.items()}, index=idx)
+        X = np.asarray(patsy.build_design_matrices([di], frame, NA_action='raise')[0], dtype=float)
+    return idx, X, {k: v[ok] for k, v in ex.items()}
+
+
+def combos(widths):
+    """Column combinations of a patsy subterm, the left-most factor iterating
+    fastest, as patsy orders them."""
+    for rev in itertools.product(*[range(w) for w in reversed(widths)]):
+        yield rev[::-1]
+
+
+_CAT_FACTOR = re.compile(r'C\((v\d+)')
+_NUMERIC = (
+    (re.compile(r'^(v\d+)$'), lambda m, ref: ref(m.group(1))),
+    (re.compile(r'^I\(\((v\d+) - (.+)\) \*\* (\d+)\)$'), lambda m, ref: f'{_shifted(ref(m.group(1)), float(m.group(2)))}^{m.group(3)}'),
+    (re.compile(r'^I\((v\d+) - (.+)\)$'), lambda m, ref: _shifted(ref(m.group(1)), float(m.group(2)))),
+    (re.compile(r'^I\((v\d+) \*\* (\d+)\)$'), lambda m, ref: f'{ref(m.group(1))}^{m.group(2)}'),
+)
+
+
+def _shifted(r, mean):
+    from .util import formula_num
+    return f'({r} - {formula_num(mean)})' if mean >= 0 else f'({r} + {formula_num(-mean)})'
+
+
+def numeric_text(code, ref):
+    """A continuous factor of a design (x, x centred, a power of either) in
+    formula text; ref(alias) gives the column's reference."""
+    for rx, fn in _NUMERIC:
+        m = rx.match(code)
+        if m:
+            return fn(m, ref)
+    raise ValueError(f'no formula for the design factor {code}')
+
+
+def formula_linear(d, di, b, tid):
+    """The linear predictor b'x of a design as formula text over the table's
+    columns (the page's formula language, smui-formula.js), in JMP's form:
+    each term's categorical factors as a Match of their levels (nested for a
+    crossing) giving the term's coefficient at that level, its effect
+    coding folded in (the last level minus the sum of the others); a
+    continuous factor as the design has it, centred ((:x - mean)) where the
+    fit centred it, a power as ^; a level the fit did not see gives a
+    missing value."""
+    from .util import formula_num, formula_ref, formula_str
+    b = np.asarray(b, dtype=float)
+
+    def ref(a):
+        return formula_ref(d.name[a])
+
+    def lit(a, v):
+        if data.meta(tid, d.name[a]).get('dataType') == 'numeric':
+            return formula_num(v)
+        return formula_str(v.item() if hasattr(v, 'item') else v)
+    pieces = []
+    j = 0
+    for _term, subterms in di.term_codings.items():
+        for st in subterms:
+            cats, nums, widths = [], [], []
+            for f in st.factors:
+                fi = di.factor_infos[f]
+                if fi.type == 'categorical':
+                    cm = np.asarray(st.contrast_matrices[f].matrix, dtype=float)
+                    cats.append((_CAT_FACTOR.match(f.code).group(1), cm, len(widths), list(fi.categories)))
+                    widths.append(cm.shape[1])
+                else:
+                    nums.append(numeric_text(f.code, ref))
+                    widths.append(int(fi.num_columns))
+            ncol = int(np.prod(widths)) if widths else 1
+            coef = b[j:j + ncol]
+            cmb = list(combos(widths)) if widths else [()]
+            j += ncol
+            if not cats:
+                c = float(coef[0])
+                if c != 0:
+                    pieces.append(' * '.join([formula_num(c)] + nums))
+                continue
+
+            def value(levels):
+                v = 0.0
+                for cc, combo in zip(coef, cmb):
+                    prod = float(cc)
+                    for (_a, cm, pos, _lv), li in zip(cats, levels):
+                        prod *= cm[li, combo[pos]]
+                    v += prod
+                return v
+            grid = {}
+            for lv in itertools.product(*[range(len(c[3])) for c in cats]):
+                grid[lv] = value(lv)
+            if all(v == 0 for v in grid.values()):
+                continue
+
+            def match(k, prefix):
+                a, _cm, _pos, levels = cats[k]
+                parts = []
+                for li, lv in enumerate(levels):
+                    inner = formula_num(grid[prefix + (li,)]) if k == len(cats) - 1 else match(k + 1, prefix + (li,))
+                    parts.append(f'{lit(a, lv)}, {inner}')
+                return f'Match({ref(a)}, {", ".join(parts)}, .)'
+            pieces.append(' * '.join([match(0, ())] + nums))
+    return ' + '.join(pieces) if pieces else '0'
+
+
+# the mean from the linear predictor, as formula text (statsmodels' links)
+INVERSE_LINK = {'identity': '{}', 'log': 'Exp({})', 'logit': 'Squash({})', 'probit': 'Normal Distribution({})',
+                'cloglog': '1 - Exp(-Exp({}))', 'reciprocal': '1 / ({})', 'inverse_squared': '1 / Sqrt({})', 'sqrt': '({})^2'}
+
+
+def where_condition(tid, where):
+    """The condition, in formula text, that holds for the rows of a By group
+    (:by == value & ...), or None without By."""
+    from .util import formula_num, formula_ref, formula_str
+    if not where:
+        return None
+    conds = []
+    for w in where:
+        num = data.meta(tid, w['column']).get('dataType') == 'numeric'
+        conds.append(f'{formula_ref(w["column"])} == {formula_num(w["value"]) if num else formula_str(w["value"])}')
+    return ' & '.join(conds)
+
+
+def formula_where(tid, where, expr):
+    """A formula for the rows of a By group only: If(:by == value, expr, .)."""
+    cond = where_condition(tid, where)
+    return expr if cond is None else f'If({cond}, {expr}, .)'
+
+
+class Ref:
+    """A reference, in a formula, to the k-th column saved with it."""
+    __slots__ = ('k',)
+
+    def __init__(self, k):
+        self.k = k
+
+
+def segs(*parts):
+    """Formula text that refers to columns saved with it: a list of text and
+    {'ref': k}, the k-th column of the save (the page puts in its name, which
+    the table may have changed to keep names unique)."""
+    out = []
+    for p in parts:
+        if isinstance(p, Ref):
+            out.append({'ref': p.k})
+        elif p:
+            if out and isinstance(out[-1], str):
+                out[-1] += p
+            else:
+                out.append(p)
+    return out
+
+
+def probability_formulas(mode, labels, lins, y_name, target=0, cuts=None, distr='logit'):
+    """Save Probability Formula of a logistic model, as JMP names and writes
+    it: the linear predictors, then Prob[level] from them, then Most Likely
+    y, the level with the largest probability (the first of equals). mode
+    'binary': lins = [the target's log odds] (Lin[target]); 'multinomial':
+    lins = each level's log odds against the last (Lin[level]); 'ordinal':
+    lins = [x'b] (Linear) with cuts, the thresholds a_j of P(Y <= j) =
+    F(a_j + x'b), F logistic or normal (Cum[level])."""
+    from .util import formula_num, formula_str
+    k = len(labels)
+    F = []
+    if mode == 'binary':
+        F.append({'name': f'Lin[{labels[target]}]', 'expr': lins[0]})
+        probs = [segs('Squash(', Ref(0), ')') if j == target else segs('1 - Squash(', Ref(0), ')') for j in range(k)]
+    elif mode == 'multinomial':
+        for q in range(k - 1):
+            F.append({'name': f'Lin[{labels[q]}]', 'expr': lins[q]})
+        den = ['1']
+        for q in range(k - 1):
+            den += [' + Exp(', Ref(q), ')']
+        probs = [segs('Exp(', Ref(q), ') / (', *den, ')') for q in range(k - 1)] + [segs('1 / (', *den, ')')]
+    else:
+        F.append({'name': 'Linear', 'expr': lins[0]})
+        cdf = 'Squash' if distr == 'logit' else 'Normal Distribution'
+        for j in range(k - 1):
+            F.append({'name': f'Cum[{labels[j]}]', 'expr': segs(f'{cdf}({formula_num(cuts[j])} + ', Ref(0), ')')})
+        probs = [segs(Ref(1))] + [segs(Ref(1 + j), ' - ', Ref(j)) for j in range(1, k - 1)] + [segs('1 - ', Ref(k - 1))]
+    first = len(F)
+    for j in range(k):
+        F.append({'name': f'Prob[{labels[j]}]', 'expr': probs[j]})
+    mx = ['Max(']
+    for j in range(k):
+        mx += ([', '] if j else []) + [Ref(first + j)]
+    mx.append(')')
+    parts = ['If(']
+    for j in range(k - 1):
+        parts += ([', '] if j else []) + [Ref(first + j), ' == ', *mx, f', {formula_str(labels[j])}']
+    parts.append(f', {formula_str(labels[-1])})')
+    F.append({'name': f'Most Likely {y_name}', 'expr': segs(*parts), 'character': True,
+              'modelingType': 'ordinal' if mode == 'ordinal' else 'nominal', 'valueOrder': list(labels)})
+    return F
+
+
+def logistic_lack_of_fit(pattern, y, w, k, llf, df_fit):
+    """JMP's Lack of Fit of a logistic model: the fitted model against the
+    saturated one, which gives each distinct pattern of the X values its own
+    probabilities of the k levels (their shares among the pattern's rows,
+    each row counted by its weight). pattern: each row's pattern (codes), y:
+    its level index, llf: the fitted model's log-likelihood, df_fit: its
+    parameters beyond the intercepts. -LogLikelihood of Lack Of Fit is
+    -llf - (-LL_saturated), ChiSquare twice that on (patterns - 1)(k - 1) -
+    df_fit degrees of freedom. None when no pattern holds two rows or no
+    degree of freedom is left."""
+    from scipy import stats as st_
+    pattern = np.asarray(pd.factorize(np.asarray(pattern))[0], dtype=int)
+    y = np.asarray(y, dtype=int)
+    w = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
+    m = int(pattern.max()) + 1 if len(pattern) else 0
+    if m >= len(y):
+        return None
+    cnt = np.zeros((m, k))
+    np.add.at(cnt, (pattern, y), w)
+    tot = cnt.sum(axis=1, keepdims=True)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ll_sat = float(np.sum(np.where(cnt > 0, cnt * np.log(cnt / tot), 0.0)))
+    df_sat = (m - 1) * (k - 1)
+    df_lof = df_sat - int(df_fit)
+    if df_lof <= 0:
+        return None
+    nll_lof = max(-llf - (-ll_sat), 0.0)
+    chi = 2 * nll_lof
+    rows = [{'source': 'Lack Of Fit', 'df': float(df_lof), 'nll': nll_lof, 'chisq': chi, 'p': float(st_.chi2.sf(chi, df_lof))},
+            {'source': 'Saturated', 'df': float(df_sat), 'nll': -ll_sat, 'chisq': None, 'p': None},
+            {'source': 'Fitted', 'df': float(df_fit), 'nll': -float(llf), 'chisq': None, 'p': None}]
+    return table([col('source', 'Source', 'text'), col('df', 'DF', 'num'), col('nll', '-LogLikelihood'), col('chisq', 'ChiSquare'),
+                  col('p', 'Prob>ChiSq', 'p')], rows, patterns=m)
+
+
+LOGISTIC_LOF_CODE = [
+    'def lack_of_fit(pattern, y, w, k, llf, df_fit):',
+    '    """The fitted model against the saturated one (each X pattern its own shares of the levels), as JMP\'s Lack of Fit."""',
+    '    p_ = pd.factorize(pattern)[0]; m = p_.max() + 1',
+    '    cnt = np.zeros((m, k)); np.add.at(cnt, (p_, y), w)',
+    '    ll_sat = np.sum(np.where(cnt > 0, cnt * np.log(np.where(cnt > 0, cnt, 1) / cnt.sum(axis=1, keepdims=True)), 0.0))',
+    '    df_lof = (m - 1) * (k - 1) - df_fit; chi = 2 * (ll_sat - llf)',
+    '    return df_lof, ll_sat - llf, chi, stats.chi2.sf(chi, df_lof)   # DF, -LogLikelihood, ChiSquare and Prob>ChiSq of Lack Of Fit',
+]
+
+
+# ---- the Estimates menu: Indicator Parameterization and Expanded Estimates ------------------------------
+# JMP's effect coding reparametrized: Indicator Parameterization Estimates code each effect-coded factor 0/1,
+# its last level the reference (the same fit when the model holds the effects a crossing contains; otherwise
+# a fit of its own), and Expanded Estimates give every level (combination) of a term its parameter, the
+# last level's the negative sum of the others'. Both keep the report's intercept at x = 0 (estimates()).
+
+def _last_level(d, a):
+    cats = d.df[a].cat.categories if isinstance(d.df[a].dtype, pd.CategoricalDtype) else d.levels[a]
+    v = list(cats)[-1]
+    return v.item() if hasattr(v, 'item') else v
+
+
+def indicator_rhs(d):
+    """The design's right-hand side with each effect-coded factor 0/1 coded, its last level the reference."""
+    return re.sub(r'C\((v\d+), Sum\)', lambda m: f'C({m.group(1)}, Treatment(reference={_last_level(d, m.group(1))!r}))', d.rhs)
+
+
+def _indicator_to_effect(nm):
+    """An indicator column's name as the effect-coded design names the same level (both leave out the last)."""
+    return re.sub(r'C\((v\d+), Treatment\(reference=[^)]*\)\)\[T\.', r'C(\1, Sum)[S.', nm)
+
+
+def _estimate_rows(d, names, b, V, dfe, use_t, alpha, labels=None, order=None):
+    from scipy import stats as st_
+    se = np.sqrt(np.maximum(np.diag(V), 0.0))
+    crit = st_.t.ppf(1 - alpha / 2, dfe) if use_t else st_.norm.ppf(1 - alpha / 2)
+    rows = []
+    for j, nm in enumerate(names):
+        t = b[j] / se[j] if se[j] > 0 else float('nan')
+        p = float(2 * (st_.t.sf(abs(t), dfe) if use_t else st_.norm.sf(abs(t)))) if np.isfinite(t) else None
+        rows.append({'term': labels[j] if labels else d.label(nm), 'estimate': float(b[j]), 'se': float(se[j]), 't': t, 'p': p,
+                     'lower': float(b[j] - crit * se[j]), 'upper': float(b[j] + crit * se[j]), 'name': nm})
+    rank = {'Intercept': -1}
+    for i, e in enumerate(d.effects):
+        for c in e.get('terms', []):
+            rank.setdefault(c, i)
+    key = order or (lambda r: rank.get(r['name'], len(d.effects)))
+    rows.sort(key=key)
+    return rows
+
+
+def _estimate_columns(use_t, alpha):
+    stat = 't Ratio' if use_t else 'z Ratio'
+    lv = f'{100 * (1 - alpha):g}%'
+    return [col('term', 'Term', 'text'), col('estimate', 'Estimate'), col('se', 'Std Error'), col('t', stat),
+            col('p', 'Prob>|t|' if use_t else 'Prob>|z|', 'p'), col('lower', f'Lower {lv}'), col('upper', f'Upper {lv}')]
+
+
+def indicator_estimates(d, res, alpha=0.05, df=None):
+    """Indicator Parameterization Estimates: the fit's parameters with each
+    effect-coded factor 0/1 coded (the last level the reference, its column
+    left out), a crossing the products of the indicators. When the effect
+    coded design lies in the indicator design's span (every effect a crossing
+    contains is in the model) this is the same fit reparametrized: b_i = K b
+    and V_i = K V K' with K = pinv(X_i) X, so the robust covariance carries
+    over; otherwise the indicator design is a model of its own, fitted here
+    by (weighted) least squares ('refit' True)."""
+    import patsy
+    Xe = np.asarray(res.model.exog, dtype=float)
+    Xi_df = patsy.dmatrix(indicator_rhs(d), d.df, return_type='dataframe', NA_action='raise')
+    Xi = Xi_df.to_numpy(float)
+    names = list(Xi_df.columns)
+    if Xi.shape[0] != Xe.shape[0]:
+        raise ValueError('the indicator design does not have the fit\'s rows')
+    K = np.linalg.pinv(Xi) @ Xe
+    scale = max(1.0, float(np.max(np.abs(Xe)))) if Xe.size else 1.0
+    exact = bool(np.max(np.abs(Xi @ K - Xe)) <= 1e-8 * scale) if Xe.size else True
+    use_t = getattr(res, 'use_t', True) is not False
+    dfe = float(getattr(res, 'df_resid', np.inf)) if df is None else float(df)
+    if exact:
+        b = K @ np.asarray(res.params, dtype=float)
+        V = K @ np.asarray(res.cov_params(), dtype=float) @ K.T
+    else:
+        import statsmodels.api as sm_
+        w = np.broadcast_to(np.asarray(getattr(res.model, 'weights', 1.0), dtype=float), (Xi.shape[0],))
+        mod = sm_.WLS(np.asarray(res.model.endog, dtype=float), Xi, weights=w)
+        mod.df_resid = res.model.df_resid
+        r2 = mod.fit()
+        b, V, dfe, use_t = np.asarray(r2.params, dtype=float), np.asarray(r2.cov_params(), dtype=float), float(r2.df_resid), True
+    T = _uncentre(d, names)
+    if T is not None:
+        b, V = T @ b, T @ V @ T.T
+    labels = [d.label(nm) for nm in names]
+    rows = _estimate_rows(d, [_indicator_to_effect(nm) for nm in names], b, V, dfe, use_t, alpha, labels=labels)
+    return table(_estimate_columns(use_t, alpha), rows, refit=not exact)
+
+
+def expanded_estimates(d, res, alpha=0.05, df=None):
+    """Expanded Estimates: each term with categorical factors at every
+    combination of their levels, its estimate the term's coded columns
+    there times the parameters (for effect coding the last level's is minus
+    the sum of the others'), with its standard error from the covariance;
+    continuous terms as they are. The nested effects list the combinations
+    that occur. Also 'L': each line's weights of the parameters (the code
+    prints them from the fit)."""
+    di = res.model.data.design_info
+    names = list(res.params.index)
+    b = np.asarray(res.params, dtype=float)
+    V = np.asarray(res.cov_params(), dtype=float)
+    T = _uncentre(d, names)
+    if T is None:
+        T = np.eye(len(names))
+    p = len(names)
+    lines = []
+    j = 0
+    for term, subterms in di.term_codings.items():
+        e_ = next((e for e in d.effects if e.get('patsy') and _same_term(e['patsy'], term.name())), None)
+        nested = bool(e_ and (e_.get('spec') or {}).get('nest'))
+        for st in subterms:
+            cats, parts, widths = [], [], []
+            for f in st.factors:
+                fi = di.factor_infos[f]
+                if fi.type == 'categorical':
+                    cm = np.asarray(st.contrast_matrices[f].matrix, dtype=float)
+                    a = _CAT_FACTOR.match(f.code).group(1)
+                    cats.append((a, cm, len(widths), list(fi.categories)))
+                    parts.append(('cat', len(cats) - 1))
+                    widths.append(cm.shape[1])
+                else:
+                    parts.append(('num', d._part(f.code)))
+                    widths.append(int(fi.num_columns))
+            ncol = int(np.prod(widths)) if widths else 1
+            if not cats:
+                for c in range(j, j + ncol):
+                    lines.append((names[c], d.label(names[c]), T[c].copy()))
+                j += ncol
+                continue
+            cmb = list(combos(widths))
+            seen = None
+            if nested:
+                codes = np.column_stack([pd.Categorical(d.df[a], categories=lv).codes for a, _cm, _pos, lv in cats])
+                seen = {tuple(r) for r in codes.tolist()}
+            for lv in itertools.product(*[range(len(c[3])) for c in cats]):
+                if seen is not None and lv not in seen:
+                    continue
+                L = np.zeros(p)
+                for k_, combo in enumerate(cmb):
+                    prod = 1.0
+                    for (_a, cm, pos, _l), li in zip(cats, lv):
+                        prod *= cm[li, combo[pos]]
+                    L[j + k_] = prod
+                if not L.any():
+                    continue
+                lab = '*'.join(f'{d.name[cats[i][0]]}[{_level_text(str(cats[i][3][lv[i]]))}]' if kind == 'cat' else i for kind, i in parts)
+                lines.append((names[j], lab, L))
+            j += ncol
+    use_t = getattr(res, 'use_t', True) is not False
+    dfe = float(getattr(res, 'df_resid', np.inf)) if df is None else float(df)
+    # in the order of the effects as given, as the Parameter Estimates (patsy sorts terms its own way)
+    rank = {'Intercept': -1}
+    for i, e in enumerate(d.effects):
+        for c in e.get('terms', []):
+            rank.setdefault(c, i)
+    lines.sort(key=lambda ln: rank.get(ln[0], len(d.effects)))
+    Lm = np.array([ln[2] for ln in lines]) if lines else np.zeros((0, p))
+    est, C = Lm @ b, Lm @ V @ Lm.T
+    rows = _estimate_rows(d, [ln[0] for ln in lines], est, C, dfe, use_t, alpha, labels=[ln[1] for ln in lines], order=lambda r: 0)
+    return table(_estimate_columns(use_t, alpha), rows, L=[{int(k): float(v) for k, v in enumerate(ln[2]) if v != 0} for ln in lines])
+
+
+# ---- Unstable estimates of a logistic fit (JMP marks them) --------------------------------------------
+def unstable_params(loglike, params, cov, tol=1e-3, scales=None):
+    """Which parameters of a maximum likelihood fit do not settle: along a
+    direction in which the estimates are least determined (an eigenvector of
+    their covariance), a step of five standard errors (at most 10 on the
+    scale of the linear predictor's coefficients: a flat likelihood's
+    standard errors are huge, and so would the step's misalignment be) away
+    from zero does not lower the log-likelihood by tol, so the data separate
+    the levels along it
+    (a level of a factor, or a range of X, where every row has the same
+    response level) and the maximum is at infinity. Every parameter that
+    takes part in such a direction (a tenth of its largest weight or more,
+    each weight times the parameter's scale: the root mean square of its
+    design column, so that a slope and an intercept compare by what they do
+    to the linear predictor), or whose variance is not finite, is unstable.
+    loglike(v) is the fit's log-likelihood at the parameter vector v (in the
+    covariance's order)."""
+    b = np.asarray(params, dtype=float).ravel()
+    C = np.asarray(cov, dtype=float)
+    out = np.zeros(len(b), dtype=bool)
+    if not len(b):
+        return out
+    bad = ~np.isfinite(np.diag(C)) | (np.diag(C) < 0)
+    out |= bad
+    ok = ~bad
+    if not ok.any():
+        return out
+    Cs = C[np.ix_(ok, ok)]
+    if not np.all(np.isfinite(Cs)):
+        return out | ok
+    lam, U = np.linalg.eigh((Cs + Cs.T) / 2)
+    idx = np.flatnonzero(ok)
+    try:
+        L0 = float(loglike(b))
+    except Exception:
+        return out
+    for i in range(len(lam)):
+        if not lam[i] > 0:
+            continue
+        u = np.zeros(len(b))
+        u[idx] = U[:, i]
+        s = 1.0 if float(u @ b) >= 0 else -1.0
+        step = min(5 * math.sqrt(lam[i]), 10.0)
+        try:
+            L1 = float(loglike(b + s * step * u))
+        except Exception:
+            continue
+        if np.isfinite(L1) and L1 > L0 - tol:
+            su = np.abs(u) * (1.0 if scales is None else np.asarray(scales, dtype=float))
+            out |= su >= 0.1 * np.max(su)
     return out

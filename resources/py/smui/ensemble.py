@@ -1,20 +1,34 @@
 """Analyze > Predictive Modeling > Bootstrap Forest and Boosted Tree.
 
-JMP Pro's two tree ensembles, fitted by scikit-learn:
+JMP Pro's two tree ensembles, their trees scikit-learn's decision trees:
 
-  Bootstrap Forest   RandomForestRegressor / RandomForestClassifier: each
-                     tree on a bootstrap sample of the training rows, a
-                     random set of the X columns tried at each split. Each
-                     tree is then cut back as JMP's documentation says its
-                     trees stop: past Minimum Splits per Tree a split stays
-                     only while it lowers the tree's out-of-bag loss, and
-                     the first that does not is taken back. A categorical
-                     response's probabilities are JMP's: a node's counts
-                     plus a prior worth one row, never 0. The forest
-                     averages its trees.
-  Boosted Tree       GradientBoostingRegressor / GradientBoostingClassifier:
-                     small trees (layers), each fitted to the residuals of
-                     the layers before it and scaled by the learning rate.
+  Bootstrap Forest   each tree a DecisionTreeRegressor / Classifier on a
+                     bootstrap sample of the training rows, a random set of
+                     the X columns tried at each split, the samples and
+                     seeds drawn as scikit-learn's RandomForestRegressor
+                     draws them (without a nominal X the forest is that
+                     forest). Each tree is then cut back as JMP's
+                     documentation says its trees stop: past Minimum Splits
+                     per Tree a split stays only while it lowers the tree's
+                     out-of-bag loss, and the first that does not is taken
+                     back. A categorical response's probabilities are JMP's:
+                     a node's counts plus a prior worth one row, never 0.
+                     The forest averages its trees.
+  Boosted Tree       small trees (layers), each fitted to the residuals of
+                     the layers before it and scaled by the learning rate:
+                     scikit-learn's gradient boosting written out layer by
+                     layer (boost_layer; without a nominal X it is
+                     GradientBoostingRegressor / Classifier, the same draws).
+
+A categorical X is one column of level numbers. A split on a nominal X
+takes two groups of its levels, as JMP's do: each tree (each layer's tree)
+orders the levels by the mean response of its rows (the mean residual, for
+a layer), and a cut in that order is a grouping, the best one at the tree's
+root for a continuous or two-level response (Fisher's result); a response
+of three or more levels orders them by the first principal component of
+the levels' shares. An ordinal X keeps its order. A missing level, and a
+level a tree's rows lack, is NaN, which scikit-learn's trees send to the
+better side of each split.
 
 With validation rows, Early Stopping grows the trees or layers one at a
 time and keeps the number with the best validation statistic (RSquare, or
@@ -24,9 +38,11 @@ the learning rate) and reports the best by the same statistic.
 
 The data, sets and measures are predictive.py's. The fitted models are
 cached (predictive.cached) for the profiler, Save Columns, the tree views
-and the permutation importance. Everything random takes the report's seed.
-The helper functions near the top are written out into the Python code
-under the report as they are here, so that the code gives the same trees.
+and the permutation importance, and kept under the report's key
+(predictive.keep) for Score Rows. Everything random takes the report's
+seed. The helper functions near the top are written out into the Python
+code under the report as they are here, so that the code gives the same
+trees.
 """
 import copy
 import inspect
@@ -35,7 +51,7 @@ import math
 
 import numpy as np
 
-from . import predictive, profile
+from . import data, predictive, profile
 from .registry import api
 
 SK = predictive.SK
@@ -123,7 +139,163 @@ def stands_for(parent, kept):
     return rep
 
 
-HELPERS = (parents, jmp_probs, oob_losses, kept_splits, stands_for)
+def level_ranks(codes, target, w, u):
+    """The order in which a tree splits a nominal X's u levels into two
+    groups, as JMP groups levels: each level by the weighted mean of target
+    over the rows (codes: the rows' level numbers 0 .. u - 1, -1 missing;
+    w: their weights, 0 for a row the tree does not use). A cut anywhere in
+    this order is a grouping of the levels, and the best cut is the best of
+    all groupings for a continuous or two-level target (Fisher 1958). A
+    target of several columns (the 0/1 columns of a response of three or
+    more levels) orders the levels by the first principal component of
+    their shares. Returns each level's rank, NaN for a level the rows lack
+    (a tree sends it where missing values go)."""
+    ok = (codes >= 0) & (w > 0)
+    c = codes[ok].astype(int)
+    wk = w[ok]
+    t = target[ok]
+    W = np.bincount(c, weights=wk, minlength=u)
+    present = W > 0
+    score = np.zeros(u)
+    if t.ndim == 1:
+        score[present] = np.bincount(c, weights=wk * t, minlength=u)[present] / W[present]
+    else:
+        share = np.column_stack([np.bincount(c, weights=wk * t[:, k], minlength=u) for k in range(t.shape[1])])[present] / W[present, None]
+        dev = share - W[present] @ share / W[present].sum()
+        v = np.linalg.eigh((dev * W[present, None]).T @ dev)[1][:, -1]     # the first principal component
+        v = -v if v[np.argmax(np.abs(v))] < 0 else v                       # its sign fixed, so the order is too
+        score[present] = share @ v
+    order = np.argsort(np.where(present, score, np.inf), kind='mergesort')[:int(present.sum())]
+    rank = np.full(u, np.nan)
+    rank[order] = np.arange(len(order), dtype=float)
+    return rank
+
+
+def recode(X, maps):
+    """X with each categorical column as a tree reads it (maps: [(column,
+    ranks)] from maps_for): a nominal column's level numbers become their
+    ranks, an ordinal one's (ranks None) stay as they are, and a missing
+    value (-1), or a level without a rank, becomes NaN, which the tree sends
+    to the better side of each split."""
+    if not maps:
+        return X
+    out = X.copy()
+    for j, rank in maps:
+        code = X[:, j]
+        ok = code >= 0
+        col = np.full(len(code), np.nan)
+        col[ok] = code[ok] if rank is None else np.asarray(rank, dtype=float)[code[ok].astype(int)]
+        out[:, j] = col
+    return out
+
+
+def maps_for(X, target, w, nominal, ordinal):
+    """How one tree reads the categorical columns of X: each nominal column
+    (nominal: [(column, number of levels)]) by the ranks of its levels in
+    the tree's rows (level_ranks: target and w are the rows' target and
+    weights), each ordinal one (ordinal: [column]) in its level order."""
+    return [(j, level_ranks(X[:, j], target, w, u)) for j, u in nominal] + [(j, None) for j in ordinal]
+
+
+def sample_mask(n, n_in, rs):
+    """The rows of one boosting layer: n_in of the n training rows drawn
+    without replacement from the RandomState rs, as scikit-learn's gradient
+    boosting draws them (selection sampling)."""
+    rand = rs.uniform(size=n)
+    mask = np.zeros(n, dtype=bool)
+    taken = 0
+    for i in range(n):
+        if rand[i] * (n - i) < n_in - taken:
+            mask[i] = True
+            taken += 1
+    return mask
+
+
+def boost_start(yt, wt, kind, n):
+    """The raw prediction before the first layer, as scikit-learn's gradient
+    boosting starts: the weighted mean (kind 'squared', a continuous
+    response), the log odds of the second level ('binomial'), or each
+    level's log share less their mean ('multinomial', n levels); a share is
+    kept within machine epsilon of 0 and 1."""
+    if kind == 'squared':
+        return np.array([np.average(yt, weights=wt)])
+    from scipy.special import logit
+    eps = np.finfo(np.float64).eps
+    counts = np.bincount(yt, weights=wt, minlength=n)
+    share = np.clip(counts / counts.sum(), eps, 1 - eps)
+    if kind == 'binomial':
+        return np.array([logit(share[1])])
+    return np.log(share / np.exp(np.mean(np.log(share))))
+
+
+def boost_layer(Xt, yt, wt, raw, kind, lr, rs, row_rate, tree_args, nominal, ordinal):
+    """One layer of the boosted tree, as scikit-learn's gradient boosting
+    fits a stage: the rows drawn (row_rate below 1), then a regression tree
+    on the negative gradient (the residuals; for three or more levels a tree
+    per level), its leaves given a Newton step for a categorical response,
+    and lr times its prediction added to raw, the training rows' raw
+    predictions (updated in place). Each tree reads the nominal columns in
+    the order of their levels' mean residual (maps_for), so that a split
+    takes two groups of levels. rs: the one RandomState of the whole fit.
+    Returns the layer's trees, [(tree, maps)]."""
+    from sklearn.tree import DecisionTreeRegressor
+    n = len(yt)
+    if row_rate < 1:
+        mask = sample_mask(n, max(1, int(row_rate * n)), rs)
+        w = wt * mask
+    else:
+        mask, w = np.ones(n, dtype=bool), wt
+    if kind == 'squared':
+        neg = (yt - raw[:, 0])[:, None]
+    elif kind == 'binomial':
+        e = np.exp(-raw[:, 0])
+        neg = -np.where(raw[:, 0] > -37, ((1 - yt) - yt * e) / (1 + e), np.exp(raw[:, 0]) - yt)[:, None]
+    else:
+        e = np.exp(raw - raw.max(axis=1, keepdims=True))
+        neg = (yt[:, None] == np.arange(raw.shape[1])).astype(float) - e / e.sum(axis=1, keepdims=True)
+    layer = []
+    for k in range(neg.shape[1]):
+        maps = maps_for(Xt, neg[:, k], w, nominal, ordinal)
+        Xk = recode(Xt, maps)
+        tree = DecisionTreeRegressor(random_state=rs, **tree_args).fit(Xk, neg[:, k], sample_weight=w)
+        leaf = tree.apply(Xk)
+        t = tree.tree_
+        if kind != 'squared':
+            yk = (yt == (1 if kind == 'binomial' else k)).astype(float)
+            factor = 1.0 if kind == 'binomial' else (raw.shape[1] - 1) / raw.shape[1]
+            for node in np.flatnonzero(t.children_left == -1):
+                i = np.flatnonzero(mask & (leaf == node))
+                g = neg[i, k]
+                p = yk[i] - g
+                num = np.average(g, weights=w[i]) * factor
+                den = np.average(p * (1 - p), weights=w[i])
+                t.value[node, 0, 0] = 0.0 if abs(den) < 1e-150 else float(num) / float(den)
+        raw[:, k] += lr * t.value[:, 0, 0].take(leaf, axis=0)
+        layer.append((tree, maps))
+    return layer
+
+
+def boost_value(raw, kind, classes, n_levels):
+    """The boosted tree's prediction from its raw predictions: the value (a
+    continuous response), or the probability of every one of n_levels
+    levels, the logistic of the log odds (two levels) or the softmax of the
+    level scores (more); classes: the levels the training rows have."""
+    if kind == 'squared':
+        return raw[:, 0].copy()
+    from scipy.special import expit
+    out = np.zeros((len(raw), n_levels))
+    if kind == 'binomial':
+        p = expit(raw[:, 0])
+        out[:, classes[1]] = p
+        out[:, classes[0]] = 1 - p
+    else:
+        e = np.exp(raw - raw.max(axis=1, keepdims=True))
+        out[:, classes] = e / e.sum(axis=1, keepdims=True)
+    return out
+
+
+HELPERS = (parents, jmp_probs, oob_losses, kept_splits, stands_for, level_ranks, recode, maps_for)
+BOOST_HELPERS = (level_ranks, recode, maps_for, sample_mask, boost_start, boost_layer, boost_value)
 
 
 def _source(fns):
@@ -303,41 +475,50 @@ class Fit:
         self.kind = None
         self.label = ''
         self.params = {}
-        self.model = None
         self.grown = 0
         self.kept = 0
         self.stopped = False
         self.curves = {}            # set -> stat -> [value after 1, 2, ... trees or layers]
         self.trees = []             # the forest's trees (cut back), each a dict
+        self.layers = []            # the boosted tree's layers kept, each [(tree, maps)]: a tree per level for 3+ levels
+        self.init = None            # ... the raw prediction before the first layer
+        self.loss = None            # ... 'squared', 'binomial' or 'multinomial'
         self.fitted = None          # the prediction of every row of P
         self.oob = None             # the forest's out-of-bag prediction of the training rows
         self.oob_rows = None
         self.selection = None       # the statistics Model Validation-Set Summaries shows
+        self.classes = None         # the levels the training rows have (a categorical response)
+        self.n_levels = 0
         self.notes = []
 
-    # ---- predictions of new rows
+    # ---- predictions of new rows (X coded as P.X is)
+    def _forest_sum(self, X):
+        s = None
+        for T in self.trees[:self.kept]:
+            v = T['est'][T['rep'][T['tree'].apply(recode(X, T['maps']))]]
+            s = v if s is None else s + v
+        return s / self.kept
+
+    def raw(self, X):
+        """The boosted tree's raw predictions of the rows X: the start plus each kept layer."""
+        raw = np.tile(self.init, (X.shape[0], 1))
+        lr = self.params['learning_rate']
+        for layer in self.layers[:self.kept]:
+            for k, (tree, maps) in enumerate(layer):
+                raw[:, k] += lr * tree.tree_.value[:, 0, 0].take(tree.apply(recode(X, maps)), axis=0)
+        return raw
+
     def predict(self, X):
         if self.kind == 'forest':
-            s = None
-            for T in self.trees[:self.kept]:
-                v = T['est'][T['rep'][T['tree'].apply(X)]]
-                s = v if s is None else s + v
-            return s / self.kept
-        return self.model.predict(X)
+            return self._forest_sum(X)
+        return boost_value(self.raw(X), self.loss, self.classes, self.n_levels)
 
     def proba(self, X, P=None):
         if self.kind == 'forest':
-            s = None
-            for T in self.trees[:self.kept]:
-                v = T['est'][T['rep'][T['tree'].apply(X)]]
-                s = v if s is None else s + v
             out = np.zeros((X.shape[0], self.n_levels))
-            out[:, self.classes] = s / self.kept
+            out[:, self.classes] = self._forest_sum(X)
             return out
-        p = np.asarray(self.model.predict_proba(X), dtype=float)
-        out = np.zeros((p.shape[0], self.n_levels))
-        out[:, self.classes] = p
-        return out
+        return boost_value(self.raw(X), self.loss, self.classes, self.n_levels)
 
 
 def _progress(what, done, total):
@@ -375,31 +556,66 @@ def _masks(P):
     return {SET_NAMES[k]: P.mask(k) for k in range(3) if P.has(k)}
 
 
+def categorical_columns(P):
+    """The columns of X (level numbers: P is coded 'ordinal') that hold a
+    categorical X: the nominal ones, [(column, number of levels)], whose
+    levels a split takes in two groups, and the ordinal ones, [column],
+    which keep their level order."""
+    nominal, ordinal = [], []
+    for e in P.enc:
+        if e['type'] == 'continuous':
+            continue
+        j = P.groups[e['name']][0]
+        if data.meta(P.table, e['name']).get('modelingType') == 'ordinal':
+            ordinal.append(int(j))
+        else:
+            nominal.append((int(j), len(e['levels'])))
+    return nominal, ordinal
+
+
+def forest_target(yt, ycol, classes):
+    """What a forest's tree orders a nominal X's levels by: the response
+    (continuous), the second level's 0/1 column (two levels), or every
+    level's (three or more: level_ranks takes their first principal
+    component)."""
+    if classes is None:
+        return yt
+    if len(classes) == 2:
+        return (ycol == 1).astype(float)
+    return np.eye(len(classes))[ycol]
+
+
 def grow_forest(P, st, terms, seed, prog):
-    """A Bootstrap Forest: scikit-learn's forest grown ten trees at a time
-    (warm_start: the trees do not depend on how many are grown), each tree
-    cut back by JMP's rule, and with validation rows and Early Stopping on,
-    stopped when the last tenth of the trees asked for (at least 5) has not
-    improved the validation statistic; the best number is kept."""
-    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    """A Bootstrap Forest: its trees grown one at a time, each on a
+    bootstrap sample drawn as scikit-learn's RandomForestRegressor draws it
+    (a seed per tree from the report's seed: the first k trees do not
+    depend on how many are grown), its nominal columns read in the order of
+    the sample's level means (maps_for), cut back by JMP's rule; with
+    validation rows and Early Stopping on, growth stops when the last tenth
+    of the trees asked for (at least 5) has not improved the validation
+    statistic, and the best number is kept."""
+    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
     cat = P.kind == 'categorical'
     tr = P.train()
     tr_idx = np.flatnonzero(tr)
     Xt, yt = P.X[tr], P.target[tr]
-    wt = None if P.w is None else P.w[tr]
-    w1 = np.ones(len(yt)) if wt is None else wt
+    w1 = np.ones(len(yt)) if P.w is None else np.asarray(P.w[tr], dtype=float)
     if cat and len(np.unique(yt)) < 2:
         raise ValueError(f'{P.y} has one level in the training rows: nothing to classify')
     K = st['trees']
     nf = P.X.shape[1]
     kf = features_for(terms, len(P.x), nf)
-    params = dict(criterion='entropy' if cat else 'squared_error', max_features=kf, max_leaf_nodes=st['maxSplits'] + 1,
-                  min_samples_leaf=st['minSize'], bootstrap=True, max_samples=None if st['rate'] >= 1 else float(st['rate']),
-                  random_state=int(seed), n_jobs=1)
-    Cls = RandomForestClassifier if cat else RandomForestRegressor
-    model = Cls(warm_start=True, n_estimators=1, **params)
+    n_tr = len(yt)
+    n_boot = n_tr if st['rate'] >= 1 else max(round(n_tr * float(st['rate'])), 1)
+    params = dict(criterion='entropy' if cat else 'squared_error', max_features=kf, max_leaf_nodes=st['maxSplits'] + 1, min_samples_leaf=st['minSize'])
+    Cls = DecisionTreeClassifier if cat else DecisionTreeRegressor
+    nominal, ordinal = categorical_columns(P)
+    classes = np.unique(yt).astype(int) if cat else None
+    ycol = np.searchsorted(classes, yt) if cat else None     # the row's level among the tree's columns
+    target = forest_target(yt, ycol, classes)
+    seeds = np.random.RandomState(int(seed)).randint(np.iinfo(np.int32).max, size=K)
     F = Fit()
-    F.kind, F.params = 'forest', dict(params, n_features=kf, terms=terms)
+    F.kind, F.params = 'forest', dict(params, n_boot=int(n_boot), random_state=int(seed), n_features=kf, terms=terms)
     F.label = f'{terms} terms'
     early = st['early'] and P.has(1)
     patience = max(5, int(math.ceil(K / 10)))
@@ -408,47 +624,42 @@ def grow_forest(P, st, terms, seed, prog):
     share = _shares(P) if cat else None
     L = len(P.levels) if cat else 0
     S = np.zeros((n, L)) if cat else np.zeros(n)
-    oob_sum = np.zeros((len(yt), L)) if cat else np.zeros(len(yt))
-    oob_cnt = np.zeros(len(yt))
+    oob_sum = np.zeros((n_tr, L)) if cat else np.zeros(n_tr)
+    oob_cnt = np.zeros(n_tr)
     oob_curve = {}
     best_k, best_v, best_S, best_oob = 0, -math.inf, None, None
     grown = 0
     vmask = P.mask(1)
-    classes = None
-    while grown < K and not F.stopped:
-        target = min(K, grown + 10)
-        model.set_params(n_estimators=target)
-        model.fit(Xt, yt, sample_weight=wt)
-        if cat and classes is None:
-            classes = np.asarray(model.classes_, dtype=int)
-            ycol = np.searchsorted(classes, yt)             # the row's level among the tree's columns
-        view = copy.copy(model)
-        view.estimators_ = model.estimators_[grown:target]
-        for tree, drawn in zip(view.estimators_, view.estimators_samples_):
-            T = _forest_tree(tree, np.bincount(drawn, minlength=len(yt)), P, Xt, yt if not cat else ycol, w1, cat, st, classes, L)
-            F.trees.append(T)
-            grown += 1
-            S += T['all']
-            ob = T.pop('oob')
-            oob_sum[ob] += T['all'][tr_idx][ob]
-            oob_cnt[ob] += 1
-            T.pop('all')             # not kept: the forest's sums have it
-            cur = S / grown
-            _record(F.curves, P, cur, share, masks)
-            _oob_record(oob_curve, P, tr_idx, oob_sum, oob_cnt, share)
-            prog.add(1)
-            if early:
-                v = stats_of(P, cur, vmask, share)[_main_stat(P)]
-                v = -math.inf if v is None else v
-                if v > best_v:
-                    best_v, best_k, best_S, best_oob = v, grown, cur.copy(), (oob_sum.copy(), oob_cnt.copy())
-                elif grown - best_k >= patience:
-                    F.stopped = True
-                    break
+    for b in range(K):
+        s_b = int(seeds[b])
+        inbag = np.bincount(np.random.RandomState(s_b).randint(0, n_tr, n_boot, dtype=np.int32), minlength=n_tr)
+        sw = w1 * inbag
+        maps = maps_for(Xt, target, sw, nominal, ordinal)
+        tree = Cls(random_state=s_b, **params).fit(recode(Xt, maps), yt, sample_weight=sw)
+        T = _forest_tree(tree, maps, inbag, P, Xt, ycol if cat else yt, w1, cat, st, classes, L)
+        F.trees.append(T)
+        grown += 1
+        S += T['all']
+        ob = T.pop('oob')
+        oob_sum[ob] += T['all'][tr_idx][ob]
+        oob_cnt[ob] += 1
+        T.pop('all')             # not kept: the forest's sums have it
+        cur = S / grown
+        _record(F.curves, P, cur, share, masks)
+        _oob_record(oob_curve, P, tr_idx, oob_sum, oob_cnt, share)
+        prog.add(1)
+        if early:
+            v = stats_of(P, cur, vmask, share)[_main_stat(P)]
+            v = -math.inf if v is None else v
+            if v > best_v:
+                best_v, best_k, best_S, best_oob = v, grown, cur.copy(), (oob_sum.copy(), oob_cnt.copy())
+            elif grown - best_k >= patience:
+                F.stopped = True
+                break
     prog.finish(K, grown)
     if not early:
         best_k, best_S, best_oob = grown, S / grown, (oob_sum, oob_cnt)
-    F.model, F.grown, F.kept = model, grown, best_k
+    F.grown, F.kept = grown, best_k
     F.fitted = best_S
     F.curves['Out of Bag'] = oob_curve
     s, c = best_oob
@@ -470,27 +681,28 @@ def _oob_record(curve, P, tr_idx, oob_sum, oob_cnt, share):
         curve.setdefault(key, []).append(None if s is None else s.get(key))
 
 
-def _forest_tree(tree, inbag, P, Xt, yt, w1, cat, st, classes, L):
-    """One tree of the forest: cut back (JMP's rule, unless the Tree Size
-    setting says grow to the maximum), its estimate at every node, its
-    prediction of every row, and its Per-Tree Summaries line."""
+def _forest_tree(tree, maps, inbag, P, Xt, yt, w1, cat, st, classes, L):
+    """One tree of the forest (maps: how it reads the categorical columns):
+    cut back (JMP's rule, unless the Tree Size setting says grow to the
+    maximum), its estimate at every node, its prediction of every row, and
+    its Per-Tree Summaries line."""
     t = tree.tree_
     parent = parents(tree)
     est = jmp_probs(tree, LAMBDA) if cat else t.value[:, 0, 0].copy()
     oob = inbag == 0
-    loss = oob_losses(tree, Xt[oob], yt[oob], w1[oob], est, cat)
+    loss = oob_losses(tree, recode(Xt[oob], maps), yt[oob], w1[oob], est, cat)
     total = len(loss) - 1
     kept = kept_splits(loss, st['minSplits']) if st['stop'] == 'oob' else total
     before = loss[kept + 1] if kept < total else loss[kept]
     rep = stands_for(parent, kept)
-    node_all = rep[tree.apply(P.X)]
+    node_all = rep[tree.apply(recode(P.X, maps))]
     if cat:
         full = np.zeros((t.node_count, L))
         full[:, classes] = est
         pred = full[node_all]
     else:
         pred = est[node_all]
-    T = {'tree': tree, 'rep': rep, 'est': est, 'kept': kept, 'total': total, 'all': pred, 'oob': oob, 'parent': parent}
+    T = {'tree': tree, 'maps': maps, 'rep': rep, 'est': est, 'kept': kept, 'total': total, 'all': pred, 'oob': oob, 'parent': parent}
     # the summaries: in bag (each row as often as it was drawn) and out of bag
     trp = pred[P.train()]
     cw = inbag * w1
@@ -531,90 +743,66 @@ def _gains(t, split, left, right, cat):
 
 
 def grow_boosted(P, st, splits, learn, seed, prog):
-    """A Boosted Tree: scikit-learn's gradient boosting, its trees of
-    Splits per Tree splits grown best first; with validation rows and
-    Early Stopping on, the fit stops at the first layer that does not
+    """A Boosted Tree: layer after layer (boost_layer), scikit-learn's
+    gradient boosting with its trees of Splits per Tree splits grown best
+    first, from one RandomState of the report's seed; with validation rows
+    and Early Stopping on, the fit stops at the first layer that does not
     improve the validation statistic (JMP: 'until fitting an additional
     layer no longer improves the validation statistic') and keeps the
     layers before it."""
-    from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
     cat = P.kind == 'categorical'
     tr = P.train()
-    Xt, yt = P.X[tr], P.target[tr]
-    wt = None if P.w is None else P.w[tr]
-    if cat and len(np.unique(yt)) < 2:
-        raise ValueError(f'{P.y} has one level in the training rows: nothing to classify')
+    Xt = P.X[tr]
+    wt = np.ones(int(tr.sum())) if P.w is None else np.asarray(P.w[tr], dtype=float)
+    if cat:
+        classes = np.unique(P.target[tr]).astype(int)
+        if len(classes) < 2:
+            raise ValueError(f'{P.y} has one level in the training rows: nothing to classify')
+        yt = np.searchsorted(classes, P.target[tr])
+        loss = 'binomial' if len(classes) == 2 else 'multinomial'
+    else:
+        classes, yt, loss = None, np.asarray(P.target[tr], dtype=float), 'squared'
     nf = P.X.shape[1]
     cols = None if st['colRate'] >= 1 else int(max(1, min(nf, round(st['colRate'] * nf))))
-    params = dict(loss='log_loss' if cat else 'squared_error', learning_rate=float(learn), n_estimators=st['layers'],
-                  subsample=float(st['rowRate']), criterion='squared_error', min_samples_leaf=st['minSize'], max_depth=None,
-                  max_leaf_nodes=int(splits) + 1, max_features=cols, random_state=int(seed))
-    Cls = GradientBoostingClassifier if cat else GradientBoostingRegressor
-    model = Cls(**params)
+    tree_args = dict(criterion='squared_error', max_leaf_nodes=int(splits) + 1, min_samples_leaf=st['minSize'], max_features=cols)
+    nominal, ordinal = categorical_columns(P)
+    lr = float(learn)
     F = Fit()
-    F.kind, F.params = 'boosted', dict(params, splits=int(splits))
+    F.kind = 'boosted'
+    F.params = dict(tree_args, loss=loss, learning_rate=lr, splits=int(splits), subsample=float(st['rowRate']), random_state=int(seed))
     F.label = f'{splits} splits, learning rate {learn:g}'
+    F.loss, F.classes, F.n_levels = loss, classes, (len(P.levels) if cat else 0)
+    F.init = boost_start(yt, wt, loss, len(classes) if cat else 1)
     early = st['early'] and P.has(1)
     vmask = P.mask(1)
-    Xv = P.X[vmask]
     share = _shares(P) if cat else None
-    L = len(P.levels) if cat else 0
-    state = {'gen': None, 'best': 0, 'best_v': -math.inf}
-    classes = None
-
-    def full_of(p):
-        if not cat:
-            return p
-        out = np.zeros((p.shape[0], L))
-        out[:, classes] = p
-        return out
-
-    def monitor(i, est, _locals):
-        nonlocal classes
+    masks = _masks(P)
+    rs = np.random.RandomState(int(seed))
+    raw = np.tile(F.init, (len(yt), 1))              # the training rows' raw predictions
+    raw_all = np.tile(F.init, (len(P.index), 1))     # every row's
+    best, best_v = 0, -math.inf
+    for i in range(st['layers']):
+        layer = boost_layer(Xt, yt, wt, raw, loss, lr, rs, float(st['rowRate']), tree_args, nominal, ordinal)
+        for k, (tree, maps) in enumerate(layer):
+            raw_all[:, k] += lr * tree.tree_.value[:, 0, 0].take(tree.apply(recode(P.X, maps)), axis=0)
+        F.layers.append(layer)
+        cur = boost_value(raw_all, loss, classes, F.n_levels)
+        _record(F.curves, P, cur, share, masks)       # Cumulative Validation: every set after each layer
         prog.add(1)
-        if not early:
-            return False
-        if state['gen'] is None:
-            classes = np.asarray(est.classes_, dtype=int) if cat else None
-            state['gen'] = est.staged_predict_proba(Xv) if cat else est.staged_predict(Xv)
-        pv = next(state['gen'])
-        sub = _Sub(P, vmask)
-        v = stats_of(sub, full_of(pv), np.ones(int(vmask.sum()), dtype=bool), share)[_main_stat(P)]
-        v = -math.inf if v is None else v
-        if v > state['best_v']:
-            state['best_v'], state['best'] = v, i + 1
-            return False
-        return True
-    model.fit(Xt, yt, sample_weight=wt, monitor=monitor)
-    if cat:
-        classes = np.asarray(model.classes_, dtype=int)
-    grown = int(model.estimators_.shape[0])
+        if early:
+            v = stats_of(P, cur, vmask, share)[_main_stat(P)]
+            v = -math.inf if v is None else v
+            if v > best_v:
+                best_v, best = v, i + 1
+            else:
+                break
+    grown = len(F.layers)
+    prog.finish(st['layers'], grown)
     F.grown = grown
     F.stopped = early and grown < st['layers']
-    F.kept = state['best'] if early else grown
-    if F.kept < 1:
-        F.kept = 1
-    # Cumulative Validation: every set after each layer
-    masks = _masks(P)
-    staged = model.staged_predict_proba(P.X) if cat else model.staged_predict(P.X)
-    for k, pk in enumerate(staged, start=1):
-        cur = full_of(np.asarray(pk, dtype=float))
-        _record(F.curves, P, cur, share, masks)
-        if k == F.kept:
-            F.fitted = cur.copy()
-    prog.finish(st['layers'], grown)
-    # keep the layers chosen (a fit with that many layers is the same)
-    if F.kept < grown:
-        model.estimators_ = model.estimators_[:F.kept]
-        model.train_score_ = model.train_score_[:F.kept]
-        if hasattr(model, 'oob_improvement_'):
-            model.oob_improvement_ = model.oob_improvement_[:F.kept]
-        if hasattr(model, 'oob_scores_'):
-            model.oob_scores_ = model.oob_scores_[:F.kept]
-            model.oob_score_ = model.oob_scores_[-1]
-        model.n_estimators_ = F.kept
-    F.model = model
-    F.classes, F.n_levels = classes, L
+    F.kept = max(1, best if early else grown)
+    F.layers = F.layers[:F.kept]                      # the layers kept (a fit of that many layers is the same)
+    F.fitted = F.predict(P.X)
     return F
 
 
@@ -645,11 +833,33 @@ class Model:
         self.by = 'validation'     # how the best of several fits was chosen
         self.seed = None
         self.notes = []
+        self.cv = {}               # a K-fold Validation column: each fit's crossvalidation (crossvalidated)
+
+
+def crossvalidated(M, i):
+    """With a K-fold Validation column (every row trains): fit i crossvalidated by its folds, the forest or
+    boosted tree of the same settings grown on the other folds predicting each fold (predictive.crossvalidate,
+    by predictive.fold_masks); None without folds. Kept with the model."""
+    P = M.P
+    if P.folds is None:
+        return None
+    if i not in M.cv:
+        F, st = M.fits[i], M.st
+        prog = _Progress(M.kind, (st['trees'] if M.kind == 'forest' else st['layers']) * P.k)
+
+        def fit_predict(fit_rows):
+            Q = copy.copy(P)
+            Q.sets = np.where(fit_rows, 0, 2)        # the held fold's rows: predicted, never fitted
+            if M.kind == 'forest':
+                return grow_forest(Q, st, F.params['terms'], M.seed, prog).fitted
+            return grow_boosted(Q, st, F.params['splits'], F.params['learning_rate'], M.seed, prog).fitted
+        M.cv[i] = predictive.crossvalidate(P, fit_predict)
+    return M.cv[i]
 
 
 def _prepared(table, rows, y, x, weight, freq, validation, portion, seed, missing):
     return predictive.prepare(table, y, list(x or []), rows=rows, weight=weight, freq=freq, validation=validation,
-                              portion=portion, seed=seed, missing=missing, coding='onehot')
+                              portion=portion, seed=seed, missing=missing, coding='ordinal')
 
 
 def model_of(table, rows, y, x, kind, weight=None, freq=None, validation=None, portion=0.0, seed=None,
@@ -728,14 +938,16 @@ def _model_args(table, rows, y, x, kind, weight, freq, validation, portion, seed
 
 @api('ensemble.fit', packages=SK)
 def fit(table, y, x, kind='forest', rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None,
-        missing='informative', settings=None, shown=None, plot=None, table_name='data'):
+        missing='informative', settings=None, shown=None, plot=None, table_name='data', keep=None):
     """Everything the Bootstrap Forest or Boosted Tree report shows. plot:
     the page's choices for the graphs' code ({'stat': the statistic
-    Cumulative Validation shows})."""
+    Cumulative Validation shows}); keep: the page's key for the report (its
+    id and By group), under which the fit shown is kept for Score Rows."""
     M = _model_args(table, rows, y, x, kind, weight, freq, validation, portion, seed, missing, settings)
     P, st = M.P, M.st
     i = _shown(M, shown)
     F = M.fits[i]
+    predictive.keep(keep, {'kind': 'ensemble', 'ensemble': kind, 'M': M, 'F': F})
     cat = P.kind == 'categorical'
     head = _code(P, M, F, table_name, rows, graph=True)
     rep = predictive.report(P, F.fitted, head=head)
@@ -763,8 +975,14 @@ def fit(table, y, x, kind='forest', rows=None, weight=None, freq=None, validatio
         if short:
             notes.append(f'{short} of the {F.kept} trees have fewer than {st["minSplits"]} splits (Minimum Splits per Tree): no split was left that keeps {st["minSize"]} rows on each side.')
     if P.X.shape[1] != len(P.x):
-        notes.append(f'The {len(P.x)} X columns are {P.X.shape[1]} columns for scikit-learn (a 0/1 column per level of a categorical one{", and a Missing column where values are missing" if any(e.get("indicator") for e in P.enc) else ""}).')
+        notes.append(f'The {len(P.x)} X columns are {P.X.shape[1]} columns for the trees: a continuous column with missing values has a 0/1 Missing column beside it (its missing values are its training mean).')
     out['notes'] += notes
+    cv = crossvalidated(M, i)
+    if cv:
+        rep['measures'].append(dict(cv['measures'], set='Crossvalidation'))
+        what = 'forest' if kind == 'forest' else 'boosted tree'
+        out['notes'].append(f'Crossvalidation: each row predicted by the {what} of these settings grown without its fold, the {P.k} folds of {validation} (every row trains the {what} above).')
+        out['crossvalidation'] = {'folds': cv['folds'], 'k': int(P.k), 'column': validation}
     out['code'] = _code(P, M, F, table_name, rows)
     return out
 
@@ -864,14 +1082,15 @@ def _contributions(P, F):
                 value[c] += float(g)
         label = 'G²' if P.kind == 'categorical' else 'SS'
     else:
-        for tree in F.model.estimators_.ravel():
-            t = tree.tree_
-            inner = np.flatnonzero(t.children_left >= 0)
-            g = _gains(t, inner, t.children_left[inner], t.children_right[inner], False)
-            for f, v in zip(t.feature[inner], g):
-                c = feat_col[int(f)]
-                count[c] += 1
-                value[c] += float(v)
+        for layer in F.layers:
+            for tree, _maps in layer:
+                t = tree.tree_
+                inner = np.flatnonzero(t.children_left >= 0)
+                g = _gains(t, inner, t.children_left[inner], t.children_right[inner], False)
+                for f, v in zip(t.feature[inner], g):
+                    c = feat_col[int(f)]
+                    count[c] += 1
+                    value[c] += float(v)
         label = 'SS'
     tot = sum(max(v, 0.0) for v in value.values())
     rows = [{'column': c, 'splits': count[c], 'value': value[c], 'portion': value[c] / tot if tot > 0 else None} for c in P.x]
@@ -893,8 +1112,8 @@ def _code(P, M, F, table_name, rows, graph=False):
     st = M.st
     p = F.params
     forest = F.kind == 'forest'
-    cls = ('RandomForestClassifier' if cat else 'RandomForestRegressor') if forest else ('GradientBoostingClassifier' if cat else 'GradientBoostingRegressor')
-    L = P.code(table_name, rows, extra_imports=([predictive.PLT] if graph else []) + [f'from sklearn.ensemble import {cls}'])
+    cls = 'DecisionTreeClassifier' if forest and cat else 'DecisionTreeRegressor'
+    L = P.code(table_name, rows, extra_imports=([predictive.PLT] if graph else []) + [f'from sklearn.tree import {cls}'])
     L += ['', 'SETS = ["Training", "Validation", "Test"]', "ww = np.ones(len(y)) if w is None else w   # each row's weight"]
     if cat:
         L.append('share = np.array([ww[train][y[train] == j].sum() for j in range(len(levels))]) / ww[train].sum()   # the training shares of the levels')
@@ -911,70 +1130,89 @@ def _code(P, M, F, table_name, rows, graph=False):
               '    N = wm.sum(); sse = np.sum(wm * (ym - f) ** 2)',
               '    return [1 - sse / np.sum(wm * (ym - np.sum(wm * ym) / N) ** 2), np.sqrt(sse / N), np.sum(wm * np.abs(ym - f)) / N]']
     L.append('')
-    fit_w = 'sample_weight=None if w is None else w[train]'
+    L += _source(HELPERS if forest else BOOST_HELPERS)
+    L.append('')
+    nominal, ordinal = categorical_columns(P)
+    L.append(f'NOMINAL = {json.dumps([[j, u] for j, u in nominal])}   # the nominal X columns: their column of X and number of levels (a split takes two groups of levels)')
+    L.append(f'ORDINAL = {json.dumps(ordinal)}   # the ordinal ones: a split keeps their level order')
     if forest:
-        L += _source(HELPERS)
-        L.append('')
         L.append(f'# the forest: {F.grown} trees grown, the first {F.kept} kept' + (f' (early stopping: {F.grown - F.kept} more trees did not improve the validation statistic)' if F.stopped else ''))
-        L.append(f'rf = {cls}(n_estimators={F.grown}, criterion={p["criterion"]!r}, max_features={p["max_features"]}, '
-                 f'max_leaf_nodes={p["max_leaf_nodes"]}, min_samples_leaf={p["min_samples_leaf"]}, bootstrap=True, '
-                 f'max_samples={p["max_samples"]!r}, random_state={p["random_state"]}, n_jobs=1)')
-        L.append(f'rf.fit(X[train], y[train], {fit_w})')
+        L.append('Xt, yt, wt = X[train], y[train], ww[train]')
         if cat:
-            L.append("ycol = np.searchsorted(rf.classes_, y[train])   # each training row's level among the forest's columns")
-        L.append('forest = []   # each tree cut back: the tree, its estimate at every node, the node each node falls in')
+            L.append('ycol = np.searchsorted(np.unique(yt), yt)   # each training row\'s level among the levels the training rows have')
+            if len(F.classes) == 2:
+                L.append('target = (ycol == 1).astype(float)   # a tree orders a nominal X\'s levels by their share of the second level')
+            else:
+                L.append(f'target = np.eye({len(F.classes)})[ycol]   # a tree orders a nominal X\'s levels by the first principal component of their shares')
+        else:
+            L.append('target = yt   # a tree orders a nominal X\'s levels by their mean response')
+        L.append(f'seeds = np.random.RandomState({p["random_state"]}).randint(np.iinfo(np.int32).max, size={F.grown})   # a seed per tree, drawn as scikit-learn\'s forests draw them')
+        L.append('forest = []   # each tree cut back: the tree, how it reads the categorical columns, its estimate at every node, the node each node falls in')
         if graph:
             L.append('oobs, kept_of = [], []   # each tree\'s out-of-bag rows (of the training rows) and the splits it keeps')
-        L.append('for tree, drawn in zip(rf.estimators_, rf.estimators_samples_):')
-        L.append('    oob = np.bincount(drawn, minlength=int(train.sum())) == 0   # the training rows the tree did not see')
+        L.append('for s in seeds:')
+        L.append(f'    inbag = np.bincount(np.random.RandomState(s).randint(0, len(yt), {p["n_boot"]}, dtype=np.int32), minlength=len(yt))   # the bootstrap sample: how often each training row was drawn')
+        L.append('    maps = maps_for(Xt, target, wt * inbag, NOMINAL, ORDINAL)   # the order of each nominal column\'s levels in the sample')
+        L.append(f'    tree = {cls}(criterion={p["criterion"]!r}, max_features={p["max_features"]}, max_leaf_nodes={p["max_leaf_nodes"]}, '
+                 f'min_samples_leaf={p["min_samples_leaf"]}, random_state=int(s))')
+        L.append('    tree.fit(recode(Xt, maps), yt, sample_weight=wt * inbag)')
+        L.append('    oob = inbag == 0   # the training rows the tree did not see')
         if cat:
             L.append(f'    est = jmp_probs(tree, {LAMBDA})')
-            L.append('    loss = oob_losses(tree, X[train][oob], ycol[oob], ww[train][oob], est, True)')
-            L.append("    full = np.zeros((tree.tree_.node_count, len(levels))); full[:, rf.classes_] = est   # a column for every level")
+            L.append('    loss = oob_losses(tree, recode(Xt[oob], maps), ycol[oob], wt[oob], est, True)')
+            L.append("    full = np.zeros((tree.tree_.node_count, len(levels))); full[:, tree.classes_] = est   # a column for every level")
         else:
             L.append('    full = tree.tree_.value[:, 0, 0]')
-            L.append('    loss = oob_losses(tree, X[train][oob], y[train][oob], ww[train][oob], full, False)')
+            L.append('    loss = oob_losses(tree, recode(Xt[oob], maps), yt[oob], wt[oob], full, False)')
         if st['stop'] == 'oob':
             L.append(f"    kept = kept_splits(loss, {st['minSplits']})   # JMP's rule, Minimum Splits per Tree {st['minSplits']}")
         else:
             L.append('    kept = len(loss) - 1   # every split: the tree as scikit-learn grew it')
-        L.append('    forest.append((tree, full, stands_for(parents(tree), kept)))')
+        L.append('    forest.append((tree, maps, full, stands_for(parents(tree), kept)))')
         if graph:
             L.append('    oobs.append(oob)')
             L.append('    kept_of.append(kept)')
-        L.append("each = [est[rep[tree.apply(X)]] for tree, est, rep in forest]   # every tree's prediction of every row")
+        L.append("each = [est[rep[tree.apply(recode(X, maps))]] for tree, maps, est, rep in forest]   # every tree's prediction of every row")
         L.append('cum = np.cumsum(each, axis=0) / np.arange(1, len(each) + 1).reshape((-1,) + (1,) * each[0].ndim)   # the forest of the first k trees')
         L.append(f'KEPT = {F.kept}')
         L.append('')
         L.append('def predict(Xnew):')
         L.append('    """The forest of the trees kept: the mean of their predictions."""')
-        L.append('    return np.mean([est[rep[tree.apply(Xnew)]] for tree, est, rep in forest[:KEPT]], axis=0)')
+        L.append('    return np.mean([est[rep[tree.apply(recode(Xnew, maps))]] for tree, maps, est, rep in forest[:KEPT]], axis=0)')
     else:
-        args = (f'loss={p["loss"]!r}, learning_rate={p["learning_rate"]!r}, max_leaf_nodes={p["max_leaf_nodes"]}, max_depth=None, '
-                f'min_samples_leaf={p["min_samples_leaf"]}, subsample={p["subsample"]!r}, max_features={p["max_features"]!r}, '
-                f'criterion="squared_error", random_state={p["random_state"]}')
-        L.append(f'# the boosted tree: {F.grown} layers fitted, the first {F.kept} kept' + (' (early stopping: the next layer did not improve the validation statistic)' if F.stopped else ''))
-        L.append(f'gb = {cls}(n_estimators={F.grown}, {args})')
-        L.append(f'gb.fit(X[train], y[train], {fit_w})')
+        lr = p['learning_rate']
+        L.append('Xt, wt = X[train], ww[train]')
         if cat:
-            L.append('')
-            L.append('def full(p):')
-            L.append('    """The probabilities in a column for every level."""')
-            L.append('    out = np.zeros((len(p), len(levels))); out[:, gb.classes_] = p')
-            L.append('    return out')
-            L.append('cum = [full(q) for q in gb.staged_predict_proba(X)]   # after 1, 2, ... layers')
+            L.append('classes = np.unique(y[train])   # the levels the training rows have')
+            L.append('yt = np.searchsorted(classes, y[train])   # ... numbered from 0')
         else:
-            L.append('cum = list(gb.staged_predict(X))   # after 1, 2, ... layers')
-        L.append(f'KEPT = {F.kept}')
-        if F.kept < F.grown:
-            L.append(f'kept = {cls}(n_estimators=KEPT, {args})   # the same model as the first {F.kept} layers of gb')
-            L.append(f'kept.fit(X[train], y[train], {fit_w})')
-        else:
-            L.append('kept = gb')
+            L.append('yt, classes = y[train], None')
+        words = {'squared': 'squared error: each layer fits the residuals', 'binomial': 'the log likelihood of two levels: each layer adds to the log odds',
+                 'multinomial': 'the log likelihood of several levels: each layer has a tree per level'}[F.loss]
+        L.append(f'KIND = {F.loss!r}   # {words}')
+        L.append(f'init = boost_start(yt, wt, KIND, {len(F.classes) if cat else 1})   # the start, before the first layer')
+        L.append(f'tree_args = dict(criterion="squared_error", max_leaf_nodes={p["max_leaf_nodes"]}, min_samples_leaf={p["min_samples_leaf"]}, max_features={p["max_features"]!r})')
+        L.append(f'rs = np.random.RandomState({p["random_state"]})   # one RandomState for the row samples and the trees, drawn in scikit-learn\'s order')
+        L.append('raw = np.tile(init, (len(yt), 1))   # the training rows\' raw predictions, which each layer adds to')
+        L.append(f'layers = [boost_layer(Xt, yt, wt, raw, KIND, {lr!r}, rs, {p["subsample"]!r}, tree_args, NOMINAL, ORDINAL) for _ in range({F.grown})]'
+                 + f'   # {F.grown} layers fitted' + (' (early stopping: the last did not improve the validation statistic)' if F.stopped else ''))
+        L.append(f'KEPT = {F.kept}   # the layers kept')
+        L.append('')
+        L.append('def staged(Xnew):')
+        L.append('    """The raw predictions of the rows Xnew after each layer."""')
+        L.append('    raw = np.tile(init, (len(Xnew), 1))')
+        L.append('    for layer in layers:')
+        L.append('        for k, (tree, maps) in enumerate(layer):')
+        L.append(f'            raw[:, k] += {lr!r} * tree.tree_.value[:, 0, 0].take(tree.apply(recode(Xnew, maps)), axis=0)')
+        L.append('        yield raw.copy()')
+        L.append('')
+        L.append(f'cum = [boost_value(r, KIND, classes, {len(P.levels) if cat else 0}) for r in staged(X)]   # the model after 1, 2, ... layers')
         L.append('')
         L.append('def predict(Xnew):')
         L.append('    """The boosted tree of the layers kept."""')
-        L.append('    return full(kept.predict_proba(Xnew))' if cat else '    return kept.predict(Xnew)')
+        L.append('    for k, r in enumerate(staged(Xnew), start=1):')
+        L.append('        if k == KEPT:')
+        L.append(f'            return boost_value(r, KIND, classes, {len(P.levels) if cat else 0})')
     what = 'trees' if forest else 'layers'
     if graph:
         L.append('fitted = predict(X)   # each row\'s prediction, or its probability of every level')
@@ -990,7 +1228,69 @@ def _code(P, M, F, table_name, rows, graph=False):
     L.append('for k, name in enumerate(SETS):')
     L.append('    if (sets == k).any():')
     L.append('        print("measures", name, *[float(v) for v in stats(fitted, sets == k)])')
+    if P.folds is not None:
+        L += _cv_lines(P, M, F)
     return '\n'.join(L)
+
+
+def _cv_lines(P, M, F):
+    """The code of the Crossvalidation line: the model of the same settings grown on the other folds of the
+    K-fold Validation column predicting each fold (after the report's code, which has the helpers)."""
+    cat = P.kind == 'categorical'
+    p, st = F.params, M.st
+    L = ['', f'# Crossvalidation by the {P.k} folds of {P.spec["validation"]}: each fold predicted by the model of these settings grown on the other folds', '']
+    if F.kind == 'forest':
+        cls = 'DecisionTreeClassifier' if cat else 'DecisionTreeRegressor'
+        rate = st['rate']
+        L += ['def model_on(rows):',
+              f'    """The forest of {F.grown} trees grown on the rows (as above, no early stopping without validation rows): its prediction of every row."""',
+              '    Xt, yt, wt = X[rows], y[rows], ww[rows]']
+        if cat:
+            L += ['    ycol = np.searchsorted(np.unique(yt), yt)',
+                  '    target = (ycol == 1).astype(float) if len(np.unique(yt)) == 2 else np.eye(len(np.unique(yt)))[ycol]']
+        else:
+            L.append('    target = yt')
+        L += [f'    n_boot = len(yt) if {rate!r} >= 1 else max(round(len(yt) * {rate!r}), 1)',
+              f'    each = []',
+              f'    for s in np.random.RandomState({p["random_state"]}).randint(np.iinfo(np.int32).max, size={F.grown}):',
+              '        inbag = np.bincount(np.random.RandomState(s).randint(0, len(yt), n_boot, dtype=np.int32), minlength=len(yt))',
+              '        maps = maps_for(Xt, target, wt * inbag, NOMINAL, ORDINAL)',
+              f'        tree = {cls}(criterion={p["criterion"]!r}, max_features={p["max_features"]}, max_leaf_nodes={p["max_leaf_nodes"]}, min_samples_leaf={p["min_samples_leaf"]}, random_state=int(s))',
+              '        tree.fit(recode(Xt, maps), yt, sample_weight=wt * inbag)',
+              '        oob = inbag == 0']
+        if cat:
+            L += [f'        est = jmp_probs(tree, {LAMBDA})',
+                  '        loss = oob_losses(tree, recode(Xt[oob], maps), ycol[oob], wt[oob], est, True)',
+                  '        full = np.zeros((tree.tree_.node_count, len(levels))); full[:, tree.classes_] = est']
+        else:
+            L += ['        full = tree.tree_.value[:, 0, 0]',
+                  '        loss = oob_losses(tree, recode(Xt[oob], maps), yt[oob], wt[oob], full, False)']
+        L += [f"        kept = kept_splits(loss, {st['minSplits']})" if st['stop'] == 'oob' else '        kept = len(loss) - 1',
+              '        each.append(full[stands_for(parents(tree), kept)[tree.apply(recode(X, maps))]])',
+              '    return np.mean(each, axis=0)']
+    else:
+        L += ['def model_on(rows):',
+              f'    """The boosted tree of {F.grown} layers grown on the rows (as above, no early stopping without validation rows): its prediction of every row."""',
+              '    Xt, wt = X[rows], ww[rows]']
+        if cat:
+            L += ['    cl = np.unique(y[rows])', '    yt = np.searchsorted(cl, y[rows])',
+                  "    kind = 'binomial' if len(cl) == 2 else 'multinomial'"]
+        else:
+            L += ['    yt, cl, kind = y[rows], None, "squared"']
+        L += ['    init = boost_start(yt, wt, kind, len(cl) if cl is not None else 1)',
+              f'    rs = np.random.RandomState({p["random_state"]})',
+              '    raw = np.tile(init, (len(yt), 1))',
+              '    out = np.tile(init, (len(y), 1))',
+              f'    for _ in range({F.grown}):',
+              f'        for k, (tree, maps) in enumerate(boost_layer(Xt, yt, wt, raw, kind, {p["learning_rate"]!r}, rs, {p["subsample"]!r}, tree_args, NOMINAL, ORDINAL)):',
+              f'            out[:, k] += {p["learning_rate"]!r} * tree.tree_.value[:, 0, 0].take(tree.apply(recode(X, maps)), axis=0)',
+              f'    return boost_value(out, kind, cl, {len(P.levels) if cat else 0})']
+    L += ['', '',
+          'cvp = np.zeros_like(fitted)',
+          f'for q in range({P.k}):',
+          '    cvp[folds == q] = model_on(folds != q)[folds == q]',
+          'print("measures", "Crossvalidation", *[float(v) for v in stats(cvp, folds >= 0)])']
+    return L
 
 
 # ---------------------------------------------------------------------------
@@ -1063,18 +1363,19 @@ def _contrib_lines(P, F):
          '    return -2.0 * g.sum(axis=1)',
          '', '']
     if F.kind == 'forest':
-        L += ['for (tree, est, rep), k in zip(forest[:KEPT], kept_of[:KEPT]):   # the kept trees, each with the splits it keeps',
+        L += ['for (tree, maps, est, rep), k in zip(forest[:KEPT], kept_of[:KEPT]):   # the kept trees, each with the splits it keeps',
               '    t, parent = tree.tree_, parents(tree)',
               f'    loss = node_loss(t, {cat})',
               '    for s in range(1, k + 1):   # the s-th split made nodes 2s - 1 and 2s',
               '        node = parent[2 * s - 1]',
               '        contrib[column_of[int(t.feature[node])]] += float(loss[node] - loss[2 * s - 1] - loss[2 * s])']
     else:
-        L += ['for tree in kept.estimators_.ravel():   # every layer\'s trees (a tree per level of a categorical response)',
-              '    t = tree.tree_',
-              '    loss = node_loss(t, False)   # the SS of the residuals the tree fits',
-              '    for node in np.flatnonzero(t.children_left >= 0):',
-              '        contrib[column_of[int(t.feature[node])]] += float(loss[node] - loss[t.children_left[node]] - loss[t.children_right[node]])']
+        L += ['for layer in layers[:KEPT]:   # every kept layer\'s trees (a tree per level of a response of three or more levels)',
+              '    for tree, maps in layer:',
+              '        t = tree.tree_',
+              '        loss = node_loss(t, False)   # the SS of the residuals the tree fits',
+              '        for node in np.flatnonzero(t.children_left >= 0):',
+              '            contrib[column_of[int(t.feature[node])]] += float(loss[node] - loss[t.children_left[node]] - loss[t.children_right[node]])']
     return L
 
 
@@ -1096,6 +1397,34 @@ def save(table, y, x, kind='forest', rows=None, weight=None, freq=None, validati
     return predictive.saved(M.P, F.predict, F.proba)
 
 
+@api('ensemble.score', packages=SK)
+def score(table, keep=None, source=None, target_rows=None, y=None, x=None, kind='forest', rows=None, weight=None, freq=None,
+          validation=None, portion=0.0, seed=None, missing='informative', settings=None, shown=None):
+    """Score Rows: the report's forest or boosted tree (kept under keep when it fitted) on rows of a table (table: the
+    one to score, another open table or the report's own with rows added since; target_rows: those rows, None for
+    all), found by the names of the X columns. Its formula would run to thousands of nested conditions, so the model
+    scores the rows itself. Without the kept model (the engine started again) it is fitted again from the source
+    table as it is now, and the note says so."""
+    K_ = predictive.kept(keep)
+    note = None
+    if K_ is None or K_.get('kind') != 'ensemble' or K_.get('ensemble') != kind:
+        M, F = _fit_of(source or table, rows, y, x, kind, weight, freq, validation, portion, seed, missing, settings, shown)
+        note = 'The model was fitted again (the engine had not kept it): on the report\'s table as it is now.'
+    else:
+        M, F = K_['M'], K_['F']
+    P = M.P
+    X, rws = predictive.score_frame(P, table, target_rows)
+    if P.kind == 'categorical':
+        pr = F.proba(X) if len(rws) else np.zeros((0, len(P.levels)))
+        out = {'rows': [int(r) for r in rws], 'prob': pr.tolist(), 'levels': list(P.labels),
+               'most_likely': [P.labels[int(j)] for j in np.argmax(pr, axis=1)], 'names': [f'Prob[{lab}]' for lab in P.labels],
+               'most_name': f'Most Likely {P.y}', 'ordinal': data.meta(P.table, P.y).get('modelingType') == 'ordinal'}
+    else:
+        out = {'rows': [int(r) for r in rws], 'values': (F.predict(X) if len(rws) else np.zeros(0)).tolist(), 'name': f'Predicted {P.y}'}
+    out['note'] = note
+    return out
+
+
 def _build(table, rows=None, y=None, x=(), kind='forest', weight=None, freq=None, validation=None, portion=0.0, seed=None,
            missing='informative', settings=None, shown=None, **_):
     M, F = _fit_of(table, rows, y, x, kind, weight, freq, validation, portion, seed, missing, settings, shown)
@@ -1105,21 +1434,27 @@ def _build(table, rows=None, y=None, x=(), kind='forest', weight=None, freq=None
 profile.expose('ensemble', _build, packages=SK)
 
 
-def _condition(P, j, left, threshold):
-    """A split in words: X's column j at or below the threshold (left) or above."""
-    name = P.features[j]
-    col = None
-    for c in P.x:
-        if j in P.groups[c]:
-            col = c
-            break
+def _condition(P, j, left, threshold, ranks=None, missing_left=None):
+    """A split in words, as JMP words them: X's column j at or below the
+    threshold (left) or above it; a categorical column's levels on that
+    side, in their order, as g(a, c) (ranks: a nominal column's ranks in the
+    tree, None for an ordinal one), with Missing where the tree sends
+    missing values when the column has them (and a level the tree's rows
+    lacked, which goes there too); a Missing column's 0 or 1."""
+    col = next(c for c in P.x if j in P.groups[c])
     e = next(e for e in P.enc if e['name'] == col)
-    if e['type'] == 'continuous' and name == col:
-        return f'{col} {"<=" if left else ">"} {threshold:.6g}'
-    if name.endswith(' Missing') or name == f'{col}[Missing]':
+    if e['type'] == 'continuous':
+        if P.features[j] == col:
+            return f'{col} {"<=" if left else ">"} {threshold:.6g}'
         return f'{col} {"not missing" if left else "missing"}'
-    lv = name[len(col) + 1:-1]
-    return f'{col} {"≠" if left else "="} {lv}'
+    u = len(e['levels'])
+    pos = np.arange(u, dtype=float) if ranks is None else np.asarray(ranks, dtype=float)
+    side = [predictive.level_label(e['levels'][i]) for i in range(u) if np.isfinite(pos[i]) and (pos[i] <= threshold) == left]
+    if missing_left is not None and bool(missing_left) == left:
+        side += [predictive.level_label(e['levels'][i]) for i in range(u) if not np.isfinite(pos[i])]
+        if e.get('indicator'):
+            side.append('Missing')
+    return f'{col}({", ".join(side)})'
 
 
 @api('ensemble.tree', packages=SK)
@@ -1134,13 +1469,15 @@ def tree_view(table, y, x, kind='forest', rows=None, weight=None, freq=None, val
     lines = []
     if F.kind == 'forest':
         T = F.trees[i - 1]
-        tree, limit, est = T['tree'], 2 * T['kept'], T['est']
+        tree, maps, limit, est = T['tree'], T['maps'], 2 * T['kept'], T['est']
         cls = F.classes
     else:
-        trees = F.model.estimators_[i - 1]
-        tree, limit, est, cls = trees[0], None, None, None
+        tree, maps = F.layers[i - 1][0]
+        limit, est, cls = None, None, None
     t = tree.tree_
     lr = F.params.get('learning_rate', 1.0)
+    ranks = dict(maps)
+    go_left = t.missing_go_to_left
 
     def info(node):
         n = float(t.weighted_n_node_samples[node])
@@ -1161,8 +1498,9 @@ def tree_view(table, y, x, kind='forest', rows=None, weight=None, freq=None, val
             return
         f, thr = int(t.feature[node]), float(t.threshold[node])
         split = P.features[f] if detail == 'names' else None
-        walk(t.children_left[node], depth + 1, split or _condition(P, f, True, thr))
-        walk(t.children_right[node], depth + 1, split or _condition(P, f, False, thr))
+        rk, ml = ranks.get(f), bool(go_left[node])
+        walk(t.children_left[node], depth + 1, split or _condition(P, f, True, thr, rk, ml))
+        walk(t.children_right[node], depth + 1, split or _condition(P, f, False, thr, rk, ml))
     walk(0, 0, 'All Rows')
     out = {'index': i, 'count': count, 'what': 'Tree' if F.kind == 'forest' else 'Layer', 'lines': lines, 'truncated': len(lines) >= most,
            'nodes': int(t.node_count), 'response': P.kind}

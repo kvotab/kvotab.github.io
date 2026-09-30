@@ -376,7 +376,7 @@ check('... and label SS (G^2 for a categorical response)', (con['label'], fit(y=
 check('the leaves\' predictions are their means', bool(np.allclose([lf['mean'] for lf in rh['leaves']], [float(np.mean(y[np.array(rh['assign']['rows'])[np.array(rh['assign']['leaf']) == i][np.array(rh['assign']['set'])[np.array(rh['assign']['leaf']) == i] == 0]])) for i in range(len(rh['leaves']))])), True)
 rc = fit(y='three', x=['x1', 'g'], steps=[{'op': 'split', 'n': 3}], validation='v')
 check('a categorical response: Measures of Fit, confusion matrices, ROC and lift', all(k in rc['fit'] for k in ('measures', 'confusion', 'roc', 'lift')), True)
-check('... its summary is the entropy RSquare and the misclassification rate', sorted(rc['summary'][0]), sorted(['set', 'entropy_rsquare', 'misclassification', 'n', 'splits']))
+check('... its summary is the entropy RSquare and the misclassification rate, and the AICc', sorted(rc['summary'][0]), sorted(['set', 'entropy_rsquare', 'misclassification', 'n', 'splits', 'aicc']))
 check('... no probability the tree gives is 0 (the validation log-likelihood stays finite)', all(min(nd['probs']) > 0 for nd in rc['nodes']), True)
 
 # ---- Freq against duplicated rows ----------------------------------------------------------------------------------------
@@ -623,7 +623,7 @@ def graph_checks(label, res, tid, plot=None):
                 g = res['go']
                 after = [e for e in g['trace'] if e['splits'] > g['best']]
                 check(f'{label}: ... what Go looked at past the best, dotted, and the best marked', (len(dotted), any(q['ls'] == '--' and q['x'][:2] == [g['best'], g['best']] for q in ax['lines']),
-                                                                                                         all(q['x'] == [g['best']] + [e['splits'] for e in after] for q in dotted)), (len([s for s in res['history'][0] if s != 'splits']), True, True))
+                                                                                                         all(q['x'] == [g['best']] + [e['splits'] for e in after] for q in dotted)), (len([s for s in res['history'][0] if s not in ('splits', 'aicc')]), True, True))
             else:
                 check(f'{label}: ... no Go: nothing dotted', dotted, [])
             check(f'{label}: ... the titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('Number of Splits', 'Entropy RSquare' if L else 'RSquare', 'Split history'))
@@ -665,5 +665,235 @@ for label, kw, cart in [
         check(f'{label}: the head leaves out the rows the report leaves out', f'df = df.drop(index={sorted(set(range(n)) - set(kw["rows"]))})   # the rows the report leaves out' in res['fit']['plots']['head_code'], True)
     check(f'{label}: the go trace shown', res['go'] is not None, kw['steps'][-1]['op'] == 'go')
     graph_checks(label, res, TD, kw.get('plot'))
+
+
+# ---- Save Prediction Formula, the leaf formulas: the tree as nested If, in the page's own formula engine (node) ----------
+import statsmodels.api as sm  # noqa: E402
+
+JS = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js'))
+NODE = r"""
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const sandbox = { console }; sandbox.self = sandbox; vm.createContext(sandbox);
+for (const f of ['smui-util.js', 'smui-table.js', 'smui-formula.js']) vm.runInContext(fs.readFileSync(path.join(process.argv[1], f), 'utf8'), sandbox, { filename: f });
+const SM = sandbox.SM;
+const job = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const t = new SM.Table({ name: 'data', columns: job.columns.map((c) => ({ ...c, values: c.values.map((v) => (v == null ? (c.dataType === 'numeric' ? NaN : '') : v)) })) });
+const out = job.exprs.map((e) => { try { return Array.from(SM.formula.evaluate(t, e), (x) => (typeof x === 'number' && !Number.isFinite(x) ? null : x)); } catch (err) { return { error: String(err.message || err) }; } });
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def eval_formulas(columns, exprs):
+    """Each formula's value on every row of a table of these columns ({name: values}), in smui-formula.js run by
+    node, as the page computes a formula column."""
+    spec = []
+    for name, vals in columns.items():
+        char = any(isinstance(v, str) for v in vals)
+        spec.append({'name': name, 'dataType': 'character' if char else 'numeric',
+                     'values': [None if v is None or (isinstance(v, float) and math.isnan(v)) else v for v in vals]})
+    with tempfile.TemporaryDirectory() as tmp:
+        jf = os.path.join(tmp, 'job.json')
+        with open(jf, 'w') as fh:
+            json.dump({'columns': spec, 'exprs': exprs}, fh)
+        out = subprocess.run(['node', '-e', NODE, JS, jf], capture_output=True, text=True, timeout=120)
+    if out.returncode:
+        return [{'error': out.stderr[-400:]}] * len(exprs)
+    return json.loads(out.stdout)
+
+
+def same_values(got, rows, want, tol=1e-12):
+    """A formula's values at the rows equal want; missing everywhere else."""
+    if isinstance(got, dict):
+        return got
+    at = dict(zip(rows, want))
+    for i, v in enumerate(got):
+        w_ = at.get(i)
+        if w_ is None:
+            if not (v is None or v == ''):
+                return f'row {i}: {v!r}, expected missing'
+        elif isinstance(w_, str):
+            if v != w_:
+                return f'row {i}: {v!r}, expected {w_!r}'
+        elif v is None or not math.isclose(v, w_, rel_tol=tol, abs_tol=1e-14):
+            return f'row {i}: {v!r}, expected {w_!r}'
+    return True
+
+
+# a numeric nominal factor (its levels numbers), missing values of every kind
+num_g = [None if v is None else float('abcde'.index(v) + 1) for v in gm]
+TFm = table({**cols, 'gnum': num_g}, types={**TYPES, 'gnum': 'nominal'}, levels={**LEVELS, 'gnum': [1.0, 2.0, 3.0, 4.0, 5.0]})
+colsF = {**cols, 'gnum': num_g}
+for label, kw in [('continuous, Informative Missing (a missing x, a missing level)', dict(y='ym', x=['x1m', 'gm', 'o', 'x2'], steps=[{'op': 'split', 'n': 8}])),
+                  ('continuous, Informative Missing off', dict(y='ym', x=['x1m', 'gm', 'x2'], missing='drop', steps=[{'op': 'split', 'n': 6}])),
+                  ('two levels, a numeric nominal factor with missing levels', dict(y='cls', x=['x1', 'gnum', 'o'], steps=[{'op': 'split', 'n': 6}])),
+                  ('three ordinal levels, ordinal factors grouped freely, rows left out', dict(y='three', x=['x1m', 'o', 'g'], ordinal_order=False, rows=list(range(20, 380)), steps=[{'op': 'split', 'n': 7}])),
+                  ('a split specific, a numeric factor with missing levels, Informative Missing off', dict(y='y', x=['gnum', 'x1'], missing='drop', steps=[{'op': 'specific', 'col': 'gnum'}, {'op': 'split', 'n': 3}]))]:
+    kw = dict(kw, table=TFm)
+    fo = call('partition.formula', **kw)
+    sv = call('partition.save', **kw)
+    lv = call('partition.leaves', **kw)
+    exprs = [c['expr'] for c in fo['columns']]
+    nf = call('partition.formula', what='leaf_number', **kw)['columns'][0]['expr']
+    lf = call('partition.formula', what='leaf_label', **kw)['columns'][0]['expr']
+    ev = eval_formulas(colsF, exprs + [nf, lf])
+    if fo['kind'] == 'continuous':
+        check(f'formula: {label}: Save Prediction Formula, in the page\'s formula engine, is Save Predicteds on every row', same_values(ev[0], sv['rows'], sv['values']), True)
+    else:
+        ok = [same_values(ev[j], sv['rows'], [p[j] for p in sv['prob']]) for j in range(len(fo['columns']))]
+        check(f'formula: {label}: each Prob[] formula is Save Predicteds\' probability of its level, on every row', ok, [True] * len(fo['columns']))
+        check(f'formula: {label}: ... a column per level, named as Save Predicteds names them', [c['name'] for c in fo['columns']], sv['names'])
+    check(f'formula: {label}: Save Leaf Number Formula is Save Leaf Numbers on every row', same_values(ev[-2], lv['rows'], [float(v) for v in lv['numbers']]), True)
+    check(f'formula: {label}: Save Leaf Label Formula is Save Leaf Labels on every row', same_values(ev[-1], lv['rows'], lv['labels']), True)
+    check(f'formula: {label}: nested If, one per split', exprs[0].count('If(') - (1 if kw.get('missing') == 'drop' else 0), call('partition.fit', **kw)['splits'])
+big_steps = [{'op': 'split', 'n': 400}]
+rbig = call('partition.formula', table=T, y='y', x=['x1', 'x2', 'g'], minsize=1, steps=big_steps)
+check('a tree too large for a formula says so', 'too large' in (rbig.get('error') or '') or all(len(c['expr']) <= 50000 for c in rbig['columns']), True)
+
+# ---- AICc in the summary and after each split -------------------------------------------------------------------------------
+ra = fit(y='y', x=['x1', 'x2', 'g'], steps=[{'op': 'split', 'n': 5}])
+a = ra['assign']
+Xd = pd.get_dummies(pd.Series(a['leaf']).astype('category')).to_numpy(float)
+ols = sm.OLS(np.array(a['y']), Xd).fit()
+k_ = Xd.shape[1] + 1
+check.near('AICc (continuous): -2 log L + 2k + 2k(k+1)/(n-k-1) of OLS on the leaves, k the leaf means and the variance', ra['summary'][0]['aicc'], -2 * ols.llf + 2 * k_ + 2 * k_ * (k_ + 1) / (n - k_ - 1), 1e-10)
+hs = ra['history']
+ok_h = True
+for kk in range(len(hs)):
+    rk = fit(y='y', x=['x1', 'x2', 'g'], steps=[{'op': 'split', 'n': kk}] if kk else [])
+    ok_h &= math.isclose(hs[kk]['aicc'], rk['summary'][0]['aicc'], rel_tol=1e-12)
+check('the split history\'s AICc after each split is the AICc of the tree of that many splits', ok_h, True)
+rc3 = fit(y='three', x=['x1', 'x2', 'g'], steps=[{'op': 'split', 'n': 4}])
+tr3 = grown('three', ['x1', 'x2', 'g'], steps=[{'op': 'split', 'n': 4}])[1]
+pr3 = tr3.fitted()
+y3 = tr3.y
+m2ll = -2 * np.sum(np.log(pr3[np.arange(len(y3)), y3]))
+k3 = 5 * 2
+check.near('AICc (categorical): -2 sum log Prob of each row\'s level + 2k + ..., k the leaves\' probabilities (levels - 1 each)', rc3['summary'][0]['aicc'], m2ll + 2 * k3 + 2 * k3 * (k3 + 1) / (n - k3 - 1), 1e-10)
+cr_a = call('partition.cart_fit', table=T, y='y', x=['x1', 'x2', 'g'], steps=[{'op': 'split', 'n': 4}], seed=1)
+check('CART: the summary and each split of the history have the AICc too', cr_a['summary'][0]['aicc'] is not None and math.isclose(cr_a['summary'][0]['aicc'], cr_a['history'][-1]['aicc'], rel_tol=1e-12) and len(cr_a['history']) == 5, True)
+
+# ---- the leaves' rules: the conditions on one column merged ---------------------------------------------------------------
+rr = fit(y='y', x=['x1', 'x2', 'g'], steps=[{'op': 'specific', 'col': 'x1', 'cut': 0.0}, {'op': 'specific', 'node': 'L', 'col': 'x1', 'cut': 1.0}, {'op': 'specific', 'node': 'LL', 'col': 'x2', 'cut': 5.0},
+                                            {'op': 'specific', 'node': 'LLL', 'col': 'x1', 'cut': 0.5}, {'op': 'specific', 'node': 'R', 'col': 'g'}, {'op': 'specific', 'node': 'RL', 'col': 'g'}])
+got = {lf['label']: lf['rule'] for lf in rr['leaves']}
+nodes_ = {nd['path']: nd for nd in rr['nodes']}
+
+
+def interval_ok(label, rule):
+    """The rule's range of x1 holds exactly the values every x1 condition of the label allows."""
+    import re
+    los, his = [], []
+    for part in label.split('&'):
+        m_ = re.fullmatch(r'x1(<|>=)(-?[\d.]+)', part)
+        if m_:
+            (his if m_.group(1) == '<' else los).append(float(m_.group(2)))
+    lo, hi = (max(los) if los else -math.inf), (min(his) if his else math.inf)
+    if math.isinf(lo) and math.isinf(hi):
+        return 'x1' not in rule
+    want = f'{pt.num_text(lo)}<=x1<{pt.num_text(hi)}' if math.isfinite(lo) and math.isfinite(hi) else f'x1>={pt.num_text(lo)}' if math.isfinite(lo) else f'x1<{pt.num_text(hi)}'
+    return want in rule.split('&') and rule.count('x1') == 1
+
+
+check('a leaf\'s rule has each continuous column once, its cuts merged into one range', all(interval_ok(lab, r) for lab, r in got.items()), True)
+check('... the conditions on another column kept as they are', all(('x2<5' in lab) == ('x2<5' in r) and ('x2>=5' in lab) == ('x2>=5' in r) for lab, r in got.items()), True)
+g_ok = True
+for lab, r in got.items():
+    sets_ = [set(p[2:-1].split(', ')) for p in lab.split('&') if p.startswith('g(')]
+    if sets_:
+        inter = set.intersection(*sets_)
+        want = 'g(' + ', '.join(v for v in 'abcde' if v in inter) + ')'
+        g_ok &= want in r.split('&') and r.count('g(') == 1
+check('... a categorical column\'s groups as the levels they share', g_ok, True)
+check('... the rule of a leaf with one condition per column is its label', all(r == lab for lab, r in got.items() if len(set(p.split('<')[0].split('>')[0].split('(')[0] for p in lab.split('&'))) == len(lab.split('&'))), True)
+
+# ---- a K-fold Validation column: every row trains; K Fold by its folds; Go by the crossvalidated RSquare ----------------------------
+rk_ = np.random.default_rng(77)
+kfv = rk_.integers(1, 6, n).astype(float)
+cols_f = {**cols, 'kf': list(kfv)}
+TF = table(cols_f, types=TYPES, levels=LEVELS)
+XF = ['x1', 'x2', 'g']
+fold_f = (kfv - 1).astype(int)
+rf2 = fit(table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'split', 'n': 2}])
+check('a Validation column of five values holds five folds: every row trains, no validation rows, and a note says so',
+      (rf2['folds'], rf2['has_validation'], [s_['set'] for s_ in rf2['summary']], any('holds 5 folds' in t_ for t_ in rf2['fit']['notes'])),
+      ({'k': 5, 'column': 'kf', 'values': ['1', '2', '3', '4', '5']}, False, ['Training'], True))
+PF, tF, msF = grown('y', XF, steps=[{'op': 'split', 'n': 2}], validation='kf', seed=4, table=TF)
+check('... the tree knows its folds (predictive.fold_masks)', np.array_equal(tF.folds, fold_f), True)
+
+
+def cv_tree(s_, y_=y, L_=0):
+    """The out-of-fold predictions of trees of s_ best splits, each grown on the other folds (the engine's Tree)."""
+    Pq, tq, mq = grown('y' if not L_ else 'cls', XF, validation='kf', seed=4, table=TF)
+    oofs = np.zeros((n, L_)) if L_ else np.zeros(n)
+    for f_ in range(5):
+        tt_ = pt.Tree(tq.cols, Pq.X, Pq.target, L_, None, None, np.where(fold_f == f_, 1, 0), mq, True, Pq.labels)
+        for _ in range(s_):
+            if tt_.split_best() is None:
+                break
+        oofs[fold_f == f_] = tt_.fitted()[fold_f == f_]
+    return oofs, Pq
+
+
+def r2_of(pred):
+    return 1 - np.sum((y - pred) ** 2) / np.sum((y - y.mean()) ** 2)
+
+
+kff = call('partition.kfold', table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'split', 'n': 2}], k=3)
+check('K Fold by the column: its five folds, whatever number was asked, each named by its value', (kff['k'], kff['fold'], [f_['value'] for f_ in kff['folds']], kff['by_column']), (5, fold_f.tolist(), ['1', '2', '3', '4', '5'], 'kf'))
+check.near('... each fold predicted by a 2-split tree grown on the other folds (by hand)', kff['folded']['rsquare'], r2_of(cv_tree(2)[0]), 1e-10)
+rgo = fit(table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'go'}])
+g_ = rgo['go']
+want_cv = [r2_of(cv_tree(e['splits'])[0]) for e in g_['trace']]
+check.near('Go by the folds: the crossvalidated RSquare of each size it looked at, by hand (every row by the tree that did not see its fold)', max(abs(e['Crossvalidation'] - v_) for e, v_ in zip(g_['trace'], want_cv)), 0.0, abs_=1e-10)
+best_cv = int(np.argmax(want_cv))
+check('... keeps the size with the best, having looked 10 splits past it', (rgo['splits'], g_['best'], g_['start'], len(g_['trace']) - 1 - g_['best'], g_['folds']), (best_cv, best_cv, 0, 10, 5))
+check('... the training RSquare of each size is the tree\'s own', all(math.isclose(e['Training'], h_['Training'], rel_tol=1e-10) for e, h_ in zip(g_['trace'], fit(table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'split', 'n': len(g_['trace']) - 1}])['history'])), True)
+kfg = call('partition.kfold', table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'go'}])
+check.near('... and K Fold at that size gives the RSquare Go chose by', kfg['folded']['rsquare'], want_cv[best_cv], 1e-10)
+rgc = fit(table=TF, y='cls', x=XF, validation='kf', seed=4, steps=[{'op': 'go'}])
+oofc, Pqc = cv_tree(rgc['go']['best'], L_=2)
+share_c = np.bincount(Pqc.target, minlength=2) / n
+want_c = 1 - np.sum(np.log(np.clip(oofc[np.arange(n), Pqc.target], 1e-15, 1))) / np.sum(np.log(share_c[Pqc.target]))
+check.near('... a categorical response: the crossvalidated entropy RSquare of the size kept, by hand', next(e['Crossvalidation'] for e in rgc['go']['trace'] if e['splits'] == rgc['go']['best']), want_c, 1e-10)
+# CART: K Fold by the column, Go by the folds (scikit-learn's trees fitted without each fold, by hand)
+ckf = call('partition.cart_kfold', table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'split', 'n': 3}], k=2)
+check('CART K Fold by the column: its five folds', (ckf['k'], ckf['fold'], ckf['by_column'], [f_['value'] for f_ in ckf['folds']]), (5, fold_f.tolist(), 'kf', ['1', '2', '3', '4', '5']))
+cgo = call('partition.cart_fit', table=TF, y='y', x=XF, validation='kf', seed=4, steps=[{'op': 'go'}])
+Pcf = pv.prepare(TF, 'y', XF, validation='kf', seed=4)
+
+
+def cart_cv(k_leaves):
+    oofs = np.zeros(n)
+    for f_ in range(5):
+        fr = fold_f != f_
+        pred = np.full(n, Pcf.target[fr].mean()) if k_leaves < 2 else DecisionTreeRegressor(max_leaf_nodes=k_leaves, min_samples_leaf=5, random_state=4).fit(Pcf.X[fr], Pcf.target[fr]).predict(Pcf.X)
+        oofs[fold_f == f_] = pred[fold_f == f_]
+    return r2_of(oofs)
+
+
+want_cart = [cart_cv(e['splits'] + 1) for e in cgo['go']['trace']]
+check.near('CART Go by the folds: the crossvalidated RSquare of each number of leaves, by hand with scikit-learn', max(abs(e['Crossvalidation'] - v_) for e, v_ in zip(cgo['go']['trace'], want_cart)), 0.0, abs_=1e-10)
+check('... keeps the best', (cgo['splits'], cgo['go']['folds']), (int(np.argmax(want_cart)), 5))
+# the code: the fit's with Go by the folds, K Fold's, and the Split History graphs' (the engine's tree and CART's)
+got, out = run_code(rgo['script'], EXTRA, tbl=cols_f)
+check('the code grows the same tree (Go by the folds of the Validation column)', (got or {}).get('labels'), [nd['label'] for nd in rgo['nodes']])
+got, out = run_code(kfg['script'], '', tbl=cols_f)
+check('the K Fold code prints the folded RSquare by the column\'s folds', any(ln.startswith('Folded RSquare') and math.isclose(float(ln.split()[-1]), kfg['folded']['rsquare'], rel_tol=1e-9) for ln in out.splitlines()), True)
+got, out = run_code(ckf['script'], '', tbl=cols_f)
+check('... and CART\'s', any(ln.startswith('Folded RSquare') and math.isclose(float(ln.split()[-1]), ckf['folded']['rsquare'], rel_tol=1e-9) for ln in out.splitlines()), True)
+for label, res in (('the engine\'s tree', rgo), ('CART', cgo)):
+    F, err = run_graph_native(joined(res['fit']['plots'], 'history'), TF, GTMP)
+    check(f'Go by the folds, {label}: the split history\'s code runs', err, None)
+    if F:
+        ax = F['axes'][0]
+        cvl = next((q for q in ax['lines'] if q['label'] == 'Crossvalidation'), None)
+        upto = [e for e in res['go']['trace'] if e['splits'] <= res['go']['best']]
+        check(f'... the crossvalidated RSquare up to the size kept, then dotted past it, and the legend', (cvl is not None and np.allclose(cvl['y'], [e['Crossvalidation'] for e in upto], rtol=1e-12) and cvl['x'] == [e['splits'] for e in upto],
+                                                                                                          sum(1 for q in ax['lines'] if q['ls'] == ':'), F['legend']), (True, 2, ['Training', 'Crossvalidation']))
+# Uplift: Go by the folds too
+TUF = table({**cols_f, 'trt': list(rk_.choice(['offer', 'none'], n))}, types={**TYPES, 'trt': 'nominal'}, levels=LEVELS)
+rug = call('uplift.fit', table=TUF, y='y', treatment='trt', x=XF, validation='kf', seed=4, steps=[{'op': 'go'}])
+check('Uplift with a K-fold Validation column: Go by the crossvalidated RSquare of its folds', (rug['folds']['k'], rug['go']['folds'], rug['splits'] == rug['go']['best'],
+      rug['go']['best'] == max(rug['go']['trace'], key=lambda e: (e['Crossvalidation'], -e['splits']))['splits']), (5, 5, True, True))
 
 sys.exit(check.done())

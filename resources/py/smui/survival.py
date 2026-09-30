@@ -42,7 +42,7 @@ from statsmodels.tools.numdiff import approx_fprime
 
 from . import data, models
 from .registry import api
-from .util import code_head, col, table as rtable
+from .util import code_head, col, one_line, table as rtable
 
 EULER = 0.5772156649015329
 LOG2PI = math.log(2 * math.pi)
@@ -449,7 +449,7 @@ def keep_lines(table, rows, where=None):
             match &= np.asarray(raw, dtype=float) == float(v)
         else:
             match &= np.array([x == v for x in raw], dtype=bool)
-        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {c} is {_value_text(table, c, v)}')
+        out.append(f'df = df[df[{J(c)}] == {_lit(v)}]   # only the rows where {one_line(c)} is {one_line(_value_text(table, c, v))}')
     if rows is not None:
         keep = np.zeros(n, dtype=bool)
         keep[np.asarray(rows, dtype=int)] = True

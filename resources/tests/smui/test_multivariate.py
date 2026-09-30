@@ -1573,4 +1573,527 @@ for label, kw in (('Ward, unstandardized, 4 clusters chosen', {'method': 'ward',
     check(tag + ': the leaders and joiners', [(h_[2], h_[3]) for h_ in ns['history']], [(names_[a_], names_[b_]) for a_, b_ in lj])
     check(tag + ': the graphs\' code at the same number of clusters', all(f'k = {kk_}   #' in r_[k2] for k2 in ('dendro_code', 'distgraph_code')) if kw.get('n_clusters') else all("k = None   # Number of Clusters: None takes the report's default" in r_[k2] for k2 in ('code', 'dendro_code', 'distgraph_code')), True)
 
+
+# ======================================================================================================================
+# Saved columns for every row, and live formulas (Save Principal Components, Save Rotated Components, K Means'
+# Save Clusters, Cluster Formula and Distance Formulas, Hierarchical Cluster's Save Formula for Closest Cluster,
+# Discriminant's Save Formulas and Save Canonical Scores)
+# ======================================================================================================================
+# A formula is evaluated by the page's own formula language (smui-formula.js, in node, as test-formula.js runs it) on
+# the whole table: every row whose columns are present gets a value, excluded rows and the other By groups' rows
+# included (the other groups: missing, for their fits are their own). The numbers are checked against the reports'
+# own scores on their rows and against numpy by another route on the others.
+import shutil as _shutil  # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+_NODE = _shutil.which('node')
+_FORMULA_JS = r'''
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const sb = { console }; sb.self = sb; vm.createContext(sb);
+for (const f of ['smui-util.js', 'smui-table.js', 'smui-formula.js']) vm.runInContext(fs.readFileSync(path.join(spec.js, f), 'utf8'), sb, { filename: f });
+const SM = sb.SM;
+const t = new SM.Table({ name: 't', columns: spec.columns.map((c) => ({ name: c.name, dataType: c.char ? 'character' : 'numeric', values: c.values.map((v) => (v == null ? (c.char ? null : NaN) : v)) })) });
+const ref = (name) => `:"${String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+const out = [], made = [];
+for (const s of spec.saved) {
+  const c = t.addColumn({ name: s.name, dataType: 'numeric', values: [] });
+  made.push(c);
+  try { SM.formula.apply(t, c, s.formula.replace(/\{\{col:(\d+)\}\}/g, (_, j) => ref(made[+j].name))); } catch (e) { out.push({ name: c.name, error: e.message }); continue; }
+  out.push({ name: c.name, values: Array.from(c.values, (v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v)), type: c.dataType });
+}
+process.stdout.write(JSON.stringify(out));
+'''
+
+
+def formula_values(tid, saved):
+    """The saved formulas (in order, {{col:j}} naming the j-th of them) computed by the page's formula language on
+    every row of the table: a list of {'name', 'values'} (None for missing), or None without node."""
+    if not _NODE:
+        return None
+    t = data.TABLES[tid]
+    cols = []
+    for name, v in t['cols'].items():
+        char = t['meta'][name].get('dataType') != 'numeric'
+        cols.append({'name': name, 'char': char, 'values': [None if x is None or (not char and not np.isfinite(x)) else (str(x) if char else float(x)) for x in v]})
+    d = _tempfile.mkdtemp(prefix='smui-mv-formula-')
+    js, sp_ = os.path.join(d, 'f.js'), os.path.join(d, 's.json')
+    with open(js, 'w') as fh:
+        fh.write(_FORMULA_JS)
+    with open(sp_, 'w') as fh:
+        json.dump({'js': os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js')), 'columns': cols,
+                   'saved': [{'name': c['name'], 'formula': c['formula']} for c in saved]}, fh)
+    r_ = _sp.run([_NODE, js, sp_], capture_output=True, text=True, timeout=300)
+    if r_.returncode:
+        raise RuntimeError(r_.stderr)
+    return json.loads(r_.stdout)
+
+
+def fvals(res, j):
+    """The j-th formula's values as floats (NaN for missing)."""
+    return np.array([np.nan if v is None else v for v in res[j]['values']], dtype=float)
+
+
+import json  # noqa: E402
+
+if not _NODE:
+    print('note: node is not installed; the formula checks are skipped')
+Xall = export(tq)
+cq = ['a', 'b', 'c', 'd', 'e']
+present_all = np.isfinite(Xall[cq].to_numpy(float)).all(1)
+hi_all = np.array([g_ == 'hi' for g_ in gq])
+
+# ---- Principal Components: Save Principal Components and Save Rotated Components as formulas -----------------
+for on in ('correlations', 'covariances', 'unscaled'):
+    for label, kw in (('every group, rows excluded', {'rows': all_rows}), ('the By group hi, rows excluded, Weight', {'rows': grp_rows, 'where': where_hi, 'weight': 'w'})):
+        tag = f'Save Principal Components ({on}, {label})'
+        fit_ = call('pca.fit', table=tq, columns=cq, on=on, **kw)
+        sv = call('pca.save', table=tq, columns=cq, on=on, n=3, **kw)
+        check(f'{tag}: three formula columns Prin1 to Prin3', [c_['name'] for c_ in sv['columns']], ['Prin1', 'Prin2', 'Prin3'])
+        fr_ = formula_values(tq, sv['columns'])
+        if fr_ is None:
+            continue
+        F = np.column_stack([fvals(fr_, j) for j in range(3)])
+        S_ = arr(fit_['scores']).reshape(len(fit_['rows']), -1)[:, :3]
+        check.near(f'{tag}: the formulas give the report\'s scores on its rows', gap(F[fit_['rows']], S_), 0.0, abs_=1e-10)
+        # every other row of the group whose columns are present: the fitted means, scale and eigenvectors by numpy
+        grp_ = hi_all if kw.get('where') else np.ones(nq, dtype=bool)
+        others = [i for i in range(nq) if grp_[i] and present_all[i] and i not in fit_['rows']]
+        Z_ = (Xall.loc[others, cq].to_numpy(float) - np.array(fit_['center'])) / np.array(fit_['scale'])
+        check.near(f'{tag}: the excluded rows scored by the same fit', gap(F[others], Z_ @ arr(fit_['eigenvectors']).reshape(5, -1)[:, :3]), 0.0, abs_=1e-10)
+        check(f'{tag}: {len(others)} excluded rows scored', len(others) > 0 and bool(np.isfinite(F[others]).all()), True)
+        check(f'{tag}: the row with a missing value has none', bool(np.isnan(F[7]).all()), True)
+        if kw.get('where'):
+            check(f'{tag}: the other groups\' rows have none (their fits are their own)', bool(np.isnan(F[~hi_all]).all()), True)
+rot_ = {'rotation': 'varimax', 'n_rotate': 2}
+fit_ = call('pca.fit', table=tq, columns=cq, rows=all_rows, **rot_)
+sv = call('pca.save', table=tq, columns=cq, rows=all_rows, what='rotated', **rot_)
+fr_ = formula_values(tq, sv['columns'])
+if fr_ is not None:
+    F = np.column_stack([fvals(fr_, j) for j in range(2)])
+    check.near('Save Rotated Components (varimax, 2): the formulas give the rotated scores', gap(F[fit_['rows']], arr(fit_['rotation']['scores']).reshape(-1, 2)), 0.0, abs_=1e-10)
+    check('Save Rotated Components: named Rotated Prin1, Rotated Prin2', [c_['name'] for c_ in sv['columns']], ['Rotated Prin1', 'Rotated Prin2'])
+check('Save Rotated Components without a rotation: an error', 'error' in call('pca.save', table=tq, columns=cq, what='rotated'), True)
+
+# ---- Factor Analysis: the factor scores as formulas ----------------------------------------------------------------
+for method in ('ml', 'pa'):
+    kw = {'rows': all_rows, 'n_factors': 2, 'method': method, 'rotation': 'promax'}
+    fit_ = call('factor.fit', table=tq, columns=cq, **kw)
+    sv = call('factor.save', table=tq, columns=cq, **kw)
+    fr_ = formula_values(tq, sv['columns'])
+    if fr_ is None:
+        continue
+    F = np.column_stack([fvals(fr_, j) for j in range(2)])
+    check.near(f'Factor Analysis ({method}, promax): the formulas give Thurstone\'s scores on the report\'s rows', gap(F[fit_['rows']], arr(fit_['scores']).reshape(-1, 2)), 0.0, abs_=1e-10)
+    Xr_ = Xall.loc[fit_['rows'], cq].to_numpy(float)
+    others = [i for i in range(nq) if present_all[i] and i not in fit_['rows']]
+    want_ = (Xall.loc[others, cq].to_numpy(float) - Xr_.mean(0)) / Xr_.std(0, ddof=1) @ arr(fit_['score_coef']).reshape(5, 2)
+    check.near(f'Factor Analysis ({method}): the excluded rows scored by the report\'s means, standard deviations and coefficients', gap(F[others], want_), 0.0, abs_=1e-10)
+
+# ---- K Means: Save Clusters for every row, the Cluster Formula and the Distance Formulas ----------------------------
+for std in (True, False):
+    for label, kw in (('rows excluded', {'rows': all_rows}), ('the By group hi', {'rows': grp_rows, 'where': where_hi})):
+        tag = f'K Means ({"scaled" if std else "unscaled"}, {label})'
+        base_ = {'table': tq, 'columns': ['u', 'v', 'b'], 'k_min': 3, 'standardize': std, **kw}
+        fit_ = call('kmeans.fit', **base_)
+        f_ = fit_['fits'][0]
+        sv = call('kmeans.save', k=3, what='clusters', **base_)
+        cl_, di_ = sv['columns']
+        lab_ = dict(zip(cl_['rows'], cl_['values']))
+        dd_ = dict(zip(di_['rows'], di_['values']))
+        grp_ = hi_all if kw.get('where') else np.ones(nq, dtype=bool)
+        U_ = Xall[['u', 'v', 'b']].to_numpy(float)
+        want_rows = [i for i in range(nq) if grp_[i] and np.isfinite(U_[i]).all()]
+        check(f'{tag}: Save Clusters gives every row of the group with its columns, excluded ones too', sorted(lab_), want_rows)
+        check(f'{tag}: ... the report\'s clusters on its rows', [lab_[r_] for r_ in fit_['rows']], [c_ + 1 for c_ in f_['labels']])
+        check.near(f'{tag}: ... and its squared distances (JMP\'s Distance)', gap([dd_[r_] for r_ in fit_['rows']], f_['distance']), 0.0, abs_=1e-12)
+        mu_, sd_ = np.array(fit_['mean']), np.array(fit_['sd'])
+        C_ = arr(f_['centers_scaled']).reshape(3, 3)
+        Zo = (U_[want_rows] - mu_) / sd_ if std else U_[want_rows]
+        D_ = ((Zo[:, None, :] - C_[None]) ** 2).sum(2)
+        check(f'{tag}: every row in the cluster of its nearest centre', [lab_[r_] for r_ in want_rows], (D_.argmin(1) + 1).tolist())
+        check.near(f'{tag}: its Distance the squared Euclidean distance to it, where the clustering is', gap([dd_[r_] for r_ in want_rows], D_.min(1)), 0.0, abs_=1e-12)
+        fo = call('kmeans.save', k=3, what='formula', **base_)
+        fd = call('kmeans.save', k=3, what='distances', **base_)
+        check(f'{tag}: Cluster Formula and three Distance Formulas', [c_['name'] for c_ in fo['columns'] + fd['columns']], ['Cluster Formula', 'Distance to Cluster 1', 'Distance to Cluster 2', 'Distance to Cluster 3'])
+        fr_ = formula_values(tq, fo['columns'] + fd['columns'])
+        if fr_ is None:
+            continue
+        cf = fvals(fr_, 0)
+        check(f'{tag}: the Cluster Formula = Save Clusters on every row', [cf[r_] for r_ in want_rows], [float(lab_[r_]) for r_ in want_rows])
+        check(f'{tag}: ... missing where a column is (row 8) and outside the group', (bool(np.isnan(cf[7])), bool(np.isnan(cf[~grp_]).all()) if kw.get('where') else True), (True, True))
+        Df = np.column_stack([fvals(fr_, j) for j in range(1, 4)])
+        check.near(f'{tag}: the Distance Formulas = the squared distances to the centres', gap(Df[want_rows], D_), 0.0, abs_=1e-10)
+
+# ---- Hierarchical Cluster: Save Formula for Closest Cluster ------------------------------------------------------
+from scipy.cluster.hierarchy import fcluster, linkage  # noqa: E402,F811
+from scipy.spatial.distance import pdist, squareform  # noqa: E402
+
+for label, kw, std in (('Ward, columns standardized', {'method': 'ward'}, 'columns'), ('average, unstandardized, 4 clusters', {'method': 'average', 'standardize': 'none', 'n_clusters': 4}, 'none'),
+                       ('complete, rows standardized', {'method': 'complete', 'standardize': 'rows'}, 'rows'), ('Ward, robust, By group', {'method': 'ward', 'robust': True, 'rows': grp_rows, 'where': where_hi}, 'columns')):
+    tag = f'Save Formula for Closest Cluster ({label})'
+    kw2 = {'rows': all_rows, **kw}
+    fit_ = call('hcluster.fit', table=tq, columns=['u', 'v', 'a'], **kw2)
+    sv = call('hcluster.save', table=tq, columns=['u', 'v', 'a'], **kw2)
+    k_ = sv['k']
+    n_ = fit_['n']
+    check(f'{tag}: the number of clusters is the report\'s', k_, kw.get('n_clusters') or page_default(fit_['heights'], n_))
+    fr_ = formula_values(tq, sv['columns'])
+    if fr_ is None:
+        continue
+    f_ = fvals(fr_, 0)
+    U_ = Xall[['u', 'v', 'a']].to_numpy(float)
+    Xc_ = U_[fit_['rows']]
+    if std == 'columns':
+        cen, sca = np.array(fit_['center']), np.array(fit_['scale'])
+        Zs_ = lambda A: (A - cen) / sca  # noqa: E731
+    elif std == 'rows':
+        Zs_ = lambda A: (A - A.mean(1, keepdims=True)) / A.std(1, ddof=1)[:, None]  # noqa: E731
+    else:
+        Zs_ = lambda A: A  # noqa: E731
+    labs_ = page_clusters(fit_['merges'], n_, k_, fit_['order'])
+    M_ = np.array([Zs_(Xc_)[np.array(labs_) == c_].mean(0) for c_ in range(k_)])
+    grp_ = hi_all if kw.get('where') else np.ones(nq, dtype=bool)
+    rows_ = [i for i in range(nq) if grp_[i] and np.isfinite(U_[i]).all()]
+    D_ = ((Zs_(U_[rows_])[:, None, :] - M_[None]) ** 2).sum(2)
+    check(f'{tag}: every row of the group with its columns: the cluster of the nearest centroid (squared Euclidean, the clustering\'s space)', f_[rows_].tolist(), (D_.argmin(1) + 1).astype(float).tolist())
+    same_ = np.mean(f_[fit_['rows']] == np.array(labs_) + 1)
+    check(f'{tag}: ... most of the tree\'s rows keep their own cluster ({100 * same_:.0f}%)', same_ > 0.8, True)
+check('Save Formula for Closest Cluster of a distance matrix: refused', 'error' in call('hcluster.save', table=tq, columns=['u', 'v'], matrix=True), True)
+
+# ---- Hierarchical Cluster: Standardize Robustly, Missing value imputation, a distance matrix, the Distance option ----
+from statsmodels.robust.scale import Huber as _Huber  # noqa: E402
+
+Uc = Xall.loc[all_rows, ['a', 'b', 'c']].dropna()
+Uv = Uc.to_numpy(float)
+hr = call('hcluster.fit', table=tq, columns=['a', 'b', 'c'], rows=all_rows, method='average', robust=True)
+hub_ = [tuple(float(np.asarray(x_)) for x_ in _Huber(maxiter=100)(Uv[:, j])) for j in range(3)]
+check.near('Standardize Robustly: the centres are statsmodels\' Huber locations', gap(hr['center'], [h_[0] for h_ in hub_]), 0.0, abs_=1e-12)
+check.near('... the scales its Huber scales', gap(hr['scale'], [h_[1] for h_ in hub_]), 0.0, abs_=1e-12)
+Zr_ = linkage(pdist((Uv - [h_[0] for h_ in hub_]) / [h_[1] for h_ in hub_], 'sqeuclidean'), 'average')
+check.near('... and the joins those of the robustly standardized rows (scipy)', gap(hr['heights'], Zr_[:, 2]), 0.0, abs_=1e-10)
+
+
+def em_mvn(X, iters=2000, tol=1e-13):
+    """A textbook EM for a multivariate normal with missing values (the E step's conditional means and covariances),
+    written here, independently of tables.mvn_em."""
+    X = np.asarray(X, float)
+    n, p = X.shape
+    M = np.isnan(X)
+    mu = np.nanmean(X, 0)
+    S = np.diag(np.nanvar(X, 0))
+    for _ in range(iters):
+        Xh = np.where(M, 0.0, X)
+        C = np.zeros((p, p))
+        for i in range(n):
+            m, o = M[i], ~M[i]
+            if m.any():
+                K = S[np.ix_(m, o)] @ np.linalg.inv(S[np.ix_(o, o)])
+                Xh[i, m] = mu[m] + K @ (X[i, o] - mu[o])
+                C[np.ix_(m, m)] += S[np.ix_(m, m)] - K @ S[np.ix_(o, m)]
+        mu2 = Xh.mean(0)
+        S2 = (Xh - mu2).T @ (Xh - mu2) / n + C / n
+        done = np.abs(mu2 - mu).max() < tol and np.abs(S2 - S).max() < tol
+        mu, S = mu2, S2
+        if done:
+            break
+    return Xh
+
+
+Xmiss = Xall.loc[all_rows, ['a', 'b', 'c', 'd']].to_numpy(float)
+hi_ = call('hcluster.fit', table=tq, columns=['a', 'b', 'c', 'd'], rows=all_rows, method='ward', impute=True)
+check('Missing value imputation keeps the rows with a missing value', hi_['n'], len(all_rows))
+Xh_ = em_mvn(Xmiss)
+check.near('... each missing value the conditional mean under the EM fit (a textbook EM written here)', gap(arr(hi_['values']).reshape(-1, 4), Xh_), 0.0, abs_=1e-6)
+Zi_ = linkage((Xh_ - Xh_.mean(0)) / Xh_.std(0, ddof=1), 'ward')
+check.near('... and the Ward joins of the completed rows (scipy)', gap(hi_['heights'], Zi_[:, 2] ** 2 / 2), 0.0, abs_=1e-6)
+check('... the report says how many values it imputed', any('imputed' in t_ for t_ in hi_['notes']), True)
+check('Missing value imputation with one numeric column: refused', 'error' in call('hcluster.fit', table=tq, columns=['b'], impute=True), True)
+
+# a distance matrix: a column per row, one side of the diagonal given
+pts_ = Xall.loc[:11, ['u', 'v']].to_numpy(float)
+Dm_ = squareform(pdist(pts_))
+Dlo = Dm_.copy()
+Dlo[np.triu_indices(12, 1)] = np.nan
+tm_ = table({'obj': [f'o{i}' for i in range(12)], **{f'o{j}': Dlo[:, j] for j in range(12)}})
+mcols_ = [f'o{j}' for j in range(12)]
+for method in ('single', 'complete', 'average', 'ward', 'centroid'):
+    hm_ = call('hcluster.fit', table=tm_, columns=mcols_, method=method, matrix=True, label='obj')
+    want_ = linkage(pdist(pts_), method) if method in ('single', 'complete', 'average') else linkage(pts_, method)
+    h_ = want_[:, 2] ** 2 / 2 if method == 'ward' else want_[:, 2] ** 2 if method == 'centroid' else want_[:, 2]
+    check.near(f'distance matrix ({method}): the joins of the distances given (scipy; Ward and Centroid in JMP\'s heights)', gap(hm_['heights'], h_), 0.0, abs_=1e-9)
+keep_ = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11]
+hm_ = call('hcluster.fit', table=tm_, columns=mcols_, method='average', matrix=True, rows=keep_)
+check.near('distance matrix with a row excluded: its row and column left out', gap(hm_['heights'], linkage(pdist(pts_[keep_]), 'average')[:, 2]), 0.0, abs_=1e-9)
+check('... the rows clustered', hm_['rows'], keep_)
+check('distance matrix of the wrong shape: refused', 'error' in call('hcluster.fit', table=tm_, columns=mcols_[:5], method='average', matrix=True), True)
+bad_ = Dlo.copy()
+bad_[3, 1] = np.nan
+check('distance matrix missing on both sides: refused', 'error' in call('hcluster.fit', table=table({f'o{j}': bad_[:, j] for j in range(12)}), columns=mcols_, method='average', matrix=True), True)
+ns = run_code('distance matrix (average)', hm_['code'], tm_)
+# (the code of a report of every row: the report above leaves row 5 out)
+hm_all = call('hcluster.fit', table=tm_, columns=mcols_, method='average', matrix=True, label='obj')
+ns = run_code('distance matrix (average, every row)', hm_all['code'], tm_)
+if ns:
+    check.near('distance matrix: the code\'s joins are the report\'s', gap(ns['heights'], hm_all['heights']), 0.0, abs_=1e-12)
+
+# the Distance option of Single, Complete and Average
+Xd_ = Xall.loc[all_rows, ['u', 'v', 'a']].dropna().to_numpy(float)
+Xds = (Xd_ - Xd_.mean(0)) / Xd_.std(0, ddof=1)
+for dist in ('euclidean', 'cityblock', 'chebyshev', 'correlation', 'mahalanobis'):
+    extra_ = {'VI': np.linalg.pinv(np.cov(Xds, rowvar=False))} if dist == 'mahalanobis' else {}
+    for method in ('single', 'complete', 'average'):
+        hd_ = call('hcluster.fit', table=tq, columns=['u', 'v', 'a'], rows=all_rows, method=method, distance=dist)
+        Zd_ = linkage(pdist(Xds, dist, **extra_), method)
+        check(f'Distance {dist}, {method}: the joins = scipy linkage of pdist', (np.array(hd_['merges']).tolist() == Zd_[:, :2].astype(int).tolist(), float(gap(hd_['heights'], Zd_[:, 2])) < 1e-12), (True, True))
+    ns = run_code(f'Distance {dist} (average)', hd_['code'], tq)
+    if ns:
+        check.near(f'Distance {dist}: the code\'s joins are the report\'s', gap(ns['heights'], hd_['heights']), 0.0, abs_=1e-12)
+check('Ward with the city block distance: refused (Ward needs squared Euclidean distances)', 'error' in call('hcluster.fit', table=tq, columns=['u', 'v'], method='ward', distance='cityblock'), True)
+# Jaccard: present (not 0) or absent
+bj = (np.random.default_rng(3).random((40, 5)) < 0.4).astype(float)
+tj = table({f'b{j}': bj[:, j] for j in range(5)})
+hj = call('hcluster.fit', table=tj, columns=[f'b{j}' for j in range(5)], method='average', distance='jaccard')
+check.near('Distance Jaccard: the joins = scipy\'s Jaccard of the 0/1 rows', gap(hj['heights'], linkage(pdist(bj != 0, 'jaccard'), 'average')[:, 2]), 0.0, abs_=1e-12)
+ns = run_code('Distance Jaccard', hj['code'], tj)
+if ns:
+    check.near('Distance Jaccard: the code\'s joins are the report\'s', gap(ns['heights'], hj['heights']), 0.0, abs_=1e-12)
+# Gower on numeric and nominal columns: by brute force
+okg = [i for i in all_rows if np.isfinite(Xall.loc[i, ['a', 'b']].to_numpy(float)).all()]
+Gx = Xall.loc[okg, ['a', 'b']].to_numpy(float)
+Gq = np.array([q1[i] for i in okg])
+Gq3 = np.array([q3[i] for i in okg])
+rg_ = Gx.max(0) - Gx.min(0)
+Gb = np.array([[(abs(Gx[i, 0] - Gx[j, 0]) / rg_[0] + abs(Gx[i, 1] - Gx[j, 1]) / rg_[1] + (Gq[i] != Gq[j]) + (Gq3[i] != Gq3[j])) / 4 for j in range(len(okg))] for i in range(len(okg))])
+for method in ('single', 'complete', 'average'):
+    hg = call('hcluster.fit', table=tq, columns=['a', 'b', 'q1', 'q3'], rows=all_rows, method=method, distance='gower')
+    check.near(f'Distance Gower ({method}, two numeric and two nominal columns, one of them numeric): the joins of Gower\'s brute-force dissimilarities', gap(hg['heights'], linkage(squareform(Gb, checks=False), method)[:, 2]), 0.0, abs_=1e-12)
+check('... Gower with nominal columns has no coordinates (no CCC, two-way clustering or closest-cluster formula)', (hg['coords'], hg['criterion'], 'error' in call('hcluster.save', table=tq, columns=['a', 'b', 'q1'], rows=all_rows, method='average', distance='gower')), (False, [], True))
+ns = run_code('Distance Gower (average)', hg['code'], tq)
+if ns:
+    check.near('Distance Gower: the code\'s joins are the report\'s', gap(ns['heights'], hg['heights']), 0.0, abs_=1e-12)
+check('a nominal column without Gower: refused', 'error' in call('hcluster.fit', table=tq, columns=['a', 'q1'], method='average'), True)
+
+# ---- Hierarchical Cluster: silhouettes (beyond JMP) against scikit-learn ----------------------------------------
+from sklearn.metrics import silhouette_samples, silhouette_score  # noqa: E402
+
+for label, kw, D_of in (('Ward: Euclidean distances', {'method': 'ward'}, lambda h: squareform(pdist(arr(h['data']).reshape(h['n'], -1)))),
+                        ('average, city block', {'method': 'average', 'distance': 'cityblock'}, lambda h: squareform(pdist(arr(h['data']).reshape(h['n'], -1), 'cityblock'))),
+                        ('average, Gower with nominal columns', {'method': 'average', 'distance': 'gower'}, lambda h: Gb),
+                        ('a distance matrix, complete', {'method': 'complete', 'matrix': True}, lambda h: Dm_)):
+    for nc in (None, 4):
+        cols_ = mcols_ if kw.get('matrix') else (['a', 'b', 'q1', 'q3'] if kw.get('distance') == 'gower' else ['u', 'v', 'a'])
+        t_ = tm_ if kw.get('matrix') else tq
+        h_ = call('hcluster.fit', table=t_, columns=cols_, rows=None if kw.get('matrix') else all_rows, silhouette=True, n_clusters=nc, **kw)
+        S_ = h_['silhouette']
+        tag = f'silhouettes ({label}, {"the default" if nc is None else nc} clusters)'
+        lab_ = np.array(page_clusters(h_['merges'], h_['n'], S_['k'], h_['order']))
+        Dsk = D_of(h_)
+        check.near(f'{tag}: each row\'s = scikit-learn\'s silhouette_samples', gap(S_['values'], silhouette_samples(Dsk, lab_, metric='precomputed')), 0.0, abs_=1e-12)
+        check.near(f'{tag}: the mean', S_['mean'], float(silhouette_score(Dsk, lab_, metric='precomputed')), rel=1e-12)
+        pth = {q_['k']: q_['mean'] for q_ in S_['path']}
+        want_ = {q_: float(silhouette_score(Dsk, np.array(page_clusters(h_['merges'], h_['n'], q_, h_['order'])), metric='precomputed')) for q_ in pth}
+        check.near(f'{tag}: the mean for every number of clusters (2 to {max(pth)})', max(abs(pth[q_] - want_[q_]) for q_ in pth), 0.0, abs_=1e-12)
+        check(f'{tag}: the best number is the largest mean', S_['best'], max(want_, key=want_.get))
+        check(f'{tag}: each cluster\'s count and mean', [(c_['count'], round(c_['mean'], 12)) for c_ in S_['clusters']], [(int((lab_ == c_).sum()), round(float(np.mean(silhouette_samples(Dsk, lab_, metric='precomputed')[lab_ == c_])), 12)) for c_ in range(S_['k'])])
+        if nc == 4:
+            F = figure(tag, h_['silhouette_code'], t_)
+            ax = F['axes'][0]
+            o_ = np.lexsort((-np.array(S_['values']), lab_))
+            check.near(f'{tag}: the code\'s bars are the rows\' silhouettes, by cluster', gap([b_['w'] for b_ in ax['bars']], np.array(S_['values'])[o_]), 0.0, abs_=1e-12)
+            check(f'{tag}: ... in their clusters\' colours, the mean dashed', ([b_['fc'][:7] for b_ in ax['bars']] == [PAL[c_ % 12] for c_ in lab_[o_]], has_line(ax, [S_['mean'], S_['mean']], None, ls='--')), (True, True))
+            F = figure(f'{tag}: the mean by number of clusters', h_['silhouette_k_code'], t_)
+            ax = F['axes'][0]
+            check(f'{tag}: the code draws the mean silhouette of each number of clusters', has_line(ax, list(pth), [pth[q_] for q_ in pth], rel=1e-10), True)
+
+# ---- Hierarchical Cluster: the parallel coordinate plot's code ---------------------------------------------------
+for label, kw in (('Ward, 3 clusters', {'method': 'ward', 'n_clusters': 3}), ('average, imputed, By group', {'method': 'average', 'impute': True, 'rows': grp_rows, 'where': where_hi})):
+    cols_ = ['a', 'b', 'c', 'd']
+    h_ = call('hcluster.fit', table=tq, columns=cols_, **{'rows': all_rows, **kw})
+    k_ = kw.get('n_clusters') or page_default(h_['heights'], h_['n'])
+    tag = f'parallel coordinates ({label})'
+    F = figure(tag, h_['parallel_code'], tq)
+    ax = F['axes'][0]
+    lab_ = np.array(page_clusters(h_['merges'], h_['n'], k_, h_['order']))
+    V_ = arr(h_['values']).reshape(h_['n'], -1) if kw.get('impute') else Xall.loc[h_['rows'], cols_].to_numpy(float)
+    mu_, sd_ = V_.mean(0), V_.std(0, ddof=1)
+    means_ = [(V_[lab_ == c_].mean(0) - mu_) / sd_ for c_ in range(k_)]
+    check(f'{tag}: each cluster\'s mean line, standardized', all(has_line(ax, [0, 1, 2, 3], list(m_), rel=1e-9, color=PAL[c_]) for c_, m_ in enumerate(means_)), True)
+    segs_ = [np.asarray(s_, float) for sgm in ax['segments'] for s_ in sgm['segs']]
+    check.near(f'{tag}: every row\'s line', gap(np.sort(np.array([s_[:, 1] for s_ in segs_]), axis=0), np.sort((V_ - mu_) / sd_, axis=0)), 0.0, abs_=1e-9)
+    if kw.get('where'):
+        keeps(tag, h_['parallel_code'], WHERE_HI, grp_drop)
+
+# ---- K Means: Single Step (JMP's) and the criteria by number of clusters -------------------------------------------
+base_ = {'table': tq, 'columns': ['u', 'v'], 'rows': all_rows, 'k_min': 2, 'k_max': 5, 'seed': 77}
+one_ = call('kmeans.fit', restarts=1, **base_)
+go_ = call('kmeans.fit', single=True, steps={str(k_): None for k_ in range(2, 6)}, **base_)
+for f1, fs in zip(one_['fits'], go_['fits']):
+    a_, b_ = np.array(f1['labels']), np.array(fs['labels'])
+    same_ = all(len(set(b_[a_ == c_])) == 1 for c_ in range(f1['k'])) and all(len(set(a_[b_ == c_])) == 1 for c_ in range(f1['k']))
+    check(f'Single Step, Go ({f1["k"]} clusters): the partition of the fit with one restart (the same start)', (same_, fs['converged']), (True, True))
+    check.near(f'Single Step, Go ({f1["k"]} clusters): the same within sum of squares', fs['wss'], f1['wss'], rel=1e-10)
+s0 = call('kmeans.fit', single=True, steps={}, **base_)
+check('Single Step before a step: no clusters, the starting centres only (JMP: no cluster assignments)', [(f_['k'], f_['labels'], f_['step'], len(f_['seeds'])) for f_ in s0['fits']], [(k_, None, 0, k_) for k_ in range(2, 6)])
+U_ = Xall.loc[go_['rows'], ['u', 'v']].to_numpy(float)
+mu_, sd_ = np.array(go_['mean']), np.array(go_['sd'])
+Z_ = (U_ - mu_) / sd_
+for k_ in (3, 4):
+    C0 = arr(s0['fits'][k_ - 2]['centers_scaled']).reshape(k_, 2)
+    check.near(f'Single Step ({k_} clusters): the starting centres in the columns\' units', gap(s0['fits'][k_ - 2]['seeds'], mu_ + sd_ * C0), 0.0, abs_=1e-12)
+    C_ = C0.copy()
+    for step_ in (1, 2, 3):
+        lab_ = ((Z_[:, None] - C_[None]) ** 2).sum(2).argmin(1)   # a step by hand: the nearest centre, then the means
+        C_ = np.array([Z_[lab_ == c_].mean(0) if (lab_ == c_).any() else C_[c_] for c_ in range(k_)])
+        st_ = call('kmeans.fit', single=True, steps={str(k_): step_}, **{**base_, 'k_min': k_, 'k_max': k_})
+        # (the start of k is the k-th draw of the stream: with k_min = k the stream starts there; draw the earlier starts too)
+        st_ = call('kmeans.fit', single=True, steps={str(k_): step_}, **base_)['fits'][k_ - 2]
+        check(f'Single Step ({k_} clusters), step {step_}: the rows assigned to the nearest centres of the step before', np.array(st_['labels']).tolist(), lab_.tolist())
+        check.near(f'Single Step ({k_} clusters), step {step_}: the cluster means', gap(st_['means'], [U_[lab_ == c_].mean(0) for c_ in range(k_)]), 0.0, abs_=1e-12)
+        check(f'Single Step ({k_} clusters), step {step_}: the step', st_['step'], step_)
+sv1 = call('kmeans.save', k=3, what='clusters', single=True, steps={'3': 1}, **base_)
+f1_ = call('kmeans.fit', single=True, steps={'3': 1}, **base_)['fits'][1]
+lab1 = dict(zip(sv1['columns'][0]['rows'], sv1['columns'][0]['values']))
+check('Single Step, one step: Save Clusters keeps the report\'s clusters on its rows', [lab1[r_] for r_ in go_['rows']], [c_ + 1 for c_ in f1_['labels']])
+check('Single Step before the first step: no clusters to save', 'error' in call('kmeans.save', k=3, what='clusters', single=True, steps={}, **base_), True)
+ns = run_code('Single Step: the report\'s code', call('kmeans.fit', single=True, steps={'2': 1, '3': None}, **base_)['code'], tq)
+if ns:
+    mix_ = call('kmeans.fit', single=True, steps={'2': 1, '3': None}, **base_)
+    check('Single Step: the code\'s clusters are the report\'s (one step, Go, and no step)', [np.asarray(ns['fits'][f_['k']]).tolist() for f_ in mix_['fits'] if f_['labels'] is not None], [f_['labels'] for f_ in mix_['fits'] if f_['labels'] is not None])
+for label, r_ in (('restarts', call('kmeans.fit', **base_)), ('Single Step, Go', go_)):
+    tag = f'the criteria by number of clusters ({label})'
+    F = figure(tag, r_['comparison_code'], tq)
+    ks_ = [f_['k'] for f_ in r_['fits']]
+    for q_, key in enumerate(('ccc', 'pseudo_f', 'r2', 'wss')):
+        ax = F['axes'][q_]
+        check(f'{tag}: the {key} of each number of clusters', has_line(ax, ks_, [f_[key] for f_ in r_['fits']], rel=1e-9), True)
+        check(f'{tag}: ... the Optimal CCC dashed', has_line(ax, [r_['best'], r_['best']], None, ls='--'), True)
+check('the criteria\'s code only with two or more fits', 'comparison_code' in call('kmeans.fit', table=tq, columns=['u', 'v'], k_min=3), False)
+
+# ---- Discriminant: the Validation role, Save Formulas, the curves and the Decision Threshold -----------------------------
+from sklearn.metrics import roc_auc_score  # noqa: E402
+
+vq = np.array([1.0 if i % 4 == 0 else 2.0 if i % 9 == 0 else 0.0 for i in range(nq)])
+tqv = table({**{c_: Xall[c_].to_numpy(float) for c_ in ('a', 'b', 'c', 'u', 'v')}, 'g': gq, 'yb': ybq, 'val': vq, 'valt': [['Training', 'Validation', 'Test'][int(x_)] for x_ in vq], 'w': wq},
+            levels={'g': ['mid', 'hi', 'lo']})
+Xv = export(tqv)
+okv = np.isfinite(Xv[['a', 'b', 'c']].to_numpy(float)).all(1)
+tr_ = okv & (vq == 0)
+Yv, gv = Xv[['a', 'b', 'c']].to_numpy(float), np.array(gq)
+lv_ = ['mid', 'hi', 'lo']
+for method in ('linear', 'quadratic'):
+    for vcol in ('val', 'valt'):
+        tag = f'Discriminant with a Validation column ({method}, {"0/1/2" if vcol == "val" else "words"})'
+        dv = call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='g', method=method, validation=vcol, curves=True)
+        means_ = np.array([Yv[tr_ & (gv == l_)].mean(0) for l_ in lv_])
+        check.near(f'{tag}: the group means are the training rows\'', gap(dv['means'], means_), 0.0, abs_=1e-12)
+        E_ = sum((Yv[tr_ & (gv == l_)] - means_[t_]).T @ (Yv[tr_ & (gv == l_)] - means_[t_]) for t_, l_ in enumerate(lv_))
+        Sp_ = E_ / (tr_.sum() - 3)
+        rows_v = np.flatnonzero(okv)
+        if method == 'linear':
+            lp = np.column_stack([stats.multivariate_normal(means_[t_], Sp_).logpdf(Yv[rows_v]) for t_ in range(3)])
+        else:
+            lp = np.column_stack([stats.multivariate_normal(means_[t_], np.cov(Yv[tr_ & (gv == l_)], rowvar=False)).logpdf(Yv[rows_v]) for t_, l_ in enumerate(lv_)])
+        Pw = np.exp(lp - lp.max(1, keepdims=True))
+        Pw /= Pw.sum(1, keepdims=True)
+        check.near(f'{tag}: every row scored by the training rows\' normal densities (scipy)', gap(dv['prob'], Pw), 0.0, abs_=1e-10)
+        check(f'{tag}: the sets of the rows', dv['sets'], vq[rows_v].astype(int).tolist())
+        act = np.array([lv_.index(g_) for g_ in gv[rows_v]])
+        for s_ in dv['summaries']:
+            k_ = ['Training', 'Validation', 'Test'].index(s_['set'])
+            m_ = vq[rows_v] == k_
+            check(f'{tag}: {s_["set"]} misclassified', s_['n_mis'], float(np.sum(Pw[m_].argmax(1) != act[m_])))
+            sh_ = np.array([np.sum(act[vq[rows_v] == 0] == t_) for t_ in range(3)]) / np.sum(vq[rows_v] == 0)
+            ll_, ll0_ = np.sum(np.log(Pw[m_][np.arange(m_.sum()), act[m_]])), np.sum(np.log(sh_[act[m_]]))
+            check.near(f'{tag}: {s_["set"]} entropy RSquare (the training shares)', s_['entropy_r2'], 1 - ll_ / ll0_, rel=1e-9)
+        for rc_ in dv['fit']['roc']:
+            k_ = ['Training', 'Validation', 'Test'].index(rc_['set'])
+            m_ = vq[rows_v] == k_
+            j_ = dv['fit']['levels'].index(rc_['level'])
+            check.near(f'{tag}: the {rc_["set"]} AUC of {rc_["level"]} = scikit-learn\'s', rc_['auc'], float(roc_auc_score(act[m_] == j_, Pw[m_, j_])), rel=1e-12)
+        ns = run_code(f'{tag}: the code', dv['code'], tqv)
+        if ns:
+            check.near(f'{tag}: the code\'s probabilities are the report\'s', gap(ns['P'], dv['prob']), 0.0, abs_=1e-10)
+        F = figure(f'{tag}: the validation ROC curve', f'{dv["fit"]["plots"]["head_code"]}\n\n# ----\n{dv["fit"]["plots"]["roc"]["Validation"]}', tqv)
+        vroc = [rc_ for rc_ in dv['fit']['roc'] if rc_['set'] == 'Validation']
+        check(f'{tag}: ... its code draws the report\'s curves', all(has_line(F['axes'][0], rc_['fpr'], rc_['tpr'], rel=1e-9) for rc_ in vroc if len(rc_['fpr']) < 400), True)
+dvw = call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='g', weight='w', validation='val', curves=True)
+Pw_, act_, st_w = arr(dvw['prob']).reshape(-1, 3), np.array(dvw['actual']), np.array(dvw['sets'])
+w_v = wq[dvw['rows']]
+check.near('Discriminant with a Weight: each set\'s AUC = scikit-learn\'s with the weights (the curves count rows by Weight x Freq)',
+           max(abs(rc_['auc'] - roc_auc_score(act_[st_w == ['Training', 'Validation', 'Test'].index(rc_['set'])] == dvw['fit']['levels'].index(rc_['level']),
+                                               Pw_[st_w == ['Training', 'Validation', 'Test'].index(rc_['set']), dvw['fit']['levels'].index(rc_['level'])],
+                                               sample_weight=w_v[st_w == ['Training', 'Validation', 'Test'].index(rc_['set'])])) for rc_ in dvw['fit']['roc']), 0.0, abs_=1e-12)
+F = figure('Discriminant with a Weight: the validation lift curves', f'{dvw["fit"]["plots"]["head_code"]}\n\n# ----\n{dvw["fit"]["plots"]["lift"]["Validation"]}', tqv)
+check('... its lift code draws the report\'s curves', all(has_line(F['axes'][0], lc_['portion'], lc_['lift'], rel=1e-9) for lc_ in dvw['fit']['lift'] if lc_['set'] == 'Validation' and len(lc_['portion']) < 300), True)
+check('Discriminant: a Validation column with k folds is refused', 'error' in call('discriminant.fit', table=table({'a': Yv[:, 0], 'b': Yv[:, 1], 'g': gq, 'f': [float(i % 5) for i in range(nq)]}), y=['a', 'b'], x='g', validation='f'), True)
+st_ = call('discriminant.stepwise', table=tqv, y=['a', 'b', 'c'], x='g', validation='val', entered=[])
+okt = tr_
+ow_ = sm.OLS(Yv[okt, 0], sm.add_constant(pd.get_dummies(gv[okt], drop_first=True).to_numpy(float))).fit()
+check.near('Discriminant stepwise with a Validation column: the F test on the training rows', st_['columns'][0]['F'], float(ow_.fvalue), rel=1e-9)
+# the Decision Threshold of two groups (WP3's report, fed with every row's probabilities)
+d2 = call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='yb', validation='val', decision=True)
+th = d2['threshold']
+check('Decision Threshold: two levels, every row\'s set and group', (th['levels'], th['points']['set'], th['points']['actual']), (d2['levels'], d2['sets'], d2['actual']))
+check.near('Decision Threshold: the probabilities of the second level are the report\'s', gap(th['models'][0]['p'], arr(d2['prob']).reshape(-1, 2)[:, 1]), 0.0, abs_=1e-15)
+check('Decision Threshold: only with two groups', 'threshold' in call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='g', decision=True), False)
+# Save Formulas: SqDist, Prob and Pred for every row, and Save Canonical Scores
+for method, kw in (('linear', {}), ('quadratic', {}), ('regularized', {'lam': 0.3, 'gam': 0.2}), ('linear, proportional priors, Validation', {'priors': 'proportional', 'validation': 'val'}),
+                   ('linear, other priors, the By group hi, rows excluded', {'priors': 'other', 'prior_values': {'k1': 0.2, 'k2': 0.5, 'k3': 0.3}})):
+    tag = f'Discriminant Save Formulas ({method})'
+    meth = method.split(',')[0]
+    kw2 = {'table': tqv, 'y': ['a', 'b', 'c'], 'x': 'g', 'method': meth, **kw}
+    if 'By group' in method:
+        kw2 = {**kw2, 'rows': [i for i in grp_rows], 'where': where_hi, 'x': 'yb', 'prior_values': {'no': 0.3, 'yes': 0.7}}
+    dr_ = call('discriminant.fit', **kw2)
+    sv = call('discriminant.save', **kw2)
+    names_ = [c_['name'] for c_ in sv['columns']]
+    L_ = [str(v_) for v_ in dr_['levels']]
+    check(f'{tag}: SqDist[…], Prob[…] and Pred {kw2["x"]}', names_, [f'SqDist[{l_}]' for l_ in L_] + [f'Prob[{l_}]' for l_ in L_] + [f'Pred {kw2["x"]}'])
+    fr_ = formula_values(tqv, sv['columns'])
+    if fr_ is None:
+        continue
+    T_ = len(L_)
+    Sq = np.column_stack([fvals(fr_, j) for j in range(T_)])
+    Pq = np.column_stack([fvals(fr_, T_ + j) for j in range(T_)])
+    rr_ = dr_['rows']
+    check.near(f'{tag}: the SqDist formulas give the report\'s', gap(Sq[rr_], dr_['sqdist']), 0.0, abs_=1e-9)
+    check.near(f'{tag}: the Prob formulas give its posterior probabilities', gap(Pq[rr_], dr_['prob']), 0.0, abs_=1e-12)
+    check(f'{tag}: Pred is its most probable group', [fr_[-1]['values'][r_] for r_ in rr_], [L_[t_] for t_ in dr_['pred']])
+    grp_ = hi_all if 'By group' in method else np.ones(nq, dtype=bool)
+    others = [i for i in range(nq) if grp_[i] and okv[i] and i not in rr_]
+    if others:
+        check(f'{tag}: the rows the report leaves out are scored too ({len(others)})', bool(np.isfinite(Pq[others]).all()) and all(fr_[-1]['values'][i] is not None for i in others), True)
+        check.near(f'{tag}: ... their probabilities sum to 1', gap(Pq[others].sum(1), np.ones(len(others))), 0.0, abs_=1e-12)
+    check(f'{tag}: a row with a missing covariate has none', (bool(np.isnan(Pq[7]).all()), fr_[-1]['values'][7]), (True, None))
+    if 'By group' in method:
+        check(f'{tag}: the other groups\' rows have none', bool(np.isnan(Pq[~hi_all]).all()), True)
+dr_ = call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='g')
+sv = call('discriminant.save', table=tqv, y=['a', 'b', 'c'], x='g', what='canonical')
+fr_ = formula_values(tqv, sv['columns'])
+if fr_ is not None:
+    check.near('Save Canonical Scores: the formulas give the canonical scores', gap(np.column_stack([fvals(fr_, j) for j in range(2)])[dr_['rows']], dr_['canonical']['scores']), 0.0, abs_=1e-10)
+pr_ = call('discriminant.probs', table=tqv, y=['a', 'b', 'c'], x='g', rows=all_rows)
+check('discriminant.probs: every row with its covariates, excluded ones too', pr_['rows'], np.flatnonzero(okv).tolist())
+# the Scatterplot Matrix with the groups' ellipses: its code
+for method in ('linear', 'quadratic'):
+    ds = call('discriminant.fit', table=tqv, y=['a', 'b', 'c'], x='g', method=method, plot={'splom': {'width': 400, 'height': 380, 'level': 0.9}})
+    tag = f'Discriminant scatterplot matrix ({method})'
+    F = figure(tag, ds['splom_code'], tqv)
+    axes_ = [ax for ax in F['axes'] if ax.get('visible', True) and (ax['scatter'] or ax['lines'])]
+    check(f'{tag}: three cells below the diagonal', len(axes_), 3)
+    rows_d = ds['rows']
+    ax = axes_[0]
+    check.near(f'{tag}: its points are the rows\' covariates (b by a)', gap(pts(ax), Xv.loc[rows_d, ['a', 'b']].to_numpy(float)), 0.0, abs_=1e-12)
+    Sg = [arr(c_).reshape(3, 3) for c_ in ds['model_cov']]
+    want_ok = []
+    for t_ in range(3):
+        m_ = np.array(ds['means'][t_])
+        sx, sy = math.sqrt(Sg[t_][0, 0]), math.sqrt(Sg[t_][1, 1])
+        ex, ey = page_ellipse(m_[0], m_[1], sx, sy, Sg[t_][0, 1] / (sx * sy), 0.9)
+        want_ok.append(has_line(ax, list(ex), list(ey), rel=1e-9, color=PAL[t_]))
+    check(f'{tag}: each group\'s 90% ellipse from its mean and the method\'s covariance', want_ok, [True] * 3)
+    if method == 'linear':
+        check(f'{tag}: the linear method\'s ellipses share the pooled covariance', all(np.allclose(Sg[0], S_) for S_ in Sg), True)
+
 sys.exit(check.done())

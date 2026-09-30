@@ -50,23 +50,30 @@ SETS = pv.SETS
 CV = 'Crossvalidation'
 
 # key, label, and for categorical responses only
-METHODS = [('tree', 'Decision Tree'), ('forest', 'Bootstrap Forest'), ('boosted', 'Boosted Tree'), ('knn', 'K Nearest Neighbors'),
-           ('nb', 'Naive Bayes'), ('neural', 'Neural'), ('svm', 'Support Vector Machines'), ('lda', 'Discriminant'),
+METHODS = [('tree', 'Decision Tree'), ('forest', 'Bootstrap Forest'), ('boosted', 'Boosted Tree'), ('xgboost', 'XGBoost'), ('lightgbm', 'LightGBM'),
+           ('knn', 'K Nearest Neighbors'), ('nb', 'Naive Bayes'), ('neural', 'Neural'), ('svm', 'Support Vector Machines'), ('lda', 'Discriminant'),
            ('linear', 'Fit Least Squares'), ('lasso', 'Generalized Regression Lasso'), ('enet', 'Generalized Regression Elastic Net'),
-           ('stepwise', 'Fit Stepwise')]
+           ('ridge', 'Generalized Regression Ridge'), ('stepwise', 'Fit Stepwise')]
 LABEL = dict(METHODS)
 CATEGORICAL_ONLY = {'nb', 'lda'}
-DEFAULT = [k for k, _ in METHODS if k != 'stepwise']
+# off at first: Fit Stepwise (as JMP), and the methods beyond JMP's default list (XGBoost and LightGBM load a package of their own)
+DEFAULT = [k for k, _ in METHODS if k not in ('stepwise', 'xgboost', 'lightgbm', 'ridge')]
+# the Pyodide packages a method needs beyond scikit-learn: loaded only when it is chosen (screening.fit.<tags>)
+PACKAGES = {'xgboost': 'xgboost', 'lightgbm': 'lightgbm'}
+# the methods the Two Way Interactions and Quadratic options change (the linear ones)
+TERMED = {'linear', 'lasso', 'enet', 'ridge', 'lda'}
 USES = {'tree': 'sklearn.tree.DecisionTreeClassifier/Regressor', 'forest': 'sklearn.ensemble.RandomForestClassifier/Regressor',
         'boosted': 'sklearn.ensemble.GradientBoostingClassifier/Regressor', 'knn': 'sklearn.neighbors.NearestNeighbors',
         'nb': 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'neural': 'sklearn.neural_network.MLPClassifier/Regressor',
         'svm': 'sklearn.svm.SVC, SVR', 'lda': 'numpy, scipy.linalg.pinvh', 'linear': 'sklearn.linear_model.LinearRegression, LogisticRegression; scipy.optimize',
         'lasso': 'sklearn.linear_model.enet_path, LogisticRegression (saga)', 'enet': 'sklearn.linear_model.enet_path, LogisticRegression (saga)',
-        'stepwise': 'numpy.linalg.lstsq, sklearn.linear_model.LogisticRegression'}
-# the measures of the Summary Across the Models, and which way is better
-SUMMARY = {'continuous': ['rsquare', 'rase'], 'categorical': ['entropy_rsquare', 'misclassification', 'auc']}
+        'ridge': 'numpy.linalg.svd (the ridge path), sklearn.linear_model.LogisticRegression', 'stepwise': 'numpy.linalg.lstsq, sklearn.linear_model.LogisticRegression',
+        'xgboost': 'xgboost.XGBClassifier/XGBRegressor', 'lightgbm': 'lightgbm.LGBMClassifier/LGBMRegressor'}
+# the measures of the Summary Across the Models, and which way is better; the first ranks the methods (JMP ranks a
+# categorical response's by Generalized RSquare)
+SUMMARY = {'continuous': ['rsquare', 'rase'], 'categorical': ['generalized_rsquare', 'entropy_rsquare', 'misclassification', 'auc']}
 HIGHER = {'rsquare', 'entropy_rsquare', 'generalized_rsquare', 'auc'}
-SPEC = ('y', 'x', 'weight', 'freq', 'validation', 'portion', 'seed', 'missing', 'kfold')
+SPEC = ('y', 'x', 'weight', 'freq', 'validation', 'portion', 'seed', 'missing', 'kfold', 'interactions', 'quadratic')
 
 
 # ============================================================================
@@ -119,6 +126,31 @@ def linear_columns(factors):
         if f['missing'] is not None:
             cols.append(f['missing'])
     return cols
+
+
+def model_terms(X, factors, train, interactions=False, quadratic=False):
+    """The linear methods' columns of X (linear_columns) and, with the Two Way Interactions and Quadratic options,
+    the products of every two factors' columns and each continuous factor's square, a continuous column centred at
+    its training mean first (as JMP centres its polynomials). Returns expand(Xn), the design of new rows."""
+    X = np.asarray(X, dtype=float)
+    base = linear_columns(factors)
+    parts = [(f['cols'][:-1] if f['kind'] == 'categorical' else f['cols'], f['kind']) for f in factors]
+    center = {c: float(X[train, c].mean()) for f in factors if f['kind'] == 'continuous' for c in f['cols']}
+
+    def expand(Xn):
+        Xn = np.asarray(Xn, dtype=float)
+        cols = [Xn[:, base]]
+        if interactions:
+            for a in range(len(parts)):
+                for b in range(a + 1, len(parts)):
+                    for i in parts[a][0]:
+                        for j in parts[b][0]:
+                            cols.append(((Xn[:, i] - center.get(i, 0.0)) * (Xn[:, j] - center.get(j, 0.0)))[:, None])
+        if quadratic:
+            for c in center:
+                cols.append(((Xn[:, c] - center[c]) ** 2)[:, None])
+        return np.hstack(cols)
+    return expand
 
 
 def inner_folds(train, k, seed):
@@ -504,12 +536,13 @@ def fit_svm(X, y, w, train, tune, n_levels, factors, seed, cost=1.0):
     return predict, {'text': f'RBF kernel, cost {cost:g}, gamma {gamma:.4g}, {len(m.support_)} support vectors, Platt probabilities'}
 
 
-def fit_lda(X, y, w, train, tune, n_levels, factors, seed):
+def fit_lda(X, y, w, train, tune, n_levels, factors, seed, terms=None):
     """Discriminant (linear): normal factors with one covariance matrix for every level, pooled within the levels
-    with n - (number of levels) degrees of freedom; priors the training shares."""
+    with n - (number of levels) degrees of freedom; priors the training shares. terms: the Two Way Interactions and
+    Quadratic options (model_terms)."""
     from scipy.linalg import pinvh
-    cols = linear_columns(factors)
-    A = np.asarray(X, dtype=float)[:, cols]
+    expand = model_terms(X, factors, train, **(terms or {}))
+    A = expand(X)
     wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
     At, yt, wtt = A[train], np.asarray(y[train], dtype=int), wt[train]
     classes = np.unique(yt)
@@ -519,39 +552,42 @@ def fit_lda(X, y, w, train, tune, n_levels, factors, seed):
     Si = pinvh((R * wtt[:, None]).T @ R / max(wtt.sum() - len(classes), 1e-12))
 
     def predict(Xn):
-        An = np.asarray(Xn, dtype=float)[:, cols]
+        An = expand(Xn)
         d = np.stack([np.log(prior[k]) - 0.5 * np.einsum('ij,jk,ik->i', An - means[k], Si, An - means[k]) for k in range(len(classes))], axis=1)
         d -= d.max(axis=1, keepdims=True)
         p = np.exp(d)
         return full_proba(p / p.sum(axis=1, keepdims=True), classes, n_levels)
-    return predict, {'text': f'linear, {len(cols)} columns, priors the training shares'}
+    what = 'the main effects' + (' and two-way interactions' if (terms or {}).get('interactions') else '') + (' and squares' if (terms or {}).get('quadratic') else '')
+    return predict, {'text': f'linear on {what}, {A.shape[1]} columns, priors the training shares'}
 
 
-def fit_linear(X, y, w, train, tune, n_levels, factors, seed, ordinal=False):
+def fit_linear(X, y, w, train, tune, n_levels, factors, seed, ordinal=False, terms=None):
     """Fit Least Squares (the main effects, by weighted least squares), or for a categorical Y Nominal Logistic
-    (multinomial, by maximum likelihood) or Ordinal Logistic (cumulative logit)."""
-    cols = linear_columns(factors)
-    A = np.asarray(X, dtype=float)[:, cols]
+    (multinomial, by maximum likelihood) or Ordinal Logistic (cumulative logit). terms: the Two Way Interactions
+    and Quadratic options (model_terms)."""
+    expand = model_terms(X, factors, train, **(terms or {}))
+    A = expand(X)
+    what = 'the main effects' + (' and two-way interactions' if (terms or {}).get('interactions') else '') + (' and squares' if (terms or {}).get('quadratic') else '')
     ww = None if w is None else w[train]
     if not n_levels:
         from sklearn.linear_model import LinearRegression
         m = LinearRegression().fit(A[train], y[train], sample_weight=ww)
-        return (lambda Xn: m.predict(np.asarray(Xn, dtype=float)[:, cols])), {'text': f'the main effects, {len(cols)} terms and an intercept'}
+        return (lambda Xn: m.predict(expand(Xn))), {'text': f'{what}, {A.shape[1]} terms and an intercept'}
     if ordinal:
         prob = ordinal_logit(A[train], y[train], ww, n_levels)
-        return (lambda Xn: prob(np.asarray(Xn, dtype=float)[:, cols])), {'text': f'cumulative logit, {len(cols)} terms'}
+        return (lambda Xn: prob(expand(Xn))), {'text': f'cumulative logit on {what}, {A.shape[1]} terms'}
     center, scale = weighted_scaler(A[train], ww)
     m = fit_quietly(no_penalty_logistic(), (A[train] - center) / scale, y[train], sample_weight=ww)
-    return (lambda Xn: full_proba(m.predict_proba((np.asarray(Xn, dtype=float)[:, cols] - center) / scale), m.classes_, n_levels)), {'text': f'multinomial logit, {len(cols)} terms'}
+    return (lambda Xn: full_proba(m.predict_proba((expand(Xn) - center) / scale), m.classes_, n_levels)), {'text': f'multinomial logit on {what}, {A.shape[1]} terms'}
 
 
-def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_lambda=100):
+def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_lambda=100, terms=None):
     """Generalized Regression: the lasso (l1_ratio 1) or elastic net penalty path on the centred and scaled
     main effects; the penalty with the best validation measure, or with no validation rows the smallest AICc. A
     normal response by coordinate descent (enet_path), a categorical one by logistic regression (saga, 30 penalties
-    from the one that zeroes every coefficient)."""
-    cols = linear_columns(factors)
-    A = np.asarray(X, dtype=float)[:, cols]
+    from the one that zeroes every coefficient). terms: the Two Way Interactions and Quadratic options."""
+    expand = model_terms(X, factors, train, **(terms or {}))
+    A = expand(X)
     wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
     center, scale = weighted_scaler(A[train], wt[train])
     Z = (A - center) / scale
@@ -576,7 +612,7 @@ def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_la
         b = coefs[:, j]
 
         def predict(Xn):
-            return ym + ((np.asarray(Xn, dtype=float)[:, cols] - center) / scale) @ b
+            return ym + ((expand(Xn) - center) / scale) @ b
         lam = lambdas[j]
     else:
         from sklearn.linear_model import LogisticRegression
@@ -598,7 +634,7 @@ def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_la
         b, b0 = path[j]
 
         def predict(Xn):
-            return full_proba(logit_proba((np.asarray(Xn, dtype=float)[:, cols] - center) / scale, b, b0), classes, n_levels)
+            return full_proba(logit_proba((expand(Xn) - center) / scale, b, b0), classes, n_levels)
         lam = 1 / Cs[j]
     kind = 'lasso' if l1_ratio == 1 else f'elastic net (alpha {l1_ratio:g})'
     return predict, {'text': f'{kind}, {int(np.count_nonzero(b))} of {b.size} estimates nonzero, penalty {lam:.4g} ({"the validation rows" if has_tune else "AICc"})'}
@@ -661,14 +697,157 @@ def fit_stepwise(X, y, w, train, tune, n_levels, factors, seed, ordinal=False):
     return steps[j][1], {'text': f'{len(kept)} of {len(left) + len(chosen)} factors ({how}): {", ".join(kept) if kept else "none"}'}
 
 
-FITTERS = {'tree': fit_tree, 'forest': fit_forest, 'boosted': fit_boosted, 'knn': fit_knn, 'nb': fit_nb, 'neural': fit_neural, 'svm': fit_svm,
-           'lda': fit_lda, 'linear': fit_linear, 'lasso': fit_genreg, 'enet': fit_genreg, 'stepwise': fit_stepwise}
+def fit_ridge(X, y, w, train, tune, n_levels, factors, seed, n_lambda=60, folds=5, terms=None):
+    """Generalized Regression Ridge: a squared penalty on the centred and scaled main effects (and the terms of the Two
+    Way Interactions and Quadratic options), which shrinks every estimate and zeroes none. A normal response along
+    the ridge path worked out from the singular value decomposition, the penalty with the best validation measure
+    or with no validation rows the smallest AICc (its degrees of freedom the trace of the hat matrix); a
+    categorical one by logistic regression (lbfgs) at 30 penalties, the best by the validation rows or 5-fold
+    crossvalidation within the training rows."""
+    expand = model_terms(X, factors, train, **(terms or {}))
+    A = expand(X)
+    wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)
+    center, scale = weighted_scaler(A[train], wt[train])
+    Z = (A - center) / scale
+    N = wt[train].sum()
+    has_tune = tune is not None and tune.any()
+    if not n_levels:
+        sw = wt[train] / wt[train].mean()
+        ym = float(np.average(y[train], weights=sw))
+        r = np.sqrt(sw)
+        U, sv, Vt = np.linalg.svd(Z[train] * r[:, None], full_matrices=False)
+        uy = U.T @ ((y[train] - ym) * r)
+        top = float(sv[0] ** 2) if len(sv) else 1.0
+        lambdas = top * np.logspace(-6, 2, n_lambda)[::-1]      # the largest penalty first, as the lasso's path
+        coefs = np.column_stack([Vt.T @ (sv / (sv ** 2 + lam) * uy) for lam in lambdas])
+        fits = ym + Z @ coefs
+        if has_tune:
+            crit = [loss(y[tune], fits[tune, j], None if w is None else w[tune], 0) for j in range(len(lambdas))]
+        else:
+            sse = wt[train] @ (y[train][:, None] - fits[train]) ** 2
+            df = [float(np.sum(sv ** 2 / (sv ** 2 + lam))) for lam in lambdas]
+            k = [d + 2 for d in df]        # the estimates' effective number, the intercept and the variance
+            crit = [N * (math.log(2 * math.pi * e / N) + 1) + 2 * kk + (2 * kk * (kk + 1) / (N - kk - 1) if N - kk - 1 > 0 else np.inf) if e > 0 else -np.inf for e, kk in zip(sse, k)]
+        j = int(np.argmin(crit))
+        b = coefs[:, j]
+
+        def predict(Xn):
+            return ym + ((expand(Xn) - center) / scale) @ b
+        lam = float(lambdas[j])
+    else:
+        from sklearn.linear_model import LogisticRegression
+        yt = np.asarray(y, dtype=int)
+        Cs = np.logspace(-4, 3, 30)
+
+        def path(rows):
+            out = []
+            for C in Cs:
+                m = LogisticRegression(C=C, max_iter=2000, tol=1e-8).fit(Z[rows], yt[rows], sample_weight=None if w is None else w[rows])
+                out.append((m.coef_.copy(), m.intercept_.copy(), m.classes_))
+            return out
+
+        def probs(fit_, rows):
+            c, i, cl = fit_
+            return full_proba(logit_proba(Z[rows], c, i), cl, n_levels)
+        if has_tune:
+            fits = path(train)
+            crit = [loss(y[tune], probs(f_, tune), None if w is None else w[tune], n_levels) for f_ in fits]
+        else:
+            fold = inner_folds(train, folds, [seed, 3])
+            crit = np.zeros(len(Cs))
+            for k in range(folds):
+                held = fold == k
+                if not held.any():
+                    continue
+                for jj, f_ in enumerate(path((fold >= 0) & ~held)):
+                    crit[jj] += loss(y[held], probs(f_, held), None if w is None else w[held], n_levels)
+            fits = path(train)
+        j = int(np.argmin(crit))
+        b, b0, classes = fits[j]
+
+        def predict(Xn):
+            return full_proba(logit_proba((expand(Xn) - center) / scale, b, b0), classes, n_levels)
+        lam = float(1 / Cs[j])
+    how = 'the validation rows' if has_tune else ('AICc' if not n_levels else f'{folds}-fold crossvalidation within the training rows')
+    return predict, {'text': f'ridge, {b.size} estimates, penalty {lam:.4g} ({how})'}
+
+
+def fit_xgboost(X, y, w, train, tune, n_levels, factors, seed, rounds=100, depth=6, rate=0.3):
+    """XGBoost (the xgboost package, loaded when chosen): gradient-boosted trees of depth up to 6 at a learning rate
+    of 0.3, up to 100 rounds (xgboost's defaults); with validation rows the number of rounds with the best
+    validation measure, else every round."""
+    import xgboost as xgb
+    ww = None if w is None else w[train]
+    Xt = np.asarray(X, dtype=float)[train]
+    if n_levels:
+        classes = np.unique(y[train]).astype(int)
+        m = xgb.XGBClassifier(n_estimators=rounds, max_depth=depth, learning_rate=rate, n_jobs=1, random_state=seed)
+        m.fit(Xt, np.searchsorted(classes, np.asarray(y[train], dtype=int)), sample_weight=ww)
+
+        def at(Xn, k):
+            p = m.predict_proba(np.asarray(Xn, dtype=float), iteration_range=(0, k))
+            return full_proba(p if len(classes) > 1 else np.ones((len(p), 1)), classes, n_levels)
+    else:
+        m = xgb.XGBRegressor(n_estimators=rounds, max_depth=depth, learning_rate=rate, n_jobs=1, random_state=seed)
+        m.fit(Xt, y[train], sample_weight=ww)
+
+        def at(Xn, k):
+            return m.predict(np.asarray(Xn, dtype=float), iteration_range=(0, k))
+    use, how = rounds, 'every round (no validation rows)'
+    if tune is not None and tune.any():
+        ls = [loss(y[tune], at(X[tune], k), None if w is None else w[tune], n_levels) for k in range(1, rounds + 1)]
+        use, how = int(np.argmin(ls)) + 1, 'the validation rows'
+
+    def predict(Xn):
+        return at(Xn, use)
+    return predict, {'text': f'{use} rounds ({how}), depth {depth}, learning rate {rate:g}', 'rounds': use}
+
+
+def fit_lightgbm(X, y, w, train, tune, n_levels, factors, seed, rounds=100, leaves=31, rate=0.1, min_leaf=20):
+    """LightGBM (the lightgbm package, loaded when chosen): gradient-boosted trees grown leaf-wise, up to 31 leaves and
+    at least 20 rows in a leaf, learning rate 0.1, up to 100 rounds (LightGBM's defaults); with validation rows the
+    number of rounds with the best validation measure, else every round."""
+    import lightgbm as lgb
+    ww = None if w is None else w[train]
+    Xt = np.asarray(X, dtype=float)[train]
+    opts = dict(n_estimators=rounds, num_leaves=leaves, learning_rate=rate, min_child_samples=min_leaf, n_jobs=1, random_state=seed,
+                verbose=-1, deterministic=True, force_row_wise=True)
+    quiet = 'X does not have valid feature names'     # lightgbm names numpy's columns itself, which scikit-learn 1.8 takes for a mismatch
+    if n_levels:
+        classes = np.unique(y[train]).astype(int)
+        m = lgb.LGBMClassifier(**opts).fit(Xt, np.searchsorted(classes, np.asarray(y[train], dtype=int)), sample_weight=ww)
+
+        def at(Xn, k):
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', message=quiet)
+                return full_proba(m.predict_proba(np.asarray(Xn, dtype=float), num_iteration=k), classes, n_levels)
+    else:
+        m = lgb.LGBMRegressor(**opts).fit(Xt, y[train], sample_weight=ww)
+
+        def at(Xn, k):
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', message=quiet)
+                return m.predict(np.asarray(Xn, dtype=float), num_iteration=k)
+    done = int(m.booster_.current_iteration())
+    use, how = done, 'every round (no validation rows)'
+    if tune is not None and tune.any():
+        ls = [loss(y[tune], at(X[tune], k), None if w is None else w[tune], n_levels) for k in range(1, done + 1)]
+        use, how = int(np.argmin(ls)) + 1, 'the validation rows'
+
+    def predict(Xn):
+        return at(Xn, use)
+    return predict, {'text': f'{use} rounds ({how}), at most {leaves} leaves of {min_leaf} rows or more, learning rate {rate:g}', 'rounds': use}
+
+
+FITTERS = {'tree': fit_tree, 'forest': fit_forest, 'boosted': fit_boosted, 'xgboost': fit_xgboost, 'lightgbm': fit_lightgbm, 'knn': fit_knn, 'nb': fit_nb,
+           'neural': fit_neural, 'svm': fit_svm, 'lda': fit_lda, 'linear': fit_linear, 'lasso': fit_genreg, 'enet': fit_genreg, 'ridge': fit_ridge,
+           'stepwise': fit_stepwise}
 EXTRA = {'enet': {'l1_ratio': 0.9}}
 # the helpers each fitter's shown code needs, beyond the common ones
 COMMON = [weighted_scaler, level_shares, loss, full_proba]
-NEEDS = {'tree': [smooth_counts, inner_folds, tree_paths, leaf_after], 'forest': [smooth_counts], 'boosted': [], 'knn': [smooth_counts], 'nb': [],
-         'neural': [], 'svm': [platt], 'lda': [linear_columns], 'linear': [linear_columns, ordinal_logit, no_penalty_logistic, fit_quietly],
-         'lasso': [linear_columns, logit_proba], 'enet': [linear_columns, logit_proba],
+NEEDS = {'tree': [smooth_counts, inner_folds, tree_paths, leaf_after], 'forest': [smooth_counts], 'boosted': [], 'xgboost': [], 'lightgbm': [], 'knn': [smooth_counts], 'nb': [],
+         'neural': [], 'svm': [platt], 'lda': [linear_columns, model_terms], 'linear': [linear_columns, model_terms, ordinal_logit, no_penalty_logistic, fit_quietly],
+         'lasso': [linear_columns, model_terms, logit_proba], 'enet': [linear_columns, model_terms, logit_proba], 'ridge': [linear_columns, model_terms, logit_proba, inner_folds],
          'stepwise': [level_shares, ordinal_logit, no_penalty_logistic, fit_quietly]}
 
 
@@ -715,8 +894,16 @@ def measures(y, f, w, sets, n_levels):
             r = y[m] - f[m]
             sse = float(np.sum(ww * r * r))
             sst = float(np.sum(ww * (y[m] - np.sum(ww * y[m]) / N) ** 2))
+            nz = y[m] != 0          # MAPE and MPE: the rows whose actual value is not 0
+            wz = float(ww[nz].sum())
+            o = np.argsort(np.abs(r), kind='mergesort')
+            c = np.cumsum(ww[o])
+            i = int(np.searchsorted(c, c[-1] / 2))          # the weighted median of the absolute errors
+            medae = float((np.abs(r)[o][i] + np.abs(r)[o][i + 1]) / 2) if c[i] == c[-1] / 2 and i + 1 < len(o) else float(np.abs(r)[o][i])
             out[name] = {'rsquare': 1 - sse / sst if sst > 0 else None, 'rase': math.sqrt(sse / N), 'mad': float(np.sum(ww * np.abs(r)) / N),
-                         'neg_loglik': 0.5 * N * (math.log(2 * math.pi * sse / N) + 1) if sse > 0 else None, 'sse': sse, 'n': N}
+                         'neg_loglik': 0.5 * N * (math.log(2 * math.pi * sse / N) + 1) if sse > 0 else None, 'sse': sse, 'n': N,
+                         'me': float(np.sum(ww * r) / N), 'mape': float(100 * np.sum(ww[nz] * np.abs(r[nz] / y[m][nz])) / wz) if wz > 0 else None,
+                         'mpe': float(100 * np.sum(ww[nz] * (r[nz] / y[m][nz])) / wz) if wz > 0 else None, 'medae': medae}
             continue
         yy, p = np.asarray(y[m], dtype=int), f[m]
         pt = np.clip(p[np.arange(len(yy)), yy], 1e-15, 1.0)
@@ -739,6 +926,7 @@ def measures(y, f, w, sets, n_levels):
 def _spec(kw):
     s = {k: kw.get(k) for k in SPEC}
     s['x'] = list(s['x'] or [])
+    s['interactions'], s['quadratic'] = bool(s['interactions']), bool(s['quadratic'])
     s['portion'] = float(s['portion'] or 0)
     s['kfold'] = int(s['kfold'] or 0)
     seed = pv.seed_of(s['seed'])
@@ -747,9 +935,28 @@ def _spec(kw):
     return s
 
 
-def _kfold(s):
-    """The number of folds in use: none with a Validation column (its sets win)."""
+def _kfold(s, P=None):
+    """The number of folds in use: a K-fold Validation column's (P.k), or the launch's K Fold Crossvalidation
+    without a Validation column (a column's sets win)."""
+    if P is not None and P.k:
+        return P.k
     return s['kfold'] if s['kfold'] >= 2 and not s['validation'] else 0
+
+
+def _cv_splits(P, s, k, repeats):
+    """The crossvalidation's (repeat, fold, rows fitted, rows held out): the Validation column's folds when it
+    holds them (one repeat), else k random folds of the training rows, repeated."""
+    if P.k:
+        return [(0, j, fit_rows, held) for j, (fit_rows, held) in enumerate(pv.fold_masks(P))]
+    return crossvalidation(P.train(), k, repeats, s['seed'])
+
+
+def _cv_loop(P, K, repeats):
+    """The crossvalidation's loop in the code under the report (after P.code(), which makes folds for a K-fold
+    Validation column)."""
+    if P.k:
+        return 'for r, j, fit_rows, held in [(0, j, folds != j, folds == j) for j in range(%d)]:   # the Validation column\'s folds' % P.k
+    return f'for r, j, fit_rows, held in crossvalidation(train, {K}, {repeats}, seed):'
 
 
 def _P(table, rows, s):
@@ -779,10 +986,19 @@ def label_of(key, P):
     return LABEL[key]
 
 
-def _call_fitter(key, P, train, tune, seed):
+def _fitter_args(key, P, s):
+    """The arguments of a method's fitter beyond the common ones: the elastic net's mix, an ordinal response's
+    cumulative logit, the Two Way Interactions and Quadratic options of the linear methods."""
     kw = dict(EXTRA.get(key, {}))
     if key in ('linear', 'stepwise') and _ordinal(P):
         kw['ordinal'] = True
+    if key in TERMED and (s.get('interactions') or s.get('quadratic')):
+        kw['terms'] = {'interactions': bool(s.get('interactions')), 'quadratic': bool(s.get('quadratic'))}
+    return kw
+
+
+def _call_fitter(key, P, train, tune, seed, s=None):
+    kw = _fitter_args(key, P, s or {})
     n_levels = len(P.levels) if P.kind == 'categorical' else 0
     return FITTERS[key](P.X, P.target, P.w, train, tune, n_levels, factors_of(P), seed, **kw)
 
@@ -813,7 +1029,7 @@ def _model(table, rows, s, key):
     def build():
         t0 = time.perf_counter()
         tune = P.mask(1) if P.has(1) else None
-        (predict, info), caught = _caught(_call_fitter, key, P, P.train(), tune, s['seed'])
+        (predict, info), caught = _caught(_call_fitter, key, P, P.train(), tune, s['seed'], s)
         return {'predict': predict, 'info': info, 'seconds': time.perf_counter() - t0, 'warnings': caught}
     return pv.cached('screening-model', table, rows, {**s, 'method': key}, build, keep=64)
 
@@ -822,14 +1038,14 @@ def _crossvalidated(table, rows, s, key, repeats):
     """K-fold crossvalidation of one method: the held-out measures of every fold, and each row's out-of-fold
     prediction from the first repeat."""
     P = _P(table, rows, s)
-    k = _kfold(s)
+    k = _kfold(s, P)
 
     def build():
         folds = []
         oof = None
         caught = []
-        for r, j, fit_rows, held in crossvalidation(P.train(), k, repeats, s['seed']):
-            (predict, info), c = _caught(_call_fitter, key, P, fit_rows, None, s['seed'])
+        for r, j, fit_rows, held in _cv_splits(P, s, k, repeats):
+            (predict, info), c = _caught(_call_fitter, key, P, fit_rows, None, s['seed'], s)
             caught += [x for x in c if x not in caught]
             f = predict(P.X)
             Q = copy.copy(P)
@@ -891,7 +1107,7 @@ def dominant(rows, keys):
 
 @api('screening.fit', packages=pv.SK)
 def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None, missing='informative',
-        methods=None, kfold=0, repeats=1, plot=None, table_name='data'):
+        methods=None, kfold=0, repeats=1, plot=None, interactions=False, quadratic=False, table_name='data'):
     """Every chosen method on the same rows and sets: the Measures of Fit per method and set, the crossvalidated
     measures (K-fold), the best and the dominant methods, and the curves and predictions the comparisons draw.
     plot: the page's choices for the graphs' code (the level of the ROC and lift curves, the set of Actual by
@@ -901,17 +1117,19 @@ def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion
     keys = _methods(methods, P)
     if not keys:
         raise ValueError('choose at least one method that fits this response')
-    K = _kfold(s)
-    repeats = max(1, int(repeats or 1)) if K else 1
+    K = _kfold(s, P)
+    repeats = max(1, int(repeats or 1)) if K and not P.k else 1
     n_levels = len(P.levels) if P.kind == 'categorical' else 0
     _PROGRESS.update(done=0, total=len(keys) * (1 + K * repeats))
-    notes = list(P.notes)
-    if s['kfold'] >= 2 and s['validation']:
+    notes = [t for t in P.notes if not (P.k and t.startswith(f'{s["validation"]} holds'))]
+    if s['kfold'] >= 2 and s['validation'] and not P.k:
         notes.append(f'K-fold crossvalidation is not used: the Validation column {s["validation"]} gives the sets.')
-    elif K and s['portion']:
+    elif K and s['portion'] and not s['validation']:
         notes.append('The Validation Portion is not used with K-fold crossvalidation.')
-    out = {'kind': P.kind, 'levels': list(P.labels), 'sets': [SETS[k] for k in range(3) if P.has(k)], 'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)},
-           'seed': s['seed'], 'kfold': K, 'repeats': repeats, 'features': list(P.features), 'measure_columns': pv.measure_columns(P.kind)}
+    out = {'kind': P.kind, 'levels': list(P.labels), 'values': [v.item() if hasattr(v, 'item') else v for v in P.levels] if P.kind == 'categorical' else [],
+           'sets': [SETS[k] for k in range(3) if P.has(k)], 'n': {SETS[k]: int(P.mask(k).sum()) for k in range(3)},
+           'seed': s['seed'], 'kfold': K, 'repeats': repeats, 'features': list(P.features), 'measure_columns': pv.measure_columns(P.kind),
+           'fold_column': s['validation'] if P.k else None}
     res = []
     fitted = {}
     for key in keys:
@@ -1006,13 +1224,11 @@ def _code(P, table_name, rows, keys, s, K, repeats):
     fns = list(COMMON)
     for k in keys:
         fns += NEEDS[k]
-    fns += [FITTERS[k] for k in keys] + [auc, measures] + ([crossvalidation] if K else [])
+    fns += [FITTERS[k] for k in keys] + [auc, measures] + ([crossvalidation] if K and not P.k else [])
     L.append(_src(fns))
     L += ['', '', 'methods = {']
     for k in keys:
-        kw = dict(EXTRA.get(k, {}))
-        if k in ('linear', 'stepwise') and _ordinal(P):
-            kw['ordinal'] = True
+        kw = _fitter_args(k, P, s)
         args = ''.join(f', {a}={v!r}' for a, v in kw.items())
         L.append(f'    {json.dumps(label_of(k, P))}: lambda *a: {FITTERS[k].__name__}(*a{args}),')
     L += ['}', 'for name, fit in methods.items():',
@@ -1020,9 +1236,9 @@ def _code(P, table_name, rows, keys, s, K, repeats):
           '    for set_name, m in measures(y, predict(X), w, sets, n_levels).items():',
           "        print(json.dumps({'method': name, 'set': set_name, **m}))"]
     if K:
-        L += ['', f'# {K}-fold crossvalidation{f", repeated {repeats} times" if repeats > 1 else ""}: each fold held out once, the method fitted to the others (and tuned without them)',
+        L += ['', f'# {K}-fold crossvalidation{" by the folds of the Validation column" if P.k else ""}{f", repeated {repeats} times" if repeats > 1 else ""}: each fold held out once, the method fitted to the others (and tuned without them)',
               'for name, fit in methods.items():',
-              f'    for r, j, fit_rows, held in crossvalidation(train, {K}, {repeats}, seed):',
+              '    ' + _cv_loop(P, K, repeats),
               '        predict, info = fit(X, y, w, fit_rows, None, n_levels, factors, seed)',
               '        m = measures(y, predict(X), w, np.where(held, 1, np.where(fit_rows, 0, -1)), n_levels)["Validation"]',
               "        print(json.dumps({'method': name, 'repeat': r, 'fold': j, **m}))"]
@@ -1032,8 +1248,9 @@ def _code(P, table_name, rows, keys, s, K, repeats):
 # ---- the graphs' code (smui-p-screening.js puts each under its graph) -----------------------------
 
 # each method's colour (smui-p-screening.js LIGHT, by the methods' order)
-COLORS = dict(zip([k for k, _ in METHODS], ['#2f6690', '#c46a12', '#3a7d44', '#b0413e', '#6c5b7b', '#1a8a78', '#8f7600', '#8c564b', '#b8428f',
-                                            '#666666', '#107f8f', '#7b5bb5']))
+COLORS = {'tree': '#2f6690', 'forest': '#c46a12', 'boosted': '#3a7d44', 'knn': '#b0413e', 'nb': '#6c5b7b', 'neural': '#1a8a78', 'svm': '#8f7600',
+          'lda': '#8c564b', 'linear': '#b8428f', 'lasso': '#666666', 'enet': '#107f8f', 'stepwise': '#7b5bb5', 'xgboost': '#4f6d2a',
+          'lightgbm': '#9c3d5e', 'ridge': '#3d5a80'}
 
 
 def _graph_head(P, table_name, rows, keys, s, K):
@@ -1051,13 +1268,11 @@ def _graph_head(P, table_name, rows, keys, s, K):
     fns = list(COMMON)
     for k in keys:
         fns += NEEDS[k]
-    fns += [FITTERS[k] for k in keys] + ([crossvalidation] if K else [])
+    fns += [FITTERS[k] for k in keys] + ([crossvalidation] if K and not P.k else [])
     L.append(_src(fns))
     L += ['', '', 'methods = {']
     for k in keys:
-        kw = dict(EXTRA.get(k, {}))
-        if k in ('linear', 'stepwise') and _ordinal(P):
-            kw['ordinal'] = True
+        kw = _fitter_args(k, P, s)
         args = ''.join(f', {a}={v!r}' for a, v in kw.items())
         L.append(f'    {json.dumps(label_of(k, P))}: lambda *a: {FITTERS[k].__name__}(*a{args}),')
     L += ['}',
@@ -1069,7 +1284,7 @@ def _graph_head(P, table_name, rows, keys, s, K):
         L += ['oof = {}   # each row predicted by the model fitted without its fold (the first repeat)',
               'for name, fit in methods.items():',
               '    oof[name] = np.zeros_like(fitted[name])',
-              f'    for r, j, fit_rows, held in crossvalidation(train, {K}, 1, seed):',
+              '    ' + _cv_loop(P, K, 1),
               '        predict, info = fit(X, y, w, fit_rows, None, n_levels, factors, seed)',
               '        oof[name][held] = predict(X)[held]']
     return '\n'.join(L)
@@ -1167,28 +1382,6 @@ def _plots(P, out, table_name, rows, keys, s, K, plot):
     return res
 
 
-def _threshold_tail(P, lv, cut, st, labels, keys):
-    """Decision Threshold's graph: each method's misclassification rate of one set at every cut from 0 to 1."""
-    level = P.labels[lv]
-    return '\n'.join([
-        f'lv = {lv}   # the target level, {level}',
-        f'cut = {float(cut)!r}   # the threshold (Set Threshold, or the field above the tables)',
-        f'order = {json.dumps(labels)}   # the methods, in the Summary\'s order',
-        f'colors = {json.dumps({label_of(k, P): COLORS[k] for k in keys})}   # each method\'s colour, the same in every graph',
-        pv.freq_line(P), *_set_lines(st),
-        'grid = np.round(np.linspace(0, 1, 101), 2)',
-        'target, fr = y[m] == lv, f[m]',
-        pv.figure(560, 330),
-        'for name in order:',
-        '    p1 = pred[name][m][:, lv]',
-        '    rate = [(fr[(p1 >= t) & ~target].sum() + fr[(p1 < t) & target].sum()) / max(fr.sum(), 1e-300) for t in grid]   # called the level but not it, or it but not called',
-        '    ax.plot(grid, rate, color=colors[name], linewidth=1.5, label=name)',
-        f'ax.axvline(cut, color="{pv.MUTED}", linewidth=1.2, linestyle="--")',
-        'ax.set_xlim(0, 1)', 'ax.set_ylim(bottom=0)',
-        f'ax.set_xlabel({json.dumps("Threshold on the probability of " + level)})', 'ax.set_ylabel("Misclassification Rate")',
-        'ax.set_title("Misclassification by threshold")', _legend_beside(), 'plt.show()'])
-
-
 # ---- the profiler, Save Columns, Decision Threshold ------------------------------------------------
 
 def _profile_build(table, rows=None, method=None, **kw):
@@ -1220,61 +1413,37 @@ def save(table, method, rows=None, **kw):
     return out
 
 
-def _confusion_at(target, p1, f, cut):
-    """Counts at a cut on the probability of the target level: (true positive, false positive, false negative,
-    true negative), each row counted by its frequency."""
-    pred = p1 >= cut
-    return (float(np.sum(f[pred & target])), float(np.sum(f[pred & ~target])), float(np.sum(f[~pred & target])), float(np.sum(f[~pred & ~target])))
-
-
-def _rates(tp, fp, fn, tn):
-    pos, neg, n = tp + fn, fp + tn, tp + fp + fn + tn
-    prec = tp / (tp + fp) if tp + fp > 0 else None
-    sens = tp / pos if pos > 0 else None
-    return {'tp': tp, 'fp': fp, 'fn': fn, 'tn': tn, 'sensitivity': sens, 'specificity': tn / neg if neg > 0 else None, 'precision': prec,
-            'misclassification': (fp + fn) / n if n > 0 else None, 'f1': 2 * prec * sens / (prec + sens) if prec and sens else None}
-
-
 @api('screening.threshold', packages=pv.SK)
-def threshold(table, rows=None, methods=None, cut=0.5, level=1, repeats=1, plot=None, table_name='data', **kw):
-    """Decision Threshold for a response with two levels: each method's confusion counts and rates at a cut on the
-    probability of one level, per set, and the misclassification rate of every cut from 0 to 1. plot: the order
-    of the methods on the page (its graph's code draws them in it)."""
+def threshold(table, rows=None, methods=None, repeats=1, plot=None, table_name='data', **kw):
+    """Decision Threshold for a response with two levels (predictive.threshold, drawn by SM.predict.threshold):
+    each method's probabilities of every row, in the order of plot['order'] (the Summary's), with the K Fold
+    crossvalidated ones as a Crossvalidation set, and the code of every method fitted as the report fits them
+    (the head of the comparisons' graphs, which names fitted[label] and oof[label])."""
     s = _spec(kw)
     P = _P(table, rows, s)
     if P.kind != 'categorical' or len(P.levels) != 2:
         raise ValueError('Decision Threshold is for a response with two levels')
-    level = int(level)
-    if level not in (0, 1):
-        raise ValueError('the target level is the first or the second')
-    cut = float(cut)
-    K = _kfold(s)
-    grid = np.round(np.linspace(0, 1, 101), 2)
-    out = {'level': P.labels[level], 'cut': cut, 'methods': [], 'grid': grid.tolist()}
-    for key in _methods(methods, P):
-        r = {'key': key, 'label': label_of(key, P), 'sets': {}, 'curves': {}}
+    K = _kfold(s, P)
+    keys = _methods(methods, P)
+    want = [k for k in ((plot or {}).get('order') or keys) if k in keys]
+    keys = want + [k for k in keys if k not in want]
+    probs, cv, code, errors = {}, {}, {}, []
+    for key in keys:
+        lab = label_of(key, P)
         try:
             f = np.asarray(_model(table, rows, s, key)['predict'](P.X), dtype=float)
-        except Exception as e:
-            r['error'] = f'{type(e).__name__}: {e}'
-            out['methods'].append(r)
+        except Exception as e:  # a method that cannot fit these data: the others are shown
+            errors.append({'key': key, 'label': lab, 'error': f'{type(e).__name__}: {e}'})
             continue
-        parts = [(SETS[k], P.mask(k), f) for k in range(3) if P.has(k)]
+        probs[key] = (lab, f)
+        code[key] = (f'fitted[{json.dumps(lab)}]', f'oof[{json.dumps(lab)}]')
         if K:
-            parts.append((CV, np.ones(len(P.index), dtype=bool), _crossvalidated(table, rows, s, key, max(1, int(repeats or 1)))['oof']))
-        for name, m, g in parts:
-            target, p1, fr = P.target[m] == level, g[m][:, level], P.counts(m)
-            r['sets'][name] = _rates(*_confusion_at(target, p1, fr, cut))
-            r['curves'][name] = [(lambda c: (c[1] + c[2]) / max(fr.sum(), 1e-300))(_confusion_at(target, p1, fr, t)) for t in grid]
-        out['methods'].append(r)
-    ok = [r['key'] for r in out['methods'] if 'error' not in r]
-    want = [k for k in ((plot or {}).get('order') or ok) if k in ok]
-    order = want + [k for k in ok if k not in want]
-    sets = [SETS[k] for k in range(3) if P.has(k)] + ([CV] if K else [])
-    cmp = 'Validation' if P.has(1) else (CV if K else 'Training')     # the set the page draws: the report's comparison set
-    if cmp not in sets:
-        cmp = sets[0]
-    out['plot_code'] = _threshold_tail(P, level, cut, cmp, [label_of(k, P) for k in order], order)
+            cv[key] = _crossvalidated(table, rows, s, key, max(1, int(repeats or 1)))['oof']
+    if not probs:
+        raise ValueError('no method could be fitted')
+    head = _graph_head(P, table_name, rows, list(probs), s, K)
+    out = pv.threshold(P.target, probs, P.labels, P.sets, P.w, P.index, head=head, code=code, cv=cv or None, values=P.levels)
+    out['errors'] = errors
     return out
 
 
@@ -1343,15 +1512,43 @@ def stratum_counts(sizes, props):
     return F + up
 
 
-def make_sets(n, props, seed, strata=None, groups=None, time=None):
-    """Training (0), validation (1) and test (2) for n rows, in the proportions props:
+def group_sets(strata, groups, props, rng):
+    """Stratify by Group: every group whole in one set, the sets' shares of each stratum as near their proportions
+    as whole groups allow. The groups in random order, then the largest first; each goes to the set where it most
+    lowers the squared distance of that set's count in every stratum from its target (the set's proportion of the
+    stratum), of equal ones the earlier set. Returns each group's set."""
+    st, g = np.asarray(strata), np.asarray(groups)
+    G, S, K = int(g.max()) + 1, int(st.max()) + 1, len(props)
+    counts = np.zeros((G, S))
+    np.add.at(counts, (g, st), 1.0)
+    share = np.asarray(props, dtype=float) / np.sum(props)
+    target = share[:, None] * counts.sum(axis=0)[None, :]
+    order = rng.permutation(G)
+    order = order[np.argsort(-counts[order].sum(axis=1), kind='stable')]     # the largest first, ties in the random order
+    cur = np.zeros((K, S))
+    out = np.full(G, -1)
+    for q in order:
+        cost = np.sum(counts[q] * (2 * (cur - target) + counts[q]), axis=1)   # the change of each set's squared distance
+        k = int(np.argmin(cost))
+        out[q] = k
+        cur[k] += counts[q]
+    return out
+
+
+def make_sets(n, props, seed, strata=None, groups=None, time=None, balance=False):
+    """A set for each of n rows in the proportions props: training (0), validation (1) and test (2), or with more
+    proportions K folds (0 to K - 1, equal ones for K Fold):
     random     split_counts rows of each set, the rows in random order;
     strata     (a code per row) the same within each stratum, the strata in the order they first appear, and the
                totals still split_counts (stratum_counts);
     groups     (a code per row) every row of a group in one set: the groups in random order, each to the set its
                middle row falls in by the cumulative split_counts;
+    strata and groups   Stratify by Group: every group in one set, the strata balanced across the sets (group_sets);
     time       (a number per row) no randomness: the distinct times in order, each to the set its middle row falls
-               in, so that the earliest rows train; a row with no time gets no set (-1)."""
+               in, so that the earliest rows train; a row with no time gets no set (-1).
+    balance    with strata alone: after the split, each stratum's training rows cut down at random to those of the
+               smallest stratum, so that training has every stratum equally (the rows cut get no set, -1); the
+               other sets keep the table's proportions."""
     rng = np.random.default_rng(seed)
     props = np.asarray(props, dtype=float)
     sets = np.full(n, -1)
@@ -1362,13 +1559,24 @@ def make_sets(n, props, seed, strata=None, groups=None, time=None):
         at = 0
         for b in blocks:
             mid = at + len(b) / 2
-            sets[b] = 0 if mid < c[0] else (1 if mid < c[1] else 2)
+            sets[b] = int(np.searchsorted(c, mid, side='right'))    # the set its middle row falls in
             at += len(b)
+
+    def deal(order, c):
+        """The rows of order to the sets, c[j] of them to set j, in turn."""
+        at = 0
+        for j, cj in enumerate(c):
+            sets[order[at:at + cj]] = j
+            at += cj
     if time is not None:
         t = np.asarray(time, dtype=float)
         ok = np.flatnonzero(np.isfinite(t))
         u, inv = np.unique(t[ok], return_inverse=True)
         by_blocks([ok[inv == j] for j in range(len(u))])
+    elif groups is not None and strata is not None:
+        g = np.asarray(groups)
+        to = group_sets(strata, g, props, rng)
+        sets[:] = to[g]
     elif groups is not None:
         g = np.asarray(groups)
         blocks = [np.flatnonzero(g == v) for v in range(int(g.max()) + 1)]
@@ -1378,16 +1586,14 @@ def make_sets(n, props, seed, strata=None, groups=None, time=None):
         members = [np.flatnonzero(st == v) for v in range(int(st.max()) + 1)]
         counts = stratum_counts([len(m) for m in members], props)
         for m, c in zip(members, counts):
-            order = m[rng.permutation(len(m))]
-            sets[order[:c[0]]] = 0
-            sets[order[c[0]:c[0] + c[1]]] = 1
-            sets[order[c[0] + c[1]:]] = 2
+            deal(m[rng.permutation(len(m))], c)
+        if balance:
+            tr = [np.flatnonzero((st == v) & (sets == 0)) for v in range(len(members))]
+            least = min(len(q) for q in tr)
+            for q in tr:
+                sets[q[rng.permutation(len(q))[:len(q) - least]]] = -1   # the rows cut from training get no set
     else:
-        c = split_counts(n, props)
-        order = rng.permutation(n)
-        sets[order[:c[0]]] = 0
-        sets[order[c[0]:c[0] + c[1]]] = 1
-        sets[order[c[0] + c[1]:]] = 2
+        deal(rng.permutation(n), split_counts(n, props))
     return sets
 
 
@@ -1410,14 +1616,27 @@ def _codes(table, names):
 
 @api('screening.validation_column')
 def validation_column(table, training=0.6, validation=0.2, test=0.2, strata=None, groups=None, time=None, seed=None, values='text',
-                      name='Validation', table_name='data'):
-    """Make Validation Column: every row of the table gets a set (see make_sets)."""
-    props = [float(v or 0) for v in (training, validation, test)]
-    if any(v < 0 or not math.isfinite(v) for v in props) or props[0] <= 0:
-        raise ValueError('the proportions are 0 or more, and the training share is above 0')
+                      name='Validation', kfold=0, balance=False, table_name='data'):
+    """Make Validation Column: every row of the table gets a set (see make_sets): training, validation and test in
+    the proportions given, or with kfold (4 to 50) that many folds of equal size, numbered 1 to kfold (JMP's K Fold,
+    which the predictive platforms read as folds). balance: stratification columns alone, the training set cut
+    to equal strata."""
+    k = int(kfold or 0)
+    if k:
+        if not 4 <= k <= 50:
+            raise ValueError('K Fold: from 4 to 50 folds (a Validation column of three values or fewer is read as training, validation and test)')
+        props = [1.0] * k
+    else:
+        props = [float(v or 0) for v in (training, validation, test)]
+        if any(v < 0 or not math.isfinite(v) for v in props) or props[0] <= 0:
+            raise ValueError('the proportions are 0 or more, and the training share is above 0')
     strata, groups = [c for c in (strata or []) if c], [c for c in (groups or []) if c]
-    if sum(bool(v) for v in (strata, groups, time)) > 1:
-        raise ValueError('choose one kind: stratification columns, grouping columns or a cutpoint column')
+    if time and (strata or groups):
+        raise ValueError('a cutpoint column goes alone: no stratification or grouping columns with it')
+    if time and k:
+        raise ValueError('K Fold needs no cutpoint column: the folds are random (stratified or grouped)')
+    if balance and (not strata or groups or k):
+        raise ValueError('Balance the training set needs stratification columns, and no grouping columns or K Fold')
     seed = pv.seed_of(seed)
     if seed is None:
         seed = int(np.random.default_rng().integers(1, 2 ** 31 - 1))
@@ -1427,40 +1646,181 @@ def validation_column(table, training=0.6, validation=0.2, test=0.2, strata=None
             raise ValueError(f'the cutpoint column {time} is not numeric')
         sets = make_sets(n, props, seed, time=np.asarray(data.raw(table, time), dtype=float))
         method = f'cutpoint by {time}'
+    elif groups and strata:
+        sets = make_sets(n, props, seed, strata=_codes(table, strata), groups=_codes(table, groups))
+        method = f'stratified by {", ".join(strata)} with the groups of {", ".join(groups)} kept whole'
     elif groups:
         sets = make_sets(n, props, seed, groups=_codes(table, groups))
         method = f'grouped by {", ".join(groups)}'
     elif strata:
-        sets = make_sets(n, props, seed, strata=_codes(table, strata))
-        method = f'stratified by {", ".join(strata)}'
+        sets = make_sets(n, props, seed, strata=_codes(table, strata), balance=bool(balance))
+        method = f'stratified by {", ".join(strata)}' + (', the training set balanced' if balance else '')
     else:
         sets = make_sets(n, props, seed)
         method = 'random'
-    counts = [int(np.sum(sets == k)) for k in range(3)]
+    K = len(props)
+    counts = [int(np.sum(sets == j)) for j in range(K)]
     tot = sum(props)
-    words = ['Training', 'Validation', 'Test']
-    vals = [None if k < 0 else (words[k] if values == 'text' else int(k)) for k in sets.tolist()]
-    note = (f'Make Validation Column: {method}, proportions {", ".join(f"{p / tot:.4g}" for p in props)} (training, validation, test), '
-            f'seed {seed}: {counts[0]} training, {counts[1]} validation, {counts[2]} test rows'
-            + (f', {n - sum(counts)} with no {time} and no set' if n - sum(counts) else '') + '.')
-    return {'values': vals, 'counts': counts, 'seed': seed, 'method': method, 'notes': note,
-            'code': _validation_code(table_name, props, seed, strata, groups, time, values, name)}
+    unset = n - sum(counts)
+    if k:
+        vals = [None if j < 0 else int(j) + 1 for j in sets.tolist()]
+        note = (f'Make Validation Column: {k} folds, {method}, seed {seed}: ' + ', '.join(f'fold {j + 1} {c} rows' for j, c in enumerate(counts))
+                + (f', {unset} with no set' if unset else '') + '. A Validation column of more than three values holds folds: the predictive platforms crossvalidate by them.')
+    else:
+        words = ['Training', 'Validation', 'Test']
+        vals = [None if j < 0 else (words[j] if values == 'text' else int(j)) for j in sets.tolist()]
+        why = f'no {time}' if time else ('cut from training to balance it' if balance else 'no set')
+        note = (f'Make Validation Column: {method}, proportions {", ".join(f"{p / tot:.4g}" for p in props)} (training, validation, test), '
+                f'seed {seed}: {counts[0]} training, {counts[1]} validation, {counts[2]} test rows'
+                + (f', {unset} {why} and no set' if unset and not balance else (f', {unset} {why}' if unset else '')) + '.')
+    return {'values': vals, 'counts': counts, 'seed': seed, 'method': method, 'notes': note, 'kfold': k, 'unset': unset,
+            'code': _validation_code(table_name, props, seed, strata, groups, time, values, name, k, bool(balance))}
 
 
-def _validation_code(table_name, props, seed, strata, groups, time, values, name):
+def _validation_code(table_name, props, seed, strata, groups, time, values, name, kfold=0, balance=False):
     L = [code_head(table_name), '']
-    L.append(_src([split_counts, stratum_counts, make_sets]))
+    L.append(_src([split_counts, stratum_counts, group_sets, make_sets]))
     L.append('')
     L.append('')
-    keys = strata or groups
-    if keys:
-        L.append(f'keys = df[{json.dumps(keys)}].astype(str).agg("\\x1f".join, axis=1)   # the combinations of values, missing ones included')
-        L.append('codes = pd.factorize(keys, sort=False)[0]   # in the order they first appear')
-    arg = ', strata=codes' if strata else (', groups=codes' if groups else (f', time=pd.to_numeric(df[{json.dumps(time)}], errors="coerce").to_numpy(float)' if time else ''))
+    for what, cols_ in (('strata', strata), ('groups', groups)):
+        if cols_:
+            L.append(f'keys = df[{json.dumps(cols_)}].astype(str).agg("\\x1f".join, axis=1)   # the combinations of values, missing ones included')
+            L.append(f'{what} = pd.factorize(keys, sort=False)[0]   # in the order they first appear')
+    arg = ''.join([', strata=strata' if strata else '', ', groups=groups' if groups else '',
+                   f', time=pd.to_numeric(df[{json.dumps(time)}], errors="coerce").to_numpy(float)' if time else '', ', balance=True' if balance else ''])
     L.append(f'sets = make_sets(len(df), {[round(p, 12) for p in props]!r}, {int(seed)}{arg})')
-    if values == 'text':
+    if kfold:
+        L.append(f'df[{json.dumps(name)}] = pd.Series(sets + 1.0).where(sets >= 0)   # the folds, 1 to {kfold}')
+    elif values == 'text':
         L.append(f'df[{json.dumps(name)}] = pd.Series(np.array(["Training", "Validation", "Test", None], dtype=object)[sets])   # -1: no set')
     else:
         L.append(f'df[{json.dumps(name)}] = pd.Series(sets, dtype=float).where(sets >= 0)   # 0 training, 1 validation, 2 test')
     L.append(f'print(df[{json.dumps(name)}].value_counts(dropna=False))')
     return '\n'.join(L)
+
+
+# ---- Ensemble of Selected (beyond JMP): the average of the selected methods, and their stacking ---------------------
+
+def stack_weights(F, y, w, n_levels):
+    """Stacking (a super learner): the weights, 0 or more and adding to 1, of the methods' out-of-fold predictions F
+    (methods x rows, or methods x rows x levels) that make the combined prediction best: the smallest weighted
+    squared error, or the largest weighted log-likelihood of a categorical response; found by SLSQP from equal
+    weights."""
+    from scipy.optimize import minimize
+    F = np.asarray(F, dtype=float)
+    m = F.shape[0]
+    wt = np.ones(F.shape[1]) if w is None else np.asarray(w, dtype=float)
+
+    def crit(a):
+        f = np.tensordot(a, F, axes=1)
+        if n_levels:
+            return float(-np.sum(wt * np.log(np.clip(f[np.arange(len(y)), np.asarray(y, dtype=int)], 1e-15, 1.0))) / wt.sum())
+        return float(np.sum(wt * (y - f) ** 2) / wt.sum())
+    res = minimize(crit, np.full(m, 1.0 / m), method='SLSQP', bounds=[(0.0, 1.0)] * m,
+                   constraints=[{'type': 'eq', 'fun': lambda a: float(np.sum(a) - 1.0)}], options={'ftol': 1e-12, 'maxiter': 500})
+    a = np.clip(res.x, 0.0, None)
+    return a / a.sum()
+
+
+def _ensemble_parts(table, rows, s, keys, repeats):
+    """The ensemble's pieces: each method's prediction of every row, the out-of-fold predictions of the training
+    rows that the stacking weights are fitted to (the report's K folds, or 5 folds from the seed), and how."""
+    P = _P(table, rows, s)
+    K = _kfold(s, P)
+    fitted, oof = {}, {}
+    for k in keys:
+        fitted[k] = np.asarray(_model(table, rows, s, k)['predict'](P.X), dtype=float)
+    if K:
+        for k in keys:
+            oof[k] = np.asarray(_crossvalidated(table, rows, s, k, repeats)['oof'], dtype=float)
+        how = f'the {K} folds of the Validation column' if P.k else f'the report\'s {K}-fold crossvalidation (the first repeat)'
+    else:
+        def build():
+            out = {}
+            for k in keys:
+                o = np.zeros_like(fitted[k])
+                for r, j, fit_rows, held in crossvalidation(P.train(), 5, 1, [s['seed'], 4]):
+                    (predict, info), _ = _caught(_call_fitter, k, P, fit_rows, None, s['seed'], s)
+                    o[held] = np.asarray(predict(P.X), dtype=float)[held]
+                out[k] = o
+            return out
+        got = pv.cached('screening-stack', table, rows, {**s, 'methods': list(keys)}, build, keep=32)
+        oof = {k: got[k] for k in keys}
+        how = '5-fold crossvalidation within the training rows (the folds from the seed)'
+    return P, K, fitted, oof, how
+
+
+@api('screening.ensemble', packages=pv.SK)
+def ensemble(table, rows=None, methods=None, repeats=1, table_name='data', **kw):
+    """Ensemble of Selected: the average of the selected methods' predictions (or probabilities), and their stacking
+    (stack_weights on the out-of-fold predictions of the training rows), with the Measures of Fit of each set."""
+    s = _spec(kw)
+    P = _P(table, rows, s)
+    keys = [k for k in _methods(methods, P)]
+    if len(keys) < 2:
+        raise ValueError('an ensemble needs two or more methods: select them in the Summary')
+    repeats = max(1, int(repeats or 1))
+    P, K, fitted, oof, how = _ensemble_parts(table, rows, s, keys, repeats)
+    n_levels = len(P.levels) if P.kind == 'categorical' else 0
+    tr = P.train()
+    avg = np.mean([fitted[k] for k in keys], axis=0)
+    wts = stack_weights(np.stack([oof[k][tr] for k in keys]), P.target[tr], None if P.w is None else P.w[tr], n_levels)
+    stacked = np.tensordot(wts, np.stack([fitted[k] for k in keys]), axes=1)
+    out_rows = []
+    for name, f in (('Average of Selected', avg), ('Stacked', stacked)):
+        ms = {m['set']: m for m in pv.measures(P, f)}
+        if K and name == 'Average of Selected':
+            Q = copy.copy(P)
+            Q.sets = np.where(tr, 0, -1)
+            cvm = pv.measures(Q, np.mean([oof[k] for k in keys], axis=0))
+            if cvm:
+                ms[CV] = {**cvm[0], 'set': CV}
+        out_rows.append({'method': name, 'measures': ms})
+    labels = [label_of(k, P) for k in keys]
+    return {'methods': keys, 'labels': labels, 'rows': out_rows, 'weights': [{'method': lab, 'weight': float(a)} for lab, a in zip(labels, wts)],
+            'how': how, 'kfold': K, 'code': _ensemble_code(P, table_name, rows, keys, s, K)}
+
+
+def _ensemble_code(P, table_name, rows, keys, s, K):
+    head = _graph_head(P, table_name, rows, keys, s, K).replace(f'\n{pv.PLT}', '')
+    labels = [label_of(k, P) for k in keys]
+    n_levels = len(P.levels) if P.kind == 'categorical' else 0
+    L = [head, '', '', _src([auc, measures, stack_weights] + ([] if K else [crossvalidation])), '', '',
+         f'names = {json.dumps(labels)}   # the selected methods']
+    if not K:
+        L += ['oof = {}   # the training rows each predicted by the method fitted without its fold (5 folds from the seed)',
+              'for name in names:',
+              '    oof[name] = np.zeros_like(fitted[name])',
+              '    for r, j, fit_rows, held in crossvalidation(train, 5, 1, [seed, 4]):',
+              '        predict, info = methods[name](X, y, w, fit_rows, None, n_levels, factors, seed)',
+              '        oof[name][held] = predict(X)[held]']
+    L += ['average = np.mean([fitted[name] for name in names], axis=0)   # Average of Selected',
+          'wts = stack_weights(np.stack([oof[name][train] for name in names]), y[train], None if w is None else w[train], n_levels)',
+          'stacked = np.tensordot(wts, np.stack([fitted[name] for name in names]), axes=1)   # Stacked',
+          'print(json.dumps(dict(zip(names, wts.tolist()))))   # the stacking weights',
+          "for name, f in (('Average of Selected', average), ('Stacked', stacked)):",
+          '    for set_name, m in measures(y, f, w, sets, n_levels).items():',
+          "        print(json.dumps({'method': name, 'set': set_name, **m}))"]
+    if n_levels == 0:
+        pass
+    return '\n'.join(L)
+
+
+# ---- the methods that need a package of their own ---------------------------------------------------------
+# XGBoost and LightGBM are Pyodide packages loaded only when chosen: the worker loads what a function's name
+# registers (registry.packages_for), so every entry point of the platform has a variant per package set,
+# screening.<name>.<tags> with the tags of the packages the methods need (xgb, lgbm, or xgb.lgbm), which the page
+# calls when such a method is in the report (smui-p-screening.js, fnFor).
+TAGS = {('xgboost',): 'xgb', ('lightgbm',): 'lgbm', ('xgboost', 'lightgbm'): 'xgb.lgbm'}
+
+
+def tag_of(methods):
+    """The tag of the packages some methods need ('' for none)."""
+    need = tuple(p for p in ('xgboost', 'lightgbm') if p in (methods or []))
+    return TAGS.get(need, '')
+
+
+for _need, _tag in TAGS.items():
+    for _name, _fn in (('fit', fit), ('save', save), ('threshold', threshold), ('ensemble', ensemble)):
+        api(f'screening.{_name}.{_tag}', packages=pv.SK + _need)(_fn)
+    expose(f'screening.{_tag}', _profile_build, packages=pv.SK + _need)

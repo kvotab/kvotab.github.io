@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 """Analyze > Predictive Modeling > Bootstrap Forest and Boosted Tree's
 backend (resources/py/smui/ensemble.py), through registry.dispatch as the
-page calls it, checked against scikit-learn called directly with the same
-settings (RandomForestRegressor/Classifier and GradientBoostingRegressor/
-Classifier: the same trees, predictions and staged predictions), against
-brute force (every cut-back tree's out-of-bag loss, JMP's node
-probabilities node by node, the forest as the mean of its trees, the
-permutation importance), against JMP's documented formulas and examples
-(Prob = (n + prior)/(N + 1) with the prior 0.9 of the parent's prior and
-0.1 of its Prob; Multiple Fits' numbers of terms 4, 5, 6, 8, 10; the
-default number of terms 13 -> 10; G² and SS of the splits), the measures
-against scikit-learn's metrics, and by running the Python shown under the
+page calls it, checked against scikit-learn called directly (without a
+nominal X the forest is RandomForestRegressor/Classifier and the boosted
+tree GradientBoostingRegressor/Classifier: the same trees, draws and
+staged predictions), against a forest and a boosted tree written anew here
+from scikit-learn's decision trees and pandas (a nominal X read in the
+order of its levels' means in each tree's rows), against brute force
+(the best cut in that order is the best of all groupings of the levels;
+every cut-back tree's out-of-bag loss, JMP's node probabilities node by
+node, the forest as the mean of its trees, the permutation importance),
+against JMP's documented formulas and examples (Prob = (n + prior)/(N + 1)
+with the prior 0.9 of the parent's prior and 0.1 of its Prob; Multiple
+Fits' numbers of terms 4, 5, 6, 8, 10; the default number of terms 13 ->
+10; G² and SS of the splits), the measures against scikit-learn's metrics,
+Score Rows with the kept model, and by running the Python shown under the
 report on a CSV export of the table.
 
     python3 resources/tests/smui/test_ensemble.py
 """
 import contextlib
 import io
+import itertools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -31,16 +37,18 @@ from backend import FAILED, Checks, call, table
 
 check = Checks()
 check('ensemble.py imports', 'ensemble' in FAILED, False)
-from smui import ensemble as E, predictive as pv, registry  # noqa: E402
+from smui import data, ensemble as E, predictive as pv, registry  # noqa: E402
 
 try:
     import sklearn
     from sklearn import metrics
     from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor
+    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 except ImportError:
     print('scikit-learn 1.8 is needed for these tests (Pyodide 314.0.7 has 1.8.0)')
     sys.exit(1)
 check('scikit-learn 1.8 (as in Pyodide 314.0.7)', sklearn.__version__.startswith('1.8'), True)
+MAXINT = np.iinfo(np.int32).max
 
 
 def mx(a, b):
@@ -74,17 +82,31 @@ x1m = x1.copy()
 x1m[rng.choice(n, 40, replace=False)] = np.nan
 gm = g.astype(object).copy()
 gm[rng.choice(n, 25, replace=False)] = None
+# two groups of levels: y2 is 2 higher for g4 in {a, c}, 1.5 higher for o3 at either end (lo or hi)
+g4 = rng.choice(['a', 'b', 'c', 'd'], n)
+o3 = rng.choice(['lo', 'mid', 'hi'], n)
+y2 = np.sin(2 * x1) + 2.0 * np.isin(g4, ['a', 'c']) + 1.5 * np.isin(o3, ['lo', 'hi']) + rng.normal(0, 0.5, n)
+kfv = rng.integers(1, 5, n).astype(float)            # a K-fold Validation column: four folds
 cols = {'y': list(y), 'x1': list(x1), 'x2': list(x2), 'g': list(g), 'x3': list(x3), 'x4': list(x4), 'cls': list(cls), 'three': list(three),
-        'v': list(vt), 'vn': list(vnum), 'w': list(w), 'f': list(fq), 'x1m': [None if np.isnan(v) else v for v in x1m], 'gm': list(gm)}
-TYPES = {'g': 'nominal', 'cls': 'nominal', 'three': 'nominal', 'v': 'nominal', 'gm': 'nominal'}
-LEVELS = {'three': ['lo', 'mid', 'hi'], 'cls': ['high', 'low'], 'g': ['a', 'b', 'c'], 'gm': ['a', 'b', 'c']}
+        'v': list(vt), 'vn': list(vnum), 'w': list(w), 'f': list(fq), 'x1m': [None if np.isnan(v) else v for v in x1m], 'gm': list(gm),
+        'g4': list(g4), 'o3': list(o3), 'o3n': list(o3), 'y2': list(y2), 'kf': list(kfv)}
+TYPES = {'g': 'nominal', 'cls': 'nominal', 'three': 'nominal', 'v': 'nominal', 'gm': 'nominal', 'g4': 'nominal', 'o3': 'ordinal', 'o3n': 'nominal'}
+LEVELS = {'three': ['lo', 'mid', 'hi'], 'cls': ['high', 'low'], 'g': ['a', 'b', 'c'], 'gm': ['a', 'b', 'c'], 'g4': ['a', 'b', 'c', 'd'],
+          'o3': ['lo', 'mid', 'hi'], 'o3n': ['lo', 'mid', 'hi']}
 T = table(cols, types=TYPES, levels=LEVELS)
 XS = ['x1', 'x2', 'g', 'x3', 'x4']
+XN = ['x1', 'x2', 'x3', 'x4']          # no nominal X: scikit-learn's own forests and boosting
 SEED = 4242
+
+
+def prep(y_, x_, **kw):
+    """The report's data as the platform prepares it: a categorical X as one column of level numbers."""
+    return pv.prepare(T, y_, x_, coding='ordinal', **kw)
+
 
 # ---- the registry --------------------------------------------------------------------------------------
 names = registry.names()
-for fn in ('ensemble.fit', 'ensemble.save', 'ensemble.profile', 'ensemble.maximize', 'ensemble.importance', 'ensemble.tree', 'ensemble.permutation'):
+for fn in ('ensemble.fit', 'ensemble.save', 'ensemble.score', 'ensemble.profile', 'ensemble.maximize', 'ensemble.importance', 'ensemble.tree', 'ensemble.permutation'):
     check(f'{fn} is registered and needs scikit-learn', (fn in names, json.loads(registry.packages_for(fn))), (True, ['scikit-learn']))
 check('scikit-learn is not imported at module level (the page starts without it)', 'import sklearn' not in open(E.__file__).read().split('def parents')[0], True)
 
@@ -112,11 +134,13 @@ for bad, msg in ((('forest', {'trees': 0}), 'at least 1'), (('forest', {'rate': 
     except ValueError as e:
         check(f'a bad setting is refused: {bad[1]}', msg in str(e), True)
 check('the terms tried at a split: the terms\' share of X\'s columns', (E.features_for(3, 5, 5), E.features_for(3, 5, 7), E.features_for(1, 5, 7)), (3, 4, 1))
+Pc = prep('y', XS, validation='v')
+check('a categorical X is one column of level numbers (-1 missing): 5 X columns, 5 columns of X', (Pc.X.shape[1], Pc.groups['g'], sorted(set(Pc.X[:, Pc.groups['g'][0]]))), (5, [2], [0.0, 1.0, 2.0]))
 
-# ---- JMP's node probabilities, node by node --------------------------------------------------------------
-P3 = pv.prepare(T, 'three', XS, validation='v')
-tr = P3.train()
-dt = RandomForestClassifier(n_estimators=1, max_leaf_nodes=30, min_samples_leaf=5, criterion='entropy', random_state=3).fit(P3.X[tr], P3.target[tr]).estimators_[0]
+# ---- JMP's node probabilities, node by node (any tree of scikit-learn's) -----------------------------------
+P3h = pv.prepare(T, 'three', XS, validation='v')
+trh = P3h.train()
+dt = RandomForestClassifier(n_estimators=1, max_leaf_nodes=30, min_samples_leaf=5, criterion='entropy', random_state=3).fit(P3h.X[trh], P3h.target[trh]).estimators_[0]
 pr = E.jmp_probs(dt, 0.9)
 t = dt.tree_
 Nn = t.weighted_n_node_samples
@@ -141,13 +165,13 @@ pri = 0.9 * np.array([0.5, 0.5]) + 0.1 * np.array([0.6, 0.4])
 check.near('the formula by hand: counts (20, 10), parent prior (0.5, 0.5) and Prob (0.6, 0.4) -> Prob[1] = (20 + 0.51)/31', float((20 + pri[0]) / 31), 20.51 / 31, 1e-12)
 
 # ---- the out-of-bag loss of every cut-back tree, by brute force --------------------------------------------
-Pc = pv.prepare(T, 'y', XS, validation='v')
-trc = Pc.train()
-rfc = RandomForestRegressor(n_estimators=3, max_features=4, max_leaf_nodes=2001, min_samples_leaf=5, random_state=9).fit(Pc.X[trc], Pc.target[trc])
+Pch = pv.prepare(T, 'y', XS, validation='v')
+trch = Pch.train()
+rfc = RandomForestRegressor(n_estimators=3, max_features=4, max_leaf_nodes=2001, min_samples_leaf=5, random_state=9).fit(Pch.X[trch], Pch.target[trch])
 worst = 0.0
 for tree, drawn in zip(rfc.estimators_, rfc.estimators_samples_):
-    oob = np.bincount(drawn, minlength=int(trc.sum())) == 0
-    Xo, yo = Pc.X[trc][oob], Pc.target[trc][oob]
+    oob = np.bincount(drawn, minlength=int(trch.sum())) == 0
+    Xo, yo = Pch.X[trch][oob], Pch.target[trch][oob]
     est = tree.tree_.value[:, 0, 0]
     loss = E.oob_losses(tree, Xo, yo, np.ones(len(yo)), est, False)
     parent = E.parents(tree)
@@ -160,52 +184,176 @@ check('the splits in the order scikit-learn made them: the k-th made nodes 2k - 
       all(tree.tree_.children_left[E.parents(tree)[2 * k - 1]] == 2 * k - 1 for tree in rfc.estimators_ for k in range(1, int((tree.tree_.children_left >= 0).sum()) + 1)), True)
 tree = rfc.estimators_[0]
 k0 = 7
-small = RandomForestRegressor(n_estimators=1, max_features=4, max_leaf_nodes=k0 + 1, min_samples_leaf=5, random_state=9).fit(Pc.X[trc], Pc.target[trc]).estimators_[0]
+small = RandomForestRegressor(n_estimators=1, max_features=4, max_leaf_nodes=k0 + 1, min_samples_leaf=5, random_state=9).fit(Pch.X[trch], Pch.target[trch]).estimators_[0]
 check('a tree cut back to k splits is the tree scikit-learn grows with k + 1 leaves (the same seed)',
-      mx(small.predict(Pc.X), tree.tree_.value[:, 0, 0][E.stands_for(E.parents(tree), k0)[tree.apply(Pc.X)]]), 0.0)
+      mx(small.predict(Pch.X), tree.tree_.value[:, 0, 0][E.stands_for(E.parents(tree), k0)[tree.apply(Pch.X)]]), 0.0)
 check('kept_splits: at least the minimum, then while the loss falls', [E.kept_splits(np.array(a), 2) for a in ([9, 8, 7, 6, 5.5, 5.6, 5], [9, 8, 7, 7, 6], [9, 8], [9, 8, 7, 6, 5])],
       [4, 2, 1, 4])
 
-# ---- a forest, against scikit-learn and brute force -----------------------------------------------------------
+# ---- two groups of levels: the order of the levels, against every grouping -------------------------------------
+
+
+def gain(t_, w_, left, kind):
+    """The fall in the weighted SS (continuous) or G² (0/1 target) when the rows split into left and the rest."""
+    def loss_(m):
+        W = w_[m].sum()
+        if W <= 0:
+            return 0.0
+        if kind == 'ss':
+            return float(np.sum(w_[m] * (t_[m] - np.sum(w_[m] * t_[m]) / W) ** 2))
+        n1 = float(np.sum(w_[m] * t_[m]))
+        return -2.0 * sum(v * math.log(v / W) for v in (W - n1, n1) if v > 0)
+    return loss_(np.ones(len(t_), dtype=bool)) - loss_(left) - loss_(~left)
+
+
+rt = np.random.default_rng(5)
+for kind in ('ss', 'g2'):
+    worst, groupings = 0.0, 0
+    for trial in range(40):
+        u = int(rt.integers(3, 7))
+        codes = rt.integers(-1, u, 240).astype(float)        # -1: missing, left out of the order
+        ww_ = rt.uniform(0.5, 2.0, 240)
+        eff = rt.normal(0, 1, u)
+        tt = (rt.normal(0, 1, 240) + eff[np.maximum(codes, 0).astype(int)]) if kind == 'ss' else (rt.random(240) < 1 / (1 + np.exp(-eff[np.maximum(codes, 0).astype(int)]))).astype(float)
+        ok = codes >= 0
+        ranks = E.level_ranks(codes, tt, ww_, u)
+        present = sorted({int(c) for c in codes[ok]})
+        c_ok, t_ok, w_ok = codes[ok].astype(int), tt[ok], ww_[ok]
+        best_all = max(gain(t_ok, w_ok, np.isin(c_ok, S), kind) for r_ in range(1, len(present)) for S in itertools.combinations(present, r_))
+        best_cut = max(gain(t_ok, w_ok, ranks[c_ok] <= k, kind) for k in range(len(present) - 1))
+        worst = max(worst, best_all - best_cut)
+        groupings += 2 ** (len(present) - 1) - 1
+    check(f'level_ranks: the best cut in the order of the levels\' means is the best of all {groupings} groupings (40 tables of 3 to 6 levels, {"a continuous target: SS" if kind == "ss" else "a 0/1 target: G²"}; Fisher)', worst < 1e-9, True)
+check('level_ranks: a row of weight 0 has no say (the tree does not use it); tied means go by level number',
+      E.level_ranks(np.array([0., 1., 1., 2.]), np.array([5., 100., 1., 5.]), np.array([1., 0., 1., 1.]), 3).tolist(), [1.0, 0.0, 2.0])
+r_abs = E.level_ranks(np.array([0., 0., 2.]), np.array([1., 2., 3.]), np.ones(3), 3)
+check('... the lacking level is NaN, the others ranked by their means', (r_abs[0], bool(np.isnan(r_abs[1])), r_abs[2]), (0.0, True, 1.0))
+# three levels: the first principal component of the levels' shares (weighted), written anew with np.cov
+codes = rt.integers(0, 5, 300).astype(float)
+yk = rt.integers(0, 3, 300)
+yk[codes == 1] = 2
+ww_ = rt.uniform(0.5, 2, 300)
+onehot = np.eye(3)[yk]
+shares = np.array([[np.sum(ww_[codes == c] * onehot[codes == c, k]) / np.sum(ww_[codes == c]) for k in range(3)] for c in range(5)])
+Wc = np.array([np.sum(ww_[codes == c]) for c in range(5)])
+vec = np.linalg.eigh(np.cov(shares.T, aweights=Wc, bias=True))[1][:, -1]
+vec = -vec if vec[np.argmax(np.abs(vec))] < 0 else vec
+want = np.empty(5)
+want[np.argsort(shares @ vec, kind='mergesort')] = np.arange(5)
+check('... three levels of the response: in the order of the first principal component of the levels\' shares (np.cov with the weights)', E.level_ranks(codes, onehot, ww_, 5).tolist(), want.tolist())
+Z = E.recode(np.array([[0., 1.], [2., -1.], [1., 0.], [-1., 2.]]), [(0, np.array([2., 0., np.nan])), (1, None)])
+check('recode: a nominal column\'s levels become their ranks, an ordinal one keeps its level numbers; missing (-1) and a level without a rank are NaN',
+      [[None if np.isnan(v) else v for v in row] for row in Z.tolist()], [[2.0, 1.0], [None, None], [0.0, 0.0], [None, 2.0]])
+check('... no categorical column: X itself', E.recode(Pc.X, []) is Pc.X, True)
+
+# ---- the forest written anew: a nominal X read in each tree's order of its levels (pandas), scikit-learn's trees --------
+
+
+def ranks_ref(codes_, target, w_, u):
+    """Each level's rank by its weighted mean of target (several columns: the first principal component of the
+    levels' shares), NaN for a level with no weight: pandas and np.cov."""
+    ok = (codes_ >= 0) & (w_ > 0)
+    df = pd.DataFrame({'c': codes_[ok].astype(int), 'w': w_[ok]})
+    if target.ndim == 1:
+        df['s'] = w_[ok] * target[ok]
+        gsum = df.groupby('c')[['w', 's']].sum()
+        score = (gsum['s'] / gsum['w']).to_dict()
+    else:
+        ks = [f's{k}' for k in range(target.shape[1])]
+        for k, nm in enumerate(ks):
+            df[nm] = w_[ok] * target[ok, k]
+        gsum = df.groupby('c')[['w'] + ks].sum()
+        sh = gsum[ks].to_numpy() / gsum['w'].to_numpy()[:, None]
+        v_ = np.linalg.eigh(np.cov(sh.T, aweights=gsum['w'].to_numpy(), bias=True))[1][:, -1]
+        v_ = -v_ if v_[np.argmax(np.abs(v_))] < 0 else v_
+        score = dict(zip(gsum.index, sh @ v_))
+    rank = np.full(u, np.nan)
+    for r_, c in enumerate(sorted(score, key=lambda c: (score[c], c))):
+        rank[c] = r_
+    return rank
+
+
+def recode_ref(X, ranks, ordinal):
+    Zr = X.copy()
+    for j, rk in ranks.items():
+        Zr[:, j] = [np.nan if c < 0 or np.isnan(rk[int(c)]) else rk[int(c)] for c in X[:, j]]
+    for j in ordinal:
+        Zr[:, j] = np.where(X[:, j] < 0, np.nan, X[:, j])
+    return Zr
+
+
+def cat_cols(P):
+    nom = {P.groups[c][0]: len(next(e for e in P.enc if e['name'] == c)['levels']) for c in P.x if TYPES.get(c) == 'nominal'}
+    return nom, [P.groups[c][0] for c in P.x if TYPES.get(c) == 'ordinal']
+
+
+def forest_ref(P, K, seed, kf, min_splits=10, stop='oob', rate=1.0, min_leaf=5, max_leaf=2001):
+    """The forest of K trees: bootstrap samples and seeds drawn as scikit-learn's forests draw them."""
+    cat = P.kind == 'categorical'
+    tr_ = P.train()
+    Xt, yt = P.X[tr_], P.target[tr_]
+    w1 = np.ones(len(yt)) if P.w is None else P.w[tr_]
+    nom, ordi = cat_cols(P)
+    n_boot = len(yt) if rate >= 1 else max(round(len(yt) * rate), 1)
+    classes = np.unique(yt) if cat else None
+    ycol = np.searchsorted(classes, yt) if cat else None
+    target = yt if not cat else (ycol == 1).astype(float) if len(classes) == 2 else np.eye(len(classes))[ycol]
+    out = []
+    for s in np.random.RandomState(seed).randint(MAXINT, size=K):
+        inbag = np.bincount(np.random.RandomState(int(s)).randint(0, len(yt), n_boot, dtype=np.int32), minlength=len(yt))
+        ranks = {j: ranks_ref(Xt[:, j], target, w1 * inbag, u) for j, u in nom.items()}
+        Zt = recode_ref(Xt, ranks, ordi)
+        args = dict(max_features=kf, max_leaf_nodes=max_leaf, min_samples_leaf=min_leaf, random_state=int(s))
+        tr_obj = (DecisionTreeClassifier(criterion='entropy', **args) if cat else DecisionTreeRegressor(criterion='squared_error', **args)).fit(Zt, yt, sample_weight=w1 * inbag)
+        oob_ = inbag == 0
+        est_ = E.jmp_probs(tr_obj, 0.9) if cat else tr_obj.tree_.value[:, 0, 0]
+        loss_ = E.oob_losses(tr_obj, Zt[oob_], (ycol if cat else yt)[oob_], w1[oob_], est_, cat)
+        k_ = E.kept_splits(loss_, min_splits) if stop == 'oob' else len(loss_) - 1
+        node_ = E.stands_for(E.parents(tr_obj), k_)[tr_obj.apply(recode_ref(P.X, ranks, ordi))]
+        if cat:
+            full = np.zeros((tr_obj.tree_.node_count, len(P.levels)))
+            full[:, classes] = est_
+            pred_ = full[node_]
+        else:
+            pred_ = est_[node_]
+        out.append({'tree': tr_obj, 'inbag': inbag, 'oob': oob_, 'k': k_, 'loss': loss_, 'pred': pred_, 'ranks': ranks})
+    return out
+
+
+# ---- a forest, against the forest written anew and brute force ---------------------------------------------------
 r, lines = quiet(call, 'ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, table_name='data')
 check('a forest: no error', 'error' not in r, True)
 cum = r['cumulative']
 st = E.settings_of('forest', {}, 5)
 K, patience = st['trees'], max(5, math.ceil(st['trees'] / 10))
 check('progress lines: "smui:progress forest <done> <total>" up to the total', (bool(lines), lines[-1].split()[1:] if lines else None), (True, ['forest', str(K), str(K)]))
-rf = RandomForestRegressor(n_estimators=cum['grown'], criterion='squared_error', max_features=E.features_for(st['terms'], 5, Pc.X.shape[1]), max_leaf_nodes=2001,
-                           min_samples_leaf=5, bootstrap=True, random_state=SEED, n_jobs=1).fit(Pc.X[trc], Pc.target[trc])
-each, kept_s, rows_ = [], [], []
-w1 = np.ones(int(trc.sum()))
-for tree, drawn in zip(rf.estimators_, rf.estimators_samples_):
-    inbag = np.bincount(drawn, minlength=int(trc.sum()))
-    oob = inbag == 0
-    est = tree.tree_.value[:, 0, 0]
-    loss = E.oob_losses(tree, Pc.X[trc][oob], Pc.target[trc][oob], w1[oob], est, False)
-    k = E.kept_splits(loss, 10)
-    kept_s.append(k)
-    p_ = est[E.stands_for(E.parents(tree), k)[tree.apply(Pc.X)]]
-    each.append(p_)
-    ytr, ptr = Pc.target[trc], p_[trc]
-    ib_sse = float(np.sum(inbag * (ytr - ptr) ** 2))
-    rows_.append({'splits': k, 'oob_n': float(oob.sum()), 'oob_sse': float(np.sum((ytr[oob] - ptr[oob]) ** 2)), 'ib_sse': ib_sse, 'ib_sse_n': ib_sse / inbag.sum(),
-                  'oob_loss': float(loss[k + 1] if k < len(loss) - 1 else loss[k])})
+trc = Pc.train()
+ref = forest_ref(Pc, cum['grown'], SEED, E.features_for(st['terms'], 5, Pc.X.shape[1]))
+each = [q['pred'] for q in ref]
+kept_s = [q['k'] for q in ref]
+rows_ = []
+for q in ref:
+    ytr, ptr = Pc.target[trc], q['pred'][trc]
+    ib_sse = float(np.sum(q['inbag'] * (ytr - ptr) ** 2))
+    oo_ = q['oob']
+    rows_.append({'splits': q['k'], 'oob_n': float(oo_.sum()), 'oob_sse': float(np.sum((ytr[oo_] - ptr[oo_]) ** 2)), 'ib_sse': ib_sse, 'ib_sse_n': ib_sse / q['inbag'].sum(),
+                  'oob_loss': float(q['loss'][q['k'] + 1] if q['k'] < len(q['loss']) - 1 else q['loss'][q['k']])})
 cumsum = np.cumsum(each, axis=0) / np.arange(1, len(each) + 1)[:, None]
 vm = Pc.mask(1)
-r2v = [metrics.r2_score(Pc.target[vm], c[vm]) for c in cumsum]
+r2v = [metrics.r2_score(Pc.target[vm], c) for c in cumsum[:, vm]]
 kept = cum['kept']
 check('Early Stopping keeps the number of trees with the best validation RSquare (scikit-learn\'s r2_score)', kept, int(np.argmax(r2v)) + 1)
 check(f'and stops when the last tenth of the trees ({patience}) did not improve it', (cum['stopped'], cum['grown'] - kept), (True, patience))
-check('the validation curve is r2_score of the forest of the first k trees', mx(next(s for s in cum['series'] if s['set'] == 'Validation')['stats']['rsquare'], r2v), 0.0)
+check.near('the validation curve is r2_score of the forest of the first k trees', mx(next(s for s in cum['series'] if s['set'] == 'Validation')['stats']['rsquare'], r2v), 0.0, abs_=1e-12)
 fitted = cumsum[kept - 1]
 M = {m['set']: m for m in r['fit']['measures']}
 for k_, name in enumerate(pv.SETS):
     m = Pc.mask(k_)
     check.near(f'{name} RSquare = r2_score of the mean of the kept trees', M[name]['rsquare'], metrics.r2_score(Pc.target[m], fitted[m]), 1e-10)
     check.near(f'{name} RASE', M[name]['rase'], math.sqrt(metrics.mean_squared_error(Pc.target[m], fitted[m])), 1e-10)
-check('the forest is scikit-learn\'s: its trees\' splits kept are the ones computed here', [t_['splits'] for t_ in r['trees']], kept_s[:kept])
+check('the forest is the one written here: its trees\' splits kept', [t_['splits'] for t_ in r['trees']], kept_s[:kept])
 check('every tree keeps at least Minimum Splits per Tree (10)', min(t_['splits'] for t_ in r['trees']) >= 10, True)
-check('... and is cut back well below scikit-learn\'s full tree', np.mean([t_['splits'] for t_ in r['trees']]) < np.mean([int((t_.tree_.children_left >= 0).sum()) for t_ in rf.estimators_[:kept]]), True)
+check('... and is cut back well below scikit-learn\'s full tree', np.mean([t_['splits'] for t_ in r['trees']]) < np.mean([int((q['tree'].tree_.children_left >= 0).sum()) for q in ref[:kept]]), True)
 worst = max(max(abs(a[kk] - b[kk]) / max(1.0, abs(b[kk])) for kk in ('oob_n', 'oob_sse', 'ib_sse', 'ib_sse_n', 'oob_loss')) for a, b in zip(r['trees'], rows_[:kept]))
 check.near('Per-Tree Summaries: OOB N, OOB SSE, IB SSE, IB SSE/N and OOB Loss (before the split taken back) as computed here', worst, 0.0, abs_=1e-9)
 ranks = [t_['rank'] for t_ in sorted(r['trees'], key=lambda t_: (t_['oob_loss_n'], t_['tree']))]
@@ -217,10 +365,9 @@ check.near('Individual Trees: Out of Bag RASE = the mean of √(OOB SSE/N)', ind
 # the forest's out-of-bag prediction
 num = np.zeros(int(trc.sum()))
 den = np.zeros(int(trc.sum()))
-for (tree, drawn), p_ in zip(list(zip(rf.estimators_, rf.estimators_samples_))[:kept], each[:kept]):
-    oob = np.bincount(drawn, minlength=int(trc.sum())) == 0
-    num[oob] += p_[trc][oob]
-    den[oob] += 1
+for q in ref[:kept]:
+    num[q['oob']] += q['pred'][trc][q['oob']]
+    den[q['oob']] += 1
 ok = den > 0
 oo = M['Out of Bag']
 check.near('Out of Bag: the RSquare of each training row by the trees that did not see it', oo['rsquare'], metrics.r2_score(Pc.target[trc][ok], num[ok] / den[ok]), 1e-10)
@@ -229,21 +376,25 @@ check('... over the training rows some kept tree did not see', oo['n'], float(ok
 ss = {c: 0.0 for c in XS}
 nsplit = {c: 0 for c in XS}
 fcol = {j: c for c in XS for j in Pc.groups[c]}
-for tree, k in zip(rf.estimators_[:kept], kept_s[:kept]):
-    tt = tree.tree_
-    parent = E.parents(tree)
-    for s in range(1, k + 1):
-        q = parent[2 * s - 1]
-        L_, R_ = tt.children_left[q], tt.children_right[q]
-        sse = lambda node: float(tt.impurity[node] * tt.weighted_n_node_samples[node])  # noqa: E731
-        ss[fcol[int(tt.feature[q])]] += sse(q) - sse(L_) - sse(R_)
-        nsplit[fcol[int(tt.feature[q])]] += 1
+for q in ref[:kept]:
+    tt = q['tree'].tree_
+    parent = E.parents(q['tree'])
+    for s in range(1, q['k'] + 1):
+        node = parent[2 * s - 1]
+        L_, R_ = tt.children_left[node], tt.children_right[node]
+        sse = lambda nd: float(tt.impurity[nd] * tt.weighted_n_node_samples[nd])  # noqa: E731
+        ss[fcol[int(tt.feature[node])]] += sse(node) - sse(L_) - sse(R_)
+        nsplit[fcol[int(tt.feature[node])]] += 1
 cc = {row['column']: row for row in r['contributions']['rows']}
 check('Column Contributions: the number of splits on each column over the kept trees', {c: cc[c]['splits'] for c in XS}, nsplit)
 check.near('... and the SS they take away (SSparent - SSleft - SSright)', max(abs(cc[c]['value'] - ss[c]) / max(1, ss[c]) for c in XS), 0.0, abs_=1e-9)
 check.near('the portions add to 1', sum(row['portion'] for row in r['contributions']['rows']), 1.0, 1e-12)
 check('x2 (a step of 3) and x1 (a wave) contribute most, x3 and x4 (an interaction) less', [row['column'] for row in r['contributions']['rows']][:2] in (['x2', 'x1'], ['x1', 'x2']), True)
 check('the label is SS for a continuous response', r['contributions']['label'], 'SS')
+MF = E.model_of(T, None, 'y', XS, 'forest', validation='v', seed=SEED)
+jg = Pc.groups['g'][0]
+check('each tree reads g in the order of its bootstrap sample\'s level means (the ranks, tree by tree)',
+      all(np.array_equal(dict(T_['maps'])[jg], q['ranks'][jg], equal_nan=True) for T_, q in zip(MF.fits[0].trees, ref)), True)
 
 # the same seed, the same forest; another seed, another
 r_again = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED)
@@ -259,42 +410,105 @@ check('... and Overall Statistics has Training and Out of Bag', [m['set'] for m 
 ro = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 30})
 check('Early Stopping off: every tree asked for', (ro['cumulative']['kept'], ro['cumulative']['grown']), (30, 30))
 rg = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 30, 'stop': 'none'})
-full_splits = [int((t_.tree_.children_left >= 0).sum()) for t_ in RandomForestRegressor(n_estimators=30, max_features=E.features_for(4, 5, 7), max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(Pc.X[trc], Pc.target[trc]).estimators_]
-check('Tree Size ▸ Grow to Maximum: scikit-learn\'s trees as they are', [t_['splits'] for t_ in rg['trees']], full_splits)
-rfb = RandomForestRegressor(n_estimators=30, max_features=E.features_for(4, 5, 7), max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(Pc.X[trc], Pc.target[trc])
-check.near('... and the forest is RandomForestRegressor.predict', {m['set']: m for m in rg['fit']['measures']}['Test']['rsquare'], metrics.r2_score(Pc.target[Pc.mask(2)], rfb.predict(Pc.X[Pc.mask(2)])), 1e-10)
+ref30 = forest_ref(Pc, 30, SEED, E.features_for(4, 5, 5), stop='none')
+check('Tree Size ▸ Grow to Maximum: scikit-learn\'s trees as they grew', [t_['splits'] for t_ in rg['trees']], [int((q['tree'].tree_.children_left >= 0).sum()) for q in ref30])
+check.near('... and the forest is the mean of those trees', {m['set']: m for m in rg['fit']['measures']}['Test']['rsquare'],
+           metrics.r2_score(Pc.target[Pc.mask(2)], np.mean([q['pred'] for q in ref30], axis=0)[Pc.mask(2)]), 1e-10)
 rr = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, settings={'rate': 0.5, 'early': False, 'trees': 12})
 check('Bootstrap Sample Rate 0.5: half the training rows drawn per tree', (rr['trees'][0]['ib_n'], [v for k_, v, *_ in rr['spec']['right'] if k_ == 'Bootstrap Samples']), (float(round(trc.sum() * 0.5)), [int(round(trc.sum() * 0.5))]))
+ref12 = forest_ref(Pc, 12, SEED, E.features_for(4, 5, 5), rate=0.5)
+check.near('... the forest of those samples', {m['set']: m for m in rr['fit']['measures']}['Validation']['rsquare'],
+           metrics.r2_score(Pc.target[vm], np.mean([q['pred'] for q in ref12], axis=0)[vm]), 1e-10)
+
+# ---- without a nominal X the forest is scikit-learn's RandomForestRegressor / Classifier ----------------------------
+PN = prep('y', XN, validation='v')
+trN = PN.train()
+MN = E.model_of(T, None, 'y', XN, 'forest', validation='v', seed=SEED, settings={'early': False, 'trees': 30, 'stop': 'none'})
+rfN = RandomForestRegressor(n_estimators=30, max_features=E.features_for(3, 4, 4), max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(PN.X[trN], PN.target[trN])
+check('no nominal X: each tree\'s seed, bootstrap sample, thresholds and values are RandomForestRegressor\'s',
+      all(T_['tree'].random_state == e_.random_state and np.array_equal(T_['tree'].tree_.threshold, e_.tree_.threshold) and np.array_equal(T_['tree'].tree_.value, e_.tree_.value)
+          and np.array_equal(np.bincount(s_, minlength=int(trN.sum())), np.bincount(np.random.RandomState(T_['tree'].random_state).randint(0, int(trN.sum()), int(trN.sum()), dtype=np.int32), minlength=int(trN.sum())))
+          for T_, e_, s_ in zip(MN.fits[0].trees, rfN.estimators_, rfN.estimators_samples_)), True)
+check.near('... and its prediction RandomForestRegressor.predict (grown to the maximum)', mx(MN.fits[0].predict(PN.X), rfN.predict(PN.X)), 0.0, abs_=1e-12)
+P3N = prep('three', XN, validation='v')
+M3N = E.model_of(T, None, 'three', XN, 'forest', validation='v', seed=SEED, settings={'early': False, 'trees': 10, 'stop': 'none'})
+rf3N = RandomForestClassifier(n_estimators=10, criterion='entropy', max_features=3, max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(P3N.X[P3N.train()], P3N.target[P3N.train()])
+check('... a categorical response: RandomForestClassifier\'s trees (thresholds and level shares)',
+      all(np.array_equal(T_['tree'].tree_.threshold, e_.tree_.threshold) and np.array_equal(T_['tree'].tree_.value, e_.tree_.value) for T_, e_ in zip(M3N.fits[0].trees, rf3N.estimators_)), True)
+
+# ---- two groups of levels in the trees; an ordinal X keeps its order; a missing level goes to the better side ---------
+MF2 = E.model_of(T, None, 'y2', ['x1', 'g4', 'o3'], 'forest', validation='v', seed=SEED, settings={'early': False, 'trees': 20})
+
+
+def first_splits(F_, P_, col, levels):
+    """Each tree's first split on col down every path from the root: the levels it sends left."""
+    j = P_.groups[col][0]
+    out = []
+    for T_ in F_.trees:
+        t_ = T_['tree'].tree_
+        rk = dict(T_['maps']).get(j)
+        pos = np.arange(len(levels), dtype=float) if rk is None else rk
+        stack = [(0, False)]
+        while stack:
+            node, seen = stack.pop()
+            if t_.children_left[node] < 0 or t_.children_left[node] > 2 * T_['kept']:
+                continue
+            if t_.feature[node] == j and not seen:
+                out.append(frozenset(lv for i, lv in enumerate(levels) if pos[i] <= t_.threshold[node]))
+                seen = True
+            stack += [(t_.children_left[node], seen), (t_.children_right[node], seen)]
+    return out
+
+
+fs = first_splits(MF2.fits[0], MF2.P, 'g4', 'abcd')
+check('two groups of levels: every tree\'s first split on g4 (y2 is 2 higher for a and c) takes {a, c} against {b, d}, which one level against the rest cannot',
+      (len(fs) >= 20, set(fs) <= {frozenset('ac'), frozenset('bd')}), (True, True))
+tv2 = call('ensemble.tree', table=T, y='y2', x=['x1', 'g4', 'o3'], kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 20}, index=1, detail='categories')
+texts = [ln['text'] for ln in tv2['lines']]
+check('... Show Trees words it as JMP does: g4(a, c) and g4(b, d)', ('g4(a, c)' in texts, 'g4(b, d)' in texts), (True, True))
+o_texts = {ln['text'] for i in range(1, 21) for ln in call('ensemble.tree', table=T, y='y2', x=['x1', 'g4', 'o3'], kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 20}, index=i, detail='categories')['lines'] if ln['text'].startswith('o3(')}
+check('an ordinal X keeps its level order: its splits are lo | mid, hi or lo, mid | hi (never lo with hi)', (bool(o_texts), o_texts <= {'o3(lo)', 'o3(mid, hi)', 'o3(lo, mid)', 'o3(hi)'}), (True, True))
+MF2n = E.model_of(T, None, 'y2', ['x1', 'g4', 'o3n'], 'forest', validation='v', seed=SEED, settings={'early': False, 'trees': 20})
+fsn = first_splits(MF2n.fits[0], MF2n.P, 'o3n', ['lo', 'mid', 'hi'])
+check('... the same levels as a nominal X: the first split takes lo and hi (1.5 higher) against mid', (len(fsn) >= 20, set(fsn) <= {frozenset(['lo', 'hi']), frozenset(['mid'])}), (True, True))
+MFm = E.model_of(T, None, 'y', ['x1', 'x2', 'gm', 'x3', 'x4'], 'forest', validation='v', seed=SEED, settings={'early': False, 'trees': 15})
+Pm = MFm.P
+jm = Pm.groups['gm'][0]
+check('Informative Missing: a missing level of a nominal X is NaN for the trees (25 rows)', int(np.isnan(E.recode(Pm.X, MFm.fits[0].trees[0]['maps'])[:, jm]).sum()), int(np.sum(pd.isna(gm)[Pm.index])))
+mtexts = [ln['text'] for i in range(1, 16) for ln in call('ensemble.tree', table=T, y='y', x=['x1', 'x2', 'gm', 'x3', 'x4'], kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 15}, index=i, detail='categories')['lines'] if ln['text'].startswith('gm(')]
+pairs = [(mtexts[i], mtexts[i + 1]) for i in range(0, len(mtexts) - 1, 2)]
+check('... each split on it names Missing on the side the tree sends missing values (the better side), once',
+      (bool(pairs), all((a.count('Missing') + b.count('Missing')) == 1 for a, b in pairs)), (True, True))
+sm_ = call('ensemble.save', table=T, y='y', x=['x1', 'x2', 'gm', 'x3', 'x4'], kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 15})
+miss_rows = [i for i in range(n) if gm[i] is None]
+check('... and the rows missing it are predicted (Save Predicteds has every row)', (len(sm_['rows']), all(np.isfinite(sm_['values'][sm_['rows'].index(i)]) for i in miss_rows)), (n, True))
+check('_condition: a nominal column\'s levels by their ranks in the tree, Missing where missing values go',
+      (E._condition(Pm, jm, True, 0.5, np.array([1., 0., 2.]), False), E._condition(Pm, jm, False, 0.5, np.array([1., 0., 2.]), False),
+       E._condition(Pm, jm, True, 0.5, np.array([1., np.nan, 0.]), True)),
+      ('gm(b)', 'gm(a, c, Missing)', 'gm(c, b, Missing)'))
 
 # ---- a categorical forest: JMP's probabilities, never 0 ---------------------------------------------------------
 r3 = call('ensemble.fit', table=T, y='three', x=XS, kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 25})
-rfc3 = RandomForestClassifier(n_estimators=25, criterion='entropy', max_features=E.features_for(4, 5, 7), max_leaf_nodes=2001, min_samples_leaf=5,
-                              random_state=SEED).fit(P3.X[tr], P3.target[tr])
-ycol = np.searchsorted(rfc3.classes_, P3.target[tr])
-probs, g2 = [], {c: 0.0 for c in XS}
+P3 = prep('three', XS, validation='v')
+tr = P3.train()
+ref3 = forest_ref(P3, 25, SEED, E.features_for(4, 5, 5))
+fp = np.mean([q['pred'] for q in ref3], axis=0)
+g2 = {c: 0.0 for c in XS}
 fcol3 = {j: c for c in XS for j in P3.groups[c]}
-for tree, drawn in zip(rfc3.estimators_, rfc3.estimators_samples_):
-    oob = np.bincount(drawn, minlength=int(tr.sum())) == 0
-    est = E.jmp_probs(tree, 0.9)
-    loss = E.oob_losses(tree, P3.X[tr][oob], ycol[oob], np.ones(int(oob.sum())), est, True)
-    k = E.kept_splits(loss, 10)
-    rep = E.stands_for(E.parents(tree), k)
-    full = np.zeros((tree.tree_.node_count, 3))
-    full[:, rfc3.classes_] = est
-    probs.append(full[rep[tree.apply(P3.X)]])
-    tt = tree.tree_
+for q in ref3:
+    tt = q['tree'].tree_
     cn = tt.value[:, 0, :] * tt.weighted_n_node_samples[:, None]
-    G = lambda node: float(-2 * sum(v * math.log(v / cn[node].sum()) for v in cn[node] if v > 0))  # noqa: E731
-    parent = E.parents(tree)
-    for s in range(1, k + 1):
-        q = parent[2 * s - 1]
-        g2[fcol3[int(tt.feature[q])]] += G(q) - G(tt.children_left[q]) - G(tt.children_right[q])
-fp = np.mean(probs, axis=0)
+    G = lambda nd: float(-2 * sum(v * math.log(v / cn[nd].sum()) for v in cn[nd] if v > 0))  # noqa: E731
+    parent = E.parents(q['tree'])
+    for s in range(1, q['k'] + 1):
+        node = parent[2 * s - 1]
+        g2[fcol3[int(tt.feature[node])]] += G(node) - G(tt.children_left[node]) - G(tt.children_right[node])
 M3 = {m['set']: m for m in r3['fit']['measures']}
 for k_, name in enumerate(pv.SETS):
     m = P3.mask(k_)
     check.near(f'categorical forest, {name}: Mean -Log p = log_loss of the mean of the trees\' JMP probabilities', M3[name]['mean_neg_log_p'], metrics.log_loss(P3.target[m], fp[m], labels=[0, 1, 2]), 1e-10)
     check.near(f'categorical forest, {name}: Misclassification Rate = 1 - accuracy', M3[name]['misclassification'], 1 - metrics.accuracy_score(P3.target[m], fp.argmax(1)[m]), 1e-12)
+rfc3 = RandomForestClassifier(n_estimators=25, criterion='entropy', max_features=4, max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(P3.X[tr], P3.target[tr])
 check('no predicted probability is exactly 0 or 1 (JMP\'s prior), though scikit-learn\'s own forest gives 0s', (float(fp.min()) > 0, float(fp.max()) < 1, bool((rfc3.predict_proba(P3.X) == 0).any())), (True, True, True))
 cc3 = {row['column']: row for row in r3['contributions']['rows']}
 check('categorical: Column Contributions are G² (2 × the entropy in nats, from the node counts)', r3['contributions']['label'], 'G²')
@@ -304,66 +518,72 @@ check('Save Predicteds: a probability per level and the most likely level, for e
 check.near('... the forest\'s probabilities', mx(np.array(sv['prob'])[P3.index], fp), 0.0, abs_=1e-12)
 rb3 = call('ensemble.fit', table=T, y='cls', x=XS, kind='forest', validation='v', seed=SEED, settings={'early': False, 'trees': 20})
 check('two levels: AUC in Overall Statistics (and ROC and lift curves)', ('auc' in rb3['fit']['measures'][0], bool(rb3['fit']['roc']), bool(rb3['fit']['lift'])), (True, True, True))
+Pb2 = prep('cls', XS, validation='v')
+refb2 = forest_ref(Pb2, 20, SEED, E.features_for(4, 5, 5))
+check.near('... two levels: each tree orders g by its share of the second level; the forest\'s AUC', {m['set']: m for m in rb3['fit']['measures']}['Validation']['auc'],
+           metrics.roc_auc_score(Pb2.target[Pb2.mask(1)], np.mean([q['pred'] for q in refb2], axis=0)[Pb2.mask(1), 1]), 1e-10)
 
 # ---- weights and frequencies -------------------------------------------------------------------------------------------
 rw = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', weight='w', freq='f', seed=SEED, settings={'early': False, 'trees': 15})
-Pw = pv.prepare(T, 'y', XS, validation='v', weight='w', freq='f')
-trw = Pw.train()
-rfw = RandomForestRegressor(n_estimators=15, max_features=E.features_for(4, 5, 7), max_leaf_nodes=2001, min_samples_leaf=5, random_state=SEED).fit(Pw.X[trw], Pw.target[trw], sample_weight=Pw.w[trw])
-eachw = []
-for tree, drawn in zip(rfw.estimators_, rfw.estimators_samples_):
-    oob = np.bincount(drawn, minlength=int(trw.sum())) == 0
-    est = tree.tree_.value[:, 0, 0]
-    k = E.kept_splits(E.oob_losses(tree, Pw.X[trw][oob], Pw.target[trw][oob], Pw.w[trw][oob], est, False), 10)
-    eachw.append(est[E.stands_for(E.parents(tree), k)[tree.apply(Pw.X)]])
-fw = np.mean(eachw, axis=0)
+Pw = prep('y', XS, validation='v', weight='w', freq='f')
+refw = forest_ref(Pw, 15, SEED, E.features_for(4, 5, 5))
+fw = np.mean([q['pred'] for q in refw], axis=0)
 mv = Pw.mask(1)
-check.near('Weight × Freq: case weights of the forest and its measures (r2_score with sample_weight)', {m['set']: m for m in rw['fit']['measures']}['Validation']['rsquare'],
+check.near('Weight × Freq: case weights of the forest (and of the level means that order g) and its measures (r2_score with sample_weight)', {m['set']: m for m in rw['fit']['measures']}['Validation']['rsquare'],
            metrics.r2_score(Pw.target[mv], fw[mv], sample_weight=Pw.w[mv]), 1e-10)
 
-# ---- a boosted tree, against scikit-learn ---------------------------------------------------------------------------------
-rbt, lines = quiet(call, 'ensemble.fit', table=T, y='y', x=XS, kind='boosted', validation='v', seed=SEED, table_name='data', settings={'layers': 400, 'learn': 0.3})
+# ---- a boosted tree: without a nominal X, scikit-learn's gradient boosting ------------------------------------------------
+rbt, lines = quiet(call, 'ensemble.fit', table=T, y='y', x=XN, kind='boosted', validation='v', seed=SEED, table_name='data', settings={'layers': 400, 'learn': 0.3})
 cb = rbt['cumulative']
 check('progress lines: "smui:progress boosted <done> <total>", the total at the end', (bool(lines), lines[-1].split()[1:] if lines else None), (True, ['boosted', '400', '400']))
 gb = GradientBoostingRegressor(loss='squared_error', n_estimators=cb['grown'], learning_rate=0.3, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5,
-                               subsample=1.0, criterion='squared_error', random_state=SEED).fit(Pc.X[trc], Pc.target[trc])
-stg = [metrics.r2_score(Pc.target[vm], p_) for p_ in gb.staged_predict(Pc.X[vm])]
+                               subsample=1.0, criterion='squared_error', random_state=SEED).fit(PN.X[trN], PN.target[trN])
+vmN = PN.mask(1)
+stg = [metrics.r2_score(PN.target[vmN], p_) for p_ in gb.staged_predict(PN.X[vmN])]
 check('boosted: stops at the first layer that does not improve the validation RSquare, keeps the layers before it',
       (cb['stopped'], cb['kept'], cb['grown'], all(stg[i] > stg[i - 1] for i in range(1, cb['kept'])), stg[cb['grown'] - 1] <= stg[cb['kept'] - 1]),
       (True, cb['grown'] - 1, cb['kept'] + 1, True, True))
-check('the validation curve is scikit-learn\'s staged_predict', mx(next(s for s in cb['series'] if s['set'] == 'Validation')['stats']['rsquare'], stg), 0.0)
+check.near('no nominal X: the validation curve is GradientBoostingRegressor\'s staged_predict', mx(next(s for s in cb['series'] if s['set'] == 'Validation')['stats']['rsquare'], stg), 0.0, abs_=1e-12)
 gbk = GradientBoostingRegressor(loss='squared_error', n_estimators=cb['kept'], learning_rate=0.3, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5,
-                                subsample=1.0, criterion='squared_error', random_state=SEED).fit(Pc.X[trc], Pc.target[trc])
+                                subsample=1.0, criterion='squared_error', random_state=SEED).fit(PN.X[trN], PN.target[trN])
 MB = {m['set']: m for m in rbt['fit']['measures']}
 for k_, name in enumerate(pv.SETS):
-    m = Pc.mask(k_)
-    check.near(f'boosted {name} RSquare = GradientBoostingRegressor(n_estimators=kept).predict', MB[name]['rsquare'], metrics.r2_score(Pc.target[m], gbk.predict(Pc.X[m])), 1e-10)
-svb = call('ensemble.save', table=T, y='y', x=XS, kind='boosted', validation='v', seed=SEED, settings={'layers': 400, 'learn': 0.3})
-Xall, okrows = Pc.all_rows()
+    m = PN.mask(k_)
+    check.near(f'boosted {name} RSquare = GradientBoostingRegressor(n_estimators=kept).predict', MB[name]['rsquare'], metrics.r2_score(PN.target[m], gbk.predict(PN.X[m])), 1e-10)
+svb = call('ensemble.save', table=T, y='y', x=XN, kind='boosted', validation='v', seed=SEED, settings={'layers': 400, 'learn': 0.3})
+Xall, okrows = PN.all_rows()
 check.near('Save Predicteds and Residuals: every row of the table, by the kept layers', mx(svb['values'], gbk.predict(Xall)), 0.0, abs_=1e-12)
 check.near('... residuals = y - predicted', mx(svb['residuals'], np.array(y)[okrows] - gbk.predict(Xall)), 0.0, abs_=1e-12)
-ssb = {c: 0.0 for c in XS}
-nb = {c: 0 for c in XS}
+ssb = {c: 0.0 for c in XN}
+nb = {c: 0 for c in XN}
+fcolN = {j: c for c in XN for j in PN.groups[c]}
 for tree in gbk.estimators_.ravel():
     tt = tree.tree_
     for q in np.flatnonzero(tt.children_left >= 0):
         L_, R_ = tt.children_left[q], tt.children_right[q]
-        ssb[fcol[int(tt.feature[q])]] += tt.impurity[q] * tt.weighted_n_node_samples[q] - tt.impurity[L_] * tt.weighted_n_node_samples[L_] - tt.impurity[R_] * tt.weighted_n_node_samples[R_]
-        nb[fcol[int(tt.feature[q])]] += 1
+        ssb[fcolN[int(tt.feature[q])]] += tt.impurity[q] * tt.weighted_n_node_samples[q] - tt.impurity[L_] * tt.weighted_n_node_samples[L_] - tt.impurity[R_] * tt.weighted_n_node_samples[R_]
+        nb[fcolN[int(tt.feature[q])]] += 1
 ccb = {row['column']: row for row in rbt['contributions']['rows']}
-check('boosted Column Contributions: 3 splits per layer, each on a column', (sum(nb.values()), {c: ccb[c]['splits'] for c in XS}), (3 * cb['kept'], nb))
+check('boosted Column Contributions: 3 splits per layer, each on a column', (sum(nb.values()), {c: ccb[c]['splits'] for c in XN}), (3 * cb['kept'], nb))
+check.near('... and the SS of the residuals each split takes away', max(abs(ccb[c]['value'] - ssb[c]) / max(1, ssb[c]) for c in XN), 0.0, abs_=1e-9)
 rb50 = call('ensemble.fit', table=T, y='y', x=XS, kind='boosted', validation='v', seed=SEED)
 check('the defaults on these data: all 50 layers improve the validation RSquare, so all are kept', (rb50['cumulative']['kept'], rb50['cumulative']['stopped']), (50, False))
-check.near('... and the SS of the residuals each split takes away', max(abs(ccb[c]['value'] - ssb[c]) / max(1, ssb[c]) for c in XS), 0.0, abs_=1e-9)
-rbs = call('ensemble.fit', table=T, y='y', x=XS, kind='boosted', validation='v', seed=SEED, settings={'rowRate': 0.6, 'colRate': 0.5, 'early': False, 'layers': 20, 'splits': 5, 'learn': 0.2})
+rbs = call('ensemble.fit', table=T, y='y', x=XN, kind='boosted', validation='v', seed=SEED, settings={'rowRate': 0.6, 'colRate': 0.5, 'early': False, 'layers': 20, 'splits': 5, 'learn': 0.2})
 gbs = GradientBoostingRegressor(loss='squared_error', n_estimators=20, learning_rate=0.2, max_leaf_nodes=6, max_depth=None, min_samples_leaf=5, subsample=0.6,
-                                max_features=round(0.5 * Pc.X.shape[1]), criterion='squared_error', random_state=SEED).fit(Pc.X[trc], Pc.target[trc])
-check.near('Row and Column Sampling Rates: subsample and max_features (per split in scikit-learn)', {m['set']: m for m in rbs['fit']['measures']}['Test']['rsquare'],
-           metrics.r2_score(Pc.target[Pc.mask(2)], gbs.predict(Pc.X[Pc.mask(2)])), 1e-10)
+                                max_features=round(0.5 * PN.X.shape[1]), criterion='squared_error', random_state=SEED).fit(PN.X[trN], PN.target[trN])
+check.near('Row and Column Sampling Rates: subsample (drawn as scikit-learn draws it) and max_features (per split in scikit-learn)', {m['set']: m for m in rbs['fit']['measures']}['Test']['rsquare'],
+           metrics.r2_score(PN.target[PN.mask(2)], gbs.predict(PN.X[PN.mask(2)])), 1e-10)
 check('Early Stopping off: every layer', (rbs['cumulative']['kept'], rbs['cumulative']['grown']), (20, 20))
+try:
+    from sklearn.ensemble._gradient_boosting import _random_sample_mask
+    rs1, rs2 = np.random.RandomState(3), np.random.RandomState(3)
+    check('sample_mask is scikit-learn\'s _random_sample_mask (the same rows from the same RandomState, draw after draw)',
+          all(np.array_equal(E.sample_mask(137, 80, rs1), _random_sample_mask(137, 80, rs2)) for _ in range(5)), True)
+except ImportError:
+    check('sample_mask is scikit-learn\'s _random_sample_mask', 'no _random_sample_mask to compare with', 'skipped')
 # categorical boosting
-rbc = call('ensemble.fit', table=T, y='cls', x=XS, kind='boosted', validation='v', seed=SEED)
-Pb = pv.prepare(T, 'cls', XS, validation='v')
+rbc = call('ensemble.fit', table=T, y='cls', x=XN, kind='boosted', validation='v', seed=SEED)
+Pb = prep('cls', XN, validation='v')
 trb = Pb.train()
 gbc = GradientBoostingClassifier(n_estimators=rbc['cumulative']['kept'], learning_rate=0.1, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5,
                                  criterion='squared_error', random_state=SEED).fit(Pb.X[trb], Pb.target[trb])
@@ -374,11 +594,57 @@ for k_, name in enumerate(pv.SETS):
     check.near(f'boosted two levels, {name}: AUC = roc_auc_score of GradientBoostingClassifier', MBC[name]['auc'], metrics.roc_auc_score(Pb.target[m], pb_[m, 1]), 1e-10)
 ent = [None if s['stats']['entropy_rsquare'] is None else s['stats']['entropy_rsquare'] for s in rbc['cumulative']['series'] if s['set'] == 'Validation'][0]
 check('categorical boosting stops by the validation Entropy RSquare', int(np.argmax(ent)) + 1 == rbc['cumulative']['kept'], True)
-rb3b = call('ensemble.fit', table=T, y='three', x=XS, kind='boosted', validation='v', seed=SEED, settings={'early': False, 'layers': 15})
-gb3 = GradientBoostingClassifier(n_estimators=15, learning_rate=0.1, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5, criterion='squared_error', random_state=SEED).fit(P3.X[tr], P3.target[tr])
-check.near('three levels (beyond JMP, which boosts two): a tree per level per layer, log_loss as scikit-learn\'s', {m['set']: m for m in rb3b['fit']['measures']}['Validation']['mean_neg_log_p'],
-           metrics.log_loss(P3.target[P3.mask(1)], P3.proba(gb3, P3.X[P3.mask(1)]), labels=[0, 1, 2]), 1e-10)
+rb3b = call('ensemble.fit', table=T, y='three', x=XN, kind='boosted', validation='v', seed=SEED, settings={'early': False, 'layers': 15, 'rowRate': 0.8})
+gb3 = GradientBoostingClassifier(n_estimators=15, learning_rate=0.1, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5, criterion='squared_error', subsample=0.8,
+                                 random_state=SEED).fit(P3N.X[P3N.train()], P3N.target[P3N.train()])
+check.near('three levels (beyond JMP, which boosts two): a tree per level per layer, log_loss as GradientBoostingClassifier\'s (row sampling too)', {m['set']: m for m in rb3b['fit']['measures']}['Validation']['mean_neg_log_p'],
+           metrics.log_loss(P3N.target[P3N.mask(1)], P3N.proba(gb3, P3N.X[P3N.mask(1)]), labels=[0, 1, 2]), 1e-10)
 check('... 3 trees in each of the 15 layers', sum(row['splits'] for row in rb3b['contributions']['rows']), 15 * 3 * 3)
+
+# ---- a boosted tree with a nominal X: each layer's tree orders its levels by their mean residual ------------------------------
+rbg = call('ensemble.fit', table=T, y='y2', x=['x1', 'g4', 'o3'], kind='boosted', validation='v', seed=SEED, settings={'layers': 60, 'learn': 0.2})
+P2b = prep('y2', ['x1', 'g4', 'o3'], validation='v')
+tr2 = P2b.train()
+nom2, ord2 = cat_cols(P2b)
+yt2 = P2b.target[tr2]
+rs_ = np.random.RandomState(SEED)
+raw_t = np.full(len(yt2), np.mean(yt2))
+raw_a = np.full(len(P2b.index), np.mean(yt2))
+curve = []
+for i in range(rbg['cumulative']['grown']):
+    res_ = yt2 - raw_t
+    rk_ = {j: ranks_ref(P2b.X[tr2][:, j], res_, np.ones(len(yt2)), u) for j, u in nom2.items()}
+    tree_ = DecisionTreeRegressor(criterion='squared_error', max_leaf_nodes=4, min_samples_leaf=5, random_state=rs_).fit(recode_ref(P2b.X[tr2], rk_, ord2), res_)
+    raw_t += 0.2 * tree_.predict(recode_ref(P2b.X[tr2], rk_, ord2))
+    raw_a += 0.2 * tree_.predict(recode_ref(P2b.X, rk_, ord2))
+    curve.append(metrics.r2_score(P2b.target[P2b.mask(1)], raw_a[P2b.mask(1)]))
+check.near('a nominal X in the boosted tree: layer by layer, a tree on the residuals with g4 in the order of its levels\' mean residual (pandas), the validation curve',
+           mx(next(s for s in rbg['cumulative']['series'] if s['set'] == 'Validation')['stats']['rsquare'], curve), 0.0, abs_=1e-10)
+MB2 = E.model_of(T, None, 'y2', ['x1', 'g4', 'o3'], 'boosted', validation='v', seed=SEED, settings={'layers': 60, 'learn': 0.2})
+P2 = MB2.P
+fsb = []
+for layer in MB2.fits[0].layers[:10]:
+    tree_, maps_ = layer[0]
+    t_ = tree_.tree_
+    j4 = P2.groups['g4'][0]
+    for node in np.flatnonzero(t_.children_left >= 0):
+        if t_.feature[node] == j4:
+            rk = dict(maps_)[j4]
+            fsb.append(frozenset(lv for i, lv in enumerate('abcd') if rk[i] <= t_.threshold[node]))
+            break
+check('... its first layers split g4 into {a, c} and {b, d}', (bool(fsb), set(fsb[:3]) <= {frozenset('ac'), frozenset('bd')}), (True, True))
+# the Newton step of a two-level response's leaves, with a nominal X
+MBc = E.model_of(T, None, 'cls', XS, 'boosted', validation='v', seed=SEED, settings={'early': False, 'layers': 3})
+Pbc = MBc.P
+trc_ = Pbc.train()
+y01 = (Pbc.target[trc_] == 1).astype(float)
+p0 = np.clip(y01.mean(), np.finfo(float).eps, 1 - np.finfo(float).eps)
+tree_, maps_ = MBc.fits[0].layers[0][0]
+res_ = y01 - p0
+leaf_ = tree_.apply(E.recode(Pbc.X[trc_], maps_))
+want_v = {int(lf): float(np.sum(res_[leaf_ == lf]) / np.sum(p0 * (1 - p0) * np.ones(int((leaf_ == lf).sum())))) for lf in np.unique(leaf_)}
+check.near('two levels: a leaf\'s value is the Newton step Σ(y - p) / Σ p(1 - p) of its rows (from the log odds of the training share)', max(abs(tree_.tree_.value[lf, 0, 0] - v_) for lf, v_ in want_v.items()), 0.0, abs_=1e-12)
+check('... and the layer\'s g is in the order of its levels\' mean residual', np.array_equal(dict(maps_)[Pbc.groups['g'][0]], ranks_ref(Pbc.X[trc_][:, Pbc.groups['g'][0]], res_, np.ones(len(res_)), 3), equal_nan=True), True)
 
 # ---- Multiple Fits ------------------------------------------------------------------------------------------------------
 rm = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, settings={'terms': 2, 'maxTerms': 5, 'multi': True, 'trees': 30})
@@ -406,9 +672,9 @@ F0 = E.model_of(T, None, 'y', XS, 'forest', validation='v', seed=SEED)
 fit0 = F0.fits[F0.best]
 x2m = prof['factors'][1]['current']
 grid = np.linspace(prof['factors'][0]['min'], prof['factors'][0]['max'], 9)
-Xg = Pc.encode_settings([{'x1': v, 'x2': x2m, 'g': 'b', 'x3': prof['factors'][3]['current'], 'x4': prof['factors'][4]['current']} for v in grid])
+Xg = F0.P.encode_settings([{'x1': v, 'x2': x2m, 'g': 'b', 'x3': prof['factors'][3]['current'], 'x4': prof['factors'][4]['current']} for v in grid])
 check.near('the profiler: the forest\'s prediction over x1, the others at their current values', mx(prof['responses'][0]['traces'][0]['pred'], fit0.predict(Xg)), 0.0, abs_=1e-12)
-check.near('... the current prediction', prof['responses'][0]['current']['pred'], float(fit0.predict(Pc.encode_settings([{'x1': 0.5, 'x2': x2m, 'g': 'b', 'x3': prof['factors'][3]['current'], 'x4': prof['factors'][4]['current']}]))[0]), 1e-12)
+check.near('... the current prediction', prof['responses'][0]['current']['pred'], float(fit0.predict(F0.P.encode_settings([{'x1': 0.5, 'x2': x2m, 'g': 'b', 'x3': prof['factors'][3]['current'], 'x4': prof['factors'][4]['current']}]))[0]), 1e-12)
 profc = call('ensemble.profile', table=T, y='three', x=XS, kind='boosted', validation='v', seed=SEED)
 check('a categorical response: a probability row per level, adding to 1', ([p_['name'] for p_ in profc['responses']], bool(np.allclose(np.sum([p_['traces'][0]['pred'] for p_ in profc['responses']], axis=0), 1))),
       (['Prob[lo]', 'Prob[mid]', 'Prob[hi]'], True))
@@ -417,11 +683,11 @@ check('the profiler\'s Assess Variable Importance runs on the model', 'error' no
 tv = call('ensemble.tree', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, index=2)
 check('Show Trees: tree 2 of the kept trees, from All Rows, as many leaves as splits + 1',
       (tv['index'], tv['count'], tv['lines'][0]['text'], sum(1 for ln in tv['lines'] if ln['leaf'])), (2, kept, 'All Rows', r['trees'][1]['splits'] + 1))
-check('... each split in words, and each node\'s count and mean', all(('<=' in ln['text'] or '>' in ln['text'] or '=' in ln['text'] or '≠' in ln['text']) for ln in tv['lines'][1:]) and 'estimate' in tv['lines'][0], True)
-check.near('... the root\'s mean is the in-bag mean', tv['lines'][0]['estimate'], float(rf.estimators_[1].tree_.value[0, 0, 0]), 1e-12)
+check('... each split in words (a value cut, or the levels on each side), and each node\'s count and mean',
+      all(('<=' in ln['text'] or '>' in ln['text'] or re.fullmatch(r'g\([a-c](, [a-c])*\)', ln['text'])) for ln in tv['lines'][1:]) and 'estimate' in tv['lines'][0], True)
+check.near('... the root\'s mean is the in-bag mean', tv['lines'][0]['estimate'], float(np.sum(ref[1]['inbag'] * Pc.target[trc]) / ref[1]['inbag'].sum()), 1e-12)
 tvb = call('ensemble.tree', table=T, y='cls', x=XS, kind='boosted', validation='v', seed=SEED, index=1, detail='names')
 check('a boosted layer with names only: 3 splits, 4 leaves', (sum(1 for ln in tvb['lines'] if ln['leaf']), 'estimate' in tvb['lines'][0], tvb['what']), (4, False, 'Layer'))
-check('a one-hot split in words: g = b or g ≠ b', E._condition(Pc, Pc.features.index('g[b]'), True, 0.5), 'g ≠ b')
 pm = call('ensemble.permutation', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, repeats=3)
 rng2 = np.random.default_rng(SEED)
 Xv = Pc.X[vm]
@@ -436,8 +702,71 @@ for c in XS:
         d_.append(base - metrics.r2_score(Pc.target[vm], fit0.predict(Xp)))
     want[c] = float(np.mean(d_))
 got = {row['column']: row['value'] for row in pm['contributions']['rows']}
-check('permutation importance on the validation rows, a categorical column\'s 0/1 columns shuffled together', (pm['set'], pm['repeats']), ('Validation', 3))
+check('permutation importance on the validation rows, a categorical column shuffled as one', (pm['set'], pm['repeats']), ('Validation', 3))
 check.near('... the fall in r2_score, as computed here with the same draws', max(abs(got[c] - want[c]) for c in XS), 0.0, abs_=1e-12)
+
+# ---- Score Rows: the report's model (kept) on another table, and on rows added since ------------------------------------------
+rk_ = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='v', seed=SEED, settings={'trees': 30}, keep='test-forest')
+Fk = pv.kept('test-forest')['F']
+Mk = pv.kept('test-forest')['M']
+check('ensemble.fit keeps the fit shown under the page\'s key', (Fk is Mk.fits[rk_['shown']], Fk.kept), (True, rk_['cumulative']['kept']))
+go = list(g[:40])
+go[3], go[7] = 'e', None                               # a level the model never saw, and a missing one
+Tother = table({'x1': list(x1[:40] + 0.3), 'x2': list(x2[:40]), 'g': go, 'x3': list(x3[:40]), 'x4': list(x4[:40])}, types={'g': 'nominal'}, levels={'g': ['a', 'b', 'c', 'e']})
+sc = call('ensemble.score', table=Tother, keep='test-forest', kind='forest')
+Xo, rows_o = pv.score_frame(Mk.P, Tother)
+check.near('Score Rows: another open table, by the report\'s forest (its columns found by name)', mx(sc['values'], Fk.predict(Xo)), 0.0, abs_=1e-12)
+check('... every row, a Predicted column and no note', (sc['rows'], sc['name'], sc['note']), (list(range(40)), 'Predicted y', None))
+check('... a level the model never saw is read as a missing value (-1, NaN for the trees) and predicted', (float(Xo[3, Mk.P.groups['g'][0]]), bool(np.isfinite(sc['values'][3]))), (-1.0, True))
+T2cols = {k_: v_[:600] for k_, v_ in cols.items()}
+T2 = table(T2cols, types=TYPES, levels=LEVELS)
+call('ensemble.fit', table=T2, y='y', x=XS, kind='boosted', validation='v', seed=SEED, settings={'layers': 40}, keep='test-boosted')
+Fb = pv.kept('test-boosted')['F']
+T2cols = {k_: v_[:650] for k_, v_ in cols.items()}
+T2cols['v'] = T2cols['v'][:600] + ['Training'] * 50       # 50 rows added since the report fitted, with a response
+table(T2cols, types=TYPES, levels=LEVELS, tid=T2)
+data.TABLES[T2]['version'] = 2                          # the page sends a changed table with a new version
+new_rows = list(range(600, 650))
+sb_ = call('ensemble.score', table=T2, keep='test-boosted', kind='boosted', target_rows=new_rows)
+Xn, rows_n = pv.score_frame(pv.kept('test-boosted')['M'].P, T2, new_rows)
+check.near('Score Rows: rows added to the report\'s table since it fitted, by the boosted tree as it fitted (kept)', mx(sb_['values'], Fb.predict(Xn)), 0.0, abs_=1e-12)
+refit = call('ensemble.save', table=T2, y='y', x=XS, kind='boosted', validation='v', seed=SEED, settings={'layers': 40})
+check('... not the model Save Predicteds fits again on the changed table (the new rows train it)', mx(sb_['values'], np.array(refit['values'])[[refit['rows'].index(i) for i in new_rows]]) > 1e-6, True)
+sc3 = call('ensemble.score', table=Tother, keep='test-three', source=T, y='three', x=XS, kind='forest', validation='v', seed=SEED, settings={'trees': 10})
+check('... a categorical response: Prob[] of every level and the most likely; without the kept model it is fitted again, and said',
+      (sc3['names'], sc3['most_name'], len(sc3['prob']), sc3['note'] is not None, bool(np.allclose(np.sum(sc3['prob'], axis=1), 1))), (['Prob[lo]', 'Prob[mid]', 'Prob[hi]'], 'Most Likely three', 40, True, True))
+try:
+    call('ensemble.score', table=table({'x1': [0.1, 0.2]}), keep='test-forest', kind='forest')
+    check('Score Rows: a table without the model\'s columns is an error that names them', 'no error', 'error')
+except Exception as ex:
+    check('Score Rows: a table without the model\'s columns is an error that names them', ('x2' in str(ex), 'by name' in str(ex)), (True, True))
+
+# ---- a K-fold Validation column: every row trains, and a Crossvalidation line by its folds ----------------------------------
+fold_k = (kfv - 1).astype(int)
+rcv = call('ensemble.fit', table=T, y='y', x=XS, kind='forest', validation='kf', seed=SEED, settings={'trees': 20})
+Pk = prep('y', XS, validation='kf')
+check('a K-fold Validation column: every row trains (no early stopping), Overall Statistics adds a Crossvalidation line',
+      ([m['set'] for m in rcv['fit']['measures']], rcv['cumulative']['kept'], [v for k_, v, *_ in rcv['spec']['left'] if k_ == 'Early Stopping'], rcv['crossvalidation']['k']),
+      (['Training', 'Out of Bag', 'Crossvalidation'], 20, ['Off (no validation rows)'], 4))
+oofk = np.zeros(n)
+for f_ in range(4):
+    Q = pv.prepare(T, 'y', XS, validation='kf', coding='ordinal')
+    Q.sets = np.where(fold_k != f_, 0, 2)
+    oofk[fold_k == f_] = np.mean([q['pred'] for q in forest_ref(Q, 20, SEED, E.features_for(4, 5, 5))], axis=0)[fold_k == f_]
+cvm = next(m for m in rcv['fit']['measures'] if m['set'] == 'Crossvalidation')
+check.near('... each fold predicted by the forest of the same settings grown on the other folds (written anew): RSquare', cvm['rsquare'], metrics.r2_score(y, oofk), 1e-10)
+check('... per fold too, and the note says so', (len(rcv['crossvalidation']['folds']), any('Crossvalidation: each row predicted by the forest' in t_ for t_ in rcv['notes'])), (4, True))
+rcb = call('ensemble.fit', table=T, y='y', x=XN, kind='boosted', validation='kf', seed=SEED, settings={'layers': 25, 'rowRate': 0.8})
+PNk = prep('y', XN, validation='kf')
+oofb = np.zeros(n)
+for f_ in range(4):
+    fr = fold_k != f_
+    gbf = GradientBoostingRegressor(loss='squared_error', n_estimators=25, learning_rate=0.1, max_leaf_nodes=4, max_depth=None, min_samples_leaf=5, subsample=0.8,
+                                    criterion='squared_error', random_state=SEED).fit(PNk.X[fr], PNk.target[fr])
+    oofb[fold_k == f_] = gbf.predict(PNk.X[fold_k == f_])
+check.near('... the boosted tree\'s: GradientBoostingRegressor fitted without each fold', next(m for m in rcb['fit']['measures'] if m['set'] == 'Crossvalidation')['rsquare'], metrics.r2_score(y, oofb), 1e-10)
+rcc = call('ensemble.fit', table=T, y='three', x=XS, kind='boosted', validation='kf', seed=SEED, settings={'layers': 15})
+check('... a categorical response: its Crossvalidation line has the Entropy RSquare and the Misclassification Rate', all(k_ in next(m for m in rcc['fit']['measures'] if m['set'] == 'Crossvalidation') for k_ in ('entropy_rsquare', 'misclassification')), True)
 
 # ---- errors ----------------------------------------------------------------------------------------------------------
 one = table({'y': ['a'] * 30 + ['b'] * 3, 'x': list(range(33)), 'v': ['Training'] * 30 + ['Validation'] * 3}, types={'y': 'nominal', 'v': 'nominal'})
@@ -500,9 +829,13 @@ cases = [
     ('a forest, three levels, JMP\'s probabilities', dict(y='three', x=XS, kind='forest', validation='v', settings={'trees': 30})),
     ('a forest, Informative Missing, weight and frequency, a numeric Validation column', dict(y='y', x=['x1m', 'x2', 'gm', 'x3'], kind='forest', validation='vn', weight='w', freq='f', settings={'trees': 25, 'minSplits': 4})),
     ('a forest grown to its maximum, a row subset, no validation', dict(y='cls', x=XS, kind='forest', settings={'trees': 15, 'stop': 'none'}, rows=list(range(0, 800)))),
+    ('a forest, two groups of levels and an ordinal X, a bootstrap rate', dict(y='y2', x=['x1', 'g4', 'o3', 'o3n'], kind='forest', validation='v', settings={'trees': 20, 'rate': 0.7})),
     ('a boosted tree, continuous, early stopping', dict(y='y', x=XS, kind='boosted', validation='v')),
     ('a boosted tree, two levels, sampling rates', dict(y='cls', x=XS, kind='boosted', validation='v', settings={'rowRate': 0.7, 'colRate': 0.6})),
     ('a boosted tree, three levels, a validation portion', dict(y='three', x=XS, kind='boosted', portion=0.3, settings={'layers': 20})),
+    ('a boosted tree, a nominal X with missing values and an ordinal X', dict(y='y2', x=['x1', 'gm', 'o3', 'g4'], kind='boosted', validation='v', settings={'layers': 30, 'rowRate': 0.8})),
+    ('a forest, a K-fold Validation column: the Crossvalidation line too', dict(y='three', x=XS, kind='forest', validation='kf', settings={'trees': 15})),
+    ('a boosted tree, a K-fold Validation column: the Crossvalidation line too', dict(y='y', x=XS, kind='boosted', validation='kf', settings={'layers': 20, 'rowRate': 0.7})),
 ]
 for label, kw in cases:
     res = call('ensemble.fit', table=T, seed=SEED, table_name='data', **kw)
@@ -519,6 +852,7 @@ if p_.returncode:
     print(p_.stderr[-2000:])
 gotp = {ln.split()[1]: float(ln.split()[2]) for ln in p_.stdout.splitlines() if ln.startswith('permutation ')}
 check.near('the permutation importance code gives the report\'s numbers', max((abs(gotp.get(row['column'], math.inf) - row['value']) for row in pmb['contributions']['rows']), default=math.inf), 0.0, abs_=1e-9)
+check('the code writes out the helpers it uses (level_ranks, recode, boost_layer) and no scikit-learn ensemble', ('def level_ranks' in res['code'], 'def boost_layer' in res['code'], 'sklearn.ensemble' in res['code']), (True, True, False))
 
 # ---- the graphs' matplotlib code, run on a CSV export: every graph of the report --------------------------------
 from test_predictive import SEP, check_contrib_native, check_shared_native, joined, run_graph as run_graph_native  # noqa: E402

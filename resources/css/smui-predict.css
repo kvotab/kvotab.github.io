@@ -1,0 +1,35 @@
+/* ==========================================================================
+   SMUI.HTML: WHAT THE PREDICTIVE PLATFORMS SHARE (smui-predict.js)
+   The Decision Threshold's controls (the threshold field and slider), the
+   best line of the ROC Table, the Naive Model's lines of the Measures of
+   Fit, Group Metrics' reference group, and the scroller of a wide table.
+   Colours are kvot.css's tokens, so both themes read. Class prefix sm-pred-.
+   ========================================================================== */
+
+/* ---- Decision Threshold: the threshold field, Apply and the slider ---------- */
+.sm-pred-cut { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 2px 0 8px; font-size: 12px; }
+.sm-pred-cut label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.sm-pred-input {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; width: 5.5em;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.sm-pred-input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+.sm-pred-slider { width: 200px; max-width: 100%; margin: 0; accent-color: var(--color-kvot-accent); }
+
+/* ---- a wide table scrolls by itself on a narrow screen ------------------------ */
+.sm-pred-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-pred-scroll > table.sm-rt { margin-bottom: 8px; }
+
+/* ---- the ROC Table's best cut, the Naive Model, Group Metrics' reference ----- */
+.sm-rt td.sm-pred-best { font-weight: 700; color: var(--accent-text); }
+.sm-rt td.sm-pred-naive { color: var(--text-muted); font-style: italic; }
+.sm-rt td.sm-pred-ref { font-weight: 600; }
+.sm-rt tr:has(td.sm-pred-ref) td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+
+/* ---- Group Metrics: per-group thresholds ------------------------------------- */
+.sm-pred-groups { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 2px 0 8px; font-size: 12px; }
+.sm-pred-groups label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+
+@media (max-width: 560px) {
+  .sm-pred-slider { width: 100%; }
+}

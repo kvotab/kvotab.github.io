@@ -669,26 +669,61 @@ def gc_fmt(v, sig=7):
     return '−' + s[1:] if s.startswith('-') else s
 
 
-def gc_groups(tid_, c, rows_):
-    """A zone's groups as the page makes them: a categorical column's levels, or a continuous one's five bins of about equal counts."""
+def gc_jmp_q(s_, p):
+    """JMP's quantile of sorted values: the (n + 1)p-th value, interpolated."""
+    n_ = len(s_)
+    h_ = (n_ + 1) * p
+    if h_ <= 1:
+        return float(s_[0])
+    if h_ >= n_:
+        return float(s_[-1])
+    k_ = int(math.floor(h_))
+    return float(s_[k_ - 1] + (h_ - k_) * (s_[k_] - s_[k_ - 1]))
+
+
+def gc_bin_cuts(v, n=5, method='quantile'):
+    """Make Binning Column's cuts, from their definitions: n bins of about equal counts at JMP's quantiles, or bins of one
+    round width (1, 2, 2.5, 5 or 10 times a power of ten, the nearest to the range over n) from a whole multiple of it."""
+    s_ = np.sort(np.asarray(v, dtype=float))
+    lo, hi = float(s_[0]), float(s_[-1])
+    if method == 'quantile':
+        cuts = [gc_jmp_q(s_, i / n) for i in range(1, n)]
+    else:
+        raw = (hi - lo) / n
+        p_ = 10 ** math.floor(math.log10(raw))
+        size = min((m_ * p_ for m_ in (1, 2, 2.5, 5, 10)), key=lambda q: abs(math.log(q / raw)))
+        start = math.floor(lo / size) * size
+        cuts, x_ = [], start + (size if start <= lo else 0)
+        while x_ <= hi and len(cuts) < 1000:
+            cuts.append(float(f'{x_:.12g}'))
+            x_ += size
+    cuts = [c_ for c_ in sorted({float(f'{c_:.12g}') for c_ in cuts}) if lo < c_ <= hi]
+    if cuts and cuts[-1] == hi:
+        cuts.pop()
+    return cuts, lo, hi
+
+
+def gc_groups(tid_, c, rows_, spec=None):
+    """A zone's groups as the page makes them: a categorical column's levels; a continuous one with more than 10 distinct
+    values (or with Levels set: spec, { n, method }) in bins as Make Binning Column cuts them, five of about equal counts by
+    default, labelled by their ranges."""
     if not gc_is_cat(tid_, c):
         v = np.asarray(_data.raw(tid_, c, rows_), dtype=float)
-        v = np.sort(v[np.isfinite(v)])
-        if len(np.unique(v)) > 10:
-            edges = [v[0]]
-            for p in (0.2, 0.4, 0.6, 0.8):
-                q = v[int(math.floor(p * (len(v) - 1)))]
-                if q > edges[-1]:
-                    edges.append(q)
-            if v[-1] > edges[-1]:
-                edges.append(v[-1])
-            return {'col': c, 'values': list(range(len(edges) - 1)), 'labels': [f'{gc_fmt(edges[k])}–{gc_fmt(edges[k + 1])}' for k in range(len(edges) - 1)], 'edges': [float(q) for q in edges]}
+        v = v[np.isfinite(v)]
+        if spec or len(np.unique(v)) > 10:
+            n_ = int((spec or {}).get('n') or 5)
+            method = 'width' if (spec or {}).get('method') == 'width' else 'quantile'
+            cuts, lo, hi = gc_bin_cuts(v, n_, method)
+            edges = [lo] + cuts + [hi]
+            lab = lambda q: gc_fmt(q).replace('−', '-')  # noqa: E731
+            labels = [f'{lab(edges[k_])} - {lab(edges[k_ + 1])}' for k_ in range(len(edges) - 1)]
+            return {'col': c, 'values': list(range(len(labels))), 'labels': labels, 'bins': {'cuts': cuts, 'method': method, 'n': n_}}
     lv = gc_levels(tid_, c, rows_)
-    return {'col': c, 'values': lv, 'labels': [gc_label(q) for q in lv], 'edges': None}
+    return {'col': c, 'values': lv, 'labels': [gc_label(q) for q in lv], 'bins': None}
 
 
 def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=None, color=None, size=None, freq=None,
-            y_mode='side', w=640, h=420, log=None, where=None):
+            y_mode='side', w=640, h=420, log=None, where=None, bins=None, axes=None, order=None, marker=None, map_=None):
     """Graph Builder's plan of a graph, as the page's Env.plan makes it for these zones and elements."""
     n = _data.TABLES[tid_]['n']
     r0 = np.arange(n)
@@ -721,7 +756,7 @@ def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=Non
     G = None
     gcol = overlay or (color if color and gc_is_cat(tid_, color) else None)
     if gcol:
-        G = dict(gc_groups(tid_, gcol, r0), zone='Overlay' if overlay else 'Color')
+        G = dict(gc_groups(tid_, gcol, r0, (bins or {}).get(gcol)), zone='Overlay' if overlay else 'Color')
     C = None
     if color:
         if gc_is_cat(tid_, color):
@@ -733,9 +768,9 @@ def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=Non
     if size:
         v = np.asarray(_data.raw(tid_, size, r0), dtype=float)
         S = {'col': size, 'range': [float(np.nanmin(v)), float(np.nanmax(v))]}
-    W_ = gc_groups(tid_, wrap, r0) if wrap else None
-    GX_ = gc_groups(tid_, gx, r0) if gx and not wrap else None
-    GY_ = gc_groups(tid_, gy, r0) if gy and not wrap else None
+    W_ = gc_groups(tid_, wrap, r0, (bins or {}).get(wrap)) if wrap else None
+    GX_ = gc_groups(tid_, gx, r0, (bins or {}).get(gx)) if gx and not wrap else None
+    GY_ = gc_groups(tid_, gy, r0, (bins or {}).get(gy)) if gy and not wrap else None
     if W_:
         nC = math.ceil(math.sqrt(len(W_['values'])))
         nR = math.ceil(len(W_['values']) / nC)
@@ -767,7 +802,7 @@ def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=Non
             'legend': {'on': any_legend, 'pos': 'right', 'title': ltitle}, 'series_names': names_,
             'titles': {'x': [title_of('x', s) for s in xsets], 'y': [title_of('y', s) for s in ysets], 'shared_x': nC > 1 and len(xsets) == 1 and not exclusive},
             'alpha': 0.05, 'panel': [(w - 74 - (130 if any_legend else 0)) / nC, (h - 80) / nR], 'exclusive': exclusive,
-            'colorbar': bool(C and not C['cat'] and 'points' in types)}
+            'colorbar': bool(C and not C['cat'] and 'points' in types), 'axes': axes or {}, 'order': order or {}, 'marker': marker or {}, 'map': map_}
 
 
 # the elements as the page records them in the plan (their properties resolved)
@@ -1273,5 +1308,261 @@ code, out, err = gc_run('overlay', {'size': [760, 456], 'ys': [{'col': 'z', 'poi
 AX = gc_axes(out)
 srt = pdf.sort_values('x', kind='stable')
 check('Overlay Plot: each Y joined in the order of X, pop on the right axis', [(L_['label'], L_['y'] == srt[L_['label']].tolist()) for A_ in AX for L_ in A_['lines']], [('z', True), ('pop', True)])
+
+
+# ---- Graph Builder's Levels, Axis Settings, Order By, Marker Size and Transparency, and maps ----------------------
+# Levels: a continuous grouping column in bins as Make Binning Column cuts them (a bin holds its lower cut); the rows of
+# each bin found here with searchsorted on the cuts worked out from their definitions (JMP's quantile, the round width)
+for zone_, spec_ in (('overlay', None), ('overlay', {'n': 3, 'method': 'quantile'}), ('overlay', {'n': 4, 'method': 'width'})):
+    plan_ = gb_plan(tid, [el('points')], x=['x'], y=['y'], overlay='z', bins={'z': spec_} if spec_ else None)
+    code, out, err = gc_run('builder', plan_, tid, rows=rows)
+    cuts_ = plan_['group']['bins']['cuts']
+    S_ = gc_axes(out)[0]['scatter'] if out else []
+    want = sorted((round(float(x[r]), 12), round(float(y[r]), 12), PALETTE[int(np.searchsorted(cuts_, z[r], side='right'))]) for r in rows if okxy[r] and np.isfinite(z[r]))
+    got = sorted((round(p_[0], 12), round(p_[1], 12), gc_hex(c_)) for S in S_ for p_, c_ in zip(S['xy'], S['colors'] * len(S['xy']) if len(S['colors']) == 1 else S['colors']))
+    what = 'five of equal counts (automatic)' if not spec_ else f'{spec_["n"]} of {"equal counts" if spec_["method"] == "quantile" else "an equal width"}'
+    check(f'Levels, {what}: every point in its bin\'s colour (a bin holds its lower cut)', (err, got == want), (None, True))
+    check(f'Levels, {what}: the legend, the bins\' ranges', out['figures'][0]['legend'] if out else None, plan_['group']['labels'])
+cq_, lo_, hi_ = gc_bin_cuts(x, 4, 'quantile')
+check('Levels, 4 of equal counts: the cuts are JMP\'s quartiles of x', cq_, sorted({float(f'{q:.12g}') for q in (np.quantile(x, [0.25, 0.5, 0.75], method='weibull'))} - {float(x.min()), float(x.max())}))
+plan_ = gb_plan(tid, [el('points')], x=['x'], y=['y'], wrap='x', bins={'x': {'n': 3, 'method': 'width'}})
+code, out, err = gc_run('builder', plan_, tid, rows=rows)
+cw_ = plan_['wrap']['bins']['cuts']
+AX = [A_ for A_ in gc_axes(out) if A_['shown']]
+per = [sorted(round(p_[0], 12) for S in A_['scatter'] for p_ in S['xy']) for A_ in AX]
+want = [sorted(round(float(x[r]), 12) for r in rows if okxy[r] and int(np.searchsorted(cw_, x[r], side='right')) == k_) for k_ in range(len(cw_) + 1)]
+check('Levels on Wrap, 3 of an equal width: a panel for each bin, titled with its range, holding its rows', ([A_['title'] for A_ in AX], per == want), (plan_['wrap']['labels'], True))
+
+# Axis Settings (smui-axis.js): the code gives each axis its scale, ends, ticks, order and reference lines
+axs_ = {'y': [{'log': True, 'min': 2, 'max': 40, 'inc': 2, 'refs': [{'value': 10, 'to': None, 'label': 'ten', 'color': 'red', 'dash': 'dash'}, {'value': 20, 'to': 30, 'label': '', 'color': 'blue', 'dash': 'solid'}]}],
+        'x': [{'reverse': True, 'min': 1}]}
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], axes=axs_), tid, rows=rows)
+A = gc_axes(out)[0]
+check('Axis Settings: a log Y from 2 to 40, a tick every × 2 from the minimum', (err, A['yscale'], A['ylim'], [round(t_, 9) for t_ in A['yticks']]), (None, 'log', [2.0, 40.0], [2.0, 4.0, 8.0, 16.0, 32.0]))
+ref_ = [L_ for L_ in A['lines'] if L_['y'] == [10.0, 10.0]]
+check('Axis Settings: the reference line at 10, red and dashed, labelled', ([(gc_hex(L_['color']), L_['ls']) for L_ in ref_], any(a_['s'] == 'ten' for a_ in A['annotations'])), ([('#b0413e', '--')], True))
+spans = [sorted({round(q[1], 9) for q in P_['xy']}) for P_ in A['polygons'] if gc_hex(P_['fc']) == '#1f4e79'] + \
+    [[round(b_['y'], 9), round(b_['y'] + b_['h'], 9)] for b_ in A['bars'] if gc_hex(b_['fc']) == '#1f4e79']   # a Rectangle in newer matplotlib, a Polygon before
+check('Axis Settings: the reference range from 20 to 30, in blue', spans, [[20.0, 30.0]])
+check('Axis Settings: X reversed, its minimum 1 on the right', (A['xlim'][1], A['xlim'][0] > A['xlim'][1]), (1.0, True))
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], gx='g', axes={'y': [{'min': 0, 'max': 20, 'inc': 5}]}), tid, rows=rows)
+check('Axis Settings with Group X: every panel from 0 to 20, a tick every 5', [(A_['ylim'], A_['yticks']) for A_ in gc_axes(out)], [([0.0, 20.0], [0.0, 5.0, 10.0, 15.0, 20.0])] * 3)
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y', 'z'], axes={'y': [{'min': -5, 'max': 25}, None]}), tid, rows=rows)
+AX = gc_axes(out)
+check('Axis Settings of one of two Y columns side by side: its row of panels only', (AX[0]['ylim'], AX[1]['ylim'] != [-5.0, 25.0]), ([-5.0, 25.0], True))
+code, out, err = gc_run('builder', gb_plan(tid, [el('bar', stat='n')], x=['g'], axes={'y': [{'max': 200, 'refs': [{'value': 100, 'label': 'half', 'color': 'gray', 'dash': 'dot'}]}]}), tid, rows=rows)
+A = gc_axes(out)[0]
+check('Axis Settings of a count axis: its maximum, and a dotted line at 100', (A['ylim'][1], [L_['ls'] for L_ in A['lines'] if L_['y'] == [100.0, 100.0]]), (200.0, [':']))
+day = 86400000
+tdt = table({'d': [float(np.datetime64('2020-01-06', 'ms').astype(np.int64) + k_ * 7 * day) for k_ in range(40)], 'v': np.arange(40.0)})
+_data.TABLES[tdt]['meta']['d']['format'] = {'kind': 'date'}
+lo_ms = float(np.datetime64('2020-02-03', 'ms').astype(np.int64))
+code, out, err = gc_run('builder', gb_plan(tdt, [el('points')], x=['d'], y=['v'], axes={'x': [{'min': lo_ms, 'max': lo_ms + 70 * day, 'inc': 14, 'refs': [{'value': lo_ms + 35 * day, 'label': 'mid', 'color': 'green', 'dash': 'solid'}]}]}), tdt, name='Dates', dates=['d'])
+A = gc_axes(out)[0] if out else {}
+check('Axis Settings on a date X: from 2020-02-03 for 70 days (matplotlib\'s days), a tick every 14 days, a line at the 35th', (err, A.get('xlim'), [round(t_ - A['xticks'][0], 9) for t_ in A.get('xticks', [])][:6], [L_['x'] for L_ in A.get('lines', []) if L_['x'][0] == L_['x'][-1]]),
+      (None, [lo_ms / day, lo_ms / day + 70], [0, 14, 28, 42, 56, 70], [[lo_ms / day + 35] * 2]))
+
+# Order By: a categorical axis's levels by a statistic of another column, the code sorting them from the data as the page
+gdf_ = gdf.copy()
+for label, o_, key_ in (('the mean of y, descending', {'by': 'y', 'stat': 'mean', 'desc': True}, gdf_.groupby('g')['y'].mean().sort_values(ascending=False)),
+                        ('the count of rows, ascending', {'by': None, 'desc': False}, gdf_.groupby('g').size().sort_values(kind='stable')),
+                        ('the sum of y, ascending', {'by': 'y', 'stat': 'sum', 'desc': False}, gdf_.groupby('g')['y'].sum().sort_values())):
+    code, out, err = gc_run('builder', gb_plan(tid, [el('bar', stat='mean' if o_['by'] else 'n')], x=['g'], y=['y'] if o_['by'] else [], order={'g': o_}), tid, rows=rows)
+    A = gc_axes(out)[0]
+    check(f'Order By {label}: the levels in that order', (err, A['xticklabels']), (None, list(key_.index)))
+    if o_['by']:
+        check.near(f'Order By {label}: each bar the mean of its level, in that order', float(max(abs(b_['h'] - gdf_[gdf_['g'] == lv_]['y'].mean()) for b_, lv_ in zip(sorted(A['bars'], key=lambda b_: b_['x']), key_.index))), 0.0, abs_=1e-9)
+rep_ = np.repeat(np.arange(N), f.astype(int))
+med_ = {lv_: float(np.quantile(y[rep_][(g[rep_] == lv_) & np.isfinite(y[rep_])], 0.5, method='weibull')) for lv_ in lv}
+code, out, err = gc_run('builder', gb_plan(tid, [el('bar', stat='median')], x=['g'], y=['y'], freq='f', order={'g': {'by': 'y', 'stat': 'median', 'desc': True}}), tid, rows=rows)
+check('Order By the median of y with Freq (a row counted f times, JMP\'s quantile), descending', gc_axes(out)[0]['xticklabels'], sorted(lv, key=lambda lv_: -med_[lv_]))
+
+# Marker Size and Transparency: the points' diameter in pixels and their opacity
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], marker={'size': 10, 'alpha': 0.4}), tid, rows=rows)
+S_ = gc_axes(out)[0]['scatter'][0]
+a3 = lambda px: float(f'{(px * 0.72) ** 2:.3g}')  # noqa: E731   (the code's areas, to 3 digits)
+check('Marker Size 10 and Transparency 0.4: the points\' size (10 pixels, 7.2 points across) and opacity', (sorted({round(q, 6) for q in S_['sizes']}), sorted({c_[-2:] for c_ in S_['colors']})), ([a3(10)], ['66']))
+code, out, err = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], size='f', marker={'size': 12}), tid, rows=rows)
+code0, out0, err0 = gc_run('builder', gb_plan(tid, [el('points')], x=['x'], y=['y'], size='f'), tid, rows=rows)
+check.near('Marker Size with a Size column: every size scaled by 12/6 (areas by 4)', float(np.max(np.abs(np.asarray(gc_axes(out)[0]['scatter'][0]['sizes']) / np.asarray(gc_axes(out0)[0]['scatter'][0]['sizes']) - 4))), 0.0, abs_=1e-9)
+mk_ = {'size': 9, 'alpha': 0.5}
+code, out, err = gc_run('ternary', {'size': [620, 558], 'cols': ['A', 'B', 'C'], 'color': None, 'marker': mk_}, tp, name='Plat')
+S_ = gc_axes(out)[0]['scatter'][0]
+check('Ternary Plot: Marker Size and Transparency', (sorted({round(q, 6) for q in S_['sizes']}), sorted({c_[-2:] for c_ in S_['colors']})), ([a3(9)], ['80']))
+code, out, err = gc_run('scatter3d', {'size': [760, 620], 'cols': ['x', 'y', 'z'], 'color': None, 'marker': mk_}, tp, name='Plat')
+S3 = gc_axes(out)[0]['scatter3d'][0]
+check('Scatterplot 3D: Marker Size and Transparency', (sorted({round(q, 6) for q in S3['sizes']}), sorted({c_[-2:] for c_ in S3['colors']})), ([a3(9)], ['80']))
+code, out, err = gc_run('overlay', {'size': [760, 456], 'ys': [{'col': 'z', 'points': True, 'connect': True}], 'x': 'x', 'group': None, 'overlayY': True, 'sortX': True, 'thru': False, 'marker': mk_}, tp, name='Plat')
+L0 = gc_axes(out)[0]['lines'][0]
+check('Overlay Plot: Marker Size, and Transparency on the points only (the line stays opaque)', (err, round(L0['lw'], 3), L0['color']), (None, round(1.5 * 0.72, 3), PALETTE[0] + 'ff'))
+ns_ = gc_ns(code, pdf, 'Plat')
+check('Overlay Plot: the markers\' face at opacity 0.5 in the code', '_error' not in ns_ and 'markerfacecolor=to_rgba("#2f6690", 0.5), markeredgewidth=0' in code, True)
+code, out, err = gc_run('matrix', dict(mplan, marker=mk_, fit=False, ellipses=False, hist=False), tp, name='Plat')
+check('Scatterplot Matrix: Marker Size and Transparency in every cell', sorted({(round(q, 6), c_[-2:]) for A_ in gc_axes(out) for S in A_['scatter'] for q, c_ in zip(S['sizes'] * len(S['colors']) if len(S['sizes']) == 1 else S['sizes'], S['colors'])}), [(a3(9), '80')])
+
+# Maps: Map Shapes' regions and points on a map, from Plotly's own boundaries (world_110m and usa_110m, read at run time
+# from cdn.plot.ly, never kept in the repository); the code reads a copy beside the CSV first, as the page's does not
+import json  # noqa: E402
+import ssl  # noqa: E402
+import subprocess  # noqa: E402
+import urllib.request  # noqa: E402
+TOPO = {}
+for name_ in ('world_110m', 'usa_110m'):
+    url_ = f'https://cdn.plot.ly/{name_}.json'
+    try:
+        try:
+            import certifi
+            ctx_ = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ctx_ = ssl.create_default_context()
+        try:
+            with urllib.request.urlopen(url_, timeout=60, context=ctx_) as f_:
+                TOPO[name_] = f_.read()
+        except Exception:   # a Python without its certificates: curl has the system's
+            TOPO[name_] = subprocess.run(['curl', '-sf', '--max-time', '60', url_], check=True, capture_output=True).stdout
+        json.loads(TOPO[name_])
+        with open(os.path.join(GC_TMP, f'{name_}.json'), 'wb') as f_:
+            f_.write(TOPO[name_])
+    except Exception as e:  # no network: the map checks are skipped
+        TOPO.pop(name_, None)
+        print(f'(no {name_}.json from cdn.plot.ly: {e}; the map checks are skipped)')
+
+
+def gc_map(code, frame, name):
+    """Run a map's code on the CSV: its variables, and each panel's regions (their values), land, borders and points."""
+    import matplotlib.pyplot as plt_
+    from matplotlib.collections import LineCollection as _LC, PathCollection as _Pt, PolyCollection as _PC
+    frame.to_csv(os.path.join(GC_TMP, f'{name}.csv'), index=False)
+    here, ns = os.getcwd(), {}
+    os.chdir(GC_TMP)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(strip_show(code), name, 'exec'), ns)
+        fig_ = plt_.gcf()
+        fig_.canvas.draw()
+        axes_ = []
+        for ax_ in fig_.axes:
+            if getattr(ax_, '_colorbar', None) is not None:
+                continue
+            polys = [{'n': len(c_.get_paths()), 'array': None if c_.get_array() is None else [float(v) for v in c_.get_array()], 'colors': [matplotlib.colors.to_hex(q, keep_alpha=True) for q in c_.get_facecolors()]} for c_ in ax_.collections if isinstance(c_, _PC)]
+            axes_.append({'polys': polys, 'lines': [len(c_.get_segments()) for c_ in ax_.collections if isinstance(c_, _LC)], 'points': [np.asarray(c_.get_offsets()).tolist() for c_ in ax_.collections if isinstance(c_, _Pt)],
+                          'xlim': list(ax_.get_xlim()), 'ylim': list(ax_.get_ylim()), 'aspect': ax_.get_aspect()})
+        ns['_axes'] = axes_
+        ns['_colorbars'] = [a_.get_ylabel() for a_ in fig_.axes if getattr(a_, '_colorbar', None) is not None]
+    except Exception as e:  # reported by the check
+        import traceback
+        ns = {'_error': f'{type(e).__name__}: {e}\n{traceback.format_exc(limit=-2)}'}
+    finally:
+        os.chdir(here)
+        plt_.close('all')
+    return ns
+
+
+def gc_topo(name_, layer):
+    """A layer of a boundary file decoded here, independently: {id: number of rings}."""
+    topo = json.loads(TOPO[name_])
+    out = {}
+    for geom in topo['objects'][layer]['geometries']:
+        polys = [geom['arcs']] if geom['type'] == 'Polygon' else geom['arcs'] if geom['type'] == 'MultiPolygon' else []
+        out[geom.get('id')] = sum(len(p_) for p_ in polys)
+    return out
+
+
+import json  # noqa: E402
+import matplotlib.collections  # noqa: E402
+import matplotlib.colors  # noqa: E402
+if TOPO:
+    rm = np.random.default_rng(77)
+    iso = ['SWE', 'NOR', 'FIN', 'DNK', 'DEU', 'FRA', 'ESP', 'ITA', 'POL', 'GBR']
+    nm = ['Sweden', 'Norway', 'Finland', 'Denmark', 'Germany', 'France', 'Spain', 'Italy', 'Poland', 'United Kingdom']
+    st_ = ['California', 'Texas', 'New York', 'Florida', 'Washington', 'Ohio', 'Georgia', 'Colorado']
+    nmap = 150
+    mcols = {'iso': [iso[i % 10] for i in range(nmap)], 'name': [nm[i % 10] for i in range(nmap)], 'state': [st_[i % 8] for i in range(nmap)],
+             'v': (np.arange(nmap) % 10 * 3 + rm.normal(0, 1, nmap)).round(3), 'lvl': [['p', 'q', 'r'][(i * 7) % 3] if i % 10 != 3 else 'r' for i in range(nmap)],
+             'lon': rm.uniform(-10, 30, nmap).round(3), 'lat': rm.uniform(40, 65, nmap).round(3), 'fq': (1 + np.arange(nmap) % 3).astype(float)}
+    mcols['v'][5] = np.nan
+    tm = table(mcols)
+    mdf = gc_frame(tm)
+    world = gc_topo('world_110m', 'countries')
+
+    def mplan(shape, mode, ids, element, color=None, x=(), y=(), scope='world', freq=None):
+        P_ = gb_plan(tm, [element] + ([el('points')] if x else []), x=x, y=y, color=color, freq=freq)
+        P_['map'] = {'scope': scope, 'file': 'usa_110m' if scope == 'usa' else 'world_110m', 'lonlat': bool(x), 'shape': {'col': shape, 'mode': mode, 'ids': ids} if shape else None}
+        P_['levels'], P_['kinds'] = {}, {'x': 'cont' if x else 'none', 'y': 'cont' if y else 'none'}
+        return P_
+
+    v_ = mdf.dropna(subset=['v']).groupby('iso')['v'].mean()
+    lo_, hi_ = float(np.nanmin(mcols['v'])), float(np.nanmax(mcols['v']))
+    E_ = {'type': 'map', 'stat': 'mean', 'label': 'Mean(v)', 'range': [lo_, hi_]}
+    code = call('graph.code', kind='builder', plan=mplan('iso', 'iso3', {k_: k_ for k_ in iso}, E_, color='v'), table=tm, rows=list(range(nmap)), table_name='Maps')['plot_code']
+    ns_ = gc_map(code, mdf, 'Maps')
+    check('Map Shapes by ISO 3166 code: the code runs and ends in plt.show()', (ns_.get('_error'), code.rstrip().split('\n')[-1]), (None, 'plt.show()'))
+    if '_error' not in ns_:
+        check.near('Map Shapes, the Mean of v: each region\'s value is its rows\' mean', float(max(abs(ns_['value'][k_] - v_[k_]) for k_ in iso)), 0.0, abs_=1e-12)
+        R_ = ns_['_axes'][0]['polys'][-1]
+        want_n = sum(world[k_] for k_ in iso)
+        check('Map Shapes: every ring of each region drawn (the boundaries decoded here too), its value the region\'s', (R_['n'], sorted({round(a_, 9) for a_ in R_['array']}) == sorted({round(v, 9) for v in ns_['value'].values()})), (want_n, True))
+        cmap_ = matplotlib.colors.LinearSegmentedColormap.from_list('ramp', graph.RAMP)
+        col_ = {k_: matplotlib.colors.to_hex(cmap_((v_[k_] - lo_) / (hi_ - lo_)), keep_alpha=True) for k_ in iso}
+        check('Map Shapes: each region in the page\'s blue-grey-red at its mean (the page\'s range of v)', sorted(set(R_['colors'])), sorted(set(col_.values())))
+        check('Map Shapes: the land under them, the countries\' borders, the colour bar', (len(ns_['_axes'][0]['polys']) == 2 and ns_['_axes'][0]['polys'][0]['colors'][0] == '#e0d7ce8c', ns_['_axes'][0]['lines'] != [], ns_['_colorbars']), (True, True, ['Mean(v)']))
+    # by name: the ids the page's map matched; with Freq, N
+    E_ = {'type': 'map', 'stat': 'n', 'label': 'N', 'range': [0, 1]}
+    ids_ = dict(zip(nm, iso))
+    code = call('graph.code', kind='builder', plan=mplan('name', 'names', ids_, E_, freq='fq'), table=tm, rows=list(range(nmap)), table_name='Maps')['plot_code']
+    ns_ = gc_map(code, mdf, 'Maps')
+    nq_ = mdf.groupby('name')['fq'].sum()
+    check('Map Shapes by country name, N with Freq: each region\'s count is its rows\' sum of Freq', ns_.get('value') == {ids_[k_]: float(nq_[k_]) for k_ in nm} if 'value' in ns_ else ns_.get('_error'), True)
+    # a categorical Color: each region in the colour of its most common level
+    E_ = {'type': 'map', 'stat': 'level', 'label': 'lvl', 'range': None}
+    code = call('graph.code', kind='builder', plan=mplan('iso', 'iso3', {k_: k_ for k_ in iso}, E_, color='lvl'), table=tm, rows=list(range(nmap)), table_name='Maps')['plot_code']
+    ns_ = gc_map(code, mdf, 'Maps')
+    cnt_ = mdf.groupby(['iso', 'lvl']).size().unstack(fill_value=0)[['p', 'q', 'r']]
+    top_ = {k_: int(np.argmax(cnt_.loc[k_].to_numpy())) for k_ in iso}
+    check('Map Shapes, a categorical Color: each region at its most common level (a tie: the first)', ns_.get('value') == top_ if 'value' in ns_ else ns_.get('_error'), True)
+    R_ = ns_['_axes'][0]['polys'][-1] if '_axes' in ns_ else {'colors': []}
+    check('Map Shapes, a categorical Color: the regions in those levels\' colours', sorted(set(c_[:7] for c_ in R_['colors'])), sorted({PALETTE[k_] for k_ in top_.values()}))
+    # US states by name, on the US map
+    usa = gc_topo('usa_110m', 'subunits')
+    E_ = {'type': 'map', 'stat': 'n', 'label': 'N', 'range': [18, 19]}
+    sid_ = {'California': 'CA', 'Texas': 'TX', 'New York': 'NY', 'Florida': 'FL', 'Washington': 'WA', 'Ohio': 'OH', 'Georgia': 'GA', 'Colorado': 'CO'}
+    code = call('graph.code', kind='builder', plan=mplan('state', 'usa', sid_, E_, scope='usa'), table=tm, rows=list(range(nmap)), table_name='Maps')['plot_code']
+    ns_ = gc_map(code, mdf, 'Maps')
+    check('Map Shapes of US states by name: each state\'s count of rows, every ring drawn', (ns_.get('value') == {sid_[k_]: float(n_) for k_, n_ in mdf.groupby('state').size().items()} if 'value' in ns_ else ns_.get('_error'),
+                                                                                              ns_['_axes'][0]['polys'][-1]['n'] if '_axes' in ns_ else None), (True, sum(usa[k_] for k_ in sid_.values())))
+    A_ = ns_.get('_axes', [{}])[0]
+    check('The US map: at least the lower 48 states in view, a degree of longitude as long as it is at the middle latitude', (A_.get('xlim', [0])[0] <= -125, A_.get('xlim', [0, 0])[1] >= -66.5, round(A_.get('aspect', 0), 9) == round(1 / math.cos(math.radians(sum(A_.get('ylim', [0, 0])) / 2)), 9)), (True, True, True))
+    # points on a Background Map: every row at its longitude and latitude, the view fitted to them
+    P_ = gb_plan(tm, [el('points')], x=['lon'], y=['lat'], overlay='lvl')
+    P_['map'] = {'scope': 'world', 'file': 'world_110m', 'lonlat': True, 'shape': None}
+    code = call('graph.code', kind='builder', plan=P_, table=tm, rows=list(range(nmap)), table_name='Maps')['plot_code']
+    ns_ = gc_map(code, mdf, 'Maps')
+    A_ = ns_.get('_axes', [{}])[0]
+    pts_ = sorted(tuple(round(q, 9) for q in p_) for S in A_.get('points', []) for p_ in S)
+    check('Points on a Background Map: every row at its longitude (X) and latitude (Y), over the land and borders', (ns_.get('_error'), pts_ == sorted((round(a_, 9), round(b_, 9)) for a_, b_ in zip(mcols['lon'], mcols['lat'])), len(A_.get('polys', [])), len(A_.get('lines', []))), (None, True, 1, 1))
+    check('Points on a Background Map: the view fits the points (5% about them)', (A_.get('xlim', [0])[0] <= min(mcols['lon']), A_.get('xlim', [0, 0])[1] >= max(mcols['lon']), A_.get('xlim', [0, 0])[1] - A_.get('xlim', [0, 0])[0] < 60), (True, True, True))
+    # offline: the boundaries cannot be read, and the code still runs, drawing the points without them
+    off = tempfile.mkdtemp(prefix='smui-graph-offline-')
+    with open(os.path.join(off, 'world_110m.json'), 'w') as f_:
+        f_.write('not a boundary file')
+    mdf.to_csv(os.path.join(off, 'Maps.csv'), index=False)
+    here_ = os.getcwd()
+    os.chdir(off)
+    try:
+        import warnings as _w
+        with contextlib.redirect_stdout(io.StringIO()), _w.catch_warnings(record=True) as warned_:
+            _w.simplefilter('always')
+            ns_off = {}
+            exec(compile(strip_show(code), 'Maps', 'exec'), ns_off)
+            import matplotlib.pyplot as plt_
+            npts = sum(len(c_.get_offsets()) for ax_ in plt_.gcf().axes for c_ in ax_.collections if not isinstance(c_, (matplotlib.collections.PolyCollection, matplotlib.collections.LineCollection)))
+        err_off = None
+    except Exception as e:  # reported by the check
+        err_off, npts, warned_ = f'{type(e).__name__}: {e}', 0, []
+    finally:
+        os.chdir(here_)
+        import matplotlib.pyplot as plt_
+        plt_.close('all')
+    check('A map offline (its boundaries unreadable): the code still runs, warns, and draws the points', (err_off, npts, any('boundaries' in str(q.message) for q in warned_)), (None, nmap, True))
 
 sys.exit(check.done())

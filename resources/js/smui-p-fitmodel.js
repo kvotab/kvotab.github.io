@@ -78,7 +78,9 @@
   const labelOf = (names, nest) => `${names.join('*')}${nest && nest.length ? `[${nest.join(',')}]` : ''}`;
   const effectLabel = (e) => labelOf(e.cols.map((c) => c.name), (e.nest || []).map((c) => c.name));
   const effectKey = (e) => `${e.cols.map((c) => c.id).sort().join('|')}#${(e.nest || []).map((c) => c.id).sort().join('|')}`;
-  const serialize = (e) => ({ cols: e.cols.map((c) => c.id), names: e.cols.map((c) => c.name), nest: (e.nest || []).map((c) => c.id), nestNames: (e.nest || []).map((c) => c.name), random: !!e.random });
+  const serialize = (e) => ({ cols: e.cols.map((c) => c.id), names: e.cols.map((c) => c.name), nest: (e.nest || []).map((c) => c.id), nestNames: (e.nest || []).map((c) => c.name), random: !!e.random, ...(e.rc ? { rc: e.rc } : {}) });
+  // a random effect's tag in the list; rc: the group of correlated random coefficients (smui-p-mixed.js)
+  const randomTag = (e) => (e.rc ? `&Random Coefficients(${e.rc})` : e.random ? '&Random' : '');
 
   function findCol(t, id, name) {
     const byId = t.columns.find((c) => c.id === id) || null;
@@ -94,7 +96,7 @@
       const nestNames = e.nestNames || [];
       const cols = (e.cols || names).map((id, i) => (byName ? t.col(names[i] || id) : findCol(t, id, names[i])));
       const nest = (e.nest || nestNames).map((id, i) => (byName ? t.col(nestNames[i] || id) : findCol(t, id, nestNames[i])));
-      if (cols.length && cols.every(Boolean) && nest.every(Boolean)) out.push({ cols, nest, random: !!e.random });
+      if (cols.length && cols.every(Boolean) && nest.every(Boolean)) out.push({ cols, nest, random: !!e.random, ...(e.random && e.rc ? { rc: e.rc } : {}) });
     }
     return out;
   }
@@ -159,7 +161,7 @@
       effects.forEach((e, i) => {
         // draggable: along the list to reorder it, out of the dialog's places to take it out, a main effect onto a role
         const li = el('li', { role: 'option', draggable: 'true', dataset: { i: String(i) }, 'aria-selected': String(sel.has(i)) },
-          el('span', { class: 'sm-colname', text: effectLabel(e) + (e.random ? '&Random' : '') }));
+          el('span', { class: 'sm-colname', text: effectLabel(e) + randomTag(e) }));
         if (sel.has(i)) li.classList.add('is-selected');
         list.append(li);
       });
@@ -196,7 +198,7 @@
         const e = effects[+li.dataset.i];
         if (!e) return null;
         const main = e.cols.length === 1 && !(e.nest && e.nest.length);
-        return { cols: main ? [e.cols[0]] : [], text: effectLabel(e) + (e.random ? '&Random' : ''), effect: e,
+        return { cols: main ? [e.cols[0]] : [], text: effectLabel(e) + randomTag(e), effect: e,
           remove: () => { effects = effects.filter((x) => x !== e); sel.clear(); renderList(); } };
       },
       refuses: (m) => (m.cols.length === 1 ? null : 'not a column'),
@@ -255,13 +257,16 @@
     const bAttr = btn('Attributes ▾', () => SM.ui.menu([{ label: 'Random Effect', checked: [...sel].length > 0 && [...sel].every((i) => effects[i].random), action: () => {
       if (!sel.size) { msg('Select effects in the model list first.'); return; }
       const on = ![...sel].every((i) => effects[i].random);
-      for (const i of sel) effects[i].random = on;
+      for (const i of sel) { effects[i].random = on; if (!on) delete effects[i].rc; }
       renderList();
-    } }], bAttr, { returnFocus: bAttr }), { 'aria-haspopup': 'menu' });
+    } }, ...(mixedPart ? mixedPart.attributes() : [])], bAttr, { returnFocus: bAttr }), { 'aria-haspopup': 'menu' });
     const bRemove = btn('Remove', () => { if (!sel.size) { msg('Select effects in the model list to remove.'); return; } removeSel(); });
     const noInt = el('input', { type: 'checkbox' });
     noInt.checked = st.noIntercept;
     noInt.addEventListener('change', () => { st.noIntercept = noInt.checked; });
+    // JMP's Center Polynomials (the Model Specification's red triangle): on by default
+    const centerIn = el('input', { type: 'checkbox', 'aria-label': 'Center Polynomials' });
+    centerIn.checked = o0.centerPolys !== false;
 
     // personality and its options
     const mkSel = (choices, value, label) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; return s; };
@@ -287,6 +292,8 @@
     // Quantile Regression: the quantile τ (the rest of its options are in the report's Model Launch)
     const tauIn = numIn('Quantile', st.tau);
     const lTau = lab('Quantile τ', tauIn);
+    // the mixed models' own controls, roles and Attributes items (smui-p-mixed.js)
+    const mixedPart = SM.fitmodel.mixed ? SM.fitmodel.mixed.launchPart(api, o0, { selected: () => [...sel].map((i) => effects[i]), all: () => effects, add, render: () => renderList(), msg }) : null;
     const num = (i, dflt) => { const v = Number(String(i.value).replace(',', '.')); return Number.isFinite(v) ? v : dflt; };
     const yCols = () => (api.state.y || []).map((id) => t.col(id)).filter(Boolean);
     const defaultPers = () => { const y = yCols()[0]; return !y ? 'standard' : y.modelingType === 'nominal' ? 'nominal' : y.modelingType === 'ordinal' ? 'ordinal' : 'standard'; };
@@ -321,6 +328,7 @@
       api.showRole('offset', p === 'glm' || gee);
       for (const k of ['subject', 'time', 'subgroup']) api.showRole(k, gee);
       for (const k of ['endog', 'instruments']) api.showRole(k, p === 'iv');
+      if (mixedPart) mixedPart.sync(p);
     };
     pers.addEventListener('change', () => { st.userPers = true; sync(); });
     dist.addEventListener('change', () => { link.value = DEFAULT_LINK[dist.value] || 'identity'; scaleSel.value = UNIT_SCALE.has(dist.value) ? 'fixed' : 'estimated'; sync(); });
@@ -334,9 +342,9 @@
     });
 
     const tools = el('div', { class: 'sm-fm-tools' }, bAdd, bCross, bNest, bMacros, el('label', { class: 'sm-fm-degree' }, 'Degree', degree), bAttr, bRemove,
-      el('label', { class: 'sm-fm-noint' }, noInt, 'No Intercept'));
+      el('label', { class: 'sm-fm-noint' }, noInt, 'No Intercept'), el('label', { class: 'sm-fm-noint' }, centerIn, 'Center Polynomials'));
     const rootEl = el('div', { class: 'sm-fm-construct' },
-      el('div', { class: 'sm-fm-pers' }, lab('Personality', pers), lEmph, lDist, lAlpha, lPower, lLink, lDistr, lTarget, lCorr, lCov, lScale, lTau,
+      el('div', { class: 'sm-fm-pers' }, lab('Personality', pers), lEmph, lDist, lAlpha, lPower, lLink, lDistr, lTarget, lCorr, lCov, lScale, lTau, mixedPart && mixedPart.el,
         typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:fitmodel:personality') : null),
       el('h4', null, 'Construct Model Effects', typeof KvotInfo !== 'undefined' ? KvotInfo.slot('p:fitmodel:effects') : null),
       el('div', { class: 'sm-fm-effbox' }, tools, list));
@@ -361,6 +369,7 @@
       if (on(lCov)) out.push(['Covariance', 'The standard errors: Robust, the sandwich, right even when the working correlation is not (the default); Naive, from the model, right only when the working correlation is; Bias-reduced, Mancl and DeRouen\'s correction of the sandwich, which is too small with few subjects.']);
       if (on(lScale)) out.push(['Scale', 'The scale φ of the variance: Estimated, Pearson χ²/(N − p), or Fixed at the value beside it (1 by default). A change of distribution picks Fixed for the binomial, Poisson and negative binomial, Estimated for the others.']);
       if (on(lTau)) out.push(['Quantile τ', 'The quantile of Y to fit, strictly between 0 and 1: 0.5 is the median, 0.9 the upper tenth. Model Launch in the report changes it.']);
+      if (mixedPart) out.push(...mixedPart.help(p));
       out.push(
         ['Model effects', 'The list of the model\'s effects: columns dragged onto it from the list on the left go in as main effects, as Add puts them, and so do columns dragged from a role (they leave it; dropped on an effect, one takes its place); click one to select it (ctrl/⌘ adds or takes away one, shift selects a range), for Cross, Nest, Attributes and Remove; a double click removes it. Drag an effect up or down the list to change the order, a main effect onto a role to move its column there, or an effect anywhere else in the dialog to take it out. A crossing is A*B, a nested effect B[A], a random one ends in &Random.'],
         ['Add', 'Each selected column (in the list on the left) as a main effect.'],
@@ -371,6 +380,7 @@
         ['Attributes', 'Random Effect: marks the selected effects random, their levels a sample from a larger population, estimated as a variance component. Standard Least Squares then fits by REML, as Mixed Model (which needs one); the other personalities take fixed effects only and say so.'],
         ['Remove', 'Takes the selected effects out of the model (so do Delete and a double click).'],
         ['No Intercept', 'Fits the model without its constant term, so that the prediction is 0 where every effect is 0. Generalized Regression keeps its intercept, which is never penalized.'],
+        ['Center Polynomials', 'On (the default, as JMP): a continuous column in a crossing or a power is centred at its mean, (x − mean)·(z − mean), so that the main effects keep their meaning and the terms are less correlated; the fit and its predictions are the same either way. Off: the raw products, x·z and x².'],
       );
       return out;
     };
@@ -384,7 +394,7 @@
         const qr = p === 'quantreg' ? { qrTau: num(tauIn, NaN) } : {};
         return {
           effects: effects.map(serialize),
-          options: { personality: p, emphasis: emph.value, dist: dist.value, link: p === 'glm' || p === 'gee' ? link.value : null, noIntercept: noInt.checked, target: target.value === '' ? null : target.value, distr: distr.value, ...gee, ...qr },
+          options: { personality: p, emphasis: emph.value, dist: dist.value, link: p === 'glm' || p === 'gee' ? link.value : null, noIntercept: noInt.checked, centerPolys: centerIn.checked, target: target.value === '' ? null : target.value, distr: distr.value, ...gee, ...qr, ...(mixedPart ? mixedPart.read(p) : {}) },
         };
       },
       recall(saved) {
@@ -404,7 +414,9 @@
         if (o.nbAlpha != null) nbAlpha.value = String(o.nbAlpha);
         if (o.varPower != null) varPower.value = String(o.varPower);
         if (o.qrTau != null) tauIn.value = String(o.qrTau);
+        if (mixedPart) mixedPart.recall(o);
         noInt.checked = !!o.noIntercept;
+        centerIn.checked = o.centerPolys !== false;
         st.target = o.target ?? '';
         sel.clear();
         renderList();
@@ -421,8 +433,11 @@
     const effects = spec.effects || [];
     const yIds = new Set(spec.roles.y || []);
     if (effects.some((e) => [...(e.cols || []), ...(e.nest || [])].some((id) => yIds.has(id)))) return 'A Y column is also in a model effect: take it out of the effects.';
+    // the mixed models' own checks (smui-p-mixed.js): undefined when it has none for this spec
+    const mixedSays = SM.fitmodel.mixed ? SM.fitmodel.mixed.validate(spec, table) : undefined;
+    if (mixedSays !== undefined) return mixedSays;
     const cont = ys.every((c) => !c.isCategorical);
-    if (['standard', 'stepwise', 'mixed', 'manova', 'iv', 'quantreg'].includes(p) && !cont) return `${PERS_LABEL[p]} needs continuous Y columns: change the personality, or the modeling type of ${ys.find((c) => c.isCategorical).name}.`;
+    if (['standard', 'manova', 'iv', 'quantreg'].includes(p) && !cont) return `${PERS_LABEL[p]} needs continuous Y columns: change the personality, or the modeling type of ${ys.find((c) => c.isCategorical).name}.`;
     if (p === 'iv' || p === 'quantreg') {
       if (!effects.length) return `${PERS_LABEL[p]} needs model effects: select columns and press Add.`;
       if (effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only: take the Random Effect attribute off.`;
@@ -451,13 +466,12 @@
     if (p === 'manova' && ys.length < 2) return 'MANOVA needs two or more Y columns.';
     if ((p === 'nominal' || p === 'ordinal') && ys.some((c) => !c.isCategorical)) return `${PERS_LABEL[p]} needs a nominal or ordinal Y.`;
     if (p === 'glm' && o.dist !== 'binomial' && ys.some((c) => c.isCategorical)) return 'A categorical Y takes the binomial distribution (or Nominal Logistic).';
-    if (p === 'mixed' && !effects.some((e) => e.random)) return 'The mixed model needs a random effect: select an effect and choose Attributes > Random Effect.';
     if ((p === 'stepwise' || p === 'genreg') && !effects.some((e) => !e.random)) return `${PERS_LABEL[p]} needs model effects.`;
     if ((p === 'stepwise' || p === 'genreg' || p === 'manova') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only.`;
     // (these fitted the fixed effects alone, leaving the random ones out without a word)
     if ((p === 'glm' || p === 'nominal' || p === 'ordinal') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only: take the Random Effect attribute off, or fit random effects with Standard Least Squares or Mixed Model.`;
     const w = ((spec.roles.weight || []).length || (spec.roles.freq || []).length);
-    if ((p === 'mixed' || p === 'manova') && w) return `${PERS_LABEL[p]}: statsmodels takes no weights here; remove Weight and Freq.`;
+    if (p === 'manova' && w) return `${PERS_LABEL[p]}: statsmodels takes no weights here; remove Weight and Freq.`;
     if (p === 'gee') {
       const one = (k) => (spec.roles[k] || [])[0] || null;
       if (!one('subject')) return 'Generalized Estimating Equations need a Subject: the column that says which rows belong together (the subjects, or clusters).';
@@ -476,6 +490,12 @@
     return null;
   }
 
+  /* The Validation role's column, for the personalities that hold rows out with it (JMP Pro's
+     Fit Model: Standard Least Squares, Stepwise, the GLM and the logistic fits; Generalized
+     Regression has its own Validation Method). */
+  const VALIDATES = new Set(['standard', 'stepwise', 'glm', 'nominal', 'ordinal']);
+  const validationOf = (ctx) => (VALIDATES.has(ctx.opt('personality', 'standard')) ? ctx.name('validation') : null);
+
   /* ---- the model of a report --------------------------------------------------- */
   function modelOf(ctx) {
     const t = ctx.table;
@@ -483,11 +503,14 @@
       const cols = (e.cols || []).map((id, i) => findCol(t, id, (e.names || [])[i]));
       const nest = (e.nest || []).map((id, i) => findCol(t, id, (e.nestNames || [])[i]));
       if (cols.some((c) => !c) || nest.some((c) => !c)) throw new Error(`the effect ${labelOf(e.names || [], e.nestNames || [])} uses a column that is no longer in the table: relaunch the analysis (Model Dialog)`);
-      return { cols, nest, random: !!e.random };
+      return { cols, nest, random: !!e.random, ...(e.random && e.rc ? { rc: e.rc } : {}) };
     });
+    const vcol = validationOf(ctx);
     const base = {
-      effects: effects.map((e) => ({ names: e.cols.map((c) => c.name), nest: e.nest.map((c) => c.name), random: e.random })),
+      effects: effects.map((e) => ({ names: e.cols.map((c) => c.name), nest: e.nest.map((c) => c.name), random: e.random, ...(e.rc ? { rc: e.rc } : {}) })),
       weight: ctx.name('weight'), freq: ctx.name('freq'), no_intercept: !!ctx.opt('noIntercept', false),
+      ...(ctx.opt('centerPolys', true) === false ? { center: false } : {}),
+      ...(vcol ? { validation: vcol } : {}),
     };
     const byName = new Map(t.columns.map((c) => [c.name, c]));
     return { effects, base, byName };
@@ -518,12 +541,69 @@
   const withCode = (graph, code) => (code ? el('div', { class: 'sm-fm-plotcode' }, graph, code) : graph);
   const codeOf = (res, key) => (res && res.plot_code ? res.plot_code[key] : null);
 
+  /* ---- Save Columns for every row, and Save Prediction Formula --------------------------
+     fitmodel.save predicts every row whose predictors are present, as JMP saves them:
+     rows the fit left out (excluded, missing Y, a Validation column's hold-out) too, in
+     the report's By group; residuals where Y is present. Its formulas are the model in
+     the page's formula language (smui-formula.js): saved as live formula columns. */
+  const formulaRef = (name) => (/^[\p{L}_][\p{L}\p{N}_]*$/u.test(String(name)) ? `:${name}` : `:"${String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+
+  /* Formula columns from the backend's [{name, expr, character, modelingType, valueOrder}];
+     an expr that is a list refers to the columns saved before it ({ref: k}, the k-th),
+     by the names the table gave them. Returns the columns made. */
+  function saveFormulas(ctx, formulas, from) {
+    const made = [];
+    for (const f of formulas || []) {
+      const expr = Array.isArray(f.expr) ? f.expr.map((s) => (typeof s === 'string' ? s : formulaRef(made[s.ref].name))).join('') : f.expr;
+      const spec = { notes: `${f.name}: the prediction formula of ${from || ctx.report.title}` };
+      if (f.modelingType) spec.modelingType = f.modelingType;
+      if (f.valueOrder) spec.valueOrder = f.valueOrder;
+      try {
+        const c = ctx.saveFormula(f.name, expr, spec);
+        if (!c) break;
+        made.push(c);
+      } catch (e) {
+        SM.ui.toast(`${f.name} could not be saved as a formula: ${e.message || e}`, { error: true });
+        break;
+      }
+    }
+    return made;
+  }
+
+  // the backend's save of the report's model: kind, the report's payload, the By group's rows
+  const savedRows = (ctx, kind, payload) => ctx.call('fitmodel.save', { ...payload, kind, where: ctx.where || [], alpha: ctx.alpha });
+
+  /* A Save Columns item: cols [[key of fitmodel.save's columns, column name], ...]. */
+  function saveAllRows(ctx, kind, payload, cols) {
+    return async () => {
+      try {
+        const r = await savedRows(ctx, kind, payload);
+        if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
+        for (const [key, name] of cols) ctx.saveColumn(name, { rows: r.rows, values: r.columns[key] });
+      } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+    };
+  }
+
+  /* Save Prediction Formula (Save Probability Formula for the logistic fits). */
+  function saveFormulaItem(ctx, kind, payload, label = 'Prediction Formula') {
+    return { label, action: async () => {
+      try {
+        const r = await savedRows(ctx, kind, payload);
+        if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
+        saveFormulas(ctx, r.formulas);
+      } catch (e) { SM.ui.toast(e.message || String(e), { error: true }); }
+    } };
+  }
+
   /* A scatter of rows (linked to the table) with reference lines. */
-  function rowPlot(ctx, { x, y, rows, xTitle, yTitle, lines = [], hlines = [], width = 380, height = 300, title }) {
+  function rowPlot(ctx, { x, y, rows, xTitle, yTitle, lines = [], hlines = [], width = 380, height = 300, title, legend = false }) {
     const P = pal();
-    const traces = [{ type: x.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x, y, rows, marker: { size: x.length > 500 ? 4 : 6 }, name: 'Rows' }, ...lines];
+    // with a legend (the validation and test rows marked), the rows of the fit are the Training set
+    const traces = [{ type: x.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', x, y, rows, marker: { size: x.length > 500 ? 4 : 6 }, name: legend ? 'Training' : 'Rows', showlegend: legend }, ...lines];
     const shapes = hlines.map((h) => ({ type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: h.y, y1: h.y, line: { color: h.color || P.muted, width: h.width || 1, dash: h.dash || 'solid' } }));
-    return ctx.plot(traces, { xaxis: { title: { text: xTitle } }, yaxis: { title: { text: yTitle } }, shapes, margin: { l: 58, r: 12, t: 8, b: 46 } }, { width: W(width), height, title });
+    const lay = { xaxis: { title: { text: xTitle } }, yaxis: { title: { text: yTitle } }, shapes, margin: { l: 58, r: 12, t: 8, b: 46 + (legend ? 22 : 0) } };
+    if (legend) Object.assign(lay, { showlegend: true, legend: { orientation: 'h', x: 0, xanchor: 'left', yref: 'container', y: 0, yanchor: 'bottom' } });
+    return ctx.plot(traces, lay, { width: W(width), height: height + (legend ? 22 : 0), title });
   }
 
   /* Report notes from Python, and the code. */
@@ -584,6 +664,48 @@
     return ob;
   }
 
+  /* The Effect Summary of several responses: every response's effect tests by LogWorth, and with FDR their p-values
+     adjusted by Benjamini and Hochberg over all of them (the more tests, the more small p-values by chance). */
+  function combinedSummary(ctx, ob, all) {
+    const fdr = ctx.opt('fdr', false, null);
+    const rows = [];
+    for (const { y, res } of all) for (const r of res.effect_summary || []) if (r.p != null) rows.push({ response: y.name, source: r.source, p: r.p });
+    const m = rows.length;
+    // Benjamini-Hochberg: q(i) = min over j >= i of p(j) m / j, the p-values in increasing order (as statsmodels' multipletests)
+    const order = rows.map((_, i) => i).sort((a, b) => rows[a].p - rows[b].p);
+    let run = 1;
+    for (let k = m - 1; k >= 0; k--) { const i = order[k]; run = Math.min(run, (rows[i].p * m) / (k + 1)); rows[i].fdr_p = Math.min(1, run); }
+    for (const r of rows) { r.logworth = logw(r.p); r.fdr_logworth = logw(r.fdr_p); }
+    const lk = fdr ? 'fdr_logworth' : 'logworth', pk = fdr ? 'fdr_p' : 'p';
+    rows.sort((a, b) => (b[lk] || 0) - (a[lk] || 0));
+    const max = Math.max(2.5, ...rows.map((r) => r[lk] || 0));
+    const tbl = el('table', { class: 'sm-rt sm-fm-esum' });
+    tbl.append(el('thead', null, el('tr', null, el('th', { class: 'sm-l', text: 'Source' }), el('th', { class: 'sm-l', text: 'Response' }), el('th', { text: fdr ? 'FDR LogWorth' : 'LogWorth' }), el('th', { class: 'sm-fm-barhead', 'aria-hidden': 'true' }), el('th', { text: fdr ? 'FDR PValue' : 'PValue' }))));
+    const body = el('tbody');
+    for (const r of rows) {
+      const v = r[lk] || 0;
+      const tdP = el('td', { text: SM.util.fmtP(r[pk], ctx.alpha) });
+      if (r[pk] != null && r[pk] < ctx.alpha) tdP.classList.add('p-sig');
+      body.append(el('tr', null, el('td', { class: 'sm-l', text: r.source }), el('td', { class: 'sm-l', text: r.response }), el('td', { text: fmt(v, { digits: 3 }) }),
+        el('td', { class: 'sm-fm-barcell' }, el('span', { class: 'sm-fm-bar', style: { width: `${(100 * v) / max}%` } }), el('span', { class: 'sm-fm-ref', style: { left: `${(100 * 2) / max}%` } })), tdP));
+    }
+    tbl.append(body);
+    const box = el('label', { class: 'sm-fm-opt' }, (() => { const c = el('input', { type: 'checkbox', 'aria-label': 'FDR' }); c.checked = fdr; c.addEventListener('change', () => ctx.set('fdr', c.checked, null)); return c; })(), 'FDR');
+    const lit = (t) => JSON.stringify(t);
+    const code = [SM.report.codeHead(ctx.table.name, ['from statsmodels.stats.multitest import multipletests']), '',
+      'codes = {', ...all.map(({ y, res }) => `    ${lit(y.name)}: ${lit(res.code)},`), '}   # the code under each response\'s fit',
+      'rows = []', 'for response, code in codes.items():', '    ns = {}', '    exec(code, ns)   # fits the response as its report does',
+      '    et = sm.stats.anova_lm(ns["fit"], typ=3).drop(index=["Intercept", "Residual"], errors="ignore")   # its Effect Tests',
+      '    rows += [(response, source, p) for source, p in et["PR(>F)"].items()]',
+      'p = np.array([r[2] for r in rows])', 'fdr = multipletests(p, method="fdr_bh")[1]   # Benjamini-Hochberg over every response\'s tests',
+      'for (response, source, pv), q in sorted(zip(rows, fdr), key=lambda z: z[0][2]):',
+      '    print(source, response, -np.log10(pv), pv, -np.log10(q), q)   # LogWorth, PValue, FDR LogWorth, FDR PValue'].join('\n');
+    ob.add(tbl, el('div', { class: 'sm-fm-esum-btns' }, box),
+      ctx.note(`The effect tests of all ${all.length} responses, ${m} in all, by LogWorth (−log₁₀ p; the line marks p = 0.01). FDR adjusts the p-values for the number of tests over every response (Benjamini and Hochberg). Each response's own Effect Summary is in its report.`),
+      ctx.code(code));
+    return ob;
+  }
+
   function removeEffect(ctx, label) {
     const t = ctx.table;
     const effects = effectsFrom(ctx.spec.effects, t);
@@ -595,15 +717,31 @@
   }
 
   /* ---- the plots of a least squares fit ----------------------------------------------------- */
-  function actualByPredicted(ctx, parent, d, whole, yname, info = 'p:fitmodel:leverage', title = 'Actual by Predicted Plot', code = null) {
+  /* The validation and test rows of a model with a Validation column (res.holdout: rows, set,
+     and x/y values), marked in a plot of the training rows: their own markers and colours, a
+     legend, linked to the rows as the others. */
+  const HOLD = { 1: ['Validation', 'triangle-up', '#d9822b'], 2: ['Test', 'square', '#3a7d44'] };
+  function holdoutTraces(hold, xs, ys) {
+    if (!hold || !hold.rows || !hold.rows.length) return [];
+    return [1, 2].map((k) => {
+      const idx = hold.set.map((v, i) => (v === k ? i : -1)).filter((i) => i >= 0);
+      if (!idx.length) return null;
+      const [name, symbol, color] = HOLD[k];
+      return { type: 'scatter', mode: 'markers', x: idx.map((i) => xs[i]), y: idx.map((i) => ys[i]), rows: idx.map((i) => hold.rows[i]), name, showlegend: true,
+        marker: { size: 6.5, symbol, color, line: { width: 0.6, color: SM.util.themeColors().surface } } };
+    }).filter(Boolean);
+  }
+
+  function actualByPredicted(ctx, parent, d, whole, yname, info = 'p:fitmodel:leverage', title = 'Actual by Predicted Plot', code = null, hold = null) {
     const P = pal();
     const ob = ctx.outline(title, { parent, key: 'actpred', info });
-    const [lo, hi] = extent(d.predicted, d.actual);
+    const [lo, hi] = extent(d.predicted, d.actual, hold && hold.predicted, hold && hold.actual);
     const lines = [lineTrace([lo, hi], [lo, hi], P.fit, 'solid', 1.4)];
     if (whole && whole.mean != null) lines.push(lineTrace([lo, hi], [whole.mean, whole.mean], P.mean, 'dot', 1.2));
     if (whole && whole.curve) lines.push(lineTrace(whole.curve.x, whole.curve.lower, P.fit, 'dash', 1), lineTrace(whole.curve.x, whole.curve.upper, P.fit, 'dash', 1));
     const sub = whole ? ` P${pText(whole.p)} RSq=${whole.rsq != null ? whole.rsq.toFixed(2) : '.'} RMSE=${fmt(whole.rmse, { sig: 5 })}` : '';
-    ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${yname} Predicted${sub}`, yTitle: `${yname} Actual`, lines, width: 400, height: 320, title: `${yname} actual by predicted` }), ctx.code(code));
+    const ho = hold ? holdoutTraces(hold, hold.predicted, hold.actual) : [];
+    ob.add(rowPlot(ctx, { x: d.predicted, y: d.actual, rows: d.rows, xTitle: `${yname} Predicted${sub}`, yTitle: `${yname} Actual`, lines: [...lines, ...ho], width: 400, height: 320, title: `${yname} actual by predicted`, legend: ho.length > 0 }), ctx.code(code));
     return ob;
   }
 
@@ -644,10 +782,11 @@
     return rowPlot(ctx, { x: lev.x, y: lev.y, rows: lev.rows, xTitle: `${lev.effect} Leverage, P${pText(lev.p)}${robust ? ' (usual F test)' : ''}`, yTitle: `${yname} Leverage Residuals`, lines, width: 340, height: 290, title: `${lev.effect} leverage plot` });
   }
 
-  function residualPlots(ctx, parent, d, yname, o, emph, lim, codes = {}) {
+  function residualPlots(ctx, parent, d, yname, o, emph, lim, codes = {}, hold = null) {
     const P = pal();
     if (o('plotResidPred', emph !== 'minimal')) {
-      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yname} Predicted`, yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], title: `${yname} residual by predicted` }), ctx.code(codes.residpred));
+      const ho = hold ? holdoutTraces(hold, hold.predicted, hold.residual) : [];
+      ctx.outline('Residual by Predicted Plot', { parent, key: 'residpred' }).add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${yname} Predicted`, yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], lines: ho, legend: ho.length > 0, title: `${yname} residual by predicted` }), ctx.code(codes.residpred));
     }
     if (o('plotResidRow', false)) {
       ctx.outline('Residual by Row Plot', { parent, key: 'residrow' }).add(rowPlot(ctx, { x: d.rows.map((r) => r + 1), y: d.residual, rows: d.rows, xTitle: 'Row Number', yTitle: `${yname} Residual`, hlines: [{ y: 0, color: P.mean }], width: 460, title: `${yname} residual by row` }), ctx.code(codes.residrow));
@@ -673,34 +812,68 @@
     }
   }
 
+  /* Crossvalidation (a Validation column, JMP Pro's Fit Model): the measures of each set of the
+     model fitted to the training rows, the validation and test rows predicted by it; a categorical
+     response's confusion matrix of each set. cv is predictive.report's (fitmodel's _cv_report). */
+  function crossvalidation(ctx, parent, cv, scope) {
+    const ob = SM.predict.measures(ctx, parent, cv, { title: 'Crossvalidation', key: 'crossval' });
+    if (cv.kind === 'categorical') SM.predict.confusion(ctx, ob, cv, 'cv:');
+    ob.add(ctx.note(`The model learns from the training rows of ${cv.column} (0, or Training); the validation (1) and test (2) rows are predicted by it. ${cv.kind === 'continuous' ? 'RSquare is 1 − SSE/SST of each set about its own mean, RASE the root mean squared error.' : 'Entropy RSquare against the training rows\' shares of the levels; the Misclassification Rate counts the rows whose most likely level is not theirs.'} Right click the table for more measures.`),
+      ctx.code(cv.code));
+    return ob;
+  }
+
   /* ---- least squares means ----------------------------------------------------------------- */
   function lsmeansTable(ctx, M, lsm) {
     const cols = lsm.factors.length > 1 ? lsm.factors.map((f, i) => ({ key: `f${i}`, label: f, fmt: 'text' })) : [{ key: 'f0', label: 'Level', fmt: 'text' }];
     const rows = lsm.labels.map((_, k) => {
-      const r = { lsmean: lsm.lsmean[k], se: lsm.se[k], mean: lsm.mean[k] };
+      const r = { lsmean: lsm.lsmean[k], se: lsm.se[k], mean: lsm.mean[k], lower: lsm.lower ? lsm.lower[k] : null, upper: lsm.upper ? lsm.upper[k] : null };
       lsm.levels[k].forEach((v, i) => { r[`f${i}`] = levelText(ctx, M, lsm.factors[i], v); });
       return r;
     });
-    return ctx.rt({ columns: [...cols, { key: 'lsmean', label: 'Least Sq Mean' }, { key: 'se', label: 'Std Error' }, { key: 'mean', label: 'Mean' }], rows }, { caption: 'Least Squares Means Table', key: 'lsmeans' });
+    // the confidence limits are JMP's hidden columns (right click the table, Columns)
+    const lvl = fmt(100 * (1 - ctx.alpha));
+    const ci = lsm.lower ? [{ key: 'lower', label: `Lower ${lvl}%`, hidden: true }, { key: 'upper', label: `Upper ${lvl}%`, hidden: true }] : [];
+    return ctx.rt({ columns: [...cols, { key: 'lsmean', label: 'Least Sq Mean' }, { key: 'se', label: 'Std Error' }, ...ci, { key: 'mean', label: 'Mean' }], rows }, { caption: 'Least Squares Means Table', key: 'lsmeans' });
   }
 
-  function lsmeansPlot(ctx, M, lsm, tcrit, yname, label) {
+  /* opts: swap, the second factor of a two-way interaction on the x axis and the first overlaid (JMP's Transpose
+     Factors); ci: the confidence limits as error bars (on by default). */
+  function lsmeansPlot(ctx, M, lsm, tcrit, yname, label, opts = {}) {
     const P = pal();
     const traces = [];
+    const ci = opts.ci !== false;
     if (lsm.factors.length === 2) {
-      const xs = [...new Set(lsm.levels.map((l) => levelText(ctx, M, lsm.factors[0], l[0])))];
-      const groups = [...new Set(lsm.levels.map((l) => levelText(ctx, M, lsm.factors[1], l[1])))];
+      const [ix, ig] = opts.swap ? [1, 0] : [0, 1];
+      const xs = [...new Set(lsm.levels.map((l) => levelText(ctx, M, lsm.factors[ix], l[ix])))];
+      const groups = [...new Set(lsm.levels.map((l) => levelText(ctx, M, lsm.factors[ig], l[ig])))];
       groups.forEach((g, gi) => {
-        const idx = lsm.levels.map((l, k) => [l, k]).filter(([l]) => levelText(ctx, M, lsm.factors[1], l[1]) === g).map(([, k]) => k);
-        traces.push({ type: 'scatter', mode: 'lines+markers', x: idx.map((k) => levelText(ctx, M, lsm.factors[0], lsm.levels[k][0])), y: idx.map((k) => lsm.lsmean[k]), name: g,
+        const idx = lsm.levels.map((l, k) => [l, k]).filter(([l]) => levelText(ctx, M, lsm.factors[ig], l[ig]) === g).map(([, k]) => k);
+        traces.push({ type: 'scatter', mode: 'lines+markers', x: idx.map((k) => levelText(ctx, M, lsm.factors[ix], lsm.levels[k][ix])), y: idx.map((k) => lsm.lsmean[k]), name: g,
           line: { color: SM.util.PALETTE[gi % SM.util.PALETTE.length], width: 1.6 }, marker: { size: 7, color: SM.util.PALETTE[gi % SM.util.PALETTE.length] },
-          error_y: { type: 'data', array: idx.map((k) => tcrit * lsm.se[k]), visible: true, thickness: 1, width: 4 } });
+          error_y: { type: 'data', array: idx.map((k) => tcrit * lsm.se[k]), visible: ci, thickness: 1, width: 4 } });
       });
-      return ctx.plot(traces, { showlegend: true, legend: { title: { text: lsm.factors[1] } }, xaxis: { type: 'category', categoryorder: 'array', categoryarray: xs, title: { text: lsm.factors[0] } }, yaxis: { title: { text: `${yname} LS Means` } } }, { width: W(420), height: 290, title: `${label} LS means plot` });
+      return ctx.plot(traces, { showlegend: true, legend: { title: { text: lsm.factors[ig] } }, xaxis: { type: 'category', categoryorder: 'array', categoryarray: xs, title: { text: lsm.factors[ix] } }, yaxis: { title: { text: `${yname} LS Means` } } }, { width: W(420), height: 290, title: `${label} LS means plot` });
     }
     traces.push({ type: 'scatter', mode: 'lines+markers', x: lsm.labels, y: lsm.lsmean, line: { color: P.point, width: 1.4 }, marker: { size: 8, color: P.point },
-      error_y: { type: 'data', array: lsm.se.map((s) => tcrit * s), visible: true, thickness: 1.2, width: 5, color: P.point }, hovertemplate: '%{x}: %{y:.5g}<extra></extra>' });
+      error_y: { type: 'data', array: lsm.se.map((s) => tcrit * s), visible: ci, thickness: 1.2, width: 5, color: P.point }, hovertemplate: '%{x}: %{y:.5g}<extra></extra>' });
     return ctx.plot(traces, { xaxis: { type: 'category', title: { text: label } }, yaxis: { title: { text: `${yname} LS Means` } } }, { width: W(360), height: 280, title: `${label} LS means plot` });
+  }
+
+  /* LSMeans Test Slices (fitmodel.slices): each level of each factor of an interaction, the F test that the least squares
+     means of its cells are equal, and a Test Detail of each (each cell against the first), closed. */
+  async function testSlices(ctx, parent, payload, label, scope) {
+    const r = await ctx.call('fitmodel.slices', { ...payload, effect: label, alpha: ctx.alpha });
+    const ob = ctx.outline('Test Slices', { parent, key: `slices:${label}`, info: 'p:fitmodel:lsmeans', menu: () => [{ label: 'Remove', action: () => ctx.set(`slices:${label}`, false, scope) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return ob; }
+    ob.add(ctx.rt({ columns: [{ key: 'slice', label: 'Slice', fmt: 'text' }, { key: 'dfnum', label: 'DFNum', fmt: 'int' }, { key: 'dfden', label: 'DFDen' }, { key: 'ss', label: 'Sum of Squares', hidden: true }, { key: 'f', label: 'F Ratio' }, { key: 'p', label: 'Prob > F', fmt: 'p' }], rows: r.rows }, { key: `slices:${label}`, sortable: false }),
+      ctx.note('At each level of one factor, whether the least squares means of the other factor\'s levels differ: the interaction taken apart. The error degrees of freedom are the model\'s.'));
+    for (const x of r.rows) {
+      ctx.outline(`Test Detail: ${x.slice}`, { parent: ob, key: `slicedetail:${label}:${x.slice}`, closed: true }).add(
+        ctx.rt({ columns: [{ key: 'contrast', label: 'Contrast', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }], rows: x.detail }, { key: `slicedetail:${label}:${x.slice}`, sortable: false }));
+    }
+    ob.add(ctx.code(r.code));
+    return ob;
   }
 
   async function comparisons(ctx, M, parent, payload, label, method, scope) {
@@ -852,13 +1025,17 @@
   async function renderStandard(ctx, M) {
     const ys = ctx.roles('y');
     const all = [];
+    // several responses: one Effect Summary of every response's effects at the top, the FDR over all of them (JMP's)
+    const combined = ys.length > 1 && ctx.opt('combinedSummary', true) ? ctx.outline('Effect Summary', { key: 'combinedsummary', info: 'p:fitmodel:summary' }) : null;
     await perResponse(ctx, ys, (y) => `Response ${y.name}`, async (y, parent, st) => {
       const r = await standardY(ctx, M, y, parent, st);
       if (r) all.push({ y, res: r });
     }, () => [
+      ctx.check('Effect Summary', 'combinedSummary', null, true),
       ctx.check('Profiler', 'groupProfiler', null, false),
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ]);
+    if (combined) combinedSummary(ctx, combined, all);
     if (ys.length > 1 && ctx.opt('groupProfiler', false) && all.length) {
       await profiler(ctx, ctx.top, { sources: all.map(({ y }) => { const rob = robustOf(ctx, y.id); return { kind: 'ls', payload: { ...M.base, y: y.name, ...(rob ? { robust: rob } : {}) } }; }), scope: null, title: 'Prediction Profiler', key: 'groupprofiler', option: 'groupProfiler' });
     }
@@ -871,16 +1048,23 @@
     const payload = { ...M.base, y: y.name };
     const rob = robustOf(ctx, sc);
     const rpay = rob ? { ...payload, robust: rob } : payload;   // the profilers' intervals follow Robust Standard Errors
-    const res = await ctx.call('fitmodel.ls', { ...rpay, alpha: ctx.alpha, vif: true, leverage: true, dw: o('dw', false), sequential: o('sequential', false), corr: o('corr', false), ccpr: !!o('ccpr', false) });
-    st.menu = () => lsMenu(ctx, y, res);
+    const res = await ctx.call('fitmodel.ls', { ...rpay, alpha: ctx.alpha, vif: true, leverage: true, dw: o('dw', false), sequential: o('sequential', false), corr: o('corr', false), ccpr: !!o('ccpr', false),
+      indicator: !!o('indicatorEst', false), expanded: !!o('expandedEst', false) });
+    st.menu = () => lsMenu(ctx, y, res, rpay);
     const tc = res.tcrit;
+    // a singular design, as JMP: the zeroed columns and the combinations of the kept ones they equal, at the top
+    if (res.singularity) {
+      ctx.outline('Singularity Details', { parent, key: 'singular', info: 'p:fitmodel:estimates' }).add(ctx.rt(res.singularity, { sortable: false, key: 'singular' }),
+        ctx.note('Each Zeroed column is this linear combination of columns before it (in the order of the effects), so the data cannot tell their effects apart: its estimate is set to 0 and the estimates of the columns it equals are Biased (they hold its part too). Take an effect out, or add rows, to remove the dependency.'),
+        ctx.code(res.singularity.code));
+    }
     if (o('effectSummary', true) && res.effect_summary.length) effectSummary(ctx, parent, res.effect_summary, { scope: sc });
     const top = [];
     if (o('plotRegression', emph !== 'minimal')) {
       const rp = await regressionPlot(ctx, parent, { kind: 'ls', payload: rpay, factors: res.factors, d: res.diag, yname: y.name, scope: sc, code: codeOf(res, 'regression') });
       if (rp) top.push(rp.el);
     }
-    if (o('plotActual', emph !== 'minimal')) top.push(actualByPredicted(ctx, parent, res.diag, res.whole, y.name, undefined, undefined, codeOf(res, 'actpred')).el);
+    if (o('plotActual', emph !== 'minimal')) top.push(actualByPredicted(ctx, parent, res.diag, res.whole, y.name, undefined, undefined, codeOf(res, 'actpred'), res.holdout).el);
     if (o('summaryOfFit', true)) {
       const s = ctx.outline('Summary of Fit', { parent, key: 'sof' });
       const pairs = res.summary.rows.map((r) => [r.stat, r.value]);
@@ -889,6 +1073,7 @@
       top.push(s.el);
     }
     if (top.length > 1) parent.add(ctx.row(...top));
+    if (res.crossvalidation) crossvalidation(ctx, parent, res.crossvalidation, sc);
     if (o('anova', true)) ctx.outline('Analysis of Variance', { parent, key: 'anova' }).add(ctx.rt(res.anova, { sortable: false, key: 'anova' }));
     if (res.lof && o('lackOfFit', true)) {
       ctx.outline('Lack Of Fit', { parent, key: 'lof', closed: true }).add(ctx.rt(res.lof, { sortable: false, key: 'lof' }), ctx.kv([['Max RSq', res.lof.max_rsquare]]),
@@ -896,8 +1081,9 @@
     }
     if (o('estimates', true)) {
       const showCI = o('showCI', false);
-      const cols = res.estimates.columns.map((c) => ({ ...c, hidden: (['lower', 'upper'].includes(c.key) && !showCI) || (c.key === 'vif' && !o('vif', false)) }));
-      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: res.robust ? 'p:fitmodel:robust' : null }).add(ctx.rt({ columns: cols, rows: res.estimates.rows },
+      // the optional columns, JMP's: Std Beta, VIF, Design Std Error (the Estimates menu, or right click the table)
+      const cols = res.estimates.columns.map((c) => ({ ...c, hidden: (['lower', 'upper'].includes(c.key) && !showCI) || (c.key === 'vif' && !o('vif', false)) || (c.key === 'std_beta' && !o('stdBeta', false)) || (c.key === 'design_se' && !o('designSE', false)) }));
+      ctx.outline('Parameter Estimates', { parent, key: 'estimates', info: res.robust ? 'p:fitmodel:robust' : 'p:fitmodel:estimates' }).add(ctx.rt({ columns: cols, rows: res.estimates.rows },
         { key: 'estimates', caption: res.robust ? `Robust standard errors: ${res.robust.label}; t tests on ${fmt(res.robust.df)} DF` : undefined }));
     }
     if (o('effectTests', true) && res.effect_tests.rows.length) {
@@ -911,13 +1097,33 @@
         ctx.note('A term name like sex[F] is +1 at that level and −1 at the last level (effect coding); a centred term (x−m) subtracts the mean.'));
     }
     if (o('sortedEst', emph === 'screening')) sortedEstimates(ctx, parent, res, tc);
+    if (o('expandedEst', false) && res.expanded) {
+      const showCI = o('showCI', false);
+      ctx.outline('Expanded Estimates', { parent, key: 'expanded', info: 'p:fitmodel:estimates' }).add(
+        ctx.rt({ columns: res.expanded.columns.map((c) => ({ ...c, hidden: ['lower', 'upper'].includes(c.key) && !showCI })), rows: res.expanded.rows }, { key: 'expanded', sortable: false }),
+        ctx.note('Every level of each categorical term, the last one too: with effect coding its estimate is minus the sum of the other levels\', and a crossing\'s combinations follow from the products. The standard errors are from the covariance of the estimates.'),
+        ctx.code(res.expanded.code));
+    }
+    if (o('indicatorEst', false) && res.indicator) {
+      const ob = ctx.outline('Indicator Parameterization Estimates', { parent, key: 'indicator', info: 'p:fitmodel:estimates' });
+      if (res.indicator.error) ob.add(ctx.warn(res.indicator.error));
+      else {
+        const showCI = o('showCI', false);
+        ob.add(ctx.rt({ columns: res.indicator.columns.map((c) => ({ ...c, hidden: ['lower', 'upper'].includes(c.key) && !showCI })), rows: res.indicator.rows }, { key: 'indicator', sortable: false }),
+          ctx.note(res.indicator.refit ? 'The factors 0/1 coded, the last level of each the reference (0), a crossing the products. This model leaves out an effect that a crossing contains, so its indicator coding is another model: these are the estimates of that fit, by least squares.'
+            : 'The same fit with the factors 0/1 coded, the last level of each the reference: a level\'s estimate is its difference from the last level (the other factors at their last levels), a crossing\'s the products of the indicators.'),
+          ctx.code(res.indicator.code));
+      }
+    }
+    const inv = o('invpred', null);
+    if (inv && inv.factor) await inversePrediction(ctx, parent, rpay, inv, sc, res, y);
     if (o('sequential', false) && res.sequential) ctx.outline('Sequential (Type 1) Tests', { parent, key: 'seq' }).add(res.sequential.error ? ctx.warn(res.sequential.error) : ctx.rt(res.sequential, { key: 'seq' }));
     if (o('corr', false) && res.corr) {
       const cols = [{ key: 'term', label: '', fmt: 'text' }, ...res.corr.terms.map((tm, i) => ({ key: `c${i}`, label: tm, digits: 4 }))];
       ctx.outline('Correlation of Estimates', { parent, key: 'corr' }).add(ctx.rt({ columns: cols, rows: res.corr.terms.map((tm, i) => ({ term: tm, ...Object.fromEntries(res.corr.matrix[i].map((v, j) => [`c${j}`, v])) })) }, { sortable: false, key: 'corr' }));
     }
     if (o('effectDetails', true) && res.effects.length) await effectDetails(ctx, M, parent, res, payload, y, o, emph);
-    residualPlots(ctx, parent, res.diag, y.name, o, emph, res.diag.limits, res.plot_code || {});
+    residualPlots(ctx, parent, res.diag, y.name, o, emph, res.diag.limits, res.plot_code || {}, res.holdout);
     if (o('press', false)) ctx.outline('Press', { parent, key: 'press' }).add(ctx.kv([['Press', res.press.press], ['Press RMSE', res.press.rmse]]), ctx.note('The sum of squared leave-one-out prediction errors, Σ(eᵢ/(1 − hᵢ))².'));
     if (o('dw', false) && res.dw) {
       ctx.outline('Durbin-Watson', { parent, key: 'dw' }).add(ctx.rt({ columns: [{ key: 'dw', label: 'Durbin-Watson' }, { key: 'n', label: 'Number of Obs.', fmt: 'int' }, { key: 'autocorr', label: 'AutoCorrelation', digits: 4 }, { key: 'p', label: 'Prob<DW', fmt: 'p' }], rows: [res.dw] }, { sortable: false, key: 'dw' }),
@@ -967,20 +1173,29 @@
         ...(lsm ? [
           ctx.check('LSMeans Table', `lsmTable:${e.label}`, sc, true),
           ctx.check('LSMeans Plot', `lsmPlot:${e.label}`, sc, false),
+          lsm.factors.length === 2 ? ctx.check('Transpose Factors (LSMeans Plot)', `lsmSwap:${e.label}`, sc, false) : null,
+          ctx.check('Show Confidence Limits (LSMeans Plot)', `lsmCI:${e.label}`, sc, true),
+          lsm.slices ? ctx.check('Test Slices', `slices:${e.label}`, sc, false) : null,
           { label: 'LSMeans Contrast…', action: () => contrastDialog(ctx, M, lsm, e.label, sc) },
           ctx.check('LSMeans Student\'s t', `student:${e.label}`, sc, false),
           ctx.check('LSMeans Tukey HSD', `tukey:${e.label}`, sc, false),
           { separator: true },
         ] : []),
         ctx.check('Leverage Plot', 'plotLeverage', sc, emph === 'leverage'),
-      ];
+      ].filter(Boolean);
       const eo = ctx.outline(e.label, { parent: ob, key: `eff:${e.label}`, menu });
       const parts = [];
       const lev = (res.leverage || []).find((l) => l.effect === e.label);
       if (lev && o('plotLeverage', emph === 'leverage')) parts.push(withCode(leveragePlot(ctx, lev, y.name, !!res.robust), ctx.code((codeOf(res, 'leverage') || {})[e.label])));
       if (lsm && o(`lsmTable:${e.label}`, true)) parts.push(lsmeansTable(ctx, M, lsm));
       if (parts.length) eo.add(ctx.row(...parts));
-      if (lsm && o(`lsmPlot:${e.label}`, false)) eo.add(lsmeansPlot(ctx, M, lsm, res.tcrit, y.name, e.label), ctx.code((codeOf(res, 'lsmeans') || {})[e.label]));
+      if (lsm && o(`lsmPlot:${e.label}`, false)) {
+        const swap = !!o(`lsmSwap:${e.label}`, false), ci = o(`lsmCI:${e.label}`, true) !== false;
+        const lc = (codeOf(res, 'lsmeans') || {})[e.label];
+        eo.add(lsmeansPlot(ctx, M, lsm, res.tcrit, y.name, e.label, { swap, ci }),
+          ctx.code(lc && lc.replace('transpose = False', `transpose = ${swap ? 'True' : 'False'}`).replace('show_ci = True', `show_ci = ${ci ? 'True' : 'False'}`)));
+      }
+      if (lsm && lsm.slices && o(`slices:${e.label}`, false)) await testSlices(ctx, eo, payload, e.label, sc);
       if (lsm && o(`student:${e.label}`, false)) await comparisons(ctx, M, eo, payload, e.label, 'student', sc);
       if (lsm && o(`tukey:${e.label}`, false)) await comparisons(ctx, M, eo, payload, e.label, 'tukey', sc);
       const cl = o(`contrast:${e.label}`, []);
@@ -989,41 +1204,48 @@
     }
   }
 
-  function lsMenu(ctx, y, res) {
+  function lsMenu(ctx, y, res, payload) {
     const sc = y.id;
     const c = (label, key, d) => ctx.check(label, key, sc, d);
     const emph = ctx.opt('emphasis', 'leverage');
     return [
       { label: 'Regression Reports', submenu: () => [c('Summary of Fit', 'summaryOfFit', true), c('Analysis of Variance', 'anova', true), c('Parameter Estimates', 'estimates', true),
         c('Effect Tests', 'effectTests', true), c('Effect Details', 'effectDetails', true), c('Lack of Fit', 'lackOfFit', true), { separator: true }, c('Show All Confidence Intervals', 'showCI', false), c('AICc', 'aicc', false)] },
-      { label: 'Estimates', submenu: () => [c('Show Prediction Expression', 'expression', false), c('Sorted Estimates', 'sortedEst', emph === 'screening'), c('Sequential Tests', 'sequential', false),
-        c('Correlation of Estimates', 'corr', false), c('VIF (in Parameter Estimates)', 'vif', false)] },
+      { label: 'Estimates', submenu: () => [c('Show Prediction Expression', 'expression', false), c('Sorted Estimates', 'sortedEst', emph === 'screening'), c('Expanded Estimates', 'expandedEst', false),
+        c('Indicator Parameterization Estimates', 'indicatorEst', false), c('Sequential Tests', 'sequential', false),
+        { label: 'Inverse Prediction…', checked: !!ctx.opt('invpred', null, sc), action: () => inversePredictionDialog(ctx, sc, res, y) },
+        c('Correlation of Estimates', 'corr', false), { separator: true }, c('Std Beta (in Parameter Estimates)', 'stdBeta', false), c('VIF (in Parameter Estimates)', 'vif', false), c('Design Std Error (in Parameter Estimates)', 'designSE', false)] },
       { label: 'Robust Standard Errors', submenu: () => robustMenu(ctx, y, 'ls') },
       { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', emph === 'screening'), c('Interaction Plots', 'interaction', false), c('Contour Profiler', 'contour', false), c('Box Cox Y Transformation', 'boxcox', false)] },
       { label: 'Row Diagnostics', submenu: () => [c('Plot Regression', 'plotRegression', emph !== 'minimal'), c('Plot Actual by Predicted', 'plotActual', emph !== 'minimal'), c('Plot Effect Leverage', 'plotLeverage', emph === 'leverage'), c('Plot Residual by Predicted', 'plotResidPred', emph !== 'minimal'),
         c('Plot Residual by Row', 'plotResidRow', false), c('Plot Studentized Residuals', 'plotStudent', false), c('Plot Residual by Normal Quantiles', 'plotResidQQ', false), { separator: true }, c('Press', 'press', false), c('Durbin-Watson Test', 'dw', false)] },
       { label: 'Regression Diagnostics', submenu: () => regDiagMenu(ctx, sc) },
       { label: 'Recursive and Rolling Regression', submenu: () => rrMenu(ctx, sc) },
-      { label: 'Save Columns', submenu: () => saveLS(ctx, res, y) },
+      { label: 'Save Columns', submenu: () => saveLS(ctx, res, y, payload) },
       { separator: true },
       c('Effect Summary', 'effectSummary', true),
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ];
   }
 
-  function saveLS(ctx, res, y) {
+  /* Save Columns: the predictions and their limits for every row whose factors are present
+     (fitmodel.save); the diagnostics of the fit (studentized residuals, hats, Cook's D, the
+     residual's standard error) for the rows of the fit. */
+  function saveLS(ctx, res, y, payload) {
     const d = res.diag;
     const pct = fmt(100 * (1 - ctx.alpha));
+    const all = (cols) => saveAllRows(ctx, 'ls', payload, cols);
     return [
-      { label: 'Predicted Values', action: () => ctx.saveColumn(`Predicted ${y.name}`, { rows: d.rows, values: d.predicted }) },
-      { label: 'Residuals', action: () => ctx.saveColumn(`Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
-      { label: 'Mean Confidence Interval', action: () => { ctx.saveColumn(`Lower ${pct}% Mean ${y.name}`, { rows: d.rows, values: d.lower_mean }); ctx.saveColumn(`Upper ${pct}% Mean ${y.name}`, { rows: d.rows, values: d.upper_mean }); } },
-      { label: 'Indiv Confidence Interval', action: () => { ctx.saveColumn(`Lower ${pct}% Indiv ${y.name}`, { rows: d.rows, values: d.lower_indiv }); ctx.saveColumn(`Upper ${pct}% Indiv ${y.name}`, { rows: d.rows, values: d.upper_indiv }); } },
+      saveFormulaItem(ctx, 'ls', payload),
+      { label: 'Predicted Values', action: all([['predicted', `Predicted ${y.name}`]]) },
+      { label: 'Residuals', action: all([['residual', `Residual ${y.name}`]]) },
+      { label: 'Mean Confidence Interval', action: all([['lower_mean', `Lower ${pct}% Mean ${y.name}`], ['upper_mean', `Upper ${pct}% Mean ${y.name}`]]) },
+      { label: 'Indiv Confidence Interval', action: all([['lower_indiv', `Lower ${pct}% Indiv ${y.name}`], ['upper_indiv', `Upper ${pct}% Indiv ${y.name}`]]) },
       { label: 'Studentized Residuals', action: () => ctx.saveColumn(`Studentized Resid ${y.name}`, { rows: d.rows, values: d.studentized }) },
       { label: 'Hats', action: () => ctx.saveColumn(`h ${y.name}`, { rows: d.rows, values: d.hat }) },
-      { label: 'Std Error of Predicted', action: () => ctx.saveColumn(`StdErr Pred ${y.name}`, { rows: d.rows, values: d.se_pred }) },
+      { label: 'Std Error of Predicted', action: all([['se_pred', `StdErr Pred ${y.name}`]]) },
       { label: 'Std Error of Residual', action: () => ctx.saveColumn(`StdErr Resid ${y.name}`, { rows: d.rows, values: d.se_resid }) },
-      { label: 'Std Error of Individual', action: () => ctx.saveColumn(`StdErr Indiv ${y.name}`, { rows: d.rows, values: d.se_indiv }) },
+      { label: 'Std Error of Individual', action: all([['se_indiv', `StdErr Indiv ${y.name}`]]) },
       { label: 'Cook\'s D Influence', action: () => ctx.saveColumn(`Cook's D Influence ${y.name}`, { rows: d.rows, values: d.cooks }) },
     ];
   }
@@ -1320,10 +1542,20 @@
   async function stepwiseY(ctx, M, y, parent, st) {
     const sc = `${y.id}|${ctx.byLabel || ''}`;
     const o = (k, d) => ctx.opt(k, d, sc);
-    const payload = { ...M.base, y: y.name };
-    const cfg = { rule: o('sw:rule', 'pvalue'), direction: o('sw:direction', 'forward'), p_enter: o('sw:penter', 0.25), p_leave: o('sw:pleave', 0.1), heredity: o('sw:heredity', M.effects.some((e) => e.cols.length > 1) ? 'combine' : 'none') };
+    const cat = y.isCategorical;
+    const vcol = validationOf(ctx);
+    const payload = { ...M.base, y: y.name, ...(vcol ? { validation: vcol } : {}), ...(cat ? { ordinal: y.modelingType === 'ordinal', distr: ctx.opt('distr', 'logit'), target: ctx.opt('target', null) } : {}) };
+    // JMP's default Stopping Rule is Minimum BIC; with a validation column (JMP Pro) Max Validation RSquare
+    const rules = [['pvalue', 'P-value Threshold'], ['aicc', 'Minimum AICc'], ['bic', 'Minimum BIC'], ...(vcol && !cat ? [['max_valid', 'Max Validation RSquare']] : [])];
+    let rule = o('sw:rule', vcol && !cat ? 'max_valid' : 'bic');
+    if (!rules.some((r) => r[0] === rule)) rule = 'bic';
+    const dirs = [['forward', 'Forward'], ['backward', 'Backward'], ...(rule !== 'max_valid' ? [['mixed', 'Mixed']] : [])];
+    let direction = o('sw:direction', 'forward');
+    if (!dirs.some((d) => d[0] === direction)) direction = 'forward';
+    const cfg = { rule, direction, p_enter: o('sw:penter', 0.25), p_leave: o('sw:pleave', 0.1), heredity: o('sw:heredity', M.effects.some((e) => e.cols.length > 1) ? 'combine' : 'none') };
     const state = { entered: o('sw:entered', []), locked: o('sw:locked', []), history: o('sw:history', []), step: o('sw:step', 0) };
     const res = await ctx.call('fitmodel.stepwise', { ...payload, ...cfg, entered: state.entered, locked: state.locked, action: 'show' });
+    const logit = res.kind === 'logit';
     const act = async (action, extra = {}) => {
       try {
         const r = await ctx.call('fitmodel.stepwise', { ...payload, ...cfg, entered: state.entered, locked: state.locked, action, step0: state.step, ...extra });
@@ -1337,11 +1569,15 @@
       const fixed = (ctx.spec.effects || []).filter((e) => !e.random);
       return res.entered.map((i) => fixed[i]).filter(Boolean);
     };
-    const modelSpec = () => ({ ...JSON.parse(JSON.stringify(ctx.spec)), effects: chosenEffects(), options: { ...ctx.spec.options, personality: 'standard' }, roles: { ...ctx.spec.roles, y: [y.id] } });
+    // Make Model and Run Model: the entered effects, with the personality of the Y (Standard Least Squares, or the logistic fits)
+    const personality = logit ? (y.modelingType === 'ordinal' ? 'ordinal' : 'nominal') : 'standard';
+    const modelSpec = () => ({ ...JSON.parse(JSON.stringify(ctx.spec)), effects: chosenEffects(), options: { ...ctx.spec.options, personality }, roles: { ...ctx.spec.roles, y: [y.id] } });
     const makeModel = () => SM.launch.open({ platform: ctx.report.platform, table: ctx.table, spec: modelSpec(), onOK: (s) => SM.app.openReport(ctx.report.platform, s, ctx.table) });
     const runModel = () => { if (!res.entered.length) { SM.ui.toast('No effects are entered'); return; } SM.app.openReport(ctx.report.platform, modelSpec(), ctx.table); };
+    const kEff = res.effects.length;
     st.menu = () => [
-      ctx.check('All Possible Models', 'sw:all', sc, false),
+      { label: 'All Possible Models…', checked: !!o('sw:all', false), disabled: logit, action: () => allModelsDialog(ctx, sc, kEff) },
+      { label: 'Model Averaging…', checked: !!o('sw:avg', null), disabled: logit, action: () => modelAveragingDialog(ctx, sc, kEff) },
       { label: 'Clear History', action: () => { ctx.set('sw:history', [], sc, { rerun: false }); ctx.set('sw:step', 0, sc); } },
       { separator: true },
       { label: 'Make Model', action: makeModel },
@@ -1352,21 +1588,27 @@
     const mkSel = (label, key, value, choices) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; s.addEventListener('change', () => ctx.set(key, s.value, sc)); return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), s); };
     const mkNum = (label, key, value) => { const i = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': label }); i.value = String(value); i.addEventListener('change', () => { const v = Number(i.value.replace(',', '.')); if (v > 0 && v < 1) ctx.set(key, v, sc); else i.value = String(value); }); return el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), i); };
     const b = (label, fn) => { const x = el('button', { type: 'button', class: 'sm-btn small', text: label }); x.addEventListener('click', fn); return x; };
+    const statCols = logit
+      ? [{ key: 'nll', label: '-LogLikelihood' }, { key: 'rsq', label: 'RSquare' }, { key: 'p', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }, { key: 'n', label: 'N' }]
+      : [{ key: 'sse', label: 'SSE' }, { key: 'dfe', label: 'DFE' }, { key: 'rmse', label: 'RMSE' }, { key: 'rsq', label: 'RSquare' }, { key: 'rsq_adj', label: 'RSquare Adj' }, { key: 'cp', label: 'Cp' }, { key: 'p', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' },
+        ...(res.validation ? [{ key: 'rsq_v', label: 'Validation RSquare' }] : [])];
     ctl.add(el('div', { class: 'sm-fm-controls' },
-      mkSel('Stopping Rule', 'sw:rule', cfg.rule, [['pvalue', 'P-value Threshold'], ['aicc', 'Minimum AICc'], ['bic', 'Minimum BIC']]),
-      mkSel('Direction', 'sw:direction', cfg.direction, [['forward', 'Forward'], ['backward', 'Backward'], ['mixed', 'Mixed']]),
+      mkSel('Stopping Rule', 'sw:rule', cfg.rule, rules),
+      mkSel('Direction', 'sw:direction', cfg.direction, dirs),
       mkSel('Rules', 'sw:heredity', cfg.heredity, [['combine', 'Combine'], ['restrict', 'Restrict'], ['none', 'Whole Effects']]),
       cfg.rule === 'pvalue' ? mkNum('Prob to Enter', 'sw:penter', cfg.p_enter) : null,
       cfg.rule === 'pvalue' ? mkNum('Prob to Leave', 'sw:pleave', cfg.p_leave) : null),
     el('div', { class: 'sm-fm-controls' }, b('Go', () => act('go')), b('Step', () => act('step')), b('Enter All', () => act('enter_all')), b('Remove All', () => act('remove_all')),
       b('Make Model', makeModel), b('Run Model', runModel)),
-    ctx.rt({ columns: [{ key: 'sse', label: 'SSE' }, { key: 'dfe', label: 'DFE' }, { key: 'rmse', label: 'RMSE' }, { key: 'rsq', label: 'RSquare' }, { key: 'rsq_adj', label: 'RSquare Adj' }, { key: 'cp', label: 'Cp' }, { key: 'p', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }], rows: [res.stats] }, { sortable: false, key: 'swstats' }));
+    ctx.rt({ columns: statCols, rows: [res.stats] }, { sortable: false, key: 'swstats' }));
     // Current Estimates: Lock and Entered boxes
     const ce = ctx.outline('Current Estimates', { parent, key: 'swcur', info: 'p:fitmodel:stepwise' });
     const tbl = el('table', { class: 'sm-rt sm-fm-swtable' });
-    tbl.append(el('thead', null, el('tr', null, ...['Lock', 'Entered', 'Parameter', 'Estimate', 'nDF', 'SS', '"F Ratio"', '"Prob>F"'].map((h, i) => el('th', { class: i < 3 ? 'sm-l' : null, text: h })))));
+    const heads = logit ? ['Lock', 'Entered', 'Parameter', 'Estimate', 'nDF', '"L-R ChiSquare"', '"Prob>ChiSq"'] : ['Lock', 'Entered', 'Parameter', 'Estimate', 'nDF', 'SS', '"F Ratio"', '"Prob>F"'];
+    tbl.append(el('thead', null, el('tr', null, ...heads.map((h, i) => el('th', { class: i < 3 ? 'sm-l' : null, text: h })))));
     const body = el('tbody');
-    body.append(el('tr', null, el('td'), el('td'), el('td', { class: 'sm-l', text: 'Intercept' }), el('td', { text: fmt(res.intercept) }), el('td', { text: '1' }), el('td', { text: '0' }), el('td', { text: '.' }), el('td', { text: '.' })));
+    body.append(el('tr', null, el('td'), el('td'), el('td', { class: 'sm-l', text: logit && res.mode === 'ordinal' ? 'Intercepts' : 'Intercept' }), el('td', { text: fmt(res.intercept) }), el('td', { text: logit && res.mode !== 'binary' ? String(Math.max(1, res.levels.length - 1)) : '1' }),
+      ...(logit ? [el('td', { text: '.' }), el('td', { text: '.' })] : [el('td', { text: '0' }), el('td', { text: '.' }), el('td', { text: '.' })])));
     for (const c of res.current) {
       const lock = el('input', { type: 'checkbox', 'aria-label': `Lock ${c.effect}` });
       lock.checked = c.locked;
@@ -1375,24 +1617,68 @@
       ent.checked = c.entered;
       ent.addEventListener('change', () => act('toggle', { index: c.index }));
       const pTd = el('td', { text: SM.util.fmtP(c.p, 1.01).replace('*', '') });
-      body.append(el('tr', { class: c.entered ? 'is-entered' : null }, el('td', null, lock), el('td', null, ent), el('td', { class: 'sm-l', text: c.effect }), el('td', { text: fmt(c.estimate) }), el('td', { text: String(c.ndf) }), el('td', { text: fmt(c.ss) }), el('td', { text: fmt(c.f) }), pTd));
+      body.append(el('tr', { class: c.entered ? 'is-entered' : null }, el('td', null, lock), el('td', null, ent), el('td', { class: 'sm-l', text: c.effect }), el('td', { text: fmt(c.estimate) }), el('td', { text: String(c.ndf) }),
+        ...(logit ? [el('td', { text: fmt(c.ss) })] : [el('td', { text: fmt(c.ss) }), el('td', { text: fmt(c.f) })]), pTd));
     }
     tbl.append(body);
-    ce.add(tbl, ctx.note('For an entered effect: the F test of removing it; for one not entered: of adding it. Check Entered to put an effect in or take it out; Lock keeps it as it is.'));
+    ce.add(tbl, ctx.note(logit ? 'For an entered effect: the likelihood ratio test of removing it; for one not entered: of adding it (refits of the logistic model). Check Entered to put an effect in or take it out; Lock keeps it as it is.'
+      : 'For an entered effect: the F test of removing it; for one not entered: of adding it. Check Entered to put an effect in or take it out; Lock keeps it as it is.'));
     const hist = ctx.outline('Step History', { parent, key: 'swhist' });
-    if (state.history.length) hist.add(ctx.rt({ columns: [{ key: 'step', label: 'Step', fmt: 'int' }, { key: 'parameter', label: 'Parameter', fmt: 'text' }, { key: 'action', label: 'Action', fmt: 'text' }, { key: 'p', label: '"Sig Prob"', fmt: 'p' }, { key: 'seq_ss', label: 'Seq SS' }, { key: 'rsq', label: 'RSquare' }, { key: 'cp', label: 'Cp' }, { key: 'p_params', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }], rows: state.history }, { sortable: false, key: 'swhist' }));
+    const histCols = [{ key: 'step', label: 'Step', fmt: 'int' }, { key: 'parameter', label: 'Parameter', fmt: 'text' }, { key: 'action', label: 'Action', fmt: 'text' }, { key: 'p', label: '"Sig Prob"', fmt: 'p' },
+      { key: 'seq_ss', label: logit ? 'L-R ChiSquare' : 'Seq SS' }, { key: 'rsq', label: 'RSquare' }, ...(logit ? [] : [{ key: 'cp', label: 'Cp' }]), { key: 'p_params', label: 'p', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' },
+      ...(res.validation ? [{ key: 'rsq_v', label: 'Validation RSquare' }] : [])];
+    if (state.history.length) hist.add(ctx.rt({ columns: histCols, rows: state.history }, { sortable: false, key: 'swhist' }));
     else hist.add(ctx.note('No steps yet: press Go or Step.'));
-    if (o('sw:all', false)) {
-      const r = await ctx.call('fitmodel.all_models', { ...payload, per_size: 5 });
-      const ob = ctx.outline('All Possible Models', { parent, key: 'swall', info: 'p:fitmodel:stepwise', menu: () => [{ label: 'Remove', action: () => ctx.set('sw:all', false, sc) }] });
+    const all = o('sw:all', false);
+    if (all && !logit) {
+      const opts = all === true ? {} : all;
+      const r = await ctx.call('fitmodel.all_models', { ...payload, max_terms: opts.max ?? null, per_size: opts.per ?? 5 });
+      const ob = ctx.outline('All Possible Models', { parent, key: 'swall', info: 'p:fitmodel:stepwise', menu: () => [{ label: 'Change…', action: () => allModelsDialog(ctx, sc, kEff) }, { label: 'Remove', action: () => ctx.set('sw:all', false, sc) }] });
       if (r.error) ob.add(ctx.warn(r.error));
       else {
         ob.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'number', label: 'Number', fmt: 'int' }, { key: 'rsq', label: 'RSquare' }, { key: 'rmse', label: 'RMSE' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' }, { key: 'cp', label: 'Cp' }], rows: r.models.map((m) => ({ ...m, model: `${m.model}${m.best ? '  (best of its size)' : ''}${m.min_aicc ? '  (smallest AICc)' : ''}` })) },
           { onRow: (row) => { ctx.set('sw:entered', row.effects, sc); }, key: 'swall' }),
-        ctx.note('The five best models of each size by RSquare. Click a line to make it the current model.'));
+        ctx.note(`The ${r.per_size === 1 ? 'best model' : `${r.per_size} best models`} of each size by RSquare, up to ${r.max_terms} effect${r.max_terms === 1 ? '' : 's'}. Click a line to make it the current model.`));
       }
     }
-    tail(ctx, parent, { code: res.code, notes: ['Effects enter and leave whole (all their terms); JMP can also split a nominal effect into its terms. AICc and BIC count the error variance as a parameter.'] });
+    const avg = o('sw:avg', null);
+    if (avg && !logit) await modelAveraging(ctx, parent, payload, avg, sc, kEff);
+    const notes = ['Effects enter and leave whole (all their terms); JMP can also split a nominal effect into its terms. AICc and BIC count the error variance as a parameter.'];
+    if (logit) notes.push(`${res.mode === 'ordinal' ? 'Ordinal' : 'Nominal'} Y: each step refits the ${res.mode === 'ordinal' ? 'cumulative logit (statsmodels OrderedModel)' : res.mode === 'binary' ? 'logistic regression (a binomial GLM)' : 'multinomial logit (statsmodels MNLogit)'} and tests the effect by its likelihood ratio χ²; RSquare is the entropy RSquare, 1 − LL/LL(intercept only). All Possible Models and Model Averaging are for a continuous Y, as in JMP.`);
+    if (res.validation) notes.push(`${res.validation}: every fit is the training rows' (0, or Training); Validation RSquare is 1 − SSE/SST of the validation rows (1) about their own mean. Max Validation RSquare enters the most significant effect at each step to the end and keeps the model of the path with the largest validation RSquare; it goes Forward or Backward, as JMP offers Mixed with P-value Threshold only.`);
+    tail(ctx, parent, { code: res.code, notes: [...notes, ...(res.notes || [])] });
+  }
+
+  async function allModelsDialog(ctx, sc, k) {
+    const cur = ctx.opt('sw:all', false, sc);
+    const c0 = cur && cur !== true ? cur : {};
+    const v = await SM.ui.form({ title: 'All Possible Models', info: 'p:fitmodel:stepwise',
+      lead: 'Least squares fits of every combination of the effects, the best of each size by RSquare (at most 12 effects).',
+      fields: [{ key: 'max', label: 'Maximum number of terms', type: 'number', value: c0.max ?? k, help: `The largest number of effects in a model, 1 to ${k} (every effect by default).` },
+        { key: 'per', label: 'Number of best models to see', type: 'number', value: c0.per ?? 5, help: 'How many models of each size are listed, the best by RSquare first; 5 by default.' }],
+      validate: (x) => (Number.isInteger(x.max) && x.max >= 1 && x.max <= k && Number.isInteger(x.per) && x.per >= 1 ? null : `whole numbers: the terms 1 to ${k}, the models 1 or more`) });
+    if (v) ctx.set('sw:all', { max: v.max, per: v.per }, sc);
+  }
+
+  async function modelAveragingDialog(ctx, sc, k) {
+    const cur = ctx.opt('sw:avg', null, sc) || {};
+    const v = await SM.ui.form({ title: 'Model Averaging', info: 'p:fitmodel:stepwise',
+      lead: 'The least squares fits of every combination of the effects averaged by their AICc weights, instead of one model chosen.',
+      fields: [{ key: 'max', label: 'Maximum number of terms', type: 'number', value: cur.max ?? k, help: `The largest number of effects in a model, 1 to ${k} (every effect by default); at most 12 effects.` },
+        { key: 'cut', label: 'Minimum cumulative weight', type: 'number', value: cur.cut ?? 0.95, help: 'The models of the largest AICc weights are kept until their weights add up to this share, then their weights are made to sum to one; 0.95 by default, 1 keeps every model.' }],
+      validate: (x) => (Number.isInteger(x.max) && x.max >= 1 && x.max <= k && x.cut > 0 && x.cut <= 1 ? null : `the terms: a whole number from 1 to ${k}; the weight: above 0, at most 1`) });
+    if (v) ctx.set('sw:avg', { max: v.max, cut: v.cut }, sc);
+  }
+
+  async function modelAveraging(ctx, parent, payload, avg, sc, k) {
+    const r = await ctx.call('fitmodel.model_average', { ...payload, max_terms: avg.max ?? null, cutoff: avg.cut ?? 0.95, alpha: ctx.alpha });
+    const ob = ctx.outline('Model Averaging', { parent, key: 'swavg', info: 'p:fitmodel:stepwise', menu: () => [{ label: 'Change…', action: () => modelAveragingDialog(ctx, sc, k) }, { label: 'Remove', action: () => ctx.set('sw:avg', null, sc) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return; }
+    const lvl = fmt(100 * (1 - ctx.alpha));
+    ob.add(ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'lower', label: `Lower ${lvl}%`, hidden: true }, { key: 'upper', label: `Upper ${lvl}%`, hidden: true }, { key: 'weight', label: 'Weight of the models with it', digits: 4 }], rows: r.estimates }, { key: 'swavgest', sortable: false }),
+      ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'number', label: 'Number', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'rsq', label: 'RSquare' }, { key: 'weight', label: 'AICc Weight', digits: 4 }], rows: r.models }, { key: 'swavgmodels', caption: `The ${r.kept} models of the largest weights (of ${r.n_models}), until they hold ${fmt(r.cutoff)}`, sortable: false }),
+      ctx.note('Each model\'s AICc weight is exp(−ΔAICc/2) over every model of up to the maximum number of terms (Burnham and Anderson 2002); the models kept have their weights made to sum to one. A term\'s estimate is the weighted average of its estimates, 0 in a model without it; its standard error is the unconditional one, Σ w √(var + (b − b̄)²). The intercept is at 0 of the continuous columns.'),
+      ctx.code(r.code));
   }
 
   /* ---- Generalized Linear Model ----------------------------------------------------------------------- */
@@ -1414,7 +1700,7 @@
     const res = await ctx.call('fitmodel.glm', { ...payload, alpha: ctx.alpha });
     const m = res.model;
     const wald = o('wald', false) || !!res.robust;   // robust standard errors: Wald tests (the L-R tests assume the model's variance)
-    st.menu = () => glmMenu(ctx, g, res, sc);
+    st.menu = () => glmMenu(ctx, g, res, sc, payload);
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', `${m.response}${m.target ? ` (event: ${m.target})` : ''}`], ['Distribution', m.distribution], ['Link', m.link], ['Estimation Method', 'Maximum Likelihood'], ['Observations (or Sum Wgts)', fmt(m.n)]]
       .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
     if (o('effectSummary', true) && res.effect_tests.length) effectSummary(ctx, parent, res.effect_tests.map((r) => ({ source: r.source, p: wald ? r.p_wald : r.p, logworth: logw(wald ? r.p_wald : r.p) })).sort((a, b) => b.logworth - a.logworth), { scope: sc });
@@ -1423,6 +1709,7 @@
         ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'nll', label: '-LogLikelihood' }, { key: 'lr', label: 'L-R ChiSquare' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.whole }, { sortable: false, key: 'whole' }),
         ctx.kv([['AICc', res.aicc], ['BIC', res.bic]]), res.scaled ? ctx.note(`Scaled by the overdispersion estimate ${fmt(res.overdispersion, { sig: 5 })}.`) : null);
     }
+    if (res.crossvalidation) crossvalidation(ctx, parent, res.crossvalidation, sc);
     if (o('gof', true)) {
       const scaleFam = ['normal', 'gamma', 'invgauss'].includes(dist);
       ctx.outline('Goodness Of Fit Statistic', { parent, key: 'gof' }).add(ctx.rt({ columns: [{ key: 'stat', label: 'Statistic', fmt: 'text' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'df', label: 'DF' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p', hidden: scaleFam }], rows: res.gof }, { sortable: false, key: 'gof' }),
@@ -1443,7 +1730,7 @@
     if (o('studDev', true)) ctx.outline('Studentized Deviance Residual by Predicted', { parent, key: 'studdev' }).add(rowPlot(ctx, { x: d.predicted, y: d.stud_dev, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: 'Studentized Deviance Residual', hlines: [{ y: 0, color: P.mean }], title: 'studentized deviance residuals' }), ctx.code(codeOf(res, 'studDev')));
     const extraPlots = [['studPearson', 'Studentized Pearson Residual by Predicted', d.stud_pearson, 'Studentized Pearson Residual'], ['devPlot', 'Deviance Residual by Predicted', d.resid_dev, 'Deviance Residual'], ['pearPlot', 'Pearson Residual by Predicted', d.resid_pearson, 'Pearson Residual']];
     for (const [k, title, v, yt] of extraPlots) if (o(k, false)) ctx.outline(title, { parent, key: k }).add(rowPlot(ctx, { x: d.predicted, y: v, rows: d.rows, xTitle: `${yl} Predicted`, yTitle: yt, hlines: [{ y: 0, color: P.mean }], title }), ctx.code(codeOf(res, k)));
-    if (o('actualPred', false)) actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, yl, 'p:fitmodel:glm', undefined, codeOf(res, 'actualPred'));
+    if (o('actualPred', !!res.crossvalidation)) actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, yl, 'p:fitmodel:glm', undefined, codeOf(res, 'actualPred'), res.holdout);
     if (o('linPlot', false)) {
       const order = d.linpred.map((_, k) => k).sort((a, b) => d.linpred[a] - d.linpred[b]);
       ctx.outline('Linear Predictor Plot', { parent, key: 'linplot' }).add(rowPlot(ctx, { x: d.linpred, y: d.actual, rows: d.rows, xTitle: 'Linear Predictor', yTitle: yl, lines: [lineTrace(order.map((k) => d.linpred[k]), order.map((k) => d.predicted[k]), P.fit)], title: 'linear predictor plot' }),
@@ -1458,7 +1745,7 @@
   }
   const logw = (p) => (p == null ? 0 : -Math.log10(Math.max(p, 1e-300)));
 
-  function glmMenu(ctx, g, res, sc) {
+  function glmMenu(ctx, g, res, sc, payload) {
     const c = (label, key, d, x) => ctx.check(label, key, sc, d, x);
     const d = res.diag;
     const yl = res.model.response.replace(/, .*/, '');
@@ -1469,13 +1756,14 @@
       c('Overdispersion Tests and Intervals', 'overdispersion', false, { disabled: !['binomial', 'poisson'].includes(ctx.opt('dist', 'normal')) }),
       c('Wald Tests', 'wald', false, res.robust ? { checked: true, disabled: true } : {}),
       { label: 'Robust Standard Errors', submenu: () => robustMenu(ctx, { id: sc }, 'glm') },
-      { label: 'Diagnostic Plots', submenu: () => [c('Regression Plot', 'plotRegression', true), c('Studentized Deviance Residuals by Predicted', 'studDev', true), c('Studentized Pearson Residuals by Predicted', 'studPearson', false), c('Deviance Residuals by Predicted', 'devPlot', false), c('Pearson Residuals by Predicted', 'pearPlot', false), c('Actual by Predicted', 'actualPred', false), c('Linear Predictor Plot', 'linPlot', false)] },
+      { label: 'Diagnostic Plots', submenu: () => [c('Regression Plot', 'plotRegression', true), c('Studentized Deviance Residuals by Predicted', 'studDev', true), c('Studentized Pearson Residuals by Predicted', 'studPearson', false), c('Deviance Residuals by Predicted', 'devPlot', false), c('Pearson Residuals by Predicted', 'pearPlot', false), c('Actual by Predicted', 'actualPred', !!res.crossvalidation), c('Linear Predictor Plot', 'linPlot', false)] },
       { label: 'Profilers', submenu: () => [c('Profiler', 'profiler', false), c('Contour Profiler', 'contour', false), c('Interaction Plots', 'interaction', false)] },
       { label: 'Save Columns', submenu: () => [
-        { label: 'Predicted Values', action: sv(`Pred ${yl}`, d.predicted) },
-        { label: 'Mean Confidence Interval', action: () => { sv(`Lower ${pct}% Mean ${yl}`, d.lower_mean)(); sv(`Upper ${pct}% Mean ${yl}`, d.upper_mean)(); } },
-        { label: 'Linear Predictor', action: sv(`Linear Predictor ${yl}`, d.linpred) },
-        { label: 'Residuals', action: sv(`Residual ${yl}`, d.residual) },
+        saveFormulaItem(ctx, 'glm', payload),
+        { label: 'Predicted Values', action: saveAllRows(ctx, 'glm', payload, [['predicted', `Pred ${yl}`]]) },
+        { label: 'Mean Confidence Interval', action: saveAllRows(ctx, 'glm', payload, [['lower_mean', `Lower ${pct}% Mean ${yl}`], ['upper_mean', `Upper ${pct}% Mean ${yl}`]]) },
+        { label: 'Linear Predictor', action: saveAllRows(ctx, 'glm', payload, [['linpred', `Linear Predictor ${yl}`]]) },
+        { label: 'Residuals', action: saveAllRows(ctx, 'glm', payload, [['residual', `Residual ${yl}`]]) },
         { label: 'Deviance Residuals', action: sv(`Deviance Residual ${yl}`, d.resid_dev) },
         { label: 'Pearson Residuals', action: sv(`Pearson Residual ${yl}`, d.resid_pearson) },
         { label: 'Studentized Deviance Residuals', action: sv(`Studentized Deviance Residual ${yl}`, d.stud_dev) },
@@ -1511,7 +1799,7 @@
     const payload = geePayload(ctx, M, y);
     const res = await ctx.call('fitmodel.gee', { ...payload, alpha: ctx.alpha });
     const m = res.model;
-    st.menu = () => geeMenu(ctx, y, res, sc);
+    st.menu = () => geeMenu(ctx, y, res, sc, payload);
     const yl = m.target ? `${m.response} (event: ${m.target})` : m.response;
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', yl], ['Distribution', m.distribution], ['Link', m.link], ['Working Correlation', m.corr], ['Covariance', m.cov], ['Subject', m.subject]]
       .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
@@ -1622,7 +1910,7 @@
     ob.add(ctx.note('Click a line to refit the report with that working correlation.'), ctx.code(r.code));
   }
 
-  function geeMenu(ctx, y, res, sc) {
+  function geeMenu(ctx, y, res, sc, payload) {
     const c = (label, key, dflt, x) => ctx.check(label, key, sc, dflt, x);
     const m = res.model;
     const d = res.diag;
@@ -1637,10 +1925,11 @@
       { label: 'Diagnostic Plots', submenu: () => [c('Residual by Predicted', 'residPred', true), c('Actual by Predicted', 'actualPred', true), c('Residuals by Subject', 'residSubject', true), c('Boxes per Subject', 'subjectBoxes', false)] },
       { label: 'Profilers', submenu: () => [c('Profiler', 'profiler', false), c('Contour Profiler', 'contour', false), c('Interaction Plots', 'interaction', false)] },
       { label: 'Save Columns', submenu: () => [
-        { label: 'Predicted Values (marginal)', action: sv(`Pred ${y.name}`, d.predicted) },
-        { label: 'Residuals', action: sv(`Residual ${y.name}`, d.residual) },
+        saveFormulaItem(ctx, 'gee', payload),
+        { label: 'Predicted Values (marginal)', action: saveAllRows(ctx, 'gee', payload, [['predicted', `Pred ${y.name}`]]) },
+        { label: 'Residuals', action: saveAllRows(ctx, 'gee', payload, [['residual', `Residual ${y.name}`]]) },
         { label: 'Pearson Residuals', action: sv(`Pearson Residual ${y.name}`, d.pearson) },
-        { label: 'Linear Predictor', action: sv(`Linear Predictor ${y.name}`, d.linpred) },
+        { label: 'Linear Predictor', action: saveAllRows(ctx, 'gee', payload, [['linpred', `Linear Predictor ${y.name}`]]) },
       ] },
       { separator: true },
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
@@ -1659,20 +1948,24 @@
     const o = (k, d) => ctx.opt(k, d, sc);
     const payload = { ...M.base, y: y.name, ordinal, distr: ordinal ? ctx.opt('distr', 'logit') : 'logit', target: ordinal ? null : ctx.opt('target', null) };
     const res = await ctx.call('fitmodel.logistic', { ...payload, alpha: ctx.alpha });
-    st.menu = () => logisticMenu(ctx, y, res, sc, ordinal);
+    st.menu = () => logisticMenu(ctx, y, res, sc, ordinal, payload);
     if (o('effectSummary', true) && res.effect_tests.length) effectSummary(ctx, parent, res.effect_tests.map((r) => ({ source: r.source, p: r.p, logworth: logw(r.p) })).sort((a, b) => b.logworth - a.logworth), { scope: sc });
     if (res.plot && o('logisticPlot', true)) logisticPlot(ctx, parent, res, y);
     const wm = ctx.outline('Whole Model Test', { parent, key: 'whole', info: 'p:fitmodel:logistic' });
     wm.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'nll', label: '-LogLikelihood' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.whole }, { sortable: false, key: 'whole' }),
       ctx.kv([['RSquare (U)', res.rsquare_u], ['AICc', res.aicc], ['BIC', res.bic], ['Observations (or Sum Wgts)', res.n]]));
+    if (res.lack_of_fit && o('lackOfFit', true)) logisticLackOfFit(ctx, parent, res.lack_of_fit);
     if (o('fitDetails', true)) {
       const f = res.fit;
       ctx.outline('Fit Details', { parent, key: 'fit' }).add(ctx.kv([['Entropy RSquare', f.entropy_rsq], ['Generalized RSquare', f.generalized_rsq], ['Mean -Log p', f.mean_neg_log_p], ['RMSE', f.rmse], ['Mean Abs Dev', f.mad], ['Misclassification Rate', f.misclass], ['N', f.n]]));
     }
+    const cv = res.crossvalidation;
+    if (cv) crossvalidation(ctx, parent, cv, sc);
     if (o('estimates', true)) {
       const ci = o('showCI', false);
       const cols = [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }, { key: 'upper', label: `Upper ${fmt(100 * (1 - ctx.alpha))}%`, hidden: !ci }];
       if (!ordinal && res.levels.length > 2) cols.unshift({ key: 'logit', label: 'Log Odds of', fmt: 'text' });
+      if (res.unstable) cols.splice(cols.findIndex((c) => c.key === 'term') + 1, 0, { key: 'unstable', label: '', fmt: 'text' });   // JMP's Unstable mark
       ctx.outline('Parameter Estimates', { parent, key: 'estimates' }).add(ctx.rt({ columns: cols, rows: res.estimates, footer: res.footer }, { sortable: false, key: 'estimates' }));
     }
     if (o('effectTests', true) && res.effect_tests.length) {
@@ -1699,12 +1992,22 @@
       ctx.outline('Confusion Matrix', { parent, key: 'confusion' }).add(ctx.row(ctx.rt({ columns: cols, rows }, { caption: 'Predicted count', sortable: false, key: 'confcount' }), ctx.rt({ columns: cols.map((c2) => (c2.key === 'actual' ? c2 : { ...c2, digits: 4 })), rows: rates }, { caption: 'Predicted rate', sortable: false, key: 'confrate' })),
         ctx.note('Each row is predicted as its most likely level.'));
     }
-    if (o('roc', false) && res.roc.length) {
+    if (o('roc', false) && cv) SM.predict.rocCurves(ctx, parent, cv, 'cv:', sc);   // by set, with a Validation column
+    else if (o('roc', false) && res.roc.length) {
       const traces = res.roc.map((r, i) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, name: `${r.level} (AUC ${r.auc.toFixed(4)})`, line: { color: SM.util.PALETTE[i % SM.util.PALETTE.length], width: 1.8, shape: 'hv' } }));
       traces.push(lineTrace([0, 1], [0, 1], P.muted, 'dot', 1));
-      ctx.outline('Receiver Operating Characteristic', { parent, key: 'roc' }).add(ctx.row(withCode(ctx.plot(traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(360), height: 340, title: 'ROC curve', select: false }), ctx.code(codeOf(res, 'roc'))),
+      const D = res.fit_report && res.fit_report.threshold;
+      const rob = ctx.outline('Receiver Operating Characteristic', { parent, key: 'roc', info: 'p:fitmodel:logistic', menu: D ? () => [ctx.check('ROC Table', 'rocTable', sc, false)] : null });
+      rob.add(ctx.row(withCode(ctx.plot(traces, { showlegend: true, legend: { x: 0.35, y: 0.08 }, xaxis: { title: { text: '1 - Specificity' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity' }, range: [0, 1.01] } }, { width: W(360), height: 340, title: 'ROC curve', select: false }), ctx.code(codeOf(res, 'roc'))),
         ctx.rt({ columns: [{ key: 'level', label: 'Level', fmt: 'text' }, { key: 'auc', label: 'AUC' }], rows: res.roc }, { sortable: false, key: 'auc' })),
       ctx.note(res.roc.length > 1 ? 'Each level against all the others, by its fitted probability.' : `The fitted probability of ${res.roc[0].level} as the score.`));
+      if (D && o('rocTable', false)) rocTable(ctx, rob, D, { scope: sc, key: 'roctable' });
+    }
+    // Lift Curve (predictive.lift's, by set with a Validation column) and, for two levels, the Decision Threshold
+    const pf = cv || res.fit_report;
+    if (o('lift', false) && pf) SM.predict.liftCurves(ctx, parent, pf, cv ? 'cv:' : 'fm:', sc);
+    if (pf && pf.threshold && o('threshold', false)) {
+      SM.predict.threshold(ctx, parent, pf.threshold, { scope: sc, prefix: cv ? 'cv:' : 'fm:', yCol: y, save: { fn: 'fitmodel.save', payload: { ...payload, kind: 'logistic', where: ctx.where || [], alpha: ctx.alpha } } });
     }
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'logistic', payload }], scope: sc });
     if (o('contour', false)) await contourProfiler(ctx, parent, { kind: 'logistic', payload, factors: res.factors, scope: sc });
@@ -1712,90 +2015,121 @@
     tail(ctx, parent, res);
   }
 
+  /* Inverse Prediction (JMP's Estimates menu): the value of a continuous factor at which the prediction is each given
+     response value, the other factors held, with Fieller's confidence limits (fitmodel.inverse). */
+  async function inversePredictionDialog(ctx, sc, res, y) {
+    const facs = res.factors || [];
+    const cont = facs.filter((f) => f.type === 'continuous');
+    if (!cont.length) { SM.ui.toast('Inverse Prediction needs a continuous factor in the model', { error: true }); return; }
+    const cur = ctx.opt('invpred', null, sc) || {};
+    const held = cur.settings || {};
+    const v = await SM.ui.form({ title: 'Inverse Prediction', info: 'p:fitmodel:estimates',
+      lead: `The value of a factor at which the predicted ${y.name} is each value you give, with its confidence limits.`,
+      fields: [
+        { key: 'factor', label: 'Factor to predict', type: 'select', value: cur.factor || cont[0].name, choices: cont.map((f) => [f.name, f.name]), help: 'A continuous factor of the model in which the prediction is a straight line (not in a power).' },
+        { key: 'values', label: `Values of ${y.name}, separated by commas`, value: (cur.values || []).join(', '), help: `One or more values of ${y.name}: for each, the factor's value where the model predicts it.` },
+        ...facs.map((f) => (f.type === 'continuous'
+          ? { key: `s:${f.name}`, label: `${f.name} held at`, type: 'number', value: held[f.name] ?? f.mean, help: 'The other factors are held here (a continuous one at its mean unless you type another value); the factor predicted ignores its own.' }
+          : { key: `s:${f.name}`, label: `${f.name} held at`, type: 'select', value: held[f.name] ?? f.labels[0], choices: f.labels.map((l) => [l, l]), help: 'The level of this factor the prediction is for.' })),
+        { key: 'individual', label: 'Limits for an individual response', type: 'check', value: !!cur.individual, help: 'Off: the limits of the factor\'s value where the expected (mean) response is the value. On: where a single new response would be, so wider (JMP: confidence interval with respect to an individual rather than the expected response).' },
+      ],
+      validate: (x) => (String(x.values || '').split(/[,;\s]+/).some((t) => t !== '' && Number.isFinite(Number(t))) ? null : 'Give one or more numbers') });
+    if (!v) return;
+    const values = String(v.values).split(/[,;\s]+/).filter((t) => t !== '').map(Number).filter(Number.isFinite);
+    const settings = Object.fromEntries(facs.filter((f) => f.name !== v.factor).map((f) => [f.name, v[`s:${f.name}`]]).filter(([, x]) => x != null && x !== ''));
+    ctx.set('invpred', { factor: v.factor, values, settings, individual: !!v.individual }, sc);
+  }
+
+  async function inversePrediction(ctx, parent, payload, inv, sc, res, y) {
+    const r = await ctx.call('fitmodel.inverse', { ...payload, factor: inv.factor, values: inv.values, settings: inv.settings || {}, individual: !!inv.individual, alpha: ctx.alpha });
+    const ob = ctx.outline('Inverse Prediction', { parent, key: 'invpred', info: 'p:fitmodel:estimates', menu: () => [{ label: 'Change…', action: () => inversePredictionDialog(ctx, sc, res, y) }, { label: 'Remove', action: () => ctx.set('invpred', null, sc) }] });
+    if (r.error) { ob.add(ctx.warn(r.error)); return ob; }
+    const lvl = fmt(100 * (1 - ctx.alpha));
+    ob.add(ctx.rt({ columns: [{ key: 'y', label: `Response ${y.name}` }, { key: 'x', label: `Predicted ${r.factor}` }, { key: 'lower', label: `Lower ${lvl}%` }, { key: 'upper', label: `Upper ${lvl}%` }], rows: r.rows }, { key: 'invpred', sortable: false }),
+      ctx.note(`${r.held.length ? `Held at ${r.held.map((h) => `${h.factor} = ${typeof h.value === 'number' ? fmt(h.value) : h.value}`).join(', ')}. ` : ''}Fieller's limits: the ${r.factor} values where the ${inv.individual ? 'individual (prediction)' : 'confidence'} limits of the ${inv.individual ? 'response' : 'mean response'} reach the given value; missing when the slope is not clearly different from zero (the limits do not close).`),
+      ctx.code(r.code));
+    return ob;
+  }
+
+  /* JMP's ROC Table under a two-level fit's ROC curve: a line per cut on the target level's probability
+     (the Decision Threshold's Target Level; SM.predict's cut tables, WP3's), the line of the largest
+     Sens-(1-Spec) starred. D: predictive.threshold's data. Fit Y by X's logistic fits use it too. */
+  function rocTable(ctx, parent, D, { scope = null, key = 'roctable' } = {}) {
+    let lv = SM.predict.thresholdOption ? SM.predict.thresholdOption(ctx, 'dtLevel', D.target ?? 1, scope) : ctx.opt('dtLevel', D.target ?? 1, scope);   // per By group (WP3's)
+    lv = lv === 0 || lv === 1 ? lv : 1;
+    const S = SM.predict.thresholdState(D, lv, null);
+    const ob = ctx.outline('ROC Table', { parent, key, info: 'p:predict:roctable', menu: () => [{ label: 'Remove', action: () => ctx.set('rocTable', false, scope) }] });
+    const cols = [{ key: 'star', label: '', fmt: 'text' }, { key: 'prob', label: 'Prob', sig: 6 }, { key: 'fpr', label: '1-Specificity', digits: 4 }, { key: 'sens', label: 'Sensitivity', digits: 4 }, { key: 'j', label: 'Sens-(1-Spec)', digits: 4 },
+      { key: 'tp', label: 'True Pos' }, { key: 'tn', label: 'True Neg' }, { key: 'fp', label: 'False Pos' }, { key: 'fn', label: 'False Neg' }];
+    const sets = D.sets.filter((x) => x !== 'Crossvalidation');
+    ob.add(ctx.row(...sets.map((set) => el('div', { class: 'sm-pred-scroll' }, ctx.rt({ columns: cols, rows: SM.predict.rocTableRows(S.cut(D.models[0], set)).map((r) => ({ ...r, star: r.best ? '*' : '' })) },
+      { caption: `${sets.length > 1 ? `${set}: ` : ''}${D.levels[lv]}`, sortable: false, key: `${key}-${set}`, maxRows: 600, cellClass: (r) => (r.best ? 'sm-pred-best' : '') })))));
+    const pc = D.plots;
+    if (pc && pc.head_code) {
+      ob.add(ctx.code([pc.head_code, '', 'import pandas as pd', pc.lib, '', '',
+        `lv = ${lv}   # the target level, ${SM.util.oneLine(D.levels[lv])} (the Decision Threshold's Target Level)`,
+        'wt = np.ones(len(y)) if w is None else np.asarray(w, dtype=float)   # each row\'s Weight x Freq',
+        `for k, set_name in ${JSON.stringify(sets.map((x) => [['Training', 'Validation', 'Test'].indexOf(x), x]))}:`,
+        '    m = sets == k',
+        '    print(set_name); print(pd.DataFrame(roc_table(cut_table(fitted[m][:, lv], y[m] == lv, wt[m]))).to_string(index=False, max_rows=40))   # best: the largest Sens-(1-Spec)'].join('\n')));
+    }
+    ob.add(ctx.note(`A line per cut: a row is called ${D.levels[lv]} when its probability of ${D.levels[lv]} is at least Prob. The star marks the line with the largest Sens-(1-Spec) (Youden's J); the counts are by Weight × Freq.`));
+    return ob;
+  }
+
+  /* JMP's Lack of Fit of a logistic fit: the fitted model against the saturated one, which gives
+     each distinct pattern of the X values its own probabilities (models.logistic_lack_of_fit). */
+  function logisticLackOfFit(ctx, parent, lof) {
+    const ob = ctx.outline('Lack Of Fit', { parent, key: 'loglof', closed: true, info: 'p:fitmodel:logistic' });
+    ob.add(ctx.rt(lof, { sortable: false, key: 'loglof' }),
+      ctx.note(`The saturated model gives each of the ${lof.patterns} distinct patterns of the X values its own probabilities of the levels (their shares of its rows). ChiSquare is twice the difference of the −LogLikelihoods; a small p-value says the model misses how the probabilities change with the X values (a curve, a crossing): more terms are needed.`),
+      ctx.code(lof.code));
+    return ob;
+  }
+
   function logisticPlot(ctx, parent, res, y) {
     const p = res.plot;
     const n = res.levels.length;
     const traces = [];
     p.cum.forEach((cv, j) => traces.push({ type: 'scatter', mode: 'lines', x: p.x, y: cv, line: { color: SM.util.PALETTE[j % SM.util.PALETTE.length], width: 1.8 }, hoverinfo: 'skip', showlegend: false }));
-    traces.push({ type: 'scatter', mode: 'markers', x: p.points.x, y: p.points.y, rows: p.points.rows, marker: { size: 5 }, name: 'Rows' });
+    const ho = p.holdout ? holdoutTraces(p.holdout, p.holdout.x, p.holdout.y) : [];
+    traces.push({ type: 'scatter', mode: 'markers', x: p.points.x, y: p.points.y, rows: p.points.rows, marker: { size: 5 }, name: ho.length ? 'Training' : 'Rows', showlegend: ho.length > 0 }, ...ho);
     const end = (j) => (j < 0 ? 0 : j >= n - 1 ? 1 : p.cum[j][p.cum[j].length - 1]);
     const ann = res.levels.map((lv, j) => ({ xref: 'paper', x: 1.01, xanchor: 'left', yref: 'y', y: (end(j - 1) + end(j)) / 2, text: lv, showarrow: false, font: { size: 10, color: SM.util.PALETTE[j % SM.util.PALETTE.length] } }));
-    ctx.outline('Logistic Plot', { parent, key: 'logplot', info: 'p:fitmodel:logistic' }).add(ctx.plot(traces, { xaxis: { title: { text: p.factor } }, yaxis: { title: { text: `${y.name} (cumulative probability)` }, range: [0, 1] }, annotations: ann, margin: { l: 58, r: 60, t: 8, b: 44 } }, { width: W(430), height: 320, title: `${y.name} logistic plot` }),
+    const lay = { xaxis: { title: { text: p.factor } }, yaxis: { title: { text: `${y.name} (cumulative probability)` }, range: [0, 1] }, annotations: ann, margin: { l: 58, r: 60, t: 8, b: 44 + (ho.length ? 22 : 0) } };
+    if (ho.length) Object.assign(lay, { showlegend: true, legend: { orientation: 'h', x: 0, xanchor: 'left', yref: 'container', y: 0, yanchor: 'bottom' } });
+    ctx.outline('Logistic Plot', { parent, key: 'logplot', info: 'p:fitmodel:logistic' }).add(ctx.plot(traces, lay, { width: W(430), height: 320 + (ho.length ? 22 : 0), title: `${y.name} logistic plot` }),
       ctx.code(codeOf(res, 'logistic')),
       ctx.note('The curves are the fitted cumulative probabilities of the levels; each row is placed at random between the curves of its level.'));
   }
 
-  function logisticMenu(ctx, y, res, sc, ordinal) {
+  function logisticMenu(ctx, y, res, sc, ordinal, payload) {
     const c = (label, key, d) => ctx.check(label, key, sc, d);
-    const pr = res.probs;
     return [
       c('Effect Summary', 'effectSummary', true),
       c('Fit Details', 'fitDetails', true),
       c('Parameter Estimates', 'estimates', true), c('Confidence Intervals', 'showCI', false),
       c('Effect Likelihood Ratio Tests', 'effectTests', true),
+      res.lack_of_fit ? c('Lack of Fit', 'lackOfFit', true) : null,
       c('Odds Ratios', 'odds', false),
       c('Confusion Matrix', 'confusion', false),
       c('ROC Curve', 'roc', false),
+      c('Lift Curve', 'lift', false),
+      (res.crossvalidation || res.fit_report || {}).threshold ? SM.predict.thresholdItem(ctx, sc) : null,
       res.plot ? c('Logistic Plot', 'logisticPlot', true) : null,
       { label: 'Profilers', submenu: () => [c('Profiler', 'profiler', false), c('Contour Profiler', 'contour', false), c('Interaction Plots', 'interaction', false)] },
-      { label: 'Save Probability Formula', action: () => {
-        pr.lin_names.forEach((nm, j) => ctx.saveColumn(nm, { rows: pr.rows, values: pr.lin.map((r) => r[j]) }));
-        res.levels.forEach((lv, j) => ctx.saveColumn(`Prob[${lv}]`, { rows: pr.rows, values: pr.prob.map((r) => r[j]) }));
-        ctx.saveColumn(`Most Likely ${y.name}`, { rows: pr.rows, values: pr.most_likely }, { dataType: 'character', modelingType: ordinal ? 'ordinal' : 'nominal', valueOrder: res.levels });
-      } },
+      // live formula columns, JMP's: Lin[level] (ordinal: Linear and Cum[level]), Prob[level], Most Likely
+      saveFormulaItem(ctx, 'logistic', payload, 'Save Probability Formula'),
       { separator: true },
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ].filter(Boolean);
   }
 
-  /* ---- Mixed Model ---------------------------------------------------------------------------------------- */
-  async function renderMixed(ctx, M, { sls = false } = {}) {
-    const ys = ctx.roles('y');
-    await perResponse(ctx, ys, (y) => `Response ${y.name}`, (y, parent, st) => mixedY(ctx, M, y, parent, st, sls));
-  }
-
-  async function mixedY(ctx, M, y, parent, st, sls) {
-    const P = pal();
-    const sc = y.id;
-    const o = (k, d) => ctx.opt(k, d, sc);
-    const payload = { ...M.base, y: y.name };
-    const res = await ctx.call('fitmodel.mixed', { ...payload, alpha: ctx.alpha });
-    const d = res.diag;
-    const pct = fmt(100 * (1 - ctx.alpha));
-    st.menu = () => [
-      ctx.check('Random Effects Predictions', 'blups', sc, false),
-      { label: 'Diagnostic Plots', submenu: () => [ctx.check('Actual by Conditional Predicted', 'actCond', sc, true), ctx.check('Actual by Marginal Predicted', 'actMarg', sc, false), ctx.check('Conditional Residual by Predicted', 'resCond', sc, true)] },
-      { label: 'Profilers', submenu: () => [ctx.check('Profiler', 'profiler', sc, false), ctx.check('Interaction Plots', 'interaction', sc, false)] },
-      { label: 'Save Columns', submenu: () => [
-        { label: 'Conditional Pred Values', action: () => ctx.saveColumn(`Cond Pred ${y.name}`, { rows: d.rows, values: d.predicted }) },
-        { label: 'Conditional Residuals', action: () => ctx.saveColumn(`Cond Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
-        { label: 'Marginal Pred Values', action: () => ctx.saveColumn(`Pred ${y.name}`, { rows: d.rows, values: d.marginal }) },
-        { label: 'Marginal Residuals', action: () => ctx.saveColumn(`Residual ${y.name}`, { rows: d.rows, values: d.marg_resid }) },
-      ] },
-      { separator: true },
-      { label: 'Model Dialog', action: () => ctx.report.relaunch() },
-    ];
-    const f = res.fit;
-    ctx.outline(sls ? 'Summary of Fit' : 'Fit Statistics', { parent, key: 'fitstats', info: 'p:fitmodel:mixed' }).add(ctx.kv([['-2 Residual Log Likelihood', f.m2rll], ['AICc', f.aicc], ['BIC', f.bic], ['Observations', f.n, 'int'], ['Converged', f.converged ? 'yes' : 'no', 'text'], ['Method', f.method, 'text']]));
-    ctx.outline(sls ? 'REML Variance Component Estimates' : 'Random Effects Covariance Parameter Estimates', { parent, key: 'varcomp', info: 'p:fitmodel:mixed' }).add(
-      ctx.rt({ columns: [{ key: 'effect', label: 'Random Effect', fmt: 'text' }, { key: 'ratio', label: 'Var Ratio' }, { key: 'var', label: 'Var Component' }, { key: 'se', label: 'Std Error' }, { key: 'lower', label: `${pct}% Lower` }, { key: 'upper', label: `${pct}% Upper` }, { key: 'p', label: 'Wald p-Value', fmt: 'p' }, { key: 'pct', label: 'Pct of Total', digits: 3 }], rows: res.varcomp }, { sortable: false, key: 'varcomp' }));
-    ctx.outline(sls ? 'Parameter Estimates' : 'Fixed Effects Parameter Estimates', { parent, key: 'estimates' }).add(
-      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'dfden', label: 'DFDen', digits: 2 }, { key: 't', label: 't Ratio' }, { key: 'p', label: 'Prob>|t|', fmt: 'p' }, { key: 'lower', label: `${pct}% Lower`, hidden: !o('showCI', false) }, { key: 'upper', label: `${pct}% Upper`, hidden: !o('showCI', false) }], rows: res.estimates }, { key: 'estimates' }));
-    if (res.tests.length) ctx.outline(sls ? 'Fixed Effect Tests' : 'Fixed Effects Tests', { parent, key: 'tests' }).add(ctx.rt({ columns: [{ key: 'source', label: 'Source', fmt: 'text' }, { key: 'nparm', label: 'Nparm', fmt: 'int' }, { key: 'dfnum', label: 'DFNum', fmt: 'int' }, { key: 'dfden', label: 'DFDen', digits: 2 }, { key: 'f', label: 'F Ratio' }, { key: 'p', label: 'Prob > F', fmt: 'p' }], rows: res.tests }, { key: 'tests' }));
-    if (o('blups', false)) {
-      const ob = ctx.outline('Random Effects Predictions', { parent, key: 'blups' });
-      for (const b of res.blups) ob.add(ctx.rt({ columns: [{ key: 'level', label: 'Level', fmt: 'text' }, { key: 'blup', label: 'BLUP' }], rows: b.rows }, { caption: b.effect, key: `blup:${b.effect}` }));
-      if (!res.blups.length) ob.add(ctx.note('For a model this large (rows times random levels) the predictions are not computed.'));
-    }
-    const plots = [];
-    if (o('actCond', true)) plots.push(actualByPredicted(ctx, parent, { predicted: d.predicted, actual: d.actual, rows: d.rows }, null, y.name, 'p:fitmodel:mixed', 'Actual by Conditional Predicted', codeOf(res, 'actCond')).el);
-    if (o('actMarg', false)) { const ob = ctx.outline('Actual by Marginal Predicted', { parent, key: 'actmarg' }); const [lo, hi] = extent(d.marginal, d.actual); ob.add(rowPlot(ctx, { x: d.marginal, y: d.actual, rows: d.rows, xTitle: `${y.name} Marginal Predicted`, yTitle: `${y.name} Actual`, lines: [lineTrace([lo, hi], [lo, hi], P.fit)], title: 'actual by marginal predicted' }), ctx.code(codeOf(res, 'actMarg'))); plots.push(ob.el); }
-    if (o('resCond', true)) { const ob = ctx.outline('Conditional Residual by Predicted', { parent, key: 'rescond' }); ob.add(rowPlot(ctx, { x: d.predicted, y: d.residual, rows: d.rows, xTitle: `${y.name} Conditional Predicted`, yTitle: 'Conditional Residual', hlines: [{ y: 0, color: P.mean }], title: 'conditional residuals' }), ctx.code(codeOf(res, 'resCond'))); plots.push(ob.el); }
-    if (plots.length > 1) parent.add(ctx.row(...plots));
-    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'mixed', payload }], scope: sc });
-    if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'mixed', payload, scope: sc });
-    tail(ctx, parent, res);
-  }
+  /* ---- Mixed Model: smui-p-mixed.js draws the mixed models' reports (SM.fitmodel.mixed; the Mixed Model
+     personality, and random effects in Standard Least Squares). These are the parts of this file it shares. */
+  SM.fitmodel = { PERS_LABEL, labelOf, effectLabel, pal, W, extent, pText, levelText, lineTrace, withCode, codeOf, rowPlot, tail, perResponse,
+    actualByPredicted, residualPlots, lsmeansTable, lsmeansPlot, comparisons, contrastDialog, contrasts, profiler, contourProfiler, interactionPlots, mixed: null,
+    formulaRef, saveFormulas, rocTable };
 
   /* ---- MANOVA ---------------------------------------------------------------------------------------------
      Choose Response picks the response design. Repeated Measures (JMP's) asks
@@ -1921,7 +2255,7 @@
      the scaled estimates, or the step; the red line is the model shown: drag it or click a point) and the
      estimates on both scales. KFold and Holdback draw their rows from the report's seed (SM.predict.seed),
      a holdback and a Validation column follow predictive.prepare's rules, so the page's platforms agree. */
-  const GR_METHODS = [['lasso', 'Lasso'], ['enet', 'Elastic Net'], ['ridge', 'Ridge'], ['forward', 'Forward Selection'], ['pruned', 'Pruned Forward Selection']];
+  const GR_METHODS = [['mle', 'Maximum Likelihood'], ['lasso', 'Lasso'], ['enet', 'Elastic Net'], ['ridge', 'Ridge'], ['forward', 'Forward Selection'], ['pruned', 'Pruned Forward Selection']];
   const GR_VALID = [['aicc', 'AICc'], ['bic', 'BIC'], ['kfold', 'KFold'], ['holdback', 'Holdback'], ['loo', 'Leave-One-Out'], ['validation', 'Validation Column']];
   const GR_LINK = { Normal: 'Identity', Binomial: 'Logit', Poisson: 'Log' };
 
@@ -1955,6 +2289,10 @@
     const o = (k, d) => ctx.opt(k, d, sc);
     const chooseKey = `gr:choose:${ctx.byLabel || ''}`;
     const { cfg, valids, payload } = genregCfg(ctx, M, y);
+    // the fits kept by Go (JMP's several fits of a response), each its own settings and chosen model; the Model Comparison
+    // at the top compares them with the fit of the Model Launch
+    const kept = (o('gr:fits', []) || []).filter((f) => f && f.cfg);
+    const cmp = kept.length ? ctx.outline('Model Comparison', { parent, key: 'grcompare', info: 'p:fitmodel:genreg' }) : null;
     // KFold and Leave-One-Out fit the path once per fold: say how far they are
     let res;
     const status = cfg.criterion === 'kfold' || cfg.criterion === 'loo' ? el('p', { class: 'sm-ob-note', role: 'status', text: `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}: fitting the path of every fold…` }) : null;
@@ -1962,24 +2300,20 @@
     if (status) (parent.body || parent.el || ctx.container).append(status);
     try { res = await ctx.call('fitmodel.genreg', payload); } finally { if (off) off(); if (status) status.remove(); }
     const m = res.model;
-    const d = res.diag;
-    const resampled = cfg.criterion === 'kfold' || cfg.criterion === 'holdback';
     st.menu = () => [
       ctx.check('Diagnostic Plots', 'gr:diag', sc, false, { disabled: m.distribution === 'Binomial' }),
+      ...(res.fit_report ? genregClassItems(ctx, res.fit_report, sc) : []),
       { label: 'Profilers', submenu: () => [ctx.check('Profiler', 'profiler', sc, false), ctx.check('Interaction Plots', 'interaction', sc, false)] },
-      { label: 'Save Columns', submenu: () => [
-        { label: 'Predicted Values', action: () => ctx.saveColumn(`Pred ${y.name}`, { rows: d.rows, values: d.predicted }) },
-        { label: 'Residuals', action: () => ctx.saveColumn(`Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
-        resampled ? { label: 'Validation Column', action: () => ctx.saveColumn('Validation', { rows: d.rows, values: d.set }, { notes: `0 training, 1 validation: the rows of ${m.title} in ${ctx.report.title}`, modelingType: 'nominal' }) } : null,
-      ].filter(Boolean) },
+      { label: 'Save Columns', submenu: () => genregSaveItems(ctx, y, res, payload) },
       { separator: true },
+      ...genregModelItems(ctx, y, res),
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ];
-    // Model Launch: every change refits (and shows the best model again)
+    // Model Launch: every change refits (and shows the best model again); Go keeps the fit as it is, beside the next ones
     const launch = ctx.outline('Model Launch', { parent, key: 'grlaunch', info: 'p:fitmodel:genreg' });
     const reset = () => ctx.set(chooseKey, null, sc, { rerun: false });
     const field = (label, input) => el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), input);
-    const mkSel = (label, key, value, choices) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; s.addEventListener('change', () => { reset(); ctx.set(key, s.value, sc); }); return field(label, s); };
+    const mkSel = (label, key, value, choices) => { const s2 = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s2.value = value; s2.addEventListener('change', () => { reset(); ctx.set(key, s2.value, sc); }); return field(label, s2); };
     const numIn = (label, key, value, ok) => {
       const i = el('input', { type: 'text', inputmode: 'decimal', size: 5, 'aria-label': label, class: 'sm-fm-num' });
       i.value = String(value);
@@ -1989,47 +2323,152 @@
     const adaptive = el('input', { type: 'checkbox', 'aria-label': 'Adaptive' });
     adaptive.checked = !!cfg.adaptive;
     adaptive.addEventListener('change', () => { reset(); ctx.set('gr:adaptive', adaptive.checked, sc); });
+    const resampled = cfg.criterion === 'kfold' || cfg.criterion === 'holdback';
     const seed = el('input', { type: 'text', inputmode: 'numeric', size: 8, 'aria-label': 'Random Seed', class: 'sm-fm-seed', placeholder: cfg.seed != null ? String(cfg.seed) : '' });
     seed.value = String(ctx.opt('seed', '') ?? '');
     seed.addEventListener('change', () => { const v = seed.value.trim(); if (v === '' || /^\d+$/.test(v)) { reset(); ctx.set('seed', v); } else seed.value = String(ctx.opt('seed', '') ?? ''); });
+    const go = el('button', { type: 'button', class: 'sm-btn small', text: 'Go', title: 'Keep this fit as it is, beside the next ones (Model Comparison)' });
+    go.addEventListener('click', () => ctx.set('gr:fits', [...kept, { cfg: { ...cfg, choose: res.chosen === res.best ? null : res.chosen, ...(res.model.seed != null ? { seed: res.model.seed } : {}) } }], sc));
     launch.add(el('div', { class: 'sm-fm-controls' },
       mkSel('Distribution', 'gr:dist', cfg.dist, GR_DISTS),
       mkSel('Estimation Method', 'gr:method', cfg.method, GR_METHODS),
       cfg.method === 'lasso' || cfg.method === 'enet' ? el('label', { class: 'sm-fm-opt' }, adaptive, el('span', { text: 'Adaptive' })) : null,
       mkSel('Validation Method', 'gr:crit', cfg.criterion, valids),
       cfg.method === 'enet' ? numIn('Elastic Net Alpha', 'gr:enet', cfg.enet_alpha, (v) => v > 0 && v < 1) : null,
-      cfg.criterion === 'kfold' ? numIn('Number of Folds', 'gr:folds', cfg.folds, (v) => Number.isInteger(v) && v >= 2 && v <= d.rows.length) : null,
+      cfg.criterion === 'kfold' ? numIn('Number of Folds', 'gr:folds', cfg.folds, (v) => Number.isInteger(v) && v >= 2 && v <= res.diag.rows.length) : null,
       cfg.criterion === 'holdback' ? numIn('Holdback Proportion', 'gr:holdback', cfg.portion, (v) => v > 0 && v < 1) : null,
-      resampled ? field('Random Seed', seed) : null));
-    // the fit
-    const fitOb = ctx.outline(m.title, { parent, key: 'grfit' });
-    const sumOb = ctx.outline('Model Summary', { parent: fitOb, key: 'grsummary', info: 'p:fitmodel:grsummary' });
-    sumOb.add(ctx.row(
-      ctx.kv([['Response', m.response, 'text'], ['Distribution', m.distribution, 'text'], ['Estimation Method', m.method, 'text'], ['Validation Method', m.validation, 'text'],
-        [m.distribution === 'Binomial' ? 'Probability Model Link' : 'Mean Model Link', GR_LINK[m.distribution], 'text'], m.target ? ['Target level', m.target, 'text'] : null,
-        m.validation_column ? ['Validation column', m.validation_column, 'text'] : null, m.seed != null ? ['Random Seed', String(m.seed), 'text'] : null]),
-      ctx.rt(res.summary, { key: 'grsummary', sortable: false })));
-    genregPath(ctx, fitOb, res, { P, sc, chooseKey });
-    ctx.outline('Parameter Estimates for Centered and Scaled Predictors', { parent: fitOb, key: 'grscaled' }).add(
-      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.scaled }, { sortable: false, key: 'grscaled' }));
-    // zeroed terms in grey (not a text column: Bootstrap finds the rows again by their text)
-    const zeroed = res.estimates.filter((e) => e.zero).length;
-    ctx.outline('Parameter Estimates for Original Predictors', { parent: fitOb, key: 'grest' }).add(
-      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.estimates }, { sortable: false, key: 'grest', cellClass: (r) => (r.zero ? 'sm-fm-zeroed' : null) }),
-      zeroed ? ctx.note(`${zeroed} term${zeroed > 1 ? 's' : ''} zeroed (in grey): the ${res.path.xlabel === 'Step' ? 'selection' : 'penalty'} leaves ${zeroed > 1 ? 'them' : 'it'} out.`) : null);
-    if (o('gr:diag', false) && m.distribution !== 'Binomial') {
-      const sets = ['Training', 'Validation', 'Test'].filter((_, k) => d.set.some((v) => v === k));
-      SM.predict.actualByPredicted(ctx, fitOb, { kind: 'continuous', sets, residuals: { rows: d.rows, actual: d.actual, predicted: d.predicted, set: d.set } }, { key: 'gractual' });
+      resampled ? field('Random Seed', seed) : null, go),
+    kept.length ? ctx.note(`Go keeps the fit as it is: ${kept.length} kept fit${kept.length > 1 ? 's' : ''} below, compared with this one in the Model Comparison.`) : null);
+    const cmpRows = [genregCompareRow(res, 'Model Launch')];
+    genregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key: '' });
+    for (const [i, f] of kept.entries()) {
+      const pay = { ...M.base, y: y.name, ...f.cfg };
+      const ck = `gr:choose:${i}:${ctx.byLabel || ''}`;
+      if (ctx.opt(ck, undefined, sc) !== undefined) pay.choose = ctx.opt(ck, null, sc);
+      let r2;
+      try { r2 = await ctx.call('fitmodel.genreg', pay); } catch (e) { parent.add(ctx.warn(`Kept fit ${i + 1}: ${e.message || e}`)); continue; }
+      const remove = () => { const L = kept.slice(); L.splice(i, 1); ctx.set('gr:fits', L, sc); };
+      genregFit(ctx, M, y, parent, r2, { P, sc, chooseKey: ck, payload: pay, key: `:${i}`, title: `${r2.model.title} (${i + 2})`, remove });
+      cmpRows.push(genregCompareRow(r2, `Fit ${i + 2}`));
+    }
+    if (cmp) {
+      const sets = ['Training', 'Validation', 'Test'].filter((x) => cmpRows.some((r) => r[`grsq_${x}`] != null));
+      cmp.add(ctx.rt({ columns: [{ key: 'fit', label: 'Fit', fmt: 'text' }, { key: 'model', label: 'Model', fmt: 'text' }, { key: 'nonzero', label: 'Nonzero Parameters', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' },
+        ...sets.flatMap((x) => [{ key: `grsq_${x}`, label: `${x} Generalized RSquare` }, { key: `rase_${x}`, label: `${x} RASE` }])], rows: cmpRows }, { key: 'grcompare', sortable: false }),
+      ctx.note('Each fit\'s training AICc and BIC and each set\'s Generalized RSquare and RASE, from its Model Summary. The fit of the Model Launch follows the launch\'s settings; Go keeps a fit as it is. A kept fit\'s red triangle removes it.'),
+      ctx.code(genregCompareCode(ctx, cmpRows)));
     }
     if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'genreg', payload }], scope: sc });
     if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'genreg', payload, scope: sc });
     tail(ctx, parent, res);
   }
 
+  /* One fit's report: the Model Summary, the Solution Path (not for Maximum Likelihood), the estimates, the
+     diagnostics and, binomial, the classification parts (SM.predict's: confusion, ROC, lift, Decision Threshold). */
+  function genregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key, title = null, remove = null }) {
+    const m = res.model;
+    const d = res.diag;
+    const o = (k, dflt) => ctx.opt(k, dflt, sc);
+    const menu = remove ? () => [
+      ...(res.fit_report ? genregClassItems(ctx, res.fit_report, `${sc}${key}`) : []),
+      { label: 'Save Columns', submenu: () => genregSaveItems(ctx, y, res, payload) },
+      ...genregModelItems(ctx, y, res),
+      { separator: true },
+      { label: 'Remove Fit', action: remove },
+    ] : null;
+    const fitOb = ctx.outline(title || m.title, { parent, key: `grfit${key}`, menu });
+    const sumOb = ctx.outline('Model Summary', { parent: fitOb, key: `grsummary${key}`, info: 'p:fitmodel:grsummary' });
+    sumOb.add(ctx.row(
+      ctx.kv([['Response', m.response, 'text'], ['Distribution', m.distribution, 'text'], ['Estimation Method', m.method, 'text'], ['Validation Method', m.validation, 'text'],
+        [m.distribution === 'Binomial' ? 'Probability Model Link' : 'Mean Model Link', GR_LINK[m.distribution], 'text'], m.target ? ['Target level', m.target, 'text'] : null,
+        m.validation_column ? ['Validation column', m.validation_column, 'text'] : null, m.seed != null ? ['Random Seed', String(m.seed), 'text'] : null]),
+      ctx.rt(res.summary, { key: `grsummary${key}`, sortable: false })));
+    if (!m.mle) genregPath(ctx, fitOb, res, { P, sc, chooseKey, key });
+    ctx.outline('Parameter Estimates for Centered and Scaled Predictors', { parent: fitOb, key: `grscaled${key}` }).add(
+      ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.scaled }, { sortable: false, key: `grscaled${key}` }));
+    // zeroed terms in grey (not a text column: Bootstrap finds the rows again by their text); Maximum Likelihood: standard errors and Wald tests
+    const zeroed = res.estimates.filter((e) => e.zero).length;
+    const lvl = fmt(100 * 0.95);
+    const cols = [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' },
+      ...(m.mle ? [{ key: 'se', label: 'Std Error' }, { key: 'chisq', label: 'Wald ChiSquare' }, { key: 'p', label: 'Prob > ChiSquare', fmt: 'p' }, { key: 'lower', label: `Lower ${lvl}%` }, { key: 'upper', label: `Upper ${lvl}%` }] : [])];
+    ctx.outline('Parameter Estimates for Original Predictors', { parent: fitOb, key: `grest${key}` }).add(
+      ctx.rt({ columns: cols, rows: res.estimates }, { sortable: false, key: `grest${key}`, cellClass: (r) => (r.zero ? 'sm-fm-zeroed' : null) }),
+      zeroed ? ctx.note(`${zeroed} term${zeroed > 1 ? 's' : ''} zeroed (in grey): the ${res.path.xlabel === 'Step' ? 'selection' : 'penalty'} leaves ${zeroed > 1 ? 'them' : 'it'} out.`) : null);
+    if (!key && o('gr:diag', false) && m.distribution !== 'Binomial') {
+      const sets = ['Training', 'Validation', 'Test'].filter((_, k) => d.set.some((v) => v === k));
+      SM.predict.actualByPredicted(ctx, fitOb, { kind: 'continuous', sets, residuals: { rows: d.rows, actual: d.actual, predicted: d.predicted, set: d.set } }, { key: 'gractual' });
+    }
+    // a binomial fit's classification by set, as the predictive platforms show it (each part from the red triangle)
+    const fr = res.fit_report;
+    if (fr) {
+      const scope = `${sc}${key}`, prefix = `gr${key}:`;
+      if (ctx.opt('confusion', false, scope)) SM.predict.confusion(ctx, fitOb, fr, prefix);
+      if (ctx.opt('roc', false, scope)) SM.predict.rocCurves(ctx, fitOb, fr, prefix, scope);
+      if (ctx.opt('lift', false, scope)) SM.predict.liftCurves(ctx, fitOb, fr, prefix, scope);
+      SM.predict.decisionParts(ctx, fitOb, fr, scope, prefix, { save: { fn: 'fitmodel.save', payload: { ...payload, kind: 'genreg', where: ctx.where || [], alpha: ctx.alpha } }, yCol: y });
+    }
+    return fitOb;
+  }
+
+  const genregClassItems = (ctx, fr, scope) => [ctx.check('Confusion Matrix', 'confusion', scope, false), ctx.check('ROC Curve', 'roc', scope, false), ctx.check('Lift Curve', 'lift', scope, false),
+    fr.threshold ? SM.predict.thresholdItem(ctx, scope) : null].filter(Boolean);
+
+  function genregSaveItems(ctx, y, res, payload) {
+    const d = res.diag, m = res.model;
+    const resampled = ['KFold', 'Holdback'].includes(m.validation);
+    return [
+      saveFormulaItem(ctx, 'genreg', payload, 'Save Prediction Formula'),
+      { label: 'Predicted Values', action: saveAllRows(ctx, 'genreg', payload, [['predicted', `Pred ${y.name}`]]) },
+      { label: 'Residuals', action: saveAllRows(ctx, 'genreg', payload, [['residual', `Residual ${y.name}`]]) },
+      resampled ? { label: 'Validation Column', action: () => ctx.saveColumn('Validation', { rows: d.rows, values: d.set }, { notes: `0 training, 1 validation: the rows of ${m.title} in ${ctx.report.title}`, modelingType: 'nominal' }) } : null,
+    ].filter(Boolean);
+  }
+
+  /* Make Model and Run Model with the effects whose terms are not all zero (the fit's active effects): Standard Least
+     Squares for a normal response, Nominal Logistic for a two-level one, the Generalized Linear Model otherwise; and
+     JMP's Relaunch with Active Effects (Generalized Regression again). */
+  function genregModelItems(ctx, y, res) {
+    const fixed = (ctx.spec.effects || []).filter((e) => !e.random);
+    const active = (res.active || []).map((i) => fixed[i]).filter(Boolean);
+    const dist = { Normal: 'normal', Binomial: 'binomial', Poisson: 'poisson' }[res.model.distribution] || 'normal';
+    const pers = dist === 'normal' ? { personality: 'standard' } : y.isCategorical ? { personality: y.modelingType === 'ordinal' ? 'ordinal' : 'nominal' } : { personality: 'glm', dist };
+    const spec = (options) => ({ ...JSON.parse(JSON.stringify(ctx.spec)), effects: JSON.parse(JSON.stringify(active)), options: { ...ctx.spec.options, ...options }, roles: { ...ctx.spec.roles, y: [y.id] } });
+    const none = () => { SM.ui.toast('Every term of this fit is zero: no active effects'); };
+    const open = (sp) => SM.launch.open({ platform: ctx.report.platform, table: ctx.table, spec: sp, onOK: (s2) => SM.app.openReport(ctx.report.platform, s2, ctx.table) });
+    return [
+      { label: 'Make Model with Active Effects', action: () => (active.length ? open(spec(pers)) : none()) },
+      { label: 'Run Model with Active Effects', action: () => (active.length ? SM.app.openReport(ctx.report.platform, spec(pers), ctx.table) : none()) },
+      { label: 'Relaunch with Active Effects', action: () => (active.length ? open(spec({ personality: 'genreg' })) : none()) },
+    ];
+  }
+
+  function genregCompareRow(res, fit) {
+    const row = { fit, model: res.model.title, nonzero: res.model.nonzero, aicc: res.model.aicc, bic: res.model.bic };
+    const by = Object.fromEntries(res.summary.rows.map((r) => [r.measure, r]));
+    for (const x of ['Training', 'Validation', 'Test']) {
+      if (by['Generalized RSquare'] && by['Generalized RSquare'][x] != null) row[`grsq_${x}`] = by['Generalized RSquare'][x];
+      if (by.RASE && by.RASE[x] != null) row[`rase_${x}`] = by.RASE[x];
+    }
+    row.code = res.code;
+    return row;
+  }
+
+  /* The code under the Model Comparison: each fit's own code, run in turn, and its Model Summary's measures. */
+  function genregCompareCode(ctx, rows) {
+    const lit = (t) => JSON.stringify(t);
+    return [SM.report.codeHead(ctx.table.name), '', 'fits = {',
+      ...rows.map((r) => `    ${lit(`${r.fit}: ${r.model}`)}: ${lit(r.code)},`),
+      '}   # the code under each fit (its own block), by the name the Model Comparison gives it',
+      'for name, code in fits.items():',
+      '    ns = {}',
+      '    exec(code, ns)   # fits the model as its report does, and prints its estimates',
+      '    print(name, ns["fit_nll"])   # its Model Summary: the Scaled -LogLikelihood of each set'].join('\n');
+  }
+
   /* The Solution Path: the estimates on the scaled predictors (left) and the validation curve (right)
      against the magnitude of the scaled estimates or the step; the red line is the model shown. Drag it
      (in either plot) or click a point to show another; Reset to the Best Model goes back. */
-  function genregPath(ctx, fitOb, res, { P, sc, chooseKey }) {
+  function genregPath(ctx, fitOb, res, { P, sc, chooseKey, key = '' }) {
     const x = res.path.x;
     const at = (i) => x[Math.max(0, Math.min(x.length - 1, i))];
     const choose = (i) => { if (i !== res.chosen) ctx.set(chooseKey, i === res.best ? null : i, sc); };
@@ -2051,7 +2490,7 @@
       });
     };
     const xaxis = { title: { text: res.path.xlabel }, ...(step ? { dtick: x.length > 12 ? undefined : 1 } : {}) };
-    const pathOb = ctx.outline('Solution Path', { parent: fitOb, key: 'grpath', info: 'p:fitmodel:grpath', menu: () => [{ label: 'Reset to the Best Model', action: () => ctx.set(chooseKey, null, sc), disabled: res.chosen === res.best }] });
+    const pathOb = ctx.outline('Solution Path', { parent: fitOb, key: `grpath${key}`, info: 'p:fitmodel:grpath', menu: () => [{ label: 'Reset to the Best Model', action: () => ctx.set(chooseKey, null, sc), disabled: res.chosen === res.best }] });
     const config = { edits: { shapePosition: true } };
     pathOb.add(ctx.row(
       withCode(ctx.plot(coefTr, { xaxis, yaxis: { title: { text: 'Parameter Estimates' } }, shapes, hovermode: 'x', showlegend: false }, { width: W(400), height: 300, title: 'solution path', select: false, config, onDraw: wire }), ctx.code(codeOf(res, 'path'))),
@@ -2086,7 +2525,7 @@
     const res = await ctx.call('fitmodel.iv', { ...payload, alpha: ctx.alpha, ols: !!o('iv:ols', false) });
     const m = res.model;
     const d = res.diag;
-    st.menu = () => ivMenu(ctx, y, res, sc);
+    st.menu = () => ivMenu(ctx, y, res, sc, payload);
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', m.response], ['Endogenous', m.endogenous.join(', ')], ['Instruments', m.instruments.join(', ')],
       ['Estimation', 'Two-Stage Least Squares'], ['Standard Errors', m.cov], ['Observations', fmt(m.n)]].map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
     const top = [];
@@ -2160,7 +2599,7 @@
         : `Hansen's J: the minimised criterion of the efficient two-step GMM estimate, with the weight matrix of the robust covariance (${res.robust.label}); χ² on the ${O.df} overidentifying restriction${O.df > 1 ? 's' : ''}. H0: every instrument is uncorrelated with the error.`));
   }
 
-  function ivMenu(ctx, y, res, sc) {
+  function ivMenu(ctx, y, res, sc, payload) {
     const c = (label, key, d) => ctx.check(label, key, sc, d);
     const d = res.diag;
     const sv = (name, values) => () => ctx.saveColumn(name, { rows: d.rows, values });
@@ -2172,8 +2611,9 @@
       { label: 'Row Diagnostics', submenu: () => [c('Plot Actual by Predicted', 'iv:actual', true), c('Plot Residual by Predicted', 'iv:resid', true), c('Plot Residual by Row', 'plotResidRow', false)] },
       { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', false)] },
       { label: 'Save Columns', submenu: () => [
-        { label: 'Predicted Values', action: sv(`Predicted ${y.name}`, d.predicted) },
-        { label: 'Residuals', action: sv(`Residual ${y.name}`, d.residual) },
+        saveFormulaItem(ctx, 'iv', payload),
+        { label: 'Predicted Values', action: saveAllRows(ctx, 'iv', payload, [['predicted', `Predicted ${y.name}`]]) },
+        { label: 'Residuals', action: saveAllRows(ctx, 'iv', payload, [['residual', `Residual ${y.name}`]]) },
         ...d.first.flatMap((f) => [{ label: `First Stage Predicted ${f.label}`, action: sv(`First Stage Pred ${f.label}`, f.fitted) }, { label: `First Stage Residual ${f.label}`, action: sv(`First Stage Resid ${f.label}`, f.resid) }]),
       ] },
       { separator: true },
@@ -2222,7 +2662,7 @@
     const res = await ctx.call('fitmodel.quantreg', { ...payload, taus, process, alpha: ctx.alpha });
     const m = res.model;
     const d = res.diag;
-    st.menu = () => qrMenu(ctx, y, res, sc);
+    st.menu = () => qrMenu(ctx, y, res, sc, payload);
     parent.add(el('p', { class: 'sm-fm-modelline' }, ...[['Response', m.response], ['Quantile', fmt(m.tau)], ['Standard Errors', m.cov_label], ['Kernel', m.kernel_label], ['Bandwidth', m.bandwidth_label], ['Observations', fmt(m.n)]]
       .map(([k, v]) => el('span', null, el('b', { text: `${k}: ` }), v))));
     // Model Launch: the options of the fit
@@ -2298,9 +2738,9 @@
       ctx.note(`The fitted quantiles of ${y.name} over ${L.factor} (the report's quantile drawn thicker) and the least squares line (dashed). Lines that fan out mean the spread of ${y.name} changes with ${L.factor}.`));
   }
 
-  function qrMenu(ctx, y, res, sc) {
+  function qrMenu(ctx, y, res, sc, payload) {
     const c = (label, key, d) => ctx.check(label, key, sc, d);
-    const d = res.diag;
+    const qrp = { ...payload, tau: res.tau };
     const cov = res.model.cov;
     return [
       { label: 'Regression Reports', submenu: () => [c('Summary of Fit', 'summaryOfFit', true), c('Parameter Estimates', 'estimates', true), c('Show All Confidence Intervals', 'showCI', true)] },
@@ -2310,8 +2750,9 @@
       { label: 'Row Diagnostics', submenu: () => [c('Plot Actual by Predicted', 'qr:actual', true), c('Plot Residual by Predicted', 'qr:resid', false), ctx.check('Quantile Regression Plot', 'qr:lines', sc, true, { disabled: !res.lines })] },
       { label: 'Factor Profiling', submenu: () => [c('Profiler', 'profiler', false)] },
       { label: 'Save Columns', submenu: () => [
-        { label: 'Predicted Quantile', action: () => ctx.saveColumn(`Pred Quantile(${res.tau}) ${y.name}`, { rows: d.rows, values: d.predicted }, { notes: `the fitted ${res.tau} quantile of ${y.name}, from ${ctx.report.title}` }) },
-        { label: 'Residuals', action: () => ctx.saveColumn(`Quantile(${res.tau}) Residual ${y.name}`, { rows: d.rows, values: d.residual }) },
+        saveFormulaItem(ctx, 'qr', qrp),
+        { label: 'Predicted Quantile', action: saveAllRows(ctx, 'qr', qrp, [['predicted', `Pred Quantile(${res.tau}) ${y.name}`]]) },
+        { label: 'Residuals', action: saveAllRows(ctx, 'qr', qrp, [['residual', `Quantile(${res.tau}) Residual ${y.name}`]]) },
       ] },
       { separator: true },
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
@@ -2325,9 +2766,11 @@
       kicker: 'Analyze', title: 'Fit Model',
       lead: 'Linear and generalized models of one or more responses: choose the Y, build the model from effects, pick a personality and press OK. The model is JMP\'s, the numbers are statsmodels\'.',
       sections: [
-        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Validation', 'Generalized Regression: a column with 0 (Training), 1 (Validation) and 2 (Test), or those words; the other personalities ignore it.'], ['Endogenous', 'Instrumental Variables: the columns of the model effects that are correlated with the error; every effect that holds one is endogenous.'], ['Instruments', 'Instrumental Variables: the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y (they stay out of the model effects).'], ['Offset', 'A known part of the linear predictor (GLM, GEE), for example log exposure.'], ['Subject', 'Generalized Estimating Equations: the rows with the same value belong together (a subject, a cluster).'], ['Time', 'GEE: the order of a subject\'s rows, for the AR(1) and Unstructured working correlations.'], ['Subgroup', 'GEE: a grouping within the subjects, for the Nested working correlation.'], ['By', 'A separate fit for each level.']] },
+        { heading: 'Roles', choices: [['Y', 'The response. A continuous Y gets Standard Least Squares by default, a nominal one Nominal Logistic, an ordinal one Ordinal Logistic.'], ['Weight', 'Weights of the rows (least squares: WLS weights; GLM: variance weights).'], ['Freq', 'Each row counts that many times; the degrees of freedom follow.'], ['Validation', 'A column with 0 (Training), 1 (Validation) and 2 (Test), or those words. Standard Least Squares, Stepwise, the Generalized Linear Model and Nominal and Ordinal Logistic fit the training rows and predict the others: the Crossvalidation report measures each set, and the plots mark the held-out rows. Generalized Regression: the validation rows choose the model on the path; a column of more than three values gives KFold\'s folds. The other personalities ignore it and say so.'], ['Endogenous', 'Instrumental Variables: the columns of the model effects that are correlated with the error; every effect that holds one is endogenous.'], ['Instruments', 'Instrumental Variables: the excluded instruments, columns that move the endogenous ones but have no effect of their own on Y (they stay out of the model effects).'], ['Offset', 'A known part of the linear predictor (GLM, GEE), for example log exposure.'], ['Subject', 'Generalized Estimating Equations: the rows with the same value belong together (a subject, a cluster).'], ['Time', 'GEE: the order of a subject\'s rows, for the AR(1) and Unstructured working correlations.'], ['Subgroup', 'GEE: a grouping within the subjects, for the Nested working correlation.'], ['By', 'A separate fit for each level.']] },
         { heading: 'Construct Model Effects', text: 'Select columns on the left and press Add. Cross makes an interaction, a column crossed with itself a power; Nest puts an effect within a column (B[A]). The Macros add whole models; Attributes > Random Effect marks an effect as random (Mixed Model, or REML in Standard Least Squares).' },
-        { heading: 'Coding', text: 'Nominal and ordinal factors are effect coded (a level\'s parameter is its difference from the average of the levels, the last level the negative sum); continuous columns in crossings and powers are centred at their means, as JMP\'s Center Polynomials.' },
+        { heading: 'Coding', text: 'Nominal and ordinal factors are effect coded (a level\'s parameter is its difference from the average of the levels, the last level the negative sum); continuous columns in crossings and powers are centred at their means, as JMP\'s Center Polynomials (a launch option, on by default; off: the raw products x·z and x², the same fit and predictions with other estimates).' },
+        { heading: 'Saved columns', text: 'Save Columns gives every row whose predictors have values its prediction, as JMP: also the rows the fit left out (excluded, a missing Y, a Validation column\'s held-out rows); residuals only where Y has a value. Prediction Formula (the logistic fits: Save Probability Formula) saves live formula columns in the table\'s formula language, which recompute when a predictor changes: the effect coding written out with Match, the centred crossings, the inverse link of a GLM; for the logistic fits Lin[level] (ordinal: Linear and Cum[level]), Prob[level] and Most Likely.' },
+        { heading: 'Differences from JMP', list: ['Mixed (both directions) is offered with Minimum AICc and Minimum BIC too; JMP offers it with P-value Threshold only. Max Validation RSquare goes Forward or Backward.', 'A Validation column of more than three values (KFold) is used by Generalized Regression only; the other personalities take its 0, 1 and 2.', 'The confidence limits of the logistic fits are Wald limits; JMP gives profile-likelihood limits.', 'Only Standard Least Squares zeroes the dependent columns of a singular design as JMP does (Biased, Zeroed, Singularity Details); the other personalities say that the design is singular.', 'Unstable estimates are found by a test of our own (the log-likelihood along the least determined directions of the estimates); JMP\'s rule is its own.', 'Generalized Regression\'s Maximum Likelihood standard errors are statsmodels\' GLM\'s (for the normal the variance SSE/(rows − parameters)).'] },
       ],
       more: MORE,
     },
@@ -2341,7 +2784,7 @@
     'p:fitmodel:personality': {
       kicker: 'Fit Model', title: 'Personality',
       lead: 'How the model is fitted and reported.',
-      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by p-values, AICc or BIC.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Generalized Estimating Equations', 'statsmodels GEE: a marginal generalized linear model of rows grouped by a Subject, with a working correlation and robust standard errors.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized and stepwise fits (lasso, elastic net, ridge, their adaptive forms, forward selection), the model picked by AICc, BIC, KFold, holdback, leave-one-out or a Validation column.'], ['Instrumental Variables', 'Two-stage least squares (statsmodels IV2SLS) for effects that are correlated with the error: cast them into Endogenous and the excluded instruments into Instruments.'], ['Quantile Regression', 'statsmodels QuantReg: a quantile of Y (the Quantile τ; 0.5 is the median) rather than its mean, with the quantile process.']] },
+      sections: [{ choices: [['Standard Least Squares', 'OLS (WLS with a weight): tests, leverage plots, least squares means, profilers. With random effects: REML.'], ['Stepwise', 'Chooses the effects by BIC (the default, as JMP), AICc, p-values or, with a Validation column, the validation RSquare. A nominal or ordinal Y: each step refits a logistic model and tests by likelihood ratios.'], ['Generalized Linear Model', 'statsmodels GLM: normal, binomial, Poisson, gamma, inverse Gaussian, negative binomial, with a link.'], ['Nominal Logistic', 'Multinomial logit: the log odds of each level against the last.'], ['Ordinal Logistic', 'Cumulative logit (or probit) for ordered levels.'], ['Generalized Estimating Equations', 'statsmodels GEE: a marginal generalized linear model of rows grouped by a Subject, with a working correlation and robust standard errors.'], ['Mixed Model', 'MixedLM by REML, random effects from the Random Effect attribute.'], ['MANOVA', 'Several continuous responses tested together.'], ['Generalized Regression', 'Penalized and stepwise fits (lasso, elastic net, ridge, their adaptive forms, forward selection), the model picked by AICc, BIC, KFold, holdback, leave-one-out or a Validation column.'], ['Instrumental Variables', 'Two-stage least squares (statsmodels IV2SLS) for effects that are correlated with the error: cast them into Endogenous and the excluded instruments into Instruments.'], ['Quantile Regression', 'statsmodels QuantReg: a quantile of Y (the Quantile τ; 0.5 is the median) rather than its mean, with the quantile process.']] },
         { heading: 'Emphasis', text: 'For Standard Least Squares: Effect Leverage opens the leverage plots and the effect details, Effect Screening the sorted estimates and the profiler, Minimal Report only the tables.' }],
       more: MORE,
     },
@@ -2354,7 +2797,8 @@
         ['Edit', 'Opens the launch dialog with the model (the red triangle\'s Model Dialog), to change it and fit again.'],
         ['Undo', 'Puts back the model as it was before the last Remove, up to 20 steps back.'],
         ['FDR', 'Shows LogWorth and p-values adjusted for the number of effects by Benjamini and Hochberg\'s false discovery rate, so that a few small p-values among many effects are not taken at face value.'],
-      ] }],
+      ] },
+      { heading: 'Several responses', text: 'With more than one Y, an Effect Summary at the top lists every response\'s effect tests together, by LogWorth, and its FDR adjusts their p-values over all of them (the more tests, the more small p-values by chance). Each response\'s own Effect Summary stays in its report; the group\'s red triangle hides the combined one.' }],
       more: MORE,
     },
     'p:fitmodel:leverage': {
@@ -2363,10 +2807,30 @@
       sections: [{ heading: 'Actual by Predicted', text: 'The leverage plot of the whole model: the response against its prediction, with the p-value, RSquare and RMSE of the model.' }, { heading: 'Units', text: 'For a continuous regressor the horizontal axis is in the regressor\'s units (an added-variable plot); otherwise in the response\'s.' }],
       more: MORE,
     },
+    'p:fitmodel:estimates': {
+      kicker: 'Fit Model', title: 'Parameter Estimates',
+      lead: 'The estimates of the model\'s parameters in JMP\'s effect coding: a level\'s parameter is its difference from the average of the levels, the last level minus the sum of the others; the intercept is at 0 of the continuous columns. t Ratio is the estimate over its standard error, on the error degrees of freedom.',
+      sections: [
+        { heading: 'Optional columns', text: 'From the Estimates menu, or right click the table:', choices: [
+          ['Lower 95%, Upper 95%', 'the confidence limits (Regression Reports ▸ Show All Confidence Intervals)'],
+          ['Std Beta', 'the estimate had Y and the term\'s design column been standardized to mean 0 and variance 1, b·sd(x)/sd(y) (by the fit\'s weights): a size of each term that does not depend on the units'],
+          ['VIF', 'the variance inflation factor, 1/(1 − R²) of the term\'s column on the other columns: how much correlation among the terms inflates its variance'],
+          ['Design Std Error', 'the standard error over the root mean square error, √((X′WX)⁻¹) of the term: what the design alone gives, whatever the noise']] },
+        { heading: 'A singular design', text: 'When columns of the design are linear combinations of others (an aliased effect, a column that is the sum of two others, a crossing with empty cells), the report does as JMP: going through the columns in the order of the effects, the intercept first, a column that is a combination of the ones before it is Zeroed (estimate 0, no standard error) and the columns it equals are Biased (their estimates hold its part). Singularity Details lists the combinations; the Effect Tests test each effect\'s other columns, with LostDFs the zeroed ones. The fit, its predictions and every estimable least squares mean do not depend on the choice.' },
+        { heading: 'The Estimates menu', choices: [
+          ['Expanded Estimates', 'every level of each categorical term, the last one too, and every combination of a crossing\'s levels, with standard errors from the covariance of the estimates'],
+          ['Indicator Parameterization Estimates', 'the same fit with the factors 0/1 coded, the last level of each the reference: a level\'s estimate is its difference from the last level. When the model leaves out an effect that a crossing contains, the indicator coding is another model, and its own fit is shown.'],
+          ['Inverse Prediction…', 'the value of a continuous factor at which the predicted response is each value you give, the other factors held where you say (continuous at their means by default), with Fieller\'s confidence limits: where the confidence limits of the mean response, or with Limits for an individual response those of a single new response, reach the value'],
+          ['Sorted Estimates', 'the estimates by the size of their t ratios, with a bar chart'],
+          ['Sequential Tests', 'Type 1 sums of squares, each effect after the ones before it'],
+          ['Correlation of Estimates', 'the correlations of the estimates, from their covariance']] },
+      ],
+      more: MORE,
+    },
     'p:fitmodel:lsmeans': {
       kicker: 'Fit Model', title: 'Least squares means',
       lead: 'The model\'s prediction at each level of an effect, with the other categorical factors averaged over their levels and continuous ones at their means: means adjusted for the rest of the model.',
-      sections: [{ choices: [['LSMeans Student\'s t', 'pairwise t tests, no adjustment for the number of comparisons'], ['LSMeans Tukey HSD', 'pairwise comparisons adjusted by the studentized range (Tukey-Kramer)'], ['Connecting Letters Report', 'levels that share no letter differ significantly'], ['LSMeans Contrast', 'your own weighted comparisons of the levels, with a joint F test']] }],
+      sections: [{ choices: [['LSMeans Table', 'each level\'s least squares mean, its standard error and the raw mean; right click it (Columns) for the confidence limits, Lower and Upper'], ['LSMeans Plot', 'the means with their confidence limits; for a two-way interaction a line per level of the second factor. Transpose Factors puts the second factor on the axis and overlays the first; Show Confidence Limits turns the error bars off and on'], ['LSMeans Student\'s t', 'pairwise t tests, no adjustment for the number of comparisons'], ['LSMeans Tukey HSD', 'pairwise comparisons adjusted by the studentized range (Tukey-Kramer)'], ['Connecting Letters Report', 'levels that share no letter differ significantly'], ['LSMeans Contrast', 'your own weighted comparisons of the levels, with a joint F test'], ['Test Slices', 'an interaction of categorical factors taken apart: at each level of one factor, the F test that the least squares means of the other factor\'s levels are equal (on the error degrees of freedom), with a Test Detail of each (each cell against the first)']] }],
       more: MORE,
     },
     // The shared profiler's red triangle (smui-profiler.js) is explained after the controls.
@@ -2400,7 +2864,7 @@
       lead: 'Builds the model one effect at a time. Go runs until the rule stops, Step makes one step, the Entered boxes put effects in and out by hand. Make Model opens the launch dialog with the chosen effects, Run Model fits them at once.',
       sections: [
         { heading: 'Stepwise Regression Control', choices: [
-          ['Stopping Rule', 'P-value Threshold (the default): the steps go on while the best move passes Prob to Enter or Prob to Leave. Minimum AICc or Minimum BIC: the steps go all the way in the direction and the model with the smallest criterion on the path is kept (Mixed makes the move that lowers it most, while one does).'],
+          ['Stopping Rule', 'Minimum BIC (the default, as JMP) or Minimum AICc: Go steps all the way in the direction and keeps the model with the smallest criterion on the path (Mixed makes the move that lowers it most, while one does). P-value Threshold: the steps go on while the best move passes Prob to Enter or Prob to Leave. Max Validation RSquare (with a Validation column, a continuous Y): Go steps to the end and keeps the model with the largest RSquare of the validation rows; every fit is the training rows\'.'],
           ['Direction', 'Forward (the default) enters the most significant effect at each step; Backward removes the least significant, and Go starts from every effect when none is entered; Mixed does both, a step in and then out while an effect leaves.'],
           ['Rules', 'How crossings go with their parts: Combine enters an effect together with the effects it contains (A and B with A*B) and removes them together; Restrict lets an effect enter only after the effects it contains, and leave only before them; Whole Effects has no rule. Combine is the default when the model has crossings.'],
           ['Prob to Enter', 'P-value Threshold: an effect enters while its p-value is below it, strictly between 0 and 1 (0.25 by default, as JMP).'],
@@ -2417,7 +2881,9 @@
           ['Entered', 'Puts the effect in the model or takes it out by hand; the move is a line of the Step History. A locked effect\'s box cannot change.'],
           ['F Ratio, Prob>F', 'For an entered effect the F test of taking it out; for one not entered, of putting it in.'],
         ] },
-        { heading: 'All Possible Models', text: 'From the red triangle: the five best models of each size by RSquare. Click a line to make it the current model.' },
+        { heading: 'A nominal or ordinal Y', text: 'Each step refits the logistic model of the entered effects (a nominal Y: the multinomial logit, two levels a binomial GLM; an ordinal Y: the cumulative logit) and tests an effect by the likelihood ratio χ² of putting it in or taking it out. The Step History shows the L-R ChiSquare, the entropy RSquare, AICc and BIC; Make Model and Run Model go to Nominal or Ordinal Logistic.' },
+        { heading: 'All Possible Models', text: 'From the red triangle, a continuous Y: least squares fits of every combination of the effects (at most 12), the best of each size by RSquare: Maximum number of terms (every effect by default) and Number of best models to see (5). Click a line to make it the current model.' },
+        { heading: 'Model Averaging', text: 'From the red triangle, a continuous Y: the fits of every combination of up to Maximum number of terms effects, each weighted by its AICc weight exp(−ΔAICc/2) (Burnham and Anderson); the models of the largest weights are kept until they hold the Minimum cumulative weight (0.95) and their weights are made to sum to one. A term\'s estimate is the weighted average of its estimates (0 in the models without it), its standard error the unconditional one.' },
       ],
       more: MORE,
     },
@@ -2430,15 +2896,12 @@
     'p:fitmodel:logistic': {
       kicker: 'Fit Model', title: 'Logistic fits',
       lead: 'Nominal Logistic models the log odds of each level against the last (for two levels: of the first, or the Target Level); Ordinal Logistic the cumulative probabilities P(Y ≤ level) = F(intercept + x′b), one intercept per level and one slope per term.',
-      sections: [{ choices: [['Whole Model Test', 'twice the log-likelihood gain over the model without effects; RSquare (U) its share'], ['Effect Likelihood Ratio Tests', 'refits without each effect'], ['Odds Ratios', 'per unit and over the range of a regressor; between levels of a factor'], ['Confusion Matrix, ROC', 'how well the most likely level and the probabilities classify']] }],
+      sections: [{ choices: [['Whole Model Test', 'twice the log-likelihood gain over the model without effects; RSquare (U) its share'], ['Lack Of Fit', 'when X patterns repeat: the fitted model against the saturated one, which gives each distinct combination of the X values its own shares of the levels; ChiSquare is twice the difference of their −LogLikelihoods on (patterns − 1)(levels − 1) minus the fit\'s parameters beyond the intercepts. A small p-value says the model misses how the probabilities change (a curve, a crossing).'], ['Effect Likelihood Ratio Tests', 'refits without each effect'], ['Odds Ratios', 'per unit and over the range of a regressor; between levels of a factor'], ['Confusion Matrix, ROC', 'how well the most likely level and the probabilities classify; ROC Table (two levels, the ROC outline\'s red triangle): a line per cut'], ['Lift Curve', 'the rate of each level among the rows of the highest probabilities over its overall rate (with a Validation column: per set)'], ['Decision Threshold', 'two levels: each row\'s probability of the target level against a threshold you drag or type, the counts and measures at it, a Profit Matrix and Save Threshold Formula (see its own (i))'], ['Save Probability Formula', 'live formula columns: Lin[level] (the linear predictor; ordinal: Linear and Cum[level]), Prob[level] and Most Likely, for every row whose X values are present']] },
+        { heading: 'Unstable estimates', text: 'When the data separate the levels of Y (a level of a factor, or a range of an X, where every row has the same response level, often a sparse level), the likelihood keeps rising as some estimates move away from zero, and the fit stops somewhere on the way. The report marks those estimates Unstable, as JMP does: along the least determined directions of the estimates, a step of five standard errors (at most 10) outward does not lower the log-likelihood. Their values, standard errors and tests mean little; combine sparse levels or leave the term out.' },
+        { heading: 'A Validation column', text: 'The model is fitted to the training rows; Crossvalidation gives each set\'s Entropy RSquare, Generalized RSquare, RASE, misclassification rate and AUC with a confusion matrix per set, the ROC and lift curves are drawn per set, and the logistic plot marks the validation and test rows.' }],
       more: MORE,
     },
-    'p:fitmodel:mixed': {
-      kicker: 'Fit Model', title: 'Mixed Model',
-      lead: 'Fixed effects and random effects (variance components), fitted by REML with statsmodels\' MixedLM. A random effect that holds a continuous column is a random slope.',
-      sections: [{ choices: [['Var Component', 'the variance of the random effect; Var Ratio its ratio to the residual variance, Pct of Total its share'], ['Std Error', 'from the REML information; Wald intervals and p-values'], ['DFDen', 'Satterthwaite\'s degrees of freedom of each test'], ['Conditional', 'predictions with the random effects\' BLUPs; marginal: the fixed effects only']] }],
-      more: MORE,
-    },
+    // 'p:fitmodel:mixed' and the mixed models' other topics: smui-p-mixed.js
     'p:fitmodel:manova': {
       kicker: 'Fit Model', title: 'MANOVA',
       lead: 'Tests each effect on all responses at once: Wilks\' lambda, Pillai\'s trace, the Hotelling-Lawley trace and Roy\'s maximum root, each with an F approximation. Choose Response transforms the responses first (sum, contrasts, polynomial trends); Repeated Measures takes the responses for the levels of a within-subject factor.',
@@ -2480,9 +2943,16 @@
           ['Number of Folds', 'KFold: the folds the rows are split into at random, from 2 to the number of rows (5 by default).'],
           ['Holdback Proportion', 'Holdback: the share of the rows held back to validate, between 0 and 1 (0.3 by default).'],
           ['Random Seed', 'KFold and Holdback: the seed of the random split. Empty: a seed drawn at the first run and kept with the report (it shows greyed in the box); type a whole number for another split.'],
+          ['Go', 'Keeps the fit as it is, with its chosen model, and fits the next settings beside it: each kept fit has its own report below (its red triangle removes it), and the Model Comparison at the top compares them with the fit of the Model Launch.'],
         ] },
-        { heading: 'Estimation Method', choices: [['Lasso', 'an l1 penalty: small effects are set to zero'], ['Elastic Net', 'the lasso and ridge penalties mixed; Elastic Net Alpha is the lasso share'], ['Ridge', 'an l2 penalty: every effect shrinks, none is zero'], ['Adaptive', 'for the lasso and the elastic net: each term\'s penalty is divided by |b| of the maximum likelihood fit (of a ridge fit when that does not exist), so large effects are penalized less'], ['Forward Selection', 'terms enter one at a time, the one with the largest score statistic (for the normal the largest drop in the error sum of squares); each step is a maximum likelihood fit'], ['Pruned Forward Selection', 'after each entry a term leaves while the model without it fits better than every model of its size before (a floating search)']] },
-        { heading: 'Validation Method', choices: [['AICc, BIC', 'the model on the path with the smallest criterion of the training fit'], ['KFold', 'the rows split at random into folds (Number of Folds); each fold is predicted by a fit to the others; the curve is the mean of the folds\' Scaled −LogLikelihood. As in JMP, the model shown is the fold model that validates best at the chosen penalty'], ['Holdback', 'a random share of the rows (Holdback Proportion) held back to validate, drawn as the page draws a Validation Portion'], ['Leave-One-Out', 'KFold with a fold per row: slow, and taken up to 1000 rows (300 for the binomial, the Poisson and the forward methods)'], ['Validation Column', 'the launch\'s Validation role: 0 Training, 1 Validation, 2 Test (kept out of both)']] },
+        { heading: 'Model Comparison', text: 'With kept fits: each fit\'s Nonzero Parameters, training AICc and BIC, and each set\'s Generalized RSquare and RASE, from its Model Summary.' },
+        { heading: 'The red triangle', choices: [
+          ['Confusion Matrix, ROC Curve, Lift Curve, Decision Threshold', 'a binomial fit (a two-level Y): its probabilities by set, as the predictive platforms show them'],
+          ['Make Model with Active Effects', 'opens the launch dialog with the effects that have a nonzero term: Standard Least Squares for a normal fit, Nominal (or Ordinal) Logistic for a two-level Y, the Generalized Linear Model otherwise'],
+          ['Run Model with Active Effects', 'fits them at once, in a new report'],
+          ['Relaunch with Active Effects', 'Generalized Regression again, with those effects (JMP\'s)']] },
+        { heading: 'Estimation Method', choices: [['Maximum Likelihood', 'every term, no penalty (statsmodels\' GLM; least squares for the normal): a single model, no Solution Path; the estimates on the original predictors have standard errors, Wald ChiSquares and Wald limits'], ['Lasso', 'an l1 penalty: small effects are set to zero'], ['Elastic Net', 'the lasso and ridge penalties mixed; Elastic Net Alpha is the lasso share'], ['Ridge', 'an l2 penalty: every effect shrinks, none is zero'], ['Adaptive', 'for the lasso and the elastic net: each term\'s penalty is divided by |b| of the maximum likelihood fit (of a ridge fit when that does not exist), so large effects are penalized less'], ['Forward Selection', 'terms enter one at a time, the one with the largest score statistic (for the normal the largest drop in the error sum of squares); each step is a maximum likelihood fit'], ['Pruned Forward Selection', 'after each entry a term leaves while the model without it fits better than every model of its size before (a floating search)']] },
+        { heading: 'Validation Method', choices: [['AICc, BIC', 'the model on the path with the smallest criterion of the training fit'], ['KFold', 'the rows split at random into folds (Number of Folds); each fold is predicted by a fit to the others; the curve is the mean of the folds\' Scaled −LogLikelihood. As in JMP, the model shown is the fold model that validates best at the chosen penalty'], ['Holdback', 'a random share of the rows (Holdback Proportion) held back to validate, drawn as the page draws a Validation Portion'], ['Leave-One-Out', 'KFold with a fold per row: slow, and taken up to 1000 rows (300 for the binomial, the Poisson and the forward methods)'], ['Validation Column', 'the launch\'s Validation role: 0 Training, 1 Validation, 2 Test (kept out of both). A column of more than three values (Make Validation Column\'s K Fold) gives the folds of KFold instead: every row trains and each fold is held out once']] },
         { heading: 'Validation rows of a normal response', text: 'Their −LogLikelihood takes the variance of the training residuals (SSE/N).' },
       ],
       more: MORE,
@@ -2693,8 +3163,8 @@
   /* ---- the platform -------------------------------------------------------------------------------------- */
   SM.platforms.register({
     id: 'fitmodel', label: 'Fit Model', menu: 'Analyze', order: 110, info: 'p:fitmodel', topics: TOPICS,
-    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests with partial η² and ω² as optional columns, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise, Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic, Mixed Model (REML), MANOVA (with JMP\'s Repeated Measures: the between- and within-subject tests, Mauchly\'s sphericity test, the Greenhouse–Geisser and Huynh–Feldt adjusted univariate tests), Generalized Regression (lasso, elastic net, ridge, adaptive lasso and elastic net, forward and pruned forward selection, validated by AICc, BIC, KFold, holdback, leave-one-out or a Validation column), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows).',
-    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'statsmodels.regression.mixed_linear_model.MixedLM', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.genmod.generalized_linear_model.GLM.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
+    about: 'Linear and generalized models from JMP\'s Construct Model Effects (crossings, nesting, macros, random effects), fitted by one of the personalities: Standard Least Squares (effect tests with partial η² and ω² as optional columns, leverage plots, least squares means with Tukey HSD, row diagnostics, Box-Cox, the Prediction and Contour Profilers, and beyond JMP robust standard errors HC0–HC3, Newey–West and cluster, the Breusch–Pagan, White, Goldfeld–Quandt, RESET, Harvey–Collier, Rainbow, Breusch–Godfrey, Jarque–Bera and omnibus tests, an influence plot and component-plus-residual plots), Stepwise (Minimum BIC by default, AICc, p-values or Max Validation RSquare; a nominal or ordinal Y by likelihood ratios; All Possible Models and Model Averaging), Generalized Linear Model (with robust standard errors), Generalized Estimating Equations (statsmodels\' GEE: independence, exchangeable, AR(1), nested and unstructured working correlations, robust, naive and bias-reduced standard errors, QIC and a comparison of working correlations), Nominal and Ordinal Logistic (with Lack of Fit, lift curves and the Decision Threshold), Mixed Model (REML as JMP fits it: Unbounded Variance Components, Kenward–Roger or Satterthwaite degrees of freedom, correlated random coefficients, JMP Pro\'s repeated structures — Unstructured, AR(1), Compound Symmetry, Toeplitz, Antedependent, their unequal-variance forms, Unequal Variances — and the spatial ones with a variogram, least squares means with Tukey HSD, contrasts and Test Slices, BLUPs with their prediction errors, Simulate for power and interval coverage, and beyond JMP Compare Structures, profile-likelihood intervals and a Skeleton ANOVA; random effects in Standard Least Squares, and in a binomial or Poisson Generalized Linear Model: a generalized linear mixed model by pseudo-likelihood), MANOVA (with JMP\'s Repeated Measures: the between- and within-subject tests, Mauchly\'s sphericity test, the Greenhouse–Geisser and Huynh–Feldt adjusted univariate tests), Generalized Regression (lasso, elastic net, ridge, adaptive lasso and elastic net, forward and pruned forward selection, validated by AICc, BIC, KFold, holdback, leave-one-out or a Validation column), and beyond JMP Instrumental Variables (two-stage least squares with first stages, weak-instrument statistics, the Durbin–Wu–Hausman and Sargan / Hansen J tests, robust standard errors), Quantile Regression (statsmodels\' QuantReg at a quantile with the Koenker–Machado pseudo RSquare, the quantile process beside least squares, quantile lines) and, in Standard Least Squares, Recursive and Rolling Regression (recursive estimates, the CUSUM and CUSUM of squares tests of parameter stability, rolling windows). Every personality saves predictions for every row with its predictors and live prediction formulas; a Validation column gives Standard Least Squares, Stepwise, the GLM and the logistic fits a Crossvalidation report.',
+    uses: ['statsmodels.formula.api.ols, wls', 'statsmodels.regression.linear_model.RegressionResults.wald_test_terms, get_robustcov_results', 'statsmodels.stats.anova.anova_lm', 'statsmodels.stats.outliers_influence.variance_inflation_factor', 'statsmodels.stats.multitest.multipletests', 'statsmodels.genmod.generalized_linear_model.GLM', 'statsmodels.genmod.generalized_estimating_equations.GEE (qic, cov_struct)', 'statsmodels.genmod.cov_struct.Independence, Exchangeable, Autoregressive, Nested, Unstructured', 'statsmodels.stats.diagnostic.het_breuschpagan, het_white, het_goldfeldquandt, linear_reset, linear_rainbow, recursive_olsresiduals, acorr_breusch_godfrey', 'statsmodels.stats.stattools.jarque_bera, omni_normtest', 'statsmodels.discrete.discrete_model.MNLogit, NegativeBinomial', 'statsmodels.miscmodels.ordinal_model.OrderedModel', 'scipy.linalg, scipy.optimize (the mixed models\' REML, Kenward–Roger and pseudo-likelihood, resources/py/smui/mixed.py)', 'statsmodels.multivariate.manova.MANOVA', 'statsmodels.regression.linear_model.OLS.fit_regularized', 'statsmodels.genmod.generalized_linear_model.GLM.fit_regularized', 'statsmodels.sandbox.regression.gmm.IV2SLS', 'statsmodels.stats.sandwich_covariance.S_white_simple, S_hac_simple, S_crosssection', 'statsmodels.regression.quantile_regression.QuantReg', 'statsmodels.regression.recursive_ls.RecursiveLS (cusum, cusum_squares and their bounds)', 'statsmodels.regression.rolling.RollingOLS', 'scipy.stats.studentized_range', 'patsy'],
     launch: {
       lead: 'Choose the Y, add the model effects from the selected columns, and pick a personality. Continuous Y: least squares; nominal or ordinal Y: logistic.',
       roles: [
@@ -2704,8 +3174,8 @@
           help: 'A weight per row, multiplied with Freq: least squares becomes weighted least squares (Stepwise too), the Generalized Linear Model takes it as variance weights, the logistic fits and Generalized Regression as frequencies (the ordinal and multinomial logistic fits repeat each row, so they need whole numbers). Mixed Model, MANOVA, GEE, Instrumental Variables and Quantile Regression take none, nor the negative binomial. Rows with a missing, zero or negative weight are left out.' },
         { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric',
           help: 'How many observations each row stands for: least squares counts the error degrees of freedom from their sum, as JMP; the Generalized Linear Model and the logistic fits take them as frequency weights (or repeated rows). It multiplies the Weight; Mixed Model, MANOVA, GEE, Instrumental Variables and Quantile Regression take none. With a Freq, Robust Standard Errors are not computed.' },
-        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional (Generalized Regression): 0/1/2 or Training/Validation/Test',
-          help: 'Generalized Regression only: rows with 0 or Training fit the path, 1 or Validation choose the model on it (Validation Method: Validation Column), 2 or Test are kept out of both and only measured; rows with no value are left out. With this column KFold, Holdback and Leave-One-Out are not offered. The other personalities take every row and say so.' },
+        { ...SM.predict.roles({ weight: false, freq: false, by: false })[0], hint: 'optional: 0/1/2 or Training/Validation/Test',
+          help: 'Rows with 0 or Training fit the model; 1 or Validation and 2 or Test are held out, predicted by it and measured (JMP Pro\'s Crossvalidation): in Standard Least Squares, Stepwise (whose Max Validation RSquare chooses the model by them), the Generalized Linear Model and the logistic fits. Generalized Regression: the validation rows choose the model on the path (Validation Method: Validation Column), and a column of more than three values gives the folds of KFold. Rows with no value are left out. The other personalities take every row and say so.' },
         { key: 'endog', label: 'Endogenous', hint: 'required: the model effects\' columns that are endogenous',
           help: 'Instrumental Variables only (required there): the columns of the model effects that are correlated with the error. Every effect that holds one is endogenous; a crossing or power of one is instrumented by the same crossing or power of the instruments.' },
         { key: 'instruments', label: 'Instruments', hint: 'required: the excluded instruments',
@@ -2748,17 +3218,17 @@
       const M = modelOf(ctx);
       const p = ctx.opt('personality', 'standard');
       const vc = ctx.name('validation');
-      if (vc && p !== 'genreg') ctx.top.add(ctx.note(`${vc} is in the Validation role, which only Generalized Regression uses: this fit takes every row, whatever its set.`));
+      if (vc && p !== 'genreg' && !VALIDATES.has(p)) ctx.top.add(ctx.note(`${vc} is in the Validation role, which ${PERS_LABEL[p] || p} does not use: this fit takes every row, whatever its set.`));
+      // the mixed models (Mixed Model; random effects in Standard Least Squares): smui-p-mixed.js
+      if (SM.fitmodel.mixed && SM.fitmodel.mixed.claims(p, M)) return SM.fitmodel.mixed.render(ctx, M, p);
       if (p === 'stepwise') return renderStepwise(ctx, M);
       if (p === 'glm') return renderGLM(ctx, M);
       if (p === 'gee') return renderGEE(ctx, M);
       if (p === 'nominal' || p === 'ordinal') return renderLogistic(ctx, M, p === 'ordinal');
-      if (p === 'mixed') return renderMixed(ctx, M);
       if (p === 'manova') return renderManova(ctx, M);
       if (p === 'genreg') return renderGenReg(ctx, M);
       if (p === 'iv') return renderIV(ctx, M);
       if (p === 'quantreg') return renderQR(ctx, M);
-      if (M.effects.some((e) => e.random)) return renderMixed(ctx, M, { sls: true });
       return renderStandard(ctx, M);
     },
   });

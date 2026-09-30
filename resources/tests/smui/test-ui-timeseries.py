@@ -26,6 +26,22 @@ structural model with its components and Save Components; the Theta model
 and statsmodels' own intervals; all of them in reopened projects, the
 script, the dark theme and at phone width.
 
+Then Forecast on Holdback from the launch dialog (the holdback columns
+sorted by RMSE against the page's own arithmetic, the table's code run in
+the page, the shaded span, Holdback Statistics, Save Columns with the Set
+column and the forecast errors, Refit on All Rows), the benchmarks, the
+moving average (its smoothed series and forecasts against the page's
+arithmetic, Save Moving Average), Save Prediction Formula, Custom
+constraints through their second dialog, Box-Cox, the averaged forecast,
+the runs tests, rolling-origin cross-validation (every origin of Seasonal
+Naive against the page's arithmetic), the multiplicative trends; a
+reopened project, By, the dark theme, phone width and every new graph
+against its code. And Time Series Forecast on the Store sales example:
+the launch dialog, the value labels naming the series, the holdback RMSE
+against the page's arithmetic, Forecasts, a row's click opening its
+report, Save Results, BIC from the red triangle, a reopened project, By,
+the graphs against their code, the dark theme and phone width.
+
 Start a server on the repository root and headless Chrome on SMUI_HTTP_PORT
 and SMUI_CDP_PORT (see README.md), then
 
@@ -1082,12 +1098,365 @@ async def main():
         await asyncio.sleep(1.0)
         await page.shot(os.path.join(SHOTS, 'ts-17-phone-ardl.png'))
 
+    # ==== Forecast on Holdback, benchmarks, the moving average, constraints, Box-Cox, averages, runs tests, cross-validation ====
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(0.6)
+    # the launch dialog's Forecast on Holdback, by real clicks
+    r = await page.ev('''(async () => {
+      const t = SM.app.tables.find((x) => x.name === 'Monthly sales'); SM.app.showTab(SM.app.tabOf(t));
+      SM.app.launch('timeseries');
+      await new Promise(r => setTimeout(r, 250));
+      const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+      const items = [...dlg.querySelectorAll('.sm-pick-list li')];
+      const pick = (name) => { const li = items.find(li => li.textContent === name); li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
+      const role = (label) => [...dlg.querySelectorAll('.sm-role .sm-btn')].find(b => b.textContent === label);
+      pick('sales'); role('Y, Time Series').click();
+      pick('month'); role('X, Time ID').click();
+      const lab = (text) => [...dlg.querySelectorAll('.sm-launch-opts label')].find(l => l.textContent.startsWith(text));
+      lab('Forecast Periods').querySelector('input').value = '12';
+      const hb = lab('Forecast on Holdback').querySelector('input');
+      hb.click();
+      const checked = hb.checked;
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'OK').click();
+      const rep = __ts.rep();
+      await __ts.done(rep);
+      return { checked, title: rep.title, holdback: rep.spec.options.holdback, ...__ts.problems(rep) };
+    })()''', timeout=600)
+    check('Forecast on Holdback: a launch option, checked by a click', (r['checked'], r['holdback'], r['errors']), (True, True, []))
+    # models through the red triangle and their dialogs: ARIMA, Winters, the three benchmarks, a moving average
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['ARIMA…']); return await __ts.form({ 'p, Autoregressive Order': 1, 'q, Moving Average Order': 1 }, 'Estimate');''')
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Smoothing Models', 'Winters Method…']); return await __ts.form({}, 'Estimate');''')
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Benchmark Models', 'All Three…']); return await __ts.form({}, 'Estimate');''')
+    check('Benchmark Models > All Three: its dialog', t, 'Benchmark Models: sales')
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Smoothing Models', 'Simple Moving Average…']);
+      return await __ts.form({ 'Smoothing window width': 12, 'Centering': 'double' }, 'Estimate');''')
+    check('Smoothing Models > Simple Moving Average: its dialog', t, 'Simple Moving Average: sales')
+    hdr = await page.ev('''[...__ts.rep().body.querySelectorAll('table.sm-ts-cmp thead th')].map(th => th.textContent)''')
+    check('holdback: Model Comparison shows the holdback statistics, JMP\'s RMSE, MSE, MAPE, MAE with the mean error and MASE', hdr,
+          ['Report', 'Graph', 'Model', 'RMSE', 'MSE', 'MAPE', 'MAE', 'Mean Error', 'MASE', 'N'])
+    rows = await page.ev('''[...__ts.rep().body.querySelectorAll('table.sm-ts-cmp tbody tr')].map(tr => [...tr.children].slice(2).map(c => c.textContent))''')
+    names = [x[0] for x in rows]
+    check('... the models, the benchmarks and the moving average', sorted(names), sorted(['ARMA(1, 1)', 'Winters Method (Additive)(12)', 'Naive', 'Seasonal Naive(12)', 'Drift',
+                                                                                          'Simple Moving Average(12, centered and double smoothed)']))
+    rm = [num(x[1]) for x in rows]
+    check('... sorted by RMSE, as JMP sorts them', rm == sorted(rm), True)
+    check('... N: the 12 held-back months', {x[7] for x in rows}, {'12'})
+    # the numbers against the page's own arithmetic: the Naive and Seasonal Naive forecasts of the last 12 months
+    js = await page.ev('''(() => { const v = SM.app.tables.find(t => t.name === 'Monthly sales').col('sales').values; const n = v.length, h = 12;
+      const act = v.slice(n - h), last = v[n - h - 1], seas = v.slice(n - 2 * h, n - h);
+      const stats = (f) => { const e = act.map((a, i) => a - f[i]); const mse = e.reduce((s, x) => s + x * x, 0) / h; const mae = e.reduce((s, x) => s + Math.abs(x), 0) / h;
+        return { rmse: SM.util.fmt(Math.sqrt(mse)), mae: SM.util.fmt(mae), me: SM.util.fmt(e.reduce((s, x) => s + x, 0) / h), mape: SM.util.fmt(100 * e.reduce((s, x, i) => s + Math.abs(x / act[i]), 0) / h) }; };
+      const tr = v.slice(0, n - h); let sc = 0; for (let i = 12; i < tr.length; i++) sc += Math.abs(tr[i] - tr[i - 12]); sc /= tr.length - 12;
+      const naive = stats(new Array(h).fill(last)), sn = stats(seas);
+      const maeN = act.reduce((s, a) => s + Math.abs(a - last), 0) / h;
+      return { naive, sn, mase: SM.util.fmt(maeN / sc) }; })()''')
+    got = {x[0]: x for x in rows}
+    check('the Naive row: RMSE, MAPE, MAE, mean error of the last value as the forecast, computed in the page', [got['Naive'][i] for i in (1, 3, 4, 5)],
+          [js['naive'][k] for k in ('rmse', 'mape', 'mae', 'me')])
+    check('... its MASE: the MAE over the training values\' seasonal naive MAE (the calendar\'s period 12)', got['Naive'][6], js['mase'])
+    check('the Seasonal Naive row: the same months a year before, computed in the page', [got['Seasonal Naive(12)'][i] for i in (1, 3, 4, 5)],
+          [js['sn'][k] for k in ('rmse', 'mape', 'mae', 'me')])
+    code_hb = await page.ev('''(() => { const h = __ts.head(__ts.rep(), 'Model Comparison'); const c = h.parentElement.querySelector('details.sm-code code'); return c ? c.textContent : null; })()''')
+    check('... the table\'s code: each model on the training values, holdback_stats, sorted by RMSE', bool(code_hb) and 'def holdback_stats(' in code_hb and 'sort_values("RMSE")' in code_hb, True)
+    await page.ev(GRAPHS_JS)
+    out = await page.ev(f'__gr.run({json.dumps(code_hb)}, __ts.rep().table)', timeout=600)
+    txt = json.dumps(out)
+    check('... it runs in the page and prints the Naive row\'s RMSE', ('Naive' in txt, js['naive']['rmse'][:6] in txt.replace('\\n', ' ')), (True, True))
+    # the holdback shaded in the graphs, the forecasts at the held-back months
+    g = await page.ev('''(async () => { const rep = __ts.rep(); const p = rep.plots.find(p => p.opts.title === 'sales model comparison forecasts on the holdback'); await p.draw();
+      const sh = p.userLayout.shapes; const fcs = p.traces.filter(t => / forecast$/.test(t.name)); return { rect: sh.filter(s => s.type === 'rect').map(s => [s.x0, s.x1]), line: sh.filter(s => s.type === 'line').map(s => s.x0),
+        firstFc: fcs.length ? fcs[0].x[1] : null, lastFc: fcs.length ? fcs[0].x[fcs[0].x.length - 1] : null }; })()''')
+    check('the comparison plot: the held-back months shaded, from the last training month to the last month', (g['rect'], g['line']), ([['2024-12-01', '2025-12-01']], ['2024-12-01']))
+    check('... the forecasts at the held-back months', (g['firstFc'], g['lastFc']), ('2025-01-01', '2025-12-01'))
+    hs = dict(tuple(x) for x in await page.ev(table_under_js('Holdback Statistics')))
+    check('each model\'s report: Holdback Statistics under Forecast', all(k in hs for k in ('RMSE', 'MSE', 'MAPE', 'MAE', 'Mean Error', 'MASE', 'N')), True)
+    # Save Columns: the training rows' predictions, the held-back rows' forecasts and errors, a Set column
+    r = await page.ev('''(async () => { const before = SM.app.tables.length; await __ts.menu(__ts.rep(), 'Model: Naive', ['Save Columns']); await new Promise(r => setTimeout(r, 200));
+      const t = SM.app.tables[SM.app.tables.length - 1]; const set = t.col('Set').values; const res = t.col('Residual sales').values; const pr = t.col('Predicted sales').values;
+      const act = t.col('Actual sales').values; const n = t.nrows;
+      const hold = [...Array(n).keys()].filter(i => set[i] === 'Holdback');
+      const rmse = Math.sqrt(hold.reduce((s, i) => s + res[i] ** 2, 0) / hold.length);
+      const out = { added: SM.app.tables.length - before, rows: n, sets: [...new Set(set)], nhold: hold.length, err: hold.every(i => Math.abs(res[i] - (act[i] - pr[i])) < 1e-9), rmse: SM.util.fmt(rmse),
+        cols: t.columns.map(c => c.name) };
+      SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      SM.app.showTab(SM.app.tabOf(__ts.rep()));
+      return out; })()''')
+    check('Save Columns with values held back: a Set column, Training and Holdback, 120 rows', (r['added'], r['rows'], r['sets'], r['nhold'], r['cols'][-1]), (1, 120, ['Training', 'Holdback'], 12, 'Set'))
+    check('... the held-back rows\' residuals are the forecast errors, actual − forecast, and give the table\'s RMSE', (r['err'], r['rmse']), (True, got['Naive'][1]))
+    # Save Prediction Formula: the benchmarks' and the moving average's one-step predictions as live formula columns
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const before = t.columns.length; await __ts.menu(rep, 'Model: Naive', ['Save Prediction Formula']);
+      await new Promise(r => setTimeout(r, 300)); const c = t.columns[t.columns.length - 1]; const v = t.col('sales').values;
+      const out = { added: t.columns.length - before, formula: c.formula && c.formula.expr, first: c.values[0], ok: c.values.slice(1).every((x, i) => x === v[i]) }; t.removeColumn(c.id); return out; })()''')
+    check('Save Prediction Formula (Naive): a live column Lag(:sales, 1), each row the value before', (r['added'], r['formula'], r['first'], r['ok']), (1, 'Lag(:sales, 1)', None, True))
+    await act(page, '''const rep = __ts.rep(); rep.run(); return true;''')
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const p = rep.plots.find(p => p.opts.title === 'Simple Moving Average(12, centered and double smoothed) forecast'); await p.draw();
+      const fit = p.traces.find(tr => tr.name === 'Predicted').y; await __ts.menu(rep, 'Model: Simple Moving Average', ['Save Prediction Formula']);
+      await new Promise(r => setTimeout(r, 300)); const c = t.columns[t.columns.length - 1];
+      const out = { formula: c.formula && c.formula.expr.slice(0, 40), ok: fit.every((x, i) => x == null ? !Number.isFinite(c.values[i]) : Math.abs(x - c.values[i]) < 1e-9 * Math.abs(x)) }; t.removeColumn(c.id); return out; })()''')
+    check('Save Prediction Formula (moving average): the mean of the 12 lags, the report\'s one-step predictions', (r['formula'], r['ok']), ('(Lag(:sales, 1) + Lag(:sales, 2) + Lag(:', True))
+    await act(page, '''const rep = __ts.rep(); rep.run(); return true;''')
+    # Refit on All Rows, from the red triangle
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Refit on All Rows']); return true;''')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('Refit on All Rows: every model again on all the values, a plot of the forecasts after the end', ('Refit on All Rows' in outl, outl.count('Forecast, Refit on All Rows'), 6), (True, 6, 6))
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const p = rep.plots.find(p => p.opts.title === 'Naive forecast, refit on all rows'); await p.draw();
+      const fc = p.traces.find(t => t.name === 'Naive forecast'); const v = rep.table.col('sales').values;
+      return { first: fc.x[1], last: fc.x[fc.x.length - 1], value: fc.y[1], lastValue: v[v.length - 1] }; })()''')
+    check('... the Naive refit forecasts the last value, from 2026-01-01', (r['first'], r['last'], abs(r['value'] - r['lastValue']) < 1e-9), ('2026-01-01', '2026-12-01', True))
+    r = await page.ev('''(async () => { const before = SM.app.tables.length; await __ts.menu(__ts.rep(), 'Model: Naive', ['Save Columns']); await new Promise(r => setTimeout(r, 200));
+      const t = SM.app.tables[SM.app.tables.length - 1]; const set = t.col('Set').values; const out = { rows: t.nrows, n: ['Training', 'Holdback', 'Forecast'].map(k => set.filter(x => x === k).length),
+        lastTime: t.columns[0].values[t.nrows - 1] };
+      SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click()); SM.app.showTab(SM.app.tabOf(__ts.rep())); return out; })()''')
+    check('... Save Columns then adds the 12 forecasts after the end (Set Forecast)', (r['rows'], r['n'], r['lastTime']), (132, [108, 12, 12], await page.ev('Date.UTC(2026, 11, 1)')))
+    # Custom constraints: Simple Exponential Smoothing with α fixed at 0.3, through both dialogs
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['Smoothing Models', 'Simple Exponential Smoothing…']);
+      await __ts.form({ 'Constraints': 'custom' }, 'Estimate');
+      await new Promise(r => setTimeout(r, 200));
+      window.__custom = [...[...document.querySelectorAll('.sm-dialog')].pop().querySelectorAll('.sm-form label')].map(l => l.textContent);
+      return await __ts.form({ 'α, Level Smoothing Weight': 'fix', 'α: fixed value': 0.3 }, 'Estimate');''')
+    check('Custom constraints: a second dialog after OK, a line per weight', (t, await page.ev('window.__custom')),
+          ('Custom Constraints: Simple Exponential Smoothing', ['α, Level Smoothing Weight', 'α: fixed value', 'α: lower bound', 'α: upper bound']))
+    pe = await page.ev('''(() => { const h = __ts.head(__ts.rep(), 'Model: Simple Exponential Smoothing, α = 0.3'); if (!h) return null; const t = h.parentElement.querySelector('table.sm-rt');
+      return [...t.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent)); })()''')
+    check('... the model, named by its constraint, α = 0.3 Fixed, with no standard error', pe and (pe[1][0], pe[1][1], pe[0][-1], pe[1][-1], pe[1][2]), ('Level Smoothing Weight', '0.3', 'Constraint', 'Fixed', '.'))
+    # Box-Cox: Winters on the log scale
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Smoothing Models', 'Winters Method…']); return await __ts.form({ 'Box-Cox transformation': true, 'λ, Box-Cox': 0 }, 'Estimate');''')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('Box-Cox: Winters on the log scale, named so', 'Model: Winters Method (Additive)(12), Box-Cox λ = 0' in outl, True)
+    # the moving average: the smoothed series and its forecasts against the page's arithmetic
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const v = rep.table.col('sales').values; const n = v.length - 12;
+      const p = rep.plots.find(p => p.opts.title === 'Simple Moving Average(12, centered and double smoothed) smoothed series'); await p.draw();
+      const sm = p.traces[1].y; const t = 60; let want = 0.5 * v[t - 6] + 0.5 * v[t + 6]; for (let j = t - 5; j <= t + 5; j++) want += v[j]; want /= 12;
+      const f = rep.plots.find(p => p.opts.title === 'Simple Moving Average(12, centered and double smoothed) forecast').traces.find(t => / forecast$/.test(t.name)).y[1];
+      const trail = v.slice(n - 12, n).reduce((s, x) => s + x, 0) / 12;
+      return { sm: Math.abs(sm[t] - want) < 1e-9, f: Math.abs(f - trail) < 1e-9 }; })()''')
+    check('Simple Moving Average: the centered and double smoothed series (1/24 at the ends, 1/12 inside) and the trailing forecast, computed in the page', r, {'sm': True, 'f': True})
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const t = rep.table; const before = t.columns.length; await __ts.menu(rep, 'Model: Simple Moving Average', ['Save Moving Average']);
+      await new Promise(r => setTimeout(r, 150)); const c = t.columns[t.columns.length - 1]; const out = { added: t.columns.length - before, name: c.name, first: c.values[5], v6: Number.isFinite(c.values[6]) }; t.removeColumn(c.id); return out; })()''')
+    check('... Save Moving Average writes the smoothed series, missing where the window is not whole', (r['added'], r['name'], r['first'], r['v6']),
+          (1, 'sales Simple Moving Average(12, centered and double smoothed)', None, True))
+    # the averaged forecast, through its dialog: ARMA(1, 1) and Winters
+    t = await act(page, '''await __ts.menu(__ts.rep(), 'Model Comparison', ['Averaged Forecast…']);
+      const dlg = [...document.querySelectorAll('.sm-dialog')].pop(); const labs = [...dlg.querySelectorAll('.sm-form label')].map(l => l.textContent);
+      const vals = {}; for (const l of labs) if (l !== 'Prediction Interval') vals[l] = l === 'ARMA(1, 1)' || l === 'Winters Method (Additive)(12)';
+      return await __ts.form(vals, 'Estimate');''')
+    check('Averaged Forecast: its dialog lists the models', t, 'Averaged Forecast: sales')
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const fcOf = async (title) => { const p = rep.plots.find(p => p.opts.title === title); await p.draw(); return p.traces.find(t => / forecast$/.test(t.name)).y.slice(1); };
+      const a = await fcOf('ARMA(1, 1) forecast'), w = await fcOf('Winters Method (Additive)(12) forecast'), m = await fcOf('Average of ARMA(1, 1), Winters Method (Additive)(12) forecast');
+      return m.every((v, i) => Math.abs(v - (a[i] + w[i]) / 2) < 1e-9 * Math.abs(v)); })()''')
+    check('... its forecasts of the held-back months are the mean of the two models\', computed in the page', r, True)
+    # the runs test of the series (about the mean) and of a model's residuals
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Runs Test', 'About the Mean']); return true;''')
+    rt = dict(tuple(x) for x in await page.ev(table_under_js('Runs Test')))
+    js = await page.ev('''(() => { const v = __ts.rep().table.col('sales').values; const n = v.length; const m = v.reduce((s, x) => s + x, 0) / n;
+      const up = v.map(x => x >= m); let R = 1; for (let i = 1; i < n; i++) if (up[i] !== up[i - 1]) R++; const n1 = up.filter(Boolean).length, n2 = n - n1;
+      const E = 2 * n1 * n2 / n + 1, V = 2 * n1 * n2 * (2 * n1 * n2 - n) / (n * n * (n - 1)); return { R: String(R), E: SM.util.fmt(E), z: SM.util.fmt((R - E) / Math.sqrt(V)) }; })()''')
+    check('Runs Test about the mean: the runs, their expectation and z, computed in the page', (rt.get('Runs'), rt.get('Expected Runs'), rt.get('z')), (js['R'], js['E'], js['z']))
+    await act(page, '''await __ts.menu(__ts.rep(), 'Model: Naive', ['Residual Statistics', 'Runs Test']); return true;''')
+    r = await page.ev('''(() => { const h = __ts.head(__ts.rep(), 'Model: Naive'); const caps = [...h.parentElement.querySelectorAll('table.sm-kv caption')].map(c => c.textContent); return caps; })()''')
+    check('... a model\'s Residual Statistics > Runs Test: its residuals about zero', 'Residual Runs Test' in r, True)
+    # rolling-origin cross-validation, from Model Comparison's red triangle
+    t = await act(page, '''await __ts.menu(__ts.rep(), 'Model Comparison', ['Rolling-Origin Cross-Validation…']); return await __ts.form({ 'Number of origins': 3, 'Horizon (values forecast from each origin)': 6 }, 'OK');''', timeout=900)
+    check('Rolling-Origin Cross-Validation: its dialog', t, 'Rolling-Origin Cross-Validation: sales')
+    cvm = await page.ev(table_under_js('Rolling-Origin Cross-Validation'))
+    check('... the means over the origins, a row per model, best RMSE first', (cvm[0], len(cvm) - 1, all(num(cvm[i][1]) <= num(cvm[i + 1][1]) for i in range(1, len(cvm) - 1))),
+          (['Model', 'RMSE', 'MAE', 'MAPE', 'Origins'], 9, True))
+    per = await page.ev(table_under_js('Per Origin'))
+    sn = [row for row in per[1:] if row[0] == 'Seasonal Naive(12)']
+    js = await page.ev('''(() => { const v = __ts.rep().table.col('sales').values; const n = v.length; const out = [];
+      for (const cut of [12, 6, 0]) { const o = n - cut - 6; let s = 0; for (let i = 0; i < 6; i++) s += (v[o + i] - v[o + i - 12]) ** 2; out.push(SM.util.fmt(Math.sqrt(s / 6))); } return out; })()''')
+    check('... Per Origin: Seasonal Naive\'s RMSE at each of 3 origins 6 apart, computed in the page', [row[4] for row in sn], js)
+    check('... the origins\' last training months', [row[1] for row in sn], ['2024-06-01', '2024-12-01', '2025-06-01'])
+    await shot(page, 'ts-18-holdback.png', 'Model Comparison')
+    await shot(page, 'ts-19-cv.png', 'Rolling-Origin Cross-Validation')
+    # State Space Smoothing: the multiplicative trends in the dialog
+    t = await act(page, '''await __ts.menu(__ts.rep(), null, ['State Space Smoothing Models…']);
+      window.__lead = [...document.querySelectorAll('.sm-dialog .sm-dialog-lead')].pop().textContent;
+      return await __ts.form({ 'Error: Additive (A)': false, 'Trend: None (N)': false, 'Trend: Additive (A)': false, 'Trend: Additive damped (Ad)': false,
+        'Trend: Multiplicative (M)': true, 'Trend: Multiplicative damped (Md)': true, 'Seasonal: Multiplicative (M)': false, 'Seasonal: None (N)': false }, 'OK');''', timeout=900)
+    lead = await page.ev('window.__lead')
+    check('State Space Smoothing: the lead no longer says statsmodels has no multiplicative trend; up to 30 models', ('no multiplicative trend' not in lead, 'up to 30' in lead), (True, True))
+    sel = await page.ev(table_under_js('State Space Smoothing Model Selection 1'))
+    check('... ETS(M,M,A) and ETS(M,Md,A), ranked by their holdback RMSE with values held back', (sorted(row[0] for row in sel[1:]), sel[0][-3:-1]),
+          (['ETS(M,M,A)12', 'ETS(M,Md,A)12'], ['Holdback RMSE', 'Holdback MAPE']))
+    pr = await page.ev('__ts.problems(__ts.rep())')
+    check('no errors in the holdback report', pr['errors'], [])
+    # a saved project keeps holdback, refit, the constrained, Box-Cox, moving average and averaged models, the runs test and the cross-validation
+    r = await page.ev('''(async () => {
+      const rep = __ts.rep(); const t = rep.table; const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j))); const r2 = SM.app.reports[n]; await __ts.done(r2);
+      const out = { outlines: __ts.outlines(r2).filter(o => o.startsWith('Model: ') || ['Runs Test', 'Rolling-Origin Cross-Validation', 'Refit on All Rows'].includes(o)),
+        cols: [...r2.body.querySelectorAll('table.sm-ts-cmp thead th')].map(th => th.textContent).slice(3, 5), ...__ts.problems(r2) };
+      const t2 = r2.table; SM.app.closeReport(r2); SM.app.closeTable(t2); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      SM.app.showTab(SM.app.tabOf(rep)); return out; })()''', timeout=900)
+    for o in ('Model: Simple Exponential Smoothing, α = 0.3', 'Model: Winters Method (Additive)(12), Box-Cox λ = 0', 'Model: Simple Moving Average(12, centered and double smoothed)',
+              'Model: Average of ARMA(1, 1), Winters Method (Additive)(12)', 'Runs Test', 'Rolling-Origin Cross-Validation', 'Refit on All Rows'):
+        check(f'a reopened project: {o}', o in r['outlines'], True)
+    check('... the holdback columns, and no errors', (r['cols'], r['errors']), (['RMSE', 'MSE'], []))
+    # By: every group held back
+    r = await page.ev('''(async () => {
+      const src = SM.app.tables.find(t => t.name === 'Monthly sales'); const m = src.col('month').values, s = src.col('sales').values;
+      const t = new SM.Table({ name: 'Two regions, held back', columns: [
+        { name: 'region', dataType: 'character', values: [...m.map(() => 'North'), ...m.map(() => 'South')] },
+        { name: 'month', dataType: 'numeric', format: { kind: 'date' }, values: [...m, ...m] },
+        { name: 'sales', dataType: 'numeric', values: [...s, ...s.map((v, i) => v * 0.8 + 5 * Math.sin(i))] } ] });
+      SM.app.addTable(t);
+      const rep = SM.app.openReport(SM.platforms.get('timeseries'), { roles: { y: [t.col('sales').id], time: [t.col('month').id], by: [t.col('region').id] }, options: { forecast: 6, holdback: true,
+        'ts:sales|models': [{ id: 1, kind: 'bench', method: 'naive', s: 0, level: 0.95 }, { id: 2, kind: 'sma', width: 4, centering: 'none', level: 0.95 }] } }, t);
+      await __ts.done(rep);
+      const out = { n: [...rep.body.querySelectorAll('table.sm-ts-cmp')].map(tb => [...tb.querySelectorAll('tbody tr')].map(tr => tr.children[tr.children.length - 1].textContent)), ...__ts.problems(rep),
+        code: rep.pythonScript().includes('y_all = y; y, y_hold = y_all.iloc[:-6], y_all.iloc[-6:]') };
+      SM.app.closeReport(rep); SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click()); return out; })()''', timeout=900)
+    check('By: each group\'s models fitted without its last 6 values, N 6 in each', (r['n'], r['errors'], r['code']), ([['6', '6'], ['6', '6']], [], True))
+    # the holdback report in the dark theme and at phone width
+    await page.ev('SM.app.showTab(SM.app.tabOf(__ts.rep()))')
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark'); await d; })()''', timeout=900)
+    await asyncio.sleep(1.0)
+    shade = await page.ev('''(() => { const p = __ts.rep().plots.find(p => p.opts.title === 'sales model comparison forecasts on the holdback'); return p.userLayout.shapes.find(s => s.type === 'rect').fillcolor; })()''')
+    check('dark theme: the holdback shading in the dark theme\'s colours', shade, 'rgba(200, 190, 178, 0.14)')
+    await shot(page, 'ts-20-dark-holdback.png', 'Model Comparison')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); rep.run(); await d; })()''', timeout=900)
+    await asyncio.sleep(1.2)
+    check('no horizontal page scroll at phone width (holdback, cross-validation)', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'ts-21-phone-cv.png', 'Rolling-Origin Cross-Validation')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); rep.run(); await d; })()''', timeout=900)
+    # every graph of the holdback report against its code's figure
+    await page.ev(TSG_JS)
+    # the new models' reports and graphs only, and none of the series' own charts (the older kinds are checked above)
+    await page.ev('''(async () => { const rep = __ts.rep(); const o = rep.spec.options; const k = 'ts:sales|models';
+      const keep = (m) => m.kind === 'bench' && m.method === 'naive' || m.kind === 'sma' || m.kind === 'avg' || (m.kind === 'smooth' && m.boxcox != null);
+      const members = new Set(o[k].filter((m) => m.kind === 'avg').flatMap((m) => m.members));   // the average's members stay, out of sight
+      o[k] = o[k].filter((m) => keep(m) || members.has(m.id)).map((m) => ({ ...m, report: keep(m), graph: keep(m), racf: false, rpacf: false }));
+      for (const x of ['acf', 'pacf', 'stationarity']) o[`ts:sales|${x}`] = false;
+      const d = __ts.done(rep); rep.run(); await d; window.__tsc = rep; })()''', timeout=900)
+    g = await check_report_graphs(page, 'window.__tsc', 'window.__tsc.table', 'charts: holdback')
+    labels = [x['label'] for x in g['g']]
+    check('charts: holdback: the comparison, refit, cross-validation, moving average and model graphs', [x for x in ('sales model comparison forecasts on the holdback', 'sales model comparison forecasts, refit on all rows',
+          'sales cross-validation RMSE by origin', 'Simple Moving Average(12, centered and double smoothed) smoothed series', 'Naive forecast', 'Naive forecast, refit on all rows',
+          'Average of ARMA(1, 1), Winters Method (Additive)(12) forecast', 'Winters Method (Additive)(12), Box-Cox λ = 0 forecast') if x not in labels], [])
+    hb_id = await page.ev('SM.app.reports.indexOf(__ts.rep())')
+
+    # ==== Time Series Forecast: many series, the best ETS model of each ====
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    menu = await page.ev('''(() => { const it = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling"); const sub = typeof it.submenu === "function" ? it.submenu() : it.submenu; return sub.map(i => i.label); })()''')
+    check('Analyze > Specialized Modeling lists Time Series Forecast', 'Time Series Forecast…' in (menu or []), True)
+    r = await page.ev('''(() => { const t = SM.io.example('stores'); SM.app.addTable(t); const c = t.col('store');
+      return { name: t.name, rows: t.nrows, labels: [1, 2, 3, 4].map(v => SM.grid.cellText(c, v)), listed: !!SM.io.EXAMPLES.stores }; })()''')
+    check('the Store sales example: 4 stores × 72 months, stacked, the store a code with value labels', (r['name'], r['rows'], r['labels'], r['listed']),
+          ('Store sales', 288, ['North', 'South', 'East', 'West'], True))
+    # the launch dialog, by real clicks: sales stacked by store, a holdback criterion
+    r = await page.ev('''(async () => {
+      SM.app.launch('tsforecast');
+      await new Promise(r => setTimeout(r, 250));
+      const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
+      const items = [...dlg.querySelectorAll('.sm-pick-list li')];
+      const pick = (name) => { const li = items.find(li => li.textContent === name); li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
+      const role = (label) => [...dlg.querySelectorAll('.sm-role .sm-btn')].find(b => b.textContent === label);
+      pick('sales'); role('Y, Time Series').click();
+      pick('store'); role('Grouping').click();
+      pick('month'); role('Time').click();
+      const lab = (text) => [...dlg.querySelectorAll('.sm-launch-opts label')].find(l => l.textContent.startsWith(text));
+      lab('Forecast Periods').querySelector('input').value = '6';
+      const sel = lab('Model Selection').querySelector('select'); sel.value = 'rmse'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const roles = [...dlg.querySelectorAll('.sm-role .sm-btn')].map(b => b.textContent);
+      [...dlg.querySelectorAll('.sm-actions .sm-btn')].find(b => b.textContent === 'OK').click();
+      const rep = __ts.rep();
+      await __ts.done(rep);
+      return { roles, title: rep.title, outlines: __ts.outlines(rep), ...__ts.problems(rep) };
+    })()''', timeout=900)
+    check("Time Series Forecast: JMP's roles", r['roles'], ['Y, Time Series', 'Grouping', 'Time', 'By'])
+    check('... the report, without errors', (r['title'], r['errors']), ('Time Series Forecast', []))
+    check('... Model Summary, Forecasts, and the first series\' report with its holdback forecasts', [o for o in r['outlines'] if o in ('Forecasts', 'Series: North', 'Model Selection', 'Forecast on Holdback')],
+          ['Forecasts', 'Series: North', 'Model Selection', 'Forecast on Holdback'])
+    summ = await page.ev(table_under_js('Model Summary'))
+    check('Model Summary: a row per store, named by the value labels', [row[0] for row in summ[1:]], ['North', 'South', 'East', 'West'])
+    check('... the holdback criterion\'s column', summ[0][:4], ['Series', 'N', 'Model', 'Holdback RMSE'])
+    # the chosen model's holdback RMSE against the page's own arithmetic: its forecasts of North's last 6 months
+    js = await page.ev('''(async () => { const rep = __ts.rep(); const p = rep.plots.find(p => p.opts.title === 'North forecast on the holdback'); await p.draw();
+      const fc = p.traces.find(t => / forecast$/.test(t.name)).y.slice(1); const t = rep.table; const st = t.col('store').values, v = t.col('sales').values;
+      const north = v.filter((x, i) => st[i] === 1); const act = north.slice(north.length - 6);
+      const rmse = Math.sqrt(act.reduce((s, a, i) => s + (a - fc[i]) ** 2, 0) / 6); return SM.util.fmt(rmse); })()''')
+    check('... North\'s Holdback RMSE is that of its chosen model\'s forecasts of the last 6 months, computed in the page', summ[1][3], js)
+    fcs = await page.ev(table_under_js('Forecasts'))
+    check('Forecasts: 6 months of each store, from 2025-01-01', (len(fcs) - 1, fcs[1][:2], fcs[6][:2], fcs[7][:2]), (24, ['North', '2025-01-01'], ['North', '2025-06-01'], ['South', '2025-01-01']))
+    r = await page.ev('''(async () => { const rep = __ts.rep(); const p = rep.plots.find(p => p.opts.title === 'North forecast'); await p.draw();
+      return p.traces.find(t => / forecast$/.test(t.name)).y.slice(1).map(v => SM.util.fmt(v)); })()''')
+    check('... North\'s forecasts are those of its report (the chosen model on all 72 months)', [row[2] for row in fcs[1:7]], r)
+    # a click on a row opens that series' report
+    await act(page, '''const rep = __ts.rep(); const h = __ts.head(rep, 'Model Summary'); const tr = [...h.parentElement.querySelectorAll('table.sm-rt tbody tr')].find(tr => tr.children[0].textContent === 'East');
+      tr.click(); return true;''')
+    outl = await page.ev('__ts.outlines(__ts.rep())')
+    check('a click on East\'s row opens its report too', ('Series: North' in outl, 'Series: East' in outl), (True, True))
+    # Save Results
+    r = await page.ev('''(async () => { const before = SM.app.tables.length; await __ts.menu(__ts.rep(), null, ['Save Results']); await new Promise(r => setTimeout(r, 200));
+      const t = SM.app.tables[SM.app.tables.length - 1]; const set = t.col('Set').values, ser = t.col('Series').values;
+      const out = { added: SM.app.tables.length - before, rows: t.nrows, cols: t.columns.map(c => c.name), hist: set.filter(x => x === 'History').length, fc: set.filter(x => x === 'Forecast').length,
+        series: [...new Set(ser)], dated: t.col('month').format && t.col('month').format.kind };
+      SM.app.closeTable(t); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click()); SM.app.showTab(SM.app.tabOf(__ts.rep())); return out; })()''')
+    check('Save Results: every store\'s values and one-step-ahead predictions, then its forecasts, stacked with a Set column', (r['added'], r['rows'], r['hist'], r['fc'], r['series'], r['dated']),
+          (1, 312, 288, 24, ['North', 'South', 'East', 'West'], 'date'))
+    check('... its columns', r['cols'], ['Series', 'month', 'Actual', 'Predicted', 'Lower CL (0.95)', 'Upper CL (0.95)', 'Set'])
+    # the red triangle: BIC instead
+    await act(page, '''await __ts.menu(__ts.rep(), null, ['Model Selection', 'BIC']); return true;''', timeout=900)
+    summ = await page.ev(table_under_js('Model Summary'))
+    check('Model Selection > BIC: the criterion column, and no holdback report', (summ[0][3], 'Forecast on Holdback' in await page.ev('__ts.outlines(__ts.rep())')), ('BIC', False))
+    sel = await page.ev(table_under_js('Model Selection'))
+    bics = [num(row[5]) for row in sel[1:] if row[5] not in ('.', '')]
+    check('... North\'s Model Selection: best BIC first, marked as chosen', (bics == sorted(bics), sel[1][-1]), (True, '★ chosen'))
+    # a saved project keeps the options and the series opened
+    r = await page.ev('''(async () => {
+      const rep = __ts.rep(); const t = rep.table; const j = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] };
+      const n = SM.app.reports.length; SM.app.loadProject(JSON.parse(JSON.stringify(j))); const r2 = SM.app.reports[n]; await __ts.done(r2);
+      const out = { outlines: __ts.outlines(r2).filter(o => o.startsWith('Series: ')), head: [...r2.body.querySelectorAll('table.sm-rt')][0].querySelector('thead th:nth-child(4)').textContent, ...__ts.problems(r2) };
+      const t2 = r2.table; SM.app.closeReport(r2); SM.app.closeTable(t2); document.querySelectorAll('.sm-dialog .sm-btn.primary').forEach(b => b.click());
+      SM.app.showTab(SM.app.tabOf(rep)); return out; })()''', timeout=900)
+    check('a reopened project: BIC, and the North and East reports', (r['outlines'], r['head'], r['errors']), (['Series: North', 'Series: East'], 'BIC', []))
+    # the graphs of the series' reports against their code
+    await page.ev('window.__tsc = __ts.rep()')
+    await check_report_graphs(page, 'window.__tsc', 'window.__tsc.table', 'charts: Time Series Forecast')
+    ns_code = await page.ev('''(() => { const h = __ts.head(__ts.rep(), 'Model Summary'); return h.parentElement.querySelector('details.sm-code code').textContent; })()''')
+    out = await page.ev(f'__gr.run({json.dumps(ns_code)}, __ts.rep().table)', timeout=900)
+    txt = json.dumps(out)
+    check('the Model Summary code runs in the page and names every store\'s chosen model', ('"type": "error"' not in txt, all(row[2] in txt for row in summ[1:])), (True, True))
+    # By, the dark theme and phone width
+    r = await page.ev('''(async () => { const t = SM.app.tables.find(x => x.name === 'Store sales');
+      const rep = SM.app.openReport(SM.platforms.get('tsforecast'), { roles: { y: [t.col('sales').id], time: [t.col('month').id], by: [t.col('store').id] }, options: { forecast: 3, models: 'additive' } }, t);
+      await __ts.done(rep);
+      const out = { tops: [...rep.body.querySelectorAll('.sm-ob.level-0 > .sm-ob-head h2')].map(h => h.textContent), n: [...rep.body.querySelectorAll('.sm-ob-head')].filter(h => h.textContent.trim() === 'Model Summary').length, ...__ts.problems(rep),
+        code: rep.pythonScript().includes('df = df[df["store"] == 1') };
+      SM.app.closeReport(rep); return out; })()''', timeout=900)
+    check('By: a report per store, each with its Model Summary, the code keeping the group', (len(r['tops']), r['n'] >= 4, r['errors'], r['code']), (4, True, [], True))
+    await page.ev('SM.app.showTab(SM.app.tabOf(__ts.rep()))')
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark'); await d; })()''', timeout=900)
+    await asyncio.sleep(1.0)
+    await shot(page, 'ts-22-dark-forecast.png', 'Model Summary')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+    await page.ev('''(async () => { const rep = __ts.rep(); const d = __ts.done(rep); rep.run(); await d; })()''', timeout=900)
+    await asyncio.sleep(1.2)
+    check('no horizontal page scroll at phone width (Time Series Forecast)', await page.ev('document.documentElement.scrollWidth <= innerWidth + 1'), True)
+    await shot(page, 'ts-23-phone-forecast.png', 'Series: North')
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    tsf_id = await page.ev('SM.app.reports.indexOf(__ts.rep())')
+
     # ---- help for every input: the launch dialog's (i), every dialog of the red triangles, the report's controls
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
     await page.ev(HELP_JS)
     check('help: back on the Monthly sales table', await page.ev('__hp.showTable("Monthly sales")'), True)
     await check_launch_help(page, 'timeseries', what='timeseries: the launch dialog')
+    await check_launch_help(page, 'tsforecast', what='tsforecast: the launch dialog')
+    tsr = f'SM.app.reports[{tsf_id}]'
+    await check_controls_help(page, tsr, 'Model Summary', ['Model Summary', 'Forecasts', 'Series: …', 'Save Results'], 'tsforecast: Model Summary')
+    info = await page.ev(f'__hp.outline({tsr}, "Series: North")')
+    check('tsforecast: a series\' report has its (i)', (info or {}).get('title'), 'A series\' report')
+    for path, fields in ((['Set Forecast Periods…'], ['Forecast Periods']), (['Set Forecast Interval Level…'], ['Level'])):
+        await check_form_help(page, f"await __hp.menu({tsr}, null, {json.dumps(path)})", fields, f'tsforecast: {path[0]}')
     models = [{'kind': 'arima', 'p': 1, 'd': 0, 'q': 0, 'P': 0, 'D': 0, 'Q': 0, 's': 0, 'intercept': True, 'constrain': True, 'level': 0.95, 'id': 1},
               {'kind': 'ets', 'error': 'add', 'trend': 'N', 'seasonal': 'N', 's': 0, 'level': 0.95, 'group': 1, 'id': 2},
               {'kind': 'ets', 'error': 'add', 'trend': 'A', 'seasonal': 'N', 's': 0, 'level': 0.95, 'group': 1, 'id': 3}]
@@ -1110,10 +1479,16 @@ async def main():
         (None, ['Seasonal ARIMA…'], orders + seas + fit),
         (None, ['ARIMA Model Group…'], ['p, d, q, P, D, Q (ranges)', 'Observations per Period'] + fit),
         (None, ['Transfer Function…'], ['Noise p, d, q, P, D, Q', 'Observations per Period', 'Input (each column)', 'Input lag (dead time)', 'Numerator order (more lags)'] + fit),
-        (None, ['Smoothing Models', 'Simple Exponential Smoothing…'], ['Prediction Interval']),
-        (None, ['Smoothing Models', 'Winters Method…'], ['Prediction Interval', 'Observations per Period', 'Seasonality']),
-        (None, ['State Space Smoothing Models…'], ['Error: Additive (A)', 'Error: Multiplicative (M)', 'Trend: None (N)', 'Trend: Additive (A)', 'Trend: Additive damped (Ad)', 'Seasonal: None (N)',
-                                                   'Seasonal: Additive (A)', 'Seasonal: Multiplicative (M)', 'Period', 'Leave out additive errors with multiplicative seasonality', 'Prediction Interval']),
+        (None, ['Smoothing Models', 'Simple Exponential Smoothing…'], ['Prediction Interval', 'Constraints', 'Box-Cox transformation', 'λ, Box-Cox']),
+        (None, ['Smoothing Models', 'Winters Method…'], ['Prediction Interval', 'Observations per Period', 'Seasonality', 'Constraints', 'Box-Cox transformation', 'λ, Box-Cox']),
+        (None, ['Smoothing Models', 'Simple Moving Average…'], ['Smoothing window width', 'Centering', 'Prediction Interval']),
+        (None, ['State Space Smoothing Models…'], ['Error: Additive (A)', 'Error: Multiplicative (M)', 'Trend: None (N)', 'Trend: Additive (A)', 'Trend: Additive damped (Ad)', 'Trend: Multiplicative (M)',
+                                                   'Trend: Multiplicative damped (Md)', 'Seasonal: None (N)', 'Seasonal: Additive (A)', 'Seasonal: Multiplicative (M)', 'Period',
+                                                   'Leave out additive errors with multiplicative seasonality', 'Prediction Interval']),
+        (None, ['Benchmark Models', 'All Three…'], ['Prediction Interval', 'Observations per Period']),
+        (None, ['Benchmark Models', 'Naive…'], ['Prediction Interval']),
+        (None, ['Averaged Forecast…'], ['Each model', 'Prediction Interval']),
+        (None, ['Rolling-Origin Cross-Validation…'], ['Number of origins', 'Horizon', 'Step between origins']),
         (None, ['Structural Model…'], ['Level and Trend', 'Seasonal', 'Seasonal Period', 'Harmonics', 'Stochastic seasonal', 'Cycle', 'Stochastic cycle', 'Damped cycle', 'Cycle period from',
                                        'Cycle period to', 'Autoregressive Order', 'Input (each column)', 'Exact diffuse initialization', 'Prediction Interval']),
         (None, ['Regime Switching…'], ['Number of Regimes', 'Autoregressive Order', 'Mean', 'Switching mean (and trend)', 'Switching variance', 'Switching AR coefficients', 'Random Starts']),
@@ -1129,6 +1504,18 @@ async def main():
     await check_controls_help(page, rep, 'Lag Plot (lag 1)', ['Lag p', '− and +', 'A point'], 'timeseries: Lag Plot')
     await check_controls_help(page, rep, 'Model Comparison', ['Report', 'Graph', 'A column heading', 'Right click the table'], 'timeseries: Model Comparison')
     await check_controls_help(page, rep, 'State Space Smoothing Model Selection 1', ['A line of the selection table'], 'timeseries: State Space Smoothing Model Selection')
+    hbr = f'SM.app.reports[{hb_id}]'
+    await check_controls_help(page, hbr, 'Rolling-Origin Cross-Validation', ['Means over the Origins', 'RMSE by origin', 'Per Origin'], 'timeseries: Rolling-Origin Cross-Validation')
+    await check_controls_help(page, hbr, 'Holdback Statistics', ['The graphs', 'Holdback Statistics', 'Save Columns', 'Refit on All Rows'], 'timeseries: Holdback Statistics')
+    info = await page.ev(f'__hp.outline({hbr}, "Runs Test")')
+    check('timeseries: Runs Test: its (i)', (info or {}).get('title'), 'Runs Test')
+    r = await page.ev(f'''__hp.form(async () => {{ await __hp.menu({hbr}, null, ['Smoothing Models', 'Linear (Holt) Exponential Smoothing…']); await __hp.sleep(150);
+      const d = [...document.querySelectorAll('.sm-dialog')].pop(); d.querySelector('select').value = 'custom';
+      [...d.querySelectorAll('.sm-form label')].find(l => l.textContent === 'Constraints') && (document.getElementById([...d.querySelectorAll('.sm-form label')].find(l => l.textContent === 'Constraints').htmlFor).value = 'custom');
+      [...d.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Estimate').click(); }})''', timeout=300)
+    got = help_section((r or {}).get('info'), 'Fields') or {}
+    check('timeseries: Custom Constraints: its (i) explains each weight\'s choice, the fixed value and the bounds', list(got), ['Each weight', 'Fixed value', 'Lower and upper bound'])
+    await page.ev('document.querySelectorAll(".sm-dialog .sm-dialog-x").forEach((x) => x.click())')
 
     # ---- the graphs' matplotlib code, every graph of every kind
     await chart_code(page)

@@ -255,7 +255,7 @@ async def main():
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "counts").map(f => f.error)')
     check('counts imports in Pyodide', failed, [])
     names = await page.ev('SM.engine.names.filter(n => n.startsWith("counts.")).sort()')
-    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.importance', 'counts.lr_effects', 'counts.margeff', 'counts.maximize', 'counts.plot_code', 'counts.profile'])
+    check('the engine has the counts functions', names, ['counts.compare', 'counts.fit', 'counts.importance', 'counts.lr_effects', 'counts.margeff', 'counts.marginal', 'counts.maximize', 'counts.plot_code', 'counts.profile', 'counts.shapley'])
     await page.ev(HELPERS)
     menu = await page.ev('''(() => { const sub = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling");
       const items = typeof sub.submenu === "function" ? sub.submenu() : sub.submenu; return items.map(i => i.label).filter(Boolean); })()''')

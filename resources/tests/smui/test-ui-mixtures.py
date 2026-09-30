@@ -527,6 +527,48 @@ async def main():
     check('Save Clusters and Save Mixture Probabilities: the columns', r['names'], ['Cluster', 'Prob[Cluster 1]', 'Prob[Cluster 2]', 'Prob[Cluster 3]'])
     check('the saved clusters are nominal, the most likely cluster of each row', (r['type'], r['v']), ('nominal', want[:20]))
     check.near('the saved probabilities of a row add to 1', r['worst'], 0.0, tol=1e-12)
+    # Save Mixture Formulas (JMP's Dist Formula, Dist Total and Prob Formula columns, and a Cluster Formula): live formulas
+    # that give the saved probabilities and clusters, and follow an edited value
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const n0 = t.columns.length;
+      await (%s)('Normal Mixtures NCluster=3', ['Save Mixture Formulas'], false, 0);
+      for (let i = 0; i < 60 && t.columns.length < n0 + 8; i++) await new Promise(r => setTimeout(r, 100));
+      const made = t.columns.slice(n0);
+      const P = [1, 2, 3].map(j => t.col(`Prob Formula ${j}`)), Q = [1, 2, 3].map(j => t.col(`Prob[Cluster ${j}]`));
+      let worst = 0;
+      for (let r = 0; r < t.nrows; r++) for (let j = 0; j < 3; j++) worst = Math.max(worst, Math.abs(P[j].values[r] - Q[j].values[r]));
+      const cf = t.col('Cluster Formula'), cl = t.col('Cluster');
+      let same = 0;
+      for (let r = 0; r < t.nrows; r++) same += cf.values[r] === cl.values[r];
+      const L = t.col('length (cm)'); const before = P[0].values[0]; const old = L.values[0];
+      t.setCell(0, L.id, old + 3); await new Promise(r => setTimeout(r, 80)); const after = P[0].values[0]; t.setCell(0, L.id, old);
+      const out = { names: made.map(c => c.name), formulas: made.every(c => !!c.formula), worst, same, moved: before !== after };
+      for (const c of made) t.removeColumn(c.id);
+      return out;
+    })()''' % PICK)
+    check('Save Mixture Formulas: JMP\'s Dist Formula, Dist Total and Prob Formula columns, and a Cluster Formula', (r['names'], r['formulas']),
+          (['Dist Formula 1', 'Dist Formula 2', 'Dist Formula 3', 'Dist Total', 'Prob Formula 1', 'Prob Formula 2', 'Prob Formula 3', 'Cluster Formula'], True))
+    check.near('... the Prob formulas give the saved probabilities', r['worst'], 0.0, tol=1e-12)
+    check('... the Cluster Formula the saved clusters, on every row', r['same'], 540)
+    check('... and they follow an edited value', r['moved'], True)
+    # the rows the fit leaves out get their cluster and probabilities too
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      for (const n of ['Cluster', 'Prob[Cluster 1]', 'Prob[Cluster 2]', 'Prob[Cluster 3]']) if (t.col(n)) t.removeColumn(t.col(n).id);
+      t.setState([0, 1, 2], 'excluded', true);
+      let d = new Promise(res => rep.on('done', res)); rep.run(); await d;
+      const n0 = t.columns.length;
+      await (%s)('Normal Mixtures NCluster=3', ['Save Clusters'], false, 0);
+      for (let i = 0; i < 40 && t.columns.length < n0 + 1; i++) await new Promise(r => setTimeout(r, 100));
+      const cl = t.col('Cluster');
+      const out = [0, 1, 2].map(r => cl && Number.isFinite(cl.values[r]));
+      if (cl) t.removeColumn(cl.id);
+      t.setState([0, 1, 2], 'excluded', false);
+      d = new Promise(res => rep.on('done', res)); rep.run(); await d;
+      return out;
+    })()''' % PICK)
+    check('Save Clusters: the excluded rows get their most likely cluster too', r, [True, True, True])
 
     # ---- Color Clusters: once, when the clusters change
     r = await page.ev('''(async (labels, rows) => {

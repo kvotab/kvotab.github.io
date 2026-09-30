@@ -1,9 +1,10 @@
 /* ==========================================================================
    SMUI.HTML: GRAPH (smui-p-graph.js)
    Graph Builder's columns, element palette, drop zones and properties; the
-   axis pickers of Scatterplot 3D; the Functional Data Plot's launch part.
-   Colours are kvot.css's tokens, so both themes work; at phone width the
-   builder stacks its parts.
+   axis pickers of Scatterplot 3D; the Functional Data Plot's launch part;
+   the Axis Settings window of every graph (smui-axis.js). Colours are
+   kvot.css's tokens, so both themes work; at phone width the builder
+   stacks its parts.
    ========================================================================== */
 
 /* ---- Graph Builder ---------------------------------------------------------- */
@@ -161,3 +162,22 @@
 .sm-fd-radio { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .sm-fd-radio input { margin: 0; accent-color: var(--color-kvot-accent); }
 .sm-fd-sub { margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+
+/* ---- Axis Settings (smui-axis.js): the window of any graph's axis -------------------- */
+.sm-ax-dialog { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sm-ax-form { grid-template-columns: auto minmax(0, 14em); }
+.sm-ax-form .sm-ax-hint { margin: -3px 0 0; font-size: 11.5px; }
+.sm-ax-head { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.sm-ax-refs { display: flex; flex-direction: column; gap: 5px; }
+.sm-ax-ref { display: grid; grid-template-columns: minmax(0, 7em) minmax(0, 7em) minmax(0, 1fr) auto auto auto; gap: 5px; align-items: center; }
+.sm-ax-ref input[type="text"], .sm-ax-ref select {
+  min-width: 0; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px;
+}
+.sm-ax-ref .sm-btn { padding: 1px 8px; }
+.sm-ax-dialog .sm-ob-note { margin: 0; }
+/* a phone: each reference line on two rows (the value, the range's end and the label; then the colour, the style and ×) */
+@media (max-width: 760px) {
+  .sm-ax-form { grid-template-columns: auto minmax(0, 1fr); }
+  .sm-ax-ref { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); padding-bottom: 5px; border-bottom: 1px solid var(--border-color); }
+}

@@ -188,6 +188,9 @@ def check_form(r, name, title=None):
         check(f'{name}: the (i) builds on the topic {title}', (r.get('info') or {}).get('title'), title)
 
 
+SM_FMT4 = '%.4f'   # the Alarm Rate as the report writes it: four decimals, trailing zeros kept
+
+
 async def settle(page, s=0.8):
     await asyncio.sleep(s)
 
@@ -206,8 +209,10 @@ async def main():
     menu = await page.ev('(() => { const q = SM.app.menuItems("Analyze").find(i => i.label === "Quality and Process"); return q ? q.submenu().map(i => i.label || "—") : null; })()')
     check('Analyze > Quality and Process', [m for m in menu if m != '—'][:4], ['Control Chart Builder…', 'Process Capability…', 'Variability / Attribute Gauge Chart…', 'Pareto Plot…'])
     doe = await page.ev('SM.app.menuItems("DOE").filter(i => i.submenu).map(i => [i.label, i.submenu().map(s => s.label).filter(Boolean)])')
-    check('the DOE menu', doe, [['Classical', ['Screening Design…', 'Full Factorial Design…', 'Response Surface Design…']], ['Special Purpose', ['Space Filling Design…']],
-                                ['Design Diagnostics', ['Evaluate Design…']], ['Sample Size Explorers', ['Sample Size and Power']]])
+    # (each submenu's first items: other platforms may add theirs after them, as Test Calculators did on 2026-09-29)
+    want_doe = [['Classical', ['Screening Design…', 'Full Factorial Design…', 'Response Surface Design…']], ['Special Purpose', ['Space Filling Design…']],
+                ['Design Diagnostics', ['Evaluate Design…']], ['Sample Size Explorers', ['Sample Size and Power']]]
+    check('the DOE menu', [[m[0], m[1][:len(w[1])]] for m, w in zip(doe, want_doe)], want_doe)
     help_rows = await page.ev('["controlchart", "capability", "pareto", "variability", "evaldesign", "power"].filter(id => !document.getElementById("help-p-" + id))')
     check('a Help row for every platform', help_rows, [])
 
@@ -265,6 +270,57 @@ async def main():
     })()''')
     check('the tests flag points', r['head'].startswith('Tests (') and r['red'], True)
     check('a Tests line selects its subgroup\'s rows', (r['subs'], r['n']), ([r['sub']], 5))
+
+    # Show Alarm Report (JMP's), from the top red triangle: each chart's samples out of control and alarm rate, the
+    # tests it runs, the samples out of control; against the Tests outline; a line selects the sample's rows
+    r = await page.ev('''(async () => {
+      const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table;
+      const menu = [...rep.body.querySelectorAll('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu')][0];
+      menu.click(); await new Promise(r => setTimeout(r, 100));
+      const d = new Promise(res => rep.on('done', res));
+      [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent.includes('Show Alarm Report')).click();
+      await d;
+      const ob = [...rep.body.querySelectorAll('.sm-ob')].find(o => o.querySelector(':scope > .sm-ob-head h3, :scope > .sm-ob-head h2')?.textContent === 'Alarm Report');
+      if (!ob) return null;
+      const tables = [...ob.querySelectorAll('table.sm-rt')].map(tb => ({ caption: tb.querySelector('caption')?.textContent, rows: [...tb.querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim())) }));
+      const head = [...rep.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.startsWith('Tests'));
+      const tt = [...head.parentElement.querySelector('table.sm-rt').querySelectorAll('tbody tr')].map(tr => [tr.children[0].textContent, tr.children[1].textContent]);
+      const samples = [...ob.querySelectorAll('table.sm-rt')].find(tb => tb.querySelector('caption')?.textContent === 'Samples Out of Control');
+      samples.querySelector('tbody tr').click();
+      const sel = t.selectedRows(); const sub = [...new Set(sel.map(r => String(t.col('subgroup').values[r])))]; t.select([]);
+      const code = ob.querySelector('.sm-code, pre') ? (ob.querySelector('.sm-code pre, pre') || {}).textContent : '';
+      return { tables, tt, sel: sel.length, sub, first: samples.querySelector('tbody tr').children[2].textContent, code: code || '', errors: [...rep.body.querySelectorAll('.sm-ob-error')].length };
+    })()''')
+    if not r:
+        check('Show Alarm Report: the Alarm Report outline', r, 'an outline')
+    else:
+        caps = [tb['caption'] for tb in r['tables']]
+        check('Show Alarm Report: the Alarms, Enabled Tests and Samples Out of Control tables', caps, ['Alarms', 'Enabled Tests', 'Samples Out of Control'])
+        al = r['tables'][0]['rows']
+        hdr = al[0]
+        check('... the Alarms table\'s columns (JMP\'s Position, Total Samples Out of Control, Alarm Rate)', hdr[:5], ['Position', 'Chart', 'Samples', 'Total Samples Out of Control', 'Alarm Rate'])
+        by_chart = {}
+        for c_, sub_ in r['tt']:
+            by_chart.setdefault(c_, set()).add(sub_)
+        check('... a line per chart, numbered from the top', [(row[0], row[1]) for row in al[1:]], [('1', 'XBar of diameter (mm)'), ('2', 'R of diameter (mm)')])
+        check('... each chart\'s samples out of control are the Tests outline\'s', [int(row[3]) for row in al[1:]], [len(by_chart.get('XBar', ())), len(by_chart.get('R', ()))])
+        check('... the alarm rate is them over the 25 samples', [row[4] for row in al[1:]], [SM_FMT4 % (len(by_chart.get(k, ())) / 25) for k in ('XBar', 'R')])
+        en = r['tables'][1]['rows']
+        check('... the enabled tests: 1 to 8 on the XBar chart, 1 on the R chart', [(row[0], row[2]) for row in en[1:]], [('1', str(t_)) for t_ in range(1, 9)] + [('2', '1')])
+        check('... the Samples Out of Control: a line per sample and chart the Tests outline lists', len(r['tables'][2]['rows']) - 1, len(r['tt']))
+        check('... a line selects its sample\'s five rows', (r['sub'], r['sel']), ([r['first']], 5))
+        check('... its code gives the place of the process\'s first chart', ('first = 1' in r['code'], 'report = []' in r['code']), (True, True))
+        check('... no errors', r['errors'], 0)
+    # two processes: the charts numbered on from the first process's
+    await page.ev("(() => { const t = SM.app.tables.find(x => x.name === 'Process'); if (!t.col('width (mm)')) t.addColumn({ name: 'width (mm)', dataType: 'numeric', values: t.col('diameter (mm)').values.map((v, i) => +(v * 0.5 + 0.02 * Math.sin(i)).toFixed(4)) }); SM.app.showTab(SM.app.tabOf(t)); })()")
+    r = await page.ev(open_report_js('controlchart', {'y': ['diameter (mm)', 'width (mm)'], 'subgroup': ['subgroup']}, {'alarmReport': True, 'tests': [1, 2, 5]}))
+    al = await page.ev(table_under_js('Alarm Report'))
+    check('Alarm Report of two processes: four charts, numbered from the top', [(row[0], row[1]) for row in (al or [[]])[1:]], [('1', 'XBar of diameter (mm)'), ('2', 'R of diameter (mm)'), ('3', 'XBar of width (mm)'), ('4', 'R of width (mm)')])
+    code = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; const ob = [...rep.body.querySelectorAll('.sm-ob')].find(o => o.querySelector(':scope > .sm-ob-head h3, :scope > .sm-ob-head h2')?.textContent === 'Alarm Report');
+      return [...ob.querySelectorAll('pre')].map(p => p.textContent).join('\\n'); })()''')
+    check('... the code of the second process starts at its place, 3', ('first = 1' in code, 'first = 3' in code), (True, True))
+    await page.ev('SM.app.closeReport(SM.app.reports[SM.app.reports.length - 1])')
+    await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === 'controlchart')))")
 
     # phases, By, Save Limits
     await page.ev("(() => { const t = SM.app.current; const s = t.col('subgroup').values; t.addColumn({ name: 'phase', dataType: 'character', values: s.map(v => v <= 18 ? 'before' : 'after'), valueOrder: ['before', 'after'] }); })()")
@@ -614,6 +670,7 @@ async def main():
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === 'controlchart')))")
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(1.6)
+    check('dark theme: the control chart report with its Alarm Report, no errors', await page.ev("[...SM.app.reports.find(r => r.platform.id === 'controlchart').body.querySelectorAll('.sm-ob-error')].length"), 0)
     await shot(page, 'q09-dark-chart.png')
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === 'capability')))")
     await asyncio.sleep(1.2)

@@ -60,3 +60,6 @@
   .mv-methods { grid-template-columns: 1fr; }
   .mv-control input[type="range"] { width: 60vw; }
 }
+/* Explore Outliers: the lines chosen in Outliers by Column (the buttons act on them) */
+.sm-rt tr.is-chosen > td { background: color-mix(in srgb, var(--color-kvot-accent) 16%, transparent); }
+.sm-rt tr.is-chosen > td:first-child { box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
