@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Winnetkakort — kvot ab</title>
+  <meta name="description" content="Öva talfakta med Winnetkakort: uppgiften på framsidan, svaret på baksidan, och en hög för det du kan och en för det du behöver öva mer på. Lilla och stora plus och minus, multiplikationstabellerna, division, bråk, procent och negativa tal.">
+  <link rel="canonical" href="https://kvotab.se/winnetkakort.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Winnetkakort — kvot ab">
+  <meta property="og:description" content="Öva talfakta med Winnetkakort: plus och minus, multiplikationstabellerna, division, bråk, procent och negativa tal.">
+  <meta property="og:url" content="https://kvotab.se/winnetkakort.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body class="wk-body">
+<header></header>
+<div class="content wk-scroll" id="wk-scroll">
+<main class="wk">
+
+  <!-- ── Choosing the piles ─────────────────────────────────────────────── -->
+  <section id="wk-home" class="wk-view" aria-labelledby="wk-home-title">
+    <div class="wk-intro">
+      <h1 id="wk-home-title" class="wk-visually-hidden">Winnetkakort</h1>
+      <p class="wk-lead">
+        Ett Winnetkakort har en uppgift på framsidan och svaret på baksidan. Gå igenom en hög:
+        kort du kan <b>snabbt och rätt</b> lägger du i <span class="wk-word-kan">Kan</span>-högen, resten i
+        <span class="wk-word-ova">Öva mer</span>-högen. Öva sedan på Öva mer-högen tills den är tom.
+      </p>
+      <div class="wk-who">
+        <label for="wk-who">Vem övar?</label>
+        <select id="wk-who" data-on-change="wk:who"></select>
+        <button type="button" class="wk-btn wk-btn-quiet" id="wk-newperson-btn" data-on-click="wk:newPerson">+ Ny</button>
+        <span class="wk-newperson" id="wk-newperson" hidden>
+          <input id="wk-newname" type="text" maxlength="30" autocomplete="off" aria-label="Namn" placeholder="Namn"
+                 data-on-keydown="wk:newNameKey">
+          <button type="button" class="wk-btn" data-on-click="wk:addPerson">Lägg till</button>
+          <button type="button" class="wk-btn wk-btn-quiet" data-on-click="wk:cancelPerson">Avbryt</button>
+        </span>
+      </div>
+    </div>
+
+    <details class="wk-panel wk-settings" id="wk-settings">
+      <summary><span class="wk-panel-title">Inställningar</span><span class="wk-settings-sum" id="wk-settings-sum"></span></summary>
+      <div class="wk-settings-grid">
+        <fieldset>
+          <legend>Så svarar du</legend>
+          <label><input type="radio" name="mode" value="skriv" data-on-change="wk:setting"> Skriv svaret</label>
+          <label><input type="radio" name="mode" value="vand" data-on-change="wk:setting"> Vänd kortet – säg svaret, vänd och kolla</label>
+        </fieldset>
+        <fieldset>
+          <legend>Snabbt och rätt</legend>
+          <p class="wk-help">Ett rätt svar hamnar i Kan-högen om det kommer inom</p>
+          <label><input type="radio" name="limit" value="3" data-on-change="wk:setting"> 3 sekunder</label>
+          <label><input type="radio" name="limit" value="5" data-on-change="wk:setting"> 5 sekunder</label>
+          <label><input type="radio" name="limit" value="8" data-on-change="wk:setting"> 8 sekunder</label>
+          <label><input type="radio" name="limit" value="12" data-on-change="wk:setting"> 12 sekunder</label>
+          <label><input type="radio" name="limit" value="0" data-on-change="wk:setting"> Ingen tidsgräns</label>
+        </fieldset>
+        <fieldset>
+          <legend>Kort per omgång</legend>
+          <p class="wk-help">Är högen större tas först de kort du behöver öva mest på.</p>
+          <label><input type="radio" name="count" value="10" data-on-change="wk:setting"> 10</label>
+          <label><input type="radio" name="count" value="20" data-on-change="wk:setting"> 20</label>
+          <label><input type="radio" name="count" value="30" data-on-change="wk:setting"> 30</label>
+          <label><input type="radio" name="count" value="0" data-on-change="wk:setting"> Hela högen</label>
+        </fieldset>
+        <fieldset>
+          <legend>Frågor</legend>
+          <label><input type="radio" name="form" value="vanlig" data-on-change="wk:setting"> Vanliga <span class="wk-eg">7 + 8 = ?</span></label>
+          <label><input type="radio" name="form" value="saknat" data-on-change="wk:setting"> Saknat tal <span class="wk-eg">7 + ? = 15</span></label>
+          <label><input type="radio" name="form" value="blandat" data-on-change="wk:setting"> Blandat</label>
+        </fieldset>
+        <fieldset>
+          <legend>Tecken</legend>
+          <label><input type="radio" name="signs" value="punkt" data-on-change="wk:setting"> <span class="wk-eg">3 · 4</span> och <span class="wk-eg">12 / 3</span></label>
+          <label><input type="radio" name="signs" value="kryss" data-on-change="wk:setting"> <span class="wk-eg">3 × 4</span> och <span class="wk-eg">12 ÷ 3</span></label>
+        </fieldset>
+        <fieldset>
+          <legend>Knappsats på skärmen</legend>
+          <label><input type="radio" name="pad" value="auto" data-on-change="wk:setting"> På pekskärmar</label>
+          <label><input type="radio" name="pad" value="pa" data-on-change="wk:setting"> Alltid</label>
+          <label><input type="radio" name="pad" value="av" data-on-change="wk:setting"> Aldrig</label>
+        </fieldset>
+      </div>
+      <div class="wk-person-admin">
+        <button type="button" class="wk-btn wk-btn-quiet" id="wk-reset" data-on-click="wk:resetPerson"></button>
+        <button type="button" class="wk-btn wk-btn-quiet" id="wk-remove" data-on-click="wk:removePerson"></button>
+      </div>
+    </details>
+
+    <div id="wk-groups"></div>
+
+    <section class="wk-panel wk-progress" aria-labelledby="wk-progress-title">
+      <h2 id="wk-progress-title" class="wk-panel-title">Mina framsteg</h2>
+      <div class="wk-tabs" role="tablist" aria-label="Tabell">
+        <button type="button" role="tab" data-grid="plus" data-on-click="wk:grid">Plus</button>
+        <button type="button" role="tab" data-grid="minus" data-on-click="wk:grid">Minus</button>
+        <button type="button" role="tab" data-grid="ganger" data-on-click="wk:grid">Gånger</button>
+        <button type="button" role="tab" data-grid="delat" data-on-click="wk:grid">Delat</button>
+      </div>
+      <p class="wk-grid-sum" id="wk-grid-sum"></p>
+      <div class="wk-grid-wrap" id="wk-grid" role="tabpanel"></div>
+      <p class="wk-grid-caption" id="wk-grid-caption" aria-live="polite"></p>
+      <ul class="wk-legend">
+        <li><span class="wk-dot" data-status="none"></span> Inte övat än</li>
+        <li><span class="wk-dot" data-status="ova"></span> Öva mer</li>
+        <li><span class="wk-dot" data-status="nara"></span> På gång</li>
+        <li><span class="wk-dot" data-status="kan"></span> Kan</li>
+      </ul>
+    </section>
+
+    <details class="wk-panel wk-about" id="wk-about">
+      <summary><span class="wk-panel-title">Om Winnetkakort</span></summary>
+      <div class="wk-about-body">
+        <h3>Varifrån kommer korten?</h3>
+        <p>
+          Korten har fått sitt namn efter Winnetka, en förort till Chicago. Där var Carleton Washburne
+          skolchef 1919–1943 och byggde upp det som kallas Winnetkaplanen: varje elev arbetade i sin
+          egen takt med material som rättade sig självt, och gick vidare först när ett moment satt.
+          Räknekort med uppgiften på ena sidan och svaret på den andra var en del av det – Washburnes
+          egna räknekort gavs ut 1928 – och idén har levt kvar i svenska klassrum sedan dess.
+        </p>
+        <h3>Så övar man</h3>
+        <ol>
+          <li>Ta en hög, till exempel tiokompisarna eller 7:ans tabell.</li>
+          <li>Svara på kortet. Kom svaret snabbt och rätt läggs kortet i Kan-högen, annars i Öva mer-högen.</li>
+          <li>När högen är slut: öva på Öva mer-högen igen, tills den är tom.</li>
+          <li>Kan du hela högen snabbt och rätt? Gå vidare till nästa.</li>
+        </ol>
+        <p>
+          Öva lite och ofta – några minuter om dagen – hellre än länge en gång i veckan. Målet är att svaret
+          ska komma direkt, utan att räkna på fingrarna. Då blir huvudet fritt för det som är svårare.
+          Multiplikationstabellerna brukar gå lättast i ordningen 2, 10, 5, 4, 3, 9, 6, 8, 7: de man redan kan
+          hjälper till med nästa.
+        </p>
+        <h3>Så räknar sidan</h3>
+        <ul>
+          <li>Ett kort räknas som <i>kan</i> när du har svarat snabbt och rätt. Har du svarat fel på det tidigare
+            behöver du svara rätt två gånger i rad.</li>
+          <li>Tar du hjälp av tipset hamnar kortet i Öva mer-högen den gången.</li>
+          <li>I läget <i>Vänd kortet</i> bestämmer du själv om du kunde – bra när en vuxen eller en kompis förhör.</li>
+          <li>Klarar du en hel hög rätt på första försöket, med Skriv svaret, sparas tiden som ditt rekord.</li>
+          <li>Framstegen sparas bara i den här webbläsaren. Ingenting skickas någonstans.</li>
+        </ul>
+        <h3>Skriva ut korten</h3>
+        <p>
+          Välj högar och tryck på <i>Skriv ut</i>. Skriv ut dubbelsidigt och vänd längs långsidan, så hamnar
+          svaret på baksidan av rätt kort. Klipp isär korten och klipp av hörnet som är markerat – då ligger
+          alla kort åt samma håll.
+        </p>
+        <h3>Läs mer</h3>
+        <ul class="wk-links">
+          <li><a href="https://en.wikipedia.org/wiki/Winnetka_Plan" target="_blank" rel="noopener noreferrer">Winnetka Plan</a> och
+            <a href="https://en.wikipedia.org/wiki/Carleton_Washburne" target="_blank" rel="noopener noreferrer">Carleton Washburne</a> (Wikipedia, engelska)</li>
+          <li><a href="https://mattefixaren.wordpress.com/category/lektionsforslag-utifran-det-centrala-innehallet-i-lgr-11/taluppfattning-och-tals-anvandning/de-fyra-raknesatten/addition/addition-0-10-lilla-plus/" target="_blank" rel="noopener noreferrer">Lilla plus i små steg</a> (Mattefixaren)</li>
+          <li><a href="https://trulscronberg.se/material.html" target="_blank" rel="noopener noreferrer">Winnetkakort att skriva ut</a> (Truls Cronberg)</li>
+          <li><a href="https://eddler.se/huvudrakning-nagra-strategier/" target="_blank" rel="noopener noreferrer">Strategier för huvudräkning</a> (Eddler)</li>
+          <li><a href="https://fivetwelvethirteen.substack.com/p/incremental-fact-fluency-v2" target="_blank" rel="noopener noreferrer">Incremental fact fluency</a> – en tabell i taget, i vilken ordning (Dylan Kane, engelska)</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="wk-selbar" id="wk-selbar">
+      <p class="wk-selbar-text" id="wk-selbar-text" aria-live="polite"></p>
+      <div class="wk-selbar-buttons">
+        <button type="button" class="wk-btn wk-btn-quiet" id="wk-clear" data-on-click="wk:clear">Rensa</button>
+        <button type="button" class="wk-btn wk-btn-quiet" id="wk-print-btn" data-on-click="wk:print">Skriv ut</button>
+        <button type="button" class="wk-btn wk-btn-go" id="wk-start" data-on-click="wk:start">Börja öva</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Practising ─────────────────────────────────────────────────────── -->
+  <section id="wk-practice" class="wk-view wk-practice" hidden aria-label="Övning">
+    <div class="wk-bar">
+      <button type="button" class="wk-btn wk-btn-quiet" data-on-click="wk:quit">← Avsluta</button>
+      <span class="wk-bar-title" id="wk-round-title"></span>
+      <span class="wk-bar-meta"><span id="wk-round-count"></span><span id="wk-round-time"></span></span>
+    </div>
+    <div class="wk-stage">
+      <div class="wk-pile" data-pile="ova" id="wk-pile-ova">
+        <div class="wk-pile-stack" aria-hidden="true"></div>
+        <div class="wk-pile-n" id="wk-pile-ova-n">0</div>
+        <div class="wk-pile-label">Öva mer</div>
+      </div>
+      <div class="wk-deck" id="wk-deck">
+        <div class="wk-card" id="wk-card" data-side="front">
+          <div class="wk-face wk-front" id="wk-front"><div class="wk-paper">
+            <div class="wk-band" id="wk-band-front"></div>
+            <div class="wk-eq" id="wk-eq"></div>
+            <div class="wk-note" id="wk-note"></div>
+            <div class="wk-timer" id="wk-timer" aria-hidden="true"><span></span></div>
+          </div></div>
+          <div class="wk-face wk-back" id="wk-back" aria-hidden="true"><div class="wk-paper">
+            <div class="wk-band" id="wk-band-back"></div>
+            <div class="wk-eq" id="wk-eq-back"></div>
+            <div class="wk-verdict" id="wk-verdict"></div>
+          </div></div>
+        </div>
+      </div>
+      <div class="wk-pile" data-pile="kan" id="wk-pile-kan">
+        <div class="wk-pile-stack" aria-hidden="true"></div>
+        <div class="wk-pile-n" id="wk-pile-kan-n">0</div>
+        <div class="wk-pile-label">Kan</div>
+      </div>
+    </div>
+    <p class="wk-feedback" id="wk-feedback" role="status" aria-live="polite"></p>
+    <div class="wk-actions" id="wk-actions"></div>
+    <div class="wk-hint" id="wk-hint" hidden></div>
+    <div class="wk-numpad" id="wk-numpad" hidden></div>
+  </section>
+
+  <!-- ── After a round ──────────────────────────────────────────────────── -->
+  <section id="wk-summary" class="wk-view wk-summary" hidden aria-labelledby="wk-sum-title">
+    <h2 id="wk-sum-title" tabindex="-1"></h2>
+    <div class="wk-sum-piles">
+      <div class="wk-sum-pile" data-pile="kan"><span class="wk-sum-n" id="wk-sum-kan"></span><span>Kan</span></div>
+      <div class="wk-sum-pile" data-pile="ova"><span class="wk-sum-n" id="wk-sum-ova"></span><span>Öva mer</span></div>
+    </div>
+    <p class="wk-sum-time" id="wk-sum-time"></p>
+    <div class="wk-sum-list" id="wk-sum-list"></div>
+    <div class="wk-sum-actions" id="wk-sum-actions"></div>
+  </section>
+
+</main>
+</div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260930"></script>
+<script src="./resources/js/winnetkakort-sets.js?v=20260930"></script>
+<script src="./resources/js/winnetkakort.js?v=20260930"></script>
+<script>
+  KVOT.renderHeader('Winnetkakort');
+  KVOT.renderNav('winnetkakort.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  WK.init();
+</script>
+</body>
+</html>
