@@ -42,7 +42,7 @@ too:
 
     python3 resources/tests/winnetkakort/test-ui.py
 
-It exits 0 when all 152 checks pass and takes about two minutes. With
+It exits 0 when all 176 checks pass and takes about two and a half minutes. With
 `WK_SHOTS=<folder>` it also saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -98,6 +98,24 @@ What it plays:
 - **The cards under the one asked:** two, of opaque paper with the pile's
   band (what shows while the card turns), their band level with the card's.
 - **Dark theme and reduced motion.**
+- **Sound effects** (resources/js/winnetkakort-sound.js, made with Web
+  Audio; there are no sound files):
+  - Every sound is rendered silently offline and measured, so nobody has to
+    listen. Each must be audible without clipping (peak between 0.08 and
+    0.9) and short. Wrong must be gentler than right, the card's own sounds
+    and the hint quieter than the chime, and the fanfares must grow from
+    done to all-in-Kan to record.
+  - Sounds are off at first, and no audio exists until they are on. They
+    are switched on with a real mouse click (`page.click`, which counts as a
+    user gesture where `element.click()` would not). Switching on plays the
+    chime.
+  - A right answer swishes, chimes and taps. A wrong one says uh-oh, the
+    hint bubbles, and right with the hint plays the softer note. A finished
+    pile plays its fanfare. In Vänd kortet the swish, chime and tap come on
+    the key presses.
+  - After a reload they are still on, and wait for the first tap. The
+    setting switches them off, and off is silent. On a phone the loudspeaker
+    stays in the practice bar.
 
 The page exposes `WK.inspect()` for this test: the current round, the
 status of a fact, and a copy of the store. It is read-only.

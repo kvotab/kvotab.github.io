@@ -33,11 +33,11 @@ const FC = (() => {
   const STORE_KEY = 'flashcards.v1';
   const FULL_KEY = 'flashcards.full';
   const DEFAULTS = Object.freeze({
-    lang: 'en', dir: 'till', mode: 'skriv', count: 20, pics: true, speak: true, accents: 'valfri', article: 'valfri',
+    lang: 'en', dir: 'till', mode: 'skriv', count: 20, pics: true, speak: true, accents: 'valfri', article: 'valfri', sound: false,
   });
   const CHOICES = Object.freeze({
     lang: ['en', 'es'], dir: ['till', 'fran', 'blandat'], mode: ['skriv', 'valj', 'vand', 'lyssna'], count: [10, 20, 30, 0],
-    pics: [true, false], speak: [true, false], accents: ['valfri', 'krav'], article: ['valfri', 'krav'],
+    pics: [true, false], speak: [true, false], accents: ['valfri', 'krav'], article: ['valfri', 'krav'], sound: [true, false],
   });
 
   let store = null;
@@ -731,9 +731,14 @@ const FC = (() => {
     setFeedback(message, kan ? 'kan' : 'ova');
 
     turn('back');
+    WK_SOUND.play('flip');
+    /* Nearly right - a letter off, an accent or el/la missing - is the softer
+       note, like right with the hint: only a wrong word gets the uh-oh. */
+    const near = res.ok || ['almost', 'accent', 'article'].includes(res.verdict);
+    WK_SOUND.play(kan ? 'right' : near ? 'okay' : 'wrong', 0.16);
     round.phase = 'feedback';
     renderActions();
-    if (settings().speak) setTimeout(() => { if (round && round.card === rc) say(c.say, c.lang); }, reduceMotion() ? 0 : 350);
+    if (settings().speak) setTimeout(() => { if (round && round.card === rc) say(c.say, c.lang); }, afterChime(reduceMotion() ? 0 : 350));
     const flip = reduceMotion() ? 0 : 450;
     if (wait) advanceTimer = setTimeout(advance, flip + wait);
     else $('fc-next').focus({ preventScroll: true });
@@ -746,9 +751,15 @@ const FC = (() => {
     if (round.card.hinted) setFeedback('Du tog hjälp av tipset, så ordet läggs i Öva mer-högen den här gången.', 'ova');
     else setFeedback('Kunde du? Lägg kortet i rätt hög.');
     renderActions();
-    if (settings().speak) say(round.card.c.say, round.card.c.lang);
+    WK_SOUND.play('flip');
+    const rc = round.card;
+    if (settings().speak) setTimeout(() => { if (round && round.card === rc) say(rc.c.say, rc.c.lang); }, settings().sound ? 250 : 0);
     $('fc-deck').focus({ preventScroll: true });
   }
+
+  /* With the sound effects on, a word is read out once the chime has
+     rung, not on top of it. */
+  const afterChime = ms => (settings().sound ? 650 : ms);
 
   function judge(kanSaid) {
     if (!round || round.phase !== 'judge') return;
@@ -758,6 +769,7 @@ const FC = (() => {
     saveStore();
     round.pending = kan ? 'kan' : 'ova';
     (kan ? round.kan : round.ova).push({ c: rc.c, typed: null });
+    if (kan) WK_SOUND.play('right');
     advance();
   }
 
@@ -768,6 +780,7 @@ const FC = (() => {
     renderActions();
     const next = () => {
       if (!round || round.phase !== 'moving') return;
+      WK_SOUND.play('land');
       round.i += 1;
       renderPiles();
       showCard();
@@ -796,6 +809,7 @@ const FC = (() => {
       + (pic ? `<p class="fc-hint-pic">${pic}</p>` : '')
       + '<p class="wk-hint-note">Med tipset hamnar ordet i Öva mer-högen den här gången.</p>';
     box.hidden = false;
+    WK_SOUND.play('hint');
     renderActions();
     if (rc.mode === 'skriv' || rc.mode === 'lyssna') $('fc-input').focus({ preventScroll: true });
   }
@@ -804,6 +818,8 @@ const FC = (() => {
     clearTimeout(advanceTimer);
     round.phase = 'done';
     const r = round;
+    /* After the last card's tap into its pile. */
+    WK_SOUND.play(r.ova.length ? 'done' : 'allKan', 0.12);
     $('fc-sum-title').textContent = r.ova.length ? 'Högen är slut' : 'Alla kort hamnade i Kan-högen!';
     $('fc-sum-kan').textContent = r.kan.length;
     $('fc-sum-ova').textContent = r.ova.length;
@@ -1021,6 +1037,7 @@ const FC = (() => {
     $('fc-newperson-btn').hidden = false;
     selected.clear();
     renderHome();
+    syncSound();
     $('fc-who').focus();
   }
 
@@ -1112,6 +1129,34 @@ const FC = (() => {
     update();
   }
 
+  /* ── Sound effects ───────────────────────────────────────────────────── */
+
+  /* Winnetkakort's (winnetkakort-sound.js). On or off from a tap - the
+     loudspeaker in either bar, or the setting - so the audio may start at
+     once; switching on plays the chime, so the child hears what "on" sounds
+     like. */
+  function setSound(on) {
+    setSetting('sound', !!on);
+    WK_SOUND.setOn(on, true);
+    soundState();
+    renderSettings();
+    if (on) WK_SOUND.play('right');
+  }
+
+  function soundState() {
+    const on = !!settings().sound;
+    for (const button of document.querySelectorAll('.wk-soundbtn')) {
+      button.setAttribute('aria-pressed', String(on));
+      button.title = on ? 'Ljudeffekterna är på – tryck för att stänga av dem' : 'Ljudeffekterna är av – tryck för att slå på dem';
+    }
+  }
+
+  /* Each person has settings of their own, the sounds among them. */
+  function syncSound() {
+    WK_SOUND.setOn(settings().sound, true);
+    soundState();
+  }
+
   /* ── Settings ────────────────────────────────────────────────────────── */
 
   function setSetting(name, value) {
@@ -1123,6 +1168,7 @@ const FC = (() => {
   function onSetting(e, el) {
     const name = el.name;
     if (!(name in DEFAULTS)) return;
+    if (name === 'sound') { setSound(el.checked); return; }
     const value = el.type === 'checkbox' ? el.checked : typeof DEFAULTS[name] === 'number' ? Number(el.value) : el.value;
     setSetting(name, value);
     renderHome();
@@ -1172,6 +1218,7 @@ const FC = (() => {
       'fc:study': () => showStudy(),
       'fc:print': () => printCards(),
       'fc:full': () => setFull(!document.documentElement.classList.contains('wk-full')),
+      'fc:sound': () => setSound(!settings().sound),
       'fc:setting': onSetting,
       'fc:lang': (e, el) => {
         if (el.dataset.lang === lang()) return;
@@ -1186,6 +1233,7 @@ const FC = (() => {
         saveStore();
         selected.clear();
         renderHome();
+        syncSound();
       },
       'fc:newPerson': () => {
         $('fc-newperson').hidden = false;
@@ -1216,6 +1264,7 @@ const FC = (() => {
         saveStore();
         selected.clear();
         renderHome();
+        syncSound();
         notifyUser(`${p.name} är borttagen.`, { tone: 'success' });
       },
 
@@ -1299,6 +1348,12 @@ const FC = (() => {
       if (speech.supported) speechSynthesis.addEventListener('voiceschanged', () => { if (!$('fc-home').hidden) renderSettings(); });
       watchKeyboard();
       fullState();
+      WK_SOUND.setOn(settings().sound, false);
+      soundState();
+      /* A browser lets the audio run only after a tap or a key: the first one
+         starts it, if sounds are on, and later ones wake it after the browser
+         has put it to sleep. */
+      for (const type of ['pointerup', 'keydown']) document.addEventListener(type, () => WK_SOUND.unlock(), true);
       showView('home');
       readShared();
     } catch (e) {
@@ -1318,6 +1373,8 @@ const FC = (() => {
     status: key => statusOf(key),
     stat: key => statOf(key) || null,
     store: JSON.parse(JSON.stringify(store)),
+    sounds: WK_SOUND.log(),
+    audio: WK_SOUND.state(),
   });
 
   return { init, inspect };

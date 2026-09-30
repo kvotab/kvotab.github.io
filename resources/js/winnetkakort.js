@@ -30,10 +30,10 @@ const WK = (() => {
   /* ── Storage ─────────────────────────────────────────────────────────── */
 
   const STORE_KEY = 'winnetkakort.v1';
-  const DEFAULTS = Object.freeze({ mode: 'skriv', limit: 5, count: 20, form: 'vanlig', signs: 'punkt', pad: 'auto' });
+  const DEFAULTS = Object.freeze({ mode: 'skriv', limit: 5, count: 20, form: 'vanlig', signs: 'punkt', pad: 'auto', sound: false });
   const CHOICES = Object.freeze({
     mode: ['skriv', 'vand'], limit: [3, 5, 8, 12, 0], count: [10, 20, 30, 0],
-    form: ['vanlig', 'saknat', 'blandat'], signs: ['punkt', 'kryss'], pad: ['auto', 'pa', 'av'],
+    form: ['vanlig', 'saknat', 'blandat'], signs: ['punkt', 'kryss'], pad: ['auto', 'pa', 'av'], sound: [true, false],
   });
 
   let store = null;
@@ -370,6 +370,7 @@ const WK = (() => {
     for (const input of document.querySelectorAll('#wk-settings input[type=radio]')) {
       input.checked = String(st[input.name]) === input.value;
     }
+    for (const input of document.querySelectorAll('#wk-settings input[type=checkbox]')) input.checked = !!st[input.name];
     const parts = [
       st.mode === 'skriv' ? 'Skriv svaret' : 'Vänd kortet',
       st.limit ? `snabbt inom ${st.limit} s` : 'ingen tidsgräns',
@@ -690,6 +691,8 @@ const WK = (() => {
     else setFeedback(`Inte riktigt – rätt svar är ${answer}.`, 'ova');
 
     turn('back');
+    WK_SOUND.play('flip');
+    WK_SOUND.play(kan ? 'right' : ok ? 'okay' : 'wrong', 0.16);
     round.phase = 'feedback';
     renderActions();
     const flipTime = reduceMotion() ? 0 : 450;
@@ -702,6 +705,7 @@ const WK = (() => {
     if (!round || round.phase !== 'answer' || round.mode !== 'vand') return;
     round.card.flipMs = performance.now() - round.card.shownAt;
     turn('back');
+    WK_SOUND.play('flip');
     round.phase = 'judge';
     if (round.card.hinted) setFeedback('Du tog hjälp av tipset, så kortet läggs i Öva mer-högen den här gången.', 'ova');
     else setFeedback('Kunde du? Lägg kortet i rätt hög.');
@@ -718,6 +722,7 @@ const WK = (() => {
     if (!kan) round.clean = false;
     round.pending = kan ? 'kan' : 'ova';
     (kan ? round.kan : round.ova).push({ fact: c.fact, q: c.q, typed: null });
+    if (kan) WK_SOUND.play('right');
     advance();
   }
 
@@ -728,6 +733,7 @@ const WK = (() => {
     renderActions();
     const next = () => {
       if (!round || round.phase !== 'moving') return;
+      WK_SOUND.play('land');
       round.i += 1;
       renderPiles();
       showCard();
@@ -755,6 +761,7 @@ const WK = (() => {
     box.innerHTML = `<p class="wk-hint-text">${esc(withSigns(h.text))}</p>${picHtml(h.pic)}`
       + '<p class="wk-hint-note">Med tipset hamnar kortet i Öva mer-högen den här gången.</p>';
     box.hidden = false;
+    WK_SOUND.play('hint');
     renderActions();
     if (round.mode === 'skriv') $('wk-input').focus({ preventScroll: true });
   }
@@ -765,6 +772,7 @@ const WK = (() => {
     round.phase = 'done';
     const r = round;
     let timeText = '';
+    let newRecord = false;
     if (r.mode === 'skriv') {
       timeText = `Tid att svara: ${mmss(r.respMs)}.`;
       if (r.recordable) {
@@ -773,6 +781,7 @@ const WK = (() => {
         if (r.clean && (!prev || r.respMs < prev)) {
           profile().best[id] = Math.round(r.respMs);
           saveStore();
+          newRecord = true;
           timeText += prev ? ` Nytt rekord! Förra var ${mmss(prev)}.` : ' Det är ditt rekord för den här högen.';
         } else if (prev) {
           timeText += ` Rekordet är ${mmss(prev)}.`;
@@ -782,6 +791,8 @@ const WK = (() => {
       }
     }
     const allKan = !r.ova.length;
+    /* After the last card's tap into its pile. */
+    WK_SOUND.play(newRecord ? 'record' : allKan ? 'allKan' : 'done', 0.12);
     $('wk-sum-title').textContent = allKan ? 'Alla kort hamnade i Kan-högen!' : 'Högen är slut';
     $('wk-sum-kan').textContent = r.kan.length;
     $('wk-sum-ova').textContent = r.ova.length;
@@ -967,11 +978,34 @@ const WK = (() => {
     }
   }
 
+  /* ── Sound effects ───────────────────────────────────────────────────── */
+
+  /* On or off from a tap - the loudspeaker in either bar, or the setting -
+     so the audio may start at once; switching on plays the chime, so the
+     child hears what "on" sounds like. */
+  function setSound(on) {
+    settings().sound = !!on;
+    saveStore();
+    WK_SOUND.setOn(on, true);
+    soundState();
+    renderSettings();
+    if (on) WK_SOUND.play('right');
+  }
+
+  function soundState() {
+    const on = !!settings().sound;
+    for (const button of document.querySelectorAll('.wk-soundbtn')) {
+      button.setAttribute('aria-pressed', String(on));
+      button.title = on ? 'Ljudeffekterna är på – tryck för att stänga av dem' : 'Ljudeffekterna är av – tryck för att slå på dem';
+    }
+  }
+
   /* ── Actions ─────────────────────────────────────────────────────────── */
 
   function onSetting(e, el) {
     const name = el.name;
     if (!(name in DEFAULTS)) return;
+    if (name === 'sound') { setSound(el.checked); return; }
     const value = typeof DEFAULTS[name] === 'number' ? Number(el.value) : el.value;
     if (!CHOICES[name].includes(value)) return;
     settings()[name] = value;
@@ -993,6 +1027,7 @@ const WK = (() => {
       'wk:start': () => startRound(selectedIds()),
       'wk:print': () => printCards(),
       'wk:full': () => setFull(!document.documentElement.classList.contains('wk-full')),
+      'wk:sound': () => setSound(!settings().sound),
       'wk:setting': onSetting,
       'wk:who': (e, el) => {
         if (!store.profiles[el.value]) return;
@@ -1090,6 +1125,12 @@ const WK = (() => {
         if (!field || !/^(INPUT|SELECT|TEXTAREA)$/.test(field.tagName)) window.scrollTo(0, 0);
       }, 100));
       fullState();
+      WK_SOUND.setOn(settings().sound, false);
+      soundState();
+      /* A browser lets the audio run only after a tap or a key: the first one
+         starts it, if sounds are on, and later ones wake it after the browser
+         has put it to sleep. */
+      for (const type of ['pointerup', 'keydown']) document.addEventListener(type, () => WK_SOUND.unlock(), true);
       showView('home');
     } catch (e) {
       reportFailure('winnetkakort: init', e, { userMessage: 'Winnetkakorten kunde inte starta.' });
@@ -1103,6 +1144,8 @@ const WK = (() => {
       answer: round.card && round.card.q.answer, form: round.card && round.card.form, key: round.card && round.card.fact.key },
     status: key => statusOf(key),
     store: JSON.parse(JSON.stringify(store)),
+    sounds: WK_SOUND.log(),
+    audio: WK_SOUND.state(),
   });
 
   return { init, inspect };

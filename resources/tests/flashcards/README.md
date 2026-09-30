@@ -58,7 +58,7 @@ ports too:
 
     python3 resources/tests/flashcards/test-ui.py
 
-It exits 0 when all 111 checks pass, in about two and a half minutes. With
+It exits 0 when all 134 checks pass, in about three minutes. With
 `FC_SHOTS=<folder>` it saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -91,6 +91,23 @@ What it plays:
 - **Titta först and printing.** Printing gives 27 cards on two sheets, with
   the backs mirrored and four A4 pages in the PDF.
 - **No voice:** no listening mode, a note on why, and no loudspeakers.
+- **Sound effects.** These are Winnetkakort's, from `winnetkakort-sound.js`.
+  Their levels are measured in `../winnetkakort/test-ui.py`.
+  - They are off at first, and no audio exists until they are on. The
+    loudspeaker is switched on with a real mouse click (`page.click`).
+  - Right swishes and chimes, then taps as the card lands. *Nästan* (a
+    letter off) and right with the hint get the softer note, and a wrong
+    word gets the uh-oh. The hint bubbles.
+  - A pile with words left to practise ends with the short fanfare, and all
+    in Kan with the bright one. Choosing among four and turning the card
+    make the same sounds.
+  - With the sounds on, the word is read out at least 600 ms after the
+    answer, once the chime has rung. With them off, it comes as the card
+    turns.
+  - Sounds are per person: a new person starts with them off, and switching
+    back turns them on again.
+  - After a reload they wait for the first tap. The setting switches them
+    off, and off is silent.
 - **The full window.**
 - **Phones.** An iPhone 13 in Safari at 390 × 664 and 844 × 340, an iPhone
   SE at 375 × 548 and 667 × 325, and a small Android phone at 360 × 560. At

@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <!-- the cards, the piles and the phone layouts are Winnetkakort's; flashcards.css adds what words need -->
-  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930d">
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930e">
   <link rel="stylesheet" href="./resources/css/flashcards.css?v=20260930b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
@@ -75,6 +75,12 @@
         </div>
         <div class="wk-top-end">
           <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+          <button type="button" class="wk-soundbtn" data-on-click="fc:sound" aria-pressed="false" aria-label="Ljudeffekter">
+            <svg class="wk-sound-off" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M11 6.2l3.4 3.6M14.4 6.2L11 9.8"/></svg>
+            <svg class="wk-sound-on" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M10.6 5.6a3.4 3.4 0 0 1 0 4.8M12.6 3.6a6.2 6.2 0 0 1 0 8.8"/></svg>
+          </button>
           <button type="button" class="wk-fullbtn" data-on-click="fc:full" aria-pressed="false" aria-label="Helt fönster">
             <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
                  stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
@@ -119,6 +125,8 @@
           <legend>Bilder och ljud</legend>
           <label><input type="checkbox" name="pics" data-on-change="fc:setting"> Visa bilder på korten</label>
           <label><input type="checkbox" name="speak" data-on-change="fc:setting"> Läs upp ordet när kortet vänds</label>
+          <label><input type="checkbox" name="sound" data-on-change="fc:setting"> Ljudeffekter</label>
+          <p class="wk-help">Ett pling för rätt svar, och korten låter när de vänds och hamnar i högarna. På en iPhone hörs de inte när den står på ljudlöst.</p>
         </fieldset>
         <fieldset class="fc-es-only">
           <legend>Spanska: accenter</legend>
@@ -201,6 +209,9 @@
             á, é, í, ó, ú, ñ och ü.</li>
           <li>Framstegen sparas bara i den här webbläsaren. Ingenting skickas någonstans – inte heller dina egna
             listor, förrän du själv delar en länk.</li>
+          <li>Med högtalarknappen blir det ljud: ett pling för rätt svar, en mjukare ton när du nästan har rätt, ett mjukt
+            ”oj” för fel, och korten låter när de vänds och hamnar i högarna. Ljuden görs i webbläsaren – inga ljudfiler
+            laddas ner.</li>
         </ul>
         <h3>Egna glosor</h3>
         <p>
@@ -248,6 +259,12 @@
       <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:quit">← Avsluta</button>
       <span class="wk-bar-title" id="fc-round-title"></span>
       <span class="wk-bar-meta"><span id="fc-round-count"></span></span>
+      <button type="button" class="wk-soundbtn" data-on-click="fc:sound" aria-pressed="false" aria-label="Ljudeffekter">
+        <svg class="wk-sound-off" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M11 6.2l3.4 3.6M14.4 6.2L11 9.8"/></svg>
+        <svg class="wk-sound-on" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h2.5L8 3v10l-3.5-3H2z"/><path d="M10.6 5.6a3.4 3.4 0 0 1 0 4.8M12.6 3.6a6.2 6.2 0 0 1 0 8.8"/></svg>
+      </button>
       <button type="button" class="wk-fullbtn" data-on-click="fc:full" aria-pressed="false" aria-label="Helt fönster">
         <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
@@ -329,7 +346,8 @@
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260930b"></script>
 <script src="./resources/js/flashcards-words.js?v=20260930"></script>
-<script src="./resources/js/flashcards.js?v=20260930"></script>
+<script src="./resources/js/winnetkakort-sound.js?v=20260930c"></script>
+<script src="./resources/js/flashcards.js?v=20260930b"></script>
 <script>
   KVOT.renderHeader('Glosor');
   KVOT.renderNav('flashcards.html');

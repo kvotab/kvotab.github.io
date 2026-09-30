@@ -57,7 +57,8 @@ KEYS = {
 SPEECH = """(() => {
   const voices = %s;
   window.__spoken = [];
-  const stub = { getVoices: () => voices, speak: u => window.__spoken.push([u.text, u.lang]), cancel: () => {},
+  window.__spokenAt = [];
+  const stub = { getVoices: () => voices, speak: u => { window.__spoken.push([u.text, u.lang]); window.__spokenAt.push(performance.now()); }, cancel: () => {},
                  addEventListener: () => {}, speaking: false };
   Object.defineProperty(window, 'speechSynthesis', { value: stub, configurable: true });
   window.SpeechSynthesisUtterance = function (text) { this.text = text; };
@@ -114,6 +115,13 @@ class Page:
 
     async def type(self, text):
         await self.call('Input.insertText', {'text': text})
+
+    async def click(self, selector):
+        """A real click, with the mouse: unlike element.click(), it counts as the
+        tap after which a browser lets a page make sound."""
+        x, y = await self.ev(f"(e => {{ e.scrollIntoView({{ block: 'center' }}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }})(document.querySelector({json.dumps(selector)}))")
+        for kind in ('mousePressed', 'mouseReleased'):
+            await self.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1})
 
     async def load(self, width=1400, height=900, theme='light', storage=None, mobile=False, voices=VOICES, url=URL):
         """A fresh page: this size and theme, its storage as given, speech as a stub with these voices."""
@@ -602,6 +610,111 @@ async def run(page):
     await play_card(page, advance=False)
     check('not on the back either', await page.ev("document.getElementById('fc-say-back').hidden"), True)
     check('no script errors so far', page.errors + page.console, [])
+
+    # --- sound effects (Winnetkakort's) -------------------------------------------------------------------------------------
+    SOUND = "JSON.stringify([...document.querySelectorAll('.wk-soundbtn')].map(b => b.getAttribute('aria-pressed')))"
+    sounds = "FC.inspect().sounds"
+    await page.load()
+    check('sounds: the same module as Winnetkakort, and off to begin with, with no audio made',
+          [await page.ev("WK_SOUND.names.length"), json.loads(await page.ev(SOUND)), await page.ev("document.querySelector('#fc-settings input[name=sound]').checked"),
+           await page.ev("FC.inspect().audio")], [9, ['false', 'false'], False, 'none'])
+    await choose(page, 'husdjur')
+    await start(page)
+    await page.ev("window.__spokenAt = []")
+    t0 = await page.ev("performance.now()")
+    await play_card(page, advance=False)
+    await settle(page, "window.__spokenAt.length", 1)
+    check('off: no sound at all, and the word is read out as the card turns',
+          [await page.ev(sounds), await page.ev("FC.inspect().audio"), await page.ev(f"window.__spokenAt[0] - {t0} < 600")], [[], 'none', True])
+    await page.key('Enter')
+    await page.click('.wk-bar .wk-soundbtn')
+    check('the practice bar’s loudspeaker switches them on, for both buttons, the setting and this person',
+          [json.loads(await page.ev(SOUND)), await page.ev("document.querySelector('#fc-settings input[name=sound]').checked"),
+           await page.ev("FC.inspect().store.profiles.p1.settings.sound")], [['true', 'true'], True, True])
+    check('switching on plays the chime, and the audio runs', [await page.ev(sounds), await settle(page, "FC.inspect().audio", 'running')], [['right'], 'running'])
+    await phase(page, 'answer')
+    await page.ev("window.__spokenAt = []")
+    t0 = await page.ev("performance.now()")
+    await play_card(page, advance=False)
+    check('right: the swish as the card turns, and the chime', (await page.ev(sounds))[-2:], ['flip', 'right'])
+    await settle(page, "window.__spokenAt.length", 1)
+    check('and the word is read out after the chime, not on top of it', await page.ev(f"window.__spokenAt[0] - {t0} >= 600"), True)
+    await page.key('Enter')
+    await settle(page, "FC.inspect().sounds.at(-1)", 'land')
+    check('then the tap as it lands in its pile', (await page.ev(sounds))[-1], 'land')
+    await phase(page, 'answer')
+    while len((await rnd(page))['answer']) < 5:
+        await play_card(page)
+    r = await rnd(page)
+    await play_card(page, r['answer'][:-1] + ('x' if r['answer'][-1] != 'x' else 'y'), advance=False)
+    check('one letter off, "nästan": the softer note, not the uh-oh', (await page.ev(sounds))[-1], 'okay')
+    await page.key('Enter')
+    await play_card(page, 'qqqq', advance=False)
+    check('a wrong word: the soft uh-oh', (await page.ev(sounds))[-1], 'wrong')
+    await page.key('Enter')
+    await phase(page, 'answer')
+    await page.ev("document.querySelector('[data-on-click=\"fc:hint\"]').click()")
+    check('the hint makes its small bubble', (await page.ev(sounds))[-1], 'hint')
+    await play_card(page, advance=False)
+    check('right with the hint: the softer note', (await page.ev(sounds))[-1], 'okay')
+    await page.key('Enter')
+    await phase(page, 'answer')
+    r = await rnd(page)
+    for _ in range(r['n'] - r['i']):
+        await play_card(page)
+    await settle(page, "!document.getElementById('fc-summary').hidden", True)
+    check('a finished pile with words to practise: the short fanfare', (await page.ev(sounds))[-1], 'done')
+    await page.ev("document.querySelector('[data-on-click=\"fc:home\"]').click()")
+    await choose(page, 'dagar')
+    await start(page)
+    await play_round(page)
+    check('every word in Kan: the bright fanfare', (await page.ev(sounds))[-1], 'allKan')
+    await page.ev("document.querySelector('[data-on-click=\"fc:home\"]').click()")
+    await page.ev("document.getElementById('fc-settings').open = true")
+    await setting(page, 'mode', 'valj')
+    await choose(page, 'farger')
+    await start(page)
+    r = await rnd(page)
+    await page.key(str(r['options'].index(r['answer']) + 1))
+    await phase(page, 'feedback')
+    check('choosing the right one: the swish and the chime', (await page.ev(sounds))[-2:], ['flip', 'right'])
+    await home(page)
+    await setting(page, 'mode', 'vand')
+    await choose(page, 'kropp')
+    await start(page)
+    await page.key(' ')
+    await phase(page, 'judge')
+    check('turning the card over: the swish', (await page.ev(sounds))[-1], 'flip')
+    await page.key('ArrowRight')
+    await phase(page, 'answer')
+    check('then "Kan": the chime and the tap', (await page.ev(sounds))[-3:], ['flip', 'right', 'land'])
+    await home(page)
+    await setting(page, 'mode', 'skriv')
+    await page.ev("document.getElementById('fc-newperson-btn').click()")
+    await page.type('Kim')
+    await page.key('Enter')
+    check('a new person has sounds of their own: off', [json.loads(await page.ev(SOUND)), await settle(page, "FC.inspect().audio", 'suspended')],
+          [['false', 'false'], 'suspended'])
+    await page.ev("(s => { s.value = 'p1'; s.dispatchEvent(new Event('change', { bubbles: true })); })(document.getElementById('fc-who'))")
+    check('and switching back brings the first person’s back on', [json.loads(await page.ev(SOUND)), await settle(page, "FC.inspect().audio", 'running')],
+          [['true', 'true'], 'running'])
+    await page.reload()
+    check('after a reload they are still on, and wait for the first tap', [json.loads(await page.ev(SOUND)), await page.ev("FC.inspect().audio")],
+          [['true', 'true'], 'none'])
+    await choose(page, 'husdjur')
+    await page.click('#fc-start')
+    await phase(page, 'answer')
+    check('that tap starts them', await settle(page, "FC.inspect().audio", 'running'), 'running')
+    await home(page)
+    await page.ev("document.getElementById('fc-settings').open = true")
+    await page.click('#fc-settings input[name=sound]')
+    check('the setting switches them off, both buttons with it, and the audio sleeps',
+          [json.loads(await page.ev(SOUND)), await settle(page, "FC.inspect().audio", 'suspended')], [['false', 'false'], 'suspended'])
+    before = await page.ev(sounds)
+    await start(page)
+    await play_card(page, advance=False)
+    check('and off is silent', await page.ev(sounds), before)
+    check('no script errors with the sounds', page.errors + page.console, [])
 
     # --- the full window ------------------------------------------------------------------------------------------------
     await page.load()

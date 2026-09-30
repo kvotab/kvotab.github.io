@@ -139,7 +139,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-title { margin: 0; font-family: RawengulkSans, verdana, sans-serif; font-weight: normal; font-size: 1.7rem; line-height: 1.1; }
 .wk-top-end { display: flex; gap: 8px; margin-left: auto; }
 
-.wk-fullbtn, .wk-top-end > .theme-toggle {
+.wk-fullbtn, .wk-soundbtn, .wk-top-end > .theme-toggle {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
@@ -152,11 +152,15 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   color: var(--text-secondary);
   cursor: pointer;
 }
-.wk-fullbtn { display: inline-flex; flex: none; }
+.wk-fullbtn, .wk-soundbtn { display: inline-flex; flex: none; }
 .wk-top-end > .theme-toggle { display: none; font-size: 18px; line-height: 1; }
-.wk-fullbtn:hover, .wk-top-end > .theme-toggle:hover { color: var(--text-primary); border-color: var(--accent-line); transform: none; }
-.wk-fullbtn:focus-visible, .wk-top-end > .theme-toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.wk-fullbtn:hover, .wk-soundbtn:hover, .wk-top-end > .theme-toggle:hover { color: var(--text-primary); border-color: var(--accent-line); transform: none; }
+.wk-fullbtn:focus-visible, .wk-soundbtn:focus-visible, .wk-top-end > .theme-toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .wk-full-in { display: none; }
+/* The loudspeaker: crossed out while the sounds are off. */
+.wk-soundbtn .wk-sound-on, .wk-soundbtn[aria-pressed="true"] .wk-sound-off { display: none; }
+.wk-soundbtn[aria-pressed="true"] .wk-sound-on { display: block; }
+.wk-soundbtn[aria-pressed="true"] { color: var(--text-primary); border-color: var(--accent-line); }
 
 /* ── The full window, and phones ──────────────────────────────────────── */
 

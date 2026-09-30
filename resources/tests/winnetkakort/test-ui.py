@@ -101,6 +101,13 @@ class Page:
     async def type(self, text):
         await self.call('Input.insertText', {'text': text})
 
+    async def click(self, selector):
+        """A real click, with the mouse: unlike element.click(), it counts as the
+        tap after which a browser lets a page make sound."""
+        x, y = await self.ev(f"(e => {{ e.scrollIntoView({{ block: 'center' }}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }})(document.querySelector({json.dumps(selector)}))")
+        for kind in ('mousePressed', 'mouseReleased'):
+            await self.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1})
+
     async def load(self, width=1400, height=900, theme='light', storage=None, mobile=False):
         """A fresh page in this theme, its storage as given (None: nothing stored).
 
@@ -725,6 +732,105 @@ async def run(page):
     await page.key('Enter')
     check('reduced motion: the next card comes at once', (await rnd(page))['i'], 1)
     await page.call('Emulation.setEmulatedMedia', {'features': []})
+
+    # --- sound effects -------------------------------------------------------------------------------------
+    SOUND = "JSON.stringify([...document.querySelectorAll('.wk-soundbtn')].map(b => b.getAttribute('aria-pressed')))"
+    # Every sound rendered silently, offline, and measured: nobody has to listen.
+    levels = json.loads(await page.ev("""(async () => { const out = {}; for (const n of WK_SOUND.names) {
+      const m = await WK_SOUND.measure(n); out[n] = [m.peak, m.rms, m.seconds]; } return JSON.stringify(out); })()"""))
+    check('nine sounds', sorted(levels), sorted(['flip', 'land', 'right', 'okay', 'wrong', 'hint', 'done', 'allKan', 'record']))
+    check('each one audible and never clipping (peak between 0.08 and 0.9), and short (at most 1.3 s)',
+          [n for n, (peak, rms, sec) in levels.items() if not (0.08 < peak < 0.9 and 0.03 < sec < 1.3)], [])
+    check('wrong is gentler than right: quieter at its peak and on average',
+          [levels['wrong'][0] < levels['right'][0], levels['wrong'][1] < levels['right'][1]], [True, True])
+    check('the card’s own sounds and the hint are quieter than the chime',
+          [n for n in ('flip', 'land', 'hint', 'okay') if levels[n][0] >= levels['right'][0]], [])
+    check('the fanfares grow: done, then all in Kan, then a record',
+          levels['done'][0] < levels['allKan'][0] < levels['record'][0] and levels['done'][2] < levels['allKan'][2] < levels['record'][2], True)
+    sounds = "WK.inspect().sounds"
+    await page.load()
+    check('sounds are off to begin with: both loudspeakers say so, and no audio is even made',
+          [json.loads(await page.ev(SOUND)), await page.ev("document.querySelector('#wk-settings input[name=sound]').checked"), await page.ev("WK.inspect().audio")],
+          [['false', 'false'], False, 'none'])
+    await choose(page, 't6')
+    await start(page)
+    await play_card(page)
+    check('and a card answered makes no sound', [await page.ev(sounds), await page.ev("WK.inspect().audio")], [[], 'none'])
+    await page.click('.wk-bar .wk-soundbtn')
+    check('the loudspeaker in the practice bar switches them on, for both buttons and the setting, and remembers it',
+          [json.loads(await page.ev(SOUND)), await page.ev("document.querySelector('#wk-settings input[name=sound]').checked"),
+           await page.ev("WK.inspect().store.settings.sound")], [['true', 'true'], True, True])
+    check('switching on plays the chime, so the child hears what on sounds like, and the audio runs',
+          [await page.ev(sounds), await settle(page, "WK.inspect().audio", 'running')], [['right'], 'running'])
+    await play_card(page, advance=False)
+    check('a right answer: the card swishes as it turns, and chimes', (await page.ev(sounds))[-2:], ['flip', 'right'])
+    await page.key('Enter')
+    await settle(page, f"WK.inspect().sounds.length", 4)
+    check('and taps as it lands in its pile', (await page.ev(sounds))[-1], 'land')
+    await play_card(page, '999', advance=False)
+    check('a wrong answer: a soft uh-oh', (await page.ev(sounds))[-1], 'wrong')
+    await page.key('Enter')
+    await phase(page, 'answer')
+    await page.ev("document.querySelector('[data-on-click=\"wk:hint\"]').click()")
+    check('the hint makes its small bubble', (await page.ev(sounds))[-1], 'hint')
+    await play_card(page, advance=False)
+    check('right with the hint: the softer note, not the chime', (await page.ev(sounds))[-1], 'okay')
+    await page.key('Enter')
+    await phase(page, 'answer')
+    r = await rnd(page)
+    for _ in range(r['n'] - r['i']):
+        await play_card(page)
+    await settle(page, "!document.getElementById('wk-summary').hidden", True)
+    await asyncio.sleep(0.2)
+    check('a finished pile with cards to practise: the short fanfare', (await page.ev(sounds))[-1], 'done')
+    await page.ev("document.querySelector('[data-on-click=\"wk:home\"]').click()")
+    await choose(page, 't10')
+    await start(page)
+    await play_round(page)
+    await asyncio.sleep(0.2)
+    check('every card in Kan, and the first time through: the record fanfare', (await page.ev(sounds))[-1], 'record')
+    await page.ev("document.querySelector('[data-on-click=\"wk:repeat\"]').click()")
+    await phase(page, 'answer')
+    await asyncio.sleep(0.3)
+    await play_round(page, wrong=set())
+    await asyncio.sleep(0.2)
+    last = (await page.ev(sounds))[-1]
+    check('all in Kan but no new record: the bright fanfare (or a record, if faster)', last in ('allKan', 'record'), True)
+    await page.ev("document.querySelector('[data-on-click=\"wk:home\"]').click()")
+    await page.ev("document.getElementById('wk-settings').open = true")
+    await setting(page, 'mode', 'vand')
+    await choose(page, 't2')
+    await start(page)
+    # The log keeps the last 60 sounds, so the new ones are read from its end.
+    await page.key(' ')
+    await phase(page, 'judge')
+    check('turning the card over: the swish', (await page.ev(sounds))[-1], 'flip')
+    await page.key('ArrowRight')
+    await phase(page, 'answer')
+    check('then "Kan": the chime and the tap', (await page.ev(sounds))[-3:], ['flip', 'right', 'land'])
+    await page.ev("document.querySelector('[data-on-click=\"wk:quit\"]').click()")
+    await setting(page, 'mode', 'skriv')
+    await page.reload()
+    check('after a reload the sounds are still on, and wait for the first tap before any audio is made',
+          [json.loads(await page.ev(SOUND)), await page.ev("WK.inspect().audio")], [['true', 'true'], 'none'])
+    await choose(page, 't2')
+    await page.click('#wk-start')
+    await phase(page, 'answer')
+    check('that tap starts it', await settle(page, "WK.inspect().audio", 'running'), 'running')
+    await page.ev("document.querySelector('[data-on-click=\"wk:quit\"]').click()")
+    await page.ev("document.getElementById('wk-settings').open = true")
+    await page.click('#wk-settings input[name=sound]')
+    check('the setting switches them off again, both loudspeakers with it, and the audio is put to sleep',
+          [json.loads(await page.ev(SOUND)), await page.ev("WK.inspect().store.settings.sound"), await settle(page, "WK.inspect().audio", 'suspended')],
+          [['false', 'false'], False, 'suspended'])
+    before = await page.ev(sounds)
+    await start(page)
+    await play_card(page, advance=False)
+    check('and off is silent', await page.ev(sounds), before)
+    await page.load(390, 664, mobile=True)
+    check('on a phone the loudspeaker stays in the practice bar, where the full-window button goes',
+          await page.ev("(async () => { document.querySelector('[data-set=t3]').click(); document.getElementById('wk-start').click(); await new Promise(r => setTimeout(r, 400)); return [document.querySelector('.wk-bar .wk-soundbtn').checkVisibility(), document.querySelector('.wk-bar .wk-fullbtn').checkVisibility()]; })()"),
+          [True, False])
     check('no script errors at the end', page.errors + page.console, [])
 
 
