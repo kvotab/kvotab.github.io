@@ -1,10 +1,11 @@
 {
   "name": "HDF5 Browser",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "file": "hdf5-browser.vsix",
-  "bytes": 4757493,
-  "sha256": "f496aef69d8ba5afc665c5608e4dac8cdf69a1d260a170e40ce6095f3729a891",
-  "released": "2026-09-30T09:30:59.860Z",
-  "build": "d49af75 2026-09-30 09:30",
-  "vscode": "^1.100.0"
+  "bytes": 4766970,
+  "sha256": "14ac07d3ed6a4a706e8b153d8580ac2cf120dd16dcede368f39f6d39fdb5f2d1",
+  "released": "2026-09-30T10:55:29.474Z",
+  "build": "c973fa8 2026-09-30 10:55",
+  "vscode": "^1.100.0",
+  "signature": "cipJxU47BopoCBPJ0HsJgbuQik2Aw7rS8pP9Et3FxJWveAdShFgH+pxtIiOc1/ss2ol9dkkj/JqLL8rcAil4Bg=="
 }
