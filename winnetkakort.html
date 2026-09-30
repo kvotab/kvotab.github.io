@@ -21,11 +21,13 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the page bar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('winnetkakort.full') === '1') document.documentElement.classList.add('wk-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930">
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body class="wk-body">
@@ -36,23 +38,40 @@
   <!-- ── Choosing the piles ─────────────────────────────────────────────── -->
   <section id="wk-home" class="wk-view" aria-labelledby="wk-home-title">
     <div class="wk-intro">
-      <h1 id="wk-home-title" class="wk-visually-hidden">Winnetkakort</h1>
+      <!-- The page bar. The kvot mark, the title and the theme switch stand in
+           for the site's header and footer where those are not shown: on a
+           phone, and in the full window. -->
+      <div class="wk-top">
+        <div class="wk-brand">
+          <a class="wk-homelink" href="./index.html"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: startsidan" width="28" height="28"></a>
+          <h1 id="wk-home-title" class="wk-title">Winnetkakort</h1>
+        </div>
+        <div class="wk-who">
+          <label for="wk-who">Vem övar?</label>
+          <select id="wk-who" data-on-change="wk:who"></select>
+          <button type="button" class="wk-btn wk-btn-quiet" id="wk-newperson-btn" data-on-click="wk:newPerson">+ Ny</button>
+          <span class="wk-newperson" id="wk-newperson" hidden>
+            <input id="wk-newname" type="text" maxlength="30" autocomplete="off" aria-label="Namn" placeholder="Namn"
+                   data-on-keydown="wk:newNameKey">
+            <button type="button" class="wk-btn" data-on-click="wk:addPerson">Lägg till</button>
+            <button type="button" class="wk-btn wk-btn-quiet" data-on-click="wk:cancelPerson">Avbryt</button>
+          </span>
+        </div>
+        <div class="wk-top-end">
+          <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+          <button type="button" class="wk-fullbtn" data-on-click="wk:full" aria-pressed="false" aria-label="Helt fönster">
+            <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+            <svg class="wk-full-in" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+          </button>
+        </div>
+      </div>
       <p class="wk-lead">
         Ett Winnetkakort har en uppgift på framsidan och svaret på baksidan. Gå igenom en hög:
         kort du kan <b>snabbt och rätt</b> lägger du i <span class="wk-word-kan">Kan</span>-högen, resten i
         <span class="wk-word-ova">Öva mer</span>-högen. Öva sedan på Öva mer-högen tills den är tom.
       </p>
-      <div class="wk-who">
-        <label for="wk-who">Vem övar?</label>
-        <select id="wk-who" data-on-change="wk:who"></select>
-        <button type="button" class="wk-btn wk-btn-quiet" id="wk-newperson-btn" data-on-click="wk:newPerson">+ Ny</button>
-        <span class="wk-newperson" id="wk-newperson" hidden>
-          <input id="wk-newname" type="text" maxlength="30" autocomplete="off" aria-label="Namn" placeholder="Namn"
-                 data-on-keydown="wk:newNameKey">
-          <button type="button" class="wk-btn" data-on-click="wk:addPerson">Lägg till</button>
-          <button type="button" class="wk-btn wk-btn-quiet" data-on-click="wk:cancelPerson">Avbryt</button>
-        </span>
-      </div>
     </div>
 
     <details class="wk-panel wk-settings" id="wk-settings">
@@ -192,6 +211,12 @@
       <button type="button" class="wk-btn wk-btn-quiet" data-on-click="wk:quit">← Avsluta</button>
       <span class="wk-bar-title" id="wk-round-title"></span>
       <span class="wk-bar-meta"><span id="wk-round-count"></span><span id="wk-round-time"></span></span>
+      <button type="button" class="wk-fullbtn" data-on-click="wk:full" aria-pressed="false" aria-label="Helt fönster">
+        <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+        <svg class="wk-full-in" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+      </button>
     </div>
     <div class="wk-stage">
       <div class="wk-pile" data-pile="ova" id="wk-pile-ova">
@@ -220,10 +245,13 @@
         <div class="wk-pile-label">Kan</div>
       </div>
     </div>
-    <p class="wk-feedback" id="wk-feedback" role="status" aria-live="polite"></p>
-    <div class="wk-actions" id="wk-actions"></div>
-    <div class="wk-hint" id="wk-hint" hidden></div>
-    <div class="wk-numpad" id="wk-numpad" hidden></div>
+    <!-- What answers the card. A column of its own only on a phone on its side. -->
+    <div class="wk-side">
+      <p class="wk-feedback" id="wk-feedback" role="status" aria-live="polite"></p>
+      <div class="wk-actions" id="wk-actions"></div>
+      <div class="wk-hint" id="wk-hint" hidden></div>
+      <div class="wk-numpad" id="wk-numpad" hidden></div>
+    </div>
   </section>
 
   <!-- ── After a round ──────────────────────────────────────────────────── -->
@@ -249,8 +277,8 @@
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260930"></script>
-<script src="./resources/js/winnetkakort-sets.js?v=20260930"></script>
-<script src="./resources/js/winnetkakort.js?v=20260930"></script>
+<script src="./resources/js/winnetkakort-sets.js?v=20260930b"></script>
+<script src="./resources/js/winnetkakort.js?v=20260930b"></script>
 <script>
   KVOT.renderHeader('Winnetkakort');
   KVOT.renderNav('winnetkakort.html');

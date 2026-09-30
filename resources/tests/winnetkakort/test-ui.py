@@ -144,6 +144,33 @@ async def settle(page, expr, want, tries=60, pause=0.1):
 
 ROUND = "JSON.stringify(WK.inspect().round)"
 
+# What of the site's chrome and the page bar is on screen, and where the page starts.
+CHROME = """JSON.stringify((() => {
+  const shown = sel => { const e = document.querySelector(sel); return !!e && e.checkVisibility(); };
+  const c = document.querySelector('.content').getBoundingClientRect();
+  return { header: shown('body > header'), footer: shown('body > footer'), menu: shown('body > .nav-toggle'),
+           brand: shown('.wk-brand'), theme: shown('.wk-top-end > .theme-toggle'), full: shown('#wk-home .wk-fullbtn'),
+           top: Math.round(c.top), fills: Math.round(c.height) === innerHeight,
+           full_class: document.documentElement.classList.contains('wk-full') };
+})())"""
+
+# Whether the practice view fits the screen: the card, the key pad, what scrolls.
+FIT = """JSON.stringify((() => {
+  const b = id => document.getElementById(id).getBoundingClientRect();
+  const pad = document.getElementById('wk-numpad');
+  const middle = e => { const r = e.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2 / 6); };
+  return { vh: innerHeight, deck: Math.round(b('wk-deck').bottom), deckTop: Math.round(b('wk-deck').top),
+           pad: pad.hidden ? null : Math.round(b('wk-numpad').bottom),
+           scroll: document.getElementById('wk-scroll').scrollHeight,
+           scrollX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+           oneLine: new Set([...document.getElementById('wk-eq').children].map(middle)).size === 1,
+           barRows: new Set([...document.querySelector('.wk-bar').children].filter(e => e.checkVisibility()).map(middle)).size };
+})())"""
+
+# Upright and on their side; the last two are an iPhone SE, the smallest in use.
+PHONES = [(390, 760, 'phone upright'), (844, 390, 'phone on its side'),
+          (375, 667, 'iPhone SE upright'), (667, 375, 'iPhone SE on its side')]
+
 
 async def rnd(page):
     s = await page.ev(ROUND)
@@ -576,27 +603,86 @@ async def run(page):
     check('and a fact key cannot reach the prototype', await page.ev("({}).n === undefined && WK.inspect().status('mul:2:2')"), 'none')
     check('no script errors with hostile storage', page.errors + page.console, [])
 
-    # --- dark, phone, reduced motion ---------------------------------------------------------------
+    # --- dark ------------------------------------------------------------------------------------------
     await page.load(theme='dark')
     check('dark: the pile colours change with the theme',
           await page.ev("getComputedStyle(document.body).getPropertyValue('--wk-green').trim()"), '#46592f')
     await page.shot('home-dark.png')
-    await page.load(390, 760, mobile=True)
-    check('phone: no horizontal scroll on the home view', await page.ev("document.documentElement.scrollWidth - document.documentElement.clientWidth"), 0)
-    await page.ev("document.getElementById('wk-settings').open = true")
-    await setting(page, 'pad', 'pa')
+
+    # --- the full window ----------------------------------------------------------------------------------
+    await page.load()
+    chrome = json.loads(await page.ev(CHROME))
+    check('desktop: the site header and footer, and the full-window button',
+          [chrome[k] for k in ('header', 'footer', 'menu', 'full', 'brand', 'theme', 'top')], [True, True, True, True, False, False, 43])
+    button = "document.querySelector('#wk-home .wk-fullbtn')"
+    check('the button says what it does', await page.ev(f"[{button}.getAttribute('aria-label'), {button}.getAttribute('aria-pressed'), {button}.title]"),
+          ['Helt fönster', 'false', 'Helt fönster: sidan utan sajtens sidhuvud och sidfot'])
+    await page.ev(f"{button}.click()")
+    chrome = json.loads(await page.ev(CHROME))
+    check('the full window: no site header, footer or menu, and the page fills the window',
+          [chrome[k] for k in ('header', 'footer', 'menu', 'top', 'fills')], [False, False, False, 0, True])
+    check('the page bar takes over: the kvot mark, the title and the theme switch',
+          [chrome['brand'], chrome['theme'], chrome['full']], [True, True, True])
+    check('the button shows it is on, and offers the way back',
+          await page.ev(f"[{button}.getAttribute('aria-pressed'), {button}.title, localStorage.getItem('winnetkakort.full')]"),
+          ['true', 'Visa sajtens sidhuvud och sidfot igen', '1'])
+    check('the mark goes to the home page', await page.ev(
+          "[new URL(document.querySelector('.wk-homelink').href).pathname, document.querySelector('.wk-homelink img').alt]"),
+          ['/index.html', 'kvot ab: startsidan'])
+    theme = "document.querySelector('.wk-top-end > .theme-toggle')"
+    await page.ev(f"{theme}.click()")
+    check('the theme switch in the page bar works like the footer’s', await page.ev(f"[document.documentElement.dataset.theme, {theme}.textContent]"), ['dark', '☀️'])
+    await page.ev(f"{theme}.click()")
+    check('and back', await page.ev(f"[document.documentElement.dataset.theme, {theme}.textContent]"), ['light', '🌙'])
+    await page.shot('desktop-full.png')
+    await page.reload()
+    chrome = json.loads(await page.ev(CHROME))
+    check('the full window outlives the page, set in its head before the first paint',
+          [chrome['full_class'], chrome['header'], chrome['top'], await page.ev(f"{button}.getAttribute('aria-pressed')")], [True, False, 0, 'true'])
+    await choose(page, 't2')
+    await start(page)
+    bar = "document.querySelector('.wk-bar .wk-fullbtn')"
+    check('practising, the button is at the end of the bar', await page.ev(f"[{bar}.checkVisibility(), {bar}.getAttribute('aria-pressed')]"), [True, 'true'])
+    await page.ev(f"{bar}.click()")
+    chrome = json.loads(await page.ev(CHROME))
+    check('and brings the header and footer back, for both buttons',
+          [chrome['header'], chrome['footer'], chrome['top'], await page.ev(f"[{bar}, {button}].map(b => b.getAttribute('aria-pressed')).join()"),
+           await page.ev("localStorage.getItem('winnetkakort.full')")], [True, True, 43, 'false,false', '0'])
+    check('the round goes on meanwhile', (await rnd(page))['phase'], 'answer')
+    await page.ev("document.querySelector('[data-on-click=\"wk:quit\"]').click()")
+
+    # --- phones: never the header and footer --------------------------------------------------------------
+    await page.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
+    for width, height, name in PHONES:
+        await page.load(width, height, mobile=True)
+        chrome = json.loads(await page.ev(CHROME))
+        check(f'{name}: no site header, footer or menu, and no full-window button either',
+              [chrome[k] for k in ('header', 'footer', 'menu', 'full', 'top', 'fills')], [False, False, False, False, 0, True])
+        check(f'{name}: the kvot mark, the title and the theme switch instead', [chrome['brand'], chrome['theme']], [True, True])
+        check(f'{name}: no horizontal scroll on the home view', await page.ev("document.documentElement.scrollWidth - document.documentElement.clientWidth"), 0)
+        await choose(page, 't8')
+        await start(page)
+        fit = json.loads(await page.ev(FIT))
+        check(f'{name}: the key pad comes by itself on a touch screen', fit['pad'] is not None, True)
+        check(f'{name}: the card and the key pad fit, with nothing to scroll',
+              [fit['deck'] <= fit['vh'], fit['pad'] <= fit['vh'], fit['scroll'] <= fit['vh'], fit['scrollX']], [True, True, True, 0])
+        check(f'{name}: the card’s sum is on one line, and the bar over it one row', [fit['oneLine'], fit['barRows']], [True, 1])
+        await page.ev("document.querySelector('[data-on-click=\"wk:hint\"]').click()")
+        hinted = json.loads(await page.ev(FIT))
+        check(f'{name}: with the hint open the key pad is still in sight, and the card has not moved',
+              [hinted['pad'] <= hinted['vh'], hinted['scroll'] <= hinted['vh'], hinted['deckTop'] == fit['deckTop']], [True, True, True])
+        await page.shot(f"{name.replace(' ', '-').replace('’', '')}.png")
+        await play_card(page, advance=False)
+        check(f'{name}: and it answers', (await rnd(page))['phase'], 'feedback')
+    await page.load(820, 1180, mobile=True)
+    chrome = json.loads(await page.ev(CHROME))
+    check('a tablet keeps the header and footer, and the button', [chrome['header'], chrome['footer'], chrome['full']], [True, True, True])
+    await page.call('Emulation.setTouchEmulationEnabled', {'enabled': False})
+
+    # --- reduced motion ------------------------------------------------------------------------------------
+    await page.load()
     await choose(page, 't8')
     await start(page)
-    geo = json.loads(await page.ev("""JSON.stringify((() => {
-      const b = id => document.getElementById(id).getBoundingClientRect();
-      return { pad: Math.round(b('wk-numpad').bottom), footer: Math.round(document.querySelector('footer').getBoundingClientRect().top),
-               deck: Math.round(b('wk-deck').width), scrollX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-               barRows: new Set([...document.querySelector('.wk-bar').children].map(c => { const r = c.getBoundingClientRect(); return Math.round((r.top + r.bottom) / 2); })).size };
-    })())"""))
-    check('phone: the card, the piles and the key pad fit above the footer', geo['pad'] <= geo['footer'], True)
-    check('phone: no horizontal scroll while practising', geo['scrollX'], 0)
-    check('phone: the bar over the card is one row', geo['barRows'], 1)
-    await page.shot('phone-practice.png')
     await page.call('Emulation.setEmulatedMedia', {'features': [{'name': 'prefers-reduced-motion', 'value': 'reduce'}]})
     await play_card(page, advance=False)
     await page.key('Enter')

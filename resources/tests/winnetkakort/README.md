@@ -42,7 +42,7 @@ too:
 
     python3 resources/tests/winnetkakort/test-ui.py
 
-It exits 0 when all 91 checks pass and takes about a minute. With
+It exits 0 when all 132 checks pass and takes about a minute and a half. With
 `WK_SHOTS=<folder>` it also saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -71,8 +71,20 @@ What it plays:
   four A4 pages.
 - **Storage that is not ours:** broken JSON, a markup name (shown as text,
   cut to 30 characters), unknown settings, a `__proto__` fact key.
-- **Dark theme, a 390 px phone and reduced motion:** no horizontal scroll,
-  and the key pad above the footer.
+- **The full window:** the button hides the site's header, footer and menu,
+  and the page then fills the window. The page bar shows the kvot mark
+  (linking to the home page), the title and a theme switch that works like
+  the footer's. A reload keeps the full window, applied in the page's head
+  before first paint. The button in the practice bar brings the chrome back
+  without stopping the round.
+- **Phones never show the header and footer,** and have no button. Sizes
+  checked, all with touch emulation so the key pad appears by itself: 390 ×
+  760 upright, 844 × 390 on its side, and the iPhone SE (375 × 667) both
+  ways. At each size the card and the key pad fit with nothing to scroll,
+  the card's sum is on one line, and with the hint open the pad stays in
+  sight and the card does not move. A tablet (820 × 1180) keeps the chrome
+  and the button.
+- **Dark theme and reduced motion.**
 
 The page exposes `WK.inspect()` for this test: the current round, the
 status of a fact, and a copy of the store. It is read-only.

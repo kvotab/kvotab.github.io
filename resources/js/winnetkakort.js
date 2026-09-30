@@ -942,6 +942,31 @@ const WK = (() => {
     window.print();
   }
 
+  /* ── The full window ─────────────────────────────────────────────────── */
+
+  /* The page without the site's header and footer (winnetkakort.css,
+     :root.wk-full), kept for the next visit; the head of the page applies it
+     before the first paint. A phone never shows them, whatever this says. */
+  const FULL_KEY = 'winnetkakort.full';
+
+  function setFull(on) {
+    document.documentElement.classList.toggle('wk-full', on);
+    try {
+      localStorage.setItem(FULL_KEY, on ? '1' : '0');
+    } catch (e) {
+      ignoreFailure('winnetkakort: remember the full window', e);
+    }
+    fullState();
+  }
+
+  function fullState() {
+    const on = document.documentElement.classList.contains('wk-full');
+    for (const button of document.querySelectorAll('.wk-fullbtn')) {
+      button.setAttribute('aria-pressed', String(on));
+      button.title = on ? 'Visa sajtens sidhuvud och sidfot igen' : 'Helt fönster: sidan utan sajtens sidhuvud och sidfot';
+    }
+  }
+
   /* ── Actions ─────────────────────────────────────────────────────────── */
 
   function onSetting(e, el) {
@@ -967,6 +992,7 @@ const WK = (() => {
       'wk:clear': () => { selected.clear(); renderGroups(); renderSelection(); },
       'wk:start': () => startRound(selectedIds()),
       'wk:print': () => printCards(),
+      'wk:full': () => setFull(!document.documentElement.classList.contains('wk-full')),
       'wk:setting': onSetting,
       'wk:who': (e, el) => {
         if (!store.profiles[el.value]) return;
@@ -1056,6 +1082,7 @@ const WK = (() => {
       $('wk-deck').tabIndex = -1;
       for (const pile of ['kan', 'ova']) $(`wk-pile-${pile}`).setAttribute('data-on-click', 'wk:pile');
       document.addEventListener('keydown', onKey);
+      fullState();
       showView('home');
     } catch (e) {
       reportFailure('winnetkakort: init', e, { userMessage: 'Winnetkakorten kunde inte starta.' });
