@@ -421,8 +421,8 @@
               <input id="unitInput" type="text" maxlength="20" placeholder="e.g. mg/L">
             </div>
             <div class="setting-field setting-check">
-              <div class="kvot-info-line"><label for="lnViewToggle">ln(x) view</label><span class="kvot-info-slot" data-info-key="set:lnview"></span></div>
-              <input id="lnViewToggle" type="checkbox" checked>
+              <div class="kvot-info-line"><label for="logViewToggle">log₁₀(x) view</label><span class="kvot-info-slot" data-info-key="set:logview"></span></div>
+              <input id="logViewToggle" type="checkbox" checked>
             </div>
             <div class="setting-field">
               <div class="kvot-info-line"><label for="curveMode">Curves</label><span class="kvot-info-slot" data-info-key="set:curves"></span></div>
@@ -464,7 +464,7 @@
                 <input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50">
               </div>
             </div>
-            <p class="setting-note">Significant digits apply to the results and the comparison, the unit only titles the chart’s x-axis, and the rest apply to the chart. Chart bounds set the x-axis range, which covers every distribution shown, and the shaded band and reference line must lie within it. The band, the reference line and the raw data can each be switched off, which is worth doing once several distributions overlap. The ln(x) view plots on the log scale, where a lognormal is a symmetric bell and distributions of different size can be read against each other — untick it for a linear x-axis.</p>
+            <p class="setting-note">Significant digits apply to the results and the comparison, the unit only titles the chart’s x-axis, and the rest apply to the chart. Chart bounds set the x-axis range, which covers every distribution shown, and the shaded band and reference line must lie within it. The band, the reference line and the raw data can each be switched off, which is worth doing once several distributions overlap. The log₁₀(x) view plots log₁₀ x, where each step of 1 is a factor of ten, a lognormal is a symmetric bell and distributions of different size can be read against each other — untick it for a linear x-axis.</p>
             <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
           </div>
         </div>
@@ -549,7 +549,7 @@
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20260925"></script>
   <script src="./resources/js/kvot-info.js?v=20260926"></script>
-  <script src="./resources/js/logn-info.js?v=20260926"></script>
+  <script src="./resources/js/logn-info.js?v=20260930"></script>
   <script>
     KVOT.renderHeader('Lognormal Conversions');
     KVOT.renderNav('logn.html');
@@ -1675,7 +1675,7 @@
       if (!drawn.length) { if (CHART) { Plotly.purge(CHART); CHART = null; } return; }
 
       const single    = drawn.length === 1;
-      const lnView    = !!(document.getElementById('lnViewToggle') || {}).checked;
+      const logView   = !!(document.getElementById('logViewToggle') || {}).checked;
       const isDark    = document.documentElement.getAttribute('data-theme') === 'dark';
       const themeBG   = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim() || '#ffffff';
       const gridClr   = isDark ? '#4a3f35' : '#e5ddd5';
@@ -1727,8 +1727,11 @@
         const colour = dist.colour, name = distLabel(dist), group = dist.id;
         const values = dist.args._dataValues, dataStats = dist.args._dataStats;
 
-        const x = grid.map(p => lnView ? norminv(mu, sigmaPlot, p) : logninv(mu, sigmaPlot, p));
-        const y = x.map(v => lnView ? normpdf(mu, sigmaPlot, v) : lognpdf(mu, sigmaPlot, v));
+        /* log10 x is normal with mean mu/ln 10 and sd sigma/ln 10. */
+        const mu10 = mu / Math.LN10, sigma10 = sigmaPlot / Math.LN10;
+
+        const x = grid.map(p => logView ? norminv(mu10, sigma10, p) : logninv(mu, sigmaPlot, p));
+        const y = x.map(v => logView ? normpdf(mu10, sigma10, v) : lognpdf(mu, sigmaPlot, v));
         axisMin = Math.min(axisMin, x[0]);
         axisMax = Math.max(axisMax, x[nPts - 1]);
 
@@ -1743,14 +1746,14 @@
 
         if (showPdf && showRaw && values && values.length) {
           traces.push({
-            x: lnView ? values.map(v => Math.log(v)) : values,
+            x: logView ? values.map(v => Math.log10(v)) : values,
             type: 'histogram', histnorm: 'probability density',
-            opacity: single ? (lnView ? .45 : .4) : .28,
-            marker: { color: single ? (lnView ? 'rgba(96,96,96,.25)' : 'rgba(96,96,96,.22)') : colour },
+            opacity: single ? (logView ? .45 : .4) : .28,
+            marker: { color: single ? (logView ? 'rgba(96,96,96,.25)' : 'rgba(96,96,96,.22)') : colour },
             nbinsx: Math.min(50, Math.max(5, Math.round(Math.sqrt(dataStats.n)))),
-            hovertemplate: (lnView ? '%{x:.4f}: %{y:.4f}' : '%{x}: %{y:.4f}')
-              + `<extra>${single ? (lnView ? 'ln(data)' : 'data') : name + ' data'}</extra>`,
-            name: single ? (lnView ? 'Empirical (ln)' : 'Empirical') : `${name} data`,
+            hovertemplate: (logView ? '%{x:.4f}: %{y:.4f}' : '%{x}: %{y:.4f}')
+              + `<extra>${single ? (logView ? 'log₁₀(data)' : 'data') : name + ' data'}</extra>`,
+            name: single ? (logView ? 'Empirical (log₁₀)' : 'Empirical') : `${name} data`,
             legendgroup: group, showlegend: false
           });
         }
@@ -1782,8 +1785,8 @@
         }
 
         if (showPdf && showReference) {
-          const refX = lnView ? norminv(mu, sigmaPlot, referenceP) : logninv(mu, sigmaPlot, referenceP);
-          const refY = lnView ? normpdf(mu, sigmaPlot, refX) : lognpdf(mu, sigmaPlot, refX);
+          const refX = logView ? norminv(mu10, sigma10, referenceP) : logninv(mu, sigmaPlot, referenceP);
+          const refY = logView ? normpdf(mu10, sigma10, refX) : lognpdf(mu, sigmaPlot, refX);
           const refName = `P${fmt(referencePct, 5)}`;
           traces.push({
             x: [refX, refX], y: [0, refY], mode: 'lines',
@@ -1796,16 +1799,16 @@
         if (showCdf) {
           cdfTraces.push({
             x, y: grid.slice(), mode: 'lines',
-            line: single ? (lnView ? { color: soloCdfColour } : { color: soloCdfColour, width: 1.5 })
+            line: single ? (logView ? { color: soloCdfColour } : { color: soloCdfColour, width: 1.5 })
                          : { color: colour, width: 1.5, dash: 'dot' },
             name: single ? 'CDF (theoretical)' : `${name} CDF`,
             yaxis: 'y2', legendgroup: group, showlegend: claimLegend()
           });
           if (showRaw && values && values.length) {
-            const sorted = (lnView ? values.map(v => Math.log(v)) : values.slice()).sort((a, b) => a - b);
+            const sorted = (logView ? values.map(v => Math.log10(v)) : values.slice()).sort((a, b) => a - b);
             cdfTraces.push({
               x: sorted, y: sorted.map((_, index) => (index + 1) / sorted.length), mode: 'lines',
-              line: single ? (lnView ? { color: 'rgba(96,96,96,.7)', shape: 'hv' }
+              line: single ? (logView ? { color: 'rgba(96,96,96,.7)', shape: 'hv' }
                                      : { color: 'rgba(96,96,96,.65)', shape: 'hv', width: 1.5 })
                            : { color: colour, shape: 'hv', width: 1.5 },
               name: single ? 'CDF (empirical)' : `${name} CDF (data)`,
@@ -1821,7 +1824,7 @@
       const ch = chartEl.clientHeight || 420;
       const lM = cw < 480 ? 42 : 56, rM = 68, bM = cw < 480 ? 50 : 42, tM = 16;
       const unit = ((document.getElementById('unitInput') || {}).value || '').trim();
-      const axisTitle = lnView ? (unit ? `ln(${unit})` : 'ln(x)') : (unit || 'x');
+      const axisTitle = logView ? (unit ? `log₁₀(${unit})` : 'log₁₀(x)') : (unit || 'x');
       const axisStyle = { gridcolor: gridClr, zerolinecolor: gridClr, linecolor: gridClr, color: axisClr };
 
       Plotly.react(CHART, traces.concat(cdfTraces), {
@@ -1840,9 +1843,9 @@
                    line: { color: gridClr, width: 1 }, fillcolor: 'rgba(0,0,0,0)' }]
       }, {
         modeBarButtonsToAdd: [{
-          name: 'Toggle ln(x) view', title: 'Toggle normal / ln-x view',
+          name: 'Toggle log10(x) view', title: 'Toggle normal / log₁₀-x view',
           icon: { width: 448, height: 512, path: 'M246.6 41.4c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 109.3 361.4 246.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3l-160-160zm160 352l-160-160c-12.5-12.5-32.8-12.5-45.3 0l-160 160c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L224 301.3 361.4 438.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3z' },
-          click: () => { const box = document.getElementById('lnViewToggle'); if (box) box.checked = !box.checked; updatedInput(); }
+          click: () => { const box = document.getElementById('logViewToggle'); if (box) box.checked = !box.checked; updatedInput(); }
         }],
         responsive: false
       });
@@ -1880,7 +1883,7 @@
 
     document.querySelectorAll('.arg').forEach(i=>i.addEventListener('input',updatedInput));
     document.documentElement.addEventListener('kvot-theme-change',()=>{ if(typeof updatedInput==='function') updatedInput(); });
-    const _lnT=document.getElementById('lnViewToggle'); if(_lnT)_lnT.addEventListener('change',updatedInput);
+    const _logT=document.getElementById('logViewToggle'); if(_logT)_logT.addEventListener('change',updatedInput);
     window.addEventListener('resize',()=>{ if(CHART&&document.getElementById('chart-details').open)Plotly.Plots.resize(CHART); });
     document.getElementById('chart-details').addEventListener('toggle', e=>{ if(e.target.open) setTimeout(updatedInput,100); });
 

@@ -247,10 +247,10 @@ on the chart, and that with a single distribution the chart draws the exact
 five traces it drew before there could be several — that being the case every
 existing user of the page is in.
 
-The chart opens on the log scale, so the linear branch is no longer reached by
-simply loading the page. Unticking `ln(x) view` has to give the same
-distribution over the same percentiles, which is the same axis range
-exponentiated, and that is checked rather than assumed.
+The chart opens on the log₁₀ scale, so the linear branch is no longer reached
+by simply loading the page. Unticking `log₁₀(x) view` has to give the same
+distribution over the same percentiles, which is ten to the power of the same
+axis range, and that is checked rather than assumed.
 
 Data is fitted to a distribution of its own, so it shares one with nothing: it
 is disabled while a metric is selected and every metric is disabled while it

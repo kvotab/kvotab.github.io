@@ -190,7 +190,7 @@
             'Not **sd**: the page has no formula for that pair.',
           ],
         }, {
-          text: 'In the ln(x) view the curve peaks at μ, not at the mode: the density of ln x has its peak at its mean.',
+          text: 'In the log₁₀(x) view the curve peaks at μ/ln 10, the log₁₀ of the median, not at the mode: the density of log₁₀ x has its peak at its mean.',
         }],
         more: more('eq-central'),
       },
@@ -370,12 +370,12 @@
       }),
 
       'sec:chart': () => {
-        const ln = field('lnViewToggle') && field('lnViewToggle').checked;
+        const log10 = field('logViewToggle') && field('logViewToggle').checked;
         const curves = { both: 'PDF and CDF', pdf: 'PDF only', cdf: 'CDF only' }[field('curveMode') ? field('curveMode').value : 'both'];
         return {
           kicker: 'Section', title: 'Distribution chart',
           lead: 'The density (PDF, left axis) and the cumulative distribution (CDF, right axis, 0 to 1) of every distribution that is not hidden, on one x-axis.',
-          facts: [['x-axis', ln ? 'ln x, the ln(x) view' : 'x, linear'], ['Curves', curves]],
+          facts: [['x-axis', log10 ? 'log₁₀ x, the log₁₀(x) view' : 'x, linear'], ['Curves', curves]],
           sections: [{
             heading: 'What is drawn',
             list: [
@@ -390,9 +390,9 @@
           }, {
             heading: 'Reading it',
             list: [
-              'In the ln(x) view the axis numbers are natural logarithms: 0 is x = 1, 2.30 is x = 10.',
+              'In the log₁₀(x) view the axis numbers are base-10 logarithms: 0 is x = 1, 1 is x = 10, 2 is x = 100.',
               'The x-axis runs from the chart minimum percentile to the chart maximum percentile, wide enough for every distribution drawn.',
-              'Hovering shows values. The toolbar at the top right zooms, pans and saves a PNG, and its button Toggle normal / ln-x view switches the ln(x) view.',
+              'Hovering shows values. The toolbar at the top right zooms, pans and saves a PNG, and its button Toggle normal / log₁₀-x view switches the log₁₀(x) view.',
               'The chart is drawn only while this section is open, and again when it is opened.',
             ],
           }],
@@ -466,28 +466,28 @@
 
       'set:unit': () => {
         const u = field('unitInput') ? field('unitInput').value.trim() : '';
-        const ln = field('lnViewToggle') && field('lnViewToggle').checked;
+        const log10 = field('logViewToggle') && field('logViewToggle').checked;
         return {
           kicker: SET, title: 'Optional unit',
-          lead: 'A name for the unit of x, for the title of the chart’s x-axis: `mg/L` gives `mg/L` on a linear axis and `ln(mg/L)` in the ln(x) view.',
-          facts: [['Now', u || 'none'], ['Axis title', ln ? (u ? `ln(${u})` : 'ln(x)') : (u || 'x')], ['At most', '20 characters']],
+          lead: 'A name for the unit of x, for the title of the chart’s x-axis: `mg/L` gives `mg/L` on a linear axis and `log₁₀(mg/L)` in the log₁₀(x) view.',
+          facts: [['Now', u || 'none'], ['Axis title', log10 ? (u ? `log₁₀(${u})` : 'log₁₀(x)') : (u || 'x')], ['At most', '20 characters']],
           sections: [{
             text: 'It converts nothing. The inputs, the results and the Comparison are in whatever unit the numbers were typed in, and μ is in its logarithm.',
           }],
         };
       },
 
-      'set:lnview': () => ({
-        kicker: SET, title: 'ln(x) view',
-        lead: 'Plots ln x along the x-axis instead of x. A lognormal is then a normal bell, symmetric about μ, and distributions of very different size can be read against each other.',
-        facts: [['Now', onOff('lnViewToggle')], ['New page', 'on']],
+      'set:logview': () => ({
+        kicker: SET, title: 'log₁₀(x) view',
+        lead: 'Plots log₁₀ x along the x-axis instead of x. A lognormal is then a normal bell, symmetric about μ/ln 10, and distributions of very different size can be read against each other.',
+        facts: [['Now', onOff('logViewToggle')], ['New page', 'on']],
         sections: [{
           list: [
-            'The axis numbers are natural logarithms: 0 is x = 1, 2.30 is x = 10, −2.30 is x = 0.1.',
-            'The curve is the density of ln x. It peaks at μ, the logarithm of the median, not at the mode, and its height is not that of the density of x.',
-            'The CDF and the percentiles are the same either way; only the axis changes.',
+            'The axis numbers are base-10 logarithms: 0 is x = 1, 1 is x = 10, −1 is x = 0.1, so each step of 1 is a factor of ten.',
+            'The curve is the density of log₁₀ x, a normal with mean μ/ln 10 and standard deviation σ/ln 10 (ln 10 = 2.3026). It peaks at the log₁₀ of the median, not at the mode, and its height is not that of the density of x.',
+            'The results, the CDF and the percentiles are the same either way, and μ and σ stay those of ln x; only the axis changes.',
             'Unticked, the axis is linear in x, and the long right tail of a wide distribution squeezes its body against the left edge.',
-            'The chart’s toolbar has a button, Toggle normal / ln-x view, that switches it too.',
+            'The chart’s toolbar has a button, Toggle normal / log₁₀-x view, that switches it too.',
           ],
         }],
       }),
@@ -513,7 +513,7 @@
         facts: [['Now', onOff('showRawData')], ['New page', 'on']],
         sections: [{
           text: [
-            'The histogram is scaled as a probability density, so that it sits on the PDF’s axis. Plotly chooses the bins, up to √n of them, with that limit kept between 5 and 50. In the ln(x) view it is a histogram of ln x.',
+            'The histogram is scaled as a probability density, so that it sits on the PDF’s axis. Plotly chooses the bins, up to √n of them, with that limit kept between 5 and 50. In the log₁₀(x) view it is a histogram of log₁₀ x.',
             'Off, only the fitted curves are drawn, which is worth it once several fits overlap. A distribution given by metrics has no data and is not affected.',
           ],
         }],
@@ -524,7 +524,7 @@
         lead: 'Where the x-axis starts, as a percentile: at the lowest value this percentile takes among the distributions drawn.',
         facts: [['Now', typed('chartMinPct')], ['New page', '0.1'], ['Must be', 'above 0 and below the maximum']],
         sections: [{
-          text: 'The shaded band and the reference line must lie at or above it. On a linear axis a lower value changes little, since the left tail is squeezed against zero; in the ln(x) view each smaller one stretches the axis further to the left.',
+          text: 'The shaded band and the reference line must lie at or above it. On a linear axis a lower value changes little, since the left tail is squeezed against zero; in the log₁₀(x) view each smaller one stretches the axis further to the left.',
         }],
       }),
 

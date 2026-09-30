@@ -43,7 +43,7 @@ ORIGINAL_TRACES = ['Outer PDF', 'Shaded PDF', 'Outer PDF', 'P50', 'CDF (theoreti
 # the twelve settings are folded away with theirs.
 AT_LOAD = ['set:dists', 'set:metrics', 'metric:mu', 'metric:sigma',
            'sec:results', 'sec:chart', 'sec:settings', 'sec:equations']
-SETTINGS = ['set:digits', 'set:unit', 'set:lnview', 'set:curves', 'set:raw', 'set:chartMin',
+SETTINGS = ['set:digits', 'set:unit', 'set:logview', 'set:curves', 'set:raw', 'set:chartMin',
             'set:chartMax', 'set:band', 'set:shadeFrom', 'set:shadeTo', 'set:ref', 'set:refPct']
 COLUMN = ['set:dists', 'set:metrics', 'metric:sigma', 'sec:results', 'sec:chart', 'sec:settings',
           'sec:equations']

@@ -67,11 +67,11 @@ PROBE = r"""(async () => {
   out.singleLegend = chart.layout.showlegend;
   out.singleHasComparison = getComputedStyle(document.getElementById('compare-details')).display !== 'none';
 
-  /* The chart opens on the log scale. Unticking it must give the same
-     distribution over the same percentiles on a linear axis, which is the
-     same range exponentiated — the linear branch is no longer the default and
-     would otherwise go uncovered. */
-  const lnBox = document.getElementById('lnViewToggle');
+  /* The chart opens on the log10 scale. Unticking it must give the same
+     distribution over the same percentiles on a linear axis, which is ten to
+     the power of the same range — the linear branch is no longer the default
+     and would otherwise go uncovered. */
+  const lnBox = document.getElementById('logViewToggle');
   out.lnIsDefault = lnBox.checked;
   out.lnRange = chart.layout.xaxis.range.slice();
   out.lnTitle = chart.layout.xaxis.title.text;
@@ -290,15 +290,15 @@ async def main():
     check(report['singleLegend'] is False, 'one distribution should need no legend')
 
     check(report['lnIsDefault'] is True, 'the chart should open on the log scale')
-    check(report['lnTitle'] == 'ln(x)' and report['linearTitle'] == 'x',
+    check(report['lnTitle'] == 'log₁₀(x)' and report['linearTitle'] == 'x',
           'the axis should say which scale it is on, got %r and %r'
           % (report['lnTitle'], report['linearTitle']))
     check(report['linearTraces'] == ORIGINAL_TRACES,
           'the linear view should draw the same traces, got %r' % (report['linearTraces'],))
-    for got, wanted in zip(report['lnRange'], [math.log(v) for v in report['linearRange']]):
+    for got, wanted in zip(report['lnRange'], [math.log10(v) for v in report['linearRange']]):
         check(abs(got - wanted) < 1e-9,
               'the log scale should cover the same percentiles as the linear one: '
-              'ln(%r) is %r, not %r' % (report['linearRange'], wanted, got))
+              'log10(%r) is %r, not %r' % (report['linearRange'], wanted, got))
     check(report['singleHasComparison'] is False, 'one distribution is not a comparison')
 
     check(report['swappedGsd'] == report['swappedGsdWanted'],
