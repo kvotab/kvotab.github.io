@@ -3051,6 +3051,8 @@
         onDraw: (gd) => this.onDraw(gd),
         axes: this.axisProvider(fig),
         plotMenu: () => this.graphItems(),
+        // the corner grip sets the builder's own Graph Size (kept in its state, as the Graph Size… dialog)
+        sizer: { set: (w, h) => this.update((st) => { st.size = { w, h }; }), reset: () => this.update((st) => { st.size = null; }) },
       });
       link(box, fig.links, { maskColors: fig.mask });
       if (fig.geoPoints) pointStates(box, fig.geoPoints);
@@ -3454,13 +3456,22 @@
       ...C.labels.map((lab, i) => el('span', { role: 'listitem', class: 'sm-inline' }, el('span', { class: 'sm-swatch', style: { display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: PALETTE[i % PALETTE.length] } }), lab)));
   }
 
+  /* The scene of a 3-D graph. In the light theme its three walls get a soft
+     tint, as matplotlib's panes have, so the points stand out against them
+     (thin blue points on the page's white were hard to see); in the dark
+     theme the walls stay open: Plotly's 3-D walls take no transparency, and
+     a tint would be a solid block. */
+  const WALL3D = '#f3eee8';
   function scene3d(names) {
     const tc = SM.util.themeColors();
-    const ax = (n) => ({ title: { text: esc(n) }, gridcolor: tc.grid, zerolinecolor: tc.grid, linecolor: tc.muted, color: tc.text, showbackground: false, backgroundcolor: 'rgba(0,0,0,0)' });
+    const wall = !tc.dark;
+    const ax = (n) => ({ title: { text: esc(n) }, gridcolor: tc.grid, zerolinecolor: tc.grid, linecolor: tc.muted, color: tc.text, showbackground: wall, backgroundcolor: wall ? WALL3D : 'rgba(0,0,0,0)' });
     return { xaxis: ax(names[0]), yaxis: ax(names[1]), zaxis: ax(names[2]), bgcolor: 'rgba(0,0,0,0)', aspectmode: 'cube' };
   }
 
   const SYM3D = ['circle', 'square', 'diamond', 'cross', 'x', 'circle-open', 'square-open', 'diamond-open'];
+  // a 3-D graph's points: WebGL draws them small, so larger when there are few
+  const size3d = (n) => (n > 6000 ? 2.5 : n > 1500 ? 3.5 : 4.5);
 
   /* ---- Scatterplot Matrix ---------------------------------------------------------------- */
   SM.platforms.register({
@@ -3682,7 +3693,7 @@
       const C = colorer(t, ctx.role('color'), rows);
       const base = rows.map((r) => (C ? C.color(r) : pointColor()));
       const X = rows.map((r) => cols[0].values[r]), Y = rows.map((r) => cols[1].values[r]), Z = rows.map((r) => cols[2].values[r]);
-      const m3 = markerSizeOf(markerOpt(ctx), 3.5);
+      const m3 = markerSizeOf(markerOpt(ctx), size3d(rows.length));
       const traces = [{ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: m3, color: base, opacity: markerAlphaOf(markerOpt(ctx), 1), line: { width: 0 } },
         hovertext: rows.map((r) => rowHover(t, r, [...cols, C ? C.col : null])), hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }];
       if (ctx.opt('drop', false) && rows.length <= 3000) {
@@ -3694,7 +3705,7 @@
       const w = Math.min(760, availWidth(ctx)), h = Math.round(Math.min(620, w * 0.82));
       const box = ctx.plot(traces, { scene: scene3d(cols.map((c) => c.name)), margin: { l: 0, r: 0, t: 6, b: 0 }, xaxis: { visible: false }, yaxis: { visible: false } }, { width: w, height: h, title: 'Scatterplot 3D' });
       pointStates(box, [{ trace: 0, rows, coords: { x: X, y: Y, z: Z }, color: base, size: m3, symbols: SYM3D, fade: 0.2, mask: !!C }]);
-      const code = await graphCode(ctx, 'scatter3d', { size: [w, h], cols: cols.map((c) => c.name), color: colorSpec(C), drop: !!(ctx.opt('drop', false) && rows.length <= 3000), marker: markerOpt(ctx) });
+      const code = await graphCode(ctx, 'scatter3d', { size: [w, h], cols: cols.map((c) => c.name), color: colorSpec(C), drop: !!(ctx.opt('drop', false) && rows.length <= 3000), marker: markerOpt(ctx), pointSize: size3d(rows.length) });
       ctx.container.append(...[pick, box, code, htmlLegend(C)].filter(Boolean), ctx.note(`${rows.length} rows with all three values. Drag to rotate; to zoom, pick Zoom in the toolbar above the graph and drag. A click selects a row.`));
     },
   });

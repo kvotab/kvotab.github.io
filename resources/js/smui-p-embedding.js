@@ -232,7 +232,8 @@
       const tc = SM.util.themeColors();
       const X = res.coords.map((c) => c[0]), Y = res.coords.map((c) => c[1]), Z = res.coords.map((c) => c[2]);
       const base = colors || SM.report.BASE;
-      const ax = (name) => ({ title: { text: name }, gridcolor: tc.grid, zerolinecolor: tc.grid, linecolor: tc.muted, color: tc.text, showbackground: false, backgroundcolor: 'rgba(0,0,0,0)' });
+      // the walls tinted in the light theme, so the points stand out (as Scatterplot 3D's; open in the dark theme)
+      const ax = (name) => ({ title: { text: name }, gridcolor: tc.grid, zerolinecolor: tc.grid, linecolor: tc.muted, color: tc.text, showbackground: !tc.dark, backgroundcolor: tc.dark ? 'rgba(0,0,0,0)' : '#f3eee8' });
       const w = Math.min(720, room);
       W = w; H = Math.round(Math.min(600, w * 0.85));
       box = ctx.plot([{ type: 'scatter3d', mode: 'markers', x: X, y: Y, z: Z, rows, marker: { size: size - 1, color: base, line: { width: 0 } }, hovertext: hover, hovertemplate: '%{hovertext}<extra></extra>', showlegend: false }],

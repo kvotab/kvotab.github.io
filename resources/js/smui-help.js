@@ -201,6 +201,7 @@
         '**Save ▾** writes the Python script, or the report as a standalone HTML file or a Word document with its graphs as images; **Print…** prints that document, without the page around it. The browser\'s own Print prints the report in view, graphs wider than the paper scaled to fit.',
         '**Save ▾ > Save Script to Data Table** keeps the report with its table, as a script in the Table panel: a click opens it again with the same columns and options, also after the table was saved and opened again, or in a project.',
         'Graphs: click a point or bar to select its rows (shift adds), drag a rectangle to select several; double click to clear. The toolbar above a graph zooms, pans and saves it as PNG.',
+        'Drag the grip in a graph\'s lower right corner to make it larger or smaller (or focus the grip and use the arrow keys), or right-click the graph for **Size…**; a double-click on the grip, or **Default Size**, puts the report\'s size back. The size is kept with the report (Redo, By groups, projects), and the graph\'s Python code draws its figure in the same proportions.',
         'Double-click a numeric axis of any graph (its tick labels), or right-click it, for **Axis Settings**: log scale, minimum, maximum, increment, reverse order and reference lines; the red triangle\'s Axis Settings lists the report\'s axes. They are kept with the report (Redo, By groups, projects), and the graph\'s Python code draws them too.',
       ]),
 

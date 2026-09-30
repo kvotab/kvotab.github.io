@@ -510,6 +510,50 @@
     return Math.max(0, Math.floor(p.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)));
   }
 
+  /* A graph's size as the reader sets it: its corner dragged, its grip's
+     arrow keys, or Size… in its right-click menu. Kept in the report's spec,
+     options.plotSizes, by the graph's key (SM.axis.keyOf: the outlines it is
+     in, its title, its place), so a redraw, Redo, the same graph of every By
+     group and a saved project keep it. A graph whose platform keeps its own
+     size (Graph Builder's Graph Size) passes opts.sizer = { set(w, h),
+     reset() }; one of a grid of small graphs (a profiler's cells, fit:
+     false) or with resize: false has no grip. */
+  const MIN_W = 240, MIN_H = 140, MAX_H = 2400;
+  function sizeOf(p) {
+    const all = p.report && p.report.spec && p.report.spec.options && p.report.spec.options.plotSizes;
+    const k = all && SM.axis ? SM.axis.keyOf(p) : null;
+    const v = k ? all[k] : null;
+    return Array.isArray(v) && v.length === 2 && v.every((x) => Number.isFinite(x) && x > 0) ? [Math.round(v[0]), Math.round(v[1])] : null;
+  }
+  function storeSize(p, wh) {
+    const rep = p.report;
+    const k = rep && rep.spec && SM.axis ? SM.axis.keyOf(p) : null;
+    if (!k) return;
+    const o = rep.spec.options || (rep.spec.options = {});
+    const all = { ...(o.plotSizes || {}) };
+    if (wh) all[k] = wh; else delete all[k];
+    if (Object.keys(all).length) o.plotSizes = all; else delete o.plotSizes;
+  }
+  const resizable = (p) => p.opts.resize !== false && p.opts.fit !== false;
+  /* The room around a graph: its parent's content box, or, where the parent
+     only hugs the graph (a box of a graph and its code, as Distribution's),
+     the first box up that does not: wider (the room it may grow into) or
+     narrower (the room it must fit). Measured by the parent alone, a graph
+     made narrower by a narrow window never grew back, its hugging parent
+     as narrow as it. */
+  function roomAround(box) {
+    const w = box.offsetWidth;
+    for (let p = box.parentElement; p; p = p.parentElement) {
+      if (!p.clientWidth) return 0;
+      const cs = getComputedStyle(p);
+      const inner = p.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+      if (Math.abs(inner - w) > 2 || p.matches('.sm-ob-body, .sm-reportcol') || !p.parentElement) return Math.max(0, Math.floor(inner));
+    }
+    return 0;
+  }
+  // (a graph whose platform keeps its size, Graph Builder, is measured by its own parent)
+  const roomOfPlot = (p) => (p.opts.sizer ? roomFor(p.box) : roomAround(p.box));
+
   let webgl = null;
   function hasWebGL() {
     if (webgl == null) {
@@ -530,6 +574,7 @@
       this.width = opts.width || 420;
       this.ownWidth = this.width;
       this.height = opts.height || 280;
+      this.defaultSize = [this.width, this.height];     // the platform's size (Default Size goes back to it)
       this.userLayout = layout;
       this.rows = [];
       this.kinds = [];
@@ -618,13 +663,17 @@
       if (!this.box.isConnected || this.box.offsetParent === null) return;
       this.drawing = true;
       if (io) io.unobserve(this.box);
+      // the size the reader gave this graph, if any (kept with the report)
+      const mine = resizable(this) && !this.opts.sizer ? sizeOf(this) : null;
+      if (mine) { [this.width, this.height] = mine; this.ownWidth = mine[0]; this.box.style.height = `${this.height}px`; this.box.style.width = `${this.width}px`; }
       // Drawn no wider than the room there is (a phone, a narrow window),
       // unless the platform says fit: false (a forest plot whose text columns
       // must keep their width scrolls instead).
-      const room = this.opts.fit !== false ? roomFor(this.box) : 0;
+      const room = this.opts.fit !== false ? roomOfPlot(this) : 0;
       if (room && room < this.width) { this.width = Math.max(240, room); this.box.style.width = `${this.width}px`; }
       // the axes as set by Axis Settings (smui-axis.js), on the platform's layout
       const layout = themedLayout(SM.axis ? SM.axis.layout(this, this.userLayout) : this.userLayout, this.width, this.height);
+      if (mine) { layout.width = this.width; layout.height = this.height; }
       // the axis types the page gave (category, date, log), before Plotly writes its guesses into the layout: a restyle keeps them
       const types = Object.fromEntries(Object.keys(layout).filter((k) => /^[xy]axis\d*$/.test(k) && layout[k] && layout[k].type && layout[k].type !== '-').map((k) => [k, layout[k].type]));
       try {
@@ -644,6 +693,97 @@
       this.refreshStates();
       if (this.opts.onDraw) this.opts.onDraw(gd);
       if (SM.axis) { SM.axis.wire(this); SM.axis.amend(this); }
+      if (resizable(this)) this._grip();
+    }
+
+    /* The size the reader gave the graph ([w, h]), or null. */
+    userSize() { return this.opts.sizer ? null : sizeOf(this); }
+
+    /* The graph at a size: no narrower than 240 px nor wider than the room,
+       140 to 2400 px tall. keep: stored with the report (at the end of a
+       drag, not at each step of it). */
+    setSize(w, h, { keep = true } = {}) {
+      // (a platform that keeps the size itself, Graph Builder, bounds it itself)
+      const room = !this.opts.sizer && this.box.isConnected ? roomAround(this.box) : 0;
+      w = Math.round(Math.max(MIN_W, room ? Math.min(w, room) : w));
+      h = Math.round(Math.min(MAX_H, Math.max(MIN_H, h)));
+      if (keep && this.opts.sizer) { this.opts.sizer.set(w, h); return [w, h]; }
+      this.ownWidth = w;
+      this.width = w;
+      this.height = h;
+      this.box.style.width = `${w}px`;
+      this.box.style.height = `${h}px`;
+      if (this.drawn) { try { Plotly.relayout(this.box, { width: w, height: h }); } catch (e) { /* being drawn again */ } }
+      if (keep) { storeSize(this, [w, h]); if (SM.axis) SM.axis.amend(this); }
+      return [w, h];
+    }
+
+    /* Back to the platform's own size. */
+    resetSize() {
+      if (this.opts.sizer) { this.opts.sizer.reset(); return; }
+      storeSize(this, null);
+      const [w, h] = this.defaultSize;
+      const room = this.opts.fit !== false && this.box.parentElement ? roomOfPlot(this) : 0;
+      this.ownWidth = w;
+      this.width = room ? Math.max(MIN_W, Math.min(w, room)) : w;
+      this.height = h;
+      this.box.style.width = `${this.width}px`;
+      this.box.style.height = `${h}px`;
+      if (this.drawn) { try { Plotly.relayout(this.box, { width: this.width, height: h }); } catch (e) { /* being drawn again */ } }
+      if (SM.axis) SM.axis.amend(this);
+    }
+
+    /* The grip in the graph's corner: drag it (mouse, pen or finger), or
+       focus it and use the arrow keys (shift: 50 px a step); a double-click
+       puts the platform's size back. */
+    _grip() {
+      const gd = this.box;
+      if (gd.querySelector(':scope > .sm-plot-grip')) return;
+      const S = SM.util.svg;
+      const grip = el('button', { type: 'button', class: 'sm-plot-grip', title: 'Drag to resize the graph; double-click for its own size. The arrow keys resize it too.', 'aria-label': `Resize the graph${this.opts.title ? ` ${this.opts.title}` : ''}` },
+        S('svg', { viewBox: '0 0 10 10', width: 10, height: 10, 'aria-hidden': 'true' }, S('path', { d: 'M9 3 L3 9 M9 6 L6 9', stroke: 'currentColor', 'stroke-width': 1.2, fill: 'none', 'stroke-linecap': 'round' })));
+      grip.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        try { grip.setPointerCapture(ev.pointerId); } catch (e) { /* a synthetic event */ }
+        const x0 = ev.clientX, y0 = ev.clientY, w0 = this.width, h0 = this.height;
+        let next = null, frame = 0;
+        // a platform that keeps the size itself redraws on a change of the graph's layout: an outline of the new size
+        // follows the pointer, and the size goes to the platform when it is let go
+        const ghost = this.opts.sizer ? el('div', { class: 'sm-plot-ghost', style: { width: `${w0}px`, height: `${h0}px` } }) : null;
+        if (ghost) gd.append(ghost);
+        const step = () => {
+          frame = 0;
+          if (!next) return;
+          if (ghost) { ghost.style.width = `${Math.max(MIN_W, next[0])}px`; ghost.style.height = `${Math.min(MAX_H, Math.max(MIN_H, next[1]))}px`; } else this.setSize(next[0], next[1], { keep: false });
+        };
+        const move = (e) => { next = [w0 + e.clientX - x0, h0 + e.clientY - y0]; if (!frame) frame = requestAnimationFrame(step); };
+        const up = () => {
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointercancel', up);
+          if (frame) cancelAnimationFrame(frame);
+          document.documentElement.classList.remove('sm-resizing');
+          if (ghost) ghost.remove();
+          if (next) this.setSize(next[0], next[1]);
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointercancel', up);
+        document.documentElement.classList.add('sm-resizing');
+      });
+      grip.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+      grip.addEventListener('dblclick', (ev) => { ev.preventDefault(); ev.stopPropagation(); this.resetSize(); });
+      grip.addEventListener('keydown', (ev) => {
+        const d = ev.shiftKey ? 50 : 10;
+        const by = { ArrowRight: [d, 0], ArrowLeft: [-d, 0], ArrowDown: [0, d], ArrowUp: [0, -d] }[ev.key];
+        if (!by) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.setSize(this.width + by[0], this.height + by[1]);
+      });
+      gd.append(grip);
     }
 
     rowsOf(pt) {
@@ -1410,7 +1550,7 @@
     fitPlots() {
       for (const p of this.plots) {
         if (!p.drawn || !p.box.isConnected || p.opts.fit === false) continue;
-        const room = p.box.parentElement ? roomFor(p.box) : p.ownWidth;
+        const room = p.box.parentElement ? roomOfPlot(p) : p.ownWidth;
         if (!room) continue;
         const w = Math.max(240, Math.min(p.ownWidth, room));
         if (Math.abs(w - p.width) < 4) continue;

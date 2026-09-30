@@ -38,7 +38,7 @@ with the page's own formula engine need `node` (skipped without it):
 | `test_nonlinear.py` | 472 | NIST Misra1a, Thurber, MGH09, DanWood, Rat42, Eckerle4, MGH17 |
 | `test_quality.py` | 913 | Montgomery's control-chart constants, the published median-range divisors d4 and a simulation, formulas; the Alarm Report's counts and rates by hand |
 | `test_doe.py` | 960 | design properties, statsmodels power, textbook values; split plots and blocked full factorials by their structure, the design's model fitted by REML against the exact split-plot F tests (Kenward–Roger df), Simulate Responses' formula; Evaluate Design of a split plot against the closed forms of a balanced one (its variances, Satterthwaite df, the exact noncentral F), 20,000 simulated exact tests and REML + Kenward–Roger simulations of an unbalanced one |
-| `test_graph.py` | 370 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot; the automatic bins as Make Binning Column's (JMP quantiles), Axis Settings in the code, the maps' boundaries (cdn.plot.ly, read at run time; skipped offline) |
+| `test_graph.py` | 371 | statsmodels/scipy smoothers, fits, densities, interpolation; statsmodels' banddepth, fboxplot, hdrboxplot, rainbowplot, beanplot; the automatic bins as Make Binning Column's (JMP quantiles), Axis Settings in the code, the maps' boundaries (cdn.plot.ly, read at run time; skipped offline) |
 | `test_tables.py` | 178 | pandas group-by, merge, melt/pivot, JMP quantiles; Missing Value Codes and Value Labels in the engine; Tabulate's bins; the SVD and shrunk EM imputations by their fixed points; Missing Value Clustering against scipy's Ward |
 | `test_multits.py` | 321 | statsmodels' documented VAR example, MHM 1999 and MacKinnon 2010 critical values |
 | `test_counts.py` | 817 | the Stata and R results bundled with statsmodels' tests, the pscl Vuong formula |
@@ -83,8 +83,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-30: association 56, bootstrap 58, calculators 58, circular 276, compare 194, copula 249, core 199, counts 304, distribution 186, dnd 123, dock 75, doe 298, embedding 124, ensemble 407, fitmodel 846, fitybyx 655, gam 387, gaussproc 217, graph 1182, hostile 16, jsl 24, learners 598, mediation 397, meta 431, mixed 196, mixtures 297, multits 464, multivariate 1526, neural 346, notebook 49, partition 695, pls 684, profiler 32, quality 539, screening 297, scripts 59, survival 414, tables 251, text 363, timeseries 1639, treatment 346, uplift 232
-(15,789 in 42 suites in all).
+Browser suites, and their checks on 2026-09-30: association 56, bootstrap 58, calculators 58, circular 276, compare 194, copula 249, core 216, counts 304, distribution 186, dnd 123, dock 75, doe 298, embedding 124, ensemble 407, fitmodel 846, fitybyx 655, gam 387, gaussproc 217, graph 1186, hostile 16, jsl 24, learners 598, mediation 397, meta 431, mixed 196, mixtures 297, multits 464, multivariate 1526, neural 346, notebook 49, partition 695, pls 684, profiler 32, quality 539, screening 297, scripts 59, survival 414, tables 251, text 363, timeseries 1639, treatment 346, uplift 232
+(15,810 in 42 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -326,6 +326,17 @@ it builds outlines into the report:
   `plt.show()` gets the settings written in. On a date axis the page gives
   Plotly UTC date text (millisecond numbers are read in the browser's time
   zone).
+- A graph's size: every graph but those drawn with `fit: false` (a
+  profiler's cells) or `resize: false` has a grip in its lower right corner
+  (dragged, its arrow keys, a double-click for the report's size) and Size…
+  and Default Size in its right-click menu. The size is kept in
+  `spec.options.plotSizes` by the graph's key (`SM.axis.keyOf`), the
+  graph's code draws its figure in the same proportions (its one
+  `figsize`, `SM.axis.sizedCode`), and a platform that keeps its own size
+  (Graph Builder's Graph Size) passes `sizer: { set(w, h), reset() }`,
+  which the grip calls when it is let go. The room a graph fits into is
+  measured past a parent that only hugs it (a box of a graph and its code),
+  so a graph made narrower by a narrow window grows back.
 - A platform's own `Plotly.restyle` of x or y goes through
   `SM.report.restyle(gd, update, traces)`: Plotly 2.27 guesses the axis
   types again after such a restyle (a Pareto's causes that look like
@@ -565,7 +576,11 @@ away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels; a 
 beside a dialog leaves it open; on a phone (touch emulation) the dialog and
 the (i) panel as the whole screen, a swipe that scrolls and a touch drag
 onto a role, the model effects, the formula and a Graph Builder zone;
-the dark theme and phone width; the full window (no site header, menu or
+the dark theme and phone width; a graph's size (its corner grip dragged
+with the mouse, and its code's figsize in proportion; the grip's arrow
+keys; Redo; Size… and Default Size from a real right-click; a narrower
+window and back; a project; a double-click; Graph Builder's own Graph
+Size, an outline following the drag; the dark theme); the full window (no site header, menu or
 footer; the kvot mark to the home page and the theme switch in the menu
 bar; kept for the next visit from before the workbench is made; at phone
 width its two buttons at the right edge while the menus scroll).

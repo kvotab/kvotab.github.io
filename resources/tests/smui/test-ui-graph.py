@@ -1794,6 +1794,18 @@ async def main():
     r = await page.ev('''(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; const info = await infoClick(rep.body.querySelector('.sm-graph-pick')); KvotInfo.close();
       return info ? (info.choices['In the report'] || []).map(c => c[0]) : null; })()''')
     check('scatter 3D: an (i) by the axis menus explains them', r[:1] if r else r, ['X Axis, Y Axis, Z Axis'])
+    WALLS = '''(async () => { const [rep, p] = await lastPlot(); const sc = p.userLayout.scene; const m = /ax\\.scatter\\([^\\n]*\\bs=([0-9.e+-]+)/.exec(rep.pythonScript());
+      const ms = p.traces[0].marker.size; return { walls: ['xaxis', 'yaxis', 'zaxis'].map((k) => [sc[k].showbackground, String(sc[k].backgroundcolor).replace(/\\s+/g, '')]), size: Array.isArray(ms) ? ms[0] : ms, s: m ? Number(m[1]) : null }; })()'''
+    r = await page.ev(WALLS)
+    check('scatter 3D in the light theme: the three walls tinted, so the points stand out against them', r['walls'], [[True, '#f3eee8']] * 3)
+    check('scatter 3D: points of 4.5 px for its 240 rows (WebGL draws them small), and the code\'s the same (s = (4.5 × 0.72)²)', (r['size'], r['s']), (4.5, 10.5))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(0.4)
+    await run('scatter3d', {'y': ['x', 'y', 'z'], 'color': ['g']})
+    r = await page.ev(WALLS)
+    check('scatter 3D in the dark theme: the walls open (Plotly\'s 3-D walls take no transparency)', r['walls'], [[False, 'rgba(0,0,0,0)']] * 3)
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
+    await asyncio.sleep(0.4)
     await run('contour', {'y': ['z'], 'x': ['x', 'y']})
     r = await page.ev('''(async () => { const [rep, p] = await lastPlot(); const z = p.traces[0].z;
       return { rows: z.length, cols: z[0].length, holes: z.flat().some(v => v == null), linked: p.rows[1] ? p.rows[1].length : 0, code: rep.pythonScript().includes('griddata') }; })()''')

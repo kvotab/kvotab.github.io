@@ -439,6 +439,14 @@
 .sm-plot { position: relative; min-width: 260px; }
 .sm-plot .js-plotly-plot .modebar { opacity: 0.25; }
 .sm-plot:hover .js-plotly-plot .modebar { opacity: 1; }
+/* the grip in a graph's corner (Plot._grip: drag, the arrow keys, a double-click for its own size) */
+.sm-plot-grip { position: absolute; right: 0; bottom: 0; z-index: 3; display: flex; align-items: flex-end; justify-content: flex-end; width: 18px; height: 18px; padding: 2px; border: 0; border-radius: 3px 0 3px 0; background: none; color: var(--text-secondary); cursor: nwse-resize; opacity: 0.35; touch-action: none; }
+.sm-plot:hover .sm-plot-grip, .sm-plot-grip:focus-visible, :root.sm-resizing .sm-plot-grip { opacity: 1; }
+.sm-plot-grip:hover, .sm-plot-grip:focus-visible { background: var(--sm-sel-bg, rgba(127, 127, 127, 0.15)); color: var(--text-primary); outline: none; }
+.sm-plot-grip:focus-visible { box-shadow: 0 0 0 2px var(--color-kvot-bright) inset; }
+:root.sm-resizing, :root.sm-resizing * { cursor: nwse-resize !important; user-select: none; }
+.sm-plot-ghost { position: absolute; left: 0; top: 0; z-index: 2; box-sizing: border-box; border: 1.5px dashed var(--text-secondary); border-radius: 2px; pointer-events: none; }
+@media (hover: none) { .sm-plot-grip { opacity: 0.8; width: 26px; height: 26px; } }
 .sm-code { margin: 4px 0 8px; }
 .sm-code summary { cursor: pointer; font-size: 11.5px; color: var(--link-color); }
 /* the code as text (the details' own pre: not the editor's layers, nor a run's output) */
@@ -674,6 +682,7 @@
   .sm-report, .sm-reportbody { display: block !important; height: auto !important; overflow: visible !important; }
   .sm-reportbody { padding: 0 !important; }
   .sm-rt, .sm-kv, .sm-plot { break-inside: avoid; }
+  .sm-plot-grip { display: none !important; }
   .sm-ob-head { break-after: avoid; }
   /* nothing in a report scrolls on paper (a graph's own parts aside); set
      by smui-report.js before printing: boxes that scroll lose their limits,

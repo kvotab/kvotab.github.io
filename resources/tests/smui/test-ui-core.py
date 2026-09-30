@@ -1296,5 +1296,121 @@ async def main():
     await page.close()
 
 
+    # ---- a graph's size: the grip in its corner (a real drag, the arrow keys, a double-click), Size… and
+    # Default Size in its right-click menu; kept with the report (Redo, a project), the code's figsize in
+    # proportion, a narrower window and back, the HTML document without the grip, Graph Builder's own size
+    page = await open_page(f'{BASE}/smui.html?example=students')
+    await wait_engine(page)
+    await page.ev(open_report_js('distribution', {'y': ['height (cm)']}))
+    await asyncio.sleep(1)
+    G = """(() => { const rep = SM.app.reports.at(-1), p = rep.plots[0], g = p.box.querySelector(':scope > .sm-plot-grip');
+      const b = g ? g.getBoundingClientRect() : null, pb = p.box.getBoundingClientRect(), blk = p.box.nextElementSibling;
+      const fig = (t) => { const m = /figsize=\\(([0-9.]+), ([0-9.]+)\\)/.exec(t || ''); return m ? [Number(m[1]), Number(m[2])] : null; };
+      return { w: p.width, h: p.height, lw: p.box._fullLayout && p.box._fullLayout.width, lh: p.box._fullLayout && p.box._fullLayout.height, def: p.defaultSize,
+        grip: g ? { x: b.x + b.width / 2, y: b.y + b.height / 2, label: g.getAttribute('aria-label') } : null, plot: [pb.x + pb.width / 2, pb.y + pb.height / 2],
+        sizes: rep.spec.options.plotSizes || null, base: blk && blk._code ? fig(blk._code.base) : null, code: blk && blk._code ? fig(blk._code.get()) : null,
+        script: fig(rep.pythonScript().split('\\n').filter((l) => l.includes('figsize=')).join('\\n')) }; })()"""
+    g0 = await page.ev(G)
+    check('a graph has a grip in its corner, named for its graph', (g0['grip'] is not None, (g0['grip'] or {}).get('label', '').startswith('Resize the graph')), (True, True))
+
+    async def drag(g, dx, dy):
+        await page.mouse('mouseMoved', g['x'], g['y'])
+        await page.mouse('mousePressed', g['x'], g['y'])
+        for k in range(1, 9):
+            await page.mouse('mouseMoved', g['x'] + dx * k / 8, g['y'] + dy * k / 8)
+            await asyncio.sleep(0.03)
+        await page.mouse('mouseReleased', g['x'] + dx, g['y'] + dy)
+        await asyncio.sleep(0.5)
+    await drag(g0['grip'], 120, 70)
+    g1 = await page.ev(G)
+    key = next(iter((g1['sizes'] or {}).keys()), None)
+    check('a real drag of the grip makes the graph 120 px wider and 70 px taller, and Plotly draws it so',
+          (g1['w'] - g0['w'], g1['h'] - g0['h'], g1['lw'], g1['lh']), (120, 70, g1['w'], g1['h']))
+    check('... kept with the report, by the graph', (g1['sizes'] or {}).get(key), [g1['w'], g1['h']])
+    ok_fig = bool(g1['base'] and g1['code']) and abs(g1['code'][0] - round(g1['base'][0] * g1['w'] / g1['def'][0], 2)) < 0.011 and abs(g1['code'][1] - round(g1['base'][1] * g1['h'] / g1['def'][1], 2)) < 0.011
+    check('... its code\'s figure in the same proportion (figsize), in Save Python Script too', (ok_fig, g1['script'] == g1['code']), (True, True))
+    await page.ev("SM.app.reports.at(-1).plots[0].box.querySelector('.sm-plot-grip').focus()")
+    await page.key('ArrowRight')
+    await page.key('ArrowDown', modifiers=8)
+    await asyncio.sleep(0.3)
+    g2 = await page.ev(G)
+    check('the grip\'s arrow keys: 10 px a step, 50 px with shift', (g2['w'] - g1['w'], g2['h'] - g1['h'], (g2['sizes'] or {}).get(key)), (10, 50, [g2['w'], g2['h']]))
+    await page.ev('(async () => { const rep = SM.app.reports.at(-1); const d = new Promise((res) => rep.on("done", res)); rep.run(); await d; await new Promise((r) => setTimeout(r, 400)); })()')
+    g3 = await page.ev(G)
+    check('Redo keeps the size', (g3['w'], g3['h'], g3['lw'], g3['lh']), (g2['w'], g2['h'], g2['w'], g2['h']))
+    # the right-click menu of the plot: Size… (a dialog), Default Size
+    await page.mouse('mouseMoved', g3['plot'][0], g3['plot'][1])
+    await page.mouse('mousePressed', g3['plot'][0], g3['plot'][1], button='right')
+    await page.mouse('mouseReleased', g3['plot'][0], g3['plot'][1], button='right')
+    await asyncio.sleep(0.3)
+    items = await page.ev("[...document.querySelectorAll('.sm-menu button .sm-label')].map((x) => x.textContent)")
+    check('a right-click in the plot has Size… and Default Size', ('Size…' in (items or []), 'Default Size' in (items or [])), (True, True))
+    await page.ev("""(async () => { [...document.querySelectorAll('.sm-menu button')].find((b) => b.textContent.includes('Size…')).click();
+      await new Promise((r) => setTimeout(r, 300)); const d = [...document.querySelectorAll('.sm-dialog')].pop();
+      const [w, h] = [...d.querySelectorAll('input')]; w.value = '420'; w.dispatchEvent(new Event('input', { bubbles: true })); h.value = '300'; h.dispatchEvent(new Event('input', { bubbles: true }));
+      d.querySelector('.sm-dialog-foot .primary').click(); await new Promise((r) => setTimeout(r, 400)); })()""")
+    g4 = await page.ev(G)
+    check('Size… sets the width and height typed', (g4['w'], g4['h'], (g4['sizes'] or {}).get(key)), (420, 300, [420, 300]))
+    # narrower than the graph, then wide again: it follows the room and comes back to its size
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await asyncio.sleep(0.8)
+    narrow = await page.ev(G)
+    await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+    await asyncio.sleep(0.8)
+    wide = await page.ev(G)
+    check('a narrower window makes the graph narrower, and it comes back to its width', (narrow['w'] < 420, wide['w'], wide['h']), (True, 420, 300))
+    html = await page.ev('SM.app.reports.at(-1).documentHtml()')
+    check('Save Report as HTML leaves the grip out', 'sm-plot-grip' in (html or ''), False)
+    # a project keeps it: the report's JSON, opened again as a project (the columns get new ids)
+    r = await page.ev("""(async () => { const rep = SM.app.reports.at(-1), t = rep.table;
+      const j = JSON.parse(JSON.stringify({ format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [rep.toJSON()] }));
+      const n0 = SM.app.reports.length; SM.app.loadProject(j);
+      for (let i = 0; i < 100 && SM.app.reports.length <= n0; i++) await new Promise((res) => setTimeout(res, 50));
+      const back = SM.app.reports.at(-1); SM.app.showTab(SM.app.tabOf(back));
+      for (let i = 0; i < 100 && !(back.plots[0] && back.plots[0].drawn); i++) await new Promise((res) => setTimeout(res, 60));
+      const p = back.plots[0]; const out = { w: p && p.width, h: p && p.height, sizes: back.spec.options.plotSizes || null };
+      SM.app.closeReport(back); SM.app.showTab(SM.app.tabOf(rep)); await new Promise((res) => setTimeout(res, 300)); return out; })()""")
+    check('a project keeps the size', (r['w'], r['h'], list((r['sizes'] or {}).values())), (420, 300, [[420, 300]]))
+    # Default Size, and a double-click on the grip
+    await page.mouse('mouseMoved', wide['plot'][0], wide['plot'][1])
+    await page.mouse('mousePressed', wide['plot'][0], wide['plot'][1], button='right')
+    await page.mouse('mouseReleased', wide['plot'][0], wide['plot'][1], button='right')
+    await asyncio.sleep(0.3)
+    await page.ev("[...document.querySelectorAll('.sm-menu button')].find((b) => b.textContent.includes('Default Size')).click()")
+    await asyncio.sleep(0.4)
+    g5 = await page.ev(G)
+    check('Default Size puts the report\'s size back, and its code\'s', ([g5['w'], g5['h']], g5['sizes'], g5['code'] == g5['base']), (g5['def'], None, True))
+    await drag(g5['grip'], 60, 40)
+    g6 = await page.ev(G)
+    await page.mouse('mouseMoved', g6['grip']['x'], g6['grip']['y'])
+    await page.mouse('mousePressed', g6['grip']['x'], g6['grip']['y'], clicks=1)
+    await page.mouse('mouseReleased', g6['grip']['x'], g6['grip']['y'], clicks=1)
+    await page.mouse('mousePressed', g6['grip']['x'], g6['grip']['y'], clicks=2)
+    await page.mouse('mouseReleased', g6['grip']['x'], g6['grip']['y'], clicks=2)
+    await asyncio.sleep(0.4)
+    g7 = await page.ev(G)
+    check('a double-click on the grip: the report\'s size again', ([g6['w'] - g5['w'], g6['h'] - g5['h']], [g7['w'], g7['h']], g7['sizes']), ([60, 40], g7['def'], None))
+    # Graph Builder: its grip sets its own Graph Size
+    r = await page.ev("""(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res)); const gb = SM.platforms.get('graphbuilder').builder(rep);
+      await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
+      SM.app.showTab(SM.app.tabOf(rep)); let p = null;
+      for (let i = 0; i < 100 && !p; i++) { await new Promise((r) => setTimeout(r, 60)); p = rep.plots.find((x) => x.drawn && x.box.isConnected && x.box.querySelector('.sm-plot-grip')); }
+      if (!p) return { error: 'no drawn Graph Builder graph with a grip' };
+      const g = p.box.querySelector('.sm-plot-grip'); g.scrollIntoView({ block: 'nearest' }); const b = g.getBoundingClientRect();
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2, w: p.width, h: p.height }; })()""")
+    check('Graph Builder\'s graph has its grip', r.get('error') if isinstance(r, dict) else r, None)
+    await drag(r, -80, 50)
+    await asyncio.sleep(1.2)
+    gb = await page.ev("(async () => { const rep = SM.app.reports.at(-1); let p = null; for (let i = 0; i < 60; i++) { p = rep.plots.filter((x) => x.drawn && x.box.isConnected).at(-1); if (p && p.width !== %d) break; await new Promise((r) => setTimeout(r, 60)); } return { size: SM.platforms.get('graphbuilder').builder(rep).state().size || null, w: p ? p.width : null, h: p ? p.height : null, ghost: !!document.querySelector('.sm-plot-ghost'), stored: rep.spec.options.plotSizes || null }; })()" % r['w'])
+    check('Graph Builder\'s grip sets its own Graph Size (an outline follows the drag), which draws the graph again', (gb['size'], gb['w'], gb['h'], gb['ghost'], gb['stored']), ({'w': r['w'] - 80, 'h': r['h'] + 50}, r['w'] - 80, r['h'] + 50, False, None))
+    await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
+    await asyncio.sleep(0.5)
+    dk = await page.ev("(() => { const g = document.querySelector('.sm-plot-grip'); const cs = getComputedStyle(g); return [cs.color, cs.cursor]; })()")
+    check('dark theme: the grip in the dark theme\'s text colour, with the resize cursor', (dk[0] not in ('rgb(0, 0, 0)', ''), dk[1]), (True, 'nwse-resize'))
+    check('graph sizes: no script errors', page.errors, [])
+    await page.close()
+
+
 asyncio.run(main())
 sys.exit(check.done())

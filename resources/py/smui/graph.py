@@ -3914,6 +3914,7 @@ def _scatter3d_code(table, plan, rows, table_name):
     X, Y, Zc = P['cols']
     C = P.get('color')
     W, H = P.get('size') or [640, 520]
+    ps = P.get('pointSize') if isinstance(P.get('pointSize'), (int, float)) and P['pointSize'] > 0 else 3.5   # the page's size for this many points
     w = _Py()
     w(f'd = df.dropna(subset={_py([X, Y, Zc])})   # the rows with all three values')
     if C and C.get('cat'):
@@ -3928,7 +3929,7 @@ def _scatter3d_code(table, plan, rows, table_name):
         cl = f'color="{POINT}"'
     w('', f'fig = plt.figure(figsize=({_inch(W)}, {_inch(H)}), layout="constrained")',
       'ax = fig.add_subplot(projection="3d")',
-      f'ax.scatter(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}], s={_area(_marker(P, 3.5, 1)[0])}, {cl}{", alpha=" + _nm(_marker(P, 3.5, 1)[1]) if _marker(P, 3.5, 1)[3] else ""}, depthshade=False, linewidths=0)')
+      f'ax.scatter(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}], s={_area(_marker(P, ps, 1)[0])}, {cl}{", alpha=" + _nm(_marker(P, ps, 1)[1]) if _marker(P, ps, 1)[3] else ""}, depthshade=False, linewidths=0)')
     if P.get('drop'):
         w(f'zmin = d[{_j(Zc)}].min()')
         with w.block(f'for x, y, z in zip(d[{_j(X)}], d[{_j(Y)}], d[{_j(Zc)}]):   # Drop Lines: from each point down to the lowest Z'):

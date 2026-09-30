@@ -468,14 +468,15 @@
     gd.addEventListener('contextmenu', (ev) => {
       const name = axisAt(ev.target);
       const I = name ? info(p, name) : null;
-      // in the plot itself: the graph's own settings (opts.plotMenu: Marker Size, Transparency)
+      // in the plot itself: the graph's own settings (opts.plotMenu: Marker Size, Transparency), and its size
       if (!I) {
         const inPlot = ev.target && ev.target.closest && ev.target.closest('.draglayer rect.nsewdrag, .geo .bg rect, .geolayer .bg, .nsewdrag');
         const extra = inPlot && p.opts.plotMenu ? (p.opts.plotMenu() || []).filter(Boolean) : [];
-        if (!extra.length) return;
+        const size = p.opts.resize !== false && p.opts.fit !== false && !p.opts.sizer && typeof p.setSize === 'function' ? sizeItems(p) : [];
+        if (!extra.length && !size.length) return;
         ev.preventDefault();
         ev.stopPropagation();
-        SM.ui.menu([{ head: 'Graph' }, ...extra], { x: ev.clientX, y: ev.clientY });
+        SM.ui.menu([{ head: 'Graph' }, ...extra, ...(extra.length && size.length ? [{ separator: true }] : []), ...size], { x: ev.clientX, y: ev.clientY });
         return;
       }
       if (I.why && !(p.opts.axes && p.opts.axes.menu)) return;
@@ -485,6 +486,38 @@
       ev.stopPropagation();
       SM.ui.menu(items, { x: ev.clientX, y: ev.clientY });
     }, true);
+  }
+
+  /* ---- a graph's size (smui-report.js keeps it: Plot.setSize, resetSize) ---- */
+  function sizeItems(p) {
+    return [
+      { label: 'Size…', title: 'The graph\'s width and height in pixels', action: () => sizeDialog(p) },
+      { label: 'Default Size', disabled: !p.userSize(), title: 'The size the report draws the graph at', action: () => p.resetSize() },
+    ];
+  }
+
+  async function sizeDialog(p) {
+    const v = await SM.ui.form({
+      title: 'Graph Size', info: 'report:size', narrow: true,
+      lead: `${p.opts.title || 'The graph'}, in pixels. It is kept with the report; Default Size in the graph's right-click menu, or a double-click on its corner grip, puts the report's size back.`,
+      fields: [
+        { key: 'w', label: 'Width', type: 'number', value: Math.round(p.width), help: 'At least 240 pixels, and no wider than the report has room for (the graph follows a narrower window, and comes back when there is room).' },
+        { key: 'h', label: 'Height', type: 'number', value: Math.round(p.height), help: '140 to 2400 pixels.' },
+      ],
+      validate: (x) => (!(Number(x.w) > 0) || !(Number(x.h) > 0) ? 'Give a width and a height in pixels' : null),
+    });
+    if (v) p.setSize(Number(v.w), Number(v.h));
+  }
+
+  /* The code's figure at the size the reader gave the graph: its one
+     figsize=(w, h), in the proportion of that size to the report's. */
+  function sizedCode(p, text) {
+    const want = typeof p.userSize === 'function' ? p.userSize() : null;
+    if (!want || !p.defaultSize) return text;
+    const re = /figsize=\(\s*([0-9]*\.?[0-9]+)\s*,\s*([0-9]*\.?[0-9]+)\s*\)/g;
+    if ((text.match(re) || []).length !== 1) return text;
+    const r2 = (v) => String(Math.round(v * 100) / 100);
+    return text.replace(re, (m, a, b) => `figsize=(${r2(a * want[0] / p.defaultSize[0])}, ${r2(b * want[1] / p.defaultSize[1])})`);
   }
 
   /* ---- the graph's matplotlib code ------------------------------------------------------------- */
@@ -589,9 +622,9 @@
     const block = p.box.nextElementSibling;
     if (!block || !block.matches || !block.matches('details.sm-code') || !block._code) return;
     if (!keyOf(p)) return;
-    const base = block._code.base;
     // a graph's code (matplotlib, ending in plt.show()), not a result's
-    if (!/(^|\n)plt\.show\(\)\s*$/.test(base)) return;
+    if (!/(^|\n)plt\.show\(\)\s*$/.test(block._code.base)) return;
+    const base = sizedCode(p, block._code.base);
     const lines = p.drawn ? codeOf(p, stored(p)) : null;
     if (!p.drawn && stored(p)) return;          // written when it is drawn (the axes' types come from Plotly)
     let next = base;
@@ -650,6 +683,7 @@
             ['Defaults', 'Takes this axis\'s settings away: the axis is drawn as the report draws it.'],
           ] },
           { heading: 'Kept', text: 'The settings belong to the graph in the report: a redraw, Redo and a saved project keep them, and with By they apply to the same graph of every group. Graph Builder keeps them with the column on the axis.' },
+          { heading: 'The graph\'s size', text: 'Drag the grip in a graph\'s lower right corner to make it larger or smaller, or right-click the graph for Size…; see Graph Size.' },
           { heading: 'Differences from JMP', list: [
             'The log scale has no base of its own: the increment gives the ratio between ticks.',
             'The number format, minor ticks, grid lines, tick label orientation and the Power and probability scales are not here.',
@@ -659,8 +693,18 @@
         ],
         more: { label: 'Reports', id: 'help-reports' },
       },
+      'report:size': {
+        kicker: 'Report', title: 'Graph Size',
+        lead: 'A graph\'s width and height, as JMP\'s frame size: drag the grip in the graph\'s lower right corner (the mouse, a pen or a finger), or focus the grip and use the arrow keys (shift for bigger steps), or right-click the graph for Size… and type them in pixels.',
+        sections: [
+          { heading: 'Fields', choices: [['Width', 'At least 240 pixels, and no wider than the report has room for: in a narrower window the graph gets narrower, and it comes back to your width when there is room again.'], ['Height', '140 to 2400 pixels.']] },
+          { heading: 'Back to the report\'s size', text: 'A double-click on the grip, or Default Size in the graph\'s right-click menu.' },
+          { heading: 'Kept', text: 'The size belongs to the graph in the report: a redraw, Redo and a saved project keep it, and with By it applies to the same graph of every group. The graph\'s Python code draws its figure in the same proportions (its figsize), and Save Report as HTML or Word and Print use the size. Graph Builder keeps its own Graph Size, which its grip sets.' },
+        ],
+        more: { label: 'Reports', id: 'help-reports' },
+      },
     });
   }
 
-  SM.axis = Object.freeze({ layout, wire, amend, settle, open, menuItems, info, axisAt, patch, refShapes, applyAll, clean, keyOf, get, put, pyAxis, codeOf, reportItem, paperLayout, COLORS, DASHES, colorOf });
+  SM.axis = Object.freeze({ layout, wire, amend, settle, open, menuItems, info, axisAt, patch, refShapes, applyAll, clean, keyOf, get, put, pyAxis, codeOf, reportItem, paperLayout, sizeItems, sizeDialog, sizedCode, COLORS, DASHES, colorOf });
 }(typeof self !== 'undefined' ? self : this));

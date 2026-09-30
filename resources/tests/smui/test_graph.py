@@ -1392,6 +1392,10 @@ check('Ternary Plot: Marker Size and Transparency', (sorted({round(q, 6) for q i
 code, out, err = gc_run('scatter3d', {'size': [760, 620], 'cols': ['x', 'y', 'z'], 'color': None, 'marker': mk_}, tp, name='Plat')
 S3 = gc_axes(out)[0]['scatter3d'][0]
 check('Scatterplot 3D: Marker Size and Transparency', (sorted({round(q, 6) for q in S3['sizes']}), sorted({c_[-2:] for c_ in S3['colors']})), ([a3(9)], ['80']))
+# without a Marker Size of its own, the page's size for its number of points (pointSize: 4.5 up to 1500 rows)
+code, out, err = gc_run('scatter3d', {'size': [760, 620], 'cols': ['x', 'y', 'z'], 'color': None, 'pointSize': 4.5}, tp, name='Plat')
+S3 = gc_axes(out)[0]['scatter3d'][0]
+check('Scatterplot 3D: the page\'s point size when none is set (its pointSize)', sorted({round(q, 6) for q in S3['sizes']}), [a3(4.5)])
 code, out, err = gc_run('overlay', {'size': [760, 456], 'ys': [{'col': 'z', 'points': True, 'connect': True}], 'x': 'x', 'group': None, 'overlayY': True, 'sortX': True, 'thru': False, 'marker': mk_}, tp, name='Plat')
 L0 = gc_axes(out)[0]['lines'][0]
 check('Overlay Plot: Marker Size, and Transparency on the points only (the line stays opaque)', (err, round(L0['lw'], 3), L0['color']), (None, round(1.5 * 0.72, 3), PALETTE[0] + 'ff'))
