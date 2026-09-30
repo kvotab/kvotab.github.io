@@ -106,6 +106,11 @@ const KVOT = (() => {
       desc: 'Build the SRU files for Skatteverket from a SIE file, using BAS official account mapping.',
     },
     {
+      href: './flashcards.html',
+      label: 'Glosor',
+      desc: 'Practise English and Spanish vocabulary on cards, in Swedish: themes from colours and animals to irregular verbs, both ways round, the words read out, and word lists of one’s own from school that can be shared as a link.',
+    },
+    {
       href: './winnetkakort.html',
       label: 'Winnetkakort',
       desc: 'Practise the arithmetic facts with Winnetka cards, in Swedish: the task on the front, the answer on the back, and one pile for what you know and one for what needs more practice — addition and subtraction, the times tables, division, fractions, percent and negative numbers.',

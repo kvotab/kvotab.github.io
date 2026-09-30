@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <!-- resizes-content: on Android the keyboard shrinks the page rather than covering the card -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Glosor — kvot ab</title>
+  <meta name="description" content="Öva glosor i engelska och spanska med kort: ordet på framsidan, översättningen på baksidan, och en hög för det du kan och en för det du behöver öva mer på. Teman från färger och djur till oregelbundna verb, egna glosor från skolan och uppläsning av orden.">
+  <link rel="canonical" href="https://kvotab.se/flashcards.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Glosor — kvot ab">
+  <meta property="og:description" content="Öva glosor i engelska och spanska med kort, egna glosor från skolan och uppläsning av orden.">
+  <meta property="og:url" content="https://kvotab.se/flashcards.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+        // the full window (the page bar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('flashcards.full') === '1') document.documentElement.classList.add('wk-full');
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <!-- the cards, the piles and the phone layouts are Winnetkakort's; flashcards.css adds what words need -->
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930d">
+  <link rel="stylesheet" href="./resources/css/flashcards.css?v=20260930b">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body class="wk-body fc-body">
+<header></header>
+<div class="content wk-scroll" id="fc-scroll">
+<main class="wk">
+
+  <!-- A list somebody shared: offered, never added unasked. -->
+  <div class="wk-panel fc-import" id="fc-import" hidden>
+    <p class="fc-import-text" id="fc-import-text"></p>
+    <div class="fc-row">
+      <button type="button" class="wk-btn wk-btn-go" data-on-click="fc:importYes">Lägg till i Mina glosor</button>
+      <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:importNo">Nej tack</button>
+    </div>
+  </div>
+
+  <!-- ── Choosing the words ─────────────────────────────────────────────── -->
+  <section id="fc-home" class="wk-view" aria-labelledby="fc-home-title">
+    <div class="wk-intro">
+      <!-- The page bar. The kvot mark, the title and the theme switch stand in
+           for the site's header and footer where those are not shown: on a
+           phone, and in the full window. -->
+      <div class="wk-top">
+        <div class="wk-brand">
+          <a class="wk-homelink" href="./index.html"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: startsidan" width="28" height="28"></a>
+          <h1 id="fc-home-title" class="wk-title">Glosor</h1>
+        </div>
+        <div class="fc-lang" role="group" aria-label="Språk">
+          <button type="button" data-lang="en" aria-pressed="true" data-on-click="fc:lang">Engelska</button>
+          <button type="button" data-lang="es" aria-pressed="false" data-on-click="fc:lang">Spanska</button>
+        </div>
+        <div class="wk-who">
+          <label for="fc-who">Vem övar?</label>
+          <select id="fc-who" data-on-change="fc:who"></select>
+          <button type="button" class="wk-btn wk-btn-quiet" id="fc-newperson-btn" data-on-click="fc:newPerson">+ Ny</button>
+          <span class="wk-newperson" id="fc-newperson" hidden>
+            <input id="fc-newname" type="text" maxlength="30" autocomplete="off" aria-label="Namn" placeholder="Namn"
+                   data-on-keydown="fc:newNameKey">
+            <button type="button" class="wk-btn" data-on-click="fc:addPerson">Lägg till</button>
+            <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:cancelPerson">Avbryt</button>
+          </span>
+        </div>
+        <div class="wk-top-end">
+          <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+          <button type="button" class="wk-fullbtn" data-on-click="fc:full" aria-pressed="false" aria-label="Helt fönster">
+            <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+            <svg class="wk-full-in" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="wk-lead">
+        Varje kort har ett ord på framsidan och översättningen på baksidan. Ord du kan lägger du i
+        <span class="wk-word-kan">Kan</span>-högen, resten i <span class="wk-word-ova">Öva mer</span>-högen – och så övar du
+        på dem tills högen är tom. Välj teman nedan, eller skriv in glosorna du har fått i skolan.
+      </p>
+    </div>
+
+    <details class="wk-panel wk-settings" id="fc-settings">
+      <summary><span class="wk-panel-title">Inställningar</span><span class="wk-settings-sum" id="fc-settings-sum"></span></summary>
+      <div class="wk-settings-grid">
+        <fieldset>
+          <legend>Åt vilket håll?</legend>
+          <label><input type="radio" name="dir" value="till" data-on-change="fc:setting"> <span data-dir-label="till"></span></label>
+          <label><input type="radio" name="dir" value="fran" data-on-change="fc:setting"> <span data-dir-label="fran"></span></label>
+          <label><input type="radio" name="dir" value="blandat" data-on-change="fc:setting"> Blandat</label>
+        </fieldset>
+        <fieldset>
+          <legend>Så svarar du</legend>
+          <label><input type="radio" name="mode" value="skriv" data-on-change="fc:setting"> Skriv ordet</label>
+          <label><input type="radio" name="mode" value="valj" data-on-change="fc:setting"> Välj bland fyra</label>
+          <label><input type="radio" name="mode" value="vand" data-on-change="fc:setting"> Vänd kortet – säg ordet, vänd och kolla</label>
+          <label><input type="radio" name="mode" value="lyssna" data-on-change="fc:setting"> Lyssna och skriv</label>
+          <p class="wk-help" id="fc-speech-help" hidden>Den här webbläsaren kan inte läsa upp <span data-lang-name></span> – därför går det inte att lyssna.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Kort per omgång</legend>
+          <p class="wk-help">Är högen större tas först de ord du behöver öva mest på.</p>
+          <label><input type="radio" name="count" value="10" data-on-change="fc:setting"> 10</label>
+          <label><input type="radio" name="count" value="20" data-on-change="fc:setting"> 20</label>
+          <label><input type="radio" name="count" value="30" data-on-change="fc:setting"> 30</label>
+          <label><input type="radio" name="count" value="0" data-on-change="fc:setting"> Hela högen</label>
+        </fieldset>
+        <fieldset>
+          <legend>Bilder och ljud</legend>
+          <label><input type="checkbox" name="pics" data-on-change="fc:setting"> Visa bilder på korten</label>
+          <label><input type="checkbox" name="speak" data-on-change="fc:setting"> Läs upp ordet när kortet vänds</label>
+        </fieldset>
+        <fieldset class="fc-es-only">
+          <legend>Spanska: accenter</legend>
+          <label><input type="radio" name="accents" value="valfri" data-on-change="fc:setting"> Räknas som rätt ändå <span class="wk-eg">raton</span></label>
+          <label><input type="radio" name="accents" value="krav" data-on-change="fc:setting"> Måste vara med <span class="wk-eg">ratón</span></label>
+        </fieldset>
+        <fieldset class="fc-es-only">
+          <legend>Spanska: el och la</legend>
+          <label><input type="radio" name="article" value="valfri" data-on-change="fc:setting"> Behövs inte <span class="wk-eg">perro</span></label>
+          <label><input type="radio" name="article" value="krav" data-on-change="fc:setting"> Måste vara med <span class="wk-eg">el perro</span></label>
+        </fieldset>
+      </div>
+      <div class="wk-person-admin">
+        <button type="button" class="wk-btn wk-btn-quiet" id="fc-reset" data-on-click="fc:resetPerson"></button>
+        <button type="button" class="wk-btn wk-btn-quiet" id="fc-remove" data-on-click="fc:removePerson"></button>
+      </div>
+    </details>
+
+    <!-- What is due today and the pupil's own lists; the editor opens under them. -->
+    <div id="fc-groups-own"></div>
+
+    <!-- A list of one's own: what the teacher gave out this week. -->
+    <section class="wk-panel fc-editor" id="fc-editor" hidden aria-labelledby="fc-editor-title">
+      <h2 class="wk-panel-title" id="fc-editor-title">Ny lista</h2>
+      <div class="fc-editor-grid">
+        <label class="fc-field">Namn
+          <input id="fc-list-name" type="text" maxlength="40" autocomplete="off" placeholder="Till exempel Vecka 12">
+        </label>
+        <fieldset class="fc-field">
+          <legend>Språk</legend>
+          <label><input type="radio" name="listlang" value="en"> Engelska</label>
+          <label><input type="radio" name="listlang" value="es"> Spanska</label>
+        </fieldset>
+      </div>
+      <label class="fc-field" for="fc-list-text">Orden – ett par på varje rad, svenska först</label>
+      <textarea id="fc-list-text" rows="9" spellcheck="false" data-on-input="fc:listTyped"
+                placeholder="hund = dog&#10;katt = cat&#10;mamma = mum / mom"></textarea>
+      <p class="wk-help">Mellan orden går det bra med <b>=</b>, <b>-</b>, <b>;</b>, <b>:</b> eller en tabb. Snedstreck skiljer ord som är rätt båda två: <i>mum / mom</i>.</p>
+      <p class="fc-list-status" id="fc-list-status" aria-live="polite"></p>
+      <div class="fc-row">
+        <button type="button" class="wk-btn wk-btn-go" id="fc-list-save" data-on-click="fc:saveList">Spara listan</button>
+        <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:closeEditor">Avbryt</button>
+      </div>
+    </section>
+
+    <div id="fc-groups"></div>
+
+    <section class="wk-panel fc-progress" aria-labelledby="fc-progress-title">
+      <h2 id="fc-progress-title" class="wk-panel-title">Mina framsteg</h2>
+      <p class="fc-progress-sum" id="fc-progress-sum"></p>
+      <div id="fc-progress-list"></div>
+    </section>
+
+    <details class="wk-panel wk-about" id="fc-about">
+      <summary><span class="wk-panel-title">Om glosorna och hur man övar</span></summary>
+      <div class="wk-about-body">
+        <h3>Titta, täck, skriv, kolla</h3>
+        <p>
+          Det gamla sättet att plugga glosor fungerar fortfarande bäst: titta på ordet och säg det högt, täck över det,
+          skriv det själv och kolla sedan om det blev rätt. De ord du inte kunde övar du på igen, tills de sitter.
+          <i>Titta först</i> visar orden innan du börjar – sedan är korten täckta, och du skriver.
+        </p>
+        <h3>Lite varje dag, och åt båda hållen</h3>
+        <p>
+          Det är bättre att öva en stund varje dag än länge en gång i veckan. Sidan håller reda på det åt dig, som
+          lådorna i Leitners system: ord du inte kan kommer tillbaka varje dag, ord du nästan kan efter två dagar,
+          och ord du kan efter en vecka – så att de inte glöms bort. De hamnar i högen <i>Dags att repetera</i>.
+        </p>
+        <p>
+          Att förstå ett ord (engelska till svenska) och att kunna säga det själv (svenska till engelska) är två olika
+          saker, och båda behövs. Öva åt båda hållen – sidan räknar dem var för sig.
+        </p>
+        <h3>Så räknar sidan</h3>
+        <ul>
+          <li>Ett ord hamnar i <i>Kan</i>-högen när du har svarat rätt utan tips.</li>
+          <li>Stor eller liten bokstav spelar ingen roll, inte heller <i>a</i>, <i>the</i> eller <i>to</i> på engelska, eller
+            <i>en</i>, <i>ett</i> och <i>att</i> på svenska.</li>
+          <li>Är bara en bokstav fel blir det <i>nästan</i> – ordet får stavas rätt en gång till.</li>
+          <li>På spanska kan du själv välja om accenterna och el och la måste vara med. Knapparna under kortet ger
+            á, é, í, ó, ú, ñ och ü.</li>
+          <li>Framstegen sparas bara i den här webbläsaren. Ingenting skickas någonstans – inte heller dina egna
+            listor, förrän du själv delar en länk.</li>
+        </ul>
+        <h3>Egna glosor</h3>
+        <p>
+          Har du fått glosor i skolan? Tryck på <i>Ny lista</i> och skriv eller klistra in dem, ett par på varje rad.
+          Med <i>Dela</i> får du en länk: den som öppnar den kan lägga till listan hos sig. Listan finns i själva länken.
+        </p>
+        <h3>Läs mer</h3>
+        <ul class="wk-links">
+          <li><a href="https://lektionsbanken.se/lektioner/plugga-glosor/" target="_blank" rel="noopener noreferrer">Plugga glosor</a> (Lektionsbanken)</li>
+          <li><a href="https://www.grundskoleboken.se/wiki/Minnestekniker_-_glosor_och_begrepp" target="_blank" rel="noopener noreferrer">Minnestekniker för glosor, och Leitners lådor</a> (Grundskoleboken)</li>
+          <li><a href="https://urplay.se/program/176962-plugga-battre-glosor" target="_blank" rel="noopener noreferrer">Plugga bättre: Glosor</a> (UR Play)</li>
+          <li><a href="https://www.skolverket.se/undervisning/grundskolan/laroplan-lgr22-for-grundskolan-samt-for-forskoleklassen-och-fritidshemmet/curriculums/LGR22/GRGRENG01?schoolType=GR&amp;tosHeading=Kursplaner&amp;hasSubjects=true&amp;v=5" target="_blank" rel="noopener noreferrer">Kursplanen i engelska</a> (Skolverket)</li>
+          <li><a href="https://en.wikipedia.org/wiki/Leitner_system" target="_blank" rel="noopener noreferrer">Leitner system</a> (Wikipedia, engelska)</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="wk-selbar" id="fc-selbar">
+      <p class="wk-selbar-text" id="fc-selbar-text" aria-live="polite"></p>
+      <div class="wk-selbar-buttons">
+        <button type="button" class="wk-btn wk-btn-quiet" id="fc-clear" data-on-click="fc:clear">Rensa</button>
+        <button type="button" class="wk-btn wk-btn-quiet" id="fc-print-btn" data-on-click="fc:print">Skriv ut</button>
+        <button type="button" class="wk-btn" id="fc-study-btn" data-on-click="fc:study">Titta först</button>
+        <button type="button" class="wk-btn wk-btn-go" id="fc-start" data-on-click="fc:start">Börja öva</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Looking at the words first ─────────────────────────────────────── -->
+  <section id="fc-study" class="wk-view fc-study" hidden aria-labelledby="fc-study-title">
+    <div class="wk-bar">
+      <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:home">← Tillbaka</button>
+      <h2 class="wk-bar-title" id="fc-study-title">Titta på orden</h2>
+    </div>
+    <p class="wk-lead">Läs orden och säg dem högt. Tryck på ett ord för att höra det. När du är klar täcks orden, och du får skriva dem själv.</p>
+    <div class="fc-study-list" id="fc-study-list"></div>
+    <div class="fc-row fc-study-end">
+      <button type="button" class="wk-btn wk-btn-go" data-on-click="fc:start">Täck orden och börja öva</button>
+    </div>
+  </section>
+
+  <!-- ── Practising ─────────────────────────────────────────────────────── -->
+  <section id="fc-practice" class="wk-view wk-practice" hidden aria-label="Övning">
+    <div class="wk-bar">
+      <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:quit">← Avsluta</button>
+      <span class="wk-bar-title" id="fc-round-title"></span>
+      <span class="wk-bar-meta"><span id="fc-round-count"></span></span>
+      <button type="button" class="wk-fullbtn" data-on-click="fc:full" aria-pressed="false" aria-label="Helt fönster">
+        <svg class="wk-full-out" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+        <svg class="wk-full-in" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+      </button>
+    </div>
+    <div class="wk-stage">
+      <div class="wk-pile" data-pile="ova" id="wk-pile-ova" data-on-click="fc:pile">
+        <div class="wk-pile-stack" aria-hidden="true"></div>
+        <div class="wk-pile-n" id="fc-pile-ova-n">0</div>
+        <div class="wk-pile-label">Öva mer</div>
+      </div>
+      <div class="wk-deckbox">
+        <div class="wk-deck" id="fc-deck" tabindex="-1" data-on-click="fc:tapCard">
+          <!-- the cards under the one asked: what shows while it turns -->
+          <div class="wk-under" aria-hidden="true"></div>
+          <div class="wk-under" aria-hidden="true"></div>
+          <div class="wk-card" id="fc-card" data-side="front">
+            <div class="wk-face wk-front" id="fc-front"><div class="wk-paper">
+              <div class="wk-band" id="fc-band-front"></div>
+              <div class="fc-face">
+                <div class="fc-pic" id="fc-pic-front" aria-hidden="true"></div>
+                <div class="fc-prompt" id="fc-prompt"></div>
+                <div class="fc-sub" id="fc-sub"></div>
+                <div class="fc-ask" id="fc-ask"></div>
+                <div class="fc-answerbox" id="fc-answerbox"></div>
+              </div>
+            </div></div>
+            <div class="wk-face wk-back" id="fc-back" aria-hidden="true"><div class="wk-paper">
+              <div class="wk-band" id="fc-band-back"></div>
+              <div class="fc-face">
+                <div class="fc-pic" id="fc-pic-back" aria-hidden="true"></div>
+                <div class="fc-prompt fc-prompt-small" id="fc-prompt-back"></div>
+                <div class="fc-answer"><span id="fc-answer"></span><button type="button" class="fc-say" id="fc-say-back"
+                     data-say="back" data-on-click="fc:say" aria-label="Lyssna" hidden>🔊</button></div>
+                <div class="wk-verdict" id="fc-verdict"></div>
+              </div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+      <div class="wk-pile" data-pile="kan" id="wk-pile-kan" data-on-click="fc:pile">
+        <div class="wk-pile-stack" aria-hidden="true"></div>
+        <div class="wk-pile-n" id="fc-pile-kan-n">0</div>
+        <div class="wk-pile-label">Kan</div>
+      </div>
+    </div>
+    <!-- What answers the card. A column of its own only on a phone on its side. -->
+    <div class="wk-side">
+      <p class="wk-feedback" id="fc-feedback" role="status" aria-live="polite"></p>
+      <div class="fc-choices" id="fc-choices" hidden></div>
+      <div class="fc-accents" id="fc-accents" hidden></div>
+      <div class="wk-actions" id="fc-actions"></div>
+      <div class="wk-hint" id="fc-hint" hidden></div>
+    </div>
+  </section>
+
+  <!-- ── After a round ──────────────────────────────────────────────────── -->
+  <section id="fc-summary" class="wk-view wk-summary" hidden aria-labelledby="fc-sum-title">
+    <h2 id="fc-sum-title" tabindex="-1"></h2>
+    <div class="wk-sum-piles">
+      <div class="wk-sum-pile" data-pile="kan"><span class="wk-sum-n" id="fc-sum-kan"></span><span>Kan</span></div>
+      <div class="wk-sum-pile" data-pile="ova"><span class="wk-sum-n" id="fc-sum-ova"></span><span>Öva mer</span></div>
+    </div>
+    <div class="wk-sum-list" id="fc-sum-list"></div>
+    <div class="wk-sum-actions" id="fc-sum-actions"></div>
+  </section>
+
+</main>
+</div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<script src="./resources/js/kvot-errors.js?v=20260911"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20260930b"></script>
+<script src="./resources/js/flashcards-words.js?v=20260930"></script>
+<script src="./resources/js/flashcards.js?v=20260930"></script>
+<script>
+  KVOT.renderHeader('Glosor');
+  KVOT.renderNav('flashcards.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  FC.init();
+</script>
+</body>
+</html>

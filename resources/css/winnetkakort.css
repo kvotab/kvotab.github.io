@@ -1,6 +1,10 @@
 /*
   winnetkakort.html - practice cards for the arithmetic facts.
 
+  flashcards.html (glosor) is built on this file too: its cards, piles,
+  tiles, page bar and phone layouts are these, in the same markup, with
+  flashcards.css adding what words need. A change here shows on both pages.
+
   Colours come from the site's theme variables. The six pile colours are the
   exception: they are what tells one box of cards from another, as the
   coloured boxes in a classroom do, so each has a light and a dark value of
@@ -362,6 +366,8 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-practice[hidden], .wk-summary[hidden], .wk-view[hidden] { display: none; }
 
 .wk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; width: 100%; }
+/* "← Avsluta" never breaks in two: the title beside it gives way instead. */
+.wk-bar > .wk-btn { flex: none; white-space: nowrap; }
 .wk-bar-title { flex: 1 1 auto; font-family: RawengulkSans, verdana, sans-serif; font-size: 1.25rem; }
 .wk-bar-meta { display: flex; gap: 14px; font-size: .9rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 

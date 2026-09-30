@@ -1,0 +1,333 @@
+/*
+  flashcards.html - glosor on cards.
+
+  Built on winnetkakort.css, which the page loads first: the cards, the
+  piles, the tiles, the page bar, the full window and the phone layouts are
+  the same design, and the page uses the same markup for them. This file
+  adds only what words need: the word, picture and answer on a card, the
+  loudspeaker, four answers to choose from, the Spanish letters, the language
+  switch, lists of one's own, and the list of words to look at first.
+
+  Every size on a card is in cqi, against the deck (a container in
+  winnetkakort.css), so a word fits the card it is on, whatever size that
+  card has become on a phone. Fields are 16px or more: an iPhone zooms into
+  anything smaller.
+*/
+
+/* ── On the card ──────────────────────────────────────────────────────── */
+
+.fc-face {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .1em;
+  padding: 4px 16px 10px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.fc-pic { line-height: 1; font-size: clamp(1.5rem, 11cqi, 3.2rem); }
+.fc-pic:empty { display: none; }
+.fc-emoji { display: inline-block; }
+.fc-swatch {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  background: var(--fc-swatch);
+  border: 2px solid var(--wk-edge);
+  box-sizing: border-box;
+}
+
+.fc-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .25em;
+  max-width: 100%;
+  font-size: clamp(1.25rem, 10cqi, 3.1rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.fc-prompt[data-len="l"] { font-size: clamp(1.1rem, 7.5cqi, 2.4rem); }
+.fc-prompt[data-len="xl"] { font-size: clamp(1rem, 5.5cqi, 1.8rem); }
+.fc-prompt-small { font-size: clamp(.95rem, 5.5cqi, 1.6rem); color: var(--text-secondary); }
+.fc-sub { font-size: clamp(.8rem, 4cqi, 1.05rem); color: var(--text-secondary); }
+.fc-sub:empty { display: none; }
+.fc-ask { font-size: clamp(.75rem, 3.6cqi, .95rem); color: var(--text-muted); }
+.fc-ask:empty { display: none; }
+.fc-answerbox { width: 100%; display: flex; justify-content: center; margin-top: .2em; }
+.fc-answerbox:empty { display: none; }
+
+.fc-input {
+  box-sizing: border-box;
+  width: min(92%, 14em);
+  padding: .12em .3em;
+  font: inherit;
+  font-size: max(16px, clamp(1.05rem, 7cqi, 2rem));
+  text-align: center;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: none;
+  border-bottom: .12em solid var(--wk-edge);
+  border-radius: .2em .2em 0 0;
+  outline: none;
+}
+.fc-input:focus { border-bottom-color: var(--accent-line); background: color-mix(in srgb, var(--accent-line) 12%, var(--bg-secondary)); }
+.fc-input[readonly] { background: transparent; }
+.fc-q { font-size: clamp(1.4rem, 9cqi, 2.6rem); color: var(--text-muted); line-height: 1; }
+
+.fc-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .3em;
+  font-size: clamp(1.3rem, 10cqi, 3rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.fc-answer[data-len="l"] { font-size: clamp(1.1rem, 7.5cqi, 2.4rem); }
+.fc-answer[data-len="xl"] { font-size: clamp(1rem, 5.5cqi, 1.8rem); }
+.fc-answer > span { padding: 0 .15em; border-radius: .15em; background: var(--wk-c); }
+
+/* The loudspeaker: only there when the browser has a voice for the language. */
+.fc-say {
+  flex: none;
+  width: 2.1em;
+  height: 2.1em;
+  padding: 0;
+  font-size: max(15px, .5em);
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fc-say:hover { border-color: var(--accent-line); }
+.fc-say:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.fc-say-big { font-size: clamp(1.5rem, 11cqi, 2.8rem); width: 1.9em; height: 1.9em; }
+
+/* ── Beside the card ──────────────────────────────────────────────────── */
+
+.fc-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: min(100%, 560px);
+}
+.fc-choices[hidden] { display: none; }
+.fc-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 1.1rem;
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  overflow-wrap: anywhere;
+}
+.fc-choice:hover:not(:disabled) { border-color: var(--accent-line); }
+.fc-choice:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.fc-choice:disabled { cursor: default; }
+.fc-choice[data-state="right"] { background: var(--wk-kan-soft); border-color: var(--wk-kan); }
+.fc-choice[data-state="wrong"] { background: var(--wk-ova-soft); border-color: var(--wk-ova); }
+.fc-choice-n {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.6em;
+  font-size: .75rem;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+}
+
+.fc-accents { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.fc-accents[hidden] { display: none; }
+.fc-accents button {
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+  font: inherit;
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fc-accents button:active { background: var(--bg-secondary); }
+
+.fc-hint-letters { font-size: 1.3rem; letter-spacing: .04em; white-space: pre-wrap; }
+.fc-hint-pic { margin: 0; font-size: 2rem; line-height: 1; }
+
+/* ── The page bar: which language ─────────────────────────────────────── */
+
+.fc-lang { display: inline-flex; border: 1px solid var(--input-border); border-radius: 10px; overflow: hidden; }
+.fc-lang button {
+  min-height: 42px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: .95rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.fc-lang button + button { border-left: 1px solid var(--input-border); }
+.fc-lang button[aria-pressed="true"] { background: var(--accent-fill); color: #fff; font-weight: bold; }
+.fc-lang button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -3px; }
+
+/* The Spanish settings, for Spanish. */
+:root[data-fc-lang="en"] .fc-es-only { display: none; }
+
+/* ── Lists of one's own ───────────────────────────────────────────────── */
+
+.fc-newlist {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 118px;
+  margin: 0 6px 6px 0;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 2px dashed var(--wk-edge);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.fc-newlist:hover { color: var(--text-primary); border-color: var(--accent-line); }
+.fc-newlist:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
+.fc-newlist span { font-size: 1.4rem; }
+
+.fc-lists { display: flex; flex-direction: column; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }
+.fc-lists li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 0; border-top: 1px solid var(--border-color); }
+.fc-lists-name { font-weight: bold; }
+.fc-lists-n { margin-left: 6px; font-weight: normal; font-size: .85rem; color: var(--text-secondary); }
+.fc-share { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: .85rem; }
+.fc-share[hidden] { display: none; }
+.fc-share input {
+  flex: 1 1 260px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 16px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+}
+
+.fc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.fc-editor { border-color: var(--accent-line); }
+.fc-editor[hidden] { display: none; }
+.fc-editor-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 16px; margin: 10px 0 12px; }
+.fc-field { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+.fc-editor fieldset { margin: 0; padding: 4px 10px 8px; border: 1px solid var(--border-color); border-radius: 8px; }
+.fc-editor fieldset label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; font-size: .9rem; }
+.fc-editor input[type="text"], .fc-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  color: var(--input-text);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+}
+.fc-editor input[type="text"] { min-height: 42px; padding: 6px 10px; }
+.fc-editor textarea { padding: 10px; line-height: 1.5; resize: vertical; margin-top: 4px; }
+.fc-list-status { min-height: 1.4em; margin: 6px 0 10px; font-size: .9rem; }
+.fc-list-status[data-tone="ova"] { color: var(--accent-text); }
+
+.fc-import { margin: 0 0 16px; border-color: var(--accent-line); }
+.fc-import[hidden] { display: none; }
+.fc-import-text { margin: 0 0 10px; }
+
+/* ── Looking at the words first ───────────────────────────────────────── */
+
+.fc-study { padding-bottom: 24px; }
+.fc-study .wk-bar { margin-bottom: 8px; }
+.fc-study .wk-bar-title { margin: 0; font-weight: normal; }
+.fc-study-list ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.fc-study-row {
+  display: grid;
+  grid-template-columns: 2.4em minmax(0, 1fr) minmax(0, 1fr) 2.6em;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--wk-paper);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+.fc-study-pic { font-size: 1.5rem; text-align: center; line-height: 1; }
+.fc-study-sv { color: var(--text-secondary); }
+.fc-study-x { font-weight: bold; }
+.fc-study-row .fc-say { font-size: 15px; }
+.fc-study-end { justify-content: center; margin-top: 18px; }
+
+.fc-progress-sum { margin: 6px 0 8px; font-size: .9rem; }
+
+/* ── Phones ───────────────────────────────────────────────────────────── */
+
+@media (max-width: 680px) {
+  .fc-body .wk-top .fc-lang { order: 2; }
+  .fc-body .wk-top .wk-who { order: 3; }
+  .fc-choice { min-height: 48px; font-size: 1rem; }
+  .fc-editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .fc-study-row { grid-template-columns: 2em minmax(0, 1fr) minmax(0, 1fr) 2.4em; gap: 8px; padding: 6px 10px; font-size: .92rem; }
+}
+
+/* While the phone's keyboard is up (--fc-vh, from flashcards.js), the
+   practice view is the height that is left above it, so the card shrinks
+   instead of going under the keyboard. */
+@media (max-width: 680px), (max-height: 520px) and (orientation: landscape) {
+  .fc-body .wk-practice {
+    height: calc(var(--fc-vh, 100dvh) - var(--header-height) - var(--footer-height) - var(--wk-pad-top));
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .fc-choices { width: 100%; gap: 6px; }
+  .fc-choice { min-height: 40px; padding: 4px 8px; font-size: .95rem; }
+  .fc-accents { gap: 4px; }
+  /* All seven on one line in a column a third of the screen wide. */
+  .fc-accents button { min-width: 34px; min-height: 36px; font-size: 1rem; }
+}
+
+/* ── Printed cards ────────────────────────────────────────────────────── */
+
+@media print {
+  .fc-pc-word { padding: 0 3mm; text-align: center; overflow-wrap: anywhere; font-size: 17pt; }
+  .fc-pc-emoji { margin-top: 2mm; font-size: 18pt; line-height: 1; }
+  .fc-pc-swatch {
+    display: inline-block;
+    width: 9mm;
+    height: 9mm;
+    margin-top: 2mm;
+    border-radius: 50%;
+    background: var(--fc-swatch);
+    border: .3mm solid #999;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
