@@ -121,12 +121,13 @@ async def main():
     check('no script errors at load', page.errors, [])
     failed = await page.ev('SM.engine.failed.filter(f => f.error !== "not written yet").map(f => f.module + ": " + f.error)')
     check('tables.py imports in the engine', [f for f in failed if f.startswith('tables')], [])
-    menus = await page.ev('JSON.stringify(["Tables", "Cols", "Analyze", "File"].map(m => SM.app.menuItems(m).map(i => i.label || "—")))')
-    tables, cols, analyze, filem = json.loads(menus)
+    menus = await page.ev('JSON.stringify(["Tables", "Cols", "Analyze", "File", "Python"].map(m => SM.app.menuItems(m).map(i => i.label || "—")))')
+    tables, cols, analyze, filem, pythonm = json.loads(menus)
     check('the Tables menu', tables, ['Summary…', 'Subset…', 'Sort…', 'Stack…', 'Split…', 'Transpose…', 'Concatenate…', 'Join…', 'Update…', '—', 'Missing Data Pattern…'])
     check('the Cols menu has Formula, New Formula Column, Recode, Columns Viewer and Utilities', [c for c in cols if c in ('Formula…', 'New Formula Column', 'Recode…', 'Columns Viewer', 'Utilities')], ['Formula…', 'New Formula Column', 'Recode…', 'Columns Viewer', 'Utilities'])
     check('Analyze has Tabulate after Distribution', analyze.index('Tabulate') > analyze.index('Distribution…'), True)
-    check('File has Python Script…', 'Python Script…' in filem, True)
+    check('Python has Script…, after the notebooks; File has it no more',
+          (pythonm[:4], 'Python Script…' in filem), (['New Notebook', 'Open Notebook…', 'Report Script in Notebook', 'Script…'], False))
 
     # ---- Summary through its dialog, linked to the source ----------------------------------------------
     r = await js(page, r'''
@@ -646,13 +647,17 @@ async def main():
     r = await js(page, r'''
       const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
       const n0 = SM.app.reports.length;
-      T.cmd('File', 'Python Script…');
+      T.cmd('Python', 'Script…');
       const rep = SM.app.reports[SM.app.reports.length - 1];
       await T.done(rep);
       const warnHidden = rep.body.querySelector('.sm-ob-warn').hidden;
-      const ta = rep.body.querySelector('textarea.smp-code');
+      const ta = rep.body.querySelector('.smp-editor textarea');
       T.set(ta, 'print(df.shape, df["sex"].dtype)\nresult = df.groupby("sex", observed=True)["height (cm)"].mean().reset_index()');
+      // in colour, as the notebook's editor shows it: a built-in, a string, a keyword
+      const hl = rep.body.querySelector('.smp-editor .sm-ed-hl');
+      const colours = ['t-b', 't-s', 't-k'].map((c) => [...hl.querySelectorAll('.' + c)].map((x) => x.textContent)[0] || null);
       // Tab indents
+      ta.focus();
       ta.setSelectionRange(0, 0);
       ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
       const indented = ta.value.startsWith('    print');
@@ -674,10 +679,11 @@ async def main():
       await T.done(p2);
       const warn2 = !p2.body.querySelector('.sm-ob-warn').hidden;
       const ran = !!p2.body.querySelector('.smp-stdout');
-      return { warnHidden, indented, dedented, out, want: `(${t.nrows}, ${t.columns.length}) category`, made: [made.name, made.columns.map((c) => c.name), made.col('sex').modelingType, made.nrows], err, warn2, ran };
+      return { warnHidden, colours, indented, dedented, out, want: `(${t.nrows}, ${t.columns.length}) category`, made: [made.name, made.columns.map((c) => c.name), made.col('sex').modelingType, made.nrows], err, warn2, ran };
     ''', 'Python script')
     if r:
         check('a script opened from the menu has no warning', r['warnHidden'], True)
+        check('the script is in colour: print a built-in, "sex" a string, True a keyword', r['colours'], ['print', '"sex"', 'True'])
         check('Tab indents and shift+Tab dedents', (r['indented'], r['dedented']), (True, True))
         check('Run shows what the script prints', r['out'].strip(), r['want'])
         check('result becomes a data table', r['made'], ['Python result', ['sex', 'height (cm)'], 'nominal', 2])

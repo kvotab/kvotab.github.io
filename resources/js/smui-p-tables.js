@@ -29,7 +29,7 @@
    Analyze > Screening > Explore Missing Values   reports, clustering, snapshot,
                                imputation (mean, median, EM with or without
                                shrinkage, low-rank SVD, MICE)
-   File > Python Script…       Python against the table as a DataFrame
+   Python > Script…            Python against the table as a DataFrame
    File > Import Multiple Files…   many files into one table
 
    The statistics are pandas and numpy in the engine (smui/tables.py);
@@ -1995,7 +1995,7 @@
     },
   });
 
-  /* ---- File > Python Script… --------------------------------------------------------------------------------- */
+  /* ---- Python > Script… ------------------------------------------------------------------------------------- */
   const SCRIPT_EXAMPLES = [
     ['Describe the table', 'print(df.describe(include="all"))'],
     ['Group means', 'result = df.groupby(df.columns[1], observed=True).mean(numeric_only=True).reset_index()\nprint(result)'],
@@ -2005,7 +2005,7 @@
   const DEFAULT_SCRIPT = '# df is the table: its included rows, columns by their names\nprint(df.shape)\nprint(df.head())\n';
   const outputs = new WeakMap();   // report -> the last run's output
   const typed = new WeakSet();     // reports whose code was typed or opened in this session
-  let opening = false;             // set while File > Python Script opens its report
+  let opening = false;             // set while Python > Script opens its report
 
   function lastScript() { try { return localStorage.getItem('smui.pyscript') || DEFAULT_SCRIPT; } catch (e) { return DEFAULT_SCRIPT; } }
 
@@ -2036,7 +2036,7 @@
     if (out.result) {
       const btn = el('button', { type: 'button', class: 'sm-btn small primary', text: 'Make into Data Table' });
       btn.addEventListener('click', () => {
-        const nt = fromBackend(out.result, { name: uniqueTable('Python result'), source: 'File > Python Script: result' });
+        const nt = fromBackend(out.result, { name: uniqueTable('Python result'), source: 'Python > Script: result' });
         SM.app.addTable(nt);
       });
       box.append(el('div', { class: 'smp-result' }, el('span', { text: `result is a ${out.result_type} of ${out.result.nrows} rows × ${out.result.columns.length} columns. ` }), btn));
@@ -2057,28 +2057,18 @@
       const rep = ctx.report;
       if (opening) typed.add(rep);
       const code = String(ctx.opt('code', DEFAULT_SCRIPT));
-      const ed = el('textarea', { class: 'smp-code', rows: 14, spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off', 'aria-label': 'Python code', wrap: 'off' });
-      ed.value = code;
-      const save = SM.util.debounce(() => { ctx.set('code', ed.value, null, { rerun: false }); try { localStorage.setItem('smui.pyscript', ed.value); } catch (e) { /* private window */ } }, 250);
-      ed.addEventListener('input', () => { typed.add(rep); save(); });
-      ed.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Tab' && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
-          ev.preventDefault();
-          const s = ed.selectionStart, e = ed.selectionEnd;
-          const v = ed.value;
-          if (!ev.shiftKey && s === e) ed.setRangeText('    ', s, e, 'end');
-          else {
-            // indent or dedent the lines of the selection
-            const a = v.lastIndexOf('\n', s - 1) + 1;
-            const b = e > s && v[e - 1] === '\n' ? e - 1 : e;
-            const lines = v.slice(a, b).split('\n');
-            const next = lines.map((l) => (ev.shiftKey ? l.replace(/^ {1,4}/, '') : `    ${l}`)).join('\n');
-            ed.setRangeText(next, a, b, 'select');
-          }
-          typed.add(rep);
-          save();
-        } else if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); runBtn.click(); }
+      // The notebook's editor (smui-editor.js): the code in colour, with its keys (Tab and shift+Tab,
+      // Enter's indent, ctrl/⌘+/); ctrl/⌘+Enter runs.
+      const ed = SM.editor.create({
+        value: code, language: 'python', label: 'Python code',
+        onKey: (ev) => {
+          if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { runBtn.click(); return true; }
+          return false;
+        },
       });
+      ed.el.classList.add('smp-editor');
+      const save = SM.util.debounce(() => { ctx.set('code', ed.value, null, { rerun: false }); try { localStorage.setItem('smui.pyscript', ed.value); } catch (e) { /* private window */ } }, 250);
+      ed.on('change', () => { typed.add(rep); save(); });
       const outBox = el('div', { class: 'smp-out', 'aria-live': 'polite' });
       const runBtn = el('button', { type: 'button', class: 'sm-btn primary', text: 'Run' });
       runBtn.addEventListener('click', async () => {
@@ -2105,7 +2095,7 @@
       const warnBox = el('div', { class: 'sm-ob-warn', text: 'This code came with a saved project or file. Read it before you run it: Python here can do whatever this page can do in the browser.', hidden: typed.has(rep) });
       const o = ctx.outline('Script', { key: 'editor', info: 'cmd:pyscript' });
       o.add(ctx.note(`df is ${t.name}: ${ctx.rows.length} rows (excluded rows left out), the columns by their names, nominal and ordinal columns as pandas Categoricals, dates as milliseconds since 1970. np, pd, sm (statsmodels.api), smf (statsmodels.formula.api) and stats (scipy.stats) are imported. Set result to a DataFrame to make it a data table. The code runs only when you press Run, each time in a fresh namespace.`),
-        warnBox, ed, el('div', { class: 'smp-bar' }, runBtn, ex, el('span', { class: 'sm-ob-note', text: 'Tab indents; ctrl/⌘+Enter runs.' })));
+        warnBox, ed.el, el('div', { class: 'smp-bar' }, runBtn, ex, el('span', { class: 'sm-ob-note', text: 'Tab indents; ctrl/⌘+/ comments lines; ctrl/⌘+Enter runs.' })));
       const out = ctx.outline('Output', { key: 'output' });
       out.add(outBox);
       renderOutput(outBox, outputs.get(rep));
@@ -2277,9 +2267,9 @@
         ['Continue Sequence to End of Table', 'Numbers (and dates) along the straight line through the selected values: 1, 2 go on 3, 4, 5; dates a week apart go on a week at a time.'],
       ] }] },
     'grid:headergraphs': { kicker: 'The grid', title: 'Header Graphs', lead: 'The Header Graphs button in the grid\'s bar puts a small graph under each column\'s heading: a histogram of a continuous column, a bar for each level of a nominal or ordinal one (the largest 30 when there are more). Every row counts; the selected rows\' share is drawn darker. Hovering a graph says what it shows. Off at the start; the page remembers it in this browser.' },
-    'cmd:pyscript': { kicker: 'File', title: 'Python Script', lead: 'A report tab with a Python editor. The code runs in the page\'s Python engine only when you press Run, in a fresh namespace, with df the table (included rows, the real column names, nominal and ordinal columns as Categoricals) and np, pd, sm, smf and stats imported.', sections: [
+    'cmd:pyscript': { kicker: 'Python', title: 'Python Script', lead: 'A report tab with a Python editor, the code in colour. The code runs in the page\'s Python engine only when you press Run, in a fresh namespace, with df the table (included rows, the real column names, nominal and ordinal columns as Categoricals) and np, pd, sm, smf and stats imported.', sections: [
       { heading: 'In the report', choices: [
-        ['The editor', 'Your Python. Tab indents (every selected line, when several are), shift+Tab takes an indent back, ctrl/⌘+Enter runs. The code is kept with the report, and in this browser as the start of the next script.'],
+        ['The editor', 'Your Python, in colour: keywords, strings, numbers, comments. Tab indents (every selected line, when several are) and shift+Tab takes an indent back; Enter keeps the indent, one more after a colon; ctrl/⌘+/ comments the lines out or in; ctrl/⌘+Enter runs; Escape, then Tab, leaves the editor. The code is kept with the report, and in this browser as the start of the next script.'],
         ['Run', 'Runs the code on the table\'s included rows, each time in a fresh namespace; nothing runs before you press it.'],
         ['Examples ▾', 'Puts an example in the editor in place of what is there: describe the table, group means, a regression with statsmodels\' formulas, a t test.'],
         ['Make into Data Table', 'Shown when the code left a DataFrame (or Series) in result: opens it as a new data table.'],
@@ -2307,7 +2297,7 @@
   reg({ menu: 'Cols/Utilities', label: 'Make Indicator Columns…', order: 10, enabled: hasTable, action: (app) => indicatorCommand(app) });
   reg({ menu: 'Cols/Utilities', label: 'Make Binning Column…', order: 20, enabled: hasTable, action: (app) => binningCommand(app) });
   reg({ menu: 'Cols/Utilities', label: 'Standardize', order: 30, enabled: hasTable, action: (app) => standardizeCommand(app) });
-  reg({ menu: 'File', label: 'Python Script…', order: 150, enabled: hasTable, action: openScript, about: 'Python against the table, in a report tab' });
+  reg({ menu: 'Python', label: 'Script…', order: 40, enabled: hasTable, action: openScript, about: 'Python against the table, in a report tab' });
   reg({ menu: 'File', label: 'Import Multiple Files…', order: 25, action: importMultipleCommand, about: 'Many text files (or a folder of them) into one table: a row per file with its name and text, or their tables stacked' });
 
   SM.tables = Object.freeze({ copyTable, fromBackend, concatenate, applyUpdate, applyRecode, makeBinning, nfcItems, linkRows, binCuts, TRANSFORMS, transformMenu, makeTransform, specOf, similarGroups, editDistance, subsetRows });

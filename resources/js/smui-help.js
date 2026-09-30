@@ -226,6 +226,7 @@
         '**Restart** forgets the notebook\'s variables. A cell cannot be stopped in the middle: **Stop** restarts Python itself, which every notebook, and any report still calculating, feels.',
         '**Save ▾** writes the notebook as a Jupyter notebook (.ipynb, with its outputs) or as a Python script with `# %%` cells; **File > Open** reads both, and a saved project keeps its notebooks. A notebook opened from a file runs nothing until you run it.',
         'In a report, each **Python code** block has **Edit**: the code becomes editable, **Run** runs it on its own (the table read as the code reads it) and shows its output, figures too, under the block, and **Reset** puts the report\'s code back; an edit lasts until the report is drawn again. **Notebook** sends a block to a notebook as a cell, and **Save ▾ > Open Script in Notebook** the report\'s whole script, a cell per result.',
+        '**Python > Script…** is a script for the table in front, in a report tab: its code in colour, run on the table\'s included rows as `df` when you press **Run** (or Ctrl/⌘+Enter), each time afresh. A DataFrame left in `result` becomes a data table with **Make into Data Table**.',
       ]),
 
       h('h2', 'JSL to Python', 'jsl'),
