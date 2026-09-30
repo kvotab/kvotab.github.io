@@ -257,7 +257,9 @@ published and offers no Download; with one it gives the version, size, date
 and the VS Code needed, and Download fetches this version's copy (`?v=`) under
 a name with the version in it; a broken note is reported. The note is stubbed
 as test-sample.py stubs its manifest, and what is really in `rb-vscode/dist`,
-if anything, must be the size and hash its note says.
+if anything, must be the size and hash its note says, and the note signed with
+the release key the extension carries (installed copies check that before
+they update themselves; rb-vscode/test/README.md has the updater's own tests).
 
     python3 test-extension.py
 

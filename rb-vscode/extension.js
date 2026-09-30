@@ -15,7 +15,9 @@
      several files in one view for rb's intersect and union;
    * a file dropped on a view going into it as another file, as Add Files
      would add it, not into a view of its own (browserShowingBehind), and
-     several files dropped at once going into one view (gatherInto).
+     several files dropped at once going into one view (gatherInto);
+   * updates: a newer version, released on kvotab.se, installed by itself
+     once its signature is checked (src/update.js).
 
    The page may ask only about files this view was given, and is given
    tokens, never paths: what it is shown comes from a file that may have been
@@ -30,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Worker } = require('worker_threads');
+const { Updater } = require('./src/update');
 
 const VIEW_TYPE = 'kvotab.hdf5Browser';
 /** rb-lazy.js RB_LAZY_MIN_BYTES: from this size a file is read lazily. */
@@ -797,6 +800,13 @@ function activate(context) {
   const log = vscode.window.createOutputChannel('HDF5 Browser', { log: true });
   context.subscriptions.push(log);
 
+  // First, so that a copy whose page cannot start still updates itself. A
+  // copy run from its folder (development, the tests) looks only when asked.
+  let provider = null;
+  const updater = new Updater({ vscode, context, log, event: e => provider && provider.event(e) });
+  context.subscriptions.push(vscode.commands.registerCommand('kvotab.hdf5Browser.checkForUpdates', () => updater.check(true)));
+  if (context.extensionMode === vscode.ExtensionMode.Production) context.subscriptions.push(updater.start());
+
   let build;
   try {
     build = JSON.parse(fs.readFileSync(path.join(__dirname, 'media', 'build.json'), 'utf8'));
@@ -809,7 +819,7 @@ function activate(context) {
   log.info(`HDF5 Browser ${context.extension.packageJSON.version}, page ${build.stamp}`);
 
   const reader = new Reader(build, log);
-  const provider = new Hdf5BrowserProvider(context, build, reader, log);
+  provider = new Hdf5BrowserProvider(context, build, reader, log);
   context.subscriptions.push(
     reader,
     vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
@@ -826,7 +836,7 @@ function activate(context) {
 
   // What test/runner.js drives in an integration test; an installed copy
   // (Production mode) gives nothing out.
-  if (context.extensionMode !== vscode.ExtensionMode.Production) return { provider, log, viewType: VIEW_TYPE };
+  if (context.extensionMode !== vscode.ExtensionMode.Production) return { provider, log, viewType: VIEW_TYPE, updater };
   return undefined;
 }
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.5
+
+* The extension updates itself from kvotab.se. Twice a day (soon after
+  VS Code starts, unless it looked in the last twelve hours, and every twelve
+  hours while it runs) it reads the site's release note; a newer version is
+  downloaded, checked and installed, and the window offers *Reload Window* to
+  start it. *HDF5 Browser: Check for Updates*, in the Command Palette and the
+  extension's gear menu, looks at once. `hdf5Browser.updates` (`install`,
+  `notify` or `off`) says what a new version leads to, and VS Code's own
+  Auto Update and Auto Check Updates settings, when off, hold it back.
+* Only a release signed with kvotab's release key is installed: the note's
+  signature covers the version and the package's SHA-256, and is checked
+  with the key the extension carries.
+* This is the last version to install by hand: the ones after it arrive by
+  themselves.
+
 ## 0.1.4
 
 * From the site: a group whose index list is Pathways or Exposed groups draws

@@ -2,7 +2,7 @@
   "name": "hdf5-browser",
   "displayName": "HDF5 Browser",
   "description": "Browse HDF5 (.h5) files in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "kvotab",
   "icon": "icon.png",
   "license": "MIT",
@@ -67,6 +67,11 @@
         "command": "kvotab.hdf5Browser.showLog",
         "title": "Show Log",
         "category": "HDF5 Browser"
+      },
+      {
+        "command": "kvotab.hdf5Browser.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "HDF5 Browser"
       }
     ],
     "menus": {
@@ -81,6 +86,13 @@
         {
           "command": "kvotab.hdf5Browser.openTogether",
           "when": "false"
+        }
+      ],
+      "extension/context": [
+        {
+          "command": "kvotab.hdf5Browser.checkForUpdates",
+          "when": "extension == kvotab.hdf5-browser && extensionStatus == installed",
+          "group": "0_update"
         }
       ]
     },
@@ -121,6 +133,25 @@
           ],
           "default": "auto",
           "markdownDescription": "Light or dark mode in the HDF5 Browser's views. The toggle at the right of a view's header sets this; toggling back to the mode VS Code is in sets it to `auto` again."
+        },
+        "hdf5Browser.updates": {
+          "type": "string",
+          "enum": [
+            "install",
+            "notify",
+            "off"
+          ],
+          "enumDescriptions": [
+            "A new version is installed when it is out, and the window is offered a reload to start it.",
+            "A new version is offered, and installed if you choose to.",
+            "No looking by itself: only HDF5 Browser: Check for Updates looks."
+          ],
+          "default": "install",
+          "scope": "application",
+          "tags": [
+            "usesOnlineServices"
+          ],
+          "markdownDescription": "What a new version of the HDF5 Browser leads to. The extension comes from [kvotab.se](https://kvotab.se/rb.html), not from the Marketplace, so it looks there itself, reading the site's release note twice a day: soon after VS Code starts, unless it looked in the last twelve hours, and every twelve hours while VS Code runs. A version is installed only if its signature shows kvotab released it. With VS Code's own `#extensions.autoUpdate#` off, a new version is offered rather than installed; with `#extensions.autoCheckUpdates#` off, the extension looks only when asked, as with `off`."
         }
       }
     }

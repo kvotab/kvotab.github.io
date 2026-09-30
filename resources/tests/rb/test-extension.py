@@ -14,7 +14,10 @@ reads latest.json when it opens, so a release needs no change to the page:
 
 The note is stubbed by replacing window.fetch, as test-sample.py stubs its
 manifest. What is really published is checked too, when there is something:
-the served package is the size and hash the served note says.
+the served package is the size and hash the served note says, and the note is
+signed with the release key the extension carries (rb-vscode/src/update.js
+checks it so before an installed copy updates itself; a note from before the
+signing, 0.1.4's, is said to be one).
 
 Start the server and the browser as in README.md, then
 
@@ -25,6 +28,8 @@ Exit status is 0 when every check passes.
 import asyncio
 import hashlib
 import json
+import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -45,6 +50,17 @@ def check(label, got, want=True):
     if not ok:
         failures.append(label)
 
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+# Whether the note's signature is the release key's, checked by the updater's own code.
+VERIFY = r"""
+const crypto = require('crypto');
+const fs = require('fs');
+const [update, key, id, version, sha256, signature] = process.argv.slice(1);
+const { verifyRelease } = require(update);
+process.stdout.write(String(verifyRelease(crypto.createPublicKey(fs.readFileSync(key)), id, version, sha256, signature)));
+"""
 
 # Answer the release note with whatever this test wants; `body` of None stands for a 404.
 STUB = """(() => {
@@ -130,9 +146,17 @@ async def main():
                 data = urllib.request.urlopen('http://127.0.0.1:8765/rb-vscode/dist/hdf5-browser.vsix').read()
                 check('the published package is the size and hash its note says',
                       (len(data), hashlib.sha256(data).hexdigest()), (served['bytes'], served['sha256']))
-                package = json.load(open(__file__.rsplit('/resources/', 1)[0] + '/rb-vscode/package.json'))
+                package = json.load(open(os.path.join(ROOT, 'rb-vscode', 'package.json')))
                 check('  and a zip, of the version package.json had when it was released',
                       (data[:2], served['version'].count('.')), (b'PK', 2))
+                if 'signature' in served:
+                    signed = subprocess.run(['node', '-e', VERIFY, os.path.join(ROOT, 'rb-vscode', 'src', 'update.js'),
+                                             os.path.join(ROOT, 'rb-vscode', 'src', 'release-public-key.pem'),
+                                             f'{package["publisher"]}.{package["name"]}', served['version'], served['sha256'],
+                                             served['signature']], capture_output=True, text=True)
+                    check('  and signed with the release key the extension carries', signed.stdout or signed.stderr[-300:], 'true')
+                else:
+                    print(f'skip  the signature: the note of {served["version"]} is from before the releases were signed')
                 print(f'      published: {served["version"]} (package.json now {package["version"]})')
 
             check('no console errors throughout', page.logs[:3], [])

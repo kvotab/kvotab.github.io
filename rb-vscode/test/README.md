@@ -1,6 +1,27 @@
 # Tests of the HDF5 Browser extension
 
-Four, from the cheapest up. All need `node build.mjs` first.
+Six, from the cheapest up. All but the first need `node build.mjs` first.
+
+## test-update.mjs: what the updater installs, refuses and says
+
+`src/update.js` against a site of its own (a local server whose release note
+and package each case sets), with a stand-in for VS Code's API and a release
+key made for the run. A newer version is installed only when its note is
+signed with the release key over that version and the package's SHA-256, and
+the package is that one: signed with another key, an older release's
+signature on a newer version, no signature or no hash, a package changed or
+longer than the note says are all refused, said once, and not sent to the
+site to be fetched by hand. Also: up to date (an older, unsigned note too),
+the three modes and VS Code's own Auto Update and Auto Check Updates, one
+look for twelve hours across windows (and a clock put back), an offer left
+open not holding up the command, a version another window installed (and one
+VS Code is to remove), another window's lock (and a stale one), VS Code
+refusing the install, a copy run from its folder, a note that is missing, not
+JSON or unreachable, a VS Code too old, the key the extension carries, and
+release.mjs refusing to release without the private key or with the wrong
+one. 68 checks, a few seconds, no VS Code:
+
+    node rb-vscode/test/test-update.mjs
 
 ## test-reader.py: the reader answers as the site's worker does
 
@@ -88,6 +109,24 @@ a drag from the workbench into the webview's frame, so a drop with Shift
 starts over the page, which is what the page gets of a real one. Every drag
 starts with a mouse move: that is what gives a webview its pointer events
 back after the drag before, as a real pointer does.
+
+## test-update.py: an installed copy updates itself
+
+This folder, packaged, installed into a VS Code of its own as a download
+from the site is; a server here plays the site, offering the next version
+(this package with its version raised), signed with a key made for the run
+(KVOT_HDF5_UPDATE_URL and KVOT_HDF5_UPDATE_KEY point the extension at them).
+Twenty seconds after VS Code starts the copy installs it by itself and offers
+the reload; *Reload Window*, clicked in the notification, starts the new
+version, and VS Code marks the old one for removal; the new one does not look
+again so soon; *Check for Updates* from the Command Palette says it is up to
+date; and the extension's gear menu in the Extensions view has the command
+(read where VS Code draws its menus in the window; 1.100, which has no
+`window.menuStyle`, uses macOS's own, and that check is skipped). No
+test/runner.js: a copy run from its folder is never updated. 16 checks on
+1.135, 15 on 1.100.
+
+    RB_VSCODE_EXE=... python3 rb-vscode/test/test-update.py
 
 ## Running VS Code for them
 
