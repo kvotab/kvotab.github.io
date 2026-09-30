@@ -254,6 +254,10 @@ async function main() {
   /* ── the page's own files, and what they name ─────────────────────── */
 
   const sources = {};
+  // Every file of the repository whose bytes go into media/: the build is
+  // marked with local changes (its stamp ends in +) only when one of these,
+  // rb.html or the extension's own files have some.
+  const bundled = new Set(copied);
   for (const rel of [...copied]) {
     let bytes = read(rel);
     if (rel === 'resources/js/rb-state.js') {
@@ -265,6 +269,7 @@ async function main() {
       for (const m of bytes.toString('utf8').matchAll(/url\(\s*['"]?(?!data:)([^'")]+)['"]?\s*\)/g)) {
         const dep = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1]));
         write(path.join(MEDIA, dep), read(dep));
+        bundled.add(dep);
       }
     }
   }
@@ -276,6 +281,7 @@ async function main() {
       const wrel = local(m[1]);
       if (!fs.existsSync(path.join(ROOT, wrel))) fail(`${rel} starts a worker ${m[1]} that is not in the repo`);
       workers[wrel] = read(wrel).toString('utf8');
+      bundled.add(wrel);
     }
   }
   if (!workers['resources/js/rb-lazy-worker.js'] || !workers['resources/js/tree-worker.js']) {
@@ -337,8 +343,10 @@ async function main() {
   let dirty = false;
   try {
     commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT }).toString().trim();
-    dirty = execFileSync('git', ['status', '--porcelain', '--', 'rb.html', 'resources/js', 'resources/css', 'rb-vscode'], { cwd: ROOT })
-      .toString().split('\n').some(line => line.trim() && !/\s(rb-vscode\/(media|node|\.cache)\/)/.test(line));
+    // Not the other pages' files, which change with work on those; not what
+    // this builds (media/, node/) or releases (dist/).
+    dirty = execFileSync('git', ['status', '--porcelain', '--', 'rb.html', 'LICENSE', 'rb-vscode', ...bundled], { cwd: ROOT })
+      .toString().split('\n').some(line => line.trim() && !/\s(rb-vscode\/(media|node|\.cache|dist)\/)/.test(line));
   } catch (_) { /* not a git checkout */ }
   const built = new Date().toISOString();
   const stamp = `${commit}${dirty ? '+' : ''} ${built.slice(0, 16).replace('T', ' ')}`;
