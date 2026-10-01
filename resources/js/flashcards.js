@@ -34,10 +34,12 @@ const FC = (() => {
   const FULL_KEY = 'flashcards.full';
   const DEFAULTS = Object.freeze({
     lang: 'en', dir: 'till', mode: 'skriv', count: 20, pics: true, speak: true, accents: 'valfri', article: 'valfri', sound: false,
+    look: 'kvot',
   });
   const CHOICES = Object.freeze({
     lang: ['en', 'es'], dir: ['till', 'fran', 'blandat'], mode: ['skriv', 'valj', 'vand', 'lyssna'], count: [10, 20, 30, 0],
     pics: [true, false], speak: [true, false], accents: ['valfri', 'krav'], article: ['valfri', 'krav'], sound: [true, false],
+    look: CARD_LOOKS.ids,
   });
 
   let store = null;
@@ -432,7 +434,15 @@ const FC = (() => {
     document.querySelector('#fc-settings input[name=speak]').disabled = !speakable;
     $('fc-speech-help').hidden = speakable;
     const mode = effectiveMode();
-    $('fc-settings-sum').textContent = [DIR_LABEL[st.dir](), MODE_LABEL[mode], st.count ? `${st.count} kort per omgång` : 'hela högen'].join(' · ');
+    const summary = [DIR_LABEL[st.dir](), MODE_LABEL[mode], st.count ? `${st.count} kort per omgång` : 'hela högen'];
+    if (st.look !== CARD_LOOKS.DEFAULT) summary.push(CARD_LOOKS.label(st.look));
+    $('fc-settings-sum').textContent = summary.join(' · ');
+    /* The picker is made once and then only marked, so the tile just pressed
+       keeps the focus; the page is in this person's look. */
+    const picker = $('fc-looks');
+    if (!picker.childElementCount) picker.innerHTML = CARD_LOOKS.pickerHtml(st.look, 'fc:look', 'hund');
+    else CARD_LOOKS.markPicked(picker, st.look);
+    CARD_LOOKS.apply(st.look);
   }
 
   /* Listening needs a voice; without one the page types instead. */
@@ -1219,6 +1229,12 @@ const FC = (() => {
       'fc:print': () => printCards(),
       'fc:full': () => setFull(!document.documentElement.classList.contains('wk-full')),
       'fc:sound': () => setSound(!settings().sound),
+      /* A look is each person's own, like their other settings. */
+      'fc:look': (e, el) => {
+        if (!CARD_LOOKS.valid(el.dataset.look)) return;
+        setSetting('look', el.dataset.look);
+        renderSettings();
+      },
       'fc:setting': onSetting,
       'fc:lang': (e, el) => {
         if (el.dataset.lang === lang()) return;
@@ -1348,6 +1364,7 @@ const FC = (() => {
       if (speech.supported) speechSynthesis.addEventListener('voiceschanged', () => { if (!$('fc-home').hidden) renderSettings(); });
       watchKeyboard();
       fullState();
+      CARD_LOOKS.apply(settings().look);
       WK_SOUND.setOn(settings().sound, false);
       soundState();
       /* A browser lets the audio run only after a tap or a key: the first one

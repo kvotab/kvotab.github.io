@@ -39,7 +39,7 @@ const WK = (() => {
   let store = null;
   let saveWarned = false;
 
-  const newProfile = name => ({ name, facts: Object.create(null), best: Object.create(null) });
+  const newProfile = name => ({ name, look: CARD_LOOKS.DEFAULT, facts: Object.create(null), best: Object.create(null) });
 
   function loadStore() {
     let raw = null;
@@ -65,6 +65,7 @@ const WK = (() => {
           if (!/^p\d{1,6}$/.test(id) || !p || typeof p !== 'object') continue;
           const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim().slice(0, 30) : 'Jag';
           const profile = newProfile(name);
+          if (CARD_LOOKS.valid(p.look)) profile.look = p.look;
           if (p.facts && typeof p.facts === 'object') {
             for (const [key, st] of Object.entries(p.facts)) {
               if (!st || typeof st !== 'object' || !Number.isFinite(st.n) || st.n < 1) continue;
@@ -376,7 +377,20 @@ const WK = (() => {
       st.limit ? `snabbt inom ${st.limit} s` : 'ingen tidsgräns',
       st.count ? `${st.count} kort per omgång` : 'hela högen',
     ];
+    const look = profile().look;
+    if (look !== CARD_LOOKS.DEFAULT) parts.push(CARD_LOOKS.label(look));
     $('wk-settings-sum').textContent = parts.join(' · ');
+    /* The picker, its little cards in the chosen signs - made again only when
+       those change, so the tile just pressed keeps the focus - and the page
+       in the look. */
+    const picker = $('wk-looks');
+    if (picker.dataset.signs !== st.signs) {
+      picker.innerHTML = CARD_LOOKS.pickerHtml(look, 'wk:look', `7 ${S.SIGNS[st.signs]['*']} 8`);
+      picker.dataset.signs = st.signs;
+    } else {
+      CARD_LOOKS.markPicked(picker, look);
+    }
+    CARD_LOOKS.apply(look);
   }
 
   /* ── The progress grids ──────────────────────────────────────────────── */
@@ -1028,6 +1042,13 @@ const WK = (() => {
       'wk:print': () => printCards(),
       'wk:full': () => setFull(!document.documentElement.classList.contains('wk-full')),
       'wk:sound': () => setSound(!settings().sound),
+      /* A look is each person's own. */
+      'wk:look': (e, el) => {
+        if (!CARD_LOOKS.valid(el.dataset.look)) return;
+        profile().look = el.dataset.look;
+        saveStore();
+        renderSettings();
+      },
       'wk:setting': onSetting,
       'wk:who': (e, el) => {
         if (!store.profiles[el.value]) return;
@@ -1125,6 +1146,7 @@ const WK = (() => {
         if (!field || !/^(INPUT|SELECT|TEXTAREA)$/.test(field.tagName)) window.scrollTo(0, 0);
       }, 100));
       fullState();
+      CARD_LOOKS.apply(profile().look);
       WK_SOUND.setOn(settings().sound, false);
       soundState();
       /* A browser lets the audio run only after a tap or a key: the first one

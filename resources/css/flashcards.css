@@ -134,8 +134,8 @@
   text-align: left;
   color: var(--text-primary);
   background: var(--bg-surface);
-  border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border: var(--wk-line, 1px) solid var(--input-border);
+  border-radius: calc(var(--wk-radius, 8px) + 2px);
   cursor: pointer;
   touch-action: manipulation;
   overflow-wrap: anywhere;
@@ -169,7 +169,7 @@
   color: var(--text-primary);
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--wk-radius, 8px);
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -180,7 +180,7 @@
 
 /* ── The page bar: which language ─────────────────────────────────────── */
 
-.fc-lang { display: inline-flex; border: 1px solid var(--input-border); border-radius: 10px; overflow: hidden; }
+.fc-lang { display: inline-flex; border: var(--wk-line, 1px) solid var(--input-border); border-radius: calc(var(--wk-radius, 8px) + 2px); overflow: hidden; }
 .fc-lang button {
   min-height: 42px;
   padding: 6px 14px;
@@ -192,7 +192,7 @@
   cursor: pointer;
 }
 .fc-lang button + button { border-left: 1px solid var(--input-border); }
-.fc-lang button[aria-pressed="true"] { background: var(--accent-fill); color: #fff; font-weight: bold; }
+.fc-lang button[aria-pressed="true"] { background: var(--accent-fill); color: var(--wk-on-accent, #fff); font-weight: bold; }
 .fc-lang button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -3px; }
 
 /* The Spanish settings, for Spanish. */
@@ -212,7 +212,7 @@
   color: var(--text-secondary);
   background: transparent;
   border: 2px dashed var(--wk-edge);
-  border-radius: 8px;
+  border-radius: var(--wk-radius, 8px);
   cursor: pointer;
 }
 .fc-newlist:hover { color: var(--text-primary); border-color: var(--accent-line); }
@@ -252,7 +252,7 @@
   color: var(--input-text);
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: 8px;
+  border-radius: var(--wk-radius, 8px);
 }
 .fc-editor input[type="text"] { min-height: 42px; padding: 6px 10px; }
 .fc-editor textarea { padding: 10px; line-height: 1.5; resize: vertical; margin-top: 4px; }
@@ -277,7 +277,7 @@
   padding: 8px 12px;
   background: var(--wk-paper);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: calc(var(--wk-radius, 8px) + 2px);
 }
 .fc-study-pic { font-size: 1.5rem; text-align: center; line-height: 1; }
 .fc-study-sv { color: var(--text-secondary); }

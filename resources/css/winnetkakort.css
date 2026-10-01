@@ -79,7 +79,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  font-family: verdana, sans-serif;
+  font-family: var(--wk-font, verdana, sans-serif);
 }
 
 .wk {
@@ -99,7 +99,9 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   white-space: nowrap;
 }
 
-.wk h2, .wk h3, .wk-panel-title { font-family: RawengulkSans, verdana, sans-serif; font-weight: normal; }
+/* The looks in card-looks.css set the three fonts, the corners and the line
+   width through these; without a look they are the values here. */
+.wk h2, .wk h3, .wk-panel-title { font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-weight: normal; }
 
 /* ── Buttons ──────────────────────────────────────────────────────────── */
 
@@ -108,8 +110,8 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   font-size: .95rem;
   min-height: 42px;
   padding: 8px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--input-border);
+  border-radius: var(--wk-radius, 8px);
+  border: var(--wk-line, 1px) solid var(--input-border);
   background: var(--bg-surface);
   color: var(--text-primary);
   cursor: pointer;
@@ -119,10 +121,10 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .wk-btn:disabled { opacity: .5; cursor: not-allowed; }
 .wk-btn-quiet { background: transparent; border-color: var(--border-color); }
-.wk-btn-go { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: bold; }
+.wk-btn-go { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--wk-on-accent, #fff); font-weight: bold; }
 .wk-btn-go:hover:not(:disabled) { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
 .wk-btn-kan { background: var(--wk-kan); border-color: var(--wk-kan); color: var(--wk-on-kan); font-weight: bold; }
-.wk-btn-ova { background: var(--wk-ova); border-color: var(--wk-ova); color: #fff; font-weight: bold; }
+.wk-btn-ova { background: var(--wk-ova); border-color: var(--wk-ova); color: var(--wk-on-ova, #fff); font-weight: bold; }
 .wk-btn-kan:hover:not(:disabled), .wk-btn-ova:hover:not(:disabled) { border-color: var(--text-primary); }
 .wk-btn-armed { border-color: var(--color-kvot-accent); color: var(--accent-text); }
 
@@ -136,7 +138,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-homelink { display: flex; border-radius: 6px; }
 .wk-homelink:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
 .wk-homelink img { display: block; width: 28px; height: 28px; }
-.wk-title { margin: 0; font-family: RawengulkSans, verdana, sans-serif; font-weight: normal; font-size: 1.7rem; line-height: 1.1; }
+.wk-title { margin: 0; font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-weight: normal; font-size: 1.7rem; line-height: 1.1; }
 .wk-top-end { display: flex; gap: 8px; margin-left: auto; }
 
 .wk-fullbtn, .wk-soundbtn, .wk-top-end > .theme-toggle {
@@ -199,7 +201,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
    and leave it zoomed. */
 .wk-who select, .wk-newperson input {
   font: inherit; font-size: 1rem; min-height: 42px; box-sizing: border-box;
-  padding: 6px 10px; border: 1px solid var(--input-border); border-radius: 8px;
+  padding: 6px 10px; border: var(--wk-line, 1px) solid var(--input-border); border-radius: var(--wk-radius, 8px);
 }
 .wk-newperson { display: inline-flex; flex-wrap: wrap; gap: 8px; }
 .wk-newperson[hidden] { display: none; }
@@ -210,8 +212,8 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-panel {
   margin: 20px 0;
   padding: 12px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border: var(--wk-line, 1px) solid var(--border-color);
+  border-radius: calc(var(--wk-radius, 8px) + 4px);
   background: var(--bg-surface);
 }
 .wk-panel > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
@@ -225,7 +227,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   gap: 12px;
   margin-top: 12px;
 }
-.wk-settings fieldset { margin: 0; padding: 8px 12px 10px; border: 1px solid var(--border-color); border-radius: 8px; }
+.wk-settings fieldset { margin: 0; padding: 8px 12px 10px; border: 1px solid var(--border-color); border-radius: var(--wk-radius, 8px); }
 .wk-settings legend { padding: 0 4px; font-size: .9rem; font-weight: bold; }
 .wk-settings label { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: .9rem; cursor: pointer; }
 .wk-help { margin: 2px 0 4px; font-size: .8rem; color: var(--text-secondary); }
@@ -259,8 +261,8 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   font: inherit;
   color: var(--text-primary);
   background: var(--wk-paper);
-  border: 1px solid var(--wk-edge);
-  border-radius: 8px;
+  border: var(--wk-line, 1px) solid var(--wk-edge);
+  border-radius: var(--wk-radius, 8px);
   box-shadow:
     3px 3px 0 -1px var(--wk-paper), 3px 3px 0 0 var(--wk-edge),
     6px 6px 0 -1px var(--wk-paper), 6px 6px 0 0 var(--wk-edge);
@@ -285,9 +287,19 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 }
 .wk-tile[aria-pressed="true"] { border-color: var(--accent-line); outline: 2px solid var(--accent-line); outline-offset: 0; }
 .wk-tile[aria-pressed="true"]:focus-visible { outline-offset: 3px; }
-.wk-tile[aria-pressed="true"] .wk-tile-tick {
-  border-color: var(--accent-fill);
-  background: var(--accent-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E") center / 14px no-repeat;
+.wk-tile[aria-pressed="true"] .wk-tile-tick { border-color: var(--accent-fill); background: var(--accent-fill); }
+/* The tick in the colour that is readable on the fill, which a look may make
+   light: drawn with borders rather than a picture, which has one colour. */
+.wk-tile[aria-pressed="true"] .wk-tile-tick::after {
+  content: '';
+  position: absolute;
+  left: 5.5px;
+  top: 2.5px;
+  width: 4.5px;
+  height: 9px;
+  border: solid var(--wk-on-accent, #fff);
+  border-width: 0 2.4px 2.4px 0;
+  transform: rotate(45deg);
 }
 
 /* ── The bar with the selection ───────────────────────────────────────── */
@@ -319,7 +331,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   border: 1px solid var(--border-color); border-radius: 18px;
   background: transparent; color: var(--text-primary); cursor: pointer;
 }
-.wk-tabs [role="tab"][aria-selected="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+.wk-tabs [role="tab"][aria-selected="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--wk-on-accent, #fff); }
 .wk-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .wk-grid-sum { margin: 6px 0 10px; font-size: .85rem; color: var(--text-secondary); }
 .wk-grid-wrap { overflow-x: auto; }
@@ -372,7 +384,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; width: 100%; }
 /* "← Avsluta" never breaks in two: the title beside it gives way instead. */
 .wk-bar > .wk-btn { flex: none; white-space: nowrap; }
-.wk-bar-title { flex: 1 1 auto; font-family: RawengulkSans, verdana, sans-serif; font-size: 1.25rem; }
+.wk-bar-title { flex: 1 1 auto; font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-size: 1.25rem; }
 .wk-bar-meta { display: flex; gap: 14px; font-size: .9rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .wk-stage {
@@ -395,10 +407,11 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
    the one asked and the ones under it. --k is the size of the cut. The
    outer shape is the edge colour and the paper sits 1.5px inside it, so the
    cut edges are outlined too. */
-.wk-face, .wk-paper, .wk-under, .wk-under::before {
-  clip-path: polygon(var(--k) 0, calc(100% - var(--k)) 0, 100% var(--k), 100% calc(100% - var(--k)),
-    calc(100% - var(--k)) 100%, var(--k) 100%, 0 calc(100% - var(--k)), 0 var(--k));
-}
+/* A look may round the corners or square them (--wk-clip-outer and -inner). */
+.wk-face, .wk-under { clip-path: var(--wk-clip-outer, polygon(var(--k) 0, calc(100% - var(--k)) 0, 100% var(--k), 100% calc(100% - var(--k)),
+    calc(100% - var(--k)) 100%, var(--k) 100%, 0 calc(100% - var(--k)), 0 var(--k))); }
+.wk-paper, .wk-under::before { clip-path: var(--wk-clip-inner, polygon(var(--k) 0, calc(100% - var(--k)) 0, 100% var(--k), 100% calc(100% - var(--k)),
+    calc(100% - var(--k)) 100%, var(--k) 100%, 0 calc(100% - var(--k)), 0 var(--k))); }
 .wk-face, .wk-under { --k: var(--wk-cut); background: var(--wk-edge); }
 .wk-paper, .wk-under::before { --k: calc(var(--wk-cut) - 0.6px); }
 
@@ -411,7 +424,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-under::before {
   content: '';
   position: absolute;
-  inset: 1.5px;
+  inset: var(--wk-edge-w, 1.5px);
   background: linear-gradient(var(--wk-c) 0 var(--wk-band-h), var(--wk-under-paper) var(--wk-band-h));
 }
 
@@ -434,10 +447,11 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-back { transform: rotateY(180deg); }
 .wk-paper {
   position: absolute;
-  inset: 1.5px;
+  inset: var(--wk-edge-w, 1.5px);
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  font-family: var(--wk-card-font, inherit);
   background: var(--wk-paper);
 }
 .wk-back .wk-paper { background: var(--wk-paper-back); }
@@ -548,7 +562,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   text-align: center;
   background: var(--bg-surface);
   border: 1px dashed var(--accent-line);
-  border-radius: 10px;
+  border-radius: calc(var(--wk-radius, 8px) + 2px);
 }
 .wk-hint[hidden] { display: none; }
 .wk-hint-text { margin: 0 0 8px; font-size: 1rem; }
@@ -576,24 +590,24 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-side:has(.wk-numpad:not([hidden])) .wk-hint .wk-pic { width: auto; max-height: 96px; }
 .wk-numpad button {
   min-height: 52px;
-  font: inherit; font-size: 1.4rem;
+  font: inherit; font-size: 1.4rem; font-family: var(--wk-card-font, inherit);
   color: var(--text-primary);
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: calc(var(--wk-radius, 8px) + 2px);
   cursor: pointer;
   touch-action: manipulation;
 }
 .wk-numpad button:active { background: var(--bg-secondary); }
 .wk-numpad [data-key="0"], .wk-numpad [data-key="ok"] { grid-column: span 2; }
-.wk-numpad [data-key="ok"] { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: bold; font-size: 1.1rem; }
+.wk-numpad [data-key="ok"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--wk-on-accent, #fff); font-weight: bold; font-size: 1.1rem; }
 
 /* ── After a round ────────────────────────────────────────────────────── */
 
 .wk-summary { max-width: 680px; margin: 0 auto; padding: 16px 0 40px; text-align: center; }
 .wk-summary h2 { margin: 0 0 16px; font-size: 1.7rem; outline: none; }
 .wk-sum-piles { display: flex; justify-content: center; gap: 16px; }
-.wk-sum-pile { min-width: 128px; padding: 12px 16px; border-radius: 12px; border: 1.5px solid; }
+.wk-sum-pile { min-width: 128px; padding: 12px 16px; border-radius: calc(var(--wk-radius, 8px) + 4px); border: 1.5px solid; }
 .wk-sum-pile[data-pile="kan"] { background: var(--wk-kan-soft); border-color: var(--wk-kan); }
 .wk-sum-pile[data-pile="ova"] { background: var(--wk-ova-soft); border-color: var(--wk-ova); }
 .wk-sum-n { display: block; font-size: 2.4rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -628,7 +642,20 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
     padding-bottom: 12px;
   }
   .wk-bar { flex: none; flex-wrap: nowrap; }
-  .wk-bar-title { font-size: 1.05rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The title gives way to the buttons beside it: two lines at most, with a
+     long word broken where Swedish allows it. */
+  .wk-bar-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 1.05rem;
+    line-height: 1.15;
+    hyphens: auto;
+    overflow-wrap: anywhere;
+  }
   .wk-bar-meta { flex-direction: column; align-items: flex-end; gap: 0; font-size: .8rem; line-height: 1.3; }
   .wk-stage {
     flex: 1 1 auto;

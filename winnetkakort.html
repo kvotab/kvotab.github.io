@@ -23,11 +23,16 @@
         document.documentElement.setAttribute('data-theme', t);
         // the full window (the page bar's button): no site header or footer, from the first paint
         if (localStorage.getItem('winnetkakort.full') === '1') document.documentElement.classList.add('wk-full');
+        // the look (Utseende) of whoever practised last, from the first paint too
+        var st = JSON.parse(localStorage.getItem('winnetkakort.v1') || 'null');
+        var who = st && st.profiles && st.profiles[st.current];
+        if (who && typeof who.look === 'string' && /^[a-z]{2,16}$/.test(who.look)) document.documentElement.setAttribute('data-look', who.look);
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930e">
+  <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930f">
+  <link rel="stylesheet" href="./resources/css/card-looks.css?v=20260930">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body class="wk-body">
@@ -83,6 +88,11 @@
     <details class="wk-panel wk-settings" id="wk-settings">
       <summary><span class="wk-panel-title">Inställningar</span><span class="wk-settings-sum" id="wk-settings-sum"></span></summary>
       <div class="wk-settings-grid">
+        <fieldset class="wk-looks-field">
+          <legend>Utseende</legend>
+          <p class="wk-help">Välj hur sidan ska se ut. Var och en som övar har sitt eget.</p>
+          <div id="wk-looks"></div>
+        </fieldset>
         <fieldset>
           <legend>Så svarar du</legend>
           <label><input type="radio" name="mode" value="skriv" data-on-change="wk:setting"> Skriv svaret</label>
@@ -303,7 +313,8 @@
 <script src="./resources/js/site.js?v=20260930b"></script>
 <script src="./resources/js/winnetkakort-sets.js?v=20260930b"></script>
 <script src="./resources/js/winnetkakort-sound.js?v=20260930c"></script>
-<script src="./resources/js/winnetkakort.js?v=20260930d"></script>
+<script src="./resources/js/card-looks.js?v=20260930"></script>
+<script src="./resources/js/winnetkakort.js?v=20260930e"></script>
 <script>
   KVOT.renderHeader('Winnetkakort');
   KVOT.renderNav('winnetkakort.html');

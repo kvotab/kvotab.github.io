@@ -1,6 +1,8 @@
 # Tests for winnetkakort.html
 
-Two files: the card sets on their own in Node, and the page in headless Chrome.
+Three files: the card sets on their own in Node, the page in headless
+Chrome, and the looks of this page and of Glosor (flashcards.html), also in
+Chrome.
 
 ## test-sets.js
 
@@ -119,3 +121,58 @@ What it plays:
 
 The page exposes `WK.inspect()` for this test: the current round, the
 status of a fact, and a copy of the store. It is read-only.
+
+## test-looks.py
+
+The looks (*Utseenden*: `resources/css/card-looks.css` and
+`resources/js/card-looks.js`) on both pages, with the same server, Chrome
+and ports as test-ui.py:
+
+    python3 resources/tests/winnetkakort/test-looks.py
+
+It exits 0 when all 50 checks pass, in about a minute and a half. With
+`WK_SHOTS=<folder>` it saves the picker, a card in every look on a phone,
+Glosor in six looks, and Glosor in every look on an iPhone SE. It checks
+that:
+
+- **Every look can be read.** Its colours are measured against each other
+  by WCAG contrast, in the browser, from the computed colours. Text on the
+  page and on cards needs 7:1, other text, buttons and piles 4.5:1, and
+  field borders, focus rings and ticks 3:1. Kvot is measured light and
+  dark. The other looks ignore the site's dark mode and set `color-scheme`
+  for the browser's own controls. A new look has to pass. The first run
+  found five misses: greens too light to read in Dinosaurier and
+  Solnedgång, and in Svarta tavlan the back of the card and a tick box
+  that vanished into the board.
+- **Each look is what it says.** Its motif is the one in the picker, the
+  cards have cut, round or square corners, and the card fonts differ.
+- **The window-sized layers of a background are drawn.** The pinned body
+  leaves `<html>` no height. While `<html>` drew the body's background,
+  Rymden's planet, Solnedgång's sun and every gradient came out zero
+  pixels high. A pixel of the screenshot must now be the planet. The
+  planet and the sun sit in the margin beside the page, off the screen of
+  a phone, since light text on the planet could not be read.
+- **Printed, every look is ink on white paper.** Without that, a browser
+  printing backgrounds (test-ui.py's PDF does) put the look behind the
+  cards, and a dark look's page margins came out in Chrome's dark canvas
+  colour. The test prints in Rymden and reads the paper, the ink and a
+  band.
+- **The picker** has 20 tiles, calm looks first. Each tile is in its own
+  look, Kvot's too while the page is in space. Choosing one keeps the
+  focus on it, shows in the settings line and is kept with the person.
+- **There is no flash of the standard look.** After a reload `data-look`
+  is set in the head, before the body. A new person starts in Kvot, and a
+  look that does not exist falls back to it.
+- **Phones, in every look:** a look brings wider fonts and thicker lines,
+  so each is tried where the room is least. On an iPhone 13 upright and an
+  iPhone SE upright and on its side, nothing scrolls and the key pad is in
+  sight. The theme switch shows in Kvot only, since the other looks are
+  light or dark by nature.
+- **Glosor** has the same picker. Its look is kept with the person, set in
+  the head, and readable there too. On an iPhone SE, upright and on its
+  side, the card and what answers it fit in every look: Spanish typed, the
+  tallest with its row of letters, and four to choose among.
+
+A test chooses a look the way a child does, by clicking its tile. The pages
+put the person's own look back whenever they redraw, so a `data-look` set
+from the test would not last.

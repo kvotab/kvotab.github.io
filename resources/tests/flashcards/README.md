@@ -2,7 +2,9 @@
 
 Two files: the words and the answer checking on their own in Node, and the
 page in headless Chrome. The page is built on `winnetkakort.css`, so a change
-there should be run against `../winnetkakort/test-ui.py` as well.
+there should be run against `../winnetkakort/test-ui.py` as well. Its looks
+(*Utseenden*) are Winnetkakort's, and `../winnetkakort/test-looks.py` tests
+them on both pages.
 
 ## test-words.js
 

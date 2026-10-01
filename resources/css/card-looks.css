@@ -1,0 +1,668 @@
+/*
+  Utseenden - the looks of winnetkakort.html and flashcards.html (Glosor).
+
+  A look is chosen under Inställningar, per person, and is set on <html> as
+  data-look before the first paint (the head of each page reads it from
+  storage). "kvot" is the site's own look and follows its light and dark;
+  every other look is light or dark by nature, and the page bar's theme
+  switch steps aside for it.
+
+  HOW A LOOK WORKS. Each look is one block of custom properties: the site's
+  own colour roles (kvot.css), the pages' (winnetkakort.css) and a few that
+  only looks set - three fonts, the corners, the width of lines, the shape
+  of a card, a motif and a background. The block applies in three places:
+
+    :root[data-look=x]             the page;
+    [data-look=x] .wk-body         the body, where winnetkakort.css defines
+                                   the pages' own colours;
+    .wk-look[data-look=x]          a tile in the picker, which so shows the
+                                   look in its own colours.
+
+  A reset block first gives every look the same starting point, so a tile
+  never shows anything of the look the page itself is in.
+
+  Only fonts a device already has are named - rounded ones where Apple's
+  and Windows' fonts allow, handwritten ones for the notebook and the
+  chalkboard, monospace for the robot and the arcade - with plain fallbacks.
+  Nothing is downloaded, and nothing is asked of a font service. Card
+  numbers stay in fonts whose 1 and 7 cannot be confused.
+
+  The test resources/tests/winnetkakort/test-looks.py measures every look:
+  text against its backgrounds (7:1 for text on cards and pages, 4.5:1 for
+  the rest), text on every button and pile, focus rings and field borders
+  at 3:1. A new look has to pass it.
+*/
+
+/* ── The starting point of every look ─────────────────────────────────── */
+
+:root[data-look], [data-look] .wk-body, .wk-look[data-look] {
+  --wk-font: initial;
+  --wk-head-font: initial;
+  --wk-card-font: initial;
+  --wk-radius: initial;
+  --wk-line: initial;
+  --wk-edge-w: initial;
+  --wk-clip-outer: initial;
+  --wk-clip-inner: initial;
+  --wk-motif: initial;
+  --wk-on-accent: initial;
+  --wk-on-ova: initial;
+  --wk-cut: 16px;
+  --look-bg-image: initial;
+  --look-bg-size: initial;
+  --look-tick: initial;
+}
+
+/* ── Kvot: the site's own look, for its tile in the picker ────────────── */
+
+/* The page in this look needs nothing: kvot.css and winnetkakort.css are
+   it. Its tile does, since it sits inside a page that may be in another. */
+.wk-look[data-look="kvot"] {
+  --bg-primary: #ffffff; --bg-secondary: #f6efe8; --bg-surface: #fcf7f2;
+  --text-primary: #352921; --text-secondary: #6b5d4f; --text-muted: #786b5d;
+  --border-color: #e0d7ce; --accent-fill: #a5503f; --accent-line: #bb7d37;
+  --wk-green: #d3e6bd; --wk-blue: #c6dbef; --wk-paper: #fffdf9; --wk-edge: #bcae9f;
+}
+[data-theme="dark"] .wk-look[data-look="kvot"] {
+  --bg-primary: #1a1410; --bg-secondary: #2a221b; --bg-surface: #332b23;
+  --text-primary: #e8ddd0; --text-secondary: #b8a898; --text-muted: #9f9182;
+  --border-color: #51453a; --accent-fill: #b35d4e; --accent-line: #f3b87b;
+  --wk-green: #46592f; --wk-blue: #304b66; --wk-paper: #2b241e; --wk-edge: #6b5c4e;
+}
+
+/* The font stacks the looks share. */
+:root {
+  --look-rounded: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Nunito", "Varela Round", "Trebuchet MS", verdana, sans-serif;
+  --look-hand: "Chalkboard SE", "Comic Sans MS", "Comic Neue", "Segoe Print", "Marker Felt", sans-serif;
+  --look-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  --look-system: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+/* ── Lugna och tydliga ────────────────────────────────────────────────── */
+
+/* Minimal: white, grey and one blue, and nothing else. */
+:root[data-look="minimal"], [data-look="minimal"] .wk-body, .wk-look[data-look="minimal"] {
+  color-scheme: light;
+  --bg-primary: #ffffff; --bg-secondary: #f2f2f2; --bg-surface: #ffffff;
+  --text-primary: #1a1a1a; --text-secondary: #444444; --text-muted: #595959;
+  --border-color: #e0e0e0; --input-bg: #ffffff; --input-border: #858585; --input-text: #1a1a1a;
+  --link-color: #1a4fc4; --shadow-color: rgba(0, 0, 0, 0.1);
+  --accent-fill: #1a56db; --accent-fill-hover: #1445b0; --accent-line: #1a56db; --accent-text: #1a4fc4;
+  --accent-success: #147a3d; --check-fill: #1a56db; --scrollbar-thumb: #c4c4c4; --scrollbar-track: #f2f2f2;
+  --wk-green: #e1f1e4; --wk-blue: #e2ebfb; --wk-yellow: #faf1d2; --wk-red: #fbe1dd; --wk-purple: #ebe5f8; --wk-teal: #ddf2ef; --wk-accent: #fde8d1;
+  --wk-paper: #ffffff; --wk-paper-back: #f8f8f8; --wk-edge: #c8c8c8;
+  --wk-kan: #147a3d; --wk-on-kan: #ffffff; --wk-kan-soft: #dcf0e2; --wk-nara: #a6d8b4;
+  --wk-ova: #c0392b; --wk-on-ova: #ffffff; --wk-ova-soft: #fbe0dc; --wk-none: #f2f2f2;
+  --wk-dot-a: #c0392b; --wk-dot-b: #1a56db;
+  --wk-font: var(--look-system); --wk-head-font: var(--look-system); --wk-card-font: var(--look-system);
+  --wk-radius: 10px; --wk-clip-outer: inset(0 round 12px); --wk-clip-inner: inset(0 round 10.5px);
+}
+
+/* Natt: calm and dark. */
+:root[data-look="natt"], [data-look="natt"] .wk-body, .wk-look[data-look="natt"] {
+  color-scheme: dark;
+  --bg-primary: #10151f; --bg-secondary: #1c2433; --bg-surface: #171e2b;
+  --text-primary: #e7ecf5; --text-secondary: #bcc6d8; --text-muted: #a3aec4;
+  --border-color: #2c3648; --input-bg: #1c2433; --input-border: #7584a0; --input-text: #e7ecf5;
+  --link-color: #9db9ff; --shadow-color: rgba(0, 0, 0, 0.5);
+  --accent-fill: #7aa2ff; --accent-fill-hover: #9ab8ff; --accent-line: #7aa2ff; --accent-text: #9db9ff;
+  --accent-success: #7ee2a8; --check-fill: #7aa2ff; --look-tick: #0c1530; --scrollbar-thumb: #3b4760; --scrollbar-track: #171e2b;
+  --wk-on-accent: #0c1530;
+  --wk-green: #25463a; --wk-blue: #243b5e; --wk-yellow: #4b4426; --wk-red: #4f2c35; --wk-purple: #3b3160; --wk-teal: #1f4a52; --wk-accent: #4d3a22;
+  --wk-paper: #1b2332; --wk-paper-back: #202a3b; --wk-edge: #54647f;
+  --wk-kan: #7ee2a8; --wk-on-kan: #0b2417; --wk-kan-soft: #1f4636; --wk-nara: #3b7f5c;
+  --wk-ova: #ff9a9a; --wk-on-ova: #2e0b0b; --wk-ova-soft: #4f2a2e; --wk-none: #1c2433;
+  --wk-dot-a: #ff9a9a; --wk-dot-b: #7aa2ff;
+  --wk-font: var(--look-system); --wk-head-font: var(--look-system); --wk-card-font: var(--look-system);
+  --wk-radius: 10px; --wk-clip-outer: inset(0 round 12px); --wk-clip-inner: inset(0 round 10.5px);
+  --wk-motif: "🌙";
+  --look-bg-image: radial-gradient(ellipse at 20% 0%, rgba(122, 162, 255, 0.10), transparent 60%);
+  --look-bg-size: 100% 100%;
+}
+
+/* Skogen: moss, bark and a fox. */
+:root[data-look="skogen"], [data-look="skogen"] .wk-body, .wk-look[data-look="skogen"] {
+  color-scheme: light;
+  --bg-primary: #eef2e8; --bg-secondary: #e3e9dc; --bg-surface: #fbfcf8;
+  --text-primary: #22301c; --text-secondary: #3f4e36; --text-muted: #4d5c44;
+  --border-color: #d6dfcb; --input-bg: #fbfcf8; --input-border: #7d906e; --input-text: #22301c;
+  --link-color: #455f25; --shadow-color: rgba(34, 48, 28, 0.12);
+  --accent-fill: #4f6b2c; --accent-fill-hover: #3e5522; --accent-line: #6b8a3a; --accent-text: #445c24;
+  --accent-success: #2f6f3a; --check-fill: #4f6b2c; --scrollbar-thumb: #b6c3a8; --scrollbar-track: #e3e9dc;
+  --wk-green: #d6e5c6; --wk-blue: #d1dfe5; --wk-yellow: #ede3bb; --wk-red: #eed1c5; --wk-purple: #ddd4e5; --wk-teal: #cde2da; --wk-accent: #eedabd;
+  --wk-paper: #fdfdf9; --wk-paper-back: #f4f6ee; --wk-edge: #98aa84;
+  --wk-kan: #2f6f3a; --wk-on-kan: #ffffff; --wk-kan-soft: #dae9d0; --wk-nara: #a7c796;
+  --wk-ova: #9c4221; --wk-on-ova: #ffffff; --wk-ova-soft: #f1d8ca; --wk-none: #e3e9dc;
+  --wk-dot-a: #9c4221; --wk-dot-b: #4f6b2c;
+  --wk-font: "Trebuchet MS", verdana, sans-serif; --wk-head-font: Georgia, "Times New Roman", serif; --wk-card-font: verdana, sans-serif;
+  --wk-motif: "🌲";
+  --look-bg-image: linear-gradient(180deg, #f3f6ee 0%, #e2eadb 100%);
+  --look-bg-size: 100% 100%;
+}
+
+/* Skrivbok: a school notebook, lines and a red margin - left of the page,
+   or in the gutter of a phone, never through the text. */
+:root[data-look="papper"], [data-look="papper"] .wk-body, .wk-look[data-look="papper"] {
+  color-scheme: light;
+  --bg-primary: #fdfcf6; --bg-secondary: #eef3fa; --bg-surface: #ffffff;
+  --text-primary: #1f2a44; --text-secondary: #3a4764; --text-muted: #4d5a76;
+  --border-color: #cbd7e8; --input-bg: #ffffff; --input-border: #7488ab; --input-text: #1f2a44;
+  --link-color: #2a54ac; --shadow-color: rgba(31, 42, 68, 0.12);
+  --accent-fill: #2a54ac; --accent-fill-hover: #214490; --accent-line: #2f5bb7; --accent-text: #2a52a6;
+  --accent-success: #2b7131; --check-fill: #2a54ac; --scrollbar-thumb: #b3c3db; --scrollbar-track: #eef3fa;
+  --wk-green: #d6ebc6; --wk-blue: #cde0f5; --wk-yellow: #faedae; --wk-red: #f7d1cb; --wk-purple: #e3d6f2; --wk-teal: #cbeae5; --wk-accent: #fde1b6;
+  --wk-paper: #ffffff; --wk-paper-back: #fffdf0; --wk-edge: #93aac6;
+  --wk-kan: #2b7131; --wk-on-kan: #ffffff; --wk-kan-soft: #ddefd6; --wk-nara: #a5cf8b;
+  --wk-ova: #b92525; --wk-on-ova: #ffffff; --wk-ova-soft: #f9dcdc; --wk-none: #eef3fa;
+  --wk-dot-a: #b92525; --wk-dot-b: #2a54ac;
+  --wk-font: "Trebuchet MS", verdana, sans-serif; --wk-head-font: "Noteworthy", "Bradley Hand", "Segoe Print", var(--look-hand);
+  --wk-card-font: "Chalkboard SE", "Comic Sans MS", "Segoe Print", verdana, sans-serif;
+  --wk-radius: 6px; --wk-clip-outer: inset(0 round 6px); --wk-clip-inner: inset(0 round 4.5px);
+  --wk-motif: "✏️";
+  --look-bg-image: linear-gradient(90deg, transparent 0 max(7px, 50% - 540px), rgba(226, 104, 104, 0.45) 0 calc(max(7px, 50% - 540px) + 2px), transparent 0),
+                   repeating-linear-gradient(180deg, transparent 0 27px, rgba(116, 150, 200, 0.28) 27px 28px);
+  --look-bg-size: 100% 100%, 100% 28px;
+}
+
+/* Hög kontrast: black, white and yellow, and lines that cannot be missed. */
+:root[data-look="kontrast"], [data-look="kontrast"] .wk-body, .wk-look[data-look="kontrast"] {
+  color-scheme: dark;
+  --bg-primary: #000000; --bg-secondary: #141414; --bg-surface: #000000;
+  --text-primary: #ffffff; --text-secondary: #ffffff; --text-muted: #e8e8e8;
+  --border-color: #ffffff; --input-bg: #000000; --input-border: #ffffff; --input-text: #ffffff;
+  --link-color: #ffe14d; --shadow-color: rgba(255, 255, 255, 0.2);
+  --accent-fill: #ffd400; --accent-fill-hover: #ffe14d; --accent-line: #ffd400; --accent-text: #ffe14d;
+  --accent-success: #3dff8b; --check-fill: #ffd400; --look-tick: #000000; --scrollbar-thumb: #ffffff; --scrollbar-track: #000000;
+  --wk-on-accent: #000000;
+  --wk-green: #00532b; --wk-blue: #003a94; --wk-yellow: #574600; --wk-red: #760000; --wk-purple: #4a0080; --wk-teal: #00525a; --wk-accent: #5a3200;
+  --wk-paper: #000000; --wk-paper-back: #0d0d0d; --wk-edge: #ffffff;
+  --wk-kan: #3dff8b; --wk-on-kan: #000000; --wk-kan-soft: #003d1f; --wk-nara: #007a3d;
+  --wk-ova: #ff6b6b; --wk-on-ova: #000000; --wk-ova-soft: #4d0000; --wk-none: #141414;
+  --wk-dot-a: #ffd400; --wk-dot-b: #6bd4ff;
+  --wk-font: verdana, sans-serif; --wk-head-font: verdana, sans-serif; --wk-card-font: verdana, sans-serif;
+  --wk-radius: 4px; --wk-line: 2px; --wk-edge-w: 2.5px; --wk-clip-outer: inset(0); --wk-clip-inner: inset(0);
+}
+
+/* ── Roliga ───────────────────────────────────────────────────────────── */
+
+/* Rymden: a sky full of stars, and a planet. The planet is in the margin
+   beside the page (the page is 1000px wide), so on a narrow screen it is
+   off to the side: light text on it would be unreadable. */
+:root[data-look="rymden"], [data-look="rymden"] .wk-body, .wk-look[data-look="rymden"] {
+  color-scheme: dark;
+  --bg-primary: #0b1033; --bg-secondary: #1b2256; --bg-surface: #151b4a;
+  --text-primary: #eef1ff; --text-secondary: #c8cdf2; --text-muted: #adb5e8;
+  --border-color: #2f3b7c; --input-bg: #1b2256; --input-border: #7d88d9; --input-text: #eef1ff;
+  --link-color: #ffd76a; --shadow-color: rgba(0, 0, 0, 0.55);
+  --accent-fill: #ffcf4a; --accent-fill-hover: #ffdd7a; --accent-line: #ffcf4a; --accent-text: #ffd76a;
+  --accent-success: #5ee3a1; --check-fill: #ffcf4a; --look-tick: #1a1440; --scrollbar-thumb: #3a4590; --scrollbar-track: #151b4a;
+  --wk-on-accent: #1a1440;
+  --wk-green: #245e4f; --wk-blue: #28498a; --wk-yellow: #665520; --wk-red: #6b2e50; --wk-purple: #4b3190; --wk-teal: #1f5d72; --wk-accent: #684821;
+  --wk-paper: #1b2358; --wk-paper-back: #212b68; --wk-edge: #7380da;
+  --wk-kan: #5ee3a1; --wk-on-kan: #06281a; --wk-kan-soft: #1f5a4a; --wk-nara: #3f9f7c;
+  --wk-ova: #ff86b0; --wk-on-ova: #3a0a1e; --wk-ova-soft: #5a2346; --wk-none: #1b2256;
+  --wk-dot-a: #ffcf4a; --wk-dot-b: #7ad7ff;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 14px; --wk-clip-outer: inset(0 round 18px); --wk-clip-inner: inset(0 round 16.5px);
+  --wk-motif: "🚀";
+  --look-bg-image:
+    radial-gradient(1.6px 1.6px at 20px 30px, #ffffff 50%, transparent 52%),
+    radial-gradient(1.2px 1.2px at 95px 140px, #cfe3ff 50%, transparent 52%),
+    radial-gradient(1.8px 1.8px at 160px 80px, #fff3b0 50%, transparent 52%),
+    radial-gradient(1.1px 1.1px at 60px 190px, #ffffff 50%, transparent 52%),
+    radial-gradient(1.4px 1.4px at 180px 200px, #ffd2f0 50%, transparent 52%),
+    radial-gradient(circle at calc(50% + 590px) 150px, #ff9f43 0 34px, rgba(255, 159, 67, 0.25) 35px 46px, transparent 47px),
+    radial-gradient(ellipse at 15% 85%, rgba(0, 190, 255, 0.18), transparent 55%),
+    radial-gradient(ellipse at 75% 30%, rgba(150, 90, 255, 0.22), transparent 50%);
+  --look-bg-size: 210px 230px, 210px 230px, 210px 230px, 210px 230px, 210px 230px, 100% 100%, 100% 100%, 100% 100%;
+}
+
+/* Havet: under the waves, bubbles rising. */
+:root[data-look="havet"], [data-look="havet"] .wk-body, .wk-look[data-look="havet"] {
+  color-scheme: light;
+  --bg-primary: #d8f1ff; --bg-secondary: #e8f7ff; --bg-surface: #ffffff;
+  --text-primary: #0b3a5b; --text-secondary: #1f5475; --text-muted: #2f6384;
+  --border-color: #b7dbef; --input-bg: #ffffff; --input-border: #4f93bd; --input-text: #0b3a5b;
+  --link-color: #005f92; --shadow-color: rgba(11, 58, 91, 0.14);
+  --accent-fill: #006aa3; --accent-fill-hover: #005887; --accent-line: #0a7fbf; --accent-text: #005c8e;
+  --accent-success: #157a4f; --check-fill: #006aa3; --scrollbar-thumb: #9ccbe6; --scrollbar-track: #e8f7ff;
+  --wk-green: #cbeedf; --wk-blue: #cde6ff; --wk-yellow: #fff0b5; --wk-red: #ffd4c9; --wk-purple: #e1d8ff; --wk-teal: #c4f0ed; --wk-accent: #ffdfad;
+  --wk-paper: #ffffff; --wk-paper-back: #effaff; --wk-edge: #69b5de;
+  --wk-kan: #157a4f; --wk-on-kan: #ffffff; --wk-kan-soft: #d2f2e3; --wk-nara: #9cdbbf;
+  --wk-ova: #c2410c; --wk-on-ova: #ffffff; --wk-ova-soft: #ffe1d1; --wk-none: #e8f7ff;
+  --wk-dot-a: #ff7f50; --wk-dot-b: #006aa3;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 14px; --wk-clip-outer: inset(0 round 18px); --wk-clip-inner: inset(0 round 16.5px);
+  --wk-motif: "🐠";
+  --look-bg-image:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.95) 0 2px, transparent 3px),
+    radial-gradient(circle, transparent 0 6px, rgba(255, 255, 255, 0.75) 7px 8.5px, transparent 9.5px),
+    radial-gradient(circle, transparent 0 3.5px, rgba(255, 255, 255, 0.8) 4.5px 5.5px, transparent 6.5px),
+    linear-gradient(180deg, #e6f7ff 0%, #bfe6fb 100%);
+  --look-bg-size: 90px 120px, 140px 170px, 70px 95px, 100% 100%;
+}
+
+/* Djungeln: leaves, a parrot and ripe bananas. */
+:root[data-look="djungeln"], [data-look="djungeln"] .wk-body, .wk-look[data-look="djungeln"] {
+  color-scheme: light;
+  --bg-primary: #eaf6dc; --bg-secondary: #def0cb; --bg-surface: #fbfff5;
+  --text-primary: #1f3b12; --text-secondary: #37562a; --text-muted: #486737;
+  --border-color: #cde3b5; --input-bg: #fbfff5; --input-border: #72975a; --input-text: #1f3b12;
+  --link-color: #2e6b1f; --shadow-color: rgba(31, 59, 18, 0.14);
+  --accent-fill: #b35300; --accent-fill-hover: #924400; --accent-line: #c25d00; --accent-text: #9e4800;
+  --accent-success: #2e7031; --check-fill: #2e7031; --scrollbar-thumb: #b1d19a; --scrollbar-track: #def0cb;
+  --wk-green: #cfeab5; --wk-blue: #cbe6f0; --wk-yellow: #fbe8a0; --wk-red: #f7cec2; --wk-purple: #e0d2ef; --wk-teal: #c3e8d5; --wk-accent: #ffdfb0;
+  --wk-paper: #fffef6; --wk-paper-back: #f5fbe7; --wk-edge: #7aa955;
+  --wk-kan: #2e7031; --wk-on-kan: #ffffff; --wk-kan-soft: #d6eec4; --wk-nara: #a3d086;
+  --wk-ova: #b3261e; --wk-on-ova: #ffffff; --wk-ova-soft: #fad7d3; --wk-none: #def0cb;
+  --wk-dot-a: #b35300; --wk-dot-b: #2e7031;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-hand); --wk-card-font: var(--look-rounded);
+  --wk-radius: 12px; --wk-clip-outer: inset(0 round 14px); --wk-clip-inner: inset(0 round 12.5px);
+  --wk-motif: "🦜";
+  --look-bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='%234f9a2f' fill-opacity='0.14'%3E%3Cpath d='M18 52c12-22 38-27 46-22-3 15-23 35-46 22z'/%3E%3Cpath d='M70 104c8-17 28-22 34-18-2 12-17 28-34 18z'/%3E%3Cpath d='M84 20c4-11 17-15 21-12-1 8-11 18-21 12z'/%3E%3C/g%3E%3Cg fill='none' stroke='%234f9a2f' stroke-opacity='0.2' stroke-width='1.4'%3E%3Cpath d='M18 52c15-7 30-14 46-22M70 104c11-6 23-12 34-18M84 20c7-4 14-8 21-12'/%3E%3C/g%3E%3C/svg%3E"),
+                   linear-gradient(180deg, #eef8e2 0%, #d9efc4 100%);
+  --look-bg-size: 120px 120px, 100% 100%;
+}
+
+/* Godisbutiken: candy stripes, strawberry and mint. */
+:root[data-look="godis"], [data-look="godis"] .wk-body, .wk-look[data-look="godis"] {
+  color-scheme: light;
+  --bg-primary: #fff0f6; --bg-secondary: #ffe4ef; --bg-surface: #ffffff;
+  --text-primary: #4a1631; --text-secondary: #682a4b; --text-muted: #793c5c;
+  --border-color: #f6c8dc; --input-bg: #ffffff; --input-border: #cc6d97; --input-text: #4a1631;
+  --link-color: #b0185a; --shadow-color: rgba(74, 22, 49, 0.14);
+  --accent-fill: #c81e64; --accent-fill-hover: #a8174f; --accent-line: #dd3f7f; --accent-text: #ad1758;
+  --accent-success: #177a6c; --check-fill: #c81e64; --scrollbar-thumb: #f3a9c9; --scrollbar-track: #ffe4ef;
+  --wk-green: #c8f2e3; --wk-blue: #cfe5ff; --wk-yellow: #fff0a6; --wk-red: #ffcfe0; --wk-purple: #e6d3ff; --wk-teal: #c6efef; --wk-accent: #ffd8b6;
+  --wk-paper: #ffffff; --wk-paper-back: #fff6fb; --wk-edge: #ee88b3;
+  --wk-kan: #177a6c; --wk-on-kan: #ffffff; --wk-kan-soft: #cff3ec; --wk-nara: #9be0d0;
+  --wk-ova: #7b3fb0; --wk-on-ova: #ffffff; --wk-ova-soft: #ebdcf9; --wk-none: #ffe4ef;
+  --wk-dot-a: #e0467c; --wk-dot-b: #7b3fb0;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 18px; --wk-clip-outer: inset(0 round 24px); --wk-clip-inner: inset(0 round 22.5px);
+  --wk-motif: "🍭";
+  --look-bg-image: repeating-linear-gradient(-45deg, rgba(255, 170, 205, 0.32) 0 16px, transparent 16px 34px),
+                   radial-gradient(circle at 50% 50%, rgba(123, 63, 176, 0.18) 0 2.5px, transparent 3.5px);
+  --look-bg-size: 100% 100%, 46px 46px;
+}
+
+/* Regnbåge: a pale rainbow across the page, a rainbow arc and confetti. */
+:root[data-look="regnbage"], [data-look="regnbage"] .wk-body, .wk-look[data-look="regnbage"] {
+  color-scheme: light;
+  --bg-primary: #fbfaff; --bg-secondary: #f1eefb; --bg-surface: #ffffff;
+  --text-primary: #2d2a4a; --text-secondary: #464266; --text-muted: #57537a;
+  --border-color: #e2dcf2; --input-bg: #ffffff; --input-border: #8a83b1; --input-text: #2d2a4a;
+  --link-color: #5e4386; --shadow-color: rgba(45, 42, 74, 0.12);
+  --accent-fill: #6a4c93; --accent-fill-hover: #563c7a; --accent-line: #7a5aa8; --accent-text: #5e4386;
+  --accent-success: #26803a; --check-fill: #6a4c93; --scrollbar-thumb: #cbc2e6; --scrollbar-track: #f1eefb;
+  --wk-green: #d4f0b6; --wk-blue: #cce5fa; --wk-yellow: #ffeea6; --wk-red: #ffd1d2; --wk-purple: #e3d6f5; --wk-teal: #c8ece8; --wk-accent: #ffdfb3;
+  --wk-paper: #ffffff; --wk-paper-back: #fffaf0; --wk-edge: #b3a4d6;
+  --wk-kan: #26803a; --wk-on-kan: #ffffff; --wk-kan-soft: #daf2cf; --wk-nara: #a6db8d;
+  --wk-ova: #d62839; --wk-on-ova: #ffffff; --wk-ova-soft: #ffd8db; --wk-none: #f1eefb;
+  --wk-dot-a: #ff595e; --wk-dot-b: #1982c4;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 14px; --wk-clip-outer: inset(0 round 18px); --wk-clip-inner: inset(0 round 16.5px);
+  --wk-motif: "🌈";
+  --look-bg-image:
+    radial-gradient(circle at 14px 16px, rgba(255, 89, 94, 0.55) 0 3px, transparent 3.5px),
+    radial-gradient(circle at 52px 44px, rgba(255, 146, 76, 0.6) 0 2.5px, transparent 3px),
+    radial-gradient(circle at 88px 14px, rgba(240, 180, 20, 0.7) 0 3px, transparent 3.5px),
+    radial-gradient(circle at 30px 78px, rgba(118, 181, 28, 0.6) 0 2.5px, transparent 3px),
+    radial-gradient(circle at 72px 86px, rgba(25, 130, 196, 0.5) 0 3px, transparent 3.5px),
+    radial-gradient(circle at 100px 56px, rgba(106, 76, 147, 0.5) 0 2.5px, transparent 3px),
+    radial-gradient(circle at 0% 100%, transparent 0 58%, rgba(255, 89, 94, 0.2) 58% 61%, rgba(255, 146, 76, 0.2) 61% 64%,
+      rgba(255, 202, 58, 0.26) 64% 67%, rgba(138, 201, 38, 0.2) 67% 70%, rgba(25, 130, 196, 0.17) 70% 73%,
+      rgba(106, 76, 147, 0.17) 73% 76%, transparent 76%),
+    linear-gradient(135deg, #fff0f0 0%, #fff6e2 22%, #fffce0 40%, #eefae6 58%, #e9f4ff 78%, #f3edff 100%);
+  --look-bg-size: 112px 100px, 112px 100px, 112px 100px, 112px 100px, 112px 100px, 112px 100px, 100% 100%, 100% 100%;
+}
+
+/* Enhörning: lavender and pink, and sparkles. */
+:root[data-look="enhorning"], [data-look="enhorning"] .wk-body, .wk-look[data-look="enhorning"] {
+  color-scheme: light;
+  --bg-primary: #fbf0ff; --bg-secondary: #f4e6fc; --bg-surface: #fffbff;
+  --text-primary: #3b1f5c; --text-secondary: #563978; --text-muted: #674a89;
+  --border-color: #ead7f7; --input-bg: #fffbff; --input-border: #9d78c4; --input-text: #3b1f5c;
+  --link-color: #7f2da6; --shadow-color: rgba(59, 31, 92, 0.14);
+  --accent-fill: #8e35b8; --accent-fill-hover: #742a97; --accent-line: #a855d6; --accent-text: #7c2ba3;
+  --accent-success: #257a60; --check-fill: #8e35b8; --scrollbar-thumb: #dcc0f0; --scrollbar-track: #f4e6fc;
+  --wk-green: #d7f6e4; --wk-blue: #d9e7ff; --wk-yellow: #fff2c0; --wk-red: #ffd8e9; --wk-purple: #e9daff; --wk-teal: #d2f3f3; --wk-accent: #ffe2ca;
+  --wk-paper: #ffffff; --wk-paper-back: #fff4fd; --wk-edge: #c6a4e6;
+  --wk-kan: #257a60; --wk-on-kan: #ffffff; --wk-kan-soft: #d3f3e7; --wk-nara: #a0e0c9;
+  --wk-ova: #c0337b; --wk-on-ova: #ffffff; --wk-ova-soft: #ffdaee; --wk-none: #f4e6fc;
+  --wk-dot-a: #e05aa8; --wk-dot-b: #8e35b8;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 16px; --wk-clip-outer: inset(0 round 22px); --wk-clip-inner: inset(0 round 20.5px);
+  --wk-motif: "🦄";
+  --look-bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90' viewBox='0 0 90 90'%3E%3Cpath d='M18 6l2.6 9.4L30 18l-9.4 2.6L18 30l-2.6-9.4L6 18l9.4-2.6z' fill='%23f3a6d8' fill-opacity='0.55'/%3E%3Cpath d='M64 50l1.8 6.2L72 58l-6.2 1.8L64 66l-1.8-6.2L56 58l6.2-1.8z' fill='%23bda6f7' fill-opacity='0.65'/%3E%3Ccircle cx='70' cy='16' r='1.8' fill='%23f2c95a'/%3E%3Ccircle cx='26' cy='66' r='1.5' fill='%23f2c95a'/%3E%3C/svg%3E"),
+                   linear-gradient(160deg, #fdf0ff 0%, #eef1ff 100%);
+  --look-bg-size: 90px 90px, 100% 100%;
+}
+
+/* Dinosaurier: warm sand and three-toed tracks. */
+:root[data-look="dino"], [data-look="dino"] .wk-body, .wk-look[data-look="dino"] {
+  color-scheme: light;
+  --bg-primary: #f4efdc; --bg-secondary: #ebe4c8; --bg-surface: #fffcf1;
+  --text-primary: #2e2a14; --text-secondary: #4a452d; --text-muted: #59533a;
+  --border-color: #e0d8bb; --input-bg: #fffcf1; --input-border: #8a825c; --input-text: #2e2a14;
+  --link-color: #a8380a; --shadow-color: rgba(46, 42, 20, 0.14);
+  --accent-fill: #c2410c; --accent-fill-hover: #9a3412; --accent-line: #d4561d; --accent-text: #a4370a;
+  --accent-success: #36721a; --check-fill: #36721a; --scrollbar-thumb: #cfc59c; --scrollbar-track: #ebe4c8;
+  --wk-green: #d3e5b3; --wk-blue: #cedfe7; --wk-yellow: #f4e29f; --wk-red: #f2cbb5; --wk-purple: #dcd1e7; --wk-teal: #cbe4d4; --wk-accent: #f6d6ad;
+  --wk-paper: #fffdf5; --wk-paper-back: #f7f0da; --wk-edge: #8b9a59;
+  --wk-kan: #36721a; --wk-on-kan: #ffffff; --wk-kan-soft: #dbebc6; --wk-nara: #a8c983;
+  --wk-ova: #9b2c2c; --wk-on-ova: #ffffff; --wk-ova-soft: #f4d5cf; --wk-none: #ebe4c8;
+  --wk-dot-a: #c2410c; --wk-dot-b: #36721a;
+  --wk-font: var(--look-rounded); --wk-head-font: "Marker Felt", var(--look-hand); --wk-card-font: var(--look-rounded);
+  --wk-radius: 12px; --wk-clip-outer: inset(0 round 16px); --wk-clip-inner: inset(0 round 14.5px);
+  --wk-motif: "🦖";
+  --look-bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='%236b7d3a' opacity='0.15'%3E%3Cg transform='translate(32 46) rotate(-12)'%3E%3Cellipse cy='3' rx='6.5' ry='5.5'/%3E%3Cpath d='M-3.2 1C-4-6-2.2-11 0-16C2.2-11 4-6 3.2 1Z' transform='rotate(-36)'/%3E%3Cpath d='M-3.4 1C-4.2-7-2.2-13 0-19C2.2-13 4.2-7 3.4 1Z'/%3E%3Cpath d='M-3.2 1C-4-6-2.2-11 0-16C2.2-11 4-6 3.2 1Z' transform='rotate(36)'/%3E%3C/g%3E%3Cg transform='translate(88 102) rotate(12)'%3E%3Cellipse cy='3' rx='6.5' ry='5.5'/%3E%3Cpath d='M-3.2 1C-4-6-2.2-11 0-16C2.2-11 4-6 3.2 1Z' transform='rotate(-36)'/%3E%3Cpath d='M-3.4 1C-4.2-7-2.2-13 0-19C2.2-13 4.2-7 3.4 1Z'/%3E%3Cpath d='M-3.2 1C-4-6-2.2-11 0-16C2.2-11 4-6 3.2 1Z' transform='rotate(36)'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --look-bg-size: 120px 120px;
+}
+
+/* Superhjälte: a comic page, bold lines and halftone dots. */
+:root[data-look="hjalte"], [data-look="hjalte"] .wk-body, .wk-look[data-look="hjalte"] {
+  color-scheme: light;
+  --bg-primary: #fff5c4; --bg-secondary: #fff0a8; --bg-surface: #ffffff;
+  --text-primary: #111111; --text-secondary: #262626; --text-muted: #3a3a3a;
+  --border-color: #111111; --input-bg: #ffffff; --input-border: #111111; --input-text: #111111;
+  --link-color: #1d4ed8; --shadow-color: rgba(17, 17, 17, 0.9);
+  --accent-fill: #d62839; --accent-fill-hover: #b21f2e; --accent-line: #1d4ed8; --accent-text: #b91c2c;
+  --accent-success: #16803c; --check-fill: #1d4ed8; --scrollbar-thumb: #111111; --scrollbar-track: #fff0a8;
+  --wk-green: #a8f0a1; --wk-blue: #a8c8ff; --wk-yellow: #ffe066; --wk-red: #ffb3b3; --wk-purple: #d6b8ff; --wk-teal: #9fe7df; --wk-accent: #ffc27a;
+  --wk-paper: #ffffff; --wk-paper-back: #fffbe3; --wk-edge: #111111;
+  --wk-kan: #16803c; --wk-on-kan: #ffffff; --wk-kan-soft: #d3f4da; --wk-nara: #9ee0ad;
+  --wk-ova: #b45309; --wk-on-ova: #ffffff; --wk-ova-soft: #ffe0bf; --wk-none: #fff0a8;
+  --wk-dot-a: #d62839; --wk-dot-b: #1d4ed8;
+  --wk-font: "Comic Sans MS", "Chalkboard SE", "Comic Neue", var(--look-rounded);
+  --wk-head-font: Impact, "Arial Black", "Franklin Gothic Heavy", sans-serif;
+  --wk-card-font: "Comic Sans MS", "Chalkboard SE", verdana, sans-serif;
+  --wk-radius: 6px; --wk-line: 2px; --wk-edge-w: 3px; --wk-clip-outer: inset(0 round 8px); --wk-clip-inner: inset(0 round 5px);
+  --wk-motif: "💥";
+  --look-bg-image: radial-gradient(rgba(214, 40, 57, 0.16) 24%, transparent 26%);
+  --look-bg-size: 14px 14px;
+}
+
+/* Piratskatten: an old map, parchment and ink. */
+:root[data-look="pirat"], [data-look="pirat"] .wk-body, .wk-look[data-look="pirat"] {
+  color-scheme: light;
+  --bg-primary: #f1e3c2; --bg-secondary: #eadab4; --bg-surface: #f8eed6;
+  --text-primary: #3a2410; --text-secondary: #56381b; --text-muted: #654627;
+  --border-color: #d8c191; --input-bg: #fbf4e0; --input-border: #8a693c; --input-text: #3a2410;
+  --link-color: #8a1a1a; --shadow-color: rgba(58, 36, 16, 0.2);
+  --accent-fill: #9b1c1c; --accent-fill-hover: #7a1414; --accent-line: #9b1c1c; --accent-text: #8a1a1a;
+  --accent-success: #2f6b2f; --check-fill: #9b1c1c; --scrollbar-thumb: #c9ad76; --scrollbar-track: #eadab4;
+  --wk-green: #d8e2b3; --wk-blue: #c8dadf; --wk-yellow: #f1dd9d; --wk-red: #eec4a7; --wk-purple: #dbcad8; --wk-teal: #c6dccf; --wk-accent: #eecd96;
+  --wk-paper: #fbf3dd; --wk-paper-back: #f4e6c4; --wk-edge: #8b5a2b;
+  --wk-kan: #2f6b2f; --wk-on-kan: #ffffff; --wk-kan-soft: #dbe8cc; --wk-nara: #a7c78c;
+  --wk-ova: #a3480f; --wk-on-ova: #ffffff; --wk-ova-soft: #f1d7ba; --wk-none: #eadab4;
+  --wk-dot-a: #9b1c1c; --wk-dot-b: #2f5b7a;
+  --wk-font: "American Typewriter", Georgia, "Times New Roman", serif; --wk-head-font: "American Typewriter", Georgia, serif;
+  --wk-card-font: "Trebuchet MS", verdana, sans-serif;
+  --wk-radius: 4px; --wk-cut: 12px;
+  --wk-motif: "🏴‍☠️";
+  --look-bg-image: radial-gradient(ellipse at 50% 45%, rgba(255, 250, 232, 0.75), transparent 70%),
+                   radial-gradient(ellipse at 8% 10%, rgba(120, 80, 30, 0.2), transparent 38%),
+                   radial-gradient(ellipse at 94% 92%, rgba(120, 80, 30, 0.22), transparent 42%),
+                   radial-gradient(ellipse at 92% 8%, rgba(120, 80, 30, 0.14), transparent 30%);
+  --look-bg-size: 100% 100%;
+}
+
+/* Vinterland: snowflakes on ice blue. */
+:root[data-look="vinter"], [data-look="vinter"] .wk-body, .wk-look[data-look="vinter"] {
+  color-scheme: light;
+  --bg-primary: #e6f2fb; --bg-secondary: #eef6fc; --bg-surface: #ffffff;
+  --text-primary: #13324d; --text-secondary: #294a66; --text-muted: #3c5c79;
+  --border-color: #d0e3f1; --input-bg: #ffffff; --input-border: #6a94b8; --input-text: #13324d;
+  --link-color: #1b578c; --shadow-color: rgba(19, 50, 77, 0.12);
+  --accent-fill: #1f5f99; --accent-fill-hover: #174a78; --accent-line: #2d7cc0; --accent-text: #1b568a;
+  --accent-success: #1f7a52; --check-fill: #1f5f99; --scrollbar-thumb: #a9c8e1; --scrollbar-track: #eef6fc;
+  --wk-green: #d5eee2; --wk-blue: #d4e7f8; --wk-yellow: #faefc6; --wk-red: #f8d9df; --wk-purple: #e3ddf5; --wk-teal: #d0efef; --wk-accent: #fbe3c6;
+  --wk-paper: #ffffff; --wk-paper-back: #f3f8fd; --wk-edge: #88b4d4;
+  --wk-kan: #1f7a52; --wk-on-kan: #ffffff; --wk-kan-soft: #d6f0e4; --wk-nara: #a0dac0;
+  --wk-ova: #b3263e; --wk-on-ova: #ffffff; --wk-ova-soft: #f8d8de; --wk-none: #eef6fc;
+  --wk-dot-a: #b3263e; --wk-dot-b: #1f5f99;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 12px; --wk-clip-outer: inset(0 round 16px); --wk-clip-inner: inset(0 round 14.5px);
+  --wk-motif: "⛄";
+  --look-bg-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg stroke='%23ffffff' stroke-width='1.8' stroke-linecap='round' fill='none'%3E%3Cpath d='M24 14v20M15.3 19l17.4 10M15.3 29l17.4-10'/%3E%3Cpath d='M70 58v16M63 62l14 8M63 70l14-8'/%3E%3C/g%3E%3Ccircle cx='76' cy='20' r='2' fill='%23ffffff'/%3E%3Ccircle cx='20' cy='76' r='1.6' fill='%23ffffff'/%3E%3C/svg%3E"),
+                   linear-gradient(180deg, #edf6fd 0%, #d6e9f7 100%);
+  --look-bg-size: 96px 96px, 100% 100%;
+}
+
+/* Robotlabbet: a dark lab, a grid and neon. */
+:root[data-look="robot"], [data-look="robot"] .wk-body, .wk-look[data-look="robot"] {
+  color-scheme: dark;
+  --bg-primary: #0e1116; --bg-secondary: #1a212b; --bg-surface: #161b22;
+  --text-primary: #e6f7ff; --text-secondary: #b9cbd8; --text-muted: #a1b4c3;
+  --border-color: #2b3542; --input-bg: #1a212b; --input-border: #5f7a8e; --input-text: #e6f7ff;
+  --link-color: #5ff0ff; --shadow-color: rgba(0, 0, 0, 0.6);
+  --accent-fill: #00e5ff; --accent-fill-hover: #00c8e0; --accent-line: #00e5ff; --accent-text: #5ff0ff;
+  --accent-success: #39ff88; --check-fill: #00e5ff; --look-tick: #04161a; --scrollbar-thumb: #2f3b4a; --scrollbar-track: #161b22;
+  --wk-on-accent: #04161a;
+  --wk-green: #1e4c39; --wk-blue: #1f3d66; --wk-yellow: #5a5418; --wk-red: #5c2230; --wk-purple: #3d2a66; --wk-teal: #134f5c; --wk-accent: #5c3d14;
+  --wk-paper: #1b222c; --wk-paper-back: #202a35; --wk-edge: #00c2d6;
+  --wk-kan: #39ff88; --wk-on-kan: #062012; --wk-kan-soft: #1c4a34; --wk-nara: #2f8f5f;
+  --wk-ova: #ff5fdc; --wk-on-ova: #2a0624; --wk-ova-soft: #58204f; --wk-none: #1a212b;
+  --wk-dot-a: #00e5ff; --wk-dot-b: #ff5fdc;
+  --wk-font: var(--look-system); --wk-head-font: var(--look-mono); --wk-card-font: var(--look-mono);
+  --wk-radius: 6px; --wk-cut: 10px;
+  --wk-motif: "🤖";
+  --look-bg-image: linear-gradient(rgba(0, 229, 255, 0.07) 1px, transparent 1px),
+                   linear-gradient(90deg, rgba(0, 229, 255, 0.07) 1px, transparent 1px);
+  --look-bg-size: 28px 28px, 28px 28px;
+}
+
+/* Pixelspel: an arcade game, square pixels, no curves anywhere. */
+:root[data-look="pixel"], [data-look="pixel"] .wk-body, .wk-look[data-look="pixel"] {
+  color-scheme: dark;
+  --bg-primary: #1d1b3a; --bg-secondary: #2c2957; --bg-surface: #25224a;
+  --text-primary: #ffffff; --text-secondary: #dcd9ff; --text-muted: #c3bff4;
+  --border-color: #4a4590; --input-bg: #2c2957; --input-border: #8f89e0; --input-text: #ffffff;
+  --link-color: #ffd32a; --shadow-color: rgba(0, 0, 0, 0.8);
+  --accent-fill: #ffd32a; --accent-fill-hover: #ffe066; --accent-line: #ffd32a; --accent-text: #ffe066;
+  --accent-success: #2ed573; --check-fill: #ffd32a; --look-tick: #1d1b3a; --scrollbar-thumb: #4a4590; --scrollbar-track: #25224a;
+  --wk-on-accent: #1d1b3a;
+  --wk-green: #2b6b47; --wk-blue: #2d4f9c; --wk-yellow: #6f6012; --wk-red: #7a2432; --wk-purple: #5a2d8f; --wk-teal: #1f6878; --wk-accent: #7a4a12;
+  --wk-paper: #312d63; --wk-paper-back: #37336e; --wk-edge: #ffd32a;
+  --wk-kan: #2ed573; --wk-on-kan: #0d2b18; --wk-kan-soft: #1f5e3c; --wk-nara: #2a8f58;
+  --wk-ova: #ff6b81; --wk-on-ova: #2b0a0f; --wk-ova-soft: #6b2230; --wk-none: #2c2957;
+  --wk-dot-a: #ffd32a; --wk-dot-b: #2ed573;
+  --wk-font: var(--look-mono); --wk-head-font: var(--look-mono); --wk-card-font: var(--look-mono);
+  --wk-radius: 0px; --wk-line: 2px; --wk-edge-w: 3px; --wk-clip-outer: inset(0); --wk-clip-inner: inset(0);
+  --wk-motif: "👾";
+  --look-bg-image: conic-gradient(rgba(255, 255, 255, 0.04) 25%, transparent 0 50%, rgba(255, 255, 255, 0.04) 0 75%, transparent 0);
+  --look-bg-size: 24px 24px;
+}
+
+/* Svarta tavlan: a green board and chalk. */
+:root[data-look="tavla"], [data-look="tavla"] .wk-body, .wk-look[data-look="tavla"] {
+  color-scheme: dark;
+  --bg-primary: #22463a; --bg-secondary: #2c5244; --bg-surface: #284d40;
+  --text-primary: #f6f3ea; --text-secondary: #ddd8c8; --text-muted: #cbc5b2;
+  --border-color: #4d7364; --input-bg: #2c5244; --input-border: #a3b8ac; --input-text: #f6f3ea;
+  --link-color: #f7d27a; --shadow-color: rgba(0, 0, 0, 0.4);
+  --accent-fill: #f2c14e; --accent-fill-hover: #f6d27d; --accent-line: #f2c14e; --accent-text: #f7d27a;
+  --accent-success: #9fe0ad; --check-fill: #f2c14e; --look-tick: #1d2f28; --scrollbar-thumb: #4d7364; --scrollbar-track: #284d40;
+  --wk-on-accent: #1d2f28;
+  --wk-green: #3d6a4d; --wk-blue: #365979; --wk-yellow: #6f6230; --wk-red: #74403b; --wk-purple: #5a4a75; --wk-teal: #2f6964; --wk-accent: #735635;
+  --wk-paper: #2f5a4b; --wk-paper-back: #2c5647; --wk-edge: #e6e0cc;
+  --wk-kan: #9fe0ad; --wk-on-kan: #10281c; --wk-kan-soft: #3b6b50; --wk-nara: #6f9f7d;
+  --wk-ova: #f4a09a; --wk-on-ova: #2b0f0c; --wk-ova-soft: #6b3d39; --wk-none: #2c5244;
+  --wk-dot-a: #f6f3ea; --wk-dot-b: #f2c14e;
+  --wk-font: "Chalkboard SE", "Trebuchet MS", verdana, sans-serif; --wk-head-font: "Chalkduster", var(--look-hand);
+  --wk-card-font: "Chalkboard SE", "Comic Sans MS", verdana, sans-serif;
+  --wk-radius: 4px; --wk-clip-outer: inset(0 round 4px); --wk-clip-inner: inset(0 round 2.5px);
+  --wk-motif: "🍎";
+  --look-bg-image: radial-gradient(ellipse 60% 40% at 25% 20%, rgba(255, 255, 255, 0.07), transparent),
+                   radial-gradient(ellipse 50% 35% at 80% 70%, rgba(255, 255, 255, 0.05), transparent),
+                   radial-gradient(ellipse 40% 30% at 60% 15%, rgba(255, 255, 255, 0.04), transparent);
+  --look-bg-size: 100% 100%;
+}
+
+/* Solnedgång: orange, pink and purple, and the sun going down - in the
+   margin beside the page, like the planet in Rymden. */
+:root[data-look="solnedgang"], [data-look="solnedgang"] .wk-body, .wk-look[data-look="solnedgang"] {
+  color-scheme: light;
+  --bg-primary: #ffe9d6; --bg-secondary: #ffe0d6; --bg-surface: #fffaf6;
+  --text-primary: #3d1f2b; --text-secondary: #5a3444; --text-muted: #6a4353;
+  --border-color: #f2d5d0; --input-bg: #fffaf6; --input-border: #bd7b82; --input-text: #3d1f2b;
+  --link-color: #a8380a; --shadow-color: rgba(61, 31, 43, 0.14);
+  --accent-fill: #c2410c; --accent-fill-hover: #9a3412; --accent-line: #d9602f; --accent-text: #a4370a;
+  --accent-success: #2a7247; --check-fill: #c2410c; --scrollbar-thumb: #eeb9ae; --scrollbar-track: #ffe0d6;
+  --wk-green: #def0cd; --wk-blue: #d7e3fb; --wk-yellow: #ffebad; --wk-red: #ffd2ca; --wk-purple: #e9d7fb; --wk-teal: #d0eee8; --wk-accent: #ffdab5;
+  --wk-paper: #fffdfb; --wk-paper-back: #fff3ea; --wk-edge: #e39676;
+  --wk-kan: #2a7247; --wk-on-kan: #ffffff; --wk-kan-soft: #d7efdc; --wk-nara: #a3d6b1;
+  --wk-ova: #b1255a; --wk-on-ova: #ffffff; --wk-ova-soft: #fbd4e1; --wk-none: #ffe0d6;
+  --wk-dot-a: #c2410c; --wk-dot-b: #7c3aed;
+  --wk-font: var(--look-rounded); --wk-head-font: var(--look-rounded); --wk-card-font: var(--look-rounded);
+  --wk-radius: 14px; --wk-clip-outer: inset(0 round 16px); --wk-clip-inner: inset(0 round 14.5px);
+  --wk-motif: "🌅";
+  --look-bg-image: radial-gradient(circle at calc(50% + 590px) 190px, rgba(255, 196, 92, 0.75) 0 58px, rgba(255, 196, 92, 0.2) 60px 84px, transparent 86px),
+                   linear-gradient(180deg, #ffe7cc 0%, #ffd2da 58%, #e9d6ff 100%);
+  --look-bg-size: 100% 100%, 100% 100%;
+}
+
+/* ── What tokens alone cannot do ──────────────────────────────────────── */
+
+/* The background, behind everything: the body is pinned (winnetkakort.css),
+   so the pattern stays put while the page scrolls over it. The pinned body
+   leaves <html> no height at all, and <html> draws the body's background
+   when it has none of its own: the layers the size of the window - a sun, a
+   planet, a gradient - came out zero pixels high. A colour of its own on
+   <html> leaves the body to draw its background itself, over the window. */
+:root[data-look] { background-color: var(--bg-primary); }
+body.wk-body {
+  background-color: var(--bg-primary);
+  background-image: var(--look-bg-image, none);
+  background-size: var(--look-bg-size, auto);
+}
+
+/* Paper is white in every look. The printed cards are ink on paper
+   (winnetkakort.css), and a browser told to print backgrounds must not put
+   the stars or the stripes behind them. A dark look is light on paper too,
+   or Chrome paints the page margins in its dark canvas colour; and the
+   colours change at once, as kvot.css would otherwise fade the body's. */
+@media print {
+  :root[data-look] { color-scheme: light; }
+  :root[data-look], body.wk-body { background: #fff; transition: none; }
+}
+
+/* A look is light or dark by nature: the page bar's theme switch would only
+   change the site's header and footer, so it steps aside. */
+:root[data-look]:not([data-look="kvot"]) .wk-top-end > .theme-toggle { display: none !important; }
+
+/* The motif: on the card's band, after the title and the end of a round. */
+.wk-band::before { content: var(--wk-motif, none); margin-right: .35em; }
+.wk-title::after, .wk-summary h2::after { content: var(--wk-motif, none); margin-left: .35em; }
+
+/* Superhjälte: hard black shadows, and headings that shout. */
+:root[data-look="hjalte"] .wk-tile { box-shadow: 4px 4px 0 #111111; }
+:root[data-look="hjalte"] :is(.wk-btn, .fc-choice, .wk-numpad button) { box-shadow: 2px 2px 0 #111111; }
+:root[data-look="hjalte"] :is(.wk h2, .wk-title, .wk-bar-title, .wk-panel-title) { letter-spacing: .03em; text-transform: uppercase; }
+
+/* Pixelspel: square everything, and shadows in whole pixels. */
+:root[data-look="pixel"] .wk-tile { box-shadow: 4px 4px 0 #000000; }
+:root[data-look="pixel"] :is(.wk-btn, .fc-choice, .wk-numpad button, .wk-look) { box-shadow: 3px 3px 0 #000000; }
+:root[data-look="pixel"] :is(.wk h2, .wk-title, .wk-bar-title, .wk-panel-title) { text-transform: uppercase; letter-spacing: .05em; }
+:root[data-look="pixel"] :is(.wk-meter, .wk-tabs [role="tab"], .wk-grade, .wk-chip, .wk-sum-pile) { border-radius: 0; }
+
+/* On a phone the practice bar's title gets what its buttons leave, and in
+   Pixelspel's monospace that is less than a word ("FRUK / T…", "DUBB /
+   LOR…"). The title is on the card's band as well, so there the bar leaves
+   it out. */
+@media (max-width: 680px) {
+  :root[data-look="pixel"] :is(#wk-practice, #fc-practice) .wk-bar-title { display: none; }
+  :root[data-look="pixel"] :is(#wk-practice, #fc-practice) .wk-bar-meta { margin-left: auto; }
+}
+
+/* Robotlabbet and Rymden: a glow on the headings. */
+:root[data-look="robot"] :is(.wk h2, .wk-title, .wk-bar-title) { text-shadow: 0 0 10px rgba(0, 229, 255, 0.45); }
+:root[data-look="rymden"] :is(.wk h2, .wk-title, .wk-bar-title) { text-shadow: 0 0 12px rgba(255, 207, 74, 0.35); }
+
+/* Regnbåge: a rainbow stripe along the top of every band. The band keeps
+   its pile's colour underneath, so a card still shows where it came from. */
+:root[data-look="regnbage"] :is(.wk-band, .wk-tile-band), .wk-look[data-look="regnbage"] .wk-look-band {
+  background-image: linear-gradient(90deg, #ff595e 0 16.7%, #ff924c 0 33.3%, #ffca3a 0 50%, #8ac926 0 66.7%, #1982c4 0 83.3%, #6a4c93 0);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+}
+.wk-look[data-look="regnbage"] .wk-look-band { background-size: 100% 3px; }
+
+/* Svarta tavlan: chalk is a little soft at the edges. */
+:root[data-look="tavla"] :is(.wk h2, .wk-title, .wk-bar-title, .wk-eq, .fc-prompt) { text-shadow: 0 0 1px rgba(255, 255, 255, 0.35); }
+
+/* The dark looks: a tick box filled bright, with a dark tick - a white tick
+   would need a fill too dark to stand out from the board. kvot.css draws
+   the tick as a picture, so the dark one is drawn here, in --look-tick. */
+:root:is([data-look="natt"], [data-look="kontrast"], [data-look="rymden"], [data-look="robot"], [data-look="pixel"], [data-look="tavla"]) input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23101010' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E");
+}
+:root:is([data-look="natt"], [data-look="kontrast"], [data-look="rymden"], [data-look="robot"], [data-look="pixel"], [data-look="tavla"]) input[type="radio"]:checked {
+  background-image: radial-gradient(circle at center, var(--look-tick) 0 34%, transparent 36%);
+}
+
+/* Hög kontrast: a focus ring that cannot be missed. */
+:root[data-look="kontrast"] :focus-visible { outline-width: 3px !important; outline-offset: 3px; }
+
+/* ── The picker ───────────────────────────────────────────────────────── */
+
+.wk-looks-field { grid-column: 1 / -1; }
+.wk-looks-head { margin: 8px 0 6px; font-size: .85rem; color: var(--text-secondary); }
+.wk-looks-head:first-of-type { margin-top: 2px; }
+.wk-looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 4px; }
+
+/* A tile carries its own look, so it shows it: its colours, its font, its
+   background and its card. */
+.wk-look {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  font: inherit;
+  font-family: var(--wk-font, verdana, sans-serif);
+  color: var(--text-primary);
+  text-align: center;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-color);
+  border-radius: calc(var(--wk-radius, 8px) + 4px);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.wk-look:hover { border-color: var(--accent-line); }
+.wk-look:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.wk-look[aria-pressed="true"] { border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-line); }
+.wk-look-scene {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 64px;
+  border-radius: var(--wk-radius, 8px);
+  background-color: var(--bg-primary);
+  background-image: var(--look-bg-image, none);
+  background-size: var(--look-bg-size, auto);
+  overflow: hidden;
+}
+.wk-look-card {
+  display: flex;
+  flex-direction: column;
+  width: 66px;
+  height: 44px;
+  overflow: hidden;
+  background: var(--wk-paper);
+  border: var(--wk-edge-w, 1.5px) solid var(--wk-edge);
+  border-radius: min(var(--wk-radius, 8px), 12px);
+  box-sizing: border-box;
+}
+.wk-look-band { flex: none; height: 10px; background: var(--wk-blue); }
+.wk-look-sample { flex: 1; display: grid; place-items: center; font-family: var(--wk-card-font, verdana, sans-serif); font-size: 14px; color: var(--text-primary); }
+.wk-look-motif {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-size: 20px;
+  line-height: 1;
+  transform: rotate(-10deg);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+.wk-look-name { font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-size: .88rem; line-height: 1.2; }
