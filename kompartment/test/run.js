@@ -11365,6 +11365,80 @@ test('a distribution that has never been set opens on the normal curve', async (
 		'a distribution that exists is not opened on its own shape');
 });
 
+test('the distribution editor draws a log axis in ln x, with minor ticks, and marks the value', async () => {
+	const { readFileSync } = await import('node:fs');
+	const E = await import('../src/ui/pdfeditor.js');
+	const P = await import('../src/domain/pdf.js');
+	const blank = { values: null, trmin: null, trmax: null, pmin: null, pmax: null };
+
+	// On a log axis the height is the density of ln x, so a log-normal is the
+	// bell it is in ln x and peaks at its median. f(x) peaks at the mode, 1.94
+	// for this one, which is where the chart used to put the top -- off centre
+	// between the two points it was fitted through.
+	const logn = { ...blank, kind: 'logn5', params: { p1: 0.05, x1: 1, p2: 0.95, x2: 10 } };
+	const c = P.curveOf(logn, { points: 2001 });
+	const hs = E.drawnHeights(c);
+	close(c.xs[hs.indexOf(Math.max(...hs))], Math.sqrt(10), 0.01, 'the top of the log-normal');
+	// A log-uniform is flat on it, and a log-triangular peaks at its mode.
+	const u = E.drawnHeights(P.curveOf({ ...blank, kind: 'logu', params: { min: 1e-3, max: 10 } })).slice(1, -1);
+	assert(Math.max(...u) / Math.min(...u) - 1 < 1e-9, 'a log-uniform is not flat on its log axis');
+	const ct = P.curveOf({ ...blank, kind: 'logt', params: { min: 0.01, max: 100, mode: 1 } }, { points: 2001 });
+	const t = E.drawnHeights(ct);
+	close(ct.xs[t.indexOf(Math.max(...t))], 1, 0.01, 'the top of the log-triangular');
+	// A linear axis draws the density as it is.
+	const cn = P.curveOf({ ...blank, kind: 'norm', params: { mean: 0, sd: 1 } });
+	assert(!cn.log && E.drawnHeights(cn) === cn.ys, 'a linear axis is not drawn as the density');
+
+	// The marks between the labelled ticks of a log axis: 2 to 9 times each
+	// power of ten with room for them, never on a labelled tick, never outside.
+	const minors = E.logMinorTicks(0.19, 52, 280);
+	const labelled = E.logTicks(0.19, 52);
+	assert(labelled.join() === '1,10', labelled.join());
+	const want = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 2, 3, 4, 5, 6, 7, 8, 9, 20, 30, 40, 50];
+	assert(minors.length === want.length && minors.every((v, i) => Math.abs(v / want[i] - 1) < 1e-12),
+		minors.join());
+	// Narrower decades keep 2 and 5, and a very wide axis only the powers of
+	// ten its labels skip -- which a wide one always has some of.
+	const mid = E.logMinorTicks(1e-3, 10, 40).map((v) => Number(v.toPrecision(3)));
+	assert(mid.join() === '0.002,0.005,0.02,0.05,0.2,0.5,2,5', mid.join());
+	const wide = E.logMinorTicks(1e-30, 1, 20);
+	assert(wide.length > 0 && wide.every((v) => Number.isInteger(Math.log10(v))
+		&& !E.logTicks(1e-30, 1).includes(v)), wide.join());
+	// Within one decade the ends are the labels and the integers between are marked.
+	assert(E.logMinorTicks(2, 8, 1000).join() === '3,4,5,6,7', E.logMinorTicks(2, 8, 1000).join());
+	assert(E.logMinorTicks(0, 10, 100).length === 0 && E.logMinorTicks(10, 1, 100).length === 0,
+		'an axis that is not one has minor ticks');
+
+	// The value a deterministic run uses. Only a number is one: an index's
+	// entry holds what was typed, and an empty field is no value, not zero.
+	const vals = [3, '3.5', ' ', '', null, undefined, '2*k', NaN, Infinity, {}].map(E.deterministicValue);
+	assert(vals.join() === '3,3.5,,,,,,,,', vals.join());
+	// It is marked where it is inside what the chart draws, and the note says
+	// it is outside everywhere else: for any number, one of the two and never
+	// both or neither.
+	const span = P.supportOf(logn);
+	for (const v of [span[0], 1, 3, 10, span[1], span[0] / 2, span[1] * 2, 0, -1]) {
+		const marked = E.valueOnChart(logn, v) === v;
+		const noted = v < span[0] || v > span[1];
+		assert(marked !== noted, `${v}: marked ${marked}, noted ${noted}`);
+	}
+	// A truncation moves the edge, so a value it cuts off is not marked.
+	assert(E.valueOnChart({ ...logn, trmax: 5 }, 7.5) === null, 'a value truncated off is marked');
+	assert(E.valueOnChart({ ...logn, trmax: 5 }, 4) === 4, 'a value inside a truncation is not marked');
+	assert(E.valueOnChart({ ...blank, kind: 'logn5', params: { p1: 0.05 } }, 3) === null,
+		'a distribution not filled in marks a value');
+	// The chart and the note read the same number.
+	const src = readFileSync(new URL('../src/ui/pdfeditor.js', import.meta.url), 'utf8');
+	assert(/paint\(canvas, draft, fixed\)/.test(src), 'the chart is not given the value');
+	assert(/if \(fixed != null && span && \(fixed < span\[0\] \|\| fixed > span\[1\]\)\)/.test(src),
+		'the note reads a different value from the chart');
+	// The block's settings hand the value over as it is. Number() of it made a
+	// parameter with no value one of 0, and 0 would be marked.
+	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	assert(!/value: Number\.isFinite\(Number\(block\.value\)\)/.test(insp),
+		'the settings turn a missing value into 0 before the editor sees it');
+});
+
 test('an index chip can be both clicked and double-clicked', async () => {
 	const { readFileSync } = await import('node:fs');
 	const ix = readFileSync(new URL('../src/ui/indexlists.js', import.meta.url), 'utf8');

@@ -38,7 +38,7 @@ function fmt(v) {
 }
 
 /** The ticks for a log axis: one per decade, or per 3 when there are many. */
-function logTicks(lo, hi) {
+export function logTicks(lo, hi) {
 	const a = Math.ceil(Math.log10(lo));
 	const b = Math.floor(Math.log10(hi));
 	const decades = b - a;
@@ -46,6 +46,28 @@ function logTicks(lo, hi) {
 	const step = decades > 8 ? Math.ceil(decades / 6) : 1;
 	const out = [];
 	for (let e = a; e <= b; e += step) out.push(10 ** e);
+	return out;
+}
+
+/**
+ * The unlabelled marks between the labelled ticks of a log axis: 2 to 9 times
+ * each power of ten where a decade is wide enough to hold them apart, 2 and 5
+ * where it is narrower, and the powers of ten the labels skip when there are
+ * many decades. 9 and 10 are a twentieth of a decade apart, so a decade has
+ * to be about 80 pixels wide for the nine of them to read as nine.
+ */
+export function logMinorTicks(lo, hi, pxPerDecade) {
+	if (!(lo > 0 && hi > lo)) return [];
+	const labelled = new Set(logTicks(lo, hi));
+	const multiples = pxPerDecade >= 80 ? [1, 2, 3, 4, 5, 6, 7, 8, 9]
+		: pxPerDecade >= 24 ? [1, 2, 5] : [1];
+	const out = [];
+	for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) {
+		for (const m of multiples) {
+			const v = m * 10 ** e;
+			if (v >= lo && v <= hi && !labelled.has(v)) out.push(v);
+		}
+	}
 	return out;
 }
 
@@ -69,13 +91,59 @@ const tickText = (v) => {
 	return String(Number(v.toPrecision(3)));
 };
 
+/** The deterministic value as its label on the chart says it. */
+const valueText = (v) => {
+	const a = Math.abs(v);
+	if (v === 0) return '0';
+	if (a >= 1e5 || a < 1e-3) return Number(v.toPrecision(3)).toExponential().replace('e+', 'e');
+	return String(Number(v.toPrecision(4)));
+};
+
 /**
- * Draws the density on a canvas.
+ * The value a deterministic run uses, as a number, or null where there is
+ * none: an index's own entry holds what was typed, which may be an expression,
+ * and an empty field is no value rather than zero.
+ */
+export function deterministicValue(value) {
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+	if (typeof value !== 'string' || value.trim() === '') return null;
+	const n = Number(value);
+	return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Where the chart marks the deterministic value: the value, when it lies in
+ * what the chart draws, and null when it does not -- which is when the notes
+ * under the chart say it is outside instead.
+ */
+export function valueOnChart(spec, value) {
+	const v = deterministicValue(value);
+	const span = v == null ? null : supportOf(spec);
+	return span && v >= span[0] && v <= span[1] ? v : null;
+}
+
+/**
+ * The heights the chart draws for a curve from `curveOf`.
+ *
+ * On a log axis the height is x·f(x), the density per unit of ln x, so the
+ * area between two ticks is the probability between them as it is on a
+ * linear one. f(x) itself peaks at the mode of x and leans left of the body
+ * the axis shows: a log-normal through P5 = 1 and P95 = 10 would peak at 1.9
+ * instead of at its median 3.2, and a log-triangular would not be the
+ * triangle in ln x that it is.
+ */
+export function drawnHeights(curve) {
+	return curve.log ? curve.ys.map((y, i) => y * curve.xs[i]) : curve.ys;
+}
+
+/**
+ * Draws the density on a canvas, and the deterministic value on it where it
+ * falls inside.
  *
  * Read from the stylesheet rather than written in, so the picture follows the
  * theme the way every other drawing here does.
  */
-function paint(canvas, spec) {
+function paint(canvas, spec, value = null) {
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return;
 	const dpr = window.devicePixelRatio || 1;
@@ -90,8 +158,14 @@ function paint(canvas, spec) {
 	const ink = style.getPropertyValue('--text-secondary').trim() || '#888';
 	const faint = style.getPropertyValue('--border').trim() || '#333';
 	const accent = style.getPropertyValue('--accent').trim() || '#3b82f6';
+	const strong = style.getPropertyValue('--text-primary').trim() || '#ccc';
 
-	const pad = { l: 8, r: 8, t: 10, b: 18 };
+	// A parameter with a value keeps a row above the curve for its label,
+	// whether or not this shape reaches it: the value does not change while
+	// the dialog is open, and a curve that jumped down whenever typing carried
+	// the range across it would look like a change of shape.
+	const fixed = deterministicValue(value);
+	const pad = { l: 8, r: 8, t: fixed == null ? 10 : 22, b: 18 };
 	const plotW = w - pad.l - pad.r;
 	const plotH = h - pad.t - pad.b;
 
@@ -106,14 +180,8 @@ function paint(canvas, spec) {
 		return;
 	}
 
-	// On a log axis the height is x·f(x), the density per unit of ln x, so the
-	// area between two ticks is the probability between them as it is on a
-	// linear one. f(x) itself peaks at the mode of x and leans left of the
-	// body the axis shows: a log-normal through P5 = 1 and P95 = 10 would peak
-	// at 1.9 instead of at its median 3.2, and a log-triangular would not be
-	// the triangle in ln x that it is.
 	const { xs, log, bars } = curve;
-	const ys = log ? curve.ys.map((y, i) => y * xs[i]) : curve.ys;
+	const ys = drawnHeights(curve);
 	const lo = xs[0];
 	const hi = xs[xs.length - 1];
 	const peak = Math.max(...ys, Number.MIN_VALUE);
@@ -128,14 +196,24 @@ function paint(canvas, spec) {
 	// The axis, and a tick per decade where the scale is logarithmic -- which
 	// is the one thing that says *this is five decades wide* rather than
 	// leaving the reader to infer it from a shape that looks the same either
-	// way.
+	// way. Each labelled tick has a mark under the axis, and a log axis has
+	// shorter unlabelled ones between them, so a value can be read off it
+	// between the decades too.
+	const axisY = pad.t + plotH + 0.5;
+	const crisp = (px) => Math.round(px) + 0.5;
 	ctx.strokeStyle = faint;
 	ctx.lineWidth = 1;
 	ctx.beginPath();
-	ctx.moveTo(pad.l, pad.t + plotH + 0.5);
-	ctx.lineTo(pad.l + plotW, pad.t + plotH + 0.5);
+	ctx.moveTo(pad.l, axisY);
+	ctx.lineTo(pad.l + plotW, axisY);
 	ctx.stroke();
 
+	const mark = (t, length) => {
+		ctx.beginPath();
+		ctx.moveTo(crisp(sx(t)), axisY);
+		ctx.lineTo(crisp(sx(t)), axisY + length);
+		ctx.stroke();
+	};
 	ctx.fillStyle = ink;
 	ctx.font = '9.5px system-ui, sans-serif';
 	ctx.textAlign = 'center';
@@ -146,12 +224,21 @@ function paint(canvas, spec) {
 		const px = sx(t);
 		ctx.strokeStyle = faint;
 		ctx.beginPath();
-		ctx.moveTo(px + 0.5, pad.t);
-		ctx.lineTo(px + 0.5, pad.t + plotH);
+		ctx.moveTo(crisp(px), pad.t);
+		ctx.lineTo(crisp(px), pad.t + plotH);
 		ctx.globalAlpha = 0.45;
 		ctx.stroke();
+		ctx.strokeStyle = ink;
+		ctx.globalAlpha = 0.8;
+		mark(t, 4);
 		ctx.globalAlpha = 1;
-		ctx.fillText(tickText(t), px, pad.t + plotH + 4);
+		ctx.fillText(tickText(t), px, axisY + 5.5);
+	}
+	if (log) {
+		ctx.strokeStyle = ink;
+		ctx.globalAlpha = 0.55;
+		for (const t of logMinorTicks(lo, hi, plotW / Math.log10(hi / lo))) mark(t, 2.5);
+		ctx.globalAlpha = 1;
 	}
 
 	ctx.fillStyle = accent;
@@ -165,31 +252,56 @@ function paint(canvas, spec) {
 			ctx.fillRect(sx(xs[i]) - width / 2, top, width, pad.t + plotH - top);
 		}
 		ctx.globalAlpha = 1;
-		return;
+	} else {
+		// The area, then the line over it: the filled shape is what carries
+		// the spread at a glance, and the line is what carries the mode.
+		ctx.beginPath();
+		ctx.moveTo(sx(xs[0]), pad.t + plotH);
+		for (let i = 0; i < xs.length; i++) ctx.lineTo(sx(xs[i]), sy(ys[i]));
+		ctx.lineTo(sx(xs[xs.length - 1]), pad.t + plotH);
+		ctx.closePath();
+		ctx.globalAlpha = 0.18;
+		ctx.fill();
+		ctx.globalAlpha = 1;
+
+		ctx.strokeStyle = accent;
+		ctx.lineWidth = 2;
+		ctx.lineJoin = 'round';
+		ctx.beginPath();
+		for (let i = 0; i < xs.length; i++) {
+			const px = sx(xs[i]);
+			const py = sy(ys[i]);
+			if (i === 0) ctx.moveTo(px, py);
+			else ctx.lineTo(px, py);
+		}
+		ctx.stroke();
 	}
 
-	// The area, then the line over it: the filled shape is what carries the
-	// spread at a glance, and the line is what carries the mode.
-	ctx.beginPath();
-	ctx.moveTo(sx(xs[0]), pad.t + plotH);
-	for (let i = 0; i < xs.length; i++) ctx.lineTo(sx(xs[i]), sy(ys[i]));
-	ctx.lineTo(sx(xs[xs.length - 1]), pad.t + plotH);
-	ctx.closePath();
-	ctx.globalAlpha = 0.18;
-	ctx.fill();
-	ctx.globalAlpha = 1;
-
-	ctx.strokeStyle = accent;
-	ctx.lineWidth = 2;
-	ctx.lineJoin = 'round';
-	ctx.beginPath();
-	for (let i = 0; i < xs.length; i++) {
-		const px = sx(xs[i]);
-		const py = sy(ys[i]);
-		if (i === 0) ctx.moveTo(px, py);
-		else ctx.lineTo(px, py);
+	// The value a deterministic run uses, over the shape a probabilistic one
+	// would draw from: dashed, as a value marked on the sensitivity charts
+	// is, with its number in the row kept for it above the curve. A list's
+	// bars stand on bin centres, so its extremes are half a bin past the ends
+	// and are drawn at them.
+	const at = valueOnChart(spec, fixed);
+	if (at != null) {
+		const px = crisp(Math.min(pad.l + plotW, Math.max(pad.l, sx(at))));
+		ctx.strokeStyle = strong;
+		ctx.lineWidth = 1;
+		ctx.globalAlpha = 0.7;
+		ctx.setLineDash([3, 3]);
+		ctx.beginPath();
+		ctx.moveTo(px, pad.t - 6);
+		ctx.lineTo(px, pad.t + plotH);
+		ctx.stroke();
+		ctx.setLineDash([]);
+		ctx.globalAlpha = 1;
+		const text = `value ${valueText(at)}`;
+		const half = ctx.measureText(text).width / 2;
+		ctx.fillStyle = strong;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'top';
+		ctx.fillText(text, Math.min(w - pad.r - half, Math.max(pad.l + half, px)), 3);
 	}
-	ctx.stroke();
 }
 
 /**
@@ -200,7 +312,8 @@ function paint(canvas, spec) {
  * @param {string} opts.title         what is being edited, for the heading
  * @param {string} [opts.subtitle]
  * @param {string} [opts.unit]        shown beside the numbers
- * @param {number} [opts.value]       the constant a deterministic run uses
+ * @param {number|string} [opts.value] the constant a deterministic run uses,
+ *                                   marked on the chart where it is a number
  * @param {(spec: object|null) => void} opts.onSave
  */
 export function openPDFEditor({
@@ -227,7 +340,8 @@ export function openPDFEditor({
 		};
 
 	let canvas = null;
-	const redraw = () => { if (canvas) paint(canvas, draft); };
+	const fixed = deterministicValue(value);
+	const redraw = () => { if (canvas) paint(canvas, draft, fixed); };
 
 	const modal = openModal({
 		info: dialogInfo('distribution-editor'),
@@ -361,9 +475,9 @@ export function openPDFEditor({
 				// other question this dialog can answer: a value outside its own
 				// distribution is a real mistake and an invisible one.
 				const span = supportOf(draft);
-				if (value != null && span && (value < span[0] || value > span[1])) {
+				if (fixed != null && span && (fixed < span[0] || fixed > span[1])) {
 					noteBox.append(el('p', { className: 'pdf-warn' },
-						`The parameter's value, ${value}, is outside this distribution. `
+						`The parameter's value, ${fixed}, is outside this distribution. `
 						+ 'A deterministic run uses that value; a probabilistic one would '
 						+ 'never draw it.'));
 				}

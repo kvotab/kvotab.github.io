@@ -1512,7 +1512,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 					spec,
 					title: block.name,
 					unit: block.unit ?? '',
-					value: Number.isFinite(Number(block.value)) ? Number(block.value) : null,
+					value: block.value ?? null,
 					onSave: (next) => {
 						if (next) block.pdf = next;
 						else delete block.pdf;

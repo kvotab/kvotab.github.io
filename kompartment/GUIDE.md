@@ -5965,11 +5965,18 @@ they are drawn, and the mistakes they invite are invisible on a form and
 obvious on a curve: a most-likely value outside the range, a truncation that
 removes nearly all the probability, a geometric standard deviation of 1.05
 where 5 was meant. The curve is redrawn as you type. A log-scaled kind gets a
-logarithmic axis with a tick per decade, because a log-triangular over five
-decades drawn on a linear axis is a spike beside a flat line and tells you
-nothing. On that axis the height is the density of the logarithm, so a
-log-normal is a symmetric bell centred on its median, a log-triangular is a
-triangle peaking at its most likely value, and a log-uniform is flat.
+logarithmic axis with a labelled tick per decade and unlabelled ones between
+them, at 2 to 9 times each power of ten where there is room, because a
+log-triangular over five decades drawn on a linear axis is a spike beside a
+flat line and tells you nothing. On that axis the height is the density of the
+logarithm, so a log-normal is a symmetric bell centred on its median, a
+log-triangular is a triangle peaking at its most likely value, and a
+log-uniform is flat.
+
+The parameter's own value — the one a deterministic run uses — is the dashed
+line across the chart, with its number above it, wherever it falls inside the
+curve. Where it falls outside, there is no line and a note under the chart says
+so instead.
 
 Eleven shapes: the nine the corpus uses, and skbrnt's two double triangulars:
 

@@ -282,7 +282,12 @@ const TOPICS = {
 				'**Truncation** — cut the curve at values, or at percentiles of itself.',
 			],
 		}, {
-			text: 'The curve is drawn as you type, and a distribution that cannot be sampled says why.',
+			text: [
+				'The curve is drawn as you type, and a distribution that cannot be sampled says why.',
+				'The dashed line is the value a deterministic run uses, where it falls inside the curve; '
+				+ 'outside it, a note under the chart says so. A log axis has a labelled tick per decade '
+				+ 'and unlabelled ones between.',
+			],
 		}],
 		more: 'A distribution on a parameter',
 	},
