@@ -6,7 +6,7 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
 
     node resources/tests/ensdf/test-parse.js
 
-115 checks in four parts:
+133 checks in four parts:
 
 1. **Fields**, each against what the ENSDF manual says the record means:
    NUCIDs (including `NN` for the neutron and `Z - 100` above Z = 109),
@@ -33,6 +33,14 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
    member but the start under a year, the start kept however short it lives,
    a branch with no percentage on the way leaving the known part (131In →
    131Sn at least 81.5 %), and every chain at 1000 y built in under 5 s),
+   the parents (the direct ones of 226Ra and 234U, each with its share; none
+   for 36Cl; the chain built going up -- 226Ac reaching 226Ra by its 17 %, its
+   branch to 226Th not drawn, 238U to 234U via 234Th and 234mPa at 1 y, the
+   short-lived parents with nothing drawn above them listed, no stable parent
+   though 136Ce keeps a 2EC mode with no percentage, a cut-off chain with no
+   member left hanging; going up and going down giving the same share and
+   the same arrow for every pair of start and member, at three settings, and
+   226Ra grown in from 230Th the same in both),
    the list of NNDC's archive in `nndc.js` (2004-03 to the release on this
    site, newest first, every part of a split release covering A = 1 on or
    saying what it lacks -- NNDC lists 2017-05-01 and 2021-07-01 without
@@ -51,6 +59,10 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
    the 238U chain in secular equilibrium after 10 My, and no atom lost over
    10^10 years.
 
+With `--every-setting` the up-and-down comparison runs at all 55 settings the
+page offers (about 12 s; 795 290 pairs and 1 121 653 arrows for the 2026-09-01
+release), which is what the About tab says was checked.
+
 Part 4 reads the committed data, so run it again after `scripts/gen-ensdf.mjs`
 installs a release.
 
@@ -62,7 +74,7 @@ Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py
 
-73 checks: the built-in release loads; the hover card sets its superscripts as
+94 checks: the built-in release loads; the hover card sets its superscripts as
 `<sup>` and draws no Unicode superscript character (Verdana has only ¹ ² ³, so
 "²³⁸" came out in two fonts); a nuclide is reached by address
 (`#60Co`), by search, by a click on the chart and by the arrow keys; every
@@ -87,6 +99,19 @@ the 238U chain over time with 1 Bq at its start and that box full, turns
 a line rings its member in the chain and fills the boxes to that time, while
 pointing at a row picks out its line and box, while the table under the chart keeps its columns wherever the cursor is; Run through takes the cursor
 to the end, the values save as CSV, and leaving the tab puts the boxes back;
+the Nuclide tab lists the parents of 226Ra by mode, longest-lived first,
+each a link with its share, and says so when there are none (36Cl); with the
+chain set to parents the view tab says "Parents of 226Ra", the chart rings
+230Th, 234U and 238U and draws an arrow into 226Ra from each direct parent,
+the card on the Nuclide tab follows and the setting is kept; the drawing has
+230Th, 234U, 238U, 226Ac and 226Fr but not 226Th, no label on a box, opens on
+226Ra at its foot, and the table and the tooltips give each member's share
+of its decays that reaches 226Ra (226Ac 17 %); at 1 y 238U goes to 234U via
+234Th and 234mPa and the note names what was left out, nearest first; a box
+opens its member without moving the start; the parents save as
+parents-226Ra.svg, .png and .csv; their inventory starts empty, and 1 g of
+230Th grows 226Ra into equilibrium with it; a stable nuclide (206Pb) has
+parents, and the card turns the chain back down;
 the database menu lists
 NNDC's archive back to 2004 less the release on the site, and choosing one
 opens a dialog with the right NNDC link (all three parts, with their mass

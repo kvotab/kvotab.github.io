@@ -283,6 +283,97 @@ check('the start stays however short it lives: 218Po (3 min) to 210Pb at 1 y', r
   for (const n of idx.list) if (!n.hidden && n.s.length && !n.s[0].st) C.buildChain(idx, n.z, n.a, 0, { minHalfLifeS: 1000 * C.YEAR_S });
   check('every chain at 1000 y in under 5 s', Date.now() - t0, (ms) => ms < 5000);
 }
+
+/* Parents: the states that decay to a state, and the chain built going up. */
+{
+  const nm = (n) => C.name(n.z, n.a, n.k, idx.get(n.z, n.a)).text;
+  /* Sorted by name, as the expected values are written. */
+  const direct = (z, a, k = 0) => Object.fromEntries(C.parentsOf(idx, z, a, k).map((p) => [`${nm(p)} ${p.mode}`, p.pct === null ? null : +(p.pct * p.f).toPrecision(4)]).sort((p, q) => (p[0] < q[0] ? -1 : 1)));
+  check('parents of 226Ra: 230Th by alpha, 226Fr by beta-minus, 226Ac by its 17 % of electron capture', direct(88, 226), { '226Ac EC': 17, '226Fr B-': 100, '230Th A': 100 });
+  check('parents of 234U, each with the share of its decays that lands in the ground state', direct(92, 234), { '234Np EC+B+': 100, '234Pa B-': 80.32, '234mPa B-': 99.84, '234mU IT': 100, '238Pu A': 100 });
+  check('36Cl has none: 36S and 36Ar are stable', C.parentsOf(idx, 17, 36, 0), []);
+  const up = (z, a, k, opt = {}) => C.buildChain(idx, z, a, k, { minIsomerS: 1, ...opt, up: true });
+  const reach = (ch) => Object.fromEntries(ch.nodes.filter((n) => n !== ch.root).map((n) => [nm(n), +(n.cum * 100).toPrecision(5)]));
+  const ra = up(88, 226, 0);
+  check('going up from 226Ra: 230Th, 234U, 238U and 238Pu all reach it by every decay', ['230Th', '234U', '238U', '238Pu'].map((m) => reach(ra)[m]), [100, 100, 100, 100]);
+  /* 226Ac's modes add up to 100.006 % and are scaled down to 100, as everywhere: 16.999 %. */
+  check('... 226Ac by its 17 %, and its beta-minus branch to 226Th, which never gets there, is not drawn', [reach(ra)['226Ac'], ra.nodes.some((n) => nm(n) === '226Th'), ra.nodes.find((n) => nm(n) === '226Ac').out.map((e) => e.mode)], [16.999, false, ['EC']]);
+  check('... the start is the last of the members, as the decays run, and the only one with nothing to decay to', [ra.nodes[ra.nodes.length - 1] === ra.root, ra.nodes.filter((n) => !n.out.length).length], [true, 1]);
+  check('... depth is the most steps a member takes to the start: 230Th 1, 234U 2, 238U 6 (by 234Th, 234mPa and the IT to 234Pa)', ['230Th', '234U', '238U'].map((m) => ra.nodes.find((n) => nm(n) === m).depth), [1, 2, 6]);
+  const ra1y = up(88, 226, 0, { minIsomerS: 0, minHalfLifeS: C.YEAR_S });
+  check('members >= 1 y: 238U goes to 234U via 234Th and 234mPa, as going down', ra1y.edges.find((e) => nm(e.from) === '238U').via.map((v) => v.name).join(','), '²³⁴Th,²³⁴ᵐPa');
+  check('... and no member but the start lives less than a year', ra1y.nodes.filter((n) => n !== ra1y.root && !(n.st.ts >= C.YEAR_S)).length, 0);
+  check('... those left out with nothing drawn above them are listed (238Pa, 2.3 min)', ra1y.leftOut.some((x) => x.key === '91,238,0'), true);
+  check('the start stays however short it lives: 234mPa (1.16 min) has 238U above it at 1 y', up(91, 234, 1, { minIsomerS: 0, minHalfLifeS: C.YEAR_S }).edges.some((e) => nm(e.from) === '238U' && e.to.k === 1), true);
+  check('a stable state is no parent, though 136Ce keeps a 2EC mode with no percentage', [C.parentsOf(idx, 56, 136, 0).some((p) => p.z === 58), up(56, 136, 0).nodes.some((n) => n.z === 58)], [true, false]);
+  check('nothing above 36Cl: the chain is its start alone', up(17, 36, 0).nodes.length, 1);
+  const pb = up(81, 205, 0, { minIsomerS: 0 });
+  check('a chain with more parents than the drawing allows is cut off, and no member is left without a way down', [pb.truncated, pb.nodes.length, pb.nodes.every((n) => n === pb.root || n.out.length)], [true, 400, true]);
+
+  /* Going up and going down agree: a member's share of decays that reach the
+     start is the start's share in the member's own chain, and every arrow is
+     the same arrow. Every pair, at three settings -- or, with
+     --every-setting, at all 55 the page offers, as its About tab says (20 s;
+     run it when a release is installed). */
+  const Y = C.YEAR_S;
+  const lives = [{}, { minIsomerS: 1 }, ...[1e-3, 1, 60, 3600, 86400, Y, 10 * Y, 100 * Y, 1000 * Y].map((s) => ({ minHalfLifeS: s }))];
+  const settings = process.argv.includes('--every-setting')
+    ? [0, 1e-6, 0.001, 0.1, 1].flatMap((minBranch) => lives.map((l) => ({ ...l, minBranch })))
+    : [{ minIsomerS: 1 }, { minHalfLifeS: Y }, { minHalfLifeS: 3600, minBranch: 1 }];
+  let pairs = 0, differ = 0, arrows = 0, arrowsDiffer = 0;
+  const t0 = Date.now();
+  for (const opt of settings) {
+    const memo = new Map();
+    const down = (n) => {
+      let d = memo.get(n.key);
+      if (!d) { d = C.buildChain(idx, n.z, n.a, n.k, { ...opt, maxNodes: 1e5 }); d.byKey = new Map(d.nodes.map((x) => [x.key, x])); memo.set(n.key, d); }
+      return d;
+    };
+    for (const n of idx.list) {
+      for (let k = 0; k < n.s.length; k++) {
+        const st = n.s[k];
+        const min = Math.max(opt.minHalfLifeS || 0, k > 0 ? opt.minIsomerS || 0 : 0);
+        /* A start that would be left out as a member of another chain is not in it to compare. */
+        const startLeftOut = !st.st && (st.br || []).length && min > 0 && !(st.ts >= min);
+        const ch = C.buildChain(idx, n.z, n.a, k, { ...opt, up: true, maxNodes: 1e5 });
+        for (const x of ch.nodes) {
+          if (x === ch.root) continue;
+          const d = down(x);
+          for (const e of x.out) {
+            if (startLeftOut && e.to === ch.root) continue;
+            arrows++;
+            const f = d.edges.find((g) => g.key === e.key);
+            if (!f || f.pct !== e.pct || f.more !== e.more || f.inferred !== e.inferred || f.limit !== e.limit || f.via.map((v) => v.key).join() !== e.via.map((v) => v.key).join()) arrowsDiffer++;
+          }
+          if (startLeftOut) continue;
+          pairs++;
+          const t = d.byKey.get(ch.root.key);
+          if (!t || Math.abs(t.cum - x.cum) > 1e-12 * Math.max(1, t.cum) || !!t.cumUnknown !== !!x.cumUnknown || !!t.bounded !== !!x.bounded) differ++;
+        }
+      }
+    }
+  }
+  console.log(`up against down: ${pairs} pairs, ${arrows} arrows in ${Date.now() - t0} ms`);
+  check('going up and going down give the same share for every pair of start and member', [pairs > 30000, differ], [true, 0]);
+  check('... and the same arrows', [arrows > 40000, arrowsDiffer], [true, 0]);
+  const t1 = Date.now();
+  for (const n of idx.list) for (let k = 0; k < n.s.length; k++) C.buildChain(idx, n.z, n.a, k, { minIsomerS: 1, up: true });
+  check('the parents of every state, as the page draws them, in under 3 s', Date.now() - t1, (ms) => ms < 3000);
+
+  /* Every state that feeds a member is a member: what a member of the parents
+     holds is what it would hold in any chain the same amounts start. */
+  const th = C.buildChain(idx, 90, 230, 0, { minIsomerS: 1 });
+  const at = (ch, key, n0key, times) => {
+    const sys = C.decaySystem(ch);
+    const n0 = new Float64Array(sys.members.length);
+    n0[sys.members.findIndex((m) => m.key === n0key)] = 1e20;
+    const i = sys.members.findIndex((m) => m.key === key);
+    return C.decayAt(sys, n0, times).A.map((A) => A[i]);
+  };
+  const times = [1e3, 1e4, 1e5].map((y) => y * C.YEAR_S);
+  const grownUp = at(ra, '88,226,0', '90,230,0', times), grownDown = at(th, '88,226,0', '90,230,0', times);
+  check('226Ra grown in from 230Th: the same in the parents of 226Ra as in the chain of 230Th', grownUp.every((v, i) => Math.abs(v - grownDown[i]) <= 1e-12 * grownDown[i]), true);
+}
 check('superscript runs', C.supRuns('²³⁸U 4.5×10⁻⁹ y').map((r) => (r.sup ? `^${r.t}` : r.t)).join(''), '^238U 4.5×10^−9 y');
 check('plain text for a <select>', C.asciiText('²³⁸U · 5.45×10⁻⁵ %'), '238U · 5.45E-5 %');
 

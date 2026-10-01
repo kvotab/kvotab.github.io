@@ -186,9 +186,9 @@
     view: 'chart',
     tab: 'nuclide',
     colour: 'halflife',
-    chainOpt: { minBranch: 0, life: 'iso', overlay: true },
+    chainOpt: { minBranch: 0, life: 'iso', overlay: true, dir: 'down' },   // dir: 'down' to the daughters, 'up' to the parents
     inv: { from: 0, end: 0, unit: 'y', qty: 'Bq', xLog: true, yLog: true, for: '', cursor: null },
-    inventories: {},       // chain start key -> {member key: [value, unit]}
+    inventories: {},       // chain start key ('up:' first for the parents) -> {member key: [value, unit]}
     levelsAll: false,
     radSort: 'energy',
     radAll: false,
@@ -217,6 +217,7 @@
         if (Number.isFinite(s.chainOpt.minBranch)) state.chainOpt.minBranch = s.chainOpt.minBranch;
         if (typeof s.chainOpt.life === 'string') state.chainOpt.life = s.chainOpt.life;
         if (typeof s.chainOpt.overlay === 'boolean') state.chainOpt.overlay = s.chainOpt.overlay;
+        if (s.chainOpt.dir === 'up' || s.chainOpt.dir === 'down') state.chainOpt.dir = s.chainOpt.dir;
       }
       if (['nuclide', 'levels', 'radiation', 'datasets', 'inventory', 'about'].includes(s.tab)) state.tab = s.tab;
       if (s.inv && typeof s.inv === 'object') {
@@ -230,7 +231,7 @@
       }
       if (s.inventories && typeof s.inventories === 'object') {
         for (const [k, v] of Object.entries(s.inventories)) {
-          if (!/^\d+,\d+,\d+$/.test(k) || !v || typeof v !== 'object') continue;
+          if (!/^(up:)?\d+,\d+,\d+$/.test(k) || !v || typeof v !== 'object') continue;
           const clean = {};
           for (const [mk, e] of Object.entries(v)) if (/^\d+,\d+,\d+$/.test(mk) && Array.isArray(e) && Number.isFinite(+e[0]) && ['Bq', 'mol', 'g'].includes(e[1])) clean[mk] = [+e[0], e[1]];
           state.inventories[k] = clean;
@@ -443,11 +444,20 @@
     saveState();
   }
 
+  /* The database, start and settings the chain on show was built for: the
+     same again give the same chain, which is kept -- and with it the
+     drawing's layout, so that a click on a box among a few hundred parents
+     does not lay them all out again. */
+  let chainFor = null;
   function computeChain() {
-    if (!state.root || !state.idx) { state.chain = null; chart.setChain(null); return; }
+    if (!state.root || !state.idx) { state.chain = null; chainFor = null; chart.setChain(null); return; }
     const r = state.root;
     const life = lifeOption();
-    state.chain = C.buildChain(state.idx, r.z, r.a, r.k, { minBranch: state.chainOpt.minBranch, minHalfLifeS: life.life, minIsomerS: life.iso });
+    const sig = [r.z, r.a, r.k, state.chainOpt.minBranch, life.id, state.chainOpt.dir].join('|');
+    if (!state.chain || !chainFor || chainFor.idx !== state.idx || chainFor.sig !== sig) {
+      state.chain = C.buildChain(state.idx, r.z, r.a, r.k, { minBranch: state.chainOpt.minBranch, minHalfLifeS: life.life, minIsomerS: life.iso, up: state.chainOpt.dir === 'up' });
+      chainFor = { idx: state.idx, sig };
+    }
     if (!state.chainOpt.overlay) { chart.setChain(null); return; }
     const cells = new Set();
     const arrows = [];
@@ -586,7 +596,7 @@
     const r = state.source ? state.source.summary.release : null;
     return `<div class="nz-welcome">
       <h2>Chart of nuclides</h2>
-      <p>Every nuclide in the Evaluated Nuclear Structure Data File, placed by its neutron number <i>N</i> and proton number <i>Z</i> and coloured by half-life. Click one — or type its name above — for its states, decay modes, Q-values and evaluation, its level scheme and radiation, and the whole decay chain that follows from it.</p>
+      <p>Every nuclide in the Evaluated Nuclear Structure Data File, placed by its neutron number <i>N</i> and proton number <i>Z</i> and coloured by half-life. Click one — or type its name above — for its states, decay modes, Q-values and evaluation, its level scheme and radiation, and the whole decay chain that follows from it, or every parent that leads to it.</p>
       ${r ? `<p class="nz-dim">${esc(state.source.label)}: ${r.nuclides.toLocaleString('en')} nuclides with adopted data${r.unobserved ? ` (and ${r.unobserved} searched for but not observed, which are not drawn)` : ''}, ${r.states.toLocaleString('en')} ground states and isomers, ${r.datasets.toLocaleString('en')} data sets; newest evaluation ${esc(fmtDate(r.newest))}.</p>` : ''}
       <p class="nz-dim">Drag to pan, scroll or pinch to zoom, arrow keys to step from one nuclide to the next. The notch in a cell’s corner marks a nuclide with isomers.</p>
     </div>`;
@@ -647,30 +657,13 @@
       daughters.push(`<li><span class="nz-mode">${supHtml(C.modeText(b[0]))}</span> → ${parts.join(', ')}</li>`);
     }
     if (daughters.length) html.push(`<dt>Daughters</dt><dd><ul class="nz-modes">${daughters.join('')}</ul></dd>`);
+    html.push(`<dt>Parents</dt><dd>${parentsHtml(z, a, k)}</dd>`);
     if (st.mu) html.push(`<dt>Magnetic moment</dt><dd>${esc(st.mu.replace(/\s*\(.*\)$/, ''))} μ<sub>N</sub></dd>`);
     if (st.qm) html.push(`<dt>Quadrupole moment</dt><dd>${esc(st.qm.replace(/\s*\(.*\)$/, ''))} b</dd>`);
     html.push('</dl>');
 
     /* The chain in brief, with the way into the full drawing. */
-    if (state.chain && !st.st && state.root && state.root.z === z && state.root.a === a && state.root.k === k) {
-      const ch = state.chain;
-      const ends = ch.nodes.filter((n) => n.kind === 'fission' || n.kind === 'missing' || (n.st && (n.st.st || !(n.st.br || []).length)));
-      const endList = ends.sort((p, q) => q.cum - p.cum).slice(0, 6).map((n) => {
-        const what = n.kind === 'fission' ? 'fission' : n.kind === 'missing' ? `${nameHtml(n.z, n.a, 0, null)} (not in ENSDF)` : `${nucLink(n.z, n.a, n.k)}${n.st.st ? ' (stable)' : ' (decay unknown)'}`;
-        return `<li>${what} <span class="nz-dim">${supHtml(n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100))}${n.cumUnknown && n.cum ? ' or more' : ''}</span></li>`;
-      });
-      const members = ch.nodes.filter((n) => n !== ch.root && n.kind !== 'fission');
-      const what = members.some((n) => n.k > 0) ? ['state', 'nuclides and states'] : ['nuclide', 'nuclides'];
-      const count = members.length === 1 ? `1 ${what[0]} follows` : `${members.length} ${what[1]} follow`;
-      html.push(`<section class="nz-card">
-        <h3>Decay chain</h3>
-        <div class="nz-chain-mini" data-on-click="nz:showChain" title="Open the decay chain"><svg id="nzChainMini" role="img" aria-label="The decay chain in small; click to open it"></svg></div>
-        <p>${count} from ${nameHtml(z, a, k, nuc)}${ch.truncated ? ' (cut off: the chain is too large to draw whole)' : ''}. Where it ends:</p>
-        <ul class="nz-ends">${endList.join('')}</ul>
-        <button type="button" class="nz-btn" data-on-click="nz:showChain">Show the decay chain</button>
-        <button type="button" class="nz-btn secondary" data-on-click="nz:showInventory" title="Give the chain an initial inventory and follow it over time">Inventory over time</button>
-      </section>`);
-    }
+    if (state.chain && state.root && state.root.z === z && state.root.a === a && state.root.k === k) html.push(chainCard(st, nuc));
 
     if (nuc.s.length > 1) {
       html.push('<h3>States</h3><div class="nz-table-wrap"><table class="nz-table"><thead><tr><th class="text">State</th><th>E (keV)</th><th class="text">Jπ</th><th class="text">T½</th><th class="text">Decay</th></tr></thead><tbody>');
@@ -710,6 +703,91 @@
     }
     pane.innerHTML = html.join('');
     drawMiniChain();
+  }
+
+  /*
+    The states that decay straight to this one, by mode, each with the share
+    of its decays that lands here -- the file's own branches, as Daughters
+    gives them on the parent. The longest-lived come first, mode by mode:
+    they are the parents that matter in the long run (230Th before 226Fr).
+    Their own parents are in the chain, set to run up.
+  */
+  function parentsHtml(z, a, k) {
+    const list = C.parentsOf(state.idx, z, a, k).map((p) => ({ ...p, st: state.idx.get(p.z, p.a).s[p.k] }));
+    if (!list.length) return '<span class="nz-dim">none: nothing in this database decays to it</span>';
+    /* A stable one (136Ce, by a double electron capture never seen) goes last. */
+    const life = (p) => (p.st.st ? -2 : p.st.ts > 0 ? p.st.ts : -1);
+    list.sort((p, q) => (life(q) - life(p)) || (p.a - q.a) || (p.z - q.z) || (p.k - q.k));
+    const byMode = new Map();
+    for (const p of list) {
+      if (!byMode.has(p.mode)) byMode.set(p.mode, []);
+      byMode.get(p.mode).push(p);
+    }
+    const items = [...byMode].map(([m, ps]) => {
+      const parts = ps.map((p) => {
+        const pct = p.pct === null ? '?' : C.sharePct(p.pct * p.f, C.isLimit(p.op) ? p.op : '');
+        const why = p.inferred ? (m === 'IT' ? ' Assumed: an excited state with no decay given decays by gamma emission.' : ' Inferred from the Q-values; not stated in ENSDF.') : '';
+        const title = `${C.plainName(p.z, p.a, p.k, state.idx.get(p.z, p.a))}: ${p.st.st ? 'stable' : `T½ ${C.halfLifeText(p.st)}`}; ${p.pct === null ? 'a share not given' : pct} of its decays come here.${why}`;
+        return `${nucLink(p.z, p.a, p.k)} <span class="nz-dim" title="${esc(C.asciiText(title))}">${supHtml(pct)}${p.inferred ? '*' : ''}${p.st.st ? ' (stable)' : ''}</span>`;
+      });
+      return `<li><span class="nz-mode">${supHtml(C.modeText(m))}</span> ← ${parts.join(', ')}</li>`;
+    });
+    return `<ul class="nz-modes">${items.join('')}</ul>`;
+  }
+
+  /* A member's share of its decays that reaches the start of a chain built
+     going up: "100 %", or "81.5 % or more" where part of the way has no
+     percentage. */
+  const reachText = (n) => `${n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)}${n.cumUnknown && n.cum ? ' or more' : ''}`;
+
+  /* The chain on show in brief, down to the daughters or up to the parents,
+     with the way to turn it round and into the full drawing. */
+  function chainCard(st, nuc) {
+    const ch = state.chain;
+    const { z, a, k } = ch.root;
+    const name = nameHtml(z, a, k, nuc);
+    const dir = ch.up ? 'up' : 'down';
+    const toggle = `<span class="nz-sort" role="group" aria-label="Which way the chain runs">${[['down', 'daughters'], ['up', 'parents']]
+      .map(([d, t]) => `<button type="button" class="${d === dir ? 'active' : ''}" aria-pressed="${d === dir}" data-on-click="nz:chainDir" data-dir="${d}">${t}</button>`).join('')}</span>`;
+    const head = `<div class="nz-card-head"><h3>${ch.up ? 'Parents' : 'Decay chain'}</h3>${toggle}</div>`;
+    const members = ch.nodes.filter((n) => n !== ch.root && n.kind !== 'fission');
+    const what = members.some((n) => n.k > 0) ? ['state', 'nuclides and states'] : ['nuclide', 'nuclides'];
+    const label = ch.up ? 'parents' : 'decay chain';
+    const mini = `<div class="nz-chain-mini" data-on-click="nz:showChain" title="Open the ${label}"><svg id="nzChainMini" role="img" aria-label="The ${label} in small; click to open it"></svg></div>`;
+    const buttons = `<button type="button" class="nz-btn" data-on-click="nz:showChain">Show the ${label}</button>
+        <button type="button" class="nz-btn secondary" data-on-click="nz:showInventory" title="Give the chain an initial inventory and follow it over time">Inventory over time</button>`;
+    let body;
+    if (!ch.up && st.st) {
+      body = `<p class="nz-dim">${name} is stable: no chain follows from it.</p>`;
+    } else if (ch.up && !members.length) {
+      body = `<p class="nz-dim">Nothing in this database decays to ${name}${state.chainOpt.minBranch ? ' by a branch as large as the chain settings keep' : ''}.</p>`;
+    } else if (!ch.up) {
+      const ends = ch.nodes.filter((n) => n.kind === 'fission' || n.kind === 'missing' || (n.st && (n.st.st || !(n.st.br || []).length)));
+      const endList = ends.sort((p, q) => q.cum - p.cum).slice(0, 6).map((n) => {
+        const end = n.kind === 'fission' ? 'fission' : n.kind === 'missing' ? `${nameHtml(n.z, n.a, 0, null)} (not in ENSDF)` : `${nucLink(n.z, n.a, n.k)}${n.st.st ? ' (stable)' : ' (decay unknown)'}`;
+        return `<li>${end} <span class="nz-dim">${supHtml(n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100))}${n.cumUnknown && n.cum ? ' or more' : ''}</span></li>`;
+      });
+      const count = members.length === 1 ? `1 ${what[0]} follows` : `${members.length} ${what[1]} follow`;
+      body = `${mini}
+        <p>${count} from ${name}${ch.truncated ? ' (cut off: the chain is too large to draw whole)' : ''}. Where it ends:</p>
+        <ul class="nz-ends">${endList.join('')}</ul>
+        ${buttons}`;
+    } else {
+      /* Going up, the longest-lived say where the start comes from in the
+         long run -- those that send it a real share of their decays: 232Th
+         reaches 206Pb, but only by a cluster decay of 224Ra, 4×10⁻⁹ %. */
+      const lived = members.filter((n) => n.st && n.st.ts > 0).sort((p, q) => q.st.ts - p.st.ts);
+      const real = lived.filter((n) => n.cum >= 0.01);
+      const longest = (real.length ? real : lived).slice(0, 6)
+        .map((n) => `<li>${nucLink(n.z, n.a, n.k)} <span class="nz-dim">${supHtml(C.halfLifeShort(n.st))} · ${supHtml(reachText(n))}</span></li>`);
+      const count = members.length === 1 ? `1 ${what[0]} decays` : `${members.length} ${what[1]} decay`;
+      const lead = real.length ? `The longest-lived of those that send it at least 1 % of their decays, with that share:` : `The longest-lived, with the share of their decays that comes to ${name}:`;
+      body = `${mini}
+        <p>${count} to ${name}, directly or through others${ch.truncated ? ' (cut off: there are too many to draw)' : ''}.${longest.length ? ` ${lead}` : ''}</p>
+        ${longest.length ? `<ul class="nz-ends">${longest.join('')}</ul>` : ''}
+        ${buttons}`;
+    }
+    return `<section class="nz-card">${head}${body}</section>`;
   }
 
   /* The chain in small, in the panel: the whole drawing scaled to the panel's
@@ -871,12 +949,15 @@
      --------------------------------------------------------------------- */
   function renderChainView() {
     const nameEl = $('nzChainTabName');
+    const up = state.chainOpt.dir === 'up';
+    $('nzChainTabLabel').textContent = up ? 'Parents of' : 'Decay chain';
+    $('nzChainStateLabel').textContent = up ? 'Parents of' : 'Start from';
     if (!state.root || !state.idx || !state.chain) {
       nameEl.textContent = '';
       if (state.view === 'chain') {
         $('nzChainSvg').replaceChildren();
         $('nzChainTable').innerHTML = '';
-        $('nzChainNote').innerHTML = '<p class="nz-dim">Choose a nuclide on the chart to see its decay chain.</p>';
+        $('nzChainNote').innerHTML = `<p class="nz-dim">Choose a nuclide on the chart to see its ${up ? 'parents' : 'decay chain'}.</p>`;
         $('nzChainState').innerHTML = '';
       }
       return;
@@ -907,29 +988,44 @@
         invPointAt(n ? n.key : null);
       },
     });
-    fitChain(size);
+    fitChain(size, ch);
     invBuckets();
     const notes = [];
-    if (nuc.s[r.k] && nuc.s[r.k].st) notes.push(`${supHtml(C.plainName(r.z, r.a, r.k, nuc))} is stable: there is no chain to follow.`);
-    if (ch.truncated) notes.push('The chain is larger than the drawing allows; it has been cut off.');
+    const rootName = supHtml(C.plainName(r.z, r.a, r.k, nuc));
+    if (ch.up) {
+      if (ch.nodes.length === 1) notes.push(`Nothing in this database decays to ${rootName}${state.chainOpt.minBranch ? ' by a branch as large as the setting keeps' : ''}.`);
+      else notes.push(`Every nuclide and state whose decays come to ${rootName}, directly or through others. Only the branches that lead to it are drawn: the share on an arrow is of the decays of the nuclide it leaves, and the table gives the share of each member’s decays that reaches ${rootName}.`);
+    } else if (nuc.s[r.k] && nuc.s[r.k].st) notes.push(`${rootName} is stable: there is no chain to follow.`);
+    if (ch.truncated) notes.push(ch.up ? 'There are more parents than the drawing allows; the farthest have been cut off.' : 'The chain is larger than the drawing allows; it has been cut off.');
     if (ch.edges.some((e) => e.inferred)) notes.push('A dashed arrow marked * is a branch ENSDF does not state: an excited state assumed to decay by gamma emission, or a beta or electron-capture branch inferred from the Q-values.');
     if (ch.edges.some((e) => e.pct === null)) notes.push('A dashed arrow marked ? is a mode the evaluators list without a percentage.');
-    /* What the half-life setting left out, heaviest first as the chain runs. */
+    /* What the half-life setting left out, heaviest first as the chain runs;
+       going up, also those that nothing drawn decays through, and the
+       nearest the start first: the lightest, and of one mass number those
+       nearest it in Z. */
     const left = new Map();
     for (const e of ch.edges) for (const x of e.skipped) if (!left.has(x.key)) left.set(x.key, x);
+    for (const x of ch.leftOut || []) if (!left.has(x.key)) left.set(x.key, x);
     if (left.size) {
       const order = (x) => x.key.split(',').map(Number);
-      const names = [...left.values()].sort((p, q) => { const [z1, a1, k1] = order(p), [z2, a2, k2] = order(q); return (a2 - a1) || (z1 - z2) || (k2 - k1); })
-        .map((x) => supHtml(x.name));
+      const near = (z) => Math.abs(z - r.z);
+      const names = [...left.values()].sort((p, q) => {
+        const [z1, a1, k1] = order(p), [z2, a2, k2] = order(q);
+        return (ch.up ? (a1 - a2) || (near(z1) - near(z2)) : a2 - a1) || (z1 - z2) || (k2 - k1);
+      }).map((x) => supHtml(x.name));
       const life = lifeOption();
-      notes.push(`Left out, as ${life.life ? 'members' : 'isomers'} that live less than ${esc(life.span)}: ${names.slice(0, 30).join(', ')}${names.length > 30 ? `, and ${names.length - 30} more` : ''}. The chain goes straight on to where they decay, each share the product of the branches on the way. An arrow marked “via” jumps over them; what went through an isomer’s IT joins the arrow to the same nuclide.`);
+      const how = ch.up
+        ? 'The arrows go straight on through them to where they decay, each share the product of the branches on the way: an arrow marked “via” jumps over them, and what went through an isomer’s IT joins the arrow to the same nuclide. One that nothing drawn decays to is not drawn at all.'
+        : 'The chain goes straight on to where they decay, each share the product of the branches on the way. An arrow marked “via” jumps over them; what went through an isomer’s IT joins the arrow to the same nuclide.';
+      notes.push(`Left out, as ${life.life ? 'members' : 'isomers'} that live less than ${esc(life.span)}: ${names.slice(0, 30).join(', ')}${names.length > 30 ? `, and ${names.length - 30} more` : ''}. ${how}`);
     }
     $('nzChainNote').innerHTML = notes.length ? `<ul>${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '';
     renderChainTable(ch);
   }
 
   /* The drawing shrinks to the width it has, down to 70 %; below that it scrolls. */
-  function fitChain(size) {
+  let fittedFor = '';
+  function fitChain(size, ch) {
     const svg = $('nzChainSvg');
     const box = document.querySelector('.nz-chain-scroll');
     const cs = getComputedStyle(box);
@@ -940,13 +1036,27 @@
     svg.setAttribute('height', Math.round(size.height * scale));
     /* A chain wider than the view opens scrolled to where it starts -- usually
        its top right, the heaviest member -- with as much of where that decays
-       to beside it as fits. */
+       to beside it as fits; going up, with the parents it comes from, which
+       stand on both sides of it. */
     const draw = svg.parentElement;
+    const f = size.focus || size.root;
     if (size.root && size.width * scale > draw.clientWidth) {
-      const f = size.focus || size.root;
       const right = (f.x + f.w) * scale + 24;
-      const left = Math.max(0, size.root.x * scale - 24);
+      const left = Math.max(0, ((ch && ch.up) ? f.x : size.root.x) * scale - 24);
       draw.scrollLeft = Math.min(left, Math.max(0, right - draw.clientWidth));
+    }
+    /* Going up, the start stands at the foot of the drawing, so a chain
+       taller than the view opens scrolled down to it and its parents; going
+       down, it opens at the top, where the start is. Only for a chain that
+       is new -- another start, or the other way -- not each time a box in
+       it is clicked. */
+    const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}` : '';
+    if (size.root && ch && sig !== fittedFor) {
+      fittedFor = sig;
+      if (ch.up) {
+        const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+        box.scrollTop = Math.max(0, Math.min(top + f.y * scale - 12, top + (f.y + f.h) * scale + 24 - box.clientHeight));
+      } else box.scrollTop = 0;
     }
   }
 
@@ -979,6 +1089,20 @@
     if (![...br.options].some((o) => +o.value === state.chainOpt.minBranch)) state.chainOpt.minBranch = 0;
     br.value = [...br.options].find((o) => +o.value === state.chainOpt.minBranch).value;
     $('nzOverlay').checked = state.chainOpt.overlay;
+    $('nzChainDir').value = state.chainOpt.dir;
+  }
+
+  /* Which way the chain runs, from the setting beside the view tabs or the
+     card on the Nuclide tab: the drawing, the chart, the table and the
+     inventory all follow. */
+  function setChainDir(dir) {
+    if (dir !== 'up' && dir !== 'down') return;
+    state.chainOpt.dir = dir;
+    $('nzChainDir').value = dir;
+    computeChain();
+    renderChainView();
+    renderPanel();
+    saveState();
   }
 
   function chainTip(n) {
@@ -994,7 +1118,9 @@
       line(n.st.st ? 'stable' : `T½ ${C.halfLifeText(n.st, true)}`);
       if (n.k > 0) line(`${n.st.e} keV`);
     }
-    if (n !== state.chain.root) line(`${n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)} of the decays pass through here`);
+    if (n !== state.chain.root) {
+      line(state.chain.up ? `${reachText(n)} of its decays reach ${CH.nodeName(state.chain.root)}` : `${n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)} of the decays pass through here`);
+    }
     for (const e of n.out) line(`${C.modeText(e.mode)} ${CH.shareText(e)} → ${CH.nodeName(e.to)}${viaSuffix(e)}`);
     return box;
   }
@@ -1011,13 +1137,18 @@
   }
 
   function renderChainTable(ch) {
-    const html = ['<table class="nz-table nz-chain-tab"><thead><tr><th class="text">Member</th><th class="text">T½</th><th class="text">Decays by</th><th>Reached by (% of the first nuclide’s decays)</th></tr></thead><tbody>'];
+    /* Going up, a member's row has only its branches toward the start, and
+       the last column the share of its decays that gets there. */
+    const start = nameHtml(ch.root.z, ch.root.a, ch.root.k, ch.root.nuc);
+    const heads = ch.up ? [`Decays toward ${start} by`, `Reaches ${start} (% of its decays)`] : ['Decays by', 'Reached by (% of the first nuclide’s decays)'];
+    const html = [`<table class="nz-table nz-chain-tab"><thead><tr><th class="text">Member</th><th class="text">T½</th><th class="text">${heads[0]}</th><th>${heads[1]}</th></tr></thead><tbody>`];
     for (const n of chainRows(ch)) {
       const who = n.kind === 'missing' ? `${nameHtml(n.z, n.a, 0, null)} <span class="nz-dim">not in ENSDF</span>` : nucLink(n.z, n.a, n.k);
       const life = n.kind === 'missing' ? '' : supHtml(C.halfLifeText(n.st, true));
       const outs = n.out.map((e) => `${supHtml(C.modeText(e.mode))} ${supHtml(CH.shareText(e))}${e.inferred ? '*' : ''} → ${e.to.kind === 'fission' ? 'fission' : e.to.kind === 'missing' ? nameHtml(e.to.z, e.to.a, 0, null) : nameHtml(e.to.z, e.to.a, e.to.k, e.to.nuc)}${viaSuffix(e) ? ` <span class="nz-dim" title="${esc(C.asciiText(CH.edgeAbout(e)))}">${supHtml(viaSuffix(e).trim())}</span>` : ''}`).join('<br>');
-      const reached = n === ch.root ? '100 %' : (n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)) + (n.cumUnknown && n.cum ? ' or more' : '') + (n.bounded ? ' †' : '');
-      html.push(`<tr class="${n === ch.root ? 'current' : ''}"><td class="text">${who}</td><td class="text">${life}</td><td class="text">${outs || (n.st && n.st.st ? '<span class="nz-dim">stable</span>' : '<span class="nz-dim">—</span>')}</td><td>${supHtml(reached)}</td></tr>`);
+      const reached = n === ch.root ? (ch.up ? '—' : '100 %') : (n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)) + (n.cumUnknown && n.cum ? ' or more' : '') + (n.bounded ? ' †' : '');
+      const none = n.st && n.st.st && !ch.up ? '<span class="nz-dim">stable</span>' : '<span class="nz-dim">—</span>';
+      html.push(`<tr class="${n === ch.root ? 'current' : ''}"><td class="text">${who}</td><td class="text">${life}</td><td class="text">${outs || none}</td><td>${supHtml(reached)}</td></tr>`);
     }
     html.push('</tbody></table>');
     if (ch.nodes.some((n) => n.bounded)) html.push('<p class="nz-note">† Reached through a branch the evaluators give only as a limit (&lt;, ≤, &gt;, ≥); the share uses the limit’s value.</p>');
@@ -1153,21 +1284,27 @@
     download(`ensdf-${releaseTag()}-ground-states.csv`, rows.join('\r\n'), 'text/csv');
   }
 
+  /* What the chain's files are called: decay-chain-238U, or parents-238U for one built going up. */
+  const chainFileName = (ch, ext) => `${ch.up ? 'parents' : 'decay-chain'}-${C.name(ch.root.z, ch.root.a, ch.root.k, ch.root.nuc).key}.${ext}`;
+
   function chainCsv() {
     const ch = state.chain;
     if (!ch) return;
-    const rows = [['member', 'Z', 'A', 'state', 'level energy keV', 'half-life', 'half-life (s)', 'decay', 'reached (% of first nuclide decays)'].map(cell).join(',')];
+    const start = C.name(ch.root.z, ch.root.a, ch.root.k, ch.root.nuc).text;
+    const heads = ch.up ? [`decay toward ${start}`, `reaches ${start} (% of its decays)`] : ['decay', 'reached (% of first nuclide decays)'];
+    const rows = [['member', 'Z', 'A', 'state', 'level energy keV', 'half-life', 'half-life (s)', ...heads].map(cell).join(',')];
     for (const n of chainRows(ch)) {
       const outs = n.out.map((e) => `${e.mode} ${e.limit || (e.more ? '>=' : '')}${e.pct === null ? '?' : e.pct}% -> ${e.to.kind === 'fission' ? 'fission' : C.name(e.to.z, e.to.a, e.to.k, e.to.nuc).text}${C.asciiText(viaSuffix(e))}${e.inferred ? ' (inferred)' : ''}`).join('; ');
-      rows.push([n.kind === 'missing' ? `${n.a}${C.ELEMENTS[n.z] ? C.ELEMENTS[n.z][0] : n.z}` : C.name(n.z, n.a, n.k, n.nuc).text, n.z, n.a, n.k, n.st ? n.st.e : '', n.st ? (n.st.st ? 'stable' : n.st.t) : '', n.st && n.st.ts !== undefined ? n.st.ts : '', outs, n === ch.root ? 100 : (n.cumUnknown && !n.cum ? '' : +(n.cum * 100).toPrecision(8))].map(cell).join(','));
+      const reached = n === ch.root ? (ch.up ? '' : 100) : (n.cumUnknown && !n.cum ? '' : +(n.cum * 100).toPrecision(8));
+      rows.push([n.kind === 'missing' ? `${n.a}${C.ELEMENTS[n.z] ? C.ELEMENTS[n.z][0] : n.z}` : C.name(n.z, n.a, n.k, n.nuc).text, n.z, n.a, n.k, n.st ? n.st.e : '', n.st ? (n.st.st ? 'stable' : n.st.t) : '', n.st && n.st.ts !== undefined ? n.st.ts : '', outs, reached].map(cell).join(','));
     }
-    download(`decay-chain-${C.name(ch.root.z, ch.root.a, ch.root.k, ch.root.nuc).key}.csv`, rows.join('\r\n'), 'text/csv');
+    download(chainFileName(ch, 'csv'), rows.join('\r\n'), 'text/csv');
   }
 
   function chainSvg() {
     const svg = $('nzChainSvg');
     if (!state.chain || !svg.firstChild) return;
-    download(`decay-chain-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}.svg`, CH.svgFile(svg), 'image/svg+xml');
+    download(chainFileName(state.chain, 'svg'), CH.svgFile(svg), 'image/svg+xml');
   }
 
   function chainPng() {
@@ -1184,7 +1321,7 @@
       g.scale(scale, scale);
       g.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
-      c.toBlob((b) => download(`decay-chain-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}.png`, b), 'image/png');
+      c.toBlob((b) => download(chainFileName(state.chain, 'png'), b), 'image/png');
     };
     img.onerror = () => { URL.revokeObjectURL(url); reportFailure('ensdf:chainPng', new Error('the drawing could not be turned into an image'), { userMessage: 'The PNG could not be made.' }); };
     img.src = url;
@@ -1224,20 +1361,24 @@
   let invFrame = 0;        // requestAnimationFrame id while running through the times
   let invHotKey = null;    // the member picked out, by node key
 
-  const invRootKey = () => (state.root ? `${state.root.z},${state.root.a},${state.root.k}` : '');
+  /* The chain on show, for its inventory: its start, with 'up:' before it for the parents. */
+  const invRootKey = () => (state.root ? `${state.chainOpt.dir === 'up' ? 'up:' : ''}${state.root.z},${state.root.a},${state.root.k}` : '');
   const decaysAway = (nd) => !!(nd && nd.kind === 'state' && nd.st && !nd.st.st && nd.st.ts > 0);
 
   /* The initial inventory of the chain on show, member key -> [value, unit].
-     Its start holds 1 Bq until something is set. */
+     Going down, its start holds 1 Bq until something is set; going up,
+     nothing does until the reader gives one of the parents an amount. */
   function invEntries() {
     const k = invRootKey();
     if (!k) return {};
     if (!state.inventories[k]) {
       const r = state.chain && state.chain.root;
-      state.inventories[k] = { [k]: decaysAway(r) ? [1, 'Bq'] : [1, 'mol'] };
+      state.inventories[k] = !r || state.chain.up ? {} : { [r.key]: decaysAway(r) ? [1, 'Bq'] : [1, 'mol'] };
     }
     return state.inventories[k];
   }
+
+  const invFileName = (ext) => `inventory-${state.chain.up ? 'parents-' : ''}${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.${ext}`;
 
   /* Atoms in an amount given in Bq, mol or g. A mass takes the mass number for
      the molar mass, which is right to 0.1 % above A = 20. */
@@ -1253,7 +1394,10 @@
   /* The span a new chain opens with, as rdc.html chooses it: a power of ten
      past ten half-lives of its start, in the largest unit it is one of. */
   function defaultSpan() {
-    const ts = state.chain && state.chain.root.st && state.chain.root.st.ts;
+    const ch = state.chain;
+    let ts = ch && ch.root.st && ch.root.st.ts;
+    /* A stable start of the parents: the time its own parents take. */
+    if (!(ts > 0) && ch && ch.up) ts = Math.max(0, ...ch.root.in.map((e) => (e.from.st && e.from.st.ts > 0 ? e.from.st.ts : 0)));
     if (!(ts > 0)) return { end: 1, unit: 'y' };
     for (let i = TIME_UNITS.length - 1; i >= 0; i--) {
       const v = ts / TIME_UNITS[i][1];
@@ -1337,8 +1481,13 @@
     }
     const ch = state.chain;
     const r = ch.root;
-    if (r.st && r.st.st) {
+    if (!ch.up && r.st && r.st.st) {
       pane.innerHTML = `<p class="nz-dim">${nameHtml(r.z, r.a, r.k, r.nuc)} is stable: it has no decay chain to follow.</p>`;
+      invBuckets();
+      return;
+    }
+    if (ch.up && ch.nodes.length === 1) {
+      pane.innerHTML = `<p class="nz-dim">Nothing in this database decays to ${nameHtml(r.z, r.a, r.k, r.nuc)}: it has no parents to follow.</p>`;
       invBuckets();
       return;
     }
@@ -1360,9 +1509,10 @@
         <td class="nz-inv-now" data-key="${n.key}"></td>
       </tr>`;
     }).join('');
+    const rName = nameHtml(r.z, r.a, r.k, r.nuc);
     pane.innerHTML = `
-      <div class="nz-pane-head"><h3>Inventory of the ${nameHtml(r.z, r.a, r.k, r.nuc)} chain</h3></div>
-      <p class="nz-dim nz-inv-lead">Give any member an initial amount below, and follow each one over time. Point at a line, a box in the chain or a row to find a member in all three; the boxes fill to their share at the time under the cursor.</p>
+      <div class="nz-pane-head"><h3>${ch.up ? `Inventory of the parents of ${rName}` : `Inventory of the ${rName} chain`}</h3></div>
+      <p class="nz-dim nz-inv-lead">${ch.up ? `Give any of the parents an initial amount below, and follow how ${rName} and every member between grow in from it.` : 'Give any member an initial amount below, and follow each one over time.'} Point at a line, a box in the chain or a row to find a member in all three; the boxes fill to their share at the time under the cursor.</p>
       <div class="nz-inv-bar">
         <label class="nz-field">${state.inv.xLog ? 'From' : 'Up to'}${state.inv.xLog ? ` <input type="text" inputmode="decimal" id="nzInvFrom" value="${esc(inputNum(state.inv.from > 0 ? state.inv.from : state.inv.end * 1e-6))}" data-on-change="nz:invFrom" aria-label="Start of the time span"> to` : ''} <input type="text" inputmode="decimal" id="nzInvEnd" value="${esc(inputNum(state.inv.end))}" data-on-change="nz:invEnd" aria-label="End of the time span"> <select id="nzInvUnit" data-on-change="nz:invUnit" aria-label="Unit of the time span">${unitOpts}</select></label>
         <label class="nz-field">Show <select id="nzInvQty" data-on-change="nz:invQty">${qOpts}</select></label>
@@ -1400,7 +1550,7 @@
   function drawInvChart() {
     if (!invChart || !inv) return;
     if (!inv.any) {
-      invChart.render(null, 'No initial inventory: give a member an amount below.');
+      invChart.render(null, state.chain && state.chain.up ? 'No initial inventory: give one of the parents an amount below.' : 'No initial inventory: give a member an amount below.');
     } else if (!inv.shown.length) {
       invChart.render(null, `Nothing in this chain has ${inv.q.id === 'Bq' ? 'an activity' : 'emitted energy'} to draw.`);
     } else {
@@ -1542,6 +1692,7 @@
       ['ENSDF decay chain inventory'].map(cell).join(','),
       ['release', state.source ? state.source.label : ''].map(cell).join(','),
       ['chain start', C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).text].map(cell).join(','),
+      ['chain runs', state.chain.up ? 'up, to the parents' : 'down, to the daughters'].map(cell).join(','),
       ['isomer and half-life setting', lifeOption().text].map(cell).join(','),
       ['initial amounts', ...Object.entries(invEntries()).filter((e) => +e[1][0] > 0).map(([k, e]) => { const nd = state.chain.nodes.find((n) => n.key === k); return nd ? `${C.asciiText(CH.nodeName(nd))} ${e[0]} ${e[1]}` : ''; })].map(cell).join(','),
       '',
@@ -1550,12 +1701,12 @@
     inv.times.forEach((t, i) => {
       rows.push([+(t / inv.unit[1]).toPrecision(8)].concat(inv.shown.map((x) => +x.values[i].toPrecision(8)), inv.shown.length > 1 ? [+inv.total[i].toPrecision(8)] : []).map(cell).join(','));
     });
-    download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.csv`, '﻿' + rows.join('\r\n'), 'text/csv');
+    download(invFileName('csv'), '﻿' + rows.join('\r\n'), 'text/csv');
   }
 
   function invSvg() {
     if (!invChart || !inv || !inv.any) return;
-    download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.svg`, invChart.svgFile(), 'image/svg+xml');
+    download(invFileName('svg'), invChart.svgFile(), 'image/svg+xml');
   }
 
   function invPng() {
@@ -1571,7 +1722,7 @@
       g.scale(2, 2);
       g.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
-      c.toBlob((b) => download(`inventory-${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.png`, b), 'image/png');
+      c.toBlob((b) => download(invFileName('png'), b), 'image/png');
     };
     img.onerror = () => { URL.revokeObjectURL(url); reportFailure('ensdf:invPng', new Error('the chart could not be turned into an image'), { userMessage: 'The PNG could not be made.' }); };
     img.src = url;
@@ -1790,6 +1941,7 @@
     'nz:minBranch': (ev, el) => { state.chainOpt.minBranch = +el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:minLife': (ev, el) => { state.chainOpt.life = el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:overlay': (ev, el) => { state.chainOpt.overlay = el.checked; computeChain(); saveState(); },
+    'nz:chainDir': (ev, el) => setChainDir(el.dataset.dir || el.value),
     'nz:chainSvg': () => chainSvg(),
     'nz:chainPng': () => chainPng(),
     'nz:chainCsv': () => chainCsv(),

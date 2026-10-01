@@ -5,7 +5,8 @@ test-parse.js proves the reading and the chains. This proves the wiring: the
 built-in release loads, a nuclide can be reached by address, by search, by
 clicking the chart and by the arrow keys, every colour mode draws its legend,
 the decay-chain chart draws with no label on top of a box, the options change
-the chain, the Levels, Radiation and Data sets tabs fill, a user's ENSDF zip
+the chain, the chain runs up to the parents as well, the Levels, Radiation and
+Data sets tabs fill, a user's ENSDF zip
 opens in the worker, is remembered across a reload and can be forgotten, the
 downloads produce files, the theme switch recolours the chart, the phone
 layout does not overflow -- and nothing reaches the console as an error.
@@ -384,6 +385,121 @@ async def main():
         check('Run through takes the cursor from start to end', (row['cursor'], row['button']), (240, 'Run through'))
         check('the values save as CSV', row['csv'], ['inventory-238U-total.csv'])
         check('leaving the tab puts the boxes back', row['after'], 0)
+
+        # ---------------------------------------------------------- parents
+        par = json.loads(await page.ev("""(async () => {
+          document.querySelector('[data-view=chart]').click();
+          const row = () => { const dt = [...document.querySelectorAll('#nzPaneNuclide .nz-facts dt')].find(d => d.textContent === 'Parents'); return dt && dt.nextElementSibling; };
+          ENSDFPage.select('Cl-36'); await new Promise(r => setTimeout(r, 100));
+          const out = { none: row().textContent };
+          ENSDFPage.select('Ra-226'); await new Promise(r => setTimeout(r, 150));
+          const r = row();
+          out.items = [...r.querySelectorAll('li')].map(li => li.textContent);
+          out.links = [...r.querySelectorAll('a.nz-nuc')].map(a => a.getAttribute('href'));
+          out.sups = r.querySelectorAll('a.nz-nuc sup').length;
+          /* The chain the chart is given, caught on its way. */
+          const ch = ENSDFPage.chart, set = ch.setChain; let overlay = null;
+          ch.setChain = function (o) { overlay = o; return set.call(this, o); };
+          const s = document.getElementById('nzChainDir'); s.value = 'up'; s.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 300));
+          ch.setChain = set;
+          out.tab = document.querySelector('[data-view=chain]').textContent;
+          out.cells = overlay ? [88226, 90230, 92234, 92238].map(id => overlay.cells.has(id)) : null;
+          out.into = overlay ? overlay.arrows.filter(a => a.z1 === 88 && a.n1 === 138).map(a => `${a.z0},${a.n0}`).sort() : null;
+          out.card = document.querySelector('#nzPaneNuclide .nz-card h3').textContent;
+          out.pressed = document.querySelector('#nzPaneNuclide .nz-card [data-dir=up]').getAttribute('aria-pressed');
+          out.saved = JSON.parse(localStorage.getItem('kvot-ensdf-v1')).chainOpt.dir;
+          return JSON.stringify(out); })()"""))
+        check('a nuclide nothing decays to says so (36Cl)', par['none'], 'none: nothing in this database decays to it')
+        check('the Nuclide tab lists the parents of 226Ra by mode, the longest-lived first, each with its share',
+              par['items'], ['α ← 230Th 100 %', 'EC ← 226Ac 17 %', 'β− ← 226Fr 100 %'])
+        check('... each a link, its mass number set as <sup>', (par['links'], par['sups']), (['#230Th', '#226Ac', '#226Fr'], 3))
+        check('the chain set to parents: the view tab says so', par['tab'], 'Parents of 226Ra')
+        check('... the chart rings 226Ra, 230Th, 234U and 238U', par['cells'], [True, True, True, True])
+        check('... and draws an arrow into 226Ra from each parent', par['into'], ['87,139', '89,137', '90,140'])
+        check('... the Nuclide tab\'s card follows, its parents button pressed, and the setting is kept', (par['card'], par['pressed'], par['saved']), ('Parents', 'true', 'up'))
+        pv = json.loads(await page.ev("""(async () => {
+          document.querySelector('[data-view=chain]').click(); await new Promise(r => setTimeout(r, 500));
+          const svg = document.getElementById('nzChainSvg');
+          const nodes = [...svg.querySelectorAll('.nz-node')];
+          const boxes = nodes.map(g => g.querySelector('rect').getBoundingClientRect());
+          const labels = [...svg.querySelectorAll('.nz-edge-label rect')].map(r => r.getBoundingClientRect());
+          const hit = (p, q) => p.left < q.right - 1 && p.right > q.left + 1 && p.top < q.bottom - 1 && p.bottom > q.top + 1;
+          const view = document.querySelector('.nz-chain-scroll').getBoundingClientRect();
+          const ra = svg.querySelector('.nz-node[data-key="88,226,0"] rect').getBoundingClientRect();
+          const cells = (z, a, k) => { const l = document.querySelector(`#nzChainTable a[data-z="${z}"][data-a="${a}"][data-k="${k}"]`); return l ? [...l.closest('tr').children].map(td => td.textContent) : null; };
+          return JSON.stringify({ keys: nodes.map(g => g.dataset.key), covered: labels.filter(l => boxes.some(b => hit(l, b))).length,
+            raInView: ra.top >= view.top - 1 && ra.bottom <= view.bottom + 1,
+            head: [...document.querySelectorAll('#nzChainTable th')].map(th => th.textContent), ac: cells(89, 226, 0), u: cells(92, 238, 0),
+            title: svg.querySelector('.nz-node[data-key="92,238,0"] title').textContent,
+            note: document.getElementById('nzChainNote').textContent }); })()"""))
+        check('the parents of 226Ra are drawn: 230Th, 234U, 238U, 226Ac and 226Fr', all(k in pv['keys'] for k in ('90,230,0', '92,234,0', '92,238,0', '89,226,0', '87,226,0')), True)
+        check('... but not 226Th, where 226Ac\'s other branch goes, which never reaches 226Ra', '90,226,0' in pv['keys'], False)
+        check('... no label on a box, and the view opens on 226Ra, at the foot of the drawing', (pv['covered'], pv['raInView']), (0, True))
+        check('the table gives the share of each member\'s decays that reaches 226Ra', (pv['head'][2], pv['head'][3], pv['ac'][3], pv['u'][3]),
+              ('Decays toward 226Ra by', 'Reaches 226Ra (% of its decays)', '17 %', '100 %'))
+        check('... and so does a box\'s tooltip', pv['title'], lambda t: t.startswith('238U: T½ 4.468E9 y') and t.endswith('100 % of its decays reach 226Ra.'))
+        check('... and the note says only the branches that lead to it are drawn', 'Only the branches that lead to it are drawn' in pv['note'], True)
+        y1 = json.loads(await page.ev("""(async () => {
+          const s = document.getElementById('nzMinLife'); s.value = '1y'; s.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 300));
+          const out = { keys: [...document.querySelectorAll('#nzChainSvg .nz-node')].map(g => g.dataset.key),
+            labels: [...document.querySelectorAll('#nzChainSvg .nz-edge-label text')].map(t => t.textContent),
+            short: ENSDFPage.state.chain.nodes.filter(n => n !== ENSDFPage.state.chain.root && !(n.st.ts >= 31557600)).length,
+            note: document.getElementById('nzChainNote').textContent };
+          s.value = 'iso'; s.dispatchEvent(new Event('change', {bubbles: true})); await new Promise(r => setTimeout(r, 300));
+          return JSON.stringify(out); })()"""))
+        check('T½ ≥ 1 y: the parents of 226Ra keep 230Th, 234U, 238U, 238Pu and 242Pu, and none that lives less',
+              (all(k in y1['keys'] for k in ('90,230,0', '92,234,0', '92,238,0', '94,238,0', '94,242,0')), y1['short']), (True, 0))
+        check('... 238U goes to 234U by an arrow marked via 234Th, 234mPa', 'via 234Th, 234mPa' in y1['labels'], True)
+        check('... and the note names what was left out, the nearest first: 226Fr, and 238Pa (2.3 min, nothing drawn above it)',
+              ('Left out, as members that live less than 1 y: 226Fr' in y1['note'], '238Pa' in y1['note']), (True, True))
+        up = json.loads(await page.ev("""(async () => {
+          window.__saved = []; HTMLAnchorElement.prototype.click = function () {
+            if (this.download) fetch(this.href).then(r => r.blob()).then(b => window.__saved.push([this.download, b.size])); };
+          const g = document.querySelector('#nzChainSvg .nz-node[data-key="92,234,0"]');
+          g.dispatchEvent(new MouseEvent('click', {bubbles: true})); await new Promise(r => setTimeout(r, 250));
+          const out = { sel: ENSDFPage.state.sel, root: ENSDFPage.state.root, up: ENSDFPage.state.chain.up };
+          ['nz:chainSvg', 'nz:chainPng', 'nz:chainCsv'].forEach(a => document.querySelector(`[data-on-click="${a}"]`).click());
+          for (let i = 0; i < 40 && window.__saved.length < 3; i++) await new Promise(r => setTimeout(r, 100));
+          out.files = window.__saved.map(f => f[0]).sort(); out.sizes = window.__saved.map(f => f[1]);
+          return JSON.stringify(out); })()"""))
+        check('a box among the parents opens that member, and the chain keeps its start', (up['sel'], up['root'], up['up']), ({'z': 92, 'a': 234, 'k': 0}, {'z': 88, 'a': 226, 'k': 0}, True))
+        check('... and the parents save as SVG, PNG and CSV', (up['files'], all(s > 200 for s in up['sizes'])), (['parents-226Ra.csv', 'parents-226Ra.png', 'parents-226Ra.svg'], True))
+        pi = json.loads(await page.ev("""(async () => {
+          ENSDFPage.select('Ra-226'); document.querySelector('[data-tab=inventory]').click(); await new Promise(r => setTimeout(r, 500));
+          const pane = document.getElementById('nzPaneInventory');
+          const out = { head: pane.querySelector('.nz-pane-head').textContent, empty: document.getElementById('nzInvChart').textContent,
+            set: [...pane.querySelectorAll('.nz-inv-table input')].filter(i => i.value).length };
+          const th = pane.querySelector('input[data-key="90,230,0"]'); th.value = '1'; th.parentNode.querySelector('select').value = 'g';
+          th.dispatchEvent(new Event('input', {bubbles: true})); await new Promise(r => setTimeout(r, 900));
+          out.lines = document.querySelectorAll('#nzInvChart path').length;
+          const r = document.querySelector('#nzInvChart svg').getBoundingClientRect();
+          out.at = { x: r.left + r.width * 0.88, y: r.top + r.height * 0.45 };
+          return JSON.stringify(out); })()"""))
+        check('the Inventory tab takes the parents too, and none of them has an amount until one is given', (pi['head'], pi['set'], 'give one of the parents an amount' in pi['empty']),
+              ('Inventory of the parents of 226Ra', 0, True))
+        await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': pi['at']['x'], 'y': pi['at']['y']}, session=page.sid)
+        await asyncio.sleep(0.2)
+        grown = json.loads(await page.ev("""(() => {
+          const num = (t) => { const m = /^([\\d.]+)(?:×10(−?\\d+))?$/.exec(t.trim()); return m ? +m[1] * Math.pow(10, m[2] ? +m[2].replace('−', '-') : 0) : NaN; };
+          const v = (k) => num(document.querySelector(`#nzPaneInventory .nz-inv-now[data-key="${k}"]`).textContent);
+          return JSON.stringify({ ra: v('88,226,0'), th: v('90,230,0'), at: document.getElementById('nzInvAt').textContent }); })()"""))
+        await page.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': 5, 'y': 5}, session=page.sid)
+        # Long after 1600 y, 226Ra stands in transient equilibrium with 230Th: A(Ra)/A(Th) = 1/(1 - 1600/75400) = 1.02.
+        check('1 g of 230Th grows 226Ra in: thousands of years on, in equilibrium with it', (pi['lines'] >= 2, grown['th'] > 1e8, 0.99 < grown['ra'] / grown['th'] < 1.05),
+              (True, True, True))
+        back = json.loads(await page.ev("""(async () => {
+          document.querySelector('[data-tab=nuclide]').click();
+          ENSDFPage.select('Pb-206'); await new Promise(r => setTimeout(r, 300));
+          const card = () => document.querySelector('#nzPaneNuclide .nz-card');
+          const out = { up: [card().querySelector('h3').textContent, card().textContent.includes('decay to 206Pb, directly or through others')] };
+          card().querySelector('[data-dir=down]').click(); await new Promise(r => setTimeout(r, 300));
+          out.down = [card().querySelector('h3').textContent, card().textContent.includes('206Pb is stable: no chain follows from it.'),
+            document.getElementById('nzChainDir').value, document.querySelector('[data-view=chain]').textContent];
+          return JSON.stringify(out); })()"""))
+        check('a stable nuclide has parents (206Pb), and the card turns the chain back down', (back['up'], back['down']),
+              (['Parents', True], ['Decay chain', True, 'down', 'Decay chain 206Pb']))
 
         # ---------------------------------------------------------- the NNDC archive
         nn = json.loads(await page.ev("""(async () => {

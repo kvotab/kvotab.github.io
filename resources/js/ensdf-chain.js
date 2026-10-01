@@ -7,7 +7,8 @@
    minus one column right on the same row, electron capture one column left,
    neutron emission down a row. An isomer and the ground state it decays to
    share a column and stand one above the other. Fission ends in the column
-   at the far right.
+   at the far right. A chain built going up -- the parents of a state -- is
+   drawn the same way, the start then at the foot of its arrows.
 
    Only the rows that hold a member are drawn, so a chain that jumps from
    A = 238 to 206 by cluster emission does not leave thirty empty rows, but
@@ -141,17 +142,21 @@
   const BENDS = [0, 0.1, -0.1, 0.18, -0.18, 0.27, -0.27, 0.38, -0.38, 0.5, -0.5];
   const SAMPLES = 24;
 
+  /* A grid cell as one number, for the lookups the routing and the labels
+     make by the million in a chain of a few hundred members. */
+  const cellId = (i, j) => (i + 4096) * 65536 + (j + 4096);
+
   function routeEdges(chain, L) {
     const routes = new Map();
     const boxes = [...L.boxes.entries()].map(([key, b]) => ({ key, x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
     const centre = (b) => [b.x + b.w / 2, b.y + b.h / 2];
     /* Points of the arrows already placed, in 8 px cells, to find crowding quickly. */
     const grid = new Map();
-    const cellKey = (x, y) => `${Math.floor(x / 8)},${Math.floor(y / 8)}`;
+    const cellKey = (x, y) => cellId(Math.floor(x / 8), Math.floor(y / 8));
     const crowded = (x, y) => {
       const cx = Math.floor(x / 8), cy = Math.floor(y / 8);
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-        const list = grid.get(`${cx + i},${cy + j}`);
+        const list = grid.get(cellId(cx + i, cy + j));
         if (list && list.some(([u, v]) => Math.abs(u - x) < 6 && Math.abs(v - y) < 6)) return true;
       }
       return false;
@@ -179,8 +184,12 @@
         const Q = [2 * M[0] - (P0[0] + P1[0]) / 2, 2 * M[1] - (P0[1] + P1[1]) / 2];
         const pts = [];
         for (let i = 0; i <= SAMPLES; i++) pts.push(bezier(P0, Q, P1, i / SAMPLES));
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [x, y] of pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
         let hits = 0;
         for (const r of boxes) {
+          /* A box clear of the curve's bounding box holds none of its points. */
+          if (r.x >= x1 || r.x + r.w <= x0 || r.y >= y1 || r.y + r.h <= y0) continue;
           if (r.key === e.from.key || r.key === e.to.key) continue;
           if (pts.some(([x, y]) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h)) hits++;
         }
@@ -324,6 +333,27 @@
     fixed.push({ x: 0, y: 0, w: L.width, h: 24 }, { x: 0, y: 0, w: GEOM.left - 2, h: L.height });
     const inside = (r) => r.x >= 2 && r.y >= 2 && r.x + r.w <= L.width - 2 && r.y + r.h <= L.height - 2;
     const hit = (r, t) => r.x < t.x + t.w && r.x + r.w > t.x && r.y < t.y + t.h && r.y + r.h > t.y;
+    /* The fixed places filed in 64 px cells: two that overlap share a cell. */
+    const FIX = 64;
+    const fixedAt = new Map();
+    for (const t of fixed) {
+      for (let i = Math.floor(t.x / FIX); i <= Math.floor((t.x + t.w) / FIX); i++) {
+        for (let j = Math.floor(t.y / FIX); j <= Math.floor((t.y + t.h) / FIX); j++) {
+          const k = cellId(i, j);
+          if (!fixedAt.has(k)) fixedAt.set(k, []);
+          fixedAt.get(k).push(t);
+        }
+      }
+    }
+    const blocked = (r) => {
+      for (let i = Math.floor(r.x / FIX); i <= Math.floor((r.x + r.w) / FIX); i++) {
+        for (let j = Math.floor(r.y / FIX); j <= Math.floor((r.y + r.h) / FIX); j++) {
+          const list = fixedAt.get(cellId(i, j));
+          if (list && list.some((t) => hit(r, t))) return true;
+        }
+      }
+      return false;
+    };
     /* Two labels on one lane keep a little apart. */
     const crowds = (r, t) => r.x < t.x + t.w + 3 && r.x + r.w + 3 > t.x && r.y < t.y + t.h && r.y + r.h > t.y;
     const overlap = (r, t) => Math.max(0, Math.min(r.x + r.w, t.x + t.w) - Math.max(r.x, t.x)) * Math.max(0, Math.min(r.y + r.h, t.y + t.h) - Math.max(r.y, t.y));
@@ -339,7 +369,7 @@
       for (let i = 0; i <= n; i++) pts.push(bezier(rt.P0, rt.Q, rt.P1, i / n));
       trace.set(e.key, pts);
       for (const [x, y] of pts) {
-        const k = `${Math.floor(x / 16)},${Math.floor(y / 16)}`;
+        const k = cellId(Math.floor(x / 16), Math.floor(y / 16));
         if (!cells.has(k)) cells.set(k, []);
         cells.get(k).push([x, y, e.key]);
       }
@@ -349,7 +379,7 @@
       let n = 0;
       for (let i = Math.floor(r.x / 16); i <= Math.floor((r.x + r.w) / 16); i++) {
         for (let j = Math.floor(r.y / 16); j <= Math.floor((r.y + r.h) / 16); j++) {
-          for (const [x, y, k] of cells.get(`${i},${j}`) || []) if (k !== own && x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) n++;
+          for (const [x, y, k] of cells.get(cellId(i, j)) || []) if (k !== own && x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) n++;
         }
       }
       return n;
@@ -375,7 +405,7 @@
       const cands = candidates(rt, Math.ceil(textWidth(txt, 11)) + 12, pts, L);
       const free = [];
       cands.forEach((r, i) => {
-        if (!inside(r) || fixed.some((t) => hit(r, t))) return;
+        if (!inside(r) || blocked(r)) return;
         const d = distance(r, pts);
         if (d <= REACH) free.push({ r, cost: d + covers(r, e.key) * 3 + i * 0.01 });
       });
@@ -447,6 +477,35 @@
     };
   }
 
+  /*
+    Lay out, route the arrows, place the labels; where a label found no
+    room, widen the gap between rows it wanted by a lane and go again, up to
+    three times, and keep the try that left the fewest without room -- so a
+    crowded chain grows only where it is crowded. One lane more may not be
+    enough: the labels of the level arrows take the lanes next to their
+    rows, and those of the arrows crossing the gap need a third. Worked out
+    once for each chain and kept: the panel's small copy and the big drawing
+    are the same chain, and the parents of a heavy stable nuclide, a few
+    hundred members, take a good part of a second.
+  */
+  const arranged = new WeakMap();
+  function arrange(chain) {
+    let best = arranged.get(chain);
+    if (best) return best;
+    let grow = [];
+    for (let pass = 0; pass < 4; pass++) {
+      const L = layout(chain, GEOM, grow);
+      const routes = routeEdges(chain, L);
+      const labels = placeLabels(chain, L, routes);
+      if (!best || labels.missed.length < best.labels.missed.length) best = { L, routes, labels };
+      if (!labels.missed.length) break;
+      grow = grow.slice();
+      for (const b of new Set(labels.missed)) grow[b] = (grow[b] || 0) + LABEL_H + 2;
+    }
+    arranged.set(chain, best);
+    return best;
+  }
+
   /**
    * Draw the chain into an <svg>.
    *
@@ -458,27 +517,11 @@
    * @param {function(Object|null, MouseEvent)} [opt.onHover]
    * @returns {{width: number, height: number, root: Object|null, focus: Object|null}}
    *   root is the box of the start, focus the box around it and its daughters
+   *   -- or, going up, its parents
    */
   function render(svg, chain, opt = {}) {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
-    /* Lay out, route the arrows, place the labels; where a label found no
-       room, widen the gap between rows it wanted by a lane and go again, up
-       to three times, and keep the try that left the fewest without room --
-       so a crowded chain grows only where it is crowded. One lane more may
-       not be enough: the labels of the level arrows take the lanes next to
-       their rows, and those of the arrows crossing the gap need a third. */
-    let grow = [];
-    let best = null;
-    for (let pass = 0; pass < 4; pass++) {
-      const L = layout(chain, GEOM, grow);
-      const routes = routeEdges(chain, L);
-      const labels = placeLabels(chain, L, routes);
-      if (!best || labels.missed.length < best.labels.missed.length) best = { L, routes, labels };
-      if (!labels.missed.length) break;
-      grow = grow.slice();
-      for (const b of new Set(labels.missed)) grow[b] = (grow[b] || 0) + LABEL_H + 2;
-    }
-    const { L, routes, labels } = best;
+    const { L, routes, labels } = arrange(chain);
     const col = themeColours();
     /* Marker ids must be unique in the document: the panel carries a small
        copy of the drawing beside the big one. */
@@ -576,7 +619,7 @@
         richText(t2, n.kind === 'missing' ? 'not in ENSDF' : C.halfLifeShort(n.st) || 'T½ unknown', 11);
       }
       const title = el('title', {}, g);
-      title.textContent = C.asciiText(nodeTitle(n));
+      title.textContent = C.asciiText(nodeTitle(n, chain));
       g.addEventListener('click', () => { if (opt.onPick) opt.onPick(n); });
       g.addEventListener('keydown', (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && opt.onPick) { ev.preventDefault(); opt.onPick(n); } });
       g.addEventListener('mouseenter', (ev) => {
@@ -594,12 +637,13 @@
         if (opt.onHover) opt.onHover(null, ev);
       });
     }
-    /* The start and where its own decays go: what the view should open on. */
+    /* The start and where its own decays go -- or, going up, the parents
+       it comes from: what the view should open on. */
     const rb = L.boxes.get(chain.root.key);
     let focus = rb ? { ...rb } : null;
     if (focus) {
-      for (const e of chain.root.out) {
-        const b = L.boxes.get(e.to.key);
+      for (const e of chain.up ? chain.root.in : chain.root.out) {
+        const b = L.boxes.get((chain.up ? e.from : e.to).key);
         if (!b) continue;
         const x0 = Math.min(focus.x, b.x), y0 = Math.min(focus.y, b.y);
         focus = { x: x0, y: y0, w: Math.max(focus.x + focus.w, b.x + b.w) - x0, h: Math.max(focus.y + focus.h, b.y + b.h) - y0 };
@@ -659,13 +703,21 @@
     return C.plainName(n.z, n.a, n.k, n.nuc);
   }
 
-  function nodeTitle(n) {
+  /* A box's tooltip. Going down, the share is of the first nuclide's
+     decays; going up, of the member's own decays that reach the start. */
+  function nodeTitle(n, chain) {
     if (n.kind === 'fission') return 'Spontaneous fission: the chain ends in fission fragments.';
     const nm = C.plainName(n.z, n.a, n.k, n.nuc);
     if (n.kind === 'missing') return `${nm}: no adopted data for this nuclide in the database.`;
-    const reached = n.cumUnknown && !n.cum ? 'share not known' : `${C.pctText(n.cum * 100)} of the decays of the first nuclide pass through here`;
     const life = n.st.st ? 'stable' : `T½ ${C.halfLifeText(n.st, true)}`;
-    return `${nm}${n.k > 0 ? ` (${n.st.e} keV)` : ''}: ${life}; ${reached}.`;
+    const head = `${nm}${n.k > 0 ? ` (${n.st.e} keV)` : ''}: ${life}`;
+    if (chain && chain.up) {
+      if (n === chain.root) return `${head}; the parents drawn are those that decay to it.`;
+      const share = n.cumUnknown && !n.cum ? 'a share not known' : `${C.pctText(n.cum * 100)}${n.cumUnknown ? ' or more' : ''}`;
+      return `${head}; ${share} of its decays reach ${nodeName(chain.root)}.`;
+    }
+    const reached = n.cumUnknown && !n.cum ? 'share not known' : `${C.pctText(n.cum * 100)} of the decays of the first nuclide pass through here`;
+    return `${head}; ${reached}.`;
   }
 
   /**

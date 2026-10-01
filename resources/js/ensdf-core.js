@@ -10,7 +10,8 @@
                     percentages
      colours        the half-life ramp, the decay-mode set and the continuous
                     scales, per theme
-     buildChain()   the decay chain below a state
+     buildChain()   the decay chain below a state, or the states above it
+     parentsOf()    the states that decay straight to a state
 
    One global: KVOT_ENSDF_CORE (module.exports under Node). Reads the element
    list from KVOT_ENSDF (ensdf-parse.js), which must load first.
@@ -512,9 +513,74 @@
      The decay chain
      --------------------------------------------------------------------- */
 
+  /* The branches of a state as [mode, percent or null, targets, inferred,
+     limit]. Branches that add up to more than 100 % are scaled down to it
+     -- but only the ones given as values: "%A=100, %SF<=20" is alpha at
+     least 80 %, not 83 %, and the limit stays a limit. Those under
+     minBranch are dropped. */
+  function stateBranches(st, minBranch) {
+    const br = st.br || [];
+    const total = br.reduce((t, b) => t + (b[1] === null || isLimit(b[4]) ? 0 : b[1]), 0);
+    const scale = total > 100 ? 100 / total : 1;
+    const out = [];
+    for (const [mode, pct, targets, inferred, op] of br) {
+      const limit = isLimit(op) ? op : '';
+      const p = pct === null ? null : (limit ? pct : pct * scale);
+      if (p !== null && minBranch && p < minBranch) continue;
+      /* Where a branch lands is kept to six digits; rounded shares that
+         miss 1 by a little would lose decays (234Th's add up to 0.99999957). */
+      const sum = targets.reduce((t, x) => t + x[3], 0);
+      const tg = sum !== 1 && Math.abs(sum - 1) < 1e-3 ? targets.map((x) => [x[0], x[1], x[2], x[3] / sum]) : targets;
+      out.push([mode, p, tg, !!inferred, limit]);
+    }
+    return out;
+  }
+
+  /*
+    The branches the other way round: for every state, the states whose
+    decays land in it, as the file gives them -- {z, a, k} of the parent,
+    its mode, its percentage (null where none is given), the share of that
+    branch that lands in this state, the limit sign and whether the branch
+    is one the reader inferred. Worked out once for each database and kept.
+  */
+  const PARENTS = new WeakMap();
+  function parentIndex(idx) {
+    let map = PARENTS.get(idx);
+    if (map) return map;
+    map = new Map();
+    for (const n of idx.list) {
+      (n.s || []).forEach((st, k) => {
+        for (const [mode, pct, targets, inferred, op] of st.br || []) {
+          for (const [z2, a2, k2, f] of targets) {
+            if (k2 < 0) continue;
+            const tk = `${z2},${a2},${k2}`;
+            if (!map.has(tk)) map.set(tk, []);
+            map.get(tk).push({ z: n.z, a: n.a, k, mode, pct, f, op: op || '', inferred: !!inferred });
+          }
+        }
+      });
+    }
+    PARENTS.set(idx, map);
+    return map;
+  }
+
+  /**
+   * The states that decay straight to state k of (z, a): 230Th by alpha,
+   * 226Fr by beta-minus and 226Ac by electron capture to 226Ra.
+   *
+   * @returns {Array<{z: number, a: number, k: number, mode: string, pct: number|null,
+   *   f: number, op: string, inferred: boolean}>} f is the share of the
+   *   parent's branch that lands in this state, so pct * f is the share of
+   *   the parent's decays.
+   */
+  function parentsOf(idx, z, a, k) {
+    return parentIndex(idx).get(`${z},${a},${k}`) || [];
+  }
+
   /**
    * Every nuclide and state below a starting state, and the branches
-   * between them.
+   * between them -- or, with `up`, every state above it: the states whose
+   * decays come to it, directly or through others.
    *
    * Branch fractions come from the summary, where the reader already worked
    * out which isomer of the daughter each branch lands in. A member that
@@ -526,17 +592,31 @@
    * of 109Ag, which is real, but in a chain it can be one box too many.
    * exits() and addEdge() say how the shares and arrows come out.
    *
+   * Going up, the same rules make the same arrows: a member's arrows are
+   * its own branches, by the same settings, but only those that lead on to
+   * the start -- 226Ac goes to 226Ra by its 17 % of electron capture, and
+   * its beta-minus branch to 226Th, which never reaches 226Ra, is not
+   * drawn. A member's `cum` is then the share of its own decays that reach
+   * the start, and its `depth` the most steps it takes to get there. Every
+   * state that feeds a member is itself a member, so a decay worked over
+   * the chain is exact for every member of it.
+   *
    * @param {Object} idx - index()
    * @param {number} z
    * @param {number} a
    * @param {number} k - state index of the start
-   * @param {{minHalfLifeS?: number, minIsomerS?: number, minBranch?: number, maxNodes?: number}} [opt]
+   * @param {{minHalfLifeS?: number, minIsomerS?: number, minBranch?: number, maxNodes?: number, up?: boolean}} [opt]
    *   the shortest half-life, in seconds, a member (any member, or isomers
    *   alone) must have to be drawn, 0 for all; minBranch is a percentage of
-   *   the parent's decays below which a branch is left out.
-   * @returns {{nodes: Array, edges: Array, root: Object, truncated: boolean}}
+   *   the parent's decays below which a branch is left out; up for the
+   *   states above the start instead of below it.
+   * @returns {{nodes: Array, edges: Array, root: Object, truncated: boolean, up: boolean,
+   *   leftOut: Array}} nodes in the order the decays run; leftOut, going up,
+   *   every state above the start that the half-life setting left out
+   *   (going down they are in the arrows' `skipped`).
    */
   function buildChain(idx, z, a, k, opt = {}) {
+    const up = !!opt.up;
     const minHalfLifeS = opt.minHalfLifeS || 0;
     const minIsomerS = opt.minIsomerS || 0;
     const minBranch = opt.minBranch || 0;
@@ -567,28 +647,7 @@
       return nd;
     }
 
-    /* The branches of a state as [mode, percent or null, targets, inferred,
-       limit]. Branches that add up to more than 100 % are scaled down to it
-       -- but only the ones given as values: "%A=100, %SF<=20" is alpha at
-       least 80 %, not 83 %, and the limit stays a limit. Those under
-       minBranch are dropped. */
-    function branches(st) {
-      const br = st.br || [];
-      const total = br.reduce((t, b) => t + (b[1] === null || isLimit(b[4]) ? 0 : b[1]), 0);
-      const scale = total > 100 ? 100 / total : 1;
-      const out = [];
-      for (const [mode, pct, targets, inferred, op] of br) {
-        const limit = isLimit(op) ? op : '';
-        const p = pct === null ? null : (limit ? pct : pct * scale);
-        if (p !== null && minBranch && p < minBranch) continue;
-        /* Where a branch lands is kept to six digits; rounded shares that
-           miss 1 by a little would lose decays (234Th's add up to 0.99999957). */
-        const sum = targets.reduce((t, x) => t + x[3], 0);
-        const tg = sum !== 1 && Math.abs(sum - 1) < 1e-3 ? targets.map((x) => [x[0], x[1], x[2], x[3] / sum]) : targets;
-        out.push([mode, p, tg, !!inferred, limit]);
-      }
-      return out;
-    }
+    const branches = (st) => stateBranches(st, minBranch);
 
     /* A state the chain leaves out, as {nuc, st}, or null for one it draws.
        A half-life that is not known does not reach the threshold. */
@@ -674,28 +733,78 @@
 
     const root = node(z, a, k);
     root.cum = 1;
-    const queue = [root];
-    const seen = new Set([root.key]);
-    while (queue.length) {
-      const nd = queue.shift();
-      const st = nd.st;
-      if (!st || st.st || nd.kind !== 'state') continue;
-      for (const [mode, p, targets, inferred, limit] of branches(st)) {
-        if (!targets.length) {
-          addEdge(nd, fission(nd), mode, p, 1, inferred, null, limit);
-          continue;
-        }
-        for (const [z2, a2, k2, g] of targets) {
-          const lo = leftOut(z2, a2, k2);
-          for (const x of lo ? exits(z2, a2, k2, lo) : [{ to: { z: z2, a: a2, k: k2 }, f: 1, more: false, limit: '' }]) {
-            let to;
-            if (!x.to) to = fission(nd);
-            else {
-              if (nodes.size >= maxNodes && !nodes.has(key(x.to.z, x.to.a, x.to.k))) { truncated = true; continue; }
-              to = node(x.to.z, x.to.a, x.to.k);
-              if (!seen.has(to.key)) { seen.add(to.key); queue.push(to); }
+    const leftOutAbove = [];
+    if (!up) {
+      const queue = [root];
+      const seen = new Set([root.key]);
+      while (queue.length) {
+        const nd = queue.shift();
+        const st = nd.st;
+        if (!st || st.st || nd.kind !== 'state') continue;
+        for (const [mode, p, targets, inferred, limit] of branches(st)) {
+          if (!targets.length) {
+            addEdge(nd, fission(nd), mode, p, 1, inferred, null, limit);
+            continue;
+          }
+          for (const [z2, a2, k2, g] of targets) {
+            const lo = leftOut(z2, a2, k2);
+            for (const x of lo ? exits(z2, a2, k2, lo) : [{ to: { z: z2, a: a2, k: k2 }, f: 1, more: false, limit: '' }]) {
+              let to;
+              if (!x.to) to = fission(nd);
+              else {
+                if (nodes.size >= maxNodes && !nodes.has(key(x.to.z, x.to.a, x.to.k))) { truncated = true; continue; }
+                to = node(x.to.z, x.to.a, x.to.k);
+                if (!seen.has(to.key)) { seen.add(to.key); queue.push(to); }
+              }
+              addEdge(nd, to, mode, p, g * x.f, inferred, lo ? x : null, limit || x.limit, g);
             }
-            addEdge(nd, to, mode, p, g * x.f, inferred, lo ? x : null, limit || x.limit, g);
+          }
+        }
+      }
+    } else {
+      /*
+        Going up: first every state whose decays reach the start, through
+        any others, nearest first -- a parent counts only by a branch the
+        settings keep. The members are those the half-life setting does not
+        leave out, as many as the drawing allows, the nearest first; each
+        gets the branches that go on to the start, through left-out states
+        as going down. A branch that leads anywhere else is not drawn, and
+        neither is fission. The nearest member on a member's way down is
+        never farther from the start than it is, so a chain cut off at the
+        far end has no member left hanging. A stable state is no parent,
+        here as going down, though three keep a double-beta mode with no
+        percentage (80Se, 136Ce, 198Pt).
+      */
+      const parents = parentIndex(idx);
+      const above = new Set([root.key]);
+      const found = [[z, a, k]];
+      for (let i = 0; i < found.length; i++) {
+        const [z1, a1, k1] = found[i];
+        for (const p of parents.get(key(z1, a1, k1)) || []) {
+          const pk = key(p.z, p.a, p.k);
+          if (above.has(pk)) continue;
+          const pst = idx.get(p.z, p.a).s[p.k];
+          if (pst.st || !branches(pst).some((b) => b[2].some((t) => t[0] === z1 && t[1] === a1 && t[2] === k1))) continue;
+          above.add(pk);
+          found.push([p.z, p.a, p.k]);
+        }
+      }
+      for (const [z1, a1, k1] of found.slice(1)) {
+        const lo = leftOut(z1, a1, k1);
+        if (!lo && nodes.size >= maxNodes) { truncated = true; break; }
+        if (lo) leftOutAbove.push({ key: key(z1, a1, k1), name: plainName(z1, a1, k1, lo.nuc), t: halfLifeShort(lo.st), e: lo.st.e });
+        else node(z1, a1, k1);
+      }
+      for (const nd of [...nodes.values()]) {
+        if (nd === root) continue;
+        for (const [mode, p, targets, inferred, limit] of branches(nd.st)) {
+          for (const [z2, a2, k2, g] of targets) {
+            if (!above.has(key(z2, a2, k2))) continue;
+            const lo = leftOut(z2, a2, k2);
+            for (const x of lo ? exits(z2, a2, k2, lo) : [{ to: { z: z2, a: a2, k: k2 }, f: 1, more: false, limit: '' }]) {
+              const to = x.to && nodes.get(key(x.to.z, x.to.a, x.to.k));
+              if (to) addEdge(nd, to, mode, p, g * x.f, inferred, lo ? x : null, limit || x.limit, g);
+            }
           }
         }
       }
@@ -803,28 +912,45 @@
 
     /* Cumulative fractions and generations, in topological order. A cycle
        cannot happen in real data; if one ever did, the nodes on it are
-       simply left where they are. */
+       simply left where they are. Going up, the order starts from the
+       members nothing feeds, and the shares are worked from the start back
+       up: what reaches the start from a member is what its arrows carry to
+       members that reach it. */
     const indeg = new Map([...nodes.values()].map((n) => [n.key, n.in.length]));
     const order = [];
-    const ready = [root];
-    indeg.set(root.key, 0);
+    const ready = up ? [...nodes.values()].filter((n) => !n.in.length) : [root];
+    if (!up) indeg.set(root.key, 0);
     while (ready.length) {
       const nd = ready.shift();
       order.push(nd);
       for (const e of nd.out) {
-        if (e.pct !== null) e.to.cum += nd.cum * e.pct / 100;
-        if (e.pct === null || e.more) e.to.cumUnknown = true;
-        if (nd.cumUnknown) e.to.cumUnknown = true;
-        /* Reached through a limit: the share uses the limit's value. */
-        if (e.limit || nd.bounded) e.to.bounded = true;
-        e.to.depth = Math.max(e.to.depth, nd.depth + 1);
+        if (!up) {
+          if (e.pct !== null) e.to.cum += nd.cum * e.pct / 100;
+          if (e.pct === null || e.more) e.to.cumUnknown = true;
+          if (nd.cumUnknown) e.to.cumUnknown = true;
+          /* Reached through a limit: the share uses the limit's value. */
+          if (e.limit || nd.bounded) e.to.bounded = true;
+          e.to.depth = Math.max(e.to.depth, nd.depth + 1);
+        }
         const d = indeg.get(e.to.key) - 1;
         indeg.set(e.to.key, d);
         if (d === 0) ready.push(e.to);
       }
     }
     for (const nd of nodes.values()) if (!order.includes(nd)) order.push(nd);
-    return { nodes: order, edges: [...edges.values()], root, truncated };
+    if (up) {
+      for (let i = order.length - 1; i >= 0; i--) {
+        const nd = order[i];
+        if (nd === root) continue;
+        for (const e of nd.out) {
+          if (e.pct !== null) nd.cum += (e.pct / 100) * e.to.cum;
+          if (e.pct === null || e.more || e.to.cumUnknown) nd.cumUnknown = true;
+          if (e.limit || e.to.bounded) nd.bounded = true;
+          nd.depth = Math.max(nd.depth, e.to.depth + 1);
+        }
+      }
+    }
+    return { nodes: order, edges: [...edges.values()], root, truncated, up, leftOut: leftOutAbove };
   }
 
   /* ---------------------------------------------------------------------
@@ -968,7 +1094,7 @@
   }
 
   return {
-    ELEMENTS, index, name, plainName, sup, supRuns, asciiText, isomerLabel, parseQuery, stateForLabel, chainEmission,
+    ELEMENTS, index, name, plainName, sup, supRuns, asciiText, isomerLabel, parseQuery, stateForLabel, chainEmission, parentsOf,
     decaySystem, decayAt, AVOGADRO,
     expText, valueParts, uncertaintyText, halfLifeParts, halfLifeText, halfLifeAlt, halfLifeShort,
     modeText, modeMeaning, modeStated, pctText, sharePct, isLimit, primaryMode, modeFamily,
