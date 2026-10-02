@@ -19,6 +19,7 @@ digits after a few steps and usually end on the same count, not always.
 
 from __future__ import annotations
 
+import copy
 import math
 import unittest
 from typing import Any, Dict, List
@@ -29,7 +30,7 @@ from helpers import example, needs_app
 from test_engine_lang import engine, number
 
 from kompartment.engine.builder import build_system
-from kompartment.engine.project import BLOCK_COLLECTIONS, Project
+from kompartment.engine.project import BLOCK_COLLECTIONS, Project, ValidationError
 from kompartment.engine.runner import run
 
 EXAMPLES = ['four-compartment', 'decay-chain', 'biosphere', 'lookup-driver', 'post-processing', 'scenarios',
@@ -330,6 +331,48 @@ class RunParity(unittest.TestCase):
         for name, res in pooled.items():
             for a, b in zip(res.series_many(res.outputs()), mine[name].series_many(mine[name].outputs())):
                 self.assertTrue(close(a, b, 0), name)
+
+
+@needs_app
+class RefusalParity(unittest.TestCase):
+    def test_what_cannot_be_is_refused_as_the_application_refuses_it(self) -> None:
+        # As the model is loaded: an order that is not a whole number, and a
+        # sorption on the fracture coating written as a number below zero --
+        # the block's own or an entry's.
+        bio, path = example('biosphere'), example('farfield')
+        cases = []
+        for key, value in (('max_order', 2.5), ('min_order', '1.5'), ('max_order', 9), ('max_steps', 1000.5),
+                           ('max_jac_age', 2.5), ('below_tol_run', '0.5')):
+            raw = copy.deepcopy(bio)
+            raw['simulation'][key] = value
+            cases.append((f'{key} {value}', raw))
+        for key, value in (('kd_f', '-0.1'), ('kd_m', '-1e-3'), ('de_m', -1e-5), ('eps_m', '-1e-4'),
+                           ('rho_m', '-2700')):
+            raw = copy.deepcopy(path)
+            raw['farfields'][0][key] = value
+            cases.append((key, raw))
+        raw = copy.deepcopy(path)
+        raw['farfields'][0]['entries'] = [{'index': {'Radionuclides': 'U-238'}, 'kd_f': -2}]
+        cases.append(('kd_f at an index', raw))
+        for label, raw in cases:
+            with self.subTest(label):
+                theirs = engine('project', model=raw)
+                with self.assertRaises(ValidationError) as caught:
+                    Project(copy.deepcopy(raw))
+                self.assertEqual((str(caught.exception), 'ValidationError'), (theirs.get('error'), theirs.get('kind')))
+        # And as a run works an equation out below zero, however little --
+        # on either layout, and on the Python path and the compiled one.
+        for grid, key in (('matched', 'kd_f'), ('reference', 'kd_f'), ('matched', 'de_m'), ('reference', 'eps_m')):
+            raw = copy.deepcopy(path)
+            raw['farfields'][0].update({key: '-1e-6 * rampUp(time, 0, 1)', 'grid': grid})
+            raw['simulation']['end_time'] = 2e4
+            theirs = engine('run', model=raw)
+            for compiled in (False, 'auto'):
+                with self.subTest(grid=grid, key=key, compiled=compiled):
+                    with self.assertRaises(Exception) as caught:
+                        run(Project(copy.deepcopy(raw)), compiled=compiled)
+                    self.assertEqual((str(caught.exception), type(caught.exception).__name__),
+                                     (theirs.get('error'), theirs.get('kind')))
 
 
 @needs_app

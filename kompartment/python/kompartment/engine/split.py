@@ -21,13 +21,23 @@ it.
 **A job at a time, where the application builds a bin once.** The
 application packs its jobs into one bin per core and builds each bin once,
 since the code it generates does not shrink with the part: a part costs half a
-whole build whatever it holds. A build here does shrink with the part -- a
-twelfth of a 10,080-state model built in 0.18 of the whole's time, half of it
-in 0.46 -- so a job costs about its share of the states, build and solve
-alike, which is the cost model below; and building each job on its own is
-what keeps a job's run the same whichever jobs share its process. The plans
-are the application's in everything but that weighing (``PlanParity`` in the
-tests).
+whole build whatever it holds. A build here shrinks with the part on a model
+of independent chains -- a twelfth of a 10,080-state model built in 0.18 of
+the whole's time, half of it in 0.46 -- so a job is taken to cost about its
+share of the states, build and solve alike, until a split of the model has
+been timed. Then the part of a build that does not shrink is known: on a model
+whose equations and transports all come along into every part, a part of a
+fiftieth of the states builds in two thirds of the whole's time. Building each
+job on its own is what keeps a job's run the same whichever jobs share its
+process. The plans are the application's in everything but that weighing
+(``PlanParity`` in the tests).
+
+**What auto learns** -- a whole solve's time, a split's measured gain, the
+part of a build that does not shrink -- is kept by the model's layout, the
+path it runs on (compiled or not) and this engine's code, in a file in the
+cache directory (``KOMPARTMENT_CACHE``, else the user's cache directory), so a
+script run in a process of its own decides from the runs before it.
+Compilation is timed apart and left out: it is paid once.
 
 **Refused, whatever the setting, where it would be wrong or cannot work:** a
 model the partition declines (a delay, a snapshot or an event reaches across
@@ -57,6 +67,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
 import math
 import multiprocessing as mp
@@ -65,6 +76,7 @@ import re
 import sys
 import time
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -392,7 +404,10 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
     and each worker costs a start -- with this engine's numbers. ``known`` is
     the whole model's solve time from an earlier run of this layout here
     (``{'solve_ms', 'gain'}``); without it the ratio is judged on the model's
-    shape alone, with a larger margin and only for a large model.
+    shape alone, with a larger margin and only for a large model. ``known``
+    may hold ``build_fixed`` too, the share of a whole build each part pays
+    whatever it holds, as a split measured it; without it a part's build is
+    taken to shrink as its solve does.
 
     Returns ``{'use', 'mode', 'why', ...}``; when ``use``, also ``jobs``,
     ``owner``, ``keys``, ``bins``, ``parts``, ``predicted`` and ``recorders``.
@@ -438,7 +453,15 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
     if known is not None and known.get('solve_ms') is not None and math.isfinite(known['solve_ms']):
         S = float(known['solve_ms'])
         B = max(0.0, float(build_ms))
-        predicted = S / (load * (B + S) + START_MS)
+        fixed = known.get('build_fixed')
+        if fixed is None:
+            predicted = S / (load * (B + S) + START_MS)
+        else:
+            # The part of a build that does not shrink with the part, as a
+            # split of this model measured it.
+            bin_ms = max(sum(B * (fixed + (1 - fixed) * found['jobs'][j]['states'] / n) + S * costs[j] for j in b)
+                         for b in bins)
+            predicted = S / (bin_ms + START_MS)
         if S < AUTO_SOLVE_MS:
             return no(f'a whole solve takes {_js_round(S)} ms, too short to be worth dividing', predicted=predicted)
         if predicted < AUTO_GAIN:
@@ -718,7 +741,8 @@ def _part_job(job: int, materials: Sequence[str]) -> Dict[str, Any]:
         'dis': state['dis'],
         'sampled': state['sampled'],
         'clock': state['clock'],
-        'timing': {'build_ms': build_ms, 'solve_ms': (results.timing or {}).get('solve_ms'), 'pinned': pinned},
+        'timing': {'build_ms': build_ms, 'solve_ms': (results.timing or {}).get('solve_ms'),
+                   'compile_ms': getattr(results, 'compile_ms', 0.0) or 0.0, 'pinned': pinned},
         'pid': os.getpid(),
     }
 
@@ -825,23 +849,168 @@ def run_split(project: Any, system: Any, plan: Dict[str, Any], *, workers: Optio
     system.restore_run_state({'mem': mem, 'dis': first['dis'], 'sampled': first['sampled'],  # type: ignore[index]
                               'clock': first['clock']})  # type: ignore[index]
     summary = []
+    solving = []
     for j, jb in enumerate(jobs):
         o = outcome[j]
+        timing = o['timing']  # type: ignore[index]
         summary.append({'materials': jb['materials'], 'states': jb['states'],
                         'nsteps': (o['stats'] or {}).get('nsteps'),  # type: ignore[index]
-                        'buildMs': o['timing']['build_ms'], 'solveMs': o['timing']['solve_ms']})  # type: ignore[index]
+                        'buildMs': timing['build_ms'], 'solveMs': timing['solve_ms']})
+        # A part's solve without its compilation, which is paid once.
+        solving.append(max(0.0, (timing['solve_ms'] or 0.0) - (timing.get('compile_ms') or 0.0)))
     n = int(system.layout.nstate)
     # What one process would have taken for the whole model, as the slowest
-    # part stretched to the whole: kept for deciding the next run.
-    whole_ms = max(((s['solveMs'] or 0.0) / job_cost(s['states'], n)) for s in summary)
+    # part stretched to the whole, and what the split takes once its parts are
+    # compiled (each part's build and solve, packed as the pool hands them out)
+    # -- both without compiling: kept for deciding the next run.
+    whole_ms = max(solving[j] / job_cost(s['states'], n) for j, s in enumerate(summary))
+    spent = [s['buildMs'] + solving[j] for j, s in enumerate(summary)]
+    packed = pack_jobs(spent, count)
+    expected_ms = max(sum(spent[j] for j in b) for b in packed) + START_MS
     return {'solution': {'t': assembled['t'], 'y': assembled['rows'], 'stats': assembled['stats']},
-            'wall_ms': wall_ms, 'jobs': summary, 'whole_ms': whole_ms,
+            'wall_ms': wall_ms, 'jobs': summary, 'whole_ms': whole_ms, 'expected_ms': expected_ms,
             'processes': len({outcome[j]['pid'] for j in range(len(jobs))})}  # type: ignore[index]
 
 
-#: What whole runs of each model layout have cost here, for deciding whether
-#: the next one is worth splitting: layout signature -> ``{'solve_ms', 'gain'}``.
+def build_fixed(jobs: Sequence[Dict[str, Any]], states: int, build_ms: float) -> Optional[float]:
+    """The share of a whole build each part pays whatever it holds, from the
+    parts' builds (``f`` in ``B * (f + (1 - f) * share)``): their mean, held
+    to [0, 2] -- a part that rebuilds the whole model's structure costs about
+    a whole build, a little more for the process it starts in."""
+    if not (build_ms > 0) or not states:
+        return None
+    seen = []
+    for j in jobs:
+        share = j['states'] / states
+        if share < 1:
+            seen.append((j['buildMs'] / build_ms - share) / (1 - share))
+    if not seen:
+        return None
+    return min(2.0, max(0.0, sum(seen) / len(seen)))
+
+
+#: What runs of each model have cost here, for deciding whether the next one
+#: is worth splitting: :func:`memory_key` -> ``{'solve_ms', 'gain',
+#: 'build_fixed', 'when'}``, the whole solve and the split's gain without
+#: compiling. Read from and written to :func:`memory_path` as well.
 _MEMORY: Dict[str, Dict[str, Any]] = {}
+_MEMORY_READ = [False]
+#: The file the memory is kept in, in the cache directory, and the most entries it keeps.
+MEMORY_FILE = 'split-memory.json'
+MEMORY_KEEP = 1000
+_ENGINE_STAMP: List[str] = []
+
+
+def memory_path() -> Optional[Path]:
+    """Where what auto learns is kept: ``split-memory.json`` in the cache
+    directory, or nowhere when ``KOMPARTMENT_SPLIT_MEMORY`` is ``0``."""
+    if os.environ.get('KOMPARTMENT_SPLIT_MEMORY', '').strip() == '0':
+        return None
+    from .compiled import cache_root
+    return cache_root() / MEMORY_FILE
+
+
+def _engine_stamp() -> str:
+    """A hash of this engine's code: what was measured with other code is
+    not taken to hold for this."""
+    if not _ENGINE_STAMP:
+        h = hashlib.sha256()
+        here = Path(__file__).resolve().parent
+        for path in sorted(here.rglob('*.py')):
+            try:
+                h.update(path.relative_to(here).as_posix().encode())
+                h.update(path.read_bytes())
+            except OSError:
+                pass
+        _ENGINE_STAMP.append(h.hexdigest()[:16])
+    return _ENGINE_STAMP[0]
+
+
+def memory_key(signature: str, compiled: bool) -> str:
+    """What a measurement is kept by: the model's layout, whether its runs are
+    compiled, and the engine's code."""
+    return f"{signature}|{'compiled' if compiled else 'python'}|{_engine_stamp()}"
+
+
+def _read_memory() -> None:
+    if _MEMORY_READ[0]:
+        return
+    _MEMORY_READ[0] = True
+    path = memory_path()
+    if path is None or not path.is_file():
+        return
+    try:
+        kept = json.loads(path.read_text('utf-8'))
+    except (OSError, ValueError):
+        return
+    if isinstance(kept, dict):
+        for key, entry in kept.items():
+            if isinstance(entry, dict) and key not in _MEMORY:
+                _MEMORY[key] = entry
+
+
+def recall(key: str) -> Optional[Dict[str, Any]]:
+    """What auto has learned of a model (see :func:`memory_key`), or None."""
+    _read_memory()
+    entry = _MEMORY.get(key)
+    return dict(entry) if entry is not None else None
+
+
+def _close(a: Any, b: Any) -> bool:
+    if a is None or b is None:
+        return a is b
+    return abs(float(a) - float(b)) <= 0.25 * max(abs(float(a)), abs(float(b)))
+
+
+def remember(key: str, entry: Dict[str, Any]) -> None:
+    """Keeps what a run measured, here and in the file -- written whole under
+    a name of this process's own and moved into place, the oldest entries
+    dropped past :data:`MEMORY_KEEP`. A measurement within a quarter of the
+    one kept is not written again: a script that runs a model a thousand
+    times does not write the file a thousand times."""
+    _read_memory()
+    before = _MEMORY.get(key)
+    _MEMORY[key] = {**entry, 'when': time.time()}
+    if before is not None and all(_close(before.get(k), entry.get(k)) for k in ('solve_ms', 'gain', 'build_fixed')):
+        return
+    path = memory_path()
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        kept: Dict[str, Any] = {}
+        if path.is_file():
+            try:
+                old = json.loads(path.read_text('utf-8'))
+                if isinstance(old, dict):
+                    kept.update(old)
+            except ValueError:
+                pass
+        kept[key] = _MEMORY[key]
+        if len(kept) > MEMORY_KEEP:
+            newest = sorted(kept, key=lambda k: -float((kept[k] or {}).get('when') or 0.0))[:MEMORY_KEEP]
+            kept = {k: kept[k] for k in newest}
+        tmp = path.with_name(f'{path.name}.{os.getpid()}.part')
+        tmp.write_text(json.dumps(kept), 'utf-8')
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _compiled_on(compiled: Any) -> bool:
+    """Whether a run asked to be compiled ``compiled`` will be."""
+    if compiled is False or compiled is None:
+        return False
+    import importlib.util
+    return importlib.util.find_spec('numba') is not None
+
+
+def _ran_as(results: Any, compiling: bool) -> bool:
+    """Whether a run went the way its memory is kept by (compiled or not): a
+    run asked to compile whose model, or one of whose parts, went to the
+    Python path instead measured neither path, and is not kept."""
+    ran = (results.stats or {}).get('compiled')
+    return ran is None or bool(ran) == compiling
 
 
 def _in_worker_process() -> bool:
@@ -864,8 +1033,9 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
     t0 = time.perf_counter()
     system = build_system(project)
     build_ms = (time.perf_counter() - t0) * 1000
-    signature = layout_signature(system)
-    known = _MEMORY.get(signature)
+    compiling = _compiled_on(compiled)
+    key = memory_key(layout_signature(system), compiling)
+    known = recall(key)
     cores = int(workers) if workers is not None else (os.cpu_count() or 1)
     plan = plan_split(system, project, mode=project.simulation.get('split') or 'auto', workers=cores,
                       nest=not _in_worker_process(), build_ms=build_ms, known=known, on_grid=on_grid)
@@ -880,8 +1050,10 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
             plan['jobs'] = split['jobs']
             plan['wall_ms'] = split['wall_ms']
             whole_ms = known['solve_ms'] if known and known.get('solve_ms') is not None else split['whole_ms']
-            plan['gain'] = whole_ms / split['wall_ms'] if split['wall_ms'] > 0 else None
-            _MEMORY[signature] = {'solve_ms': whole_ms, 'gain': plan['gain']}
+            plan['gain'] = whole_ms / split['expected_ms'] if split['expected_ms'] > 0 else None
+            if _ran_as(results, compiling):
+                remember(key, {'solve_ms': whole_ms, 'gain': plan['gain'],
+                               'build_fixed': build_fixed(split['jobs'], int(system.layout.nstate), build_ms)})
         except Exception as e:  # noqa: BLE001 - a split that does not add up is solved whole instead
             from .solvers import SolverError
             if isinstance(e, SolverError) and e.code == 'aborted':
@@ -895,7 +1067,9 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
         timing['build_ms'] = build_ms
         timing['total_ms'] = (timing.get('total_ms') or 0.0) + build_ms
         results.timing = timing
-        _MEMORY[signature] = {**(known or {}), 'solve_ms': timing.get('solve_ms')}
+        solving = (timing.get('solve_ms') or 0.0) - (getattr(results, 'compile_ms', 0.0) or 0.0)
+        if _ran_as(results, compiling):
+            remember(key, {**(known or {}), 'solve_ms': max(0.0, solving)})
     account: Dict[str, Any] = {'used': bool(plan['use']), 'mode': plan['mode'], 'why': plan['why'],
                                'predicted': plan.get('predicted')}
     if plan['use']:

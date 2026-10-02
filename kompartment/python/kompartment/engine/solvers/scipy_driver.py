@@ -4,7 +4,8 @@ The application runs these in a Python it downloads into the browser
 (``src/ode/scipy.js``); here they are ``scipy.integrate`` itself, driven the
 same way: ``solve_ivp`` over the run, answering at the output times, with the
 analytic Jacobian where the model has one (sparse for a large sparse model,
-dense otherwise), a hook on every accepted step for the blocks that remember,
+dense otherwise and always for LSODA), a hook on every accepted step for the
+blocks that remember,
 and the same account of a state that went below zero. Discrete events are
 refused, as the application refuses them: its events are terminal and
 located by its own rules.
@@ -24,6 +25,18 @@ TICK = 64
 
 class _Cancelled(Exception):
     pass
+
+
+def jacobian_form(method: str, jac: Any, neq: int) -> str:
+    """How a SciPy method is handed the model's Jacobian (``jacobianForm``):
+    ``'sparse'`` (a ``scipy.sparse`` matrix), ``'dense'`` or ``'none'``.
+    Sparse only for a large sparse matrix, where its zeros outnumber the
+    bookkeeping; never for LSODA, which is ODEPACK's and factorises full or
+    banded matrices only -- a sparse one failed the run -- and keeps an n by n
+    matrix of its own once the problem turns stiff anyway."""
+    if not jac:
+        return 'none'
+    return 'sparse' if method != 'LSODA' and neq >= 60 and jac['density'] < 0.25 else 'dense'
 
 
 def _solve(solver_id: str, f: Any, tspan: Any, y0: np.ndarray, opts: Dict[str, Any]) -> Dict[str, Any]:
@@ -63,7 +76,7 @@ def _solve(solver_id: str, f: Any, tspan: Any, y0: np.ndarray, opts: Dict[str, A
 
     jac_info = opts.get('jacobian')
     jac = jac_info if jac_info and jac_info.get('available') and jac_info.get('evaluate') else None
-    use_sparse = bool(jac) and neq >= 60 and jac['density'] < 0.25
+    use_sparse = jacobian_form(SCIPY_METHODS[solver_id], jac, neq) == 'sparse'
     kwargs: Dict[str, Any] = {}
     if jac is not None:
         pattern = jac['pattern']

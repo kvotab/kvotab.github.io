@@ -34,14 +34,15 @@ from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import CodeWriter, Leaf, Tree
 from .farfield import (FARF_METHODS, FARF_NUCLIDE_KEYS, FarfError, FarfPath, active_equation_keys, cell_count,
-                       effective_structure, geometry_problem, is_semi_analytic, structure_problem, surface_of,
-                       uses_cells)
+                       effective_structure, geometry_problem, is_semi_analytic, rock_problem, structure_problem,
+                       surface_of, uses_cells)
 from .farfield_semi import FARF_TEXT, LaplaceFarfPath
 from .indexspace import IndexError_, IndexSpace
 from .lang import Call, Node, Num, ParseError, Ref, collect_references, parse
 from .lookup import LookupError_, Table
 from .project import (DIS_EQUATION_KEYS, FAILURE_KEYS, SECONDS_PER_YEAR, TIMING_KEYS, WASTE_EQUATION_KEYS,
-                      WASTE_LABEL, WASTE_NUCLIDE_KEYS, Project, has_dydt, lam, normalise_actions, value_at)
+                      WASTE_LABEL, WASTE_NUCLIDE_KEYS, Project, entry_lookup, has_dydt, lam, normalise_actions,
+                      value_at)
 from .recorders import (DIRECTION_SIGN, EQUATION_FIELDS, EVENT_ACTION, EVENT_FIELDS, RECORDER_COLLECTION,
                         RECORDER_KINDS, REMEMBERING_KINDS, Recorder)
 from .reduce import OPERATION_FUNCTION, operated_list
@@ -687,7 +688,7 @@ class _Builder:
             n += width
         self.farf_layout: List[Entry] = []
         for b in project.farfields:
-            problem = structure_problem(b) or geometry_problem(b)
+            problem = structure_problem(b) or geometry_problem(b) or rock_problem(b)
             if problem:
                 raise BuildError(problem, b['qname'])
             laplace = is_semi_analytic(b)
@@ -793,9 +794,10 @@ class _Builder:
         for lk in project.lookups:
             dims = self.dims_of(lk)
             width = space.width(dims)
+            points_at = entry_lookup(lk, 'points')
             for off in range(width):
                 tup = self.entry_tuple(lk, dims, off)
-                points = value_at(lk, 'points', tup) or []
+                points = points_at(tup) or []
                 for i, pt in enumerate(points):
                     spec = pt[2] if isinstance(pt, list) and len(pt) > 2 else None
                     if not spec:
@@ -812,9 +814,10 @@ class _Builder:
         for pt in self.point_layout:
             P[pt.slot] = pt.value
         for e in self.param_layout:
+            value_of = entry_lookup(e.block, 'value')
             for off in range(e.width):
                 tup = self.entry_tuple(e.block, e.dims, off)
-                v = value_at(e.block, 'value', tup)
+                v = value_of(tup)
                 num = _js_number(v)
                 if not math.isfinite(num):
                     raise BuildError(f"Value '{v}' is not a number", e.name)
@@ -830,9 +833,10 @@ class _Builder:
             width = space.width(dims)
             cache: Dict[int, Table] = {}
             base = len(self.TAB)
+            points_at = entry_lookup(lk, 'points')
             for off in range(width):
                 tup = self.entry_tuple(lk, dims, off)
-                points = value_at(lk, 'points', tup) or []
+                points = points_at(tup) or []
                 mine = self.points_by_entry.get((lk['qname'], off))
                 table = None if mine else cache.get(id(points))
                 if table is None:
@@ -1149,9 +1153,10 @@ class _Builder:
                 a.uniform = all(e == a.equations[0] for e in a.equations)
                 continue
             parsed: Dict[str, Node] = {}
+            value_of = entry_lookup(a.block, a.value_key)
             for off in range(a.width):
                 tup = self.entry_tuple(a.block, a.dims, off)
-                v = value_at(a.block, a.value_key, tup)
+                v = value_of(tup)
                 eq = _js_str(v if v is not None else '0')
                 a.equations.append(eq)
                 ast = parsed.get(eq)
@@ -2174,9 +2179,10 @@ class _Builder:
                 continue
             key = 'inventory' if s.kind == 'waste_package' else 'initial'
             parsed: Dict[str, Node] = {}
+            value_of = entry_lookup(s.block, key)
             for off in range(s.width):
                 tup = space.pin_scenario(s.block.get('index_lists') or [], tuple_by_list(space, s.dims, off))
-                v = value_at(s.block, key, tup)
+                v = value_of(tup)
                 eq = _js_str(v if v is not None else '0')
 
                 def resolve(name: str, indices: Any, node: Optional[Node] = None, _s: Entry = s,

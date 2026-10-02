@@ -26,6 +26,10 @@ import math
 import numpy as np
 from numba import cfunc, njit, types
 
+from . import guard_numba_cache
+
+guard_numba_cache()
+
 EPS = 2.0 ** -52
 SQRT_EPS = math.sqrt(EPS)
 MAX_ORDER = 5
@@ -72,10 +76,17 @@ _F = types.float64
 _A = types.float64[::1]
 _I = types.int64[::1]
 _M = types.float64[:, ::1]
-RHS_T = types.FunctionType(types.void(_F, _A, _A, _A, _A, _A, _I))
-STORE_T = types.FunctionType(types.int64(_F, _A, _A, _A, _A, _I))
 CB_SIG = types.int64(_F, _F)
 CB_T = types.FunctionType(CB_SIG)
+#: A model's derivative, ``rhs(t, y, out, P, X, W, IW, pycb)``, and what a
+#: step accepted records, ``store(t, y, P, X, W, IW, pycb)``: ``pycb`` is the
+#: callback into Python for the blocks a model works out there (see :mod:`.model`).
+RHS_SIG = types.void(_F, _A, _A, _A, _A, _A, _I, CB_T)
+#: One of a model's passes over its algebraic slots, ``(t, y, X, P, W, IW, pycb)``.
+PASS_SIG = types.void(_F, _A, _A, _A, _A, _I, CB_T)
+STORE_SIG = types.int64(_F, _A, _A, _A, _A, _I, CB_T)
+RHS_T = types.FunctionType(RHS_SIG)
+STORE_T = types.FunctionType(STORE_SIG)
 _OPTS = dict(cache=True, error_model='numpy')
 
 
@@ -83,6 +94,12 @@ _OPTS = dict(cache=True, error_model='numpy')
 def no_callback(a, b):  # pragma: no cover - compiled
     """The callback slot when there is nothing to call."""
     return 1
+
+
+@njit(RHS_SIG, **_OPTS)
+def no_events(t, y, out, P, X, W, IW, pycb):  # pragma: no cover - compiled
+    """The event-function slot of a model with no discrete events."""
+    return
 
 
 # --- small arithmetic, as the Python solvers do it -----------------------------------------------
@@ -429,7 +446,7 @@ def _increment(y, threshold, dl):
 
 @njit(**_OPTS)
 def _differenced(f, t, y, fy, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
-                 P, X, W, IW, ytry, fd, dl, counts):
+                 P, X, W, IW, pycb, ytry, fd, dl, counts):
     n = y.size
     _increment(y, threshold, dl)
     if jac_mode == JAC_DENSE:
@@ -437,7 +454,7 @@ def _differenced(f, t, y, fy, jac_mode, colptr, rowidx, gptr, gcols, threshold, 
             for q in range(n):
                 ytry[q] = y[q]
             ytry[j] = y[j] + dl[j]
-            f(t, ytry, fd, P, X, W, IW)
+            f(t, ytry, fd, P, X, W, IW, pycb)
             counts[0] += 1
             for i in range(n):
                 jdense[i, j] = (fd[i] - fy[i]) / dl[j]
@@ -448,7 +465,7 @@ def _differenced(f, t, y, fy, jac_mode, colptr, rowidx, gptr, gcols, threshold, 
         for gg in range(gptr[g], gptr[g + 1]):
             j = gcols[gg]
             ytry[j] += dl[j]
-        f(t, ytry, fd, P, X, W, IW)
+        f(t, ytry, fd, P, X, W, IW, pycb)
         counts[0] += 1
         for gg in range(gptr[g], gptr[g + 1]):
             j = gcols[gg]
@@ -472,11 +489,11 @@ def _callback_jacobian(jac_cb, t, y, W, ybuf):
 
 
 @njit(**_OPTS)
-def _proj(f, t, y, out, P, X, W, IW, constrained, push, held_rows, flags, counts):
+def _proj(f, t, y, out, P, X, W, IW, pycb, constrained, push, held_rows, flags, counts):
     """f(t, y) into ``out``, a constrained state at zero whose derivative is
     negative held there; flags[0] says whether anything is held."""
     counts[0] += 1
-    f(t, y, out, P, X, W, IW)
+    f(t, y, out, P, X, W, IW, pycb)
     if constrained.size == 0:
         return
     above = True
@@ -541,21 +558,224 @@ def _snap(cols, constrained, atol, mark, below):
     return snapped
 
 
+# The one-step methods' constants, here because the event search reads Dormand-Prince's dense output.
+ONESTEP_STALL_FRACTION = 1e-9
+MAX_AT_FLOOR = 20
+ONESTEP_SAFETY = 0.9
+SHRINK_LEAST = 0.1
+GROW_MOST = 5.0
+ROS_D = 1 / (2 + math.sqrt(2))
+ROS_E32 = 6 + math.sqrt(2)
+DP_NODES = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1.0, 1.0])
+DP_STAGE = np.array([
+    [1 / 5, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [3 / 40, 9 / 40, 0.0, 0.0, 0.0, 0.0],
+    [44 / 45, -56 / 15, 32 / 9, 0.0, 0.0, 0.0],
+    [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0.0, 0.0],
+    [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0.0],
+    [35 / 384, 0.0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84],
+])
+DP_ERROR = np.array([71 / 57600, 0.0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40])
+DP_DENSE = np.array([
+    [1.0, -183 / 64, 37 / 12, -145 / 128],
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 1500 / 371, -1000 / 159, 1000 / 371],
+    [0.0, -125 / 32, 125 / 12, -375 / 64],
+    [0.0, 9477 / 3392, -729 / 106, 25515 / 6784],
+    [0.0, -11 / 7, 11 / 3, -55 / 28],
+    [0.0, 3 / 2, -4.0, 5 / 2],
+])
+
+
+# --- discrete events (``solvers/events.py``) -------------------------------------------------------------
+# The events' functions are read at the end of every accepted step; where
+# one crosses zero in the direction it watches, the first crossing inside the
+# step is found on the solver's dense output, and the step ends there. The
+# rows of ``evbuf`` are the functions at the step's start (vl) and end (vr),
+# and the search's two ends and middle (vlo, vhi, vmid).
+
+DENSE_NDF = 0
+DENSE_ROS = 1
+DENSE_DP = 2
+
+
+@njit(inline='always', **_OPTS)
+def _ev_sign(v):
+    """``Math.sign``: NaN for NaN, a zero for either zero."""
+    if v != v:
+        return np.nan
+    if v > 0:
+        return 1.0
+    if v < 0:
+        return -1.0
+    return v
+
+
+@njit(**_OPTS)
+def _crosses(vl, vr, direction, i):
+    a = vl[i]
+    b = vr[i]
+    if _ev_sign(a) == _ev_sign(b):
+        return False
+    return direction[i] * (b - a) >= 0
+
+
+@njit(**_OPTS)
+def _any_crossing(vl, vr, direction):
+    for i in range(direction.size):
+        if _crosses(vl, vr, direction, i):
+            return True
+    return False
+
+
+@njit(**_OPTS)
+def _earliest_secant(vlo, vhi, direction):
+    frac = 1.0
+    for i in range(direction.size):
+        if not _crosses(vlo, vhi, direction, i):
+            continue
+        a = vlo[i]
+        b = vhi[i]
+        f = 0.5 if a == b else -a / (b - a)
+        if not (0 < f < 1):
+            f = 0.5
+        if f < frac:
+            frac = f
+    return frac
+
+
+@njit(**_OPTS)
+def _dense_onestep(tq, ros, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, out):
+    """The one-step methods' solution inside the last step (``dense_at``),
+    a constrained state below zero put on zero."""
+    neq = out.size
+    s = (tq - t_from) / h_from
+    if ros:
+        a1 = s * h_from
+        a2 = s * s * h_from
+        for i in range(neq):
+            out[i] = y_from[i] + a1 * f0[i] + a2 * (k2[i] - f0[i])
+    else:
+        s2 = s * s
+        s3 = s2 * s
+        s4 = s3 * s
+        for i in range(neq):
+            tmp[i] = 0.0
+        for j in range(7):
+            w = DP_DENSE[j, 0] * s + DP_DENSE[j, 1] * s2 + DP_DENSE[j, 2] * s3 + DP_DENSE[j, 3] * s4
+            if w != 0:
+                for i in range(neq):
+                    tmp[i] = tmp[i] + w * kk[j, i]
+        for i in range(neq):
+            out[i] = y_from[i] + h_from * tmp[i]
+    if has_nn:
+        for i in range(neq):
+            if is_nn[i] != 0 and out[i] < 0:
+                out[i] = 0.0
+
+
+@njit(**_OPTS)
+def _probe(kind, tq, evf, P, X, W, IW, pycb, out, cols, k, tnew, h, constrained, b, t_from, h_from, y_from, f0, k2, kk,
+           has_nn, is_nn, tmp, evy):
+    """The events' functions at ``tq``, on the dense output, into ``out``."""
+    if kind == DENSE_NDF:
+        _value_at(cols, k, (tq - tnew) / h, constrained, evy, b)
+    else:
+        _dense_onestep(tq, kind == DENSE_ROS, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, evy)
+    evf(tq, evy, out, P, X, W, IW, pycb)
+
+
+@njit(**_OPTS)
+def _first_crossing(kind, tl, tr, t_start, direction, evbuf, evwhich, evf, P, X, W, IW, pycb, cols, k, tnew, h,
+                    constrained, b, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, evy):
+    """``first_crossing`` between the step's ends ``tl`` and ``tr`` (the
+    functions at them in evbuf[0] and evbuf[1]): whether one crossed, and
+    where; its functions there end up in evbuf[3], the events that crossed
+    marked in ``evwhich``."""
+    nev = direction.size
+    vl = evbuf[0]
+    vr = evbuf[1]
+    vlo = evbuf[2]
+    vhi = evbuf[3]
+    vmid = evbuf[4]
+    scale = _pymax(_pymax(abs(tl), abs(tr)), 1.0)
+    tol = _pymin(abs(tr - tl), 64 * EPS * scale)
+    tdir = math.copysign(1.0, tr - tl) if tr != tl else 0.0
+    lo = tl
+    for i in range(nev):
+        vlo[i] = vl[i]
+    if tl == t_start:
+        resting = False
+        for i in range(nev):
+            if vl[i] == 0 and vr[i] != 0:
+                resting = True
+                break
+        if resting:
+            lo = tl + tdir * 0.5 * tol
+            if tdir * (tr - lo) <= 0:
+                return False, 0.0
+            _probe(kind, lo, evf, P, X, W, IW, pycb, vlo, cols, k, tnew, h, constrained, b, t_from, h_from, y_from, f0,
+                   k2, kk, has_nn, is_nn, tmp, evy)
+            for i in range(nev):
+                if vlo[i] == 0 and vl[i] == 0:
+                    vlo[i] = vr[i]
+    if not _any_crossing(vlo, vr, direction):
+        return False, 0.0
+    hi = tr
+    for i in range(nev):
+        vhi[i] = vr[i]
+    kept = 0
+    same_end = 0
+    for _ in range(80):
+        if not (abs(hi - lo) > tol):
+            break
+        if same_end >= 2:
+            mid = 0.5 * (lo + hi)
+        else:
+            mid = lo + _earliest_secant(vlo, vhi, direction) * (hi - lo)
+            inner = 0.5 * tol
+            if tdir * (mid - lo) < inner:
+                mid = lo + tdir * inner
+            if tdir * (hi - mid) < inner:
+                mid = hi - tdir * inner
+            if not (tdir * (mid - lo) > 0 and tdir * (hi - mid) > 0):
+                mid = 0.5 * (lo + hi)
+        _probe(kind, mid, evf, P, X, W, IW, pycb, vmid, cols, k, tnew, h, constrained, b, t_from, h_from, y_from, f0,
+               k2, kk, has_nn, is_nn, tmp, evy)
+        if _any_crossing(vlo, vmid, direction):
+            hi = mid
+            for i in range(nev):
+                vhi[i] = vmid[i]
+            same_end = same_end + 1 if kept == 1 else 1
+            kept = 1
+        else:
+            lo = mid
+            for i in range(nev):
+                vlo[i] = vmid[i]
+            same_end = same_end + 1 if kept == -1 else 1
+            kept = -1
+    for i in range(nev):
+        evwhich[i] = 1 if _crosses(vlo, vhi, direction, i) else 0
+    return True, hi
+
+
 # --- the NDF --------------------------------------------------------------------------------------------
 
 NDF_SIG = types.int64(
-    RHS_T, STORE_T, CB_T, CB_T, _A, _A, _A, _I,         # f, store, jac_cb, progress, P, X, W, IW
+    RHS_T, STORE_T, CB_T, CB_T, _A, _A, _A, _I, CB_T,   # f, store, jac_cb, progress, P, X, W, IW, pycb, pycb
     _A, _A, _A, _I,                                     # tspan, y0, atol, constrained
     types.int64, _I, _I, _A, _I, _I, _A,                # jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf
     _A, _I, _M, _I, _I, _A,                             # fpar, ipar, yout, held, stats, fstat
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
-    CB_T, CB_T, _M, _I, _A, _A)                         # form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf
+    CB_T, CB_T, _M, _I, _A, _A,                         # form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf
+    RHS_T, _A, _M, _A, _I, _A)                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
 
 
 @njit(NDF_SIG, **_OPTS)
-def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
+def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrained,
         jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
-        ct, cy, cint, cflt, form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf):
+        ct, cy, cint, cflt, form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf,
+        evf, evdir, evbuf, evy, evwhich, evstat):
     """``engine/solvers/ndf.py``'s ``ndf``, compiled.
 
     fpar: rtol, hmax, h0, max_steps, stagnation_tol
@@ -569,6 +789,9 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
     Jacobian without a pattern), ``held_in_w`` (the rows held in the
     matrix), ``rbuf`` and ``xbuf`` (a solve's right-hand side and answer) are
     the caller's, for the matrix callbacks to read and write.
+    With discrete events (``evdir`` not empty), ``evf`` works their
+    functions out; a solve an event stops says so in evstat (1, the time),
+    with the state there in ``evy`` and the events that fired in ``evwhich``.
     """
     neq = y0.size
     npts = tspan.size
@@ -630,13 +853,17 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
     next_report = PROGRESS_EVERY
 
     f0 = np.empty(neq)
-    _proj(f, t0, cols[0], f0, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+    _proj(f, t0, cols[0], f0, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
     for i in range(neq):
         if not math.isfinite(cols[0, i]) or not math.isfinite(f0[i]):
             fstat[0] = t0
             fstat[1] = i
             stats[7] = counts[0]
             return E_INITIAL
+    nev = evdir.size
+    evstat[0] = 0.0
+    if nev:
+        evf(t0, cols[0], evbuf[0], P, X, W, IW, pycb)
 
     # --- the Jacobian and the matrix
     ytry = np.empty(neq)
@@ -652,7 +879,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
             return E_CALLBACK
     if got == 0:
         _differenced(f, t, cols[0], f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
-                     P, X, W, IW, ytry, fd, dl, counts)
+                     P, X, W, IW, pycb, ytry, fd, dl, counts)
     fresh = True
     lu = np.zeros((neq, neq)) if mat_mode == MAT_KERNEL else np.zeros((1, 1))
     piv = np.zeros(neq, dtype=np.int64)
@@ -677,7 +904,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
         for i in range(neq):
             trial[i] = y[i] + direction * guess * yp[i]
         f1 = np.empty(neq)
-        _proj(f, t0 + direction * guess, trial, f1, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+        _proj(f, t0 + direction * guess, trial, f1, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
         for i in range(neq):
             tmpv[i] = f1[i] - f0[i]
         d2 = _w_of(tmpv, einv, norm_control, rms) / rtol / guess
@@ -745,7 +972,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
                     anyle = True
                     break
             if anyle:
-                _proj(f, t, y, raw, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+                _proj(f, t, y, raw, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
             for i in range(neq):
                 held_now[i] = held_rows[i]
         moved = False
@@ -794,7 +1021,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
             rho = rate
             scale = 1 / leading[k]
             for it in range(1, NEWTON_MAX + 1):
-                _proj(f, tnew, ynew, fv, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+                _proj(f, tnew, ynew, fv, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
                 for i in range(neq):
                     resid[i] = (h * fv[i] - hist[i]) * scale - d[i]
                 if mat_mode == MAT_KERNEL:
@@ -838,7 +1065,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
                     snapped = _snap(cols, constrained, atol, held_rows, False)
                     if snapped:
                         stats[6] += snapped
-                        _proj(f, t, cols[0], raw, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+                        _proj(f, t, cols[0], raw, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
                         for i in range(neq):
                             held_now[i] = held_rows[i]
                         st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense,
@@ -860,10 +1087,10 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
                             stats[7] = counts[0]
                             return E_CALLBACK
                     if got == 0:
-                        f(t, cols[0], raw, P, X, W, IW)
+                        f(t, cols[0], raw, P, X, W, IW, pycb)
                         counts[0] += 1
                         _differenced(f, t, cols[0], raw, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals,
-                                     jdense, P, X, W, IW, ytry, fd, dl, counts)
+                                     jdense, P, X, W, IW, pycb, ytry, fd, dl, counts)
                     fresh = True
                     if projected:
                         for i in range(neq):
@@ -955,7 +1182,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
                 snapped = _snap(cols, constrained, atol, ynew, True)
                 if snapped:
                     stats[6] += snapped
-                    _proj(f, t, cols[0], raw, P, X, W, IW, constrained, push, held_rows, pflags, counts)
+                    _proj(f, t, cols[0], raw, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
                     for i in range(neq):
                         held_now[i] = held_rows[i]
                     st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
@@ -1045,6 +1272,34 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
                 if push[c] * abs(h) > atol[i]:
                     held[i] += 1
 
+        if nev:
+            evf(tnew, cols[0], evbuf[1], P, X, W, IW, pycb)
+            hit = False
+            t_e = 0.0
+            if _any_crossing(evbuf[0], evbuf[1], evdir):
+                hit, t_e = _first_crossing(DENSE_NDF, t, tnew, t0, evdir, evbuf, evwhich, evf, P, X, W, IW, pycb, cols,
+                                           k, tnew, h, constrained, b, 0.0, 1.0, dense, dense, dense, cols, False,
+                                           evwhich, dense, evy)
+            if hit:
+                _regrid(cols, k, (t_e - tnew) / h, (t_e - t) / h, tmpv)
+                h = t_e - t
+                hTable = h
+                tnew = t_e
+                consecutive = 0
+                y = cols[0]
+                for c in range(constrained.size):
+                    if y[constrained[c]] < 0:
+                        y[constrained[c]] = 0.0
+                for i in range(nev):
+                    evbuf[1, i] = evbuf[3, i]
+                for i in range(neq):
+                    evy[i] = y[i]
+                evstat[0] = 1.0
+                evstat[1] = t_e
+                last = True
+            for i in range(nev):
+                evbuf[0, i] = evbuf[1, i]
+
         while next_out < npts:
             tq = tspan[next_out]
             if direction * (tnew - tq) < 0:
@@ -1057,12 +1312,12 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
             for i in range(neq):
                 yout[row, i] = dense[i]
             row += 1
-            if has_store and store(tq, dense, P, X, W, IW) != 0:
+            if has_store and store(tq, dense, P, X, W, IW, pycb) != 0:
                 stats[7] = counts[0]
                 stats[8] = row
                 return E_HISTORY
             next_out += 1
-        if has_store and store(tnew, cols[0], P, X, W, IW) != 0:
+        if has_store and store(tnew, cols[0], P, X, W, IW, pycb) != 0:
             stats[7] = counts[0]
             stats[8] = row
             return E_HISTORY
@@ -1118,34 +1373,6 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, constrained,
 
 # --- the one-step methods (``solvers/onestep.py``, ``rosenbrock23.py``, ``dormand_prince.py``) ----------
 
-ONESTEP_STALL_FRACTION = 1e-9
-MAX_AT_FLOOR = 20
-ONESTEP_SAFETY = 0.9
-SHRINK_LEAST = 0.1
-GROW_MOST = 5.0
-ROS_D = 1 / (2 + math.sqrt(2))
-ROS_E32 = 6 + math.sqrt(2)
-DP_NODES = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1.0, 1.0])
-DP_STAGE = np.array([
-    [1 / 5, 0.0, 0.0, 0.0, 0.0, 0.0],
-    [3 / 40, 9 / 40, 0.0, 0.0, 0.0, 0.0],
-    [44 / 45, -56 / 15, 32 / 9, 0.0, 0.0, 0.0],
-    [19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729, 0.0, 0.0],
-    [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0.0],
-    [35 / 384, 0.0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84],
-])
-DP_ERROR = np.array([71 / 57600, 0.0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40])
-DP_DENSE = np.array([
-    [1.0, -183 / 64, 37 / 12, -145 / 128],
-    [0.0, 0.0, 0.0, 0.0],
-    [0.0, 1500 / 371, -1000 / 159, 1000 / 371],
-    [0.0, -125 / 32, 125 / 12, -375 / 64],
-    [0.0, 9477 / 3392, -729 / 106, 25515 / 6784],
-    [0.0, -11 / 7, 11 / 3, -55 / 28],
-    [0.0, 3 / 2, -4.0, 5 / 2],
-])
-
-
 @njit(**_OPTS)
 def _weighted(v, ya, yb, threshold):
     """``kernels._weighted``: the largest |v| / max(|ya|, |yb|, threshold)
@@ -1166,10 +1393,10 @@ def _weighted(v, ya, yb, threshold):
 
 
 @njit(**_OPTS)
-def _held(f, t, y, out, P, X, W, IW, nn_idx, push, hold_on):
+def _held(f, t, y, out, P, X, W, IW, pycb, nn_idx, push, hold_on):
     """f(t, y) into ``out``, held at zero as ``HeldDerivative`` holds it
     when ``hold_on``."""
-    f(t, y, out, P, X, W, IW)
+    f(t, y, out, P, X, W, IW, pycb)
     if not hold_on:
         return
     above = True
@@ -1196,7 +1423,7 @@ def _any_below(v, nn_idx):
 
 @njit(**_OPTS)
 def _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
-                  P, X, W, IW, ytry, fd, dl, ybuf, nn_idx, push, hold_on):
+                  P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on):
     """``_Stepper._jacobian``: the callback's values, else differenced with
     the held derivative. The evaluations spent (the callback's count
     none), or -1 when the callback raised."""
@@ -1213,7 +1440,7 @@ def _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, th
             for q in range(n):
                 ytry[q] = y[q]
             ytry[j] = y[j] + dl[j]
-            _held(f, t, ytry, fd, P, X, W, IW, nn_idx, push, hold_on)
+            _held(f, t, ytry, fd, P, X, W, IW, pycb, nn_idx, push, hold_on)
             for i in range(n):
                 jdense[i, j] = (fd[i] - f0[i]) / dl[j]
         return n
@@ -1224,7 +1451,7 @@ def _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, th
         for gg in range(gptr[g], gptr[g + 1]):
             j = gcols[gg]
             ytry[j] += dl[j]
-        _held(f, t, ytry, fd, P, X, W, IW, nn_idx, push, hold_on)
+        _held(f, t, ytry, fd, P, X, W, IW, pycb, nn_idx, push, hold_on)
         for gg in range(gptr[g], gptr[g + 1]):
             j = gcols[gg]
             for p in range(colptr[j], colptr[j + 1]):
@@ -1234,18 +1461,19 @@ def _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, th
 
 
 ONESTEP_SIG = types.int64(
-    RHS_T, STORE_T, CB_T, CB_T, _A, _A, _A, _I,         # f, store, jac_cb, progress, P, X, W, IW
+    RHS_T, STORE_T, CB_T, CB_T, _A, _A, _A, _I, CB_T,   # f, store, jac_cb, progress, P, X, W, IW, pycb, pycb
     _A, _A, _A, _I,                                     # tspan, y0, atol, nn_idx
     types.int64, _I, _I, _A, _I, _I, _A,                # jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf
     _A, _I, _M, _I, _I, _A,                             # fpar, ipar, yout, held, stats, fstat
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
-    CB_T, CB_T, _M, _A, _A)                             # form_cb, solve_cb, jdense, rbuf, xbuf
+    CB_T, CB_T, _M, _A, _A,                             # form_cb, solve_cb, jdense, rbuf, xbuf
+    RHS_T, _A, _M, _A, _I, _A)                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
 
 
 @njit(ONESTEP_SIG, **_OPTS)
-def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
+def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_idx,
             jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
-            ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf):
+            ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf, evf, evdir, evbuf, evy, evwhich, evstat):
     """``engine/solvers/onestep.py``'s ``integrate`` with the Rosenbrock
     (2,3) or the Dormand-Prince stepper, compiled.
 
@@ -1254,6 +1482,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
           has_progress, stall_window, mat_mode
     stats (out): nsteps, nfailed, nfevals, nbelowtol, negative, npds,
           ndecomps, rows written
+    The events are as in :func:`ndf`.
     """
     neq = y0.size
     npts = tspan.size
@@ -1330,18 +1559,22 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
     need_jacobian = True
     dfdt_at = np.nan
     spent = 0
+    nev = evdir.size
+    evstat[0] = 0.0
+    if nev:
+        evf(t0, y, evbuf[0], P, X, W, IW, pycb)
 
     if ros:
-        _held(f, t, y, f0, P, X, W, IW, nn_idx, push, hold_on)
+        _held(f, t, y, f0, P, X, W, IW, pycb, nn_idx, push, hold_on)
         if _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
-                         P, X, W, IW, ytry, fd, dl, ybuf, nn_idx, push, hold_on) < 0:
+                         P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on) < 0:
             return E_CALLBACK
         npds += 1
         need_jacobian = False
         nfevals += 1
         fstart = f0
     else:
-        f(t, y, kk[0], P, X, W, IW)
+        f(t, y, kk[0], P, X, W, IW, pycb)
         nfevals += 1
         fstart = kk[0]
 
@@ -1355,7 +1588,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
         trial = np.empty(neq)
         for i in range(neq):
             trial[i] = y[i] + direction * guess * fstart[i]
-        _held(f, t0 + direction * guess, trial, ftmp, P, X, W, IW, nn_idx, push, hold_on)
+        _held(f, t0 + direction * guess, trial, ftmp, P, X, W, IW, pycb, nn_idx, push, hold_on)
         nfevals += 1
         for i in range(neq):
             ftmp[i] = ftmp[i] - fstart[i]
@@ -1397,7 +1630,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                 before = spent
                 if need_jacobian and not (constant and npds > 0):
                     used = _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold,
-                                         jvals, jdense, P, X, W, IW, ytry, fd, dl, ybuf, nn_idx, push, hold_on)
+                                         jvals, jdense, P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on)
                     if used < 0:
                         stats[2] = nfevals
                         return E_CALLBACK
@@ -1406,7 +1639,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                 need_jacobian = False
                 if dfdt_at != t:
                     dt = math.copysign(_pymin(SQRT_EPS * _pymax(abs(t), abs(t + h)), abs(h)), h)
-                    _held(f, t + dt, y, ftmp, P, X, W, IW, nn_idx, push, hold_on)
+                    _held(f, t + dt, y, ftmp, P, X, W, IW, pycb, nn_idx, push, hold_on)
                     spent += 1
                     for i in range(neq):
                         ft[i] = (ftmp[i] - f0[i]) / dt
@@ -1426,7 +1659,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                     return E_CALLBACK
                 for i in range(neq):
                     ymid[i] = y[i] + half_h * k1[i]
-                _held(f, t + 0.5 * h, ymid, f1, P, X, W, IW, nn_idx, push, hold_on)
+                _held(f, t + 0.5 * h, ymid, f1, P, X, W, IW, pycb, nn_idx, push, hold_on)
                 for i in range(neq):
                     tmp[i] = f1[i] - k1[i]
                 if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k2, rbuf, xbuf):
@@ -1436,7 +1669,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                     k2[i] += k1[i]
                 for i in range(neq):
                     ynew[i] = y[i] + h * k2[i]
-                _held(f, tnew, ynew, f2, P, X, W, IW, nn_idx, push, hold_on)
+                _held(f, tnew, ynew, f2, P, X, W, IW, pycb, nn_idx, push, hold_on)
                 for i in range(neq):
                     tmp[i] = f2[i] - ROS_E32 * (k2[i] - f1[i]) - 2 * (k1[i] - f0[i]) + hD * ft[i]
                 if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k3, rbuf, xbuf):
@@ -1462,7 +1695,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                                 tmp[i] = tmp[i] + c * kk[j, i]
                     for i in range(neq):
                         ymid[i] = y[i] + h * tmp[i]
-                    f(t + h * DP_NODES[s], ymid, kk[s + 1], P, X, W, IW)
+                    f(t + h * DP_NODES[s], ymid, kk[s + 1], P, X, W, IW, pycb)
                 for i in range(neq):
                     tmp[i] = 0.0
                 for j in range(6):
@@ -1472,7 +1705,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                             tmp[i] = tmp[i] + c * kk[j, i]
                 for i in range(neq):
                     ynew[i] = y[i] + h * tmp[i]
-                f(tnew, ynew, kk[6], P, X, W, IW)
+                f(tnew, ynew, kk[6], P, X, W, IW, pycb)
                 for i in range(neq):
                     err_vec[i] = 0.0
                 for j in range(7):
@@ -1533,7 +1766,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                     for i in range(neq):
                         if is_nn[i] != 0 and ynew[i] < 0 and y[i] > 0 and y[i] <= atol[i]:
                             y[i] = 0.0
-                    _held(f, t, y, f0, P, X, W, IW, nn_idx, push, hold_on)
+                    _held(f, t, y, f0, P, X, W, IW, pycb, nn_idx, push, hold_on)
                     need_jacobian = True
                     dfdt_at = np.nan
                     nfevals += 1
@@ -1584,6 +1817,26 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                 return E_STALLED
             stall_step = nsteps
             stall_t = tnew
+        if nev:
+            evf(tnew, ynew, evbuf[1], P, X, W, IW, pycb)
+            hit = False
+            t_e = 0.0
+            if _any_crossing(evbuf[0], evbuf[1], evdir):
+                hit, t_e = _first_crossing(DENSE_DP if not ros else DENSE_ROS, t, tnew, t0, evdir, evbuf, evwhich,
+                                           evf, P, X, W, IW, pycb, kk, 0, tnew, h, nn_idx, dense, t_from, h_from,
+                                           y_from, f0, k2, kk, has_nn, is_nn, tmp, evy)
+            if hit:
+                tnew = t_e
+                _dense_onestep(tnew, ros, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, ynew)
+                for i in range(nev):
+                    evbuf[1, i] = evbuf[3, i]
+                for i in range(neq):
+                    evy[i] = ynew[i]
+                evstat[0] = 1.0
+                evstat[1] = t_e
+                last = True
+            for i in range(nev):
+                evbuf[0, i] = evbuf[1, i]
         while next_out < npts:
             tq = tspan[next_out]
             if direction * (tnew - tq) < 0:
@@ -1592,38 +1845,16 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
                 for i in range(neq):
                     dense[i] = ynew[i]
             else:
-                s = (tq - t_from) / h_from
-                if ros:
-                    a1 = s * h_from
-                    a2 = s * s * h_from
-                    for i in range(neq):
-                        dense[i] = y_from[i] + a1 * f0[i] + a2 * (k2[i] - f0[i])
-                else:
-                    s2 = s * s
-                    s3 = s2 * s
-                    s4 = s3 * s
-                    for i in range(neq):
-                        tmp[i] = 0.0
-                    for j in range(7):
-                        w = DP_DENSE[j, 0] * s + DP_DENSE[j, 1] * s2 + DP_DENSE[j, 2] * s3 + DP_DENSE[j, 3] * s4
-                        if w != 0:
-                            for i in range(neq):
-                                tmp[i] = tmp[i] + w * kk[j, i]
-                    for i in range(neq):
-                        dense[i] = y_from[i] + h_from * tmp[i]
-                if has_nn:
-                    for i in range(neq):
-                        if is_nn[i] != 0 and dense[i] < 0:
-                            dense[i] = 0.0
+                _dense_onestep(tq, ros, t_from, h_from, y_from, f0, k2, kk, has_nn, is_nn, tmp, dense)
             for i in range(neq):
                 yout[row, i] = dense[i]
             row += 1
-            if has_store and store(tq, dense, P, X, W, IW) != 0:
+            if has_store and store(tq, dense, P, X, W, IW, pycb) != 0:
                 stats[2] = nfevals
                 stats[7] = row
                 return E_HISTORY
             next_out += 1
-        if has_store and store(tnew, ynew, P, X, W, IW) != 0:
+        if has_store and store(tnew, ynew, P, X, W, IW, pycb) != 0:
             stats[2] = nfevals
             stats[7] = row
             return E_HISTORY
@@ -1641,7 +1872,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
         # --- accept
         if ros:
             if reprojected:
-                _held(f, tnew, ynew, f2, P, X, W, IW, nn_idx, push, hold_on)
+                _held(f, tnew, ynew, f2, P, X, W, IW, pycb, nn_idx, push, hold_on)
                 nfevals += 1
             for i in range(neq):
                 f0[i] = f2[i]
@@ -1649,7 +1880,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, tspan, y0, atol, nn_idx,
             dfdt_at = np.nan
         else:
             if reprojected:
-                f(tnew, ynew, kk[6], P, X, W, IW)
+                f(tnew, ynew, kk[6], P, X, W, IW, pycb)
                 nfevals += 1
             for i in range(neq):
                 kk[0, i] = kk[6, i]

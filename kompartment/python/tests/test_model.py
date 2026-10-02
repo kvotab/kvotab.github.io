@@ -190,6 +190,47 @@ class Building(unittest.TestCase):
         out = res.series('Out')
         self.assertAlmostEqual(float(held[-1] + out[-1]), 1000.0, delta=1e-4)
 
+    def test_a_sorption_on_the_coating_below_zero_is_refused(self):
+        # K_d,f is a volume of water per unit of wetted surface: zero for none,
+        # never less -- refused as it is set, written as a number, wherever it
+        # is set; an equation is refused where it works out below zero.
+        m = kp.Model.new()
+        with self.assertRaises(kp.EditError) as caught:
+            m.add_farfield('Rock', kd_f=-0.1)
+        self.assertEqual(str(caught.exception), 'Rock: kd_f must be zero or positive (got -0.1)')
+        path = m.add_farfield('Rock')
+        for bad in ('-1e-7', -2, ' -3 '):
+            with self.subTest(value=bad), self.assertRaises(kp.EditError):
+                path.kd_f = bad
+        for good in (0, '1e-3', 'Kd_coat', '-Kd_coat', ''):
+            path.kd_f = good
+        self.assertEqual(path.kd_f, '')
+        m.add_index_list('Species', ['A', 'B'])
+        path.index_lists = ['Species']
+        with self.assertRaises(kp.EditError):
+            path.set_value('-1', at='A')
+        with self.assertRaises(kp.EditError):
+            path.set_entry('B', kd_f=-1)
+        path.set_value('0.5', at='A')
+        self.assertEqual(path.value_at('A'), '0.5')
+        # And the rest of the rock's settings alike.
+        for key in ('kd_m', 'de_m', 'eps_m', 'rho_m'):
+            with self.subTest(key=key):
+                with self.assertRaises(kp.EditError) as caught:
+                    setattr(path, key, '-1e-3')
+                self.assertEqual(str(caught.exception), f'Rock: {key} must be zero or positive (got -1e-3)')
+                setattr(path, key, '1e-3')
+        # One that got into the file another way is reported, and refused as
+        # the model is loaded.
+        path.kd_f = '0'
+        path.entries[0]['kd_f'] = '-0.5'
+        said = 'the sorption on the fracture coating K_d,f must be zero or positive (got -0.5 at A)'
+        self.assertEqual(m.check(), [f'Rock: {said}'])
+        from kompartment.engine import ValidationError as Refused
+        with self.assertRaises(Refused) as loaded:
+            m.project()
+        self.assertEqual(str(loaded.exception), f'Rock: {said}')
+
     def test_a_path_saved_before_the_new_numerics_keeps_its_own(self):
         # A file that says nothing about the outlet or the layers meant the
         # reference implementation's, and is read that way.
@@ -305,9 +346,14 @@ class Building(unittest.TestCase):
         sim.update(end_time=1e6, rtol=1e-6, solver='radau5', max_order=3)
         self.assertEqual((sim.end_time, sim.rtol, sim.solver), (1e6, 1e-6, 'radau5'))
         for key, value in (('rtol', 0), ('solver', 'euler'), ('time_unit', 'week'), ('spacing', 'cubic'),
-                           ('output_points', 1), ('max_order', 7), ('split', 'maybe')):
-            with self.subTest(key=key), self.assertRaises(kp.EditError):
+                           ('output_points', 1), ('max_order', 7), ('max_order', 2.5), ('min_order', '1.5'),
+                           ('max_steps', 1000.5), ('max_jac_age', 2.5), ('below_tol_run', '0.5'), ('split', 'maybe')):
+            with self.subTest(key=key, value=value), self.assertRaises(kp.EditError):
                 sim.set(key, value)
+        # An order is a whole number, however it is written.
+        sim.set('min_order', 2.0)
+        self.assertEqual(sim.get('min_order'), 2)
+        self.assertIs(type(sim.get('min_order')), int)
         sim.spacing = 'series'
         self.assertEqual(sim.output_series[0].kind, 'log')
         sim.add_output_series('times', times=[5, 1, 3])

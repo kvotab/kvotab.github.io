@@ -312,7 +312,7 @@ def _as_project(model: Any) -> Project:
 
 def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, most: Any = None,
                     differenced: bool = False, on_progress: Optional[Callable[[float, float], Any]] = None,
-                    signal: Any = None) -> Dict[str, Any]:
+                    signal: Any = None, compiled: Any = 'auto') -> Dict[str, Any]:
     """Integrates the model and ``dy/dp`` for the parameters named (``runSensitivity``).
 
     ``model`` is a :class:`Project`, a :class:`kompartment.Model`, a model
@@ -321,17 +321,19 @@ def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, m
     more, since each one adds a copy of the state vector to the solve;
     ``differenced`` differences ``df/dp`` even where it could be generated.
     ``on_progress(fraction, t)`` hears the run's progress, and ``signal`` (an
-    object with ``aborted``, a mapping, or a callable) stops it.
+    object with ``aborted``, a mapping, or a callable) stops it. ``compiled``
+    -- 'auto', True or False -- is whether the model's derivative inside the
+    sensitivity equations is the compiled one (:func:`model_derivative`).
 
     Returns ``{'t', 'y', 'sens', 'chosen', 'states', 'series', 'stats'}``: the
     output times; ``y[i]`` the series of state ``i``; ``sens[k][i]`` that of
     ``d y_i / d p_k``; ``chosen[k]`` = ``{'label', 'name', 'index', 'value'}``;
     the layout's state blocks; a name for every state (:func:`state_series`);
-    and ``{'ms', 'nsteps', 'states', 'restarts'}``. Raises
+    and ``{'ms', 'nsteps', 'states', 'restarts', 'compiled'}``. Raises
     :class:`SensitivityError` where it refuses.
     """
     started = time.time()
-    problem = sensitivity_problem(model, parameters, most=most, differenced=differenced)
+    problem = sensitivity_problem(model, parameters, most=most, differenced=differenced, compiled=compiled)
     n, m, N = problem['n'], problem['m'], problem['n'] * (1 + problem['m'])
     # Progress and stop are read through one hook, as a run reads them, so a
     # caller with only a stop to offer still has one read.
@@ -354,12 +356,44 @@ def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, m
         'states': problem['system'].layout.states,
         'series': state_series(problem['system']),
         'stats': {'ms': int(round((time.time() - started) * 1000)), 'nsteps': 0 if nsteps is None else nsteps,
-                  'states': N, 'restarts': stats.get('restarts') or 0},
+                  'states': N, 'restarts': stats.get('restarts') or 0, 'compiled': problem['compiled']},
     }
 
 
+def model_derivative(system: Any, compiled: Any = 'auto') -> Any:
+    """The model's own derivative ``f(t, y)`` as the sensitivity equations
+    call it, and whether it is compiled: the compiled one (the Python one's
+    numbers to the last bit) unless ``compiled`` is False or numba is
+    missing -- ``compiled=True`` insists. The compiled arrays are brought up
+    to date whenever a parameter has moved (the invariant pass has run) or
+    the clock interpolation has, and the clock is worked out afresh at each
+    call, since the Jacobian works the algebra out in Python in between."""
+    if compiled is False or compiled is None:
+        return system.dydt, False
+    try:
+        from .compiled.run import compiled_model
+        cm = compiled_model(system)
+    except Exception:  # noqa: BLE001 - numba missing or refusing: the Python derivative
+        if compiled is True:
+            raise
+        return system.dydt, False
+    seen: Dict[str, Any] = {'key': None}
+
+    def f(t: float, y: np.ndarray) -> np.ndarray:
+        key = (system._invariant_version, system._min_change, system._origin)
+        if key != seen['key']:
+            if seen['key'] is None:
+                cm.load()
+            else:
+                cm.load_invariants()
+            seen['key'] = key
+        cm.W[0] = math.nan
+        return cm.derivative(t, y)
+    return f, True
+
+
 def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, *, most: Any = None,
-                        differenced: bool = False) -> Dict[str, Any]:
+                        differenced: bool = False, compiled: Any = 'auto') -> Dict[str, Any]:
     """The augmented system :func:`run_sensitivity` integrates, set up and not
     solved: for a caller that wants to look at it or hand it elsewhere.
 
@@ -411,6 +445,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
 
     pattern = jac['pattern']
     jac_evaluate = jac['evaluate']
+    model_dydt, model_compiled = model_derivative(system, compiled)
     row_idx = np.asarray(pattern.row_idx, dtype=np.int64)
     col_of = np.asarray(pattern.col_of, dtype=np.int64)
 
@@ -438,12 +473,12 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         if not (size > 0):
             return np.zeros(n)
         delta = SQRT_EPS * max(1.0, float(np.max(np.abs(yv)))) / size
-        return (np.asarray(system.dydt(t, yv + delta * sv), dtype=float) - f0) / delta
+        return (np.asarray(model_dydt(t, yv + delta * sv), dtype=float) - f0) / delta
 
     def dydt(t: float, Y: np.ndarray) -> np.ndarray:
         Y = np.asarray(Y, dtype=float)
         yv = Y[:n].copy()
-        f0 = np.array(system.dydt(t, yv), dtype=float)
+        f0 = np.array(model_dydt(t, yv), dtype=float)
         out = np.empty(N)
         out[:n] = f0
         values = jac_evaluate(t, yv)
@@ -464,7 +499,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
             P[slot] = p0 + h
             system.evaluate_invariant()
             forget_clock()
-            fp = np.array(system.dydt(t, yv), dtype=float)
+            fp = np.array(model_dydt(t, yv), dtype=float)
             P[slot] = p0
             system.evaluate_invariant()
             forget_clock()
@@ -545,6 +580,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         'project': project,
         'equations': {'dydt': dydt, 'y0': Y0, 'abstol': atol, 'jacobian': big_jacobian, 'solver': 'ndf',
                       'on_segment': on_segment},
+        'compiled': model_compiled,
     }
 
 

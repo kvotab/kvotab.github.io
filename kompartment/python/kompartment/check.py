@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 from .blocks import (
     AVAILABILITY_SCHEMES, DIRECTIONS, EXTREMES, FAILURES, INTERPOLATIONS, OPERATIONS, SINGULAR, TIMINGS,
 )
+from .engine.farfield import rock_problem
 from .equations import EquationSyntaxError, _reference_tokens, tokenize
 from .errors import ValidationError
 from .indexlists import clashing_dimensions, clashing_dimensions_why, find_list, index_name, list_applies
@@ -176,6 +177,11 @@ def check_model(model: 'Model') -> List[str]:
                                    'absolute flux')
                 if kind == 'inflow' and b.get('to') is None:
                     out.append(f'{q} feeds nothing')
+            if kind == 'farfield':
+                # The Project refuses a rock setting written as a negative number.
+                problem = rock_problem(b)
+                if problem:
+                    out.append(f'{q}: {problem}')
                 a = b.get('availability')
                 if isinstance(a, dict):
                     if a.get('scheme') not in AVAILABILITY_SCHEMES:

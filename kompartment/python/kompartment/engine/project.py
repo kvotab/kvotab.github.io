@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import math
 import re
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 import numpy as np
 
@@ -32,7 +32,7 @@ from ..simulation import DEFAULTS as DEFAULT_SIMULATION
 from ..simulation import TIME_UNITS
 from .farfield import (FARF_DEFAULTS, FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_STRUCTURE_KEYS,
                        FARF_SURFACE_DEFAULTS, SURFACE_KEY, surface_of)
-from .farfield import geometry_problem, structure_problem
+from .farfield import geometry_problem, rock_problem, structure_problem
 from .. import jsmath
 from .indexspace import IndexError_, IndexSpace
 
@@ -204,6 +204,46 @@ def value_at(block: Dict[str, Any], key: str, tuple_by_list: Dict[str, str]) -> 
     if best_score >= 0:
         return best
     return block.get(key)
+
+
+def entry_lookup(block: Dict[str, Any], key: str) -> Callable[[Dict[str, str]], Any]:
+    """``value_at(block, key, tup)`` as a function of ``tup``, for reading one
+    key at every index tuple of a block: its entries indexed once, by the
+    lists each names, rather than scanned for every tuple. The same answer --
+    the most specific matching entry, the first of them on a tie, else the
+    block's own value -- and the very same objects."""
+    groups: Dict[Any, Dict[Any, Any]] = {}
+    for pos, entry in enumerate(block.get('entries') or []):
+        if key not in entry:
+            continue
+        index = entry.get('index') or {}
+        values = tuple(index.values())
+        try:
+            hash(values)
+        except TypeError:
+            return lambda tup: value_at(block, key, tup)
+        group = groups.setdefault(tuple(index.keys()), {})
+        if values not in group:
+            group[values] = (pos, entry[key])
+    own = block.get(key)
+    if not groups:
+        return lambda tup: own
+    # Most specific first: a less specific group can only lose to a hit.
+    order = sorted(groups.items(), key=lambda item: -len(item[0]))
+
+    def look(tup: Dict[str, str]) -> Any:
+        best_score = -1
+        best_pos = -1
+        best: Any = None
+        for lists, group in order:
+            score = len(lists)
+            if score < best_score:
+                break
+            hit = group.get(tuple(tup.get(name) for name in lists))
+            if hit is not None and (score > best_score or hit[0] < best_pos):
+                best_score, best_pos, best = score, hit[0], hit[1]
+        return best if best_score >= 0 else own
+    return look
 
 
 def has_dydt(block: Dict[str, Any]) -> bool:
@@ -496,18 +536,22 @@ class Project:
             if not math.isfinite(n):
                 raise ValidationError(f"'{js_text(v)}' is not a number, and {key.replace('_', ' ')} has to be one")
             sim[key] = n
-        for key, least, most in (('max_step', 0, math.inf), ('initial_step', 0, math.inf),
-                                 ('max_steps', 1, math.inf), ('max_order', 1, 5), ('min_order', 1, 5),
-                                 ('newton_kappa', 0, 1), ('max_jac_age', 1, math.inf),
-                                 ('below_tol_run', 0, math.inf), ('stagnation_tol', 0, 1)):
+        # An order is which formula a step takes, and the counts count steps:
+        # whole numbers, as the application has them.
+        for key, least, most, whole in (('max_step', 0, math.inf, False), ('initial_step', 0, math.inf, False),
+                                        ('max_steps', 1, math.inf, True), ('max_order', 1, 5, True),
+                                        ('min_order', 1, 5, True), ('newton_kappa', 0, 1, False),
+                                        ('max_jac_age', 1, math.inf, True), ('below_tol_run', 0, math.inf, True),
+                                        ('stagnation_tol', 0, 1, False)):
             v = sim.get(key)
             if v is None or v == '':
                 sim.pop(key, None)
                 continue
             n = js_number(v)
-            if not math.isfinite(n) or n < least or n > most:
+            if not math.isfinite(n) or n < least or n > most or (whole and not float(n).is_integer()):
                 rng = f'of at least {least}' if most == math.inf else f'between {least} and {most}'
-                raise ValidationError(f"'{js_text(v)}' is not a {key.replace('_', ' ')}: a number {rng}")
+                raise ValidationError(f"'{js_text(v)}' is not a {key.replace('_', ' ')}: "
+                                      f"a {'whole number' if whole else 'number'} {rng}")
             sim[key] = n
         if sim.get('min_order') is not None and js_number(sim['min_order']) > js_number(sim.get('max_order', 5)):
             raise ValidationError(f"The lowest order ({js_text(sim['min_order'])}) is above the highest "
@@ -1104,7 +1148,8 @@ class Project:
             raise ValidationError(p['message'], p['name'])
         root = self.index_space.get(self.material_list_name).root_name if self.material_list_name else None
         for f in self.blocks['farfields'] + self.blocks['waste_packages']:
-            problem = (structure_problem(f) or geometry_problem(f)) if f['kind'] == 'farfield' else None
+            problem = ((structure_problem(f) or geometry_problem(f) or rock_problem(f)) if f['kind'] == 'farfield'
+                       else None)
             if problem:
                 raise ValidationError(problem, f['qname'])
             chains = [d for d in f['index_lists'] if root and self.index_space.has(d)

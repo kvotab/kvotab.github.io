@@ -47,20 +47,21 @@ DEFAULTS: Dict[str, Any] = {
     'sampling': 'latin',
 }
 
-#: The solvers' own settings: kind, and the allowed range or choices.
+#: The solvers' own settings: kind (a switch, a choice, a number or a whole
+#: number), and the allowed range or choices.
 SOLVER_SETTINGS: Dict[str, Any] = {
     'bdf': ('switch', None),
     'max_step': ('number', (0, math.inf)),
     'initial_step': ('number', (0, math.inf)),
-    'max_steps': ('number', (1, math.inf)),
-    'max_order': ('number', (1, 5)),
-    'min_order': ('number', (1, 5)),
+    'max_steps': ('whole', (1, math.inf)),
+    'max_order': ('whole', (1, 5)),
+    'min_order': ('whole', (1, 5)),
     'norm_control': ('switch', None),
     'error_norm': ('choice', ('rms', 'max')),
     'stagnation_tol': ('number', (0, 1)),
     'newton_kappa': ('number', (0, 1)),
-    'max_jac_age': ('number', (1, math.inf)),
-    'below_tol_run': ('number', (0, math.inf)),
+    'max_jac_age': ('whole', (1, math.inf)),
+    'below_tol_run': ('whole', (0, math.inf)),
     'matrix': ('choice', ('auto', 'refactor', 'sparse', 'dense')),
     'jacobian': ('choice', ('analytic', 'numeric')),
     'auto_abstol': ('switch', None),
@@ -89,7 +90,7 @@ SOLVER_OPTIONS: Dict[str, Sequence[str]] = {
 
 
 def _number(key: str, value: Any, least: float = -math.inf, most: float = math.inf,
-            above: Optional[float] = None) -> float:
+            above: Optional[float] = None, whole: bool = False) -> float:
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -98,10 +99,10 @@ def _number(key: str, value: Any, least: float = -math.inf, most: float = math.i
         raise EditError(f"'{value}' is not a {key.replace('_', ' ')}")
     if above is not None and not v > above:
         raise EditError(f"{key.replace('_', ' ')} must be greater than {above:g} (got {value})")
-    if v < least or v > most:
+    if v < least or v > most or (whole and not v.is_integer()):
         rng = f'of at least {least:g}' if most == math.inf else f'between {least:g} and {most:g}'
-        raise EditError(f"'{value}' is not a {key.replace('_', ' ')}: a number {rng}")
-    return int(v) if v.is_integer() and not isinstance(value, float) else v
+        raise EditError(f"'{value}' is not a {key.replace('_', ' ')}: a {'whole number' if whole else 'number'} {rng}")
+    return int(v) if v.is_integer() and (whole or not isinstance(value, float)) else v
 
 
 class OutputSeries:
@@ -229,7 +230,7 @@ class Simulation:
             self._raw[key] = value
         else:
             least, most = allowed
-            self._raw[key] = _number(key, value, least, most)
+            self._raw[key] = _number(key, value, least, most, whole=kind == 'whole')
         if key in ('min_order', 'max_order'):
             lo = self._raw.get('min_order', 1)
             hi = self._raw.get('max_order', 5)

@@ -1,75 +1,49 @@
 """A run's solve on the compiled path.
 
-:func:`prepare` says whether a run can take it -- a model whose derivative
-compiles (:mod:`.model`) and a solver with a compiled loop (the NDF,
-Rosenbrock (2,3), Dormand-Prince) -- and hands back a :class:`CompiledRun`,
-which the runner calls in place of the solver: with a span and a start,
-answering as the solver's Python version does (:mod:`..solverset`), failures
-and their messages included.
+:func:`prepare` hands back the compiled stand-in for a run's solver, which
+the runner calls in place of it -- with a span and a start, answering as the
+solver's Python version does (:mod:`..solverset`), failures and their
+messages included:
 
-Three things stay in Python, and the compiled loop calls them back: an
-analytic Jacobian, with the min/max histories handed over first (they live
-in the compiled arrays during a run); the progress report; and, where the
-Python solver would factorise with SuperLU or LAPACK rather than the
-application's dense LU, the iteration matrix itself, formed and solved with
-by the Python solver's own :class:`~kompartment.engine.solvers.matrix.IterationMatrix`.
+* a :class:`CompiledRun` for the NDF, Rosenbrock (2,3) and Dormand-Prince,
+  whose loops are compiled (:mod:`.solvers`);
+* a :class:`~.julia_run.JuliaRun` for the Julia-derived ones, whose loop is
+  compiled too (:mod:`.julia`);
+* a :class:`PythonLoopRun` for a solver that keeps its own loop in Python --
+  SciPy's, and a Julia-derived one whose Python solver computes otherwise
+  than the compiled loop ports (see :func:`.julia_run.why_python`) -- handed
+  the compiled model.
+
+What stays in Python is called back: an analytic Jacobian, with the
+recorders handed over first (they live in the compiled arrays during a run);
+the progress report; where the Python solver would factorise with SuperLU or
+LAPACK rather than the application's dense LU, the iteration matrix itself,
+formed and solved with by the Python solver's own
+:class:`~kompartment.engine.solvers.matrix.IterationMatrix`; and the blocks a
+model works out in Python (see :mod:`.model`).
 """
 
 from __future__ import annotations
 
-import ctypes
 import math
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
-from numba import types
 
 from ..jacobian import colour_columns, difference_jacobian
 from ..solvers import SolverError
 from ..solvers.matrix import APP_LU_MAX, DENSE_BELOW, IterationMatrix, non_finite_message, singular_message
 from . import solvers as cs
-from . import NotCompiled
-from .model import CompiledModel, compile_model
+from . import FAIL_PYTHON, CompiledFailure, NotCompiled, python_error
+from .model import Callback, CompiledModel, HistoryFull, compile_model
 
 #: The solvers with a compiled loop.
 COMPILED_SOLVERS = ('ndf', 'ros23', 'dp45')
 SINGULAR_HINT = 'A compartment with no way in and no way out will do this.'
-#: The most the collected steps (when they are output) may take.
-STEPS_MAX_BYTES = 256 * 1024 ** 2
-
-
-class HistoryFull(Exception):
-    """A min/max history ran out of room: the run is made again with more."""
 
 
 class UsePython(NotCompiled):
     """This run is found, once under way, to be one for the Python path."""
-
-
-class Callback(types.WrapperAddressProtocol):
-    """A Python function as the ``int64(float64, float64)`` the compiled loop
-    calls. An exception it raises is kept in ``error``, and the call answers
-    -1, which ends the solve."""
-
-    _PROTO = ctypes.CFUNCTYPE(ctypes.c_int64, ctypes.c_double, ctypes.c_double)
-
-    def __init__(self, fn: Callable[[float, float], int]) -> None:
-        self.error: Optional[BaseException] = None
-
-        def call(a: float, b: float) -> int:
-            try:
-                return int(fn(a, b))
-            except BaseException as e:  # noqa: BLE001 - handed back to the caller of the solve
-                self.error = e
-                return -1
-
-        self._c = self._PROTO(call)
-
-    def __wrapper_address__(self) -> int:
-        return ctypes.cast(self._c, ctypes.c_void_p).value
-
-    def signature(self) -> Any:
-        return cs.CB_SIG
 
 
 def compiled_model(system: Any) -> CompiledModel:
@@ -90,25 +64,108 @@ def compiled_model(system: Any) -> CompiledModel:
 
 
 def prepare(system: Any, solver_id: str, opts: Dict[str, Any], *, min_change: float = 0.0,
-            solver_points: bool = False, equations: bool = False) -> 'CompiledRun':
-    """A compiled stand-in for the solver of this run, or :class:`NotCompiled`
-    saying why the run keeps to the Python path."""
+            solver_points: bool = False, equations: bool = False, solver: Any = None) -> Any:
+    """A compiled stand-in for the solver of this run: a :class:`CompiledRun`
+    for the solvers with a compiled loop, a :class:`~.julia_run.JuliaRun` for
+    the Julia-derived ones, a :class:`PythonLoopRun` for the ones that keep
+    their own (``solver`` is it) -- or :class:`NotCompiled` saying why the run
+    keeps to the Python path."""
     if equations:
         raise NotCompiled('the run integrates a system of equations of its own')
+    cm = compiled_model(system)
+    from ..solvers.julia.adapter import ALGORITHMS
+    why = None
+    if solver_id in ALGORITHMS:
+        from .julia_run import JuliaRun, why_python
+        why = why_python(solver_id, opts)
+        if why is None:
+            return JuliaRun(system, cm, solver_id, opts, solver_points)
     if solver_id not in COMPILED_SOLVERS:
-        raise NotCompiled(f"the solver '{solver_id}' has no compiled loop")
-    if min_change > 0:
-        raise NotCompiled('the clock-only slots are worked out every min_change_time and interpolated')
-    semi = [F for F in getattr(system, 'laplace', None) or []]
-    if semi:
-        raise NotCompiled(f"'{semi[0].block_name}' is worked out semi-analytically: its release is the inflow's "
-                          'recorded history convolved with the path\'s responses, which the compiled loop does not '
-                          'keep')
-    n = system.nstate
-    if solver_points and 2 * cs.MAX_SOLVER_POINTS * n * 8 > STEPS_MAX_BYTES:
-        raise NotCompiled(f"the solver's own steps are asked for as output, and {n} states would need more room "
-                          'for them than the compiled path sets aside')
-    return CompiledRun(system, compiled_model(system), solver_id, opts, solver_points)
+        if solver is None:
+            raise NotCompiled(f"the solver '{solver_id}' has no compiled loop")
+        return PythonLoopRun(system, cm, solver_id, solver, opts, why)
+    return CompiledRun(system, cm, solver_id, opts, solver_points)
+
+
+class _CompiledEvents:
+    """The discrete events as a Python solver asks for them (``Events``),
+    their functions worked out by the compiled model."""
+
+    def __init__(self, events: Any, cm: CompiledModel) -> None:
+        self.n = events.n
+        self.direction = events.direction
+        self.cm = cm
+
+    def fun(self, t: float, y: np.ndarray, out: Optional[np.ndarray] = None) -> np.ndarray:
+        v = self.cm.event_values(t, y)
+        if out is not None:
+            out[:] = v
+            return out
+        return v.copy()
+
+
+class PythonLoopRun:
+    """A run whose solver keeps its own loop in Python -- SciPy's methods, and
+    a Julia-derived one the compiled loop does not take -- on the compiled
+    model: the derivative, what the recorders and the semi-analytical paths
+    record at each step, the events' functions and what firing them does. The
+    answer is the Python path's to the last bit, since every number the solver
+    is given is. Called as :class:`CompiledRun` is; ``loop`` says the solver's
+    own loop is not compiled."""
+
+    loop = False
+
+    def __init__(self, system: Any, cm: CompiledModel, solver_id: str, solver: Any, opts: Dict[str, Any],
+                 why: Optional[str] = None) -> None:
+        self.system = system
+        self.cm = cm
+        self.solver_id = solver_id
+        self.solver = solver
+        self.opts = opts
+        #: Why the solver's loop is not compiled, as a run's stats say it.
+        self.loop_why = (f"the solver '{solver_id}' keeps the loop of its own, in Python, on the compiled model"
+                         + (f': {why}' if why else ''))
+        jac = opts.get('jacobian')
+        if jac and jac.get('evaluate') is not None:
+            evaluate = jac['evaluate']
+
+            def handed(t: float, y: np.ndarray) -> Any:
+                # Worked out in Python: the recorders as the compiled model
+                # has them first, and a clock it no longer holds after.
+                self.cm.sync_histories()
+                self.system._clock_at = math.nan
+                try:
+                    return evaluate(t, y)
+                finally:
+                    self.cm.W[0] = math.nan
+            jac = dict(jac, evaluate=handed)
+        self.jacobian = jac
+        self.events = _CompiledEvents(system.events, cm) if system.events is not None else None
+
+    def store_step(self, t: float, y: np.ndarray) -> None:
+        self.cm.store_step(t, y, grow=True)
+
+    def fire(self, which: Sequence[int], t: float, y: np.ndarray) -> None:
+        self.cm.fire(which, t, y, grow=True)
+
+    def start(self) -> None:
+        self.cm.load()
+
+    def steps_into(self, steps: Dict[str, Any]) -> None:
+        """Nothing: the runner collects the steps itself, as on the Python path."""
+
+    def finish(self) -> None:
+        self.cm.write_back()
+
+    def grow(self) -> None:
+        self.cm.grow()
+
+    def __call__(self, tspan: Any, y0: np.ndarray) -> Dict[str, Any]:
+        self.cm.load_clock()
+        opts = dict(self.opts)
+        opts['jacobian'] = self.jacobian
+        opts['events'] = self.events
+        return self.solver(self.cm.derivative, tspan, y0, opts)
 
 
 class CompiledRun:
@@ -160,13 +217,40 @@ class CompiledRun:
         self.cy = np.zeros((rows, n if solver_points else 1))
         self.cint = np.array([0, 0, 1, 1 if solver_points else 0], dtype=np.int64)
         self.cflt = np.array([-math.inf])
+        # The discrete events: their functions, the directions they watch,
+        # and where a solve an event stops says so.
+        events = system.events
+        nev = events.n if events is not None else 0
+        self.evf = cm.module.event_values if nev else cs.no_events
+        self.evdir = (np.ascontiguousarray(events.direction, dtype=float) if nev else np.zeros(0))
+        self.evbuf = np.zeros((5, max(nev, 1)))
+        self.evy = np.zeros(n)
+        self.evwhich = np.zeros(max(nev, 1), dtype=np.int64)
+        self.evstat = np.zeros(2)
 
     # --- the run around the spans -----------------------------------------------------------------
 
     def start(self) -> None:
         self.cm.load()
+        # The steps collected as output start afresh with each attempt at the run.
         self.cint[:3] = (0, 0, 1)
         self.cflt[0] = -math.inf
+
+    def store_step(self, t: float, y: np.ndarray) -> None:
+        """A step recorded between solves (after an event): a history that
+        runs out of room makes the run again, as inside the loop."""
+        self.cm.store_step(t, y)
+
+    def fire(self, which: Sequence[int], t: float, y: np.ndarray) -> None:
+        self.cm.fire(which, t, y)
+
+    def _stopped(self) -> Optional[Dict[str, Any]]:
+        """Where an event stopped the last solve, as the Python solvers say it."""
+        if not self.evstat[0]:
+            return None
+        nev = self.evdir.size
+        return {'t': float(self.evstat[1]), 'y': self.evy.copy(),
+                'which': [i for i in range(nev) if self.evwhich[i]]}
 
     def steps_into(self, steps: Dict[str, Any]) -> None:
         """The collected steps into the runner's record of them."""
@@ -219,7 +303,12 @@ class CompiledRun:
         try:
             W = IterationMatrix(n, self.pattern, values, mode, None, hints)
         except RuntimeError as e:
-            raise UsePython(str(e)) from None
+            # A matrix the Python solver would not form either: it stops on
+            # it, the NDF calling it singular.
+            if kind == 'ndf':
+                from ..solverset import variable_order_failure
+                raise variable_order_failure(SolverError('singular', str(e), t0), t0) from None
+            raise RuntimeError(str(e)) from None
         if W._kernels and not W.sparse:
             return cs.MAT_KERNEL, W, cs.no_callback, cs.no_callback
         return cs.MAT_PYTHON, W, Callback(lambda a, any_held: self._form(W, a, any_held)), \
@@ -284,9 +373,19 @@ class CompiledRun:
         return RuntimeError('a callback of the compiled solver failed')
 
     def __call__(self, tspan: Any, y0: np.ndarray) -> Dict[str, Any]:
-        if self.solver_id == 'ndf':
-            return self._ndf(tspan, y0)
-        return self._onestep(tspan, y0)
+        self.cm.load_clock()
+        try:
+            if self.solver_id == 'ndf':
+                return self._ndf(tspan, y0)
+            return self._onestep(tspan, y0)
+        except CompiledFailure as e:
+            # Where the model's own equations raise on the Python path: the
+            # same exception, at the same evaluation.
+            raised = self.cm.python_error() if e.args and int(e.args[0]) == FAIL_PYTHON else None
+            if raised is not None:
+                self.cm.py_callback.error = None
+                raise raised from None
+            raise python_error(e) from None
 
     # --- the NDF (``solverset.variable_order``) ----------------------------------------------------
 
@@ -332,10 +431,10 @@ class CompiledRun:
         fstat = np.zeros(4)
         cm.W[0] = math.nan
         status = cs.ndf(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W, cm.IW,
-                        tspan, y0, atol, constrained, self.jac_mode, self.colptr, self.rowidx, self.jvals,
-                        self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
+                        cm.py_callback, tspan, y0, atol, constrained, self.jac_mode, self.colptr, self.rowidx,
+                        self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                         self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.held_in_w,
-                        self.rbuf, self.xbuf)
+                        self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat)
         if into is not None:
             into[:] = atol
         if status != cs.OK:
@@ -349,7 +448,7 @@ class CompiledRun:
             raise variable_order_failure(self._ndf_error(status, fstat, max_steps, self.matrix_error), t0)
         rows = int(stats[8])
         return {
-            't': tspan[:rows].copy(), 'y': list(yout[:rows]), 'stopped': None,
+            't': tspan[:rows].copy(), 'y': list(yout[:rows]), 'stopped': self._stopped(),
             'stats': {'nsteps': int(stats[0]), 'nfailed': int(stats[1]), 'nfevals': int(stats[7]),
                       'npds': int(stats[2]), 'ndecomps': int(stats[3]), 'nsolves': int(stats[4]),
                       'nbelowtol': int(stats[5]), 'sparse': bool(W is not None and W.info['sparse']),
@@ -418,10 +517,10 @@ class CompiledRun:
         fstat = np.zeros(4)
         cm.W[0] = math.nan
         status = cs.onestep(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W,
-                            cm.IW, tspan, y0, atol, nn_idx, self.jac_mode, self.colptr, self.rowidx, self.jvals,
-                            self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
+                            cm.IW, cm.py_callback, tspan, y0, atol, nn_idx, self.jac_mode, self.colptr, self.rowidx,
+                            self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                             self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.rbuf,
-                            self.xbuf)
+                            self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat)
         if status != cs.OK:
             if status == cs.E_HISTORY:
                 raise HistoryFull()
@@ -435,7 +534,7 @@ class CompiledRun:
         if ros:
             out.update(npds=int(stats[5]), ndecomps=int(stats[6]), sparse=bool(W is not None and W.sparse),
                        fill=W.info['fill'] if W is not None else None)
-        return {'t': tspan[:rows].copy(), 'y': list(yout[:rows]), 'stopped': None, 'stats': out}
+        return {'t': tspan[:rows].copy(), 'y': list(yout[:rows]), 'stopped': self._stopped(), 'stats': out}
 
     @staticmethod
     def _onestep_error(status: int, fstat: np.ndarray, method: Any, max_steps: float,
@@ -472,5 +571,6 @@ def restart_state(abstol: Any) -> Any:
     return abstol.copy() if isinstance(abstol, np.ndarray) else None
 
 
-__all__: Sequence[str] = ('COMPILED_SOLVERS', 'CompiledRun', 'HistoryFull', 'NotCompiled', 'UsePython', 'prepare',
+__all__: Sequence[str] = ('COMPILED_SOLVERS', 'CompiledRun', 'HistoryFull', 'NotCompiled', 'PythonLoopRun',
+                          'UsePython', 'prepare',
                           'compiled_model')

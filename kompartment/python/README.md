@@ -323,12 +323,20 @@ steps; no materials to divide by; one part; one core. So is a split that does
 not add up, and `stats['split']['why']` says so.
 
 `auto` is the application's rule with numbers measured here, since a process
-takes longer to start than a browser's worker. A model this process has not
+takes longer to start than a browser's worker. A model this machine has not
 timed is split from 10,000 states, when its parts promise at least 2x over
 the cores there are. Once a whole solve has been timed, it is split when that
 solve took 1.5 s or more and the parts are expected to be at least 1.2x
-faster. Once it has been split, what the split was measured to gain decides.
-A made-up model of 16 independent chains, 28,800 states, took 8.5 s whole and
+faster, each part's build weighed as a split of the model measured it -- a
+part of a model whose equations all come along into every part builds in
+about two thirds of the whole's time, whatever it holds. Once it has been
+split, what the split was measured to gain decides. Compiling is left out of
+every measurement, since it is paid once. What auto learns is kept in
+`split-memory.json` in the cache directory (`KOMPARTMENT_CACHE`, or the
+user's cache directory) by the model's layout, the path it runs on and this
+package's code, so a script run in a process of its own decides from the
+runs before it; `KOMPARTMENT_SPLIT_MEMORY=0` keeps it to the process. A
+made-up model of 16 independent chains, 28,800 states, took 8.5 s whole and
 2.9 s split on eight processes (2.1 s of solve against 7.5 s). A model of a
 few thousand states is quicker whole.
 
@@ -432,59 +440,79 @@ numpy. The model's author goes out as the project's.
 
 The equations are compiled to numpy, statements of the same shape merged into
 one expression, and the derivative assembled as one sparse product in the
-application's order. With numba installed a run goes further: the model's
-derivative is compiled to machine code, and so is the solver's loop -- the
-NDF, Rosenbrock (2,3) and Dormand-Prince, ported step for step
-(`kompartment.engine.compiled`) -- so that a run returns to Python only when
-it ends. A compiled run takes the same steps as the Python path to the last
-bit: the same states, statistics and failures. So it is the default
-(`compiled='auto'`); `m.run(compiled=False)` keeps to Python, and
-`compiled=True` insists, saying why when it cannot.
+application's order. With numba installed every run goes further, whatever
+the model: its derivative is compiled to machine code -- every function of
+the language, the blocks that remember, discrete events, the clock worked out
+every `min_change_time`, far-field paths -- and so is the solver's loop, for
+the NDF, Rosenbrock (2,3), Dormand-Prince and the six Julia-derived methods,
+ported step for step and event for event (`kompartment.engine.compiled`), so
+that a run returns to Python only when it ends. A compiled run takes the same
+steps as the Python path to the last bit: the same states, statistics,
+recorders and failures. So it is the default (`compiled='auto'`);
+`m.run(compiled=False)` keeps to Python, and `compiled=True` insists, which
+only a Python without numba refuses.
 
 ```python
 res = m.run()
-res.stats['compiled']                          # True when the run was compiled
-res.stats.get('compiled_why')                  # and why not, when it was not
+res.stats['compiled']                          # True: the model was compiled
+res.stats['compiled_loop']                     # and the solver's loop with it
+res.stats.get('compiled_loop_why')             # why not: SciPy's solvers keep their own
+res.stats.get('compiled_why')                  # why not compiled at all
 ```
 
-A model's first run compiles it, in a second or two (the solvers compile once
-per machine). After that, runs and other processes load it from the cache:
-`KOMPARTMENT_CACHE`, or the user's cache directory. Measured on a laptop,
-best of three runs:
+SciPy's three solvers keep the loop of their own, in Python, and run it on
+the compiled model: its derivative, what the recorders keep at each step.
+Local sensitivity integrates the model's derivative, compiled, in equations
+of its own (`m.local_sensitivity(..., compiled='auto')`).
+
+A few things are worked out in Python even then, called back from the
+compiled code: SuperLU's factorisations and solves (and LAPACK's, for the
+NDF's and Rosenbrock's dense matrices of more than 200 states; the
+Julia-derived methods call the same LAPACK routines from the compiled loop),
+an analytic Jacobian, progress, and a far-field path worked out
+semi-analytically, whose release is the recorded history of its inflow
+convolved with the path's unit responses, kept in Python as the Python path
+keeps it. A path on cells whose settings move during the run is worked out
+again in the compiled code as they move, and handed to Python only to hold
+the matched layers it lays out and to raise what the Python path raises.
+
+A model's first run compiles it: a second or two for most models, a minute or
+two for one of hundreds of thousands of algebraic slots. After that, runs and
+other processes load it from the cache -- `KOMPARTMENT_CACHE`, or the user's
+cache directory -- in a fraction of a second. The compiled code
+holds the model's structure and none of its numbers, which it reads at run
+time, so a model's parts in a split run, and its realisations in a
+probabilistic one, mostly share theirs. Processes compiling at once, as a
+split run's workers do, read and write the cache under a file lock (on
+Linux and macOS): numba's own cache, written by several processes at once,
+can file one compiled version under another's types, and a model whose
+compile finds it goes to the Python path. Measured on a laptop, best of three
+runs:
 
 | Run | Python | Compiled |
 | --- | --- | --- |
 | four-compartment, NDF | 15 ms | 0.7 ms |
-| decay-chain, NDF | 105 ms | 1.6 ms |
+| decay-chain, NDF | 104 ms | 2.2 ms |
 | biosphere, NDF | 26 ms | 1.4 ms |
-| landscape, NDF | 57 ms | 3.4 ms |
-| waste-packages, Dormand-Prince | 0.98 s | 20 ms |
-| farfield (1,581 states), NDF | 0.99 s | 0.71 s |
-| made-up decay chains, 2,000 states | 0.25 s | 0.14 s |
-| made-up decay chains, 16,000 states | 2.0 s | 1.4 s |
-| biosphere, Sobol design of 272 runs, one process | 12.6 s | 1.3 s |
+| landscape, NDF | 58 ms | 3.9 ms |
+| waste-packages, Dormand-Prince | 0.99 s | 17 ms |
+| recorders (a discrete event), NDF | 69 ms | 2.0 ms |
+| made-up, 21 events and 9 recorders, NDF | 62 ms | 8.2 ms |
+| farfield (1,581 states), NDF | 0.95 s | 0.66 s |
+| farfield worked out semi-analytically, NDF | 2.7 s | 2.5 s |
+| farfield, its F/TW following the clock, NDF | 4.5 s | 0.74 s |
+| biosphere, Radau IIA 5 | 44 ms | 13 ms |
+| biosphere, FBDF | 111 ms | 21 ms |
+| made-up decay chains, 2,000 states | 146 ms | 102 ms |
+| made-up decay chains, 16,000 states | 0.88 s | 0.73 s |
+| biosphere, Sobol design of 272 runs, one process | 12.1 s | 1.35 s |
 
-The application takes 2.5 s over the same Sobol design. On a large model the
-gain shrinks: most of the time goes to SuperLU's factorisations and solves,
-the same calls on both paths. The compiled loop calls back into Python for
-these, as it does for an analytic Jacobian and for progress. Rosenbrock
-gains two to three times on a model whose analytic Jacobian moves, since it
-asks for a Jacobian at every step, and that Jacobian is worked out in Python.
-
-Some runs stay on the Python path, and `compiled_why` says so:
-
-- a model with discrete events, or with a running mean, snapshot, delay or
-  trigger (a min/max is compiled);
-- `min_change_time`;
-- the SciPy and Julia-derived solvers;
-- a system of equations standing in for the model's own, as local
-  sensitivity integrates;
-- a far-field path worked out semi-analytically (`method='semi-analytical'`):
-  its release is the recorded history of what flowed into it convolved with
-  the path's unit responses, which the compiled loop does not keep. The Python
-  path runs it as the application does, to rounding (the history is summed
-  with numpy); the example worked that way takes about 5 s, half of it working
-  the responses out, which later runs with the same settings reuse.
+The application takes 2.5 s over the biosphere's Sobol design. On a large
+model the gain shrinks: most of the time goes to SuperLU's factorisations and
+solves, the same calls on both paths, and to building the model, which is
+Python either way. Rosenbrock gains two to three times on a model whose
+analytic Jacobian moves, since it asks for a Jacobian at every step, and that
+Jacobian is worked out in Python.
 
 Each worker process of a probabilistic run or a split run is compiled like
 any other.
@@ -536,11 +564,18 @@ the partition and the plan of a split run with the application's, and split
 runs with whole ones; `KOMPARTMENT_SPLIT_TIMING=1` adds a timing of a large
 made-up model, whole against split. `test_engine_compiled.py` runs the bundled
 examples and made-up models on the compiled path and the Python path, and
-asks for the same states, statistics and failures to the last bit, across the
-solvers' settings, the non-negative constraint, a min/max, sparse matrices
-and the solver's own steps as output. `tools/gen_data.mjs` writes the ICRP 107 table
-and the reserved names from the application's sources; `--check` says whether
-they are current.
+asks for the same states, statistics, recorders, series and failures to the
+last bit, across every function of the language, the blocks that remember,
+discrete events, `min_change_time`, far-field paths of every kind, every
+solver and the solvers' settings, the non-negative constraint, sparse
+matrices and the solver's own steps as output;
+`test_engine_compiled_julia.py` does the same for the compiled loops of the
+six Julia-derived methods, and `test_engine_compiled_farfield.py` for a
+far-field path whose every setting follows the clock or the state;
+`test_engine_compiled_cache.py` has processes compiling at once share the
+cache, and none find code it did not ask for. `tools/gen_data.mjs` writes the
+ICRP 107 table and the reserved names from the application's sources;
+`--check` says whether they are current.
 
 ## Licence
 

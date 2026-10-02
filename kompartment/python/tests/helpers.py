@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,10 @@ EXAMPLES = APP / 'examples'
 
 if str(PACKAGE) not in sys.path:
     sys.path.insert(0, str(PACKAGE))
+
+# What a split run's auto learns is kept in the user's cache directory; the
+# tests neither read it nor add to it (the ones about it say where it goes).
+os.environ.setdefault('KOMPARTMENT_SPLIT_MEMORY', '0')
 
 NODE = shutil.which('node')
 HAVE_APP = NODE is not None and (SRC / 'domain' / 'project.js').is_file()

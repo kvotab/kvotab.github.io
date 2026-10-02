@@ -267,20 +267,25 @@ class PointMass(unittest.TestCase):
 
 
 class SemiEngine(unittest.TestCase):
-    def test_the_compiled_path_says_why_it_is_not_taken(self) -> None:
+    def test_the_compiled_path_takes_it_and_says_the_same(self) -> None:
+        # The path's release and history worked out in Python, called back
+        # from the compiled loop: the Python path's run, to the last bit.
         try:
             import numba  # noqa: F401
         except ImportError:
             self.skipTest('numba is not installed')
-        from kompartment.engine.compiled import NotCompiled
-        from kompartment.engine.compiled.run import prepare
-        system = build_system(Project(leaching_model()))
-        with self.assertRaises(NotCompiled) as caught:
-            prepare(system, 'ndf', {})
-        self.assertIn("'Rock' is worked out semi-analytically", str(caught.exception))
-        res = run(Project(leaching_model()))
-        self.assertFalse(res.stats['compiled'])
-        self.assertIn('semi-analytically', res.stats['compiled_why'])
+        out = []
+        for compiled in (False, True):
+            project = Project(leaching_model())
+            out.append(run(project, system=build_system(project), compiled=compiled))
+        a, b = out
+        self.assertFalse(a.stats['compiled'])
+        self.assertTrue(b.stats['compiled'])
+        self.assertTrue(np.array_equal(np.array(a.y).view(np.int64), np.array(b.y).view(np.int64)))
+        self.assertEqual(a.stats['nsteps'], b.stats['nsteps'])
+        for label in a.labels:
+            self.assertTrue(np.array_equal(np.asarray(a[label]).view(np.int64), np.asarray(b[label]).view(np.int64)),
+                            label)
 
     def test_a_single_nuclide_is_its_inflow_convolved_exactly(self) -> None:
         k = 1e-3

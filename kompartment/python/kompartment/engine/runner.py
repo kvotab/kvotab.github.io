@@ -141,12 +141,15 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
 
     ``compiled`` -- 'auto' (the default), True or False -- is whether the
     solve runs on the compiled path (:mod:`kompartment.engine.compiled`): the
-    derivative and the solver's loop compiled with numba, the same steps as
-    the Python path to the last bit and several times quicker on a small
-    model. 'auto' takes it when the run allows (and numba is installed),
-    True insists (raising ``NotCompiled`` with the reason when it cannot),
-    False keeps to Python. ``stats['compiled']`` says which path ran, and
-    ``stats['compiled_why']`` why not, when it was not.
+    model and the solver's loop compiled with numba, the same steps as the
+    Python path to the last bit and several times quicker on a small model.
+    Every model and every solver takes it; SciPy's solvers, which keep their
+    own loop in Python, run that loop on the compiled model. 'auto' takes it
+    when numba is installed, True insists
+    (raising ``NotCompiled`` when it cannot), False keeps to Python.
+    ``stats['compiled']`` says which path ran and ``stats['compiled_why']``
+    why not, when it was not; ``stats['compiled_loop']`` whether the
+    solver's loop was compiled too, and ``stats['compiled_loop_why']`` why not.
     """
     if not isinstance(project, Project):
         raw = project.to_dict() if hasattr(project, 'to_dict') else project
@@ -221,15 +224,23 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         on_progress(fraction, at)  # type: ignore[misc]
         return True
 
+    # What records a step accepted: the system's own recorders, or -- for a
+    # solver whose loop stays in Python on the compiled model -- the compiled
+    # model's (see below).
+    store_hook = [system.store_step]
+
+    def stored(t: float, y: np.ndarray) -> None:
+        store_hook[0](t, y)
+
     on_accepted: Optional[Callable[[float, np.ndarray], None]] = None
     if steps is not None and system.has_store_step:
         def on_accepted(t: float, y: np.ndarray) -> None:
-            system.store_step(t, y)
+            stored(t, y)
             collect(t, y)
     elif steps is not None:
         on_accepted = collect
     elif system.has_store_step:
-        on_accepted = system.store_step
+        on_accepted = stored
     opts: Dict[str, Any] = {
         'rtol': float(sim['rtol']), 'abstol': abstol,
         'jacobian': _jacobian_option(system, sim),
@@ -243,7 +254,7 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         'stagnation_tol': sim.get('stagnation_tol'), 'max_jac_age': sim.get('max_jac_age'),
         'below_tol_run': sim.get('below_tol_run'), 'matrix': sim.get('matrix'),
         'on_accepted': on_accepted,
-        'on_output': system.store_step if system.has_store_step else None,
+        'on_output': stored if system.has_store_step else None,
         'ends_only': steps is not None and project.output_mode == 'solver',
         'events': system.events,
         'on_step': (lambda fraction, n, at: _step(fraction, at)) if on_progress else None,
@@ -277,8 +288,14 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     min_change = float(sim.get('min_change_time') or 0)
     f = eq['dydt'] if eq.get('dydt') is not None else system.rhs
     on_segment = eq.get('on_segment')
+    # Compiling a model (or loading it from the cache) is timed apart from
+    # the solve it is part of: a split run weighs solves, not compilations.
+    compile_start = time.perf_counter()
     compiled_run, compiled_why = _compiled_run(compiled, system, solver_id, opts, min_change, steps is not None,
-                                               equations is not None)
+                                               equations is not None, solver)
+    compile_ms = (time.perf_counter() - compile_start) * 1000
+    if compiled_run is not None and not getattr(compiled_run, 'loop', True):
+        store_hook[0] = compiled_run.store_step
 
     start_segment = getattr(system, 'start_segment', None)
 
@@ -292,6 +309,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         if start_segment is not None:
             start_segment(float(grid2[0]), start)
         if system.events is not None:
+            if compiled_run is not None:
+                # The compiled solve between events, and the events fired on
+                # the recorders it keeps.
+                return solve_with_events(system, f, lambda _f, span, y, _opts: compiled_run(span, y), grid2, start,
+                                         opts, fire=compiled_run.fire, store=compiled_run.store_step)
             return solve_with_events(system, f, solver, grid2, start, opts)
         if compiled_run is not None:
             return compiled_run(grid2, start)
@@ -322,6 +344,7 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                             if compiled is True:
                                 raise
                             compiled_run, compiled_why = None, str(e)
+                            store_hook[0] = system.store_step
                         else:
                             compiled_run.grow()
                         if tolerances is not None:
@@ -341,6 +364,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                     compiled_run.finish()
         if solution.get('stats') is not None:
             solution['stats']['compiled'] = compiled_run is not None
+            if compiled_run is not None:
+                looped = getattr(compiled_run, 'loop', True)
+                solution['stats']['compiled_loop'] = looped
+                if not looped:
+                    solution['stats']['compiled_loop_why'] = getattr(compiled_run, 'loop_why', None)
             if compiled_why and compiled_run is None:
                 solution['stats']['compiled_why'] = compiled_why
             # What a semi-analytical path could not hold to its mass balance,
@@ -365,13 +393,16 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         if hints:
             e.hint = ' '.join(hints)
         raise
-    return Results(project, system, solution, {'build_ms': build_ms,
-                                               'solve_ms': (time.perf_counter() - solve_start) * 1000,
-                                               'total_ms': (time.perf_counter() - t0) * 1000})
+    results = Results(project, system, solution, {'build_ms': build_ms,
+                                                  'solve_ms': (time.perf_counter() - solve_start) * 1000,
+                                                  'total_ms': (time.perf_counter() - t0) * 1000})
+    # Kept apart from the timing a saved run carries, which is the application's.
+    results.compile_ms = compile_ms
+    return results
 
 
 def _compiled_run(compiled: Any, system: Any, solver_id: str, opts: Dict[str, Any], min_change: float,
-                  solver_points: bool, equations: bool) -> Any:
+                  solver_points: bool, equations: bool, solver: Any = None) -> Any:
     """``(compiled solver, None)`` for a run that takes the compiled path,
     ``(None, why not)`` for one that does not."""
     if compiled is False or compiled is None:
@@ -385,7 +416,7 @@ def _compiled_run(compiled: Any, system: Any, solver_id: str, opts: Dict[str, An
         return None, f'numba is not installed ({e})'
     try:
         return prepare(system, solver_id, opts, min_change=min_change, solver_points=solver_points,
-                       equations=equations), None
+                       equations=equations, solver=solver), None
     except NotCompiled as e:
         if compiled is True:
             raise
@@ -499,10 +530,15 @@ def solve_across_breaks(solve: Callable[[np.ndarray, np.ndarray], Dict[str, Any]
 
 
 def solve_with_events(system: Any, f: Callable[..., np.ndarray], solver: Callable[..., Dict[str, Any]],
-                      grid: np.ndarray, y0: np.ndarray,
-                      opts: Dict[str, Any]) -> Dict[str, Any]:
-    """Integrates a model with discrete events, restarting at each crossing."""
+                      grid: np.ndarray, y0: np.ndarray, opts: Dict[str, Any],
+                      fire: Optional[Callable[[Sequence[int], float, np.ndarray], None]] = None,
+                      store: Optional[Callable[[float, np.ndarray], None]] = None) -> Dict[str, Any]:
+    """Integrates a model with discrete events, restarting at each crossing.
+    ``fire`` and ``store`` are what firing events and recording the instant
+    do -- the system's own unless the compiled run keeps the recorders."""
     events = system.events
+    fire = fire if fire is not None else events.fire
+    store = store if store is not None else system.store_step
     last = float(grid[-1])
     times: List[float] = []
     rows: List[np.ndarray] = []
@@ -542,8 +578,8 @@ def solve_with_events(system: Any, f: Callable[..., np.ndarray], solver: Callabl
             break
         t = stopped['t']
         y = stopped['y']
-        events.fire(stopped['which'], t, y)
-        system.store_step(t, y)
+        fire(stopped['which'], t, y)
+        store(t, y)
         stats['events'] += len(stopped['which'])
         stats['restarts'] += 1
     return {'t': np.array(times), 'y': rows, 'stats': stats}
@@ -690,6 +726,9 @@ class Results:
         self.y = solution['y']
         self.stats = solution.get('stats') or {}
         self.timing = timing if timing is not None else {}
+        #: How much of the solve's time went to compiling the model, or
+        #: loading it from the cache (ms): part of ``timing['solve_ms']``.
+        self.compile_ms = 0.0
 
     @property
     def nuclides(self) -> List[str]:
@@ -841,14 +880,14 @@ class Results:
         n = self.t.size
         out = np.zeros((n, need.size))
         system = self.system
-        if self.stats.get('compiled') and n and not getattr(system, '_min_change', 0):
+        if self.stats.get('compiled') and n:
             cm = getattr(system, '_compiled_model', None)
             rows = getattr(cm, 'algebraic_rows', None)
             if rows is not None:
                 try:
                     cm.load()
                     rows(np.ascontiguousarray(self.t, dtype=float), np.ascontiguousarray(Y, dtype=float), need, out,
-                         system.P, system.X, cm.W, cm.IW)
+                         system.P, system.X, cm.W, cm.IW, cm.py_callback)
                     return out
                 except Exception:  # noqa: BLE001 - the Python passes give the same numbers
                     pass

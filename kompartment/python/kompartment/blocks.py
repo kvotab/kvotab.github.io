@@ -32,6 +32,7 @@ dimension -- the index name alone::
 
 from __future__ import annotations
 
+import math
 from typing import (TYPE_CHECKING, Any, ClassVar, Dict, Iterator, List, Mapping, Optional,
                     Sequence, Tuple, Union)
 
@@ -179,6 +180,19 @@ def equation_text(value: Any) -> str:
     return str(value)
 
 
+def _written_number(text: str) -> Optional[float]:
+    """The number an equation is when it is one written out, as JavaScript's
+    ``Number`` reads it; None for anything else."""
+    t = text.strip()
+    if not t or '_' in t:
+        return None
+    try:
+        v = float(t)
+    except ValueError:
+        return None
+    return v if math.isfinite(v) else None
+
+
 def _truthy(value: Any, default: bool) -> bool:
     """A switch as the application reads one from a file."""
     if value is None:
@@ -195,17 +209,20 @@ class Field:
     numbers are written as equations), ``'text'``, ``'bool'``, ``'int'``,
     ``'count'`` (a whole number, or ``''`` to have it worked out), ``'number'``
     or ``'choice'`` (one of ``choices``). Setting ``None`` removes the key,
-    which returns the field to its default.
+    which returns the field to its default. ``least`` refuses an equation
+    written as a number below it; one that works out below it is refused as
+    it is worked out.
     """
 
     def __init__(self, key: str, kind: str = 'equation', default: Any = None,
                  choices: Optional[Sequence[Any]] = None, doc: str = '',
-                 entries: bool = False) -> None:
+                 entries: bool = False, least: Optional[float] = None) -> None:
         self.key = key
         self.kind = kind
         self.default = default
         self.choices = tuple(choices) if choices else None
         self.entries = entries
+        self.least = least
         self.__doc__ = doc
         self.name = key
 
@@ -230,7 +247,13 @@ class Field:
         """``value`` as this field stores it, or :class:`EditError`."""
         where = f"{block.name}: " if block is not None else ''
         if self.kind == 'equation':
-            return equation_text(value)
+            text = equation_text(value)
+            if self.least is not None:
+                n = _written_number(text)
+                if n is not None and n < self.least:
+                    floor = 'zero or positive' if self.least == 0 else f'at least {js_number(self.least)}'
+                    raise EditError(f'{where}{self.name} must be {floor} (got {text})')
+            return text
         if self.kind == 'text':
             return str(value)
         if self.kind == 'bool':
@@ -1158,11 +1181,16 @@ class Farfield(Block):
     aw = Field('aw', 'equation', '1000', doc='a_w: flow-wetted surface per unit volume of water, m²/m³ (surface aw).')
     aperture = Field('aperture', 'equation', '0.002',
                      doc='δ: the fracture aperture, m; a_w = 2/δ (surface aperture).')
-    kd_f = Field('kd_f', 'equation', '0', doc='K_d,f: sorption on the fracture coating, m³/m² (per nuclide).')
-    kd_m = Field('kd_m', 'equation', '0', doc='K_d,m: partition coefficient in the rock matrix, m³/kg (per nuclide).')
-    de_m = Field('de_m', 'equation', '1e-4', doc='D_e,m: effective diffusivity in the matrix, m²/[time] (per nuclide).')
-    eps_m = Field('eps_m', 'equation', '0.0018', doc='ε_m: porosity of the rock matrix (per nuclide).')
-    rho_m = Field('rho_m', 'equation', '2700', doc='ρ_m: dry bulk density of the rock matrix, kg/m³.')
+    kd_f = Field('kd_f', 'equation', '0', least=0,
+                 doc='K_d,f: sorption on the fracture coating, m³/m², zero or more (per nuclide).')
+    kd_m = Field('kd_m', 'equation', '0', least=0,
+                 doc='K_d,m: partition coefficient in the rock matrix, m³/kg, zero or more (per nuclide).')
+    de_m = Field('de_m', 'equation', '1e-4', least=0,
+                 doc='D_e,m: effective diffusivity in the matrix, m²/[time], zero or more (per nuclide).')
+    eps_m = Field('eps_m', 'equation', '0.0018', least=0,
+                  doc='ε_m: porosity of the rock matrix, zero or more (per nuclide).')
+    rho_m = Field('rho_m', 'equation', '2700', least=0,
+                  doc='ρ_m: dry bulk density of the rock matrix, kg/m³, zero or more.')
     pe = Field('pe', 'equation', '10', doc='P_e: Peclet number; the dispersion is the travel time over it.')
     pen_dep = Field('pen_dep', 'equation', '12.5', doc='PENDEP: the greatest depth into the matrix modelled, m.')
     pen_dep_0 = Field('pen_dep_0', 'equation', '', doc="PENDEP0: the first matrix layer's thickness, m; "

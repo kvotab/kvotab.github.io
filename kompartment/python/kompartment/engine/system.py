@@ -279,6 +279,13 @@ class System:
         self._lo_t = math.nan
         self._hi_t = math.nan
         self._clock_at = math.nan
+        # The derivative's coefficients are kept by the instant the clock was
+        # worked out for; from a new origin the same instant interpolates to
+        # other values (a segment starts where the last one ended), so they
+        # are worked out again, as the application's derivative always is.
+        assemble = getattr(self, '_assemble', None)
+        if assemble is not None:
+            assemble._key = None
 
     def _clock_into(self, t: float, y: np.ndarray, into: np.ndarray) -> None:
         self._clock(t, y, self.X)

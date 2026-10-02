@@ -772,6 +772,8 @@ class Settings(unittest.TestCase):
                 ({**ok, 'de_m': [1e-5, 0]}, FL.decay_table([1e-3, 1e-4], [(0, 1, 1e-3)]), 'does not diffuse'),
                 (ok, FL.decay_table([1e-3, 1e-4], [(0, 1, 1e-3), (1, 0, 1e-4)]), 'closes on itself'),
                 ({**ok, 'eps_m': 0}, None, 'capacity'),
+                ({**ok, 'kd_f': [0, -1e-9]}, FL.decay_table([1e-3, 1e-4], [(0, 1, 1e-3)]),
+                 'kd_f of #2 must be zero or a positive number'),
                 ({**ok, 'surface': 'volume'}, None, 'wetted surface'),
                 (ok, FL.decay_table([1e-3] * 19, [(k, k + 1, 1e-3) for k in range(18)]), 'at most 16')):
             with self.assertRaises(FL.LaplacePathError) as e:

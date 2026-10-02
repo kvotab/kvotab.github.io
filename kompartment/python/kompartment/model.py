@@ -3951,13 +3951,14 @@ class Model:
         return run_probabilistic(self.project(), iterations=iterations, seed=seed, **opts)
 
     def local_sensitivity(self, parameters: Sequence[str], *, most: Optional[int] = None,
-                          differenced: bool = False) -> Dict[str, Any]:
+                          differenced: bool = False, compiled: Any = 'auto') -> Dict[str, Any]:
         """How every state moves with each parameter named: ``dy/dp`` integrated
         with the model (see :func:`kompartment.engine.localsens.run_sensitivity`).
-        ``parameters`` are slot labels, ``'k'`` or ``'Kd[I-129]'``. Returns
-        ``{'t', 'y', 'sens', 'chosen', 'states', 'stats'}``."""
+        ``parameters`` are slot labels, ``'k'`` or ``'Kd[I-129]'``; ``compiled``
+        as for :meth:`run`, for the model's derivative in the sensitivity
+        equations. Returns ``{'t', 'y', 'sens', 'chosen', 'states', 'stats'}``."""
         from .engine.localsens import run_sensitivity
-        return run_sensitivity(self, parameters, most=most, differenced=differenced)
+        return run_sensitivity(self, parameters, most=most, differenced=differenced, compiled=compiled)
 
     def calibrate(self, targets: Sequence[Mapping[str, Any]], variables: Sequence[Mapping[str, Any]], *,
                   method: Optional[str] = None, max_evals: Optional[int] = None, seed: Optional[int] = None,

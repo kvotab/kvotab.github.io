@@ -18,8 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from .. import jsmath
 from .farfield import (
-    CONTINUES, FARF_DEFAULTS, GRIDS, FarfPath, is_semi_analytic, layer_depths, matched_grid, structure_problem,
-    wetted_surface, zeroin,
+    CONTINUES, FARF_DEFAULTS, GRIDS, FarfError, FarfPath, is_semi_analytic, layer_depths, matched_grid, rock_setting_problem,
+    structure_problem, wetted_surface, zeroin,
 )
 
 
@@ -98,6 +98,11 @@ def _layers_at(F: Any, X: Any, o: int, nm: int, matched: bool) -> Dict[str, Opti
     if not matched:
         return {'d': reference_layers(s['pen_dep'], nm, aw, first), 'h': None}
     lam = (F.D or {}).get('lam') if isinstance(F.D, dict) else None
+    for m in range(len(s['kd_f'])):
+        rock = rock_setting_problem({'kd_f': s['kd_f'][m], 'kd_m': s['kd_m'][m], 'de_m': s['de_m'][m],
+                                     'eps_m': s['eps_m'][m], 'rho_m': s['rho_m']})
+        if rock:
+            raise FarfError(rock)
     nucs = [{'de': de, 'rm': s['eps_m'][m] + s['rho_m'] * s['kd_m'][m],
              'lam': (lam[m] if lam is not None and m < len(lam) else 0.0), 'rf': 1 + s['kd_f'][m] * aw}
             for m, de in enumerate(s['de_m'])]

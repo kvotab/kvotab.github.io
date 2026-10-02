@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..jsonio import js_text
+
 
 class FarfError(ValueError):
     """A far-field path whose settings cannot describe a path."""
@@ -302,6 +304,29 @@ def _surface_problem(s: Dict[str, Any], aw: float) -> Optional[str]:
     return f'F/TW must be positive: it is the flow-wetted surface per unit volume of water (got {_num_text(aw)})'
 
 
+#: The rock's settings, each zero or more and never less (``ROCK_KEYS``):
+#: the sorption on the fracture coating, and the matrix's partition
+#: coefficient, diffusivity, porosity and density.
+ROCK_KEYS = ('kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m')
+_ROCK_TERM = {
+    'kd_f': 'The sorption on the fracture coating K_d,f',
+    'kd_m': 'The partition coefficient in the rock matrix K_d,m',
+    'de_m': 'The effective diffusivity in the rock matrix D_e,m',
+    'eps_m': 'The porosity of the rock matrix \u03b5_m',
+    'rho_m': 'The dry bulk density of the rock matrix \u03c1_m',
+}
+
+
+def rock_setting_problem(s: Dict[str, Any]) -> Optional[str]:
+    """Why one slot's rock settings cannot be used -- the first that is not a
+    number of zero or more -- or None (``rockSettingProblem``)."""
+    for key in ROCK_KEYS:
+        v = s[key]
+        if not (v >= 0) or not math.isfinite(v):
+            return f'{_ROCK_TERM[key]} must be zero or positive (got {js_text(v)})'
+    return None
+
+
 def coefficients(s: Dict[str, Any], grid: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One path's rates for one nuclide: everything the transport matrix is written in.
 
@@ -318,6 +343,9 @@ def coefficients(s: Dict[str, Any], grid: Optional[Dict[str, Any]] = None) -> Di
         raise FarfError(bad)
     if not (s['tw'] > 0) or not math.isfinite(s['tw']):
         raise FarfError(f"The travel time T_w must be positive (got {_num_text(s['tw'])})")
+    rock = rock_setting_problem(s)
+    if rock:
+        raise FarfError(rock)
     r_m = s['eps_m'] + s['rho_m'] * s['kd_m']
     if not (r_m > 0) or not math.isfinite(r_m):
         raise FarfError(
@@ -648,6 +676,27 @@ def geometry_problem(block: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def rock_problem(block: Dict[str, Any]) -> Optional[str]:
+    """The rock's settings ahead of a run (``rockProblem``): each of
+    :data:`ROCK_KEYS` written as a number -- the block's own and every
+    entry's -- is zero or more. An equation is checked as it is worked out, in
+    :func:`coefficients`."""
+    for holder in [block, *(block.get('entries') or [])]:
+        if not isinstance(holder, dict):
+            continue
+        for key in ROCK_KEYS:
+            v = holder.get(key)
+            if v is None or str(v).strip() == '':
+                continue
+            n = _num(v)
+            if not math.isfinite(n) or n >= 0:
+                continue
+            at = '' if holder is block else ' at ' + ', '.join(js_text(x) for x in (holder.get('index') or {}).values())
+            what = _ROCK_TERM[key]
+            return f'{what[0].lower()}{what[1:]} must be zero or positive (got {js_text(v)}{at})'
+    return None
+
+
 def dispersion_warning(g: Dict[str, Any]) -> Optional[str]:
     """A warning when the fracture grid disperses more than the Peclet number asked for."""
     # Worked out exactly, the path disperses as its Peclet number says.
@@ -770,12 +819,17 @@ class FarfPath:
         return s
 
     def _lay_out(self, X: np.ndarray, o: int) -> Dict[str, Any]:
-        """The matched layers of one combination, from every nuclide on it."""
+        """The matched layers of one combination, from every nuclide on it,
+        each one's rock settings checked first: they are in the diffusion
+        depth the layers are sized by."""
         first = self._setting(X, o * self.nnuc)
         aw = wetted_surface(first)
         nucs = []
         for m in range(self.nnuc):
             n = self._setting(X, o * self.nnuc + m)
+            rock = rock_setting_problem(n)
+            if rock:
+                raise FarfError(rock)
             nucs.append({'de': n['de_m'], 'rm': n['eps_m'] + n['rho_m'] * n['kd_m'], 'lam': float(self.lam[m]),
                          'rf': 1 + n['kd_f'] * aw})
         return matched_grid(first['pen_dep'], first['nm'], first['pen_dep_0'], aw, first['tw'], first['pe'], nucs)
@@ -795,12 +849,18 @@ class FarfPath:
                 continue
             if fresh[o]:
                 self.layers[o] = self._lay_out(X, o)
+            # The reference layers follow from settings every nuclide of the
+            # combination shares: worked out with the first slot's rates and
+            # used for the rest, as the compiled refresh does.
+            layers = self.layers[o] if matched else None
             try:
                 for slot in range(lo, hi):
                     if not fresh[o] and not changed[slot]:
                         continue
                     s = self._setting(X, slot)
-                    c = coefficients(s, self.layers[o] if matched else None)
+                    c = coefficients(s, layers)
+                    if layers is None:
+                        layers = {'kind': 'reference', 'd': c['d'], 'h': None}
                     cell_values(g, c, self.vals[slot])
                     release_weights(g, c, self.rel_w[slot])
                     self.seen[slot] = probe[slot]

@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import copy
 import importlib
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List
 from unittest import mock
 
@@ -38,6 +40,12 @@ from kompartment.engine.partition import partition_of, state_partition
 from kompartment.engine.project import Project
 from kompartment.engine.runner import run
 from kompartment.engine.solvers import SolverError
+
+try:
+    import numba  # noqa: F401
+    HAVE_NUMBA = True
+except Exception:  # noqa: BLE001 - optional
+    HAVE_NUMBA = False
 
 S = importlib.import_module('kompartment.engine.split')
 
@@ -393,6 +401,28 @@ class OwnConstants(unittest.TestCase):
         self.assertTrue(self.plan(known={'solve_ms': 10.0, 'gain': 1.3})['use'])
         self.assertFalse(self.plan(known={'solve_ms': 1e6, 'gain': 1.1})['use'])
 
+    def test_a_measured_build_that_does_not_shrink(self) -> None:
+        # A split measured parts that each cost a whole build: the same
+        # solve, weighed with that, is not worth dividing.
+        S_ms, B_ms = 4000.0, 3000.0
+        shrinking = self.plan(known={'solve_ms': S_ms}, build_ms=B_ms)
+        self.assertTrue(shrinking['use'], shrinking['why'])
+        whole_builds = self.plan(known={'solve_ms': S_ms, 'build_fixed': 1.0}, build_ms=B_ms)
+        self.assertFalse(whole_builds['use'], whole_builds['why'])
+        self.assertIn('not enough', whole_builds['why'])
+        # The learned share at the default is the default's prediction, to rounding.
+        same = self.plan(known={'solve_ms': S_ms, 'build_fixed': S.SHARED_WORK}, build_ms=B_ms)
+        self.assertAlmostEqual(same['predicted'], shrinking['predicted'], places=12)
+
+    def test_the_build_share_measured(self) -> None:
+        jobs = [{'states': 10, 'buildMs': 550.0}, {'states': 30, 'buildMs': 650.0}]
+        # Each part paid a whole build (500 ms) and a tenth more.
+        f = S.build_fixed(jobs, 100, 500.0)
+        self.assertAlmostEqual(f, ((1.1 - 0.1) / 0.9 + (1.3 - 0.3) / 0.7) / 2)
+        self.assertEqual(S.build_fixed(jobs, 100, 0.0), None)
+        self.assertEqual(S.build_fixed([{'states': 100, 'buildMs': 1.0}], 100, 1.0), None)
+        self.assertEqual(S.build_fixed([{'states': 10, 'buildMs': 1e9}], 100, 1.0), 2.0)
+
     def test_untimed_needs_a_large_model_of_many_parts(self) -> None:
         big = chains(12, 4, 210)                       # 10,080 states, twelve parts
         project = Project(big)
@@ -515,9 +545,7 @@ class SplitRuns(unittest.TestCase):
         self.assertTrue(python.stats['split']['used'], python.stats['split']['why'])
         self.assertIs(python.stats['compiled'], False)
         self.assertNotIn('compiled_why', python.stats)
-        try:
-            import numba  # noqa: F401
-        except ImportError:
+        if not HAVE_NUMBA:
             return
         # Insisted on: every part compiled. One part built and run here first,
         # so that the processes find its compiled model on disk rather than
@@ -577,6 +605,67 @@ class SplitRuns(unittest.TestCase):
                     self.assertEqual(proc.stdout.split(), ['True', '4'], proc.stderr)
                     with open(marker, encoding='utf-8') as f:
                         self.assertEqual(f.read(), 'top level\n')
+
+    def test_what_auto_learns_is_kept_for_the_next_process(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'split-memory.json')
+            with mock.patch.object(S, 'memory_path', return_value=Path(path)), \
+                    mock.patch.object(S, '_MEMORY_READ', [False]):
+                run(Project(example('biosphere')))
+                self.assertTrue(os.path.isfile(path))
+                with open(path, encoding='utf-8') as f:
+                    kept = json.load(f)
+                self.assertEqual(len(kept), 1)
+                key, entry = next(iter(kept.items()))
+                self.assertIn('|compiled|' if HAVE_NUMBA else '|python|', key)
+                self.assertGreater(entry['solve_ms'], 0)
+                # A process that starts afresh reads it before it plans.
+                S._MEMORY.clear()
+                S._MEMORY_READ[0] = False
+                again = run(Project(example('biosphere')))
+                self.assertRegex(again.stats['split']['why'], r'^a whole solve takes \d+ ms, too short')
+                # Kept apart by path: the Python path has not been timed.
+                python = run(Project(example('biosphere')), compiled=False)
+                if HAVE_NUMBA:
+                    self.assertIn('before a run has been timed', python.stats['split']['why'])
+
+    @unittest.skipUnless(HAVE_NUMBA, 'needs numba')
+    def test_a_run_that_went_to_python_is_not_kept_as_compiled(self) -> None:
+        """A run asked to compile whose model -- or one of whose parts -- went
+        to the Python path measured neither path: auto keeps nothing of it."""
+        from kompartment.engine.compiled import NotCompiled
+        from kompartment.engine.compiled import run as compiled_run
+
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            raise NotCompiled('turned down for the test')
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'split-memory.json')
+            with mock.patch.object(S, 'memory_path', return_value=Path(path)), \
+                    mock.patch.object(S, '_MEMORY_READ', [False]), mock.patch.object(S, '_MEMORY', {}):
+                with mock.patch.object(compiled_run, 'prepare', refuse):
+                    r = run(Project(example('biosphere')))
+                self.assertIs(r.stats['compiled'], False)
+                self.assertEqual(r.stats['compiled_why'], 'turned down for the test')
+                self.assertEqual(S._MEMORY, {})
+                self.assertFalse(os.path.isfile(path))
+                # Compiled, it is kept.
+                run(Project(example('biosphere')))
+                self.assertEqual([k.split('|')[-2] for k in S._MEMORY], ['compiled'])
+
+        class Ran:
+            stats: Dict[str, Any] = {}
+
+        for ran, compiling, kept in ((True, True, True), (False, True, False), (False, False, True),
+                                     (True, False, False), (None, True, True)):
+            Ran.stats = {} if ran is None else {'compiled': ran}
+            self.assertIs(S._ran_as(Ran, compiling), kept, (ran, compiling))
+
+    def test_compiling_is_not_counted_as_solving(self) -> None:
+        r = run(Project(example('biosphere')))
+        self.assertGreaterEqual(r.compile_ms, 0.0)
+        self.assertLessEqual(r.compile_ms, r.timing['solve_ms'])
+        self.assertNotIn('compile_ms', r.timing)   # what a saved run carries is the application's
 
     def test_auto_is_the_default_and_learns(self) -> None:
         model = example('biosphere')

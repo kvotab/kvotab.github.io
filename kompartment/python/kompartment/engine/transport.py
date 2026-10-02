@@ -15,7 +15,6 @@ downstream has to know a chain from a model.
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..equations import EquationSyntaxError, tokenize
@@ -121,13 +120,30 @@ def _plain(block: Dict[str, Any], patch: Optional[Dict[str, Any]] = None) -> Dic
     return out
 
 
-def _rewrite_refs(text: Any, system: str, known: Set[str], replace: Callable[[str], Optional[str]]) -> Any:
+def _tokens(src: str, cache: Optional[Dict[str, Any]]) -> Any:
+    """``tokenize(src)``, or None where it raises -- kept in ``cache`` when
+    one is given, since an expansion reads the same equations again for every
+    transport."""
+    if cache is not None:
+        hit = cache.get(src, cache)
+        if hit is not cache:
+            return hit
+    try:
+        tokens: Any = tokenize(src)
+    except EquationSyntaxError:
+        tokens = None
+    if cache is not None:
+        cache[src] = tokens
+    return tokens
+
+
+def _rewrite_refs(text: Any, system: str, known: Set[str], replace: Callable[[str], Optional[str]],
+                  cache: Optional[Dict[str, Any]] = None) -> Any:
     src = str(text if text is not None else '')
     if not src:
         return src
-    try:
-        tokens = tokenize(src)
-    except EquationSyntaxError:
+    tokens = _tokens(src, cache)
+    if tokens is None:
         return src
     out = []
     cursor = 0
@@ -211,16 +227,20 @@ def expand_transports(project: Any) -> Any:
             known.add(qualified_name(b))
     taken = set(known)
     off: Set[str] = set()
+    tokens: Dict[str, Any] = {}
+    read: Dict[Any, Any] = {}
     for path in paths:
-        _expand_one(project, raw, path, known, taken, off)
-    derived = Project(copy.deepcopy(raw))
+        _expand_one(project, raw, path, known, taken, off, tokens, read)
+    # A Project copies what it is given, so raw needs no copy of its own.
+    derived = Project(raw)
     derived.disabled = set(project.disabled) | set(derived.disabled) | off
     derived.implicitly_disabled = {**project.implicitly_disabled, **derived.implicitly_disabled}
     return derived
 
 
 def _expand_one(project: Any, raw: Dict[str, Any], path: str, known: Set[str], taken: Set[str],
-                off: Set[str]) -> None:
+                off: Set[str], tokens: Optional[Dict[str, Any]] = None,
+                read: Optional[Dict[Any, Any]] = None) -> None:
     parts = transport_parts(project, path)
     switched_off = any(parent_of(n) == path for n in project.disabled)
     if (not parts['begins'] or not parts['ends']) and switched_off:
@@ -264,15 +284,40 @@ def _expand_one(project: Any, raw: Dict[str, Any], path: str, known: Set[str], t
     def pair_names() -> Set[str]:
         return {bq, eq, *([cq] if cq else []), *internal_names, *dependent_names}
 
+    def texts_of(block: Dict[str, Any], keys: List[str]) -> Any:
+        """A block's texts under ``keys``, and the last component of every
+        name they hold -- worked out once for each block in an expansion (the
+        project's blocks do not change while it runs)."""
+        at = (id(block), tuple(keys))
+        got = read.get(at) if read is not None else None
+        if got is None:
+            texts = []
+            for key in keys:
+                if isinstance(block.get(key), str):
+                    texts.append(block[key])
+                for e in block.get('entries') or []:
+                    if isinstance(e.get(key), str):
+                        texts.append(e[key])
+            last: Set[str] = set()
+            for text in texts:
+                for tok in _tokens(str(text), tokens) or ():
+                    if tok.type == 'ident':
+                        last.add(base_name(tok.value))
+            got = (texts, last)
+            if read is not None:
+                read[at] = got
+        return got
+
     def refs_any(block: Dict[str, Any], keys: List[str], names: Set[str]) -> bool:
-        texts = []
-        for key in keys:
-            if isinstance(block.get(key), str):
-                texts.append(block[key])
-            for e in block.get('entries') or []:
-                if isinstance(e.get(key), str):
-                    texts.append(e[key])
+        texts, last = texts_of(block, keys)
+        # A reference keeps its last component whatever it resolves to, so a
+        # block none of whose names ends as one of these refers to none of them.
+        bases = {base_name(n) for n in names}
+        if not any(b in last for b in bases):
+            return False
         for text in texts:
+            if not any(b in text for b in bases):
+                continue
             found = [False]
 
             def note(q: str) -> None:
@@ -280,7 +325,7 @@ def _expand_one(project: Any, raw: Dict[str, Any], path: str, known: Set[str], t
                     found[0] = True
                 return None
 
-            _rewrite_refs(text, path, known, note)
+            _rewrite_refs(text, path, known, note, tokens)
             if found[0]:
                 return True
         return False
@@ -352,14 +397,14 @@ def _expand_one(project: Any, raw: Dict[str, Any], path: str, known: Set[str], t
         return replace
 
     def rewrite(text: Any, e: int) -> Any:
-        return _rewrite_refs(text, path, known, replace_for(e))
+        return _rewrite_refs(text, path, known, replace_for(e), tokens)
 
     def rewrite_entries(entries: Any, key: str, e: int) -> List[Dict[str, Any]]:
         return [({**en, key: rewrite(en[key], e)} if isinstance(en.get(key), str) else dict(en))
                 for en in entries or []]
 
     def rewrite_initial(text: Any, e: int) -> Any:
-        return _rewrite_refs(text, path, known, lambda q: str(e) if q == cq else None)
+        return _rewrite_refs(text, path, known, lambda q: str(e) if q == cq else None, tokens)
 
     def without(lst: List[Dict[str, Any]], names: Set[str]) -> List[Dict[str, Any]]:
         return [b for b in lst if qualified_name(b) not in names]
