@@ -552,6 +552,8 @@
       ob.head.style.setProperty('--fit-color', FIT_COLORS[i % FIT_COLORS.length]);
       if (f.dist === 'kde') { ob.add(ctx.kv([['Bandwidth', f.bandwidth], ['N', f.n]]), ctx.note(f.note), ctx.code(f.code)); return; }
       if (f.note) ob.add(ctx.note(f.note));
+      // the search not converged, or no standard errors: said in words (distribution.py)
+      if (f.warning) ob.add(ctx.warn(f.warning));
       ob.add(ctx.rt({ caption: 'Parameter Estimates', columns: [{ key: 'name', label: 'Parameter', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }, { key: 'se', label: 'Std Error' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - ctx.alpha))}%` }, { key: 'upper', label: `Upper ${fmt(100 * (1 - ctx.alpha))}%` }], rows: f.params }));
       if (f.exact) ob.add(ctx.kv([[`λ, exact ${fmt(100 * (1 - ctx.alpha))}% interval (Garwood)`, `${fmt(f.exact.lower)} to ${fmt(f.exact.upper)}`, 'text']]));
       ob.add(ctx.kv([['−2 log(Likelihood)', -2 * f.loglik], ['AICc', f.aicc], ['BIC', f.bic]]));
@@ -560,11 +562,16 @@
     });
     if (o('fitAll', false)) {
       const r = await ctx.call('distribution.fit_all', { column: col.name });
-      const ob = ctx.outline('Compare Distributions', { parent: outline, key: 'fitall', menu: () => [{ label: 'Remove', action: () => ctx.set('fitAll', false, sc) }] });
+      const ob = ctx.outline('Compare Distributions', { parent: outline, key: 'fitall', info: 'p:distribution:fitall', menu: () => [{ label: 'Remove', action: () => ctx.set('fitAll', false, sc) }] });
       if (r.error) ob.add(ctx.warn(r.error));
-      else ob.add(ctx.rt({ columns: [{ key: 'label', label: 'Distribution', fmt: 'text' }, { key: 'k', label: 'Parameters', fmt: 'int' }, { key: 'm2ll', label: '−2 log L' }, { key: 'aicc', label: 'AICc' }, { key: 'weight', label: 'AICc Weight' }, { key: 'bic', label: 'BIC' }], rows: r.fits.map((x) => ({ ...x, m2ll: -2 * x.loglik })) },
+      else {
+        // a fit whose search did not converge says so in a Note column, there only then
+        const noted = r.fits.some((x) => x.note);
+        ob.add(ctx.rt({ columns: [{ key: 'label', label: 'Distribution', fmt: 'text' }, { key: 'k', label: 'Parameters', fmt: 'int' }, { key: 'm2ll', label: '−2 log L' }, { key: 'aicc', label: 'AICc' }, { key: 'weight', label: 'AICc Weight' }, { key: 'bic', label: 'BIC' },
+          { key: 'note', label: 'Note', fmt: 'text', hidden: !noted }], rows: r.fits.map((x) => ({ ...x, m2ll: -2 * x.loglik })) },
         { onRow: (row) => { const cur = o('fits', []); if (!cur.includes(row.dist)) ctx.set('fits', [...cur, row.dist], sc); } }),
-        ctx.note('Maximum likelihood fits, best first by AICc. Click a line to show that fit.'));
+        ctx.note(`Maximum likelihood fits, best first by AICc. Click a line to show that fit.${noted ? ' A fit whose search did not converge is short of its best: its −2 log L, AICc and BIC are too high, so it ranks lower than it may deserve.' : ''}`));
+      }
     }
   }
 
@@ -905,6 +912,14 @@
       sections: [{ choices: [['Wilson Score', 'inverts the score test; good coverage in general, and JMP\'s'], ['Agresti-Coull', 'the Wald interval about the Wilson centre, z²/2 successes and failures added'], ['Jeffreys', 'the central interval of the Beta(x + ½, n − x + ½) posterior'], ['Clopper-Pearson (exact)', 'from the binomial tails: coverage at least 1 − α, and wider for it'], ['Wald', 'p ± z√(p(1 − p)/n): poor for small counts and near 0 or 1, and no width when a count is 0']] },
         { heading: 'Weights', text: 'With Weight or Freq the counts are sums of weights; the formulas take them as they are.' }],
       more: { label: 'Distribution', id: 'help-p-distribution' },
+    },
+    'p:distribution:fitall': {
+      kicker: 'Distribution', title: 'Compare Distributions',
+      lead: 'Continuous Fit ▸ All fits every distribution the column can have (the positive ones only to values above zero, Beta to values between 0 and 1, the discrete ones to whole numbers) by maximum likelihood, and lists them best first by AICc. AICc Weight is each fit\'s share of exp(−AICc/2) over the list: the weight of evidence for it among these. Click a line to show that fit, with its estimates, standard errors and goodness of fit.',
+      sections: [
+        { heading: 'While it runs', text: 'The fits take a while on a long column (Johnson Su\'s most): the report\'s bar says which distribution is being fitted, how many of them, and the time gone, with Stop.' },
+        { heading: 'Note', text: 'Each fit is a Nelder-Mead search from a start, polished by BFGS. A fit whose search did not converge (the likelihood still rises from where it stopped, as it can on data with few distinct values) says so in a Note column, which is there only then: its −2 log L, AICc and BIC are too high. Searches that end at the edge of a family\'s range (a t whose ν reaches 1000, a negative binomial at its Poisson limit) are at their best and get no note. statsmodels\' own warnings from the searches are left out (Nelder-Mead\'s cap on its steps, which the polish then passes; BFGS at such an edge): the Note says when a search really did not converge.' },
+      ],
     },
     'p:distribution:rate': {
       kicker: 'Distribution', title: 'Test Rate',

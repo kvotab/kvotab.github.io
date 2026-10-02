@@ -8,8 +8,12 @@
 
    A call that names a table sends the table first if the worker has not
    got this version of it. Events: 'status', 'busy', 'log' (Python's
-   output) and 'progress' ({ what, done, total }, from lines a backend
-   prints as 'smui:progress <what> <done> <total>'). The worker runs one call at a time. A call that
+   output), 'begin' (a call starts running in the worker: running holds
+   { id, fn, owner, since }) and 'progress' ({ what, done, total, text,
+   owner }, from lines a backend prints as 'smui:progress <what> <done>
+   <total> [words]', the words saying what it is doing; owner is the one
+   the running call was made for: call(fn, payload, table, { owner })).
+   The worker runs one call at a time. A call that
    runs away can be stopped with restart(): the worker is terminated and
    loaded again, from the browser's cache.
 
@@ -55,6 +59,7 @@
       this.failed = [];
       this.worker = null;
       this.pending = new Map();
+      this.running = null;         // the call Python is running: { id, fn, owner, since }
       this.sent = new Map();
       this.csvSent = new Map();     // table id -> the version whose CSV the notebook's files hold
       this.restarts = 0;
@@ -108,6 +113,7 @@
     restart() {
       if (this.worker) this.worker.terminate();
       this.worker = null;
+      this.running = null;
       this.sent.clear();
       this.csvSent.clear();
       this.restarts++;
@@ -161,7 +167,7 @@
       this.sent.set(table.id, table.version);
     }
 
-    async call(fn, payload = {}, table = null) {
+    async call(fn, payload = {}, table = null, { owner = null } = {}) {
       await this.ready();
       if (!this.names.includes(fn)) throw new Error(`the engine has no ${fn}`);
       this._sync(table);
@@ -171,7 +177,7 @@
       this.emit('busy', this.busy);
       try {
         const json = await new Promise((resolve, reject) => {
-          this.pending.set(id, { resolve, reject, fn });
+          this.pending.set(id, { resolve, reject, fn, owner });
           this.worker.postMessage({ type: 'call', id, fn, payload: body });
         });
         // The code in a result reads the CSV, where a missing value code is
@@ -256,7 +262,12 @@
         this.emit('status', this);
       } else if (m.type === 'fatal') {
         this._fail(m.message, m.traceback);
+      } else if (m.type === 'begin') {
+        const p = this.pending.get(m.id);
+        this.running = { id: m.id, fn: p ? p.fn : null, owner: p ? p.owner || null : null, since: performance.now() };
+        this.emit('begin', this.running);
       } else if (m.type === 'result' || m.type === 'error') {
+        if (this.running && this.running.id === m.id) this.running = null;
         const p = this.pending.get(m.id);
         if (!p) return;
         this.pending.delete(m.id);
@@ -269,10 +280,16 @@
         }
       } else if (m.type === 'log') {
         this.emit('log', m);
-        // 'smui:progress <what> <done> <total>' lines from a long calculation
-        // (Mediation's simulations) become a progress event, not console text.
-        const pm = /^smui:progress\s+(\S+)\s+(\d+)\s+(\d+)/.exec(m.text || '');
-        if (pm) { this.emit('progress', { what: pm[1], done: +pm[2], total: +pm[3] }); return; }
+        // 'smui:progress <what> <done> <total> [words]' lines from a long
+        // calculation (Mediation's simulations, Fit All's distributions)
+        // become a progress event, not console text. Words that are a number
+        // (Fit Model's −2 log likelihood) are the line's own business.
+        const pm = /^smui:progress\s+(\S+)\s+(\d+)\s+(\d+)(?:\s+(.*))?$/.exec(m.text || '');
+        if (pm) {
+          const words = (pm[4] || '').trim();
+          this.emit('progress', { what: pm[1], done: +pm[2], total: +pm[3], text: words && !Number.isFinite(Number(words)) ? words : '', owner: this.running ? this.running.owner : null });
+          return;
+        }
         if (m.stream === 'stderr') console.warn('[python]', m.text); else console.log('[python]', m.text);
       }
     }
@@ -280,6 +297,7 @@
     _fail(text, traceback) {
       clearInterval(this.timer);
       this.timer = null;
+      this.running = null;
       this.state = 'error';
       this.text = text;
       this.traceback = traceback;

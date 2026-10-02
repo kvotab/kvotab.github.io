@@ -101,6 +101,14 @@
       ],
       more: { label: 'Row states', id: 'help-rowstates' },
     },
+    'report:progress': {
+      kicker: 'Report', title: 'Progress',
+      lead: 'An analysis that takes more than a moment shows its progress in the report\'s bar: a bar that moves, what Python is doing and the time gone. Calculations that count their steps (Fit All of Distribution\'s Continuous Fit: one distribution after another) say which step it is on and fill the bar as they go; the others move without a count. The report dims while it runs and is drawn when Python is done.',
+      sections: [
+        { heading: 'Stop', text: 'Stops the analysis. A calculation in Python cannot be interrupted, so Stop restarts the Python engine (a few seconds, from the browser\'s cache): whatever else Python is running stops too, another report\'s analysis or a notebook cell, and each says it was stopped. The tables and the reports stay as they are; Redo runs a stopped analysis again.' },
+        { heading: 'Waiting', text: 'Python runs one analysis at a time. While it is on another report\'s, this one says so and starts when that one is done.' },
+      ],
+    },
     'report:switcher': {
       kicker: 'Report', title: 'Column Switcher',
       lead: 'Swaps one column of the analysis for another with a click, keeping every option of the report: look at each response in turn with the same fits and tests.',
@@ -151,6 +159,7 @@
         'Check the modeling types in the Columns panel: a number that is really a category (a subgroup, a code) should be ordinal or nominal.',
         'Choose an analysis from **Analyze** or **Graph**, put columns into the roles and press OK. The report opens in its own tab.',
         'Open the red triangles (▼ in red) for more: tests, fits, saved columns. Click the grey triangles to close outlines you do not need.',
+        'Looking for a feature? **Search** (at the right end of the menu bar, **Help > Search…**, or ctrl/⌘+K) finds it by a word or two: a menu command, any platform\'s red-triangle item (word cloud finds Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud), an item of an open report, or a help text. Enter goes there: a command runs, an item applies to the report in front, or the platform opens and the item is applied once its report has run.',
         'Select points or bars: the rows are selected in the table and in every other graph. Exclude them (**Rows > Exclude/Unexclude**) and press **Redo**, or turn on **Automatic Recalc**.',
         'Each result computed in Python has its **Python code** under it: what statsmodels was asked and how. The **Python code** button above the report shows or hides all of it. Every graph has code under it that draws it with matplotlib from the table, so an edited graph can be run again; only the interactive ones (the profilers) have none. **Save ▾ > Save Python Script** writes all of it as one script that runs on a CSV export of the table.',
         'The button with four corners at the right end of the menu bar gives the workbench the whole window, without the site\'s header and footer. There the kvot mark at the left of the menu bar goes to kvot\'s home page, and ☀️ or 🌙 beside the button changes between the light and the dark theme. The same button brings the header and footer back, and the page keeps the choice for the next visit.',
@@ -244,12 +253,13 @@
         'A notebook\'s **Save ▾** writes it as a Jupyter notebook (.ipynb) or a Python script (.py).',
         '**Export** writes CSV, tab-separated text or Excel for other programs; a report\'s **Save ▾** writes its Python script, a standalone HTML copy or a Word document (.docx), or prints it.',
         'Nothing is kept by the page itself between visits: save a project before closing the tab.',
-        '**Edit > Undo** (ctrl/⌘+Z in the grid) takes back edits, deleted rows and columns, sorting and row states, thirty steps deep.',
+        '**Edit > Undo** (ctrl/⌘+Z, outside a text field) takes back the last change, thirty steps deep: in a table edits, deleted rows and columns, sorting and row states; in a report the options of its red triangles, Remove, Axis Settings, a filter or a relaunch (the report is run again as it was); and Close Report, which opens it again. Its tab comes to the front. **Edit > Redo** (shift+ctrl/⌘+Z, or ctrl/⌘+Y) does it again. In Graph Builder, ctrl/⌘+Z takes back the builder\'s own changes first, as its Undo button does. A graph\'s size and the code shown are not steps.',
       ]),
 
       h('h2', 'Keyboard', 'keyboard'),
       el('table', null, el('tbody', null, ...[
         ['Grid', 'arrows move; Enter or F2 edits; typing replaces the cell; Tab moves right; Delete clears; ctrl/⌘+C and V copy and paste; ctrl/⌘+Z undo, shift for redo; ctrl/⌘+A selects all rows'],
+        ['Anywhere', 'ctrl/⌘+K opens Search; ctrl/⌘+Z undoes the last change of a table or a report, shift+ctrl/⌘+Z or ctrl/⌘+Y redoes it (in a text field they undo its typing)'],
         ['Menus', 'arrows move and open submenus; Enter chooses; Escape closes'],
         ['Tabs', 'left and right arrows, Home and End, along a group\'s tabs; ctrl/⌘+shift+left or right moves the tab; on the bar between two groups the arrows move it'],
         ['Dialogs', 'Enter is OK, Escape cancels; in a launch dialog Enter puts the selected columns in the first role that takes them; drag the title bar to move a dialog. A click beside a dialog leaves it open.'],

@@ -21,7 +21,11 @@ writes a .docx of the open outlines, tables and graphs, and the page's own
 print leaves the site around the report out; the page draws in the dark
 theme (documents keep the light one) and at phone width; the full window
 (no site header or footer, the kvot mark and the theme switch in the menu
-bar, kept for the next visit from before the workbench is made).
+bar, kept for the next visit from before the workbench is made); a report
+table's bar column; a long run's progress in the report's bar (what Python
+is doing, the time, waiting behind another report, Stop) and in the
+engine's status; Edit > Undo and Redo of report changes and Close Report,
+with real keys, across tables and reports, and Graph Builder's own first.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 ../rb/README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT (defaults 8791, 9291),
@@ -843,7 +847,11 @@ async def main():
         const paras = [...doc.getElementsByTagNameNS(W, 'p')].map(p => ({ style: p.getElementsByTagNameNS(W, 'pStyle')[0]?.getAttribute('w:val') || '', text: [...p.getElementsByTagNameNS(W, 't')].map(x => x.textContent).join('') }));
         const rels = await zip.file('word/_rels/document.xml.rels').async('string');
         return { files, bad: !!doc.querySelector('parsererror'), paras, tables: doc.getElementsByTagNameNS(W, 'tbl').length, pictures: doc.getElementsByTagNameNS(W, 'drawing').length, rels: (rels.match(/relationships\\/image/g) || []).length,
-          png: files.filter(f => f.startsWith('word/media/')).length ? [...(await zip.file('word/media/image1.png').async('uint8array')).slice(0, 4)] : [] };
+          png: files.filter(f => f.startsWith('word/media/')).length ? [...(await zip.file('word/media/image1.png').async('uint8array')).slice(0, 4)] : [],
+          // each table's grid: right after its properties, a column for each the widest row spans, each wider than Word's margins, within the 6.5 in of text
+          grids: [...doc.getElementsByTagNameNS(W, 'tbl')].map((tb) => { const g = [...(tb.getElementsByTagNameNS(W, 'tblGrid')[0] ? tb.getElementsByTagNameNS(W, 'tblGrid')[0].getElementsByTagNameNS(W, 'gridCol') : [])].map((x) => +x.getAttribute('w:w'));
+            const spans = [...tb.getElementsByTagNameNS(W, 'tr')].map((tr) => [...tr.getElementsByTagNameNS(W, 'tc')].reduce((a, tc) => a + +((tc.getElementsByTagNameNS(W, 'gridSpan')[0] || { getAttribute: () => 1 }).getAttribute('w:val')), 0));
+            return { order: [...tb.childNodes].slice(0, 2).map((n) => n.localName), cols: g.length, spans: Math.max(...spans), narrowest: Math.min(...g), sum: g.reduce((a, b) => a + b, 0) }; }) };
       };
       const plain = await read(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
       rep.spec.options.showCode = true;
@@ -866,11 +874,87 @@ async def main():
     check('the outlines are headings', [h for h in r['heads'] if h != 'Quantiles' and h in hs] == [h for h in r['heads'] if h != 'Quantiles'], True)
     check('a closed outline keeps its heading but not its body', ('Quantiles' in hs, sum(1 for x in p['paras'] if x['text'] == '97.5%')), (True, 0))
     check('the open tables are Word tables', p['tables'], r['tables'])
+    check('... each with its grid (w:tblGrid, which Word\'s schema wants), a column for each the widest row spans, within the page', [(g['order'], g['cols'] == g['spans'], g['narrowest'] > 180, g['sum'] <= 9360) for g in p['grids']], [(['tblPr', 'tblGrid'], True, True, True)] * len(p['grids']))
     check('each graph is a picture, with its image part', (p['pictures'], p['rels'], len([f for f in p['files'] if f.startswith('word/media/')])), (r['plots'], r['plots'], r['plots']))
     check('the pictures are PNG', p['png'], [137, 80, 78, 71])
     check('no Python code unless the report shows it', (sum(1 for x in p['paras'] if x['style'] == 'SmCode'), sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode') > 0), (0, True))
     n = sum(1 for x in r['opened']['paras'] if x['style'] == 'SmCode')
     check('... or that block was opened by its heading (and only that one)', 0 < n < sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode'), True)
+
+    # ---- a report table's bar column ({ bar: key }, Text Explorer's count
+    # bars): a bar for each value of zero or more against the largest, the
+    # rows past maxRows too; none for zero, a negative, a missing value or
+    # NaN; a number given as text counts; cellClass marks its cells; sorting
+    # keeps the bars with their rows; it is no data (tbl._rt, Copy Table, Make
+    # into Data Table, Sort by Column), Bootstrap on it takes the column it
+    # draws; hidden: true starts it hidden, Columns shows it; all zero, no bar
+    r = await page.ev('''(async () => {
+      const wait = (ms) => new Promise(r => setTimeout(r, ms));
+      const box = document.createElement('div');
+      box.style.cssText = 'position: fixed; left: 0; top: 0; z-index: 99999; background: #fff;';
+      document.body.append(box);
+      const cols = [{ key: 'name', label: 'Name', fmt: 'text' }, { key: 'v', label: 'Amount' }, { key: 'vb', label: 'Amount Bars', bar: 'v' }];
+      const rows = [{ name: 'a', v: 4 }, { name: 'b', v: 0 }, { name: 'c', v: -2 }, { name: 'd', v: null }, { name: 'e', v: NaN }, { name: 'f', v: '2' }, { name: 'g', v: 1 }, { name: 'h', v: 8 }];
+      const tbl = SM.report.rt({ columns: cols, rows }, { maxRows: 7, cellClass: (r) => (r.name === 'a' ? 'is-mark' : '') });
+      box.append(tbl);
+      const read = () => [...tbl.tBodies[0].rows].filter(tr => tr.cells.length > 1).map(tr => { const c = tr.cells[2], b = c.querySelector('.sm-rt-bar');
+        return [tr.cells[0].textContent, c.dataset.bar, b ? Math.round(b.getBoundingClientRect().width * 100) / 100 : null]; });
+      const shown = read();
+      const more = [...tbl.tBodies[0].rows].pop();
+      const marks = [...tbl.tBodies[0].rows[0].cells].map(c => c.classList.contains('is-mark'));
+      const menuOf = async (node) => {
+        const b = node.getBoundingClientRect();
+        node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 3, clientY: b.y + 3 }));
+        await wait(60);
+        const m = [...document.querySelectorAll('.sm-menu')].pop();
+        const labels = [...m.querySelectorAll('.sm-label')].map(x => x.textContent);
+        const sortBtn = [...m.querySelectorAll('button')].find(x => x.querySelector('.sm-label')?.textContent === 'Sort by Column…');
+        sortBtn.click();
+        await wait(60);
+        const sub = [...document.querySelectorAll('.sm-menu')].pop();
+        const sorts = [...sub.querySelectorAll('.sm-label')].map(x => x.textContent);
+        SM.ui.closeMenus(0);
+        return { labels, sorts };
+      };
+      const menu = await menuOf(tbl.tHead.rows[0].cells[2]);
+      tbl.tHead.rows[0].cells[1].click();
+      const sorted = read();
+      const text = SM.report.rtText({ columns: tbl._rt.columns, rows: tbl._rt.rows }).split('\\n')[0];
+      const made = SM.report.tableFromRT({ columns: tbl._rt.columns, rows: tbl._rt.rows }, 'x').columns.map(c => c.name);
+      const out = { shown, more: [more.cells.length, more.cells[0].colSpan, more.textContent], marks, menu, sorted, data: tbl._rt.columns.map(c => c.label), all: tbl._rt.all.map(c => c.label), text, made };
+      // hidden at the start: no bar cells until Columns shows it
+      const t2 = SM.report.rt({ columns: [cols[0], cols[1], { ...cols[2], hidden: true }], rows: rows.slice(0, 3) });
+      box.append(t2);
+      const before = [t2.tHead.rows[0].cells.length, t2.querySelectorAll('.sm-rt-barcell').length];
+      const b2 = t2.getBoundingClientRect();
+      t2.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b2.x + 3, clientY: b2.y + 3 }));
+      await wait(60);
+      let m = [...document.querySelectorAll('.sm-menu')].pop();
+      [...m.querySelectorAll('button')].find(x => x.querySelector('.sm-label')?.textContent === 'Columns').click();
+      await wait(60);
+      m = [...document.querySelectorAll('.sm-menu')].pop();
+      const item = [...m.querySelectorAll('button')].find(x => x.querySelector('.sm-label')?.textContent === 'Amount Bars');
+      const checkedBefore = item ? item.getAttribute('aria-checked') : null;
+      if (item) item.click();
+      await wait(60);
+      SM.ui.closeMenus(0);
+      out.hidden = { before, checkedBefore, after: [t2.tHead.rows[0].cells.length, t2.querySelectorAll('.sm-rt-barcell').length, t2.querySelectorAll('.sm-rt-bar').length] };
+      // every value zero: tracks without bars
+      const t3 = SM.report.rt({ columns: cols, rows: [{ name: 'x', v: 0 }, { name: 'y', v: 0 }] });
+      box.append(t3);
+      out.zero = [t3.querySelectorAll('.sm-rt-bartrack').length, t3.querySelectorAll('.sm-rt-bar').length, [...t3.querySelectorAll('.sm-rt-barcell')].map(c => c.dataset.bar)];
+      box.remove();
+      return out;
+    })()''')
+    check('a bar column: each value against the largest, a row past maxRows too; none for 0, a negative, missing or NaN; text numbers count',
+          r['shown'], [['a', '0.5', 50], ['b', '0', None], ['c', '0', None], ['d', '0', None], ['e', '0', None], ['f', '0.25', 25], ['g', '0.125', 12.5]])
+    check('... the row of more rows spans it too', r['more'], [1, 3, '… 1 more rows (right click: Make into Data Table)'])
+    check('... cellClass marks its cells as the others', r['marks'], [True, True, True])
+    check('... the menu on its heading: Columns, Bootstrap of the column it draws; Sort by Column without it', (r['menu']['labels'][0], r['menu']['labels'][-1], r['menu']['sorts']), ('Columns', 'Bootstrap Amount…', ['Name', 'Amount']))
+    check('... sorting keeps the bars with their rows (missing last)', r['sorted'], [['c', '0', None], ['b', '0', None], ['g', '0.125', 12.5], ['f', '0.25', 25], ['a', '0.5', 50], ['e', '0', None], ['h', '1', 100]])
+    check('... no data: tbl._rt, Copy Table\'s text, Make into Data Table', (r['data'], r['all'], r['text'], r['made']), (['Name', 'Amount'], ['Name', 'Amount'], 'Name\tAmount', ['Name', 'Amount']))
+    check('... hidden: true starts it hidden, unchecked in Columns, which shows it', r['hidden'], {'before': [2, 0], 'checkedBefore': 'false', 'after': [3, 3, 1]})
+    check('... every value zero: tracks and no bars', r['zero'], [2, 0, ['0', '0']])
 
     # ---- the page's own print (the browser's Print command): only the
     # report in view, flowing over pages
@@ -1409,6 +1493,199 @@ async def main():
     dk = await page.ev("(() => { const g = document.querySelector('.sm-plot-grip'); const cs = getComputedStyle(g); return [cs.color, cs.cursor]; })()")
     check('dark theme: the grip in the dark theme\'s text colour, with the resize cursor', (dk[0] not in ('rgb(0, 0, 0)', ''), dk[1]), (True, 'nwse-resize'))
     check('graph sizes: no script errors', page.errors, [])
+    await page.close()
+    await progress_and_undo()
+
+
+# ---- a long run's progress in the report's bar, and Edit > Undo of report changes
+# A run longer than 0.8 s shows a bar, what Python is doing (Fit All's
+# 'smui:progress' lines: the distribution and how many of them) and the time;
+# the engine's status says how long it has worked; a report waiting behind
+# another's says so; Stop restarts the engine and the report says it stopped;
+# a platform's own progress (data-progress) takes the place. Undo: a red
+# triangle's option undone and redone with real keys (ctrl/⌘+Z, shift, ctrl+Y),
+# named by the item; not in a text field or under a dialog; Close Report and
+# Close All Reports open again; the newest step first, across a table and a
+# report, its tab to the front; a theme change or a plain Redo is no step;
+# Graph Builder's own undo goes first in its report.
+GAMMA = r'''
+(async (n) => {
+  let s = 12345; const u = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const vals = Array.from({ length: n }, () => -3 * (Math.log(u()) + Math.log(u())));
+  SM.app.addTable(new SM.Table({ name: 'Gamma', columns: [{ name: 'g', dataType: 'numeric', values: vals }, { name: 'h', dataType: 'numeric', values: vals.map((v) => 2 * v + 1) }] }));
+  return SM.app.tables.length;
+})
+'''
+
+# Watch a report's bar every 100 ms until it is done: rep is JS giving the report.
+WATCH = r'''
+(async (start) => {
+  const out = [];
+  const tick = (rep) => { const box = rep.progressEl, bar = box.querySelector('progress');
+    return { t: Math.round(performance.now() - t0), hidden: box.hidden, text: box.querySelector('.sm-progress-text')?.textContent || null, time: box.querySelector('.sm-progress-time')?.textContent || null,
+             value: bar && bar.hasAttribute('value') ? [bar.value, bar.max] : null, info: !!box.querySelector('.kvot-info-slot, .info-btn'), pill: SM.app.engineEl.textContent }; };
+  const t0 = performance.now();
+  const reps = (new Function('return (' + start + ')'))();
+  const done = reps.map((r) => new Promise((res) => r.on('done', res)));
+  let finished = 0; done.forEach((d) => d.then(() => { finished++; }));
+  while (finished < reps.length) { out.push(reps.map(tick)); await new Promise((r) => setTimeout(r, 100)); }
+  out.push(reps.map(tick));
+  return { seen: out, msgs: reps.map((rep) => [...rep.body.querySelectorAll('.sm-ob-head')].map((h) => h.textContent.trim()).filter((x) => /Messages/.test(x)).length),
+           empty: reps.map((rep) => rep.progressEl.hidden && !rep.progressEl.children.length) };
+})
+'''
+
+
+def watch_js(start):
+    return f'({WATCH})({json.dumps(start)})'
+
+
+async def progress_and_undo():
+    import re
+    page = await open_page(f'{BASE}/smui.html?example=students', height=950)
+    st = await wait_engine(page)
+    check('progress and undo: engine ready', st, 'ready')
+    await page.ev(f'({GAMMA})(10000)')
+    fams = await page.ev('''(async () => { const t = SM.app.tables.at(-1);
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('g').id] }, options: {} }, t); await new Promise((res) => rep.on('done', res)); SM.app.closeReport(rep, { record: false });
+      return 12; })()''', timeout=600)
+    start = """[(() => { const t = SM.app.tables.at(-1); const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('g').id] }, options: { [t.col('g').id + '|fitAll']: true } }, t); window.__A = rep; return rep; })()]"""
+    r = await page.ev(watch_js(start), timeout=900)
+    seen = [s[0] for s in r['seen']]
+    shown = [s for s in seen if not s['hidden']]
+    fit = [s for s in shown if s['text'] and re.fullmatch(r'Fitting the .+ distribution \((\d+) of (\d+)\)', s['text'])]
+    check('a long run: nothing shows in its first 0.7 s, then the bar does', (all(s['hidden'] for s in seen if s['t'] < 700), bool(shown)), (True, True))
+    check('... what Python is doing: "Fitting the … distribution (k of n)", a bar filling to n', (bool(fit), {s['value'][1] for s in fit if s['value']} == {fams}), (True, True))
+    vals = [s['value'][0] for s in fit if s['value']]
+    check('... the bar only fills', vals == sorted(vals) and len(set(vals)) > 3, True)
+    check('... the time gone, from a second on, and an (i)', (any(s['time'] and re.fullmatch(r'\d+ s', s['time']) for s in shown), all(not s['time'] for s in shown if s['t'] < 1000), all(s['info'] for s in shown)), (True, True, True))
+    check('... the engine\'s status says how long Python has worked', any(re.fullmatch(r'Python · working \d+ s', s['pill']) for s in seen), True)
+    check('... and goes, when the run is done; no statsmodels messages in the report', (r['empty'], r['msgs'], seen[-1]['pill'].startswith('Python · statsmodels')), ([True], [0], True))
+    topic = await page.ev('(() => { const t = SM.info.get("report:progress"); return t ? (t.sections || []).map((s) => s.heading) : null; })()')
+    check('... its (i) explains Stop and waiting', topic, ['Stop', 'Waiting'])
+
+    # two reports at once: one waits while Python is on the other's call
+    start2 = """[(() => { window.__A.cache.clear(); void window.__A.run(); return window.__A; })(), (() => { const t = SM.app.tables.at(-1); const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('h').id] }, options: { [t.col('h').id + '|fitAll']: true } }, t); window.__B = rep; return rep; })()]"""
+    r = await page.ev(watch_js(start2), timeout=900)
+    texts = [[s[k]['text'] for s in r['seen'] if not s[k]['hidden']] for k in (0, 1)]
+    check('two reports at once: the second says it waits while Python fits the first\'s', any(t == 'Waiting for Python: it is on another analysis…' for t in texts[1]), True)
+    check('... and each fits its own when its turn comes', [any(t and t.startswith('Fitting the ') for t in tx) for tx in texts], [True, True])
+
+    # Stop: the engine restarts, the report says it stopped, Redo runs it again
+    r = await page.ev('''(async () => {
+      const rep = window.__A; rep.cache.clear(); const restarts = SM.engine.restarts;
+      const done = new Promise((res) => rep.on('done', res)); void rep.run();
+      for (let i = 0; i < 200 && !(rep.progressEl.querySelector('.sm-progress-text')?.textContent || '').startsWith('Fitting'); i++) await new Promise((r) => setTimeout(r, 50));
+      const before = rep.progressEl.querySelector('.sm-progress-text')?.textContent || null;
+      // a platform's own progress in the bar takes the place
+      const own = document.createElement('span'); own.dataset.progress = ''; rep.bar.append(own);
+      await new Promise((r) => setTimeout(r, 1150)); const ownHides = rep.progressEl.hidden; own.remove();
+      await new Promise((r) => setTimeout(r, 1150)); const back = !rep.progressEl.hidden;
+      const stop = rep.progressEl.querySelector('button'); stop.click();
+      const stopping = rep.progressEl.querySelector('.sm-progress-text')?.textContent || null;
+      await done;
+      const warns = [...rep.body.querySelectorAll('.sm-ob-warn')].map((w) => w.textContent), errors = rep.body.querySelectorAll('.sm-ob-error').length;
+      await SM.engine.ready();
+      const d2 = new Promise((res) => rep.on('done', res)); void rep.run(); await d2;
+      return { before, ownHides, back, stopping, warns, errors, restarted: SM.engine.restarts - restarts, again: [...rep.body.querySelectorAll('.sm-ob-head')].some((h) => h.textContent.trim() === 'Compare Distributions'), warnsAfter: rep.body.querySelectorAll('.sm-ob-warn').length };
+    })()''', timeout=900)
+    check('Stop: during a fit', (r['before'] or '').startswith('Fitting the '), True)
+    check('... a platform\'s own progress in the bar (data-progress) takes the place, and gives it back', (r['ownHides'], r['back']), (True, True))
+    check('... Stop says it is stopping, restarts the engine once, and the report says it stopped (no error)', (r['stopping'], r['restarted'], r['errors'], len(r['warns']) == 1 and bool(re.fullmatch(r'Stopped after \d+ s: Stop restarted the Python engine before the analysis was finished\. Redo runs it again\.', r['warns'][0]))),
+          ('Stopping: the Python engine restarts…', 1, 0, True))
+    check('... Redo runs it again, whole', (r['again'], r['warnsAfter']), (True, 0))
+    await page.ev('SM.app.closeReport(window.__B, { record: false }); SM.app.closeReport(window.__A, { record: false }); SM.app.closeTable(SM.app.tables.find((t) => t.name === "Gamma"))')
+    await asyncio.sleep(0.3)
+
+    # ---- undo: a red triangle's option, with real keys
+    CMD, SHIFT, CTRL = 4, 8, 2
+
+    async def key(k, mods):
+        await page.key(k.upper() if mods & SHIFT else k, code=f'Key{k.upper()}', modifiers=mods)
+        await asyncio.sleep(0.15)
+        await page.ev('(async () => { for (const rep of SM.app.reports) for (let i = 0; i < 200 && rep.body.classList.contains("is-running"); i++) await new Promise((r) => setTimeout(r, 50)); await new Promise((r) => setTimeout(r, 150)); })()', timeout=300)
+
+    STATE = '''(() => { const rep = SM.app.reports.at(-1); const t = SM.app.tables[0]; const id = t.col('height (cm)').id;
+      return { reports: SM.app.reports.length, qq: rep ? rep.spec.options[id + '|qq'] ?? null : null, plot: rep ? [...rep.body.querySelectorAll('.sm-ob-head')].some((h) => h.textContent.trim() === 'Normal Quantile Plot') : null,
+               edit: SM.app.menuItems('Edit').filter((i) => i && i.label).slice(0, 2).map((i) => [i.label, !!i.disabled]), front: SM.app.activeTab ? SM.app.activeTab.kind : null,
+               toast: [...document.querySelectorAll('.sm-toast')].map((x) => x.textContent).at(-1) || null }; })()'''
+    await page.ev('''(async () => { SM.app.undoStack.length = 0; SM.app.redoStack.length = 0; const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('height (cm)').id] }, options: {} }, t); await new Promise((res) => rep.on('done', res)); })()''', timeout=600)
+    s0 = await page.ev(STATE)
+    check('undo: a new report is no step', s0['edit'], [['Undo', True], ['Redo', True]])
+    await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const head = [...rep.body.querySelectorAll('.sm-ob-head')].find((h) => h.querySelector('h2, h3, h4').textContent.trim() === 'height (cm)');
+      head.querySelector('.sm-ob-menu').click(); await new Promise((r) => setTimeout(r, 80));
+      [...document.querySelectorAll('.sm-menu')].pop().querySelectorAll('button').forEach((b) => { if (b.querySelector('.sm-label')?.textContent === 'Normal Quantile Plot') b.click(); });
+      await new Promise((r) => setTimeout(r, 100)); for (let i = 0; i < 200 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 50)); })()''', timeout=300)
+    s1 = await page.ev(STATE)
+    check('a red triangle\'s option is a step, named by its item', (s1['qq'], s1['plot'], s1['edit']), (True, True, [['Undo Normal Quantile Plot', False], ['Redo', True]]))
+    await page.ev('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
+    await key('z', CMD)
+    s2 = await page.ev(STATE)
+    check('⌘Z undoes it: the report runs as it was', (s2['qq'], s2['plot'], s2['edit'], s2['toast']), (None, False, [['Undo', True], ['Redo Normal Quantile Plot', False]], 'Undid: Normal Quantile Plot'))
+    await key('z', CMD | SHIFT)
+    s3 = await page.ev(STATE)
+    check('⇧⌘Z redoes it', (s3['qq'], s3['plot'], s3['toast']), (True, True, 'Redid: Normal Quantile Plot'))
+    await key('z', CTRL)
+    await key('y', CTRL)
+    s4 = await page.ev(STATE)
+    check('ctrl+Z, then ctrl+Y, the same', (s4['qq'], s4['edit'][0][0]), (True, 'Undo Normal Quantile Plot'))
+    # a plain Redo and a theme change are no steps
+    await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const d = new Promise((res) => rep.on('done', res)); rep.run(); await d;
+      KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark'); await new Promise((r) => setTimeout(r, 1500));
+      KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light'); await new Promise((r) => setTimeout(r, 1500)); })()''', timeout=300)
+    s5 = await page.ev('SM.app.undoStack.map((e) => e.label)')
+    check('a plain Redo and a theme change add no step', s5, ['Normal Quantile Plot'])
+    # in a text field ⌘Z is the field's own; under a dialog nothing changes
+    await page.ev('(() => { const i = document.createElement("input"); i.id = "__undo_field"; document.body.append(i); i.focus(); })()')
+    await key('z', CMD)
+    s6 = await page.ev(STATE)
+    await page.ev('document.getElementById("__undo_field").remove()')
+    await page.ev("SM.ui.dialog({ title: 'Probe', body: document.createElement('div'), buttons: [{ label: 'Close', primary: true }] })")
+    await asyncio.sleep(0.2)
+    await page.ev('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
+    await key('z', CMD)
+    s7 = await page.ev(STATE)
+    await page.ev("[...document.querySelectorAll('.sm-dialog')].pop().querySelector('.sm-dialog-foot .primary').click()")
+    await asyncio.sleep(0.2)
+    check('⌘Z in a text field, or under a dialog, leaves the report as it is', (s6['qq'], s7['qq']), (True, True))
+    # a table step and a report step: the newest first, its tab to the front
+    await page.ev('''(() => { const t = SM.app.tables[0]; const c = t.col('height (cm)'); SM.app.recordCells(t, 'Edit Cell', [[0, c.id]]); t.setCell(0, c.id, 999); })()''')
+    await key('z', CMD)
+    s8 = await page.ev('(() => ({ v: SM.app.tables[0].col("height (cm)").values[0], front: SM.app.activeTab.kind, next: SM.app.undoStack.at(-1)?.label }))()')
+    check('the newest step first (a cell edit, from a report\'s tab), its table to the front', (s8['v'] != 999, s8['front'], s8['next']), (True, 'table', 'Normal Quantile Plot'))
+    await key('z', CMD)
+    s9 = await page.ev(STATE)
+    check('... then the report\'s option, its report to the front', (s9['qq'], s9['front']), (None, 'report'))
+    # Close Report opens again, with its options; Redo closes it again
+    await key('z', CMD | SHIFT)
+    await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
+    c1 = await page.ev('({ n: SM.app.reports.length, edit: SM.app.menuItems("Edit").filter((i) => i && i.label)[0].label })')
+    await key('z', CMD)
+    c2 = await page.ev(STATE)
+    check('Close Report is a step: undone, the report opens again as it was', (c1, c2['reports'], c2['qq'], c2['plot'], c2['edit'][1][0]), ({'n': 0, 'edit': 'Undo Close Report'}, 1, True, True, 'Redo Close Report'))
+    await key('z', CMD | SHIFT)
+    c3 = await page.ev('SM.app.reports.length')
+    await key('z', CMD)
+    await page.ev('''(async () => { const t = SM.app.tables[0]; const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [t.col('weight (kg)').id] }, options: {} }, t); await new Promise((res) => rep.on('done', res)); })()''', timeout=600)
+    REPS = 'JSON.stringify(SM.app.reports.map((r) => r.title + " " + JSON.stringify(r.spec.roles.y.map((id) => r.table.col(id).name))).sort())'
+    c_before = await page.ev(REPS)
+    await page.ev("SM.app.menuItems('File').flatMap((i) => (i && i.submenu ? (typeof i.submenu === 'function' ? i.submenu() : i.submenu) : [i])).find((i) => i && i.label === 'Close All Reports').action()")
+    c4 = await page.ev('({ n: SM.app.reports.length, label: SM.app.undoStack.at(-1)?.label })')
+    await key('z', CMD)
+    c5 = await page.ev(REPS)
+    check('... Redo closes it again; Close All Reports is one step, undone they all open', (c3, c4, json.loads(c5) == json.loads(c_before), len(json.loads(c5))), (0, {'n': 0, 'label': 'Close All Reports'}, True, 2))
+    # Graph Builder: its own undo goes first in its report
+    r = await page.ev('''(async () => { const t = SM.app.tables[0]; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); const gb = SM.platforms.get('graphbuilder').builder(rep);
+      await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
+      await new Promise((r) => setTimeout(r, 300));
+      return { label: SM.app.menuItems('Edit').filter((i) => i && i.label)[0].label, x: (gb.state().zones.x || []).length }; })()''', timeout=600)
+    await page.ev('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
+    await key('z', CMD)
+    g1 = await page.ev('(() => { const rep = SM.app.reports.at(-1); const gb = SM.platforms.get("graphbuilder").builder(rep); return { x: (gb.state().zones.x || []).length, reports: SM.app.reports.length }; })()')
+    check('Graph Builder: ⌘Z takes back the builder\'s own change first', (r['label'], r['x'], g1), ('Undo Graph Builder Change', 1, {'x': 0, 'reports': 3}))
+    check('progress and undo: no script errors', page.errors, [])
     await page.close()
 
 

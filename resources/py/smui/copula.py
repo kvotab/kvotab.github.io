@@ -1295,7 +1295,7 @@ def margins(table, columns, rows=None, choice=None, alpha=0.05, table_name='data
             msgs = [str(w.message) for w in caught if not issubclass(w.category, (DeprecationWarning, FutureWarning))]
             cands.append({'dist': key, 'label': r['label'], 'k': r['k'], 'loglik': r['loglik'], 'aicc': r['aicc'], 'bic': r['bic'],
                           'params': r['params'], 'values': [p['estimate'] for p in r['params']], 'curve': r.get('curve'),
-                          'warning': msgs[0] if msgs else None})
+                          'warning': r.get('warning') or (msgs[0] if msgs else None)})
         cands.sort(key=lambda f: f['aicc'] if f['aicc'] is not None and np.isfinite(f['aicc']) else np.inf)
         best = cands[0]['aicc'] if cands else None
         for f in cands:

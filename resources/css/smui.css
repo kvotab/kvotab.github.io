@@ -384,6 +384,12 @@
 }
 .sm-reportbar .sm-spacer { flex: 1 1 auto; }
 .sm-reportbar .sm-reportnote { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* a run that takes a while (Report._progressBegin): a bar, what Python is doing, the time gone, Stop */
+.sm-progress { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; font-size: 11.5px; color: var(--text-secondary); }
+.sm-progress-bar { flex: none; width: 96px; height: 8px; accent-color: var(--color-kvot-accent); }
+.sm-progress-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-progress-time { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) { .sm-progress { flex-basis: 100%; } .sm-progress-bar { width: 64px; } }
 .sm-reportbody { overflow: auto; padding: 10px 14px 40px; }
 .sm-reportbody.is-running { opacity: 0.6; }
 
@@ -432,6 +438,14 @@
 .sm-rt tbody tr:hover td { background: color-mix(in oklab, var(--sm-sel-bg) 40%, transparent); }
 .sm-rt.sortable thead th { cursor: pointer; }
 .sm-rt tfoot td { font-size: 11px; color: var(--text-muted); text-align: left; border-bottom: 0; }
+/* A bar column (rt's { bar }): a track of fixed width, the bar from its left
+   edge in the histograms' colour (SM.report.BAR), rounded at its end; it
+   prints, as the report's own colours do. The count beside it carries the
+   value, so the pale bar on white (2.4:1) is no loss. */
+.sm-rt td.sm-rt-barcell { vertical-align: middle; }
+.sm-rt-bartrack { display: block; width: 100px; height: 10px; }
+.sm-rt-bar { display: block; height: 100%; min-width: 1px; background: #8fa9c2; border-radius: 0 4px 4px 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@media (max-width: 560px) { .sm-rt-bartrack { width: 64px; } }
 .sm-kv { border-collapse: collapse; font-size: 12px; margin: 2px 0 8px; }
 .sm-kv td { padding: 1.5px 0; border-bottom: 1px solid color-mix(in oklab, var(--border-color) 55%, transparent); }
 .sm-kv td:first-child { padding-right: 18px; color: var(--text-primary); white-space: nowrap; }

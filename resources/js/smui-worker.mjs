@@ -20,6 +20,8 @@
      { type: 'ready', versions, names, failed }
      { type: 'loading', text }              a package a call needs, on its first use
      { type: 'loaded', versions }           ... and when it is in (versions of what came)
+     { type: 'begin', id }                  a call or cell starts running (the ones
+                                            before it are done): its progress lines are its own
      { type: 'result', id, json }  or  { type: 'error', id, message, traceback }
      { type: 'log', stream, text }          Python's stdout and stderr
 
@@ -146,9 +148,10 @@ async function handle(msg) {
     }
     return null;
   }
-  if (msg.type === 'nbrun') return notebookCell(msg);
+  if (msg.type === 'nbrun') { post({ type: 'begin', id: msg.id }); return notebookCell(msg); }
   if (msg.type === 'call' || msg.type === 'callb') {
     if (!dispatch) { post({ type: 'error', id: msg.id, message: 'the engine is not ready' }); return null; }
+    post({ type: 'begin', id: msg.id });
     try {
       await ensurePackages(msg.fn);
       let json;

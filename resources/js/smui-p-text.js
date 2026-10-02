@@ -6,7 +6,8 @@
 
      Summary Counts           terms, cases (documents), tokens, tokens per
                               case, the portion of cases with a term
-     Term and Phrase Lists    the terms and phrases with their counts,
+     Term and Phrase Lists    the terms and phrases with their counts (a
+                              bar of each term's count against the largest),
                               sortable; a click selects the rows that hold
                               them, a right click adds a stop word, recodes,
                               adds a phrase or shows the texts
@@ -265,8 +266,10 @@
   function listsOutline(ctx, S, parent, code) {
     const { res } = S;
     const ob = ctx.outline('Term and Phrase Lists', { parent, key: K(S, 'lists'), info: 'p:text:lists', menu: () => listsMenu(ctx, S) });
+    // a bar of each count right of it, the most frequent term's the longest
     const terms = ctx.rt({
-      columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'cases', label: 'Cases', fmt: 'int', hidden: true, title: 'the documents that hold the term' }],
+      columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'countBar', label: 'Count Bars', bar: 'count' },
+        { key: 'cases', label: 'Cases', fmt: 'int', hidden: true, title: 'the documents that hold the term' }],
       rows: res.terms,
     }, { caption: 'Term List', key: K(S, 'terms'), name: 'Term List', maxRows: 1000, onRow: (r, ev) => pick(ctx, S, 'term', r.term, ev), cellClass: (r) => (S.chosen.has(r.term) ? 'sm-tx-chosen' : '') });
     const phrases = ctx.rt({
@@ -1618,6 +1621,7 @@
       kicker: 'Text Explorer', title: 'Term and Phrase Lists',
       lead: 'Every term with its count (the number of times it occurs; the Cases column, from the right-click Columns menu, counts the documents that hold it), and the phrases: runs of two to Maximum Words per Phrase tokens that occur at least twice and neither begin nor end with a stop word. Most frequent first; click a heading to sort.',
       sections: [
+        { heading: 'Count Bars', text: 'The bar right of each term\'s count is as long as the count against the largest: the most frequent term\'s bar is full, a term half as frequent has half a bar. Sorting the list keeps each bar with its term. Right click a heading of the list, Columns, to hide the bars; Copy Table and Make into Data Table leave them out.' },
         { heading: 'Selecting', text: 'A click on a term or phrase selects the rows that hold it; shift adds, ctrl/⌘ toggles. The chosen terms are what Show Text and Save Document Term Matrix take.' },
         { heading: 'Right click', choices: [['Show Text', 'The texts of the rows, with the words marked (every word of a stem).'], ['Add Stop Word', 'Leaves the term out from now on.'], ['Recode', 'Counts the term as another (to combine spellings).'], ['Add Phrase', 'Counts a phrase as one term; its words lose those occurrences.']] },
         { heading: 'Show Text', choices: [['Select These Rows', 'Selects every row the dialog lists, the ones beyond the first 500 shown too.'], ['Close', 'Closes the dialog; the selection stays as it is.']] },
@@ -1717,7 +1721,7 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'text', label: 'Text Explorer', menu: 'Analyze', order: 40, info: 'p:text', topics: TOPICS,
-    about: 'The words of a column of text, as JMP\'s Text Explorer counts them: tokenizing by built-in patterns, basic words or your own regular expression; scikit-learn\'s English stop words; Snowball\'s English (Porter2) stemmer, as JMP\'s, or Porter\'s (for combining or for all terms); Summary Counts, the Term and Phrase Lists (linked to the rows, with Select Contains, Select Contained and Containing Phrases), a word cloud, stop words, recodes and phrases of your own, Show Text; latent class analysis (a Bernoulli mixture of the binary document term matrix by EM, with its term probabilities, top terms, an MDS map of the clusters and saved clusters); latent semantic analysis (the SVD of the document term matrix with JMP\'s weightings, Centered and Scaled by default, documents and terms linked to the rows, a scatterplot matrix, the terms and documents clustered by Ward\'s method); topic analysis by varimax-rotated SVD, NMF or LDA; term selection (an elastic net of a response on the terms, chosen by AICc); sentiment analysis by VADER; and the document term matrix (also stacked, for Association Analysis), singular vectors and topic scores saved.',
+    about: 'The words of a column of text, as JMP\'s Text Explorer counts them: tokenizing by built-in patterns, basic words or your own regular expression; scikit-learn\'s English stop words; Snowball\'s English (Porter2) stemmer, as JMP\'s, or Porter\'s (for combining or for all terms); Summary Counts, the Term and Phrase Lists (a bar of each term\'s count; linked to the rows, with Select Contains, Select Contained and Containing Phrases), a word cloud, stop words, recodes and phrases of your own, Show Text; latent class analysis (a Bernoulli mixture of the binary document term matrix by EM, with its term probabilities, top terms, an MDS map of the clusters and saved clusters); latent semantic analysis (the SVD of the document term matrix with JMP\'s weightings, Centered and Scaled by default, documents and terms linked to the rows, a scatterplot matrix, the terms and documents clustered by Ward\'s method); topic analysis by varimax-rotated SVD, NMF or LDA; term selection (an elastic net of a response on the terms, chosen by AICc); sentiment analysis by VADER; and the document term matrix (also stacked, for Association Analysis), singular vectors and topic scores saved.',
     uses: ['sklearn.feature_extraction.text (CountVectorizer, ENGLISH_STOP_WORDS)', 'sklearn.decomposition (TruncatedSVD, PCA, NMF, LatentDirichletAllocation)', 'sklearn.linear_model.ElasticNet (Term Selection)', 'scipy.sparse', 'scipy.cluster.hierarchy.linkage (Ward)', 'vaderSentiment (MIT, from PyPI when used)', 'the Snowball and Porter stemmers, the latent class EM and the varimax rotation, written here'],
     launch: {
       lead: 'Choose one or more character columns. Each text is split into words; the words that are not stop words are counted as terms.',

@@ -2354,6 +2354,8 @@
       let ui = UI.get(ctx.report);
       if (!ui) { ui = { filter: '', sel: null, undo: [] }; UI.set(ctx.report, ui); }
       this.ui = ui;
+      // Edit > Undo and ctrl/⌘+Z in this report take back the builder's own last change first (smui-app.js)
+      if (!ctx.headless) ctx.report.localUndo = { label: 'Graph Builder Change', can: () => ui.undo.length > 0, undo: () => this.undo() };
       this.S = normalize(clone(ctx.opt('gb', null)), this.t);
       this.seq = 0;
       this.busy = 0;

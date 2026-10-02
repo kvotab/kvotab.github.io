@@ -263,7 +263,8 @@
     const text = el('span', { role: 'status', style: { fontSize: '11.5px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' } });
     const stop = el('button', { type: 'button', class: 'sm-btn small', text: 'Stop',
       title: 'Stop the fit. A calculation in Python cannot be interrupted: this restarts the Python engine, as the notebook\'s Stop does, and stops whatever else it is running.' });
-    const box = el('span', { class: 'sm-mx-progress', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: '0', maxWidth: '100%' } }, text, stop);
+    // data-progress: the report's own progress (smui-report.js) steps aside for this one
+    const box = el('span', { class: 'sm-mx-progress', 'data-progress': '', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: '0', maxWidth: '100%' } }, text, stop);
     const say = () => {
       if (st.stopped) { text.textContent = 'Stopping: the Python engine restarts…'; return; }
       const who = label ? `${label}: ` : '';

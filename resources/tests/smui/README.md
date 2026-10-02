@@ -25,7 +25,7 @@ with the page's own formula engine need `node` (skipped without it):
 
 | Suite | Checks | Against |
 |---|---|---|
-| `test_distribution.py` | 165 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out |
+| `test_distribution.py` | 173 | scipy/statsmodels directly, JMP's quantile definition, Garwood and DescTools rate intervals; the one-sample effect size and Bayes factor, the binomial Bayes factor; the code on the whole table's CSV leaves out the rows the report leaves out; Fit All's searches (no statsmodels warnings, a search that did not converge named by a short Powell search, its progress lines, the single fits' AICc) |
 | `test_models.py` | 71 | NIST Longley, anova_lm type III, JMP's ANCOVA design built by hand; the formula text of a model (Match codes, centred crossings, By) evaluated by the page's formula engine (needs node) |
 | `test_io.py` | 11 | a Stata file written by pandas (its value labels as the coded column's Value Labels), statsmodels.datasets |
 | `test_jmp.py` | 53 | JMPReader.jl's own test tables and the values its runtests.jl expects (the tables are not ours: `fetch-jmp-fixtures.py` puts them in `local/jmp/`, git-ignored; skipped without them); the table scripts JMP 18.2 wrote in them, a copy with its script block rewritten in place, a damaged block |
@@ -83,8 +83,8 @@ since 1970) and text in the CSV: code that uses one gets, after its
 code, and `SM.report.datedCode` for code the page writes); code that parses
 the column itself (`pd.to_datetime(df[...])`, a Time ID) is left to it.
 
-Browser suites, and their checks on 2026-09-30: association 56, bootstrap 58, calculators 58, circular 276, compare 194, copula 249, core 216, counts 304, distribution 186, dnd 123, dock 75, doe 298, embedding 124, ensemble 407, fitmodel 846, fitybyx 655, gam 387, gaussproc 217, graph 1186, hostile 16, jsl 24, learners 598, mediation 397, meta 431, mixed 196, mixtures 297, multits 464, multivariate 1526, neural 346, notebook 49, partition 695, pls 684, profiler 32, quality 539, screening 297, scripts 59, survival 414, tables 251, text 363, timeseries 1639, treatment 346, uplift 232
-(15,810 in 42 suites in all).
+Browser suites, and their checks on 2026-09-30 (core, distribution, search, tables and text on 2026-10-02): association 56, bootstrap 58, calculators 58, circular 276, compare 194, copula 249, core 252, counts 304, distribution 192, dnd 123, dock 75, doe 298, embedding 124, ensemble 407, fitmodel 846, fitybyx 655, gam 387, gaussproc 217, graph 1186, hostile 16, jsl 24, learners 598, mediation 397, meta 431, mixed 196, mixtures 297, multits 464, multivariate 1526, neural 346, notebook 49, partition 695, pls 684, profiler 32, quality 539, screening 297, scripts 59, search 104, survival 414, tables 252, text 390, timeseries 1639, treatment 346, uplift 232
+(15,984 in 43 suites in all).
 
 Browser tests drive headless Chrome over the DevTools protocol (`cdp.py`,
 needs the `websockets` package). Start a server on the repository root and
@@ -135,6 +135,7 @@ every run fetches the page's own files fresh.
 | `resources/js/smui-colprops.js` | `SM.colprops`: the column properties' editors in Column Info and Cols > Column Properties (Missing Value Codes, Value Labels, Profit Matrix), and Cols > Preselect Role |
 | `resources/js/smui-scripts.js` | `SM.scripts`: table scripts, as JMP keeps them (the Table panel's list, Save Script to Data Table, a script run by its columns' names) |
 | `resources/js/smui-axis.js` | `SM.axis`: Axis Settings on every report graph (log scale, range, increment, reverse order, reference lines), kept in `spec.options.axisSettings` and written into the graph's code |
+| `resources/js/smui-search.js`, `resources/css/smui-search.css` | `SM.search`: Help > Search… (ctrl/⌘+K, the magnifier at the right of the menu bar): the menu commands, every platform's red-triangle items (read from a stand-in report that is never run: no action is called, no call reaches Python), the open reports' items and the help, ranked by where the words are; choosing one runs it, applies it to the report in front, or launches the platform and applies it once its report has run |
 | `resources/js/smui-help.js` | the Help tab and the (i) topics of the frame |
 | `resources/js/smui-profiler.js` | `SM.profiler`: the Prediction Profiler of any model a backend exposes |
 | `resources/js/smui-bootstrap.js` | `SM.bootstrap`: Bootstrap from any report table's right-click menu, and the Bootstrap report |
@@ -275,7 +276,14 @@ it builds outlines into the report:
   joins the same table of every group). A column with `hidden: true` is an
   optional one the reader can show from the right-click Columns menu (as
   JMP's Std Beta or VIF); `opts.cellClass(row, column)` gives a cell its
-  own classes (a minimum marked, a colour-map cell). `ctx.kv(pairs)`, `ctx.note(text)`,
+  own classes (a minimum marked, a colour-map cell). A column
+  `{ key, label, bar: 'count' }` draws a bar of the `count` column's
+  values of zero or more in each row, its length the value against the
+  largest in the table (Text Explorer's Count Bars): its heading is empty,
+  `label` names it in Columns, and it is no data (`tbl._rt`, Copy Table,
+  Make into Data Table and Sort by Column leave it out; Bootstrap on it
+  takes the column it draws); Save Report as HTML, Print and Save Report
+  as Word draw it. `ctx.kv(pairs)`, `ctx.note(text)`,
   `ctx.warn(text)`, `ctx.code(text)`, `ctx.row(...nodes)` side by side.
   Save Python Script collects the code of every call, and what `ctx.code`
   shows beyond that (code worked out in the page).
@@ -523,12 +531,25 @@ So a platform's render must get everything a table shows from its calls
 and options, not from side effects; it may test `ctx.headless` to skip
 work no table needs. The table is found again by its outline titles and
 its place, its rows by their text columns.
-  A long fit prints `smui:progress <what> <done> <total>` lines (the engine
-  turns them into 'progress' events). Fit Model's mixed fits tag theirs:
+  A long fit prints `smui:progress <what> <done> <total> [words]` lines (the
+  engine turns them into 'progress' events, with the call's owner: the
+  report whose `ctx.call` made it). Every report's bar shows a run longer
+  than 0.8 s (`Report._progressBegin`): a bar, the words ("Fitting the
+  Weibull distribution", shown as "… (3 of 12)") or the counts of its own
+  calls' lines, the time gone, and Stop, which restarts the engine; the
+  report then says it stopped, and its other By groups are not analysed.
+  Words that are a number are not shown. Fit Model's mixed fits tag theirs:
   `reml:<tag> <iteration> 250 <−2LL>`, `remlinfo:<tag> <done> <total>` and
   `rspl:<tag> <iteration> 100`, the tag being `fitmodel.mixed`'s `progress`
-  argument, so a report shows only its own; after a second the report's
-  bar shows them, with a Stop that restarts the engine.
+  argument, and show them in the bar themselves, with their own Stop: an
+  element of the bar marked `data-progress` makes the core's step aside.
+  Edit > Undo takes back a report's changes: a run that starts from another
+  spec than the last run's is a step (named by the menu item chosen since),
+  put back with `Report.restoreSpec` and run again. A platform that keeps
+  state in the spec without a run (Graph Builder's `gb`; a graph's size,
+  the code shown) is left out of it (`UNDO_SKIP` in smui-report.js); one
+  with its own undo sets `report.localUndo = { label, can(), undo() }`,
+  which Edit > Undo and ctrl/⌘+Z use first while its report is in front.
 
 ## What the core test checks
 

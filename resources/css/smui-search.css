@@ -1,0 +1,87 @@
+/* ==========================================================================
+   SMUI.HTML: SEARCH (smui-search.js)
+
+   The magnifier at the right end of the menu bar, and the search dialog: a
+   field, what was found (a listbox: each result its name with the words
+   found marked, its path, a badge of its kind and a line of its help), and
+   with nothing typed the recent searches and a few to try. On a phone the
+   dialog is the whole screen, as the page's other dialogs are (smui.css).
+   Colours are kvot.css's tokens, so both themes work.
+   ========================================================================== */
+
+/* ---- the menu bar's button: a small field-like pill ---------------------- */
+.sm-menuend > .sm-searchbtn {
+  gap: 6px;
+  margin: 4px 6px 4px 2px;
+  padding: 0 7px 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.sm-menuend > .sm-searchbtn:hover { border-color: var(--color-kvot-accent); background: var(--bg-primary); color: var(--text-primary); }
+.sm-menuend > .sm-searchbtn:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
+.sm-searchbtn-glyph { flex: none; }
+.sm-searchbtn-key { padding: 0 4px; border: 1px solid var(--border-color); border-radius: 3px; font: inherit; font-size: 10.5px; line-height: 15px; color: var(--text-muted); }
+
+/* ---- the dialog ------------------------------------------------------------------ */
+@media (min-width: 761px) {
+  .sm-dialog.sm-search-dialog { width: min(680px, 100%); }
+}
+.sm-search-dialog .sm-dialog-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 10px 12px 12px; }
+.sm-search { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.sm-search-field { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--input-border); border-radius: 5px; background: var(--input-bg); color: var(--text-muted); }
+.sm-search-field:focus-within { border-color: var(--color-kvot-accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-kvot-accent) 28%, transparent); }
+.sm-search-glyph { flex: none; }
+.sm-search-input { flex: 1 1 auto; min-width: 0; padding: 8px 0; border: 0; outline: none; background: none; color: var(--input-text); font: inherit; font-size: 14px; }
+.sm-search-input::placeholder { color: var(--text-muted); opacity: 1; }
+.sm-search-status { min-height: 16px; margin: 6px 2px 4px; font-size: 11.5px; color: var(--text-muted); }
+
+/* the results: the one marked (keys or mouse) with a bar at its left */
+.sm-search-list { flex: 0 1 auto; min-height: 0; max-height: min(62vh, 560px); overflow-y: auto; margin: 0; padding: 0; list-style: none; overscroll-behavior: contain; }
+.sm-search-opt { position: relative; padding: 6px 10px 7px 12px; border-radius: 4px; cursor: pointer; }
+.sm-search-opt[aria-selected="true"] { background: color-mix(in oklab, var(--color-kvot-bright) 22%, var(--bg-surface)); box-shadow: inset 3px 0 0 var(--color-kvot-accent); }
+/* on the dark surface 22% of the beige left the path and the help line at 3.8:1; 10% keeps them at 4.7:1 (the accent bar still marks the row) */
+[data-theme="dark"] .sm-search-opt[aria-selected="true"] { background: color-mix(in oklab, var(--color-kvot-bright) 10%, var(--bg-surface)); }
+.sm-search-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.sm-search-label { flex: 1 1 auto; min-width: 0; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.sm-search-badge { flex: none; padding: 0 7px; border: 1px solid var(--border-color); border-radius: 9px; font-size: 10.5px; line-height: 16px; color: var(--text-secondary); white-space: nowrap; }
+.sm-search-opt[data-kind="triangle"] .sm-search-badge, .sm-search-opt[data-kind="live"] .sm-search-badge, .sm-search-opt[data-kind="common"] .sm-search-badge { color: var(--accent-text); border-color: color-mix(in oklab, var(--accent-text) 40%, var(--border-color)); }
+.sm-search-key { flex: none; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.sm-search-state { flex: none; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.sm-search-state.is-on { color: var(--accent-text); font-weight: 600; }
+.sm-search-path { margin-top: 1px; font-size: 11.5px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.sm-search-sep { color: var(--text-muted); }
+.sm-search-gen { font-style: italic; color: var(--text-muted); }
+.sm-search-snip, .sm-search-why { margin-top: 2px; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-search-opt[aria-selected="true"] .sm-search-snip, .sm-search-opt[aria-selected="true"] .sm-search-gen { color: var(--text-secondary); }
+.sm-search-hint { color: var(--text-secondary); }
+.sm-search-why { font-style: italic; color: var(--text-secondary); }
+.sm-search-opt.is-off .sm-search-label { color: var(--text-secondary); font-weight: 500; }
+/* the words found: underlined in the accent, which reads on the marked row in both themes */
+.sm-search mark { background: none; color: inherit; font-weight: 700; text-decoration: underline; text-decoration-color: var(--color-kvot-accent); text-decoration-thickness: 2px; text-underline-offset: 2px; }
+/* a result that cannot be chosen now, chosen: it flashes, and the line above says why */
+.sm-search-opt.is-told { animation: sm-search-told 0.5s ease-out; }
+@keyframes sm-search-told { 30% { box-shadow: inset 3px 0 0 var(--color-kvot-accent), 0 0 0 2px var(--color-kvot-accent); } }
+@media (prefers-reduced-motion: reduce) { .sm-search-opt.is-told { animation-duration: 0.01s; } }
+
+/* nothing typed, nothing found */
+.sm-search-start, .sm-search-none { padding: 4px 2px 2px; font-size: 12px; line-height: 1.55; color: var(--text-secondary); }
+.sm-search-start p, .sm-search-none p { margin: 0 0 8px; }
+.sm-search-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; }
+.sm-search-chiplabel { min-width: 52px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.sm-search-chip { max-width: 100%; padding: 2px 10px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-search-chip:hover, .sm-search-chip:focus-visible { border-color: var(--color-kvot-accent); outline: none; }
+
+/* ---- a phone: the button a magnifier only; the list fills the screen ---------------- */
+@media (max-width: 760px) {
+  .sm-menuend > .sm-searchbtn { margin: 4px 2px; padding: 0 9px; }
+  .sm-searchbtn-text, .sm-searchbtn-key { display: none; }
+  .sm-search-input { font-size: 16px; }            /* iOS zooms into a field under 16 px */
+  .sm-search-list { flex: 1 1 auto; max-height: none; }
+  .sm-search-chip { font-size: 14px; padding: 4px 12px; }
+  /* a long badge (Red triangle · Generalized Additive Model) goes under the label rather than squeeze it to a word a line */
+  .sm-search-top { flex-wrap: wrap; row-gap: 2px; }
+  .sm-search-label { flex: 1 1 12em; }
+}

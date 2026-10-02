@@ -39,6 +39,22 @@
   const BAR = '#8fa9c2';
   const SELECTED = '#d9822b';
 
+  // What Edit > Undo leaves alone in a report's spec: what changes without a
+  // run and is no analysis (a graph's size, the code shown), and Graph
+  // Builder's state, which its own Undo takes back.
+  const UNDO_SKIP = ['plotSizes', 'showCode', 'gb'];
+  function specKey(spec) {
+    const options = { ...((spec && spec.options) || {}) };
+    for (const k of UNDO_SKIP) delete options[k];
+    return JSON.stringify({ ...spec, options });
+  }
+
+  // A run longer than this (ms) shows its progress in the report's bar.
+  const PROGRESS_AFTER = 800;
+  const RUNNING = new Set();      // the reports with a run going
+  // seconds as the bar says them: 7 s, 1 min 05 s
+  const elapsed = (s) => (s < 60 ? `${Math.floor(s)} s` : `${Math.floor(s / 60)} min ${String(Math.floor(s % 60)).padStart(2, '0')} s`);
+
   /* ---- formatting a cell ----------------------------------------------------- */
   function cellText(v, f = 'num', col = {}, alpha = 0.05) {
     if (f === 'text') return v == null ? '' : String(v);
@@ -71,10 +87,12 @@
         this.menuBtn.addEventListener('click', (ev) => {
           ev.stopPropagation();
           const items = typeof menu === 'function' ? menu() : menu;
-          SM.ui.menu(items, this.menuBtn, { returnFocus: this.menuBtn });
+          SM.ui.menu(items, this.menuBtn, { returnFocus: this.menuBtn, path: [this.titleEl.textContent] });
         });
         this.head.append(this.menuBtn);
       }
+      // the red triangle's items, as its button opens them (Help > Search reads them: smui-search.js)
+      this.menuItems = () => (menu ? (typeof menu === 'function' ? menu() : menu) : []);
       this.head.append(this.titleEl);
       if (info && typeof KvotInfo !== 'undefined') this.head.append(KvotInfo.slot(info));
       this.body = el('div', { class: 'sm-ob-body' });
@@ -101,10 +119,17 @@
   /* A report table: t = { columns: [{ key, label, fmt, digits, hidden, title }],
      rows: [{ key: value }] }. Columns marked hidden are optional ones the
      reader can show from the right-click menu, as JMP's Columns submenu.
-     A click on a heading sorts. */
+     A click on a heading sorts.
+     A bar column, { key, label, bar: 'count' }, draws a bar in each row
+     for the value of the column named by bar (zero or more), from the left,
+     its length the value against the largest in the table, the rows not
+     shown too (barCell). Its heading is empty, as JMP's bar columns are;
+     the label names it in the Columns submenu, where the reader can hide
+     it. It is no data: Copy Table, Make into Data Table, Sort by Column and
+     tbl._rt leave it out, and Bootstrap on it takes the column it draws. */
   function rt(t, opts = {}) {
     const alpha = opts.alpha ?? 0.05;
-    const all = (t.columns || []).map((c) => ({ ...c }));
+    const all = (t.columns || []).map((c) => ({ ...c, ...(c.bar != null ? { _optional: true } : {}) }));
     const rows = (t.rows || []).slice();
     const tbl = el('table', { class: `sm-rt${opts.className ? ` ${opts.className}` : ''}` });
     const caption = opts.caption ?? t.caption;
@@ -114,13 +139,28 @@
     const foot = t.footer || opts.footer ? el('tfoot') : null;
     let sortKey = null, sortDir = 1;
     const shownCols = () => all.filter((c) => !c.hidden);
+    const isData = (c) => c.bar == null;
     const fill = () => {
       const cols = shownCols();
       body.replaceChildren();
       const shown = opts.maxRows && rows.length > opts.maxRows ? rows.slice(0, opts.maxRows) : rows;
+      // each bar column's longest bar: the largest value of its column in all the rows
+      const tops = new Map();
+      for (const c of cols) {
+        if (isData(c)) continue;
+        let top = 0;
+        for (const r of rows) { const v = barValue(r[c.bar]); if (v > top) top = v; }
+        tops.set(c, top);
+      }
       for (const r of shown) {
         const tr = el('tr');
         for (const c of cols) {
+          if (!isData(c)) {
+            const td = barCell(barValue(r[c.bar]), tops.get(c));
+            if (opts.cellClass) { const k = opts.cellClass(r, c); if (k) td.classList.add(...String(k).split(/\s+/).filter(Boolean)); }
+            tr.append(td);
+            continue;
+          }
           const v = r[c.key];
           const f = c.fmt || 'num';
           const td = el('td', { text: cellText(v, f, c, alpha) });
@@ -143,6 +183,7 @@
     const header = () => {
       const head = el('tr');
       for (const c of shownCols()) {
+        if (!isData(c)) { head.append(el('th', { class: 'sm-rt-barhead', scope: 'col', 'aria-label': c.label ?? c.key })); continue; }
         const th = el('th', { text: c.label ?? c.key, scope: 'col' });
         if ((c.fmt || 'num') === 'text' || c.left) th.className = 'sm-l';
         if (c.title) th.title = c.title;
@@ -171,20 +212,37 @@
     tbl.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       const cols = shownCols();
+      const data = cols.filter(isData);
       const optional = all.filter((c) => c.hidden || c._optional);
       const combined = tbl.dataset.group != null ? combinedTables(tbl) : null;
+      // the column clicked; on a bar, the column it draws
+      const at = cols[ev.target.closest('td, th')?.cellIndex ?? -1] || null;
+      const clicked = at && !isData(at) ? all.find((c) => isData(c) && c.key === at.bar) || null : at;
       SM.ui.menu([
         optional.length ? { label: 'Columns', submenu: () => optional.map((c) => ({ label: c.label ?? c.key, checked: !c.hidden, action: () => { c._optional = true; c.hidden = !c.hidden; header(); fill(); } })) } : null,
-        { label: 'Sort by Column…', submenu: () => cols.map((c) => ({ label: c.label ?? c.key, checked: sortKey === c.key, action: () => { thead.querySelectorAll('th')[cols.indexOf(c)]?.click(); } })) },
+        { label: 'Sort by Column…', submenu: () => data.map((c) => ({ label: c.label ?? c.key, checked: sortKey === c.key, action: () => { thead.querySelectorAll('th')[cols.indexOf(c)]?.click(); } })) },
         { separator: true },
-        { label: 'Copy Table', action: () => copyText(rtText({ columns: cols, rows }, alpha)) },
-        { label: 'Make into Data Table', action: () => SM.app.addTable(tableFromRT({ columns: cols, rows }, opts.name || caption || 'Report table')), disabled: !SM.app },
+        { label: 'Copy Table', action: () => copyText(rtText({ columns: data, rows }, alpha)) },
+        { label: 'Make into Data Table', action: () => SM.app.addTable(tableFromRT({ columns: data, rows }, opts.name || caption || 'Report table')), disabled: !SM.app },
         combined && combined.length > 1 ? { label: `Make Combined Data Table (${combined.length} groups)`, action: () => SM.app.addTable(combineRT(combined, opts.name || caption || 'Report table')) } : null,
-        ...(SM.bootstrap ? [{ separator: true }, SM.bootstrap.item(tbl, cols[ev.target.closest('td, th')?.cellIndex ?? -1] || null)] : []),
+        ...(SM.bootstrap ? [{ separator: true }, SM.bootstrap.item(tbl, clicked)] : []),
       ], { x: ev.clientX, y: ev.clientY });
     });
-    tbl._rt = { get columns() { return shownCols(); }, rows, all };
+    tbl._rt = { get columns() { return shownCols().filter(isData); }, rows, all: all.filter(isData) };
     return tbl;
+  }
+
+  /* A bar column's value: a number of zero or more, else none (0). */
+  const barValue = (v) => { const x = typeof v === 'number' ? v : v == null || v === '' ? NaN : Number(v); return Number.isFinite(x) && x > 0 ? x : 0; };
+
+  /* A bar column's cell: a track of fixed width, the bar from its left edge,
+     as long as the value against top (a value above zero is a pixel at least).
+     data-bar keeps the fraction for Save Report as Word. */
+  function barCell(v, top) {
+    const frac = top > 0 ? Math.min(1, v / top) : 0;
+    const track = el('span', { class: 'sm-rt-bartrack', 'aria-hidden': 'true' });
+    if (frac > 0) track.append(el('span', { class: 'sm-rt-bar', style: { width: `${+(100 * frac).toFixed(3)}%` } }));
+    return el('td', { class: 'sm-rt-barcell', dataset: { bar: String(+frac.toFixed(6)) } }, track);
   }
 
   /* The tables of the same kind in the other By groups of the report: the
@@ -1179,7 +1237,77 @@
       this.noteEl = el('span', { class: 'sm-reportnote' });
       this.staleEl = el('button', { type: 'button', class: 'sm-btn small', text: 'Data changed: Redo', hidden: true });
       this.staleEl.addEventListener('click', () => this.run());
-      this.bar.append(redo, codeBtn, exp, this.staleEl, el('span', { class: 'sm-spacer' }), this.noteEl);
+      this.progressEl = el('div', { class: 'sm-progress', hidden: true });
+      this.bar.append(redo, codeBtn, exp, this.staleEl, this.progressEl, el('span', { class: 'sm-spacer' }), this.noteEl);
+    }
+
+    /* ---- a run that takes a while ------------------------------------------------
+       PROGRESS_AFTER into a run, the bar shows a bar that moves, what Python
+       is doing, the time gone and Stop. What it is doing comes from the
+       'smui:progress' lines of this report's own calls (Fit All: the
+       distribution, and how many of them); without them the bar only moves
+       and says whether Python is on this report or still on another's. Stop
+       restarts the engine, the only way to interrupt a call into Python, so
+       it stops whatever else Python runs too (another report, a notebook
+       cell); the reports say they were stopped. A platform that shows its
+       own progress in the bar (mixed models, with their Stop) marks it
+       data-progress, and this one steps aside. */
+    _progressBegin(seq) {
+      if (this._prog) this._prog.end();
+      const st = { seq, t0: performance.now(), last: null, stopped: false, shown: false, timers: [], off: null };
+      this._prog = st;
+      RUNNING.add(this);
+      const box = this.progressEl;
+      const bar = el('progress', { class: 'sm-progress-bar', 'aria-label': 'Progress of the analysis' });
+      const text = el('span', { class: 'sm-progress-text', role: 'status' });
+      const time = el('span', { class: 'sm-progress-time', 'aria-hidden': 'true' });
+      const stop = el('button', { type: 'button', class: 'sm-btn small', text: 'Stop' });
+      stop.addEventListener('click', () => {
+        if (st.stopped) return;
+        st.stopped = true;
+        this._stopped = { seq, secs: (performance.now() - st.t0) / 1000 };
+        stop.disabled = true;
+        say();
+        SM.engine.restart();
+      });
+      const say = () => {
+        const own = this.bar.querySelector('[data-progress]');
+        box.hidden = !!own;
+        if (own) return;
+        const secs = (performance.now() - st.t0) / 1000;
+        time.textContent = secs >= 1 ? elapsed(secs) : '';
+        const p = st.last;
+        if (p && p.total > 0) { bar.max = p.total; bar.value = Math.min(p.done, p.total); } else bar.removeAttribute('value');
+        let words;
+        if (st.stopped) words = 'Stopping: the Python engine restarts…';
+        else if (p && p.text) words = p.done < p.total ? `${p.text} (${fmt(p.done + 1)} of ${fmt(p.total)})` : p.text;
+        else if (p && p.total > 0) words = `${fmt(p.done)} of ${fmt(p.total)}`;
+        else if (SM.engine.state !== 'ready') words = 'Waiting for the Python engine to load…';
+        else if (SM.engine.running && SM.engine.running.owner && SM.engine.running.owner !== this) words = 'Waiting for Python: it is on another analysis…';
+        else if (SM.engine.loading) words = SM.engine.loading;   // a package the call needs, on its first use (scikit-learn)
+        else words = `Python is working on ${this.platform.label}…`;
+        if (text.textContent !== words) text.textContent = words;
+      };
+      st.off = SM.engine.on('progress', (p) => {
+        // this report's calls; an unclaimed line when no other report runs
+        if (p.owner === this || (p.owner == null && RUNNING.size === 1)) { st.last = p; if (st.shown) say(); }
+      });
+      st.timers.push(setTimeout(() => {
+        st.shown = true;
+        box.replaceChildren(bar, text, time, stop, typeof KvotInfo !== 'undefined' ? KvotInfo.slot('report:progress') : null);
+        if (typeof KvotInfo !== 'undefined') KvotInfo.mount(box);
+        say();
+        st.timers.push(setInterval(say, 1000));
+      }, PROGRESS_AFTER));
+      // once: at the run's end, or when a newer run of the report takes over
+      st.end = () => {
+        if (st.ended) return;
+        st.ended = true;
+        for (const t of st.timers) { clearTimeout(t); clearInterval(t); }
+        if (st.off) st.off();
+        if (this._prog === st) { this._prog = null; RUNNING.delete(this); box.hidden = true; box.replaceChildren(); }
+      };
+      return st;
     }
 
     redoMenu() {
@@ -1391,6 +1519,48 @@
        the table while rendering (Color Clusters) can skip it on 'theme'. */
     async run(reason = 'redo') {
       const seq = ++this.seq;
+      this._noteChange(reason);
+      const prog = this._progressBegin(seq);
+      try { await this._run(seq, reason); } finally {
+        prog.end();
+        // what the run itself wrote in the spec (a platform's own bookkeeping) is no change of the reader's
+        if (seq === this.seq) this._specSeen = specKey(this.spec);
+      }
+    }
+
+    /* ---- undo of a report's changes ---------------------------------------------
+       A run that starts from another spec than the last run's follows a change
+       of the report: a red-triangle option, Remove, Axis Settings, a filter, a
+       relaunch. Edit > Undo can put the spec back (app.recordReport), named by
+       the menu item that was chosen since the last run, if one was. A run for
+       the theme, or one an undo starts, records nothing. specKey leaves out
+       what is no analysis (UNDO_SKIP). */
+    _noteChange(reason) {
+      const now = specKey(this.spec);
+      const before = this._specSeen, since = this._specSeenAt || 0;
+      this._specSeen = now;
+      this._specSeenAt = performance.now();
+      if (before == null || before === now || reason === 'undo' || reason === 'theme' || !this.app || !this.app.recordReport) return;
+      const p = SM.ui.picked && SM.ui.picked();
+      this.app.recordReport(this, p && p.at > since ? p.path[p.path.length - 1] : `Change in ${this.title}`, before);
+    }
+
+    /* A spec from Edit > Undo or Redo (specKey's text) put back and run; what
+       undo leaves alone (a graph's size, the code shown) stays as it is. */
+    restoreSpec(key) {
+      const spec = JSON.parse(key);
+      spec.options = spec.options || {};
+      for (const k of UNDO_SKIP) if (this.spec.options && k in this.spec.options) spec.options[k] = this.spec.options[k];
+      this.spec = spec;
+      this._renderFilter();
+      this._renderSwitcher();
+      if (this.app && this.app.retitle) this.app.retitle(this);
+      return this.run('undo');
+    }
+
+    get undoKey() { return specKey(this.spec); }
+
+    async _run(seq, reason) {
       this.reason = reason;
       this.stale = false;
       this.staleEl.hidden = true;
@@ -1421,13 +1591,22 @@
         const top = ctx.outline(title, { level: 0, menu: () => ctx.topMenu() });
         ctx.container = top.body;
         ctx.top = top;
+        // after a Stop the rest of the run (the other By groups) is not analysed
+        if (this._stopped && this._stopped.seq === seq) { top.body.append(warn('Not analysed: Stop restarted the Python engine. Redo runs the analysis again.')); continue; }
         try {
           const missing = ctx.missingColumns();
           if (missing.length) throw new Error(`the column${missing.length > 1 ? 's' : ''} ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} no longer in the table; relaunch the analysis`);
           await this.platform.render(ctx);
         } catch (e) {
-          console.error(e);
-          top.body.append(error(e));
+          // Stop (this report's or another's) restarted the engine under the run
+          if (e && e.message === 'stopped') {
+            const s = this._stopped && this._stopped.seq === seq ? this._stopped : null;
+            top.body.append(warn(s ? `Stopped after ${elapsed(s.secs)}: Stop restarted the Python engine before the analysis was finished. Redo runs it again.`
+              : 'Stopped: the Python engine was restarted (by Stop, here, in another report or in a notebook) before this analysis was finished. Redo runs it again.'));
+          } else {
+            console.error(e);
+            top.body.append(error(e));
+          }
         }
         if (ctx.warnings.length) {
           const w = ctx.outline('Messages from statsmodels', { closed: false, level: 1 });
@@ -1511,7 +1690,7 @@
       // The Python goes along when the report shows it (the Python code button) or its block is open; a traceback always.
       if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error') && !d.open) d.remove(); });
       clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
-      const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
+      const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}td.sm-rt-barcell{vertical-align:middle}.sm-rt-bartrack{display:block;width:100px;height:10px}.sm-rt-bar{display:block;height:100%;min-width:1px;background:#8fa9c2;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
         + '@page{margin:15mm}@media print{body{margin:0}table,img,.sm-plot,caption{break-inside:avoid}h2,h3,h4{break-after:avoid}summary{list-style:none}}';
       return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.title)}</title><style>${css}</style></head><body><h1 style="font-size:16px">${escapeHtml(this.title)}</h1><p style="color:#786b5d">${this.table ? `Table: ${escapeHtml(this.table.name)}. ` : ''} Made with the User Interface for statsmodels (kvotab.se/smui.html), statsmodels ${escapeHtml(SM.engine.versions ? SM.engine.versions.statsmodels : '')}, ${new Date().toISOString().slice(0, 10)}.</p>${clone.innerHTML}</body></html>`;
     }
@@ -1655,7 +1834,8 @@
       const key = `${fn}\u0001${this.table ? (this.table.dataVersion ?? this.table.version) : 0}\u0001${hashRows(rows)}\u0001${JSON.stringify(rest)}`;
       let r = this.headless ? null : this.report.cache.get(key);
       if (!r) {
-        r = SM.engine.call(fn, this.table ? body : rest, this.table);
+        // the report owns the call: its progress lines go to its bar
+        r = SM.engine.call(fn, this.table ? body : rest, this.table, { owner: this.report });
         if (!this.headless) {
           this.report.cache.set(key, r);
           r.catch(() => this.report.cache.delete(key));

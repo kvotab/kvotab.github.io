@@ -10,7 +10,10 @@ factor and Test Probabilities' binomial Bayes factor against a
 noncentrality search, the noncentral t and beta integrals, the closed
 forms, BayesFactor's 17.25888 for t = −4.0621 on 9 DF, and pingouin's
 compute_effsize, compute_esci, bayesfactor_ttest and bayesfactor_binom
-when it is installed (GPL: a reference only).
+when it is installed (GPL: a reference only). Fit All brings back none of
+statsmodels' warnings from its searches, names a search that did not
+converge (a short Powell search still gains), prints a progress line
+before each family, and gives the single fits' AICc.
 
     python3 resources/tests/smui/test_distribution.py
 """
@@ -106,6 +109,40 @@ check('weibull has standard errors', all(p['se'] and p['se'] > 0 for p in fw['pa
 fa = call('distribution.fit_all', table=tid, column='x')
 check('fit all sorted by AICc', [x['aicc'] for x in fa['fits']] == sorted(x['aicc'] for x in fa['fits']), True)
 check.near('AICc weights sum to one', sum(x['weight'] for x in fa['fits']), 1.0)
+
+# Fit All's searches: statsmodels' warnings stay out of the report (Nelder-Mead
+# stops at its 4000 steps on Johnson Su's flat likelihood here and BFGS then
+# converges; t's ν and the negative binomial's σ end at their bounds); a
+# search that did not converge is named (two tight clusters: Johnson Sb and the
+# three-normal mixture gain more from a short Powell search); 'smui:progress'
+# lines say which family is fitted; the fits are the single fits' (Fit All only
+# leaves out their standard errors, goodness of fit and curves)
+import contextlib  # noqa: E402
+import io  # noqa: E402
+from smui import distribution as D  # noqa: E402
+r11 = np.random.default_rng(11)
+near_normal = r11.normal(170, 9, 1000)
+r11.uniform(0, 10, 200)
+two = np.r_[np.full(30, 1.0), np.full(30, 2.0)] + r11.normal(0, 1e-3, 60)
+tid_nn, tid_two = table({'v': near_normal.tolist()}), table({'v': two.tolist()})
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    fa_nn = call('distribution.fit_all', table=tid_nn, column='v')
+lines = [ln for ln in out.getvalue().splitlines() if ln.startswith('smui:progress fitall')]
+fams = [f[1] for f in D._families(near_normal) if f[-1]]
+check('Fit All: no statsmodels warnings come back (Nelder-Mead\'s cap, t at its bound)', (fa_nn.get('warnings'), [f['dist'] for f in fa_nn['fits'] if f['note']]), (None, []))
+check('... a progress line before each family, in words, and one at the end', lines, [f'smui:progress fitall {i} {len(fams)} Fitting the {lab} distribution' for i, lab in enumerate(fams)] + [f'smui:progress fitall {len(fams)} {len(fams)} Comparing the fits'])
+one = call('distribution.fit', table=tid_nn, column='v', dist='johnsonsu')
+check.near('... its Johnson Su fit is the single fit\'s (AICc)', next(f['aicc'] for f in fa_nn['fits'] if f['dist'] == 'johnsonsu'), one['aicc'], rel=1e-12)
+check('a Johnson Su fit to near-normal data has no standard errors, and says why', (one.get('warning', '')[:18], all(p['se'] is None for p in one['params'])), ('No standard errors', True))
+ft_nn = call('distribution.fit', table=tid_nn, column='v', dist='t')
+check('a t whose ν reaches its bound is at its maximum: no warning, the bound noted', (ft_nn.get('warning'), 'bound' in ft_nn.get('note', ''), round(ft_nn['params'][2]['estimate'])), (None, True, 1000))
+with contextlib.redirect_stdout(io.StringIO()):
+    fa_two = call('distribution.fit_all', table=tid_two, column='v')
+check('two tight clusters: Fit All names the searches that did not converge', sorted(f['dist'] for f in fa_two['fits'] if f['note'] == 'the search did not converge'), ['johnsonsb', 'normal3'])
+check('... and no statsmodels warnings', fa_two.get('warnings'), None)
+sb = call('distribution.fit', table=tid_two, column='v', dist='johnsonsb')
+check('... the single Johnson Sb fit says so in words', sb.get('warning', '').startswith('The maximum likelihood search did not converge'), True)
 
 # more of JMP's Continuous Fit list
 tw = stats.t.rvs(4, loc=3, scale=2, size=83, random_state=5)

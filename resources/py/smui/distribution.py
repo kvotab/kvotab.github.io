@@ -13,11 +13,13 @@ distribution families).
 """
 import json
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+from scipy import optimize, stats
 from statsmodels.base.model import GenericLikelihoodModel
+from statsmodels.tools.sm_exceptions import HessianInversionWarning
 from statsmodels.stats.diagnostic import lilliefors, normal_ad
 from statsmodels.stats.proportion import proportion_confint
 from statsmodels.stats.stattools import jarque_bera
@@ -579,7 +581,36 @@ def _mix_em(x, k, iters=500):
     return list(mu) + list(sd) + list(pi[:-1])
 
 
-def _fit_one(x, key, alpha=0.05):
+def _converged(model, res):
+    """Whether BFGS reached the maximum. Its own verdict, when it says yes.
+    When it says no it has mostly met the edge of the parameters' range (a t
+    whose ν reaches its bound, a negative binomial at the Poisson limit),
+    where the likelihood is at its maximum and only the step fails: a short
+    Powell search from the estimate then gains nothing. A search that gains
+    more than 0.01 in the log likelihood (two-point data: Johnson Sb, a
+    normal mixture) did not converge."""
+    rv = getattr(res, 'mle_retvals', None) or {}
+    if rv.get('converged', True):
+        return True
+    est = np.asarray(res.params, dtype=float)
+    n = model.endog.shape[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        r = optimize.minimize(lambda p: -model.loglike(p) / n, est, method='Powell', options={'maxiter': 20, 'xtol': 1e-8, 'ftol': 1e-12})
+    return bool(-r.fun * n - model.loglike(est) < 0.01)
+
+
+def _fit_one(x, key, alpha=0.05, full=True):
+    """One maximum likelihood fit. full=False (Compare Distributions) leaves
+    out what only the fit's own outline shows: the standard errors, the
+    goodness of fit and the curve.
+
+    The fit is Nelder-Mead from the start, then BFGS from there. Nelder-Mead
+    only polishes the start: on a flat likelihood (Johnson Su's) it often
+    stops at its 4000 steps a hair from the maximum that BFGS then reaches,
+    so its warnings and its Hessian say nothing about the estimate and are
+    left out. BFGS's are not: a search that did not converge, or standard
+    errors that cannot be had, come back as 'warning', in words."""
     fam = {f[0]: f for f in _families(x)}
     if key not in fam:
         raise KeyError(f'no distribution {key!r}')
@@ -593,28 +624,49 @@ def _fit_one(x, key, alpha=0.05):
     n = len(x)
     p0 = np.asarray(start(x), dtype=float)
     model = _Fit(x, logpdf, names)
+    warning, converged = None, True
     try:
-        res = model.fit(start_params=p0, method='nm', maxiter=4000, disp=0)
-        res = model.fit(start_params=res.params, method='bfgs', maxiter=200, disp=0)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            res = model.fit(start_params=p0, method='nm', maxiter=4000, disp=0, skip_hessian=True)
+        # the warnings of BFGS's steps through impossible values (a log of a
+        # negative scale) are the search's own business; its verdict is not
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            res = model.fit(start_params=res.params, method='bfgs', maxiter=200, disp=0, skip_hessian=not full)
         est = np.asarray(res.params, dtype=float)
-        try:
-            se = np.asarray(res.bse, dtype=float)
-        except Exception:
-            se = np.full(len(est), np.nan)
+        se = np.full(len(est), np.nan)
+        if full and not any(issubclass(w.category, HessianInversionWarning) for w in caught):
+            try:
+                se = np.asarray(res.bse, dtype=float)
+            except Exception:
+                pass
         llf = float(model.loglike(est))
+        converged = _converged(model, res)
+        if not converged:
+            warning = 'The maximum likelihood search did not converge: the likelihood rises further from the estimate, so the estimates, the likelihood, AICc and BIC are not those of the best fit. Data with few distinct values can make a family degenerate.'
+        elif full and not np.all(np.isfinite(se)):
+            warning = 'No standard errors: the curvature of the likelihood at the estimate cannot be inverted (a parameter at the edge of its range, or a likelihood flat in some direction), so the estimates have no intervals.'
     except Exception:
         est, se, llf = p0, np.full(len(p0), np.nan), float(model.loglike(p0))
+        converged = False
+        warning = 'The maximum likelihood search failed: the starting values are shown, with no standard errors.'
     if key == 'normal':   # JMP reports the sample standard deviation for σ
         est = np.array([np.mean(x), np.std(x, ddof=1)])
         se = np.array([est[1] / math.sqrt(n), est[1] / math.sqrt(2 * (n - 1))])
         llf = float(np.sum(stats.norm.logpdf(x, est[0], est[1])))
+        warning, converged = None, True
     z = stats.norm.ppf(1 - alpha / 2)
     params = [{'name': nm, 'estimate': float(e), 'se': float(s), 'lower': float(e - z * s), 'upper': float(e + z * s)} for nm, e, s in zip(names, est, se)]
     kp = len(est)
     aic = -2 * llf + 2 * kp
     aicc = aic + (2 * kp * (kp + 1) / (n - kp - 1) if n - kp - 1 > 0 else float('nan'))
     bic = -2 * llf + kp * math.log(n)
-    out = {'dist': key, 'label': label, 'params': params, 'loglik': llf, 'aic': aic, 'aicc': aicc, 'bic': bic, 'n': n, 'k': kp}
+    out = {'dist': key, 'label': label, 'params': params, 'loglik': llf, 'aic': aic, 'aicc': aicc, 'bic': bic, 'n': n, 'k': kp, 'converged': converged}
+    if warning:
+        out['warning'] = warning
+    if not full:
+        return out
     # Goodness of fit: KS with estimated parameters (approximate), plus the
     # exact normal tests for the normal.
     try:
@@ -765,11 +817,17 @@ def fit_all(table, column, rows=None, alpha=0.05):
     x, _, _ = _values(table, column, rows)
     if len(x) < 3:
         return {'error': 'fewer than three values'}
+    # the families this column can have, each fitted in turn; the page shows
+    # the 'smui:progress' lines (the label after the counts)
+    fams = [f for f in _families(x) if f[-1]]
     fits = []
-    for key, *_rest in _families(x):
-        r = _fit_one(x, key, alpha)
+    for i, (key, label, *_rest) in enumerate(fams):
+        print(f'smui:progress fitall {i} {len(fams)} Fitting the {label} distribution', flush=True)
+        r = _fit_one(x, key, alpha, full=False)
         if 'error' not in r:
-            fits.append({'dist': key, 'label': r['label'], 'k': r['k'], 'loglik': r['loglik'], 'aicc': r['aicc'], 'bic': r['bic']})
+            note = None if r['converged'] else ('the search failed: its start' if 'failed' in r.get('warning', '') else 'the search did not converge')
+            fits.append({'dist': key, 'label': r['label'], 'k': r['k'], 'loglik': r['loglik'], 'aicc': r['aicc'], 'bic': r['bic'], 'note': note})
+    print(f'smui:progress fitall {len(fams)} {len(fams)} Comparing the fits', flush=True)
     fits.sort(key=lambda r: (np.inf if r['aicc'] is None or not np.isfinite(r['aicc']) else r['aicc']))
     best = fits[0]['aicc'] if fits else None
     for r in fits:

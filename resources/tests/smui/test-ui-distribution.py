@@ -9,6 +9,9 @@ standard deviation computed here in the page, BF10 against the backend and
 the binomial Bayes factor against its closed form computed here; BF01 =
 1/BF10; the item is disabled for more than two levels; By, a project, the
 dark theme and phone width; every (i) has a topic; no script errors.
+Continuous Fit ▸ All: a Note column for the searches that did not
+converge (two tight clusters), as the engine's fits have them, none on
+ordinary data, and no messages from statsmodels.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT, then
@@ -591,6 +594,57 @@ async def help_inputs(page):
         print(r)
     check('Test Rate\'s (i): its topic, then its fields', (r['title'], r['fields'], r['shortest'] > 60, r['noTopic']),
           ('Test Rate', ['Hypothesized rate (events per unit of exposure)', 'Exposure', 'Test', 'Confidence interval'], True, []))
+
+    # Continuous Fit ▸ All on two tight clusters (sixty values, at 1 and 2 to a
+    # thousandth): the families whose search did not converge say so in a Note
+    # column, which is there only then, as the engine's fits have them; no
+    # "Messages from statsmodels"; such a fit shown by a click says it in words;
+    # on ordinary data (height) no Note column; its (i) explains the notes
+    r = await page.ev('''(async () => {
+      const vals = [...Array.from({ length: 30 }, (_, k) => 1 + 1e-3 * Math.sin(k + 1)), ...Array.from({ length: 30 }, (_, k) => 2 + 1e-3 * Math.cos(k + 1))];
+      const t = new SM.Table({ name: 'Two clusters', columns: [{ name: 'v', dataType: 'numeric', values: vals }] });
+      SM.app.addTable(t);
+      const id = t.col('v').id;
+      const rep = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [id] }, options: { [id + '|fitAll']: true } }, t);
+      await new Promise((res) => rep.on('done', res));
+      const eng = await SM.engine.call('distribution.fit_all', { column: 'v', rows: null }, t);
+      const ob = [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head').textContent.trim() === 'Compare Distributions');
+      const tbl = ob.querySelector('table.sm-rt');
+      const heads = [...tbl.tHead.rows[0].cells].map((c) => c.textContent);
+      const rows = [...tbl.tBodies[0].rows].map((tr) => [tr.cells[0].textContent, tr.cells[tr.cells.length - 1].textContent]);
+      const note = [...ob.querySelectorAll('.sm-ob-note')].map((n) => n.textContent).join(' ');
+      const msgs = [...rep.body.querySelectorAll('.sm-ob-head')].filter((h) => /Messages/.test(h.textContent)).length;
+      const first = eng.fits.find((f) => f.note);
+      let shown = null;
+      if (first) {
+        const d = new Promise((res) => rep.on('done', res));
+        [...tbl.tBodies[0].rows].find((tr) => tr.cells[0].textContent === first.label).click();
+        await d;
+        const fo = [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head').textContent.trim() === `Fitted ${first.label} Distribution`);
+        shown = fo ? [...fo.querySelectorAll(':scope > .sm-ob-body > .sm-ob-warn')].map((w) => w.textContent) : null;
+      }
+      const info = !!ob.querySelector(':scope > .sm-ob-head .kvot-info-slot, :scope > .sm-ob-head .info-btn');
+      SM.app.closeReport(rep, { record: false }); SM.app.closeTable(t);
+      // ordinary data: no Note column
+      const s = SM.app.tables.find((x) => x.name === 'Students') || SM.app.tables[0];
+      const hid = s.col('height (cm)').id;
+      const rep2 = SM.app.openReport(SM.platforms.get('distribution'), { roles: { y: [hid] }, options: { [hid + '|fitAll']: true } }, s);
+      await new Promise((res) => rep2.on('done', res));
+      const ob2 = [...rep2.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head').textContent.trim() === 'Compare Distributions');
+      const heads2 = [...ob2.querySelector('table.sm-rt').tHead.rows[0].cells].map((c) => c.textContent);
+      const msgs2 = [...rep2.body.querySelectorAll('.sm-ob-head')].filter((h) => /Messages/.test(h.textContent)).length;
+      SM.app.closeReport(rep2, { record: false });
+      const topic = SM.info.get('p:distribution:fitall');
+      return { heads, rows, note, msgs, eng: eng.fits.map((f) => [f.label, f.note || '']), first: first ? first.label : null, shown, info, heads2, msgs2, topic: topic ? topic.sections.map((x) => x.heading) : null };
+    })()''', timeout=900)
+    if isinstance(r, str):
+        print(r)
+    check('Fit All on two tight clusters: some searches do not converge (the engine says which)', any(n for _, n in r['eng']), True)
+    check('... a Note column, as the engine\'s notes, and a sentence under the table', (r['heads'][-1], r['rows'] == [[lab, n] for lab, n in r['eng']], 'did not converge' in r['note']), ('Note', True, True))
+    check('... no Messages from statsmodels', r['msgs'], 0)
+    check('... that fit, shown by a click, says it in words', bool(r['shown']) and r['shown'][0].startswith('The maximum likelihood search did not converge'), True)
+    check('ordinary data (height): no Note column, no messages', ('Note' in r['heads2'], r['msgs2']), (False, 0))
+    check('Compare Distributions has an (i): what it runs and the notes', (r['info'], r['topic']), (True, ['While it runs', 'Note']))
 
 
 asyncio.run(main())

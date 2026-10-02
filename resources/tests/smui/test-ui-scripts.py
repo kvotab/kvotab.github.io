@@ -313,6 +313,7 @@ async def main():
       SM.app.closeReport(rep);
       // a script whose column is not there: a message names it, the dialog has the others
       SM.app.showTab(SM.app.tabOf(t));
+      SM.app.undoStack.length = 0;   // from an empty history: a full one (30 steps) would not grow
       const u0 = SM.app.undoStack.length;
       t.setScripts([...t.scripts, { name: 'Gone', platform: 'fitmodel', spec: { roles: { y: ['yield (g)', 'no such column'] }, options: {}, extra: { effects: [{ names: ['fertilizer'] }, { names: ['vanished'] }] } } }]);
       T.script('Gone').click();

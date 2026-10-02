@@ -6,7 +6,11 @@ Examples, and the platform sits in Analyze right after Tabulate; the launch
 dialog has JMP's roles and options (a numeric column and an empty custom
 regex are refused); the first call loads scikit-learn; the Summary Counts
 and the Term and Phrase Lists are the engine's, and their counts are the
-ones counted here in the page; a click on a term, a phrase or a word of the
+ones counted here in the page; the Term List's count bars (right of Count,
+each as long as its count against the largest, kept with its term when the
+list is sorted, no data to Copy Table, Make into Data Table, Sort by Column
+and Bootstrap, hidden and shown by Columns, drawn in Save Report as HTML and
+Word, in the dark theme and at phone width); a click on a term, a phrase or a word of the
 cloud selects the rows that hold it; every red triangle opens; the word
 cloud's words do not overlap and grow with the count; stemming, Add Stop
 Word, Recode, Add Phrase and Show Text work from the menus, and Redo keeps
@@ -354,6 +358,169 @@ async def form_help(page, opener, fields, name):
     return f
 
 
+# ---- the Term List's count bars, in the last report: tbl is the Term List;
+# read() gives each shown row's term, count and bar (its cell's class and
+# data-bar, the bar's and the track's widths, how far the bar's middle is
+# from the row's); menu(node, path) right clicks node and clicks down the
+# labels, giving each level's items as [label, aria-checked, disabled], the
+# submenu the last label opens too.
+BARS_HEAD = r'''
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const rep = SM.app.reports[SM.app.reports.length - 1];
+  const tbl = [...rep.body.querySelectorAll('table.sm-rt')].find(t => t.caption && t.caption.textContent === 'Term List');
+  const ths = () => [...tbl.tHead.rows[0].cells];
+  const read = () => [...tbl.tBodies[0].rows].filter(tr => tr.cells.length > 1).map(tr => {
+    const c = tr.cells[2], bar = c && c.querySelector('.sm-rt-bar'), track = c && c.querySelector('.sm-rt-bartrack');
+    const b = bar && bar.getBoundingClientRect(), r = tr.getBoundingClientRect();
+    return { term: tr.cells[0].textContent, count: Number(tr.cells[1].textContent), cls: c ? c.className : null, frac: c ? Number(c.dataset.bar) : null,
+             w: b ? b.width : 0, tw: track ? track.getBoundingClientRect().width : 0, mid: b ? Math.abs((b.top + b.bottom) / 2 - (r.top + r.bottom) / 2) : 0 };
+  });
+  const menu = async (node, path) => {
+    const b = node.getBoundingClientRect();
+    node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 4, clientY: b.y + 4 }));
+    await wait(80);
+    const levels = [];
+    const items = (m) => [...m.querySelectorAll('button')].filter(x => x.querySelector('.sm-label'));
+    let last = null;
+    for (const label of path) {
+      const m = [...document.querySelectorAll('.sm-menu')].pop();
+      levels.push(items(m).map(x => [x.querySelector('.sm-label').textContent, x.getAttribute('aria-checked'), x.disabled]));
+      const it = items(m).find(x => x.querySelector('.sm-label').textContent === label);
+      if (!it) { SM.ui.closeMenus(0); return { levels, missing: label }; }
+      last = m;
+      it.click();
+      await wait(80);
+    }
+    const sub = [...document.querySelectorAll('.sm-menu')].pop();
+    if (sub && sub !== last) levels.push(items(sub).map(x => [x.querySelector('.sm-label').textContent, x.getAttribute('aria-checked'), x.disabled]));
+    SM.ui.closeMenus(0);
+    return { levels };
+  };
+'''
+
+
+async def count_bars(page, eng):
+    """Right of Count, a bar of each term's count against the largest: its
+    look, sorting, the menus that treat it as no data, hiding it, and the
+    documents (Save Report as HTML and Print, Save Report as Word)."""
+    top = max(x['count'] for x in eng['terms'])
+    r = await page.ev('''(async () => {%s
+      tbl.scrollIntoView({ block: 'start' });
+      await wait(200);
+      const bar = tbl.querySelector('.sm-rt-bar'), cs = getComputedStyle(bar), track = getComputedStyle(tbl.querySelector('.sm-rt-bartrack'));
+      return { heads: ths().map(th => [th.textContent, th.className, th.getAttribute('aria-label')]), rows: read(), data: tbl._rt.columns.map(c => c.label), all: tbl._rt.all.map(c => c.label),
+               color: cs.backgroundColor, radius: [cs.borderTopLeftRadius, cs.borderBottomLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius], track: [track.width, track.height],
+               print: cs.printColorAdjust, hidden: tbl.querySelector('.sm-rt-bartrack').getAttribute('aria-hidden') };
+    })()''' % BARS_HEAD)
+    rows = r['rows']
+    check('count bars: a column right of Count, its heading empty and named Count Bars', r['heads'][:3], [['Term', 'sm-l', None], ['Count', '', None], ['', 'sm-rt-barhead', 'Count Bars']])
+    check('... a bar cell in every row of the list', (len(rows), all(x['cls'] == 'sm-rt-barcell' for x in rows)), (len(eng['terms']), True))
+    check('... each bar\'s length is its count against the largest (the cell\'s fraction and the drawn bar)', [x['term'] for x in rows if abs(x['frac'] - x['count'] / top) > 1e-6 or abs(x['w'] - max(1, x['tw'] * x['count'] / top)) > 0.5], [])
+    check('... the most frequent term\'s bar fills the track, 100 px', (rows[0]['term'], rows[0]['w'], rows[0]['tw']), (eng['terms'][0]['term'], 100, 100))
+    check('... the bars in the middle of their rows', max(x['mid'] for x in rows) <= 1, True)
+    check('... in the histograms\' colour, square at the start and rounded at the end, printed with the page', (r['color'], r['radius'], r['print']), ('rgb(143, 169, 194)', ['0px', '0px', '4px', '4px'], 'exact'))
+    check('... a track 100 by 10 px, hidden from screen readers (Count says it)', (r['track'], r['hidden']), (['100px', '10px'], 'true'))
+    check('... no data: the table\'s columns are Term and Count (and Cases)', (r['data'], r['all']), (['Term', 'Count'], ['Term', 'Count', 'Cases']))
+
+    # sorting keeps each bar with its term; the bars' heading sorts nothing
+    r = await page.ev('''(async () => {%s
+      const ok = (rows) => rows.every(x => Math.abs(x.frac - x.count / %d) < 1e-6);
+      ths()[0].click(); const byTerm = read();
+      ths()[1].click(); const byCount = read();
+      ths()[2].click(); const barClick = read();
+      return { byTerm: byTerm.map(x => x.term), termOk: ok(byTerm), byCount: byCount.map(x => x.count), countOk: ok(byCount), same: JSON.stringify(barClick) === JSON.stringify(byCount),
+               aria: ths().map(th => th.getAttribute('aria-sort')) };
+    })()''' % (BARS_HEAD, top))
+    check('... sorted by Term, every bar stays with its term', (r['byTerm'] == sorted(r['byTerm'], key=lambda s: s.lower()), r['termOk']), (True, True))
+    check('... sorted by Count, the shortest first', (r['byCount'] == sorted(r['byCount']), r['countOk']), (True, True))
+    check('... a click on the bars\' heading sorts nothing', (r['same'], r['aria']), (True, [None, 'ascending', None]))
+
+    # the heading's menu: Columns hides and shows them, Sort by Column and Copy
+    # Table leave them out, Bootstrap on a bar takes Count; the row menu's Copy
+    # Table and the heading's Make into Data Table leave them out too
+    r = await page.ev('''(async () => {%s
+      let copied = [];
+      Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (t) => { copied.push(t); } });
+      const bh = () => ths()[2];
+      const top = await menu(bh(), ['Columns']);
+      const sort = await menu(bh(), ['Sort by Column…']);
+      await menu(bh(), ['Columns', 'Count Bars']);
+      const off = { heads: ths().map(th => th.textContent), cells: tbl.tBodies[0].rows[0].cells.length };
+      await menu(ths()[0], ['Columns', 'Count Bars']);
+      const on = { heads: ths().map(th => th.textContent), rows: read() };
+      await menu(bh(), ['Copy Table']);
+      await menu([...tbl.tBodies[0].rows].find(tr => tr.cells[0].textContent === 'kettle').cells[0], ['Copy Table']);
+      delete navigator.clipboard.writeText;
+      rep.table.select([]);
+      const n0 = SM.app.tables.length;
+      await menu(bh(), ['Make into Data Table']);
+      const made = SM.app.tables.length > n0 ? SM.app.tables[SM.app.tables.length - 1] : null;
+      const out = { top: top.levels, sort: sort.levels, off, on, copied: copied.map(t => t.split('\\n')), made: made ? { name: made.name, cols: made.columns.map(c => c.name), n: made.nrows } : null };
+      if (made) {
+        SM.app.closeTable(made);
+        await wait(100);
+        const dl = [...document.querySelectorAll('.sm-dialog')].pop();
+        const yes = dl && [...dl.querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Close');
+        if (yes) yes.click();
+        await wait(100);
+      }
+      SM.app.showTable(SM.app.tables.find(t => t.name === 'Service comments').id);
+      SM.app.showTab(SM.app.tabOf(rep));
+      return out;
+    })()''' % BARS_HEAD)
+    first = {x[0]: x for x in r['top'][0]}
+    check('... the heading\'s menu: Bootstrap on the bars takes Count', first.get('Bootstrap Count…', [None, None, True])[2], False)
+    check('... Columns lists Count Bars (shown) and Cases (hidden)', [x[:2] for x in r['top'][1]], [['Count Bars', 'true'], ['Cases', 'false']])
+    check('... Sort by Column lists the data columns only', [x[0] for x in r['sort'][1]], ['Term', 'Count'])
+    check('... Columns > Count Bars hides them, and shows them again', (r['off'], r['on']['heads'], len(r['on']['rows']) == len(eng['terms']) and all(x['cls'] == 'sm-rt-barcell' for x in r['on']['rows'])), ({'heads': ['Term', 'Count'], 'cells': 2}, ['Term', 'Count', ''], True))
+    cp = r['copied']
+    check('... Copy Table, from the heading and from a term, copies Term and Count only', [(c[0], len(c) - 1, len(c[1].split('\t'))) for c in cp], [('Term\tCount', len(eng['terms']), 2)] * 2)
+    check('... Make into Data Table makes Term and Count only', r['made'], {'name': 'Term List', 'cols': ['Term', 'Count'], 'n': len(eng['terms'])})
+    await rerun(page)
+
+    # the documents: Save Report as HTML (and Print, the same document) draws
+    # the bars; Save Report as Word shades a paragraph as long as each bar
+    r = await page.ev('''(async () => {%s
+      const html = await rep.documentHtml();
+      const f = document.createElement('iframe');
+      f.style.cssText = 'position: fixed; left: 0; top: 0; width: 900px; height: 900px; border: 0;';
+      document.body.append(f);
+      await new Promise(res => { f.onload = res; f.srcdoc = html; });
+      const d = f.contentDocument;
+      const t = [...d.querySelectorAll('table')].find(t => t.caption && t.caption.textContent === 'Term List');
+      const doc = [...t.tBodies[0].rows].map(tr => { const b = tr.cells[2].querySelector('.sm-rt-bar'); return [Number(tr.cells[1].textContent), b ? b.getBoundingClientRect().width : 0, tr.cells[2].querySelector('.sm-rt-bartrack').getBoundingClientRect().width]; });
+      const bcs = getComputedStyle(t.querySelector('.sm-rt-bar'));
+      const docHead = [...t.tHead.rows[0].cells].map(c => c.textContent);
+      const look = [bcs.backgroundColor, bcs.borderTopRightRadius, bcs.printColorAdjust];
+      f.remove();
+      const zip = await JSZip.loadAsync(await SM.docx.report(rep, { plotImage: (p) => rep.plotImage(p, 'png', 2) }));
+      const xml = await zip.file('word/document.xml').async('string');
+      const x = new DOMParser().parseFromString(xml, 'application/xml');
+      const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      const text = (n) => [...n.getElementsByTagNameNS(W, 't')].map(e => e.textContent).join('');
+      const wt = [...x.getElementsByTagNameNS(W, 'tbl')].find(tb => tb.previousSibling && text(tb.previousSibling) === 'Term List');
+      const word = wt ? [...wt.getElementsByTagNameNS(W, 'tr')].map(tr => {
+        const tcs = [...tr.getElementsByTagNameNS(W, 'tc')], c = tcs[2];
+        const p = c.getElementsByTagNameNS(W, 'p')[0], ppr = p.getElementsByTagNameNS(W, 'pPr')[0];
+        const shd = ppr && [...ppr.childNodes].find(n => n.localName === 'shd'), ind = ppr && [...ppr.childNodes].find(n => n.localName === 'ind');
+        return { cells: tcs.map(text), tcW: c.getElementsByTagNameNS(W, 'tcW')[0].getAttribute('w:w'), fill: shd ? shd.getAttribute('w:fill') : null, right: ind ? Number(ind.getAttribute('w:right')) : null,
+                 order: ppr ? [...ppr.childNodes].map(n => n.localName) : [] };
+      }) : null;
+      return { doc, docHead, look, bad: !!x.querySelector('parsererror'), word };
+    })()''' % BARS_HEAD)
+    doc = r['doc']
+    check('Save Report as HTML: the Term List keeps its empty bar heading', r['docHead'], ['Term', 'Count', ''])
+    check('... each bar as long as its count against the largest (100 px the longest)', ([c for c, w, tw in doc if abs(w - max(1, tw * c / top)) > 0.5], doc[0][1], doc[0][2]), ([], 100, 100))
+    check('... in the bar colour, rounded at its end, printed as it is (Print prints this document)', r['look'], ['rgb(143, 169, 194)', '4px', 'exact'])
+    w = r['word']
+    check('Save Report as Word: well-formed, the Term List a table with an empty bar heading', (r['bad'], w is not None and w[0]['cells'], w is not None and w[0]['fill']), (False, ['Term', 'Count', ''], None))
+    body = (w or [])[1:]
+    check('... every term\'s bar cell 1680 twips wide (the 100 px track and the margins) and empty', (len(body), all(x['tcW'] == '1680' and x['cells'][2] == '' for x in body)), (len(eng['terms']), True))
+    check('... its paragraph shaded in the bar colour, as long as the bar by its right indent (15 twips at least)',
+          [x['cells'][0] for x, t in zip(body, eng['terms']) if x['fill'] != '8FA9C2' or x['right'] != 1500 - max(15, round(1500 * t['count'] / top)) or x['cells'][1] != str(t['count'])], [])
+    check('... the paragraph properties in the schema\'s order', body[0]['order'] if body else None, ['pStyle', 'shd', 'ind', 'rPr'])
+
+
 async def main():
     page = await open_page(f'{BASE}/smui.html?example=service-comments', height=1300)
     st = await wait_engine(page)
@@ -434,7 +601,7 @@ async def main():
     check('1,000 cases, each a row', s['cases'], 1000)
     terms = await page.ev(table_under_js('Term and Phrase Lists', 0))
     phr = await page.ev(table_under_js('Term and Phrase Lists', 1))
-    check('the Term List: Term and Count, as the engine lists them', ([row[:2] for row in terms[1:]], terms[0]), ([[x['term'], str(x['count'])] for x in eng['terms']][:1000], ['Term', 'Count']))
+    check('the Term List: Term and Count, as the engine lists them, and the count bars\' empty heading', ([row[:2] for row in terms[1:]], terms[0]), ([[x['term'], str(x['count'])] for x in eng['terms']][:1000], ['Term', 'Count', '']))
     check('the Phrase List: Phrase, Count and N', (phr[0], [row for row in phr[1:6]]), (['Phrase', 'Count', 'N'], [[x['phrase'], str(x['count']), str(x['n'])] for x in eng['phrases'][:5]]))
     check('Total Tokens is the sum of the Term List', sum(int(row[1]) for row in terms[1:]), s['tokens'])
     words = ['delivery', 'courier', 'refund', 'checkout', 'discount', 'agent', 'kettle']
@@ -445,6 +612,9 @@ async def main():
     check('and the rows that hold them', all(tl[w][1] == here[w]['rows'] for w in words), True)
     pl = {x['phrase']: (x['count'], eng['phrase_rows'][k]) for k, x in enumerate(eng['phrases'])}
     check('three phrases\' counts and rows = those counted here', {p: (pl[p][0], pl[p][1] == here[p]['rows']) for p in phrases}, {p: (here[p]['n'], True) for p in phrases})
+
+    # ---- the Term List's count bars
+    await count_bars(page, eng)
 
     # ---- linking: a click on a term selects its rows
     r = await page.ev(list_row_js('Term List', 'courier'))
@@ -808,6 +978,7 @@ async def main():
     await form_help(page, f"await clickPath({big}, 'Word Cloud', ['Number of Terms…']);", ['The most frequent terms to show'], 'Word Cloud: Number of Terms…')
     lists = await page.ev('SM.info.get("p:text:lists")')
     check('Term and Phrase Lists\' (i) explains the Show Text dialog\'s buttons', [c[0] for sec in lists['sections'] if sec.get('heading') == 'Show Text' for c in sec['choices']], ['Select These Rows', 'Close'])
+    check('... and the count bars: against the largest, kept when sorted, hidden by Columns, left out of Copy Table', [all(w in sec.get('text', '') for w in ('largest', 'Sorting', 'Columns', 'Copy Table')) for sec in lists['sections'] if sec.get('heading') == 'Count Bars'], [True])
 
     # ---- dark theme and phone width
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "text" && r.table.name === "Service comments")))')
@@ -819,6 +990,11 @@ async def main():
       rep.spec.options[id + '|cloud'] = true; rep.spec.options[id + '|cloudColor'] = 'colors'; const d = new Promise(res => rep.on('done', res)); rep.run(); await d;
       return [...rep.body.querySelectorAll('svg.sm-tx-cloud text.sm-tx-word')].slice(0, 6).map(w => w.getAttribute('fill')); })()''')
     check('the word cloud takes the dark theme\'s colours', fills, ['#6da7ec', '#f08a5d', '#3cc494', '#a99ff0', '#d0b24a', '#ee86ad'])
+    bars = await page.ev('''(() => { const rep = SM.app.reports.find(r => r.platform.id === "text" && r.table.name === "Service comments");
+      const tbl = [...rep.body.querySelectorAll('table.sm-rt')].find(t => t.caption && t.caption.textContent === 'Term List');
+      const bar = tbl.querySelector('.sm-rt-bar'), box = getComputedStyle(tbl.closest('.sm-tx-list'));
+      return { bar: getComputedStyle(bar).backgroundColor, box: box.backgroundColor, w: bar.getBoundingClientRect().width }; })()''')
+    check('the count bars keep the histograms\' colour on the dark list (7.5:1)', (bars['bar'], bars['box'], bars['w']), ('rgb(143, 169, 194)', 'rgb(26, 20, 16)', 100))
     await shot(page, 'text-06-dark.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
@@ -830,11 +1006,15 @@ async def main():
       const boxes = rep.plots.filter(p => p.drawn).map(p => p.box.getBoundingClientRect().right);
       const cloud = rep.body.querySelector('svg.sm-tx-cloud').getBoundingClientRect();
       const lists = [...rep.body.querySelectorAll('.sm-tx-list')].map(l => l.getBoundingClientRect().right);
+      const terms = [...rep.body.querySelectorAll('table.sm-rt')].find(t => t.caption && t.caption.textContent === 'Term List');
+      const box = terms.closest('.sm-tx-list');
       return { page: document.documentElement.scrollWidth <= innerWidth + 1, plots: boxes.every(x => x <= body.right + 1), n: boxes.length, cloud: cloud.right <= body.right + 1 && cloud.width > 200,
-               lists: lists.every(x => x <= body.right + 1), body: rep.body.scrollWidth <= rep.body.clientWidth + 1 };
+               lists: lists.every(x => x <= body.right + 1), body: rep.body.scrollWidth <= rep.body.clientWidth + 1,
+               track: terms.querySelector('.sm-rt-bartrack').getBoundingClientRect().width, bar: terms.querySelector('.sm-rt-bar').getBoundingClientRect().width, termsFit: box.scrollWidth <= box.clientWidth + 1 };
     })()''')
     check('no horizontal page scroll at phone width', r['page'], True)
     check('the graphs, the word cloud and the lists fit the phone\'s width', (r['plots'], r['n'] >= 1, r['cloud'], r['lists'], r['body']), (True, True, True, True, True))
+    check('the count bars\' track is 64 px on a phone, and the Term List fits its box without scrolling sideways', (r['track'], r['bar'], r['termsFit']), (64, 64, True))
     await shot(page, 'text-07-phone.png')
     r = await page.ev(f'''(async () => {{ const rep = {NEW}; SM.app.showTab(SM.app.tabOf(rep)); const d = new Promise(res => rep.on("done", res)); rep.run(); await d;
       await __gr.drawAll(rep); const body = rep.body.getBoundingClientRect();

@@ -117,7 +117,44 @@
     /* ---- undo ---------------------------------------------------------------
        Before a change, record(table, label) keeps a copy of the table (or
        recordCells() the old values of a few cells); Edit > Undo puts it
-       back. Thirty steps, tables of up to four million cells. */
+       back. Thirty steps, tables of up to four million cells. A report's
+       changes are steps too (recordReport, from Report._noteChange: its spec
+       before the change, put back and run again), and so is closing a
+       report (it opens again, run again). One history for the tables and
+       the reports, the newest step first; an undo brings its tab to the
+       front. Graph Builder keeps its own (_localUndo). */
+    _push(entry) {
+      this.undoStack.push(entry);
+      if (this.undoStack.length > 30) this.undoStack.shift();
+      this.redoStack = [];
+    }
+
+    recordReport(r, label, spec) { this._push({ report: r, label, spec }); }
+
+    // a closed report, to open again: what openReport needs
+    _closedOf(r) { return { platform: r.platform, spec: JSON.stringify(r.spec), table: r.table }; }
+
+    _flipReport(e, to) {
+      if (e.closed) {
+        const gone = e.closed.filter((c) => c.table && !this.tables.includes(c.table));
+        if (gone.length) { SM.ui.toast(`${e.label}: its table is closed`); return false; }
+        const reps = e.closed.map((c) => this.openReport(c.platform, JSON.parse(c.spec), c.table));
+        to.push({ reopened: reps, label: e.label });
+      } else if (e.reopened) {
+        const live = e.reopened.filter((r) => this.reports.includes(r));
+        if (!live.length) { SM.ui.toast(`${e.label}: closed already`); return false; }
+        to.push({ closed: live.map((r) => this._closedOf(r)), label: e.label });
+        for (const r of live) this.closeReport(r, { record: false });
+      } else {
+        const r = e.report;
+        if (!this.reports.includes(r)) { SM.ui.toast(`${e.label}: its report is closed`); return false; }
+        to.push({ report: r, label: e.label, spec: r.undoKey });
+        const tab = this.tabOf(r);
+        if (tab) this.showTab(tab);
+        r.restoreSpec(e.spec);
+      }
+      return true;
+    }
     record(t, label) {
       if (!t || t.nrows * Math.max(1, t.columns.length) > 4e6) return;
       this.undoStack.push({ table: t, label, snap: t.snapshot() });
@@ -135,6 +172,10 @@
     _flip(from, to) {
       const e = from.pop();
       if (!e) return;
+      if (e.report || e.closed || e.reopened) {
+        if (this._flipReport(e, to)) SM.ui.toast(`${from === this.undoStack ? 'Undid' : 'Redid'}: ${e.label}`);
+        return;
+      }
       const t = e.table;
       if (!this.tables.includes(t)) { SM.ui.toast(`${e.label}: its table is closed`); return; }
       if (e.snap) {
@@ -147,10 +188,19 @@
       }
       const g = this.grids.get(t.id);
       if (g) g.refresh();
+      // the table comes to the front, where the change shows
+      const tab = this.tabOf(t);
+      if (tab && this.activeTab !== tab) this.showTab(tab);
       SM.ui.toast(`${from === this.undoStack ? 'Undid' : 'Redid'}: ${e.label}`);
     }
 
-    undo() { this._flip(this.undoStack, this.redoStack); }
+    // the front report's own undo (Graph Builder's), which goes first there
+    _localUndo() { const r = this.activeTab && this.activeTab.report; const u = r && r.localUndo; return u && u.can() ? u : null; }
+    undo() {
+      const l = this._localUndo();
+      if (l) { l.undo(); SM.ui.toast(`Undid: ${l.label}`); return; }
+      this._flip(this.undoStack, this.redoStack);
+    }
     redo() { this._flip(this.redoStack, this.undoStack); }
 
     get grid() { return this.current ? this.grids.get(this.current.id) || null : null; }
@@ -404,7 +454,7 @@
     closeTable(t) {
       const reps = this.reports.filter((r) => r.table === t);
       const go = () => {
-        for (const r of reps) this.closeReport(r);
+        for (const r of reps) this.closeReport(r, { record: false });
         const tab = this.tabOf(t);
         this.tables.splice(this.tables.indexOf(t), 1);
         this.grids.get(t.id)?.setTable(null);
@@ -412,8 +462,10 @@
         if (tab) this._removeTab(tab);
         if (this.current === t) this._setCurrent(this.tables[this.tables.length - 1] || null);
         this._renderHome();
-        this.undoStack = this.undoStack.filter((e) => e.table !== t);
-        this.redoStack = this.redoStack.filter((e) => e.table !== t);
+        // its steps go with it, and its closed reports' (they need it to open again)
+        const keep = (e) => e.table !== t && !(e.closed && e.closed.some((c) => c.table === t));
+        this.undoStack = this.undoStack.filter(keep);
+        this.redoStack = this.redoStack.filter(keep);
         this.emit('tableremoved', t);
       };
       if (reps.length) {
@@ -593,7 +645,13 @@
       if (tab) { tab.titleEl.textContent = r.title; tab.title = r.title; }
     }
 
-    closeReport(r) {
+    /* record: Edit > Undo opens it again (not when its table goes too). Its
+       own steps go: an undo opens a new report, which has none yet. */
+    closeReport(r, { record = true, label = 'Close Report' } = {}) {
+      if (record) this._push({ closed: [this._closedOf(r)], label });
+      const keep = (e) => e.report !== r;
+      this.undoStack = this.undoStack.filter(keep);
+      this.redoStack = this.redoStack.filter(keep);
       const tab = this.tabOf(r);
       r.close();
       this.reports.splice(this.reports.indexOf(r), 1);
@@ -633,7 +691,13 @@
         { order: 130, label: 'Save Project (tables, reports, notebooks)', action: () => this.saveProject(), disabled: !this.tables.length && !(SM.notebook && SM.notebook.notebooks.length) },
         { order: 140, label: 'Open Project…', action: () => this.fileInput.click() },
         { order: 210, label: 'Close Table', action: () => this.current && this.closeTable(this.current), disabled: !this.current },
-        { order: 220, label: 'Close All Reports', action: () => { for (const r of this.reports.slice()) this.closeReport(r); }, disabled: !this.reports.length },
+        { order: 220, label: 'Close All Reports', action: () => {
+          // one step for Edit > Undo: they all open again
+          const all = this.reports.slice();
+          if (!all.length) return;
+          this._push({ closed: all.map((r) => this._closedOf(r)), label: 'Close All Reports' });
+          for (const r of all) this.closeReport(r, { record: false });
+        }, disabled: !this.reports.length },
       ];
     }
 
@@ -641,8 +705,9 @@
       const t = this.current;
       const g = this.grid;
       const u = this.undoStack[this.undoStack.length - 1], r = this.redoStack[this.redoStack.length - 1];
+      const l = this._localUndo();
       return [
-        { order: 1, label: u ? `Undo ${u.label}` : 'Undo', key: 'ctrl Z', disabled: !u, action: () => this.undo() },
+        { order: 1, label: l ? `Undo ${l.label}` : u ? `Undo ${u.label}` : 'Undo', key: 'ctrl Z', disabled: !l && !u, action: () => this.undo() },
         { order: 2, label: r ? `Redo ${r.label}` : 'Redo', key: 'ctrl shift Z', disabled: !r, action: () => this.redo() },
         { order: 10, label: 'Copy', key: 'ctrl C', disabled: !t, action: () => { this.showTab(this.tabOf(t)); SM.ui.toast('In the grid: ctrl/⌘+C copies the selected rows or the cell'); } },
         { order: 20, label: 'Paste', key: 'ctrl V', disabled: !t, action: () => { this.showTab(this.tabOf(t)); SM.ui.toast('In the grid: click the cell to paste at, then ctrl/⌘+V'); } },
@@ -1086,7 +1151,9 @@
       this.engineEl.dataset.state = e.state;
       // while loading, how long it has taken: a slow download is then told from a stuck one
       const took = e.state === 'loading' && e.elapsed >= 5 ? ` (${duration(e.elapsed)})` : '';
-      this.engineEl.textContent = e.state === 'ready' ? (e.loading || `Python · statsmodels ${e.versions.statsmodels}`) : `${e.text}${took}`;
+      // a call that has run for a while: how long (the analysis's own report says more)
+      const working = e.state === 'ready' && e.running ? Math.floor((performance.now() - e.running.since) / 1000) : 0;
+      this.engineEl.textContent = e.state === 'ready' ? (e.loading || (working >= 3 ? `Python · working ${duration(working)}` : `Python · statsmodels ${e.versions.statsmodels}`)) : `${e.text}${took}`;
       this.engineEl.title = e.loading || (e.slow && e.state === 'loading' ? `${e.text}${took}. Still loading: click for what it is doing.` : e.text);
       this.engineEl.dataset.loading = e.loading ? '1' : '0';
       this.engineEl.dataset.slow = e.slow && e.state === 'loading' ? '1' : '0';
@@ -1204,8 +1271,26 @@
       }
       this.on('columnselection', () => this.panels.renderColumns());
       SM.engine.on('status', () => { this._engineStatus(); if (SM.engine.state === 'ready' || SM.engine.state === 'error') this._renderHome(); });
-      SM.engine.on('busy', (n) => { this.engineEl.dataset.busy = n > 0 ? '1' : '0'; });
+      SM.engine.on('busy', (n) => {
+        this.engineEl.dataset.busy = n > 0 ? '1' : '0';
+        // while Python works, the status says for how long, every second
+        if (n > 0 && !this._busyTimer) this._busyTimer = setInterval(() => this._engineStatus(), 1000);
+        else if (n === 0 && this._busyTimer) { clearInterval(this._busyTimer); this._busyTimer = null; this._engineStatus(); }
+      });
       SM.engine.on('log', (m) => { this.log.push(m.text); if (this.log.length > 2000) this.log.splice(0, 1000); });
+      // ctrl/⌘+Z undoes and shift+ctrl/⌘+Z or ctrl/⌘+Y redoes anywhere: the grid
+      // has its own (it prevents this one), a text field keeps the browser's
+      // undo of its text, and an open dialog keeps the page behind it as it is
+      document.addEventListener('keydown', (ev) => {
+        if (ev.defaultPrevented || !(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+        const k = ev.key.toLowerCase();
+        if (k !== 'z' && k !== 'y') return;
+        const t = ev.target;
+        if (t && t.closest && t.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), .sm-modal-back')) return;
+        if (document.querySelector('.sm-modal-back')) return;
+        ev.preventDefault();
+        if (k === 'y' || ev.shiftKey) this.redo(); else this.undo();
+      });
       this._engineStatus();
       SM.engine.start(version);
       this.showTab(this.homeTab);

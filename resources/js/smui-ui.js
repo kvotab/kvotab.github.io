@@ -17,6 +17,10 @@
   const { el } = SM.util;
 
   let openMenus = [];
+  // The item chosen last: its labels down from the menu's (opts.path: an
+  // outline's red triangle starts with the outline's title), for Edit > Undo
+  // to name what a report change was.
+  let picked = null;
 
   function closeMenus(from = 0) {
     for (const m of openMenus.splice(from)) { m.el.remove(); if (m.onClose) m.onClose(); }
@@ -25,6 +29,7 @@
   /* Open a menu at an anchor element (below it) or at a point {x, y}. */
   function menu(items, at, opts = {}) {
     const level = opts.level || 0;
+    const path = opts.path || [];
     closeMenus(level);
     const box = el('div', { class: 'sm-menu', role: 'menu' });
     const buttons = [];
@@ -44,7 +49,7 @@
           buttons.forEach((x) => x.classList.remove('is-open'));
           b.classList.add('is-open');
           const r = b.getBoundingClientRect();
-          menu(typeof it.submenu === 'function' ? it.submenu() : it.submenu, { x: r.right - 2, y: r.top - 4, sub: true }, { level: level + 1 });
+          menu(typeof it.submenu === 'function' ? it.submenu() : it.submenu, { x: r.right - 2, y: r.top - 4, sub: true }, { level: level + 1, path: [...path, it.label] });
         };
         b.addEventListener('mouseenter', openSub);
         b.addEventListener('click', (ev) => { ev.stopPropagation(); openSub(); });
@@ -55,6 +60,7 @@
           ev.stopPropagation();
           if (it.disabled) return;
           closeMenus(0);
+          picked = { path: [...path, it.label], at: performance.now() };
           if (it.action) Promise.resolve().then(() => it.action()).catch((e) => SM.ui.toast(e.message || String(e), { error: true }));
         });
       }
@@ -270,5 +276,5 @@
     toastTimer = setTimeout(() => t.remove(), error ? ms * 1.6 : ms);
   }
 
-  SM.ui = Object.freeze({ menu, closeMenus, dialog, form, toast, dialogs });
+  SM.ui = Object.freeze({ menu, closeMenus, dialog, form, toast, dialogs, picked: () => picked });
 }(typeof self !== 'undefined' ? self : this));

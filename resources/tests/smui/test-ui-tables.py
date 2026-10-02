@@ -1004,6 +1004,8 @@ async def wp5(page):
     r = await js(page, r"""
       const t = SM.app.tables.find((x) => x.name === 'Props');
       SM.app.showTab(SM.app.tabOf(t));
+      // from an empty history: a full one (30 steps; closing a report is one too) would not grow
+      SM.app.undoStack.length = 0;
       const n0 = t.columns.length, u0 = SM.app.undoStack.length;
       const p = SM.app.newColumn();
       await T.sleep(80);
@@ -1110,6 +1112,7 @@ async def wp5(page):
       let d = T.dlg(); T.set(T.opt(d, 'First Lag'), '1'); T.set(T.opt(d, 'Last Lag'), '3'); T.ok(d); await p;
       const sv = s.col('sales').values;
       out.lags = [1, 2, 3].map((k) => { const c = s.col(`Lag ${k}[sales]`); return !!c && c.values.every((v, i) => (i < k ? Number.isNaN(v) : v === sv[i - k])) && c.formula.expr === `Lag(:sales, ${k})`; });
+      SM.app.undoStack.length = 0;   // from an empty history: a full one would not grow
       const u0 = SM.app.undoStack.length;
       // Moving Average: equal weights over the two rows before and this one
       const p2 = row.find((x) => x.label === 'Moving Average…').action();

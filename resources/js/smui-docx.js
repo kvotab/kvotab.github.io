@@ -34,17 +34,57 @@
   const visible = (e) => { const cs = getComputedStyle(e); return cs.display !== 'none' && cs.visibility !== 'hidden'; };
   const SKIP = 'button, input, select, textarea, .kvot-info-slot, [data-noexport], .sm-ob-toggle, .sm-ob-menu, script, style';
 
+  /* A bar column's cell (smui-report.js's barCell): the track 100 px wide
+     (1500 twips) inside the cell's margins (90 twips a side, SmTable's), the
+     bar a paragraph shaded in the bar colour, as short as the page's bar
+     through its right indent (a pixel, 15 twips, at least), on a line of
+     6 pt (about the page's 10 px). */
+  const BAR_W = 1500;
+  function barTc(c, isHead) {
+    const shd = isHead ? '<w:shd w:val="clear" w:color="auto" w:fill="F5EEE7"/>' : '';
+    const frac = isHead ? 0 : Math.max(0, Math.min(1, Number(c.dataset.bar) || 0));
+    const p = frac > 0
+      ? `<w:p><w:pPr><w:pStyle w:val="SmCell"/><w:shd w:val="clear" w:color="auto" w:fill="8FA9C2"/><w:ind w:left="0" w:right="${BAR_W - Math.max(15, Math.round(BAR_W * frac))}"/><w:rPr><w:sz w:val="12"/><w:szCs w:val="12"/></w:rPr></w:pPr></w:p>`
+      : para('', { style: 'SmCell' });
+    return `<w:tc><w:tcPr><w:tcW w:w="${BAR_W + 180}" w:type="dxa"/>${shd}<w:vAlign w:val="center"/></w:tcPr>${p}</w:tc>`;
+  }
+
+  /* The table's grid (w:tblGrid, which a table must have): a width in twips
+     for each of its columns, as the page lays them out (15 twips a pixel,
+     from a row of single cells): the page's content width of the cell and
+     Word's margins (90 twips a side; a key-value table's cells have no
+     padding on the page); a bar column's is its cell's; a table the page has
+     not laid out gets widths from its longest texts. A grid wider than the
+     text (6.5 in) is narrowed to it, as Word would fit it. */
+  const TEXT_TW = 9360;
+  const contentPx = (c) => { const cs = getComputedStyle(c); return c.getBoundingClientRect().width - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0); };
+  function gridOf(rows, width) {
+    const single = rows.find((r) => r.cells.length === width && [...r.cells].every((c) => (c.colSpan || 1) === 1));
+    let w = single ? [...single.cells].map((c) => (c.matches('.sm-rt-barcell, .sm-rt-barhead') ? BAR_W + 180 : 180 + Math.round(contentPx(c) * 15))) : [];
+    if (w.length !== width || w.some((x) => !(x > 180))) {
+      w = Array.from({ length: width }, (_, j) => {
+        let n = 1;
+        for (const r of rows) { const c = r.cells[j]; if (c && (c.colSpan || 1) === 1) n = Math.max(n, c.textContent.trim().length); }
+        return 180 + 100 * Math.min(n, 40);
+      });
+    }
+    const sum = w.reduce((a, b) => a + b, 0);
+    return sum > TEXT_TW ? w.map((x) => Math.max(200, Math.floor((x * TEXT_TW) / sum))) : w;
+  }
+
   /* The rows of a report table as text, as the page shows them. */
   function tableXml(tbl) {
     const rows = [...tbl.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr, :scope > tfoot > tr')].filter(visible);
     if (!rows.length) return '';
     const head = tbl.tHead ? [...tbl.tHead.rows] : [];
-    const width = Math.max(...rows.map((r) => [...r.cells].length));
+    // the grid's columns: the most a row spans
+    const width = Math.max(...rows.map((r) => [...r.cells].reduce((a, c) => a + (c.colSpan || 1), 0)));
     const out = [];
     for (const tr of rows) {
       const isHead = head.includes(tr);
       const cells = [...tr.cells];
       const tcs = cells.map((c) => {
+        if (c.matches('.sm-rt-barcell, .sm-rt-barhead')) return barTc(c, isHead);
         const left = c.classList.contains('sm-l') || (tbl.classList.contains('sm-kv') && c.cellIndex === 0);
         const sig = c.classList.contains('p-sig');
         const span = c.colSpan > 1 ? `<w:gridSpan w:val="${c.colSpan}"/>` : '';
@@ -56,7 +96,8 @@
     }
     const cap = tbl.caption && tbl.caption.textContent.trim();
     return (cap ? para(run(cap), { style: 'Caption', keepNext: true }) : '')
-      + `<w:tbl><w:tblPr><w:tblStyle w:val="SmTable"/><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr>${out.join('')}</w:tbl>`
+      + `<w:tbl><w:tblPr><w:tblStyle w:val="SmTable"/><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1"/></w:tblPr>`
+      + `<w:tblGrid>${gridOf(rows, width).map((w) => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${out.join('')}</w:tbl>`
       + para('', { style: 'SmSpace' });
   }
 
