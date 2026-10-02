@@ -2157,7 +2157,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 			(v) => { block.handle_decay = v; },
 			FARF_HELP.handle_decay));
 
-		const problem = ed.structureProblem(block) ?? ed.geometryProblem(block);
+		const problem = ed.structureProblem(block) ?? ed.geometryProblem(block) ?? ed.rockProblem(block);
 		if (problem) host.append(el('p', { className: 'insp-error' }, `${problem}.`));
 		if (!problem) {
 			// Two independent things can be worth saying: where the release

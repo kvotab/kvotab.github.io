@@ -325,6 +325,27 @@ export function jacobianValues(jac, f, t, y, out, { threshold, work = {} }) {
 	return 1 + work.groups.length;
 }
 
+/**
+ * How a SciPy method is handed the model's Jacobian: `'sparse'` (a
+ * `scipy.sparse` matrix), `'dense'` or `'none'`.
+ *
+ * A sparse factorisation only pays off once the matrix is big enough that its
+ * zeros outnumber the bookkeeping. Below that, building a scipy.sparse matrix
+ * per Jacobian costs more than it saves -- measured on landscape.json (n=28),
+ * where dense beat sparse. LSODA takes a dense matrix whatever the size: it is
+ * ODEPACK's, which factorises full or banded matrices and nothing else, and a
+ * sparse one handed to it failed the run. It keeps an n by n matrix of its own
+ * when the problem turns stiff, so the dense Jacobian costs it nothing more.
+ *
+ * @param {string} method  'BDF', 'Radau' or 'LSODA'
+ * @param {object|null} jac  the model's Jacobian, when it has one
+ * @param {number} neq  how many states
+ */
+export function jacobianForm(method, jac, neq) {
+	if (!jac) return 'none';
+	return method !== 'LSODA' && neq >= 60 && jac.density < 0.25 ? 'sparse' : 'dense';
+}
+
 // --- the solver --------------------------------------------------------------
 
 /**
@@ -486,11 +507,7 @@ export function scipySolver(id) {
 		py.globals.set('js_accepted', jsAccepted);
 		py.globals.set('js_jac', jsJac);
 
-		// A sparse factorisation only pays off once the matrix is big enough
-		// that its zeros outnumber the bookkeeping. Below that, building a
-		// scipy.sparse matrix per Jacobian costs more than it saves -- measured
-		// on landscape.json (n=28), where dense beat sparse.
-		const useSparse = !!jac && neq >= 60 && jac.density < 0.25;
+		const useSparse = jacobianForm(method, jac, neq) === 'sparse';
 		const spec = {
 			method,
 			t_eval: Array.from(tspan),

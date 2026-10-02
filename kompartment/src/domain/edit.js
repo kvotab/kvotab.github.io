@@ -128,6 +128,7 @@ import {
 	cellNames,
 	structureProblem,
 	geometryProblem,
+	rockProblem,
 	dispersionWarning,
 	gridPeclet,
 	extraCells,
@@ -9223,7 +9224,7 @@ export {
 	FARF_STRUCTURE_KEYS, FARF_CHOICE_KEYS, FARF_HELP, FARF_LABEL, FARF_TERM, OUTFLOWS,
 	OUTFLOW_LABEL, OUTFLOW_ORDER, CONTINUES, SURFACES, SURFACE_KEY, SURFACE_LABEL, GRIDS,
 	GRID_LABEL, FARF_SURFACE_DEFAULTS, FARF_LEGACY, cellCount, cellNames, heldCells,
-	structureProblem, geometryProblem, dispersionWarning, gridPeclet, extraCells,
+	structureProblem, geometryProblem, rockProblem, dispersionWarning, gridPeclet, extraCells,
 	autoExtraCells, activeEquationKeys, surfaceOf, usesCells, isSemiAnalytic, FARF_METHODS,
 	METHOD_LABEL,
 } from './farfield.js';

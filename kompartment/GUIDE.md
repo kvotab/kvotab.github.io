@@ -2095,14 +2095,14 @@ NDF's Newton has its own convergence test and keeps a Jacobian until it stalls:
 | **BDF formulas** | the plain backward differentiation formulas: every κ of the NDFs zero. Off, since the NDFs take fewer steps for the same answer; on to see what those terms buy, or to match a result worked out with BDF. On QNDF it gives QBDF | `ndf`, `qndf` |
 | **Maximum step** | the longest step the solver may take | all |
 | **First step** | the first step to try | all |
-| **Step budget** | how many steps before it gives up and says so | all |
-| **Maximum order** / **Minimum order** | cap and floor the variable-order formulas; set both equal for a fixed order | `ndf` (maximum only) and FBDF/QNDF |
+| **Step budget** | how many steps before it gives up and says so: a whole number | all |
+| **Maximum order** / **Minimum order** | cap and floor the variable-order formulas, each a whole number from 1 to 5; set both equal for a fixed order | `ndf` (maximum only) and FBDF/QNDF |
 | **Norm control** | judge the error against the norm of the whole solution rather than component by component (MATLAB's NormControl) | `ndf` |
 | **Error norm** | the largest of the components' errors, or their root mean square | `ndf`, and the vendored methods except Radau, which uses its own |
 | **Stall tolerance** | how large a Newton correction may be and still be taken once it has stopped shrinking | `ndf` |
 | **Newton tolerance** | how tightly each stage's iteration must converge | the vendored methods with a Newton iteration |
-| **Jacobian reuse** | how many steps a Jacobian may be reused | as above, except Rodas5P |
-| **Steps at the floor** | how many failing steps at the smallest representable size may be accepted in a row; empty is the solver's own rule, which for `ndf` is twenty failed error tests and no failed Newton iteration | `ndf`, the vendored methods |
+| **Jacobian reuse** | how many steps a Jacobian may be reused: a whole number | as above, except Rodas5P |
+| **Steps at the floor** | how many failing steps at the smallest representable size may be accepted in a row, a whole number; empty is the solver's own rule, which for `ndf` is twenty failed error tests and no failed Newton iteration | `ndf`, the vendored methods |
 | **Iteration matrix** | factorise I − hJ with the sparse LU that keeps its pivots from one factorisation to the next (*sparse LU, pivots kept*), the sparse LU that chooses them every time (*sparse LU*) or a dense LU, or let *auto* measure the fill and choose. The vendored methods have no LU that keeps its pivots and use their sparse one for it | `ndf`, the vendored methods |
 | **Jacobian** | generated from the equations, or differenced through the same pattern (*finite differences*): the check to run when the generated one is in doubt | every stiff solver |
 | **Absolute tolerance follows the solution** | see below | `ndf`, the vendored methods |
@@ -5464,6 +5464,11 @@ radionuclide per row:
 | **ρ<sub>m</sub>** | the dry bulk density of the rock |
 | **P<sub>e</sub>** | the Peclet number; the dispersion is T<sub>w</sub>/P<sub>e</sub> |
 | **PENDEP**, **PENDEP0** | the depths, under *Discretisation* below |
+
+None of K<sub>d,f</sub>, ε<sub>m</sub>, K<sub>d,m</sub>, D<sub>e,m</sub> and
+ρ<sub>m</sub> can be below zero. One written as a number below zero is
+refused as the model opens, and one an equation works out below zero stops
+the run, saying which.
 
 The water does not travel at one speed for caesium and another for iodine, so
 there is no per-nuclide box for T<sub>w</sub> to be filled in by accident. They

@@ -52,7 +52,7 @@ import { FarfPath } from './farfield.js';
 import { LaplaceFarfPath } from './farfield-laplace.js';
 import { expandTransports, TransportError } from './transport.js';
 import {
-	FARF_NUCLIDE_KEYS, cellCount, structureProblem, geometryProblem,
+	FARF_NUCLIDE_KEYS, cellCount, structureProblem, geometryProblem, rockProblem,
 	effectiveStructure, activeEquationKeys, surfaceOf, usesCells, FARF_METHODS, isSemiAnalytic,
 	FARF_LABEL, FarfError,
 } from '../domain/farfield.js';
@@ -226,7 +226,7 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	// ../domain/farfield.js.
 	const farfLayout = [];
 	for (const b of project.farfields ?? []) {
-		const problem = structureProblem(b) ?? geometryProblem(b);
+		const problem = structureProblem(b) ?? geometryProblem(b) ?? rockProblem(b);
 		if (problem) throw new BuildError(problem, b.qname ?? b.name);
 		// On cells, or semi-analytically -- which has no cells, and holds one
 		// state per nuclide for what the path holds.

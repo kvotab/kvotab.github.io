@@ -26,6 +26,7 @@ import { buildSystem } from './builder.js';
 import { FarfPath } from './farfield.js';
 import {
 	CONTINUES, FARF_DEFAULTS, GRIDS, isSemiAnalytic, layerDepths, matchedGrid, structureProblem, wettedSurface, zeroin,
+	rockSettingProblem, FarfError,
 } from '../domain/farfield.js';
 
 /**
@@ -127,6 +128,12 @@ function layersAt(F, X, o, nm, matched) {
 	const aw = wettedSurface(s);
 	if (!matched) return { d: referenceLayers(s.pen_dep, nm, aw, first), h: null };
 	const lam = F.D?.lam ?? null;
+	for (let m = 0; m < s.kd_f.length; m++) {
+		const rock = rockSettingProblem({
+			kd_f: s.kd_f[m], kd_m: s.kd_m[m], de_m: s.de_m[m], eps_m: s.eps_m[m], rho_m: s.rho_m,
+		});
+		if (rock) throw new FarfError(rock);
+	}
 	const nucs = s.de_m.map((de, m) => ({
 		de, rm: s.eps_m[m] + s.rho_m * s.kd_m[m], lam: lam ? lam[m] ?? 0 : 0, rf: 1 + s.kd_f[m] * aw,
 	}));

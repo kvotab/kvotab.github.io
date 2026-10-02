@@ -23,7 +23,7 @@
 import {
 	cellStructure, cellValues, coefficients, coefficientsTangent,
 	releaseCells, releaseWeights, FARF_EQUATION_KEYS,
-	effectiveStructure, matchedGrid, wettedSurface,
+	effectiveStructure, matchedGrid, wettedSurface, rockSettingProblem, FarfError,
 } from '../domain/farfield.js';
 
 export class FarfPath {
@@ -158,7 +158,9 @@ export class FarfPath {
 
 	/**
 	 * Lays out the matched layers of one combination, from every nuclide on
-	 * it: they share the cells, since a daughter grows in cell by cell.
+	 * it: they share the cells, since a daughter grows in cell by cell. Each
+	 * nuclide's rock settings are checked first: they are in the diffusion
+	 * depth the layers are sized by.
 	 */
 	_layOut(X, o) {
 		const s = this._read(X, o, 0, {});
@@ -166,6 +168,8 @@ export class FarfPath {
 		const nucs = new Array(this.nnuc);
 		for (let m = 0; m < this.nnuc; m++) {
 			const n = this._read(X, o, m, {});
+			const rock = rockSettingProblem(n);
+			if (rock) throw new FarfError(rock);
 			nucs[m] = {
 				de: n.de_m, rm: n.eps_m + n.rho_m * n.kd_m, lam: this.lam[m], rf: 1 + n.kd_f * aw,
 			};

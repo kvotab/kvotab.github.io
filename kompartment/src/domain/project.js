@@ -61,6 +61,7 @@ import {
 	surfaceOf,
 	structureProblem,
 	geometryProblem,
+	rockProblem,
 } from './farfield.js';
 import {
 	WASTE_EQUATION_KEYS, WASTE_NUCLIDE_KEYS, WASTE_DEFAULTS, wasteProblems,
@@ -239,19 +240,22 @@ export class Project {
 		//
 		// Out of range is refused rather than clamped: a step budget of -1 or
 		// an order of 9 is a mistake, and a run that quietly used something
-		// else would be a number nobody could account for.
-		for (const [key, least, most] of [
+		// else would be a number nobody could account for. So is an order of
+		// 2.5: an order is which formula the step takes, and there is none
+		// between the second and the third -- and a budget of 1000.5 steps, a
+		// Jacobian kept for 2.5 steps: what is counted is a whole number.
+		for (const [key, least, most, whole] of [
 			['max_step', 0, Infinity], ['initial_step', 0, Infinity],
-			['max_steps', 1, Infinity], ['max_order', 1, 5], ['min_order', 1, 5],
-			['newton_kappa', 0, 1], ['max_jac_age', 1, Infinity], ['below_tol_run', 0, Infinity],
+			['max_steps', 1, Infinity, true], ['max_order', 1, 5, true], ['min_order', 1, 5, true],
+			['newton_kappa', 0, 1], ['max_jac_age', 1, Infinity, true], ['below_tol_run', 0, Infinity, true],
 			['stagnation_tol', 0, 1],
 		]) {
 			const v = this.simulation[key];
 			if (v == null || v === '') { delete this.simulation[key]; continue; }
 			const n = Number(v);
-			if (!Number.isFinite(n) || n < least || n > most) {
+			if (!Number.isFinite(n) || n < least || n > most || (whole && !Number.isInteger(n))) {
 				throw new ValidationError(
-					`'${v}' is not a ${key.replace(/_/g, ' ')}: a number `
+					`'${v}' is not a ${key.replace(/_/g, ' ')}: a ${whole ? 'whole number' : 'number'} `
 					+ `${most === Infinity ? `of at least ${least}` : `between ${least} and ${most}`}`,
 				);
 			}
@@ -1359,7 +1363,9 @@ export class Project {
 		for (const p of wasteProblems(this)) throw new ValidationError(p.message, p.name);
 		for (const p of disruptionProblems(this)) throw new ValidationError(p.message, p.name);
 		for (const f of [...this.farfields, ...this.waste_packages]) {
-			const problem = f.kind === 'farfield' ? structureProblem(f) ?? geometryProblem(f) : null;
+			const problem = f.kind === 'farfield'
+				? structureProblem(f) ?? geometryProblem(f) ?? rockProblem(f)
+				: null;
 			if (problem) throw new ValidationError(problem, f.qname);
 			// A path may be indexed by whatever a compartment may be indexed
 			// by. It used to be the radionuclides or nothing, on the grounds

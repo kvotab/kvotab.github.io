@@ -26934,13 +26934,41 @@ test('a far-field path with no matrix diffusion has a clean Jacobian', () => {
 	// rather than reaching the solver as an Infinity.
 	for (const [key, value, word] of [
 		['pe', '0', /Peclet/], ['eps_m', '0', /matrix capacity/], ['tw', '0', /F\/TW/],
+		// The rock's settings below zero, however little: written as a
+		// number the model is refused as it loads, an equation as it is
+		// worked out. A little below zero used to run.
+		['kd_f', '-0.1', /^F: the sorption on the fracture coating K_d,f must be zero or positive \(got -0\.1\)$/],
+		['kd_f', '-1e-9 * (time >= 0)', /^The sorption on the fracture coating K_d,f must be zero or positive \(got -1e-9\)$/],
+		['kd_m', '-1e-3', /^F: the partition coefficient in the rock matrix K_d,m must be zero or positive/],
+		['de_m', '-1e-5 * (time >= 0)', /^The effective diffusivity in the rock matrix D_e,m must be zero or positive \(got -0\.00001\)$/],
+		['eps_m', '-1e-4', /^F: the porosity of the rock matrix ε_m must be zero or positive \(got -1e-4\)$/],
+		['rho_m', '-2700 * (time >= 0)', /^The dry bulk density of the rock matrix ρ_m must be zero or positive \(got -2700\)$/],
 	]) {
 		const bad = structuredClone(raw);
-		bad.farfields[0][key] = value;
 		bad.farfields[0].kd_m = '0';
+		bad.farfields[0][key] = value;
 		let message = null;
 		try { run(bad); } catch (e) { message = e.message; }
 		assert(word.test(message ?? ''), `${key}=${value}: ${message}`);
+	}
+	// On matched layers too, before the layers are sized by it: it is in the
+	// retardation the first layer is worked out from.
+	const matched = structuredClone(raw);
+	Object.assign(matched.farfields[0], { grid: 'matched', pen_dep_0: '', kd_f: '-1 * (time >= 0)' });
+	let said = null;
+	try { run(matched); } catch (e) { said = e.message; }
+	assert(said === 'The sorption on the fracture coating K_d,f must be zero or positive (got -1)', String(said));
+	// And the check ahead of a run reads every entry, and leaves an equation
+	// to the run.
+	const entry = { kd_f: '0', entries: [{ index: { Radionuclides: 'Cs-137' }, kd_f: '-2' }] };
+	assert(ed.rockProblem(entry)
+		=== 'the sorption on the fracture coating K_d,f must be zero or positive (got -2 at Cs-137)',
+	String(ed.rockProblem(entry)));
+	for (const key of ['kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m']) {
+		for (const fine of ['0', 0, '1e-3', 'Kd', '-Kd', '', null]) {
+			assert(ed.rockProblem({ [key]: fine }) === null, `${key} ${fine} was refused`);
+		}
+		assert(ed.rockProblem({ [key]: -1 }), `${key} -1 was accepted`);
 	}
 });
 
@@ -27441,6 +27469,19 @@ test('a declined Jacobian keeps its pattern, and the solver differences through 
 	const a = declined.y[declined.y.length - 1];
 	const b = exact.y[exact.y.length - 1];
 	for (let i = 0; i < n; i++) assert(Math.abs(a[i] - b[i]) <= 1e-5 * Math.abs(b[i]) + 1e-12, `C${i}: ${a[i]} vs ${b[i]}`);
+});
+
+test('LSODA is handed a dense Jacobian however large and sparse the model', async () => {
+	// ODEPACK factorises full or banded matrices only. A sparse one -- what
+	// BDF and Radau are given from 60 states, as is right for them -- failed
+	// every LSODA run that turned stiff, with a message about a derivative
+	// gone non-finite.
+	const { jacobianForm } = await import('../src/ode/scipy.js');
+	const sparse = { density: 0.02 };
+	const forms = ['BDF', 'Radau', 'LSODA'].map((m) => jacobianForm(m, sparse, 80));
+	assert(forms.join() === 'sparse,sparse,dense', forms.join());
+	assert(jacobianForm('BDF', sparse, 59) === 'dense' && jacobianForm('BDF', { density: 0.3 }, 80) === 'dense');
+	assert(jacobianForm('LSODA', null, 80) === 'none');
 });
 
 test('a generated Jacobian that answers null is differenced for SciPy, not handed over', async () => {
@@ -33879,6 +33920,13 @@ test('a solver’s own settings are offered where they are read, and reach it', 
 		assert(new RegExp(why).test(caught.message), `${caught.message} (wanted ${why})`);
 	};
 	bad({ max_order: 9 }, 'max order');
+	// An order is which formula a step takes, and there is none at 2.5.
+	bad({ max_order: 2.5 }, "^'2.5' is not a max order: a whole number between 1 and 5$");
+	bad({ min_order: '1.5' }, "^'1.5' is not a min order: a whole number between 1 and 5$");
+	// Nor half a step, of the budget, of a Jacobian's reuse or at the floor.
+	bad({ max_steps: 1000.5 }, "^'1000.5' is not a max steps: a whole number of at least 1$");
+	bad({ max_jac_age: 2.5 }, "^'2.5' is not a max jac age: a whole number of at least 1$");
+	bad({ below_tol_run: '0.5' }, "^'0.5' is not a below tol run: a whole number of at least 0$");
 	bad({ max_steps: 0 }, 'max steps');
 	bad({ newton_kappa: 2 }, 'newton kappa');
 	bad({ stagnation_tol: 2 }, 'stagnation tol');

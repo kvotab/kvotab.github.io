@@ -315,11 +315,11 @@ export const FARF_HELP = {
 	f: 'The flow-related transport resistance, in [time]·m²/m³',
 	aw: 'The flow-wetted surface per unit volume of flowing water, in m²/m³',
 	aperture: 'The fracture aperture, in m: two walls, so the wetted surface is 2/δ per m³ of water',
-	kd_f: 'Sorption on the fracture coating, in m³/m² (0 for none)',
-	kd_m: 'The partition coefficient in the rock matrix, in m³/kg',
-	de_m: 'The effective diffusivity in the rock matrix, in m²/[time]',
-	eps_m: 'The porosity of the rock matrix',
-	rho_m: 'The dry bulk density of the rock matrix, in kg/m³',
+	kd_f: 'Sorption on the fracture coating, in m³/m²: zero or more (0 for none)',
+	kd_m: 'The partition coefficient in the rock matrix, in m³/kg: zero or more',
+	de_m: 'The effective diffusivity in the rock matrix, in m²/[time]: zero or more',
+	eps_m: 'The porosity of the rock matrix: zero or more',
+	rho_m: 'The dry bulk density of the rock matrix, in kg/m³: zero or more',
 	pe: 'The Peclet number; dispersion is the travel time over it',
 	pen_dep: 'The greatest depth into the matrix that is modelled, in m',
 	pen_dep_0: 'The first matrix layer’s thickness, in m; empty for automatic',
@@ -756,6 +756,36 @@ export function wettedSurfaceTangent(s, ds) {
 	return (ds.f * s.tw - s.f * ds.tw) / (s.tw * s.tw);
 }
 
+/**
+ * The rock's settings, each zero or more and never less: the sorption on the
+ * fracture coating, and the matrix's partition coefficient, diffusivity,
+ * porosity and density. Less was not refused. A sorption a little below zero
+ * ran, as a coating that gives up more than it ever held, and a more negative
+ * one made the retardation 1 + K_d,f·a_w zero or below it and the layer depths
+ * NaN; a negative porosity, partition coefficient or density ran on for as
+ * long as the capacity eps + rho*Kd they make up stayed above zero, and a
+ * negative diffusivity ran backwards.
+ */
+export const ROCK_KEYS = ['kd_f', 'kd_m', 'de_m', 'eps_m', 'rho_m'];
+
+/** What each of `ROCK_KEYS` is, for a refusal. */
+const ROCK_TERM = {
+	kd_f: 'The sorption on the fracture coating K_d,f',
+	kd_m: 'The partition coefficient in the rock matrix K_d,m',
+	de_m: 'The effective diffusivity in the rock matrix D_e,m',
+	eps_m: 'The porosity of the rock matrix ε_m',
+	rho_m: 'The dry bulk density of the rock matrix ρ_m',
+};
+
+/** Why one slot's rock settings cannot be used -- the first that is not a number of zero or more -- or null. */
+export function rockSettingProblem(s) {
+	for (const key of ROCK_KEYS) {
+		const v = s[key];
+		if (!(v >= 0) || !Number.isFinite(v)) return `${ROCK_TERM[key]} must be zero or positive (got ${v})`;
+	}
+	return null;
+}
+
 /** Why a wetted surface cannot be used, said in the terms it was given in. */
 function surfaceProblem(s, aw) {
 	if (aw > 0 && Number.isFinite(aw)) return null;
@@ -807,6 +837,8 @@ export function coefficients(s, grid = null) {
 	if (!(s.tw > 0) || !Number.isFinite(s.tw)) {
 		throw new FarfError(`The travel time T_w must be positive (got ${s.tw})`);
 	}
+	const rock = rockSettingProblem(s);
+	if (rock) throw new FarfError(rock);
 	const rM = s.eps_m + s.rho_m * s.kd_m;
 	if (!(rM > 0) || !Number.isFinite(rM)) {
 		// eps + rho*Kd is the matrix's capacity for the nuclide, and it divides
@@ -1363,6 +1395,28 @@ export function geometryProblem(block) {
 		return `${nm} matrix layers starting at ${first} m cannot add up to a `
 			+ `penetration depth of ${penDep} m: the layers grow with depth, so the `
 			+ `first must be smaller than ${penDep / nm} m`;
+	}
+	return null;
+}
+
+/**
+ * The rock's settings ahead of a run (`ROCK_KEYS`): each written as a number
+ * -- the block's own and every entry's -- is zero or more. An equation is
+ * checked as it is worked out, in `coefficients`.
+ *
+ * @returns {string|null}
+ */
+export function rockProblem(block) {
+	for (const holder of [block, ...(block.entries ?? [])]) {
+		for (const key of ROCK_KEYS) {
+			const v = holder?.[key];
+			if (v == null || String(v).trim() === '') continue;
+			const n = Number(v);
+			if (!Number.isFinite(n) || n >= 0) continue;
+			const at = holder === block ? '' : ` at ${Object.values(holder.index ?? {}).join(', ')}`;
+			const what = ROCK_TERM[key];
+			return `${what[0].toLowerCase()}${what.slice(1)} must be zero or positive (got ${v}${at})`;
+		}
 	}
 	return null;
 }
