@@ -390,3 +390,37 @@ export class WFactorization {
     return b;
   }
 }
+
+/**
+ * ‖J‖∞, the largest absolute row sum, of whatever storage the cache holds J
+ * in -- OrdinaryDiffEq's opnorm(J, Inf), which a composite method's stiffness
+ * test reads as its estimate of the spectral radius whenever a stiff method
+ * forms J. A NaN entry makes it NaN, as there.
+ *
+ * @param {JacobianCache} cache
+ * @returns {number}
+ */
+export function jacobianInfNorm(cache) {
+  const n = cache.n;
+  const rows = new Float64Array(n);
+  const J = cache.J;
+  if (cache.sparse) {
+    const { colPtr, rowIdx, values } = J;
+    for (let j = 0; j < n; j++) {
+      for (let k = colPtr[j]; k < colPtr[j + 1]; k++) rows[rowIdx[k]] += Math.abs(values[k]);
+    }
+  } else {
+    const d = J.data;
+    for (let j = 0; j < n; j++) {
+      const base = j * n;
+      for (let i = 0; i < n; i++) rows[i] += Math.abs(d[base + i]);
+    }
+  }
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const r = rows[i];
+    if (r > m) m = r;
+    else if (r !== r) return NaN;
+  }
+  return m;
+}

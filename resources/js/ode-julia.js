@@ -1,9 +1,13 @@
 /* ==========================================================================
    ode_julia -- a single-file build
 
-   Stiff ODE solvers ported from DifferentialEquations.jl -- FBDF, Rodas5P,
-   KenCarp4, TRBDF2 and RadauIIA5 -- with their linear algebra, Jacobian
-   handling, Newton iteration and step-size control. No dependencies.
+   ODE solvers ported from DifferentialEquations.jl -- FBDF (factorising or
+   GMRES), QNDF, Rodas5P, Rosenbrock23, KenCarp4, TRBDF2, RadauIIA5, Tsit5,
+   Vern7, and DefaultODEAlgorithm, which switches between them on stiffness --
+   with their linear algebra, Jacobian handling, Newton iteration and
+   step-size control. No dependencies. MIT (ode/julia/LICENSE), except the
+   part from core/krylov.js, a port of Krylov.jl's GMRES, which is subject to
+   the Mozilla Public License 2.0 (its header, below).
 
      const { solve, ODEProblem, FBDF } = OdeJulia;
      const sol = solve(new ODEProblem(f, u0, [0, 1e5], { jac }), FBDF(),
@@ -1134,6 +1138,40 @@
     }
   }
 
+  /**
+   * ‖J‖∞, the largest absolute row sum, of whatever storage the cache holds J
+   * in -- OrdinaryDiffEq's opnorm(J, Inf), which a composite method's stiffness
+   * test reads as its estimate of the spectral radius whenever a stiff method
+   * forms J. A NaN entry makes it NaN, as there.
+   *
+   * @param {JacobianCache} cache
+   * @returns {number}
+   */
+  function jacobianInfNorm(cache) {
+    const n = cache.n;
+    const rows = new Float64Array(n);
+    const J = cache.J;
+    if (cache.sparse) {
+      const { colPtr, rowIdx, values } = J;
+      for (let j = 0; j < n; j++) {
+        for (let k = colPtr[j]; k < colPtr[j + 1]; k++) rows[rowIdx[k]] += Math.abs(values[k]);
+      }
+    } else {
+      const d = J.data;
+      for (let j = 0; j < n; j++) {
+        const base = j * n;
+        for (let i = 0; i < n; i++) rows[i] += Math.abs(d[base + i]);
+      }
+    }
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      const r = rows[i];
+      if (r > m) m = r;
+      else if (r !== r) return NaN;
+    }
+    return m;
+  }
+
   /* ---------- core/newton.js ---------- */
   /* ==========================================================================
      ode_julia / core / newton
@@ -1348,6 +1386,9 @@
           // The stage value is z itself:  g(z) = tmp + γh·f(z) − z.
           for (let i = 0; i < n; i++) dz[i] = this.tmp[i] + gammaDt * k[i] - z[i];
         }
+        // A matrix-free W (../core/krylov.js) is linearised where the iterate
+        // is, and is told so; a factorised one has no use for it.
+        if (W.setPoint) W.setPoint(tstep, ustep, k, gammaDt);
         W.solve(dz);
 
         ndz = residualNorm(dz, uprev, ustep, tol.abstol, tol.reltol, n, this.norm);
@@ -1459,6 +1500,8 @@
    * @param {number} [opts.qsteadyMin=1]   inside [min,max] the step is left alone
    * @param {number} [opts.qsteadyMax=1.2]
    * @param {number} [opts.qoldinit=1e-4]
+   * @param {number} [opts.qmaxFirstStep]  the growth allowed after the first
+   *        accepted step instead of qmax; unset, qmax applies there too
    */
   class PIController {
     constructor(opts) {
@@ -1471,6 +1514,11 @@
       this.qsteadyMin = opts.qsteadyMin ?? 1;
       this.qsteadyMax = opts.qsteadyMax ?? 1.2;
       this.qoldinit = opts.qoldinit ?? 1e-4;
+      // OrdinaryDiffEq's qmax_first_step (10000 by default there, after CVODE):
+      // the starting step is an estimate, so the first accepted one may be
+      // followed by a much longer one. Only the methods ported with it set it;
+      // the older ports keep qmax throughout, as they were checked with.
+      this.qmaxFirstStep = opts.qmaxFirstStep ?? 0;
       this.errold = this.qoldinit;
       this.q11 = 1;
     }
@@ -1485,17 +1533,21 @@
      * q, the factor the step is *divided* by: dtnew = dt / q.
      * @param {number} EEst  the scaled error estimate; <= 1 is an accepted step
      */
-    q(EEst) {
-      if (EEst === 0) return 1 / this.qmax;
+    q(EEst, first = false) {
+      const qmax = first && this.qmaxFirstStep > 0 ? this.qmaxFirstStep : this.qmax;
+      if (EEst === 0) return 1 / qmax;
       this.q11 = EEst ** this.beta1;
       let q = this.q11 / this.errold ** this.beta2;
       q /= this.gamma;
-      return Math.min(1 / this.qmin, Math.max(1 / this.qmax, q));
+      return Math.min(1 / this.qmin, Math.max(1 / qmax, q));
     }
 
-    /** dtnew after an accepted step, and the state update that goes with it. */
-    accept(EEst, dt) {
-      let q = this.q(EEst);
+    /**
+     * dtnew after an accepted step, and the state update that goes with it.
+     * `first` says it is the run's first accepted step, for qmaxFirstStep.
+     */
+    accept(EEst, dt, first = false) {
+      let q = this.q(EEst, first);
       if (q >= this.qsteadyMin && q <= this.qsteadyMax) q = 1;
       this.errold = Math.max(EEst, this.qoldinit);
       return dt / q;
@@ -1574,6 +1626,523 @@
     return tdir * h;
   }
 
+  const F64 = new Float64Array(1);
+  const I64 = new BigInt64Array(F64.buffer);
+
+  /** The next double above x (Julia's nextfloat), for finite x >= 0. */
+  function nextUp(x) {
+    if (x === 0) return Number.MIN_VALUE;
+    F64[0] = x;
+    I64[0] += 1n;
+    return F64[0];
+  }
+
+  /** Julia's eps(x): the gap from |x| to the next double, MIN_VALUE at zero. */
+  function epsOf(x) {
+    const a = Math.abs(x);
+    if (a === 0) return Number.MIN_VALUE;
+    return nextUp(a) - a;
+  }
+
+  /**
+   * The starting step exactly as OrdinaryDiffEq's ode_determine_initdt takes it
+   * (OrdinaryDiffEqCore/src/initdt.jl, `_ode_initdt_iip`), for the methods
+   * ported with it.
+   *
+   * The same two Euler probes as `initialStep` above, but where Hairer's book
+   * refines h₁ = (0.01/max(d₁, d₂))^(1/(p+1)), OrdinaryDiffEq takes the p-th
+   * root -- of the method's order, not one more -- and clamps the first probe
+   * to dtmax. It also stops at the first probe when f has not changed at all
+   * ("a constant zone"), answering 100 times it, and falls back to a default
+   * when the first probe came out below machine epsilon. `initialStep` is kept
+   * as it was for the methods checked with it.
+   *
+   * `norm` is the integrator's: the root mean square unless the run uses the
+   * maximum.
+   *
+   * @returns {number} a signed step, in the direction of tdir
+   */
+  function initialStepSciML(f, t0, u0, f0, tdir, order, reltol, abstol, dtmax, work, opts = {}) {
+    const n = u0.length;
+    const { u1, f1, w } = work;
+    const norm = opts.norm === 'max'
+      ? (fill) => { let m = 0; for (let i = 0; i < n; i++) { const v = Math.abs(fill(i)); if (v > m || v !== v) m = v; } return m; }
+      : (fill) => { let s = 0; for (let i = 0; i < n; i++) { const v = fill(i); s += v * v; } return Math.sqrt(s / n); };
+    const dtminUser = opts.dtmin > 0 ? opts.dtmin : 0;
+    const dtmin = nextUp(Math.max(dtminUser, epsOf(t0)));
+    const smalldt = Math.max(dtmin, 1e-6);
+    const dtmaxAbs = Math.abs(dtmax);
+
+    const scalarAtol = typeof abstol === 'number';
+    for (let i = 0; i < n; i++) w[i] = (scalarAtol ? abstol : abstol[i]) + Math.abs(u0[i]) * reltol;
+
+    const d0 = norm((i) => u0[i] / w[i]);
+    const d1 = norm((i) => f0[i] / w[i]);
+    if (Number.isNaN(d1)) return tdir * dtmin;
+
+    let dt0 = (d0 < 1e-5 || d1 < 1e-5) ? smalldt : (d0 / d1) / 100;
+    dt0 = Math.min(dt0, dtmaxAbs);
+    const tinyFirst = dt0 < 10 * Number.EPSILON;
+    const fallback = (dt) => (tinyFirst && (!Number.isFinite(dt) || Math.abs(dt) < 10 * Number.EPSILON)
+      ? tdir * Math.max(smalldt, dtmin)
+      : dt);
+
+    for (let i = 0; i < n; i++) u1[i] = u0[i] + tdir * dt0 * f0[i];
+    f(t0 + tdir * dt0, u1, f1);
+
+    let same = n > 0;
+    for (let i = 0; i < n && same; i++) if (f0[i] !== f1[i]) same = false;
+    if (same) return fallback(tdir * Math.max(dtmin, 100 * dt0));
+
+    const d2 = norm((i) => (f1[i] - f0[i]) / w[i]) / dt0;
+    const m = Math.max(d1, d2);
+    const dt1 = m <= 1e-15
+      ? Math.max(1e-6, dt0 * 1e-3)
+      : 10 ** (-(2 + Math.log10(m)) / order);
+    return fallback(tdir * Math.max(dtmin, Math.min(100 * dt0, dt1, dtmaxAbs)));
+  }
+
+  /* ---------- core/krylov.js ---------- */
+  /* ==========================================================================
+     ode_julia / core / krylov
+
+     GMRES, and the matrix-free W that the Krylov FBDF solves its Newton
+     iterations with -- what OrdinaryDiffEq does with
+     FBDF(linsolve = KrylovJL_GMRES()), which is the stiff method its default
+     algorithm takes for a system of more than 500 states.
+
+     No matrix is formed at all. W·v needs J·v, and that is a directional
+     difference of f at the current Newton iterate,
+
+         J·v ≈ (f(z + ε·v) − f(z)) / ε,   ε = max(√eps·‖z‖, √eps) / ‖v‖
+
+     (FiniteDiff.jl's jvp step, which DifferentiationInterface uses for
+     AutoFiniteDiff), unless the problem supplies its own `jvp`. Each GMRES
+     iteration costs one evaluation of f, and the linearisation point moves
+     with every Newton iteration: it is a Newton method, not the simplified one
+     the factorising methods use.
+
+     How it is solved follows the pieces OrdinaryDiffEq stacks, each from its
+     source:
+
+       the system     Julia's W = J − I/(γh) against its residual, which is
+                      this package's (I − γh·J) and residual divided through by
+                      −γh (see `KrylovW.solve`); the scaling matters, because
+                      GMRES's absolute tolerance is not scale-free
+       weighting      a diagonal scaling on both sides by the error weights,
+                      wᵢ = 1/(abstolᵢ + reltol·max(|uprevᵢ|, |uᵢ|)): OrdinaryDiffEq's
+                      wrapprecs, M = InvPreconditioner(Diagonal(w)) on the left
+                      and N = Diagonal(w) on the right, which Krylov.jl applies
+                      with ldiv, so the residual is measured as w∘r
+       tolerances     rtol = the integration's reltol (OrdinaryDiffEq's
+                      dolinsolve), atol = √eps (LinearSolve's default), at most
+                      n iterations (LinearSolve's maxiters), never restarted
+                      (gmres_restart = 0)
+       warm start     the previous solution, rescaled by Hegedüs's trick and
+                      used only when it at least halves the residual
+                      (LinearSolve's WarmStart.Hegedus, which OrdinaryDiffEq
+                      selects on its Newton path), with the stopping threshold
+                      kept at the cold start's
+       the iteration  Krylov.jl's gmres!: modified Gram-Schmidt, Givens
+                      rotations from sym_givens, a breakdown tolerance of
+                      eps^(3/4)
+
+     One deliberate difference: the basis is never let grow past 256 MB (the
+     dense-matrix cap of ../../core), which on a system of 50 000 states is 670
+     vectors where Julia would allow 50 000 and run out of memory first. A
+     solve that reaches the cap fails as one that reaches its iteration limit
+     does, and the Newton iteration treats it as divergence.
+
+     Licence. GMRES and symGivens are a port of Krylov.jl's gmres! and
+     sym_givens, https://github.com/JuliaSmoothOptimizers/Krylov.jl, Copyright
+     (c) 2015-present: Alexis Montoison, Dominique Orban, and other
+     contributors, which is licensed under the Mozilla Public License 2.0; so,
+     unlike the rest of this package (../LICENSE), is this file:
+
+     This Source Code Form is subject to the terms of the Mozilla Public
+     License, v. 2.0. If a copy of the MPL was not distributed with this file,
+     You can obtain one at https://mozilla.org/MPL/2.0/.
+     ========================================================================== */
+
+  const JVP_SQRT_EPS = Math.sqrt(Number.EPSILON);
+  const BTOL = Number.EPSILON ** 0.75;
+  const BASIS_MAX_BYTES = 256 * 1024 * 1024;
+  // LinearSolve's Hegedüs acceptance: the guess must at least halve the residual.
+  const HEGEDUS_MIN_COSINE = Math.sqrt(1 - 0.5 ** 2);
+
+  /**
+   * Krylov.jl's sym_givens for real a, b: (c, s, ρ) with [c s; s −c]·[a; b] = [ρ; 0].
+   * Written into `out` to keep the inner loop free of allocation.
+   */
+  function symGivens(a, b, out) {
+    let c; let s; let rho;
+    if (b === 0) {
+      c = a === 0 ? 1 : Math.sign(a);
+      s = 0;
+      rho = Math.abs(a);
+    } else if (a === 0) {
+      c = 0;
+      s = Math.sign(b);
+      rho = Math.abs(b);
+    } else if (Math.abs(b) > Math.abs(a)) {
+      const t = a / b;
+      s = Math.sign(b) / Math.sqrt(1 + t * t);
+      c = s * t;
+      rho = b / s;
+    } else {
+      const t = b / a;
+      c = Math.sign(a) / Math.sqrt(1 + t * t);
+      s = c * t;
+      rho = a / c;
+    }
+    out[0] = c; out[1] = s; out[2] = rho;
+    return out;
+  }
+
+  function dot(n, x, y) {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += x[i] * y[i];
+    return s;
+  }
+
+  function norm2(n, x) {
+    return Math.sqrt(dot(n, x, x));
+  }
+
+  /**
+   * GMRES without restarts, as Krylov.jl's gmres! with restart = false.
+   *
+   * The basis grows as it is needed, from `memory` vectors up to `maxBasis`.
+   */
+  class GMRES {
+    constructor(n, opts = {}) {
+      this.n = n;
+      this.memory = Math.min(opts.memory ?? 20, n);
+      this.maxBasis = Math.max(this.memory,
+        Math.floor((opts.maxBytes ?? BASIS_MAX_BYTES) / (8 * Math.max(1, n))));
+      this.V = [];
+      this.R = [];
+      this.c = [];
+      this.s = [];
+      this.z = [];
+      this.w = new Float64Array(n);
+      this.q = new Float64Array(n);
+      this.p = new Float64Array(n);
+      this.dx = new Float64Array(n);
+      this.g = new Float64Array(3);
+      this.stats = { niter: 0, solved: false, status: '', rNorm: 0 };
+    }
+
+    basis(k) {
+      while (this.V.length <= k) this.V.push(new Float64Array(this.n));
+      return this.V[k];
+    }
+
+    /**
+     * Solve A·x = b.
+     *
+     * @param {(v:Float64Array, out:Float64Array)=>void} A
+     * @param {Float64Array} b
+     * @param {Float64Array} x       the answer, written in place
+     * @param {object} o
+     * @param {Float64Array} [o.left]   a diagonal left preconditioner, applied as
+     *        M⁻¹·v = left∘v (OrdinaryDiffEq's InvPreconditioner(Diagonal(w)), ldiv'd)
+     * @param {Float64Array} [o.right]  a diagonal right one, applied as
+     *        N⁻¹·v = v/right (Diagonal(w), ldiv'd)
+     * @param {Float64Array|null} [o.x0]  a warm start, already chosen
+     * @param {number} o.atol
+     * @param {number} o.rtol
+     * @param {number} [o.itmax]  0 means 2n, as Krylov.jl
+     * @returns {{niter:number, solved:boolean, status:string, rNorm:number}}
+     */
+    solve(A, b, x, o) {
+      const n = this.n;
+      const { w, q, dx, g } = this;
+      const { V, R, c, s, z } = this;
+      const left = o.left || null;     // r ↦ left∘r   (M⁻¹)
+      const right = o.right || null;   // v ↦ v/right  (N⁻¹)
+      const warm = !!o.x0;
+      const stats = this.stats;
+
+      x.fill(0);
+      if (warm) {
+        dx.set(o.x0);
+        A(dx, w);
+        for (let i = 0; i < n; i++) w[i] = b[i] - w[i];
+      } else {
+        w.set(b);
+      }
+      const r0 = q;
+      if (left) for (let i = 0; i < n; i++) r0[i] = left[i] * w[i];
+      else r0.set(w);
+      const beta = norm2(n, r0);
+      let rNorm = beta;
+      const eps = o.atol + o.rtol * rNorm;
+
+      if (beta === 0) {
+        if (warm) for (let i = 0; i < n; i++) x[i] += dx[i];
+        stats.niter = 0; stats.solved = true; stats.status = 'x is a zero-residual solution'; stats.rNorm = 0;
+        return stats;
+      }
+
+      let itmax = o.itmax > 0 ? o.itmax : 2 * n;
+      itmax = Math.min(itmax, this.maxBasis);
+      const capped = itmax === this.maxBasis && (o.itmax > 0 ? o.itmax : 2 * n) > this.maxBasis;
+
+      let solved = rNorm <= eps;
+      let breakdown = false;
+      let inconsistent = false;
+      let k = 0;               // inner iterations
+      let nr = 0;              // coefficients stored in R
+      R.length = 0; c.length = 0; s.length = 0; z.length = 0;
+
+      if (!solved) {
+        z.push(beta);
+        const v0 = this.basis(0);
+        for (let i = 0; i < n; i++) v0[i] = r0[i] / rNorm;
+        const p = this.p;
+        for (;;) {
+          k++;
+          const vk = V[k - 1];
+          let pv = vk;
+          if (right) { for (let i = 0; i < n; i++) p[i] = vk[i] / right[i]; pv = p; }
+          A(pv, w);
+          if (left) for (let i = 0; i < n; i++) q[i] = left[i] * w[i];
+          else q.set(w);
+          for (let i = 0; i < k; i++) {
+            const h = dot(n, V[i], q);
+            R.push(h);
+            const vi = V[i];
+            for (let m = 0; m < n; m++) q[m] -= h * vi[m];
+          }
+          const hbis = norm2(n, q);
+          // The previous rotations, then this column's own.
+          for (let i = 0; i < k - 1; i++) {
+            const a1 = R[nr + i];
+            const a2 = R[nr + i + 1];
+            R[nr + i] = c[i] * a1 + s[i] * a2;
+            R[nr + i + 1] = s[i] * a1 - c[i] * a2;
+          }
+          symGivens(R[nr + k - 1], hbis, g);
+          c.push(g[0]); s.push(g[1]); R[nr + k - 1] = g[2];
+          const zeta = s[k - 1] * z[k - 1];
+          z[k - 1] = c[k - 1] * z[k - 1];
+          rNorm = Math.abs(zeta);
+          nr += k;
+
+          solved = rNorm <= eps;
+          breakdown = hbis <= BTOL;
+          const tired = k >= itmax;
+          if (solved || tired || breakdown || !Number.isFinite(rNorm)) break;
+          const next = this.basis(k);
+          for (let i = 0; i < n; i++) next[i] = q[i] / hbis;
+          z.push(zeta);
+        }
+
+        // y from R·y = z by back substitution, in Krylov.jl's packed indexing
+        // (1-based positions, column after column).
+        const y = z;
+        for (let i = k; i >= 1; i--) {
+          let pos = nr + i - k;
+          for (let j = k; j >= i + 1; j--) {
+            y[i - 1] -= R[pos - 1] * y[j - 1];
+            pos = pos - j + 1;
+          }
+          if (Math.abs(R[pos - 1]) <= BTOL) {
+            y[i - 1] = 0;
+            inconsistent = true;
+          } else {
+            y[i - 1] /= R[pos - 1];
+          }
+        }
+        for (let i = 0; i < k; i++) {
+          const yi = y[i];
+          const vi = V[i];
+          for (let m = 0; m < n; m++) x[m] += yi * vi[m];
+        }
+        if (right) for (let i = 0; i < n; i++) x[i] /= right[i];
+      }
+      if (warm) for (let i = 0; i < n; i++) x[i] += dx[i];
+
+      stats.niter = k;
+      stats.solved = solved;
+      stats.rNorm = rNorm;
+      stats.status = solved
+        ? (inconsistent ? 'found approximate least-squares solution' : 'solution good enough given atol and rtol')
+        : capped && k >= itmax ? 'the basis reached its memory cap'
+          : k >= itmax ? 'maximum number of iterations exceeded'
+            : breakdown ? 'breakdown' : 'not a number';
+      return stats;
+    }
+  }
+
+  /**
+   * The matrix-free W of the Krylov FBDF, with the `solve(b)` the Newton
+   * iteration calls.
+   *
+   * The Newton iteration (../core/newton.js) tells it where it is before every
+   * solve -- `setPoint(t, z, f(z), γh)` -- and hands it this package's
+   * right-hand side, `(I − γh·J)·dz = b`. OrdinaryDiffEq solves
+   * `(J − I/(γh))·x = b/(γh)` instead and steps by −x; that is the same
+   * equation, and solving it in that form keeps GMRES's absolute tolerance
+   * meaning what it means there.
+   */
+  class KrylovW {
+    constructor(n, integ, opts = {}) {
+      this.n = n;
+      this.integ = integ;
+      this.gmres = new GMRES(n, { memory: opts.krylovMemory, maxBytes: opts.krylovMaxBytes });
+      this.weight = new Float64Array(n);
+      this.bj = new Float64Array(n);
+      this.x = new Float64Array(n);
+      this.xPrev = new Float64Array(n);
+      this.havePrev = false;
+      this.Au = new Float64Array(n);
+      this.zpert = new Float64Array(n);
+      this.fpert = new Float64Array(n);
+      this.t = 0;
+      this.z = null;
+      this.fz = null;
+      this.gammaDt = 1;
+      this.zNorm = 0;
+      // Counted work: solves, GMRES iterations, products J·v, failed solves.
+      this.nsolve = 0;
+      this.niter = 0;
+      this.njvp = 0;
+      this.nfail = 0;
+      this.warmStarts = 0;
+      this.apply = (v, out) => this.applyW(v, out);
+    }
+
+    /** The error weights for this step, as OrdinaryDiffEq's Newton initialize! sets them. */
+    prepare(integ) {
+      const n = this.n;
+      const { uprev, u } = integ;
+      const at = integ.abstolFixed;
+      const scalar = typeof at === 'number';
+      const rtol = integ.reltol;
+      for (let i = 0; i < n; i++) {
+        const w = (scalar ? at : at[i]) + rtol * Math.max(Math.abs(uprev[i]), Math.abs(u[i]));
+        // A weight that is no number to scale by -- zero, or infinite where a
+        // rejected non-finite step left a state -- is left unscaled: 1/∞ would
+        // be a zero the right scaling then divides by.
+        this.weight[i] = w > 0 && Number.isFinite(w) ? 1 / w : 1;
+      }
+    }
+
+    /** Where the Newton iteration is: the linearisation point of J. */
+    setPoint(t, z, fz, gammaDt) {
+      this.t = t;
+      this.z = z;
+      this.fz = fz;
+      this.gammaDt = gammaDt;
+      this.zNorm = norm2(this.n, z);
+    }
+
+    /** J·v at the current point: the problem's own, or a forward difference. */
+    jvp(v, out) {
+      this.njvp++;
+      const n = this.n;
+      const integ = this.integ;
+      if (integ.prob.jvp) {
+        integ.prob.jvp(this.t, this.z, v, out, this.fz);
+        return out;
+      }
+      const nx = Number.isFinite(this.zNorm) ? this.zNorm : 0;
+      const nv = norm2(n, v);
+      let eps = Math.max(JVP_SQRT_EPS * nx, JVP_SQRT_EPS);
+      if (nv !== 0 && Number.isFinite(nv)) eps /= nv;
+      const { zpert, fpert } = this;
+      const z = this.z;
+      for (let i = 0; i < n; i++) zpert[i] = z[i] + eps * v[i];
+      integ.f(this.t, zpert, fpert);
+      const fz = this.fz;
+      for (let i = 0; i < n; i++) out[i] = (fpert[i] - fz[i]) / eps;
+      return out;
+    }
+
+    /** Julia's W·v = J·v − v/(γh). */
+    applyW(v, out) {
+      this.jvp(v, out);
+      const inv = 1 / this.gammaDt;
+      const n = this.n;
+      for (let i = 0; i < n; i++) out[i] -= v[i] * inv;
+      return out;
+    }
+
+    /**
+     * LinearSolve's Hegedüs warm start: the previous solution scaled to
+     * minimise the residual along it, kept only if that at least halves it.
+     * @returns {Float64Array|null} the starting guess, or null for a cold start
+     */
+    hegedus(b) {
+      if (!this.havePrev) return null;
+      const n = this.n;
+      const u = this.xPrev;
+      const unorm = norm2(n, u);
+      if (unorm === 0 || !Number.isFinite(unorm)) return null;
+      const Au = this.applyW(u, this.Au);
+      const d = dot(n, Au, Au);
+      if (d === 0 || !Number.isFinite(d)) return null;
+      const Aub = dot(n, Au, b);
+      if (!Number.isFinite(Aub)) return null;
+      const bnorm = norm2(n, b);
+      if (bnorm === 0 || !Number.isFinite(bnorm)) return null;
+      if (Math.abs(Aub) < HEGEDUS_MIN_COSINE * Math.sqrt(d) * bnorm) return null;
+      const xi = Aub / d;
+      const x0 = this.zpert;     // free between products
+      for (let i = 0; i < n; i++) x0[i] = xi * u[i];
+      return x0;
+    }
+
+    /** Solve (I − γh·J)·dz = b in place, as the Newton iteration expects. */
+    solve(b) {
+      const n = this.n;
+      const { bj, x, weight } = this;
+      const g = this.gammaDt;
+      for (let i = 0; i < n; i++) bj[i] = b[i] / g;
+      const atol = JVP_SQRT_EPS;
+      const rtol = this.integ.reltol;
+      let x0 = this.hegedus(bj);
+      let a = atol;
+      let r = rtol;
+      if (x0) {
+        // Copied out of the scratch the products reuse, and the threshold kept
+        // at the cold start's: atol + rtol·‖M⁻¹b‖, with rtol then zero.
+        const start = this.xStart || (this.xStart = new Float64Array(n));
+        start.set(x0);
+        x0 = start;
+        let s = 0;
+        for (let i = 0; i < n; i++) { const v = weight[i] * bj[i]; s += v * v; }
+        a = atol + rtol * Math.sqrt(s);
+        r = 0;
+        this.warmStarts++;
+      }
+      const st = this.gmres.solve(this.apply, bj, x, {
+        left: weight, right: weight, x0, atol: a, rtol: r, itmax: n,
+      });
+      this.nsolve++;
+      this.niter += st.niter;
+      if (!st.solved) {
+        this.nfail++;
+        this.havePrev = false;
+        b.fill(Infinity);
+        return b;
+      }
+      this.xPrev.set(x);
+      this.havePrev = true;
+      for (let i = 0; i < n; i++) b[i] = -x[i];
+      return b;
+    }
+
+    report() {
+      return {
+        krylovSolves: this.nsolve, krylovIters: this.niter, krylovJvps: this.njvp,
+        krylovFailures: this.nfail, krylovWarmStarts: this.warmStarts,
+      };
+    }
+  }
+
   /* ---------- core/integrator.js ---------- */
   /* ==========================================================================
      ode_julia / core / integrator
@@ -1637,6 +2206,8 @@
    *        1e-8 relative, which becomes the accuracy floor of a fifth-order
    *        method well before its step size does.
    * @param {{colPtr:Int32Array,rowIdx:Int32Array}} [opts.jacPattern]  sparsity of df/du
+   * @param {(t:number,u:Float64Array,v:Float64Array,out:Float64Array,fu:Float64Array)=>void} [opts.jvp]
+   *        J·v, for a matrix-free method; differenced otherwise
    * @param {object} [opts.events]  { n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }.
    *        `direction` is one number for every function or an array with one
    *        per function: above 0 a rising crossing counts, below 0 a falling
@@ -1652,6 +2223,9 @@
       this.jac = opts.jac || null;
       this.tgrad = opts.tgrad || null;
       this.jacPattern = opts.jacPattern || null;
+      // J·v at (t, u), `(t, u, v, out, fu) => out`: what a matrix-free method
+      // (the Krylov FBDF) uses instead of differencing f, when it is given.
+      this.jvp = opts.jvp || null;
       this.events = opts.events || null;
       this.n = this.u0.length;
     }
@@ -1818,27 +2392,61 @@
         sparse: false, fill: null, ordering: 'none', alg: alg.name,
       };
 
-      // Jacobian, W and Newton exist for every method here; a Rosenbrock cache
-      // simply never touches the Newton solver.
-      this.jacCache = new JacobianCache(n, {
-        jac: prob.jac, jacPattern: prob.jacPattern, matrix: opts.matrix,
-        central: opts.central,
-      });
-      this.W = new WFactorization(n, this.jacCache, {
-        matrix: opts.matrix, maxJacAge: opts.maxJacAge,
-      });
+      // Jacobian and W are made the first time a method asks for them -- see
+      // the getters below -- and the Newton solver is a handful of vectors. A
+      // method that never touches them (an explicit Runge-Kutta, which the
+      // automatic switch may run for a whole solve) never pays for an n×n
+      // matrix, which for a model of tens of thousands of states it could not.
+      this._jacCache = null;
+      this._W = null;
       this.newton = new NewtonSolver(n, {
         norm: opts.norm, kappa: opts.kappa, maxIters: opts.newtonMaxIters,
       });
-      this.stats.sparse = this.W.sparse;
-      this.stats.ordering = this.W.ordering;
+
+      // What a composite method needs from the loop (see ../solvers/default.js):
+      // the spectral-radius estimate its stiffness test reads, which the
+      // explicit methods set from their last two stages and the stiff ones from
+      // ‖J‖∞ whenever they form J, and whether the error checks of the next
+      // step are to be made at all -- OrdinaryDiffEq's eigen_est, starting at
+      // one, and do_error_check.
+      this.isComposite = !!alg.composite;
+      this.eigenEst = 1;
+      this.doErrorCheck = true;
 
       this.f = (t, u, du) => { this.stats.nf++; prob.f(t, u, du); };
+      this.controller = null;
       this.cache = alg.build(n, this, opts);
-      this.controller = new PIController({
-        order: this.cache.errorOrder ?? this.cache.order,
-        ...(alg.controller || {}),
-      });
+      // A composite method keeps a controller for each of its methods and sets
+      // integ.controller to the one in charge, from its init on, as it switches.
+      if (!this.isComposite) {
+        this.controller = new PIController({
+          order: this.cache.errorOrder ?? this.cache.order,
+          ...(alg.controller || {}),
+        });
+      }
+    }
+
+    /** The Jacobian's cache, made on first use. */
+    get jacCache() {
+      if (!this._jacCache) {
+        this._jacCache = new JacobianCache(this.n, {
+          jac: this.prob.jac, jacPattern: this.prob.jacPattern, matrix: this.opts.matrix,
+          central: this.opts.central,
+        });
+      }
+      return this._jacCache;
+    }
+
+    /** W and its factorisation, made on first use. */
+    get W() {
+      if (!this._W) {
+        this._W = new WFactorization(this.n, this.jacCache, {
+          matrix: this.opts.matrix, maxJacAge: this.opts.maxJacAge,
+        });
+        this.stats.sparse = this._W.sparse;
+        this.stats.ordering = this._W.ordering;
+      }
+      return this._W;
     }
 
     /** A step's worth of clamping, where the caller asked for non-negativity. */
@@ -1885,9 +2493,14 @@
 
     /** Build and factorise W for this γ·dt. Returns false if it is singular. */
     formW(gammaDt, transform, forceJac = false) {
-      const ok = this.W.form(this.f, this.t, this.uprev, this.fsalfirst, gammaDt, transform, forceJac);
+      const W = this.W;
+      const jacsBefore = this.jacCache.njac;
+      const ok = W.form(this.f, this.t, this.uprev, this.fsalfirst, gammaDt, transform, forceJac);
       this.stats.njacs = this.jacCache.njac;
-      this.stats.nw = this.W.nfactor;
+      this.stats.nw = W.nfactor;
+      // A composite method's stiffness test reads ‖J‖∞ whenever J is formed,
+      // as OrdinaryDiffEq's calc_J! sets eigen_est = opnorm(J, Inf).
+      if (this.isComposite && this.jacCache.njac !== jacsBefore) this.eigenEst = jacobianInfNorm(this.jacCache);
       return ok;
     }
 
@@ -2102,6 +2715,9 @@
     let since = 0;
     const maxPoints = opts.maxPoints > 0 ? Math.max(100, opts.maxPoints) : 0;
     const interp = opts.dense ? [] : null;
+    // A composite method's choice at each saved point, numbered from 1 as
+    // OrdinaryDiffEq's sol.alg_choice is.
+    const choice = integ.isComposite ? [] : null;
 
     const remember = (t, u, keep) => {
       if (!keep) {
@@ -2111,6 +2727,7 @@
       T.push(t);
       U.push(Float64Array.from(u));
       if (interp) interp.push(null);
+      if (choice) choice.push(integ.cache.current + 1);
       if (!maxPoints || T.length < maxPoints) return;
       // Halve the store in place, keeping the ends. Doubling the stride as it
       // goes means the thinning is uniform over the whole run rather than
@@ -2119,10 +2736,12 @@
       for (let r = 2; r < T.length; r += 2) {
         T[w] = T[r]; U[w] = U[r];
         if (interp) interp[w] = interp[r];
+        if (choice) choice[w] = choice[r];
         w++;
       }
       T.length = w; U.length = w;
       if (interp) interp.length = w;
+      if (choice) choice.length = w;
       stride *= 2;
     };
 
@@ -2167,10 +2786,17 @@
     if (!opts.adaptive && !opts.dt) {
       throw new ODEError('dt', 'A non-adaptive run needs an explicit dt', t0);
     }
+    // The methods ported with OrdinaryDiffEq's own starting step say so; the
+    // older ones keep the one they were checked with. Its dtmax is the span,
+    // as OrdinaryDiffEq's default is.
     let dt = opts.dt
       ? Math.abs(opts.dt) * tdir
-      : initialStep(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
-                    integ.cache.order, opts.reltol, opts.abstol, opts.dtmax, work);
+      : alg.initdt === 'sciml'
+        ? initialStepSciML(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
+                           integ.cache.order, opts.reltol, opts.abstol, Math.min(Math.abs(opts.dtmax), span),
+                           work, { norm: opts.norm, dtmin: opts.dtmin })
+        : initialStep(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
+                      integ.cache.order, opts.reltol, opts.abstol, opts.dtmax, work);
     if (!Number.isFinite(dt) || dt === 0) dt = tdir * Math.min(1e-6 * span, opts.dtmax);
     dt = tdir * Math.min(Math.abs(dt), Math.abs(opts.dtmax), span);
     integ.dt = dt;
@@ -2195,7 +2821,15 @@
 
     // --- the loop -------------------------------------------------------------
     while (tdir * (tf - integ.t) > tEps) {
-      if (integ.nsteps >= maxSteps) {
+      // A composite method decides here which of its methods takes the next
+      // step: after the last attempt has been judged and its successor's dt
+      // chosen, before anything else -- OrdinaryDiffEq's loopheader!, which
+      // calls choose_algorithm! after every attempt, rejected ones included.
+      // It may change dt, and it says whether this attempt's error checks are
+      // to be made: an explicit method that has just been found stiff is let
+      // through them for the few steps until the switch, as there.
+      if (integ.isComposite) integ.cache.choose(integ);
+      if (integ.nsteps >= maxSteps && integ.doErrorCheck) {
         retcode = MaxIters;
         message = `More than ${maxSteps} steps were needed, and the run stopped at t = ${integ.t}`;
         break;
@@ -2243,8 +2877,9 @@
         // One that failed at the smallest step the clock can represent has
         // nowhere left to go. Halving it only for the floor to bring it back ran
         // the step budget out one futile attempt at a time -- ten million of
-        // them by default -- with the run standing still.
-        if (atFloor) {
+        // them by default -- with the run standing still. (Unless a composite
+        // method has waived the checks while it switches: see the loop's top.)
+        if (atFloor && integ.doErrorCheck) {
           retcode = ConvergenceFailure;
           message = `The step could not be taken at t = ${integ.t} even at `
             + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent: `
@@ -2255,7 +2890,7 @@
         // would not converge, a singular W -- is not the controller's business:
         // halve it, and make sure the next attempt uses a fresh Jacobian.
         integ.dt *= 0.5;
-        integ.W.markStale();
+        integ._W?.markStale();
         integ.controller.reset();
         continue;
       }
@@ -2269,7 +2904,7 @@
           // method that reads integ.u before writing it must not be handed this.
           integ.u.set(integ.uprev);
           integ.dt *= 0.5;
-          integ.W.markStale();
+          integ._W?.markStale();
           if (Math.abs(integ.dt) < dtminAt(integ.t)) {
             retcode = Unstable;
             message = `The solution became infinite or not-a-number at t = ${integ.t} (component ${bad})`;
@@ -2298,7 +2933,7 @@
           break;
         }
         integ.dt *= 0.5;
-        integ.W.markStale();
+        integ._W?.markStale();
         integ.controller.reset();
         continue;
       }
@@ -2320,7 +2955,7 @@
       // the tolerance, and no step size mends that -- the implicit step itself
       // does. The case against is that it is accepting a step known to be
       // inaccurate, so the count is reported rather than buried.
-      if (!accepted && atFloor) {
+      if (!accepted && atFloor && integ.doErrorCheck) {
         if (belowTolRun < belowTolMax) {
           belowTolRun++;
           integ.stats.nbelowtol++;
@@ -2370,7 +3005,7 @@
       }
 
       integ.stats.naccept++;
-      if (integ.nonNegative) integ.clamp(integ.u);
+      const clamped = integ.nonNegative ? integ.clamp(integ.u) : 0;
 
       // saveat points that the step passed -- up to the event, where one cuts it
       // short -- each where it lies in the whole step. They are read before the
@@ -2422,10 +3057,19 @@
         integ.t = tstops[tstopAt];
       }
       integ.uprev.set(integ.u);
-      if (integ.cache.hasFsalLast) integ.fsalfirst.set(integ.fsallast);
-      else integ.f(integ.t, integ.uprev, integ.fsalfirst);
+      // f at the new point is the step's own last stage where the method has
+      // one -- unless clamping moved the point off it, which the methods ported
+      // with OrdinaryDiffEq's semantics answer as a callback that modified u
+      // does there, by evaluating f again. The older ports keep what they were
+      // checked with.
+      if (integ.cache.hasFsalLast && !(clamped && integ.cache.refreshFsalOnClamp)) {
+        integ.fsalfirst.set(integ.fsallast);
+      } else integ.f(integ.t, integ.uprev, integ.fsalfirst);
 
-      integ.W.agePlus();
+      // The Jacobian ages by the steps taken with it: under a composite method
+      // an explicit method's steps do not count, or the stiff method would come
+      // back to a Jacobian aged out by steps that never read it.
+      if (!integ.cache.explicit) integ._W?.agePlus();
       if (integ.cache.accepted) integ.cache.accepted(integ, dtjust);
 
       if (tstopAt < tstops.length && tdir * (integ.t - tstops[tstopAt]) >= 0) tstopAt++;
@@ -2444,7 +3088,7 @@
           if (integ.nonNegative) integ.clamp(integ.u);
           integ.uprev.set(integ.u);
           integ.f(integ.t, integ.uprev, integ.fsalfirst);
-          integ.W.markStale();
+          integ._W?.markStale();
           integ.newton.reset();
           integ.controller.reset();
           if (integ.cache.restart) integ.cache.restart(integ);
@@ -2459,7 +3103,7 @@
         ? (opts.dt ? Math.abs(opts.dt) * tdir : dtjust)
         : (integ.cache.dtpropose != null
           ? integ.cache.dtpropose
-          : integ.controller.accept(integ.EEst, dtjust));
+          : integ.controller.accept(integ.EEst, dtjust, integ.stats.naccept === 1));
       integ.cache.dtpropose = null;
       if (!Number.isFinite(dtnext) || dtnext === 0) dtnext = dtjust;
       dtnext = tdir * Math.min(Math.abs(dtnext), Math.abs(opts.dtmax));
@@ -2483,18 +3127,23 @@
     stats.points = T.length;
     stats.stride = stride;
     stats.nf = integ.stats.nf;
-    stats.njacs = integ.jacCache.njac;
-    stats.nw = integ.W.nfactor;
+    // Nothing formed, nothing to report: a method that never asked for J or W.
+    stats.njacs = integ._jacCache ? integ._jacCache.njac : 0;
+    stats.nw = integ._W ? integ._W.nfactor : 0;
     // Counted on the factorisation, because the Newton iteration solves against
     // it directly rather than through the integrator; reading the integrator's
-    // own counter here reported zero solves for every implicit method.
-    stats.nsolve = integ.W.nsolve;
-    stats.fill = integ.W.fill;
+    // own counter here reported zero solves for every implicit method. A
+    // method solving without one (the Krylov FBDF) adds its own.
+    stats.nsolve = (integ._W ? integ._W.nsolve : 0) + (integ.cache.krylovSolves ?? 0);
+    stats.fill = integ._W ? integ._W.fill : null;
     stats.nnonliniter = integ.newton.nf;
     stats.t = integ.t;
+    if (integ.isComposite && integ.cache.report) Object.assign(stats, integ.cache.report(integ));
+    if (integ.cache.krylovReport) Object.assign(stats, integ.cache.krylovReport());
 
     const sol = new ODESolution(Float64Array.from(T), U, stats, retcode, message);
     sol.events = events;
+    sol.algChoice = choice ? Uint8Array.from(choice) : null;
     return sol;
   }
 
@@ -2591,6 +3240,30 @@
      ========================================================================== */
 
 
+  /**
+   * ∂f/∂t at (t, u) for a Rosenbrock step -- the caller's, or differenced; see
+   * RosenbrockCache.timeDerivative for why the difference step is scaled by
+   * max(|t|, |h|). `work` is a scratch vector for central differences.
+   */
+  function rosenbrockTimeDerivative(integ, t, u, fu, out, work) {
+    const n = out.length;
+    if (integ.prob.tgrad) { integ.prob.tgrad(t, u, out); return out; }
+    const scale = Math.max(Math.abs(t), Math.abs(integ.dt));
+    if (integ.opts.central) {
+      const dtd = Math.cbrt(Number.EPSILON) * scale;
+      integ.f(t + dtd, u, out);
+      integ.f(t - dtd, u, work);
+      const inv = 1 / (2 * dtd);
+      for (let i = 0; i < n; i++) out[i] = (out[i] - work[i]) * inv;
+      return out;
+    }
+    const dtd = Math.sqrt(Number.EPSILON) * scale;
+    integ.f(t + dtd, u, out);
+    const inv = 1 / dtd;
+    for (let i = 0; i < n; i++) out[i] = (out[i] - fu[i]) * inv;
+    return out;
+  }
+
   class RosenbrockCache {
     constructor(n, tab, integ) {
       this.tab = tab;
@@ -2631,22 +3304,7 @@
      * limit.
      */
     timeDerivative(integ, t, u, fu, out) {
-      const n = this.n;
-      if (integ.prob.tgrad) { integ.prob.tgrad(t, u, out); return out; }
-      const scale = Math.max(Math.abs(t), Math.abs(integ.dt));
-      if (integ.opts.central) {
-        const dtd = Math.cbrt(Number.EPSILON) * scale;
-        integ.f(t + dtd, u, out);
-        integ.f(t - dtd, u, this.dTwork);
-        const inv = 1 / (2 * dtd);
-        for (let i = 0; i < n; i++) out[i] = (out[i] - this.dTwork[i]) * inv;
-        return out;
-      }
-      const dtd = Math.sqrt(Number.EPSILON) * scale;
-      integ.f(t + dtd, u, out);
-      const inv = 1 / dtd;
-      for (let i = 0; i < n; i++) out[i] = (out[i] - fu[i]) * inv;
-      return out;
+      return rosenbrockTimeDerivative(integ, t, u, fu, out, this.dTwork);
     }
 
     step(integ) {
@@ -3068,6 +3726,7 @@
      ========================================================================== */
 
 
+
   /**
    * Classical BDF coefficients, row k for order k:
    *
@@ -3185,7 +3844,22 @@
       this.qmin = opts.qmin ?? 0.2;
       this.qsteadyMin = opts.qsteadyMin ?? 0.9;
       this.qsteadyMax = opts.qsteadyMax ?? 1.2;
+
+      // FBDF(linsolve = 'gmres'): the Newton iterations solved matrix-free by
+      // GMRES instead of against a factorised W (../core/krylov.js). Nothing
+      // else about the method changes.
+      this.krylov = opts.linsolve === 'gmres' ? new KrylovW(n, integ, opts) : null;
+      this.krylovFresh = true;
+      // How the first step after a start predicts: see `step`.
+      this.juliaPredictor = opts.firstPredictor === 'julia';
+      // What the automatic switch needs to know of the method in charge.
+      this.family = 'fbdf';
     }
+
+    /** Linear solves done by GMRES, for the integrator's count. */
+    get krylovSolves() { return this.krylov ? this.krylov.nsolve : 0; }
+
+    krylovReport() { return this.krylov ? this.krylov.report() : {}; }
 
     init(integ) {
       integ.newton.method = COEFFICIENT_MULTISTEP;
@@ -3215,6 +3889,7 @@
 
     /** History is meaningless after a discontinuity: start again at order 1. */
     restart(integ) {
+      this.krylovFresh = true;
       this.ts[0] = 0;
       this.uHistory[0].set(integ.uprev);
       this.nHistory = 1;
@@ -3299,8 +3974,18 @@
       // Jacobian is a separate and much larger expense: `form` rebuilds W from
       // the stored one whenever γh has moved, so only a labouring Newton or an
       // invalidated matrix justifies differencing again.
-      const needNew = integ.W.jacStale || !integ.W.haveFactor || !newton.fastConvergence;
-      if (!integ.formW(gammaDt, false, needNew)) return false;
+      let needNew;
+      if (this.krylov) {
+        // Matrix-free: nothing to form, only this step's error weights to set.
+        // `needNew` is only what the Newton iteration makes of its last
+        // contraction rate: after a restart or a failure it is not believed.
+        needNew = this.krylovFresh || !newton.fastConvergence;
+        this.krylovFresh = false;
+        this.krylov.prepare(integ);
+      } else {
+        needNew = integ.W.jacStale || !integ.W.haveFactor || !newton.fastConvergence;
+        if (!integ.formW(gammaDt, false, needNew)) return false;
+      }
 
       const count = Math.min(k + 1, this.nHistory);
       for (let j = 0; j < count; j++) thetas[j] = ts[j] / dt;
@@ -3320,8 +4005,18 @@
         // is h·f -- O(h), with the whole derivative in it. After a jump f is large
         // and the time is late, so that no representable step passed: a model
         // whose packages failed at t = 5000 was refused at a step of 1.5e-11.
-        const f0 = integ.fsalfirst;
-        for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
+        //
+        // `firstPredictor: 'julia'` takes OrdinaryDiffEq's u₀ = u instead -- the
+        // last accepted state; OrdinaryDiffEq reads its integrator's u, which
+        // after a rejection still holds the rejected attempt. Measured inside
+        // the automatic switch it is the worse of the two at tight tolerances
+        // (see ./default.js), and it is kept for comparison with Julia.
+        if (this.juliaPredictor) {
+          upred.set(uprev);
+        } else {
+          const f0 = integ.fsalfirst;
+          for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
+        }
         for (let i = 1; i < k; i++) corrector[i].set(uprev);
       }
 
@@ -3343,14 +4038,15 @@
       newton.errorConstant = 1 / (k + 1);
 
       const status = newton.solve(
-        integ.f, integ.W, t, dt, uprev, { reltol: integ.reltol, abstol: integ.abstolFixed },
+        integ.f, this.krylov ?? integ.W, t, dt, uprev, { reltol: integ.reltol, abstol: integ.abstolFixed },
         needNew, this.consfailcnt === 0,
       );
       integ.stats.nnonliniter += newton.iter;
       newton.errorConstant = 1;
       if (status !== Convergence) {
         integ.stats.nnonlinconvfail++;
-        integ.W.markStale();
+        if (this.krylov) this.krylovFresh = true;
+        else integ.W.markStale();
         // Three failures in a row is the history's fault, not the step's.
         if (this.order > 1 && newton.nfails >= 3) this.order--;
         this.consfailcnt++;
@@ -3534,10 +4230,17 @@
    * @param {object} [options]
    * @param {number} [options.maxOrder=5]
    * @param {number} [options.minOrder=1]
+   * @param {'gmres'} [options.linsolve]  solve the Newton iterations matrix-free
+   *        by GMRES, as FBDF(linsolve = KrylovJL_GMRES()) does
+   * @param {'euler'|'julia'} [options.firstPredictor='euler']  the first step's
+   *        predictor after a start: an Euler step, or OrdinaryDiffEq's current
+   *        value (what the automatic switch uses; see `step`)
    */
   function FBDF(options = {}) {
     return {
-      name: 'FBDF',
+      // With linsolve 'gmres' it is what OrdinaryDiffEq's default algorithm
+      // calls its KrylovFBDF choice.
+      name: options.linsolve === 'gmres' ? 'KrylovFBDF' : 'FBDF',
       order: options.maxOrder || MAX_ORDER_LIMIT,
       build: (n, integ, opts) => new FBDFCache(n, integ, { ...opts, ...options }),
       // FBDF chooses its own step; the generic controller is only a fallback.
@@ -4494,5 +5197,1021 @@
     };
   }
 
-  return { ODEProblem, ODESolution, ODEError, solve, Success, MaxIters, DtLessThanMin, Unstable, Terminated, DenseMatrix, CSC, cscFromTriplets, DenseLU, ComplexDenseLU, SparseLU, reverseCuthillMcKee, JacobianCache, WFactorization, colourColumns, densePattern, NewtonSolver, PIController, initialStep, Rodas5P, rosenbrockAlgorithm, Rodas5PTableau, TRBDF2, KenCarp4, esdirkAlgorithm, TRBDF2Tableau, KenCarp4Tableau, FBDF, fornbergWeights, QNDF, QBDF, rescaleMatrix, RadauIIA5, RadauIIA5Tableau };
+  /* ---------- solvers/tsit5-tableau.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / tsit5-tableau
+
+     GENERATED -- do not edit by hand.
+     Written by scripts/gen-explicit-rk-tableaus.py from the Float64 method of
+     Tsit5ConstantCacheActual and Tsit5Interp in
+     OrdinaryDiffEqTsit5/src/tsit_tableaus.jl.
+
+     Tsit5: Tsitouras's 5(4) pair, seven stages, first same as last, with a
+     free fourth-order interpolant.
+
+       Tsitouras, Ch. (2011). Runge-Kutta pairs of order 5(4) satisfying only
+       the first column simplifying assumption. Computers & Mathematics with
+       Applications 62, 770-775.
+
+     Shapes. `a` is strictly lower triangular and ragged: row i has i entries,
+     so row 0 is empty. `b` is row 7 of `a` with a trailing zero: the solution
+     is the point stage 7 is evaluated at, and k7 = f(u) is the next step's k1.
+     `interp[0]` holds r11..r14 of b1(Θ) = Θ·(r11 + r12·Θ + r13·Θ² + r14·Θ³);
+     `interp[j]` for j > 0 holds rj2..rj4 of bj(Θ) = Θ²·(rj2 + rj3·Θ + rj4·Θ²).
+     ========================================================================== */
+
+  const Tsit5Tableau = {
+    name: 'Tsit5',
+    stages: 7,
+    order: 5,
+    errorOrder: 4,
+    // The width of the method's stability region along the negative real axis,
+    // which the stiffness test of the automatic switch divides by
+    // (alg_stability_size in OrdinaryDiffEqTsit5/src/alg_utils.jl).
+    stabilitySize: 3.5068,
+    c: [0.0, 0.161, 0.327, 0.9, 0.9800255409045097, 1.0, 1.0],
+    a: [
+      [],
+      [0.161],
+      [-0.008480655492356989, 0.335480655492357],
+      [2.8971530571054935, -6.359448489975075, 4.3622954328695815],
+      [5.325864828439257, -11.748883564062828, 7.4955393428898365, -0.09249506636175525],
+      [5.86145544294642, -12.92096931784711, 8.159367898576159, -0.071584973281401, -0.028269050394068383],
+      [0.09646076681806523, 0.01, 0.4798896504144996, 1.379008574103742, -3.290069515436081, 2.324710524099774],
+    ],
+    b: [0.09646076681806523, 0.01, 0.4798896504144996, 1.379008574103742, -3.290069515436081, 2.324710524099774, 0.0],
+    btilde: [-0.00178001105222577714, -0.0008164344596567469, 0.007880878010261995, -0.1447110071732629, 0.5823571654525552, -0.45808210592918697, 0.015151515151515152],
+    interp: [
+      [1.0, -2.763706197274826, 2.9132554618219126, -1.0530884977290216],
+      [0.13169999999999998, -0.2234, 0.1017],
+      [3.9302962368947516, -5.941033872131505, 2.490627285651253],
+      [-12.411077166933676, 30.33818863028232, -16.548102889244902],
+      [37.50931341651104, -88.1789048947664, 47.37952196281928],
+      [-27.896526289197286, 65.09189467479366, -34.87065786149661],
+      [1.5, -4.0, 2.5],
+    ],
+  };
+
+  /* ---------- solvers/tsit5.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / tsit5
+
+     Tsit5: Tsitouras's explicit Runge-Kutta pair of order 5(4), the
+     non-stiff method DifferentialEquations.jl recommends first and the one its
+     default algorithm starts on (OrdinaryDiffEqTsit5).
+
+     Seven stages, the last of which is f at the new solution, so each step
+     costs six evaluations of f: that last stage is the next step's first
+     ("first same as last"). The error estimate is the embedded fourth-order
+     solution's difference, and the free interpolant is fourth order, which is
+     what saved rows and event location are read off.
+
+     An explicit method has no use for a Jacobian and asks for none, so the
+     integrator never forms one while it runs. On a stiff problem it is the
+     wrong method -- its step is held to the edge of its stability region, a
+     little over 3.5/|λ| -- and that is exactly what the automatic switch in
+     ./default.js watches for: when it runs inside the switch, each step also
+     estimates the largest eigenvalue from its last two stages,
+
+         |λ| ≈ ‖(k₇ − k₆) / (g₇ − g₆)‖∞,        Hairer & Wanner II, p. 22
+
+     with g₆ and g₇ the points those two stages were evaluated at (the second
+     being the new solution), and leaves it in integ.eigenEst.
+     ========================================================================== */
+
+
+  /**
+   * The spectral-radius estimate of OrdinaryDiffEq's explicit methods from two
+   * stages at the same time: max over i of |(kB − kA)ᵢ / (gB − gA)ᵢ|.
+   *
+   * A NaN makes the whole estimate NaN, as Julia's norm(·, Inf) does -- the
+   * switch reads a NaN as stiff. One case is set apart, and it is a deliberate
+   * difference from OrdinaryDiffEq: a component that has not moved at all
+   * between the two stages, both differences exactly zero. There 0/0 is NaN in
+   * Julia, so a single state at rest -- an empty compartment, a constant -- is
+   * enough for every step to be judged stiff: Lorenz with one idle extra state
+   * switches to Rosenbrock23 and back twenty-three times over [0, 20] (measured,
+   * OrdinaryDiffEq 7.8.1), where without it it never leaves Tsit5. A component
+   * at rest says nothing about stiffness either way, and here it is passed
+   * over; `stillIsStiff` restores Julia's reading.
+   *
+   * @returns {number}
+   */
+  function explicitStiffness(kA, kB, gA, gB, n, stillIsStiff = false) {
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      const num = kB[i] - kA[i];
+      const den = gB[i] - gA[i];
+      if (num === 0 && den === 0 && !stillIsStiff) continue;
+      const r = Math.abs(num / den);
+      if (r > m) m = r;
+      else if (r !== r) return NaN;
+    }
+    return m;
+  }
+
+  class Tsit5Cache {
+    constructor(n, tab) {
+      this.n = n;
+      // Never reads J or W (see the integrator's ageing of the Jacobian).
+      this.explicit = true;
+      this.tab = tab;
+      this.order = tab.order;
+      this.errorOrder = tab.errorOrder;
+      this.stabilitySize = tab.stabilitySize;
+      this.hasFsalLast = true;
+      // A clamped solution is not the point k₇ was evaluated at; f is taken
+      // again there, as OrdinaryDiffEq does after a callback changes u.
+      this.refreshFsalOnClamp = true;
+      this.dtpropose = null;
+      this.k = Array.from({ length: tab.stages }, () => new Float64Array(n));
+      this.tmp = new Float64Array(n);
+      this.utilde = new Float64Array(n);
+    }
+
+    step(integ) {
+      const { n, tab, k, tmp } = this;
+      const { a, c, btilde } = tab;
+      const { t, dt, uprev, u } = integ;
+      const f = integ.f;
+
+      k[0].set(integ.fsalfirst);
+      // Stages 2..6 at their own times; stage 6 is at t + dt, and the point it
+      // is evaluated at (g₆) stays in tmp for the stiffness estimate.
+      const a2 = dt * a[1][0];
+      for (let i = 0; i < n; i++) tmp[i] = uprev[i] + a2 * k[0][i];
+      f(t + c[1] * dt, tmp, k[1]);
+      for (let s = 2; s < 6; s++) {
+        const row = a[s];
+        for (let i = 0; i < n; i++) {
+          let acc = row[0] * k[0][i];
+          for (let j = 1; j < s; j++) acc += row[j] * k[j][i];
+          tmp[i] = uprev[i] + dt * acc;
+        }
+        f(t + c[s] * dt, tmp, k[s]);
+      }
+      // The solution is stage 7's point, and k₇ = f(u) is the next step's k₁.
+      const row = a[6];
+      for (let i = 0; i < n; i++) {
+        let acc = row[0] * k[0][i];
+        for (let j = 1; j < 6; j++) acc += row[j] * k[j][i];
+        u[i] = uprev[i] + dt * acc;
+      }
+      f(t + dt, u, k[6]);
+      integ.fsallast.set(k[6]);
+
+      if (integ.isComposite) {
+        integ.eigenEst = explicitStiffness(k[5], k[6], tmp, u, n, integ.stillIsStiff);
+      }
+
+      const utilde = this.utilde;
+      for (let i = 0; i < n; i++) {
+        let acc = btilde[0] * k[0][i];
+        for (let j = 1; j < 7; j++) acc += btilde[j] * k[j][i];
+        utilde[i] = dt * acc;
+      }
+      integ.EEst = integ.errorNorm(utilde);
+      return true;
+    }
+
+    /**
+     * u(t + θ·dt) by Tsitouras's free interpolant, fourth order:
+     *   u = uprev + dt·Σⱼ bⱼ(θ)·kⱼ,   b₁(θ) = θ·p₁(θ),  bⱼ(θ) = θ²·pⱼ(θ)
+     */
+    interpolate(integ, theta, out) {
+      // The end of the step is the step's own solution: OrdinaryDiffEq saves u
+      // itself at a requested time the step lands on.
+      if (theta === 1) { out.set(integ.u); return out; }
+      const { n, k, tab } = this;
+      const r = tab.interp;
+      const th2 = theta * theta;
+      const w = this.w || (this.w = new Float64Array(7));
+      const r0 = r[0];
+      w[0] = theta * (r0[0] + theta * (r0[1] + theta * (r0[2] + theta * r0[3])));
+      for (let j = 1; j < 7; j++) {
+        const rj = r[j];
+        w[j] = th2 * (rj[0] + theta * (rj[1] + theta * rj[2]));
+      }
+      const { uprev } = integ;
+      const dt = integ.dt;
+      for (let i = 0; i < n; i++) {
+        let acc = k[0][i] * w[0];
+        for (let j = 1; j < 7; j++) acc += k[j][i] * w[j];
+        out[i] = uprev[i] + dt * acc;
+      }
+      return out;
+    }
+  }
+
+  /**
+   * Tsit5: explicit, order 5(4), seven stages (six evaluations a step).
+   *
+   * The step controller is OrdinaryDiffEq's PI controller with its defaults for
+   * a fifth-order method: β₁ = 7/50, β₂ = 2/25, a safety factor of 9/10, a step
+   * at most ten times the last (ten thousand after the first accepted one) and
+   * at least a fifth of it.
+   */
+  function Tsit5(options = {}) {
+    return {
+      name: 'Tsit5',
+      order: 5,
+      stabilitySize: Tsit5Tableau.stabilitySize,
+      initdt: 'sciml',
+      build: (n) => new Tsit5Cache(n, Tsit5Tableau),
+      controller: {
+        beta1: 7 / 50, beta2: 2 / 25, gamma: 0.9, qmin: 0.2, qmax: 10,
+        qsteadyMin: 1, qsteadyMax: 1, qoldinit: 1e-4, qmaxFirstStep: 10000,
+        ...(options.controller || {}),
+      },
+    };
+  }
+
+  /* ---------- solvers/vern7-tableau.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / vern7-tableau
+
+     GENERATED -- do not edit by hand.
+     Written by scripts/gen-explicit-rk-tableaus.py from the Float64 methods of
+     Vern7Tableau, Vern7ExtraStages and Vern7InterpolationCoefficients in
+     OrdinaryDiffEqVerner/src/verner_tableaus.jl.
+
+     Vern7: Verner's "most efficient" 7(6) pair, ten stages, not first same as
+     last, with a seventh-order interpolant that needs six more stages -- worked
+     out only when a point inside the step is asked for ("lazy").
+
+       Verner, J. H. (2010). Numerically optimal Runge-Kutta pairs with
+       interpolants. Numerical Algorithms 53, 383-396.
+
+     Shapes. `a` is strictly lower triangular and ragged: row i has i entries
+     (zeros where the source has none). `extraA[m]` is stage 11 + m against
+     stages 1..10 and then 11..(10 + m); its entry against stage 10 is zero.
+     `interpStages` lists which stages the interpolant reads (1-based, as in the
+     source), and `interp` their polynomials: the first is
+     Θ·(r011 + r012·Θ + … + r017·Θ⁶), every other Θ²·(rj2 + … + rj7·Θ⁵).
+     ========================================================================== */
+
+  const Vern7Tableau = {
+    name: 'Vern7',
+    stages: 10,
+    order: 7,
+    errorOrder: 6,
+    // alg_stability_size in OrdinaryDiffEqVerner/src/alg_utils.jl.
+    stabilitySize: 4.64,
+    c: [0.0, 0.005, 0.10888888888888888, 0.16333333333333333, 0.4555, 0.6095094489978381, 0.884, 0.925, 1.0, 1.0],
+    a: [
+      [],
+      [0.005],
+      [-1.07679012345679, 1.185679012345679],
+      [0.04083333333333333, 0.0, 0.1225],
+      [0.6389139236255726, 0.0, -2.455672638223657, 2.272258714598084],
+      [-2.6615773750187572, 0.0, 10.804513886456137, -8.3539146573962, 0.820487594956657],
+      [6.067741434696772, 0.0, -24.711273635911088, 20.427517930788895, -1.9061579788166472, 1.006172249242068],
+      [12.054670076253203, 0.0, -49.75478495046899, 41.142888638604674, -4.461760149974004, 2.042334822239175, -0.09834843665406107],
+      [10.138146522881808, 0.0, -42.6411360317175, 35.76384003992257, -4.3480228403929075, 2.0098622683770357, 0.3487490460338272, -0.27143900510483127],
+      [-45.030072034298676, 0.0, 187.3272437654589, -154.02882369350186, 18.56465306347536, -7.141809679295079, 1.3088085781613787, 0.0, 0.0],
+    ],
+    b: [0.04715561848627222, 0.0, 0.0, 0.25750564298434153, 0.26216653977412624, 0.15216092656738558, 0.4939969170032485, -0.29430311714032503, 0.08131747232495111, 0.0],
+    btilde: [0.002547011879931045, 0.0, 0.0, -0.00965839487279575, 0.04206470975639691, -0.0666822437469301, 0.2650097464621281, -0.29430311714032503, 0.08131747232495111, -0.02029518466335628],
+    extraC: [1.0, 0.29, 0.125, 0.25, 0.53, 0.79],
+    extraA: [
+      [0.04715561848627222, 0.0, 0.0, 0.25750564298434153, 0.2621665397741262, 0.15216092656738558, 0.49399691700324844, -0.29430311714032503, 0.0813174723249511, 0.0],
+      [0.0523222769159969, 0.0, 0.0, 0.22495861826705715, 0.017443709248776376, -0.007669379876829393, 0.03435896044073285, -0.0410209723009395, 0.025651133005205617, 0.0, -0.0160443457],
+      [0.053053341257859085, 0.0, 0.0, 0.12195301011401886, 0.017746840737602496, -0.0005928372667681495, 0.008381833970853752, -0.01293369259698612, 0.009412056815253861, 0.0, -0.005353253107275676, -0.06666729992455811],
+      [0.03887903257436304, 0.0, 0.0, -0.0024403203308301317, -0.0013928917214672623, -0.00047446291558680135, 0.00039207932413159514, -0.00040554733285128004, 0.00019897093147716726, 0.0, -0.00010278198793179169, 0.03385661513870267, 0.1814893063199928],
+      [0.05723681204690013, 0.0, 0.0, 0.22265948066761182, 0.12344864200186899, 0.04006332526666491, -0.05269894848581452, 0.04765971214244523, -0.02138895885042213, 0.0, 0.015193891064036402, 0.12060546716289655, -0.022779423016187374, 0.0],
+      [0.051372038802756814, 0.0, 0.0, 0.5414214473439406, 0.350399806692184, 0.14193112269692182, 0.10527377478429423, -0.031081847805874016, -0.007401883149519145, 0.0, -0.006377932504865363, -0.17325495908361865, -0.18228156777622026, 0.0, 0.0],
+    ],
+    interpStages: [1, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16],
+    interp: [
+      [1.0, -8.413387198332767, 33.675508884490895, -70.80159089484886, 80.64695108301298, -47.19413969837522, 11.133813442539243],
+      [8.754921980674396, -88.4596828699771, 346.9017638429916, -629.2580030059837, 529.6773755604193, -167.35886986514018],
+      [8.913387586637922, -90.06081846893218, 353.1807459217058, -640.6476819744374, 539.2646279047156, -170.38809442991547],
+      [5.1733120298478, -52.271115900055385, 204.9853867374073, -371.8306118563603, 312.9880934374529, -98.89290352172495],
+      [16.79537744079696, -169.70040000059728, 665.4937727009246, -1207.1638892336007, 1016.1291515818546, -321.06001557237494],
+      [-10.005997536098665, 101.1005433052275, -396.47391512378437, 719.1787707014183, -605.3681033918824, 191.27439892797935],
+      [2.764708833638599, -27.934602637390462, 109.54779186137893, -198.7128113064482, 167.26633571640318, -52.85010499525706],
+      [-2.1696320280163506, 22.016696037569876, -86.90152427798948, 159.22388973861476, -135.9618306534588, 43.792401183280006],
+      [-4.890070188793804, 22.75407737425176, -30.78034218537731, -2.797194317207249, 31.369456637508403, -15.655927320381801],
+      [10.862170929551967, -50.542971417827104, 68.37148040407511, 6.213326521632409, -69.68006323194157, 34.776056794509195],
+      [-11.37286691922923, 130.79058078246717, -488.65113677785604, 832.2148793276441, -664.7743368554426, 201.79288044241662],
+      [-5.919778732715007, 63.27679965889219, -265.432682088738, 520.1009254140611, -467.412109533902, 155.3868452824017],
+      [-10.492146197961823, 105.35538525188011, -409.43975011988937, 732.831448907654, -606.3044574733512, 188.0495196316683],
+    ],
+  };
+
+  /* ---------- solvers/vern7.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / vern7
+
+     Vern7: Verner's "most efficient" explicit Runge-Kutta pair of order 7(6)
+     (OrdinaryDiffEqVerner), the non-stiff method DifferentialEquations.jl's
+     default algorithm takes when the relative tolerance is below 1e-6.
+
+     Ten stages a step and not first-same-as-last, so ten evaluations of f --
+     the first of them is f at the step's start, which the integrator already
+     holds, and is taken from there. Its interpolant is seventh order and needs
+     six stages more; they are worked out only when a point inside the step is
+     actually asked for, once per step ("lazy", OrdinaryDiffEq's default).
+
+     Inside the automatic switch it estimates the largest eigenvalue from its
+     last two stages as Tsit5 does (see explicitStiffness in ./tsit5.js), with
+     OrdinaryDiffEq's choice of points: the difference of stages 10 and 9 over
+     the difference of the solution and stage 10's point.
+     ========================================================================== */
+
+
+
+  class Vern7Cache {
+    constructor(n, tab) {
+      this.n = n;
+      // Never reads J or W (see the integrator's ageing of the Jacobian).
+      this.explicit = true;
+      this.tab = tab;
+      this.order = tab.order;
+      this.errorOrder = tab.errorOrder;
+      this.stabilitySize = tab.stabilitySize;
+      this.hasFsalLast = false;
+      this.dtpropose = null;
+      // Stages 1..10 of the step, and 11..16 for the interpolant.
+      this.k = Array.from({ length: 16 }, () => new Float64Array(n));
+      this.tmp = new Float64Array(n);
+      this.utilde = new Float64Array(n);
+      this.extraValid = false;
+      // Each row's nonzero coefficients, in the source's order, so a stage sums
+      // exactly the terms OrdinaryDiffEq writes out and no zeros.
+      this.rows = tab.a.map((row) => row.map((v, j) => [j, v]).filter(([, v]) => v !== 0));
+      this.extraRows = tab.extraA.map((row) => row.map((v, j) => [j, v]).filter(([, v]) => v !== 0));
+      this.bTerms = tab.b.map((v, j) => [j, v]).filter(([, v]) => v !== 0);
+      this.eTerms = tab.btilde.map((v, j) => [j, v]).filter(([, v]) => v !== 0);
+    }
+
+    /** out = uprev + dt·Σ coefficient·k over `terms`. */
+    combine(uprev, dt, terms, out) {
+      const { n, k } = this;
+      const [j0, v0] = terms[0];
+      const k0 = k[j0];
+      for (let i = 0; i < n; i++) {
+        let acc = v0 * k0[i];
+        for (let m = 1; m < terms.length; m++) {
+          const [j, v] = terms[m];
+          acc += v * k[j][i];
+        }
+        out[i] = uprev[i] + dt * acc;
+      }
+      return out;
+    }
+
+    step(integ) {
+      const { n, tab, k, tmp, rows } = this;
+      const { t, dt, uprev, u } = integ;
+      const f = integ.f;
+      const c = tab.c;
+
+      k[0].set(integ.fsalfirst);
+      for (let s = 1; s < 10; s++) {
+        this.combine(uprev, dt, rows[s], tmp);
+        f(t + c[s] * dt, tmp, k[s]);
+      }
+      // tmp now holds stage 10's point, which the stiffness estimate reads.
+      this.combine(uprev, dt, this.bTerms, u);
+      this.extraValid = false;
+
+      if (integ.isComposite) {
+        integ.eigenEst = explicitStiffness(k[8], k[9], tmp, u, n, integ.stillIsStiff);
+      }
+
+      const utilde = this.utilde;
+      const e = this.eTerms;
+      for (let i = 0; i < n; i++) {
+        let acc = e[0][1] * k[e[0][0]][i];
+        for (let m = 1; m < e.length; m++) acc += e[m][1] * k[e[m][0]][i];
+        utilde[i] = dt * acc;
+      }
+      integ.EEst = integ.errorNorm(utilde);
+      return true;
+    }
+
+    /** Stages 11..16, for the interpolant: six more evaluations, once a step. */
+    extraStages(integ) {
+      const { tab, k, tmp } = this;
+      const { t, dt, uprev } = integ;
+      for (let m = 0; m < 6; m++) {
+        this.combine(uprev, dt, this.extraRows[m], tmp);
+        integ.f(t + tab.extraC[m] * dt, tmp, k[10 + m]);
+      }
+      this.extraValid = true;
+    }
+
+    /**
+     * u(t + θ·dt) by Verner's seventh-order interpolant:
+     *   u = uprev + dt·Σⱼ bⱼ(θ)·kⱼ over stages 1, 4..9 and 11..16,
+     *   b₁(θ) = θ·p₁(θ), the others θ²·pⱼ(θ).
+     */
+    interpolate(integ, theta, out) {
+      // The end of the step is the step's own solution: OrdinaryDiffEq saves u
+      // itself at a requested time the step lands on, and Vern7 would otherwise
+      // work out six stages to reproduce it.
+      if (theta === 1) { out.set(integ.u); return out; }
+      if (!this.extraValid) this.extraStages(integ);
+      const { n, k, tab } = this;
+      const { interp, interpStages } = tab;
+      const m = interpStages.length;
+      const w = this.w || (this.w = new Float64Array(m));
+      const th2 = theta * theta;
+      for (let q = 0; q < m; q++) {
+        const r = interp[q];
+        let p = r[r.length - 1];
+        for (let d = r.length - 2; d >= 0; d--) p = r[d] + theta * p;
+        w[q] = (q === 0 ? theta : th2) * p;
+      }
+      const { uprev } = integ;
+      const dt = integ.dt;
+      const k0 = k[interpStages[0] - 1];
+      for (let i = 0; i < n; i++) {
+        let acc = k0[i] * w[0];
+        for (let q = 1; q < m; q++) acc += k[interpStages[q] - 1][i] * w[q];
+        out[i] = uprev[i] + dt * acc;
+      }
+      return out;
+    }
+  }
+
+  /**
+   * Vern7: explicit, order 7(6), ten stages a step and six more for a point
+   * inside one. PI step control with OrdinaryDiffEq's defaults for order 7:
+   * β₁ = 1/10, β₂ = 2/35.
+   */
+  function Vern7(options = {}) {
+    return {
+      name: 'Vern7',
+      order: 7,
+      stabilitySize: Vern7Tableau.stabilitySize,
+      initdt: 'sciml',
+      build: (n) => new Vern7Cache(n, Vern7Tableau),
+      controller: {
+        beta1: 7 / 70, beta2: 2 / 35, gamma: 0.9, qmin: 0.2, qmax: 10,
+        qsteadyMin: 1, qsteadyMax: 1, qoldinit: 1e-4, qmaxFirstStep: 10000,
+        ...(options.controller || {}),
+      },
+    };
+  }
+
+  /* ---------- solvers/rosenbrock23.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / rosenbrock23
+
+     Rosenbrock23: the Rosenbrock (2,3) W-method of Shampine and Reichelt's
+     MATLAB ode23s, as OrdinaryDiffEqRosenbrock implements it -- the stiff
+     method DifferentialEquations.jl's default algorithm switches to for a
+     small system (up to 50 states) at a relative tolerance of 1e-6 or above.
+
+     With d = 1/(2 + √2) and W = I − h·d·J,
+
+         W k₁ = f(t, u) + h·d·∂f/∂t
+         W k₂ = f(t + h/2, u + h/2·k₁) − k₁,                then k₂ += k₁
+         u₁   = u + h·k₂
+         W k₃ = f(t + h, u₁) − (6 + √2)·(k₂ − f₁) − 2·(k₁ − f₀) + h·∂f/∂t
+
+     and the step's error is h/6·(k₁ − 2k₂ + k₃): second order, judged by a
+     third-order estimate. f at the new solution is the next step's f₀.
+
+     It is the same method as this repository's own `ros23` (Kompartment's
+     src/ode/solvers/rosenbrock23.js) and a different implementation of it:
+     OrdinaryDiffEq's step controller, error weights and norm, starting step
+     and interpolant. W is formed from a fresh Jacobian on every step, as
+     OrdinaryDiffEq does for this method (its max_jac_age is 1 here, and inside
+     a composite algorithm it always re-forms J).
+
+     W is held here as I/(h·d) − J, the form the Rosenbrock methods in this
+     package use; OrdinaryDiffEq holds its negative and multiplies each solve by
+     −1/(h·d), so here each solve is multiplied by +1/(h·d).
+     ========================================================================== */
+
+
+  const D = 1 / (2 + Math.sqrt(2));
+  const C32 = 6 + Math.sqrt(2);
+
+  class Rosenbrock23Cache {
+    constructor(n) {
+      this.n = n;
+      this.order = 2;
+      // OrdinaryDiffEq's alg_adaptive_order(Rosenbrock23) is 3; the PI
+      // controller's gains are set from the method's order, 2, below.
+      this.errorOrder = 3;
+      this.hasFsalLast = true;
+      this.refreshFsalOnClamp = true;
+      this.dtpropose = null;
+      this.k1 = new Float64Array(n);
+      this.k2 = new Float64Array(n);
+      this.k3 = new Float64Array(n);
+      this.f1 = new Float64Array(n);
+      this.dT = new Float64Array(n);
+      this.dTwork = new Float64Array(n);
+      this.rhs = new Float64Array(n);
+      this.err = new Float64Array(n);
+    }
+
+    step(integ) {
+      const { n, k1, k2, k3, f1, dT, rhs } = this;
+      const { t, dt, uprev, u } = integ;
+      const dtgamma = dt * D;
+      const inv = 1 / dtgamma;
+      const dto2 = dt / 2;
+      const dto6 = dt / 6;
+      const f0 = integ.fsalfirst;
+
+      // A fresh J on every step, W = I/(h·d) − J.
+      if (!integ.formW(dtgamma, true, true)) return false;
+      rosenbrockTimeDerivative(integ, t, uprev, f0, dT, this.dTwork);
+
+      for (let i = 0; i < n; i++) rhs[i] = f0[i] + dtgamma * dT[i];
+      integ.solveW(rhs);
+      for (let i = 0; i < n; i++) k1[i] = rhs[i] * inv;
+
+      for (let i = 0; i < n; i++) u[i] = uprev[i] + dto2 * k1[i];
+      integ.f(t + dto2, u, f1);
+
+      for (let i = 0; i < n; i++) rhs[i] = f1[i] - k1[i];
+      integ.solveW(rhs);
+      for (let i = 0; i < n; i++) k2[i] = rhs[i] * inv + k1[i];
+
+      for (let i = 0; i < n; i++) u[i] = uprev[i] + dt * k2[i];
+
+      const f2 = integ.fsallast;
+      integ.f(t + dt, u, f2);
+      for (let i = 0; i < n; i++) {
+        rhs[i] = f2[i] - C32 * (k2[i] - f1[i]) - 2 * (k1[i] - f0[i]) + dt * dT[i];
+      }
+      integ.solveW(rhs);
+      for (let i = 0; i < n; i++) k3[i] = rhs[i] * inv;
+
+      const err = this.err;
+      for (let i = 0; i < n; i++) err[i] = dto6 * (k1[i] - 2 * k2[i] + k3[i]);
+      integ.EEst = integ.errorNorm(err);
+      return true;
+    }
+
+    /**
+     * u(t + θ·dt) by the method's own second-order interpolant (the MATLAB
+     * suite's): uprev + dt·(c₁k₁ + c₂k₂), c₁ = θ(1−θ)/(1−2d), c₂ = θ(θ−2d)/(1−2d).
+     */
+    interpolate(integ, theta, out) {
+      // The end of the step is the step's own solution: OrdinaryDiffEq saves u
+      // itself at a requested time the step lands on.
+      if (theta === 1) { out.set(integ.u); return out; }
+      const { n, k1, k2 } = this;
+      const c1 = theta * (1 - theta) / (1 - 2 * D);
+      const c2 = theta * (theta - 2 * D) / (1 - 2 * D);
+      const { uprev } = integ;
+      const dt = integ.dt;
+      for (let i = 0; i < n; i++) out[i] = uprev[i] + dt * (c1 * k1[i] + c2 * k2[i]);
+      return out;
+    }
+  }
+
+  /**
+   * Rosenbrock23: linearly implicit, order 2 with a third-order error
+   * estimate, L-stable. PI step control with OrdinaryDiffEq's defaults for
+   * order 2: β₁ = 7/20, β₂ = 1/5, the step held where it would change by less
+   * than a fifth (as for every adaptive implicit method there).
+   */
+  function Rosenbrock23(options = {}) {
+    return {
+      name: 'Rosenbrock23',
+      order: 2,
+      initdt: 'sciml',
+      build: (n) => new Rosenbrock23Cache(n),
+      controller: {
+        beta1: 7 / 20, beta2: 1 / 5, gamma: 0.9, qmin: 0.2, qmax: 10,
+        qsteadyMin: 1, qsteadyMax: 1.2, qoldinit: 1e-4, qmaxFirstStep: 10000,
+        ...(options.controller || {}),
+      },
+    };
+  }
+
+  /* ---------- solvers/default.js ---------- */
+  /* ==========================================================================
+     ode_julia / solvers / default
+
+     DefaultODEAlgorithm: what DifferentialEquations.jl runs when it is given no
+     algorithm (OrdinaryDiffEqDefault), and the switching machinery under it
+     (OrdinaryDiffEqCore's CompositeAlgorithm, AutoSwitch and their caches).
+
+     It starts on an explicit method and watches every step for stiffness. Six
+     methods, of which a run uses at most two -- one of each kind, both fixed by
+     the tolerance and the size of the system before it starts:
+
+         non-stiff   Tsit5          reltol ≥ 1e-6
+                     Vern7          reltol < 1e-6
+         stiff       Rosenbrock23   up to 50 states, reltol ≥ 1e-6
+                     Rodas5P        up to 50 states, reltol < 1e-6
+                     FBDF           51 to 500 states
+                     KrylovFBDF     over 500 states: FBDF, its Newton
+                                    iterations solved matrix-free by GMRES
+
+     THE TEST. After every attempted step, accepted or not, the explicit
+     method's estimate of the largest eigenvalue |λ| (see explicitStiffness in
+     ./tsit5.js), or ‖J‖∞ whenever a stiff method has formed J, is turned into
+
+         stiffness = |λ|·dt / S,      S the width of the non-stiff method's
+                                      stability region (3.5068 Tsit5, 4.64 Vern7)
+
+     and the step counts as stiff if that exceeds 9/10. Eleven stiff verdicts in
+     a row on the explicit method switch to the stiff one and double dt; four
+     non-stiff ones in a row on the stiff method switch back and halve it. A
+     counter of verdicts is all the state there is (AutoSwitchCache).
+
+     While the explicit method is being found stiff the integrator's error
+     checks are waived (OrdinaryDiffEq's do_error_check), so a step forced down
+     by instability does not end the run before the switch can happen.
+
+     WHAT IS ITS OWN HERE. Each method keeps its own step controller, as each
+     branch of OrdinaryDiffEq's CompositeController does; the stiff and
+     non-stiff ones share the integrator's Jacobian, W and Newton iteration,
+     which only one of them uses. A method switched to is started as
+     OrdinaryDiffEq's initialize! would: FBDF from order 1, a Rosenbrock method
+     as it always starts.
+
+     A FAULT IN JULIA, NOT REPRODUCED. Inside OrdinaryDiffEq's composite
+     (OrdinaryDiffEqCore 4.18.1, OrdinaryDiffEqBDF 2.4.12) the BDF controller
+     decides acceptance from the error estimate in its own cache, which only
+     ever holds its starting 1: the estimate is written to the composite's. So
+     no FBDF step is ever rejected there -- one 62 tolerance units out was
+     accepted. Here the error test stands, and two things follow from keeping
+     it, both above: no verdict is counted on an FBDF attempt it rejects, which
+     in Julia never exists, and FBDF's first step after a switch is predicted
+     by an Euler step rather than from the last value, whose first estimate is
+     h·f and was rejected over and over at tight tolerances.
+
+     And one deliberate difference in the stiffness estimate: a state that has
+     not moved at all is passed over instead of making the estimate NaN (and so
+     "stiff") -- see explicitStiffness. `stillIsStiff: true` gives
+     OrdinaryDiffEq's reading.
+     ========================================================================== */
+
+
+
+
+
+
+
+
+  // OrdinaryDiffEqDefault/src/default_alg.jl
+  const LOW_TOL = 1e-6;
+  const SMALLSIZE = 50;
+  const MEDIUMSIZE = 500;
+  /** DefaultSolverChoice, numbered from 0 here (1 there). */
+  const DEFAULT_CHOICES = ['Tsit5', 'Vern7', 'Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF'];
+  const TSIT5 = 0;
+  const VERN7 = 1;
+  const ROSENBROCK23 = 2;
+  const RODAS5P = 3;
+  const FBDF_CHOICE = 4;
+  const KRYLOV_FBDF = 5;
+  // alg_stability_size of the two non-stiff methods.
+  const STABILITY_SIZES = [3.5068, 4.64];
+
+  function nonstiffchoice(reltol) {
+    return reltol < LOW_TOL ? VERN7 : TSIT5;
+  }
+
+  function stiffchoice(reltol, len) {
+    if (len > MEDIUMSIZE) return KRYLOV_FBDF;
+    if (len > SMALLSIZE) return FBDF_CHOICE;
+    return reltol < LOW_TOL ? RODAS5P : ROSENBROCK23;
+  }
+
+  /**
+   * OrdinaryDiffEq's AutoSwitchCache: the verdict counter and the thresholds.
+   * `count` runs positive for consecutive stiff verdicts and negative for
+   * consecutive non-stiff ones.
+   */
+  function switchState(o = {}) {
+    return {
+      count: 0,
+      successiveSwitches: 0,
+      isStiffAlg: !!o.stiffalgfirst,
+      maxstiffstep: o.maxstiffstep ?? 10,
+      maxnonstiffstep: o.maxnonstiffstep ?? 3,
+      nonstifftol: o.nonstifftol ?? 9 / 10,
+      stifftol: o.stifftol ?? 9 / 10,
+      dtfac: o.dtfac ?? 2,
+      stiffalgfirst: !!o.stiffalgfirst,
+      switchMax: o.switchMax ?? 5,
+      current: -1,              // none chosen yet (0 in Julia, which counts from 1)
+    };
+  }
+
+  /**
+   * is_stiff: the verdict on the last attempt, with its side effects on the
+   * waiver of error checks -- default_alg.jl's version, whose S is always the
+   * non-stiff method's own for the tolerance in force.
+   */
+  function isStiff(integ, AS, stabilitySize) {
+    const stiffness = Math.abs(integ.eigenEst * integ.dt / stabilitySize);
+    const tol = AS.isStiffAlg ? AS.stifftol : AS.nonstifftol;
+    // NaN-safe as OrdinaryDiffEq writes it: a NaN estimate counts as stiff.
+    const stiff = !(stiffness <= tol);
+    if (!stiff) AS.successiveSwitches++;
+    else AS.successiveSwitches = 0;
+    integ.doErrorCheck = (AS.successiveSwitches > AS.switchMax || !stiff) || AS.isStiffAlg;
+    return stiff;
+  }
+
+  /** Count a verdict into AS.count, Julia's way round. */
+  function countVerdict(AS, stiff) {
+    if (stiff) AS.count = AS.count < 0 ? 1 : AS.count + 1;
+    else AS.count = AS.count > 0 ? -1 : AS.count - 1;
+  }
+
+  /** default_autoswitch: which of the six the next step is taken with. */
+  function defaultAutoswitch(AS, integ) {
+    const len = integ.n;
+    const reltol = integ.reltol;
+    if (AS.current < 0) {
+      AS.current = AS.stiffalgfirst ? stiffchoice(reltol, len) : nonstiffchoice(reltol);
+      return AS.current;
+    }
+    const dt = integ.dt;
+    countVerdict(AS, isStiff(integ, AS, STABILITY_SIZES[nonstiffchoice(reltol)]));
+    if (!AS.isStiffAlg && AS.count > AS.maxstiffstep) {
+      integ.dt = dt * AS.dtfac;
+      AS.isStiffAlg = true;
+      AS.current = stiffchoice(reltol, len);
+    } else if (AS.isStiffAlg && AS.count < -AS.maxnonstiffstep) {
+      integ.dt = dt / AS.dtfac;
+      AS.isStiffAlg = false;
+      AS.current = nonstiffchoice(reltol);
+    }
+    return AS.current;
+  }
+
+  /**
+   * The generic AutoSwitch of two methods, (nonstiff, stiff) at indices 0 and
+   * 1: OrdinaryDiffEqCore's AutoSwitchCache call, used by AutoAlgSwitch.
+   */
+  function genericAutoswitch(AS, integ, cache) {
+    if (AS.current < 0) {
+      AS.current = AS.stiffalgfirst ? 1 : 0;
+      return AS.current;
+    }
+    const dt = integ.dt;
+    countVerdict(AS, isStiff(integ, AS, cache.stabilitySizeOf(0)));
+    if (!AS.isStiffAlg && AS.count > AS.maxstiffstep) {
+      integ.dt = dt * AS.dtfac;
+      AS.isStiffAlg = true;
+    } else if (AS.isStiffAlg && AS.count < -AS.maxnonstiffstep) {
+      integ.dt = dt / AS.dtfac;
+      AS.isStiffAlg = false;
+    }
+    AS.current = AS.isStiffAlg ? 1 : 0;
+    return AS.current;
+  }
+
+  /**
+   * The cache of a composite method: the methods' own caches, made the first
+   * time each is chosen (as DefaultCache makes them), and a controller for each.
+   * To the integrator it is one method, whichever is in charge.
+   */
+  class CompositeCache {
+    constructor(n, integ, opts, spec) {
+      this.n = n;
+      this.opts = opts;
+      this.algs = spec.algs;
+      this.chooseFn = spec.choose;
+      this.state = switchState(spec.options);
+      this.caches = new Array(this.algs.length).fill(null);
+      this.controllers = new Array(this.algs.length).fill(null);
+      this.current = -1;
+      this.sub = null;
+      this.stepsBy = new Array(this.algs.length).fill(0);
+      this.attemptsBy = new Array(this.algs.length).fill(0);
+      this.switchLog = [];
+      this.nswitches = 0;
+      this.fsalStep = -1;
+      integ.stillIsStiff = !!spec.options?.stillIsStiff;
+      this.skipNext = false;
+      // (info) => void, after every verdict: for tests and for looking.
+      this.trace = typeof spec.options?.trace === 'function' ? spec.options.trace : null;
+    }
+
+    stabilitySizeOf(i) {
+      const s = this.algs[i].stabilitySize;
+      if (!(s > 0)) throw new Error(`${this.algs[i].name} has no stability size to test stiffness against`);
+      return s;
+    }
+
+    /** Make method i's cache and controller, if it has none yet. */
+    ensure(i, integ) {
+      if (!this.caches[i]) {
+        const alg = this.algs[i];
+        const cache = alg.build(this.n, integ, this.opts);
+        this.caches[i] = cache;
+        this.controllers[i] = new PIController({
+          order: cache.errorOrder ?? cache.order,
+          ...(alg.controller || {}),
+        });
+        cache.compositeFresh = true;
+      }
+      return this.caches[i];
+    }
+
+    /**
+     * Put method i in charge: its controller becomes the integrator's, and it
+     * is started as OrdinaryDiffEq's initialize! starts a method switched to --
+     * its own init the first time, and after that whatever restart it has
+     * (FBDF's history begins again at order 1; the one-step methods have none).
+     */
+    activate(i, integ) {
+      const cache = this.ensure(i, integ);
+      this.current = i;
+      this.sub = cache;
+      integ.controller = this.controllers[i];
+      if (cache.compositeFresh) {
+        cache.compositeFresh = false;
+        if (cache.init) cache.init(integ);
+        if (integ.t !== integ.prob.tspan[0] && cache.restart) cache.restart(integ);
+      } else if (cache.restart) {
+        cache.restart(integ);
+      }
+    }
+
+    init(integ) {
+      this.activate(this.chooseFn(this.state, integ, this), integ);
+    }
+
+    /** choose_algorithm!, at the top of every pass of the integrator's loop. */
+    choose(integ) {
+      const dtBefore = integ.dt;
+      // No verdict on an FBDF attempt the error test turned down: inside
+      // OrdinaryDiffEq's composite no such attempt exists (its BDF controller
+      // never rejects there -- see the header), so its switch never counts one.
+      // Counted, each rejection after a switch was a "not stiff" at a step
+      // shrunk tenfold, and four of them sent the run back to Tsit5 before
+      // FBDF had taken a step.
+      if (this.skipNext) {
+        this.skipNext = false;
+        return;
+      }
+      const next = this.chooseFn(this.state, integ, this);
+      if (this.trace) {
+        this.trace({
+          t: integ.t, dt: dtBefore, eigenEst: integ.eigenEst, count: this.state.count,
+          from: this.algs[this.current].name, to: this.algs[next].name, nsteps: integ.nsteps,
+          njacs: integ._jacCache ? integ._jacCache.njac : 0, EEst: integ.EEst,
+        });
+      }
+      if (next === this.current) return;
+      const from = this.current;
+      this.activate(next, integ);
+      this.nswitches++;
+      if (this.switchLog.length < 1000) {
+        this.switchLog.push({ t: integ.t, from: this.algs[from].name, to: this.algs[next].name });
+      }
+    }
+
+    // --- the integrator's interface, delegated to the method in charge ---------
+
+    get order() { return this.sub.order; }
+    get explicit() { return !!this.sub.explicit; }
+    get errorOrder() { return this.sub.errorOrder; }
+    get hasFsalLast() { return !!this.sub.hasFsalLast; }
+    get refreshFsalOnClamp() { return !!this.sub.refreshFsalOnClamp; }
+    get dtpropose() { return this.sub ? this.sub.dtpropose ?? null : null; }
+    set dtpropose(v) { if (this.sub) this.sub.dtpropose = v; }
+
+    step(integ) {
+      this.attemptsBy[this.current]++;
+      return this.sub.step(integ);
+    }
+
+    accepted(integ, dtjust) {
+      this.stepsBy[this.current]++;
+      if (this.sub.accepted) this.sub.accepted(integ, dtjust);
+    }
+
+    rejected(integ) {
+      if (this.sub.family === 'fbdf') this.skipNext = true;
+      return this.sub.rejected ? this.sub.rejected(integ) === true : false;
+    }
+
+    restart(integ) {
+      if (this.sub.restart) this.sub.restart(integ);
+    }
+
+    interpolate(integ, theta, out) {
+      if (this.sub.interpolate) return this.sub.interpolate(integ, theta, out);
+      // A method without an interpolant of its own is read by the cubic
+      // Hermite, which needs f at the step's end; the integrator only takes it
+      // for a cache with neither, so it is taken here, once a step.
+      if (!this.sub.hasFsalLast && this.fsalStep !== integ.nsteps) {
+        integ.f(integ.t + integ.dt, integ.u, integ.fsallast);
+        this.fsalStep = integ.nsteps;
+      }
+      return hermite(theta, integ.dt, integ.uprev, integ.u, integ.fsalfirst, integ.fsallast, out);
+    }
+
+    get krylovSolves() {
+      let s = 0;
+      for (const c of this.caches) if (c && c.krylovSolves) s += c.krylovSolves;
+      return s;
+    }
+
+    krylovReport() {
+      const out = {};
+      for (const c of this.caches) if (c && c.krylovReport) Object.assign(out, c.krylovReport());
+      return out;
+    }
+
+    /** What the run did, for its statistics. */
+    report() {
+      const stepsBy = {};
+      this.algs.forEach((a, i) => { if (this.caches[i]) stepsBy[a.name] = this.stepsBy[i]; });
+      return {
+        algorithms: this.algs.map((a) => a.name),
+        stepsBy,
+        switches: this.nswitches,
+        switchLog: this.switchLog.slice(),
+        lastAlg: this.algs[this.current].name,
+      };
+    }
+  }
+
+  /**
+   * A composite method from a list of methods and a choice function, as
+   * OrdinaryDiffEqCore's CompositeAlgorithm.
+   */
+  function compositeAlgorithm(name, algs, choose, options = {}) {
+    return {
+      name,
+      composite: true,
+      algs,
+      // OrdinaryDiffEq's starting step for whichever method is chosen first.
+      initdt: 'sciml',
+      order: Math.max(...algs.map((a) => a.order || 1)),
+      build: (n, integ, opts) => new CompositeCache(n, integ, opts, { algs, choose, options }),
+    };
+  }
+
+  /**
+   * DefaultODEAlgorithm: DifferentialEquations.jl's automatic choice.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.stiffalgfirst=false]  start on the stiff side
+   * @param {boolean} [options.stillIsStiff=false]   read a state at rest as Julia
+   *        does (the estimate becomes NaN, which counts as stiff); see
+   *        explicitStiffness in ./tsit5.js
+   * @param {number}  [options.maxstiffstep=10], [options.maxnonstiffstep=3],
+   *        [options.nonstifftol=0.9], [options.stifftol=0.9], [options.dtfac=2]
+   *        AutoSwitch's thresholds
+   * @param {object}  [options.stiff]  options for the stiff methods (maxOrder
+   *        and minOrder for the two FBDFs), as kwargs... are there
+   */
+  function DefaultODEAlgorithm(options = {}) {
+    // The stiff methods as OrdinaryDiffEq has them, with one exception: FBDF
+    // predicts its first step after a switch by an Euler step, as this
+    // package's FBDF does after any restart, not from the last value as
+    // OrdinaryDiffEq's does. Inside OrdinaryDiffEq's composite that first step
+    // is never rejected however wrong (see the header), and the predictor
+    // costs nothing; here the error test is kept, and with OrdinaryDiffEq's
+    // predictor diffusion on 600 points at reltol 1e-6 took 26 516 steps and
+    // 3147 switches (OrdinaryDiffEq: 87 and one; with this one, 88 and one).
+    // `firstPredictor: 'julia'` takes OrdinaryDiffEq's. And Rodas5P with its PI
+    // gains from its order, 5 -- the standalone port's come from its error
+    // estimate's, 4, and are kept as they were checked.
+    const stiff = { firstPredictor: options.firstPredictor ?? 'euler', ...(options.stiff || {}) };
+    const algs = [
+      Tsit5(), Vern7(),
+      Rosenbrock23(),
+      Rodas5P({ controller: { beta1: 7 / 50, beta2: 2 / 25, qmaxFirstStep: 10000 } }),
+      FBDF(stiff), FBDF({ ...stiff, linsolve: 'gmres' }),
+    ];
+    return compositeAlgorithm('DefaultODEAlgorithm', algs, defaultAutoswitch, options);
+  }
+
+  /**
+   * DefaultImplicitODEAlgorithm: the same, started on the stiff side and with
+   * the stiffness tolerances OrdinaryDiffEqDefault gives it (stol = 0, ntol =
+   * Inf).
+   */
+  function DefaultImplicitODEAlgorithm(options = {}) {
+    const alg = DefaultODEAlgorithm({
+      ...options, stiffalgfirst: true,
+      stifftol: options.stol ?? 0, nonstifftol: options.ntol ?? Infinity,
+    });
+    alg.name = 'DefaultImplicitODEAlgorithm';
+    return alg;
+  }
+
+  /**
+   * AutoAlgSwitch(nonstiff, stiff): two methods and the generic switch between
+   * them -- AutoTsit5(Rosenbrock23()) and its kind. The non-stiff method must
+   * know the width of its stability region (`stabilitySize`).
+   */
+  function AutoAlgSwitch(nonstiff, stiff, options = {}) {
+    return compositeAlgorithm(`AutoSwitch(${nonstiff.name}, ${stiff.name})`, [nonstiff, stiff],
+      genericAutoswitch, options);
+  }
+
+  return { ODEProblem, ODESolution, ODEError, solve, Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure, DenseMatrix, CSC, cscFromTriplets, DenseLU, ComplexDenseLU, SparseLU, reverseCuthillMcKee, JacobianCache, WFactorization, colourColumns, densePattern, jacobianInfNorm, NewtonSolver, PIController, initialStep, initialStepSciML, epsOf, GMRES, KrylovW, symGivens, Rodas5P, rosenbrockAlgorithm, Rodas5PTableau, TRBDF2, KenCarp4, esdirkAlgorithm, TRBDF2Tableau, KenCarp4Tableau, FBDF, fornbergWeights, QNDF, QBDF, rescaleMatrix, RadauIIA5, RadauIIA5Tableau, Tsit5, explicitStiffness, Tsit5Tableau, Vern7, Vern7Tableau, Rosenbrock23, DefaultODEAlgorithm, DefaultImplicitODEAlgorithm, AutoAlgSwitch, DEFAULT_CHOICES };
 }));

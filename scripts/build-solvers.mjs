@@ -79,6 +79,7 @@ const PACKAGES = [
 			'core/jacobian.js',
 			'core/newton.js',
 			'core/controller.js',
+			'core/krylov.js',
 			'core/integrator.js',
 			'solvers/rodas5p-tableau.js',
 			'solvers/rosenbrock.js',
@@ -88,21 +89,30 @@ const PACKAGES = [
 			'solvers/qndf.js',
 			'solvers/radau-tableau.js',
 			'solvers/radau.js',
+			'solvers/tsit5-tableau.js',
+			'solvers/tsit5.js',
+			'solvers/vern7-tableau.js',
+			'solvers/vern7.js',
+			'solvers/rosenbrock23.js',
+			'solvers/default.js',
 		],
 		// What the bundle puts on the global. Kept in step with index.js by the
 		// check below, which fails if index.js exports a name this list does not.
 		exports: [
 			'ODEProblem', 'ODESolution', 'ODEError', 'solve',
-			'Success', 'MaxIters', 'DtLessThanMin', 'Unstable', 'Terminated',
+			'Success', 'MaxIters', 'DtLessThanMin', 'Unstable', 'Terminated', 'ConvergenceFailure',
 			'DenseMatrix', 'CSC', 'cscFromTriplets', 'DenseLU', 'ComplexDenseLU', 'SparseLU',
 			'reverseCuthillMcKee',
-			'JacobianCache', 'WFactorization', 'colourColumns', 'densePattern',
-			'NewtonSolver', 'PIController', 'initialStep',
+			'JacobianCache', 'WFactorization', 'colourColumns', 'densePattern', 'jacobianInfNorm',
+			'NewtonSolver', 'PIController', 'initialStep', 'initialStepSciML', 'epsOf',
+			'GMRES', 'KrylovW', 'symGivens',
 			'Rodas5P', 'rosenbrockAlgorithm', 'Rodas5PTableau',
 			'TRBDF2', 'KenCarp4', 'esdirkAlgorithm', 'TRBDF2Tableau', 'KenCarp4Tableau',
 			'FBDF', 'fornbergWeights',
 			'QNDF', 'QBDF', 'rescaleMatrix',
 			'RadauIIA5', 'RadauIIA5Tableau',
+			'Tsit5', 'explicitStiffness', 'Tsit5Tableau', 'Vern7', 'Vern7Tableau', 'Rosenbrock23',
+			'DefaultODEAlgorithm', 'DefaultImplicitODEAlgorithm', 'AutoAlgSwitch', 'DEFAULT_CHOICES',
 		],
 		copyTo: 'kompartment/src/ode/julia',
 		// Kompartment keeps its own README (its paths are its own); everything
@@ -110,9 +120,13 @@ const PACKAGES = [
 		copy: ['index.js', 'LICENSE'],
 		describe: `ode_julia -- a single-file build
 
-   Stiff ODE solvers ported from DifferentialEquations.jl -- FBDF, Rodas5P,
-   KenCarp4, TRBDF2 and RadauIIA5 -- with their linear algebra, Jacobian
-   handling, Newton iteration and step-size control. No dependencies.
+   ODE solvers ported from DifferentialEquations.jl -- FBDF (factorising or
+   GMRES), QNDF, Rodas5P, Rosenbrock23, KenCarp4, TRBDF2, RadauIIA5, Tsit5,
+   Vern7, and DefaultODEAlgorithm, which switches between them on stiffness --
+   with their linear algebra, Jacobian handling, Newton iteration and
+   step-size control. No dependencies. MIT (ode/julia/LICENSE), except the
+   part from core/krylov.js, a port of Krylov.jl's GMRES, which is subject to
+   the Mozilla Public License 2.0 (its header, below).
 
      const { solve, ODEProblem, FBDF } = OdeJulia;
      const sol = solve(new ODEProblem(f, u0, [0, 1e5], { jac }), FBDF(),

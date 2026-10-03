@@ -93,6 +93,12 @@ const cases = [
   ['TRBDF2', alg.TRBDF2(), 2, 0.2],
   ['KenCarp4', alg.KenCarp4(), 4, 0.2],
   ['RadauIIA5', alg.RadauIIA5(), 5, 0.2],
+  // The methods of the automatic algorithm. Rosenbrock23 is a W-method of
+  // order 2 whatever J it is given; Vern7's seventh order is near rounding
+  // by dt = 0.03, so it starts from coarser steps.
+  ['Tsit5', alg.Tsit5(), 5, 0.2],
+  ['Vern7', alg.Vern7(), 7, 0.5],
+  ['Rosenbrock23', alg.Rosenbrock23(), 2, 0.2],
 ];
 for (const [name, a, order, dt0] of cases) {
   if (!a) continue;

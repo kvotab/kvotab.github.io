@@ -26,9 +26,9 @@
                             the step both come from it, and both happen first.
    ========================================================================== */
 
-import { JacobianCache, WFactorization } from './jacobian.js';
+import { JacobianCache, WFactorization, jacobianInfNorm } from './jacobian.js';
 import { NewtonSolver } from './newton.js';
-import { PIController, initialStep } from './controller.js';
+import { PIController, initialStep, initialStepSciML } from './controller.js';
 
 export const Success = 'Success';
 export const MaxIters = 'MaxIters';
@@ -61,6 +61,8 @@ export class ODEError extends Error {
  *        1e-8 relative, which becomes the accuracy floor of a fifth-order
  *        method well before its step size does.
  * @param {{colPtr:Int32Array,rowIdx:Int32Array}} [opts.jacPattern]  sparsity of df/du
+ * @param {(t:number,u:Float64Array,v:Float64Array,out:Float64Array,fu:Float64Array)=>void} [opts.jvp]
+ *        J·v, for a matrix-free method; differenced otherwise
  * @param {object} [opts.events]  { n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }.
  *        `direction` is one number for every function or an array with one
  *        per function: above 0 a rising crossing counts, below 0 a falling
@@ -76,6 +78,9 @@ export class ODEProblem {
     this.jac = opts.jac || null;
     this.tgrad = opts.tgrad || null;
     this.jacPattern = opts.jacPattern || null;
+    // J·v at (t, u), `(t, u, v, out, fu) => out`: what a matrix-free method
+    // (the Krylov FBDF) uses instead of differencing f, when it is given.
+    this.jvp = opts.jvp || null;
     this.events = opts.events || null;
     this.n = this.u0.length;
   }
@@ -242,27 +247,61 @@ class Integrator {
       sparse: false, fill: null, ordering: 'none', alg: alg.name,
     };
 
-    // Jacobian, W and Newton exist for every method here; a Rosenbrock cache
-    // simply never touches the Newton solver.
-    this.jacCache = new JacobianCache(n, {
-      jac: prob.jac, jacPattern: prob.jacPattern, matrix: opts.matrix,
-      central: opts.central,
-    });
-    this.W = new WFactorization(n, this.jacCache, {
-      matrix: opts.matrix, maxJacAge: opts.maxJacAge,
-    });
+    // Jacobian and W are made the first time a method asks for them -- see
+    // the getters below -- and the Newton solver is a handful of vectors. A
+    // method that never touches them (an explicit Runge-Kutta, which the
+    // automatic switch may run for a whole solve) never pays for an n×n
+    // matrix, which for a model of tens of thousands of states it could not.
+    this._jacCache = null;
+    this._W = null;
     this.newton = new NewtonSolver(n, {
       norm: opts.norm, kappa: opts.kappa, maxIters: opts.newtonMaxIters,
     });
-    this.stats.sparse = this.W.sparse;
-    this.stats.ordering = this.W.ordering;
+
+    // What a composite method needs from the loop (see ../solvers/default.js):
+    // the spectral-radius estimate its stiffness test reads, which the
+    // explicit methods set from their last two stages and the stiff ones from
+    // ‖J‖∞ whenever they form J, and whether the error checks of the next
+    // step are to be made at all -- OrdinaryDiffEq's eigen_est, starting at
+    // one, and do_error_check.
+    this.isComposite = !!alg.composite;
+    this.eigenEst = 1;
+    this.doErrorCheck = true;
 
     this.f = (t, u, du) => { this.stats.nf++; prob.f(t, u, du); };
+    this.controller = null;
     this.cache = alg.build(n, this, opts);
-    this.controller = new PIController({
-      order: this.cache.errorOrder ?? this.cache.order,
-      ...(alg.controller || {}),
-    });
+    // A composite method keeps a controller for each of its methods and sets
+    // integ.controller to the one in charge, from its init on, as it switches.
+    if (!this.isComposite) {
+      this.controller = new PIController({
+        order: this.cache.errorOrder ?? this.cache.order,
+        ...(alg.controller || {}),
+      });
+    }
+  }
+
+  /** The Jacobian's cache, made on first use. */
+  get jacCache() {
+    if (!this._jacCache) {
+      this._jacCache = new JacobianCache(this.n, {
+        jac: this.prob.jac, jacPattern: this.prob.jacPattern, matrix: this.opts.matrix,
+        central: this.opts.central,
+      });
+    }
+    return this._jacCache;
+  }
+
+  /** W and its factorisation, made on first use. */
+  get W() {
+    if (!this._W) {
+      this._W = new WFactorization(this.n, this.jacCache, {
+        matrix: this.opts.matrix, maxJacAge: this.opts.maxJacAge,
+      });
+      this.stats.sparse = this._W.sparse;
+      this.stats.ordering = this._W.ordering;
+    }
+    return this._W;
   }
 
   /** A step's worth of clamping, where the caller asked for non-negativity. */
@@ -309,9 +348,14 @@ class Integrator {
 
   /** Build and factorise W for this γ·dt. Returns false if it is singular. */
   formW(gammaDt, transform, forceJac = false) {
-    const ok = this.W.form(this.f, this.t, this.uprev, this.fsalfirst, gammaDt, transform, forceJac);
+    const W = this.W;
+    const jacsBefore = this.jacCache.njac;
+    const ok = W.form(this.f, this.t, this.uprev, this.fsalfirst, gammaDt, transform, forceJac);
     this.stats.njacs = this.jacCache.njac;
-    this.stats.nw = this.W.nfactor;
+    this.stats.nw = W.nfactor;
+    // A composite method's stiffness test reads ‖J‖∞ whenever J is formed,
+    // as OrdinaryDiffEq's calc_J! sets eigen_est = opnorm(J, Inf).
+    if (this.isComposite && this.jacCache.njac !== jacsBefore) this.eigenEst = jacobianInfNorm(this.jacCache);
     return ok;
   }
 
@@ -341,7 +385,7 @@ function reportProgress(integ, opts) {
 }
 
 /** Cubic Hermite through (t, uprev, f0) and (t+dt, u, f1). */
-function hermite(theta, dt, uprev, u, f0, f1, out) {
+export function hermite(theta, dt, uprev, u, f0, f1, out) {
   const n = out.length;
   const t2 = theta * theta;
   const t3 = t2 * theta;
@@ -526,6 +570,9 @@ export function solve(prob, alg, options = {}) {
   let since = 0;
   const maxPoints = opts.maxPoints > 0 ? Math.max(100, opts.maxPoints) : 0;
   const interp = opts.dense ? [] : null;
+  // A composite method's choice at each saved point, numbered from 1 as
+  // OrdinaryDiffEq's sol.alg_choice is.
+  const choice = integ.isComposite ? [] : null;
 
   const remember = (t, u, keep) => {
     if (!keep) {
@@ -535,6 +582,7 @@ export function solve(prob, alg, options = {}) {
     T.push(t);
     U.push(Float64Array.from(u));
     if (interp) interp.push(null);
+    if (choice) choice.push(integ.cache.current + 1);
     if (!maxPoints || T.length < maxPoints) return;
     // Halve the store in place, keeping the ends. Doubling the stride as it
     // goes means the thinning is uniform over the whole run rather than
@@ -543,10 +591,12 @@ export function solve(prob, alg, options = {}) {
     for (let r = 2; r < T.length; r += 2) {
       T[w] = T[r]; U[w] = U[r];
       if (interp) interp[w] = interp[r];
+      if (choice) choice[w] = choice[r];
       w++;
     }
     T.length = w; U.length = w;
     if (interp) interp.length = w;
+    if (choice) choice.length = w;
     stride *= 2;
   };
 
@@ -591,10 +641,17 @@ export function solve(prob, alg, options = {}) {
   if (!opts.adaptive && !opts.dt) {
     throw new ODEError('dt', 'A non-adaptive run needs an explicit dt', t0);
   }
+  // The methods ported with OrdinaryDiffEq's own starting step say so; the
+  // older ones keep the one they were checked with. Its dtmax is the span,
+  // as OrdinaryDiffEq's default is.
   let dt = opts.dt
     ? Math.abs(opts.dt) * tdir
-    : initialStep(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
-                  integ.cache.order, opts.reltol, opts.abstol, opts.dtmax, work);
+    : alg.initdt === 'sciml'
+      ? initialStepSciML(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
+                         integ.cache.order, opts.reltol, opts.abstol, Math.min(Math.abs(opts.dtmax), span),
+                         work, { norm: opts.norm, dtmin: opts.dtmin })
+      : initialStep(integ.f, t0, integ.uprev, integ.fsalfirst, tdir,
+                    integ.cache.order, opts.reltol, opts.abstol, opts.dtmax, work);
   if (!Number.isFinite(dt) || dt === 0) dt = tdir * Math.min(1e-6 * span, opts.dtmax);
   dt = tdir * Math.min(Math.abs(dt), Math.abs(opts.dtmax), span);
   integ.dt = dt;
@@ -619,7 +676,15 @@ export function solve(prob, alg, options = {}) {
 
   // --- the loop -------------------------------------------------------------
   while (tdir * (tf - integ.t) > tEps) {
-    if (integ.nsteps >= maxSteps) {
+    // A composite method decides here which of its methods takes the next
+    // step: after the last attempt has been judged and its successor's dt
+    // chosen, before anything else -- OrdinaryDiffEq's loopheader!, which
+    // calls choose_algorithm! after every attempt, rejected ones included.
+    // It may change dt, and it says whether this attempt's error checks are
+    // to be made: an explicit method that has just been found stiff is let
+    // through them for the few steps until the switch, as there.
+    if (integ.isComposite) integ.cache.choose(integ);
+    if (integ.nsteps >= maxSteps && integ.doErrorCheck) {
       retcode = MaxIters;
       message = `More than ${maxSteps} steps were needed, and the run stopped at t = ${integ.t}`;
       break;
@@ -667,8 +732,9 @@ export function solve(prob, alg, options = {}) {
       // One that failed at the smallest step the clock can represent has
       // nowhere left to go. Halving it only for the floor to bring it back ran
       // the step budget out one futile attempt at a time -- ten million of
-      // them by default -- with the run standing still.
-      if (atFloor) {
+      // them by default -- with the run standing still. (Unless a composite
+      // method has waived the checks while it switches: see the loop's top.)
+      if (atFloor && integ.doErrorCheck) {
         retcode = ConvergenceFailure;
         message = `The step could not be taken at t = ${integ.t} even at `
           + `${Math.abs(integ.dt).toExponential(3)}, the smallest the clock can represent: `
@@ -679,7 +745,7 @@ export function solve(prob, alg, options = {}) {
       // would not converge, a singular W -- is not the controller's business:
       // halve it, and make sure the next attempt uses a fresh Jacobian.
       integ.dt *= 0.5;
-      integ.W.markStale();
+      integ._W?.markStale();
       integ.controller.reset();
       continue;
     }
@@ -693,7 +759,7 @@ export function solve(prob, alg, options = {}) {
         // method that reads integ.u before writing it must not be handed this.
         integ.u.set(integ.uprev);
         integ.dt *= 0.5;
-        integ.W.markStale();
+        integ._W?.markStale();
         if (Math.abs(integ.dt) < dtminAt(integ.t)) {
           retcode = Unstable;
           message = `The solution became infinite or not-a-number at t = ${integ.t} (component ${bad})`;
@@ -722,7 +788,7 @@ export function solve(prob, alg, options = {}) {
         break;
       }
       integ.dt *= 0.5;
-      integ.W.markStale();
+      integ._W?.markStale();
       integ.controller.reset();
       continue;
     }
@@ -744,7 +810,7 @@ export function solve(prob, alg, options = {}) {
     // the tolerance, and no step size mends that -- the implicit step itself
     // does. The case against is that it is accepting a step known to be
     // inaccurate, so the count is reported rather than buried.
-    if (!accepted && atFloor) {
+    if (!accepted && atFloor && integ.doErrorCheck) {
       if (belowTolRun < belowTolMax) {
         belowTolRun++;
         integ.stats.nbelowtol++;
@@ -794,7 +860,7 @@ export function solve(prob, alg, options = {}) {
     }
 
     integ.stats.naccept++;
-    if (integ.nonNegative) integ.clamp(integ.u);
+    const clamped = integ.nonNegative ? integ.clamp(integ.u) : 0;
 
     // saveat points that the step passed -- up to the event, where one cuts it
     // short -- each where it lies in the whole step. They are read before the
@@ -846,10 +912,19 @@ export function solve(prob, alg, options = {}) {
       integ.t = tstops[tstopAt];
     }
     integ.uprev.set(integ.u);
-    if (integ.cache.hasFsalLast) integ.fsalfirst.set(integ.fsallast);
-    else integ.f(integ.t, integ.uprev, integ.fsalfirst);
+    // f at the new point is the step's own last stage where the method has
+    // one -- unless clamping moved the point off it, which the methods ported
+    // with OrdinaryDiffEq's semantics answer as a callback that modified u
+    // does there, by evaluating f again. The older ports keep what they were
+    // checked with.
+    if (integ.cache.hasFsalLast && !(clamped && integ.cache.refreshFsalOnClamp)) {
+      integ.fsalfirst.set(integ.fsallast);
+    } else integ.f(integ.t, integ.uprev, integ.fsalfirst);
 
-    integ.W.agePlus();
+    // The Jacobian ages by the steps taken with it: under a composite method
+    // an explicit method's steps do not count, or the stiff method would come
+    // back to a Jacobian aged out by steps that never read it.
+    if (!integ.cache.explicit) integ._W?.agePlus();
     if (integ.cache.accepted) integ.cache.accepted(integ, dtjust);
 
     if (tstopAt < tstops.length && tdir * (integ.t - tstops[tstopAt]) >= 0) tstopAt++;
@@ -868,7 +943,7 @@ export function solve(prob, alg, options = {}) {
         if (integ.nonNegative) integ.clamp(integ.u);
         integ.uprev.set(integ.u);
         integ.f(integ.t, integ.uprev, integ.fsalfirst);
-        integ.W.markStale();
+        integ._W?.markStale();
         integ.newton.reset();
         integ.controller.reset();
         if (integ.cache.restart) integ.cache.restart(integ);
@@ -883,7 +958,7 @@ export function solve(prob, alg, options = {}) {
       ? (opts.dt ? Math.abs(opts.dt) * tdir : dtjust)
       : (integ.cache.dtpropose != null
         ? integ.cache.dtpropose
-        : integ.controller.accept(integ.EEst, dtjust));
+        : integ.controller.accept(integ.EEst, dtjust, integ.stats.naccept === 1));
     integ.cache.dtpropose = null;
     if (!Number.isFinite(dtnext) || dtnext === 0) dtnext = dtjust;
     dtnext = tdir * Math.min(Math.abs(dtnext), Math.abs(opts.dtmax));
@@ -907,17 +982,22 @@ export function solve(prob, alg, options = {}) {
   stats.points = T.length;
   stats.stride = stride;
   stats.nf = integ.stats.nf;
-  stats.njacs = integ.jacCache.njac;
-  stats.nw = integ.W.nfactor;
+  // Nothing formed, nothing to report: a method that never asked for J or W.
+  stats.njacs = integ._jacCache ? integ._jacCache.njac : 0;
+  stats.nw = integ._W ? integ._W.nfactor : 0;
   // Counted on the factorisation, because the Newton iteration solves against
   // it directly rather than through the integrator; reading the integrator's
-  // own counter here reported zero solves for every implicit method.
-  stats.nsolve = integ.W.nsolve;
-  stats.fill = integ.W.fill;
+  // own counter here reported zero solves for every implicit method. A
+  // method solving without one (the Krylov FBDF) adds its own.
+  stats.nsolve = (integ._W ? integ._W.nsolve : 0) + (integ.cache.krylovSolves ?? 0);
+  stats.fill = integ._W ? integ._W.fill : null;
   stats.nnonliniter = integ.newton.nf;
   stats.t = integ.t;
+  if (integ.isComposite && integ.cache.report) Object.assign(stats, integ.cache.report(integ));
+  if (integ.cache.krylovReport) Object.assign(stats, integ.cache.krylovReport());
 
   const sol = new ODESolution(Float64Array.from(T), U, stats, retcode, message);
   sol.events = events;
+  sol.algChoice = choice ? Uint8Array.from(choice) : null;
   return sol;
 }

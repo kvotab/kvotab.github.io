@@ -1,8 +1,9 @@
 /* ==========================================================================
    ode_julia
 
-   Stiff ODE solvers ported from DifferentialEquations.jl, for the browser and
-   for Node. No dependencies.
+   ODE solvers ported from DifferentialEquations.jl, for the browser and for
+   Node: its stiff methods, the explicit ones its default algorithm starts on,
+   and that default algorithm itself. No dependencies.
 
      import { solve, ODEProblem, Rodas5P } from './ode/julia/index.js';
 
@@ -17,7 +18,7 @@
 
 export {
   ODEProblem, ODESolution, ODEError, solve,
-  Success, MaxIters, DtLessThanMin, Unstable, Terminated,
+  Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure,
 } from './core/integrator.js';
 
 export {
@@ -25,9 +26,12 @@ export {
   reverseCuthillMcKee,
 } from './core/linalg.js';
 
-export { JacobianCache, WFactorization, colourColumns, densePattern } from './core/jacobian.js';
+export {
+  JacobianCache, WFactorization, colourColumns, densePattern, jacobianInfNorm,
+} from './core/jacobian.js';
 export { NewtonSolver } from './core/newton.js';
-export { PIController, initialStep } from './core/controller.js';
+export { PIController, initialStep, initialStepSciML, epsOf } from './core/controller.js';
+export { GMRES, KrylovW, symGivens } from './core/krylov.js';
 
 export { Rodas5P, rosenbrockAlgorithm } from './solvers/rosenbrock.js';
 export { Rodas5PTableau } from './solvers/rodas5p-tableau.js';
@@ -37,3 +41,11 @@ export { QNDF, QBDF, rescaleMatrix } from './solvers/qndf.js';
 export { RadauIIA5 } from './solvers/radau.js';
 export { RadauIIA5Tableau } from './solvers/radau-tableau.js';
 export { TRBDF2Tableau, KenCarp4Tableau } from './solvers/esdirk-tableaus.js';
+export { Tsit5, explicitStiffness } from './solvers/tsit5.js';
+export { Tsit5Tableau } from './solvers/tsit5-tableau.js';
+export { Vern7 } from './solvers/vern7.js';
+export { Vern7Tableau } from './solvers/vern7-tableau.js';
+export { Rosenbrock23 } from './solvers/rosenbrock23.js';
+export {
+  DefaultODEAlgorithm, DefaultImplicitODEAlgorithm, AutoAlgSwitch, DEFAULT_CHOICES,
+} from './solvers/default.js';

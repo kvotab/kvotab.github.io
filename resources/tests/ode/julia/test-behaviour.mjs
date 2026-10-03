@@ -52,7 +52,15 @@ function check(label, ok, detail = '') {
 const METHODS = {
   FBDF: alg.FBDF, QNDF: alg.QNDF, QBDF: alg.QBDF, Rodas5P: alg.Rodas5P,
   RadauIIA5: alg.RadauIIA5, KenCarp4: alg.KenCarp4, TRBDF2: alg.TRBDF2,
+  // The automatic algorithm and the three methods it brought (2026-10-03):
+  // every group below holds them to the same, except where a problem is too
+  // stiff for an explicit method to cross at all.
+  Tsit5: alg.Tsit5, Vern7: alg.Vern7, Rosenbrock23: alg.Rosenbrock23,
+  Default: alg.DefaultODEAlgorithm, KrylovFBDF: (o) => alg.FBDF({ ...o, linsolve: 'gmres' }),
 };
+const EXPLICIT = new Set(['Tsit5', 'Vern7']);
+// Second order, so held to less where a bound is about accuracy.
+const LOW_ORDER = new Set(['TRBDF2', 'Rosenbrock23']);
 const linspace = (a, b, m) => Array.from({ length: m }, (_, i) => a + (b - a) * (i / (m - 1)));
 
 /** y' = -y, y(0) = 1, with a second component y2' = y - y2 / 10 riding along. */
@@ -93,8 +101,8 @@ for (const [name, make] of Object.entries(METHODS)) {
   const sol2 = solve(new ODEProblem(decay, [1, 0], [0, 5], { events: onlyFalling }), make(),
     { reltol: 1e-8, abstol: 1e-10, saveEverystep: false });
   const ev2 = sol2.events[0];
-  // TRBDF2 is second order: its event time is held to less.
-  const tol = name === 'TRBDF2' ? 1e-5 : 1e-6;
+  // TRBDF2 and Rosenbrock23 are second order: their event time is held to less.
+  const tol = LOW_ORDER.has(name) ? 1e-5 : 1e-6;
   check(`${name}: a crossing in the other direction is not one`,
     !!ev2 && ev2.which === 0 && Math.abs(ev2.t - Math.log(4)) < tol, ev2 ? `which ${ev2.which} at ${ev2.t}` : 'no event');
 }
@@ -149,8 +157,8 @@ console.log('\n2. the rows between steps, from each method\'s own interpolant');
       { reltol: 1e-8, abstol: 1e-12, saveat: grid, saveEverystep: false });
     let worst = 0;
     grid.forEach((t, j) => { worst = Math.max(worst, Math.abs(sol.u[j][0] - Math.exp(-t))); });
-    // TRBDF2 is second order; the rest are held near the tolerance.
-    const bound = name === 'TRBDF2' ? 1e-5 : 1e-6;
+    // TRBDF2 and Rosenbrock23 are second order; the rest are held near the tolerance.
+    const bound = LOW_ORDER.has(name) ? 1e-5 : 1e-6;
     check(`${name}: every row within ${bound} of e^-t`, worst < bound, `worst ${worst.toExponential(2)}`);
   }
 }
@@ -167,7 +175,7 @@ console.log('\n3. rows inside the step an event cut short');
     const ev = sol.events[0];
     let worst = 0;
     for (let j = 0; j < sol.t.length; j++) worst = Math.max(worst, Math.abs(sol.u[j][0] - Math.exp(-sol.t[j])));
-    const bound = name === 'TRBDF2' ? 1e-5 : 1e-6;
+    const bound = LOW_ORDER.has(name) ? 1e-5 : 1e-6;
     check(`${name}: rows up to the event within ${bound} of e^-t`,
       !!ev && worst < bound, `worst ${worst.toExponential(2)}, event at ${ev && ev.t}`);
   }
@@ -433,6 +441,8 @@ console.log('\n10. a component at rest stays exactly where it is');
     return du;
   };
   for (const [name, make] of Object.entries(METHODS)) {
+    // Rates of 1e3 for 1e5 time units: tens of millions of explicit steps.
+    if (EXPLICIT.has(name)) continue;
     const events = {
       n: 1, direction: 1, fun: (t, u, out) => { out[0] = u[4] - 3.7; return out; },
       apply: (t, u) => { u[5] = 0; },

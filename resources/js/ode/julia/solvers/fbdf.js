@@ -30,6 +30,7 @@
    ========================================================================== */
 
 import { COEFFICIENT_MULTISTEP, Convergence } from '../core/newton.js';
+import { KrylovW } from '../core/krylov.js';
 
 /**
  * Classical BDF coefficients, row k for order k:
@@ -148,7 +149,22 @@ class FBDFCache {
     this.qmin = opts.qmin ?? 0.2;
     this.qsteadyMin = opts.qsteadyMin ?? 0.9;
     this.qsteadyMax = opts.qsteadyMax ?? 1.2;
+
+    // FBDF(linsolve = 'gmres'): the Newton iterations solved matrix-free by
+    // GMRES instead of against a factorised W (../core/krylov.js). Nothing
+    // else about the method changes.
+    this.krylov = opts.linsolve === 'gmres' ? new KrylovW(n, integ, opts) : null;
+    this.krylovFresh = true;
+    // How the first step after a start predicts: see `step`.
+    this.juliaPredictor = opts.firstPredictor === 'julia';
+    // What the automatic switch needs to know of the method in charge.
+    this.family = 'fbdf';
   }
+
+  /** Linear solves done by GMRES, for the integrator's count. */
+  get krylovSolves() { return this.krylov ? this.krylov.nsolve : 0; }
+
+  krylovReport() { return this.krylov ? this.krylov.report() : {}; }
 
   init(integ) {
     integ.newton.method = COEFFICIENT_MULTISTEP;
@@ -178,6 +194,7 @@ class FBDFCache {
 
   /** History is meaningless after a discontinuity: start again at order 1. */
   restart(integ) {
+    this.krylovFresh = true;
     this.ts[0] = 0;
     this.uHistory[0].set(integ.uprev);
     this.nHistory = 1;
@@ -262,8 +279,18 @@ class FBDFCache {
     // Jacobian is a separate and much larger expense: `form` rebuilds W from
     // the stored one whenever γh has moved, so only a labouring Newton or an
     // invalidated matrix justifies differencing again.
-    const needNew = integ.W.jacStale || !integ.W.haveFactor || !newton.fastConvergence;
-    if (!integ.formW(gammaDt, false, needNew)) return false;
+    let needNew;
+    if (this.krylov) {
+      // Matrix-free: nothing to form, only this step's error weights to set.
+      // `needNew` is only what the Newton iteration makes of its last
+      // contraction rate: after a restart or a failure it is not believed.
+      needNew = this.krylovFresh || !newton.fastConvergence;
+      this.krylovFresh = false;
+      this.krylov.prepare(integ);
+    } else {
+      needNew = integ.W.jacStale || !integ.W.haveFactor || !newton.fastConvergence;
+      if (!integ.formW(gammaDt, false, needNew)) return false;
+    }
 
     const count = Math.min(k + 1, this.nHistory);
     for (let j = 0; j < count; j++) thetas[j] = ts[j] / dt;
@@ -283,8 +310,18 @@ class FBDFCache {
       // is h·f -- O(h), with the whole derivative in it. After a jump f is large
       // and the time is late, so that no representable step passed: a model
       // whose packages failed at t = 5000 was refused at a step of 1.5e-11.
-      const f0 = integ.fsalfirst;
-      for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
+      //
+      // `firstPredictor: 'julia'` takes OrdinaryDiffEq's u₀ = u instead -- the
+      // last accepted state; OrdinaryDiffEq reads its integrator's u, which
+      // after a rejection still holds the rejected attempt. Measured inside
+      // the automatic switch it is the worse of the two at tight tolerances
+      // (see ./default.js), and it is kept for comparison with Julia.
+      if (this.juliaPredictor) {
+        upred.set(uprev);
+      } else {
+        const f0 = integ.fsalfirst;
+        for (let i = 0; i < n; i++) upred[i] = uprev[i] + dt * f0[i];
+      }
       for (let i = 1; i < k; i++) corrector[i].set(uprev);
     }
 
@@ -306,14 +343,15 @@ class FBDFCache {
     newton.errorConstant = 1 / (k + 1);
 
     const status = newton.solve(
-      integ.f, integ.W, t, dt, uprev, { reltol: integ.reltol, abstol: integ.abstolFixed },
+      integ.f, this.krylov ?? integ.W, t, dt, uprev, { reltol: integ.reltol, abstol: integ.abstolFixed },
       needNew, this.consfailcnt === 0,
     );
     integ.stats.nnonliniter += newton.iter;
     newton.errorConstant = 1;
     if (status !== Convergence) {
       integ.stats.nnonlinconvfail++;
-      integ.W.markStale();
+      if (this.krylov) this.krylovFresh = true;
+      else integ.W.markStale();
       // Three failures in a row is the history's fault, not the step's.
       if (this.order > 1 && newton.nfails >= 3) this.order--;
       this.consfailcnt++;
@@ -497,10 +535,17 @@ class FBDFCache {
  * @param {object} [options]
  * @param {number} [options.maxOrder=5]
  * @param {number} [options.minOrder=1]
+ * @param {'gmres'} [options.linsolve]  solve the Newton iterations matrix-free
+ *        by GMRES, as FBDF(linsolve = KrylovJL_GMRES()) does
+ * @param {'euler'|'julia'} [options.firstPredictor='euler']  the first step's
+ *        predictor after a start: an Euler step, or OrdinaryDiffEq's current
+ *        value (what the automatic switch uses; see `step`)
  */
 export function FBDF(options = {}) {
   return {
-    name: 'FBDF',
+    // With linsolve 'gmres' it is what OrdinaryDiffEq's default algorithm
+    // calls its KrylovFBDF choice.
+    name: options.linsolve === 'gmres' ? 'KrylovFBDF' : 'FBDF',
     order: options.maxOrder || MAX_ORDER_LIMIT,
     build: (n, integ, opts) => new FBDFCache(n, integ, { ...opts, ...options }),
     // FBDF chooses its own step; the generic controller is only a fallback.

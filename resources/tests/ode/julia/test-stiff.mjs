@@ -117,6 +117,12 @@ const SOLVERS = [
   ['KenCarp4', () => alg.KenCarp4(), 1, 1],
   ['TRBDF2', () => alg.TRBDF2(), 1e3, 10],
   ['RadauIIA5', () => alg.RadauIIA5(), 1, 1],
+  // Second order, like TRBDF2, and loosened like it.
+  ['Rosenbrock23', () => alg.Rosenbrock23(), 1e3, 10],
+  // The automatic choice: at 1e-8 Vern7 then Rodas5P for these small
+  // problems, at the loosened 1e-5 of the low-order ones Tsit5 then
+  // Rosenbrock23.
+  ['Default', () => alg.DefaultODEAlgorithm(), 1, 1],
 ];
 
 for (const c of CASES) {

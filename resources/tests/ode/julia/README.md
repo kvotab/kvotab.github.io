@@ -1,12 +1,14 @@
 # ode_julia — tests
 
-Four of them, and they answer four different questions.
+Six of them, and they answer six different questions.
 
 ```
 node resources/tests/ode/julia/test-linalg.mjs
 node resources/tests/ode/julia/test-order.mjs
 node resources/tests/ode/julia/test-stiff.mjs [--verbose]
 node resources/tests/ode/julia/test-behaviour.mjs
+node resources/tests/ode/julia/test-default.mjs [--verbose]
+node resources/tests/ode/julia/test-switching.mjs
 node resources/tests/ode/test-build.mjs           # the bundles and Kompartment's copies are up to date
 ```
 
@@ -123,6 +125,38 @@ component held at zero where the rates are flat below it. Each of its twelve
 groups failed on the package as it was before 2026-09-25 (see the package
 README), and each of groups 9 to 12 fails on the package with only groups 1 to
 8 fixed.
+
+## Does it do what DifferentialEquations.jl does?
+
+`test-default` runs the automatic algorithm, and Tsit5, Vern7 and Rosenbrock23
+on their own, against what OrdinaryDiffEq 7.8.1 itself did on the same
+twenty-two problems and tolerances: `ref/default.json`, written by
+`scripts/gen-ode-default-ref.jl` from the twins of `problems-default.mjs` in
+Julia. Every problem carries its exact Jacobian on both sides, because Julia's
+differenced one is the bigger difference: with it, Julia's Rodas5P takes 2308
+steps on Robertson at `reltol = 1e-8`, and 270 with the exact one.
+
+Fifteen runs are held to Julia step for step — the same numbers accepted and
+rejected, and for the automatic algorithm the same method at every saved row —
+and the rest to the same methods, the first switch within two steps, and an
+error against a reference at `reltol = 1e-12` no more than ten times Julia's.
+The seven that differ all have FBDF on their stiff side, and are explained in
+the test's header and the package README: by a fault in Julia (its composite
+never rejects an FBDF step), by the prediction FBDF's first step after a switch
+is given here, and by FBDF having moved on in OrdinaryDiffEq since it was
+ported.
+
+Exact agreement rests on doing the same arithmetic as Julia in the same order,
+and on V8's `Math.pow`; a run that drifts by one step after an engine update is
+worth re-measuring before the expectation is loosened.
+
+`test-switching` checks what came with the automatic algorithm on its own: an
+explicit method forming no matrix on 300 000 states, Vern7's interpolation
+stages worked out only for a step with a row in it, f taken again where
+clamping moved a first-same-as-last method's solution, GMRES against a dense
+LU, the matrix-free FBDF against the factorising one and with a problem's own
+J·v, the switch's bookkeeping and its options, and OrdinaryDiffEq's starting
+step.
 
 ## What the stiff set found
 

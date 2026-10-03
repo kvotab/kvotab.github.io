@@ -1,7 +1,9 @@
 # src/ode/julia
 
-Stiff ODE solvers ported from [DifferentialEquations.jl][sciml], for the
-browser and for Node. No dependencies. Licence: MIT, as the original; the
+ODE solvers ported from [DifferentialEquations.jl][sciml], for the browser and
+for Node: its stiff methods, the explicit methods its default algorithm starts
+on, and that default algorithm itself, which switches between them as a run
+turns stiff and back. No dependencies. Licence: MIT, as the original; the
 notice is in `LICENSE` beside this file.
 
 **This directory is a copy.** The package is written once, in the site's
@@ -38,6 +40,17 @@ sol.retcode;    // 'Success', or why not
 | `RadauIIA5()` | 5 | 3 | fully implicit Radau IIA, L-stable | accuracy, and the worst stiffness |
 | `KenCarp4()` | 4 | 6 | ESDIRK, L-stable | a good default at moderate tolerances |
 | `TRBDF2()` | 2 | 3 | ESDIRK, L-stable | loose tolerances, cheaply |
+| `Rosenbrock23()` | 2 | 3 | Rosenbrock W-method (MATLAB's ode23s), L-stable | small stiff systems at ordinary tolerances |
+| `FBDF({ linsolve: 'gmres' })` | 1–5, adaptive | multistep | FBDF, its Newton iterations solved matrix-free by GMRES | large systems where no matrix can be formed |
+| `Tsit5()` | 5 | 7 (6 f) | explicit Runge-Kutta, first same as last | non-stiff problems |
+| `Vern7()` | 7 | 10 (+6 lazy) | explicit Runge-Kutta | non-stiff problems at tight tolerances |
+| `DefaultODEAlgorithm()` | — | — | switches between the methods above on stiffness | not having to choose |
+
+**Not having to choose.** `DefaultODEAlgorithm()` is what DifferentialEquations.jl
+runs when it is given no algorithm; see [The automatic algorithm](#the-automatic-algorithm)
+below. `DefaultImplicitODEAlgorithm()` is the same started on the stiff side, and
+`AutoAlgSwitch(nonstiff, stiff)` switches between any two methods the same way.
+
 
 **Which to reach for.** `FBDF` first for anything large: it reuses one matrix
 factorisation across many steps, which on a system of hundreds of states is
@@ -89,7 +102,8 @@ Passed as the third argument to `solve`.
 | `history` | — | solution before `t0`, so a multistep method starts at full order |
 
 On the problem: `jac(t, u, J)` fills the Jacobian in place, `jacPattern` gives
-its sparsity, `tgrad(t, u, dT)` gives ∂f/∂t, and `events` is
+its sparsity, `tgrad(t, u, dT)` gives ∂f/∂t, `jvp(t, u, v, out, fu)` gives J·v
+for the matrix-free FBDF (which differences it otherwise), and `events` is
 `{ n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }`. `direction`
 is one number for every function or an array with one each: above 0 a rising
 crossing counts, below 0 a falling one, 0 either. `enabled`, if given, has an
@@ -188,6 +202,132 @@ step-size controller acting on a corrupted number — TRBDF2 walked the pollutio
 problem up to 10⁹ in components that belong between 0 and 1. At `1e-3` it is
 correct and, no longer being lied to, several times cheaper.
 
+## The automatic algorithm
+
+`DefaultODEAlgorithm()` is OrdinaryDiffEqDefault's: six methods, of which a run
+uses at most two, one of each kind, both fixed by the tolerance and the size of
+the system before it starts.
+
+| | when |
+|---|---|
+| `Tsit5` | non-stiff, `reltol` ≥ 1e-6 |
+| `Vern7` | non-stiff, `reltol` < 1e-6 |
+| `Rosenbrock23` | stiff, up to 50 states, `reltol` ≥ 1e-6 |
+| `Rodas5P` | stiff, up to 50 states, `reltol` < 1e-6 |
+| `FBDF` | stiff, 51 to 500 states |
+| `FBDF` by GMRES | stiff, over 500 states |
+
+It starts on the explicit one. After every attempted step, accepted or not, it
+turns an estimate of the largest eigenvalue |λ| into `|λ|·dt / S`, with S the
+width of the explicit method's stability region (3.5068 for Tsit5, 4.64 for
+Vern7), and counts the step stiff if that exceeds 9/10. The explicit methods
+estimate |λ| from their last two stages, `max |(k₇ − k₆) / (g₇ − g₆)|` (Hairer
+and Wanner, modified by OrdinaryDiffEq to the maximum norm); a stiff method
+leaves ‖J‖∞ whenever it forms J. Eleven stiff verdicts in a row on the explicit
+method switch to the stiff one and double dt; four non-stiff ones in a row on
+the stiff method switch back and halve it. While the explicit method is being
+found stiff, the integrator's error checks are waived (OrdinaryDiffEq's
+`do_error_check`). Each method keeps its own step controller.
+
+The solution says what happened: `sol.algChoice` has the method (1 to 6, as
+`sol.alg_choice` in Julia) for every saved row, and `sol.stats.stepsBy`,
+`switches` and `switchLog` count the steps each took and record every switch.
+
+**Checked against Julia itself.** The site's
+`resources/tests/ode/julia/test-default.mjs` runs twenty-two problems
+and tolerances through both, with exact Jacobians on both sides (the site's
+`scripts/gen-ode-default-ref.jl` wrote Julia's results, from OrdinaryDiffEq
+7.8.1). On fifteen they take the same steps -- the same number accepted and
+rejected, and the same method for every one: Tsit5, Vern7 and Rosenbrock23 on
+their own (four runs), and the automatic algorithm on Robertson, HIRES and
+Kepler at two tolerances each (HIRES at 1e-8 in a fifteen-segment pattern), van
+der Pol at μ = 1000 with its seven switches, the Oregonator, diffusion on 30
+points, and a decay chain of 40 at 1e-3 and at 1e-6 (thirteen switches). None
+of them uses FBDF; the seven that differ all have FBDF on their stiff side, for
+the reasons below. Against a reference at `reltol = 1e-12` the errors
+agree with Julia's to two or three digits where the steps are the same, and are
+of the same size where they are not.
+
+The exact Jacobian matters. Julia differences one with a step of
+√eps·max(|u|, 1), larger than Robertson's y₂ itself, and its Rodas5P then takes
+2308 steps at `reltol = 1e-8` where with the exact J it takes 270.
+
+**Where it is deliberately different**, each measured:
+
+- *A state at rest.* Julia's estimate divides 0 by 0 for a component that has
+  not moved at all, and reads the NaN as stiff; a single empty compartment or
+  constant then makes every step look stiff -- Lorenz with one idle extra
+  state switches to Rosenbrock23 and back twenty-three times over [0, 20].
+  Here such a component is passed over. `DefaultODEAlgorithm({ stillIsStiff:
+  true })` reads it as Julia does, and reproduces those twenty-three round
+  trips step for step.
+- *FBDF's first step after a switch* is predicted by an Euler step, as this
+  package's FBDF predicts after any restart, where OrdinaryDiffEq's predicts no
+  change. In OrdinaryDiffEq's composite that costs nothing, since a step there
+  is never rejected (below); with the error test kept, its prediction makes
+  the first estimate h·f, which at tight tolerances is rejected again and
+  again -- diffusion on 600 points at `reltol = 1e-6` took 26 516 steps and
+  3147 switches, against Julia's 87 and one, and 88 and one with the Euler
+  step. `DefaultODEAlgorithm({ firstPredictor: 'julia' })` takes
+  OrdinaryDiffEq's, which at 1e-3 is two steps closer to it on diffusion.
+- *No verdict on a rejected FBDF attempt.* OrdinaryDiffEq's switch counts a
+  verdict after every attempt, but inside its composite an FBDF attempt is
+  never rejected, so it never counts one after a rejection. Here each
+  rejection shrinks the step tenfold, and counted, four of them in a row sent
+  the run back to Tsit5 before FBDF had taken a step.
+- *Rodas5P inside the switch* has OrdinaryDiffEq's PI gains, from its order 5;
+  the standalone `Rodas5P()` keeps the ones it was checked with, from its error
+  estimate's order 4.
+- *The Jacobian's age* counts only the steps of a method that uses it, so a
+  stiff method coming back after a stretch of Tsit5 finds its J as it left it,
+  as in Julia.
+- *Julia's composite never rejects an FBDF step.* Its BDF controller reads its
+  error estimate from its own cache, and inside the composite the estimate is
+  written to the composite's (OrdinaryDiffEqCore 4.18.1, OrdinaryDiffEqBDF
+  2.4.12): a step 62 tolerance units out is accepted. That is not reproduced
+  here. It is why the FBDF runs differ: on the chain of 120 Julia's FBDF rides
+  through steps this one rejects, and from its second switch on stays stiff
+  because its estimate of |λ| is the explicit method's stale NaN.
+
+**Where the switch goes back and forth.** With FBDF in charge after a switch,
+its step during a transient is set by accuracy, and the stiffness test --
+‖J‖∞ times that step, against what Tsit5 could take -- often says "not stiff";
+Tsit5, back in charge, finds it stiff again eleven steps later. Julia does this
+too: diffusion on 200 points at `reltol = 1e-6` switches 31 times there. Here,
+with FBDF's error test kept, more: 231 times on that problem (1807 steps, five
+times plain FBDF's time), and 951 on the chain of 120 at 1e-6, where Julia
+stays stiff on its stale estimate. At 1e-3 both make one to a few dozen
+switches.
+
+**The stiffness estimate overshoots on a compartment model**, and that is
+Julia's as well: where mass is moving into empty compartments, f changes while
+the state is still exactly zero (|λ| comes out infinite) and the finite ratios
+near the front run to 6e7 on a chain whose largest eigenvalue is 1e4. Such a
+model is judged stiff within eleven steps of the start; whether it stays so is
+then the stiff method's ‖J‖∞ times its own step.
+
+## The matrix-free FBDF
+
+`FBDF({ linsolve: 'gmres' })` is OrdinaryDiffEq's FBDF with
+`linsolve = KrylovJL_GMRES()`: no Jacobian is formed, no matrix factorised, and
+each Newton iteration solves its linear system by GMRES with J·v as a
+directional difference of f at the current iterate, ε = max(√eps·‖u‖, √eps)/‖v‖
+(FiniteDiff's step), or the problem's own `jvp`. Each GMRES iteration costs one
+evaluation of f. How it is solved follows OrdinaryDiffEq's stack piece by piece:
+Julia's form of the system, `(J − I/(γh))·x = b/(γh)` (GMRES's absolute
+tolerance is not scale-free); a diagonal scaling on both sides by the error
+weights (`wrapprecs`); `rtol` the integration's `reltol` and `atol` √eps; at
+most n iterations, never restarted; a warm start from the previous solution
+rescaled by Hegedüs's trick, kept only when it halves the residual; and
+Krylov.jl's GMRES itself, modified Gram-Schmidt and its Givens rotations. One
+difference: the basis never grows past 256 MB, where Julia's would grow to n
+vectors; a solve that reaches the cap fails as one that reaches its iteration
+limit does, and the Newton iteration takes it as divergence.
+
+Without a real preconditioner GMRES needs many iterations on a very stiff
+system, and where the Jacobian is known and sparse the factorising FBDF is
+usually much the cheaper.
+
 ## How it was ported, and how it is checked
 
 The tableaux were generated from the Julia sources rather than retyped, by
@@ -215,6 +355,7 @@ core/jacobian.js     df/du by colour groups, and W = I − γh·J, factorised an
 core/newton.js       the simplified Newton iteration and its convergence tests
 core/controller.js   the PI step-size controller, and the starting step
 core/integrator.js   the loop: stepping, saving, dense output, event location
+core/krylov.js       GMRES, and the matrix-free W of the Krylov FBDF
 solvers/             one file per family, plus a generated tableau beside each
 ```
 

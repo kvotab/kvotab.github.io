@@ -29,6 +29,30 @@
 
 import { Rodas5PTableau } from './rodas5p-tableau.js';
 
+/**
+ * ∂f/∂t at (t, u) for a Rosenbrock step -- the caller's, or differenced; see
+ * RosenbrockCache.timeDerivative for why the difference step is scaled by
+ * max(|t|, |h|). `work` is a scratch vector for central differences.
+ */
+export function rosenbrockTimeDerivative(integ, t, u, fu, out, work) {
+  const n = out.length;
+  if (integ.prob.tgrad) { integ.prob.tgrad(t, u, out); return out; }
+  const scale = Math.max(Math.abs(t), Math.abs(integ.dt));
+  if (integ.opts.central) {
+    const dtd = Math.cbrt(Number.EPSILON) * scale;
+    integ.f(t + dtd, u, out);
+    integ.f(t - dtd, u, work);
+    const inv = 1 / (2 * dtd);
+    for (let i = 0; i < n; i++) out[i] = (out[i] - work[i]) * inv;
+    return out;
+  }
+  const dtd = Math.sqrt(Number.EPSILON) * scale;
+  integ.f(t + dtd, u, out);
+  const inv = 1 / dtd;
+  for (let i = 0; i < n; i++) out[i] = (out[i] - fu[i]) * inv;
+  return out;
+}
+
 class RosenbrockCache {
   constructor(n, tab, integ) {
     this.tab = tab;
@@ -69,22 +93,7 @@ class RosenbrockCache {
    * limit.
    */
   timeDerivative(integ, t, u, fu, out) {
-    const n = this.n;
-    if (integ.prob.tgrad) { integ.prob.tgrad(t, u, out); return out; }
-    const scale = Math.max(Math.abs(t), Math.abs(integ.dt));
-    if (integ.opts.central) {
-      const dtd = Math.cbrt(Number.EPSILON) * scale;
-      integ.f(t + dtd, u, out);
-      integ.f(t - dtd, u, this.dTwork);
-      const inv = 1 / (2 * dtd);
-      for (let i = 0; i < n; i++) out[i] = (out[i] - this.dTwork[i]) * inv;
-      return out;
-    }
-    const dtd = Math.sqrt(Number.EPSILON) * scale;
-    integ.f(t + dtd, u, out);
-    const inv = 1 / dtd;
-    for (let i = 0; i < n; i++) out[i] = (out[i] - fu[i]) * inv;
-    return out;
+    return rosenbrockTimeDerivative(integ, t, u, fu, out, this.dTwork);
   }
 
   step(integ) {

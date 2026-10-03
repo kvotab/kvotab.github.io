@@ -211,6 +211,9 @@ export class NewtonSolver {
         // The stage value is z itself:  g(z) = tmp + γh·f(z) − z.
         for (let i = 0; i < n; i++) dz[i] = this.tmp[i] + gammaDt * k[i] - z[i];
       }
+      // A matrix-free W (../core/krylov.js) is linearised where the iterate
+      // is, and is told so; a factorised one has no use for it.
+      if (W.setPoint) W.setPoint(tstep, ustep, k, gammaDt);
       W.solve(dz);
 
       ndz = residualNorm(dz, uprev, ustep, tol.abstol, tol.reltol, n, this.norm);
