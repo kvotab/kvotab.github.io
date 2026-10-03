@@ -449,6 +449,31 @@ class Weighting {
 	}
 }
 
+/*
+ * The Newton iteration's two passes over the state, as functions of their own
+ * rather than loops inside `ndf`. A function the size of `ndf` is sent back to
+ * the interpreter each time a branch it has not run before is first taken --
+ * the first failed step, the first change of order, a dozen times in a run --
+ * and loops written inside it went back with it, until it was optimised
+ * again. Small functions are optimised once and stay so.
+ */
+
+/** The Newton residual (h·f - M·history)/l_k - M·d, into `out`, which may be `fv` itself. */
+function newtonResidual(out, fv, hist, d, h, scale, mass) {
+	const n = out.length;
+	if (mass) for (let i = 0; i < n; i++) out[i] = (h * fv[i] - mass[i] * hist[i]) * scale - mass[i] * d[i];
+	else for (let i = 0; i < n; i++) out[i] = (h * fv[i] - hist[i]) * scale - d[i];
+	return out;
+}
+
+/** A Newton correction taken: d += delta, and the iterate y⁰ + d. */
+function takeCorrection(d, delta, ynew, pred) {
+	for (let i = 0; i < d.length; i++) {
+		d[i] += delta[i];
+		ynew[i] = pred[i] + d[i];
+	}
+}
+
 /** Plain Euclidean norm. */
 function twoNorm(v) {
 	let ss = 0;
@@ -1071,19 +1096,14 @@ export function ndf(f, tspan, y0, options = {}) {
 			const newtonNorms = o.debug ? [] : null;
 			newtonIts = 0;
 			for (let iter = 1; iter <= NEWTON_MAX; iter++) {
-				const fv = rhs(tnew, ynew, resid);
-				if (mass) for (let i = 0; i < neq; i++) resid[i] = (h * fv[i] - mass[i] * hist[i]) * scale - mass[i] * d[i];
-				else for (let i = 0; i < neq; i++) resid[i] = (h * fv[i] - hist[i]) * scale - d[i];
+				newtonResidual(resid, rhs(tnew, ynew, resid), hist, d, h, scale, mass);
 				W.solve(resid, delta);
 				nsolves++;
 				newtonIts = iter;
 				const size = newtonWeight.of(delta);
 				if (newtonNorms) newtonNorms.push(size);
 				if (!Number.isFinite(size)) { outcome = 'nonfinite'; break; }
-				for (let i = 0; i < neq; i++) {
-					d[i] += delta[i];
-					ynew[i] = pred[i] + d[i];
-				}
+				takeCorrection(d, delta, ynew, pred);
 				if (size <= roundoff || size <= CONVERGED_FLOOR * rtol) break;
 				if (iter === 1) {
 					if (minNewton <= 1 && rate >= 0 && (rate / (1 - rate)) * size <= NEWTON_TOL * rtol) break;

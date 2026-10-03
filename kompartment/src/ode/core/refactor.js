@@ -131,6 +131,16 @@ export class RefactorLU {
 		this.Uslot = new Int32Array(64);
 		this.Ucol = new Int32Array(64);
 		this.T = new Int32Array(64);
+		// The factor as a solve reads it (see `_order`): L's and U's values in
+		// step order, their rows and columns as the steps that pivot on them,
+		// and the pivots.
+		this.Lval = new Float64Array(64);
+		this.Lstep = new Int32Array(64);
+		this.Uval = new Float64Array(64);
+		this.Ustep = new Int32Array(64);
+		this.Dval = new Float64Array(n);
+		this.rowStep = new Int32Array(n);
+		this.colStep = new Int32Array(n);
 		this.valid = false;
 		this.ops = 0;			// multiply-adds per factorisation
 		this.nnz = 0;			// entries of L + U
@@ -184,7 +194,10 @@ export class RefactorLU {
 		let from = 0;
 		if (this.valid) {
 			from = this.refactor();
-			if (from < 0) return true;
+			if (from < 0) {
+				this._pack();
+				return true;
+			}
 		}
 		this.repivots++;
 		if (!this.choose(from)) {
@@ -201,7 +214,47 @@ export class RefactorLU {
 			this.fullOps = this.ops;
 		}
 		this.valid = true;
+		this._order();
+		this._pack();
 		return true;
+	}
+
+	/*
+	 * V keeps its slots in the order they were made, which is what a replay
+	 * needs and what scatters a solve across the whole factor: every entry of
+	 * L and U was read through its slot number, and every row and column
+	 * through the permutation. So after each choice the rows of L and the
+	 * columns of U are renamed by the step that pivots on them (`_order`), and
+	 * after each factorisation the values are copied out in the order the
+	 * solve walks them (`_pack`). The copy is one pass over the factor; every
+	 * Newton iteration made with it reads it front to back. The arithmetic, and
+	 * its order, are the solve's as before.
+	 */
+
+	/** The rows and columns of L and U as steps. After every choice. */
+	_order() {
+		const { n, pr, pc, Lstart, Ustart, Lrow, Ucol, rowStep, colStep } = this;
+		for (let s = 0; s < n; s++) {
+			rowStep[pr[s]] = s;
+			colStep[pc[s]] = s;
+		}
+		const nl = Lstart[n], nu = Ustart[n];
+		this.Lstep = room(this.Lstep, nl);
+		this.Ustep = room(this.Ustep, nu);
+		this.Lval = room(this.Lval, nl);
+		this.Uval = room(this.Uval, nu);
+		const { Lstep, Ustep } = this;
+		for (let k = 0; k < nl; k++) Lstep[k] = rowStep[Lrow[k]];
+		for (let u = 0; u < nu; u++) Ustep[u] = colStep[Ucol[u]];
+	}
+
+	/** L's, U's and the pivots' values in step order. After every factorisation. */
+	_pack() {
+		const { n, V, pslot, Lstart, Ustart, Lslot, Uslot, Lval, Uval, Dval } = this;
+		const nl = Lstart[n], nu = Ustart[n];
+		for (let k = 0; k < nl; k++) Lval[k] = V[Lslot[k]];
+		for (let u = 0; u < nu; u++) Uval[u] = V[Uslot[u]];
+		for (let s = 0; s < n; s++) Dval[s] = V[pslot[s]];
 	}
 
 	/** Replays the record on V; -1, or the first step whose pivot fails. */
@@ -276,9 +329,11 @@ export class RefactorLU {
 			rowActive[pr[s]] = 0;
 			colActive[pc[s]] = 0;
 		}
+		// A length is set only where it changes: the setter is a call into the
+		// engine, and these run for every row and column of every choice.
 		for (let i = 0; i < n; i++) {
-			rowSlots[i].length = 0;
-			colSlots[i].length = 0;
+			if (rowSlots[i].length) rowSlots[i].length = 0;
+			if (colSlots[i].length) colSlots[i].length = 0;
 		}
 		rc.fill(0);
 		cc.fill(0);
@@ -316,7 +371,7 @@ export class RefactorLU {
 						if (!(v < Infinity)) return false;		// NaN or infinite
 						if (v > m) m = v;
 					}
-					list.length = keep;
+					if (keep < list.length) list.length = keep;
 					if (!(m > 0)) continue;
 					examined++;
 					const thr = PIVOT_THRESHOLD * m, cj = fixed >= 0 ? 1 : c - 1;
@@ -383,7 +438,7 @@ export class RefactorLU {
 					at[j] = sl;
 					atStamp[j] = stamp;
 				}
-				row.length = keep;
+				if (keep < row.length) row.length = keep;
 				for (let u = u0; u < up; u++) {
 					const j = Ucol[u];
 					// Fill is structure whatever its value now: a later matrix
@@ -412,20 +467,23 @@ export class RefactorLU {
 
 	/** Solves against the latest factorisation. Returns a new Float64Array unless `out` is given. */
 	solve(b, out) {
-		const { n, V, pr, pc, pslot, Lstart, Ustart, Lslot, Lrow, Uslot, Ucol } = this;
-		const y = this._y ?? (this._y = new Float64Array(n));
-		y.set(b);						// indexed by row
+		const { n, pr, pc, Lstart, Ustart, Lval, Lstep, Uval, Ustep, Dval } = this;
+		// Indexed by step: z[s] is first the entry of b in the row step s
+		// pivots on, then, going back, the unknown in the column it pivots on.
+		const z = this._z ?? (this._z = new Float64Array(n));
+		for (let s = 0; s < n; s++) z[s] = b[pr[s]];
 		for (let s = 0; s < n; s++) {
-			const yr = y[pr[s]];
-			if (yr === 0) continue;
-			for (let k = Lstart[s]; k < Lstart[s + 1]; k++) y[Lrow[k]] -= V[Lslot[k]] * yr;
+			const zs = z[s];
+			if (zs === 0) continue;
+			for (let k = Lstart[s], end = Lstart[s + 1]; k < end; k++) z[Lstep[k]] -= Lval[k] * zs;
+		}
+		for (let s = n - 1; s >= 0; s--) {
+			let t = z[s];
+			for (let u = Ustart[s], end = Ustart[s + 1]; u < end; u++) t -= Uval[u] * z[Ustep[u]];
+			z[s] = t / Dval[s];
 		}
 		const x = out ?? new Float64Array(n);	// indexed by column
-		for (let s = n - 1; s >= 0; s--) {
-			let t = y[pr[s]];
-			for (let u = Ustart[s]; u < Ustart[s + 1]; u++) t -= V[Uslot[u]] * x[Ucol[u]];
-			x[pc[s]] = t / V[pslot[s]];
-		}
+		for (let s = 0; s < n; s++) x[pc[s]] = z[s];
 		return x;
 	}
 }
