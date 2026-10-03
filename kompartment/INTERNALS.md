@@ -2881,9 +2881,10 @@ counted on a rejected FBDF attempt. Where FBDF's step is set by accuracy the
 switch can still go back and forth -- 231 times on diffusion on 200 points at
 1e-6, five times plain FBDF's time, where Julia makes 31.
 
-Five ids in the catalogue: `auto` (the default algorithm), `fbdf_krylov`,
-`rosenbrock23`, `tsit5`, `vern7`. The adapter needs three things beyond the
-other ported methods:
+Five ids in the catalogue: `auto` (the default algorithm -- `auto_julia` since
+later the same day, when `auto` became the faster switch of the next section),
+`fbdf_krylov`, `rosenbrock23`, `tsit5`, `vern7`. The adapter needs three things
+beyond the other ported methods:
 
 - **the account.** The composite reports the steps each of its methods took
   and its switches (`stepsBy`, `switches`); the adapter passes them on,
@@ -2893,11 +2894,11 @@ other ported methods:
 - **the carry.** A run here is restarted at every event and switch time, and a
   fresh composite starts on its explicit method -- where DifferentialEquations.jl
   carries its choice across a callback. The runner hands every solver of a run
-  one `carry` object; `auto` writes there whether it ended on a stiff method and
-  starts the next solve on it (`stiffalgfirst`).
+  one `carry` object; `auto_julia` writes there whether it ended on a stiff
+  method and starts the next solve on it (`stiffalgfirst`).
 - **the budget rows.** `tsit5` and `vern7` form no matrix, so the mass-balance
-  audit's rows may stay at the diagonal for them (`DIAGONAL_BUDGET_IDS`); `auto`
-  is not among them, since its stiff methods read J whole.
+  audit's rows may stay at the diagonal for them (`DIAGONAL_BUDGET_IDS`);
+  `auto_julia` is not among them, since its stiff methods read J whole.
 
 Measured on the bundled models and three large local ones, it is the cheapest
 choice on small models that are not very stiff (four-compartment: 140 steps
@@ -2908,7 +2909,7 @@ DifferentialEquations.jl's rules cost here, and are kept because they are its
 rules: at exactly 1e-6, this tool's usual tolerance, a small stiff model gets
 the second-order Rosenbrock23 (biosphere: 740 tolerance units against ndf's 53);
 and above 500 states the stiff method is the matrix-free FBDF, since Julia's
-default cannot assume a Jacobian -- 7 to 40 times ndf's time on the large models
+default cannot assume a Jacobian -- many times ndf's time on every large model
 measured (farfield.json, 1581 states: 31 s against 0.8 s, in fbdf's steps,
 about twenty model evaluations per linear solve). And its explicit stiffness
 estimate, `max |Δk/Δg|` over the last two stages, overshoots on a compartment
@@ -2917,6 +2918,70 @@ still exactly zero, so the estimate is infinite, and the finite ratios near the
 front reach 6e7 on a chain whose fastest rate is 1e4. Such a model is judged
 stiff within eleven steps and may then go back and forth (waste-packages: 123
 switches) -- as DifferentialEquations.jl does on the same kind of model.
+
+### `auto` hands its stiff part to ndf (2026-10-03, later)
+
+Shown those costs, the user asked for `auto` to be as fast as possible. Three
+ways to make it so were measured, on the bundled models and the hundred-odd on
+the development machine, a few states to fifty thousand:
+
+- **the factorising FBDF above 500 states**, the obvious repair, was worse
+  still: on farfield.json 78 s and 17 699 switches between Vern7 and FBDF.
+  Once FBDF forms J, ‖J‖∞ times a step that accuracy sets says "not stiff",
+  and Vern7 finds it stiff again eleven steps later; the GMRES FBDF never
+  forms J, which is all that kept it to 27 switches there.
+- **DifferentialEquations.jl's choices below 500 states** are slower than ndf
+  wherever a run turns stiff: its Rosenbrock and FBDF switch back and forth
+  (waste-packages.json: 123 switches), and Rosenbrock23 is second order.
+- **ndf for the rest of the run**, from where the explicit method turns
+  stiff, was the fastest at every size: about ndf's own time on a stiff model,
+  from twenty states to fifty thousand, and less on one that stays explicit.
+  The runs it made slower were of two kinds: a model that never turns stiff
+  and asks for a row at a thousand times, whose rows cost more off the
+  explicit interpolant than ndf's whole run, and one whose explicit start lands
+  on dozens of table corners (below). What it gives up is the switch back,
+  which on a compartment model -- linear, so stiff once it is stiff -- was
+  never worth anything.
+
+So `auto` is DefaultODEAlgorithm with every stiff method handed off (the
+package's `handOff` option: where the run would turn to one it stops, retcode
+`HandedOff`, with `sol.handOff` the state there) and `variableOrder` from that
+point over the remaining requested times (`ndfPart` in
+`src/ode/julia-solvers.js`). One account comes back: the rows at the requested
+times once each, nsteps as attempts, `stepsBy` with `NDF` (or `BDF`) beside the
+explicit method, one switch. `carry.ndf` sends the rest of the run's solves
+straight to ndf, and `auto` joins `DIAGONAL_BUDGET_IDS`, since its only matrix
+is ndf's. DifferentialEquations.jl's own is `auto_julia`.
+
+**What the explicit start needed.** Its error test is on the end of each step;
+the rows between are read off an interpolant nothing tests. At a loose
+tolerance, a local landscape model's rate turned at a year a table did not
+mark (an onset written as an expression) and at one a table did, and Tsit5
+crossed both in single long steps: right at both ends, a factor of two out at
+the requested times between -- Julia's Tsit5 and Vern7 alone did the same,
+ndf did not. Two changes mend it, neither of them DifferentialEquations.jl's:
+
+- the explicit methods run at a tenth of the model's tolerances
+  (`EXPLICIT_TOLERANCE`), which also moves the choice of Vern7 to a relative
+  tolerance below 1e-5. On lookup-driver.json the worst error at the requested
+  times goes from 56 tolerance units to 0.001, on four-compartment.json from
+  1.9 to 0.02, in about as many steps;
+- their steps land on the corners of the tables read at the clock (the
+  builder's `tableCorners`: a linear table's points, a nearest-point table's
+  midpoints, a cyclic one's every period, merged where they differ by
+  rounding), handed to the package as `tstops`. Landing on every requested
+  time instead also mends it, and costs a run with a thousand rows a thousand
+  steps -- many times ndf's time where the model never turns stiff.
+
+A run whose tables turn more than a hundred times (`MAX_CORNERS`) is ndf's from
+the start: some models carry a corner for every year of a series, and landing
+on each made them several times slower than ndf. Against references at
+rtol 1e-10, worst error in tolerance units, `auto` against `ndf`: biosphere 53
+and 53, decay-chain 14 and 193, landscape 86 and 107, recorders 0.46 and 147,
+waste-packages 66 and 72, farfield 178 and 178. Tests: "the tables read at the
+clock say where they turn", "the switching solver lands its explicit steps on
+the corners", "a run the switching solver hands to ndf has a row at every time
+asked, once", and the package's test-switching group 8.
 
 ## Importing blocks from another model
 

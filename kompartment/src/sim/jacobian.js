@@ -118,15 +118,16 @@ const inComment = (text) => String(text).replace(/[\r\n\u2028\u2029]+/g, ' ');
  * see `buildJacobian`. The NDF iterates, and differences -- when asked to, or
  * at a point where the generated matrix is not finite -- through the groups
  * made here, which keep the budgets apart (`budgetsApart`). dp45, tsit5 and
- * vern7 form no matrix, and the SciPy methods take only a generated one. The
- * switching solver is not among them: its stiff methods want the rows whole.
+ * vern7 form no matrix, and the SciPy methods take only a generated one.
+ * `auto` is explicit methods and then the NDF, so it is one of them;
+ * `auto_julia` is not, because its stiff methods want the rows whole.
  *
  * Every other solver gets the rows whole. The Rosenbrocks need them, and the
  * ported methods colour the pattern for themselves when they difference, which
  * puts each budget in with states that feed it. A solver added later and not
  * named here is right from the start, and only slower.
  */
-const DIAGONAL_BUDGET_IDS = new Set(['ndf', 'dp45', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda']);
+const DIAGONAL_BUDGET_IDS = new Set(['ndf', 'auto', 'dp45', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda']);
 
 class Refused extends Error {
 	constructor(message) {

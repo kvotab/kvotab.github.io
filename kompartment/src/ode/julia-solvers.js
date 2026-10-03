@@ -51,7 +51,7 @@
  * [sciml]: https://docs.sciml.ai/DiffEqDocs/stable/
  */
 
-import { ODEProblem, solve, Success, Terminated } from './julia/index.js';
+import { ODEProblem, solve, Success, Terminated, HandedOff } from './julia/index.js';
 import { FBDF } from './julia/solvers/fbdf.js';
 import { QNDF, QBDF } from './julia/solvers/qndf.js';
 import { Rodas5P } from './julia/solvers/rosenbrock.js';
@@ -62,6 +62,60 @@ import { Vern7 } from './julia/solvers/vern7.js';
 import { Rosenbrock23 } from './julia/solvers/rosenbrock23.js';
 import { DefaultODEAlgorithm } from './julia/solvers/default.js';
 import { SolverError } from './solvers/dormand-prince.js';
+import { variableOrder } from './variable-order.js';
+
+/**
+ * `auto`'s explicit methods run at this fraction of the model's tolerances.
+ * Their error test is on the end of each step; what lies between is read off
+ * an interpolant that nothing tests, and at a loose tolerance a long step
+ * across a change of slope the model does not declare -- an onset written as
+ * an expression -- left values a factor of two out between its ends, with
+ * both ends right. On the bundled lookup-driver.json the worst error at the
+ * requested times goes from 0.25 tolerance units to 0.001 with it, on
+ * four-compartment.json from 1.9 to 0.02, for about as many steps.
+ */
+const EXPLICIT_TOLERANCE = 0.1;
+
+/**
+ * At most this many corners of the clock-read tables for `auto`'s explicit
+ * methods to land on in one solve. Landing costs a step each, and the models
+ * with more than this carry thousands -- a yearly series, say -- which made a
+ * run several times longer than ndf's; such a run is ndf's from the start,
+ * and ndf's error test deals with the corners.
+ */
+const MAX_CORNERS = 100;
+
+/** The stiff methods of the default algorithm, none of which `auto` switches to: ndf goes on instead. */
+const HANDED_OFF = ['Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF'];
+
+/** A tolerance, scalar or per state, times k. */
+function scaled(tol, k) {
+	return typeof tol === 'number' ? tol * k : Float64Array.from(tol, (v) => v * k);
+}
+
+/**
+ * ndf over the requested times from `t1` on, starting from `y1` -- the whole
+ * of a solve when t1 is its start, the rest of one when the explicit methods
+ * handed it on there. Its first row is t1 itself. Progress is reported as a
+ * fraction of the whole solve, and the step budget is what the first part
+ * left of it.
+ */
+function ndfPart(f, grid, t0, tf, t1, y1, opts, stepsBefore) {
+	const dir = Math.sign(tf - t0);
+	const times = [t1];
+	if (opts.endsOnly) times.push(tf);
+	else for (let i = 0; i < grid.length; i++) if (dir * (grid[i] - t1) > 0) times.push(grid[i]);
+	const sub = { ...opts };
+	delete sub.carry;
+	delete sub.tableCorners;
+	if (t1 !== t0) delete sub.h0;
+	if (opts.maxSteps > 0) sub.maxSteps = Math.max(1, opts.maxSteps - stepsBefore);
+	if (opts.onStep && t1 !== t0) {
+		sub.onStep = (_fraction, count, t) => opts.onStep(
+			Math.min(1, Math.abs(t - t0) / Math.abs(tf - t0)), count, t);
+	}
+	return variableOrder(f, times, y1, sub);
+}
 
 /** The methods offered, by the id a project file stores. */
 const ALGORITHMS = Object.assign(Object.create(null), {
@@ -71,11 +125,11 @@ const ALGORITHMS = Object.assign(Object.create(null), {
 	radau5: RadauIIA5,
 	kencarp4: KenCarp4,
 	trbdf2: TRBDF2,
-	// The default algorithm and the three methods it brought with it. Each
-	// run of `auto` is one solve between two events, and starts on the
-	// explicit side again, as DifferentialEquations.jl's does after a callback
-	// that ends the solve.
+	// The default algorithm and the three methods it brought with it: as
+	// DifferentialEquations.jl has it (`auto_julia`), and with ndf as its only
+	// stiff method (`auto`, below).
 	auto: DefaultODEAlgorithm,
+	auto_julia: DefaultODEAlgorithm,
 	rosenbrock23: Rosenbrock23,
 	tsit5: Tsit5,
 	vern7: Vern7,
@@ -235,13 +289,50 @@ export function julia(id) {
 			settings.progressEvery = 1;
 		}
 
-		// The switching solver goes on with the method it ended the last solve
-		// of this run on: a run restarted at an event is still the run, and
-		// DifferentialEquations.jl's carries its choice across a callback.
-		const carry = id === 'auto' ? opts.carry ?? null : null;
-		const made = carry
-			? DefaultODEAlgorithm({ stiffalgfirst: carry.stiff === true })
-			: (variant?.algorithm ?? algorithm)();
+		/*
+		  The switching solvers. `auto_julia` is DifferentialEquations.jl's
+		  default as it is, and goes on with the method a run ended on when it
+		  is restarted at an event, as that does across a callback.
+
+		  `auto` is the same start and the same test for stiffness, with ndf
+		  in place of all four stiff methods: where the run turns stiff, the
+		  explicit method stops and ndf takes the rest of it, at every size of
+		  model. Measured on the bundled models and the hundred-odd on the
+		  development machine, that was the fastest of the choices at every
+		  size: above 500 states DifferentialEquations.jl's GMRES FBDF takes
+		  many times ndf's time (farfield.json: 31 s against 0.7 s), and below
+		  it its Rosenbrock and FBDF can switch back and forth for most of a
+		  run (waste-packages.json: 123 switches, here one). The explicit
+		  methods run at a tenth of the tolerances and land on the corners of
+		  the clock-read tables (see EXPLICIT_TOLERANCE); a run that has
+		  turned stiff, or whose tables turn too often, is ndf's from the
+		  start.
+		*/
+		const carry = id === 'auto' || id === 'auto_julia' ? opts.carry ?? null : null;
+		let made;
+		if (id === 'auto') {
+			const corners = opts.tableCorners ? opts.tableCorners(t0, tf, MAX_CORNERS) : [];
+			if (carry?.ndf || corners === null) {
+				if (carry) carry.ndf = true;
+				const r = ndfPart(f, grid, t0, tf, t0, Float64Array.from(y0), opts, 0);
+				const st = r.stats;
+				return {
+					t: r.t, y: r.y, stopped: r.stopped,
+					stats: {
+						...st, nsteps: st.nsteps + st.nfailed, solver: 'auto',
+						stepsBy: { [opts.bdf ? 'BDF' : 'NDF']: st.nsteps }, switches: 0,
+					},
+				};
+			}
+			settings.reltol *= EXPLICIT_TOLERANCE;
+			settings.abstol = scaled(settings.abstol, EXPLICIT_TOLERANCE);
+			if (corners.length) settings.tstops = corners;
+			made = DefaultODEAlgorithm({ handOff: HANDED_OFF });
+		} else if (id === 'auto_julia') {
+			made = DefaultODEAlgorithm({ stiffalgfirst: carry?.stiff === true });
+		} else {
+			made = (variant?.algorithm ?? algorithm)();
+		}
 
 		let sol;
 		try {
@@ -249,7 +340,8 @@ export function julia(id) {
 		} catch (e) {
 			throw new SolverError(e.message, e.t ?? t0);
 		}
-		if (carry && sol.stats.lastAlg) carry.stiff = STIFF_METHODS.has(sol.stats.lastAlg);
+		if (carry && id === 'auto_julia' && sol.stats.lastAlg) carry.stiff = STIFF_METHODS.has(sol.stats.lastAlg);
+		if (carry && sol.retcode === HandedOff) carry.ndf = true;
 
 		/*
 		  A stop the caller asked for is an abort, not a result. The package
@@ -266,7 +358,7 @@ export function julia(id) {
 
 		// A run that stopped at an event did what it was asked; anything else
 		// that is not Success is a failure this tool reports as one.
-		if (sol.retcode !== Success && sol.retcode !== Terminated) {
+		if (sol.retcode !== Success && sol.retcode !== Terminated && sol.retcode !== HandedOff) {
 			throw new SolverError(
 				`${sol.message || sol.retcode} (${variant?.id ?? id})`,
 				sol.t[sol.t.length - 1] ?? t0,
@@ -307,6 +399,37 @@ export function julia(id) {
 		}
 		// GMRES's own work, where the method solved without a matrix.
 		if (s.krylovIters != null) stats.krylovIters = s.krylovIters;
+
+		// Where `auto` turned stiff: ndf from that point, and one account of
+		// both parts -- the steps each method took, and the one switch.
+		if (sol.retcode === HandedOff) {
+			const r = ndfPart(f, grid, t0, tf, sol.handOff.t, sol.handOff.u, opts, stats.nsteps);
+			const b = r.stats;
+			const t = new Float64Array(sol.t.length + r.t.length - 1);
+			t.set(sol.t);
+			t.set(r.t.subarray(1), sol.t.length);
+			return {
+				t,
+				y: [...sol.u.map((u) => Float64Array.from(u)), ...r.y.slice(1)],
+				stopped: r.stopped,
+				stats: {
+					...stats,
+					nsteps: stats.nsteps + b.nsteps + b.nfailed,
+					nfailed: stats.nfailed + b.nfailed,
+					nfevals: stats.nfevals + b.nfevals,
+					npds: stats.npds + b.npds,
+					ndecomps: stats.ndecomps + b.ndecomps,
+					nsolves: stats.nsolves + b.nsolves,
+					nbelowtol: b.nbelowtol,
+					negative: b.negative,
+					held: b.held,
+					sparse: b.sparse,
+					fill: b.fill,
+					stepsBy: { ...stats.stepsBy, [opts.bdf ? 'BDF' : 'NDF']: b.nsteps },
+					switches: stats.switches + 1,
+				},
+			};
+		}
 		return {
 			t: Float64Array.from(sol.t),
 			y: sol.u.map((u) => Float64Array.from(u)),

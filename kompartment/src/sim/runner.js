@@ -52,6 +52,7 @@ const SOLVERS = Object.assign(Object.create(null), {
 	kencarp4: julia('kencarp4'),
 	trbdf2: julia('trbdf2'),
 	auto: julia('auto'),
+	auto_julia: julia('auto_julia'),
 	fbdf_krylov: julia('fbdf_krylov'),
 	rosenbrock23: julia('rosenbrock23'),
 	tsit5: julia('tsit5'),
@@ -485,10 +486,13 @@ export function run(input, opts = {}) {
 		events: system.events ?? undefined,
 		// What a solver may carry from one solve of this run to the next, the
 		// run being restarted at every event and switch time: the switching
-		// solver keeps here whether it ended stiff, and goes on with that
-		// method, as DifferentialEquations.jl's carries on across a callback
-		// rather than starting on its explicit method again.
+		// solvers keep here whether they ended stiff, and go on from there --
+		// `auto_julia` with the method it had, as DifferentialEquations.jl's
+		// carries on across a callback, and `auto` with ndf.
 		carry: {},
+		// The times the model's clock-read tables turn at, which the switching
+		// solver's explicit methods land on. See `tableCorners` in ./builder.js.
+		tableCorners: system.tableCorners ?? undefined,
 		onStep: opts.onProgress
 			? (fraction, _n, at) => {
 				if (opts.signal?.aborted) return false;

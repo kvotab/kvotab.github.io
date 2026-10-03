@@ -42,20 +42,31 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 	//
 	// Methods from SciML's suite, vendored whole in ./julia/ and adapted in
 	// ./julia-solvers.js: its default algorithm, which switches between an
-	// explicit and a stiff method as it runs, the six stiff methods first
-	// ported, and the three more that default needs. Two of them are families
+	// explicit and a stiff method as it runs (as it is, and with ndf as its
+	// stiff method), the six stiff methods first ported, and the three more
+	// that default needs. Two of them are families
 	// this tool has nothing else of -- a Rosenbrock-Wanner with no nonlinear
 	// iteration at all, and a fully implicit Runge-Kutta -- so they are a
 	// second opinion that, unlike the SciPy ones below, needs no download and
 	// works offline.
 	auto: {
 		label: 'stiff or non-stiff, switching as it runs',
-		blurb: 'DifferentialEquations.jl\u2019s default algorithm, chosen for you as the run goes: '
-			+ 'it starts on an explicit method (Tsit5, or Vern7 below a relative tolerance of 1e-6), '
-			+ 'watches every step for stiffness, and switches to a stiff method once it finds it '
-			+ '\u2014 Rosenbrock23 up to 50 states (Rodas5P below 1e-6), FBDF up to 500, FBDF solved '
-			+ 'by GMRES above \u2014 and back when the stiffness passes. Most models here are stiff '
-			+ 'from the first steps; the run log says which methods took how many steps.',
+		blurb: 'Chosen for you as the run goes, and on most models here the fastest choice: it '
+			+ 'starts on an explicit method (Tsit5, or Vern7 below a relative tolerance of 1e-5), '
+			+ 'watches every step for stiffness as DifferentialEquations.jl\u2019s default does, and '
+			+ 'once it finds it hands the rest of the run to the variable-order NDF. A model that '
+			+ 'never turns stiff stays explicit throughout. The explicit methods work at a tenth of '
+			+ 'the tolerances and land on every corner of the tables read at the clock; the run log '
+			+ 'says which methods took how many steps.',
+	},
+	auto_julia: {
+		label: 'stiff or non-stiff, as DifferentialEquations.jl chooses',
+		blurb: 'DifferentialEquations.jl\u2019s default algorithm as it is: it starts on an '
+			+ 'explicit method (Tsit5, or Vern7 below a relative tolerance of 1e-6), watches every '
+			+ 'step for stiffness, and switches to a stiff method once it finds it \u2014 '
+			+ 'Rosenbrock23 up to 50 states (Rodas5P below 1e-6), FBDF up to 500, FBDF solved by '
+			+ 'GMRES above \u2014 and back when the stiffness passes. For comparing with Julia: '
+			+ 'the switching solver above is usually much faster here.',
 	},
 	rodas5p: {
 		label: 'stiff, Rosenbrock 5',
@@ -83,7 +94,7 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 		label: 'stiff, FBDF by GMRES, no matrix',
 		blurb: 'FBDF with its Newton iterations solved by GMRES instead of a factorised '
 			+ 'matrix: products J\u00b7v by differencing the model, nothing formed or stored '
-			+ '\u2014 what the switching solver takes above 500 states. GMRES has only a '
+			+ '\u2014 what DifferentialEquations.jl\u2019s default takes above 500 states. GMRES has only a '
 			+ 'diagonal scaling to help it, and on a very stiff model it needs many '
 			+ 'iterations a step; where the Jacobian is known, as here, the factorising FBDF '
 			+ 'is usually the faster.',
@@ -111,8 +122,8 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 		label: 'stiff, low order, Rosenbrock 2-3 as in Julia',
 		blurb: 'The Rosenbrock (2,3) method of MATLAB\u2019s ode23s \u2014 the same method as the '
 			+ 'low-order Rosenbrock above \u2014 as DifferentialEquations.jl runs it: its step '
-			+ 'control, error norm and starting step. What the switching solver takes when a '
-			+ 'small model turns stiff at an ordinary tolerance.',
+			+ 'control, error norm and starting step. What DifferentialEquations.jl\u2019s default '
+			+ 'takes when a small model turns stiff at an ordinary tolerance.',
 	},
 	tsit5: {
 		label: 'non-stiff, Tsitouras 5',
@@ -350,12 +361,14 @@ export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
 	fbdf_krylov: [...MATRIX_FREE, ...ORDER],
 	// Everything any of its methods reads: the stiff ones are handed these
 	// settings, as DefaultODEAlgorithm forwards its keyword arguments to them.
-	auto: [...NEWTON, ...ORDER],
+	auto_julia: [...NEWTON, ...ORDER],
 });
+// The explicit methods and then ndf, which reads everything they do.
+SOLVER_OPTIONS.auto = SOLVER_OPTIONS.ndf;
 
 /** The methods ported from DifferentialEquations.jl, which share one integrator. */
-export const PORTED_IDS = ['auto', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4', 'trbdf2',
-	'rosenbrock23', 'tsit5', 'vern7'];
+export const PORTED_IDS = ['auto', 'auto_julia', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4',
+	'trbdf2', 'rosenbrock23', 'tsit5', 'vern7'];
 
 /**
  * What a setting left empty comes to for solver `id`: the value the solver uses
@@ -378,6 +391,22 @@ export const PORTED_IDS = ['auto', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', '
  *   then says it in a word or two, for a box too narrow for `text`
  */
 export function solverDefault(key, id, { span = null } = {}) {
+	// `auto` is the ported explicit methods and then ndf, and where their own
+	// defaults differ, says both.
+	if (id === 'auto') {
+		switch (key) {
+			case 'max_step':
+				return { value: null, text: 'no limit on the explicit methods, a tenth of the run on ndf', short: 'per method' };
+			case 'max_steps':
+				return { value: null, text: 'ten million steps on the explicit methods, a million on ndf', short: 'per method' };
+			case 'error_norm':
+				return { value: null, text: 'rms on the explicit methods, max on ndf', short: 'per method' };
+			case 'below_tol_run':
+				return { value: null, text: 'none on the explicit methods; on ndf up to 20 failed error tests in a row', short: 'per method' };
+			default:
+				return solverDefault(key, 'ndf', { span });
+		}
+	}
 	const ported = PORTED_IDS.includes(id);
 	switch (key) {
 		case 'bdf':

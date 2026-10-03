@@ -397,8 +397,9 @@ function solverTopic(ctx, label) {
 				heading: 'Ported from DifferentialEquations.jl',
 				text: 'Methods from SciML’s suite, a second opinion that needs no download: its '
 					+ 'default algorithm, which switches between an explicit and a stiff method as '
-					+ 'the run goes, and the methods it switches between, with the stiff ones '
-					+ 'ported before it.',
+					+ 'the run goes \u2014 first as this tool runs it, handing the stiff part to the '
+					+ 'NDF, then as DifferentialEquations.jl does \u2014 and the methods it switches '
+					+ 'between, with the stiff ones ported before it.',
 				choices: PORTED_IDS.filter((id) => SOLVER_INFO[id]).map(choice),
 			},
 			...(remote.length ? [{

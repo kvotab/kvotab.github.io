@@ -2500,9 +2500,10 @@ desktop output. `src/ode/solvers.js` is the one place both are defined.
 | **stiff, quasi-constant-step NDF** | `qndf` | QNDF | Shampine and Reichelt's NDFs — the same method `ndf` implements, written independently from the Julia sources. The closest thing here to a line-by-line check of the default solver. With **BDF formulas** on it is QBDF, the same with every κ zero. |
 | **stiff, ESDIRK 4** | `kencarp4` | KenCarp4 | Order 4, L-stable. A reasonable middle: cheaper per step than Radau, higher order than the low-order Rosenbrock. |
 | **stiff, ESDIRK 2 (loose tolerances)** | `trbdf2` | TRBDF2 | Order 2, L-stable, forgiving — and second order is the catch: on sharp transients it loses phase accuracy long before local accuracy, and reports success either way. Use it loose, or use the ESDIRK 4. |
-| **stiff or non-stiff, switching as it runs** | `auto` | DefaultODEAlgorithm | DifferentialEquations.jl's default: starts on an explicit method, watches every step for stiffness, switches to a stiff method when it finds it and back when it passes. See [The switching solver](#the-switching-solver). |
-| **stiff, FBDF by GMRES, no matrix** | `fbdf_krylov` | FBDF with GMRES | FBDF whose Newton iterations are solved by GMRES, matrix-free: no Jacobian formed or factorised. What `auto` takes above 500 states. Where the Jacobian is known and sparse, as here, `fbdf` is usually many times faster. |
-| **stiff, low order, Rosenbrock 2-3 as in Julia** | `rosenbrock23` | Rosenbrock23 | The method of `ros23`, as DifferentialEquations.jl runs it: its step control, error norm and starting step. What `auto` takes for a small model that turns stiff at an ordinary tolerance. |
+| **stiff or non-stiff, switching as it runs** | `auto` | DefaultODEAlgorithm's start, then `ndf` | Starts on an explicit method, watches every step for stiffness as DifferentialEquations.jl's default does, and hands the rest of the run to `ndf` once it finds it; a model that never turns stiff stays explicit. About `ndf`'s time on a stiff model, less on one that is not. See [The switching solver](#the-switching-solver). |
+| **stiff or non-stiff, as DifferentialEquations.jl chooses** | `auto_julia` | DefaultODEAlgorithm | DifferentialEquations.jl's default as it is: starts on an explicit method, switches to a stiff one when it finds it and back when it passes. For comparing with Julia; `auto` is usually much faster here. |
+| **stiff, FBDF by GMRES, no matrix** | `fbdf_krylov` | FBDF with GMRES | FBDF whose Newton iterations are solved by GMRES, matrix-free: no Jacobian formed or factorised. What `auto_julia` takes above 500 states. Where the Jacobian is known and sparse, as here, `fbdf` is usually many times faster. |
+| **stiff, low order, Rosenbrock 2-3 as in Julia** | `rosenbrock23` | Rosenbrock23 | The method of `ros23`, as DifferentialEquations.jl runs it: its step control, error norm and starting step. What `auto_julia` takes for a small model that turns stiff at an ordinary tolerance. |
 | **non-stiff, Tsitouras 5** | `tsit5` | Tsit5 | Explicit Runge-Kutta of order 5(4), SciML's first choice for a non-stiff problem. No Jacobian at all; grinds on a stiff model. |
 | **non-stiff, Verner 7** | `vern7` | Vern7 | Explicit Runge-Kutta of order 7(6), for tight tolerances on a non-stiff problem. |
 | **SciPy BDF, stiff** ↓ | `scipy_bdf` | `solve_ivp(method="BDF")` | The same family as `ndf`, written independently of it. A second opinion rather than a faster route to the same one. |
@@ -2532,14 +2533,46 @@ knows the difference.
 
 ### The switching solver
 
-`auto` is what DifferentialEquations.jl runs when it is told nothing: it decides
-for itself, as the run goes, whether the model is stiff. It begins on an
-explicit method — Tsit5, or Vern7 when the relative tolerance is below 1e-6 —
-and after every step estimates how stiff the model is there: the largest rate
-it can see, times the step, against how far the explicit method can be pushed
-before it goes unstable. Eleven stiff verdicts in a row and it switches to a
-stiff method, chosen by the size of the model and the tolerance; four the other
-way and it switches back.
+`auto` decides for itself, as the run goes, whether the model is stiff. It
+begins on an explicit method — Tsit5, or Vern7 when the relative tolerance is
+below 1e-5 — and after every step estimates how stiff the model is there, by the
+test DifferentialEquations.jl's default algorithm uses: the largest rate it can
+see, times the step, against how far the explicit method can be pushed before it
+goes unstable. After eleven stiff verdicts in a row it hands the rest of the run
+to the variable-order NDF, `ndf`; a model that never turns stiff stays on the
+explicit method to the end. A run restarted at an event or a switch time after
+that goes on with the NDF.
+
+Two things keep the explicit start honest. Its error test is on the end of each
+step, and at a loose tolerance a long step across a change in a rate can be right
+at both ends and wrong in between, where the requested times are read off. So
+the explicit methods work at a tenth of the model's tolerances, and their steps
+land on every time a table read at the clock turns at. A model whose tables turn
+more than a hundred times in a run is the NDF's from the start.
+
+The run log and the status line say which methods took how many steps
+(*methods: Vern7 11 steps, NDF 467; 1 switch* on `biosphere.json`).
+
+What that comes to, against `ndf`:
+
+- **On a stiff model, about `ndf`'s time, at any size.** `farfield.json`
+  (1581 states) 0.69 s against 0.70 s; `biosphere.json` 3 ms against 3.
+- **On one that never turns stiff, fewer steps.** `four-compartment.json` 95
+  against 310, `scenarios.json` 89 against 254, `recorders.json` 121 against
+  485. Except where it asks for a row at a great many times: those are read off
+  the explicit method's interpolant, which costs more a row than `ndf`'s, and on
+  a model of a thousand states and a thousand rows that can outweigh the steps
+  saved.
+- **As accurate, or more.** The worst error at the requested times against a
+  reference run at a relative tolerance of 1e-10, in tolerance units, `auto`
+  against `ndf`: `biosphere.json` 53 and 53, `decay-chain.json` 14 and 193,
+  `landscape.json` 86 and 107, `recorders.json` 0.46 and 147.
+
+`auto_julia` is DifferentialEquations.jl's default as it is, for comparing with
+Julia: the same explicit start at the model's own tolerances, Vern7 below 1e-6,
+and a stiff method of its own when the run turns stiff, chosen by the size of
+the model and the tolerance — and back to the explicit one when the stiffness
+passes.
 
 | The model | The stiff method |
 |---|---|
@@ -2548,36 +2581,24 @@ way and it switches back.
 | 51 to 500 states | FBDF (`fbdf`) |
 | over 500 states | FBDF by GMRES (`fbdf_krylov`) |
 
-The run log and the status line say which methods took how many steps
-(*methods: Tsit5 78 steps, Rosenbrock23 1006; 1 switch* on `biosphere.json`).
-A run restarted at an event or a switch time goes on with the method it had,
-as DifferentialEquations.jl's does across a callback.
+A run restarted at an event goes on with the method it had, as
+DifferentialEquations.jl's does across a callback. Those rules cost here:
 
-What that comes to on the bundled models, measured:
-
-- **Small and not very stiff, it is the cheapest here.** `four-compartment.json`
-  never leaves Tsit5: 140 steps against `ndf`'s 310. `scenarios.json` and
-  `recorders.json` run on Vern7 at their tight tolerances, 70 and 123 steps
-  against 254 and 485.
-- **At a relative tolerance below 1e-6 it is the most accurate.** On
-  `decay-chain.json` (1e-8) it takes Vern7 then Rosenbrock 5: 447 steps
-  against `ndf`'s 2052, and well inside the tolerance where `ndf` is not.
 - **At 1e-6, the usual setting here, a small stiff model gets the second-order
-  Rosenbrock**, which is DifferentialEquations.jl's rule, and is the least
-  accurate choice on offer: on `biosphere.json` about fourteen times further
-  from a reference than `ndf`, in more steps. Below 1e-6 it takes Rosenbrock 5
-  instead.
+  Rosenbrock**, the least accurate choice on offer: on `biosphere.json` 740
+  tolerance units from the reference against `ndf`'s 53, in twice the steps.
+  Below 1e-6 it takes Rosenbrock 5 and is the most accurate of all
+  (`decay-chain.json` at 1e-8: 3.9 units).
 - **Above 500 states it is much slower.** DifferentialEquations.jl's default
   cannot assume it knows the Jacobian, and solves the large stiff case without
-  one, by GMRES; this tool always knows it. `farfield.json` (1581 states) takes
-  31 s against `ndf`'s 0.8 s and `fbdf`'s 1.6 s, in the same steps as `fbdf` —
-  GMRES needs about twenty model evaluations for every linear solve. For a large
-  stiff model, choose `ndf` or `fbdf`.
-- **A compartment model looks stiff to it from the start**: where amounts are
-  moving into empty compartments, its estimate of the fastest rate runs far
-  above the true one. It switches within eleven steps, and on some models goes
-  back and forth for a while (123 switches on `waste-packages.json`) — which
-  DifferentialEquations.jl does too, on the same kind of model.
+  one, by GMRES; this tool always knows it. `farfield.json` takes 31 s against
+  `ndf`'s 0.7 s — GMRES needs about twenty model evaluations for every linear
+  solve.
+- **It goes back and forth.** Where amounts are moving into empty compartments,
+  its estimate of the fastest rate runs far above the true one, and once its
+  stiff method's step is set by accuracy rather than stability it looks
+  non-stiff again: 123 switches on `waste-packages.json`, where `auto` makes one.
+  DifferentialEquations.jl does the same on the same kind of model.
 
 The formulas live in `src/ode/solvers/ndf.js`, and `src/ode/variable-order.js` adapts
 them to the interface the other two use. Both stiff solvers are handed an

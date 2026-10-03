@@ -186,6 +186,7 @@ const SOLVER_TO_ECO = table({
 	rodas5p: 'java-ode23s',
 	kencarp4: 'java-ode15s',
 	auto: 'java-ode15s',
+	auto_julia: 'java-ode15s',
 	fbdf_krylov: 'java-ode15s-BDF',
 	rosenbrock23: 'java-ode23s',
 	tsit5: 'java-ode45',
@@ -225,7 +226,10 @@ const SOLVER_WHY = table({
 		+ 'back as ndf with its BDF switch on',
 	rodas5p: 'the nearest Ecolego has: its Rosenbrock solver, of lower order',
 	kencarp4: 'the nearest Ecolego has for a stiff model',
-	auto: 'the nearest Ecolego has: it does not switch methods as a run goes, and its NDF is '
+	auto: 'the nearest Ecolego has: its NDF, which is what this switching solver hands a run to '
+		+ 'once it turns stiff, as most here do (Ecolego does not start on an explicit method); '
+		+ 'this tool reads it back as ndf',
+	auto_julia: 'the nearest Ecolego has: it does not switch methods as a run goes, and its NDF is '
 		+ 'what a stiff model wants, as most here are; this tool reads it back as ndf',
 	fbdf_krylov: 'the nearest Ecolego has: the same backward differentiation formulas with a '
 		+ 'factorised matrix rather than GMRES, which this tool reads back as ndf with its BDF '

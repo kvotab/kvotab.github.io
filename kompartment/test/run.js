@@ -21709,7 +21709,7 @@ await (async () => {
 	/** The solver the importer reads back from the name an export writes. */
 	const SOLVER_BACK = {
 		radau5: 'ndf', qndf: 'ndf', fbdf: 'ndf', trbdf2: 'ros23', rodas5p: 'ros23', kencarp4: 'ndf',
-		auto: 'ndf', fbdf_krylov: 'ndf', rosenbrock23: 'ros23', tsit5: 'dp45', vern7: 'dp45',
+		auto: 'ndf', auto_julia: 'ndf', fbdf_krylov: 'ndf', rosenbrock23: 'ros23', tsit5: 'dp45', vern7: 'dp45',
 		scipy_bdf: 'ndf', scipy_radau: 'ndf', scipy_lsoda: 'ndf',
 	};
 
@@ -33409,11 +33409,12 @@ test('the absolute tolerance can follow the solution, and the Newton test does n
 
 section('the ported DifferentialEquations.jl solvers');
 
-// The six first ported, and the five that came with the default algorithm
-// (2026-10-03). Held to the same, except where a model is too stiff for an
+// The six first ported, and the six that came with the default algorithm
+// (2026-10-03): the default as it is and as this tool runs it, and four
+// methods. Held to the same, except where a model is too stiff for an
 // explicit method or a second-order one is held to less.
 const PORTED_SIX = ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2'];
-const PORTED_NEW = ['auto', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7'];
+const PORTED_NEW = ['auto', 'auto_julia', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7'];
 
 test('every ported method integrates a closed-form problem to the tolerance asked', async () => {
 	const { julia } = await import('../src/ode/julia-solvers.js');
@@ -33461,9 +33462,15 @@ test('the switching solver says which of its methods took the steps, in the run 
 	const accepted = Object.values(by).reduce((a, b) => a + b, 0);
 	assert(accepted === auto.r.stats.nsteps - auto.r.stats.nfailed,
 		`${accepted} steps accounted for, ${auto.r.stats.nsteps - auto.r.stats.nfailed} accepted`);
+	// At a tenth of 1e-6, Vern7 until the run turns stiff, and ndf from there.
 	const line = describeMethodSteps(auto.r.stats);
-	assert(/^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$/.test(line), line);
+	assert(/^Vern7 \d+ steps?, NDF \d+; 1 switch$/.test(line), line);
 	assert(auto.text.includes(`methods: ${line}`), 'the run log does not say which methods ran');
+	// DifferentialEquations.jl's own: Tsit5 and its second-order Rosenbrock.
+	const jl = logOf('auto_julia');
+	const jlLine = describeMethodSteps(jl.r.stats);
+	assert(/^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$/.test(jlLine), jlLine);
+	assert(jl.text.includes(`methods: ${jlLine}`), 'the run log does not say which methods ran');
 	// Every other solver is one method, and says nothing of the kind.
 	const ndf = logOf('ndf');
 	assert(!ndf.r.stats.stepsBy && !/methods:/.test(ndf.text) && describeMethodSteps(ndf.r.stats) === null);
@@ -33484,19 +33491,114 @@ test('the switching solver goes on with the method it had when the run is restar
 		return out;
 	};
 	const grid = Float64Array.from([0, 1, 10, 100]);
+	const later = Float64Array.from([100, 1000, 1e4]);
+	// DifferentialEquations.jl's own goes on with its stiff method.
 	const carry = {};
-	const first = julia('auto')(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-6, abstol: 1e-10, carry });
+	const first = julia('auto_julia')(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-6, abstol: 1e-10, carry });
 	assert(first.stats.stepsBy.Tsit5 > 0 && first.stats.stepsBy.Rosenbrock23 > 0 && carry.stiff === true,
 		`the first solve: ${JSON.stringify(first.stats.stepsBy)}, carry ${JSON.stringify(carry)}`);
-	const later = Float64Array.from([100, 1000, 1e4]);
-	const again = julia('auto')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10, carry });
+	const again = julia('auto_julia')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10, carry });
 	assert(!again.stats.stepsBy.Tsit5 && again.stats.stepsBy.Rosenbrock23 > 0 && again.stats.switches === 0,
 		`the restart began on the explicit method again: ${JSON.stringify(again.stats.stepsBy)}`);
-	// Without a carry, as before: from Tsit5.
-	const fresh = julia('auto')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10 });
+	// This tool's goes on with ndf.
+	const carry2 = {};
+	const first2 = julia('auto')(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-6, abstol: 1e-10, carry: carry2 });
+	assert(first2.stats.stepsBy.Vern7 > 0 && first2.stats.stepsBy.NDF > 0 && first2.stats.switches === 1
+		&& carry2.ndf === true, `the first solve: ${JSON.stringify(first2.stats.stepsBy)}, carry ${JSON.stringify(carry2)}`);
+	const again2 = julia('auto')(f, later, first2.y[first2.y.length - 1], { rtol: 1e-6, abstol: 1e-10, carry: carry2 });
+	assert(Object.keys(again2.stats.stepsBy).join() === 'NDF' && again2.stats.switches === 0,
+		`the restart began on the explicit method again: ${JSON.stringify(again2.stats.stepsBy)}`);
+	// Without a carry, as before: from the explicit method.
+	const fresh = julia('auto_julia')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10 });
 	assert(fresh.stats.stepsBy.Tsit5 > 0, JSON.stringify(fresh.stats.stepsBy));
+	const fresh2 = julia('auto')(f, later, first2.y[first2.y.length - 1], { rtol: 1e-6, abstol: 1e-10 });
+	assert(fresh2.stats.stepsBy.Vern7 > 0, JSON.stringify(fresh2.stats.stepsBy));
 	const runner = (await import('node:fs')).readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
 	assert(/\n\t\tcarry: \{\},\n/.test(runner), 'the runner hands its solvers no carry');
+});
+
+test('the tables read at the clock say where they turn: linear, nearest, cyclic, and at most so many', async () => {
+	const raw = {
+		name: 'corners', simulation: { ...DEFAULT_SIMULATION, start_time: 0, end_time: 100, output_points: 11,
+			spacing: 'linear', rtol: 1e-6, abstol: 1e-9 },
+		index_lists: [], expressions: [], inflows: [], parameters: [],
+		compartments: [{ name: 'A', initial: '1', index_lists: [] }],
+		transfers: [{ name: 'T', from: 'A', to: null, rate: 'L1 * 1e-3 + L2 * 1e-3 + L3 * 1e-3', index_lists: [] }],
+		lookups: [
+			// Turns at 10 and 20; 0 is the start, not a corner.
+			{ name: 'L1', interpolation: 'linear', points: [[0, 1], [10, 2], [20, 1.5]] },
+			// Jumps halfway between its points; 20 again, which is one corner.
+			{ name: 'L2', interpolation: 'nearest', points: [[10, 1], [30, 2]] },
+			// Once a period of 25: at 10 and 25 in each.
+			{ name: 'L3', interpolation: 'linear', cyclic: true, points: [[0, 0], [10, 1], [25, 0]] },
+			// A function of its argument, not of the clock: no corner.
+			{ name: 'F', interpolation: 'linear', argument: 'x', points: [[0, 0], [33, 1], [66, 0]] },
+		],
+	};
+	const sys = buildSystem(new Project(raw));
+	const got = sys.tableCorners(0, 100);
+	assert(JSON.stringify(got) === JSON.stringify([10, 20, 25, 35, 50, 60, 75, 85]), JSON.stringify(got));
+	assert(JSON.stringify(sys.tableCorners(100, 0)) === JSON.stringify(got), 'backwards in time');
+	assert(JSON.stringify(sys.tableCorners(15, 55)) === JSON.stringify([20, 25, 35, 50]), 'inside a span only');
+	assert(sys.tableCorners(0, 100, 7) === null && sys.tableCorners(0, 100, 8).length === 8, 'the limit');
+	// Two points a rounding apart are one corner.
+	raw.lookups[0].points = [[0, 1], [10, 2], [10 + 1e-12, 2.5], [20, 1.5]];
+	assert(JSON.stringify(buildSystem(new Project(raw)).tableCorners(0, 100).slice(0, 3)) === '[10,20,25]',
+		JSON.stringify(buildSystem(new Project(raw)).tableCorners(0, 100)));
+});
+
+test('the switching solver lands its explicit steps on the corners, and hands a run with too many to ndf', async () => {
+	const { julia } = await import('../src/ode/julia-solvers.js');
+	// y' = s(t), s rising until 3.7 and falling after: y has a corner in its
+	// slope there, and nothing in the equation says so but the table.
+	const corner = 3.7;
+	const s = (t) => (t < corner ? t : 2 * corner - t);
+	const f = (t, y, out) => { out[0] = s(t); return out; };
+	const exact = (t) => (t < corner ? t * t / 2 : corner * corner / 2 + 2 * corner * (t - corner) - (t * t - corner * corner) / 2);
+	const grid = Float64Array.from({ length: 11 }, (_, i) => i);
+	const steps = [];
+	const r = julia('auto')(f, grid, Float64Array.from([0]), {
+		rtol: 1e-3, abstol: 1e-3, tableCorners: () => [corner], onAccepted: (t) => steps.push(t),
+	});
+	assert(steps.includes(corner), `no step ends at the corner: ${steps.map((t) => t.toPrecision(4)).join(' ')}`);
+	const worst = Math.max(...Array.from(r.t, (t, k) => Math.abs(r.y[k][0] - exact(t))));
+	assert(worst < 1e-6, `${worst} from the closed form`);
+	// More corners than it lands on: ndf from the start, and from then on.
+	const carry = {};
+	const many = julia('auto')(f, grid, Float64Array.from([0]), {
+		rtol: 1e-3, abstol: 1e-3, carry, tableCorners: (a, b, limit) => (limit < 150 ? null : []),
+	});
+	assert(Object.keys(many.stats.stepsBy).join() === 'NDF' && many.stats.switches === 0 && carry.ndf === true,
+		`${JSON.stringify(many.stats.stepsBy)}, carry ${JSON.stringify(carry)}`);
+});
+
+test('a run the switching solver hands to ndf has a row at every time asked, once', async () => {
+	const { julia } = await import('../src/ode/julia-solvers.js');
+	const { variableOrder } = await import('../src/ode/variable-order.js');
+	// Robertson again: Vern7 for a few steps, then ndf, inside the grid.
+	const f = (t, y, out) => {
+		out[0] = -0.04 * y[0] + 1e4 * y[1] * y[2];
+		out[1] = 0.04 * y[0] - 1e4 * y[1] * y[2] - 3e7 * y[1] * y[1];
+		out[2] = 3e7 * y[1] * y[1];
+		return out;
+	};
+	const grid = Float64Array.from([0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.1, 1, 10, 100, 1000]);
+	let outputs = 0;
+	const r = julia('auto')(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-6, abstol: 1e-10, onOutput: () => { outputs++; } });
+	assert(r.stats.switches === 1 && r.stats.stepsBy.NDF > 0, JSON.stringify(r.stats.stepsBy));
+	assert(r.t.length === grid.length && r.t.every((t, k) => t === grid[k]), `rows at ${Array.from(r.t).join(' ')}`);
+	assert(r.y.length === grid.length && outputs === grid.length - 1, `${r.y.length} rows, ${outputs} outputs reported`);
+	// Every step taken is someone's.
+	const accepted = Object.values(r.stats.stepsBy).reduce((a, b) => a + b, 0);
+	assert(accepted === r.stats.nsteps - r.stats.nfailed, `${accepted} of ${r.stats.nsteps - r.stats.nfailed}`);
+	// And the answer is ndf's own to its tolerance.
+	const ref = variableOrder(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-10, abstol: 1e-14 });
+	for (let k = 0; k < grid.length; k++) {
+		for (let i = 0; i < 3; i++) {
+			const d = Math.abs(r.y[k][i] - ref.y[k][i]) / (1e-10 + 1e-6 * Math.abs(ref.y[k][i]));
+			assert(d < 50, `t = ${grid[k]}, y${i + 1}: ${r.y[k][i]} against ${ref.y[k][i]}`);
+		}
+	}
 });
 
 test('a ported method takes this tool’s analytic Jacobian, and may decline a point', async () => {

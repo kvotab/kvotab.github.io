@@ -531,6 +531,62 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			tab: base, width, dims, block: l, argument: l.argument ?? null,
 		});
 	}
+	/**
+	 * The times the tables read at the clock turn at, strictly inside the span
+	 * of (from, to), in order: places where the model is not smooth although
+	 * nothing declares them -- ../domain/switchtimes.js lists the times written
+	 * into equations, and a table's points are its own. A linear table turns at
+	 * its points, a nearest-point one jumps halfway between them, and a cyclic
+	 * one does either once a period. Two that differ by rounding are one.
+	 *
+	 * The switching solver's explicit methods land on these rather than fit a
+	 * step across one (see `auto` in ../ode/julia-solvers.js), and all it wants
+	 * of a model with more than `limit` of them is to know so: null then.
+	 */
+	const tableCorners = (from, to, limit = Infinity) => {
+		const lo = Math.min(from, to);
+		const hi = Math.max(from, to);
+		const found = [];
+		for (const l of lookupLayout) {
+			if (l.argument) continue;
+			const rule = l.block.interpolation;
+			for (let k = l.tab; k < l.tab + l.width; k++) {
+				const table = TAB[k];
+				const x = table?.x;
+				// One point is one value everywhere: no corner.
+				if (!x || x.length < 2) continue;
+				const at = rule === 'nearest'
+					? Array.from({ length: x.length - 1 }, (_, i) => (x[i] + x[i + 1]) / 2)
+					: Array.from(x);
+				if (!table.cyclic) {
+					for (const c of at) if (c > lo && c < hi) found.push(c);
+					continue;
+				}
+				const period = x[x.length - 1] - x[0];
+				if (!(period > 0)) continue;
+				const first = Math.floor((lo - x[0]) / period);
+				const last = Math.ceil((hi - x[0]) / period);
+				// Every period brings that many more distinct corners.
+				if ((last - first) * (at.length - 1) > limit) return null;
+				for (let p = first; p <= last; p++) {
+					for (const c of at) {
+						const t = c + p * period;
+						if (t > lo && t < hi) found.push(t);
+					}
+				}
+			}
+		}
+		found.sort((a, b) => a - b);
+		const out = [];
+		for (const t of found) {
+			const prev = out.length ? out[out.length - 1] : -Infinity;
+			if (t - prev <= 1e-9 * Math.max(1, Math.abs(t))) continue;
+			out.push(t);
+			if (out.length > limit) return null;
+		}
+		return out;
+	};
+
 	// A table with an argument is a function -- `Table(x)` -- so it has no slot
 	// of its own; one without is read at the clock, and gets one like any other
 	// algebraic quantity.
@@ -2777,6 +2833,7 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		 */
 		restartPaths: () => { for (const F of FARF) F.restart(); },
 		useClockInterpolation,
+		tableCorners,
 		clockSlotCount: clockIdx.length,
 		/** The clock-only slots, worked out for `t` if they are not already. */
 		evaluateAtInstant: atInstant,
