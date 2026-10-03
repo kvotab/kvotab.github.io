@@ -134,6 +134,9 @@ class Refused extends Error {
 	}
 }
 
+/** A tangent that would be too large: the ceilings below. */
+class TooLarge extends Refused {}
+
 /**
  * Proves the tangent function can be called at all.
  *
@@ -235,6 +238,58 @@ function refuseNonFinite(evaluate, b) {
 			+ 'can factorise',
 		);
 	}
+}
+
+/**
+ * The algebraic blocks some generated lines read, as indices into
+ * `algebraic`: the block owning every `X[<slot>` or `dX[<slot>` they name,
+ * and for every `FARF[k]` call the path's release block, whose `needs` list
+ * every setting the path reads (and, worked out semi-analytically, every rate
+ * delivering into it). Null when the lines hand `X` over to anything else, or
+ * name a slot no block owns: what they read cannot then be told from them.
+ * Comments are left out, since they name blocks.
+ *
+ * @param {string[]} lines
+ * @param {Int32Array} owner  the block index of every slot of X, -1 for none
+ * @param {(k: number) => number} releaseOf  a path's release block, by FARF index
+ */
+export function blocksRead(lines, owner, releaseOf) {
+	const read = new Set();
+	for (const raw of lines) {
+		const at = raw.indexOf('//');
+		const code = at < 0 ? raw : raw.slice(0, at);
+		if (!/X|FARF/.test(code)) continue;
+		for (const m of code.matchAll(/\bFARF\[(\d+)\]/g)) {
+			const k = releaseOf(Number(m[1]));
+			if (!(k >= 0)) return null;
+			read.add(k);
+		}
+		const rest = code.replace(/\bFARF\[\d+\]\.\w+\([^()]*\)/g, '');
+		for (const m of rest.matchAll(/\bd?X\b(?:\[(\d+))?/g)) {
+			if (m[1] == null) return null;
+			const k = owner[Number(m[1])];
+			if (!(k >= 0)) return null;
+			read.add(k);
+		}
+	}
+	return read;
+}
+
+/** `read`, grown by everything its blocks read in turn. */
+export function withWhatTheyRead(read, algebraic) {
+	const index = new Map(algebraic.map((a, k) => [a.name, k]));
+	const stack = [...read];
+	while (stack.length) {
+		const a = algebraic[stack.pop()];
+		for (const name of [...(a.readsAlg ?? []), ...(a.needs ?? [])]) {
+			const k = index.get(name);
+			if (k != null && !read.has(k)) {
+				read.add(k);
+				stack.push(k);
+			}
+		}
+	}
+	return read;
 }
 
 /**
@@ -365,7 +420,7 @@ function generate(b) {
 	// whether a quantity depends on the state at all, and that is what `SX`
 	// says.
 	b.SX = SX;
-	const { source: jvpSource, slots } = jvpSourceFor(b);
+	const { source: jvpSource, slots, clockFirst } = jvpSourceFor(b);
 	const rawJvp = buildFunction(
 		['y', 'v', 'dout', 'P', 'X', 'dX', 'DEC', 'MAPS', 'TAB', 'MEM', 'FARF'],
 		jvpSource, 'jvp',
@@ -382,6 +437,9 @@ function generate(b) {
 	const {
 		P, X, DEC, MAPS, TAB, MEM, FARF, ctx,
 	} = runtime;
+	// The clock-only slots at `t`, which the tangent function no longer works
+	// out itself (see `leftToPasses`): once per matrix, not once per colour.
+	const clock = clockFirst ? runtime.clock : null;
 	const dX = new Float64Array(Math.max(1, nalg));
 	const seed = new Float64Array(nstate);
 	const dout = new Float64Array(nstate);
@@ -405,6 +463,7 @@ function generate(b) {
 	 */
 	const evaluate = (t, y) => {
 		ctx.t = t;
+		if (clock) clock(t, y);
 		for (const group of groups) {
 			if (group === apart) {
 				for (const j of group) {
@@ -455,6 +514,7 @@ function generate(b) {
 	 */
 	const jvp = (t, y, v, out = new Float64Array(nstate)) => {
 		ctx.t = t;
+		if (clock) clock(t, y);
 		out.fill(0);
 		rawJvp(FUNCTIONS, ctx, y, v, out, P, X, dX, DEC, MAPS, TAB, MEM, FARF);
 		return out;
@@ -1035,6 +1095,26 @@ function jvpSourceFor(b, opts = {}) {
 	 */
 	const alongState = (opts.seed ?? 'state') === 'state';
 
+	// Along the state, a block the builder works out once for the run or once
+	// per instant (its slot class 0 or 1) cannot move with the state: its
+	// tangent is exactly zero, and its value is what the builder's own passes
+	// put in X. So it is not emitted at all, and `generate` runs the clock pass
+	// once before the colours instead -- where the tangent function used to
+	// work every one of those blocks out again for every colour, and they are
+	// most of a landscape model (only 216 of 65,751 slots of model A follow the
+	// state). Along a parameter they move, and are emitted as before.
+	const slotClass = alongState && b.runtime?.clock ? b.slotClass : null;
+	const leftToPasses = (a) => slotClass != null && a.width > 0 && slotClass[a.base] < 2;
+	let skipped = 0;
+	// And a moving block the derivative does not read -- a dose, worked out for
+	// the results -- has no part in its Jacobian: the builder's
+	// `derivativeBlocks`, the blocks its own derivative runs. Checked at the
+	// end against what the tangent function reads.
+	const derivativeOnly = slotClass && b.derivativeBlocks && !opts.everyBlock ? b.derivativeBlocks : null;
+	const leftOut = new Set();
+	// [from, to) line ranges of what is left out, cut once the ceilings are judged.
+	const cuts = [];
+
 	const lines = [];
 	// One counter for the whole function: a temporary emitted at top level
 	// would otherwise be redeclared by the next block.
@@ -1102,247 +1182,269 @@ function jvpSourceFor(b, opts = {}) {
 	lines.push(tapePrelude('\t'));
 	lines.push('// --- algebraic blocks and their tangents ---');
 	for (const a of algebraic) {
-		// Sanitised for the same reason builder.js does it: a name with a line
-		// break in it would end this comment and compile as source.
-		lines.push(`\t// ${a.kind} ${inComment(a.name)}`);
-		if (a.kind === 'lookup') {
-			// The value still has to be computed -- whatever reads it reads X --
-			// but its tangent along any state direction is exactly zero.
-			if (a.width === 1 && a.dims.length === 0) {
-				lines.push(`\tX[${a.base}] = TAB[${a.tab}].at(ctx.t);`);
-				lines.push(`\tdX[${a.base}] = 0;`);
-			} else {
-				emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
-					lines.push(
-						`${indent}X[${a.base} + ${offExpr}] = TAB[${a.tab} + ${offExpr}].at(ctx.t);`,
+		// A block the tangent leaves out is still emitted, and cut from the
+		// source at the end. The ceilings below were set for the tangent as it
+		// was before anything was left out, so they are judged on that: a model
+		// whose whole tangent is too large differences its Jacobian, as it did.
+		const cut = leftToPasses(a) ? 'passes'
+			: (derivativeOnly && a.width > 0 && !derivativeOnly.has(a.name) ? 'unread' : null);
+		const from = lines.length;
+		const counted = tape.count;
+		try {
+			// Sanitised for the same reason builder.js does it: a name with a line
+			// break in it would end this comment and compile as source.
+			lines.push(`\t// ${a.kind} ${inComment(a.name)}`);
+			if (a.kind === 'lookup') {
+				// The value still has to be computed -- whatever reads it reads X --
+				// but its tangent along any state direction is exactly zero.
+				if (a.width === 1 && a.dims.length === 0) {
+					lines.push(`\tX[${a.base}] = TAB[${a.tab}].at(ctx.t);`);
+					lines.push(`\tdX[${a.base}] = 0;`);
+				} else {
+					emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
+						lines.push(
+							`${indent}X[${a.base} + ${offExpr}] = TAB[${a.tab} + ${offExpr}].at(ctx.t);`,
+						);
+						lines.push(`${indent}dX[${a.base} + ${offExpr}] = 0;`);
+					});
+				}
+				continue;
+			}
+			// A path's release: `sum(w(X)*y)` over a couple of its own cells, so
+			// the tangent carries both the seed and, when a rate follows the
+			// state, the rate's own tangent. It writes X as well as dX, since the
+			// value has to be there for whatever reads it.
+			if (a.kind === 'farfield') {
+				lines.push(`\tFARF[${a.farfIndex}].release(y, X, ctx.t);`);
+				lines.push(`\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX, ctx.t);`);
+				continue;
+			}
+			// Waste packages. The hazard is a function of the clock and of settings
+			// that are, in any model so far, constants: its tangent is then zero
+			// exactly. A failure setting that follows the state would need the
+			// hazard differentiated in each of its closed forms, and that is
+			// refused rather than approximated -- the solvers difference instead.
+			if (a.kind === 'waste_package:hazard') {
+				const W = a.waste;
+				const moving = Object.entries(W.setting)
+					.filter(([k, slot]) => k.startsWith('fail_') && b.SX?.[slot.base]?.size);
+				for (const { D, share } of W.disrupted ?? []) {
+					if (b.SX?.[D.lambdaSlot.base]?.size) moving.push([`${D.q}'s rate`]);
+					if (b.SX?.[share.base]?.size) moving.push([`${D.q}'s share`]);
+				}
+				if (moving.length) {
+					throw new Refused(
+						`'${inComment(W.q)}' fails by a setting that follows the state `
+						+ `(${moving.map(([k]) => k).join(', ')}), and the hazard's derivative `
+						+ 'along it is not one to guess at',
 					);
-					lines.push(`${indent}dX[${a.base} + ${offExpr}] = 0;`);
+				}
+				const at = (key) => (W.setting[key] ? `X[${W.setting[key].base}]` : '0');
+				const extra = (W.disrupted ?? [])
+					.map(({ D, share }) => ` + X[${D.lambdaSlot.base}] * X[${share.base}]`).join('');
+				lines.push(`\tX[${a.base}] = ${hazardCode(W.failure, {
+					t: 'ctx.t', from: at('fail_from'), to: at('fail_to'), start: at('fail_start'),
+					rate: at('fail_rate'), scale: at('fail_scale'), shape: at('fail_shape'),
+				})}${extra};`);
+				lines.push(`\tdX[${a.base}] = 0;`);
+				continue;
+			}
+			// An event's expected-value rate: the rate gated by its window, with
+			// no tangent unless a rate or a window follows the state, which is
+			// refused for the same reason a moving failure setting is.
+			if (a.kind === 'event:lambda') {
+				const D = a.event;
+				if (Object.values(D.setting).some((slot) => b.SX?.[slot.base]?.size)) {
+					throw new Refused(
+						`'${inComment(D.q)}' happens at a rate or in a window that follows the state, `
+						+ 'and the derivative of that is not one to guess at',
+					);
+				}
+				if (D.timing !== 'poisson') {
+					lines.push(`\tX[${a.base}] = 0;`);
+				} else {
+					const from = D.setting.from ? `X[${D.setting.from.base}]` : 'ctx.startTime';
+					const until = D.setting.until ? `X[${D.setting.until.base}]` : 'ctx.endTime';
+					lines.push(`\tX[${a.base}] = ctx.dis[${D.index}] * `
+						+ `(ctx.t >= ${from} && ctx.t < ${until} ? X[${D.setting.rate.base}] : 0);`);
+				}
+				lines.push(`\tdX[${a.base}] = 0;`);
+				continue;
+			}
+			// The release, h P irf + d M, differentiated: through the two
+			// inventories always, and through the fraction and the rate when
+			// either follows the state.
+			if (a.kind === 'waste_package') {
+				const W = a.waste;
+				const haz = `X[${W.hazardSlot.base}]`;
+				for (let off = 0; off < a.width; off++) {
+					const P = W.intact.base + off;
+					const M = W.exposed.base + off;
+					// A rate per index, like the fraction: see WASTE_NUCLIDE_KEYS.
+					const deg = `X[${W.setting.degradation_rate.base + off}]`;
+					const dDeg = b.SX?.[W.setting.degradation_rate.base + off]?.size
+						? `dX[${W.setting.degradation_rate.base + off}]` : null;
+					const irf = `X[${W.setting.irf.base + off}]`;
+					const dIrf = b.SX?.[W.setting.irf.base + off]?.size ? `dX[${W.setting.irf.base + off}]` : null;
+					lines.push(`\tX[${a.base + off}] = ${haz} * y[${P}] * ${irf} + ${deg} * y[${M}];`);
+					lines.push(`\tdX[${a.base + off}] = ${haz} * (v[${P}] * ${irf}`
+						+ `${dIrf ? ` + y[${P}] * ${dIrf}` : ''}) + ${deg} * v[${M}]`
+						+ `${dDeg ? ` + ${dDeg} * y[${M}]` : ''};`);
+				}
+				continue;
+			}
+			// A block that remembers. Each is differentiable exactly, and each in
+			// its own way:
+			//
+			//   min/max        max(so far, target), whose derivative is the
+			//                  target's when the target is the extreme and zero
+			//                  when it is not -- which is the derivative of `max`
+			//                  wherever one exists
+			//   running mean   the integral divided by the time it covers, so the
+			//                  tangent is the integral's over the same time
+			//   snapshot,      the past, which no present state can move
+			//   delay
+			//   discrete event an ordinary difference of two expressions
+			if (a.recorder) {
+				const rec = a.recorder;
+				for (let off = 0; off < a.width; off++) {
+					const i = a.base + off;
+					const at = (slot) => `X[${slot.base + off}]`;
+					const dat = (slot) => `dX[${slot.base + off}]`;
+					const mem = `MEM[${rec.mem + off}]`;
+					switch (rec.kind) {
+						case 'min_max':
+							lines.push(`\tX[${i}] = ${mem}.extreme(ctx.t, ${at(rec.aux.target)});`);
+							lines.push(`\tdX[${i}] = X[${i}] === ${at(rec.aux.target)} `
+								+ `? ${dat(rec.aux.target)} : 0;`);
+							break;
+						case 'running_mean': {
+							const st = rec.state.base + off;
+							lines.push(`\tX[${i}] = ${mem}.mean(ctx.t, y[${st}], ${at(rec.aux.target)});`);
+							lines.push(`\t{`);
+							lines.push(`\t\tconst el = ${mem}.elapsedAt(ctx.t);`);
+							lines.push(`\t\tdX[${i}] = el > 0 ? ${alongState ? `v[${st}] / el` : '0'} `
+								+ `: ${dat(rec.aux.target)};`);
+							lines.push(`\t}`);
+							break;
+						}
+						case 'snapshot':
+							lines.push(`\tX[${i}] = ${mem}.held(ctx.t);`);
+							lines.push(`\tdX[${i}] = 0;`);
+							break;
+						case 'delay':
+							// A delay reports the past, which no present state can
+							// move -- *unless the lag itself does*. Then the value
+							// slides along the recorded history as the state
+							// changes, and `dX = 0` is a Jacobian entry that is
+							// simply missing. Refused rather than guessed: the
+							// derivative of a lerp over a history is not something
+							// to invent, and the solvers fall back to differencing,
+							// which gets it right.
+							if (b.SX?.[rec.aux.delay.base + off]?.size) {
+								throw new Refused(
+									'a delay whose lag depends on the state: its value slides '
+									+ 'along the recorded history as the state changes, and '
+									+ 'that derivative is not one to guess at',
+								);
+							}
+							lines.push(`\tX[${i}] = ${mem}.delayed(ctx.t, ${at(rec.aux.delay)});`);
+							lines.push(`\tdX[${i}] = 0;`);
+							break;
+						default:
+							lines.push(`\tX[${i}] = ${at(rec.aux.first)} - ${at(rec.aux.second)};`);
+							lines.push(`\tdX[${i}] = ${dat(rec.aux.first)} - ${dat(rec.aux.second)};`);
+							break;
+					}
+				}
+				continue;
+			}
+
+			const emitOne = (ast, locate, call, slotExpr, indent) => {
+				const t = fresh(indent);
+				let r;
+				try {
+					r = emitWithTangent(ast, tangentResolver(locate), t, call);
+				} catch (e) {
+					// Which block it was. Without this the whole model declines an
+					// analytic Jacobian over one equation and the panel says only
+					// what the function was -- leaving no way to find the block and
+					// no way to know that rewriting it would make the model fast.
+					if (e instanceof NoDerivative) {
+						throw new NoDerivative(`${e.what} in '${inComment(a.name)}'`);
+					}
+					throw e;
+				}
+				lines.push(...t.lines);
+				lines.push(`${indent}X[${slotExpr}] = ${r.value};`);
+				lines.push(`${indent}dX[${slotExpr}] = ${r.tangent ?? 0};`);
+				if (tape.count > MAX_STATEMENTS) {
+					throw new TooLarge(
+						`the model generates more than ${MAX_STATEMENTS} tangent statements`,
+					);
+				}
+				if (lines.length > MAX_LINES) {
+					throw new TooLarge(
+						`the model generates more than ${MAX_LINES} lines of tangent code`,
+					);
+				}
+			};
+
+			if (a.width === 1 && a.dims.length === 0) {
+				emitOne(a.asts[0], makeLocator(a, [], null, {}), makeCall(a, [], null, {}),
+					String(a.base), '\t');
+			} else if (a.uniform) {
+				emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
+					emitOne(a.asts[0], makeLocator(a, a.dims, vars, null),
+						makeCall(a, a.dims, vars, null), `${a.base} + ${offExpr}`, indent);
+				});
+			} else {
+				emitByEquation(lines, space, a, '\t', ({ ast, vars, tuple, slot, indent }) => {
+					emitOne(ast, makeLocator(a, a.dims, vars, tuple),
+						makeCall(a, a.dims, vars, tuple), slot, indent);
 				});
 			}
-			continue;
-		}
-		// A path's release: `sum(w(X)*y)` over a couple of its own cells, so
-		// the tangent carries both the seed and, when a rate follows the
-		// state, the rate's own tangent. It writes X as well as dX, since the
-		// value has to be there for whatever reads it.
-		if (a.kind === 'farfield') {
-			lines.push(`\tFARF[${a.farfIndex}].release(y, X, ctx.t);`);
-			lines.push(`\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX, ctx.t);`);
-			continue;
-		}
-		// Waste packages. The hazard is a function of the clock and of settings
-		// that are, in any model so far, constants: its tangent is then zero
-		// exactly. A failure setting that follows the state would need the
-		// hazard differentiated in each of its closed forms, and that is
-		// refused rather than approximated -- the solvers difference instead.
-		if (a.kind === 'waste_package:hazard') {
-			const W = a.waste;
-			const moving = Object.entries(W.setting)
-				.filter(([k, slot]) => k.startsWith('fail_') && b.SX?.[slot.base]?.size);
-			for (const { D, share } of W.disrupted ?? []) {
-				if (b.SX?.[D.lambdaSlot.base]?.size) moving.push([`${D.q}'s rate`]);
-				if (b.SX?.[share.base]?.size) moving.push([`${D.q}'s share`]);
-			}
-			if (moving.length) {
-				throw new Refused(
-					`'${inComment(W.q)}' fails by a setting that follows the state `
-					+ `(${moving.map(([k]) => k).join(', ')}), and the hazard's derivative `
-					+ 'along it is not one to guess at',
-				);
-			}
-			const at = (key) => (W.setting[key] ? `X[${W.setting[key].base}]` : '0');
-			const extra = (W.disrupted ?? [])
-				.map(({ D, share }) => ` + X[${D.lambdaSlot.base}] * X[${share.base}]`).join('');
-			lines.push(`\tX[${a.base}] = ${hazardCode(W.failure, {
-				t: 'ctx.t', from: at('fail_from'), to: at('fail_to'), start: at('fail_start'),
-				rate: at('fail_rate'), scale: at('fail_scale'), shape: at('fail_shape'),
-			})}${extra};`);
-			lines.push(`\tdX[${a.base}] = 0;`);
-			continue;
-		}
-		// An event's expected-value rate: the rate gated by its window, with
-		// no tangent unless a rate or a window follows the state, which is
-		// refused for the same reason a moving failure setting is.
-		if (a.kind === 'event:lambda') {
-			const D = a.event;
-			if (Object.values(D.setting).some((slot) => b.SX?.[slot.base]?.size)) {
-				throw new Refused(
-					`'${inComment(D.q)}' happens at a rate or in a window that follows the state, `
-					+ 'and the derivative of that is not one to guess at',
-				);
-			}
-			if (D.timing !== 'poisson') {
-				lines.push(`\tX[${a.base}] = 0;`);
-			} else {
-				const from = D.setting.from ? `X[${D.setting.from.base}]` : 'ctx.startTime';
-				const until = D.setting.until ? `X[${D.setting.until.base}]` : 'ctx.endTime';
-				lines.push(`\tX[${a.base}] = ctx.dis[${D.index}] * `
-					+ `(ctx.t >= ${from} && ctx.t < ${until} ? X[${D.setting.rate.base}] : 0);`);
-			}
-			lines.push(`\tdX[${a.base}] = 0;`);
-			continue;
-		}
-		// The release, h P irf + d M, differentiated: through the two
-		// inventories always, and through the fraction and the rate when
-		// either follows the state.
-		if (a.kind === 'waste_package') {
-			const W = a.waste;
-			const haz = `X[${W.hazardSlot.base}]`;
-			for (let off = 0; off < a.width; off++) {
-				const P = W.intact.base + off;
-				const M = W.exposed.base + off;
-				// A rate per index, like the fraction: see WASTE_NUCLIDE_KEYS.
-				const deg = `X[${W.setting.degradation_rate.base + off}]`;
-				const dDeg = b.SX?.[W.setting.degradation_rate.base + off]?.size
-					? `dX[${W.setting.degradation_rate.base + off}]` : null;
-				const irf = `X[${W.setting.irf.base + off}]`;
-				const dIrf = b.SX?.[W.setting.irf.base + off]?.size ? `dX[${W.setting.irf.base + off}]` : null;
-				lines.push(`\tX[${a.base + off}] = ${haz} * y[${P}] * ${irf} + ${deg} * y[${M}];`);
-				lines.push(`\tdX[${a.base + off}] = ${haz} * (v[${P}] * ${irf}`
-					+ `${dIrf ? ` + y[${P}] * ${dIrf}` : ''}) + ${deg} * v[${M}]`
-					+ `${dDeg ? ` + ${dDeg} * y[${M}]` : ''};`);
-			}
-			continue;
-		}
-		// A block that remembers. Each is differentiable exactly, and each in
-		// its own way:
-		//
-		//   min/max        max(so far, target), whose derivative is the
-		//                  target's when the target is the extreme and zero
-		//                  when it is not -- which is the derivative of `max`
-		//                  wherever one exists
-		//   running mean   the integral divided by the time it covers, so the
-		//                  tangent is the integral's over the same time
-		//   snapshot,      the past, which no present state can move
-		//   delay
-		//   discrete event an ordinary difference of two expressions
-		if (a.recorder) {
-			const rec = a.recorder;
-			for (let off = 0; off < a.width; off++) {
-				const i = a.base + off;
-				const at = (slot) => `X[${slot.base + off}]`;
-				const dat = (slot) => `dX[${slot.base + off}]`;
-				const mem = `MEM[${rec.mem + off}]`;
-				switch (rec.kind) {
-					case 'min_max':
-						lines.push(`\tX[${i}] = ${mem}.extreme(ctx.t, ${at(rec.aux.target)});`);
-						lines.push(`\tdX[${i}] = X[${i}] === ${at(rec.aux.target)} `
-							+ `? ${dat(rec.aux.target)} : 0;`);
-						break;
-					case 'running_mean': {
-						const st = rec.state.base + off;
-						lines.push(`\tX[${i}] = ${mem}.mean(ctx.t, y[${st}], ${at(rec.aux.target)});`);
-						lines.push(`\t{`);
-						lines.push(`\t\tconst el = ${mem}.elapsedAt(ctx.t);`);
-						lines.push(`\t\tdX[${i}] = el > 0 ? ${alongState ? `v[${st}] / el` : '0'} `
-							+ `: ${dat(rec.aux.target)};`);
-						lines.push(`\t}`);
-						break;
+			// Rate × availability, differentiated: d(r·A) = dr·A + r·dA, the
+			// availability's tangent taken through the amount (along the state;
+			// along a parameter the inventories are held fixed) and through the
+			// limit or the coefficients, where those move. Written after the
+			// rate's own value and tangent, exactly as the builder writes the
+			// product after the rate. See ../domain/availability.js.
+			if (a.availability) {
+				const t = a.block;
+				const src = stateByName.get(t.from);
+				const { scheme, operands } = a.availability;
+				emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
+					const terms = availabilityTerms(t, scheme, src, a, space, vars, mapIndex);
+					const ops = {};
+					const dops = {};
+					for (const [key, op] of Object.entries(operands)) {
+						ops[key] = `X[${op.base} + ${offExpr}]`;
+						dops[key] = doesNotMove(op) ? null : `dX[${op.base} + ${offExpr}]`;
 					}
-					case 'snapshot':
-						lines.push(`\tX[${i}] = ${mem}.held(ctx.t);`);
-						lines.push(`\tdX[${i}] = 0;`);
-						break;
-					case 'delay':
-						// A delay reports the past, which no present state can
-						// move -- *unless the lag itself does*. Then the value
-						// slides along the recorded history as the state
-						// changes, and `dX = 0` is a Jacobian entry that is
-						// simply missing. Refused rather than guessed: the
-						// derivative of a lerp over a history is not something
-						// to invent, and the solvers fall back to differencing,
-						// which gets it right.
-						if (b.SX?.[rec.aux.delay.base + off]?.size) {
-							throw new Refused(
-								'a delay whose lag depends on the state: its value slides '
-								+ 'along the recorded history as the state changes, and '
-								+ 'that derivative is not one to guess at',
-							);
-						}
-						lines.push(`\tX[${i}] = ${mem}.delayed(ctx.t, ${at(rec.aux.delay)});`);
-						lines.push(`\tdX[${i}] = 0;`);
-						break;
-					default:
-						lines.push(`\tX[${i}] = ${at(rec.aux.first)} - ${at(rec.aux.second)};`);
-						lines.push(`\tdX[${i}] = ${dat(rec.aux.first)} - ${dat(rec.aux.second)};`);
-						break;
-				}
+					const slot = `${a.base} + ${offExpr}`;
+					const dA = tangentOf(scheme, 'am', alongState ? 'dam' : null, ops, dops);
+					lines.push(`${indent}{`);
+					lines.push(`${indent}\tconst am = ${availabilitySum(terms, 'y')};`);
+					if (alongState) lines.push(`${indent}\tconst dam = ${availabilitySum(terms, 'v')};`);
+					lines.push(`${indent}\tconst av = ${expressionOf(scheme, 'am', ops)};`);
+					lines.push(`${indent}\tdX[${slot}] = dX[${slot}] * av${dA ? ` + X[${slot}] * ${dA}` : ''};`);
+					lines.push(`${indent}\tX[${slot}] = X[${slot}] * av;`);
+					lines.push(`${indent}}`);
+				});
 			}
-			continue;
-		}
-
-		const emitOne = (ast, locate, call, slotExpr, indent) => {
-			const t = fresh(indent);
-			let r;
-			try {
-				r = emitWithTangent(ast, tangentResolver(locate), t, call);
-			} catch (e) {
-				// Which block it was. Without this the whole model declines an
-				// analytic Jacobian over one equation and the panel says only
-				// what the function was -- leaving no way to find the block and
-				// no way to know that rewriting it would make the model fast.
-				if (e instanceof NoDerivative) {
-					throw new NoDerivative(`${e.what} in '${inComment(a.name)}'`);
-				}
-				throw e;
+		} catch (e) {
+			// What is cut may have no derivative rule, or be refused on its
+			// merits, and none of it runs; what is too large is still too large.
+			if (!cut || e instanceof TooLarge || !(e instanceof NoDerivative || e instanceof Refused)) throw e;
+			lines.length = from;
+			tape.count = counted;
+		} finally {
+			if (cut) {
+				cuts.push(from, lines.length);
+				if (cut === 'passes') skipped++;
+				else leftOut.add(a.name);
 			}
-			lines.push(...t.lines);
-			lines.push(`${indent}X[${slotExpr}] = ${r.value};`);
-			lines.push(`${indent}dX[${slotExpr}] = ${r.tangent ?? 0};`);
-			if (tape.count > MAX_STATEMENTS) {
-				throw new Refused(
-					`the model generates more than ${MAX_STATEMENTS} tangent statements`,
-				);
-			}
-			if (lines.length > MAX_LINES) {
-				throw new Refused(
-					`the model generates more than ${MAX_LINES} lines of tangent code`,
-				);
-			}
-		};
-
-		if (a.width === 1 && a.dims.length === 0) {
-			emitOne(a.asts[0], makeLocator(a, [], null, {}), makeCall(a, [], null, {}),
-				String(a.base), '\t');
-		} else if (a.uniform) {
-			emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
-				emitOne(a.asts[0], makeLocator(a, a.dims, vars, null),
-					makeCall(a, a.dims, vars, null), `${a.base} + ${offExpr}`, indent);
-			});
-		} else {
-			emitByEquation(lines, space, a, '\t', ({ ast, vars, tuple, slot, indent }) => {
-				emitOne(ast, makeLocator(a, a.dims, vars, tuple),
-					makeCall(a, a.dims, vars, tuple), slot, indent);
-			});
-		}
-		// Rate × availability, differentiated: d(r·A) = dr·A + r·dA, the
-		// availability's tangent taken through the amount (along the state;
-		// along a parameter the inventories are held fixed) and through the
-		// limit or the coefficients, where those move. Written after the
-		// rate's own value and tangent, exactly as the builder writes the
-		// product after the rate. See ../domain/availability.js.
-		if (a.availability) {
-			const t = a.block;
-			const src = stateByName.get(t.from);
-			const { scheme, operands } = a.availability;
-			emitLoop(lines, space, a.dims, '\t', (vars, offExpr, indent) => {
-				const terms = availabilityTerms(t, scheme, src, a, space, vars, mapIndex);
-				const ops = {};
-				const dops = {};
-				for (const [key, op] of Object.entries(operands)) {
-					ops[key] = `X[${op.base} + ${offExpr}]`;
-					dops[key] = doesNotMove(op) ? null : `dX[${op.base} + ${offExpr}]`;
-				}
-				const slot = `${a.base} + ${offExpr}`;
-				const dA = tangentOf(scheme, 'am', alongState ? 'dam' : null, ops, dops);
-				lines.push(`${indent}{`);
-				lines.push(`${indent}\tconst am = ${availabilitySum(terms, 'y')};`);
-				if (alongState) lines.push(`${indent}\tconst dam = ${availabilitySum(terms, 'v')};`);
-				lines.push(`${indent}\tconst av = ${expressionOf(scheme, 'am', ops)};`);
-				lines.push(`${indent}\tdX[${slot}] = dX[${slot}] * av${dA ? ` + X[${slot}] * ${dA}` : ''};`);
-				lines.push(`${indent}\tX[${slot}] = X[${slot}] * av;`);
-				lines.push(`${indent}}`);
-			});
 		}
 	}
 
@@ -1529,13 +1631,31 @@ function jvpSourceFor(b, opts = {}) {
 	// assembly below it has its own unrolled loops, so the total is measured
 	// once more before this is handed to `new Function`.
 	if (lines.length > MAX_LINES) {
-		throw new Refused(
+		throw new TooLarge(
 			`the model generates more than ${MAX_LINES} lines of tangent code`,
 		);
 	}
+	// The ceilings are judged; now what is left out goes.
+	const kept = [];
+	for (let c = 0, at = 0; c <= cuts.length; c += 2) {
+		const to = c < cuts.length ? cuts[c] : lines.length;
+		for (let k = at; k < to; k++) kept.push(lines[k]);
+		at = cuts[c + 1];
+	}
+	// Nothing kept may read a block left out. If anything does, or hands X to
+	// something that cannot be followed, every block is emitted after all.
+	if (leftOut.size) {
+		const owner = new Int32Array(Math.max(1, b.nalg)).fill(-1);
+		algebraic.forEach((a, k) => { if (a.width > 0) owner.fill(k, a.base, a.base + a.width); });
+		const release = new Map((farfLayout ?? []).map((p) => [p.farfIndex, algebraic.indexOf(p.algRelease)]));
+		const read = blocksRead(kept, owner, (k) => release.get(k) ?? -1);
+		if (!read || [...read].some((k) => leftOut.has(algebraic[k].name))) {
+			return jvpSourceFor(b, { ...opts, everyBlock: true });
+		}
+	}
 	// The slot count goes with the source: the caller allocates the scratch
 	// the prelude reaches for. See `tapePrelude` in ../parser/compile.js.
-	return { source: lines.join('\n'), slots: tape.n };
+	return { source: kept.join('\n'), slots: tape.n, clockFirst: skipped > 0 };
 }
 
 // --- is the matrix the same at every point? ---------------------------------

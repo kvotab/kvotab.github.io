@@ -2290,11 +2290,12 @@ and by nothing otherwise.
 
 **The two numerics a path chooses** -- the outlet and the matrix layers -- are
 this tool's own for new paths (`FARF_DEFAULTS`: `o_b` 4, `n_b` empty, `grid`
-'matched') and the reference implementation's for any path saved before they
-were choices: `migrateFarfieldDefaults` in `src/domain/keys.js` (and
-`kompartment/keys.py`) writes `FARF_LEGACY` -- `o_b` 1, `n_b` 0, `grid`
-'reference', `surface` 'f' -- into a block that does not say, so it runs
-exactly as it did. `compareModels` reads both sides that way, so a file against
+'matched', `n_m` 12) and the reference implementation's for any path saved
+before they were choices: `migrateFarfieldDefaults` in `src/domain/keys.js`
+(and `kompartment/keys.py`) writes `FARF_LEGACY` -- `o_b` 1, `n_b` 0, `grid`
+'reference', `surface` 'f', `n_m` 20 -- into a block that does not say, so it
+runs exactly as it did. A new path had 20 matrix layers until 2026-10-03, so a
+file that leaves `n_m` out means 20 whenever it was written. `compareModels` reads both sides that way, so a file against
 the model it was opened into reports no change. `method` is 'discretized' or
 absent: the cells are one way of working a path out, `usesCells` is what the
 builder asks, and every other setting is the method's input. The other way is
@@ -3995,7 +3996,8 @@ poison the derivative at another.
 -- 157.94 ms against 9.87 ms for a derivative, on model A -- and its tangent
 recomputes the same algebra with the same structure, which is why model C gains
 2.2x per derivative call and only 1.19x over a run. The same three-way split
-applies to `jvpSourceFor` and has not been done.
+applies to `jvpSourceFor`, and it has since been done: see *Less work per
+call*.
 
 
 ## Solving a large model in sections
@@ -5559,7 +5561,9 @@ either the brackets or the liveness of a local.
 `MAX_LINES` in `src/sim/jacobian.js`) was set for the compile time and the cost
 per call of one whole function. With parts, the cost per call is an order of
 magnitude lower, so the ceiling may now be set too low. It has not been
-re-measured.
+re-measured. The tangent now leaves out what the derivative does not read
+(*Less work per call*), but the ceiling is still judged on the whole of it, so
+the same models reach it as before.
 
 ## An LU that keeps its pivots
 
@@ -5628,6 +5632,10 @@ times, so this is the model's sensitivity at its tolerance, not the LU.
 nine orders of magnitude of h, the choosing-again of a collapsed pivot, the
 declining of singular and NaN matrices, and the singular message.
 
+The solve has since been made to read the factor in the order it walks it, and
+the choosing to set no list length that does not change: see *Less work per
+call*.
+
 ## One solver core for three pages
 
 facsimile.html and rtm.html used to carry an NDF of their own, written from the
@@ -5691,6 +5699,144 @@ The ported solvers of `src/ode/julia/` keep their own linear algebra:
 column-major storage, a complex LU for Radau's stages, and a sparse LU written
 against their own Jacobian cache. They read `refactor` as their sparse LU,
 since they have none that keeps its pivots.
+
+## Less work per call
+
+A stiff run spends nearly all of its time in a few calls made thousands of
+times: the derivative, the Jacobian, and the LU's factorisations and solves.
+Profiling corpus models in Node (`--cpu-prof` with its line ticks, and
+`--trace-opt --trace-deopt` for what V8 did with the code) found, in each of
+them, work that nothing reads or work done in a shape the engine is slow at.
+Five changes came of it. Each does the same arithmetic in the same order, so a
+run that keeps its kind of Jacobian gives the same bits as before.
+
+**The tangent no longer works out the clock.** `evaluate` calls the tangent
+function once per colour of the pattern (54 times on the Loviisa model), and
+every call worked out every algebraic block again. That included the constant
+blocks and the clock-only ones, although along the state their tangents are
+zero by construction and their values are the same in every colour. This was
+the open item at the end of *Three passes, not one*. `jvpSourceFor` now leaves
+out every block of slot class 0 or 1, and `evaluate` and `jvp` run the clock
+pass once before the colours (`runtime.clock` in builder.js). That pass is
+worked out exactly at `t`: never the cached instant and never the
+interpolated `min_change_time` values, since the tangent computed neither of
+those. What the tangents leave in `X` is still marked for the cache, and now
+for all of them: `evaluate`, `evaluateDense`, `jvp` and `df/dp`'s `pvp`, where
+only `evaluate` was wrapped before.
+
+**The derivative no longer works out what only results read.** The moving pass
+ran every block that follows the state. On the Loviisa model 103,167 of the
+177,389 moving slots are doses and concentrations: read by results, recorders
+and events, never by the derivative, and worked out on every call of the
+derivative and in every colour of every Jacobian. The derivative now runs the
+blocks its assembly reads and whatever those read in turn, in the same order.
+`evaluateAlgebraic`, which results, recorders and events go through, still
+runs them all.
+
+- What the assembly reads is read off its lines (`blocksRead` in
+  src/sim/jacobian.js): every `X[<slot>`, and for a far-field path its release
+  block, whose `needs` name every setting the path reads. The jumps' lines are
+  read too, since a jump reads `X` as the derivative left it.
+- The lines that will run are then read again. If anything in them reads a
+  block left out, or hands `X` to something that cannot be followed, the
+  derivative runs every block, as before.
+- The tangent along the state leaves out the same blocks, and checks itself
+  the same way: if it reads a block left out, it is generated whole.
+- The Generated code tab shows the blocks left out in a section of their own
+  (`source.forResults`), since they are in no other pass it shows.
+- `test/run.js` checks on the lookup-driver example that the dose is left out
+  of the derivative and the tables and the dose out of the tangent, that the
+  matrix still agrees with differences, and that the results still have the
+  dose. Switching off either half fails it.
+
+Two consequences beyond speed:
+
+- A function with no derivative rule, in a block only results read, no longer
+  declines the Jacobian. `test/run.js` has a transport's chain functions read
+  by results (the Jacobian is generated, and agrees with differences) and by a
+  rate (it is declined, as before).
+- The tangent's ceilings (`MAX_STATEMENTS`, `MAX_LINES`) are judged on the
+  whole tangent, as before anything was left out. A left-out block is still
+  emitted, counted and then cut, and a model whose whole tangent is too large
+  differences its Jacobian as it did. Judged on the cut tangent instead, two
+  corpus models (LandscapeAllChain_CC23 and LandscapeMainChain_E6, 9,462 states)
+  came under the ceiling. Their Jacobians are constant and evaluated once, and
+  compiling the tangent and running it cold cost them about 1.7 s a run more
+  than differencing it through 17 calls of a derivative that is already hot.
+  Emitting the left-out blocks costs about 0.1 s of the Loviisa model's build.
+
+The Python engine (kompartment/python) leaves out the same blocks: its builder
+works them out from the derivative's phases (`_Builder._derivative_reads`), its
+derivative runs only the rest (`System._step_d`, and `_moving_d` in a compiled
+model's `rhs`), and its analytic Jacobian plans their gradients alone. Its
+results are the same bits as before, on the Python path and compiled.
+
+**The NDF adapter allocated a derivative per call.** variable-order.js handed
+every call a fresh plain Array, on the belief that ndf keeps past derivatives.
+It does not: it passes an output buffer of its own and reads it before it
+passes that buffer again. The generated code now writes into the solver's own
+Float64Arrays: no allocation per call, and no generic array where doubles are
+written.
+
+**The kept-pivot LU reads its factor in order.** `solve` read every value of L
+and U through its slot number, and every row and column through the
+permutation. V keeps its slots in the order they were made, so a solve
+wandered over the whole factor. Now, after every choice, the rows of L and the
+columns of U are renamed by the step that pivots on them (`_order`), and after
+every factorisation the values are copied out in the order the solve walks
+them (`_pack`). The copy is one pass over the factor, and every Newton
+iteration made with it then reads it front to back: the farfield example's
+solves take a quarter less time. `choose` also no longer sets a list's length
+when it does not change. The setter is a call into the engine, and it ran for
+every row and column of every choice, which on a large model that chooses
+again often was a few per cent of the run.
+
+**The Newton loops left `ndf`.** V8 sends a function the size of `ndf` back to
+the interpreter whenever a branch it has not run before is first taken: the
+first failed step, the first change of order, a dozen times in one run of
+BHKSimplePA. The residual and correction loops written inside it went back
+with it, and cost 5 to 10 ns an element. As two small functions of their own
+(`newtonResidual`, `takeCorrection`) they are optimised once and stay so: 3 to
+6 % of a run of BHKSimplePA and of the farfield example. facsimile.html and
+rtm.html share both this and the LU.
+
+**Measured.** Node 20 on an M1 Max, each model's own solver, the same steps,
+the solve of a first run (the least of two; one for the Loviisa model):
+
+| model | states | steps | before | after | |
+|---|---|---|---|---|---|
+| farfield example | 1,581 | 3,776 | 0.86 s | 0.75 s | 1.16x |
+| SimpleSilo | 1,325 | 952 | 0.66 s | 0.49 s | 1.34x |
+| BHKSimplePA | 1,474 | 4,174 | 1.44 s | 1.21 s | 1.19x |
+| BHASimplePA | 1,139 | 2,322 | 0.65 s | 0.56 s | 1.17x |
+| LandscapeAllChain | 9,462 | 28 | 1.11 s | 0.31 s | 3.6x |
+| Loviisa AoRD model-2 | 16,244 | 5,714 | 128.4 s | 58.4 s | **2.2x** |
+
+Builds are shorter too, since there is less code to compile: 4.6 to 3.4 s on
+the Loviisa model, 4.2 to 3.3 s on LandscapeAllChain. The other bundled
+examples are too small to move.
+
+**Checked by the bits.** Every run compared here was hashed over every stored
+value, at HEAD and after:
+
+- the 220 distinct .eco and .eas files on this machine: 108 run, all identical;
+  the other 112 fail to import or build, at HEAD as now;
+- the ten examples and three corpus models under all nine local solvers;
+- facsimile.html's `run.js --all` (identical apart from timings, and 8 %
+  faster), and rtm.html's eleven examples under four settings;
+- the test suites: `test/run.js`, resources/tests/ode, facsimile and rtm.
+
+**Measured and not kept.**
+
+- A Float64Array for the tangent's tape: no faster than the double array V8
+  makes of the plain one.
+- Reading the clock-only slots through the derivative's per-instant cache, which
+  saves a clock pass per Jacobian: 2.5 % on the Loviisa model, and it would make
+  the Jacobian rely on every writer of `X` keeping that cache honest.
+- Subnormal numbers: up to 4 % of the state on the decay-chain example, at most
+  0.2 % on corpus models. They cost nothing on Apple silicon and can be slow on
+  x86, but JavaScript cannot flush them to zero, and doing it by hand would
+  change results.
 
 ## An (i) instead of a tooltip
 

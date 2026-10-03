@@ -5510,7 +5510,7 @@ field's tooltip for anyone cross-checking against SKB's own reports.
 | **Matrix layers laid out** | *matched to diffusion into the rock* (new paths), or *as in SKB's reference implementation* — see below |
 | **Depth into the matrix modelled** | `PENDEP` |
 | **First layer's thickness** | `PENDEP0`. Left empty it is worked out: for matched layers from the path's own time scales — 3.6 mm in `examples/farfield.json` — and for the reference layers as the thickness that makes them grow by a factor of e, 44 nanometres for a 12.5 m depth in 20 layers |
-| **Fracture cells**, **Matrix layers** | `NF` (at least 1) and `NM` (at least 2) |
+| **Fracture cells**, **Matrix layers** | `NF` (at least 1) and `NM` (at least 2). A new path has 20 fracture cells and 12 matrix layers; a path saved without `NM` has 20, as new paths did before |
 | **Water downstream of the path** | `OB`: *the rock goes on past the release point, as in FARF31* (new paths, and this tool's own); or one of the reference implementation's four — infinite dilution, the same concentration as the last cell, linear extrapolation, or quadratic. The stored value is the number the reference uses (4 for the rock going on); the choice is made by what it means |
 | **Cells past the release point** | `NB` — extra fracture cells *past* the point the release is read at. Empty works the count out: as many as the rock going on needs, and none for the other four |
 

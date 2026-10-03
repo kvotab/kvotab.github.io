@@ -23365,8 +23365,8 @@ test('a path says what it cannot do', () => {
 		raw.farfields[0].index_lists = [];
 		const built = buildSystem(new Project(raw));
 		// 20 fracture cells and the 5 of rock past the release point that the
-		// semi-infinite outlet works out at Pe 10, each with 20 layers.
-		assert(built.layout.nstate === 1 + 25 * 21, `states ${built.layout.nstate}`);
+		// semi-infinite outlet works out at Pe 10, each with 12 layers.
+		assert(built.layout.nstate === 1 + 25 * 13, `states ${built.layout.nstate}`);
 		assert(!/DEC\[/.test(built.source.dydt.split('far-field path')[1] ?? ''),
 			'a path with no nuclide dimension has nothing to decay');
 	}
@@ -23590,7 +23590,7 @@ test('every way of connecting agrees about what a path may be', () => {
 		const src = ed.addSource(raw, { to: 'Rock', rate: '1' });
 		assert(src.to === 'Rock', JSON.stringify(src));
 		const built = buildSystem(new Project(structuredClone(raw)));
-		assert(built.layout.nstate === 2 + 25 * 21, `states ${built.layout.nstate}`);
+		assert(built.layout.nstate === 2 + 25 * 13, `states ${built.layout.nstate}`);
 	}
 
 	// Out of a path: a release. Its rate is the path itself -- the flux out of
@@ -23744,8 +23744,9 @@ test('the editor can add a path, and it survives a round trip', () => {
 	const raw = { name: 'edit', nuclides: ['Cs-137', 'Sr-90'], compartments: [] };
 	const block = ed.addFarfield(raw, { name: 'Rock' });
 	assert(block.index_lists.length === 1, 'indexed by the nuclides');
-	// 20 cells and the 5 past the release point the outlet works out, by 21.
-	assert(ed.farfieldStates(raw, block).states === 525 * 2,
+	// 20 cells and the 5 past the release point the outlet works out, by 13:
+	// twelve matrix layers behind each.
+	assert(ed.farfieldStates(raw, block).states === 325 * 2,
 		JSON.stringify(ed.farfieldStates(raw, block)));
 	// A path is a node on the diagram and answers to the block tree like any
 	// other block.
@@ -23766,7 +23767,7 @@ test('the editor can add a path, and it survives a round trip', () => {
 	const plain = { name: 'x', compartments: [] };
 	const none = ed.addFarfield(plain, {});
 	assert(none.index_lists.length === 0, JSON.stringify(none.index_lists));
-	assert(ed.farfieldStates(plain, none).states === 525, JSON.stringify(ed.farfieldStates(plain, none)));
+	assert(ed.farfieldStates(plain, none).states === 325, JSON.stringify(ed.farfieldStates(plain, none)));
 });
 
 // =========================================================================
@@ -24618,7 +24619,8 @@ test('a transport of N runs as a chain of N compartments', () => {
 	assert(labels.includes('Col.N'), 'N is');
 });
 
-test('the counter, a pair-reading expression, a flow back up and the operations match a chain drawn by hand', () => {
+test('the counter, a pair-reading expression, a flow back up and the operations match a chain drawn by hand', async () => {
+	const { checkJacobian } = await import('../src/sim/jaccheck.js');
 	const a = run(columnModel());
 	const b = run(explicitColumn());
 	for (const [x, y] of [['Col.Begin', 'E1'], ['Col.End', 'E3'], ['Sink', 'Sink'],
@@ -24661,10 +24663,39 @@ test('the counter, a pair-reading expression, a flow back up and the operations 
 	// End's own initial condition is not read: every element starts as Begin says.
 	assert(d.compartments.find((c) => c.qname === 'Col.End').initial === 'if(3 == 1, 10, 0)',
 		'End starts as Begin says, with the counter substituted');
-	// A model that calls a chain function has no derivative rule for it, and
-	// says so rather than shipping a wrong Jacobian.
-	assert(!a.system.jacobian.available, 'the Jacobian falls back to differencing');
+	// A chain function has no derivative rule. Read only by results, as here,
+	// it has no part in the derivative, and the Jacobian is generated without
+	// it -- exactly, as the differences say. Read by a rate, the model says so
+	// rather than shipping a wrong Jacobian.
+	assert(a.system.jacobian.available, 'a chain function only a result reads keeps the Jacobian');
+	assert(checkJacobian(columnModel()).verdict === 'agrees', 'and it is the derivative of the derivative');
+	const fed = columnModel();
+	fed.transfers.push({ name: 'Back', from: 'Sink', to: 'Col.Begin', rate: '0.01 * AtHalf' });
+	assert(!run(fed).system.jacobian.available, 'read by a rate, the Jacobian falls back to differencing');
 	assert(run(explicitColumn()).system.jacobian.available, 'while the explicit one has it');
+});
+
+test('the derivative and its Jacobian leave out what only results read, and the clock to its pass', async () => {
+	// The lookup-driver example: two tables read at the clock make the rates,
+	// and a concentration and a dose follow the state but only results read
+	// them. The derivative used to work both out on every call, and the
+	// tangent worked out the tables, the concentration and the dose again in
+	// every colour of every Jacobian. See *Less work per call* in INTERNALS.md.
+	const { readFileSync } = await import('node:fs');
+	const { checkJacobian } = await import('../src/sim/jaccheck.js');
+	const raw = JSON.parse(readFileSync(new URL('../examples/lookup-driver.json', import.meta.url), 'utf8'));
+	const { dydt, forResults, jacobian } = buildSystem(new Project(structuredClone(raw))).source;
+	assert(/expression Conc_lake/.test(forResults) && /expression Dose/.test(forResults),
+		'the concentration and the dose are not worked out for the results');
+	assert(!/expression (Conc_lake|Dose)/.test(dydt), 'the derivative still works out the dose');
+	assert(!/TAB\[/.test(jacobian), 'the tangent still reads the tables itself');
+	assert(!/expression (Conc_lake|Dose)/.test(jacobian), 'the tangent still works out the dose');
+	assert(checkJacobian(structuredClone(raw)).verdict === 'agrees', 'and it is no longer df/dy');
+	// The results still have them, from the pass that works everything out.
+	const r = run(structuredClone(raw));
+	close(lastOf(r, 'Dose [I-129]'), lastOf(r, 'Conc_lake [I-129]') * 1.1e-7, 1e-15,
+		'the dose is the concentration times DC');
+	assert(lastOf(r, 'Dose [I-129]') > 0, 'the dose is empty');
 });
 
 test('N = 1 folds Begin and End into one compartment', () => {
@@ -27558,13 +27589,14 @@ test('a per-compartment tolerance reaches SciPy instead of failing it', async ()
 	assert(/atol: typeof opts\.abstol === 'number'/.test(src), 'the vector no longer crosses');
 });
 
-test('the variableOrder wrapper does not copy every derivative twice', () => {
-	// ndf keeps references to past derivatives, so each call has to hand back
-	// its own array -- but it was written into a scratch buffer and then
-	// copied out of it, and on a 1,266-state model that copy was six sevenths
-	// of what the wrapper cost. Written straight into the fresh array instead.
-	// The invariant the copy protected still has to hold, which is what this
-	// checks: no two calls share an array.
+test('the variableOrder wrapper writes each derivative into the solver\'s own buffer', () => {
+	// The wrapper used to hand every call a fresh plain Array, on the belief
+	// that ndf keeps references to past derivatives. It does not: it passes an
+	// output buffer of its own on every call and reads what comes back before
+	// that buffer is handed out again (`f` in ../src/ode/solvers/ndf.js). The
+	// fresh array was an allocation per call and a generic array where the
+	// generated code writes doubles. So: the solver's Float64Arrays, a few of
+	// them reused for every call, and still the right answer.
 	const neq = 6;
 	const seen = [];
 	const f = (t, y, out) => {
@@ -27575,7 +27607,10 @@ test('the variableOrder wrapper does not copy every derivative twice', () => {
 	const wrapped = (t, y, out) => { seen.push(out); f(t, y, out); };
 	const r = variableOrder(wrapped, Float64Array.from([0, 10]), y0, { rtol: 1e-8, abstol: 1e-10 });
 	assert(seen.length > 10, `${seen.length} derivative calls`);
-	assert(new Set(seen).size === seen.length, 'two calls were handed the same array');
+	assert(seen.every((o) => o instanceof Float64Array && o.length === neq),
+		'a call was handed something other than a Float64Array of the state\'s length');
+	const distinct = new Set(seen).size;
+	assert(distinct <= 8, `${distinct} buffers for ${seen.length} calls: one allocated per call again?`);
 	// And the answer is the analytic one.
 	const last = r.y[r.y.length - 1];
 	for (let i = 0; i < neq; i++) {
@@ -28841,22 +28876,30 @@ test('a path saved before the new outlet and layers keeps its own, and says so',
 	};
 	const migrated = keys.migrateKeys(structuredClone(old));
 	const f = migrated.farfields[0];
-	assert(f.grid === 'reference' && f.o_b === 1 && f.n_b === 0 && f.surface === 'f', JSON.stringify(f));
+	assert(f.grid === 'reference' && f.o_b === 1 && f.n_b === 0 && f.surface === 'f' && f.n_m === 20,
+		JSON.stringify(f));
 	// ...and a file with no outlet at all meant the reference default, the closed one.
 	const bare = keys.migrateKeys({ farfields: [{ name: 'R' }] }).farfields[0];
-	assert(bare.o_b === 1 && bare.n_b === 0 && bare.grid === 'reference', JSON.stringify(bare));
+	assert(bare.o_b === 1 && bare.n_b === 0 && bare.grid === 'reference' && bare.n_m === 20, JSON.stringify(bare));
+	// A path that says nothing about its layer count had 20 whenever it was
+	// written: new paths had 20 until they started with 12.
+	const unsaid = keys.migrateKeys({ farfields: [{ name: 'R', grid: 'matched', o_b: 4, n_b: '' }] }).farfields[0];
+	assert(unsaid.n_m === 20 && unsaid.grid === 'matched', JSON.stringify(unsaid));
+	assert(new Project({ farfields: [{ name: 'R', grid: 'matched', o_b: 4, n_b: '' }] }).farfields[0].n_m === 20,
+		'a path that does not say read as the new default');
 	// Opening it is not a change to it.
 	assert(compareModels(old, migrated).same, JSON.stringify(compareModels(old, migrated).blocks.changed));
-	// New paths start with the rock going on and the matched layers.
-	assert(ed.FARF_DEFAULTS.o_b === 4 && ed.FARF_DEFAULTS.grid === 'matched' && ed.FARF_DEFAULTS.n_b === '',
-		JSON.stringify(ed.FARF_DEFAULTS));
+	// New paths start with the rock going on and twelve matched layers.
+	assert(ed.FARF_DEFAULTS.o_b === 4 && ed.FARF_DEFAULTS.grid === 'matched' && ed.FARF_DEFAULTS.n_b === ''
+		&& ed.FARF_DEFAULTS.n_m === 12, JSON.stringify(ed.FARF_DEFAULTS));
 	// A path saved from the editor says so out loud, and comes back the same.
 	const raw = { name: 'new', nuclides: ['Cs-135'], compartments: [] };
 	const block = ed.addFarfield(raw, { name: 'Rock' });
 	const back = new Project(structuredClone(raw)).toJSON().farfields[0];
-	for (const key of ['o_b', 'n_b', 'grid', 'surface']) {
+	for (const key of ['o_b', 'n_b', 'grid', 'surface', 'n_m']) {
 		assert(String(back[key]) === String(block[key]), `${key}: ${back[key]} vs ${block[key]}`);
 	}
+	assert(block.n_m === 12 && back.n_m === 12, `${block.n_m} ${back.n_m}`);
 });
 
 test('a path’s Jacobian is exact over the matched layers and the rock going on, however its surface is given', () => {

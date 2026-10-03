@@ -66,13 +66,15 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 	const span = Math.abs(tfinal - t0) || 1;
 	let lastReport = 0;
 
-	/** Bridges the two derivative conventions, and carries progress + abort. */
-	const fun = (t, y) => {
+	/** Counts the evaluations, and carries progress + abort. */
+	const fun = (t, y, dy) => {
 		nfevals++;
-		// A fresh array each call: the caller's `f` may keep what it is handed
-		// (a block that remembers reads its own past derivatives), so one
-		// reused buffer would corrupt that history.
-		const dy = new Array(neq);
+		// Into the integrator's own Float64Array, which is never one it still
+		// needs: see `f` in ./solvers/ndf.js. This used to be a fresh plain
+		// Array per call, on the worry that `f` might keep what it is handed;
+		// nothing does -- dormandPrince and rosenbrock23 have always passed
+		// buffers they reuse -- and the fresh array cost an allocation per call
+		// and a generic array where the generated code writes doubles.
 		f(t, y, dy);
 
 		if (opts.onStep && (nfevals & 63) === 0) {

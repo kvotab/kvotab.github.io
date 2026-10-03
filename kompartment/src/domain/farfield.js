@@ -336,12 +336,13 @@ export const FARF_HELP = {
 
 /**
  * What a new path starts with: the reference implementation's own numbers for
- * everything that has one -- 20 × 20 cells, Pe 10, a penetration depth of
+ * everything that has one -- 20 fracture cells, Pe 10, a penetration depth of
  * 12.5 m, granite porosity and density -- and this tool's numerics for the
- * two things that are numerics rather than physics: an outlet where the rock
- * goes on past the release point, as the analytical models have it, and matrix
- * layers matched to diffusion into the rock. A model saved before those two
- * existed keeps what it had: see `FARF_LEGACY`.
+ * things that are numerics rather than physics: an outlet where the rock goes
+ * on past the release point, as the analytical models have it, and 12 matrix
+ * layers matched to diffusion into the rock, where the reference has 20 at a
+ * ratio of e. A model saved before those existed keeps what it had: see
+ * `FARF_LEGACY`.
  */
 export const FARF_DEFAULTS = {
 	method: 'discretized',
@@ -350,7 +351,7 @@ export const FARF_DEFAULTS = {
 	eps_m: '0.0018', rho_m: '2700', pe: '10',
 	pen_dep: '12.5', pen_dep_0: '',
 	// Empty extra cells: as many as the outlet needs, worked out.
-	n_f: 20, n_m: 20, o_b: CONTINUES, n_b: '', grid: 'matched',
+	n_f: 20, n_m: 12, o_b: CONTINUES, n_b: '', grid: 'matched',
 	// The same switch a compartment has, and there for the same reason: to be
 	// able to compare against a path that does not decay.
 	handle_decay: true,
@@ -369,9 +370,11 @@ export const FARF_DEFAULTS = {
  * given. Read that way it runs exactly as it did -- which is the point: a
  * validated model is not re-validated by opening it. `migrateFarfieldDefaults`
  * in ./keys.js writes these into the file's blocks on the way in, so that the
- * editor and everything after it sees one explicit model.
+ * editor and everything after it sees one explicit model. A path that does not
+ * say how many matrix layers it has meant 20, the default until new paths
+ * started with 12.
  */
-export const FARF_LEGACY = { o_b: 1, n_b: 0, grid: 'reference', surface: 'f', method: 'discretized' };
+export const FARF_LEGACY = { o_b: 1, n_b: 0, grid: 'reference', surface: 'f', method: 'discretized', n_m: 20 };
 
 /**
  * What a new setting's equation is when the path gives none: the same

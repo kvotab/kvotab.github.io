@@ -142,7 +142,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-02';
+const BUILD = '2026-10-03';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -9461,6 +9461,16 @@ function renderCode() {
 		'// ===== dy/dt, on every call ======================================',
 		src.dydt,
 	);
+	if (src.forResults && /X\[/.test(src.forResults)) {
+		parts.push(
+			'',
+			'// ===== worked out for results, recorders and events =============',
+			'// These follow the state, but nothing in dy/dt reads them, so the',
+			'// derivative and its Jacobian leave them out. They are worked out',
+			'// where a result, a recorder or an event asks for them.',
+			src.forResults,
+		);
+	}
 	if (src.jacobian) {
 		const rows = state.results.jacobian?.budgetRows;
 		parts.push(

@@ -46,7 +46,7 @@ import { Recorder } from './history.js';
 import {
 	IndexError, COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
 } from '../domain/indexlists.js';
-import { buildJacobian, buildParamTangent } from './jacobian.js';
+import { buildJacobian, buildParamTangent, blocksRead, withWhatTheyRead } from './jacobian.js';
 import { userFunctions, FunctionError } from './functions.js';
 import { FarfPath } from './farfield.js';
 import { LaplaceFarfPath } from './farfield-laplace.js';
@@ -2050,11 +2050,15 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	// is the same; applied by the runner at that corner, on the state, between
 	// two segments of the integration.
 	const jumps = [];
+	// Every jump's body, for `blocksRead` below: a jump reads X as the
+	// derivative left it, so what it reads the derivative works out too.
+	const jumpLines = [];
 	// A jump's code may read the budget tables (`BMAP<j>`), which are spliced
 	// into the derivative once every emission has said which lists it needs.
 	// So a jump is compiled the first time it is applied, with the tables in
 	// front of it, rather than at build time before the list is complete.
 	const jumpFunction = (body) => {
+		jumpLines.push(...body.split('\n'));
 		let fn = null;
 		return (y) => {
 			fn ??= new Function('y', 'X', [
@@ -2259,9 +2263,52 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			Array.from(m.table ?? [], (v) => (v < 0 ? budgetLayout.nfam - 1 : v)).join(', ')}];`));
 	}
 
+	// --- which of the moving blocks the derivative reads ----------------------
+	// The moving pass opens every derivative call, and it held every block
+	// that follows the state: those the assembly above reads, and those only
+	// a result, a recorder or an event reads -- a dose, a concentration. On the
+	// Loviisa assessment model 103,167 of the 177,389 moving slots were of the
+	// second kind, worked out on every call of the derivative and in every
+	// colour of every Jacobian, and never read by either. So the derivative
+	// runs the blocks its assembly reads and whatever those read in turn, in
+	// the same order; `evaluateAlgebraic`, which results, recorders and events
+	// go through, still runs them all.
+	//
+	// What the assembly reads is read off its lines (`blocksRead` in
+	// ./jacobian.js), and so is what the jumps read, since they read X as the
+	// derivative left it. The lines that will run are read again afterwards: if
+	// anything in them reads a block left out, or hands X to something that
+	// cannot be followed, the derivative runs every block, as it always did.
+	const slotOwner = new Int32Array(Math.max(1, nalg)).fill(-1);
+	algebraic.forEach((a, k) => { if (a.width > 0) slotOwner.fill(k, a.base, a.base + a.width); });
+	const releaseIndex = new Map(farfLayout.map((p) => [p.farfIndex, algebraic.indexOf(p.algRelease)]));
+	const releaseOf = (k) => releaseIndex.get(k) ?? -1;
+	let derivativeReads = blocksRead([...dLines, ...jumpLines], slotOwner, releaseOf);
+	if (derivativeReads) withWhatTheyRead(derivativeReads, algebraic);
+	let derivativeSteps = stepLines;
+	// What is left out, for the Generated code tab: it is in no pass the tab
+	// otherwise shows.
+	let resultSteps = [];
+	if (derivativeReads) {
+		const kept = [];
+		const left = [];
+		algebraic.forEach((a, k) => {
+			if (!(a.width > 0) || slotClass[a.base] !== 2) return;
+			const [from, to] = spanOf(k);
+			const into = derivativeReads.has(k) ? kept : left;
+			for (let i = from; i < to; i++) into.push(algLines[i]);
+		});
+		const ran = blocksRead([...kept, ...dLines, ...jumpLines], slotOwner, releaseOf);
+		const leftOut = (k) => slotClass[algebraic[k].base] === 2 && !derivativeReads.has(k);
+		if (ran && ![...ran].some(leftOut)) {
+			derivativeSteps = kept;
+			resultSteps = left;
+		} else derivativeReads = null;
+	}
+
 	const dydtSource = [
 		'// --- algebraic blocks that move (dependency order) ---',
-		...stepLines,
+		...derivativeSteps,
 		'// --- derivative assembly ---',
 		...dLines,
 		'return out;',
@@ -2606,8 +2653,24 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			mapsSource: () => budgetMaps.map((m, j) => `\tconst BMAP${j} = [${
 				Array.from(m.table ?? [], (v) => (v < 0 ? budgetLayout.nfam - 1 : v)).join(', ')}];`),
 		} : null,
+		// Which slots follow the state: the tangent along the state leaves the
+		// others to the passes above, and asks for the clock's through `clock`.
+		slotClass,
+		// The blocks the derivative runs, by name; null where it runs them all.
+		// The tangent along the state leaves out the moving blocks not in it.
+		derivativeBlocks: derivativeReads
+			? new Set([...derivativeReads].map((k) => algebraic[k].name))
+			: null,
 		runtime: {
 			P, X, DEC, MAPS, TAB, MEM, FARF, ctx,
+			// The clock-only slots exactly at `t`: never the cached instant and
+			// never the interpolated `min_change_time` values, since this is
+			// what the tangent function computed when it worked them out in
+			// every colour itself. What it leaves in X is marked below.
+			clock: (t, y) => {
+				ctx.t = t;
+				rawClock(FUNCTIONS, ctx, y, scratchOut, P, X, DEC, MAPS, TAB, MEM, FARF);
+			},
 		},
 	};
 
@@ -2632,23 +2695,29 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		paramTangentCache = jacobian.available
 			? buildParamTangent(generatorInput)
 			: { available: false, reason: `there is no analytic Jacobian: ${jacobian.reason}` };
+		if (paramTangentCache.available) paramTangentCache.pvp = writesClock(paramTangentCache.pvp);
 		return paramTangentCache;
 	};
 
-	// The tangent shares `X` -- it works out each algebraic value and its
-	// derivative together, and writes the value into the same slot the
-	// derivative reads. So a Jacobian taken at one instant leaves the
-	// clock-only slots holding *its* instant, and the cache below would
-	// otherwise go on believing they hold the one it filled them for. Anything
-	// that writes `X` behind the cache's back has to say so; this is the only
-	// thing that does.
-	if (jacobian?.available && typeof jacobian.evaluate === 'function') {
-		const evaluate = jacobian.evaluate.bind(jacobian);
-		jacobian.evaluate = (t, y, ...rest) => {
-			const out = evaluate(t, y, ...rest);
+	// The tangents share `X` -- each works out the algebraic values it needs
+	// and writes them into the slots the derivative reads. So a tangent taken
+	// at one instant leaves the clock-only slots holding *its* instant (the
+	// state's through `clock` above, the parameters' in its own sweep), and
+	// the cache below would otherwise go on believing they hold the one it
+	// filled them for. Anything that writes `X` behind the cache's back has to
+	// say so: the Jacobian, its product with a direction, and `df/dp`.
+	function writesClock(fn) {
+		return (...args) => {
+			const out = fn(...args);
 			clockAt = NaN;
 			return out;
 		};
+	}
+	if (jacobian?.available && typeof jacobian.evaluate === 'function') {
+		jacobian.evaluate = writesClock(jacobian.evaluate.bind(jacobian));
+		for (const k of ['evaluateDense', 'jvp']) {
+			if (typeof jacobian[k] === 'function') jacobian[k] = writesClock(jacobian[k]);
+		}
 	}
 
 	return {
@@ -2774,6 +2843,10 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			invariant: rawOnce.source,
 			atInstant: rawClock.source,
 			moving: rawAlg.source,
+			// The moving blocks the derivative leaves out, since nothing in it
+			// reads them: `moving` works them out for results, recorders and
+			// events. Empty when the derivative runs them all.
+			forResults: resultSteps.join('\n'),
 			jacobian: jacobian.available ? jacobian.source : null,
 		},
 		parameterValues: P,

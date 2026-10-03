@@ -679,9 +679,10 @@ export function addSource(project, { name, to, rate, system } = {}) {
  * model's lists hold. Nothing about a path needs a nuclide: a species that is
  * stable, or on a list that is not the radionuclides, simply does not decay.
  * The reference implementation's own numbers
- * for the physics -- twenty cells by twenty layers is what SKB's assessments
- * use -- and this tool's for the outlet and the matrix layers; see
- * `FARF_DEFAULTS`.
+ * for the physics -- twenty cells along the fracture, as SKB's assessments
+ * have -- and this tool's for the outlet and the matrix layers: twelve,
+ * matched to diffusion into the rock, where the reference has twenty at a
+ * ratio of e. See `FARF_DEFAULTS`.
  */
 export function addFarfield(project, { name, at, system = '' } = {}) {
 	const n = name ?? uniqueName(project, 'Farfield', system);
