@@ -2181,6 +2181,8 @@
   const Unstable = 'Unstable';
   const Terminated = 'Terminated';
   const ConvergenceFailure = 'ConvergenceFailure';
+  /** A composite method stopped where it would have turned to a method it was told to hand off. */
+  const HandedOff = 'HandedOff';
 
   /** Thrown for a problem that cannot be integrated at all, rather than one that fails part-way. */
   class ODEError extends Error {
@@ -2412,6 +2414,8 @@
       this.isComposite = !!alg.composite;
       this.eigenEst = 1;
       this.doErrorCheck = true;
+      // Set by a composite that has reached a method it hands off: {from, to}.
+      this.handOff = null;
 
       this.f = (t, u, du) => { this.stats.nf++; prob.f(t, u, du); };
       this.controller = null;
@@ -2828,7 +2832,18 @@
       // It may change dt, and it says whether this attempt's error checks are
       // to be made: an explicit method that has just been found stiff is let
       // through them for the few steps until the switch, as there.
-      if (integ.isComposite) integ.cache.choose(integ);
+      if (integ.isComposite) {
+        if (!integ.handOff) integ.cache.choose(integ);
+        // A composite told to hand off a method (DefaultODEAlgorithm's
+        // `handOff`) stops where it would have switched to it, at the last
+        // accepted point, for the caller to go on from there with a method of
+        // its own: sol.handOff says where and to what.
+        if (integ.handOff) {
+          retcode = HandedOff;
+          message = `The run turned to ${integ.handOff.to} at t = ${integ.t}, which was handed off`;
+          break;
+        }
+      }
       if (integ.nsteps >= maxSteps && integ.doErrorCheck) {
         retcode = MaxIters;
         message = `More than ${maxSteps} steps were needed, and the run stopped at t = ${integ.t}`;
@@ -3144,6 +3159,9 @@
     const sol = new ODESolution(Float64Array.from(T), U, stats, retcode, message);
     sol.events = events;
     sol.algChoice = choice ? Uint8Array.from(choice) : null;
+    sol.handOff = integ.handOff
+      ? { from: integ.handOff.from, to: integ.handOff.to, t: integ.t, u: Float64Array.from(integ.uprev) }
+      : null;
     return sol;
   }
 
@@ -5991,6 +6009,8 @@
       this.fsalStep = -1;
       integ.stillIsStiff = !!spec.options?.stillIsStiff;
       this.skipNext = false;
+      // The methods this composite does not switch to but stops at, by name.
+      this.handOff = new Set(spec.options?.handOff ?? []);
       // (info) => void, after every verdict: for tests and for looking.
       this.trace = typeof spec.options?.trace === 'function' ? spec.options.trace : null;
     }
@@ -6037,7 +6057,16 @@
     }
 
     init(integ) {
-      this.activate(this.chooseFn(this.state, integ, this), integ);
+      const first = this.chooseFn(this.state, integ, this);
+      if (this.handOff.has(this.algs[first].name)) {
+        // Started on a method it hands off: the run stops before its first
+        // step. The first method is put in charge only so that the integrator
+        // has one to stop with.
+        this.activate(0, integ);
+        integ.handOff = { from: null, to: this.algs[first].name };
+        return;
+      }
+      this.activate(first, integ);
     }
 
     /** choose_algorithm!, at the top of every pass of the integrator's loop. */
@@ -6063,6 +6092,11 @@
       }
       if (next === this.current) return;
       const from = this.current;
+      if (this.handOff.has(this.algs[next].name)) {
+        // Not switched to: the integrator stops here and the caller goes on.
+        integ.handOff = { from: this.algs[from].name, to: this.algs[next].name };
+        return;
+      }
       this.activate(next, integ);
       this.nswitches++;
       if (this.switchLog.length < 1000) {
@@ -6166,6 +6200,10 @@
    *        AutoSwitch's thresholds
    * @param {object}  [options.stiff]  options for the stiff methods (maxOrder
    *        and minOrder for the two FBDFs), as kwargs... are there
+   * @param {string[]} [options.handOff]  stiff methods not to switch to: where
+   *        the run would turn to one, it stops instead (retcode HandedOff) and
+   *        sol.handOff = {t, u, from, to} says where, for the caller to go on
+   *        with a method of its own
    */
   function DefaultODEAlgorithm(options = {}) {
     // The stiff methods as OrdinaryDiffEq has them, with one exception: FBDF
@@ -6213,5 +6251,5 @@
       genericAutoswitch, options);
   }
 
-  return { ODEProblem, ODESolution, ODEError, solve, Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure, DenseMatrix, CSC, cscFromTriplets, DenseLU, ComplexDenseLU, SparseLU, reverseCuthillMcKee, JacobianCache, WFactorization, colourColumns, densePattern, jacobianInfNorm, NewtonSolver, PIController, initialStep, initialStepSciML, epsOf, GMRES, KrylovW, symGivens, Rodas5P, rosenbrockAlgorithm, Rodas5PTableau, TRBDF2, KenCarp4, esdirkAlgorithm, TRBDF2Tableau, KenCarp4Tableau, FBDF, fornbergWeights, QNDF, QBDF, rescaleMatrix, RadauIIA5, RadauIIA5Tableau, Tsit5, explicitStiffness, Tsit5Tableau, Vern7, Vern7Tableau, Rosenbrock23, DefaultODEAlgorithm, DefaultImplicitODEAlgorithm, AutoAlgSwitch, DEFAULT_CHOICES };
+  return { ODEProblem, ODESolution, ODEError, solve, Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure, HandedOff, DenseMatrix, CSC, cscFromTriplets, DenseLU, ComplexDenseLU, SparseLU, reverseCuthillMcKee, JacobianCache, WFactorization, colourColumns, densePattern, jacobianInfNorm, NewtonSolver, PIController, initialStep, initialStepSciML, epsOf, GMRES, KrylovW, symGivens, Rodas5P, rosenbrockAlgorithm, Rodas5PTableau, TRBDF2, KenCarp4, esdirkAlgorithm, TRBDF2Tableau, KenCarp4Tableau, FBDF, fornbergWeights, QNDF, QBDF, rescaleMatrix, RadauIIA5, RadauIIA5Tableau, Tsit5, explicitStiffness, Tsit5Tableau, Vern7, Vern7Tableau, Rosenbrock23, DefaultODEAlgorithm, DefaultImplicitODEAlgorithm, AutoAlgSwitch, DEFAULT_CHOICES };
 }));

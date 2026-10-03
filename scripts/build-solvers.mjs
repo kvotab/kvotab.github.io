@@ -100,7 +100,7 @@ const PACKAGES = [
 		// check below, which fails if index.js exports a name this list does not.
 		exports: [
 			'ODEProblem', 'ODESolution', 'ODEError', 'solve',
-			'Success', 'MaxIters', 'DtLessThanMin', 'Unstable', 'Terminated', 'ConvergenceFailure',
+			'Success', 'MaxIters', 'DtLessThanMin', 'Unstable', 'Terminated', 'ConvergenceFailure', 'HandedOff',
 			'DenseMatrix', 'CSC', 'cscFromTriplets', 'DenseLU', 'ComplexDenseLU', 'SparseLU',
 			'reverseCuthillMcKee',
 			'JacobianCache', 'WFactorization', 'colourColumns', 'densePattern', 'jacobianInfNorm',

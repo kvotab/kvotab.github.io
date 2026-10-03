@@ -229,6 +229,14 @@ The solution says what happened: `sol.algChoice` has the method (1 to 6, as
 `sol.alg_choice` in Julia) for every saved row, and `sol.stats.stepsBy`,
 `switches` and `switchLog` count the steps each took and record every switch.
 
+**Handing off.** `DefaultODEAlgorithm({ handOff: ['FBDF', 'KrylovFBDF'] })`
+does not switch to the methods it names: where the run would turn to one, it
+stops instead, with retcode `HandedOff`, and `sol.handOff = { t, u, from, to }`
+holds the last accepted time and state for the caller to go on from with a
+method of its own. Kompartment's `auto` hands off all four stiff methods this
+way and goes on with its own variable-order NDF, which on its models was faster
+than any of them (its `src/ode/julia-solvers.js`).
+
 **Checked against Julia itself.** `test-default` runs twenty-two problems
 and tolerances through both, with exact Jacobians on both sides
 (`scripts/gen-ode-default-ref.jl` wrote Julia's results, from OrdinaryDiffEq

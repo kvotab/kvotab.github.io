@@ -17,6 +17,8 @@
        side first, AutoAlgSwitch of two methods, a state at rest read as
        Julia reads it, the thresholds
     7  OrdinaryDiffEq's starting step, including its constant-derivative case
+    8  handing off: a run told not to switch to a stiff method stops where it
+       would have, with the state there, for the caller to go on from
 
       node resources/tests/ode/julia/test-switching.mjs
 */
@@ -238,6 +240,43 @@ console.log('\n7. OrdinaryDiffEq\'s starting step');
   const dtCap = J.initialStepSciML(flat, 0, Float64Array.from([1]), Float64Array.from([1]), 1, 5, 1e-3, 1e-6, 0.005, work);
   check('dtmax bounds the first probe', Math.abs(dtCap - 0.5) < 1e-15, `${dtCap}`);
   check('Julia\'s eps', J.epsOf(1) === Number.EPSILON && J.epsOf(0) === Number.MIN_VALUE && J.epsOf(-2) === 2 * Number.EPSILON);
+}
+
+// --- 8 ---------------------------------------------------------------------------------------
+console.log('\n8. handing off a stiff method');
+{
+  const P = (p) => new J.ODEProblem(p.f, p.u0, p.tspan, { jac: p.jac });
+  // Rows every millisecond up to past the first switch, then every ten.
+  const saveat = [...Array.from({ length: 30 }, (_, i) => i / 1000), ...Array.from({ length: 300 }, (_, i) => 10 * (i + 1))];
+  const whole = J.solve(P(vdp1000), J.DefaultODEAlgorithm(), { saveat });
+  const first = whole.stats.switchLog[0];
+  const cut = J.solve(P(vdp1000), J.DefaultODEAlgorithm({ handOff: ['Rosenbrock23'] }), { saveat });
+  check('it stops where the default would have switched, saying to what',
+    cut.retcode === J.HandedOff && cut.handOff.t === first.t
+    && cut.handOff.from === 'Tsit5' && cut.handOff.to === 'Rosenbrock23',
+  `${cut.retcode} at ${cut.handOff?.t} (the switch at ${first.t})`);
+  // The same run up to there, so the same rows and the same state.
+  const k = whole.t.findIndex((t) => t > first.t);
+  const sameRows = cut.t.length === k && cut.t.every((t, i) => t === whole.t[i]
+    && cut.u[i].every((v, j) => v === whole.u[i][j]));
+  check('with the rows of the run up to there, bit for bit', sameRows, `${cut.t.length} rows, ${k} before the switch`);
+  // The default's own row at that time: the end of a step, read off the
+  // interpolant at θ = (t - t₀)/h, which rounding leaves a hair below one.
+  const at = J.solve(P(vdp1000), J.DefaultODEAlgorithm(), { saveat: [...saveat, first.t].sort((x, y) => x - y) });
+  const row = at.u[at.t.indexOf(first.t)];
+  check('and the state there, the one the default switched with',
+    cut.handOff.u.every((v, j) => Math.abs(v - row[j]) <= 1e-12 * Math.max(1, Math.abs(v))),
+    `${Array.from(cut.handOff.u).map((v) => v.toPrecision(6))} against ${Array.from(row).map((v) => v.toPrecision(6))}`);
+  check('the explicit steps are still counted', cut.stats.stepsBy.Tsit5 > 0 && cut.stats.switches === 0,
+    JSON.stringify(cut.stats.stepsBy));
+  const start = J.solve(P(vdp1000), J.DefaultODEAlgorithm({ stiffalgfirst: true, handOff: ['Rosenbrock23'] }), { saveat });
+  check('started on a method it hands off, it stops before a step',
+    start.retcode === J.HandedOff && start.handOff.t === 0 && start.stats.nsteps === 0
+    && start.handOff.u[0] === 2 && start.handOff.u[1] === 0, `${start.stats.nsteps} steps`);
+  const other = J.solve(P(vdp1000), J.DefaultODEAlgorithm({ handOff: ['KrylovFBDF'] }), { saveat });
+  check('a method it never chooses is no reason to stop',
+    other.retcode === J.Success && other.t.length === whole.t.length
+    && other.u.every((u, i) => u.every((v, j) => v === whole.u[i][j])));
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

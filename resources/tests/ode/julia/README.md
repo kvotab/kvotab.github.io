@@ -155,8 +155,8 @@ explicit method forming no matrix on 300 000 states, Vern7's interpolation
 stages worked out only for a step with a row in it, f taken again where
 clamping moved a first-same-as-last method's solution, GMRES against a dense
 LU, the matrix-free FBDF against the factorising one and with a problem's own
-J·v, the switch's bookkeeping and its options, and OrdinaryDiffEq's starting
-step.
+J·v, the switch's bookkeeping and its options, OrdinaryDiffEq's starting
+step, and a run handing off a stiff method where it would have switched to it.
 
 ## What the stiff set found
 

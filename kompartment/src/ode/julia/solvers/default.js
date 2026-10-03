@@ -200,6 +200,8 @@ class CompositeCache {
     this.fsalStep = -1;
     integ.stillIsStiff = !!spec.options?.stillIsStiff;
     this.skipNext = false;
+    // The methods this composite does not switch to but stops at, by name.
+    this.handOff = new Set(spec.options?.handOff ?? []);
     // (info) => void, after every verdict: for tests and for looking.
     this.trace = typeof spec.options?.trace === 'function' ? spec.options.trace : null;
   }
@@ -246,7 +248,16 @@ class CompositeCache {
   }
 
   init(integ) {
-    this.activate(this.chooseFn(this.state, integ, this), integ);
+    const first = this.chooseFn(this.state, integ, this);
+    if (this.handOff.has(this.algs[first].name)) {
+      // Started on a method it hands off: the run stops before its first
+      // step. The first method is put in charge only so that the integrator
+      // has one to stop with.
+      this.activate(0, integ);
+      integ.handOff = { from: null, to: this.algs[first].name };
+      return;
+    }
+    this.activate(first, integ);
   }
 
   /** choose_algorithm!, at the top of every pass of the integrator's loop. */
@@ -272,6 +283,11 @@ class CompositeCache {
     }
     if (next === this.current) return;
     const from = this.current;
+    if (this.handOff.has(this.algs[next].name)) {
+      // Not switched to: the integrator stops here and the caller goes on.
+      integ.handOff = { from: this.algs[from].name, to: this.algs[next].name };
+      return;
+    }
     this.activate(next, integ);
     this.nswitches++;
     if (this.switchLog.length < 1000) {
@@ -375,6 +391,10 @@ function compositeAlgorithm(name, algs, choose, options = {}) {
  *        AutoSwitch's thresholds
  * @param {object}  [options.stiff]  options for the stiff methods (maxOrder
  *        and minOrder for the two FBDFs), as kwargs... are there
+ * @param {string[]} [options.handOff]  stiff methods not to switch to: where
+ *        the run would turn to one, it stops instead (retcode HandedOff) and
+ *        sol.handOff = {t, u, from, to} says where, for the caller to go on
+ *        with a method of its own
  */
 export function DefaultODEAlgorithm(options = {}) {
   // The stiff methods as OrdinaryDiffEq has them, with one exception: FBDF

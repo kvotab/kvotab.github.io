@@ -36,6 +36,8 @@ export const DtLessThanMin = 'DtLessThanMin';
 export const Unstable = 'Unstable';
 export const Terminated = 'Terminated';
 export const ConvergenceFailure = 'ConvergenceFailure';
+/** A composite method stopped where it would have turned to a method it was told to hand off. */
+export const HandedOff = 'HandedOff';
 
 /** Thrown for a problem that cannot be integrated at all, rather than one that fails part-way. */
 export class ODEError extends Error {
@@ -267,6 +269,8 @@ class Integrator {
     this.isComposite = !!alg.composite;
     this.eigenEst = 1;
     this.doErrorCheck = true;
+    // Set by a composite that has reached a method it hands off: {from, to}.
+    this.handOff = null;
 
     this.f = (t, u, du) => { this.stats.nf++; prob.f(t, u, du); };
     this.controller = null;
@@ -683,7 +687,18 @@ export function solve(prob, alg, options = {}) {
     // It may change dt, and it says whether this attempt's error checks are
     // to be made: an explicit method that has just been found stiff is let
     // through them for the few steps until the switch, as there.
-    if (integ.isComposite) integ.cache.choose(integ);
+    if (integ.isComposite) {
+      if (!integ.handOff) integ.cache.choose(integ);
+      // A composite told to hand off a method (DefaultODEAlgorithm's
+      // `handOff`) stops where it would have switched to it, at the last
+      // accepted point, for the caller to go on from there with a method of
+      // its own: sol.handOff says where and to what.
+      if (integ.handOff) {
+        retcode = HandedOff;
+        message = `The run turned to ${integ.handOff.to} at t = ${integ.t}, which was handed off`;
+        break;
+      }
+    }
     if (integ.nsteps >= maxSteps && integ.doErrorCheck) {
       retcode = MaxIters;
       message = `More than ${maxSteps} steps were needed, and the run stopped at t = ${integ.t}`;
@@ -999,5 +1014,8 @@ export function solve(prob, alg, options = {}) {
   const sol = new ODESolution(Float64Array.from(T), U, stats, retcode, message);
   sol.events = events;
   sol.algChoice = choice ? Uint8Array.from(choice) : null;
+  sol.handOff = integ.handOff
+    ? { from: integ.handOff.from, to: integ.handOff.to, t: integ.t, u: Float64Array.from(integ.uprev) }
+    : null;
   return sol;
 }

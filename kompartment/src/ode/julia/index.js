@@ -18,7 +18,7 @@
 
 export {
   ODEProblem, ODESolution, ODEError, solve,
-  Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure,
+  Success, MaxIters, DtLessThanMin, Unstable, Terminated, ConvergenceFailure, HandedOff,
 } from './core/integrator.js';
 
 export {
