@@ -44,7 +44,7 @@ too:
 
     python3 resources/tests/winnetkakort/test-ui.py
 
-It exits 0 when all 176 checks pass and takes about two and a half minutes. With
+It exits 0 when all 176 checks pass and takes about a minute and a half. With
 `WK_SHOTS=<folder>` it also saves screenshots and the printed cards as
 `cards.pdf`.
 

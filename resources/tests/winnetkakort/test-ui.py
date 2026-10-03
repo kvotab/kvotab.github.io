@@ -120,14 +120,16 @@ class Page:
         await self.ev(f"localStorage.clear(); localStorage.setItem('kvot-theme', {json.dumps(theme)});"
                       + (f"localStorage.setItem('winnetkakort.v1', {json.dumps(storage)});" if storage is not None else ''))
         await self.call('Page.navigate', {'url': URL})
-        await settle(self, "!!(window.WK && document.querySelectorAll('.wk-tile').length)", True)
+        # typeof, not window.WK: a top-level const is not a property of window,
+        # so that wait never succeeded and every load sat out settle()'s 6 s
+        await settle(self, "typeof WK !== 'undefined' && document.querySelectorAll('.wk-tile').length > 0", True)
         await asyncio.sleep(0.2)
 
     async def reload(self):
         """The same page again, storage kept."""
         await self.call('Page.reload', {'ignoreCache': True})
         await asyncio.sleep(0.3)
-        await settle(self, "!!(window.WK && document.querySelectorAll('.wk-tile').length)", True)
+        await settle(self, "typeof WK !== 'undefined' && document.querySelectorAll('.wk-tile').length > 0", True)
 
     async def shot(self, name):
         if not SHOTS:

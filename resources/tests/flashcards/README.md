@@ -60,7 +60,7 @@ ports too:
 
     python3 resources/tests/flashcards/test-ui.py
 
-It exits 0 when all 134 checks pass, in about three minutes. With
+It exits 0 when all 134 checks pass, in about a minute. With
 `FC_SHOTS=<folder>` it saves screenshots and the printed cards as
 `cards.pdf`.
 
