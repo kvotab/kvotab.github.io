@@ -115,9 +115,11 @@ def _migrate_farfield_targets(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 #: What a far-field path that says nothing about its numerics meant when it was
-#: written: the reference implementation's outlet and matrix layers, and F given
-#: (``FARF_LEGACY`` in src/domain/farfield.js).
-FARF_LEGACY: Dict[str, Any] = {'o_b': 1, 'n_b': 0, 'grid': 'reference', 'surface': 'f', 'method': 'discretized'}
+#: written: the reference implementation's outlet and matrix layers, F given,
+#: and 20 layers, a new path's count until 2026-10-03 (``FARF_LEGACY`` in
+#: src/domain/farfield.js).
+FARF_LEGACY: Dict[str, Any] = {'o_b': 1, 'n_b': 0, 'grid': 'reference', 'surface': 'f', 'method': 'discretized',
+                               'n_m': 20}
 
 
 def _migrate_farfield_defaults(raw: Dict[str, Any]) -> Dict[str, Any]:

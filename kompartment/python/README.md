@@ -297,6 +297,7 @@ last place for about one argument in ten.
 m.values_at_start('Soil')                      # what the equations come to at the first instant
 runs = m.run_scenarios(workers=3)              # {scenario: Results}, one run per scenario
 system = m.build()                             # the built equations: system.dydt(t, y), system.layout
+system.evaluate_algebraic(t, y)                # every algebraic value at (t, y); dydt works out only those it reads
 ```
 
 ### Solving in parts
@@ -347,7 +348,7 @@ run to be split. Each process keeps its numerical libraries to one thread.
 ### Probabilistic runs
 
 ```python
-p = m.run_probabilistic(1000, seed=1, workers=8, keep=['Dose'])
+p = m.run_probabilistic(1000, seed=1, workers=8, keep=['Dose'], progress=True)
 p['Dose [I-129]']                              # (realisations, times)
 p.quantiles('Dose [I-129]')                    # 5th, 50th and 95th percentiles over time
 p.sample('Kd[I-129]')                          # the values one input took
@@ -360,8 +361,23 @@ m.run_probabilistic(gsa={'method': 'sobol', 'options': {'samples': 512}})
 The design is drawn whole in every process, from the same named streams the
 application draws from, so the samples are the application's and the answer
 does not depend on `workers`. With `workers` above 1 the realisations are
-shared between processes; a script that uses them needs the usual
-`if __name__ == '__main__':` guard on macOS and Windows.
+shared between processes, started as a split's are: with `spawn`, loading only
+this package and never the calling script (so no `if __name__ == '__main__':`
+guard is needed), each keeping its numerical libraries to one thread. The
+scenarios of `run_scenarios(workers=...)` are shared out the same way.
+
+`progress=True` shows how far the run has got and how long it has left, on one
+line that is redrawn in place in a terminal or a notebook:
+
+```
+Probabilistic run [#########---------------] 380/1000 realisations  38%  0:41, about 1:07 left
+```
+
+It goes to standard error (standard output in a notebook), or to a stream
+given as `progress=`; written to a file, it is a line per tenth of the way.
+The time left is the pace since the first realisation, which also builds and
+compiles the model. For a display of your own, `on_progress=lambda done,
+total: ...` is called after every realisation, with `workers` or without.
 
 ### Sensitivity and calibration
 

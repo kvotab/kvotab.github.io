@@ -124,8 +124,13 @@ def run_scenarios(model: Any, scenarios: Optional[Sequence[str]] = None, *, work
     if workers <= 1 or len(names) == 1:
         return {name: run(Project({**raw, 'scenario': name})) for name in names}
     import concurrent.futures as cf
-    with cf.ProcessPoolExecutor(max_workers=min(workers, len(names))) as pool:
-        futures = {name: pool.submit(_run_one, {**raw, 'scenario': name}) for name in names}
+    import multiprocessing as mp
+    from .split import _one_thread_each, _without_main
+    # As a split's parts are started (``_one_thread_each`` in ./split.py):
+    # spawned, one thread per numerical library, the scenarios the parallelism.
+    with cf.ProcessPoolExecutor(max_workers=min(workers, len(names)), mp_context=mp.get_context('spawn')) as pool:
+        with _one_thread_each(), _without_main():
+            futures = {name: pool.submit(_run_one, {**raw, 'scenario': name}) for name in names}
         out = {}
         for name, fut in futures.items():
             # A system holds compiled code and cannot travel between

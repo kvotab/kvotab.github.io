@@ -79,6 +79,65 @@ class Probabilistic(unittest.TestCase):
         q = a.quantiles(label)
         self.assertEqual(len(q), 3)
 
+    def test_progress_is_heard_after_every_realisation(self) -> None:
+        # With workers too: each process says how far its slice has got, so
+        # the caller hears the realisations as they are done, not only the
+        # slices as they end. And watching changes nothing.
+        import io
+        m = kp.Model.from_dict(example('biosphere'))
+        m.simulation.update(output_points=20)
+        plain = m.run_probabilistic(12, seed=3, keep=['Dose'])
+        label = plain.labels[0]
+        for workers in (1, 2):
+            with self.subTest(workers=workers):
+                heard = []
+                shown = io.StringIO()
+                p = m.run_probabilistic(12, seed=3, keep=['Dose'], workers=workers, progress=shown,
+                                        on_progress=lambda done, total: heard.append((done, total)))
+                self.assertEqual(heard[-1], (12, 12))
+                self.assertTrue(all(a[0] < b[0] for a, b in zip(heard, heard[1:])), heard)
+                if workers == 1:
+                    self.assertEqual([d for d, _ in heard], list(range(1, 13)))
+                lines = shown.getvalue().splitlines()
+                self.assertTrue(lines[0].startswith('Probabilistic run [') and '0/12 realisations' in lines[0], lines)
+                self.assertEqual(lines[-1].split(' in ')[0], 'Probabilistic run: 12 realisations')
+                self.assertTrue(np.array_equal(p.realisations(label), plain.realisations(label), equal_nan=True))
+
+    def test_the_progress_line(self) -> None:
+        import io
+        from kompartment.engine.progress import ProgressLine, clock
+
+        class Terminal(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        self.assertEqual((clock(5), clock(65), clock(3725)), ('0:05', '1:05', '1:02:05'))
+        # In a terminal: redrawn in place, and the last word ends the line.
+        t = Terminal()
+        line = ProgressLine(4, stream=t)
+        for done in range(1, 5):
+            line(done)
+        line.close(failed=1)
+        out = t.getvalue()
+        self.assertTrue(out.startswith('\r') and out.endswith('\n') and out.count('\n') == 1, repr(out))
+        self.assertIn('Probabilistic run: 4 realisations in ', out)
+        self.assertTrue(out.rstrip().endswith('1 failed'), repr(out))
+        # In a file: a line per tenth, never the same tenth twice, then the last word.
+        f = io.StringIO()
+        line = ProgressLine(30, what='runs', stream=f)
+        for done in range(1, 31):
+            line(done)
+        line.close()
+        lines = f.getvalue().splitlines()
+        self.assertEqual(len(lines), 1 + 9 + 1, lines)
+        self.assertEqual(lines[-1].split(' in ')[0], 'Probabilistic run: 30 runs')
+        # A run that stops says where.
+        f = io.StringIO()
+        line = ProgressLine(10, stream=f)
+        line(3)
+        line.close(stopped=True)
+        self.assertTrue(f.getvalue().splitlines()[-1].startswith('Probabilistic run stopped after 3 of 10'))
+
 
 class SensitivityAndCalibration(unittest.TestCase):
     def test_local_sensitivity_is_the_derivative(self) -> None:

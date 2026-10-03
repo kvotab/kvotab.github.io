@@ -49,12 +49,13 @@ FARF_CHOICE_KEYS = ('surface', 'grid', 'method')
 FARF_DEFAULTS: Dict[str, Any] = {
     'method': 'discretized',
     'tw': '100', 'surface': 'f', 'f': '1e5', 'kd_f': '0', 'kd_m': '0', 'de_m': '1e-4', 'eps_m': '0.0018',
-    'rho_m': '2700', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '', 'n_f': 20, 'n_m': 20,
+    'rho_m': '2700', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '', 'n_f': 20, 'n_m': 12,
     'o_b': CONTINUES, 'n_b': '', 'grid': 'matched', 'handle_decay': True, 'report_cells': False,
 }
 #: What a saved path that does not mention these meant: the reference
 #: implementation's numerics, written into the block on the way in.
-FARF_LEGACY: Dict[str, Any] = {'o_b': 1, 'n_b': 0, 'grid': 'reference', 'surface': 'f', 'method': 'discretized'}
+FARF_LEGACY: Dict[str, Any] = {'o_b': 1, 'n_b': 0, 'grid': 'reference', 'surface': 'f', 'method': 'discretized',
+                               'n_m': 20}
 #: A surface setting's equation when the path gives none.
 FARF_SURFACE_DEFAULTS: Dict[str, str] = {'f': '1e5', 'aw': '1000', 'aperture': '0.002'}
 

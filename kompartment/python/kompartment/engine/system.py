@@ -104,6 +104,11 @@ class System:
         self._once = self._compile('invariant', merge_statements(b.pass_stmts[0]))
         self._clock = self._compile('at_instant', merge_statements(b.pass_stmts[1]))
         self._step = self._compile('moving', merge_statements(b.pass_stmts[2]))
+        # The moving blocks the derivative reads (see `_Builder._derivative_reads`):
+        # the rest -- a dose, a concentration -- only results, recorders and
+        # events read, and they go through `evaluate_algebraic`.
+        d = b.derivative_stmts
+        self._step_d = self._step if d is None else self._compile('moving_derivative', merge_statements(d))
         self._invariant_version = 0
         self._clock_at = math.nan
         from .assembly import Assembler
@@ -326,11 +331,20 @@ class System:
             self._step(t, y, self.X)
         return self.X
 
+    def evaluate_for_derivative(self, t: float, y: np.ndarray) -> np.ndarray:
+        """The algebraic slots the derivative reads at ``(t, y)``, in ``X``:
+        what the analytic Jacobian is formed from. The others are left as
+        they were."""
+        with np.errstate(all='ignore'):
+            self.at_instant(t, y)
+            self._step_d(t, y, self.X)
+        return self.X
+
     def dydt(self, t: float, y: np.ndarray, out: Optional[np.ndarray] = None) -> np.ndarray:
         """The derivative at ``(t, y)``."""
         with np.errstate(all='ignore'):
             self.at_instant(t, y)
-            self._step(t, y, self.X)
+            self._step_d(t, y, self.X)
             d = self._assemble(t, y, self.X)
         if out is not None:
             out[:] = d
@@ -343,7 +357,7 @@ class System:
         (everything ignored) around the whole solve, which on a small model
         costs less than setting it on every call."""
         self.at_instant(t, y)
-        self._step(t, y, self.X)
+        self._step_d(t, y, self.X)
         return self._assemble(t, y, self.X)
 
     def initial_state(self) -> np.ndarray:

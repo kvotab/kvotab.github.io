@@ -329,8 +329,9 @@ def _design_options(opts: Dict[str, Any]) -> Dict[str, Any]:
 def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin: bool = True,
                       varied: Optional[Iterable[str]] = None, tornado: Optional[Dict[str, float]] = None,
                       gsa: Optional[Dict[str, Any]] = None, keep: Any = None, workers: int = 1,
-                      on_progress: Optional[Callable[[int, int], Any]] = None, large: bool = False,
-                      range_: Optional[Sequence[int]] = None, compiled: Any = 'auto') -> 'ProbabilisticResults':
+                      on_progress: Optional[Callable[[int, int], Any]] = None, progress: Any = False,
+                      large: bool = False, range_: Optional[Sequence[int]] = None,
+                      compiled: Any = 'auto') -> 'ProbabilisticResults':
     """Runs ``iterations`` realisations and keeps the series asked for.
 
     ``keep``: which series to hold -- None for every endpoint (anything but an
@@ -341,18 +342,51 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
     ``gsa={'method': ..., 'options': {...}}`` runs a sensitivity design.
     ``compiled`` is each run's, as :func:`kompartment.engine.runner.run`
     takes it: the model compiles once, and every realisation runs compiled.
+
+    ``progress=True`` shows how far the run has got, and how long it has left,
+    as a line on standard error (standard output in a notebook), or on a
+    stream passed as ``progress``: see :mod:`kompartment.engine.progress`.
+    ``on_progress(done, total)`` is called after every realisation, with
+    ``workers`` too, for a display of the caller's own.
     """
     started = time.perf_counter()
     project = _as_project(model)
-    raw = project.to_json() if workers > 1 else None
-    if workers > 1:
-        return _run_pool(raw, dict(iterations=iterations, seed=seed, latin=latin, varied=varied, tornado=tornado,
-                                   gsa=gsa, keep=keep, large=large, compiled=compiled), workers, on_progress,
-                         started)
-    system = build_system(project)
-    design = design_for(project, system, seed=seed, iterations=iterations, latin=latin, varied=varied,
-                        tornado=tornado, gsa=gsa)
-    return _run_slice(project, system, design, keep, range_, on_progress, large, started, compiled)
+    line = None
+    if progress:
+        from .progress import ProgressLine
+        line = ProgressLine(iterations, what='runs' if (tornado or gsa) else 'realisations',
+                            stream=None if progress is True else progress)
+    tell = _both(on_progress, line)
+    try:
+        if workers > 1:
+            res = _run_pool(project.to_json(), dict(iterations=iterations, seed=seed, latin=latin, varied=varied,
+                                                    tornado=tornado, gsa=gsa, keep=keep, large=large,
+                                                    compiled=compiled), workers, tell, started, line)
+        else:
+            system = build_system(project)
+            design = design_for(project, system, seed=seed, iterations=iterations, latin=latin, varied=varied,
+                                tornado=tornado, gsa=gsa)
+            if line is not None:
+                line.set_total(design.iterations)
+            res = _run_slice(project, system, design, keep, range_, tell, large, started, compiled)
+    except BaseException:
+        if line is not None:
+            line.close(stopped=True)
+        raise
+    if line is not None:
+        line.close(failed=int(res.stats.get('failed', 0)))
+    return res
+
+
+def _both(on_progress: Optional[Callable[[int, int], Any]], line: Any) -> Optional[Callable[[int, int], Any]]:
+    """The caller's ``on_progress`` and the progress line, as one."""
+    if line is None or on_progress is None:
+        return on_progress if line is None else line
+
+    def both(done: int, total: int) -> None:
+        line(done, total)
+        on_progress(done, total)
+    return both
 
 
 def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
@@ -446,25 +480,52 @@ def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_:
     })
 
 
+#: A worker process's channel back to the caller, given as it starts.
+_SLICE_WORKER: Dict[str, Any] = {}
+
+
+def _start_slice_worker(heard: Any) -> None:
+    """A worker process's start: the queue its progress goes back by, which a
+    process can only be given as it starts (as split.py's workers are)."""
+    _SLICE_WORKER['heard'] = heard
+
+
 def _pool_slice(args: tuple) -> Dict[str, Any]:
-    raw, opts, lo, hi = args
+    raw, opts, lo, hi, n = args
     project = Project(raw)
     system = build_system(project)
     design = design_for(project, system, **_design_options(opts))
-    res = _run_slice(project, system, design, opts.get('keep'), (lo, hi), None, opts.get('large', False),
-                     time.perf_counter(), opts.get('compiled', 'auto'))
+    heard = _SLICE_WORKER.get('heard')
+    last = [0.0]
+
+    def hear(done: int, span: int) -> None:
+        # At most ten a second, and the last always: each is a message to the
+        # caller's process.
+        now = time.perf_counter()
+        if now - last[0] > 0.1 or done >= span:
+            last[0] = now
+            heard.put((n, int(done)))
+
+    res = _run_slice(project, system, design, opts.get('keep'), (lo, hi), hear if heard is not None else None,
+                     opts.get('large', False), time.perf_counter(), opts.get('compiled', 'auto'))
     return res.data
 
 
 def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
-              on_progress: Optional[Callable[[int, int], Any]], started: float) -> 'ProbabilisticResults':
-    """The realisations shared out between processes, stitched back in order."""
+              on_progress: Optional[Callable[[int, int], Any]], started: float,
+              line: Any = None) -> 'ProbabilisticResults':
+    """The realisations shared out between processes, stitched back in order.
+    Each process says how many of its slice it has run, so ``on_progress``
+    hears every realisation as it is done, not every slice."""
     import concurrent.futures as cf
+    import queue as queue_module
     # The number of runs is the design's, which for a GSA or tornado is not
     # `iterations`: work it out once here.
     project = Project(raw)
     system = build_system(project, jacobian=False)
     total = design_for(project, system, **_design_options(opts)).iterations
+    if line is not None:
+        line.set_total(total)
     workers = max(1, min(workers, total))
     edges = np.linspace(0, total, workers + 1).round().astype(int)
     slices = [(int(edges[k]), int(edges[k + 1])) for k in range(workers) if edges[k + 1] > edges[k]]
@@ -472,14 +533,38 @@ def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
         raise ValueError('keep= must be a list of names, not a function, when the run is shared between processes')
     parts: List[Dict[str, Any]] = [None] * len(slices)  # type: ignore[list-item]
     done = 0
-    with cf.ProcessPoolExecutor(max_workers=len(slices)) as pool:
-        futures = {pool.submit(_pool_slice, (raw, opts, lo, hi)): n for n, (lo, hi) in enumerate(slices)}
-        for fut in cf.as_completed(futures):
-            n = futures[fut]
-            parts[n] = fut.result()
-            done += parts[n]['to'] - parts[n]['from']
-            if on_progress:
+    # Spawned processes with one thread per numerical library, as a split's
+    # parts are (``_one_thread_each`` in ./split.py): the realisations are the
+    # parallelism here, and a BLAS that starts a thread per core in each of
+    # several processes spends the machine waiting. Processes start as the
+    # slices are handed in, which is when they take their environment.
+    import multiprocessing as mp
+    from .split import _one_thread_each, _without_main
+    ctx = mp.get_context('spawn')
+    heard = ctx.Queue() if on_progress is not None else None
+    counts = [0] * len(slices)
+    with cf.ProcessPoolExecutor(max_workers=len(slices), mp_context=ctx, initializer=_start_slice_worker,
+                                initargs=(heard,)) as pool:
+        with _one_thread_each(), _without_main():
+            futures = {pool.submit(_pool_slice, (raw, opts, lo, hi, n)): n for n, (lo, hi) in enumerate(slices)}
+        pending = set(futures)
+        while pending:
+            finished, pending = cf.wait(pending, timeout=0.1, return_when=cf.FIRST_COMPLETED)
+            while heard is not None:
+                try:
+                    n, count = heard.get_nowait()
+                except queue_module.Empty:
+                    break
+                counts[n] = max(counts[n], count)
+            for fut in finished:
+                n = futures[fut]
+                parts[n] = fut.result()
+                counts[n] = parts[n]['to'] - parts[n]['from']
+            if on_progress is not None and sum(counts) > done:
+                done = sum(counts)
                 on_progress(done, total)
+    if heard is not None:
+        heard.close()
     first = parts[0]
     values = [np.concatenate([p['values'][w] for p in parts], axis=0) for w in range(len(first['values']))]
     samples = np.concatenate([p['samples'] for p in parts], axis=1)

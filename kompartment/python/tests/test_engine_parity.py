@@ -129,6 +129,38 @@ class BuildParity(unittest.TestCase):
                     self.assertEqual(j['pattern'].nnz, js['nnz'])
                     self.assertEqual(len(j['groups']), js['colours'])
 
+    def test_the_derivative_leaves_out_what_only_results_read(self) -> None:
+        # As the application's builder.js does: lookup-driver's concentration
+        # and dose follow the state, but only results read them, so the
+        # derivative and its Jacobian leave them out and the results still
+        # have them, from the pass that works everything out.
+        model = example('lookup-driver')
+        s = build_system(Project(model))
+        b = s.builder
+        self.assertEqual(sorted(a.name for a in b.algebraic if a.cls == 2), ['Conc_lake', 'Dose'])
+        self.assertIsNotNone(b.derivative_blocks)
+        self.assertFalse({'Conc_lake', 'Dose'} & b.derivative_blocks)
+        self.assertNotIn('X[', s.source['moving_derivative'])
+        rng = np.random.default_rng(3)
+        j = s.jacobian
+        self.assertTrue(j['available'], j.get('reason'))
+        for t in (10.0, 5000.0, 15000.0):
+            y = rng.uniform(0.0, 1e9, s.nstate)
+            d = s.dydt(t, y).copy()
+            s.evaluate_algebraic(t, y)
+            self.assertTrue(np.array_equal(d, s._assemble(t, y, s.X)), t)
+            J = j['pattern'].matrix(j['evaluate'](t, y)).toarray()
+            for c in range(s.nstate):
+                h = 1e-6 * max(1.0, abs(y[c]))
+                yh = y.copy()
+                yh[c] += h
+                np.testing.assert_allclose(J[:, c], (s.dydt(t, yh) - d) / (yh[c] - y[c]), rtol=1e-6, atol=1e-12)
+        res = run(Project(model))
+        by = {o['label']: o for o in res.outputs()}
+        dose = res.series(by['Dose [I-129]'])
+        np.testing.assert_array_equal(dose, res.series(by['Conc_lake [I-129]']) * 1.1e-7)
+        self.assertGreater(float(dose[-1]), 0.0)
+
     def test_a_jacobian_infinite_at_the_start_is_refused(self) -> None:
         # The application's refuseNonFinite: d/dB of k*sqrt(B)*B at an empty B.
         import kompartment as kp

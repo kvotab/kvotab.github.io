@@ -3946,7 +3946,9 @@ class Model:
     def run_probabilistic(self, iterations: int = 100, *, seed: int = 1, **opts: Any) -> Any:
         """A probabilistic run over the model's distributions (see
         :func:`kompartment.engine.probabilistic.run_probabilistic`): keep=,
-        latin=, varied=, workers=, tornado=, gsa=."""
+        latin=, varied=, workers=, tornado=, gsa=. ``progress=True`` shows how
+        far it has got and how long it has left; ``on_progress(done, total)``
+        is called after every realisation, for a display of your own."""
         from .engine.probabilistic import run_probabilistic
         return run_probabilistic(self.project(), iterations=iterations, seed=seed, **opts)
 

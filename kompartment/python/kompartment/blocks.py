@@ -96,13 +96,14 @@ FARF_EQUATION_KEYS = ('tw', 'f', 'aw', 'aperture', 'kd_f', 'kd_m', 'de_m', 'eps_
 FARF_NUCLIDE_KEYS = ('kd_f', 'eps_m', 'kd_m', 'de_m')
 FARF_STRUCTURE_KEYS = ('n_f', 'n_m', 'o_b', 'n_b')
 #: What a new path starts with: the reference implementation's physics, the
-#: semi-infinite outlet (4) with its extra cells worked out ('') and matched
-#: matrix layers. A saved path that does not mention the last three meant the
-#: reference implementation's: see ``FARF_LEGACY`` in :mod:`kompartment.keys`.
+#: semi-infinite outlet (4) with its extra cells worked out ('') and 12 matched
+#: matrix layers. A saved path that does not mention the outlet, its extra
+#: cells, the grid or the layer count meant the reference implementation's (and
+#: 20 layers): see ``FARF_LEGACY`` in :mod:`kompartment.keys`.
 FARF_DEFAULTS: Dict[str, Any] = {
     'method': 'discretized',
     'tw': '100', 'surface': 'f', 'f': '1e5', 'kd_f': '0', 'kd_m': '0', 'de_m': '1e-4', 'eps_m': '0.0018',
-    'rho_m': '2700', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '', 'n_f': 20, 'n_m': 20,
+    'rho_m': '2700', 'pe': '10', 'pen_dep': '12.5', 'pen_dep_0': '', 'n_f': 20, 'n_m': 12,
     'o_b': 4, 'n_b': '', 'grid': 'matched', 'handle_decay': True, 'report_cells': False,
 }
 #: The optional settings a path may also be given (the other ways of giving

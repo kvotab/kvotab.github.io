@@ -406,6 +406,16 @@ class _Analytic:
         self.n = system.nstate
         self.moving = b.slot_class
         deps = state_dependencies(system)
+        # Only the blocks the derivative reads have a part in its Jacobian: a
+        # dose that follows the state but only results read is left out, as
+        # the derivative leaves it out (`_Builder._derivative_reads`).
+        self.keep = b.derivative_blocks
+        if self.keep is not None:
+            kept = np.zeros(max(1, b.nalg), dtype=bool)
+            for a in b.algebraic:
+                if a.name in self.keep and a.width:
+                    kept[a.base:a.base + a.width] = True
+            deps = {s: c for s, c in deps.items() if kept[s]}
         # The gradients' structure: one sparse row per slot that reads the state.
         self.g_rows = sorted(deps)
         self.g_row_of = {s: k for k, s in enumerate(self.g_rows)}
@@ -450,7 +460,7 @@ class _Analytic:
     def _plan_statements(self) -> None:
         b = self.b
         for a in b.algebraic:
-            if a.cls != 2:
+            if a.cls != 2 or (self.keep is not None and a.name not in self.keep):
                 continue
             for s in b.alg_stmts[a.name]:
                 if s.code is not None:
@@ -807,7 +817,7 @@ class _Analytic:
 
     def evaluate(self, t: float, y: np.ndarray) -> np.ndarray:
         system = self.system
-        X = system.evaluate_algebraic(t, y)
+        X = system.evaluate_for_derivative(t, y)
         with np.errstate(all='ignore'):
             G = self._gradients(y, X, t) if self.g_nnz else np.zeros(0)
             J = np.zeros(self.pattern.nnz)

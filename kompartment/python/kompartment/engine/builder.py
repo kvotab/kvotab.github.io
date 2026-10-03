@@ -607,6 +607,7 @@ class _Builder:
         self._assembly()
         self._jumps()
         self._decay_tables()
+        self._derivative_reads()
         self._initial_state()
 
     def _semi_loop(self, e: 'BuildError') -> 'BuildError':
@@ -1716,6 +1717,83 @@ class _Builder:
         self.slot_class = slot_class
         self.on_state = on_state
         self.on_clock = on_clock
+
+    # --- which of the moving blocks the derivative reads ----------------------------------------
+
+    def _derivative_reads(self) -> None:
+        """The moving blocks the derivative's phases read, and whatever those
+        read in turn (``derivativeReads`` in the application's builder.js).
+
+        The moving pass works out every block that follows the state: those
+        the derivative reads, and those only a result, a recorder or an event
+        reads -- a dose, a concentration. The derivative and its Jacobian
+        leave the second kind out; ``System.evaluate_algebraic`` still works
+        everything out. ``derivative_stmts`` is the moving pass without them,
+        in the same order, and ``derivative_blocks`` their names: both None
+        when nothing is left out, or when a phase is one this does not know,
+        so that the derivative runs every block as it always did.
+
+        What the phases read is in them: rate slots, released and explicit
+        terms, a hazard, an event's rate and share, a running mean's target, a
+        far-field path's settings. What a block reads is its statements'
+        ``X`` leaves and its ``reads_alg``, which holds the ``needs`` of the
+        blocks with code of their own (a path's release names its settings,
+        and a semi-analytical one the rates that flow into it).
+        """
+        self.derivative_blocks: Optional[Set[str]] = None
+        self.derivative_stmts: Optional[List[Stmt]] = None
+        slots: List[np.ndarray] = []
+        for ph in self.phases:
+            kind = ph[0]
+            if kind == 'transfers':
+                slots.append(self.flux_rate[np.asarray(ph[2], dtype=np.int64)])
+            elif kind in ('x', 'mean'):
+                slots.append(np.asarray(ph[2], dtype=np.int64))
+            elif kind == 'waste':
+                slots.append(np.array([ph[3]], dtype=np.int64))
+                slots.append(np.asarray(ph[4], dtype=np.int64))
+            elif kind == 'move':
+                slots.append(np.array([ph[3], ph[4]], dtype=np.int64))
+            elif kind == 'farf':
+                slots.append(np.asarray(self.FARF[ph[1]].setting_idx, dtype=np.int64).ravel())
+            elif kind != 'coef':
+                return
+        # A jump reads X as the derivative left it: a waste package's fraction
+        # released at once, an event's shares (see `_jumps`). Read here too.
+        for W in self.waste_layout:
+            if W.width:
+                slots.append(W.setting['irf'].base + np.arange(W.width, dtype=np.int64))
+        for D in self.disruption_layout:
+            slots.extend(np.array([s.base], dtype=np.int64) for s in D.shares)
+        owner = np.full(max(1, self.nalg), -1, dtype=np.int64)
+        for k, a in enumerate(self.algebraic):
+            if a.width:
+                owner[a.base:a.base + a.width] = k
+        index = {a.name: k for k, a in enumerate(self.algebraic)}
+        need: Set[int] = set()
+        if slots:
+            got = owner[np.concatenate(slots)]
+            need.update(int(k) for k in np.unique(got[got >= 0]))
+        stack = list(need)
+        while stack:
+            a = self.algebraic[stack.pop()]
+            more = [index[n] for n in a.reads_alg if n in index]
+            for s in self.alg_stmts[a.name]:
+                if s.tree is None:
+                    continue
+                for leaf in codegen.leaves(s.tree):
+                    if leaf.kind == 'X':
+                        got = owner[np.atleast_1d(np.asarray(leaf.index, dtype=np.int64))]
+                        more.extend(int(k) for k in got[got >= 0])
+            for k in more:
+                if k not in need:
+                    need.add(k)
+                    stack.append(k)
+        if all(k in need for k, a in enumerate(self.algebraic) if a.cls == 2):
+            return
+        self.derivative_blocks = {self.algebraic[k].name for k in need}
+        self.derivative_stmts = [s for k, a in enumerate(self.algebraic) if a.cls == 2 and k in need
+                                 for s in self.alg_stmts[a.name]]
 
     # --- the derivative ------------------------------------------------------------------------
 
