@@ -1,0 +1,509 @@
+/* ==========================================================================
+   GITARR - the guitar tuner (gitarr.html)
+
+   One screen and no scrolling: the page bar, the headstock and the panel
+   with the meter share the height between the site's header and footer, and
+   on a phone, where those are not shown, the whole screen. The headstock
+   takes what the others leave (a grid row of minmax(0, 1fr), the SVG
+   scaled to fit), so a short screen gets a smaller guitar rather than a
+   page that scrolls.
+   ========================================================================== */
+
+.gt-body {
+  /* How far out the string is: the meter's mark, the message and the
+     arrows on the drawing. */
+  --gt-off: #c64f22;
+  --gt-near: #946100;
+  --gt-ok: #2b8546;
+  --gt-ok-soft: rgba(43, 133, 70, 0.14);
+  /* The arrows and highlights on the drawing sit on wood, on chrome and on
+     the page, so they are one bright colour with a dark edge in either
+     theme. */
+  --gt-arrow: #ff7b22;
+  --gt-arrow-near: #ffc02e;
+  --gt-arrow-edge: #2a1406;
+  --gt-green: #43c463;
+  --gt-picked: #f3b87b;
+}
+[data-theme="dark"] .gt-body {
+  --gt-off: #f08b5c;
+  --gt-near: #e7bd4e;
+  --gt-ok: #74d08d;
+  --gt-ok-soft: rgba(116, 208, 141, 0.16);
+}
+
+/* The page never scrolls as a whole: kvot.css sizes .content between the
+   header and the footer. Pinned, a phone can neither drag the page about
+   nor bounce it, and a double tap does not zoom it (pinching still does).
+   A pinned body leaves <html> zero high, so <html> paints the background. */
+html { overflow: hidden; overscroll-behavior: none; touch-action: manipulation; background: var(--bg-primary); }
+body.gt-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; }
+
+.gt-content {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  font-family: verdana, sans-serif;
+}
+
+.gt {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 460px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 14px 24px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "stage top" "stage panel";
+  gap: 6px 32px;
+  color: var(--text-primary);
+}
+
+.gt-sr {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  margin: 0;
+}
+
+/* ── The page bar ─────────────────────────────────────────────────────── */
+
+.gt-top { grid-area: top; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gt-brand { display: none; align-items: center; gap: 10px; min-width: 0; }
+.gt-homelink { display: flex; border-radius: 6px; flex: none; }
+.gt-homelink:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
+.gt-homelink img { display: block; width: 28px; height: 28px; }
+.gt-title {
+  margin: 0;
+  font-family: RawengulkSans, verdana, sans-serif;
+  font-weight: normal;
+  font-size: 1.45rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gt-top-end { display: flex; gap: 8px; margin-left: auto; }
+
+.gt-iconbtn, .gt-top-end > .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  flex: none;
+}
+.gt-top-end > .theme-toggle { display: none; font-size: 17px; line-height: 1; }
+.gt-iconbtn:hover, .gt-top-end > .theme-toggle:hover { color: var(--text-primary); border-color: var(--accent-line); transform: none; }
+.gt-iconbtn:focus-visible, .gt-top-end > .theme-toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+/* A phone never shows the site's header and footer: a narrow screen, or a
+   touch screen turned on its side, where height is what is short. kvot.css
+   places .content by these two heights, so zero is all it takes. */
+@media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
+  :root { --header-height: 0px; --footer-height: 0px; }
+  body.gt-body > header, body.gt-body > footer, body.gt-body > .nav-toggle,
+  body.gt-body > #menu, body.gt-body > #kvotmap { display: none; }
+  .gt-brand { display: flex; }
+  .gt-top-end > .theme-toggle { display: inline-flex; }
+}
+
+/* ── The headstock ────────────────────────────────────────────────────── */
+
+.gt-stage { grid-area: stage; position: relative; min-height: 0; min-width: 0; }
+.gt-guitar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The six keys can be pressed: each picks its string. */
+.gt-key { cursor: pointer; outline: none; }
+.gt-key-face { transition: filter .2s; }
+.gt-key:hover .gt-key-face { filter: brightness(1.07); }
+.gt-key-ring { fill: none; stroke: transparent; stroke-width: 5; transition: stroke .15s; }
+.gt-key:focus-visible .gt-key-ring { stroke: var(--accent-line); stroke-dasharray: 6 5; }
+.gt-key-letter { font: 700 24px verdana, sans-serif; fill: #262b30; pointer-events: none; }
+.gt-key-check { display: none; pointer-events: none; }
+.gt-key-check circle { fill: var(--gt-green); stroke: #0d3a19; stroke-width: 1.2; }
+.gt-key-check path { fill: none; stroke: #fff; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.gt-key.is-tuned .gt-key-check { display: inline; }
+
+/* Picked by the player: a pale ring that stays while the page listens for
+   that string alone. */
+.gt-key.is-picked .gt-key-ring { stroke: var(--gt-picked); stroke-dasharray: 7 5; stroke-width: 3; }
+
+/* The string being tuned: its key glows and its string lights up. */
+.gt-key-halo { fill: transparent; pointer-events: none; transition: fill .15s; }
+.gt-key.is-active .gt-key-halo { fill: var(--gt-arrow); opacity: .85; }
+.gt-key.is-active.is-near .gt-key-halo { fill: var(--gt-arrow-near); }
+.gt-key.is-active.is-ok .gt-key-halo { fill: var(--gt-green); }
+.gt-key.is-active.is-ok .gt-key-ring { stroke: var(--gt-green); stroke-width: 3.5; stroke-dasharray: none; }
+.gt-key.is-active.is-ok .gt-key-face { fill: url(#gt-chrome-ok); }
+.gt-key.is-active.is-quiet .gt-key-halo { opacity: .4; }
+
+.gt-string-glow { fill: none; stroke: transparent; transition: stroke .15s; }
+.gt-string-glow.is-active { stroke: var(--gt-arrow); opacity: .5; }
+.gt-string-glow.is-active.is-near { stroke: var(--gt-arrow-near); }
+.gt-string-glow.is-active.is-ok { stroke: var(--gt-green); opacity: .6; }
+.gt-string-glow.is-picked { stroke: var(--gt-picked); opacity: .35; }
+.gt-string-glow.is-active.is-quiet { opacity: .25; }
+/* A sounding string trembles below the nut. */
+.gt-string.is-live .gt-string-neck { animation: gt-tremble 90ms linear infinite alternate; }
+@keyframes gt-tremble { from { transform: translateX(-0.7px); } to { transform: translateX(0.7px); } }
+
+/* The turning arrows. A key turns about its own shaft, which runs across
+   the picture, so its arrow is a loop around the key: the stroke in front
+   of the key shows which way the key's front moves, and the dashes march
+   that way. A post turns in the plane of the picture, so its arrow simply
+   spins. */
+.gt-turn { display: none; pointer-events: none; }
+.gt-key.is-turn .gt-turn { display: inline; }
+.gt-turn-edge { fill: none; stroke: var(--gt-arrow-edge); stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; }
+.gt-turn-line { fill: none; stroke: var(--gt-arrow); stroke-width: 6.5; stroke-linecap: round; stroke-linejoin: round; }
+.gt-turn-head { fill: var(--gt-arrow); stroke: var(--gt-arrow-edge); stroke-width: 2; stroke-linejoin: round; }
+.gt-turn-back { fill: none; stroke: var(--gt-arrow); stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 2.5 6; opacity: .9; }
+.gt-turn-march { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 3 11; opacity: .95;
+  animation: gt-march var(--gt-speed, 1s) linear infinite; }
+@keyframes gt-march { to { stroke-dashoffset: -14; } }
+.gt-key.is-near .gt-turn-line, .gt-key.is-near .gt-turn-back { stroke: var(--gt-arrow-near); }
+.gt-key.is-near .gt-turn-head { fill: var(--gt-arrow-near); }
+
+/* Stripes across the key that roll the way its front moves. */
+.gt-roll { display: none; }
+.gt-key.is-turn .gt-roll { display: inline; }
+.gt-roll line { stroke: #3d454c; stroke-width: 2.6; opacity: .38; }
+.gt-roll line.gt-roll-lit { stroke: #ffffff; stroke-width: 2; opacity: .8; }
+.gt-roll-inner { animation: gt-roll-up var(--gt-speed, 1s) linear infinite; }
+.gt-key[data-front="down"] .gt-roll-inner { animation-name: gt-roll-down; }
+@keyframes gt-roll-up { from { transform: translateY(0); } to { transform: translateY(-14px); } }
+@keyframes gt-roll-down { from { transform: translateY(0); } to { transform: translateY(14px); } }
+
+.gt-spin { display: none; pointer-events: none; }
+.gt-post.is-turn .gt-spin { display: inline; }
+.gt-spin-inner { animation: gt-spin-cw calc(var(--gt-speed, 1s) * 2.4) linear infinite; }
+.gt-post[data-turn="ccw"] .gt-spin-inner { animation-name: gt-spin-ccw; }
+@keyframes gt-spin-cw { to { transform: rotate(360deg); } }
+@keyframes gt-spin-ccw { to { transform: rotate(-360deg); } }
+.gt-spin-line { fill: none; stroke: var(--gt-arrow); stroke-width: 2.6; stroke-linecap: round; }
+.gt-spin-head { fill: var(--gt-arrow); }
+.gt-post.is-near .gt-spin-line { stroke: var(--gt-arrow-near); }
+.gt-post.is-near .gt-spin-head { fill: var(--gt-arrow-near); }
+
+/* In tune: a green pulse round the key. */
+.gt-pulse { fill: none; stroke: var(--gt-green); stroke-width: 3; opacity: 0; pointer-events: none; }
+.gt-key.is-pulse .gt-pulse { animation: gt-pulse .9s ease-out 2; }
+@keyframes gt-pulse { from { opacity: .9; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+.gt-pulse { transform-box: fill-box; transform-origin: center; }
+
+/* All six in tune. */
+.gt-done {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  width: max-content;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 8px);
+  box-sizing: border-box;
+  padding: 6px 6px 6px 14px;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  border: 2px solid var(--gt-ok);
+  box-shadow: 0 6px 18px var(--shadow-color);
+  font-weight: bold;
+  color: var(--gt-ok);
+  z-index: 2;
+}
+.gt-done[hidden] { display: none; }
+.gt-done .gt-btn { min-height: 36px; padding: 4px 12px; font-weight: normal; color: var(--text-primary); }
+
+/* ── The panel ────────────────────────────────────────────────────────── */
+
+.gt-panel { grid-area: panel; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-top: 6px; }
+
+.gt-readout { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-height: 1.6em; }
+.gt-what { font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gt-what b { font-size: 1.35rem; }
+.gt-cents { font-size: 1.05rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-secondary); }
+.gt-panel.is-quiet .gt-what, .gt-panel.is-quiet .gt-cents { opacity: .6; }
+
+/* The meter: −50 to +50 cents, the middle ±5 in green, and a round mark
+   with the note's name that slides along it. */
+.gt-meter { --gt-mark: 38px; }
+.gt-track {
+  position: relative;
+  height: var(--gt-mark);
+  margin: 0 calc(var(--gt-mark) / 2);
+}
+.gt-track::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--gt-mark) / -2);
+  right: calc(var(--gt-mark) / -2);
+  top: 50%;
+  height: 10px;
+  transform: translateY(-50%);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+}
+.gt-zone {
+  position: absolute;
+  top: 50%;
+  left: 45%;
+  width: 10%;
+  height: 18px;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: var(--gt-ok-soft);
+  border: 1.5px solid var(--gt-ok);
+  box-sizing: border-box;
+}
+.gt-ticks {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(to right, var(--text-muted) 1px, transparent 1px);
+  background-size: 10% 100%;
+  background-position: 0 0;
+  background-repeat: repeat-x;
+  -webkit-mask: linear-gradient(to bottom, transparent 0 24%, #000 24% 36%, transparent 36% 64%, #000 64% 76%, transparent 76%);
+  mask: linear-gradient(to bottom, transparent 0 24%, #000 24% 36%, transparent 36% 64%, #000 64% 76%, transparent 76%);
+  opacity: .7;
+  width: calc(100% + 1px);
+}
+.gt-mark {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--gt-mark);
+  height: var(--gt-mark);
+  margin-left: calc(var(--gt-mark) / -2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-color);
+  color: var(--text-muted);
+  font-weight: bold;
+  font-size: 1rem;
+  box-shadow: 0 2px 6px var(--shadow-color);
+  will-change: left;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.gt-meter[data-state="off"] .gt-mark { background: var(--gt-off); border-color: var(--gt-off); color: #fff; }
+.gt-meter[data-state="near"] .gt-mark { background: var(--gt-near); border-color: var(--gt-near); color: #fff; }
+.gt-meter[data-state="ok"] .gt-mark { background: var(--gt-ok); border-color: var(--gt-ok); color: #fff; }
+[data-theme="dark"] .gt-meter[data-state] .gt-mark { color: #1a1410; }
+.gt-meter[data-state="idle"] .gt-mark, .gt-panel.is-quiet .gt-mark { opacity: .55; }
+.gt-scale { display: flex; justify-content: space-between; margin-top: 2px; font-size: .78rem; color: var(--text-muted); }
+
+.gt-msg {
+  margin: 0;
+  min-height: 2.6em;
+  font-size: 1.12rem;
+  line-height: 1.3;
+  font-weight: bold;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.gt-msg[data-state="off"] { color: var(--gt-off); }
+.gt-msg[data-state="near"] { color: var(--gt-near); }
+.gt-msg[data-state="ok"] { color: var(--gt-ok); }
+.gt-msg[data-state="error"] { color: var(--accent-text); font-weight: normal; font-size: .98rem; }
+.gt-msg[data-state="info"] { font-weight: normal; color: var(--text-secondary); }
+.gt-panel.is-quiet .gt-msg { opacity: .65; }
+
+.gt-controls { display: flex; align-items: center; gap: 10px; }
+
+.gt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 1rem;
+  min-height: 46px;
+  padding: 8px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.gt-btn:hover:not(:disabled) { border-color: var(--accent-line); }
+.gt-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.gt-btn-go { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: bold; }
+.gt-btn-go:hover:not(:disabled) { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+.gt-btn-quiet { background: transparent; border-color: var(--border-color); }
+#gt-start { min-width: 132px; }
+#gt-start.is-on { background: transparent; color: var(--text-primary); border-color: var(--input-border); font-weight: normal; }
+
+.gt-chip {
+  font: inherit;
+  font-size: .95rem;
+  min-height: 40px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.gt-chip[aria-pressed="true"] { background: var(--bg-secondary); color: var(--text-primary); border-color: var(--input-border); }
+.gt-chip[aria-pressed="true"]::before { content: '✓ '; }
+.gt-chip:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+/* What the microphone hears: five bars, lit by level. */
+.gt-level { display: inline-flex; align-items: flex-end; gap: 3px; height: 22px; margin-left: auto; opacity: .35; transition: opacity .2s; }
+.gt-level.is-on { opacity: 1; }
+.gt-level i { display: block; width: 5px; border-radius: 2px; background: var(--border-color); }
+.gt-level i:nth-child(1) { height: 6px; }
+.gt-level i:nth-child(2) { height: 9px; }
+.gt-level i:nth-child(3) { height: 13px; }
+.gt-level i:nth-child(4) { height: 17px; }
+.gt-level i:nth-child(5) { height: 21px; }
+.gt-level i.is-lit { background: var(--accent-success); }
+
+.gt-howto {
+  margin: 8px 0 0;
+  padding: 14px 14px 14px 34px;
+  border-radius: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  font-size: .9rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.gt-howto li + li { margin-top: 4px; }
+.gt-howto b { color: var(--text-primary); }
+
+.gt-noscript { position: fixed; left: 16px; right: 16px; top: 60px; text-align: center; }
+
+/* ── Dialogs ──────────────────────────────────────────────────────────── */
+
+.gt-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(86vh, 760px);
+  max-height: min(86dvh, 760px);
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--modal-bg);
+  color: var(--text-primary);
+  box-shadow: 0 18px 50px var(--shadow-color);
+  font-family: verdana, sans-serif;
+  overflow: hidden;
+}
+.gt-dialog[open] { display: flex; flex-direction: column; }
+.gt-dialog::backdrop { background: var(--overlay-bg); }
+.gt-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px 20px; border-bottom: 1px solid var(--border-color); }
+.gt-dialog-head h2 { margin: 0; font-family: RawengulkSans, verdana, sans-serif; font-weight: normal; font-size: 1.4rem; }
+.gt-dialog-body { padding: 12px 20px 20px; overflow-y: auto; overscroll-behavior: contain; font-size: .95rem; line-height: 1.55; }
+.gt-dialog-body h3 { margin: 18px 0 6px; font-size: 1rem; }
+.gt-dialog-body ol, .gt-dialog-body ul { margin: 6px 0; padding-left: 22px; }
+.gt-dialog-body li + li { margin-top: 6px; }
+.gt-small { font-size: .85rem; color: var(--text-secondary); margin: 6px 0 0; }
+.gt-table { border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.gt-table th, .gt-table td { padding: 4px 18px 4px 0; text-align: left; border-bottom: 1px solid var(--table-border); }
+.gt-table th { font-weight: normal; color: var(--text-secondary); }
+.gt-table td:last-child, .gt-table th:last-child { text-align: right; padding-right: 0; }
+.gt-check { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border-color); cursor: pointer; }
+.gt-check input { margin-top: 4px; flex: none; }
+.gt-check small { display: block; margin-top: 3px; font-size: .85rem; color: var(--text-secondary); }
+.gt-dialog-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+/* ── Phones ───────────────────────────────────────────────────────────── */
+
+/* Stacked - the guitar above the panel - on phones upright, and on a
+   tablet or a narrow window that is taller than wide, where two columns
+   would leave the guitar a thin strip. */
+@media (max-width: 680px), (orientation: portrait) and (max-width: 1100px) {
+  .gt {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "top" "stage" "panel";
+    gap: 4px;
+    padding: 8px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .gt-panel { gap: 6px; padding-top: 0; width: 100%; max-width: 560px; justify-self: center; }
+  .gt-howto { display: none; }
+}
+
+@media (max-width: 680px) {
+  .gt-msg { font-size: 1.05rem; }
+  .gt-meter { --gt-mark: 34px; }
+  .gt-btn { min-height: 44px; }
+}
+
+/* A phone on its side: the guitar on the left, the rest on the right. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .gt {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "stage top" "stage panel";
+    gap: 4px 18px;
+    padding: 6px max(14px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px));
+  }
+  .gt-panel { gap: 6px; padding-top: 0; justify-content: center; }
+  .gt-howto { display: none; }
+  .gt-msg { font-size: 1rem; min-height: 2.6em; }
+  .gt-meter { --gt-mark: 32px; }
+  .gt-btn { min-height: 42px; }
+}
+
+/* Narrow phones: the frequency gives way before the string's name does. */
+@media (max-width: 380px) {
+  .gt-hz { display: none; }
+  .gt-title { font-size: 1.2rem; }
+}
+
+/* Short phones upright (an iPhone SE in Safari is 375 × 548). */
+@media (max-width: 680px) and (max-height: 600px) {
+  .gt-title { font-size: 1.25rem; }
+  .gt-iconbtn, .gt-top-end > .theme-toggle { width: 36px; height: 36px; }
+  .gt-homelink img { width: 24px; height: 24px; }
+  .gt-scale { display: none; }
+  .gt-msg { font-size: 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* !important: the per-direction rules above are more specific */
+  .gt-turn-march, .gt-roll-inner, .gt-spin-inner, .gt-string-neck, .gt-pulse { animation: none !important; }
+}
+
+@media print {
+  html { overflow: visible; }
+  body.gt-body { position: static; }
+}

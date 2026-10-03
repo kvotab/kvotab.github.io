@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Gitarrstämmare — kvot ab</title>
+  <meta name="description" content="Stäm en akustisk gitarr i standardstämning, E A D G B E, med mikrofonen i mobilen eller datorn. Sidan hör vilken sträng du slår an och visar på gitarrhuvudet vilken stämskruv du ska vrida, och åt vilket håll.">
+  <link rel="canonical" href="https://kvotab.se/gitarr.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Gitarrstämmare — kvot ab">
+  <meta property="og:description" content="Stäm gitarren med mikrofonen: sidan hör strängen och visar vilken skruv du ska vrida, och åt vilket håll.">
+  <meta property="og:url" content="https://kvotab.se/gitarr.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/gitarr.css?v=20261003">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body class="gt-body">
+<header></header>
+<div class="content gt-content">
+<main class="gt" id="gt">
+
+  <!-- The page bar. On a phone the site's header and footer are not shown,
+       and the kvot mark, the title and the theme switch stand in for them. -->
+  <div class="gt-top">
+    <div class="gt-brand">
+      <a class="gt-homelink" href="./index.html"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: startsidan" width="28" height="28"></a>
+      <h1 class="gt-title">Gitarrstämmare</h1>
+    </div>
+    <div class="gt-top-end">
+      <button type="button" class="gt-iconbtn" data-on-click="gt:help" aria-label="Så här stämmer du" title="Så här stämmer du">
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.6"/><path d="M6.1 6.2a2 2 0 0 1 3.8.6c0 1.3-1.9 1.6-1.9 2.8"/><path d="M8 11.9v.1"/></svg>
+      </button>
+      <button type="button" class="gt-iconbtn" data-on-click="gt:settings" aria-label="Inställningar" title="Inställningar">
+        <!-- a gear: eight teeth on a 5.15 to 7 radius, and the hole in its middle -->
+        <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.1"/><path d="M6.75 3L6.97 1.08A7 7 0 0 1 9.03 1.08L9.25 3A5.15 5.15 0 0 1 10.65 3.59L12.16 2.37A7 7 0 0 1 13.63 3.84L12.41 5.35A5.15 5.15 0 0 1 13 6.75L14.92 6.97A7 7 0 0 1 14.92 9.03L13 9.25A5.15 5.15 0 0 1 12.41 10.65L13.63 12.16A7 7 0 0 1 12.16 13.63L10.65 12.41A5.15 5.15 0 0 1 9.25 13L9.03 14.92A7 7 0 0 1 6.97 14.92L6.75 13A5.15 5.15 0 0 1 5.35 12.41L3.84 13.63A7 7 0 0 1 2.37 12.16L3.59 10.65A5.15 5.15 0 0 1 3 9.25L1.08 9.03A7 7 0 0 1 1.08 6.97L3 6.75A5.15 5.15 0 0 1 3.59 5.35L2.37 3.84A7 7 0 0 1 3.84 2.37L5.35 3.59A5.15 5.15 0 0 1 6.75 3Z"/></svg>
+      </button>
+      <button type="button" class="theme-toggle" data-on-click="kvot:toggleTheme">🌙</button>
+    </div>
+  </div>
+
+  <!-- The headstock, drawn by gitarr.js. Each key is a button: tapping one
+       tunes that string only. -->
+  <div class="gt-stage" id="gt-stage">
+    <svg class="gt-guitar" id="gt-guitar" viewBox="0 26 400 562" role="group"
+         aria-label="Gitarrhuvudet framifrån, med en stämskruv för varje sträng"></svg>
+    <div class="gt-done" id="gt-done" role="status" hidden>
+      <span>Alla sex strängar är stämda!</span>
+      <button type="button" class="gt-btn gt-btn-quiet" data-on-click="gt:again">Stäm igen</button>
+    </div>
+  </div>
+
+  <section class="gt-panel" id="gt-panel" aria-label="Stämningen">
+    <div class="gt-readout">
+      <div class="gt-what" id="gt-what">Ingen sträng än</div>
+      <div class="gt-cents" id="gt-cents"></div>
+    </div>
+    <div class="gt-meter" id="gt-meter" aria-hidden="true">
+      <div class="gt-track">
+        <div class="gt-zone"></div>
+        <div class="gt-ticks"></div>
+        <div class="gt-mark" id="gt-mark"><span id="gt-mark-note"></span></div>
+      </div>
+      <div class="gt-scale"><span>för lågt</span><span>rätt</span><span>för högt</span></div>
+    </div>
+    <p class="gt-msg" id="gt-msg">Tryck på Starta och tillåt mikrofonen.</p>
+    <div class="gt-controls">
+      <button type="button" class="gt-btn gt-btn-go" id="gt-start" data-on-click="gt:start">
+        <svg class="gt-mic" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="5.6" y="1.6" width="4.8" height="8" rx="2.4"/><path d="M3.4 7.6a4.6 4.6 0 0 0 9.2 0M8 12.2v2.2"/></svg>
+        <span id="gt-start-label">Starta</span>
+      </button>
+      <button type="button" class="gt-chip" id="gt-auto" data-on-click="gt:auto" aria-pressed="true"
+              title="Sidan väljer själv strängen den hör">Auto</button>
+      <span class="gt-level" id="gt-level" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+    </div>
+    <ol class="gt-howto">
+      <li>Tryck på <b>Starta</b> och tillåt mikrofonen.</li>
+      <li>Slå an <b>en</b> lös sträng i taget och låt den klinga.</li>
+      <li>Skruven som lyser är strängens. Vrid lite i taget åt pilens håll och slå an igen.</li>
+      <li>När markören står i mitten och skruven blir <b>grön</b> är strängen stämd.</li>
+    </ol>
+    <p class="gt-sr" id="gt-say" aria-live="polite"></p>
+  </section>
+
+</main>
+</div>
+
+<dialog class="gt-dialog" id="gt-help" aria-labelledby="gt-help-title">
+  <div class="gt-dialog-head">
+    <h2 id="gt-help-title">Så här stämmer du</h2>
+    <button type="button" class="gt-iconbtn" data-on-click="gt:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="gt-dialog-body">
+    <ol>
+      <li>Tryck på <b>Starta</b> och tillåt sidan att använda mikrofonen.</li>
+      <li>Slå an <b>en</b> lös sträng i taget och låt den klinga.</li>
+      <li>Sidan hör vilken sträng det är och lyser upp dess stämskruv. Pilen runt skruven visar åt vilket håll du ska vrida.</li>
+      <li>Vrid lite i taget och slå an igen. När markören står i mitten och skruven blir <b>grön</b> är strängen stämd.</li>
+    </ol>
+    <h3>Bra att veta</h3>
+    <ul>
+      <li><b>Bilden visar gitarren framifrån</b>, med huvudet uppåt. E, A och D har sina skruvar till vänster och G, B och E till höger. B kallas också H.</li>
+      <li><b>Pilen runt skruven</b> visar åt vilket håll skruvens framsida ska röra sig. Den lilla pilen runt stiftet, där strängen är lindad, visar hur stiftet snurrar.
+        På de flesta gitarrer spänns strängen när skruven vrids moturs, sett från skruvens ände. Går tonen åt fel håll när du vrider, så vrid tillbaka och kryssa i
+        <i>Mina skruvar går åt andra hållet</i> under inställningarna.</li>
+      <li><b>Stäm upp mot tonen.</b> Är strängen för hög, släpp efter så att den hamnar lite under, och spänn den sedan upp till rätt ton. Då håller stämningen bättre.</li>
+      <li><b>Långt från rätt ton?</b> En ny sträng kan ligga flera toner fel, och då kan sidan ta den för en annan sträng. Tryck på strängens skruv i bilden, så lyssnar sidan bara efter den. Tryck på <b>Auto</b> för att gå tillbaka.</li>
+      <li>När en sträng stäms ändras spänningen i halsen lite. Gå gärna igenom strängarna en gång till.</li>
+    </ul>
+    <h3>Strängarna</h3>
+    <table class="gt-table">
+      <thead><tr><th>Sträng</th><th>Ton</th><th>Frekvens</th></tr></thead>
+      <tbody id="gt-table-body"></tbody>
+    </table>
+    <p class="gt-small">Standardstämning med kammartonen A = 440 Hz.</p>
+    <h3>Mikrofonen</h3>
+    <p>Ljudet analyseras bara här i webbläsaren. Inget spelas in och inget skickas någonstans. Mikrofonen stängs när du trycker på Stoppa,
+      när du byter flik eller app, och efter tre minuter utan gitarrljud.</p>
+  </div>
+</dialog>
+
+<dialog class="gt-dialog" id="gt-settings" aria-labelledby="gt-settings-title">
+  <div class="gt-dialog-head">
+    <h2 id="gt-settings-title">Inställningar</h2>
+    <button type="button" class="gt-iconbtn" data-on-click="gt:close" aria-label="Stäng">✕</button>
+  </div>
+  <div class="gt-dialog-body">
+    <label class="gt-check"><input type="checkbox" name="reverse" data-on-change="gt:setting">
+      <span>Mina skruvar går åt andra hållet<small>Vänder pilen runt skruven, för gitarrer där skruven spänner strängen medurs.</small></span></label>
+    <label class="gt-check"><input type="checkbox" name="lefty" data-on-change="gt:setting">
+      <span>Vänsterhänt gitarr<small>Spegelvänder gitarrhuvudet: E, A och D till höger.</small></span></label>
+    <div class="gt-dialog-foot">
+      <button type="button" class="gt-btn gt-btn-go" data-on-click="gt:close">Klar</button>
+    </div>
+  </div>
+</dialog>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<noscript><p class="gt-noscript">Gitarrstämmaren behöver JavaScript.</p></noscript>
+<script src="./resources/js/kvot-errors.js?v=20260921"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20261003"></script>
+<script src="./resources/js/gitarr-pitch.js?v=20261003"></script>
+<script src="./resources/js/gitarr.js?v=20261003"></script>
+<script>
+  KVOT.renderHeader('Gitarrstämmare');
+  KVOT.renderNav('gitarr.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  GT.init();
+</script>
+</body>
+</html>
