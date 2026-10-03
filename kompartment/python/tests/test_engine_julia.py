@@ -1,7 +1,10 @@
-"""The six ported DifferentialEquations.jl solvers against the application's.
+"""The ported DifferentialEquations.jl solvers against the application's.
 
 ``kompartment.engine.solvers.julia`` ports ``src/ode/julia/`` and its adapter
-``src/ode/julia-solvers.js``. Four kinds of check, all against the
+``src/ode/julia-solvers.js``: the six methods first ported (``SOLVERS``) and
+the five that came with the default algorithm (``NEW``) -- the switching
+solver ``auto``, the matrix-free ``fbdf_krylov``, ``rosenbrock23``, and the
+explicit ``tsit5`` and ``vern7``. Six kinds of check, all against the
 application's own code run in Node:
 
 * ``Tables``: what has no floating point to argue about -- the tableaux, the
@@ -12,15 +15,22 @@ application's own code run in Node:
   the same functions to the last bit (Robertson, a decay chain with Bateman's
   closed form, van der Pol, HIRES, terminal events, non-negative states, a
   clock-driven forcing, a chain restarted late in a run just after a jump),
-  through all six methods and a spread of options:
-  every count the adapter reports, the rows, where a run stopped, the errors.
-* ``BitIdentity``: the same runs, and two bundled examples through the
-  runner, with the two things this port does differently from the package
-  put back -- a transcription of the package's dense LU in place of LAPACK's,
-  and V8's own ``Math.pow`` values (asked of Node for every argument a run
-  meets) in place of the C library's ``pow`` -- are the application's step
-  for step, bit for bit.
-* ``Examples``: every bundled example with each of the six ids, through the
+  through all eleven methods -- the explicit ones not on Robertson, which is
+  too stiff for them -- and a spread of options: every count the adapter
+  reports, the switching solver's account of its methods and GMRES's
+  iterations, the rows, where a run stopped, the errors.
+* ``Switching``, ``Krylov`` and ``Explicit``: what came with the default
+  algorithm, on its own -- which method took every saved row, the switch's
+  options, the carry from one solve of a run to the next, the run log's
+  line; GMRES, and the matrix-free FBDF on 600 states; Vern7's lazy stages,
+  an explicit method forming no matrix, OrdinaryDiffEq's starting step.
+* ``BitIdentity``: the same runs, and bundled examples through the runner,
+  with the two things this port does differently from the package put back
+  -- a transcription of the package's dense LU in place of LAPACK's, and V8's
+  own ``Math.pow`` values (asked of Node for every argument a run meets) in
+  place of the C library's ``pow`` -- are the application's step for step,
+  bit for bit.
+* ``Examples``: every bundled example with each of the ids, through the
   application's runner and this engine's.
 
 Why the counts carry a margin. ``BitIdentity`` shows that the port's own
@@ -58,7 +68,10 @@ from kompartment.engine.project import Project
 from kompartment.engine.runner import run as run_project
 from kompartment.engine.solvers import SolverError
 from kompartment.engine.solvers import julia as ported
-from kompartment.engine.solvers.julia import _js, controller, linalg, newton
+from kompartment.engine.solvers.julia import _js, controller, linalg, methods, newton
+from kompartment.engine.solvers.julia.adapter import _jacobian_for
+from kompartment.engine.solvers.julia.integrator import ODEError, ODEProblem
+from kompartment.engine.solvers.julia.integrator import solve as package_solve
 from kompartment.engine.solvers.julia.jacobian import colour_columns
 from kompartment.engine.solvers.julia.linalg import reverse_cuthill_mckee
 from kompartment.engine.solvers.julia.methods import fbdf as fbdf_module
@@ -67,6 +80,21 @@ from kompartment.engine.solvers.julia.methods import radau as radau_module
 from kompartment.engine.solvers.julia.methods import tableaus
 
 SOLVERS = ('fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2')
+# The five that came with the default algorithm (2026-10-03): the switching
+# solver, the matrix-free FBDF, and the three methods it switches between.
+NEW = ('auto', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
+EVERY = SOLVERS + NEW
+# Held to the edge of their stability on a stiff problem.
+EXPLICIT = ('tsit5', 'vern7')
+STIFF = SOLVERS + ('auto', 'fbdf_krylov', 'rosenbrock23')
+# The ones a matrix or a Jacobian setting means anything to.
+MATRIX = SOLVERS + ('auto', 'rosenbrock23')
+# Too stiff for an explicit method: Robertson it cannot cross in any number of
+# steps worth taking, and on HIRES it runs at the edge of its stability, where
+# whether a step is rejected is decided in the last bits (Vern7: 2 rejections
+# in 7540 steps here against 5 in the application, the same run bit for bit
+# with V8's pow).
+TOO_STIFF = ('robertson', 'hires')
 COUNTS = ('nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves')
 
 # The application's option names, as the bridge takes them, and this engine's.
@@ -221,6 +249,54 @@ def functions(name: str) -> Tuple[Callable[[float, np.ndarray], np.ndarray], Cal
         def jac(t: float, y: np.ndarray) -> np.ndarray:
             return np.array([[-1e-4, 0, 0, 0], [1e-4, -0.01, 0, 0],
                              [0, 0.01, -1e-3, 0], [0, 0, 1e-3, 0]], dtype=float)
+    elif name == 'vdp1000':
+        def f(t: float, y: np.ndarray) -> np.ndarray:
+            return np.array([y[1], 1000 * ((1 - y[0] * y[0]) * y[1]) - y[0]])
+
+        def jac(t: float, y: np.ndarray) -> np.ndarray:
+            return np.array([[0.0, 1.0], [-2000 * y[0] * y[1] - 1, 1000 * (1 - y[0] * y[0])]])
+    elif name == 'kepler':
+        def f(t: float, y: np.ndarray) -> np.ndarray:
+            r2 = y[0] * y[0] + y[1] * y[1]
+            r3 = r2 * math.sqrt(r2)
+            return np.array([y[2], y[3], -y[0] / r3, -y[1] / r3])
+
+        def jac(t: float, y: np.ndarray) -> np.ndarray:
+            r2 = y[0] * y[0] + y[1] * y[1]
+            r = math.sqrt(r2)
+            r3 = r2 * r
+            r5 = r3 * r2
+            return np.array([[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0],
+                             [-1 / r3 + 3 * y[0] * y[0] / r5, 3 * y[0] * y[1] / r5, 0.0, 0.0],
+                             [3 * y[0] * y[1] / r5, -1 / r3 + 3 * y[1] * y[1] / r5, 0.0, 0.0]])
+    elif name == 'idle':
+        def f(t: float, y: np.ndarray) -> np.ndarray:
+            return np.array([y[1], -y[0], 0.0])
+
+        def jac(t: float, y: np.ndarray) -> np.ndarray:
+            return np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    elif name == 'heat':
+        dx = 1 / (n + 1)
+        c = 1 / (dx * dx)
+
+        def f(t: float, y: np.ndarray) -> np.ndarray:
+            left = np.concatenate([[0.0], y[:-1]])
+            right = np.concatenate([y[1:], [0.0]])
+            return (left - 2 * y + right) / (dx * dx)
+
+        def jac(t: float, y: np.ndarray) -> np.ndarray:
+            return np.diag(np.full(n, -2 * c)) + np.diag(np.full(n - 1, c), 1) + np.diag(np.full(n - 1, c), -1)
+    elif name in ('chain120', 'long_chain'):
+        k = np.array(info['rates'], dtype=float)
+
+        def f(t: float, y: np.ndarray) -> np.ndarray:
+            d = np.empty(n)
+            d[0] = -k[0] * y[0]
+            d[1:] = k[:-1] * y[:-1] - k[1:] * y[1:]
+            return d
+
+        def jac(t: float, y: np.ndarray) -> np.ndarray:
+            return np.diag(-k) + np.diag(k[:-1], -1)
     else:
         raise KeyError(name)
     return f, jac
@@ -285,21 +361,78 @@ def run_here(name: str, solver: str, opts: Dict[str, Any]) -> Dict[str, Any]:
             'accepted': accepted, 'calls': calls[0]}
 
 
+# The package's algorithms by the bridge's names (``MAKE`` in julia_solvers.mjs),
+# and the package's options in the port's spelling.
+PACKAGE_ALGORITHMS: Dict[str, Callable[..., Any]] = {
+    'Tsit5': methods.Tsit5, 'Vern7': methods.Vern7, 'Rosenbrock23': methods.Rosenbrock23,
+    'Rodas5P': methods.Rodas5P, 'FBDF': methods.FBDF, 'DefaultODEAlgorithm': methods.DefaultODEAlgorithm,
+    'DefaultImplicitODEAlgorithm': methods.DefaultImplicitODEAlgorithm,
+    'AutoTsit5Rodas5P': lambda **o: methods.AutoAlgSwitch(methods.Tsit5(), methods.Rodas5P(), **o),
+}
+PACKAGE_NAMES = {'saveEverystep': 'save_everystep', 'nonNegative': 'non_negative', 'stillIsStiff': 'still_is_stiff',
+                 'firstPredictor': 'first_predictor', 'maxOrder': 'max_order', 'minOrder': 'min_order',
+                 'autoAbstol': 'auto_abstol', 'belowTolRun': 'below_tol_run', 'maxSteps': 'max_steps'}
+
+
+def run_package(name: str, alg: str, alg_options: Optional[Dict[str, Any]] = None,
+                opts: Optional[Dict[str, Any]] = None, jacobian: bool = True) -> Dict[str, Any]:
+    """The package's own solve with one of its algorithms, as the bridge's
+    ``package`` task runs it: t, u, stats (the package's), retcode, message
+    and the method of every saved row."""
+    info = problems()[name]
+    n = info['n']
+    f, jac = functions(name)
+    col_ptr = np.array(info['colPtr'], dtype=np.int64)
+    rows = np.array(info['rowIdx'], dtype=np.int64)
+    pattern = Pattern(n, rows, np.repeat(np.arange(n), np.diff(col_ptr)))
+    handed = (_jacobian_for({'pattern': pattern,
+                             'evaluate': lambda t, y: jac(t, y)[pattern.row_idx, pattern.col_of]})
+              if jacobian else None)
+    problem = ODEProblem(f, np.array(info['y0'], dtype=float), (info['grid'][0], info['grid'][-1]), jac=handed,
+                         jac_pattern=(col_ptr, rows))
+    made = PACKAGE_ALGORITHMS[alg](**{PACKAGE_NAMES.get(k, k): v for k, v in (alg_options or {}).items()})
+    settings = {PACKAGE_NAMES.get(k, k): v for k, v in (opts or {}).items()}
+    try:
+        with np.errstate(all='ignore'):
+            sol = package_solve(problem, made, settings)
+    except ODEError as e:
+        return {'error': str(e)}
+    return {'t': [float(v) for v in sol.t], 'u': [row.tolist() for row in sol.u], 'stats': sol.stats,
+            'retcode': sol.retcode, 'message': sol.message,
+            'algChoice': None if sol.alg_choice is None else sol.alg_choice.tolist()}
+
+
 def within(mine: float, theirs: float, share: float, least: float) -> bool:
     return abs(mine - theirs) <= max(least, share * abs(theirs))
 
 
+# The matrix-free FBDF's work is GMRES's iterations, one f each, and how many a
+# solve takes turns on whether a residual falls under its threshold: a step
+# size a last bit apart moves that by an iteration here and there while the
+# steps stay the same. Measured on the problems: the same steps, f evaluations
+# up to 3.5 % apart and GMRES iterations up to 5.3 % (two_events: 419 f
+# against 434, 143 iterations against 151), every one of them the
+# application's run bit for bit with V8's pow.
+GMRES_SHARE = 0.05
+GMRES_ITERATIONS_SHARE = 0.1
+
+
 def counts_agree(mine: Dict[str, Any], theirs: Dict[str, Any]) -> List[str]:
     """What is outside the margin: steps within max(2, 1 %), and every other
-    count within the same share or two steps' worth of it."""
+    count within the same share or two steps' worth of it -- f evaluations of
+    a run that solved by GMRES within GMRES_SHARE, and its iterations too."""
     bad = []
     steps = theirs['nsteps'] or 1
+    gmres = theirs.get('krylovIters') is not None
     for key in COUNTS:
         a, b = mine[key], theirs[key]
         per_step = abs(b) / steps
         least = 2 if key == 'nsteps' else 2 * max(1.0, per_step)
-        if not within(a, b, 0.01, least):
+        share = GMRES_SHARE if (gmres and key == 'nfevals') else 0.01
+        if not within(a, b, share, least):
             bad.append(f'{key} {a} against {b}')
+    if gmres and not within(mine.get('krylov_iters') or 0, theirs['krylovIters'], GMRES_ITERATIONS_SHARE, 2):
+        bad.append(f"GMRES iterations {mine.get('krylov_iters')} against {theirs['krylovIters']}")
     return bad
 
 
@@ -436,6 +569,15 @@ def _key(x: float, y: float) -> Tuple[bytes, bytes]:
     return struct.pack('<d', float(x)), struct.pack('<d', float(y))
 
 
+def _package_patches(pow_fn: Callable[[float, float], float]) -> List[Any]:
+    """The pow given in every module that takes one, and the package's dense LU."""
+    patches = [mock.patch.object(m, 'jpow', pow_fn)
+               for m in (_js, controller, newton, fbdf_module, qndf_module, radau_module)]
+    patches += [mock.patch.object(linalg.DenseLU, 'factor', PackageDenseLU.factor),
+                mock.patch.object(linalg.DenseLU, 'solve', PackageDenseLU.solve)]
+    return patches
+
+
 @contextmanager
 def as_the_package_computes() -> Iterator[Dict[Tuple[bytes, bytes], Tuple[float, float]]]:
     """The package's dense LU, and V8's pow wherever it is known; the
@@ -450,10 +592,7 @@ def as_the_package_computes() -> Iterator[Dict[Tuple[bytes, bytes], Tuple[float,
         missing[k] = (float(x), float(y))
         return platform_pow(x, y)
 
-    patches = [mock.patch.object(m, 'jpow', v8_pow)
-               for m in (_js, controller, newton, fbdf_module, qndf_module, radau_module)]
-    patches += [mock.patch.object(linalg.DenseLU, 'factor', PackageDenseLU.factor),
-                mock.patch.object(linalg.DenseLU, 'solve', PackageDenseLU.solve)]
+    patches = _package_patches(v8_pow)
     for p in patches:
         p.start()
     try:
@@ -461,6 +600,41 @@ def as_the_package_computes() -> Iterator[Dict[Tuple[bytes, bytes], Tuple[float,
     finally:
         for p in reversed(patches):
             p.stop()
+
+
+@contextmanager
+def asking_v8_at_every_call() -> Iterator[None]:
+    """The package's dense LU, and V8's pow asked of a Node process
+    (tests/node/v8_pow.mjs) at every call it has not answered before: one
+    pass however long the run, where until_known can need a round for each
+    argument on which V8's pow and the platform's differ (1249 along the
+    9751 steps of the chain of 120 at reltol 1e-6)."""
+    assert NODE is not None
+    oracle = subprocess.Popen([NODE, str(HERE / 'node' / 'v8_pow.mjs')],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    assert oracle.stdin is not None and oracle.stdout is not None
+    ask, answer = oracle.stdin, oracle.stdout
+
+    def v8_pow(x: float, y: float) -> float:
+        k = _key(x, y)
+        v = _V8_POW.get(k)
+        if v is None:
+            ask.write(k[0].hex().encode() + b' ' + k[1].hex().encode() + b'\n')
+            ask.flush()
+            v = _V8_POW[k] = struct.unpack('<d', bytes.fromhex(answer.readline().decode().strip()))[0]
+        return v
+
+    patches = _package_patches(v8_pow)
+    for p in patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        ask.close()
+        oracle.wait(timeout=60)
+        answer.close()
 
 
 def until_known(attempts: List[Callable[[], Any]], passes: int = 400) -> List[Any]:
@@ -509,32 +683,37 @@ NEWTON = ('fbdf', 'qndf', 'radau5', 'kencarp4', 'trbdf2')
 
 
 def _runs() -> List[Tuple[str, str, Dict[str, Any]]]:
-    """Every problem with every method, then the options the adapter maps."""
-    runs = [(name, s, dict(opts)) for name, opts in BASE.items() for s in SOLVERS]
+    """Every problem with every method -- the explicit ones not where they
+    cannot get through -- then the options the adapter maps, each with the
+    methods that read it."""
+    runs = [(name, s, dict(opts)) for name, opts in BASE.items() for s in EVERY
+            if not (s in EXPLICIT and name in TOO_STIFF)]
     rob = BASE['robertson']
     variants: List[Tuple[str, Tuple[str, ...], Dict[str, Any]]] = [
-        ('robertson', SOLVERS, {**rob, 'errorNorm': 'max'}),
-        ('robertson', SOLVERS, {'rtol': 1e-5, 'abstol': [1e-8, 1e-12, 1e-8]}),
-        ('hires', SOLVERS, {**BASE['hires'], 'autoUpdateAbsTol': True}),
-        ('chain', SOLVERS, {**BASE['chain'], 'matrix': 'dense'}),
-        ('hires', SOLVERS, {**BASE['hires'], 'matrix': 'sparse'}),
-        ('hires', SOLVERS, {**BASE['hires'], 'matrix': 'refactor'}),
-        ('chain', SOLVERS, {**BASE['chain'], 'jacobian': 'none'}),
-        ('chain', SOLVERS, {**BASE['chain'], 'jacobian': 'declined'}),
-        ('vdp', SOLVERS, {**BASE['vdp'], 'jacobian': 'none'}),
-        ('vdp', SOLVERS, {**BASE['vdp'], 'hmax': 0.05}),
-        ('robertson', SOLVERS, {**rob, 'h0': 1e-5}),
-        ('robertson', ('fbdf', 'qndf'), {**rob, 'maxOrder': 3}),
-        ('robertson', ('fbdf', 'qndf'), {**rob, 'minOrder': 2, 'maxOrder': 4.0}),
+        ('robertson', STIFF, {**rob, 'errorNorm': 'max'}),
+        ('vdp', EXPLICIT, {**BASE['vdp'], 'errorNorm': 'max'}),
+        ('robertson', STIFF, {'rtol': 1e-5, 'abstol': [1e-8, 1e-12, 1e-8]}),
+        ('hires', STIFF, {**BASE['hires'], 'autoUpdateAbsTol': True}),
+        ('chain', EXPLICIT, {**BASE['chain'], 'autoUpdateAbsTol': True}),
+        ('chain', MATRIX, {**BASE['chain'], 'matrix': 'dense'}),
+        ('hires', MATRIX, {**BASE['hires'], 'matrix': 'sparse'}),
+        ('hires', MATRIX, {**BASE['hires'], 'matrix': 'refactor'}),
+        ('chain', MATRIX, {**BASE['chain'], 'jacobian': 'none'}),
+        ('chain', MATRIX, {**BASE['chain'], 'jacobian': 'declined'}),
+        ('vdp', MATRIX, {**BASE['vdp'], 'jacobian': 'none'}),
+        ('vdp', EVERY, {**BASE['vdp'], 'hmax': 0.05}),
+        ('robertson', STIFF, {**rob, 'h0': 1e-5}),
+        ('robertson', ('fbdf', 'qndf', 'fbdf_krylov'), {**rob, 'maxOrder': 3}),
+        ('robertson', ('fbdf', 'qndf', 'fbdf_krylov'), {**rob, 'minOrder': 2, 'maxOrder': 4.0}),
         ('robertson', ('qndf', 'fbdf'), {**rob, 'bdf': True}),
-        ('hires', NEWTON, {**BASE['hires'], 'newtonKappa': 1e-2}),
+        ('hires', NEWTON + ('fbdf_krylov',), {**BASE['hires'], 'newtonKappa': 1e-2}),
         ('hires', NEWTON, {**BASE['hires'], 'maxJacAge': 5}),
-        ('robertson', SOLVERS, {**rob, 'belowTolRun': 3}),
-        ('robertson', SOLVERS, {**rob, 'endsOnly': True}),
-        ('event', SOLVERS, {**BASE['event'], 'endsOnly': True}),
-        ('robertson', SOLVERS, {**rob, 'maxSteps': 40}),
-        ('hires', SOLVERS, {**BASE['hires'], 'abortAfter': 7}),
-        ('robertson', ('rodas5p', 'fbdf'), {**rob, 'grid': [0.5, 0.5]}),
+        ('robertson', STIFF, {**rob, 'belowTolRun': 3}),
+        ('robertson', STIFF, {**rob, 'endsOnly': True}),
+        ('event', EVERY, {**BASE['event'], 'endsOnly': True}),
+        ('robertson', EVERY, {**rob, 'maxSteps': 40}),
+        ('hires', EVERY, {**BASE['hires'], 'abortAfter': 7}),
+        ('robertson', ('rodas5p', 'fbdf', 'auto'), {**rob, 'grid': [0.5, 0.5]}),
     ]
     for name, solvers, opts in variants:
         runs += [(name, s, dict(opts)) for s in solvers]
@@ -561,8 +740,11 @@ class Tables(unittest.TestCase):
     def test_the_tableaux_are_the_packages(self) -> None:
         js = bridge('tableaus')
         mine = {'rodas5p': tableaus.RODAS5P, 'radau5': tableaus.RADAU_IIA5,
-                'trbdf2': tableaus.TRBDF2, 'kencarp4': tableaus.KENCARP4}
-        snake = {'errorOrder': 'error_order', 'interpOrder': 'interp_order'}
+                'trbdf2': tableaus.TRBDF2, 'kencarp4': tableaus.KENCARP4,
+                'tsit5': tableaus.TSIT5, 'vern7': tableaus.VERN7}
+        self.assertEqual(sorted(js), sorted(mine))
+        snake = {'errorOrder': 'error_order', 'interpOrder': 'interp_order', 'stabilitySize': 'stability_size',
+                 'extraC': 'extra_c', 'extraA': 'extra_a', 'interpStages': 'interp_stages'}
         for key, table in js.items():
             for field, value in table.items():
                 if field == 'stifflyAccurate':
@@ -644,6 +826,36 @@ class Problems(unittest.TestCase):
         self.assertGreater(total, 150)
         self.assertGreaterEqual(exact / total, 0.85, f'{exact} of {total} runs have every count the same')
 
+    def test_the_switch_and_gmres_give_the_applications_account(self) -> None:
+        """The switching solver's steps by method and its switches, and the
+        matrix-free FBDF's GMRES iterations, under this engine's names: the
+        application's where the two took the same steps, and adding up
+        either way."""
+        switched = krylov = 0
+        for name, solver, opts, theirs, mine in self.pairs():
+            if 'error' in theirs or 'error' in mine:
+                continue
+            with self.subTest(problem=name, solver=solver, opts=opts):
+                js, here = theirs['stats'], mine['stats']
+                self.assertEqual('steps_by' in here, js.get('stepsBy') is not None)
+                self.assertEqual('krylov_iters' in here, js.get('krylovIters') is not None)
+                self.assertNotIn('stepsBy', here)
+                if js.get('stepsBy') is not None:
+                    switched += 1
+                    self.assertEqual(solver, 'auto')
+                    # Every accepted step is one method's.
+                    self.assertEqual(sum(here['steps_by'].values()), here['nsteps'] - here['nfailed'])
+                    self.assertEqual(list(here['steps_by']), list(js['stepsBy']))
+                    if all(here[k] == js[k] for k in COUNTS):
+                        self.assertEqual(here['steps_by'], js['stepsBy'])
+                        self.assertEqual(here['switches'], js['switches'])
+                if js.get('krylovIters') is not None:
+                    krylov += 1
+                    self.assertEqual(solver, 'fbdf_krylov')
+                    self.assertEqual((here['npds'], here['ndecomps']), (0, 0))
+        self.assertGreater(switched, 10)
+        self.assertGreater(krylov, 10)
+
     def test_the_rows_are_the_applications(self) -> None:
         for name, solver, opts, theirs, mine in self.pairs():
             if 'error' in theirs or 'error' in mine:
@@ -681,7 +893,9 @@ class Problems(unittest.TestCase):
         # And the stops are where the problem says: y = e^-t reaches 0.25 at ln 4.
         for name, solver, opts, theirs, mine in self.pairs():
             if name == 'event' and 'error' not in mine:
-                tol = 1e-4 if solver == 'trbdf2' else 1e-6
+                # The two second-order methods are held to less: 5.4e-6 at
+                # worst when written, Rosenbrock23's.
+                tol = 1e-4 if solver == 'trbdf2' else 1e-5 if solver == 'rosenbrock23' else 1e-6
                 self.assertLess(abs(mine['stopped']['t'] - math.log(4)), tol, solver)
 
     def test_the_earlier_of_two_events_stops_the_run(self) -> None:
@@ -731,7 +945,7 @@ class Problems(unittest.TestCase):
                 # written, TRBDF2's, which is second order.
                 y = np.array(mine['y'], dtype=float)[1:, :3]
                 self.assertLess(np.max(np.abs(y - exact[1:]) / np.abs(exact[1:])), 1e-4)
-        self.assertEqual(seen, 6)
+        self.assertEqual(seen, len(EVERY))
 
     def test_they_fail_as_the_application_fails(self) -> None:
         failures = 0
@@ -759,7 +973,8 @@ class Problems(unittest.TestCase):
                 elif opts.get('grid') == [0.5, 0.5]:
                     self.assertEqual(mine['error'], 'Simulation start and end time are equal')
                     self.assertEqual(mine['code'], 'span')
-        self.assertEqual(failures, 6 + 6 + 2)
+        # The step budget and the stop, with every method; equal ends, with three.
+        self.assertEqual(failures, 2 * len(EVERY) + 3)
 
     def test_the_chain_is_batemans(self) -> None:
         """Absolute accuracy, not only agreement: the decay chain against its
@@ -784,6 +999,428 @@ class Problems(unittest.TestCase):
                 self.assertLess(np.max(np.abs(y[-1] - exact[-1])), 1e-4)
 
 
+# The package-level runs of the switch, each a problem, an algorithm and the
+# package's options: stiff from the start and small (Robertson, HIRES, a
+# chain of twelve), stiff with non-stiff stretches (van der Pol at mu = 1000,
+# seven switches), not stiff at all (Kepler), a state at rest beside an
+# oscillator, and the switch's options. On every one the port takes the
+# application's steps with the platform's pow: the switch is decided on
+# verdicts with room to spare.
+SWITCH_RUNS: List[Dict[str, Any]] = [
+    {'problem': 'robertson', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-6, 'abstol': 1e-10}},
+    {'problem': 'robertson', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-3, 'abstol': 1e-6}},
+    {'problem': 'robertson', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-8, 'abstol': 1e-10}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-3, 'abstol': 1e-6}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-6, 'abstol': 1e-8}},
+    {'problem': 'hires', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-3, 'abstol': 1e-6}},
+    {'problem': 'hires', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-8, 'abstol': 1e-10}},
+    {'problem': 'kepler', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-3, 'abstol': 1e-6}},
+    {'problem': 'kepler', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-8, 'abstol': 1e-10}},
+    {'problem': 'chain', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-6, 'abstol': 1e-12}},
+    {'problem': 'idle', 'alg': 'DefaultODEAlgorithm', 'opts': {}},
+    {'problem': 'idle', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'stillIsStiff': True}, 'opts': {}},
+    {'problem': 'vdp1000', 'alg': 'DefaultImplicitODEAlgorithm', 'opts': {}},
+    {'problem': 'vdp1000', 'alg': 'AutoTsit5Rodas5P', 'opts': {}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'maxstiffstep': 2, 'maxnonstiffstep': 1},
+     'opts': {}},
+    # FBDF in the switch, factorising: a chain of 120 compartments.
+    {'problem': 'chain120', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-3, 'abstol': 1e-6}},
+]
+
+
+def runs_of(choice: List[int]) -> List[Tuple[int, int]]:
+    """A choice per row as runs of (method, rows)."""
+    out: List[List[int]] = []
+    for a in choice:
+        if out and out[-1][0] == a:
+            out[-1][1] += 1
+        else:
+            out.append([a, 1])
+    return [(a, k) for a, k in out]
+
+
+@needs_app
+class Switching(unittest.TestCase):
+    """The default algorithm's switch: which method took every saved row, the
+    steps each took, the log of switches, and its options -- the
+    application's, run for run; then the carry from one solve of a run to the
+    next, and the run log's account."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.theirs = bridge('package', runs=SWITCH_RUNS)['runs']
+        cls.mine = [run_package(r['problem'], r['alg'], r.get('algOptions'), r.get('opts')) for r in SWITCH_RUNS]
+
+    def test_every_row_was_taken_by_the_applications_method(self) -> None:
+        for r, js, mine in zip(SWITCH_RUNS, self.theirs, self.mine):
+            with self.subTest(**r):
+                self.assertNotIn('error', js)
+                self.assertEqual(mine['retcode'], js['retcode'], mine['message'])
+                self.assertEqual(mine['algChoice'], js['algChoice'])
+                for key in ('naccept', 'nreject', 'nf', 'njacs', 'nw', 'nsolve', 'stepsBy', 'switches', 'lastAlg',
+                            'algorithms'):
+                    self.assertEqual(mine['stats'][key], js['stats'][key], key)
+                self.assertEqual([(e['from'], e['to']) for e in mine['stats']['switchLog']],
+                                 [(e['from'], e['to']) for e in js['stats']['switchLog']])
+                # The same steps, each a last bit apart in size -- a step size
+                # goes through a pow -- and so at times up to 3e-6 apart
+                # (Robertson at 1e-8, 5e-7 at a switch on the chain), with the
+                # states at the end round-off apart (6.5e-5 tolerance units at
+                # worst when written).
+                for a, b in zip(mine['stats']['switchLog'], js['stats']['switchLog']):
+                    self.assertLessEqual(abs(a['t'] - b['t']), 1e-5 * max(1.0, abs(b['t'])))
+                self.assertEqual(len(mine['t']), len(js['t']))
+                self.assertEqual(mine['t'][-1], js['t'][-1])
+                rtol, atol = r['opts'].get('reltol', 1e-3), r['opts'].get('abstol', 1e-6)
+                end, end_js = np.array(mine['u'][-1]), np.array(js['u'][-1])
+                self.assertLess(float(np.max(np.abs(end - end_js) / (atol + rtol * np.abs(end_js)))), 1e-3)
+
+    def test_the_switch_does_what_it_says(self) -> None:
+        by = {(r['problem'], r['alg'], json.dumps(r.get('algOptions')), json.dumps(r['opts'])): m
+              for r, m in zip(SWITCH_RUNS, self.mine)}
+
+        def run(problem: str, alg: str = 'DefaultODEAlgorithm', options: Any = None, **opts: Any) -> Dict[str, Any]:
+            return by[(problem, alg, json.dumps(options), json.dumps(opts))]
+        # Every accepted step is one method's, and every saved row says whose.
+        for m in self.mine:
+            self.assertEqual(sum(m['stats']['stepsBy'].values()), m['stats']['naccept'])
+            self.assertEqual(len(m['algChoice']), len(m['t']))
+            self.assertEqual(m['stats']['switches'], len(m['stats']['switchLog']))
+        # Van der Pol at mu = 1000: seven switches between Tsit5 and
+        # Rosenbrock23, as OrdinaryDiffEq makes them.
+        vdp = run('vdp1000', reltol=1e-3, abstol=1e-6)
+        self.assertEqual(vdp['stats']['switches'], 7)
+        self.assertEqual(set(vdp['algChoice']), {1, 3})
+        self.assertEqual((vdp['stats']['switchLog'][0]['from'], vdp['stats']['switchLog'][0]['to']),
+                         ('Tsit5', 'Rosenbrock23'))
+        # Below a relative tolerance of 1e-6 the pair is Vern7 and Rodas5P.
+        self.assertEqual(set(run('robertson', reltol=1e-8, abstol=1e-10)['stats']['stepsBy']), {'Vern7', 'Rodas5P'})
+        kepler = run('kepler', reltol=1e-8, abstol=1e-10)
+        self.assertEqual((list(kepler['stats']['stepsBy']), kepler['stats']['switches']), (['Vern7'], 0))
+        # The stiff side first, and the stiff side throughout.
+        implicit = run('vdp1000', 'DefaultImplicitODEAlgorithm')
+        self.assertEqual((implicit['algChoice'][0], implicit['stats']['switches']), (3, 0))
+        pair = run('vdp1000', 'AutoTsit5Rodas5P')
+        self.assertEqual(list(pair['stats']['stepsBy']), ['Tsit5', 'Rodas5P'])
+        self.assertGreaterEqual(pair['stats']['switches'], 2)
+        # A state at rest does not make a non-stiff problem stiff -- unless
+        # read as Julia reads it.
+        self.assertEqual(run('idle')['stats']['switches'], 0)
+        self.assertGreater(run('idle', options={'stillIsStiff': True})['stats']['switches'], 0)
+        # The thresholds are the switch's: three stiff verdicts switch, not eleven.
+        eager = run('vdp1000', options={'maxstiffstep': 2, 'maxnonstiffstep': 1})
+        self.assertLess(runs_of(eager['algChoice'])[0][1], runs_of(vdp['algChoice'])[0][1])
+
+    def test_a_run_restarted_goes_on_with_the_method_it_had(self) -> None:
+        """The carry: one dict for every solve of a run, in which ``auto``
+        keeps whether it ended stiff -- through the adapter, as the
+        application's, and through the runner, where a run restarts at its
+        events."""
+        grids = [[0, 1, 10, 100], [100, 1e3, 1e4]]
+        js = bridge('carry', runs=[{'problem': 'robertson', 'opts': {'rtol': 1e-6, 'abstol': 1e-10}, 'grids': grids}])
+        theirs = js['runs'][0]['solves']
+        f, jac = functions('robertson')
+        info = problems()['robertson']
+        n = info['n']
+        col_ptr = np.array(info['colPtr'], dtype=np.int64)
+        pattern = Pattern(n, np.array(info['rowIdx'], dtype=np.int64), np.repeat(np.arange(n), np.diff(col_ptr)))
+        jacobian = {'pattern': pattern, 'available': True,
+                    'evaluate': lambda t, y: jac(t, y)[pattern.row_idx, pattern.col_of]}
+
+        def solves(carried: bool) -> List[Dict[str, Any]]:
+            carry: Dict[str, Any] = {}
+            y = np.array(info['y0'], dtype=float)
+            out = []
+            for grid in grids:
+                opts = {'rtol': 1e-6, 'abstol': 1e-10, 'jacobian': jacobian, 'carry': carry if carried else {}}
+                r = ported.auto(f, np.array(grid, dtype=float), y, opts)
+                out.append({'stats': r['stats'], 'carry': dict(carry), 'y': r['y']})
+                y = r['y'][-1]
+            return out
+        mine = solves(True)
+        for k, (a, b) in enumerate(zip(mine, theirs)):
+            with self.subTest(solve=k):
+                self.assertEqual(a['carry'], b['carry'])
+                self.assertEqual(a['stats']['steps_by'], b['stats']['stepsBy'])
+                self.assertEqual(a['stats']['switches'], b['stats']['switches'])
+                self.assertEqual(counts_agree(a['stats'], b['stats']), [])
+        # Stiff after the first, so the second starts there: no Tsit5 at all.
+        self.assertTrue(mine[0]['carry']['stiff'])
+        self.assertGreater(mine[0]['stats']['steps_by']['Tsit5'], 0)
+        self.assertNotIn('Tsit5', mine[1]['stats']['steps_by'])
+        self.assertEqual(mine[1]['stats']['switches'], 0)
+        # Without the carry each solve starts on Tsit5 again.
+        self.assertGreater(solves(False)[1]['stats']['steps_by']['Tsit5'], 0)
+
+        # Through the runner: a stiff model restarted by a discrete event at
+        # t = 5. The solve after it goes on with Rosenbrock23, as the
+        # application's; handed a fresh carry, it would start on Tsit5 again
+        # and take another path altogether.
+        m = kp_model_restarted()
+        js_run = engine('run', model=m, overrides={})
+        res = run_project(Project(json.loads(json.dumps(m))), compiled=False)
+        self.assertEqual(res.stats['events'], 1)
+        self.assertEqual(res.stats['steps_by'], js_run['stats']['stepsBy'])
+        self.assertEqual(res.stats['switches'], js_run['stats']['switches'])
+        from kompartment.engine import solverset
+        handed = solverset.SOLVERS['auto']
+        with mock.patch.dict(solverset.SOLVERS,
+                             {'auto': lambda f, tspan, y0, opts: handed(f, tspan, y0, {**opts, 'carry': {}})}):
+            fresh = run_project(Project(json.loads(json.dumps(m))), compiled=False)
+        self.assertNotEqual(fresh.stats['steps_by'], res.stats['steps_by'])
+
+    def test_a_chain_of_120_at_a_tight_tolerance(self) -> None:
+        """The chain of 120 at reltol 1e-6: Tsit5 and FBDF, back and forth
+        hundreds of times in the application too (OrdinaryDiffEq's FBDF rides
+        through steps the port rejects, and stays stiff; see problems-default.mjs).
+        Which way each verdict goes is decided in the last bits, so the counts
+        are held to the spread of the application's own runs: nudging reltol
+        by 1e-9 relative takes it from 9330 to 10 620 steps and 943 to 1101
+        switches (ten nudges, measured 2026-10-03), and the port's runs lie in
+        the same band (9394 to 9983). Run dense, with V8's pow and the
+        package's LU, the port's run is the application's step for step
+        (BitIdentity.test_runs_too_long_for_until_known)."""
+        opts = {'rtol': 1e-6, 'abstol': 1e-9}
+        js = bridge('solve', runs=[{'problem': 'chain120', 'solver': 'auto', 'opts': opts}])['runs'][0]
+        mine = run_here('chain120', 'auto', opts)
+        here, there = mine['stats'], js['stats']
+        self.assertEqual(list(here['steps_by']), ['Tsit5', 'FBDF'])
+        self.assertEqual(list(there['stepsBy']), ['Tsit5', 'FBDF'])
+        self.assertEqual(sum(here['steps_by'].values()), here['nsteps'] - here['nfailed'])
+        self.assertTrue(within(here['nsteps'], there['nsteps'], 0.15, 2), f"{here['nsteps']} against {there['nsteps']}")
+        self.assertTrue(within(here['switches'], there['switches'], 0.15, 2),
+                        f"{here['switches']} against {there['switches']}")
+        # Each run carries its own error: the two 1.7 to 10.2 tolerance units
+        # apart over the ten nudges.
+        a, b = np.array(mine['y']), np.array(js['y'])
+        self.assertLess(float(np.max(np.abs(a - b) / (opts['abstol'] + opts['rtol'] * np.abs(b)))), 50)
+
+    def test_the_run_log_says_which_methods_took_the_steps(self) -> None:
+        from kompartment.engine import runlog
+        model = example('biosphere')
+        model['simulation']['solver'] = 'auto'
+        res = run_project(Project(json.loads(json.dumps(model))))
+        by = res.stats['steps_by']
+        self.assertEqual(sum(by.values()), res.stats['nsteps'] - res.stats['nfailed'])
+        line = runlog.describe_method_steps(runlog.payload_of(res)['stats'])
+        self.assertRegex(line, r'^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$')
+        log = runlog.run_log(res, build='test')
+        self.assertIn(f'\n  methods: {line}\n', log)
+        self.assertIn(f'methods: {line}', res.summary())
+        self.assertEqual(runlog.payload_of(res)['stats']['stepsBy'], by)
+        # And the application's run of it, logged by both.
+        js_run = engine('run', model=example('biosphere'), overrides={'solver': 'auto'})
+        if all(res.stats.get(k) == js_run['stats'].get(k) for k in COUNTS):
+            self.assertEqual(line, runlog.describe_method_steps(js_run['stats']))
+        # Every other solver is one method, and says nothing of the kind.
+        model['simulation']['solver'] = 'ndf'
+        ndf = run_project(Project(json.loads(json.dumps(model))))
+        self.assertNotIn('steps_by', ndf.stats)
+        self.assertNotIn('methods:', runlog.run_log(ndf, build='test'))
+        self.assertIsNone(runlog.describe_method_steps(ndf.stats))
+
+
+def kp_model_restarted() -> Dict[str, Any]:
+    """A stiff chain (A to B at 1e4 a year) and a discrete event at t = 5,
+    at which the runner starts the solver again."""
+    import kompartment as kp
+    m = kp.Model.new('Stiff and restarted')
+    m.simulation.update(end_time=20, output_points=21, spacing='linear', rtol=1e-6, abstol=1e-10, solver='auto')
+    m.add_compartment('A', initial='1')
+    m.add_compartment('B')
+    m.add_compartment('C')
+    m.add_transfer('A', 'B', rate='1e4')
+    m.add_transfer('B', 'C', rate='0.5')
+    m.add_trigger('Tick', first='time', second='5', direction='rising')
+    m.add_snapshot('At_tick', target='B', trigger='Tick', initial='0')
+    return json.loads(json.dumps(m.to_dict()))
+
+
+@needs_app
+class Krylov(unittest.TestCase):
+    """GMRES, and the FBDF whose Newton iterations it solves without a matrix."""
+
+    def test_gmres_solves_what_a_dense_lu_solves(self) -> None:
+        from kompartment.engine.solvers.julia.krylov import GMRES, sym_givens
+        rng = np.random.default_rng(7)
+        n = 60
+        A = rng.random((n, n)) - 0.5 + 6 * np.eye(n)
+        b = rng.random(n) - 0.5
+        exact = np.linalg.solve(A, b)
+
+        def op(v: np.ndarray) -> np.ndarray:
+            return A @ v
+        g = GMRES(n)
+        x = g.solve(op, b, atol=0.0, rtol=1e-12, itmax=n)
+        self.assertTrue(g.stats['solved'])
+        self.assertLess(np.max(np.abs(x - exact)), 1e-9)
+        w = 10.0 ** ((np.arange(n) % 9) - 4)
+        x2 = g.solve(op, b, atol=0.0, rtol=1e-12, itmax=n, left=w, right=w)
+        self.assertTrue(g.stats['solved'])
+        self.assertLess(np.max(np.abs(x2 - exact)), 1e-9)
+        # Started from the answer, with the cold start's threshold, it stops at once.
+        x3 = g.solve(op, b, atol=1e-12 * float(np.linalg.norm(b)), rtol=0.0, itmax=n, x0=exact)
+        self.assertEqual((g.stats['solved'], g.stats['niter']), (True, 0))
+        self.assertLess(np.max(np.abs(x3 - exact)), 1e-12)
+        # A basis at its memory cap fails rather than growing.
+        tight = GMRES(n, memory=5, max_bytes=8 * n * 5)
+        tight.solve(op, b, atol=0.0, rtol=1e-14, itmax=n)
+        self.assertFalse(tight.stats['solved'])
+        self.assertIn('cap', tight.stats['status'])
+        c, s, rho = sym_givens(3.0, 4.0)
+        self.assertLess(abs(s * 3 - c * 4), 1e-15)
+        self.assertLess(abs(rho - 5), 1e-15)
+
+    def test_the_matrix_free_fbdf_on_600_states(self) -> None:
+        """Diffusion on 600 points, through the adapter: the matrix-free
+        FBDF, and the switch, which takes it above 500 states -- and the
+        switch on a chain of 600 compartments, rates from 1e4 down to 1e-4,
+        the shape of a compartment model. No Jacobian, no factorisation; the
+        application's steps, and its GMRES iterations within
+        GMRES_ITERATIONS_SHARE."""
+        cases = [('heat', 'fbdf_krylov', {'rtol': 1e-6, 'abstol': 1e-8}),
+                 ('heat', 'auto', {'rtol': 1e-3, 'abstol': 1e-6}),
+                 ('heat', 'auto', {'rtol': 1e-6, 'abstol': 1e-9}),
+                 ('long_chain', 'auto', {'rtol': 1e-3, 'abstol': 1e-6})]
+        theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
+        for (name, solver, opts), js in zip(cases, theirs):
+            with self.subTest(solver=solver):
+                mine = run_here(name, solver, opts)
+                self.assertNotIn('error', js)
+                self.assertNotIn('error', mine)
+                here, there = mine['stats'], js['stats']
+                self.assertEqual(counts_agree(here, there), [])
+                self.assertEqual((here['npds'], here['ndecomps'], here['sparse'], here['fill']), (0, 0, False, None))
+                self.assertGreater(here['krylov_iters'], here['nsolves'])
+                # In units of the tolerance: down the chain most states sit far
+                # below abstol, where a relative difference says nothing (1e-4
+                # units at worst when written, GMRES's left-over residual).
+                a, b = np.array(mine['y']), np.array(js['y'])
+                self.assertLess(float(np.max(np.abs(a - b) / (opts['abstol'] + opts['rtol'] * np.abs(b)))), 0.1)
+                if solver == 'auto':
+                    self.assertEqual(list(here['steps_by']), ['Tsit5', 'KrylovFBDF'])
+                    self.assertEqual(here['steps_by'], there['stepsBy'])
+                    # One switch, as OrdinaryDiffEq makes it. On diffusion
+                    # at 1e-6 this was 26 516 steps and 3147 switches while
+                    # the switch counted every FBDF rejection as a verdict
+                    # and FBDF predicted its first step from the last value
+                    # (the application now takes 88 steps and rejects 8).
+                    self.assertEqual((here['switches'], there['switches']), (1, 1))
+                    if name == 'heat':
+                        self.assertLess(here['nsteps'], 200)
+
+    def test_the_problems_own_jvp_is_used(self) -> None:
+        """J*v from the problem itself, where it has one: no f spent on
+        differencing it, and the same answer within the tolerance."""
+        info = problems()['heat']
+        n = info['n']
+        f, _ = functions('heat')
+        dx = 1 / (n + 1)
+        calls = [0]
+
+        def jvp(t: float, u: np.ndarray, v: np.ndarray, fu: np.ndarray) -> np.ndarray:
+            calls[0] += 1
+            left = np.concatenate([[0.0], v[:-1]])
+            right = np.concatenate([v[1:], [0.0]])
+            return (left - 2 * v + right) / (dx * dx)
+        y0 = np.array(info['y0'], dtype=float)
+        opts = {'reltol': 1e-4, 'abstol': 1e-6}
+        with np.errstate(all='ignore'):
+            plain = package_solve(ODEProblem(f, y0, (0.0, 0.1)), methods.FBDF(linsolve='gmres'), opts)
+            exact = package_solve(ODEProblem(f, y0, (0.0, 0.1), jvp=jvp), methods.FBDF(linsolve='gmres'), opts)
+        self.assertEqual((plain.retcode, exact.retcode), ('Success', 'Success'))
+        self.assertGreater(calls[0], 0)
+        self.assertEqual(exact.stats['krylovJvps'], calls[0])
+        self.assertLess(exact.stats['nf'], plain.stats['nf'] / 3)
+        self.assertEqual((exact.stats['njacs'], exact.stats['nw']), (0, 0))
+        scale = 1e-6 + 1e-4 * np.abs(plain.u[-1])
+        self.assertLess(float(np.max(np.abs(exact.u[-1] - plain.u[-1]) / scale)), 50)
+
+
+@needs_app
+class Explicit(unittest.TestCase):
+    """What came with the explicit methods: no matrix, Vern7's lazy stages, f
+    taken again at a clamped state, OrdinaryDiffEq's starting step."""
+
+    def test_an_explicit_method_forms_no_matrix(self) -> None:
+        # 300 000 states: a dense W would be 720 GB.
+        n = 300000
+        rate = 1 + (np.arange(n) % 7) / 7
+
+        def f(t: float, u: np.ndarray) -> np.ndarray:
+            return -u * rate
+        for make in (methods.Tsit5, methods.Vern7, methods.DefaultODEAlgorithm):
+            with self.subTest(method=make.__name__):
+                sol = package_solve(ODEProblem(f, np.ones(n), (0.0, 1.0)), make(), {'save_everystep': False})
+                self.assertEqual(sol.retcode, 'Success')
+                self.assertEqual((sol.stats['njacs'], sol.stats['nw']), (0, 0))
+
+    def test_vern7_works_out_its_interpolation_stages_only_for_a_row(self) -> None:
+        """Ten evaluations a step either way, plus six for each step a saved
+        row falls inside -- and the application's count of them."""
+        grid = [0.5 * i for i in range(41)]
+        opts = {'reltol': 1e-8, 'abstol': 1e-10}
+        runs = [{'problem': 'kepler', 'alg': 'Vern7', 'opts': opts},
+                {'problem': 'kepler', 'alg': 'Vern7', 'opts': {**opts, 'saveat': grid}}]
+        theirs = bridge('package', runs=runs)['runs']
+        plain, rows = [run_package(r['problem'], r['alg'], None, r['opts']) for r in runs]
+        self.assertEqual(plain['stats']['naccept'], rows['stats']['naccept'])
+        ts = plain['t']
+        inside = set()
+        for g in grid[1:-1]:
+            j = 1
+            while j < len(ts) and ts[j] < g:
+                j += 1
+            if ts[j] != g:
+                inside.add(j)
+        self.assertEqual(rows['stats']['nf'] - plain['stats']['nf'], 6 * len(inside))
+        for mine, js in zip((plain, rows), theirs):
+            self.assertEqual(mine['stats']['nf'], js['stats']['nf'])
+            self.assertEqual(len(mine['t']), len(js['t']))
+            # The same steps a last bit apart in size (see Switching).
+            self.assertLess(max(abs(a - b) / max(1.0, abs(b)) for a, b in zip(mine['t'], js['t'])), 1e-6)
+        # The saved rows are at the same times on both sides.
+        self.assertLess(worst_relative(rows['u'], theirs[1]['u']), 1e-6)
+
+    def test_f_is_taken_again_where_clamping_moved_the_solution(self) -> None:
+        # u' = -1 - u falls through zero at ln 2, and is held there.
+        for make in (methods.Tsit5, methods.Rosenbrock23):
+            with self.subTest(method=make.__name__):
+                calls: List[Tuple[float, float]] = []
+
+                def f(t: float, u: np.ndarray) -> np.ndarray:
+                    calls.append((t, float(u[0])))
+                    return np.array([-1 - u[0]])
+                clamped_at: List[float] = []
+
+                def on_accepted(t: float, u: np.ndarray) -> None:
+                    if not clamped_at and u[0] == 0:
+                        clamped_at.append(t)
+                sol = package_solve(ODEProblem(f, [1.0], (0.0, 2.0)), make(),
+                                    {'non_negative': True, 'reltol': 1e-4, 'abstol': 1e-8,
+                                     'on_accepted': on_accepted})
+                self.assertEqual(sol.retcode, 'Success')
+                self.assertTrue(clamped_at)
+                self.assertIn((clamped_at[0], 0.0), calls)
+
+    def test_ordinarydiffeqs_starting_step(self) -> None:
+        from kompartment.engine.solvers.julia.controller import eps_of, initial_step_sciml
+
+        def flat(t: float, u: np.ndarray) -> np.ndarray:
+            return np.array([1.0])
+        one = np.array([1.0])
+        # f does not change: a hundred times the first probe, (d0/d1)/100.
+        self.assertLess(abs(initial_step_sciml(flat, 0.0, one, one, 1.0, 5, 1e-3, 1e-6, 10.0) - 1), 1e-15)
+        # dtmax bounds the first probe; the integrator holds the answer to it.
+        self.assertLess(abs(initial_step_sciml(flat, 0.0, one, one, 1.0, 5, 1e-3, 1e-6, 0.005) - 0.5), 1e-15)
+        self.assertEqual((eps_of(1.0), eps_of(0.0), eps_of(-2.0)), (_js.EPS, _js.MIN_VALUE, 2 * _js.EPS))
+        # Its log10 is V8's: the application's to the bit wherever the power is.
+        xs = [1e-300, 5e-324, 0.3, 123.456, 2.5e7, 1e15, 7.0000000000000001e-3]
+        theirs = bridge('log10', values=xs)['values']
+        from kompartment import jsmath
+        self.assertEqual([jsmath.log10(x) for x in xs], theirs)
+
+
 @needs_app
 class BitIdentity(unittest.TestCase):
     """With the package's dense LU and V8's pow put back, a run is the
@@ -805,12 +1442,91 @@ class BitIdentity(unittest.TestCase):
                 self.assertEqual(mine['y'], js['y'])
                 self.assertEqual(mine['stopped'] and mine['stopped']['t'], js['stopped'] and js['stopped']['t'])
 
+    def test_what_came_with_the_default_algorithm(self) -> None:
+        """The five new methods the same way, the switch's own account and
+        GMRES's iterations included; and, through the package itself, the
+        switch taking the matrix-free FBDF on 600 states."""
+        # Rosenbrock23 only where it takes few steps: each round of until_known
+        # takes a run one pow further along, and at rtol 1e-6 this
+        # second-order method takes 2700 steps on van der Pol and 15 900 on
+        # the forcing, more than its rounds reach (the next test has them).
+        cases = [(name, s, dict(BASE[name])) for name in ('two_events', 'event_rising') for s in NEW]
+        cases += [(name, s, dict(BASE[name])) for name in ('vdp', 'forced') for s in NEW if s != 'rosenbrock23']
+        cases += [('robertson', s, dict(BASE['robertson'])) for s in ('auto', 'fbdf_krylov', 'rosenbrock23')]
+        cases += [('hires', s, dict(BASE['hires'])) for s in ('auto', 'fbdf_krylov')]
+        # The chains dense, as nonneg is above: sparse, they would be
+        # factorised by SuperLU here and by the package's own sparse LU there.
+        # The chain of 120 switches 23 times at 1e-3 (Switching has it at 1e-6).
+        cases += [('vdp1000', 'auto', {'rtol': 1e-3, 'abstol': 1e-6}),
+                  ('chain', 'auto', {**BASE['chain'], 'matrix': 'dense'}),
+                  ('chain120', 'auto', {'rtol': 1e-3, 'abstol': 1e-6, 'matrix': 'dense'}),
+                  ('kepler', 'vern7', {'rtol': 1e-8, 'abstol': 1e-10}),
+                  ('nonneg', 'auto', {**BASE['nonneg'], 'matrix': 'dense'}),
+                  ('robertson', 'auto', {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})]
+        theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
+        packaged = [{'problem': 'heat', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-6, 'abstol': 1e-9}},
+                    {'problem': 'idle', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'stillIsStiff': True},
+                     'opts': {'matrix': 'dense'}}]
+        their_packaged = bridge('package', runs=packaged)['runs']
+        attempts = [(lambda n=n, s=s, o=o: run_here(n, s, o)) for n, s, o in cases]
+        attempts += [(lambda r=r: run_package(r['problem'], r['alg'], r.get('algOptions'), r['opts']))
+                     for r in packaged]
+        runs = until_known(attempts)
+        for (name, solver, opts), js, mine in zip(cases, theirs, runs):
+            with self.subTest(problem=name, solver=solver, opts=opts):
+                self.assertEqual({k: mine['stats'][k] for k in COUNTS}, {k: js['stats'][k] for k in COUNTS})
+                self.assertEqual(mine['stats'].get('steps_by'), js['stats'].get('stepsBy'))
+                self.assertEqual(mine['stats'].get('switches'), js['stats'].get('switches'))
+                self.assertEqual(mine['stats'].get('krylov_iters'), js['stats'].get('krylovIters'))
+                self.assertEqual(mine['accepted'], js['accepted'])
+                self.assertEqual(mine['t'], js['t'])
+                self.assertEqual(mine['y'], js['y'])
+                self.assertEqual(mine['stopped'] and mine['stopped']['t'], js['stopped'] and js['stopped']['t'])
+        for r, js, mine in zip(packaged, their_packaged, runs[len(cases):]):
+            with self.subTest(**r):
+                self.assertEqual(mine['algChoice'], js['algChoice'])
+                for key in ('naccept', 'nreject', 'nf', 'nsolve', 'stepsBy', 'switches', 'switchLog', 'krylovIters'):
+                    self.assertEqual(mine['stats'].get(key), js['stats'].get(key), key)
+                self.assertEqual(mine['t'], js['t'])
+                self.assertEqual(mine['u'], js['u'])
+
+    def test_runs_too_long_for_until_known(self) -> None:
+        """Rosenbrock23 where it takes thousands of steps, and the chain of
+        120 at reltol 1e-6 switching near a thousand times (Switching holds
+        the platform's run of it to the application's spread), with V8's pow
+        asked at every call."""
+        cases = [(name, 'rosenbrock23', dict(BASE[name])) for name in ('vdp', 'forced', 'hires')]
+        cases += [('chain120', 'auto', {'rtol': 1e-6, 'abstol': 1e-9, 'matrix': 'dense'})]
+        theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
+        # Arguments no run meets, so that the answers are the Node process's.
+        probe = [(1.2345678912345, 0.3141592653589793), (3.3e-7, 0.123456789), (0.987654321, -7.25)]
+        told = bridge('pow', pairs=[list(p) for p in probe])['values']
+        with asking_v8_at_every_call():
+            self.assertEqual([_js.jpow(x, y) for x, y in probe], [float(v) for v in told])
+            runs = [run_here(n, s, o) for n, s, o in cases]
+        for (name, solver, opts), js, mine in zip(cases, theirs, runs):
+            with self.subTest(problem=name, solver=solver, opts=opts):
+                self.assertNotIn('error', mine)
+                self.assertEqual({k: mine['stats'][k] for k in COUNTS}, {k: js['stats'][k] for k in COUNTS})
+                self.assertEqual(mine['stats'].get('steps_by'), js['stats'].get('stepsBy'))
+                self.assertEqual(mine['stats'].get('switches'), js['stats'].get('switches'))
+                self.assertEqual(mine['accepted'], js['accepted'])
+                self.assertEqual(mine['t'], js['t'])
+                self.assertEqual(mine['y'], js['y'])
+        self.assertGreater(runs[-1]['stats']['switches'], 500)
+
     def test_bundled_examples_through_the_runner(self) -> None:
         """The whole path: the runner's options, the Jacobian it hands over,
         non-negative compartments, a lookup table's corners, a terminal event
         and the segment after it, the recorders fed from the accepted steps."""
         cases = (('four-compartment', 'fbdf'), ('lookup-driver', 'rodas5p'),
-                 ('recorders', 'rodas5p'), ('recorders', 'kencarp4'))
+                 ('recorders', 'rodas5p'), ('recorders', 'kencarp4'),
+                 # The new ones: Vern7 and its event (the run Examples holds
+                 # to 500 rtol is this one exactly), Rosenbrock23 over the
+                 # corners, the switch deciding by verdicts at its threshold,
+                 # GMRES on the landscape's 28 states.
+                 ('recorders', 'auto'), ('lookup-driver', 'rosenbrock23'), ('decay-chain', 'auto'),
+                 ('landscape', 'fbdf_krylov'))
         models = []
         for name, solver in cases:
             model = example(name)
@@ -822,6 +1538,9 @@ class BitIdentity(unittest.TestCase):
                 js = engine('run', model=example(name), overrides={'solver': solver})
                 for key in ('nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'events'):
                     self.assertEqual(res.stats.get(key), js['stats'].get(key), key)
+                self.assertEqual(res.stats.get('steps_by'), js['stats'].get('stepsBy'))
+                self.assertEqual(res.stats.get('switches'), js['stats'].get('switches'))
+                self.assertEqual(res.stats.get('krylov_iters'), js['stats'].get('krylovIters'))
                 outs = res.outputs()
                 self.assertEqual([o['label'] for o in outs], js['labels'])
                 self.assertEqual(res.t.tolist(), js['t'])
@@ -852,10 +1571,43 @@ STEP_SHARE = {
     'recorders': 0.45,
 }
 
-# farfield (1266 states) only with the two quick methods: the application's
+# The methods that came with the default algorithm, where one needs more than
+# its example's share, measured 2026-10-03 (Python 3.12, numpy 2.3, scipy
+# 1.16) and put through BitIdentity's machinery: the application's run.
+NEW_STEP_SHARE = {
+    # The switch from Vern7 to Rodas5P is decided by verdicts at its
+    # threshold, and a last bit moves which: 403 steps against 447 (397 of
+    # Vern7's and 4 of Rodas5P's against 322 and 121).
+    ('decay-chain', 'auto'): 0.2,
+}
+
+# The rows of a run that took other steps than the application's are held to
+# 200 rtol; where one needs more, measured, explained and checked the same way.
+ROW_BOUND = {
+    # Vern7 -- and the switch, which is Vern7 here, at rtol 1e-7 -- steps over
+    # the release's corner at t = 140. The port's run at exactly 1e-7 put a
+    # step across it whose polynomial reads the next row 2e-5 out, 212 rtol
+    # from the application's, which is 2.7e-6 out; nudged by 3e-9 relative,
+    # thirty runs here and eight there all land between 7e-7 and 4e-6.
+    ('recorders', 'vern7'): 500,
+    ('recorders', 'auto'): 500,
+}
+
+# farfield (1266 states) only with the quick methods: the application's
 # RadauIIA5 takes half a minute there (its complex half is dense) and its
-# TRBDF2 more than twenty-five.
-FARFIELD = ('rodas5p', 'kencarp4')
+# TRBDF2 more than twenty-five; the switch and the matrix-free FBDF spend
+# 200 000 evaluations of f in GMRES, half a minute there and most of one here.
+FARFIELD = ('rodas5p', 'kencarp4', 'rosenbrock23')
+
+# Stiff from the first steps, where an explicit method needs over a million.
+STIFF_EXAMPLES = ('biosphere', 'farfield')
+
+
+def example_solvers(name: str) -> Tuple[str, ...]:
+    """The methods an example is run with: every one, less those it takes too long."""
+    if name == 'farfield':
+        return FARFIELD
+    return tuple(s for s in EVERY if not (s in EXPLICIT and name in STIFF_EXAMPLES))
 
 
 @needs_app
@@ -866,7 +1618,7 @@ class Examples(unittest.TestCase):
         for name in names:
             model = example(name)
             rtol = float(model['simulation'].get('rtol', 1e-3))
-            for solver in (FARFIELD if name == 'farfield' else SOLVERS):
+            for solver in example_solvers(name):
                 with self.subTest(example=name, solver=solver):
                     js = engine('run', model=model, overrides={'solver': solver})
                     m = json.loads(json.dumps(model))
@@ -882,12 +1634,15 @@ class Examples(unittest.TestCase):
                         self.assertEqual(res.stats.get('solver'), js['stats'].get('solver'))
                     n_js = js['stats'].get('nsteps')
                     if n_js is not None:
-                        share = STEP_SHARE.get(name, STEP_SHARE['default'])
+                        share = NEW_STEP_SHARE.get((name, solver), STEP_SHARE.get(name, STEP_SHARE['default']))
                         self.assertTrue(within(res.stats['nsteps'], n_js, share, 3),
                                         f"{res.stats['nsteps']} steps against {n_js}")
                         for key in ('sparse', 'fill'):
                             if key in js['stats']:
                                 self.assertEqual(res.stats.get(key), js['stats'][key], key)
+                    # The switch used the same methods, every solve of the run summed.
+                    if js['stats'].get('stepsBy') is not None or 'steps_by' in res.stats:
+                        self.assertEqual(list(res.stats['steps_by']), list(js['stats']['stepsBy']))
                     outs = res.outputs()
                     self.assertEqual([o['label'] for o in outs], js['labels'])
                     self.assertEqual((res.t[0], res.t[-1]), (js['t'][0], js['t'][-1]))
@@ -920,7 +1675,7 @@ class Examples(unittest.TestCase):
                     # KenCarp4), held to 200. A run that also reports the
                     # solver's own steps is compared at the times asked for.
                     same = n_js is None or res.stats.get('nsteps') == n_js
-                    bound = (10 if same else 200) * rtol
+                    bound = (10 if same else ROW_BOUND.get((name, solver), 200)) * rtol
                     mine_t = res.t.tolist()
                     if Project(model).solver_points:
                         common = set(Project(model).time_grid().tolist()) & set(mine_t) & set(js['t'])

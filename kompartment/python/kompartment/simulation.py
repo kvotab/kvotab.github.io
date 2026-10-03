@@ -12,13 +12,14 @@ Anything without a property of its own is still reachable, as
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Mapping, MutableMapping, Optional, Sequence
 
 from .errors import EditError
 
+#: In the order the application offers them (``SOLVER_IDS`` in ``src/ode/solvers.js``).
 SOLVERS = (
-    'ndf', 'ros23', 'dp45', 'rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4', 'trbdf2',
-    'scipy_bdf', 'scipy_radau', 'scipy_lsoda',
+    'ndf', 'ros23', 'dp45', 'auto', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4', 'trbdf2',
+    'rosenbrock23', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda',
 )
 DEFAULT_SOLVER = 'ndf'
 SPACINGS = ('log', 'linear', 'series', 'solver', 'both')
@@ -67,26 +68,80 @@ SOLVER_SETTINGS: Dict[str, Any] = {
     'auto_abstol': ('switch', None),
 }
 
-#: Which of those each solver reads (the rest are kept, and ignored by it).
+#: Which of those each solver reads (the rest are kept, and ignored by it):
+#: ``SOLVER_OPTIONS`` in ``src/ode/solvers.js``.
 SOLVER_OPTIONS: Dict[str, Sequence[str]] = {
     'ndf': ('bdf', 'max_step', 'initial_step', 'max_steps', 'max_order', 'norm_control',
             'error_norm', 'stagnation_tol', 'below_tol_run', 'matrix', 'jacobian', 'auto_abstol'),
     'ros23': ('max_step', 'initial_step', 'max_steps', 'jacobian'),
     'dp45': ('max_step', 'initial_step', 'max_steps'),
+    # Everything any of its methods reads: the stiff ones are handed these
+    # settings, as DefaultODEAlgorithm forwards its keyword arguments to them.
+    'auto': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
+             'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa', 'max_order', 'min_order'),
     'rodas5p': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'below_tol_run',
                 'error_norm', 'auto_abstol'),
     'radau5': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
                'below_tol_run', 'auto_abstol', 'newton_kappa'),
     'fbdf': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
              'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa', 'max_order', 'min_order'),
+    # GMRES forms no matrix, and its Newton iteration is the FBDF's.
+    'fbdf_krylov': ('max_step', 'initial_step', 'max_steps', 'below_tol_run', 'error_norm', 'auto_abstol',
+                    'newton_kappa', 'max_order', 'min_order'),
     'qndf': ('bdf', 'max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
              'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa', 'max_order', 'min_order'),
     'kencarp4': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
                  'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa'),
     'trbdf2': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
                'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa'),
+    'rosenbrock23': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'below_tol_run',
+                     'error_norm', 'auto_abstol'),
+    # An explicit method forms no matrix and has no Jacobian to choose.
+    'tsit5': ('max_step', 'initial_step', 'max_steps', 'below_tol_run', 'error_norm', 'auto_abstol'),
+    'vern7': ('max_step', 'initial_step', 'max_steps', 'below_tol_run', 'error_norm', 'auto_abstol'),
     'scipy_bdf': (), 'scipy_radau': (), 'scipy_lsoda': (),
 }
+
+
+def add_method_steps(into: MutableMapping[str, Any], frm: Any) -> MutableMapping[str, Any]:
+    """Adds one solve's account of the switching solver (``auto``) -- the steps
+    each of its methods took (``steps_by``) and how often it switched
+    (``switches``) -- into a run's, for a run made of several solves: events,
+    switch times, parts (``addMethodSteps`` in ``src/ode/solvers.js``)."""
+    by = frm.get('steps_by') if isinstance(frm, Mapping) else None
+    if by is None:
+        return into
+    acc = into.get('steps_by')
+    if acc is None:
+        acc = into['steps_by'] = {}
+    for name, n in by.items():
+        acc[name] = (acc[name] if acc.get(name) is not None else 0) + n
+    into['switches'] = ((into['switches'] if into.get('switches') is not None else 0)
+                        + (frm['switches'] if frm.get('switches') is not None else 0))
+    return into
+
+
+def describe_method_steps(stats: Any) -> Optional[str]:
+    """The switching solver's account in words, ``Tsit5 12 steps, Rosenbrock23
+    300; 3 switches``, or None for any other solver (``describeMethodSteps``).
+    Read under this engine's name (``steps_by``) or the application's
+    (``stepsBy``), as a run log's payload has it."""
+    if not isinstance(stats, Mapping):
+        return None
+    by = stats.get('steps_by')
+    if by is None:
+        by = stats.get('stepsBy')
+    if not isinstance(by, Mapping):
+        return None
+    from .jsonio import js_number
+
+    def number(v: Any) -> str:
+        return str(v) if isinstance(v, int) and not isinstance(v, bool) else js_number(float(v))
+    parts = [f"{name} {number(n)}" + (f" step{'' if n == 1 else 's'}" if i == 0 else '')
+             for i, (name, n) in enumerate(by.items())]
+    sw = stats.get('switches')
+    sw = 0 if sw is None else sw
+    return f"{', '.join(parts)}; {number(sw)} switch{'' if sw == 1 else 'es'}"
 
 
 def _number(key: str, value: Any, least: float = -math.inf, most: float = math.inf,
@@ -342,9 +397,11 @@ class Simulation:
 
     @property
     def solver(self) -> str:
-        """The solver: ``ndf`` (the default), ``ros23``, ``dp45``, ``rodas5p``,
-        ``radau5``, ``fbdf``, ``qndf``, ``kencarp4``, ``trbdf2``, or one of the
-        SciPy solvers, which need a network connection to run."""
+        """The solver: ``ndf`` (the default), ``ros23``, ``dp45``, ``auto`` (which
+        switches between an explicit and a stiff method as the run goes),
+        ``rodas5p``, ``radau5``, ``fbdf``, ``fbdf_krylov``, ``qndf``,
+        ``kencarp4``, ``trbdf2``, ``rosenbrock23``, ``tsit5``, ``vern7``, or one
+        of the SciPy solvers, which need a network connection to run."""
         return self['solver']
 
     @solver.setter

@@ -1,12 +1,18 @@
 """The methods (``src/ode/julia/solvers/``): one module per family, with the
-tableaux beside them."""
+tableaux beside them, and the automatic algorithm that switches between them
+(``default.py``)."""
 
 from __future__ import annotations
 
+from .default import AutoAlgSwitch, DefaultImplicitODEAlgorithm, DefaultODEAlgorithm
 from .esdirk import KenCarp4, TRBDF2
 from .fbdf import FBDF
 from .qndf import QBDF, QNDF
 from .radau import RadauIIA5
 from .rosenbrock import Rodas5P
+from .rosenbrock23 import Rosenbrock23
+from .tsit5 import Tsit5
+from .vern7 import Vern7
 
-__all__ = ['FBDF', 'QNDF', 'QBDF', 'Rodas5P', 'RadauIIA5', 'KenCarp4', 'TRBDF2']
+__all__ = ['FBDF', 'QNDF', 'QBDF', 'Rodas5P', 'RadauIIA5', 'KenCarp4', 'TRBDF2', 'Rosenbrock23', 'Tsit5', 'Vern7',
+           'DefaultODEAlgorithm', 'DefaultImplicitODEAlgorithm', 'AutoAlgSwitch']

@@ -1338,6 +1338,30 @@ class RunLogs(unittest.TestCase):
                 self.assertEqual(runlog.run_log(res, project=models[name], build='test', at=_at()),
                                  runlog.run_log_text(lines))
 
+    def test_the_switching_solver_s_methods_are_logged_alike(self) -> None:
+        """``auto`` says which of its methods took the steps, on its own line
+        after the steps -- from the application's payload, and from a run here,
+        whose statistics carry it as ``steps_by`` and the payload as ``stepsBy``."""
+        models = opened()
+        model = models['biosphere']
+        got = js({'task': 'run', 'model': model, 'opened': True, 'overrides': {'solver': 'auto'}})[0]
+        self.assertNotIn('error', got, got.get('error'))
+        payload = dec(got['payload'])
+        answer = js({'task': 'runlog', 'project': model, 'payload': got['payload'], 'build': 'test', 'at': AT})[0]
+        lines = runlog.run_log_lines(model, payload, build='test', at=_at())
+        self.assertEqual(lines, answer['lines'])
+        theirs = [x for x in lines if x.startswith('  methods: ')]
+        self.assertEqual(len(theirs), 1)
+        self.assertEqual(lines.index(theirs[0]), next(i for i, x in enumerate(lines) if x.startswith('  steps: ')) + 1)
+        here = dict(model, simulation={**model['simulation'], 'solver': 'auto'})
+        res = run(Project(here))
+        mine = runlog.payload_of(res)
+        self.assertEqual(mine['stats']['stepsBy'], res.stats['steps_by'])
+        logged = [x for x in runlog.run_log_lines(here, mine, build='test', at=_at()) if x.startswith('  methods: ')]
+        self.assertEqual(len(logged), 1)
+        if all(res.stats.get(k) == payload['stats'].get(k) for k in ('nsteps', 'nfailed', 'nfevals')):
+            self.assertEqual(logged, theirs)
+
     def test_the_mass_balance_audit_reads_alike(self) -> None:
         model = {
             'name': 'audit', 'simulation': {'time_unit': 'year', 'start_time': 0, 'end_time': 200, 'output_points': 40,

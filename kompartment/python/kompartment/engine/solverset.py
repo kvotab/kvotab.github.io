@@ -129,4 +129,9 @@ SOLVERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     'radau5': _lazy('julia', 'radau5'),
     'kencarp4': _lazy('julia', 'kencarp4'),
     'trbdf2': _lazy('julia', 'trbdf2'),
+    'auto': _lazy('julia', 'auto'),
+    'fbdf_krylov': _lazy('julia', 'fbdf_krylov'),
+    'rosenbrock23': _lazy('julia', 'rosenbrock23'),
+    'tsit5': _lazy('julia', 'tsit5'),
+    'vern7': _lazy('julia', 'vern7'),
 }

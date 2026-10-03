@@ -36,10 +36,10 @@ The archive is laid out as the application lays it out (the ZIP writer is
 the byte, as it is when the platform cannot compress.
 
 Two things differ from a run's own record, by necessity: the Python engine
-names two counters of its statistics and its timings in snake case, and they
-are written under the application's names (``solverPoints``, ``thinnedBy``,
-``buildMs``, ``solveMs``, ``totalMs``), so that the application reads them as
-its own.
+names some of its statistics and its timings in snake case, and they are
+written under the application's names (``solverPoints``, ``thinnedBy``,
+``stepsBy``, ``krylovIters``, ``buildMs``, ``solveMs``, ``totalMs``), so that
+the application reads them as its own.
 """
 
 from __future__ import annotations
@@ -81,7 +81,8 @@ _MEM = f'{DIR}mem.f64'
 MAX_INFLATED = 256 * 1024 * 1024
 
 #: The Python engine's names for what the application calls otherwise.
-_STATS_NAMES = {'solver_points': 'solverPoints', 'thinned_by': 'thinnedBy'}
+_STATS_NAMES = {'solver_points': 'solverPoints', 'thinned_by': 'thinnedBy', 'steps_by': 'stepsBy',
+                'krylov_iters': 'krylovIters'}
 _TIMING_NAMES = {'build_ms': 'buildMs', 'solve_ms': 'solveMs', 'total_ms': 'totalMs'}
 
 _DEFAULT = object()

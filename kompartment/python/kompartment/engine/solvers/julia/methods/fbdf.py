@@ -6,6 +6,12 @@ and the textbook formula applied to that, so the leading coefficient -- and W
 -- survive a change of step. Four error estimates (orders k-2 .. k+1), each
 from the history by a Fornberg finite-difference formula, drive the order,
 with CVODE's ``qwait`` countdown between changes.
+
+``FBDF(linsolve='gmres')`` is the same method with its Newton iterations
+solved matrix-free by GMRES (``krylov.py``), what OrdinaryDiffEq's default
+algorithm calls KrylovFBDF; ``first_predictor='julia'`` predicts the last
+accepted state on the first step after a start, as OrdinaryDiffEq does, where
+this FBDF otherwise takes an Euler step (fbdf.js explains).
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import numpy as np
 
 from .._js import INF, jdiv, jmax, jmin, jpow, jsign
 from ..integrator import algorithm
+from ..krylov import KrylovW
 from ..newton import COEFFICIENT_MULTISTEP, CONVERGENCE
 
 BDF_COEFFS: List[Any] = [
@@ -99,6 +106,22 @@ class FBDFCache:
         self.prev_order_pending = self.order
         self.next_order = self.order
         self.next_terk = INF
+        # FBDF(linsolve='gmres'): the Newton iterations solved matrix-free by
+        # GMRES instead of against a factorised W. Nothing else changes.
+        self.krylov = KrylovW(n, integ, opts) if opts.get('linsolve') == 'gmres' else None
+        self.krylov_fresh = True
+        # How the first step after a start predicts: see `step`.
+        self.julia_predictor = opts.get('first_predictor') == 'julia'
+        # What the automatic switch needs to know of the method in charge.
+        self.family = 'fbdf'
+
+    @property
+    def krylov_solves(self) -> int:
+        """Linear solves done by GMRES, for the integrator's count."""
+        return self.krylov.nsolve if self.krylov is not None else 0
+
+    def krylov_report(self) -> Dict[str, int]:
+        return self.krylov.report() if self.krylov is not None else {}
 
     def init(self, integ: Any) -> None:
         integ.newton.method = COEFFICIENT_MULTISTEP
@@ -108,6 +131,7 @@ class FBDFCache:
         self.iters_from_event = 0
 
     def restart(self, integ: Any) -> None:
+        self.krylov_fresh = True
         self.ts[0] = 0.0
         self.u_history[0][:] = integ.uprev
         self.n_history = 1
@@ -168,9 +192,17 @@ class FBDFCache:
         gamma_dt = gamma * dt
         tdt = dt  # t + dt on the history's own clock
 
-        need_new = integ.W.jac_stale or not integ.W.have_factor or not newton.fast_convergence
-        if not integ.form_w(gamma_dt, False, need_new):
-            return False
+        if self.krylov is not None:
+            # Matrix-free: nothing to form, only this step's error weights to
+            # set; `need_new` is what the Newton iteration makes of its last
+            # contraction rate, not believed after a restart or a failure.
+            need_new = self.krylov_fresh or not newton.fast_convergence
+            self.krylov_fresh = False
+            self.krylov.prepare(integ)
+        else:
+            need_new = integ.W.jac_stale or not integ.W.have_factor or not newton.fast_convergence
+            if not integ.form_w(gamma_dt, False, need_new):
+                return False
 
         count = min(k + 1, self.n_history)
         for j in range(count):
@@ -183,8 +215,14 @@ class FBDFCache:
         else:
             # The first step from a start or a restart: an Euler predictor, so
             # the predictor-corrector difference is O(h^2), as the error
-            # estimate assumes (fbdf.js explains).
-            upred = uprev + dt * integ.fsalfirst
+            # estimate assumes (fbdf.js explains). `first_predictor='julia'`
+            # takes OrdinaryDiffEq's u0 = u instead, the last accepted state:
+            # inside the automatic switch it is the worse of the two at tight
+            # tolerances (methods/default.py), kept for comparison with Julia.
+            if self.julia_predictor:
+                upred = uprev.copy()
+            else:
+                upred = uprev + dt * integ.fsalfirst
             for i in range(1, k):
                 corrector[i] = uprev.copy()
         self.upred = upred
@@ -200,14 +238,17 @@ class FBDFCache:
         newton.z[:] = upred
         newton.error_constant = 1 / (k + 1)
 
-        status = newton.solve(integ.f, integ.W, t, dt, uprev,
+        status = newton.solve(integ.f, self.krylov if self.krylov is not None else integ.W, t, dt, uprev,
                               {'reltol': integ.reltol, 'abstol': integ.abstol_fixed},
                               need_new, self.consfailcnt == 0)
         integ.stats['nnonliniter'] += newton.iter
         newton.error_constant = 1
         if status != CONVERGENCE:
             integ.stats['nnonlinconvfail'] += 1
-            integ.W.mark_stale()
+            if self.krylov is not None:
+                self.krylov_fresh = True
+            else:
+                integ.W.mark_stale()
             if self.order > 1 and newton.nfails >= 3:
                 self.order -= 1
             self.consfailcnt += 1
@@ -346,9 +387,14 @@ class FBDFCache:
 
 
 def FBDF(**options: Any) -> Any:
+    """FBDF; ``linsolve='gmres'`` solves its Newton iterations by GMRES, and is
+    then what OrdinaryDiffEq's default algorithm calls KrylovFBDF;
+    ``first_predictor='julia'`` predicts OrdinaryDiffEq's way after a start,
+    where the default (``'euler'``) takes an Euler step."""
     def build(n: int, integ: Any, opts: Dict[str, Any]) -> FBDFCache:
         merged = dict(opts)
         merged.update(options)
         return FBDFCache(n, integ, merged)
-    return algorithm('FBDF', options.get('max_order') or MAX_ORDER_LIMIT, build,
+    return algorithm('KrylovFBDF' if options.get('linsolve') == 'gmres' else 'FBDF',
+                     options.get('max_order') or MAX_ORDER_LIMIT, build,
                      {'qmax': 5, 'qmin': 0.2, 'gamma': 1.2, 'qsteady_min': 0.9, 'qsteady_max': 1.2})

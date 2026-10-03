@@ -113,6 +113,11 @@ class NewtonSolver:
                 dz = dt * k - z
             else:
                 dz = self.tmp + gamma_dt * k - z
+            # A matrix-free W (krylov.py) is linearised where the iterate is,
+            # and is told so; a factorised one has no use for it.
+            set_point = getattr(W, 'set_point', None)
+            if set_point is not None:
+                set_point(tstep, ustep, k, gamma_dt)
             dz = W.solve(dz)
 
             ndz = residual_norm(dz, uprev, ustep, abstol, reltol, n, self.norm)

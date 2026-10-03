@@ -283,15 +283,33 @@ print(res.summary())
 
 A run is the application's run: the same model loaded the same way, built
 into the same equations in the same order, and solved by ports of the same
-solvers -- `ndf` (the default), `ros23`, `dp45`, the six Julia-derived methods
-(`fbdf`, `qndf`, `rodas5p`, `radau5`, `kencarp4`, `trbdf2`) and SciPy's `BDF`,
-`Radau` and `LSODA` (`scipy_bdf`, `scipy_radau`, `scipy_lsoda`), which here run
-natively rather than in a browser's Python. The derivative is the
-application's to the last bit on the bundled examples; a run agrees with the
-application's to round-off, and usually takes the same number of steps. It
-cannot always take exactly the same: each step size is chosen with a power,
-and JavaScript's `Math.pow` rounds differently from the C library's in the
-last place for about one argument in ten.
+solvers -- `ndf` (the default), `ros23`, `dp45`, the Julia-derived methods
+(`fbdf`, `qndf`, `rodas5p`, `radau5`, `kencarp4`, `trbdf2`, and `auto`,
+`fbdf_krylov`, `rosenbrock23`, `tsit5` and `vern7`, which came with
+DifferentialEquations.jl's default algorithm) and SciPy's `BDF`, `Radau` and
+`LSODA` (`scipy_bdf`, `scipy_radau`, `scipy_lsoda`), which here run natively
+rather than in a browser's Python. The derivative is the application's to the
+last bit on the bundled examples; a run agrees with the application's to
+round-off, and usually takes the same number of steps. It cannot always take
+exactly the same: each step size is chosen with a power, and JavaScript's
+`Math.pow` rounds differently from the C library's in the last place for
+about one argument in ten.
+
+`auto` is DifferentialEquations.jl's default algorithm: it starts on an
+explicit method (`tsit5`, or `vern7` below a relative tolerance of 1e-6),
+watches every step for stiffness, and switches to a stiff one once it finds
+it -- `rosenbrock23` up to 50 states (Rodas5P below 1e-6), FBDF up to 500,
+`fbdf_krylov` above -- and back when the stiffness passes. A run restarted at
+an event or a switch time goes on with the method it had. `fbdf_krylov` is
+FBDF with its Newton iterations solved by GMRES: no matrix is formed or
+stored, at the price of many iterations on a very stiff model.
+
+```python
+res = m.run(solver='auto')
+res.stats['steps_by']                          # e.g. {'Tsit5': 78, 'Rosenbrock23': 1006}: accepted steps by method
+res.stats['switches']                          # how often it changed between them; the run log says both
+m.run(solver='fbdf_krylov').stats.get('krylov_iters')  # GMRES's iterations, of a run in one solve
+```
 
 ```python
 m.values_at_start('Soil')                      # what the equations come to at the first instant
@@ -460,13 +478,13 @@ application's order. With numba installed every run goes further, whatever
 the model: its derivative is compiled to machine code -- every function of
 the language, the blocks that remember, discrete events, the clock worked out
 every `min_change_time`, far-field paths -- and so is the solver's loop, for
-the NDF, Rosenbrock (2,3), Dormand-Prince and the six Julia-derived methods,
-ported step for step and event for event (`kompartment.engine.compiled`), so
-that a run returns to Python only when it ends. A compiled run takes the same
-steps as the Python path to the last bit: the same states, statistics,
-recorders and failures. So it is the default (`compiled='auto'`);
-`m.run(compiled=False)` keeps to Python, and `compiled=True` insists, which
-only a Python without numba refuses.
+the NDF, Rosenbrock (2,3), Dormand-Prince and the six Julia-derived methods
+first ported, step for step and event for event
+(`kompartment.engine.compiled`), so that a run returns to Python only when it
+ends. A compiled run takes the same steps as the Python path to the last bit:
+the same states, statistics, recorders and failures. So it is the default
+(`compiled='auto'`); `m.run(compiled=False)` keeps to Python, and
+`compiled=True` insists, which only a Python without numba refuses.
 
 ```python
 res = m.run()
@@ -477,7 +495,10 @@ res.stats.get('compiled_why')                  # why not compiled at all
 ```
 
 SciPy's three solvers keep the loop of their own, in Python, and run it on
-the compiled model: its derivative, what the recorders keep at each step.
+the compiled model: its derivative, what the recorders keep at each step. So,
+for now, do the five that came with the default algorithm (`auto`,
+`fbdf_krylov`, `rosenbrock23`, `tsit5`, `vern7`): the same steps as on the
+Python path, the loop not compiled yet.
 Local sensitivity integrates the model's derivative, compiled, in equations
 of its own (`m.local_sensitivity(..., compiled='auto')`).
 
@@ -595,4 +616,8 @@ ICRP 107 table and the reserved names from the application's sources;
 
 ## Licence
 
-MIT, as Kompartment. See [LICENSE](LICENSE).
+MIT, as Kompartment. See [LICENSE](LICENSE). The ports keep the notices of what
+they port, beside them: OrdinaryDiffEq.jl's in `kompartment/engine/solvers/julia/LICENSE`,
+GlobalSensitivity.jl's and SALib's in `kompartment/stats/`, all MIT. One file is under
+other terms: `kompartment/engine/solvers/julia/krylov.py` ports the GMRES of Krylov.jl
+and, like it, is subject to the Mozilla Public License 2.0.

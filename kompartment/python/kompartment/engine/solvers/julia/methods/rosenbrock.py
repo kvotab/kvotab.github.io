@@ -23,6 +23,24 @@ def _cbrt(x: float) -> float:
     return math.copysign(abs(x) ** (1.0 / 3.0), x)
 
 
+def rosenbrock_time_derivative(integ: Any, t: float, u: np.ndarray, fu: np.ndarray) -> np.ndarray:
+    """df/dt at (t, u) for a Rosenbrock step: the problem's, else differenced
+    with a step scaled by max(|t|, |h|) (``rosenbrockTimeDerivative``)."""
+    if integ.prob.tgrad is not None:
+        return np.array(integ.prob.tgrad(t, u), dtype=float)
+    scale = jmax(abs(t), abs(integ.dt))
+    if integ.opts['central']:
+        dtd = _cbrt(EPS) * scale
+        out = integ.f(t + dtd, u)
+        back = integ.f(t - dtd, u)
+        inv = 1 / (2 * dtd)
+        return (out - back) * inv
+    dtd = math.sqrt(EPS) * scale
+    out = integ.f(t + dtd, u)
+    inv = 1 / dtd
+    return (out - fu) * inv
+
+
 class RosenbrockCache:
     def __init__(self, n: int, tab: Any, integ: Any) -> None:
         self.tab = tab
@@ -38,19 +56,7 @@ class RosenbrockCache:
 
     def time_derivative(self, integ: Any, t: float, u: np.ndarray, fu: np.ndarray) -> np.ndarray:
         """df/dt at (t, u): the problem's, else differenced."""
-        if integ.prob.tgrad is not None:
-            return np.array(integ.prob.tgrad(t, u), dtype=float)
-        scale = jmax(abs(t), abs(integ.dt))
-        if integ.opts['central']:
-            dtd = _cbrt(EPS) * scale
-            out = integ.f(t + dtd, u)
-            back = integ.f(t - dtd, u)
-            inv = 1 / (2 * dtd)
-            return (out - back) * inv
-        dtd = math.sqrt(EPS) * scale
-        out = integ.f(t + dtd, u)
-        inv = 1 / dtd
-        return (out - fu) * inv
+        return rosenbrock_time_derivative(integ, t, u, fu)
 
     def step(self, integ: Any) -> bool:
         tab = self.tab

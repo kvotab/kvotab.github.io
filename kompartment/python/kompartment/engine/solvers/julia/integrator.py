@@ -4,7 +4,11 @@ Propose a step, judge it, save what it passed, look for an event, choose the
 next one. A method contributes a cache with ``init``, ``step``, ``accepted``
 and, where it has them, ``rejected``, ``restart`` and ``interpolate``;
 everything else -- the Jacobian, W, the Newton iteration, the controller,
-saving, event location, the floor on the step -- is here.
+saving, event location, the floor on the step -- is here. The Jacobian and W
+are made the first time a method asks for them, so an explicit method never
+pays for an n x n matrix; a composite method (``methods/default.py``) picks
+the method of each step at the top of the loop, and the solution says which
+took every saved row (``alg_choice``).
 
 What the adapter never asks for is not ported: dense output kept for later,
 ``maxPoints`` thinning and a ``history`` to start a multistep method at full
@@ -20,8 +24,8 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from ._js import EPS, INF, MIN_VALUE, jmax, jmin, js_string, max_or_zero, seq_sum, to_exponential, ulp
-from .controller import PIController, initial_step
-from .jacobian import JacobianCache, WFactorization
+from .controller import PIController, initial_step, initial_step_sciml
+from .jacobian import JacobianCache, WFactorization, jacobian_inf_norm
 from .newton import NewtonSolver
 
 SUCCESS = 'Success'
@@ -42,17 +46,21 @@ class ODEError(Exception):
 
 
 class ODEProblem:
-    """u' = f(t, u) on [t0, tf] (``ODEProblem``). ``f(t, u)`` returns du."""
+    """u' = f(t, u) on [t0, tf] (``ODEProblem``). ``f(t, u)`` returns du;
+    ``jvp(t, u, v, fu)``, where given, returns J*v for the matrix-free FBDF,
+    which differences f otherwise."""
 
     def __init__(self, f: Callable[[float, np.ndarray], np.ndarray], u0: Any, tspan: Any,
                  jac: Optional[Callable[..., bool]] = None, jac_pattern: Any = None, events: Any = None,
-                 tgrad: Optional[Callable[[float, np.ndarray], np.ndarray]] = None) -> None:
+                 tgrad: Optional[Callable[[float, np.ndarray], np.ndarray]] = None,
+                 jvp: Optional[Callable[..., np.ndarray]] = None) -> None:
         self.f = f
         self.u0 = np.array(u0, dtype=float)
         self.tspan = (float(tspan[0]), float(tspan[1]))
         self.jac = jac
         self.tgrad = tgrad
         self.jac_pattern = jac_pattern
+        self.jvp = jvp
         self.events = events
         self.n = int(self.u0.size)
 
@@ -66,6 +74,9 @@ class ODESolution:
         self.retcode = retcode
         self.message = message or ''
         self.events: List[Dict[str, Any]] = []
+        # A composite method's choice at each saved row, numbered from 1 as
+        # OrdinaryDiffEq's sol.alg_choice is; None for any other method.
+        self.alg_choice: Optional[np.ndarray] = None
 
 
 DEFAULTS: Dict[str, Any] = {
@@ -136,14 +147,48 @@ class Integrator:
             'nnonlinconvfail': 0, 'nnonliniter': 0, 'nbelowtol': 0, 'maxOrder': 0, 'points': 0, 'stride': 1,
             'sparse': False, 'fill': None, 'ordering': 'none', 'alg': alg.name,
         }
-        self.jac_cache = JacobianCache(n, prob.jac, prob.jac_pattern, opts['matrix'], opts['central'])
-        self.W = WFactorization(n, self.jac_cache, opts['max_jac_age'])
+        # The Jacobian and W are made the first time a method asks for them
+        # (the properties below); the Newton solver is a handful of vectors.
+        # A method that never touches them -- an explicit Runge-Kutta, which
+        # the automatic switch may run for a whole solve -- never pays for an
+        # n x n matrix.
+        self._jac_cache: Optional[JacobianCache] = None
+        self._W: Optional[WFactorization] = None
         self.newton = NewtonSolver(n, norm=opts['norm'], kappa=opts['kappa'], max_iters=opts['newton_max_iters'])
-        self.stats['sparse'] = self.W.sparse
-        self.stats['ordering'] = self.W.ordering
+        # What a composite method needs from the loop (methods/default.py):
+        # the spectral-radius estimate its stiffness test reads -- set by the
+        # explicit methods from their last two stages and by the stiff ones as
+        # ||J||_inf whenever they form J -- and whether the next step's error
+        # checks are to be made at all: OrdinaryDiffEq's eigen_est, starting
+        # at one, and do_error_check. ``still_is_stiff`` is the composite's.
+        self.is_composite = bool(getattr(alg, 'composite', False))
+        self.eigen_est = 1.0
+        self.do_error_check = True
+        self.still_is_stiff = False
+        self.controller: Any = None
         self.cache = alg.build(n, self, opts)
-        order = self.cache.error_order if self.cache.error_order is not None else self.cache.order
-        self.controller = PIController(order, **(alg.controller or {}))
+        # A composite method keeps a controller for each of its methods and
+        # puts the one in charge here, from its init on, as it switches.
+        if not self.is_composite:
+            order = self.cache.error_order if self.cache.error_order is not None else self.cache.order
+            self.controller = PIController(order, **(alg.controller or {}))
+
+    @property
+    def jac_cache(self) -> JacobianCache:
+        """The Jacobian's cache, made on first use."""
+        if self._jac_cache is None:
+            self._jac_cache = JacobianCache(self.n, self.prob.jac, self.prob.jac_pattern, self.opts['matrix'],
+                                            self.opts['central'])
+        return self._jac_cache
+
+    @property
+    def W(self) -> WFactorization:  # noqa: N802 - the package's name
+        """W and its factorisation, made on first use."""
+        if self._W is None:
+            self._W = WFactorization(self.n, self.jac_cache, self.opts['max_jac_age'])
+            self.stats['sparse'] = self._W.sparse
+            self.stats['ordering'] = self._W.ordering
+        return self._W
 
     def f(self, t: float, u: np.ndarray) -> np.ndarray:
         self.stats['nf'] += 1
@@ -170,9 +215,15 @@ class Integrator:
         return math.sqrt(seq_sum(r * r) / self.n)
 
     def form_w(self, gamma_dt: float, transform: bool, force_jac: bool = False) -> bool:
-        ok = self.W.form(self.f, self.t, self.uprev, self.fsalfirst, gamma_dt, transform, force_jac)
+        W = self.W
+        jacs_before = self.jac_cache.njac
+        ok = W.form(self.f, self.t, self.uprev, self.fsalfirst, gamma_dt, transform, force_jac)
         self.stats['njacs'] = self.jac_cache.njac
-        self.stats['nw'] = self.W.nfactor
+        self.stats['nw'] = W.nfactor
+        # A composite method's stiffness test reads ||J||_inf whenever J is
+        # formed, as OrdinaryDiffEq's calc_J! sets eigen_est = opnorm(J, Inf).
+        if self.is_composite and self.jac_cache.njac != jacs_before:
+            self.eigen_est = jacobian_inf_norm(self.jac_cache)
         return ok
 
     def solve_w(self, b: np.ndarray) -> np.ndarray:
@@ -333,10 +384,14 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
     # --- saving --------------------------------------------------------------------------
     T: List[float] = []
     U: List[np.ndarray] = []
+    # A composite method's choice at each saved row, numbered from 1.
+    choice: Optional[List[int]] = [] if integ.is_composite else None
 
     def remember(t: float, u: np.ndarray) -> None:
         T.append(t)
         U.append(np.array(u, dtype=float))
+        if choice is not None:
+            choice.append(integ.cache.current + 1)
 
     saveat: Optional[List[float]] = None
     saveat_at = 0
@@ -373,8 +428,15 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
 
     if not opts['adaptive'] and not opts['dt']:
         raise ODEError('dt', 'A non-adaptive run needs an explicit dt', t0)
+    # The methods ported with OrdinaryDiffEq's own starting step say so; the
+    # older ones keep the one they were checked with. Its dtmax is the span,
+    # as OrdinaryDiffEq's default is.
     if opts['dt']:
         dt = abs(opts['dt']) * tdir
+    elif getattr(alg, 'initdt', None) == 'sciml':
+        dt = initial_step_sciml(integ.f, t0, integ.uprev, integ.fsalfirst, tdir, integ.cache.order, opts['reltol'],
+                                opts['abstol'], jmin(abs(opts['dtmax']), span), norm=opts['norm'],
+                                dtmin=opts['dtmin'])
     else:
         dt = initial_step(integ.f, t0, integ.uprev, integ.fsalfirst, tdir, integ.cache.order, opts['reltol'],
                           opts['abstol'], opts['dtmax'])
@@ -406,7 +468,16 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
 
     # --- the loop ------------------------------------------------------------------------
     while tdir * (tf - integ.t) > t_eps:
-        if integ.nsteps >= max_steps:
+        # A composite method decides here which of its methods takes the
+        # next step -- after the last attempt has been judged and its
+        # successor's dt chosen, before anything else, as OrdinaryDiffEq's
+        # loopheader! calls choose_algorithm! after every attempt. It may
+        # change dt, and it says whether this attempt's error checks are to
+        # be made: an explicit method just found stiff is let through them
+        # for the few steps until the switch.
+        if integ.is_composite:
+            cache.choose(integ)
+        if integ.nsteps >= max_steps and integ.do_error_check:
             retcode = MAX_ITERS
             message = f'More than {js_string(max_steps)} steps were needed, and the run stopped at t = ' \
                       f'{js_string(integ.t)}'
@@ -440,15 +511,17 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
                 message = 'The run was stopped from outside'
                 break
             # At the smallest step the clock can represent there is nowhere
-            # left to go: the run ends rather than retrying there.
-            if at_floor:
+            # left to go: the run ends rather than retrying there (unless a
+            # composite method has waived the checks while it switches).
+            if at_floor and integ.do_error_check:
                 retcode = CONVERGENCE_FAILURE
                 message = f'The step could not be taken at t = {js_string(integ.t)} even at ' \
                           f'{to_exponential(abs(integ.dt), 3)}, the smallest the clock can represent: ' \
                           'the equations of its stages could not be solved there'
                 break
             integ.dt *= 0.5
-            integ.W.mark_stale()
+            if integ._W is not None:
+                integ._W.mark_stale()
             integ.controller.reset()
             continue
 
@@ -460,7 +533,8 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
                 # The candidate is no state; the last accepted one is.
                 integ.u[:] = integ.uprev
                 integ.dt *= 0.5
-                integ.W.mark_stale()
+                if integ._W is not None:
+                    integ._W.mark_stale()
                 if abs(integ.dt) < dtmin_at(integ.t):
                     retcode = UNSTABLE
                     message = f'The solution became infinite or not-a-number at t = {js_string(integ.t)} ' \
@@ -482,12 +556,13 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
                           f'{to_exponential(abs(integ.dt), 3)}, the smallest the clock can represent'
                 break
             integ.dt *= 0.5
-            integ.W.mark_stale()
+            if integ._W is not None:
+                integ._W.mark_stale()
             integ.controller.reset()
             continue
 
         accepted = (not opts['adaptive']) or integ.eest <= 1
-        if not accepted and at_floor:
+        if not accepted and at_floor and integ.do_error_check:
             if below_tol_run < below_tol_max:
                 below_tol_run += 1
                 stats['nbelowtol'] += 1
@@ -524,8 +599,7 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
             ev = _find_event(integ, eval_at, g_prev, work)  # type: ignore[arg-type]
 
         stats['naccept'] += 1
-        if integ.non_negative is not None:
-            integ.clamp(integ.u)
+        clamped = integ.clamp(integ.u) if integ.non_negative is not None else 0
 
         if saveat is not None:
             t_end = ev['t'] if ev is not None else tnew
@@ -562,12 +636,19 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
         elif tstop_at < len(tstops) and abs(tstops[tstop_at] - integ.t) <= 16 * jmax(ulp(integ.t), MIN_VALUE):
             integ.t = tstops[tstop_at]
         integ.uprev[:] = integ.u
-        if cache.has_fsal_last:
+        # f at the new point is the step's own last stage where the method
+        # has one -- unless clamping moved the point off it, which the methods
+        # ported with OrdinaryDiffEq's semantics answer as a callback that
+        # modified u does there, by evaluating f again.
+        if cache.has_fsal_last and not (clamped and getattr(cache, 'refresh_fsal_on_clamp', False)):
             integ.fsalfirst[:] = integ.fsallast
         else:
             integ.fsalfirst[:] = integ.f(integ.t, integ.uprev)
 
-        integ.W.age_plus()
+        # The Jacobian ages by the steps taken with it: an explicit method's
+        # steps under a composite method do not count.
+        if not getattr(cache, 'explicit', False) and integ._W is not None:
+            integ._W.age_plus()
         accepted_hook = getattr(cache, 'accepted', None)
         if accepted_hook is not None:
             accepted_hook(integ, dtjust)
@@ -589,7 +670,8 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
                     integ.clamp(integ.u)
                 integ.uprev[:] = integ.u
                 integ.fsalfirst[:] = integ.f(integ.t, integ.uprev)
-                integ.W.mark_stale()
+                if integ._W is not None:
+                    integ._W.mark_stale()
                 integ.newton.reset()
                 integ.controller.reset()
                 restart = getattr(cache, 'restart', None)
@@ -608,7 +690,7 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
         elif cache.dtpropose is not None:
             dtnext = cache.dtpropose
         else:
-            dtnext = integ.controller.accept(integ.eest, dtjust)
+            dtnext = integ.controller.accept(integ.eest, dtjust, stats['naccept'] == 1)
         cache.dtpropose = None
         if not math.isfinite(dtnext) or dtnext == 0:
             dtnext = dtjust
@@ -625,17 +707,30 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
 
     stats['points'] = len(T)
     stats['stride'] = 1
-    stats['njacs'] = integ.jac_cache.njac
-    stats['nw'] = integ.W.nfactor
-    stats['nsolve'] = integ.W.nsolve
-    stats['fill'] = integ.W.fill
+    # Nothing formed, nothing to report: a method that never asked for J or W.
+    W = integ._W
+    stats['njacs'] = integ._jac_cache.njac if integ._jac_cache is not None else 0
+    stats['nw'] = W.nfactor if W is not None else 0
+    # A method solving without a factorisation (the Krylov FBDF) adds its own.
+    stats['nsolve'] = (W.nsolve if W is not None else 0) + (getattr(cache, 'krylov_solves', 0) or 0)
+    stats['fill'] = W.fill if W is not None else None
     stats['nnonliniter'] = integ.newton.nf
     stats['t'] = integ.t
+    if integ.is_composite and hasattr(cache, 'report'):
+        stats.update(cache.report(integ))
+    krylov_report = getattr(cache, 'krylov_report', None)
+    if krylov_report is not None:
+        stats.update(krylov_report())
     sol = ODESolution(T, U, stats, retcode, message)
     sol.events = events
+    sol.alg_choice = np.array(choice, dtype=np.uint8) if choice is not None else None
     return sol
 
 
-def algorithm(name: str, order: float, build: Callable[..., Any], controller: Dict[str, Any]) -> SimpleNamespace:
-    """What a solver module hands ``solve``: ``{ name, order, build, controller }``."""
-    return SimpleNamespace(name=name, order=order, build=build, controller=controller)
+def algorithm(name: str, order: float, build: Callable[..., Any], controller: Optional[Dict[str, Any]],
+              **extra: Any) -> SimpleNamespace:
+    """What a solver module hands ``solve``: ``{ name, order, build, controller }``,
+    and what a method ported with OrdinaryDiffEq's semantics says beside it --
+    ``initdt='sciml'`` for its starting step, ``stability_size`` for the
+    automatic switch, ``composite`` and ``algs`` for the switch itself."""
+    return SimpleNamespace(name=name, order=order, build=build, controller=controller, **extra)

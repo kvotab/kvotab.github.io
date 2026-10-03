@@ -20,7 +20,12 @@ turns it into a :class:`~kompartment.engine.solvers.SolverError`.
 
 A run whose Python solver has been given other arithmetic than the one the
 loop ports -- a test putting the application's own ``pow`` and dense LU in
-its place -- keeps to the Python loop (:func:`why_python`).
+its place -- keeps to the Python loop (:func:`why_python`). So does a run of
+the five methods that came with the default algorithm (``auto``,
+``fbdf_krylov``, ``rosenbrock23``, ``tsit5``, ``vern7``), which the loop
+does not port yet: on the compiled path they run their Python solver's own
+loop on the compiled model, as SciPy's solvers do, the same steps to the
+last bit.
 """
 
 from __future__ import annotations
@@ -44,6 +49,11 @@ METHODS = {'fbdf': cj.M_FBDF, 'qndf': cj.M_QNDF, 'rodas5p': cj.M_ROSENBROCK, 'ra
 
 def why_python(solver_id: str, opts: Dict[str, Any]) -> Optional[str]:
     """Why a run of ``solver_id`` keeps the Python solver's own loop, or None."""
+    if solver_id not in METHODS:
+        # The default algorithm's methods (and the switch between them) have
+        # no compiled loop yet: such a run falls back to PythonLoopRun, the
+        # Python solver's loop on the compiled model, as SciPy's solvers do.
+        return 'the compiled loop does not take this method yet'
     from ..solvers.julia import _js, controller, linalg, newton
     from ..solvers.julia.methods import fbdf, qndf, radau
     # The arithmetic the loop ports: each module's pow, and the dense LU.

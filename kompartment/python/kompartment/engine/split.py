@@ -81,6 +81,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..simulation import add_method_steps
 from .partition import partition_of
 
 __all__ = ['SPLIT_MODES', 'SHARED_WORK', 'AUTO_STATES', 'AUTO_SOLVE_MS', 'AUTO_GAIN', 'AUTO_GAIN_UNTIMED',
@@ -606,6 +607,7 @@ def assemble_parts(plan: Dict[str, Any], outcomes: Sequence[Dict[str, Any]]) -> 
             stats['solver'] = s['solver']
         if s.get('sparse') is not None:
             stats['sparse'] = s['sparse']
+        add_method_steps(stats, s)
         # This engine's own: the run was compiled when every part was, and
         # the first part that was not says why.
         if 'compiled' in s:

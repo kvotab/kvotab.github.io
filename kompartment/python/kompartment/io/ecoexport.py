@@ -144,8 +144,9 @@ DIRECTION_TO_ECO = {'rising': 'RIGHT', 'falling': 'LEFT', 'both': 'BOTH'}
 SOLVER_TO_ECO = {
     'ndf': 'java-ode15s', 'ros23': 'java-ode23s', 'dp45': 'java-ode45', 'qndf': 'java-ode15s',
     'fbdf': 'java-ode15s-BDF', 'radau5': 'java-radau5', 'trbdf2': 'java-ode23tb',
-    'rodas5p': 'java-ode23s', 'kencarp4': 'java-ode15s', 'scipy_bdf': 'java-ode15s',
-    'scipy_radau': 'java-radau5', 'scipy_lsoda': 'java-ode15s',
+    'rodas5p': 'java-ode23s', 'kencarp4': 'java-ode15s', 'auto': 'java-ode15s',
+    'fbdf_krylov': 'java-ode15s-BDF', 'rosenbrock23': 'java-ode23s', 'tsit5': 'java-ode45',
+    'vern7': 'java-ode45', 'scipy_bdf': 'java-ode15s', 'scipy_radau': 'java-radau5', 'scipy_lsoda': 'java-ode15s',
 }
 
 #: Ecolego's ode15s with its BDF option: the NDFs with every κ zero, which is
@@ -171,6 +172,16 @@ SOLVER_WHY = {
              'back as ndf with its BDF switch on'),
     'rodas5p': 'the nearest Ecolego has: its Rosenbrock solver, of lower order',
     'kencarp4': 'the nearest Ecolego has for a stiff model',
+    'auto': ('the nearest Ecolego has: it does not switch methods as a run goes, and its NDF is '
+             'what a stiff model wants, as most here are; this tool reads it back as ndf'),
+    'fbdf_krylov': ('the nearest Ecolego has: the same backward differentiation formulas with a '
+                    'factorised matrix rather than GMRES, which this tool reads back as ndf with its BDF '
+                    'switch on'),
+    'rosenbrock23': 'the same Rosenbrock (2,3) method, which this tool reads back as ros23',
+    'tsit5': ('the nearest Ecolego has: an explicit Runge-Kutta pair of the same order, which this '
+              'tool reads back as dp45'),
+    'vern7': ('the nearest Ecolego has: an explicit Runge-Kutta pair, of lower order, which this '
+              'tool reads back as dp45'),
     'scipy_bdf': 'the nearest Ecolego has: the same family, a different implementation',
     'scipy_radau': 'Ecolego’s Radau IIA of order 5, which this tool reads back as ndf',
     'scipy_lsoda': 'the nearest Ecolego has for a stiff model',

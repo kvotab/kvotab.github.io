@@ -12,6 +12,10 @@
 //   stamps     { model }           -> { name: stamp } for every block
 //   numbers    { values }          -> String(x) for each
 //   count      { model }           -> stateCount
+//   catalogue  { describe, add }   -> the solver catalogue (src/ode/solvers.js): its ids in
+//                                     order, labels, the settings each reads, the ported ids,
+//                                     describeMethodSteps of each of `describe`, and
+//                                     addMethodSteps of each list of `add` folded from {}
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -23,6 +27,7 @@ const ed = await load('domain/edit.js');
 const qa = await load('domain/qa.js');
 const nuclides = await load('domain/nuclides.js');
 const { qualifiedName } = await load('domain/systems.js');
+const solvers = await load('ode/solvers.js');
 
 const req = JSON.parse(readFileSync(0, 'utf8'));
 const open = (raw) => {
@@ -70,6 +75,16 @@ switch (req.task) {
 		break;
 	case 'count':
 		out = { count: ed.stateCount(open(req.model)) };
+		break;
+	case 'catalogue':
+		out = {
+			ids: solvers.SOLVER_IDS,
+			labels: Object.fromEntries(solvers.SOLVER_IDS.map((id) => [id, solvers.solverLabel(id)])),
+			options: Object.fromEntries(solvers.SOLVER_IDS.map((id) => [id, solvers.SOLVER_OPTIONS[id] ?? []])),
+			ported: solvers.PORTED_IDS,
+			described: (req.describe ?? []).map((s) => solvers.describeMethodSteps(s)),
+			added: (req.add ?? []).map((list) => list.reduce((into, from) => solvers.addMethodSteps(into, from), {})),
+		};
 		break;
 	default:
 		throw new Error(`No task '${req.task}'`);

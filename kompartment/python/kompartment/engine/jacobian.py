@@ -15,7 +15,10 @@ or differenced through the pattern, one evaluation per colour.
 
 The rows of the mass-balance budgets are left at the diagonal, as the
 application leaves them for the NDF: nothing reads a budget, so the Newton
-iteration needs nothing more of those rows.
+iteration needs nothing more of those rows. The application does so for the
+solvers in its ``DIAGONAL_BUDGET_IDS`` (``src/sim/jacobian.js``: ``ndf``,
+``dp45``, ``tsit5``, ``vern7`` and SciPy's) and generates the rows whole for
+every other; this engine leaves them at the diagonal for every solver.
 """
 
 from __future__ import annotations

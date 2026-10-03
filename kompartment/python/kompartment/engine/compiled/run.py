@@ -7,12 +7,13 @@ messages included:
 
 * a :class:`CompiledRun` for the NDF, Rosenbrock (2,3) and Dormand-Prince,
   whose loops are compiled (:mod:`.solvers`);
-* a :class:`~.julia_run.JuliaRun` for the Julia-derived ones, whose loop is
-  compiled too (:mod:`.julia`);
+* a :class:`~.julia_run.JuliaRun` for the six Julia-derived ones first
+  ported, whose loop is compiled too (:mod:`.julia`);
 * a :class:`PythonLoopRun` for a solver that keeps its own loop in Python --
-  SciPy's, and a Julia-derived one whose Python solver computes otherwise
-  than the compiled loop ports (see :func:`.julia_run.why_python`) -- handed
-  the compiled model.
+  SciPy's, the five Julia-derived ones that came with the default algorithm
+  (``auto`` and the methods it switches to), and a Julia-derived one whose
+  Python solver computes otherwise than the compiled loop ports (see
+  :func:`.julia_run.why_python`) -- handed the compiled model.
 
 What stays in Python is called back: an analytic Jacobian, with the
 recorders handed over first (they live in the compiled arrays during a run);

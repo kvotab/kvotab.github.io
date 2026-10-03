@@ -423,5 +423,51 @@ class TheSameArithmetic(unittest.TestCase):
                     self.assertEqual(m.review_stamp(b), js[b.qualified_name], b.qualified_name)
 
 
+@needs_app
+class TheSolverCatalogue(unittest.TestCase):
+    """The solvers a model may name, what they are called and what each reads,
+    as ``src/ode/solvers.js`` has them -- every place this package keeps a copy."""
+
+    def test_the_solvers_are_the_application_s(self):
+        from kompartment.engine.runner import SOLVER_LABELS
+        from kompartment.engine.solverset import SOLVERS as RUNNABLE
+        from kompartment.importers._eco_maps import SOLVER_LABELS as ECO_LABELS
+        from kompartment.io.ecoexport import SOLVER_TO_ECO, SOLVER_WHY, SOLVER_EXACT
+        from kompartment.simulation import SOLVER_OPTIONS, SOLVERS
+        js = app('catalogue')
+        self.assertEqual(list(SOLVERS), js['ids'])
+        self.assertEqual({k: list(SOLVER_OPTIONS.get(k, ())) for k in SOLVERS}, js['options'])
+        for labels in (SOLVER_LABELS, ECO_LABELS):
+            self.assertEqual(list(labels.items()), list(js['labels'].items()))
+        self.assertEqual(sorted(RUNNABLE), sorted(SOLVERS))
+        self.assertEqual(sorted(SOLVER_TO_ECO), sorted(SOLVERS))
+        self.assertEqual(sorted(SOLVER_WHY), sorted(set(SOLVERS) - SOLVER_EXACT))
+        # Every ported method is the Python solver's, through the one adapter.
+        from kompartment.engine.solvers.julia.adapter import ALGORITHMS
+        self.assertEqual(sorted(ALGORITHMS), sorted(js['ported']))
+
+    def test_the_switching_solver_s_account_reads_alike(self):
+        from kompartment.simulation import add_method_steps, describe_method_steps
+        described = [{'stepsBy': {'Tsit5': 1, 'Rosenbrock23': 300}, 'switches': 1},
+                     {'stepsBy': {'Vern7': 12}, 'switches': 0}, {'stepsBy': {'Tsit5': 2}},
+                     {'stepsBy': {'Tsit5': 33, 'KrylovFBDF': 1, 'FBDF': 2.5}, 'switches': 2}, {'stepsBy': {}},
+                     {'nsteps': 3}, {}]
+        added = [[{'stepsBy': {'Tsit5': 3}, 'switches': 1}, {'nsteps': 4}, {'stepsBy': {'Tsit5': 2, 'FBDF': 5}}],
+                 [{'nsteps': 1}], [{'stepsBy': {}}]]
+        js = app('catalogue', describe=described, add=added)
+        self.assertEqual([describe_method_steps(s) for s in described], js['described'])
+        # This engine's spelling, folded the application's way.
+
+        def spelt(d):
+            return {('steps_by' if k == 'stepsBy' else k): v for k, v in d.items()}
+        mine = []
+        for parts in added:
+            into = {}
+            for part in parts:
+                add_method_steps(into, spelt(part))
+            mine.append(into)
+        self.assertEqual(mine, [spelt(d) for d in js['added']])
+
+
 if __name__ == '__main__':
     unittest.main()

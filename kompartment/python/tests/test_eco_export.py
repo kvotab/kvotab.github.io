@@ -43,8 +43,16 @@ from kompartment.jsonio import dumps
 #: The solver the importer reads back from the name an export writes.
 SOLVER_BACK = {
     'radau5': 'ndf', 'qndf': 'ndf', 'fbdf': 'ndf', 'trbdf2': 'ros23', 'rodas5p': 'ros23', 'kencarp4': 'ndf',
+    'auto': 'ndf', 'fbdf_krylov': 'ndf', 'rosenbrock23': 'ros23', 'tsit5': 'dp45', 'vern7': 'dp45',
     'scipy_bdf': 'ndf', 'scipy_radau': 'ndf', 'scipy_lsoda': 'ndf',
 }
+
+#: Every key Ecolego 6.5 has for ``<java-solver>`` (``ALL_SOLVER_INFOS`` in its
+#: SolverSettingPage): anything else and the project does not open.
+ECOLEGO_SOLVER_KEYS = (
+    'java-ode1', 'java-ode2', 'java-ode3', 'java-ode4', 'java-ode5', 'java-ode23', 'java-ode45', 'java-ode113',
+    'java-ode15s', 'java-ode15s-BDF', 'java-radau5', 'java-ode23s', 'java-ode23t', 'java-ode23tb',
+)
 
 
 def js(requests: List[Dict[str, Any]]) -> List[Any]:
@@ -395,6 +403,27 @@ class ReadBack(unittest.TestCase):
         for i, t in enumerate(r.t):
             self.assertAlmostEqual(series['Pond [A]'][i] / (100 * math.exp(-0.1 * t)), 1, delta=1e-7)
             self.assertAlmostEqual(series['Pond [B]'][i], 100 - 2 * t, delta=1e-7)
+
+    def test_every_solver_goes_out_as_one_ecolego_has_and_comes_back(self):
+        """Each of the solvers a model may name, on a small model: the
+        application's bytes and report, a key Ecolego has, read back as the
+        importer reads it, and a word in the report for every one that does
+        not come back as itself."""
+        from kompartment.simulation import SOLVERS
+        base = models()['SCENARIO_ONLY']
+        variants = [{**base, 'simulation': {**base['simulation'], 'solver': sid}} for sid in SOLVERS]
+        answers = js([{'task': 'export', 'model': m} for m in variants])
+        for sid, model, answer in zip(SOLVERS, variants, answers):
+            with self.subTest(solver=sid):
+                out = export_eco(model)
+                self.assertEqual(out.bytes, base64.b64decode(answer['base64']))
+                self.assertEqual(json_text(out.report.to_dict()), json_text(answer['report']))
+                name = ET.fromstring(out.xml.encode('utf-8')).find('simulation-settings').findtext('java-solver')
+                self.assertIn(name, ECOLEGO_SOLVER_KEYS)
+                back = import_eco_file(out.bytes).project
+                self.assertEqual(back['simulation']['solver'], SOLVER_BACK.get(sid, sid))
+                said = any(r.get('type') == 'solver' and r.get('name') == sid for r in out.report.rewritten)
+                self.assertEqual(said, sid not in ('ndf', 'ros23', 'dp45'))
 
     def test_guids_are_deterministic_and_shaped_as_uuids(self):
         a = guid_for('Model', 'block:Soil')

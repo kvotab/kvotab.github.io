@@ -13,7 +13,7 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from ._js import SQRT_EPS
+from ._js import SQRT_EPS, max_or_zero
 from .linalg import DenseLU, SparseLU, csc_from_triplets, dense_pattern, reverse_cuthill_mckee
 
 Pattern = Tuple[np.ndarray, np.ndarray]
@@ -263,3 +263,20 @@ class WFactorization:
     def solve(self, b: np.ndarray) -> np.ndarray:
         self.nsolve += 1
         return self.lu.solve(b)
+
+
+def jacobian_inf_norm(cache: JacobianCache) -> float:
+    """||J||_inf, the largest absolute row sum, of whichever storage the cache
+    holds J in (``jacobianInfNorm``): OrdinaryDiffEq's opnorm(J, Inf), which a
+    composite method's stiffness test reads as its estimate of the spectral
+    radius whenever a stiff method forms J. Each row is summed in column
+    order, as the package sums it; a NaN entry makes it NaN."""
+    n = cache.n
+    if n == 0:
+        return 0.0
+    if cache.sparse:
+        rows = np.bincount(np.asarray(cache.pattern[1], dtype=np.int64),  # type: ignore[index]
+                           weights=np.abs(cache.values), minlength=n)
+    else:
+        rows = np.cumsum(np.abs(cache.J), axis=1)[:, -1]  # type: ignore[arg-type]
+    return max_or_zero(rows)

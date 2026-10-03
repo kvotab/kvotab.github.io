@@ -15,6 +15,15 @@ Where the model's analytic Jacobian is declined (``available: False``), the
 engine's runner hands over the structural pattern, as the application's does,
 and the matrix is differenced through it and factorised sparsely: a large
 model runs rather than asking for n^2 numbers.
+
+The switching solver (``auto``) reports which of its methods took the
+accepted steps and how often it changed between them (``steps_by``,
+``switches``), and the matrix-free FBDF its GMRES iterations
+(``krylov_iters``) -- the application's ``stepsBy``, ``switches`` and
+``krylovIters``, in this engine's spelling. A run is one solve between two
+events; the runner hands every solve of a run one ``carry`` dict, in which
+``auto`` keeps whether it ended on its stiff method and goes on with it, as
+DifferentialEquations.jl carries its choice across a callback.
 """
 
 from __future__ import annotations
@@ -28,7 +37,8 @@ from .. import SolverError
 from ._js import jmin
 from .integrator import (CONVERGENCE_FAILURE, DT_LESS_THAN_MIN, MAX_ITERS, SUCCESS, TERMINATED, UNSTABLE, ODEError,
                          ODEProblem, solve)
-from .methods import FBDF, QBDF, QNDF, KenCarp4, RadauIIA5, Rodas5P, TRBDF2
+from .methods import (FBDF, QBDF, QNDF, DefaultODEAlgorithm, KenCarp4, RadauIIA5, Rodas5P, Rosenbrock23, TRBDF2,
+                      Tsit5, Vern7)
 
 ALGORITHMS: Dict[str, Callable[..., Any]] = {
     'fbdf': FBDF,
@@ -37,7 +47,17 @@ ALGORITHMS: Dict[str, Callable[..., Any]] = {
     'radau5': RadauIIA5,
     'kencarp4': KenCarp4,
     'trbdf2': TRBDF2,
+    # The default algorithm and the three methods it brought with it. Each
+    # run of `auto` is one solve between two events.
+    'auto': DefaultODEAlgorithm,
+    'rosenbrock23': Rosenbrock23,
+    'tsit5': Tsit5,
+    'vern7': Vern7,
+    'fbdf_krylov': lambda: FBDF(linsolve='gmres'),
 }
+
+#: The switching solver's stiff methods, by the names its statistics give them.
+STIFF_METHODS = frozenset(['Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF'])
 
 # What `simulation.bdf` runs instead, by the id the run then reports.
 AS_BDF: Dict[str, Any] = {
@@ -183,7 +203,12 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
             settings['progress'] = progress
             settings['progress_every'] = 1
 
-        alg = (variant[1] if variant else algorithm)()
+        # The switching solver goes on with the method it ended the last solve
+        # of this run on: a run restarted at an event is still the run. (An
+        # empty carry is one all the same: `is not None`, not truth.)
+        carry = opts.get('carry') if solver_id == 'auto' else None
+        alg = (DefaultODEAlgorithm(stiffalgfirst=carry.get('stiff') is True) if carry is not None
+               else (variant[1] if variant else algorithm)())
         try:
             with np.errstate(all='ignore'):
                 sol = solve(problem, alg, settings)
@@ -193,6 +218,8 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
             at = getattr(e, 't', None)
             code = getattr(e, 'code', None) if isinstance(e, SolverError) else None
             raise SolverError(code or 'failed', str(e), at if at is not None else t0) from None
+        if carry is not None and sol.stats.get('lastAlg'):
+            carry['stiff'] = sol.stats['lastAlg'] in STIFF_METHODS
 
         last_t = sol.t[-1] if sol.t else t0
         if stopped_here[0]:
@@ -205,21 +232,30 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
                     'which': list(fired.get('all') or [fired['which']])}
                    if fired is not None else None)
         s = sol.stats
+        stats = {
+            'nsteps': s.get('nsteps') or 0,
+            'nfailed': s.get('nreject') or 0,
+            'nfevals': s.get('nf') or 0,
+            'npds': s.get('njacs') or 0,
+            'ndecomps': s.get('nw') or 0,
+            'nsolves': s.get('nsolve') or 0,
+            'solver': run_id,
+            'sparse': bool(s.get('sparse')),
+            'fill': s.get('fill'),
+        }
+        # The switching solver says which of its methods took the accepted
+        # steps and how often it changed between them, for the run log.
+        if s.get('stepsBy') is not None:
+            stats['steps_by'] = dict(s['stepsBy'])
+            stats['switches'] = s['switches'] if s.get('switches') is not None else 0
+        # GMRES's own work, where the method solved without a matrix.
+        if s.get('krylovIters') is not None:
+            stats['krylov_iters'] = s['krylovIters']
         return {
             't': np.array(sol.t, dtype=float),
             'y': [np.array(u, dtype=float) for u in sol.u],
             'stopped': stopped,
-            'stats': {
-                'nsteps': s.get('nsteps') or 0,
-                'nfailed': s.get('nreject') or 0,
-                'nfevals': s.get('nf') or 0,
-                'npds': s.get('njacs') or 0,
-                'ndecomps': s.get('nw') or 0,
-                'nsolves': s.get('nsolve') or 0,
-                'solver': run_id,
-                'sparse': bool(s.get('sparse')),
-                'fill': s.get('fill'),
-            },
+            'stats': stats,
         }
 
     solve_it.__name__ = solver_id

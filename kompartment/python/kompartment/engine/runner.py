@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 import numpy as np
 
 from ..jsonio import js_number
+from ..simulation import add_method_steps, describe_method_steps
 from .builder import BuildError, build_system, tuple_by_list
 from .project import Project, value_at
 from .solvers import SolverError
@@ -28,9 +29,13 @@ HISTORY_KINDS = {'min_max', 'running_mean', 'snapshot', 'delay', 'trigger', 'eve
 
 SOLVER_LABELS = {
     'ndf': 'stiff, NDF', 'ros23': 'stiff, low order, Rosenbrock 2-3', 'dp45': 'non-stiff, Dormand-Prince 4-5',
+    'auto': 'stiff or non-stiff, switching as it runs',
     'rodas5p': 'stiff, Rosenbrock 5', 'radau5': 'stiff, Radau IIA 5', 'fbdf': 'stiff, fixed-leading-coefficient BDF',
+    'fbdf_krylov': 'stiff, FBDF by GMRES, no matrix',
     'qndf': 'stiff, quasi-constant-step NDF', 'kencarp4': 'stiff, ESDIRK 4',
-    'trbdf2': 'stiff, ESDIRK 2 (loose tolerances)', 'scipy_bdf': 'SciPy BDF, stiff',
+    'trbdf2': 'stiff, ESDIRK 2 (loose tolerances)',
+    'rosenbrock23': 'stiff, low order, Rosenbrock 2-3 as in Julia', 'tsit5': 'non-stiff, Tsitouras 5',
+    'vern7': 'non-stiff, Verner 7', 'scipy_bdf': 'SciPy BDF, stiff',
     'scipy_radau': 'SciPy Radau IIA, stiff', 'scipy_lsoda': 'SciPy LSODA, auto-switching',
 }
 
@@ -257,6 +262,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         'on_output': stored if system.has_store_step else None,
         'ends_only': steps is not None and project.output_mode == 'solver',
         'events': system.events,
+        # What a solver may carry from one solve of this run to the next, the
+        # run being restarted at every event and switch time: the switching
+        # solver keeps here whether it ended stiff, and goes on with that
+        # method, as DifferentialEquations.jl's carries on across a callback.
+        'carry': {},
         'on_step': (lambda fraction, n, at: _step(fraction, at)) if on_progress else None,
     }
     if equations is not None:
@@ -382,9 +392,12 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             solution = merge_steps(solution, steps) if project.output_mode == 'both' else from_steps(steps, solution)
     except SolverError as e:
         hints = []
-        if solver_id == 'dp45':
+        # The explicit methods grind on a stiff model rather than fail
+        # cleanly, and say so only as a step budget run out.
+        if solver_id in ('dp45', 'tsit5', 'vern7'):
             hints.append(f'This model looks stiff; switch the solver to "{SOLVER_LABELS["ndf"]}" or '
-                         f'"{SOLVER_LABELS["ros23"]}".')
+                         f'"{SOLVER_LABELS["ros23"]}", or to "{SOLVER_LABELS["auto"]}", which finds that out for '
+                         'itself.')
         said = 'cannot go negative' in str(e)
         if not said and solver_id != 'ndf' and any(non_negative):
             hints.append('If a compartment reaches zero at this time, its "cannot go negative" setting is the likely '
@@ -521,6 +534,7 @@ def solve_across_breaks(solve: Callable[[np.ndarray, np.ndarray], Dict[str, Any]
                     stats[key] = stats.get(key, 0) + s[key]
             if s.get('held') is not None:
                 stats['held'] = s['held'] if stats.get('held') is None else stats['held'] + s['held']
+            add_method_steps(stats, s)
         y = seg['y'][-1]
         at = float(seg['t'][-1])
         if jump_at is not None:
@@ -573,6 +587,7 @@ def solve_with_events(system: Any, f: Callable[..., np.ndarray], solver: Callabl
         stats['negative'] = stats.get('negative', 0) + (s.get('negative') or 0)
         if s.get('held') is not None:
             stats['held'] = s['held'] if stats.get('held') is None else stats['held'] + s['held']
+        add_method_steps(stats, s)
         stopped = seg.get('stopped')
         if not stopped:
             break
@@ -1006,6 +1021,11 @@ class Results:
             parts.append(f"{st['nsteps']} steps")
         if st.get('nfailed'):
             parts.append(f"{st['nfailed']} failed")
+        # The switching solver: which of its methods took the steps, and how
+        # often it changed between them, as the application's status line says.
+        methods = describe_method_steps(st)
+        if methods:
+            parts.append(f'methods: {methods}')
         parts.append(f"{len(self.t)} output times")
         if self.timing.get('total_ms') is not None:
             parts.append(f"{self.timing['total_ms'] / 1000:.2f} s")

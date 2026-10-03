@@ -33,7 +33,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from ..io.csv import JS_WHITESPACE, is_js_boolean, js_string, js_to_number
-from ..simulation import SOLVER_OPTIONS
+from ..simulation import SOLVER_OPTIONS, describe_method_steps
 from ..stats.pdf import _to_exponential, _to_precision
 
 __all__ = ['run_log_lines', 'scenario_log_lines', 'probabilistic_log_lines', 'run_log_text', 'describe_audit',
@@ -42,7 +42,8 @@ __all__ = ['run_log_lines', 'scenario_log_lines', 'probabilistic_log_lines', 'ru
 DEFAULT_SOLVER = 'ndf'
 
 #: The Python engine's names for what the application calls otherwise.
-_STATS_NAMES = {'solver_points': 'solverPoints', 'thinned_by': 'thinnedBy'}
+_STATS_NAMES = {'solver_points': 'solverPoints', 'thinned_by': 'thinnedBy', 'steps_by': 'stepsBy',
+                'krylov_iters': 'krylovIters'}
 _TIMING_NAMES = {'build_ms': 'buildMs', 'solve_ms': 'solveMs', 'total_ms': 'totalMs'}
 
 _SPACE = re.compile('[' + ''.join(re.escape(c) for c in JS_WHITESPACE) + ']+')
@@ -320,6 +321,10 @@ def run_log_lines(project: Any, payload: Any, replayed: Any = None, build: str =
         out.append(f"  states: {_s(_nz(_get(payload, 'stateCount'), '?'))}")
         out.append(f"  steps: {_s(_nz(_get(s, 'nsteps'), '?'))}, rejected: {_s(_nz(_get(s, 'nfailed'), 0))}, "
                    f"f evaluations: {_s(_nz(_get(s, 'nfevals'), '?'))}")
+        # The switching solver: which of its methods took the accepted steps.
+        methods = describe_method_steps(s)
+        if methods:
+            out.append(f'  methods: {methods}')
         if _truthy(_get(s, 'nbelowtol')):
             out.append(f"  steps taken below tolerance: {_s(_get(s, 'nbelowtol'))}")
         if not _nullish(_get(s, 'events')):

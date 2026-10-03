@@ -6,10 +6,17 @@
 //
 //   solve     { runs: [{ problem, solver, opts }] }  -> per run: t, y, stats, stopped, accepted
 //             times (from onAccepted), progress calls, or the error it threw
+//   carry     { runs: [{ problem, opts, grids }] }    -> the switching solver ('auto') run over
+//             each grid in turn, each from where the last ended, all with one carry, as the
+//             runner restarts it at events: per solve t, y, stats and the carry after it
+//   package   { runs: [{ problem, alg, algOptions, opts }] } -> the package's own solve with
+//             one of its algorithms (Tsit5, Vern7, Rosenbrock23, FBDF, DefaultODEAlgorithm, ...),
+//             opts in the package's names: t, u, stats, retcode, message, algChoice, events
 //   tableaus  {}                                     -> the package's tableaux, as it holds them
 //   orderings { patterns: [{ n, colPtr, rowIdx }] }  -> reverseCuthillMcKee and colourColumns
 //   problems  {}                                     -> each problem's n, y0, grid and pattern
 //   pow       { pairs: [[x, y]] }                     -> Math.pow(x, y) for each, as V8 computes it
+//   log10     { values: [x] }                         -> Math.log10(x) for each, as V8 computes it
 //
 // The problems are defined here and mirrored in test_engine_julia.py, expression for
 // expression, so that f is the same function to the last bit on both sides.
@@ -244,6 +251,140 @@ PROBLEMS.nonneg = { ...PROBLEMS.chain, nonNegative: new Array(12).fill(true) };
 	};
 }
 
+// Van der Pol at mu = 1000: stiff with non-stiff stretches between, what the
+// automatic switch is for (OrdinaryDiffEq switches seven times over [0, 3000]).
+{
+	const pattern = csc(2, [[1, 0], [0, 1], [1, 1]]);
+	PROBLEMS.vdp1000 = {
+		y0: [2, 0],
+		grid: linspace(0, 3000, 31),
+		pattern,
+		f: (t, y, d) => {
+			d[0] = y[1];
+			d[1] = 1000 * ((1 - y[0] * y[0]) * y[1]) - y[0];
+			return d;
+		},
+		jac: (t, y) => inOrder(pattern, (r, c) => [
+			[0, 1],
+			[-2000 * y[0] * y[1] - 1, 1000 * (1 - y[0] * y[0])],
+		][r][c]),
+	};
+}
+
+// Kepler's orbit at eccentricity 0.6: not stiff at all, the explicit methods'
+// problem (Math.sqrt is IEEE's on both sides).
+{
+	const e = 0.6;
+	const pattern = csc(4, [[2, 0], [3, 0], [2, 1], [3, 1], [0, 2], [1, 3]]);
+	PROBLEMS.kepler = {
+		y0: [1 - e, 0, 0, Math.sqrt((1 + e) / (1 - e))],
+		grid: linspace(0, 20, 41),
+		pattern,
+		f: (t, y, d) => {
+			const r2 = y[0] * y[0] + y[1] * y[1];
+			const r3 = r2 * Math.sqrt(r2);
+			d[0] = y[2];
+			d[1] = y[3];
+			d[2] = -y[0] / r3;
+			d[3] = -y[1] / r3;
+			return d;
+		},
+		jac: (t, y) => {
+			const r2 = y[0] * y[0] + y[1] * y[1];
+			const r = Math.sqrt(r2);
+			const r3 = r2 * r;
+			const r5 = r3 * r2;
+			const J = [
+				[0, 0, 1, 0],
+				[0, 0, 0, 1],
+				[-1 / r3 + 3 * y[0] * y[0] / r5, 3 * y[0] * y[1] / r5, 0, 0],
+				[3 * y[0] * y[1] / r5, -1 / r3 + 3 * y[1] * y[1] / r5, 0, 0],
+			];
+			return inOrder(pattern, (row, col) => J[row][col]);
+		},
+	};
+}
+
+// An oscillator far from stiff, with a state at rest beside it: the switch
+// passes the resting state over, where OrdinaryDiffEq reads 0/0 as stiff.
+{
+	const pattern = csc(3, [[1, 0], [0, 1]]);
+	PROBLEMS.idle = {
+		y0: [1, 0, 0],
+		grid: linspace(0, 20, 21),
+		pattern,
+		f: (t, y, d) => {
+			d[0] = y[1];
+			d[1] = -y[0];
+			d[2] = 0;
+			return d;
+		},
+		jac: () => inOrder(pattern, (r) => (r === 0 ? 1 : -1)),
+	};
+}
+
+// Diffusion on 600 interior points, zero at both ends: linear, stiff, every
+// state moving, and over the 500 states above which the switch takes the
+// matrix-free FBDF. The start is V8's sines, handed over with the problem.
+{
+	const n = 600;
+	const dx = 1 / (n + 1);
+	const c = 1 / (dx * dx);
+	const entries = [];
+	for (let j = 0; j < n; j++) {
+		if (j > 0) entries.push([j - 1, j]);
+		entries.push([j, j]);
+		if (j < n - 1) entries.push([j + 1, j]);
+	}
+	const pattern = csc(n, entries);
+	PROBLEMS.heat = {
+		y0: Array.from({ length: n }, (_, j) => {
+			const x = (j + 1) * dx;
+			return Math.sin(Math.PI * x) + 0.5 * Math.sin(3 * Math.PI * x);
+		}),
+		grid: linspace(0, 0.1, 11),
+		pattern,
+		f: (t, u, du) => {
+			for (let i = 0; i < n; i++) {
+				const l = i > 0 ? u[i - 1] : 0;
+				const r = i < n - 1 ? u[i + 1] : 0;
+				du[i] = (l - 2 * u[i] + r) / (dx * dx);
+			}
+			return du;
+		},
+		jac: () => inOrder(pattern, (r, col) => (r === col ? -2 * c : c)),
+	};
+}
+
+// A chain of n compartments, one unit in the first, rates from 1e4 down to
+// 1e-4: a compartment model stripped down (chain(n) of
+// resources/tests/ode/julia/problems-default.mjs). Of 120 the switch takes
+// FBDF for it, of 600 the matrix-free FBDF. The rates are V8's powers, handed
+// over with the problem.
+function compartmentChain(n) {
+	const k = Array.from({ length: n }, (_, i) => 10 ** (4 - 8 * i / (n - 1)));
+	const entries = [];
+	for (let j = 0; j < n; j++) {
+		entries.push([j, j]);
+		if (j < n - 1) entries.push([j + 1, j]);
+	}
+	const pattern = csc(n, entries);
+	return {
+		y0: Array.from({ length: n }, (_, i) => (i === 0 ? 1 : 0)),
+		grid: [0, 1e-3, 1e-2, 0.1, 1, 10, 100],
+		pattern,
+		rates: k,
+		f: (t, u, du) => {
+			du[0] = -k[0] * u[0];
+			for (let i = 1; i < n; i++) du[i] = k[i - 1] * u[i - 1] - k[i] * u[i];
+			return du;
+		},
+		jac: () => inOrder(pattern, (r, col) => (r === col ? -k[col] : k[col])),
+	};
+}
+PROBLEMS.chain120 = compartmentChain(120);
+PROBLEMS.long_chain = compartmentChain(600);
+
 // --- running them ------------------------------------------------------------------------
 
 function jacobianOption(problem, how) {
@@ -283,10 +424,81 @@ function runOne({ problem: name, solver, opts = {} }) {
 	}
 }
 
+/** The switching solver over several grids in turn, with one carry (see the header). */
+function runCarried({ problem: name, opts = {}, grids }) {
+	const problem = PROBLEMS[name];
+	const carry = {};
+	let y = Float64Array.from(problem.y0);
+	const solves = [];
+	for (const grid of grids) {
+		try {
+			const s = julia('auto')((t, u, d) => problem.f(t, u, d), Float64Array.from(grid), y, {
+				...opts, jacobian: jacobianOption(problem, 'analytic'), events: problem.events, carry,
+			});
+			solves.push({ t: s.t, y: s.y, stats: s.stats, carry: { ...carry } });
+			y = s.y[s.y.length - 1];
+		} catch (e) {
+			solves.push({ error: e.message, carry: { ...carry } });
+			break;
+		}
+	}
+	return { solves };
+}
+
+/** J into whichever storage the package hands over: CSC values, or dense column-major. */
+function packageJac(problem) {
+	const { n, colPtr, rowIdx } = problem.pattern;
+	return (t, u, J) => {
+		const values = problem.jac(t, u);
+		if (J.values) { J.values.set(values); return true; }
+		J.data.fill(0);
+		for (let j = 0; j < n; j++) {
+			for (let k = colPtr[j]; k < colPtr[j + 1]; k++) J.data[j * n + rowIdx[k]] = values[k];
+		}
+		return true;
+	};
+}
+
+const MAKE = {
+	Tsit5: (o) => pkg.Tsit5(o), Vern7: (o) => pkg.Vern7(o), Rosenbrock23: (o) => pkg.Rosenbrock23(o),
+	Rodas5P: (o) => pkg.Rodas5P(o), FBDF: (o) => pkg.FBDF(o),
+	DefaultODEAlgorithm: (o) => pkg.DefaultODEAlgorithm(o),
+	DefaultImplicitODEAlgorithm: (o) => pkg.DefaultImplicitODEAlgorithm(o),
+	AutoTsit5Rodas5P: (o) => pkg.AutoAlgSwitch(pkg.Tsit5(), pkg.Rodas5P(), o),
+};
+
+/** The package's own solve, with one of its algorithms (see the header). */
+function runPackage({ problem: name, alg, algOptions = {}, opts = {}, jacobian = true }) {
+	const problem = PROBLEMS[name];
+	const prob = new pkg.ODEProblem((t, u, d) => { problem.f(t, u, d); }, problem.y0,
+		[problem.grid[0], problem.grid[problem.grid.length - 1]], {
+			jac: jacobian ? packageJac(problem) : null,
+			jacPattern: { colPtr: problem.pattern.colPtr, rowIdx: problem.pattern.rowIdx },
+		});
+	try {
+		const sol = pkg.solve(prob, MAKE[alg](algOptions), opts);
+		return {
+			t: sol.t, u: sol.u, stats: sol.stats, retcode: sol.retcode, message: sol.message,
+			algChoice: sol.algChoice, events: sol.events,
+		};
+	} catch (e) {
+		return { error: e.message };
+	}
+}
+
 let out;
 switch (req.task) {
 	case 'solve':
 		out = { runs: req.runs.map(runOne) };
+		break;
+	case 'carry':
+		out = { runs: req.runs.map(runCarried) };
+		break;
+	case 'package':
+		out = { runs: req.runs.map(runPackage) };
+		break;
+	case 'log10':
+		out = { values: req.values.map((x) => Math.log10(x)) };
 		break;
 	case 'problems': {
 		out = {};
@@ -303,6 +515,7 @@ switch (req.task) {
 		out = {
 			rodas5p: pkg.Rodas5PTableau, radau5: pkg.RadauIIA5Tableau,
 			trbdf2: pkg.TRBDF2Tableau, kencarp4: pkg.KenCarp4Tableau,
+			tsit5: pkg.Tsit5Tableau, vern7: pkg.Vern7Tableau,
 		};
 		break;
 	case 'pow':
