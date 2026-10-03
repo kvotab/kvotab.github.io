@@ -19,7 +19,9 @@ import { valueAt } from '../domain/project.js';
 import { dormandPrince, SolverError } from '../ode/solvers/dormand-prince.js';
 import { rosenbrock23 } from '../ode/solvers/rosenbrock23.js';
 import { variableOrder } from '../ode/variable-order.js';
-import { SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions } from '../ode/solvers.js';
+import {
+	SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions, addMethodSteps,
+} from '../ode/solvers.js';
 import { isScipySolver, scipySolver } from '../ode/scipy.js';
 import { csvCell } from '../io/csv.js';
 
@@ -49,6 +51,11 @@ const SOLVERS = Object.assign(Object.create(null), {
 	radau5: julia('radau5'),
 	kencarp4: julia('kencarp4'),
 	trbdf2: julia('trbdf2'),
+	auto: julia('auto'),
+	fbdf_krylov: julia('fbdf_krylov'),
+	rosenbrock23: julia('rosenbrock23'),
+	tsit5: julia('tsit5'),
+	vern7: julia('vern7'),
 });
 
 function solverFor(id) {
@@ -476,6 +483,12 @@ export function run(input, opts = {}) {
 		// and every byte of it was discarded.
 		endsOnly: !!steps && project.outputMode === 'solver',
 		events: system.events ?? undefined,
+		// What a solver may carry from one solve of this run to the next, the
+		// run being restarted at every event and switch time: the switching
+		// solver keeps here whether it ended stiff, and goes on with that
+		// method, as DifferentialEquations.jl's carries on across a callback
+		// rather than starting on its explicit method again.
+		carry: {},
 		onStep: opts.onProgress
 			? (fraction, _n, at) => {
 				if (opts.signal?.aborted) return false;
@@ -563,9 +576,12 @@ export function run(input, opts = {}) {
 	} catch (e) {
 		if (e instanceof SolverError) {
 			const hints = [];
-			if (solverId === 'dp45') {
+			// The explicit methods grind on a stiff model rather than fail
+			// cleanly, and say so only as a step budget run out.
+			if (solverId === 'dp45' || solverId === 'tsit5' || solverId === 'vern7') {
 				hints.push(`This model looks stiff; switch the solver to `
-					+ `"${solverLabel('ndf')}" or "${solverLabel('ros23')}".`);
+					+ `"${solverLabel('ndf')}" or "${solverLabel('ros23')}", or to `
+					+ `"${solverLabel('auto')}", which finds that out for itself.`);
 			}
 			// A non-negativity constraint that actually binds makes the
 			// derivative discontinuous at zero, and only ndf carries that:
@@ -772,6 +788,7 @@ function solveAcrossBreaks(solve, grid, y0, breaks, jumpAt = null) {
 				if (!stats.held) stats.held = new Int32Array(seg.stats.held.length);
 				for (let i = 0; i < seg.stats.held.length; i++) stats.held[i] += seg.stats.held[i];
 			}
+			addMethodSteps(stats, seg.stats);
 		}
 		y = seg.y[seg.y.length - 1];
 		at = seg.t[seg.t.length - 1];
@@ -848,6 +865,7 @@ function solveWithEvents(system, f, solver, grid, y0, opts) {
 			if (!stats.held) stats.held = new Int32Array(seg.stats.held.length);
 			for (let i = 0; i < seg.stats.held.length; i++) stats.held[i] += seg.stats.held[i];
 		}
+		addMethodSteps(stats, seg.stats);
 
 		if (!seg.stopped) break;
 		t = seg.stopped.t;

@@ -42,6 +42,7 @@
 
 import { partitionOf } from './partition.js';
 import { UNINDEXED } from '../domain/massbalance.js';
+import { addMethodSteps } from '../ode/solvers.js';
 
 /** The setting, as the Simulation section offers it. */
 export const SPLIT_MODES = [
@@ -602,6 +603,7 @@ export function assembleParts({ keys, owner }, outcomes) {
 		}
 		if (!stats.solver && o.stats?.solver) stats.solver = o.stats.solver;
 		if (o.stats?.sparse !== undefined) stats.sparse = o.stats.sparse;
+		addMethodSteps(stats, o.stats);
 		if (o.held) {
 			const steps = Math.max(1, o.stats?.nsteps ?? 1);
 			for (let k = 0; k < from.length; k++) {

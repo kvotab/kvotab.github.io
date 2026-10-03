@@ -40,11 +40,23 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 
 	// --- ported from DifferentialEquations.jl ---------------------------------
 	//
-	// Six methods from SciML's stiff suite, vendored whole in ./julia/ and
-	// adapted in ./julia-solvers.js. Two of them are families this tool has
-	// nothing else of -- a Rosenbrock-Wanner with no nonlinear iteration at
-	// all, and a fully implicit Runge-Kutta -- so they are a second opinion
-	// that, unlike the SciPy ones below, needs no download and works offline.
+	// Methods from SciML's suite, vendored whole in ./julia/ and adapted in
+	// ./julia-solvers.js: its default algorithm, which switches between an
+	// explicit and a stiff method as it runs, the six stiff methods first
+	// ported, and the three more that default needs. Two of them are families
+	// this tool has nothing else of -- a Rosenbrock-Wanner with no nonlinear
+	// iteration at all, and a fully implicit Runge-Kutta -- so they are a
+	// second opinion that, unlike the SciPy ones below, needs no download and
+	// works offline.
+	auto: {
+		label: 'stiff or non-stiff, switching as it runs',
+		blurb: 'DifferentialEquations.jl\u2019s default algorithm, chosen for you as the run goes: '
+			+ 'it starts on an explicit method (Tsit5, or Vern7 below a relative tolerance of 1e-6), '
+			+ 'watches every step for stiffness, and switches to a stiff method once it finds it '
+			+ '\u2014 Rosenbrock23 up to 50 states (Rodas5P below 1e-6), FBDF up to 500, FBDF solved '
+			+ 'by GMRES above \u2014 and back when the stiffness passes. Most models here are stiff '
+			+ 'from the first steps; the run log says which methods took how many steps.',
+	},
 	rodas5p: {
 		label: 'stiff, Rosenbrock 5',
 		blurb: 'Rodas5P, order 5, L-stable. It has no Newton iteration, so there is '
@@ -67,6 +79,15 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 			+ 'systems: it reuses one matrix factorisation across many steps, which on '
 			+ 'hundreds of states is most of the cost.',
 	},
+	fbdf_krylov: {
+		label: 'stiff, FBDF by GMRES, no matrix',
+		blurb: 'FBDF with its Newton iterations solved by GMRES instead of a factorised '
+			+ 'matrix: products J\u00b7v by differencing the model, nothing formed or stored '
+			+ '\u2014 what the switching solver takes above 500 states. GMRES has only a '
+			+ 'diagonal scaling to help it, and on a very stiff model it needs many '
+			+ 'iterations a step; where the Jacobian is known, as here, the factorising FBDF '
+			+ 'is usually the faster.',
+	},
 	qndf: {
 		label: 'stiff, quasi-constant-step NDF',
 		blurb: 'The numerical differentiation formulas of Shampine and Reichelt — the '
@@ -85,6 +106,26 @@ export const SOLVER_INFO = Object.assign(Object.create(null), {
 			+ 'on a problem with sharp transients it loses phase accuracy long before it '
 			+ 'loses local accuracy, and reports success either way. Use it at loose '
 			+ 'tolerances on smooth problems, or use the ESDIRK 4.',
+	},
+	rosenbrock23: {
+		label: 'stiff, low order, Rosenbrock 2-3 as in Julia',
+		blurb: 'The Rosenbrock (2,3) method of MATLAB\u2019s ode23s \u2014 the same method as the '
+			+ 'low-order Rosenbrock above \u2014 as DifferentialEquations.jl runs it: its step '
+			+ 'control, error norm and starting step. What the switching solver takes when a '
+			+ 'small model turns stiff at an ordinary tolerance.',
+	},
+	tsit5: {
+		label: 'non-stiff, Tsitouras 5',
+		blurb: 'Tsitouras\u2019s explicit Runge-Kutta pair of order 5(4), SciML\u2019s first '
+			+ 'choice for a non-stiff problem and where the switching solver starts. Cheap per '
+			+ 'step and no Jacobian at all; on a stiff model its step is held to the edge of its '
+			+ 'stability and it grinds.',
+	},
+	vern7: {
+		label: 'non-stiff, Verner 7',
+		blurb: 'Verner\u2019s explicit Runge-Kutta pair of order 7(6), for tight tolerances on a '
+			+ 'non-stiff problem: more work a step than order 5 and far fewer steps below a '
+			+ 'relative tolerance of about 1e-6, where the switching solver starts on it.',
 	},
 
 	// --- a second opinion, from another library ------------------------------
@@ -270,6 +311,11 @@ const ROSENBROCK = JULIA.filter((k) => k !== 'max_jac_age');
 const NEWTON = [...JULIA, 'newton_kappa'];
 // Only the variable-order multistep methods have an order to cap.
 const ORDER = ['max_order', 'min_order'];
+// An explicit method forms no matrix and has no Jacobian to choose: the
+// integrator's own settings are all it reads.
+const EXPLICIT = JULIA.filter((k) => !['matrix', 'jacobian', 'max_jac_age'].includes(k));
+// GMRES forms no matrix either, and its Newton iteration is the FBDF's.
+const MATRIX_FREE = [...EXPLICIT, 'newton_kappa'];
 
 /**
  * Which settings each solver actually reads.
@@ -298,10 +344,18 @@ export const SOLVER_OPTIONS = Object.assign(Object.create(null), {
 	kencarp4: NEWTON,
 	trbdf2: NEWTON,
 	rodas5p: ROSENBROCK,
+	rosenbrock23: ROSENBROCK,
+	tsit5: EXPLICIT,
+	vern7: EXPLICIT,
+	fbdf_krylov: [...MATRIX_FREE, ...ORDER],
+	// Everything any of its methods reads: the stiff ones are handed these
+	// settings, as DefaultODEAlgorithm forwards its keyword arguments to them.
+	auto: [...NEWTON, ...ORDER],
 });
 
 /** The methods ported from DifferentialEquations.jl, which share one integrator. */
-export const PORTED_IDS = ['rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4', 'trbdf2'];
+export const PORTED_IDS = ['auto', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4', 'trbdf2',
+	'rosenbrock23', 'tsit5', 'vern7'];
 
 /**
  * What a setting left empty comes to for solver `id`: the value the solver uses
@@ -416,6 +470,28 @@ export const LOCAL_SOLVER_IDS = SOLVER_IDS.filter((id) => !SOLVER_INFO[id].remot
 
 /** Whether a solver needs something downloaded before it can run. */
 export function solverIsRemote(id) { return !!SOLVER_INFO[id]?.remote; }
+
+/**
+ * Adds one solve's account of the switching solver -- the steps each of its
+ * methods took, and how often it switched -- into a run's, for a run made of
+ * several solves (events, switch times, parts).
+ */
+export function addMethodSteps(into, from) {
+	if (!from?.stepsBy) return into;
+	if (!into.stepsBy) into.stepsBy = {};
+	for (const [name, n] of Object.entries(from.stepsBy)) into.stepsBy[name] = (into.stepsBy[name] ?? 0) + n;
+	into.switches = (into.switches ?? 0) + (from.switches ?? 0);
+	return into;
+}
+
+/** The switching solver's account in words: `Tsit5 12 steps, Rosenbrock23 300; 3 switches`. */
+export function describeMethodSteps(stats) {
+	const by = stats?.stepsBy;
+	if (!by) return null;
+	const parts = Object.entries(by).map(([name, n], i) => `${name} ${n}${i === 0 ? ` step${n === 1 ? '' : 's'}` : ''}`);
+	const sw = stats.switches ?? 0;
+	return `${parts.join(', ')}; ${sw} switch${sw === 1 ? '' : 'es'}`;
+}
 
 /** The interface name, falling back to the id for anything unrecognised. */
 export function solverLabel(id) {

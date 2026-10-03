@@ -131,6 +131,7 @@ import {
 	solverIgnores,
 	solverIsRemote,
 	solverDefault,
+	describeMethodSteps,
 } from '../ode/solvers.js';
 import { dialogInfo } from './dialoginfo.js';
 import * as sitechrome from './sitechrome.js';
@@ -4581,6 +4582,9 @@ function setStatus(p) {
 			: ['solver', solverLabel(s.solver)],
 		['states', evaluated ? null : p.stateCount], ['steps', s.nsteps],
 		['rejected', s.nfailed], ['f evals', s.nfevals],
+		// The switching solver: which of its methods took the steps, and how
+		// often it changed between them. Absent for every other solver.
+		['methods', describeMethodSteps(s)],
 		// Steps the solver took without meeting the error test, because the
 		// step size had already collapsed onto its smallest. Shown only when
 		// there were any: a result carrying them is not wrong so much as

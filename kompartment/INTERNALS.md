@@ -2765,9 +2765,11 @@ nothing set it. They are wired now, and `ndf` also forwards the step budget
 
 ## The DifferentialEquations.jl solvers
 
-`src/ode/julia/` is a package of stiff solvers ported from SciML's
-DifferentialEquations.jl -- FBDF, QNDF, Rodas5P, RadauIIA5, KenCarp4, TRBDF2 --
-written for the browser, with no dependencies, and vendored here whole. It is
+`src/ode/julia/` is a package of solvers ported from SciML's
+DifferentialEquations.jl -- FBDF, QNDF, Rodas5P, RadauIIA5, KenCarp4, TRBDF2,
+and since 2026-10-03 its default algorithm with Tsit5, Vern7, Rosenbrock23 and
+FBDF by GMRES (below) -- written for the browser, with no dependencies, and
+vendored here whole. It is
 not this project's code and is not written in this project's voice; its own
 README, which travelled with it, says how it was written and how it is checked
 (observed order of convergence at fixed steps, then the Hairer and Wanner stiff
@@ -2852,6 +2854,69 @@ biosphere.json     ndf 442 / 6.2e-5    rodas5p 151 / 1.6e-7    radau5 211 / 1.0e
 Rodas5P is both the most accurate and the cheapest of them there, which is not
 a general claim -- it is one model -- but it is why the catalogue points at it
 first among the six.
+
+### The default algorithm, and the methods it brought (2026-10-03)
+
+The user asked for OrdinaryDiffEqDefault -- DifferentialEquations.jl's
+`DefaultODEAlgorithm`, what `solve(prob)` runs -- and the methods it needs that
+were not here: Tsit5 and Vern7 (explicit), Rosenbrock23, and FBDF with GMRES
+as its linear solver. All four, the composite algorithm (OrdinaryDiffEqCore's
+`CompositeAlgorithm`, `AutoSwitch` and their caches and controllers) and
+OrdinaryDiffEq's starting step are in the package now; its README has the
+design, the deviations and how it was checked, which in short is: against
+Julia itself (OrdinaryDiffEq 7.8.1, installed for the purpose), with exact
+Jacobians on both sides, fifteen of twenty-two runs take the same steps -- the
+same accepted and rejected counts and the same method for every step, van der
+Pol's seven switches and HIRES's fifteen-segment pattern included -- and the
+other seven, every one with FBDF on its stiff side, are explained. The cause is
+mostly a fault in Julia, recorded in the package README: inside the composite,
+OrdinaryDiffEq's BDF controller reads an error estimate from its own cache
+that is only ever written to the composite's, so its FBDF steps are never
+rejected (one accepted 62 tolerance units out). The port rejects them, and
+two of its choices follow from that: FBDF's first step after a switch is
+predicted by an Euler step (OrdinaryDiffEq's no-change prediction, rejected
+again and again, took diffusion on 600 points at reltol 1e-6 to 26 516 steps
+and 3147 switches, against Julia's 87 and one), and no stiffness verdict is
+counted on a rejected FBDF attempt. Where FBDF's step is set by accuracy the
+switch can still go back and forth -- 231 times on diffusion on 200 points at
+1e-6, five times plain FBDF's time, where Julia makes 31.
+
+Five ids in the catalogue: `auto` (the default algorithm), `fbdf_krylov`,
+`rosenbrock23`, `tsit5`, `vern7`. The adapter needs three things beyond the
+other ported methods:
+
+- **the account.** The composite reports the steps each of its methods took
+  and its switches (`stepsBy`, `switches`); the adapter passes them on,
+  `addMethodSteps` in `src/ode/solvers.js` sums them over the solves of a run
+  (events, switch times, parts -- the runner and `split.js`), and the run log and
+  the status line print them (`describeMethodSteps`).
+- **the carry.** A run here is restarted at every event and switch time, and a
+  fresh composite starts on its explicit method -- where DifferentialEquations.jl
+  carries its choice across a callback. The runner hands every solver of a run
+  one `carry` object; `auto` writes there whether it ended on a stiff method and
+  starts the next solve on it (`stiffalgfirst`).
+- **the budget rows.** `tsit5` and `vern7` form no matrix, so the mass-balance
+  audit's rows may stay at the diagonal for them (`DIAGONAL_BUDGET_IDS`); `auto`
+  is not among them, since its stiff methods read J whole.
+
+Measured on the bundled models and three large local ones, it is the cheapest
+choice on small models that are not very stiff (four-compartment: 140 steps
+against ndf's 310, all Tsit5), and the most accurate at a relative tolerance
+below 1e-6 (decay-chain at 1e-8: Vern7 then Rodas5P, 447 steps, 0.3 tolerance
+units from a reference against ndf's 2052 steps and 197 units). Two of
+DifferentialEquations.jl's rules cost here, and are kept because they are its
+rules: at exactly 1e-6, this tool's usual tolerance, a small stiff model gets
+the second-order Rosenbrock23 (biosphere: 740 tolerance units against ndf's 53);
+and above 500 states the stiff method is the matrix-free FBDF, since Julia's
+default cannot assume a Jacobian -- 7 to 40 times ndf's time on the large models
+measured (farfield.json, 1581 states: 31 s against 0.8 s, in fbdf's steps,
+about twenty model evaluations per linear solve). And its explicit stiffness
+estimate, `max |Δk/Δg|` over the last two stages, overshoots on a compartment
+model: where amounts move into empty compartments f changes while the state is
+still exactly zero, so the estimate is infinite, and the finite ratios near the
+front reach 6e7 on a chain whose fastest rate is 1e4. Such a model is judged
+stiff within eleven steps and may then go back and forth (waste-packages: 123
+switches) -- as DifferentialEquations.jl does on the same kind of model.
 
 ## Importing blocks from another model
 

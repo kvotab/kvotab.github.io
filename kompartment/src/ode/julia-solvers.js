@@ -1,9 +1,11 @@
 /**
  * The DifferentialEquations.jl methods, in this tool's solver shape.
  *
- * `src/ode/julia/` is a package of stiff solvers ported from
- * [DifferentialEquations.jl][sciml] -- FBDF, QNDF, Rodas5P, RadauIIA5,
- * KenCarp4, TRBDF2 -- written for the browser and vendored here whole. This
+ * `src/ode/julia/` is a package of solvers ported from
+ * [DifferentialEquations.jl][sciml] -- FBDF (factorising, or by GMRES), QNDF,
+ * Rodas5P, Rosenbrock23, RadauIIA5, KenCarp4, TRBDF2, Tsit5, Vern7, and the
+ * default algorithm that switches between them as a run turns stiff and back
+ * -- written for the browser and vendored here whole. This
  * file is the adapter: it takes what a solver in this project is handed
  * (`f, tspan, y0, opts`) and gives back what one is expected to return
  * (`{t, y, stopped, stats}`), so the runner, the event loop and the status
@@ -55,6 +57,10 @@ import { QNDF, QBDF } from './julia/solvers/qndf.js';
 import { Rodas5P } from './julia/solvers/rosenbrock.js';
 import { RadauIIA5 } from './julia/solvers/radau.js';
 import { TRBDF2, KenCarp4 } from './julia/solvers/esdirk.js';
+import { Tsit5 } from './julia/solvers/tsit5.js';
+import { Vern7 } from './julia/solvers/vern7.js';
+import { Rosenbrock23 } from './julia/solvers/rosenbrock23.js';
+import { DefaultODEAlgorithm } from './julia/solvers/default.js';
 import { SolverError } from './solvers/dormand-prince.js';
 
 /** The methods offered, by the id a project file stores. */
@@ -65,7 +71,19 @@ const ALGORITHMS = Object.assign(Object.create(null), {
 	radau5: RadauIIA5,
 	kencarp4: KenCarp4,
 	trbdf2: TRBDF2,
+	// The default algorithm and the three methods it brought with it. Each
+	// run of `auto` is one solve between two events, and starts on the
+	// explicit side again, as DifferentialEquations.jl's does after a callback
+	// that ends the solve.
+	auto: DefaultODEAlgorithm,
+	rosenbrock23: Rosenbrock23,
+	tsit5: Tsit5,
+	vern7: Vern7,
+	fbdf_krylov: () => FBDF({ linsolve: 'gmres' }),
 });
+
+/** The switching solver's stiff methods, by the names its statistics give them. */
+const STIFF_METHODS = new Set(['Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF']);
 
 /**
  * What `simulation.bdf` runs instead, for the one method that has a plain-BDF
@@ -217,12 +235,21 @@ export function julia(id) {
 			settings.progressEvery = 1;
 		}
 
+		// The switching solver goes on with the method it ended the last solve
+		// of this run on: a run restarted at an event is still the run, and
+		// DifferentialEquations.jl's carries its choice across a callback.
+		const carry = id === 'auto' ? opts.carry ?? null : null;
+		const made = carry
+			? DefaultODEAlgorithm({ stiffalgfirst: carry.stiff === true })
+			: (variant?.algorithm ?? algorithm)();
+
 		let sol;
 		try {
-			sol = solve(problem, (variant?.algorithm ?? algorithm)(), settings);
+			sol = solve(problem, made, settings);
 		} catch (e) {
 			throw new SolverError(e.message, e.t ?? t0);
 		}
+		if (carry && sol.stats.lastAlg) carry.stiff = STIFF_METHODS.has(sol.stats.lastAlg);
 
 		/*
 		  A stop the caller asked for is an abort, not a result. The package
@@ -259,23 +286,32 @@ export function julia(id) {
 			: null;
 
 		const s = sol.stats;
+		const stats = {
+			nsteps: s.nsteps ?? 0,
+			nfailed: s.nreject ?? 0,
+			nfevals: s.nf ?? 0,
+			// The package counts Jacobians and W-factorisations separately,
+			// which is what this tool's `npds` and `ndecomps` mean.
+			npds: s.njacs ?? 0,
+			ndecomps: s.nw ?? 0,
+			nsolves: s.nsolve ?? 0,
+			solver: variant?.id ?? id,
+			sparse: !!s.sparse,
+			fill: s.fill ?? null,
+		};
+		// The switching solver says which of its methods took the accepted
+		// steps and how often it changed between them, for the run log.
+		if (s.stepsBy) {
+			stats.stepsBy = { ...s.stepsBy };
+			stats.switches = s.switches ?? 0;
+		}
+		// GMRES's own work, where the method solved without a matrix.
+		if (s.krylovIters != null) stats.krylovIters = s.krylovIters;
 		return {
 			t: Float64Array.from(sol.t),
 			y: sol.u.map((u) => Float64Array.from(u)),
 			stopped,
-			stats: {
-				nsteps: s.nsteps ?? 0,
-				nfailed: s.nreject ?? 0,
-				nfevals: s.nf ?? 0,
-				// The package counts Jacobians and W-factorisations separately,
-				// which is what this tool's `npds` and `ndecomps` mean.
-				npds: s.njacs ?? 0,
-				ndecomps: s.nw ?? 0,
-				nsolves: s.nsolve ?? 0,
-				solver: variant?.id ?? id,
-				sparse: !!s.sparse,
-				fill: s.fill ?? null,
-			},
+			stats,
 		};
 	};
 }

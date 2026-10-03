@@ -395,7 +395,10 @@ function solverTopic(ctx, label) {
 			{ heading: 'This tool’s own', choices: own.map(choice) },
 			{
 				heading: 'Ported from DifferentialEquations.jl',
-				text: 'Methods from SciML’s stiff suite, a second opinion that needs no download.',
+				text: 'Methods from SciML’s suite, a second opinion that needs no download: its '
+					+ 'default algorithm, which switches between an explicit and a stiff method as '
+					+ 'the run goes, and the methods it switches between, with the stiff ones '
+					+ 'ported before it.',
 				choices: PORTED_IDS.filter((id) => SOLVER_INFO[id]).map(choice),
 			},
 			...(remote.length ? [{

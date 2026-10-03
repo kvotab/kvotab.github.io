@@ -16,6 +16,7 @@
 
 import { describeAudit } from './massbalance.js';
 import { inventoryUnit } from './units.js';
+import { describeMethodSteps } from '../ode/solvers.js';
 
 /**
  * One line per setting, in the order somebody reads them.
@@ -82,6 +83,9 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 	} else {
 		out.push(`  states: ${payload?.stateCount ?? '?'}`);
 		out.push(`  steps: ${s.nsteps ?? '?'}, rejected: ${s.nfailed ?? 0}, f evaluations: ${s.nfevals ?? '?'}`);
+		// The switching solver: which of its methods took the accepted steps.
+		const methods = describeMethodSteps(s);
+		if (methods) out.push(`  methods: ${methods}`);
 		if (s.nbelowtol) out.push(`  steps taken below tolerance: ${s.nbelowtol}`);
 		if (s.events != null) out.push(`  events: ${s.events}, restarts: ${s.restarts ?? 0}`);
 		if (s.jumps != null) out.push(`  jumps: ${s.jumps} — package failures at a time and disruptive events, applied to the state at their corners`);

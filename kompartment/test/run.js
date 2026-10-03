@@ -21709,6 +21709,7 @@ await (async () => {
 	/** The solver the importer reads back from the name an export writes. */
 	const SOLVER_BACK = {
 		radau5: 'ndf', qndf: 'ndf', fbdf: 'ndf', trbdf2: 'ros23', rodas5p: 'ros23', kencarp4: 'ndf',
+		auto: 'ndf', fbdf_krylov: 'ndf', rosenbrock23: 'ros23', tsit5: 'dp45', vern7: 'dp45',
 		scipy_bdf: 'ndf', scipy_radau: 'ndf', scipy_lsoda: 'ndf',
 	};
 
@@ -33408,9 +33409,15 @@ test('the absolute tolerance can follow the solution, and the Newton test does n
 
 section('the ported DifferentialEquations.jl solvers');
 
+// The six first ported, and the five that came with the default algorithm
+// (2026-10-03). Held to the same, except where a model is too stiff for an
+// explicit method or a second-order one is held to less.
+const PORTED_SIX = ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2'];
+const PORTED_NEW = ['auto', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7'];
+
 test('every ported method integrates a closed-form problem to the tolerance asked', async () => {
 	const { julia } = await import('../src/ode/julia-solvers.js');
-	const ids = ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2'];
+	const ids = [...PORTED_SIX, ...PORTED_NEW];
 	// A stiff pair with a known solution: y1' = -1000(y1 - cos t) - sin t and
 	// y2' = -y2, so y1 -> cos t after a transient of 1/1000 and y2 = e^-t.
 	const f = (t, y, out) => {
@@ -33425,12 +33432,71 @@ test('every ported method integrates a closed-form problem to the tolerance aske
 		assert(s.t.length === grid.length, `${id}: ${s.t.length} rows for ${grid.length} points`);
 		assert(Math.abs(s.t[s.t.length - 1] - 10) < 1e-12, `${id}: ends at ${s.t[s.t.length - 1]}`);
 		const last = s.y[s.y.length - 1];
-		// TRBDF2 is second order and says so in its blurb; it is held to less.
-		const tol = id === 'trbdf2' ? 2e-4 : 1e-6;
+		// TRBDF2 and Rosenbrock23 are second order and say so in their blurbs;
+		// they are held to less.
+		const tol = id === 'trbdf2' || id === 'rosenbrock23' ? 2e-4 : 1e-6;
 		assert(Math.abs(last[0] - Math.cos(10)) < tol, `${id}: y1 ${last[0]} against ${Math.cos(10)}`);
 		assert(Math.abs(last[1] / Math.exp(-10) - 1) < tol, `${id}: y2 off by ${last[1] / Math.exp(-10) - 1}`);
 		assert(s.stats.nsteps > 0 && s.stats.solver === id && s.stats.nfevals > 0, JSON.stringify(s.stats));
 	}
+});
+
+test('the switching solver says which of its methods took the steps, in the run log and the status line', async () => {
+	const L = await import('../src/domain/runlog.js');
+	const { describeMethodSteps } = await import('../src/ode/solvers.js');
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8'));
+	const logOf = (solver) => {
+		const m = structuredClone(raw);
+		m.simulation.solver = solver;
+		const r = run(m);
+		const payload = { stats: r.stats, timing: r.timing, jacobian: r.jacobian, heldAtZero: r.heldAtZero(),
+			stateCount: r.system.layout.nstate, outputs: r.outputs(), t: r.t };
+		return { r, text: L.runLogText(L.runLogLines({ project: m, payload, build: 'test' })) };
+	};
+	const auto = logOf('auto');
+	const by = auto.r.stats.stepsBy;
+	assert(by && Object.keys(by).length >= 1, `no account: ${JSON.stringify(auto.r.stats)}`);
+	// Every accepted step is someone's: the attempts less the rejected ones.
+	const accepted = Object.values(by).reduce((a, b) => a + b, 0);
+	assert(accepted === auto.r.stats.nsteps - auto.r.stats.nfailed,
+		`${accepted} steps accounted for, ${auto.r.stats.nsteps - auto.r.stats.nfailed} accepted`);
+	const line = describeMethodSteps(auto.r.stats);
+	assert(/^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$/.test(line), line);
+	assert(auto.text.includes(`methods: ${line}`), 'the run log does not say which methods ran');
+	// Every other solver is one method, and says nothing of the kind.
+	const ndf = logOf('ndf');
+	assert(!ndf.r.stats.stepsBy && !/methods:/.test(ndf.text) && describeMethodSteps(ndf.r.stats) === null);
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/\['methods', describeMethodSteps\(s\)\]/.test(app), 'the status line does not show it');
+});
+
+test('the switching solver goes on with the method it had when the run is restarted', async () => {
+	// A run here is a new solve at every event; DifferentialEquations.jl carries
+	// its choice across a callback. One carry for the run, as the runner hands it.
+	const { julia } = await import('../src/ode/julia-solvers.js');
+	// Robertson: stiff from the first steps, and found so after eleven of
+	// Tsit5's, as DifferentialEquations.jl finds it.
+	const f = (t, y, out) => {
+		out[0] = -0.04 * y[0] + 1e4 * y[1] * y[2];
+		out[1] = 0.04 * y[0] - 1e4 * y[1] * y[2] - 3e7 * y[1] * y[1];
+		out[2] = 3e7 * y[1] * y[1];
+		return out;
+	};
+	const grid = Float64Array.from([0, 1, 10, 100]);
+	const carry = {};
+	const first = julia('auto')(f, grid, Float64Array.from([1, 0, 0]), { rtol: 1e-6, abstol: 1e-10, carry });
+	assert(first.stats.stepsBy.Tsit5 > 0 && first.stats.stepsBy.Rosenbrock23 > 0 && carry.stiff === true,
+		`the first solve: ${JSON.stringify(first.stats.stepsBy)}, carry ${JSON.stringify(carry)}`);
+	const later = Float64Array.from([100, 1000, 1e4]);
+	const again = julia('auto')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10, carry });
+	assert(!again.stats.stepsBy.Tsit5 && again.stats.stepsBy.Rosenbrock23 > 0 && again.stats.switches === 0,
+		`the restart began on the explicit method again: ${JSON.stringify(again.stats.stepsBy)}`);
+	// Without a carry, as before: from Tsit5.
+	const fresh = julia('auto')(f, later, first.y[first.y.length - 1], { rtol: 1e-6, abstol: 1e-10 });
+	assert(fresh.stats.stepsBy.Tsit5 > 0, JSON.stringify(fresh.stats.stepsBy));
+	const runner = (await import('node:fs')).readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
+	assert(/\n\t\tcarry: \{\},\n/.test(runner), 'the runner hands its solvers no carry');
 });
 
 test('a ported method takes this tool’s analytic Jacobian, and may decline a point', async () => {
@@ -33477,7 +33543,7 @@ test('every ported method says where it has got to, and stops when told to', asy
 	// a model of 55 000 states where a run is an hour: a page saying "Solving…"
 	// with no way out of it. Tested through `run`, because the mismatch was
 	// between two layers and a unit test of either would have passed.
-	const ids = ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2'];
+	const ids = [...PORTED_SIX, ...PORTED_NEW];
 	const raw = {
 		name: 'p', simulation: { ...DEFAULT_SIMULATION, time_unit: 'year', start_time: 0,
 			end_time: 200, output_points: 21, spacing: 'linear', rtol: 1e-8, abstol: 1e-10 },
@@ -33512,7 +33578,8 @@ test('every ported method says where it has got to, and stops when told to', asy
 
 test('the ported methods agree with variableOrder on the bundled models, events and all', async () => {
 	const { readFileSync } = await import('node:fs');
-	const ids = ['rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4'];
+	// The explicit methods are not among them: these models are stiff.
+	const ids = ['rodas5p', 'radau5', 'fbdf', 'qndf', 'kencarp4', 'auto', 'fbdf_krylov', 'rosenbrock23'];
 	for (const file of ['biosphere.json', 'decay-chain.json', 'recorders.json']) {
 		const raw = JSON.parse(readFileSync(new URL(`../examples/${file}`, import.meta.url), 'utf8'));
 		const base = run(structuredClone(raw));
@@ -33556,12 +33623,12 @@ test('the adapter passes only the options it was given', async () => {
 	assert(!/dtmax: opts\.hmax > 0 \? opts\.hmax : undefined/.test(src));
 	// And the solvers are in the catalogue, all local, with the ids the runner knows.
 	const { SOLVER_INFO, LOCAL_SOLVER_IDS } = await import('../src/ode/solvers.js');
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		assert(SOLVER_INFO[id] && SOLVER_INFO[id].label && SOLVER_INFO[id].blurb, `${id} is not in the catalogue`);
 		assert(!SOLVER_INFO[id].remote && LOCAL_SOLVER_IDS.includes(id), `${id} is not local`);
 	}
 	const runner = readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		assert(new RegExp(`${id}: julia\\('${id}'\\)`).test(runner), `${id} is not wired to the runner`);
 	}
 });
@@ -33578,14 +33645,14 @@ test('the ported methods stop at the first of two events, each in its own direct
 		fun: (t, y, out) => { out[0] = y[0] - 0.25; out[1] = t - 0.5; return out; },
 	};
 	const grid = Float64Array.from({ length: 11 }, (_, i) => i * 0.5);
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		const s = julia(id)(f, grid, Float64Array.from([1]), { rtol: 1e-8, abstol: 1e-10, events });
 		assert(s.stopped && Math.abs(s.stopped.t - 0.5) < 1e-9 && s.stopped.which.join() === '1',
 			`${id}: ${JSON.stringify(s.stopped)}`);
 		// The clock may only fall now, and it rises: the first function decides.
 		const falling = { ...events, direction: Int8Array.from([-1, -1]) };
 		const s2 = julia(id)(f, grid, Float64Array.from([1]), { rtol: 1e-8, abstol: 1e-10, events: falling });
-		const tol = id === 'trbdf2' ? 1e-5 : 1e-6;
+		const tol = id === 'trbdf2' || id === 'rosenbrock23' ? 1e-5 : 1e-6;
 		assert(s2.stopped && s2.stopped.which.join() === '0' && Math.abs(s2.stopped.t - Math.log(4)) < tol,
 			`${id}: ${JSON.stringify(s2.stopped)}`);
 	}
@@ -33611,7 +33678,7 @@ test('a model with two triggers fires both under every ported method', async () 
 		],
 	};
 	const half = Math.log(2) / 0.05;
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		const m = structuredClone(raw);
 		m.simulation.solver = id;
 		const r = run(m);
@@ -33636,14 +33703,14 @@ test('the ported FBDF and QNDF report the rows between their steps accurately', 
 		compartments: [{ name: 'A', initial: '10', index_lists: [] }, { name: 'B', initial: '0', index_lists: [] }],
 		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k', index_lists: [] }],
 	};
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		const m = structuredClone(raw);
 		m.simulation.solver = id;
 		const r = run(m);
 		const a = r.series(r.outputs().find((o) => o.label === 'A'));
 		let worst = 0;
 		r.t.forEach((t, j) => { worst = Math.max(worst, Math.abs(a[j] / (10 * Math.exp(-0.05 * t)) - 1)); });
-		const tol = id === 'trbdf2' ? 1e-5 : 1e-6;
+		const tol = id === 'trbdf2' || id === 'rosenbrock23' ? 1e-5 : 1e-6;
 		assert(worst < tol, `${id}: a row is out by ${worst} relative`);
 	}
 });
@@ -33656,7 +33723,7 @@ test('the ported methods hand the requested times to the blocks that remember', 
 	const { julia } = await import('../src/ode/julia-solvers.js');
 	const f = (t, y, out) => { out[0] = -y[0]; return out; };
 	const grid = Float64Array.from({ length: 11 }, (_, i) => i);
-	for (const id of ['fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of [...PORTED_SIX, ...PORTED_NEW]) {
 		const seen = [];
 		const s = julia(id)(f, grid, Float64Array.from([1]), {
 			rtol: 1e-6, abstol: 1e-9, onOutput: (t, y) => seen.push([t, y[0]]),
@@ -33695,7 +33762,7 @@ test('every method goes on from packages that all fail late in a run', async () 
 	});
 	const last = (r, label) => { const v = r.series(r.outputs().find((o) => o.label === label)); return v[v.length - 1]; };
 	const ref = run(model('rodas5p', 1e-10));
-	for (const id of ['ndf', 'fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2']) {
+	for (const id of ['ndf', 'fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2', 'auto', 'fbdf_krylov', 'rosenbrock23']) {
 		let r;
 		try { r = run(model(id, 1e-6)); } catch (e) { assert(false, `${id}: ${e.message}`); }
 		// 3e-5 at worst when written, TRBDF2's, which is second order.
