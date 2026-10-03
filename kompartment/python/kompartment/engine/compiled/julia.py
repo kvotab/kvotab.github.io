@@ -1,9 +1,11 @@
-"""The Julia-derived solvers' loop compiled with numba: FBDF, QNDF (and QBDF),
-Rodas5P, RadauIIA5, KenCarp4 and TRBDF2 -- a port of ``engine/solvers/julia``
-(the integrator's loop, the Jacobian cache and W, the simplified Newton
-iteration, the PI controller and the five method families) with the same
-arithmetic in the same order, so that a run takes the Python solver's steps,
-to the last bit.
+"""The Julia-derived solvers' loop compiled with numba: FBDF (factorising, or
+by GMRES), QNDF (and QBDF), Rodas5P, RadauIIA5, KenCarp4, TRBDF2,
+Rosenbrock23, Tsit5 and Vern7, and the default algorithm that switches
+between them -- a port of ``engine/solvers/julia`` (the integrator's loop, the
+Jacobian cache and W, the simplified Newton iteration, GMRES, the PI
+controller, the method families and the composite's switch, with the
+hand-off the application's ``auto`` stops at) with the same arithmetic in the
+same order, so that a run takes the Python solver's steps, to the last bit.
 
 As in :mod:`.solvers`, the loop is compiled once for every model: the model's
 derivative, what its recorders keep at a step and its events' functions are
@@ -20,10 +22,21 @@ The integrator keeps its own scalars as the loop's locals. What the pieces it
 calls share lives in small arrays named by the constants below -- ``C_`` the
 counts the adapter reports, ``WS_`` the factorisation's state, ``NS_`` and
 ``NI_`` the Newton iteration's, ``PC_`` the controller's, ``FB``/``FI``,
-``QN``/``QI`` and ``RA``/``RI`` the multistep methods' and Radau's -- and the
-vectors in tuples of arrays, unpacked where they are used. Where Python's
-scalar arithmetic would raise (a division by zero), the loop ends with the
-status that says so. The driver is :mod:`.julia_run`.
+``QN``/``QI`` and ``RA``/``RI`` the multistep methods' and Radau's (and, in
+:mod:`.krylov`, ``KF``/``KI`` the matrix-free W's) -- and the vectors in
+tuples of arrays, unpacked where they are used. Where Python's scalar arithmetic would raise (a division
+by zero), the loop ends with the status that says so. The driver is
+:mod:`.julia_run`.
+
+A composite run (the default algorithm) has two methods, one of each kind,
+both fixed by the tolerance and the size of the system before it starts: the
+non-stiff in slot 0, the stiff in slot 1, each with a controller of its own.
+The loop switches between them as ``methods/default.py`` does, and stops
+where it would switch to a slot it was told to hand off.
+
+GMRES and the matrix-free W of the Krylov FBDF are compiled in
+:mod:`.krylov`, apart, as ``solvers/julia/krylov.py`` is: a port of
+Krylov.jl's ``gmres!``, under the Mozilla Public License 2.0 as that file is.
 """
 
 from __future__ import annotations
@@ -36,6 +49,9 @@ from numba import njit, types
 from numba.extending import get_cython_function_address
 
 from . import guard_numba_cache
+from .krylov import C_NF as _KRYLOV_C_NF
+from .krylov import (KF_GAMMA_DT, KF_T, KF_ZNORM, KI_MAX_BASIS, KI_MEMORY, KI_NITER, KI_NSOLVE, NKF, NKI,
+                     _krylov_prepare, _krylov_solve, _seq_dot)
 from .solvers import CB_T, RHS_T, STORE_T
 
 guard_numba_cache()
@@ -61,6 +77,7 @@ E_INITIAL = 8          # component: the start or its derivative is not a number
 E_HISTORY = 9          # a min/max history ran out of room
 E_CALLBACK = 10        # a callback raised; the driver holds the exception
 E_ZERO_DIVISION = 11   # where Python's arithmetic divides by zero
+R_HANDED_OFF = 12      # t: a composite stopped where it would have switched to a slot it hands off
 
 # The method families.
 M_ROSENBROCK = 0
@@ -68,6 +85,9 @@ M_ESDIRK = 1
 M_FBDF = 2
 M_QNDF = 3
 M_RADAU = 4
+M_TSIT5 = 5
+M_VERN7 = 6
+M_ROS23 = 7            # Rosenbrock23, OrdinaryDiffEq's
 
 # The counts the adapter reports (``ctr``).
 C_NF = 0               # stats['nf']: every evaluation of the derivative
@@ -77,6 +97,7 @@ C_NSOLVE = 3           # W.nsolve, Radau's complex solves included
 C_NSTEPS = 4           # stats['nsteps']: every step tried
 C_NREJECT = 5          # stats['nreject']
 NC = 6
+assert C_NF == _KRYLOV_C_NF  # GMRES counts its evaluations of f into the same place
 
 # What the matrix is (``fl``).
 FL_CALLBACK = 0        # the Jacobian is the callback's, differenced where it declines
@@ -124,7 +145,8 @@ PC_QSTEADY_MIN = 5
 PC_QSTEADY_MAX = 6
 PC_QOLDINIT = 7
 PC_ERROLD = 8
-NPC = 9
+PC_QMAX_FIRST = 9      # qmax_first_step: the growth allowed after the run's first accepted step (0: none)
+NPC = 10
 
 # ``FBDFCache``'s state: floats (``fbv``) and integers (``fbi``).
 FB_TERKM2 = 0
@@ -150,7 +172,9 @@ FI_FROM_EVENT = 6      # iters_from_event
 FI_PENDING = 7         # prev_order_pending
 FI_NEXT_ORDER = 8
 FI_MIN_ORDER = 9
-NFI = 10
+FI_KRYLOV = 10         # the Newton iterations solved by GMRES (KrylovFBDF)
+FI_KRYLOV_FRESH = 11   # krylov_fresh: no contraction rate to believe yet
+NFI = 12
 FB_K = 7               # MAX_ORDER_LIMIT + 2: the points of history kept
 FB_STRIDE = 6          # coef[FB_STRIDE * k + j] is BDF_COEFFS[k][j]
 
@@ -547,10 +571,12 @@ def _fast(ns, ni):
 
 @njit(**_OPTS)
 def _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, atol_fixed, rtol, new_w,
-            last_accepted):
-    """``NewtonSolver.solve``: z from its seed, against the W formed last;
-    the status, or -1 when a callback raised. ``nwt``: z, tmp, the stage
-    value, f there and the increment."""
+            last_accepted, kry, krylov):
+    """``NewtonSolver.solve``: z from its seed, against the W formed last --
+    or, with ``krylov``, by GMRES at the iterate (``KrylovW``, told where the
+    iteration is before every solve, as ``set_point`` tells it); the status,
+    or -1 when a callback raised. ``nwt``: z, tmp, the stage value, f there
+    and the increment."""
     P, X, Wm, IW = model
     z, tmp, ustep, k, dz = nwt
     n = z.size
@@ -582,7 +608,13 @@ def _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, a
         else:
             for i in range(n):
                 dz[i] = tmp[i] + gamma_dt * k[i] - z[i]
-        if not _solve_w(solve_cb, mat, fl, ctr, dz, dz):
+        if krylov:
+            kwf = kry[0]
+            kwf[KF_T] = tstep
+            kwf[KF_GAMMA_DT] = gamma_dt
+            kwf[KF_ZNORM] = math.sqrt(_seq_dot(ustep, ustep))
+            _krylov_solve(f, model, pycb, ctr, kry, dz, ustep, k, rtol)
+        elif not _solve_w(solve_cb, mat, fl, ctr, dz, dz):
             return -1
         ndz = _residual_norm(dz, uprev, ustep, atol_fixed, rtol, norm_max)
         if ns[NS_ERRC] != 1:
@@ -635,14 +667,16 @@ def _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, a
 
 
 @njit(**_OPTS)
-def _pi_accept(pc, eest, dt):
-    """``PIController.accept``: the next step after one accepted."""
+def _pi_accept(pc, eest, dt, first):
+    """``PIController.accept``: the next step after one accepted; ``first``
+    says it is the run's first accepted step, for ``qmax_first_step``."""
+    qmax = pc[PC_QMAX_FIRST] if (first and pc[PC_QMAX_FIRST] > 0) else pc[PC_QMAX]
     if eest == 0:
-        q = 1 / pc[PC_QMAX]
+        q = 1 / qmax
     else:
         q = _jpow(eest, pc[PC_BETA1]) / _jpow(pc[PC_ERROLD], pc[PC_BETA2])
         q /= pc[PC_GAMMA]
-        q = _jmin(1 / pc[PC_QMIN], _jmax(1 / pc[PC_QMAX], q))
+        q = _jmin(1 / pc[PC_QMIN], _jmax(1 / qmax, q))
     if q >= pc[PC_QSTEADY_MIN] and q <= pc[PC_QSTEADY_MAX]:
         q = 1.0
     pc[PC_ERROLD] = _jmax(eest, pc[PC_QOLDINIT])
@@ -685,6 +719,517 @@ def _initial_step(f, model, pycb, ctr, t0, u0, f0, tdir, order, rtol, atol, dtma
     dmax = _jmax(d1, d2)
     h1 = _jmax(1e-6, h0 * 1e-3) if dmax <= 1e-15 else _jpow(0.01 / dmax, 1 / (order + 1))
     return tdir * _jmin(_jmin(100 * h0, h1), abs(dtmax))
+
+
+# --- OrdinaryDiffEq's starting step (``controller.initial_step_sciml``) ---------------------------------
+# Its p-th root goes through V8's ``Math.log10`` (``kompartment.jsmath``), as
+# fdlibm writes it: here bit for bit, by the high and low words of a double.
+
+_LN2_HI = 6.93147180369123816490e-01
+_LN2_LO = 1.90821492927058770002e-10
+_TWO54 = 1.80143985094819840000e+16
+_LG1 = 6.666666666666735130e-01
+_LG2 = 3.999999999940941908e-01
+_LG3 = 2.857142874366239149e-01
+_LG4 = 2.222219843214978396e-01
+_LG5 = 1.818357216161805012e-01
+_LG6 = 1.531383769920937332e-01
+_LG7 = 1.479819860511658591e-01
+_IVLN10 = 4.34294481903251816668e-01
+_LOG10_2HI = 3.01029995663611771306e-01
+_LOG10_2LO = 3.69423907715893078616e-13
+
+
+@njit(inline='always', **_OPTS)
+def _signed32(v):
+    """A 32-bit word as fdlibm's signed int."""
+    v = v & 0xFFFFFFFF
+    return v - 0x100000000 if v & 0x80000000 else v
+
+
+@njit(**_OPTS)
+def _v8_log(x):
+    """``jsmath.log``: V8's ``Math.log``."""
+    w = np.empty(1)
+    u = w.view(np.uint32)
+    w[0] = x
+    hx = _signed32(np.int64(u[1]))
+    lx = np.int64(u[0])
+    k = 0
+    if hx < 0x00100000:
+        if ((hx & 0x7FFFFFFF) | lx) == 0:
+            return -np.inf
+        if hx < 0:
+            return np.nan
+        k -= 54
+        x *= _TWO54
+        w[0] = x
+        hx = _signed32(np.int64(u[1]))
+    if hx >= 0x7FF00000:
+        return x + x
+    k += (hx >> 20) - 1023
+    hx &= 0x000FFFFF
+    i = (hx + 0x95F64) & 0x100000
+    w[0] = x
+    u[1] = np.uint32(hx | (i ^ 0x3FF00000))
+    x = w[0]
+    k += i >> 20
+    f = x - 1.0
+    if (0x000FFFFF & (2 + hx)) < 3:
+        if f == 0.0:
+            if k == 0:
+                return 0.0
+            dk = float(k)
+            return dk * _LN2_HI + dk * _LN2_LO
+        r = f * f * (0.5 - 0.33333333333333333 * f)
+        if k == 0:
+            return f - r
+        dk = float(k)
+        return dk * _LN2_HI - ((r - dk * _LN2_LO) - f)
+    s = f / (2.0 + f)
+    dk = float(k)
+    z = s * s
+    i = hx - 0x6147A
+    w2 = z * z
+    j = 0x6B851 - hx
+    t1 = w2 * (_LG2 + w2 * (_LG4 + w2 * _LG6))
+    t2 = z * (_LG1 + w2 * (_LG3 + w2 * (_LG5 + w2 * _LG7)))
+    i |= j
+    r = t2 + t1
+    if i > 0:
+        hfsq = 0.5 * f * f
+        if k == 0:
+            return f - (hfsq - s * (hfsq + r))
+        return dk * _LN2_HI - ((hfsq - (s * (hfsq + r) + dk * _LN2_LO)) - f)
+    if k == 0:
+        return f - s * (f - r)
+    return dk * _LN2_HI - ((s * (f - r) - dk * _LN2_LO) - f)
+
+
+@njit(**_OPTS)
+def _v8_log10(x):
+    """``jsmath.log10``: V8's ``Math.log10``."""
+    w = np.empty(1)
+    u = w.view(np.uint32)
+    w[0] = x
+    hx = _signed32(np.int64(u[1]))
+    lx = np.int64(u[0])
+    k = 0
+    if hx < 0x00100000:
+        if ((hx & 0x7FFFFFFF) | lx) == 0:
+            return -np.inf
+        if hx < 0:
+            return np.nan
+        k -= 54
+        x *= _TWO54
+        w[0] = x
+        hx = _signed32(np.int64(u[1]))
+        lx = np.int64(u[0])
+    if hx >= 0x7FF00000:
+        return x + x
+    if hx == 0x3FF00000 and lx == 0:
+        return 0.0
+    k += (hx >> 20) - 1023
+    i = 1 if k < 0 else 0
+    hx = (hx & 0x000FFFFF) | ((0x3FF - i) << 20)
+    y = float(k + i)
+    u[1] = np.uint32(hx)
+    u[0] = np.uint32(lx)
+    z = y * _LOG10_2LO + _IVLN10 * _v8_log(w[0])
+    return z + y * _LOG10_2HI
+
+
+@njit(inline='always', **_OPTS)
+def _next_up(x):
+    """``next_up``: the next double above x >= 0."""
+    if x == 0:
+        return MIN_VALUE
+    return np.nextafter(x, np.inf)
+
+
+@njit(inline='always', **_OPTS)
+def _eps_of(x):
+    """``eps_of``: Julia's ``eps(x)``."""
+    a = abs(x)
+    if a == 0:
+        return MIN_VALUE
+    return _next_up(a) - a
+
+
+@njit(**_OPTS)
+def _measure(v, norm_max):
+    """``initial_step_sciml``'s measure: the largest |v| (at least 0, NaN if
+    any is), or the rms of a sum taken left to right."""
+    n = v.size
+    if norm_max:
+        m = 0.0
+        for i in range(n):
+            a = abs(v[i])
+            if a != a:
+                return np.nan
+            if a > m:
+                m = a
+        return m
+    s = 0.0
+    for i in range(n):
+        s += v[i] * v[i]
+    return math.sqrt(s / n)
+
+
+@njit(inline='always', **_OPTS)
+def _fallback(dt, tiny_first, tdir, smalldt, dtmin_):
+    if tiny_first and (not math.isfinite(dt) or abs(dt) < 10 * EPS):
+        return tdir * _jmax(smalldt, dtmin_)
+    return dt
+
+
+@njit(**_OPTS)
+def _initial_step_sciml(f, model, pycb, ctr, t0, u0, f0, tdir, order, rtol, atol, dtmax, norm_max, u1, f1, w, v):
+    """``initial_step_sciml``: the starting step as OrdinaryDiffEq's
+    ``ode_determine_initdt`` takes it, signed (dtmin left at its default)."""
+    P, X, Wm, IW = model
+    n = u0.size
+    dtmin_ = _next_up(_jmax(0.0, _eps_of(t0)))
+    smalldt = _jmax(dtmin_, 1e-6)
+    dtmax_abs = abs(dtmax)
+    for i in range(n):
+        w[i] = atol[i] + abs(u0[i]) * rtol
+    for i in range(n):
+        v[i] = u0[i] / w[i]
+    d0 = _measure(v, norm_max)
+    for i in range(n):
+        v[i] = f0[i] / w[i]
+    d1 = _measure(v, norm_max)
+    if d1 != d1:
+        return tdir * dtmin_
+    dt0 = smalldt if (d0 < 1e-5 or d1 < 1e-5) else (d0 / d1) / 100
+    dt0 = _jmin(dt0, dtmax_abs)
+    tiny_first = dt0 < 10 * EPS
+    step = tdir * dt0
+    for i in range(n):
+        u1[i] = u0[i] + step * f0[i]
+    f(t0 + tdir * dt0, u1, f1, P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    same = n > 0
+    for i in range(n):
+        if not (f0[i] == f1[i]):
+            same = False
+            break
+    if same:
+        return _fallback(tdir * _jmax(dtmin_, 100 * dt0), tiny_first, tdir, smalldt, dtmin_)
+    for i in range(n):
+        v[i] = (f1[i] - f0[i]) / w[i]
+    d2 = _measure(v, norm_max) / dt0
+    m = _jmax(d1, d2)
+    dt1 = _jmax(1e-6, dt0 * 1e-3) if m <= 1e-15 else _jpow(10.0, (-(2 + _v8_log10(m))) / order)
+    return _fallback(tdir * _jmax(dtmin_, _jmin(_jmin(100 * dt0, dt1), dtmax_abs)), tiny_first, tdir, smalldt,
+                     dtmin_)
+
+
+# --- the explicit methods: Tsit5 and Vern7 (``methods/tsit5.py``, ``methods/vern7.py``) -------------------
+# ``ex``: the stages (16 rows: Vern7's ten and its interpolant's six, Tsit5's
+# seven), a stage's point and a sum, whether Vern7's interpolation stages are
+# this step's, Tsit5's tableau (a by rows, c, btilde, the interpolant's
+# polynomials by rows) and Vern7's (each row's nonzero terms -- stage, value --
+# in the source's order, rows 0..9 the stages, 10 the solution, 11 the error,
+# 12..17 the interpolation stages; c and the interpolation stages' c; the
+# interpolant's stages and polynomials).
+
+
+@njit(**_OPTS)
+def _explicit_stiffness(ka, kb, ga, gb, still):
+    """``explicit_stiffness``: the largest |(kb - ka)_i / (gb - ga)_i|, a
+    component that has not moved at all passed over unless ``still``."""
+    m = 0.0
+    for i in range(ka.size):
+        num = kb[i] - ka[i]
+        den = gb[i] - ga[i]
+        if not still and num == 0 and den == 0:
+            continue
+        r = abs(num / den)
+        if r != r:
+            return np.nan
+        if r > m:
+            m = r
+    return m
+
+
+@njit(**_OPTS)
+def _tsit5_step(f, model, pycb, ctr, ex, t, dt, uprev, u, fsalfirst, fsallast, atol, rtol, norm_max):
+    """``Tsit5Cache.step``: the error estimate; the stage-6 point stays in
+    ``ex``'s point for the stiffness estimate."""
+    P, X, Wm, IW = model
+    ek, pt, acc = ex[0], ex[1], ex[2]
+    ta, tc, tbt = ex[4], ex[5], ex[6]
+    n = u.size
+    k0 = ek[0]
+    for i in range(n):
+        k0[i] = fsalfirst[i]
+    a2 = dt * ta[1, 0]
+    for i in range(n):
+        pt[i] = uprev[i] + a2 * k0[i]
+    f(t + tc[1] * dt, pt, ek[1], P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    for s in range(2, 6):
+        r0 = ta[s, 0]
+        for i in range(n):
+            acc[i] = r0 * k0[i]
+        for j in range(1, s):
+            rj = ta[s, j]
+            kj = ek[j]
+            for i in range(n):
+                acc[i] = acc[i] + rj * kj[i]
+        for i in range(n):
+            pt[i] = uprev[i] + dt * acc[i]
+        f(t + tc[s] * dt, pt, ek[s], P, X, Wm, IW, pycb)
+        ctr[C_NF] += 1
+    r0 = ta[6, 0]
+    for i in range(n):
+        acc[i] = r0 * k0[i]
+    for j in range(1, 6):
+        rj = ta[6, j]
+        kj = ek[j]
+        for i in range(n):
+            acc[i] = acc[i] + rj * kj[i]
+    for i in range(n):
+        u[i] = uprev[i] + dt * acc[i]
+    f(t + dt, u, ek[6], P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    for i in range(n):
+        fsallast[i] = ek[6, i]
+    b0 = tbt[0]
+    for i in range(n):
+        acc[i] = b0 * k0[i]
+    for j in range(1, 7):
+        bj = tbt[j]
+        kj = ek[j]
+        for i in range(n):
+            acc[i] = acc[i] + bj * kj[i]
+    for i in range(n):
+        acc[i] = dt * acc[i]
+    return _error_norm(acc, uprev, u, atol, rtol, norm_max)
+
+
+@njit(**_OPTS)
+def _tsit5_interpolate(ex, theta, dt, uprev, u, out):
+    """``Tsit5Cache.interpolate``: Tsitouras's free interpolant, fourth order;
+    the step's own solution at its end."""
+    ek, acc, ti = ex[0], ex[2], ex[7]
+    n = u.size
+    if theta == 1:
+        for i in range(n):
+            out[i] = u[i]
+        return
+    th2 = theta * theta
+    w0 = theta * (ti[0, 0] + theta * (ti[0, 1] + theta * (ti[0, 2] + theta * ti[0, 3])))
+    for i in range(n):
+        acc[i] = ek[0, i] * w0
+    for j in range(1, 7):
+        wj = th2 * (ti[j, 0] + theta * (ti[j, 1] + theta * ti[j, 2]))
+        kj = ek[j]
+        for i in range(n):
+            acc[i] = acc[i] + kj[i] * wj
+    for i in range(n):
+        out[i] = uprev[i] + dt * acc[i]
+
+
+@njit(**_OPTS)
+def _vern7_combine(ex, row, uprev, dt, out):
+    """``Vern7Cache.combine``: uprev + dt*sum coefficient*k over the row's terms."""
+    ek, acc = ex[0], ex[2]
+    vptr, vj, vv = ex[8], ex[9], ex[10]
+    n = uprev.size
+    p0 = vptr[row]
+    j0 = vj[p0]
+    v0 = vv[p0]
+    for i in range(n):
+        acc[i] = v0 * ek[j0, i]
+    for p in range(p0 + 1, vptr[row + 1]):
+        v = vv[p]
+        kj = ek[vj[p]]
+        for i in range(n):
+            acc[i] = acc[i] + v * kj[i]
+    for i in range(n):
+        out[i] = uprev[i] + dt * acc[i]
+
+
+@njit(**_OPTS)
+def _vern7_step(f, model, pycb, ctr, ex, t, dt, uprev, u, fsalfirst, atol, rtol, norm_max):
+    """``Vern7Cache.step``: the error estimate; the stage-10 point stays in
+    ``ex``'s point for the stiffness estimate."""
+    P, X, Wm, IW = model
+    ek, pt, acc, valid = ex[0], ex[1], ex[2], ex[3]
+    vptr, vj, vv, vc = ex[8], ex[9], ex[10], ex[11]
+    n = u.size
+    k0 = ek[0]
+    for i in range(n):
+        k0[i] = fsalfirst[i]
+    for s in range(1, 10):
+        _vern7_combine(ex, s, uprev, dt, pt)
+        f(t + vc[s] * dt, pt, ek[s], P, X, Wm, IW, pycb)
+        ctr[C_NF] += 1
+    _vern7_combine(ex, 10, uprev, dt, u)
+    valid[0] = 0
+    p0 = vptr[11]
+    j0 = vj[p0]
+    v0 = vv[p0]
+    for i in range(n):
+        acc[i] = v0 * ek[j0, i]
+    for p in range(p0 + 1, vptr[12]):
+        v = vv[p]
+        kj = ek[vj[p]]
+        for i in range(n):
+            acc[i] = acc[i] + v * kj[i]
+    for i in range(n):
+        acc[i] = dt * acc[i]
+    return _error_norm(acc, uprev, u, atol, rtol, norm_max)
+
+
+@njit(**_OPTS)
+def _vern7_interpolate(f, model, pycb, ctr, ex, theta, t, dt, uprev, u, out):
+    """``Vern7Cache.interpolate``: Verner's seventh-order interpolant, its six
+    stages worked out once a step, when a point inside it is first asked
+    for; the step's own solution at its end."""
+    P, X, Wm, IW = model
+    ek, pt, acc, valid = ex[0], ex[1], ex[2], ex[3]
+    vc2, vst, vip, viv = ex[12], ex[13], ex[14], ex[15]
+    n = u.size
+    if theta == 1:
+        for i in range(n):
+            out[i] = u[i]
+        return
+    if valid[0] == 0:
+        for m in range(6):
+            _vern7_combine(ex, 12 + m, uprev, dt, pt)
+            f(t + vc2[m] * dt, pt, ek[10 + m], P, X, Wm, IW, pycb)
+            ctr[C_NF] += 1
+        valid[0] = 1
+    th2 = theta * theta
+    for q in range(vst.size):
+        lo = vip[q]
+        hi = vip[q + 1]
+        p = viv[hi - 1]
+        for d in range(hi - 2, lo - 1, -1):
+            p = viv[d] + theta * p
+        wq = (theta if q == 0 else th2) * p
+        kq = ek[vst[q] - 1]
+        if q == 0:
+            for i in range(n):
+                acc[i] = kq[i] * wq
+        else:
+            for i in range(n):
+                acc[i] = acc[i] + kq[i] * wq
+    for i in range(n):
+        out[i] = uprev[i] + dt * acc[i]
+
+
+# --- Rosenbrock23 (``methods/rosenbrock23.py``) ---------------------------------------------------------------
+# ``r23``: k1, k2, k3 (the stages; k1 and k2 are the interpolant's), dT, a
+# stage's point, f there and a right-hand side.
+
+ROS23_D = 1 / (2 + math.sqrt(2))
+ROS23_C32 = 6 + math.sqrt(2)
+
+
+@njit(**_OPTS)
+def _ros23_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, r23, t, dt, uprev, u, fsalfirst,
+                fsallast, atol, rtol):
+    """``Rosenbrock23Cache.step``: W = I/(h d) - J from a fresh J on every
+    step. (1, the error estimate), (0, 0) when W is singular, (-1, 0) when a
+    callback raised, (-2, 0) where Python divides by zero."""
+    P, X, Wm, IW = model
+    k1, k2, k3, dT, pt, f1, rhs = r23
+    n = u.size
+    dtgamma = dt * ROS23_D
+    inv = 1.0 / dtgamma
+    dto2 = dt / 2
+    dto6 = dt / 6
+    r = _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fsalfirst, dtgamma, 1.0, True)
+    if r <= 0:
+        return r, 0.0
+    # df/dt, differenced with a step scaled by max(|t|, |h|) (``rosenbrock_time_derivative``).
+    dtd = math.sqrt(EPS) * _jmax(abs(t), abs(dt))
+    f(t + dtd, uprev, pt, P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    if dtd == 0:
+        return -2, 0.0
+    invd = 1 / dtd
+    for i in range(n):
+        dT[i] = (pt[i] - fsalfirst[i]) * invd
+    for i in range(n):
+        rhs[i] = fsalfirst[i] + dtgamma * dT[i]
+    if not _solve_w(solve_cb, mat, fl, ctr, rhs, k1):
+        return -1, 0.0
+    for i in range(n):
+        k1[i] = k1[i] * inv
+    for i in range(n):
+        pt[i] = uprev[i] + dto2 * k1[i]
+    f(t + dto2, pt, f1, P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    for i in range(n):
+        rhs[i] = f1[i] - k1[i]
+    if not _solve_w(solve_cb, mat, fl, ctr, rhs, k2):
+        return -1, 0.0
+    for i in range(n):
+        k2[i] = k2[i] * inv + k1[i]
+    for i in range(n):
+        u[i] = uprev[i] + dt * k2[i]
+    f(t + dt, u, fsallast, P, X, Wm, IW, pycb)
+    ctr[C_NF] += 1
+    for i in range(n):
+        rhs[i] = fsallast[i] - ROS23_C32 * (k2[i] - f1[i]) - 2 * (k1[i] - fsalfirst[i]) + dt * dT[i]
+    if not _solve_w(solve_cb, mat, fl, ctr, rhs, k3):
+        return -1, 0.0
+    for i in range(n):
+        k3[i] = k3[i] * inv
+    for i in range(n):
+        rhs[i] = dto6 * (k1[i] - 2 * k2[i] + k3[i])
+    return 1, _error_norm(rhs, uprev, u, atol, rtol, fl[FL_NORM_MAX] != 0)
+
+
+@njit(**_OPTS)
+def _ros23_interpolate(r23, theta, dt, uprev, u, out):
+    """``Rosenbrock23Cache.interpolate``: the method's own second-order
+    interpolant; the step's own solution at its end."""
+    k1, k2 = r23[0], r23[1]
+    n = u.size
+    if theta == 1:
+        for i in range(n):
+            out[i] = u[i]
+        return
+    c1 = theta * (1 - theta) / (1 - 2 * ROS23_D)
+    c2 = theta * (theta - 2 * ROS23_D) / (1 - 2 * ROS23_D)
+    for i in range(n):
+        out[i] = uprev[i] + dt * (c1 * k1[i] + c2 * k2[i])
+
+
+@njit(**_OPTS)
+def _jac_inf_norm(jac, fl, jrow, rows):
+    """``jacobian_inf_norm``: ||J||_inf, each row summed in column order; a
+    NaN entry makes it NaN."""
+    jd, jv = jac[0], jac[1]
+    n = rows.size
+    if n == 0:
+        return 0.0
+    for i in range(n):
+        rows[i] = 0.0
+    if fl[FL_SPARSE]:
+        for p in range(jv.size):
+            rows[jrow[p]] += abs(jv[p])
+    else:
+        for i in range(n):
+            s = 0.0
+            for j in range(n):
+                s += abs(jd[i, j])
+            rows[i] = s
+    m = 0.0
+    for i in range(n):
+        a = rows[i]
+        if a != a:
+            return np.nan
+        if a > m:
+            m = a
+    return m
 
 
 # --- Rosenbrock: Rodas5P (``methods/rosenbrock.py``) ------------------------------------------------------
@@ -805,7 +1350,7 @@ def _ros_interpolate(coef, ros, theta, uprev, u, out):
 
 @njit(**_OPTS)
 def _esdirk_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, ez, nwt, ns, ni, t, dt, uprev, u,
-                 fsalfirst, fsallast, atol, atol_fixed, rtol, est):
+                 fsalfirst, fsallast, atol, atol_fixed, rtol, est, kry):
     """``ESDIRKCache.step``: each stage by the Newton iteration against one
     W = I - gamma h J. (1, the error estimate), (0, 0) when W is singular or a
     stage does not converge, (-1, 0) when a callback raised."""
@@ -845,7 +1390,7 @@ def _esdirk_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr,
         ns[NS_C] = coef[c0 + stage]
         ns[NS_GAMMA] = gamma
         st = _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, atol_fixed, rtol,
-                     new_w and stage == 1, True)
+                     new_w and stage == 1, True, kry, False)
         if st < 0:
             return -1, 0.0
         if st != N_CONVERGENCE:
@@ -978,10 +1523,11 @@ def _lagrange(fb, xi, count, out):
 
 @njit(**_OPTS)
 def _fbdf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, fb, nwt, ns, ni, t, dt, uprev, u,
-               fsalfirst, atol, atol_fixed, rtol):
+               fsalfirst, atol, atol_fixed, rtol, kry):
     """``FBDFCache.step``: (1, the error estimate) with the order for the
     next step decided, (0, 0) when W is singular or Newton does not
-    converge, (-1, 0) when a callback raised."""
+    converge, (-1, 0) when a callback raised. A KrylovFBDF forms no W: its
+    Newton iterations are solved by GMRES (``_krylov_solve``)."""
     uh, uhi, corr, upred, ts, thetas, fdw, xs, fw, tmp, v, fbv, fbi = fb
     ws = mat[0]
     z, ntmp = nwt[0], nwt[1]
@@ -993,10 +1539,20 @@ def _fbdf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, c
     gamma = 1 / coef[row]
     gamma_dt = gamma * dt
     tdt = dt  # t + dt on the history's own clock
-    need_new = ws[WS_STALE] != 0 or ws[WS_HAVE] == 0 or not _fast(ns, ni)
-    r = _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fsalfirst, gamma_dt, 0.0, need_new)
-    if r <= 0:
-        return r, 0.0
+    krylov = fbi[FI_KRYLOV] != 0
+    if krylov:
+        # Nothing to form, only this step's error weights to set; `need_new`
+        # is what the Newton iteration makes of its last contraction rate,
+        # not believed after a restart or a failure.
+        need_new = fbi[FI_KRYLOV_FRESH] != 0 or not _fast(ns, ni)
+        fbi[FI_KRYLOV_FRESH] = 0
+        _krylov_prepare(kry, atol_fixed, rtol, uprev, u)
+    else:
+        need_new = ws[WS_STALE] != 0 or ws[WS_HAVE] == 0 or not _fast(ns, ni)
+        r = _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fsalfirst, gamma_dt, 0.0,
+                    need_new)
+        if r <= 0:
+            return r, 0.0
     nh = fbi[FI_N_HISTORY]
     count = min(k + 1, nh)
     for j in range(count):
@@ -1026,12 +1582,15 @@ def _fbdf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, c
     ni[NI_METHOD] = N_MULTISTEP
     ns[NS_ERRC] = 1 / (k + 1)
     st = _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, atol_fixed, rtol, need_new,
-                 fbi[FI_CONSFAIL] == 0)
+                 fbi[FI_CONSFAIL] == 0, kry, krylov)
     ns[NS_ERRC] = 1.0
     if st < 0:
         return -1, 0.0
     if st != N_CONVERGENCE:
-        ws[WS_STALE] = 1.0
+        if krylov:
+            fbi[FI_KRYLOV_FRESH] = 1
+        else:
+            ws[WS_STALE] = 1.0
         if fbi[FI_ORDER] > 1 and ni[NI_NFAILS] >= 3:
             fbi[FI_ORDER] -= 1
         fbi[FI_CONSFAIL] += 1
@@ -1064,6 +1623,40 @@ def _fbdf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, c
     fbv[FB_TERKM3] = _estimate_terk(fb, k - 2, dt, uprev, u, atol, rtol, norm_max) if k > 3 else np.inf
     _fbdf_decide(fbv, fbi)
     return 1, eest
+
+
+@njit(**_OPTS)
+def _fbdf_init(fb, ni, uprev):
+    """``FBDFCache.init``: the history begins at the state."""
+    uh, uhi, ts, fbi = fb[0], fb[1], fb[4], fb[12]
+    ni[NI_METHOD] = N_MULTISTEP
+    ts[0] = 0.0
+    for q in range(uprev.size):
+        uh[uhi[0], q] = uprev[q]
+    fbi[FI_N_HISTORY] = 1
+    fbi[FI_FROM_EVENT] = 0
+
+
+@njit(**_OPTS)
+def _fbdf_restart(fb, uprev):
+    """``FBDFCache.restart``: as a method switched back to starts again --
+    its history from the state, at its lowest order."""
+    uh, uhi, ts, fbv, fbi = fb[0], fb[1], fb[4], fb[11], fb[12]
+    fbi[FI_KRYLOV_FRESH] = 1
+    ts[0] = 0.0
+    for q in range(uprev.size):
+        uh[uhi[0], q] = uprev[q]
+    fbi[FI_N_HISTORY] = 1
+    fbi[FI_FROM_EVENT] = 0
+    fbi[FI_ORDER] = fbi[FI_MIN_ORDER]
+    fbi[FI_PREV_ORDER] = fbi[FI_ORDER]
+    fbi[FI_QWAIT] = 3
+    fbi[FI_NCONSTEPS] = 0
+    fbi[FI_CONSFAIL] = 0
+    fbv[FB_TERKM2] = np.inf
+    fbv[FB_TERKM1] = np.inf
+    fbv[FB_TERK] = np.inf
+    fbv[FB_TERKP1] = 0.0
 
 
 @njit(**_OPTS)
@@ -1192,7 +1785,7 @@ def _qndf_error_constant(coef, m):
 
 @njit(**_OPTS)
 def _qndf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, qn, nwt, ns, ni, t, dt, uprev, u,
-               fsalfirst, atol, atol_fixed, rtol):
+               fsalfirst, atol, atol_fixed, rtol, kry):
     """``QNDFCache.step``: (1, the error estimate) with the estimates one
     order either side, (0, 0) when W is singular or Newton does not converge,
     (-1, 0) when a callback raised."""
@@ -1266,7 +1859,7 @@ def _qndf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, c
     ni[NI_METHOD] = N_MULTISTEP
     ns[NS_ERRC] = abs(_qndf_error_constant(coef, k))
     st = _newton(f, model, pycb, solve_cb, mat, fl, ctr, nwt, ns, ni, t, dt, uprev, atol_fixed, rtol, need_new,
-                 qni[QI_CONSFAIL] == 0)
+                 qni[QI_CONSFAIL] == 0, kry, False)
     ns[NS_ERRC] = 1.0
     if st < 0:
         return -1, 0.0
@@ -1650,9 +2243,11 @@ def _radau_interpolate(coef, ra, theta, uprev, out):
 
 
 @njit(**_OPTS)
-def _eval_at(method, coef, ros, fb, qn, ra, theta, dt, uprev, u, fsalfirst, fsallast, out):
+def _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, theta, t, dt, uprev, u, fsalfirst, fsallast,
+             out):
     """``eval_at``: the step's own interpolant at theta -- the method's, or the
-    cubic Hermite for the ESDIRKs, which have none."""
+    cubic Hermite for the ESDIRKs, which have none. Vern7's works out its six
+    stages the first time a step is read inside, with the model's f."""
     if method == M_ROSENBROCK:
         _ros_interpolate(coef, ros, theta, uprev, u, out)
     elif method == M_ESDIRK:
@@ -1661,13 +2256,19 @@ def _eval_at(method, coef, ros, fb, qn, ra, theta, dt, uprev, u, fsalfirst, fsal
         _fbdf_interpolate(fb, theta, u, out)
     elif method == M_QNDF:
         _qndf_interpolate(qn, theta, u, out)
+    elif method == M_TSIT5:
+        _tsit5_interpolate(ex, theta, dt, uprev, u, out)
+    elif method == M_VERN7:
+        _vern7_interpolate(f, model, pycb, ctr, ex, theta, t, dt, uprev, u, out)
+    elif method == M_ROS23:
+        _ros23_interpolate(r23, theta, dt, uprev, u, out)
     else:
         _radau_interpolate(coef, ra, theta, uprev, out)
 
 
 @njit(**_OPTS)
-def _locate_root(method, coef, ros, fb, qn, ra, evf, model, pycb, which, g_start, t, dt, uprev, u, fsalfirst, fsallast,
-                 ub, gb):
+def _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, which, g_start, t, dt, uprev, u,
+                 fsalfirst, fsallast, ub, gb):
     """``_locate_root``: where in the step, as theta, event function ``which``
     crosses zero -- bisection then Illinois on the step's interpolant; the
     bracket's far end."""
@@ -1675,7 +2276,7 @@ def _locate_root(method, coef, ros, fb, qn, ra, evf, model, pycb, which, g_start
     lo = 0.0
     hi = 1.0
     flo = g_start
-    _eval_at(method, coef, ros, fb, qn, ra, 1.0, dt, uprev, u, fsalfirst, fsallast, ub)
+    _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, 1.0, t, dt, uprev, u, fsalfirst, fsallast, ub)
     evf(t + 1.0 * dt, ub, gb, P, X, Wm, IW, pycb)
     fhi = gb[which]
     it = 0
@@ -1684,7 +2285,8 @@ def _locate_root(method, coef, ros, fb, qn, ra, evf, model, pycb, which, g_start
         mid = 0.5 * (lo + hi) if denom == 0 else lo - flo * (hi - lo) / denom
         if not (lo < mid < hi):
             mid = 0.5 * (lo + hi)
-        _eval_at(method, coef, ros, fb, qn, ra, mid, dt, uprev, u, fsalfirst, fsallast, ub)
+        _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, mid, t, dt, uprev, u, fsalfirst, fsallast,
+                 ub)
         evf(t + mid * dt, ub, gb, P, X, Wm, IW, pycb)
         fmid = gb[which]
         if fmid == 0:
@@ -1703,8 +2305,8 @@ def _locate_root(method, coef, ros, fb, qn, ra, evf, model, pycb, which, g_start
 
 
 @njit(**_OPTS)
-def _find_event(method, coef, ros, fb, qn, ra, evf, model, pycb, evdir, evbuf, evwhich, found, t, dt, t0, uprev, u,
-                fsalfirst, fsallast, ub, u_event):
+def _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, evdir, evbuf, evwhich, found, t, dt,
+                t0, uprev, u, fsalfirst, fsallast, ub, u_event):
     """``_find_event``: the earliest crossing inside the step just taken, each
     function in its own direction (the functions at the step's start in
     evbuf[0]); functions crossing together are reported together. Whether
@@ -1723,8 +2325,8 @@ def _find_event(method, coef, ros, fb, qn, ra, evf, model, pycb, evdir, evbuf, e
         rising = a < 0 and b >= 0
         falling = a > 0 and b <= 0
         if (d >= 0 and rising) or (d <= 0 and falling):
-            theta = _locate_root(method, coef, ros, fb, qn, ra, evf, model, pycb, i, a, t, dt, uprev, u, fsalfirst,
-                                 fsallast, ub, evbuf[2])
+            theta = _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, i, a, t, dt, uprev,
+                                 u, fsalfirst, fsallast, ub, evbuf[2])
             t_event = t + theta * dt
             # A root at the instant the solve began is not a crossing (``_root_at_start``).
             if abs(t_event - t0) <= 16 * EPS * _jmax(abs(t0), abs(dt)):
@@ -1750,7 +2352,8 @@ def _find_event(method, coef, ros, fb, qn, ra, evf, model, pycb, evdir, evbuf, e
             evwhich[int(found[2, k])] = 1
             if found[0, k] > found[0, last]:
                 last = k
-    _eval_at(method, coef, ros, fb, qn, ra, found[0, last], dt, uprev, u, fsalfirst, fsallast, u_event)
+    _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, found[0, last], t, dt, uprev, u, fsalfirst,
+             fsallast, u_event)
     return True, found[1, last]
 
 
@@ -1786,10 +2389,13 @@ def _collect(t, y, ct, cy, cint, cflt):
 
 @njit(inline='always', **_OPTS)
 def _clamp(nn, u):
-    """``Integrator.clamp``: a non-negative state below zero put on zero."""
+    """``Integrator.clamp``: a non-negative state below zero put on zero; how many were."""
+    hit = 0
     for i in range(nn.size):
         if nn[i] != 0 and u[i] < 0:
             u[i] = 0.0
+            hit += 1
+    return hit
 
 
 @njit(inline='always', **_OPTS)
@@ -1810,16 +2416,45 @@ FP_MAX_STEPS = 5
 FP_MAX_AGE = 6         # max_jac_age
 FP_KAPPA = 7           # the Newton iteration's
 FP_CUTOFF = 8          # its fast_convergence_cutoff
-NFP = 9
-IP_METHOD = 0
+FP_NONSTIFFTOL = 9     # a composite's switch (``SwitchState``): its thresholds,
+FP_STIFFTOL = 10
+FP_DTFAC = 11
+FP_STABILITY = 12      # the non-stiff method's stability size,
+FP_MAXSTIFFSTEP = 13   # and its counts
+FP_MAXNONSTIFFSTEP = 14
+FP_SWITCH_MAX = 15
+NFP = 16
+IP_METHOD = 0          # the method, or a composite's non-stiff one (slot 0)
 IP_BELOW_TOL = 1       # below_tol_run, rounded
 IP_STORE = 2           # the model's recorders keep the steps
 IP_PROGRESS = 3
 IP_SAVEAT_AT = 4       # the first time to save at
-IP_ORDER = 5           # the method's order, for the starting step
+IP_ORDER = 5           # the order of the method it starts on, for the starting step
 IP_AUTO_ABSTOL = 6
 IP_NEWTON_MAX_ITERS = 7
-NIP = 8                # then the method's integers (fbi, qni or rai) as a step starts them
+IP_INITDT = 8          # OrdinaryDiffEq's starting step (``initdt='sciml'``), else Hairer's
+IP_COMPOSITE = 9       # a composite of two methods
+IP_STIFF = 10          # its stiff one (slot 1)
+IP_FIRST = 11          # the slot it starts on
+IP_HAND_OFF = 12       # the slots it hands off, as bits (1 << slot)
+IP_STIFFALGFIRST = 13
+IP_STILL = 14          # still_is_stiff: a state at rest read as Julia reads it
+NIP = 15               # then the method's integers (fbi, qni or rai) as a step starts them
+NCP = 2 * NPC          # cpar: the two slots' controllers, then the method's floats (fbv, qnv or rav)
+
+# What the loop reports besides the counts: stats[NC + SO_...].
+SO_ROWS = 0            # the rows written
+SO_STEPS0 = 1          # the accepted steps of each slot
+SO_STEPS1 = 2
+SO_SWITCHES = 3
+SO_SLOT = 4            # the slot in charge at the end
+SO_BUILT = 5           # the slots that took charge at all, as bits
+SO_W = 6               # whether W was ever formed
+SO_KSOLVES = 7         # GMRES's solves and iterations
+SO_KITERS = 8
+SO_FROM = 9            # where it handed off: from this slot (-1, none) to that
+SO_TO = 10
+NSO = 11
 
 JULIA_SIG = types.int64(
     RHS_T, STORE_T, RHS_T, CB_T, CB_T, CB_T, CB_T,   # f, store, evf, jac_cb, progress, factor_cb, solve_cb
@@ -1830,34 +2465,92 @@ JULIA_SIG = types.int64(
     _M, _A, _I, _I, _A, _A,                         # wf, wv, j_to_w, diag_w, rbuf, xbuf
     _A, _M, _A, _I, _A,                             # evdir, evbuf, evy, evwhich, evstat
     _A, _M, _I, _A, _I,                             # tout, yout, stats, fstat, pbuf
-    _A, _M, _I, _A)                                 # ct, cy, cint, cflt: the steps as output
+    _A, _M, _I, _A,                                 # ct, cy, cint, cflt: the steps as output
+    _A, _A, _I, _I, _A)                             # tstops, ecoef, eint, jrow, hand
+
+
+@njit(inline='always', **_OPTS)
+def _has_fsal_last(method):
+    """Whether the step's last stage is f at its end: the ESDIRKs', Radau's,
+    Tsit5's and Rosenbrock23's."""
+    return method == M_ESDIRK or method == M_RADAU or method == M_TSIT5 or method == M_ROS23
+
+
+@njit(**_OPTS)
+def _explicit_tables(method, ecoef, eint):
+    """The explicit method's tableau, out of ``ecoef`` and ``eint`` as
+    :mod:`.julia_run` lays them out: Tsit5's a (7 x 7), c, btilde and
+    interpolant (7 x 4); Vern7's terms (row pointers, stages, values), c, its
+    interpolation stages' c, the interpolant's stages, polynomials' pointers
+    and coefficients. A run without one has empty ones."""
+    if method == M_TSIT5:
+        ta = ecoef[0:49].reshape(7, 7)
+        tc = ecoef[49:56]
+        tbt = ecoef[56:63]
+        ti = ecoef[63:91].reshape(7, 4)
+    else:
+        ta = np.zeros((1, 1))
+        tc = np.zeros(1)
+        tbt = np.zeros(1)
+        ti = np.zeros((1, 1))
+    if method == M_VERN7:
+        nt = eint[0]
+        nv = eint[1]
+        ns = eint[2]
+        vptr = eint[3:3 + 19]
+        vj = eint[22:22 + nt]
+        vst = eint[22 + nt:22 + nt + ns]
+        vip = eint[22 + nt + ns:22 + nt + 2 * ns + 1]
+        vv = ecoef[0:nt]
+        vc = ecoef[nt:nt + 10]
+        vc2 = ecoef[nt + 10:nt + 16]
+        viv = ecoef[nt + 16:nt + 16 + nv]
+    else:
+        vptr = np.zeros(1, dtype=np.int64)
+        vj = np.zeros(1, dtype=np.int64)
+        vst = np.zeros(1, dtype=np.int64)
+        vip = np.zeros(1, dtype=np.int64)
+        vv = np.zeros(1)
+        vc = np.zeros(1)
+        vc2 = np.zeros(1)
+        viv = np.zeros(1)
+    return ta, tc, tbt, ti, vptr, vj, vv, vc, vc2, vst, vip, viv
 
 
 @njit(JULIA_SIG, **_OPTS)
 def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, pycb, saveat, y0, atol, atol0, nn,
           coef, fpar, cpar, ipar, fl, jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, wf, wv, j_to_w, diag_w,
-          rbuf, xbuf, evdir, evbuf, evy, evwhich, evstat, tout, yout, stats, fstat, pbuf, ct, cy, cint, cflt):
-    """``integrator.solve`` with the method ``ipar[IP_METHOD]``, compiled.
+          rbuf, xbuf, evdir, evbuf, evy, evwhich, evstat, tout, yout, stats, fstat, pbuf, ct, cy, cint, cflt,
+          tstops, ecoef, eint, jrow, hand):
+    """``integrator.solve`` with the method ``ipar[IP_METHOD]`` -- or, for a
+    composite, with the two of ``ipar[IP_METHOD]`` and ``ipar[IP_STIFF]`` and
+    the switch between them -- compiled.
 
-    fpar, ipar: see ``FP_`` and ``IP_``; cpar: the controller's numbers
-    (``PC_``), then the method's floats (fbv, qnv or rav) as a run starts
-    them; coef: the method's tableau or coefficients; fl: ``FL_``.
-    ``atol`` is the integrator's own tolerance (raised in place under
-    auto_abstol), ``atol0`` the one asked for, which the Newton iteration and
-    the starting step read; ``nn`` marks the non-negative states (empty when
-    none is). The Jacobian (``jd`` dense, ``jv`` on the pattern), the colouring
-    that differences it, W by columns (``wf``) or its values (``wv``) and the
-    callbacks' buffers are the Python solver's own objects' arrays.
-    Rows are saved at ``saveat`` from ``ipar[IP_SAVEAT_AT]`` into tout/yout,
-    and the model's recorders told of each one and of each step (``store``),
-    the steps collected when cint[3] is set; an event stops the solve, which
-    says so in evstat (1, the time), with the state there in evy and the
-    events that fired in evwhich.
-    stats (out): the ``C_`` counts, then the rows written; fstat (out): t,
+    fpar, ipar: see ``FP_`` and ``IP_``; cpar: the two slots' controllers'
+    numbers (``PC_``), then the method's floats (fbv, qnv or rav) as a run
+    starts them; coef: the stiff (or only) method's tableau or coefficients,
+    ecoef and eint the explicit one's; fl: ``FL_``. ``atol`` is the
+    integrator's own tolerance (raised in place under auto_abstol),
+    ``atol0`` the one asked for, which the Newton iteration and the starting
+    step read; ``nn`` marks the non-negative states (empty when none is). The
+    Jacobian (``jd`` dense, ``jv`` on the pattern, whose rows are ``jrow``),
+    the colouring that differences it, W by columns (``wf``) or its values
+    (``wv``) and the callbacks' buffers are the Python solver's own objects'
+    arrays. Rows are saved at ``saveat`` from ``ipar[IP_SAVEAT_AT]`` into
+    tout/yout, steps land on ``tstops``, and the model's recorders are told
+    of each row and each step (``store``), the steps collected when cint[3]
+    is set; an event stops the solve, which says so in evstat (1, the time),
+    with the state there in evy and the events that fired in evwhich; a
+    hand-off stops it too, with the state there in ``hand``.
+    stats (out): the ``C_`` counts, then the ``SO_`` numbers; fstat (out): t,
     dt and the component a message needs.
     """
     n = y0.size
-    method = ipar[IP_METHOD]
+    comp = ipar[IP_COMPOSITE] != 0
+    mcode0 = ipar[IP_METHOD]
+    mcode1 = ipar[IP_STIFF] if comp else mcode0
+    slot = ipar[IP_FIRST] if comp else 0
+    method = mcode1 if slot == 1 else mcode0
     rtol = fpar[FP_RTOL]
     t0 = fpar[FP_T0]
     tf = fpar[FP_TF]
@@ -1867,6 +2560,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     has_store = ipar[IP_STORE] != 0
     has_progress = ipar[IP_PROGRESS] != 0
     auto_abstol = ipar[IP_AUTO_ABSTOL] != 0
+    norm_max = fl[FL_NORM_MAX] != 0
     has_nn = nn.size > 0
     nev = evdir.size
     model = (P, X, Wm, IW)
@@ -1876,7 +2570,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     span = abs(tf - t0)
     t_eps = 16 * _jmax(_ulp(t0), _ulp(tf))
 
-    # --- what the methods share: J, W, the Newton iteration, the controller
+    # --- what the methods share: J, W, the Newton iteration, the controllers
     jac = (jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, np.zeros(n), np.zeros(n), np.zeros(max(gcols.size, 1)))
     ws = np.zeros(NWS)
     ws[WS_GAMMA_DT] = np.nan
@@ -1900,45 +2594,100 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     ni = np.zeros(NNI, dtype=np.int64)
     ni[NI_STATUS] = N_CONVERGENCE
     ni[NI_MAX_ITERS] = ipar[IP_NEWTON_MAX_ITERS]
-    pc = cpar[:NPC].copy()
+    pcs = np.zeros((2, NPC))
+    pcs[0, :] = cpar[:NPC]
+    pcs[1, :] = cpar[NPC:NCP]
+    pc = pcs[slot]
 
-    # --- each method's own: full size for the one that runs
-    m_ros = n if method == M_ROSENBROCK else 1
-    s_ros = int(coef[0]) if method == M_ROSENBROCK else 1
-    h_ros = int(coef[1]) if method == M_ROSENBROCK else 1
+    # --- each method's own: full size for the ones that run
+    use_ros = mcode0 == M_ROSENBROCK or mcode1 == M_ROSENBROCK
+    m_ros = n if use_ros else 1
+    s_ros = int(coef[0]) if use_ros else 1
+    h_ros = int(coef[1]) if use_ros else 1
     ros = (np.zeros((s_ros, m_ros)), np.zeros((h_ros, m_ros)), np.zeros(1, dtype=np.int64), np.zeros(m_ros),
            np.zeros(m_ros), np.zeros(m_ros), np.zeros(m_ros))
-    m_esd = n if method == M_ESDIRK else 1
-    ez = np.zeros((int(coef[0]) if method == M_ESDIRK else 1, m_esd))
+    use_esd = mcode0 == M_ESDIRK
+    m_esd = n if use_esd else 1
+    ez = np.zeros((int(coef[0]) if use_esd else 1, m_esd))
     est = np.zeros(m_esd)
-    m_fb = n if method == M_FBDF else 1
+    use_fb = mcode0 == M_FBDF or mcode1 == M_FBDF
+    m_fb = n if use_fb else 1
     fbv = np.zeros(NFB)
     fbi = np.zeros(NFI, dtype=np.int64)
-    if method == M_FBDF:
-        fbv[:] = cpar[NPC:NPC + NFB]
+    if use_fb:
+        fbv[:] = cpar[NCP:NCP + NFB]
         fbi[:] = ipar[NIP:NIP + NFI]
     fb = (np.zeros((FB_K, m_fb)), np.arange(FB_K), np.zeros((FB_K, m_fb)), np.zeros(m_fb), np.zeros(FB_K),
           np.zeros(FB_K), np.zeros((FB_K + 1) * (FB_K + 2)), np.zeros(FB_K + 1), np.zeros(FB_K + 1), np.zeros(m_fb),
           np.zeros(m_fb), fbv, fbi)
-    m_qn = n if method == M_QNDF else 1
+    use_qn = mcode0 == M_QNDF
+    m_qn = n if use_qn else 1
     qnv = np.zeros(NQN)
     qni = np.zeros(NQI, dtype=np.int64)
     qcoef = np.zeros(QN_S * QN_S)
-    if method == M_QNDF:
-        qnv[:] = cpar[NPC:NPC + NQN]
+    if use_qn:
+        qnv[:] = cpar[NCP:NCP + NQN]
         qni[:] = ipar[NIP:NIP + NQI]
         qcoef[:] = coef[QN_GAMMAS + 6:QN_GAMMAS + 6 + QN_S * QN_S]
     qn = (np.zeros((QN_ROWS, m_qn)), np.zeros(m_qn), np.zeros((QN_S, m_qn)), np.zeros((QN_S + 1, m_qn)),
           np.zeros(QN_S * QN_S), np.zeros(QN_S * QN_S), qcoef, qnv, qni)
-    m_ra = n if method == M_RADAU else 1
+    use_ra = mcode0 == M_RADAU
+    m_ra = n if use_ra else 1
     rav = np.zeros(NRA)
     rai = np.zeros(NRI, dtype=np.int64)
-    if method == M_RADAU:
-        rav[:] = cpar[NPC:NPC + NRA]
+    if use_ra:
+        rav[:] = cpar[NCP:NCP + NRA]
         rai[:] = ipar[NIP:NIP + NRI]
     ra = (np.zeros((3, m_ra)), np.zeros((3, m_ra)), np.zeros((3, m_ra)), np.zeros((3, m_ra)), np.zeros(m_ra),
           np.zeros(m_ra), np.zeros(m_ra), np.zeros((m_ra, m_ra), dtype=np.complex128),
           np.zeros(m_ra, dtype=np.int32), np.zeros(m_ra, dtype=np.complex128), rav, rai)
+    use_ex = mcode0 == M_TSIT5 or mcode0 == M_VERN7
+    m_ex = n if use_ex else 1
+    ta, tc, tbt, ti, vptr, vj, vv, vc, vc2, vst, vip, viv = _explicit_tables(mcode0, ecoef, eint)
+    ex = (np.zeros((16, m_ex)), np.zeros(m_ex), np.zeros(m_ex), np.zeros(1, dtype=np.int64), ta, tc, tbt, ti, vptr, vj,
+          vv, vc, vc2, vst, vip, viv)
+    use_23 = mcode0 == M_ROS23 or mcode1 == M_ROS23
+    m_23 = n if use_23 else 1
+    r23 = (np.zeros(m_23), np.zeros(m_23), np.zeros(m_23), np.zeros(m_23), np.zeros(m_23), np.zeros(m_23),
+           np.zeros(m_23))
+    use_kr = use_fb and fbi[FI_KRYLOV] != 0
+    m_kr = n if use_kr else 1
+    kwf = np.zeros(NKF)
+    kwi = np.zeros(NKI, dtype=np.int64)
+    if use_kr:
+        # GMRES's basis: ``memory`` vectors to start with, up to 256 MB of them.
+        kwi[KI_MEMORY] = min(20, n)
+        kwi[KI_MAX_BASIS] = max(kwi[KI_MEMORY], (256 * 1024 * 1024) // (8 * max(1, n)))
+    Vh = [np.zeros((max(1, kwi[KI_MEMORY]), m_kr))]
+    kry = (kwf, kwi, np.zeros(m_kr), np.zeros(m_kr), Vh, np.zeros(m_kr), np.zeros(m_kr), np.zeros(m_kr),
+           np.zeros(m_kr), np.zeros(m_kr), np.zeros(m_kr), np.zeros(m_kr), np.zeros(m_kr), np.zeros(m_kr))
+    rowsum = np.zeros(n if comp else 1)
+
+    # --- the composite's switch (``SwitchState``, ``CompositeCache``)
+    nonstifftol = fpar[FP_NONSTIFFTOL]
+    stifftol = fpar[FP_STIFFTOL]
+    dtfac = fpar[FP_DTFAC]
+    stability = fpar[FP_STABILITY]
+    maxstiffstep = fpar[FP_MAXSTIFFSTEP]
+    maxnonstiffstep = fpar[FP_MAXNONSTIFFSTEP]
+    switch_max = fpar[FP_SWITCH_MAX]
+    still = ipar[IP_STILL] != 0
+    hand_mask = ipar[IP_HAND_OFF]
+    as_count = 0
+    as_succ = 0
+    as_stiff = ipar[IP_STIFFALGFIRST] != 0
+    built = 1 << slot if comp else 1
+    steps0 = 0
+    steps1 = 0
+    nswitches = 0
+    skip_next = False
+    handed = False
+    hand_from = -1
+    hand_to = -1
+    eigen_est = 1.0
+    dec = True            # do_error_check
+    naccept = 0
+    w_formed = False
 
     uprev = y0.copy()
     u = y0.copy()
@@ -1954,6 +2703,8 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     eest = 1.0
     status = OK
     evstat[0] = 0.0
+    ntstops = tstops.size
+    tstop_at = 0
 
     # --- the start
     f(t0, uprev, fsalfirst, P, X, Wm, IW, pycb)
@@ -1971,17 +2722,16 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
             ni[NI_METHOD] = N_DIRK
             ns[NS_GAMMA] = coef[1]
         elif method == M_FBDF:
-            ni[NI_METHOD] = N_MULTISTEP
-            uh, uhi = fb[0], fb[1]
-            for q in range(n):
-                uh[uhi[0], q] = uprev[q]
-            fb[4][0] = 0.0
-            fbi[FI_N_HISTORY] = 1
-            fbi[FI_FROM_EVENT] = 0
+            _fbdf_init(fb, ni, uprev)
         elif method == M_QNDF:
             ni[NI_METHOD] = N_MULTISTEP
         if fpar[FP_DT] != 0:
             dt = abs(fpar[FP_DT]) * tdir
+        elif ipar[IP_INITDT] != 0:
+            dt = _initial_step_sciml(f, model, pycb, ctr, t0, uprev, fsalfirst, tdir, ipar[IP_ORDER], rtol, atol0,
+                                     _jmin(abs(dtmax), span), norm_max, utmp, ub, u_event, fsallast)
+            for q in range(n):
+                fsallast[q] = 0.0
         else:
             dt = _initial_step(f, model, pycb, ctr, t0, uprev, fsalfirst, tdir, ipar[IP_ORDER], rtol, atol0, dtmax,
                                utmp, ub)
@@ -2000,13 +2750,69 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
             evf(t0, uprev, evbuf[0], P, X, Wm, IW, pycb)
     below_run = 0
 
-    # --- the loop: propose a step, judge it, save what it passed, look for
-    # an event, choose the next
+    # --- the loop: choose the method, propose a step, judge it, save what it
+    # passed, look for an event, choose the next
     while status == OK and tdir * (tf - t) > t_eps:
-        if ctr[C_NSTEPS] >= max_steps:
+        if comp:
+            # ``choose_algorithm!``: a verdict on the last attempt, after it
+            # was judged and its successor's dt chosen (``CompositeCache.choose``).
+            # No verdict on an FBDF attempt the error test turned down.
+            if not handed:
+                if skip_next:
+                    skip_next = False
+                else:
+                    dt_was = dt
+                    stiffness = abs(eigen_est * dt / stability)
+                    tol = stifftol if as_stiff else nonstifftol
+                    stiff = not (stiffness <= tol)
+                    if not stiff:
+                        as_succ += 1
+                    else:
+                        as_succ = 0
+                    dec = (as_succ > switch_max or not stiff) or as_stiff
+                    if stiff:
+                        as_count = 1 if as_count < 0 else as_count + 1
+                    else:
+                        as_count = -1 if as_count > 0 else as_count - 1
+                    nxt = 1 if as_stiff else 0
+                    if not as_stiff and as_count > maxstiffstep:
+                        dt = dt_was * dtfac
+                        as_stiff = True
+                        nxt = 1
+                    elif as_stiff and as_count < -maxnonstiffstep:
+                        dt = dt_was / dtfac
+                        as_stiff = False
+                        nxt = 0
+                    if nxt != slot:
+                        if hand_mask & (1 << nxt):
+                            handed = True
+                            hand_from = slot
+                            hand_to = nxt
+                        else:
+                            # ``activate``: its controller in charge, and FBDF
+                            # started as a method switched to starts.
+                            fresh = (built & (1 << nxt)) == 0
+                            built |= 1 << nxt
+                            slot = nxt
+                            method = mcode1 if slot == 1 else mcode0
+                            pc = pcs[slot]
+                            if method == M_FBDF:
+                                if fresh:
+                                    _fbdf_init(fb, ni, uprev)
+                                    if t != t0:
+                                        _fbdf_restart(fb, uprev)
+                                else:
+                                    _fbdf_restart(fb, uprev)
+                            nswitches += 1
+            if handed:
+                status = R_HANDED_OFF
+                break
+        if ctr[C_NSTEPS] >= max_steps and dec:
             status = R_MAX_ITERS
             break
         limit = tf
+        if tstop_at < ntstops and tdir * (tstops[tstop_at] - limit) < 0:
+            limit = tstops[tstop_at]
         if tdir * (t + dt - limit) > 0:
             dt = limit - t
         elif tdir * (limit - (t + dt)) <= t_eps:
@@ -2019,24 +2825,51 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
             status = R_DT_FLOOR
             break
 
+        njac_before = ctr[C_NJAC]
         if method == M_ROSENBROCK:
             st, e = _ros_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, ros, t, dt, uprev,
                               u, fsalfirst, atol, rtol)
+            w_formed = True
         elif method == M_ESDIRK:
             st, e = _esdirk_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, ez, nwt, ns, ni,
-                                 t, dt, uprev, u, fsalfirst, fsallast, atol, atol0, rtol, est)
+                                 t, dt, uprev, u, fsalfirst, fsallast, atol, atol0, rtol, est, kry)
+            w_formed = True
         elif method == M_FBDF:
             st, e = _fbdf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, fb, nwt, ns, ni,
-                               t, dt, uprev, u, fsalfirst, atol, atol0, rtol)
+                               t, dt, uprev, u, fsalfirst, atol, atol0, rtol, kry)
+            if not use_kr:
+                w_formed = True
         elif method == M_QNDF:
             st, e = _qndf_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, qn, nwt, ns, ni,
-                               t, dt, uprev, u, fsalfirst, atol, atol0, rtol)
+                               t, dt, uprev, u, fsalfirst, atol, atol0, rtol, kry)
+            w_formed = True
+        elif method == M_TSIT5:
+            st = 1
+            e = _tsit5_step(f, model, pycb, ctr, ex, t, dt, uprev, u, fsalfirst, fsallast, atol, rtol, norm_max)
+        elif method == M_VERN7:
+            st = 1
+            e = _vern7_step(f, model, pycb, ctr, ex, t, dt, uprev, u, fsalfirst, atol, rtol, norm_max)
+        elif method == M_ROS23:
+            st, e = _ros23_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, r23, t, dt, uprev, u,
+                                fsalfirst, fsallast, atol, rtol)
+            w_formed = True
         else:
             st, e = _radau_step(f, model, pycb, jac_cb, jac, factor_cb, solve_cb, mat, fl, ctr, coef, ra, t, dt,
                                 uprev, u, fsalfirst, fsallast, atol, nn, rtol)
+            w_formed = True
         if st < 0:
             status = E_CALLBACK if st == -1 else E_ZERO_DIVISION
             break
+        # The composite's estimate of the spectral radius: the explicit
+        # method's from its last two stages, the stiff one's ||J||_inf
+        # whenever it formed J (``Integrator.form_w``).
+        if comp:
+            if method == M_TSIT5:
+                eigen_est = _explicit_stiffness(ex[0][5], ex[0][6], ex[1], u, still)
+            elif method == M_VERN7:
+                eigen_est = _explicit_stiffness(ex[0][8], ex[0][9], ex[1], u, still)
+            elif ctr[C_NJAC] != njac_before:
+                eigen_est = _jac_inf_norm(jac, fl, jrow, rowsum)
         ctr[C_NSTEPS] += 1
 
         if st == 0:
@@ -2046,8 +2879,9 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
                 if r <= 0:
                     status = R_STOPPED if r == 0 else E_CALLBACK
                     break
-            # At the smallest step the clock can represent there is nowhere left to go.
-            if at_floor:
+            # At the smallest step the clock can represent there is nowhere
+            # left to go (unless a composite has waived the checks while it switches).
+            if at_floor and dec:
                 status = R_NOT_SOLVED
                 break
             dt *= 0.5
@@ -2093,7 +2927,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
             continue
 
         accepted = eest <= 1
-        if not accepted and at_floor:
+        if not accepted and at_floor and dec:
             if below_run < below_tol_max:
                 below_run += 1
                 accepted = True
@@ -2105,6 +2939,8 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         if not accepted:
             ctr[C_NREJECT] += 1
             if method == M_FBDF:
+                if comp:
+                    skip_next = True
                 dt = _fbdf_rejected(fb, eest, dt)
             elif method == M_QNDF:
                 dt = _qndf_rejected(qn, eest, dt)
@@ -2123,16 +2959,17 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         hit = False
         t_e = 0.0
         if nev:
-            hit, t_e = _find_event(method, coef, ros, fb, qn, ra, evf, model, pycb, evdir, evbuf, evwhich, found, t,
-                                   dt, t0, uprev, u, fsalfirst, fsallast, ub, u_event)
-        if has_nn:
-            _clamp(nn, u)
+            hit, t_e = _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, evdir, evbuf,
+                                   evwhich, found, t, dt, t0, uprev, u, fsalfirst, fsallast, ub, u_event)
+        naccept += 1
+        clamped = _clamp(nn, u) if has_nn else 0
         t_end = t_e if hit else tnew
         while sa < saveat.size and tdir * (saveat[sa] - t_end) <= 0:
             ts = saveat[sa]
             if tdir * (ts - t) >= 0:
                 theta = 1.0 if dt == 0 else (ts - t) / dt
-                _eval_at(method, coef, ros, fb, qn, ra, theta, dt, uprev, u, fsalfirst, fsallast, utmp)
+                _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, theta, t, dt, uprev, u,
+                         fsalfirst, fsallast, utmp)
                 if has_nn:
                     _clamp(nn, utmp)
                 tout[rows] = ts
@@ -2151,12 +2988,12 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
                 u[q] = u_event[q]
             if has_nn:
                 _clamp(nn, u)
-        ta = t + dt
-        if has_store and store(ta, u, P, X, Wm, IW, pycb) != 0:
+        ta_ = t + dt
+        if has_store and store(ta_, u, P, X, Wm, IW, pycb) != 0:
             status = E_HISTORY
             break
         if cint[3]:
-            _collect(ta, u, ct, cy, cint, cflt)
+            _collect(ta_, u, ct, cy, cint, cflt)
         if auto_abstol:
             for i in range(n):
                 want = rtol * abs(u[i])
@@ -2167,15 +3004,22 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         t += dt
         if abs(tf - t) <= t_eps:
             t = tf
+        elif tstop_at < ntstops and abs(tstops[tstop_at] - t) <= 16 * _jmax(_ulp(t), MIN_VALUE):
+            t = tstops[tstop_at]
         for q in range(n):
             uprev[q] = u[q]
-        if method == M_ESDIRK or method == M_RADAU:
+        # f at the new point is the step's own last stage where the method has
+        # one -- unless clamping moved the point off it, which Tsit5 and
+        # Rosenbrock23 answer by evaluating f again.
+        if _has_fsal_last(method) and not (clamped > 0 and (method == M_TSIT5 or method == M_ROS23)):
             for q in range(n):
                 fsalfirst[q] = fsallast[q]
         else:
             f(t, uprev, fsalfirst, P, X, Wm, IW, pycb)
             ctr[C_NF] += 1
-        ws[WS_AGE] += 1
+        # The Jacobian ages by the steps taken with it: an explicit method's do not count.
+        if not (method == M_TSIT5 or method == M_VERN7):
+            ws[WS_AGE] += 1
         dtp = 0.0
         if method == M_ROSENBROCK:
             ros[2][0] = 0
@@ -2185,6 +3029,13 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
             dtp = _qndf_accepted(qn, u, eest, dtjust)
         elif method == M_RADAU:
             _radau_accepted(coef, ra, dtjust)
+        if comp:
+            if slot == 0:
+                steps0 += 1
+            else:
+                steps1 += 1
+        if tstop_at < ntstops and tdir * (t - tstops[tstop_at]) >= 0:
+            tstop_at += 1
 
         if nev:
             if hit:
@@ -2207,7 +3058,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         if method == M_FBDF or method == M_QNDF:
             dtnext = dtp
         else:
-            dtnext = _pi_accept(pc, eest, dtjust)
+            dtnext = _pi_accept(pc, eest, dtjust, naccept == 1)
         if not math.isfinite(dtnext) or dtnext == 0:
             dtnext = dtjust
         dt = tdir * _jmin(abs(dtnext), abs(dtmax))
@@ -2217,9 +3068,22 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
                 status = R_STOPPED if r == 0 else E_CALLBACK
                 break
 
+    if status == R_HANDED_OFF:
+        for q in range(n):
+            hand[q] = uprev[q]
     for q in range(NC):
         stats[q] = ctr[q]
-    stats[NC] = rows
+    stats[NC + SO_ROWS] = rows
+    stats[NC + SO_STEPS0] = steps0
+    stats[NC + SO_STEPS1] = steps1
+    stats[NC + SO_SWITCHES] = nswitches
+    stats[NC + SO_SLOT] = slot
+    stats[NC + SO_BUILT] = built
+    stats[NC + SO_W] = 1 if w_formed else 0
+    stats[NC + SO_KSOLVES] = kwi[KI_NSOLVE]
+    stats[NC + SO_KITERS] = kwi[KI_NITER]
+    stats[NC + SO_FROM] = hand_from
+    stats[NC + SO_TO] = hand_to
     fstat[0] = t
     fstat[1] = dt
     return status

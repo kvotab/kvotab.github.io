@@ -9,13 +9,13 @@ with numba, so that a run returns to Python only when it ends.
   the rates of a far-field path whose settings move, worked out again as
   they move;
 * :mod:`.solvers` holds the NDF, Rosenbrock (2,3) and Dormand-Prince loops,
-  and :mod:`.julia` those of the six Julia-derived methods first ported,
-  ports of ``engine/solvers`` with the same arithmetic, events located as
-  they locate them, compiled once for every model;
+  and :mod:`.julia` that of the Julia-derived methods and the switch between
+  them (with :mod:`.krylov`, GMRES, under the MPL 2.0 as the Python port it
+  compiles is), ports of ``engine/solvers`` with the same arithmetic, events
+  located as they locate them, compiled once for every model;
 * :mod:`.run` and :mod:`.julia_run` drive a run on those loops -- or, for
-  SciPy's solvers and the five Julia-derived ones that came with the default
-  algorithm (``auto`` and the methods it switches between), which keep their
-  own loop in Python, on that loop, given the compiled model.
+  SciPy's solvers, which keep their own loop in Python, on that loop, given
+  the compiled model.
 
 Every model takes the path, and a compiled run takes the same steps as the
 Python path, to the last bit. A few things are worked out in Python and

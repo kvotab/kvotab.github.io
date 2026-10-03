@@ -30,6 +30,7 @@ HISTORY_KINDS = {'min_max', 'running_mean', 'snapshot', 'delay', 'trigger', 'eve
 SOLVER_LABELS = {
     'ndf': 'stiff, NDF', 'ros23': 'stiff, low order, Rosenbrock 2-3', 'dp45': 'non-stiff, Dormand-Prince 4-5',
     'auto': 'stiff or non-stiff, switching as it runs',
+    'auto_julia': 'stiff or non-stiff, as DifferentialEquations.jl chooses',
     'rodas5p': 'stiff, Rosenbrock 5', 'radau5': 'stiff, Radau IIA 5', 'fbdf': 'stiff, fixed-leading-coefficient BDF',
     'fbdf_krylov': 'stiff, FBDF by GMRES, no matrix',
     'qndf': 'stiff, quasi-constant-step NDF', 'kencarp4': 'stiff, ESDIRK 4',
@@ -264,9 +265,13 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         'events': system.events,
         # What a solver may carry from one solve of this run to the next, the
         # run being restarted at every event and switch time: the switching
-        # solver keeps here whether it ended stiff, and goes on with that
-        # method, as DifferentialEquations.jl's carries on across a callback.
+        # solvers keep here whether they ended stiff, and go on from there --
+        # `auto_julia` with the method it had, as DifferentialEquations.jl's
+        # carries on across a callback, and `auto` with the NDF.
         'carry': {},
+        # The times the model's clock-read tables turn at, which the switching
+        # solver's explicit methods land on (``System.table_corners``).
+        'table_corners': getattr(system, 'table_corners', None),
         'on_step': (lambda fraction, n, at: _step(fraction, at)) if on_progress else None,
     }
     if equations is not None:
@@ -359,6 +364,8 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                             compiled_run.grow()
                         if tolerances is not None:
                             abstol[:] = tolerances
+                        # A run made again is a run of its own: nothing carried from the attempt.
+                        opts['carry'] = {}
                         jumped[0] = 0
                         system.prime_recorders(float(grid[0]), y0)
                         if compiled_run is None:

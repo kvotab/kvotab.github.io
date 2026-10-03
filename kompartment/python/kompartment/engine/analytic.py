@@ -375,14 +375,16 @@ NON_FINITE_AT_START = ('the generated Jacobian has a non-finite entry at the sta
                        'not a matrix a solver can factorise')
 
 
-def analytic_jacobian(system: Any, pattern: Any) -> Optional[Dict[str, Any]]:
+def analytic_jacobian(system: Any, pattern: Any, full_budget: bool = False) -> Optional[Dict[str, Any]]:
     """``{'available', 'constant', 'evaluate'}`` for the analytic Jacobian, or
     ``{'available': False, 'reason'}`` when the model has something it cannot
     differentiate -- or, as the application's ``refuseNonFinite`` has it, a
     derivative that is infinite at the state and time the run starts from,
-    where the singularities live (the square root of an empty compartment)."""
+    where the singularities live (the square root of an empty compartment).
+    ``full_budget``: the mass-balance budgets' rows whole, on a pattern that
+    holds them (:func:`.jacobian.structure`); at their diagonal otherwise."""
     try:
-        made = _Analytic(system, pattern)
+        made = _Analytic(system, pattern, full_budget)
     except NoDerivative as e:
         return {'available': False, 'reason': f'no derivative rule for {e.what}'}
     try:
@@ -398,7 +400,7 @@ def analytic_jacobian(system: Any, pattern: Any) -> Optional[Dict[str, Any]]:
 
 
 class _Analytic:
-    def __init__(self, system: Any, pattern: Any) -> None:
+    def __init__(self, system: Any, pattern: Any, full_budget: bool = False) -> None:
         from .jacobian import state_dependencies
         self.system = system
         self.b = b = system.builder
@@ -430,9 +432,13 @@ class _Analytic:
         order = np.argsort(self._pat_key, kind='stable')
         self._pat_sorted = self._pat_key[order]
         self._pat_order = order
+        # The budgets' rows, where they are left at the diagonal: no term is
+        # written into them. Whole, they take every term the derivative writes.
         budget_rows = np.zeros(self.n, dtype=bool)
-        if b.budget is not None:
-            budget_rows[b.budget['base']:b.budget['base'] + len(b.budget['terms']) * b.budget['nfam']] = True
+        if b.budget is not None and not full_budget:
+            from .jacobian import budget_columns
+            frm, to = budget_columns(b)
+            budget_rows[frm:to] = True
         self.budget_rows = budget_rows
         self.plans: List[Any] = []
         self._plan_statements()
@@ -717,7 +723,7 @@ class _Analytic:
                 _, tgt, xs = ph
                 add_chain(tgt, xs, lambda y, X, k=tgt.size: np.ones(k))
             elif kind == 'waste':
-                _, p_idx, m_idx, h, r_idx, _budget = ph
+                _, p_idx, m_idx, h, r_idx, budget = ph
                 pos_p = self.pat_pos(p_idx, p_idx)
                 pos_m = self.pat_pos(m_idx, p_idx)
                 direct.append((pos_p, lambda y, X, h=h, k=p_idx.size: -np.full(k, X[h])))
@@ -726,6 +732,9 @@ class _Analytic:
                 add_chain(p_idx, hs, lambda y, X, p=p_idx: -y[p])
                 add_chain(m_idx, hs, lambda y, X, p=p_idx: y[p])
                 add_chain(m_idx, r_idx, lambda y, X, k=p_idx.size: -np.ones(k))
+                # The release into the budget's `out`, where it leaves the audit.
+                if budget is not None:
+                    add_chain(np.asarray(budget, dtype=np.int64), r_idx, lambda y, X, k=p_idx.size: np.ones(k))
             elif kind == 'move':
                 _, a_idx, second, lam_slot, share_slot = ph
                 pos_a = self.pat_pos(a_idx, a_idx)

@@ -13,12 +13,18 @@ for a structural zero.
 The values are then either assembled analytically (see :func:`build_jacobian`)
 or differenced through the pattern, one evaluation per colour.
 
-The rows of the mass-balance budgets are left at the diagonal, as the
-application leaves them for the NDF: nothing reads a budget, so the Newton
-iteration needs nothing more of those rows. The application does so for the
-solvers in its ``DIAGONAL_BUDGET_IDS`` (``src/sim/jacobian.js``: ``ndf``,
-``dp45``, ``tsit5``, ``vern7`` and SciPy's) and generates the rows whole for
-every other; this engine leaves them at the diagonal for every solver.
+The rows of the mass-balance budgets follow the solver, as the application's
+do (``buildJacobian`` in ``src/sim/jacobian.js``). Nothing reads a budget, so
+a budget's column holds its diagonal alone, and a Newton iteration converges
+to the same solution with the budget rows left at their diagonal: for the
+solvers in ``DIAGONAL_BUDGET_IDS`` -- the NDF, ``auto`` (explicit methods and
+then the NDF), the explicit methods and SciPy's -- they are, and the budgets'
+columns are differenced in a colour group of their own
+(:func:`budgets_apart`), where the quotients are exactly zero. Every other
+solver gets the rows whole, written where the derivative writes the fluxes
+they accumulate: a Rosenbrock method puts the matrix into its formula, and a
+missing row there is a lower-order budget, an audit that no longer closes.
+``jacobian['budget_rows']`` says which: 'diagonal' or 'exact'.
 """
 
 from __future__ import annotations
@@ -29,10 +35,52 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 import scipy.sparse as sp
 
+from ..simulation import DEFAULT_SOLVER
 from . import codegen
 
 EPS = 2.0 ** -52
 SQRT_EPS = math.sqrt(EPS)
+
+#: The solvers that are handed the mass-balance budgets' rows at their
+#: diagonal (``DIAGONAL_BUDGET_IDS``): a Newton iteration needs nothing more of
+#: them, the explicit methods form no matrix and the SciPy methods take only a
+#: generated one. Every other solver gets the rows whole.
+DIAGONAL_BUDGET_IDS = frozenset(['ndf', 'auto', 'dp45', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda'])
+
+
+def full_budget(system: Any) -> bool:
+    """Whether the run's solver is handed the budgets' rows whole: a model
+    with the mass-balance audit, solved by a solver outside
+    :data:`DIAGONAL_BUDGET_IDS` (``fullBudget``)."""
+    if system.builder.budget is None:
+        return False
+    solver = system.project.simulation.get('solver')
+    return (DEFAULT_SOLVER if solver is None else solver) not in DIAGONAL_BUDGET_IDS
+
+
+def budget_columns(b: Any) -> Tuple[int, int]:
+    """Where the budget states lie, ``(from, to)``."""
+    frm = int(b.budget['base'])
+    return frm, frm + len(b.budget['terms']) * int(b.budget['nfam'])
+
+
+def budgets_apart(groups: List[np.ndarray], b: Any, full: bool) -> List[np.ndarray]:
+    """The colouring, with the audit's budgets taken out into one group of
+    their own when their rows are left at the diagonal (``budgetsApart``).
+
+    A budget column holds only its diagonal, which shares a row with no other
+    column, so the colouring is free to put it in any group -- and does, with
+    the first. Differenced there, the quotient in its row is the flux of every
+    state in the group that feeds it, and that lands on the diagonal. In a
+    group of budgets only, the perturbation moves nothing, since nothing reads
+    a budget, and every quotient is exactly zero."""
+    if b.budget is None or full:
+        return groups
+    frm, to = budget_columns(b)
+    rest = [g[(g < frm) | (g >= to)] for g in groups]
+    rest = [g for g in rest if g.size]
+    rest.append(np.arange(frm, to, dtype=np.int64))
+    return rest
 
 
 class Pattern:
@@ -210,15 +258,17 @@ def _special_dependencies(b: Any, a: Any, deps: Dict[int, np.ndarray], of_x: Any
         deps[a.base + off] = np.unique(np.concatenate(parts)) if parts else np.zeros(0, dtype=np.int64)
 
 
-def structure(system: Any) -> Pattern:
-    """Which entries of df/dy can be non-zero."""
+def structure(system: Any, full: bool = False) -> Pattern:
+    """Which entries of df/dy can be non-zero: the budgets' rows at their
+    diagonal, or with ``full`` whole, where the derivative writes them."""
     b = system.builder
     n = system.nstate
     deps = state_dependencies(system)
     moving = b.slot_class
     budget_rows = np.zeros(n, dtype=bool)
-    if b.budget is not None:
-        budget_rows[b.budget['base']:b.budget['base'] + len(b.budget['terms']) * b.budget['nfam']] = True
+    if b.budget is not None and not full:
+        frm, to = budget_columns(b)
+        budget_rows[frm:to] = True
     rows: List[np.ndarray] = [np.arange(n, dtype=np.int64)]
     cols: List[np.ndarray] = [np.arange(n, dtype=np.int64)]
     empty = np.zeros(0, dtype=np.int64)
@@ -252,13 +302,17 @@ def structure(system: Any) -> Pattern:
             for r, x in zip(tgt, xs):
                 add(int(r), x_deps(int(x)))
         elif kind == 'waste':
-            _, p_idx, m_idx, h, r_idx, _budget = ph
+            _, p_idx, m_idx, h, r_idx, budget = ph
             add_many(p_idx, p_idx)
             add_many(m_idx, p_idx)
             for p, m, r in zip(p_idx, m_idx, r_idx):
                 add(int(p), x_deps(h))
                 add(int(m), x_deps(h))
                 add(int(m), x_deps(int(r)))
+            # A release delivered nowhere audited has left: the budget's `out`.
+            if budget is not None:
+                for o, r in zip(np.asarray(budget), r_idx):
+                    add(int(o), x_deps(int(r)))
         elif kind == 'move':
             _, a_idx, second, lam_slot, share_slot = ph
             extra = np.unique(np.concatenate([x_deps(lam_slot), x_deps(share_slot)]))
@@ -292,12 +346,14 @@ def structure(system: Any) -> Pattern:
 
 def build_jacobian(system: Any) -> Dict[str, Any]:
     """The Jacobian the solvers are handed: its pattern and colouring, and --
-    where the model allows -- its values."""
+    where the model allows -- its values; the budgets' rows as the run's
+    solver needs them (see the module's docstring)."""
+    full = full_budget(system)
     try:
-        pattern = structure(system)
+        pattern = structure(system, full)
     except MemoryError:
         return {'available': False, 'reason': 'the pattern is too large to hold'}
-    groups = colour_columns(pattern)
+    groups = budgets_apart(colour_columns(pattern), system.builder, full)
     n = system.nstate
     info: Dict[str, Any] = {
         'available': False,
@@ -309,13 +365,16 @@ def build_jacobian(system: Any) -> Dict[str, Any]:
         'nnz': pattern.nnz,
         'colours': len(groups),
         'density': pattern.nnz / max(1, n * n),
-        'budget_rows': 'diagonal' if system.builder.budget is not None else None,
+        'budget_rows': None,
     }
     try:
         from .analytic import analytic_jacobian
-        analytic = analytic_jacobian(system, pattern)
+        analytic = analytic_jacobian(system, pattern, full)
     except ImportError:
         analytic = None
     if analytic is not None:
         info.update(analytic)
+    # Said of a matrix that is generated, as the application says it.
+    if system.builder.budget is not None and info.get('available'):
+        info['budget_rows'] = 'exact' if full else 'diagonal'
     return info

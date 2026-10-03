@@ -43,7 +43,8 @@ from kompartment.jsonio import dumps
 #: The solver the importer reads back from the name an export writes.
 SOLVER_BACK = {
     'radau5': 'ndf', 'qndf': 'ndf', 'fbdf': 'ndf', 'trbdf2': 'ros23', 'rodas5p': 'ros23', 'kencarp4': 'ndf',
-    'auto': 'ndf', 'fbdf_krylov': 'ndf', 'rosenbrock23': 'ros23', 'tsit5': 'dp45', 'vern7': 'dp45',
+    'auto': 'ndf', 'auto_julia': 'ndf', 'fbdf_krylov': 'ndf', 'rosenbrock23': 'ros23', 'tsit5': 'dp45',
+    'vern7': 'dp45',
     'scipy_bdf': 'ndf', 'scipy_radau': 'ndf', 'scipy_lsoda': 'ndf',
 }
 

@@ -16,14 +16,24 @@ engine's runner hands over the structural pattern, as the application's does,
 and the matrix is differenced through it and factorised sparsely: a large
 model runs rather than asking for n^2 numbers.
 
-The switching solver (``auto``) reports which of its methods took the
-accepted steps and how often it changed between them (``steps_by``,
-``switches``), and the matrix-free FBDF its GMRES iterations
+The switching solvers (``auto``, ``auto_julia``) report which of their
+methods took the accepted steps and how often they changed between them
+(``steps_by``, ``switches``), and the matrix-free FBDF its GMRES iterations
 (``krylov_iters``) -- the application's ``stepsBy``, ``switches`` and
 ``krylovIters``, in this engine's spelling. A run is one solve between two
 events; the runner hands every solve of a run one ``carry`` dict, in which
-``auto`` keeps whether it ended on its stiff method and goes on with it, as
-DifferentialEquations.jl carries its choice across a callback.
+``auto_julia`` keeps whether it ended on its stiff method and goes on with
+it, as DifferentialEquations.jl carries its choice across a callback, and
+``auto`` whether it has handed the run to the NDF.
+
+``auto`` is DifferentialEquations.jl's start and its test for stiffness, with
+the engine's NDF (:func:`kompartment.engine.solverset.variable_order`) in
+place of all four stiff methods: its explicit methods run at a tenth of the
+model's tolerances (``EXPLICIT_TOLERANCE``) and land on the corners of the
+tables read at the clock (the runner's ``table_corners``), and where the run
+turns stiff, the NDF takes the rest of it from the last accepted point. A run
+that has turned stiff, or whose tables turn more than ``MAX_CORNERS`` times,
+is the NDF's from the start.
 """
 
 from __future__ import annotations
@@ -35,10 +45,28 @@ import numpy as np
 
 from .. import SolverError
 from ._js import jmin
-from .integrator import (CONVERGENCE_FAILURE, DT_LESS_THAN_MIN, MAX_ITERS, SUCCESS, TERMINATED, UNSTABLE, ODEError,
-                         ODEProblem, solve)
+from .integrator import (CONVERGENCE_FAILURE, DT_LESS_THAN_MIN, HANDED_OFF, MAX_ITERS, SUCCESS, TERMINATED, UNSTABLE,
+                         ODEError, ODEProblem, solve)
 from .methods import (FBDF, QBDF, QNDF, DefaultODEAlgorithm, KenCarp4, RadauIIA5, Rodas5P, Rosenbrock23, TRBDF2,
                       Tsit5, Vern7)
+
+#: ``auto``'s explicit methods run at this fraction of the model's tolerances.
+#: Their error test is on the end of each step; what lies between is read off
+#: an interpolant that nothing tests, and at a loose tolerance a long step
+#: across a change of slope the model does not declare -- an onset written as
+#: an expression -- left values a factor of two out between its ends, with
+#: both ends right (``EXPLICIT_TOLERANCE`` in the application's adapter).
+EXPLICIT_TOLERANCE = 0.1
+
+#: At most this many corners of the clock-read tables for ``auto``'s explicit
+#: methods to land on in one solve. Landing costs a step each, and a model with
+#: thousands (a yearly series) ran several times longer than on the NDF; such a
+#: run is the NDF's from the start, and its error test deals with the corners.
+MAX_CORNERS = 100
+
+#: The stiff methods of the default algorithm, none of which ``auto`` switches
+#: to: the NDF goes on instead.
+HANDED_OFF_METHODS = ('Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF')
 
 ALGORITHMS: Dict[str, Callable[..., Any]] = {
     'fbdf': FBDF,
@@ -47,9 +75,11 @@ ALGORITHMS: Dict[str, Callable[..., Any]] = {
     'radau5': RadauIIA5,
     'kencarp4': KenCarp4,
     'trbdf2': TRBDF2,
-    # The default algorithm and the three methods it brought with it. Each
-    # run of `auto` is one solve between two events.
+    # The default algorithm and the three methods it brought with it: as
+    # DifferentialEquations.jl has it (`auto_julia`), and with the NDF as its
+    # only stiff method (`auto`).
     'auto': DefaultODEAlgorithm,
+    'auto_julia': DefaultODEAlgorithm,
     'rosenbrock23': Rosenbrock23,
     'tsit5': Tsit5,
     'vern7': Vern7,
@@ -107,6 +137,41 @@ def _positive(v: Any) -> bool:
         return v is not None and not isinstance(v, bool) and float(v) > 0
     except (TypeError, ValueError):
         return False
+
+
+def _scaled(tol: Any, k: float) -> Any:
+    """A tolerance, one number or one per state, times k (``scaled``)."""
+    if np.ndim(tol) == 0:
+        return tol * k
+    return np.asarray(tol, dtype=float) * k
+
+
+def ndf_part(f: Callable[[float, np.ndarray], np.ndarray], grid: np.ndarray, t0: float, tf: float, t1: float,
+             y1: np.ndarray, opts: Dict[str, Any], steps_before: int) -> Dict[str, Any]:
+    """The NDF over the requested times from ``t1`` on, starting from ``y1``
+    (``ndfPart``): the whole of a solve when t1 is its start, the rest of one
+    when the explicit methods handed it on there. Its first row is t1 itself.
+    Progress is reported as a fraction of the whole solve, and the step
+    budget is what the first part left of it."""
+    from ...solverset import variable_order
+    direction = 1.0 if tf > t0 else (-1.0 if tf < t0 else 0.0)
+    times = [t1]
+    if opts.get('ends_only'):
+        times.append(tf)
+    else:
+        times.extend(float(v) for v in grid if direction * (v - t1) > 0)
+    sub = dict(opts)
+    sub.pop('carry', None)
+    sub.pop('table_corners', None)
+    if t1 != t0:
+        sub.pop('h0', None)
+    if _positive(opts.get('max_steps')):
+        sub['max_steps'] = max(1, opts['max_steps'] - steps_before)
+    on_step = opts.get('on_step')
+    if on_step is not None and t1 != t0:
+        span = abs(tf - t0)
+        sub['on_step'] = lambda _fraction, count, t: on_step(jmin(1.0, abs(t - t0) / span), count, t)
+    return variable_order(f, np.array(times, dtype=float), np.asarray(y1, dtype=float), sub)
 
 
 def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
@@ -203,12 +268,39 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
             settings['progress'] = progress
             settings['progress_every'] = 1
 
-        # The switching solver goes on with the method it ended the last solve
-        # of this run on: a run restarted at an event is still the run. (An
-        # empty carry is one all the same: `is not None`, not truth.)
-        carry = opts.get('carry') if solver_id == 'auto' else None
-        alg = (DefaultODEAlgorithm(stiffalgfirst=carry.get('stiff') is True) if carry is not None
-               else (variant[1] if variant else algorithm)())
+        # The switching solvers. `auto_julia` is DifferentialEquations.jl's
+        # default as it is, and goes on with the method a run ended on when
+        # it is restarted at an event, as that does across a callback. `auto`
+        # is the same start and the same test for stiffness, with the NDF in
+        # place of all four stiff methods: where the run turns stiff, the
+        # explicit method stops and the NDF takes the rest of it. Its explicit
+        # methods run at a tenth of the tolerances and land on the corners of
+        # the clock-read tables; a run that has turned stiff, or whose tables
+        # turn too often, is the NDF's from the start. (An empty carry is one
+        # all the same: `is not None`, not truth.)
+        carry = opts.get('carry') if solver_id in ('auto', 'auto_julia') else None
+        if solver_id == 'auto':
+            table_corners = opts.get('table_corners')
+            corners = table_corners(t0, tf, MAX_CORNERS) if table_corners is not None else []
+            if (carry is not None and carry.get('ndf')) or corners is None:
+                if carry is not None:
+                    carry['ndf'] = True
+                r = ndf_part(f, grid, t0, tf, t0, np.array(y0, dtype=float), opts, 0)
+                st = r['stats']
+                return {
+                    't': r['t'], 'y': r['y'], 'stopped': r['stopped'],
+                    'stats': {**st, 'nsteps': st['nsteps'] + st['nfailed'], 'solver': 'auto',
+                              'steps_by': {'BDF' if opts.get('bdf') else 'NDF': st['nsteps']}, 'switches': 0},
+                }
+            settings['reltol'] = settings['reltol'] * EXPLICIT_TOLERANCE
+            settings['abstol'] = _scaled(settings['abstol'], EXPLICIT_TOLERANCE)
+            if len(corners):
+                settings['tstops'] = list(corners)
+            alg = DefaultODEAlgorithm(hand_off=HANDED_OFF_METHODS)
+        elif solver_id == 'auto_julia':
+            alg = DefaultODEAlgorithm(stiffalgfirst=carry is not None and carry.get('stiff') is True)
+        else:
+            alg = (variant[1] if variant else algorithm)()
         try:
             with np.errstate(all='ignore'):
                 sol = solve(problem, alg, settings)
@@ -218,13 +310,15 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
             at = getattr(e, 't', None)
             code = getattr(e, 'code', None) if isinstance(e, SolverError) else None
             raise SolverError(code or 'failed', str(e), at if at is not None else t0) from None
-        if carry is not None and sol.stats.get('lastAlg'):
+        if carry is not None and solver_id == 'auto_julia' and sol.stats.get('lastAlg'):
             carry['stiff'] = sol.stats['lastAlg'] in STIFF_METHODS
+        if carry is not None and sol.retcode == HANDED_OFF:
+            carry['ndf'] = True
 
         last_t = sol.t[-1] if sol.t else t0
         if stopped_here[0]:
             raise SolverError('aborted', 'Simulation aborted', last_t)
-        if sol.retcode != SUCCESS and sol.retcode != TERMINATED:
+        if sol.retcode not in (SUCCESS, TERMINATED, HANDED_OFF):
             raise SolverError(_RETCODES.get(sol.retcode, 'failed'), f'{sol.message or sol.retcode} ({run_id})', last_t)
 
         fired = sol.events[-1] if sol.events else None
@@ -251,6 +345,36 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
         # GMRES's own work, where the method solved without a matrix.
         if s.get('krylovIters') is not None:
             stats['krylov_iters'] = s['krylovIters']
+
+        # Where `auto` turned stiff: the NDF from that point, and one account
+        # of both parts -- the steps each method took, and the one switch.
+        if sol.retcode == HANDED_OFF:
+            handed = sol.hand_off
+            r = ndf_part(f, grid, t0, tf, handed['t'], handed['u'], opts, stats['nsteps'])
+            b = r['stats']
+            rows = [np.array(u, dtype=float) for u in sol.u]
+            rows.extend(r['y'][1:])
+            return {
+                't': np.concatenate([np.array(sol.t, dtype=float), np.asarray(r['t'], dtype=float)[1:]]),
+                'y': rows,
+                'stopped': r['stopped'],
+                'stats': {
+                    **stats,
+                    'nsteps': stats['nsteps'] + b['nsteps'] + b['nfailed'],
+                    'nfailed': stats['nfailed'] + b['nfailed'],
+                    'nfevals': stats['nfevals'] + b['nfevals'],
+                    'npds': stats['npds'] + b['npds'],
+                    'ndecomps': stats['ndecomps'] + b['ndecomps'],
+                    'nsolves': stats['nsolves'] + b['nsolves'],
+                    'nbelowtol': b['nbelowtol'],
+                    'negative': b['negative'],
+                    'held': b['held'],
+                    'sparse': b['sparse'],
+                    'fill': b['fill'],
+                    'steps_by': {**stats['steps_by'], 'BDF' if opts.get('bdf') else 'NDF': b['nsteps']},
+                    'switches': stats['switches'] + 1,
+                },
+            }
         return {
             't': np.array(sol.t, dtype=float),
             'y': [np.array(u, dtype=float) for u in sol.u],

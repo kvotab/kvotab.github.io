@@ -193,6 +193,8 @@ class CompositeCache:
         self.fsal_step = -1
         integ.still_is_stiff = bool(options.get('still_is_stiff'))
         self.skip_next = False
+        # The methods this composite does not switch to but stops at, by name.
+        self.hand_off = frozenset(options.get('hand_off') or ())
         # (info) -> None after every verdict: for tests and for looking.
         trace = options.get('trace')
         self.trace = trace if callable(trace) else None
@@ -235,7 +237,15 @@ class CompositeCache:
             restart(integ)
 
     def init(self, integ: Any) -> None:
-        self.activate(self.choose_fn(self.state, integ, self), integ)
+        first = self.choose_fn(self.state, integ, self)
+        if self.algs[first].name in self.hand_off:
+            # Started on a method it hands off: the run stops before its first
+            # step. The first method is put in charge only so that the
+            # integrator has one to stop with.
+            self.activate(0, integ)
+            integ.hand_off = {'from': None, 'to': self.algs[first].name}
+            return
+        self.activate(first, integ)
 
     def choose(self, integ: Any) -> None:
         """choose_algorithm!, at the top of every pass of the integrator's loop."""
@@ -257,6 +267,10 @@ class CompositeCache:
         if nxt == self.current:
             return
         frm = self.current
+        if self.algs[nxt].name in self.hand_off:
+            # Not switched to: the integrator stops here and the caller goes on.
+            integ.hand_off = {'from': self.algs[frm].name, 'to': self.algs[nxt].name}
+            return
         self.activate(nxt, integ)
         self.nswitches += 1
         if len(self.switch_log) < 1000:
@@ -369,7 +383,10 @@ def DefaultODEAlgorithm(**options: Any) -> Any:
     (3), ``nonstifftol`` and ``stifftol`` (0.9) and ``dtfac`` (2) are
     AutoSwitch's thresholds; ``first_predictor='julia'`` has the two FBDFs
     predict their first step as OrdinaryDiffEq's does; ``stiff`` holds options
-    for them, as kwargs... are there."""
+    for them, as kwargs... are there; ``hand_off`` names stiff methods not to
+    switch to: where the run would turn to one, it stops instead (retcode
+    HandedOff) and ``sol.hand_off = {'t', 'u', 'from', 'to'}`` says where, for
+    the caller to go on with a method of its own."""
     # The stiff methods as OrdinaryDiffEq has them, with one exception: FBDF
     # predicts its first step after a switch by an Euler step, as it does
     # after any restart, not from the last value as OrdinaryDiffEq's does.

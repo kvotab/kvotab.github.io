@@ -34,6 +34,8 @@ DT_LESS_THAN_MIN = 'DtLessThanMin'
 UNSTABLE = 'Unstable'
 TERMINATED = 'Terminated'
 CONVERGENCE_FAILURE = 'ConvergenceFailure'
+#: A composite method stopped where it would have turned to a method it was told to hand off.
+HANDED_OFF = 'HandedOff'
 
 
 class ODEError(Exception):
@@ -77,6 +79,9 @@ class ODESolution:
         # A composite method's choice at each saved row, numbered from 1 as
         # OrdinaryDiffEq's sol.alg_choice is; None for any other method.
         self.alg_choice: Optional[np.ndarray] = None
+        # Where a composite stopped to hand the run on (retcode HandedOff):
+        # {'from', 'to', 't', 'u'}, the last accepted time and state.
+        self.hand_off: Optional[Dict[str, Any]] = None
 
 
 DEFAULTS: Dict[str, Any] = {
@@ -165,6 +170,8 @@ class Integrator:
         self.eigen_est = 1.0
         self.do_error_check = True
         self.still_is_stiff = False
+        # Set by a composite that has reached a method it hands off: {'from', 'to'}.
+        self.hand_off: Optional[Dict[str, Any]] = None
         self.controller: Any = None
         self.cache = alg.build(n, self, opts)
         # A composite method keeps a controller for each of its methods and
@@ -476,7 +483,16 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
         # be made: an explicit method just found stiff is let through them
         # for the few steps until the switch.
         if integ.is_composite:
-            cache.choose(integ)
+            if integ.hand_off is None:
+                cache.choose(integ)
+            # A composite told to hand off a method (DefaultODEAlgorithm's
+            # ``hand_off``) stops where it would have switched to it, at the
+            # last accepted point, for the caller to go on from there with a
+            # method of its own: sol.hand_off says where and to what.
+            if integ.hand_off is not None:
+                retcode = HANDED_OFF
+                message = f"The run turned to {integ.hand_off['to']} at t = {js_string(integ.t)}, which was handed off"
+                break
         if integ.nsteps >= max_steps and integ.do_error_check:
             retcode = MAX_ITERS
             message = f'More than {js_string(max_steps)} steps were needed, and the run stopped at t = ' \
@@ -724,6 +740,9 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
     sol = ODESolution(T, U, stats, retcode, message)
     sol.events = events
     sol.alg_choice = np.array(choice, dtype=np.uint8) if choice is not None else None
+    if integ.hand_off is not None:
+        sol.hand_off = {'from': integ.hand_off['from'], 'to': integ.hand_off['to'], 't': integ.t,
+                        'u': integ.uprev.copy()}
     return sol
 
 

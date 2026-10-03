@@ -292,6 +292,60 @@ class System:
         if assemble is not None:
             assemble._key = None
 
+    def table_corners(self, frm: float, to: float, limit: float = math.inf) -> Optional[List[float]]:
+        """The times the tables read at the clock turn at, strictly inside the
+        span of (frm, to), in order (``tableCorners``): places where the model
+        is not smooth although nothing declares them -- :mod:`.switchtimes`
+        lists the times written into equations, and a table's points are its
+        own. A linear table turns at its points, a nearest-point one jumps
+        halfway between them, and a cyclic one does either once a period. Two
+        that differ by rounding are one.
+
+        The switching solver's explicit methods land on these rather than fit
+        a step across one (``auto`` in :mod:`.solvers.julia.adapter`), and all
+        it wants of a model with more than ``limit`` of them is to know so:
+        None then."""
+        lo = min(frm, to)
+        hi = max(frm, to)
+        found: List[float] = []
+        for lk in self.builder.lookup_layout:
+            if lk.argument:
+                continue
+            rule = (lk.block or {}).get('interpolation')
+            for k in range(lk.tab, lk.tab + lk.width):
+                table = self.TAB[k] if k < len(self.TAB) else None
+                x = table.x if table is not None else None
+                # One point is one value everywhere: no corner.
+                if not x or len(x) < 2:
+                    continue
+                at = [(x[i] + x[i + 1]) / 2 for i in range(len(x) - 1)] if rule == 'nearest' else list(x)
+                if not table.cyclic:
+                    found.extend(c for c in at if lo < c < hi)
+                    continue
+                period = x[-1] - x[0]
+                if not (period > 0):
+                    continue
+                first = math.floor((lo - x[0]) / period)
+                last = math.ceil((hi - x[0]) / period)
+                # Every period brings that many more distinct corners.
+                if (last - first) * (len(at) - 1) > limit:
+                    return None
+                for p in range(first, last + 1):
+                    for c in at:
+                        t = c + p * period
+                        if lo < t < hi:
+                            found.append(t)
+        found.sort()
+        out: List[float] = []
+        for t in found:
+            prev = out[-1] if out else -math.inf
+            if t - prev <= 1e-9 * max(1.0, abs(t)):
+                continue
+            out.append(t)
+            if len(out) > limit:
+                return None
+        return out
+
     def _clock_into(self, t: float, y: np.ndarray, into: np.ndarray) -> None:
         self._clock(t, y, self.X)
         into[:] = self.X[self.clock_idx]

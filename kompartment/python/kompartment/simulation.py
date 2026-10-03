@@ -18,8 +18,8 @@ from .errors import EditError
 
 #: In the order the application offers them (``SOLVER_IDS`` in ``src/ode/solvers.js``).
 SOLVERS = (
-    'ndf', 'ros23', 'dp45', 'auto', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4', 'trbdf2',
-    'rosenbrock23', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda',
+    'ndf', 'ros23', 'dp45', 'auto', 'auto_julia', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov', 'qndf', 'kencarp4',
+    'trbdf2', 'rosenbrock23', 'tsit5', 'vern7', 'scipy_bdf', 'scipy_radau', 'scipy_lsoda',
 )
 DEFAULT_SOLVER = 'ndf'
 SPACINGS = ('log', 'linear', 'series', 'solver', 'both')
@@ -77,8 +77,8 @@ SOLVER_OPTIONS: Dict[str, Sequence[str]] = {
     'dp45': ('max_step', 'initial_step', 'max_steps'),
     # Everything any of its methods reads: the stiff ones are handed these
     # settings, as DefaultODEAlgorithm forwards its keyword arguments to them.
-    'auto': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
-             'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa', 'max_order', 'min_order'),
+    'auto_julia': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
+                   'below_tol_run', 'error_norm', 'auto_abstol', 'newton_kappa', 'max_order', 'min_order'),
     'rodas5p': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'below_tol_run',
                 'error_norm', 'auto_abstol'),
     'radau5': ('max_step', 'initial_step', 'max_steps', 'matrix', 'jacobian', 'max_jac_age',
@@ -101,6 +101,8 @@ SOLVER_OPTIONS: Dict[str, Sequence[str]] = {
     'vern7': ('max_step', 'initial_step', 'max_steps', 'below_tol_run', 'error_norm', 'auto_abstol'),
     'scipy_bdf': (), 'scipy_radau': (), 'scipy_lsoda': (),
 }
+# The explicit methods and then the NDF, which reads everything they do.
+SOLVER_OPTIONS['auto'] = SOLVER_OPTIONS['ndf']
 
 
 def add_method_steps(into: MutableMapping[str, Any], frm: Any) -> MutableMapping[str, Any]:
@@ -398,8 +400,10 @@ class Simulation:
     @property
     def solver(self) -> str:
         """The solver: ``ndf`` (the default), ``ros23``, ``dp45``, ``auto`` (which
-        switches between an explicit and a stiff method as the run goes),
-        ``rodas5p``, ``radau5``, ``fbdf``, ``fbdf_krylov``, ``qndf``,
+        starts on an explicit method and hands the run to the NDF once it turns
+        stiff), ``auto_julia`` (DifferentialEquations.jl's default algorithm,
+        which switches between an explicit and a stiff method as the run
+        goes), ``rodas5p``, ``radau5``, ``fbdf``, ``fbdf_krylov``, ``qndf``,
         ``kencarp4``, ``trbdf2``, ``rosenbrock23``, ``tsit5``, ``vern7``, or one
         of the SciPy solvers, which need a network connection to run."""
         return self['solver']

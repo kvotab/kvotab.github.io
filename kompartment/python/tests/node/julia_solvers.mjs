@@ -6,12 +6,14 @@
 //
 //   solve     { runs: [{ problem, solver, opts }] }  -> per run: t, y, stats, stopped, accepted
 //             times (from onAccepted), progress calls, or the error it threw
-//   carry     { runs: [{ problem, opts, grids }] }    -> the switching solver ('auto') run over
-//             each grid in turn, each from where the last ended, all with one carry, as the
-//             runner restarts it at events: per solve t, y, stats and the carry after it
+//   carry     { runs: [{ problem, solver, opts, grids }] } -> a switching solver ('auto', the
+//             default, or 'auto_julia') run over each grid in turn, each from where the last
+//             ended, all with one carry, as the runner restarts it at events: per solve t, y,
+//             stats and the carry after it
 //   package   { runs: [{ problem, alg, algOptions, opts }] } -> the package's own solve with
 //             one of its algorithms (Tsit5, Vern7, Rosenbrock23, FBDF, DefaultODEAlgorithm, ...),
-//             opts in the package's names: t, u, stats, retcode, message, algChoice, events
+//             opts in the package's names: t, u, stats, retcode, message, algChoice, events,
+//             handOff
 //   tableaus  {}                                     -> the package's tableaux, as it holds them
 //   orderings { patterns: [{ n, colPtr, rowIdx }] }  -> reverseCuthillMcKee and colourColumns
 //   problems  {}                                     -> each problem's n, y0, grid and pattern
@@ -22,9 +24,11 @@
 // expression, so that f is the same function to the last bit on both sides.
 //
 // `opts` is the solver option bag in the application's names (rtol, abstol, hmax, ...),
-// plus four of this bridge's: `jacobian: 'analytic' | 'declined' | 'none'` (default
+// plus five of this bridge's: `jacobian: 'analytic' | 'declined' | 'none'` (default
 // 'analytic'), `abortAfter` (the onStep call that answers false), `grid` (to replace
-// the problem's) and `collect: false` (no onAccepted).
+// the problem's), `collect: false` (no onAccepted) and `corners` (times handed over as
+// the runner hands over the corners of a model's clock-read tables: `tableCorners`,
+// those strictly inside the span, or null when there are more than its limit).
 //
 // Infinity and NaN travel as the strings 'Infinity', '-Infinity' and 'NaN'.
 
@@ -395,6 +399,16 @@ function jacobianOption(problem, how) {
 	return { pattern, available: true, evaluate: (t, y) => problem.jac(t, y) };
 }
 
+/** `tableCorners` over a list of times: those strictly inside the span, or null past the limit. */
+function cornersOf(times) {
+	return (from, to, limit = Infinity) => {
+		const lo = Math.min(from, to);
+		const hi = Math.max(from, to);
+		const inside = times.filter((c) => c > lo && c < hi);
+		return inside.length > limit ? null : inside;
+	};
+}
+
 function runOne({ problem: name, solver, opts = {} }) {
 	const problem = PROBLEMS[name];
 	if (!problem) return { error: `no problem '${name}'` };
@@ -403,7 +417,8 @@ function runOne({ problem: name, solver, opts = {} }) {
 	const abortAfter = o.abortAfter;
 	const collect = o.collect !== false;
 	const grid = o.grid ?? problem.grid;
-	delete o.jacobian; delete o.abortAfter; delete o.collect; delete o.grid;
+	const corners = o.corners;
+	delete o.jacobian; delete o.abortAfter; delete o.collect; delete o.grid; delete o.corners;
 	const accepted = [];
 	let calls = 0;
 	const solverOpts = {
@@ -413,6 +428,7 @@ function runOne({ problem: name, solver, opts = {} }) {
 		events: problem.events,
 		onAccepted: collect ? (t) => { accepted.push(t); } : undefined,
 		onStep: abortAfter != null ? () => (++calls < abortAfter) : undefined,
+		tableCorners: corners ? cornersOf(corners) : undefined,
 	};
 	if (Array.isArray(o.abstol)) solverOpts.abstol = Float64Array.from(o.abstol);
 	const f = (t, y, d) => problem.f(t, y, d);
@@ -424,15 +440,15 @@ function runOne({ problem: name, solver, opts = {} }) {
 	}
 }
 
-/** The switching solver over several grids in turn, with one carry (see the header). */
-function runCarried({ problem: name, opts = {}, grids }) {
+/** A switching solver over several grids in turn, with one carry (see the header). */
+function runCarried({ problem: name, solver = 'auto', opts = {}, grids }) {
 	const problem = PROBLEMS[name];
 	const carry = {};
 	let y = Float64Array.from(problem.y0);
 	const solves = [];
 	for (const grid of grids) {
 		try {
-			const s = julia('auto')((t, u, d) => problem.f(t, u, d), Float64Array.from(grid), y, {
+			const s = julia(solver)((t, u, d) => problem.f(t, u, d), Float64Array.from(grid), y, {
 				...opts, jacobian: jacobianOption(problem, 'analytic'), events: problem.events, carry,
 			});
 			solves.push({ t: s.t, y: s.y, stats: s.stats, carry: { ...carry } });
@@ -479,7 +495,7 @@ function runPackage({ problem: name, alg, algOptions = {}, opts = {}, jacobian =
 		const sol = pkg.solve(prob, MAKE[alg](algOptions), opts);
 		return {
 			t: sol.t, u: sol.u, stats: sol.stats, retcode: sol.retcode, message: sol.message,
-			algChoice: sol.algChoice, events: sol.events,
+			algChoice: sol.algChoice, events: sol.events, handOff: sol.handOff,
 		};
 	} catch (e) {
 		return { error: e.message };

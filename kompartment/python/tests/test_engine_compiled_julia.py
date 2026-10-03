@@ -2,7 +2,11 @@
 
 ``engine/compiled/julia.py`` ports the loop of ``fbdf``, ``qndf``,
 ``rodas5p``, ``radau5``, ``kencarp4`` and ``trbdf2`` (``engine/solvers/julia``)
-to numba. A compiled run (``compiled='auto'``) and a Python one
+to numba, and that of the six that came with the default algorithm (``NEW``):
+``rosenbrock23``, ``tsit5``, ``vern7``, ``fbdf_krylov`` (GMRES, in
+``compiled/krylov.py``), DifferentialEquations.jl's switch itself
+(``auto_julia``) and ``auto``, whose explicit start hands the run to the
+compiled NDF. A compiled run (``compiled='auto'``) and a Python one
 (``compiled=False``) take the same steps with the same arithmetic, so their
 states, counts, recorders, series and failures must be identical -- the
 comparison is ``test_engine_compiled``'s, on its models and the bundled
@@ -37,7 +41,50 @@ from kompartment.engine.solvers import SolverError
 SOLVERS = ('rodas5p', 'kencarp4', 'trbdf2', 'fbdf', 'qndf', 'radau5')
 #: The multistep methods, which read ``simulation.bdf``: QNDF runs QBDF, FBDF is a BDF already.
 BDF = ('qndf', 'fbdf')
+#: The six that came with the default algorithm.
+NEW = ('auto', 'auto_julia', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
+#: Explicit throughout: too slow for a stiff model.
+EXPLICIT = ('tsit5', 'vern7')
 needs_numba = base.needs_numba
+
+
+def stiff(n: int = 3, **sim: Any) -> kp.Model:
+    """n compartments exchanging with their neighbours at 1e3 a year and the
+    last draining slowly: stiff for as long as anything is left, so that the
+    switching solvers turn to their stiff side -- Rosenbrock23 up to 50
+    states (Rodas5P below a relative tolerance of 1e-6), FBDF up to 500,
+    FBDF by GMRES above, ``auto`` to the NDF at every size."""
+    m = kp.Model.new('Stiff')
+    base.settings(m, sim, end_time=20, output_points=21, spacing='linear', rtol=1e-6, abstol=1e-10)
+    for i in range(n):
+        m.add_compartment(f'C{i}', initial='100' if i == 0 else '0')
+    for i in range(n - 1):
+        m.add_transfer(f'C{i}', f'C{i + 1}', rate='1e3')
+        m.add_transfer(f'C{i + 1}', f'C{i}', rate='1e3')
+    m.add_transfer(f'C{n - 1}', None, rate='0.5')
+    return m
+
+
+def ticking(solver: str, **sim: Any) -> kp.Model:
+    """``stiff`` with a discrete event at t = 5, at which the runner starts
+    the solver again: the switching solvers go on as they ended."""
+    m = stiff(solver=solver, **sim)
+    m.add_trigger('Tick', first='time', second='5', direction='rising')
+    m.add_snapshot('At_tick', target='C1', trigger='Tick', initial='0')
+    return m
+
+
+def cornered(points: int, **sim: Any) -> kp.Model:
+    """A flow read from a table of ``points`` corners: ``auto``'s explicit
+    methods land on each, or, past a hundred, leave the run to the NDF."""
+    m = kp.Model.new('Cornered')
+    base.settings(m, sim, end_time=50, output_points=26, rtol=1e-6, abstol=1e-10)
+    m.add_compartment('A', initial='100')
+    m.add_compartment('B')
+    m.add_lookup('Flow', [[50 * i / (points - 1), 0.1 + 0.05 * (i % 3)] for i in range(points)])
+    m.add_transfer('A', 'B', rate='Flow')
+    m.add_transfer('B', None, rate='0.02')
+    return m
 
 
 def per_state_tolerances(**sim: Any) -> kp.Model:
@@ -334,6 +381,242 @@ class Behaviour(unittest.TestCase):
                     base.chain(solver='qndf').project(**{key: 2.5})
                 self.assertEqual(str(loaded.exception), said)
                 self.assertTrue(run(base.chain(solver='qndf', **{key: 3.0}).project()).stats['compiled_loop'])
+
+
+@needs_numba
+class DefaultAlgorithm(unittest.TestCase):
+    """What came with the default algorithm, on the compiled loop: the
+    explicit methods, Rosenbrock23, GMRES, the switch between methods and
+    ``auto``'s hand-off to the compiled NDF -- every run the Python loop's,
+    to the last bit."""
+
+    same = Identical.same
+    _same = base.Identical.same
+
+    def raw(self, name: str, solver: str, **sim: Any) -> Project:
+        raw = example(name)
+        raw['simulation'].update(solver=solver, **sim)
+        return Project(raw)
+
+    def test_made_up_models(self) -> None:
+        for solver in NEW:
+            for label, model in (('chain', base.chain), ('peaked', base.peaked), ('resting', base.resting),
+                                 ('drained', base.drained)):
+                if label == 'drained' and solver in EXPLICIT:
+                    continue
+                with self.subTest(model=label, solver=solver):
+                    self.same(model(solver=solver).project())
+
+    def test_every_function_of_the_language(self) -> None:
+        for nuclides in (False, True):
+            for solver in NEW:
+                with self.subTest(nuclides=nuclides, solver=solver):
+                    self.same(base.functions(nuclides, solver=solver).project())
+
+    def test_discrete_events(self) -> None:
+        for solver in NEW:
+            with self.subTest(solver=solver):
+                # The explicit methods take larger steps, which carry a pair
+                # of the tank's crossings inside one step: 19 events, not 21.
+                a, _ = self.same(base.oscillating(solver=solver).project())
+                self.assertEqual(a.stats['events'], 21 if solver in ('fbdf_krylov', 'rosenbrock23') else 19)
+            with self.subTest(solver=solver, model='recorders'):
+                a, _ = self.same(self.raw('recorders', solver))
+                self.assertEqual(a.stats['events'], 1)
+            for spacing in ('both', 'solver'):
+                with self.subTest(solver=solver, spacing=spacing):
+                    self.same(base.oscillating(solver=solver, spacing=spacing).project())
+
+    def test_the_clock_worked_out_every_min_change_time(self) -> None:
+        for solver in NEW:
+            with self.subTest(solver=solver):
+                self.same(base.clocked(solver=solver, min_change_time=0.7).project())
+
+    def test_bundled_examples(self) -> None:
+        for name in ('biosphere', 'decay-chain', 'landscape', 'waste-packages', 'lookup-driver', 'four-compartment',
+                     'scenarios', 'recorders'):
+            for solver in NEW:
+                if solver in EXPLICIT and name == 'biosphere':
+                    continue
+                with self.subTest(name=name, solver=solver):
+                    self.same(self.raw(name, solver))
+
+    def test_farfield(self) -> None:
+        # 1581 states: `auto` hands the run to the NDF, sparse; the switch
+        # takes FBDF by GMRES, as the matrix-free FBDF itself, on a shorter span.
+        a, _ = self.same(self.raw('farfield', 'auto', end_time=2e4))
+        self.assertTrue(a.stats['sparse'])
+        self.assertEqual(list(a.stats['steps_by']), ['Vern7', 'NDF'])
+        for solver in ('auto_julia', 'fbdf_krylov'):
+            with self.subTest(solver=solver):
+                a, _ = self.same(self.raw('farfield', solver, end_time=50))
+                self.assertGreater(a.stats['krylov_iters'], 0)
+                self.assertEqual((a.stats['npds'], a.stats['ndecomps'], a.stats['sparse']), (0, 0, False))
+
+    def test_the_switch_on_each_stiff_side(self) -> None:
+        """DifferentialEquations.jl's switch to each of its stiff methods, by
+        the size of the system and the tolerance, and back: steps by
+        method, switches, which method the carry says it ended on."""
+        cases = [(3, {}, ['Tsit5', 'Rosenbrock23']), (12, {'rtol': 1e-7}, ['Vern7', 'Rodas5P']),
+                 (70, {}, ['Tsit5', 'FBDF']), (600, {'end_time': 2}, ['Tsit5', 'KrylovFBDF'])]
+        for n, sim, methods in cases:
+            with self.subTest(n=n, **sim):
+                a, _ = self.same(stiff(n, solver='auto_julia', **sim).project())
+                self.assertEqual(list(a.stats['steps_by']), methods)
+                self.assertGreaterEqual(a.stats['switches'], 1)
+                self.assertEqual(sum(a.stats['steps_by'].values()), a.stats['nsteps'] - a.stats['nfailed'])
+
+    def test_auto_hands_the_run_to_the_ndf(self) -> None:
+        """``auto``: the explicit start, the hand-off where it turns stiff and
+        the compiled NDF over the rest -- rows, counts and the steps as output
+        put together as the adapter puts them; the NDF from the start after
+        an event (the carry) and where the tables turn more than a hundred
+        times; the explicit methods landing on the tables' corners."""
+        for n in (3, 70, 600):
+            with self.subTest(n=n):
+                a, _ = self.same(stiff(n, solver='auto', end_time=2 if n == 600 else 20).project())
+                self.assertEqual((list(a.stats['steps_by'])[1], a.stats['switches']), ('NDF', 1))
+        for spacing in ('both', 'solver'):
+            with self.subTest(spacing=spacing):
+                a, _ = self.same(stiff(solver='auto', spacing=spacing).project())
+                self.assertGreater(a.stats['solver_points'], 50)
+        for extra in (dict(bdf=True), dict(max_order=2), dict(norm_control=True), dict(stagnation_tol=1e-3),
+                      dict(error_norm='max'), dict(auto_abstol=True), dict(initial_step=1e-4), dict(max_step=0.5),
+                      dict(jacobian='numeric'), dict(matrix='dense'), dict(non_negative=False)):
+            with self.subTest(**extra):
+                a, _ = self.same(stiff(solver='auto', **extra).project())
+                self.assertEqual(list(a.stats['steps_by'])[-1], 'BDF' if extra.get('bdf') else 'NDF')
+        with self.subTest(model='ticking'):
+            a, _ = self.same(ticking('auto').project())
+            self.assertEqual((a.stats['events'], a.stats['switches']), (1, 1))
+        for points, by in ((12, ['Vern7']), (150, ['NDF'])):
+            with self.subTest(corners=points):
+                a, _ = self.same(cornered(points, solver='auto').project())
+                self.assertEqual(list(a.stats['steps_by']), by)
+        with self.subTest(model='ticking', solver='auto_julia'):
+            a, _ = self.same(ticking('auto_julia').project())
+            self.assertEqual(list(a.stats['steps_by']), ['Tsit5', 'Rosenbrock23'])
+
+    def test_solver_settings(self) -> None:
+        settings = [dict(auto_abstol=True), dict(matrix='dense'), dict(matrix='sparse'), dict(jacobian='numeric'),
+                    dict(max_order=2), dict(initial_step=1e-3), dict(max_step=0.5), dict(error_norm='max'),
+                    dict(newton_kappa=1e-2), dict(max_jac_age=3), dict(below_tol_run=3), dict(non_negative=False)]
+        for solver in NEW:
+            for extra in settings:
+                with self.subTest(solver=solver, **extra):
+                    self.same(base.chain(solver=solver, **extra).project())
+                    if solver not in EXPLICIT:
+                        self.same(stiff(solver=solver, **extra).project())
+
+    def test_the_audit(self) -> None:
+        # The budgets' rows whole for the Rosenbrocks and the switch, at the
+        # diagonal for the NDF and `auto`: the matrix the compiled loops are
+        # handed, and its colouring, follow the run's solver.
+        from helpers import audit_model
+        for solver in ('ndf', 'ros23', 'auto', 'auto_julia', 'rosenbrock23', 'rodas5p', 'fbdf', 'kencarp4'):
+            for extra in ({}, {'jacobian': 'numeric'}):
+                raw = audit_model(solver)
+                raw['simulation'].update(extra)
+                with self.subTest(solver=solver, **extra):
+                    a, b = self._same(Project(raw))
+                    self.assertTrue(b.stats['compiled_loop'])
+                    self.assertEqual(a.jacobian.get('budgetRows'), 'diagonal' if solver in ('ndf', 'auto') else 'exact')
+
+    def test_histories_that_outgrow_their_room(self) -> None:
+        # Made again from the start with more room: `auto`'s carry starts
+        # afresh with the run, as on the Python path, which never restarts.
+        from kompartment.engine.compiled import model as compiled_model
+        was = compiled_model.HISTORY_CAPACITY
+        compiled_model.HISTORY_CAPACITY = 4
+        try:
+            for solver in NEW:
+                with self.subTest(solver=solver):
+                    a, b = self.same(base.peaked(solver=solver).project())
+                    self.assertGreater(len(b.system.MEM[0].history.t), 4)
+                    self.same(base.oscillating(solver=solver).project())
+            for solver in ('auto', 'auto_julia'):
+                with self.subTest(solver=solver, model='ticking'):
+                    self.same(ticking(solver).project())
+        finally:
+            compiled_model.HISTORY_CAPACITY = was
+
+    def test_failures_say_the_same(self) -> None:
+        for solver in NEW:
+            with self.subTest(solver=solver, failure='steps'):
+                # `auto`'s NDF is handed what the explicit start left of the budget.
+                e = self.same(stiff(solver=solver, max_steps=60).project())
+                self.assertIsInstance(e, SolverError)
+                self.assertEqual(e.code, 'steps')
+            with self.subTest(solver=solver, failure='blow-up'):
+                e = self.same(base.blowup(solver=solver).project())
+                self.assertIsInstance(e, SolverError)
+
+    def test_what_the_equations_raise_is_raised_alike(self) -> None:
+        # The model's own error: handed on by the adapter as a SolverError,
+        # or, from `auto`'s NDF, as the NDF hands it on.
+        cases = {
+            'transport_point(1, 2, 3, time/5 - 0.2)': 'lower than zero',
+            'interpolationUseEndValues(time, 1, 2, 3)': 'x, y pairs',
+        }
+        for equation, said in cases.items():
+            for solver in NEW:
+                with self.subTest(equation=equation, solver=solver):
+                    e = self.same(base.failing(equation, solver=solver).project())
+                    self.assertIn(said, str(e))
+
+    def test_progress_and_stopping(self) -> None:
+        # The progress told, and a stop asked for, at the same points: in the
+        # explicit start and in the NDF after it, whose fractions are of the
+        # whole span.
+        for solver in NEW:
+            for label, project in (('chain', base.chain(solver=solver, end_time=5000, rtol=1e-9).project()),
+                                   ('stiff', stiff(solver=solver, rtol=1e-8).project())):
+                if label == 'stiff' and solver in EXPLICIT:
+                    continue
+                seen: Dict[Any, list] = {False: [], 'auto': []}
+                for compiled in seen:
+                    run(project, system=build_system(project), compiled=compiled,
+                        on_progress=lambda fraction, t, c=compiled: seen[c].append((fraction, t)))
+                with self.subTest(solver=solver, model=label):
+                    self.assertTrue(seen[False])
+                    self.assertEqual(seen[False], seen['auto'])
+                for after in (3, 40):
+                    asked = {False: [0], 'auto': [0]}
+                    caught = {}
+                    for compiled in asked:
+                        def signal(c: Any = compiled) -> bool:
+                            asked[c][0] += 1
+                            return asked[c][0] > after
+                        with self.assertRaises(SolverError) as ctx:
+                            run(project, system=build_system(project), compiled=compiled,
+                                on_progress=lambda f, t: None, signal=signal)
+                        caught[compiled] = (str(ctx.exception), ctx.exception.code, ctx.exception.t, asked[compiled][0])
+                    with self.subTest(solver=solver, model=label, after=after):
+                        self.assertEqual(caught[False], caught['auto'])
+                        self.assertEqual(caught['auto'][1], 'aborted')
+
+    def test_every_run_takes_the_compiled_loop(self) -> None:
+        for solver in NEW:
+            project = stiff(solver=solver).project()
+            res = run(project, system=build_system(project), compiled=True)
+            with self.subTest(solver=solver):
+                self.assertTrue(res.stats['compiled'])
+                self.assertTrue(res.stats['compiled_loop'])
+                self.assertNotIn('compiled_loop_why', res.stats)
+
+    def test_v8s_log10(self) -> None:
+        # The starting step's p-th root goes through V8's Math.log10, ported
+        # to the compiled loop from kompartment.jsmath: the same bits.
+        from kompartment import jsmath
+        from kompartment.engine.compiled import julia as cj
+        rng = np.random.default_rng(20261003)
+        xs = np.concatenate([10.0 ** rng.uniform(-320, 308, 20000), rng.uniform(0, 4, 5000),
+                             2.0 ** np.arange(-1074, 1024),
+                             [0.0, -0.0, 1.0, 10.0, 1e-308, 5e-324, np.inf, -1.0, np.nan, 0.99999999999999989]])
+        mine = np.array([cj._v8_log10(float(x)) for x in xs])
+        theirs = np.array([jsmath.log10(float(x)) for x in xs])
+        self.assertTrue(np.array_equal(mine, theirs, equal_nan=True))
+        self.assertTrue(np.array_equal(np.signbit(mine), np.signbit(theirs)))
 
 
 @needs_numba

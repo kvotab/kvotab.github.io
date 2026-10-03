@@ -8,6 +8,10 @@
 //   grid     { model }                 -> the output times
 //   layout   { model }                 -> the built system's states, slots and flags
 //   jacobian { model }                 -> whether df/dy is generated, and whether it is constant
+//   matrix   { model, points: [{t, y}] } -> the generated Jacobian: its pattern (colPtr, rowIdx),
+//                                        colouring, budgetRows, and its values at each point
+//   corners  { model, spans: [[from, to, limit]] } -> tableCorners(from, to, limit) of the built
+//                                        system for each (a limit of null is none)
 //   dydt     { model, points: [{t, y}] } -> the derivative and every algebraic slot at each
 //   run      { model, overrides }      -> the run's times and every output series
 //   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name
@@ -151,6 +155,37 @@ switch (req.task) {
 			const j = sys.jacobian ?? {};
 			out = { available: !!j.available, constant: j.available ? !!j.constant : null, reason: j.reason ?? null,
 				nnz: j.pattern?.nnz ?? null, colours: j.groups?.length ?? null };
+		} catch (e) {
+			out = { error: e.message, kind: e.name, stack: e.stack };
+		}
+		break;
+	}
+	case 'matrix': {
+		try {
+			const sys = buildSystem(new Project(req.model));
+			const j = sys.jacobian ?? {};
+			out = {
+				available: !!j.available, reason: j.reason ?? null, budgetRows: j.budgetRows ?? null,
+				colPtr: j.pattern?.colPtr ?? null, rowIdx: j.pattern?.rowIdx ?? null,
+				groups: j.groups ? j.groups.map((g) => Array.from(g)) : null,
+				values: j.available
+					? req.points.map(({ t, y }) => {
+						const v = j.evaluate(t, Float64Array.from(y));
+						return v ? Array.from(v) : null;
+					})
+					: null,
+			};
+		} catch (e) {
+			out = { error: e.message, kind: e.name, stack: e.stack };
+		}
+		break;
+	}
+	case 'corners': {
+		try {
+			const sys = buildSystem(new Project(req.model), { jacobian: false });
+			out = {
+				corners: req.spans.map(([from, to, limit]) => sys.tableCorners(from, to, limit ?? Infinity)),
+			};
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}

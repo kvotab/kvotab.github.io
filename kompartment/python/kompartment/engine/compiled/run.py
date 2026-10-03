@@ -7,13 +7,13 @@ messages included:
 
 * a :class:`CompiledRun` for the NDF, Rosenbrock (2,3) and Dormand-Prince,
   whose loops are compiled (:mod:`.solvers`);
-* a :class:`~.julia_run.JuliaRun` for the six Julia-derived ones first
-  ported, whose loop is compiled too (:mod:`.julia`);
+* a :class:`~.julia_run.JuliaRun` for every Julia-derived one and the two
+  switching solvers, whose loop is compiled too (:mod:`.julia`) -- ``auto``
+  going on, where it turns stiff, on the NDF's;
 * a :class:`PythonLoopRun` for a solver that keeps its own loop in Python --
-  SciPy's, the five Julia-derived ones that came with the default algorithm
-  (``auto`` and the methods it switches to), and a Julia-derived one whose
-  Python solver computes otherwise than the compiled loop ports (see
-  :func:`.julia_run.why_python`) -- handed the compiled model.
+  SciPy's, and a Julia-derived one whose Python solver computes otherwise
+  than the compiled loop ports (see :func:`.julia_run.why_python`) -- handed
+  the compiled model.
 
 What stays in Python is called back: an analytic Jacobian, with the
 recorders handed over first (they live in the compiled arrays during a run);
@@ -68,9 +68,9 @@ def prepare(system: Any, solver_id: str, opts: Dict[str, Any], *, min_change: fl
             solver_points: bool = False, equations: bool = False, solver: Any = None) -> Any:
     """A compiled stand-in for the solver of this run: a :class:`CompiledRun`
     for the solvers with a compiled loop, a :class:`~.julia_run.JuliaRun` for
-    the Julia-derived ones, a :class:`PythonLoopRun` for the ones that keep
-    their own (``solver`` is it) -- or :class:`NotCompiled` saying why the run
-    keeps to the Python path."""
+    the Julia-derived ones and the switching solvers, a :class:`PythonLoopRun`
+    for the ones that keep their own (``solver`` is it) -- or
+    :class:`NotCompiled` saying why the run keeps to the Python path."""
     if equations:
         raise NotCompiled('the run integrates a system of equations of its own')
     cm = compiled_model(system)

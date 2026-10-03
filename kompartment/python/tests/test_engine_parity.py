@@ -26,7 +26,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from helpers import example, needs_app
+from helpers import audit_model, example, needs_app
 from test_engine_lang import engine, number
 
 from kompartment.engine.builder import build_system
@@ -307,6 +307,98 @@ class BuildParity(unittest.TestCase):
                     d = s.dydt(p['t'], y)
                     self.assertTrue(close(X[:s.nalg], numbers(q['X'])[:s.nalg], 1e-12))
                     self.assertTrue(close(d, numbers(q['dydt']), 1e-12))
+
+
+# A solver of each kind as the mass-balance audit sees it: the budgets' rows at
+# their diagonal (the NDF, `auto`, an explicit method) or whole (a Rosenbrock,
+# the Julia-derived methods, DifferentialEquations.jl's switch).
+BUDGET_SOLVERS = ('ndf', 'auto', 'dp45', 'ros23', 'rodas5p', 'fbdf', 'radau5', 'auto_julia')
+
+
+@needs_app
+class BudgetRows(unittest.TestCase):
+    """The audit's rows in df/dy follow the run's solver, as the
+    application's do (``DIAGONAL_BUDGET_IDS``): the pattern, the colouring
+    that differences it (the budgets in a group of their own where their rows
+    are at the diagonal), what ``budget_rows`` says, and the generated values,
+    all the application's to the last bit."""
+
+    def models(self) -> List[Dict[str, Any]]:
+        out = []
+        for name in ('decay-chain', 'biosphere', 'waste-packages', 'landscape', 'lookup-driver'):
+            m = example(name)
+            m['simulation']['mass_balance'] = True
+            out.append(m)
+        return out + [audit_model()]
+
+    def test_the_matrix_is_the_applications(self) -> None:
+        from kompartment.engine.jacobian import DIAGONAL_BUDGET_IDS
+        rng = np.random.default_rng(11)
+        for base in self.models():
+            for solver in BUDGET_SOLVERS:
+                with self.subTest(model=base['name'], solver=solver):
+                    model = copy.deepcopy(base)
+                    model['simulation']['solver'] = solver
+                    s = build_system(Project(copy.deepcopy(model)))
+                    j = s.jacobian
+                    y0 = s.initial_state()
+                    points = [{'t': s.start_time, 'y': y0.tolist()},
+                              {'t': s.start_time + 7.5, 'y': (y0 + rng.random(y0.size) * (np.abs(y0) + 1)).tolist()}]
+                    js = engine('matrix', model=model, points=points)
+                    self.assertTrue(js['available'] and j['available'], js.get('reason') or j.get('reason'))
+                    whole = solver not in DIAGONAL_BUDGET_IDS
+                    self.assertEqual(j['budget_rows'], 'exact' if whole else 'diagonal')
+                    self.assertEqual(j['budget_rows'], js['budgetRows'])
+                    self.assertEqual(j['pattern'].col_ptr.tolist(), js['colPtr'])
+                    self.assertEqual(j['pattern'].row_idx.tolist(), js['rowIdx'])
+                    self.assertEqual([g.tolist() for g in j['groups']], js['groups'])
+                    for p, theirs in zip(points, js['values']):
+                        mine = j['evaluate'](p['t'], np.array(p['y']))
+                        s._clock_at = math.nan
+                        self.assertEqual(np.asarray(mine).tolist(), theirs)
+                    budget = s.builder.budget
+                    frm = budget['base']
+                    to = frm + len(budget['terms']) * budget['nfam']
+                    rows = j['pattern'].row_idx
+                    in_budget = (rows >= frm) & (rows < to)
+                    if whole:
+                        # Rows that reach the states feeding them.
+                        self.assertGreater(int(np.count_nonzero(in_budget)), to - frm)
+                    else:
+                        # The diagonal alone, and the budgets coloured apart.
+                        self.assertEqual(int(np.count_nonzero(in_budget)), to - frm)
+                        self.assertEqual(j['groups'][-1].tolist(), list(range(frm, to)))
+
+    def test_a_run_with_the_audit_is_the_applications(self) -> None:
+        """Runs with the audit, generated and differenced: the same steps as
+        the application's, give or take a percent, and the audit's account
+        within the run's tolerance of its own."""
+        for base in (self.models()[0], audit_model()):
+            for solver in ('ndf', 'auto', 'rodas5p', 'fbdf', 'auto_julia'):
+                for numeric in (False, True):
+                    with self.subTest(model=base['name'], solver=solver, numeric=numeric):
+                        model = copy.deepcopy(base)
+                        model['simulation']['solver'] = solver
+                        if numeric:
+                            model['simulation']['jacobian'] = 'numeric'
+                        js = engine('run', model=model, overrides={})
+                        self.assertNotIn('error', js)
+                        res = run(Project(copy.deepcopy(model)), compiled=False)
+                        self.assertEqual(res.jacobian.get('budgetRows'),
+                                         'diagonal' if solver in ('ndf', 'auto') else 'exact')
+                        # Where a last bit decides, measured and put through
+                        # test_engine_julia's BitIdentity, which has them the
+                        # application's runs bit for bit with V8's pow: FBDF's
+                        # order on the decay chain's plateau (3301 steps against
+                        # 2969 when written), and the switch from Vern7 to
+                        # Rodas5P there, decided by verdicts at its threshold
+                        # (495 against 483).
+                        share = {'fbdf': 0.15, 'auto_julia': 0.2}.get(solver, 0.01)
+                        n_js = js['stats']['nsteps']
+                        self.assertLessEqual(abs(res.stats['nsteps'] - n_js), max(2, share * n_js))
+                        mine, theirs = res.mass_balance(), js['mass']
+                        self.assertEqual([f['name'] for f in mine['families']],
+                                         [f['name'] for f in theirs['families']])
 
 
 @needs_app

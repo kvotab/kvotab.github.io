@@ -483,6 +483,7 @@ SOLVER_LABELS = {
     'ros23': 'stiff, low order, Rosenbrock 2-3',
     'dp45': 'non-stiff, Dormand-Prince 4-5',
     'auto': 'stiff or non-stiff, switching as it runs',
+    'auto_julia': 'stiff or non-stiff, as DifferentialEquations.jl chooses',
     'rodas5p': 'stiff, Rosenbrock 5',
     'radau5': 'stiff, Radau IIA 5',
     'fbdf': 'stiff, fixed-leading-coefficient BDF',

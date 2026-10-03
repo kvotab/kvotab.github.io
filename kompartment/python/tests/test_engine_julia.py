@@ -2,10 +2,12 @@
 
 ``kompartment.engine.solvers.julia`` ports ``src/ode/julia/`` and its adapter
 ``src/ode/julia-solvers.js``: the six methods first ported (``SOLVERS``) and
-the five that came with the default algorithm (``NEW``) -- the switching
-solver ``auto``, the matrix-free ``fbdf_krylov``, ``rosenbrock23``, and the
-explicit ``tsit5`` and ``vern7``. Six kinds of check, all against the
-application's own code run in Node:
+the six that came with the default algorithm (``NEW``) -- the switching
+solvers ``auto`` (the explicit methods, then the NDF from where the run turns
+stiff) and ``auto_julia`` (DifferentialEquations.jl's default as it is), the
+matrix-free ``fbdf_krylov``, ``rosenbrock23``, and the explicit ``tsit5`` and
+``vern7``. Seven kinds of check, all against the application's own code run
+in Node:
 
 * ``Tables``: what has no floating point to argue about -- the tableaux, the
   reverse Cuthill-McKee ordering, the colouring of the Jacobian's columns --
@@ -24,6 +26,10 @@ application's own code run in Node:
   options, the carry from one solve of a run to the next, the run log's
   line; GMRES, and the matrix-free FBDF on 600 states; Vern7's lazy stages,
   an explicit method forming no matrix, OrdinaryDiffEq's starting step.
+* ``HandOff``: ``auto`` -- the package stopping where it would have switched
+  to a stiff method, the NDF going on from there with one row at every time
+  asked, the corners of the clock-read tables landed on, the run handed to the
+  NDF from the start.
 * ``BitIdentity``: the same runs, and bundled examples through the runner,
   with the two things this port does differently from the package put back
   -- a transcription of the package's dense LU in place of LAPACK's, and V8's
@@ -61,7 +67,7 @@ from unittest import mock
 
 import numpy as np
 
-from helpers import HERE, NODE, SRC, example, needs_app
+from helpers import HERE, NODE, SRC, audit_model, example, needs_app
 
 from kompartment.engine.jacobian import Pattern
 from kompartment.engine.project import Project
@@ -80,15 +86,17 @@ from kompartment.engine.solvers.julia.methods import radau as radau_module
 from kompartment.engine.solvers.julia.methods import tableaus
 
 SOLVERS = ('fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2')
-# The five that came with the default algorithm (2026-10-03): the switching
-# solver, the matrix-free FBDF, and the three methods it switches between.
-NEW = ('auto', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
+# The six that came with the default algorithm (2026-10-03): the switching
+# solvers -- this tool's, which hands the stiff part to the NDF, and
+# DifferentialEquations.jl's own -- the matrix-free FBDF, and the three
+# methods the second switches between.
+NEW = ('auto', 'auto_julia', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
 EVERY = SOLVERS + NEW
 # Held to the edge of their stability on a stiff problem.
 EXPLICIT = ('tsit5', 'vern7')
-STIFF = SOLVERS + ('auto', 'fbdf_krylov', 'rosenbrock23')
+STIFF = SOLVERS + ('auto', 'auto_julia', 'fbdf_krylov', 'rosenbrock23')
 # The ones a matrix or a Jacobian setting means anything to.
-MATRIX = SOLVERS + ('auto', 'rosenbrock23')
+MATRIX = SOLVERS + ('auto', 'auto_julia', 'rosenbrock23')
 # Too stiff for an explicit method: Robertson it cannot cross in any number of
 # steps worth taking, and on HIRES it runs at the edge of its stability, where
 # whether a step is rejected is decided in the last bits (Vern7: 2 rejections
@@ -315,6 +323,16 @@ def events_for(name: str) -> Any:
     return None
 
 
+def corners_of(times: List[float]) -> Callable[..., Optional[List[float]]]:
+    """``table_corners`` over a list of times, as the bridge's ``cornersOf``:
+    those strictly inside the span, or None past the limit."""
+    def corners(frm: float, to: float, limit: float = math.inf) -> Optional[List[float]]:
+        lo, hi = min(frm, to), max(frm, to)
+        inside = [float(c) for c in times if lo < c < hi]
+        return None if len(inside) > limit else inside
+    return corners
+
+
 def run_here(name: str, solver: str, opts: Dict[str, Any]) -> Dict[str, Any]:
     """One run through the port, in the bridge's request shape and answer shape."""
     info = problems()[name]
@@ -325,6 +343,7 @@ def run_here(name: str, solver: str, opts: Dict[str, Any]) -> Dict[str, Any]:
     abort_after = o.pop('abortAfter', None)
     collect = o.pop('collect', True)
     grid = o.pop('grid', info['grid'])
+    corners = o.pop('corners', None)
     col_ptr = np.array(info['colPtr'], dtype=np.int64)
     rows = np.array(info['rowIdx'], dtype=np.int64)
     pattern = Pattern(n, rows, np.repeat(np.arange(n), np.diff(col_ptr)))
@@ -341,6 +360,8 @@ def run_here(name: str, solver: str, opts: Dict[str, Any]) -> Dict[str, Any]:
     if 'non_negative' not in here and info['nonNegative'] is not None:
         here['non_negative'] = info['nonNegative']
     here['events'] = events_for(name)
+    if corners is not None:
+        here['table_corners'] = corners_of(corners)
     accepted: List[float] = []
     calls = [0]
     if collect:
@@ -370,6 +391,7 @@ PACKAGE_ALGORITHMS: Dict[str, Callable[..., Any]] = {
     'AutoTsit5Rodas5P': lambda **o: methods.AutoAlgSwitch(methods.Tsit5(), methods.Rodas5P(), **o),
 }
 PACKAGE_NAMES = {'saveEverystep': 'save_everystep', 'nonNegative': 'non_negative', 'stillIsStiff': 'still_is_stiff',
+                 'handOff': 'hand_off',
                  'firstPredictor': 'first_predictor', 'maxOrder': 'max_order', 'minOrder': 'min_order',
                  'autoAbstol': 'auto_abstol', 'belowTolRun': 'below_tol_run', 'maxSteps': 'max_steps'}
 
@@ -397,9 +419,11 @@ def run_package(name: str, alg: str, alg_options: Optional[Dict[str, Any]] = Non
             sol = package_solve(problem, made, settings)
     except ODEError as e:
         return {'error': str(e)}
+    handed = sol.hand_off
     return {'t': [float(v) for v in sol.t], 'u': [row.tolist() for row in sol.u], 'stats': sol.stats,
             'retcode': sol.retcode, 'message': sol.message,
-            'algChoice': None if sol.alg_choice is None else sol.alg_choice.tolist()}
+            'algChoice': None if sol.alg_choice is None else sol.alg_choice.tolist(),
+            'handOff': None if handed is None else {**handed, 'u': handed['u'].tolist()}}
 
 
 def within(mine: float, theirs: float, share: float, least: float) -> bool:
@@ -703,9 +727,14 @@ def _runs() -> List[Tuple[str, str, Dict[str, Any]]]:
         ('vdp', MATRIX, {**BASE['vdp'], 'jacobian': 'none'}),
         ('vdp', EVERY, {**BASE['vdp'], 'hmax': 0.05}),
         ('robertson', STIFF, {**rob, 'h0': 1e-5}),
-        ('robertson', ('fbdf', 'qndf', 'fbdf_krylov'), {**rob, 'maxOrder': 3}),
+        ('robertson', ('fbdf', 'qndf', 'fbdf_krylov', 'auto', 'auto_julia'), {**rob, 'maxOrder': 3}),
         ('robertson', ('fbdf', 'qndf', 'fbdf_krylov'), {**rob, 'minOrder': 2, 'maxOrder': 4.0}),
         ('robertson', ('qndf', 'fbdf'), {**rob, 'bdf': True}),
+        # The NDF `auto` hands a run to, with its BDF switch on. (Not on
+        # Robertson, where plain BDF is round-off chaotic: rtol nudged by 1e-9
+        # relative takes the application's run from 424 to 478 steps.)
+        ('chain', ('auto',), {**BASE['chain'], 'bdf': True}),
+        ('vdp', ('auto',), {**BASE['vdp'], 'bdf': True}),
         ('hires', NEWTON + ('fbdf_krylov',), {**BASE['hires'], 'newtonKappa': 1e-2}),
         ('hires', NEWTON, {**BASE['hires'], 'maxJacAge': 5}),
         ('robertson', STIFF, {**rob, 'belowTolRun': 3}),
@@ -714,6 +743,12 @@ def _runs() -> List[Tuple[str, str, Dict[str, Any]]]:
         ('robertson', EVERY, {**rob, 'maxSteps': 40}),
         ('hires', EVERY, {**BASE['hires'], 'abortAfter': 7}),
         ('robertson', ('rodas5p', 'fbdf', 'auto'), {**rob, 'grid': [0.5, 0.5]}),
+        # `auto` handed the corners of a model's clock-read tables: three to
+        # land on, through an event, and more than it lands on (the NDF's
+        # run from the start).
+        ('forced', ('auto',), {**BASE['forced'], 'corners': [2.5, 5.0, 7.5]}),
+        ('event', ('auto',), {**BASE['event'], 'corners': [0.3, 0.7, 2.0]}),
+        ('vdp', ('auto',), {**BASE['vdp'], 'corners': [0.2 * i for i in range(1, 150)]}),
     ]
     for name, solvers, opts in variants:
         runs += [(name, s, dict(opts)) for s in solvers]
@@ -817,7 +852,13 @@ class Problems(unittest.TestCase):
                 total += 1
                 self.assertEqual(mine['stats']['solver'], theirs['stats']['solver'])
                 self.assertEqual(mine['stats']['sparse'], theirs['stats']['sparse'])
-                self.assertEqual(mine['stats']['fill'], theirs['stats']['fill'])
+                # The NDF that `auto` hands a run to factorises a sparse
+                # matrix with SuperLU here and with the application's own LU
+                # there, which fill in differently (hires sparse: 35 against 27).
+                if 'NDF' in (mine['stats'].get('steps_by') or {}):
+                    self.assertEqual(mine['stats']['fill'] is None, theirs['stats']['fill'] is None)
+                else:
+                    self.assertEqual(mine['stats']['fill'], theirs['stats']['fill'])
                 self.assertEqual(counts_agree(mine['stats'], theirs['stats']), [])
                 exact += all(mine['stats'][k] == theirs['stats'][k] for k in COUNTS)
         # The margin is for the runs a last-bit difference reaches (see the
@@ -842,7 +883,7 @@ class Problems(unittest.TestCase):
                 self.assertNotIn('stepsBy', here)
                 if js.get('stepsBy') is not None:
                     switched += 1
-                    self.assertEqual(solver, 'auto')
+                    self.assertIn(solver, ('auto', 'auto_julia'))
                     # Every accepted step is one method's.
                     self.assertEqual(sum(here['steps_by'].values()), here['nsteps'] - here['nfailed'])
                     self.assertEqual(list(here['steps_by']), list(js['stepsBy']))
@@ -1112,13 +1153,15 @@ class Switching(unittest.TestCase):
         self.assertLess(runs_of(eager['algChoice'])[0][1], runs_of(vdp['algChoice'])[0][1])
 
     def test_a_run_restarted_goes_on_with_the_method_it_had(self) -> None:
-        """The carry: one dict for every solve of a run, in which ``auto``
-        keeps whether it ended stiff -- through the adapter, as the
+        """The carry: one dict for every solve of a run, in which
+        ``auto_julia`` keeps whether it ended stiff and ``auto`` whether it
+        has handed the run to the NDF -- through the adapter, as the
         application's, and through the runner, where a run restarts at its
         events."""
         grids = [[0, 1, 10, 100], [100, 1e3, 1e4]]
-        js = bridge('carry', runs=[{'problem': 'robertson', 'opts': {'rtol': 1e-6, 'abstol': 1e-10}, 'grids': grids}])
-        theirs = js['runs'][0]['solves']
+        runs = [{'problem': 'robertson', 'solver': s, 'opts': {'rtol': 1e-6, 'abstol': 1e-10}, 'grids': grids}
+                for s in ('auto_julia', 'auto')]
+        js = bridge('carry', runs=runs)
         f, jac = functions('robertson')
         info = problems()['robertson']
         n = info['n']
@@ -1127,47 +1170,61 @@ class Switching(unittest.TestCase):
         jacobian = {'pattern': pattern, 'available': True,
                     'evaluate': lambda t, y: jac(t, y)[pattern.row_idx, pattern.col_of]}
 
-        def solves(carried: bool) -> List[Dict[str, Any]]:
+        def solves(solver: str, carried: bool) -> List[Dict[str, Any]]:
             carry: Dict[str, Any] = {}
             y = np.array(info['y0'], dtype=float)
             out = []
             for grid in grids:
                 opts = {'rtol': 1e-6, 'abstol': 1e-10, 'jacobian': jacobian, 'carry': carry if carried else {}}
-                r = ported.auto(f, np.array(grid, dtype=float), y, opts)
+                r = getattr(ported, solver)(f, np.array(grid, dtype=float), y, opts)
                 out.append({'stats': r['stats'], 'carry': dict(carry), 'y': r['y']})
                 y = r['y'][-1]
             return out
-        mine = solves(True)
-        for k, (a, b) in enumerate(zip(mine, theirs)):
-            with self.subTest(solve=k):
-                self.assertEqual(a['carry'], b['carry'])
-                self.assertEqual(a['stats']['steps_by'], b['stats']['stepsBy'])
-                self.assertEqual(a['stats']['switches'], b['stats']['switches'])
-                self.assertEqual(counts_agree(a['stats'], b['stats']), [])
-        # Stiff after the first, so the second starts there: no Tsit5 at all.
-        self.assertTrue(mine[0]['carry']['stiff'])
-        self.assertGreater(mine[0]['stats']['steps_by']['Tsit5'], 0)
-        self.assertNotIn('Tsit5', mine[1]['stats']['steps_by'])
-        self.assertEqual(mine[1]['stats']['switches'], 0)
-        # Without the carry each solve starts on Tsit5 again.
-        self.assertGreater(solves(False)[1]['stats']['steps_by']['Tsit5'], 0)
+        for solver, theirs in zip(('auto_julia', 'auto'), (r['solves'] for r in js['runs'])):
+            mine = solves(solver, True)
+            for k, (a, b) in enumerate(zip(mine, theirs)):
+                with self.subTest(solver=solver, solve=k):
+                    self.assertEqual(a['carry'], b['carry'])
+                    self.assertEqual(a['stats']['steps_by'], b['stats']['stepsBy'])
+                    self.assertEqual(a['stats']['switches'], b['stats']['switches'])
+                    self.assertEqual(counts_agree(a['stats'], b['stats']), [])
+            if solver == 'auto_julia':
+                # Stiff after the first, so the second starts there: no Tsit5 at all.
+                self.assertTrue(mine[0]['carry']['stiff'])
+                self.assertGreater(mine[0]['stats']['steps_by']['Tsit5'], 0)
+                self.assertNotIn('Tsit5', mine[1]['stats']['steps_by'])
+                self.assertEqual(mine[1]['stats']['switches'], 0)
+                # Without the carry each solve starts on Tsit5 again.
+                self.assertGreater(solves(solver, False)[1]['stats']['steps_by']['Tsit5'], 0)
+            else:
+                # Vern7 at a tenth of 1e-6, then the NDF; the NDF throughout after.
+                self.assertEqual(mine[0]['carry'], {'ndf': True})
+                self.assertEqual(list(mine[0]['stats']['steps_by']), ['Vern7', 'NDF'])
+                self.assertEqual(mine[0]['stats']['switches'], 1)
+                self.assertEqual(list(mine[1]['stats']['steps_by']), ['NDF'])
+                self.assertEqual(mine[1]['stats']['switches'], 0)
+                self.assertGreater(solves(solver, False)[1]['stats']['steps_by']['Vern7'], 0)
 
         # Through the runner: a stiff model restarted by a discrete event at
-        # t = 5. The solve after it goes on with Rosenbrock23, as the
-        # application's; handed a fresh carry, it would start on Tsit5 again
-        # and take another path altogether.
-        m = kp_model_restarted()
-        js_run = engine('run', model=m, overrides={})
-        res = run_project(Project(json.loads(json.dumps(m))), compiled=False)
-        self.assertEqual(res.stats['events'], 1)
-        self.assertEqual(res.stats['steps_by'], js_run['stats']['stepsBy'])
-        self.assertEqual(res.stats['switches'], js_run['stats']['switches'])
+        # t = 5. The solve after it goes on as the one before ended -- with
+        # Rosenbrock23, or the NDF -- as the application's; handed a fresh
+        # carry, it would start on the explicit method again and take another
+        # path altogether.
         from kompartment.engine import solverset
-        handed = solverset.SOLVERS['auto']
-        with mock.patch.dict(solverset.SOLVERS,
-                             {'auto': lambda f, tspan, y0, opts: handed(f, tspan, y0, {**opts, 'carry': {}})}):
-            fresh = run_project(Project(json.loads(json.dumps(m))), compiled=False)
-        self.assertNotEqual(fresh.stats['steps_by'], res.stats['steps_by'])
+        for solver in ('auto_julia', 'auto'):
+            with self.subTest(solver=solver, through='the runner'):
+                m = kp_model_restarted(solver)
+                js_run = engine('run', model=m, overrides={})
+                res = run_project(Project(json.loads(json.dumps(m))), compiled=False)
+                self.assertEqual(res.stats['events'], 1)
+                self.assertEqual(res.stats['steps_by'], js_run['stats']['stepsBy'])
+                self.assertEqual(res.stats['switches'], js_run['stats']['switches'])
+                handed = solverset.SOLVERS[solver]
+                with mock.patch.dict(solverset.SOLVERS,
+                                     {solver: lambda f, tspan, y0, opts, h=handed: h(f, tspan, y0,
+                                                                                     {**opts, 'carry': {}})}):
+                    fresh = run_project(Project(json.loads(json.dumps(m))), compiled=False)
+                self.assertNotEqual(fresh.stats['steps_by'], res.stats['steps_by'])
 
     def test_a_chain_of_120_at_a_tight_tolerance(self) -> None:
         """The chain of 120 at reltol 1e-6: Tsit5 and FBDF, back and forth
@@ -1181,8 +1238,8 @@ class Switching(unittest.TestCase):
         package's LU, the port's run is the application's step for step
         (BitIdentity.test_runs_too_long_for_until_known)."""
         opts = {'rtol': 1e-6, 'abstol': 1e-9}
-        js = bridge('solve', runs=[{'problem': 'chain120', 'solver': 'auto', 'opts': opts}])['runs'][0]
-        mine = run_here('chain120', 'auto', opts)
+        js = bridge('solve', runs=[{'problem': 'chain120', 'solver': 'auto_julia', 'opts': opts}])['runs'][0]
+        mine = run_here('chain120', 'auto_julia', opts)
         here, there = mine['stats'], js['stats']
         self.assertEqual(list(here['steps_by']), ['Tsit5', 'FBDF'])
         self.assertEqual(list(there['stepsBy']), ['Tsit5', 'FBDF'])
@@ -1197,21 +1254,26 @@ class Switching(unittest.TestCase):
 
     def test_the_run_log_says_which_methods_took_the_steps(self) -> None:
         from kompartment.engine import runlog
-        model = example('biosphere')
-        model['simulation']['solver'] = 'auto'
-        res = run_project(Project(json.loads(json.dumps(model))))
-        by = res.stats['steps_by']
-        self.assertEqual(sum(by.values()), res.stats['nsteps'] - res.stats['nfailed'])
-        line = runlog.describe_method_steps(runlog.payload_of(res)['stats'])
-        self.assertRegex(line, r'^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$')
-        log = runlog.run_log(res, build='test')
-        self.assertIn(f'\n  methods: {line}\n', log)
-        self.assertIn(f'methods: {line}', res.summary())
-        self.assertEqual(runlog.payload_of(res)['stats']['stepsBy'], by)
-        # And the application's run of it, logged by both.
-        js_run = engine('run', model=example('biosphere'), overrides={'solver': 'auto'})
-        if all(res.stats.get(k) == js_run['stats'].get(k) for k in COUNTS):
-            self.assertEqual(line, runlog.describe_method_steps(js_run['stats']))
+        # At a tenth of 1e-6, Vern7 until the run turns stiff, and the NDF from
+        # there; DifferentialEquations.jl's own takes Tsit5 and Rosenbrock23.
+        for solver, pattern in (('auto', r'^Vern7 \d+ steps?, NDF \d+; 1 switch$'),
+                                ('auto_julia', r'^Tsit5 \d+ steps?, Rosenbrock23 \d+; \d+ switch(es)?$')):
+            with self.subTest(solver=solver):
+                model = example('biosphere')
+                model['simulation']['solver'] = solver
+                res = run_project(Project(json.loads(json.dumps(model))))
+                by = res.stats['steps_by']
+                self.assertEqual(sum(by.values()), res.stats['nsteps'] - res.stats['nfailed'])
+                line = runlog.describe_method_steps(runlog.payload_of(res)['stats'])
+                self.assertRegex(line, pattern)
+                log = runlog.run_log(res, build='test')
+                self.assertIn(f'\n  methods: {line}\n', log)
+                self.assertIn(f'methods: {line}', res.summary())
+                self.assertEqual(runlog.payload_of(res)['stats']['stepsBy'], by)
+                # And the application's run of it, logged by both.
+                js_run = engine('run', model=example('biosphere'), overrides={'solver': solver})
+                if all(res.stats.get(k) == js_run['stats'].get(k) for k in COUNTS):
+                    self.assertEqual(line, runlog.describe_method_steps(js_run['stats']))
         # Every other solver is one method, and says nothing of the kind.
         model['simulation']['solver'] = 'ndf'
         ndf = run_project(Project(json.loads(json.dumps(model))))
@@ -1220,16 +1282,18 @@ class Switching(unittest.TestCase):
         self.assertIsNone(runlog.describe_method_steps(ndf.stats))
 
 
-def kp_model_restarted() -> Dict[str, Any]:
-    """A stiff chain (A to B at 1e4 a year) and a discrete event at t = 5,
+def kp_model_restarted(solver: str = 'auto_julia') -> Dict[str, Any]:
+    """Two compartments exchanging at 1e4 a year and draining slowly, stiff
+    for as long as anything is left in them, and a discrete event at t = 5,
     at which the runner starts the solver again."""
     import kompartment as kp
     m = kp.Model.new('Stiff and restarted')
-    m.simulation.update(end_time=20, output_points=21, spacing='linear', rtol=1e-6, abstol=1e-10, solver='auto')
+    m.simulation.update(end_time=20, output_points=21, spacing='linear', rtol=1e-6, abstol=1e-10, solver=solver)
     m.add_compartment('A', initial='1')
     m.add_compartment('B')
     m.add_compartment('C')
     m.add_transfer('A', 'B', rate='1e4')
+    m.add_transfer('B', 'A', rate='1e4')
     m.add_transfer('B', 'C', rate='0.5')
     m.add_trigger('Tick', first='time', second='5', direction='rising')
     m.add_snapshot('At_tick', target='B', trigger='Tick', initial='0')
@@ -1279,9 +1343,9 @@ class Krylov(unittest.TestCase):
         application's steps, and its GMRES iterations within
         GMRES_ITERATIONS_SHARE."""
         cases = [('heat', 'fbdf_krylov', {'rtol': 1e-6, 'abstol': 1e-8}),
-                 ('heat', 'auto', {'rtol': 1e-3, 'abstol': 1e-6}),
-                 ('heat', 'auto', {'rtol': 1e-6, 'abstol': 1e-9}),
-                 ('long_chain', 'auto', {'rtol': 1e-3, 'abstol': 1e-6})]
+                 ('heat', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6}),
+                 ('heat', 'auto_julia', {'rtol': 1e-6, 'abstol': 1e-9}),
+                 ('long_chain', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6})]
         theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
         for (name, solver, opts), js in zip(cases, theirs):
             with self.subTest(solver=solver):
@@ -1297,7 +1361,7 @@ class Krylov(unittest.TestCase):
                 # units at worst when written, GMRES's left-over residual).
                 a, b = np.array(mine['y']), np.array(js['y'])
                 self.assertLess(float(np.max(np.abs(a - b) / (opts['abstol'] + opts['rtol'] * np.abs(b)))), 0.1)
-                if solver == 'auto':
+                if solver == 'auto_julia':
                     self.assertEqual(list(here['steps_by']), ['Tsit5', 'KrylovFBDF'])
                     self.assertEqual(here['steps_by'], there['stepsBy'])
                     # One switch, as OrdinaryDiffEq makes it. On diffusion
@@ -1421,6 +1485,209 @@ class Explicit(unittest.TestCase):
         self.assertEqual([jsmath.log10(x) for x in xs], theirs)
 
 
+# The default algorithm told to hand off every stiff method, as ``auto`` tells
+# it: problems stiff from the first steps, stiff after a non-stiff stretch,
+# never stiff; and started on the stiff side, where it stops before a step.
+HAND_OFF = ['Rosenbrock23', 'Rodas5P', 'FBDF', 'KrylovFBDF']
+HAND_OFF_RUNS: List[Dict[str, Any]] = [
+    {'problem': 'robertson', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': HAND_OFF},
+     'opts': {'reltol': 1e-7, 'abstol': 1e-11}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': HAND_OFF},
+     'opts': {'reltol': 1e-4, 'abstol': 1e-7}},
+    {'problem': 'hires', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': HAND_OFF},
+     'opts': {'reltol': 1e-4, 'abstol': 1e-7}},
+    {'problem': 'chain120', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': HAND_OFF},
+     'opts': {'reltol': 1e-4, 'abstol': 1e-7}},
+    {'problem': 'kepler', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': HAND_OFF},
+     'opts': {'reltol': 1e-7, 'abstol': 1e-9}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': ['Rosenbrock23'],
+                                                                        'stiffalgfirst': True}, 'opts': {}},
+    {'problem': 'vdp1000', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'handOff': ['KrylovFBDF']}, 'opts': {}},
+]
+
+
+@needs_app
+class HandOff(unittest.TestCase):
+    """``auto``: the default algorithm stopping where it would have turned
+    stiff, the NDF going on from there, and the corners of the clock-read
+    tables the explicit methods land on."""
+
+    def test_the_package_stops_where_it_would_have_switched(self) -> None:
+        theirs = bridge('package', runs=HAND_OFF_RUNS)['runs']
+        mine = [run_package(r['problem'], r['alg'], r.get('algOptions'), r['opts']) for r in HAND_OFF_RUNS]
+        handed = 0
+        for r, js, here in zip(HAND_OFF_RUNS, theirs, mine):
+            with self.subTest(**r):
+                self.assertNotIn('error', js)
+                self.assertEqual(here['retcode'], js['retcode'])
+                self.assertEqual(here['stats']['stepsBy'], js['stats']['stepsBy'])
+                self.assertEqual(here['stats']['switches'], js['stats']['switches'])
+                self.assertEqual(len(here['t']), len(js['t']))
+                if js['handOff'] is None:
+                    self.assertIsNone(here['handOff'])
+                    continue
+                handed += 1
+                self.assertEqual(here['stats']['switches'], 0)
+                a, b = here['handOff'], js['handOff']
+                self.assertEqual((a['from'], a['to']), (b['from'], b['to']))
+                self.assertEqual(here['message'].split(' at t = ')[0], js['message'].split(' at t = ')[0])
+                # The same steps a last bit apart in size (see Switching): on
+                # Robertson, where the explicit method runs at the edge of its
+                # stability, 1e-6 apart at the hand-off, and the states there
+                # 1.2e-9 of the largest (BitIdentity has them bit for bit).
+                self.assertLessEqual(abs(a['t'] - b['t']), 1e-5 * max(1.0, abs(b['t'])))
+                u, u_js = np.array(a['u']), np.array(b['u'])
+                self.assertLess(float(np.max(np.abs(u - u_js)) / np.max(np.abs(u_js))), 1e-6)
+        self.assertEqual(handed, 5)
+        by = {(r['problem'], json.dumps(r['algOptions'])): m for r, m in zip(HAND_OFF_RUNS, mine)}
+        # Stopped where the default algorithm would have switched: its run up
+        # to there, the same rows, and the state at its last accepted step.
+        whole = run_package('vdp1000', 'DefaultODEAlgorithm', None, {'reltol': 1e-4, 'abstol': 1e-7})
+        cut = by[('vdp1000', json.dumps({'handOff': HAND_OFF}))]
+        first = whole['stats']['switchLog'][0]
+        self.assertEqual((cut['handOff']['t'], cut['handOff']['from'], cut['handOff']['to']),
+                         (first['t'], 'Tsit5', 'Rosenbrock23'))
+        k = sum(1 for t in whole['t'] if t <= first['t'])
+        self.assertEqual(cut['t'], whole['t'][:k])
+        self.assertEqual(cut['u'], whole['u'][:k])
+        # Started on a method it hands off: before a step, at the start.
+        start = by[('vdp1000', json.dumps({'handOff': ['Rosenbrock23'], 'stiffalgfirst': True}))]
+        self.assertEqual((start['retcode'], start['stats']['nsteps'], start['handOff']['t'],
+                          start['handOff']['from']), ('HandedOff', 0, 0.0, None))
+        self.assertEqual(start['handOff']['u'], problems()['vdp1000']['y0'])
+        # A method it never chooses is no reason to stop.
+        other = by[('vdp1000', json.dumps({'handOff': ['KrylovFBDF']}))]
+        plain = run_package('vdp1000', 'DefaultODEAlgorithm', None, {})
+        self.assertEqual((other['retcode'], other['t'], other['u']), ('Success', plain['t'], plain['u']))
+
+    def test_the_explicit_steps_land_on_the_corners(self) -> None:
+        """y' = s(t), s rising until 3.7 and falling after: y has a corner in
+        its slope there that only the table says. A step ends on it, and the
+        rows are the closed form's; with more corners than it lands on, the
+        run is the NDF's from the start and from then on."""
+        corner = 3.7
+
+        def s(t: float) -> float:
+            return t if t < corner else 2 * corner - t
+
+        def exact(t: float) -> float:
+            if t < corner:
+                return t * t / 2
+            return corner * corner / 2 + 2 * corner * (t - corner) - (t * t - corner * corner) / 2
+
+        grid = np.arange(11, dtype=float)
+        steps: List[float] = []
+        r = ported.auto(lambda t, y: np.array([s(t)]), grid, np.zeros(1),
+                        {'rtol': 1e-3, 'abstol': 1e-3, 'table_corners': lambda a, b, limit: [corner],
+                         'on_accepted': lambda t, y: steps.append(float(t))})
+        self.assertIn(corner, steps)
+        self.assertLess(max(abs(r['y'][k][0] - exact(t)) for k, t in enumerate(r['t'])), 1e-6)
+        carry: Dict[str, Any] = {}
+        many = ported.auto(lambda t, y: np.array([s(t)]), grid, np.zeros(1),
+                           {'rtol': 1e-3, 'abstol': 1e-3, 'carry': carry,
+                            'table_corners': lambda a, b, limit: None if limit < 150 else []})
+        self.assertEqual((list(many['stats']['steps_by']), many['stats']['switches'], carry), (['NDF'], 0,
+                                                                                             {'ndf': True}))
+        self.assertEqual(many['stats']['solver'], 'auto')
+
+    def test_a_handed_run_has_a_row_at_every_time_once(self) -> None:
+        """Robertson: Vern7 for a few steps, then the NDF, inside the grid --
+        a row at every time asked, the recorders told of each once, every step
+        someone's, and the answer the NDF's own to its tolerance."""
+        f, jac = functions('robertson')
+        grid = np.array([0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.1, 1, 10, 100, 1000])
+        outputs = [0]
+        def told(t: float, y: np.ndarray) -> None:
+            outputs[0] += 1
+        r = ported.auto(f, grid, np.array([1.0, 0.0, 0.0]), {'rtol': 1e-6, 'abstol': 1e-10, 'on_output': told})
+        self.assertEqual((r['stats']['switches'], list(r['stats']['steps_by'])), (1, ['Vern7', 'NDF']))
+        self.assertEqual(r['t'].tolist(), grid.tolist())
+        self.assertEqual((len(r['y']), outputs[0]), (grid.size, grid.size - 1))
+        self.assertEqual(sum(r['stats']['steps_by'].values()), r['stats']['nsteps'] - r['stats']['nfailed'])
+        from kompartment.engine.solverset import variable_order
+        ref = variable_order(f, grid, np.array([1.0, 0.0, 0.0]), {'rtol': 1e-10, 'abstol': 1e-14})
+        for k in range(grid.size):
+            d = np.abs(r['y'][k] - ref['y'][k]) / (1e-10 + 1e-6 * np.abs(ref['y'][k]))
+            self.assertLess(float(np.max(d)), 50, f't = {grid[k]}')
+
+    def test_the_runner_hands_auto_the_tables_corners(self) -> None:
+        """Through the runner, as the application's: a table of 12 points, the
+        explicit methods landing on every corner, and one of 150, more than
+        they land on, the NDF's run from the start -- that NDF run itself,
+        here and there, which steps over the corners and is held to the
+        application's as the NDF is (2.7 % apart in steps when written: 1814
+        against 1864, the plain ndf's own difference on this model)."""
+        import kompartment as kp
+
+        def model(points: int, solver: str) -> Dict[str, Any]:
+            m = kp.Model.new('Cornered')
+            m.simulation.update(end_time=50, output_points=26, spacing='linear', rtol=1e-6, abstol=1e-10,
+                                solver=solver)
+            m.add_compartment('A', initial='100')
+            m.add_compartment('B')
+            m.add_lookup('Flow', [[50 * i / (points - 1), 0.1 + 0.05 * (i % 3)] for i in range(points)])
+            m.add_transfer('A', 'B', rate='Flow')
+            m.add_transfer('B', None, rate='0.02')
+            return json.loads(json.dumps(m.to_dict()))
+        for points, expected in ((12, ['Vern7']), (150, ['NDF'])):
+            raw = model(points, 'auto')
+            with self.subTest(points=points):
+                js = engine('run', model=raw, overrides={})
+                res = run_project(Project(json.loads(json.dumps(raw))), compiled=False)
+                self.assertEqual(list(res.stats['steps_by']), expected)
+                self.assertEqual(list(js['stats']['stepsBy']), expected)
+                if points == 12:
+                    self.assertEqual({k: res.stats[k] for k in COUNTS[:3]}, {k: js['stats'][k] for k in COUNTS[:3]})
+                else:
+                    plain = model(points, 'ndf')
+                    js_ndf = engine('run', model=plain, overrides={})
+                    ndf = run_project(Project(json.loads(json.dumps(plain))), compiled=False)
+                    for stats, by, of in ((res.stats, res.stats['steps_by'], ndf.stats),
+                                          (js['stats'], js['stats']['stepsBy'], js_ndf['stats'])):
+                        self.assertEqual(stats['nsteps'], of['nsteps'] + of['nfailed'])
+                        self.assertEqual(by['NDF'], of['nsteps'])
+                    self.assertTrue(within(ndf.stats['nsteps'], js_ndf['stats']['nsteps'], 0.05, 2))
+                outs = res.outputs()
+                for o, mine, theirs in zip(outs, res.series_many(outs), js['columns']):
+                    if o['kind'] == 'compartment':
+                        theirs = np.array(theirs, dtype=float)
+                        self.assertLess(float(np.max(np.abs(mine - theirs))) / float(np.max(np.abs(theirs))), 1e-5)
+
+    def test_the_table_corners_are_the_applications(self) -> None:
+        """``System.table_corners`` against the application's ``tableCorners``:
+        linear, nearest, cyclic, a function of its argument, the limit, two
+        points a rounding apart -- and the bundled examples."""
+        from kompartment.engine.builder import build_system
+        raw = {
+            'name': 'corners', 'simulation': {'start_time': 0, 'end_time': 100, 'output_points': 11,
+                                              'spacing': 'linear', 'rtol': 1e-6, 'abstol': 1e-9},
+            'index_lists': [], 'expressions': [], 'inflows': [], 'parameters': [],
+            'compartments': [{'name': 'A', 'initial': '1', 'index_lists': []}],
+            'transfers': [{'name': 'T', 'from': 'A', 'to': None, 'rate': 'L1 * 1e-3 + L2 * 1e-3 + L3 * 1e-3',
+                           'index_lists': []}],
+            'lookups': [
+                {'name': 'L1', 'interpolation': 'linear', 'points': [[0, 1], [10, 2], [20, 1.5]]},
+                {'name': 'L2', 'interpolation': 'nearest', 'points': [[10, 1], [30, 2]]},
+                {'name': 'L3', 'interpolation': 'linear', 'cyclic': True, 'points': [[0, 0], [10, 1], [25, 0]]},
+                {'name': 'F', 'interpolation': 'linear', 'argument': 'x', 'points': [[0, 0], [33, 1], [66, 0]]},
+            ],
+        }
+        spans = [[0, 100, None], [100, 0, None], [15, 55, None], [0, 100, 7], [0, 100, 8], [-60, 260, None],
+                 [-60, 260, 30], [0.5, 1e4, 1000]]
+        stepped = json.loads(json.dumps(raw))
+        stepped['lookups'][0]['points'] = [[0, 1], [10, 2], [10 + 1e-12, 2.5], [20, 1.5]]
+        models = [raw, stepped] + [example(n) for n in ('lookup-driver', 'recorders', 'post-processing')]
+        for model in models:
+            with self.subTest(model=model['name']):
+                js = engine('corners', model=model, spans=spans)['corners']
+                system = build_system(Project(json.loads(json.dumps(model))), jacobian=False)
+                mine = [system.table_corners(a, b, math.inf if limit is None else limit) for a, b, limit in spans]
+                self.assertEqual(mine, js)
+        system = build_system(Project(json.loads(json.dumps(raw))), jacobian=False)
+        self.assertEqual(system.table_corners(0, 100), [10, 20, 25, 35, 50, 60, 75, 85])
+        self.assertIsNone(system.table_corners(0, 100, 7))
+
+
 @needs_app
 class BitIdentity(unittest.TestCase):
     """With the package's dense LU and V8's pow put back, a run is the
@@ -1450,19 +1717,20 @@ class BitIdentity(unittest.TestCase):
         # takes a run one pow further along, and at rtol 1e-6 this
         # second-order method takes 2700 steps on van der Pol and 15 900 on
         # the forcing, more than its rounds reach (the next test has them).
-        cases = [(name, s, dict(BASE[name])) for name in ('two_events', 'event_rising') for s in NEW]
-        cases += [(name, s, dict(BASE[name])) for name in ('vdp', 'forced') for s in NEW if s != 'rosenbrock23']
-        cases += [('robertson', s, dict(BASE['robertson'])) for s in ('auto', 'fbdf_krylov', 'rosenbrock23')]
-        cases += [('hires', s, dict(BASE['hires'])) for s in ('auto', 'fbdf_krylov')]
+        cases = [(name, s, dict(BASE[name])) for name in ('two_events', 'event_rising') for s in NEW if s != 'auto']
+        cases += [(name, s, dict(BASE[name])) for name in ('vdp', 'forced') for s in NEW
+                  if s not in ('auto', 'rosenbrock23')]
+        cases += [('robertson', s, dict(BASE['robertson'])) for s in ('auto_julia', 'fbdf_krylov', 'rosenbrock23')]
+        cases += [('hires', s, dict(BASE['hires'])) for s in ('auto_julia', 'fbdf_krylov')]
         # The chains dense, as nonneg is above: sparse, they would be
         # factorised by SuperLU here and by the package's own sparse LU there.
         # The chain of 120 switches 23 times at 1e-3 (Switching has it at 1e-6).
-        cases += [('vdp1000', 'auto', {'rtol': 1e-3, 'abstol': 1e-6}),
-                  ('chain', 'auto', {**BASE['chain'], 'matrix': 'dense'}),
-                  ('chain120', 'auto', {'rtol': 1e-3, 'abstol': 1e-6, 'matrix': 'dense'}),
+        cases += [('vdp1000', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6}),
+                  ('chain', 'auto_julia', {**BASE['chain'], 'matrix': 'dense'}),
+                  ('chain120', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6, 'matrix': 'dense'}),
                   ('kepler', 'vern7', {'rtol': 1e-8, 'abstol': 1e-10}),
-                  ('nonneg', 'auto', {**BASE['nonneg'], 'matrix': 'dense'}),
-                  ('robertson', 'auto', {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})]
+                  ('nonneg', 'auto_julia', {**BASE['nonneg'], 'matrix': 'dense'}),
+                  ('robertson', 'auto_julia', {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})]
         theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
         packaged = [{'problem': 'heat', 'alg': 'DefaultODEAlgorithm', 'opts': {'reltol': 1e-6, 'abstol': 1e-9}},
                     {'problem': 'idle', 'alg': 'DefaultODEAlgorithm', 'algOptions': {'stillIsStiff': True},
@@ -1490,13 +1758,90 @@ class BitIdentity(unittest.TestCase):
                 self.assertEqual(mine['t'], js['t'])
                 self.assertEqual(mine['u'], js['u'])
 
+    def test_what_auto_hands_the_ndf_is_the_applications(self) -> None:
+        """``auto``: the package stopping for the NDF, where and with what
+        state; a run that stays explicit, corners and events included, bit
+        for bit; and a run handed on, up to the hand-off. From there it is the
+        NDF's, whose arithmetic is this engine's own (ndf.py's ``**`` and
+        LU), held to the application's by Problems and Examples."""
+        packaged = HAND_OFF_RUNS[:5]
+        their_packaged = bridge('package', runs=packaged)['runs']
+        explicit = [('forced', 'auto', {**BASE['forced'], 'corners': [2.5, 5.0, 7.5]}),
+                    ('event', 'auto', {**BASE['event'], 'corners': [0.3, 0.7, 2.0]}),
+                    ('two_events', 'auto', dict(BASE['two_events']))]
+        handed = [('robertson', 'auto', dict(BASE['robertson'])),
+                  ('vdp1000', 'auto', {'rtol': 1e-3, 'abstol': 1e-6}),
+                  ('chain', 'auto', {**BASE['chain'], 'matrix': 'dense'}),
+                  ('nonneg', 'auto', {**BASE['nonneg'], 'matrix': 'dense'})]
+        cases = explicit + handed
+        theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
+        attempts = [(lambda r=r: run_package(r['problem'], r['alg'], r.get('algOptions'), r['opts']))
+                    for r in packaged]
+        attempts += [(lambda n=n, s=s, o=o: run_here(n, s, o)) for n, s, o in cases]
+        runs = until_known(attempts)
+        for r, js, mine in zip(packaged, their_packaged, runs):
+            with self.subTest(**r):
+                for key in ('naccept', 'nreject', 'nf', 'stepsBy', 'switches'):
+                    self.assertEqual(mine['stats'].get(key), js['stats'].get(key), key)
+                self.assertEqual((mine['retcode'], mine['message']), (js['retcode'], js['message']))
+                self.assertEqual(mine['handOff'], js['handOff'])
+                self.assertEqual(mine['t'], js['t'])
+                self.assertEqual(mine['u'], js['u'])
+        for (name, solver, opts), js, mine in zip(cases, theirs, runs[len(packaged):]):
+            with self.subTest(problem=name, opts=opts):
+                by, by_js = mine['stats']['steps_by'], js['stats']['stepsBy']
+                if (name, solver, opts) in explicit:
+                    self.assertEqual(len(by), 1)
+                    self.assertEqual({k: mine['stats'][k] for k in COUNTS}, {k: js['stats'][k] for k in COUNTS})
+                    self.assertEqual(by, by_js)
+                    self.assertEqual(mine['accepted'], js['accepted'])
+                    self.assertEqual(mine['t'], js['t'])
+                    self.assertEqual(mine['y'], js['y'])
+                    continue
+                # Handed on: the explicit method's steps, and every row up to
+                # the hand-off, which is its last accepted step.
+                first = list(by)[0]
+                self.assertEqual((list(by)[1], list(by_js)), ('NDF', [first, 'NDF']))
+                self.assertEqual(by[first], by_js[first])
+                k = by[first]
+                self.assertEqual(mine['accepted'][:k], js['accepted'][:k])
+                at = mine['accepted'][k - 1]
+                rows = sum(1 for t in mine['t'] if t <= at)
+                self.assertEqual(mine['t'], js['t'])
+                self.assertEqual(mine['y'][:rows], js['y'][:rows])
+
+    def test_the_audit_s_rows_whole(self) -> None:
+        """With the mass-balance audit on, the methods that are handed its
+        budgets' rows whole -- a Rosenbrock, FBDF, Radau, DifferentialEquations.jl's
+        switch -- on matrices that hold them, the application's runs step for
+        step and bit for bit (dense, as the chains above)."""
+        cases = [('decay-chain', 'fbdf'), ('decay-chain', 'auto_julia'), ('decay-chain', 'radau5'),
+                 ('audit', 'rodas5p'), ('audit', 'auto_julia')]
+        models = []
+        for name, solver in cases:
+            m = audit_model(solver) if name == 'audit' else example(name)
+            m['simulation'].update(mass_balance=True, solver=solver, matrix='dense')
+            models.append(m)
+        with asking_v8_at_every_call():
+            results = [run_project(Project(json.loads(json.dumps(m))), compiled=False) for m in models]
+        for (name, solver), m, res in zip(cases, models, results):
+            with self.subTest(model=name, solver=solver):
+                self.assertEqual(res.jacobian['budgetRows'], 'exact')
+                js = engine('run', model=m, overrides={})
+                for key in ('nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves'):
+                    self.assertEqual(res.stats.get(key), js['stats'].get(key), key)
+                outs = res.outputs()
+                for o, mine, theirs in zip(outs, res.series_many(outs), js['columns']):
+                    if o['kind'] == 'compartment':
+                        self.assertEqual(mine.tolist(), theirs, o['label'])
+
     def test_runs_too_long_for_until_known(self) -> None:
         """Rosenbrock23 where it takes thousands of steps, and the chain of
         120 at reltol 1e-6 switching near a thousand times (Switching holds
         the platform's run of it to the application's spread), with V8's pow
         asked at every call."""
         cases = [(name, 'rosenbrock23', dict(BASE[name])) for name in ('vdp', 'forced', 'hires')]
-        cases += [('chain120', 'auto', {'rtol': 1e-6, 'abstol': 1e-9, 'matrix': 'dense'})]
+        cases += [('chain120', 'auto_julia', {'rtol': 1e-6, 'abstol': 1e-9, 'matrix': 'dense'})]
         theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
         # Arguments no run meets, so that the answers are the Node process's.
         probe = [(1.2345678912345, 0.3141592653589793), (3.3e-7, 0.123456789), (0.987654321, -7.25)]
@@ -1525,8 +1870,12 @@ class BitIdentity(unittest.TestCase):
                  # to 500 rtol is this one exactly), Rosenbrock23 over the
                  # corners, the switch deciding by verdicts at its threshold,
                  # GMRES on the landscape's 28 states.
-                 ('recorders', 'auto'), ('lookup-driver', 'rosenbrock23'), ('decay-chain', 'auto'),
-                 ('landscape', 'fbdf_krylov'))
+                 ('recorders', 'auto_julia'), ('lookup-driver', 'rosenbrock23'), ('decay-chain', 'auto_julia'),
+                 ('landscape', 'fbdf_krylov'),
+                 # This tool's switching solver: Vern7 throughout, landing on
+                 # the tables' corners; and Vern7 handing the run to the NDF.
+                 ('lookup-driver', 'auto'), ('recorders', 'auto'), ('decay-chain', 'auto'),
+                 ('waste-packages', 'auto'))
         models = []
         for name, solver in cases:
             model = example(name)
@@ -1544,9 +1893,19 @@ class BitIdentity(unittest.TestCase):
                 outs = res.outputs()
                 self.assertEqual([o['label'] for o in outs], js['labels'])
                 self.assertEqual(res.t.tolist(), js['t'])
+                # A run `auto` handed to the NDF is the application's to the
+                # hand-off and takes its steps after it, read off this
+                # engine's own NDF arithmetic: 5e-13 apart when written.
+                handed = 'NDF' in (res.stats.get('steps_by') or {})
                 for o, mine, theirs in zip(outs, res.series_many(outs), js['columns']):
-                    if o['kind'] == 'compartment':
+                    if o['kind'] != 'compartment':
+                        continue
+                    if not handed:
                         self.assertEqual(mine.tolist(), theirs, o['label'])
+                        continue
+                    theirs = np.array(theirs, dtype=float)
+                    scale = float(np.max(np.abs(theirs))) or 1.0
+                    self.assertLess(float(np.max(np.abs(np.asarray(mine) - theirs))) / scale, 1e-10, o['label'])
 
 
 # The share of the application's steps each example may differ by, and why.
@@ -1578,7 +1937,7 @@ NEW_STEP_SHARE = {
     # The switch from Vern7 to Rodas5P is decided by verdicts at its
     # threshold, and a last bit moves which: 403 steps against 447 (397 of
     # Vern7's and 4 of Rodas5P's against 322 and 121).
-    ('decay-chain', 'auto'): 0.2,
+    ('decay-chain', 'auto_julia'): 0.2,
 }
 
 # The rows of a run that took other steps than the application's are held to
@@ -1590,14 +1949,14 @@ ROW_BOUND = {
     # from the application's, which is 2.7e-6 out; nudged by 3e-9 relative,
     # thirty runs here and eight there all land between 7e-7 and 4e-6.
     ('recorders', 'vern7'): 500,
-    ('recorders', 'auto'): 500,
+    ('recorders', 'auto_julia'): 500,
 }
 
 # farfield (1266 states) only with the quick methods: the application's
 # RadauIIA5 takes half a minute there (its complex half is dense) and its
 # TRBDF2 more than twenty-five; the switch and the matrix-free FBDF spend
 # 200 000 evaluations of f in GMRES, half a minute there and most of one here.
-FARFIELD = ('rodas5p', 'kencarp4', 'rosenbrock23')
+FARFIELD = ('rodas5p', 'kencarp4', 'rosenbrock23', 'auto')
 
 # Stiff from the first steps, where an explicit method needs over a million.
 STIFF_EXAMPLES = ('biosphere', 'farfield')
@@ -1637,8 +1996,13 @@ class Examples(unittest.TestCase):
                         share = NEW_STEP_SHARE.get((name, solver), STEP_SHARE.get(name, STEP_SHARE['default']))
                         self.assertTrue(within(res.stats['nsteps'], n_js, share, 3),
                                         f"{res.stats['nsteps']} steps against {n_js}")
+                        # The NDF `auto` hands a run to factorises sparsely
+                        # with SuperLU here and its own LU there, and above
+                        # 24 states rather than 64: its own matter, held to
+                        # the application's in test_engine_parity.py.
+                        handed = 'NDF' in (res.stats.get('steps_by') or {})
                         for key in ('sparse', 'fill'):
-                            if key in js['stats']:
+                            if key in js['stats'] and not handed:
                                 self.assertEqual(res.stats.get(key), js['stats'][key], key)
                     # The switch used the same methods, every solve of the run summed.
                     if js['stats'].get('stepsBy') is not None or 'steps_by' in res.stats:

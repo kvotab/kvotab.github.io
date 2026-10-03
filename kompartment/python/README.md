@@ -285,8 +285,8 @@ A run is the application's run: the same model loaded the same way, built
 into the same equations in the same order, and solved by ports of the same
 solvers -- `ndf` (the default), `ros23`, `dp45`, the Julia-derived methods
 (`fbdf`, `qndf`, `rodas5p`, `radau5`, `kencarp4`, `trbdf2`, and `auto`,
-`fbdf_krylov`, `rosenbrock23`, `tsit5` and `vern7`, which came with
-DifferentialEquations.jl's default algorithm) and SciPy's `BDF`, `Radau` and
+`auto_julia`, `fbdf_krylov`, `rosenbrock23`, `tsit5` and `vern7`, which came
+with DifferentialEquations.jl's default algorithm) and SciPy's `BDF`, `Radau` and
 `LSODA` (`scipy_bdf`, `scipy_radau`, `scipy_lsoda`), which here run natively
 rather than in a browser's Python. The derivative is the application's to the
 last bit on the bundled examples; a run agrees with the application's to
@@ -295,19 +295,26 @@ exactly the same: each step size is chosen with a power, and JavaScript's
 `Math.pow` rounds differently from the C library's in the last place for
 about one argument in ten.
 
-`auto` is DifferentialEquations.jl's default algorithm: it starts on an
-explicit method (`tsit5`, or `vern7` below a relative tolerance of 1e-6),
+`auto_julia` is DifferentialEquations.jl's default algorithm: it starts on
+an explicit method (`tsit5`, or `vern7` below a relative tolerance of 1e-6),
 watches every step for stiffness, and switches to a stiff one once it finds
 it -- `rosenbrock23` up to 50 states (Rodas5P below 1e-6), FBDF up to 500,
 `fbdf_krylov` above -- and back when the stiffness passes. A run restarted at
-an event or a switch time goes on with the method it had. `fbdf_krylov` is
-FBDF with its Newton iterations solved by GMRES: no matrix is formed or
-stored, at the price of many iterations on a very stiff model.
+an event or a switch time goes on with the method it had. `auto`, the
+application's switching solver, starts and tests for stiffness the same way,
+with its explicit methods at a tenth of the tolerances and landing on every
+corner of the tables read at the clock, and once the run turns stiff hands
+the rest of it to `ndf`; a run restarted after that, or one whose tables turn
+more than a hundred times, is `ndf`'s from the start. On most models here it
+is the faster of the two by far. `fbdf_krylov` is FBDF with its Newton
+iterations solved by GMRES: no matrix is formed or stored, at the price of
+many iterations on a very stiff model.
 
 ```python
 res = m.run(solver='auto')
-res.stats['steps_by']                          # e.g. {'Tsit5': 78, 'Rosenbrock23': 1006}: accepted steps by method
+res.stats['steps_by']                          # e.g. {'Vern7': 66, 'NDF': 627}: accepted steps by method
 res.stats['switches']                          # how often it changed between them; the run log says both
+m.run(solver='auto_julia').stats['steps_by']   # e.g. {'Tsit5': 78, 'Rosenbrock23': 1006}
 m.run(solver='fbdf_krylov').stats.get('krylov_iters')  # GMRES's iterations, of a run in one solve
 ```
 
@@ -478,8 +485,8 @@ application's order. With numba installed every run goes further, whatever
 the model: its derivative is compiled to machine code -- every function of
 the language, the blocks that remember, discrete events, the clock worked out
 every `min_change_time`, far-field paths -- and so is the solver's loop, for
-the NDF, Rosenbrock (2,3), Dormand-Prince and the six Julia-derived methods
-first ported, step for step and event for event
+the NDF, Rosenbrock (2,3), Dormand-Prince, every Julia-derived method and the
+two switching solvers, step for step and event for event
 (`kompartment.engine.compiled`), so that a run returns to Python only when it
 ends. A compiled run takes the same steps as the Python path to the last bit:
 the same states, statistics, recorders and failures. So it is the default
@@ -495,10 +502,14 @@ res.stats.get('compiled_why')                  # why not compiled at all
 ```
 
 SciPy's three solvers keep the loop of their own, in Python, and run it on
-the compiled model: its derivative, what the recorders keep at each step. So,
-for now, do the five that came with the default algorithm (`auto`,
-`fbdf_krylov`, `rosenbrock23`, `tsit5`, `vern7`): the same steps as on the
-Python path, the loop not compiled yet.
+the compiled model: its derivative, what the recorders keep at each step.
+`auto` runs its explicit start on the compiled loop and hands the rest of the
+run to the compiled NDF; `auto_julia` switches between its methods there.
+Warm, against the Python loop: 9 to 57 times quicker on the bundled examples
+for the explicit methods, GMRES and `auto`, 4 to 6 times on 600 to 1600
+states for GMRES; 1.5 to 4 times where every step forms W from the model's
+analytic Jacobian (`rosenbrock23`, `auto_julia` on a small model), which is
+worked out in Python and called back.
 Local sensitivity integrates the model's derivative, compiled, in equations
 of its own (`m.local_sensitivity(..., compiled='auto')`).
 
@@ -607,7 +618,8 @@ discrete events, `min_change_time`, far-field paths of every kind, every
 solver and the solvers' settings, the non-negative constraint, sparse
 matrices and the solver's own steps as output;
 `test_engine_compiled_julia.py` does the same for the compiled loops of the
-six Julia-derived methods, and `test_engine_compiled_farfield.py` for a
+Julia-derived methods and the switching solvers, and
+`test_engine_compiled_farfield.py` for a
 far-field path whose every setting follows the clock or the state;
 `test_engine_compiled_cache.py` has processes compiling at once share the
 cache, and none find code it did not ask for. `tools/gen_data.mjs` writes the
@@ -618,6 +630,7 @@ ICRP 107 table and the reserved names from the application's sources;
 
 MIT, as Kompartment. See [LICENSE](LICENSE). The ports keep the notices of what
 they port, beside them: OrdinaryDiffEq.jl's in `kompartment/engine/solvers/julia/LICENSE`,
-GlobalSensitivity.jl's and SALib's in `kompartment/stats/`, all MIT. One file is under
-other terms: `kompartment/engine/solvers/julia/krylov.py` ports the GMRES of Krylov.jl
-and, like it, is subject to the Mozilla Public License 2.0.
+GlobalSensitivity.jl's and SALib's in `kompartment/stats/`, all MIT. Two files are under
+other terms: `kompartment/engine/solvers/julia/krylov.py` ports the GMRES of Krylov.jl,
+and `kompartment/engine/compiled/krylov.py` compiles that port; like Krylov.jl, they are
+subject to the Mozilla Public License 2.0.

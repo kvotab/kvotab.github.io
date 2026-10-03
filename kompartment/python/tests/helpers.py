@@ -45,6 +45,30 @@ def example(name: str) -> Dict[str, Any]:
     return json.loads((EXAMPLES / f'{name}.json').read_text('utf-8'))
 
 
+def audit_model(solver: str = 'ndf') -> Dict[str, Any]:
+    """waste-packages with the mass-balance audit on and every kind of term a
+    budget accumulates: a release delivered nowhere audited (the canisters'
+    own transfer taken out), a source, a dy/dt term, a move between families
+    (the nuclides' flux summed into one tank), decay and ingrowth, and an
+    event's move out of the model at an expected rate."""
+    m = example('waste-packages')
+    m['simulation'].update(mass_balance=True, solver=solver, end_time=1e5)
+    m['transfers'] = [t for t in m['transfers'] if t['name'] != 'Release']
+    m['compartments'].append({'name': 'Tank', 'index_lists': [], 'initial': '1', 'unit': 'Bq'})
+    m['transfers'].append({'name': 'ToTank', 'from': 'Geosphere', 'to': 'Tank', 'rate': '1e-4', 'unit': '1/year',
+                           'index_lists': ['Radionuclides'], 'sum_extra_indices': True})
+    m.setdefault('inflows', []).append({'name': 'Seep', 'to': 'NearField', 'rate': '1e3', 'unit': 'Bq/year',
+                                        'index_lists': ['Radionuclides']})
+    for c in m['compartments']:
+        if c['name'] == 'Geosphere':
+            c['dydt'] = '-1e-5 * Geosphere'
+    for e in m['events']:
+        if e['name'] == 'Glaciation':
+            e.update(timing='poisson', rate='1e-5', start='', until='')
+            e.pop('at', None)
+    return m
+
+
 def differences(a: Any, b: Any, path: str = '', out: List[str] = None) -> List[str]:
     """Where two JSON values differ, key order included, as readable lines."""
     out = [] if out is None else out

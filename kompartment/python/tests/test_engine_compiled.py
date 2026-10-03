@@ -421,11 +421,10 @@ class Identical(unittest.TestCase):
                 self.same(farfield(**block))
 
     def test_solvers_with_a_loop_of_their_own(self) -> None:
-        # The six Julia-derived methods first ported run on a compiled loop of
-        # their own (test_engine_compiled_julia.py takes them further); SciPy's
-        # run theirs in Python, on the compiled model, and so do the five that
-        # came with the default algorithm, whose loop is not compiled yet.
-        later = ('auto', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
+        # The Julia-derived methods, and the switching solvers, run on a
+        # compiled loop of their own (test_engine_compiled_julia.py takes them
+        # further); SciPy's run theirs in Python, on the compiled model.
+        later = ('auto', 'auto_julia', 'fbdf_krylov', 'rosenbrock23', 'tsit5', 'vern7')
         for solver in ('fbdf', 'qndf', 'rodas5p', 'radau5', 'kencarp4', 'trbdf2', 'scipy_bdf', 'scipy_radau',
                        'scipy_lsoda') + later:
             models = [chain, peaked]
@@ -434,7 +433,7 @@ class Identical(unittest.TestCase):
             for model in models:
                 with self.subTest(solver=solver, model=model.__name__):
                     _, b = self.same(model(solver=solver).project())
-                    looped = not solver.startswith('scipy') and solver not in later
+                    looped = not solver.startswith('scipy')
                     self.assertEqual(b.stats['compiled_loop'], looped)
                     if not looped:
                         self.assertIn(f"the solver '{solver}' keeps the loop of its own", b.stats['compiled_loop_why'])
@@ -464,8 +463,8 @@ class Behaviour(unittest.TestCase):
     def test_every_run_takes_the_compiled_path(self) -> None:
         # Discrete events, the recorders, min_change_time and every solver
         # included: compiled=True never says no. (SciPy refuses discrete events.)
-        cases = {'recorders': ('ndf', 'dp45', 'radau5', 'auto'),
-                 'farfield': ('ndf', 'radau5', 'scipy_bdf', 'scipy_lsoda'),
+        cases = {'recorders': ('ndf', 'dp45', 'radau5', 'auto', 'auto_julia'),
+                 'farfield': ('ndf', 'radau5', 'scipy_bdf', 'scipy_lsoda', 'auto'),
                  'waste-packages': ('ndf', 'dp45', 'radau5', 'scipy_lsoda', 'auto', 'rosenbrock23')}
         for name, solvers in cases.items():
             for solver in solvers:
@@ -476,8 +475,7 @@ class Behaviour(unittest.TestCase):
                     res = run(project, system=build_system(project), compiled=True)
                     self.assertTrue(res.stats['compiled'])
                     self.assertNotIn('compiled_why', res.stats)
-                    self.assertEqual(res.stats['compiled_loop'],
-                                     not solver.startswith('scipy') and solver not in ('auto', 'rosenbrock23'))
+                    self.assertEqual(res.stats['compiled_loop'], not solver.startswith('scipy'))
 
     def test_no_array_is_frozen_into_the_compiled_code(self) -> None:
         # Every array a model's code reads is handed in at run time: an array
