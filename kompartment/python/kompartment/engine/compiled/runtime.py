@@ -23,7 +23,10 @@ import numpy as np
 from numba import literal_unroll, njit, types
 from numba.extending import overload
 
+from ...stats._normal import _ERF_A as _NORMAL_ERF_A
+from ...stats._normal import _ERF_B as _NORMAL_ERF_B
 from ...stats._normal import _ERFC_COF as _NORMAL_ERFC_COF
+from ...stats._normal import ERF_NEAR
 from ..functions import AVOGADRO, FACTORIAL_MAX, LN2, SECONDS_PER_YEAR
 from . import (FAIL_INTERPOLATION_ARGS, FAIL_LOOKUP_NO_X, FAIL_PYTHON, FAIL_RANGE_END, FAIL_RANGE_START,
                FAIL_TRANSPORT_ABOVE, FAIL_TRANSPORT_BELOW, CompiledFailure, guard_numba_cache)
@@ -201,14 +204,31 @@ def _ulp1(a):
     return abs(a) * 2.0 ** -52
 
 
-# Numerical Recipes' coefficients, the very ones stats/_normal.py uses.
+# Numerical Recipes' coefficients, and Cody's for erf near zero: the very ones
+# stats/_normal.py uses.
 _ERFC_COF = np.array(_NORMAL_ERFC_COF, dtype=np.float64)
+_ERF_A = np.array(_NORMAL_ERF_A, dtype=np.float64)
+_ERF_B = np.array(_NORMAL_ERF_B, dtype=np.float64)
+
+
+@njit(cache=True, inline='always', error_model='numpy')
+def _erf_near(x):
+    y = abs(x)
+    ysq = y * y if y > 1.11e-16 else 0.0
+    num = _ERF_A[4] * ysq
+    den = ysq
+    for i in range(3):
+        num = (num + _ERF_A[i]) * ysq
+        den = (den + _ERF_B[i]) * ysq
+    return x * (num + _ERF_A[3]) / (den + _ERF_B[3])
 
 
 @njit(cache=True, inline='always', error_model='numpy')
 def _erfc1(x):
     if x != x:
         return np.nan
+    if abs(x) <= ERF_NEAR:
+        return 1 - _erf_near(x)
     z = abs(x)
     t = 2 / (2 + z)
     ty = 4 * t - 2
@@ -224,7 +244,10 @@ def _erfc1(x):
 
 @njit(cache=True, inline='always', error_model='numpy')
 def _erf1(x):
-    return 1 - _erfc1(x)
+    if abs(x) <= ERF_NEAR:
+        return _erf_near(x)
+    v = 1 - _erfc1(abs(x))
+    return -v if x < 0 else v
 
 
 overload(js_mod, jit_options=_UNCACHED)(_binary(_mod1))

@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from ..stats._normal import erf as _erf_scalar
 from ..stats._normal import erfc as _erfc_scalar
 
 AVOGADRO = 6.02214179e23
@@ -61,17 +62,21 @@ def js_rem(a: Any, b: Any) -> Any:
 
 
 _erfc_vec = np.frompyfunc(_erfc_scalar, 1, 1)
+_erf_vec = np.frompyfunc(_erf_scalar, 1, 1)
 
 
 def erfc(x: Any) -> Any:
-    """Numerical Recipes' erfc, exactly as the application computes it."""
+    """erfc exactly as the application computes it (see :mod:`..stats._normal`)."""
     if np.ndim(x) == 0:
         return _erfc_scalar(float(x))
     return _erfc_vec(np.asarray(x, dtype=float)).astype(float)
 
 
 def erf(x: Any) -> Any:
-    return 1 - erfc(x)
+    """erf exactly as the application computes it: Cody's near zero, not ``1 - erfc``."""
+    if np.ndim(x) == 0:
+        return _erf_scalar(float(x))
+    return _erf_vec(np.asarray(x, dtype=float)).astype(float)
 
 
 FACTORIAL_MAX = 170

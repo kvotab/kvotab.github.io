@@ -9,10 +9,12 @@ import subprocess
 import unittest
 from typing import Any, Dict, List
 
+import numpy as np
+
 from helpers import EXAMPLES, HERE, NODE, SRC, needs_app
 
 from kompartment import jsmath
-from kompartment.engine.functions import FUNCTIONS
+from kompartment.engine.functions import FUNCTIONS, erf, erfc
 from kompartment.engine.lang import Binary, Call, Cond, Num, ParseError, Ref, Unary, parse
 from kompartment.engine.lookup import Table
 from kompartment.engine.reduce import percentile
@@ -190,6 +192,41 @@ class FunctionParity(unittest.TestCase):
             if isinstance(got, Exception) or not close(got, w):
                 bad.append(f'{name}{tuple(args)}: {got!r} != {w!r}')
         self.assertEqual(bad, [])
+
+
+class ErrorFunction(unittest.TestCase):
+    """erf and erfc against mpmath's values at 40 digits.
+
+    FunctionParity shows the app computes the same; this shows it is right.
+    Near zero erf is Cody's rational approximation: as ``1 - erfc`` it had
+    none of its digits there (erf(0) was -1.6e-15 and erf(1e-20) negative).
+    """
+
+    REF = [  # x, erf(x), erfc(x)
+        (1e-20, 1.1283791670955125e-20, 1.0),
+        (-1e-10, -1.1283791670955126e-10, 1.000000000112838),
+        (0.3, 0.3286267594591274, 0.6713732405408726),
+        (0.46875, 0.49261347321793797, 0.507386526782062),
+        (0.5, 0.5204998778130465, 0.4795001221869535),
+        (1.0, 0.8427007929497149, 0.15729920705028513),
+        (-1.5, -0.9661051464753108, 1.9661051464753108),
+        (2.0, 0.9953222650189527, 0.004677734981047266),
+        (10.0, 1.0, 2.088487583762545e-45),
+    ]
+
+    def test_values(self) -> None:
+        for x, e, c in self.REF:
+            self.assertLessEqual(abs(erf(x) - e), 3e-15 * abs(e), f'erf({x})')
+            self.assertLessEqual(abs(erfc(x) - c), 3e-15 * abs(c), f'erfc({x})')
+
+    def test_zero_sign_and_arrays(self) -> None:
+        self.assertEqual((erf(0.0), erfc(0.0)), (0.0, 1.0))
+        self.assertEqual(math.copysign(1.0, erf(-0.0)), -1.0)
+        for x in (1e-300, 0.1, 0.46875, 0.5, 1.7, 4.0, 9.0):
+            self.assertEqual(erf(-x), -erf(x), x)
+        xs = [x for x, _, _ in self.REF]
+        self.assertEqual(list(erf(np.array(xs))), [erf(x) for x in xs])
+        self.assertEqual(list(erfc(np.array(xs))), [erfc(x) for x in xs])
 
 
 @needs_app

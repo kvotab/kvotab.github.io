@@ -21,7 +21,7 @@ others. Each item keeps its own licence.
 | [SALib](https://github.com/SALib/SALib) (methods ported to JavaScript: PAWN, discrepancy, the radial design, Morris's optimal trajectories, bootstrap intervals, interaction effects; and from there to Python) | MIT | `kompartment/src/domain/salib.LICENSE`, `kompartment/python/kompartment/stats/salib.LICENSE` |
 | Coordinate conversions by Arnold Andreasson (`gausskruger.js`, `lat_lon_conv.js`, `latlong.js`, `map.js`) | MIT | headers in the files |
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
-| CALERF (`resources/js/erf.f`, `erf.js`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
+| CALERF (`resources/js/erf.f`, `erf.js`; the coefficients of its first interval also in `kompartment/src/parser/functions.js` and `kompartment/python/kompartment/stats/_normal.py`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
 | Rawengulk Sans | SIL Open Font License 1.1 | `vendors/font/SIL Open Font License.txt` |
 
 ## Libraries loaded from public CDNs

@@ -252,15 +252,30 @@ test('function library values', () => {
 	close(evalExpr('factorial(6)'), 720, 0);
 });
 
-test('erf/erfc match reference values to ~1e-11 relative', () => {
-	// The Numerical Recipes rational form is good to about 1e-12 relative,
-	// which is well inside anything a compartment model needs.
-	close(erf(1), 0.8427007929497149, 1e-12);
-	close(erf(0.5), 0.5204998778130465, 1e-12);
-	close(erfc(2), 0.004677734981063127, 1e-11);
-	close(erf(-1.5), -0.9661051464753107, 1e-12);
-	close(erf(0), 0, 1e-14);
-	close(erfc(0), 1, 1e-14);
+test('erf/erfc match reference values, and erf keeps its digits near zero', () => {
+	// mpmath's values at 40 digits. From |x| = 0.46875 out erfc is Numerical
+	// Recipes' Chebyshev fit, about 1e-15 relative there (1e-13 far in the
+	// tail); inside, erf is Cody's rational approximation and erfc is 1 − erf.
+	close(erf(1), 0.8427007929497149, 3e-15);
+	close(erf(0.5), 0.5204998778130465, 3e-15);
+	close(erfc(2), 0.004677734981047266, 3e-15);
+	close(erf(-1.5), -0.9661051464753108, 3e-15);
+	close(erfc(10), 2.088487583762545e-45, 3e-15);
+	close(erf(0.46875), 0.49261347321793797, 3e-15);
+	close(erfc(0.46875), 0.507386526782062, 3e-15);
+	close(erf(0.3), 0.3286267594591274, 3e-15);
+	close(erfc(-0.3), 1.3286267594591274, 3e-15);
+	// Near zero erf is a small number in its own right. As 1 − erfc it had
+	// none of its digits there: erf(0) was −1.6e−15, erf(1e−20) negative.
+	assert(erf(0) === 0 && erfc(0) === 1, `erf(0) ${erf(0)}, erfc(0) ${erfc(0)}`);
+	assert(Object.is(erf(-0), -0), 'erf(-0) is not -0');
+	close(erf(1e-20), 1.1283791670955125e-20, 3e-15);
+	close(erf(-1e-10), -1.1283791670955126e-10, 3e-15);
+	close(erfc(-1e-10), 1.000000000112838, 3e-15);
+	// And odd to the last bit.
+	for (const x of [1e-300, 0.1, 0.46875, 0.5, 1.7, 4, 9]) {
+		assert(Object.is(erf(-x), -erf(x)), `erf(-${x}) is not -erf(${x})`);
+	}
 });
 
 test('time functions read the simulation clock', () => {

@@ -1,6 +1,6 @@
 """The standard normal distribution, as Kompartment computes it.
 
-Exact ports of ``erfc`` (``src/parser/functions.js``) and of ``phi``,
+Exact ports of ``erf`` and ``erfc`` (``src/parser/functions.js``) and of ``phi``,
 ``probit`` and ``normalQuantile`` (``src/domain/pdf.js``), so that everything
 built on them -- quantiles, samples, sensitivity designs -- comes out as the
 application's does. Scalars in, scalars out; the arithmetic is the same step
@@ -24,13 +24,36 @@ _ERFC_COF = (
     -1.12708e-13, 3.81e-16, 7.106e-15,
 )
 
+# Inside |x| = 0.46875, W. J. Cody's rational approximation of erf (the first
+# interval of his CALERF, Netlib SPECFUN, public domain), as the application
+# has it: 1 - erfc would leave erf none of its digits near zero.
+ERF_NEAR = 0.46875
+_ERF_A = (3.16112374387056560e0, 1.13864154151050156e2, 3.77485237685302021e2,
+          3.20937758913846947e3, 1.85777706184603153e-1)
+_ERF_B = (2.36012909523441209e1, 2.44024637934444173e2, 1.28261652607737228e3,
+          2.84423683343917062e3)
+
 SQRT2 = math.sqrt(2.0)
 
 
+def _erf_near(x: float) -> float:
+    """erf for ``|x| <= ERF_NEAR``: x P(x^2)/Q(x^2), and 2x/sqrt(pi) below 1.11e-16."""
+    y = abs(x)
+    ysq = y * y if y > 1.11e-16 else 0.0
+    num = _ERF_A[4] * ysq
+    den = ysq
+    for i in range(3):
+        num = (num + _ERF_A[i]) * ysq
+        den = (den + _ERF_B[i]) * ysq
+    return x * (num + _ERF_A[3]) / (den + _ERF_B[3])
+
+
 def erfc(x: float) -> float:
-    """The complementary error function: Numerical Recipes' Chebyshev fit."""
+    """The complementary error function: 1 - erf near zero, Numerical Recipes' Chebyshev fit beyond."""
     if math.isnan(x):
         return math.nan
+    if abs(x) <= ERF_NEAR:
+        return 1 - _erf_near(x)
     z = abs(x)
     t = 2 / (2 + z)
     ty = 4 * t - 2
@@ -45,8 +68,11 @@ def erfc(x: float) -> float:
 
 
 def erf(x: float) -> float:
-    """The error function, as ``1 - erfc(x)``."""
-    return 1 - erfc(x)
+    """The error function: Cody's near zero, ``1 - erfc(|x|)`` with x's sign beyond."""
+    if abs(x) <= ERF_NEAR:
+        return _erf_near(x)
+    v = 1 - erfc(abs(x))
+    return -v if x < 0 else v
 
 
 def phi(z: float) -> float:

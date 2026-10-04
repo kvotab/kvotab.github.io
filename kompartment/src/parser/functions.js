@@ -22,13 +22,39 @@ function fix(a) {
 	return a < 0 ? Math.ceil(a) : Math.floor(a);
 }
 
-/**
- * Abramowitz & Stegun 7.1.26 is only good to ~1e-7; the desktop tools' erf comes
- * from a higher precision series, so we use the Numerical Recipes erfc rational
- * approximation (fractional error < 1.2e-7 everywhere) refined by one
- * Newton step against the defining integral's derivative.
+/*
+ * erf and erfc, to double precision. Abramowitz & Stegun 7.1.26 is only good
+ * to ~1e-7, and the desktop tools' erf comes from a higher precision series.
+ *
+ * From |x| = 0.46875 out, erfc is Numerical Recipes' Chebyshev fit (Press et
+ * al., 3rd ed., §6.2; the first 24 of its 28 coefficients): about 1e-15
+ * relative near 0.5, 1e-13 where erfc is 1e-250. erf is 1 − erfc there, which loses nothing while erf is not small.
+ * Inside it, erf is W. J. Cody's rational approximation in x² (the first
+ * interval of his CALERF, Netlib SPECFUN, public domain), and erfc is 1 − erf:
+ * 1 − erfc would leave erf none of its digits near zero -- erf(0) came out
+ * −1.6e−15, and erf(1e−20) negative.
  */
+const ERF_NEAR = 0.46875;
+const ERF_A = [3.16112374387056560e0, 1.13864154151050156e2, 3.77485237685302021e2,
+	3.20937758913846947e3, 1.85777706184603153e-1];
+const ERF_B = [2.36012909523441209e1, 2.44024637934444173e2, 1.28261652607737228e3,
+	2.84423683343917062e3];
+
+/** erf for |x| <= ERF_NEAR: x P(x²)/Q(x²), and 2x/√π below 1.11e-16. */
+function erfNear(x) {
+	const y = Math.abs(x);
+	const ysq = y > 1.11e-16 ? y * y : 0;
+	let num = ERF_A[4] * ysq;
+	let den = ysq;
+	for (let i = 0; i < 3; i++) {
+		num = (num + ERF_A[i]) * ysq;
+		den = (den + ERF_B[i]) * ysq;
+	}
+	return x * (num + ERF_A[3]) / (den + ERF_B[3]);
+}
+
 function erfc(x) {
+	if (Math.abs(x) <= ERF_NEAR) return 1 - erfNear(x);
 	const z = Math.abs(x);
 	const t = 2 / (2 + z);
 	const ty = 4 * t - 2;
@@ -52,8 +78,11 @@ function erfc(x) {
 	return x >= 0 ? ans : 2 - ans;
 }
 
+/** Odd to the last bit: the far side is −(1 − erfc(|x|)). */
 function erf(x) {
-	return 1 - erfc(x);
+	if (Math.abs(x) <= ERF_NEAR) return erfNear(x);
+	const v = 1 - erfc(Math.abs(x));
+	return x < 0 ? -v : v;
 }
 
 /**
