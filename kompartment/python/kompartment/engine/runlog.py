@@ -345,8 +345,9 @@ def run_log_lines(project: Any, payload: Any, replayed: Any = None, build: str =
     split = _get(s, 'split')
     if _truthy(_get(split, 'used')):
         jobs = _nz(_get(split, 'jobs'), [])
-        out.append(f"  split: {len(jobs)} independent parts on {_s(_get(split, 'workers'))} cores "
-                   f"({_s(_get(split, 'mode'))}) — {_s(_get(split, 'why'))}")
+        out.append(f"  split: {_s(_nz(_get(split, 'parts'), len(jobs)))} independent parts on "
+                   f"{_s(_get(split, 'workers'))} cores ({_s(_get(split, 'mode'))}) — {_s(_get(split, 'why'))}")
+        # One line per core: the parts it was given, solved together.
         for job in jobs:
             out.append(f"    {_join(_get(job, 'materials'), ', ')}: {_s(_get(job, 'states'))} states, "
                        f"{_s(_nz(_get(job, 'nsteps'), '?'))} steps, "
@@ -412,8 +413,8 @@ def scenario_log_lines(active: Any, runs: Optional[Sequence[Any]]) -> List[str]:
             split = _get(s, 'split')
             out.append(f"  {name} — {_s(_nz(_get(s, 'nsteps'), '?'))} steps, compile "
                        f"{_to_fixed(_nz(_get(t, 'buildMs'), 0), 1)} ms, solve {solve}"
-                       + (f", in {len(_get(split, 'jobs'))} parts on {_s(_get(split, 'workers'))} cores"
-                          if _truthy(_get(split, 'used')) else ''))
+                       + (f", in {_s(_nz(_get(split, 'parts'), len(_nz(_get(split, 'jobs'), []))))} parts on "
+                          f"{_s(_get(split, 'workers'))} cores" if _truthy(_get(split, 'used')) else ''))
         else:
             out.append(f'  {name} — not run yet')
     return out

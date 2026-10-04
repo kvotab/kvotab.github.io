@@ -328,43 +328,52 @@ system.evaluate_algebraic(t, y)                # every algebraic value at (t, y)
 ### Solving in parts
 
 ```python
-res = m.run(split='on')                        # each independent part in a process of its own
+res = m.run(split='on')                        # the independent parts shared out, a process per core
 from kompartment.engine.runner import run
 res = run(m.project(split='on'), workers=4)    # at most four processes
-res.stats['split']                             # whether it was split and why, each part's steps and times
+res.stats['split']                             # whether it was split and why, each process's steps and times
 ```
 
 A model that falls apart into parts that cannot reach each other -- each decay
-chain a system of its own, joined to no other -- can be solved a part per
-core, as the application's *Split into parts* does: `simulation.split` is
-`auto` (the default), `on` or `off`. The parts are read off the model's
-Jacobian. Each is the model with every other material switched off, solved on
-the output grid at its own steps in a process of its own, and its states are
-filed back into the whole model by name, so what comes back is the whole
-model's `Results`. It agrees with a whole solve to within the tolerance, not
-to the last digit, and does not depend on the number of processes. A model is
-solved whole, whatever the setting, where the application would solve it
-whole: a delay, a snapshot or a discrete event; output at the solver's own
-steps; no materials to divide by; one part; one core. So is a split that does
-not add up, and `stats['split']['why']` says so.
+chain a system of its own, joined to no other -- can be solved on several
+cores at once, as the application's *Split into parts* does:
+`simulation.split` is `auto` (the default), `on` or `off`. The parts are read
+off the model's Jacobian and packed by their states into one bin per process,
+as the application packs them. Each bin is the model with every material
+switched off but its parts', built once and solved on the output grid at its
+own steps in a process of its own, and its states are filed back into the
+whole model by name, so what comes back is the whole model's `Results`. It
+agrees with a whole solve to within the tolerance, not to the last digit; the
+parts of one bin share its steps, so the number of processes changes the last
+digits, as the number of cores does in the application. A model is solved
+whole, whatever the setting, where the application would solve it whole: a
+delay, a snapshot or a discrete event; output at the solver's own steps; no
+materials to divide by; one part; one core. So is a split that does not add
+up, and `stats['split']['why']` says so. The series that are not states --
+flows, expressions -- are worked out afterwards on the whole model; after a
+compiled split, on the whole model compiled, which a process of its own
+compiles into the cache while the parts are solved.
 
 `auto` is the application's rule with numbers measured here, since a process
 takes longer to start than a browser's worker. A model this machine has not
 timed is split from 10,000 states, when its parts promise at least 2x over
 the cores there are. Once a whole solve has been timed, it is split when that
 solve took 1.5 s or more and the parts are expected to be at least 1.2x
-faster, each part's build weighed as a split of the model measured it -- a
-part of a model whose equations all come along into every part builds in
-about two thirds of the whole's time, whatever it holds. Once it has been
-split, what the split was measured to gain decides. Compiling is left out of
-every measurement, since it is paid once. What auto learns is kept in
+faster, each bin's build weighed as a split of the model measured it -- a
+part of a model whose equations all come along into every part costs nearly
+a whole build, whatever it holds. Once it has been split, what the split was
+measured to gain decides: its time against a whole solve worked out from its
+bins (`whole_solve_ms` in `kompartment.engine.split`), the smaller of the
+slowest bin stretched by its share of the states and every bin's cost per
+step over the most steps any bin took. Compiling is left out of every
+measurement, since it is paid once. What auto learns is kept in
 `split-memory.json` in the cache directory (`KOMPARTMENT_CACHE`, or the
 user's cache directory) by the model's layout, the path it runs on and this
 package's code, so a script run in a process of its own decides from the
 runs before it; `KOMPARTMENT_SPLIT_MEMORY=0` keeps it to the process. A
-made-up model of 16 independent chains, 28,800 states, took 8.5 s whole and
-2.9 s split on eight processes (2.1 s of solve against 7.5 s). A model of a
-few thousand states is quicker whole.
+made-up model of 16 independent chains, 28,800 states, took 7.3 s whole and
+3.0 s split on eight processes, two chains to each (2.2 s of solve against
+6.4 s). A model of a few thousand states is quicker whole.
 
 The processes are started with `spawn` and load only this package, never the
 calling script, so a script needs no `if __name__ == '__main__':` guard for a

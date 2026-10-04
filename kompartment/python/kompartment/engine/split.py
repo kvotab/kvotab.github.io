@@ -5,32 +5,34 @@ simulation worker. :mod:`kompartment.engine.partition` finds the parts of a
 model that cannot reach each other -- on an assessment, one per decay chain --
 and this decides whether solving them side by side pays for the model in
 hand, and does it: the whole model is built (its Jacobian says where the parts
-are, and its system is what every series is worked out from afterwards), each
-*job* -- the model with every material switched off but the job's own -- is
-built and run in a worker process on the model's output grid at its own
-steps, and every state is filed back into the whole model's vector by name.
-What comes out is an ordinary :class:`~kompartment.engine.runner.Results` of
-the whole model whose states were integrated in pieces.
+are, and its system is what every series is worked out from afterwards), the
+*jobs* -- sets of materials whose states reach no other job's -- are packed
+into one bin per core, each bin -- the model with every material switched off
+but its jobs' -- is built once and run in a worker process on the model's
+output grid at its own steps, and every state is filed back into the whole
+model's vector by name. What comes out is an ordinary
+:class:`~kompartment.engine.runner.Results` of the whole model whose states
+were integrated in pieces.
 
-**Not bit for bit the whole model's.** Each part takes the steps its own
+**Not bit for bit the whole model's.** Each bin takes the steps its own
 states need rather than the steps the stiffest state anywhere needs, which is
-the point, and so agrees with the whole to within the tolerance. The worker
-count changes nothing: each job is the same run in whichever process takes
-it.
+the point, and so agrees with the whole to within the tolerance. The jobs of
+one bin share its steps, so how they are packed -- which follows the number of
+processes -- changes the last digits, as it does in the application; a bin is
+the same run in whichever process takes it.
 
-**A job at a time, where the application builds a bin once.** The
-application packs its jobs into one bin per core and builds each bin once,
-since the code it generates does not shrink with the part: a part costs half a
-whole build whatever it holds. A build here shrinks with the part on a model
-of independent chains -- a twelfth of a 10,080-state model built in 0.18 of
-the whole's time, half of it in 0.46 -- so a job is taken to cost about its
-share of the states, build and solve alike, until a split of the model has
-been timed. Then the part of a build that does not shrink is known: on a model
-whose equations and transports all come along into every part, a part of a
-fiftieth of the states builds in two thirds of the whole's time. Building each
-job on its own is what keeps a job's run the same whichever jobs share its
-process. The plans are the application's in everything but that weighing
-(``PlanParity`` in the tests).
+**A bin is built once, as in the application.** Wherever the model's
+equations and transports come along into every part -- on a real assessment,
+most of a build -- a build costs about the same whatever part of the model it
+holds: a job built on its own pays nearly a whole build to solve a sliver of
+the model, and a model of a few dozen parts spends its run building. So the
+jobs are packed by their states into as many bins as there
+are processes, the application's ``packJobs`` and ``binJobs``, and the plans
+are the application's (``PlanParity`` in the tests) in everything but how
+auto weighs the cost: a build here is taken to shrink with the part, as it
+does on a model of independent chains -- a twelfth of a 10,080-state model
+built in 0.18 of the whole's time, half of it in 0.46 -- until a split of the
+model has been timed and the part of a build that does not shrink is known.
 
 **What auto learns** -- a whole solve's time, a split's measured gain, the
 part of a build that does not shrink -- is kept by the model's layout, the
@@ -86,7 +88,8 @@ from .partition import partition_of
 
 __all__ = ['SPLIT_MODES', 'SHARED_WORK', 'AUTO_STATES', 'AUTO_SOLVE_MS', 'AUTO_GAIN', 'AUTO_GAIN_UNTIMED',
            'START_MS', 'state_keys', 'state_materials', 'split_jobs', 'job_cost', 'pack_jobs', 'plan_split',
-           'part_model', 'place_states', 'assemble_parts', 'build_part', 'run_split', 'run_whole_or_split']
+           'bin_jobs', 'part_model', 'place_states', 'assemble_parts', 'build_part', 'run_split', 'whole_solve_ms',
+           'run_whole_or_split']
 
 #: The setting, as the application's Simulation section offers it.
 SPLIT_MODES = [
@@ -400,10 +403,12 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
                build_ms: float = 0.0, known: Optional[Dict[str, Any]] = None, on_grid: bool = False) -> Dict[str, Any]:
     """Whether to split this run, and how (``planSplit``).
 
-    The prediction is the application's cost model: each job costs its share
-    of the whole model's build and of its solve, the bins run side by side,
-    and each worker costs a start -- with this engine's numbers. ``known`` is
-    the whole model's solve time from an earlier run of this layout here
+    The jobs are packed by their states into one bin per core, as the
+    application packs them, and a bin is built once (:func:`bin_jobs`). The
+    prediction is the application's cost model: each bin costs its share of
+    the whole model's build and of its solve, the bins run side by side, and
+    each worker costs a start -- with this engine's numbers. ``known`` is the
+    whole model's solve time from an earlier run of this layout here
     (``{'solve_ms', 'gain'}``); without it the ratio is judged on the model's
     shape alone, with a larger margin and only for a large model. ``known``
     may hold ``build_fixed`` too, the share of a whole build each part pays
@@ -430,12 +435,14 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
     if not found['ok']:
         return no(found['why'])
     n = int(system.layout.nstate)
-    costs = [job_cost(j['states'], n) for j in found['jobs']]
     cores = max(1, int(math.floor(workers)))
     if cores < 2:
         return no('there is one core to run on')
-    bins = pack_jobs(costs, cores)
-    load = max(sum(costs[j] for j in b) for b in bins)
+    # Packed by states: a bin is one build, so the work every part repeats is
+    # paid once per bin whatever it holds.
+    bins = pack_jobs([j['states'] for j in found['jobs']], cores)
+    bin_states = [sum(found['jobs'][j]['states'] for j in b) for b in bins]
+    load = max(job_cost(s, n) for s in bin_states)
     plan = {'use': True, 'mode': m, 'jobs': found['jobs'], 'owner': found['owner'], 'keys': found['keys'],
             'bins': bins, 'parts': found['parts'], 'predicted': None, 'why': '', 'recorders': found['recorders']}
     largest = max(j['states'] for j in found['jobs'])
@@ -460,8 +467,7 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
         else:
             # The part of a build that does not shrink with the part, as a
             # split of this model measured it.
-            bin_ms = max(sum(B * (fixed + (1 - fixed) * found['jobs'][j]['states'] / n) + S * costs[j] for j in b)
-                         for b in bins)
+            bin_ms = max(B * (fixed + (1 - fixed) * s / n) + S * job_cost(s, n) for s in bin_states)
             predicted = S / (bin_ms + START_MS)
         if S < AUTO_SOLVE_MS:
             return no(f'a whole solve takes {_js_round(S)} ms, too short to be worth dividing', predicted=predicted)
@@ -479,6 +485,23 @@ def plan_split(system: Any, project: Any, *, mode: Any = 'auto', workers: int = 
     plan['predicted'] = shape
     plan['why'] = f'{size}; up to {_to_fixed(shape, 1)}× faster on {len(bins)} cores'
     return plan
+
+
+def bin_jobs(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """The plan's bins as the jobs the processes are given (``binJobs``): one
+    per bin, its jobs' materials together, built once however many of the
+    model's parts it holds -- with which of the whole model's states each
+    files (``owner``) and which recorders' histories each gives back
+    (``recorders``, as :func:`split_jobs` gives them, by bin)."""
+    bin_of = np.zeros(len(plan['jobs']), dtype=np.int64)
+    for b, members in enumerate(plan['bins']):
+        for j in members:
+            bin_of[j] = b
+    jobs = [{'materials': [m for j in members for m in plan['jobs'][j]['materials']],
+             'states': sum(plan['jobs'][j]['states'] for j in members)} for members in plan['bins']]
+    owner = bin_of[np.asarray(plan['owner'], dtype=np.int64)]
+    recorders = [(key, int(bin_of[job]), slot) for key, job, slot in plan.get('recorders') or []]
+    return {'jobs': jobs, 'owner': owner, 'recorders': recorders}
 
 
 # --- one job's model -------------------------------------------------------------------------
@@ -764,20 +787,23 @@ def run_split(project: Any, system: Any, plan: Dict[str, Any], *, workers: Optio
               compiled: Any = 'auto') -> Dict[str, Any]:
     """The whole model, solved in its parts at once, as one run (``runSplit``).
 
-    The jobs go to a pool of spawned worker processes, one per bin of the plan
-    unless ``workers`` says otherwise, largest job first to whichever process
-    is free; what each sends back is filed into the whole model's vector by
-    name, and its recorders' histories onto the whole system. Each part is
-    run with ``compiled`` as :func:`~kompartment.engine.runner.run` takes it.
-    Returns ``{'solution', 'wall_ms', 'jobs', 'whole_ms', 'processes'}``;
-    raises if anything does not add up, and the caller solves the whole model
-    instead.
+    Each bin of the plan is one job (:func:`bin_jobs`): the model with the
+    bin's materials switched on, built once and run in a spawned worker
+    process -- one process per bin unless ``workers`` says fewer, the largest
+    bin first to whichever process is free. What each sends back is filed
+    into the whole model's vector by name, the states each bin owns, and its
+    recorders' histories onto the whole system. Each part is run with
+    ``compiled`` as :func:`~kompartment.engine.runner.run` takes it. Returns
+    ``{'solution', 'wall_ms', 'jobs', 'whole_ms', 'expected_ms',
+    'processes'}``, ``jobs`` a line per bin; raises if anything does not add
+    up, and the caller solves the whole model instead.
     """
     import concurrent.futures as cf
     import queue as queue_module
     from .solvers import SolverError
-    jobs = plan['jobs']
-    count = len(plan['bins']) if workers is None else max(1, min(int(workers), len(jobs)))
+    work = bin_jobs(plan)
+    jobs = work['jobs']
+    count = len(jobs) if workers is None else max(1, min(int(workers), len(jobs)))
     order = sorted(range(len(jobs)), key=lambda j: (-jobs[j]['states'], j))
     ctx = mp.get_context('spawn')
     started = time.perf_counter()
@@ -838,11 +864,11 @@ def run_split(project: Any, system: Any, plan: Dict[str, Any], *, workers: Optio
         if heard is not None:
             heard.close()
     wall_ms = (time.perf_counter() - started) * 1000
-    assembled = assemble_parts(plan, outcome)  # type: ignore[arg-type]
+    assembled = assemble_parts({'keys': plan['keys'], 'owner': work['owner']}, outcome)  # type: ignore[arg-type]
     # The recorders' histories, from the job that owns what each one reads.
     state = system.run_state()
     mem = list(state['mem'])
-    for key, job, slot in plan.get('recorders') or []:
+    for key, job, slot in work['recorders']:
         carried = outcome[job]['mem'].get(key)  # type: ignore[index]
         if carried is None:
             raise RuntimeError(f"the part that owns '{key}' did not send its history back")
@@ -861,17 +887,47 @@ def run_split(project: Any, system: Any, plan: Dict[str, Any], *, workers: Optio
         # A part's solve without its compilation, which is paid once.
         solving.append(max(0.0, (timing['solve_ms'] or 0.0) - (timing.get('compile_ms') or 0.0)))
     n = int(system.layout.nstate)
-    # What one process would have taken for the whole model, as the slowest
-    # part stretched to the whole, and what the split takes once its parts are
-    # compiled (each part's build and solve, packed as the pool hands them out)
-    # -- both without compiling: kept for deciding the next run.
-    whole_ms = max(solving[j] / job_cost(s['states'], n) for j, s in enumerate(summary))
+    # What one process would have taken for the whole model, and what the
+    # split takes once its parts are compiled (each part's build and solve,
+    # packed as the pool hands them out) -- both without compiling: kept for
+    # deciding the next run.
+    whole_ms = whole_solve_ms(summary, solving, n)
     spent = [s['buildMs'] + solving[j] for j, s in enumerate(summary)]
     packed = pack_jobs(spent, count)
     expected_ms = max(sum(spent[j] for j in b) for b in packed) + START_MS
     return {'solution': {'t': assembled['t'], 'y': assembled['rows'], 'stats': assembled['stats']},
             'wall_ms': wall_ms, 'jobs': summary, 'whole_ms': whole_ms, 'expected_ms': expected_ms,
             'processes': len({outcome[j]['pid'] for j in range(len(jobs))})}  # type: ignore[index]
+
+
+def whole_solve_ms(jobs: Sequence[Dict[str, Any]], solving: Sequence[float], states: int) -> float:
+    """What one process would have taken to solve the whole model, from a
+    split's bins: each one's ``states`` and ``nsteps``, and its solve without
+    compiling (``solving``, in the same order).
+
+    Two estimates, each of which errs high in a way of its own; the smaller
+    is taken.
+
+    * The slowest bin stretched to the whole by its share of a derivative
+      call (:func:`job_cost`), as the application estimates it. That takes a
+      bin's cost per step to follow its states, and a bin of nuclides that
+      decay into each other, whose Jacobian is the denser, costs more per
+      state than one of nuclides that do not: stretched, it overstates the
+      whole.
+    * Every bin's cost per step summed, the work each repeats every step
+      counted once (:data:`SHARED_WORK`), over as many steps as the most any
+      bin took. That weighs each bin as it was measured. It errs high where a
+      process repeats more than :data:`SHARED_WORK` of the whole's work each
+      step -- a small model -- and low in its steps, since the whole takes at
+      least the steps its most demanding part takes, and usually more.
+    """
+    stretched = max(solving[j] / job_cost(jb['states'], states) for j, jb in enumerate(jobs))
+    steps = [jb.get('nsteps') for jb in jobs]
+    if not all(isinstance(s, (int, float)) and s > 0 for s in steps):
+        return stretched
+    per_step = sum(solving[j] / steps[j] for j in range(len(jobs)))
+    summed = per_step / (SHARED_WORK * len(jobs) + 1 - SHARED_WORK) * max(steps)
+    return min(stretched, summed)
 
 
 def build_fixed(jobs: Sequence[Dict[str, Any]], states: int, build_ms: float) -> Optional[float]:
@@ -1015,6 +1071,28 @@ def _ran_as(results: Any, compiling: bool) -> bool:
     return ran is None or bool(ran) == compiling
 
 
+def _warm_whole_model(system: Any) -> None:
+    """Starts compiling the whole model in a process of its own, beside its
+    parts. A split run's series that are not states are worked out on the
+    whole model's system -- compiled, when the run was -- and on a large model
+    compiling it once the parts are in takes as long again as solving them.
+    Begun beside them, its module is in the cache by the time a series is
+    asked for, and :func:`~kompartment.engine.compiled.run.compiled_model`
+    waits for what is left of it rather than compiling it a second time. A
+    model the compiled path does not take is not started; its series are
+    worked out in Python as before."""
+    from .compiled.model import model_source, warm_module
+    try:
+        key, source, layout, _, _ = model_source(system)
+    except Exception:  # noqa: BLE001 - said where it matters, when a series is asked for
+        return
+    calls_back = bool(layout['semi'] or layout['farf_moving'])
+    proc = mp.get_context('spawn').Process(target=warm_module, args=(key, source, calls_back), daemon=True)
+    with _one_thread_each(), _without_main():
+        proc.start()
+    system._warming = proc
+
+
 def _in_worker_process() -> bool:
     """Whether this is a process some pool started: such a run is not split,
     which would start processes from processes."""
@@ -1043,6 +1121,8 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
                       nest=not _in_worker_process(), build_ms=build_ms, known=known, on_grid=on_grid)
     results = None
     if plan['use']:
+        if compiling:
+            _warm_whole_model(system)
         try:
             split = run_split(project, system, plan, workers=workers, on_progress=on_progress, signal=signal,
                               compiled=compiled)

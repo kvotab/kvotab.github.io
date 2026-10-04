@@ -263,6 +263,22 @@ def opened() -> Dict[str, Dict[str, Any]]:
 
 # --- result files ------------------------------------------------------------
 
+class ResultFileLookup(unittest.TestCase):
+    def test_the_series_asked_for_are_found_as_they_were(self) -> None:
+        """By label, by the output itself or by place: the first of a label
+        two share, as a search through them in order finds it."""
+        outs = [{'label': 'A'}, {'label': 'B'}, {'label': 'A'}, {'label': 'C'}]
+        self.assertEqual(resultfile._which_of(outs, ['C', 'A', 'B']), [3, 0, 1])
+        self.assertEqual(resultfile._which_of(outs, [outs[2], {'label': 'B'}, 1]), [0, 1, 1])
+        self.assertEqual(resultfile._which_of(outs, None), [0, 1, 2, 3])
+        # A label equal to nothing, not even itself, is found as the output it is.
+        odd = {'label': float('nan')}
+        self.assertEqual(resultfile._which_of(outs + [odd], [odd]), [4])
+        for missing in ('D', {'label': 'D'}, {'label': float('nan')}):
+            with self.subTest(missing=missing), self.assertRaises(KeyError):
+                resultfile._which_of(outs + [odd], [missing])
+
+
 @needs_app
 class ResultFiles(unittest.TestCase):
     """HDF5 result files, as the page's Export to HDF5 writes them."""

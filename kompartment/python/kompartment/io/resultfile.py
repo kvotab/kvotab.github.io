@@ -408,17 +408,30 @@ def result_tree(*, t: Any, outputs: Sequence[Mapping[str, Any]], column: Callabl
 def _which_of(outputs: Sequence[Mapping[str, Any]], which: Optional[Sequence[Any]]) -> List[int]:
     if which is None:
         return list(range(len(outputs)))
+    # Where each label is first: a large model reports hundreds of thousands
+    # of series, and a search through them for every one asked for took
+    # longer than writing the file. An output given as itself is found by its
+    # label, which finds it or an earlier one of the same label, as the
+    # search did.
+    first: Dict[Any, int] = {}
+    for j, o in enumerate(outputs):
+        label = o.get('label')
+        try:
+            first.setdefault(label, j)
+        except TypeError:                    # a label that is not one: never asked for
+            pass
     out = []
     for w in which:
-        if isinstance(w, str):
-            k = next((j for j, o in enumerate(outputs) if o.get('label') == w), None)
+        if isinstance(w, str) or isinstance(w, Mapping):
+            label = w if isinstance(w, str) else w.get('label')
+            try:
+                k = first.get(label)
+            except TypeError:
+                k = None
+            if k is None and isinstance(w, Mapping):
+                k = next((j for j, o in enumerate(outputs) if o is w), None)
             if k is None:
-                raise KeyError(f"No output labelled '{w}'")
-            out.append(k)
-        elif isinstance(w, Mapping):
-            k = next((j for j, o in enumerate(outputs) if o is w or o.get('label') == w.get('label')), None)
-            if k is None:
-                raise KeyError(f"No output labelled '{w.get('label')}'")
+                raise KeyError(f"No output labelled '{label}'")
             out.append(k)
         else:
             out.append(int(w))

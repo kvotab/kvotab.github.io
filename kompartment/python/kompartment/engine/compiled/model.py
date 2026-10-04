@@ -49,7 +49,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from numba import types
@@ -586,6 +586,31 @@ def _rewrite(src: str, ns: Dict[str, Any], consts: Dict[str, np.ndarray], L: Dic
 
 def compile_model(system: Any) -> CompiledModel:
     """The system's derivative compiled, or :class:`NotCompiled` saying why not."""
+    key, source, L, int_consts, float_consts = model_source(system)
+    module = _load_module(key, source)
+    return CompiledModel(system, module, L, int_consts, float_consts)
+
+
+def warm_module(key: str, source: str, calls_back: bool) -> None:
+    """Compiles a model's generated module into the cache -- its results'
+    ``algebraic_rows`` included, for the arguments a :class:`CompiledModel`
+    hands it -- in a process of its own, while the one that will load it does
+    something else (a split run's parts). ``key`` and ``source`` are
+    :func:`model_source`'s; ``calls_back`` whether the model's callback is a
+    :class:`Callback` (a far-field path worked out in Python)."""
+    module = _load_module(key, source)
+    from .solvers import no_callback
+    cb = Callback(lambda a, b: 0) if calls_back else no_callback
+    floats = np.zeros(1)
+    # No rows: compiled for these types, and nothing run.
+    module.algebraic_rows(np.zeros(0), np.zeros((0, 1)), np.zeros(0, dtype=np.int64), np.zeros((0, 1)), floats,
+                          floats, floats, np.zeros(1, dtype=np.int64), cb)
+
+
+def model_source(system: Any) -> Tuple[str, str, Dict[str, Any], np.ndarray, np.ndarray]:
+    """The system's generated module, and what a :class:`CompiledModel` of it
+    reads: ``(key, source, layout, int_consts, float_consts)``. Raises
+    :class:`NotCompiled` for a model the compiled path does not take."""
     try:
         import numba  # noqa: F401
     except Exception:  # noqa: BLE001 - optional
@@ -807,8 +832,7 @@ def compile_model(system: Any) -> CompiledModel:
 
     source = _module_source(clock_src, moving_src, moving_d_src, scalars, where)
     key = hashlib.sha256(source.encode()).hexdigest()[:24]
-    module = _load_module(key, source)
-    return CompiledModel(system, module, L, int_consts, float_consts)
+    return key, source, L, int_consts, float_consts
 
 
 _NAME = re.compile(r'\b(_[A-Za-z][A-Za-z0-9_]*|FREL\d+|FSLOT\d+|FDIR\d+)\b')

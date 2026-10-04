@@ -773,7 +773,10 @@ class Results:
         return self.series(label)
 
     def __contains__(self, label: object) -> bool:
-        return any(o['label'] == label for o in self.outputs())
+        try:
+            return label in self._by_label()
+        except TypeError:                    # not a label at all
+            return False
 
     def select(self, block: Optional[str] = None, *, kind: Optional[str] = None,
                nuclide: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -851,8 +854,8 @@ class Results:
         if derived:
             from .derived import reduce as reduce_derived
             wanted = list(dict.fromkeys(outputs[k]['derived']['of'] for k in derived))
-            every = self.outputs()
-            frm = [o for o in (next((x for x in every if x['label'] == label), None) for label in wanted) if o]
+            by_label = self._by_label()
+            frm = [o for o in (by_label.get(label) for label in wanted) if o]
             got = {}
             if frm:
                 for o, col in zip(frm, self.series_many(frm)):
@@ -904,6 +907,21 @@ class Results:
         system = self.system
         if self.stats.get('compiled') and n:
             cm = getattr(system, '_compiled_model', None)
+            if cm is None:
+                # A split run: its parts were compiled in processes of their
+                # own, and the whole model, whose system every series is
+                # worked out on, was not -- a process began compiling it
+                # beside the parts (``split._warm_whole_model``), and this
+                # loads what it put in the cache, or compiles it, once per
+                # model as every compiled model is, rather than working it out
+                # in Python at every output time: tens of times slower on a
+                # large model. One that cannot be compiled is worked out in
+                # Python.
+                from .compiled.run import compiled_model
+                try:
+                    cm = compiled_model(system)
+                except Exception:  # noqa: BLE001 - the Python passes give the same numbers
+                    cm = None
             rows = getattr(cm, 'algebraic_rows', None)
             if rows is not None:
                 try:
@@ -922,11 +940,25 @@ class Results:
                 out[i] = system.X[need]
         return out
 
+    def _by_label(self) -> Dict[str, Dict[str, Any]]:
+        """Each label's output -- the first, where two share one -- made once:
+        a large model reports hundreds of thousands of series, and a search
+        through them for every label asked for is the slow part of asking."""
+        outs = self.outputs()
+        index = getattr(self, '_label_index', None)
+        if index is None or index[0] is not outs:
+            found: Dict[str, Dict[str, Any]] = {}
+            for o in outs:
+                found.setdefault(o['label'], o)
+            index = (outs, found)
+            self._label_index = index
+        return index[1]
+
     def _find(self, label: str) -> Dict[str, Any]:
-        for o in self.outputs():
-            if o['label'] == label:
-                return o
-        raise KeyError(f"No output labelled '{label}'")
+        o = self._by_label().get(label)
+        if o is None:
+            raise KeyError(f"No output labelled '{label}'")
+        return o
 
     def constant_of(self, output: Dict[str, Any]) -> Optional[float]:
         if output['source'] != 'P':

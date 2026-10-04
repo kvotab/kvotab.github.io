@@ -18,8 +18,9 @@
 //   lu       { cases: [{n, a, colPtr, rowIdx, values, mass, b}] } -> the dense LU's factors and solution
 //   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
 //   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
-//                                        planSplit(system, project, o) for each o of opts, and the
-//                                        constants auto decides by
+//                                        planSplit(system, project, o) for each o of opts (with
+//                                        binJobs of each plan that splits), and the constants auto
+//                                        decides by
 //
 // Infinity and NaN travel as the strings 'Infinity', '-Infinity' and 'NaN'.
 
@@ -311,6 +312,7 @@ switch (req.task) {
 				return {
 					use: p.use, mode: p.mode, why: p.why, predicted: p.predicted ?? null,
 					jobs: p.jobs ?? null, owner: p.owner ?? null, bins: p.bins ?? null, parts: p.parts ?? null,
+					binned: p.use ? split.binJobs(p) : null,
 				};
 			});
 			out = {

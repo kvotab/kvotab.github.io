@@ -6,7 +6,12 @@
   automatic choice with the application's constants put in, since this
   engine's are its own.
 * A split run agrees with the whole model's to within the tolerance, every
-  series, and does not depend on how many processes take the parts.
+  series. Its parts are packed into one bin per process and each bin is
+  built once, as the application does; a bin is the same run, filed back as
+  it came, in whichever process takes it.
+* What a split measured is weighed against a whole solve estimated from its
+  bins, and the series after a compiled split are worked out on the whole
+  model compiled, to the Python passes' last bit.
 * Where this engine does what the application does not -- a SciPy solver
   split, the histories of a min/max and a running mean carried back, a
   min/max that reads more than one part refused -- it is tested here too.
@@ -259,20 +264,19 @@ class PartitionParity(unittest.TestCase):
 
 @needs_app
 class PlanParity(unittest.TestCase):
-    """The jobs, the state names and every plan, with the application's
+    """The jobs, the state names and every plan -- its bins included, packed
+    by states as the application packs them -- with the application's
     constants put in for auto: its structure is the application's, its numbers
     this engine's own.
 
-    Except where a plan weighs what a split costs. The application builds each
-    of its bins once -- its generated code does not shrink with the part, so a
-    part costs half a whole build whatever it holds -- and packs its jobs into
-    bins by their states. Here every job is built and solved on its own, and a
-    build does shrink with the part (a twelfth of a 10,080-state model built
-    in 0.18 of the whole's time, half of it in 0.46), so a job costs about its
-    share of the states, build and solve alike, and the jobs are packed by that.
-    A plan that weighs -- auto, with nothing measured to decide -- is held to
-    this engine's own formula (``OwnConstants``); against the application's it
-    is compared in everything but the weighing."""
+    Except where a plan weighs a whole solve that has been timed against what
+    a split costs. The application takes a bin to cost half a whole build
+    whatever it holds, its generated code not shrinking with the part; here a
+    build is taken to shrink with the part (a twelfth of a 10,080-state model
+    built in 0.18 of the whole's time, half of it in 0.46) until a split of
+    the model has measured it. Such a plan is held to this engine's own
+    formula (``OwnConstants``); against the application's it is compared in
+    everything but the weighing."""
 
     def check(self, name: str, model: Dict[str, Any]) -> None:
         theirs = engine('plan', model=model, opts=OPTIONS)
@@ -298,22 +302,24 @@ class PlanParity(unittest.TestCase):
             for o, p in zip(OPTIONS, theirs['plans']):
                 mine = plan_view(S.plan_split(system, project, **python_opts(o)))
                 app = app_view(p)
-                if p['predicted'] is not None and (o.get('known') or {}).get('gain') is None:
-                    # Weighed, each by its own engine's costs: the same model and
-                    # the same question, and the answer may differ.
+                known = o.get('known') or {}
+                if p['predicted'] is not None and known.get('gain') is None and known.get('solveMs') is not None:
+                    # A timed solve weighed against a split, each engine by its
+                    # own build costs: the same model and the same question,
+                    # and the answer may differ. The bins do not.
                     self.assertIsNotNone(mine['predicted'], f'{name} {o}')
                     self.assertEqual((mine['mode'], mine['why'].split(';')[0]), (app['mode'], app['why'].split(';')[0]),
                                      f'{name} {o}')
+                    if app['use'] and mine['use']:
+                        self.assertEqual(mine['bins'], app['bins'], f'{name} {o}')
                     continue
-                if app['use']:
-                    # As many workers, each job in one, however they are packed.
-                    for view in (mine, app):
-                        self.assertEqual(sorted(j for b in view.get('bins') or [] for j in b),
-                                         list(range(len(app['jobs']))), f'{name} {o}')
-                    self.assertEqual(len(mine.get('bins') or []), len(app['bins']), f'{name} {o}')
-                    mine.pop('bins', None)
-                    app.pop('bins')
                 self.assertEqual(mine, app, f'{name} {o}')
+                if app['use']:
+                    # What each process is given: the bin's jobs' materials
+                    # together, and the states it files.
+                    binned = S.bin_jobs(S.plan_split(system, project, **python_opts(o)))
+                    self.assertEqual({'jobs': binned['jobs'], 'owner': binned['owner'].tolist()}, p['binned'],
+                                     f'{name} {o}')
 
     def test_every_bundled_example(self) -> None:
         for name in EXAMPLES:
@@ -414,6 +420,56 @@ class OwnConstants(unittest.TestCase):
         same = self.plan(known={'solve_ms': S_ms, 'build_fixed': S.SHARED_WORK}, build_ms=B_ms)
         self.assertAlmostEqual(same['predicted'], shrinking['predicted'], places=12)
 
+    def test_the_bins_and_their_weight(self) -> None:
+        """Packed by states, as the application packs them, and a bin of two
+        parts weighed as one build: the work every part repeats paid once."""
+        project = Project(chains(12, 4, 6))
+        system = build_system(project)
+        n = system.layout.nstate
+        p = S.plan_split(system, project, mode='on', workers=8)
+        sizes = [j['states'] for j in p['jobs']]
+        self.assertEqual(len(sizes), 12)
+        self.assertEqual(p['bins'], S.pack_jobs(sizes, 8))
+        heaviest = max(sum(sizes[j] for j in b) for b in p['bins'])
+        self.assertEqual(heaviest, 2 * sizes[0])
+        timed = S.plan_split(system, project, mode='auto', workers=8, known={'solve_ms': 40000.0}, build_ms=500.0)
+        self.assertEqual(timed['predicted'], 40000.0 / (S.job_cost(heaviest, n) * 40500.0 + S.START_MS))
+        measured = S.plan_split(system, project, mode='auto', workers=8,
+                                known={'solve_ms': 40000.0, 'build_fixed': 0.8}, build_ms=500.0)
+        bin_ms = 500.0 * (0.8 + 0.2 * heaviest / n) + 40000.0 * S.job_cost(heaviest, n)
+        self.assertAlmostEqual(measured['predicted'], 40000.0 / (bin_ms + S.START_MS), places=12)
+
+    def test_the_jobs_a_process_is_given(self) -> None:
+        plan = {'jobs': [{'materials': ['A'], 'states': 3}, {'materials': ['B', 'C'], 'states': 5},
+                         {'materials': ['D'], 'states': 2}],
+                'bins': [[1], [0, 2]], 'owner': np.array([0, 0, 0, 1, 1, 1, 1, 1, 2, 2]),
+                'recorders': [('min_max:Peak[D]', 2, 7), ('running_mean:Mean[B]', 1, 3)]}
+        got = S.bin_jobs(plan)
+        self.assertEqual(got['jobs'], [{'materials': ['B', 'C'], 'states': 5}, {'materials': ['A', 'D'], 'states': 5}])
+        self.assertEqual(got['owner'].tolist(), [1, 1, 1, 0, 0, 0, 0, 0, 1, 1])
+        self.assertEqual(got['recorders'], [('min_max:Peak[D]', 1, 7), ('running_mean:Mean[B]', 0, 3)])
+
+    def test_the_whole_solve_estimated_from_the_bins(self) -> None:
+        # Bins that cost what their states say: the two estimates agree.
+        even = [{'states': 50, 'nsteps': 1000}, {'states': 50, 'nsteps': 1000}]
+        self.assertAlmostEqual(S.whole_solve_ms(even, [1000.0, 1000.0], 100), 1000.0 / S.job_cost(50, 100))
+        # A small bin that costs the most per state -- nuclides decaying into
+        # each other -- stretched by its states overstates the whole; its
+        # cost per step summed with the other's, over the most steps either
+        # took, is the estimate.
+        uneven = [{'states': 10, 'nsteps': 1000}, {'states': 90, 'nsteps': 800}]
+        summed = (900.0 / 1000 + 300.0 / 800) / (2 * S.SHARED_WORK + 1 - S.SHARED_WORK) * 1000
+        self.assertLess(summed, 900.0 / S.job_cost(10, 100))
+        self.assertAlmostEqual(S.whole_solve_ms(uneven, [900.0, 300.0], 100), summed)
+        # A small bin that took a tenth of the steps and repeats more than the
+        # shared work at each: summed over the most steps, it would overstate
+        # the whole, and the stretched is the smaller.
+        apart = [{'states': 10, 'nsteps': 100}, {'states': 90, 'nsteps': 1000}]
+        self.assertAlmostEqual(S.whole_solve_ms(apart, [100.0, 1000.0], 100), 1000.0 / S.job_cost(90, 100))
+        # A bin that did not say how many steps it took: the stretched alone.
+        unsaid = [{'states': 10, 'nsteps': None}, {'states': 90, 'nsteps': 800}]
+        self.assertEqual(S.whole_solve_ms(unsaid, [900.0, 300.0], 100), 900.0 / S.job_cost(10, 100))
+
     def test_the_build_share_measured(self) -> None:
         jobs = [{'states': 10, 'buildMs': 550.0}, {'states': 30, 'buildMs': 650.0}]
         # Each part paid a whole build (500 ms) and a tenth more.
@@ -472,7 +528,10 @@ class SplitRuns(unittest.TestCase):
         self.assertEqual(account['why'], 'asked for: 4 parts, the largest 25% of the states, on 3 cores')
         self.assertEqual((account['used'], account['mode'], account['parts'], account['workers']), (True, 'on', 4, 3))
         self.assertIsNone(account['predicted'])
-        self.assertEqual([j['materials'] for j in account['jobs']], [['I-129'], ['Cl-36'], ['Tc-99'], ['Se-79']])
+        # A line per process: four parts of four states on three cores, the
+        # first core given two of them.
+        self.assertEqual([j['materials'] for j in account['jobs']], [['I-129', 'Se-79'], ['Cl-36'], ['Tc-99']])
+        self.assertEqual([j['states'] for j in account['jobs']], [8, 4, 4])
         for job in account['jobs']:
             self.assertEqual(list(job), ['materials', 'states', 'nsteps', 'buildMs', 'solveMs'])
             self.assertGreater(job['nsteps'], 0)
@@ -481,19 +540,45 @@ class SplitRuns(unittest.TestCase):
         self.assertEqual(parted.timing['solve_ms'], account['wallMs'])
         log = parted.run_log()
         self.assertIn('split: 4 independent parts on 3 cores (on) — asked for: 4 parts', log)
-        self.assertIn('I-129: 4 states,', log)
+        self.assertIn('I-129, Se-79: 8 states,', log)
 
-    def test_the_worker_count_changes_nothing(self) -> None:
+    def test_a_bin_is_one_build_and_the_same_run_wherever_it_goes(self) -> None:
+        """Each process is given a bin: its parts' materials switched on
+        together, built once and solved at the steps they need together. So
+        the bins follow the number of processes, and so do the last digits;
+        a bin's run is the run of that model, filed back as it came."""
         model = example('biosphere')
-        runs = {w: run(with_split(model, 'on'), workers=w) for w in (2, 3, 4)}
-        first = runs[2]
-        for w, r in runs.items():
-            self.assertEqual(r.stats['split']['workers'], w)
-            self.assertTrue(np.array_equal(np.asarray(r.t), np.asarray(first.t)))
-            self.assertTrue(np.array_equal(np.asarray(r.y), np.asarray(first.y)), f'{w} workers')
-            self.assertEqual([j['nsteps'] for j in r.stats['split']['jobs']],
-                             [j['nsteps'] for j in first.stats['split']['jobs']])
-            self.assertEqual(r.stats['nsteps'], first.stats['nsteps'])
+        project = with_split(model, 'on')
+        two = run(project, workers=2)
+        account = two.stats['split']
+        self.assertEqual(account['workers'], 2)
+        self.assertEqual([j['materials'] for j in account['jobs']], [['I-129', 'Tc-99'], ['Cl-36', 'Se-79']])
+        again = run(with_split(model, 'on'), workers=2)
+        self.assertTrue(np.array_equal(np.asarray(again.y), np.asarray(two.y)))
+        self.assertEqual(again.stats['nsteps'], two.stats['nsteps'])
+        # Each bin is a run of the model with its materials alone switched on.
+        whole = build_system(project)
+        work = S.bin_jobs(S.plan_split(whole, project, mode='on', workers=2))
+        where = {key: i for i, key in enumerate(S.state_keys(whole.layout))}
+        Y = np.asarray(two.y)
+        for b, job in enumerate(account['jobs']):
+            part_project, part_system, _ = S.build_part(S.part_model(project.to_json(), job['materials']))
+            alone = run(part_project, system=part_system, on_grid=True)
+            self.assertEqual(alone.stats['nsteps'], job['nsteps'])
+            got = np.asarray(alone.y)
+            filed = 0
+            for k, key in enumerate(S.state_keys(part_system.layout)):
+                i = where[key]
+                if work['owner'][i] == b:
+                    self.assertTrue(np.array_equal(Y[:, i], got[:, k]), key)
+                    filed += 1
+            self.assertEqual(filed, job['states'])
+        # A process per part: each part at its own steps, which agree with
+        # the bins' to the tolerance.
+        four = run(with_split(model, 'on'), workers=4)
+        self.assertEqual([j['materials'] for j in four.stats['split']['jobs']],
+                         [['I-129'], ['Cl-36'], ['Tc-99'], ['Se-79']])
+        self.assertLess(worst(two, four), AGREE)
 
     def test_made_up_chains(self) -> None:
         model = chains(6, 5, 4)
@@ -547,17 +632,60 @@ class SplitRuns(unittest.TestCase):
         self.assertNotIn('compiled_why', python.stats)
         if not HAVE_NUMBA:
             return
-        # Insisted on: every part compiled. One part built and run here first,
+        # Insisted on: every part compiled. One bin built and run here first,
         # so that the processes find its compiled model on disk rather than
         # all writing it at once.
         project = with_split(model, 'on')
-        first = S.split_jobs(build_system(project))['jobs'][0]
+        first = S.bin_jobs(S.plan_split(build_system(project), project, mode='on', workers=2))['jobs'][0]
         part_project, part_system, _ = S.build_part(S.part_model(project.to_json(), first['materials']))
         run(part_project, system=part_system, on_grid=True, compiled=True)
         fast = run(project, workers=2, compiled=True)
         self.assertTrue(fast.stats['split']['used'], fast.stats['split']['why'])
         self.assertIs(fast.stats['compiled'], True)
         self.assertTrue(np.array_equal(np.asarray(fast.y), np.asarray(python.y)))
+
+    @unittest.skipUnless(HAVE_NUMBA, 'needs numba')
+    def test_the_series_of_a_compiled_split_are_worked_out_compiled(self) -> None:
+        """The whole model's system, on which every series is worked out, was
+        never solved in this process: its compiled model is made when a series
+        that is not a state is first asked for, and gives the Python passes'
+        numbers to the last bit."""
+        from kompartment.engine.compiled.model import CompiledModel
+        parted = run(with_split(example('biosphere'), 'on'), workers=2, compiled=True)
+        self.assertTrue(parted.stats['split']['used'], parted.stats['split']['why'])
+        self.assertIs(parted.stats['compiled'], True)
+        self.assertIsNone(getattr(parted.system, '_compiled_model', None))
+        worked = [o for o in parted.outputs() if o['source'] == 'X']
+        self.assertGreater(len(worked), 10)
+        compiled = parted.series_many(worked)
+        self.assertIsInstance(parted.system._compiled_model, CompiledModel)
+        # The Python passes, as a run that was not compiled works them out.
+        parted.system._compiled_model = 'kept to the Python passes for the test'
+        python = parted.series_many(worked)
+        for o, a, b in zip(worked, compiled, python):
+            self.assertTrue(np.array_equal(a, b, equal_nan=True), o['label'])
+        self.assertTrue(any(np.any(a != 0) for a in compiled))
+
+    @unittest.skipUnless(HAVE_NUMBA, 'needs numba')
+    def test_the_whole_model_is_compiled_beside_the_parts(self) -> None:
+        """A compiled split starts compiling the whole model in a process of
+        its own beside the parts, into the cache; the first series asked for
+        waits for it and loads the model from there, compiling nothing."""
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {'KOMPARTMENT_CACHE': d}):
+            parted = run(with_split(chains(3, 3, 5), 'on'), workers=2, compiled=True)
+            self.assertTrue(parted.stats['split']['used'], parted.stats['split']['why'])
+            self.assertIs(parted.stats['compiled'], True)
+            warming = parted.system._warming
+            worked = [o for o in parted.outputs() if o['source'] == 'X']
+            self.assertTrue(worked)
+            parted.series_many(worked)
+            self.assertIsNone(parted.system._warming)
+            self.assertEqual(warming.exitcode, 0)
+            module = parted.system._compiled_model.module
+            for name in ('rhs', 'algebraic_rows'):
+                stats = getattr(module, name).stats
+                self.assertTrue(stats.cache_hits, name)
+                self.assertFalse(stats.cache_misses, name)
 
     def test_progress_and_stop(self) -> None:
         heard: List[Any] = []
@@ -590,7 +718,7 @@ class SplitRuns(unittest.TestCase):
                       f'open({marker!r}, "a").write("top level\\n")\n'
                       'import kompartment as kp\n'
                       f'res = kp.run({str(EXAMPLES_DIR / "biosphere.json")!r}, split="on")\n'
-                      'print(res.stats["split"]["used"], len(res.stats["split"].get("jobs", [])))\n')
+                      'print(res.stats["split"]["used"], res.stats["split"].get("parts"))\n')
             path = os.path.join(tmp, 'unguarded.py')
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(script)

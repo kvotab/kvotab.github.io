@@ -55,6 +55,13 @@ def compiled_model(system: Any) -> CompiledModel:
         return cached
     if isinstance(cached, str):
         raise NotCompiled(cached)
+    # A process compiling this system's module into the cache while the system
+    # was busy with something else (a split run's parts): waited for, so that
+    # the module is loaded from the cache rather than compiled again here.
+    warming = getattr(system, '_warming', None)
+    if warming is not None:
+        system._warming = None
+        warming.join()
     try:
         cm = compile_model(system)
     except NotCompiled as e:
