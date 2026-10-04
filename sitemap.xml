@@ -16,6 +16,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://kvotab.se/dose_coefficients.html</loc>
+    <lastmod>2026-10-04</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://kvotab.se/rb.html</loc>
     <lastmod>2026-08-31</lastmod>
     <priority>0.8</priority>

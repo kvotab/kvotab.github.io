@@ -59,6 +59,48 @@ browser from their publishers and are not redistributed here.
   Publication 107, *Nuclear Decay Data for Dosimetric Calculations*, Annals of
   the ICRP 38(3), 2008, © ICRP. Dose coefficients are from ICRP Publications
   72 and 119 as cited on the page.
+- **Dose coefficient data** (`resources/data/dose/`, used by
+  `dose_coefficients.html`):
+  - `icrp60/` is built by `scripts/gen-dose-icrp60.mjs` from the data files of
+    DCAL (Eckerman, Leggett et al., ORNL/TM-2001/190), distributed by Oak Ridge
+    National Laboratory: the biokinetic models of ICRP Publications 30, 56,
+    67, 69 and 71 as DCAL holds them, the specific absorbed fractions of
+    Cristy and Eckerman (ORNL/TM-8381, ORNL/TM-12351), and the ICRP
+    Publication 38 decay data (*Radionuclide Transformations*, Annals of the
+    ICRP 11–13, 1983, © ICRP).
+  - `icrp103/decay/` is the ICRP Publication 107 decay data, read from the
+    ICRP-07 files of the publication's supplementary data on the ICRP's site
+    (with the index file of its corrigenda, 2021), Copyright © 2008 A. Endo
+    and K.F. Eckerman, used for non-profit purposes under their licence,
+    whose two notices are distributed with the data
+    (`resources/data/dose/icrp103/decay/LICENSE.TXT` and `LICENSE_DECDATA.TXT`).
+  - `icrp103/saf/` holds the specific absorbed fractions and region masses of
+    the supplementary data of ICRP Publications 133 and 155 (Annals of the
+    ICRP 45(2), 2016, and 52(4), 2023, © ICRP), converted to binary form by
+    `scripts/gen-dose-icrp103.mjs`.
+  - `icrp103/elements.json` and `hrtm.json` are transcribed from ICRP
+    Publication 158 (Annals of the ICRP 53(4–5), 2024, © ICRP) and the ICRP's
+    consultation drafts of its Parts 2 and 3: absorption parameters,
+    absorption fractions, systemic transfer coefficients and regional
+    deposition. `icrp103/progeny.json` is transcribed from the sections on the
+    treatment of radioactive progeny of ICRP Publications 134, 137, 141 and
+    151 (*Occupational Intakes of Radionuclides* Parts 2–5, Annals of the ICRP
+    45(3–4), 2016; 46(3–4), 2017; 48(2–3), 2019; 51(1–2), 2022, © ICRP): the
+    models that progeny formed in the body follow.
+    `icrp103/radon.json` holds the inputs of Publication 158 for radon and
+    thoron in homes (Tables 32.1–32.3 and C.1, the lung-air volumes of Table
+    C.3), and `resources/js/dose/radon.js` the potential alpha energies and
+    activity ratios of Publication 137 (Annex A; Annals of the ICRP 46(3–4),
+    2017), © ICRP; the ICRP's tables of doses per exposure are not included.
+    `resources/js/dose/risk.js` holds the nominal risk coefficients, the
+    lethality, quality-of-life and life-lost factors, and the printed
+    detriment tables of ICRP Publications 60 (Annex B, Tables 3 and 4;
+    Annals of the ICRP 21(1–3), 1991) and 103 (Annex A, Table 1; Annals of
+    the ICRP 37(2–4), 2007), © ICRP, from which the page recalculates the
+    detriment-adjusted nominal risk coefficients and with which it compares. The ICRP's own tables of dose
+    coefficients are not included; the tests compare with local copies of
+    them and of the electronic annex of Publication 158 (ICRP InMoP
+    Electronic Annex), which the page names as their source.
 - **Nuclear structure and decay data** (`resources/data/ensdf/`) are built from
   the Evaluated Nuclear Structure Data File (ENSDF), maintained by the National
   Nuclear Data Center, Brookhaven National Laboratory, for the international

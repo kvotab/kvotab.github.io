@@ -31,3 +31,5 @@ resources/tests/simplefunctions/local/
 resources/tests/erosion_corrosion/local/
 # JMPReader.jl's test tables for resources/tests/smui/test_jmp.py (fetch-jmp-fixtures.py); not ours
 resources/tests/smui/local/
+# The ICRP's own dose coefficients for resources/tests/dose_coefficients (make-local-fixtures.py); not ours to publish
+resources/tests/dose_coefficients/local/

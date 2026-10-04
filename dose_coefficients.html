@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Dose Coefficients — kvot ab</title>
+  <meta name="description" content="Committed equivalent and effective dose coefficients for members of the public, by age at intake, for ingestion and inhalation of radionuclides, calculated in your browser with the ICRP's own models: the ICRP 60 system of Publications 56–72 (the values compiled in Publication 119) or the ICRP 103 system of Publication 158 and its Parts 2 and 3.">
+  <link rel="canonical" href="https://kvotab.se/dose_coefficients.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Dose Coefficients — kvot ab">
+  <meta property="og:description" content="Age-dependent dose coefficients for members of the public from the ICRP biokinetic and dosimetric models, in the ICRP 60 or the ICRP 103 system: retention, excretion, the models themselves and how the doses build up.">
+  <meta property="og:url" content="https://kvotab.se/dose_coefficients.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
+  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261004o">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="dc" id="dcRoot">
+      <!-- ===================== the settings column ===================== -->
+      <aside class="dc-side" id="dcSide">
+        <p class="dc-side-note" id="dcSideNote" role="note" hidden>These settings are for a single calculation and its tabs. The Batch tab has its own, so they rest here while it is open; they still work.</p>
+        <div class="dc-side-scroll">
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:system"></span>
+            <details class="dc-sec" open>
+              <summary><span class="dc-sec-title">System</span></summary>
+              <label class="dc-radio"><input type="radio" name="dcSystem" value="60" data-on-change="dc:systemChanged">
+                <span><b>ICRP 60</b> · Publications 56, 67, 69, 71 and 72, as compiled in Publication 119</span></label>
+              <label class="dc-radio"><input type="radio" name="dcSystem" value="103" checked data-on-change="dc:systemChanged">
+                <span><b>ICRP 103</b> · Publication 158 (Part 1) and the consultation drafts of Parts 2 and 3</span></label>
+            </details>
+          </div>
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:nuclide"></span>
+            <details class="dc-sec" open>
+              <summary><span class="dc-sec-title">Radionuclide</span><span class="dc-count" id="dcNuclideCount"></span></summary>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label for="dcNuclide">Nuclide</label><span class="kvot-info-slot" data-info-key="set:nuclide"></span></div>
+                <div class="dc-combo">
+                  <input id="dcNuclide" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="dcNuclideList" autocomplete="off" spellcheck="false" placeholder="e.g. Cs-137" data-on-change="dc:nuclideChanged" data-on-input="dc:nuclideTyped">
+                  <ul id="dcNuclideList" class="dc-suggest" role="listbox" aria-label="Radionuclides" hidden></ul>
+                </div>
+                <p class="dc-muted" id="dcNuclideNote"></p>
+              </div>
+            </details>
+          </div>
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:intake"></span>
+            <details class="dc-sec" open>
+              <summary><span class="dc-sec-title">Intake</span></summary>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label>Route</label><span class="kvot-info-slot" data-info-key="set:route"></span></div>
+                <div class="dc-seg" role="radiogroup" aria-label="Route of intake">
+                  <label><input type="radio" name="dcRoute" value="ingestion" checked data-on-change="dc:routeChanged"><span>Ingestion</span></label>
+                  <label><input type="radio" name="dcRoute" value="inhalation" data-on-change="dc:routeChanged"><span>Inhalation</span></label>
+                  <label><input type="radio" name="dcRoute" value="injection" data-on-change="dc:routeChanged"><span>Injection</span></label>
+                </div>
+              </div>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label for="dcForm">Chemical or physical form</label><span class="kvot-info-slot" data-info-key="set:form"></span></div>
+                <select id="dcForm" data-on-change="dc:formChanged"></select>
+                <p class="dc-muted" id="dcFormNote"></p>
+              </div>
+              <div class="dc-row" id="dcAmadRow" hidden>
+                <div class="kvot-info-line dc-label-line"><label for="dcAmad">Aerosol size</label><span class="kvot-info-slot" data-info-key="set:amad"></span></div>
+                <select id="dcAmad" data-on-change="dc:settingChanged"></select>
+              </div>
+            </details>
+          </div>
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:ages"></span>
+            <details class="dc-sec" open>
+              <summary><span class="dc-sec-title">Ages at intake</span></summary>
+              <div class="dc-ages" id="dcAges">
+                <label class="dc-check"><input type="checkbox" value="100" checked data-on-change="dc:settingChanged"><span>3 months</span></label>
+                <label class="dc-check"><input type="checkbox" value="365" checked data-on-change="dc:settingChanged"><span>1 year</span></label>
+                <label class="dc-check"><input type="checkbox" value="1825" checked data-on-change="dc:settingChanged"><span>5 years</span></label>
+                <label class="dc-check"><input type="checkbox" value="3650" checked data-on-change="dc:settingChanged"><span>10 years</span></label>
+                <label class="dc-check"><input type="checkbox" value="5475" checked data-on-change="dc:settingChanged"><span>15 years</span></label>
+                <label class="dc-check"><input type="checkbox" value="7300" checked data-on-change="dc:settingChanged"><span>Adult</span></label>
+              </div>
+            </details>
+          </div>
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:calc"></span>
+            <details class="dc-sec">
+              <summary><span class="dc-sec-title">Calculation</span></summary>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label for="dcCutoff">Decay chain cut-off</label><span class="kvot-info-slot" data-info-key="set:cutoff"></span></div>
+                <span class="dc-desc">progeny carrying less than this share of the energy emitted in 100 years are left out</span>
+                <select id="dcCutoff" data-on-change="dc:settingChanged">
+                  <option value="0">none: the whole chain</option>
+                  <option value="1e-5">0.001 %</option>
+                  <option value="1e-4" selected>0.01 %</option>
+                  <option value="1e-3">0.1 %</option>
+                </select>
+              </div>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label for="dcRtol">Relative tolerance</label><span class="kvot-info-slot" data-info-key="set:rtol"></span></div>
+                <select id="dcRtol" data-on-change="dc:settingChanged">
+                  <option value="1e-4">1E-4 (faster)</option>
+                  <option value="1e-6" selected>1E-6</option>
+                  <option value="1e-8">1E-8 (slower)</option>
+                </select>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="dc-side-foot">
+          <details class="dc-size" id="dcSize" hidden>
+            <summary><span class="dc-size-kicker">Model</span> <span id="dcSizeSum"></span></summary>
+            <div class="dc-size-body" id="dcSizeBody"></div>
+          </details>
+          <div class="dc-actions">
+            <button type="button" class="dc-btn" id="dcRun" data-on-click="dc:run">Calculate</button>
+            <button type="button" class="dc-btn secondary" id="dcStop" data-on-click="dc:stop" hidden>Stop</button>
+          </div>
+          <div class="dc-status" id="dcStatus" role="status" aria-live="polite">Choose a radionuclide and press Calculate.</div>
+        </div>
+      </aside>
+      <div class="dc-resize" id="dcResize" role="separator" aria-orientation="vertical" aria-label="Resize the settings panel" tabindex="0"></div>
+
+      <!-- ===================== the work area ===================== -->
+      <main class="dc-main">
+        <nav class="dc-tabs" role="tablist" aria-label="Results">
+          <button type="button" role="tab" class="active" data-tab="coef" data-on-click="dc:tab">Coefficients</button>
+          <button type="button" role="tab" data-tab="retention" data-on-click="dc:tab">Retention</button>
+          <button type="button" role="tab" data-tab="model" data-on-click="dc:tab">Model</button>
+          <button type="button" role="tab" data-tab="chain" data-on-click="dc:tab">Decay chain</button>
+          <button type="button" role="tab" data-tab="batch" data-on-click="dc:tab">Batch</button>
+          <button type="button" role="tab" data-tab="risk" data-on-click="dc:tab">Risk</button>
+          <button type="button" role="tab" data-tab="radon" data-on-click="dc:tab">Radon at home</button>
+          <button type="button" role="tab" data-tab="help" data-on-click="dc:tab">Help</button>
+        </nav>
+
+        <section class="dc-pane" id="pane-coef" role="tabpanel">
+          <p class="dc-empty" id="dcCoefEmpty">The committed effective and equivalent dose coefficients by age at intake appear here once calculated.</p>
+          <div class="dc-stale-note" id="dcCoefStale" role="status" hidden></div>
+          <div id="dcCoef" hidden>
+            <div class="dc-toolbar">
+              <div class="dc-headline" id="dcHeadline"></div>
+              <span class="dc-spacer"></span>
+              <label>Digits <select id="dcDigits" data-on-change="dc:redraw"><option value="2" selected>2, as ICRP</option><option value="3">3</option><option value="4">4</option></select></label>
+              <button type="button" class="dc-btn secondary small" data-on-click="dc:csv">Save as CSV</button>
+              <span class="kvot-info-slot" data-info-key="tab:coef"></span>
+            </div>
+            <div class="dc-table-wrap"><table class="dc-table" id="dcETable"></table></div>
+            <h3 class="dc-h3">Committed equivalent dose <span class="dc-unit">Sv per Bq</span></h3>
+            <div class="dc-toolbar" id="dcSexBar">
+              <div class="dc-seg small" role="radiogroup" aria-label="Sex">
+                <label><input type="radio" name="dcSex" value="avg" checked data-on-change="dc:redraw"><span>Average of the sexes</span></label>
+                <label><input type="radio" name="dcSex" value="M" data-on-change="dc:redraw"><span>Male</span></label>
+                <label><input type="radio" name="dcSex" value="F" data-on-change="dc:redraw"><span>Female</span></label>
+              </div>
+            </div>
+            <div class="dc-table-wrap"><table class="dc-table" id="dcHTable"></table></div>
+            <div class="dc-notes" id="dcNotes"></div>
+          </div>
+        </section>
+
+        <section class="dc-pane" id="pane-retention" role="tabpanel" hidden>
+          <p class="dc-empty" id="dcRetEmpty">Retention, excretion and how the dose builds up after the intake appear here once calculated.</p>
+          <div class="dc-stale-note" id="dcRetStale" role="status" hidden></div>
+          <div id="dcRet" hidden>
+            <div class="dc-toolbar">
+              <label>Age at intake <select id="dcRetAge" data-on-change="dc:redraw"></select></label>
+              <label>Nuclide <select id="dcRetNuclide" data-on-change="dc:redraw"></select></label>
+              <label>Activity in <select id="dcRetWhat" data-on-change="dc:redraw">
+                <option value="groups" selected>body regions</option>
+                <option value="regions">source regions</option>
+                <option value="members">the whole body, each chain member</option>
+              </select></label>
+              <label>Dose by <select id="dcRetSplit" data-on-change="dc:redraw">
+                <option value="region" selected>body region of the activity</option>
+                <option value="source">source region of the activity</option>
+                <option value="member">chain member</option>
+                <option value="tissue">tissue receiving it</option>
+                <option value="none">nothing: the total only</option>
+              </select></label>
+              <span class="dc-spacer"></span>
+              <span class="kvot-info-slot" data-info-key="tab:retention"></span>
+            </div>
+            <div class="plot" id="dcPlotRet"></div>
+            <div class="plot" id="dcPlotExc"></div>
+            <div class="plot" id="dcPlotDose"></div>
+          </div>
+        </section>
+
+        <section class="dc-pane" id="pane-model" role="tabpanel" hidden>
+          <p class="dc-empty" id="dcModelEmpty">The models behind the calculation (systemic model, respiratory and alimentary tracts, absorption) appear here once a radionuclide and its form are chosen.</p>
+          <div id="dcModel" hidden>
+            <div class="dc-pane-head" id="dcModelHead"></div>
+            <div class="dc-toolbar">
+              <label>Member <select id="dcModelMember" data-on-change="dc:redraw"></select></label>
+              <label>Age at intake <select id="dcModelAge" data-on-change="dc:modelAge"></select></label>
+              <label>Show <select id="dcModelShow" data-on-change="dc:modelView">
+                <option value="model">Model</option>
+                <option value="activity">Activity in the body</option>
+                <option value="dose">Effective dose</option>
+              </select></label>
+              <select id="dcModelDose" data-on-change="dc:modelView" aria-label="Which effective dose" hidden>
+                <option value="received">received up to the time</option>
+                <option value="rate">rate at the time</option>
+              </select>
+              <select id="dcModelFrom" data-on-change="dc:modelView" aria-label="From the activity of" hidden>
+                <option value="member">from this member</option>
+                <option value="chain">from the whole chain</option>
+              </select>
+              <span class="dc-spacer"></span>
+              <span class="kvot-info-slot" data-info-key="tab:model"></span>
+            </div>
+            <div class="dc-model-text" id="dcModelText"></div>
+            <div class="dc-buckets" id="dcBuckets" hidden>
+              <div class="dc-toolbar">
+                <input type="range" class="dc-range" id="dcBucketsT" min="0" max="0" step="1" value="0" aria-label="Time after intake" data-on-input="dc:bucketsTime">
+                <output class="dc-buckets-time" id="dcBucketsTime" for="dcBucketsT"></output>
+                <button type="button" class="dc-btn small secondary" id="dcBucketsPlay" data-on-click="dc:bucketsPlay">Run through</button>
+              </div>
+              <div class="dc-bucket-note"><p class="dc-muted" id="dcBucketsNote"></p><p class="dc-muted dc-sizer" id="dcBucketsSizer" aria-hidden="true"></p></div>
+              <div class="dc-bucket-extra" id="dcBucketsExtra"></div>
+            </div>
+            <div class="dc-model-figs" id="dcModelFigs">
+              <div class="dc-diagram" id="dcDiagram"></div>
+              <figure class="dc-body" id="dcBody" hidden></figure>
+            </div>
+            <h3 class="dc-h3">Transfer coefficients <span class="dc-unit">per day</span></h3>
+            <div class="dc-table-wrap"><table class="dc-table" id="dcTransfers"></table></div>
+            <div id="dcIntakeModel"></div>
+          </div>
+        </section>
+
+        <section class="dc-pane" id="pane-chain" role="tabpanel" hidden>
+          <p class="dc-empty" id="dcChainEmpty">The decay chain appears here once a radionuclide is chosen, and the number of nuclear transformations in each source region once calculated.</p>
+          <div id="dcChain" hidden>
+            <div class="dc-pane-head" id="dcChainHead"></div>
+            <div class="dc-stale-note" id="dcChainStale" role="status" hidden></div>
+            <div class="dc-toolbar">
+              <div class="dc-muted" id="dcChainNote"></div>
+              <span class="dc-spacer"></span>
+              <label>Transformations at age <select id="dcChainAge" data-on-change="dc:redraw"></select></label>
+              <span class="kvot-info-slot" data-info-key="tab:chain"></span>
+            </div>
+            <div class="dc-table-wrap"><table class="dc-table" id="dcChainTable"></table></div>
+            <h3 class="dc-h3">Nuclear transformations in source regions <span class="dc-unit">per Bq taken in, over the commitment period</span></h3>
+            <div class="dc-table-wrap"><table class="dc-table" id="dcUTable"></table></div>
+          </div>
+        </section>
+
+        <section class="dc-pane" id="pane-batch" role="tabpanel" hidden>
+          <div class="dc-toolbar">
+            <div class="dc-headline">Batch calculation <span class="dc-head-note">many radionuclides, forms, aerosol sizes and ages at once, in one table</span></div>
+            <span class="dc-spacer"></span>
+            <span class="kvot-info-slot" data-info-key="tab:batch"></span>
+          </div>
+          <form class="dc-batch-form" id="dcBatchForm" autocomplete="off"></form>
+          <div class="dc-batch-show" id="dcBatchShow"></div>
+          <div class="dc-stale-note" id="dcBatchNotice" role="status" hidden></div>
+          <div class="dc-toolbar" id="dcBatchTools" hidden>
+            <span class="dc-muted dc-batch-caption" id="dcBatchCaption"></span>
+            <span class="dc-spacer"></span>
+            <button type="button" class="dc-btn secondary small" data-on-click="dc:batchCsv">Save as CSV</button>
+            <button type="button" class="dc-btn secondary small" data-on-click="dc:batchExcel">Save as Excel</button>
+          </div>
+          <p class="dc-muted" id="dcBatchFileNote" aria-live="polite"></p>
+          <div class="dc-table-wrap"><table class="dc-table dc-batch-table" id="dcBatchTable"></table></div>
+        </section>
+
+        <section class="dc-pane" id="pane-risk" role="tabpanel" hidden>
+          <div class="dc-toolbar">
+            <div class="dc-seg small" role="radiogroup" aria-label="Exposed population">
+              <label><input type="radio" name="dcRiskPop" value="whole" checked data-on-change="dc:redraw"><span>Whole population</span></label>
+              <label><input type="radio" name="dcRiskPop" value="adult" data-on-change="dc:redraw"><span>Adult workers</span></label>
+            </div>
+            <span class="dc-spacer"></span>
+            <span class="kvot-info-slot" data-info-key="tab:risk"></span>
+          </div>
+          <div id="dcRisk"></div>
+        </section>
+
+        <section class="dc-pane" id="pane-radon" role="tabpanel" hidden>
+          <div class="dc-toolbar">
+            <div class="dc-seg small" role="radiogroup" aria-label="Gas">
+              <label><input type="radio" name="dcRadonKind" value="radon" checked data-on-change="dc:radonKind"><span>Radon, <sup>222</sup>Rn</span></label>
+              <label><input type="radio" name="dcRadonKind" value="thoron" data-on-change="dc:radonKind"><span>Thoron, <sup>220</sup>Rn</span></label>
+            </div>
+            <span class="dc-spacer"></span>
+            <span class="kvot-info-slot" data-info-key="tab:radon"></span>
+          </div>
+          <div class="dc-radon-inputs">
+            <label><span>Unattached fraction f<sub>p</sub></span><input type="number" id="dcRadonFp" step="0.01" min="0" max="1" data-on-input="dc:radonParams"></label>
+            <label><span>Nucleation share of the attached, f<sub>pn</sub></span><input type="number" id="dcRadonFpn" step="0.01" min="0" max="1" data-on-input="dc:radonParams"></label>
+            <label id="dcRadonFLabel"><span>Equilibrium factor F</span><input type="number" id="dcRadonF" step="0.05" min="0.01" max="1" data-on-input="dc:radonParams"></label>
+            <label><span id="dcRadonCLabel">Radon concentration, Bq m<sup>−3</sup></span><input type="number" id="dcRadonC" step="10" min="0" value="300" data-on-input="dc:radonParams"></label>
+            <label><span>Hours a year at home</span><input type="number" id="dcRadonHours" step="100" min="0" max="8766" value="7000" data-on-input="dc:radonParams"></label>
+            <button type="button" class="dc-btn secondary" data-on-click="dc:radonDefaults">Reference values</button>
+          </div>
+          <div id="dcRadon"></div>
+        </section>
+
+        <section class="dc-pane dc-help" id="pane-help" role="tabpanel" hidden>
+          <h2>Dose coefficients for members of the public</h2>
+          <p>A dose coefficient is the committed dose per becquerel taken into the body: the equivalent dose to an
+            organ or tissue, or the effective dose, received over the 50 years after an adult’s intake, or up to age
+            70 after a child’s. This page calculates them the way the ICRP does, from the ICRP’s biokinetic models
+            (where the radionuclide goes in the body and how long it stays) and dosimetric models (how much of the
+            energy emitted in one place is absorbed in another), for intakes by ingestion and inhalation (and, in the
+            ICRP 103 system, direct uptake to blood) at the six reference ages of the ICRP’s publications for members of
+            the public: 3 months, 1, 5, 10 and 15 years, and adults. Choose the system, the radionuclide, the route and
+            the chemical form on the left.</p>
+
+          <h3 id="help-systems">The two systems</h3>
+          <p>The <b>ICRP 60 system</b> is the one of the ICRP’s 1990 Recommendations: the age-dependent models of
+            Publications 56, 67, 69 and 71, whose dose coefficients Publication 72 tabulated and Publication 119
+            compiled. It is still the basis of many national regulations and of the IAEA Basic Safety Standards’
+            tables. The <b>ICRP 103 system</b> is the one of the 2007 Recommendations: new tissue weighting factors,
+            voxel phantoms of reference persons of both sexes, the revised respiratory tract model of Publication 130,
+            the alimentary tract model of Publication 100 and revised systemic models. For members of the public its
+            coefficients are being published element by element: Part 1 (Publication 158, 2024) covers hydrogen to
+            radium, Part 2 (the lanthanides and actinides) and Part 3 (35 more elements, beryllium to francium) were out
+            for consultation as drafts when this page was made. The two systems give different numbers for the same intake, sometimes by a factor of several; the
+            page tells you which one each result comes from.</p>
+
+          <h3 id="help-60">The ICRP 60 system as calculated here</h3>
+          <p>The ICRP calculated the Publication 72 coefficients with the software DCAL (Eckerman and Leggett,
+            ORNL/TM-2001/190), which ORNL distributes with its data. This page reads DCAL’s own model and data files
+            and reproduces its method:</p>
+          <ul>
+            <li><b>Respiratory tract</b>: the ICRP 66 model, Types F, M and S and the gas and vapour classes, with
+              DCAL’s age-dependent deposition fractions for members of the public (1 µm AMAD by default).</li>
+            <li><b>Gastrointestinal tract</b>: the ICRP 30 model (stomach, small intestine, upper and lower large
+              intestine), absorption f<sub>1</sub> from the small intestine with its age-dependent values.</li>
+            <li><b>Urinary bladder</b>: emptied at 40, 32 and 12 d<sup>−1</sup> at 3 months, 1 year and from 5 years
+              (Publication 67).</li>
+            <li><b>Systemic models</b>: the ones of Publications 56–71 as DCAL’s FGR-13 library holds them, with the
+              transfer rates interpolated linearly in age, and the adult at 25 years for bone-seeking elements. Progeny
+              follow the kinetics DCAL’s batch files give them: shared with the parent, or independent with the
+              element-specific models for lead, radium, thorium and uranium chains, iodine from tellurium and noble
+              gases.</li>
+            <li><b>Dosimetry</b>: specific effective energies from the Cristy–Eckerman phantoms (newborn, 1, 5, 10 and
+              15 years, adult), the ICRP 30 bone and walled-organ absorbed fractions, and the ICRP 66 absorbed fractions
+              of the airways, interpolated in age between the phantoms.</li>
+            <li><b>Effective dose</b>: the tissue weighting factors of Publication 60 with the remainder of
+              Publication 72 (mass-weighted, with the splitting rule).</li>
+          </ul>
+
+          <h3 id="help-103">The ICRP 103 system as calculated here</h3>
+          <ul>
+            <li><b>Respiratory tract</b>: the revised Human Respiratory Tract Model of Publication 130 (particle
+              transport of its Fig. 2.4, dissolution and the bound state), with the deposition of Publication 158
+              Table A.1 for environmental exposure (1 µm AMAD by default), the absorption types and material-specific
+              parameters of each element, and the parent’s absorption parameters for progeny formed in the lungs.</li>
+            <li><b>Alimentary tract</b>: the Human Alimentary Tract Model of Publication 100 with the age-specific transit
+              rates of Publication 158 Table 2.10, absorption f<sub>A</sub> from the small intestine; material cleared
+              from the lungs is absorbed with f<sub>r</sub>·f<sub>A</sub>, and activity secreted from tissues with the
+              highest reference f<sub>A</sub>. An injection puts the activity into the systemic model’s blood at once.</li>
+            <li><b>Systemic models</b>: transcribed from each element’s section of Publication 158 and of the Part 2
+              and Part 3 drafts, with their age-specific transfer coefficients. The adult’s values apply from 20 years, from
+              25 years for the alkaline earths, lead and the actinides (Publication 158 para 13) and, as the ICRP’s own
+              coefficients show, for yttrium, zirconium, niobium, hafnium, tantalum and francium. Mercury vapour absorbed
+              from the lungs enters blood by the way it got there: dissolved as vapour to Plasma 0, the rest as
+              Hg<sup>2+</sup> to Plasma 1 (Part 3 draft paras 367–368).</li>
+            <li><b>Dosimetry</b>: the specific absorbed fractions of Publications 133 and 155 for the twelve reference
+              individuals (newborn, 1, 5, 10 and 15 years, adult; male and female), with the radiations of Publication 107,
+              interpolated in energy and in age as Publication 158 prescribes (PCHIP; a weighted linear interpolation
+              in the first year).</li>
+            <li><b>Effective dose</b>: the tissue weighting factors of Publication 103 applied to the average of the male
+              and female equivalent doses, the remainder the arithmetic mean of its thirteen tissues.</li>
+          </ul>
+          <h3 id="help-progeny">Progeny</h3>
+          <p>A radionuclide’s dose coefficient includes the dose from its radioactive progeny formed in the body after
+            the intake. How the progeny move is where the two systems, and this page, need most care.</p>
+          <p>In the <b>ICRP 60 system</b> the progeny follow what DCAL’s batch files for Publication 72 give them:
+            the parent’s model (shared kinetics) for most chains, element-specific models for the chains of lead,
+            radium, thorium and uranium, iodine from tellurium and noble gases (independent kinetics), as Publications
+            67, 69 and 71 describe.</p>
+          <p>In the <b>ICRP 103 system</b> Publication 158 (section 2.5) gives the general rules: in the respiratory tract
+            every member keeps the parent’s absorption parameters, but noble gases escape at 100 d<sup>−1</sup>; progeny
+            formed in the alimentary tract are absorbed with their own reference f<sub>A</sub> (after an inhalation of
+            particles, times the parent’s f<sub>r</sub>; after a gas or vapour, their own f<sub>A</sub> alone, as the
+            ICRP’s coefficients for ruthenium tetroxide have it); isotopes of the parent’s element share its model. How a progeny of another element
+            moves once it is formed in the body is set by the parent element’s section of the OIR series (Publications 134,
+            137, 141 and 151, “Treatment of radioactive progeny”), the same for every chain that element heads, and this page
+            carries those sections’ models:</p>
+          <ul>
+            <li><b>chains of lead, bismuth and polonium</b> (Publication 137 section 9.2.3.3): lead and bismuth with red
+              marrow, spleen, skin, testes and ovaries added to their models, polonium entering blood at Plasma 2, and models
+              of their own for thallium, gold and mercury;</li>
+            <li><b>chains of radium, thorium and uranium</b> (sections 13.2.3.3, 14.2.3.3 and 15.3.3): the lead-chain models
+              with trabecular and cortical marrow; radium, thorium, uranium, actinium and neptunium with added spleen, skin,
+              marrow and gonads; protactinium with thorium’s model; francium and astatine decay where they are formed;</li>
+            <li><b>the other actinides</b> (Publication 141 section 18.2.10): each element’s model with skin and spleen added,
+              plutonium without its fast blood compartment;</li>
+            <li><b>caesium, barium, the lanthanides, tellurium, antimony, iodine, strontium, yttrium, zirconium, niobium,
+              molybdenum, ruthenium, iridium, iron, cobalt, zinc, calcium and sulphur</b>: their sections’ models, among
+              them those for scandium, manganese, gallium, rubidium, rhodium, osmium, platinum and rhenium as progeny, and
+              the model of <sup>137m</sup>Ba formed from <sup>137</sup>Cs (with Publication 158 para 450 for children);</li>
+            <li><b>nickel, selenium and silver</b> (Publication 151 sections 15, 20 and 25): cobalt formed from nickel;
+              arsenic, bromine and krypton from selenium; rhodium, palladium, cadmium and indium from silver, with the
+              adult characteristic models of Publication 151 at every age (which reproduces the annex of Publication 158),
+              extended by the parent’s tissues as its Annex B describes;</li>
+            <li><b>the elements of Part 3</b> (Publication 151, the section of each): magnesium, silicon, chlorine, potassium,
+              titanium, chromium, manganese, gallium, germanium, arsenic, bromine, rubidium, rhodium, palladium, cadmium,
+              indium, tin, hafnium, tantalum, tungsten, rhenium, osmium, platinum, gold, mercury, thallium, astatine and
+              francium as parents, each progeny with its own model and the tissues and rates the section adds; argon formed
+              from chlorine leaves tissue with a half-time of 15 minutes. Polonium formed from astatine enters blood at
+              Plasma 1, not at Plasma 2 as in lead chains: the Part 3 draft’s <sup>210</sup>At coefficients need it (with
+              Plasma 2 they come out 7–12 % lower).</li>
+          </ul>
+          <p>A progeny formed in a compartment that its model also has (the same tissue, of the same name) is in that
+            compartment, but the unspecific soft-tissue pools (ST0–ST2) of another element’s model are not its own,
+            except in radium chains and those that share their models: there thorium and radium formed in the pools of a
+            progeny’s model take their own pools of the same name, though not in those of the chain’s parent (the ICRP’s
+            coefficients for <sup>227</sup>Ra, <sup>228</sup>Ra, <sup>231</sup>Pa and <sup>228</sup>Ac follow the one,
+            those for <sup>229</sup>Th and <sup>232</sup>Th the other), and thorium formed in radium’s bone volume,
+            exchangeable or not, returns to blood at the bone turnover rate. Formed
+            anywhere else it moves to its own blood at the rate the section gives: 1000 d<sup>−1</sup> from blood, a rate of
+            its own model from soft tissue, the bone turnover rate from bone volume. Noble gases formed in the body follow the
+            OIR series’ generic model: to blood at 100 d<sup>−1</sup> from bone surface, 1.5 or 0.36 d<sup>−1</sup> from bone
+            volume, with a half-time of 30, 20 or 15 minutes from soft tissue (radon, xenon, krypton), exhaled at 1000
+            d<sup>−1</sup>. Activity secreted into the alimentary tract is reabsorbed with the element’s highest reference
+            f<sub>A</sub>, for polonium 0.1, the value the ICRP’s own calculations used. Where a section changes a model by
+            shares of its flows (the spleen’s share of the soft tissue, say), the same shares are applied to the children’s
+            models.</p>
+          <p>A progeny that its parent’s section does not name (yttrium from zirconium, say) falls back to simpler rules: in
+            a compartment its model also has, it is there; formed in bone volume it leaves at the parent’s rates; elsewhere it
+            returns to its blood at the rate of its own model’s intermediate soft tissue.</p>
+          <p>When progeny of other elements emit a tenth or more of a chain’s energy, the Coefficients tab says so: those
+            results rest on these rules, and can differ from the ICRP’s by more than its rounding (see below).</p>
+
+          <h3 id="help-numerics">How the calculation is done</h3>
+          <p>Each intake becomes one system of linear differential equations: the activity of every chain member in every
+            compartment, with transfer rates interpolated linearly in age between the reference ages (the rates change as
+            the child grows), and decay feeding each member’s progeny. The equivalent dose to each target region is the
+            activity in each source region times its dose per transformation (SEE in the ICRP 60 system, S in the ICRP
+            103 system), integrated over the commitment period; the dose per transformation also changes with age:
+            between the reference phantoms linearly (ICRP 60), or by a monotone cubic spline (PCHIP) through the six
+            reference ages (ICRP 103), with in both a weighted interpolation in the first year that follows the growth
+            curves of Publication 89. Between two reference ages it is therefore one polynomial in age for every source
+            and target, and the integrator carries, for each group of compartments that share a source region, the
+            integral of their activity weighted by each of its basis functions (four for the cubic, in Bernstein form; two
+            for a straight line): the doses to all targets follow from these exactly, at the end of each stretch. The
+            integrator is a variable-order backward differentiation method (NDF) with the exact sparse Jacobian,
+            restarted wherever a rate table has a corner; it crosses the commitment period in one to two thousand steps
+            however stiff the system (rates from 10<sup>−5</sup> to 4·10<sup>4</sup> d<sup>−1</sup>) and however long
+            the chain (a few hundred compartments for the actinide series). Specific
+            absorbed fractions are interpolated in energy as each publication says (linearly for the ICRP 60 photon
+            SAFs, as DCAL; PCHIP for the ICRP 103 SAFs), beta particles enter through their spectra.</p>
+          <p>The integrals keep the system small: for <sup>226</sup>Ra by ingestion, 1,782 equations with 5,622
+            coefficients. The ages at intake are separate integrations and run in parallel, each in a worker of its own,
+            as many at a time as the device has cores to spare; so do the inhalations behind radon at home. Before a run,
+            the foot of the settings sums up the model Calculate will solve — the nuclides the cut-off keeps, the
+            compartments, transfers and equations, and the number of integrations — and the Model and Decay chain tabs
+            show it. Results stay on their tabs when a setting is changed, marked as not of the current settings until
+            Calculate runs again.</p>
+          <p>After a calculation the Model tab can show where the activity is and where the dose comes from. Under
+            <b>Show</b>, <b>Activity in the body</b> fills each box of the drawing, as a bucket, to its share of the chosen
+            member’s activity in the whole body at a time after intake, and <b>Effective dose</b> to its share of the
+            committed effective dose received up to that time, or of its rate then, from the activity in the box: the
+            member’s, or the whole chain’s. The time is one of the calculation’s output times, ten to a decade from about a
+            minute and a half after intake, for one of its ages at intake; <b>Run through</b> moves it to the last. Each
+            compartment’s dose is its own, not a share of its source region’s: with a time series the integrator keeps the
+            integrals of every compartment apart (otherwise those of a member in a source region together), which takes
+            a tenth to a quarter longer. The drawing has one box for each part of the gut’s contents and for the
+            bladder’s, whichever copy of the alimentary tract the activity is in; with the whole chain, a nuclide counts
+            in the box of the same name, or, where it was formed in a compartment of another member’s model, in that
+            compartment’s box. What the drawing has no box for — the respiratory tract, the mouth and the oesophagus, and
+            the compartments a progeny is given where it is formed in a part of another member’s model that its own
+            model lacks — is listed under the slider with its share.</p>
+
+          <h3 id="help-checks">Checking it</h3>
+          <div id="dcHelpChecks">
+            <p>The coefficients this page calculates were compared with the ICRP’s own, at every age, for every case the
+              publications give: in the ICRP 60 system with Publication 119 (its corrected version; the coefficients of Publication 72),
+              in the ICRP 103 system with every coefficient printed in Publication 158 and the drafts of Parts 2 and 3, and with the
+              electronic annex that accompanies Publication 158, which gives every nuclide of its elements for injection, ingestion, inhalation
+              and gases, with the equivalent doses to the organs of the reference male and female.<sup>*</sup> The ICRP rounds its
+              printed coefficients to two significant figures, so a perfect calculation agrees with them to within about ±2.5–5 %;
+              the annex gives more digits.</p>
+            <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>Committed effective dose</th><th>values</th><th>within 5 %</th><th>within 10 %</th><th>within 20 %</th></tr></thead><tbody>
+            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4512</td><td class="num">98.0 %</td><td class="num">99.4 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9806</td><td class="num">96.8 %</td><td class="num">99.2 %</td><td class="num">99.8 %</td></tr>
+            <tr><td>ICRP 103, ingestion, against Publication 158 and the Part 2 draft</td><td class="num">744</td><td class="num">99.7 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, inhalation, against Publication 158 and the Part 2 draft</td><td class="num">2214</td><td class="num">99.8 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, ingestion, against the Part 3 draft</td><td class="num">342</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, inhalation (and gases), against the Part 3 draft</td><td class="num">804</td><td class="num">99.9 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, ingestion, against the annex of Publication 158</td><td class="num">2526</td><td class="num">99.9 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, inhalation (1 µm) and gases, against the annex</td><td class="num">5760</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, injection, against the annex</td><td class="num">1740</td><td class="num">99.3 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 103, equivalent doses to organs (male and female), against the annex</td><td class="num">536798</td><td class="num">97.9 %</td><td class="num">99.1 %</td><td class="num">99.7 %</td></tr>
+            </tbody></table></div>
+            <p class="dc-note"><sup>*</sup> ICRP InMoP Electronic Annex v.1.23.2.2, dataset v.1.2 (2025.08.25), © ICRP, accompanying the ICRP
+              publication series on dose coefficients for intakes of radionuclides by members of the public. The comparisons read it
+              from a local copy; none of its values are part of this page.</p><p>In the ICRP 60 system the few values outside 10 % are single ages here and there (rounding and the
+              interpolations of the first year) and these, more than 10 % off at two ages or more (– where Publication 119 gives
+              the infant another f<sub>1</sub>):</p>
+            <div class="dc-table-wrap"><table class="dc-ref dc-ratios"><thead><tr><th rowspan="2">Intake</th><th colspan="6" class="group">Ratio, this page / Publication 119</th><th rowspan="2">Why</th></tr>
+            <tr><th class="age">3 months</th><th class="age">1 year</th><th class="age">5 years</th><th class="age">10 years</th><th class="age">15 years</th><th class="age">Adult</th></tr></thead><tbody>
+            <tr><td>Si-31 ingestion (f1 0.01)</td><td class="num">–</td><td class="num">1.05</td><td class="num">1.13</td><td class="num">1.12</td><td class="num">1.12</td><td class="num">1.00</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
+            <tr><td>Nb-89 ingestion (f1 0.01)</td><td class="num">–</td><td class="num">1.01</td><td class="num">1.02</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">1.11</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
+            <tr><td>Ho-161 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">1.12</td><td class="num">1.11</td><td class="num">1.03</td><td class="num">1.01</td><td class="num">0.98</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
+            <tr><td>U-232 ingestion (f1 0.02)</td><td class="num">–</td><td class="num">0.93</td><td class="num">0.89</td><td class="num">0.90</td><td class="num">0.93</td><td class="num">0.88</td><td>gonads (ICRP 72 2.5–4 times this page’s, from the 228Th chain) and red marrow; not resolved</td></tr>
+            <tr><td>Pu-246 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">0.85</td><td class="num">0.83</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>V-48 inhalation (Type F)</td><td class="num">0.90</td><td class="num">0.93</td><td class="num">0.92</td><td class="num">0.92</td><td class="num">0.90</td><td class="num">0.87</td><td>red marrow (two-thirds of ICRP 72’s) and gonads; not resolved</td></tr>
+            <tr><td>Nb-95 inhalation (Type F)</td><td class="num">0.91</td><td class="num">0.99</td><td class="num">0.99</td><td class="num">0.88</td><td class="num">0.89</td><td class="num">0.99</td><td>not resolved</td></tr>
+            <tr><td>Cs-125 inhalation (Type F)</td><td class="num">0.90</td><td class="num">0.90</td><td class="num">0.89</td><td class="num">0.89</td><td class="num">0.91</td><td class="num">0.88</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
+            <tr><td>Cs-125 inhalation (Type M)</td><td class="num">0.88</td><td class="num">0.86</td><td class="num">0.87</td><td class="num">0.85</td><td class="num">0.85</td><td class="num">0.86</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
+            <tr><td>Cs-125 inhalation (Type S)</td><td class="num">0.87</td><td class="num">0.89</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
+            <tr><td>Gd-149 inhalation (Type F)</td><td class="num">1.01</td><td class="num">0.98</td><td class="num">1.01</td><td class="num">1.20</td><td class="num">1.19</td><td class="num">1.01</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Lu-171 inhalation (Type S)</td><td class="num">1.11</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">0.97</td><td class="num">0.99</td><td class="num">1.00</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Au-198m inhalation (Type M)</td><td class="num">1.12</td><td class="num">1.13</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">0.97</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>At-207 inhalation (Type F)</td><td class="num">1.05</td><td class="num">1.04</td><td class="num">1.05</td><td class="num">1.05</td><td class="num">1.17</td><td class="num">1.18</td><td>ET a quarter higher here, which splits the remainder at 15 y and adult (5 % at the other ages); not resolved</td></tr>
+            <tr><td>U-232 inhalation (Type F)</td><td class="num">0.95</td><td class="num">0.96</td><td class="num">0.87</td><td class="num">0.89</td><td class="num">0.92</td><td class="num">0.87</td><td>gonads (ICRP 72 2.5–4 times this page’s, from the 228Th chain) and red marrow; not resolved</td></tr>
+            <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.84</td><td class="num">0.86</td><td class="num">0.87</td><td class="num">0.91</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type M)</td><td class="num">0.68</td><td class="num">0.67</td><td class="num">0.65</td><td class="num">0.61</td><td class="num">0.60</td><td class="num">0.61</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type S)</td><td class="num">0.65</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">0.60</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            </tbody></table></div><p>In the ICRP 103 system single radionuclides, and chains whose members are isotopes of one element or short-lived,
+              agree within the rounding of the tables. These differ by more than 10 % at some age:</p>
+            <div class="dc-table-wrap"><table class="dc-ref dc-ratios"><thead><tr><th rowspan="2">Intake</th><th rowspan="2">Against</th><th colspan="6" class="group">Ratio, this page / ICRP</th><th rowspan="2">Why</th></tr>
+            <tr><th class="age">3 months</th><th class="age">1 year</th><th class="age">5 years</th><th class="age">10 years</th><th class="age">15 years</th><th class="age">Adult</th></tr></thead><tbody>
+            <tr><td>Ba-129 injection</td><td>annex</td><td class="num">0.91</td><td class="num">0.91</td><td class="num">0.96</td><td class="num">0.98</td><td class="num">0.99</td><td class="num">0.99</td><td>caesium formed from barium, in infants: the shortfall is in caesium’s Other tissues, while every caesium and every barium nuclide without caesium progeny agrees; not resolved</td></tr>
+            </tbody></table></div>
+          </div>
+
+          <h3 id="help-batch">Batch calculations</h3>
+          <p>The <b>Batch</b> tab calculates many coefficients at once, for one system and one route: the radionuclides
+            typed or pasted into its field (names such as Cs-137 or cs137, separated by commas, spaces or lines; an
+            element’s symbol stands for all its nuclides in the system), or chosen from the list that <b>Choose from the
+            list</b> opens — the system’s radionuclides to the left, narrowed by a search, an element, a half-life range,
+            a decay mode and whether the route has forms for them, and the chosen ones to the right, moved with the
+            buttons (the selected ones, or all that are shown), by double-clicking or with Enter. Each is calculated in all
+            its chemical and physical forms for the route or in its default one, for inhalation at each aerosol size ticked
+            (a gas or vapour has no aerosol size and is calculated once), at each age at intake ticked, with the tab’s
+            own decay chain cut-off (ICRP 103 system) and tolerance. The count above the button says how many
+            calculations that is. They run in the page’s workers, as many at a time as the device has cores to spare,
+            after any single calculation started meanwhile; the bar shows how far the batch has come and about how long
+            is left, and Stop ends it, keeping what is done. A calculation that fails is noted in its row and the batch
+            goes on.</p>
+          <p>Under the bar is what the table shows, which calculates nothing again when changed: the committed effective
+            dose, and if chosen the committed equivalent doses of the tissues weighted in it, of the remainder’s tissues
+            and of the others, in the ICRP 103 system for each sex as well; a row for each radionuclide, form and aerosol
+            size with the ages as columns, or a row for each age as well; and the digits. <b>Save as CSV</b> and <b>Save
+            as Excel</b> write the whole table, six significant figures in CSV and the full values in Excel, the
+            workbook with a second sheet of the settings.</p>
+
+          <h3 id="help-risk">Risk coefficients</h3>
+          <p>The <b>Risk</b> tab recalculates the ICRP’s detriment-adjusted nominal risk coefficients from the inputs its
+            recommendations give, tissue by tissue, beside the values it printed:</p>
+          <ul>
+            <li><b>ICRP 103 system</b> (Publication 103 Table 1 and Annex A): for each tissue the nominal risk R, lifetime
+              cases per 10 000 persons per Sv, is adjusted for lethality k and for the quality of life of those who survive,
+              R (k + q (1 − k)) with q = q<sub>min</sub> + (1 − q<sub>min</sub>) k, and weighted by the relative cancer-free
+              life lost l. Summed, this gives 5.7 × 10<sup>−2</sup> Sv<sup>−1</sup> for the whole population and
+              4.2 × 10<sup>−2</sup> Sv<sup>−1</sup> for adults; Table 1 lists the heritable part before the life-lost
+              weighting (para A 164).</li>
+            <li><b>ICRP 60 system</b> (Publication 60 Table 3 and Annex B): for each organ the probability of fatal cancer F,
+              with non-fatal cancers weighted by their lethality, F (2 − k), times the relative length of life lost l / l̄,
+              plus severe hereditary effects: 7.3 × 10<sup>−2</sup> Sv<sup>−1</sup> for the whole population and
+              5.6 × 10<sup>−2</sup> Sv<sup>−1</sup> for workers, the basis of its tissue weighting factors.</li>
+          </ul>
+          <p>The nominal risks themselves come from risk models fitted to the atomic bomb survivors and carried to other
+            populations with life tables and age weights that the publications do not give, so the calculation starts from
+            them; the tab shows for each tissue where its value comes from (the mix of excess relative and excess absolute
+            risk models, or another study) and the tissue weighting factor its relative detriment led to.</p>
+          <p>Once a dose coefficient is calculated, the tab also gives its <b>nominal detriment per becquerel</b>, two ways:
+            the committed effective dose times the total coefficient (5.7 × 10<sup>−2</sup> Sv<sup>−1</sup>, or 7.3 in the
+            ICRP 60 system), and tissue by tissue, each tissue’s detriment per sievert times its committed equivalent dose.
+            They agree when the dose is spread through the body and part when it gathers in a few tissues (iodine in the
+            thyroid gives about half), because the weighting factors are rounded and grouped detriments. Both are nominal
+            values for protection purposes: the coefficients are averages over the sexes and the ages at exposure, and the
+            ICRP does not recommend them, or effective dose, for the risk of an individual (Publication 103 paras 155–161,
+            A 164).</p>
+
+          <h3 id="help-radon">Radon and thoron at home</h3>
+          <p>For radon (<sup>222</sup>Rn) and thoron (<sup>220</sup>Rn) indoors the ICRP gives doses <b>per exposure</b>, not
+            per becquerel taken in: most of the dose comes from the short-lived progeny the air carries, as tiny unattached
+            clusters or attached to the aerosol, and is reckoned from their potential alpha energy concentration times the time
+            spent in it (mJ h m<sup>−3</sup>; 1 WLM = 3.54 mJ h m<sup>−3</sup>), or from the gas concentration through the
+            equilibrium factor F. The <b>Radon at home</b> tab calculates them as Publication 158 does (Section 32, Annex C),
+            with the method of Publication 137 (Annex A):</p>
+          <ul>
+            <li>each progeny nuclide (<sup>218</sup>Po, <sup>214</sup>Pb, <sup>214</sup>Bi; <sup>212</sup>Pb, <sup>212</sup>Bi)
+              in each mode of the home aerosol — unattached, nucleation and accumulation — is an inhalation calculated by this
+              page’s engine, with the regional deposition of Table C.1, the absorption of Table 32.1 and the element’s systemic
+              model;</li>
+            <li>per mode they are combined per unit potential alpha energy with the progeny’s activity ratios and the breathing
+              rate at home of each age (Table 32.3), and the modes weighted by the unattached fraction f<sub>p</sub> and the
+              nucleation share f<sub>pn</sub> (Table 32.2), which you can change;</li>
+            <li>the gas itself adds its own dose per exposure, from the radon model (Annex C para C 18).</li>
+          </ul>
+          <p>Against Publication 158 the radon progeny agree within 1 % at every age (Table 32.7), the gas within 3 % (Table C.7)
+            and each nuclide and mode within the rounding of Table C.8. Thoron progeny come out 2–5 % higher than Table 32.8: Table
+            C.1 gives the deposition of the 200 nm accumulation mode for radon progeny’s spread (σ<sub>g</sub> 2.0), not for
+            thoron progeny’s narrower one (1.8). The tab also shows the coefficients the ICRP recommends for every age,
+            3 mSv per mJ h m<sup>−3</sup> for radon and 1 for thoron (paras 532–537), and an annual dose for a concentration and
+            the hours spent at home.</p>
+
+          <h3 id="help-data">Data and where they come from</h3>
+          <div class="dc-table-wrap"><table class="dc-ref">
+            <tbody>
+              <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>.</td></tr>
+              <tr><th>ICRP 103 decay data</th><td>ICRP Publication 107 (Endo and Eckerman): the data files of its <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener">supplementary data</a> on the ICRP’s site, with the index file as corrected in the corrigenda of Publication 107 (2021; only atomic masses changed, which the page does not use). Copyright © 2008 A. Endo and K.F. Eckerman, used for non-profit purposes under their licence, whose notices accompany the data (<code>LICENSE.TXT</code> and <code>LICENSE_DECDATA.TXT</code> in <code>resources/data/dose/icrp103/decay/</code>).</td></tr>
+              <tr><th>Specific absorbed fractions</th><td>The supplementary data of ICRP Publications 133 and 155 (© ICRP), for the twelve reference individuals; Publication 155’s adult files revise Publication 133’s for electrons and alphas.</td></tr>
+              <tr><th>Radon at home</th><td>Transcribed from Publication 158 (Tables 32.1, 32.2, 32.3, C.1 and the lung-air volumes of Table C.3; <code>resources/data/dose/icrp103/radon.json</code>) and Publication 137 (potential alpha energies, Table A.1; activity ratios of the progeny, paras A80–A81; <code>resources/js/dose/radon.js</code>), © ICRP. The ICRP’s own tables of doses per exposure are not part of this page; the tests compare with local copies.</td></tr>
+              <tr><th>Risk coefficients</th><td>Transcribed from Publication 60 (Annex B Tables B-17 to B-20, Tables 3 and 4) and Publication 103 (Annex A Tables A.4.1, A.4.2 and A.4.5, Table 1), © ICRP: the nominal risks and the lethality, quality-of-life and life-lost factors the calculation uses, and the printed results it is compared with (<code>resources/js/dose/risk.js</code>).</td></tr>
+              <tr><th>ICRP 103 models</th><td>Transcribed from Publication 158 and the consultation drafts of Parts 2 and 3: absorption parameters, f<sub>A</sub> values and systemic transfer coefficients of each element, the deposition of Table A.1, the respiratory and alimentary tract models of Chapter 2; and from the progeny sections of Publications 134, 137, 141 and 151, the models of progeny formed in the body. The ICRP’s own dose coefficient tables are not part of this page; the tests compare with local copies.</td></tr>
+            </tbody>
+          </table></div>
+
+          <h3 id="help-limits">What it does not do</h3>
+          <ul>
+            <li>Intakes by the embryo and fetus, and by infants through breast milk (Publications 88 and 95).</li>
+            <li>Wounds as such (the NCRP wound model), and occupational exposure (the OIR series for workers). Direct uptake
+              to blood is calculated in the ICRP 103 system (route Injection).</li>
+            <li>Radon and thoron in workplaces, mines and caves (Publication 137), and actinon (<sup>219</sup>Rn); homes are on
+              the Radon at home tab.</li>
+            <li>Argon, krypton and xenon, which the ICRP treats as external exposure to the gas around the body rather
+              than as intakes.</li>
+          </ul>
+
+          <h3 id="help-refs">References</h3>
+          <div class="dc-table-wrap"><table class="dc-ref">
+            <tbody>
+              <tr><td>ICRP 30, 38</td><td>Limits for intakes of radionuclides by workers (1979–1988); Radionuclide transformations (1983).</td></tr>
+              <tr><td>ICRP 56, 67, 69, 71, 72</td><td>Age-dependent doses to members of the public from intake of radionuclides, Parts 1–5 (1990–1996); Part 5 compiles the coefficients.</td></tr>
+              <tr><td>ICRP 60, 103</td><td>The 1990 and 2007 Recommendations of the ICRP.</td></tr>
+              <tr><td>ICRP 66, 130</td><td>Human respiratory tract model (1994); Occupational intakes of radionuclides Part 1, with the revised model (2015).</td></tr>
+              <tr><td>ICRP 89, 100, 107, 110, 143</td><td>Reference values (2002); Human alimentary tract model (2006); Nuclear decay data (2008; corrigenda 2021); Adult and paediatric reference computational phantoms (2009, 2020).</td></tr>
+              <tr><td>ICRP 119</td><td>Compendium of dose coefficients based on ICRP Publication 60 (2012; corrected version with the corrigenda of Publication 123, 2013).</td></tr>
+              <tr><td>ICRP 133, 155</td><td>Specific absorbed fractions for reference adults (2016) and reference paediatric individuals (2023).</td></tr>
+              <tr><td>ICRP 134, 137, 141, 151</td><td>Occupational intakes of radionuclides, Parts 2–5 (2016–2022); the element sections give the models of progeny formed in the body.</td></tr>
+              <tr><td>ICRP 158</td><td>Dose coefficients for intakes of radionuclides by members of the public: Part 1. Ann. ICRP 53(4–5), 2024.</td></tr>
+              <tr><td>EIR Part 2</td><td>Dose coefficients for intakes of radionuclides by members of the public: Part 2. ICRP draft for consultation.</td></tr>
+              <tr><td>EIR Part 3</td><td>Dose coefficients for intakes of radionuclides by members of the public: Part 3. ICRP draft for consultation.</td></tr>
+              <tr><td>InMoP annex</td><td>ICRP InMoP Electronic Annex v.1.23.2.2, dataset v.1.2 (2025), accompanying the series on dose coefficients for intakes of radionuclides by members of the public; used here only to check the results.</td></tr>
+              <tr><td>ORNL/TM-2001/190</td><td>Eckerman KF, Leggett RW et al. User’s guide to the DCAL system (2006).</td></tr>
+              <tr><td>ORNL/TM-8381, ORNL/TM-12351</td><td>Cristy M, Eckerman KF. Specific absorbed fractions of energy at various ages from internal photon sources (1987); SEECAL (1993).</td></tr>
+              <tr><td>Fritsch and Carlson 1980</td><td>Monotone piecewise cubic interpolation. SIAM J. Numer. Anal. 17, 238–246.</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <footer></footer>
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260925"></script>
+  <script>
+    KVOT.renderHeader('Dose Coefficients');
+    KVOT.renderNav('dose_coefficients.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      dose/ui.js       this page: settings, the worker, the tables and charts
+      dose/worker.js   the calculations, in a module worker (dose60, dose103 and their models)
+      dose/diagram.js  the drawing of a compartment model
+      kvot-info        the (i) next to each setting and its panel
+  -->
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261004r"></script>
+</body>
+</html>

@@ -31,6 +31,11 @@ const KVOT = (() => {
       desc: 'Every nuclide in the Evaluated Nuclear Structure Data File by N and Z, coloured by half-life or decay mode, with its states, Q-values, levels and radiation, and the whole decay chain of any radionuclide.',
     },
     {
+      href: './dose_coefficients.html',
+      label: 'Dose Coefficients',
+      desc: 'Committed effective and equivalent dose coefficients for members of the public, by age at intake, for ingestion and inhalation, calculated with the ICRP’s own models in the ICRP 60 system (Publication 72) or the ICRP 103 system (Publication 158): retention, excretion and the models themselves.',
+    },
+    {
       href: './rb.html',
       label: 'HDF5 Browser',
       desc: 'Open .h5 files straight in the browser — walk the tree, inspect datasets, plot them and export to Excel.',
