@@ -3086,13 +3086,20 @@ The flat line at zero is then known for what it is: the constraint's, not the
 equations'. A run with nothing held shows nothing, which is most runs.
 
 Every solver here carries a step budget and a no-progress check, since in a
-Worker there is nobody to press Ctrl-C. The `ndf` check needs two signals before it gives up — no ground covered *and* a step
-size that has stopped growing — because a violent initial transient
-legitimately crawls: a model whose derivative starts at 1e150 reaches only
-t=1e-42 after two thousand accepted steps, and then recovers.
+Worker there is nobody to press Ctrl-C. Each check needs two signals before it
+gives up — next to no ground covered over two thousand steps, *and* a step that
+has stopped growing — because a run can crawl and still be on its way. Under
+`ndf`, a model whose derivative starts at 1e150 reaches only t=1e-42 after two
+thousand accepted steps, and then recovers; `ros23` at a tight tolerance spends
+thousands of steps on the first seconds of `examples/robertson.json`, a run to
+10¹¹, growing its step as it goes, and finishes. An explicit method held to its
+stability limit does not grow its step, and is stopped early.
 
-The two failures carry a hint naming `ndf` and the flag, because on the face
-of it they read like stiffness.
+When `ros23` or `dp45` stops, the message names what the run showed: the floor,
+when a state was cut back, put onto zero or held there in the steps that
+crawled — with the advice to use `ndf` or turn the flag off — and otherwise
+stiffness for `dp45`, or a rate changing faster than the step can follow for
+`ros23`.
 
 If a cap is part of the model rather than a guard against nonsense, express it
 as a rate term — a transfer whose rate falls to zero as the compartment fills —

@@ -52,9 +52,16 @@ const EPS = 2 ** -52;
 /**
  * The stall guard: how many accepted steps to look back over, and how small a
  * fraction of the run they may have covered before the solver is judged to be
- * pinned rather than merely slow. Measured in elapsed time, not step size: a
- * pinned solver alternates tiny accepted steps with rejected larger ones, so
- * the step size on its own looks healthy.
+ * pinned rather than merely slow. Both signals have to hold: next to no
+ * ground covered over the window, and a step no larger than a window ago.
+ * Ground alone is not enough -- a stiff method at a tight tolerance crawls
+ * through the early decades of a long run and grows its step as it goes:
+ * Rosenbrock 2-3 on Robertson's kinetics to 1e11 covers two seconds in its
+ * first two thousand steps at 1e-8, and at 1e-10 grows its step by as little
+ * as 7% a window, and both runs finish. A pinned solver does not grow it,
+ * and nor does an explicit one held to its stability limit, the run this
+ * guard exists to stop early: Dormand-Prince on the same problem shrinks its
+ * step by 3% to 19% a window. The NDF asks for twice the step instead.
  */
 export const STALL_WINDOW_STEPS = 2000;
 export const STALL_SPAN_FRACTION = 1e-9;
@@ -228,6 +235,12 @@ export function integrate(method, f, tspan, y0, opts = {}) {
 	let atFloor = 0;
 	let stallStep = 0;
 	let stallT = t0;
+	let stallH = 0;
+	// What the floor did inside the window the guard is looking at: a step cut
+	// because a constrained state went below zero, a state put onto the bound,
+	// projected back onto it, or held there. A stall with none of those is not
+	// the floor's doing, and its message says so rather than blaming it.
+	let floorInWindow = 0;
 
 	for (;;) {
 		if (nsteps > maxSteps) {
@@ -292,6 +305,7 @@ export function integrate(method, f, tspan, y0, opts = {}) {
 			if (err <= rtol) { atFloor = 0; break; }
 
 			nfailed++;
+			if (forConstraint) floorInWindow++;
 			// A state within its tolerance of the bound and pushed past it by
 			// every step tried never reaches the bound by halving: each shorter
 			// step lands it a little nearer, still positive, and the next tries
@@ -338,21 +352,25 @@ export function integrate(method, f, tspan, y0, opts = {}) {
 		let reprojected = false;
 		if (nonNegative) {
 			for (let i = 0; i < neq; i++) {
-				if (nonNegative[i] && ynew[i] < 0) { ynew[i] = 0; reprojected = true; negative++; }
+				if (nonNegative[i] && ynew[i] < 0) { ynew[i] = 0; reprojected = true; negative++; floorInWindow++; }
 				// Held through this step: the derivative held back would have
 				// moved the state by more than its tolerance over the step. A
 				// projection alone is not a hold.
-				if (held && rhs.push[i] * stepSize > atol[i]) held[i]++;
+				if (held && rhs.push[i] * stepSize > atol[i]) { held[i]++; floorInWindow++; }
 			}
 			if (held) rhs.push.fill(0);
 		}
 
 		if (nsteps - stallStep >= stallWindow) {
-			if (Math.abs(tnew - stallT) < stallSpan) {
-				throw new SolverError(method.stallMessage(tnew, stallWindow, stallSpan), tnew);
+			const crawling = Math.abs(tnew - stallT) < stallSpan;
+			const notGrowing = Math.abs(h) <= stallH;
+			if (crawling && notGrowing) {
+				throw new SolverError(method.stallMessage(tnew, stallWindow, stallSpan, floorInWindow > 0), tnew);
 			}
 			stallStep = nsteps;
 			stallT = tnew;
+			stallH = Math.abs(h);
+			floorInWindow = 0;
 		}
 
 		const denseAt = (tq) => {

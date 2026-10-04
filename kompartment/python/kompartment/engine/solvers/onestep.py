@@ -159,6 +159,10 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
     at_floor = 0
     stall_step = 0
     stall_t = t0
+    stall_h = 0.0
+    # What the floor did inside the window the stall guard looks at; a stall
+    # without any of it is not the floor's doing and is not blamed on it.
+    floor_in_window = 0
     ynew = np.zeros(neq)
     err_vec = np.zeros(neq)
     while True:
@@ -205,6 +209,8 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
                 at_floor = 0
                 break
             nfailed += 1
+            if for_constraint:
+                floor_in_window += 1
             if for_constraint and method.snaps_to_constraint:
                 snap = non_negative & (ynew < 0) & (y > 0) & (y <= atol)
                 if snap.any():
@@ -237,14 +243,24 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
                 ynew[neg] = 0.0
                 reprojected = True
                 negative += int(neg.sum())
+                floor_in_window += int(neg.sum())
             if held is not None:
-                held += (rhs.push * step_size > atol).astype(np.int64)  # type: ignore[union-attr]
+                holding = rhs.push * step_size > atol  # type: ignore[union-attr]
+                held += holding.astype(np.int64)
+                floor_in_window += int(holding.sum())
                 rhs.push[:] = 0.0  # type: ignore[union-attr]
         if nsteps - stall_step >= stall_window:
-            if abs(tnew - stall_t) < stall_span:
-                raise SolverError('stalled', method.stall_message(tnew, stall_window, stall_span), tnew)
+            # Both signals, as the application's: next to no ground covered,
+            # and a step no larger than a window ago.
+            crawling = abs(tnew - stall_t) < stall_span
+            not_growing = abs(h) <= stall_h
+            if crawling and not_growing:
+                raise SolverError('stalled', method.stall_message(tnew, stall_window, stall_span,
+                                                                  floor_in_window > 0), tnew)
             stall_step = nsteps
             stall_t = tnew
+            stall_h = abs(h)
+            floor_in_window = 0
 
         def dense_at(tq: float) -> np.ndarray:
             out = stepper.dense_at(tq)

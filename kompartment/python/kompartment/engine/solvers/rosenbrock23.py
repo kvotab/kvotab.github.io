@@ -182,12 +182,18 @@ class _Method:
                 f'({hmin}).')
 
     @staticmethod
-    def stall_message(t: float, window: int, covered: float) -> str:
+    def stall_message(t: float, window: int, covered: float, floor: bool = False) -> str:
+        # `floor`: whether "cannot go negative" acted in the steps that crawled -- a step cut for a state below
+        # zero, a state put onto the bound or held there. Without that it is not what stopped the run.
         return (f'The solver stopped making progress at t={t}: {window} steps advanced the clock by less than '
-                f'{covered}. This usually means a state reaching zero while its equations push it below -- a '
-                'constraint that binds is not one a one-step method can carry; turn "cannot go negative" off on the '
-                'compartment to see what the model really does, or use variableOrder -- or that a rate changes faster '
-                'than the step size can follow.')
+                f'{covered}, and the step size is no longer growing. '
+                + ('A state is reaching zero while its equations push it below, and a constraint that binds is not '
+                   'one a one-step method can carry: use the stiff NDF solver, or turn "cannot go negative" off on '
+                   'the compartment to see what the model really does.'
+                   if floor else
+                   'A rate is changing faster than the step size can follow -- a switch the model does not declare, '
+                   'or a tolerance tighter than this low-order method can keep up with: declare its switch times, '
+                   'loosen the tolerance, or use the stiff NDF solver.'))
 
     @staticmethod
     def set_up(neq: int, rhs: Any, f: Any, threshold: np.ndarray, atol: np.ndarray, rtol: float,

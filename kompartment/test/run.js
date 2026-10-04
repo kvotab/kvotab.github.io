@@ -954,8 +954,11 @@ test('a binding non-negativity constraint is survivable, and says so when it is 
 		}
 		const said = `${caught.message} ${caught.hint ?? ''}`;
 		assert(/cannot go negative/.test(said), `${solver} gave no usable hint: ${said}`);
-		assert(/variableOrder|stiff, var\. order/.test(said),
+		// The NDF, as the solver menu names it.
+		assert(/stiff NDF|"stiff, NDF"/.test(said),
 			`${solver}'s hint names no solver that works: ${said}`);
+		// And says one thing: the floor, not stiffness as well.
+		assert(!/looks stiff/.test(said), `${solver} blamed the floor and stiffness both: ${said}`);
 	}
 
 	// With the constraint off, all three agree and none of them struggle.
@@ -1070,7 +1073,7 @@ test('a stiff system makes dormandPrince give a useful error', () => {
 		});
 	} catch (e) { caught = e; }
 	assert(caught, 'expected the step budget to be exhausted');
-	assert(/rosenbrock23/.test(caught.message), 'error should point at the stiff solver');
+	assert(/NDF, or Rosenbrock 2-3/.test(caught.message), 'error should point at the stiff solver');
 });
 
 test('every block the quick-edit panel offers has the value it edits', () => {
@@ -30426,6 +30429,48 @@ test('rosenbrock23 carries a constraint that binds mid-run, or says why it canno
 		close(at(3), 1, 1e-4, 'after the release');
 		close(at(5), 9, 1e-4, 'still on the parabola');
 		assert(got.stats.held[0] > 0 && got.stats.negative >= 1, 'the hold went unreported');
+	}
+});
+
+test('a one-step solver that crawls while its step grows is not stopped, and a stop names what the run showed', async () => {
+	// The stall guard took ground alone for a stall: Rosenbrock 2-3 at 1e-8 on
+	// Robertson's kinetics covers two seconds in its first two thousand steps of
+	// a run to 1e11 -- under a billionth of it -- and was stopped there, with a
+	// message about the floor though nothing was held. It grows its step as it
+	// goes, and the run takes 28,296 steps; Dormand-Prince held to its stability
+	// limit does not, and is still stopped within a few thousand.
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/robertson.json', import.meta.url), 'utf8'));
+	const solve = (solver) => {
+		const m = structuredClone(raw);
+		m.simulation.solver = solver;
+		m.simulation.output_times.push({ kind: 'times', times: [40] });
+		return run(new Project(m));
+	};
+	const r = solve('ros23');
+	assert(r.stats.nsteps < 1e5, `${r.stats.nsteps} steps`);
+	const at40 = r.t.findIndex((x) => x === 40);
+	close(r.series(r.outputs().find((o) => o.label === 'A'))[at40], 0.7158270687, 1e-7, 'A(40) under ros23');
+
+	const failure = (fn) => { try { fn(); } catch (e) { return e; } return null; };
+	const stiff = failure(() => solve('dp45'));
+	assert(stiff && /stopped making progress/.test(stiff.message) && stiff.t < 100, stiff?.message);
+	assert(/stiff/.test(stiff.message) && !/cannot go negative/.test(stiff.message), stiff.message);
+
+	// The floor is named when it acted in the steps that crawled.
+	const dip = (t, y, o) => { o[0] = 2 * t - 4; return o; };
+	const pinned = failure(() => dormandPrince(dip, [0, 5], Float64Array.from([1]),
+		{ rtol: 1e-9, abstol: 1e-13, nonNegative: [true] }));
+	assert(pinned && /cannot go negative/.test(pinned.message), pinned?.message);
+
+	// And the solvers go by the names the solver menu gives them.
+	const { dormandPrinceMethod } = await import('../src/ode/solvers/dormand-prince.js');
+	const { rosenbrockMethod } = await import('../src/ode/solvers/rosenbrock23.js');
+	for (const m of [dormandPrinceMethod, rosenbrockMethod]) {
+		for (const text of [m.stepBudgetMessage(1e6, 1), m.floorMessage(1, 1e-12, 0),
+			m.stallMessage(1, 2000, 100, false), m.stallMessage(1, 2000, 100, true)]) {
+			assert(!/variableOrder|rosenbrock23/.test(text), text);
+		}
 	}
 });
 

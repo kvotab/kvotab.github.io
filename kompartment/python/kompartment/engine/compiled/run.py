@@ -562,7 +562,7 @@ class CompiledRun:
         if status == cs.E_STEPS:
             return SolverError('steps', method.step_budget_message(max_steps, t), t)
         if status == cs.E_STALLED:
-            return SolverError('stalled', method.stall_message(t, int(fstat[1]), float(fstat[2])), t)
+            return SolverError('stalled', method.stall_message(t, int(fstat[1]), float(fstat[2]), bool(fstat[3])), t)
         return SolverError('compiled', f'The compiled solver ended with status {status} at t={t}.', t)
 
 

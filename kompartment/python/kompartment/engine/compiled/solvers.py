@@ -52,7 +52,7 @@ PROGRESS_EVERY = 64
 # How a compiled solve ended; ``fstat`` holds the numbers its message needs.
 OK = 0
 E_STEPS = 1            # t, max_steps
-E_STALLED = 2          # t, window, distance
+E_STALLED = 2          # t, window, distance; one-step: whether the floor acted
 E_FLOOR = 3            # t, hmin, worst state (one-step methods)
 E_FLOOR_NONFINITE = 4  # t, hmin, worst state
 E_ERR_NONFINITE = 5    # t
@@ -1602,6 +1602,8 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
     at_floor = 0
     stall_step = 0
     stall_t = t0
+    stall_h = 0.0
+    floor_in_window = 0   # what the floor did in the stall guard's window
     err = 0.0
     while True:
         if nsteps > max_steps:
@@ -1756,6 +1758,8 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                 at_floor = 0
                 break
             nfailed += 1
+            if for_constraint:
+                floor_in_window += 1
             if for_constraint and ros:
                 snapped = False
                 for i in range(neq):
@@ -1802,21 +1806,28 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                     if is_nn[i] != 0 and ynew[i] < 0:
                         ynew[i] = 0.0
                         negative += 1
+                        floor_in_window += 1
                 reprojected = True
             if hold_on:
                 for i in range(neq):
                     if push[i] * step_size > atol[i]:
                         held[i] += 1
+                        floor_in_window += 1
                     push[i] = 0.0
         if nsteps - stall_step >= stall_window:
-            if abs(tnew - stall_t) < stall_span:
+            # Both signals, as the application's: next to no ground covered,
+            # and a step no larger than a window ago.
+            if abs(tnew - stall_t) < stall_span and abs(h) <= stall_h:
                 fstat[0] = tnew
                 fstat[1] = stall_window
                 fstat[2] = stall_span
+                fstat[3] = 1.0 if floor_in_window > 0 else 0.0
                 stats[2] = nfevals
                 return E_STALLED
             stall_step = nsteps
             stall_t = tnew
+            stall_h = abs(h)
+            floor_in_window = 0
         if nev:
             evf(tnew, ynew, evbuf[1], P, X, W, IW, pycb)
             hit = False

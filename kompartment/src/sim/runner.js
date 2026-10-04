@@ -580,9 +580,16 @@ export function run(input, opts = {}) {
 	} catch (e) {
 		if (e instanceof SolverError) {
 			const hints = [];
+			// Whether the solver has named the floor already -- ros23 and dp45
+			// do when it acted in the steps that stalled -- and so whether it
+			// has said what this was, which neither hint below should then
+			// contradict or repeat.
+			const saidAlready = /cannot go negative/.test(e.message);
+			const stalledOneStep = (solverId === 'ros23' || solverId === 'dp45')
+				&& /stopped making progress/.test(e.message);
 			// The explicit methods grind on a stiff model rather than fail
 			// cleanly, and say so only as a step budget run out.
-			if (solverId === 'dp45' || solverId === 'tsit5' || solverId === 'vern7') {
+			if (!saidAlready && (solverId === 'dp45' || solverId === 'tsit5' || solverId === 'vern7')) {
 				hints.push(`This model looks stiff; switch the solver to `
 					+ `"${solverLabel('ndf')}" or "${solverLabel('ros23')}", or to `
 					+ `"${solverLabel('auto')}", which finds that out for itself.`);
@@ -595,13 +602,13 @@ export function run(input, opts = {}) {
 			// and not on ros23 for the same reason. Worth saying, because the
 			// failure surfaces as an unreachable tolerance or a stall and reads
 			// like a stiffness problem. Unless the solver has already said it,
-			// which ros23 does when it stops at a held state.
-			const saidAlready = /cannot go negative/.test(e.message);
+			// or has looked and found the floor did nothing: a stall of ros23
+			// or dp45 names the floor exactly when it acted.
 			// The NDF integrator carries it with or without its BDF switch: it is
 			// the Newton iteration that lands on the kink, and kappa does not
 			// change that.
 			const bindsHere = solverId === 'ndf';
-			if (!saidAlready && !bindsHere && nonNegative.some(Boolean)) {
+			if (!saidAlready && !stalledOneStep && !bindsHere && nonNegative.some(Boolean)) {
 				hints.push(`If a compartment reaches zero at this time, its `
 					+ `"cannot go negative" setting is the likely cause: `
 					+ `"${solverLabel('ndf')}" carries a binding constraint, and `

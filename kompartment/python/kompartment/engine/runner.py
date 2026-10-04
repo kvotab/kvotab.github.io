@@ -399,14 +399,18 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             solution = merge_steps(solution, steps) if project.output_mode == 'both' else from_steps(steps, solution)
     except SolverError as e:
         hints = []
+        # Whether the solver has named the floor already, and whether a stall
+        # of ros23 or dp45 has looked and found it did nothing: neither hint
+        # below then contradicts or repeats it (the application's runner).
+        said = 'cannot go negative' in str(e)
+        stalled_one_step = solver_id in ('ros23', 'dp45') and 'stopped making progress' in str(e)
         # The explicit methods grind on a stiff model rather than fail
         # cleanly, and say so only as a step budget run out.
-        if solver_id in ('dp45', 'tsit5', 'vern7'):
+        if not said and solver_id in ('dp45', 'tsit5', 'vern7'):
             hints.append(f'This model looks stiff; switch the solver to "{SOLVER_LABELS["ndf"]}" or '
                          f'"{SOLVER_LABELS["ros23"]}", or to "{SOLVER_LABELS["auto"]}", which finds that out for '
                          'itself.')
-        said = 'cannot go negative' in str(e)
-        if not said and solver_id != 'ndf' and any(non_negative):
+        if not said and not stalled_one_step and solver_id != 'ndf' and any(non_negative):
             hints.append('If a compartment reaches zero at this time, its "cannot go negative" setting is the likely '
                          f'cause: "{SOLVER_LABELS["ndf"]}" carries a binding constraint, and turning the setting off '
                          'on that compartment shows what the model is really doing.')

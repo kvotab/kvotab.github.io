@@ -106,19 +106,22 @@ class _Method:
     @staticmethod
     def step_budget_message(max_steps: float, t: float) -> str:
         return (f'Exceeded {int(max_steps)} steps at t={t}; the system may be stiff -- try a stiff solver '
-                '(variableOrder or rosenbrock23).')
+                '(NDF, or Rosenbrock 2-3).')
 
     @staticmethod
     def floor_message(t: float, hmin: float, worst: int) -> str:
         return (f'Unable to meet integration tolerances at t={t} without reducing the step below the smallest allowed '
                 f'({hmin}). State {worst} is the worst offender; the system is probably stiff -- try a stiff solver '
-                '(variableOrder or rosenbrock23).')
+                '(NDF, or Rosenbrock 2-3).')
 
     @staticmethod
-    def stall_message(t: float, window: int, covered: float) -> str:
+    def stall_message(t: float, window: int, covered: float, floor: bool = False) -> str:
+        # `floor`: whether "cannot go negative" acted in the steps that crawled.
         return (f'The solver stopped making progress at t={t}: {window} steps advanced the clock by less than '
-                f'{covered}. Either the system is stiff -- try a stiff solver (variableOrder or rosenbrock23) -- or a '
-                'discontinuous rate is holding a state against zero.')
+                f'{covered}, and the step size is no longer growing. '
+                + ('A state is being held against zero, which this explicit method cannot carry: use the stiff NDF '
+                   'solver, or turn "cannot go negative" off on the compartment to see what the model really does.'
+                   if floor else 'The system is stiff -- try a stiff solver (NDF, or Rosenbrock 2-3).'))
 
     @staticmethod
     def set_up(neq: int, rhs: Any, f: Any, threshold: np.ndarray, atol: np.ndarray, rtol: float,

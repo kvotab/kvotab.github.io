@@ -57,19 +57,23 @@ export const dormandPrinceMethod = {
 
 	stepBudgetMessage: (maxSteps, t) => (
 		`Exceeded ${maxSteps} steps at t=${t}; the system may be stiff `
-		+ '-- try a stiff solver (variableOrder or rosenbrock23).'
+		+ '-- try a stiff solver (NDF, or Rosenbrock 2-3).'
 	),
 	floorMessage: (t, hmin, worst) => (
 		`Unable to meet integration tolerances at t=${t} without reducing the `
 		+ `step below the smallest allowed (${hmin}). State ${worst} is the `
 		+ 'worst offender; the system is probably stiff -- try a stiff '
-		+ 'solver (variableOrder or rosenbrock23).'
+		+ 'solver (NDF, or Rosenbrock 2-3).'
 	),
-	stallMessage: (t, window, spanCovered) => (
+	// `floor`: whether "cannot go negative" acted in the steps that crawled.
+	stallMessage: (t, window, spanCovered, floor) => (
 		`The solver stopped making progress at t=${t}: ${window} steps `
-		+ `advanced the clock by less than ${spanCovered}. Either the system is stiff `
-		+ '-- try a stiff solver (variableOrder or rosenbrock23) -- or a discontinuous rate '
-		+ 'is holding a state against zero.'
+		+ `advanced the clock by less than ${spanCovered}, and the step size is no longer growing. `
+		+ (floor
+			? 'A state is being held against zero, which this explicit method cannot carry: use '
+				+ 'the stiff NDF solver, or turn "cannot go negative" off on the compartment to see '
+				+ 'what the model really does.'
+			: 'The system is stiff -- try a stiff solver (NDF, or Rosenbrock 2-3).')
 	),
 
 	setUp({ neq, rhs }) {
